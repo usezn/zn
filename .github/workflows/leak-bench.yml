@@ -1,0 +1,36 @@
+name: zn-gate leak bench
+
+on:
+  pull_request:
+    branches: [ next, main ]
+  workflow_dispatch:
+
+concurrency:
+  group: leak-bench-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  leak-bench:
+    name: leak bench (node ${{ matrix.node }} / ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: [20, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Self-check fake secrets fixtures
+        run: node packages/zn-gate/test/fixtures/fake_secrets.js --selftest
+      - name: Run leak bench
+        run: node bench/leak_bench.js --json leak_bench_results.json
+      - name: Upload JSON report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: leak-bench-${{ matrix.os }}-node${{ matrix.node }}
+          path: leak_bench_results.json
+          if-no-files-found: ignore

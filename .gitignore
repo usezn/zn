@@ -43,3 +43,6 @@ models/
 # OS
 .DS_Store
 Thumbs.db
+
+# Leak bench output
+bench/leak_bench_results.json
