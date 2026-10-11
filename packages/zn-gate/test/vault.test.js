@@ -206,14 +206,34 @@ test('daemon: named secrets, reserved names, metadata updates, backups', async (
   c.close();
 });
 
-test('daemon: first-use approvals are per (project, secret, command)', async () => {
+test('daemon: first-use approvals are per (project, secret, real executable)', async () => {
   const c = clientMod.createClient({});
-  assert.strictEqual(await c.isApproved('/work/app', 'GITHUB_TOKEN', '/usr/bin/gh'), false);
-  await c.recordApproval('/work/app', 'GITHUB_TOKEN', '/usr/bin/gh');
-  assert.strictEqual(await c.isApproved('/work/app', 'GITHUB_TOKEN', 'gh'), true);
-  assert.strictEqual(await c.isApproved('/work/other', 'GITHUB_TOKEN', 'gh'), false);
-  assert.strictEqual(await c.isApproved('/work/app', 'GITHUB_TOKEN', 'curl'), false);
-  await assert.rejects(c.recordApproval('/work/app', 'GITHUB_TOKEN', 'gh; rm -rf /'), (e) => e.code === 'ZN_POLICY_DENIED');
+  assert.ok(clientMod.resolveExecutable('node'), 'node must be on PATH for this test');
+  assert.strictEqual(await c.isApproved('/work/app', 'GITHUB_TOKEN', 'node'), false);
+  await c.recordApproval('/work/app', 'GITHUB_TOKEN', 'node');
+  assert.strictEqual(await c.isApproved('/work/app', 'GITHUB_TOKEN', 'node'), true);
+  assert.strictEqual(await c.isApproved('/work/other', 'GITHUB_TOKEN', 'node'), false);
+  assert.strictEqual(await c.isApproved('/work/app', 'OTHER_SECRET', 'node'), false);
+  await assert.rejects(c.recordApproval('/work/app', 'GITHUB_TOKEN', 'zn-no-such-command-xyz'), (e) => e.code === 'ZN_NOT_FOUND');
+  await assert.rejects(c.recordApproval('/work/app', 'GITHUB_TOKEN', 'gh; rm -rf /'), (e) => e.code === 'ZN_POLICY_DENIED' || e.code === 'ZN_NOT_FOUND');
+  // A binary with the same name earlier on PATH: the approval no longer applies.
+  const shadow = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-shadow-'));
+  const fake = path.join(shadow, POSIX ? 'node' : 'node.cmd');
+  fs.writeFileSync(fake, POSIX ? '#!/bin/sh\nexit 0\n' : '@exit /b 0\r\n');
+  if (POSIX) fs.chmodSync(fake, 0o755);
+  const savedPath = process.env.PATH;
+  process.env.PATH = shadow + path.delimiter + savedPath;
+  try {
+    assert.strictEqual(await c.isApproved('/work/app', 'GITHUB_TOKEN', 'node'), false);
+  } finally {
+    process.env.PATH = savedPath;
+    fs.rmSync(shadow, { recursive: true, force: true });
+  }
+  assert.strictEqual(await c.isApproved('/work/app', 'GITHUB_TOKEN', 'node'), true);
+  // The broker's two-argument form: (secret, command), project from the cwd.
+  assert.strictEqual(await c.isApproved('DEPLOY_KEY', 'node scripts/migrate.js'), false);
+  await c.recordApproval('DEPLOY_KEY', 'node scripts/migrate.js');
+  assert.strictEqual(await c.isApproved('DEPLOY_KEY', 'node'), true);
   c.close();
 });
 

@@ -14,6 +14,11 @@
  *   updateSecretMeta(name, meta)                  policy change; the value is not touched
  *   isApproved(project, secret, argv0) -> bool     first-use approval of a command
  *   recordApproval(project, secret, argv0)
+ *       Also accepted: (secret, command), the broker's form; the project is
+ *       then the nearest parent of the current directory with .git.
+ *       The approval is bound to the real path of the executable that argv0
+ *       resolves to on this PATH; if it later resolves elsewhere (a shadowing
+ *       binary, a replaced symlink), the approval no longer applies.
  *
  * Extras: status(), isUnlocked(), lock(), auditVerify(), createClient({home}), close().
  *
@@ -54,6 +59,62 @@ function hmac(key, ...parts) {
 function safeEqualHex(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length || !/^[0-9a-f]+$/.test(a)) return false;
   return crypto.timingSafeEqual(Buffer.from(a, 'hex'), Buffer.from(b, 'hex'));
+}
+
+/* First word of a command, skipping VAR=value assignments. */
+function commandWord(command) {
+  const words = String(command || '').trim().split(/\s+/);
+  for (const w of words) if (w && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) return w.replace(/^["']|["']$/g, '');
+  return '';
+}
+
+/* Real path of the executable argv0 runs, on the given PATH; null if none. */
+function resolveExecutable(argv0, env) {
+  const e = env || process.env;
+  const name = commandWord(argv0);
+  if (!name) return null;
+  const isWin = process.platform === 'win32';
+  const exts = isWin ? ['', ...String(e.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)] : [''];
+  const candidates = [];
+  if (name.includes('/') || (isWin && name.includes('\\'))) {
+    for (const x of exts) candidates.push(path.resolve(name + x));
+  } else {
+    for (const dir of String(e.PATH || e.Path || '').split(path.delimiter)) {
+      if (!dir) continue;
+      for (const x of exts) candidates.push(path.join(dir, name + x));
+    }
+  }
+  for (const c of candidates) {
+    try {
+      const st = fs.statSync(c);
+      if (!st.isFile()) continue;
+      if (!isWin) fs.accessSync(c, fs.constants.X_OK);
+      const real = fs.realpathSync(c);
+      return isWin ? real.toLowerCase() : real;
+    } catch (err) { /* next */ }
+  }
+  return null;
+}
+
+function findProjectRoot(dir) {
+  let cur = path.resolve(dir || process.cwd());
+  for (;;) {
+    if (fs.existsSync(path.join(cur, '.git'))) return cur;
+    const parent = path.dirname(cur);
+    if (parent === cur) return path.resolve(dir || process.cwd());
+    cur = parent;
+  }
+}
+
+/* (project, secret, argv0) or the broker's (secret, command). */
+function approvalArgs(args) {
+  let project;
+  let secret;
+  let command;
+  if (args.length >= 3 && args[2] !== undefined) [project, secret, command] = args;
+  else { [secret, command] = args; project = findProjectRoot(process.cwd()); }
+  const argv0 = commandWord(command);
+  return [project, secret, argv0.split(/[\\/]/).pop(), resolveExecutable(argv0)];
 }
 
 function lockedError(detail) {
@@ -178,8 +239,8 @@ class VaultClient {
   exactValues(project) { return this.call('exactValues', [project]); }
   audit(event) { return this.call('audit', [event || {}]); }
   updateSecretMeta(name, meta) { return this.call('updateSecretMeta', [name, meta || {}]); }
-  isApproved(project, secret, argv0) { return this.call('isApproved', [project, secret, argv0]); }
-  recordApproval(project, secret, argv0) { return this.call('recordApproval', [project, secret, argv0]); }
+  isApproved(project, secret, argv0) { return this.call('isApproved', approvalArgs(Array.from(arguments))); }
+  recordApproval(project, secret, argv0) { return this.call('recordApproval', approvalArgs(Array.from(arguments))); }
   status() { return this.call('status', []); }
   auditVerify() { return this.call('auditVerify', []); }
   lock() { return this.call('lock', []); }
@@ -205,8 +266,8 @@ async function removeSecret(name) { return client().removeSecret(name); }
 async function exactValues(project) { return client().exactValues(project); }
 async function audit(event) { return client().audit(event); }
 async function updateSecretMeta(name, meta) { return client().updateSecretMeta(name, meta); }
-async function isApproved(project, secret, argv0) { return client().isApproved(project, secret, argv0); }
-async function recordApproval(project, secret, argv0) { return client().recordApproval(project, secret, argv0); }
+async function isApproved(project, secret, argv0) { return client().isApproved(...arguments); }
+async function recordApproval(project, secret, argv0) { return client().recordApproval(...arguments); }
 
 module.exports = {
   mapToken,
@@ -225,6 +286,7 @@ module.exports = {
   auditVerify: () => client().auditVerify(),
   close: () => { if (defaultClient) defaultClient.close(); defaultClient = null; },
   createClient: (opts) => new VaultClient(opts),
+  resolveExecutable,
   VaultClient,
   endpoint,
   hmac,

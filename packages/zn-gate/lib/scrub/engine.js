@@ -117,6 +117,14 @@ function resolveOverlaps(spans) {
   return out;
 }
 
+/**
+ * scan(text, ctx) -> Span[]. Synchronous and pure: it never calls the vault.
+ * The exact-value layer only sees what the caller already resolved in
+ * ctx.exactValues (or ctx.exactMatcher). Callers that use scan directly,
+ * such as the UserPromptSubmit hook (decidePrompt), must first run
+ * `ctx = await prepare(ctx)`, which fetches vault and local exact values;
+ * otherwise only patterns and PII are checked.
+ */
 function scan(text, ctx) {
   if (typeof text !== 'string') throw new TypeError('scan(text, ctx): text must be a string');
   if (text.length === 0) return [];

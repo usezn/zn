@@ -277,17 +277,28 @@ function makeOps(state, ctl) {
     },
 
     /* First-use approvals of (project, secret, command), kept in the vault. */
-    async isApproved(project, secret, argv0) {
+    /* Approved only if the stored approval names the same real executable
+     * the client resolved now (exePath). A changed binary is refused. */
+    async isApproved(project, secret, argv0, exePath) {
       const secrets = await state.loadSecrets();
-      return !!(secrets.approvals && secrets.approvals[approvalKey(project, secret, argv0)]);
+      const rec = secrets.approvals && secrets.approvals[approvalKey(project, secret, argv0)];
+      if (!rec || typeof rec !== 'object' || !rec.exe) return false;
+      if (typeof exePath !== 'string' || rec.exe !== exePath) {
+        writeAudit({ secret: String(secret), mode: 'env', argv0, decision: 'deny', reason: exePath ? 'exe_changed' : 'exe_not_found' });
+        return false;
+      }
+      return true;
     },
 
-    async recordApproval(project, secret, argv0) {
+    async recordApproval(project, secret, argv0, exePath) {
       const key = approvalKey(project, secret, argv0);
+      if (typeof exePath !== 'string' || !exePath || exePath.length > 4096) {
+        throw znError(CODES.NOT_FOUND, 'command not found on PATH: ' + normArgv0(argv0));
+      }
       return state.serial(async () => {
         const secrets = await state.loadSecrets();
         if (!secrets.approvals || typeof secrets.approvals !== 'object') secrets.approvals = {};
-        secrets.approvals[key] = new Date().toISOString();
+        secrets.approvals[key] = { ts: new Date().toISOString(), exe: exePath };
         writeAudit({ secret: String(secret), mode: 'env', argv0, decision: 'ask:yes', reason: 'first_use_approved' });
         await state.saveSecrets();
         return true;
