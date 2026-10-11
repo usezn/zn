@@ -50,22 +50,24 @@ const { generateAll, SEED_DEFAULT } = require(path.join(FIXTURES_DIR, 'fake_secr
 
 /* Default thresholds:
  * - leaks: 0 — a single value surviving tokenization fails the run.
- * - over-redaction: at most 0.1% of benign files may be altered, and the
- *   fixed must-not-touch snippets must stay intact.
- * - latency: the documented hook budget is p50 <= 60 ms for a full hook
- *   process at 64 KB (dominated by Node startup); this bench measures the
- *   in-process engine only, a lower bound of that budget, and gates well
- *   under it. p95 is kept at 2x p50 as a regression guard; smaller sizes
- *   share the same absolute cap. */
+ * - over-redaction: at most 0.1% of benign files may be altered by the
+ *   pattern layer, none by the exact-value layer, and the fixed
+ *   must-not-touch snippets must stay intact.
+ * - latency: in-process tokenize() on real code, calibrated on 2026-10-11
+ *   (see bench/SCRUB_LATENCY.md). The slowest machine measured (a 2-vCPU
+ *   Xeon 8259CL under load) ran 64 KB at p50 1.6 ms / p95 2.5 ms, GitHub
+ *   runners at p50 0.9-1.5 ms. Limits leave ~3x headroom for noisy shared
+ *   runners while still catching a pathological regex or a rebuilt
+ *   automaton per call. */
 const DEFAULT_THRESHOLDS = {
   max_leaks: 0,
   max_overredacted_file_rate: 0.001,
   max_exact_altered_files: 0,
   max_known_ok_redactions: 0,
   latency_ms: {
-    '256B': { p50: 60, p95: 120 },
-    '4KB': { p50: 60, p95: 120 },
-    '64KB': { p50: 60, p95: 120 },
+    '256B': { p50: 0.5, p95: 2 },
+    '4KB': { p50: 1, p95: 3 },
+    '64KB': { p50: 5, p95: 10 },
   },
 };
 
@@ -654,7 +656,7 @@ function printSummary(report) {
       if (s.error) return label + ' ERROR';
       return label + ' p50=' + s.p50_ms + 'ms p95=' + s.p95_ms + 'ms' + (anyFailure(failures, 'latency:' + label) ? ' FAIL' : '');
     }).join(' | ');
-    lines.push('latency:        ' + lat + ' (hook budget: p50 <= 60ms at 64KB, whole process)');
+    lines.push('latency:        ' + lat + ' (engine only; a whole hook process adds Node startup)');
     lines.push('gate:           ' + (report.gate.pass ? 'PASS' : 'FAIL'));
     for (const f of report.gate.failures) lines.push('  FAIL ' + f.metric + ': ' + f.actual + ' (limit ' + f.limit + ')');
     if (O.present && report.latency.payload_source === 'builtin') {
