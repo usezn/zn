@@ -181,7 +181,7 @@ const SECRET_TYPES = SECRET_GENERATORS.map((g) => g[0]);
 const PII_GENERATORS = [
   ['email', (r) => ({ value: pick(r, CHARS.lower, 6) + '.' + pick(r, CHARS.lower, 6) + '@example.org' })],
   ['phone_e164', (r) => (r() < 0.5
-    ? { value: '+155501' + digits(r, 2) }
+    ? { value: '+1' + String(int(r, 2, 9)) + digits(r, 2) + '55501' + digits(r, 2) }
     : { value: '+447700900' + digits(r, 3) })],
   ['iban', (r) => {
     const bban = digits(r, 8) + digits(r, 10);
@@ -272,7 +272,7 @@ const VALIDATORS = {
   mongodb_connection_string: (v) => /^mongodb:\/\/app_rw:[A-Za-z0-9_-]{24}@mongo\.internal:27017\/appdb$/.test(v),
   redis_connection_string: (v) => /^redis:\/\/:[A-Za-z0-9_-]{24}@cache\.internal:6379\/0$/.test(v),
   email: (v) => /^[a-z]{6}\.[a-z]{6}@example\.org$/.test(v),
-  phone_e164: (v) => /^(\+155501\d{2}|\+447700900\d{3})$/.test(v),
+  phone_e164: (v) => /^(\+1[2-9]\d{2}55501\d{2}|\+447700900\d{3})$/.test(v),
   iban: (v) => /^DE\d{20}$/.test(v) && ibanValid(v),
   payment_card: (v) => luhnValid(v) && /^(424242\d{10}|400005\d{10}|555555\d{10}|520082\d{10}|601111\d{10}|378282\d{9})$/.test(v),
   dni: (v) => /^\d{8}[A-Z]$/.test(v) && v[8] === DNI_LETTERS[Number(v.slice(0, 8)) % 23],
@@ -324,6 +324,8 @@ function selftest() {
   check('dni: rejects wrong control letter', validate({ type: 'dni', value: '12345678A' }) !== null);
   check('nie: known vector X0000000T', validate({ type: 'nie', value: 'X0000000T' }) === null);
   check('nie: rejects wrong control letter', validate({ type: 'nie', value: 'X0000000A' }) !== null);
+  check('phone: E.164 fiction sample accepted', validate({ type: 'phone_e164', value: '+12025550142' }) === null);
+  check('phone: too-short US number rejected', validate({ type: 'phone_e164', value: '+15550142' }) !== null);
 
   const iban = a.pii.find((p) => p.type === 'iban').value;
   check('iban: generated passes mod-97', ibanValid(iban));

@@ -46,3 +46,4 @@ Thumbs.db
 
 # Leak bench output
 bench/leak_bench_results.json
+leak_bench_results.jsonn

@@ -38,7 +38,8 @@
     "bin/",
     "lib/",
     "test/",
-    "!test/fixtures/benign/",
+    "!test/fixtures/",
+    "!test/fake_secrets.test.js",
     "README.md",
     "LICENSE"
   ],
