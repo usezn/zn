@@ -42,7 +42,7 @@ aho-corasick = "1.1"
 reqwest = { version = "0.11", features = ["json"] }
 prometheus = "0.14"
 lazy_static = "1.4"
-lru = "0.12"
+lru = "0.16"
 hex = "0.4"
 notify = "6.1"
 crossbeam-channel = "0.5"

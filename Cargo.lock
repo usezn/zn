@@ -5572,6 +5572,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "lru"
+version = "0.16.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1dc47f592c06f33f8e3aea9591776ec7c9f9e4124778ff8a3c3b87159f7e593"
+dependencies = [
+ "hashbrown 0.16.1",
+]
+
+[[package]]
 name = "lru-slab"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7278,7 +7287,7 @@ dependencies = [
  "compact_str 0.7.1",
  "crossterm",
  "itertools 0.12.1",
- "lru",
+ "lru 0.12.5",
  "paste",
  "stability",
  "strum",
@@ -8628,7 +8637,7 @@ dependencies = [
  "itertools 0.14.0",
  "levenshtein_automata",
  "log",
- "lru",
+ "lru 0.12.5",
  "lz4_flex",
  "measure_time",
  "memmap2",
@@ -10706,7 +10715,7 @@ checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 
 [[package]]
 name = "zn"
-version = "1.0.0"
+version = "1.4.0"
 dependencies = [
  "aes-gcm",
  "aho-corasick",
@@ -10739,7 +10748,7 @@ dependencies = [
  "jsonwebtoken",
  "lance",
  "lazy_static",
- "lru",
+ "lru 0.16.3",
  "notify",
  "opentelemetry",
  "opentelemetry-otlp",
