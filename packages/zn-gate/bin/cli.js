@@ -92,6 +92,24 @@ COMMANDS:
   status              Show engine configuration and gateway connectivity
   version, -V         Show package version
 
+SECRETS (values stay on this machine; agents only see __ZN_<NAME>__ markers):
+  secret set NAME     Store a secret (hidden prompt or --clipboard; never as an argument)
+                      [--mode proxy|env|file] [--host H] [--command C]
+  secret list         List stored secrets (names and policy, never values)
+  secret allow NAME   Add allowed hosts (--host) or commands (--command) to a secret
+  secret approve NAME Approve the first use of a secret by an allowed command
+  secret rm NAME      Remove a secret
+  secret import FILE  Copy the secret values of a .env file into the vault
+  secret adopt TOKEN  Store a value the scrubber detected (e.g. AWS_KEY_1) as a named secret
+  env shadow [FILE]   Move .env values into the vault and leave markers in the file
+  run -- <command>    Run a command with markers replaced by values (allowed commands only)
+                      and its output masked [--secrets A,B to set env vars]
+  audit               Show the local audit log of secret use
+  hooks install claude-code [--project]
+                      Install the Claude Code hooks and the "secrets" MCP server
+  secrets-mcp         Run the "secrets" MCP server (stdio)
+  hook <agent>        Hook entry point used by agents (reads the event on stdin)
+
 OPTIONS:
   --key <api_key>     API key for the optional cloud gate (or ZN_API_KEY). Used only
                       by 'analyze' / analyze_prompt, and only if ZN_CLOUD=1 is set.
@@ -320,8 +338,32 @@ Status       : ${totalFindings === 0 ? 'Clean workspace' : 'Review and neutraliz
   }
 }
 
+// Secrets broker and agent hooks. Dispatched before the global option parsing
+// so flags after `zn run --` belong to the child command, untouched.
+const BROKER_COMMANDS = new Set(['run', 'hook', 'secrets-mcp', 'secret', 'secrets', 'env', 'audit', 'hooks']);
+
+async function runBrokerCommand(command, rest) {
+  if (command === 'run') {
+    await require('../lib/broker/run').main(rest);
+    return;
+  }
+  if (command === 'hook') {
+    await require('../lib/hooks/runner').main(rest);
+    return;
+  }
+  if (command === 'secrets-mcp') {
+    require('../lib/broker/mcp').startSecretsMcp();
+    return;
+  }
+  process.exitCode = await require('../lib/broker/cli').dispatch(command, rest);
+}
+
 async function main() {
   const args = process.argv.slice(2);
+  if (BROKER_COMMANDS.has(args[0]) && !(args.length === 2 && (args[1] === '-h' || args[1] === '--help'))) {
+    await runBrokerCommand(args[0], args.slice(1));
+    return;
+  }
   if (args.length === 0 || args.includes('-h') || args.includes('--help')) {
     printHelp();
     process.exit(0);
