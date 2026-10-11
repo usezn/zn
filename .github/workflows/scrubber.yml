@@ -1,0 +1,70 @@
+name: zn-gate scrubber and vault
+
+on:
+  pull_request:
+    branches: [ next, main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scrubber-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scrubber-vault:
+    name: scrubber + vault (node ${{ matrix.node }} / ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: [18, 20, 24]
+    defaults:
+      run:
+        working-directory: packages/zn-gate
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Contract and scrubber tests
+        run: |
+          node test/contract.test.js
+          node test/scrub_patterns.test.js
+          node test/scrub_exact.test.js
+          node test/scrub_engine.test.js
+      - name: Vault tests (passphrase backend)
+        run: node test/vault.test.js
+      - name: Vault tests (native keychain, Linux Secret Service)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libsecret-tools gnome-keyring dbus-x11 >/dev/null
+          dbus-run-session -- bash -c 'printf "ci-keyring" | gnome-keyring-daemon --unlock --components=secrets >/dev/null && ZN_TEST_NATIVE_KEYCHAIN=1 node test/vault.test.js'
+      - name: Vault tests (native keychain, macOS Keychain)
+        if: runner.os == 'macOS'
+        run: |
+          security create-keychain -p ci-keychain zn-ci.keychain
+          security unlock-keychain -p ci-keychain zn-ci.keychain
+          ZN_KEYCHAIN_PATH="$HOME/Library/Keychains/zn-ci.keychain-db" ZN_TEST_NATIVE_KEYCHAIN=1 node test/vault.test.js
+          security delete-keychain zn-ci.keychain
+      - name: Vault tests (native keychain, Windows Credential Manager)
+        if: runner.os == 'Windows'
+        env:
+          ZN_TEST_NATIVE_KEYCHAIN: '1'
+        run: node test/vault.test.js
+      - name: CLI smoke (unlock, status, lock)
+        shell: bash
+        env:
+          ZN_KEYCHAIN_BACKEND: passphrase
+        run: |
+          export ZN_HOME="$RUNNER_TEMP/zn-cli-home"
+          printf 'ci passphrase for the smoke test' | node bin/cli.js unlock --passphrase-stdin --ttl 5m --idle 2m
+          node bin/cli.js vault status | grep -q unlocked
+          node bin/cli.js vault verify
+          node bin/cli.js lock
+          node bin/cli.js vault status | grep -q locked

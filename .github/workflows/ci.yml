@@ -4,7 +4,7 @@ on:
   push:
     branches: [ main ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, next ]
 
 jobs:
   test-node:
@@ -19,6 +19,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
+      - name: Install zn-gate dependencies
+        run: |
+          cd packages/zn-gate
+          npm ci --ignore-scripts
       - name: Run zn-gate unit tests
         run: |
           cd packages/zn-gate

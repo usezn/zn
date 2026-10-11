@@ -44,7 +44,7 @@ jobs:
       - name: Self-check fake secrets fixtures
         run: node packages/zn-gate/test/fixtures/fake_secrets.js --selftest
       - name: Run leak bench
-        run: node bench/leak_bench.js --json leak_bench_results.json
+        run: node bench/leak_bench.js --require-engine --json leak_bench_results.json
       - name: Upload JSON report
         if: always()
         uses: actions/upload-artifact@v4

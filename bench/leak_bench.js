@@ -10,7 +10,12 @@
  *   1. leaks         — fake secrets (fixed PRNG seed) embedded in realistic
  *                      contexts must never survive tokenization
  *   2. overredaction — benign real files (npm packages + Python stdlib) that
- *                      must not be rewritten, plus fixed known-OK snippets
+ *                      must not be rewritten, plus fixed known-OK snippets.
+ *                      Counted per layer (replaced[i].source): the gate is
+ *                      on the pattern layer (<= 0.1 % of files) and on the
+ *                      exact-value layer (0 files). Benign files that hold
+ *                      real PII (author e-mails) are reported, not gated.
+ *                      Known-OK snippets must stay intact in every layer.
  *   3. latency       — tokenize p50/p95 per input size
  *
  * The engine module may not exist yet: a local stub is used and the run is
@@ -55,6 +60,7 @@ const { generateAll, SEED_DEFAULT } = require(path.join(FIXTURES_DIR, 'fake_secr
 const DEFAULT_THRESHOLDS = {
   max_leaks: 0,
   max_overredacted_file_rate: 0.001,
+  max_exact_altered_files: 0,
   max_known_ok_redactions: 0,
   latency_ms: {
     '256B': { p50: 60, p95: 120 },
@@ -105,7 +111,7 @@ function loadThresholds(file) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Engine loading: missing module or WP0 stub -> not-implemented run.  */
+/* Engine loading: missing module or placeholder -> not-implemented run. */
 /* ------------------------------------------------------------------ */
 
 function loadEngine() {
@@ -123,7 +129,7 @@ function loadEngine() {
 function stubEngine() {
   return {
     tokenize() {
-      const err = new Error('scrub/engine.js tokenize not implemented yet (WP0/WP1 pending)');
+      const err = new Error('scrub/engine.js tokenize not implemented yet');
       err.code = 'ZN_ENGINE_NOT_IMPLEMENTED';
       err.znNotImplemented = true;
       throw err;
@@ -444,6 +450,8 @@ async function runCorpus(engine, vault, corpusDir) {
   let altered = 0;
   let tokens = 0;
   let bytes = 0;
+  const layerFiles = { pattern: 0, exact: 0, pii: 0 };
+  const layerTokens = { pattern: 0, exact: 0, pii: 0 };
   const scanErrors = [];
   const offenders = [];
   for (const f of files) {
@@ -463,18 +471,37 @@ async function runCorpus(engine, vault, corpusDir) {
     if (out.replaced.length > 0) {
       altered++;
       tokens += out.replaced.length;
-      offenders.push({ file: path.relative(corpusDir, f).replace(/\\/g, '/'), replaced: out.replaced.length });
+      const layers = new Set();
+      for (const r of out.replaced) {
+        // An engine that does not report the layer is counted against the pattern gate.
+        const layer = r && (r.source === 'exact' || r.source === 'pii') ? r.source : 'pattern';
+        layers.add(layer);
+        layerTokens[layer]++;
+      }
+      for (const layer of layers) layerFiles[layer]++;
+      offenders.push({
+        file: path.relative(corpusDir, f).replace(/\\/g, '/'),
+        replaced: out.replaced.length,
+        layers: Array.from(layers).sort(),
+      });
     }
   }
-  offenders.sort((a, b) => b.replaced - a.replaced || a.file.localeCompare(b.file));
+  const gated = (o) => (o.layers.includes('pattern') || o.layers.includes('exact') ? 1 : 0);
+  offenders.sort((a, b) => gated(b) - gated(a) || b.replaced - a.replaced || a.file.localeCompare(b.file));
   return {
     files: files.length,
     scanned,
     skipped_binary: skippedBinary,
     bytes,
     altered_files: altered,
-    altered_rate: scanned > 0 ? altered / scanned : 0,
+    altered_rate_any_layer: scanned > 0 ? altered / scanned : 0,
+    pattern_altered_files: layerFiles.pattern,
+    exact_altered_files: layerFiles.exact,
+    pii_altered_files: layerFiles.pii,
+    // Gated rate: files with at least one pattern-layer replacement.
+    altered_rate: scanned > 0 ? layerFiles.pattern / scanned : 0,
     replaced_tokens: tokens,
+    replaced_tokens_by_layer: layerTokens,
     scan_errors: scanErrors.length,
     scan_error_details: scanErrors.slice(0, 20),
     top_offenders: offenders.slice(0, 20),
@@ -564,6 +591,9 @@ function evaluateGate(report, thresholds, args) {
   }
   if (over.present) {
     if (over.scan_errors > 0) failures.push({ metric: 'overredaction:scan_errors', actual: over.scan_errors, limit: 0 });
+    if (over.exact_altered_files > thresholds.max_exact_altered_files) {
+      failures.push({ metric: 'overredaction:exact_layer', actual: over.exact_altered_files, limit: thresholds.max_exact_altered_files });
+    }
     if (over.altered_rate > thresholds.max_overredacted_file_rate) {
       failures.push({
         metric: 'overredaction:altered_rate',
@@ -600,7 +630,7 @@ function printSummary(report) {
 
   if (report.status === 'not-implemented') {
     lines.push('result: NOT IMPLEMENTED — engine not available, all measurements skipped.');
-    lines.push('        re-run once packages/zn-gate/lib/scrub/engine.js exists (WP1).');
+    lines.push('        re-run once packages/zn-gate/lib/scrub/engine.js is implemented.');
   } else {
     const failures = report.gate.failures;
     const L = report.leaks;
@@ -608,9 +638,12 @@ function printSummary(report) {
       (anyFailure(failures, 'lea') ? 'FAIL' : 'PASS'));
     const O = report.overredaction;
     if (O.present) {
-      lines.push('over-redaction: ' + O.altered_files + '/' + O.scanned + ' files altered (' + round3(O.altered_rate * 100) +
-        '% of ' + (O.bytes / 1048576).toFixed(1) + ' MB, limit ' + round3(report.thresholds.max_overredacted_file_rate * 100) + '%)  ' +
-        (anyFailure(failures, 'overredaction:alter') || anyFailure(failures, 'overredaction:scan') ? 'FAIL' : 'PASS'));
+      lines.push('over-redaction: pattern layer ' + O.pattern_altered_files + '/' + O.scanned + ' files (' + round3(O.altered_rate * 100) +
+        '% of ' + (O.bytes / 1048576).toFixed(1) + ' MB, limit ' + round3(report.thresholds.max_overredacted_file_rate * 100) +
+        '%), exact layer ' + O.exact_altered_files + ' files (limit ' + report.thresholds.max_exact_altered_files + ')  ' +
+        (anyFailure(failures, 'overredaction:alter') || anyFailure(failures, 'overredaction:scan') ||
+          anyFailure(failures, 'overredaction:exact') ? 'FAIL' : 'PASS'));
+      lines.push('pii (info):     ' + O.pii_altered_files + ' benign files hold real PII (e.g. author e-mails) that was tokenized; reported, not gated');
     } else {
       lines.push('over-redaction: SKIPPED — corpus missing at ' + report.corpus.dir + ' (run packages/zn-gate/test/fixtures/benign/fetch_corpus.sh)');
     }
