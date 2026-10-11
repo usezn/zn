@@ -154,6 +154,12 @@ async function decidePre(ev, d, agentId, opts) {
     }
 
     if (command === original) {
+      if (markers.findMarkers(original).length) {
+        // A command that carries markers always asks, even when nothing was rewritten
+        // (already wrapped in `zn run` by the agent, or tokens kept unresolved).
+        // Never let it run on the user's allow rules alone.
+        return { decision: 'ask', message: 'zn: this command carries secret markers' + (notes.length ? '; ' + notes.join('; ') : '') + '.' };
+      }
       return notes.length ? { decision: 'allow', message: 'zn: ' + notes.join('; ') } : { decision: 'allow' };
     }
     return { decision: 'ask', updatedInput: { command }, message: 'zn: this command ' + notes.join('; ') + '.' };
