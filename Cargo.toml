@@ -54,7 +54,7 @@ ed25519-dalek = "2.1"
 opentelemetry = { version = "0.21", features = ["trace"] }
 tracing-opentelemetry = "0.22"
 opentelemetry-otlp = { version = "0.14", features = ["http-proto", "reqwest-client"] }
-opentelemetry_sdk = { version = "0.21", features = ["rt-tokio"] }
+opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"] }
 sha2 = "0.10"
 rand = "0.8"
 pqcrypto-dilithium = "0.5"
