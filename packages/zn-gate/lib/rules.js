@@ -114,6 +114,9 @@ function loadCustomConfig(forceReload = false) {
           for (let line of lines) {
             line = line.trim();
             if (!line || line.startsWith('#')) continue;
+            // `secret:` lines feed the scrubber's exact-value layer; they are
+            // values, not patterns, and must never be compiled as regexes.
+            if (line.startsWith('secret:')) continue;
             if (line.startsWith('path:')) {
               customConfig.forbiddenPaths.push(line.slice(5).trim());
             } else {
