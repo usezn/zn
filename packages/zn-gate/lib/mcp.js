@@ -1,12 +1,13 @@
 'use strict';
 
 const readline = require('readline');
-const { analyze, checkToolResult, RULES_VERSION, resolveEndpoint } = require('./client');
+const { analyze, analyzeLocal, checkToolResult, isCloudEnabled, RULES_VERSION, resolveEndpoint } = require('./client');
+const { sanitizeToolResult } = require('./rules');
 
 const SERVER_NAME = 'zn-gate';
-let SERVER_VERSION = '1.4.0';
+let SERVER_VERSION = '1.4.1';
 try {
-  SERVER_VERSION = require('../package.json').version || '1.4.0';
+  SERVER_VERSION = require('../package.json').version || '1.4.1';
 } catch (_) {}
 const PROTOCOL_VERSION = '2024-11-05';
 
@@ -37,7 +38,7 @@ function sendError(id, code, message, data) {
 const TOOLS = [
   {
     name: 'analyze_prompt',
-    description: 'Analyze text, prompt, or agent messages for security threats (prompt injection, jailbreak, credential exfiltration, role hijacking). Returns threat assessment, confidence score, and matched rule.',
+    description: 'Analyze text, prompt, or agent messages for security threats (prompt injection, jailbreak, credential exfiltration, role hijacking). Runs locally; only if the user set ZN_CLOUD=1 and ZN_API_KEY is the text, with secrets redacted, also sent to the zn cloud gate. Returns threat assessment, confidence score, and matched rule.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -51,7 +52,7 @@ const TOOLS = [
   },
   {
     name: 'check_tool_call',
-    description: 'Pre-flight safety inspection for tool invocations and arguments before execution. Defends against tool poisoning, argument injection, and unauthorized exfiltration attempts.',
+    description: 'Pre-flight safety inspection for tool invocations and arguments before execution. Always local: arguments never leave the machine. Defends against tool poisoning, argument injection, and unauthorized exfiltration attempts.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -69,7 +70,7 @@ const TOOLS = [
   },
   {
     name: 'check_tool_result',
-    description: 'Post-execution safety inspection for tool outputs and third-party content (web pages, git commits, database queries) before LLM context assimilation. Defends against indirect prompt injection and covert data exfiltration.',
+    description: 'Post-execution safety inspection for tool outputs and third-party content (web pages, git commits, database queries) before LLM context assimilation. Always local: content never leaves the machine. Returns the content with secrets redacted, or neutralized if an injection is detected.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -87,7 +88,7 @@ const TOOLS = [
   },
   {
     name: 'zn_status',
-    description: 'Get current zn-gate status, active engine (local OSS vs cloud v30), rules version, and health.',
+    description: 'Get current zn-gate status: engine, rules version, and exactly what (if anything) leaves the machine.',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -162,13 +163,14 @@ async function handleRequest(message, options) {
         }
         extractStrings(toolArgs);
 
-        let worstAssessment = await analyze(`${targetTool}: ${JSON.stringify(toolArgs)}`, options);
+        // Local only: tool-call arguments never leave the machine.
+        let worstAssessment = analyzeLocal(`${targetTool}: ${JSON.stringify(toolArgs)}`, options);
         let isBlock = worstAssessment.verdict?.toLowerCase() === 'block';
 
         if (!isBlock) {
           for (const str of stringValues) {
             if (str.length >= 4) {
-              const subRes = await analyze(str, options);
+              const subRes = analyzeLocal(str, options);
               if (subRes.verdict?.toLowerCase() === 'block') {
                 worstAssessment = subRes;
                 isBlock = true;
@@ -178,10 +180,14 @@ async function handleRequest(message, options) {
           }
         }
 
+        const { sanitized: sanitizedArgs, detections } = sanitizeToolResult(toolArgs);
+
         const output = {
           tool_name: targetTool,
           safe_to_execute: !isBlock,
           assessment: worstAssessment,
+          secrets_redacted: detections.length,
+          sanitized_arguments: sanitizedArgs,
         };
 
         return sendResult(id, {
@@ -213,15 +219,17 @@ async function handleRequest(message, options) {
       }
 
       if (toolName === 'zn_status') {
-        const hasKey = Boolean(options.apiKey || process.env.ZN_API_KEY);
+        const cloud = isCloudEnabled(options);
         const status = {
           package: `${SERVER_NAME}@${SERVER_VERSION}`,
-          engine: hasKey ? 'cloud-fused-gate' : 'oss-local-rules',
-          endpoint: hasKey ? resolveEndpoint(options) : 'offline / local-only',
+          engine: cloud ? 'local-rules + cloud (analyze_prompt only)' : 'local-rules',
+          endpoint: cloud ? resolveEndpoint(options) : 'none (local only)',
           rules_version: RULES_VERSION,
-          neural_ready: hasKey,
+          cloud_enabled: cloud,
+          leaves_machine: cloud
+            ? 'analyze_prompt text only, with secrets redacted locally before sending. Tool results and tool-call arguments never leave the machine.'
+            : 'nothing',
           lifecycle_coverage: 'bidirectional (prompt, pre-tool-call, post-tool-result)',
-          tip: hasKey ? 'Cloud neural inspection enabled' : 'Running free local OSS rules. Set ZN_API_KEY for neural protection.',
         };
         return sendResult(id, {
           content: [
@@ -252,8 +260,7 @@ function startMcpServer(options = {}) {
   });
 
   if (process.env.DEBUG || process.env.ZN_VERBOSE) {
-    const hasKey = Boolean(options.apiKey || process.env.ZN_API_KEY);
-    process.stderr.write(`[zn-gate] MCP server listening on stdio (engine: ${hasKey ? 'cloud' : 'oss-local'})...\n`);
+    process.stderr.write(`[zn-gate] MCP server listening on stdio (engine: ${isCloudEnabled(options) ? 'local + cloud for analyze_prompt' : 'local only'})...\n`);
   }
 
   rl.on('line', async (line) => {
@@ -286,6 +293,7 @@ function startMcpServer(options = {}) {
 
 module.exports = {
   startMcpServer,
+  handleRequest,
   TOOLS,
   SERVER_NAME,
   SERVER_VERSION,

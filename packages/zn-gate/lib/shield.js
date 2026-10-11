@@ -2,7 +2,9 @@
 
 const { spawn } = require('child_process');
 const readline = require('readline');
-const { analyze, checkToolResult } = require('./client');
+// All shield inspections are local-only: tool arguments, tool descriptions and
+// tool results never leave the machine (see lib/client.js data-flow contract).
+const { analyzeLocal, checkToolResult } = require('./client');
 const { logEvidence } = require('./evidence');
 
 /**
@@ -97,7 +99,7 @@ function startMcpShield(command, args, options = {}) {
       log(`Intercepting request tools/call [${callId}]: tool=${toolName}`);
 
       // Inspect tool arguments for injection / exfiltration attempts
-      const check = await analyze(argsText, options);
+      const check = analyzeLocal(argsText, options);
       if (check.verdict === 'block') {
         const ruleName = check.rule || check.reason || 'prompt_injection';
         process.stderr.write(`[zn-shield BLOCKED REQUEST] Prompt injection detected in arguments for tool '${toolName}'. Rule: ${ruleName}\n`);
@@ -189,7 +191,7 @@ function startMcpShield(command, args, options = {}) {
           for (const tool of tools) {
             // 1. Inspect tool description
             if (typeof tool.description === 'string' && tool.description.length > 0) {
-              const check = await analyze(tool.description, options);
+              const check = analyzeLocal(tool.description, options);
               if (check.verdict === 'block') {
                 const ruleName = check.rule || check.reason || 'tool_poisoning';
                 process.stderr.write(`[zn-shield BLOCKED TOOL DESCRIPTION] Poisoned tool description in '${tool.name}'. Rule: ${ruleName}\n`);
@@ -218,7 +220,7 @@ function startMcpShield(command, args, options = {}) {
               const props = tool.inputSchema.properties;
               for (const [propName, propDef] of Object.entries(props)) {
                 if (propDef && typeof propDef.description === 'string' && propDef.description.length > 0) {
-                  const check = await analyze(propDef.description, options);
+                  const check = analyzeLocal(propDef.description, options);
                   if (check.verdict === 'block') {
                     const ruleName = check.rule || check.reason || 'parameter_poisoning';
                     process.stderr.write(`[zn-shield BLOCKED PARAMETER DESCRIPTION] Poisoned parameter '${propName}' in tool '${tool.name}'. Rule: ${ruleName}\n`);
@@ -281,6 +283,11 @@ function startMcpShield(command, args, options = {}) {
                   item.text = check.sanitized_content || `[zn-gate SECURITY BLOCKED] Content neutralized: indirect prompt injection detected in external tool output (${blockReason}).`;
                 }
               } else {
+                // DLP: forward the secret-redacted content (not in shadow mode, which never alters traffic).
+                if (!options.shadow && check.secrets_redacted > 0 && typeof check.sanitized_content === 'string') {
+                  log(`Redacted ${check.secrets_redacted} secret(s) from output of tool '${toolName}'`);
+                  item.text = check.sanitized_content;
+                }
                 logEvidence({
                   agent: options.agent || 'mcp-server',
                   phase: 'tool-result',

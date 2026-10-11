@@ -5,6 +5,7 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const http = require('http');
+const { redactSecrets } = require('./rules');
 
 const ZN_DIR = path.join(os.homedir(), '.zn');
 const EVIDENCE_FILE = path.join(ZN_DIR, 'evidence.jsonl');
@@ -60,7 +61,8 @@ function logEvidence(event, filePath = EVIDENCE_FILE) {
     phase: event.phase || 'tool-call',
     tool_name: event.tool_name || event.tool || 'unknown',
     payload_sha256: payloadSha256,
-    payload_preview: payloadStr.slice(0, 120),
+    // Redact the full payload first, then cut, so a secret straddling the cut is not leaked.
+    payload_preview: String(redactSecrets(payloadStr).sanitized || '').slice(0, 120),
     verdict: event.verdict || 'allow',
     rule: event.rule || null,
     reason: event.reason || null,

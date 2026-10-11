@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 
 from . import __version__
 from .rules import RULES_VERSION, evaluate, redact_secrets
-from .client import analyze, resolve_endpoint
+from .client import analyze, is_cloud_enabled, resolve_endpoint
 from .evidence import log_evidence, verify_evidence_ledger, get_evidence_stats, export_evidence_ledger, EVIDENCE_FILE
 
 
@@ -34,16 +34,22 @@ def cmd_test(args: argparse.Namespace) -> int:
             out["redacted_preview"] = clean_text
         print(json.dumps(out, indent=2))
     else:
-        status_icon = "🛡️ ALLOW" if assessment.allowed and not secrets else "🚨 BLOCK"
+        # The icon follows the injection verdict only. A secret found by the
+        # DLP filter is reported on its own line and does not turn an ALLOW
+        # into a BLOCK.
+        status_icon = "🛡️ ALLOW" if assessment.allowed else "🚨 BLOCK"
         print(f"\n{status_icon} | Verdict: {assessment.verdict.upper()} (latency: {latency_us:.1f}µs)")
         print(f"Rule:       {assessment.rule}")
         if assessment.reason:
             print(f"Reason:     {assessment.reason}")
         if secrets:
-            print(f"DLP Alert:  Found {len(secrets)} sensitive credentials! Redacted: {clean_text}")
+            noun = "secret" if len(secrets) == 1 else "secrets"
+            print(f"DLP Alert:  {len(secrets)} {noun} detected (verdict unchanged). Redacted: {clean_text}")
         print(f"Confidence: {assessment.confidence * 100:.1f}%")
         print(f"Engine:     {assessment.engine} (rules: {assessment.rules_version})\n")
 
+    # Exit code: 0 only when nothing was flagged (no block and no secret), so
+    # the command can be used as a check in scripts.
     return 0 if (assessment.allowed and not secrets) else 1
 
 
@@ -200,14 +206,15 @@ def cmd_evidence(args: argparse.Namespace) -> int:
 
 def cmd_status(args: argparse.Namespace) -> int:
     has_key = bool(os.environ.get("ZN_API_KEY"))
-    stage = os.environ.get("ZN_STAGE", "v30")
+    cloud = is_cloud_enabled()
     print(f"\n🛡️ zn-gate Status (Python):")
     print(f"  Package Version : {__version__}")
     print(f"  Rules Version   : {RULES_VERSION}")
     print(f"  Python Runtime  : {sys.version.split()[0]}")
-    print(f"  Active Engine   : {'Cloud (' + stage + ')' if has_key else 'Local OSS (deterministic)'}")
-    print(f"  Endpoint        : {resolve_endpoint() if has_key else 'Offline / In-Memory'}")
-    print(f"  Authentication  : {'Configured' if has_key else 'None (Free OSS Mode)'}\n")
+    print(f"  Active Engine   : {'Local rules + cloud for analyze (ZN_CLOUD=1)' if cloud else 'Local rules only'}")
+    print(f"  Endpoint        : {resolve_endpoint() if cloud else 'None (nothing leaves this machine)'}")
+    print(f"  API key         : {('Set' + ('' if cloud else ' (unused: cloud requires ZN_CLOUD=1)')) if has_key else 'Not set'}")
+    print(f"  Leaves machine  : {'analyze() text only, secrets redacted locally first' if cloud else 'Nothing'}\n")
     return 0
 
 
@@ -225,7 +232,7 @@ def main() -> int:
     test_parser.add_argument("--json", action="store_true", help="Output results as JSON")
 
     # analyze command
-    analyze_parser = subparsers.add_parser("analyze", help="Inspect prompt using hybrid fastpath & cloud gate")
+    analyze_parser = subparsers.add_parser("analyze", help="Inspect a prompt (local; cloud only with ZN_CLOUD=1 + key, redacted)")
     analyze_parser.add_argument("text", help="Prompt or message to analyze")
     analyze_parser.add_argument("--key", help="API key for zn Cloud Gate")
     analyze_parser.add_argument("--stage", default="v30", help="Cloud gate stage (default: v30)")

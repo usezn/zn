@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="440 690 1170 620" role="img" aria-label="zn">
+  <title>zn</title>
+  <defs>
+    <!-- Letters are knocked out around the node graph (about 30 units of clear space). -->
+    <mask id="zn-gap" maskUnits="userSpaceOnUse" x="440" y="690" width="1170" height="620">
+      <rect x="440" y="690" width="1170" height="620" fill="#fff" />
+      <g fill="#000" stroke="#000" stroke-linecap="round">
+        <path d="M1054 797 L823 1090" fill="none" stroke-width="112" />
+        <path d="M850 1092 L1137 1222" fill="none" stroke-width="108" />
+        <circle cx="1052" cy="797" r="106" stroke="none" />
+        <circle cx="850" cy="1092" r="102" stroke="none" />
+        <circle cx="1137" cy="1222" r="102" stroke="none" />
+      </g>
+    </mask>
+  </defs>
+  <g fill="#2c2c2c">
+    <g mask="url(#zn-gap)">
+      <!-- z -->
+      <path d="M466 727 H929 V829 L653 1152 H901 V1285 H466 V1167 L728 859 H466 Z" />
+      <!-- n -->
+      <path d="M1088 1285 V962 C1088 793 1167 714 1336 714 C1505 714 1584 793 1584 962 V1285 H1424 V950 C1424 895 1388 859 1336 859 C1284 859 1249 895 1249 950 V1285 Z" />
+    </g>
+    <!-- node graph -->
+    <path d="M1054 797 L823 1090" fill="none" stroke="#2c2c2c" stroke-width="44" />
+    <path d="M850 1092 L1137 1222" fill="none" stroke="#2c2c2c" stroke-width="40" />
+    <circle cx="1052" cy="797" r="72" />
+    <circle cx="850" cy="1092" r="72" />
+    <circle cx="1137" cy="1222" r="71" />
+  </g>
+</svg>

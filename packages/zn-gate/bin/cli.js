@@ -7,7 +7,7 @@ const { startMcpServer } = require('../lib/mcp');
 const { startMcpShield } = require('../lib/shield');
 const { scanEnvironments, configureEnvironments } = require('../lib/init');
 const { logEvidence, verifyEvidenceLedger, getEvidenceStats, exportEvidenceLedger, startEvidenceUi, EVIDENCE_FILE } = require('../lib/evidence');
-const { analyze, checkToolResult, RULES_VERSION } = require('../lib/client');
+const { analyze, analyzeLocal, isCloudEnabled, resolveEndpoint, RULES_VERSION } = require('../lib/client');
 const { evaluate } = require('../lib/rules');
 
 const VERSION = require('../package.json').version;
@@ -81,22 +81,23 @@ USAGE:
   zn-gate <command> [options]
 
 COMMANDS:
-  init                Auto-discover and wrap MCP servers across 7 agent environments
+  init                Find and wrap MCP servers in known agent configs (Claude, Cursor, Codex, OpenCode...)
   shield, mcp-shield  Wrap and protect ANY external MCP server (uvx, npx, node, python)
   scan <path>         Recursively audit prompt templates, markdown, skills, and configs for injection traps
-  evidence            Query cryptographic tamper-evident audit ledger and run UI dashboard
+  evidence            Query the local hash-chained audit log and run the UI dashboard
   logs                Tail or inspect security event logs
   mcp                 Run as standalone bidirectional MCP server for AI agents
-  analyze <text>      Inspect prompt or message directly from CLI
-  test                Run instant self-test suite (51 real attack & benign vectors + latency)
+  analyze <text>      Inspect a prompt from the CLI (local; cloud only with ZN_CLOUD=1 + key)
+  test                Run the local self-test (51 curated vectors: 26 attacks, 25 benign)
   status              Show engine configuration and gateway connectivity
   version, -V         Show package version
 
 OPTIONS:
-  --key <api_key>     API key for cloud neural gate (or set ZN_API_KEY env var)
-  --stage <v30|prod>  Target gateway stage (default: v30 for neural fused gate)
+  --key <api_key>     API key for the optional cloud gate (or ZN_API_KEY). Used only
+                      by 'analyze' / analyze_prompt, and only if ZN_CLOUD=1 is set.
+  --stage <v30|prod>  Cloud gateway stage (default: v30, the current production API)
   --url <custom_url>  Override gateway endpoint URL
-  --local-only        Force offline local OSS deterministic rules only
+  --local-only        Never use the cloud, even if ZN_CLOUD=1 is set
   --all, --code       Include source code files in security scan
   --include <exts>    Custom extensions to scan (e.g. .rst,.xml)
   --exclude <dirs>    Additional directories to exclude (e.g. fixtures,legacy)
@@ -109,16 +110,16 @@ INIT OPTIONS:
   --revert            Restore pre-zn backups for all detected configurations
 
 EVIDENCE OPTIONS:
-  --verify            Cryptographically verify SHA-256 chain integrity across all records
+  --verify            Verify the SHA-256 hash chain across all records
   --ui                Launch local zero-dependency audit dashboard in browser
-  --export            Export cryptographic audit records to JSONL or CSV (SOC 2 / EU AI Act)
+  --export            Export audit records to JSONL or CSV
   --format <jsonl|csv> Export format (default: jsonl)
   --output <file>     Write exported audit records to target file
   --port <number>     Set HTTP port for dashboard (default: 3100)
   --tail <number>     Display the last N security records (default: 20)
 
 EXAMPLES:
-  # 1-Click zero-touch MCP shielding for Claude, Cursor, Antigravity, Codex, etc.
+  # Wrap the MCP servers found in your agent configs (backups are written first)
   npx -y zn-gate init
 
   # Audit prompt templates / agent skills for hidden injection traps
@@ -138,7 +139,7 @@ Learn more & documentation at https://usezn.com · GitHub: https://github.com/us
 async function runTestSuite(options) {
   process.stdout.write(`
 🛡️  Running zn-gate v${VERSION} Self-Test Suite
-Engine: ${options.apiKey ? `Cloud (${options.stage})` : 'Local OSS (deterministic)'} · Rules: ${RULES_VERSION}
+Engine: Local rules (the self-test never uses the network) · Rules: ${RULES_VERSION}
 Evaluating ${TEST_VECTORS.length} curated test vectors (${TEST_VECTORS.filter(v => v.type === 'attack').length} attacks + ${TEST_VECTORS.filter(v => v.type === 'benign').length} benign developer scenarios)...\n
 `);
 
@@ -150,7 +151,7 @@ Evaluating ${TEST_VECTORS.length} curated test vectors (${TEST_VECTORS.filter(v 
   for (let i = 0; i < TEST_VECTORS.length; i++) {
     const vec = TEST_VECTORS[i];
     const start = process.hrtime.bigint();
-    const result = await analyze(vec.text, options);
+    const result = analyzeLocal(vec.text, options);
     const end = process.hrtime.bigint();
     const elapsedNs = end - start;
     totalTimeNs += elapsedNs;
@@ -179,7 +180,7 @@ Evaluating ${TEST_VECTORS.length} curated test vectors (${TEST_VECTORS.filter(v 
   process.stdout.write(`
 ─────────────────────────────────────────────────────────────────────────────
 Summary         : ${passed}/${TEST_VECTORS.length} vectors passed (${((passed / TEST_VECTORS.length) * 100).toFixed(1)}%)
-False Positives : ${falsePositives} (0.0% false positive rate)
+False Positives : ${falsePositives} of ${TEST_VECTORS.filter(v => v.type === 'benign').length} curated benign vectors (not a general false-positive rate)
 Average Latency : ${avgMs} ms per decision
 Status          : ${failed === 0 ? '\x1b[32mALL TESTS PASSED (100%)\x1b[0m' : '\x1b[31mFAILURES DETECTED\x1b[0m'}
 ─────────────────────────────────────────────────────────────────────────────\n
@@ -393,10 +394,16 @@ async function main() {
     });
 
     for (const act of actions) {
-      const mark = act.status === 'error' ? '\x1b[31m✖\x1b[0m' : '\x1b[32m✔\x1b[0m';
+      const mark = act.status === 'error' ? '\x1b[31m✖\x1b[0m' : act.status === 'manual_required' ? '\x1b[33m!\x1b[0m' : '\x1b[32m✔\x1b[0m';
       process.stdout.write(`  ${mark} ${act.env.padEnd(20)} [${act.status}] ${act.serversCount ? act.serversCount + ' servers' : ''}${act.shadow ? ' (shadow mode)' : ''}\n`);
       if (act.backup) {
         process.stdout.write(`    \x1b[90m↳ backup: ${act.backup}\x1b[0m\n`);
+      }
+      if (act.error) {
+        process.stdout.write(`    \x1b[33m↳ ${act.error}\x1b[0m\n`);
+      }
+      for (const m of act.manual || []) {
+        process.stdout.write(`    \x1b[33m↳ wrap manually: ${m}\x1b[0m\n`);
       }
     }
 
@@ -524,14 +531,17 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
 
   if (command === 'status') {
     const hasKey = Boolean(options.apiKey);
+    const cloud = isCloudEnabled(options);
     process.stdout.write(`
 🛡️  zn-gate Status:
   Package Version : ${VERSION}
   Rules Version   : ${RULES_VERSION}
-  Active Engine   : ${hasKey ? `Cloud (${options.stage})` : 'Local OSS (deterministic)'}
-  Endpoint        : ${hasKey ? (options.apiUrl || `https://api.usezn.com/${options.stage}/analyze`) : 'Offline / In-Memory'}
-  Authentication  : ${hasKey ? 'Configured (' + options.apiKey.slice(0, 8) + '...)' : 'None (Free OSS Mode)'}
-\n`);
+  Active Engine   : ${cloud ? 'Local rules + cloud for analyze_prompt (ZN_CLOUD=1)' : 'Local rules only'}
+  Endpoint        : ${cloud ? resolveEndpoint(options) : 'None (nothing leaves this machine)'}
+  API key         : ${hasKey ? 'Set' + (cloud ? '' : ' (unused: cloud requires ZN_CLOUD=1)') : 'Not set'}
+  Leaves machine  : ${cloud ? 'analyze_prompt text only, secrets redacted locally first' : 'Nothing'}
+
+`);
     process.exit(0);
   }
 

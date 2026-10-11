@@ -1,6 +1,12 @@
 """
-zn-gate client module: Hybrid inspection engine combining local deterministic rules (<10µs)
-with optional deep neural cloud inspection. Pure Python stdlib. Zero external dependencies.
+zn-gate client module: local deterministic rules, with an optional cloud second
+opinion for prompt analysis. Pure Python stdlib. Zero external dependencies.
+
+Data-flow contract (since 1.4.1): `analyze()` only contacts the network when the
+user explicitly opted in with BOTH `ZN_API_KEY` and `ZN_CLOUD=1` (and
+`ZN_LOCAL_ONLY` is not "true"). Secrets are redacted locally with
+`redact_secrets()` before the request is built. Tool results and tool-call
+arguments (guard, integrations, sanitize_tool_result) are always local.
 """
 
 from __future__ import annotations
@@ -11,7 +17,7 @@ import urllib.request
 import urllib.error
 from typing import Any, Dict, Optional
 
-from .rules import evaluate, Assessment, RULES_VERSION
+from .rules import evaluate, redact_secrets, Assessment, RULES_VERSION
 from . import __version__
 
 DEFAULT_ENDPOINT = "https://api.usezn.com/v30/analyze"
@@ -29,15 +35,24 @@ def resolve_endpoint(options: Optional[Dict[str, Any]] = None) -> str:
     return DEFAULT_ENDPOINT
 
 
+def is_cloud_enabled(api_key: Optional[str] = None, local_only: bool = False) -> bool:
+    """True only if the user opted in: an API key AND ZN_CLOUD=1, and no local-only override."""
+    key = api_key or os.environ.get("ZN_API_KEY")
+    opted_in = os.environ.get("ZN_CLOUD") == "1"
+    force_local = local_only or os.environ.get("ZN_LOCAL_ONLY") == "true"
+    return bool(key) and opted_in and not force_local
+
+
 def analyze_cloud(
     input_text: str,
     api_key: str,
     endpoint_url: Optional[str] = None,
     timeout: float = 4.0,
 ) -> Dict[str, Any]:
-    """Sends payload to zn Cloud Gate using pure stdlib urllib."""
+    """Sends a payload to the zn cloud gate (stdlib urllib). Secrets are always redacted first."""
     endpoint = endpoint_url or DEFAULT_ENDPOINT
-    payload = json.dumps({"input": input_text}).encode("utf-8")
+    redacted, _ = redact_secrets(input_text)
+    payload = json.dumps({"input": redacted}).encode("utf-8")
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key.strip()}",
@@ -60,12 +75,11 @@ def analyze(
     **kwargs: Any,
 ) -> Dict[str, Any]:
     """
-    Hybrid analysis: evaluates in-process local deterministic rules in <10µs.
-    If local rules block -> immediately short-circuits with 0 network latency.
-    If local rules allow & api_key is present -> queries Cloud Gate for neural multilingual scan.
+    Prompt analysis. Local deterministic rules first; if they block, return at once.
+    Only if the user opted in (ZN_API_KEY + ZN_CLOUD=1) is the text, with secrets
+    redacted locally, also sent to the zn cloud gate. Otherwise nothing leaves the machine.
     """
     key = api_key or os.environ.get("ZN_API_KEY")
-    force_local = local_only or os.environ.get("ZN_LOCAL_ONLY") == "true"
 
     # 1. Local fast-path (<10µs, $0 cost)
     local_eval = evaluate(input_text)
@@ -81,8 +95,8 @@ def analyze(
             "latency_us": 5,
         }
 
-    # If no API key or local only, return local allow
-    if not key or force_local:
+    # Cloud is opt-in: without ZN_CLOUD=1 (or with ZN_LOCAL_ONLY) everything stays local
+    if not is_cloud_enabled(key, local_only):
         return {
             "verdict": "allow",
             "confidence": local_eval.confidence,
@@ -91,14 +105,15 @@ def analyze(
             "mode": "oss-local",
             "engine": "oss-local",
             "rules_version": local_eval.rules_version,
-            "tip": "Set ZN_API_KEY to enable neural multilingual protection via usezn cloud gate",
         }
 
     # 2. Cloud Gate deep neural analysis
     target_url = endpoint or resolve_endpoint(kwargs)
     try:
+        _, detections = redact_secrets(input_text)
         cloud_res = analyze_cloud(input_text, key, target_url, timeout=timeout)
         cloud_res["mode"] = "hybrid-cloud"
+        cloud_res["secrets_redacted_before_upload"] = len(detections)
         return cloud_res
     except Exception as exc:
         if os.environ.get("DEBUG") or os.environ.get("ZN_VERBOSE"):

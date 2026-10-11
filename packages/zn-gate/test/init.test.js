@@ -109,3 +109,131 @@ test('zn-gate init - configureEnvironments wraps servers with zn-gate shield and
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// 1.4.1: correct config locations and formats for Codex CLI and OpenCode
+// ---------------------------------------------------------------------------
+
+test('zn-gate init - known paths: Codex uses config.toml, OpenCode uses ~/.config/opencode/opencode.json', () => {
+  const envs = getKnownEnvironments();
+  const codex = envs.find(e => e.id === 'codex');
+  const opencode = envs.find(e => e.id === 'opencode');
+  assert.equal(codex.format, 'codex-toml');
+  assert.equal(path.basename(codex.filePath), 'config.toml');
+  assert.equal(opencode.format, 'opencode-json');
+  assert.ok(/opencode\.jsonc?$/.test(opencode.filePath));
+  assert.equal(path.basename(path.dirname(opencode.filePath)), 'opencode');
+  if (process.platform === 'linux' && !process.env.XDG_CONFIG_HOME) {
+    const cd = envs.find(e => e.id === 'claude-desktop');
+    assert.equal(cd.filePath, path.join(os.homedir(), '.config', 'Claude', 'claude_desktop_config.json'));
+  }
+});
+
+test('zn-gate init - Codex config.toml: wraps stdio servers, keeps env tables and url servers, reverts', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-init-codex-'));
+  const file = path.join(tmpDir, 'config.toml');
+  const original = [
+    'model = "o4-mini"',
+    '',
+    '[mcp_servers.context7]',
+    'command = "npx"',
+    'args = ["-y", "@upstash/context7-mcp"]',
+    '',
+    '[mcp_servers.context7.env]',
+    'MY_ENV_VAR = "MY_ENV_VALUE"',
+    '',
+    '[mcp_servers."fetch-srv"]',
+    "command = 'uvx' # inline comment",
+    '',
+    '[mcp_servers.remote]',
+    'url = "https://mcp.example.com/mcp"',
+    '',
+  ].join('\n');
+  fs.writeFileSync(file, original);
+  const mockList = [{ name: 'Codex', id: 'codex', filePath: file, key: 'mcp_servers', format: 'codex-toml' }];
+  try {
+    const scan = scanEnvironments(mockList)[0];
+    assert.equal(scan.serverCount, 3);
+    assert.equal(scan.allShielded, false);
+
+    const { actions } = configureEnvironments({ envList: mockList });
+    assert.equal(actions[0].status, 'shielded');
+    const out = fs.readFileSync(file, 'utf8');
+    assert.ok(out.includes('args = ["-y", "zn-gate", "shield", "--", "npx", "-y", "@upstash/context7-mcp"]'));
+    assert.ok(out.includes('args = ["-y", "zn-gate", "shield", "--", "uvx"]'), 'server without args gets an args line');
+    assert.ok(out.includes('[mcp_servers.context7.env]\nMY_ENV_VAR = "MY_ENV_VALUE"'));
+    assert.ok(out.includes('url = "https://mcp.example.com/mcp"'));
+    assert.ok(out.startsWith('model = "o4-mini"'));
+    assert.equal(scanEnvironments(mockList)[0].allShielded, true);
+
+    // idempotent
+    const again = configureEnvironments({ envList: mockList });
+    assert.equal(again.actions[0].status, 'already_shielded');
+
+    const rev = configureEnvironments({ envList: mockList, revert: true });
+    assert.equal(rev.actions[0].status, 'reverted');
+    assert.equal(fs.readFileSync(file, 'utf8'), original);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('zn-gate init - Codex config.toml with multi-line args is left untouched and reported', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-init-codex-ml-'));
+  const file = path.join(tmpDir, 'config.toml');
+  const original = '[mcp_servers.x]\ncommand = "npx"\nargs = [\n  "-y",\n  "pkg"\n]\n';
+  fs.writeFileSync(file, original);
+  const mockList = [{ name: 'Codex', id: 'codex', filePath: file, key: 'mcp_servers', format: 'codex-toml' }];
+  try {
+    const { actions } = configureEnvironments({ envList: mockList });
+    assert.equal(actions[0].status, 'manual_required');
+    assert.equal(fs.readFileSync(file, 'utf8'), original);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('zn-gate init - OpenCode opencode.json: wraps local servers (command array), skips remote, reverts', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-init-oc-'));
+  const file = path.join(tmpDir, 'opencode.json');
+  const original = JSON.stringify({
+    $schema: 'https://opencode.ai/config.json',
+    mcp: {
+      local1: { type: 'local', command: ['npx', '-y', 'my-mcp-command'], enabled: true, environment: { A: 'b' } },
+      remote1: { type: 'remote', url: 'https://mcp.example.com/mcp' },
+    },
+  }, null, 2);
+  fs.writeFileSync(file, original);
+  const mockList = [{ name: 'OpenCode', id: 'opencode', filePath: file, key: 'mcp', format: 'opencode-json' }];
+  try {
+    const { actions } = configureEnvironments({ envList: mockList, shadow: true });
+    assert.equal(actions[0].status, 'shielded');
+    const out = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert.deepEqual(out.mcp.local1.command, ['npx', '-y', 'zn-gate', 'shield', '--shadow', '--', 'npx', '-y', 'my-mcp-command']);
+    assert.equal(out.mcp.local1.type, 'local');
+    assert.deepEqual(out.mcp.local1.environment, { A: 'b' });
+    assert.deepEqual(out.mcp.remote1, { type: 'remote', url: 'https://mcp.example.com/mcp' });
+    assert.equal(out.mcp.local1.args, undefined, 'OpenCode has no args key');
+
+    const rev = configureEnvironments({ envList: mockList, revert: true });
+    assert.equal(rev.actions[0].status, 'reverted');
+    assert.equal(fs.readFileSync(file, 'utf8'), original);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('zn-gate init - OpenCode JSONC with comments is not rewritten', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-init-ocjsonc-'));
+  const file = path.join(tmpDir, 'opencode.jsonc');
+  const original = '{\n  // my servers\n  "mcp": { "x": { "type": "local", "command": ["npx", "y"] } }\n}\n';
+  fs.writeFileSync(file, original);
+  const mockList = [{ name: 'OpenCode', id: 'opencode', filePath: file, key: 'mcp', format: 'opencode-json' }];
+  try {
+    const { actions } = configureEnvironments({ envList: mockList });
+    assert.equal(actions[0].status, 'manual_required');
+    assert.equal(fs.readFileSync(file, 'utf8'), original);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});

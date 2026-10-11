@@ -14,6 +14,11 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+
+def _redact(text: str) -> str:
+    from .rules import redact_secrets  # local import avoids import cycles
+    return redact_secrets(text)[0]
+
 ZN_DIR = os.path.expanduser("~/.zn")
 EVIDENCE_FILE = os.path.join(ZN_DIR, "evidence.jsonl")
 GENESIS_HASH = "0" * 64
@@ -64,7 +69,8 @@ def log_evidence(event: Dict[str, Any], file_path: str = EVIDENCE_FILE) -> Dict[
         "phase": event.get("phase", "tool-call"),
         "tool_name": event.get("tool_name") or event.get("tool") or "unknown",
         "payload_sha256": payload_sha256,
-        "payload_preview": payload_str[:120],
+        # Redact the full payload first, then cut, so a secret straddling the cut is not leaked.
+        "payload_preview": (_redact(payload_str) or "")[:120],
         "verdict": event.get("verdict", "allow"),
         "rule": event.get("rule", None),
         "reason": event.get("reason", None),
