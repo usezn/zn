@@ -32,7 +32,7 @@
   },
   "main": "lib/client.js",
   "scripts": {
-    "test": "node test/unit_test.js && node test/contract.test.js && node test/fake_secrets.test.js && node test/shield.test.js && node test/init.test.js && node test/local_only.test.js && node test/evidence.test.js && node test/integration/test_agent_workflows.js && node bin/cli.js test"
+    "test": "node test/unit_test.js && node test/contract.test.js && node test/scrub_patterns.test.js && node test/scrub_exact.test.js && node test/scrub_engine.test.js && node test/vault.test.js && node test/fake_secrets.test.js && node test/shield.test.js && node test/init.test.js && node test/local_only.test.js && node test/evidence.test.js && node test/integration/test_agent_workflows.js && node bin/cli.js test"
   },
   "files": [
     "bin/",
@@ -45,5 +45,8 @@
   ],
   "engines": {
     "node": ">=18"
+  },
+  "dependencies": {
+    "age-encryption": "0.3.1"
   }
 }

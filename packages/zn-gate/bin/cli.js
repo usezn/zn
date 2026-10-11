@@ -104,6 +104,14 @@ OPTIONS:
   --verbose           Enable debug logging to stderr
   -h, --help          Show this help message
 
+VAULT (local, encrypted with age; the key stays in the OS keychain):
+  unlock              Unlock the vault for this session [--ttl 8h] [--idle 30m]
+                      (first run creates it; --passphrase-stdin without a keychain)
+  lock                Lock the vault now
+  vault status        Show whether the vault exists and is unlocked
+  vault verify        Verify the HMAC-chained audit log of secret use
+  vault forget [dir]  Forget the token map of a project (vault locked)
+
 INIT OPTIONS:
   --dry-run           Scan environments and preview changes without modifying configs
   --shadow            Wrap servers in non-blocking shadow mode (alerts logged without drops)
@@ -382,6 +390,11 @@ async function main() {
   }
 
   const command = args[0];
+
+  if (command === 'unlock' || command === 'lock' || command === 'vault') {
+    const { runVaultCommand } = require('../lib/vault/cli');
+    process.exit(await runVaultCommand(args));
+  }
 
   if (command === 'init') {
     process.stdout.write(`
