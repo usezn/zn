@@ -153,13 +153,20 @@ test('vault/client exposes the seven async calls', async () => {
 test('agents/claude-code follows the adapter shape', () => {
   const a = load('agents/claude-code.js');
   assert.strictEqual(a.id, 'claude-code');
-  assertFunctions(a, { detect: 0, install: 1, uninstall: 0, normalize: 1, respond: 1 }, 'agents/claude-code');
+  // install/uninstall/detect may declare defaulted options (arity 0).
+  for (const fn of ['detect', 'install', 'uninstall']) assert.strictEqual(typeof a[fn], 'function', fn);
+  assertFunctions(a, { normalize: 1, respond: 1 }, 'agents/claude-code');
 });
 
 test('broker and hooks expose their entry points', () => {
-  assert.strictEqual(typeof load('broker/run.js').run, 'function');
-  assert.strictEqual(typeof load('broker/mcp.js').start, 'function');
+  assert.strictEqual(typeof load('broker/run.js').main, 'function');
+  assert.strictEqual(typeof load('broker/mcp.js').startSecretsMcp, 'function');
   assert.strictEqual(typeof load('hooks/runner.js').handle, 'function');
+});
+
+test('vault client exposes the approval and metadata calls', () => {
+  assertFunctions(load('vault/client.js'), { updateSecretMeta: 2, isApproved: 3, recordApproval: 3 }, 'vault/client');
+  assert.strictEqual(typeof load('vault/audit.js').read, 'function');
 });
 
 Promise.all(pending).then(() => {
