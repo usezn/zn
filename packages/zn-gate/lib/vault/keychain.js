@@ -89,7 +89,7 @@ const macos = {
     // shows up in the process list.
     const kc = process.env.ZN_KEYCHAIN_PATH;
     if (kc && /\s/.test(kc)) throw znError(CODES.POLICY_DENIED, 'ZN_KEYCHAIN_PATH must not contain spaces');
-    const line = ['add-generic-password', '-U', '-s', service(), '-a', ACCOUNT, '-l', 'zn vault identity', '-w', identity].concat(kc ? [kc] : []).join(' ') + '\n';
+    const line = ['add-generic-password', '-U', '-s', service(), '-a', ACCOUNT, '-l', 'zn-vault-identity', '-w', identity].concat(kc ? [kc] : []).join(' ') + '\n';
     const res = run('/usr/bin/security', ['-i'], line);
     if (res.status !== 0) throw znError(CODES.LOCKED, 'macOS keychain refused the identity (security exit ' + res.status + ')');
   },
