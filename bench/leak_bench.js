@@ -1,9 +1,8 @@
 'use strict';
 /**
- * zn-gate leak bench (WP5).
+ * zn-gate leak bench.
  *
- * Measures the Scrubber engine through the frozen interface of the plan
- * (2026-10-11-PLAN-PARALELO-SCRUBBER.md, section 2):
+ * Measures the Scrubber engine through its package interface:
  *
  *     require('../packages/zn-gate/lib/scrub/engine.js').tokenize(text, ctx)
  *
@@ -14,8 +13,11 @@
  *                      must not be rewritten, plus fixed known-OK snippets
  *   3. latency       — tokenize p50/p95 per input size
  *
- * The engine module may not exist yet (WP0/WP1 pending): a local stub is
- * used and the run is reported as "not-implemented" instead of crashing.
+ * The engine module may not exist yet: a local stub is used and the run is
+ * reported as "not-implemented" instead of crashing.
+ *
+ * The benign corpus is downloaded, not committed. If it is missing, run:
+ *     bash packages/zn-gate/test/fixtures/benign/fetch_corpus.sh
  *
  * CLI: node bench/leak_bench.js [options]
  *   --json <path>            JSON report path, "-" = stdout only
@@ -41,14 +43,14 @@ const DEFAULT_JSON = path.join(ROOT, 'bench', 'leak_bench_results.json');
 
 const { generateAll, SEED_DEFAULT } = require(path.join(FIXTURES_DIR, 'fake_secrets.js'));
 
-/* Defaults. Anchors:
- * - leaks: 0 (WP5 requirement; spec §9.2 recall target).
- * - over-redaction: spec §9.1 — <= 0.1 % of benign files with any pattern
- *   redaction, and 0 redactions on the fixed must-not-touch cases.
- * - latency: spec §8.2 gives p50 <= 60 ms for a full PostToolUse hook
- *   process at 64 KB (dominated by Node startup). This bench measures the
- *   in-process engine only, i.e. a lower bound of that budget, and gates
- *   well under it; p95 kept at 2x p50 as a regression guard. Smaller sizes
+/* Default thresholds:
+ * - leaks: 0 — a single value surviving tokenization fails the run.
+ * - over-redaction: at most 0.1% of benign files may be altered, and the
+ *   fixed must-not-touch snippets must stay intact.
+ * - latency: the documented hook budget is p50 <= 60 ms for a full hook
+ *   process at 64 KB (dominated by Node startup); this bench measures the
+ *   in-process engine only, a lower bound of that budget, and gates well
+ *   under it. p95 is kept at 2x p50 as a regression guard; smaller sizes
  *   share the same absolute cap. */
 const DEFAULT_THRESHOLDS = {
   max_leaks: 0,
@@ -345,8 +347,8 @@ function buildLeakCases(generated) {
   return cases;
 }
 
-/* Fixed must-not-touch cases (spec §9.1): high-entropy-but-benign strings
- * that the pattern layer is not allowed to rewrite. */
+/* Fixed must-not-touch cases: high-entropy-but-benign strings that the
+ * pattern layer is not allowed to rewrite. */
 const KNOWN_OK = [
   { id: 'git_sha', text: 'commit 3f786850e387550fdab836ed7e6dc881de23001b fix: bump deps\n' },
   { id: 'uuid', text: 'session id: 550e8400-e29b-41d4-a716-446655440000\n' },
@@ -554,7 +556,7 @@ function evaluateGate(report, thresholds, args) {
   if (report.leaks.leaked > thresholds.max_leaks) failures.push({ metric: 'leaks', actual: report.leaks.leaked, limit: thresholds.max_leaks });
 
   if (!over.present && !args.allowMissingCorpus) {
-    failures.push({ metric: 'corpus_missing', actual: 'absent', limit: 'present (' + report.corpus.dir + ')' });
+    failures.push({ metric: 'corpus_missing', actual: 'absent', limit: report.corpus.hint || ('present (' + report.corpus.dir + ')') });
   }
   if (over.known_ok.errors > 0) failures.push({ metric: 'overredaction:known_ok_errors', actual: over.known_ok.errors, limit: 0 });
   if (over.known_ok.redacted_cases > thresholds.max_known_ok_redactions) {
@@ -592,6 +594,9 @@ function printSummary(report) {
   const env = report.environment;
   lines.push('zn-gate leak bench  seed=' + report.seed + '  ' + env.platform + '/' + env.arch + '  ' + env.node);
   lines.push('engine: packages/zn-gate/lib/scrub/engine.js (' + (report.engine.loaded ? 'loaded' : 'MISSING, stub used') + ')');
+  if (report.corpus && !report.corpus.present) {
+    lines.push('corpus:         NOT DOWNLOADED — ' + report.corpus.hint);
+  }
 
   if (report.status === 'not-implemented') {
     lines.push('result: NOT IMPLEMENTED — engine not available, all measurements skipped.');
@@ -607,7 +612,7 @@ function printSummary(report) {
         '% of ' + (O.bytes / 1048576).toFixed(1) + ' MB, limit ' + round3(report.thresholds.max_overredacted_file_rate * 100) + '%)  ' +
         (anyFailure(failures, 'overredaction:alter') || anyFailure(failures, 'overredaction:scan') ? 'FAIL' : 'PASS'));
     } else {
-      lines.push('over-redaction: SKIPPED — corpus missing at ' + report.corpus.dir + ' (run test/fixtures/benign/fetch_corpus.sh)');
+      lines.push('over-redaction: SKIPPED — corpus missing at ' + report.corpus.dir + ' (run packages/zn-gate/test/fixtures/benign/fetch_corpus.sh)');
     }
     lines.push('known-OK:       ' + O.known_ok.redacted_cases + '/' + O.known_ok.cases + ' fixed snippets altered, ' +
       O.known_ok.errors + ' errors (limit ' + report.thresholds.max_known_ok_redactions + ')  ' +
@@ -616,7 +621,7 @@ function printSummary(report) {
       if (s.error) return label + ' ERROR';
       return label + ' p50=' + s.p50_ms + 'ms p95=' + s.p95_ms + 'ms' + (anyFailure(failures, 'latency:' + label) ? ' FAIL' : '');
     }).join(' | ');
-    lines.push('latency:        ' + lat + ' (spec §8.2 hook budget: p50 <= 60ms at 64KB, whole process)');
+    lines.push('latency:        ' + lat + ' (hook budget: p50 <= 60ms at 64KB, whole process)');
     lines.push('gate:           ' + (report.gate.pass ? 'PASS' : 'FAIL'));
     for (const f of report.gate.failures) lines.push('  FAIL ' + f.metric + ': ' + f.actual + ' (limit ' + f.limit + ')');
     if (O.present && report.latency.payload_source === 'builtin') {
@@ -678,6 +683,13 @@ async function main() {
   const cases = buildLeakCases(generated);
   report.cases_total = cases.length;
 
+  const corpusPresent = fs.existsSync(args.corpus);
+  report.corpus = {
+    dir: path.relative(ROOT, args.corpus).replace(/\\/g, '/') || '.',
+    present: corpusPresent,
+    hint: corpusPresent ? null : 'run: bash packages/zn-gate/test/fixtures/benign/fetch_corpus.sh',
+  };
+
   try {
     report.leaks = await runLeaks(engine, vault, cases);
   } catch (err) {
@@ -685,14 +697,13 @@ async function main() {
       report.status = 'not-implemented';
       report.gate = { pass: null, skipped: true, failures: [] };
       report.notes = ['scrub/engine.js is not implemented yet; all measurements skipped (local stub used)'];
+      if (!corpusPresent) report.notes.push('benign corpus not downloaded: ' + report.corpus.hint);
       finish(report, args, thresholds);
       return;
     }
     throw err;
   }
 
-  const corpusPresent = fs.existsSync(args.corpus);
-  report.corpus = { dir: path.relative(ROOT, args.corpus).replace(/\\/g, '/') || '.', present: corpusPresent };
   const over = { present: corpusPresent, known_ok: await runKnownOk(engine, vault, KNOWN_OK) };
   if (corpusPresent) Object.assign(over, await runCorpus(engine, vault, args.corpus));
   report.overredaction = over;

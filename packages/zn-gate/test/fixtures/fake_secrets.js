@@ -1,7 +1,7 @@
 'use strict';
 /**
  * Deterministic generator of FAKE secrets and synthetic PII for the zn-gate
- * leak bench (WP5 of the Scrubber plan).
+ * leak bench.
  *
  * Everything produced here is fabricated: secret bodies come from a seeded
  * PRNG (mulberry32) and only reuse public format prefixes (sk-ant-, AKIA,

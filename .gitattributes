@@ -1,3 +1,0 @@
-# Keep the leak-bench benign corpus byte-exact (LF, no EOL conversion) on
-# every platform so over-redaction measurements are identical across CI.
-packages/zn-gate/test/fixtures/benign/** -text

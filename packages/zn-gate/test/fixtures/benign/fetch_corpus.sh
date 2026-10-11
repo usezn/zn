@@ -1,53 +1,59 @@
 #!/usr/bin/env bash
-# Regenerates the benign corpus for bench/leak_bench.js (WP5).
+# Fetches the pinned benign corpus used by bench/leak_bench.js and verifies
+# every file against MANIFEST.json (one sha256 per file). The sources are
+# immutable and the file set is deterministic, so every run produces the
+# exact same bytes; any mismatch fails the script.
 #
-# Sources (pinned; npm tarballs are immutable on the registry):
-#   - CPython standard library from a local install (PSF-2.0),
-#     every *.py except test/ and __pycache__/
-#   - npm: lodash@4.17.21 (MIT), async@3.2.6 (MIT)
+# Deterministic exclusions: Lib/venv/ and the npm dist/ directories are left
+# out because this repository's global .gitignore hides paths with those
+# names; the fetched tree, MANIFEST.json and a checkout view must always
+# agree on the same file set. Lib/test is excluded as well: test suites are
+# not representative benign code.
 #
-# Usage:  PY_LIB=/usr/lib/python3.14 ./fetch_corpus.sh
-# Needs:  bash, curl, tar, node >= 18, a local CPython Lib directory.
+# Pinned sources:
+#   - CPython v3.14.8 source tag, Lib/**/*.py except Lib/test and Lib/venv (PSF-2.0)
+#   - lodash@4.17.21 (MIT), async@3.2.6 (MIT) from the npm registry
+#
+# Usage:  bash fetch_corpus.sh
+# Needs:  bash, curl, tar, node >= 18. On Windows use Git Bash (CI runs it
+#         with `shell: bash`).
 set -euo pipefail
 
 DEST="$(cd "$(dirname "$0")" && pwd)"
-PY_LIB="${PY_LIB:-/usr/lib/python3.14}"
+PY_TAG="v3.14.8"
 NPM_PACKAGES=("lodash@4.17.21" "async@3.2.6")
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
 
-if [ ! -d "$PY_LIB" ]; then
-  echo "error: python stdlib not found at $PY_LIB (set PY_LIB=...)" >&2
-  exit 1
-fi
+echo "== fetching CPython $PY_TAG sources"
+mkdir -p "$TMP/cpython"
+curl -fsSL "https://github.com/python/cpython/archive/refs/tags/$PY_TAG.tar.gz" \
+  | tar -xz -C "$TMP/cpython" --strip-components=1 "cpython-${PY_TAG#v}/Lib" "cpython-${PY_TAG#v}/LICENSE"
 
-echo "== python stdlib from $PY_LIB"
 rm -rf "$DEST/python-stdlib" "$DEST/npm" "$DEST/licenses"
 mkdir -p "$DEST/licenses"
-find "$PY_LIB" -name '*.py' -not -path '*__pycache__*' -not -path '*/test/*' -type f -print0 \
-  | sort -z \
-  | while IFS= read -r -d '' f; do
-      rel="${f#"$PY_LIB"/}"
+
+echo "== copying Lib/**/*.py (excluding Lib/test and Lib/venv)"
+(cd "$TMP/cpython/Lib" && find . -name '*.py' ! -path './test/*' ! -path './venv/*' -type f | sed 's|^\./||' | sort) \
+  | while IFS= read -r rel; do
       mkdir -p "$DEST/python-stdlib/$(dirname "$rel")"
-      cp "$f" "$DEST/python-stdlib/$rel"
+      cp "$TMP/cpython/Lib/$rel" "$DEST/python-stdlib/$rel"
     done
+cp "$TMP/cpython/LICENSE" "$DEST/licenses/cpython-$PY_TAG-LICENSE.txt"
 
-PY_SHORT="$(basename "$PY_LIB")"
-for cand in "/usr/share/doc/$PY_SHORT/copyright" "/usr/share/doc/$PY_SHORT/LICENSE"; do
-  if [ -f "$cand" ]; then
-    cp "$cand" "$DEST/licenses/$PY_SHORT-copyright.txt"
-    break
-  fi
-done
-
-echo "== npm packages"
+echo "== fetching npm packages"
 for spec in "${NPM_PACKAGES[@]}"; do
   name="${spec%@*}"
   ver="${spec##*@}"
   echo "   $name@$ver"
-  mkdir -p "$DEST/npm/$name"
-  curl -fsSL "https://registry.npmjs.org/$name/-/$name-$ver.tgz" | tar -xz -C "$DEST/npm/$name" --strip-components=1
+  mkdir -p "$TMP/pkg-$name"
+  curl -fsSL "https://registry.npmjs.org/$name/-/$name-$ver.tgz" | tar -xz -C "$TMP/pkg-$name" --strip-components=1
+  (cd "$TMP/pkg-$name" && find . -type f ! -path '*/dist/*' | sed 's|^\./||' | sort) \
+    | while IFS= read -r rel; do
+        mkdir -p "$DEST/npm/$name/$(dirname "$rel")"
+        cp "$TMP/pkg-$name/$rel" "$DEST/npm/$name/$rel"
+      done
 done
 
-echo "== manifest"
-PY_LIB="$PY_LIB" PY_VER="$(python3 --version 2>/dev/null | awk '{print $2}' || echo unknown)" node "$DEST/build_manifest.js"
-
-echo "== done: $(find "$DEST/python-stdlib" "$DEST/npm" -type f | wc -l) corpus files"
+echo "== verifying corpus against MANIFEST.json"
+node "$DEST/build_manifest.js" --verify

@@ -19,7 +19,7 @@ paths = [
   '''packages/zn-gate/test/.*''',
   '''packages/zn-gate-py/tests/.*''',
   # packages/zn-gate/test/fixtures/fake_secrets.js is the deterministic generator of
-  # SYNTHETIC secrets for the leak bench (WP5): fabricated values from a fixed PRNG
+  # SYNTHETIC secrets for the leak bench: fabricated values from a fixed PRNG
   # seed, never real credentials. Allowlisted explicitly so its format-valid fake
   # prefixes never fail a scan; this entry exempts that one file and nothing else.
   '''packages/zn-gate/test/fixtures/fake_secrets\.js''',

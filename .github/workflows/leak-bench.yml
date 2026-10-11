@@ -23,6 +23,21 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
+      - name: Restore benign corpus cache
+        id: corpus-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            packages/zn-gate/test/fixtures/benign/python-stdlib
+            packages/zn-gate/test/fixtures/benign/npm
+            packages/zn-gate/test/fixtures/benign/licenses
+          key: benign-corpus-${{ runner.os }}-${{ hashFiles('packages/zn-gate/test/fixtures/benign/MANIFEST.json') }}
+      - name: Fetch benign corpus (cache miss)
+        if: steps.corpus-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: bash packages/zn-gate/test/fixtures/benign/fetch_corpus.sh
+      - name: Verify corpus checksums
+        run: node packages/zn-gate/test/fixtures/benign/build_manifest.js --verify
       - name: Self-check fake secrets fixtures
         run: node packages/zn-gate/test/fixtures/fake_secrets.js --selftest
       - name: Run leak bench
