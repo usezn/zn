@@ -8,11 +8,17 @@
     "email": "security@usezn.com",
     "url": "https://usezn.com"
   },
-  "homepage": "https://github.com/usezn/zn/tree/main/plugins/zn-gate",
+  "homepage": "https://github.com/usezn/zn/tree/v1.6.0/plugins/zn-gate",
   "repository": "https://github.com/usezn/zn",
   "license": "MIT",
-  "keywords": ["security", "secrets", "mcp", "hooks", "prompt-injection"],
-  "documentationUrl": "https://github.com/usezn/zn/blob/main/docs/secrets.md",
+  "keywords": [
+    "security",
+    "secrets",
+    "mcp",
+    "hooks",
+    "prompt-injection"
+  ],
+  "documentationUrl": "https://github.com/usezn/zn/blob/v1.6.0/docs/secrets.md",
   "supportUrl": "https://github.com/usezn/zn/issues",
   "privacyPolicyUrl": "https://usezn.com/privacy",
   "termsOfServiceUrl": "https://usezn.com/terms"

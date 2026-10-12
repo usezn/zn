@@ -48,11 +48,32 @@ function get(url, redirects = 3) {
   });
 }
 
-/* Minimal reader for the ustar archives that npm pack produces. */
+/*
+ * Minimal reader for the ustar archives that npm pack produces: regular files,
+ * directories, GNU long names (L) and PAX headers (x, g) with a path record.
+ * Any other entry type (links, devices) makes the pin fail.
+ */
+function paxPath(body) {
+  const text = body.toString('utf8');
+  let off = 0;
+  let found = null;
+  while (off < text.length) {
+    const sp = text.indexOf(' ', off);
+    if (sp < 0) break;
+    const len = parseInt(text.slice(off, sp), 10);
+    if (!(len > 0)) throw new Error('malformed PAX header');
+    const rec = text.slice(sp + 1, off + len - 1);
+    const eq = rec.indexOf('=');
+    if (rec.slice(0, eq) === 'path') found = rec.slice(eq + 1);
+    off += len;
+  }
+  return found;
+}
+
 function tarEntries(buf) {
   const out = [];
   let off = 0;
-  let longName = null;
+  let nextName = null;
   while (off + 512 <= buf.length) {
     const header = buf.subarray(off, off + 512);
     if (header.every((b) => b === 0)) break;
@@ -64,9 +85,15 @@ function tarEntries(buf) {
     const type = field(156, 1) || '0';
     const body = buf.subarray(off + 512, off + 512 + size);
     off += 512 + Math.ceil(size / 512) * 512;
-    if (type === 'L') { longName = body.toString('utf8').replace(/\0.*$/s, ''); continue; }
-    if (longName) { name = longName; longName = null; }
+    if (type === 'L') { nextName = body.toString('utf8').replace(/\0.*$/s, ''); continue; }
+    if (type === 'x') { nextName = paxPath(body) || nextName; continue; }
+    if (type === 'g') {
+      if (paxPath(body)) throw new Error('global PAX header with a path is not supported');
+      continue;
+    }
+    if (nextName) { name = nextName; nextName = null; }
     if (type === '0' || type === '\0') out.push({ name, body });
+    else if (type !== '5') throw new Error('unsupported tar entry type "' + type + '" for ' + name);
   }
   return out;
 }
@@ -89,6 +116,7 @@ async function main(argv) {
   for (const e of tarEntries(zlib.gunzipSync(tgz))) {
     const rel = e.name.replace(/^package\//, '');
     if (rel.includes('..') || path.isAbsolute(rel)) throw new Error('unexpected path in tarball: ' + e.name);
+    if (Object.prototype.hasOwnProperty.call(files, rel)) throw new Error('duplicate path in tarball: ' + rel);
     files[rel] = crypto.createHash('sha256').update(e.body).digest('hex');
   }
   if (!files['package.json'] || !files['lib/hooks/runner.js'] || !files['lib/broker/mcp.js']) {

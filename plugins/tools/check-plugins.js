@@ -106,11 +106,33 @@ for (const f of ['hooks/hooks.json', 'com.openai/hooks.json', 'cursor/hooks.json
   if (cmds.length === 0) fail(f + ': no hooks');
   for (const c of cmds) if (!LAUNCHER.test(String(c))) fail(f + ': hook command does not run the launcher: ' + c);
 }
-for (const [f, root] of [['mcp.json', '${PLUGIN_ROOT}'], ['.mcp.json', '${CLAUDE_PLUGIN_ROOT}']]) {
+for (const [f, root] of [['mcp.json', '${PLUGIN_ROOT}'], ['.mcp.json', '${CLAUDE_PLUGIN_ROOT}'], ['cursor/mcp.json', '${CURSOR_PLUGIN_ROOT}']]) {
   for (const [name, s] of Object.entries(json(PLUGIN + '/' + f).mcpServers || {})) {
     if (s.command !== 'node' || JSON.stringify(s.args) !== JSON.stringify([root + '/scripts/zn-launch.js', 'secrets-mcp'])) {
       fail(f + ': MCP server ' + name + ' does not run the launcher');
     }
+  }
+}
+
+const cursorManifest = json(PLUGIN + '/.cursor-plugin/plugin.json');
+if (cursorManifest.hooks !== './cursor/hooks.json' || cursorManifest.mcpServers !== './cursor/mcp.json') {
+  fail('.cursor-plugin/plugin.json: hooks and mcpServers must point to the Cursor files in cursor/');
+}
+for (const [event, entries] of Object.entries(json(PLUGIN + '/cursor/hooks.json').hooks || {})) {
+  for (const e of entries) if (e.failClosed !== true) fail('cursor/hooks.json: ' + event + ' hook is not failClosed');
+}
+
+/* ------------------------------- links ------------------------------- */
+
+// Links into this repository name the release tag and a path that exists.
+for (const f of files.filter((x) => /\.(md|json)$/.test(x) && fs.existsSync(path.join(ROOT, x)))) {
+  const re = /https:\/\/github\.com\/usezn\/zn\/(?:blob|tree)\/([^/\s)"']+)\/([^\s)"'#]+)/g;
+  let m;
+  const text = read(f);
+  while ((m = re.exec(text)) !== null) {
+    if (m[1] !== 'v' + v) fail(f + ': link to ' + m[0] + ' must use the tag v' + v);
+    const target = m[2].replace(/[.,;:]+$/, '');
+    if (!fs.existsSync(path.join(ROOT, ...target.split('/')))) fail(f + ': link to ' + m[0] + ' names a path that does not exist');
   }
 }
 

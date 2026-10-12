@@ -7,19 +7,21 @@ agent:
 
 | Agent | What the plugin adds | How it is installed |
 | --- | --- | --- |
-| Claude Code | hooks, `secrets` MCP server, skills | marketplace in this repository |
-| Codex | hooks (after you trust them), `secrets` MCP server, skills | marketplace in this repository |
-| Cursor | hooks, `secrets` MCP server, skills | plugin from this repository |
-| Other Agent Plugins clients | `secrets` MCP server, skills | the `plugins/zn-gate` directory |
+| Claude Code | hooks, `secrets` MCP server, skill | marketplace in this repository |
+| Codex | hooks (after you trust them), `secrets` MCP server, skill | marketplace in this repository |
+| Cursor | hooks, `secrets` MCP server, skill | plugin from this repository |
+| Other Agent Plugins clients | `secrets` MCP server, skill | the `plugins/zn-gate` directory |
 | OpenCode | (no plugin manifest) | `zn hooks install opencode` |
 
 What zn-gate can and cannot do in each agent is listed in
-[docs/compat.md](../docs/compat.md).
+[docs/compat.md](https://github.com/usezn/zn/blob/v1.6.0/docs/compat.md). Codex
+and Cursor loading these hooks from a plugin has not been tested in those
+agents yet.
 
 ## Security model
 
-The plugin is part of zn-gate's attack surface, so it is built to do as
-little as possible:
+The plugin is part of zn-gate's attack surface, so it does as little as
+possible:
 
 - **Nothing is downloaded or installed by the plugin.** You install zn-gate
   yourself, at an exact version, and check its signatures:
@@ -29,25 +31,35 @@ little as possible:
   npm audit signatures
   ```
 
-- **Exact pins everywhere.** The plugin manifests, the lock file, the MCP
-  registry entry and every install instruction name zn-gate 1.6.0. There is no
-  `@latest`, no version range and no package launcher such as `npx`.
-- **Verified before it runs.** `scripts/zn-launch.js` checks the installed
-  package's version and the SHA-256 digest of each of its files against
-  `scripts/zn-gate.lock.json`, generated from the published npm tarball after
-  checking the registry's sha512 integrity. Any mismatch fails closed.
+- **Exact pins.** The plugin manifests, the lock file, the MCP registry entry
+  and every install instruction name zn-gate 1.6.0. There is no `@latest` and
+  no version range, and the plugin itself runs no package launcher such as
+  `npx`.
+- **Checked on every call.** `scripts/zn-launch.js` requires the installed
+  package to hold exactly the files in `scripts/zn-gate.lock.json` (generated
+  from the published npm tarball after checking the registry's sha512
+  integrity), with matching SHA-256 digests and nothing else, then runs
+  zn-gate from the checked bytes in memory. Any mismatch or error fails closed.
 - **No self-update.** The plugin never updates itself or zn-gate. Install new
   releases on purpose; marketplaces are added at a release tag, and
   auto-update for third-party marketplaces is off by default in Claude Code.
 - **Least privilege.** The hooks and the MCP server run zn-gate locally with
-  your user's rights, read only what zn-gate needs, and send nothing over the
-  network except the HTTP requests you allow per secret.
+  your user's rights and send nothing over the network except the HTTP
+  requests you allow per secret.
 
-`node plugins/tools/check-plugins.js` enforces the pinning rules in CI.
+This reduces what a prompt-injected agent can do through its own tools; it is
+not a sandbox. The limits (hook timeouts, the agent's environment, files Node
+reads after the check, files you can write) are listed in
+[the plugin README](zn-gate/README.md#limits).
+
+`node plugins/tools/check-plugins.js` enforces the pinning rules in CI,
+`node plugins/tools/test-launch.js` tests the launcher, and
+`node plugins/tools/bench-launch.js packages/zn-gate` measures its cost per
+hook call.
 
 ## Install
 
-First install zn-gate as shown above. Then:
+First install zn-gate as shown above (Node.js 20.12 or later). Then:
 
 ### Claude Code
 
@@ -74,12 +86,15 @@ you do, and asks again whenever they change.
 ### Cursor
 
 Add the plugin from this repository (`plugins/zn-gate`) in Cursor's plugin
-settings, or install it from the Cursor Marketplace once it is listed there.
+settings. Cursor reads `.cursor-plugin/plugin.json`, which points to its own
+hook and MCP files in `cursor/`. Every Cursor hook is marked `failClosed`, so
+a crash or a timeout blocks the action (stricter than
+`zn hooks install cursor`, which marks only file reads and prompts).
 
 ### Other Agent Plugins clients
 
 Point the client at the `plugins/zn-gate` directory of the `v1.6.0` tag. These
-clients load the `secrets` MCP server and the skills; hooks are agent-specific
+clients load the `secrets` MCP server and the skill; hooks are agent-specific
 and need one of the agents above.
 
 ### OpenCode
@@ -92,19 +107,7 @@ hook runner:
 zn hooks install opencode
 ```
 
-## Continuous integration
-
-`zn audit` also runs in GitHub Actions through the zn-gate action at the root
-of this repository. Pin it by the full commit SHA that the release tag points
-to, not by the tag; tags can be moved, commits cannot. Look the SHA up with
-`git ls-remote https://github.com/usezn/zn refs/tags/v1.6.0` and write it in
-place of the placeholder:
-
-```yaml
-- uses: usezn/zn@<commit-sha-of-v1.6.0> # v1.6.0
-```
-
-See the action's README for its inputs and the permissions it needs.
+That path does not go through the plugin launcher or its file check.
 
 ## MCP registry
 
@@ -112,14 +115,22 @@ See the action's README for its inputs and the permissions it needs.
 official MCP Registry. The npm package declares the matching `mcpName` in
 `packages/zn-gate/package.json`, which the registry uses to verify ownership.
 
+Registry clients start the server as `npx zn-gate@1.6.0 secrets-mcp`
+(`runtimeHint`). That path does not go through the plugin launcher: it relies
+on the exact version and npm's own integrity check of the tarball, not on the
+plugin's file digests.
+
 ## Releasing a new version
 
-1. Publish zn-gate `X.Y.Z` to npm.
+1. Publish zn-gate `X.Y.Z` to npm with provenance.
 2. Run `node plugins/tools/pin-release.js X.Y.Z` to regenerate
    `plugins/zn-gate/scripts/zn-gate.lock.json` from the published tarball.
 3. Set `X.Y.Z` in `plugins/zn-gate/plugin.json`,
    `plugins/zn-gate/.claude-plugin/plugin.json`,
    `plugins/zn-gate/.cursor-plugin/plugin.json`,
-   `plugins/mcp-registry/server.json` and the install instructions.
-4. Run `node plugins/tools/check-plugins.js --release`; it must print OK.
-5. Tag the release; never move or reuse a tag.
+   `plugins/mcp-registry/server.json`, the documentation links and the
+   install instructions.
+4. Run `node plugins/tools/check-plugins.js --release`; it must print OK. CI
+   runs the same check on release tags and on `main`.
+5. Tag the release. Release tags must be protected by a repository ruleset
+   that blocks updates and deletion of `v*` tags; never move or reuse a tag.

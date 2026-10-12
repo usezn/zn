@@ -4,42 +4,71 @@
 /**
  * zn-gate plugin launcher.
  *
- * Every hook and MCP server of this plugin goes through this file. It does
- * not download, install or update anything. It finds the zn-gate npm package
- * that the user installed, checks that it is exactly the version this plugin
- * release pins, checks every file of it against the SHA-256 digests in
- * zn-gate.lock.json, and only then loads it in this same process. The full
- * digest check runs at session start (check) and whenever the size, mtime,
- * ctime or inode of any package file changed since the last full check:
+ * Every hook and MCP server of this plugin goes through this file:
  *
  *   node zn-launch.js hook <agent>     agent hook (event JSON on stdin)
  *   node zn-launch.js secrets-mcp      the "secrets" MCP server (stdio)
  *   node zn-launch.js check [agent]    report the installation status; never blocks
  *
- * When the package is missing, has another version or does not match the
- * lock file, hooks fail closed (exit code 2: the call or the prompt is
- * refused, with a message that says how to fix it) and the MCP server does
- * not start. The user can let hook events pass instead with
- * {"hooks": {"whenUnavailable": "allow"}} in ~/.zn/config.json, the same
- * switch zn-gate itself uses. Agents cannot write that file: zn-gate's hooks
- * deny access to ~/.zn.
+ * It does not download, install or update anything. On every run it:
  *
- * Package lookup, in order:
- *   1. "plugin": {"packageDir": "<dir>"} in ~/.zn/config.json
- *   2. a zn-gate executable on PATH (npm global install layouts on
- *      Linux, macOS and Windows)
- * No environment variable can point this launcher at other code.
+ *  1. finds the zn-gate package the user installed (see findPackage);
+ *  2. walks the whole package directory and requires it to hold exactly the
+ *     files listed in zn-gate.lock.json: no extra file or directory, no
+ *     symbolic link, nothing missing, every file with the SHA-256 digest of
+ *     the published release;
+ *  3. loads zn-gate's hook runner or MCP server from the bytes it just
+ *     verified, held in memory, with a module loader that resolves only
+ *     within the verified file set. Nothing zn-gate loads in this process is
+ *     read from disk again after the check.
  *
- * No dependencies; Node.js 18 or later.
+ * Any failure, including an exception thrown by zn-gate itself, refuses the
+ * hook event (exit code 2 and a message that says how to fix it) and keeps
+ * the MCP server from starting. The user can let hook events pass instead
+ * with {"hooks": {"whenUnavailable": "allow"}} in ~/.zn/config.json.
+ *
+ * What this does not protect against (see the plugin README):
+ *  - Child processes zn-gate starts (the vault daemon, `zn run`, the stream
+ *    scrubber) and the ES modules of its bundled dependencies are loaded from
+ *    disk by Node after the check, so a change made in between is not seen.
+ *  - Whoever controls the environment the agent starts hooks with decides
+ *    which `node` runs this file, can preload code with NODE_OPTIONS before
+ *    this file starts, and chooses the PATH used to find zn-gate (only an
+ *    exact copy of the pinned release passes the check).
+ *  - Code running as the user can edit this plugin or ~/.zn/config.json.
+ * It reduces what a prompt-injected agent can do through its own tools; it
+ * is not a sandbox.
+ *
+ * No dependencies; Node.js 20.12 or later.
  */
 
 const crypto = require('crypto');
 const fs = require('fs');
+const Module = require('module');
 const os = require('os');
 const path = require('path');
+const url = require('url');
+const vm = require('vm');
 
 const LOCK_FILE = path.join(__dirname, 'zn-gate.lock.json');
+// vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER: Node.js 20.12 / 21.7 and later.
+const NODE_OK = !!(vm.constants && vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER);
+const NODE_HINT = 'the zn-gate plugin needs Node.js 20.12 or later (this is ' + process.version + ').';
 const SUPPORTED_AGENTS = new Set(['claude-code', 'codex', 'cursor']);
+
+// zn-gate starts child processes with this process's environment; a preload
+// set through NODE_OPTIONS or a module path in NODE_PATH must not reach them.
+delete process.env.NODE_OPTIONS;
+delete process.env.NODE_PATH;
+
+/* The account's home directory from the user database, not from $HOME. */
+function homeDir() {
+  try {
+    const h = os.userInfo().homedir;
+    if (h) return h;
+  } catch (_) { /* no passwd entry (some containers) */ }
+  return os.homedir();
+}
 
 function readJson(file) {
   try {
@@ -50,12 +79,12 @@ function readJson(file) {
 }
 
 function znConfig() {
-  return readJson(path.join(os.homedir(), '.zn', 'config.json')) || {};
+  return readJson(path.join(homeDir(), '.zn', 'config.json')) || {};
 }
 
 function loadLock() {
   const lock = readJson(LOCK_FILE);
-  if (!lock || lock.package !== 'zn-gate' || typeof lock.version !== 'string') {
+  if (!lock || lock.package !== 'zn-gate' || typeof lock.version !== 'string' || !lock.files || typeof lock.files !== 'object') {
     throw new Error('the plugin lock file (scripts/zn-gate.lock.json) is missing or invalid');
   }
   return lock;
@@ -73,102 +102,213 @@ function isPackageDir(dir) {
   return !!(pkg && pkg.name === 'zn-gate');
 }
 
-function candidatesFromPath() {
+/**
+ * Candidate package directories, in order:
+ *   1. "plugin": {"packageDir": "<dir>"} in ~/.zn/config.json (only that one);
+ *   2. for each PATH entry with a zn-gate executable, the npm global layouts
+ *      of Linux and macOS (<prefix>/bin -> <prefix>/lib/node_modules) and of
+ *      Windows (<prefix>\zn-gate.cmd next to <prefix>\node_modules).
+ */
+function candidates() {
+  const cfg = znConfig();
+  if (cfg.plugin && typeof cfg.plugin.packageDir === 'string') return [path.resolve(cfg.plugin.packageDir)];
   const out = [];
   const dirs = String(process.env.PATH || '').split(path.delimiter).filter(Boolean);
   for (const dir of dirs) {
     const bin = path.join(dir, 'zn-gate');
-    // Linux and macOS: <prefix>/bin/zn-gate is a symlink to
-    // <prefix>/lib/node_modules/zn-gate/bin/cli.js.
     try {
-      const real = fs.realpathSync(bin);
-      out.push(path.resolve(path.dirname(real), '..'));
+      out.push(path.resolve(path.dirname(fs.realpathSync(bin)), '..'));
     } catch (_) { /* not here */ }
-    // Windows: <prefix>\zn-gate.cmd next to <prefix>\node_modules\zn-gate.
     if (fs.existsSync(bin + '.cmd')) out.push(path.join(dir, 'node_modules', 'zn-gate'));
-    out.push(path.resolve(dir, '..', 'lib', 'node_modules', 'zn-gate'));
+    if (fs.existsSync(bin)) out.push(path.resolve(dir, '..', 'lib', 'node_modules', 'zn-gate'));
   }
-  return out;
-}
-
-function findPackage() {
-  const cfg = znConfig();
-  const configured = cfg.plugin && typeof cfg.plugin.packageDir === 'string' ? cfg.plugin.packageDir : null;
-  const list = configured ? [path.resolve(configured)] : candidatesFromPath();
-  for (const dir of list) {
-    if (isPackageDir(dir)) return fs.realpathSync(dir);
-  }
-  return null;
+  return [...new Set(out)];
 }
 
 /* --------------------------- verification --------------------------- */
 
-const STAMP_FILE = path.join(os.homedir(), '.zn', 'plugin-verified.json');
-
-function statKey(dir, names, lock) {
-  const h = crypto.createHash('sha256').update(JSON.stringify({ lock, dir }));
-  for (const name of names) {
-    try {
-      const st = fs.statSync(path.join(dir, ...name.split('/')));
-      h.update([name, st.size, st.mtimeMs, st.ino, st.ctimeMs].join(':') + ';');
-    } catch (_) {
-      return null;
-    }
+/**
+ * Read the whole package tree and compare it with the lock file.
+ * Returns {files: Map<rel, Buffer>} or {error}.
+ */
+function readVerified(dir, lock) {
+  const expected = lock.files;
+  const dirs = new Set(['']);
+  for (const rel of Object.keys(expected)) {
+    const parts = rel.split('/');
+    for (let i = 1; i < parts.length; i++) dirs.add(parts.slice(0, i).join('/'));
   }
-  return h.digest('hex');
-}
-
-function writeStamp(key) {
-  try {
-    fs.mkdirSync(path.dirname(STAMP_FILE), { recursive: true, mode: 0o700 });
-    const tmp = STAMP_FILE + '.' + process.pid;
-    fs.writeFileSync(tmp, JSON.stringify({ key, checked: new Date().toISOString() }), { mode: 0o600 });
-    fs.renameSync(tmp, STAMP_FILE);
-  } catch (_) { /* the next call checks in full again */ }
-}
-
-function sha256(file) {
-  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+  const files = new Map();
+  const problems = [];
+  const walk = (rel) => {
+    const abs = rel ? path.join(dir, ...rel.split('/')) : dir;
+    let names;
+    try {
+      names = fs.readdirSync(abs);
+    } catch (err) {
+      problems.push('cannot read ' + (rel || '.') + ' (' + err.code + ')');
+      return;
+    }
+    for (const name of names) {
+      const r = rel ? rel + '/' + name : name;
+      const st = fs.lstatSync(path.join(abs, name));
+      if (st.isSymbolicLink()) problems.push(r + ' is a symbolic link');
+      else if (st.isDirectory()) {
+        if (dirs.has(r)) walk(r);
+        else problems.push('unexpected directory ' + r);
+      } else if (st.isFile()) {
+        if (!Object.prototype.hasOwnProperty.call(expected, r)) problems.push('unexpected file ' + r);
+        else {
+          const buf = fs.readFileSync(path.join(abs, name));
+          if (crypto.createHash('sha256').update(buf).digest('hex') !== expected[r]) problems.push(r + ' was changed');
+          else files.set(r, buf);
+        }
+      } else problems.push(r + ' is not a regular file');
+      if (problems.length) return;
+    }
+  };
+  walk('');
+  if (!problems.length) {
+    const missing = Object.keys(expected).find((r) => !files.has(r));
+    if (missing) problems.push(missing + ' is missing');
+  }
+  if (problems.length) return { error: problems[0] };
+  return { files };
 }
 
 /**
- * Returns {dir} when the installed package is the pinned, unmodified release,
- * or {error} with a message for the user.
+ * Find the package and verify it. Every candidate is tried; the first one
+ * that matches the lock file wins. Returns {dir, files} or {error}.
  */
-function verify(lock, full) {
-  const dir = findPackage();
-  if (!dir) return { error: 'zn-gate is not installed (no zn-gate executable on PATH). ' + installHint(lock) };
-  const pkg = readJson(path.join(dir, 'package.json')) || {};
-  if (pkg.version !== lock.version) {
-    return { error: 'this plugin needs zn-gate ' + lock.version + ' but ' + dir + ' holds ' + (pkg.version || 'an unknown version') + '. ' + installHint(lock) };
+function verify(lock) {
+  if (!NODE_OK) return { error: NODE_HINT };
+  if (Object.keys(lock.files).length === 0) {
+    return { error: 'this plugin build has no file digests for zn-gate ' + lock.version + ' (development build), so it cannot run. ' +
+      'Use a released plugin version.' };
   }
-  const files = lock.files || {};
-  const names = Object.keys(files);
-  if (names.length === 0) {
-    const cfg = znConfig();
-    if (cfg.plugin && cfg.plugin.allowUnverified === true) return { dir, unverified: true };
-    return { error: 'this plugin build has no file digests for zn-gate ' + lock.version + ' (development build). ' +
-      'Set {"plugin": {"allowUnverified": true}} in ~/.zn/config.json to use it anyway.' };
-  }
-  // A full check hashes every file (several MB). Hook calls reuse the result
-  // of the last full check while no file's size, mtime or inode changed; the
-  // record lives in ~/.zn, which zn's hooks keep agents out of.
-  const key = statKey(dir, names, lock);
-  if (!full && key && readJson(STAMP_FILE) && readJson(STAMP_FILE).key === key) return { dir };
-  for (const name of names) {
-    const file = path.join(dir, ...name.split('/'));
-    let digest;
-    try {
-      digest = sha256(file);
-    } catch (_) {
-      return { error: 'zn-gate ' + lock.version + ' in ' + dir + ' is incomplete (' + name + ' is missing). ' + installHint(lock) };
+  const reasons = [];
+  for (const dir of candidates()) {
+    if (!isPackageDir(dir)) continue;
+    const real = fs.realpathSync(dir);
+    const pkg = readJson(path.join(real, 'package.json')) || {};
+    if (pkg.version !== lock.version) {
+      reasons.push(real + ' holds zn-gate ' + (pkg.version || 'of an unknown version'));
+      continue;
     }
-    if (digest !== files[name]) {
-      return { error: 'zn-gate ' + lock.version + ' in ' + dir + ' does not match the published release (' + name + ' was changed). ' + installHint(lock) };
-    }
+    const res = readVerified(real, lock);
+    if (res.files) return { dir: real, files: res.files };
+    reasons.push(real + ' does not match the published zn-gate ' + lock.version + ': ' + res.error);
   }
-  if (key) writeStamp(key);
-  return { dir };
+  if (!reasons.length) return { error: 'zn-gate ' + lock.version + ' is not installed (no zn-gate executable on PATH). ' + installHint(lock) };
+  return { error: 'this plugin needs zn-gate ' + lock.version + ', but ' + reasons.join('; ') + '. ' + installHint(lock) };
+}
+
+/* ------------------------- in-memory loader ------------------------- */
+
+const isBuiltin = Module.isBuiltin || ((id) => Module.builtinModules.includes(String(id).replace(/^node:/, '')));
+
+/**
+ * A CommonJS loader over the verified file set. require() of a relative path
+ * or a package resolves only to verified files; built-in modules come from
+ * Node. import() is handed to Node's own loader: ES modules cannot be
+ * evaluated from memory without experimental flags. Since the tree holds no
+ * file outside the lock, it resolves to a verified file (zn-gate imports only
+ * its bundled age-encryption), but Node reads it from disk again.
+ */
+function makeLoader(dir, files) {
+  const cache = new Map();
+  const has = (rel) => files.has(rel);
+  const norm = (rel) => path.posix.normalize(rel).replace(/^\.\//, '');
+
+  function packageEntry(pkgRel, sub) {
+    const pj = files.get(pkgRel + '/package.json');
+    const meta = pj ? JSON.parse(pj.toString('utf8')) : {};
+    if (sub) return asFile(pkgRel + '/' + sub);
+    const exp = typeof meta.exports === 'string' ? meta.exports
+      : meta.exports && typeof meta.exports['.'] === 'string' ? meta.exports['.']
+        : meta.exports && meta.exports['.'] && (meta.exports['.'].require || meta.exports['.'].default || meta.exports['.'].import);
+    const main = typeof exp === 'string' ? exp : meta.main || 'index.js';
+    return asFile(norm(pkgRel + '/' + main)) || asFile(pkgRel + '/index');
+  }
+
+  function asFile(rel) {
+    rel = norm(rel);
+    for (const c of [rel, rel + '.js', rel + '.json', rel + '.cjs', rel + '.mjs']) if (has(c)) return c;
+    if (files.has(rel + '/package.json')) return packageEntry(rel, '');
+    for (const c of [rel + '/index.js', rel + '/index.json']) if (has(c)) return c;
+    return null;
+  }
+
+  function resolve(spec, fromRel) {
+    const base = path.posix.dirname(fromRel);
+    if (spec.startsWith('./') || spec.startsWith('../') || spec === '.' || spec === '..') {
+      const rel = norm(path.posix.join(base, spec));
+      if (rel.startsWith('..')) return null;
+      return asFile(rel);
+    }
+    if (path.isAbsolute(spec)) {
+      const rel = path.relative(dir, spec).split(path.sep).join('/');
+      return rel.startsWith('..') || path.isAbsolute(rel) ? null : asFile(rel);
+    }
+    const m = /^((?:@[^/]+\/)?[^/]+)(?:\/(.*))?$/.exec(spec);
+    if (!m) return null;
+    let d = base;
+    for (;;) {
+      const pkgRel = norm((d === '.' ? '' : d + '/') + 'node_modules/' + m[1]);
+      if (files.has(pkgRel + '/package.json') || [...files.keys()].some((k) => k.startsWith(pkgRel + '/'))) {
+        return packageEntry(pkgRel, m[2] || '');
+      }
+      if (d === '.' || d === '') break;
+      d = path.posix.dirname(d);
+    }
+    return null;
+  }
+
+  function notFound(spec, fromRel) {
+    const err = new Error("Cannot find module '" + spec + "' among the verified zn-gate files (required from " + fromRel + ')');
+    err.code = 'MODULE_NOT_FOUND';
+    return err;
+  }
+
+  function load(rel) {
+    if (cache.has(rel)) return cache.get(rel).exports;
+    const filename = path.join(dir, ...rel.split('/'));
+    const mod = { id: filename, filename, loaded: false, exports: {}, children: [], paths: [] };
+    cache.set(rel, mod);
+    const src = files.get(rel).toString('utf8').replace(/^﻿/, '');
+    if (rel.endsWith('.json')) {
+      mod.exports = JSON.parse(src);
+      mod.loaded = true;
+      return mod.exports;
+    }
+    const req = (spec) => {
+      spec = String(spec);
+      if (isBuiltin(spec)) return require(spec);
+      const target = resolve(spec, rel);
+      if (!target) throw notFound(spec, rel);
+      return load(target);
+    };
+    req.resolve = (spec) => {
+      if (isBuiltin(spec)) return spec;
+      const target = resolve(String(spec), rel);
+      if (!target) throw notFound(spec, rel);
+      return path.join(dir, ...target.split('/'));
+    };
+    req.cache = Object.create(null);
+    req.main = undefined;
+    const code = src.startsWith('#!') ? '//' + src.slice(2) : src;
+    const fn = vm.compileFunction(code, ['exports', 'require', 'module', '__filename', '__dirname'], {
+      filename,
+      // import() goes to Node's own ES module loader, resolved from this
+      // file's location inside the verified tree (see the header).
+      importModuleDynamically: vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER,
+    });
+    fn.call(mod.exports, mod.exports, req, mod, filename, path.dirname(filename));
+    mod.loaded = true;
+    return mod.exports;
+  }
+
+  return { load, resolve };
 }
 
 /* ------------------------------ modes ------------------------------ */
@@ -178,9 +318,13 @@ function whenUnavailableAllows() {
   return String(hooks.whenUnavailable || '').toLowerCase() === 'allow';
 }
 
+let refused = false;
 function refuseHook(agent, why) {
+  if (refused) return;
+  refused = true;
   if (whenUnavailableAllows()) {
     process.stderr.write('zn plugin: ' + why + ' Event passed through (hooks.whenUnavailable is "allow").\n');
+    process.exitCode = 0;
     return;
   }
   const msg = 'zn plugin: ' + why + ' Until then zn cannot check this call, so it is refused. ' +
@@ -192,41 +336,56 @@ function refuseHook(agent, why) {
   process.exitCode = 2;
 }
 
+function failClosedOnCrash(agent) {
+  const onError = (err) => {
+    refuseHook(agent, 'zn-gate failed (' + ((err && err.message) || String(err)) + ').');
+    // Exit now: whatever was running is in an unknown state.
+    process.exit(process.exitCode);
+  };
+  process.on('uncaughtException', onError);
+  process.on('unhandledRejection', onError);
+}
+
 function runHook(agent) {
   if (!SUPPORTED_AGENTS.has(agent)) {
     process.stderr.write('zn plugin: unknown agent "' + agent + '"\n');
     process.exitCode = 1;
     return;
   }
-  let lock;
-  let res;
+  failClosedOnCrash(agent);
   try {
-    lock = loadLock();
-    res = verify(lock);
+    const lock = loadLock();
+    const res = verify(lock);
+    if (res.error) return refuseHook(agent, res.error);
+    const loader = makeLoader(res.dir, res.files);
+    const runner = loader.load('lib/hooks/runner.js');
+    // The runner reads the event from stdin and writes the agent's answer.
+    Promise.resolve(runner.main([agent])).catch((err) => {
+      refuseHook(agent, 'zn-gate failed (' + ((err && err.message) || String(err)) + ').');
+    });
   } catch (err) {
-    res = { error: err.message + '.' };
+    refuseHook(agent, 'zn-gate failed to load (' + ((err && err.message) || String(err)) + ').');
   }
-  if (res.error) return refuseHook(agent, res.error);
-  // The runner reads the event from stdin and writes the agent's answer.
-  require(path.join(res.dir, 'lib', 'hooks', 'runner.js')).main([agent]);
 }
 
 function runMcp() {
+  const fail = (msg) => {
+    process.stderr.write('zn plugin: ' + msg + '\n');
+    process.exit(1);
+  };
+  process.on('uncaughtException', (err) => fail('zn-gate failed (' + ((err && err.message) || String(err)) + ')'));
+  process.on('unhandledRejection', (err) => fail('zn-gate failed (' + ((err && err.message) || String(err)) + ')'));
   const lock = loadLock();
   const res = verify(lock);
-  if (res.error) {
-    process.stderr.write('zn plugin: ' + res.error + '\n');
-    process.exitCode = 1;
-    return;
-  }
-  require(path.join(res.dir, 'lib', 'broker', 'mcp.js')).startSecretsMcp();
+  if (res.error) return fail(res.error);
+  makeLoader(res.dir, res.files).load('lib/broker/mcp.js').startSecretsMcp();
 }
 
-/* Hooks that zn hooks install wrote into the agent's own settings run too. */
+/* Hooks that `zn hooks install` wrote into the agent's own settings run too. */
 function settingsHooks(agent) {
-  const re = /(\bhook claude-code|hooks[\\/]runner\.js"? claude-code)\s*$/;
   if (agent !== 'claude-code') return false;
-  const dir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+  const re = /(\bhook claude-code|hooks[\\/]runner\.js"? claude-code)\s*$/;
+  const dir = process.env.CLAUDE_CONFIG_DIR || path.join(homeDir(), '.claude');
   const data = readJson(path.join(dir, 'settings.json'));
   const events = data && data.hooks && typeof data.hooks === 'object' ? Object.values(data.hooks) : [];
   for (const groups of events) {
@@ -242,11 +401,9 @@ function settingsHooks(agent) {
 function runCheck(agent) {
   let message;
   try {
-    const lock = loadLock();
-    const res = verify(lock, true);
+    const res = verify(loadLock());
     if (res.error) message = 'zn plugin: ' + res.error;
-    else if (res.unverified) message = 'zn plugin: using zn-gate ' + lock.version + ' without file verification (development build).';
-    if (!res.error && settingsHooks(agent)) {
+    else if (settingsHooks(agent)) {
       message = 'zn plugin: zn hooks are also installed in your Claude Code settings, so every event is checked twice. ' +
         'Remove them with: zn hooks uninstall claude-code';
     }
@@ -267,6 +424,6 @@ function main(argv) {
   process.exitCode = 1;
 }
 
-module.exports = { verify, findPackage, loadLock };
+module.exports = { verify, loadLock, makeLoader, readVerified };
 
 if (require.main === module) main(process.argv.slice(2));

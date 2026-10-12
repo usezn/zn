@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "secrets": {
+      "command": "node",
+      "args": [
+        "${CURSOR_PLUGIN_ROOT}/scripts/zn-launch.js",
+        "secrets-mcp"
+      ]
+    }
+  }
+}

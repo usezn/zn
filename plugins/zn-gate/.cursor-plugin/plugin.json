@@ -6,11 +6,16 @@
     "name": "usezn",
     "email": "security@usezn.com"
   },
-  "homepage": "https://github.com/usezn/zn/tree/main/plugins/zn-gate",
+  "homepage": "https://github.com/usezn/zn/tree/v1.6.0/plugins/zn-gate",
   "repository": "https://github.com/usezn/zn",
   "license": "MIT",
-  "keywords": ["security", "secrets", "mcp", "hooks"],
+  "keywords": [
+    "security",
+    "secrets",
+    "mcp",
+    "hooks"
+  ],
   "skills": "./skills/",
   "hooks": "./cursor/hooks.json",
-  "mcpServers": "./.mcp.json"
+  "mcpServers": "./cursor/mcp.json"
 }

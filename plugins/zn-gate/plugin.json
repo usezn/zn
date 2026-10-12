@@ -8,10 +8,16 @@
     "email": "security@usezn.com",
     "url": "https://usezn.com"
   },
-  "homepage": "https://github.com/usezn/zn/tree/main/plugins/zn-gate",
+  "homepage": "https://github.com/usezn/zn/tree/v1.6.0/plugins/zn-gate",
   "repository": "https://github.com/usezn/zn",
   "license": "MIT",
-  "keywords": ["security", "secrets", "mcp", "hooks", "prompt-injection"],
+  "keywords": [
+    "security",
+    "secrets",
+    "mcp",
+    "hooks",
+    "prompt-injection"
+  ],
   "extensions": {
     "com.openai": {
       "hooks": "./com.openai/hooks.json"
