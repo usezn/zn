@@ -42,7 +42,8 @@
               "${CLAUDE_PLUGIN_ROOT}/node_modules/zn-gate/lib/hooks/runner.js",
               "claude-code"
             ],
-            "timeout": 15
+            "timeout": 30,
+            "onFailure": "block"
           }
         ]
       }
