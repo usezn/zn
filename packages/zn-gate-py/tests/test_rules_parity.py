@@ -240,6 +240,16 @@ class TestPrefixedCredentialNames(unittest.TestCase):
             with self.subTest(text=text[:28]):
                 self.assertEqual(R.redact_secrets(text)[1], [])
 
+    def test_names_inside_references_are_not_assignments(self):
+        for text in ("POSTGRES_PASSWORD: ${DB_PASSWORD:-difyai123456}",
+                     "MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}",
+                     "SECRET_KEY: ${SECRET_KEY:-change-me-in-production}",
+                     "API_TOKEN: \"${API_TOKEN:?set API_TOKEN}\""):
+            with self.subTest(text=text[:30]):
+                self.assertEqual(R.redact_secrets(text)[1], [])
+        value = "Kp4r" * 4
+        self.assertNotIn(value, R.redact_secrets("DB_PASSWORD=" + value)[0])
+
     def test_trailing_separators_are_linear(self):
         for text in ("A_TOKEN=" + ";" * 200000, "API_KEY=" + "," * 200000, "A_TOKEN=a" + ";" * 200000):
             start = time.perf_counter()

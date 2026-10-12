@@ -5,12 +5,12 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-12.4
+ * RULES_VERSION: 2026-10-12.5
  */
 
 const { isPlaceholder, looksRandom, PLACEHOLDER_RE, PLACEHOLDER_WORDS } = require('./scrub/patterns');
 
-const RULES_VERSION = '2026-10-12.4';
+const RULES_VERSION = '2026-10-12.5';
 
 // "ignore" and "disregard" are ordinary words ("ignore the noise in the
 // logs", "ignore whitespace changes"). They only count as an override when
@@ -436,13 +436,13 @@ const SECRET_PATTERNS = [
   // allows a single start per token. Only used when the
   // text contains ".eyJ" (see redactSecrets).
   { id: 'secret:jwt_token', pattern: /(?<![A-Za-z0-9_-])(eyJ(?=([A-Za-z0-9_-]{10,512}))\2\.eyJ(?=([A-Za-z0-9_=-]{10,8192}))\3\.[A-Za-z0-9_.+/=-]{10,4096})(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))/g, replacement: '[REDACTED_JWT]', requires: '.eyJ' },
-  { id: 'secret:env_credential', pattern: /(?<![A-Za-z0-9_])((?:[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]_[Aa][Cc][Cc][Ee][Ss][Ss]_[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]_[Kk][Ee][Yy]|[Aa][Pp][Ii]_[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh]_[Tt][Oo][Kk][Ee][Nn]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee]_[Kk][Ee][Yy]|[Dd][Aa][Tt][Aa][Bb][Aa][Ss][Ee]_[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd])["']?\s*[:=]\s*['"]?)([^\s'"]{12,})(['"]?)/g, replacement: '$1[REDACTED_SECRET]$3', valueGroup: 2 },
+  { id: 'secret:env_credential', pattern: /(?<![A-Za-z0-9_$])(?<!\$\{)((?:[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]_[Aa][Cc][Cc][Ee][Ss][Ss]_[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]_[Kk][Ee][Yy]|[Aa][Pp][Ii]_[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh]_[Tt][Oo][Kk][Ee][Nn]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee]_[Kk][Ee][Yy]|[Dd][Aa][Tt][Aa][Bb][Aa][Ss][Ee]_[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd])["']?\s*[:=]\s*['"]?)([^\s'"]{12,})(['"]?)/g, replacement: '$1[REDACTED_SECRET]$3', valueGroup: 2 },
   // Environment-style names with a prefix (OPENAI_API_KEY=, STRIPE_SECRET_KEY=, DB_PASSWORD=,
   // "GITHUB_TOKEN": in JSON, `ENV X_TOKEN value` in a Dockerfile). Upper case only, so code
   // such as `token = response.json()` is left alone. Values that are references ($VAR,
   // ${VAR}, <placeholder>, %VAR%), an earlier [REDACTED_...] marker, code or placeholders
   // (see isNonSecretValue) are skipped.
-  { id: 'secret:prefixed_credential', pattern: /(?<![A-Za-z0-9_])((?:ENV[ \t]+(?:[A-Z0-9]+_)+(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD)[ \t]+|(?:[A-Z0-9]+_)+(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD)["']?[ \t]*[:=][ \t]*)['"]?)(?![$<%{\[])([^\s'"]{12,})(['"]?)/g, replacement: '$1[REDACTED_SECRET]$3', valueGroup: 2 },
+  { id: 'secret:prefixed_credential', pattern: /(?<![A-Za-z0-9_$])(?<!\$\{)((?:ENV[ \t]+(?:[A-Z0-9]+_)+(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD)[ \t]+|(?:[A-Z0-9]+_)+(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD)["']?[ \t]*[:=][ \t]*)['"]?)(?![$<%{\[])([^\s'"]{12,})(['"]?)/g, replacement: '$1[REDACTED_SECRET]$3', valueGroup: 2 },
 ];
 
 // Values of credential assignments that are not secrets. A value that looks

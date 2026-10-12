@@ -147,6 +147,11 @@
     { "prefix": "DB_PASSWORD=arn:aws:secretsmanager:us-east-1:000000000000:secret:prod/db", "repeat": "", "times": 0 },
     { "prefix": "API_KEY=\u212a-your-api-key-here", "repeat": "", "times": 0 },
     { "prefix": "API_KEY=", "repeat": ",", "times": 300 },
-    { "prefix": "A_TOKEN=a", "repeat": ";", "times": 300 }
+    { "prefix": "A_TOKEN=a", "repeat": ";", "times": 300 },
+    { "prefix": "POSTGRES_PASSWORD: ${DB_PASSWORD:-difyai123456 }", "repeat": "", "times": 0 },
+    { "prefix": "MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin }", "repeat": "", "times": 0 },
+    { "prefix": "SECRET_KEY: ${SECRET_KEY:-change-me-in-production }", "repeat": "", "times": 0 },
+    { "prefix": "echo $DB_PASSWORD:", "repeat": "x7", "times": 8 },
+    { "prefix": "DB_PASSWORD=", "repeat": "Kp4r", "times": 4 }
   ]
 }
