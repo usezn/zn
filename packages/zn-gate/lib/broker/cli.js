@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * `zn secret ...`, `zn env ...`, `zn audit` and `zn hooks ...`.
+ * `zn secret ...`, `zn env ...`, `zn audit log` and `zn hooks ...`.
  *
  * Every command that adds, changes, reveals or removes a value is for the
  * person at the keyboard: it needs an interactive terminal, refuses to run
@@ -442,7 +442,7 @@ async function hooks(args, io) {
 
 /* ------------------------------ entry ------------------------------ */
 
-const SECRET_USAGE = 'usage: zn secret set|list|rm|allow|approve|import|adopt ...';
+const SECRET_USAGE = 'usage: zn secret set|list|rm|allow|approve|import|adopt|log ...';
 
 async function dispatch(group, args, ioIn) {
   const io = makeIo(ioIn);
@@ -456,6 +456,7 @@ async function dispatch(group, args, ioIn) {
       if (sub === 'approve') return await secretApprove(rest, io);
       if (sub === 'import') return await secretImport(rest, io);
       if (sub === 'adopt') return await secretAdopt(rest, io);
+      if (sub === 'log') return await audit(rest, io);
       if (sub === 'get' || sub === 'reveal') {
         throw deps.znError('ZN_POLICY_DENIED', 'zn does not print secret values. Use the marker with zn run or the secrets MCP tools.');
       }

@@ -84,6 +84,11 @@ COMMANDS:
   init                Find and wrap MCP servers in known agent configs (Claude, Cursor, Codex, OpenCode...)
   shield, mcp-shield  Wrap and protect ANY external MCP server (uvx, npx, node, python)
   scan <path>         Recursively audit prompt templates, markdown, skills, and configs for injection traps
+  audit [path]        Review a repository's agent configs before you open it: hooks, MCP servers,
+                      endpoint overrides, permissions, instructions, planted executables
+                      [--format text|json|sarif] [--output FILE] [--fail-on high]
+                      [--agents claude,codex,cursor,opencode,amazonq,all] [--include-home]
+                      (in 1.6 a bare 'zn audit' still shows the secret-use log: use 'zn audit .')
   evidence            Query the local hash-chained audit log and run the UI dashboard
   logs                Tail or inspect security event logs
   mcp                 Run as standalone bidirectional MCP server for AI agents
@@ -104,7 +109,7 @@ SECRETS (values stay on this machine; agents only see __ZN_<NAME>__ markers):
   env shadow [FILE]   Move .env values into the vault and leave markers in the file
   run -- <command>    Run a command with markers replaced by values (allowed commands only)
                       and its output masked [--secrets A,B to set env vars]
-  audit               Show the local audit log of secret use
+  audit log           Show the local audit log of secret use [--since DATE]
   hooks install claude-code [--project]
                       Install the Claude Code hooks and the "secrets" MCP server
   secrets-mcp         Run the "secrets" MCP server (stdio)
@@ -150,6 +155,9 @@ EXAMPLES:
 
   # Audit prompt templates / agent skills for hidden injection traps
   npx -y zn-gate scan ./prompts
+
+  # Review the agent configs of a repository you just cloned
+  npx -y zn-gate audit ./some-repo
 
   # Wrap an individual MCP server on the fly
   npx -y zn-gate shield -- uvx mcp-server-fetch
@@ -349,7 +357,33 @@ Status       : ${totalFindings === 0 ? 'Clean workspace' : 'Review and neutraliz
 
 // Secrets broker and agent hooks. Dispatched before the global option parsing
 // so flags after `zn run --` belong to the child command, untouched.
-const BROKER_COMMANDS = new Set(['run', 'hook', 'secrets-mcp', 'secret', 'secrets', 'env', 'audit', 'hooks']);
+const BROKER_COMMANDS = new Set(['run', 'hook', 'secrets-mcp', 'secret', 'secrets', 'env', 'hooks']);
+
+// `zn audit log` (also `zn secret log`) is the secret-use log. The 1.5 forms
+// `zn audit` (no arguments) and `zn audit --since X` still show the log, with a
+// deprecation notice, during 1.6. Anything else (`zn audit .`, `zn audit
+// --format json`, ...) reviews the agent configs of a directory.
+function isSecretLogCall(rest) {
+  if (rest[0] === 'log') return true;
+  if (rest.length === 0) return true;
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === '--since' && rest[i + 1] !== undefined) { i++; continue; }
+    if (String(rest[i]).startsWith('--since=')) continue;
+    return false;
+  }
+  return true;
+}
+
+async function runAuditCommand(rest) {
+  if (isSecretLogCall(rest)) {
+    if (rest[0] !== 'log') {
+      process.stderr.write('zn audit: deprecated: use `zn audit log` for the secret-use log. In a later release a bare `zn audit` will review the agent configs of the current directory (as `zn audit .` does now).\n');
+    }
+    process.exitCode = await require('../lib/broker/cli').dispatch('audit', rest[0] === 'log' ? rest.slice(1) : rest);
+    return;
+  }
+  process.exitCode = await require('../lib/audit/cli').main(rest);
+}
 
 async function runBrokerCommand(command, rest) {
   if (command === 'run') {
@@ -369,6 +403,10 @@ async function runBrokerCommand(command, rest) {
 
 async function main() {
   const args = process.argv.slice(2);
+  if (args[0] === 'audit') {
+    await runAuditCommand(args.slice(1));
+    return;
+  }
   if (BROKER_COMMANDS.has(args[0]) && !(args.length === 2 && (args[1] === '-h' || args[1] === '--help'))) {
     await runBrokerCommand(args[0], args.slice(1));
     return;

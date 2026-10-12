@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased] (1.6)
+
+This section is for the release after 1.5.0. The section below it becomes 1.5.0 when that release is cut.
+
+### Added
+- `zn audit [path]` (also `zn-gate audit`) reviews the agent configuration a repository ships before you open it, without running anything: hooks and other commands that run automatically, project MCP servers, unpinned packages, model endpoint and proxy overrides, code-loading environment variables, credential helpers, broad permissions, secrets, dangerous instructions in `AGENTS.md`, `CLAUDE.md` and similar files, agent extensions, executables in the root that shadow common tools, and CI workflows that run an agent on untrusted input. It covers Claude Code, Codex, Cursor, OpenCode, Amazon Q, Copilot and Gemini CLI. Output as text, JSON or SARIF 2.1.0 (GitHub code scanning); `--fail-on` sets the exit code. Rules `ZNA001`-`ZNA020` and the public vulnerabilities behind them: [docs/audit.md](docs/audit.md).
+- `zn audit log` and `zn secret log` show the local audit log of secret use.
+
+### Deprecated
+- A bare `zn audit` (and `zn audit --since DATE`) still shows the secret-use log, with a notice on stderr. A later release will make a bare `zn audit` review the current directory; use `zn audit log` for the log and `zn audit .` for the review.
+
 ## [Unreleased]
 
 Beta of the secrets scrubber and broker: secret values stay out of what your
