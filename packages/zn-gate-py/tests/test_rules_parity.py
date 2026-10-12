@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -207,6 +208,43 @@ class TestPrefixedCredentialNames(unittest.TestCase):
                      "SERVICE_API_KEY=zn_live_your_key"):
             with self.subTest(text=text[:32]):
                 self.assertEqual(R.redact_secrets(text)[1], [])
+
+    def test_secrets_with_code_like_shapes_are_redacted(self):
+        cases = {
+            "django": "SECRET_KEY = '" + "k9(x#2_q" * 6 + "'",
+            "mailgun": "MAILGUN_API_KEY=key-" + "a1b2c3d4" * 4,
+            "sendgrid": "SENDGRID_API_KEY=SG.Ab3cD4eF5gH6iJ7kL8mN9." + "pQ1r" * 11,
+            "mapbox": "MAPBOX_SECRET_TOKEN=sk.eyJ1Ijoi" + "Zm9v" * 10 + ".QwErTy12345",
+            "app_password": "SMTP_PASSWORD=" + "wxyz-" * 3 + "abcd",
+            "brackets": "DB_PASSWORD=Tr0(b4)[x]{9}" + "Qz" * 2,
+            "dotted": "APP_SECRET_KEY=" + "a8f3k2" * 2 + ".b9x2q7m1z4",
+            "lower_dashes": "api_key: " + "q4w8e2-" * 3 + "r5t9",
+        }
+        for name, text in cases.items():
+            with self.subTest(case=name):
+                value = text.split("=", 1)[-1] if "=" in text else text.split(": ", 1)[1]
+                value = value.strip(" '")
+                redacted, found = R.redact_secrets(text)
+                self.assertNotIn(value, redacted)
+                self.assertTrue(found)
+
+    def test_paths_and_references_are_not_secrets(self):
+        for text in ("GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json",
+                     "APP_PRIVATE_KEY=./keys/private.pem", "APP_PRIVATE_KEY=../keys/private.pem",
+                     "GH_TOKEN=~/.config/gh/hosts.yml", "SSL_PRIVATE_KEY=C:\\certs\\server.key",
+                     "OPENAI_API_KEY=op://Private/OpenAI/credential",
+                     "DB_PASSWORD=sm://projects/demo/secrets/db/versions/latest",
+                     "DB_PASSWORD=vault://secret/data/app#password", "API_TOKEN=gcp:///projects/demo/secrets/x",
+                     "DB_PASSWORD=arn:aws:secretsmanager:us-east-1:000000000000:secret:prod/db",
+                     "API_KEY=\u212a-your-api-key-here"):
+            with self.subTest(text=text[:28]):
+                self.assertEqual(R.redact_secrets(text)[1], [])
+
+    def test_trailing_separators_are_linear(self):
+        for text in ("A_TOKEN=" + ";" * 200000, "API_KEY=" + "," * 200000, "A_TOKEN=a" + ";" * 200000):
+            start = time.perf_counter()
+            R.redact_secrets(text)
+            self.assertLess(time.perf_counter() - start, 5.0)
 
     def test_openrouter_langfuse_and_short_legacy_keys(self):
         for key in ("sk-or-v1-" + "a1b2" * 16, "sk-lf-" + "c3d4-" * 8 + "e5f6", "sk-" + "Ab3x" * 7):

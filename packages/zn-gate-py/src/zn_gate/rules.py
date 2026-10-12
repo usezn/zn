@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-12.3
+RULES_VERSION: 2026-10-12.4
 Zero external dependencies. Pure Python stdlib.
 """
 
@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import os
 import re
 import sys
@@ -15,7 +16,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-RULES_VERSION = "2026-10-12.3"
+RULES_VERSION = "2026-10-12.4"
 
 # Cyrillic homoglyphs mapping to Latin
 HOMOGLYPH_MAP = {
@@ -409,12 +410,12 @@ SECRET_PATTERNS: List[Tuple[str, re.Pattern, str]] = [
     ("secret:prefixed_credential", re.compile(r"""(?<![A-Za-z0-9_])((?:ENV[ \t]+(?:[A-Z0-9]+_)+(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD)[ \t]+|(?:[A-Z0-9]+_)+(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD)["']?[ \t]*[:=][ \t]*)['"]?)(?![$<%{\[])([^\s'"]{12,})(['"]?)"""), r'\1[REDACTED_SECRET]\3'),
 ]
 
-# Substrings a text must contain before the pattern is run at all.
-# Same as isPlaceholder in packages/zn-gate/lib/scrub/patterns.js.
-PLACEHOLDER_RE = re.compile(r"""^(?:x{3,}|\*{3,}|\.{3,}|-+|_+|<[^>]*>|\$\{?[^}]*\}?|\{\{?[^}]*\}?\}|%\(?[a-z_]*\)?s|:[a-z_]+|\[[^\]]*\])$""", re.IGNORECASE)
-PLACEHOLDER_WORDS = re.compile(r"""(?:^|[^a-z])(?:password|passwd|passw0rd|secret|changeme|change_me|example|placeholder|your[_-]?|redacted|dummy|sample|foobar|hunter2|xxxx|todo|insert|replace|mypass|pass(?:word)?123)(?:[^a-z]|$)""", re.IGNORECASE)
+# Same as isPlaceholder in packages/zn-gate/lib/scrub/patterns.js. re.ASCII keeps
+# case folding to ASCII letters, as in JavaScript (no Kelvin sign, long s or dotless i).
+PLACEHOLDER_RE = re.compile(r"""^(?:x{3,}|\*{3,}|\.{3,}|-+|_+|<[^>]*>|\$\{?[^}]*\}?|\{\{?[^}]*\}?\}|%\(?[a-z_]*\)?s|:[a-z_]+|\[[^\]]*\])$""", re.IGNORECASE | re.ASCII)
+PLACEHOLDER_WORDS = re.compile(r"""(?:^|[^a-z])(?:password|passwd|passw0rd|secret|changeme|change_me|example|placeholder|your[_-]?|redacted|dummy|sample|foobar|hunter2|xxxx|todo|insert|replace|mypass|pass(?:word)?123)(?:[^a-z]|$)""", re.IGNORECASE | re.ASCII)
 _REPEATED_CHAR_RE = re.compile(r'^(.)\1+$')
-_KEYBOARD_RUN_RE = re.compile(r'^(?:0123456789|1234567890|abcdef|qwerty)', re.IGNORECASE)
+_KEYBOARD_RUN_RE = re.compile(r'^(?:0123456789|1234567890|abcdef|qwerty)', re.IGNORECASE | re.ASCII)
 
 
 def is_placeholder(s: str) -> bool:
@@ -424,20 +425,61 @@ def is_placeholder(s: str) -> bool:
                 or _REPEATED_CHAR_RE.search(s) or _KEYBOARD_RUN_RE.search(s))
 
 
-# Values of credential assignments that are not secrets: code that reads the
-# value from somewhere else (process.env.X, settings.X, os.environ.get(...)),
-# constants named like the variable, vault markers (__ZN_..__) and placeholders.
-CREDENTIAL_CODE_VALUE_RE = re.compile(r"""^(?:[A-Za-z_$][A-Za-z0-9_$]*\.)+[A-Za-z_$][A-Za-z0-9_$]*$|^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$|^[a-z][a-z0-9]*(?:[_.-][a-z][a-z0-9]*)+$|[()\[\]{}]|^__ZN_[A-Z0-9_]+__$""")
+def _shannon(s: str) -> float:
+    """Same as shannon() in packages/zn-gate/lib/scrub/patterns.js (length in UTF-16 units)."""
+    if not s:
+        return 0.0
+    counts: Dict[str, int] = {}
+    for ch in s:
+        counts[ch] = counts.get(ch, 0) + 1
+    n = len(s.encode("utf-16-le")) // 2
+    h = 0.0
+    for c in counts.values():
+        p = c / n
+        h -= p * math.log2(p)
+    return h
+
+
+def _looks_random(s: str, classes: int, bits: float) -> bool:
+    """Same as looksRandom() in packages/zn-gate/lib/scrub/patterns.js."""
+    n = sum(1 for r in (r'[a-z]', r'[A-Z]', r'[0-9]', r'[^A-Za-z0-9]') if re.search(r, s))
+    return n >= classes and _shannon(s) >= bits
+
+
+# Values of credential assignments that are not secrets. A value that looks
+# machine-generated (three character classes, a digit and enough entropy) is
+# always treated as a secret, whatever its shape.
+# - References: paths and scheme:// or ARN references to a secret manager.
+# - Code: known roots that read the value from elsewhere (process.env.X,
+#   os.environ, getenv(...), settings.X, config.X), a call or index that starts
+#   with an identifier, constants named like a variable, and vault markers.
+# - Placeholders (is_placeholder).
+CREDENTIAL_REF_VALUE_RE = re.compile(r"""^(?:(?:~|\.{1,2})?\/|[A-Za-z]:[\\\/]|\\\\)[^+=]*$|^[A-Za-z][A-Za-z0-9+.-]*:\/\/|^arn:""")
+CREDENTIAL_CODE_VALUE_RE = re.compile(r"""^(?:process\.env\.|import\.meta\.env\.|os\.environ|os\.getenv\(|getenv\(|settings\.|config\.)|^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*[(\[][A-Za-z0-9_$.()\[\]]*$|^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$|^[a-z][a-z0-9]*(?:[_.][a-z][a-z0-9]*)+$|^__ZN_[A-Z0-9_]+__$""")
+# Longer values are always treated as secrets, and the checks below stay linear.
+MAX_FILTERED_VALUE = 512
+
+
+def _looks_machine_generated(v: str) -> bool:
+    return bool(re.search(r'[0-9]', v)) and _looks_random(v, 3, 3.0)
 
 
 def _is_non_secret_value(value: str) -> bool:
-    v = re.sub(r'[;,]+$', '', value)
-    return is_placeholder(v) or bool(CREDENTIAL_CODE_VALUE_RE.search(v))
+    if len(value.encode("utf-16-le")) // 2 > MAX_FILTERED_VALUE:
+        return False
+    v = value.rstrip(";,")
+    if CREDENTIAL_REF_VALUE_RE.search(v):
+        return True
+    random_looking = _looks_machine_generated(v)
+    if is_placeholder(v):
+        return not (random_looking and len(v.encode("utf-16-le")) // 2 >= 24)
+    return not random_looking and bool(CREDENTIAL_CODE_VALUE_RE.search(v))
 
 
 # Rules whose value (capture group) is checked with _is_non_secret_value.
 SECRET_VALUE_GROUPS: Dict[str, int] = {"secret:env_credential": 2, "secret:prefixed_credential": 2}
 
+# Substrings a text must contain before the pattern is run at all.
 SECRET_PATTERN_REQUIRES: Dict[str, str] = {
     "secret:jwt_token": ".eyJ",
 }

@@ -5,12 +5,12 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-12.3
+ * RULES_VERSION: 2026-10-12.4
  */
 
-const { isPlaceholder, PLACEHOLDER_RE, PLACEHOLDER_WORDS } = require('./scrub/patterns');
+const { isPlaceholder, looksRandom, PLACEHOLDER_RE, PLACEHOLDER_WORDS } = require('./scrub/patterns');
 
-const RULES_VERSION = '2026-10-12.3';
+const RULES_VERSION = '2026-10-12.4';
 
 // "ignore" and "disregard" are ordinary words ("ignore the noise in the
 // logs", "ignore whitespace changes"). They only count as an override when
@@ -445,14 +445,36 @@ const SECRET_PATTERNS = [
   { id: 'secret:prefixed_credential', pattern: /(?<![A-Za-z0-9_])((?:ENV[ \t]+(?:[A-Z0-9]+_)+(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD)[ \t]+|(?:[A-Z0-9]+_)+(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD)["']?[ \t]*[:=][ \t]*)['"]?)(?![$<%{\[])([^\s'"]{12,})(['"]?)/g, replacement: '$1[REDACTED_SECRET]$3', valueGroup: 2 },
 ];
 
-// Values of credential assignments that are not secrets: code that reads the
-// value from somewhere else (process.env.X, settings.X, os.environ.get(...)),
-// constants named like the variable, vault markers (__ZN_..__) and placeholders.
-const CREDENTIAL_CODE_VALUE_RE = /^(?:[A-Za-z_$][A-Za-z0-9_$]*\.)+[A-Za-z_$][A-Za-z0-9_$]*$|^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$|^[a-z][a-z0-9]*(?:[_.-][a-z][a-z0-9]*)+$|[()\[\]{}]|^__ZN_[A-Z0-9_]+__$/;
+// Values of credential assignments that are not secrets. A value that looks
+// machine-generated (three character classes, a digit and enough entropy) is
+// always treated as a secret, whatever its shape.
+// - References: paths and scheme:// or ARN references to a secret manager.
+// - Code: known roots that read the value from elsewhere (process.env.X,
+//   os.environ, getenv(...), settings.X, config.X), a call or index that starts
+//   with an identifier, constants named like a variable, and vault markers.
+// - Placeholders (the scrubber's isPlaceholder).
+const CREDENTIAL_REF_VALUE_RE = /^(?:(?:~|\.{1,2})?\/|[A-Za-z]:[\\\/]|\\\\)[^+=]*$|^[A-Za-z][A-Za-z0-9+.-]*:\/\/|^arn:/;
+const CREDENTIAL_CODE_VALUE_RE = /^(?:process\.env\.|import\.meta\.env\.|os\.environ|os\.getenv\(|getenv\(|settings\.|config\.)|^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*[(\[][A-Za-z0-9_$.()\[\]]*$|^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$|^[a-z][a-z0-9]*(?:[_.][a-z][a-z0-9]*)+$|^__ZN_[A-Z0-9_]+__$/;
+// Longer values are always treated as secrets, and the checks below stay linear.
+const MAX_FILTERED_VALUE = 512;
+
+function trimSeparators(value) {
+  let end = value.length;
+  while (end > 0 && (value[end - 1] === ';' || value[end - 1] === ',')) end--;
+  return value.slice(0, end);
+}
+
+function looksMachineGenerated(v) {
+  return /[0-9]/.test(v) && looksRandom(v, 3, 3.0);
+}
 
 function isNonSecretValue(value) {
-  const v = value.replace(/[;,]+$/, '');
-  return isPlaceholder(v) || CREDENTIAL_CODE_VALUE_RE.test(v);
+  if (value.length > MAX_FILTERED_VALUE) return false;
+  const v = trimSeparators(value);
+  if (CREDENTIAL_REF_VALUE_RE.test(v)) return true;
+  const random = looksMachineGenerated(v);
+  if (isPlaceholder(v)) return !(random && v.length >= 24);
+  return !random && CREDENTIAL_CODE_VALUE_RE.test(v);
 }
 
 function redactSecrets(text) {
@@ -613,7 +635,7 @@ module.exports = {
   HELPER_PATTERNS: { ZERO_WIDTH_RE, ANSI_ESCAPE_RE, B64_EXEC_RE, WHITESPACE_RUN_RE, OPEN_TAG_RE, HIDDEN_ATTR_RE, HIDDEN_PAYLOAD_RE, MD_IMAGE_RE, MD_URL_SCHEME_RE, MD_URL_SECRET_PARAM_RE,
     RU_FORGET_RE, RU_FORGET_OBJECT_RE, RU_IGNORE_RE, RU_IGNORE_OBJECT_RE, RU_PHRASE_RE,
     ZH_IGNORE_RE, ZH_IGNORE_OBJECT_RE, ZH_FORGET_RE, ZH_FORGET_OBJECT_RE, ZH_PHRASE_RE,
-    PLACEHOLDER_RE, PLACEHOLDER_WORDS, CREDENTIAL_CODE_VALUE_RE,
+    PLACEHOLDER_RE, PLACEHOLDER_WORDS, CREDENTIAL_CODE_VALUE_RE, CREDENTIAL_REF_VALUE_RE,
   },
   SECRET_PATTERNS,
   RULES_VERSION,

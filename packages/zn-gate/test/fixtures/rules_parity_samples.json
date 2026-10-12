@@ -129,6 +129,24 @@
     { "prefix": "API_TOKEN: Optional[str] = None", "repeat": "", "times": 0 },
     { "prefix": "AWS_TOKEN_HEADER = \"x-aws-ec2-metadata-token\"", "repeat": "", "times": 0 },
     { "prefix": "-----BEGIN PRIVATE KEY-----\nMIIE", "repeat": "Ab", "times": 30, "suffix": "\n-----END PRIVATE KEY-----" },
-    { "prefix": "-----BEGIN PRIVATE KEY-----\n-----BEGIN RSA PRIVATE KEY-----\nMII", "repeat": "Cd", "times": 30, "suffix": "\n-----END RSA PRIVATE KEY-----" }
+    { "prefix": "-----BEGIN PRIVATE KEY-----\n-----BEGIN RSA PRIVATE KEY-----\nMII", "repeat": "Cd", "times": 30, "suffix": "\n-----END RSA PRIVATE KEY-----" },
+    { "prefix": "SECRET_KEY = '", "repeat": "k9(x#2_q", "times": 6, "suffix": "'" },
+    { "prefix": "MAILGUN_API_KEY=key-", "repeat": "a1b2c3d4", "times": 4 },
+    { "prefix": "SENDGRID_API_KEY=SG.Ab3cD4eF5gH6iJ7kL8mN9.", "repeat": "pQ1r", "times": 11 },
+    { "prefix": "MAPBOX_SECRET_TOKEN=sk.eyJ1Ijoi", "repeat": "Zm9v", "times": 10, "suffix": ".QwErTy12345" },
+    { "prefix": "SMTP_PASSWORD=", "repeat": "wxyz-", "times": 3, "suffix": "abcd" },
+    { "prefix": "DB_PASSWORD=Tr0(b4)[x]{9 }", "repeat": "Qz", "times": 2 },
+    { "prefix": "APP_SECRET_KEY=", "repeat": "a8f3k2", "times": 2, "suffix": ".b9x2q7m1z4" },
+    { "prefix": "api_key: ", "repeat": "q4w8e2-", "times": 3, "suffix": "r5t9" },
+    { "prefix": "GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json", "repeat": "", "times": 0 },
+    { "prefix": "APP_PRIVATE_KEY=./keys/private.pem", "repeat": "", "times": 0 },
+    { "prefix": "GH_TOKEN=~/.config/gh/hosts.yml", "repeat": "", "times": 0 },
+    { "prefix": "SSL_PRIVATE_KEY=C:\\certs\\server.key", "repeat": "", "times": 0 },
+    { "prefix": "OPENAI_API_KEY=op://Private/OpenAI/credential", "repeat": "", "times": 0 },
+    { "prefix": "DB_PASSWORD=sm://projects/demo/secrets/db/versions/latest", "repeat": "", "times": 0 },
+    { "prefix": "DB_PASSWORD=arn:aws:secretsmanager:us-east-1:000000000000:secret:prod/db", "repeat": "", "times": 0 },
+    { "prefix": "API_KEY=\u212a-your-api-key-here", "repeat": "", "times": 0 },
+    { "prefix": "API_KEY=", "repeat": ",", "times": 300 },
+    { "prefix": "A_TOKEN=a", "repeat": ";", "times": 300 }
   ]
 }
