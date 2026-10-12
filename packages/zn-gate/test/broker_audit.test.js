@@ -16,7 +16,7 @@ function zn(home, args) {
 
 test('zn audit with no vault lists nothing and does not crash', (t) => {
   const home = tempDir(t, 'zn-audit-');
-  for (const args of [['audit'], ['audit', '--since', '1h']]) {
+  for (const args of [['audit'], ['audit', '--since', '1h'], ['audit', 'log'], ['secret', 'log']]) {
     const r = zn(home, args);
     assert.strictEqual(r.status, 0, r.stderr);
     assert.doesNotMatch(r.stderr + r.stdout, /argument must be|TypeError/);
@@ -76,6 +76,12 @@ test('zn audit checks the chain of an unlocked vault and exits 1 when it is brok
   r = zn(home, ['audit']);
   assert.strictEqual(r.status, 1, r.stdout + r.stderr);
   assert.ok(r.stdout.includes('chain: BROKEN: bad mac (record ' + (target + 1) + ')'), r.stdout);
+  // The same log under its newer names keeps the exit code.
+  for (const args of [['audit', 'log'], ['secret', 'log']]) {
+    const r2 = zn(home, args);
+    assert.strictEqual(r2.status, 1, args.join(' ') + ': ' + r2.stdout + r2.stderr);
+    assert.ok(r2.stdout.includes('chain: BROKEN: bad mac'), r2.stdout);
+  }
 
   fs.writeFileSync(file, lines.slice(0, -1).join('\n') + '\n');
   r = zn(home, ['audit']);

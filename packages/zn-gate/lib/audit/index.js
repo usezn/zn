@@ -179,22 +179,66 @@ const OUR_HOOKS = [
   new RegExp('^powershell\\.exe -NoProfile -NonInteractive -Command "& \'(' + SAFE_ABS + ')\' \'(' + SAFE_ABS + '/zn-gate/lib/hooks/runner\\.js)\' ' + HOOK_AGENTS + '"$'),
 ];
 
-function outsideRoot(ctx, p) {
-  // A Windows path read on another system cannot point into this checkout.
-  if (process.platform !== 'win32' && /^[A-Za-z]:\//.test(p)) return true;
-  const rel = path.relative(ctx.rec.root, path.resolve(p));
-  return rel === '' ? false : rel.startsWith('..') || path.isAbsolute(rel);
+function insideDir(dir, p) {
+  const rel = path.relative(dir, p);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
 
+function realRootOf(ctx) {
+  if (!ctx.rec.realRoot) {
+    try { ctx.rec.realRoot = fs.realpathSync(ctx.rec.root); } catch (_) { ctx.rec.realRoot = path.resolve(ctx.rec.root); }
+  }
+  return ctx.rec.realRoot;
+}
+
+/**
+ * Real path of `p` when it exists and lies outside the audited repository
+ * and the current directory, after resolving every symbolic link (an
+ * outside link or a /proc alias that points back into the checkout does not
+ * count as outside). Null otherwise, including paths of another system.
+ */
+function realOutside(ctx, p) {
+  if (process.platform !== 'win32' && /^[A-Za-z]:\//.test(p)) return null;
+  let real;
+  try { real = fs.realpathSync(p); } catch (_) { return null; }
+  if (insideDir(realRootOf(ctx), real)) return null;
+  let cwd = null;
+  try { cwd = fs.realpathSync(process.cwd()); } catch (_) { cwd = null; }
+  if (cwd && insideDir(cwd, real)) return null;
+  return real;
+}
+
+/** Whether `real` is the file `relFile` of an installed zn-gate package. */
+function znGateFile(real, relFile) {
+  const norm = real.split(path.sep).join('/');
+  if (!norm.endsWith('/' + relFile)) return false;
+  const pkgRoot = real.slice(0, real.length - relFile.length - 1);
+  const r = readBounded(path.join(pkgRoot, 'package.json'), 64 * 1024, true);
+  if (!r.text) return false;
+  try { return JSON.parse(r.text).name === 'zn-gate'; } catch (_) { return false; }
+}
+
+function nodeOutside(ctx, p) {
+  if (/^node(?:\.exe)?$/i.test(p)) return true; // resolved through PATH
+  const real = realOutside(ctx, p);
+  return Boolean(real) && /^node(?:\.exe)?$/i.test(path.basename(real));
+}
+
+/**
+ * Whether a hook command is exactly one that `zn hooks install` writes, with
+ * the interpreter and the runner resolved to a real zn-gate installation
+ * outside the repository. Such hooks are still reported, as low.
+ */
 function isOurHook(command, ctx) {
   if (typeof command !== 'string') return false;
   const c = command.trim();
   for (const re of OUR_HOOKS) {
     const m = re.exec(c);
     if (!m) continue;
-    // A runner inside the audited repository could be anything it ships.
-    if (m[2] && !outsideRoot(ctx, m[2])) return false;
-    return true;
+    if (!m[2]) return true; // `zn hook <agent>`: zn from PATH (a planted zn in the root is ZNA016)
+    if (!nodeOutside(ctx, m[1])) return false;
+    const runner = realOutside(ctx, m[2]);
+    return Boolean(runner) && znGateFile(runner, 'lib/hooks/runner.js');
   }
   return false;
 }
@@ -237,8 +281,12 @@ function checkAutoRun(ctx, command, line, what) {
 
 function checkHooks(ctx, tree, keyPath) {
   for (const h of hookCommands(tree)) {
-    if (isOurHook(h.command, ctx)) continue;
     const line = ctx.locate(keyPath.concat(h.event ? [h.event] : []), h.command);
+    if (isOurHook(h.command, ctx)) {
+      // Never hidden: the zn hook stays visible, at low severity.
+      if (!ctx.home) ctx.add('ZNA001', 'low', line, (h.event ? '"' + h.event + '" hook' : 'Hook') + ' runs the zn-gate hook installed by zn hooks install: ' + short(h.command, 200), { title: 'zn-gate hook' });
+      continue;
+    }
     checkAutoRun(ctx, h.command, line, (h.event ? '"' + h.event + '" hook' : 'Hook'));
   }
 }
@@ -250,6 +298,15 @@ function checkEnv(ctx, env, keyPath, opts) {
     const c = P.classifyEnv(k, v);
     if (!c) continue;
     const line = opts && opts.lineOf ? opts.lineOf(k) : ctx.locate(keyPath.concat([k]));
+    if (opts && opts.server) {
+      // Environment of one MCP server: code loading is as bad as anywhere;
+      // an endpoint or proxy redirects that server's own credentials.
+      const who = 'MCP server "' + opts.server + '": ';
+      if (c.kind === 'endpoint') ctx.add('ZNA007', capHome(ctx, c.loopback ? 'low' : 'medium'), line, who + k + ' points to ' + P.safeUrl(v) + '; the server sends its requests and credentials there.', { title: 'MCP server endpoint overridden by the project' });
+      else if (c.kind === 'proxy') ctx.add('ZNA007', capHome(ctx, c.loopback ? 'low' : 'medium'), line, who + k + ' routes the server\'s traffic through ' + (c.host || 'a proxy') + '.', { title: 'MCP server traffic routed through a proxy set by the project' });
+      else ctx.add('ZNA008', capHome(ctx, 'high'), line, who + k + ' is set for the server process' + (c.kind === 'confdir' ? ' and moves where it reads its configuration.' : ' and loads code or certificates into it.'));
+      continue;
+    }
     if (c.kind === 'endpoint') {
       const sev = capHome(ctx, c.loopback ? 'medium' : 'critical');
       ctx.add('ZNA007', sev, line, k + ' points to ' + P.safeUrl(v) + (c.loopback ? ' (a local address)' : '') + '; the agent sends its API key and prompts there.');
@@ -273,18 +330,20 @@ function endpointValue(ctx, key, value, line) {
 }
 
 // The exact "secrets" MCP server `zn hooks install` writes: `zn secrets-mcp`
-// or `<node> <abs>/zn-gate/bin/cli.js secrets-mcp`, with nothing else.
+// or `<node> <abs>/zn-gate/bin/cli.js secrets-mcp`, with nothing else, the
+// paths resolved to a real zn-gate installation outside the repository.
 function isOurMcp(argv, ctx) {
   const words = argv.map(String);
   if (words[words.length - 1] !== 'secrets-mcp') return false;
   if (words.length === 2) return /^zn(?:-gate)?(?:\.cmd|\.exe)?$/.test(words[0]);
   if (words.length !== 3) return false;
   const node = words[0].replace(/\\/g, '/');
-  const nodeOk = /^node(?:\.exe)?$/i.test(node) || (new RegExp('^' + SAFE_ABS + '/node(?:\\.exe)?$', 'i').test(node) && outsideRoot(ctx, node));
-  if (!nodeOk) return false;
+  if (!/^node(?:\.exe)?$/i.test(node) && !new RegExp('^' + SAFE_ABS + '/node(?:\\.exe)?$', 'i').test(node)) return false;
+  if (!nodeOutside(ctx, node)) return false;
   const cli = words[1].replace(/\\/g, '/');
   if (!new RegExp('^' + SAFE_ABS + '/zn-gate/bin/cli\\.js$').test(cli)) return false;
-  return outsideRoot(ctx, cli);
+  const real = realOutside(ctx, cli);
+  return Boolean(real) && znGateFile(real, 'bin/cli.js');
 }
 
 function mcpArgv(cfg) {
@@ -302,10 +361,15 @@ function checkMcpServers(ctx, servers, keyPath, opts) {
     const line = o.lineOf ? o.lineOf(name) : ctx.locate(keyPath.concat([name]));
     const own = (k) => Object.prototype.hasOwnProperty.call(cfg, k);
     if ((own('disabled') && cfg.disabled === true) || (own('enabled') && cfg.enabled === false)) continue;
+    // The environment of every server, zn's own included.
+    const env = cfg.env || cfg.environment;
+    if (env) checkEnv(ctx, env, keyPath.concat([name, cfg.env ? 'env' : 'environment']), { server: name, lineOf: o.envLineOf ? o.envLineOf(name) : undefined });
     const argv = mcpArgv(cfg);
     if (argv && argv.length) {
       const cmd = argv.join(' ');
-      if (!isOurMcp(argv, ctx)) {
+      if (isOurMcp(argv, ctx)) {
+        if (!ctx.home) ctx.add('ZNA003', 'low', line, 'MCP server "' + name + '" is the zn secrets server installed by zn hooks install: ' + short(cmd, 200), { title: 'zn-gate secrets MCP server' });
+      } else {
         checkDownloadRun(ctx, cmd, line, 'MCP server "' + name + '"');
         if (!ctx.home) {
           const sev = o.severity || 'medium';
@@ -404,6 +468,7 @@ function checkCodexToml(ctx, data, lines) {
       severity: 'high',
       note: '(Codex versions affected by CVE-2025-61260 start it without asking.)',
       lineOf: tomlLineOf(lines, ['mcp_servers']),
+      envLineOf: (name) => tomlLineOf(lines, ['mcp_servers', name, 'env']),
     });
   }
   if (Array.isArray(data.notify) && data.notify.length) {
@@ -550,7 +615,15 @@ const STRONG_IN_DOCS =/^(?:pi:(?:ignore_previous|disregard|system_tag|system_bra
 function checkInstructions(ctx) {
   const claudeExt = /(^|\/)\.claude\/(commands|agents|skills)\//.test(ctx.rec.rel);
   let inFront = ctx.lines[0] && ctx.lines[0].trim() === '---';
-  let inFence = false;
+  // Lines inside code fences that are closed again (an unclosed fence runs
+  // to the end of the file and counts as plain text).
+  const fenced = new Set();
+  for (let i = 0, open = -1; i < ctx.lines.length; i++) {
+    if (!/^\s*(?:```|~~~)/.test(ctx.lines[i])) continue;
+    if (open < 0) { open = i; continue; }
+    for (let k = open + 1; k < i; k++) fenced.add(k);
+    open = -1;
+  }
   ctx.lines.forEach((raw, i) => {
     const ln = i + 1;
     const line = raw.length > P.MAX_LINE ? raw.slice(0, P.MAX_LINE) : raw;
@@ -565,7 +638,6 @@ function checkInstructions(ctx) {
       }
     }
     const t = line.trim();
-    if (/^(?:```|~~~)/.test(t)) { inFence = !inFence; return; }
     if (t.length < 8) return;
     if (INVISIBLE.test(line)) {
       ctx.add('ZNA012', 'high', ln, 'The line contains invisible Unicode (tag or bidirectional control characters) that can hide text from reviewers.', { evidence: line.replace(INVISIBLE_ALL, '?') });
@@ -573,11 +645,14 @@ function checkInstructions(ctx) {
       let res = null;
       try { res = rules().evaluate(t); } catch (_) { res = null; }
       if (res && res.verdict === 'block' && !NOISY_IN_DOCS.test(String(res.rule))) {
-        // Strong patterns are high; weaker ones, and text quoted in a code
-        // block or a blockquote (often an example of an attack), one step lower.
-        let sev = STRONG_IN_DOCS.test(String(res.rule)) ? 'high' : 'medium';
-        const quoted = inFence || /^>/.test(t) || EXAMPLE_QUOTE.test(t);
-        if (quoted) sev = sev === 'high' ? 'medium' : 'low';
+        // Strong patterns are high, weaker ones medium. A strong pattern is
+        // lowered only when the line quotes it as an example ("e.g. '...'");
+        // a weak one also inside a properly closed code block. A blockquote
+        // or an unclosed fence never lowers anything.
+        const strong = STRONG_IN_DOCS.test(String(res.rule));
+        let sev = strong ? 'high' : 'medium';
+        const quoted = EXAMPLE_QUOTE.test(t) || (!strong && fenced.has(i));
+        if (quoted) sev = strong ? 'medium' : 'low';
         ctx.add('ZNA012', sev, ln, 'Rules engine: ' + (res.reason || res.rule) + (quoted ? ' (in quoted or code text)' : '') + '.');
       }
     }

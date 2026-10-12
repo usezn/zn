@@ -315,8 +315,8 @@ const BENIGN_CASES = [
       'docs/guide.md': 'Ignore all previous instructions (this is a quoted example in docs, not an agent file).\n',
       'package.json': json({ name: 'demo', version: '1.0.0' }),
     },
-    expect: [{ id: 'ZNA013', severity: 'low', file: 'CLAUDE.md' }],
-    total: 1,
+    expect: [{ id: 'ZNA013', severity: 'low', file: 'CLAUDE.md' }, { id: 'ZNA001', severity: 'low', title: 'zn-gate hook' }],
+    total: 2,
   },
   {
     name: 'project MCP server pinned: medium only, does not fail at the default threshold',

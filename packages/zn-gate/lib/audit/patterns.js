@@ -315,7 +315,7 @@ function weakening(text) {
 /* ------------------------- shadowed tools -------------------------- */
 
 const SHADOWED_TOOLS = new Set([
-  'git', 'node', 'npm', 'npx', 'pnpm', 'yarn', 'bun', 'deno', 'python', 'python3', 'py', 'pip', 'pip3', 'uv', 'uvx',
+  'zn', 'zn-gate', 'zn-mcp', 'git', 'node', 'npm', 'npx', 'pnpm', 'yarn', 'bun', 'deno', 'python', 'python3', 'py', 'pip', 'pip3', 'uv', 'uvx',
   'ruby', 'perl', 'php', 'java', 'go', 'cargo', 'rustc', 'dotnet', 'make', 'cmake', 'gcc', 'cc', 'clang',
   'bash', 'sh', 'zsh', 'pwsh', 'powershell', 'cmd', 'conhost', 'where', 'whoami', 'curl', 'wget', 'ssh', 'scp', 'gpg', 'tar',
   'docker', 'kubectl', 'gh', 'code', 'cursor', 'rg', 'grep', 'find', 'ls', 'cat', 'tsc', 'eslint', 'prettier', 'claude', 'codex', 'opencode',
