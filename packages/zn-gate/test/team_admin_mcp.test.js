@@ -78,7 +78,7 @@ async function withMock(t, o) {
 
 function envFor(t, url, tokenValue, extra) {
   const home = tempDir(t, 'zn-team-mcp-');
-  return Object.assign({ ZN_HOME: home, ZN_TEAM_API_URL: url, ZN_ORG_TOKEN: tokenValue }, extra || {});
+  return Object.assign({ ZN_HOME: home, ZN_TEAM_API_URL: url, ZN_TEAM_DEV: '1', ZN_ORG_TOKEN: tokenValue }, extra || {});
 }
 
 function assertNoSecrets(client, mock, extra) {
@@ -499,7 +499,7 @@ function stop(child) {
 test('(e2e) zn-gate mcp process: team tools over stdio, approval link, token never on stdout or stderr', async (t) => {
   const { mock, url } = await withMock(t);
   const home = tempDir(t, 'zn-team-e2e-');
-  const env = { ...process.env, HOME: home, USERPROFILE: home, ZN_HOME: path.join(home, '.zn'), ZN_TEAM_API_URL: url, ZN_ORG_TOKEN: mock.tokens.admin, ZN_TEAM_CONFIRM: 'dashboard', DEBUG: '1', ZN_VERBOSE: '1' };
+  const env = { ...process.env, HOME: home, USERPROFILE: home, ZN_HOME: path.join(home, '.zn'), ZN_TEAM_API_URL: url, ZN_TEAM_DEV: '1', ZN_ORG_TOKEN: mock.tokens.admin, ZN_TEAM_CONFIRM: 'dashboard', DEBUG: '1', ZN_VERBOSE: '1' };
   delete env.ZN_LOCAL_ONLY;
   const child = spawn(process.execPath, [CLI, 'mcp'], { env, stdio: ['pipe', 'pipe', 'pipe'] });
   let stdout = '';

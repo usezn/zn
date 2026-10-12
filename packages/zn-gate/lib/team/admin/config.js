@@ -13,8 +13,14 @@
  *      file: zn_status and team_whoami warn about it.
  *
  * ZN_LOCAL_ONLY=true turns the team admin tools off whatever is configured.
- * ZN_TEAM_API_URL overrides the API (https only; http://localhost and
- * http://127.0.0.1 are accepted for tests).
+ *
+ * Where the token is sent: only to https://api.usezn.com, and approval links
+ * only point to https://usezn.com. ZN_TEAM_API_URL / ZN_TEAM_DASHBOARD_URL
+ * can only name those hosts, plus http://localhost / 127.0.0.1 / [::1] when
+ * ZN_TEAM_DEV=1 (development and tests). A token stored by
+ * `zn team admin login` is only ever sent to the API recorded at login: the
+ * environment cannot redirect it (an agent able to edit an MCP configuration
+ * file could otherwise send the token to any host).
  */
 
 const fs = require('fs');
@@ -29,6 +35,9 @@ const META_FILE = 'team-admin.json';
 const TOKEN_FILE = 'team-admin.token';
 const DEFAULT_API = 'https://api.usezn.com';
 const DEFAULT_DASHBOARD = 'https://usezn.com';
+const ALLOWED_API = [DEFAULT_API];
+const ALLOWED_DASHBOARD = [DEFAULT_DASHBOARD];
+const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
 const ORG_RE = /^org_[A-Za-z0-9]{8,32}$/;
 
 function adminPaths(opts) {
@@ -45,26 +54,61 @@ function localOnly(opts) {
   return envOf(opts).ZN_LOCAL_ONLY === 'true';
 }
 
-/** Checks an API or dashboard base URL. Returns it without a trailing slash, or throws. */
-function checkBase(raw, what) {
-  let u;
-  try { u = new URL(String(raw)); } catch (_) { u = null; }
-  const local = u && u.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname);
-  if (!u || (u.protocol !== 'https:' && !local) || u.username || u.password || u.search || u.hash) {
-    const err = new Error(what + ' must be an https URL (http only for localhost)');
-    err.code = 'ZN_POLICY_DENIED';
-    throw err;
-  }
-  return u.origin + u.pathname.replace(/\/+$/, '');
+function devMode(opts) {
+  return envOf(opts).ZN_TEAM_DEV === '1';
 }
 
+function deny(message) {
+  const err = new Error(message);
+  err.code = 'ZN_POLICY_DENIED';
+  return err;
+}
+
+/**
+ * Checks an API or dashboard base URL against the allow-list. Returns its
+ * origin (no path, no trailing slash), or throws ZN_POLICY_DENIED.
+ *   allowed  origins accepted in production
+ *   dev      also accept http(s)://localhost, 127.0.0.1, [::1] (ZN_TEAM_DEV=1)
+ */
+function checkBase(raw, what, allowed, dev) {
+  let u;
+  try { u = new URL(String(raw)); } catch (_) { u = null; }
+  const list = allowed || ALLOWED_API;
+  const hint = what + ' must be ' + list.join(' or ') + ' (http://localhost only with ZN_TEAM_DEV=1)';
+  if (!u || u.username || u.password || u.search || u.hash || !/^\/*$/.test(u.pathname)) throw deny(hint);
+  const local = LOCAL_HOSTS.includes(u.hostname) && (u.protocol === 'http:' || u.protocol === 'https:');
+  if (list.includes(u.origin) || (local && dev)) return u.origin;
+  throw deny(hint);
+}
+
+/**
+ * The API base the token is sent to.
+ *   meta (token from `zn team admin login`): only meta.api_base, whatever the
+ *        environment or opts.apiUrl say.
+ *   otherwise: opts.apiUrl / ZN_TEAM_API_URL / the default, allow-listed.
+ */
 function apiBase(opts, meta) {
   const env = envOf(opts);
-  return checkBase((opts && opts.apiUrl) || env.ZN_TEAM_API_URL || (meta && meta.api_base) || DEFAULT_API, 'ZN_TEAM_API_URL');
+  const dev = devMode(opts);
+  if (meta) {
+    if (!meta.api_base) throw deny('the zn Team login has no API recorded; run `zn team admin login` again');
+    return checkBase(meta.api_base, 'the API recorded at login', ALLOWED_API, dev);
+  }
+  return checkBase((opts && opts.apiUrl) || env.ZN_TEAM_API_URL || DEFAULT_API, 'ZN_TEAM_API_URL', ALLOWED_API, dev);
 }
 
 function dashboardBase(opts) {
-  return checkBase(envOf(opts).ZN_TEAM_DASHBOARD_URL || DEFAULT_DASHBOARD, 'ZN_TEAM_DASHBOARD_URL');
+  return checkBase(envOf(opts).ZN_TEAM_DASHBOARD_URL || DEFAULT_DASHBOARD, 'ZN_TEAM_DASHBOARD_URL', ALLOWED_DASHBOARD, devMode(opts));
+}
+
+/** True when url is an https (or, in dev mode, local) link on the dashboard origin. */
+function isDashboardUrl(url, opts) {
+  let u;
+  try { u = new URL(String(url)); } catch (_) { return false; }
+  if (u.username || u.password) return false;
+  let base;
+  try { base = dashboardBase(opts); } catch (_) { return false; }
+  return u.origin === base && (u.protocol === 'https:' || devMode(opts));
 }
 
 /**
@@ -200,8 +244,11 @@ module.exports = {
   SERVICE,
   DEFAULT_API,
   adminPaths,
+  ALLOWED_API,
+  ALLOWED_DASHBOARD,
   apiBase,
   dashboardBase,
+  isDashboardUrl,
   checkBase,
   localOnly,
   readAdminMeta,

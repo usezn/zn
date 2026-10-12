@@ -175,7 +175,8 @@ function createTeamAdmin(opts = {}) {
   }
 
   function approveUrl(changeId, confirm) {
-    if (confirm && typeof confirm.approve_url === 'string' && /^https:\/\//.test(confirm.approve_url)) return confirm.approve_url;
+    // The server's link is used only when it points to the zn dashboard.
+    if (confirm && typeof confirm.approve_url === 'string' && config.isDashboardUrl(confirm.approve_url, cfgOpts)) return confirm.approve_url;
     return config.dashboardBase(cfgOpts) + '/team/approvals?change=' + encodeURIComponent(changeId);
   }
 

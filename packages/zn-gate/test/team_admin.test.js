@@ -243,10 +243,52 @@ test('config: bad env token and bad API URLs are refused without echoing the tok
     assert.equal(err.code, 'ZN_TEAM_TOKEN');
     assert.ok(!err.message.includes(bad.slice(19)));
   }
-  assert.throws(() => config.apiBase({ env: { ZN_TEAM_API_URL: 'http://api.usezn.com' } }), /https/);
-  assert.throws(() => config.apiBase({ env: { ZN_TEAM_API_URL: 'https://user:pw@api.usezn.com' } }), /https/);
-  assert.equal(config.apiBase({ env: { ZN_TEAM_API_URL: 'http://127.0.0.1:8080/' } }), 'http://127.0.0.1:8080');
+  assert.throws(() => config.apiBase({ env: { ZN_TEAM_API_URL: 'http://api.usezn.com' } }), /https:\/\/api\.usezn\.com/);
+  assert.throws(() => config.apiBase({ env: { ZN_TEAM_API_URL: 'https://user:pw@api.usezn.com' } }), /https:\/\/api\.usezn\.com/);
+  assert.equal(config.apiBase({ env: { ZN_TEAM_API_URL: 'http://127.0.0.1:8080/', ZN_TEAM_DEV: '1' } }), 'http://127.0.0.1:8080');
   assert.equal(config.apiBase({ env: {} }), 'https://api.usezn.com');
+  assert.equal(config.apiBase({ env: { ZN_TEAM_API_URL: 'https://api.usezn.com/' } }), 'https://api.usezn.com');
+});
+
+test('config: the token only goes to allow-listed hosts (H2)', (t) => {
+  // Any other https host is refused, whatever names it.
+  for (const url of ['https://evil.example', 'https://api.usezn.com.evil.example', 'https://evil.example/api.usezn.com', 'https://api.usezn.com:8443',
+    'https://API.usezn.com/v1', 'https://api.usezn.com?x=1', 'http://localhost:8080', 'http://127.0.0.1:9', 'http://[::1]:9', 'file:///etc/passwd', 'not a url']) {
+    assert.throws(() => config.apiBase({ env: { ZN_TEAM_API_URL: url } }), (e) => e.code === 'ZN_POLICY_DENIED' && /ZN_TEAM_DEV=1/.test(e.message), url);
+    assert.throws(() => config.apiBase({ env: {}, apiUrl: url }), (e) => e.code === 'ZN_POLICY_DENIED', 'login --api-url ' + url);
+  }
+  // Dev mode only adds local hosts.
+  assert.throws(() => config.apiBase({ env: { ZN_TEAM_API_URL: 'https://evil.example', ZN_TEAM_DEV: '1' } }), /ZN_TEAM_API_URL must be/);
+  assert.throws(() => config.apiBase({ env: { ZN_TEAM_API_URL: 'http://localhost:1', ZN_TEAM_DEV: 'true' } }), /ZN_TEAM_API_URL must be/, 'only ZN_TEAM_DEV=1');
+  assert.equal(config.apiBase({ env: { ZN_TEAM_API_URL: 'http://localhost:3000', ZN_TEAM_DEV: '1' } }), 'http://localhost:3000');
+
+  // Token from the login store: only the API recorded at login, the environment cannot redirect it.
+  const meta = { api_base: 'https://api.usezn.com' };
+  assert.equal(config.apiBase({ env: { ZN_TEAM_API_URL: 'https://evil.example' } }, meta), 'https://api.usezn.com');
+  assert.equal(config.apiBase({ env: { ZN_TEAM_API_URL: 'http://127.0.0.1:1', ZN_TEAM_DEV: '1' }, apiUrl: 'https://evil.example' }, meta), 'https://api.usezn.com');
+  assert.throws(() => config.apiBase({ env: {} }, { api_base: 'https://evil.example' }), /recorded at login must be/, 'a tampered metadata file is refused');
+  assert.throws(() => config.apiBase({ env: {} }, { api_base: 'http://127.0.0.1:1' }), /recorded at login must be/);
+  assert.equal(config.apiBase({ env: { ZN_TEAM_DEV: '1' } }, { api_base: 'http://127.0.0.1:1' }), 'http://127.0.0.1:1');
+  assert.throws(() => config.apiBase({ env: {} }, {}), /login again|admin login/);
+
+  // End to end through loadToken: the stored token's metadata wins over the environment.
+  const home = tempDir(t, 'zn-team-');
+  const kc = fakeKeychain();
+  config.saveToken(newToken(), { org_id: 'org_7Kq2xYAcme', api_base: 'https://api.usezn.com' }, { env: {}, home, keychain: kc });
+  const env = { ZN_TEAM_API_URL: 'https://evil.example' };
+  const loaded = config.loadToken({ env, home, keychain: kc });
+  assert.equal(loaded.source, 'keychain');
+  assert.equal(config.apiBase({ env, home }, loaded.meta), 'https://api.usezn.com');
+
+  // Dashboard links.
+  assert.equal(config.dashboardBase({ env: {} }), 'https://usezn.com');
+  assert.throws(() => config.dashboardBase({ env: { ZN_TEAM_DASHBOARD_URL: 'https://usezn.com.evil.example' } }), /ZN_TEAM_DASHBOARD_URL must be https:\/\/usezn\.com/);
+  assert.throws(() => config.dashboardBase({ env: { ZN_TEAM_DASHBOARD_URL: 'http://localhost:3000' } }), /ZN_TEAM_DEV=1/);
+  assert.equal(config.dashboardBase({ env: { ZN_TEAM_DASHBOARD_URL: 'http://localhost:3000', ZN_TEAM_DEV: '1' } }), 'http://localhost:3000');
+  assert.ok(config.isDashboardUrl('https://usezn.com/team/approvals?change=chg_x', { env: {} }));
+  for (const u of ['https://evil.example/team/approvals?change=chg_x', 'https://usezn.com.evil.example/team', 'http://usezn.com/team', 'https://user@usezn.com/team', 'javascript:alert(1)']) {
+    assert.equal(config.isDashboardUrl(u, { env: {} }), false, u);
+  }
 });
 
 /* ------------------------------ confirmation ------------------------------ */
