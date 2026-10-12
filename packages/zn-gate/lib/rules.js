@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-12.1
+ * RULES_VERSION: 2026-10-12.2
  */
 
-const RULES_VERSION = '2026-10-12.1';
+const RULES_VERSION = '2026-10-12.2';
 
 // "ignore" and "disregard" are ordinary words ("ignore the noise in the
 // logs", "ignore whitespace changes"). They only count as an override when
@@ -423,9 +423,9 @@ function evaluateUncached(input, options = {}) {
 const SECRET_PATTERNS = [
   { id: 'secret:private_key', pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, replacement: '[REDACTED_PRIVATE_KEY]' },
   { id: 'secret:anthropic_key', pattern: /(?<![A-Za-z0-9_])(sk-ant-[A-Za-z0-9_-]{30,})(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))/g, replacement: '[REDACTED_ANTHROPIC_KEY]' },
-  { id: 'secret:openai_key', pattern: /(?<![A-Za-z0-9_])(sk-(?!ant-)(?:proj-|svcacct-|none-)?[A-Za-z0-9_-]{28,})(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))/g, replacement: '[REDACTED_OPENAI_KEY]' },
+  { id: 'secret:openai_key', pattern: /(?<![A-Za-z0-9_])(sk-(?:(?:proj|svcacct|admin|[Nn]one)-[A-Za-z0-9_-]{28,}|[A-Za-z0-9]{32,}))(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))/g, replacement: '[REDACTED_OPENAI_KEY]' },
   { id: 'secret:aws_access_key', pattern: /(?<![A-Za-z0-9_])(AKIA[0-9A-Z]{16})(?![A-Za-z0-9_])/g, replacement: '[REDACTED_AWS_KEY]' },
-  { id: 'secret:aws_secret_key', pattern: /(aws_secret_access_key|aws_secret|aws_key)\s*[:=]\s*['"]?([A-Za-z0-9/+=]{40})['"]?/gi, replacement: "$1='[REDACTED_AWS_SECRET]'" },
+  { id: 'secret:aws_secret_key', pattern: /((?:[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]_[Aa][Cc][Cc][Ee][Ss][Ss]_[Kk][Ee][Yy]|[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]|[Aa][Ww][Ss]_[Kk][Ee][Yy])\s*[:=]\s*['"]?)([A-Za-z0-9/+=]{40})(['"]?)/g, replacement: '$1[REDACTED_AWS_SECRET]$3' },
   { id: 'secret:github_token', pattern: /(?<![A-Za-z0-9_])((?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,40}|github_pat_[A-Za-z0-9_]{82})(?![A-Za-z0-9_])/g, replacement: '[REDACTED_GITHUB_TOKEN]' },
   { id: 'secret:db_url_password', pattern: /((?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp):\/\/[^:\s\/]+:)([^@\s\/]+)(@)/gi, replacement: '$1[REDACTED_DB_PASSWORD]$3' },
   // The lookahead + backreference pairs act as atomic groups, so a long run of
@@ -433,7 +433,12 @@ const SECRET_PATTERNS = [
   // allows a single start per token. Only used when the
   // text contains ".eyJ" (see redactSecrets).
   { id: 'secret:jwt_token', pattern: /(?<![A-Za-z0-9_-])(eyJ(?=([A-Za-z0-9_-]{10,512}))\2\.eyJ(?=([A-Za-z0-9_=-]{10,8192}))\3\.[A-Za-z0-9_.+/=-]{10,4096})(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))/g, replacement: '[REDACTED_JWT]', requires: '.eyJ' },
-  { id: 'secret:env_credential', pattern: /(?<![A-Za-z0-9_])((?:AWS_SECRET_ACCESS_KEY|SECRET_KEY|API_KEY|AUTH_TOKEN|PRIVATE_KEY|DATABASE_PASSWORD)\s*[:=]\s*['"]?)([^\s'"]{12,})(['"]?)/gi, replacement: '$1[REDACTED_SECRET]$3' },
+  { id: 'secret:env_credential', pattern: /(?<![A-Za-z0-9_])((?:[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]_[Aa][Cc][Cc][Ee][Ss][Ss]_[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]_[Kk][Ee][Yy]|[Aa][Pp][Ii]_[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh]_[Tt][Oo][Kk][Ee][Nn]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee]_[Kk][Ee][Yy]|[Dd][Aa][Tt][Aa][Bb][Aa][Ss][Ee]_[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd])\s*[:=]\s*['"]?)([^\s'"]{12,})(['"]?)/g, replacement: '$1[REDACTED_SECRET]$3' },
+  // Environment-style names with a prefix (OPENAI_API_KEY=, STRIPE_SECRET_KEY=, DB_PASSWORD=).
+  // Upper case only, so code such as `token = response.json()` is left alone;
+  // values that are references ($VAR, ${VAR}, <placeholder>, %VAR%) or an earlier
+  // [REDACTED_...] marker are skipped.
+  { id: 'secret:prefixed_credential', pattern: /(?<![A-Za-z0-9_])((?:[A-Z0-9]+_)+(?:API_KEY|SECRET_ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|SECRET|TOKEN|PASSWORD)\s*[:=]\s*['"]?)(?![$<%{\[])([^\s'"]{12,})(['"]?)/g, replacement: '$1[REDACTED_SECRET]$3' },
 ];
 
 function redactSecrets(text) {

@@ -91,6 +91,18 @@
     { "prefix": "xAKIA", "repeat": "Z", "times": 16 },
     { "prefix": "AKIA", "repeat": "Z", "times": 16, "suffix": "_x" },
     { "prefix": "MY_API_KEY=", "repeat": "d", "times": 16 },
-    { "prefix": "token sk-ant-", "repeat": "b", "times": 32, "suffix": "--." }
+    { "prefix": "token sk-ant-", "repeat": "b", "times": 32, "suffix": "--." },
+    { "prefix": "OPENAI_API_KEY=", "repeat": "q", "times": 24 },
+    { "prefix": "export STRIPE_SECRET_KEY=\"", "repeat": "r", "times": 24, "suffix": "\"" },
+    { "prefix": "GITHUB_AUTH_TOKEN: ", "repeat": "s", "times": 24 },
+    { "prefix": "PROD_AWS_SECRET_ACCESS_KEY=", "repeat": "T", "times": 40 },
+    { "prefix": "Zaws_secret=", "repeat": "u", "times": 40 },
+    { "prefix": "aws_key='", "repeat": "w", "times": 40, "suffix": "'" },
+    { "prefix": "SERVICE_PASSWORD=${ ", "repeat": "x", "times": 20, "suffix": " }" },
+    { "prefix": "\u212aAPI_KEY=", "repeat": "y", "times": 16 },
+    { "prefix": "\u017fECRET_KEY=", "repeat": "y", "times": 16 },
+    { "prefix": "/gda\u0144sk-to-warsaw-", "repeat": "train-", "times": 6 },
+    { "prefix": "sk-", "repeat": "Ab3", "times": 16 },
+    { "prefix": "sk-proj-", "repeat": "a_b-", "times": 10 }
   ]
 }
