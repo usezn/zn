@@ -51,9 +51,12 @@ const url = require('url');
 const vm = require('vm');
 
 const LOCK_FILE = path.join(__dirname, 'zn-gate.lock.json');
-// vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER: Node.js 20.12 / 21.7 and later.
+// vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER: Node.js 20.12 / 21.7 and later,
+// marked experimental in Node's documentation. Without it the launcher
+// refuses to run (hooks exit 2, the MCP server does not start) rather than
+// load zn-gate another way. CI tests the versions in .github/workflows/plugins.yml.
 const NODE_OK = !!(vm.constants && vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER);
-const NODE_HINT = 'the zn-gate plugin needs Node.js 20.12 or later (this is ' + process.version + ').';
+const NODE_HINT = 'the zn-gate plugin needs Node.js 20.12 or later with vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER (this is ' + process.version + ').';
 const SUPPORTED_AGENTS = new Set(['claude-code', 'codex', 'cursor']);
 
 // zn-gate starts child processes with this process's environment; a preload
@@ -346,12 +349,33 @@ function failClosedOnCrash(agent) {
   process.on('unhandledRejection', onError);
 }
 
+/*
+ * Agents treat exit codes other than 0 and 2 as non-blocking errors and let
+ * the call through. Whatever code zn-gate ends with (process.exit(1),
+ * process.exitCode = 1), the hook exits with 0 or 2.
+ */
+function normalizeExitCode(agent) {
+  process.on('exit', (code) => {
+    if (code === 0 || code === 2) return;
+    if (whenUnavailableAllows()) return;
+    const msg = 'zn plugin: zn-gate ended with exit code ' + code + ', so this call is refused.';
+    try {
+      fs.writeSync(2, msg + '\n');
+      if (agent === 'cursor' && !refused) {
+        fs.writeSync(1, JSON.stringify({ permission: 'deny', continue: false, user_message: msg, agent_message: msg }));
+      }
+    } catch (_) { /* the exit code below is what counts */ }
+    process.exitCode = 2;
+  });
+}
+
 function runHook(agent) {
   if (!SUPPORTED_AGENTS.has(agent)) {
     process.stderr.write('zn plugin: unknown agent "' + agent + '"\n');
     process.exitCode = 1;
     return;
   }
+  normalizeExitCode(agent);
   failClosedOnCrash(agent);
   try {
     const lock = loadLock();

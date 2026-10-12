@@ -212,6 +212,22 @@ try {
     installPackage();
   });
 
+  test('an exit code other than 0 or 2 from zn-gate becomes 2', () => {
+    for (const body of ['process.exit(1);', 'process.exitCode = 1;', 'process.exit(3);']) {
+      write(path.join(pkgDir, 'lib', 'hooks', 'runner.js'), 'exports.main = async () => { ' + body + ' };\n');
+      setLock({ package: 'zn-gate', version: '9.9.9', files: { ...files, 'lib/hooks/runner.js': sha(path.join(pkgDir, 'lib', 'hooks', 'runner.js')) } });
+      refused(run(['hook', 'claude-code'], '{}'), /ended with exit code/);
+      const c = run(['hook', 'cursor'], '{}');
+      refused(c);
+      assert.strictEqual(JSON.parse(c.stdout).permission, 'deny');
+    }
+    setConfig({ hooks: { whenUnavailable: 'allow' } });
+    assert.strictEqual(run(['hook', 'claude-code'], '{}').status, 3);
+    setConfig({});
+    setLock({ package: 'zn-gate', version: '9.9.9', files });
+    installPackage();
+  });
+
   test('NODE_OPTIONS and NODE_PATH are not passed on to what zn-gate starts', () => {
     const extra = { 'lib/hooks/runner.js': "exports.main = async () => process.stdout.write(JSON.stringify([process.env.NODE_OPTIONS || null, process.env.NODE_PATH || null]));\n" };
     write(path.join(pkgDir, 'lib', 'hooks', 'runner.js'), extra['lib/hooks/runner.js']);

@@ -63,6 +63,14 @@ and what each agent allows in [docs/compat.md](https://github.com/usezn/zn/blob/
 The plugin reduces what a prompt-injected agent can do through its own tools.
 It is not a sandbox:
 
+- **Each hook call costs more.** The full check runs on every call. In CI
+  (`plugins/tools/bench-launch.js`, 478 files, 5.6 MiB) it added a median of
+  15 to 27 ms per hook call on Linux and macOS and 51 to 90 ms on Windows, on
+  top of the 42 to 92 ms that zn-gate's hook takes without the plugin.
+- **Node.js API.** The launcher loads ES modules through
+  `vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER`, which Node's documentation
+  marks as experimental. If a Node.js version lacks it or changes it, the
+  launcher refuses to run (hooks exit 2, the MCP server does not start).
 - **Timeouts pass in Claude Code and Codex.** A hook that does not answer in
   time (15 s in Claude Code, 30 s in Codex) is treated as a non-blocking
   error, and the call goes ahead. The Cursor hooks are marked `failClosed`, so
