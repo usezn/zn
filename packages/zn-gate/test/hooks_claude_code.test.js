@@ -250,6 +250,8 @@ test('every error fails closed, a missing engine too unless the user allows it',
     assert.ok(!JSON.stringify(def.output).includes(AWS));
     assert.match(def.output.hookSpecificOutput.updatedToolOutput.stdout, /output withheld/);
     assert.match(def.output.systemMessage, /Reinstall zn-gate/);
+    assert.ok(def.output.systemMessage.includes('npm install -g zn-gate@' + require('../package.json').version),
+      def.output.systemMessage);
     const defPre = await runner.handle(adapter, preBash('node a.js __ZN_AWS_KEY_1__', '/'), { engine: absent, vault: createFakeVault(), home, znRunPrefix: PREFIX });
     assert.equal(defPre.output.hookSpecificOutput.permissionDecision, 'deny');
     fs.mkdirSync(path.join(home, '.zn'), { recursive: true });

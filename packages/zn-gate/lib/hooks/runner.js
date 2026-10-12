@@ -71,8 +71,11 @@ function failModeOf(opts) {
   return String(hooks.failMode || '').toLowerCase() === 'open' ? 'open' : 'closed';
 }
 
+// Reinstall the running version: `npm install -g zn-gate` alone could install an
+// older release without hooks.
+const { version: ZN_VERSION } = require('../../package.json');
 const REINSTALL = 'The zn scrubber engine is missing from this installation (lib/scrub/engine.js), so zn cannot check this. ' +
-  'Reinstall zn-gate (from the repository until the beta is published) and run `zn hooks install` again. To let events pass unchecked while it is missing, ' +
+  'Reinstall zn-gate (`npm install -g zn-gate@' + ZN_VERSION + '`) and run `zn hooks install` again. To let events pass unchecked while it is missing, ' +
   'set {"hooks": {"whenUnavailable": "allow"}} in ~/.zn/config.json.';
 
 /** Map every string leaf of a JSON value through an async function, keeping the shape. */

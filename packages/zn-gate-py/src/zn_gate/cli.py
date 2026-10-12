@@ -18,6 +18,43 @@ from .rules import RULES_VERSION, evaluate, redact_secrets
 from .client import analyze, is_cloud_enabled, resolve_endpoint
 from .evidence import log_evidence, verify_evidence_ledger, get_evidence_stats, export_evidence_ledger, EVIDENCE_FILE
 
+SHIELD = "\U0001f6e1\ufe0f"
+ALERT = "\U0001f6a8"
+CHECK = "\u2705"
+LOCK = "\U0001f512"
+
+# Plain markers used when the console cannot encode the symbols above, for
+# example a Windows console with a legacy code page such as cp1252.
+_ASCII_MARKERS = {SHIELD: "[+]", ALERT: "[!]", CHECK: "[ok]", LOCK: "[ok]"}
+
+
+def _configure_output_streams() -> None:
+    """Never crash on output encoding.
+
+    Characters the console cannot encode (emoji, or non-ASCII text quoted from
+    a scanned file) are replaced instead of raising UnicodeEncodeError. The
+    stream encoding is kept, so UTF-8 terminals print exactly the same output.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None or getattr(stream, "errors", None) != "strict":
+            continue
+        try:
+            reconfigure(errors="replace")
+        except Exception:
+            pass
+
+
+def _icon(symbol: str, stream: Any = None) -> str:
+    """Return `symbol` if the stream can encode it, else a plain ASCII marker."""
+    stream = stream if stream is not None else sys.stdout
+    encoding = getattr(stream, "encoding", None) or "utf-8"
+    try:
+        symbol.encode(encoding)
+        return symbol
+    except (UnicodeError, LookupError):
+        return _ASCII_MARKERS.get(symbol, "")
+
 
 def cmd_test(args: argparse.Namespace) -> int:
     text = args.text
@@ -37,7 +74,7 @@ def cmd_test(args: argparse.Namespace) -> int:
         # The icon follows the injection verdict only. A secret found by the
         # DLP filter is reported on its own line and does not turn an ALLOW
         # into a BLOCK.
-        status_icon = "🛡️ ALLOW" if assessment.allowed else "🚨 BLOCK"
+        status_icon = f"{_icon(SHIELD)} ALLOW" if assessment.allowed else f"{_icon(ALERT)} BLOCK"
         print(f"\n{status_icon} | Verdict: {assessment.verdict.upper()} (latency: {latency_us:.1f}µs)")
         print(f"Rule:       {assessment.rule}")
         if assessment.reason:
@@ -162,11 +199,11 @@ def cmd_scan(args: argparse.Namespace) -> int:
             "threats": all_violations
         }, indent=2))
     else:
-        print(f"\n🛡️ zn-gate Security Scanner — Scanned {len(files_to_scan)} files")
+        print(f"\n{_icon(SHIELD)} zn-gate Security Scanner — Scanned {len(files_to_scan)} files")
         if not all_violations:
-            print("✅ All scanned prompts, tool definitions, and files are clean!\n")
+            print(f"{_icon(CHECK)} All scanned prompts, tool definitions, and files are clean!\n")
             return 0
-        print(f"🚨 Found {len(all_violations)} threat vectors:\n")
+        print(f"{_icon(ALERT)} Found {len(all_violations)} threat vectors:\n")
         for v in all_violations:
             print(f"  {v['file']}:{v['line']} [{v['rule']}] {v['reason']}")
             print(f"    Snippet: {v['content']}\n")
@@ -180,10 +217,10 @@ def cmd_evidence(args: argparse.Namespace) -> int:
     if getattr(args, "verify", False):
         res = verify_evidence_ledger()
         if res.get("valid"):
-            print(f"\n🔒 Cryptographic Evidence Ledger: ALL {res.get('total', 0)} RECORDS VERIFIED (IMMUTABLE)\n")
+            print(f"\n{_icon(LOCK)} Cryptographic Evidence Ledger: ALL {res.get('total', 0)} RECORDS VERIFIED (IMMUTABLE)\n")
             return 0
         else:
-            print(f"\n🚨 Tamper detected: {res.get('error')}\n", file=sys.stderr)
+            print(f"\n{_icon(ALERT, sys.stderr)} Tamper detected: {res.get('error')}\n", file=sys.stderr)
             return 1
 
     if getattr(args, "export", False):
@@ -198,7 +235,7 @@ def cmd_evidence(args: argparse.Namespace) -> int:
         return 0
 
     stats = get_evidence_stats()
-    print(f"\n🛡️ zn Evidence Ledger Stats ({EVIDENCE_FILE})")
+    print(f"\n{_icon(SHIELD)} zn Evidence Ledger Stats ({EVIDENCE_FILE})")
     print(f"  Total Events   : {stats.get('total', 0)}")
     print(f"  Blocked Drops  : {stats.get('blocks', 0)}")
     print(f"  Allowed Passes : {stats.get('allows', 0)}")
@@ -209,7 +246,7 @@ def cmd_evidence(args: argparse.Namespace) -> int:
 def cmd_status(args: argparse.Namespace) -> int:
     has_key = bool(os.environ.get("ZN_API_KEY"))
     cloud = is_cloud_enabled()
-    print(f"\n🛡️ zn-gate Status (Python):")
+    print(f"\n{_icon(SHIELD)} zn-gate Status (Python):")
     print(f"  Package Version : {__version__}")
     print(f"  Rules Version   : {RULES_VERSION}")
     print(f"  Python Runtime  : {sys.version.split()[0]}")
@@ -221,6 +258,7 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
+    _configure_output_streams()
     parser = argparse.ArgumentParser(
         prog="zn-gate",
         description="zn deterministic guardrail engine for AI agents and LLM tool calling."

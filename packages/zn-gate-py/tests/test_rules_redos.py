@@ -43,6 +43,15 @@ WORST_CASES = [
     fill('sk-'),
     fill('sk-proj-'),
     fill('sk-or-v1-'),
+    fill('sk-helicone-'),
+    fill('sk-eu-cp-gov-rl-'),
+    fill('sk-a1b2c3d-'),
+    fill('sk-helicone-a1b2c3d-'),
+    fill('sk-sp-'),
+    fill('sk-sp-a-'),
+    fill('sk-' + 'T3BlbkFJ'),
+    fill('sk-x-' + 'T3BlbkFJ-'),
+    fill('sk--'),
     fill('-----BEGIN PRIVATE KEY-----'),
     fill('-----BEGIN RSA PRIVATE KEY-----\n'),
     fill('-----BEGIN PRIVATE KEY-----\nAAAA'),
@@ -109,6 +118,15 @@ class TestLinearTime(unittest.TestCase):
         for s in WORST_CASES:
             ms = time_ms(redact_secrets, s)
             self.assertLess(ms, PER_RULE_MS * len(R.SECRET_PATTERNS), f"redact_secrets took {ms:.1f} ms on {s[:12]!r}...")
+
+    def test_secret_redaction_on_256k_worst_cases(self):
+        big = 256 * 1024
+        marker = 'T3Blbk' + 'FJ'
+        inputs = [fill('sk-', big), 'sk-' * 66 + marker + 'a' + '-' * (big - 207), fill('sk-helicone-', big),
+                  fill('sk-a1b2c3d-', big), fill('sk-' + marker, big)]
+        for s in inputs:
+            ms = time_ms(redact_secrets, s)
+            self.assertLess(ms, EVALUATE_256K_MS, f"redact_secrets took {ms:.1f} ms on {s[:12]!r}... x 256 KB")
 
     def test_evaluate_256k_worst_cases(self):
         for unit in ['A', 'A\n', '\n', '\r\n', ' ', '/*', '忽略', 'забудь ', '<a x=', '<a', '![](http://a?key=', '-eyJ']:

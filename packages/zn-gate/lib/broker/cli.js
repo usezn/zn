@@ -411,11 +411,29 @@ async function audit(args, io) {
   for (const r of records || []) {
     out(io, [r.ts, r.decision, r.secret, r.mode, r.agent, r.tool, r.argv0 || r.host || '', r.reason || ''].map((x) => x == null ? '-' : String(x)).join('  '));
   }
-  if (typeof mod.verify === 'function') {
-    const v = await mod.verify();
-    out(io, 'chain: ' + (v && v.valid ? 'valid' : 'BROKEN' + (v && v.error ? ' (' + v.error + ')' : '')));
+  const chain = await auditChain();
+  out(io, chain.line);
+  // Same exit code as `zn vault verify` for a broken chain; "not checked" is not an error.
+  return chain.broken ? 1 : 0;
+}
+
+/** The chain is checked with the key held by the unlocked vault (same check as `zn vault verify`). */
+async function auditChain() {
+  let client;
+  try {
+    client = require('../vault/client').createClient({});
+    if (!(await client.isUnlocked())) {
+      return { broken: false, line: 'chain: not checked: the vault is locked or unreachable (run `zn unlock`, then `zn vault verify`)' };
+    }
+    const v = await client.auditVerify();
+    if (v && v.ok) return { broken: false, line: 'chain: valid, ' + v.records + ' records' };
+    const where = v && v.line ? ' (record ' + v.line + ')' : '';
+    return { broken: true, line: 'chain: BROKEN: ' + ((v && v.error) || 'verification failed') + where };
+  } catch (err) {
+    return { broken: false, line: 'chain: not checked: ' + (err && err.message ? err.message : String(err)) };
+  } finally {
+    if (client) client.close();
   }
-  return 0;
 }
 
 /* ------------------------------ hooks ------------------------------ */
