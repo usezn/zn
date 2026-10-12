@@ -1,0 +1,10 @@
+{
+  "name": "zn-gate-claude-plugin",
+  "version": "1.5.0",
+  "private": true,
+  "description": "Runtime dependency of the zn-gate plugin for Claude Code.",
+  "license": "MIT",
+  "dependencies": {
+    "zn-gate": "1.5.0"
+  }
+}

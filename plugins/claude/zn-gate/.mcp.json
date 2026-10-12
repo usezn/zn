@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "zn-gate": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/node_modules/zn-gate/bin/cli.js", "mcp"],
+      "env": { "ZN_LOCAL_ONLY": "true" }
+    },
+    "secrets": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/node_modules/zn-gate/bin/cli.js", "secrets-mcp"],
+      "env": { "ZN_LOCAL_ONLY": "true" }
+    }
+  }
+}
