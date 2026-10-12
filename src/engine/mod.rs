@@ -40,18 +40,22 @@ pub fn valid_policy_name(name: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
 }
 
+fn invalid_policy_name_error() -> anyhow::Error {
+    anyhow!(
+        "Invalid policy name: use 1-{} letters, digits, '.', '-' or '_', starting with a letter or digit",
+        MAX_POLICY_NAME_LEN
+    )
+}
+
 /// Path of the `<name>.wasm` file of a policy inside `dir`, for the
-/// management API's upload and delete endpoints.
+/// management API's upload endpoint.
 ///
 /// Fails when `name` is not a valid policy name, or when the resolved path
 /// (following a symlink already at that place) is not directly inside `dir`.
 /// Creates `dir` if it does not exist.
 pub fn policy_file_path(dir: impl AsRef<Path>, name: &str) -> Result<PathBuf> {
     if !valid_policy_name(name) {
-        return Err(anyhow!(
-            "Invalid policy name: use 1-{} letters, digits, '.', '-' or '_', starting with a letter or digit",
-            MAX_POLICY_NAME_LEN
-        ));
+        return Err(invalid_policy_name_error());
     }
     let dir = dir.as_ref();
     std::fs::create_dir_all(dir)
@@ -69,6 +73,58 @@ pub fn policy_file_path(dir: impl AsRef<Path>, name: &str) -> Result<PathBuf> {
         return Err(anyhow!("Policy file must be inside the policy directory"));
     }
     Ok(path)
+}
+
+/// Deletes the `<name>.wasm` file of a policy, for the management API's
+/// delete endpoint. Returns `Ok(false)` when there is no such file.
+///
+/// The file is looked up by listing `dir` and comparing each entry's file
+/// name with `<name>.wasm`; the path that is removed is the one from the
+/// listing, never one built from `name`. Fails when `name` is not a valid
+/// policy name, or when the entry is a symlink or not a regular file.
+pub fn remove_policy_file(dir: impl AsRef<Path>, name: &str) -> Result<bool> {
+    if !valid_policy_name(name) {
+        return Err(invalid_policy_name_error());
+    }
+    let dir = dir.as_ref();
+    let base = match dir.canonicalize() {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => {
+            return Err(anyhow!(
+                "Failed to resolve policy directory {:?}: {}",
+                dir,
+                e
+            ))
+        }
+    };
+    let wanted = std::ffi::OsString::from(format!("{}.wasm", name));
+    let entries = std::fs::read_dir(&base)
+        .map_err(|e| anyhow!("Failed to list policy directory {:?}: {}", base, e))?;
+    for entry in entries {
+        let entry =
+            entry.map_err(|e| anyhow!("Failed to list policy directory {:?}: {}", base, e))?;
+        if entry.file_name() != wanted {
+            continue;
+        }
+        let path = entry.path();
+        if path.parent() != Some(base.as_path()) {
+            return Err(anyhow!("Policy file must be inside the policy directory"));
+        }
+        // symlink_metadata never follows a symlink, so a link (even a
+        // dangling one) is seen as a link and refused.
+        let meta = std::fs::symlink_metadata(&path)
+            .map_err(|e| anyhow!("Failed to read policy file {:?}: {}", path, e))?;
+        if meta.file_type().is_symlink() {
+            return Err(anyhow!("Policy file {:?} is a symlink", path));
+        }
+        if !meta.is_file() {
+            return Err(anyhow!("Policy file {:?} is not a regular file", path));
+        }
+        std::fs::remove_file(&path).map_err(|e| anyhow!("Failed to delete policy file: {}", e))?;
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 /// Writes a policy file without following symlinks and without exposing a
@@ -665,6 +721,74 @@ mod tests {
         std::fs::write(root.join("outside.wasm"), b"x").unwrap();
         std::os::unix::fs::symlink(root.join("outside.wasm"), dir.join("link.wasm")).unwrap();
         assert!(policy_file_path(&dir, "link").is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn remove_policy_file_deletes_the_listed_file() {
+        let root = temp_dir("remove");
+        let dir = root.join("policies");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("pii.wasm"), b"x").unwrap();
+        std::fs::write(dir.join("other.wasm"), b"y").unwrap();
+        assert!(remove_policy_file(&dir, "pii").unwrap());
+        assert!(!dir.join("pii.wasm").exists());
+        assert!(dir.join("other.wasm").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn remove_policy_file_reports_a_missing_file() {
+        let root = temp_dir("remove-missing");
+        let dir = root.join("policies");
+        // No directory yet: nothing to delete.
+        assert!(!remove_policy_file(&dir, "pii").unwrap());
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("pii.wasm.bak"), b"x").unwrap();
+        assert!(!remove_policy_file(&dir, "pii").unwrap());
+        assert!(dir.join("pii.wasm.bak").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn remove_policy_file_rejects_names_with_path_separators() {
+        let root = temp_dir("remove-names");
+        let dir = root.join("policies");
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        std::fs::write(root.join("victim.wasm"), b"x").unwrap();
+        std::fs::write(dir.join("sub").join("victim.wasm"), b"x").unwrap();
+        for name in ["../victim", "sub/victim", "sub\\victim", "/victim", ".."] {
+            assert!(remove_policy_file(&dir, name).is_err(), "{:?}", name);
+        }
+        assert!(root.join("victim.wasm").exists());
+        assert!(dir.join("sub").join("victim.wasm").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn remove_policy_file_refuses_a_directory() {
+        let root = temp_dir("remove-dir");
+        let dir = root.join("policies");
+        std::fs::create_dir_all(dir.join("odd.wasm")).unwrap();
+        assert!(remove_policy_file(&dir, "odd").is_err());
+        assert!(dir.join("odd.wasm").is_dir());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remove_policy_file_refuses_symlinks() {
+        let root = temp_dir("remove-symlink");
+        let dir = root.join("policies");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(root.join("outside.wasm"), b"keep").unwrap();
+        std::os::unix::fs::symlink(root.join("outside.wasm"), dir.join("link.wasm")).unwrap();
+        std::os::unix::fs::symlink(root.join("missing.wasm"), dir.join("dangling.wasm")).unwrap();
+        assert!(remove_policy_file(&dir, "link").is_err());
+        assert!(remove_policy_file(&dir, "dangling").is_err());
+        assert!(std::fs::symlink_metadata(dir.join("link.wasm")).is_ok());
+        assert!(std::fs::symlink_metadata(dir.join("dangling.wasm")).is_ok());
+        assert_eq!(std::fs::read(root.join("outside.wasm")).unwrap(), b"keep");
         let _ = std::fs::remove_dir_all(&root);
     }
 }

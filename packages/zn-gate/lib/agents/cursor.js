@@ -150,7 +150,11 @@ function install(opts = {}) {
   const report = { settings: file, backup: cfg.backup(file), warnings: [] };
   data.version = data.version || 1;
   data.hooks = cfg.hooksOf(data, file);
-  const command = cfg.hookCommand(id, opts);
+  // On Windows Cursor wraps hook commands in PowerShell, which cannot run a
+  // quoted path as a command: the powershell.exe form runs there.
+  const command = !opts.command && (opts.platform || process.platform) === 'win32'
+    ? cfg.hookCommandWindows(id, opts)
+    : cfg.hookCommand(id, opts);
   for (const event of EVENTS) {
     data.hooks[event] = strip(data.hooks[event]);
     const entry = { command, timeout: HOOK_TIMEOUT_S };

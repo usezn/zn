@@ -1,0 +1,455 @@
+name: Release
+
+# Builds the npm tarball and the Python sdist and wheel once, signs them, and
+# publishes those exact files to PyPI and npm (OIDC trusted publishing, no
+# stored tokens) and to a GitHub Release.
+#
+# - Tag push (vX.Y.Z or vX.Y.Z-beta.N): verify and build, then wait for
+#   approval on the "release" environment before anything is signed, attested
+#   or published (signing, the two publish jobs and the GitHub Release each ask
+#   for that approval).
+# - workflow_dispatch: dry run for an existing tag. It verifies and builds,
+#   uploads the unsigned workflow artifact and stops. It never signs or publishes.
+#
+# How to verify a release: docs/verify-release.md
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build (dry run, nothing is signed or published), e.g. v1.5.0"
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  ARTIFACT_NAME: zn-gate-release
+
+jobs:
+  verify:
+    name: Verify tag, versions and branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      sha: ${{ steps.meta.outputs.sha }}
+      npm_version: ${{ steps.meta.outputs.npm_version }}
+      py_version: ${{ steps.meta.outputs.py_version }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+      dry_run: ${{ steps.meta.outputs.dry_run }}
+    steps:
+      - name: Check the tag name
+        id: tag
+        env:
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$'; then
+            echo "::error::Tag '$TAG' is not vX.Y.Z or vX.Y.Z-(alpha|beta|rc).N"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: refs/tags/${{ steps.tag.outputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check versions and the branch of the tagged commit
+        id: meta
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          set -euo pipefail
+          tag_version="${TAG#v}"
+          npm_version="$(node -p "require('./packages/zn-gate/package.json').version")"
+          py_version="$(python3 -c "import tomllib; print(tomllib.load(open('packages/zn-gate-py/pyproject.toml','rb'))['project']['version'])")"
+          py_init_version="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' packages/zn-gate-py/src/zn_gate/__init__.py)"
+
+          # npm 1.5.0-beta.2 <-> PyPI 1.5.0b2 (alpha -> a, rc -> rc)
+          base="${tag_version%%-*}"
+          prerelease=false
+          expected_py="$base"
+          if [ "$tag_version" != "$base" ]; then
+            prerelease=true
+            pre="${tag_version#*-}"
+            kind="${pre%%.*}"
+            num="${pre#*.}"
+            case "$kind" in
+              alpha) expected_py="${base}a${num}" ;;
+              beta) expected_py="${base}b${num}" ;;
+              rc) expected_py="${base}rc${num}" ;;
+            esac
+          fi
+
+          fail=0
+          if [ "$npm_version" != "$tag_version" ]; then
+            echo "::error::packages/zn-gate/package.json has $npm_version, tag expects $tag_version"; fail=1
+          fi
+          if [ "$py_version" != "$expected_py" ]; then
+            echo "::error::packages/zn-gate-py/pyproject.toml has $py_version, tag expects $expected_py"; fail=1
+          fi
+          if [ "$py_init_version" != "$expected_py" ]; then
+            echo "::error::zn_gate/__init__.py has $py_init_version, tag expects $expected_py"; fail=1
+          fi
+          # MCP Registry metadata: both versions in server.json must match the npm version.
+          if [ -f packages/zn-gate/server.json ]; then
+            sj_versions="$(node -p "const d=require('./packages/zn-gate/server.json'); [d.version, ...(d.packages||[]).filter(p=>p.identifier==='zn-gate').map(p=>p.version)].join(' ')")"
+            for v in $sj_versions; do
+              if [ "$v" != "$tag_version" ]; then
+                echo "::error::packages/zn-gate/server.json has version $v, tag expects $tag_version"; fail=1
+              fi
+            done
+          fi
+
+          sha="$(git rev-list -n 1 "refs/tags/$TAG")"
+          if git for-each-ref --contains "$sha" --format='%(refname:short)' refs/remotes/origin \
+              | grep -Eq '^origin/(main|release/.+)$'; then
+            echo "Tagged commit $sha is on main or a release/* branch"
+          else
+            echo "::error::Tagged commit $sha is not on main or a release/* branch"; fail=1
+          fi
+          [ "$fail" -eq 0 ] || exit 1
+
+          {
+            echo "tag=$TAG"
+            echo "sha=$sha"
+            echo "npm_version=$npm_version"
+            echo "py_version=$py_version"
+            echo "prerelease=$prerelease"
+            echo "dry_run=$DRY_RUN"
+          } >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG sha=$sha npm=$npm_version pypi=$py_version prerelease=$prerelease dry_run=$DRY_RUN"
+
+  build:
+    name: Build npm tarball and Python distributions
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          persist-credentials: false
+      # Release tooling (tarball check, hash-pinned build tools) comes from the
+      # commit that defines this workflow run. For a tag push it is the tagged
+      # commit; for a dry run it is the dispatched branch.
+      - name: Check out the release tooling
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tools
+          sparse-checkout: .github
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.x
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - name: Set a reproducible build timestamp
+        run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+      - name: Pack the npm tarball
+        working-directory: packages/zn-gate
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts
+          mkdir -p "$RUNNER_TEMP/release"
+          npm pack --ignore-scripts --json --pack-destination "$RUNNER_TEMP/release" > "$RUNNER_TEMP/pack.json"
+      - name: Check tarball contents
+        run: node .release-tools/.github/scripts/check-npm-pack.js "$RUNNER_TEMP/pack.json" packages/zn-gate
+      - name: Install hash-pinned Python build tools
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/build-venv"
+          "$RUNNER_TEMP/build-venv/bin/python" -m pip install --disable-pip-version-check --no-cache-dir \
+            --require-hashes -r .release-tools/.github/release-requirements.txt
+      - name: Build the sdist and wheel
+        run: |
+          set -euo pipefail
+          # --no-isolation: build with the hash-pinned setuptools from the
+          # venv instead of resolving the build backend again from PyPI.
+          "$RUNNER_TEMP/build-venv/bin/python" -m build --no-isolation packages/zn-gate-py --outdir "$RUNNER_TEMP/release"
+          "$RUNNER_TEMP/build-venv/bin/python" -m twine check --strict "$RUNNER_TEMP"/release/*.whl "$RUNNER_TEMP"/release/*.tar.gz
+      - name: Check file names and write SHA256SUMS
+        working-directory: ${{ runner.temp }}/release
+        env:
+          NPM_VERSION: ${{ needs.verify.outputs.npm_version }}
+          PY_VERSION: ${{ needs.verify.outputs.py_version }}
+        run: |
+          set -euo pipefail
+          expected="zn-gate-${NPM_VERSION}.tgz zn_gate-${PY_VERSION}.tar.gz zn_gate-${PY_VERSION}-py3-none-any.whl"
+          for f in $expected; do
+            [ -f "$f" ] || { echo "::error::missing $f"; ls -l; exit 1; }
+          done
+          count="$(find . -maxdepth 1 -type f | wc -l)"
+          [ "$count" -eq 3 ] || { echo "::error::expected 3 files, found $count"; ls -l; exit 1; }
+          # shellcheck disable=SC2086
+          sha256sum $expected > SHA256SUMS
+          cat SHA256SUMS
+      - name: Upload unsigned build
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ env.ARTIFACT_NAME }}-unsigned
+          path: ${{ runner.temp }}/release/
+          if-no-files-found: error
+          retention-days: 7
+
+  sign:
+    name: Attest and sign
+    needs: [verify, build]
+    # Nothing is signed or attested before the maintainer approves the release
+    # environment, and never in a dry run.
+    if: needs.verify.outputs.dry_run != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: release
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download the build
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ env.ARTIFACT_NAME }}-unsigned
+          path: release
+      - name: Check SHA256SUMS
+        working-directory: release
+        run: sha256sum --strict -c SHA256SUMS
+      - name: GitHub artifact attestations (build provenance)
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            release/*.tgz
+            release/*.whl
+            release/*.tar.gz
+            release/SHA256SUMS
+      - name: Sigstore signatures
+        uses: sigstore/gh-action-sigstore-python@790bc6befb9d733738f18d8f895854b453640ec9 # v3.5.0
+        with:
+          inputs: >-
+            release/*.tgz
+            release/*.whl
+            release/*.tar.gz
+            release/SHA256SUMS
+          verify: true
+          verify-cert-identity: https://github.com/${{ github.workflow_ref }}
+          verify-oidc-issuer: https://token.actions.githubusercontent.com
+          upload-signing-artifacts: false
+          release-signing-artifacts: false
+      - name: List signed files
+        run: ls -l release
+      - name: Upload signed release files
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: release/
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [verify, sign]
+    if: needs.verify.outputs.dry_run != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: release
+      url: https://pypi.org/project/zn-gate/${{ needs.verify.outputs.py_version }}/
+    permissions:
+      id-token: write
+    steps:
+      - name: Download the signed release files
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: release
+      - name: Check SHA256SUMS and keep only the Python distributions
+        env:
+          PY_VERSION: ${{ needs.verify.outputs.py_version }}
+        run: |
+          set -euo pipefail
+          (cd release && sha256sum --strict -c SHA256SUMS)
+          mkdir dist
+          cp "release/zn_gate-${PY_VERSION}.tar.gz" "release/zn_gate-${PY_VERSION}-py3-none-any.whl" dist/
+          ls -l dist
+      - name: Publish with PyPI trusted publishing
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist/
+          attestations: true
+
+  publish-npm:
+    name: Publish to npm
+    needs: [verify, sign]
+    if: needs.verify.outputs.dry_run != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: release
+      url: https://www.npmjs.com/package/zn-gate/v/${{ needs.verify.outputs.npm_version }}
+    permissions:
+      id-token: write
+    steps:
+      - name: Download the signed release files
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: release
+      - name: Check SHA256SUMS
+        working-directory: release
+        run: sha256sum --strict -c SHA256SUMS
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.x
+      - name: Install an npm CLI with trusted publishing support
+        run: |
+          npm install -g npm@11.21.0
+          npm --version
+      - name: Choose the dist-tag
+        id: disttag
+        env:
+          NPM_VERSION: ${{ needs.verify.outputs.npm_version }}
+        # Fails closed: if the current dist-tags cannot be read, or "latest"
+        # points to a prerelease, nothing is published.
+        #   final       -> latest (only if newer than the current latest,
+        #                  otherwise release-X.Y so latest never moves back)
+        #   X.Y.Z-beta.N -> beta, X.Y.Z-rc.N -> next, X.Y.Z-alpha.N -> alpha
+        #                  (only if newer than what that tag points to)
+        # Versions are compared with the semver module bundled in the npm CLI.
+        run: |
+          set -euo pipefail
+          if ! dist_tags="$(npm view zn-gate dist-tags --json)"; then
+            echo "::error::Could not read the current dist-tags of zn-gate"
+            exit 1
+          fi
+          cat > "$RUNNER_TEMP/dist-tag.js" <<'JS'
+          const path = require('path');
+          const semver = require(path.join(process.env.NPM_ROOT, 'npm', 'node_modules', 'semver'));
+          const fail = (msg) => { console.error(`::error::${msg}`); process.exit(1); };
+          const version = process.env.NPM_VERSION;
+          let tags;
+          try { tags = JSON.parse(process.env.DIST_TAGS); } catch { fail('dist-tags output is not JSON'); }
+          if (!tags || typeof tags !== 'object' || Array.isArray(tags)) fail('unexpected dist-tags output');
+          if (!semver.valid(version)) fail(`${version} is not a valid semver version`);
+          const pre = semver.prerelease(version);
+          let tag;
+          if (pre) {
+            tag = { alpha: 'alpha', beta: 'beta', rc: 'next' }[pre[0]];
+            if (!tag) fail(`no dist-tag for prerelease type ${pre[0]}`);
+            const current = tags[tag];
+            if (current !== undefined) {
+              if (!semver.valid(current)) fail(`dist-tag ${tag} points to an invalid version (${current})`);
+              if (!semver.gt(version, current)) fail(`${version} is not newer than ${tag} (${current})`);
+            }
+          } else {
+            const current = tags.latest;
+            if (!current || !semver.valid(current)) fail(`latest is missing or invalid (${current})`);
+            if (semver.prerelease(current)) fail(`latest points to a prerelease (${current})`);
+            tag = semver.gt(version, current) ? 'latest' : `release-${semver.major(version)}.${semver.minor(version)}`;
+          }
+          process.stdout.write(tag);
+          JS
+          tag="$(NPM_ROOT="$(npm root -g)" DIST_TAGS="$dist_tags" node "$RUNNER_TEMP/dist-tag.js")"
+          echo "dist-tag: $tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Publish the tarball with npm trusted publishing
+        working-directory: release
+        env:
+          NPM_VERSION: ${{ needs.verify.outputs.npm_version }}
+          DIST_TAG: ${{ steps.disttag.outputs.tag }}
+        run: npm publish "./zn-gate-${NPM_VERSION}.tgz" --tag "$DIST_TAG" --access public --provenance --ignore-scripts
+
+  github-release:
+    name: Create the GitHub Release
+    needs: [verify, publish-pypi, publish-npm]
+    if: needs.verify.outputs.dry_run != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          persist-credentials: false
+      - name: Download the signed release files
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: release
+      - name: Check SHA256SUMS
+        working-directory: release
+        run: sha256sum --strict -c SHA256SUMS
+      - name: Release notes from CHANGELOG.md
+        env:
+          NPM_VERSION: ${{ needs.verify.outputs.npm_version }}
+          TAG: ${{ needs.verify.outputs.tag }}
+        run: |
+          set -euo pipefail
+          awk -v v="$NPM_VERSION" '
+            index($0, "## [" v "]") == 1 { on = 1; next }
+            on && /^## \[/ { exit }
+            on { print }
+          ' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/notes.md"; then
+            echo "::error::No section for $NPM_VERSION in CHANGELOG.md"
+            exit 1
+          fi
+          {
+            echo
+            echo "---"
+            echo
+            echo "How to verify these files: [docs/verify-release.md](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/docs/verify-release.md)"
+          } >> "$RUNNER_TEMP/notes.md"
+      - name: Check that the tag still points to the verified commit
+        env:
+          TAG: ${{ needs.verify.outputs.tag }}
+          VERIFIED_SHA: ${{ needs.verify.outputs.sha }}
+        run: |
+          set -euo pipefail
+          # Annotated tags list the commit as "<tag>^{}"; lightweight tags list it directly.
+          remote_sha="$(git ls-remote origin "refs/tags/${TAG}^{}" | cut -f1)"
+          if [ -z "$remote_sha" ]; then
+            remote_sha="$(git ls-remote origin "refs/tags/${TAG}" | cut -f1)"
+          fi
+          if [ "$remote_sha" != "$VERIFIED_SHA" ]; then
+            echo "::error::Tag $TAG points to '${remote_sha}', but this run verified and built $VERIFIED_SHA"
+            exit 1
+          fi
+          echo "Tag $TAG still points to $VERIFIED_SHA"
+      - name: Create the release (draft for final versions)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.verify.outputs.tag }}
+          NPM_VERSION: ${{ needs.verify.outputs.npm_version }}
+          PRERELEASE: ${{ needs.verify.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if [ "$PRERELEASE" = "true" ]; then
+            mode=(--prerelease)
+          else
+            mode=(--draft)
+          fi
+          gh release create "$TAG" release/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "zn-gate $NPM_VERSION" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            "${mode[@]}"

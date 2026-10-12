@@ -52,6 +52,15 @@ const WORST_CASES = [
   fill('sk-'),
   fill('sk-proj-'),
   fill('sk-or-v1-'),
+  fill('sk-helicone-'),
+  fill('sk-eu-cp-gov-rl-'),
+  fill('sk-a1b2c3d-'),
+  fill('sk-helicone-a1b2c3d-'),
+  fill('sk-sp-'),
+  fill('sk-sp-a-'),
+  fill('sk-' + 'T3BlbkFJ'),
+  fill('sk-x-' + 'T3BlbkFJ-'),
+  fill('sk--'),
   fill('-----BEGIN PRIVATE KEY-----'),
   fill('-----BEGIN RSA PRIVATE KEY-----\n'),
   fill('-----BEGIN PRIVATE KEY-----\nAAAA'),
@@ -74,6 +83,26 @@ const WORST_CASES = [
   fill('A\n'),
   fill('a \n b '),
   fill('/*'),
+  // Credential assignments and the checks on their values.
+  fill('A_'),
+  fill('A_API_KEY '),
+  fill('X_TOKEN='),
+  fill('ENV A_TOKEN '),
+  fill('"A_TOKEN": '),
+  fill('$A_TOKEN='),
+  fill('${A_TOKEN:-'),
+  fill('${A_TOKEN:-a'),
+  'A_TOKEN=' + fill(';', SIZE - 8),
+  'API_KEY=' + fill(',', SIZE - 8),
+  'A_TOKEN=' + fill('a;', SIZE - 8),
+  fill('A_TOKEN=' + 'a.'.repeat(250) + '( '),
+  fill('A_TOKEN=a' + '('.repeat(500) + ' '),
+  fill('A_TOKEN=/' + 'aB3dE5fG7h/'.repeat(46) + ' '),
+  fill('${A_TOKEN:-' + 'Ab'.repeat(255) + '} '),
+  fill('API_KEY: ' + 'abc.'.repeat(127) + 'abc\n'),
+  fill('A_TOKEN=$a' + '->a'.repeat(160) + '( '),
+  fill('X_SECRET=' + 'ab-'.repeat(160) + 'c '),
+  fill('API_KEY="<' + 'aB3#'.repeat(120) + '" '),
 ];
 
 function label(input) {
@@ -122,6 +151,23 @@ test('secret redaction finishes quickly on 64 KB worst-case inputs', () => {
   for (const input of WORST_CASES) {
     const ms = timeMs(() => redactSecrets(input));
     assert.ok(ms < PER_RULE_MS * SECRET_PATTERNS.length, `redactSecrets took ${ms.toFixed(1)} ms on ${label(input)}...`);
+  }
+});
+
+// A crafted tool result can repeat key prefixes: redaction must stay fast at 256 KB.
+test('secret redaction of 256 KB worst-case inputs finishes in under a second', () => {
+  const big = 256 * 1024;
+  const marker = 'T3Blbk' + 'FJ';
+  const inputs = [
+    fill('sk-', big),
+    'sk-'.repeat(66) + marker + 'a' + '-'.repeat(big - 207),
+    fill('sk-helicone-', big),
+    fill('sk-a1b2c3d-', big),
+    fill('sk-' + marker, big),
+  ];
+  for (const input of inputs) {
+    const ms = timeMs(() => redactSecrets(input));
+    assert.ok(ms < EVALUATE_256K_MS, `redactSecrets took ${ms.toFixed(1)} ms on ${label(input)}... x 256 KB`);
   }
 });
 

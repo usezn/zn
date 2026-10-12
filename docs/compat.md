@@ -108,7 +108,7 @@ Install zn on every machine that runs the agent.
   path right after zn's last check; see
   [threat-model.md](threat-model.md#starting-the-approved-program).
 
-## Not covered in this beta
+## Not covered yet
 
 Hermes Agent, Gemini CLI, Copilot CLI and the Cursor CLI. A proxy for outgoing
-HTTP from `zn run` (for `curl`, `gh` or SDKs) is planned for after the beta.
+HTTP from `zn run` (for `curl`, `gh` or SDKs) is planned for a later release.

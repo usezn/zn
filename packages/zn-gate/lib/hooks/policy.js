@@ -22,6 +22,7 @@ const path = require('path');
 const dotenv = require('../broker/dotenv');
 const markers = require('../broker/markers');
 const { realTargetOf } = require('../broker/files');
+const { powershellQuote, portablePath } = require('../shell-quote');
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -603,7 +604,7 @@ function scanPowerShell(cmd) {
 }
 
 function psQuote(s) {
-  return "'" + String(s).replace(/\\/g, '/').replace(/'/g, "''") + "'";
+  return powershellQuote(portablePath(s));
 }
 
 /**

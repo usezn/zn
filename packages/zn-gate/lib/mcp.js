@@ -5,9 +5,9 @@ const { analyze, analyzeLocal, checkToolResult, isCloudEnabled, RULES_VERSION, r
 const { sanitizeToolResult } = require('./rules');
 
 const SERVER_NAME = 'zn-gate';
-let SERVER_VERSION = '1.4.1';
+let SERVER_VERSION = '1.5.0';
 try {
-  SERVER_VERSION = require('../package.json').version || '1.4.1';
+  SERVER_VERSION = require('../package.json').version || '1.5.0';
 } catch (_) {}
 const PROTOCOL_VERSION = '2024-11-05';
 

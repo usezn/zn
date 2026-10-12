@@ -45,6 +45,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const { writeFileAtomic } = require('../broker/files');
 const { whichSync } = require('../broker/markers');
+const { shQuote, portablePath } = require('../shell-quote');
 
 const id = 'claude-code';
 
@@ -54,7 +55,8 @@ const PRE_MATCHER = 'Bash|PowerShell|Monitor|Read|Grep|LSP|Edit|MultiEdit|Write|
 // A regex (it contains mcp__.*), anchored so it names exactly these tools.
 const POST_MATCHER = '^(Bash|PowerShell|Monitor|Read|Grep|LSP|WebFetch|ReadMcpResourceTool)$|^mcp__.*';
 const HOOK_TIMEOUT_S = 15;
-const OUR_COMMAND_RE = /(\bhook claude-code|hooks[\\/]runner\.js"? claude-code)\s*$/;
+// Older versions wrote the paths in double quotes; both forms are ours.
+const OUR_COMMAND_RE = /(\bhook claude-code|hooks[\\/]runner\.js["']? claude-code)\s*$/;
 const MCP_SERVER_NAME = 'secrets';
 
 const TOOL_MAP = {
@@ -200,8 +202,10 @@ function settingsFile(opts = {}) {
   return path.join(configDir(opts), 'settings.json');
 }
 
-function quoteArg(s) {
-  return '"' + String(s).replace(/\\/g, '/').replace(/"/g, '\\"') + '"';
+// Claude Code runs a hook command with `sh -c` (macOS, Linux) or Git Bash
+// (Windows): each path is one single-quoted sh word.
+function quoteArg(s, platform) {
+  return shQuote(portablePath(s, platform));
 }
 
 function cliPath() {
@@ -216,7 +220,7 @@ function runnerPath() {
 // so each tool call does not pay for loading the whole CLI.
 function hookCommand(opts = {}) {
   if (opts.command) return opts.command;
-  return quoteArg(opts.nodePath || process.execPath) + ' ' + quoteArg(opts.runnerPath || runnerPath()) + ' claude-code';
+  return quoteArg(opts.nodePath || process.execPath, opts.platform) + ' ' + quoteArg(opts.runnerPath || runnerPath(), opts.platform) + ' claude-code';
 }
 
 function readJson(file) {

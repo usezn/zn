@@ -3,7 +3,7 @@
 zn-gate keeps secret values out of what your coding agent sends to its model.
 The agent works with markers such as `__ZN_GITHUB_TOKEN__`; real values stay in
 an encrypted vault on your machine and are filled in only where you allowed
-them. Everything runs locally. **Status: beta, unreleased.**
+them. Everything runs locally.
 
 Supported agents: Claude Code, Codex CLI, Cursor (IDE) and OpenCode. What each
 one can and cannot do is in [compat.md](compat.md); the limits are in
@@ -12,11 +12,7 @@ one can and cannot do is in [compat.md](compat.md); the limits are in
 ## 1. Install and unlock the vault
 
 ```bash
-# The beta is not on npm yet: install it from the repository.
-git clone --branch next https://github.com/usezn/zn.git
-cd zn/packages/zn-gate
-npm ci
-npm install -g .
+npm install -g zn-gate
 zn unlock
 ```
 
@@ -112,7 +108,7 @@ returns a value.
 |---|---|
 | `zn secret list` | Names, modes, hosts and commands (never values) |
 | `zn secret rm NAME` | Remove a secret |
-| `zn audit` | Local audit log: who used which secret where (no values) |
+| `zn vault log` | Local audit log: who used which secret where (no values). Also `zn secret log`; `--since 1h` limits it. `zn audit` shows it too in 1.5, with a notice, and will audit your configuration in 1.6 |
 | `zn vault verify` | Check the audit log's HMAC chain |
 | `zn lock` | Lock the vault now |
 | `zn hooks uninstall <agent>` | Remove the hooks |

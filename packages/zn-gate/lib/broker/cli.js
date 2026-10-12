@@ -1,7 +1,8 @@
 'use strict';
 
 /**
- * `zn secret ...`, `zn env ...`, `zn audit` and `zn hooks ...`.
+ * `zn secret ...` (including `zn secret log`), `zn vault log`, `zn env ...`,
+ * `zn audit` (deprecated alias of `zn vault log`) and `zn hooks ...`.
  *
  * Every command that adds, changes, reveals or removes a value is for the
  * person at the keyboard: it needs an interactive terminal, refuses to run
@@ -398,6 +399,11 @@ async function envUnshadow(args, io) {
 /* ------------------------------ audit ------------------------------ */
 
 async function audit(args, io) {
+  if (args.includes('-h') || args.includes('--help')) {
+    out(io, 'usage: zn vault log [--since 1h]   (also: zn secret log)');
+    out(io, 'Shows who used which secret where (no values), then checks the audit log chain.');
+    return 0;
+  }
   const { flags } = parseFlags(args, {});
   let mod;
   try {
@@ -411,11 +417,29 @@ async function audit(args, io) {
   for (const r of records || []) {
     out(io, [r.ts, r.decision, r.secret, r.mode, r.agent, r.tool, r.argv0 || r.host || '', r.reason || ''].map((x) => x == null ? '-' : String(x)).join('  '));
   }
-  if (typeof mod.verify === 'function') {
-    const v = await mod.verify();
-    out(io, 'chain: ' + (v && v.valid ? 'valid' : 'BROKEN' + (v && v.error ? ' (' + v.error + ')' : '')));
+  const chain = await auditChain();
+  out(io, chain.line);
+  // Same exit code as `zn vault verify` for a broken chain; "not checked" is not an error.
+  return chain.broken ? 1 : 0;
+}
+
+/** The chain is checked with the key held by the unlocked vault (same check as `zn vault verify`). */
+async function auditChain() {
+  let client;
+  try {
+    client = require('../vault/client').createClient({});
+    if (!(await client.isUnlocked())) {
+      return { broken: false, line: 'chain: not checked: the vault is locked or unreachable (run `zn unlock`, then `zn vault verify`)' };
+    }
+    const v = await client.auditVerify();
+    if (v && v.ok) return { broken: false, line: 'chain: valid, ' + v.records + ' records' };
+    const where = v && v.line ? ' (record ' + v.line + ')' : '';
+    return { broken: true, line: 'chain: BROKEN: ' + ((v && v.error) || 'verification failed') + where };
+  } catch (err) {
+    return { broken: false, line: 'chain: not checked: ' + (err && err.message ? err.message : String(err)) };
+  } finally {
+    if (client) client.close();
   }
-  return 0;
 }
 
 /* ------------------------------ hooks ------------------------------ */
@@ -442,7 +466,8 @@ async function hooks(args, io) {
 
 /* ------------------------------ entry ------------------------------ */
 
-const SECRET_USAGE = 'usage: zn secret set|list|rm|allow|approve|import|adopt ...';
+const SECRET_USAGE = 'usage: zn secret set|list|rm|allow|approve|import|adopt|log ...';
+const AUDIT_NOTICE = 'zn: `zn audit` is moving: use `zn vault log` (alias `zn secret log`) to see this log. In 1.6, `zn audit` will audit your configuration instead.';
 
 async function dispatch(group, args, ioIn) {
   const io = makeIo(ioIn);
@@ -456,6 +481,7 @@ async function dispatch(group, args, ioIn) {
       if (sub === 'approve') return await secretApprove(rest, io);
       if (sub === 'import') return await secretImport(rest, io);
       if (sub === 'adopt') return await secretAdopt(rest, io);
+      if (sub === 'log') return await audit(rest, io);
       if (sub === 'get' || sub === 'reveal') {
         throw deps.znError('ZN_POLICY_DENIED', 'zn does not print secret values. Use the marker with zn run or the secrets MCP tools.');
       }
@@ -467,7 +493,15 @@ async function dispatch(group, args, ioIn) {
       if (sub === 'unshadow') return await envUnshadow(rest, io);
       throw deps.znError('ZN_USAGE', 'usage: zn env shadow [FILE] | zn env unshadow FILE --backup NAME');
     }
-    if (group === 'audit') return await audit(args, io);
+    if (group === 'vault') {
+      // Reached from `zn vault log` (lib/vault/cli.js routes it here).
+      if (args[0] === 'log') return await audit(args.slice(1), io);
+      throw deps.znError('ZN_USAGE', 'usage: zn vault log [--since 1h]');
+    }
+    if (group === 'audit') {
+      io.stderr.write(AUDIT_NOTICE + '\n');
+      return await audit(args, io);
+    }
     if (group === 'hooks') return await hooks(args, io);
     throw deps.znError('ZN_USAGE', 'unknown command ' + group);
   } catch (err) {

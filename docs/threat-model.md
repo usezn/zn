@@ -67,14 +67,14 @@ prove it can read `~/.zn/run/session.key`.
   `allowHosts` and `allowIn`) protect the paths zn itself offers: `zn run` and
   the `secrets` MCP server. They are not enforced for a direct request to the
   daemon.
-- **What to do in this beta:** keep the vault locked (`zn lock`) when you are
+- **What to do in this release:** keep the vault locked (`zn lock`) when you are
   not using secrets, let the vault lock itself when idle (30 minutes by
   default), and use your agent's sandbox or permission rules so that it
   cannot run arbitrary programs without asking you.
 
 The boundary is the same-user process, as for `ssh-agent`. Checking the
 calling process (its executable and script) and enforcing the policy inside
-the daemon is planned for the stable release.
+the daemon is planned for a later release.
 
 ## Starting the approved program
 

@@ -95,7 +95,7 @@ test('codex: install writes hooks.json (user and project) and uninstall removes 
   assert.ok(rep.warnings.some((w) => /\/hooks/.test(w)), 'tells the user to trust the hooks');
   const data = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.equal(data.hooks.PreToolUse.length, 2);
-  assert.equal(data.hooks.PreToolUse[1].hooks[0].command, '"/usr/bin/node" "/x/lib/hooks/runner.js" codex');
+  assert.equal(data.hooks.PreToolUse[1].hooks[0].command, "'/usr/bin/node' '/x/lib/hooks/runner.js' codex");
   assert.equal(data.hooks.PostToolUse[0].matcher, codex.POST_MATCHER);
   codex.install({ env, nodePath: '/usr/bin/node', runnerPath: '/x/lib/hooks/runner.js' });
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).hooks.PreToolUse.length, 2, 'idempotent');
@@ -149,7 +149,7 @@ test('cursor: install writes version 1 hooks.json with our four events', (t) => 
   const data = JSON.parse(fs.readFileSync(cursor.hooksFile({ home }), 'utf8'));
   assert.equal(data.version, 1);
   assert.deepEqual(Object.keys(data.hooks).sort(), [...cursor.EVENTS].sort());
-  assert.equal(data.hooks.beforeReadFile[0].command, '"/usr/bin/node" "/x/lib/hooks/runner.js" cursor');
+  assert.equal(data.hooks.beforeReadFile[0].command, "'/usr/bin/node' '/x/lib/hooks/runner.js' cursor");
   cursor.uninstall({ home });
   assert.deepEqual(JSON.parse(fs.readFileSync(cursor.hooksFile({ home }), 'utf8')).hooks, {});
 });
@@ -194,7 +194,7 @@ test('opencode: the installed plugin, driven like OpenCode does, blocks, rewrite
     const out1 = { args };
     await hooks['tool.execute.before']({ tool: 'bash', sessionID: 's', callID: 'c' }, out1);
     assert.equal(out1.args, args, 'mutated in place, not replaced');
-    assert.match(args.command, /run\.js" -- psql __ZN_DB_PASSWORD__$/);
+    assert.match(args.command, /run\.js' -- psql __ZN_DB_PASSWORD__$/);
     assert.equal(args.description, 'x');
     const res = { title: 't', output: 'line\nAWS_ACCESS_KEY_ID=' + AWS + '\n', metadata: { preview: 'AWS_ACCESS_KEY_ID=' + AWS, display: { type: 'file', text: AWS }, truncated: false } };
     await hooks['tool.execute.after']({ tool: 'bash', sessionID: 's', callID: 'c', args: {} }, res);

@@ -7,6 +7,7 @@
  *   zn vault status
  *   zn vault forget [<project dir>]     (vault must be locked)
  *   zn vault verify                     (audit log: chain, MACs, truncation)
+ *   zn vault log [--since 1h]           (audit log: who used which secret; alias: zn secret log)
  *
  * The first `zn unlock` creates the vault: a new age identity stored in the
  * OS keychain, or behind a passphrase when no keychain is available.
@@ -165,7 +166,8 @@ async function runVaultCommand(args) {
     if (cmd === 'vault' && (sub === 'status' || sub === undefined)) return await statusCmd();
     if (cmd === 'vault' && sub === 'forget') return await forgetCmd(args);
     if (cmd === 'vault' && sub === 'verify') return await auditVerifyCmd();
-    process.stderr.write('usage: zn unlock | zn lock | zn vault status | zn vault verify | zn vault forget [dir]\n');
+    if (cmd === 'vault' && sub === 'log') return await require('../broker/cli').dispatch('vault', args.slice(1));
+    process.stderr.write('usage: zn unlock | zn lock | zn vault status | zn vault verify | zn vault log [--since 1h] | zn vault forget [dir]\n');
     return 2;
   } catch (err) {
     const hint = err && err.code === CODES.LOCKED ? ' (vault locked: run `zn unlock`)' : '';

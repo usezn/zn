@@ -15,6 +15,7 @@ const { createFakeVault } = require('./helpers/fake_vault');
 const fakeEngine = require('./helpers/fake_engine');
 const { generateAll } = require('./fixtures/fake_secrets');
 const { tempDir } = require('./helpers/tmp');
+const { runScript } = require('./helpers/shell');
 
 const FAKE = generateAll(4242, { perType: 1, piiPerType: 1 });
 const fake = (type) => FAKE.secrets.find((s) => s.type === type);
@@ -351,14 +352,15 @@ test('Monitor: no command can step out of the scrubber pipe', { skip: process.pl
     const r = await run(preTool('Monitor', { command: original }, dir), { nodePath: process.execPath });
     const d = r.output.hookSpecificOutput;
     assert.equal(d.permissionDecision, 'ask', original);
-    const cmd = d.updatedInput ? d.updatedInput.command : original;
     assert.ok(d.updatedInput, 'rewritten: ' + original);
-    const out = spawnSync('bash', ['-c', cmd], { cwd: dir, encoding: 'utf8', env: { ...process.env, HOME: home, ZN_HOME: path.join(home, '.zn') } });
+    // Only the rewritten command is run, never the original text.
+    const cmd = d.updatedInput.command;
+    const out = runScript(t, 'bash', cmd, { cwd: dir, env: { ...process.env, HOME: home, ZN_HOME: path.join(home, '.zn') } });
     const text = out.stdout + out.stderr;
     assert.ok(!text.includes(AWS) && !text.includes(GHP), 'scrubbed: ' + original + ' -> ' + text);
   }
   const failing = await run(preTool('Monitor', { command: 'exit 3' }, dir), { nodePath: process.execPath });
-  const st = spawnSync('bash', ['-c', failing.output.hookSpecificOutput.updatedInput.command], { cwd: dir, encoding: 'utf8', env: { ...process.env, HOME: home, ZN_HOME: path.join(home, '.zn') } });
+  const st = runScript(t, 'bash', failing.output.hookSpecificOutput.updatedInput.command, { cwd: dir, env: { ...process.env, HOME: home, ZN_HOME: path.join(home, '.zn') } });
   assert.equal(st.status, 3, 'pipefail keeps the exit status');
 });
 
@@ -501,7 +503,7 @@ test('install / uninstall write and remove only our hooks, with backups', (t) =>
   assert.equal(data.hooks.PreToolUse.length, 2);
   assert.deepEqual(data.hooks.PreToolUse[0], userHook);
   assert.equal(data.hooks.PreToolUse[1].matcher, adapter.PRE_MATCHER);
-  assert.equal(data.hooks.PreToolUse[1].hooks[0].command, '"/usr/bin/node" "/opt/zn/lib/hooks/runner.js" claude-code');
+  assert.equal(data.hooks.PreToolUse[1].hooks[0].command, "'/usr/bin/node' '/opt/zn/lib/hooks/runner.js' claude-code");
   assert.equal(data.hooks.PostToolUse[0].matcher, adapter.POST_MATCHER);
   assert.ok(Array.isArray(data.hooks.UserPromptSubmit));
   adapter.install({ scope: 'user', home, env, mcp: false, nodePath: '/usr/bin/node', cliPath: '/opt/zn/bin/cli.js', runnerPath: '/opt/zn/lib/hooks/runner.js' });
