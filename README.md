@@ -47,6 +47,8 @@ zn env shadow .env                 # move .env values into the vault, leave mark
 zn hooks install claude-code       # or: codex, cursor, opencode
 ```
 
+Cursor support is partial: zn-gate can only rewrite the output of MCP tools there, not of shell commands or file reads.
+
 Five-minute walkthrough: [docs/secrets.md](https://github.com/usezn/zn/blob/next/docs/secrets.md). What each agent supports: [docs/compat.md](https://github.com/usezn/zn/blob/next/docs/compat.md). Limits: [docs/threat-model.md](https://github.com/usezn/zn/blob/next/docs/threat-model.md).
 
 Python (rules engine and redaction updates of the beta):
@@ -140,11 +142,11 @@ sequenceDiagram
 
 ### Scrubber: secrets stay out of the model's context
 - **Stable (1.4.1):** redacts AWS keys, OpenAI and Anthropic keys, GitHub tokens, JWTs, private keys and database URL passwords in everything that passes through zn-gate: tool output checked with `check_tool_result`, tool arguments checked with `check_tool_call`, and output of MCP servers wrapped by `zn-gate shield` / `init`. Python: `sanitize_tool_result`, `@guard(mask_secrets=True)` and the framework integrations.
-- **Beta (1.5.0):** hooks for the agents' built-in tools (Claude Code, Codex CLI, Cursor, OpenCode) scrub tool output and block pasted secrets; a local encrypted vault with stable markers (`__ZN_AWS_KEY_1__`); `zn run` fills values only into commands you approved; personal data (cards, IBAN, national IDs, e-mail, phone) is detected too. What each agent allows differs: see [docs/compat.md](https://github.com/usezn/zn/blob/next/docs/compat.md).
+- **Beta (1.5.0):** hooks for Claude Code, Codex CLI and OpenCode scrub the output of the agents' built-in tools and block pasted secrets (in Cursor only MCP tool output is scrubbed); a local encrypted vault with stable markers (`__ZN_AWS_KEY_1__`); `zn run` fills values only into commands you approved; personal data (cards, IBAN, national IDs, e-mail, phone) is detected too. What each agent allows differs: see [docs/compat.md](https://github.com/usezn/zn/blob/next/docs/compat.md).
 
 ### Galvanize: prompt-injection detection
 - **Today, local:** a deterministic rules engine (signatures plus normalization against homoglyphs, zero-width characters, BiDi overrides, comment splicing and Base64) checks prompts, tool arguments, tool output and MCP tool descriptions.
-- **Today, optional cloud check:** the Galvanize-60M classifier ([open weights on Hugging Face](https://huggingface.co/usezn/Galvanize-60M), Apache-2.0) can also check prompts sent to `analyze_prompt`, only if you set `ZN_CLOUD=1` and `ZN_API_KEY`. Prompts are redacted locally before they are sent.
+- **Today, optional cloud check:** the Galvanize-60M classifier ([open weights on Hugging Face](https://huggingface.co/usezn/Galvanize-60M), Apache-2.0) can also check prompts sent to `analyze_prompt`, only if you set `ZN_CLOUD=1` and `ZN_API_KEY`. The secrets zn-gate detects are removed from the prompt on your machine before it is sent; personal data is not removed on this path.
 - **Roadmap:** running Galvanize-60M locally inside zn-gate; published held-out results with method and data.
 
 ### Scan: audit what your agent is about to trust
@@ -159,7 +161,7 @@ Everything above runs locally, for free, with no account. The optional cloud at 
 - **A larger detection model** for prompts, when you opt in (`ZN_CLOUD=1`).
 - **Team controls** (shared policies, organization-level audit): in progress.
 
-The cloud only receives decision metadata, plus prompt text that was redacted on your machine if you turn on the cloud check. Secrets, tool output and tool-call arguments never leave your machine.
+By default nothing is sent. If you set `ZN_CLOUD=1` and an API key, `analyze` sends the prompt text after removing the secrets zn-gate detects locally: personal data is not removed on this path, and a secret it does not detect would be sent with the text. The dashboard keeps the metadata of each cloud decision. Tool output and tool-call arguments are never sent.
 
 ## What leaves your machine
 
@@ -177,7 +179,7 @@ flowchart LR
     Z -- "allowed calls, secrets masked" --> T
     T -- "tool output" --> Z
     Z -- "redacted output, verdicts" --> A
-    Z -. "prompts only, redacted,<br/>only with ZN_CLOUD=1 and ZN_API_KEY" .-> C
+    Z -. "prompts only, detected secrets removed,<br/>only with ZN_CLOUD=1 and ZN_API_KEY" .-> C
 ```
 
 | Data | Evaluated | Sent anywhere? |
@@ -185,7 +187,7 @@ flowchart LR
 | Tool output (`check_tool_result`, `shield`) | Locally | **Never**, in any configuration |
 | Tool-call arguments (`check_tool_call`, `shield`) | Locally | **Never**, in any configuration |
 | MCP tool and parameter descriptions (`shield`) | Locally | **Never**, in any configuration |
-| Prompts (`analyze_prompt`, `zn-gate analyze`, Python `analyze()`) | Locally | Only if you set **both** `ZN_CLOUD=1` and `ZN_API_KEY`. Secrets are redacted locally before sending. |
+| Prompts (`analyze_prompt`, `zn-gate analyze`, Python `analyze()`) | Locally | Only if you set **both** `ZN_CLOUD=1` and `ZN_API_KEY`. Detected secrets are removed locally before sending; personal data is not. |
 
 `ZN_API_KEY` alone enables nothing. `ZN_LOCAL_ONLY=true` overrides `ZN_CLOUD=1`. `npx -y zn-gate status` prints what your configuration sends.
 
@@ -197,7 +199,7 @@ We only publish numbers we can reproduce, with the method next to them.
 
 - **Latency of the local engine:** one table by input size, with hardware, date and the script to reproduce it (`bench/bench_by_size.js`), in the [npm package README](packages/zn-gate/README.md#performance-local-rules-engine-no-network). Short summary from that run: about 0.01 ms for a 200 B prompt, 0.3 ms for a 4 KB tool output with redaction, about 4 ms for 64 KB with redaction (p50).
 - **Self-test:** 51 curated vectors pass. That is a smoke test, not a detection or false-positive rate.
-- **Known limitation:** on whole source files, the rules can flag ordinary code comments. The 1.5.0 beta removes most of these on code and documentation, at the cost of letting some loosely worded override attempts through the local rules; `--shadow` mode helps you check it on your own files.
+- **Known limitation:** on whole source files, the rules can flag ordinary code comments. The 1.5.0 beta reduces these on code and documentation, at the cost of letting some loosely worded override attempts through the local rules. To check it on your own files, run `zn-gate scan`; for the MCP servers you wrap, `--shadow` logs detections without blocking.
 - **Detection rates:** none published yet. We will publish Galvanize results on a held-out test set, with method and data, before quoting a number.
 
 ## Configuration
