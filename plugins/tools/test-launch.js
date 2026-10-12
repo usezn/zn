@@ -47,6 +47,7 @@ const SOURCES = {
     'exports.main = async (a) => {',
     "  let s = ''; for await (const c of process.stdin) s += c;",
     "  if (s.includes('throw')) throw new Error('runner exploded');",
+    "  if (s.includes('echo-exit1')) { process.stdout.write(s); process.exit(1); }",
     "  if (s.includes('reject')) { Promise.reject(new Error('stray rejection')); await new Promise((r) => setTimeout(r, 50)); }",
     "  const esm = await import('esm-dep');",
     "  process.stdout.write(['ran', a[0], policy.name, dep.name, data.name, esm.name, s.trim()].join(' '));",
@@ -222,10 +223,83 @@ try {
       assert.strictEqual(JSON.parse(c.stdout).permission, 'deny');
     }
     setConfig({ hooks: { whenUnavailable: 'allow' } });
-    assert.strictEqual(run(['hook', 'claude-code'], '{}').status, 3);
+    const passed = run(['hook', 'claude-code'], '{}');
+    assert.strictEqual(passed.status, 0);
+    assert.match(passed.stderr, /passed through/);
     setConfig({});
     setLock({ package: 'zn-gate', version: '9.9.9', files });
     installPackage();
+  });
+
+  // A refused tool output must be replaced, not just answered with exit 2:
+  // Claude Code and Codex pass the original output on to the model on exit 2.
+  const SECRET = 'AKIAQ3EGRWZXJ7PLMN4T';
+  const postEvents = {
+    'claude-code': (extra) => JSON.stringify({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command: 'cat x' }, tool_response: { stdout: 'key ' + SECRET + extra, stderr: '', interrupted: false } }),
+    codex: (extra) => JSON.stringify({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command: 'cat x' }, tool_response: 'key ' + SECRET + extra }),
+    cursor: (extra) => JSON.stringify({ hook_event_name: 'postToolUse', tool_name: 'MCP:fetch', tool_input: {}, tool_output: JSON.stringify({ content: [{ type: 'text', text: 'key ' + SECRET + extra }] }) }),
+  };
+  function checkWithheld(agent, r) {
+    assert.ok(!r.stdout.includes(SECRET), agent + ': the secret reached stdout: ' + r.stdout);
+    assert.strictEqual(r.status, 0, agent + ': ' + r.stderr);
+    const out = JSON.parse(r.stdout);
+    if (agent === 'claude-code') {
+      assert.strictEqual(out.hookSpecificOutput.hookEventName, 'PostToolUse');
+      assert.strictEqual(out.hookSpecificOutput.updatedToolOutput.stdout, '[zn plugin: output withheld because zn could not check it]');
+      assert.strictEqual(out.hookSpecificOutput.updatedToolOutput.interrupted, false);
+      assert.match(out.hookSpecificOutput.additionalContext, /zn plugin:/);
+    } else if (agent === 'codex') {
+      assert.strictEqual(out.decision, 'block');
+      assert.match(out.reason, /output withheld/);
+    } else {
+      assert.strictEqual(out.updated_mcp_tool_output.content[0].text, '[zn plugin: output withheld because zn could not check it]');
+    }
+  }
+  const tampers = {
+    'changed file': () => fs.appendFileSync(path.join(pkgDir, 'lib', 'hooks', 'policy.js'), '// changed\n'),
+    'extra file': () => write(path.join(pkgDir, 'lib', 'hooks', 'policy'), 'process.exit(0);\n'),
+    'missing package': null,
+    'load failure': () => relock('lib/hooks/runner.js', 'x(\n'),
+    'exit 1 after echoing the event': 'echo-exit1',
+    'exception in main': 'throw',
+    'unhandled rejection': 'reject',
+  };
+  function relock(rel, text) {
+    write(path.join(pkgDir, ...rel.split('/')), text);
+    setLock({ package: 'zn-gate', version: '9.9.9', files: { ...files, [rel]: sha(path.join(pkgDir, ...rel.split('/'))) } });
+  }
+  for (const [name, tamper] of Object.entries(tampers)) {
+    test('PostToolUse output is withheld, not leaked, on: ' + name, () => {
+      for (const agent of Object.keys(postEvents)) {
+        installPackage();
+        setLock({ package: 'zn-gate', version: '9.9.9', files });
+        let extra = '';
+        let opts = {};
+        if (typeof tamper === 'function') tamper();
+        else if (typeof tamper === 'string') extra = ' ' + tamper;
+        else opts = { path: path.join(tmp, 'empty-bin') };
+        checkWithheld(agent, run(['hook', agent], postEvents[agent](extra), opts));
+      }
+      installPackage();
+      setLock({ package: 'zn-gate', version: '9.9.9', files });
+    });
+  }
+
+  test('a refused PreToolUse or prompt is still blocked with exit 2', () => {
+    fs.appendFileSync(path.join(pkgDir, 'lib', 'hooks', 'policy.js'), '// changed\n');
+    refused(run(['hook', 'claude-code'], JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: '/x' } })));
+    refused(run(['hook', 'claude-code'], JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' })));
+    refused(run(['hook', 'codex'], JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' } })));
+    const c = run(['hook', 'cursor'], JSON.stringify({ hook_event_name: 'beforeShellExecution', command: 'ls' }));
+    refused(c);
+    assert.strictEqual(JSON.parse(c.stdout).permission, 'deny');
+    installPackage();
+  });
+
+  test('a successful answer from zn-gate is passed through unchanged', () => {
+    const r = run(['hook', 'claude-code'], postEvents['claude-code'](''));
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.match(r.stdout, /^ran claude-code policy dep data esm /);
   });
 
   test('NODE_OPTIONS and NODE_PATH are not passed on to what zn-gate starts', () => {

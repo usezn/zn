@@ -16,8 +16,9 @@ Limits: [docs/threat-model.md](docs/threat-model.md). Per-agent support:
 
 ### Added
 - **Agent plugins** (`plugins/zn-gate`): one package in the Agent Plugins 1.0 format that
-  connects Claude Code, Codex and Cursor to the installed zn-gate (hooks, the `secrets` MCP
-  server and a skill). It installs and updates nothing by itself: on every call it requires
+  connects Claude Code and Cursor to the installed zn-gate (hooks, the `secrets` MCP server and
+  a skill), and gives Codex the MCP server and the skill (Codex does not run plugin hooks; use
+  `zn hooks install codex`). It installs and updates nothing by itself: on every call it requires
   the exact pinned version, checks that the package holds exactly the files of the published
   release, runs zn-gate from the checked bytes and fails closed otherwise. Marketplace files
   for Claude Code, Codex and Cursor, and an MCP Registry entry (`plugins/mcp-registry/server.json`,

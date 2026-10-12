@@ -22,9 +22,12 @@
  *     within the verified file set. Nothing zn-gate loads in this process is
  *     read from disk again after the check.
  *
- * Any failure, including an exception thrown by zn-gate itself, refuses the
- * hook event (exit code 2 and a message that says how to fix it) and keeps
- * the MCP server from starting. The user can let hook events pass instead
+ * Any failure, including an exception thrown by zn-gate itself or an exit
+ * code other than 0 or 2, refuses the hook event with a message that says how
+ * to fix it, and keeps the MCP server from starting. A tool call or prompt is
+ * refused with exit code 2; tool output is replaced by a "withheld" note in
+ * the agent's own format, because on exit 2 Claude Code and Codex still pass
+ * the original output to the model (see refusalFor). The user can let hook events pass instead
  * with {"hooks": {"whenUnavailable": "allow"}} in ~/.zn/config.json.
  *
  * What this does not protect against (see the plugin README):
@@ -321,52 +324,127 @@ function whenUnavailableAllows() {
   return String(hooks.whenUnavailable || '').toLowerCase() === 'allow';
 }
 
-let refused = false;
-function refuseHook(agent, why) {
-  if (refused) return;
-  refused = true;
+/*
+ * Hook mode keeps control of what reaches the agent:
+ *  - the event is read from stdin before anything of zn-gate is loaded, so a
+ *    refusal always knows which event it answers and what output to withhold;
+ *  - zn-gate gets that event through a replacement process.stdin, and what it
+ *    writes to process.stdout is held back;
+ *  - when the process exits, either zn-gate's answer is written out (it ended
+ *    normally with 0 or 2), or the launcher's refusal is (anything else).
+ */
+const hook = { agent: null, raw: '', event: null, refusal: null, captured: [] };
+
+const WITHHELD = '[zn plugin: output withheld because zn could not check it]';
+function withhold(v) {
+  return typeof v === 'string' ? WITHHELD
+    : Array.isArray(v) ? v.map(withhold)
+      : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, withhold(x)])) : v;
+}
+
+function eventName() {
+  return hook.event && typeof hook.event === 'object' ? String(hook.event.hook_event_name || '') : '';
+}
+
+/*
+ * The refusal for this agent and event: {code, stdout}. A refused tool call
+ * or prompt is blocked with exit code 2. A refused tool output cannot be
+ * blocked that way (Claude Code and Codex still pass the original output to
+ * the model on exit 2), so it is replaced in the format each agent reads.
+ */
+function refusalFor(msg) {
+  const name = eventName();
+  const ev = hook.event || {};
+  if (hook.agent === 'claude-code' && name === 'PostToolUse') {
+    return {
+      code: 0,
+      stdout: JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: 'PostToolUse',
+          updatedToolOutput: ev.tool_response === undefined ? WITHHELD : withhold(ev.tool_response),
+          additionalContext: msg,
+        },
+        systemMessage: msg,
+      }),
+    };
+  }
+  if (hook.agent === 'codex' && name === 'PostToolUse') {
+    return { code: 0, stdout: JSON.stringify({ decision: 'block', reason: WITHHELD + '\n\n[' + msg + ']' }) };
+  }
+  if (hook.agent === 'cursor' && name === 'postToolUse') {
+    const tool = String(ev.tool_name || '');
+    const builtin = ['Shell', 'Read', 'Write', 'Edit', 'Grep', 'Glob', 'WebFetch'].includes(tool) && !/^MCP:/i.test(tool);
+    if (!builtin) {
+      let out = ev.tool_output;
+      if (typeof out === 'string') { try { out = JSON.parse(out); } catch (_) { /* plain text */ } }
+      const replaced = withhold(out);
+      return {
+        code: 0,
+        stdout: JSON.stringify({ updated_mcp_tool_output: typeof replaced === 'string' ? { text: replaced } : replaced, additional_context: msg }),
+      };
+    }
+    // Cursor cannot rewrite the output of its built-in tools (docs/compat.md).
+  }
+  if (hook.agent === 'cursor') {
+    return { code: 2, stdout: JSON.stringify({ permission: 'deny', continue: false, user_message: msg, agent_message: msg }) };
+  }
+  return { code: 2, stdout: '' };
+}
+
+function refuseHook(why) {
+  if (hook.refusal) return;
   if (whenUnavailableAllows()) {
-    process.stderr.write('zn plugin: ' + why + ' Event passed through (hooks.whenUnavailable is "allow").\n');
-    process.exitCode = 0;
+    hook.refusal = { pass: true, msg: 'zn plugin: ' + why + ' Event passed through (hooks.whenUnavailable is "allow").' };
     return;
   }
   const msg = 'zn plugin: ' + why + ' Until then zn cannot check this call, so it is refused. ' +
     'To let events pass while zn-gate is unavailable, set {"hooks": {"whenUnavailable": "allow"}} in ~/.zn/config.json.';
-  process.stderr.write(msg + '\n');
-  if (agent === 'cursor') {
-    process.stdout.write(JSON.stringify({ permission: 'deny', continue: false, user_message: msg, agent_message: msg }));
-  }
-  process.exitCode = 2;
+  hook.refusal = { msg, ...refusalFor(msg) };
 }
 
-function failClosedOnCrash(agent) {
-  const onError = (err) => {
-    refuseHook(agent, 'zn-gate failed (' + ((err && err.message) || String(err)) + ').');
-    // Exit now: whatever was running is in an unknown state.
-    process.exit(process.exitCode);
-  };
-  process.on('uncaughtException', onError);
-  process.on('unhandledRejection', onError);
-}
-
-/*
- * Agents treat exit codes other than 0 and 2 as non-blocking errors and let
- * the call through. Whatever code zn-gate ends with (process.exit(1),
- * process.exitCode = 1), the hook exits with 0 or 2.
- */
-function normalizeExitCode(agent) {
-  process.on('exit', (code) => {
-    if (code === 0 || code === 2) return;
-    if (whenUnavailableAllows()) return;
-    const msg = 'zn plugin: zn-gate ended with exit code ' + code + ', so this call is refused.';
+function writeAll(fd, data) {
+  const buf = Buffer.isBuffer(data) ? data : Buffer.from(String(data), 'utf8');
+  let off = 0;
+  while (off < buf.length) {
     try {
-      fs.writeSync(2, msg + '\n');
-      if (agent === 'cursor' && !refused) {
-        fs.writeSync(1, JSON.stringify({ permission: 'deny', continue: false, user_message: msg, agent_message: msg }));
-      }
-    } catch (_) { /* the exit code below is what counts */ }
-    process.exitCode = 2;
+      off += fs.writeSync(fd, buf, off, buf.length - off);
+    } catch (err) {
+      if (err.code !== 'EAGAIN') throw err;
+    }
+  }
+}
+
+/* Decide, once, what the agent gets: zn-gate's answer or the refusal. */
+function finishHook(code) {
+  if (!hook.refusal && code !== 0 && code !== 2) {
+    refuseHook('zn-gate ended with exit code ' + code + '.');
+  }
+  const r = hook.refusal;
+  try {
+    if (!r) {
+      if (hook.captured.length) writeAll(1, Buffer.concat(hook.captured));
+      return code;
+    }
+    writeAll(2, r.msg + '\n');
+    if (r.pass) return 0;
+    if (r.stdout) writeAll(1, r.stdout);
+    return r.code;
+  } catch (_) {
+    return 2;
+  }
+}
+
+function captureStdio(raw) {
+  const { Readable, Writable } = require('stream');
+  const input = Readable.from([Buffer.from(raw, 'utf8')], { objectMode: false });
+  const output = new Writable({
+    write(chunk, enc, cb) {
+      hook.captured.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, enc));
+      cb();
+    },
   });
+  Object.defineProperty(process, 'stdin', { configurable: true, enumerable: true, get: () => input });
+  Object.defineProperty(process, 'stdout', { configurable: true, enumerable: true, get: () => output });
 }
 
 function runHook(agent) {
@@ -375,20 +453,29 @@ function runHook(agent) {
     process.exitCode = 1;
     return;
   }
-  normalizeExitCode(agent);
-  failClosedOnCrash(agent);
+  hook.agent = agent;
+  process.on('exit', (code) => { process.exitCode = finishHook(code); });
+  const onError = (err) => {
+    refuseHook('zn-gate failed (' + ((err && err.message) || String(err)) + ').');
+    // Exit now: whatever was running is in an unknown state.
+    process.exit(2);
+  };
+  process.on('uncaughtException', onError);
+  process.on('unhandledRejection', onError);
   try {
+    try { hook.raw = fs.readFileSync(0, 'utf8'); } catch (_) { hook.raw = ''; }
+    try { hook.event = JSON.parse(hook.raw.replace(/^﻿/, '')); } catch (_) { hook.event = null; }
+    captureStdio(hook.raw);
     const lock = loadLock();
     const res = verify(lock);
-    if (res.error) return refuseHook(agent, res.error);
-    const loader = makeLoader(res.dir, res.files);
-    const runner = loader.load('lib/hooks/runner.js');
-    // The runner reads the event from stdin and writes the agent's answer.
+    if (res.error) return refuseHook(res.error);
+    const runner = makeLoader(res.dir, res.files).load('lib/hooks/runner.js');
+    // The runner reads the event from (the replacement) stdin and writes its answer.
     Promise.resolve(runner.main([agent])).catch((err) => {
-      refuseHook(agent, 'zn-gate failed (' + ((err && err.message) || String(err)) + ').');
+      refuseHook('zn-gate failed (' + ((err && err.message) || String(err)) + ').');
     });
   } catch (err) {
-    refuseHook(agent, 'zn-gate failed to load (' + ((err && err.message) || String(err)) + ').');
+    refuseHook('zn-gate failed to load (' + ((err && err.message) || String(err)) + ').');
   }
 }
 

@@ -7,8 +7,14 @@ uses credentials without revealing them to the model, and a skill that
 explains both to the agent.
 
 The plugin follows the [Agent Plugins 1.0](https://github.com/agentplugins/agent-plugins-spec)
-layout (`plugin.json`, `mcp.json`, `skills/`) and adds the files Claude Code,
-Codex and Cursor read for hooks.
+layout (`plugin.json`, `mcp.json`, `skills/`) and adds the files Claude Code
+and Cursor read for hooks.
+
+**Codex:** Codex does not run hooks from plugins (Codex 0.162.1 lists the
+`plugin_hooks` feature as removed). In Codex this plugin adds the `secrets` MCP
+server and the skill only. For the hooks, also run `zn hooks install codex`,
+which writes them into your Codex configuration. `com.openai/hooks.json` is
+kept for when Codex runs plugin hooks again.
 
 ## Requirements
 
@@ -71,10 +77,14 @@ It is not a sandbox:
   `vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER`, which Node's documentation
   marks as experimental. If a Node.js version lacks it or changes it, the
   launcher refuses to run (hooks exit 2, the MCP server does not start).
-- **Timeouts pass in Claude Code and Codex.** A hook that does not answer in
-  time (15 s in Claude Code, 30 s in Codex) is treated as a non-blocking
-  error, and the call goes ahead. The Cursor hooks are marked `failClosed`, so
-  Cursor blocks the call instead.
+- **Timeouts pass in Claude Code.** A hook that does not answer in 15 s is
+  treated as a non-blocking error, and the call goes ahead. The Cursor hooks
+  are marked `failClosed`, so Cursor blocks the call instead.
+- **Refused output.** When the launcher refuses a tool-output event (the
+  package was changed, zn-gate failed), it replaces the output with
+  `[zn plugin: output withheld because zn could not check it]` in Claude Code,
+  and for MCP tools in Cursor. Cursor cannot replace the output of its
+  built-in tools, so there a refusal only reports the problem.
 - **The agent's environment.** Whoever controls the environment the agent
   starts hooks with chooses which `node` runs the launcher, can preload code
   with `NODE_OPTIONS` before the launcher starts, and chooses the `PATH` used to
@@ -132,7 +142,7 @@ event is not checked twice: `zn hooks uninstall claude-code`.
 | --- | --- | --- |
 | `plugin.json`, `mcp.json`, `skills/` | Agent Plugins clients | Manifest, `secrets` MCP server, skill |
 | `.claude-plugin/plugin.json`, `hooks/hooks.json`, `.mcp.json` | Claude Code | Manifest, hooks, MCP server |
-| `com.openai/hooks.json` | Codex | Hooks (Codex asks you to trust them first) |
+| `com.openai/hooks.json` | Codex | Hooks; not run by current Codex versions (use `zn hooks install codex`) |
 | `.cursor-plugin/plugin.json`, `cursor/hooks.json`, `cursor/mcp.json` | Cursor | Manifest, hooks, MCP server |
 | `scripts/zn-launch.js` | all | Finds and verifies zn-gate, then runs it |
 | `scripts/zn-gate.lock.json` | all | Pinned version and file digests |
