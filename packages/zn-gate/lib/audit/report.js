@@ -43,18 +43,30 @@ function toJson(result, meta) {
   }, null, 2) + '\n';
 }
 
+// Control characters (C0, DEL, C1) and bidirectional controls from a
+// repository must never reach the terminal: an ESC or OSC sequence could
+// erase or rewrite the lines above it. They are shown as \xNN / \u{NNNN}.
+const UNSAFE_CHARS = /[\u{0}-\u{1f}\u{7f}-\u{9f}\u{202a}-\u{202e}\u{2066}-\u{2069}\u{200e}\u{200f}\u{61c}]/gu;
+
+function safeText(s) {
+  return String(s == null ? '' : s).replace(UNSAFE_CHARS, (c) => {
+    const cp = c.codePointAt(0);
+    return cp <= 0xff ? '\\x' + cp.toString(16).padStart(2, '0') : '\\u{' + cp.toString(16) + '}';
+  });
+}
+
 function toText(result, meta) {
   const color = Boolean(meta.color);
-  const paint = (code, s) => (color ? '\x1b[' + code + 'm' + s + '\x1b[0m' : s);
+  const paint = (code, s) => (color ? '\x1b[' + code + 'm' + safeText(s) + '\x1b[0m' : safeText(s));
   const SEV = { critical: '35;1', high: '31;1', medium: '33', low: '36' };
   const lines = [];
-  lines.push('zn audit  ' + meta.displayRoot + '  (zn-gate ' + meta.toolVersion + ')');
+  lines.push('zn audit  ' + safeText(meta.displayRoot) + '  (zn-gate ' + meta.toolVersion + ')');
   lines.push('');
   for (const f of result.findings) {
-    lines.push(paint(SEV[f.severity], f.severity.toUpperCase().padEnd(9)) + ' ' + f.id + '  ' + f.file + ':' + f.line + '  [' + f.agent + ']');
+    lines.push(paint(SEV[f.severity], f.severity.toUpperCase().padEnd(9)) + ' ' + f.id + '  ' + safeText(f.file) + ':' + f.line + '  [' + safeText(f.agent) + ']');
     const pad = '          ';
-    lines.push(pad + f.title);
-    lines.push(pad + f.detail);
+    lines.push(pad + safeText(f.title));
+    lines.push(pad + safeText(f.detail));
     if (f.evidence) lines.push(pad + paint('90', 'evidence: ' + f.evidence));
     lines.push(pad + paint('90', 'fix: ' + f.fix));
     if (f.references && f.references.length) lines.push(pad + paint('90', 'refs: ' + f.references.join(', ')));
@@ -68,7 +80,7 @@ function toText(result, meta) {
   else tail += s.failed ? ' Failing: severity >= ' + meta.failOn + '.' : ' Nothing at or above ' + meta.failOn + '.';
   if (s.findings === 0) tail = 'No findings in ' + s.files + ' agent file' + (s.files === 1 ? '' : 's') + '.';
   lines.push(s.failed ? paint('31;1', tail) : tail);
-  if (result.truncated) lines.push('Note: the directory has more entries than zn audit reads; some files were not checked.');
+  if (result.truncated) lines.push('Note: the scan stopped early (see ZNA020); some files were not checked.');
   return lines.join('\n') + '\n';
 }
 
@@ -97,9 +109,15 @@ function toSarif(result, meta) {
     },
   }));
   const index = Object.fromEntries(RULES.map((r, i) => [r.id, i]));
+  // Fingerprint: rule, file and evidence (stable when lines move), plus the
+  // ordinal among identical findings so that each one stays unique.
+  const ordinals = new Map();
   const results = result.findings.map((f) => {
     const home = f.file.startsWith('~/');
-    const fp = crypto.createHash('sha256').update([f.id, f.file, f.evidence].join('\u0000')).digest('hex');
+    const base = [f.id, f.file, f.evidence].join('\u0000');
+    const n = (ordinals.get(base) || 0) + 1;
+    ordinals.set(base, n);
+    const fp = crypto.createHash('sha256').update(base + '\u0000' + n).digest('hex');
     return {
       ruleId: f.id,
       ruleIndex: index[f.id],

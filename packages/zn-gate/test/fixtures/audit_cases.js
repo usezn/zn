@@ -263,9 +263,9 @@ const RULE_CASES = [
     expect: [{ id: 'ZNA003', agent: 'gemini', severity: 'medium' }, { id: 'ZNA010', agent: 'amazonq' }, { id: 'ZNA001', agent: 'amazonq' }],
   },
   {
-    name: 'unparsable config',
-    files: { '.cursor/mcp.json': '{ "mcpServers": { "a": { "command": "x" } \n' },
-    expect: [{ id: 'ZNA020', severity: 'low' }],
+    name: 'unparsable config that can start commands is high, other unparsable files are low',
+    files: { '.cursor/mcp.json': '{ "mcpServers": { "a": { "command": "x" } \n', '.vscode/settings.json': '{ "editor.tabSize": 2 \n' },
+    expect: [{ id: 'ZNA020', severity: 'high', file: '.cursor/mcp.json' }, { id: 'ZNA020', severity: 'low', file: '.vscode/settings.json' }],
   },
 ];
 

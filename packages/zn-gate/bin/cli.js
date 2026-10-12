@@ -87,7 +87,7 @@ COMMANDS:
   audit [path]        Review a repository's agent configs before you open it: hooks, MCP servers,
                       endpoint overrides, permissions, instructions, planted executables
                       [--format text|json|sarif] [--output FILE] [--fail-on high]
-                      [--agents claude,codex,cursor,opencode,amazonq,all] [--include-home]
+                      [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home]
                       (in 1.6 a bare 'zn audit' still shows the secret-use log: use 'zn audit .')
   evidence            Query the local hash-chained audit log and run the UI dashboard
   logs                Tail or inspect security event logs
@@ -367,7 +367,8 @@ function isSecretLogCall(rest) {
   if (rest[0] === 'log') return true;
   if (rest.length === 0) return true;
   for (let i = 0; i < rest.length; i++) {
-    if (rest[i] === '--since' && rest[i + 1] !== undefined) { i++; continue; }
+    // `--since` with no value still goes to the log, which reports the usage error.
+    if (rest[i] === '--since') { i++; continue; }
     if (String(rest[i]).startsWith('--since=')) continue;
     return false;
   }

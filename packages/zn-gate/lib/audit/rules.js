@@ -152,10 +152,10 @@ const RULES = [
     references: [],
   },
   {
-    id: 'ZNA020', severity: 'low', name: 'unparsable-config',
-    title: 'Agent config file could not be parsed',
-    help: 'zn audit could not check this file; the agent may still read part of it.',
-    fix: 'Fix the syntax error.',
+    id: 'ZNA020', severity: 'high', name: 'unchecked-agent-file',
+    title: 'Agent file could not be checked',
+    help: 'zn audit could not review this file or directory: a syntax error, a size over the limit, a symbolic link leaving the repository, or a scan that stopped early. Agents may still read and act on it. High when the file can run commands or redirect the agent, or when the scan did not finish.',
+    fix: 'Fix the syntax error, move the content into the repository, or review the file by hand.',
     references: [],
   },
 ];

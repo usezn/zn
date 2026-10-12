@@ -12,44 +12,61 @@
 
 /* ------------------------------ JSONC ------------------------------ */
 
-function stripJsonc(text) {
-  let out = '';
+/** End index (exclusive) of the JSON string that starts at `i`. */
+function stringEnd(text, i) {
+  const n = text.length;
+  let j = i + 1;
+  while (j < n && text[j] !== '"') {
+    if (text[j] === '\\') j++;
+    j++;
+  }
+  return Math.min(n, j + 1);
+}
+
+/** Pass 1: comments become spaces (newlines kept, so line numbers stay right). */
+function stripComments(text) {
+  const parts = [];
   let i = 0;
+  let last = 0;
   const n = text.length;
   while (i < n) {
     const c = text[i];
-    if (c === '"') {
-      const start = i;
-      i++;
-      while (i < n && text[i] !== '"') {
-        if (text[i] === '\\') i++;
-        i++;
-      }
-      i++;
-      out += text.slice(start, i);
+    if (c === '"') { i = stringEnd(text, i); continue; }
+    if (c === '/' && (text[i + 1] === '/' || text[i + 1] === '*')) {
+      const end = text[i + 1] === '/' ? (text.indexOf('\n', i) < 0 ? n : text.indexOf('\n', i)) : (text.indexOf('*/', i + 2) < 0 ? n : text.indexOf('*/', i + 2) + 2);
+      parts.push(text.slice(last, i), text.slice(i, end).replace(/[^\n]/g, ' '));
+      i = end;
+      last = end;
       continue;
     }
-    if (c === '/' && text[i + 1] === '/') {
-      while (i < n && text[i] !== '\n') i++;
-      continue;
-    }
-    if (c === '/' && text[i + 1] === '*') {
-      const end = text.indexOf('*/', i + 2);
-      const stop = end < 0 ? n : end + 2;
-      // Keep newlines so line numbers in errors stay right.
-      out += text.slice(i, stop).replace(/[^\n]/g, ' ');
-      i = stop;
-      continue;
-    }
+    i++;
+  }
+  parts.push(text.slice(last));
+  return parts.join('');
+}
+
+/** Pass 2: trailing commas (before } or ]) become spaces. */
+function stripTrailingCommas(text) {
+  const out = text.split('');
+  const n = text.length;
+  let i = 0;
+  while (i < n) {
+    const c = text[i];
+    if (c === '"') { i = stringEnd(text, i); continue; }
     if (c === ',') {
       let j = i + 1;
       while (j < n && /\s/.test(text[j])) j++;
-      if (text[j] === '}' || text[j] === ']') { out += ' '; i++; continue; }
+      if (text[j] === '}' || text[j] === ']') out[i] = ' ';
+      i = j;
+      continue;
     }
-    out += c;
     i++;
   }
-  return out;
+  return out.join('');
+}
+
+function stripJsonc(text) {
+  return stripTrailingCommas(stripComments(text));
 }
 
 function parseJsonc(text) {
@@ -60,7 +77,8 @@ function parseJsonc(text) {
   } catch (err) {
     const e = new Error(err.message);
     const m = /position (\d+)/.exec(err.message);
-    e.line = m ? clean.slice(0, Number(m[1])).split('\n').length : 1;
+    const l = /line (\d+)/.exec(err.message);
+    e.line = m ? clean.slice(0, Number(m[1])).split('\n').length : l ? Number(l[1]) : 1;
     throw e;
   }
 }
@@ -74,8 +92,8 @@ function parseToml(text) {
   const n = s.length;
   let i = 0;
   let line = 1;
-  const root = {};
-  const lines = {};
+  const root = Object.create(null);
+  const lines = Object.create(null);
   let current = root;
   let currentPath = [];
 
@@ -168,6 +186,8 @@ function parseToml(text) {
         if (i === start) fail('expected a key');
         parts.push(s.slice(start, i));
       }
+      const last = parts[parts.length - 1];
+      if (last === '__proto__' || last === 'constructor' || last === 'prototype') fail('reserved key ' + JSON.stringify(last));
       skipWs();
       if (s[i] === '.') { i++; continue; }
       return parts;
@@ -192,7 +212,7 @@ function parseToml(text) {
     }
     if (c === '{') {
       i++;
-      const obj = {};
+      const obj = Object.create(null);
       skipWs();
       if (s[i] === '}') { i++; return obj; }
       for (;;) {
@@ -229,7 +249,7 @@ function parseToml(text) {
   function setPath(obj, parts, val) {
     let o = obj;
     for (let k = 0; k < parts.length - 1; k++) {
-      if (o[parts[k]] === undefined || o[parts[k]] === null || typeof o[parts[k]] !== 'object') o[parts[k]] = {};
+      if (o[parts[k]] === undefined || o[parts[k]] === null || typeof o[parts[k]] !== 'object') o[parts[k]] = Object.create(null);
       o = o[parts[k]];
       if (Array.isArray(o)) o = o[o.length - 1];
     }
@@ -241,13 +261,13 @@ function parseToml(text) {
       const last = k === parts.length - 1;
       if (last && isArray) {
         if (!Array.isArray(o[parts[k]])) o[parts[k]] = [];
-        const t = {};
+        const t = Object.create(null);
         o[parts[k]].push(t);
         return t;
       }
-      if (o[parts[k]] === undefined || typeof o[parts[k]] !== 'object' || o[parts[k]] === null) o[parts[k]] = {};
+      if (o[parts[k]] === undefined || typeof o[parts[k]] !== 'object' || o[parts[k]] === null) o[parts[k]] = Object.create(null);
       o = o[parts[k]];
-      if (Array.isArray(o)) o = o[o.length - 1] || {};
+      if (Array.isArray(o)) o = o[o.length - 1] || Object.create(null);
     }
     return o;
   }

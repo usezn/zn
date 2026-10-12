@@ -27,7 +27,7 @@ It runs locally and sends nothing anywhere.
 ```
 zn audit [path] [--format text|json|sarif] [--output <file>]
          [--fail-on low|medium|high|critical|none]
-         [--agents claude,codex,cursor,opencode,amazonq,all] [--include-home]
+         [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home]
 ```
 
 `zn-gate audit` is the same command.
@@ -54,7 +54,7 @@ Use `zn audit .` in scripts today.
 | `--format` | `text` | `text` for people, `json` for scripts, `sarif` for GitHub code scanning |
 | `--output` | standard output | Write the report to a file |
 | `--fail-on` | `high` | Exit with 1 if any finding has this severity or a higher one; `none` never fails |
-| `--agents` | `all` | Only check the files these agents read. `copilot` and `gemini` are also accepted |
+| `--agents` | `all` | Only check the files these agents read: `claude`, `codex`, `cursor`, `opencode`, `amazonq`, `copilot`, `gemini` or `all`. Findings that concern every agent (`AGENTS.md`, planted executables, CI workflows) are always shown |
 | `--include-home` | off | Also check your own user-level configs (`~/.claude/settings.json`, `~/.codex/config.toml`, ...) |
 
 Exit codes: `0` no finding at or above `--fail-on`, `1` at least one, `2`
@@ -75,10 +75,23 @@ zn audit --agents claude,codex --fail-on critical
 
 ## What it reads
 
-Project files, at any depth up to 8 directories (configs in a subdirectory
-apply when an agent starts there). `node_modules`, `.git`, `vendor`, build and
-virtualenv directories are skipped, symbolic links are not followed and files
-over 1 MB are skipped.
+Project files at any depth (configs in a subdirectory apply when an agent
+starts there). Agent directories (`.claude`, `.codex`, `.cursor`, `.github`,
+`skills`, ...) are read first. Outside them, `node_modules`, `vendor`, build
+and virtualenv directories are skipped; inside them nothing is skipped, so a
+skill called `build` is still read. `.git` is never read.
+
+Nothing the repository controls can make a file disappear from the report
+silently:
+
+- a symbolic link to an agent file or directory inside the repository is
+  followed; one that leaves the repository is reported (ZNA020, high);
+- an agent file over 1 MB is reported (ZNA020, high) instead of skipped;
+- the scan stops after 50,000 directory entries or 120 seconds, and says so
+  with a ZNA020 high finding (so the run fails at the default threshold);
+- FIFOs, devices and sockets are never opened;
+- a committed root `.env` that sets `CODEX_HOME` or `CLAUDE_CONFIG_DIR` to a
+  directory inside the repository makes zn audit read the configs there too.
 
 | Agent | Files |
 |---|---|
@@ -94,7 +107,9 @@ over 1 MB are skipped.
 With `--include-home` it also reads `~/.claude/settings.json`, `~/.claude.json`,
 `~/.codex/config.toml`, `~/.cursor/mcp.json`, `~/.cursor/hooks.json`,
 `~/.aws/amazonq/mcp.json`, `~/.config/opencode/opencode.json[c]` and
-`~/.gemini/settings.json`. Commands you configured yourself are expected
+`~/.gemini/settings.json`, plus `hooks.json` next to the Codex config. It
+honours `CODEX_HOME` and `XDG_CONFIG_HOME` the way the agents do. Commands you
+configured yourself are expected
 there, so in home configs only the riskier variants are reported (code
 downloaded and run, unpinned packages, endpoint overrides, secrets, broad
 permissions; endpoint, environment and permission findings are capped at medium there).
@@ -105,26 +120,26 @@ Rule ids are stable: a rule may get better, but its id never changes meaning.
 
 | Id | Severity | Finding | Why it matters |
 |---|---|---|---|
-| ZNA001 | high | A command runs automatically from a project config: hooks (Claude Code, Cursor, Codex, Amazon Q, Gemini), `statusLine`, Codex `notify`, OpenCode plugin files, VS Code tasks with `runOn: folderOpen` | Runs with your user's rights as soon as the agent (or a vulnerable version of another agent) acts on the file. CVE-2026-48124 |
+| ZNA001 | high / medium | A command runs automatically from a project config: hooks (Claude Code, Cursor, Codex, Amazon Q, Gemini), `statusLine`, Codex `notify`, OpenCode plugin files, VS Code tasks with `runOn: folderOpen`. Medium for hooks that belong to a plugin (they run only once the plugin is enabled) | Runs with your user's rights as soon as the agent (or a vulnerable version of another agent) acts on the file. CVE-2026-48124. Only the exact commands `zn hooks install` writes are left out |
 | ZNA002 | critical | An automatic command downloads code and runs it (`curl … \| sh`, `iwr … \| iex`, `bash <(curl …)`) | Whoever controls the URL controls your machine, and can change the payload after review |
 | ZNA003 | high (Codex, Amazon Q) / medium | A project MCP server starts a local command | Agents ask before starting project MCP servers, but vulnerable versions did not (CVE-2026-12957, CVE-2025-61260), and the server inherits your environment and credentials |
 | ZNA004 | high / medium | Project settings approve MCP servers in advance (`enableAllProjectMcpServers`, `enabledMcpjsonServers`) | Removes the one prompt that stands between the repository and a running server |
 | ZNA005 | medium | An MCP server or agent plugin is not pinned (`npx -y pkg`, `@latest`, `uvx pkg` without `==`, container images without a tag or digest, OpenCode plugins without a version) | The code that runs changes whenever the package is republished; a compromised release reaches you on the next start |
 | ZNA006 | medium (http) / low (https) | A remote MCP server, or instructions loaded from a URL | Tool calls and their content go to a third party; with plain `http` anyone on the path can read and change them |
 | ZNA007 | critical / high / medium | The model API endpoint is overridden (`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, any `*_BASE_URL`, Codex `model_providers.*.base_url`, OpenCode `provider.*.options.baseURL`) or a proxy is set (`HTTPS_PROXY`) | Your API key and every prompt go to that server. CVE-2026-21852. Critical for a remote host, high for a proxy, medium for a loopback address |
-| ZNA008 | high | An environment variable that loads code or certificates (`NODE_OPTIONS`, `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, `PYTHONSTARTUP`, `BASH_ENV`, `PATH`, `GIT_SSH_COMMAND`, `NODE_EXTRA_CA_CERTS`, ...) | Every process the agent starts runs the injected code or trusts the injected certificate |
+| ZNA008 | high | An environment variable that loads code or certificates (`NODE_OPTIONS`, `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, `PYTHONSTARTUP`, `BASH_ENV`, `PATH`, `GIT_SSH_COMMAND`, `NODE_EXTRA_CA_CERTS`, ...) or moves where the agent reads its config (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `XDG_CONFIG_HOME`, `OPENCODE_CONFIG`) | Every process the agent starts runs the injected code or trusts the injected certificate; a moved config directory loads a config shipped in the repository. CVE-2025-61260 |
 | ZNA009 | high | A credential helper command in project settings (`apiKeyHelper`, `awsAuthRefresh`, `awsCredentialExport`, `otelHeadersHelper`) | Runs to fetch credentials and decides which key the agent uses |
 | ZNA010 | high / medium | Broad permissions: `Bash(*)`, `Bash`, `*`, interpreter wildcards such as `Bash(python:*)`, `defaultMode: bypassPermissions`, Codex `approval_policy = "never"` with full access, OpenCode `"bash": "allow"`, VS Code `chat.tools.autoApprove` | The agent runs anything an injected instruction asks, without a prompt |
 | ZNA011 | high | A secret value in an agent config or instruction file | Committed credentials leak with the repository; detection uses the zn scrubber, and the report never prints the value |
-| ZNA012 | high | A prompt-injection pattern in agent instructions (the zn rules engine: instruction overrides, fake system tags, hidden HTML, invisible Unicode, markdown image beacons) | The agent reads the file as trusted guidance |
+| ZNA012 | high / medium / low | A prompt-injection pattern in agent instructions (the zn rules engine: instruction overrides, fake system tags, hidden HTML, invisible Unicode, markdown image beacons) | The agent reads the file as trusted guidance. High for the strong patterns; medium for weaker ones ("you are now", "forget"); one step lower inside code blocks, blockquotes and quoted examples ("e.g. '...'"), which usually describe an attack rather than carry one. Rules that are noisy in documentation ("act as", mentions of credentials or `.env`) are not used here |
 | ZNA013 | medium / low | Instructions tell the agent to download and run code | Same as ZNA002 once the agent follows them; low for well-known installers (rustup, uv, bun, deno, nvm, Homebrew) |
 | ZNA014 | high | Instructions tell the agent to send secrets or files out (`.env`, `~/.ssh`, tokens to a URL, `curl -d @.env`, `env \| curl`) | Direct exfiltration through the agent |
-| ZNA015 | medium | Instructions tell the agent to skip safety checks or to hide what it does (`--no-verify`, `--dangerously-skip-permissions`, "disable the sandbox", "do not tell the user") | Removes the checks that would catch the rest |
+| ZNA015 | medium | Instructions tell the agent to skip safety checks or to hide what it does (`--no-verify`, `--dangerously-skip-permissions`, "disable the sandbox", "do not tell the user") | Removes the checks that would catch the rest. "Never ask the user" is not concealment and is not reported |
 | ZNA016 | critical (Windows executables) / high | An executable in the audited root shares its name with a common tool (`git.exe`, `node.exe`, `npm.cmd`, `python`, ...) | Windows and some tools search the current directory first: the planted file runs instead of the real tool. CVE-2026-63093 |
 | ZNA017 | medium | Project settings add plugin marketplaces or enable plugins (`extraKnownMarketplaces`, `enabledPlugins`) | Third-party plugins (hooks, MCP servers, skills) get installed and updated once the project is trusted ("Plugin4Shell") |
 | ZNA018 | low | The repository ships agent extensions (commands, subagents, skills, plugins) | Inventory: they are reviewed by the other rules, but you should know they are there |
-| ZNA019 | high / medium | A CI workflow runs an AI agent on input anyone can write (`issues`, `issue_comment`, `pull_request_target`, discussions) | An issue or comment becomes instructions for an agent that holds repository tokens. High with `pull_request_target`, issue or comment text pasted into the workflow, or write permissions without an author filter (`author_association`, `github.actor`) |
-| ZNA020 | low | An agent config file could not be parsed | It cannot be checked; the agent may read it differently |
+| ZNA019 | high / medium | A CI workflow runs an AI agent on input anyone can write (`issues`, `issue_comment`, `pull_request_target`, discussions) | An issue or comment becomes instructions for an agent that holds repository tokens. High with `pull_request_target`, issue or comment text pasted into the workflow (`${{ github.event.issue.body }}`, also through `env:`), an action opened to users without write access (`allowed_non_write_users`), or a CLI step (`claude -p`, `codex exec`) with write permissions and no author filter. Medium otherwise: the common agent actions check the actor's own permission before running |
+| ZNA020 | high / low | An agent file could not be checked: a syntax error, a size over 1 MB, a symbolic link leaving the repository, or a scan that stopped early | The agent may still act on it. High when the file can run commands or redirect the agent (the text is then searched for risky keys, and `runOn: folderOpen` or a download piped into a shell is still reported), when it uses a reserved key such as `__proto__`, or when the scan did not finish; low for a syntax error in a file that cannot run anything |
 
 ## Output
 
@@ -143,7 +158,9 @@ CRITICAL  ZNA007  .claude/settings.json:4  [claude]
 1 finding (1 critical, 0 high, 0 medium, 0 low) in 3 files. Failing: severity >= high.
 ```
 
-Colors are used only on a terminal and never when `NO_COLOR` is set.
+Colors are used only on a terminal and never when `NO_COLOR` is set. Control
+characters and escape sequences from the repository (in evidence, details and
+file names) are printed as `\x1b`, never sent to the terminal.
 
 ### JSON
 
@@ -189,7 +206,8 @@ query string.
 `--format sarif` writes SARIF 2.1.0 for GitHub code scanning: one rule per
 `ZNA` id with help text and a `security-severity` property, results with
 locations relative to the repository root (`uriBaseId: "%SRCROOT%"`) and a
-partial fingerprint so alerts survive line moves. Findings from
+partial fingerprint (rule, file, evidence and an ordinal among identical
+findings) so alerts survive line moves and stay unique. Findings from
 `--include-home` use `uriBaseId: "HOME"` and GitHub ignores them; keep that
 flag off in CI.
 
@@ -202,6 +220,8 @@ flag off in CI.
 
 ## Limitations
 
+- Passwords written in prose ("with password ...") have no format the
+  scrubber recognises, so they are not redacted from the evidence.
 - It reads files; it does not run them, start servers or resolve packages. A
   pinned package can still be malicious, and a hook that calls a local script
   is reported as a hook, not judged by what the script does.

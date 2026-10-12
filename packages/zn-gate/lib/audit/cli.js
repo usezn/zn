@@ -2,7 +2,7 @@
 /**
  * zn audit [path] [--format text|json|sarif] [--output <file>]
  *          [--fail-on low|medium|high|critical|none]
- *          [--agents claude,codex,cursor,opencode,amazonq,all] [--include-home]
+ *          [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home]
  *
  * Exit codes: 0 nothing at or above --fail-on, 1 findings at or above it,
  * 2 usage or runtime error.
@@ -13,7 +13,7 @@ const path = require('path');
 const { audit, AGENTS } = require('./index');
 const report = require('./report');
 
-const USAGE = 'usage: zn audit [path] [--format text|json|sarif] [--output <file>] [--fail-on low|medium|high|critical|none] [--agents claude,codex,cursor,opencode,amazonq,all] [--include-home]';
+const USAGE = 'usage: zn audit [path] [--format text|json|sarif] [--output <file>] [--fail-on low|medium|high|critical|none] [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home]';
 const FORMATS = ['text', 'json', 'sarif'];
 const FAIL_ON = ['low', 'medium', 'high', 'critical', 'none'];
 

@@ -20,7 +20,9 @@ const { BY_ID, RANK } = require('./rules');
 
 const AGENTS = ['claude', 'codex', 'cursor', 'opencode', 'amazonq', 'copilot', 'gemini'];
 const MAX_FILE_BYTES = 1024 * 1024;
-const MAX_DEPTH = 8;
+const MAX_DEPTH = 64;
+const TIME_BUDGET_MS = 120000;
+const LOCATE_WINDOW = 400;
 const MAX_ENTRIES = 50000;
 const EVIDENCE_MAX = 160;
 const INSTRUCTION_READERS = ['codex', 'cursor', 'opencode', 'amazonq', 'copilot', 'gemini'];
@@ -67,9 +69,15 @@ function redact(text) {
   return s;
 }
 
+// Never clip before redacting: a value cut in half is no longer recognised.
 function clip(s, max) {
   const t = String(s).replace(/\s+/g, ' ').trim();
   return t.length > max ? t.slice(0, max - 3) + '...' : t;
+}
+
+/** Redacted, then shortened: the only way raw file text enters a finding. */
+function short(s, max) {
+  return clip(redact(s), max);
 }
 
 /* --------------------------- file context -------------------------- */
@@ -82,13 +90,43 @@ class FileCtx {
     this.out = out;
   }
 
-  /** 1-based line of the first occurrence of `needle` at or after line `from`. */
+  /** Lines on which each JSON string token appears, built once per file. */
+  tokens() {
+    if (!this.tokenIndex) {
+      this.tokenIndex = new Map();
+      const re = /"(?:[^"\\\n]|\\.){0,512}"/g;
+      this.lines.forEach((l, i) => {
+        re.lastIndex = 0;
+        let m;
+        while ((m = re.exec(l)) !== null) {
+          const list = this.tokenIndex.get(m[0]);
+          if (!list) this.tokenIndex.set(m[0], [i + 1]);
+          else if (list[list.length - 1] !== i + 1) list.push(i + 1);
+        }
+      });
+    }
+    return this.tokenIndex;
+  }
+
+  /**
+   * 1-based line of `needle` at or after line `from`. A whole JSON string
+   * token is looked up in the token index (binary search); any other text is
+   * searched in the next WINDOW lines only, so locating stays linear overall.
+   */
   find(needle, from) {
-    if (needle == null || needle === '') return from || 1;
-    const start = Math.max(0, (from || 1) - 1);
-    for (let i = start; i < this.lines.length; i++) if (this.lines[i].includes(needle)) return i + 1;
-    for (let i = 0; i < start; i++) if (this.lines[i].includes(needle)) return i + 1;
-    return from || 1;
+    const start = Math.max(1, from || 1);
+    if (needle == null || needle === '') return start;
+    if (needle.length > 1 && needle[0] === '"' && needle[needle.length - 1] === '"') {
+      const list = this.tokens().get(needle);
+      if (!list) return start;
+      let lo = 0;
+      let hi = list.length;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (list[mid] < start) lo = mid + 1; else hi = mid; }
+      return lo < list.length ? list[lo] : list[0];
+    }
+    const end = Math.min(this.lines.length, start - 1 + LOCATE_WINDOW);
+    for (let i = start - 1; i < end; i++) if (this.lines[i].includes(needle)) return i + 1;
+    return start;
   }
 
   /** Line of a JSON key path (keys searched in order) and optional value. */
@@ -130,10 +168,35 @@ function capHome(ctx, severity) {
 
 /* ----------------------------- helpers ----------------------------- */
 
-const OUR_HOOK = /(?:^|[\s"'/\\])zn(?:-gate)?(?:\.cmd|\.exe)?["']?\s+hook\s+[a-z-]+\s*$|hooks[\\/]runner\.js["']?\s+[a-z-]+\s*["']?\s*$/;
+// The exact commands `zn hooks install` writes (lib/agents/config-file.js),
+// matched against the whole command. A path may not contain shell
+// metacharacters, so nothing can run before or after the zn runner.
+const HOOK_AGENTS = '(?:claude-code|codex|cursor|opencode)';
+const SAFE_ABS = '(?:/|[A-Za-z]:/)[^;&|$`<>(){}!*?"\'\\r\\n\\\\]{1,4096}';
+const OUR_HOOKS = [
+  new RegExp('^zn(?:-gate)?(?:\\.cmd|\\.exe)? hook ' + HOOK_AGENTS + '$'),
+  new RegExp('^"(' + SAFE_ABS + ')" "(' + SAFE_ABS + '/zn-gate/lib/hooks/runner\\.js)" ' + HOOK_AGENTS + '$'),
+  new RegExp('^powershell\\.exe -NoProfile -NonInteractive -Command "& \'(' + SAFE_ABS + ')\' \'(' + SAFE_ABS + '/zn-gate/lib/hooks/runner\\.js)\' ' + HOOK_AGENTS + '"$'),
+];
 
-function isOurHook(command) {
-  return typeof command === 'string' && OUR_HOOK.test(command.trim().replace(/"\s*$/, ''));
+function outsideRoot(ctx, p) {
+  // A Windows path read on another system cannot point into this checkout.
+  if (process.platform !== 'win32' && /^[A-Za-z]:\//.test(p)) return true;
+  const rel = path.relative(ctx.rec.root, path.resolve(p));
+  return rel === '' ? false : rel.startsWith('..') || path.isAbsolute(rel);
+}
+
+function isOurHook(command, ctx) {
+  if (typeof command !== 'string') return false;
+  const c = command.trim();
+  for (const re of OUR_HOOKS) {
+    const m = re.exec(c);
+    if (!m) continue;
+    // A runner inside the audited repository could be anything it ships.
+    if (m[2] && !outsideRoot(ctx, m[2])) return false;
+    return true;
+  }
+  return false;
 }
 
 /** Every command string under a hooks tree: [{command, event}]. */
@@ -159,18 +222,22 @@ function hookCommands(tree) {
 function checkDownloadRun(ctx, command, line, what) {
   const hit = P.downloadAndRun(command);
   if (!hit) return false;
-  ctx.add('ZNA002', 'critical', line, what + ' downloads code and runs it: ' + clip(command, 200));
+  ctx.add('ZNA002', 'critical', line, what + ' downloads code and runs it: ' + short(command, 200));
   return true;
 }
 
 function checkAutoRun(ctx, command, line, what) {
   checkDownloadRun(ctx, command, line, what);
-  if (!ctx.home) ctx.add('ZNA001', 'high', line, what + ' runs automatically: ' + clip(command, 200));
+  if (ctx.home) return;
+  // Plugin hooks run only once someone installs and enables the plugin;
+  // project settings act as soon as the folder is opened.
+  const plugin = ctx.rec.kind === 'plugin-hooks' || ctx.rec.kind === 'claude-plugin';
+  ctx.add('ZNA001', plugin ? 'medium' : 'high', line, what + (plugin ? ' runs automatically once the plugin is enabled: ' : ' runs automatically: ') + short(command, 200));
 }
 
 function checkHooks(ctx, tree, keyPath) {
   for (const h of hookCommands(tree)) {
-    if (isOurHook(h.command)) continue;
+    if (isOurHook(h.command, ctx)) continue;
     const line = ctx.locate(keyPath.concat(h.event ? [h.event] : []), h.command);
     checkAutoRun(ctx, h.command, line, (h.event ? '"' + h.event + '" hook' : 'Hook'));
   }
@@ -189,6 +256,8 @@ function checkEnv(ctx, env, keyPath, opts) {
     } else if (c.kind === 'proxy') {
       const sev = capHome(ctx, c.loopback ? 'medium' : 'high');
       ctx.add('ZNA007', sev, line, k + ' routes the agent\'s traffic through ' + (c.host || 'a proxy') + '.', { title: 'Agent traffic routed through a proxy set by the project' });
+    } else if (c.kind === 'confdir') {
+      ctx.add('ZNA008', capHome(ctx, 'high'), line, k + ' moves where the agent reads its own configuration (to ' + v + '), so a config shipped in the repository is loaded instead of yours.', { title: 'Environment variable redirects the agent configuration' });
     } else {
       ctx.add('ZNA008', capHome(ctx, 'high'), line, k + ' is set for every process the agent starts.');
     }
@@ -203,16 +272,19 @@ function endpointValue(ctx, key, value, line) {
   ctx.add('ZNA007', capHome(ctx, loop ? 'medium' : 'critical'), line, key + ' points to ' + P.safeUrl(value) + (loop ? ' (a local address)' : '') + '; the agent sends its API key and prompts there.');
 }
 
+// The exact "secrets" MCP server `zn hooks install` writes: `zn secrets-mcp`
+// or `<node> <abs>/zn-gate/bin/cli.js secrets-mcp`, with nothing else.
 function isOurMcp(argv, ctx) {
   const words = argv.map(String);
-  if (!words.includes('secrets-mcp')) return false;
-  const tool = P.toolName(words[0]);
-  if (tool === 'zn' || tool === 'zn-gate') return true;
-  const cli = words.find((w) => /zn-gate[\\/]bin[\\/]cli\.js$/.test(w.replace(/\\/g, '/')) || /[\\/]cli\.js$/.test(w));
-  if (!cli || !path.isAbsolute(cli)) return false;
-  // A path inside the audited tree could be anything the repository ships.
-  const rel = path.relative(ctx.rec.root, cli);
-  return rel.startsWith('..') || path.isAbsolute(rel);
+  if (words[words.length - 1] !== 'secrets-mcp') return false;
+  if (words.length === 2) return /^zn(?:-gate)?(?:\.cmd|\.exe)?$/.test(words[0]);
+  if (words.length !== 3) return false;
+  const node = words[0].replace(/\\/g, '/');
+  const nodeOk = /^node(?:\.exe)?$/i.test(node) || (new RegExp('^' + SAFE_ABS + '/node(?:\\.exe)?$', 'i').test(node) && outsideRoot(ctx, node));
+  if (!nodeOk) return false;
+  const cli = words[1].replace(/\\/g, '/');
+  if (!new RegExp('^' + SAFE_ABS + '/zn-gate/bin/cli\\.js$').test(cli)) return false;
+  return outsideRoot(ctx, cli);
 }
 
 function mcpArgv(cfg) {
@@ -228,7 +300,8 @@ function checkMcpServers(ctx, servers, keyPath, opts) {
   for (const [name, cfg] of Object.entries(servers)) {
     if (!cfg || typeof cfg !== 'object') continue;
     const line = o.lineOf ? o.lineOf(name) : ctx.locate(keyPath.concat([name]));
-    if (cfg.disabled === true || cfg.enabled === false) continue;
+    const own = (k) => Object.prototype.hasOwnProperty.call(cfg, k);
+    if ((own('disabled') && cfg.disabled === true) || (own('enabled') && cfg.enabled === false)) continue;
     const argv = mcpArgv(cfg);
     if (argv && argv.length) {
       const cmd = argv.join(' ');
@@ -236,7 +309,7 @@ function checkMcpServers(ctx, servers, keyPath, opts) {
         checkDownloadRun(ctx, cmd, line, 'MCP server "' + name + '"');
         if (!ctx.home) {
           const sev = o.severity || 'medium';
-          ctx.add('ZNA003', sev, line, 'MCP server "' + name + '" runs: ' + clip(cmd, 200) + (o.note ? ' ' + o.note : ''));
+          ctx.add('ZNA003', sev, line, 'MCP server "' + name + '" runs: ' + short(cmd, 200) + (o.note ? ' ' + o.note : ''));
         }
         for (const pkg of P.packagesOf(argv)) {
           if (!pkg.pinned) ctx.add('ZNA005', 'medium', line, 'MCP server "' + name + '" runs ' + pkg.spec + ' through ' + pkg.manager + ' without an exact version.');
@@ -271,7 +344,7 @@ function checkClaudeSettings(ctx, data) {
     if (typeof data[k] !== 'string' || !data[k].trim()) continue;
     const line = ctx.locate([k]);
     checkDownloadRun(ctx, data[k], line, k);
-    if (!ctx.home) ctx.add('ZNA009', 'high', line, k + ' runs: ' + clip(data[k], 200));
+    if (!ctx.home) ctx.add('ZNA009', 'high', line, k + ' runs: ' + short(data[k], 200));
   }
   checkEnv(ctx, data.env, ['env']);
   const perms = data.permissions && typeof data.permissions === 'object' ? data.permissions : {};
@@ -469,10 +542,15 @@ const INVISIBLE_ALL = /[\u{E0000}-\u{E007F}\u{202A}-\u{202E}\u{2066}-\u{2069}]/g
 // Rules tuned for prompts that are too noisy in documentation ("act as",
 // "never print tokens", mentions of .env): left to ZNA011 and ZNA014.
 const NOISY_IN_DOCS = /^(?:secret|path):|^exfil:credentials$|^pi:(?:act_as|pretend|roleplay|bypass)$/;
+// "Any prompt injection (e.g. 'Ignore previous instructions...') is spam":
+// an attack quoted as an example.
+const EXAMPLE_QUOTE = /\b(?:e\.g\.|eg\.|i\.e\.|for example|for instance|such as|like)\s{0,3}[,:]?\s{0,3}["'`]/i;
+const STRONG_IN_DOCS =/^(?:pi:(?:ignore_previous|disregard|system_tag|system_bracket|template_boundary|multi_\w+)|indirect:|evasion:|exfil:markdown_image)/;
 
 function checkInstructions(ctx) {
   const claudeExt = /(^|\/)\.claude\/(commands|agents|skills)\//.test(ctx.rec.rel);
   let inFront = ctx.lines[0] && ctx.lines[0].trim() === '---';
+  let inFence = false;
   ctx.lines.forEach((raw, i) => {
     const ln = i + 1;
     const line = raw.length > P.MAX_LINE ? raw.slice(0, P.MAX_LINE) : raw;
@@ -487,6 +565,7 @@ function checkInstructions(ctx) {
       }
     }
     const t = line.trim();
+    if (/^(?:```|~~~)/.test(t)) { inFence = !inFence; return; }
     if (t.length < 8) return;
     if (INVISIBLE.test(line)) {
       ctx.add('ZNA012', 'high', ln, 'The line contains invisible Unicode (tag or bidirectional control characters) that can hide text from reviewers.', { evidence: line.replace(INVISIBLE_ALL, '?') });
@@ -494,15 +573,20 @@ function checkInstructions(ctx) {
       let res = null;
       try { res = rules().evaluate(t); } catch (_) { res = null; }
       if (res && res.verdict === 'block' && !NOISY_IN_DOCS.test(String(res.rule))) {
-        ctx.add('ZNA012', 'high', ln, 'Rules engine: ' + (res.reason || res.rule) + '.');
+        // Strong patterns are high; weaker ones, and text quoted in a code
+        // block or a blockquote (often an example of an attack), one step lower.
+        let sev = STRONG_IN_DOCS.test(String(res.rule)) ? 'high' : 'medium';
+        const quoted = inFence || /^>/.test(t) || EXAMPLE_QUOTE.test(t);
+        if (quoted) sev = sev === 'high' ? 'medium' : 'low';
+        ctx.add('ZNA012', sev, ln, 'Rules engine: ' + (res.reason || res.rule) + (quoted ? ' (in quoted or code text)' : '') + '.');
       }
     }
     const dl = P.downloadAndRun(t, { prose: true });
-    if (dl) ctx.add('ZNA013', dl.knownInstaller ? 'low' : 'medium', ln, (dl.knownInstaller ? 'A well-known installer is piped into a shell: ' : 'The instructions pipe a download into a shell: ') + clip(dl.match, 160));
+    if (dl) ctx.add('ZNA013', dl.knownInstaller ? 'low' : 'medium', ln, (dl.knownInstaller ? 'A well-known installer is piped into a shell: ' : 'The instructions pipe a download into a shell: ') + short(t, 160));
     const ex = P.exfiltration(t);
-    if (ex) ctx.add('ZNA014', 'high', ln, 'The instructions send sensitive material out: ' + clip(ex, 160));
+    if (ex) ctx.add('ZNA014', 'high', ln, 'The instructions send sensitive material out: ' + short(t, 160));
     const wk = P.weakening(t);
-    if (wk) ctx.add('ZNA015', 'medium', ln, 'The instructions weaken a safety check: ' + clip(wk, 120));
+    if (wk) ctx.add('ZNA015', 'medium', ln, 'The instructions weaken a safety check: ' + short(t, 160));
   });
 }
 
@@ -528,11 +612,12 @@ const UNTRUSTED_TRIGGERS = ['issue_comment', 'issues', 'pull_request_target', 'p
 function checkWorkflow(ctx) {
   let agentLine = 0;
   let agent = null;
+  let viaRun = false;
   ctx.lines.forEach((l, i) => {
     if (agent) return;
     if (/^\s*#/.test(l)) return;
     for (const [re, a] of CI_AGENT_ACTIONS) if (/\buses\s*:/.test(l) && re.test(l)) { agent = a; agentLine = i + 1; return; }
-    for (const [re, a] of CI_AGENT_RUN) if (re.test(l)) { agent = a; agentLine = i + 1; return; }
+    for (const [re, a] of CI_AGENT_RUN) if (re.test(l)) { agent = a; agentLine = i + 1; viaRun = true; return; }
   });
   if (!agent) return;
   const jobsAt = ctx.lines.findIndex((l) => /^jobs\s*:/.test(l));
@@ -544,13 +629,21 @@ function checkWorkflow(ctx) {
   const write = /permissions\s*:\s*write-all\b/.test(text) || /^\s*(?:contents|pull-requests|issues|actions|packages|id-token|deployments|statuses|checks)\s*:\s*write\b/m.test(text);
   const interpolated = /\$\{\{\s*github\.event\.(?:issue|comment|pull_request|review|discussion)\.(?:body|title)\b/.test(text);
   const authorFilter = /author_association|github\.actor\s*==|github\.event\.(?:comment|issue|sender)\.user\.login\s*==/.test(text);
-  let severity = 'medium';
-  if (prt || interpolated || (write && !authorFilter)) severity = 'high';
+  // Opened to any author on purpose (claude-code-action otherwise requires
+  // the actor to have write access to the repository).
+  const opened = /\ballowed_non_write_users\s*:|\ballow[_-]users\s*:\s*["']?\*/.test(text);
+  // High only when untrusted text clearly reaches the agent with privileges;
+  // write permissions alone are medium, since the common agent actions check
+  // the actor's own permission before running.
+  // A CLI run step has no built-in actor check, so write access without an
+  // author filter is high there too.
+  const severity = prt || interpolated || opened || (viaRun && write && !authorFilter) ? 'high' : 'medium';
   const why = [];
   why.push('triggered by ' + triggers.join(', '));
   if (prt) why.push('pull_request_target runs with the base repository\'s secrets');
-  if (write) why.push('the workflow has write permissions');
   if (interpolated) why.push('issue or comment text is pasted into the workflow');
+  if (opened) why.push('the action is opened to users without write access');
+  if (write) why.push('the workflow has write permissions');
   if (authorFilter) why.push('an author filter is present');
   ctx.add('ZNA019', severity, agentLine, 'An AI agent (' + agent + ') runs on input from outside the team: ' + why.join('; ') + '.', { agent, readers: [agent] });
 }
@@ -597,7 +690,7 @@ function classify(rel, isRootLevel) {
   if (has(/(^|\/)\.cursor\/(?:rules|commands|agents)\/.+\.(?:mdc|md)$/)) return rule('instructions', 'cursor');
   if (has(/(^|\/)\.claude\/(?:commands|agents|skills|output-styles)\/.+\.md$/)) return rule('instructions', 'claude');
   if (has(/(^|\/)\.codex\/prompts\/.+\.md$/)) return rule('instructions', 'codex');
-  if (has(/(^|\/)\.opencode\/(?:commands?|agents?)\/.+\.md$/)) return rule('instructions', 'opencode');
+  if (has(/(^|\/)\.opencode\/(?:commands?|agents?|skills?)\/.+\.md$/)) return rule('instructions', 'opencode');
   if (has(/(^|\/)\.amazonq\/rules\/.+\.md$/)) return rule('instructions', 'amazonq');
   if (has(/(^|\/)\.gemini\/commands\/.+\.toml$/)) return rule('instructions', 'gemini');
   if (lower === 'skill.md' && has(/(^|\/)skills\//)) return rule('instructions', 'claude');
@@ -619,34 +712,115 @@ const EXTENSION_DIRS = [
   [/(^|\/)\.amazonq\/(?:cli-)?agents$/, 'amazonq', 'agents'],
 ];
 
-function walk(root) {
+// Directories agents read from. They are visited first, and inside them the
+// SKIP_DIRS list does not apply (a skill may be called "build" or "dist").
+const AGENT_DIRS = new Set(['.claude', '.codex', '.cursor', '.amazonq', '.vscode', '.opencode', '.gemini', '.github', '.claude-plugin', '.clinerules', 'skills']);
+
+function isAgentDirName(name) {
+  return AGENT_DIRS.has(name);
+}
+
+/* -------------------------- bounded reads --------------------------- */
+
+const O_NOFOLLOW = (fs.constants && fs.constants.O_NOFOLLOW) || 0;
+const O_NONBLOCK = (fs.constants && fs.constants.O_NONBLOCK) || 0;
+
+/**
+ * Read a regular file of at most `max` bytes. FIFOs, devices and sockets are
+ * never opened for reading (no hang, no endless read); a final symbolic link
+ * is not followed unless `follow` is set. Returns { text } or { skip, size }.
+ */
+function readBounded(abs, max, follow) {
+  let st;
+  try { st = follow ? fs.statSync(abs) : fs.lstatSync(abs); } catch (_) { return { skip: 'missing' }; }
+  if (st.isSymbolicLink()) return { skip: 'symlink' };
+  if (!st.isFile()) return { skip: 'not-file' };
+  if (st.size > max) return { skip: 'too-large', size: st.size };
+  let fd;
+  try {
+    fd = fs.openSync(abs, fs.constants.O_RDONLY | O_NONBLOCK | (follow ? 0 : O_NOFOLLOW));
+    const fst = fs.fstatSync(fd);
+    if (!fst.isFile()) return { skip: 'not-file' };
+    const buf = Buffer.alloc(Math.min(fst.size, max) + 1);
+    let n = 0;
+    for (;;) {
+      const r = fs.readSync(fd, buf, n, buf.length - n, n);
+      if (r <= 0) break;
+      n += r;
+      if (n >= buf.length) break;
+    }
+    if (n > max) return { skip: 'too-large', size: n };
+    let text = buf.toString('utf8', 0, n);
+    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+    return { text };
+  } catch (_) {
+    return { skip: 'unreadable' };
+  } finally {
+    if (fd !== undefined) try { fs.closeSync(fd); } catch (_) { /* ignore */ }
+  }
+}
+
+/* ------------------------------ walk -------------------------------- */
+
+function walk(root, deadline, maxEntries) {
   const files = [];
   const extDirs = [];
+  const unchecked = [];
   let entries = 0;
-  let truncated = false;
-  function visit(dir, rel, depth) {
+  let truncated = null;
+  let realRoot = root;
+  try { realRoot = fs.realpathSync(root); } catch (_) { /* keep */ }
+  const visitedReal = new Set([realRoot]);
+  const insideRoot = (p) => { const r = path.relative(realRoot, p); return r === '' || (!r.startsWith('..') && !path.isAbsolute(r)); };
+  const priority = (name) => (isAgentDirName(name) || classify(name, true) ? 0 : 1);
+
+  function addFile(abs, r, isRoot) {
+    const c = classify(r, isRoot);
+    if (c) files.push(Object.assign({ abs, rel: r, display: r, scope: 'project' }, c));
+  }
+
+  function visit(dir, rel, depth, inAgent) {
     if (truncated) return;
     let list;
     try { list = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return; }
-    list.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    list.sort((a, b) => (priority(a.name) - priority(b.name)) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     for (const d of list) {
-      if (++entries > MAX_ENTRIES) { truncated = true; return; }
+      if (truncated) return;
+      if (++entries > maxEntries) { truncated = { reason: 'entries', at: rel || '.' }; return; }
+      if ((entries & 1023) === 0 && Date.now() > deadline) { truncated = { reason: 'time', at: rel || '.' }; return; }
       const r = rel ? rel + '/' + d.name : d.name;
       const abs = path.join(dir, d.name);
-      if (d.isSymbolicLink()) continue;
+      const agentHere = inAgent || isAgentDirName(d.name);
+      if (d.isSymbolicLink()) {
+        const asFile = classify(r, !rel);
+        if (!asFile && !isAgentDirName(d.name)) continue;
+        let real = null;
+        try { real = fs.realpathSync(abs); } catch (_) { real = null; }
+        let st = null;
+        try { st = real && fs.statSync(real); } catch (_) { st = null; }
+        if (!real || !st) {
+          unchecked.push({ file: r, agent: asFile ? asFile.agent : 'any', readers: asFile ? asFile.readers : AGENTS, severity: 'medium', detail: r + ' is a broken symbolic link.' });
+        } else if (!insideRoot(real)) {
+          unchecked.push({ file: r, agent: asFile ? asFile.agent : 'any', readers: asFile ? asFile.readers : AGENTS, severity: 'high', detail: r + ' is a symbolic link to a location outside the audited directory. Agents follow it; zn audit does not read it.' });
+        } else if (st.isDirectory() && isAgentDirName(d.name)) {
+          if (!visitedReal.has(real)) { visitedReal.add(real); visit(real, r, depth + 1, true); }
+        } else if (st.isFile() && asFile) {
+          files.push(Object.assign({ abs: real, rel: r, display: r, scope: 'project' }, asFile));
+        }
+        continue;
+      }
       if (d.isDirectory()) {
-        if (SKIP_DIRS.has(d.name)) continue;
+        if (d.name === '.git' || (!agentHere && SKIP_DIRS.has(d.name))) continue;
         const ext = EXTENSION_DIRS.find(([re]) => re.test(r));
         if (ext) extDirs.push({ rel: r, abs, agent: ext[1], what: ext[2] });
-        if (depth < MAX_DEPTH) visit(abs, r, depth + 1);
+        if (depth < MAX_DEPTH) visit(abs, r, depth + 1, agentHere);
       } else if (d.isFile()) {
-        const c = classify(r, !rel);
-        if (c) files.push(Object.assign({ abs, rel: r, display: r, scope: 'project' }, c));
+        addFile(abs, r, !rel);
       }
     }
   }
-  visit(root, '', 0);
-  return { files, extDirs, truncated };
+  visit(root, '', 0, false);
+  return { files, extDirs, unchecked, truncated, entries };
 }
 
 function homeFiles(home, env) {
@@ -671,20 +845,49 @@ function homeFiles(home, env) {
   });
 }
 
-/** Paths the root .gitignore ignores, for the few files only worth reporting when committed. */
+/** Whether the root .gitignore ignores `name` (only used for the root .env). */
 function gitIgnored(root, name) {
-  let text;
-  try { text = fs.readFileSync(path.join(root, '.gitignore'), 'utf8'); } catch (_) { return false; }
+  const r = readBounded(path.join(root, '.gitignore'), 256 * 1024, false);
+  if (!r.text) return false;
   let ignored = false;
-  for (const l of text.split(/\r?\n/)) {
+  for (const l of r.text.split(/\r?\n/)) {
     const t = l.trim();
-    if (!t || t.startsWith('#')) continue;
+    if (!t || t.startsWith('#') || t.length > 200) continue;
     const neg = t.startsWith('!');
     const pat = (neg ? t.slice(1) : t).replace(/^\//, '').replace(/\/$/, '');
-    const re = new RegExp('^' + pat.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]') + '$');
+    const re = new RegExp('^' + pat.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*+/g, '[^/]*').replace(/\?/g, '[^/]') + '$');
     if (re.test(name)) ignored = !neg;
   }
   return ignored;
+}
+
+/**
+ * Config directories a committed root .env points agents to (CODEX_HOME,
+ * CLAUDE_CONFIG_DIR). When they are inside the repository, their config
+ * files are audited like the default locations.
+ */
+function redirectedConfigs(root) {
+  if (gitIgnored(root, '.env')) return [];
+  const r = readBounded(path.join(root, '.env'), MAX_FILE_BYTES, false);
+  if (!r.text) return [];
+  const out = [];
+  for (const l of r.text.split(/\r?\n/)) {
+    const m = /^\s*(?:export\s+)?(CODEX_HOME|CLAUDE_CONFIG_DIR)\s*=\s*(.*)$/.exec(l);
+    if (!m) continue;
+    const value = m[2].trim().replace(/^(['"])(.*)\1$/, '$2');
+    if (!value || P.isPlaceholder(value)) continue;
+    const dir = path.resolve(root, value);
+    const rel = path.relative(root, dir);
+    if (rel.startsWith('..') || path.isAbsolute(rel)) continue;
+    const relPosix = rel.split(path.sep).join('/');
+    const add = (name, kind, agent, readers) => {
+      const r2 = (relPosix ? relPosix + '/' : '') + name;
+      out.push({ abs: path.join(dir, name), rel: r2, display: r2, scope: 'project', kind, agent, readers: readers || [agent] });
+    };
+    if (m[1] === 'CODEX_HOME') { add('config.toml', 'codex-toml', 'codex'); add('hooks.json', 'hooks-json', 'codex'); }
+    else { add('settings.json', 'claude-settings', 'claude', ['claude', 'cursor']); }
+  }
+  return out;
 }
 
 /* ----------------------- shadowing executables ---------------------- */
@@ -692,7 +895,8 @@ function gitIgnored(root, name) {
 function readHead(abs) {
   let fd;
   try {
-    fd = fs.openSync(abs, 'r');
+    fd = fs.openSync(abs, fs.constants.O_RDONLY | O_NONBLOCK | O_NOFOLLOW);
+    if (!fs.fstatSync(fd).isFile()) return Buffer.alloc(0);
     const b = Buffer.alloc(4);
     const n = fs.readSync(fd, b, 0, 4, 0);
     return b.slice(0, n);
@@ -725,9 +929,9 @@ function checkShadowing(root, out) {
         why = name + ' is a symbolic link named like the ' + stem + ' tool.';
       } else {
         let st;
-        try { st = fs.statSync(abs); } catch (_) { continue; }
+        try { st = fs.lstatSync(abs); } catch (_) { continue; }
         const head = readHead(abs);
-        const binary = head.length >= 2 && ((head[0] === 0x4d && head[1] === 0x5a) || (head[0] === 0x7f && head.toString('latin1', 1, 4) === 'ELF') || head.readUInt32BE(0) === 0xcffaedfe || head.readUInt32BE(0) === 0xfeedfacf);
+        const binary = head.length >= 2 && ((head[0] === 0x4d && head[1] === 0x5a) || (head.length >= 4 && head[0] === 0x7f && head.toString('latin1', 1, 4) === 'ELF') || (head.length >= 4 && (head.readUInt32BE(0) === 0xcffaedfe || head.readUInt32BE(0) === 0xfeedfacf)));
         const script = head.toString('latin1', 0, 2) === '#!';
         const execBit = process.platform !== 'win32' && (st.mode & 0o111) !== 0;
         if (binary || ((script || execBit) && !ext)) {
@@ -739,7 +943,7 @@ function checkShadowing(root, out) {
     if (!severity) continue;
     out.push({
       id: 'ZNA016', severity, agent: 'any', file: name, line: 1,
-      title: BY_ID.ZNA016.title, detail: why, evidence: name,
+      title: BY_ID.ZNA016.title, detail: redact(why), evidence: redact(name),
       fix: BY_ID.ZNA016.fix, references: BY_ID.ZNA016.references.slice(), _readers: AGENTS,
     });
   }
@@ -764,13 +968,38 @@ const CHECKS = {
   'config-other': () => {},
 };
 
+// Config kinds that can start commands or redirect the agent: when one of
+// them cannot be parsed, the text is searched for the risky keys instead.
+const RISKY_KINDS = new Set(['claude-settings', 'claude-user-json', 'mcp-json', 'vscode-mcp', 'amazonq-agent', 'vscode-tasks', 'hooks-json', 'plugin-hooks', 'codex-toml', 'gemini-settings', 'opencode-json', 'claude-plugin', 'cursor-cli', 'vscode-settings']);
+const RISKY_JSON_KEY = /"(hooks|command|args|mcpServers|servers|mcp|env|apiKeyHelper|awsAuthRefresh|awsCredentialExport|otelHeadersHelper|statusLine|enableAllProjectMcpServers|enabledMcpjsonServers|enabledPlugins|extraKnownMarketplaces|permissions?|plugin|provider|runOn|allowedTools|chat\.tools\.(?:global\.)?autoApprove)"\s*:/;
+const RISKY_TOML_KEY = /^\s*(?:\[\s*(?:mcp_servers|model_providers|shell_environment_policy|profiles)\b|(?:notify|approval_policy|sandbox_mode|openai_base_url|chatgpt_base_url|command|args)\s*=)/;
+
+function unparsable(ctx, err, what) {
+  const keys = new Set();
+  ctx.lines.forEach((l, i) => {
+    const m = RISKY_JSON_KEY.exec(l) || RISKY_TOML_KEY.exec(l);
+    if (m) keys.add((m[1] || m[0]).trim().replace(/\s*=$/, ''));
+    checkDownloadRun(ctx, l, i + 1, 'A line of this file');
+    if (ctx.rec.kind === 'vscode-tasks' && /"runOn"\s*:\s*"folderOpen"/.test(l)) {
+      ctx.add('ZNA001', 'high', i + 1, 'A task runs when the folder is opened (runOn: folderOpen); the file could not be parsed to show the command.');
+    }
+  });
+  // A reserved key (__proto__, constructor, prototype) has no use in a config
+  // but to tamper with the reader: always high.
+  const reserved = /reserved key/.test(err.message);
+  if (reserved) keys.add('a reserved key');
+  const risky = reserved || (RISKY_KINDS.has(ctx.rec.kind) && keys.size > 0);
+  ctx.add('ZNA020', risky ? 'high' : 'low', err.line || 1, what + ' error: ' + err.message + (risky ? '. The file contains ' + Array.from(keys).slice(0, 6).join(', ') + ', which could not be checked.' : ''));
+}
+
 function auditFile(rec, out) {
-  let st;
-  try { st = fs.statSync(rec.abs); } catch (_) { return false; }
-  if (!st.isFile() || st.size > MAX_FILE_BYTES) return false;
-  let raw;
-  try { raw = fs.readFileSync(rec.abs, 'utf8'); } catch (_) { return false; }
-  if (raw.charCodeAt(0) === 0xfeff) raw = raw.slice(1);
+  const r = readBounded(rec.abs, MAX_FILE_BYTES, rec.scope === 'home');
+  if (r.skip === 'too-large') {
+    out.push(uncheckedFinding({ file: rec.display, agent: rec.agent, readers: rec.readers, severity: 'high', detail: rec.display + ' is ' + r.size + ' bytes; zn audit reads agent files up to ' + MAX_FILE_BYTES + ' bytes, the agent reads all of it.' }));
+    return true;
+  }
+  if (r.text === undefined) return false;
+  const raw = r.text;
   const ctx = new FileCtx(rec, raw, out);
 
   if (rec.kind === 'plugin-hooks') {
@@ -802,7 +1031,7 @@ function auditFile(rec, out) {
   if (rec.kind === 'codex-toml') {
     let parsed;
     try { parsed = parseToml(raw); } catch (err) {
-      ctx.add('ZNA020', 'low', err.line || 1, 'TOML error: ' + err.message);
+      unparsable(ctx, err, 'TOML');
       return true;
     }
     checkCodexToml(ctx, parsed.data, parsed.lines);
@@ -811,7 +1040,7 @@ function auditFile(rec, out) {
   if (!raw.trim()) return true;
   let data;
   try { data = parseJsonc(raw); } catch (err) {
-    ctx.add('ZNA020', 'low', err.line || 1, 'JSON error: ' + err.message);
+    unparsable(ctx, err, 'JSON');
     return true;
   }
   if (!data || typeof data !== 'object' || Array.isArray(data)) return true;
@@ -837,6 +1066,14 @@ function checkSecrets(ctx) {
   }
 }
 
+function uncheckedFinding(u) {
+  return {
+    id: 'ZNA020', severity: u.severity, agent: u.agent, file: u.file, line: 1,
+    title: BY_ID.ZNA020.title, detail: redact(u.detail), evidence: redact(u.file),
+    fix: u.fix || BY_ID.ZNA020.fix, references: [], _readers: u.readers || AGENTS,
+  };
+}
+
 function inventory(extDirs, out) {
   for (const d of extDirs) {
     let first = null;
@@ -854,8 +1091,8 @@ function inventory(extDirs, out) {
     out.push({
       id: 'ZNA018', severity: 'low', agent: d.agent, file: first, line: 1,
       title: BY_ID.ZNA018.title,
-      detail: d.rel + ' adds ' + d.what + ' to ' + d.agent + ' (' + count + ' file' + (count === 1 ? '' : 's') + ').',
-      evidence: d.rel, fix: BY_ID.ZNA018.fix, references: [], _readers: [d.agent],
+      detail: redact(d.rel + ' adds ' + d.what + ' to ' + d.agent + ' (' + count + ' file' + (count === 1 ? '' : 's') + ').'),
+      evidence: redact(d.rel), fix: BY_ID.ZNA018.fix, references: [], _readers: [d.agent],
     });
   }
 }
@@ -870,13 +1107,19 @@ function audit(opts) {
   const root = path.resolve(o.root || '.');
   const selected = normalizeAgents(o.agents);
   const env = o.env || process.env;
+  const deadline = Date.now() + (o.timeBudgetMs || TIME_BUDGET_MS);
   const out = [];
-  const { files, extDirs, truncated } = walk(root);
+  const maxEntries = o.maxEntries || MAX_ENTRIES;
+  const { files, extDirs, unchecked, truncated, entries } = walk(root, deadline, maxEntries);
+  const known = new Set(files.map((f) => f.rel));
+  for (const rec of redirectedConfigs(root)) if (!known.has(rec.rel)) files.push(rec);
   let scanned = 0;
+  let timedOut = truncated && truncated.reason === 'time';
   const wanted = (readers, agent) => agent === 'any' || (readers || []).some((r) => selected.has(r)) || selected.has(agent);
   for (const rec of files) {
     rec.root = root;
     if (rec.kind !== 'workflow' && !wanted(rec.readers, rec.agent)) continue;
+    if (Date.now() > deadline) { timedOut = true; break; }
     if (auditFile(rec, out)) scanned++;
   }
   if (o.includeHome) {
@@ -890,6 +1133,13 @@ function audit(opts) {
   }
   checkShadowing(root, out);
   inventory(extDirs, out);
+  for (const u of unchecked) out.push(uncheckedFinding(u));
+  if (truncated && truncated.reason === 'entries') {
+    out.push(uncheckedFinding({ file: truncated.at, agent: 'any', severity: 'high', detail: 'zn audit stopped after ' + maxEntries + ' directory entries (in ' + truncated.at + '); agent directories were read first, but files after that point were not checked.' }));
+  }
+  if (timedOut) {
+    out.push(uncheckedFinding({ file: (truncated && truncated.at) || '.', agent: 'any', severity: 'high', detail: 'zn audit stopped after its time budget of ' + Math.round((o.timeBudgetMs || TIME_BUDGET_MS) / 1000) + ' s; some files were not checked.' }));
+  }
 
   const seen = new Set();
   const findings = [];
@@ -902,7 +1152,7 @@ function audit(opts) {
     findings.push(f);
   }
   findings.sort((a, b) => (RANK[b.severity] - RANK[a.severity]) || (a.file < b.file ? -1 : a.file > b.file ? 1 : 0) || (a.line - b.line) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  return { root, files: scanned, findings, truncated, agents: Array.from(selected) };
+  return { root, files: scanned, findings, truncated: Boolean(truncated) || timedOut, entries, agents: Array.from(selected) };
 }
 
-module.exports = { audit, classify, redact, AGENTS, _internal: { hookCommands, isOurHook, gitIgnored } };
+module.exports = { audit, classify, redact, AGENTS, _internal: { hookCommands, isOurHook, isOurMcp, gitIgnored, readBounded } };

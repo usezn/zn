@@ -372,7 +372,12 @@ test('TOML parser: tables, dotted and quoted keys, arrays, inline tables, string
   assert.equal(data.b, true);
   assert.equal(data.multi, 'line1\nline2');
   assert.deepEqual(data.mcp_servers['my server'].args, ['-y', 'pkg@1.0.0']);
-  assert.deepEqual(data.mcp_servers['my server'].env, { KEY: 'v', 'x.y': 2 });
+  assert.deepEqual({ ...data.mcp_servers['my server'].env }, { KEY: 'v', 'x.y': 2 });
+  assert.equal(Object.getPrototypeOf(data), null, 'parsed tables have no prototype');
+  assert.throws(() => parseToml('[__proto__]\ndisabled = true\n'), /reserved key/);
+  assert.throws(() => parseToml('__proto__.enabled = false\n'), /reserved key/);
+  assert.throws(() => parseToml('a = { constructor = 1 }\n'), /reserved key/);
+  assert.equal(({}).disabled, undefined);
   assert.equal(lines['mcp_servers.my server'], 8);
   assert.equal(lines['mcp_servers.my server.args'], 10);
   assert.deepEqual(data.profiles.map((p) => p.name), ['p1', 'p2']);

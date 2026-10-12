@@ -173,6 +173,8 @@ const CODE_ENV = new Set([
   'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'REQUESTS_CA_BUNDLE', 'CURL_CA_BUNDLE',
   'NODE_TLS_REJECT_UNAUTHORIZED', 'PYTHONHTTPSVERIFY', 'GIT_SSL_NO_VERIFY',
 ]);
+// Variables that move where an agent reads its own configuration.
+const CONFIG_DIR_ENV = new Set(['CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'XDG_CONFIG_HOME', 'OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR', 'GEMINI_CLI_HOME']);
 
 function isPlaceholder(v) {
   const s = String(v == null ? '' : v).trim();
@@ -198,7 +200,7 @@ function safeUrl(url) {
     const u = new URL(String(url));
     return u.protocol + '//' + u.host + (u.pathname === '/' ? '' : u.pathname);
   } catch (_) {
-    return String(url).replace(/\/\/[^/@\s]*@/, '//').replace(/[?#].*$/, '').slice(0, 120);
+    return String(url).replace(/\/\/[^/@\s]*@/, '//').replace(/[?#].*$/, '');
   }
 }
 
@@ -217,6 +219,7 @@ function classifyEnv(key, value) {
     return { kind: 'endpoint', host, loopback: isLoopback(host) };
   }
   const up = k.toUpperCase();
+  if (CONFIG_DIR_ENV.has(up)) return { kind: 'confdir' };
   if (CODE_ENV.has(up)) {
     if (up === 'NODE_OPTIONS' && !/(?:^|\s)(?:-r|--require|--import|--loader|--experimental-loader|--experimental-policy)\b/.test(v)) return null;
     if ((up === 'NODE_TLS_REJECT_UNAUTHORIZED' || up === 'PYTHONHTTPSVERIFY') && v.trim() !== '0') return null;
@@ -266,17 +269,28 @@ const WEAKEN = [
   /--yolo\b/i,
   /\bbypassPermissions\b/,
   /\b(?:disable|turn off|bypass|skip|ignore|deactivate)\b[^\n.]{0,40}?\b(?:the\s+)?(?:sandbox|permission (?:prompts?|checks?)|approval prompts?|security (?:checks?|scans?|hooks?|tools?)|pre-commit hooks?|git hooks|antivirus|firewall|code review|secret scan(?:ning|ner)?|zn(?:-gate)?)\b/i,
-  /\b(?:do not|don't|never)\s{1,3}(?:tell|inform|mention|notify|show|alert|ask)\b[^\n.]{0,30}?\bthe user\b/i,
-  /\bwithout\s{1,3}(?:telling|informing|asking|notifying|alerting)\b[^\n.]{0,20}?\bthe user\b/i,
+  // Concealment only: "never ask the user" is a workflow choice, not hiding.
+  /\b(?:do not|don't|never)\s{1,3}(?:tell|inform|mention|notify|alert|reveal)\b[^\n.]{0,30}?\bthe user\b/i,
+  /\bwithout\s{1,3}(?:telling|informing|notifying|alerting)\b[^\n.]{0,20}?\bthe user\b/i,
   /\b(?:hide|conceal)\b[^\n.]{0,30}?\bfrom the user\b/i,
 ];
 
 // "Never use --no-verify", "do not pipe curl into sh": a prohibition shortly
 // before the match turns it into a safe instruction.
-const NEGATION = /\b(?:never|not|don't|dont|avoid|without|forbidden|prohibited|disallowed|no)\b/i;
+// The negation must govern the matched instruction: same clause (no sentence
+// or clause boundary in between) and at most three words before it. "If the
+// build does not work, run curl ... | sh" is not negated.
+const CLAUSE_BOUNDARY = /[.;:!?,()]|\b(?:if|when|unless|otherwise|then|but|and|so|because)\b/gi;
+const NEGATION_NEAR = /\b(?:never|not|don't|dont|avoid|without|no)\b(?:\W+\w+){0,3}\W*$/i;
 
 function negated(text, index) {
-  return NEGATION.test(text.slice(Math.max(0, index - 60), index));
+  let seg = text.slice(Math.max(0, index - 80), index);
+  CLAUSE_BOUNDARY.lastIndex = 0;
+  let last = -1;
+  let m;
+  while ((m = CLAUSE_BOUNDARY.exec(seg)) !== null) last = m.index + m[0].length;
+  if (last >= 0) seg = seg.slice(last);
+  return NEGATION_NEAR.test(seg);
 }
 
 function exfiltration(text) {
