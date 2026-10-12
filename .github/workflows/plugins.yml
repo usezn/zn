@@ -3,6 +3,7 @@ name: Agent plugins
 on:
   push:
     branches: [ main, next ]
+    tags: [ 'v*' ]
   pull_request:
     branches: [ main, next ]
     paths:
@@ -10,7 +11,7 @@ on:
       - '.claude-plugin/**'
       - '.cursor-plugin/**'
       - '.agents/plugins/**'
-      - 'packages/zn-gate/package.json'
+      - 'packages/zn-gate/**'
       - '.github/workflows/plugins.yml'
 
 permissions:
@@ -22,21 +23,46 @@ concurrency:
 
 jobs:
   check:
-    name: Plugin checks (${{ matrix.os }})
+    name: Plugin checks (${{ matrix.os }}, Node.js ${{ matrix.node-version }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
+        node-version: [18.x, 24.x]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 18.x
+          node-version: ${{ matrix.node-version }}
       - name: Pinning and consistency checks
         run: node plugins/tools/check-plugins.js
       - name: Launcher tests
         run: node plugins/tools/test-launch.js
+      - name: Install zn-gate dependencies for the benchmark
+        if: hashFiles('plugins/tools/bench-launch.js') != ''
+        working-directory: packages/zn-gate
+        run: npm ci --ignore-scripts
+      - name: Launcher overhead benchmark (informational)
+        if: hashFiles('plugins/tools/bench-launch.js') != ''
+        run: node plugins/tools/bench-launch.js packages/zn-gate
+
+  release:
+    # A release tag, and main, must carry a pinned lock file (npm integrity,
+    # provenance attestation and file digests) and no placeholders.
+    name: Release pin checks
+    if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.x
+      - name: Release checks
+        run: node plugins/tools/check-plugins.js --release

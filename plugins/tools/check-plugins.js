@@ -18,7 +18,8 @@
  *  - no unpinned installs: no "@latest", no npx/bunx/uvx/pnpm dlx in the
  *    plugin, and every zn-gate install instruction names an exact version;
  *  - every hook and MCP server runs scripts/zn-launch.js;
- *  - --release: the lock file has the npm integrity and file digests.
+ *  - --release: the lock file has the npm integrity, a provenance attestation
+ *    and the file digests, and no placeholder is left in the plugin docs.
  * No dependencies; Node.js 18 or later.
  */
 
@@ -139,6 +140,10 @@ for (const f of walk('plugins').filter((x) => x.endsWith('.md'))) {
 if (release) {
   if (!/^sha512-/.test(lock.integrity || '')) fail('lock file: no npm integrity; run plugins/tools/pin-release.js ' + v);
   if (Object.keys(lock.files || {}).length === 0) fail('lock file: no file digests; run plugins/tools/pin-release.js ' + v);
+  if (lock.attestations !== true) fail('lock file: zn-gate ' + v + ' has no npm provenance attestation; publish it with provenance first');
+  for (const f of walk('plugins').filter((x) => x.endsWith('.md'))) {
+    if (/<commit-sha-of-v[^>]*>/.test(read(f))) fail(f + ': replace the <commit-sha-of-v...> placeholder with the release commit SHA');
+  }
 }
 
 if (errors.length) {
