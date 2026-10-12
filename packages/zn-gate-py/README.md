@@ -61,8 +61,8 @@ print(r.verdict)           # allow
 
 **Galvanize: prompt-injection detection**
 - Today, local: `evaluate`, `check_tool_call`, `check_tool_result` and `@guard` run a deterministic rules engine with normalization against homoglyphs, zero-width characters, BiDi overrides, comment splicing and Base64.
-- Today, optional cloud: `analyze()` can also query the Galvanize-60M classifier ([open weights](https://huggingface.co/usezn/Galvanize-60M), Apache-2.0), only with `ZN_CLOUD=1` and `ZN_API_KEY`.
-- Roadmap: running Galvanize-60M locally; published held-out results with method and data.
+- Today, optional cloud: `analyze()` can also query the Galvanize 2 classifier ([open weights](https://huggingface.co/usezn/Galvanize-2), Apache-2.0), only with `ZN_CLOUD=1` and `ZN_API_KEY`.
+- Roadmap: running Galvanize locally.
 
 **Scan: audit what your agent is about to trust**
 - Today: `zn-gate scan <path>` audits prompt templates, skill files and configs for injection traps and leaked secrets.
@@ -161,7 +161,7 @@ zn-gate status                  # engine and what leaves the machine
 We only publish numbers we can reproduce, with the method next to them.
 
 - **Latency:** the measured table by input size is in the [npm package README](https://github.com/usezn/zn/blob/main/packages/zn-gate/README.md#performance-local-rules-engine-no-network) (Node engine, with hardware and script). For the Python engine, run `python3 bench/bench_python.py` from the [repository](https://github.com/usezn/zn).
-- **Accuracy:** the engine is a deterministic signature and normalization layer, not a semantic classifier. On whole source files it currently produces false positives on ordinary code comments (not fixed in 1.4.1). No detection rates are published yet; Galvanize results on a held-out test set will come with method and data.
+- **Accuracy:** the engine is a deterministic signature and normalization layer, not a semantic classifier. On whole source files it currently produces false positives on ordinary code comments (not fixed in 1.4.1). These rules have no published detection rate; held-out results for the optional cloud classifier, Galvanize 2, are on its [model card](https://huggingface.co/usezn/Galvanize-2).
 
 ## Configuration
 

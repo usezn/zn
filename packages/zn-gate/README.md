@@ -108,8 +108,8 @@ npx -y zn-gate test
 
 **Galvanize: prompt-injection detection**
 - Today, local: a deterministic rules engine with normalization against homoglyphs, zero-width characters, BiDi overrides (CVE-2021-42574), comment splicing and Base64. It checks prompts, tool arguments, tool output and MCP tool descriptions.
-- Today, optional cloud: the Galvanize-60M classifier ([open weights](https://huggingface.co/usezn/Galvanize-60M), Apache-2.0) can also check prompts sent to `analyze_prompt`, only with `ZN_CLOUD=1` and `ZN_API_KEY`.
-- Roadmap: running Galvanize-60M locally inside zn-gate; published held-out results with method and data.
+- Today, optional cloud: the Galvanize 2 classifier ([open weights](https://huggingface.co/usezn/Galvanize-2), Apache-2.0) can also check prompts sent to `analyze_prompt`, only with `ZN_CLOUD=1` and `ZN_API_KEY`.
+- Roadmap: running Galvanize locally inside zn-gate.
 
 **Scan: audit what your agent is about to trust**
 - Today: `npx -y zn-gate scan <path>` audits prompt templates, `AGENTS.md` / `SKILL.md` files and configs for injection traps and leaked secrets. It exits with code 1 on findings, for CI. MCP servers can be checked on the web at [usezn.com/scan](https://usezn.com/scan).
@@ -163,7 +163,7 @@ The local engine is a deterministic signature and normalization layer. It is fas
 
 - **Self-test:** 51 curated vectors pass. That is a smoke test, not a detection or false-positive rate.
 - **Known limitation:** on whole source files, as seen by `check_tool_result`, the current normalizer produces false positives on ordinary code comments. Not fixed in 1.4.1. Until it is, use `check_tool_result` for web and third-party content rather than your own repository files.
-- **Detection rates:** none published yet. We will publish Galvanize results on a held-out test set, with method and data, before quoting a number.
+- **Detection rates:** on a private held-out set of 3,309 examples, Galvanize 2 has 83.4% recall at a 0.81% false positive rate (serving threshold 0.662); these numbers are for the cloud classifier, not the local rules engine. Method, per-language results, known weak spots and a reproducible benchmark are in the [model card](https://huggingface.co/usezn/Galvanize-2) and the [announcement](https://usezn.com/blog/introducing-galvanize-2/). It is one layer of defense, not a guarantee.
 
 ---
 

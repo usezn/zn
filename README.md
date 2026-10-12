@@ -125,8 +125,8 @@ sequenceDiagram
 
 ### Galvanize: prompt-injection detection
 - **Today, local:** a deterministic rules engine (signatures plus normalization against homoglyphs, zero-width characters, BiDi overrides, comment splicing and Base64) checks prompts, tool arguments, tool output and MCP tool descriptions.
-- **Today, optional cloud:** the Galvanize-60M classifier ([open weights on Hugging Face](https://huggingface.co/usezn/Galvanize-60M), Apache-2.0) can also check prompts sent to `analyze_prompt`, only if you set `ZN_CLOUD=1` and `ZN_API_KEY`.
-- **Roadmap:** running Galvanize-60M locally inside zn-gate; published held-out results with method and data.
+- **Today, optional cloud:** the Galvanize 2 classifier ([open weights on Hugging Face](https://huggingface.co/usezn/Galvanize-2), Apache-2.0) can also check prompts sent to `analyze_prompt`, only if you set `ZN_CLOUD=1` and `ZN_API_KEY`.
+- **Roadmap:** running Galvanize locally inside zn-gate.
 
 ### Scan: audit what your agent is about to trust
 - **Today:** `zn-gate scan <path>` audits prompt templates, `AGENTS.md` / `SKILL.md` files and configs for injection traps and leaked secrets (exit code 1 on findings, for CI). The same check runs as a [GitHub Action](#github-action). MCP servers can be checked on the web at [usezn.com/scan](https://usezn.com/scan).
@@ -143,7 +143,7 @@ flowchart LR
         Z["zn-gate<br/>rules engine + secret redaction"]
         T["Tools and MCP servers<br/>files, shell, web, databases"]
     end
-    C["api.usezn.com<br/>Galvanize-60M classifier"]
+    C["api.usezn.com<br/>Galvanize 2 classifier"]
     A -- "tool calls and prompts" --> Z
     Z -- "allowed calls, secrets masked" --> T
     T -- "tool output" --> Z
@@ -169,7 +169,7 @@ We only publish numbers we can reproduce, with the method next to them.
 - **Latency of the local engine:** one table by input size, with hardware, date and the script to reproduce it (`bench/bench_by_size.js`), in the [npm package README](packages/zn-gate/README.md#performance-local-rules-engine-no-network). Short summary from that run: about 0.01 ms for a 200 B prompt, 0.3 ms for a 4 KB tool output with redaction, about 4 ms for 64 KB with redaction (p50).
 - **Self-test:** 51 curated vectors pass. That is a smoke test, not a detection or false-positive rate.
 - **Known limitation:** on whole source files, the current normalizer produces false positives on ordinary code comments. Not fixed in 1.4.1. Until it is, use `check_tool_result` for web and third-party content rather than your own repository files.
-- **Detection rates:** none published yet. We will publish Galvanize results on a held-out test set, with method and data, before quoting a number.
+- **Detection rates:** on a private held-out set of 3,309 examples, Galvanize 2 has 83.4% recall at a 0.81% false positive rate (serving threshold 0.662); these numbers are for the cloud classifier, not the local rules engine. Method, per-language results, known weak spots and a reproducible benchmark are in the [model card](https://huggingface.co/usezn/Galvanize-2) and the [announcement](https://usezn.com/blog/introducing-galvanize-2/). It is one layer of defense, not a guarantee.
 
 ## Configuration
 
@@ -225,4 +225,4 @@ Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-MIT. Copyright (c) 2026 usezn ([usezn.com](https://usezn.com)). The Galvanize-60M weights are Apache-2.0. The [zn-prompt-injection-bench](https://huggingface.co/datasets/usezn/zn-prompt-injection-bench) dataset is CC-BY-4.0.
+MIT. Copyright (c) 2026 usezn ([usezn.com](https://usezn.com)). The [Galvanize 2](https://huggingface.co/usezn/Galvanize-2) and [Galvanize-60M](https://huggingface.co/usezn/Galvanize-60M) weights are Apache-2.0. The [zn-prompt-injection-bench](https://huggingface.co/datasets/usezn/zn-prompt-injection-bench) dataset is CC-BY-4.0.
