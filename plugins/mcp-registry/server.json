@@ -1,0 +1,31 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.usezn/zn-gate",
+  "title": "zn-gate secrets",
+  "description": "Use API keys and tokens from a local encrypted vault without revealing them to the model.",
+  "version": "1.6.0",
+  "websiteUrl": "https://usezn.com",
+  "repository": {
+    "url": "https://github.com/usezn/zn",
+    "source": "github",
+    "subfolder": "packages/zn-gate"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "zn-gate",
+      "version": "1.6.0",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "secrets-mcp"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "name": "usezn",
+  "description": "Plugins from usezn: zn-gate, a local security layer for coding agents.",
+  "owner": {
+    "name": "usezn",
+    "email": "security@usezn.com",
+    "url": "https://usezn.com"
+  },
+  "plugins": [
+    {
+      "name": "zn-gate",
+      "source": "./plugins/zn-gate",
+      "description": "Keeps secret values out of what the agent sends to its model, and adds a secrets MCP server that uses credentials without revealing them.",
+      "category": "security",
+      "tags": ["security", "secrets", "mcp", "hooks"]
+    }
+  ]
+}

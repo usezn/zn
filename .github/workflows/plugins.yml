@@ -1,0 +1,42 @@
+name: Agent plugins
+
+on:
+  push:
+    branches: [ main, next ]
+  pull_request:
+    branches: [ main, next ]
+    paths:
+      - 'plugins/**'
+      - '.claude-plugin/**'
+      - '.cursor-plugin/**'
+      - '.agents/plugins/**'
+      - 'packages/zn-gate/package.json'
+      - '.github/workflows/plugins.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plugins-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: Plugin checks (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 18.x
+      - name: Pinning and consistency checks
+        run: node plugins/tools/check-plugins.js
+      - name: Launcher tests
+        run: node plugins/tools/test-launch.js

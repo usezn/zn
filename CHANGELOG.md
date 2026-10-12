@@ -15,6 +15,12 @@ Limits: [docs/threat-model.md](docs/threat-model.md). Per-agent support:
 [docs/compat.md](docs/compat.md).
 
 ### Added
+- **Agent plugins** (`plugins/zn-gate`): one package in the Agent Plugins 1.0 format that
+  connects Claude Code, Codex and Cursor to the installed zn-gate (hooks, the `secrets` MCP
+  server and two skills). It installs and updates nothing by itself: it checks that zn-gate
+  is the exact pinned version and that every file matches the published release before
+  running it, and fails closed otherwise. Marketplace files for Claude Code, Codex and Cursor,
+  and an MCP Registry entry (`plugins/mcp-registry/server.json`, `mcpName` in package.json).
 - **Scrubber engine** (`lib/scrub/`), 100 % local, in three layers:
   - known values from the vault and from local `.env` files;
   - about 30 secret formats (cloud keys, tokens, private keys, connection-string passwords);
