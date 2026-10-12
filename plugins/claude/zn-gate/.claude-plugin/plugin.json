@@ -2,10 +2,19 @@
   "name": "zn-gate",
   "displayName": "zn-gate",
   "version": "1.5.0",
-  "description": "Keep secrets out of what Claude Code sends to the model: hooks scrub secret values from tool input, tool output and prompts, and a local MCP server checks untrusted text for prompt injection.",
-  "author": { "name": "usezn", "email": "admin@usezn.com" },
+  "description": "For Claude Code: hooks keep secret values out of what is sent to the model (tool input, tool output and prompts), and a local MCP server checks untrusted text for prompt injection. In chat, only the guidance skill loads.",
+  "author": {
+    "name": "usezn",
+    "email": "admin@usezn.com"
+  },
   "homepage": "https://usezn.com",
   "repository": "https://github.com/usezn/zn",
   "license": "MIT",
-  "keywords": ["security", "secrets", "prompt-injection", "mcp", "hooks"]
+  "keywords": [
+    "security",
+    "secrets",
+    "prompt-injection",
+    "mcp",
+    "hooks"
+  ]
 }

@@ -8,6 +8,12 @@
 
 zn-gate keeps secret values out of what Claude Code sends to the model. Real values stay in an encrypted vault on your machine, and Claude works with markers such as `__ZN_STRIPE_KEY__`. The plugin also adds a local prompt-injection check that Claude can run on untrusted text before acting on it.
 
+## Where it protects you
+
+- **Claude Code** (terminal, IDE extensions, and the Code tab of the Claude desktop app): full protection, hooks and both MCP servers.
+- **Cowork**: the hooks and MCP servers load only when the Cowork session runs on your computer.
+- **Chat** (claude.ai, the chat in the desktop app, mobile apps): only the guidance skill loads. Hooks and local MCP servers are ignored there, so **the plugin does not protect chat conversations**. Do not paste secrets into chat.
+
 ## Install
 
 ```bash
