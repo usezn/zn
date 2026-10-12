@@ -233,7 +233,8 @@ try {
 
   // A refused tool output must be replaced, not just answered with exit 2:
   // Claude Code and Codex pass the original output on to the model on exit 2.
-  const SECRET = 'AKIAQ3EGRWZXJ7PLMN4T';
+  // AWS's documented example key, allowlisted in .gitleaks.toml.
+  const SECRET = 'AKIAIOSFODNN7EXAMPLE';
   const postEvents = {
     'claude-code': (extra) => JSON.stringify({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command: 'cat x' }, tool_response: { stdout: 'key ' + SECRET + extra, stderr: '', interrupted: false } }),
     codex: (extra) => JSON.stringify({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command: 'cat x' }, tool_response: 'key ' + SECRET + extra }),
