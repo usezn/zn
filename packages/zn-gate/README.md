@@ -136,6 +136,7 @@ npx -y zn-gate test
 | Tool-call arguments (`check_tool_call`, `shield`) | Locally | **Never**, in any configuration |
 | MCP tool and parameter descriptions (`shield`) | Locally | **Never**, in any configuration |
 | Prompts (`analyze_prompt`, `zn-gate analyze`) | Locally | Only if you set **both** `ZN_CLOUD=1` and `ZN_API_KEY`. Secrets are redacted locally before sending. |
+| zn Team admin requests (`team_*` tools) | n/a | Only if you stored an org admin token (`zn team admin login` or `ZN_ORG_TOKEN`): requests to the zn Team API. See [zn Team admin tools](#zn-team-admin-tools-beta). |
 
 `ZN_API_KEY` alone enables nothing. `ZN_LOCAL_ONLY=true` (or `--local-only`) overrides `ZN_CLOUD=1`. `npx -y zn-gate status` prints what your configuration sends. Data-flow diagrams: [repository README](https://github.com/usezn/zn#what-leaves-your-machine).
 
@@ -194,6 +195,50 @@ npx -y zn-gate evidence --verify
 npx -y zn-gate evidence --ui        # local dashboard on http://localhost:3100
 npx -y zn-gate evidence --tail 20
 ```
+
+---
+
+## zn Team admin tools (beta)
+
+Owners and admins of a zn Team organization can let their coding agent read and propose changes to the organization through `zn-gate mcp`. The `team_*` tools are **off** until you store an org admin token, and `ZN_LOCAL_ONLY=true` always turns them off.
+
+**Set up**
+
+1. Create a token in the zn dashboard (Team > Tokens) with only the scopes you need. It expires in 30 days by default (90 at most).
+2. In your own terminal: `npx -y zn-gate team admin login`. Paste the token at the hidden prompt, or copy it and add `--from-clipboard`. It is never accepted as an argument. The token goes to the OS credential store (macOS Keychain, Windows Credential Manager, libsecret), or to `~/.zn/team-admin.token` (mode 0600) when there is none.
+3. Restart your agent. `team admin status` shows the org and the token prefix; `team admin logout` removes the token from the machine (revoke it in the dashboard).
+
+`ZN_ORG_TOKEN` also works (for CI or machines without a credential store). Do not put it in an agent's MCP configuration (`.mcp.json`, `~/.codex/config.toml`): the agent can read that file. `zn_status` and `team_whoami` warn when the token comes from the environment.
+
+**Tools** (listed only when the token's scopes allow them)
+
+| Tools | Scope |
+|---|---|
+| `team_whoami` | any |
+| `team_org_get`, `team_installs_list`, `team_changes_list`, `team_change_status` | `org:read` |
+| `team_members_list` | `members:read` |
+| `team_policy_get` | `policy:read` |
+| `team_audit_query`, `team_audit_summary`, `team_activity_list` | `audit:read` |
+| `team_audit_export` (writes a CSV or JSON file to `~/zn-exports`, checks its SHA-256, never returns the contents) | `audit:export` |
+| `team_member_invite`, `team_invitation_revoke`, `team_member_remove`, `team_member_set_role`, `team_install_revoke` | `members:write` |
+| `team_policy_propose` (typed operations on the policy, never a whole JSON document) | `policy:publish` |
+| `team_change_cancel` | a write scope |
+
+**How changes are approved**
+
+Write tools only *propose* a change. The zn server decides its class; the agent cannot approve it.
+
+- Changes that open access or raise privileges (allow a host or command, add or remove an allow rule, invite an admin, promote to admin, ...) are approved **only in the dashboard**, with a recent sign-in. The tool returns the approval link.
+- Changes that only tighten or are reversible (remove a member, revoke an install or invitation, add a deny rule, remove an allowed host, invite a member, ...) are confirmed by you outside the conversation, in this order:
+  1. an MCP elicitation form, if your client supports it (the client shows it; the model never answers it);
+  2. a native dialog on your desktop (macOS, Windows, Linux with a display). "Deny" is the default and no answer in 2 minutes is a no;
+  3. otherwise, the approval link to the dashboard.
+
+  The confirmation shows the organization, the token and client that asked, the server's summary of the change and its digest. The agent's note comes last and is marked as unverified. Only approve changes you asked for.
+- There is no terminal command to confirm a change: anything printed for you to type would also be visible to the agent, whose shell could run it.
+- `ZN_TEAM_CONFIRM=elicitation|dialog|dashboard` forces a channel (`auto` by default). The organization owner can also require the dashboard for every agent change, or turn agent changes off.
+
+**Limits.** This is a guardrail, not a sandbox. The token never appears in tool results, errors or logs, and the zn-gate hooks stop agents from running `zn team admin login` or reading the token from the credential store, but a process running as your user can still reach it. With a stolen token someone can read what its scopes allow and make changes that tighten or are reversible; nothing that opens access, touches billing or manages tokens. Every request made with a token is in the organization's activity log, and a token stops working as soon as it is revoked or its creator is no longer an owner or admin.
 
 ---
 

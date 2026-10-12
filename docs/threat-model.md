@@ -149,6 +149,40 @@ are confirmed by the vault daemon:
 These prompts stop prompt injection that drives the agent's tools. They do not
 stop malware running as the same user (see above).
 
+## zn Team admin token
+
+The `team_*` tools of `zn-gate mcp` use an org admin token (`znorg_...`).
+
+- **Where it lives:** the OS credential store (service `zn-team-admin`), or
+  `~/.zn/team-admin.token` when there is none, or `ZN_ORG_TOKEN`. It is never
+  part of a tool result, an error or a log; only its prefix is shown. The
+  native dialog is started without `ZN_ORG_TOKEN` in its environment.
+- **What the hooks stop:** `zn team admin login|logout` from an agent, reads
+  of `~/.zn`, and shell commands that read `zn-team-admin` from the credential
+  store with the usual tools (`security`, `secret-tool`, `cmdkey`, `CredRead`,
+  PowerShell credential modules). This is a heuristic: a determined shell or
+  malware running as the user can still reach the store. A token in
+  `ZN_ORG_TOKEN` set in an agent's MCP configuration file is readable by that
+  agent.
+- **What the server stops:** a token never changes anything directly. Every
+  write is a pending change whose class the server computes. Changes that open
+  access or raise privileges are approved only in the dashboard, with a recent
+  sign-in. Changes that tighten need a one-time confirmation within 10 minutes
+  from the same token. That nonce stays in the MCP process and only binds the
+  confirmation to the request: it is not a human factor. Whoever holds the
+  token can call the API directly, so a stolen token can make tightening or
+  reversible changes until it is revoked or expires (30 days by default).
+- **Who confirms:** an MCP elicitation form, shown by the client, or a native
+  dialog ("Deny" is the default; no answer is a no). There is no terminal
+  command to confirm: its code would be in the model's context. A client that
+  accepts elicitations by itself, or an agent that drives the GUI with
+  accessibility permissions, defeats the client-side confirmation; set
+  `ZN_TEAM_CONFIRM=dialog` or `dashboard`, or ask the owner to require the
+  dashboard for every agent change.
+- **What the person sees:** the summary comes from the server and is computed
+  from the change's parameters only; the agent's note is shown last and marked
+  as unverified. Invisible and bidi characters are shown as `\uXXXX`.
+
 ## Failure behaviour
 
 - **Vault locked:** the hooks still run the scrubber without it. They redact

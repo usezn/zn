@@ -131,6 +131,12 @@ VAULT (local, encrypted with age; the key stays in the OS keychain):
   vault verify        Verify the HMAC-chained audit log of secret use
   vault forget [dir]  Forget the token map of a project (vault locked)
 
+ZN TEAM ADMIN (org admin tools team_* in \`zn-gate mcp\`; off until a token is stored):
+  team admin login    Store an org admin token from the dashboard (hidden prompt or
+                      --from-clipboard; never as an argument) in the OS credential store
+  team admin status   Show the org and token prefix this machine uses
+  team admin logout   Remove the token from this machine (revoke it in the dashboard)
+
 INIT OPTIONS:
   --dry-run           Scan environments and preview changes without modifying configs
   --shadow            Wrap servers in non-blocking shadow mode (alerts logged without drops)
@@ -373,6 +379,11 @@ async function main() {
   if (args[0] === 'vault' && args[1] === 'log') {
     // exitCode (not process.exit) so a large log is flushed completely through a pipe.
     process.exitCode = await require('../lib/broker/cli').dispatch('vault', args.slice(1));
+    return;
+  }
+
+  if (args[0] === 'team' && args[1] === 'admin') {
+    process.exitCode = await require('../lib/team/admin/cli').main(args.slice(2));
     return;
   }
 

@@ -1,0 +1,1486 @@
+{
+  "version": 1,
+  "tools": [
+    {
+      "name": "team_whoami",
+      "title": "zn Team: who am I",
+      "scopes": [],
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Shows the zn Team organization and the org admin token this zn-gate uses (prefix, scopes, expiry, the role of its creator), the agent write mode and the confirmation channels available here. Never shows the token itself.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "team_org_get",
+      "title": "zn Team: organization",
+      "scopes": [
+        "org:read"
+      ],
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Gets the zn Team organization: name, plan and subscription status, seats and seats used, current policy version.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "team_members_list",
+      "title": "zn Team: members",
+      "scopes": [
+        "members:read"
+      ],
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Lists the members of the zn Team organization (user, role, joined) and the pending invitations.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "team_installs_list",
+      "title": "zn Team: installs",
+      "scopes": [
+        "org:read"
+      ],
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Lists the zn-gate installs that joined the organization: agent, OS, zn-gate version, last seen and audit records.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "include_revoked": {
+            "type": "boolean",
+            "default": false,
+            "description": "Include revoked installs."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "team_policy_get",
+      "title": "zn Team: policy",
+      "scopes": [
+        "policy:read"
+      ],
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Gets the current organization policy with the index and rule_hash of each rule (needed by team_policy_propose), the public signing key id and the version history.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "history": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 50,
+            "default": 10,
+            "description": "How many past versions to list."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "team_audit_query",
+      "title": "zn Team: audit events",
+      "scopes": [
+        "audit:read"
+      ],
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Queries the zn-gate audit events of the organization (metadata only: secret names, agents, hosts and decisions, never values).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "since": {
+            "type": "string",
+            "maxLength": 40,
+            "pattern": "^(?:\\d{1,4}[smhd]|\\d{4}-\\d{2}-\\d{2}(?:T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,3})?)?(?:Z|[+-]\\d{2}:\\d{2}))?)$",
+            "description": "Start: a relative age (30m, 24h, 7d) or a date or date-time. Default 30d."
+          },
+          "until": {
+            "type": "string",
+            "maxLength": 40,
+            "pattern": "^(?:\\d{1,4}[smhd]|\\d{4}-\\d{2}-\\d{2}(?:T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,3})?)?(?:Z|[+-]\\d{2}:\\d{2}))?)$",
+            "description": "End: a date or date-time. Default now."
+          },
+          "agent": {
+            "type": "string",
+            "maxLength": 32,
+            "pattern": "^[a-z0-9][a-z0-9-]{0,31}$"
+          },
+          "secret": {
+            "type": "string",
+            "maxLength": 65,
+            "pattern": "^(?:\\*|[A-Z][A-Z0-9_]{0,63}\\*?)$"
+          },
+          "decision": {
+            "type": "string",
+            "maxLength": 32,
+            "pattern": "^[a-z_]{1,32}$"
+          },
+          "install_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 50
+          },
+          "cursor": {
+            "type": "string",
+            "maxLength": 2048,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "team_audit_summary",
+      "title": "zn Team: audit summary",
+      "scopes": [
+        "audit:read"
+      ],
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Counts of zn-gate audit events per day, agent and decision for the last N days.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "days": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 90,
+            "default": 30
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "team_activity_list",
+      "title": "zn Team: admin activity",
+      "scopes": [
+        "audit:read"
+      ],
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Lists the organization activity log: every admin action and every request made with an org token (who, which token or client, what, result).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "since": {
+            "type": "string",
+            "maxLength": 40,
+            "pattern": "^(?:\\d{1,4}[smhd]|\\d{4}-\\d{2}-\\d{2}(?:T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,3})?)?(?:Z|[+-]\\d{2}:\\d{2}))?)$",
+            "description": "Start: a relative age (30m, 24h, 7d) or a date or date-time."
+          },
+          "until": {
+            "type": "string",
+            "maxLength": 40,
+            "pattern": "^(?:\\d{1,4}[smhd]|\\d{4}-\\d{2}-\\d{2}(?:T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,3})?)?(?:Z|[+-]\\d{2}:\\d{2}))?)$",
+            "description": "End: a date or date-time."
+          },
+          "actor_type": {
+            "enum": [
+              "user",
+              "token",
+              "oauth"
+            ]
+          },
+          "token_id": {
+            "type": "string",
+            "pattern": "^tok_[A-Za-z0-9]{12}$",
+            "description": "Only events of this org token (tok_...)."
+          },
+          "action": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[a-z_]+(?:\\.[a-z_]+)*$"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 50
+          },
+          "cursor": {
+            "type": "string",
+            "maxLength": 2048,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "team_audit_export",
+      "title": "zn Team: export audit events",
+      "scopes": [
+        "audit:export"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "description": "Downloads an export of the audit events (CSV or JSON) to a file in ~/zn-exports, checks its SHA-256 against the server and returns the file path, hash and row count. The contents are not returned.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "enum": [
+              "csv",
+              "json"
+            ],
+            "default": "csv"
+          },
+          "since": {
+            "type": "string",
+            "maxLength": 40,
+            "pattern": "^(?:\\d{1,4}[smhd]|\\d{4}-\\d{2}-\\d{2}(?:T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,3})?)?(?:Z|[+-]\\d{2}:\\d{2}))?)$",
+            "description": "Start: a relative age (30m, 24h, 7d) or a date or date-time."
+          },
+          "until": {
+            "type": "string",
+            "maxLength": 40,
+            "pattern": "^(?:\\d{1,4}[smhd]|\\d{4}-\\d{2}-\\d{2}(?:T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,3})?)?(?:Z|[+-]\\d{2}:\\d{2}))?)$",
+            "description": "End: a date or date-time."
+          },
+          "agent": {
+            "type": "string",
+            "maxLength": 32,
+            "pattern": "^[a-z0-9][a-z0-9-]{0,31}$"
+          },
+          "secret": {
+            "type": "string",
+            "maxLength": 65,
+            "pattern": "^(?:\\*|[A-Z][A-Z0-9_]{0,63}\\*?)$"
+          },
+          "decision": {
+            "type": "string",
+            "maxLength": 32,
+            "pattern": "^[a-z_]{1,32}$"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "team_changes_list",
+      "title": "zn Team: pending changes",
+      "scopes": [
+        "org:read"
+      ],
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Lists proposed changes (pending by default) with their summary, class, status and who requested them.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "enum": [
+              "pending",
+              "all"
+            ],
+            "default": "pending"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 20
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "team_change_status",
+      "title": "zn Team: change status",
+      "scopes": [
+        "org:read"
+      ],
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Gets one proposed change and its status (pending, applied, rejected, cancelled, expired, failed).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "change_id": {
+            "type": "string",
+            "pattern": "^chg_[0-9a-z]{9}[A-Za-z0-9]{11}$",
+            "description": "Change id (chg_...)."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "change_id"
+        ]
+      }
+    },
+    {
+      "name": "team_member_invite",
+      "title": "zn Team: invite a member",
+      "scopes": [
+        "members:write"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "description": "Invites a person to the organization (uses a paid seat). Proposes the change. A person must approve it outside the conversation; this tool cannot approve on its own. Changes that open access are approved only in the zn dashboard. Inviting an admin is approved only in the dashboard, by the owner.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 254
+          },
+          "role": {
+            "enum": [
+              "member",
+              "admin"
+            ],
+            "default": "member"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 200,
+            "pattern": "^[^\\u0000-\\u001f\\u007f]*$",
+            "description": "Why the change is requested. Shown to the approver, marked as unverified text written by the agent."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "email"
+        ]
+      }
+    },
+    {
+      "name": "team_invitation_revoke",
+      "title": "zn Team: revoke an invitation",
+      "scopes": [
+        "members:write"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Revokes a pending invitation. Proposes the change. A person must approve it outside the conversation; this tool cannot approve on its own. Changes that open access are approved only in the zn dashboard.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "invitation_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{16}$"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 200,
+            "pattern": "^[^\\u0000-\\u001f\\u007f]*$",
+            "description": "Why the change is requested. Shown to the approver, marked as unverified text written by the agent."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "invitation_id"
+        ]
+      }
+    },
+    {
+      "name": "team_member_remove",
+      "title": "zn Team: remove a member",
+      "scopes": [
+        "members:write"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Removes a member from the organization. Proposes the change. A person must approve it outside the conversation; this tool cannot approve on its own. Changes that open access are approved only in the zn dashboard.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "description": "The member email.",
+            "type": "string",
+            "format": "email",
+            "maxLength": 254
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 200,
+            "pattern": "^[^\\u0000-\\u001f\\u007f]*$",
+            "description": "Why the change is requested. Shown to the approver, marked as unverified text written by the agent."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "user_id"
+        ]
+      }
+    },
+    {
+      "name": "team_member_set_role",
+      "title": "zn Team: change a member role",
+      "scopes": [
+        "members:write"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Changes the role of a member. Proposes the change. A person must approve it outside the conversation; this tool cannot approve on its own. Changes that open access are approved only in the zn dashboard. Promoting to admin is approved only in the dashboard, by the owner.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "description": "The member email.",
+            "type": "string",
+            "format": "email",
+            "maxLength": 254
+          },
+          "role": {
+            "enum": [
+              "admin",
+              "member"
+            ]
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 200,
+            "pattern": "^[^\\u0000-\\u001f\\u007f]*$",
+            "description": "Why the change is requested. Shown to the approver, marked as unverified text written by the agent."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "user_id",
+          "role"
+        ]
+      }
+    },
+    {
+      "name": "team_install_revoke",
+      "title": "zn Team: revoke an install",
+      "scopes": [
+        "members:write"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Revokes a zn-gate install: it stops receiving the organization policy and can no longer upload audit events. Proposes the change. A person must approve it outside the conversation; this tool cannot approve on its own. Changes that open access are approved only in the zn dashboard.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "install_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 200,
+            "pattern": "^[^\\u0000-\\u001f\\u007f]*$",
+            "description": "Why the change is requested. Shown to the approver, marked as unverified text written by the agent."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "install_id"
+        ]
+      }
+    },
+    {
+      "name": "team_policy_propose",
+      "title": "zn Team: propose a policy change",
+      "scopes": [
+        "policy:publish"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "description": "Proposes typed operations on the organization policy, applied in order on base_version (get it, and each rule index and rule_hash, with team_policy_get). Proposes the change. A person must approve it outside the conversation; this tool cannot approve on its own. Changes that open access are approved only in the zn dashboard. The server decides which operations only tighten; anything else needs the dashboard.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "base_version": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Policy version the operations apply to."
+          },
+          "ops": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 20,
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": {
+                      "const": "add_deny_rule"
+                    },
+                    "secret": {
+                      "type": "string",
+                      "pattern": "^(?:\\*|[A-Z][A-Z0-9_]{0,63}|[A-Z][A-Z0-9_]{0,62}\\*)$",
+                      "description": "Vault secret NAME, NAME prefix followed by *, or * for every secret."
+                    },
+                    "agents": {
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 16,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "pattern": "^(?:\\*|[a-z0-9][a-z0-9-]{0,31})$"
+                      },
+                      "description": "zn-gate agent ids (claude-code, codex, cursor, opencode) or *."
+                    },
+                    "reason": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200,
+                      "pattern": "^[^\\u0000-\\u001f]*$"
+                    },
+                    "position": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 200,
+                      "default": 0
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "op",
+                    "secret",
+                    "agents"
+                  ],
+                  "title": "add_deny_rule",
+                  "description": "Insert a deny rule (tightens)."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": {
+                      "const": "set_rule_deny"
+                    },
+                    "index": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 199,
+                      "description": "Rule position in the current policy (team_policy_get rules_with_hash)."
+                    },
+                    "rule_hash": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{12}$",
+                      "description": "rule_hash of that rule in base_version (team_policy_get)."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "op",
+                    "index",
+                    "rule_hash"
+                  ],
+                  "title": "set_rule_deny",
+                  "description": "Make a rule deny (tightens)."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": {
+                      "const": "add_agents_to_deny_rule"
+                    },
+                    "agents": {
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 16,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "pattern": "^(?:\\*|[a-z0-9][a-z0-9-]{0,31})$"
+                      },
+                      "description": "zn-gate agent ids (claude-code, codex, cursor, opencode) or *."
+                    },
+                    "index": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 199,
+                      "description": "Rule position in the current policy (team_policy_get rules_with_hash)."
+                    },
+                    "rule_hash": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{12}$",
+                      "description": "rule_hash of that rule in base_version (team_policy_get)."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "op",
+                    "index",
+                    "rule_hash",
+                    "agents"
+                  ],
+                  "title": "add_agents_to_deny_rule",
+                  "description": "Add agents to a deny rule (tightens)."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": {
+                      "const": "remove_allow_hosts"
+                    },
+                    "hosts": {
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 64,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 253,
+                        "pattern": "^(?:\\*\\.)?[a-z0-9-]+(?:\\.[a-z0-9-]+)*(?::\\d{1,5})?$"
+                      }
+                    },
+                    "index": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 199,
+                      "description": "Rule position in the current policy (team_policy_get rules_with_hash)."
+                    },
+                    "rule_hash": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{12}$",
+                      "description": "rule_hash of that rule in base_version (team_policy_get)."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "op",
+                    "index",
+                    "rule_hash",
+                    "hosts"
+                  ],
+                  "title": "remove_allow_hosts",
+                  "description": "Remove hosts from allowHosts (tightens)."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": {
+                      "const": "remove_allow_commands"
+                    },
+                    "commands": {
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 64,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9_.+\\-/ *]{1,128}$"
+                      }
+                    },
+                    "index": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 199,
+                      "description": "Rule position in the current policy (team_policy_get rules_with_hash)."
+                    },
+                    "rule_hash": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{12}$",
+                      "description": "rule_hash of that rule in base_version (team_policy_get)."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "op",
+                    "index",
+                    "rule_hash",
+                    "commands"
+                  ],
+                  "title": "remove_allow_commands",
+                  "description": "Remove commands from allowCommands (tightens)."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": {
+                      "const": "add_detector"
+                    },
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[a-z0-9_]{1,64}$"
+                    },
+                    "pattern": {
+                      "type": "string",
+                      "minLength": 4,
+                      "maxLength": 256,
+                      "description": "JavaScript regular expression source (no flags)."
+                    },
+                    "type": {
+                      "type": "string",
+                      "pattern": "^[A-Z0-9](?:[A-Z0-9_]{0,62}[A-Z0-9])?$"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "op",
+                    "id",
+                    "pattern",
+                    "type"
+                  ],
+                  "title": "add_detector",
+                  "description": "Add a custom secret detector (tightens)."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": {
+                      "const": "enable_redaction"
+                    },
+                    "pii": {
+                      "const": true
+                    },
+                    "ner": {
+                      "const": true
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "op"
+                  ],
+                  "title": "enable_redaction",
+                  "description": "Turn on PII or NER redaction (tightens)."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": {
+                      "const": "add_rule"
+                    },
+                    "rule": {
+                      "type": "object",
+                      "properties": {
+                        "secret": {
+                          "type": "string",
+                          "pattern": "^(?:\\*|[A-Z][A-Z0-9_]{0,63}|[A-Z][A-Z0-9_]{0,62}\\*)$",
+                          "description": "Vault secret NAME, NAME prefix followed by *, or * for every secret."
+                        },
+                        "agents": {
+                          "type": "array",
+                          "minItems": 1,
+                          "maxItems": 16,
+                          "uniqueItems": true,
+                          "items": {
+                            "type": "string",
+                            "pattern": "^(?:\\*|[a-z0-9][a-z0-9-]{0,31})$"
+                          },
+                          "description": "zn-gate agent ids (claude-code, codex, cursor, opencode) or *."
+                        },
+                        "mode": {
+                          "enum": [
+                            "proxy",
+                            "env",
+                            "file",
+                            "backup"
+                          ]
+                        },
+                        "allowHosts": {
+                          "type": "array",
+                          "minItems": 0,
+                          "maxItems": 64,
+                          "uniqueItems": true,
+                          "items": {
+                            "type": "string",
+                            "maxLength": 253,
+                            "pattern": "^(?:\\*\\.)?[a-z0-9-]+(?:\\.[a-z0-9-]+)*(?::\\d{1,5})?$"
+                          }
+                        },
+                        "allowCommands": {
+                          "type": "array",
+                          "minItems": 0,
+                          "maxItems": 64,
+                          "uniqueItems": true,
+                          "items": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z0-9_.+\\-/ *]{1,128}$"
+                          }
+                        },
+                        "injectAt": {
+                          "enum": [
+                            "header",
+                            "query",
+                            "body"
+                          ]
+                        },
+                        "deny": {
+                          "type": "boolean"
+                        },
+                        "reason": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "pattern": "^[^\\u0000-\\u001f]*$"
+                        }
+                      },
+                      "additionalProperties": false,
+                      "required": [
+                        "secret",
+                        "agents"
+                      ]
+                    },
+                    "position": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 200
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "op",
+                    "rule"
+                  ],
+                  "title": "add_rule",
+                  "description": "Insert a rule (dashboard approval)."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": {
+                      "const": "remove_rule"
+                    },
+                    "index": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 199,
+                      "description": "Rule position in the current policy (team_policy_get rules_with_hash)."
+                    },
+                    "rule_hash": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{12}$",
+                      "description": "rule_hash of that rule in base_version (team_policy_get)."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "op",
+                    "index",
+                    "rule_hash"
+                  ],
+                  "title": "remove_rule",
+                  "description": "Remove a rule (dashboard approval)."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": {
+                      "const": "move_rule"
+                    },
+                    "to": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 199
+                    },
+                    "index": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 199,
+                      "description": "Rule position in the current policy (team_policy_get rules_with_hash)."
+                    },
+                    "rule_hash": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{12}$",
+                      "description": "rule_hash of that rule in base_version (team_policy_get)."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "op",
+                    "index",
+                    "rule_hash",
+                    "to"
+                  ],
+                  "title": "move_rule",
+                  "description": "Move a rule (dashboard approval)."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": {
+                      "const": "add_allow_hosts"
+                    },
+                    "hosts": {
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 64,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 253,
+                        "pattern": "^(?:\\*\\.)?[a-z0-9-]+(?:\\.[a-z0-9-]+)*(?::\\d{1,5})?$"
+                      }
+                    },
+                    "index": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 199,
+                      "description": "Rule position in the current policy (team_policy_get rules_with_hash)."
+                    },
+                    "rule_hash": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{12}$",
+                      "description": "rule_hash of that rule in base_version (team_policy_get)."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "op",
+                    "index",
+                    "rule_hash",
+                    "hosts"
+                  ],
+                  "title": "add_allow_hosts",
+                  "description": "Add hosts to allowHosts (dashboard approval)."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": {
+                      "const": "add_allow_commands"
+                    },
+                    "commands": {
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 64,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9_.+\\-/ *]{1,128}$"
+                      }
+                    },
+                    "index": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 199,
+                      "description": "Rule position in the current policy (team_policy_get rules_with_hash)."
+                    },
+                    "rule_hash": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{12}$",
+                      "description": "rule_hash of that rule in base_version (team_policy_get)."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "op",
+                    "index",
+                    "rule_hash",
+                    "commands"
+                  ],
+                  "title": "add_allow_commands",
+                  "description": "Add commands to allowCommands (dashboard approval)."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": {
+                      "const": "set_rule_mode"
+                    },
+                    "mode": {
+                      "enum": [
+                        "proxy",
+                        "env",
+                        "file",
+                        "backup"
+                      ]
+                    },
+                    "index": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 199,
+                      "description": "Rule position in the current policy (team_policy_get rules_with_hash)."
+                    },
+                    "rule_hash": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{12}$",
+                      "description": "rule_hash of that rule in base_version (team_policy_get)."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "op",
+                    "index",
+                    "rule_hash",
+                    "mode"
+                  ],
+                  "title": "set_rule_mode",
+                  "description": "Change how a secret is delivered (dashboard approval)."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": {
+                      "const": "set_inject_at"
+                    },
+                    "inject_at": {
+                      "enum": [
+                        "header",
+                        "query",
+                        "body"
+                      ]
+                    },
+                    "index": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 199,
+                      "description": "Rule position in the current policy (team_policy_get rules_with_hash)."
+                    },
+                    "rule_hash": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{12}$",
+                      "description": "rule_hash of that rule in base_version (team_policy_get)."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "op",
+                    "index",
+                    "rule_hash",
+                    "inject_at"
+                  ],
+                  "title": "set_inject_at",
+                  "description": "Change where a proxy secret is injected (dashboard approval)."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": {
+                      "const": "unset_rule_deny"
+                    },
+                    "index": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 199,
+                      "description": "Rule position in the current policy (team_policy_get rules_with_hash)."
+                    },
+                    "rule_hash": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{12}$",
+                      "description": "rule_hash of that rule in base_version (team_policy_get)."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "op",
+                    "index",
+                    "rule_hash"
+                  ],
+                  "title": "unset_rule_deny",
+                  "description": "Remove deny from a rule (dashboard approval)."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": {
+                      "const": "add_agents_to_rule"
+                    },
+                    "agents": {
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 16,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "pattern": "^(?:\\*|[a-z0-9][a-z0-9-]{0,31})$"
+                      },
+                      "description": "zn-gate agent ids (claude-code, codex, cursor, opencode) or *."
+                    },
+                    "index": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 199,
+                      "description": "Rule position in the current policy (team_policy_get rules_with_hash)."
+                    },
+                    "rule_hash": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{12}$",
+                      "description": "rule_hash of that rule in base_version (team_policy_get)."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "op",
+                    "index",
+                    "rule_hash",
+                    "agents"
+                  ],
+                  "title": "add_agents_to_rule",
+                  "description": "Add agents to an allow rule (dashboard approval)."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": {
+                      "const": "remove_agents_from_rule"
+                    },
+                    "agents": {
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 16,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "pattern": "^(?:\\*|[a-z0-9][a-z0-9-]{0,31})$"
+                      },
+                      "description": "zn-gate agent ids (claude-code, codex, cursor, opencode) or *."
+                    },
+                    "index": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 199,
+                      "description": "Rule position in the current policy (team_policy_get rules_with_hash)."
+                    },
+                    "rule_hash": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{12}$",
+                      "description": "rule_hash of that rule in base_version (team_policy_get)."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "op",
+                    "index",
+                    "rule_hash",
+                    "agents"
+                  ],
+                  "title": "remove_agents_from_rule",
+                  "description": "Remove agents from a rule (dashboard approval)."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": {
+                      "const": "set_rule_secret"
+                    },
+                    "secret": {
+                      "type": "string",
+                      "pattern": "^(?:\\*|[A-Z][A-Z0-9_]{0,63}|[A-Z][A-Z0-9_]{0,62}\\*)$",
+                      "description": "Vault secret NAME, NAME prefix followed by *, or * for every secret."
+                    },
+                    "index": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 199,
+                      "description": "Rule position in the current policy (team_policy_get rules_with_hash)."
+                    },
+                    "rule_hash": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{12}$",
+                      "description": "rule_hash of that rule in base_version (team_policy_get)."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "op",
+                    "index",
+                    "rule_hash",
+                    "secret"
+                  ],
+                  "title": "set_rule_secret",
+                  "description": "Change the secret pattern of a rule (dashboard approval)."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": {
+                      "const": "remove_detector"
+                    },
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[a-z0-9_]{1,64}$"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "op",
+                    "id"
+                  ],
+                  "title": "remove_detector",
+                  "description": "Remove a custom detector (dashboard approval)."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": {
+                      "const": "disable_redaction"
+                    },
+                    "pii": {
+                      "const": true
+                    },
+                    "ner": {
+                      "const": true
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "op"
+                  ],
+                  "title": "disable_redaction",
+                  "description": "Turn off PII or NER redaction (dashboard approval)."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": {
+                      "const": "replace_policy"
+                    },
+                    "policy": {
+                      "type": "object",
+                      "properties": {
+                        "rules": {
+                          "type": "array",
+                          "maxItems": 200,
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "secret": {
+                                "type": "string",
+                                "pattern": "^(?:\\*|[A-Z][A-Z0-9_]{0,63}|[A-Z][A-Z0-9_]{0,62}\\*)$",
+                                "description": "Vault secret NAME, NAME prefix followed by *, or * for every secret."
+                              },
+                              "agents": {
+                                "type": "array",
+                                "minItems": 1,
+                                "maxItems": 16,
+                                "uniqueItems": true,
+                                "items": {
+                                  "type": "string",
+                                  "pattern": "^(?:\\*|[a-z0-9][a-z0-9-]{0,31})$"
+                                },
+                                "description": "zn-gate agent ids (claude-code, codex, cursor, opencode) or *."
+                              },
+                              "mode": {
+                                "enum": [
+                                  "proxy",
+                                  "env",
+                                  "file",
+                                  "backup"
+                                ]
+                              },
+                              "allowHosts": {
+                                "type": "array",
+                                "minItems": 0,
+                                "maxItems": 64,
+                                "uniqueItems": true,
+                                "items": {
+                                  "type": "string",
+                                  "maxLength": 253,
+                                  "pattern": "^(?:\\*\\.)?[a-z0-9-]+(?:\\.[a-z0-9-]+)*(?::\\d{1,5})?$"
+                                }
+                              },
+                              "allowCommands": {
+                                "type": "array",
+                                "minItems": 0,
+                                "maxItems": 64,
+                                "uniqueItems": true,
+                                "items": {
+                                  "type": "string",
+                                  "pattern": "^[A-Za-z0-9_.+\\-/ *]{1,128}$"
+                                }
+                              },
+                              "injectAt": {
+                                "enum": [
+                                  "header",
+                                  "query",
+                                  "body"
+                                ]
+                              },
+                              "deny": {
+                                "type": "boolean"
+                              },
+                              "reason": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200,
+                                "pattern": "^[^\\u0000-\\u001f]*$"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "required": [
+                              "secret",
+                              "agents"
+                            ]
+                          }
+                        },
+                        "detectors": {
+                          "type": "array",
+                          "maxItems": 50,
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "pattern": "^[a-z0-9_]{1,64}$"
+                              },
+                              "pattern": {
+                                "type": "string",
+                                "minLength": 4,
+                                "maxLength": 256,
+                                "description": "JavaScript regular expression source (no flags)."
+                              },
+                              "type": {
+                                "type": "string",
+                                "pattern": "^[A-Z0-9](?:[A-Z0-9_]{0,62}[A-Z0-9])?$"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "required": [
+                              "id",
+                              "pattern",
+                              "type"
+                            ]
+                          }
+                        },
+                        "redaction": {
+                          "type": "object",
+                          "properties": {
+                            "pii": {
+                              "type": "boolean"
+                            },
+                            "ner": {
+                              "type": "boolean"
+                            }
+                          },
+                          "additionalProperties": false
+                        }
+                      },
+                      "additionalProperties": false,
+                      "required": [
+                        "rules"
+                      ]
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "op",
+                    "policy"
+                  ],
+                  "title": "replace_policy",
+                  "description": "Replace the whole policy (dashboard approval)."
+                }
+              ]
+            }
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 200,
+            "pattern": "^[^\\u0000-\\u001f\\u007f]*$",
+            "description": "Why the change is requested. Shown to the approver, marked as unverified text written by the agent."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "base_version",
+          "ops"
+        ]
+      }
+    },
+    {
+      "name": "team_change_cancel",
+      "title": "zn Team: cancel a change",
+      "scopes": [
+        "members:write",
+        "policy:publish"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Cancels a pending change that this token proposed. Cancelling never applies anything.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "change_id": {
+            "type": "string",
+            "pattern": "^chg_[0-9a-z]{9}[A-Za-z0-9]{11}$",
+            "description": "Change id (chg_...)."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "change_id"
+        ]
+      }
+    }
+  ]
+}

@@ -349,7 +349,12 @@ function findStructured(text, out) {
   }
 }
 
+/* zn Team org admin token: znorg_<12>_<43><6>, the last 6 a base62 CRC-32. */
+const { orgTokenCrcOk } = require('../team/admin/token');
+
 const PATTERNS = [
+  { type: 'ZN_ORG_TOKEN', hints: ['znorg_'], re: re(NB + 'znorg_[A-Za-z0-9]{12}_[A-Za-z0-9]{49}' + NA),
+    check: (v) => orgTokenCrcOk(v) },
   { type: 'ANTHROPIC_KEY', hints: ['sk-ant-'], re: re(NB + 'sk-ant-[a-z]{3,8}\\d{2}-[A-Za-z0-9_-]{32,200}' + NA) },
   { type: 'OPENAI_KEY', hints: ['sk-'], re: re(NB + 'sk-(?!ant-)(?:proj-|svcacct-|admin-|or-v1-)?[A-Za-z0-9_-]{40,200}' + NA),
     check: (v) => looksRandom(v.replace(/^sk-(?:proj-|svcacct-|admin-|or-v1-)?/, ''), 2, 3.5) },

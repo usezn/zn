@@ -652,11 +652,25 @@ function hasNetworkSignals(cmd) {
   try { return require('../scrub/engine').isNetworkCommand(s); } catch (_) { return false; }
 }
 
-const ZN_ADMIN_RE = /(^|[\s;&|(`$'"\\/])(zn|zn-gate|cli\.js)(\.cmd|\.js)?["']?\s+(secret\s+(set|get|rm|remove|import|adopt|approve|allow|reveal|link)|env\s+(shadow|unshadow)|unlock|lock|hooks\s+(install|uninstall))\b/i;
+const ZN_ADMIN_RE = /(^|[\s;&|(`$'"\\/])(zn|zn-gate|cli\.js)(\.cmd|\.js)?["']?\s+(secret\s+(set|get|rm|remove|import|adopt|approve|allow|reveal|link)|env\s+(shadow|unshadow)|unlock|lock|hooks\s+(install|uninstall)|team\s+(admin\s+(login|logout)|approve))\b/i;
 
 function adminCommand(cmd) {
   const m = ZN_ADMIN_RE.exec(String(cmd || ''));
   return m ? m[4].replace(/\s+/g, ' ') : null;
+}
+
+/* Reading the zn Team admin token from the OS credential store (macOS
+ * `security`, libsecret `secret-tool`, Windows CredRead / cmdkey and the
+ * PowerShell credential modules). A heuristic: the hook cannot see every
+ * way a shell can reach the store, so the token is also limited on the
+ * server (it can only propose changes, and only tightening ones can be
+ * confirmed outside the dashboard). */
+const TEAM_TOKEN_STORE_RE = /zn-team-admin/i;
+const CREDENTIAL_TOOL_RE = /(^|[\s;&|(`$'"\\/:\[])(security|secret-tool|cmdkey|CredRead\w*|CredEnumerate\w*|Get-StoredCredential|Get-Secret|keyring|vaultcmd|PasswordVault|kwallet-query|gdbus|busctl|dbus-send)(\.exe)?(?=$|[\s;&|()'"\]])/i;
+
+function teamTokenStoreRead(cmd) {
+  const s = String(cmd || '');
+  return TEAM_TOKEN_STORE_RE.test(s) && CREDENTIAL_TOOL_RE.test(s);
 }
 
 /**
@@ -665,9 +679,16 @@ function adminCommand(cmd) {
  */
 function bashDenial(cmd, opts = {}) {
   const admin = adminCommand(cmd);
+  if (admin && /^team\b/i.test(admin)) {
+    return 'zn: `zn ' + admin + '` manages the zn Team org admin token and must be run by the user in their own terminal, not by an agent. ' +
+      'Ask the user to run it. Changes proposed with the team_* tools are approved by the user outside the conversation.';
+  }
   if (admin) {
     return 'zn: `zn ' + admin + '` manages secret values and must be run by the user in their own terminal, not by an agent. ' +
       'Ask the user to run it.';
+  }
+  if (teamTokenStoreRead(cmd)) {
+    return 'zn: the zn Team org admin token in the OS credential store is not readable by agents. Use the team_* tools of zn-gate instead.';
   }
   // The context (home, project, agent directories) is built once per command.
   opts = { ...opts, ctx: contextOf(opts) };
@@ -730,5 +751,6 @@ module.exports = {
   wrapPowerShell,
   hasNetworkSignals,
   adminCommand,
+  teamTokenStoreRead,
   bashDenial,
 };

@@ -90,24 +90,39 @@ function macKeychainArgs() {
   return kc ? [kc] : [];
 }
 
+/* Which item a backend reads or writes: the vault identity by default.
+ * Other zn credentials (the zn Team admin token) pass their own service,
+ * account and label, limited to SAFE_NAME characters. */
+function itemOf(where) {
+  const w = where || {};
+  const item = { service: w.service || service(), account: w.account || ACCOUNT, label: w.label || 'zn-vault-identity' };
+  for (const k of ['service', 'account', 'label']) {
+    if (!SAFE_NAME.test(item[k])) throw znError(CODES.POLICY_DENIED, 'invalid keychain ' + k);
+  }
+  return item;
+}
+
 const macos = {
-  store(identity) {
+  store(identity, where) {
     // `security -i` reads the command from stdin, so the identity never
     // shows up in the process list.
+    const it = itemOf(where);
     const kc = process.env.ZN_KEYCHAIN_PATH;
     if (kc && /\s/.test(kc)) throw znError(CODES.POLICY_DENIED, 'ZN_KEYCHAIN_PATH must not contain spaces');
-    const line = ['add-generic-password', '-U', '-s', service(), '-a', ACCOUNT, '-l', 'zn-vault-identity', '-w', identity].concat(kc ? [kc] : []).join(' ') + '\n';
+    const line = ['add-generic-password', '-U', '-s', it.service, '-a', it.account, '-l', it.label, '-w', identity].concat(kc ? [kc] : []).join(' ') + '\n';
     const res = run('/usr/bin/security', ['-i'], line);
     if (res.status !== 0) throw znError(CODES.LOCKED, 'macOS keychain refused the identity (security exit ' + res.status + ')');
   },
-  load() {
-    const res = run('/usr/bin/security', ['find-generic-password', '-s', service(), '-a', ACCOUNT, '-w'].concat(macKeychainArgs()));
+  load(where) {
+    const it = itemOf(where);
+    const res = run('/usr/bin/security', ['find-generic-password', '-s', it.service, '-a', it.account, '-w'].concat(macKeychainArgs()));
     if (res.status === 44) return null; // errSecItemNotFound
     if (res.status !== 0) throw znError(CODES.LOCKED, 'macOS keychain read failed (security exit ' + res.status + ')');
     return res.stdout.trim();
   },
-  remove() {
-    const res = run('/usr/bin/security', ['delete-generic-password', '-s', service(), '-a', ACCOUNT].concat(macKeychainArgs()));
+  remove(where) {
+    const it = itemOf(where);
+    const res = run('/usr/bin/security', ['delete-generic-password', '-s', it.service, '-a', it.account].concat(macKeychainArgs()));
     return res.status === 0;
   },
 };
@@ -183,25 +198,26 @@ const WIN_SCRIPT = [
   '}',
 ].join('\r\n');
 
-function winCred(op, input) {
+function winCred(op, input, where) {
+  const it = itemOf(where);
   const encoded = Buffer.from(WIN_SCRIPT, 'utf16le').toString('base64');
   return run(powershellPath(), ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded], input,
-    { ZN_CRED_OP: op, ZN_CRED_TARGET: service() + ':' + ACCOUNT });
+    { ZN_CRED_OP: op, ZN_CRED_TARGET: it.service + ':' + it.account });
 }
 
 const windows = {
-  store(identity) {
-    const res = winCred('write', identity);
+  store(identity, where) {
+    const res = winCred('write', identity, where);
     if (res.status !== 0 || res.stdout.trim() !== 'ok') throw znError(CODES.LOCKED, 'Windows Credential Manager refused the identity (exit ' + res.status + ')');
   },
-  load() {
-    const res = winCred('read');
+  load(where) {
+    const res = winCred('read', undefined, where);
     if (res.status === 3) return null;
     if (res.status !== 0) throw znError(CODES.LOCKED, 'Windows Credential Manager read failed (exit ' + res.status + ')');
     return res.stdout.trim();
   },
-  remove() {
-    return winCred('delete').status === 0;
+  remove(where) {
+    return winCred('delete', undefined, where).status === 0;
   },
 };
 
@@ -216,12 +232,15 @@ function secretTool() {
 }
 
 const libsecret = {
-  store(identity) {
-    const res = run(secretTool(), ['store', '--label=zn vault identity', 'service', service(), 'account', ACCOUNT], identity);
+  store(identity, where) {
+    const it = itemOf(where);
+    const label = where && where.label ? it.label : 'zn vault identity';
+    const res = run(secretTool(), ['store', '--label=' + label, 'service', it.service, 'account', it.account], identity);
     if (res.status !== 0) throw znError(CODES.LOCKED, 'Secret Service refused the identity (secret-tool exit ' + res.status + ')');
   },
-  load() {
-    const res = run(secretTool(), ['lookup', 'service', service(), 'account', ACCOUNT]);
+  load(where) {
+    const it = itemOf(where);
+    const res = run(secretTool(), ['lookup', 'service', it.service, 'account', it.account]);
     const out = (res.stdout || '').trim();
     if (res.status !== 0 && !out) {
       if (res.status === 1) return null;
@@ -229,8 +248,9 @@ const libsecret = {
     }
     return out || null;
   },
-  remove() {
-    return run(secretTool(), ['clear', 'service', service(), 'account', ACCOUNT]).status === 0;
+  remove(where) {
+    const it = itemOf(where);
+    return run(secretTool(), ['clear', 'service', it.service, 'account', it.account]).status === 0;
   },
 };
 
@@ -348,9 +368,26 @@ async function deleteIdentity(opts) {
   try { fs.unlinkSync(store.paths(o).metaFile); } catch (err) { /* ignore */ }
 }
 
+/**
+ * Other zn credentials in the OS store (native backends only):
+ *   storeItem(backend, value, {service, account, label})
+ *   loadItem(backend, {service, account}) -> string or null
+ *   removeItem(backend, {service, account}) -> boolean
+ */
+function nativeBackend(backend) {
+  if (!NATIVE[backend]) throw znError(CODES.POLICY_DENIED, 'not a native keychain backend: ' + backend);
+  return NATIVE[backend];
+}
+function storeItem(backend, value, where) { nativeBackend(backend).store(value, where); }
+function loadItem(backend, where) { return nativeBackend(backend).load(where); }
+function removeItem(backend, where) { return nativeBackend(backend).remove(where); }
+
 module.exports = {
   BACKENDS,
   detectBackend,
+  storeItem,
+  loadItem,
+  removeItem,
   storeIdentity,
   loadIdentity,
   initIdentity,
