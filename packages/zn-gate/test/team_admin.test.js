@@ -440,3 +440,24 @@ test('zn team admin login: hidden prompt, whoami check, OS store; status and log
   assert.equal(await cli.main(['login'], Object.assign({}, io, { stdin: { isTTY: false }, readHidden: async () => { asked = true; return tok; } })), 3);
   assert.equal(asked, false);
 });
+
+test('M1: in-client confirmation only when the whole summary fits', async () => {
+  const lines = (n, len) => Array.from({ length: n }, (_, i) => ('line ' + i + ' ').padEnd(len || 10, 'x'));
+  assert.equal(teamConfirm.summaryFits({ ...CHANGE, summary: lines(20) }), true);
+  assert.equal(teamConfirm.summaryFits({ ...CHANGE, summary: lines(21) }), false);
+  assert.equal(teamConfirm.summaryFits({ ...CHANGE, summary: lines(1, 300) }), true);
+  assert.equal(teamConfirm.summaryFits({ ...CHANGE, summary: lines(1, 301) }), false);
+  // Invisible characters are shown as \uXXXX (6 characters each): counted after escaping.
+  assert.equal(teamConfirm.summaryFits({ ...CHANGE, summary: ['a'.repeat(290) + '​​'] }), false);
+  assert.equal(teamConfirm.summaryFits({ ...CHANGE, summary: [{ toString: () => 'x' }] }), false);
+  let shown = 0;
+  const gui = { available: () => true, confirm: async () => { shown++; return true; } };
+  const elicit = async () => { shown++; return { action: 'accept', content: { confirm: true } }; };
+  for (const summary of [lines(21), lines(2, 400)]) {
+    const r = await teamConfirm.askPerson({ change: { ...CHANGE, summary }, whoami: WHO }, { elicit, elicitationSupported: true, gui, env: {} });
+    assert.deepEqual(r, { decision: 'unavailable', via: null, detail: 'summary_too_long' });
+  }
+  assert.equal(shown, 0, 'neither the elicitation nor the dialog was shown');
+  const ok = await teamConfirm.askPerson({ change: { ...CHANGE, summary: lines(20) }, whoami: WHO }, { gui, env: {} });
+  assert.equal(ok.decision, 'approved');
+});

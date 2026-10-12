@@ -228,7 +228,9 @@ function createTeamAdmin(opts = {}) {
       nonce = null;
       return toolResult(outcome(change, 'pending_approval', {
         approve_url: approveUrl(id, null),
-        message: 'No confirmation channel is available here (no MCP elicitation and no desktop dialog). Approve change ' + id +
+        message: (answer.detail === 'summary_too_long'
+          ? 'This change is too long to show in full in a confirmation here. Approve change ' + id
+          : 'No confirmation channel is available here (no MCP elicitation and no desktop dialog). Approve change ' + id) +
           ' (digest ' + d8 + ') in the zn dashboard: open the link in your browser.',
       }));
     }

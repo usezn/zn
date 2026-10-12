@@ -381,14 +381,19 @@ test('tightening policy change: confirmed on the client and applied as v+1', asy
   assert.equal(mock.state.policy_version, 8);
 });
 
-test('invite as member: applied with the accept link', async (t) => {
+test('invite as member: always an approval link, never confirmed in the client', async (t) => {
   const { mock, url } = await withMock(t);
-  const gui = { available: () => true, confirm: async () => true };
+  let asked = 0;
+  const gui = { available: () => true, confirm: async () => { asked++; return true; } };
   const c = session(t, { env: envFor(t, url, mock.tokens.admin), gui });
   await c.request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'x', version: '1' } });
   const o = (await c.call('team_member_invite', { email: 'Dave2@Acme.example' })).structuredContent;
-  assert.equal(o.status, 'applied');
-  assert.match(o.accept_url, /^https:\/\/usezn\.com\/team\?invite=/);
+  assert.equal(o.status, 'pending_approval', JSON.stringify(o));
+  assert.equal(o.class, 'dashboard');
+  assert.match(o.approve_url, /^https:\/\/usezn\.com\/team\/approvals\?change=chg_/);
+  assert.equal(o.accept_url, undefined);
+  assert.equal(asked, 0, 'no dialog for an invitation');
+  assert.ok(!mock.state.requests.some((x) => /\/confirm$/.test(x.path)));
   const created = mock.state.requests.find((x) => x.method === 'POST' && x.path === '/v1/org/changes');
   assert.deepEqual(created.body, { kind: 'member.invite', params: { email: 'dave2@acme.example', role: 'member' } });
 });
@@ -561,4 +566,30 @@ test('local tools still work next to the team tools', async (t) => {
   const r = await c.call('check_tool_result', { tool_name: 'read_file', content: 'hello' });
   assert.equal(JSON.parse(r.content[0].text).safe_to_ingest, true);
   assert.equal(LOCAL_TOOLS.length, 4);
+});
+
+test('a change too long to show in full goes to the dashboard: 21 summary lines or a long line', async (t) => {
+  const { mock, url } = await withMock(t);
+  let asked = 0;
+  const c = session(t, { env: envFor(t, url, mock.tokens.admin), onElicit: () => { asked++; return { action: 'accept', content: { confirm: true } }; } });
+  await c.init();
+  // 20 operations + the "Policy vX → vY" line = 21 lines: the last one would not be shown.
+  const ops = Array.from({ length: 20 }, (_, i) => ({ op: 'add_deny_rule', secret: 'S' + i + '_*', agents: ['cursor'] }));
+  const many = (await c.call('team_policy_propose', { base_version: 7, ops })).structuredContent;
+  assert.equal(many.status, 'pending_approval', JSON.stringify(many));
+  assert.match(many.approve_url, /^https:\/\/usezn\.com\/team\/approvals\?change=chg_/);
+  assert.match(many.message, /too long to show in full/);
+  // One line over 300 characters would be cut in the middle.
+  const agents = Array.from({ length: 16 }, (_, i) => 'agent-' + String(i).padStart(2, '0') + '-' + 'x'.repeat(22));
+  const long = (await c.call('team_policy_propose', { base_version: 7, ops: [{ op: 'add_deny_rule', secret: '*', agents, reason: 'r'.repeat(200) }] })).structuredContent;
+  assert.equal(long.status, 'pending_approval', JSON.stringify(long));
+  assert.match(long.message, /too long to show in full/);
+  assert.equal(asked, 0, 'no elicitation was shown');
+  assert.equal(c.elicitations.length, 0);
+  assert.ok(!mock.state.requests.some((x) => /\/confirm$/.test(x.path)), 'nothing confirmed');
+  assert.equal(mock.state.policy_version, 7);
+  // A short change still uses the elicitation.
+  const short = (await c.call('team_policy_propose', { base_version: 7, ops: ops.slice(0, 19) })).structuredContent;
+  assert.equal(short.status, 'applied', JSON.stringify(short));
+  assert.equal(asked, 1);
 });

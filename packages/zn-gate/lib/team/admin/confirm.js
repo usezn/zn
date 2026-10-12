@@ -17,6 +17,11 @@
  * ZN_TEAM_CONFIRM = auto (default) | elicitation | dialog | dashboard forces
  * a channel; a forced channel that is not available falls back to the
  * dashboard. Nothing skips the confirmation.
+ *
+ * The person must see the whole change: when the summary has more than
+ * MAX_SUMMARY_LINES lines, or a line longer than MAX_LINE_CHARS (after
+ * invisible characters are shown as XXXX), no in-client channel is offered
+ * and the change goes to the dashboard.
  */
 
 const vaultConfirm = require('../../vault/confirm');
@@ -25,6 +30,20 @@ const { field, render } = vaultConfirm;
 const MODES = ['auto', 'elicitation', 'dialog', 'dashboard'];
 const ELICITATION_TIMEOUT_MS = 120000;
 const TITLE = 'zn Team change';
+const MAX_SUMMARY_LINES = 20;
+const MAX_LINE_CHARS = 300;
+
+function summaryOf(change) {
+  const c = change || {};
+  return Array.isArray(c.summary) && c.summary.length ? c.summary : [String(c.kind || 'change')];
+}
+
+/** True when every summary line can be shown in full on the confirmation surface. */
+function summaryFits(change) {
+  const summary = summaryOf(change);
+  if (summary.length > MAX_SUMMARY_LINES) return false;
+  return summary.every((s) => typeof s === 'string' && field(s, Infinity).length <= MAX_LINE_CHARS);
+}
 
 function confirmMode(env) {
   const raw = String(((env || process.env).ZN_TEAM_CONFIRM || 'auto')).trim().toLowerCase();
@@ -62,8 +81,8 @@ function buildRequest({ change, whoami, deadline, now }) {
   if (client) by += ' via ' + field(client.name, 64) + (client.version ? ' ' + field(client.version, 32) : '');
   lines.push(by);
   lines.push('');
-  const summary = Array.isArray(c.summary) && c.summary.length ? c.summary : [String(c.kind || 'change')];
-  for (const s of summary.slice(0, 20)) lines.push(field(s, 300));
+  const summary = summaryOf(c);
+  for (const s of summary.slice(0, MAX_SUMMARY_LINES)) lines.push(field(s, MAX_LINE_CHARS));
   lines.push('');
   const left = minutesLeft(deadline || c.deadline, now === undefined ? Date.now() : now);
   lines.push('Change ' + field(c.id, 40) + ' · digest ' + field(c.digest8, 16) + (left === null ? '' : ' · expires in ' + left + ' min'));
@@ -104,6 +123,8 @@ function availableChannels({ elicitation, dialog, env }) {
  */
 async function askPerson({ change, whoami, deadline }, deps) {
   const d = deps || {};
+  // Never ask about a change the person cannot read in full: the dashboard shows all of it.
+  if (!summaryFits(change)) return { decision: 'unavailable', via: null, detail: 'summary_too_long' };
   const gui = d.gui || null;
   const dialogOk = Boolean(gui && safe(() => gui.available()));
   const channels = availableChannels({ elicitation: Boolean(d.elicitationSupported && d.elicit), dialog: dialogOk, env: d.env });
@@ -150,6 +171,9 @@ function defaultGui(env) {
 }
 
 module.exports = {
+  MAX_SUMMARY_LINES,
+  MAX_LINE_CHARS,
+  summaryFits,
   MODES,
   REQUESTED_SCHEMA,
   ELICITATION_TIMEOUT_MS,

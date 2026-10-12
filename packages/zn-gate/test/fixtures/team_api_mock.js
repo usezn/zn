@@ -104,13 +104,15 @@ function createTeamApiMock(o = {}) {
       case 'member.remove': return ['Remove member ' + params.user_id + ' from ' + org.name];
       case 'member.role': return ['Change the role of ' + params.user_id + ' to ' + params.role];
       case 'install.revoke': return ['Revoke install ' + params.install_id];
-      case 'policy.update': return ['Policy v' + params.base_version + ' → v' + (params.base_version + 1) + ': ' + params.ops.map((x) => x.op).join(', ')];
+      // Like the API: a header line, then one line per operation.
+      case 'policy.update': return ['Policy v' + params.base_version + ' → v' + (params.base_version + 1)].concat(params.ops.map((x) =>
+        [x.op, x.secret, x.agents && 'for ' + x.agents.join(', '), x.hosts && x.hosts.join(', '), x.reason && '(' + x.reason + ')'].filter(Boolean).join(' ')));
       default: return [kind];
     }
   }
 
   function classOf(kind, params) {
-    if (kind === 'member.invite') return params.role === 'admin' ? 'dashboard' : 'confirm';
+    if (kind === 'member.invite') return 'dashboard'; // the API never lets a client confirm an invitation
     if (kind === 'member.role') return params.role === 'admin' ? 'dashboard' : 'confirm';
     if (kind === 'policy.update') {
       for (const op of params.ops) {
