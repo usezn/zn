@@ -1,6 +1,6 @@
 {
   "name": "zn-gate",
-  "version": "1.4.1",
+  "version": "1.5.0-beta.1",
   "description": "Zero-trust prompt injection security gate & MCP server for AI agents (Cursor, Claude Code, Antigravity, OpenCode, Codex)",
   "license": "MIT",
   "author": "usezn <admin@usezn.com>",

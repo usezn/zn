@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0-beta.1] - 2026-10-12
+
 Beta of the secrets scrubber and broker: secret values stay out of what your
 coding agent sends to its model. Walkthrough: [docs/secrets.md](docs/secrets.md).
 Limits: [docs/threat-model.md](docs/threat-model.md). Per-agent support:
@@ -63,6 +65,7 @@ Limits: [docs/threat-model.md](docs/threat-model.md). Per-agent support:
 - The OpenAI key pattern covers OpenRouter (`sk-or-v1-`), Langfuse (`sk-lf-`) and admin keys, and no longer matches hyphenated text such as URL slugs (a key without a known prefix must be at least 28 letters and digits). Private-key redaction no longer slows down on text with many `BEGIN ... PRIVATE KEY` headers and no end marker. Node.js and Python now redact `aws_secret` values the same way, keeping the original quotes, and Python matches credential names with ASCII letters only, as Node.js does (the Kelvin sign or a long s no longer count as `K` or `s`). Python, like Node.js, also finds `aws_secret` values under names with a prefix such as `MY_AWS_SECRET=`. A key without a known prefix is still found when it is followed by `_` (`sk-…_backup`). `RULES_VERSION` is now `2026-10-12.3`.
 
 ### Known limitations
+- Detection of credentials under prefixed variable names (e.g. OPENAI_API_KEY=) is partial in this beta.
 - Cursor cannot rewrite the output of shell commands or file reads. Codex can only replace output through "block", and keeps the original in its own session log.
 - Each hook is a short Node process: measured about 78 ms p50 per tool call on a Windows desktop and 124 ms on a small server (`bench/HOOK_LATENCY.md`). The floor is Node's start-up; scanning inside the vault daemon would remove most of it and is planned after the beta, with its own review.
 - With the vault unlocked, any process of your OS user can ask the vault daemon for a stored secret by name. Approvals, fingerprints and `allowIn` protect the `zn run` and MCP paths, not that one (see `docs/threat-model.md`).
@@ -189,7 +192,8 @@ Limits: [docs/threat-model.md](docs/threat-model.md). Per-agent support:
 - MCP Server interface for Claude Code, Cursor, and custom agent loops.
 - Bidirectional inspection for prompt inputs and tool returns.
 
-[Unreleased]: https://github.com/usezn/zn/compare/v1.4.1...next
+[Unreleased]: https://github.com/usezn/zn/compare/v1.5.0-beta.1...next
+[1.5.0-beta.1]: https://github.com/usezn/zn/compare/v1.4.1...v1.5.0-beta.1
 [1.4.1]: https://github.com/usezn/zn/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/usezn/zn/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/usezn/zn/compare/v1.2.4...v1.3.0
