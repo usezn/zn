@@ -3,7 +3,7 @@
 ## Requirements
 
 - **Claude Code 2.1.295 or later** (`claude --version`). Earlier versions do not load this plugin, so they give no protection.
-- **Node.js 18 or later (the LTS release), with npm, on your PATH** (`node --version`). The native Claude Code installer does not include Node.js. Without Node.js, Claude Code blocks every prompt with a message that `node` was not found, so you notice before anything is sent; install Node.js and start a new session.
+- **Node.js 18 or later (the LTS release), with npm, on your PATH** (`node --version`). The native Claude Code installer does not include Node.js. Without it, a check at session start shows a warning with the install link, and Claude Code blocks every prompt (`node` not found), so nothing is sent unprotected; install Node.js and start a new session.
 - **Git** (on Windows, Git for Windows), to add the marketplace from GitHub. The hooks themselves start `node` directly, without a shell.
 
 zn-gate keeps secret values out of what Claude Code sends to the model. Real values stay in an encrypted vault on your machine, and Claude works with markers such as `__ZN_STRIPE_KEY__`. The plugin also adds a local prompt-injection check that Claude can run on untrusted text before acting on it.
@@ -33,6 +33,7 @@ npx zn-gate@1.5.0 env shadow .env
 Everything in this plugin runs on your machine.
 
 - **Downloaded once, at install:** Claude Code runs your `npm` to install the npm package `zn-gate`, pinned to version 1.5.0 by the lockfile in this folder, from the npm registry, with install scripts disabled. Nothing is downloaded after that. If npm is missing, the install is skipped and `claude plugin list` shows a note on the plugin; install Node.js and run `claude plugin update zn-gate@usezn`.
+- **Session start check:** a short shell script, `hooks/check-node.sh`, runs `node --version` and shows a warning if Node.js 18 or later is missing. It prints nothing otherwise.
 - **Hooks (run on every matching event):** `node` runs the zn-gate hook on `PreToolUse` (shell, file and web tools), `PostToolUse` (shell, file, web and MCP tool output) and `UserPromptSubmit`. The hook reads the event on stdin, replaces secret values with markers or blocks the call, and writes its decision to stdout. The hooks make no network requests. If a tool hook fails or times out (15 seconds), the call goes through unchanged. If the prompt hook cannot run or times out (30 seconds), the prompt is blocked.
 - **MCP server `zn-gate`:** the tools `analyze_prompt`, `check_tool_call`, `check_tool_result` and `zn_status`, which check text and tool calls for prompt injection with local rules. The plugin starts it with `ZN_LOCAL_ONLY=true`, so text is never sent to the zn cloud API, even if `ZN_CLOUD` and `ZN_API_KEY` are set.
 - **MCP server `secrets`:** the tools `secrets_list`, `secrets_request`, `secrets_render_file` and `secrets_http_request`. They let Claude use a secret without seeing it. `secrets_http_request` makes the HTTP request that Claude asks for, to the host Claude names, with the secret filled in; this is the only network traffic the plugin creates, and only when Claude calls that tool.
