@@ -151,7 +151,7 @@ class TestAsciiTokenBoundaries(unittest.TestCase):
             ("ñ" + "ghp_" + "a" * 36 + "ü", "secret:github_token"),
             ("ç" + "sk-ant-" + "b" * 32 + "ß", "secret:anthropic_key"),
             ("ä" + "sk-proj-" + "c" * 30 + "ä", "secret:openai_key"),
-            ("é" + "API_KEY=" + "d" * 16, "secret:env_credential"),
+            ("é" + "API_KEY=" + "d4" * 8, "secret:env_credential"),
         ]
         for text, rule in cases:
             with self.subTest(rule=rule):
@@ -161,7 +161,7 @@ class TestAsciiTokenBoundaries(unittest.TestCase):
                 self.assertNotIn("a" * 36, redacted)
                 self.assertNotIn("b" * 32, redacted)
                 self.assertNotIn("c" * 30, redacted)
-                self.assertNotIn("d" * 16, redacted)
+                self.assertNotIn("d4" * 8, redacted)
 
     def test_ascii_neighbours_still_do_not_match(self):
         for text in ("x" + "AKIA" + "Z" * 16, "AKIA" + "Z" * 16 + "_x", "my_" + "api_key=" + "d" * 16):
@@ -182,6 +182,46 @@ class TestPrefixedCredentialNames(unittest.TestCase):
                     self.assertNotIn(value, redacted)
                     self.assertTrue(found)
 
+    def test_more_names_json_and_dockerfile(self):
+        value = "Zx9" + "kQ" * 10
+        for text in ('"OPENAI_API_KEY": "' + value + '"', "'DB_PASSWORD': '" + value + "'",
+                     "SENDGRID_APIKEY=" + value, "MAILGUN_ACCESS_KEY=" + value, "POSTGRES_PASS=" + value,
+                     "REDIS_PWD=" + value, "REDIS_PASSWD=" + value, "GCP_CREDENTIALS=" + value,
+                     "ENV HF_TOKEN " + value, "ENV STRIPE_SECRET_KEY=" + value,
+                     '{"api_key": "' + value + '"}'):
+            with self.subTest(text=text[:24]):
+                redacted, found = R.redact_secrets(text)
+                self.assertNotIn(value, redacted)
+                self.assertTrue(found)
+
+    def test_code_placeholders_and_vault_markers_are_left_alone(self):
+        for text in ("const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;",
+                     "  OPENAI_API_KEY: process.env.OPENAI_API_KEY,",
+                     'DB_PASSWORD = os.environ.get("DB_PASSWORD")', 'API_KEY = os.getenv("API_KEY")',
+                     "SLACK_BOT_TOKEN = settings.SLACK_BOT_TOKEN", "GH_TOKEN: core.getInput('token')",
+                     "OPENAI_API_KEY=your-openai-api-key-here", "STRIPE_SECRET_KEY=" + "x" * 24,
+                     "APP_SECRET=REPLACE_ME_WITH_REAL", "MY_API_KEY=placeholder-value-123",
+                     "SERVICE_TOKEN=EXAMPLE_VALUE_ONLY", 'FORCE_CHANGE_PASSWORD = "FORCE_CHANGE_PASSWORD"',
+                     "DB_PASSWORD=__ZN_DB_PASSWORD__", "GITHUB_TOKEN=__ZN_GITHUB_TOKEN__",
+                     "API_TOKEN: Optional[str] = None", 'AWS_TOKEN_HEADER = "x-aws-ec2-metadata-token"',
+                     "SERVICE_API_KEY=zn_live_your_key"):
+            with self.subTest(text=text[:32]):
+                self.assertEqual(R.redact_secrets(text)[1], [])
+
+    def test_openrouter_langfuse_and_short_legacy_keys(self):
+        for key in ("sk-or-v1-" + "a1b2" * 16, "sk-lf-" + "c3d4-" * 8 + "e5f6", "sk-" + "Ab3x" * 7):
+            with self.subTest(key=key[:9]):
+                redacted, found = R.redact_secrets("Authorization: Bearer " + key)
+                self.assertNotIn(key, redacted)
+                self.assertIn("secret:openai_key", [d["rule"] for d in found])
+
+    def test_private_key_with_repeated_headers(self):
+        body = "MII" + "Cd" * 30
+        text = "-----BEGIN PRIVATE KEY-----\n-----BEGIN RSA PRIVATE KEY-----\n" + body + "\n-----END RSA PRIVATE KEY-----"
+        redacted = R.redact_secrets(text)[0]
+        self.assertNotIn(body, redacted)
+        self.assertIn("[REDACTED_PRIVATE_KEY]", redacted)
+
     def test_references_and_code_are_left_alone(self):
         for text in ("GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }}", "SERVICE_PASSWORD=${SERVICE_PASSWORD}",
                      "DEPLOY_TOKEN=$DEPLOY_TOKEN_FROM_CI", "OPENAI_API_KEY=<your-openai-key>",
@@ -194,7 +234,7 @@ class TestPrefixedCredentialNames(unittest.TestCase):
     def test_case_folding_matches_nodejs(self):
         # Python's re folds K (Kelvin sign), \u017f and \u0131 into ASCII letters
         # under IGNORECASE; the patterns use explicit [Aa] classes instead.
-        value = "d" * 16
+        value = "d4" * 8
         self.assertTrue(R.redact_secrets("\u212aAPI_KEY=" + value)[1])
         self.assertEqual(R.redact_secrets("\u017fECRET_KEY=" + value)[1], [])
 

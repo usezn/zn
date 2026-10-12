@@ -5,10 +5,12 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-12.2
+ * RULES_VERSION: 2026-10-12.3
  */
 
-const RULES_VERSION = '2026-10-12.2';
+const { isPlaceholder, PLACEHOLDER_RE, PLACEHOLDER_WORDS } = require('./scrub/patterns');
+
+const RULES_VERSION = '2026-10-12.3';
 
 // "ignore" and "disregard" are ordinary words ("ignore the noise in the
 // logs", "ignore whitespace changes"). They only count as an override when
@@ -421,9 +423,10 @@ function evaluateUncached(input, options = {}) {
 // DLP & Secret Masking Rules
 // -------------------------------------------------------------------------
 const SECRET_PATTERNS = [
-  { id: 'secret:private_key', pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, replacement: '[REDACTED_PRIVATE_KEY]' },
+  // A body may not contain another BEGIN header: linear on repeated headers without END.
+  { id: 'secret:private_key', pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----(?:(?!-----BEGIN )[\s\S])*?-----END [A-Z ]*PRIVATE KEY-----/g, replacement: '[REDACTED_PRIVATE_KEY]' },
   { id: 'secret:anthropic_key', pattern: /(?<![A-Za-z0-9_])(sk-ant-[A-Za-z0-9_-]{30,})(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))/g, replacement: '[REDACTED_ANTHROPIC_KEY]' },
-  { id: 'secret:openai_key', pattern: /(?<![A-Za-z0-9_])(sk-(?:(?:proj|svcacct|admin|[Nn]one)-[A-Za-z0-9_-]{28,}|[A-Za-z0-9]{32,}))(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))/g, replacement: '[REDACTED_OPENAI_KEY]' },
+  { id: 'secret:openai_key', pattern: /(?<![A-Za-z0-9_])(sk-(?:(?:proj|svcacct|admin|[Nn]one|or-v1|lf)-[A-Za-z0-9_-]{28,}|[A-Za-z0-9]{28,}))(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))/g, replacement: '[REDACTED_OPENAI_KEY]' },
   { id: 'secret:aws_access_key', pattern: /(?<![A-Za-z0-9_])(AKIA[0-9A-Z]{16})(?![A-Za-z0-9_])/g, replacement: '[REDACTED_AWS_KEY]' },
   { id: 'secret:aws_secret_key', pattern: /((?:[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]_[Aa][Cc][Cc][Ee][Ss][Ss]_[Kk][Ee][Yy]|[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]|[Aa][Ww][Ss]_[Kk][Ee][Yy])\s*[:=]\s*['"]?)([A-Za-z0-9/+=]{40})(['"]?)/g, replacement: '$1[REDACTED_AWS_SECRET]$3' },
   { id: 'secret:github_token', pattern: /(?<![A-Za-z0-9_])((?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,40}|github_pat_[A-Za-z0-9_]{82})(?![A-Za-z0-9_])/g, replacement: '[REDACTED_GITHUB_TOKEN]' },
@@ -433,13 +436,24 @@ const SECRET_PATTERNS = [
   // allows a single start per token. Only used when the
   // text contains ".eyJ" (see redactSecrets).
   { id: 'secret:jwt_token', pattern: /(?<![A-Za-z0-9_-])(eyJ(?=([A-Za-z0-9_-]{10,512}))\2\.eyJ(?=([A-Za-z0-9_=-]{10,8192}))\3\.[A-Za-z0-9_.+/=-]{10,4096})(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))/g, replacement: '[REDACTED_JWT]', requires: '.eyJ' },
-  { id: 'secret:env_credential', pattern: /(?<![A-Za-z0-9_])((?:[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]_[Aa][Cc][Cc][Ee][Ss][Ss]_[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]_[Kk][Ee][Yy]|[Aa][Pp][Ii]_[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh]_[Tt][Oo][Kk][Ee][Nn]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee]_[Kk][Ee][Yy]|[Dd][Aa][Tt][Aa][Bb][Aa][Ss][Ee]_[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd])\s*[:=]\s*['"]?)([^\s'"]{12,})(['"]?)/g, replacement: '$1[REDACTED_SECRET]$3' },
-  // Environment-style names with a prefix (OPENAI_API_KEY=, STRIPE_SECRET_KEY=, DB_PASSWORD=).
-  // Upper case only, so code such as `token = response.json()` is left alone;
-  // values that are references ($VAR, ${VAR}, <placeholder>, %VAR%) or an earlier
-  // [REDACTED_...] marker are skipped.
-  { id: 'secret:prefixed_credential', pattern: /(?<![A-Za-z0-9_])((?:[A-Z0-9]+_)+(?:API_KEY|SECRET_ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|SECRET|TOKEN|PASSWORD)\s*[:=]\s*['"]?)(?![$<%{\[])([^\s'"]{12,})(['"]?)/g, replacement: '$1[REDACTED_SECRET]$3' },
+  { id: 'secret:env_credential', pattern: /(?<![A-Za-z0-9_])((?:[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]_[Aa][Cc][Cc][Ee][Ss][Ss]_[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]_[Kk][Ee][Yy]|[Aa][Pp][Ii]_[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh]_[Tt][Oo][Kk][Ee][Nn]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee]_[Kk][Ee][Yy]|[Dd][Aa][Tt][Aa][Bb][Aa][Ss][Ee]_[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd])["']?\s*[:=]\s*['"]?)([^\s'"]{12,})(['"]?)/g, replacement: '$1[REDACTED_SECRET]$3', valueGroup: 2 },
+  // Environment-style names with a prefix (OPENAI_API_KEY=, STRIPE_SECRET_KEY=, DB_PASSWORD=,
+  // "GITHUB_TOKEN": in JSON, `ENV X_TOKEN value` in a Dockerfile). Upper case only, so code
+  // such as `token = response.json()` is left alone. Values that are references ($VAR,
+  // ${VAR}, <placeholder>, %VAR%), an earlier [REDACTED_...] marker, code or placeholders
+  // (see isNonSecretValue) are skipped.
+  { id: 'secret:prefixed_credential', pattern: /(?<![A-Za-z0-9_])((?:ENV[ \t]+(?:[A-Z0-9]+_)+(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD)[ \t]+|(?:[A-Z0-9]+_)+(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD)["']?[ \t]*[:=][ \t]*)['"]?)(?![$<%{\[])([^\s'"]{12,})(['"]?)/g, replacement: '$1[REDACTED_SECRET]$3', valueGroup: 2 },
 ];
+
+// Values of credential assignments that are not secrets: code that reads the
+// value from somewhere else (process.env.X, settings.X, os.environ.get(...)),
+// constants named like the variable, vault markers (__ZN_..__) and placeholders.
+const CREDENTIAL_CODE_VALUE_RE = /^(?:[A-Za-z_$][A-Za-z0-9_$]*\.)+[A-Za-z_$][A-Za-z0-9_$]*$|^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$|^[a-z][a-z0-9]*(?:[_.-][a-z][a-z0-9]*)+$|[()\[\]{}]|^__ZN_[A-Z0-9_]+__$/;
+
+function isNonSecretValue(value) {
+  const v = value.replace(/[;,]+$/, '');
+  return isPlaceholder(v) || CREDENTIAL_CODE_VALUE_RE.test(v);
+}
 
 function redactSecrets(text) {
   if (typeof text !== 'string' || !text) {
@@ -452,12 +466,16 @@ function redactSecrets(text) {
     let match;
     const regex = new RegExp(item.pattern.source, item.pattern.flags);
     while ((match = regex.exec(sanitized)) !== null) {
+      if (item.valueGroup && isNonSecretValue(match[item.valueGroup])) continue;
       detections.push({
         rule: item.id,
         index: match.index,
       });
     }
-    sanitized = sanitized.replace(item.pattern, item.replacement);
+    sanitized = item.valueGroup
+      ? sanitized.replace(item.pattern, (...m) => (isNonSecretValue(m[item.valueGroup])
+        ? m[0] : m[1] + '[REDACTED_SECRET]' + m[3]))
+      : sanitized.replace(item.pattern, item.replacement);
   }
   return { sanitized, detections };
 }
@@ -595,6 +613,7 @@ module.exports = {
   HELPER_PATTERNS: { ZERO_WIDTH_RE, ANSI_ESCAPE_RE, B64_EXEC_RE, WHITESPACE_RUN_RE, OPEN_TAG_RE, HIDDEN_ATTR_RE, HIDDEN_PAYLOAD_RE, MD_IMAGE_RE, MD_URL_SCHEME_RE, MD_URL_SECRET_PARAM_RE,
     RU_FORGET_RE, RU_FORGET_OBJECT_RE, RU_IGNORE_RE, RU_IGNORE_OBJECT_RE, RU_PHRASE_RE,
     ZH_IGNORE_RE, ZH_IGNORE_OBJECT_RE, ZH_FORGET_RE, ZH_FORGET_OBJECT_RE, ZH_PHRASE_RE,
+    PLACEHOLDER_RE, PLACEHOLDER_WORDS, CREDENTIAL_CODE_VALUE_RE,
   },
   SECRET_PATTERNS,
   RULES_VERSION,

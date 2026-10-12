@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-12.2
+RULES_VERSION: 2026-10-12.3
 Zero external dependencies. Pure Python stdlib.
 """
 
@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-RULES_VERSION = "2026-10-12.2"
+RULES_VERSION = "2026-10-12.3"
 
 # Cyrillic homoglyphs mapping to Latin
 HOMOGLYPH_MAP = {
@@ -387,9 +387,10 @@ def _evaluate_uncached(input_text: str) -> Assessment:
 # DLP & Secret Masking Rules
 # -------------------------------------------------------------------------
 SECRET_PATTERNS: List[Tuple[str, re.Pattern, str]] = [
-    ("secret:private_key", re.compile(r'-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----'), "[REDACTED_PRIVATE_KEY]"),
+    # A body may not contain another BEGIN header: linear on repeated headers without END.
+    ("secret:private_key", re.compile(r"""-----BEGIN [A-Z ]*PRIVATE KEY-----(?:(?!-----BEGIN )[\s\S])*?-----END [A-Z ]*PRIVATE KEY-----"""), "[REDACTED_PRIVATE_KEY]"),
     ("secret:anthropic_key", re.compile(r'(?<![A-Za-z0-9_])(sk-ant-[A-Za-z0-9_-]{30,})(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))'), "[REDACTED_ANTHROPIC_KEY]"),
-    ("secret:openai_key", re.compile(r'(?<![A-Za-z0-9_])(sk-(?:(?:proj|svcacct|admin|[Nn]one)-[A-Za-z0-9_-]{28,}|[A-Za-z0-9]{32,}))(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))'), "[REDACTED_OPENAI_KEY]"),
+    ("secret:openai_key", re.compile(r"""(?<![A-Za-z0-9_])(sk-(?:(?:proj|svcacct|admin|[Nn]one|or-v1|lf)-[A-Za-z0-9_-]{28,}|[A-Za-z0-9]{28,}))(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))"""), "[REDACTED_OPENAI_KEY]"),
     ("secret:aws_access_key", re.compile(r'(?<![A-Za-z0-9_])(AKIA[0-9A-Z]{16})(?![A-Za-z0-9_])'), "[REDACTED_AWS_KEY]"),
     ("secret:aws_secret_key", re.compile(r"""((?:[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]_[Aa][Cc][Cc][Ee][Ss][Ss]_[Kk][Ee][Yy]|[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]|[Aa][Ww][Ss]_[Kk][Ee][Yy])\s*[:=]\s*['"]?)([A-Za-z0-9/+=]{40})(['"]?)"""), r'\1[REDACTED_AWS_SECRET]\3'),
     ("secret:github_token", re.compile(r'(?<![A-Za-z0-9_])((?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,40}|github_pat_[A-Za-z0-9_]{82})(?![A-Za-z0-9_])'), "[REDACTED_GITHUB_TOKEN]"),
@@ -399,15 +400,44 @@ SECRET_PATTERNS: List[Tuple[str, re.Pattern, str]] = [
     # allows a single start per token. Only used when the
     # text contains ".eyJ" (see SECRET_PATTERN_REQUIRES).
     ("secret:jwt_token", re.compile(r'(?<![A-Za-z0-9_-])(eyJ(?=([A-Za-z0-9_-]{10,512}))\2\.eyJ(?=([A-Za-z0-9_=-]{10,8192}))\3\.[A-Za-z0-9_.+/=-]{10,4096})(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))'), "[REDACTED_JWT]"),
-    ("secret:env_credential", re.compile(r"""(?<![A-Za-z0-9_])((?:[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]_[Aa][Cc][Cc][Ee][Ss][Ss]_[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]_[Kk][Ee][Yy]|[Aa][Pp][Ii]_[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh]_[Tt][Oo][Kk][Ee][Nn]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee]_[Kk][Ee][Yy]|[Dd][Aa][Tt][Aa][Bb][Aa][Ss][Ee]_[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd])\s*[:=]\s*['"]?)([^\s'"]{12,})(['"]?)"""), r'\1[REDACTED_SECRET]\3'),
-    # Environment-style names with a prefix (OPENAI_API_KEY=, STRIPE_SECRET_KEY=, DB_PASSWORD=).
-    # Upper case only, so code such as `token = response.json()` is left alone;
-    # values that are references ($VAR, ${VAR}, <placeholder>, %VAR%) or an earlier
-    # [REDACTED_...] marker are skipped.
-    ("secret:prefixed_credential", re.compile(r"""(?<![A-Za-z0-9_])((?:[A-Z0-9]+_)+(?:API_KEY|SECRET_ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|SECRET|TOKEN|PASSWORD)\s*[:=]\s*['"]?)(?![$<%{\[])([^\s'"]{12,})(['"]?)"""), r'\1[REDACTED_SECRET]\3'),
+    ("secret:env_credential", re.compile(r"""(?<![A-Za-z0-9_])((?:[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]_[Aa][Cc][Cc][Ee][Ss][Ss]_[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]_[Kk][Ee][Yy]|[Aa][Pp][Ii]_[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh]_[Tt][Oo][Kk][Ee][Nn]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee]_[Kk][Ee][Yy]|[Dd][Aa][Tt][Aa][Bb][Aa][Ss][Ee]_[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd])["']?\s*[:=]\s*['"]?)([^\s'"]{12,})(['"]?)"""), r'\1[REDACTED_SECRET]\3'),
+    # Environment-style names with a prefix (OPENAI_API_KEY=, STRIPE_SECRET_KEY=, DB_PASSWORD=,
+    # "GITHUB_TOKEN": in JSON, `ENV X_TOKEN value` in a Dockerfile). Upper case only, so code
+    # such as `token = response.json()` is left alone. Values that are references ($VAR,
+    # ${VAR}, <placeholder>, %VAR%), an earlier [REDACTED_...] marker, code or placeholders
+    # (see _is_non_secret_value) are skipped.
+    ("secret:prefixed_credential", re.compile(r"""(?<![A-Za-z0-9_])((?:ENV[ \t]+(?:[A-Z0-9]+_)+(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD)[ \t]+|(?:[A-Z0-9]+_)+(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD)["']?[ \t]*[:=][ \t]*)['"]?)(?![$<%{\[])([^\s'"]{12,})(['"]?)"""), r'\1[REDACTED_SECRET]\3'),
 ]
 
 # Substrings a text must contain before the pattern is run at all.
+# Same as isPlaceholder in packages/zn-gate/lib/scrub/patterns.js.
+PLACEHOLDER_RE = re.compile(r"""^(?:x{3,}|\*{3,}|\.{3,}|-+|_+|<[^>]*>|\$\{?[^}]*\}?|\{\{?[^}]*\}?\}|%\(?[a-z_]*\)?s|:[a-z_]+|\[[^\]]*\])$""", re.IGNORECASE)
+PLACEHOLDER_WORDS = re.compile(r"""(?:^|[^a-z])(?:password|passwd|passw0rd|secret|changeme|change_me|example|placeholder|your[_-]?|redacted|dummy|sample|foobar|hunter2|xxxx|todo|insert|replace|mypass|pass(?:word)?123)(?:[^a-z]|$)""", re.IGNORECASE)
+_REPEATED_CHAR_RE = re.compile(r'^(.)\1+$')
+_KEYBOARD_RUN_RE = re.compile(r'^(?:0123456789|1234567890|abcdef|qwerty)', re.IGNORECASE)
+
+
+def is_placeholder(s: str) -> bool:
+    if not s:
+        return True
+    return bool(PLACEHOLDER_RE.search(s) or PLACEHOLDER_WORDS.search(s)
+                or _REPEATED_CHAR_RE.search(s) or _KEYBOARD_RUN_RE.search(s))
+
+
+# Values of credential assignments that are not secrets: code that reads the
+# value from somewhere else (process.env.X, settings.X, os.environ.get(...)),
+# constants named like the variable, vault markers (__ZN_..__) and placeholders.
+CREDENTIAL_CODE_VALUE_RE = re.compile(r"""^(?:[A-Za-z_$][A-Za-z0-9_$]*\.)+[A-Za-z_$][A-Za-z0-9_$]*$|^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$|^[a-z][a-z0-9]*(?:[_.-][a-z][a-z0-9]*)+$|[()\[\]{}]|^__ZN_[A-Z0-9_]+__$""")
+
+
+def _is_non_secret_value(value: str) -> bool:
+    v = re.sub(r'[;,]+$', '', value)
+    return is_placeholder(v) or bool(CREDENTIAL_CODE_VALUE_RE.search(v))
+
+
+# Rules whose value (capture group) is checked with _is_non_secret_value.
+SECRET_VALUE_GROUPS: Dict[str, int] = {"secret:env_credential": 2, "secret:prefixed_credential": 2}
+
 SECRET_PATTERN_REQUIRES: Dict[str, str] = {
     "secret:jwt_token": ".eyJ",
 }
@@ -427,7 +457,9 @@ def redact_secrets(text: str) -> Tuple[str, List[Dict[str, Any]]]:
         required = SECRET_PATTERN_REQUIRES.get(rule_id)
         if required and required not in redacted:
             continue
-        matches = list(pattern.finditer(redacted))
+        group = SECRET_VALUE_GROUPS.get(rule_id)
+        matches = [m for m in pattern.finditer(redacted)
+                   if not (group and _is_non_secret_value(m.group(group)))]
         if matches:
             for m in matches:
                 detections.append({
@@ -435,7 +467,13 @@ def redact_secrets(text: str) -> Tuple[str, List[Dict[str, Any]]]:
                     "start": m.start(),
                     "end": m.end(),
                 })
-            redacted = pattern.sub(replacement, redacted)
+            if group:
+                redacted = pattern.sub(
+                    lambda m: m.group(0) if _is_non_secret_value(m.group(group))
+                    else m.group(1) + "[REDACTED_SECRET]" + m.group(3),
+                    redacted)
+            else:
+                redacted = pattern.sub(replacement, redacted)
 
     return redacted, detections
 

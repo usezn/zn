@@ -479,4 +479,6 @@ module.exports = {
   shannon,
   looksRandom,
   isPlaceholder,
+  PLACEHOLDER_RE,
+  PLACEHOLDER_WORDS,
 };
