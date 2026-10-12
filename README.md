@@ -199,7 +199,7 @@ We only publish numbers we can reproduce, with the method next to them.
 
 - **Latency of the local engine:** one table by input size, with hardware, date and the script to reproduce it (`bench/bench_by_size.js`), in the [npm package README](packages/zn-gate/README.md#performance-local-rules-engine-no-network). Short summary from that run: about 0.01 ms for a 200 B prompt, 0.3 ms for a 4 KB tool output with redaction, about 4 ms for 64 KB with redaction (p50).
 - **Self-test:** 51 curated vectors pass. That is a smoke test, not a detection or false-positive rate.
-- **Known limitation:** on whole source files, the rules can flag ordinary code comments. The 1.5.0 beta reduces these on code and documentation, at the cost of letting some loosely worded override attempts through the local rules. To check it on your own files, run `zn-gate scan`; for the MCP servers you wrap, `--shadow` logs detections without blocking.
+- **Known limitation:** on whole source files, the rules can flag ordinary code comments. The 1.5.0 beta reduces these on code and documentation, at the cost of letting some loosely worded override attempts through the local rules. To check it on your own source files, run `zn-gate scan --code <path>`; for the MCP servers you wrap, `--shadow` logs detections without blocking.
 - **Detection rates:** none published yet. We will publish Galvanize results on a held-out test set, with method and data, before quoting a number.
 
 ## Configuration
@@ -242,7 +242,7 @@ Audit log: `zn-gate shield` appends each decision to `~/.zn/evidence.jsonl` as a
 
 **Will it block legitimate content?** Sometimes. Use `init --shadow` or `shield --shadow` to log detections without blocking while you evaluate it.
 
-**Which agents are supported?** Any MCP client. `init` can rewrite configs for the agents listed under [Install](#install).
+**Which agents are supported?** Any MCP client. `init` can rewrite configs for the agents listed under [Install (stable)](#install-stable).
 
 **How do I remove it?** `npx -y zn-gate init --revert` restores your configs from the backup. For a standalone server, remove the `zn-gate` entry from your agent config.
 
