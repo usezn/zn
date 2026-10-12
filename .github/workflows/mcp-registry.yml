@@ -4,7 +4,7 @@ name: MCP Registry
 # Registry (io.github.usezn/zn-gate). It authenticates with the GitHub OIDC
 # token of this repository, so no stored token is used. Run it by hand after
 # the npm package of that version is public; it waits for approval on the
-# "release" environment.
+# "mcp-registry" environment (deploys from main only).
 
 on:
   workflow_dispatch:
@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
-      name: release
+      name: mcp-registry
       url: https://registry.modelcontextprotocol.io/v0/servers?search=io.github.usezn/zn-gate
     permissions:
       contents: read
