@@ -218,10 +218,13 @@ function znGateFile(real, relFile) {
   try { return JSON.parse(r.text).name === 'zn-gate'; } catch (_) { return false; }
 }
 
+// Node.js interpreter names (`nodejs` on Debian and Ubuntu).
+const NODE_NAME = /^(?:node|nodejs)(?:\.exe)?$/i;
+
 function nodeOutside(ctx, p) {
-  if (/^node(?:\.exe)?$/i.test(p)) return true; // resolved through PATH
+  if (NODE_NAME.test(p)) return true; // resolved through PATH
   const real = realOutside(ctx, p);
-  return Boolean(real) && /^node(?:\.exe)?$/i.test(path.basename(real));
+  return Boolean(real) && NODE_NAME.test(path.basename(real));
 }
 
 /**
@@ -338,7 +341,7 @@ function isOurMcp(argv, ctx) {
   if (words.length === 2) return /^zn(?:-gate)?(?:\.cmd|\.exe)?$/.test(words[0]);
   if (words.length !== 3) return false;
   const node = words[0].replace(/\\/g, '/');
-  if (!/^node(?:\.exe)?$/i.test(node) && !new RegExp('^' + SAFE_ABS + '/node(?:\\.exe)?$', 'i').test(node)) return false;
+  if (!NODE_NAME.test(node) && !new RegExp('^' + SAFE_ABS + '/(?:node|nodejs)(?:\\.exe)?$', 'i').test(node)) return false;
   if (!nodeOutside(ctx, node)) return false;
   const cli = words[1].replace(/\\/g, '/');
   if (!new RegExp('^' + SAFE_ABS + '/zn-gate/bin/cli\\.js$').test(cli)) return false;
@@ -610,10 +613,23 @@ const NOISY_IN_DOCS = /^(?:secret|path):|^exfil:credentials$|^pi:(?:act_as|prete
 // "Any prompt injection (e.g. 'Ignore previous instructions...') is spam":
 // an attack quoted as an example.
 const EXAMPLE_QUOTE = /\b(?:e\.g\.|eg\.|i\.e\.|for example|for instance|such as|like)\s{0,3}[,:]?\s{0,3}["'`]/i;
+const EXAMPLE_QUOTED_TEXT = /(\b(?:e\.g\.|eg\.|i\.e\.|for example|for instance|such as|like)\s{0,3}[,:]?\s{0,3})(["'`])[^"'`\n]{0,400}\2/gi;
+
+/** Whether the strong pattern of `text` sits inside the quotes of an example. */
+function insideQuotedExample(text) {
+  const without = text.replace(EXAMPLE_QUOTED_TEXT, '$1""');
+  if (without === text) return false;
+  let res = null;
+  try { res = rules().evaluate(without); } catch (_) { return false; }
+  return !(res && res.verdict === 'block' && STRONG_IN_DOCS.test(String(res.rule)));
+}
 const STRONG_IN_DOCS =/^(?:pi:(?:ignore_previous|disregard|system_tag|system_bracket|template_boundary|multi_\w+)|indirect:|evasion:|exfil:markdown_image)/;
 
 function checkInstructions(ctx) {
   const claudeExt = /(^|\/)\.claude\/(commands|agents|skills)\//.test(ctx.rec.rel);
+  // Supporting notes of a skill (not SKILL.md itself): the only files here
+  // that are not read as instructions.
+  const supporting = /(^|\/)skills?\/.+\//.test(ctx.rec.rel) && !/(^|\/)SKILL\.md$/i.test(ctx.rec.rel);
   let inFront = ctx.lines[0] && ctx.lines[0].trim() === '---';
   // Lines inside code fences that are closed again (an unclosed fence runs
   // to the end of the file and counts as plain text).
@@ -645,13 +661,19 @@ function checkInstructions(ctx) {
       let res = null;
       try { res = rules().evaluate(t); } catch (_) { res = null; }
       if (res && res.verdict === 'block' && !NOISY_IN_DOCS.test(String(res.rule))) {
-        // Strong patterns are high, weaker ones medium. A strong pattern is
-        // lowered only when the line quotes it as an example ("e.g. '...'");
-        // a weak one also inside a properly closed code block. A blockquote
-        // or an unclosed fence never lowers anything.
+        // Strong patterns are high, weaker ones medium. In the files an agent
+        // reads as its instructions a strong pattern is never lowered: the
+        // agent reads it the same, quoted or not. In supporting files (a
+        // skill's reference notes) it is lowered only when the match lies
+        // inside the quotes of an example ("e.g. '...'"): the line without
+        // the quoted text must no longer match. A weak pattern is lowered by
+        // an example marker or a properly closed code block. A blockquote or
+        // an unclosed fence never lowers anything.
         const strong = STRONG_IN_DOCS.test(String(res.rule));
         let sev = strong ? 'high' : 'medium';
-        const quoted = EXAMPLE_QUOTE.test(t) || (!strong && fenced.has(i));
+        let quoted;
+        if (strong) quoted = supporting && insideQuotedExample(t);
+        else quoted = EXAMPLE_QUOTE.test(t) || fenced.has(i);
         if (quoted) sev = strong ? 'medium' : 'low';
         ctx.add('ZNA012', sev, ln, 'Rules engine: ' + (res.reason || res.rule) + (quoted ? ' (in quoted or code text)' : '') + '.');
       }
