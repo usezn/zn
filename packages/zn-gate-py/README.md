@@ -76,7 +76,7 @@ print(r.verdict)           # allow
 
 The only function that can reach the network is `analyze()`, and only if you set **both** `ZN_CLOUD=1` and `ZN_API_KEY`. The text is secret-redacted locally before it is sent. `ZN_API_KEY` alone enables nothing, and `ZN_LOCAL_ONLY=true` overrides `ZN_CLOUD=1`. `zn-gate status` prints what your configuration sends. Data-flow diagrams: [repository README](https://github.com/usezn/zn#what-leaves-your-machine).
 
-A long text (over 1,000 characters) is checked by the cloud classifier in overlapping 512-token windows, up to 16, so an injection in the middle or at the end of a long document is not missed. Set `ZN_LONG_INPUT=off` (or `analyze(..., long_input="off")`, `zn-gate analyze --long-input off`) to check only the first 512 tokens, as before. A long text may count as more than one request toward your plan's quota (up to one per window).
+A long text (over 1,000 characters) is checked by the cloud classifier in overlapping 512-token windows, up to 16, so an injection in the middle or at the end of a long document is not missed. Set `ZN_LONG_INPUT=off` (or `analyze(..., long_input="off")`, `zn-gate analyze --long-input off`) to check only the first 512 tokens, as before. A long text still counts as one request toward your plan's quota.
 
 > **1.4.0 and earlier:** with `ZN_API_KEY` set, `analyze()` sent the text to `api.usezn.com` without redaction. 1.4.1 makes cloud analysis opt-in (`ZN_CLOUD=1`) and redacted.
 
