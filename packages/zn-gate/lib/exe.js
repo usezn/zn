@@ -51,7 +51,8 @@ function hasPathSeparator(s) {
 function pathExts(env) {
   if (!isWin) return [''];
   const e = env || process.env;
-  return ['', ...String(e.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean).map((x) => x.toLowerCase())];
+  const list = String(e.PATHEXT || '').split(';').filter(Boolean).map((x) => x.toLowerCase());
+  return ['', ...(list.length ? list : ['.com', '.exe', '.bat', '.cmd'])];
 }
 
 function envPath(env) {
