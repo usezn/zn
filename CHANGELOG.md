@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only decides who can be offered a new host. When the policy expires while offline, only its restrictions keep applying. The
   audit log (metadata only, never values) is uploaded in batches that resume from the last record
   the server confirmed. Join and leave are confirmed on the vault's own channel, outside the agent.
+- `zn team join` shows the organization name and who invited you in the vault's confirmation
+  dialog, from `POST /v1/org/join-preview`, before this machine sends its audit key. The preview
+  does not use up the join token; an invalid, expired or used-up token, or an organization without
+  an active subscription, stops before the dialog. Names from the server are shown without control
+  characters.
 - `zn hooks install` now starts the `secrets` MCP server with `--agent <id>` for Claude Code, Codex,
   Cursor and OpenCode.
 - `zn vault log export --otlp [--since 7d] [--out FILE]`: the local audit log as OpenTelemetry logs

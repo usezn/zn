@@ -76,6 +76,37 @@ test('checkBase rejects everything else with ZN_USAGE', () => {
 
 /* -------------------------------------------------------------------- join */
 
+test('preview: organization and inviter for a valid token, without using it up', async (t) => {
+  const srv = await startFakeTeamServer();
+  t.after(() => srv.close());
+  const api = createApi({ base: srv.base, userAgent: 'zn-gate/test' });
+  const tok = srv.createJoinToken({ maxUses: 1 });
+  const p = await api.preview(tok);
+  assert.strictEqual(p.ok, true);
+  assert.strictEqual(p.org_name, 'Fake Org');
+  assert.strictEqual(p.invited_by, 'Dana Admin');
+  assert.ok(!Number.isNaN(Date.parse(p.expires_at)));
+  await api.join({ join_token: tok, install_id: installId(), audit_key: auditKeyHex(), agent: 'claude-code', os: 'linux', zn_gate_version: '1.5.0' });
+  assert.deepStrictEqual(await api.preview(tok), { ok: false, reason: 'invalid' }, 'used up by the join, not by the preview');
+  const body = srv.requests.find((r) => r.path === '/v1/org/join-preview');
+  assert.ok(body && !body.authorized, 'no credential header; the token travels in the body');
+});
+
+test('preview: no subscription, older server and malformed answers', async (t) => {
+  const srv = await startFakeTeamServer();
+  t.after(() => srv.close());
+  const api = createApi({ base: srv.base, userAgent: 'zn-gate/test' });
+  srv.setOrgActive(false);
+  assert.deepStrictEqual(await api.preview(srv.createJoinToken()), { ok: false, reason: 'no_subscription' });
+  srv.setOrgActive(true);
+  srv.state.previewEnabled = false;
+  assert.deepStrictEqual(await api.preview(srv.createJoinToken()), { ok: false, reason: 'unavailable', detail: 'HTTP 404' });
+  const bad = createApi({ base: srv.base, userAgent: 'zn-gate/test', fetchImpl: async () => new Response(JSON.stringify({ org_name: '', invited_by: 3, expires_at: 'x' }), { status: 200 }) });
+  assert.deepStrictEqual(await bad.preview('znj_' + 'A'.repeat(40)), { ok: false, reason: 'unavailable', detail: 'malformed preview' });
+  const down = createApi({ base: srv.base, userAgent: 'zn-gate/test', fetchImpl: async () => { throw new TypeError('fetch failed'); } });
+  assert.strictEqual((await down.preview('znj_' + 'A'.repeat(40))).reason, 'unavailable');
+});
+
 test('join registers an installation and returns a validated response', async (t) => {
   const srv = await startServer(t);
   const joinToken = srv.createJoinToken({ maxUses: 2 });

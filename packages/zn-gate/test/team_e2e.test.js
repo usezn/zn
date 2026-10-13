@@ -91,6 +91,47 @@ test('join is confirmed outside the agent; declining sends nothing', async () =>
   assert.ok(!fs.readFileSync(policy.paths().teamFile, 'utf8').includes('zni_'), 'the install token is not in team.json');
 });
 
+test('the join dialog names the organization and who invited, and the preview does not use the token', async () => {
+  const token = cloud.createJoinToken({ maxUses: 1 });
+  answer = false;
+  const before = confirmations.length;
+  await assert.rejects(vault.teamJoin({ join_token: token, api_base: cloud.base, agent: 'claude-code' }), /declined/);
+  const dialog = confirmations.slice(before).find((c) => c.kind === 'team');
+  assert.ok(dialog, 'asked');
+  assert.match(dialog.title, /Fake Org/);
+  assert.deepEqual(dialog.fields.slice(0, 2), [['Organization', 'Fake Org'], ['Invited by', 'Dana Admin']]);
+  assert.ok(!JSON.stringify(dialog).includes(token), 'the full token is never shown');
+  assert.strictEqual(cloud.requests.filter((r) => r.path === '/v1/org/join').length, 1, 'declined: no new join request');
+  answer = true;
+  // maxUses 1: the preview did not use the token, so the join still works.
+  const r = await vault.teamJoin({ join_token: token, api_base: cloud.base, agent: 'claude-code' });
+  assert.match(r.org, /^org_/);
+});
+
+test('an unusable join token stops before the dialog; an organization without a subscription too', async () => {
+  const before = confirmations.length;
+  await assert.rejects(vault.teamJoin({ join_token: 'znj_' + 'Q'.repeat(40), api_base: cloud.base }), /invalid, expired or used up/);
+  cloud.setOrgActive(false);
+  const t = cloud.createJoinToken({ maxUses: 2 });
+  await assert.rejects(vault.teamJoin({ join_token: t, api_base: cloud.base }), /no active Team subscription/);
+  cloud.setOrgActive(true);
+  assert.strictEqual(confirmations.length, before, 'no dialog shown');
+});
+
+test('an older server without the preview still joins, with a warning in the dialog', async () => {
+  cloud.state.previewEnabled = false;
+  try {
+    const before = confirmations.length;
+    const r = await vault.teamJoin({ join_token: cloud.createJoinToken({ maxUses: 2 }), api_base: cloud.base });
+    assert.match(r.org, /^org_/);
+    const dialog = confirmations.slice(before).find((c) => c.kind === 'team');
+    assert.ok(dialog.warnings.some((w) => /Could not check which organization/.test(w)));
+    assert.ok(!dialog.fields.some(([k]) => k === 'Organization'));
+  } finally {
+    cloud.state.previewEnabled = true;
+  }
+});
+
 test('a signed policy denies a secret for every agent, and the audit log is uploaded', async () => {
   cloud.publishPolicy({ rules: [
     { secret: 'PROD_*', agents: ['codex'], deny: true, reason: 'No production credentials in Codex' },

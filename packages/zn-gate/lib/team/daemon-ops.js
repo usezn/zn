@@ -97,11 +97,30 @@ function makeTeamOps(ctx) {
       const host = new URL(base).host;
       const warnings = [];
       if (base !== DEFAULT_API) warnings.push('This is not the zn service (api.usezn.com). Only continue if your organization runs its own server at ' + host + '.');
+      const api = createApi({ base, fetchImpl, userAgent: 'zn-gate/' + VERSION });
+      // Which organization the token is for, shown in the dialog before anything is shared.
+      // The preview does not use up the token; an unusable token stops here, without a dialog.
+      const pv = await api.preview(joinToken);
+      if (!pv.ok && (pv.reason === 'invalid' || pv.reason === 'no_subscription')) {
+        writeAudit({ mode: 'set', decision: 'deny', reason: 'team_join_failed' });
+        throw znError(CODES.POLICY_DENIED, pv.reason === 'invalid'
+          ? 'join failed (this join token is invalid, expired or used up; ask your administrator for a new one)'
+          : 'join failed (this organization has no active Team subscription)');
+      }
+      const previewOrg = pv.ok ? printable(pv.org_name, 100) : null;
+      const previewBy = pv.ok ? printable(pv.invited_by, 60) : null;
+      if (!pv.ok) warnings.push('Could not check which organization this token is for (' + printable(String(pv.detail || ''), 60) + '); its name appears after joining.');
+      const orgFields = previewOrg
+        ? [['Organization', previewOrg], ['Invited by', previewBy || 'not shown (no display name set)']]
+        : [];
       await confirmOutOfBand({
         kind: 'team',
-        title: current ? 'reconnect this machine to organization ' + current.org + '?' : 'connect this machine to a zn organization?',
+        title: current
+          ? 'reconnect this machine to organization ' + (previewOrg || current.org) + '?'
+          : previewOrg ? 'connect this machine to ' + previewOrg + '?' : 'connect this machine to a zn organization?',
         warnings,
         fields: [
+          ...orgFields,
           ['Server', host],
           ['Join token', 'ends in ' + joinToken.slice(-6) + ' (check it against the one your administrator sent you)'],
           ['Shares', 'audit records, including the ones already on this machine: secret names, agents, tools, commands, hosts and decisions. Never secret values.'],
@@ -112,7 +131,6 @@ function makeTeamOps(ctx) {
 
       const secrets = await state.loadSecrets();
       const installId = current ? current.install_id : crypto.randomUUID();
-      const api = createApi({ base, fetchImpl, userAgent: 'zn-gate/' + VERSION });
       let res;
       try {
         res = await api.join({ join_token: joinToken, install_id: installId, audit_key: secrets.auditKey, agent, zn_gate_version: VERSION, os: osName() });
