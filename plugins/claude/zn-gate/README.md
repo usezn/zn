@@ -10,9 +10,9 @@ zn-gate keeps secret values out of what Claude Code sends to the model. Real val
 
 ## Where it protects you
 
-- **Claude Code** (terminal, IDE extensions, and the Code tab of the Claude desktop app): full protection, hooks and both MCP servers.
-- **Cowork**: Cowork takes its plugins from Customize > Plugins in Claude, not from `claude plugin install`. In a test where a Cowork task ran in the cloud workspace, a prompt containing a secret was not blocked and reached the model. **Do not rely on the plugin in Cowork sessions that run in the cloud.**
-- **Chat** (claude.ai, the chat in the desktop app, mobile apps): only the guidance skill loads. Hooks and local MCP servers are ignored there, so **the plugin does not protect chat conversations**. Do not paste secrets into chat.
+- **Claude Code** in the terminal, the IDE extensions and local sessions in the Code tab of the Claude desktop app: hooks and both MCP servers. The Code tab uses the plugins installed with `claude plugin install`. Claude Code sessions that run in the cloud (Claude Code on the web, cloud sessions in the Code tab) do not load plugins installed on your machine, so they are not protected.
+- **Cowork**: zn has not verified the plugin in Cowork. Cowork takes its plugins from Customize > Plugins in Claude, not from `claude plugin install`. In a test where a Cowork task ran in the cloud workspace, a prompt containing a secret was not blocked and reached the model. **Do not rely on the plugin in Cowork.**
+- **Chat** (claude.ai, the chat in the desktop app, mobile apps): this plugin is not loaded there and hooks do not run there, so **the plugin does not protect chat conversations**. Do not paste secrets into chat.
 
 ## Install
 
