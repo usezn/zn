@@ -8,6 +8,7 @@
  *   zn vault forget [<project dir>]     (vault must be locked)
  *   zn vault verify                     (audit log: chain, MACs, truncation)
  *   zn vault log [--since 1h]           (audit log: who used which secret; alias: zn secret log)
+ *   zn vault log export --otlp          (the same log as OpenTelemetry logs; lib/team/cli.js)
  *
  * The first `zn unlock` creates the vault: a new age identity stored in the
  * OS keychain, or behind a passphrase when no keychain is available.

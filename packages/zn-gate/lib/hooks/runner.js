@@ -132,6 +132,20 @@ function znRunPrefix(opts, agentId) {
   return 'ZN_AGENT=' + String(agentId).replace(/[^a-z0-9-]/g, '') + ' ' + q(opts.nodePath || process.execPath) + ' ' + q(runJs) + ' --';
 }
 
+/* Custom secret formats from the zn Team policy (verified cache), compiled
+ * once per hook process. They only add redactions. */
+let orgDetectors = null;
+function orgDetectorsFor(opts) {
+  if (orgDetectors === null) {
+    try {
+      const team = require('../team/policy');
+      const { detectorsOf } = require('../team/effective');
+      orgDetectors = require('../team/detectors').compile(detectorsOf(team.state({ home: opts && opts.znHome })));
+    } catch (_) { orgDetectors = []; }
+  }
+  return orgDetectors;
+}
+
 async function ctxFor(ev, d, agentId, destination, needVault = true) {
   return {
     project: deps.findProjectRoot(ev.cwd || process.cwd()),
@@ -139,6 +153,7 @@ async function ctxFor(ev, d, agentId, destination, needVault = true) {
     tool: ev.toolName || ev.tool,
     destination,
     vault: needVault ? await d.vault() : undefined,
+    detectors: d.detectors ? d.detectors() : orgDetectorsFor(),
   };
 }
 

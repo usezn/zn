@@ -262,7 +262,7 @@ function ourHooks(command) {
 }
 
 function mcpServerConfig(opts = {}) {
-  return { command: opts.nodePath || process.execPath, args: [opts.cliPath || cliPath(), 'secrets-mcp'] };
+  return { command: opts.nodePath || process.execPath, args: [opts.cliPath || cliPath(), 'secrets-mcp', '--agent', 'claude-code'] };
 }
 
 function installMcp(opts, report) {

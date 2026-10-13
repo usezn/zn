@@ -319,3 +319,22 @@ test('(e2e) shield proxy with ZN_API_KEY + ZN_CLOUD=1: wrapped tool output is fo
     srv.close();
   }
 });
+
+test('(b3) ZN_CLOUD=1 with a key that cannot be a key (unexpanded placeholder, blank, too short): nothing is sent', async () => {
+  installMock();
+  try {
+    for (const key of ['${user_config.api_key}', '%ZN_API_KEY_PLACEHOLDER%', '{{ZN_API_KEY_VALUE}}', 'x'.repeat(257), '   ', '', 'short', 'has space ' + FAKE.apiKey, '$(cat key)' + FAKE.apiKey]) {
+      await withEnv({ ZN_API_KEY: key, ZN_CLOUD: '1' }, async () => {
+        assert.equal(isCloudEnabled(), false, JSON.stringify(key));
+        const res = await analyze('Please summarize this README for me.');
+        assert.equal(res.mode, 'oss-local');
+      });
+    }
+    assert.equal(calls.length, 0);
+    await withEnv({ ZN_API_KEY: '  ' + FAKE.apiKey + '  ', ZN_CLOUD: '1' }, async () => {
+      assert.equal(isCloudEnabled(), true, 'surrounding whitespace is trimmed');
+    });
+  } finally {
+    restoreMock();
+  }
+});

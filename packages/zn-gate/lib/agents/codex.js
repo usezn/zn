@@ -152,7 +152,7 @@ function strip(groups) {
 function mcpSnippet(opts = {}) {
   const cli = path.resolve(__dirname, '..', '..', 'bin', 'cli.js').replace(/\\/g, '/');
   return '[mcp_servers.secrets]\ncommand = ' + JSON.stringify((opts.nodePath || process.execPath).replace(/\\/g, '/')) +
-    '\nargs = [' + JSON.stringify(cli) + ', "secrets-mcp"]';
+    '\nargs = [' + JSON.stringify(cli) + ', "secrets-mcp", "--agent", "codex"]';
 }
 
 function install(opts = {}) {

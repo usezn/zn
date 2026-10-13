@@ -167,7 +167,7 @@ function install(opts = {}) {
   if (opts.mcp !== false) {
     const cli = path.resolve(__dirname, '..', '..', 'bin', 'cli.js').replace(/\\/g, '/');
     report.warnings.push('to add the "secrets" MCP server, add to ~/.cursor/mcp.json under "mcpServers": "secrets": ' +
-      JSON.stringify({ command: (opts.nodePath || process.execPath).replace(/\\/g, '/'), args: [cli, 'secrets-mcp'] }));
+      JSON.stringify({ command: (opts.nodePath || process.execPath).replace(/\\/g, '/'), args: [cli, 'secrets-mcp', '--agent', 'cursor'] }));
   }
   return report;
 }
