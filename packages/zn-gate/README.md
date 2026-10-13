@@ -25,6 +25,8 @@ Pick your agent. Each command adds zn-gate as an MCP server. Requires Node.js 18
 claude mcp add zn-gate -- npx -y zn-gate mcp
 ```
 
+> **Windows PowerShell:** `npm` and `npx` can fail with "running scripts is disabled on this system", because the default execution policy blocks `npm.ps1`. Use `npm.cmd` and `npx.cmd` instead (for example `npm.cmd install -g zn-gate`), run the commands from Command Prompt, or allow local scripts for your account with `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+
 **Codex CLI**
 ```bash
 codex mcp add zn-gate -- npx -y zn-gate mcp

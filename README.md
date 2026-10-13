@@ -47,6 +47,8 @@ zn env shadow .env                 # move .env values into the vault, leave mark
 zn hooks install claude-code       # or: codex, cursor, opencode
 ```
 
+> **Windows PowerShell:** `npm` and `npx` can fail with "running scripts is disabled on this system", because the default execution policy blocks `npm.ps1`. Use `npm.cmd` and `npx.cmd` instead (for example `npm.cmd install -g zn-gate`), run the commands from Command Prompt, or allow local scripts for your account with `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+
 Cursor support is partial: zn-gate can only rewrite the output of MCP tools there, not of shell commands or file reads.
 
 Five-minute walkthrough: [docs/secrets.md](docs/secrets.md). What each agent supports: [docs/compat.md](docs/compat.md). Limits: [docs/threat-model.md](docs/threat-model.md).
