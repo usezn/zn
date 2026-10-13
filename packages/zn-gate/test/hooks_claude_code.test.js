@@ -539,3 +539,19 @@ test('zn hook claude-code runs as a process and passes clean events through', ()
   assert.equal(d.status, 0);
   assert.equal(JSON.parse(d.stdout).hookSpecificOutput.permissionDecision, 'deny');
 });
+
+test('a batch-file claude (npm install on Windows) is never run through cmd.exe', (t) => {
+  const home = tempDir(t, 'zn-cmd-');
+  const marker = path.join(home, 'ran');
+  const bin = path.join(home, 'claude.cmd');
+  fs.writeFileSync(bin, '@echo off\r\necho ran > "' + marker + '"\r\n');
+  const env = { CLAUDE_CONFIG_DIR: path.join(home, '.claude') };
+  const opts = { scope: 'user', home, env, claudeBin: bin, nodePath: 'C:/Program Files/nodejs/node.exe', cliPath: 'C:/a & b/zn/bin/cli.js', runnerPath: '/opt/zn/lib/hooks/runner.js' };
+  const rep = adapter.install(opts);
+  const warn = rep.warnings.find((w) => /batch file/.test(w));
+  assert.ok(warn, JSON.stringify(rep.warnings));
+  assert.match(warn, /claude mcp add-json --scope user secrets '/);
+  const un = adapter.uninstall(opts);
+  assert.ok(un.warnings.some((w) => /claude mcp remove --scope user secrets/.test(w)), JSON.stringify(un.warnings));
+  assert.equal(fs.existsSync(marker), false, 'the batch file must not run');
+});

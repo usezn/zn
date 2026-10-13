@@ -284,13 +284,20 @@ function installMcp(opts, report) {
     return;
   }
   const claude = opts.claudeBin !== undefined ? opts.claudeBin : whichSync('claude', process.env.PATH || '');
+  const manual = 'claude mcp add-json --scope user ' + MCP_SERVER_NAME + " '" + JSON.stringify({ type: 'stdio', ...conf }) + "'";
   if (!claude) {
-    report.warnings.push('`claude` CLI not found: register the MCP server yourself with: claude mcp add-json --scope user ' +
-      MCP_SERVER_NAME + " '" + JSON.stringify({ type: 'stdio', ...conf }) + "'");
+    report.warnings.push('`claude` CLI not found: register the MCP server yourself with: ' + manual);
+    return;
+  }
+  // A batch-file `claude` (an npm install on Windows) only runs through
+  // cmd.exe, which re-parses the command line: the JSON (quotes, paths with
+  // spaces or & ^ %) would not reach it intact. Never start it that way.
+  if (/\.(?:cmd|bat)$/i.test(claude)) {
+    report.warnings.push('`claude` is a batch file (' + path.basename(claude) + '), which zn does not run through cmd.exe: register the MCP server yourself with: ' + manual);
     return;
   }
   const r = spawnSync(claude, ['mcp', 'add-json', '--scope', 'user', MCP_SERVER_NAME, JSON.stringify({ type: 'stdio', ...conf })],
-    { encoding: 'utf8', windowsHide: true, shell: process.platform === 'win32' && /\.cmd$/i.test(claude) });
+    { encoding: 'utf8', windowsHide: true });
   if (r.status === 0) report.mcp = 'claude mcp (user scope)';
   else report.warnings.push('`claude mcp add-json` failed: ' + String(r.stderr || r.stdout || r.error || '').trim());
 }
@@ -348,9 +355,10 @@ function uninstall(opts = {}) {
       }
     } else {
       const claude = opts.claudeBin !== undefined ? opts.claudeBin : whichSync('claude', process.env.PATH || '');
-      if (claude) {
-        spawnSync(claude, ['mcp', 'remove', '--scope', 'user', MCP_SERVER_NAME],
-          { encoding: 'utf8', windowsHide: true, shell: process.platform === 'win32' && /\.cmd$/i.test(claude) });
+      if (claude && /\.(?:cmd|bat)$/i.test(claude)) {
+        report.warnings.push('`claude` is a batch file (' + path.basename(claude) + '), which zn does not run through cmd.exe: remove the MCP server yourself with: claude mcp remove --scope user ' + MCP_SERVER_NAME);
+      } else if (claude) {
+        spawnSync(claude, ['mcp', 'remove', '--scope', 'user', MCP_SERVER_NAME], { encoding: 'utf8', windowsHide: true });
       }
     }
   }

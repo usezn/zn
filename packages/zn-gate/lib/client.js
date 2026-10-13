@@ -34,11 +34,24 @@ function resolveEndpoint(options = {}) {
 }
 
 /**
+ * The API key to use, or null. zn keys and tokens are letters, digits, `_`,
+ * `-` and `.` only; anything else counts as unset: blank, too short, or a
+ * placeholder a launcher did not expand (for example a plugin option left
+ * empty, `${user_config.api_key}`, or `%ZN_API_KEY%`). Sending text to the
+ * cloud with such a value would only get a 401.
+ */
+function usableApiKey(value) {
+  if (typeof value !== 'string') return null;
+  const k = value.trim();
+  return /^[A-Za-z0-9._-]{16,256}$/.test(k) ? k : null;
+}
+
+/**
  * True only when the user explicitly opted in to cloud prompt analysis:
  * an API key AND ZN_CLOUD=1, and no local-only override.
  */
 function isCloudEnabled(options = {}) {
-  const apiKey = options.apiKey || process.env.ZN_API_KEY;
+  const apiKey = usableApiKey(options.apiKey || process.env.ZN_API_KEY);
   const optedIn = process.env.ZN_CLOUD === '1';
   const forceLocal = Boolean(options.localOnly) || process.env.ZN_LOCAL_ONLY === 'true';
   return Boolean(apiKey) && optedIn && !forceLocal;
@@ -126,7 +139,7 @@ async function analyze(input, options = {}) {
     };
   }
 
-  const apiKey = options.apiKey || process.env.ZN_API_KEY;
+  const apiKey = usableApiKey(options.apiKey || process.env.ZN_API_KEY);
   const { sanitized, detections } = redactSecrets(typeof input === 'string' ? input : String(input ?? ''));
   const endpoint = resolveEndpoint(options);
   try {
@@ -177,6 +190,7 @@ async function checkToolResult(toolName, content, options = {}) {
 }
 
 module.exports = {
+  usableApiKey,
   analyze,
   analyzeLocal,
   checkToolResult,

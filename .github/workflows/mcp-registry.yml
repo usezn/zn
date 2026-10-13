@@ -1,0 +1,75 @@
+name: MCP Registry
+
+# Publishes packages/zn-gate/server.json from a release tag to the official MCP
+# Registry (io.github.usezn/zn-gate). It authenticates with the GitHub OIDC
+# token of this repository, so no stored token is used. Run it by hand after
+# the npm package of that version is public; it waits for approval on the
+# "mcp-registry" environment (deploys from main only).
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish, e.g. v1.5.0"
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: mcp-registry-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  MCP_PUBLISHER_VERSION: v1.8.1
+  MCP_PUBLISHER_SHA256: a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc
+
+jobs:
+  publish:
+    name: Publish server.json to the MCP Registry
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: mcp-registry
+      url: https://registry.modelcontextprotocol.io/v0/servers?search=io.github.usezn/zn-gate
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check the tag name
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$'; then
+            echo "::error::Tag '$TAG' is not vX.Y.Z or vX.Y.Z-(alpha|beta|rc).N"
+            exit 1
+          fi
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          persist-credentials: false
+      - name: Check that server.json matches the tag
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          tag_version="${TAG#v}"
+          for v in $(node -p "const d=require('./packages/zn-gate/server.json'); [d.version, ...(d.packages||[]).map(p=>p.version)].join(' ')"); do
+            if [ "$v" != "$tag_version" ]; then
+              echo "::error::packages/zn-gate/server.json has version $v, tag expects $tag_version"; exit 1
+            fi
+          done
+      - name: Install mcp-publisher (pinned, checksum verified)
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          curl -fsSL -o mcp-publisher.tar.gz \
+            "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          echo "${MCP_PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum --strict -c -
+          tar -xzf mcp-publisher.tar.gz mcp-publisher
+          ./mcp-publisher --help > /dev/null
+      - name: Log in with the repository OIDC token
+        run: '"$RUNNER_TEMP/mcp-publisher" login github-oidc'
+      - name: Publish
+        working-directory: packages/zn-gate
+        run: '"$RUNNER_TEMP/mcp-publisher" publish'
