@@ -34,16 +34,16 @@ function resolveEndpoint(options = {}) {
 }
 
 /**
- * The API key to use, or null. A value that cannot be a key counts as unset:
- * blank, with whitespace, too short, or a placeholder a launcher did not
- * expand (for example a plugin option left empty, `${user_config.KEY}`).
- * Sending text to the cloud with such a value would only get a 401.
+ * The API key to use, or null. zn keys and tokens are letters, digits, `_`,
+ * `-` and `.` only; anything else counts as unset: blank, too short, or a
+ * placeholder a launcher did not expand (for example a plugin option left
+ * empty, `${user_config.api_key}`, or `%ZN_API_KEY%`). Sending text to the
+ * cloud with such a value would only get a 401.
  */
 function usableApiKey(value) {
   if (typeof value !== 'string') return null;
   const k = value.trim();
-  if (k.length < 16 || k.length > 256 || /\s/.test(k) || k.includes('${') || k.includes('$(')) return null;
-  return k;
+  return /^[A-Za-z0-9._-]{16,256}$/.test(k) ? k : null;
 }
 
 /**
