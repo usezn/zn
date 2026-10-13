@@ -163,12 +163,13 @@ test('zn run drops dynamic loader variables when secret values are injected, and
   const stdout = sink();
   const stderr = sink();
   const loaderEnv = { ...nodeEnv, LD_PRELOAD: '/nonexistent/hook.so', DYLD_INSERT_LIBRARIES: '/nonexistent/hook.dylib', LD_ZN_KEPT_WITHOUT_VALUES: 'kept' };
-  const probe = 'console.log(["LD_PRELOAD","DYLD_INSERT_LIBRARIES","GCONV_PATH"].map((k) => process.env[k] === undefined ? "gone" : "present").join(" "))';
+  const probe = 'console.log(["LD_PRELOAD","DYLD_INSERT_LIBRARIES","GCONV_PATH","NODE_PATH","PYTHONPATH","PERL5OPT","JAVA_TOOL_OPTIONS","BASH_ENV"].map((k) => process.env[k] === undefined ? "gone" : "present").join(" ") + "|" + (process.platform === "win32" ? process.env.NoDefaultCurrentDirectoryInExePath : "1"))';
+  const extra = { GCONV_PATH: '/nonexistent/gconv', NODE_PATH: '/nonexistent/mods', PYTHONPATH: '/x', PERL5OPT: '-Mx', JAVA_TOOL_OPTIONS: '-javaagent:x', BASH_ENV: '/x' };
   const code = await runBroker(['--secrets', 'DB_PASSWORD', '--', NODE, '-e', probe], {
-    vault, env: { ...loaderEnv, GCONV_PATH: '/nonexistent/gconv' }, stdout, stderr, stdin: { isTTY: false }, approvals: { isApproved: async () => true, recordApproval: async () => {} },
+    vault, env: { ...loaderEnv, ...extra }, stdout, stderr, stdin: { isTTY: false }, approvals: { isApproved: async () => true, recordApproval: async () => {} },
   });
   assert.equal(code, 0, stderr.text());
-  assert.equal(stdout.text().trim(), 'gone gone gone');
+  assert.equal(stdout.text().trim(), 'gone gone gone gone gone gone gone gone|1');
   assert.equal((stderr.text().match(/removed .*LD_PRELOAD/g) || []).length, 1, 'said once');
   assert.ok(!stderr.text().includes('/nonexistent/hook'), 'the values of the variables are not printed');
 });
@@ -262,4 +263,47 @@ test('without markers zn run is a plain pass-through and needs no vault', async 
   const code = await runBroker(['--', NODE, '-e', 'console.log("hi"); process.exit(3)'], { env: nodeEnv, stdout, stderr: sink() });
   assert.equal(code, 3);
   assert.equal(stdout.text().trim(), 'hi');
+});
+
+/* ---------------- batch files on Windows ---------------- */
+
+const { systemCmdExe, batchInvocation } = require('../lib/broker/run');
+const { spawnSync } = require('child_process');
+const WIN = process.platform === 'win32';
+
+test('the cmd.exe for batch files comes from the system, whatever SystemRoot, ComSpec or PATH say', () => {
+  if (!WIN) { assert.equal(systemCmdExe(), null); return; }
+  const real = systemCmdExe();
+  assert.match(real, /^[A-Za-z]:\\[^%!"]+\\System32\\cmd\.exe$/i);
+  const saved = { SystemRoot: process.env.SystemRoot, ComSpec: process.env.ComSpec, PATH: process.env.PATH };
+  try {
+    process.env.SystemRoot = 'Z:\\Windows';
+    process.env.ComSpec = process.execPath;
+    process.env.PATH = 'Z:\\Windows\\System32';
+    assert.equal(systemCmdExe(), real);
+  } finally {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+});
+
+test('batch files: arguments zn changed, metacharacters and expansion characters in the path are refused', () => {
+  const deny = (resolved, args, original) => assert.throws(() => batchInvocation(resolved, args, original),
+    (e) => e.code === 'ZN_POLICY_DENIED', resolved + ' ' + args.join(' '));
+  deny('C:\\tools\\deploy.cmd', ['secret-value'], ['__ZN_TOKEN__']);
+  for (const a of ['a&b', 'a|b', 'a>b', 'a^b', '%PATH%', '!X!', 'a"b', 'a\nb']) deny('C:\\tools\\deploy.cmd', [a], [a]);
+  for (const p of ['C:\\p\\%ZX%\\deploy.cmd', 'C:\\p\\!ZX!\\deploy.cmd', 'C:\\p\\a"b\\deploy.cmd']) deny(p, [], []);
+});
+
+test('a batch file runs through the system cmd.exe even when ComSpec points elsewhere', { skip: !WIN && 'Windows only' }, (t) => {
+  const dir = tempDir(t, 'zn-bat-');
+  const bat = path.join(dir, 'say hi.cmd');
+  fs.writeFileSync(bat, '@echo off\r\necho ran:%~1:%~2\r\n');
+  const b = batchInvocation(bat, ['one', 'two words'], ['one', 'two words']);
+  assert.deepEqual(b.args.slice(0, 4), ['/d', '/v:off', '/s', '/c']);
+  assert.match(b.file, /\\System32\\cmd\.exe$/i);
+  // A hostile ComSpec in the environment of zn and of the child changes nothing.
+  const env = { ...process.env, ComSpec: process.execPath };
+  const r = spawnSync(b.file, b.args, { env, encoding: 'utf8', windowsVerbatimArguments: true, windowsHide: true });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout.trim(), 'ran:one:two words');
 });

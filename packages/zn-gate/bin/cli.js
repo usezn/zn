@@ -593,7 +593,7 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
   }
 
   if (command === 'status') {
-    const hasKey = Boolean(options.apiKey);
+    const hasKey = Boolean(require('../lib/client').usableApiKey(options.apiKey));
     const cloud = isCloudEnabled(options);
     process.stdout.write(`
 🛡️  zn-gate Status:

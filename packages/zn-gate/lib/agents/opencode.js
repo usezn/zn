@@ -135,8 +135,11 @@ function pluginSource(opts = {}) {
   const launch = project ? 'const NODE = "zn";\nconst RUNNER = null;' : `const NODE = ${node};\nconst RUNNER = ${runner};`;
   const argv = project ? '["hook", "opencode"]' : '[RUNNER, "opencode"]';
   // On Windows `zn` is zn.cmd, which spawn runs only through a shell. The
-  // arguments are fixed strings, so the shell adds no input of its own.
+  // arguments are fixed strings, so the shell adds no input of its own; and
+  // cmd.exe must not look for `zn` in the current directory first (the
+  // project, where an agent can write a zn.cmd of its own).
   const shell = project ? 'process.platform === "win32"' : 'false';
+  const env = project ? '{ ...process.env, NoDefaultCurrentDirectoryInExePath: "1" }' : 'process.env';
   return `${PLUGIN_MARK} (written by \`zn hooks install opencode\`; remove with \`zn hooks uninstall opencode\`).
 // Sends tool calls, tool results and chat messages to the local zn hook runner,
 // which blocks reads of secret files, puts commands that use stored secrets
@@ -165,7 +168,7 @@ function runHook(event) {
     const finish = (v) => { if (!done) { done = true; resolve(v); } };
     let child;
     try {
-      child = spawn(NODE, ${argv}, { stdio: ["pipe", "pipe", "ignore"], windowsHide: true, shell: ${shell} });
+      child = spawn(NODE, ${argv}, { stdio: ["pipe", "pipe", "ignore"], windowsHide: true, shell: ${shell}, env: ${env} });
     } catch (err) {
       finish({ action: "error", message: String(err && err.message || err) });
       return;

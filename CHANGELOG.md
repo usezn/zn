@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-10-13
+
+Security release, mainly for Windows. Update with `npm install -g zn-gate@1.5.1`. The Python package has no code changes in this release.
+
+### Security
+- **Windows: `zn run` starts batch files through the system cmd.exe only.** For a `.cmd` or `.bat` program (for example an npm-installed CLI), the program that received the secret values could be chosen through the caller's environment. zn run now starts the system's cmd.exe, found through the system itself rather than any environment variable (`/d /v:off /s /c`, arguments passed verbatim), refuses to run the batch file if it cannot find it, and refuses a program path containing `%`, `!` or `"`, which cmd.exe would expand.
+- `zn run` removes interpreter start-up variables (`NODE_OPTIONS`, `NODE_PATH`, `PYTHONPATH`, `PYTHONHOME`, `PERL5OPT`, `PERL5LIB`, `RUBYOPT`, `RUBYLIB`, `JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS`, `JDK_JAVA_OPTIONS`, `BASH_ENV`, `ENV` and similar) from the environment of an approved program when it hands over secret values, as it already did for dynamic loader variables. On Windows it also sets `NoDefaultCurrentDirectoryInExePath=1` for that program, so the programs it starts by name are not taken from the current directory.
+- Windows: the OpenCode plugin written by `zn hooks install opencode --project` starts `zn` with `NoDefaultCurrentDirectoryInExePath=1`, so cmd.exe does not run a `zn.cmd` planted in the project directory instead of the installed zn.
+- `zn hooks install claude-code` no longer runs a batch-file `claude` (an npm install on Windows) through cmd.exe to register the `secrets` MCP server; it prints the command to run instead (and `claude mcp remove` on uninstall).
+- An API key that cannot be a zn key (anything but 16 to 256 letters, digits, `_`, `-` and `.`, such as a blank value or a placeholder a launcher left unexpanded) now counts as unset, so `ZN_CLOUD=1` with such a value keeps prompt analysis local.
+
+### Known limitations
+- Approving a batch file (`.cmd`, `.bat`) for a secret in `zn run` approves that file, not the programs it starts by name: an npm shim runs the `node` found on the caller's `PATH`. Prefer `secrets_http_request` for HTTP APIs, or approve the program itself.
+
 ## [1.5.0] - 2026-10-12
 
 Secrets scrubber and broker: secret values stay out of what your coding agent
@@ -202,7 +216,8 @@ Limits: [docs/threat-model.md](docs/threat-model.md). Per-agent support:
 - MCP Server interface for Claude Code, Cursor, and custom agent loops.
 - Bidirectional inspection for prompt inputs and tool returns.
 
-[Unreleased]: https://github.com/usezn/zn/compare/v1.5.0...next
+[Unreleased]: https://github.com/usezn/zn/compare/v1.5.1...next
+[1.5.1]: https://github.com/usezn/zn/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/usezn/zn/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/usezn/zn/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/usezn/zn/compare/v1.3.0...v1.4.0
