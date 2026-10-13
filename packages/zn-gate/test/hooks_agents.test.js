@@ -222,3 +222,11 @@ test('opencode: install refuses to overwrite a plugin it did not write', (t) => 
   fs.writeFileSync(file, 'export const Mine = async () => ({})\n');
   assert.throws(() => opencode.install({ env: { XDG_CONFIG_HOME: xdg } }), /not written by zn/);
 });
+
+test('opencode project plugin: cmd.exe does not look for zn in the project directory first', () => {
+  const src = require('../lib/agents/opencode').pluginSource({ scope: 'project' });
+  const call = src.match(/spawn\(NODE,[^\n]*\)/)[0];
+  assert.match(call, /NoDefaultCurrentDirectoryInExePath: "1"/);
+  const user = require('../lib/agents/opencode').pluginSource({ scope: 'user', nodePath: '/usr/bin/node', runnerPath: '/opt/zn/lib/hooks/runner.js' });
+  assert.match(user.match(/spawn\(NODE,[^\n]*\)/)[0], /shell: false/);
+});
