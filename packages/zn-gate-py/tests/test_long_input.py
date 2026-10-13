@@ -87,7 +87,7 @@ class LongInputTests(unittest.TestCase):
 
     def test_capped_answer_adds_a_warning(self):
         gate = _Gate(lambda body: {"verdict": "allow", "confidence": 0.1,
-                                   "long_input": {"mode": "windows", "windows": 16, "top_window": 0, "capped": True}})
+                                   "long_input": {"mode": "windows", "windows": 20, "top_window": 0, "capped": True}})
         self.addCleanup(gate.close)
         with mock.patch.dict(os.environ, CLOUD):
             os.environ.pop("ZN_LONG_INPUT", None)

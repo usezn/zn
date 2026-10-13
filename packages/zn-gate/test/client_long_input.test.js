@@ -75,7 +75,7 @@ test('ZN_LONG_INPUT=off and --long-input off keep the first-512-tokens request',
 
 test('a capped answer adds a warning that the end was not analyzed', async (t) => {
   withCloud(t);
-  const g = await gate(() => ({ verdict: 'allow', confidence: 0.1, long_input: { mode: 'windows', windows: 16, top_window: 0, capped: true } }));
+  const g = await gate(() => ({ verdict: 'allow', confidence: 0.1, long_input: { mode: 'windows', windows: 20, top_window: 0, capped: true } }));
   t.after(() => g.server.close());
   const r = await analyze(SENTENCE.repeat(300), { apiKey: KEY, apiUrl: g.url });
   assert.match(r.warning, /end was not analyzed/);
