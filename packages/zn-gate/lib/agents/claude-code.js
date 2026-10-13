@@ -284,7 +284,8 @@ function installMcp(opts, report) {
     return;
   }
   const claude = opts.claudeBin !== undefined ? opts.claudeBin : whichSync('claude', process.env.PATH || '');
-  const manual = 'claude mcp add-json --scope user ' + MCP_SERVER_NAME + " '" + JSON.stringify({ type: 'stdio', ...conf }) + "'";
+  // No JSON: this form works the same in cmd.exe, PowerShell and POSIX shells.
+  const manual = 'claude mcp add --scope user ' + MCP_SERVER_NAME + ' -- ' + [conf.command, ...conf.args].map((a) => '"' + a + '"').join(' ');
   if (!claude) {
     report.warnings.push('`claude` CLI not found: register the MCP server yourself with: ' + manual);
     return;
@@ -299,7 +300,7 @@ function installMcp(opts, report) {
   const r = spawnSync(claude, ['mcp', 'add-json', '--scope', 'user', MCP_SERVER_NAME, JSON.stringify({ type: 'stdio', ...conf })],
     { encoding: 'utf8', windowsHide: true });
   if (r.status === 0) report.mcp = 'claude mcp (user scope)';
-  else report.warnings.push('`claude mcp add-json` failed: ' + String(r.stderr || r.stdout || r.error || '').trim());
+  else report.warnings.push('`claude mcp add-json` failed (' + String(r.stderr || r.stdout || r.error || '').trim().slice(0, 300) + '): register the MCP server yourself with: ' + manual);
 }
 
 /**

@@ -51,7 +51,8 @@ function hasPathSeparator(s) {
 function pathExts(env) {
   if (!isWin) return [''];
   const e = env || process.env;
-  return ['', ...String(e.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean).map((x) => x.toLowerCase())];
+  const list = String(e.PATHEXT || '').split(';').filter(Boolean).map((x) => x.toLowerCase());
+  return ['', ...(list.length ? list : ['.com', '.exe', '.bat', '.cmd'])];
 }
 
 function envPath(env) {
@@ -60,7 +61,11 @@ function envPath(env) {
 }
 
 function candidates(name, env) {
-  const exts = pathExts(env);
+  let exts = pathExts(env);
+  // Windows runs a name as written only when it already has a PATHEXT
+  // extension: an extensionless file next to its .cmd (npm puts a shell
+  // script `claude` beside `claude.cmd`) is not a program there.
+  if (isWin && !exts.slice(1).includes(path.extname(name).toLowerCase())) exts = exts.slice(1);
   const out = [];
   if (hasPathSeparator(name)) {
     for (const x of exts) out.push(path.resolve(name + x));
