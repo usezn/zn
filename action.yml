@@ -14,7 +14,7 @@ inputs:
   version:
     description: 'zn-gate version to install from PyPI, as an exact version number (for example 1.4.1). Ranges and "latest" are not accepted.'
     required: false
-    default: '1.5.0'
+    default: '1.5.1'
   package-sha256:
     description: 'Optional SHA-256 of the zn-gate wheel for `version` (as listed on PyPI). When set, pip refuses to install a file with a different hash.'
     required: false

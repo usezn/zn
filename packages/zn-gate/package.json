@@ -1,7 +1,7 @@
 {
   "name": "zn-gate",
   "mcpName": "io.github.usezn/zn-gate",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "Zero-trust prompt injection security gate & MCP server for AI agents (Cursor, Claude Code, Antigravity, OpenCode, Codex)",
   "mcpName": "io.github.usezn/zn-gate",
   "license": "MIT",

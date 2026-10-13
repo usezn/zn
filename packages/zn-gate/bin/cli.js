@@ -245,7 +245,7 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
     });
   }
   
-  const BASE_EXTS = new Set(['.md', '.txt', '.prompt', '.json', '.yaml', '.yml', '.toml', '.env']);
+  const BASE_EXTS = new Set(['.md', '.txt', '.prompt', '.json', '.yaml', '.yml', '.toml', '.env', '.pem', '.key']);
   const CODE_EXTS = new Set(['.js', '.ts', '.py', '.sh', '.html', '.go', '.rs']);
   const SCANNABLE_EXTS = includeCode ? new Set([...BASE_EXTS, ...CODE_EXTS]) : new Set(BASE_EXTS);
 
@@ -322,6 +322,34 @@ Files   : ${files.length} file(s) queued for audit\n
     }
 
     const lines = content.split('\n');
+    // Line of a character offset, numbered like the line pass (split on \n).
+    const starts = [0];
+    for (const l of lines) starts.push(starts[starts.length - 1] + l.length + 1);
+    const lineOf = (offset) => {
+      let lo = 0;
+      let hi = starts.length - 1;
+      while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (starts[mid] <= offset) lo = mid; else hi = mid - 1; }
+      return lo + 1;
+    };
+    // Private keys over several lines, found first: a line inside one is never
+    // printed, even when another rule fires on it (on its own the line does
+    // not look like a key, so it would not be redacted).
+    const blocks = [];
+    const keyLines = new Set();
+    for (const r of MULTILINE_SECRET_RULES) {
+      const rx = new RegExp(r.pattern.source, r.pattern.flags.includes('g') ? r.pattern.flags : r.pattern.flags + 'g');
+      let m;
+      while ((m = rx.exec(content)) !== null) {
+        if (m[0].length === 0) { rx.lastIndex++; continue; }
+        if (!m[0].includes('\n')) continue; // one line: the line pass redacts it
+        const first = lineOf(m.index);
+        const last = lineOf(m.index + m[0].length - 1);
+        const h = r.header.exec(m[0]);
+        blocks.push({ rule: r.id, line: first, header: h ? h[0].slice(0, 100) : '[REDACTED_PRIVATE_KEY]' });
+        for (let n = first; n <= last; n++) keyLines.add(n);
+      }
+    }
+
     const seen = new Set();
     for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
       const line = lines[lineIdx].trim();
@@ -329,7 +357,7 @@ Files   : ${files.length} file(s) queued for audit\n
 
       // Printed to the terminal and CI logs: never show a detected secret.
       const redacted = redactSecrets(line);
-      const sample = redacted.sanitized.slice(0, 100);
+      const sample = keyLines.has(lineIdx + 1) ? '[REDACTED_PRIVATE_KEY]' : redacted.sanitized.slice(0, 100);
       const evalRes = evaluate(line, options);
       if (evalRes.verdict === 'block') {
         totalFindings++;
@@ -343,27 +371,13 @@ Files   : ${files.length} file(s) queued for audit\n
       }
     }
 
-    // Blocks over several lines, numbered like the line pass (split on \n).
-    const starts = [0];
-    for (const l of lines) starts.push(starts[starts.length - 1] + l.length + 1);
-    for (const r of MULTILINE_SECRET_RULES) {
-      const rx = new RegExp(r.pattern.source, r.pattern.flags.includes('g') ? r.pattern.flags : r.pattern.flags + 'g');
-      let m;
-      while ((m = rx.exec(content)) !== null) {
-        if (m[0].length === 0) { rx.lastIndex++; continue; }
-        if (!m[0].includes('\n')) continue; // one line: the line pass covers it
-        let lo = 0;
-        let hi = starts.length - 1;
-        while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (starts[mid] <= m.index) lo = mid; else hi = mid - 1; }
-        const lineNo = lo + 1;
-        const key = lineNo + '\0' + r.id;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        totalFindings++;
-        const h = r.header.exec(m[0]);
-        // Only the BEGIN marker, never the key material.
-        findings.push({ file: relPath, line: lineNo, rule: r.id, reason: 'Exposed credential detected by DLP filter', sample: h ? h[0] : '[REDACTED_PRIVATE_KEY]' });
-      }
+    for (const b of blocks) {
+      const key = b.line + '\0' + b.rule;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      totalFindings++;
+      // Only the BEGIN marker, never the key material.
+      findings.push({ file: relPath, line: b.line, rule: b.rule, reason: 'Exposed credential detected by DLP filter', sample: b.header });
     }
   }
 

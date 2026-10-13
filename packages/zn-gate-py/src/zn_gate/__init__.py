@@ -2,7 +2,7 @@
 zn-gate: Deterministic, ultra-fast, zero-dependency guardrail engine for AI agents and LLM tool calling.
 """
 
-__version__ = "1.5.0"
+__version__ = "1.5.1"
 
 from .rules import Assessment, RULES_VERSION, evaluate, normalize_input, redact_secrets, sanitize_tool_result
 from .guard import guard, check_tool_call, check_tool_result, GuardBlockError

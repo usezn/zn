@@ -4,9 +4,9 @@ const https = require('https');
 const http = require('http');
 const { URL } = require('url');
 const { evaluate, redactSecrets, sanitizeToolResult, RULES_VERSION } = require('./rules');
-let PKG_VERSION = '1.5.0';
+let PKG_VERSION = '1.5.1';
 try {
-  PKG_VERSION = require('../package.json').version || '1.5.0';
+  PKG_VERSION = require('../package.json').version || '1.5.1';
 } catch (_) {}
 
 /*
