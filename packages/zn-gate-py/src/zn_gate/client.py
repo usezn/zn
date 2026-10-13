@@ -54,7 +54,7 @@ WINDOWS_TIMEOUT = 12.0
 
 
 def long_input_mode(value: Optional[str] = None) -> str:
-    v = (value if value is not None else os.environ.get("ZN_LONG_INPUT", "windows")).strip().lower()
+    v = str(value if value is not None else os.environ.get("ZN_LONG_INPUT", "windows")).strip().lower()
     return "off" if v in ("off", "none", "truncate", "0", "false", "no") else "windows"
 
 
@@ -142,6 +142,9 @@ def analyze(
         if isinstance(li, dict) and li.get("capped"):
             cloud_res["warning"] = ("The text is longer than the cloud gate checks (%s windows of 512 tokens): "
                                     "the end was not analyzed." % li.get("windows"))
+        elif windows and isinstance(li, dict) and li.get("mode") == "truncate":
+            cloud_res["warning"] = ("The cloud gate checked only the first 512 tokens of this text (%s)."
+                                    % (li.get("reason") or "no windows"))
         return cloud_res
     except Exception as exc:
         if os.environ.get("DEBUG") or os.environ.get("ZN_VERBOSE"):

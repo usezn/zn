@@ -90,6 +90,15 @@ class LongInputTests(unittest.TestCase):
             res = analyze(SENTENCE * 300, api_key=KEY, endpoint=gate.url)
         self.assertIn("end was not analyzed", res["warning"])
 
+    def test_fallback_answer_adds_a_warning(self):
+        gate = _Gate(lambda body: {"verdict": "allow", "confidence": 0.1,
+                                   "long_input": {"mode": "truncate", "reason": "fallback"}})
+        self.addCleanup(gate.close)
+        with mock.patch.dict(os.environ, CLOUD):
+            os.environ.pop("ZN_LONG_INPUT", None)
+            res = analyze(SENTENCE * 40, api_key=KEY, endpoint=gate.url)
+        self.assertIn("only the first 512 tokens of this text (fallback)", res["warning"])
+
     def test_without_the_cloud_nothing_is_sent(self):
         gate = _Gate(_allow)
         self.addCleanup(gate.close)

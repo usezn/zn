@@ -78,6 +78,29 @@ test('a capped answer adds a warning that the end was not analyzed', async (t) =
   assert.match(r.warning, /end was not analyzed/);
 });
 
+test('a fallback answer that checked only the first 512 tokens adds a warning', async (t) => {
+  withCloud(t);
+  const g = await gate(() => ({ verdict: 'allow', confidence: 0.1, long_input: { mode: 'truncate', reason: 'fallback' } }));
+  t.after(() => g.server.close());
+  const r = await analyze(SENTENCE.repeat(40), { apiKey: KEY, apiUrl: g.url });
+  assert.match(r.warning, /only the first 512 tokens of this text \(fallback\)/);
+});
+
+test('CLI: --long-input takes only windows or off and never swallows --local-only', (t) => {
+  const { spawnSync } = require('child_process');
+  const CLI = require('path').join(__dirname, '..', 'bin', 'cli.js');
+  const env = { ...process.env, ZN_CLOUD: '1', ZN_API_KEY: KEY, ZN_API_URL: 'http://127.0.0.1:9/v30/analyze' };
+  for (const args of [['--long-input', '--local-only'], ['--long-input', 'maybe']]) {
+    const r = spawnSync(process.execPath, [CLI, 'analyze', 'hello there', ...args], { env, encoding: 'utf8' });
+    assert.strictEqual(r.status, 2, args.join(' ') + ': ' + r.stdout + r.stderr);
+    assert.match(r.stderr, /--long-input needs windows or off/);
+    assert.doesNotMatch(r.stdout, /cloud_error/);
+  }
+  const ok = spawnSync(process.execPath, [CLI, 'analyze', 'hello there', '--long-input', 'off', '--local-only'], { env, encoding: 'utf8' });
+  assert.strictEqual(ok.status, 0, ok.stderr);
+  assert.doesNotMatch(ok.stdout, /cloud_error/);
+});
+
 test('without the cloud nothing is sent, long or not', async (t) => {
   withCloud(t, { ZN_CLOUD: undefined });
   const g = await gate(allow);

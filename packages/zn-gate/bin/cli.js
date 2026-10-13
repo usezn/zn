@@ -537,7 +537,13 @@ async function main() {
     } else if (args[i] === '--exclude' && args[i + 1]) {
       options.exclude = args[++i];
     } else if (args[i] === '--long-input') {
-      options.longInput = args[++i];
+      const v = String(args[i + 1] || '').toLowerCase();
+      if (v !== 'windows' && v !== 'off') {
+        process.stderr.write('Error: --long-input needs windows or off\n');
+        process.exit(2);
+      }
+      options.longInput = v;
+      i++;
     } else if (args[i] === '--local-only') {
       options.localOnly = true;
     } else if (args[i] === '--verbose') {

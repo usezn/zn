@@ -170,6 +170,8 @@ async function analyze(input, options = {}) {
     };
     if (cloudRes.long_input && cloudRes.long_input.capped) {
       out.warning = 'The text is longer than the cloud gate checks (' + cloudRes.long_input.windows + ' windows of 512 tokens): the end was not analyzed.';
+    } else if (windows && cloudRes.long_input && cloudRes.long_input.mode === 'truncate') {
+      out.warning = 'The cloud gate checked only the first 512 tokens of this text (' + (cloudRes.long_input.reason || 'no windows') + ').';
     }
     return out;
   } catch (err) {
