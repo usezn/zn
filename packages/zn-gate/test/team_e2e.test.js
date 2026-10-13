@@ -112,6 +112,32 @@ test('a signed policy denies a secret for Codex only, and the audit log is uploa
   assert.strictEqual(sent.length, before + 1);
 });
 
+test('a self-reported agent id (ZN_AGENT) cannot dodge a rule for another agent', async () => {
+  const saved = process.env.ZN_AGENT;
+  process.env.ZN_AGENT = 'claude-code';
+  try {
+    const r = await request(undefined, '__ZN_PROD_DB_URL__', 'http://127.0.0.1:9/x');
+    assert.strictEqual(r.isError, true);
+    assert.match(r.text, /organization policy/);
+  } finally {
+    if (saved === undefined) delete process.env.ZN_AGENT; else process.env.ZN_AGENT = saved;
+  }
+});
+
+test('deleting or editing the policy file does not lift the restrictions', async () => {
+  const file = policy.paths().policyFile;
+  fs.rmSync(file);
+  const gone = await request('codex', '__ZN_PROD_DB_URL__', 'http://127.0.0.1:9/x');
+  assert.strictEqual(gone.isError, true);
+  assert.match(gone.text, /organization policy/);
+  fs.writeFileSync(file, '{"v":1,"envelope":{}}');
+  const edited = await request('codex', '__ZN_PROD_DB_URL__', 'http://127.0.0.1:9/x');
+  assert.strictEqual(edited.isError, true);
+  // The next sync puts the readable copy back.
+  await vault.teamSync({ upload: false });
+  assert.strictEqual(policy.state().state, 'active');
+});
+
 test('a host the organization opens is used only after a local approval', async () => {
   const n = confirmations.length;
   answer = false;
@@ -132,7 +158,10 @@ test('a host the organization opens is used only after a local approval', async 
 });
 
 test('approving something the policy does not ask for is refused', async () => {
-  await assert.rejects(vault.confirmOrgOpening('STRIPE_KEY', 'host', 'evil.example.net', 'claude-code'), /does not ask for this/);
+  await assert.rejects(vault.confirmOrgOpening('STRIPE_KEY', 'host', 'evil.example.net', 'claude-code', true), /does not ask for this/);
+  // A pending host, but asked for with a self-reported agent id.
+  await assert.rejects(vault.confirmOrgOpening('STRIPE_KEY', 'host', '127.0.0.1', 'claude-code', false), /does not ask for this/);
+  await assert.rejects(vault.confirmOrgOpening('STRIPE_KEY', 'command', 'stripe', 'claude-code', true), /invalid request/);
 });
 
 test('a forged policy is rejected and the last good one stays', async () => {
@@ -154,14 +183,15 @@ test('offline: the cached policy keeps applying', async () => {
 });
 
 test('local OTLP export of the audit log works without an account', () => {
-  const r = spawnSync(process.execPath, [CLI, 'log', 'export', '--otlp'], { env: process.env, encoding: 'utf8', timeout: 30000 });
+  const r = spawnSync(process.execPath, [CLI, 'vault', 'log', 'export', '--otlp'], { env: process.env, encoding: 'utf8', timeout: 30000 });
   assert.strictEqual(r.status, 0, r.stderr);
   const lines = r.stdout.trim().split('\n');
   assert.ok(lines.length >= 1);
   const first = JSON.parse(lines[0]);
   assert.strictEqual(first.resourceLogs[0].scopeLogs[0].logRecords[0].eventName, 'zn.gate.decision');
-  const same = spawnSync(process.execPath, [CLI, 'vault', 'log', 'export', '--otlp'], { env: process.env, encoding: 'utf8', timeout: 30000 });
-  assert.strictEqual(same.status, 0, same.stderr);
+  const usage = spawnSync(process.execPath, [CLI, 'vault', 'log', 'export'], { env: process.env, encoding: 'utf8', timeout: 30000 });
+  assert.strictEqual(usage.status, 2);
+  assert.match(usage.stderr, /zn vault log export --otlp/);
 });
 
 test('zn team status shows the organization and never the token', async () => {

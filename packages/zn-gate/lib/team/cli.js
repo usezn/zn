@@ -9,8 +9,7 @@
  *
  * and the local OpenTelemetry export of the audit log (free, no account):
  *
- *   zn log export --otlp [--since 7d] [--out FILE]
- *   zn vault log export --otlp ...    (same command)
+ *   zn vault log export --otlp [--since 7d] [--out FILE]
  *
  * Join and leave need the vault unlocked and are confirmed on the vault's own
  * channel, not here: an agent can type in this terminal.
@@ -25,7 +24,7 @@ const { createClient } = require('../vault/client');
 const { CODES } = require('../errors');
 
 const USAGE = 'usage: zn team join <token> [--api URL] [--agent ID] | zn team status [--json] | zn team sync | zn team leave';
-const EXPORT_USAGE = 'usage: zn log export --otlp [--since 7d] [--out FILE]';
+const EXPORT_USAGE = 'usage: zn vault log export --otlp [--since 7d] [--out FILE]';
 
 const out = (s) => process.stdout.write(s + '\n');
 const err = (s) => process.stderr.write(s + '\n');
@@ -128,7 +127,7 @@ async function runTeamCommand(args) {
   }
 }
 
-/** zn log export --otlp: args after "export". Returns the exit code. */
+/** zn vault log export --otlp: args after "export". Returns the exit code. */
 function runLogExport(args) {
   if (!args.includes('--otlp')) { err(EXPORT_USAGE); return 2; }
   try {

@@ -2,10 +2,13 @@
 /**
  * zn Team operations of the vault daemon.
  *
- * The install token and the organization's pinned public key live in the
- * encrypted vault (secrets.team), so only an unlocked daemon can fetch the
- * policy or upload the audit log, and the token never leaves this process.
- * ~/.zn/team.json is a readable copy without the token, for the hooks.
+ * The install token, the organization's pinned public key and the last
+ * accepted policy live in the encrypted vault (secrets.team), so only an
+ * unlocked daemon can fetch the policy or upload the audit log, the token
+ * never leaves this process, and editing or deleting files under ~/.zn does
+ * not remove the organization's restrictions. ~/.zn/team.json and
+ * ~/.zn/org-policy.json are readable copies, without the token, for the
+ * hooks and `zn team status`.
  *
  * Joining and leaving are confirmed on the daemon's own channel: an agent
  * that runs `zn team join <token>` could otherwise send this machine's audit
@@ -25,13 +28,15 @@ const DEFAULT_API = 'https://api.usezn.com';
 const JOIN_TOKEN_RE = /^znj_[A-Za-z0-9]{32,64}$/;
 const AGENT_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const NAME_RE = /^[A-Z][A-Z0-9_]{0,63}$/;
-const OPEN_KINDS = ['host', 'command', 'mode', 'injectAt'];
 
 const osName = () => (['linux', 'darwin', 'win32'].includes(process.platform) ? process.platform : 'other');
+/* Text from the server shown in dialogs and in `zn team status`: printable only. */
+const printable = (s, max) => (typeof s === 'string' ? s.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, '').slice(0, max) : null);
 
 function makeTeamOps(ctx) {
   const { state, writeAudit, confirmOutOfBand } = ctx;
   const fetchImpl = ctx.fetchImpl;
+  const isClosed = typeof ctx.isClosed === 'function' ? ctx.isClosed : () => false;
   const files = () => policy.paths(state.opts);
 
   async function team() {
@@ -39,11 +44,18 @@ function makeTeamOps(ctx) {
     return secrets.team && typeof secrets.team === 'object' ? secrets.team : null;
   }
 
-  /* Policy state verified with the key held in the vault, not team.json. */
+  /* Policy state from the copy held in the vault, verified with the pinned key. */
   async function policyState(now) {
     const t = await team();
     if (!t) return { state: 'none', policy: null };
-    return policy.state(Object.assign({}, state.opts, { team: { org: t.org, policy_public_key: t.pin }, now }));
+    const held = t.policy && t.policy.envelope;
+    if (!held) return { state: 'none', policy: null, org: t.org };
+    const v = policy.verifyEnvelope(held, t.pin, { now, org: t.org, allowExpired: true });
+    if (!v.ok) return { state: 'invalid', policy: null, org: t.org, error: v.error };
+    return {
+      state: v.expired ? 'expired' : 'active', policy: v.policy, org: t.org, version: v.policy.version,
+      expires_at: v.policy.expires_at, etag: t.policy.etag || null, fetched_at: t.policy.fetched_at || null,
+    };
   }
 
   function apiFor(t) {
@@ -55,6 +67,17 @@ function makeTeamOps(ctx) {
       org: t.org, org_name: t.org_name || null, api_base: t.api_base, install_id: t.install_id,
       policy_public_key: t.pin, joined_at: t.joined_at,
     }, state.opts);
+    if (t.policy && t.policy.envelope) policy.writeCache(t.policy.envelope, t.policy.etag || null, state.opts);
+  }
+
+  async function updateTeam(fn) {
+    return state.serial(async () => {
+      const s = await state.loadSecrets();
+      if (!s.team) return null;
+      const r = fn(s.team);
+      await state.saveSecrets();
+      return r;
+    });
   }
 
   return {
@@ -80,10 +103,11 @@ function makeTeamOps(ctx) {
         warnings,
         fields: [
           ['Server', host],
-          ['Shares', 'audit records: secret names, agents, tools, commands, hosts and decisions. Never secret values.'],
-          ['Applies', "the organization's signed policy for secrets (it can restrict; anything it opens asks you first)"],
+          ['Join token', 'ends in ' + joinToken.slice(-6) + ' (check it against the one your administrator sent you)'],
+          ['Shares', 'audit records, including the ones already on this machine: secret names, agents, tools, commands, hosts and decisions. Never secret values.'],
+          ['Applies', "the organization's signed policy for secrets (it can restrict; a new host for a secret asks you first)"],
         ],
-        footer: 'If you did not just run `zn team join` yourself, choose Deny.',
+        footer: 'If you did not just run `zn team join` yourself with a token from your administrator, choose Deny.',
       }, { mode: 'set', reason: 'team_join' });
 
       const secrets = await state.loadSecrets();
@@ -93,24 +117,26 @@ function makeTeamOps(ctx) {
       try {
         res = await api.join({ join_token: joinToken, install_id: installId, audit_key: secrets.auditKey, agent, zn_gate_version: VERSION, os: osName() });
       } catch (err) {
-        const why = err && err.status ? 'HTTP ' + err.status + (err.body && err.body.error ? ': ' + String(err.body.error).slice(0, 160) : '') : (err && err.code) || 'network error';
+        const why = err && err.status ? 'HTTP ' + err.status + (err.body && err.body.error ? ': ' + printable(String(err.body.error), 160) : '') : (err && err.code) || 'network error';
         writeAudit({ mode: 'set', decision: 'deny', reason: 'team_join_failed' });
         throw znError(CODES.POLICY_DENIED, 'join failed (' + why + ')');
       }
       if (current && res.org !== current.org) throw znError(CODES.POLICY_DENIED, 'the token is for another organization; run `zn team leave` first');
       if (!policy.checkPin(res.policy_public_key)) throw znError(CODES.POLICY_DENIED, 'the server sent an invalid organization key');
       if (current && current.pin.kid !== res.policy_public_key.kid) throw znError(CODES.POLICY_DENIED, "the organization's signing key changed; run `zn team leave` and join again to accept the new key");
+      const orgName = printable(res.org_name, 100) || null;
       return state.serial(async () => {
         const s = await state.loadSecrets();
         s.team = {
-          org: res.org, org_name: res.org_name || null, api_base: base, install_id: installId,
+          org: res.org, org_name: orgName, api_base: base, install_id: installId,
           install_token: res.install_token, pin: res.policy_public_key,
           joined_at: current ? current.joined_at : new Date().toISOString(), revoked_at: null,
+          policy: current && current.policy ? current.policy : null,
         };
         writeAudit({ mode: 'set', decision: 'allow', reason: current ? 'team_rejoined' : 'team_joined' });
         await state.saveSecrets();
         mirror(s.team);
-        return { org: res.org, org_name: res.org_name || null, install_id: installId, api_base: base };
+        return { org: res.org, org_name: orgName, install_id: installId, api_base: base };
       });
     },
 
@@ -161,89 +187,104 @@ function makeTeamOps(ctx) {
       if (!t) throw znError(CODES.NOT_FOUND, 'this machine is not in an organization (zn team join <token>)');
       const api = apiFor(t);
       const out = { policy: null, upload: null };
-      const cached = await policyState();
+      const held = await policyState();
       try {
-        const r = await api.getPolicy({ etag: cached.state === 'active' ? cached.etag : undefined });
+        const r = await api.getPolicy({ etag: held.state === 'active' ? held.etag : undefined });
+        if (isClosed()) return { policy: { status: 'stopped' }, upload: null };
         if (r.status === 304) {
+          await updateTeam((tt) => { if (tt.policy) tt.policy.fetched_at = new Date().toISOString(); });
           policy.touchCache(state.opts);
-          out.policy = { status: 'current', version: cached.version };
+          out.policy = { status: 'current', version: held.version };
         } else if (r.status === 404) {
           out.policy = { status: 'none' };
         } else {
-          const acc = policy.accept(r.body, r.etag, Object.assign({}, state.opts, { team: { org: t.org, policy_public_key: t.pin } }));
-          if (acc.ok) {
-            out.policy = { status: 'updated', version: acc.policy.version };
-            if (!cached.version || cached.version !== acc.policy.version) writeAudit({ mode: 'set', decision: 'allow', reason: 'org_policy_v' + acc.policy.version });
+          // The rollback floor is the version held in the vault, not a file.
+          const v = policy.verifyEnvelope(r.body, t.pin, { org: t.org, minVersion: (t.policy && t.policy.version) || 0 });
+          if (v.ok) {
+            const rec = { envelope: r.body, etag: typeof r.etag === 'string' && r.etag.length <= 200 ? r.etag : null, version: v.policy.version, fetched_at: new Date().toISOString() };
+            await updateTeam((tt) => { tt.policy = rec; });
+            policy.writeCache(rec.envelope, rec.etag, state.opts);
+            out.policy = { status: 'updated', version: v.policy.version };
+            if (held.version !== v.policy.version) writeAudit({ mode: 'set', decision: 'allow', reason: 'org_policy_v' + v.policy.version });
           } else {
-            out.policy = { status: 'rejected', error: acc.error };
+            out.policy = { status: 'rejected', error: v.error };
             writeAudit({ mode: 'set', decision: 'deny', reason: 'policy:rejected' });
           }
         }
-        if (t.revoked_at) await state.serial(async () => { const s = await state.loadSecrets(); if (s.team) s.team.revoked_at = null; await state.saveSecrets(); });
+        if (t.revoked_at) await updateTeam((tt) => { tt.revoked_at = null; });
       } catch (err) {
         if (err && err.status === 401) {
           out.policy = { status: 'revoked' };
-          if (!t.revoked_at) await state.serial(async () => { const s = await state.loadSecrets(); if (s.team) s.team.revoked_at = new Date().toISOString(); await state.saveSecrets(); });
+          if (!t.revoked_at) await updateTeam((tt) => { tt.revoked_at = new Date().toISOString(); });
         } else {
           out.policy = { status: 'offline', error: (err && err.code) || 'error' };
         }
       }
-      if (a.upload !== false && out.policy.status !== 'revoked') {
+      // Keep the readable copy in line with the vault (it may have been edited or deleted).
+      const now = await team();
+      if (now && now.policy && now.policy.envelope) {
+        const disk = policy.readCache(state.opts);
+        if (!disk || JSON.stringify(disk.envelope) !== JSON.stringify(now.policy.envelope)) policy.writeCache(now.policy.envelope, now.policy.etag, state.opts);
+      }
+      if (a.upload !== false && out.policy.status !== 'revoked' && !isClosed()) {
         const f = files();
         out.upload = await uploadPending({
           auditFile: state.paths.auditFile, stateFile: f.uploadState, lockFile: f.uploadLock,
-          api, installId: t.install_id, version: VERSION,
+          api, installId: t.install_id, version: VERSION, shouldStop: isClosed,
         });
       }
       return out;
     },
 
     /**
-     * confirmOrgOpening(secret, kind, value, agent) -> true
-     * The user approves, on this machine, one thing the organization's policy
-     * opens for a secret (a host, a command, a mode or an HTTP placement).
-     * Only openings the current policy really asks for can be approved.
+     * confirmOrgOpening(secret, 'host', value, agent, agentTrusted) -> true
+     * The user approves, on this machine, a host the organization's policy
+     * opens for a secret. Only openings the current policy asks for, for an
+     * agent zn can identify, can be approved.
      */
-    async confirmOrgOpening(secret, kind, value, agent) {
+    async confirmOrgOpening(secret, kind, value, agent, agentTrusted) {
       const name = String(secret || '');
-      if (!NAME_RE.test(name) || !OPEN_KINDS.includes(kind) || typeof value !== 'string' || value.length > 253) throw znError(CODES.POLICY_DENIED, 'invalid request');
+      if (!NAME_RE.test(name) || kind !== 'host' || typeof value !== 'string' || value.length > 253) throw znError(CODES.POLICY_DENIED, 'invalid request');
       const t = await team();
       const st = await policyState();
       const secrets = await state.loadSecrets();
       const local = secrets.secrets[name];
       if (!t || !local) throw znError(CODES.NOT_FOUND, 'nothing to approve');
-      const eff = effective(name, local, { policy: st.policy, state: st.state, org: t.org, agent: agent || null, approvals: secrets.orgApprovals });
+      const eff = effective(name, local, { policy: st.policy, state: st.state, org: t.org, agent: agent || null, agentTrusted: agentTrusted === true, approvals: secrets.orgApprovals });
       if (!eff.pending.some((p) => p.kind === kind && p.value === value)) throw znError(CODES.POLICY_DENIED, 'the organization policy does not ask for this');
-      const label = { host: 'send it to host', command: 'give it to command', mode: 'switch it to mode', injectAt: 'put it in the HTTP ' }[kind];
+      const warnings = ["Your organization's policy (version " + st.version + ') allows this, but this machine never did. It applies only after you approve it here.'];
+      if (value.startsWith('*.')) warnings.push('This is a wildcard: it allows every host that ends in ' + value.slice(1) + ', not only the one being used now.');
       await confirmOutOfBand({
         kind: 'policy',
-        title: 'let organization ' + t.org + ' ' + label + (kind === 'injectAt' ? value : ' ' + value) + ' for secret ' + name + '?',
-        warnings: ["Your organization's policy (version " + st.version + ') allows this, but this machine never did. It applies only after you approve it here.'],
-        fields: [['Secret', name], ['Change', kind + ' + ' + value], ['Organization', t.org]],
+        title: 'let organization ' + t.org + ' send secret ' + name + ' to ' + value + '?',
+        warnings,
+        fields: [['Secret', name], ['New host', value], ['Agent', agent || 'unknown'], ['Organization', t.org_name ? t.org_name + ' (' + t.org + ')' : t.org]],
         footer: 'If you do not expect your organization to need this, choose Deny.',
       }, { secret: name, mode: 'set', reason: 'org_open' });
       return state.serial(async () => {
         const s = await state.loadSecrets();
         if (!s.orgApprovals || typeof s.orgApprovals !== 'object') s.orgApprovals = {};
         s.orgApprovals[approvalKey(t.org, name, kind, value)] = { ts: new Date().toISOString(), version: st.version };
-        writeAudit({ secret: name, mode: 'set', decision: 'ask:yes', reason: 'org_open_' + kind });
+        writeAudit({ secret: name, mode: 'set', decision: 'ask:yes', reason: 'org_open_host' });
         await state.saveSecrets();
         return true;
       });
     },
 
     /**
-     * effectiveList(list, agent) -> list with the organization policy applied:
-     * each entry gets the settings to enforce, `deny`, and `orgPending`.
+     * effectiveList(list, agent, agentTrusted) -> list with the organization
+     * policy applied: each entry gets the settings to enforce, `deny`, and
+     * `orgPending`. In a team, a policy that does not verify (or none yet)
+     * leaves the local settings: the vault copy cannot be edited from outside.
      */
-    async effectiveList(list, agent) {
+    async effectiveList(list, agent, agentTrusted) {
       const t = await team();
       if (!t) return list;
       const st = await policyState();
       if (st.state !== 'active' && st.state !== 'expired') return list;
       const secrets = await state.loadSecrets();
       return list.map((entry) => {
-        const eff = effective(entry.name, entry, { policy: st.policy, state: st.state, org: t.org, agent: agent || null, approvals: secrets.orgApprovals });
+        const eff = effective(entry.name, entry, { policy: st.policy, state: st.state, org: t.org, agent: agent || null, agentTrusted: agentTrusted === true, approvals: secrets.orgApprovals });
         return Object.assign({}, entry, eff.meta, {
           name: entry.name,
           deny: eff.deny,

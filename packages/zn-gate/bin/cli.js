@@ -130,8 +130,9 @@ VAULT (local, encrypted with age; the key stays in the OS keychain):
   vault log           Show the audit log of secret use [--since 1h]; checks the chain when unlocked
   vault verify        Verify the HMAC-chained audit log of secret use
   vault forget [dir]  Forget the token map of a project (vault locked)
-  log export --otlp   Export the audit log as OpenTelemetry logs (OTLP/JSON Lines)
-                      [--since 7d] [--out FILE]; same as vault log export
+  vault log export --otlp
+                      Export the audit log as OpenTelemetry logs (OTLP/JSON Lines)
+                      [--since 7d] [--out FILE]
 
 TEAM (zn Team: organization policy and audit upload; needs the vault unlocked):
   team join <token>   Connect this machine to your organization (confirmed outside the agent)
@@ -388,8 +389,8 @@ async function main() {
     process.exitCode = await require('../lib/team/cli').runTeamCommand(args);
     return;
   }
-  if ((args[0] === 'log' && args[1] === 'export') || (args[0] === 'vault' && args[1] === 'log' && args[2] === 'export')) {
-    process.exitCode = require('../lib/team/cli').runLogExport(args.slice(args[0] === 'log' ? 2 : 3));
+  if (args[0] === 'vault' && args[1] === 'log' && args[2] === 'export') {
+    process.exitCode = require('../lib/team/cli').runLogExport(args.slice(3));
     return;
   }
   if (args[0] === 'vault' && args[1] === 'log') {

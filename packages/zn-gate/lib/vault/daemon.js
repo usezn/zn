@@ -279,7 +279,7 @@ function makeOps(state, ctl) {
     return rec;
   }
 
-  const team = makeTeamOps({ state, writeAudit, confirmOutOfBand, fetchImpl: ctl.fetchImpl });
+  const team = makeTeamOps({ state, writeAudit, confirmOutOfBand, fetchImpl: ctl.fetchImpl, isClosed: () => Boolean(ctl.closed) });
 
   return {
     async status() {
@@ -478,7 +478,7 @@ function makeOps(state, ctl) {
         allowIn: s.allowIn || ['header'], injectAt: s.injectAt, source: s.source, lastUsed: s.lastUsed || null,
       })).sort((a, b) => a.name.localeCompare(b.name));
       const o = opts && typeof opts === 'object' ? opts : {};
-      return o.effective ? team.effectiveList(list, typeof o.agent === 'string' ? o.agent : null) : list;
+      return o.effective ? team.effectiveList(list, typeof o.agent === 'string' ? o.agent : null, o.agentTrusted === true) : list;
     },
 
     teamJoin: team.teamJoin,
@@ -601,6 +601,7 @@ async function serve(opts) {
   async function shutdown(reason) {
     if (closed) return;
     closed = true;
+    ctl.closed = true;
     clearTimeout(ttlTimer);
     clearInterval(flushTimer);
     if (teamTimer) clearInterval(teamTimer);

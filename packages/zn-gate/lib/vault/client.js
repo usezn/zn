@@ -245,7 +245,7 @@ class VaultClient {
   teamLeave() { return this.call('teamLeave', []); }
   teamInfo() { return this.call('teamInfo', []); }
   teamSync(args) { return this.call('teamSync', [args || {}]); }
-  confirmOrgOpening(secret, kind, value, agent) { return this.call('confirmOrgOpening', [secret, kind, value, agent || null]); }
+  confirmOrgOpening(secret, kind, value, agent, agentTrusted) { return this.call('confirmOrgOpening', [secret, kind, value, agent || null, agentTrusted === true]); }
   status() { return this.call('status', []); }
   auditVerify() { return this.call('auditVerify', []); }
   lock() { return this.call('lock', []); }

@@ -31,6 +31,7 @@ const { createMasker } = require('./mask');
 const { gitStatusOf, realTargetOf } = require('./files');
 const policy = require('../hooks/policy');
 const deps = require('../deps');
+const { pickOpening } = require('../team/effective');
 
 // Not available on Windows: 0 there, and the path checks still run.
 const O_NOFOLLOW = fs.constants.O_NOFOLLOW || 0;
@@ -109,6 +110,9 @@ function createSecretsServer(opts = {}) {
   const home = opts.home || os.homedir();
   const project = deps.findProjectRoot(cwd);
   const agent = opts.agent || process.env.ZN_AGENT || 'mcp';
+  // Only an id from the MCP configuration zn wrote (`secrets-mcp --agent`)
+  // selects agent-specific organization rules; ZN_AGENT is self-reported.
+  const agentTrusted = Boolean(opts.agent);
   const doFetch = opts.fetch || globalThis.fetch;
   let vault = opts.vault;
   let engine = opts.engine;
@@ -123,7 +127,7 @@ function createSecretsServer(opts = {}) {
   /* Settings to enforce: the local ones with the organization policy
    * applied for this agent (zn Team). */
   async function metaMap() {
-    const list = await (await getVault()).listSecrets({ effective: true, agent });
+    const list = await (await getVault()).listSecrets({ effective: true, agent, agentTrusted });
     return new Map((list || []).map((s) => [s.name, s]));
   }
 
@@ -185,7 +189,22 @@ function createSecretsServer(opts = {}) {
         'Ask the user to store it with `zn secret adopt ' + detected[0].name + ' --name <NAME> --host ' + host + '`.');
     }
     const named = [...found.values()];
-    const meta = named.length ? await metaMap() : new Map();
+    let meta = named.length ? await metaMap() : new Map();
+    // A host the organization policy opens but this machine never allowed:
+    // the user approves it once, on the vault's own channel. The settings
+    // are then read again, so a change made while the dialog was open counts.
+    let asked = false;
+    for (const m of named) {
+      const s = meta.get(m.name);
+      if (!s || s.deny || markers.hostAllowed(s.allowHosts, host)) continue;
+      const open = pickOpening(s.orgPending, 'host', (v) => markers.hostAllowed([v], host));
+      const v = await getVault();
+      if (open && typeof v.confirmOrgOpening === 'function') {
+        asked = true;
+        try { await v.confirmOrgOpening(m.name, 'host', open.value, agent, agentTrusted); } catch (_) { /* declined or no channel: denied below */ }
+      }
+    }
+    if (asked) meta = await metaMap();
     const values = new Map();
     for (const m of named) {
       const s = meta.get(m.name);
@@ -198,22 +217,11 @@ function createSecretsServer(opts = {}) {
         return denied(m.marker + ' is blocked for this agent by your organization policy. No request was made.');
       }
       if (!markers.hostAllowed(s.allowHosts, host)) {
-        // A host the organization policy opens but this machine never allowed:
-        // the user approves it once, on the vault's own channel.
-        const open = (s.orgPending || []).find((p) => p.kind === 'host' && markers.hostAllowed([p.value], host));
-        const v = await getVault();
-        if (open && typeof v.confirmOrgOpening === 'function') {
-          try {
-            await v.confirmOrgOpening(m.name, 'host', open.value, agent);
-            s.allowHosts = [...(s.allowHosts || []), open.value];
-          } catch (_) { /* declined or no channel: denied below */ }
-        }
-      }
-      if (!markers.hostAllowed(s.allowHosts, host)) {
         await audit({ secret: m.name, mode: s.mode, tool: 'mcp:secrets_http_request', argv0: null, host, decision: 'deny', reason: 'host not in allowHosts' });
         return denied(m.marker + ' may not be sent to ' + host + ' (allowed: ' + ((s.allowHosts || []).join(', ') || 'none') + '). No request was made.');
       }
-      const allowIn = Array.isArray(s.allowIn) && s.allowIn.length ? s.allowIn : ['header'];
+      // An empty list (cut down by the organization policy) allows nowhere.
+      const allowIn = Array.isArray(s.allowIn) ? s.allowIn : ['header'];
       const outside = placements(m.name).filter((p) => !allowIn.includes(p));
       if (outside.length) {
         await audit({ secret: m.name, mode: s.mode, tool: 'mcp:secrets_http_request', argv0: null, host, decision: 'deny', reason: 'placement not allowed: ' + outside.join(',') });

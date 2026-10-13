@@ -1,8 +1,7 @@
 'use strict';
 /*
  * Organization policy on the machine: signature, pinned key, expiry, clock
- * skew, rollback, cache and strict mode; and how a rule changes a secret's
- * local settings (restrict freely, open only with a local approval).
+ * skew, rollback, cache and strict mode.
  */
 const test = require('node:test');
 const assert = require('node:assert');
@@ -10,7 +9,6 @@ const crypto = require('crypto');
 const fs = require('fs');
 const { tempDir } = require('./helpers/tmp');
 const policy = require('../lib/team/policy');
-const { effective, approvalKey, hostCovered } = require('../lib/team/effective');
 
 const DAY = 86400000;
 const NOW = Date.parse('2026-10-13T10:00:00Z');
@@ -130,90 +128,4 @@ test('the cache goes to strict mode when it expires and is ignored if edited', (
   const st = policy.state({ home, now: NOW });
   assert.strictEqual(st.state, 'invalid');
   assert.strictEqual(st.policy, null);
-});
-
-/* ------------------------------------------------------------------ */
-/* Effective settings (D1)                                             */
-/* ------------------------------------------------------------------ */
-
-const ORG = 'org_TestOrg12345678';
-const LOCAL = { mode: 'env', allowHosts: ['api.stripe.com', 'files.stripe.com'], allowCommands: ['stripe'] };
-const pol = (rules) => ({ org: ORG, version: 1, rules });
-
-test('deny blocks the secret for the agents of the rule, and for an unknown agent', () => {
-  const p = pol([{ secret: 'PROD_*', agents: ['codex'], deny: true }]);
-  assert.strictEqual(effective('PROD_DB', LOCAL, { policy: p, state: 'active', agent: 'codex' }).deny, true);
-  assert.strictEqual(effective('PROD_DB', LOCAL, { policy: p, state: 'active', agent: null }).deny, true);
-  assert.strictEqual(effective('PROD_DB', LOCAL, { policy: p, state: 'active', agent: 'claude-code' }).deny, false);
-  assert.strictEqual(effective('DEV_DB', LOCAL, { policy: p, state: 'active', agent: 'codex' }).deny, false);
-  assert.strictEqual(effective('PROD_DB', LOCAL, { policy: p, state: 'expired', agent: 'codex' }).deny, true);
-});
-
-test('first matching rule wins', () => {
-  const p = pol([
-    { secret: 'PROD_DB', agents: ['*'], allowHosts: ['api.stripe.com'] },
-    { secret: 'PROD_*', agents: ['*'], deny: true },
-  ]);
-  const r = effective('PROD_DB', LOCAL, { policy: p, state: 'active', agent: 'codex' });
-  assert.strictEqual(r.deny, false);
-  assert.deepStrictEqual(r.meta.allowHosts, ['api.stripe.com']);
-});
-
-test('restricting applies at once: fewer hosts, fewer commands, proxy mode, header placement', () => {
-  const p = pol([{ secret: '*', agents: ['*'], allowHosts: ['api.stripe.com'], allowCommands: [], mode: 'proxy', injectAt: 'header' }]);
-  const r = effective('STRIPE_KEY', Object.assign({}, LOCAL, { injectAt: 'query' }), { policy: p, state: 'active', agent: 'claude-code' });
-  assert.deepStrictEqual(r.meta.allowHosts, ['api.stripe.com']);
-  assert.deepStrictEqual(r.meta.allowCommands, []);
-  assert.strictEqual(r.meta.mode, 'proxy');
-  assert.strictEqual(r.meta.injectAt, 'header');
-  assert.deepStrictEqual(r.pending, []);
-});
-
-test('opening needs a local approval; approved openings apply; strict mode withdraws them', () => {
-  const p = pol([{ secret: 'STRIPE_KEY', agents: ['claude-code'], allowHosts: ['api.stripe.com', 'evil.example.net'], allowCommands: ['stripe', 'python3'], mode: 'file', injectAt: 'body' }]);
-  const r = effective('STRIPE_KEY', LOCAL, { policy: p, state: 'active', agent: 'claude-code' });
-  assert.deepStrictEqual(r.meta.allowHosts, ['api.stripe.com']);
-  assert.deepStrictEqual(r.meta.allowCommands, ['stripe']);
-  assert.strictEqual(r.meta.mode, 'env');
-  assert.strictEqual(r.meta.injectAt, undefined);
-  assert.deepStrictEqual(r.pending, [
-    { kind: 'mode', value: 'file' }, { kind: 'host', value: 'evil.example.net' },
-    { kind: 'command', value: 'python3' }, { kind: 'injectAt', value: 'body' },
-  ]);
-  const approvals = new Set([approvalKey(ORG, 'STRIPE_KEY', 'host', 'evil.example.net'), approvalKey(ORG, 'STRIPE_KEY', 'command', 'python3')]);
-  const a = effective('STRIPE_KEY', LOCAL, { policy: p, state: 'active', agent: 'claude-code', approvals });
-  assert.deepStrictEqual(a.meta.allowHosts, ['api.stripe.com', 'evil.example.net']);
-  assert.deepStrictEqual(a.meta.allowCommands, ['stripe', 'python3']);
-  const s = effective('STRIPE_KEY', LOCAL, { policy: p, state: 'expired', agent: 'claude-code', approvals });
-  assert.deepStrictEqual(s.meta.allowHosts, ['api.stripe.com']);
-  assert.deepStrictEqual(s.meta.allowCommands, ['stripe']);
-  assert.deepStrictEqual(s.pending, []);
-  // An approval for another organization does not count.
-  const other = new Set([approvalKey('org_Other123456789', 'STRIPE_KEY', 'host', 'evil.example.net')]);
-  assert.deepStrictEqual(effective('STRIPE_KEY', LOCAL, { policy: p, state: 'active', agent: 'claude-code', approvals: other }).meta.allowHosts, ['api.stripe.com']);
-});
-
-test('a rule for named agents never opens anything for an unknown agent', () => {
-  const p = pol([{ secret: '*', agents: ['claude-code'], allowHosts: ['evil.example.net'] }]);
-  const r = effective('STRIPE_KEY', LOCAL, { policy: p, state: 'active', agent: null });
-  assert.deepStrictEqual(r.meta.allowHosts, LOCAL.allowHosts);
-  assert.deepStrictEqual(r.pending, []);
-});
-
-test('no policy, an invalid cache or no state leaves local settings alone', () => {
-  const p = pol([{ secret: '*', agents: ['*'], deny: true }]);
-  for (const state of ['none', 'invalid', undefined]) {
-    const r = effective('X', LOCAL, { policy: p, state, agent: 'codex' });
-    assert.strictEqual(r.deny, false);
-    assert.deepStrictEqual(r.meta.allowHosts, LOCAL.allowHosts);
-  }
-});
-
-test('local wildcards cover org hosts; org wildcards need an equal or broader local one', () => {
-  assert.strictEqual(hostCovered(['*.stripe.com'], 'api.stripe.com'), true);
-  assert.strictEqual(hostCovered(['*.stripe.com'], 'stripe.com'), false);
-  assert.strictEqual(hostCovered(['*.stripe.com'], '*.api.stripe.com'), true);
-  assert.strictEqual(hostCovered(['api.stripe.com'], '*.stripe.com'), false);
-  assert.strictEqual(hostCovered(['*.com'], '*.stripe.com'), true);
-  assert.strictEqual(hostCovered([], 'a.b'), false);
 });

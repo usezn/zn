@@ -277,6 +277,15 @@ function accept(envelope, etag, opts) {
   return { ok: true, policy: v.policy };
 }
 
+/** Write the readable copy of an accepted policy (the vault daemon keeps the original). */
+function writeCache(envelope, etag, opts) {
+  const o = opts || {};
+  writeJson(paths(o).policyFile, {
+    v: 1, envelope, etag: typeof etag === 'string' && etag.length <= 200 ? etag : null,
+    fetched_at: new Date(o.now == null ? Date.now() : o.now).toISOString(), accepted_version: envelope.policy.version,
+  });
+}
+
 /** Keep the cache but record that the server answered 304 (still current). */
 function touchCache(opts) {
   const o = opts || {};
@@ -299,6 +308,7 @@ module.exports = {
   readCache,
   state,
   accept,
+  writeCache,
   touchCache,
   writeJson,
   removeFile,

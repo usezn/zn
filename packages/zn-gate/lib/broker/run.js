@@ -133,18 +133,11 @@ async function prepare(parsed, opts) {
     throw znError(code, reason);
   };
 
-  // Local settings with the organization policy applied for this agent (zn Team).
-  const list = await vault.listSecrets({ effective: true, agent });
+  // Local settings with the organization policy applied (zn Team). The agent
+  // id of zn run (--agent, ZN_AGENT) is self-reported, so it never selects
+  // agent-specific rules: every matching rule restricts, none opens.
+  const list = await vault.listSecrets({ effective: true, agent, agentTrusted: false });
   const meta = new Map((list || []).map((s) => [s.name, s]));
-  // A command the organization policy opens but this machine never allowed:
-  // the user approves it once, on the vault's own channel.
-  const approveOrgCommand = async (name, m) => {
-    const open = (m.orgPending || []).find((p) => p.kind === 'command' && markers.matchAllowCommands([p.value], parsed.command));
-    if (!open || typeof vault.confirmOrgOpening !== 'function') return null;
-    try { await vault.confirmOrgOpening(name, 'command', open.value, agent); } catch (_) { return null; }
-    m.allowCommands = [...(m.allowCommands || []), open.value];
-    return markers.matchAllowCommands(m.allowCommands, parsed.command);
-  };
   const approvals = opts.approvals || approvalStore({ vault, znHome: opts.znHome });
   const found = exe.resolveExecutable(argv0, env);
   const planted = markers.checkResolvedExecutable(found ? found.path : null, project, found ? found.real : undefined);
@@ -179,7 +172,7 @@ async function prepare(parsed, opts) {
       await deny(name, m.mode, 'secret ' + name + ' is in ' + (m.mode || 'proxy') + ' mode, so zn run never puts it in a process. ' +
         'For HTTP APIs use the secrets_http_request tool of the zn "secrets" MCP server.');
     }
-    const entry = markers.matchAllowCommands(m.allowCommands, parsed.command) || await approveOrgCommand(name, m);
+    const entry = markers.matchAllowCommands(m.allowCommands, parsed.command);
     if (!entry) {
       await deny(name, m.mode, '`' + exeName + '` is not in allowCommands for ' + name + '. ' +
         'For HTTP APIs use the secrets_http_request tool of the zn "secrets" MCP server. ' +

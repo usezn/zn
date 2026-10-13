@@ -184,6 +184,8 @@ function checkOptions(opts) {
     batchSize,
     maxBatches,
     now,
+    // Called before each batch; true stops the upload (the vault was locked).
+    shouldStop: typeof opts.shouldStop === 'function' ? opts.shouldStop : () => false,
   };
 }
 
@@ -250,7 +252,7 @@ async function sync(o, ctx) {
   while (!outcome) {
     const from = ctx.head ? ctx.head.seq : 0;
     const start = sendable.findIndex((r) => r.seq > from);
-    if (start < 0 || batches >= o.maxBatches) break;
+    if (start < 0 || batches >= o.maxBatches || o.shouldStop()) break;
 
     const batch = sendable.slice(start, start + o.batchSize);
     const body = { install_id: o.installId };

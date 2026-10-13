@@ -17,6 +17,8 @@
  *     exactFiles   false to read the environment only (no credential files)
  *     exactValues  [{name, type, value|values}] extra exact values (scan uses these)
  *     pii          false to disable PII, or {email, phone, iban, card, dni, ssn, ipv4}
+ *     detectors    compiled custom formats (lib/team/detectors.js compile()), from
+ *                  a zn Team policy; they run with the secret patterns
  *
  * Layers run in this order and, on overlap, the earlier layer wins:
  *   1. exact values (known secrets; zero false positives by construction)
@@ -39,6 +41,7 @@ const fs = require('fs');
 const path = require('path');
 const { findPatterns, findPii, hintsIn, SECRET_TYPES, PII_TYPES } = require('./patterns');
 const { collectSources, buildMatcher } = require('./exact');
+const { find: findCustom } = require('../team/detectors');
 const { CODES } = require('../errors');
 
 const TOKEN_SOURCE = '__ZN_([A-Z0-9](?:[A-Z0-9_]*[A-Z0-9])?)__';
@@ -153,6 +156,7 @@ function scan(text, ctx) {
   if (matcher) spans = spans.concat(matcher.find(text));
   const opts = { pii: c.pii, _hints: hintsIn(text) };
   spans = spans.concat(findPatterns(text, opts));
+  if (Array.isArray(c.detectors) && c.detectors.length) spans = spans.concat(findCustom(text, c.detectors));
   if (c.pii !== false) spans = spans.concat(findPii(text, opts));
   if (spans.length === 0) return spans;
   const ranges = tokenRanges(text, namesOf(c));

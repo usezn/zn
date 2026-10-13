@@ -4,32 +4,41 @@
  * machine.
  *
  * The organization can always restrict:
- *   - `deny` blocks the secret for the agents of the rule;
+ *   - `deny` blocks the secret;
  *   - `allowHosts` / `allowCommands` drop local entries the rule does not list;
- *   - `mode: proxy` and `injectAt: header` are the most restrictive values.
+ *   - `mode: proxy` is the most restrictive mode;
+ *   - `injectAt` limits where secrets_http_request may put the value
+ *     (the local `allowIn` list is cut down to it).
  *
- * It can only open with a first-use approval on this machine: a host, a
- * command, a mode or an HTTP placement the local settings do not already
- * allow stays out until the user approves it on the vault's own channel
- * (`approvals` below). A stolen signing key therefore cannot turn zn-gate
- * into a way to send secrets somewhere new without someone at this machine
- * saying yes.
+ * It can open only hosts, for an agent it can identify (below), and only
+ * with a first-use approval on this machine: a host the local settings do
+ * not already allow stays out until the user approves it on the vault's own
+ * channel (`approvals`). A stolen signing key therefore cannot send a secret
+ * somewhere new without someone at this machine saying yes. Commands, modes
+ * and HTTP placements are never opened by the organization: `zn run` cannot
+ * tell agents apart, and the other two only matter to it.
  *
  * It can never touch the base protections (credential files, ~/.zn, agent
  * configuration): those live in the hook policy, which org rules do not
  * reach.
  *
+ * Agents: rules name agents (`claude-code`, `codex`, ...). An agent id is
+ * trusted only when it comes from an MCP server configuration zn wrote
+ * (`secrets-mcp --agent <id>`): the agent cannot change those files. Any
+ * other id (`zn run --agent`, ZN_AGENT, none) is self-reported, so for it
+ * the restrictive parts of EVERY rule whose secret pattern matches apply,
+ * whatever their agent list, and nothing is opened.
+ *
+ * With a trusted agent, rules apply in order and the first rule whose secret
+ * pattern and agent list match wins.
+ *
  * When the cached policy expired (offline for longer than its lifetime), the
  * strict mode keeps what restricts and withdraws what the organization had
  * opened, approved or not.
- *
- * Rules apply in order; the first rule whose secret pattern and agent list
- * match wins. A rule for named agents still blocks when the agent is
- * unknown, but never opens anything for it.
  */
 
 const RESTRICTIVE_MODE = 'proxy';
-const DEFAULT_INJECT_AT = 'header';
+const DEFAULT_ALLOW_IN = ['header'];
 
 function secretMatches(pattern, name) {
   if (pattern === '*') return true;
@@ -37,16 +46,16 @@ function secretMatches(pattern, name) {
   return pattern === name;
 }
 
-/** First matching rule and whether it names this agent ({rule, index, forAgent}). */
+const rulesOf = (policy) => ((policy && Array.isArray(policy.rules)) ? policy.rules : []);
+
+/** First rule whose secret pattern and agent list match ({rule, index}). */
 function findRule(policy, name, agent) {
-  const rules = (policy && Array.isArray(policy.rules)) ? policy.rules : [];
+  const rules = rulesOf(policy);
   for (let i = 0; i < rules.length; i++) {
     const r = rules[i];
     if (!secretMatches(r.secret, name)) continue;
     const agents = r.agents || [];
-    const forAgent = agents.includes('*') || (agent ? agents.includes(agent) : false);
-    // Unknown agent: a deny rule for any agent still applies (fail closed).
-    if (forAgent || (!agent && r.deny === true)) return { rule: r, index: i, forAgent };
+    if (agents.includes('*') || (agent && agents.includes(agent))) return { rule: r, index: i };
   }
   return null;
 }
@@ -66,14 +75,24 @@ function hostCovered(list, host) {
   return false;
 }
 
+const hasPort = (h) => /:\d+$/.test(String(h));
 const approvalKey = (org, secret, kind, value) => [org, secret, kind, value].join('\u0000');
 
+/* Only restrict: the parts of a rule that never widen the local settings. */
+function restrictWith(meta, r) {
+  if (r.mode === RESTRICTIVE_MODE) meta.mode = RESTRICTIVE_MODE;
+  if (Array.isArray(r.allowHosts)) meta.allowHosts = r.allowHosts.filter((h) => !hasPort(h) && hostCovered(meta.allowHosts, h));
+  if (Array.isArray(r.allowCommands)) meta.allowCommands = r.allowCommands.filter((c) => meta.allowCommands.includes(c));
+  if (r.injectAt !== undefined) meta.allowIn = meta.allowIn.filter((p) => p === r.injectAt);
+}
+
 /**
- * effective(name, local, {policy, state, org, agent, approvals}) ->
+ * effective(name, local, {policy, state, org, agent, agentTrusted, approvals}) ->
  *   {meta, deny, reason?, rule?, pending: [{kind, value}], org?}
  *
- * local: the secret's local settings ({mode, allowHosts, allowCommands, injectAt, ...}).
+ * local: the secret's local settings ({mode, allowHosts, allowCommands, allowIn, ...}).
  * state: 'active' | 'expired' (anything else: the policy is ignored).
+ * agentTrusted: true only for an agent id from an MCP configuration zn wrote.
  * approvals: Set or object of approvalKey() strings already approved on this machine.
  * meta: the settings to enforce; pending: openings that need an approval.
  */
@@ -82,22 +101,38 @@ function effective(name, local, opts) {
   const meta = Object.assign({}, local, {
     allowHosts: (local && local.allowHosts) || [],
     allowCommands: (local && local.allowCommands) || [],
+    allowIn: (local && Array.isArray(local.allowIn) && local.allowIn.length) ? local.allowIn : DEFAULT_ALLOW_IN,
   });
   const out = { meta, deny: false, pending: [] };
   if (!o.policy || (o.state !== 'active' && o.state !== 'expired')) return out;
-  const strict = o.state === 'expired';
-  const found = findRule(o.policy, name, o.agent || null);
+  out.org = o.org || o.policy.org;
+  const agent = o.agentTrusted && o.agent ? o.agent : null;
+
+  if (!agent) {
+    // Self-reported or unknown agent: every matching rule restricts, none opens.
+    const matching = rulesOf(o.policy).filter((r) => secretMatches(r.secret, name));
+    if (!matching.length) return out;
+    out.rule = rulesOf(o.policy).indexOf(matching[0]);
+    if (matching.some((r) => r.deny === true)) {
+      out.deny = true;
+      out.reason = 'policy:org_deny';
+      return out;
+    }
+    for (const r of matching) restrictWith(meta, r);
+    return out;
+  }
+
+  const found = findRule(o.policy, name, agent);
   if (!found) return out;
   const r = found.rule;
   out.rule = found.index;
-  out.org = o.org || o.policy.org;
   if (r.deny === true) {
     out.deny = true;
     out.reason = 'policy:org_deny';
     return out;
   }
-  if (!found.forAgent) return out;
 
+  const strict = o.state === 'expired';
   const approved = (kind, value) => {
     if (strict) return false;
     const k = approvalKey(out.org, name, kind, value);
@@ -110,21 +145,28 @@ function effective(name, local, opts) {
     return false;
   };
 
-  if (r.mode !== undefined && r.mode !== meta.mode) {
-    if (r.mode === RESTRICTIVE_MODE || open('mode', r.mode)) meta.mode = r.mode;
-  }
+  if (r.mode === RESTRICTIVE_MODE) meta.mode = RESTRICTIVE_MODE;
   if (Array.isArray(r.allowHosts)) {
     const localHosts = meta.allowHosts;
-    meta.allowHosts = r.allowHosts.filter((h) => hostCovered(localHosts, h) || open('host', h));
+    // A host with a port is never matched by the broker (it compares host
+    // names): such an entry only restricts and is never offered for approval.
+    meta.allowHosts = r.allowHosts.filter((h) => !hasPort(h) && (hostCovered(localHosts, h) || open('host', h)));
   }
-  if (Array.isArray(r.allowCommands)) {
-    const localCmds = meta.allowCommands;
-    meta.allowCommands = r.allowCommands.filter((c) => localCmds.includes(c) || open('command', c));
-  }
-  if (r.injectAt !== undefined && r.injectAt !== (meta.injectAt || DEFAULT_INJECT_AT)) {
-    if (r.injectAt === DEFAULT_INJECT_AT || open('injectAt', r.injectAt)) meta.injectAt = r.injectAt;
-  }
+  if (Array.isArray(r.allowCommands)) meta.allowCommands = r.allowCommands.filter((c) => meta.allowCommands.includes(c));
+  if (r.injectAt !== undefined) meta.allowIn = meta.allowIn.filter((p) => p === r.injectAt);
   return out;
+}
+
+/**
+ * The most specific pending opening that covers what is being used: an exact
+ * entry before a wildcard one. {kind, value, wildcard} or null.
+ */
+function pickOpening(pending, kind, matches) {
+  const list = (pending || []).filter((p) => p.kind === kind && matches(p.value));
+  if (!list.length) return null;
+  const exact = list.find((p) => !/[*]/.test(p.value));
+  const best = exact || list.sort((a, b) => b.value.length - a.value.length)[0];
+  return { kind, value: best.value, wildcard: /[*]/.test(best.value) };
 }
 
 /**
@@ -136,11 +178,4 @@ function detectorsOf(st) {
   return Array.isArray(st.policy.detectors) ? st.policy.detectors : [];
 }
 
-/** redactionOf(state) -> {pii: bool}. Only switches things on. */
-function redactionOf(st) {
-  if (!st || !st.policy || (st.state !== 'active' && st.state !== 'expired')) return { pii: false };
-  const r = st.policy.redaction || {};
-  return { pii: r.pii === true };
-}
-
-module.exports = { effective, findRule, hostCovered, approvalKey, detectorsOf, redactionOf, secretMatches };
+module.exports = { effective, findRule, hostCovered, approvalKey, pickOpening, detectorsOf, secretMatches };
