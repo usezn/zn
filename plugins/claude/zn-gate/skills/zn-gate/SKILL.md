@@ -15,7 +15,7 @@ encrypted vault on the user's machine; you see markers such as
   the hooks fill in the real value when the command runs and replace it again
   in the output.
 - Never ask the user to paste a secret into the chat. If a value is missing,
-  ask them to add it with `npx zn-gate@1.5.0 secret set NAME` in their own
+  ask them to add it with `npx zn-gate@1.5.1 secret set NAME` in their own
   terminal.
 - Use the `secrets` MCP tools when a marker cannot be used directly:
   - `secrets_list`: names of the secrets in the vault (never values).

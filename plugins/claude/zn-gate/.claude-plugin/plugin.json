@@ -1,7 +1,7 @@
 {
   "name": "zn-gate",
   "displayName": "zn-gate",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "description": "For Claude Code: hooks keep secret values out of what is sent to the model (tool input, tool output and prompts), and a local MCP server checks untrusted text for prompt injection. In chat, only the guidance skill loads.",
   "author": {
     "name": "usezn",
