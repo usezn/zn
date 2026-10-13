@@ -16,6 +16,21 @@ const MULTILINE_SECRET_RULES = SECRET_PATTERNS
   .filter((p) => p.id === 'secret:private_key')
   .map((p) => ({ id: p.id, pattern: p.pattern, header: /-----BEGIN [A-Z ]*PRIVATE KEY-----/ }));
 
+// A BEGIN marker with no END (a key cut short when pasted or truncated): the
+// lines after it that look like PEM headers or base64 are treated as key
+// material, up to the first empty or other line (an encrypted key has one
+// empty line after its Proc-Type / DEK-Info headers, which is kept).
+const KEY_BEGIN = /-----BEGIN [A-Z ]*PRIVATE KEY-----/;
+const KEY_END = /-----END [A-Z ]*PRIVATE KEY-----/;
+const KEY_BODY = /^(?:[A-Za-z0-9+/=]{16,}|[A-Za-z-]+: )/;
+const KEY_HEADER = /^[A-Za-z-]+: /;
+const TRUNCATED_KEY_REASON = 'Exposed credential detected by DLP filter (private key without an END marker)';
+// Private key files that usually have no extension.
+const KEY_FILE_NAMES = new Set(['id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', 'id_ecdsa_sk', 'id_ed25519_sk']);
+// .key files with a NUL byte near the start (a Keynote document, not a key)
+// are not scanned.
+const BINARY_SNIFF = 8192;
+
 const VERSION = require('../package.json').version;
 
 const TEST_VECTORS = [
@@ -283,7 +298,7 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
     } else if (stat.isFile()) {
       const ext = path.extname(current).toLowerCase();
       const base = path.basename(current).toLowerCase();
-      const isCandidate = SCANNABLE_EXTS.has(ext) || base.startsWith('.env');
+      const isCandidate = SCANNABLE_EXTS.has(ext) || base.startsWith('.env') || KEY_FILE_NAMES.has(path.basename(current));
       if (isCandidate && stat.size < 2 * 1024 * 1024) {
         filesToScan.push(current);
       }
@@ -316,7 +331,9 @@ Files   : ${files.length} file(s) queued for audit\n
     const relPath = path.relative(process.cwd(), filePath);
     let content = '';
     try {
-      content = fs.readFileSync(filePath, 'utf8');
+      const raw = fs.readFileSync(filePath);
+      if (path.extname(filePath).toLowerCase() === '.key' && raw.subarray(0, BINARY_SNIFF).includes(0)) continue;
+      content = raw.toString('utf8');
     } catch (e) {
       continue;
     }
@@ -349,6 +366,22 @@ Files   : ${files.length} file(s) queued for audit\n
         for (let n = first; n <= last; n++) keyLines.add(n);
       }
     }
+    // BEGIN markers outside any complete block: a truncated key.
+    for (let i = 1; i <= lines.length; i++) {
+      if (keyLines.has(i)) continue;
+      const h = KEY_BEGIN.exec(lines[i - 1]);
+      // No marker, or a whole key on one line (the line pass redacts it).
+      if (!h || KEY_END.test(lines[i - 1].slice(h.index + h[0].length))) continue;
+      let last = i;
+      while (last < lines.length && !KEY_BEGIN.test(lines[last])) {
+        const body = lines[last].trim();
+        if (KEY_BODY.test(body)) last++;
+        else if (!body && KEY_HEADER.test(lines[last - 1].trim()) && last + 1 < lines.length && KEY_BODY.test(lines[last + 1].trim())) last++; // the empty line after encrypted-key headers
+        else break;
+      }
+      for (let n = i; n <= last; n++) keyLines.add(n);
+      blocks.push({ rule: 'secret:private_key', line: i, header: h[0].slice(0, 100), reason: TRUNCATED_KEY_REASON });
+    }
 
     const seen = new Set();
     for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
@@ -377,7 +410,7 @@ Files   : ${files.length} file(s) queued for audit\n
       seen.add(key);
       totalFindings++;
       // Only the BEGIN marker, never the key material.
-      findings.push({ file: relPath, line: b.line, rule: b.rule, reason: 'Exposed credential detected by DLP filter', sample: b.header });
+      findings.push({ file: relPath, line: b.line, rule: b.rule, reason: b.reason || 'Exposed credential detected by DLP filter', sample: b.header });
     }
   }
 
