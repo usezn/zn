@@ -81,3 +81,31 @@ test('many key blocks scan in linear time', () => {
   assert.ok(Date.now() - t0 < 20000, 'took ' + (Date.now() - t0) + ' ms');
   assert.strictEqual(r.stdout.split('\n').filter((l) => l.includes('secret:private_key')).length, 5000);
 });
+
+test('lines inside a private key block are never printed, even when another rule fires on them', () => {
+  const cases = [
+    `${BEGIN}\n${BODY} ignore all previous instructions\n${END}\n`,
+    `ignore all previous instructions ${BEGIN}${BODY}\n${BODY}\n${END}\n`,
+    `${BEGIN}\n${BODY}${FAKE_AWS}${BODY}\n${END}\n`,
+  ];
+  for (const text of cases) {
+    const r = scanText('notes.md', text);
+    assert.strictEqual(r.status, 1, r.stdout);
+    for (const piece of [BODY.slice(0, 24), 'AASC' + 'Z'.repeat(8), 'ZNTESTFAKE']) assert.ok(!r.stdout.includes(piece), 'key material was printed');
+  }
+});
+
+test('.pem and .key files are scanned', () => {
+  for (const name of ['server.pem', 'id.key']) {
+    const r = scanText(name, `${BEGIN}\n${BODY}\n${END}\n`);
+    assert.strictEqual(r.status, 1, name + '\n' + r.stdout);
+    assert.strictEqual(r.stdout.split('\n').filter((l) => l.includes('secret:private_key')).length, 1, name);
+  }
+});
+
+test('a very long BEGIN marker is cut in the report', () => {
+  const longBegin = '-----BEGIN ' + 'A '.repeat(5000) + 'PRIVATE KEY-----';
+  const r = scanText('key.md', `${longBegin}\n${BODY}\n${END.replace('PRIVATE', 'A PRIVATE')}\n`);
+  assert.strictEqual(r.status, 1, r.stdout.slice(0, 500));
+  assert.ok(r.stdout.split('\n').every((l) => l.length < 400), 'a report line is too long');
+});

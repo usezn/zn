@@ -129,6 +129,26 @@ def _scan_file(file_path: Path) -> List[Dict[str, Any]]:
     except Exception:
         return []
 
+    # Line numbers as the line pass counts them (str.splitlines boundaries).
+    starts = [0]
+    for part in content.splitlines(keepends=True):
+        starts.append(starts[-1] + len(part))
+    # Private keys over several lines, found first: a line inside one is never
+    # printed, even when another rule fires on it (the line on its own does
+    # not look like a key, so it would not be redacted).
+    blocks = []  # (rule, first line, last line, header)
+    key_lines = set()
+    for name, rx, header_rx in _MULTILINE_RULES:
+        for m in rx.finditer(content):
+            # A block on one line is redacted by the line pass.
+            if len(m.group(0).splitlines()) < 2:
+                continue
+            first = bisect.bisect_right(starts, m.start())
+            last = bisect.bisect_right(starts, m.end() - 1)
+            h = header_rx.match(m.group(0))
+            blocks.append((name, first, last, h.group(0)[:100] if h else "[REDACTED_PRIVATE_KEY]"))
+            key_lines.update(range(first, last + 1))
+
     lines = content.splitlines()
     for i, line in enumerate(lines, 1):
         if not line.strip():
@@ -136,7 +156,7 @@ def _scan_file(file_path: Path) -> List[Dict[str, Any]]:
         # Snippets are printed to the terminal and, with --format github, to CI
         # logs: always show the line with any detected secret redacted.
         redacted, findings = redact_secrets(line)
-        snippet = redacted.strip()[:100]
+        snippet = "[REDACTED_PRIVATE_KEY]" if i in key_lines else redacted.strip()[:100]
         res = evaluate(line)
         if not res.allowed:
             violations.append({
@@ -156,31 +176,20 @@ def _scan_file(file_path: Path) -> List[Dict[str, Any]]:
                 "type": "secret_leak",
                 "content": snippet,
             })
-    # Line numbers as the line pass counts them (str.splitlines boundaries).
-    starts = [0]
-    for part in content.splitlines(keepends=True):
-        starts.append(starts[-1] + len(part))
     seen = {(v["line"], v["rule"]) for v in violations}
-    for name, rx, header_rx in _MULTILINE_RULES:
-        for m in rx.finditer(content):
-            # A block on one line was already checked by the line pass.
-            if len(m.group(0).splitlines()) < 2:
-                continue
-            line = bisect.bisect_right(starts, m.start())
-            if (line, name) in seen:
-                continue
-            seen.add((line, name))
-            # Only the BEGIN marker, never the key material.
-            h = header_rx.match(m.group(0))
-            header = h.group(0)[:100] if h else "[REDACTED_PRIVATE_KEY]"
-            violations.append({
-                "file": str(file_path),
-                "line": line,
-                "rule": name,
-                "reason": "Exposed credential detected by DLP filter",
-                "type": "secret_leak",
-                "content": header,
-            })
+    for name, first, _last, header in blocks:
+        if (first, name) in seen:
+            continue
+        seen.add((first, name))
+        # Only the BEGIN marker, never the key material.
+        violations.append({
+            "file": str(file_path),
+            "line": first,
+            "rule": name,
+            "reason": "Exposed credential detected by DLP filter",
+            "type": "secret_leak",
+            "content": header,
+        })
     return violations
 
 
@@ -199,7 +208,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
             if ed:
                 skip_dirs.add(ed)
 
-    valid_exts = {".txt", ".md", ".json", ".yaml", ".yml", ".py", ".ts", ".js", ".prompt", ".env", ".toml"}
+    valid_exts = {".txt", ".md", ".json", ".yaml", ".yml", ".py", ".ts", ".js", ".prompt", ".env", ".toml", ".pem", ".key"}
     if getattr(args, "include", None):
         for ie in args.include.split(","):
             ie = ie.strip().lower()
