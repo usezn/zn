@@ -252,29 +252,14 @@ function stripOurs(groups) {
   return out;
 }
 
-// Claude Code version from which a hook can say what happens when it fails.
-const ON_FAILURE_MIN = [2, 1, 295];
-
-/* Version of the claude CLI, as [major, minor, patch], or null if unknown.
- * Never runs a batch file (see installMcp). */
-function claudeVersion(claude) {
-  if (!claude || /\.(?:cmd|bat)$/i.test(claude)) return null;
-  const r = spawnSync(claude, ['--version'], { encoding: 'utf8', windowsHide: true, timeout: 10000 });
-  const m = /(\d+)\.(\d+)\.(\d+)/.exec(String(r.stdout || ''));
-  return m ? m.slice(1, 4).map(Number) : null;
-}
-
-const atLeast = (v, min) => Boolean(v) && (v[0] - min[0] || v[1] - min[1] || v[2] - min[2]) >= 0;
-
-function ourHooks(command, opts = {}) {
+function ourHooks(command) {
   const h = { type: 'command', command, timeout: HOOK_TIMEOUT_S };
   return {
     PreToolUse: { matcher: PRE_MATCHER, hooks: [h] },
     PostToolUse: { matcher: POST_MATCHER, hooks: [h] },
-    // A prompt hook that cannot start or times out blocks the prompt. Only
-    // written for a Claude Code that knows the field: an older one could
-    // refuse the settings file and run no hook at all.
-    UserPromptSubmit: { hooks: [opts.onFailure ? { ...h, onFailure: 'block' } : h] },
+    // A prompt hook that cannot start or times out blocks the prompt
+    // (Claude Code 2.1.295 and later; earlier versions ignore the field).
+    UserPromptSubmit: { hooks: [{ ...h, onFailure: 'block' }] },
   };
 }
 
@@ -329,11 +314,7 @@ function install(opts = {}) {
   const data = readJson(file);
   const report = { settings: file, backup: backup(file), warnings: [] };
   data.hooks = data.hooks && typeof data.hooks === 'object' ? data.hooks : {};
-  const version = opts.claudeVersion !== undefined ? opts.claudeVersion
-    : claudeVersion(opts.claudeBin !== undefined ? opts.claudeBin : whichSync('claude', process.env.PATH || ''));
-  const onFailure = atLeast(version, ON_FAILURE_MIN);
-  const ours = ourHooks(hookCommand(opts), { onFailure });
-  if (!onFailure) report.warnings.push('Claude Code 2.1.295 or later not found: if the prompt hook cannot start, prompts are sent unchecked. Update Claude Code and run zn hooks install claude-code again.');
+  const ours = ourHooks(hookCommand(opts));
   for (const [event, group] of Object.entries(ours)) {
     data.hooks[event] = stripOurs(data.hooks[event]);
     data.hooks[event].push(group);

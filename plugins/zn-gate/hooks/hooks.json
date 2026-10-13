@@ -27,7 +27,7 @@
     "UserPromptSubmit": [
       {
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/zn-launch.js\" hook claude-code", "timeout": 15 }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/zn-launch.js\" hook claude-code", "timeout": 15, "onFailure": "block" }
         ]
       }
     ]

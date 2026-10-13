@@ -573,25 +573,21 @@ test('Windows: an extensionless file next to its .cmd is not the program (npm la
   }
 });
 
-test('the prompt hook blocks the prompt when it cannot run, on Claude Code 2.1.295 and later only', (t) => {
-  const base = { scope: 'user', mcp: false, nodePath: '/usr/bin/node', cliPath: '/opt/zn/bin/cli.js', runnerPath: '/opt/zn/lib/hooks/runner.js' };
-  const read = (home) => JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8')).hooks;
-  for (const [version, expected] of [[[2, 1, 295], 'block'], [[2, 2, 0], 'block'], [[3, 0, 0], 'block'], [[2, 1, 294], undefined], [[1, 9, 999], undefined], [null, undefined]]) {
-    const home = tempDir(t, 'zn-onf-');
-    const env = { CLAUDE_CONFIG_DIR: path.join(home, '.claude') };
-    const rep = adapter.install({ ...base, home, env, claudeVersion: version });
-    const hooks = read(home);
-    assert.equal(hooks.UserPromptSubmit[0].hooks[0].onFailure, expected, JSON.stringify(version));
-    // Tool hooks never get it: a tool hook that cannot run lets the call through, as documented.
-    assert.equal(hooks.PreToolUse[0].hooks[0].onFailure, undefined);
-    assert.equal(hooks.PostToolUse[0].hooks[0].onFailure, undefined);
-    assert.equal(rep.warnings.some((w) => /2\.1\.295/.test(w)), expected === undefined, JSON.stringify(rep.warnings));
-    // Reinstall and uninstall still recognise the prompt hook.
-    adapter.install({ ...base, home, env, claudeVersion: version });
-    assert.equal(read(home).UserPromptSubmit.length, 1);
-    adapter.uninstall({ scope: 'user', home, env, mcp: false });
-    assert.equal((read(home) || {}).UserPromptSubmit, undefined);
-  }
+test('the prompt hook blocks the prompt when it cannot run; tool hooks do not', (t) => {
+  const home = tempDir(t, 'zn-onf-');
+  const env = { CLAUDE_CONFIG_DIR: path.join(home, '.claude') };
+  const opts = { scope: 'user', home, env, mcp: false, nodePath: '/usr/bin/node', cliPath: '/opt/zn/bin/cli.js', runnerPath: '/opt/zn/lib/hooks/runner.js' };
+  const read = () => JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8')).hooks || {};
+  adapter.install(opts);
+  assert.equal(read().UserPromptSubmit[0].hooks[0].onFailure, 'block');
+  // A tool hook that cannot run lets the call through, as documented.
+  assert.equal(read().PreToolUse[0].hooks[0].onFailure, undefined);
+  assert.equal(read().PostToolUse[0].hooks[0].onFailure, undefined);
+  // Reinstall and uninstall still recognise the prompt hook.
+  adapter.install(opts);
+  assert.equal(read().UserPromptSubmit.length, 1);
+  adapter.uninstall({ scope: 'user', home, env, mcp: false });
+  assert.equal(read().UserPromptSubmit, undefined);
 });
 
 test('OpenCode plugin: a hook that fails or times out blocks the call and the message', () => {
