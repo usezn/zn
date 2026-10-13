@@ -123,3 +123,90 @@ impl PolicyVerifier {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::PolicyVerifier;
+    use std::path::{Path, PathBuf};
+
+    // RFC 8032, section 7.1, TEST 2 (one-byte message 0x72).
+    const PUBLIC_KEY_HEX: &str = "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c";
+    const MESSAGE: &[u8] = &[0x72];
+    const SIGNATURE_B64: &str =
+        "kqAJqfDUyrhyDoILX2QlQKKye1QWUD+Ps3YiI+vbadoIWsHkPhWZbkWPNhPQ8R2MOHsurrQwKu6wDSkWErsMAA==";
+    // Same signature with the scalar S replaced by S + L (the group order):
+    // a non-canonical encoding that must be rejected.
+    const NON_CANONICAL_SIGNATURE_B64: &str =
+        "kqAJqfDUyrhyDoILX2QlQKKye1QWUD+Ps3YiI+vbadr1LbdBWXirxhssLrau6/ygOHsurrQwKu6wDSkWErsMEA==";
+
+    fn policy_with_signature(dir: &Path, signature_b64: Option<&str>) -> PathBuf {
+        let wasm_path = dir.join("policy.wasm");
+        std::fs::write(&wasm_path, MESSAGE).unwrap();
+        if let Some(sig) = signature_b64 {
+            std::fs::write(dir.join("policy.wasm.sig"), format!("{sig}\n")).unwrap();
+        }
+        wasm_path
+    }
+
+    fn verifier() -> PolicyVerifier {
+        let v = PolicyVerifier::new(Some(PUBLIC_KEY_HEX)).unwrap();
+        assert!(
+            v.pq_public_key.is_none(),
+            "these tests expect ZN_PQ_PUBLIC_KEY to be unset"
+        );
+        v
+    }
+
+    #[test]
+    fn ed25519_accepts_rfc8032_signature() {
+        let dir = tempfile::tempdir().unwrap();
+        let wasm = policy_with_signature(dir.path(), Some(SIGNATURE_B64));
+        verifier().verify(MESSAGE, &wasm).unwrap();
+    }
+
+    #[test]
+    fn ed25519_rejects_modified_policy() {
+        let dir = tempfile::tempdir().unwrap();
+        let wasm = policy_with_signature(dir.path(), Some(SIGNATURE_B64));
+        assert!(verifier().verify(&[0x73], &wasm).is_err());
+    }
+
+    #[test]
+    fn ed25519_rejects_modified_signature() {
+        let mut sig =
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, SIGNATURE_B64)
+                .unwrap();
+        sig[0] ^= 0x01;
+        let tampered = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &sig);
+        let dir = tempfile::tempdir().unwrap();
+        let wasm = policy_with_signature(dir.path(), Some(&tampered));
+        assert!(verifier().verify(MESSAGE, &wasm).is_err());
+    }
+
+    #[test]
+    fn ed25519_rejects_non_canonical_scalar() {
+        let dir = tempfile::tempdir().unwrap();
+        let wasm = policy_with_signature(dir.path(), Some(NON_CANONICAL_SIGNATURE_B64));
+        assert!(verifier().verify(MESSAGE, &wasm).is_err());
+    }
+
+    #[test]
+    fn ed25519_rejects_wrong_length_signature() {
+        let dir = tempfile::tempdir().unwrap();
+        let wasm = policy_with_signature(dir.path(), Some("AAAA"));
+        assert!(verifier().verify(MESSAGE, &wasm).is_err());
+    }
+
+    #[test]
+    fn ed25519_requires_signature_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let wasm = policy_with_signature(dir.path(), None);
+        assert!(verifier().verify(MESSAGE, &wasm).is_err());
+    }
+
+    #[test]
+    fn rejects_malformed_public_key() {
+        assert!(PolicyVerifier::new(Some("00")).is_err());
+        assert!(PolicyVerifier::new(Some("not hex")).is_err());
+    }
+}
