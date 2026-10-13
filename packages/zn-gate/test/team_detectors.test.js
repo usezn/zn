@@ -17,10 +17,12 @@ const ACME = 'ACME-' + 'K7Q2ZP4M9XW3LB8RT5VN6YC1';
 
 test('unsafe or useless patterns are refused', () => {
   for (const p of ['(a+)+$', '(\\w*)*x', '(a|ab)*c', '(x|xy){2,4}z', '(a)\\1bc', '(?=abc)abc', '(?<!a)bcd', 'a*b?', '[unclosed', 'abc',
-    'ab+cd', 'ab{2,}cd', 'x[a-z]{0,100}y', 'a[a-z]{0,9}b[a-z]{0,9}c[a-z]{0,9}d', 'k_[0-9]{300}', '[a-z]*[a-z]*1']) {
+    'ab+cd', 'ab{2,}cd', 'x[a-z]{0,100}y', 'a[a-z]{0,9}b[a-z]{0,9}c[a-z]{0,9}d', 'k_[0-9]{300}', '[a-z]*[a-z]*1',
+    // Accepted by an earlier, regex-based check and still catastrophic: groups with ? or alternatives.
+    '(?:[a-z ]?){20}#', '((a|aa)){40}x', '(?:a?){64}x', '((?:a{1,2})){24}x', 'abc?d', 'a|bcd']) {
     assert.ok(detectors.checkPattern(p), p);
   }
-  for (const p of ['^ACME-[A-Z0-9]{24}$', 'ACME-[A-Z0-9]{24}', 'sk_[a-z]{0,8}_[A-Za-z0-9]{20,40}', 'tok_[*+]{8}', '(?:ab|cd)_[0-9]{8}', 'id-\\d{6}-?x']) {
+  for (const p of ['^ACME-[A-Z0-9]{24}$', 'ACME-[A-Z0-9]{24}', 'sk_[a-z]{0,8}_[A-Za-z0-9]{20,40}', 'tok_[*+]{8}', 'id-\\d{6}-x', 'xox[bp]-[0-9]{10,13}-[A-Za-z0-9]{24}']) {
     assert.strictEqual(detectors.checkPattern(p), null, p);
   }
   const compiled = detectors.compile([
@@ -52,7 +54,7 @@ test('the scrubber redacts an organization format it would not know otherwise', 
 test('patterns that could run for a long time never get to run', () => {
   // Heavy backtracking needs unbounded or many variable repetitions, or a
   // repeated group with alternatives: refused before anything runs.
-  for (const p of ['[a-z]*[a-z]*[a-z]*[a-z]*1', '(a|aa){1,30}b', 'a{0,64}a{0,64}a{0,64}b']) assert.ok(detectors.checkPattern(p), p);
+  for (const p of ['[a-z]*[a-z]*[a-z]*[a-z]*1', '(a|aa){1,30}b', 'a{0,64}a{0,64}a{0,64}b', '(?:[a-z ]?){26}#']) assert.ok(detectors.checkPattern(p), p);
   // The worst accepted shape stays fast on hostile input.
   const c = detectors.compile([{ id: 'worst', pattern: '[a-z]{0,64}[a-z]{0,64}1', type: 'WORST' }]);
   assert.strictEqual(c.length, 1);

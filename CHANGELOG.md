@@ -18,9 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   secret (`deny`, fewer hosts or commands, `proxy` mode, where the value may go in a request) and
   add custom secret formats for the scrubber; a new host for a secret applies only after the user
   approves it once on this machine; it can never open a new command, mode or placement, or reach
-  the protections for credential files, `~/.zn` or agent configuration. Rules for one agent match
-  only when the agent is known from the MCP configuration zn-gate wrote; otherwise every matching
-  rule restricts. When the policy expires while offline, only its restrictions keep applying. The
+  the protections for credential files, `~/.zn` or agent configuration. Every matching rule
+  restricts every agent, because zn-gate cannot prove which agent is calling; a rule's agent list
+  only decides who can be offered a new host. When the policy expires while offline, only its restrictions keep applying. The
   audit log (metadata only, never values) is uploaded in batches that resume from the last record
   the server confirmed. Join and leave are confirmed on the vault's own channel, outside the agent.
 - `zn hooks install` now starts the `secrets` MCP server with `--agent <id>` for Claude Code, Codex,

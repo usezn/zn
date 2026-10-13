@@ -111,7 +111,8 @@ function createSecretsServer(opts = {}) {
   const project = deps.findProjectRoot(cwd);
   const agent = opts.agent || process.env.ZN_AGENT || 'mcp';
   // Only an id from the MCP configuration zn wrote (`secrets-mcp --agent`)
-  // selects agent-specific organization rules; ZN_AGENT is self-reported.
+  // decides which new hosts the organization policy may offer for approval;
+  // ZN_AGENT is self-reported. No id ever lifts a restriction.
   const agentTrusted = Boolean(opts.agent);
   const doFetch = opts.fetch || globalThis.fetch;
   let vault = opts.vault;

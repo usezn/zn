@@ -14,11 +14,11 @@ const pol = (rules) => ({ org: ORG, version: 1, rules });
 const trusted = (agent) => ({ agent, agentTrusted: true });
 const eff = (name, p, who, extra) => effective(name, LOCAL, Object.assign({ policy: p, state: 'active' }, who, extra || {}));
 
-test('deny applies to a trusted agent of the rule, and to every self-reported or unknown agent', () => {
+test('a deny applies to every caller, whatever agents the rule names', () => {
   const p = pol([{ secret: 'PROD_*', agents: ['codex'], deny: true }]);
   assert.strictEqual(eff('PROD_DB', p, trusted('codex')).deny, true);
-  assert.strictEqual(eff('PROD_DB', p, trusted('claude-code')).deny, false);
-  // A self-reported id cannot dodge a rule meant for another agent.
+  // zn-gate cannot prove which agent is calling: no id dodges a restriction.
+  assert.strictEqual(eff('PROD_DB', p, trusted('claude-code')).deny, true);
   assert.strictEqual(eff('PROD_DB', p, { agent: 'claude-code', agentTrusted: false }).deny, true);
   assert.strictEqual(eff('PROD_DB', p, { agent: 'mcp' }).deny, true);
   assert.strictEqual(eff('PROD_DB', p, { agent: null }).deny, true);
@@ -39,14 +39,20 @@ test('for an untrusted agent, every matching rule restricts and none opens', () 
   assert.deepStrictEqual(r.pending, []);
 });
 
-test('first matching rule wins for a trusted agent', () => {
-  const p = pol([
+test('every matching rule restricts, in any order; an earlier narrowing beats a later opening', () => {
+  const denyLater = pol([
     { secret: 'PROD_DB', agents: ['*'], allowHosts: ['api.stripe.com'] },
     { secret: 'PROD_*', agents: ['*'], deny: true },
   ]);
-  const r = eff('PROD_DB', p, trusted('codex'));
-  assert.strictEqual(r.deny, false);
+  assert.strictEqual(eff('PROD_DB', denyLater, trusted('codex')).deny, true);
+  const p = pol([
+    { secret: 'STRIPE_*', agents: ['codex'], allowHosts: ['api.stripe.com'] },
+    { secret: 'STRIPE_KEY', agents: ['claude-code'], allowHosts: ['api.stripe.com', 'evil.example.net'] },
+  ]);
+  const approvals = new Set([approvalKey(ORG, 'STRIPE_KEY', 'host', 'evil.example.net')]);
+  const r = eff('STRIPE_KEY', p, trusted('claude-code'), { approvals });
   assert.deepStrictEqual(r.meta.allowHosts, ['api.stripe.com']);
+  assert.deepStrictEqual(r.pending, []);
 });
 
 test('restricting applies at once: fewer hosts and commands, proxy mode, placement cut to injectAt', () => {

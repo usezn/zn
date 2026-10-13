@@ -91,7 +91,7 @@ test('join is confirmed outside the agent; declining sends nothing', async () =>
   assert.ok(!fs.readFileSync(policy.paths().teamFile, 'utf8').includes('zni_'), 'the install token is not in team.json');
 });
 
-test('a signed policy denies a secret for Codex only, and the audit log is uploaded', async () => {
+test('a signed policy denies a secret for every agent, and the audit log is uploaded', async () => {
   cloud.publishPolicy({ rules: [
     { secret: 'PROD_*', agents: ['codex'], deny: true, reason: 'No production credentials in Codex' },
     { secret: 'STRIPE_KEY', agents: ['claude-code'], allowHosts: ['api.stripe.com', '127.0.0.1'] },
@@ -106,10 +106,11 @@ test('a signed policy denies a secret for Codex only, and the audit log is uploa
   const codex = await request('codex', '__ZN_PROD_DB_URL__', 'http://127.0.0.1:9/x');
   assert.strictEqual(codex.isError, true);
   assert.match(codex.text, /organization policy/);
+  // The rule names Codex, but zn-gate cannot prove which agent calls: it applies to all.
   const before = sent.length;
   const claude = await request('claude-code', '__ZN_PROD_DB_URL__', 'http://127.0.0.1:9/x');
-  assert.strictEqual(claude.isError, false, claude.text);
-  assert.strictEqual(sent.length, before + 1);
+  assert.strictEqual(claude.isError, true);
+  assert.strictEqual(sent.length, before);
 });
 
 test('a self-reported agent id (ZN_AGENT) cannot dodge a rule for another agent', async () => {

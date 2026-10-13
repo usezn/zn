@@ -133,9 +133,9 @@ async function prepare(parsed, opts) {
     throw znError(code, reason);
   };
 
-  // Local settings with the organization policy applied (zn Team). The agent
-  // id of zn run (--agent, ZN_AGENT) is self-reported, so it never selects
-  // agent-specific rules: every matching rule restricts, none opens.
+  // Local settings with the organization policy applied (zn Team): every
+  // matching rule restricts. The agent id of zn run (--agent, ZN_AGENT) is
+  // self-reported, so nothing new is offered for it.
   const list = await vault.listSecrets({ effective: true, agent, agentTrusted: false });
   const meta = new Map((list || []).map((s) => [s.name, s]));
   const approvals = opts.approvals || approvalStore({ vault, znHome: opts.znHome });

@@ -6,21 +6,25 @@
  *
  * A pattern comes from the network, so it is treated as untrusted. A
  * JavaScript regular expression cannot be interrupted once it runs, so the
- * client only accepts a grammar whose cost is bounded before running it:
- *   - the same checks as the server: no nested quantifiers, no
- *     back-references, no lookaround, must compile, must not match "";
- *   - no unbounded repetition (`*`, `+`, `{n,}`): token formats have a
- *     known length, written as `{n}` or `{m,n}`;
- *   - at most two variable-length repetitions (`?` or `{m,n}` with m < n),
- *     each spanning at most 64, and n at most 256;
- *   - no repeated group with alternatives, such as (a|ab){2,4};
- *   - text is scanned in windows of at most 4096 characters (one line at a
- *     time, long lines split);
- *   - as a last guard, a detector whose run on one window takes longer than
- *     50 ms is switched off for the rest of the process.
- * Patterns the server accepts but this grammar does not are skipped here.
- * A value split across two windows of a very long line is not found by a
- * custom detector; the built-in layers are not affected.
+ * client accepts only a grammar whose cost is bounded before it runs, and
+ * checks it with a parser, not with regular expressions:
+ *
+ *   pattern  = ["^"] item+ ["$"]
+ *   item     = atom [ "{" n "}" | "{" m "," n "}" ]
+ *   atom     = literal | "\" escape | "." | "[" class "]"
+ *
+ * That is a flat sequence of characters and character classes, each with an
+ * optional bounded repetition: no groups, no alternatives, no `?`, `*` or
+ * `+`, no back-references or lookaround. At most two repetitions may vary in
+ * length ({m,n} with m < n), each spanning at most 64, and n is at most 256.
+ * Token formats fit (`ACME-[A-Z0-9]{24}`, `sk_[a-z]{0,8}_[A-Za-z0-9]{20,40}`);
+ * a pattern outside the grammar is skipped on this machine.
+ *
+ * Text is scanned one line at a time, in windows of at most 4096
+ * characters. A value split across two windows of a very long line is not
+ * found by a custom detector; the built-in layers are not affected. As a
+ * last guard, a detector whose run on one window takes longer than 50 ms is
+ * switched off for the rest of the process.
  */
 
 const WINDOW = 4096;
@@ -28,59 +32,73 @@ const SLOW_MS = 50;
 const TYPE_RE = /^[A-Z0-9](?:[A-Z0-9_]{0,62}[A-Z0-9])?$/;
 const ID_RE = /^[a-z0-9_]{1,64}$/;
 
-const NESTED_QUANTIFIER_RE = /\((?:[^()\\]|\\.)*[+*}](?:[^()\\]|\\.)*\)\s*[+*{]/;
-const QUANTIFIED_ALTERNATION_RE = /\((?:[^()\\]|\\.)*\|(?:[^()\\]|\\.)*\)\s*[+*{?]/;
-
 const MAX_VARIABLE = 2;
 const MAX_SPAN = 64;
 const MAX_REPEAT = 256;
+const SPECIAL = '\\^$.|?*+()[]{}';
+// Escapes that stand for one character or a class of one character.
+const ESCAPES = /^[dDwWsStrnfv.\\^$|?*+()[\]{}\/-]$/;
 
-/* Walk the pattern and check every quantifier (outside character classes
- * and escapes). Returns a reason or null. */
-function checkQuantifiers(p) {
+/** Why a pattern is outside the grammar, or null. */
+function checkPattern(pattern) {
+  if (typeof pattern !== 'string' || pattern.length < 4 || pattern.length > 256) return 'invalid length';
+  const p = pattern;
+  let i = 0;
+  let items = 0;
   let variable = 0;
-  let inClass = false;
-  for (let i = 0; i < p.length; i++) {
+  if (p[i] === '^') i++;
+  while (i < p.length) {
+    if (p[i] === '$' && i === p.length - 1) { i++; break; }
+    // atom
     const ch = p[i];
-    if (ch === '\\') { i++; continue; }
-    if (inClass) { if (ch === ']') inClass = false; continue; }
-    if (ch === '[') { inClass = true; continue; }
-    if (ch === '*' || ch === '+') return 'unbounded repetition (* or +) is not allowed; use {n} or {m,n}';
-    if (ch === '?') {
-      if (p[i - 1] === '(') continue;                       // (?: group syntax
-      variable++;                                           // x? is a variable repetition
-      continue;
+    if (ch === '\\') {
+      const e = p[i + 1];
+      if (e === undefined || !ESCAPES.test(e)) return 'unsupported escape \\' + (e || '');
+      i += 2;
+    } else if (ch === '[') {
+      let j = i + 1;
+      if (p[j] === '^') j++;
+      if (p[j] === ']') return 'empty character class';
+      while (j < p.length && p[j] !== ']') {
+        if (p[j] === '\\') {
+          if (p[j + 1] === undefined || !ESCAPES.test(p[j + 1])) return 'unsupported escape in a class';
+          j += 2;
+        } else if (p[j] === '[') {
+          return 'nested character class';
+        } else {
+          j++;
+        }
+      }
+      if (p[j] !== ']') return 'unterminated character class';
+      i = j + 1;
+    } else if (ch === '.') {
+      i++;
+    } else if (SPECIAL.includes(ch)) {
+      return 'only characters, character classes and {n} or {m,n} repetitions are allowed (no ' + ch + ')';
+    } else {
+      i++;
     }
-    if (ch === '{') {
-      const m = /^\{(\d{1,3})(?:(,)(\d{0,3}))?\}/.exec(p.slice(i));
-      if (!m) continue;                                     // a literal brace
+    items++;
+    // optional bounded repetition
+    if (p[i] === '{') {
+      const m = /^\{(\d{1,3})(?:,(\d{1,3}))?\}/.exec(p.slice(i));
+      if (!m) return 'repetitions are written {n} or {m,n}';
       const lo = Number(m[1]);
-      if (m[2] && m[3] === '') return 'unbounded repetition ({n,}) is not allowed';
-      const hi = m[2] ? Number(m[3]) : lo;
-      if (hi > MAX_REPEAT || hi < lo) return 'repetition bounds must be at most ' + MAX_REPEAT;
+      const hi = m[2] === undefined ? lo : Number(m[2]);
+      if (hi < lo || hi > MAX_REPEAT || hi === 0) return 'repetition bounds must be 1 to ' + MAX_REPEAT;
       if (hi > lo) {
         if (hi - lo > MAX_SPAN) return 'a variable repetition can span at most ' + MAX_SPAN;
         variable++;
       }
-      i += m[0].length - 1;
-      if (p[i + 1] === '?') i++;                            // lazy {m,n}?
+      i += m[0].length;
+      if (p[i] === '?' || p[i] === '+' || p[i] === '{') return 'repetition modifiers are not allowed';
     }
   }
+  if (i !== p.length) return 'unexpected text after $';
+  if (items === 0) return 'empty pattern';
   if (variable > MAX_VARIABLE) return 'at most ' + MAX_VARIABLE + ' variable-length repetitions are allowed';
-  return null;
-}
-
-/** Why a pattern is refused, or null. */
-function checkPattern(pattern) {
-  if (typeof pattern !== 'string' || pattern.length < 4 || pattern.length > 256) return 'invalid length';
-  if (NESTED_QUANTIFIER_RE.test(pattern)) return 'nested quantifiers are not allowed';
-  const q = checkQuantifiers(pattern);
-  if (q) return q;
-  if (QUANTIFIED_ALTERNATION_RE.test(pattern)) return 'a repeated group with alternatives is not allowed';
-  if (/\\[1-9]|\\k</.test(pattern)) return 'back-references are not allowed';
-  if (/\(\?<?[=!]/.test(pattern)) return 'lookaround is not allowed';
   let re;
-  try { re = new RegExp(pattern); } catch (err) { return 'invalid regular expression'; }
+  try { re = new RegExp(p); } catch (err) { return 'invalid regular expression'; }
   if (re.test('')) return 'pattern must not match the empty string';
   return null;
 }

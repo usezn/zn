@@ -34,10 +34,10 @@ when it is not `api.usezn.com`.
 ## The organization policy
 
 The policy lists rules for secrets by **name** (for example `PROD_*`), never
-by value, per agent (`claude-code`, `codex`, ...):
+by value:
 
 ```json
-{ "secret": "PROD_*", "agents": ["codex"], "deny": true, "reason": "No production credentials in Codex" }
+{ "secret": "PROD_*", "agents": ["*"], "deny": true, "reason": "No production credentials in AI agents" }
 { "secret": "STRIPE_KEY", "agents": ["claude-code"], "allowHosts": ["api.stripe.com"] }
 ```
 
@@ -56,25 +56,33 @@ is a readable copy: editing or deleting it does not remove any restriction.
 
 | | |
 |---|---|
-| **Always** | Block a secret for an agent (`deny`). Narrow the hosts (`allowHosts`) or commands (`allowCommands`) a secret may be used with. Force `proxy` mode. Limit where `secrets_http_request` may put the value (`injectAt`). Add custom secret formats for the scrubber (`detectors`). |
+| **Always** | Block a secret (`deny`). Narrow the hosts (`allowHosts`) or commands (`allowCommands`) a secret may be used with. Force `proxy` mode. Limit where `secrets_http_request` may put the value (`injectAt`). Add custom secret formats for the scrubber (`detectors`). |
 | **Only after you approve it on this machine** | Let a secret go to a host your local settings do not allow. The first time an agent needs that host, the vault asks you; the approval is kept per organization, secret and host. A wildcard host (`*.example.com`) is flagged as such in the dialog. |
 | **Never** | Open a new command, mode or HTTP placement for a secret. Change or switch off the protections for credential files, `~/.zn` and agent configuration. Read secret values. |
 
 So a stolen organization signing key cannot make zn-gate send a secret
 somewhere new without someone at the machine saying yes.
 
-Rules for a specific agent are matched only when zn-gate knows which agent is
-calling: the `secrets` MCP server started from the configuration zn-gate
-writes for that agent (`zn hooks install <agent>`, which passes `--agent`).
-When the agent is not known that way (`zn run`, an older configuration, the
-`ZN_AGENT` variable), every rule that matches the secret restricts it,
-whatever agent it names, and nothing is opened.
+**Restrictions apply to every agent.** zn-gate cannot prove which agent is
+calling (any program on the machine can start its tools and say it is some
+agent), so every rule that matches a secret restricts it for all agents,
+whatever its `agents` list says. A `deny` written for Codex also blocks the
+secret in Claude Code. The `agents` list only decides who can be offered a
+new host: the `secrets` MCP server started from the configuration zn-gate
+writes for that agent (`zn hooks install <agent>` passes `--agent`), or any
+agent for `*`. Rules apply in order, and a host list from an earlier rule
+is never widened by a later one.
+
+Only `proxy` is applied from a rule's `mode`; other modes in a rule are
+ignored.
 
 Custom `detectors` run with the built-in patterns and only add redactions.
-zn-gate accepts only patterns whose cost is bounded before they run: no `*`,
-`+` or `{n,}`, at most two variable-length repetitions (`?` or `{m,n}`, each
-spanning at most 64), no repeated group with alternatives, no
-back-references or lookaround. Other patterns are skipped on the machine.
+A pattern runs only if its cost is bounded before it runs: a flat sequence
+of characters, escapes such as `\d`, and character classes, each with an
+optional `{n}` or `{m,n}` (n up to 256; at most two `{m,n}` that vary, each
+by at most 64). No groups, alternatives, `?`, `*` or `+`. For example
+`ACME-[A-Z0-9]{24}` or `sk_[a-z]{0,8}_[A-Za-z0-9]{20,40}`. Other patterns
+are skipped on the machine.
 
 ### Offline, expiry and removal
 
