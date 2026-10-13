@@ -105,6 +105,10 @@ COMMANDS:
   init                Find and wrap MCP servers in known agent configs (Claude, Cursor, Codex, OpenCode...)
   shield, mcp-shield  Wrap and protect ANY external MCP server (uvx, npx, node, python)
   scan <path>         Recursively audit prompt templates, markdown, skills, and configs for injection traps
+  audit [path]        Review a repository's agent configs before you open it: hooks, MCP servers,
+                      endpoint overrides, permissions, instructions, planted executables
+                      [--format text|json|sarif] [--output FILE] [--fail-on high]
+                      [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home]
   evidence            Query the local hash-chained audit log and run the UI dashboard
   logs                Tail or inspect security event logs
   mcp                 Run as standalone bidirectional MCP server for AI agents
@@ -183,6 +187,9 @@ EXAMPLES:
 
   # Audit prompt templates / agent skills for hidden injection traps
   npx -y zn-gate scan ./prompts
+
+  # Review the agent configs of a repository you just cloned
+  npx -y zn-gate audit ./some-repo
 
   # Wrap an individual MCP server on the fly
   npx -y zn-gate shield -- uvx mcp-server-fetch
@@ -440,7 +447,14 @@ Status       : ${totalFindings === 0 ? 'Clean workspace' : 'Review and neutraliz
 
 // Secrets broker and agent hooks. Dispatched before the global option parsing
 // so flags after `zn run --` belong to the child command, untouched.
-const BROKER_COMMANDS = new Set(['run', 'hook', 'secrets-mcp', 'secret', 'secrets', 'env', 'audit', 'hooks']);
+const BROKER_COMMANDS = new Set(['run', 'hook', 'secrets-mcp', 'secret', 'secrets', 'env', 'hooks']);
+
+// `zn audit` reviews the agent configs of a directory. The secret-use log it
+// showed in 1.5 is `zn vault log` (alias `zn secret log`); lib/audit/cli.js
+// points there when it gets the old forms (`zn audit log`, `--since`).
+async function runAuditCommand(rest) {
+  process.exitCode = await require('../lib/audit/cli').main(rest);
+}
 
 async function runBrokerCommand(command, rest) {
   if (command === 'run') {
@@ -464,6 +478,10 @@ async function runBrokerCommand(command, rest) {
 
 async function main() {
   const args = process.argv.slice(2);
+  if (args[0] === 'audit') {
+    await runAuditCommand(args.slice(1));
+    return;
+  }
   // zn Team and the OpenTelemetry export of the audit log. exitCode (not
   // process.exit) so a large export is flushed completely through a pipe.
   if (args[0] === 'team') {

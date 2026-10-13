@@ -108,10 +108,20 @@ understanding of the security model ([docs/threat-model.md](docs/threat-model.md
 and agreement to follow this document and [SECURITY.md](SECURITY.md).
 
 The existing maintainers decide on the invitation. New maintainers are added to
-[MAINTAINERS.md](MAINTAINERS.md) in a pull request, must enable two-factor
-authentication on GitHub, and get access step by step: review rights first,
-then merge rights, then release approval. Maintainers who stop being active may
-step down or be moved to an emeritus list.
+[MAINTAINERS.md](MAINTAINERS.md) in a pull request and get access step by step:
+review rights first, then merge rights, then release approval. Maintainers who
+stop being active may step down or be moved to an emeritus list.
+
+## Account security
+
+The `usezn` GitHub organization requires two-factor authentication for all
+members, outside collaborators and billing managers, and allows only secure
+methods: authenticator apps, passkeys, security keys and GitHub Mobile. SMS is
+not accepted, and an account that still has SMS configured is treated as
+non-compliant. Invitations can only be accepted after a secure method is set
+up. Members who are not compliant cannot access the organization's
+repositories or other resources until they fix it, and outside collaborators
+who are not compliant are removed.
 
 ## Changes to this document
 

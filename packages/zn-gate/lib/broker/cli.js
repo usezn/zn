@@ -1,8 +1,8 @@
 'use strict';
 
 /**
- * `zn secret ...` (including `zn secret log`), `zn vault log`, `zn env ...`,
- * `zn audit` (deprecated alias of `zn vault log`) and `zn hooks ...`.
+ * `zn secret ...` (including `zn secret log`), `zn vault log`, `zn env ...`
+ * and `zn hooks ...`.
  *
  * Every command that adds, changes, reveals or removes a value is for the
  * person at the keyboard: it needs an interactive terminal, refuses to run
@@ -467,7 +467,6 @@ async function hooks(args, io) {
 /* ------------------------------ entry ------------------------------ */
 
 const SECRET_USAGE = 'usage: zn secret set|list|rm|allow|approve|import|adopt|log ...';
-const AUDIT_NOTICE = 'zn: `zn audit` is moving: use `zn vault log` (alias `zn secret log`) to see this log. In 1.6, `zn audit` will audit your configuration instead.';
 
 async function dispatch(group, args, ioIn) {
   const io = makeIo(ioIn);
@@ -497,10 +496,6 @@ async function dispatch(group, args, ioIn) {
       // Reached from `zn vault log` (lib/vault/cli.js routes it here).
       if (args[0] === 'log') return await audit(args.slice(1), io);
       throw deps.znError('ZN_USAGE', 'usage: zn vault log [--since 1h]');
-    }
-    if (group === 'audit') {
-      io.stderr.write(AUDIT_NOTICE + '\n');
-      return await audit(args, io);
     }
     if (group === 'hooks') return await hooks(args, io);
     throw deps.znError('ZN_USAGE', 'unknown command ' + group);
