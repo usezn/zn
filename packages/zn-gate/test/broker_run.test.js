@@ -163,12 +163,13 @@ test('zn run drops dynamic loader variables when secret values are injected, and
   const stdout = sink();
   const stderr = sink();
   const loaderEnv = { ...nodeEnv, LD_PRELOAD: '/nonexistent/hook.so', DYLD_INSERT_LIBRARIES: '/nonexistent/hook.dylib', LD_ZN_KEPT_WITHOUT_VALUES: 'kept' };
-  const probe = 'console.log(["LD_PRELOAD","DYLD_INSERT_LIBRARIES","GCONV_PATH"].map((k) => process.env[k] === undefined ? "gone" : "present").join(" "))';
+  const probe = 'console.log(["LD_PRELOAD","DYLD_INSERT_LIBRARIES","GCONV_PATH","NODE_PATH","PYTHONPATH","PERL5OPT","JAVA_TOOL_OPTIONS","BASH_ENV"].map((k) => process.env[k] === undefined ? "gone" : "present").join(" ") + "|" + (process.platform === "win32" ? process.env.NoDefaultCurrentDirectoryInExePath : "1"))';
+  const extra = { GCONV_PATH: '/nonexistent/gconv', NODE_PATH: '/nonexistent/mods', PYTHONPATH: '/x', PERL5OPT: '-Mx', JAVA_TOOL_OPTIONS: '-javaagent:x', BASH_ENV: '/x' };
   const code = await runBroker(['--secrets', 'DB_PASSWORD', '--', NODE, '-e', probe], {
-    vault, env: { ...loaderEnv, GCONV_PATH: '/nonexistent/gconv' }, stdout, stderr, stdin: { isTTY: false }, approvals: { isApproved: async () => true, recordApproval: async () => {} },
+    vault, env: { ...loaderEnv, ...extra }, stdout, stderr, stdin: { isTTY: false }, approvals: { isApproved: async () => true, recordApproval: async () => {} },
   });
   assert.equal(code, 0, stderr.text());
-  assert.equal(stdout.text().trim(), 'gone gone gone');
+  assert.equal(stdout.text().trim(), 'gone gone gone gone gone gone gone gone|1');
   assert.equal((stderr.text().match(/removed .*LD_PRELOAD/g) || []).length, 1, 'said once');
   assert.ok(!stderr.text().includes('/nonexistent/hook'), 'the values of the variables are not printed');
 });
@@ -270,17 +271,23 @@ const { systemCmdExe, batchInvocation } = require('../lib/broker/run');
 const { spawnSync } = require('child_process');
 const WIN = process.platform === 'win32';
 
-test('the cmd.exe for batch files comes from a Windows directory, never ComSpec or another folder', () => {
-  assert.equal(systemCmdExe({}), null);
-  assert.equal(systemCmdExe({ SystemRoot: 'C:\\Users\\dev\\Windows' }), null);
-  assert.equal(systemCmdExe({ SystemRoot: 'C:\\Windows\\..\\Temp' }), null);
-  assert.equal(systemCmdExe({ SystemRoot: '\\\\server\\share\\Windows' }), null);
-  if (WIN) assert.match(systemCmdExe(process.env), /^[A-Za-z]:\\Windows\\System32\\cmd\.exe$/i);
+test('the cmd.exe for batch files comes from the system, whatever SystemRoot, ComSpec or PATH say', () => {
+  if (!WIN) { assert.equal(systemCmdExe(), null); return; }
+  const real = systemCmdExe();
+  assert.match(real, /^[A-Za-z]:\\[^%!"]+\\System32\\cmd\.exe$/i);
+  const saved = { SystemRoot: process.env.SystemRoot, ComSpec: process.env.ComSpec, PATH: process.env.PATH };
+  try {
+    process.env.SystemRoot = 'Z:\\Windows';
+    process.env.ComSpec = process.execPath;
+    process.env.PATH = 'Z:\\Windows\\System32';
+    assert.equal(systemCmdExe(), real);
+  } finally {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
 });
 
 test('batch files: arguments zn changed, metacharacters and expansion characters in the path are refused', () => {
-  const env = { SystemRoot: 'C:\\Windows' };
-  const deny = (resolved, args, original) => assert.throws(() => batchInvocation(resolved, args, original, env),
+  const deny = (resolved, args, original) => assert.throws(() => batchInvocation(resolved, args, original),
     (e) => e.code === 'ZN_POLICY_DENIED', resolved + ' ' + args.join(' '));
   deny('C:\\tools\\deploy.cmd', ['secret-value'], ['__ZN_TOKEN__']);
   for (const a of ['a&b', 'a|b', 'a>b', 'a^b', '%PATH%', '!X!', 'a"b', 'a\nb']) deny('C:\\tools\\deploy.cmd', [a], [a]);
@@ -291,7 +298,8 @@ test('a batch file runs through the system cmd.exe even when ComSpec points else
   const dir = tempDir(t, 'zn-bat-');
   const bat = path.join(dir, 'say hi.cmd');
   fs.writeFileSync(bat, '@echo off\r\necho ran:%~1:%~2\r\n');
-  const b = batchInvocation(bat, ['one', 'two words'], ['one', 'two words'], process.env);
+  const b = batchInvocation(bat, ['one', 'two words'], ['one', 'two words']);
+  assert.deepEqual(b.args.slice(0, 4), ['/d', '/v:off', '/s', '/c']);
   assert.match(b.file, /\\System32\\cmd\.exe$/i);
   // A hostile ComSpec in the environment of zn and of the child changes nothing.
   const env = { ...process.env, ComSpec: process.execPath };

@@ -35,10 +35,14 @@ const { znError, loadVault, findProjectRoot } = require('../deps');
 
 const USAGE = 'usage: zn run [--secrets NAME[,NAME...]] [--agent ID] -- <command> [args...]';
 
-// Dynamic loader settings (LD_PRELOAD, DYLD_INSERT_LIBRARIES, ...) and glibc
-// settings that load code or files of the caller's choosing (GCONV_PATH loads
-// converter modules).
-const LOADER_VAR = /^(LD_|DYLD_)|^(GCONV_PATH|GLIBC_TUNABLES|LOCPATH|NLSPATH|HOSTALIASES|RES_OPTIONS)$/i;
+// Settings that make the approved program, or the interpreter it starts (an
+// npm CLI is a shim that runs node), load code or files of the caller's
+// choosing: dynamic loader and glibc settings (LD_PRELOAD,
+// DYLD_INSERT_LIBRARIES, GCONV_PATH ...) and interpreter start-up options
+// (NODE_OPTIONS=--require, PYTHONPATH, PERL5OPT, JAVA_TOOL_OPTIONS, BASH_ENV ...).
+const LOADER_VAR = new RegExp('^(LD_|DYLD_)|^(GCONV_PATH|GLIBC_TUNABLES|LOCPATH|NLSPATH|HOSTALIASES|RES_OPTIONS|' +
+  'NODE_OPTIONS|NODE_PATH|NODE_REPL_EXTERNAL_MODULE|PYTHONPATH|PYTHONHOME|PYTHONSTARTUP|PYTHONINSPECT|PERL5OPT|PERL5LIB|PERLLIB|' +
+  'RUBYOPT|RUBYLIB|JAVA_TOOL_OPTIONS|_JAVA_OPTIONS|JDK_JAVA_OPTIONS|BASH_ENV|ENV)$', 'i');
 
 function splitList(v) {
   return String(v || '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -104,28 +108,20 @@ function referencedSecrets(parsed, env) {
 }
 
 /*
- * cmd.exe for batch files, chosen by zn. Never ComSpec, PATH or the current
- * directory, which the caller of zn run (an agent) controls: with
- * `shell: true` Node starts whatever ComSpec names, and that program would
- * receive the secret values. SystemRoot comes from the environment too, so it
- * must look like a Windows directory and, unless it is C:\Windows, its
- * System32 must not be writable by this user. Returns the path or null.
+ * cmd.exe for batch files, chosen by zn. Never ComSpec, SystemRoot, PATH or
+ * the current directory, which the caller of zn run (an agent) controls:
+ * with `shell: true` Node starts whatever ComSpec names, and that program
+ * would receive the secret values. The path comes from the kernel's
+ * \SystemRoot link, which no environment variable or drive mapping of the
+ * caller changes; it is resolved twice so a drive letter remapped in this
+ * logon session is refused too. Returns the path or null.
  */
-function systemCmdExe(env) {
-  const e = env || process.env;
-  const root = String(e.SystemRoot || e.SYSTEMROOT || '');
-  if (!/^[A-Za-z]:\\Windows$/i.test(root)) return null;
-  const sys = path.win32.join(root, 'System32');
-  const cmd = path.win32.join(sys, 'cmd.exe');
-  try { if (!fs.statSync(cmd).isFile()) return null; } catch (_) { return null; }
-  if (root.toLowerCase() !== 'c:\\windows') {
-    const probe = path.win32.join(sys, '.zn-write-check-' + process.pid + '-' + Date.now());
-    try {
-      fs.closeSync(fs.openSync(probe, 'wx'));
-      try { fs.unlinkSync(probe); } catch (_) { /* best effort */ }
-      return null;
-    } catch (_) { /* not writable: a system directory */ }
-  }
+function systemCmdExe() {
+  if (process.platform !== 'win32') return null;
+  let cmd;
+  try { cmd = fs.realpathSync.native('\\\\?\\GLOBALROOT\\SystemRoot\\System32\\cmd.exe'); } catch (_) { return null; }
+  if (!/^[A-Za-z]:\\[^%!"]+\\System32\\cmd\.exe$/i.test(cmd)) return null;
+  try { if (fs.realpathSync.native(cmd).toLowerCase() !== cmd.toLowerCase()) return null; } catch (_) { return null; }
   return cmd;
 }
 
@@ -141,22 +137,22 @@ function cmdQuote(arg) {
  * refused, and so is a program path with expansion characters.
  * original: the arguments as the caller wrote them.
  */
-function batchInvocation(resolved, args, original, env) {
+function batchInvocation(resolved, args, original) {
   const touched = args.some((a, i) => a !== original[i]);
   if (touched || args.some((a) => /[&|<>^%!"\r\n]/.test(a)) || /[%!"\r\n]/.test(resolved)) {
     throw znError('ZN_POLICY_DENIED', path.basename(resolved) +
       ' is a batch file: zn run will not pass secret values or shell metacharacters through cmd.exe. ' +
       'Use --secrets NAME to pass the value as an environment variable instead.');
   }
-  const cmdExe = systemCmdExe(env);
+  const cmdExe = systemCmdExe();
   if (!cmdExe) {
     throw znError('ZN_POLICY_DENIED', path.basename(resolved) +
-      ' is a batch file and zn could not find the system cmd.exe (SystemRoot must be the Windows directory); it was not started.');
+      ' is a batch file and zn could not find the system cmd.exe; it was not started.');
   }
-  // /d: no AutoRun commands; /s /c "...": cmd.exe runs the line between the
-  // outer quotes as is.
+  // /d: no AutoRun commands; /v:off: no !VAR! expansion; /s /c "...": cmd.exe
+  // runs the line between the outer quotes as is.
   const line = [resolved, ...args].map(cmdQuote).join(' ');
-  return { file: cmdExe, args: ['/d', '/s', '/c', '"' + line + '"'] };
+  return { file: cmdExe, args: ['/d', '/v:off', '/s', '/c', '"' + line + '"'] };
 }
 
 /**
@@ -275,7 +271,14 @@ async function prepare(parsed, opts) {
     const loader = Object.keys(childEnv).filter((k) => LOADER_VAR.test(k));
     for (const k of loader) delete childEnv[k];
     if (loader.length && opts.stderr !== false) {
-      (opts.stderr || process.stderr).write('zn run: removed ' + loader.join(', ') + ' from the environment (dynamic loader variables; they are not passed when secret values are injected)\n');
+      (opts.stderr || process.stderr).write('zn run: removed ' + loader.join(', ') + ' from the environment (loader and interpreter start-up variables; they are not passed when secret values are injected)\n');
+    }
+    // Windows: a program the approved one starts by name (an npm shim runs
+    // `node`) must not come from the current directory, where an agent can
+    // write files.
+    if (process.platform === 'win32') {
+      for (const k of Object.keys(childEnv)) if (k.toLowerCase() === 'nodefaultcurrentdirectoryinexepath') delete childEnv[k];
+      childEnv.NoDefaultCurrentDirectoryInExePath = '1';
     }
   }
   const argv = parsed.command.map((a) => markers.substitute(a, values));
