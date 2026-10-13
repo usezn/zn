@@ -14,7 +14,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from . import __version__
-from .rules import RULES_VERSION, evaluate, redact_secrets
+from .rules import RULES_VERSION, SECRET_PATTERNS, evaluate, redact_secrets
+
+# Secrets that span several lines (a PEM private key block). The line-by-line
+# scan never sees BEGIN and END together, so these run on the whole file.
+_MULTILINE_RULES = [(name, rx) for name, rx, _ in SECRET_PATTERNS if name == "secret:private_key"]
 from .client import analyze, is_cloud_enabled, resolve_endpoint
 from .evidence import log_evidence, verify_evidence_ledger, get_evidence_stats, export_evidence_ledger, EVIDENCE_FILE
 
@@ -145,6 +149,23 @@ def _scan_file(file_path: Path) -> List[Dict[str, Any]]:
                 "reason": "Exposed credential detected by DLP filter",
                 "type": "secret_leak",
                 "content": snippet,
+            })
+    seen = {(v["line"], v["rule"]) for v in violations}
+    for name, rx in _MULTILINE_RULES:
+        for m in rx.finditer(content):
+            line = content.count("\n", 0, m.start()) + 1
+            if (line, name) in seen:
+                continue
+            seen.add((line, name))
+            # Only the first line of the block, without the key material.
+            header = m.group(0).splitlines()[0].strip()[:100]
+            violations.append({
+                "file": str(file_path),
+                "line": line,
+                "rule": name,
+                "reason": "Exposed credential detected by DLP filter",
+                "type": "secret_leak",
+                "content": header,
             })
     return violations
 

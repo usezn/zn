@@ -75,6 +75,23 @@ class TestCliScanCommand(unittest.TestCase):
         types = {t["type"] for t in json.loads(out)["threats"]}
         self.assertEqual(types, {"injection", "secret_leak"})
 
+    def test_private_key_over_several_lines_is_reported_once_without_its_body(self):
+        body = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC" + "Z" * 40
+        pem = ("x = 1\n-----BEGIN " + "PRIVATE KEY-----\n" + body + "\n" + body[::-1] + "\n-----END " + "PRIVATE KEY-----\n")
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "key.txt"), "w", encoding="utf-8") as f:
+                f.write(pem)
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = cmd_scan(argparse.Namespace(path=d, exclude=None, include=None, format="json", no_fail=False))
+        out = buf.getvalue()
+        self.assertEqual(code, 1)
+        threats = [t for t in json.loads(out)["threats"] if t["rule"] == "secret:private_key"]
+        self.assertEqual(len(threats), 1)
+        self.assertEqual(threats[0]["line"], 2)
+        self.assertNotIn(body, out)
+        self.assertNotIn(body[::-1], out)
+
 
 if __name__ == "__main__":
     unittest.main()
