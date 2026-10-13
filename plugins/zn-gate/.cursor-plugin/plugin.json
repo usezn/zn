@@ -1,7 +1,7 @@
 {
   "name": "zn-gate",
   "version": "1.6.0",
-  "description": "Local security layer for Cursor: blocks reads of secret files, blocks prompts that carry secrets, redacts MCP tool output, and adds a secrets MCP server.",
+  "description": "Local security layer for Cursor: blocks reads of secret files, blocks prompts that carry secrets, redacts MCP tool output, adds a secrets MCP server, and checks untrusted text for prompt injection with local rules.",
   "author": {
     "name": "usezn",
     "email": "security@usezn.com"

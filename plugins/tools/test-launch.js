@@ -57,6 +57,7 @@ const SOURCES = {
   'lib/hooks/policy.js': "exports.name = 'policy';\n",
   'lib/data.json': '{"name": "data"}\n',
   'lib/broker/mcp.js': "exports.startSecretsMcp = () => process.stdout.write('mcp');\n",
+  'lib/mcp.js': "exports.startMcpServer = (o) => process.stdout.write(['zn-gate-mcp', process.env.ZN_LOCAL_ONLY, o && o.localOnly].join(' '));\n",
   'node_modules/dep/package.json': '{"name": "dep", "main": "main.js"}\n',
   'node_modules/dep/main.js': "exports.name = 'dep';\n",
   'node_modules/esm-dep/package.json': '{"name": "esm-dep", "type": "module", "exports": "./index.js"}\n',
@@ -324,6 +325,26 @@ try {
     const r = run(['hook', 'codex'], '{}', { path: oldBin + path.delimiter + binDir });
     assert.strictEqual(r.status, 0, r.stderr);
     assert.match(r.stdout, /^ran codex/);
+  });
+
+  test('zn-gate-mcp starts the MCP server with local rules only', () => {
+    const r = run(['zn-gate-mcp'], undefined, { env: { ZN_CLOUD: '1', ZN_API_KEY: 'zn_test_key', ZN_LOCAL_ONLY: 'false' } });
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.strictEqual(r.stdout, 'zn-gate-mcp true true');
+  });
+
+  test('the copy in the plugin folder is used, and checked like any other', () => {
+    const own = path.join(tmp, 'plugin-test', 'node_modules', 'zn-gate');
+    for (const [rel, text] of Object.entries(SOURCES)) write(path.join(own, ...rel.split('/')), text);
+    const noPath = { path: path.join(tmp, 'empty-bin') };
+    const r = run(['hook', 'codex'], '{"x":2}', noPath);
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.strictEqual(r.stdout, 'ran codex policy dep data esm {"x":2}');
+    // A changed copy is refused; the one on PATH is used instead when there is one.
+    write(path.join(own, 'lib', 'hooks', 'policy.js'), "exports.name = 'changed';\n");
+    refused(run(['hook', 'claude-code'], undefined, noPath), /does not match the published zn-gate/);
+    assert.strictEqual(run(['hook', 'codex'], '{"x":3}').stdout, 'ran codex policy dep data esm {"x":3}');
+    fs.rmSync(path.join(tmp, 'plugin-test', 'node_modules'), { recursive: true, force: true });
   });
 
   test('a lock without digests is refused', () => {

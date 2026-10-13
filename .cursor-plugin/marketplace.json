@@ -11,7 +11,7 @@
     {
       "name": "zn-gate",
       "source": "./plugins/zn-gate",
-      "description": "Blocks reads of secret files and prompts that carry secrets, redacts MCP tool output, and adds a secrets MCP server."
+      "description": "Blocks reads of secret files and prompts that carry secrets, redacts MCP tool output, adds a secrets MCP server, and checks untrusted text for prompt injection."
     }
   ]
 }

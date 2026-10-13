@@ -1,18 +1,19 @@
 # zn-gate plugin
 
 zn-gate is a local security layer for coding agents. This plugin connects an
-agent to the zn-gate package installed on your machine: hooks that keep secret
-values out of tool calls, tool output and prompts, a `secrets` MCP server that
-uses credentials without revealing them to the model, and a skill that
-explains both to the agent.
+agent to zn-gate: hooks that keep secret values out of tool calls, tool output
+and prompts, a `zn-gate` MCP server that checks untrusted text and tool calls
+for prompt injection with local rules, a `secrets` MCP server that uses
+credentials without revealing them to the model, and a skill that explains
+them to the agent.
 
 The plugin follows the [Agent Plugins 1.0](https://github.com/agentplugins/agent-plugins-spec)
 layout (`plugin.json`, `mcp.json`, `skills/`) and adds the files Claude Code
 and Cursor read for hooks.
 
 **Codex:** Codex does not run hooks from plugins (Codex 0.162.1 lists the
-`plugin_hooks` feature as removed). In Codex this plugin adds the `secrets` MCP
-server and the skill only. For the hooks, also run `zn hooks install codex`,
+`plugin_hooks` feature as removed). In Codex this plugin adds the MCP servers
+and the skill only. For the hooks, also run `zn hooks install codex`,
 which writes them into your Codex configuration. `com.openai/hooks.json` is
 kept for when Codex runs plugin hooks again.
 
@@ -26,9 +27,15 @@ kept for when Codex runs plugin hooks again.
   Claude Code (the terminal or the desktop app).
 - Git (on Windows, Git for Windows), to add the marketplace from GitHub.
   Without it, `claude plugin marketplace add` fails because Git is not found.
-- zn-gate **1.6.0** installed from npm. The plugin never installs, downloads or
-  updates zn-gate itself. Install it once, then check the registry signatures
-  of what you installed:
+- zn-gate **1.6.0**.
+  - **Claude Code** installs it with the plugin: it runs your `npm` to install
+    the release pinned by the plugin's `package-lock.json` (with its registry
+    integrity) into the plugin folder, with install scripts disabled. This
+    needs npm on your `PATH`; without it the install is skipped, and the
+    session start check says what to run.
+  - **Codex, Cursor and other agents** do not install plugin dependencies.
+    Install the release yourself, then check the registry signatures of what
+    you installed:
 
   ```bash
   npm install -g zn-gate@1.6.0
@@ -49,7 +56,7 @@ kept for when Codex runs plugin hooks again.
 ## Where it protects you
 
 - **Claude Code** in the terminal, the IDE extensions and local sessions in
-  the Code tab of the Claude desktop app: hooks and the `secrets` MCP server.
+  the Code tab of the Claude desktop app: hooks and both MCP servers.
   The Code tab uses the plugins installed with `claude plugin install`.
   Claude Code sessions that run in the cloud (Claude Code on the web, cloud
   sessions in the Code tab) do not load plugins installed on your machine, so
@@ -65,12 +72,13 @@ kept for when Codex runs plugin hooks again.
 
 ## What the plugin runs
 
-Every hook and the MCP server run `node scripts/zn-launch.js`, a single file
-with no dependencies that you can read in full. On every call it:
+Every hook and both MCP servers run `node scripts/zn-launch.js`, a single
+file with no dependencies that you can read in full. On every call it:
 
 1. finds the zn-gate package: the directory set as
-   `"plugin": {"packageDir": "..."}` in `~/.zn/config.json`, or else each
-   `zn-gate` executable on your `PATH` in turn (npm global layouts);
+   `"plugin": {"packageDir": "..."}` in `~/.zn/config.json`, or else the copy
+   in the plugin folder (`node_modules/zn-gate`, installed by Claude Code),
+   then each `zn-gate` executable on your `PATH` in turn (npm global layouts);
 2. requires exactly version 1.6.0;
 3. reads the whole package directory and requires it to hold exactly the files
    listed in `scripts/zn-gate.lock.json`, each with the SHA-256 digest of the
@@ -85,7 +93,7 @@ check runs on every call; `plugins/tools/bench-launch.js` in the repository
 measures what that adds per hook call.
 
 If anything fails, including an error inside zn-gate, the hooks refuse the
-call or prompt and say how to fix it (exit code 2), and the MCP server does
+call or prompt and say how to fix it (exit code 2), and the MCP servers do
 not start. To let events pass while zn-gate is unavailable instead, set
 `{"hooks": {"whenUnavailable": "allow"}}` in `~/.zn/config.json` (the file in
 your account's home directory; `$HOME` does not change which file is read).
@@ -107,7 +115,7 @@ It is not a sandbox:
 - **Node.js API.** The launcher loads ES modules through
   `vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER`, which Node's documentation
   marks as experimental. If a Node.js version lacks it or changes it, the
-  launcher refuses to run (hooks exit 2, the MCP server does not start).
+  launcher refuses to run (hooks exit 2, the MCP servers do not start).
 - **Timeouts pass in Claude Code.** A hook that does not answer in 15 s is
   treated as a non-blocking error, and the call goes ahead. The Cursor hooks
   are marked `failClosed`, so Cursor blocks the call instead.
@@ -133,24 +141,27 @@ It is not a sandbox:
 
 ## What leaves your machine
 
-Nothing, by default. The hooks and the scrubber run locally and make no
-network requests. The `secrets` MCP server makes the HTTP requests the agent
+Nothing, by default. The hooks, the scrubber and the `zn-gate` MCP server run
+locally and make no network requests: the plugin starts the `zn-gate` MCP
+server with local rules only, even when `ZN_CLOUD` and `ZN_API_KEY` are set.
+The `secrets` MCP server makes the HTTP requests the agent
 asks for with `secrets_http_request`, only to hosts you allowed for each
 secret (`zn secret allow NAME --host api.example.com`). zn-gate also has an
 optional cloud prompt analysis (`zn analyze`, enabled only with `ZN_CLOUD=1`
 and an API key, sending prompt text with secrets redacted first); the
-plugin's hooks and MCP server do not use it.
+plugin's hooks and MCP servers do not use it.
 
 ## Updates
 
 The plugin is pinned to zn-gate 1.6.0 and has no auto-update. A new zn-gate
 release comes with a new plugin release that pins it, with new file digests.
-Upgrade both together, and only after reading the release notes:
+Upgrade on purpose, after reading the release notes. In Claude Code,
+`claude plugin update zn-gate@usezn` installs the newly pinned zn-gate with
+the plugin. In other agents, install the release first:
 
 ```bash
 npm install -g zn-gate@X.Y.Z
 npm audit signatures
-claude plugin update zn-gate@usezn
 ```
 
 ## Install
@@ -171,10 +182,11 @@ event is not checked twice: `zn hooks uninstall claude-code`.
 
 | Path | Read by | Purpose |
 | --- | --- | --- |
-| `plugin.json`, `mcp.json`, `skills/` | Agent Plugins clients | Manifest, `secrets` MCP server, skill |
-| `.claude-plugin/plugin.json`, `hooks/hooks.json`, `.mcp.json` | Claude Code | Manifest, hooks, MCP server |
+| `plugin.json`, `mcp.json`, `skills/` | Agent Plugins clients | Manifest, MCP servers, skill |
+| `.claude-plugin/plugin.json`, `hooks/hooks.json`, `.mcp.json` | Claude Code | Manifest, hooks, MCP servers |
+| `package.json`, `package-lock.json` | Claude Code | The pinned zn-gate release, installed into the plugin folder |
 | `com.openai/hooks.json` | Codex | Hooks; not run by current Codex versions (use `zn hooks install codex`) |
-| `.cursor-plugin/plugin.json`, `cursor/hooks.json`, `cursor/mcp.json` | Cursor | Manifest, hooks, MCP server |
+| `.cursor-plugin/plugin.json`, `cursor/hooks.json`, `cursor/mcp.json` | Cursor | Manifest, hooks, MCP servers |
 | `scripts/zn-launch.js` | all | Finds and verifies zn-gate, then runs it |
 | `scripts/zn-gate.lock.json` | all | Pinned version and file digests |
 

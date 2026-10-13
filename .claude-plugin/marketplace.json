@@ -10,7 +10,7 @@
     {
       "name": "zn-gate",
       "source": "./plugins/zn-gate",
-      "description": "Keeps secret values out of what the agent sends to its model, and adds a secrets MCP server that uses credentials without revealing them.",
+      "description": "Keeps secret values out of what the agent sends to its model, adds a secrets MCP server that uses credentials without revealing them, and checks untrusted text for prompt injection with local rules.",
       "category": "security",
       "tags": ["security", "secrets", "mcp", "hooks"]
     }

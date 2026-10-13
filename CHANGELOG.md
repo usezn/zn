@@ -29,13 +29,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (OTLP/JSON Lines, one `ExportLogsServiceRequest` per line) for an OpenTelemetry Collector, with
   no account.
 - **Agent plugins** (`plugins/zn-gate`): one package in the Agent Plugins 1.0 format that
-  connects Claude Code and Cursor to the installed zn-gate (hooks, the `secrets` MCP server and
-  a skill), and gives Codex the MCP server and the skill (Codex does not run plugin hooks; use
-  `zn hooks install codex`). It installs and updates nothing by itself: on every call it requires
+  connects Claude Code and Cursor to zn-gate (hooks, the `zn-gate` and `secrets` MCP servers and
+  a skill), and gives Codex the MCP servers and the skill (Codex does not run plugin hooks; use
+  `zn hooks install codex`). In Claude Code, zn-gate is installed with the plugin from its
+  `package-lock.json`; other agents use the copy you installed. On every call it requires
   the exact pinned version, checks that the package holds exactly the files of the published
   release, runs zn-gate from the checked bytes and fails closed otherwise. Marketplace files
   for Claude Code, Codex and Cursor, and an MCP Registry entry (`plugins/mcp-registry/server.json`,
   `mcpName` in package.json). Needs Node.js 20.12 or later.
+
+### Changed
+- The `usezn` plugin marketplace in this repository now lists the agent plugin in `plugins/zn-gate`, which replaces the Claude Code plugin shipped with 1.5.x (`plugins/claude/zn-gate`). In Claude Code it still installs zn-gate itself: Claude Code installs the release pinned by the plugin's `package-lock.json` into the plugin folder, and the launcher checks that copy file by file against the published release before running it; other agents use a copy you install (`npm install -g zn-gate@1.6.0`). It keeps the `zn-gate` MCP server (`analyze_prompt`, `check_tool_call`, `check_tool_result`, `zn_status`), always with local rules only, and adds the `secrets` MCP server; its skill is now `zn-secrets`. To upgrade in Claude Code, update the marketplace and the plugin (`claude plugin marketplace update usezn`, then `claude plugin update zn-gate@usezn`) and start a new session. `plugins/tools/pin-release.js` now also writes the plugin's `package.json` and `package-lock.json`.
 
 ### Security
 - Prompt hooks (all agents) block a prompt that assigns a value to a credential name anywhere in the text, also in the middle of a sentence and even when the value does not look random: `my key is STRIPE_KEY=...`, `DB_PASSWORD=...`, `"api_key": "..."`, `apiKey=...`, `?api_key=...` in a URL. The value must be at least 8 characters. Left alone: placeholders and demo values (`changeme123`, `your_api_key_here`, `<key>`, `xxxx`, `dummy…`, `mock…`), references (`${API_KEY}`, `$API_KEY`, `process.env.X`, `secrets.X`, `__ZN_…__` markers), code (calls, indexes, type annotations, identifier chains such as `self.api_key` or `new_password`) and lower-case prose such as `token: required`. The block message still suggests `zn secret set NAME`. Tool calls and tool output do not use this rule. The Python package has no prompt hook, so it is not affected.
