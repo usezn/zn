@@ -137,6 +137,8 @@ OPTIONS:
   --stage <v30|prod>  Cloud gateway stage (default: v30, the current production API)
   --url <custom_url>  Override gateway endpoint URL
   --local-only        Never use the cloud, even if ZN_CLOUD=1 is set
+  --long-input MODE   Long texts sent to the cloud: windows (default; overlapping
+                      512-token windows, up to 16) or off (first 512 tokens only)
   --all, --code       Include source code files in security scan
   --include <exts>    Custom extensions to scan (e.g. .rst,.xml)
   --exclude <dirs>    Additional directories to exclude (e.g. fixtures,legacy)
@@ -534,6 +536,8 @@ async function main() {
       options.include = args[++i];
     } else if (args[i] === '--exclude' && args[i + 1]) {
       options.exclude = args[++i];
+    } else if (args[i] === '--long-input') {
+      options.longInput = args[++i];
     } else if (args[i] === '--local-only') {
       options.localOnly = true;
     } else if (args[i] === '--verbose') {

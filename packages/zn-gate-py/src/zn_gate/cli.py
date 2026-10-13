@@ -124,6 +124,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         "stage": getattr(args, "stage", None) or os.environ.get("ZN_STAGE") or "v30",
         "api_url": getattr(args, "url", None) or os.environ.get("ZN_API_URL"),
         "local_only": getattr(args, "local_only", False),
+        "long_input": getattr(args, "long_input", None),
     }
 
     t0 = time.perf_counter()
@@ -364,6 +365,7 @@ def main() -> int:
     analyze_parser.add_argument("--stage", default="v30", help="Cloud gate stage (default: v30)")
     analyze_parser.add_argument("--url", help="Custom API endpoint URL")
     analyze_parser.add_argument("--local-only", action="store_true", help="Force local deterministic rules only")
+    analyze_parser.add_argument("--long-input", choices=["windows", "off"], help="Long texts sent to the cloud: overlapping 512-token windows (default) or the first 512 tokens only")
     analyze_parser.add_argument("--json", action="store_true", default=True, help="Output results as JSON")
 
     # scan command
