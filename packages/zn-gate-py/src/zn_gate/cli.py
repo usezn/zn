@@ -6,8 +6,10 @@ Pure Python stdlib. Zero external dependencies.
 from __future__ import annotations
 
 import argparse
+import bisect
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -15,12 +17,16 @@ from typing import Any, Dict, List, Optional
 
 from . import __version__
 from .rules import RULES_VERSION, SECRET_PATTERNS, evaluate, redact_secrets
+from .client import analyze, is_cloud_enabled, resolve_endpoint
+from .evidence import log_evidence, verify_evidence_ledger, get_evidence_stats, export_evidence_ledger, EVIDENCE_FILE
 
 # Secrets that span several lines (a PEM private key block). The line-by-line
 # scan never sees BEGIN and END together, so these run on the whole file.
-_MULTILINE_RULES = [(name, rx) for name, rx, _ in SECRET_PATTERNS if name == "secret:private_key"]
-from .client import analyze, is_cloud_enabled, resolve_endpoint
-from .evidence import log_evidence, verify_evidence_ledger, get_evidence_stats, export_evidence_ledger, EVIDENCE_FILE
+# Each entry: (rule name, pattern, header pattern shown instead of the match).
+_MULTILINE_RULES = [
+    (name, rx, re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"))
+    for name, rx, _ in SECRET_PATTERNS if name == "secret:private_key"
+]
 
 SHIELD = "\U0001f6e1\ufe0f"
 ALERT = "\U0001f6a8"
@@ -150,15 +156,23 @@ def _scan_file(file_path: Path) -> List[Dict[str, Any]]:
                 "type": "secret_leak",
                 "content": snippet,
             })
+    # Line numbers as the line pass counts them (str.splitlines boundaries).
+    starts = [0]
+    for part in content.splitlines(keepends=True):
+        starts.append(starts[-1] + len(part))
     seen = {(v["line"], v["rule"]) for v in violations}
-    for name, rx in _MULTILINE_RULES:
+    for name, rx, header_rx in _MULTILINE_RULES:
         for m in rx.finditer(content):
-            line = content.count("\n", 0, m.start()) + 1
+            # A block on one line was already checked by the line pass.
+            if len(m.group(0).splitlines()) < 2:
+                continue
+            line = bisect.bisect_right(starts, m.start())
             if (line, name) in seen:
                 continue
             seen.add((line, name))
-            # Only the first line of the block, without the key material.
-            header = m.group(0).splitlines()[0].strip()[:100]
+            # Only the BEGIN marker, never the key material.
+            h = header_rx.match(m.group(0))
+            header = h.group(0)[:100] if h else "[REDACTED_PRIVATE_KEY]"
             violations.append({
                 "file": str(file_path),
                 "line": line,

@@ -10,6 +10,7 @@ import io
 import json
 import os
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stdout
 
@@ -75,22 +76,55 @@ class TestCliScanCommand(unittest.TestCase):
         types = {t["type"] for t in json.loads(out)["threats"]}
         self.assertEqual(types, {"injection", "secret_leak"})
 
-    def test_private_key_over_several_lines_is_reported_once_without_its_body(self):
-        body = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC" + "Z" * 40
-        pem = ("x = 1\n-----BEGIN " + "PRIVATE KEY-----\n" + body + "\n" + body[::-1] + "\n-----END " + "PRIVATE KEY-----\n")
+    BEGIN = "-----BEGIN " + "PRIVATE KEY-----"
+    END = "-----END " + "PRIVATE KEY-----"
+    BODY = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC" + "Z" * 40
+
+    def _scan_text(self, text, fmt="json"):
         with tempfile.TemporaryDirectory() as d:
-            with open(os.path.join(d, "key.txt"), "w", encoding="utf-8") as f:
-                f.write(pem)
+            with open(os.path.join(d, "key.txt"), "w", encoding="utf-8", newline="") as f:
+                f.write(text)
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = cmd_scan(argparse.Namespace(path=d, exclude=None, include=None, format="json", no_fail=False))
-        out = buf.getvalue()
-        self.assertEqual(code, 1)
-        threats = [t for t in json.loads(out)["threats"] if t["rule"] == "secret:private_key"]
+                code = cmd_scan(argparse.Namespace(path=d, exclude=None, include=None, format=fmt, no_fail=False))
+        return code, buf.getvalue()
+
+    def _assert_no_body(self, out):
+        for piece in (self.BODY, self.BODY[::-1], self.BODY[:24], "AASC" + "Z" * 8):
+            self.assertNotIn(piece, out)
+
+    def test_private_key_over_several_lines_is_reported_once_without_its_body(self):
+        pem = "x = 1\n" + self.BEGIN + "\n" + self.BODY + "\n" + self.BODY[::-1] + "\n" + self.END + "\n"
+        for fmt in ("json", "text", "github"):
+            code, out = self._scan_text(pem, fmt)
+            self.assertEqual(code, 1)
+            self._assert_no_body(out)
+        threats = [t for t in json.loads(self._scan_text(pem)[1])["threats"] if t["rule"] == "secret:private_key"]
         self.assertEqual(len(threats), 1)
         self.assertEqual(threats[0]["line"], 2)
-        self.assertNotIn(body, out)
-        self.assertNotIn(body[::-1], out)
+        self.assertEqual(threats[0]["content"], self.BEGIN)
+
+    def test_key_body_on_the_header_line_is_not_printed(self):
+        pem = self.BEGIN + self.BODY + "\n" + self.BODY[::-1] + "\n" + self.END + "\n"
+        code, out = self._scan_text(pem)
+        self.assertEqual(code, 1)
+        self._assert_no_body(out)
+
+    def test_escaped_one_line_key_after_a_form_feed_is_not_printed(self):
+        # splitlines() breaks on \x0c; the escaped key stays on one line and
+        # is reported, redacted, by the line pass only.
+        text = "a\x0cb\n" + '{"private_key": "' + self.BEGIN + "\\n" + self.BODY + "\\n" + self.END + '\\n"}\n'
+        code, out = self._scan_text(text)
+        self.assertEqual(code, 1)
+        self._assert_no_body(out)
+
+    def test_many_key_blocks_scan_in_linear_time(self):
+        block = self.BEGIN + "\n" + self.BODY + "\n" + self.END + "\n"
+        start = time.perf_counter()
+        code, out = self._scan_text(block * 20000)
+        self.assertEqual(code, 1)
+        self.assertLess(time.perf_counter() - start, 8.0)
+        self.assertEqual(len(json.loads(out)["threats"]), 20000)
 
 
 if __name__ == "__main__":
