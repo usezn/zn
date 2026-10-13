@@ -20,11 +20,12 @@ kept for when Codex runs plugin hooks again.
 
 - Node.js 20.12 or later, on your `PATH` (`node --version`). The native Claude
   Code installer does not include Node.js. Without it, Claude Code reports at
-  session start that `node` was not found, prompts are blocked, and tool calls
-  run unchecked; install Node.js from https://nodejs.org and start a new
-  session.
+  session start that `node` was not found, prompts are blocked (Claude Code
+  2.1.295 and later; earlier versions let them through unchecked), and tool
+  calls run unchecked. Install Node.js from https://nodejs.org and restart
+  Claude Code (the terminal or the desktop app).
 - Git (on Windows, Git for Windows), to add the marketplace from GitHub.
-  Without it, `claude plugin marketplace add` fails with "git not found".
+  Without it, `claude plugin marketplace add` fails because Git is not found.
 - zn-gate **1.6.0** installed from npm. The plugin never installs, downloads or
   updates zn-gate itself. Install it once, then check the registry signatures
   of what you installed:
@@ -36,7 +37,8 @@ kept for when Codex runs plugin hooks again.
 
   In Windows PowerShell, `npm` can fail with "running scripts is disabled on
   this system", because the default execution policy blocks `npm.ps1`. Use
-  `npm.cmd` instead (for example `npm.cmd install -g zn-gate@1.6.0`), run the
+  `npm.cmd` (and `zn.cmd`) instead (for example
+  `npm.cmd install -g zn-gate@1.6.0`), run the
   commands from Command Prompt, or allow local scripts for your account with
   `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 
@@ -46,17 +48,20 @@ kept for when Codex runs plugin hooks again.
 
 ## Where it protects you
 
-- **Claude Code** in the terminal, the IDE extensions and the Code tab of the
-  Claude desktop app: hooks and the `secrets` MCP server. The Code tab uses the
-  plugins installed with `claude plugin install`.
-- **Cowork**: Cowork takes its plugins from Customize > Plugins in Claude, not
-  from `claude plugin install`. In a test where a Cowork task ran in the cloud
-  workspace, a prompt containing a secret was not blocked and reached the
-  model. **Do not rely on the plugin in Cowork sessions that run in the
-  cloud.**
-- **Chat** (claude.ai, the chat in the desktop app, mobile apps): hooks and
-  local MCP servers do not run there, so **the plugin does not protect chat
-  conversations**. Do not paste secrets into chat.
+- **Claude Code** in the terminal, the IDE extensions and local sessions in
+  the Code tab of the Claude desktop app: hooks and the `secrets` MCP server.
+  The Code tab uses the plugins installed with `claude plugin install`.
+  Claude Code sessions that run in the cloud (Claude Code on the web, cloud
+  sessions in the Code tab) do not load plugins installed on your machine, so
+  they are not protected.
+- **Cowork**: zn has not verified the plugin in Cowork. Cowork takes its
+  plugins from Customize > Plugins in Claude, not from `claude plugin
+  install`. In a test where a Cowork task ran in the cloud workspace, a prompt
+  containing a secret was not blocked and reached the model. **Do not rely on
+  the plugin in Cowork.**
+- **Chat** (claude.ai, the chat in the desktop app, mobile apps): this plugin
+  is not loaded there and hooks do not run there, so **the plugin does not
+  protect chat conversations**. Do not paste secrets into chat.
 
 ## What the plugin runs
 
