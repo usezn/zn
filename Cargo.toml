@@ -58,7 +58,7 @@ tracing-opentelemetry = "0.34"
 opentelemetry-otlp = { version = "0.33", default-features = false, features = ["trace", "http-proto", "reqwest-blocking-client", "reqwest-rustls"] }
 opentelemetry_sdk = { version = "0.33", features = ["trace"] }
 sha2 = "0.11"
-rand = "0.8"
+rand = "0.10"
 pqcrypto-dilithium = "0.5"
 pqcrypto-traits = "0.3"
 jsonwebtoken = { version = "10.3", features = ["rust_crypto"] }

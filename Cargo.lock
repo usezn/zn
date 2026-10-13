@@ -7745,7 +7745,7 @@ dependencies = [
  "pqcrypto-dilithium",
  "pqcrypto-traits",
  "prometheus",
- "rand 0.8.7",
+ "rand 0.10.2",
  "ratatui",
  "regex",
  "reqwest 0.12.28",
