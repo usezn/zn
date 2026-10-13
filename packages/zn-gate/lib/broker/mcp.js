@@ -120,8 +120,10 @@ function createSecretsServer(opts = {}) {
     try { await (await getVault()).audit({ agent, ...ev }); } catch (_) { /* never let audit change a decision */ }
   }
 
+  /* Settings to enforce: the local ones with the organization policy
+   * applied for this agent (zn Team). */
   async function metaMap() {
-    const list = await (await getVault()).listSecrets();
+    const list = await (await getVault()).listSecrets({ effective: true, agent });
     return new Map((list || []).map((s) => [s.name, s]));
   }
 
@@ -190,6 +192,22 @@ function createSecretsServer(opts = {}) {
       if (!s) {
         await audit({ secret: m.name, mode: null, tool: 'mcp:secrets_http_request', argv0: null, host, decision: 'deny', reason: 'not found' });
         return textResult({ error: 'ZN_NOT_FOUND', message: 'secret ' + m.name + ' is not in the vault; use secrets_request to ask the user for it' }, true);
+      }
+      if (s.deny) {
+        await audit({ secret: m.name, mode: s.mode, tool: 'mcp:secrets_http_request', argv0: null, host, decision: 'deny', reason: 'policy:org_deny' });
+        return denied(m.marker + ' is blocked for this agent by your organization policy. No request was made.');
+      }
+      if (!markers.hostAllowed(s.allowHosts, host)) {
+        // A host the organization policy opens but this machine never allowed:
+        // the user approves it once, on the vault's own channel.
+        const open = (s.orgPending || []).find((p) => p.kind === 'host' && markers.hostAllowed([p.value], host));
+        const v = await getVault();
+        if (open && typeof v.confirmOrgOpening === 'function') {
+          try {
+            await v.confirmOrgOpening(m.name, 'host', open.value, agent);
+            s.allowHosts = [...(s.allowHosts || []), open.value];
+          } catch (_) { /* declined or no channel: denied below */ }
+        }
       }
       if (!markers.hostAllowed(s.allowHosts, host)) {
         await audit({ secret: m.name, mode: s.mode, tool: 'mcp:secrets_http_request', argv0: null, host, decision: 'deny', reason: 'host not in allowHosts' });

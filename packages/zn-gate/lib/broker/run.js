@@ -133,8 +133,18 @@ async function prepare(parsed, opts) {
     throw znError(code, reason);
   };
 
-  const list = await vault.listSecrets();
+  // Local settings with the organization policy applied for this agent (zn Team).
+  const list = await vault.listSecrets({ effective: true, agent });
   const meta = new Map((list || []).map((s) => [s.name, s]));
+  // A command the organization policy opens but this machine never allowed:
+  // the user approves it once, on the vault's own channel.
+  const approveOrgCommand = async (name, m) => {
+    const open = (m.orgPending || []).find((p) => p.kind === 'command' && markers.matchAllowCommands([p.value], parsed.command));
+    if (!open || typeof vault.confirmOrgOpening !== 'function') return null;
+    try { await vault.confirmOrgOpening(name, 'command', open.value, agent); } catch (_) { return null; }
+    m.allowCommands = [...(m.allowCommands || []), open.value];
+    return markers.matchAllowCommands(m.allowCommands, parsed.command);
+  };
   const approvals = opts.approvals || approvalStore({ vault, znHome: opts.znHome });
   const found = exe.resolveExecutable(argv0, env);
   const planted = markers.checkResolvedExecutable(found ? found.path : null, project, found ? found.real : undefined);
@@ -164,11 +174,12 @@ async function prepare(parsed, opts) {
     if (!m) {
       await deny(name, null, 'secret ' + name + ' is not in the vault. Add it from your own terminal: zn secret set ' + name, 'ZN_NOT_FOUND');
     }
+    if (m.deny) await deny(name, m.mode, 'secret ' + name + ' is blocked for this agent by your organization policy.', 'ZN_POLICY_DENIED');
     if (m.mode !== 'env') {
       await deny(name, m.mode, 'secret ' + name + ' is in ' + (m.mode || 'proxy') + ' mode, so zn run never puts it in a process. ' +
         'For HTTP APIs use the secrets_http_request tool of the zn "secrets" MCP server.');
     }
-    const entry = markers.matchAllowCommands(m.allowCommands, parsed.command);
+    const entry = markers.matchAllowCommands(m.allowCommands, parsed.command) || await approveOrgCommand(name, m);
     if (!entry) {
       await deny(name, m.mode, '`' + exeName + '` is not in allowCommands for ' + name + '. ' +
         'For HTTP APIs use the secrets_http_request tool of the zn "secrets" MCP server. ' +
@@ -182,7 +193,7 @@ async function prepare(parsed, opts) {
   const skipped = [];
   for (const name of optional) {
     const m = meta.get(name);
-    const entry = m && m.mode === 'env' && !planted && opened ? markers.matchAllowCommands(m.allowCommands, parsed.command) : null;
+    const entry = m && !m.deny && m.mode === 'env' && !planted && opened ? markers.matchAllowCommands(m.allowCommands, parsed.command) : null;
     if (entry && await approvals.isApproved(name, entry, ctx)) chosen.push({ name, mode: m.mode, command: entry });
     else skipped.push(name);
   }

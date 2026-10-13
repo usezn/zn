@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **zn Team client** (`zn team join | status | sync | leave`): connects this machine to a zn
+  organization. The organization's policy is signed with Ed25519 and checked against the key
+  pinned at join time (also its version, expiry and issue date, with five minutes of clock
+  tolerance), cached in `~/.zn/org-policy.json` and applied by the `secrets` MCP server and
+  `zn run` for each agent (Claude Code and Codex now pass `--agent` to the MCP server). The
+  organization can always restrict a secret (`deny`, fewer hosts or commands, `proxy` mode);
+  anything it opens (a new host, command, mode or HTTP placement) applies only after the user
+  approves it once on this machine, and it never reaches the protections for credential files,
+  `~/.zn` or agent configuration. When the cached policy expires while offline, only its
+  restrictions keep applying. The audit log is uploaded in batches of up to 500 records,
+  resuming from the last record the server confirmed; it carries metadata only, never secret
+  values. The install token stays in the encrypted vault; policy downloads and uploads run in
+  the vault daemon while it is unlocked. Joining and leaving are confirmed on the vault's own
+  channel, outside the agent.
+- `zn log export --otlp` (same as `zn vault log export --otlp`): exports the local audit log as
+  OpenTelemetry logs (OTLP/JSON Lines, one `ExportLogsServiceRequest` per line) for an
+  OpenTelemetry Collector, with no account. `[--since 7d] [--out FILE]`.
 - **Agent plugins** (`plugins/zn-gate`): one package in the Agent Plugins 1.0 format that
   connects Claude Code and Cursor to the installed zn-gate (hooks, the `secrets` MCP server and
   a skill), and gives Codex the MCP server and the skill (Codex does not run plugin hooks; use
