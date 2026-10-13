@@ -268,6 +268,7 @@ module.exports = {
   guiAvailable,
   render,
   field,
+  INVISIBLE,
   NO_CHANNEL,
   DEFAULT_TIMEOUT_MS,
 };

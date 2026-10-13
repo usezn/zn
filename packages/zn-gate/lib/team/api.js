@@ -234,7 +234,7 @@ function createApi(options = {}) {
     }
     const code = isObject(r.data) && typeof r.data.code === 'string' ? r.data.code : '';
     if (r.status === 404 && code === 'invalid_join_token') return { ok: false, reason: 'invalid' };
-    if (r.status === 402) return { ok: false, reason: 'no_subscription' };
+    if (r.status === 402 && code === 'no_subscription') return { ok: false, reason: 'no_subscription' };
     if (r.status !== 200 || !isObject(r.data)) return { ok: false, reason: 'unavailable', detail: 'HTTP ' + r.status };
     const d = r.data;
     const okName = typeof d.org_name === 'string' && d.org_name.length > 0 && d.org_name.length <= 100;

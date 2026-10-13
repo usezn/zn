@@ -24,18 +24,20 @@ machine that stops reporting is visible.
 `zn team join` and `zn team leave` are confirmed on the vault's own channel
 (the terminal of `zn unlock --foreground`, or a system dialog), not in the
 terminal where the command ran. An AI agent can type in that terminal; it
-cannot answer the vault's dialog. Before the dialog, zn-gate asks the server
-which organization the token is for, without using up the token; the dialog
-then shows the organization name, who invited you (their display name, if they
-set one), the server and the last characters of the join token. Check them
-against what your admin sent you. If you did not start the command yourself,
-choose Deny.
+cannot answer the vault's dialog. Before the dialog, zn-gate asks
+`api.usezn.com` which organization the token is for, without using up the
+token; the dialog then shows the organization name, who invited you (the
+display name they chose, if they set one), the server and the last characters
+of the join token. Check them against what your admin sent you. If you did not
+start the command yourself, choose Deny. If the organization you then join is
+not the one the dialog showed, zn-gate refuses it and does not connect this
+machine.
 
 An invalid, expired or used-up token stops before the dialog, and so does a
-token of an organization without an active Team subscription. If the server
-cannot tell which organization the token is for (for example, a self-hosted
-server that does not offer it yet), the dialog says so and the name appears
-after joining.
+token of an organization without an active Team subscription. With
+`--api`, zn-gate does not contact the other server before you confirm, so
+the dialog cannot name the organization; it says so, and the name appears
+after joining. The same happens if the check fails.
 
 `--api <https URL>` points `zn team join` at another server. The dialog warns
 when it is not `api.usezn.com`.
