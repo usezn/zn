@@ -64,8 +64,10 @@ function redact(text) {
   const spans = secretSpans(s).sort((a, b) => b.start - a.start);
   for (const sp of spans) s = s.slice(0, sp.start) + '[REDACTED:' + sp.type + ']' + s.slice(sp.end);
   try { s = rules().redactSecrets(s).sanitized; } catch (_) { /* keep scrubber result */ }
-  // Credentials in URLs (https://user:pass@host).
+  // Credentials in URLs (https://user:pass@host), and their query strings and
+  // fragments, which often carry keys (?key=..., #access_token=...).
   s = s.replace(/(\b[a-z][a-z0-9+.-]{1,15}:\/\/)[^\s/@'"]{1,256}@/gi, '$1[REDACTED]@');
+  s = s.replace(/(\b[a-z][a-z0-9+.-]{1,15}:\/\/[^\s?#'"]{1,2048})[?#][^\s'"]{1,4096}/gi, '$1?[REDACTED]');
   return s;
 }
 
@@ -82,12 +84,23 @@ function short(s, max) {
 
 /* --------------------------- file context -------------------------- */
 
+// One level lower, for a file that may be the user's own (see FileCtx).
+const LOWER = { critical: 'high', high: 'medium', medium: 'low', low: 'low' };
+const IGNORED_ENV_NOTE = ' The .env file is listed in .gitignore: if it is your own local file and not one the repository ships, this does not apply.';
+
 class FileCtx {
   constructor(rec, raw, out) {
     this.rec = rec;
     this.raw = raw;
     this.lines = raw.split(/\r?\n/);
     this.out = out;
+    // Each source line is redacted once, however many findings it has.
+    this.redacted = new Map();
+  }
+
+  redactedLine(ln) {
+    if (!this.redacted.has(ln)) this.redacted.set(ln, redact(this.lines[ln - 1] || ''));
+    return this.redacted.get(ln);
   }
 
   /** Lines on which each JSON string token appears, built once per file. */
@@ -143,6 +156,11 @@ class FileCtx {
   add(id, severity, line, detail, extra) {
     const rule = BY_ID[id];
     const ln = Math.max(1, Math.min(line || 1, this.lines.length || 1));
+    // A committed .env also listed in .gitignore: reported one level lower.
+    if (this.rec.envIgnored) {
+      severity = LOWER[severity] || severity;
+      detail = String(detail) + IGNORED_ENV_NOTE;
+    }
     this.out.push({
       id,
       severity,
@@ -151,7 +169,7 @@ class FileCtx {
       line: ln,
       title: (extra && extra.title) || rule.title,
       detail: clip(redact(detail), 600),
-      evidence: clip(redact((extra && extra.evidence != null) ? extra.evidence : (this.lines[ln - 1] || '')), EVIDENCE_MAX),
+      evidence: clip((extra && extra.evidence != null) ? redact(extra.evidence) : this.redactedLine(ln), EVIDENCE_MAX),
       fix: (extra && extra.fix) || rule.fix,
       references: (extra && extra.references) || rule.references.slice(),
       _readers: (extra && extra.readers) || this.rec.readers,
@@ -961,12 +979,17 @@ function gitIgnored(root, name) {
 /**
  * Config directories a committed root .env points agents to (CODEX_HOME,
  * CLAUDE_CONFIG_DIR). When they are inside the repository, their config
- * files are audited like the default locations.
+ * files are audited like the default locations. A directory that leads
+ * outside the repository through a symbolic link (or junction) is reported
+ * in `unchecked`, never read. A .env listed in .gitignore is still audited:
+ * in a fresh clone it exists only because it was committed.
  */
-function redirectedConfigs(root) {
-  if (gitIgnored(root, '.env')) return [];
+function redirectedConfigs(root, unchecked) {
   const r = readBounded(path.join(root, '.env'), MAX_FILE_BYTES, false);
   if (!r.text) return [];
+  const envIgnored = gitIgnored(root, '.env');
+  let realRoot;
+  try { realRoot = fs.realpathSync(root); } catch (_) { return []; }
   const out = [];
   for (const l of r.text.split(/\r?\n/)) {
     const m = /^\s*(?:export\s+)?(CODEX_HOME|CLAUDE_CONFIG_DIR)\s*=\s*(.*)$/.exec(l);
@@ -977,9 +1000,19 @@ function redirectedConfigs(root) {
     const rel = path.relative(root, dir);
     if (rel.startsWith('..') || path.isAbsolute(rel)) continue;
     const relPosix = rel.split(path.sep).join('/');
+    let realDir;
+    try { realDir = fs.realpathSync(dir); } catch (_) { continue; }
+    const realRel = path.relative(realRoot, realDir);
+    if (realRel.startsWith('..') || path.isAbsolute(realRel)) {
+      if (unchecked) {
+        unchecked.push({ file: relPosix || '.', agent: m[1] === 'CODEX_HOME' ? 'codex' : 'claude', severity: 'high',
+          detail: '.env sets ' + m[1] + ' to ' + (relPosix || '.') + ', which leads outside the repository through a symbolic link; zn audit does not read it.' });
+      }
+      continue;
+    }
     const add = (name, kind, agent, readers) => {
       const r2 = (relPosix ? relPosix + '/' : '') + name;
-      out.push({ abs: path.join(dir, name), rel: r2, display: r2, scope: 'project', kind, agent, readers: readers || [agent] });
+      out.push({ abs: path.join(dir, name), rel: r2, display: r2, scope: 'project', kind, agent, readers: readers || [agent], envIgnored });
     };
     if (m[1] === 'CODEX_HOME') { add('config.toml', 'codex-toml', 'codex'); add('hooks.json', 'hooks-json', 'codex'); }
     else { add('settings.json', 'claude-settings', 'claude', ['claude', 'cursor']); }
@@ -1105,7 +1138,8 @@ function auditFile(rec, out) {
     if (!fs.existsSync(path.join(pluginRoot, '.claude-plugin'))) return false;
   }
   if (rec.kind === 'dotenv') {
-    if (gitIgnored(rec.root, '.env')) return false;
+    // Listed in .gitignore but present in the clone: committed anyway.
+    rec.envIgnored = gitIgnored(rec.root, '.env');
     checkDotenv(ctx);
     return true;
   }
@@ -1209,7 +1243,7 @@ function audit(opts) {
   const maxEntries = o.maxEntries || MAX_ENTRIES;
   const { files, extDirs, unchecked, truncated, entries } = walk(root, deadline, maxEntries);
   const known = new Set(files.map((f) => f.rel));
-  for (const rec of redirectedConfigs(root)) if (!known.has(rec.rel)) files.push(rec);
+  for (const rec of redirectedConfigs(root, unchecked)) if (!known.has(rec.rel)) files.push(rec);
   let scanned = 0;
   let timedOut = truncated && truncated.reason === 'time';
   const wanted = (readers, agent) => agent === 'any' || (readers || []).some((r) => selected.has(r)) || selected.has(agent);

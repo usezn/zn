@@ -109,7 +109,6 @@ COMMANDS:
                       endpoint overrides, permissions, instructions, planted executables
                       [--format text|json|sarif] [--output FILE] [--fail-on high]
                       [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home]
-                      (in 1.6 a bare 'zn audit' still shows the secret-use log: use 'zn audit .')
   evidence            Query the local hash-chained audit log and run the UI dashboard
   logs                Tail or inspect security event logs
   mcp                 Run as standalone bidirectional MCP server for AI agents

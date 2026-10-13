@@ -42,7 +42,7 @@ there is no directory named `log`) and `zn audit --since DATE` exit with code
 
 | Option | Default | Meaning |
 |---|---|---|
-| `path` | `.` | Directory to audit (usually the repository root). With no path and no option, see the table above |
+| `path` | `.` | Directory to audit (usually the repository root). a bare `zn audit` reviews the current directory |
 | `--format` | `text` | `text` for people, `json` for scripts, `sarif` for GitHub code scanning |
 | `--output` | standard output | Write the report to a file |
 | `--fail-on` | `high` | Exit with 1 if any finding has this severity or a higher one; `none` never fails |
@@ -83,7 +83,12 @@ silently:
   with a ZNA020 high finding (so the run fails at the default threshold);
 - FIFOs, devices and sockets are never opened;
 - a committed root `.env` that sets `CODEX_HOME` or `CLAUDE_CONFIG_DIR` to a
-  directory inside the repository makes zn audit read the configs there too.
+  directory inside the repository makes zn audit read the configs there too;
+  a directory that leads outside the repository through a symbolic link is
+  reported (ZNA020 high), not read;
+- a root `.env` is audited even when `.gitignore` lists it (in a fresh clone
+  it exists only because it was committed); its findings are one level lower
+  and say that they do not apply to your own local `.env`.
 
 | Agent | Files |
 |---|---|
@@ -190,8 +195,8 @@ file names) are printed as `\x1b`, never sent to the terminal.
 `file` is relative to `root` with forward slashes; files from `--include-home`
 start with `~/`. `agent` is the agent that reads the file (`any` when several
 do). `evidence` is the matching line, cut to 160 characters, with secrets
-replaced by `[REDACTED:<TYPE>]`. URLs in `detail` lose their user, password and
-query string.
+replaced by `[REDACTED:<TYPE>]`. URLs in `detail` and `evidence` lose their user,
+password, query string and fragment.
 
 ### SARIF
 

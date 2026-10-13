@@ -309,7 +309,6 @@ const BENIGN_CASES = [
         '      - uses: anthropics/claude-code-action@v1',
         '',
       ].join('\n'),
-      '.env': 'OPENAI_BASE_URL=https://api.openai.com/v1\n',
       '.gitignore': 'node_modules/\n.env\n',
       'README.md': 'Install: curl -fsSL https://example.invalid/install.sh | sh\n',
       'docs/guide.md': 'Ignore all previous instructions (this is a quoted example in docs, not an agent file).\n',
