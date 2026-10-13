@@ -71,6 +71,7 @@ test('patterns that could run for a long time never get to run', () => {
 });
 
 test('all custom detectors together stop after their time budget for one call', () => {
+  detectors.resetBudget();
   const many = Array.from({ length: 50 }, (_, i) => ({ id: 'd' + i, pattern: '.{0,62}x', type: 'WORST' }));
   const c = detectors.compile(many);
   assert.strictEqual(c.length, 50);
@@ -99,4 +100,19 @@ test('detectors come from the verified policy cache only', (t) => {
   c.envelope.policy.detectors[0].pattern = '(a+)+$';
   require('fs').writeFileSync(file, JSON.stringify(c));
   assert.strictEqual(detectorsOf(policy.state({ home })).length, 0);
+});
+
+test('across many scans in one process, custom detectors stop after the process budget', () => {
+  detectors.resetBudget();
+  // Tuned to stay under the per-window guard, so no detector switches itself off.
+  const many = Array.from({ length: 50 }, (_, i) => ({ id: 'p' + i, pattern: '.{0,15}.{240}x', type: 'COSTLY' }));
+  const c = detectors.compile(many);
+  assert.strictEqual(c.length, 50);
+  const field = 'a'.repeat(1000);
+  const t0 = Date.now();
+  for (let i = 0; i < 100; i++) detectors.find(field, c);
+  const took = Date.now() - t0;
+  assert.ok(took < detectors.PROCESS_BUDGET_MS + 500, 'took ' + took + ' ms');
+  assert.ok(c.every((d) => d.off), 'all detectors are off once the budget is spent');
+  detectors.resetBudget();
 });

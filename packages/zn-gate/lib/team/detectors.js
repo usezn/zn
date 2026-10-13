@@ -27,8 +27,8 @@
  * Text is scanned one line at a time, in windows of at most 4096
  * characters. A value split across two windows of a very long line is not
  * found by a custom detector; the built-in layers are not affected. All
- * custom detectors together get 200 ms per call; past that the remaining
- * work is skipped for that call. A detector whose run on one window takes
+ * custom detectors together get 200 ms per call and 1 s per process (a hook
+ * is one short process); past either, their remaining work is skipped. A detector whose run on one window takes
  * longer than 50 ms is switched off for the rest of the process.
  */
 
@@ -42,6 +42,8 @@ const MAX_SPAN = 64;
 const MAX_REPEAT = 256;
 const MAX_COST = 4096;
 const CALL_BUDGET_MS = 200;
+const PROCESS_BUDGET_MS = 1000;
+let spentMs = 0;
 const SPECIAL = '\\^$.|?*+()[]{}';
 // Escapes that stand for one character or a class of one character.
 const ESCAPES = /^[dDwWsStrnfv.\\^$|?*+()[\]{}\/-]$/;
@@ -141,11 +143,24 @@ function* windows(text) {
 function find(text, compiled) {
   const spans = [];
   if (!compiled || compiled.length === 0 || typeof text !== 'string' || text.length === 0) return spans;
+  if (spentMs > PROCESS_BUDGET_MS) return spans;
   const start = Date.now();
+  try {
+    scan(text, compiled, spans, start);
+  } finally {
+    spentMs += Date.now() - start;
+    // A hook runs as one short process and may scan many strings: once the
+    // detectors used up the budget of the whole process, they all stop.
+    if (spentMs > PROCESS_BUDGET_MS) for (const d of compiled) d.off = true;
+  }
+  return spans;
+}
+
+function scan(text, compiled, spans, start) {
   for (const d of compiled) {
     if (d.off) continue;
     for (const [a, b] of windows(text)) {
-      if (Date.now() - start > CALL_BUDGET_MS) return spans;
+      if (Date.now() - start > CALL_BUDGET_MS) return;
       if (b - a < 1) continue;
       const chunk = text.slice(a, b);
       d.re.lastIndex = 0;
@@ -158,7 +173,9 @@ function find(text, compiled) {
       if (Date.now() - t0 > SLOW_MS) { d.off = true; break; }
     }
   }
-  return spans;
 }
 
-module.exports = { checkPattern, compile, find, WINDOW, MAX_VARIABLE, MAX_SPAN, MAX_COST, CALL_BUDGET_MS };
+/** For tests: start a new process budget. */
+function resetBudget() { spentMs = 0; }
+
+module.exports = { checkPattern, compile, find, resetBudget, WINDOW, MAX_VARIABLE, MAX_SPAN, MAX_COST, CALL_BUDGET_MS, PROCESS_BUDGET_MS };
