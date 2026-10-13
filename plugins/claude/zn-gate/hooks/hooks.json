@@ -5,7 +5,10 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/check-node.sh\"",
+            "command": "sh",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/hooks/check-node.sh"
+            ],
             "timeout": 5
           }
         ]
