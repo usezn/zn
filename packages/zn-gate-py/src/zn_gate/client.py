@@ -45,7 +45,7 @@ def is_cloud_enabled(api_key: Optional[str] = None, local_only: bool = False) ->
 
 # Long texts: the cloud gate reads the first 512 tokens unless the request
 # asks for overlapping windows ("long_input": "windows": 512-token windows,
-# stride 256, up to 16; the verdict comes from the window with the highest
+# stride 256, up to 20; the verdict comes from the window with the highest
 # score). Same rule as the Node.js client (lib/client.js): text over
 # LONG_INPUT_MIN_CHARS asks for windows unless ZN_LONG_INPUT / long_input is
 # "off". Each window is one more inference, so the default timeout is longer.

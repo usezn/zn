@@ -138,7 +138,7 @@ OPTIONS:
   --url <custom_url>  Override gateway endpoint URL
   --local-only        Never use the cloud, even if ZN_CLOUD=1 is set
   --long-input MODE   Long texts sent to the cloud: windows (default; overlapping
-                      512-token windows, up to 16) or off (first 512 tokens only)
+                      512-token windows, up to 20) or off (first 512 tokens only)
   --all, --code       Include source code files in security scan
   --include <exts>    Custom extensions to scan (e.g. .rst,.xml)
   --exclude <dirs>    Additional directories to exclude (e.g. fixtures,legacy)

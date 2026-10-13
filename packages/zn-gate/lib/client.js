@@ -60,7 +60,7 @@ function isCloudEnabled(options = {}) {
 /*
  * Long texts: the cloud gate reads the first 512 tokens unless the request
  * asks for overlapping windows ("long_input": "windows": 512-token windows,
- * stride 256, up to 16; the verdict comes from the window with the highest
+ * stride 256, up to 20; the verdict comes from the window with the highest
  * score). Text over LONG_INPUT_MIN_CHARS (well under 512 tokens of English
  * prose) asks for windows unless ZN_LONG_INPUT / --long-input is "off"; a
  * text that fits one window gets the same result either way. Each window is

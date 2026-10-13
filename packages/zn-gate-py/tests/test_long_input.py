@@ -44,7 +44,8 @@ class _Gate:
 
 
 def _allow(body):
-    out = {"verdict": "allow", "confidence": 0.1}
+    n = len(body["input"])
+    out = {"verdict": "allow", "confidence": 0.1, "input_chars": n, "billed_calls": max(1, 1 + -(-(n - 2000) // 1000))}
     if body.get("long_input") == "windows":
         out["long_input"] = {"mode": "windows", "windows": 3, "top_window": 2, "capped": False}
     return out
@@ -65,6 +66,9 @@ class LongInputTests(unittest.TestCase):
             self.assertEqual(res["mode"], "hybrid-cloud", res)
             self.assertEqual(gate.seen[0]["long_input"], "windows")
             self.assertEqual(res["long_input"]["windows"], 3)
+            # The gate's billing fields reach the caller unchanged.
+            self.assertEqual(res["billed_calls"], 2)
+            self.assertEqual(res["input_chars"], len(text))
             self.assertNotIn("warning", res)
             analyze(SENTENCE, api_key=KEY, endpoint=gate.url)
             self.assertEqual(list(gate.seen[1].keys()), ["input"])

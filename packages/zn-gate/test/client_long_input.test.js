@@ -37,7 +37,7 @@ function withCloud(t, extraEnv = {}) {
 }
 
 const allow = (body) => ({
-  verdict: 'allow', confidence: 0.1,
+  verdict: 'allow', confidence: 0.1, billed_calls: Math.max(1, 1 + Math.ceil((body.input.length - 2000) / 1000)), input_chars: body.input.length,
   ...(body.long_input === 'windows' ? { long_input: { mode: 'windows', windows: 3, top_window: 2, capped: false } } : {}),
 });
 
@@ -51,6 +51,9 @@ test('a long text asks for windows; a short one is sent as before', async (t) =>
   assert.strictEqual(r.mode, 'hybrid-cloud', JSON.stringify(r));
   assert.strictEqual(g.seen[0].long_input, 'windows');
   assert.deepStrictEqual(r.long_input, { mode: 'windows', windows: 3, top_window: 2, capped: false });
+  // The gate's billing fields reach the caller unchanged.
+  assert.strictEqual(r.billed_calls, 2);
+  assert.strictEqual(r.input_chars, long.length);
   assert.strictEqual(r.warning, undefined);
 
   await analyze(SENTENCE, { apiKey: KEY, apiUrl: g.url });
