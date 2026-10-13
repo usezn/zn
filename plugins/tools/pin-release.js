@@ -151,8 +151,13 @@ async function main(argv) {
     attestations: !!(meta.dist && meta.dist.attestations),
     files: sorted,
   };
+  // Everything is computed before anything is written, so a failure leaves the plugin unchanged.
+  const npm = buildNpmFiles(version, meta, bundled);
+  fs.writeFileSync(path.join(PLUGIN, 'package.json'), JSON.stringify(npm.pkg, null, 2) + '\n');
+  fs.writeFileSync(path.join(PLUGIN, 'package-lock.json'), JSON.stringify(npm.npmLock, null, 2) + '\n');
   fs.writeFileSync(LOCK, JSON.stringify(lock, null, 2) + '\n');
-  await writeNpmFiles(version, meta, bundled);
+  process.stdout.write('Wrote plugins/zn-gate/package.json and package-lock.json (zn-gate ' + version + ', ' +
+    (Object.keys(npm.npmLock.packages).length - 1) + ' packages)\n');
   process.stdout.write('Pinned zn-gate@' + version + ' (' + Object.keys(sorted).length + ' files, provenance attestation: ' +
     (lock.attestations ? 'yes' : 'NO') + ') in ' + path.relative(process.cwd(), LOCK) + '\n');
 }
@@ -169,7 +174,7 @@ function stripBundled(npmLock) {
   return npmLock;
 }
 
-async function writeNpmFiles(version, meta, bundled) {
+function buildNpmFiles(version, meta, bundled) {
   const deps = { 'zn-gate': version };
   for (const name of bundled.keys()) deps[name] = bundled.get(name);
   const sortedDeps = Object.fromEntries(Object.keys(deps).sort().map((k) => [k, deps[k]]));
@@ -181,31 +186,37 @@ async function writeNpmFiles(version, meta, bundled) {
     license: 'MIT',
     dependencies: sortedDeps,
   };
-  const pkgFile = path.join(PLUGIN, 'package.json');
-  const lockFile = path.join(PLUGIN, 'package-lock.json');
-  fs.writeFileSync(pkgFile, JSON.stringify(pkg, null, 2) + '\n');
-  fs.rmSync(lockFile, { force: true });
-  // npm's own CLI script, run with this node (no shell, no npm.cmd); else npm from PATH.
-  const npmCli = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
-  const args = ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund', '--registry', REGISTRY];
-  const r = fs.existsSync(npmCli)
-    ? spawnSync(process.execPath, [npmCli, ...args], { cwd: PLUGIN, encoding: 'utf8', windowsHide: true })
-    : spawnSync('npm', args, { cwd: PLUGIN, encoding: 'utf8', windowsHide: true });
-  if (r.status !== 0) throw new Error('npm install --package-lock-only failed: ' + String(r.stderr || r.error || '').trim().slice(0, 500));
-  const npmLock = stripBundled(JSON.parse(fs.readFileSync(lockFile, 'utf8')));
+  // npm resolves the lock in a scratch directory, from this package.json only.
+  const work = fs.mkdtempSync(path.join(require('os').tmpdir(), 'zn-pin-'));
+  let npmLock;
+  try {
+    fs.writeFileSync(path.join(work, 'package.json'), JSON.stringify(pkg, null, 2) + '\n');
+    // npm's own CLI script, run with this node (no shell, no npm.cmd): next to
+    // node on Windows, under <prefix>/lib on Linux and macOS; else npm from PATH.
+    const prefix = path.dirname(process.execPath);
+    const npmCli = [path.join(prefix, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+      path.join(prefix, '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js')].find((f) => fs.existsSync(f));
+    const args = ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund', '--registry', REGISTRY];
+    const r = npmCli
+      ? spawnSync(process.execPath, [npmCli, ...args], { cwd: work, encoding: 'utf8', windowsHide: true })
+      : spawnSync('npm', args, { cwd: work, encoding: 'utf8', windowsHide: true });
+    if (r.status !== 0) throw new Error('npm install --package-lock-only failed: ' + String(r.stderr || r.error || '').trim().slice(0, 500));
+    npmLock = stripBundled(JSON.parse(fs.readFileSync(path.join(work, 'package-lock.json'), 'utf8')));
+  } finally {
+    fs.rmSync(work, { recursive: true, force: true });
+  }
   const z = npmLock.packages['node_modules/zn-gate'];
   if (!z || z.version !== version || z.integrity !== meta.dist.integrity) throw new Error('the npm lock does not pin the checked zn-gate tarball');
   for (const [k, e] of Object.entries(npmLock.packages)) {
     if (k && (!/^sha512-/.test(e.integrity || '') || !String(e.resolved || '').startsWith(REGISTRY + '/'))) {
       throw new Error('the npm lock entry ' + k + ' has no sha512 integrity or registry URL');
     }
+    if (e.hasInstallScript) throw new Error('the npm lock entry ' + k + ' has an install script');
   }
-  fs.writeFileSync(lockFile, JSON.stringify(npmLock, null, 2) + '\n');
-  process.stdout.write('Wrote plugins/zn-gate/package.json and package-lock.json (zn-gate ' + version + ', ' +
-    (Object.keys(npmLock.packages).length - 1) + ' packages)\n');
+  return { pkg, npmLock };
 }
 
-module.exports = { writeNpmFiles, stripBundled };
+module.exports = { buildNpmFiles, stripBundled };
 
 if (require.main === module) main(process.argv.slice(2)).catch((err) => {
   process.stderr.write('pin-release: ' + err.message + '\n');

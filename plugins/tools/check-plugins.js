@@ -180,10 +180,24 @@ if (hasNpm) {
   const pkgs = npmLock.packages || {};
   const z = pkgs['node_modules/zn-gate'] || {};
   if ((npmPkg.dependencies || {})['zn-gate'] !== v) fail(npmPkgFile + ': must depend on zn-gate ' + v + ' exactly');
+  if (npmPkg.scripts) fail(npmPkgFile + ': must have no scripts');
+  // Dependencies: zn-gate and the top-level packages bundled in its tarball,
+  // at their bundled versions; the same list in the root of the npm lock.
+  const bundledTop = Object.keys(lock.files || {})
+    .map((f) => /^node_modules\/((?:@[^/]+\/)?[^/]+)\/package\.json$/.exec(f)).filter(Boolean).map((m) => m[1]).sort();
+  const wantDeps = ['zn-gate', ...bundledTop].sort();
+  const pkgDeps = Object.keys(npmPkg.dependencies || {}).sort();
+  if (Object.keys(lock.files || {}).length && JSON.stringify(pkgDeps) !== JSON.stringify(wantDeps)) {
+    fail(npmPkgFile + ': dependencies must be exactly ' + wantDeps.join(', '));
+  }
+  if (JSON.stringify((pkgs[''] || {}).dependencies || {}) !== JSON.stringify(npmPkg.dependencies || {})) {
+    fail(npmLockFile + ': root dependencies differ from ' + npmPkgFile);
+  }
   if (z.version !== v || z.integrity !== lock.integrity) fail(npmLockFile + ': must pin zn-gate ' + v + ' with the integrity in the lock file');
   for (const [k, e] of Object.entries(pkgs)) {
     if (!k) continue;
     if (e.inBundle || k.startsWith('node_modules/zn-gate/')) fail(npmLockFile + ': ' + k + ' is a bundled entry (Claude Code rejects those)');
+    if (e.hasInstallScript) fail(npmLockFile + ': ' + k + ' has an install script');
     if (!/^sha512-/.test(e.integrity || '') || !String(e.resolved || '').startsWith('https://registry.npmjs.org/')) fail(npmLockFile + ': ' + k + ' has no sha512 integrity or registry URL');
   }
 }
