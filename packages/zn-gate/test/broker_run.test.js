@@ -263,3 +263,39 @@ test('without markers zn run is a plain pass-through and needs no vault', async 
   assert.equal(code, 3);
   assert.equal(stdout.text().trim(), 'hi');
 });
+
+/* ---------------- batch files on Windows ---------------- */
+
+const { systemCmdExe, batchInvocation } = require('../lib/broker/run');
+const { spawnSync } = require('child_process');
+const WIN = process.platform === 'win32';
+
+test('the cmd.exe for batch files comes from a Windows directory, never ComSpec or another folder', () => {
+  assert.equal(systemCmdExe({}), null);
+  assert.equal(systemCmdExe({ SystemRoot: 'C:\\Users\\dev\\Windows' }), null);
+  assert.equal(systemCmdExe({ SystemRoot: 'C:\\Windows\\..\\Temp' }), null);
+  assert.equal(systemCmdExe({ SystemRoot: '\\\\server\\share\\Windows' }), null);
+  if (WIN) assert.match(systemCmdExe(process.env), /^[A-Za-z]:\\Windows\\System32\\cmd\.exe$/i);
+});
+
+test('batch files: arguments zn changed, metacharacters and expansion characters in the path are refused', () => {
+  const env = { SystemRoot: 'C:\\Windows' };
+  const deny = (resolved, args, original) => assert.throws(() => batchInvocation(resolved, args, original, env),
+    (e) => e.code === 'ZN_POLICY_DENIED', resolved + ' ' + args.join(' '));
+  deny('C:\\tools\\deploy.cmd', ['secret-value'], ['__ZN_TOKEN__']);
+  for (const a of ['a&b', 'a|b', 'a>b', 'a^b', '%PATH%', '!X!', 'a"b', 'a\nb']) deny('C:\\tools\\deploy.cmd', [a], [a]);
+  for (const p of ['C:\\p\\%ZX%\\deploy.cmd', 'C:\\p\\!ZX!\\deploy.cmd', 'C:\\p\\a"b\\deploy.cmd']) deny(p, [], []);
+});
+
+test('a batch file runs through the system cmd.exe even when ComSpec points elsewhere', { skip: !WIN && 'Windows only' }, (t) => {
+  const dir = tempDir(t, 'zn-bat-');
+  const bat = path.join(dir, 'say hi.cmd');
+  fs.writeFileSync(bat, '@echo off\r\necho ran:%~1:%~2\r\n');
+  const b = batchInvocation(bat, ['one', 'two words'], ['one', 'two words'], process.env);
+  assert.match(b.file, /\\System32\\cmd\.exe$/i);
+  // A hostile ComSpec in the environment of zn and of the child changes nothing.
+  const env = { ...process.env, ComSpec: process.execPath };
+  const r = spawnSync(b.file, b.args, { env, encoding: 'utf8', windowsVerbatimArguments: true, windowsHide: true });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout.trim(), 'ran:one:two words');
+});

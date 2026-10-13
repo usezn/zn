@@ -103,8 +103,60 @@ function referencedSecrets(parsed, env) {
   return [...requiredSecrets(parsed), ...optionalSecrets(parsed, env)];
 }
 
+/*
+ * cmd.exe for batch files, chosen by zn. Never ComSpec, PATH or the current
+ * directory, which the caller of zn run (an agent) controls: with
+ * `shell: true` Node starts whatever ComSpec names, and that program would
+ * receive the secret values. SystemRoot comes from the environment too, so it
+ * must look like a Windows directory and, unless it is C:\Windows, its
+ * System32 must not be writable by this user. Returns the path or null.
+ */
+function systemCmdExe(env) {
+  const e = env || process.env;
+  const root = String(e.SystemRoot || e.SYSTEMROOT || '');
+  if (!/^[A-Za-z]:\\Windows$/i.test(root)) return null;
+  const sys = path.win32.join(root, 'System32');
+  const cmd = path.win32.join(sys, 'cmd.exe');
+  try { if (!fs.statSync(cmd).isFile()) return null; } catch (_) { return null; }
+  if (root.toLowerCase() !== 'c:\\windows') {
+    const probe = path.win32.join(sys, '.zn-write-check-' + process.pid + '-' + Date.now());
+    try {
+      fs.closeSync(fs.openSync(probe, 'wx'));
+      try { fs.unlinkSync(probe); } catch (_) { /* best effort */ }
+      return null;
+    } catch (_) { /* not writable: a system directory */ }
+  }
+  return cmd;
+}
+
 function cmdQuote(arg) {
   return '"' + String(arg).replace(/"/g, '""') + '"';
+}
+
+/*
+ * How to start a batch file: {file, args} for spawn with
+ * windowsVerbatimArguments, or throws ZN_POLICY_DENIED. cmd.exe re-parses
+ * its command line and expands %VAR% (and !VAR!) even inside quotes, so
+ * arguments that zn changed (secret values) or that hold metacharacters are
+ * refused, and so is a program path with expansion characters.
+ * original: the arguments as the caller wrote them.
+ */
+function batchInvocation(resolved, args, original, env) {
+  const touched = args.some((a, i) => a !== original[i]);
+  if (touched || args.some((a) => /[&|<>^%!"\r\n]/.test(a)) || /[%!"\r\n]/.test(resolved)) {
+    throw znError('ZN_POLICY_DENIED', path.basename(resolved) +
+      ' is a batch file: zn run will not pass secret values or shell metacharacters through cmd.exe. ' +
+      'Use --secrets NAME to pass the value as an environment variable instead.');
+  }
+  const cmdExe = systemCmdExe(env);
+  if (!cmdExe) {
+    throw znError('ZN_POLICY_DENIED', path.basename(resolved) +
+      ' is a batch file and zn could not find the system cmd.exe (SystemRoot must be the Windows directory); it was not started.');
+  }
+  // /d: no AutoRun commands; /s /c "...": cmd.exe runs the line between the
+  // outer quotes as is.
+  const line = [resolved, ...args].map(cmdQuote).join(' ');
+  return { file: cmdExe, args: ['/d', '/s', '/c', '"' + line + '"'] };
 }
 
 /**
@@ -258,7 +310,7 @@ function spawnChecked(prep, opts) {
   const masker = createMasker(prep.secrets);
   let file = prep.argv[0];
   let args = prep.argv.slice(1);
-  let shell = false;
+  let verbatim = false;
   let argv0;
   if (prep.secrets.length) {
     // Values are about to be handed over: start exactly the file that was
@@ -274,16 +326,11 @@ function spawnChecked(prep, opts) {
     if (process.platform !== 'win32') argv0 = prep.argv[0];
   }
   if (process.platform === 'win32' && prep.resolved && /\.(cmd|bat)$/i.test(prep.resolved)) {
-    // cmd.exe re-parses its command line: refuse values and metacharacters in arguments.
-    const touched = args.some((a, i) => a !== opts.originalArgs[i + 1]);
-    if (touched || args.some((a) => /[&|<>^%!"\r\n]/.test(a))) {
-      return Promise.reject(znError('ZN_POLICY_DENIED', path.basename(prep.resolved) +
-        ' is a batch file: zn run will not pass secret values or shell metacharacters through cmd.exe. ' +
-        'Use --secrets NAME to pass the value as an environment variable instead.'));
-    }
-    file = cmdQuote(prep.resolved);
-    args = args.map(cmdQuote);
-    shell = true;
+    let b;
+    try { b = batchInvocation(prep.resolved, args, opts.originalArgs.slice(1), process.env); } catch (err) { return Promise.reject(err); }
+    file = b.file;
+    args = b.args;
+    verbatim = true;
   }
   return new Promise((resolve, reject) => {
     let child;
@@ -293,7 +340,8 @@ function spawnChecked(prep, opts) {
         env: prep.env,
         cwd: opts.cwd || process.cwd(),
         stdio: ['inherit', 'pipe', 'pipe'],
-        shell,
+        shell: false,
+        windowsVerbatimArguments: verbatim,
         windowsHide: true,
       });
     } catch (err) {
@@ -366,7 +414,7 @@ async function main(args) {
   process.exitCode = await runBroker(args);
 }
 
-module.exports = { parseRunArgs, requiredSecrets, optionalSecrets, referencedSecrets, prepare, runBroker, main, USAGE };
+module.exports = { systemCmdExe, batchInvocation, parseRunArgs, requiredSecrets, optionalSecrets, referencedSecrets, prepare, runBroker, main, USAGE };
 
 // Direct entry (`node lib/broker/run.js -- <command>`), used by hook rewrites.
 if (require.main === module) main(process.argv.slice(2));
