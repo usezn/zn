@@ -1,0 +1,25 @@
+{
+  "name": "zn-gate",
+  "displayName": "zn-gate",
+  "version": "1.6.0",
+  "description": "Local security layer for Claude Code: keeps secret values out of what Claude sends to the model and adds a secrets MCP server that uses credentials without revealing them.",
+  "author": {
+    "name": "usezn",
+    "email": "security@usezn.com",
+    "url": "https://usezn.com"
+  },
+  "homepage": "https://github.com/usezn/zn/tree/v1.6.0/plugins/zn-gate",
+  "repository": "https://github.com/usezn/zn",
+  "license": "MIT",
+  "keywords": [
+    "security",
+    "secrets",
+    "mcp",
+    "hooks",
+    "prompt-injection"
+  ],
+  "documentationUrl": "https://github.com/usezn/zn/blob/v1.6.0/docs/secrets.md",
+  "supportUrl": "https://github.com/usezn/zn/issues",
+  "privacyPolicyUrl": "https://usezn.com/privacy",
+  "termsOfServiceUrl": "https://usezn.com/terms"
+}

@@ -19,12 +19,16 @@ const FAIL_ON = ['low', 'medium', 'high', 'critical', 'none'];
 
 class UsageError extends Error {}
 
+// `zn audit` showed the secret-use log in 1.5.
+const LOG_MOVED = '`zn audit` reviews agent configs; the secret-use log is `zn vault log` (alias `zn secret log`)';
+
 function parseArgs(args) {
   const opts = { path: null, format: 'text', output: null, failOn: 'high', agents: ['all'], includeHome: false, help: false };
   const takesValue = { '--format': 'format', '--output': 'output', '-o': 'output', '--fail-on': 'failOn', '--agents': 'agents' };
   for (let i = 0; i < args.length; i++) {
     const a = String(args[i]);
     if (a === '-h' || a === '--help') { opts.help = true; continue; }
+    if (a === '--since' || a.startsWith('--since=')) throw new UsageError(LOG_MOVED);
     if (a === '--include-home') { opts.includeHome = true; continue; }
     const eq = a.indexOf('=');
     const name = a.startsWith('--') && eq > 0 ? a.slice(0, eq) : a;
@@ -71,7 +75,9 @@ async function main(args, ioIn) {
   try {
     const root = path.resolve(io.cwd, opts.path || '.');
     let st;
-    try { st = fs.statSync(root); } catch (_) { throw new Error('path not found: ' + (opts.path || '.')); }
+    try { st = fs.statSync(root); } catch (_) {
+      throw new Error(opts.path === 'log' ? LOG_MOVED : 'path not found: ' + (opts.path || '.'));
+    }
     if (!st.isDirectory()) throw new Error('not a directory: ' + (opts.path || '.'));
     const result = audit({ root, agents: opts.agents, includeHome: opts.includeHome, home: io.home, env: io.env });
     const toolVersion = require('../../package.json').version;

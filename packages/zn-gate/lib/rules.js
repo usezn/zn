@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-12.5
+ * RULES_VERSION: 2026-10-12.6
  */
 
-const RULES_VERSION = '2026-10-12.5';
+const RULES_VERSION = '2026-10-12.6';
 
 // "ignore" and "disregard" are ordinary words ("ignore the noise in the
 // logs", "ignore whitespace changes"). They only count as an override when
@@ -420,6 +420,11 @@ function evaluateUncached(input, options = {}) {
 // -------------------------------------------------------------------------
 // DLP & Secret Masking Rules
 // -------------------------------------------------------------------------
+// A text without one of these cannot match the credential patterns, which are
+// then not run at all.
+const ENV_CREDENTIAL_PREFILTER = /_[Kk][Ee][Yy]|_[Tt][Oo][Kk][Ee][Nn]|_[Pp][Aa][Ss][Ss]/;
+const PREFIXED_CREDENTIAL_PREFILTER = /KEY|TOKEN|SECRET|PASS|PWD|CREDENTIALS/;
+
 const SECRET_PATTERNS = [
   // A body may not contain another BEGIN header: linear on repeated headers without END.
   { id: 'secret:private_key', pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----(?:(?!-----BEGIN )[\s\S])*?-----END [A-Z ]*PRIVATE KEY-----/g, replacement: '[REDACTED_PRIVATE_KEY]' },
@@ -435,8 +440,236 @@ const SECRET_PATTERNS = [
   // allows a single start per token. Only used when the
   // text contains ".eyJ" (see redactSecrets).
   { id: 'secret:jwt_token', pattern: /(?<![A-Za-z0-9_-])(eyJ(?=([A-Za-z0-9_-]{10,512}))\2\.eyJ(?=([A-Za-z0-9_=-]{10,8192}))\3\.[A-Za-z0-9_.+/=-]{10,4096})(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))/g, replacement: '[REDACTED_JWT]', requires: '.eyJ' },
-  { id: 'secret:env_credential', pattern: /(?<![A-Za-z0-9_])((?:[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]_[Aa][Cc][Cc][Ee][Ss][Ss]_[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]_[Kk][Ee][Yy]|[Aa][Pp][Ii]_[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh]_[Tt][Oo][Kk][Ee][Nn]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee]_[Kk][Ee][Yy]|[Dd][Aa][Tt][Aa][Bb][Aa][Ss][Ee]_[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd])\s*[:=]\s*['"]?)([^\s'"]{12,})(['"]?)/g, replacement: '$1[REDACTED_SECRET]$3' },
+  // Credential assignments. A name right after "${" is a shell reference, and
+  // after "$" (PHP, PowerShell, Perl) only "=" assigns: "$NAME:" is a reference
+  // followed by text. The value (group 2) is checked with isNonSecretValue. The
+  // u flag makes the 12-character minimum count code points, as in Python.
+  { id: 'secret:env_credential', pattern: /(?=[A-Za-z0-9_])(?<![A-Za-z0-9_])(?<!\$\{)(?:(?<!\$)|(?=[A-Za-z0-9_]+\s*=))((?:[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]_[Aa][Cc][Cc][Ee][Ss][Ss]_[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]_[Kk][Ee][Yy]|[Aa][Pp][Ii]_[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh]_[Tt][Oo][Kk][Ee][Nn]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee]_[Kk][Ee][Yy]|[Dd][Aa][Tt][Aa][Bb][Aa][Ss][Ee]_[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd])["']?\s*[:=]\s*['"]?)([^\s'"]{12,})(['"]?)/gu, replacement: '$1[REDACTED_SECRET]$3', valueFilter: isNonSecretValue, prefilter: ENV_CREDENTIAL_PREFILTER },
+  // Environment-style names with a prefix: OPENAI_API_KEY=, "DB_PASSWORD": "...",
+  // `ENV X_TOKEN value` in a Dockerfile, $X_SECRET = '...' in PHP. Upper case
+  // only, so code such as `token = response.json()` is left alone.
+  { id: 'secret:prefixed_credential', pattern: /(?=[A-Z0-9])(?<![A-Za-z0-9_])(?<!\$\{)(?:(?<!\$)|(?=[A-Za-z0-9_]+[ \t]*=))((?:ENV[ \t]+(?:[A-Z0-9]+_)+(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD)[ \t]+|(?:[A-Z0-9]+_)+(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD)["']?[ \t]*[:=][ \t]*)['"]?)([^\s'"]{12,})(['"]?)/gu, replacement: '$1[REDACTED_SECRET]$3', valueFilter: isNonSecretValue, prefilter: PREFIXED_CREDENTIAL_PREFILTER },
+  // The default of a shell or Compose reference, ${DB_PASSWORD:-<value>}: only
+  // redacted when it looks machine-generated (most defaults are for development).
+  { id: 'secret:credential_default', pattern: /(\$\{(?:[A-Z0-9]+_)*(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD):?[-=])([^\s'"{}$]{12,})(\})/gu, replacement: '$1[REDACTED_SECRET]$3', valueFilter: isNonSecretDefault, requires: '${' },
 ];
+
+// ---------------------------------------------------------------------------
+// Values of credential assignments that are not secrets. The checks run in
+// this order:
+// 1. Longer than MAX_FILTERED_VALUE: a secret (keeps the checks linear).
+// 2. References: already redacted, URLs without a password in the user info,
+//    secret-manager references (ARN, vault:, Key Vault, projects/*/secrets/*),
+//    code that reads the environment or settings (process.env., os.environ,
+//    getenv(, settings., secrets., std::env::...), and a placeholder or
+//    template that is the whole value (${VAR}, $VAR, <...>, {{...}}, ***).
+// 3. Names and code: file names with a known extension, host names, calls
+//    and indexes that start with an identifier, identifier chains (a.b, a::b,
+//    a->b) and constant or snake_case names. A chain or name is not code when
+//    a part of it looks random, so a Mapbox sk.eyJ... or SendGrid SG.x.y key
+//    is still a secret. Paths, unless a segment looks random (a base64 key
+//    may start with "/").
+// 4. A placeholder mark inside the value (xxxx, ***, <...>, ${, a leading
+//    "<", "{" or "["): not a secret, unless the value looks machine-generated.
+// 5. Placeholder words (your-key-here, changeme, fake, mock, test...), unless
+//    the value is long and random.
+// 6. A value that looks machine-generated is a secret.
+// 7. A value made only of letters is not a secret when one of its words
+//    describes it (MySecretKey, api-token-here, ask-the-ops-team); short
+//    lower-case slugs name an object (regcred-ghcr, ingress-nginx-tls).
+// Everything else, including lower-case passphrases joined by "-", is a secret.
+// ---------------------------------------------------------------------------
+const MAX_FILTERED_VALUE = 512;
+// Characters of values checked per redactSecrets call (UTF-16 units). Past
+// that, credential matches are redacted without the checks, which bounds
+// their cost on crafted input.
+const MAX_FILTERED_CHARS = 32 * 1024;
+const CREDENTIAL_URL_RE = /^[A-Za-z][A-Za-z0-9+.-]*:\/\/(?:[^\/@:\s]*:([^\/@\s]*)@)?/;
+const CREDENTIAL_STORE_RE = /^(?:arn:|vault:|secretref:|@Microsoft\.KeyVault\(|projects\/[^\/]+\/secrets\/)/;
+const CREDENTIAL_CODE_ROOT_RE = /^(?:process\.env[.\[]|import\.meta\.env[.\[]|os\.environ|os\.getenv\(|getenv\(|settings\.|config\.|secrets\.|std::env::|env::var|ENV(?:\[|\.fetch\()|\$ENV\{|System\.getenv\(|Deno\.env\.|Bun\.env\.|\[Environment\]::|\([A-Z][a-z]+-[A-Z])/;
+// A placeholder or reference that is the whole value (always left alone).
+const CREDENTIAL_PLACEHOLDER_RE = /^(?:%\([A-Za-z_]*\)s|<[^<>]*>|\{\{[^{}]*\}\}|\$\{[^{}]*\}|#\{[^{}]*\}|\*+|!(?:Ref|Sub|GetAtt|ImportValue|Join|Select|Split|FindInMap|If|Base64|Cidr|GetAZs|Equals|And|Or|Not|Condition|Transform)|([A-Za-z0-9])(?:\1|[-_.:])*)$/;
+// A variable or template reference that is the whole value ($VAR, $$VAR,
+// $env:VAR, %VAR%, @name@, [name]): left alone unless the part inside looks random.
+// The part inside must read as a name: UPPER_CASE, lower.case or camelCase words.
+const CREDENTIAL_REFERENCE_NAME_RE = /^(?:[A-Z][A-Z0-9_]*|[a-z][a-z0-9_.-]*|[A-Za-z][a-z]+(?:[A-Z][a-z]+)*[0-9]*)$/;
+const CREDENTIAL_REFERENCE_RE = /^(?:\$\$?([A-Za-z_][A-Za-z0-9_]*)|\$env:([A-Za-z_][A-Za-z0-9_]*)|%([A-Za-z_][A-Za-z0-9_]*)%|@([A-Za-z0-9_.-]+)@|\[([^\[\]]*)\])$/;
+// Placeholder marks inside a value: left alone unless the value looks
+// machine-generated (a password manager may produce `<`, `{{` or `***`).
+const CREDENTIAL_PLACEHOLDER_MARK_RE = /<[^<>]*>|^[<{\[]|^\$\(|^(?:0123456789|1234567890|[Aa][Bb][Cc][Dd][Ee][Ff]|[Qq][Ww][Ee][Rr][Tt][Yy])|([A-Za-z0-9])\1{7,}/;
+const CREDENTIAL_PLACEHOLDER_MARKS = ['xxxx', '***', '...', '${', '#{', '{{', 'deadbeef'];
+const CREDENTIAL_PLACEHOLDER_WORDS = /(?<![A-Za-z])(?:password|passwd|passw0rd|secret|changeme|change_me|example|placeholder|your[_-]?|redacted|dummy|sample|foobar|hunter2|todo|insert|replace|mypass|pass(?:word)?123|fake|mock|tests?|testing|demo|stub|fixme|not[_-]?set|unset|set[_-]me|change[_-]this)(?![A-Za-z])/i;
+const CREDENTIAL_CODE_RE = /^[(!&*@:]*([A-Za-z_$][A-Za-z0-9_$]*(?:(?:\?\.|\.|::|->)[A-Za-z_$][A-Za-z0-9_$]*)*)(?:((?:->[(\[{]|!?[(\[])(?:[A-Za-z0-9_$.:=(\[{!?&|,]|[)\]}](?![A-Za-z0-9_$]))*)|!|[)\]]*)$/;
+const CREDENTIAL_DOTTED_WORDS_RE = /^[a-z]+(?:\.[a-z]+){2,}$/;
+const CREDENTIAL_IDENTIFIER_RE = /^(?:_*[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+_*|[a-z][a-z0-9]*(?:_[a-z0-9]+)+|[A-Z]+)$/;
+const CREDENTIAL_PATH_RE = /^(?:(?:~|\.{1,2})?\/|[A-Za-z]:[\\\/]|\\\\)[^+=]*$|^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+$/;
+const CREDENTIAL_FILE_EXT_RE = /\.[A-Za-z][A-Za-z0-9]{0,4}$/;
+const CREDENTIAL_FILE_NAME_RE = /^[A-Za-z0-9_][A-Za-z0-9_.-]*\.(?:json|ya?ml|pem|p8|p12|pfx|key|keystore|jks|crt|cer|der|txt|ini|toml|conf|cfg|xml|properties|env|gpg|asc|ppk|pub|kdbx)$/;
+const CREDENTIAL_HOST_NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*(?:\.[a-z0-9]+(?:-[a-z0-9]+)*)*\.(?:com|net|org|io|dev|app|cloud|internal|local|svc|co|ai|sh)$/;
+const CREDENTIAL_SLUG_RE = /^[a-z0-9]+(?:[-.][a-z0-9]+)+$/;
+const CREDENTIAL_SLUG_SHORT_WORD_RE = /(?:^|[-.])(?:[a-z0-9]{1,3}|[a-z]*[0-9][a-z0-9]*)(?:[-.]|$)/;
+const CREDENTIAL_OBJECT_NAME_RE = /_(?:SECRET|CREDENTIALS)(?![A-Za-z0-9_])/;
+const CREDENTIAL_LETTERS_RE = /^[A-Za-z]+(?:[-_.][A-Za-z]+)*$/;
+const CREDENTIAL_DESCRIPTIVE_WORDS = /(?:^|-)(?:keys?|tokens?|secrets?|pass|passwords?|passwd|pwd|api|apikey|auth|credentials?|access|private|here|value|string|my|your|default|dev|development|local|prod|production|staging|none|null|empty|required|some|generated|random|change|replace|set|use|put|enter|fill|ask|get|see|from|the|not|check|contact|generate|read|find|fake|mock|tests?|dummy|example|sample|placeholder|todo)(?:-|$)|secret|passw|token|apikey|changeme|example|placeholder|dummy/;
+const CREDENTIAL_HEX_RE = /^[0-9A-Fa-f]{32,}$/;
+const WORD_TOKEN_RE = /[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[0-9]+/g;
+
+function trimSeparators(value) {
+  let end = value.length;
+  while (end > 0 && (value[end - 1] === ';' || value[end - 1] === ',')) end--;
+  return value.slice(0, end);
+}
+
+// Shannon entropy per character, length counted in UTF-16 units. Characters
+// are summed in order of first appearance, as in the Python port.
+const ASCII_COUNTS = new Int32Array(128);
+function entropy(s) {
+  if (/^[\x00-\x7f]*$/.test(s)) {
+    const order = [];
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      if (ASCII_COUNTS[c]++ === 0) order.push(c);
+    }
+    let h = 0;
+    for (const c of order) {
+      const p = ASCII_COUNTS[c] / s.length;
+      h -= p * Math.log2(p);
+      ASCII_COUNTS[c] = 0;
+    }
+    return h;
+  }
+  const counts = new Map();
+  for (const ch of s) counts.set(ch, (counts.get(ch) || 0) + 1);
+  let h = 0;
+  for (const c of counts.values()) {
+    const p = c / s.length;
+    h -= p * Math.log2(p);
+  }
+  return h;
+}
+
+// A digit, three character classes and at least 3 bits per character.
+// Without a digit: 16 or more characters with upper case, lower case and
+// symbols, at least 3.5 bits per character and no word structure (passwords
+// from a password manager).
+function looksMachineGenerated(v) {
+  const digit = /[0-9]/.test(v);
+  const classes = (/[a-z]/.test(v) ? 1 : 0) + (/[A-Z]/.test(v) ? 1 : 0) + (digit ? 1 : 0) + (/[^A-Za-z0-9]/.test(v) ? 1 : 0);
+  if (classes < 3) return false;
+  if (digit) return entropy(v) >= 3.0;
+  return v.length >= 16 && entropy(v) >= 3.5 && machineLikePart(v);
+}
+
+// Text that reads as random rather than as words: ten or more letters and
+// digits with fewer than 2.5 per word (camelCase humps, upper-case runs and
+// numbers count as words), or twenty or more that mix upper case, lower case
+// and digits.
+function machineLikePart(s) {
+  if (s.length < 10) return false;
+  const alnum = s.replace(/[^A-Za-z0-9]/g, '').length;
+  if (alnum < 10) return false;
+  if (alnum >= 20 && /[0-9]/.test(s) && /[a-z]/.test(s) && /[A-Z]/.test(s)) return true;
+  const words = (s.match(WORD_TOKEN_RE) || []).length;
+  return alnum * 2 < words * 5;
+}
+
+// A call or index (getenv(, os.environ[, z.string().min(1)) is code. A chain
+// without one (settings.X, var.name, @user.key) and a constant or snake_case
+// name are code unless a part looks random. Three or more lower-case words
+// joined by "." are a passphrase, not a chain.
+function looksLikeCode(v) {
+  const m = CREDENTIAL_CODE_RE.exec(v);
+  if (m && m[2] !== undefined) return !m[1].split(/\?\.|\.|::|->/).some(machineLikePart);
+  if (CREDENTIAL_DOTTED_WORDS_RE.test(v)) return false;
+  if (m && /\.|::|->/.test(m[1])) return !m[1].split(/\?\.|\.|::|->/).some(machineLikePart);
+  return CREDENTIAL_IDENTIFIER_RE.test(v) && !v.split('_').some(machineLikePart);
+}
+
+// Absolute paths, and relative ones that end with a file extension.
+function looksLikePath(v) {
+  if (!CREDENTIAL_PATH_RE.test(v)) return false;
+  if (!/^[~.\/\\]|^[A-Za-z]:/.test(v) && !CREDENTIAL_FILE_EXT_RE.test(v)) return false;
+  return !v.split(/[\\\/]/).some(machineLikePart);
+}
+
+function asciiLower(s) {
+  return s.replace(/[A-Z]+/g, (m) => m.toLowerCase());
+}
+
+// A placeholder mark inside the value; lv is v with ASCII letters lower-cased.
+function placeholderMark(v, lv) {
+  return CREDENTIAL_PLACEHOLDER_MARK_RE.test(v) || CREDENTIAL_PLACEHOLDER_MARKS.some((m) => lv.includes(m));
+}
+
+function isReference(v) {
+  const m = CREDENTIAL_REFERENCE_RE.exec(v);
+  if (!m) return false;
+  const inner = m.slice(1).find((g) => g !== undefined);
+  if (!CREDENTIAL_REFERENCE_NAME_RE.test(inner)) return false;
+  return !(looksMachineGenerated(inner) || inner.split(/[-_.]/).some(machineLikePart));
+}
+
+function isPlaceholderValue(v) {
+  return CREDENTIAL_PLACEHOLDER_RE.test(v) || isReference(v) || placeholderMark(v, asciiLower(v)) || CREDENTIAL_PLACEHOLDER_WORDS.test(v);
+}
+
+// A file name with a known extension, or a host name.
+function looksLikeName(v) {
+  return (CREDENTIAL_FILE_NAME_RE.test(v) && !machineLikePart(v)) || CREDENTIAL_HOST_NAME_RE.test(v);
+}
+
+// Lower-case words joined by "-" or "." that name an object rather than hold
+// a passphrase: two words, three words with a short or numbered word, three
+// words under a *_SECRET or *_CREDENTIALS name (Kubernetes secrets, pull
+// secrets, credential files), or any number of words under such a name when
+// one is short or numbered (cert-manager-webhook-ca).
+function looksLikeSlug(v, prefix) {
+  if (!CREDENTIAL_SLUG_RE.test(v)) return false;
+  const words = v.split(/[-.]/).length;
+  if (words <= 2) return true;
+  const shortWord = CREDENTIAL_SLUG_SHORT_WORD_RE.test(v);
+  const objectName = CREDENTIAL_OBJECT_NAME_RE.test(prefix);
+  return (words === 3 && (shortWord || (objectName && !v.includes('.')))) || (objectName && shortWord);
+}
+
+// Only letters, and one of the words says what the value is or is for.
+function describesItself(v) {
+  if (!CREDENTIAL_LETTERS_RE.test(v)) return false;
+  return CREDENTIAL_DESCRIPTIVE_WORDS.test((v.match(WORD_TOKEN_RE) || []).join('-').toLowerCase());
+}
+
+const NOT_SECRET = 0;
+const SECRET = 1;
+const GENERATED_SECRET = 2;
+
+function credentialValueKind(value, prefix) {
+  if (value.length > MAX_FILTERED_VALUE) return GENERATED_SECRET;
+  const v = trimSeparators(value);
+  if (!v || v.includes('[REDACTED_')) return NOT_SECRET;
+  const url = CREDENTIAL_URL_RE.exec(v);
+  if (url) {
+    const pwd = url[1];
+    return pwd === undefined || pwd === '' || /^[$%<{]/.test(pwd) || isPlaceholderValue(pwd) ? NOT_SECRET : GENERATED_SECRET;
+  }
+  if (CREDENTIAL_STORE_RE.test(v) || CREDENTIAL_CODE_ROOT_RE.test(v) || CREDENTIAL_PLACEHOLDER_RE.test(v) || isReference(v)) return NOT_SECRET;
+  if (looksLikeName(v) || looksLikeCode(v) || looksLikePath(v)) return NOT_SECRET;
+  const generated = looksMachineGenerated(v);
+  // A whole-value reference shape with a random inside ([...], $..., @...@) is not a placeholder.
+  if (!CREDENTIAL_REFERENCE_RE.test(v) && placeholderMark(v, asciiLower(v))) return generated ? GENERATED_SECRET : NOT_SECRET;
+  if (CREDENTIAL_PLACEHOLDER_WORDS.test(v)) return generated && v.length >= 24 && machineLikePart(v) ? GENERATED_SECRET : NOT_SECRET;
+  if (generated) return GENERATED_SECRET;
+  if (describesItself(v) || looksLikeSlug(v, prefix)) return NOT_SECRET;
+  return CREDENTIAL_HEX_RE.test(v) && /[0-9]/.test(v) && /[A-Fa-f]/.test(v) ? GENERATED_SECRET : SECRET;
+}
+
+function isNonSecretValue(value, prefix = '') {
+  return credentialValueKind(value, prefix) === NOT_SECRET;
+}
+
+// Defaults are only redacted when they look machine-generated.
+function isNonSecretDefault(value, prefix = '') {
+  return credentialValueKind(value, prefix) !== GENERATED_SECRET;
+}
 
 function redactSecrets(text) {
   if (typeof text !== 'string' || !text) {
@@ -444,8 +677,23 @@ function redactSecrets(text) {
   }
   let sanitized = text;
   const detections = [];
+  let filterBudget = MAX_FILTERED_CHARS;
   for (const item of SECRET_PATTERNS) {
     if (item.requires && !sanitized.includes(item.requires)) continue;
+    if (item.prefilter && !item.prefilter.test(sanitized)) continue;
+    if (item.valueFilter) {
+      // One pass: the value (group 2) decides whether the match is redacted.
+      sanitized = sanitized.replace(item.pattern, (...m) => {
+        const n = m[2].length;
+        if (n <= MAX_FILTERED_VALUE && n <= filterBudget) {
+          filterBudget -= n;
+          if (item.valueFilter(m[2], m[1])) return m[0];
+        }
+        detections.push({ rule: item.id, index: m[m.length - 2] });
+        return m[1] + '[REDACTED_SECRET]' + m[3];
+      });
+      continue;
+    }
     let match;
     const regex = new RegExp(item.pattern.source, item.pattern.flags);
     while ((match = regex.exec(sanitized)) !== null) {
@@ -583,6 +831,8 @@ module.exports = {
   scanWindows,
   MAX_SCAN_CHARS,
   MAX_TOOL_RESULT_SCAN_CHARS,
+  MAX_FILTERED_VALUE,
+  MAX_FILTERED_CHARS,
   SCAN_WINDOW_OVERLAP,
   SCAN_HEAD_CHARS,
   SCAN_TAIL_CHARS,
@@ -592,6 +842,10 @@ module.exports = {
   HELPER_PATTERNS: { ZERO_WIDTH_RE, ANSI_ESCAPE_RE, B64_EXEC_RE, WHITESPACE_RUN_RE, OPEN_TAG_RE, HIDDEN_ATTR_RE, HIDDEN_PAYLOAD_RE, MD_IMAGE_RE, MD_URL_SCHEME_RE, MD_URL_SECRET_PARAM_RE,
     RU_FORGET_RE, RU_FORGET_OBJECT_RE, RU_IGNORE_RE, RU_IGNORE_OBJECT_RE, RU_PHRASE_RE,
     ZH_IGNORE_RE, ZH_IGNORE_OBJECT_RE, ZH_FORGET_RE, ZH_FORGET_OBJECT_RE, ZH_PHRASE_RE,
+    CREDENTIAL_URL_RE, CREDENTIAL_STORE_RE, CREDENTIAL_CODE_ROOT_RE, CREDENTIAL_PLACEHOLDER_RE, CREDENTIAL_REFERENCE_RE, CREDENTIAL_REFERENCE_NAME_RE, CREDENTIAL_PLACEHOLDER_MARK_RE,
+    CREDENTIAL_PLACEHOLDER_WORDS, CREDENTIAL_CODE_RE, CREDENTIAL_IDENTIFIER_RE, CREDENTIAL_PATH_RE,
+    CREDENTIAL_FILE_NAME_RE, CREDENTIAL_HOST_NAME_RE, CREDENTIAL_SLUG_RE, CREDENTIAL_SLUG_SHORT_WORD_RE, CREDENTIAL_OBJECT_NAME_RE,
+    CREDENTIAL_DOTTED_WORDS_RE, CREDENTIAL_FILE_EXT_RE, CREDENTIAL_LETTERS_RE, CREDENTIAL_DESCRIPTIVE_WORDS, CREDENTIAL_HEX_RE, WORD_TOKEN_RE,
   },
   SECRET_PATTERNS,
   RULES_VERSION,

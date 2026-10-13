@@ -111,7 +111,7 @@ const UUID = '550e8400-e29b-41d4-a716-446655440000';
 
 test('benign YAML and compose files are untouched', () => {
   for (const t of [
-    'services:\n  db:\n    image: postgres:16\n    ports:\n      - "5432:5432"\n    environment:\n      POSTGRES_USER: app\n      POSTGRES_DB: appdb\n      POSTGRES_PASSWORD_FILE: /run/secrets/db_password\n      TZ: Europe/Madrid\n',
+    'services:\n  db:\n    image: postgres:16\n    ports:\n      - "5432:5432"\n    environment:\n      POSTGRES_USER: app\n      POSTGRES_DB: appdb\n      POSTGRES_PASSWORD_FILE: /run/secrets/db_password\n      TZ: UTC\n',
     'services:\n  api:\n    environment:\n      - API_KEY=${API_KEY}\n      - DB_PASSWORD=$DB_PASSWORD\n      - "SESSION_SECRET=${SESSION_SECRET:?required}"\n      - NODE_ENV=production\n',
     'steps:\n  - uses: actions/checkout@v4\n    with:\n      token: ${{ secrets.GITHUB_TOKEN }}\n',
     'valueFrom:\n  secretKeyRef:\n    name: db-credentials\n    key: password\n',

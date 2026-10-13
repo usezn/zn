@@ -38,6 +38,7 @@ const policy = require('./policy');
 const markers = require('../broker/markers');
 const { gitStatusOf } = require('../broker/files');
 const deps = require('../deps');
+const { shQuote, SH_QUOTE_ESCAPE, portablePath } = require('../shell-quote');
 
 const SECRET_SOURCES = new Set(['exact', 'pattern']);
 const POST_TOOLS = new Set(['read', 'bash', 'powershell', 'monitor', 'grep', 'lsp', 'webfetch', 'mcp', 'mcpresource']);
@@ -118,15 +119,31 @@ function lazyDeps(opts) {
   };
 }
 
-function nodeQ(s) {
-  return '"' + String(s).replace(/\\/g, '/').replace(/"/g, '\\"') + '"';
-}
-
+/**
+ * The `zn run` prefix put in front of a Bash command that uses a secret. The
+ * agent runs the rewritten command in bash (Claude Code's Bash tool, Git Bash
+ * on Windows) or in the user's shell (OpenCode), so each path is one
+ * single-quoted sh word and nothing in it is expanded.
+ */
 function znRunPrefix(opts, agentId) {
   if (opts.znRunPrefix) return opts.znRunPrefix;
-  const q = (s) => '"' + String(s).replace(/\\/g, '/').replace(/"/g, '\\"') + '"';
-  const runJs = path.resolve(__dirname, '..', 'broker', 'run.js');
-  return 'ZN_AGENT=' + agentId + ' ' + q(process.execPath) + ' ' + q(runJs) + ' --';
+  const q = (s) => shQuote(portablePath(s));
+  const runJs = opts.runJs || path.resolve(__dirname, '..', 'broker', 'run.js');
+  return 'ZN_AGENT=' + String(agentId).replace(/[^a-z0-9-]/g, '') + ' ' + q(opts.nodePath || process.execPath) + ' ' + q(runJs) + ' --';
+}
+
+/* Custom secret formats from the zn Team policy (verified cache), compiled
+ * once per hook process. They only add redactions. */
+let orgDetectors = null;
+function orgDetectorsFor(opts) {
+  if (orgDetectors === null) {
+    try {
+      const team = require('../team/policy');
+      const { detectorsOf } = require('../team/effective');
+      orgDetectors = require('../team/detectors').compile(detectorsOf(team.state({ home: opts && opts.znHome })));
+    } catch (_) { orgDetectors = []; }
+  }
+  return orgDetectors;
 }
 
 async function ctxFor(ev, d, agentId, destination, needVault = true) {
@@ -136,6 +153,7 @@ async function ctxFor(ev, d, agentId, destination, needVault = true) {
     tool: ev.toolName || ev.tool,
     destination,
     vault: needVault ? await d.vault() : undefined,
+    detectors: d.detectors ? d.detectors() : orgDetectorsFor(),
   };
 }
 
@@ -263,12 +281,8 @@ async function decidePre(ev, d, agentId, opts) {
  * wrapper with our own node and stream.js paths; mentioning stream.js is not
  * enough.
  */
-function shQuote(s) {
-  return "'" + String(s).replace(/'/g, "'\\''") + "'";
-}
-
 function monitorTail(opts) {
-  const p = (s) => shQuote(String(s).replace(/\\/g, '/'));
+  const p = (s) => shQuote(portablePath(s));
   return ' 2>&1 | ' + p(opts.nodePath || process.execPath) + ' ' + p(STREAM_JS);
 }
 
@@ -280,9 +294,10 @@ function isMonitorWrapper(command, opts) {
   const head = 'set -o pipefail; bash -c \'';
   const tail = '\'' + monitorTail(opts);
   if (!command.startsWith(head) || !command.endsWith(tail)) return false;
-  // The body must be one single-quoted word: only '\'' may appear in it.
+  // The body must be one single-quoted word: a ' may appear in it only
+  // within the escapes shQuote writes for a quote.
   const body = command.slice(head.length, command.length - tail.length);
-  return body.replace(/'\\''/g, '').indexOf("'") === -1;
+  return body.replace(SH_QUOTE_ESCAPE, '').indexOf("'") === -1;
 }
 
 function decideMonitor(ev, pathOpts, opts) {
@@ -346,6 +361,11 @@ async function decidePrompt(ev, d, agentId) {
   if (typeof engine.prepare === 'function') ctx = await engine.prepare(ctx);
   const spans = engine.scan(prompt, ctx) || [];
   const secrets = spans.filter((s) => SECRET_SOURCES.has(s.source));
+  // Prompts only: NAME=value in the middle of a sentence, even when the value
+  // does not look random (see lib/scrub/prompt.js).
+  for (const a of require('../scrub/prompt').findPromptAssignments(prompt)) {
+    if (!secrets.some((s) => s.start < a.end && a.start < s.end)) secrets.push(a);
+  }
   if (secrets.length === 0) return { decision: 'allow' };
   const kinds = [...new Set(secrets.map((s) => s.name || s.type))];
   const suggestion = kinds.length === 1 && /^[A-Z][A-Z0-9_]*$/.test(String(secrets[0].name || ''))

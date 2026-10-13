@@ -264,12 +264,12 @@ test('config files: a symlinked file is written through, its mode is kept, and b
   assert.deepEqual(cfg.hooksOf({ hooks: null }, 'x.json'), {});
 });
 
-test('hook commands: a project install names zn on PATH, and $ and backticks are escaped for sh', () => {
+test('hook commands: a project install names zn on PATH, and paths are single-quoted for sh', () => {
   assert.equal(cfg.hookCommand('codex', { scope: 'project', nodePath: '/n/node', runnerPath: '/r/runner.js' }), 'zn hook codex');
   assert.equal(cfg.hookCommandWindows('codex', { scope: 'project' }), 'zn hook codex');
-  assert.equal(cfg.quoteArg('/a$b/`x`/c'), '"/a\\$b/\\`x\\`/c"');
-  const user = cfg.hookCommand('codex', { scope: 'user', nodePath: '/n/node', runnerPath: '/r/runner.js' });
-  assert.equal(user, '"/n/node" "/r/runner.js" codex');
+  assert.equal(cfg.quoteArg('/a$b/`x`/c', 'linux'), "'/a$b/`x`/c'");
+  const user = cfg.hookCommand('codex', { scope: 'user', nodePath: '/n/node', runnerPath: '/r/runner.js', platform: 'linux' });
+  assert.equal(user, "'/n/node' '/r/runner.js' codex");
   const win = cfg.hookCommandWindows('codex', { scope: 'user', nodePath: 'C:\\Program Files\\nodejs\\node.exe', runnerPath: "C:\\it's\\runner.js" });
   assert.match(win, /^powershell\.exe -NoProfile -NonInteractive -Command "& 'C:\/Program Files\/nodejs\/node\.exe' 'C:\/it''s\/runner\.js' codex"$/);
 });

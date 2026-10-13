@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-12.5
+RULES_VERSION: 2026-10-12.6
 Zero external dependencies. Pure Python stdlib.
 """
 
@@ -8,14 +8,16 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import os
 import re
 import sys
 import time
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-RULES_VERSION = "2026-10-12.5"
+RULES_VERSION = "2026-10-12.6"
 
 # Cyrillic homoglyphs mapping to Latin
 HOMOGLYPH_MAP = {
@@ -401,13 +403,264 @@ SECRET_PATTERNS: List[Tuple[str, re.Pattern, str]] = [
     # allows a single start per token. Only used when the
     # text contains ".eyJ" (see SECRET_PATTERN_REQUIRES).
     ("secret:jwt_token", re.compile(r'(?<![A-Za-z0-9_-])(eyJ(?=([A-Za-z0-9_-]{10,512}))\2\.eyJ(?=([A-Za-z0-9_=-]{10,8192}))\3\.[A-Za-z0-9_.+/=-]{10,4096})(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))'), "[REDACTED_JWT]"),
-    ("secret:env_credential", re.compile(r"""(?<![A-Za-z0-9_])((?:[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]_[Aa][Cc][Cc][Ee][Ss][Ss]_[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]_[Kk][Ee][Yy]|[Aa][Pp][Ii]_[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh]_[Tt][Oo][Kk][Ee][Nn]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee]_[Kk][Ee][Yy]|[Dd][Aa][Tt][Aa][Bb][Aa][Ss][Ee]_[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd])\s*[:=]\s*['"]?)([^\s'"]{12,})(['"]?)"""), r'\1[REDACTED_SECRET]\3'),
+    # Credential assignments. A name right after "${" is a shell reference, and
+    # after "$" (PHP, PowerShell, Perl) only "=" assigns: "$NAME:" is a reference
+    # followed by text. The value (group 2) is checked with _is_non_secret_value.
+    ("secret:env_credential", re.compile(r"""(?=[A-Za-z0-9_])(?<![A-Za-z0-9_])(?<!\$\{)(?:(?<!\$)|(?=[A-Za-z0-9_]+\s*=))((?:[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]_[Aa][Cc][Cc][Ee][Ss][Ss]_[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]_[Kk][Ee][Yy]|[Aa][Pp][Ii]_[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh]_[Tt][Oo][Kk][Ee][Nn]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee]_[Kk][Ee][Yy]|[Dd][Aa][Tt][Aa][Bb][Aa][Ss][Ee]_[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd])["']?\s*[:=]\s*['"]?)([^\s'"]{12,})(['"]?)"""), r'\1[REDACTED_SECRET]\3'),
+    # Environment-style names with a prefix: OPENAI_API_KEY=, "DB_PASSWORD": "...",
+    # `ENV X_TOKEN value` in a Dockerfile, $X_SECRET = '...' in PHP. Upper case
+    # only, so code such as `token = response.json()` is left alone.
+    ("secret:prefixed_credential", re.compile(r"""(?=[A-Z0-9])(?<![A-Za-z0-9_])(?<!\$\{)(?:(?<!\$)|(?=[A-Za-z0-9_]+[ \t]*=))((?:ENV[ \t]+(?:[A-Z0-9]+_)+(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD)[ \t]+|(?:[A-Z0-9]+_)+(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD)["']?[ \t]*[:=][ \t]*)['"]?)([^\s'"]{12,})(['"]?)"""), r'\1[REDACTED_SECRET]\3'),
+    # The default of a shell or Compose reference, ${DB_PASSWORD:-<value>}: only
+    # redacted when it looks machine-generated (most defaults are for development).
+    ("secret:credential_default", re.compile(r"""(\$\{(?:[A-Z0-9]+_)*(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD):?[-=])([^\s'"{}$]{12,})(\})"""), r'\1[REDACTED_SECRET]\3'),
 ]
 
 # Substrings a text must contain before the pattern is run at all.
 SECRET_PATTERN_REQUIRES: Dict[str, str] = {
     "secret:jwt_token": ".eyJ",
+    "secret:credential_default": "${",
 }
+
+# A text without a match for one of these cannot match the credential patterns,
+# which are then not run at all.
+SECRET_PATTERN_PREFILTERS: Dict[str, re.Pattern] = {
+    "secret:env_credential": re.compile(r"""_[Kk][Ee][Yy]|_[Tt][Oo][Kk][Ee][Nn]|_[Pp][Aa][Ss][Ss]"""),
+    "secret:prefixed_credential": re.compile(r"""KEY|TOKEN|SECRET|PASS|PWD|CREDENTIALS"""),
+}
+
+# ---------------------------------------------------------------------------
+# Values of credential assignments that are not secrets. Same as
+# isNonSecretValue in packages/zn-gate/lib/rules.js (see the comment there for
+# the order of the checks). Lengths are counted in UTF-16 units, as in Node.js.
+# ---------------------------------------------------------------------------
+MAX_FILTERED_VALUE = 512
+# Characters of values checked per redact_secrets call (UTF-16 units). Past
+# that, credential matches are redacted without the checks, which bounds
+# their cost on crafted input.
+MAX_FILTERED_CHARS = 32 * 1024
+CREDENTIAL_URL_RE = re.compile(r"""^[A-Za-z][A-Za-z0-9+.-]*:\/\/(?:[^\/@:\s]*:([^\/@\s]*)@)?""")
+CREDENTIAL_STORE_RE = re.compile(r"""^(?:arn:|vault:|secretref:|@Microsoft\.KeyVault\(|projects\/[^\/]+\/secrets\/)""")
+CREDENTIAL_CODE_ROOT_RE = re.compile(r"""^(?:process\.env[.\[]|import\.meta\.env[.\[]|os\.environ|os\.getenv\(|getenv\(|settings\.|config\.|secrets\.|std::env::|env::var|ENV(?:\[|\.fetch\()|\$ENV\{|System\.getenv\(|Deno\.env\.|Bun\.env\.|\[Environment\]::|\([A-Z][a-z]+-[A-Z])""")
+CREDENTIAL_PLACEHOLDER_RE = re.compile(r"""^(?:%\([A-Za-z_]*\)s|<[^<>]*>|\{\{[^{}]*\}\}|\$\{[^{}]*\}|#\{[^{}]*\}|\*+|!(?:Ref|Sub|GetAtt|ImportValue|Join|Select|Split|FindInMap|If|Base64|Cidr|GetAZs|Equals|And|Or|Not|Condition|Transform)|([A-Za-z0-9])(?:\1|[-_.:])*)$""")
+CREDENTIAL_REFERENCE_NAME_RE = re.compile(r"""^(?:[A-Z][A-Z0-9_]*|[a-z][a-z0-9_.-]*|[A-Za-z][a-z]+(?:[A-Z][a-z]+)*[0-9]*)$""")
+CREDENTIAL_REFERENCE_RE = re.compile(r"""^(?:\$\$?([A-Za-z_][A-Za-z0-9_]*)|\$env:([A-Za-z_][A-Za-z0-9_]*)|%([A-Za-z_][A-Za-z0-9_]*)%|@([A-Za-z0-9_.-]+)@|\[([^\[\]]*)\])$""")
+CREDENTIAL_PLACEHOLDER_MARK_RE = re.compile(r"""<[^<>]*>|^[<{\[]|^\$\(|^(?:0123456789|1234567890|[Aa][Bb][Cc][Dd][Ee][Ff]|[Qq][Ww][Ee][Rr][Tt][Yy])|([A-Za-z0-9])\1{7,}""")
+CREDENTIAL_PLACEHOLDER_MARKS = ('xxxx', '***', '...', '${', '#{', '{{', 'deadbeef')
+# re.ASCII keeps case folding to ASCII letters, as in JavaScript.
+CREDENTIAL_PLACEHOLDER_WORDS = re.compile(r"""(?<![A-Za-z])(?:password|passwd|passw0rd|secret|changeme|change_me|example|placeholder|your[_-]?|redacted|dummy|sample|foobar|hunter2|todo|insert|replace|mypass|pass(?:word)?123|fake|mock|tests?|testing|demo|stub|fixme|not[_-]?set|unset|set[_-]me|change[_-]this)(?![A-Za-z])""", re.IGNORECASE | re.ASCII)
+# The same pattern without IGNORECASE, applied to the value with ASCII letters
+# lower-cased: same result, several times faster in Python's re.
+_PLACEHOLDER_WORDS_LOWER = re.compile(CREDENTIAL_PLACEHOLDER_WORDS.pattern)
+_ASCII_LOWER = str.maketrans('ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')
+CREDENTIAL_CODE_RE = re.compile(r"""^[(!&*@:]*([A-Za-z_$][A-Za-z0-9_$]*(?:(?:\?\.|\.|::|->)[A-Za-z_$][A-Za-z0-9_$]*)*)(?:((?:->[(\[{]|!?[(\[])(?:[A-Za-z0-9_$.:=(\[{!?&|,]|[)\]}](?![A-Za-z0-9_$]))*)|!|[)\]]*)$""")
+CREDENTIAL_DOTTED_WORDS_RE = re.compile(r"""^[a-z]+(?:\.[a-z]+){2,}$""")
+CREDENTIAL_IDENTIFIER_RE = re.compile(r"""^(?:_*[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+_*|[a-z][a-z0-9]*(?:_[a-z0-9]+)+|[A-Z]+)$""")
+CREDENTIAL_PATH_RE = re.compile(r"""^(?:(?:~|\.{1,2})?\/|[A-Za-z]:[\\\/]|\\\\)[^+=]*$|^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+$""")
+CREDENTIAL_FILE_EXT_RE = re.compile(r"""\.[A-Za-z][A-Za-z0-9]{0,4}$""")
+CREDENTIAL_FILE_NAME_RE = re.compile(r"""^[A-Za-z0-9_][A-Za-z0-9_.-]*\.(?:json|ya?ml|pem|p8|p12|pfx|key|keystore|jks|crt|cer|der|txt|ini|toml|conf|cfg|xml|properties|env|gpg|asc|ppk|pub|kdbx)$""")
+CREDENTIAL_HOST_NAME_RE = re.compile(r"""^[a-z0-9]+(?:-[a-z0-9]+)*(?:\.[a-z0-9]+(?:-[a-z0-9]+)*)*\.(?:com|net|org|io|dev|app|cloud|internal|local|svc|co|ai|sh)$""")
+CREDENTIAL_SLUG_RE = re.compile(r"""^[a-z0-9]+(?:[-.][a-z0-9]+)+$""")
+CREDENTIAL_SLUG_SHORT_WORD_RE = re.compile(r"""(?:^|[-.])(?:[a-z0-9]{1,3}|[a-z]*[0-9][a-z0-9]*)(?:[-.]|$)""")
+CREDENTIAL_OBJECT_NAME_RE = re.compile(r"""_(?:SECRET|CREDENTIALS)(?![A-Za-z0-9_])""")
+CREDENTIAL_LETTERS_RE = re.compile(r"""^[A-Za-z]+(?:[-_.][A-Za-z]+)*$""")
+CREDENTIAL_DESCRIPTIVE_WORDS = re.compile(r"""(?:^|-)(?:keys?|tokens?|secrets?|pass|passwords?|passwd|pwd|api|apikey|auth|credentials?|access|private|here|value|string|my|your|default|dev|development|local|prod|production|staging|none|null|empty|required|some|generated|random|change|replace|set|use|put|enter|fill|ask|get|see|from|the|not|check|contact|generate|read|find|fake|mock|tests?|dummy|example|sample|placeholder|todo)(?:-|$)|secret|passw|token|apikey|changeme|example|placeholder|dummy""")
+CREDENTIAL_HEX_RE = re.compile(r"""^[0-9A-Fa-f]{32,}$""")
+WORD_TOKEN_RE = re.compile(r"""[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[0-9]+""")
+_DIGIT_RE = re.compile(r'[0-9]')
+_LOWER_RE = re.compile(r'[a-z]')
+_UPPER_RE = re.compile(r'[A-Z]')
+_SYMBOL_RE = re.compile(r'[^A-Za-z0-9]')
+_CHAIN_SPLIT_RE = re.compile(r'\?\.|\.|::|->')
+_CHAIN_SEP_RE = re.compile(r'\.|::|->')
+_PATH_SPLIT_RE = re.compile(r'[\\\/]')
+_PATH_ROOT_RE = re.compile(r'^[~.\/\\]|^[A-Za-z]:')
+_URL_PASSWORD_REF_RE = re.compile(r'^[$%<{]')
+_HEX_LETTER_RE = re.compile(r'[A-Fa-f]')
+_SLUG_SPLIT_RE = re.compile(r'[-.]')
+_REF_SPLIT_RE = re.compile(r'[-_.]')
+_DESCRIPTIVE_HINTS = ('key', 'token', 'secret', 'pass', 'pwd', 'api', 'auth', 'credential', 'access', 'private',
+                      'here', 'value', 'string', 'my', 'your', 'default', 'dev', 'local', 'prod', 'staging', 'none',
+                      'null', 'empty', 'required', 'some', 'generated', 'random', 'change', 'replace', 'set', 'use',
+                      'put', 'enter', 'fill', 'ask', 'get', 'see', 'from', 'the', 'not', 'check', 'contact',
+                      'generate', 'read', 'find', 'fake', 'mock', 'test', 'dummy', 'example', 'sample', 'placeholder', 'todo')
+
+
+def _utf16_len(s: str) -> int:
+    return len(s) if s.isascii() else len(s.encode("utf-16-le", "surrogatepass")) // 2
+
+
+def _entropy(s: str, n: int) -> float:
+    """Shannon entropy per character; n is the length of s in UTF-16 units.
+    Characters are summed in order of first appearance, as in Node.js."""
+    h = 0.0
+    for c in Counter(s).values():
+        p = c / n
+        h -= p * math.log2(p)
+    return h
+
+
+def _looks_machine_generated(v: str, n: int) -> bool:
+    """Three character classes and at least 3 bits per character with a digit;
+    without one, see looksMachineGenerated in rules.js."""
+    digit = _DIGIT_RE.search(v) is not None
+    classes = (1 if _LOWER_RE.search(v) else 0) + (1 if _UPPER_RE.search(v) else 0) + (1 if digit else 0) + (1 if _SYMBOL_RE.search(v) else 0)
+    if classes < 3:
+        return False
+    if digit:
+        return _entropy(v, n) >= 3.0
+    return n >= 16 and _entropy(v, n) >= 3.5 and _machine_like_part(v)
+
+
+def _machine_like_part(s: str) -> bool:
+    """Text that reads as random rather than as words (see machineLikePart)."""
+    if len(s) < 10:
+        return False
+    alnum = len(_SYMBOL_RE.sub('', s))
+    if alnum < 10:
+        return False
+    if alnum >= 20 and _DIGIT_RE.search(s) and _LOWER_RE.search(s) and _UPPER_RE.search(s):
+        return True
+    return alnum * 2 < len(WORD_TOKEN_RE.findall(s)) * 5
+
+
+def _looks_like_code(v: str) -> bool:
+    m = CREDENTIAL_CODE_RE.search(v)
+    if m and m.group(2) is not None:
+        return not any(_machine_like_part(p) for p in _CHAIN_SPLIT_RE.split(m.group(1)))
+    if CREDENTIAL_DOTTED_WORDS_RE.search(v):
+        return False
+    if m and _CHAIN_SEP_RE.search(m.group(1)):
+        return not any(_machine_like_part(p) for p in _CHAIN_SPLIT_RE.split(m.group(1)))
+    return bool(CREDENTIAL_IDENTIFIER_RE.search(v)) and not any(_machine_like_part(p) for p in v.split('_'))
+
+
+def _looks_like_path(v: str) -> bool:
+    if not CREDENTIAL_PATH_RE.search(v):
+        return False
+    if not _PATH_ROOT_RE.search(v) and not CREDENTIAL_FILE_EXT_RE.search(v):
+        return False
+    return not any(_machine_like_part(p) for p in _PATH_SPLIT_RE.split(v))
+
+
+def _placeholder_mark(v: str, lv: str) -> bool:
+    """A placeholder mark inside the value; lv is v with ASCII letters lower-cased."""
+    if CREDENTIAL_PLACEHOLDER_MARK_RE.search(v):
+        return True
+    return any(m in lv for m in CREDENTIAL_PLACEHOLDER_MARKS)
+
+
+def _is_reference(v: str) -> bool:
+    """A whole-value reference whose inner part does not look random (see isReference)."""
+    m = CREDENTIAL_REFERENCE_RE.search(v)
+    if not m:
+        return False
+    inner = next(g for g in m.groups() if g is not None)
+    if not CREDENTIAL_REFERENCE_NAME_RE.search(inner):
+        return False
+    return not (_looks_machine_generated(inner, _utf16_len(inner)) or any(_machine_like_part(p) for p in _REF_SPLIT_RE.split(inner)))
+
+
+def _is_placeholder_value(v: str) -> bool:
+    lv = v.translate(_ASCII_LOWER)
+    if CREDENTIAL_PLACEHOLDER_RE.search(v) or _is_reference(v) or _placeholder_mark(v, lv):
+        return True
+    return _PLACEHOLDER_WORDS_LOWER.search(lv) is not None
+
+
+def _looks_like_name(v: str) -> bool:
+    """A file name with a known extension, or a host name."""
+    if CREDENTIAL_FILE_NAME_RE.search(v) and not _machine_like_part(v):
+        return True
+    return CREDENTIAL_HOST_NAME_RE.search(v) is not None
+
+
+def _looks_like_slug(v: str, prefix: str) -> bool:
+    """Lower-case words joined by "-" that name an object (see looksLikeSlug)."""
+    if not CREDENTIAL_SLUG_RE.search(v):
+        return False
+    words = len(_SLUG_SPLIT_RE.split(v))
+    if words <= 2:
+        return True
+    short_word = CREDENTIAL_SLUG_SHORT_WORD_RE.search(v) is not None
+    object_name = CREDENTIAL_OBJECT_NAME_RE.search(prefix) is not None
+    return (words == 3 and (short_word or (object_name and '.' not in v))) or (object_name and short_word)
+
+
+def _describes_itself(v: str, lv: str) -> bool:
+    if not CREDENTIAL_LETTERS_RE.search(v):
+        return False
+    # Every descriptive word contains one of these: skip the split when none occurs.
+    if not any(h in lv for h in _DESCRIPTIVE_HINTS):
+        return False
+    return bool(CREDENTIAL_DESCRIPTIVE_WORDS.search('-'.join(WORD_TOKEN_RE.findall(v)).lower()))
+
+
+_NOT_SECRET, _SECRET, _GENERATED_SECRET = 0, 1, 2
+
+
+def _credential_value_kind(value: str, prefix: str = '') -> int:
+    if _utf16_len(value) > MAX_FILTERED_VALUE:
+        return _GENERATED_SECRET
+    v = value.rstrip(';,')
+    if not v or '[REDACTED_' in v:
+        return _NOT_SECRET
+    url = CREDENTIAL_URL_RE.search(v)
+    if url:
+        pwd = url.group(1)
+        if not pwd or _URL_PASSWORD_REF_RE.search(pwd) or _is_placeholder_value(pwd):
+            return _NOT_SECRET
+        return _GENERATED_SECRET
+    if CREDENTIAL_STORE_RE.search(v) or CREDENTIAL_CODE_ROOT_RE.search(v) or CREDENTIAL_PLACEHOLDER_RE.search(v) or _is_reference(v):
+        return _NOT_SECRET
+    if _looks_like_name(v) or _looks_like_code(v) or _looks_like_path(v):
+        return _NOT_SECRET
+    n = _utf16_len(v)
+    generated = _looks_machine_generated(v, n)
+    lv = v.translate(_ASCII_LOWER)
+    if not CREDENTIAL_REFERENCE_RE.search(v) and _placeholder_mark(v, lv):
+        return _GENERATED_SECRET if generated else _NOT_SECRET
+    if _PLACEHOLDER_WORDS_LOWER.search(lv):
+        return _GENERATED_SECRET if generated and n >= 24 and _machine_like_part(v) else _NOT_SECRET
+    if generated:
+        return _GENERATED_SECRET
+    if _describes_itself(v, lv) or _looks_like_slug(v, prefix):
+        return _NOT_SECRET
+    if CREDENTIAL_HEX_RE.search(v) and _DIGIT_RE.search(v) and _HEX_LETTER_RE.search(v):
+        return _GENERATED_SECRET
+    return _SECRET
+
+
+def _is_non_secret_value(value: str, prefix: str = '') -> bool:
+    return _credential_value_kind(value, prefix) == _NOT_SECRET
+
+
+def _is_non_secret_default(value: str, prefix: str = '') -> bool:
+    """Defaults are only redacted when they look machine-generated."""
+    return _credential_value_kind(value, prefix) != _GENERATED_SECRET
+
+
+# Rules whose match is only redacted when the value (group 2) is a secret.
+SECRET_VALUE_FILTERS = {
+    "secret:env_credential": _is_non_secret_value,
+    "secret:prefixed_credential": _is_non_secret_value,
+    "secret:credential_default": _is_non_secret_default,
+}
+
+
+def _redact_filtered(pattern: re.Pattern, rule_id: str, is_non_secret, text: str,
+                     detections: List[Dict[str, Any]], budget: List[int]) -> str:
+    def repl(m: "re.Match[str]") -> str:
+        value = m.group(2)
+        n = _utf16_len(value)
+        if n <= MAX_FILTERED_VALUE and n <= budget[0]:
+            budget[0] -= n
+            if is_non_secret(value, m.group(1)):
+                return m.group(0)
+        detections.append({"rule": rule_id, "start": m.start(), "end": m.end()})
+        return m.group(1) + "[REDACTED_SECRET]" + m.group(3)
+    return pattern.sub(repl, text)
+
 
 def redact_secrets(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     """
@@ -419,10 +672,18 @@ def redact_secrets(text: str) -> Tuple[str, List[Dict[str, Any]]]:
 
     redacted = text
     detections: List[Dict[str, Any]] = []
+    budget = [MAX_FILTERED_CHARS]
 
     for rule_id, pattern, replacement in SECRET_PATTERNS:
         required = SECRET_PATTERN_REQUIRES.get(rule_id)
         if required and required not in redacted:
+            continue
+        prefilter = SECRET_PATTERN_PREFILTERS.get(rule_id)
+        if prefilter is not None and not prefilter.search(redacted):
+            continue
+        value_filter = SECRET_VALUE_FILTERS.get(rule_id)
+        if value_filter is not None:
+            redacted = _redact_filtered(pattern, rule_id, value_filter, redacted, detections, budget)
             continue
         matches = list(pattern.finditer(redacted))
         if matches:

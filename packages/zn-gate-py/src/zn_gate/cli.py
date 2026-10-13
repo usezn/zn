@@ -6,17 +6,44 @@ Pure Python stdlib. Zero external dependencies.
 from __future__ import annotations
 
 import argparse
+import bisect
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from . import __version__
-from .rules import RULES_VERSION, evaluate, redact_secrets
+from .rules import RULES_VERSION, SECRET_PATTERNS, evaluate, redact_secrets
 from .client import analyze, is_cloud_enabled, resolve_endpoint
 from .evidence import log_evidence, verify_evidence_ledger, get_evidence_stats, export_evidence_ledger, EVIDENCE_FILE
+
+# Secrets that span several lines (a PEM private key block). The line-by-line
+# scan never sees BEGIN and END together, so these run on the whole file.
+# Each entry: (rule name, pattern, header pattern shown instead of the match).
+_MULTILINE_RULES = [
+    (name, rx, re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"))
+    for name, rx, _ in SECRET_PATTERNS if name == "secret:private_key"
+]
+
+# A BEGIN marker with no END (a key cut short when pasted or truncated): the
+# lines after it that look like PEM headers or base64 are treated as key
+# material, up to the first empty or other line (an encrypted key has one
+# empty line after its Proc-Type / DEK-Info headers, which is kept).
+_KEY_BEGIN = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
+_KEY_END = re.compile(r"-----END [A-Z ]*PRIVATE KEY-----")
+_KEY_BODY = re.compile(r"^(?:[A-Za-z0-9+/=]{16,}|[A-Za-z-]+: )")
+_KEY_HEADER = re.compile(r"^[A-Za-z-]+: ")
+_TRUNCATED_KEY_REASON = "Exposed credential detected by DLP filter (private key without an END marker)"
+
+# Private key files that usually have no extension.
+_KEY_FILE_NAMES = {"id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "id_ecdsa_sk", "id_ed25519_sk"}
+# Files of this size or larger are not scanned, and neither are .key files
+# with a NUL byte near the start (a Keynote document, not a key).
+_MAX_SCAN_BYTES = 2 * 1024 * 1024
+_BINARY_SNIFF = 8192
 
 SHIELD = "\U0001f6e1\ufe0f"
 ALERT = "\U0001f6a8"
@@ -115,18 +142,63 @@ def cmd_analyze(args: argparse.Namespace) -> int:
 def _scan_file(file_path: Path) -> List[Dict[str, Any]]:
     violations: List[Dict[str, Any]] = []
     try:
-        content = file_path.read_text(encoding="utf-8", errors="ignore")
+        if file_path.stat().st_size >= _MAX_SCAN_BYTES:
+            return []
+        raw = file_path.read_bytes()
     except Exception:
         return []
+    if file_path.suffix.lower() == ".key" and b"\0" in raw[:_BINARY_SNIFF]:
+        return []
+    content = raw.decode("utf-8", errors="ignore")
+
+    # Line numbers as the line pass counts them (str.splitlines boundaries).
+    starts = [0]
+    for part in content.splitlines(keepends=True):
+        starts.append(starts[-1] + len(part))
+    # Private keys over several lines, found first: a line inside one is never
+    # printed, even when another rule fires on it (the line on its own does
+    # not look like a key, so it would not be redacted).
+    blocks = []  # (rule, first line, last line, header)
+    key_lines = set()
+    for name, rx, header_rx in _MULTILINE_RULES:
+        for m in rx.finditer(content):
+            # A block on one line is redacted by the line pass.
+            if len(m.group(0).splitlines()) < 2:
+                continue
+            first = bisect.bisect_right(starts, m.start())
+            last = bisect.bisect_right(starts, m.end() - 1)
+            h = header_rx.match(m.group(0))
+            blocks.append((name, first, last, h.group(0)[:100] if h else "[REDACTED_PRIVATE_KEY]",
+                           "Exposed credential detected by DLP filter"))
+            key_lines.update(range(first, last + 1))
 
     lines = content.splitlines()
+    # BEGIN markers outside any complete block: a truncated key.
+    for i, line in enumerate(lines, 1):
+        if i in key_lines:
+            continue
+        h = _KEY_BEGIN.search(line)
+        if not h or _KEY_END.search(line, h.end()):
+            continue  # no marker, or a whole key on one line (the line pass redacts it)
+        last = i
+        while last < len(lines) and not _KEY_BEGIN.search(lines[last]):
+            body = lines[last].strip()
+            if _KEY_BODY.match(body):
+                last += 1
+            elif (not body and _KEY_HEADER.match(lines[last - 1].strip())
+                  and last + 1 < len(lines) and _KEY_BODY.match(lines[last + 1].strip())):
+                last += 1  # the empty line after encrypted-key headers
+            else:
+                break
+        key_lines.update(range(i, last + 1))
+        blocks.append(("secret:private_key", i, last, h.group(0)[:100], _TRUNCATED_KEY_REASON))
     for i, line in enumerate(lines, 1):
         if not line.strip():
             continue
         # Snippets are printed to the terminal and, with --format github, to CI
         # logs: always show the line with any detected secret redacted.
         redacted, findings = redact_secrets(line)
-        snippet = redacted.strip()[:100]
+        snippet = "[REDACTED_PRIVATE_KEY]" if i in key_lines else redacted.strip()[:100]
         res = evaluate(line)
         if not res.allowed:
             violations.append({
@@ -146,6 +218,20 @@ def _scan_file(file_path: Path) -> List[Dict[str, Any]]:
                 "type": "secret_leak",
                 "content": snippet,
             })
+    seen = {(v["line"], v["rule"]) for v in violations}
+    for name, first, _last, header, reason in blocks:
+        if (first, name) in seen:
+            continue
+        seen.add((first, name))
+        # Only the BEGIN marker, never the key material.
+        violations.append({
+            "file": str(file_path),
+            "line": first,
+            "rule": name,
+            "reason": reason,
+            "type": "secret_leak",
+            "content": header,
+        })
     return violations
 
 
@@ -164,7 +250,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
             if ed:
                 skip_dirs.add(ed)
 
-    valid_exts = {".txt", ".md", ".json", ".yaml", ".yml", ".py", ".ts", ".js", ".prompt", ".env", ".toml"}
+    valid_exts = {".txt", ".md", ".json", ".yaml", ".yml", ".py", ".ts", ".js", ".prompt", ".env", ".toml", ".pem", ".key"}
     if getattr(args, "include", None):
         for ie in args.include.split(","):
             ie = ie.strip().lower()
@@ -180,7 +266,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
             dirs[:] = [d for d in dirs if d not in skip_dirs]
             for f in files:
                 p = Path(root) / f
-                if p.suffix in valid_exts or p.name.startswith(".env"):
+                if p.suffix.lower() in valid_exts or p.name.startswith(".env") or p.name in _KEY_FILE_NAMES:
                     files_to_scan.append(p)
 
     all_violations: List[Dict[str, Any]] = []

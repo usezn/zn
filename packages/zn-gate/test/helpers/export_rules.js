@@ -39,6 +39,7 @@ const out = {
   exfil: rules.EXFIL_RULES.map((r) => ({ id: r.id, compound: r.compound.map(regex) })),
   helpers: Object.fromEntries(Object.entries(rules.HELPER_PATTERNS).map(([k, v]) => [k, regex(v)])),
   secret_requires: Object.fromEntries(rules.SECRET_PATTERNS.filter((p) => p.requires).map((p) => [p.id, p.requires])),
+  secret_prefilters: Object.fromEntries(rules.SECRET_PATTERNS.filter((p) => p.prefilter).map((p) => [p.id, regex(p.prefilter)])),
   limits: {
     MAX_SCAN_CHARS: rules.MAX_SCAN_CHARS,
     SCAN_HEAD_CHARS: rules.SCAN_HEAD_CHARS,
@@ -46,6 +47,8 @@ const out = {
     EVAL_CACHE_MAX_INPUT: rules.EVAL_CACHE_MAX_INPUT,
     MAX_TOOL_RESULT_SCAN_CHARS: rules.MAX_TOOL_RESULT_SCAN_CHARS,
     SCAN_WINDOW_OVERLAP: rules.SCAN_WINDOW_OVERLAP,
+    MAX_FILTERED_VALUE: rules.MAX_FILTERED_VALUE,
+    MAX_FILTERED_CHARS: rules.MAX_FILTERED_CHARS,
   },
   results: samples.map((sample) => {
     const text = expandSample(sample);

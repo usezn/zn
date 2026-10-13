@@ -1,15 +1,29 @@
-name: AI Security Gate
-on: [push, pull_request]
+name: AI agent security scan
+
+on:
+  pull_request:
+    paths:
+      - 'prompts/**'
+      - '**/*.prompt'
+      - '**/AGENTS.md'
+      - '**/SKILL.md'
+
+permissions:
+  contents: read
 
 jobs:
-  prompt-security-scan:
+  zn-gate-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Scan AI Agent Prompts & Tools
-        uses: usezn/zn@main
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          version: '1.4.0'
-          path: './prompts'
+          persist-credentials: false
+      - name: Scan AI agent prompts and tools
+        # Pin the action to a full commit SHA; the comment names the release.
+        # v1.4.1 does not have the package-sha256 input (v1.5.0 and later).
+        uses: usezn/zn@d9da1b1a87e12c4da468cb9beec425dc3f972c5f # v1.4.1
+        with:
+          version: '1.4.1'
+          path: '.'
           fail-on-threat: 'true'
           format: 'github'

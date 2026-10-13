@@ -1,0 +1,27 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^(Bash|apply_patch)$",
+        "hooks": [
+          { "type": "command", "command": "node \"$PLUGIN_ROOT/scripts/zn-launch.js\" hook codex", "timeout": 30, "statusMessage": "zn: checking for secrets" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          { "type": "command", "command": "node \"$PLUGIN_ROOT/scripts/zn-launch.js\" hook codex", "timeout": 30, "statusMessage": "zn: checking for secrets" }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "node \"$PLUGIN_ROOT/scripts/zn-launch.js\" hook codex", "timeout": 30, "statusMessage": "zn: checking for secrets" }
+        ]
+      }
+    ]
+  }
+}

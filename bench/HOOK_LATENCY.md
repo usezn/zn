@@ -13,7 +13,7 @@ node bench/hook_latency.js --runs 30 --json hook_latency.json
 
 ## Results (2026-10-11)
 
-Target for the beta: PostToolUse with 64 KB of output, p50 <= 60 ms.
+Target for 1.5.0: PostToolUse with 64 KB of output, p50 <= 60 ms.
 **Not met on either machine.** The floor is Node's own start-up time, which
 already takes 42 to 50 ms before any zn code runs.
 
@@ -48,14 +48,14 @@ Remove per-call work from the hook process: the vault daemon is already a
 long-lived process, so it could run `tokenize` itself and the hook would only
 forward the event over the socket (estimated 15 to 20 ms over Node start-up on
 the desktop). That moves the scanner into the process that holds the vault, so
-it needs its own review. It is not part of the beta; the beta ships with the
+it needs its own review. It is not part of 1.5.0, which ships with the
 numbers above.
 
-## Decision for the scrubber beta
+## Decision for 1.5.0
 
-The beta accepts the measured cost: about **78 ms p50 per hook call** on the
+Version 1.5.0 accepts the measured cost: about **78 ms p50 per hook call** on the
 Windows desktop (PostToolUse, 64 KB with secrets) and about 124 ms on the
 server. The floor is Node's own start-up (42 to 50 ms), so the 60 ms target
 can only be met by moving the scan out of the hook process and into the vault
 daemon. That puts the scanner next to the vault keys, so it gets its own
-security review after the beta.
+security review after 1.5.0.

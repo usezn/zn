@@ -9,6 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 const { writeFileAtomic } = require('../broker/files');
+const { shQuote, portablePath, windowsCommand, windowsCommandScript } = require('../shell-quote');
 
 function readJson(file) {
   let text;
@@ -60,9 +61,9 @@ function writeJson(file, data) {
   writeFileAtomic(target, JSON.stringify(data, null, 2) + '\n', mode);
 }
 
-/** Double quotes for sh: $, backticks and quotes are escaped, so the path is taken literally. */
-function quoteArg(s) {
-  return '"' + String(s).replace(/\\/g, '/').replace(/(["$`])/g, '\\$1') + '"';
+/** A path as one sh word (single quotes; see lib/shell-quote.js). */
+function quoteArg(s, platform = process.platform) {
+  return shQuote(portablePath(s, platform));
 }
 
 function runnerPath() {
@@ -77,24 +78,33 @@ function runnerPath() {
 function hookCommand(agentId, opts = {}) {
   if (opts.command) return opts.command;
   if ((opts.scope || 'user') === 'project') return 'zn hook ' + agentId;
-  return quoteArg(opts.nodePath || process.execPath) + ' ' + quoteArg(opts.runnerPath || runnerPath()) + ' ' + agentId;
+  const platform = opts.platform || process.platform;
+  return quoteArg(opts.nodePath || process.execPath, platform) + ' ' + quoteArg(opts.runnerPath || runnerPath(), platform) + ' ' + agentId;
 }
 
 /**
- * The same command for agents that run `commandWindows` through PowerShell
- * (Codex documents the field but not the shell). A bare quoted path is only a
- * string in PowerShell, so the call is wrapped in powershell.exe, which runs
- * the same way from cmd.exe and from PowerShell.
+ * The same command for a Windows shell that may be cmd.exe or PowerShell:
+ * Codex runs `commandWindows` through %COMSPEC% /C (cmd.exe), and Cursor wraps
+ * hook commands in PowerShell. It calls powershell.exe with PowerShell-quoted
+ * paths, written so that neither cmd.exe nor an outer PowerShell or Git Bash
+ * expands anything in them (see windowsCommand in lib/shell-quote.js).
  */
 function hookCommandWindows(agentId, opts = {}) {
   if ((opts.scope || 'user') === 'project') return 'zn hook ' + agentId;
-  const ps = (s) => "'" + String(s).replace(/\\/g, '/').replace(/'/g, "''") + "'";
-  const inner = '& ' + ps(opts.nodePath || process.execPath) + ' ' + ps(opts.runnerPath || runnerPath()) + ' ' + agentId;
-  return 'powershell.exe -NoProfile -NonInteractive -Command "' + inner + '"';
+  return windowsCommand(opts.nodePath || process.execPath, [opts.runnerPath || runnerPath()], [agentId]);
 }
 
+/**
+ * Whether a hook command is one zn wrote for this agent: `zn hook <agent>`,
+ * the runner called with double quotes (older versions) or single quotes,
+ * or the Windows powershell.exe form.
+ */
 function isOurs(command, agentId) {
-  return typeof command === 'string' && new RegExp('(\\bhook ' + agentId + '|hooks[\\\\/]runner\\.js"? ' + agentId + ')\\s*$').test(command);
+  if (typeof command !== 'string') return false;
+  const re = new RegExp('(\\bhook ' + agentId + '|hooks[\\\\/]runner\\.js["\']? ' + agentId + ')\\s*$');
+  if (re.test(command)) return true;
+  const script = windowsCommandScript(command);
+  return script !== null && re.test(script);
 }
 
 module.exports = { readJson, hooksOf, backup, writeJson, quoteArg, runnerPath, hookCommand, hookCommandWindows, isOurs };

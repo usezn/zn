@@ -373,7 +373,8 @@ test('SARIF partial fingerprints are unique for repeated findings', (t) => {
   assert.equal(new Set(fps).size, fps.length);
 });
 
-test('zn audit --since with no value goes to the secret-use log', (t) => {
+test('zn audit --since with no value points to zn vault log', (t) => {
   const r = spawnSync(process.execPath, [CLI, 'audit', '--since'], { encoding: 'utf8', env: Object.assign({}, process.env, { ZN_HOME: tempDir(t, 'zn-home-') }) });
-  assert.ok(!/unknown option/.test(r.stderr), r.stderr);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /zn vault log/);
 });

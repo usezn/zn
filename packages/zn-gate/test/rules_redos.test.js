@@ -83,6 +83,26 @@ const WORST_CASES = [
   fill('A\n'),
   fill('a \n b '),
   fill('/*'),
+  // Credential assignments and the checks on their values.
+  fill('A_'),
+  fill('A_API_KEY '),
+  fill('X_TOKEN='),
+  fill('ENV A_TOKEN '),
+  fill('"A_TOKEN": '),
+  fill('$A_TOKEN='),
+  fill('${A_TOKEN:-'),
+  fill('${A_TOKEN:-a'),
+  'A_TOKEN=' + fill(';', SIZE - 8),
+  'API_KEY=' + fill(',', SIZE - 8),
+  'A_TOKEN=' + fill('a;', SIZE - 8),
+  fill('A_TOKEN=' + 'a.'.repeat(250) + '( '),
+  fill('A_TOKEN=a' + '('.repeat(500) + ' '),
+  fill('A_TOKEN=/' + 'aB3dE5fG7h/'.repeat(46) + ' '),
+  fill('${A_TOKEN:-' + 'Ab'.repeat(255) + '} '),
+  fill('API_KEY: ' + 'abc.'.repeat(127) + 'abc\n'),
+  fill('A_TOKEN=$a' + '->a'.repeat(160) + '( '),
+  fill('X_SECRET=' + 'ab-'.repeat(160) + 'c '),
+  fill('API_KEY="<' + 'aB3#'.repeat(120) + '" '),
 ];
 
 function label(input) {

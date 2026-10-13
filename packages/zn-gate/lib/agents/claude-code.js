@@ -45,6 +45,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const { writeFileAtomic } = require('../broker/files');
 const { whichSync } = require('../broker/markers');
+const { shQuote, portablePath } = require('../shell-quote');
 
 const id = 'claude-code';
 
@@ -54,7 +55,8 @@ const PRE_MATCHER = 'Bash|PowerShell|Monitor|Read|Grep|LSP|Edit|MultiEdit|Write|
 // A regex (it contains mcp__.*), anchored so it names exactly these tools.
 const POST_MATCHER = '^(Bash|PowerShell|Monitor|Read|Grep|LSP|WebFetch|ReadMcpResourceTool)$|^mcp__.*';
 const HOOK_TIMEOUT_S = 15;
-const OUR_COMMAND_RE = /(\bhook claude-code|hooks[\\/]runner\.js"? claude-code)\s*$/;
+// Older versions wrote the paths in double quotes; both forms are ours.
+const OUR_COMMAND_RE = /(\bhook claude-code|hooks[\\/]runner\.js["']? claude-code)\s*$/;
 const MCP_SERVER_NAME = 'secrets';
 
 const TOOL_MAP = {
@@ -200,8 +202,10 @@ function settingsFile(opts = {}) {
   return path.join(configDir(opts), 'settings.json');
 }
 
-function quoteArg(s) {
-  return '"' + String(s).replace(/\\/g, '/').replace(/"/g, '\\"') + '"';
+// Claude Code runs a hook command with `sh -c` (macOS, Linux) or Git Bash
+// (Windows): each path is one single-quoted sh word.
+function quoteArg(s, platform) {
+  return shQuote(portablePath(s, platform));
 }
 
 function cliPath() {
@@ -216,7 +220,7 @@ function runnerPath() {
 // so each tool call does not pay for loading the whole CLI.
 function hookCommand(opts = {}) {
   if (opts.command) return opts.command;
-  return quoteArg(opts.nodePath || process.execPath) + ' ' + quoteArg(opts.runnerPath || runnerPath()) + ' claude-code';
+  return quoteArg(opts.nodePath || process.execPath, opts.platform) + ' ' + quoteArg(opts.runnerPath || runnerPath(), opts.platform) + ' claude-code';
 }
 
 function readJson(file) {
@@ -253,12 +257,14 @@ function ourHooks(command) {
   return {
     PreToolUse: { matcher: PRE_MATCHER, hooks: [h] },
     PostToolUse: { matcher: POST_MATCHER, hooks: [h] },
-    UserPromptSubmit: { hooks: [h] },
+    // A prompt hook that cannot start or times out blocks the prompt
+    // (Claude Code 2.1.295 and later; earlier versions ignore the field).
+    UserPromptSubmit: { hooks: [{ ...h, onFailure: 'block' }] },
   };
 }
 
 function mcpServerConfig(opts = {}) {
-  return { command: opts.nodePath || process.execPath, args: [opts.cliPath || cliPath(), 'secrets-mcp'] };
+  return { command: opts.nodePath || process.execPath, args: [opts.cliPath || cliPath(), 'secrets-mcp', '--agent', 'claude-code'] };
 }
 
 function installMcp(opts, report) {
@@ -280,15 +286,23 @@ function installMcp(opts, report) {
     return;
   }
   const claude = opts.claudeBin !== undefined ? opts.claudeBin : whichSync('claude', process.env.PATH || '');
+  // No JSON: this form works the same in cmd.exe, PowerShell and POSIX shells.
+  const manual = 'claude mcp add --scope user ' + MCP_SERVER_NAME + ' -- ' + [conf.command, ...conf.args].map((a) => '"' + a + '"').join(' ');
   if (!claude) {
-    report.warnings.push('`claude` CLI not found: register the MCP server yourself with: claude mcp add-json --scope user ' +
-      MCP_SERVER_NAME + " '" + JSON.stringify({ type: 'stdio', ...conf }) + "'");
+    report.warnings.push('`claude` CLI not found: register the MCP server yourself with: ' + manual);
+    return;
+  }
+  // A batch-file `claude` (an npm install on Windows) only runs through
+  // cmd.exe, which re-parses the command line: the JSON (quotes, paths with
+  // spaces or & ^ %) would not reach it intact. Never start it that way.
+  if (/\.(?:cmd|bat)$/i.test(claude)) {
+    report.warnings.push('`claude` is a batch file (' + path.basename(claude) + '), which zn does not run through cmd.exe: register the MCP server yourself with: ' + manual);
     return;
   }
   const r = spawnSync(claude, ['mcp', 'add-json', '--scope', 'user', MCP_SERVER_NAME, JSON.stringify({ type: 'stdio', ...conf })],
-    { encoding: 'utf8', windowsHide: true, shell: process.platform === 'win32' && /\.cmd$/i.test(claude) });
+    { encoding: 'utf8', windowsHide: true });
   if (r.status === 0) report.mcp = 'claude mcp (user scope)';
-  else report.warnings.push('`claude mcp add-json` failed: ' + String(r.stderr || r.stdout || r.error || '').trim());
+  else report.warnings.push('`claude mcp add-json` failed (' + String(r.stderr || r.stdout || r.error || '').trim().slice(0, 300) + '): register the MCP server yourself with: ' + manual);
 }
 
 /**
@@ -344,9 +358,10 @@ function uninstall(opts = {}) {
       }
     } else {
       const claude = opts.claudeBin !== undefined ? opts.claudeBin : whichSync('claude', process.env.PATH || '');
-      if (claude) {
-        spawnSync(claude, ['mcp', 'remove', '--scope', 'user', MCP_SERVER_NAME],
-          { encoding: 'utf8', windowsHide: true, shell: process.platform === 'win32' && /\.cmd$/i.test(claude) });
+      if (claude && /\.(?:cmd|bat)$/i.test(claude)) {
+        report.warnings.push('`claude` is a batch file (' + path.basename(claude) + '), which zn does not run through cmd.exe: remove the MCP server yourself with: claude mcp remove --scope user ' + MCP_SERVER_NAME);
+      } else if (claude) {
+        spawnSync(claude, ['mcp', 'remove', '--scope', 'user', MCP_SERVER_NAME], { encoding: 'utf8', windowsHide: true });
       }
     }
   }

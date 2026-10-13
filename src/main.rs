@@ -1031,10 +1031,21 @@ async fn process_mcp_message(
             // 🎯 OCR GUARD: detect malicious text embedded in images (prompt
             // injection, credentials, destructive commands) on the RAW input,
             // before stripping metadata would remove the text layer.
-            match zn::engine::vision::VisionEngine::detect_malicious_ocr(
-                &arguments,
-                &state.config.managed_rules,
-            ) {
+            // OCR runs an external command and waits for it, so it runs on
+            // the blocking thread pool instead of stalling this async task.
+            // A failed OCR task fails closed.
+            let ocr_check = if state.config.managed_rules.visual_pii_redaction {
+                let ocr_arguments = arguments.clone();
+                let rules = state.config.managed_rules.clone();
+                tokio::task::spawn_blocking(move || {
+                    zn::engine::vision::VisionEngine::detect_malicious_ocr(&ocr_arguments, &rules)
+                })
+                .await
+                .unwrap_or(Err(zn::engine::vision::VisionError::ParseTimeout))
+            } else {
+                Ok(None)
+            };
+            match ocr_check {
                 Ok(Some((ocr_text, rule))) => {
                     use sha2::{Digest, Sha256};
                     let hash = hex::encode(Sha256::digest(ocr_text.as_bytes()));
@@ -1661,31 +1672,19 @@ async fn policies_delete_handler(
             "error": "Forbidden: SuperAdmin role required"
         }));
     }
-    // The name comes from the client: it must be a plain policy name that
-    // stays inside the policy directory.
-    let path = match zn::engine::policy_file_path(&state.config.engine.policy_dir, &payload.name) {
-        Ok(p) => p,
-        Err(e) => {
-            return axum::response::Json(serde_json::json!({
-                "status": "error",
-                "error": e.to_string()
-            }))
-        }
-    };
+    // The name comes from the client: it must be a plain policy name. The
+    // file to delete is the matching entry of a listing of the policy
+    // directory, never a path built from the name. A missing file is not an
+    // error, so deleting twice succeeds.
+    if let Err(e) = zn::engine::remove_policy_file(&state.config.engine.policy_dir, &payload.name) {
+        return axum::response::Json(serde_json::json!({
+            "status": "error",
+            "error": e.to_string()
+        }));
+    }
 
     // Unregister from engine
     state.engine.unregister_policy(&payload.name);
-
-    // Delete the file. symlink_metadata also sees a dangling symlink, and
-    // remove_file deletes a symlink itself, never what it points to.
-    if std::fs::symlink_metadata(&path).is_ok() {
-        if let Err(e) = std::fs::remove_file(&path) {
-            return axum::response::Json(serde_json::json!({
-                "status": "error",
-                "error": format!("Failed to delete policy file: {}", e)
-            }));
-        }
-    }
 
     axum::response::Json(serde_json::json!({
         "status": "ok",

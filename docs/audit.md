@@ -35,18 +35,10 @@ zn audit [path] [--format text|json|sarif] [--output <file>]
 ### `zn audit` and the secret-use log
 
 In 1.5, `zn audit` showed the local audit log of secret use. That log is now
-`zn audit log` (also `zn secret log`). To avoid breaking scripts, during 1.6:
-
-| You run | You get |
-|---|---|
-| `zn audit` (no arguments) | the secret-use log, plus a deprecation notice on stderr |
-| `zn audit --since DATE` | the secret-use log, plus the notice |
-| `zn audit log [--since DATE]` | the secret-use log |
-| `zn audit <path>`, `zn audit .` | the config review described here |
-| `zn audit --format json` (or any option below) | the config review of the current directory |
-
-A later release will make a bare `zn audit` review the current directory.
-Use `zn audit .` in scripts today.
+`zn vault log` (also `zn secret log`), and `zn audit` always reviews agent
+configs: a bare `zn audit` reviews the current directory. `zn audit log` (when
+there is no directory named `log`) and `zn audit --since DATE` exit with code
+2 and say to use `zn vault log`.
 
 | Option | Default | Meaning |
 |---|---|---|

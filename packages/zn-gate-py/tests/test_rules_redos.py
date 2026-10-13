@@ -74,6 +74,26 @@ WORST_CASES = [
     fill('A\n'),
     fill('a \n b '),
     fill('/*'),
+    # Credential assignments and the checks on their values.
+    fill('A_'),
+    fill('A_API_KEY '),
+    fill('X_TOKEN='),
+    fill('ENV A_TOKEN '),
+    fill('"A_TOKEN": '),
+    fill('$A_TOKEN='),
+    fill('${A_TOKEN:-'),
+    fill('${A_TOKEN:-a'),
+    'A_TOKEN=' + fill(';', SIZE - 8),
+    'API_KEY=' + fill(',', SIZE - 8),
+    'A_TOKEN=' + fill('a;', SIZE - 8),
+    fill('A_TOKEN=' + 'a.' * 250 + '( '),
+    fill('A_TOKEN=a' + '(' * 500 + ' '),
+    fill('A_TOKEN=/' + 'aB3dE5fG7h/' * 46 + ' '),
+    fill('${A_TOKEN:-' + 'Ab' * 255 + '} '),
+    fill('API_KEY: ' + 'abc.' * 127 + 'abc\n'),
+    fill('A_TOKEN=$a' + '->a' * 160 + '( '),
+    fill('X_SECRET=' + 'ab-' * 160 + 'c '),
+    fill('API_KEY="<' + 'aB3#' * 120 + '" '),
 ]
 
 

@@ -197,8 +197,8 @@ test('validators: Luhn, IBAN mod-97, DNI/NIE letter, SSN, E.164', () => {
   assert.ok(!P.e164Valid('+15550142'));
   assert.ok(!P.e164Valid('+1234567890'));
   assert.ok(P.e164Valid('+447700900123'));
-  assert.ok(P.e164Valid('+34612345678'));
-  assert.ok(!P.e164Valid('+3461234567'));
+  assert.ok(P.e164Valid('+33612345678'));
+  assert.ok(!P.e164Valid('+3361234567'));
 });
 
 test('PII look-alikes in code are not PII', () => {

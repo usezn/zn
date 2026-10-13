@@ -311,7 +311,7 @@ const CONTEXTS = {
   ],
   phone_e164: [
     { label: 'js_const', tool: 'read', mk: (v) => jsConst('SUPPORT_PHONE', v) },
-    { label: 'support_note', tool: 'read', mk: (v) => 'Customer callback requested at ' + v + ' (UTC+1).\n' },
+    { label: 'support_note', tool: 'read', mk: (v) => 'Customer callback requested at ' + v + ' (UTC).\n' },
   ],
   iban: [
     { label: 'invoice_yaml', tool: 'read', mk: (v) => 'invoice:\n  iban: ' + v + '\n  currency: EUR\n' },
@@ -430,7 +430,7 @@ const KNOWN_OK = [
   { id: 'base64_image', text: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==\n' },
   { id: 'lockfile_resolved', text: 'resolved "https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz"\n' },
   /* Structured config without secrets. */
-  { id: 'compose_no_secrets', text: 'services:\n  db:\n    image: postgres:16\n    ports:\n      - "5432:5432"\n    environment:\n      POSTGRES_USER: app\n      POSTGRES_DB: appdb\n      POSTGRES_PASSWORD_FILE: /run/secrets/db_password\n      TZ: Europe/Madrid\n' },
+  { id: 'compose_no_secrets', text: 'services:\n  db:\n    image: postgres:16\n    ports:\n      - "5432:5432"\n    environment:\n      POSTGRES_USER: app\n      POSTGRES_DB: appdb\n      POSTGRES_PASSWORD_FILE: /run/secrets/db_password\n      TZ: UTC\n' },
   { id: 'compose_env_references', text: 'services:\n  api:\n    environment:\n      - API_KEY=${API_KEY}\n      - DB_PASSWORD=$DB_PASSWORD\n      - NODE_ENV=production\n' },
   { id: 'workflow_secret_reference', text: 'steps:\n  - uses: actions/checkout@v4\n    with:\n      token: ${{ secrets.GITHUB_TOKEN }}\n' },
   { id: 'yaml_placeholders', text: 'api_key: your-api-key-here\npassword: changeme\n' },

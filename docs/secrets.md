@@ -3,7 +3,7 @@
 zn-gate keeps secret values out of what your coding agent sends to its model.
 The agent works with markers such as `__ZN_GITHUB_TOKEN__`; real values stay in
 an encrypted vault on your machine and are filled in only where you allowed
-them. Everything runs locally. **Status: beta, unreleased.**
+them. Everything runs locally.
 
 Supported agents: Claude Code, Codex CLI, Cursor (IDE) and OpenCode. What each
 one can and cannot do is in [compat.md](compat.md); the limits are in
@@ -12,13 +12,11 @@ one can and cannot do is in [compat.md](compat.md); the limits are in
 ## 1. Install and unlock the vault
 
 ```bash
-# The beta is not on npm yet: install it from the repository.
-git clone --branch next https://github.com/usezn/zn.git
-cd zn/packages/zn-gate
-npm ci
-npm install -g .
+npm install -g zn-gate
 zn unlock
 ```
+
+> **Windows PowerShell:** `npm` and `npx` can fail with "running scripts is disabled on this system", because the default execution policy blocks `npm.ps1`. Use `npm.cmd` and `npx.cmd` instead (for example `npm.cmd install -g zn-gate`), run the commands from Command Prompt, or allow local scripts for your account with `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 
 The first `zn unlock` creates the vault: an [age](https://age-encryption.org)
 identity stored in your OS keychain (macOS Keychain, Windows Credential
@@ -68,6 +66,14 @@ replaced with tokens. Reads of `.env` files with real values, credential files
 (`~/.aws/credentials`, `~/.ssh/id_*`, `~/.npmrc`…) and zn's own `~/.zn` are
 blocked.
 
+A prompt that contains a secret is not sent. In prompts, zn also blocks a
+value of 8 characters or more given to a credential name, in the middle of a
+sentence too
+(`my key is STRIPE_KEY=...`, `DB_PASSWORD=...`), unless the value is a
+placeholder (`changeme123`, `<key>`), a reference (`${API_KEY}`,
+`__ZN_STRIPE_KEY__`) or code. Store the value with `zn secret set NAME` and
+write `__ZN_NAME__` in the prompt instead.
+
 Codex runs new hooks only after you trust them: open Codex and use `/hooks`.
 
 ## 4. Let a command use a secret
@@ -112,7 +118,8 @@ returns a value.
 |---|---|
 | `zn secret list` | Names, modes, hosts and commands (never values) |
 | `zn secret rm NAME` | Remove a secret |
-| `zn audit log` | Local audit log: who used which secret where (no values). `zn audit` alone still shows it in 1.6, with a deprecation notice |
+| `zn vault log` | Local audit log: who used which secret where (no values). Also `zn secret log`; `--since 1h` limits it. (`zn audit` reviews agent configs; see [audit.md](audit.md)) |
+| `zn vault log export --otlp` | The same log as OpenTelemetry logs (OTLP/JSON Lines) for an OpenTelemetry Collector; `--since 7d`, `--out FILE`. See [team.md](team.md#export-the-audit-log-to-opentelemetry) |
 | `zn vault verify` | Check the audit log's HMAC chain |
 | `zn lock` | Lock the vault now |
 | `zn hooks uninstall <agent>` | Remove the hooks |

@@ -1,7 +1,8 @@
 'use strict';
 
 /**
- * `zn secret ...`, `zn env ...`, `zn audit log` and `zn hooks ...`.
+ * `zn secret ...` (including `zn secret log`), `zn vault log`, `zn env ...`
+ * and `zn hooks ...`.
  *
  * Every command that adds, changes, reveals or removes a value is for the
  * person at the keyboard: it needs an interactive terminal, refuses to run
@@ -398,6 +399,11 @@ async function envUnshadow(args, io) {
 /* ------------------------------ audit ------------------------------ */
 
 async function audit(args, io) {
+  if (args.includes('-h') || args.includes('--help')) {
+    out(io, 'usage: zn vault log [--since 1h]   (also: zn secret log)');
+    out(io, 'Shows who used which secret where (no values), then checks the audit log chain.');
+    return 0;
+  }
   const { flags } = parseFlags(args, {});
   let mod;
   try {
@@ -486,7 +492,11 @@ async function dispatch(group, args, ioIn) {
       if (sub === 'unshadow') return await envUnshadow(rest, io);
       throw deps.znError('ZN_USAGE', 'usage: zn env shadow [FILE] | zn env unshadow FILE --backup NAME');
     }
-    if (group === 'audit') return await audit(args, io);
+    if (group === 'vault') {
+      // Reached from `zn vault log` (lib/vault/cli.js routes it here).
+      if (args[0] === 'log') return await audit(args.slice(1), io);
+      throw deps.znError('ZN_USAGE', 'usage: zn vault log [--since 1h]');
+    }
     if (group === 'hooks') return await hooks(args, io);
     throw deps.znError('ZN_USAGE', 'unknown command ' + group);
   } catch (err) {
