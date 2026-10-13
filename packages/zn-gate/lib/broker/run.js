@@ -334,7 +334,7 @@ function spawnChecked(prep, opts) {
   }
   if (process.platform === 'win32' && prep.resolved && /\.(cmd|bat)$/i.test(prep.resolved)) {
     let b;
-    try { b = batchInvocation(prep.resolved, args, opts.originalArgs.slice(1), process.env); } catch (err) { return Promise.reject(err); }
+    try { b = batchInvocation(prep.resolved, args, opts.originalArgs.slice(1)); } catch (err) { return Promise.reject(err); }
     file = b.file;
     args = b.args;
     verbatim = true;
