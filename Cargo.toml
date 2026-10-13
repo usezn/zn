@@ -24,7 +24,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 axum = { version = "0.7", features = ["macros", "ws", "multipart"] }
 tower-http = { version = "0.5", features = ["cors", "auth", "fs"] }
 wasmtime = "48"
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.40", default-features = false, features = ["bundled", "cache", "fallible_uint"] }
 ratatui = "0.30"
 crossterm = "0.29"
 cliclack = "0.2"
