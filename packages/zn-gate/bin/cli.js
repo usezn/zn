@@ -384,9 +384,9 @@ Status       : ${totalFindings === 0 ? 'Clean workspace' : 'Review and neutraliz
 ─────────────────────────────────────────────────────────────────────────────\n
 `);
 
-  if (totalFindings > 0) {
-    process.exit(1);
-  }
+  // exitCode, not process.exit(): a large report written to a pipe must be
+  // flushed completely before the process ends.
+  if (totalFindings > 0) process.exitCode = 1;
 }
 
 // Secrets broker and agent hooks. Dispatched before the global option parsing
