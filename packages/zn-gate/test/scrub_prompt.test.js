@@ -6,7 +6,7 @@ const { decidePrompt } = require('../lib/hooks/runner');
 
 // Prompts that hand a credential to the model: each must be blocked.
 const POSITIVES = [
-  ['mi clave es STRIPE_KEY=2342342342asfsdfsdf', 'STRIPE_KEY', '2342342342asfsdfsdf'],
+  ['my key is STRIPE_KEY=2342342342asfsdfsdf', 'STRIPE_KEY', '2342342342asfsdfsdf'],
   ['STRIPE_KEY=2342342342asfsdfsdf', 'STRIPE_KEY', '2342342342asfsdfsdf'],
   ['my key is STRIPE_KEY=sk_live_2342342342asfsdfsdf, why does checkout fail?', 'STRIPE_KEY', 'sk_live_2342342342asfsdfsdf'],
   ['DB_PASSWORD=sunshine2024, can you connect?', 'DB_PASSWORD', 'sunshine2024'],
@@ -18,6 +18,12 @@ const POSITIVES = [
   ['password=letmein2024 for the admin user', 'PASSWORD', 'letmein2024'],
   ['curl https://api.example.com/v1?api_key=k9k9k9k9k9k9 returns 401', 'API_KEY', 'k9k9k9k9k9k9'],
   ['SENTRY_DSN=https://abc123@o1.ingest.sentry.io/1 breaks', null, null],
+  ['{"password": "sunshine2024"}', 'PASSWORD', 'sunshine2024'],
+  ['{"token":"q7w8e9r0t1y2"}', 'TOKEN', 'q7w8e9r0t1y2'],
+  ['try it (STRIPE_KEY=2342342342asfsdfsdf)', 'STRIPE_KEY', '2342342342asfsdfsdf'],
+  ['STRIPE_KEY=2342342342asfsdfsdf; then retry', 'STRIPE_KEY', '2342342342asfsdfsdf'],
+  ['[API_KEY=q7w8e9r0t1y2]', 'API_KEY', 'q7w8e9r0t1y2'],
+  ['API_KEY=' + 'aB3dE6gH9jK2mN5pQ8sT1vW4yZ7'.repeat(9), 'API_KEY', 'aB3dE6gH9jK2mN5pQ8sT1vW4yZ7'.repeat(9)],
   ['DATABASE_URL=postgres://app:tr0ub4dor99@db:5432/app is wrong?', 'DATABASE_URL', 'postgres://app:tr0ub4dor99@db:5432/app'],
 ];
 
@@ -64,6 +70,11 @@ const NEGATIVES = [
   'TOKEN_TTL=3600 seconds',
   'JWT_SECRET_PATH=/etc/app/jwt',
   'SSH_AUTH_SOCK=/tmp/ssh-agent.sock',
+  '{"password": "required"}',
+  '{"token": "string"}',
+  '{"token": "<token>"}',
+  '{"password": "${DB_PASSWORD}"}',
+  'call getToken() with API_KEY=getToken()',
 ];
 
 test('prompt layer: credentials typed into a prompt are found, with their name', () => {
@@ -85,6 +96,12 @@ test('prompt layer: placeholders, references, code and prose are left alone', ()
   assert.deepEqual(hits, [], 'false positives: ' + hits.length + '/' + NEGATIVES.length);
 });
 
+test('prompt layer: a credential after a long pasted log is still found', () => {
+  const text = 'log line with nothing in it\n'.repeat(3000) + 'my key is STRIPE_KEY=2342342342asfsdfsdf';
+  assert.ok(text.length > 64 * 1024);
+  assert.equal(findPromptAssignments(text).length, 1);
+});
+
 test('prompt layer: bounded work on long input', () => {
   const long = ('API_KEY=' + 'x'.repeat(30) + ' ').repeat(20000);
   const t0 = Date.now();
@@ -101,7 +118,7 @@ function deps(spans = []) {
 }
 
 test('prompt hook blocks a typed credential and suggests zn secret set with its name', async () => {
-  const ev = { event: 'user_prompt', input: { prompt: 'mi clave es STRIPE_KEY=2342342342asfsdfsdf' } };
+  const ev = { event: 'user_prompt', input: { prompt: 'my key is STRIPE_KEY=2342342342asfsdfsdf' } };
   const d = await decidePrompt(ev, deps(), 'claude-code');
   assert.equal(d.decision, 'deny');
   assert.match(d.message, /contains a secret \(STRIPE_KEY\)/);

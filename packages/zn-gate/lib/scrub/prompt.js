@@ -16,7 +16,7 @@
 const { isPlaceholder, sensitiveKey } = require('./patterns');
 const { looksNonSecret } = require('./exact');
 
-const MAX_PROMPT = 64 * 1024;  // longer prompts: only the first 64 KiB are checked here
+const MAX_PROMPT = 1024 * 1024;  // longer prompts: only the first 1 MiB is checked here
 const MIN_VALUE = 8;
 
 /* NAME, optionally quoted, then `=` or `:`, then the value, optionally
@@ -36,7 +36,7 @@ const ENV_NAME_RE = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/;                      // a
 const TYPE_WORDS_RE = /^(?:string|number|boolean|optional|required|nullable|undefined|integer|secretstr|bytes|object|any|str)$/i;
 
 /* A plain lowercase word as the name ("token: ...", "password: ...") is
- * prose too often; it counts only with `=`. Names written like identifiers
+ * prose too often; it counts only with `=` or as a quoted key (JSON). Names written like identifiers
  * (API_KEY, apiKey, db-password) count with `=` or `:`. */
 function identifierLike(name) {
   return /[_-]/.test(name) || /[A-Z]/.test(name);
@@ -44,11 +44,11 @@ function identifierLike(name) {
 
 function trimTrailing(value) {
   // Sentence punctuation after the value ("... is STRIPE_KEY=<value>.")
-  return value.replace(/[.,!?:]+$/, '');
+  return value.replace(/[.,!?:;)\]}>]+$/, '');
 }
 
 function promptValue(v, sep) {
-  if (v.length < MIN_VALUE || v.length > 200) return false;
+  if (v.length < MIN_VALUE || v.length > 512) return false;
   if (/[^\x21-\x7e]/.test(v)) return false;
   if (isPlaceholder(v) || DEMO_RE.test(v) || looksNonSecret(v)) return false;
   if (/^[$%<{[(*&!|>@~=-]/.test(v)) return false;   // ${VAR}, templates, flags
@@ -75,7 +75,7 @@ function findPromptAssignments(text) {
     // A rejected candidate may hide one inside its value
     // (https://host/path?api_key=...): scan again from the value.
     const retry = () => { ASSIGN_RE.lastIndex = start; };
-    if (sep === ':' && !identifierLike(name)) { retry(); continue; }
+    if (sep === ':' && !m[1] && !identifierLike(name)) { retry(); continue; }  // a quoted key is never prose
     if (!sensitiveKey(name)) { retry(); continue; }
     if (/(?:\.\.\.|…)$/.test(m[5])) { retry(); continue; }   // elided: "zn_live_..."
     const value = trimTrailing(m[5]);

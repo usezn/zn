@@ -66,8 +66,9 @@ replaced with tokens. Reads of `.env` files with real values, credential files
 (`~/.aws/credentials`, `~/.ssh/id_*`, `~/.npmrc`…) and zn's own `~/.zn` are
 blocked.
 
-A prompt that contains a secret is not sent. In prompts, zn also blocks any
-value given to a credential name, in the middle of a sentence too
+A prompt that contains a secret is not sent. In prompts, zn also blocks a
+value of 8 characters or more given to a credential name, in the middle of a
+sentence too
 (`my key is STRIPE_KEY=...`, `DB_PASSWORD=...`), unless the value is a
 placeholder (`changeme123`, `<key>`), a reference (`${API_KEY}`,
 `__ZN_STRIPE_KEY__`) or code. Store the value with `zn secret set NAME` and
