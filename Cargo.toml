@@ -74,7 +74,7 @@ tokenizers = "0.22.2"
 hf-hub = "0.4.3"
 # Official MCP SDK (modelcontextprotocol/rust-sdk). Pinned exact; Apache-2.0/MIT.
 # schemars needed directly: JsonSchema derive expands to `schemars::` paths.
-rmcp = { version = "=3.1.4", features = ["server", "macros", "schemars", "transport-io"] }
+rmcp = { version = "=3.5.1", features = ["server", "macros", "schemars", "transport-io"] }
 schemars = "1"
 
 [profile.release]
