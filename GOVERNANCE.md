@@ -16,8 +16,9 @@ Today there is one maintainer, who:
 - administers the GitHub organization, the repository settings and the package
   registry entries (npm, PyPI and the MCP Registry).
 
-The project is sponsored by usezn, which also runs the optional zn cloud service.
-The code in this repository is MIT-licensed and works without that service.
+The project is developed under the usezn name, which also runs the optional zn
+cloud service. The code in this repository is MIT-licensed and works without
+that service.
 
 ## How decisions are made
 
@@ -40,23 +41,29 @@ The code in this repository is MIT-licensed and works without that service.
 | `next` | Integration branch. Pull requests target `next`. |
 | `release/X.Y.Z` | A release being prepared: a version bump, release notes and, for a patch release, only the fixes it ships. |
 
-`main`, `next` and release branches are protected: force pushes and deletion are
-blocked, changes to `main` and `next` go through pull requests, and the required
+`main` and `next` are protected: changes go through pull requests, the required
 CI checks must pass (Node.js 18, 22 and 24 test suites, Python tests, the npm and
 Python package checks, the secret-leak benchmark and the scrubber and vault
-tests).
+tests), and force pushes and deletion are blocked. `release/*` branches and
+`v*` tags can only be created by repository administrators (today, the
+maintainer); they cannot be force-pushed or deleted, and tags cannot be moved.
+Administrators can bypass the release branch and tag rules. A release branch
+reaches `main` only through a pull request with the required checks.
 
 ## Contributions
 
 - Open pull requests against `next`. Keep each one focused on one change, with
   tests, and add a line to the `[Unreleased]` section of [CHANGELOG.md](CHANGELOG.md)
   for anything a user would notice.
-- Every pull request is reviewed by a maintainer before it is merged, and CI must
-  pass. Changes to detection rules must keep the Node.js and Python rule sets in
-  step (see [CONTRIBUTING.md](CONTRIBUTING.md)).
+- Pull requests from contributors are reviewed by a maintainer before they are
+  merged, and the required CI checks must pass. With a single maintainer today,
+  the maintainer's own pull requests are merged once the required checks pass
+  (GitHub does not allow approving your own pull request). Changes to detection
+  rules must keep the Node.js and Python rule sets in step (see
+  [CONTRIBUTING.md](CONTRIBUTING.md)).
 - Pull requests that touch `.github/workflows/`, the release tooling or the
-  supply chain (dependencies, lockfiles, pinned actions) get an extra review of
-  what they run and with which permissions.
+  supply chain (dependencies, lockfiles, pinned actions) are reviewed with extra
+  care for what they run and with which permissions.
 - Commits are not force-pushed to shared branches; history is kept.
 - Report security issues privately, never in a public issue or pull request (see
   [SECURITY.md](SECURITY.md)).
@@ -69,11 +76,12 @@ By contributing, you agree that your contribution is licensed under the
 Releases follow [Semantic Versioning](https://semver.org/). Prereleases use
 `-alpha.N`, `-beta.N` and `-rc.N`.
 
-1. A maintainer prepares the release on `main` or on a `release/X.Y.Z` branch:
-   version numbers in every package, the `## [X.Y.Z]` section of the changelog,
-   and a pull request that CI and a maintainer review.
-2. A maintainer pushes an annotated tag `vX.Y.Z` on that commit. Only maintainers
-   can create release tags; tags and release branches cannot be moved or deleted.
+1. A maintainer prepares the release on a `release/X.Y.Z` branch made from
+   `main`: version numbers in every package and the `## [X.Y.Z]` section of the
+   changelog, with a pull request into `main` that must pass the required CI
+   checks.
+2. A maintainer pushes an annotated tag `vX.Y.Z` on that commit (see Branches
+   for who can create tags).
 3. The [`Release` workflow](.github/workflows/release.yml) builds the npm package
    and the Python distributions once, from the tag, and checks that the tag, the
    package versions and the branch match.
@@ -82,10 +90,13 @@ Releases follow [Semantic Versioning](https://semver.org/). Prereleases use
    - the files are signed with Sigstore and get GitHub build provenance attestations;
    - the same files are published to npm and PyPI with trusted publishing (no
      long-lived tokens), with npm provenance and PyPI attestations;
-   - a GitHub Release is created with the files, `SHA256SUMS` and the signature bundles.
+   - a GitHub Release is created with the files, `SHA256SUMS` and the signature
+     bundles (as a draft for final versions, which the maintainer reviews and
+     publishes).
 5. The MCP Registry entry is published by the `MCP Registry` workflow, from `main`,
    after another approval in the protected `mcp-registry` environment.
-6. `main` is merged back into `next`.
+6. The release pull request is merged into `main`, and `main` is merged back
+   into `next`.
 
 How to verify a release: [docs/verify-release.md](docs/verify-release.md).
 
