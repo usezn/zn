@@ -3,7 +3,7 @@
     "zn-gate": {
       "command": "node",
       "args": ["${CLAUDE_PLUGIN_ROOT}/node_modules/zn-gate/bin/cli.js", "mcp"],
-      "env": { "ZN_LOCAL_ONLY": "true" }
+      "env": { "ZN_CLOUD": "1", "ZN_API_KEY": "${user_config.api_key}" }
     },
     "secrets": {
       "command": "node",

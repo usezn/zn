@@ -37,11 +37,17 @@ Everything in this plugin runs on your machine.
 - **Downloaded once, at install:** Claude Code runs your `npm` to install the npm package `zn-gate`, pinned to version 1.5.0 by the lockfile in this folder, from the npm registry, with install scripts disabled. The plugin downloads nothing after that. (The `npx zn-gate@1.5.0` commands above are run by you, once, to set up the vault; npm downloads the same pinned version for them.) If npm is missing, the install is skipped and `claude plugin list` shows a note on the plugin, and the session start check shows how to fix it: install Node.js and run `claude plugin update zn-gate@usezn`.
 - **Session start check:** a short shell script, `hooks/check-node.sh`, run with `sh`, checks `node --version` and that the zn-gate package is in the plugin folder, and shows a warning with the fix if either is missing. It prints nothing otherwise.
 - **Hooks (run on every matching event):** `node` runs the zn-gate hook on `PreToolUse` (shell, file and web tools), `PostToolUse` (shell, file, web and MCP tool output) and `UserPromptSubmit`. The hook reads the event on stdin, replaces secret values with markers or blocks the call, and writes its decision to stdout. The hooks make no network requests. If a tool hook cannot start or times out (15 seconds), the call runs unchecked and its output reaches Claude unscrubbed; other hook errors deny the call. If the prompt hook cannot run or times out (30 seconds), the prompt is blocked.
-- **MCP server `zn-gate`:** the tools `analyze_prompt`, `check_tool_call`, `check_tool_result` and `zn_status`, which check text and tool calls for prompt injection with local rules. The plugin starts it with `ZN_LOCAL_ONLY=true`, so text is never sent to the zn cloud API, even if `ZN_CLOUD` and `ZN_API_KEY` are set.
+- **MCP server `zn-gate`:** the tools `analyze_prompt`, `check_tool_call`, `check_tool_result` and `zn_status`, which check text and tool calls for prompt injection with local rules. By default nothing is sent anywhere. The plugin never reads `ZN_API_KEY` or `ZN_CLOUD` from your environment; it uses only the optional API key below.
 - **MCP server `secrets`:** the tools `secrets_list`, `secrets_request`, `secrets_render_file` and `secrets_http_request`. They let Claude use a secret without seeing it. `secrets_http_request` makes the HTTP request that Claude asks for, to the host Claude names, with the secret filled in, only if that host is in the secret's allowed hosts (`allowHosts`); otherwise no request is made. This is the only network traffic the plugin creates, and only when Claude calls that tool.
 - **Files written:** the vault and its audit log under your home directory. Nothing is written to your project unless you run a command such as `zn env shadow`.
 
 No telemetry. No account is needed.
+
+### Optional: the zn cloud classifier (API key)
+
+With a zn Pro or Team API key (from https://usezn.com/dashboard), `analyze_prompt` also asks the zn cloud classifier, which catches more than the local rules. Only then is text sent: the text Claude passes to `analyze_prompt`, with secrets redacted first, goes to `api.usezn.com` and counts against your plan's quota. `check_tool_call`, `check_tool_result`, the `secrets` server and the hooks never send anything, with or without a key.
+
+Set or remove the key with `/plugin configure zn-gate@usezn` (it is stored in your system's credential store, not in a settings file). Leave it empty to keep everything on your machine. What is sent and kept: https://usezn.com/privacy
 
 ## Limits
 

@@ -1,7 +1,7 @@
 {
   "name": "zn-gate",
   "displayName": "zn-gate",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "description": "For Claude Code: hooks keep secret values out of what is sent to the model (tool input, tool output and prompts), and a local MCP server checks untrusted text for prompt injection. In chat, only the guidance skill loads.",
   "author": {
     "name": "usezn",
@@ -18,5 +18,15 @@
     "prompt-injection",
     "mcp",
     "hooks"
-  ]
+  ],
+  "userConfig": {
+    "api_key": {
+      "type": "string",
+      "title": "zn API key (optional)",
+      "description": "Pro or Team API key from usezn.com/dashboard. With a key, the analyze_prompt tool also asks the zn cloud classifier and the text (secrets redacted) is sent to api.usezn.com. Leave empty to keep everything on this machine.",
+      "sensitive": true,
+      "required": false,
+      "default": ""
+    }
+  }
 }
