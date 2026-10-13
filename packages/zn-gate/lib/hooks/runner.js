@@ -361,6 +361,11 @@ async function decidePrompt(ev, d, agentId) {
   if (typeof engine.prepare === 'function') ctx = await engine.prepare(ctx);
   const spans = engine.scan(prompt, ctx) || [];
   const secrets = spans.filter((s) => SECRET_SOURCES.has(s.source));
+  // Prompts only: NAME=value in the middle of a sentence, even when the value
+  // does not look random (see lib/scrub/prompt.js).
+  for (const a of require('../scrub/prompt').findPromptAssignments(prompt)) {
+    if (!secrets.some((s) => s.start < a.end && a.start < s.end)) secrets.push(a);
+  }
   if (secrets.length === 0) return { decision: 'allow' };
   const kinds = [...new Set(secrets.map((s) => s.name || s.type))];
   const suggestion = kinds.length === 1 && /^[A-Z][A-Z0-9_]*$/.test(String(secrets[0].name || ''))
