@@ -42,13 +42,13 @@ We keep you updated at least every 14 days until the issue is resolved, and tell
 
 1. **Private triage.** We confirm the issue, assess its severity and affected versions, and open a draft GitHub Security Advisory (or use the one you opened through private vulnerability reporting). You are invited to it.
 2. **CVE.** For an issue in a released package, we request a CVE through GitHub from the advisory.
-3. **Fix.** For a reported issue, the fix is developed and reviewed privately (for example in the advisory's temporary private fork), with tests that reproduce the issue. For an issue we find ourselves and can fix right away, the fix may go through public pull requests and be released within hours, without describing the attack. For a patch release we ship only the fixes it needs, from a `release/X.Y.Z` branch (see [GOVERNANCE.md](GOVERNANCE.md)).
+3. **Fix.** For a reported issue, the fix is developed and reviewed privately (for example in the advisory's temporary private fork), with tests that reproduce the issue. For an issue we find ourselves and can fix right away, the fix may go through public pull requests and be released within hours. For a patch release we ship only the fixes it needs, from a `release/X.Y.Z` branch (see [GOVERNANCE.md](GOVERNANCE.md)).
 4. **Release.** The fixed version is published to npm and PyPI by the [`Release` workflow](.github/workflows/release.yml), with signatures and provenance.
 5. **Disclosure.** We publish the advisory, the release notes and the changelog entry together: affected versions, impact, what to do, and credit to the reporter (unless you prefer to stay anonymous). Advisories describe the class of problem, not step-by-step exploitation.
 
 We ask you to keep the details private until the advisory is published, and we aim to publish within 90 days of your report. If a fix needs longer, we agree a date with you; if the issue is being exploited, we may publish earlier with mitigations.
 
-Example: [GHSA-rf3f-ppm5-3xrx](https://github.com/usezn/zn/security/advisories/GHSA-rf3f-ppm5-3xrx) (`zn run` on Windows) was found in an internal review. The fixes were merged through pull requests, cherry-picked onto a `release/1.5.1` branch made from the previous release, published as 1.5.1 through the release workflow, and disclosed with the advisory and the release notes on the same day.
+Example: [GHSA-rf3f-ppm5-3xrx](https://github.com/usezn/zn/security/advisories/GHSA-rf3f-ppm5-3xrx) (`zn run` on Windows) was found in an internal review. The fixes were merged through pull requests, cherry-picked onto a `release/1.5.1` branch made from `main`, published as 1.5.1 through the release workflow, and disclosed with the advisory and the release notes on the same day.
 
 ---
 
