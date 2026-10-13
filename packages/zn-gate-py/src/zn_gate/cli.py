@@ -30,20 +30,22 @@ _MULTILINE_RULES = [
 
 # A BEGIN marker with no END (a key cut short when pasted or truncated): the
 # lines after it that look like PEM headers or base64 are treated as key
-# material, up to the first empty or other line.
+# material, up to the first empty or other line (an encrypted key has one
+# empty line after its Proc-Type / DEK-Info headers, which is kept).
 _KEY_BEGIN = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
 _KEY_END = re.compile(r"-----END [A-Z ]*PRIVATE KEY-----")
 _KEY_BODY = re.compile(r"^(?:[A-Za-z0-9+/=]{16,}|[A-Za-z-]+: )")
+_KEY_HEADER = re.compile(r"^[A-Za-z-]+: ")
 _TRUNCATED_KEY_REASON = "Exposed credential detected by DLP filter (private key without an END marker)"
 
 # Private key files that usually have no extension.
 _KEY_FILE_NAMES = {"id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "id_ecdsa_sk", "id_ed25519_sk"}
-# Files larger than this, or with a NUL byte near the start (binary, such as
-# a Keynote .key document), are not scanned.
+# Files of this size or larger are not scanned, and neither are .key files
+# with a NUL byte near the start (a Keynote document, not a key).
 _MAX_SCAN_BYTES = 2 * 1024 * 1024
 _BINARY_SNIFF = 8192
 
-SHIELD = "\U0001f6e1️"
+SHIELD = "\U0001f6e1\ufe0f"
 ALERT = "\U0001f6a8"
 CHECK = "\u2705"
 LOCK = "\U0001f512"
@@ -140,12 +142,12 @@ def cmd_analyze(args: argparse.Namespace) -> int:
 def _scan_file(file_path: Path) -> List[Dict[str, Any]]:
     violations: List[Dict[str, Any]] = []
     try:
-        if file_path.stat().st_size > _MAX_SCAN_BYTES:
+        if file_path.stat().st_size >= _MAX_SCAN_BYTES:
             return []
         raw = file_path.read_bytes()
     except Exception:
         return []
-    if b"\0" in raw[:_BINARY_SNIFF]:
+    if file_path.suffix.lower() == ".key" and b"\0" in raw[:_BINARY_SNIFF]:
         return []
     content = raw.decode("utf-8", errors="ignore")
 
@@ -179,9 +181,15 @@ def _scan_file(file_path: Path) -> List[Dict[str, Any]]:
         if not h or _KEY_END.search(line, h.end()):
             continue  # no marker, or a whole key on one line (the line pass redacts it)
         last = i
-        while (last < len(lines) and _KEY_BODY.match(lines[last].strip())
-               and not _KEY_BEGIN.search(lines[last])):
-            last += 1
+        while last < len(lines) and not _KEY_BEGIN.search(lines[last]):
+            body = lines[last].strip()
+            if _KEY_BODY.match(body):
+                last += 1
+            elif (not body and _KEY_HEADER.match(lines[last - 1].strip())
+                  and last + 1 < len(lines) and _KEY_BODY.match(lines[last + 1].strip())):
+                last += 1  # the empty line after encrypted-key headers
+            else:
+                break
         key_lines.update(range(i, last + 1))
         blocks.append(("secret:private_key", i, last, h.group(0)[:100], _TRUNCATED_KEY_REASON))
     for i, line in enumerate(lines, 1):

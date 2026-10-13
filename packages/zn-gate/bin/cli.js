@@ -18,15 +18,17 @@ const MULTILINE_SECRET_RULES = SECRET_PATTERNS
 
 // A BEGIN marker with no END (a key cut short when pasted or truncated): the
 // lines after it that look like PEM headers or base64 are treated as key
-// material, up to the first empty or other line.
+// material, up to the first empty or other line (an encrypted key has one
+// empty line after its Proc-Type / DEK-Info headers, which is kept).
 const KEY_BEGIN = /-----BEGIN [A-Z ]*PRIVATE KEY-----/;
 const KEY_END = /-----END [A-Z ]*PRIVATE KEY-----/;
 const KEY_BODY = /^(?:[A-Za-z0-9+/=]{16,}|[A-Za-z-]+: )/;
+const KEY_HEADER = /^[A-Za-z-]+: /;
 const TRUNCATED_KEY_REASON = 'Exposed credential detected by DLP filter (private key without an END marker)';
 // Private key files that usually have no extension.
 const KEY_FILE_NAMES = new Set(['id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', 'id_ecdsa_sk', 'id_ed25519_sk']);
-// Files with a NUL byte near the start (binary, such as a Keynote .key
-// document) are not scanned.
+// .key files with a NUL byte near the start (a Keynote document, not a key)
+// are not scanned.
 const BINARY_SNIFF = 8192;
 
 const VERSION = require('../package.json').version;
@@ -330,7 +332,7 @@ Files   : ${files.length} file(s) queued for audit\n
     let content = '';
     try {
       const raw = fs.readFileSync(filePath);
-      if (raw.subarray(0, BINARY_SNIFF).includes(0)) continue;
+      if (path.extname(filePath).toLowerCase() === '.key' && raw.subarray(0, BINARY_SNIFF).includes(0)) continue;
       content = raw.toString('utf8');
     } catch (e) {
       continue;
@@ -371,7 +373,12 @@ Files   : ${files.length} file(s) queued for audit\n
       // No marker, or a whole key on one line (the line pass redacts it).
       if (!h || KEY_END.test(lines[i - 1].slice(h.index + h[0].length))) continue;
       let last = i;
-      while (last < lines.length && KEY_BODY.test(lines[last].trim()) && !KEY_BEGIN.test(lines[last])) last++;
+      while (last < lines.length && !KEY_BEGIN.test(lines[last])) {
+        const body = lines[last].trim();
+        if (KEY_BODY.test(body)) last++;
+        else if (!body && KEY_HEADER.test(lines[last - 1].trim()) && last + 1 < lines.length && KEY_BODY.test(lines[last + 1].trim())) last++; // the empty line after encrypted-key headers
+        else break;
+      }
       for (let n = i; n <= last; n++) keyLines.add(n);
       blocks.push({ rule: 'secret:private_key', line: i, header: h[0].slice(0, 100), reason: TRUNCATED_KEY_REASON });
     }
