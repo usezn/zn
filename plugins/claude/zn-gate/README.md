@@ -30,6 +30,8 @@ npx zn-gate@1.5.0 unlock
 npx zn-gate@1.5.0 env shadow .env
 ```
 
+> **Windows PowerShell:** `npm` and `npx` can fail with "running scripts is disabled on this system", because the default execution policy blocks `npm.ps1`. Use `npm.cmd` and `npx.cmd` instead (for example `npm.cmd install -g zn-gate`), run the commands from Command Prompt, or allow local scripts for your account with `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+
 ## What runs, what is sent, what is downloaded
 
 Everything in this plugin runs on your machine.
