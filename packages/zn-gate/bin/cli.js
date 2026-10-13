@@ -8,7 +8,13 @@ const { startMcpShield } = require('../lib/shield');
 const { scanEnvironments, configureEnvironments } = require('../lib/init');
 const { logEvidence, verifyEvidenceLedger, getEvidenceStats, exportEvidenceLedger, startEvidenceUi, EVIDENCE_FILE } = require('../lib/evidence');
 const { analyze, analyzeLocal, isCloudEnabled, resolveEndpoint, RULES_VERSION } = require('../lib/client');
-const { evaluate, redactSecrets } = require('../lib/rules');
+const { evaluate, redactSecrets, SECRET_PATTERNS } = require('../lib/rules');
+
+// Secrets that span several lines (a PEM private key block). The line-by-line
+// scan never sees BEGIN and END together, so these run on the whole file.
+const MULTILINE_SECRET_RULES = SECRET_PATTERNS
+  .filter((p) => p.id === 'secret:private_key')
+  .map((p) => ({ id: p.id, pattern: p.pattern, header: /-----BEGIN [A-Z ]*PRIVATE KEY-----/ }));
 
 const VERSION = require('../package.json').version;
 
@@ -316,21 +322,47 @@ Files   : ${files.length} file(s) queued for audit\n
     }
 
     const lines = content.split('\n');
+    const seen = new Set();
     for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
       const line = lines[lineIdx].trim();
       if (!line || line.length < 8) continue;
 
+      // Printed to the terminal and CI logs: never show a detected secret.
+      const redacted = redactSecrets(line);
+      const sample = redacted.sanitized.slice(0, 100);
       const evalRes = evaluate(line, options);
       if (evalRes.verdict === 'block') {
         totalFindings++;
-        findings.push({
-          file: relPath,
-          line: lineIdx + 1,
-          rule: evalRes.rule,
-          reason: evalRes.reason,
-          // Printed to the terminal and CI logs: never show a detected secret.
-          sample: redactSecrets(line).sanitized.slice(0, 100),
-        });
+        findings.push({ file: relPath, line: lineIdx + 1, rule: evalRes.rule, reason: evalRes.reason, sample });
+      }
+      // Secrets are reported too, once per rule and line.
+      for (const rule of new Set(redacted.detections.map((d) => d.rule))) {
+        totalFindings++;
+        seen.add((lineIdx + 1) + '\0' + rule);
+        findings.push({ file: relPath, line: lineIdx + 1, rule, reason: 'Exposed credential detected by DLP filter', sample });
+      }
+    }
+
+    // Blocks over several lines, numbered like the line pass (split on \n).
+    const starts = [0];
+    for (const l of lines) starts.push(starts[starts.length - 1] + l.length + 1);
+    for (const r of MULTILINE_SECRET_RULES) {
+      const rx = new RegExp(r.pattern.source, r.pattern.flags.includes('g') ? r.pattern.flags : r.pattern.flags + 'g');
+      let m;
+      while ((m = rx.exec(content)) !== null) {
+        if (m[0].length === 0) { rx.lastIndex++; continue; }
+        if (!m[0].includes('\n')) continue; // one line: the line pass covers it
+        let lo = 0;
+        let hi = starts.length - 1;
+        while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (starts[mid] <= m.index) lo = mid; else hi = mid - 1; }
+        const lineNo = lo + 1;
+        const key = lineNo + '\0' + r.id;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        totalFindings++;
+        const h = r.header.exec(m[0]);
+        // Only the BEGIN marker, never the key material.
+        findings.push({ file: relPath, line: lineNo, rule: r.id, reason: 'Exposed credential detected by DLP filter', sample: h ? h[0] : '[REDACTED_PRIVATE_KEY]' });
       }
     }
   }
