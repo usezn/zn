@@ -550,8 +550,25 @@ test('a batch-file claude (npm install on Windows) is never run through cmd.exe'
   const rep = adapter.install(opts);
   const warn = rep.warnings.find((w) => /batch file/.test(w));
   assert.ok(warn, JSON.stringify(rep.warnings));
-  assert.match(warn, /claude mcp add-json --scope user secrets '/);
+  assert.match(warn, /claude mcp add --scope user secrets -- "/);
   const un = adapter.uninstall(opts);
   assert.ok(un.warnings.some((w) => /claude mcp remove --scope user secrets/.test(w)), JSON.stringify(un.warnings));
   assert.equal(fs.existsSync(marker), false, 'the batch file must not run');
+});
+
+test('Windows: an extensionless file next to its .cmd is not the program (npm layout)', (t) => {
+  const { whichSync, resolveExecutable } = require('../lib/exe');
+  const dir = tempDir(t, 'zn-which-');
+  fs.writeFileSync(path.join(dir, 'tool'), '#!/bin/sh\necho sh\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(dir, 'tool.cmd'), '@echo cmd\r\n');
+  const found = whichSync('tool', dir);
+  const resolved = resolveExecutable('tool', { PATH: dir, PATHEXT: '.COM;.EXE;.BAT;.CMD' });
+  if (process.platform === 'win32') {
+    assert.equal(path.basename(found), 'tool.cmd');
+    assert.equal(path.basename(resolved.path), 'tool.cmd');
+    // A name that already has a PATHEXT extension is used as written.
+    assert.equal(path.basename(whichSync('tool.cmd', dir)), 'tool.cmd');
+  } else {
+    assert.equal(path.basename(found), 'tool');
+  }
 });
