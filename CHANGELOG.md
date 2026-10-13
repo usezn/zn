@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **zn Team client** (`zn team join | status | sync | leave`): connects this machine to a zn
+  organization ([docs/team.md](docs/team.md)). The organization's policy is signed with Ed25519
+  and checked against the key pinned at join time (also its organization, version, expiry and
+  issue date, with five minutes of clock tolerance); the accepted policy is kept in the encrypted
+  vault. The `secrets` MCP server and `zn run` apply it. The organization can always restrict a
+  secret (`deny`, fewer hosts or commands, `proxy` mode, where the value may go in a request) and
+  add custom secret formats for the scrubber; a new host for a secret applies only after the user
+  approves it once on this machine; it can never open a new command, mode or placement, or reach
+  the protections for credential files, `~/.zn` or agent configuration. Every matching rule
+  restricts every agent, because zn-gate cannot prove which agent is calling; a rule's agent list
+  only decides who can be offered a new host. When the policy expires while offline, only its restrictions keep applying. The
+  audit log (metadata only, never values) is uploaded in batches that resume from the last record
+  the server confirmed. Join and leave are confirmed on the vault's own channel, outside the agent.
+- `zn hooks install` now starts the `secrets` MCP server with `--agent <id>` for Claude Code, Codex,
+  Cursor and OpenCode.
+- `zn vault log export --otlp [--since 7d] [--out FILE]`: the local audit log as OpenTelemetry logs
+  (OTLP/JSON Lines, one `ExportLogsServiceRequest` per line) for an OpenTelemetry Collector, with
+  no account.
 - **Agent plugins** (`plugins/zn-gate`): one package in the Agent Plugins 1.0 format that
   connects Claude Code and Cursor to the installed zn-gate (hooks, the `secrets` MCP server and
   a skill), and gives Codex the MCP server and the skill (Codex does not run plugin hooks; use

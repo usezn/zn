@@ -37,11 +37,13 @@ const audit = require('./audit');
 const confirmMod = require('./confirm');
 const { variants } = require('../scrub/exact');
 const exe = require('../exe');
+const { makeTeamOps } = require('../team/daemon-ops');
 const { CODES, znError } = require('../errors');
 
 const PROTOCOL = 1;
 const DEFAULT_TTL_MS = 8 * 3600 * 1000;
 const DEFAULT_IDLE_MS = 30 * 60 * 1000;
+const DEFAULT_TEAM_SYNC_MS = 15 * 60 * 1000;
 const MAX_LINE = 4 * 1024 * 1024;
 const MAX_VALUE = 1024 * 1024;
 const MAX_DETECTED_EXACT = 256;
@@ -277,6 +279,8 @@ function makeOps(state, ctl) {
     return rec;
   }
 
+  const team = makeTeamOps({ state, writeAudit, confirmOutOfBand, fetchImpl: ctl.fetchImpl, isClosed: () => Boolean(ctl.closed) });
+
   return {
     async status() {
       return { unlocked: true, protocol: PROTOCOL, pid: process.pid, expiresAt: new Date(ctl.expiresAt).toISOString(), idleMs: ctl.idleMs, confirm: channel.kind };
@@ -465,13 +469,23 @@ function makeOps(state, ctl) {
       return true;
     },
 
-    async listSecrets() {
+    /* opts.effective: apply the organization policy for opts.agent (what
+     * the broker enforces). Without it, the local settings as stored. */
+    async listSecrets(opts) {
       const secrets = await state.loadSecrets();
-      return Object.entries(secrets.secrets).map(([name, s]) => ({
+      const list = Object.entries(secrets.secrets).map(([name, s]) => ({
         name, type: s.type || 'SECRET', mode: s.mode, allowHosts: s.allowHosts || [], allowCommands: s.allowCommands || [],
         allowIn: s.allowIn || ['header'], injectAt: s.injectAt, source: s.source, lastUsed: s.lastUsed || null,
       })).sort((a, b) => a.name.localeCompare(b.name));
+      const o = opts && typeof opts === 'object' ? opts : {};
+      return o.effective ? team.effectiveList(list, typeof o.agent === 'string' ? o.agent : null, o.agentTrusted === true) : list;
     },
+
+    teamJoin: team.teamJoin,
+    teamLeave: team.teamLeave,
+    teamInfo: team.teamInfo,
+    teamSync: team.teamSync,
+    confirmOrgOpening: team.confirmOrgOpening,
 
     async removeSecret(name) {
       const n = str(name, 'name', 64);
@@ -557,7 +571,7 @@ async function serve(opts) {
   // Confirmation channel: injected (tests), chosen by the caller, or none.
   const channel = typeof o.confirm === 'function' ? { kind: 'injected', confirm: o.confirm }
     : (o.channel && typeof o.channel.confirm === 'function' ? o.channel : confirmMod.noneChannel());
-  const ctl = { expiresAt: Date.now() + ttlMs, idleMs, shutdown: null, channel };
+  const ctl = { expiresAt: Date.now() + ttlMs, idleMs, shutdown: null, channel, fetchImpl: o.fetchImpl };
   const ops = makeOps(state, ctl);
   const sockets = new Set();
   let closed = false;
@@ -575,12 +589,23 @@ async function serve(opts) {
   // Persist lastUsed and the audit head now and then.
   const flushTimer = setInterval(() => { if (state.dirtySecrets) state.serial(() => state.saveSecrets()).catch(() => {}); }, 60000);
   flushTimer.unref();
+  // zn Team: refresh the organization policy and upload the audit log while
+  // unlocked (soon after unlock, then every teamSyncMs). No-op outside a team.
+  const teamSyncMs = o.teamSyncMs === 0 ? 0 : (o.teamSyncMs || DEFAULT_TEAM_SYNC_MS);
+  const teamSync = () => { if (!closed && state.secrets && state.secrets.team) ops.teamSync({}).catch(() => {}); };
+  const teamTimer = teamSyncMs ? setInterval(teamSync, teamSyncMs) : null;
+  const teamFirst = teamSyncMs ? setTimeout(teamSync, 5000) : null;
+  if (teamTimer) teamTimer.unref();
+  if (teamFirst) teamFirst.unref();
 
   async function shutdown(reason) {
     if (closed) return;
     closed = true;
+    ctl.closed = true;
     clearTimeout(ttlTimer);
     clearInterval(flushTimer);
+    if (teamTimer) clearInterval(teamTimer);
+    if (teamFirst) clearTimeout(teamFirst);
     if (idleTimer) clearTimeout(idleTimer);
     try {
       await state.serial(async () => {

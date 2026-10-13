@@ -130,6 +130,15 @@ VAULT (local, encrypted with age; the key stays in the OS keychain):
   vault log           Show the audit log of secret use [--since 1h]; checks the chain when unlocked
   vault verify        Verify the HMAC-chained audit log of secret use
   vault forget [dir]  Forget the token map of a project (vault locked)
+  vault log export --otlp
+                      Export the audit log as OpenTelemetry logs (OTLP/JSON Lines)
+                      [--since 7d] [--out FILE]
+
+TEAM (zn Team: organization policy and audit upload; needs the vault unlocked):
+  team join <token>   Connect this machine to your organization (confirmed outside the agent)
+  team status         Organization, policy version and upload state [--json]
+  team sync           Download the policy and upload the audit log now
+  team leave          Disconnect this machine (confirmed outside the agent)
 
 INIT OPTIONS:
   --dry-run           Scan environments and preview changes without modifying configs
@@ -362,7 +371,11 @@ async function runBrokerCommand(command, rest) {
     return;
   }
   if (command === 'secrets-mcp') {
-    require('../lib/broker/mcp').startSecretsMcp();
+    // --agent <id>: set by the agent's MCP configuration, so the organization
+    // policy can tell agents apart (not a security control).
+    const i = rest.indexOf('--agent');
+    const agent = i >= 0 && /^[a-z0-9-]{1,32}$/.test(String(rest[i + 1] || '')) ? rest[i + 1] : undefined;
+    require('../lib/broker/mcp').startSecretsMcp({ agent });
     return;
   }
   process.exitCode = await require('../lib/broker/cli').dispatch(command, rest);
@@ -370,6 +383,16 @@ async function runBrokerCommand(command, rest) {
 
 async function main() {
   const args = process.argv.slice(2);
+  // zn Team and the OpenTelemetry export of the audit log. exitCode (not
+  // process.exit) so a large export is flushed completely through a pipe.
+  if (args[0] === 'team') {
+    process.exitCode = await require('../lib/team/cli').runTeamCommand(args);
+    return;
+  }
+  if (args[0] === 'vault' && args[1] === 'log' && args[2] === 'export') {
+    process.exitCode = require('../lib/team/cli').runLogExport(args.slice(3));
+    return;
+  }
   if (args[0] === 'vault' && args[1] === 'log') {
     // exitCode (not process.exit) so a large log is flushed completely through a pipe.
     process.exitCode = await require('../lib/broker/cli').dispatch('vault', args.slice(1));

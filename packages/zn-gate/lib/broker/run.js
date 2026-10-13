@@ -133,7 +133,10 @@ async function prepare(parsed, opts) {
     throw znError(code, reason);
   };
 
-  const list = await vault.listSecrets();
+  // Local settings with the organization policy applied (zn Team): every
+  // matching rule restricts. The agent id of zn run (--agent, ZN_AGENT) is
+  // self-reported, so nothing new is offered for it.
+  const list = await vault.listSecrets({ effective: true, agent, agentTrusted: false });
   const meta = new Map((list || []).map((s) => [s.name, s]));
   const approvals = opts.approvals || approvalStore({ vault, znHome: opts.znHome });
   const found = exe.resolveExecutable(argv0, env);
@@ -164,6 +167,7 @@ async function prepare(parsed, opts) {
     if (!m) {
       await deny(name, null, 'secret ' + name + ' is not in the vault. Add it from your own terminal: zn secret set ' + name, 'ZN_NOT_FOUND');
     }
+    if (m.deny) await deny(name, m.mode, 'secret ' + name + ' is blocked for this agent by your organization policy.', 'ZN_POLICY_DENIED');
     if (m.mode !== 'env') {
       await deny(name, m.mode, 'secret ' + name + ' is in ' + (m.mode || 'proxy') + ' mode, so zn run never puts it in a process. ' +
         'For HTTP APIs use the secrets_http_request tool of the zn "secrets" MCP server.');
@@ -182,7 +186,7 @@ async function prepare(parsed, opts) {
   const skipped = [];
   for (const name of optional) {
     const m = meta.get(name);
-    const entry = m && m.mode === 'env' && !planted && opened ? markers.matchAllowCommands(m.allowCommands, parsed.command) : null;
+    const entry = m && !m.deny && m.mode === 'env' && !planted && opened ? markers.matchAllowCommands(m.allowCommands, parsed.command) : null;
     if (entry && await approvals.isApproved(name, entry, ctx)) chosen.push({ name, mode: m.mode, command: entry });
     else skipped.push(name);
   }
