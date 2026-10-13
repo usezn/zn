@@ -72,11 +72,14 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-          cache-dependency-path: packages/zn-gate-py/pyproject.toml
+          cache-dependency-path: |
+            packages/zn-gate-py/pyproject.toml
+            .github/ci-test-requirements.txt
       - name: Install package and test dependencies
+        # Test tools pinned with hashes; the package itself has no dependencies.
         run: |
-          python -m pip install --upgrade pip pytest
-          python -m pip install -e packages/zn-gate-py
+          python -m pip install --require-hashes -r .github/ci-test-requirements.txt
+          python -m pip install --no-deps --no-build-isolation -e packages/zn-gate-py
       - name: Run pytest (unit + integration)
         working-directory: packages/zn-gate-py
         run: python -m pytest tests/ -v
@@ -149,11 +152,14 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: packages/zn-gate-py/pyproject.toml
+          cache-dependency-path: |
+            packages/zn-gate-py/pyproject.toml
+            .github/release-requirements.txt
       - name: Install build tools
-        run: python -m pip install --upgrade pip build twine
+        # The hash-pinned tools the release workflow uses.
+        run: python -m pip install --require-hashes -r .github/release-requirements.txt
       - name: Build sdist and wheel
-        run: python -m build packages/zn-gate-py --outdir "$RUNNER_TEMP/dist"
+        run: python -m build --no-isolation packages/zn-gate-py --outdir "$RUNNER_TEMP/dist"
       - name: twine check
         run: python -m twine check --strict "$RUNNER_TEMP"/dist/*
       - name: List sdist contents
