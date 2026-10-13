@@ -78,11 +78,13 @@ ignored.
 
 Custom `detectors` run with the built-in patterns and only add redactions.
 A pattern runs only if its cost is bounded before it runs: a flat sequence
-of characters, escapes such as `\d`, and character classes, each with an
-optional `{n}` or `{m,n}` (n up to 256; at most two `{m,n}` that vary, each
-by at most 64). No groups, alternatives, `?`, `*` or `+`. For example
-`ACME-[A-Z0-9]{24}` or `sk_[a-z]{0,8}_[A-Za-z0-9]{20,40}`. Other patterns
-are skipped on the machine.
+of characters, escapes and character classes, each with an optional `{n}`
+or `{m,n}` (n up to 256). At most one repetition may vary in length (by at
+most 64), and (that variation + 1) times the longest possible match must be
+at most 4096. No groups, alternatives, `?`, `*` or `+`. For example
+`ACME-[A-Z0-9]{24}` or `xox[bp]-[0-9]{10,13}-[A-Za-z0-9]{24}`. Other
+patterns are skipped on the machine, and all custom detectors together get
+200 ms per scan.
 
 ### Offline, expiry and removal
 

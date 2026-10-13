@@ -106,7 +106,12 @@ function effective(name, local, opts) {
 
   for (const r of matching) {
     if (r.mode === RESTRICTIVE_MODE) meta.mode = RESTRICTIVE_MODE;
-    if (Array.isArray(r.allowCommands)) meta.allowCommands = r.allowCommands.filter((c) => meta.allowCommands.includes(c));
+    // A local entry allows its own word prefixes too ("git" allows "git push"),
+    // so an organization entry it covers is a narrowing, not an opening.
+    if (Array.isArray(r.allowCommands)) {
+      const cur = meta.allowCommands;
+      meta.allowCommands = r.allowCommands.filter((c) => cur.some((l) => c === l || c.startsWith(l + ' ')));
+    }
     if (r.injectAt !== undefined) meta.allowIn = meta.allowIn.filter((p) => p === r.injectAt);
     if (Array.isArray(r.allowHosts)) {
       const agents = r.agents || [];
@@ -128,7 +133,12 @@ function effective(name, local, opts) {
       narrowed = true;
     }
   }
-  out.pending = [...pending].map((value) => ({ kind: 'host', value }));
+  // Offer only hosts that every later host list keeps: approving one that a
+  // later rule removes would change nothing.
+  const lists = matching.filter((r) => Array.isArray(r.allowHosts)).map((r) => r.allowHosts);
+  out.pending = [...pending]
+    .filter((h) => lists.every((l) => hostCovered(l, h)))
+    .map((value) => ({ kind: 'host', value }));
   return out;
 }
 

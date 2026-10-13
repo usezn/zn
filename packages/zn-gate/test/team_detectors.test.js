@@ -22,7 +22,7 @@ test('unsafe or useless patterns are refused', () => {
     '(?:[a-z ]?){20}#', '((a|aa)){40}x', '(?:a?){64}x', '((?:a{1,2})){24}x', 'abc?d', 'a|bcd']) {
     assert.ok(detectors.checkPattern(p), p);
   }
-  for (const p of ['^ACME-[A-Z0-9]{24}$', 'ACME-[A-Z0-9]{24}', 'sk_[a-z]{0,8}_[A-Za-z0-9]{20,40}', 'tok_[*+]{8}', 'id-\\d{6}-x', 'xox[bp]-[0-9]{10,13}-[A-Za-z0-9]{24}']) {
+  for (const p of ['^ACME-[A-Z0-9]{24}$', 'ACME-[A-Z0-9]{24}', 'ghp_[A-Za-z0-9]{36}', 'tok_[*+]{8}', 'id-\\d{6}-x', 'xox[bp]-[0-9]{10,13}-[A-Za-z0-9]{24}']) {
     assert.strictEqual(detectors.checkPattern(p), null, p);
   }
   const compiled = detectors.compile([
@@ -54,14 +54,30 @@ test('the scrubber redacts an organization format it would not know otherwise', 
 test('patterns that could run for a long time never get to run', () => {
   // Heavy backtracking needs unbounded or many variable repetitions, or a
   // repeated group with alternatives: refused before anything runs.
-  for (const p of ['[a-z]*[a-z]*[a-z]*[a-z]*1', '(a|aa){1,30}b', 'a{0,64}a{0,64}a{0,64}b', '(?:[a-z ]?){26}#']) assert.ok(detectors.checkPattern(p), p);
-  // The worst accepted shape stays fast on hostile input.
-  const c = detectors.compile([{ id: 'worst', pattern: '[a-z]{0,64}[a-z]{0,64}1', type: 'WORST' }]);
-  assert.strictEqual(c.length, 1);
+  for (const p of ['[a-z]*[a-z]*[a-z]*[a-z]*1', '(a|aa){1,30}b', 'a{0,64}a{0,64}a{0,64}b', '(?:[a-z ]?){26}#',
+    // Polynomial: two variable repetitions, or one with a long fixed tail (13-48 s on one line before).
+    '[a-z]{0,64}[a-z]{0,64}1', '.{192,256}.{192,256}.{256}.{256}x', 'a{0,64}a{0,64}.{256}.{256}.{256}x',
+    '.{192,256}' + '.{256}'.repeat(38) + 'x', 'a{0,64}' + '.{256}'.repeat(10) + 'x', '.{256}.{256}.{256}.{256}.{256}.{256}.{256}.{256}.{256}.{256}.{256}.{256}.{256}.{256}.{256}.{256}x']) {
+    assert.ok(detectors.checkPattern(p), p);
+  }
+  // The worst accepted shape stays fast on hostile input: one window costs
+  // at most (span + 1) x longest match steps per start position.
+  assert.strictEqual(detectors.checkPattern('.{0,62}x'), null);
+  const c = detectors.compile([{ id: 'worst', pattern: '.{0,62}x', type: 'WORST' }]);
   const text = ('a'.repeat(4000) + '\n').repeat(10);
   const t0 = Date.now();
   detectors.find(text, c);
-  assert.ok(Date.now() - t0 < 5000, 'took ' + (Date.now() - t0) + ' ms');
+  assert.ok(Date.now() - t0 < 1000, 'took ' + (Date.now() - t0) + ' ms');
+});
+
+test('all custom detectors together stop after their time budget for one call', () => {
+  const many = Array.from({ length: 50 }, (_, i) => ({ id: 'd' + i, pattern: '.{0,62}x', type: 'WORST' }));
+  const c = detectors.compile(many);
+  assert.strictEqual(c.length, 50);
+  const text = ('a'.repeat(4000) + '\n').repeat(50);
+  const t0 = Date.now();
+  detectors.find(text, c);
+  assert.ok(Date.now() - t0 < detectors.CALL_BUDGET_MS + 1000, 'took ' + (Date.now() - t0) + ' ms');
 });
 
 test('detectors come from the verified policy cache only', (t) => {

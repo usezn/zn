@@ -113,3 +113,21 @@ test('local wildcards cover org hosts; org wildcards need an equal or broader lo
   assert.strictEqual(hostCovered(['*.com'], '*.stripe.com'), true);
   assert.strictEqual(hostCovered([], 'a.b'), false);
 });
+
+test('a host a later rule removes is not offered for approval', () => {
+  const p = pol([
+    { secret: 'STRIPE_KEY', agents: ['claude-code'], allowHosts: ['api.stripe.com', 'evil.example.net'] },
+    { secret: 'STRIPE_*', agents: ['*'], allowHosts: ['api.stripe.com'] },
+  ]);
+  const r = eff('STRIPE_KEY', p, trusted('claude-code'));
+  assert.deepStrictEqual(r.meta.allowHosts, ['api.stripe.com']);
+  assert.deepStrictEqual(r.pending, []);
+});
+
+test('narrowing commands keeps an organization entry that a local entry covers by word prefix', () => {
+  const local = { mode: 'env', allowHosts: [], allowCommands: ['git', 'npm publish'], allowIn: ['header'] };
+  const p = pol([{ secret: '*', agents: ['*'], allowCommands: ['git push', 'npm', 'curl'] }]);
+  const r = effective('GH_TOKEN', local, { policy: p, state: 'active', agent: 'codex', agentTrusted: true });
+  // "git push" is narrower than local "git"; "npm" would widen "npm publish"; curl was never allowed.
+  assert.deepStrictEqual(r.meta.allowCommands, ['git push']);
+});

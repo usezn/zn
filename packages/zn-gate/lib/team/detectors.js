@@ -15,16 +15,21 @@
  *
  * That is a flat sequence of characters and character classes, each with an
  * optional bounded repetition: no groups, no alternatives, no `?`, `*` or
- * `+`, no back-references or lookaround. At most two repetitions may vary in
- * length ({m,n} with m < n), each spanning at most 64, and n is at most 256.
- * Token formats fit (`ACME-[A-Z0-9]{24}`, `sk_[a-z]{0,8}_[A-Za-z0-9]{20,40}`);
- * a pattern outside the grammar is skipped on this machine.
+ * `+`, no back-references or lookaround. At most one repetition may vary in
+ * length ({m,n} with m < n, spanning at most 64), n is at most 256, and
+ * (span + 1) x (longest possible match) is at most 4096. A regular
+ * expression of this shape tries at most that many steps per start
+ * position, so one 4096-character window costs at most about 1.7e7 steps.
+ * Token formats fit (`ACME-[A-Z0-9]{24}`, `ghp_[A-Za-z0-9]{36}`,
+ * `xoxb-[0-9]{10,13}-...`); a pattern outside the grammar is skipped on
+ * this machine.
  *
  * Text is scanned one line at a time, in windows of at most 4096
  * characters. A value split across two windows of a very long line is not
- * found by a custom detector; the built-in layers are not affected. As a
- * last guard, a detector whose run on one window takes longer than 50 ms is
- * switched off for the rest of the process.
+ * found by a custom detector; the built-in layers are not affected. All
+ * custom detectors together get 200 ms per call; past that the remaining
+ * work is skipped for that call. A detector whose run on one window takes
+ * longer than 50 ms is switched off for the rest of the process.
  */
 
 const WINDOW = 4096;
@@ -32,9 +37,11 @@ const SLOW_MS = 50;
 const TYPE_RE = /^[A-Z0-9](?:[A-Z0-9_]{0,62}[A-Z0-9])?$/;
 const ID_RE = /^[a-z0-9_]{1,64}$/;
 
-const MAX_VARIABLE = 2;
+const MAX_VARIABLE = 1;
 const MAX_SPAN = 64;
 const MAX_REPEAT = 256;
+const MAX_COST = 4096;
+const CALL_BUDGET_MS = 200;
 const SPECIAL = '\\^$.|?*+()[]{}';
 // Escapes that stand for one character or a class of one character.
 const ESCAPES = /^[dDwWsStrnfv.\\^$|?*+()[\]{}\/-]$/;
@@ -46,6 +53,8 @@ function checkPattern(pattern) {
   let i = 0;
   let items = 0;
   let variable = 0;
+  let span = 0;
+  let maxLen = 0;
   if (p[i] === '^') i++;
   while (i < p.length) {
     if (p[i] === '$' && i === p.length - 1) { i++; break; }
@@ -80,23 +89,27 @@ function checkPattern(pattern) {
     }
     items++;
     // optional bounded repetition
+    let hi = 1;
     if (p[i] === '{') {
       const m = /^\{(\d{1,3})(?:,(\d{1,3}))?\}/.exec(p.slice(i));
       if (!m) return 'repetitions are written {n} or {m,n}';
       const lo = Number(m[1]);
-      const hi = m[2] === undefined ? lo : Number(m[2]);
+      hi = m[2] === undefined ? lo : Number(m[2]);
       if (hi < lo || hi > MAX_REPEAT || hi === 0) return 'repetition bounds must be 1 to ' + MAX_REPEAT;
       if (hi > lo) {
         if (hi - lo > MAX_SPAN) return 'a variable repetition can span at most ' + MAX_SPAN;
         variable++;
+        span = Math.max(span, hi - lo);
       }
       i += m[0].length;
       if (p[i] === '?' || p[i] === '+' || p[i] === '{') return 'repetition modifiers are not allowed';
     }
+    maxLen += hi;
   }
   if (i !== p.length) return 'unexpected text after $';
   if (items === 0) return 'empty pattern';
-  if (variable > MAX_VARIABLE) return 'at most ' + MAX_VARIABLE + ' variable-length repetitions are allowed';
+  if (variable > MAX_VARIABLE) return 'at most ' + MAX_VARIABLE + ' variable-length repetition is allowed';
+  if ((span + 1) * maxLen > MAX_COST) return 'pattern too costly: (repetition span + 1) x longest match must be at most ' + MAX_COST;
   let re;
   try { re = new RegExp(p); } catch (err) { return 'invalid regular expression'; }
   if (re.test('')) return 'pattern must not match the empty string';
@@ -128,9 +141,11 @@ function* windows(text) {
 function find(text, compiled) {
   const spans = [];
   if (!compiled || compiled.length === 0 || typeof text !== 'string' || text.length === 0) return spans;
+  const start = Date.now();
   for (const d of compiled) {
     if (d.off) continue;
     for (const [a, b] of windows(text)) {
+      if (Date.now() - start > CALL_BUDGET_MS) return spans;
       if (b - a < 1) continue;
       const chunk = text.slice(a, b);
       d.re.lastIndex = 0;
@@ -146,4 +161,4 @@ function find(text, compiled) {
   return spans;
 }
 
-module.exports = { checkPattern, compile, find, WINDOW, MAX_VARIABLE, MAX_SPAN };
+module.exports = { checkPattern, compile, find, WINDOW, MAX_VARIABLE, MAX_SPAN, MAX_COST, CALL_BUDGET_MS };
