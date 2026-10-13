@@ -39,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mcpName` in package.json). Needs Node.js 20.12 or later.
 
 ### Changed
+- GitHub Action (`action.yml`): `actions/setup-python` is now v7, which runs on Node.js 24. Self-hosted runners need runner version 2.327.1 or later; GitHub-hosted runners already have it.
 - The `usezn` plugin marketplace in this repository now lists the agent plugin in `plugins/zn-gate`, which replaces the Claude Code plugin shipped with 1.5.x (`plugins/claude/zn-gate`). In Claude Code it still installs zn-gate itself: Claude Code installs the release pinned by the plugin's `package-lock.json` into the plugin folder, and the launcher checks that copy file by file against the published release before running it; other agents use a copy you install (`npm install -g zn-gate@1.6.0`). It keeps both MCP servers of the 1.5.x plugin, `zn-gate` (`analyze_prompt`, `check_tool_call`, `check_tool_result`, `zn_status`) and `secrets`, and starts the `zn-gate` one with local rules only; its skill is now `zn-secrets`. To upgrade in Claude Code, update the marketplace and the plugin (`claude plugin marketplace update usezn`, then `claude plugin update zn-gate@usezn`) and start a new session. `plugins/tools/pin-release.js` now also writes the plugin's `package.json` and `package-lock.json`.
 
 ### Security
