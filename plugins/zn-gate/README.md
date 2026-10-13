@@ -18,7 +18,13 @@ kept for when Codex runs plugin hooks again.
 
 ## Requirements
 
-- Node.js 20.12 or later.
+- Node.js 20.12 or later, on your `PATH` (`node --version`). The native Claude
+  Code installer does not include Node.js. Without it, Claude Code reports at
+  session start that `node` was not found, prompts are blocked, and tool calls
+  run unchecked; install Node.js from https://nodejs.org and start a new
+  session.
+- Git (on Windows, Git for Windows), to add the marketplace from GitHub.
+  Without it, `claude plugin marketplace add` fails with "git not found".
 - zn-gate **1.6.0** installed from npm. The plugin never installs, downloads or
   updates zn-gate itself. Install it once, then check the registry signatures
   of what you installed:
@@ -28,9 +34,29 @@ kept for when Codex runs plugin hooks again.
   npm audit signatures
   ```
 
+  In Windows PowerShell, `npm` can fail with "running scripts is disabled on
+  this system", because the default execution policy blocks `npm.ps1`. Use
+  `npm.cmd` instead (for example `npm.cmd install -g zn-gate@1.6.0`), run the
+  commands from Command Prompt, or allow local scripts for your account with
+  `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+
   `npm audit signatures` checks the npm registry signature of every installed
   package and, for releases published with npm provenance, the attestation
   that links the package to its source commit in `usezn/zn`.
+
+## Where it protects you
+
+- **Claude Code** in the terminal, the IDE extensions and the Code tab of the
+  Claude desktop app: hooks and the `secrets` MCP server. The Code tab uses the
+  plugins installed with `claude plugin install`.
+- **Cowork**: Cowork takes its plugins from Customize > Plugins in Claude, not
+  from `claude plugin install`. In a test where a Cowork task ran in the cloud
+  workspace, a prompt containing a secret was not blocked and reached the
+  model. **Do not rely on the plugin in Cowork sessions that run in the
+  cloud.**
+- **Chat** (claude.ai, the chat in the desktop app, mobile apps): hooks and
+  local MCP servers do not run there, so **the plugin does not protect chat
+  conversations**. Do not paste secrets into chat.
 
 ## What the plugin runs
 
