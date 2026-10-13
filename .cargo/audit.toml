@@ -8,12 +8,6 @@
 
 [advisories]
 ignore = [
-    # --- reqwest 0.11 (direct dependency) still uses hyper 0.14 / h2 0.3 ---
-    # The AWS SDK now uses its default HTTPS client (rustls 0.23), so the
-    # rustls 0.21 / rustls-webpki 0.101 entries are gone. h2 0.3 remains through
-    # reqwest 0.11 until reqwest is upgraded. DoS only (unbounded empty DATA frames).
-    "RUSTSEC-2026-0258", # h2 0.3.27: unbounded empty DATA frames (via reqwest 0.11)
-
     # rsa has NO fixed release upstream (Marvin timing side channel, open since
     # 2023). Pulled by jsonwebtoken's rust_crypto backend; the gateway only
     # validates HMAC-signed tokens and never uses RSA keys.
@@ -31,8 +25,4 @@ ignore = [
 
     # number_prefix via indicatif <- cliclack/hf-hub (progress-bar formatting).
     "RUSTSEC-2025-0119", # number_prefix unmaintained; cosmetic CLI progress formatting only
-
-    # rustls-pemfile is unmaintained (superseded by rustls-pki-types).
-    # 1.0.4 arrives via reqwest 0.11's TLS stack; it only parses local PEM files.
-    "RUSTSEC-2025-0134", # rustls-pemfile unmaintained; via reqwest 0.11
 ]
