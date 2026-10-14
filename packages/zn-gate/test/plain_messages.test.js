@@ -23,6 +23,22 @@ function writeFile(dir, name, mode) {
   return p;
 }
 
+// An executable zn for the PATH tests: on Windows a program needs a PATHEXT
+// extension (zn.cmd); elsewhere the executable bit.
+const WIN = process.platform === 'win32';
+const PATHEXT = '.COM;.EXE;.BAT;.CMD';
+function writeZn(dir) {
+  if (WIN) {
+    const p = path.join(dir, 'zn.cmd');
+    fs.writeFileSync(p, '@echo zn\r\n');
+    return p;
+  }
+  return writeFile(dir, 'zn', 0o755);
+}
+function pathEnv(PATH) {
+  return WIN ? { PATH, PATHEXT } : { PATH };
+}
+
 function deps(spans = []) {
   return { engine: () => ({ scan: () => spans }), vault: async () => null, detectors: () => [] };
 }
@@ -44,28 +60,28 @@ async function promptFor(spans) {
 
 test('znCommand: plain zn when zn is an executable on PATH, npx with this version when not', (t) => {
   const withZn = tempDir(t, 'zn-path-yes-');
-  writeFile(withZn, 'zn', 0o755);
+  writeZn(withZn);
   const without = tempDir(t, 'zn-path-no-');
   if (process.platform !== 'win32') {
     // A file that is not executable is not a program to run.
     writeFile(without, 'zn', 0o644);
     assert.equal(znOnPath({ PATH: without }), false);
   }
-  assert.equal(znCommand('env shadow .env', { env: { PATH: withZn } }), 'zn env shadow .env');
-  assert.equal(znCommand('unlock', { env: { PATH: without } }), NPX + ' unlock');
-  assert.equal(znCommand('env shadow .env', { env: { PATH: '' } }), NPX + ' env shadow .env');
+  assert.equal(znCommand('env shadow .env', { env: pathEnv(withZn) }), 'zn env shadow .env');
+  assert.equal(znCommand('unlock', { env: pathEnv(without) }), NPX + ' unlock');
+  assert.equal(znCommand('env shadow .env', { env: pathEnv('') }), NPX + ' env shadow .env');
 });
 
 test('znCommand: a relative PATH entry is ignored, even when zn sits in the current folder', (t) => {
   const dir = tempDir(t, 'zn-path-rel-');
-  writeFile(dir, 'zn', 0o755);
+  writeZn(dir);
   const cwd = process.cwd();
   process.chdir(dir);
   try {
-    assert.equal(znOnPath({ PATH: '.' }), false);
-    assert.equal(znOnPath({ PATH: '' + path.delimiter + '.' }), false);
-    assert.equal(znCommand('unlock', { env: { PATH: '.' } }), NPX + ' unlock');
-    assert.equal(znCommand('unlock', { env: { PATH: '.' + path.delimiter + dir } }), 'zn unlock');
+    assert.equal(znOnPath(pathEnv('.')), false);
+    assert.equal(znOnPath(pathEnv('' + path.delimiter + '.')), false);
+    assert.equal(znCommand('unlock', { env: pathEnv('.') }), NPX + ' unlock');
+    assert.equal(znCommand('unlock', { env: pathEnv('.' + path.delimiter + dir) }), 'zn unlock');
   } finally {
     process.chdir(cwd);
   }
