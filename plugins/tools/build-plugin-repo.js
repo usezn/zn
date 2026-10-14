@@ -190,7 +190,7 @@ function isMethodDefinition(text, start, from) {
 /**
  * Calls of import(): for each word import followed by "(" (with spaces and
  * comments allowed in between), its position and the position after "(".
- * A plain scan, so the time is linear in the text.
+ * A plain scan without backtracking (only our own release files are read).
  */
 function importCalls(text) {
   const calls = [];
