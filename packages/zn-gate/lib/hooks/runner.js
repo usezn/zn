@@ -192,7 +192,7 @@ async function decidePre(ev, d, agentId, opts) {
   }
 
   if (tool === 'monitor') return decideMonitor(ev, pathOpts, opts);
-  if (tool === 'mcp') return decideMcp(ev, d, agentId);
+  if (tool === 'mcp' && ev.input && ev.input.args !== undefined) return decideMcp(ev, d, agentId);
 
   if (SHELL_TOOLS.has(tool)) {
     const original = String(input.command || '');
@@ -322,25 +322,29 @@ function decideMonitor(ev, pathOpts, opts) {
 }
 
 /*
- * MCP tool calls (only agents that send MCP pre-tool events, today Cursor).
- * The arguments are checked for __ZN_ markers, which other servers never
- * receive, and for credentials the scrubber finds, which no server should
- * receive from the agent. zn's own "secrets" server takes markers by design.
- * A call with no objection gets no answer, so the agent's own MCP approval
- * still applies.
+ * MCP tool calls. Only Cursor sends the arguments (input.args); any other
+ * agent's MCP pre-tool call is allowed before the vault is touched. The
+ * arguments are checked for __ZN_ markers, which servers other than zn's own
+ * never receive, and for credentials the scrubber finds, which no server
+ * should receive from the agent. zn's "secrets" server takes markers by design,
+ * but only when it is identified strictly (see isOurSecretsServer); it still
+ * gets the credential check. A call with no objection gets no answer, so the
+ * agent's own MCP approval still applies.
  */
-const MCP_SCAN_CAP = 64 * 1024;
+const MCP_SCAN_CAP = 1024 * 1024; // characters, all arguments together
+const MCP_WINDOW = 128 * 1024; // the scrubber reads the text in windows of this size
+const MCP_OVERLAP = 16 * 1024; // windows overlap, so a secret across a boundary is seen whole
 
-/* Every string of an MCP call's arguments (values and keys), or null when they
- * hold more than MCP_SCAN_CAP characters: zn cannot check text it does not read. */
-function mcpArgumentStrings(args) {
+/* Every string of an MCP call's arguments (values and keys), joined with
+ * newlines, or null when they hold more than MCP_SCAN_CAP characters. */
+function mcpArgumentText(args) {
   const out = [];
   let total = 0;
   const stack = [args];
   while (stack.length) {
     const v = stack.pop();
     if (typeof v === 'string') {
-      total += v.length;
+      total += v.length + 1;
       if (total > MCP_SCAN_CAP) return null;
       out.push(v);
     } else if (Array.isArray(v)) {
@@ -349,7 +353,20 @@ function mcpArgumentStrings(args) {
       for (const [k, x] of Object.entries(v)) stack.push(k, x);
     }
   }
-  return out;
+  return out.join('\n');
+}
+
+/* zn's own "secrets" server: the exact command `zn hooks install` writes (the
+ * matcher of `zn audit`, with the "--agent <id>" suffix it adds), outside the
+ * project. A server reached by URL is never ours, and a name alone is not enough. */
+function isOurSecretsServer(ev, root) {
+  const raw = ev.raw || {};
+  if (!ev.mcp || ev.mcp.server !== 'secrets') return false;
+  if (raw.url || raw.mcp_server_url) return false;
+  if (typeof raw.command !== 'string' || !raw.command.trim()) return false;
+  let argv = require('../audit/patterns').splitCommand(raw.command);
+  if (argv.length >= 4 && argv[argv.length - 2] === '--agent') argv = argv.slice(0, -2);
+  return Boolean(require('../audit')._internal.isOurMcp(argv, { rec: { root } }));
 }
 
 /* Server names come from the agent's config: keep the message to plain characters. */
@@ -359,18 +376,14 @@ function mcpServerLabel(server) {
 }
 
 async function decideMcp(ev, d, agentId) {
-  const server = ev.mcp && ev.mcp.server ? String(ev.mcp.server) : '';
-  const command = ev.raw && typeof ev.raw.command === 'string' ? ev.raw.command : '';
-  // Identified by name and command. Only the name: it is not trusted beyond the
-  // marker rule (the credential check below still runs).
-  if (server === 'secrets' && command.includes('secrets-mcp')) return { decision: 'allow' };
-  const nameOnly = server === 'secrets' && !command;
-
-  const strings = mcpArgumentStrings(ev.input && ev.input.args);
-  if (strings === null) {
-    return { decision: 'deny', message: 'zn: the arguments of this MCP call are larger than 64 KB, so zn cannot check them.' };
+  const text = mcpArgumentText(ev.input.args);
+  if (text === null) {
+    return { decision: 'deny', message: 'zn: the arguments of this MCP call are larger than 1 MB (counted in characters), so zn cannot check them.' };
   }
-  if (!nameOnly && strings.some((s) => markers.findMarkers(s).length)) {
+  if (!text) return { decision: 'allow' }; // nothing to check, so the vault is not loaded
+  const server = ev.mcp && ev.mcp.server ? String(ev.mcp.server) : '';
+  const ours = isOurSecretsServer(ev, deps.findProjectRoot(ev.cwd || process.cwd()));
+  if (!ours && markers.findMarkers(text).length) {
     return {
       decision: 'deny',
       message: 'zn: MCP tools from other servers never receive secret values. For an authenticated HTTP call use the secrets_http_request tool ' +
@@ -382,10 +395,11 @@ async function decideMcp(ev, d, agentId) {
   let ctx = await ctxFor(ev, d, agentId, 'mcp_input');
   if (typeof engine.prepare === 'function') ctx = await engine.prepare(ctx);
   const kinds = new Set();
-  for (const s of strings) {
-    for (const span of engine.scan(s, ctx) || []) {
+  for (let start = 0; ; start += MCP_WINDOW - MCP_OVERLAP) {
+    for (const span of engine.scan(text.slice(start, start + MCP_WINDOW), ctx) || []) {
       if (SECRET_SOURCES.has(span.source)) kinds.add(kindLabel(span.type));
     }
+    if (start + MCP_WINDOW >= text.length) break;
   }
   if (kinds.size === 0) return { decision: 'allow' };
   return {

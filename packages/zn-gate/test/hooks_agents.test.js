@@ -143,7 +143,7 @@ test('cursor: MCP output is tokenized, built-in output cannot be, prompts with s
   assert.deepEqual((await run(cursor, cu('beforeSubmitPrompt', { prompt: 'hello' }))).output, { continue: true });
 });
 
-test('cursor: install writes version 1 hooks.json with our four events', (t) => {
+test('cursor: install writes version 1 hooks.json with our events', (t) => {
   const home = tempDir(t, 'zn-cu-');
   cursor.install({ home, nodePath: '/usr/bin/node', runnerPath: '/x/lib/hooks/runner.js' });
   const data = JSON.parse(fs.readFileSync(cursor.hooksFile({ home }), 'utf8'));
@@ -190,24 +190,70 @@ test('cursor: MCP arguments with a secret value are denied by kind, the value is
   assert.ok(!JSON.stringify(asString.output).includes(FAKE_AWS_KEY));
 });
 
+// The command `zn hooks install` writes for the secrets server, under a fake
+// zn-gate install outside the project (the strict matcher checks the real file).
+function fakeZnSecretsCommand(t) {
+  const pkg = path.join(tempDir(t, 'zn-install-'), 'zn-gate');
+  fs.mkdirSync(path.join(pkg, 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(pkg, 'package.json'), JSON.stringify({ name: 'zn-gate' }));
+  const cli = path.join(pkg, 'bin', 'cli.js');
+  fs.writeFileSync(cli, '// test double\n');
+  return 'node ' + cli + ' secrets-mcp --agent cursor';
+}
+
 test('cursor: a __ZN_ marker goes to no server but zn\'s own "secrets" server', async (t) => {
   const dir = tmpProject(t);
+  const command = fakeZnSecretsCommand(t);
   const other = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'query', mcp_server_name: 'postgres', tool_input: { password: '__ZN_DB_PASSWORD__' } }));
   assert.equal(other.output.permission, 'deny');
   assert.match(other.output.user_message, /secrets_http_request/);
-  const own = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'secrets_http_request', mcp_server_name: 'secrets', command: 'node /x/cli.js secrets-mcp --agent cursor', tool_input: { url: 'https://api.example.com', token: '__ZN_DB_PASSWORD__' } }));
+  const own = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'secrets_http_request', mcp_server_name: 'secrets', command, tool_input: { url: 'https://api.example.com', token: '__ZN_DB_PASSWORD__' } }));
   assert.equal(own.output, null);
-  // A name alone is not enough to skip the credential check.
-  const nameOnly = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'x', mcp_server_name: 'secrets', tool_input: { key: FAKE_AWS_KEY } }));
+  // Our server still gets the credential check: markers are its job, raw values are not.
+  const ownCred = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'secrets_http_request', mcp_server_name: 'secrets', command, tool_input: { key: FAKE_AWS_KEY } }));
+  assert.equal(ownCred.output.permission, 'deny');
+  assert.ok(!JSON.stringify(ownCred.output).includes(FAKE_AWS_KEY));
+});
+
+test('cursor: a "secrets" server is ours only when it is zn\'s own install', async (t) => {
+  const dir = tmpProject(t);
+  // Same name and words, but not a zn-gate install: a repository can ship this.
+  const spoof = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'x', mcp_server_name: 'secrets', command: 'node /opt/evil/evil.js secrets-mcp', tool_input: { key: FAKE_AWS_KEY } }));
+  assert.equal(spoof.output.permission, 'deny');
+  assert.ok(!JSON.stringify(spoof.output).includes(FAKE_AWS_KEY));
+  const spoofMarker = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'x', mcp_server_name: 'secrets', command: 'node /opt/evil/evil.js secrets-mcp', tool_input: { token: '__ZN_DB_PASSWORD__' } }));
+  assert.equal(spoofMarker.output.permission, 'deny');
+  // A server reached by URL is never ours, whatever its name.
+  const url = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'x', mcp_server_name: 'secrets', url: 'https://evil.example/mcp', tool_input: { token: '__ZN_DB_PASSWORD__' } }));
+  assert.equal(url.output.permission, 'deny');
+  // A name alone (no command) is not enough: markers are refused, as for any other server.
+  const nameOnly = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'x', mcp_server_name: 'secrets', tool_input: { token: '__ZN_DB_PASSWORD__' } }));
   assert.equal(nameOnly.output.permission, 'deny');
 });
 
-test('cursor: benign and oversized MCP calls', async (t) => {
+test('cursor: MCP calls from Claude Code and OpenCode are allowed without the engine or the vault', async (t) => {
+  const dir = tmpProject(t);
+  // An engine that throws: any scan or prepare would make the call fail closed (deny).
+  const boom = { scan() { throw new Error('engine used'); }, async prepare() { throw new Error('engine used'); } };
+  const claudeCode = getAdapter('claude-code');
+  const cc = await run(claudeCode, cx('PreToolUse', { cwd: dir, tool_name: 'mcp__github__get_issue', tool_input: { number: 1 } }), { engine: boom });
+  assert.equal(cc.decision.decision, 'allow');
+  const oc = await run(opencode, { hook: 'tool.execute.before', tool: 'github_get_file', cwd: dir, args: { path: 'README.md' } }, { engine: boom });
+  assert.equal(oc.decision.decision, 'allow');
+});
+
+test('cursor: benign MCP calls get no answer; large arguments are scanned in full, up to 1 MB', async (t) => {
   const dir = tmpProject(t);
   assert.equal((await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'list', mcp_server_name: 'github', tool_input: { repo: 'usezn/zn' } }))).output, null);
-  const big = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'put', mcp_server_name: 'files', tool_input: { text: 'a'.repeat(70 * 1024) } }));
+  const benign = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'put', mcp_server_name: 'files', tool_input: { text: 'a'.repeat(500 * 1024) } }));
+  assert.equal(benign.output, null);
+  // A credential deep inside a large argument is still found (the scan is windowed).
+  const deep = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'put', mcp_server_name: 'files', tool_input: { text: 'a'.repeat(300 * 1024) + ' ' + FAKE_AWS_KEY + ' ' + 'b'.repeat(300 * 1024) } }));
+  assert.equal(deep.output.permission, 'deny');
+  assert.ok(!JSON.stringify(deep.output).includes(FAKE_AWS_KEY));
+  const big = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'put', mcp_server_name: 'files', tool_input: { text: 'a'.repeat(1024 * 1024) } }));
   assert.equal(big.output.permission, 'deny');
-  assert.match(big.output.agent_message, /larger than 64 KB/);
+  assert.match(big.output.agent_message, /larger than 1 MB/);
 });
 
 /* ------------------------------ OpenCode ----------------------------- */
