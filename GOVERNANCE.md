@@ -79,7 +79,13 @@ Releases follow [Semantic Versioning](https://semver.org/). Prereleases use
 1. A maintainer prepares the release on a `release/X.Y.Z` branch made from
    `next`: version numbers in every package and the `## [X.Y.Z]` section of the
    changelog, with a pull request into `main` that must pass the required CI
-   checks.
+   checks. In the same pull request, every public surface that describes
+   zn-gate is brought in line: the npm, PyPI and MCP Registry descriptions, the
+   READMEs and the documentation (the supported agents as listed in
+   docs/compat.md, the version numbers, and the performance figures, from a new
+   `bench/bench_by_size.js` run on the host named in the published table when
+   the rules engine changed). The website is updated before the release is
+   announced. A difference that stays is explained in the release notes.
 2. A maintainer pushes an annotated tag `vX.Y.Z` on that commit (see Branches
    for who can create tags).
 3. The [`Release` workflow](.github/workflows/release.yml) builds the npm package

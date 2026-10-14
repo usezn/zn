@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "zn-gate"
 version = "1.6.0"
-description = "Deterministic, ultra-fast, zero-dependency guardrail engine for AI agents and LLM tool calling."
+description = "Local security layer for Python AI agents (LangChain, CrewAI, LlamaIndex, plain tool calling): prompt-injection checks and secret redaction, zero dependencies."
 readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
