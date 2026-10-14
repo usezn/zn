@@ -12,17 +12,22 @@
 
 `zn-gate` is an open-source security layer that runs in your process. It checks prompts, tool arguments and tool output for prompt injection, and redacts secrets from tool output before the model sees it. No account, no network by default, Python standard library only.
 
-**For:** developers building agents with LangChain, CrewAI, LlamaIndex or plain Python tool calling. Using Claude Code, Codex CLI, Cursor or OpenCode? Use the MCP server from [`zn-gate` on npm](https://www.npmjs.com/package/zn-gate).
+**For:** developers building their own agents with LangChain, CrewAI, LlamaIndex or plain Python tool calling.
+
+> **Using Claude Code, Codex CLI, Cursor or OpenCode?** This Python package does not protect them. Install the Claude Code plugin or the npm package instead: see [Install](https://github.com/usezn/zn#install).
 
 ---
 
 ## Install
 
+Install it in a virtual environment. Many recent Linux systems, and Homebrew's Python on macOS, refuse `pip install` outside one, with an "externally-managed-environment" error:
+
 ```bash
-pip install zn-gate
+python3 -m venv .venv
+.venv/bin/pip install zn-gate      # Windows: .venv\Scripts\pip install zn-gate
 ```
 
-Python 3.8+ (CI tests 3.9 to 3.13). Zero runtime dependencies.
+Inside an environment you already use (your project's virtualenv, Poetry, uv), `pip install zn-gate` is enough. Python 3.8+ (CI tests 3.9 to 3.13). Zero runtime dependencies.
 
 ## Check that it works
 

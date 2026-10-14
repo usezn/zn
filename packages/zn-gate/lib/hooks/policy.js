@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-14.5';
+const POLICY_RULES_VERSION = '2026-10-14.6';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -659,7 +659,7 @@ function hasNetworkSignals(cmd) {
 }
 
 // The program is zn, zn-gate (also with a version: npx -y zn-gate@1.6.0, pnpm dlx zn-gate@latest) or the bin file.
-const ZN_ADMIN_RE = /(^|[\s;&|(`$'"\\/])((?:zn|zn-gate(?:@[^\s"'`;&|]+)?|cli\.js))(\.cmd|\.js)?["']?\s+(?:--\s+)?(secret\s+(set|get|rm|remove|import|adopt|approve|allow|reveal|link)|env\s+(shadow|unshadow)|unlock|lock|hooks\s+(install|uninstall))\b/i;
+const ZN_ADMIN_RE = /(^|[\s;&|(`$'"\\/])((?:zn|zn-gate(?:@[^\s"'`;&|]+)?|cli\.js))(\.cmd|\.js)?["']?\s+(?:--\s+)?(secret\s+(set|get|rm|remove|import|adopt|approve|allow|reveal|link)|env\s+(shadow|unshadow)|unlock|lock|hooks\s+(install|uninstall)|stats(?:\s+--?\S+)*\s+share\s+on)\b/i;
 
 function adminCommand(cmd) {
   const m = ZN_ADMIN_RE.exec(String(cmd || ''));

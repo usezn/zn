@@ -128,6 +128,18 @@ async function handleRequest(message, options) {
     }
 
     case 'tools/call': {
+      // Local counts for `zn-gate stats` (best effort).
+      function countMcp({ blocked = false, redacted = 0, detections = [] }) {
+        const types = {};
+        for (const d of detections) {
+          const t = String(d && d.rule || '').replace(/^secret:/, '');
+          if (t) types[t] = (types[t] || 0) + 1;
+        }
+        require('./stats').record({
+          layer: 'mcp', agent: options.agent || 'mcp-client', checked: 1, blocked: blocked ? 1 : 0,
+          redacted: redacted || detections.length, detections: types,
+        });
+      }
       if (!params || typeof params.name !== 'string') {
         return sendError(id, -32602, 'Invalid params: name is required');
       }
@@ -139,6 +151,7 @@ async function handleRequest(message, options) {
         const text = typeof args.text === 'string' ? args.text : '';
         const assessment = await analyze(text, options);
         const isBlock = assessment.verdict?.toLowerCase() === 'block';
+        countMcp({ blocked: isBlock });
 
         return sendResult(id, {
           isError: isBlock,
@@ -184,6 +197,7 @@ async function handleRequest(message, options) {
         }
 
         const { sanitized: sanitizedArgs, detections } = sanitizeToolResult(toolArgs);
+        countMcp({ blocked: isBlock, detections });
 
         const output = {
           tool_name: targetTool,
@@ -209,6 +223,7 @@ async function handleRequest(message, options) {
         const rawContent = args.content !== undefined ? (typeof args.content === 'string' ? args.content : JSON.stringify(args.content)) : '';
 
         const output = await checkToolResult(targetTool, rawContent, options);
+        countMcp({ blocked: !output.safe_to_ingest, redacted: output.secrets_redacted || 0 });
 
         return sendResult(id, {
           isError: !output.safe_to_ingest,

@@ -1,5 +1,8 @@
 'use strict';
 
+// zn-gate stats: these tests must never count into the real ~/.zn/stats.json.
+process.env.ZN_STATS = 'off';
+
 // Codex, Cursor and OpenCode adapters: event normalisation, responses within
 // each agent's documented limits, install/uninstall, and the OpenCode plugin
 // running against the real hook runner. Values are fake (fixtures generator).
@@ -143,15 +146,129 @@ test('cursor: MCP output is tokenized, built-in output cannot be, prompts with s
   assert.deepEqual((await run(cursor, cu('beforeSubmitPrompt', { prompt: 'hello' }))).output, { continue: true });
 });
 
-test('cursor: install writes version 1 hooks.json with our four events', (t) => {
+test('cursor: install writes version 1 hooks.json with our events', (t) => {
   const home = tempDir(t, 'zn-cu-');
-  cursor.install({ home, nodePath: '/usr/bin/node', runnerPath: '/x/lib/hooks/runner.js' });
+  // platform is explicit: on Windows the default is the PowerShell form (below).
+  cursor.install({ home, nodePath: '/usr/bin/node', runnerPath: '/x/lib/hooks/runner.js', platform: 'linux' });
   const data = JSON.parse(fs.readFileSync(cursor.hooksFile({ home }), 'utf8'));
   assert.equal(data.version, 1);
   assert.deepEqual(Object.keys(data.hooks).sort(), [...cursor.EVENTS].sort());
   assert.equal(data.hooks.beforeReadFile[0].command, "'/usr/bin/node' '/x/lib/hooks/runner.js' cursor");
   cursor.uninstall({ home });
   assert.deepEqual(JSON.parse(fs.readFileSync(cursor.hooksFile({ home }), 'utf8')).hooks, {});
+});
+
+test('cursor: install on Windows wraps the hook command in powershell.exe', (t) => {
+  const home = tempDir(t, 'zn-cu-win-');
+  cursor.install({ home, nodePath: '/usr/bin/node', runnerPath: '/x/lib/hooks/runner.js', platform: 'win32' });
+  const data = JSON.parse(fs.readFileSync(cursor.hooksFile({ home }), 'utf8'));
+  const expected = 'powershell.exe -NoProfile -NonInteractive -Command "& \'/usr/bin/node\' \'/x/lib/hooks/runner.js\' cursor"';
+  assert.equal(data.hooks.beforeReadFile[0].command, expected);
+  assert.equal(data.hooks.beforeMCPExecution[0].command, expected);
+  cursor.uninstall({ home, platform: 'win32' });
+  assert.deepEqual(JSON.parse(fs.readFileSync(cursor.hooksFile({ home }), 'utf8')).hooks, {});
+});
+
+const FAKE_AWS_KEY = 'AKIA' + 'Z'.repeat(16); // built at runtime, never a literal
+
+test('cursor: beforeMCPExecution is installed without failClosed', (t) => {
+  const home = tempDir(t, 'zn-cu-mcp-');
+  cursor.install({ home, nodePath: '/usr/bin/node', runnerPath: '/x/lib/hooks/runner.js', platform: 'linux' });
+  const data = JSON.parse(fs.readFileSync(cursor.hooksFile({ home }), 'utf8'));
+  const entry = data.hooks.beforeMCPExecution[0];
+  assert.equal(entry.command, "'/usr/bin/node' '/x/lib/hooks/runner.js' cursor");
+  assert.equal(entry.timeout, 30);
+  assert.equal(entry.failClosed, undefined, 'no failClosed: an empty answer would block every MCP call');
+  cursor.uninstall({ home });
+});
+
+test('cursor: beforeMCPExecution normalizes; only a deny gets an answer', (t) => {
+  const dir = tmpProject(t);
+  const ev = cursor.normalize(cu('beforeMCPExecution', { cwd: dir, tool_name: 'query', mcp_server_name: 'db', tool_input: '{"sql":"select 1"}' }));
+  assert.equal(ev.event, 'pre_tool');
+  assert.equal(ev.tool, 'mcp');
+  assert.deepEqual(ev.mcp, { server: 'db', tool: 'query' });
+  assert.deepEqual(ev.input.args, { sql: 'select 1' }, 'a JSON string tool_input is parsed');
+  assert.deepEqual(cursor.respond({ decision: 'deny', message: 'no', event: ev }), { permission: 'deny', user_message: 'no', agent_message: 'no' });
+  assert.equal(cursor.respond({ decision: 'allow', event: ev }), null);
+});
+
+test('cursor: MCP arguments with a secret value are denied by kind, the value is never printed', async (t) => {
+  const dir = tmpProject(t);
+  const r = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'create_issue', mcp_server_name: 'github', tool_input: { body: 'key ' + FAKE_AWS_KEY } }));
+  assert.equal(r.output.permission, 'deny');
+  assert.match(r.output.agent_message, /AWS key/);
+  assert.match(r.output.agent_message, /the MCP server github/);
+  assert.ok(!JSON.stringify(r.output).includes(FAKE_AWS_KEY));
+  const asString = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'create_issue', mcp_server_name: 'github', tool_input: JSON.stringify({ body: FAKE_AWS_KEY }) }));
+  assert.equal(asString.output.permission, 'deny', 'tool_input as a JSON string is checked too');
+  assert.ok(!JSON.stringify(asString.output).includes(FAKE_AWS_KEY));
+});
+
+// The command `zn hooks install` writes for the secrets server, under a fake
+// zn-gate install outside the project (the strict matcher checks the real file).
+function fakeZnSecretsCommand(t) {
+  const pkg = path.join(tempDir(t, 'zn-install-'), 'zn-gate');
+  fs.mkdirSync(path.join(pkg, 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(pkg, 'package.json'), JSON.stringify({ name: 'zn-gate' }));
+  const cli = path.join(pkg, 'bin', 'cli.js');
+  fs.writeFileSync(cli, '// test double\n');
+  return 'node ' + cli + ' secrets-mcp --agent cursor';
+}
+
+test('cursor: a __ZN_ marker goes to no server but zn\'s own "secrets" server', async (t) => {
+  const dir = tmpProject(t);
+  const command = fakeZnSecretsCommand(t);
+  const other = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'query', mcp_server_name: 'postgres', tool_input: { password: '__ZN_DB_PASSWORD__' } }));
+  assert.equal(other.output.permission, 'deny');
+  assert.match(other.output.user_message, /secrets_http_request/);
+  const own = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'secrets_http_request', mcp_server_name: 'secrets', command, tool_input: { url: 'https://api.example.com', token: '__ZN_DB_PASSWORD__' } }));
+  assert.equal(own.output, null);
+  // Our server still gets the credential check: markers are its job, raw values are not.
+  const ownCred = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'secrets_http_request', mcp_server_name: 'secrets', command, tool_input: { key: FAKE_AWS_KEY } }));
+  assert.equal(ownCred.output.permission, 'deny');
+  assert.ok(!JSON.stringify(ownCred.output).includes(FAKE_AWS_KEY));
+});
+
+test('cursor: a "secrets" server is ours only when it is zn\'s own install', async (t) => {
+  const dir = tmpProject(t);
+  // Same name and words, but not a zn-gate install: a repository can ship this.
+  const spoof = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'x', mcp_server_name: 'secrets', command: 'node /opt/evil/evil.js secrets-mcp', tool_input: { key: FAKE_AWS_KEY } }));
+  assert.equal(spoof.output.permission, 'deny');
+  assert.ok(!JSON.stringify(spoof.output).includes(FAKE_AWS_KEY));
+  const spoofMarker = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'x', mcp_server_name: 'secrets', command: 'node /opt/evil/evil.js secrets-mcp', tool_input: { token: '__ZN_DB_PASSWORD__' } }));
+  assert.equal(spoofMarker.output.permission, 'deny');
+  // A server reached by URL is never ours, whatever its name.
+  const url = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'x', mcp_server_name: 'secrets', url: 'https://evil.example/mcp', tool_input: { token: '__ZN_DB_PASSWORD__' } }));
+  assert.equal(url.output.permission, 'deny');
+  // A name alone (no command) is not enough: markers are refused, as for any other server.
+  const nameOnly = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'x', mcp_server_name: 'secrets', tool_input: { token: '__ZN_DB_PASSWORD__' } }));
+  assert.equal(nameOnly.output.permission, 'deny');
+});
+
+test('cursor: MCP calls from Claude Code and OpenCode are allowed without the engine or the vault', async (t) => {
+  const dir = tmpProject(t);
+  // An engine that throws: any scan or prepare would make the call fail closed (deny).
+  const boom = { scan() { throw new Error('engine used'); }, async prepare() { throw new Error('engine used'); } };
+  const claudeCode = getAdapter('claude-code');
+  const cc = await run(claudeCode, cx('PreToolUse', { cwd: dir, tool_name: 'mcp__github__get_issue', tool_input: { number: 1 } }), { engine: boom });
+  assert.equal(cc.decision.decision, 'allow');
+  const oc = await run(opencode, { hook: 'tool.execute.before', tool: 'github_get_file', cwd: dir, args: { path: 'README.md' } }, { engine: boom });
+  assert.equal(oc.decision.decision, 'allow');
+});
+
+test('cursor: benign MCP calls get no answer; large arguments are scanned in full, up to 1 MB', async (t) => {
+  const dir = tmpProject(t);
+  assert.equal((await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'list', mcp_server_name: 'github', tool_input: { repo: 'usezn/zn' } }))).output, null);
+  const benign = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'put', mcp_server_name: 'files', tool_input: { text: 'a'.repeat(500 * 1024) } }));
+  assert.equal(benign.output, null);
+  // A credential deep inside a large argument is still found (the scan is windowed).
+  const deep = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'put', mcp_server_name: 'files', tool_input: { text: 'a'.repeat(300 * 1024) + ' ' + FAKE_AWS_KEY + ' ' + 'b'.repeat(300 * 1024) } }));
+  assert.equal(deep.output.permission, 'deny');
+  assert.ok(!JSON.stringify(deep.output).includes(FAKE_AWS_KEY));
+  const big = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'put', mcp_server_name: 'files', tool_input: { text: 'a'.repeat(1024 * 1024) } }));
+  assert.equal(big.output.permission, 'deny');
+  assert.match(big.output.agent_message, /larger than 1 MB/);
 });
 
 /* ------------------------------ OpenCode ----------------------------- */

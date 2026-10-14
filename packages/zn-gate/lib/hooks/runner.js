@@ -9,7 +9,9 @@
  * the vault daemon, reached through lib/vault/client.js. Decisions:
  *
  *   pre_tool    deny reads of credential files and ~/.zn, deny secret
- *               management commands, wrap shell commands (Bash, PowerShell)
+ *               management commands, deny MCP call arguments that carry
+ *               markers or secret values (other servers than zn's own),
+ *               wrap shell commands (Bash, PowerShell)
  *               that carry __ZN_<NAME>__ markers in `zn run --` (ask),
  *               restore detected tokens per the restore policy (ask), refuse
  *               markers in WebFetch URLs (use secrets_http_request instead),
@@ -190,6 +192,7 @@ async function decidePre(ev, d, agentId, opts) {
   }
 
   if (tool === 'monitor') return decideMonitor(ev, pathOpts, opts);
+  if (tool === 'mcp' && ev.input && ev.input.args !== undefined) return decideMcp(ev, d, agentId);
 
   if (SHELL_TOOLS.has(tool)) {
     const original = String(input.command || '');
@@ -318,6 +321,93 @@ function decideMonitor(ev, pathOpts, opts) {
   return { decision: 'ask', updatedInput: { command }, kind: 'monitor', message: 'zn: the monitor output is piped through the local secret scrubber, so secret values in it are replaced with __ZN_ tokens.' };
 }
 
+/*
+ * MCP tool calls. Only Cursor sends the arguments (input.args); any other
+ * agent's MCP pre-tool call is allowed before the vault is touched. The
+ * arguments are checked for __ZN_ markers, which servers other than zn's own
+ * never receive, and for credentials the scrubber finds, which no server
+ * should receive from the agent. zn's "secrets" server takes markers by design,
+ * but only when it is identified strictly (see isOurSecretsServer); it still
+ * gets the credential check. A call with no objection gets no answer, so the
+ * agent's own MCP approval still applies.
+ */
+const MCP_SCAN_CAP = 1024 * 1024; // characters, all arguments together
+const MCP_WINDOW = 128 * 1024; // the scrubber reads the text in windows of this size
+const MCP_OVERLAP = 16 * 1024; // windows overlap, so a secret across a boundary is seen whole
+
+/* Every string of an MCP call's arguments (values and keys), joined with
+ * newlines, or null when they hold more than MCP_SCAN_CAP characters. */
+function mcpArgumentText(args) {
+  const out = [];
+  let total = 0;
+  const stack = [args];
+  while (stack.length) {
+    const v = stack.pop();
+    if (typeof v === 'string') {
+      total += v.length + 1;
+      if (total > MCP_SCAN_CAP) return null;
+      out.push(v);
+    } else if (Array.isArray(v)) {
+      for (const x of v) stack.push(x);
+    } else if (v && typeof v === 'object') {
+      for (const [k, x] of Object.entries(v)) stack.push(k, x);
+    }
+  }
+  return out.join('\n');
+}
+
+/* zn's own "secrets" server: the exact command `zn hooks install` writes (the
+ * matcher of `zn audit`, with the "--agent <id>" suffix it adds), outside the
+ * project. A server reached by URL is never ours, and a name alone is not enough. */
+function isOurSecretsServer(ev, root) {
+  const raw = ev.raw || {};
+  if (!ev.mcp || ev.mcp.server !== 'secrets') return false;
+  if (raw.url || raw.mcp_server_url) return false;
+  if (typeof raw.command !== 'string' || !raw.command.trim()) return false;
+  const argv = require('../audit/patterns').splitCommand(raw.command);
+  return Boolean(require('../audit')._internal.isOurMcp(argv, { rec: { root } }));
+}
+
+/* Server names come from the agent's config: keep the message to plain characters. */
+function mcpServerLabel(server) {
+  const s = String(server || '').replace(/[^A-Za-z0-9 ._-]/g, '').slice(0, 64).trim();
+  return s ? 'the MCP server ' + s : 'an MCP server';
+}
+
+async function decideMcp(ev, d, agentId) {
+  const text = mcpArgumentText(ev.input.args);
+  if (text === null) {
+    return { decision: 'deny', message: 'zn: the arguments of this MCP call are larger than 1 MB (counted in characters), so zn cannot check them.' };
+  }
+  if (!text) return { decision: 'allow' }; // nothing to check, so the vault is not loaded
+  const server = ev.mcp && ev.mcp.server ? String(ev.mcp.server) : '';
+  const ours = isOurSecretsServer(ev, deps.findProjectRoot(ev.cwd || process.cwd()));
+  if (!ours && markers.findMarkers(text).length) {
+    return {
+      decision: 'deny',
+      message: 'zn: MCP tools from other servers never receive secret values. For an authenticated HTTP call use the secrets_http_request tool ' +
+        'of the zn "secrets" MCP server.',
+    };
+  }
+
+  const engine = d.engine();
+  let ctx = await ctxFor(ev, d, agentId, 'mcp_input');
+  if (typeof engine.prepare === 'function') ctx = await engine.prepare(ctx);
+  const kinds = new Set();
+  for (let start = 0; ; start += MCP_WINDOW - MCP_OVERLAP) {
+    for (const span of engine.scan(text.slice(start, start + MCP_WINDOW), ctx) || []) {
+      if (SECRET_SOURCES.has(span.source)) kinds.add(kindLabel(span.type));
+    }
+    if (start + MCP_WINDOW >= text.length) break;
+  }
+  if (kinds.size === 0) return { decision: 'allow' };
+  return {
+    decision: 'deny',
+    message: 'zn: this call would send a secret (' + [...kinds].join(', ') + ') to ' + mcpServerLabel(server) + '. ' +
+      'Keep secrets in the vault and pass them with zn run or secrets_http_request.',
+  };
+}
+
 /* ---------------------------- post_tool --------------------------- */
 
 async function decidePost(ev, d, agentId) {
@@ -340,6 +430,7 @@ async function decidePost(ev, d, agentId) {
   const summary = [...types.entries()].map(([t, n]) => t + (n > 1 ? ' x' + n : '')).join(', ');
   return {
     decision: 'allow',
+    stats: { redacted: total, detections: Object.fromEntries(types) },
     updatedOutput: updated,
     message: 'zn: ' + total + ' secret value(s) in this output were replaced with __ZN_ tokens (' + summary + '). ' +
       (locked ? '__ZN_REDACTED_ markers cannot be restored, so do not retry to get the values. ' : 'Real values stay on this machine; use the tokens as they are.'),
@@ -376,6 +467,7 @@ async function decidePrompt(ev, d, agentId) {
   const suggestion = names[0] || suggestedName(secrets[0]);
   return {
     decision: 'deny',
+    stats: { detections: Object.fromEntries([...new Set(secrets.map((s) => s.type || 'SECRET'))].map((k) => [k, 1])) },
     message: 'zn: this prompt was not sent because it contains a secret (' + shown.join(', ') + '). ' +
       'Save it in your vault instead: ' + znCommand('secret set ' + suggestion) +
       ', then ask your agent to use it (as __ZN_' + suggestion + '__).',
@@ -441,8 +533,8 @@ function failClosed(ev, err, msg) {
         : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, shape(x)])) : v);
     return { decision: 'allow', updatedOutput: shape(ev.output), message: msg };
   }
-  if (ev && ev.event === 'pre_tool') return { decision: 'deny', message: msg + ' (fail-closed)' };
-  return { decision: 'deny', message: msg + ' (fail-closed)', userMessage: msg };
+  if (ev && ev.event === 'pre_tool') return { decision: 'deny', failClosed: true, message: msg + ' (fail-closed)' };
+  return { decision: 'deny', failClosed: true, message: msg + ' (fail-closed)', userMessage: msg };
 }
 
 /**
@@ -466,7 +558,29 @@ async function handle(adapter, rawEvent, opts = {}) {
     decision = failDecision(ev, err, mode);
   }
   const output = adapter.respond({ ...decision, event: ev });
+  countHook(adapter.id, ev, decision, opts);
   return { output, stderr: decision.warning || null, decision };
+}
+
+/**
+ * Local counts for `zn-gate stats` (best effort; never changes the decision). A denial because zn itself
+ * failed (fail-closed) is not counted as a block; asks and fail-open passes count as warnings.
+ */
+function countHook(agentId, ev, decision, opts = {}) {
+  try {
+    if (!ev || !ev.event || !decision) return;
+    const extra = decision.stats || {};
+    const file = opts.home ? path.join(opts.home, '.zn', 'stats.json') : undefined;
+    require('../stats').record({
+      layer: 'hook', agent: agentId, checked: 1,
+      blocked: decision.decision === 'deny' && !decision.failClosed ? 1 : 0,
+      warned: decision.decision === 'ask' || decision.failOpen ? 1 : 0,
+      redacted: extra.redacted || 0,
+      detections: extra.detections || {},
+    }, file ? { file } : {});
+  } catch {
+    /* counting must never affect a hook */
+  }
 }
 
 function readStdin() {

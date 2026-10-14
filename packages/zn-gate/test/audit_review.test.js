@@ -114,7 +114,12 @@ test('only the exact zn secrets MCP server is treated as zn\'s own', (t) => {
   for (const [c, a] of [['node', [pkg + '/bin/cli.js', 'secrets-mcp', '--extra']], ['node', ['/opt/x/other/bin/cli.js', 'secrets-mcp']], ['./node', [pkg + '/bin/cli.js', 'secrets-mcp']], ['npx', ['-y', 'zn-gate', 'secrets-mcp']], ['node', ['/opt/missing/zn-gate/bin/cli.js', 'secrets-mcp']]]) {
     assert.ok(has(run(build(t, { '.mcp.json': mcp(c, a) })), 'ZNA003', 'medium'), c + ' ' + a.join(' '));
   }
-  for (const [c, a] of [['zn', ['secrets-mcp']], ['node', [pkg + '/bin/cli.js', 'secrets-mcp']], [NODE, [pkg + '/bin/cli.js', 'secrets-mcp']]]) {
+  // The "--agent <id>" suffix that `zn hooks install` adds is part of the exact command;
+  // anything after it, or an id zn would not accept, is not.
+  for (const [c, a] of [['node', [pkg + '/bin/cli.js', 'secrets-mcp', '--agent', 'claude-code', '--extra']], ['node', [pkg + '/bin/cli.js', 'secrets-mcp', '--agent', 'Bad Id']], ['node', ['/opt/x/evil.js', 'secrets-mcp', '--agent', 'cursor']]]) {
+    assert.ok(has(run(build(t, { '.mcp.json': mcp(c, a) })), 'ZNA003', 'medium'), c + ' ' + a.join(' '));
+  }
+  for (const [c, a] of [['zn', ['secrets-mcp']], ['node', [pkg + '/bin/cli.js', 'secrets-mcp']], [NODE, [pkg + '/bin/cli.js', 'secrets-mcp']], ['node', [pkg + '/bin/cli.js', 'secrets-mcp', '--agent', 'claude-code']], ['zn', ['secrets-mcp', '--agent', 'cursor']]]) {
     const r = run(build(t, { '.mcp.json': mcp(c, a) }));
     assert.ok(onlyLow(r, 'ZNA003'), c + ' ' + a.join(' ') + ': ' + ids(r).join(', '));
   }
