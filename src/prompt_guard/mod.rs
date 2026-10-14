@@ -104,7 +104,7 @@ fn prompt_regexes() -> &'static [(&'static str, String)] {
             ("pi:fake_turn", r"(?im-u)^[ \t]*assistant\s+message\s*:"),
             ("pi:new_instructions", r"(?im-u)^[ \t]*new\s+instructions?\s*:"),
             // Mode switching aimed at the model.
-            ("pi:mode_switch", r"(?i-u)\byou\s+are\s+now\s+in\s+(?:\S+\s+){0,2}?mode\b"),
+            ("pi:mode_switch", r#"(?i-u)\byou\s+are\s+now\s+in\s+(?:['"]?\w+['"]?\s+){0,2}?mode\b"#),
             ("pi:unrestricted", r"(?i-u)\bact\s+as\s+an?\s+unrestricted\b"),
             ("pi:unrestricted", r"(?i-u)\b(?:you\s+can\s+do\s+anything\s+now|do\s+anything\s+now\s*\(?\s*dan)\b"),
             ("pi:override", r"(?i-u)\boverride\s+(?:the\s+|your\s+)?system\s+(?:prompt|instructions|rules|message)\b"),
