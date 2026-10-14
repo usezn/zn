@@ -2,11 +2,20 @@
   "mcpServers": {
     "zn-gate": {
       "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/zn-launch.js", "zn-gate-mcp"]
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/scripts/zn-launch.js",
+        "zn-gate-mcp"
+      ],
+      "env": {
+        "ZN_PLUGIN_API_KEY": "${user_config.api_key}"
+      }
     },
     "secrets": {
       "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/zn-launch.js", "secrets-mcp"]
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/scripts/zn-launch.js",
+        "secrets-mcp"
+      ]
     }
   }
 }

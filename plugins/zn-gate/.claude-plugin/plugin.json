@@ -21,5 +21,15 @@
   "documentationUrl": "https://github.com/usezn/zn/blob/v1.6.0/docs/secrets.md",
   "supportUrl": "https://github.com/usezn/zn/issues",
   "privacyPolicyUrl": "https://usezn.com/privacy",
-  "termsOfServiceUrl": "https://usezn.com/terms"
+  "termsOfServiceUrl": "https://usezn.com/terms",
+  "userConfig": {
+    "api_key": {
+      "type": "string",
+      "title": "zn API key (optional)",
+      "description": "A Pro or Team API key from usezn.com/dashboard. With a key, the analyze_prompt tool also asks the zn cloud classifier, and the text it checks (secrets redacted first) is sent to api.usezn.com. Leave it empty to keep everything on this machine.",
+      "sensitive": true,
+      "required": false,
+      "default": ""
+    }
+  }
 }

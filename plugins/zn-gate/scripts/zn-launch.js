@@ -9,6 +9,7 @@
  *   node zn-launch.js hook <agent>     agent hook (event JSON on stdin)
  *   node zn-launch.js secrets-mcp      the "secrets" MCP server (stdio)
  *   node zn-launch.js zn-gate-mcp      the "zn-gate" MCP server (stdio), local
+ *                                      unless the plugin's API key option is set
  *                                     rules only: text is never sent to the
  *                                     zn cloud API
  *   node zn-launch.js check [agent]    report the installation status; never blocks
@@ -502,6 +503,34 @@ function runMcp() {
   makeLoader(res.dir, res.files).load('lib/broker/mcp.js').startSecretsMcp();
 }
 
+/**
+ * The plugin's optional zn API key: the "api_key" plugin option, which
+ * Claude Code passes to the "zn-gate" MCP server as ZN_PLUGIN_API_KEY. An
+ * option left empty, or not expanded by the agent, is not a key.
+ */
+function pluginApiKey(env) {
+  const k = String(env.ZN_PLUGIN_API_KEY || '').trim();
+  return /^[A-Za-z0-9._-]{16,256}$/.test(k) ? k : null;
+}
+
+/**
+ * Only the plugin option turns on the cloud classifier: ZN_CLOUD, ZN_API_KEY,
+ * ZN_API_URL and ZN_STAGE from the environment the agent was started with are
+ * dropped, so the key can only go to the default zn endpoint. Without a key,
+ * local rules only.
+ */
+function znGateMcpEnv(env) {
+  const key = pluginApiKey(env);
+  for (const name of ['ZN_PLUGIN_API_KEY', 'ZN_API_KEY', 'ZN_CLOUD', 'ZN_API_URL', 'ZN_STAGE', 'ZN_LOCAL_ONLY']) delete env[name];
+  if (key) {
+    env.ZN_API_KEY = key;
+    env.ZN_CLOUD = '1';
+  } else {
+    env.ZN_LOCAL_ONLY = 'true';
+  }
+  return { cloud: Boolean(key) };
+}
+
 function runZnGateMcp() {
   const fail = (msg) => {
     process.stderr.write('zn plugin: ' + msg + '\n');
@@ -509,12 +538,11 @@ function runZnGateMcp() {
   };
   process.on('uncaughtException', (err) => fail('zn-gate failed (' + ((err && err.message) || String(err)) + ')'));
   process.on('unhandledRejection', (err) => fail('zn-gate failed (' + ((err && err.message) || String(err)) + ')'));
-  // Local rules only, whatever ZN_CLOUD and ZN_API_KEY say.
-  process.env.ZN_LOCAL_ONLY = 'true';
+  const { cloud } = znGateMcpEnv(process.env);
   const lock = loadLock();
   const res = verify(lock);
   if (res.error) return fail(res.error);
-  makeLoader(res.dir, res.files).load('lib/mcp.js').startMcpServer({ localOnly: true });
+  makeLoader(res.dir, res.files).load('lib/mcp.js').startMcpServer({ localOnly: !cloud });
 }
 
 /* Hooks that `zn hooks install` wrote into the agent's own settings run too. */
@@ -561,6 +589,6 @@ function main(argv) {
   process.exitCode = 1;
 }
 
-module.exports = { verify, loadLock, makeLoader, readVerified };
+module.exports = { verify, loadLock, makeLoader, readVerified, znGateMcpEnv };
 
 if (require.main === module) main(process.argv.slice(2));
