@@ -91,6 +91,21 @@ const EXTRA = [
   ['DISCORD_WEBHOOK', () => 'https://discord.com/api/webhooks/' + '1'.repeat(1) + pick('0123456789', 17) + '/' + pick(URLSAFE, 68)],
   ['GITHUB_TOKEN', () => 'ghu_' + pick(ALNUM, 36)],
   ['ANTHROPIC_KEY', () => 'sk-ant-admin01-' + pick(URLSAFE, 93)],
+  ['DOCKERHUB_PAT', () => 'dckr_pat_' + pick(URLSAFE, 27)],
+  ['TAVILY_KEY', () => 'tvly-' + pick(ALNUM, 30) + 'a1'],
+  ['FIRECRAWL_KEY', () => 'fc-' + pick(HEX, 30) + 'b2'],
+  ['POLAR_TOKEN', () => 'polar_oat_' + pick(ALNUM, 40)],
+  ['POLAR_TOKEN', () => 'polar_at_u_' + pick(ALNUM, 40)],
+  ['POLAR_TOKEN', () => 'polar_at_o_' + pick(ALNUM, 40)],
+  ['POLAR_TOKEN', () => 'polar_ci_' + pick(ALNUM, 40)],
+  ['POLAR_TOKEN', () => 'polar_cs_' + pick(ALNUM, 40)],
+  ['REPLICATE_TOKEN', () => 'r8_' + pick(ALNUM, 37)],
+  ['SUPABASE_PAT', () => 'sbp_' + pick(ALNUM, 40)],
+  ['AZURE_AD_CLIENT_SECRET', () => 'abc9Q~' + pick(URLSAFE, 32)],
+  ['HF_TOKEN', () => 'hf_' + pick(ALNUM.slice(0, 52), 34)],
+  ['STRIPE_KEY', () => 'sk_prod_' + pick(ALNUM, 24) + 'a1'],
+  ['TWILIO_KEY', () => 'SK' + pick('0123456789ABCDEF', 30) + 'C3'],
+  ['OPENAI_KEY', () => 'sk-' + pick(HEX, 30) + 'a1'],
 ];
 
 test('additional prefix types are detected in context', () => {
@@ -99,6 +114,43 @@ test('additional prefix types are detected in context', () => {
     const text = 'config: "' + v + '"\n';
     assert.ok(types(text).includes(type), type + ' not detected');
     assert.ok(covers(text, v), type + ' not fully covered');
+  }
+});
+
+/* Near-miss lengths, prefix words and slugs of the new and extended formats
+ * must stay untouched. Every value is generated or built from parts. */
+test('new and extended formats: near-miss lengths and look-alikes are not secrets', () => {
+  const lower = 'abcdefghijklmnopqrstuvwxyz';
+  const ALPHA = ALNUM.slice(0, 52);
+  for (const t of [
+    'dckr_pat_' + pick(URLSAFE, 19),                        // Docker Hub: below the 20-character minimum
+    'Create a dckr_pat_ token under Account Settings',      // prefix in prose
+    'tvly-' + pick(ALNUM, 12),                              // Tavily: too short
+    'tvly-' + lower + lower.slice(0, 4),                    // Tavily: no digit
+    'fc-' + pick(ALNUM, 8),                                 // Firecrawl: too short
+    'fc-barcelona',                                         // slug
+    'class="fc-icon-small-grid-layout"',                    // CSS class
+    'polar_oat_' + pick(ALNUM, 12),                         // Polar: too short
+    'polar_bear_classifier_training',                       // not a Polar prefix
+    'polar_ci_' + 'a'.repeat(25),                           // one character class
+    'r8_' + pick(ALNUM, 36),                                // Replicate: 39 characters in total
+    'r8_' + pick(ALNUM, 38),                                // Replicate: 41 characters in total
+    'r8_model_v2',                                          // prefix word
+    'sbp_' + pick(ALNUM, 20),                               // Supabase: too short
+    'sbp_' + lower + lower,                                 // Supabase: no digit
+    'abc9Q~' + pick(URLSAFE, 20),                           // Azure: body too short
+    'abc9Q~' + pick(URLSAFE, 40),                           // Azure: body too long
+    'Q~ is the tilde-Q notation in math',                   // no prefix shape
+    'hf_' + pick(ALPHA, 33),                                // letters only, one short
+    'hf_' + pick(ALPHA, 41),                                // letters only, one too long
+    'sk_prod_' + pick(ALNUM, 4),                            // Stripe: too short
+    'SK' + pick('0123456789ABCDEF', 31),                    // Twilio: 31 hex digits
+    'SK' + '0'.repeat(32),                                  // Twilio: placeholder, no letter
+    'sk-' + pick(HEX, 31),                                  // legacy sk-: 31 hex digits
+    'sk-' + 'a'.repeat(32),                                 // legacy sk-: one character class
+    'task-' + pick(HEX, 32),                                // sk- inside a word
+  ]) {
+    assert.deepStrictEqual(types(t), [], t);
   }
 });
 
