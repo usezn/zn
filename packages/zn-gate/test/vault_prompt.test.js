@@ -28,10 +28,14 @@ test('both lines typed ahead are read by the two prompts', async () => {
 
 test('lines typed after each prompt are read too', async () => {
   const t = tty();
-  const pending = getPassphrase([], true, { input: t.input, output: t.output });
-  setTimeout(() => t.input.write('fake-pass-67890\n'), 10);
-  setTimeout(() => t.input.write('fake-pass-67890\n'), 30);
-  assert.equal(await pending, 'fake-pass-67890');
+  let sent = 0;
+  t.output.on('data', () => {
+    // Answer each prompt only once it is on screen.
+    const prompts = (t.written().match(/passphrase[^:]*: /gi) || []).length;
+    while (sent < prompts) { sent++; t.input.write('fake-pass-67890\n'); }
+  });
+  assert.equal(await getPassphrase([], true, { input: t.input, output: t.output }), 'fake-pass-67890');
+  assert.equal(sent, 2);
 });
 
 test('different passphrases are refused with a plain message', async () => {
@@ -43,7 +47,7 @@ test('different passphrases are refused with a plain message', async () => {
 test('input closed before the second prompt fails instead of waiting', async () => {
   const t = tty();
   t.input.end('fake-pass-12345\n');
-  await assert.rejects(getPassphrase([], true, { input: t.input, output: t.output }), /no passphrase was entered/);
+  await assert.rejects(getPassphrase([], true, { input: t.input, output: t.output }), /Cancelled: no passphrase was entered/);
 });
 
 test('no terminal: the error says what to do', async () => {

@@ -64,9 +64,11 @@ function createHiddenPrompter(opts) {
     if (w) w.resolve(line);
     else lines.push(line);
   });
+  const cancelled = () => new Error('Cancelled: no passphrase was entered.');
   rl.on('close', () => {
     closed = true;
-    while (waiters.length) waiters.shift().reject(new Error('no passphrase was entered'));
+    if (waiters.length) output.write('\n');
+    while (waiters.length) waiters.shift().reject(cancelled());
   });
   return {
     ask(question) {
@@ -74,7 +76,7 @@ function createHiddenPrompter(opts) {
       return new Promise((resolve, reject) => {
         const done = (line) => { output.write('\n'); resolve(line); };
         if (lines.length) done(lines.shift());
-        else if (closed) reject(new Error('no passphrase was entered'));
+        else if (closed) { output.write('\n'); reject(cancelled()); }
         else waiters.push({ resolve: done, reject });
       });
     },
