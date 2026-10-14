@@ -21,7 +21,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: action-selftest-${{ github.event.pull_request.number || github.ref }}
+  group: action-selftest-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

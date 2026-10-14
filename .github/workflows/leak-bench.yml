@@ -14,9 +14,9 @@ on:
 permissions:
   contents: read
 
-# A new push to a pull request cancels the previous run for it; pushes to main and next always complete.
+# A new push to a pull request cancels the previous run for it; every push to main and next runs on its own.
 concurrency:
-  group: leak-bench-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: leak-bench-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
