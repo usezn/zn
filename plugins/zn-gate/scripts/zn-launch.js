@@ -265,31 +265,25 @@ function verify(lock) {
 const isBuiltin = Module.isBuiltin || ((id) => Module.builtinModules.includes(String(id).replace(/^node:/, '')));
 
 /**
- * A CommonJS loader over the verified file set. require() calls of a relative
- * path or a package are resolved by this loader, only to verified files;
- * built-in modules come from Node. Code that reaches Node's module system
- * directly (the "module" built-in, process.mainModule) is not covered: the
- * release build refuses a bundle that does. import() is handed to Node's own loader: ES modules cannot be
- * evaluated from memory without experimental flags. The tree holds no file
- * outside the lock, so a name that the lock includes resolves to a verified
- * file, which Node reads from disk again. A name that is not in the tree is
- * looked up by Node in node_modules folders above the package, outside the
- * check: the release build checks that every literal import of the shipped
- * files resolves inside the bundle.
- */
-/**
- * Keep ES modules inside the verified package. import() goes to Node's own
- * loader, which resolves names from disk and would look in node_modules
- * folders above the package for a name the package does not hold. With
- * module.registerHooks (Node.js 22.15 and 23.5 or later; synchronous, no
- * measurable cost) every ES module and package that Node resolves must be one
- * of the verified files, and ES module source is served from the verified
- * bytes, so a file changed after the check is never run. On older Node.js
- * versions, the long-running MCP servers use module.register instead (it
- * starts a loader thread, about 100 ms, too slow for every hook); its check
- * reads the file again and compares the digest. Hooks on those versions rely
- * on the release build, which checks that every import of the shipped files
- * resolves inside the package.
+ * Keep the modules that Node loads by itself inside the verified package.
+ * import() goes to Node's own loader (zn-gate uses it for its encryption
+ * library), which resolves names from disk and would look in node_modules
+ * folders above the package for a name the package does not hold.
+ *
+ * With module.registerHooks (Node.js 22.15 and 23.5 or later; synchronous,
+ * no measurable cost), every module that Node resolves must be a built-in or
+ * one of the verified files, and its source (ES module, CommonJS or JSON) is
+ * served from the verified bytes, so a file changed after the check is never
+ * run. require() calls inside a CommonJS module loaded this way go through
+ * the same hooks.
+ *
+ * On older Node.js versions, the long-running MCP servers use module.register
+ * instead (it starts a loader thread, about 100 ms, too slow for every hook):
+ * the same resolve check, and every loaded file is read in the hook, compared
+ * with its SHA-256 and served from those bytes. createRequire() is not hooked
+ * there. Hooks on those versions rely on the release build, which checks that
+ * every import of the shipped files resolves inside the package and refuses
+ * createRequire.
  */
 function guardModules(dir, files, lock, longRunning) {
   const mod = require('module');
@@ -316,7 +310,7 @@ function guardModules(dir, files, lock, longRunning) {
         if (url.startsWith('node:')) return r;
         const rel = relOf(url);
         if (!files.has(rel)) refuse(url);
-        return r.format === 'module' ? { ...r, source: files.get(rel) } : r;
+        return { ...r, source: files.get(rel) };
       },
     });
     return 'sync';
@@ -324,6 +318,7 @@ function guardModules(dir, files, lock, longRunning) {
   if (!longRunning || typeof mod.register !== 'function') return 'none';
   const hooks = [
     "import { fileURLToPath } from 'node:url';",
+    "import { readFileSync } from 'node:fs';",
     "import { createHash } from 'node:crypto';",
     "import path from 'node:path';",
     'let root, digests;',
@@ -345,10 +340,13 @@ function guardModules(dir, files, lock, longRunning) {
     "  if (url.startsWith('node:')) return r;",
     '  const rel = relOf(url);',
     '  if (!digests.has(rel)) refuse(url);',
-    "  if (r.source != null && createHash('sha256').update(r.source).digest('hex') !== digests.get(rel)) {",
+    '  // CommonJS comes back without source: read it here, so it is checked and its',
+    '  // require() calls go through these hooks too.',
+    '  const source = r.source == null ? readFileSync(fileURLToPath(url)) : r.source;',
+    "  if (createHash('sha256').update(source).digest('hex') !== digests.get(rel)) {",
     "    throw new Error('zn plugin: ' + rel + ' was changed after it was checked');",
     '  }',
-    '  return r;',
+    '  return { ...r, source };',
     '}',
   ].join('\n');
   mod.register('data:text/javascript,' + encodeURIComponent(hooks), {
@@ -358,6 +356,16 @@ function guardModules(dir, files, lock, longRunning) {
   return 'thread';
 }
 
+/**
+ * A CommonJS loader over the verified file set. require() calls of a relative
+ * path or a package are resolved by this loader, only to verified files;
+ * built-in modules come from Node. Code that reaches Node's module system
+ * directly (the "module" built-in, process.mainModule) is not covered: the
+ * release build refuses a bundle that does. import() is handed to Node's own
+ * loader (ES modules cannot be evaluated from memory without experimental
+ * flags); guardModules() keeps what that loader loads inside the verified
+ * files.
+ */
 function makeLoader(dir, files) {
   const cache = new Map();
   const has = (rel) => files.has(rel);

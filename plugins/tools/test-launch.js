@@ -50,6 +50,12 @@ const SOURCES = {
     "  if (s.includes('echo-exit1')) { process.stdout.write(s); process.exit(1); }",
     "  if (s.includes('reject')) { Promise.reject(new Error('stray rejection')); await new Promise((r) => setTimeout(r, 50)); }",
     "  if (s.includes('escape')) { const o = await import('outside-dep'); process.stdout.write('LOADED ' + o.name); return; }",
+    "  if (s.includes('dataurl')) { await import('data:text/javascript,export const x = 1'); process.stdout.write('LOADED data'); return; }",
+    "  if (s.includes('tamper')) {",
+    "    // Change the ES module on disk after the check: the verified bytes must still be the ones that run.",
+    "    require('fs').writeFileSync(require('path').join(__dirname, '..', '..', 'node_modules', 'esm-dep', 'index.js'), \"export const name = 'TAMPERED';\\n\");",
+    "    const t = await import('esm-dep'); process.stdout.write('esm-dep is ' + t.name); return;",
+    "  }",
     "  const esm = await import('esm-dep');",
     "  process.stdout.write(['ran', a[0], policy.name, dep.name, data.name, esm.name, s.trim()].join(' '));",
     '};',
@@ -57,12 +63,22 @@ const SOURCES = {
   ].join('\n'),
   'lib/hooks/policy.js': "exports.name = 'policy';\n",
   'lib/data.json': '{"name": "data"}\n',
-  'lib/broker/mcp.js': "exports.startSecretsMcp = () => process.stdout.write('mcp');\n",
+  'lib/broker/mcp.js': [
+    'exports.startSecretsMcp = async () => {',
+    "  if (!process.env.ZN_TEST_IMPORT) return process.stdout.write('mcp');",
+    "  try { const m = await import(process.env.ZN_TEST_IMPORT); process.stdout.write('LOADED ' + m.name); }",
+    "  catch (err) { process.stdout.write('REFUSED ' + err.message); }",
+    '};',
+    '',
+  ].join('\n'),
   'lib/mcp.js': "exports.startMcpServer = (o) => process.stdout.write(['zn-gate-mcp', process.env.ZN_LOCAL_ONLY, o && o.localOnly, process.env.ZN_CLOUD || '-', process.env.ZN_API_KEY || '-', process.env.ZN_API_URL || '-', process.env.ZN_PLUGIN_API_KEY || '-'].join(' '));\n",
   'node_modules/dep/package.json': '{"name": "dep", "main": "main.js"}\n',
   'node_modules/dep/main.js': "exports.name = 'dep';\n",
   'node_modules/esm-dep/package.json': '{"name": "esm-dep", "type": "module", "exports": "./index.js"}\n',
   'node_modules/esm-dep/index.js': "export const name = 'esm';\n",
+  // A CommonJS package that requires a package outside zn-gate (planted by a test).
+  'node_modules/cjs-dep/package.json': '{"name": "cjs-dep", "main": "index.js"}\n',
+  'node_modules/cjs-dep/index.js': "exports.name = require('outside-cjs').name;\n",
 };
 
 function installPackage() {
@@ -432,6 +448,48 @@ try {
       }
     } finally {
       fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  test('modules Node loads stay inside the verified files, in both guard modes', () => {
+    const nm = path.dirname(pkgDir);
+    write(path.join(nm, 'outside-dep', 'package.json'), '{"name": "outside-dep", "type": "module", "exports": "./index.js"}\n');
+    write(path.join(nm, 'outside-dep', 'index.js'), "export const name = 'outside';\n");
+    write(path.join(nm, 'outside-cjs', 'package.json'), '{"name": "outside-cjs", "main": "index.js"}\n');
+    write(path.join(nm, 'outside-cjs', 'index.js'), "exports.name = 'outside-cjs';\n");
+    // Without module.registerHooks, as on Node.js before 22.15: the MCP servers use module.register.
+    const preload = path.join(tmp, 'no-register-hooks.js');
+    write(preload, "require('module').registerHooks = undefined;\n");
+    const modes = [['default', {}], ['thread', { NODE_OPTIONS: '--require ' + JSON.stringify(preload) }]];
+    try {
+      for (const [mode, env] of modes) {
+        if (mode === 'default' && typeof require('module').registerHooks !== 'function') continue;
+        for (const name of ['outside-dep', 'cjs-dep']) {
+          const r = run(['secrets-mcp'], undefined, { env: { ...env, ZN_TEST_IMPORT: name } });
+          assert.strictEqual(r.status, 0, r.stderr);
+          assert.match(r.stdout, /^REFUSED zn plugin: refusing to load .*outside-(dep|cjs).*not one of the verified zn-gate files/, mode + ' ' + name);
+        }
+        const ok = run(['secrets-mcp'], undefined, { env: { ...env, ZN_TEST_IMPORT: 'esm-dep' } });
+        assert.strictEqual(ok.stdout, 'LOADED esm', mode);
+      }
+    } finally {
+      for (const d of ['outside-dep', 'outside-cjs']) fs.rmSync(path.join(nm, d), { recursive: true, force: true });
+    }
+  });
+
+  test('a module changed after the check runs as checked; data: URLs are refused', () => {
+    if (typeof require('module').registerHooks !== 'function') {
+      process.stdout.write('# skip: module.registerHooks is not available on ' + process.version + '\n');
+      return;
+    }
+    try {
+      const r = run(['hook', 'codex'], '{"tamper":1}');
+      assert.strictEqual(r.status, 0, r.stderr);
+      assert.strictEqual(r.stdout, 'esm-dep is esm');
+      write(path.join(pkgDir, 'node_modules', 'esm-dep', 'index.js'), SOURCES['node_modules/esm-dep/index.js']);
+      refused(run(['hook', 'codex'], '{"dataurl":1}'), /refusing to load data:/);
+    } finally {
+      write(path.join(pkgDir, 'node_modules', 'esm-dep', 'index.js'), SOURCES['node_modules/esm-dep/index.js']);
     }
   });
 
