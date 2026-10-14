@@ -1,0 +1,16 @@
+{
+  "name": "zn-gate-plugin",
+  "version": "1.6.0",
+  "private": true,
+  "description": "The zn-gate release this plugin runs. Claude Code installs it into the plugin folder; the launcher checks it against scripts/zn-gate.lock.json.",
+  "license": "MIT",
+  "dependencies": {
+    "@noble/ciphers": "2.4.0",
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0",
+    "@noble/post-quantum": "0.5.4",
+    "@scure/base": "2.4.0",
+    "age-encryption": "0.3.1",
+    "zn-gate": "1.6.0"
+  }
+}
