@@ -154,6 +154,62 @@ test('cursor: install writes version 1 hooks.json with our four events', (t) => 
   assert.deepEqual(JSON.parse(fs.readFileSync(cursor.hooksFile({ home }), 'utf8')).hooks, {});
 });
 
+const FAKE_AWS_KEY = 'AKIA' + 'Z'.repeat(16); // built at runtime, never a literal
+
+test('cursor: beforeMCPExecution is installed without failClosed', (t) => {
+  const home = tempDir(t, 'zn-cu-mcp-');
+  cursor.install({ home, nodePath: '/usr/bin/node', runnerPath: '/x/lib/hooks/runner.js' });
+  const data = JSON.parse(fs.readFileSync(cursor.hooksFile({ home }), 'utf8'));
+  const entry = data.hooks.beforeMCPExecution[0];
+  assert.equal(entry.command, "'/usr/bin/node' '/x/lib/hooks/runner.js' cursor");
+  assert.equal(entry.timeout, 30);
+  assert.equal(entry.failClosed, undefined, 'no failClosed: an empty answer would block every MCP call');
+  cursor.uninstall({ home });
+});
+
+test('cursor: beforeMCPExecution normalizes; only a deny gets an answer', (t) => {
+  const dir = tmpProject(t);
+  const ev = cursor.normalize(cu('beforeMCPExecution', { cwd: dir, tool_name: 'query', mcp_server_name: 'db', tool_input: '{"sql":"select 1"}' }));
+  assert.equal(ev.event, 'pre_tool');
+  assert.equal(ev.tool, 'mcp');
+  assert.deepEqual(ev.mcp, { server: 'db', tool: 'query' });
+  assert.deepEqual(ev.input.args, { sql: 'select 1' }, 'a JSON string tool_input is parsed');
+  assert.deepEqual(cursor.respond({ decision: 'deny', message: 'no', event: ev }), { permission: 'deny', user_message: 'no', agent_message: 'no' });
+  assert.equal(cursor.respond({ decision: 'allow', event: ev }), null);
+});
+
+test('cursor: MCP arguments with a secret value are denied by kind, the value is never printed', async (t) => {
+  const dir = tmpProject(t);
+  const r = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'create_issue', mcp_server_name: 'github', tool_input: { body: 'key ' + FAKE_AWS_KEY } }));
+  assert.equal(r.output.permission, 'deny');
+  assert.match(r.output.agent_message, /AWS key/);
+  assert.match(r.output.agent_message, /the MCP server github/);
+  assert.ok(!JSON.stringify(r.output).includes(FAKE_AWS_KEY));
+  const asString = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'create_issue', mcp_server_name: 'github', tool_input: JSON.stringify({ body: FAKE_AWS_KEY }) }));
+  assert.equal(asString.output.permission, 'deny', 'tool_input as a JSON string is checked too');
+  assert.ok(!JSON.stringify(asString.output).includes(FAKE_AWS_KEY));
+});
+
+test('cursor: a __ZN_ marker goes to no server but zn\'s own "secrets" server', async (t) => {
+  const dir = tmpProject(t);
+  const other = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'query', mcp_server_name: 'postgres', tool_input: { password: '__ZN_DB_PASSWORD__' } }));
+  assert.equal(other.output.permission, 'deny');
+  assert.match(other.output.user_message, /secrets_http_request/);
+  const own = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'secrets_http_request', mcp_server_name: 'secrets', command: 'node /x/cli.js secrets-mcp --agent cursor', tool_input: { url: 'https://api.example.com', token: '__ZN_DB_PASSWORD__' } }));
+  assert.equal(own.output, null);
+  // A name alone is not enough to skip the credential check.
+  const nameOnly = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'x', mcp_server_name: 'secrets', tool_input: { key: FAKE_AWS_KEY } }));
+  assert.equal(nameOnly.output.permission, 'deny');
+});
+
+test('cursor: benign and oversized MCP calls', async (t) => {
+  const dir = tmpProject(t);
+  assert.equal((await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'list', mcp_server_name: 'github', tool_input: { repo: 'usezn/zn' } }))).output, null);
+  const big = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'put', mcp_server_name: 'files', tool_input: { text: 'a'.repeat(70 * 1024) } }));
+  assert.equal(big.output.permission, 'deny');
+  assert.match(big.output.agent_message, /larger than 64 KB/);
+});
+
 /* ------------------------------ OpenCode ----------------------------- */
 
 test('opencode: before/after/chat events map to runner decisions', async (t) => {

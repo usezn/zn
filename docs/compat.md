@@ -40,6 +40,15 @@ documentation on 2026-10-11. End-to-end evidence is in [`bench/e2e/`](../bench/e
   - `beforeReadFile` can only allow or deny. zn sets `failClosed: true` on it
     and on `beforeSubmitPrompt`, so a hook that crashes or times out blocks the
     read or the prompt.
+  - `beforeMCPExecution` denies an MCP call whose arguments carry a
+    `__ZN_<NAME>__` marker (unless the server is zn's own `secrets` server) or
+    a secret value, and names the kind of secret, never its value. Arguments
+    over 64 KB are denied, because zn cannot check them. Other calls get no
+    answer, so Cursor's own MCP approval still applies. This hook, like
+    `beforeShellExecution` and `preToolUse`, has no `failClosed`: zn gives no
+    answer when it has no objection, and Cursor treats an empty answer as a
+    block when `failClosed` is set, which would block every such call. The
+    trade-off: if this hook crashes or times out, the call runs unchecked.
   - `preToolUse` (Write, Delete, Grep) checks the file a call names with the
     same rules as the other tools. Cursor does not document the input keys of
     these tools, so zn looks for the usual names (`file_path`, `path`,

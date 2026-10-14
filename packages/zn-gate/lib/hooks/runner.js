@@ -9,7 +9,9 @@
  * the vault daemon, reached through lib/vault/client.js. Decisions:
  *
  *   pre_tool    deny reads of credential files and ~/.zn, deny secret
- *               management commands, wrap shell commands (Bash, PowerShell)
+ *               management commands, deny MCP call arguments that carry
+ *               markers or secret values (other servers than zn's own),
+ *               wrap shell commands (Bash, PowerShell)
  *               that carry __ZN_<NAME>__ markers in `zn run --` (ask),
  *               restore detected tokens per the restore policy (ask), refuse
  *               markers in WebFetch URLs (use secrets_http_request instead),
@@ -190,6 +192,7 @@ async function decidePre(ev, d, agentId, opts) {
   }
 
   if (tool === 'monitor') return decideMonitor(ev, pathOpts, opts);
+  if (tool === 'mcp') return decideMcp(ev, d, agentId);
 
   if (SHELL_TOOLS.has(tool)) {
     const original = String(input.command || '');
@@ -316,6 +319,80 @@ function decideMonitor(ev, pathOpts, opts) {
   if (isMonitorWrapper(original, opts)) return { decision: 'ask', message: 'zn: this monitor already pipes through the secret scrubber.' };
   const command = wrapMonitor(original, opts);
   return { decision: 'ask', updatedInput: { command }, kind: 'monitor', message: 'zn: the monitor output is piped through the local secret scrubber, so secret values in it are replaced with __ZN_ tokens.' };
+}
+
+/*
+ * MCP tool calls (only agents that send MCP pre-tool events, today Cursor).
+ * The arguments are checked for __ZN_ markers, which other servers never
+ * receive, and for credentials the scrubber finds, which no server should
+ * receive from the agent. zn's own "secrets" server takes markers by design.
+ * A call with no objection gets no answer, so the agent's own MCP approval
+ * still applies.
+ */
+const MCP_SCAN_CAP = 64 * 1024;
+
+/* Every string of an MCP call's arguments (values and keys), or null when they
+ * hold more than MCP_SCAN_CAP characters: zn cannot check text it does not read. */
+function mcpArgumentStrings(args) {
+  const out = [];
+  let total = 0;
+  const stack = [args];
+  while (stack.length) {
+    const v = stack.pop();
+    if (typeof v === 'string') {
+      total += v.length;
+      if (total > MCP_SCAN_CAP) return null;
+      out.push(v);
+    } else if (Array.isArray(v)) {
+      for (const x of v) stack.push(x);
+    } else if (v && typeof v === 'object') {
+      for (const [k, x] of Object.entries(v)) stack.push(k, x);
+    }
+  }
+  return out;
+}
+
+/* Server names come from the agent's config: keep the message to plain characters. */
+function mcpServerLabel(server) {
+  const s = String(server || '').replace(/[^A-Za-z0-9 ._-]/g, '').slice(0, 64).trim();
+  return s ? 'the MCP server ' + s : 'an MCP server';
+}
+
+async function decideMcp(ev, d, agentId) {
+  const server = ev.mcp && ev.mcp.server ? String(ev.mcp.server) : '';
+  const command = ev.raw && typeof ev.raw.command === 'string' ? ev.raw.command : '';
+  // Identified by name and command. Only the name: it is not trusted beyond the
+  // marker rule (the credential check below still runs).
+  if (server === 'secrets' && command.includes('secrets-mcp')) return { decision: 'allow' };
+  const nameOnly = server === 'secrets' && !command;
+
+  const strings = mcpArgumentStrings(ev.input && ev.input.args);
+  if (strings === null) {
+    return { decision: 'deny', message: 'zn: the arguments of this MCP call are larger than 64 KB, so zn cannot check them.' };
+  }
+  if (!nameOnly && strings.some((s) => markers.findMarkers(s).length)) {
+    return {
+      decision: 'deny',
+      message: 'zn: MCP tools from other servers never receive secret values. For an authenticated HTTP call use the secrets_http_request tool ' +
+        'of the zn "secrets" MCP server.',
+    };
+  }
+
+  const engine = d.engine();
+  let ctx = await ctxFor(ev, d, agentId, 'mcp_input');
+  if (typeof engine.prepare === 'function') ctx = await engine.prepare(ctx);
+  const kinds = new Set();
+  for (const s of strings) {
+    for (const span of engine.scan(s, ctx) || []) {
+      if (SECRET_SOURCES.has(span.source)) kinds.add(kindLabel(span.type));
+    }
+  }
+  if (kinds.size === 0) return { decision: 'allow' };
+  return {
+    decision: 'deny',
+    message: 'zn: this call would send a secret (' + [...kinds].join(', ') + ') to ' + mcpServerLabel(server) + '. ' +
+      'Keep secrets in the vault and pass them with zn run or secrets_http_request.',
+  };
 }
 
 /* ---------------------------- post_tool --------------------------- */
