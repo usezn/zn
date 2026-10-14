@@ -79,5 +79,50 @@ class TestTestCommandMasking(unittest.TestCase):
         self.assertNotIn(FAKE_AWS, preview)
 
 
+
+class TestScanSkipped(unittest.TestCase):
+    def _dir(self):
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "big.md"), "w", encoding="utf-8") as f:
+            f.write("x" * (2 * 1024 * 1024))
+        with open(os.path.join(d, "slides.key"), "wb") as f:
+            f.write(b"PK" + b"\0" * 16)
+        with open(os.path.join(d, "ok.md"), "w", encoding="utf-8") as f:
+            f.write("hello there, nothing to see\n")
+        return d
+
+    def _run(self, d, fmt):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = cmd_scan(argparse.Namespace(path=d, exclude=None, include=None, format=fmt, no_fail=False))
+        return code, buf.getvalue()
+
+    def test_json_lists_skipped_files(self):
+        d = self._dir()
+        try:
+            code, out = self._run(d, "json")
+            data = json.loads(out)
+            self.assertEqual(code, 0)
+            self.assertEqual(data["total_files"], 1)
+            self.assertEqual(data["total_skipped"], 2)
+            reasons = sorted(s["reason"] for s in data["skipped"])
+            self.assertEqual(reasons, ["2 MiB or larger", "binary .key file, not a key"])
+        finally:
+            import shutil
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_text_and_github_mention_skipped_files(self):
+        d = self._dir()
+        try:
+            _, text = self._run(d, "text")
+            self.assertIn("Not scanned (2):", text)
+            self.assertIn("(2 MiB or larger)", text)
+            _, gh = self._run(d, "github")
+            self.assertEqual(len([ln for ln in gh.splitlines() if ln.startswith("::notice ")]), 2)
+            self.assertIn("(2 not scanned)", gh)
+        finally:
+            import shutil
+            shutil.rmtree(d, ignore_errors=True)
+
 if __name__ == "__main__":
     unittest.main()

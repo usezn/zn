@@ -144,6 +144,20 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     return 2 if res.get("verdict") == "block" else 0
 
 
+def _skip_reason(file_path: Path) -> Optional[str]:
+    """Why a file that matches the scan is not read, or None."""
+    try:
+        if file_path.stat().st_size >= _MAX_SCAN_BYTES:
+            return "2 MiB or larger"
+        if file_path.suffix.lower() == ".key":
+            with open(file_path, "rb") as f:
+                if b"\0" in f.read(_BINARY_SNIFF):
+                    return "binary .key file, not a key"
+    except OSError:
+        return "cannot be read"
+    return None
+
+
 def _scan_file(file_path: Path) -> List[Dict[str, Any]]:
     violations: List[Dict[str, Any]] = []
     try:
@@ -276,7 +290,14 @@ def cmd_scan(args: argparse.Namespace) -> int:
                     files_to_scan.append(p)
 
     all_violations: List[Dict[str, Any]] = []
+    skipped: List[Dict[str, str]] = []
+    scanned = 0
     for fp in files_to_scan:
+        reason = _skip_reason(fp)
+        if reason:
+            skipped.append({"file": str(fp), "reason": reason})
+            continue
+        scanned += 1
         all_violations.extend(_scan_file(fp))
 
     fmt = getattr(args, "format", "text")
@@ -284,15 +305,25 @@ def cmd_scan(args: argparse.Namespace) -> int:
         # CI logs are public: rule, reason and location only, never the snippet.
         for v in all_violations:
             print(f"::error file={v['file']},line={v['line']},title=Security Threat ({v['rule']})::{v['reason']}")
-        print(f"\n[zn-gate] Scanned {len(files_to_scan)} files. Found {len(all_violations)} security threats.")
+        for s in skipped:
+            print(f"::notice file={s['file']},title=Not scanned::{s['reason']}")
+        print(f"\n[zn-gate] Scanned {scanned} files ({len(skipped)} not scanned). Found {len(all_violations)} security threats.")
     elif fmt == "json":
         print(json.dumps({
-            "total_files": len(files_to_scan),
+            "total_files": scanned,
+            "total_skipped": len(skipped),
             "total_threats": len(all_violations),
-            "threats": all_violations
+            "threats": all_violations,
+            "skipped": skipped,
         }, indent=2))
     else:
-        print(f"\n{_icon(SHIELD)} zn-gate Security Scanner — Scanned {len(files_to_scan)} files")
+        print(f"\n{_icon(SHIELD)} zn-gate Security Scanner — Scanned {scanned} files")
+        if skipped:
+            print(f"Not scanned ({len(skipped)}):")
+            for s in skipped[:20]:
+                print(f"  {s['file']} ({s['reason']})")
+            if len(skipped) > 20:
+                print(f"  ... and {len(skipped) - 20} more")
         if not all_violations:
             print(f"{_icon(CHECK)} All scanned prompts, tool definitions, and files are clean!\n")
             return 0
