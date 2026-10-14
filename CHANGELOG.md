@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Every rule layer has a version: `SCRUB_RULES_VERSION` (secret and PII patterns), `AUDIT_RULES_VERSION` (`zn audit` rules) and `POLICY_RULES_VERSION` (hook policy). `SCRUB_RULES_VERSION` and `POLICY_RULES_VERSION` are `2026-10-14.2`, and `AUDIT_RULES_VERSION` is `2026-10-14.1`. `zn-gate --version` and `zn-gate status` show the scrub and audit versions next to the rules engine version.
+
+### Changed
+- Fewer false blocks from the local rules. Four rules blocked a lot of ordinary text, such as documentation, code and requests like "act as a gateway". They now block only the clear form, and the broader match is reported as an advisory: the verdict stays `allow` and the result carries `advisory` with the rule and a short reason (`zn-gate analyze`, `analyze_prompt`, Python `evaluate()` and `analyze()`).
+  - `exfil:credentials` blocks when a verb such as "send", "print" or "read" starts an instruction and a credential word ("API key", "password", "token", `.env`) follows in the same sentence, within 80 characters. Before, the two words could be anywhere in the text, so whole documents were blocked.
+  - `indirect:hidden_tag` blocks when the instruction-like word is inside the hidden element. Before, any later word such as "system" counted.
+  - `pi:act_as` blocks a request to the model to act as an assistant, a model, a persona or an unrestricted mode ("You will act as …"), not "act as a gateway".
+  - `pi:forget` no longer blocks "forget all cached entries", "forget your password" and similar phrases about data.
+  In our tests on 747 public files (package READMEs and code, docs), files blocked by the local rules went from 5.6% to 1.1%; on two public prompt-injection datasets, benign texts blocked went from 2.1% to 0.1%, injections blocked went from 28.1% to 24.0% and from 30.9% to 27.7%, and every injection that is no longer blocked gets an advisory. The local rules are a first layer; the cloud check (`ZN_CLOUD=1`) is unchanged. `RULES_VERSION` is now `2026-10-14.2`.
+- CI fails when the local rules block more benign text. A new gate runs the rules engine over the pinned benign corpus and over a list of ordinary developer sentences, and compares the block counts per rule with a committed baseline.
+- CI also fails when a rule layer changes without a higher version, or when its rule ids change without an updated snapshot. When the block counts fall, the gate passes and warns that its baseline is stale.
+
 ### Fixed
 - `zn unlock` no longer hangs at "Repeat passphrase" when the second line arrives before its prompt (for example when both lines are pasted at once). Each prompt used its own line reader and the second line was lost, so the vault was never created and `zn env shadow` then reported that the vault was locked. Wait for each prompt before typing: text typed before a prompt appears can be shown on screen by the terminal. Different passphrases, Ctrl+C and Ctrl+D now end with a clear message instead of waiting.
 

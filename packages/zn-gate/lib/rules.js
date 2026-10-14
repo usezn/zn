@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-14.1
+ * RULES_VERSION: 2026-10-14.2
  */
 
-const RULES_VERSION = '2026-10-14.1';
+const RULES_VERSION = '2026-10-14.2';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -92,12 +92,12 @@ function testMultiZh(text) {
 const INJECTION_RULES = [
   { id: 'pi:ignore_previous', pattern: new RegExp(overrideRuleSource('ignore'), 'i'), description: 'Override prior instructions' },
   { id: 'pi:disregard', pattern: new RegExp(overrideRuleSource('disregard'), 'i'), description: 'Disregard instructions' },
-  { id: 'pi:forget', pattern: /forget\s+(about\s+)?(everything|all|your)/i, description: 'Forget-context attack' },
+  { id: 'pi:forget', pattern: /(?<![A-Za-z0-9_])forget\s+(?:about\s+)?(?:everything|all|your)(?![A-Za-z0-9_])(?!\s+(?:of\s+)?(?:the\s+)?(?:cached?|caches|entries|changes|data|files?|records|sessions?|cookies|state|tabs|devices?|passwords?|history|items|keys|tokens|credentials|settings|preferences|accounts?|connections?|logins?|networks?)(?![A-Za-z0-9_]))/i, description: 'Forget-context attack' },
   { id: 'pi:identity_override', pattern: /you\s+are\s+now/i, description: 'Identity override' },
   { id: 'pi:new_instructions', pattern: /new\s+instructions?:/i, description: 'Instruction replacement' },
   { id: 'pi:system_tag', pattern: /(?:^|[\r\n"'`\[<])[ \t]*system\s*:|<[\s/]*system(?![A-Za-z0-9_])[^<>]*>/i, description: 'Fake system tag' },
   { id: 'pi:system_bracket', pattern: /\[system\]/i, description: 'Bracketed system tag' },
-  { id: 'pi:act_as', pattern: /act\s+as\s+(if|a)/i, description: 'Role hijack (act as)' },
+  { id: 'pi:act_as', pattern: /(?:(?<![A-Za-z0-9_])you\s+(?:(?:will|must|should|shall|now)\s+|are\s+to\s+)?|(?:^|[.!?\r\n\u2028\u2029])[ \t]*(?:[\"'`(\[*-][ \t]*)?|(?<![A-Za-z0-9_])please\s+|(?<![A-Za-z0-9_])now\s+|(?<![A-Za-z0-9_])from\s+now\s+on,?\s+(?:you\s+)?)(?=act(?![A-Za-z0-9_]))act\s+as\s+(?:if\s+you(?![A-Za-z0-9_])|an?\s+(?:[a-z-]+\s+){0,3}?(?:ai|assistant|chatbot|bot|model|llm|gpt|persona|character|version|mode|jailbroken|unrestricted|unfiltered|uncensored|evil|malicious|rogue|harmful|unethical|amoral|hacker|dan)(?![A-Za-z0-9_])|my(?![A-Za-z0-9_])|though\s+you(?![A-Za-z0-9_]))/i, description: 'Role hijack (act as)' },
   { id: 'pi:pretend', pattern: /pretend\s+(you|to\s+be)/i, description: 'Role hijack (pretend)' },
   { id: 'pi:roleplay', pattern: /roleplay\s+as/i, description: 'Role hijack (roleplay)' },
   { id: 'pi:jailbreak', pattern: /(?<![A-Za-z0-9_])jailbreak(?![A-Za-z0-9_])/i, description: 'Explicit jailbreak term' },
@@ -123,7 +123,52 @@ const OPEN_TAG_RE = /<[a-z0-9]+(?![A-Za-z0-9_])([^<>]*)(>?)/gi;
 const HIDDEN_ATTR_RE = /(?<![A-Za-z0-9_])(?:display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0|font-size\s*:\s*0(?:px)?|color\s*:\s*transparent|text-indent\s*:\s*-[0-9]{3,}px|hidden(?![A-Za-z0-9_]))/i;
 const HIDDEN_PAYLOAD_RE = /ignore|system|instruction|prompt|bypass|override|exfil|leak/gi;
 
+// The payload must be in the text of the hidden element itself: its content
+// up to the matching close tag (nested tags removed), at most
+// HIDDEN_TEXT_CHARS characters after the opening tag. Text after the element
+// does not count.
+const HIDDEN_TEXT_CHARS = 4096;
+const TAG_RE = /<(\/?)([a-z0-9]+)(?![A-Za-z0-9_])[^<>]*>/gi;
+
+// Returns the element's text and the index where reading stopped.
+function hiddenElementText(text, start, name) {
+  const end = Math.min(text.length, start + HIDDEN_TEXT_CHARS);
+  const re = new RegExp(TAG_RE.source, TAG_RE.flags);
+  re.lastIndex = start;
+  let depth = 1;
+  let out = '';
+  let pos = start;
+  let m;
+  while ((m = re.exec(text)) !== null && m.index < end) {
+    out += text.slice(pos, m.index) + ' ';
+    pos = re.lastIndex;
+    if (m[2].toLowerCase() === name) {
+      depth += m[1] ? -1 : 1;
+      if (depth === 0) return { text: out, stop: pos };
+    }
+  }
+  return { text: out + text.slice(pos, Math.max(pos, end)), stop: Math.max(pos, end) };
+}
+
 function testHiddenTag(text) {
+  const tagRe = new RegExp(OPEN_TAG_RE.source, OPEN_TAG_RE.flags);
+  let m;
+  while ((m = tagRe.exec(text)) !== null) {
+    if (m[2] === '>' && HIDDEN_ATTR_RE.test(m[1])) {
+      const name = m[0].slice(1).match(/^[a-z0-9]+/i)[0].toLowerCase();
+      const el = hiddenElementText(text, tagRe.lastIndex, name);
+      if (new RegExp(HIDDEN_PAYLOAD_RE.source, 'i').test(el.text)) return true;
+      // Hidden elements nested in this one were part of its text: each
+      // character is read once.
+      tagRe.lastIndex = Math.max(tagRe.lastIndex, el.stop);
+    }
+  }
+  return false;
+}
+
+// Earlier, broader form: a hidden element followed anywhere later by a
+// payload word. Used only for advisories.
+function testHiddenTagAnywhere(text) {
   const tagRe = new RegExp(OPEN_TAG_RE.source, OPEN_TAG_RE.flags);
   let m;
   while ((m = tagRe.exec(text)) !== null) {
@@ -163,13 +208,42 @@ const EXFIL_VERB_SOURCE = '(?<![A-Za-z0-9_])(give|reveal|send|show|print|expose|
 const CRED_OBJECT_SOURCE =
   '(?<![A-Za-z0-9_])(passwords?|api[_ -]?keys?|secrets?|credentials?|tokens?|ssh[ _-]?keys?|private[ _-]?keys?|aws_secret[a-z0-9_]*|aws_access[a-z0-9_]*)(?![A-Za-z0-9_])|(?:^|\\s|[\'"\`])\\.env(?:\\.[a-z0-9]+)?(?![A-Za-z0-9_])';
 
+// The verb must start a clause (an instruction, not a description such as
+// "this library reads tokens from ...") or be followed by "me"/"us", and the
+// credential must follow it in the same clause, within EXFIL_CLAUSE_CHARS
+// characters. No multiline flag: line starts are matched by the newline
+// itself, so a run of blank lines is read once.
+const EXFIL_CLAUSE_CHARS = 80;
+const EXFIL_CLAUSE_PREFIX = '(?:^|[.!?;:\\r\\n\\u2028\\u2029])[ \\t]*(?:[\\"\'`(\\[*-][ \\t]*)?|(?<![A-Za-z0-9_])(?:please|now|then|and|also|just|first|immediately|go\\s+ahead\\s+and|(?:can|could|would|will)\\s+you|(?:want|need|ask)\\s+you\\s+to|you\\s+(?:must|should|will|need\\s+to|have\\s+to))\\s+';
+const EXFIL_CLAUSE_RE = new RegExp(
+  '(?:(?:' + EXFIL_CLAUSE_PREFIX + ')' + EXFIL_VERB_SOURCE + '|' + EXFIL_VERB_SOURCE + '(?=\\s+(?:me|us)(?![A-Za-z0-9_])))' +
+    '[^.!?;\\r\\n]{0,' + EXFIL_CLAUSE_CHARS + '}?(?:' + CRED_OBJECT_SOURCE + ')',
+  'i'
+);
+
 const EXFIL_RULES = [
   {
     id: 'exfil:credentials',
-    compound: [new RegExp(EXFIL_VERB_SOURCE, 'i'), new RegExp(CRED_OBJECT_SOURCE, 'i')],
+    compound: [new RegExp(EXFIL_VERB_SOURCE, 'i'), new RegExp(CRED_OBJECT_SOURCE, 'i'), EXFIL_CLAUSE_RE],
     description: 'Imperative verb requesting credentials/secrets',
   },
 ];
+
+// Advisory tier: the broader forms of four rules. They match much benign
+// text (documentation, code, role-play requests), so a match does not block:
+// the verdict stays "allow" and the result carries `advisory` with the rule.
+// A blocking rule always wins over an advisory.
+const ADVISORY_RULES = [
+  { id: 'exfil:credentials', compound: [new RegExp(EXFIL_VERB_SOURCE, 'i'), new RegExp(CRED_OBJECT_SOURCE, 'i')], description: 'Mentions reading or sending credentials' },
+  { id: 'pi:act_as', pattern: /act\s+as\s+(?:if|a)/i, description: 'Role-play request (act as)' },
+  { id: 'pi:forget', pattern: /forget\s+(?:about\s+)?(?:everything|all|your)/i, description: 'Asks to forget context' },
+  { id: 'indirect:hidden_tag', test: testHiddenTagAnywhere, description: 'Hidden element in markup followed by instruction-like words' },
+];
+
+function matchesRule(rule, text) {
+  if (rule.compound) return rule.compound.every((re) => re.test(text));
+  return rule.test ? rule.test(text) : rule.pattern.test(text);
+}
 
 const SENSITIVE_PATH_RULES = [
   {
@@ -419,11 +493,13 @@ function evaluateUncached(input, options = {}) {
   const { normalized, stripped } = normalizeInput(input);
 
   // Check Base64 payload smuggling
+  let b64Advisory = null;
   const b64Match = normalized.match(B64_EXEC_RE) || stripped.match(B64_EXEC_RE);
   if (b64Match && b64Match[1]) {
     try {
       const decoded = Buffer.from(b64Match[1], 'base64').toString('utf8');
       const innerRes = evaluate(decoded, options);
+      if (innerRes.advisory) b64Advisory = innerRes.advisory;
       if (innerRes.verdict === 'block') {
         return {
           ...innerRes,
@@ -494,6 +570,24 @@ function evaluateUncached(input, options = {}) {
     if (input.includes(fpath)) {
       return { verdict: 'block', confidence: 1.0, reason: `Matches custom repository forbidden path: ${fpath}`, rule: 'custom:forbidden_path', engine: 'oss-local', rules_version: RULES_VERSION };
     }
+  }
+
+  for (const text of targets) {
+    for (const rule of ADVISORY_RULES) {
+      if (matchesRule(rule, text)) {
+        return {
+          verdict: 'allow', confidence: 0.99, rule: 'none', reason: null, engine: 'oss-local', rules_version: RULES_VERSION,
+          advisory: { rule: rule.id, reason: rule.description },
+        };
+      }
+    }
+  }
+
+  if (b64Advisory) {
+    return {
+      verdict: 'allow', confidence: 0.99, rule: 'none', reason: null, engine: 'oss-local', rules_version: RULES_VERSION,
+      advisory: { ...b64Advisory },
+    };
   }
 
   return { verdict: 'allow', confidence: 0.99, rule: 'none', reason: null, engine: 'oss-local', rules_version: RULES_VERSION };
@@ -874,15 +968,19 @@ function scanWindows(text, options = {}) {
   const step = MAX_SCAN_CHARS - SCAN_WINDOW_OVERLAP;
   const limit = Math.min(text.length, MAX_TOOL_RESULT_SCAN_CHARS);
   let res = null;
+  let advisory = null;
   for (let start = 0; ; start += step) {
     const end = Math.min(start + MAX_SCAN_CHARS, limit);
     res = evaluateUncached(text.slice(start, end), options);
+    if (!advisory && res.advisory) advisory = res.advisory;
     if (res.verdict === 'block' || end >= limit) break;
   }
   if (res.verdict !== 'block' && text.length > limit) {
     res = evaluateUncached(text.slice(-MAX_SCAN_CHARS), options);
+    if (!advisory && res.advisory) advisory = res.advisory;
   }
   res = { ...res };
+  if (res.verdict !== 'block' && advisory) res.advisory = { ...advisory };
   delete res.truncated;
   if (text.length > limit) res.truncated = true;
   return res;
@@ -964,14 +1062,18 @@ function evaluate(input, options = {}) {
   if (hit !== undefined && hit.ver === RULES_VERSION && hit.cfg === cfg) {
     evalCache.delete(input);
     evalCache.set(input, hit);
-    return { ...hit.res };
+    return copyResult(hit.res);
   }
   const res = evaluateUncached(input, options);
   evalCache.set(input, { res, cfg, ver: RULES_VERSION });
   if (evalCache.size > EVAL_CACHE_MAX) {
     evalCache.delete(evalCache.keys().next().value);
   }
-  return { ...res };
+  return copyResult(res);
+}
+
+function copyResult(res) {
+  return res.advisory ? { ...res, advisory: { ...res.advisory } } : { ...res };
 }
 
 module.exports = {

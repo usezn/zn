@@ -19,7 +19,7 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-RULES_VERSION = "2026-10-14.1"
+RULES_VERSION = "2026-10-14.2"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -141,12 +141,12 @@ def _test_multi_zh(text: str) -> bool:
 INJECTION_RULES: List[Tuple[str, re.Pattern, str]] = [
     ('pi:ignore_previous', re.compile(_override_rule_source('ignore'), re.IGNORECASE), 'Override prior instructions'),
     ('pi:disregard', re.compile(_override_rule_source('disregard'), re.IGNORECASE), 'Disregard instructions'),
-    ('pi:forget', re.compile(r'forget\s+(about\s+)?(everything|all|your)', re.IGNORECASE), 'Forget-context attack'),
+    ('pi:forget', re.compile(r"""(?<![A-Za-z0-9_])forget\s+(?:about\s+)?(?:everything|all|your)(?![A-Za-z0-9_])(?!\s+(?:of\s+)?(?:the\s+)?(?:cached?|caches|entries|changes|data|files?|records|sessions?|cookies|state|tabs|devices?|passwords?|history|items|keys|tokens|credentials|settings|preferences|accounts?|connections?|logins?|networks?)(?![A-Za-z0-9_]))""", re.IGNORECASE), 'Forget-context attack'),
     ('pi:identity_override', re.compile(r'you\s+are\s+now', re.IGNORECASE), 'Identity override'),
     ('pi:new_instructions', re.compile(r'new\s+instructions?:', re.IGNORECASE), 'Instruction replacement'),
     ('pi:system_tag', re.compile(r"""(?:^|[\r\n"'`\[<])[ \t]*system\s*:|<[\s/]*system(?![A-Za-z0-9_])[^<>]*>""", re.IGNORECASE), 'Fake system tag'),
     ('pi:system_bracket', re.compile(r'\[system\]', re.IGNORECASE), 'Bracketed system tag'),
-    ('pi:act_as', re.compile(r'act\s+as\s+(if|a)', re.IGNORECASE), 'Role hijack (act as)'),
+    ('pi:act_as', re.compile(r"""(?:(?<![A-Za-z0-9_])you\s+(?:(?:will|must|should|shall|now)\s+|are\s+to\s+)?|(?:^|[.!?\r\n\u2028\u2029])[ \t]*(?:[\"'`(\[*-][ \t]*)?|(?<![A-Za-z0-9_])please\s+|(?<![A-Za-z0-9_])now\s+|(?<![A-Za-z0-9_])from\s+now\s+on,?\s+(?:you\s+)?)(?=act(?![A-Za-z0-9_]))act\s+as\s+(?:if\s+you(?![A-Za-z0-9_])|an?\s+(?:[a-z-]+\s+){0,3}?(?:ai|assistant|chatbot|bot|model|llm|gpt|persona|character|version|mode|jailbroken|unrestricted|unfiltered|uncensored|evil|malicious|rogue|harmful|unethical|amoral|hacker|dan)(?![A-Za-z0-9_])|my(?![A-Za-z0-9_])|though\s+you(?![A-Za-z0-9_]))""", re.IGNORECASE), 'Role hijack (act as)'),
     ('pi:pretend', re.compile(r'pretend\s+(you|to\s+be)', re.IGNORECASE), 'Role hijack (pretend)'),
     ('pi:roleplay', re.compile(r'roleplay\s+as', re.IGNORECASE), 'Role hijack (roleplay)'),
     ('pi:jailbreak', re.compile(r'(?<![A-Za-z0-9_])jailbreak(?![A-Za-z0-9_])', re.IGNORECASE), 'Explicit jailbreak term'),
@@ -181,7 +181,55 @@ HIDDEN_ATTR_RE = re.compile(r'(?<![A-Za-z0-9_])(?:display\s*:\s*none|visibility\
 HIDDEN_PAYLOAD_RE = re.compile(r'ignore|system|instruction|prompt|bypass|override|exfil|leak', re.IGNORECASE)
 
 
+# The payload must be in the text of the hidden element itself: its content
+# up to the matching close tag (nested tags removed), at most
+# HIDDEN_TEXT_CHARS characters after the opening tag. Text after the element
+# does not count.
+HIDDEN_TEXT_CHARS = 4096
+TAG_RE = re.compile(r'<(/?)([a-z0-9]+)(?![A-Za-z0-9_])[^<>]*>', re.IGNORECASE)
+_TAG_NAME_RE = re.compile(r'<([a-z0-9]+)', re.IGNORECASE)
+
+
+def _hidden_element_text(text: str, start: int, name: str) -> Tuple[str, int]:
+    """Returns the element's text and the index where reading stopped."""
+    end = min(len(text), start + HIDDEN_TEXT_CHARS)
+    depth = 1
+    out = []
+    pos = start
+    for m in TAG_RE.finditer(text, start):
+        if m.start() >= end:
+            break
+        out.append(text[pos:m.start()])
+        out.append(' ')
+        pos = m.end()
+        if m.group(2).lower() == name:
+            depth += -1 if m.group(1) else 1
+            if depth == 0:
+                return ''.join(out), pos
+    out.append(text[pos:max(pos, end)])
+    return ''.join(out), max(pos, end)
+
+
 def _test_hidden_tag(text: str) -> bool:
+    pos = 0
+    while True:
+        m = OPEN_TAG_RE.search(text, pos)
+        if m is None:
+            return False
+        pos = m.end()
+        if m.group(2) == '>' and HIDDEN_ATTR_RE.search(m.group(1)):
+            name = _TAG_NAME_RE.match(m.group(0)).group(1).lower()
+            inner, stop = _hidden_element_text(text, m.end(), name)
+            if HIDDEN_PAYLOAD_RE.search(inner):
+                return True
+            # Hidden elements nested in this one were part of its text: each
+            # character is read once.
+            pos = max(pos, stop)
+
+
+# Earlier, broader form: a hidden element followed anywhere later by a
+# payload word. Used only for advisories.
+def _test_hidden_tag_anywhere(text: str) -> bool:
     for m in OPEN_TAG_RE.finditer(text):
         if m.group(2) == '>' and HIDDEN_ATTR_RE.search(m.group(1)):
             return HIDDEN_PAYLOAD_RE.search(text, m.end()) is not None
@@ -232,8 +280,33 @@ RULE_TESTERS: Dict[str, Any] = {
     'pi:multi_zh': _test_multi_zh,
 }
 
-EXFIL_VERBS = re.compile(r'(?<![A-Za-z0-9_])(give|reveal|send|show|print|expose|leak|paste|dump|read|open|cat|fetch|extract|steal)(?![A-Za-z0-9_])', re.IGNORECASE)
+EXFIL_VERB_SOURCE = r'(?<![A-Za-z0-9_])(give|reveal|send|show|print|expose|leak|paste|dump|read|open|cat|fetch|extract|steal)(?![A-Za-z0-9_])'
+EXFIL_VERBS = re.compile(EXFIL_VERB_SOURCE, re.IGNORECASE)
 CRED_OBJECTS = re.compile(r"""(?<![A-Za-z0-9_])(passwords?|api[_ -]?keys?|secrets?|credentials?|tokens?|ssh[ _-]?keys?|private[ _-]?keys?|aws_secret[a-z0-9_]*|aws_access[a-z0-9_]*)(?![A-Za-z0-9_])|(?:^|\s|['"`])\.env(?:\.[a-z0-9]+)?(?![A-Za-z0-9_])""", re.IGNORECASE)
+
+# The verb must start a clause (an instruction, not a description such as
+# "this library reads tokens from ...") or be followed by "me"/"us", and the
+# credential must follow it in the same clause, within EXFIL_CLAUSE_CHARS
+# characters. No MULTILINE flag: line starts are matched by the newline
+# itself, so a run of blank lines is read once.
+EXFIL_CLAUSE_CHARS = 80
+EXFIL_CLAUSE_PREFIX = r"""(?:^|[.!?;:\r\n\u2028\u2029])[ \t]*(?:[\"'`(\[*-][ \t]*)?|(?<![A-Za-z0-9_])(?:please|now|then|and|also|just|first|immediately|go\s+ahead\s+and|(?:can|could|would|will)\s+you|(?:want|need|ask)\s+you\s+to|you\s+(?:must|should|will|need\s+to|have\s+to))\s+"""
+EXFIL_CLAUSE_RE = re.compile(
+    r'(?:(?:' + EXFIL_CLAUSE_PREFIX + r')' + EXFIL_VERB_SOURCE + r'|' + EXFIL_VERB_SOURCE + r'(?=\s+(?:me|us)(?![A-Za-z0-9_])))'
+    + r'[^.!?;\r\n]{0,' + str(EXFIL_CLAUSE_CHARS) + r'}?(?:' + CRED_OBJECTS.pattern + r')',
+    re.IGNORECASE,
+)
+
+# Advisory tier: the broader forms of four rules. They match much benign
+# text (documentation, code, role-play requests), so a match does not block:
+# the verdict stays "allow" and the result carries `advisory` with the rule.
+# A blocking rule always wins over an advisory.
+ADVISORY_RULES: List[Tuple[str, Any, str]] = [
+    ('exfil:credentials', lambda t: EXFIL_VERBS.search(t) is not None and CRED_OBJECTS.search(t) is not None, 'Mentions reading or sending credentials'),
+    ('pi:act_as', re.compile(r'act\s+as\s+(?:if|a)', re.IGNORECASE).search, 'Role-play request (act as)'),
+    ('pi:forget', re.compile(r'forget\s+(?:about\s+)?(?:everything|all|your)', re.IGNORECASE).search, 'Asks to forget context'),
+    ('indirect:hidden_tag', _test_hidden_tag_anywhere, 'Hidden element in markup followed by instruction-like words'),
+]
 
 SENSITIVE_PATH_RULES: List[Tuple[str, re.Pattern, str]] = [
     (
@@ -270,6 +343,7 @@ class Assessment:
     engine: str = 'oss-local'
     rules_version: str = RULES_VERSION
     truncated: bool = False
+    advisory: Optional[Dict[str, str]] = None
 
     @property
     def allowed(self) -> bool:
@@ -287,6 +361,8 @@ class Assessment:
         }
         if self.truncated:
             d['truncated'] = True
+        if self.advisory:
+            d['advisory'] = dict(self.advisory)
         return d
 
 def _strip_c_comments(text: str) -> str:
@@ -381,12 +457,15 @@ def _evaluate_uncached(input_text: str) -> Assessment:
     raw = input_text.translate(_CASE_FOLD_GUARD)
 
     # Check Base64 payload smuggling
+    b64_advisory = None
     for text_candidate in (normalized, stripped):
         b64_match = B64_EXEC_RE.search(text_candidate)
         if b64_match:
             try:
                 decoded = base64.b64decode(b64_match.group(1)).decode('utf-8', errors='ignore')
                 inner_res = evaluate(decoded)
+                if inner_res.advisory:
+                    b64_advisory = dict(inner_res.advisory)
                 if not inner_res.allowed:
                     return Assessment(
                         verdict='block',
@@ -429,13 +508,22 @@ def _evaluate_uncached(input_text: str) -> Assessment:
                 return Assessment(verdict='block', confidence=0.95, rule=rule_id, reason=desc)
 
         # 5. Exfiltration Compound (verb + credentials)
-        if EXFIL_VERBS.search(text) and CRED_OBJECTS.search(text):
+        if EXFIL_VERBS.search(text) and CRED_OBJECTS.search(text) and EXFIL_CLAUSE_RE.search(text):
             return Assessment(
                 verdict='block',
                 confidence=0.90,
                 rule='exfil:credentials',
                 reason='Imperative verb requesting credentials/secrets'
             )
+
+    for text in targets:
+        for rule_id, test, desc in ADVISORY_RULES:
+            if test(text):
+                return Assessment(verdict='allow', confidence=0.99, rule='none', reason=None,
+                                  advisory={'rule': rule_id, 'reason': desc})
+
+    if b64_advisory:
+        return Assessment(verdict='allow', confidence=0.99, rule='none', reason=None, advisory=b64_advisory)
 
     return Assessment(verdict='allow', confidence=0.99, rule='none', reason=None)
 
@@ -839,14 +927,21 @@ def scan_windows(text: str) -> Assessment:
     step = MAX_SCAN_CHARS - SCAN_WINDOW_OVERLAP
     limit = min(len(text), MAX_TOOL_RESULT_SCAN_CHARS)
     start = 0
+    advisory = None
     while True:
         end = min(start + MAX_SCAN_CHARS, limit)
         res = _evaluate_uncached(text[start:end])
+        if advisory is None and res.advisory:
+            advisory = res.advisory
         if not res.allowed or end >= limit:
             break
         start += step
     if res.allowed and len(text) > limit:
         res = _evaluate_uncached(text[-MAX_SCAN_CHARS:])
+        if advisory is None and res.advisory:
+            advisory = res.advisory
+    if res.allowed and advisory:
+        res.advisory = dict(advisory)
     res.truncated = len(text) > limit
     return res
 
@@ -937,10 +1032,11 @@ def evaluate(input_text: str) -> Assessment:
     hit = _eval_cache.get(input_text)
     if hit is not None:
         _eval_cache[input_text] = _eval_cache.pop(input_text)
-        return Assessment(*hit)
+        return Assessment(*hit[:7], advisory=dict(hit[7]) if hit[7] else None)
     res = _evaluate_uncached(input_text)
     _eval_cache[input_text] = (res.verdict, res.confidence, res.rule,
-                               res.reason, res.engine, res.rules_version, res.truncated)
+                               res.reason, res.engine, res.rules_version, res.truncated,
+                               dict(res.advisory) if res.advisory else None)
     if len(_eval_cache) > _EVAL_CACHE_MAX:
         _eval_cache.pop(next(iter(_eval_cache)))
     return res
