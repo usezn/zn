@@ -1,0 +1,62 @@
+name: Windows checks for Windows-specific code
+
+# Pull requests into next run Ubuntu only. This workflow adds Windows (Node.js 22) when a pull
+# request touches code with Windows-specific paths: command quoting, launching programs, the
+# keychain, the broker, agent setup and their tests. Not a required check. The full Windows
+# matrix still runs on pushes to main and next, on pull requests into main and release branches,
+# and with the full-ci label.
+
+on:
+  pull_request:
+    branches: [ next ]
+    paths:
+      - 'packages/zn-gate/lib/exe.js'
+      - 'packages/zn-gate/lib/shell-quote.js'
+      - 'packages/zn-gate/lib/hooks/**'
+      - 'packages/zn-gate/lib/broker/**'
+      - 'packages/zn-gate/lib/vault/**'
+      - 'packages/zn-gate/lib/agents/**'
+      - 'packages/zn-gate/lib/init.js'
+      - 'packages/zn-gate/bin/**'
+      - 'packages/zn-gate/test/hook_quoting.test.js'
+      - 'packages/zn-gate/test/hooks*.test.js'
+      - 'packages/zn-gate/test/broker*.test.js'
+      - 'packages/zn-gate/test/vault*.test.js'
+      - 'packages/zn-gate/test/init*.test.js'
+      - 'plugins/tools/**'
+      - '.github/workflows/windows-paths.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-paths-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows (Node.js 22)
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.x
+          cache: npm
+          cache-dependency-path: packages/zn-gate/package-lock.json
+      - name: Install zn-gate dependencies
+        working-directory: packages/zn-gate
+        run: npm ci --ignore-scripts
+      - name: zn-gate unit tests
+        working-directory: packages/zn-gate
+        run: npm test
+      - name: Vault tests (Windows Credential Manager)
+        working-directory: packages/zn-gate
+        env:
+          ZN_TEST_NATIVE_KEYCHAIN: '1'
+        run: node test/vault.test.js
+      - name: Plugin launcher tests
+        run: node plugins/tools/test-launch.js

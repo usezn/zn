@@ -1,16 +1,23 @@
 name: zn-gate leak bench
 
+# Pull requests into next run the checks the rulesets require and Ubuntu with Node.js 22. The full matrix
+# (Windows and macOS, every Node.js version) runs on pushes to main and next, on pull requests into main
+# and release branches, and on any pull request labelled full-ci.
 on:
+  push:
+    branches: [ main, next ]
   pull_request:
-    branches: [ next, main ]
+    branches: [ next, main, 'release/**' ]
+    types: [ opened, synchronize, reopened, labeled ]
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# A new push to a pull request cancels the previous run for it; every push to main and next runs on its own.
 concurrency:
-  group: leak-bench-${{ github.ref }}
-  cancel-in-progress: true
+  group: leak-bench-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   leak-bench:
@@ -20,16 +27,28 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        node: [20, 22, 24]
+        # "leak bench (node 22 / ubuntu-latest)" is a required check: it always runs.
+        os: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["ubuntu-latest", "windows-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
+        node: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[20, 22, 24]' || '[22]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Decide what this change needs
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FULL: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+        working-directory: .
+        run: bash .github/scripts/ci-scope.sh
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.scope.outputs.run == 'true'
         with:
           node-version: ${{ matrix.node }}
       - name: Restore benign corpus cache
+        if: steps.scope.outputs.run == 'true'
         id: corpus-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -39,19 +58,23 @@ jobs:
             packages/zn-gate/test/fixtures/benign/licenses
           key: benign-corpus-${{ runner.os }}-${{ hashFiles('packages/zn-gate/test/fixtures/benign/MANIFEST.json') }}
       - name: Fetch benign corpus (cache miss)
-        if: steps.corpus-cache.outputs.cache-hit != 'true'
+        if: steps.scope.outputs.run == 'true' && (steps.corpus-cache.outputs.cache-hit != 'true')
         shell: bash
         run: bash packages/zn-gate/test/fixtures/benign/fetch_corpus.sh
       - name: Verify corpus checksums
+        if: steps.scope.outputs.run == 'true'
         run: node packages/zn-gate/test/fixtures/benign/build_manifest.js --verify
       - name: Rules false-positive gate
+        if: steps.scope.outputs.run == 'true'
         run: node bench/rules_fp_gate.js
       - name: Self-check fake secrets fixtures
+        if: steps.scope.outputs.run == 'true'
         run: node packages/zn-gate/test/fixtures/fake_secrets.js --selftest
       - name: Run leak bench
+        if: steps.scope.outputs.run == 'true'
         run: node bench/leak_bench.js --require-engine --json leak_bench_results.json
       - name: Upload JSON report
-        if: always()
+        if: steps.scope.outputs.run == 'true' && (always())
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: leak-bench-${{ matrix.os }}-node${{ matrix.node }}

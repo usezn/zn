@@ -20,10 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cursor checks the arguments of MCP tool calls: a call that would send a secret value, or a `__ZN_` marker, to an MCP server other than zn's `secrets` server is denied. Run `zn hooks install cursor` again to add this hook.
 
 ### Fixed
+- The Rust engine's restricted-commands rule now matches whole words in tool names too, so tools such as `transform_data`, `perform_search` or `add_item` are no longer blocked as `rm` or `dd`; `format_disk`, `runShutdown` and `rm` still are.
+- The Rust engine's log scrubber now redacts card numbers only when they pass the Luhn check and match a card network, US SSNs only with a valid area, group and serial, and phone numbers only in E.164 form or as a formatted North American number, never a digit run inside a longer number. IDs and timestamps are no longer redacted as phone numbers.
 - `zn audit` no longer reports zn's own `secrets` MCP server as an unknown server when its command ends with the `--agent <id>` that `zn hooks install` adds.
 - The tests of the suggested `zn` command now pass on Windows, where a program on the PATH needs an extension such as `.cmd`.
 - `zn init` finds the Antigravity MCP settings: it checks `~/.gemini/antigravity/mcp_config.json` and `~/.gemini/config/mcp_config.json` (each one only if it exists). It looked for `~/.gemini/antigravity/mcp.json`, which Antigravity does not use, so Antigravity was never found.
 - The threat model said that `zn run` keeps interpreter start-up variables such as `NODE_OPTIONS`; since 1.5.1 it removes them whenever it injects secret values.
+
+### Security
+- The Python package (`zn-gate` on PyPI) now redacts the same provider token formats as the Node.js scrubber: Stripe, Slack, GitLab, npm, PyPI, SendGrid, Google, Hugging Face, Twilio, AWS STS, Azure storage and AD secrets, DigitalOcean, Shopify, Mailgun, Groq, Replicate, xAI, Docker Hub, Tavily, Firecrawl, Polar, Supabase and other provider tokens, passwords in URLs, and `Authorization: Bearer` tokens. Generic assignments such as `password = "..."` in source files are not yet redacted by the Python package. Token-like runs of 24 or more characters that remain after redaction are masked in printed output and in the evidence ledger preview.
+- `zn-gate scan --format github` prints the rule, the reason and the file and line only. It no longer prints the matched line, so CI logs do not show credential text.
+- The evidence ledger directory is created with mode 0700 and the ledger file with mode 0600 on POSIX systems, in both the Node.js and the Python packages. A ledger that others can read is restricted on the next write.
 
 ## [1.6.0] - 2026-10-14
 
