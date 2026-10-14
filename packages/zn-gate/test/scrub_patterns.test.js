@@ -160,11 +160,28 @@ test('new and extended formats: near-miss lengths and look-alikes are not secret
     'polar_rt_x' + pick(ALNUM, 12),                         // Polar refresh prefix, too short
     'polar_pat_' + 'a'.repeat(25),                          // Polar: one character class
     'hf_' + HF_PASCAL,                                      // 34-letter PascalCase identifier
-    'SK' + pick('0123456789abcdef', 16) + pick('0123456789ABCDEF', 16), // Twilio: mixed case
+    'SK' + pick('0123456789abcdef', 15) + 'a' + pick('0123456789ABCDEF', 15) + 'B', // Twilio: mixed case, letters pinned
     'Set the secret to ' + 'abc9Q~' + pick(URLSAFE, 31) + '9.json.',    // Azure: dotted continuation
   ]) {
     assert.deepStrictEqual(types(t), [], t);
   }
+});
+
+/* The HF identifier check must stay linear: adversarial bodies with long
+ * lowercase runs followed by uppercase letters used to backtrack badly. */
+test('HF letters-only check is linear on adversarial bodies', () => {
+  const unit = 'hf_' + 'a'.repeat(30) + 'AAAA';
+  const many = Array.from({ length: 20 }, () => unit).join(' ');
+  let t0 = process.hrtime.bigint();
+  P.findPatterns(many, {});
+  let ms = Number(process.hrtime.bigint() - t0) / 1e6;
+  assert.ok(ms < 50, 'twenty adversarial bodies took ' + ms.toFixed(1) + ' ms');
+  const long = Array.from({ length: 423 }, () => unit + ' ').join('');
+  assert.ok(long.length >= 16000 && long.length < 17000, String(long.length));
+  t0 = process.hrtime.bigint();
+  P.findPatterns(long, {});
+  ms = Number(process.hrtime.bigint() - t0) / 1e6;
+  assert.ok(ms < 200, '16k-character text took ' + ms.toFixed(1) + ' ms');
 });
 
 test('Azure AD client secret at the end of a sentence: the full stop is not part of the span', () => {

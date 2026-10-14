@@ -382,7 +382,7 @@ const PATTERNS = [
    * are rejected so that a 34-letter class or function name is not a token;
    * mixed tokens keep the random-body check. */
   { type: 'HF_TOKEN', hints: ['hf_'], re: re(NB + 'hf_[A-Za-z0-9]{34,40}' + NA),
-    check: (v) => (/^[A-Za-z]{34}$/.test(v.slice(3)) && !/^(?:[A-Z]?[a-z]{2,})+[A-Z]{0,3}[a-z]{0,2}$/.test(v.slice(3))) ||
+    check: (v) => (/^[A-Za-z]{34}$/.test(v.slice(3)) && !/^[a-z]*(?:[A-Z][a-z]{2,})*[A-Z]{0,3}[a-z]{0,2}$/.test(v.slice(3))) ||
       looksRandom(v.slice(3), 3, 3.8) },
   { type: 'NPM_TOKEN', hints: ['npm_'], re: re(NB + 'npm_[A-Za-z0-9]{36}' + NA),
     check: (v) => looksRandom(v.slice(4), 3, 3.8) },
