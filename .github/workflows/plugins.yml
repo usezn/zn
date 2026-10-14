@@ -47,8 +47,10 @@ jobs:
     # A release tag, main and pull requests into main must carry a pinned lock
     # file (npm integrity,
     # provenance attestation and file digests) and no placeholders.
+    # Prerelease tags (vX.Y.Z-beta.N) are skipped: the plugin is pinned only to
+    # final releases.
     name: Release pin checks
-    if: (github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')) || (github.event_name == 'pull_request' && github.base_ref == 'main')
+    if: (github.event_name == 'push' && ((startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-')) || github.ref == 'refs/heads/main')) || (github.event_name == 'pull_request' && github.base_ref == 'main')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
