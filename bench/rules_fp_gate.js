@@ -257,6 +257,10 @@ function main() {
     const msg = 'the rules block fewer benign texts than the baseline records; the baseline is stale. Update bench/rules_fp_baseline.json with --update-baseline to lock in the improvement.';
     if (IN_CI) console.log('::warning::rules false-positive baseline is stale: ' + msg);
     else console.log('note: ' + msg);
+    // The new baseline, ready to copy from the log into bench/rules_fp_baseline.json.
+    console.log('RULES_FP_BASELINE_BEGIN');
+    console.log(candidateText);
+    console.log('RULES_FP_BASELINE_END');
   }
   console.log('rules false-positive gate: PASS');
 }
