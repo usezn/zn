@@ -49,7 +49,7 @@ claude plugin install zn-gate@usezn
 
 Already ran `zn hooks install claude-code` before? Run `zn hooks uninstall claude-code` first, otherwise both sets of hooks run.
 
-Start a new Claude Code session. Claude Code is then blocked from reading `.env` files with real values and credential files, secrets in what its tools return are replaced with markers before the model sees them, a secret pasted into a prompt is blocked, and Claude can check untrusted text for prompt injection. Not covered: Claude Code sessions in the cloud, Cowork and chat. Details: [plugins/claude/zn-gate](plugins/claude/zn-gate/README.md).
+Start a new Claude Code session. Claude Code is then blocked from reading `.env` files with real values and credential files, secrets in what its tools return are replaced with markers or redacted before the model sees them, a secret pasted into a prompt is blocked, and Claude can check untrusted text for prompt injection. Not covered: Claude Code sessions in the cloud, Cowork and chat. Details: [plugins/zn-gate](plugins/zn-gate/README.md).
 
 **Codex CLI, Cursor or OpenCode: the hooks.**
 
@@ -99,7 +99,7 @@ npx -y zn-gate init             # wrap (backup first)
 npx -y zn-gate init --revert    # undo
 ```
 
-It reads Claude Desktop, Claude Code (`~/.claude.json`), Cursor (`~/.cursor/mcp.json`), Codex CLI (`~/.codex/config.toml`) and OpenCode (`~/.config/opencode/opencode.json`). [Full list and rules](packages/zn-gate/README.md#wrap-the-mcp-servers-you-already-use).
+It reads Claude Desktop, Claude Code (`~/.claude.json`), Cursor (`~/.cursor/mcp.json`), Codex CLI (`~/.codex/config.toml`), OpenCode (`~/.config/opencode/opencode.json`) and Antigravity (`~/.gemini/antigravity/mcp_config.json`). [Full list and rules](packages/zn-gate/README.md#wrap-the-mcp-servers-you-already-use).
 
 ## Check that it works
 
