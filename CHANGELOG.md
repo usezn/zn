@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `zn unlock` no longer hangs at "Repeat passphrase" when the passphrase was typed or pasted before the prompt appeared (for example both lines pasted at once). Each prompt used its own line reader, and the second line was lost; the vault was then never created and `zn env shadow` reported that the vault was locked. Different passphrases and a closed input now end with a clear message instead of waiting.
+
 ### Security
 - Trigger words are now found in the same way in Node.js and Python. A non-ASCII letter next to a trigger word (for example `éjailbreak`) no longer hides it: Python previously allowed this while Node.js blocked it, and both now block.
 - Compatibility characters are folded before matching: fullwidth Latin text such as `ｉｇｎｏｒｅ` is treated as `ignore`, in both languages. The folding is used only for detection; the text returned to you is not changed.
