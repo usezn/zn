@@ -5,6 +5,10 @@
  * severity the rule can report (SARIF `security-severity` is per rule).
  */
 
+// Version of the rule catalogue and of the command patterns in audit/patterns.js.
+// Bump it when a rule, a pattern or a rule id changes; see CONTRIBUTING.md.
+const AUDIT_RULES_VERSION = '2026-10-14.1';
+
 const SEVERITIES = ['low', 'medium', 'high', 'critical'];
 const RANK = { none: 99, low: 1, medium: 2, high: 3, critical: 4 };
 const SECURITY_SEVERITY = { critical: '9.5', high: '8.0', medium: '5.5', low: '3.0' };
@@ -162,4 +166,4 @@ const RULES = [
 
 const BY_ID = Object.fromEntries(RULES.map((r) => [r.id, r]));
 
-module.exports = { RULES, BY_ID, SEVERITIES, RANK, SECURITY_SEVERITY, CVE };
+module.exports = { AUDIT_RULES_VERSION, RULES, BY_ID, SEVERITIES, RANK, SECURITY_SEVERITY, CVE };

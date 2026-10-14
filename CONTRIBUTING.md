@@ -43,6 +43,16 @@ When adding new detection rules:
 4. Add positive test cases (attack vectors that must be blocked) and negative test cases (benign developer code that must be allowed).
 5. Verify zero false positives against real technical text (SQL, React, Docker, shell scripts).
 
+## Rule Versions and the Snapshot
+
+Each rule layer has a version constant: `RULES_VERSION` (detection rules, both packages), `SCRUB_RULES_VERSION` (secret and PII types), `AUDIT_RULES_VERSION` (`zn audit` rules) and `POLICY_RULES_VERSION` (hook policy). When you change a layer:
+
+1. Bump its version in the format `YYYY-MM-DD.N` (increase `N` for a second change on the same day).
+2. Run `node packages/zn-gate/scripts/update-rules-snapshot.js`. It rewrites `packages/zn-gate/test/fixtures/rules_snapshot.json` and refuses to write when a file changed without a version bump.
+3. Commit the updated snapshot with the change. `npm test` in `packages/zn-gate` runs `test/rules_snapshot.test.js`, which fails on any mismatch.
+
+CI also runs the false-positive gate, `node bench/rules_fp_gate.js`. It counts the blocks over the benign corpus and over `packages/zn-gate/test/fixtures/benign_phrases.json`, and fails when any rule blocks more than the committed baseline in `bench/rules_fp_baseline.json`. If your change must block more benign text, explain why in the pull request, then run `node bench/rules_fp_gate.js --update-baseline`. Changing the phrase list also changes the scanned count, so update the baseline in the same commit.
+
 ## Security Vulnerability Reporting
 
 If you find a security vulnerability, please do NOT open a public issue. Follow our [Security Policy](SECURITY.md) and report it to `security@usezn.com`.

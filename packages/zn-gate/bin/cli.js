@@ -9,6 +9,8 @@ const { scanEnvironments, configureEnvironments } = require('../lib/init');
 const { logEvidence, verifyEvidenceLedger, getEvidenceStats, exportEvidenceLedger, startEvidenceUi, EVIDENCE_FILE } = require('../lib/evidence');
 const { analyze, analyzeLocal, isCloudEnabled, resolveEndpoint, RULES_VERSION } = require('../lib/client');
 const { evaluate, redactSecrets, SECRET_PATTERNS } = require('../lib/rules');
+const { SCRUB_RULES_VERSION } = require('../lib/scrub/patterns');
+const { AUDIT_RULES_VERSION } = require('../lib/audit/rules');
 
 // Secrets that span several lines (a PEM private key block). The line-by-line
 // scan never sees BEGIN and END together, so these run on the whole file.
@@ -508,7 +510,7 @@ async function main() {
   }
 
   if (args.includes('-V') || args.includes('--version') || args[0] === 'version') {
-    process.stdout.write(`zn-gate ${VERSION} (rules engine: ${RULES_VERSION})\n`);
+    process.stdout.write(`zn-gate ${VERSION} (rules engine: ${RULES_VERSION}; scrub rules: ${SCRUB_RULES_VERSION}; audit rules: ${AUDIT_RULES_VERSION})\n`);
     process.exit(0);
   }
 
@@ -728,7 +730,7 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
     process.stdout.write(`
 🛡️  zn-gate Status:
   Package Version : ${VERSION}
-  Rules Version   : ${RULES_VERSION}
+  Rules Version   : ${RULES_VERSION} (scrub ${SCRUB_RULES_VERSION}, audit ${AUDIT_RULES_VERSION})
   Active Engine   : ${cloud ? 'Local rules + cloud for analyze_prompt (ZN_CLOUD=1)' : 'Local rules only'}
   Endpoint        : ${cloud ? resolveEndpoint(options) : 'None (nothing leaves this machine)'}
   API key         : ${hasKey ? 'Set' + (cloud ? '' : ' (unused: cloud requires ZN_CLOUD=1)') : 'Not set'}
