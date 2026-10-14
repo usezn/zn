@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The Rust engine's prompt-injection rules return a stable rule ID (for example `pi:ignore_previous`) instead of the matched phrase or "Heuristic Pattern #N", and no longer block phrases that are common in ordinary text: "act as a", "respond as a", "debug mode", "root access", "shell access", "user message:", "end of conversation", "end of transmission", "stay in character", "prompt injection", "stop what you are doing", "without any restrictions" and "imagine you are a". "ignore/disregard/forget ... instructions" now needs a word such as previous, prior, above or your, and "jailbreak" must be a whole word.
+
 ### Added
 - Claude Code plugin: the plugin has a listing icon for the Claude plugin directory, and its contact email is now support@usezn.com (security reports still go to security@usezn.com).
 - `zn-gate stats` (Node and Python) shows what zn-gate did on this machine: checks, blocks, secret values replaced before the model saw them, and the secret types found, per agent, for the last 30 days (`--days N`, `--json`). The agent hooks, the MCP tools and the shield proxy keep these counts in `~/.zn/stats.json` (numbers only; never values, prompts, paths or hosts). `ZN_STATS=off` turns counting off. Nothing is sent: sharing anonymous daily counts is a separate opt-in (`zn-gate stats share on`, `off`, `status`, `show`), off by default; when on, `zn-gate stats` sends one report per complete day with only the fields that `zn-gate stats share show` prints first.
