@@ -24,7 +24,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 axum = { version = "0.7", features = ["macros", "ws", "multipart"] }
 tower-http = { version = "0.5", features = ["cors", "auth", "fs"] }
 wasmtime = "48"
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.40", default-features = false, features = ["bundled", "cache", "fallible_uint"] }
 ratatui = "0.30"
 crossterm = "0.29"
 cliclack = "0.2"
@@ -40,7 +40,7 @@ tower = "0.4"
 tower_governor = "0.4"
 governor = "0.6"
 aho-corasick = "1.1"
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.12", features = ["json"] }
 prometheus = "0.14"
 lazy_static = "1.4"
 lru = "0.18.2"
@@ -52,13 +52,13 @@ tempfile = "3.27"
 aes-gcm = "0.10"
 argon2 = "0.5"
 base64 = "0.22"
-ed25519-dalek = "2.1"
+ed25519-dalek = "3.0"
 opentelemetry = { version = "0.33", features = ["trace"] }
 tracing-opentelemetry = "0.34"
 opentelemetry-otlp = { version = "0.33", default-features = false, features = ["trace", "http-proto", "reqwest-blocking-client", "reqwest-rustls"] }
 opentelemetry_sdk = { version = "0.33", features = ["trace"] }
-sha2 = "0.10"
-rand = "0.8"
+sha2 = "0.11"
+rand = "0.10"
 pqcrypto-dilithium = "0.5"
 pqcrypto-traits = "0.3"
 jsonwebtoken = { version = "10.3", features = ["rust_crypto"] }
@@ -74,7 +74,7 @@ tokenizers = "0.22.2"
 hf-hub = "0.4.3"
 # Official MCP SDK (modelcontextprotocol/rust-sdk). Pinned exact; Apache-2.0/MIT.
 # schemars needed directly: JsonSchema derive expands to `schemars::` paths.
-rmcp = { version = "=3.1.4", features = ["server", "macros", "schemars", "transport-io"] }
+rmcp = { version = "=3.5.1", features = ["server", "macros", "schemars", "transport-io"] }
 schemars = "1"
 
 [profile.release]

@@ -12,6 +12,8 @@
  *    beforeReadFile        file_path, content     -> {permission: allow|deny, user_message}
  *    beforeShellExecution  command, cwd           -> {permission: allow|deny|ask, user_message, agent_message}
  *    beforeSubmitPrompt    prompt                 -> {continue: bool, user_message}
+ *    beforeMCPExecution    tool_name, tool_input, mcp_server_name, command|url
+ *                                                 -> {permission: allow|deny, user_message, agent_message}
  *    postToolUse           tool_name, tool_input, tool_output (JSON string)
  *                                                 -> {updated_mcp_tool_output} (MCP tools only)
  *  No output (exit 0, empty stdout) counts as a hook failure that fails
@@ -42,7 +44,7 @@ const { whichSync } = require('../broker/markers');
 
 const id = 'cursor';
 const HOOK_TIMEOUT_S = 30;
-const EVENTS = ['beforeReadFile', 'beforeShellExecution', 'beforeSubmitPrompt', 'postToolUse', 'preToolUse'];
+const EVENTS = ['beforeMCPExecution', 'beforeReadFile', 'beforeShellExecution', 'beforeSubmitPrompt', 'postToolUse', 'preToolUse'];
 const BUILTIN = { Shell: 'bash', Read: 'read', Write: 'write', Edit: 'edit', Grep: 'grep', Glob: 'glob', WebFetch: 'webfetch' };
 // preToolUse covers the built-in tools that can name a file, so the same path checks apply.
 const PRE_TOOL_MATCHER = 'Grep|Write|Delete';
@@ -62,6 +64,16 @@ function normalize(raw) {
   if (name === 'beforeReadFile') return { ...base, event: 'pre_tool', tool: 'read', toolName: 'Read', input: { path: raw.file_path, texts: [] } };
   if (name === 'beforeShellExecution') return { ...base, event: 'pre_tool', tool: 'bash', toolName: 'Shell', input: { command: String(raw.command || ''), texts: [] } };
   if (name === 'beforeSubmitPrompt') return { ...base, event: 'user_prompt', tool: null, input: { prompt: typeof raw.prompt === 'string' ? raw.prompt : '' } };
+  if (name === 'beforeMCPExecution') {
+    return {
+      ...base,
+      event: 'pre_tool',
+      tool: 'mcp',
+      toolName: String(raw.tool_name || ''),
+      mcp: { server: raw.mcp_server_name || null, tool: raw.tool_name },
+      input: { args: parseMaybeJson(raw.tool_input) },
+    };
+  }
   if (name === 'preToolUse') {
     // The input keys of Grep, Write and Delete are not documented: the first
     // string under a known name is the path. Without one, respond() fails closed for writes.
@@ -122,6 +134,10 @@ function respond(d) {
     if (d.decision === 'deny') return { continue: false, user_message: d.message || 'Blocked by zn' };
     return { continue: true };
   }
+  if (h === 'beforeMCPExecution') {
+    if (d.decision === 'deny') return { permission: 'deny', user_message: d.message || 'Blocked by zn', agent_message: d.message || 'Blocked by zn' };
+    return null; // no opinion: Cursor's own MCP approval applies
+  }
   if (h === 'postToolUse') {
     if (ev.tool === 'mcp' && d.updatedOutput !== undefined) {
       const out = { updated_mcp_tool_output: typeof d.updatedOutput === 'string' ? { text: d.updatedOutput } : d.updatedOutput };
@@ -167,7 +183,7 @@ function install(opts = {}) {
   if (opts.mcp !== false) {
     const cli = path.resolve(__dirname, '..', '..', 'bin', 'cli.js').replace(/\\/g, '/');
     report.warnings.push('to add the "secrets" MCP server, add to ~/.cursor/mcp.json under "mcpServers": "secrets": ' +
-      JSON.stringify({ command: (opts.nodePath || process.execPath).replace(/\\/g, '/'), args: [cli, 'secrets-mcp'] }));
+      JSON.stringify({ command: (opts.nodePath || process.execPath).replace(/\\/g, '/'), args: [cli, 'secrets-mcp', '--agent', 'cursor'] }));
   }
   return report;
 }

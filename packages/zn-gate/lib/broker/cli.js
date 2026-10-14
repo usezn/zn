@@ -1,8 +1,8 @@
 'use strict';
 
 /**
- * `zn secret ...` (including `zn secret log`), `zn vault log`, `zn env ...`,
- * `zn audit` (deprecated alias of `zn vault log`) and `zn hooks ...`.
+ * `zn secret ...` (including `zn secret log`), `zn vault log`, `zn env ...`
+ * and `zn hooks ...`.
  *
  * Every command that adds, changes, reveals or removes a value is for the
  * person at the keyboard: it needs an interactive terminal, refuses to run
@@ -20,6 +20,8 @@ const { approvalStore } = require('./approvals');
 const { writeFileAtomic } = require('./files');
 const deps = require('../deps');
 const exe = require('../exe');
+const { humanError } = require('../errors');
+const { znCommand } = require('../zn-command');
 
 const MODES = new Set(['proxy', 'env', 'file']);
 const PLACEMENTS = new Set(['header', 'query', 'body']);
@@ -467,7 +469,6 @@ async function hooks(args, io) {
 /* ------------------------------ entry ------------------------------ */
 
 const SECRET_USAGE = 'usage: zn secret set|list|rm|allow|approve|import|adopt|log ...';
-const AUDIT_NOTICE = 'zn: `zn audit` is moving: use `zn vault log` (alias `zn secret log`) to see this log. In 1.6, `zn audit` will audit your configuration instead.';
 
 async function dispatch(group, args, ioIn) {
   const io = makeIo(ioIn);
@@ -483,7 +484,7 @@ async function dispatch(group, args, ioIn) {
       if (sub === 'adopt') return await secretAdopt(rest, io);
       if (sub === 'log') return await audit(rest, io);
       if (sub === 'get' || sub === 'reveal') {
-        throw deps.znError('ZN_POLICY_DENIED', 'zn does not print secret values. Use the marker with zn run or the secrets MCP tools.');
+        throw deps.znError('ZN_POLICY_DENIED', 'zn does not print secret values. To use one in a command, run: ' + znCommand('run --secrets NAME -- <command>'));
       }
       throw deps.znError('ZN_USAGE', SECRET_USAGE);
     }
@@ -498,15 +499,10 @@ async function dispatch(group, args, ioIn) {
       if (args[0] === 'log') return await audit(args.slice(1), io);
       throw deps.znError('ZN_USAGE', 'usage: zn vault log [--since 1h]');
     }
-    if (group === 'audit') {
-      io.stderr.write(AUDIT_NOTICE + '\n');
-      return await audit(args, io);
-    }
     if (group === 'hooks') return await hooks(args, io);
     throw deps.znError('ZN_USAGE', 'unknown command ' + group);
   } catch (err) {
-    const tag = err.code && String(err.code).startsWith('ZN_') ? '[' + err.code + '] ' : '';
-    io.stderr.write('zn ' + group + ': ' + tag + err.message + '\n');
+    io.stderr.write('zn ' + group + ': ' + humanError(err) + '\n');
     return err.code === 'ZN_USAGE' ? 64 : err.code === 'ZN_POLICY_DENIED' ? 77 : 1;
   }
 }

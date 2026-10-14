@@ -1,5 +1,8 @@
 'use strict';
 
+// zn-gate stats: these tests must never count into the real ~/.zn/stats.json.
+process.env.ZN_STATS = 'off';
+
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
@@ -98,7 +101,7 @@ test('PreToolUse denies reading a plain-text .env, allows it once shadowed', asy
   fs.writeFileSync(envFile, 'AWS_ACCESS_KEY_ID=' + AWS + '\nDEBUG=true\n');
   const res = await run(preTool('Read', { file_path: envFile }, dir));
   assert.equal(res.output.hookSpecificOutput.permissionDecision, 'deny');
-  assert.match(res.output.hookSpecificOutput.permissionDecisionReason, /zn env shadow/);
+  assert.match(res.output.hookSpecificOutput.permissionDecisionReason, /env shadow/);
   assert.ok(!res.output.hookSpecificOutput.permissionDecisionReason.includes(AWS));
   fs.writeFileSync(envFile, 'AWS_ACCESS_KEY_ID=__ZN_AWS_ACCESS_KEY_ID__\nDEBUG=true\n');
   const ok = await run(preTool('Read', { file_path: envFile }, dir));
@@ -231,7 +234,7 @@ test('UserPromptSubmit blocks a pasted secret and suggests zn secret set', async
   const res = await run(prompt('use this key ' + AWS + ' to list buckets', '/'));
   assert.equal(res.output.decision, 'block');
   assert.equal(res.output.hookSpecificOutput.suppressOriginalPrompt, true);
-  assert.match(res.output.reason, /zn secret set AWS_KEY/);
+  assert.match(res.output.reason, /secret set AWS_KEY/);
   assert.ok(!res.output.reason.includes(AWS));
   const ok = await run(prompt('list my S3 buckets with __ZN_AWS_KEY__', '/'));
   assert.equal(ok.output, null);
@@ -435,7 +438,7 @@ test('UserPromptSubmit runs prepare() before scan(), so a vault value without a 
   const res = await runner.handle(adapter, prompt('connect with ' + plain, '/'), { engine, vault, failMode: 'open' });
   assert.ok(prepared);
   assert.equal(res.output.decision, 'block');
-  assert.match(res.output.reason, /zn secret set DB_PASS/);
+  assert.match(res.output.reason, /secret set DB_PASS/);
 });
 
 test('vault unavailable: the real engine redacts irreversibly and the user is told to unlock', async () => {
@@ -444,7 +447,10 @@ test('vault unavailable: the real engine redacts irreversibly and the user is to
   const out = JSON.stringify(res.output.hookSpecificOutput.updatedToolOutput);
   assert.ok(!out.includes(AWS));
   assert.match(out, /__ZN_REDACTED_AWS_KEY__/);
-  assert.match(res.output.systemMessage, /zn unlock/);
+  assert.match(res.output.systemMessage, /(zn|zn-gate@\S+) unlock/);
+  assert.match(res.output.systemMessage, /cannot be put back afterwards/);
+  assert.doesNotMatch(JSON.stringify(res.output), /irreversib|ZN_LOCKED/);
+  assert.match(JSON.stringify(res.output), /do not retry/);
 });
 
 test('engine: only well-formed tokens are protected from detection (a key wrapped as a token is still caught)', async () => {
@@ -519,7 +525,7 @@ test('project install writes .claude/settings.json and .mcp.json', (t) => {
   const rep = adapter.install({ scope: 'project', projectDir: dir, nodePath: 'node', cliPath: '/opt/zn/bin/cli.js', runnerPath: '/opt/zn/lib/hooks/runner.js' });
   assert.equal(rep.settings, path.join(dir, '.claude', 'settings.json'));
   const mcp = JSON.parse(fs.readFileSync(path.join(dir, '.mcp.json'), 'utf8'));
-  assert.deepEqual(mcp.mcpServers.secrets, { command: 'node', args: ['/opt/zn/bin/cli.js', 'secrets-mcp'] });
+  assert.deepEqual(mcp.mcpServers.secrets, { command: 'node', args: ['/opt/zn/bin/cli.js', 'secrets-mcp', '--agent', 'claude-code'] });
   adapter.uninstall({ scope: 'project', projectDir: dir });
   const mcp2 = JSON.parse(fs.readFileSync(path.join(dir, '.mcp.json'), 'utf8'));
   assert.equal(mcp2.mcpServers.secrets, undefined);
@@ -538,4 +544,61 @@ test('zn hook claude-code runs as a process and passes clean events through', ()
   const d = spawnSync(process.execPath, [cli, 'hook', 'claude-code'], { input: JSON.stringify(preBash('cat ~/.aws/credentials', os.tmpdir())), encoding: 'utf8' });
   assert.equal(d.status, 0);
   assert.equal(JSON.parse(d.stdout).hookSpecificOutput.permissionDecision, 'deny');
+});
+
+test('a batch-file claude (npm install on Windows) is never run through cmd.exe', (t) => {
+  const home = tempDir(t, 'zn-cmd-');
+  const marker = path.join(home, 'ran');
+  const bin = path.join(home, 'claude.cmd');
+  fs.writeFileSync(bin, '@echo off\r\necho ran > "' + marker + '"\r\n');
+  const env = { CLAUDE_CONFIG_DIR: path.join(home, '.claude') };
+  const opts = { scope: 'user', home, env, claudeBin: bin, nodePath: 'C:/Program Files/nodejs/node.exe', cliPath: 'C:/a & b/zn/bin/cli.js', runnerPath: '/opt/zn/lib/hooks/runner.js' };
+  const rep = adapter.install(opts);
+  const warn = rep.warnings.find((w) => /batch file/.test(w));
+  assert.ok(warn, JSON.stringify(rep.warnings));
+  assert.match(warn, /claude mcp add --scope user secrets -- "/);
+  const un = adapter.uninstall(opts);
+  assert.ok(un.warnings.some((w) => /claude mcp remove --scope user secrets/.test(w)), JSON.stringify(un.warnings));
+  assert.equal(fs.existsSync(marker), false, 'the batch file must not run');
+});
+
+test('Windows: an extensionless file next to its .cmd is not the program (npm layout)', (t) => {
+  const { whichSync, resolveExecutable } = require('../lib/exe');
+  const dir = tempDir(t, 'zn-which-');
+  fs.writeFileSync(path.join(dir, 'tool'), '#!/bin/sh\necho sh\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(dir, 'tool.cmd'), '@echo cmd\r\n');
+  const found = whichSync('tool', dir);
+  const resolved = resolveExecutable('tool', { PATH: dir, PATHEXT: '.COM;.EXE;.BAT;.CMD' });
+  if (process.platform === 'win32') {
+    assert.equal(path.basename(found), 'tool.cmd');
+    assert.equal(path.basename(resolved.path), 'tool.cmd');
+    // A name that already has a PATHEXT extension is used as written.
+    assert.equal(path.basename(whichSync('tool.cmd', dir)), 'tool.cmd');
+  } else {
+    assert.equal(path.basename(found), 'tool');
+  }
+});
+
+test('the prompt hook blocks the prompt when it cannot run; tool hooks do not', (t) => {
+  const home = tempDir(t, 'zn-onf-');
+  const env = { CLAUDE_CONFIG_DIR: path.join(home, '.claude') };
+  const opts = { scope: 'user', home, env, mcp: false, nodePath: '/usr/bin/node', cliPath: '/opt/zn/bin/cli.js', runnerPath: '/opt/zn/lib/hooks/runner.js' };
+  const read = () => JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8')).hooks || {};
+  adapter.install(opts);
+  assert.equal(read().UserPromptSubmit[0].hooks[0].onFailure, 'block');
+  // A tool hook that cannot run lets the call through, as documented.
+  assert.equal(read().PreToolUse[0].hooks[0].onFailure, undefined);
+  assert.equal(read().PostToolUse[0].hooks[0].onFailure, undefined);
+  // Reinstall and uninstall still recognise the prompt hook.
+  adapter.install(opts);
+  assert.equal(read().UserPromptSubmit.length, 1);
+  adapter.uninstall({ scope: 'user', home, env, mcp: false });
+  assert.equal(read().UserPromptSubmit, undefined);
+});
+
+test('OpenCode plugin: a hook that fails or times out blocks the call and the message', () => {
+  const src = require('../lib/agents/opencode').pluginSource({ scope: 'user', nodePath: '/usr/bin/node', runnerPath: '/opt/zn/lib/hooks/runner.js' });
+  assert.match(src, /action: "error", message: "timeout"/);
+  assert.match(src, /if \(r\.action === "error"\) throw new Error\("zn: the secret scrubber is not working \(" \+ r\.message \+ "\); call blocked"\)/);
+  assert.match(src, /if \(r\.action === "error"\) throw new Error\("zn: the secret scrubber is not working \(" \+ r\.message \+ "\); message not sent"\)/);
 });

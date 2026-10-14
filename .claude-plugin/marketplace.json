@@ -1,15 +1,18 @@
 {
   "name": "usezn",
-  "description": "Claude Code plugins from usezn: local security for coding agents.",
+  "description": "Plugins from usezn: zn-gate, a local security layer for coding agents.",
   "owner": {
     "name": "usezn",
-    "email": "admin@usezn.com"
+    "email": "support@usezn.com",
+    "url": "https://usezn.com"
   },
   "plugins": [
     {
       "name": "zn-gate",
-      "source": "./plugins/claude/zn-gate",
-      "description": "For Claude Code: keep secrets out of what is sent to the model, and check untrusted text for prompt injection, locally."
+      "source": "./plugins/zn-gate",
+      "description": "Keeps secret values out of what the agent sends to its model, adds a secrets MCP server that uses credentials without revealing them, and checks untrusted text for prompt injection with local rules.",
+      "category": "security",
+      "tags": ["security", "secrets", "mcp", "hooks"]
     }
   ]
 }

@@ -2,14 +2,15 @@
 
 ## Supported Versions
 
-Security updates are provided for the following versions:
+Security fixes are released for the latest minor version of `zn-gate` (npm and PyPI).
+Upgrade to it to receive them.
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 1.4.x   | :white_check_mark: |
-| 1.3.x   | :white_check_mark: |
-| 1.2.x   | :white_check_mark: |
-| < 1.2.0 | :x:                |
+| 1.5.x   | :white_check_mark: |
+| < 1.5.0 | :x:                |
+
+Prereleases (`-alpha`, `-beta`, `-rc`) are not supported once the final release is out.
 
 ---
 
@@ -19,12 +20,35 @@ We take the security of zn, the MCP Gateway, and our client SDKs seriously. If y
 
 * **Preferred: GitHub private vulnerability reporting.** Open the [Security tab](https://github.com/usezn/zn/security) of this repository and click **Report a vulnerability** ([direct link](https://github.com/usezn/zn/security/advisories/new)). The report stays private between you and the maintainers, and we can work on the fix and the advisory with you there.
 * **Alternative: email** [security@usezn.com](mailto:security@usezn.com), for example if you do not have a GitHub account or the issue affects the usezn.com platform rather than this repository.
-* **Response Time** (both channels):
-  * Initial acknowledgment: **within 24 hours**
-  * Triage & severity assessment: **within 48 hours**
-  * Remediation & patch release: typically within 7–14 days depending on complexity
 
-Please include detailed reproduction steps, proof-of-concept payloads or scripts, and affected components or commits. Testing against local Docker containers or isolated test accounts is strongly encouraged.
+Please include detailed reproduction steps, proof-of-concept payloads or scripts, and affected versions, components or commits. Testing against local Docker containers or isolated test accounts is strongly encouraged.
+
+### What to expect
+
+The project has a single maintainer today (see [MAINTAINERS.md](MAINTAINERS.md)). These are targets, for both channels:
+
+| Step | Target |
+| --- | --- |
+| Acknowledge your report | within 3 business days |
+| Initial assessment and severity (CVSS) | within 7 days |
+| Fix released, critical or high severity | within 30 days |
+| Fix released, medium or low severity | within 90 days |
+
+We keep you updated at least every 14 days until the issue is resolved, and tell you if a target will be missed and why.
+
+---
+
+## Coordinated Disclosure
+
+1. **Private triage.** We confirm the issue, assess its severity and affected versions, and open a draft GitHub Security Advisory (or use the one you opened through private vulnerability reporting). You are invited to it.
+2. **CVE.** For an issue in a released package, we request a CVE through GitHub from the advisory.
+3. **Fix.** For a reported issue, the fix is developed and reviewed privately (for example in the advisory's temporary private fork), with tests that reproduce the issue. For an issue we find ourselves and can fix right away, the fix may go through public pull requests and be released within hours. For a patch release we ship only the fixes it needs, from a `release/X.Y.Z` branch (see [GOVERNANCE.md](GOVERNANCE.md)).
+4. **Release.** The fixed version is published to npm and PyPI by the [`Release` workflow](.github/workflows/release.yml), with signatures and provenance.
+5. **Disclosure.** We publish the advisory, the release notes and the changelog entry together: affected versions, impact, what to do, and credit to the reporter (unless you prefer to stay anonymous). Advisories describe the class of problem, not step-by-step exploitation.
+
+We ask you to keep the details private until the advisory is published, and we aim to publish within 90 days of your report. If a fix needs longer, we agree a date with you; if the issue is being exploited, we may publish earlier with mitigations.
+
+Example: [GHSA-rf3f-ppm5-3xrx](https://github.com/usezn/zn/security/advisories/GHSA-rf3f-ppm5-3xrx) (`zn run` on Windows) was found in an internal review. The fixes were merged through pull requests, cherry-picked onto a `release/1.5.1` branch made from `main`, published as 1.5.1 through the release workflow, and disclosed with the advisory and the release notes on the same day.
 
 ---
 
@@ -56,5 +80,7 @@ We gratefully acknowledge independent security researchers who have helped prote
 
 ## Security Advisories
 
+* [GHSA-rf3f-ppm5-3xrx](https://github.com/usezn/zn/security/advisories/GHSA-rf3f-ppm5-3xrx) — *zn-gate for Node.js on Windows: `zn run` could hand secrets to a program chosen through the environment (fixed in 1.5.1)*
+* [GHSA-r4h2-qcf2-8227](https://github.com/usezn/zn/security/advisories/GHSA-r4h2-qcf2-8227) — *zn-gate 1.4.0 and earlier sent tool output and tool-call arguments to api.usezn.com without redaction when `ZN_API_KEY` was set (fixed in 1.4.1)*
 * [SEC-2026-01](docs/advisories/SEC-2026-01.md) — *Control-plane authorization gap in zn management API (Remediated in commit 6ebce2f)*
 * [SEC-2026-02](docs/advisories/SEC-2026-02.md) — *Insufficient session and token revocation on password reset (Remediated in the usezn.com platform, which is not part of this repository)*

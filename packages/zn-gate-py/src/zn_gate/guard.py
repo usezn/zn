@@ -44,20 +44,23 @@ def _extract_strings(data: Any, max_depth: int = 10) -> List[str]:
     return strings
 
 
-def check_tool_call(tool_name: str, arguments: Any = None) -> Assessment:
+def check_tool_call(tool_name: str, arguments: Any = None, strict: Optional[bool] = None) -> Assessment:
     """
     Evaluates whether an agent tool call is safe to execute.
     Inspects tool arguments recursively for injection, evasion, or exfiltration attacks.
     """
     strings_to_check = _extract_strings(arguments)
+    advisory = None
     for s in strings_to_check:
-        res = evaluate(s)
+        res = evaluate(s, strict=strict)
         if not res.allowed:
             return res
-    return Assessment(verdict="allow", confidence=1.0, rule="none", reason=None)
+        advisory = advisory or res.advisory
+    return Assessment(verdict="allow", confidence=1.0, rule="none", reason=None,
+                      advisory=dict(advisory) if advisory else None)
 
 
-def check_tool_result(result: Any, block_truncated: bool = False) -> Assessment:
+def check_tool_result(result: Any, block_truncated: bool = False, strict: Optional[bool] = None) -> Assessment:
     """
     Evaluates data returned by external tools (e.g. web search, file content, DB queries)
     for indirect prompt injections or leaked credentials.
@@ -68,15 +71,18 @@ def check_tool_result(result: Any, block_truncated: bool = False) -> Assessment:
     """
     strings_to_check = _extract_strings(result)
     truncated = False
+    advisory = None
     for s in strings_to_check:
-        res = scan_windows(s)
+        res = scan_windows(s, strict=strict)
         if not res.allowed:
             return res
         truncated = truncated or res.truncated
+        advisory = advisory or res.advisory
     if truncated and (block_truncated or os.environ.get("ZN_BLOCK_TRUNCATED") == "1"):
         return Assessment(verdict="block", confidence=1.0, rule="size:truncated",
                           reason="Output too large to scan in full", truncated=True)
-    return Assessment(verdict="allow", confidence=1.0, rule="none", reason=None, truncated=truncated)
+    return Assessment(verdict="allow", confidence=1.0, rule="none", reason=None, truncated=truncated,
+                      advisory=dict(advisory) if advisory else None)
 
 
 def guard(

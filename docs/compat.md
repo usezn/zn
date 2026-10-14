@@ -12,6 +12,7 @@ documentation on 2026-10-11. End-to-end evidence is in [`bench/e2e/`](../bench/e
 | Block writes to `~/.zn` and to the agents' hook and plugin configuration | Yes (Write, Edit, shell) | Yes (`apply_patch`, checked file by file; shell) | **Best effort**: Write, Delete and Grep through `preToolUse`; shell through `beforeShellExecution` | Yes (write, edit, `apply_patch`, shell) |
 | Scrub tool output before the model sees it | **Yes, every tool** (Bash, PowerShell, Read, Grep, LSP, WebFetch, MCP, MCP resources; Monitor through a streaming filter) | **Yes, lossy**: the result is replaced by its scrubbed text | **MCP output only**; shell and file output cannot be rewritten | **Yes, every tool** (and the TUI preview) |
 | Block a pasted secret in the prompt | Yes | Yes | Yes | Yes (OpenCode shows it as an error) |
+| If the zn hook cannot run (missing `node`, crash, timeout) | Tool calls run unchecked; errors inside zn deny the call or withhold the output. Prompts are blocked (`onFailure`, Claude Code 2.1.295 and later) | Codex does not document blocking here: the hook is reported as failed and calls and prompts run | Reads and prompts are blocked (`failClosed`); other events run unchecked | Calls and messages are blocked |
 | Commands with `__ZN_<NAME>__`: through `zn run` | Rewritten automatically, shown to you for confirmation | The agent is told the exact `zn run -- …` line to use | The agent is told the exact `zn run -- …` line to use; Cursor asks you once wrapped | Rewritten automatically; OpenCode's own permission rules apply |
 | Restore detected tokens into local commands and git-ignored files | Yes, shown in the confirmation dialog | No (tokens stay) | No (tokens stay) | No (tokens stay) |
 | `secrets` MCP server | Yes (registered on install) | Yes (snippet printed) | Yes (snippet printed) | Yes (snippet printed) |
@@ -39,6 +40,18 @@ documentation on 2026-10-11. End-to-end evidence is in [`bench/e2e/`](../bench/e
   - `beforeReadFile` can only allow or deny. zn sets `failClosed: true` on it
     and on `beforeSubmitPrompt`, so a hook that crashes or times out blocks the
     read or the prompt.
+  - `beforeMCPExecution` denies an MCP call whose arguments carry a
+    `__ZN_<NAME>__` marker or a secret value, and names the kind of secret,
+    never its value. The one exception for markers is zn's own `secrets`
+    server, identified by the exact command `zn hooks install` writes; a
+    server reached by URL, or one that only has the name, is not zn's own.
+    Arguments over 1 MB (counted in characters) are denied, because zn cannot
+    check them. Other calls get no answer, so Cursor's own MCP approval still
+    applies. This hook, like
+    `beforeShellExecution` and `preToolUse`, has no `failClosed`: zn gives no
+    answer when it has no objection, and Cursor treats an empty answer as a
+    block when `failClosed` is set, which would block every such call. The
+    trade-off: if this hook crashes or times out, the call runs unchecked.
   - `preToolUse` (Write, Delete, Grep) checks the file a call names with the
     same rules as the other tools. Cursor does not document the input keys of
     these tools, so zn looks for the usual names (`file_path`, `path`,

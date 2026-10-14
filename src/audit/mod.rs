@@ -162,9 +162,9 @@ impl AuditVault {
             let salt = if let Some(hex_str) = salt_hex {
                 hex::decode(hex_str).map_err(|e| anyhow!("Failed to decode salt: {}", e))?
             } else {
-                use rand::RngCore;
+                use rand::Rng;
                 let mut new_salt = [0u8; 16];
-                rand::thread_rng().fill_bytes(&mut new_salt);
+                rand::rng().fill_bytes(&mut new_salt);
                 let hex_str = hex::encode(new_salt);
                 conn.execute(
                     "INSERT INTO metadata (key, value) VALUES ('derivation_salt', ?1)",

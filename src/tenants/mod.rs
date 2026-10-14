@@ -113,8 +113,8 @@ fn seed_key(env_key: Option<String>) -> SeedKey {
     match crate::config::normalize_credential(env_key) {
         Some(k) => SeedKey::FromEnv(k),
         None => {
-            use rand::distributions::{Alphanumeric, DistString};
-            SeedKey::Generated(Alphanumeric.sample_string(&mut rand::thread_rng(), 32))
+            use rand::distr::{Alphanumeric, SampleString};
+            SeedKey::Generated(Alphanumeric.sample_string(&mut rand::rng(), 32))
         }
     }
 }

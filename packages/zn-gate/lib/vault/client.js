@@ -49,7 +49,10 @@ const PROTOCOL = 1;
 const TIMEOUT_MS = 15000;
 // Operations the daemon confirms with the user wait for the answer.
 const CONFIRM_TIMEOUT_MS = 150000;
-const CONFIRMED_OPS = new Set(['recordApproval', 'updateSecretMeta', 'confirmFileWrite']);
+const CONFIRMED_OPS = new Set(['recordApproval', 'updateSecretMeta', 'confirmFileWrite', 'teamJoin', 'teamLeave', 'confirmOrgOpening']);
+// Network calls to the zn cloud (policy download and audit upload).
+const NETWORK_OPS = new Set(['teamSync']);
+const NETWORK_TIMEOUT_MS = 120000;
 const MAX_LINE = 64 * 1024 * 1024;
 
 function endpoint(opts) {
@@ -111,14 +114,18 @@ function approvalArgs(args) {
   return [project, secret, name, resolveExecutable(argv0)];
 }
 
-function lockedError(detail) {
-  return znError(CODES.LOCKED, 'vault is locked' + (detail ? ' (' + detail + ')' : '') + '; run `zn unlock`');
+// notRunning: the daemon is not running (no session key, or no socket to it),
+// the one case the plain "unlock it" message is for.
+function lockedError(detail, notRunning = false) {
+  const err = znError(CODES.LOCKED, 'vault is locked' + (detail ? ' (' + detail + ')' : '') + '; run `zn unlock`');
+  if (notRunning) err.vaultNotRunning = true;
+  return err;
 }
 
 function readSessionKey(keyFile) {
   let buf;
   try { buf = store.readPrivateFile(keyFile); } catch (err) { throw lockedError(err.code); }
-  if (buf === null) throw lockedError();
+  if (buf === null) throw lockedError(null, true);
   const hex = buf.toString('utf8').trim();
   if (!/^[0-9a-f]{64}$/.test(hex)) throw lockedError('bad session key');
   return Buffer.from(hex, 'hex');
@@ -147,7 +154,7 @@ class VaultClient {
         reject(err);
       };
       const timer = setTimeout(() => fail(lockedError('timeout')), TIMEOUT_MS);
-      socket.on('error', (err) => { clearTimeout(timer); fail(lockedError(err.code)); });
+      socket.on('error', (err) => { clearTimeout(timer); fail(lockedError(err.code, true)); });
       socket.on('close', () => {
         clearTimeout(timer);
         for (const p of state.pending.values()) p.reject(lockedError('connection closed'));
@@ -209,7 +216,7 @@ class VaultClient {
       const timer = setTimeout(() => {
         state.pending.delete(id);
         reject(lockedError('timeout'));
-      }, CONFIRMED_OPS.has(op) ? CONFIRM_TIMEOUT_MS : TIMEOUT_MS);
+      }, CONFIRMED_OPS.has(op) ? CONFIRM_TIMEOUT_MS : NETWORK_OPS.has(op) ? NETWORK_TIMEOUT_MS : TIMEOUT_MS);
       state.pending.set(id, {
         resolve: (v) => { clearTimeout(timer); resolve(v); },
         reject: (e) => { clearTimeout(timer); reject(e); },
@@ -228,7 +235,8 @@ class VaultClient {
   mapToken(project, type, value) { return this.call('mapToken', [project, type, value]); }
   resolve(project, token, opts) { return this.call('resolve', [project, token, opts || {}]); }
   setSecret(name, value, meta) { return this.call('setSecret', [name, value, meta || {}]); }
-  listSecrets() { return this.call('listSecrets', []); }
+  // opts {effective, agent}: the organization policy applied for that agent.
+  listSecrets(opts) { return this.call('listSecrets', opts ? [opts] : []); }
   removeSecret(name) { return this.call('removeSecret', [name]); }
   exactValues(project) { return this.call('exactValues', [project]); }
   audit(event) { return this.call('audit', [event || {}]); }
@@ -237,6 +245,11 @@ class VaultClient {
   isApproved(project, secret, argv0) { return this.call('isApproved', approvalArgs(Array.from(arguments))); }
   recordApproval(project, secret, argv0) { return this.call('recordApproval', approvalArgs(Array.from(arguments))); }
   confirmFileWrite(project, file, names, reason) { return this.call('confirmFileWrite', [project, file, names, reason]); }
+  teamJoin(args) { return this.call('teamJoin', [args || {}]); }
+  teamLeave() { return this.call('teamLeave', []); }
+  teamInfo() { return this.call('teamInfo', []); }
+  teamSync(args) { return this.call('teamSync', [args || {}]); }
+  confirmOrgOpening(secret, kind, value, agent, agentTrusted) { return this.call('confirmOrgOpening', [secret, kind, value, agent || null, agentTrusted === true]); }
   status() { return this.call('status', []); }
   auditVerify() { return this.call('auditVerify', []); }
   lock() { return this.call('lock', []); }
@@ -257,7 +270,9 @@ async function mapToken(project, type, value) { return client().mapToken(project
 // {destination, agent, tool} for the daemon's policy check and audit.
 async function resolve(project, token) { return client().resolve(project, token, arguments[2]); }
 async function setSecret(name, value, meta) { return client().setSecret(name, value, meta); }
-async function listSecrets() { return client().listSecrets(); }
+// Contract arity is 0; an optional argument {effective, agent} applies the
+// organization policy for that agent (zn Team).
+async function listSecrets() { return client().listSecrets(arguments[0]); }
 async function removeSecret(name) { return client().removeSecret(name); }
 async function exactValues(project) { return client().exactValues(project); }
 async function audit(event) { return client().audit(event); }

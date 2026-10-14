@@ -4,9 +4,9 @@ const https = require('https');
 const http = require('http');
 const { URL } = require('url');
 const { evaluate, redactSecrets, sanitizeToolResult, RULES_VERSION } = require('./rules');
-let PKG_VERSION = '1.5.0';
+let PKG_VERSION = '1.6.0';
 try {
-  PKG_VERSION = require('../package.json').version || '1.5.0';
+  PKG_VERSION = require('../package.json').version || '1.6.0';
 } catch (_) {}
 
 /*
@@ -34,20 +34,50 @@ function resolveEndpoint(options = {}) {
 }
 
 /**
+ * The API key to use, or null. zn keys and tokens are letters, digits, `_`,
+ * `-` and `.` only; anything else counts as unset: blank, too short, or a
+ * placeholder a launcher did not expand (for example a plugin option left
+ * empty, `${user_config.api_key}`, or `%ZN_API_KEY%`). Sending text to the
+ * cloud with such a value would only get a 401.
+ */
+function usableApiKey(value) {
+  if (typeof value !== 'string') return null;
+  const k = value.trim();
+  return /^[A-Za-z0-9._-]{16,256}$/.test(k) ? k : null;
+}
+
+/**
  * True only when the user explicitly opted in to cloud prompt analysis:
  * an API key AND ZN_CLOUD=1, and no local-only override.
  */
 function isCloudEnabled(options = {}) {
-  const apiKey = options.apiKey || process.env.ZN_API_KEY;
+  const apiKey = usableApiKey(options.apiKey || process.env.ZN_API_KEY);
   const optedIn = process.env.ZN_CLOUD === '1';
   const forceLocal = Boolean(options.localOnly) || process.env.ZN_LOCAL_ONLY === 'true';
   return Boolean(apiKey) && optedIn && !forceLocal;
 }
 
-function analyzeCloud(input, apiKey, endpointUrl, timeoutMs = 4000) {
+/*
+ * Long texts: the cloud gate reads the first 512 tokens unless the request
+ * asks for overlapping windows ("long_input": "windows": 512-token windows,
+ * stride 256, up to 20; the verdict comes from the window with the highest
+ * score). Text over LONG_INPUT_MIN_CHARS (well under 512 tokens of English
+ * prose) asks for windows unless ZN_LONG_INPUT / --long-input is "off"; a
+ * text that fits one window gets the same result either way. Each window is
+ * one more inference, so these requests are slower and get a longer timeout.
+ */
+const LONG_INPUT_MIN_CHARS = 1000;
+const WINDOWS_TIMEOUT_MS = 12000;
+
+function longInputMode(options = {}) {
+  const v = String(options.longInput ?? process.env.ZN_LONG_INPUT ?? 'windows').trim().toLowerCase();
+  return ['off', 'none', 'truncate', '0', 'false', 'no'].includes(v) ? 'off' : 'windows';
+}
+
+function analyzeCloud(input, apiKey, endpointUrl, timeoutMs = 4000, extra = {}) {
   return new Promise((resolve, reject) => {
     const url = new URL(endpointUrl);
-    const postData = JSON.stringify({ input });
+    const postData = JSON.stringify({ input, ...extra });
     const isHttps = url.protocol === 'https:';
     const lib = isHttps ? https : http;
 
@@ -126,16 +156,24 @@ async function analyze(input, options = {}) {
     };
   }
 
-  const apiKey = options.apiKey || process.env.ZN_API_KEY;
+  const apiKey = usableApiKey(options.apiKey || process.env.ZN_API_KEY);
   const { sanitized, detections } = redactSecrets(typeof input === 'string' ? input : String(input ?? ''));
   const endpoint = resolveEndpoint(options);
+  const windows = longInputMode(options) === 'windows' && sanitized.length > LONG_INPUT_MIN_CHARS;
   try {
-    const cloudRes = await analyzeCloud(sanitized, apiKey, endpoint, options.timeout || 4000);
-    return {
+    const cloudRes = await analyzeCloud(sanitized, apiKey, endpoint,
+      options.timeout || (windows ? WINDOWS_TIMEOUT_MS : 4000), windows ? { long_input: 'windows' } : {});
+    const out = {
       ...cloudRes,
       mode: 'hybrid-cloud',
       secrets_redacted_before_upload: detections.length,
     };
+    if (cloudRes.long_input && cloudRes.long_input.capped) {
+      out.warning = 'The text is longer than the cloud gate checks (' + cloudRes.long_input.windows + ' windows of 512 tokens): the end was not analyzed.';
+    } else if (windows && cloudRes.long_input && cloudRes.long_input.mode === 'truncate') {
+      out.warning = 'The cloud gate checked only the first 512 tokens of this text (' + (cloudRes.long_input.reason || 'no windows') + ').';
+    }
+    return out;
   } catch (err) {
     if (process.env.DEBUG || process.env.ZN_VERBOSE) {
       process.stderr.write(`[zn-gate] Warning: Cloud gate error (${err.message}). Using local rules result.\n`);
@@ -177,10 +215,13 @@ async function checkToolResult(toolName, content, options = {}) {
 }
 
 module.exports = {
+  usableApiKey,
   analyze,
   analyzeLocal,
   checkToolResult,
   isCloudEnabled,
+  longInputMode,
+  LONG_INPUT_MIN_CHARS,
   resolveEndpoint,
   evaluate,
   RULES_VERSION,

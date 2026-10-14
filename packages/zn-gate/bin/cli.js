@@ -8,7 +8,30 @@ const { startMcpShield } = require('../lib/shield');
 const { scanEnvironments, configureEnvironments } = require('../lib/init');
 const { logEvidence, verifyEvidenceLedger, getEvidenceStats, exportEvidenceLedger, startEvidenceUi, EVIDENCE_FILE } = require('../lib/evidence');
 const { analyze, analyzeLocal, isCloudEnabled, resolveEndpoint, RULES_VERSION } = require('../lib/client');
-const { evaluate, redactSecrets } = require('../lib/rules');
+const { evaluate, redactSecrets, SECRET_PATTERNS } = require('../lib/rules');
+const { SCRUB_RULES_VERSION } = require('../lib/scrub/patterns');
+const { AUDIT_RULES_VERSION } = require('../lib/audit/rules');
+
+// Secrets that span several lines (a PEM private key block). The line-by-line
+// scan never sees BEGIN and END together, so these run on the whole file.
+const MULTILINE_SECRET_RULES = SECRET_PATTERNS
+  .filter((p) => p.id === 'secret:private_key')
+  .map((p) => ({ id: p.id, pattern: p.pattern, header: /-----BEGIN [A-Z ]*PRIVATE KEY-----/ }));
+
+// A BEGIN marker with no END (a key cut short when pasted or truncated): the
+// lines after it that look like PEM headers or base64 are treated as key
+// material, up to the first empty or other line (an encrypted key has one
+// empty line after its Proc-Type / DEK-Info headers, which is kept).
+const KEY_BEGIN = /-----BEGIN [A-Z ]*PRIVATE KEY-----/;
+const KEY_END = /-----END [A-Z ]*PRIVATE KEY-----/;
+const KEY_BODY = /^(?:[A-Za-z0-9+/=]{16,}|[A-Za-z-]+: )/;
+const KEY_HEADER = /^[A-Za-z-]+: /;
+const TRUNCATED_KEY_REASON = 'Exposed credential detected by DLP filter (private key without an END marker)';
+// Private key files that usually have no extension.
+const KEY_FILE_NAMES = new Set(['id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', 'id_ecdsa_sk', 'id_ed25519_sk']);
+// .key files with a NUL byte near the start (a Keynote document, not a key)
+// are not scanned.
+const BINARY_SNIFF = 8192;
 
 const VERSION = require('../package.json').version;
 
@@ -84,11 +107,16 @@ COMMANDS:
   init                Find and wrap MCP servers in known agent configs (Claude, Cursor, Codex, OpenCode...)
   shield, mcp-shield  Wrap and protect ANY external MCP server (uvx, npx, node, python)
   scan <path>         Recursively audit prompt templates, markdown, skills, and configs for injection traps
+  audit [path]        Review a repository's agent configs before you open it: hooks, MCP servers,
+                      endpoint overrides, permissions, instructions, planted executables
+                      [--format text|json|sarif] [--output FILE] [--fail-on high]
+                      [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home]
   evidence            Query the local hash-chained audit log and run the UI dashboard
   logs                Tail or inspect security event logs
   mcp                 Run as standalone bidirectional MCP server for AI agents
   analyze <text>      Inspect a prompt from the CLI (local; cloud only with ZN_CLOUD=1 + key)
   test                Run the local self-test (51 curated vectors: 26 attacks, 25 benign)
+  stats               What zn-gate did on this machine (local counts; --days N, --json; "stats share" to opt in)
   status              Show engine configuration and gateway connectivity
   version, -V         Show package version
 
@@ -116,6 +144,8 @@ OPTIONS:
   --stage <v30|prod>  Cloud gateway stage (default: v30, the current production API)
   --url <custom_url>  Override gateway endpoint URL
   --local-only        Never use the cloud, even if ZN_CLOUD=1 is set
+  --long-input MODE   Long texts sent to the cloud: windows (default; overlapping
+                      512-token windows, up to 20) or off (first 512 tokens only)
   --all, --code       Include source code files in security scan
   --include <exts>    Custom extensions to scan (e.g. .rst,.xml)
   --exclude <dirs>    Additional directories to exclude (e.g. fixtures,legacy)
@@ -130,6 +160,15 @@ VAULT (local, encrypted with age; the key stays in the OS keychain):
   vault log           Show the audit log of secret use [--since 1h]; checks the chain when unlocked
   vault verify        Verify the HMAC-chained audit log of secret use
   vault forget [dir]  Forget the token map of a project (vault locked)
+  vault log export --otlp
+                      Export the audit log as OpenTelemetry logs (OTLP/JSON Lines)
+                      [--since 7d] [--out FILE]
+
+TEAM (zn Team: organization policy and audit upload; needs the vault unlocked):
+  team join <token>   Connect this machine to your organization (confirmed outside the agent)
+  team status         Organization, policy version and upload state [--json]
+  team sync           Download the policy and upload the audit log now
+  team leave          Disconnect this machine (confirmed outside the agent)
 
 INIT OPTIONS:
   --dry-run           Scan environments and preview changes without modifying configs
@@ -151,6 +190,9 @@ EXAMPLES:
 
   # Audit prompt templates / agent skills for hidden injection traps
   npx -y zn-gate scan ./prompts
+
+  # Review the agent configs of a repository you just cloned
+  npx -y zn-gate audit ./some-repo
 
   # Wrap an individual MCP server on the fly
   npx -y zn-gate shield -- uvx mcp-server-fetch
@@ -185,12 +227,14 @@ Evaluating ${TEST_VECTORS.length} curated test vectors (${TEST_VECTORS.filter(v 
     const elapsedMs = (Number(elapsedNs) / 1e6).toFixed(2);
 
     const isBlock = result.verdict === 'block';
-    const isPass = (vec.type === 'attack' && isBlock) || (vec.type === 'benign' && !isBlock);
+    // Default policy: some heuristic rules give an advisory instead of a block.
+    const isFlagged = isBlock || Boolean(result.advisory);
+    const isPass = (vec.type === 'attack' && isFlagged) || (vec.type === 'benign' && !isBlock);
 
     if (isPass) {
       passed++;
-      const verdictTag = isBlock ? `\x1b[31mBLOCKED\x1b[0m` : `\x1b[32mALLOWED\x1b[0m`;
-      const ruleDetail = result.reason ? `(${result.reason})` : (isBlock ? `(${result.rule})` : '');
+      const verdictTag = isBlock ? `\x1b[31mBLOCKED\x1b[0m` : (result.advisory ? `\x1b[33mADVISORY\x1b[0m` : `\x1b[32mALLOWED\x1b[0m`);
+      const ruleDetail = result.reason ? `(${result.reason})` : (isBlock ? `(${result.rule})` : (result.advisory ? `(${result.advisory.reason})` : ''));
       process.stdout.write(`  \x1b[32m✔\x1b[0m [${elapsedMs}ms] ${verdictTag} ${vec.label} \x1b[90m${ruleDetail}\x1b[0m\n`);
     } else {
       failed++;
@@ -198,7 +242,7 @@ Evaluating ${TEST_VECTORS.length} curated test vectors (${TEST_VECTORS.filter(v 
         falsePositives++;
       }
       const expectedTag = vec.type === 'attack' ? 'BLOCK' : 'ALLOW';
-      const gotTag = isBlock ? 'BLOCKED' : 'ALLOWED';
+      const gotTag = isBlock ? 'BLOCKED' : (result.advisory ? 'ADVISORY' : 'ALLOWED');
       process.stdout.write(`  \x1b[31m✖\x1b[0m [${elapsedMs}ms] FAILED ${vec.label} (Expected: ${expectedTag}, Got: ${gotTag})\n`);
     }
   }
@@ -230,7 +274,7 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
     });
   }
   
-  const BASE_EXTS = new Set(['.md', '.txt', '.prompt', '.json', '.yaml', '.yml', '.toml', '.env']);
+  const BASE_EXTS = new Set(['.md', '.txt', '.prompt', '.json', '.yaml', '.yml', '.toml', '.env', '.pem', '.key']);
   const CODE_EXTS = new Set(['.js', '.ts', '.py', '.sh', '.html', '.go', '.rs']);
   const SCANNABLE_EXTS = includeCode ? new Set([...BASE_EXTS, ...CODE_EXTS]) : new Set(BASE_EXTS);
 
@@ -268,7 +312,7 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
     } else if (stat.isFile()) {
       const ext = path.extname(current).toLowerCase();
       const base = path.basename(current).toLowerCase();
-      const isCandidate = SCANNABLE_EXTS.has(ext) || base.startsWith('.env');
+      const isCandidate = SCANNABLE_EXTS.has(ext) || base.startsWith('.env') || KEY_FILE_NAMES.has(path.basename(current));
       if (isCandidate && stat.size < 2 * 1024 * 1024) {
         filesToScan.push(current);
       }
@@ -301,28 +345,87 @@ Files   : ${files.length} file(s) queued for audit\n
     const relPath = path.relative(process.cwd(), filePath);
     let content = '';
     try {
-      content = fs.readFileSync(filePath, 'utf8');
+      const raw = fs.readFileSync(filePath);
+      if (path.extname(filePath).toLowerCase() === '.key' && raw.subarray(0, BINARY_SNIFF).includes(0)) continue;
+      content = raw.toString('utf8');
     } catch (e) {
       continue;
     }
 
     const lines = content.split('\n');
+    // Line of a character offset, numbered like the line pass (split on \n).
+    const starts = [0];
+    for (const l of lines) starts.push(starts[starts.length - 1] + l.length + 1);
+    const lineOf = (offset) => {
+      let lo = 0;
+      let hi = starts.length - 1;
+      while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (starts[mid] <= offset) lo = mid; else hi = mid - 1; }
+      return lo + 1;
+    };
+    // Private keys over several lines, found first: a line inside one is never
+    // printed, even when another rule fires on it (on its own the line does
+    // not look like a key, so it would not be redacted).
+    const blocks = [];
+    const keyLines = new Set();
+    for (const r of MULTILINE_SECRET_RULES) {
+      const rx = new RegExp(r.pattern.source, r.pattern.flags.includes('g') ? r.pattern.flags : r.pattern.flags + 'g');
+      let m;
+      while ((m = rx.exec(content)) !== null) {
+        if (m[0].length === 0) { rx.lastIndex++; continue; }
+        if (!m[0].includes('\n')) continue; // one line: the line pass redacts it
+        const first = lineOf(m.index);
+        const last = lineOf(m.index + m[0].length - 1);
+        const h = r.header.exec(m[0]);
+        blocks.push({ rule: r.id, line: first, header: h ? h[0].slice(0, 100) : '[REDACTED_PRIVATE_KEY]' });
+        for (let n = first; n <= last; n++) keyLines.add(n);
+      }
+    }
+    // BEGIN markers outside any complete block: a truncated key.
+    for (let i = 1; i <= lines.length; i++) {
+      if (keyLines.has(i)) continue;
+      const h = KEY_BEGIN.exec(lines[i - 1]);
+      // No marker, or a whole key on one line (the line pass redacts it).
+      if (!h || KEY_END.test(lines[i - 1].slice(h.index + h[0].length))) continue;
+      let last = i;
+      while (last < lines.length && !KEY_BEGIN.test(lines[last])) {
+        const body = lines[last].trim();
+        if (KEY_BODY.test(body)) last++;
+        else if (!body && KEY_HEADER.test(lines[last - 1].trim()) && last + 1 < lines.length && KEY_BODY.test(lines[last + 1].trim())) last++; // the empty line after encrypted-key headers
+        else break;
+      }
+      for (let n = i; n <= last; n++) keyLines.add(n);
+      blocks.push({ rule: 'secret:private_key', line: i, header: h[0].slice(0, 100), reason: TRUNCATED_KEY_REASON });
+    }
+
+    const seen = new Set();
     for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
       const line = lines[lineIdx].trim();
       if (!line || line.length < 8) continue;
 
-      const evalRes = evaluate(line, options);
+      // Printed to the terminal and CI logs: never show a detected secret.
+      const redacted = redactSecrets(line);
+      const sample = keyLines.has(lineIdx + 1) ? '[REDACTED_PRIVATE_KEY]' : redacted.sanitized.slice(0, 100);
+      // A scan reports every match, including the rules that only warn by default.
+      const evalRes = evaluate(line, { ...options, strict: true });
       if (evalRes.verdict === 'block') {
         totalFindings++;
-        findings.push({
-          file: relPath,
-          line: lineIdx + 1,
-          rule: evalRes.rule,
-          reason: evalRes.reason,
-          // Printed to the terminal and CI logs: never show a detected secret.
-          sample: redactSecrets(line).sanitized.slice(0, 100),
-        });
+        findings.push({ file: relPath, line: lineIdx + 1, rule: evalRes.rule, reason: evalRes.reason, sample });
       }
+      // Secrets are reported too, once per rule and line.
+      for (const rule of new Set(redacted.detections.map((d) => d.rule))) {
+        totalFindings++;
+        seen.add((lineIdx + 1) + '\0' + rule);
+        findings.push({ file: relPath, line: lineIdx + 1, rule, reason: 'Exposed credential detected by DLP filter', sample });
+      }
+    }
+
+    for (const b of blocks) {
+      const key = b.line + '\0' + b.rule;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      totalFindings++;
+      // Only the BEGIN marker, never the key material.
+      findings.push({ file: relPath, line: b.line, rule: b.rule, reason: b.reason || 'Exposed credential detected by DLP filter', sample: b.header });
     }
   }
 
@@ -343,14 +446,21 @@ Status       : ${totalFindings === 0 ? 'Clean workspace' : 'Review and neutraliz
 ─────────────────────────────────────────────────────────────────────────────\n
 `);
 
-  if (totalFindings > 0) {
-    process.exit(1);
-  }
+  // exitCode, not process.exit(): a large report written to a pipe must be
+  // flushed completely before the process ends.
+  if (totalFindings > 0) process.exitCode = 1;
 }
 
 // Secrets broker and agent hooks. Dispatched before the global option parsing
 // so flags after `zn run --` belong to the child command, untouched.
-const BROKER_COMMANDS = new Set(['run', 'hook', 'secrets-mcp', 'secret', 'secrets', 'env', 'audit', 'hooks']);
+const BROKER_COMMANDS = new Set(['run', 'hook', 'secrets-mcp', 'secret', 'secrets', 'env', 'hooks']);
+
+// `zn audit` reviews the agent configs of a directory. The secret-use log it
+// showed in 1.5 is `zn vault log` (alias `zn secret log`); lib/audit/cli.js
+// points there when it gets the old forms (`zn audit log`, `--since`).
+async function runAuditCommand(rest) {
+  process.exitCode = await require('../lib/audit/cli').main(rest);
+}
 
 async function runBrokerCommand(command, rest) {
   if (command === 'run') {
@@ -362,7 +472,11 @@ async function runBrokerCommand(command, rest) {
     return;
   }
   if (command === 'secrets-mcp') {
-    require('../lib/broker/mcp').startSecretsMcp();
+    // --agent <id>: set by the agent's MCP configuration, so the organization
+    // policy can tell agents apart (not a security control).
+    const i = rest.indexOf('--agent');
+    const agent = i >= 0 && /^[a-z0-9-]{1,32}$/.test(String(rest[i + 1] || '')) ? rest[i + 1] : undefined;
+    require('../lib/broker/mcp').startSecretsMcp({ agent });
     return;
   }
   process.exitCode = await require('../lib/broker/cli').dispatch(command, rest);
@@ -370,6 +484,20 @@ async function runBrokerCommand(command, rest) {
 
 async function main() {
   const args = process.argv.slice(2);
+  if (args[0] === 'audit') {
+    await runAuditCommand(args.slice(1));
+    return;
+  }
+  // zn Team and the OpenTelemetry export of the audit log. exitCode (not
+  // process.exit) so a large export is flushed completely through a pipe.
+  if (args[0] === 'team') {
+    process.exitCode = await require('../lib/team/cli').runTeamCommand(args);
+    return;
+  }
+  if (args[0] === 'vault' && args[1] === 'log' && args[2] === 'export') {
+    process.exitCode = require('../lib/team/cli').runLogExport(args.slice(3));
+    return;
+  }
   if (args[0] === 'vault' && args[1] === 'log') {
     // exitCode (not process.exit) so a large log is flushed completely through a pipe.
     process.exitCode = await require('../lib/broker/cli').dispatch('vault', args.slice(1));
@@ -386,7 +514,7 @@ async function main() {
   }
 
   if (args.includes('-V') || args.includes('--version') || args[0] === 'version') {
-    process.stdout.write(`zn-gate ${VERSION} (rules engine: ${RULES_VERSION})\n`);
+    process.stdout.write(`zn-gate ${VERSION} (rules engine: ${RULES_VERSION}; scrub rules: ${SCRUB_RULES_VERSION}; audit rules: ${AUDIT_RULES_VERSION})\n`);
     process.exit(0);
   }
 
@@ -432,6 +560,14 @@ async function main() {
       options.include = args[++i];
     } else if (args[i] === '--exclude' && args[i + 1]) {
       options.exclude = args[++i];
+    } else if (args[i] === '--long-input') {
+      const v = String(args[i + 1] || '').toLowerCase();
+      if (v !== 'windows' && v !== 'off') {
+        process.stderr.write('Error: --long-input needs windows or off\n');
+        process.exit(2);
+      }
+      options.longInput = v;
+      i++;
     } else if (args[i] === '--local-only') {
       options.localOnly = true;
     } else if (args[i] === '--verbose') {
@@ -573,6 +709,11 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
     return;
   }
 
+  if (command === 'stats') {
+    process.exitCode = await require('../lib/stats-cli').run(args.slice(1));
+    return;
+  }
+
   if (command === 'analyze') {
     const textArgs = args.filter((a, idx) => {
       if (idx === 0) return false;
@@ -593,12 +734,12 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
   }
 
   if (command === 'status') {
-    const hasKey = Boolean(options.apiKey);
+    const hasKey = Boolean(require('../lib/client').usableApiKey(options.apiKey));
     const cloud = isCloudEnabled(options);
     process.stdout.write(`
 🛡️  zn-gate Status:
   Package Version : ${VERSION}
-  Rules Version   : ${RULES_VERSION}
+  Rules Version   : ${RULES_VERSION} (scrub ${SCRUB_RULES_VERSION}, audit ${AUDIT_RULES_VERSION})
   Active Engine   : ${cloud ? 'Local rules + cloud for analyze_prompt (ZN_CLOUD=1)' : 'Local rules only'}
   Endpoint        : ${cloud ? resolveEndpoint(options) : 'None (nothing leaves this machine)'}
   API key         : ${hasKey ? 'Set' + (cloud ? '' : ' (unused: cloud requires ZN_CLOUD=1)') : 'Not set'}

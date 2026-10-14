@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -79,10 +80,13 @@ class TestPatternParity(unittest.TestCase):
             with self.subTest(table=name):
                 self.assertEqual(_py_table(getattr(R, name)), _js_table(self.js["tables"][name]))
 
+    def test_advisory_by_default_list(self):
+        self.assertEqual(sorted(R.ADVISORY_BY_DEFAULT), self.js["advisory_by_default"])
+
     def test_exfil_compound(self):
         (rule,) = self.js["exfil"]
         self.assertEqual(rule["id"], "exfil:credentials")
-        self.assertEqual([_py_regex(R.EXFIL_VERBS), _py_regex(R.CRED_OBJECTS)],
+        self.assertEqual([_py_regex(R.EXFIL_VERBS), _py_regex(R.CRED_OBJECTS), _py_regex(R.EXFIL_CLAUSE_RE)],
                          [_js_regex(e) for e in rule["compound"]])
 
     def test_helper_patterns(self):
@@ -100,6 +104,8 @@ class TestPatternParity(unittest.TestCase):
             with self.subTest(rule=rule_id):
                 self.assertEqual(_py_regex(pat), _js_regex(js[rule_id]))
         self.assertEqual(R.SECRET_PATTERN_REQUIRES, self.js["secret_requires"])
+        self.assertEqual({k: _py_regex(v) for k, v in R.SECRET_PATTERN_PREFILTERS.items()},
+                         {k: _js_regex(e) for k, e in self.js["secret_prefilters"].items()})
 
     def test_size_limits(self):
         for name, value in self.js["limits"].items():
@@ -151,7 +157,7 @@ class TestAsciiTokenBoundaries(unittest.TestCase):
             ("ñ" + "ghp_" + "a" * 36 + "ü", "secret:github_token"),
             ("ç" + "sk-ant-" + "b" * 32 + "ß", "secret:anthropic_key"),
             ("ä" + "sk-proj-" + "c" * 30 + "ä", "secret:openai_key"),
-            ("é" + "API_KEY=" + "d" * 16, "secret:env_credential"),
+            ("é" + "API_KEY=" + "d4" * 8, "secret:env_credential"),
         ]
         for text, rule in cases:
             with self.subTest(rule=rule):
@@ -161,10 +167,10 @@ class TestAsciiTokenBoundaries(unittest.TestCase):
                 self.assertNotIn("a" * 36, redacted)
                 self.assertNotIn("b" * 32, redacted)
                 self.assertNotIn("c" * 30, redacted)
-                self.assertNotIn("d" * 16, redacted)
+                self.assertNotIn("d4" * 8, redacted)
 
     def test_ascii_neighbours_still_do_not_match(self):
-        for text in ("x" + "AKIA" + "Z" * 16, "AKIA" + "Z" * 16 + "_x", "MY_" + "API_KEY=" + "d" * 16):
+        for text in ("x" + "AKIA" + "Z" * 16, "AKIA" + "Z" * 16 + "_x", "my_" + "api_key=" + "d4" * 8):
             with self.subTest(text=text[:12]):
                 self.assertEqual(R.redact_secrets(text)[1], [])
 
@@ -261,6 +267,191 @@ class TestValidatedSecretPatterns(unittest.TestCase):
         out = R.redact_secrets('aws_secret_access_key = "' + secret + '"')[0]
         self.assertNotIn(secret, out)
         self.assertTrue(out.startswith('aws_secret_access_key = "') and out.endswith('"'), out)
+
+
+# Synthetic values, built from pieces so that no complete credential appears in the source.
+RANDOM_24 = "Zx9" + "kQ2mN8pL" + "4rT6vW1y" + "Hc5J0"
+RANDOM_40 = "aB3dE5fG7h" + "J9kL2mN4pQ" + "6rS8tU0vW1" + "xY3zA5bC7d"
+
+
+class TestPrefixedCredentialNames(unittest.TestCase):
+    """Credential assignments under environment-style names: secrets are
+    redacted; references, code and placeholders are not."""
+
+    def assertRedacted(self, text, value):
+        redacted, found = R.redact_secrets(text)
+        self.assertNotIn(value, redacted, text)
+        self.assertTrue(found, text)
+
+    def assertKept(self, text):
+        self.assertEqual(R.redact_secrets(text), (text, []), text)
+
+    def test_prefixed_names_are_redacted(self):
+        value = "Kp4r" * 5
+        for name in ("OPENAI_API_KEY", "STRIPE_SECRET_KEY", "GITHUB_AUTH_TOKEN", "MY_API_KEY",
+                     "PROD_AWS_SECRET_ACCESS_KEY", "DB_PASSWORD", "APP_SECRET", "SLACK_BOT_TOKEN"):
+            for sep in ("=", ": ", " = ", '="'):
+                with self.subTest(name=name, sep=sep):
+                    self.assertRedacted(name + sep + value, value)
+
+    def test_more_names_json_and_dockerfile(self):
+        value = "Zx9" + "kQ" * 10
+        for text in ('"OPENAI_API_KEY": "' + value + '"', "'DB_PASSWORD': '" + value + "'",
+                     "SENDGRID_APIKEY=" + value, "MAILGUN_ACCESS_KEY=" + value, "POSTGRES_PASS=" + value,
+                     "REDIS_PWD=" + value, "REDIS_PASSWD=" + value, "GCP_CREDENTIALS=" + value,
+                     "ENV HF_TOKEN " + value, "ENV STRIPE_SECRET_KEY=" + value,
+                     "ENV NODE_ENV=production VAULT_SECRET=" + value, '{"api_key": "' + value + '"}'):
+            with self.subTest(text=text[:24]):
+                self.assertRedacted(text, value)
+
+    def test_dollar_assignments_in_php_and_powershell(self):
+        for text in ("$API_KEY = '" + RANDOM_24 + "';", "$OPENAI_API_KEY = '" + RANDOM_24 + "';",
+                     "$env:DEPLOY_TOKEN = \"" + RANDOM_24 + "\"", "$env:API_KEY=\"" + RANDOM_24 + "\""):
+            with self.subTest(text=text[:20]):
+                self.assertRedacted(text, RANDOM_24)
+        # "$NAME:" is a shell reference followed by text, and "${NAME}" a reference.
+        for text in ("echo $DB_PASSWORD:" + "x7" * 8, "echo ${DB_PASSWORD}" + "x7" * 8,
+                     'URL="https://$API_TOKEN:' + "x7" * 8 + '@example.com"'):
+            with self.subTest(text=text[:20]):
+                self.assertEqual(R.redact_secrets(text)[1], [])
+
+    def test_machine_generated_values_with_code_like_shapes(self):
+        cases = {
+            "mapbox": "MAPBOX_SECRET_TOKEN=sk.eyJ1Ijoi" + "Zm9vYmFy" * 4 + "In0." + "QwErTy12" + "AsDfGh34Zx",
+            "sendgrid": "SENDGRID_API_KEY=SG." + "Ab3cD4eF5gH6iJ7kL8mN9q" + "." + "pQ1r" * 10 + "sT2",
+            "doppler": "DOPPLER_TOKEN=dp.st.prd." + RANDOM_40,
+            "vault": "VAULT_TOKEN=hvs." + RANDOM_24,
+            "django": "SECRET_KEY = '" + "k9(x#2_q" * 6 + "'",
+            "mailgun": "MAILGUN_API_KEY=key-" + "a1b2c3d4" * 4,
+            "app_password": "SMTP_PASSWORD=" + "wxyz-" * 3 + "abcd",
+            "brackets": "DB_PASSWORD=Tr0(b4)[x]{9}" + "Qz" * 2,
+            "word_parens": "DB_PASSWORD=Maple(River)" + "StoneCopper",
+            "dashed_words": "api_key: " + "orbit-maple-" + "harbor-cinder",
+            "dotted_words": "APP_PASSPHRASE_SECRET=" + "orbit.maple." + "harbor.cinder",
+            "base64_slash": "AWS_BACKUP_SECRET_ACCESS_KEY=/" + RANDOM_40[:39],
+            "url_password": "BROKER_PASSWORD=amqps://app:" + RANDOM_24 + "@mq.internal/vh",
+        }
+        for name, text in cases.items():
+            with self.subTest(case=name):
+                sep = "=" if "=" in text.split(" ")[0] else (" = " if " = " in text else ": ")
+                value = text.split(sep, 1)[1].strip("'")
+                self.assertRedacted(text, value)
+
+    def test_code_is_left_alone(self):
+        for text in ("const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;",
+                     "  OPENAI_API_KEY: process.env.OPENAI_API_KEY,", "  OPENAI_API_KEY: z.string().min(1),",
+                     'DB_PASSWORD = os.environ.get("DB_PASSWORD")', 'API_KEY = os.getenv("API_KEY")',
+                     "SLACK_BOT_TOKEN = settings.SLACK_BOT_TOKEN", "GH_TOKEN: core.getInput('token')",
+                     "K8S_TOKEN = settings.K8S_TOKEN", "R2_SECRET_ACCESS_KEY: process.env.R2_SECRET_ACCESS_KEY,",
+                     "SESSION_SECRET = os.urandom(32).hex()", "JWT_SECRET = crypto.randomBytes(64).toString('hex')",
+                     "DB_PASSWORD = Secret.fromSecretNameV2(this, 'db')", 'let API_TOKEN = std::env::var("API_TOKEN")?;',
+                     "STRIPE_API_KEY = Rails.application.credentials.stripe", "GITHUB_TOKEN = secrets.GITHUB_TOKEN",
+                     "OPENAI_API_KEY = FAKE.apiKey,", "DB_PASSWORD = random_password.db.result",
+                     "API_TOKEN: Optional[str] = None", 'AWS_TOKEN_HEADER = "x-aws-ec2-metadata-token"',
+                     "QUIDOR_APIKEY = DEFAULT_RANSUFI_APIKEY", "TAVSU_ACCESS_KEY = secrets.token_urlsafe(48)",
+                     "api_key: @user.api_key", "private_key: (Some(local_site.private_key)),"):
+            with self.subTest(text=text[:40]):
+                self.assertKept(text)
+
+    def test_references_and_placeholders_are_left_alone(self):
+        for text in ("GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }}", "SERVICE_PASSWORD=${SERVICE_PASSWORD}",
+                     "DEPLOY_TOKEN=$DEPLOY_TOKEN_FROM_CI", "OPENAI_API_KEY=<your-openai-key>",
+                     "WIN_SECRET=%WINDOWS_SECRET_VAR%", "API_KEY=$(openssl rand -base64 32)",
+                     "GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json",
+                     "GOOGLE_APPLICATION_CREDENTIALS=.secrets/service-account.json",
+                     "APP_PRIVATE_KEY=./keys/private.pem", "GH_TOKEN=~/.config/gh/hosts.yml",
+                     "SSL_PRIVATE_KEY=C:\\certs\\server.key", "OPENAI_API_KEY=op://Private/OpenAI/credential",
+                     "DB_PASSWORD=sm://projects/demo/secrets/db/versions/latest",
+                     "DB_PASSWORD=arn:aws:secretsmanager:us-east-1:000000000000:secret:prod/db",
+                     "DB_PASSWORD=vault:secret/data/app#password", "API_TOKEN=secretref:app-secrets/api-token",
+                     "API_KEY=@Microsoft.KeyVault(SecretUri=https://kv.vault.azure.net/secrets/k/)",
+                     "API_KEY=projects/demo/secrets/api-key/versions/3", "BROKER_PASSWORD=amqps://mq.internal/vh",
+                     "BROKER_PASSWORD=amqps://app:${MQ_PASS}@mq.internal/vh",
+                     "OPENAI_API_KEY=your-openai-api-key-here", "STRIPE_SECRET_KEY=" + "x" * 24,
+                     "STRIPE_SECRET_KEY=sk_live_" + "x" * 24, "APP_SECRET=REPLACE_ME_WITH_REAL", "MY_API_KEY=placeholder-value-123",
+                     "SECRET_KEY=please-change-this-value", "API_TOKEN=not-set-in-dev", "JWT_SECRET=set-me-in-production",
+                     "API_TOKEN=fake-token-for-tests", "PROVIDER_API_KEY=mock-provider-key",
+                     "SECRET_KEY=00000000-0000-0000-0000-000000000000", 'AUTH_TOKEN: "************************"',
+                     "DB_PASSWORD=__ZN_DB_PASSWORD__", "SERVICE_API_KEY=zn_live_your_key",
+                     "aws_secret_access_key: 'fakeSecretKey'"):
+            with self.subTest(text=text[:40]):
+                self.assertKept(text)
+
+    def test_compose_defaults_are_redacted_only_when_generated(self):
+        for text in ("POSTGRES_PASSWORD: ${DB_PASSWORD:-difyai123456}",
+                     "MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}",
+                     "SECRET_KEY: ${SECRET_KEY:-change-me-in-production}", 'API_TOKEN: "${API_TOKEN:?set API_TOKEN}"'):
+            with self.subTest(text=text[:30]):
+                self.assertKept(text)
+        redacted, found = R.redact_secrets("JWT_SECRET: ${JWT_SECRET:-" + RANDOM_24 + "}")
+        self.assertEqual(redacted, "JWT_SECRET: ${JWT_SECRET:-[REDACTED_SECRET]}")
+        self.assertEqual([d["rule"] for d in found], ["secret:credential_default"])
+
+    def test_generated_values_with_placeholder_marks_are_redacted(self):
+        # A password manager may produce "<", "{{", "${", "***" or a leading "[".
+        for value in ("<" + RANDOM_24 + "!#", "[" + RANDOM_24 + "%&", "{" + RANDOM_24 + "@=",
+                      RANDOM_24[:10] + "<a>" + RANDOM_24[10:] + "#", RANDOM_24 + "${" + "Q9!",
+                      RANDOM_24[:8] + "{{" + RANDOM_24[8:] + "^", RANDOM_24 + "***" + "7!", RANDOM_24 + "..." + "7!"):
+            for name in ("API_KEY", "STRIPE_SECRET_KEY"):
+                with self.subTest(name=name, value=value[:6]):
+                    self.assertRedacted(name + '="' + value + '"', value)
+        for text in ("API_KEY=sk-proj-****", "API_KEY=<your-key-here>", "API_KEY=${VAR_NAME_HERE}",
+                     "API_KEY={{ .Values.apiKey }}", "API_KEY=[REDACTED_BY_CI]", "API_KEY=" + "*" * 16):
+            with self.subTest(text=text):
+                self.assertKept(text)
+
+    def test_object_names_files_and_hosts_are_left_alone(self):
+        for text in ("IMAGE_PULL_SECRET=regcred-ghcr", "TLS_SECRET: ingress-nginx-tls",
+                     "GOOGLE_APPLICATION_CREDENTIALS=service-account.json", "FIREBASE_CREDENTIALS=firebase-adminsdk.json",
+                     "KEYSTORE_PASSWORD=android-release.keystore", "SMTP_PASSWORD=smtp.sendgrid.net",
+                     "HELM_REPO_PASSWORD=bitnami-charts", "GH_TOKEN=github-actions-bot", "X_PASSWORD=ask-the-ops-team",
+                     "X_PASSWORD=get-from-bitwarden", "api_key: preview-does-not-require-setup", "APP_TOKEN=xx-aaaaaaaaaaaa"):
+            with self.subTest(text=text):
+                self.assertKept(text)
+        for text in ("DB_PASSWORD=orbit-maple-harbor", "JWT_SECRET=orbit-maple-harbor-cinder", "SMTP_PASSWORD=wxyz-wxyz-wxyz-abcd"):
+            with self.subTest(text=text):
+                self.assertRedacted(text, text.split("=", 1)[1])
+
+    def test_php_perl_and_powershell_references(self):
+        for text in ("$API_KEY = $this->config->get('api_key');", "$DB_PASSWORD = $container->getParameter('db');",
+                     "my $API_TOKEN = $config->{api_token};", "$env:GITHUB_TOKEN = $env:GITHUB_TOKEN_PROD"):
+            with self.subTest(text=text[:24]):
+                self.assertKept(text)
+
+    def test_reference_shapes_with_random_content_are_redacted(self):
+        inner = RANDOM_24[:15]
+        for value in ("!" + inner, "@" + inner + "@", "[" + inner + "]", "$" + inner, "%" + inner + "%", "$env:" + inner):
+            with self.subTest(value=value[:3]):
+                self.assertRedacted("API_KEY=" + value, value)
+        for text in ("X_SECRET: !ImportValue", "X_SECRET: !Ref", "X_TOKEN: $$X_TOKEN_VAR", "X_PASSWORD=@app.x_password@",
+                     "DEPLOY_TOKEN=$DEPLOY_TOKEN_FROM_CI", "API_KEY=[YOUR_API_KEY_HERE]", "WIN_SECRET=%WINDOWS_SECRET_VAR%"):
+            with self.subTest(text=text):
+                self.assertKept(text)
+
+    def test_lone_surrogates_do_not_raise(self):
+        for text in ("API_TOKEN=" + "abc123XYZ09" + "\ud800", "API_KEY=" + RANDOM_24 + "\udfff",
+                     "${API_TOKEN:-" + RANDOM_24 + "\ud800}", "X_SECRET=\ud800" + "Kp4r" * 4):
+            with self.subTest(text=ascii(text)[:24]):
+                R.redact_secrets(text)
+                R.sanitize_tool_result(text)
+
+    def test_documented_limits(self):
+        # Lower-case words joined by "_" read as an identifier, and values under 12 characters are not checked.
+        for text in ("DB_PASSWORD=" + "orbit_maple_" + "harbor_cinder", "DB_PASSWORD=hunter2xyz", "db_password: " + RANDOM_24):
+            with self.subTest(text=text[:20]):
+                self.assertKept(text)
+
+    def test_value_checks_are_bounded_per_call(self):
+        line = "SERVICE_TOKEN=process.env.SERVICE_TOKEN_VALUE"
+        lines = R.redact_secrets("\n".join([line] * (R.MAX_FILTERED_CHARS // 31 + 50)))[0].split("\n")
+        self.assertEqual(lines[0], line)
+        self.assertEqual(lines[-1], "SERVICE_TOKEN=[REDACTED_SECRET]")
+
+    def test_trailing_separators_are_linear(self):
+        for text in ("A_TOKEN=" + ";" * 200000, "API_KEY=" + "," * 200000, "A_TOKEN=a" + ";" * 200000):
+            start = time.process_time()
+            R.redact_secrets(text)
+            self.assertLess(time.process_time() - start, 5.0)
 
 
 if __name__ == "__main__":

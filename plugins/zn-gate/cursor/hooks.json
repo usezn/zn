@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeReadFile": [
+      {
+        "command": "node ./scripts/zn-launch.js hook cursor",
+        "timeout": 30,
+        "failClosed": true
+      }
+    ],
+    "beforeShellExecution": [
+      {
+        "command": "node ./scripts/zn-launch.js hook cursor",
+        "timeout": 30,
+        "failClosed": true
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "node ./scripts/zn-launch.js hook cursor",
+        "timeout": 30,
+        "failClosed": true
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "node ./scripts/zn-launch.js hook cursor",
+        "timeout": 30,
+        "failClosed": true
+      }
+    ],
+    "preToolUse": [
+      {
+        "command": "node ./scripts/zn-launch.js hook cursor",
+        "timeout": 30,
+        "matcher": "Grep|Write|Delete",
+        "failClosed": true
+      }
+    ]
+  }
+}

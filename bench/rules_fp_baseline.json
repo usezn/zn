@@ -1,0 +1,9 @@
+{
+  "files": 1937,
+  "blocked": 5,
+  "by_rule": {
+    "exfil:credentials": 2,
+    "path:sensitive_file": 1,
+    "pi:forget": 2
+  }
+}

@@ -43,16 +43,35 @@ def is_cloud_enabled(api_key: Optional[str] = None, local_only: bool = False) ->
     return bool(key) and opted_in and not force_local
 
 
+# Long texts: the cloud gate reads the first 512 tokens unless the request
+# asks for overlapping windows ("long_input": "windows": 512-token windows,
+# stride 256, up to 20; the verdict comes from the window with the highest
+# score). Same rule as the Node.js client (lib/client.js): text over
+# LONG_INPUT_MIN_CHARS asks for windows unless ZN_LONG_INPUT / long_input is
+# "off". Each window is one more inference, so the default timeout is longer.
+LONG_INPUT_MIN_CHARS = 1000
+WINDOWS_TIMEOUT = 12.0
+
+
+def long_input_mode(value: Optional[str] = None) -> str:
+    v = str(value if value is not None else os.environ.get("ZN_LONG_INPUT", "windows")).strip().lower()
+    return "off" if v in ("off", "none", "truncate", "0", "false", "no") else "windows"
+
+
 def analyze_cloud(
     input_text: str,
     api_key: str,
     endpoint_url: Optional[str] = None,
     timeout: float = 4.0,
+    long_input: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Sends a payload to the zn cloud gate (stdlib urllib). Secrets are always redacted first."""
     endpoint = endpoint_url or DEFAULT_ENDPOINT
     redacted, _ = redact_secrets(input_text)
-    payload = json.dumps({"input": redacted}).encode("utf-8")
+    body: Dict[str, Any] = {"input": redacted}
+    if long_input == "windows":
+        body["long_input"] = "windows"
+    payload = json.dumps(body).encode("utf-8")
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key.strip()}",
@@ -70,8 +89,9 @@ def analyze(
     input_text: str,
     api_key: Optional[str] = None,
     endpoint: Optional[str] = None,
-    timeout: float = 4.0,
+    timeout: Optional[float] = None,
     local_only: bool = False,
+    long_input: Optional[str] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
     """
@@ -105,15 +125,27 @@ def analyze(
             "mode": "oss-local",
             "engine": "oss-local",
             "rules_version": local_eval.rules_version,
+            **({"advisory": dict(local_eval.advisory)} if local_eval.advisory else {}),
         }
 
     # 2. Cloud Gate deep neural analysis
     target_url = endpoint or resolve_endpoint(kwargs)
     try:
-        _, detections = redact_secrets(input_text)
-        cloud_res = analyze_cloud(input_text, key, target_url, timeout=timeout)
+        sanitized, detections = redact_secrets(input_text)
+        # Length in UTF-16 units, as the Node.js client counts it.
+        windows = long_input_mode(long_input) == "windows" and len(sanitized.encode("utf-16-le")) // 2 > LONG_INPUT_MIN_CHARS
+        cloud_res = analyze_cloud(input_text, key, target_url,
+                                  timeout=timeout if timeout is not None else (WINDOWS_TIMEOUT if windows else 4.0),
+                                  long_input="windows" if windows else None)
         cloud_res["mode"] = "hybrid-cloud"
         cloud_res["secrets_redacted_before_upload"] = len(detections)
+        li = cloud_res.get("long_input")
+        if isinstance(li, dict) and li.get("capped"):
+            cloud_res["warning"] = ("The text is longer than the cloud gate checks (%s windows of 512 tokens): "
+                                    "the end was not analyzed." % li.get("windows"))
+        elif windows and isinstance(li, dict) and li.get("mode") == "truncate":
+            cloud_res["warning"] = ("The cloud gate checked only the first 512 tokens of this text (%s)."
+                                    % (li.get("reason") or "no windows"))
         return cloud_res
     except Exception as exc:
         if os.environ.get("DEBUG") or os.environ.get("ZN_VERBOSE"):
@@ -128,4 +160,5 @@ def analyze(
             "engine": "oss-local",
             "fallback": True,
             "cloud_error": str(exc),
+            **({"advisory": dict(local_eval.advisory)} if local_eval.advisory else {}),
         }

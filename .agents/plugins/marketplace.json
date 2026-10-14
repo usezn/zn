@@ -1,0 +1,20 @@
+{
+  "name": "usezn",
+  "interface": {
+    "displayName": "usezn"
+  },
+  "plugins": [
+    {
+      "name": "zn-gate",
+      "source": {
+        "source": "local",
+        "path": "./plugins/zn-gate"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Security"
+    }
+  ]
+}

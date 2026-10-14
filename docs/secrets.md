@@ -16,6 +16,8 @@ npm install -g zn-gate
 zn unlock
 ```
 
+> **Windows PowerShell:** `npm` and `npx` can fail with "running scripts is disabled on this system", because the default execution policy blocks `npm.ps1`. Use `npm.cmd` and `npx.cmd` instead (for example `npm.cmd install -g zn-gate`), run the commands from Command Prompt, or allow local scripts for your account with `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+
 The first `zn unlock` creates the vault: an [age](https://age-encryption.org)
 identity stored in your OS keychain (macOS Keychain, Windows Credential
 Manager, or Secret Service on Linux), or behind a passphrase when there is no
@@ -64,6 +66,14 @@ replaced with tokens. Reads of `.env` files with real values, credential files
 (`~/.aws/credentials`, `~/.ssh/id_*`, `~/.npmrc`…) and zn's own `~/.zn` are
 blocked.
 
+A prompt that contains a secret is not sent. In prompts, zn also blocks a
+value of 8 characters or more given to a credential name, in the middle of a
+sentence too
+(`my key is STRIPE_KEY=...`, `DB_PASSWORD=...`), unless the value is a
+placeholder (`changeme123`, `<key>`), a reference (`${API_KEY}`,
+`__ZN_STRIPE_KEY__`) or code. Store the value with `zn secret set NAME` and
+write `__ZN_NAME__` in the prompt instead.
+
 Codex runs new hooks only after you trust them: open Codex and use `/hooks`.
 
 ## 4. Let a command use a secret
@@ -108,7 +118,8 @@ returns a value.
 |---|---|
 | `zn secret list` | Names, modes, hosts and commands (never values) |
 | `zn secret rm NAME` | Remove a secret |
-| `zn vault log` | Local audit log: who used which secret where (no values). Also `zn secret log`; `--since 1h` limits it. `zn audit` shows it too in 1.5, with a notice, and will audit your configuration in 1.6 |
+| `zn vault log` | Local audit log: who used which secret where (no values). Also `zn secret log`; `--since 1h` limits it. (`zn audit` reviews agent configs; see [audit.md](audit.md)) |
+| `zn vault log export --otlp` | The same log as OpenTelemetry logs (OTLP/JSON Lines) for an OpenTelemetry Collector; `--since 7d`, `--out FILE`. See [team.md](team.md#export-the-audit-log-to-opentelemetry) |
 | `zn vault verify` | Check the audit log's HMAC chain |
 | `zn lock` | Lock the vault now |
 | `zn hooks uninstall <agent>` | Remove the hooks |
