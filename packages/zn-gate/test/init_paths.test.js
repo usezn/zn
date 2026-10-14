@@ -7,6 +7,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { getKnownEnvironments } = require('../lib/init');
 
 function withHome(fn) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-init-'));
@@ -19,22 +20,12 @@ function withHome(fn) {
   }
 }
 
-function antigravity() {
-  delete require.cache[require.resolve('../lib/init')];
-  return require('../lib/init').getKnownEnvironments().find((e) => e.id === 'antigravity');
-}
-
-test('Antigravity: the IDE file by default', () => {
+test('Antigravity: both settings files are checked', () => {
   withHome((home) => {
-    assert.equal(antigravity().filePath, path.join(home, '.gemini', 'antigravity', 'mcp_config.json'));
-  });
-});
-
-test('Antigravity: the shared config when it exists', () => {
-  withHome((home) => {
-    const shared = path.join(home, '.gemini', 'config', 'mcp_config.json');
-    fs.mkdirSync(path.dirname(shared), { recursive: true });
-    fs.writeFileSync(shared, '{"mcpServers":{}}');
-    assert.equal(antigravity().filePath, shared);
+    const envs = getKnownEnvironments();
+    const ide = envs.find((e) => e.id === 'antigravity');
+    const shared = envs.find((e) => e.id === 'antigravity-shared');
+    assert.equal(ide.filePath, path.join(home, '.gemini', 'antigravity', 'mcp_config.json'));
+    assert.equal(shared.filePath, path.join(home, '.gemini', 'config', 'mcp_config.json'));
   });
 });

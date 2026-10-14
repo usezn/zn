@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- `zn init` looks for the Antigravity MCP settings where Antigravity keeps them: `~/.gemini/config/mcp_config.json` when it exists, otherwise `~/.gemini/antigravity/mcp_config.json` (it looked for `~/.gemini/antigravity/mcp.json`, so Antigravity was never found).
+- `zn init` finds the Antigravity MCP settings: it checks `~/.gemini/antigravity/mcp_config.json` and `~/.gemini/config/mcp_config.json` (each one only if it exists). It looked for `~/.gemini/antigravity/mcp.json`, which Antigravity does not use, so Antigravity was never found.
 - The threat model said that `zn run` keeps interpreter start-up variables such as `NODE_OPTIONS`; since 1.5.1 it removes them whenever it injects secret values.
 
 ## [1.6.0] - 2026-10-14
