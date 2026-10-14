@@ -189,7 +189,7 @@ test('opencode: the installed plugin, driven like OpenCode does, blocks, rewrite
     const mod = await import(pathToFileURL(mjs).href);
     fs.unlinkSync(mjs);
     const hooks = await mod.ZnGate({ directory: dir });
-    await assert.rejects(hooks['tool.execute.before']({ tool: 'read', sessionID: 's', callID: 'c' }, { args: { filePath: path.join(dir, '.env') } }), /zn env shadow/);
+    await assert.rejects(hooks['tool.execute.before']({ tool: 'read', sessionID: 's', callID: 'c' }, { args: { filePath: path.join(dir, '.env') } }), /env shadow/);
     const args = { command: 'psql __ZN_DB_PASSWORD__', description: 'x' };
     const out1 = { args };
     await hooks['tool.execute.before']({ tool: 'bash', sessionID: 's', callID: 'c' }, out1);
@@ -206,7 +206,7 @@ test('opencode: the installed plugin, driven like OpenCode does, blocks, rewrite
     await hooks['tool.execute.after']({ tool: 'gh_get', sessionID: 's', callID: 'c', args: {} }, mcpRes);
     assert.ok(!mcpRes.content[0].text.includes(GHP));
     assert.equal(mcpRes.content[1].data, 'x');
-    await assert.rejects(hooks['chat.message']({ sessionID: 's' }, { message: {}, parts: [{ type: 'text', text: 'here ' + GHP }] }), /zn secret set/);
+    await assert.rejects(hooks['chat.message']({ sessionID: 's' }, { message: {}, parts: [{ type: 'text', text: 'here ' + GHP }] }), /secret set/);
     await hooks['chat.message']({ sessionID: 's' }, { message: {}, parts: [{ type: 'text', text: 'hello' }] });
   } finally {
     if (saved === undefined) delete process.env.ZN_HOME; else process.env.ZN_HOME = saved;

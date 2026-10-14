@@ -98,7 +98,7 @@ test('PreToolUse denies reading a plain-text .env, allows it once shadowed', asy
   fs.writeFileSync(envFile, 'AWS_ACCESS_KEY_ID=' + AWS + '\nDEBUG=true\n');
   const res = await run(preTool('Read', { file_path: envFile }, dir));
   assert.equal(res.output.hookSpecificOutput.permissionDecision, 'deny');
-  assert.match(res.output.hookSpecificOutput.permissionDecisionReason, /zn env shadow/);
+  assert.match(res.output.hookSpecificOutput.permissionDecisionReason, /env shadow/);
   assert.ok(!res.output.hookSpecificOutput.permissionDecisionReason.includes(AWS));
   fs.writeFileSync(envFile, 'AWS_ACCESS_KEY_ID=__ZN_AWS_ACCESS_KEY_ID__\nDEBUG=true\n');
   const ok = await run(preTool('Read', { file_path: envFile }, dir));
@@ -231,7 +231,7 @@ test('UserPromptSubmit blocks a pasted secret and suggests zn secret set', async
   const res = await run(prompt('use this key ' + AWS + ' to list buckets', '/'));
   assert.equal(res.output.decision, 'block');
   assert.equal(res.output.hookSpecificOutput.suppressOriginalPrompt, true);
-  assert.match(res.output.reason, /zn secret set AWS_KEY/);
+  assert.match(res.output.reason, /secret set AWS_KEY/);
   assert.ok(!res.output.reason.includes(AWS));
   const ok = await run(prompt('list my S3 buckets with __ZN_AWS_KEY__', '/'));
   assert.equal(ok.output, null);
@@ -435,7 +435,7 @@ test('UserPromptSubmit runs prepare() before scan(), so a vault value without a 
   const res = await runner.handle(adapter, prompt('connect with ' + plain, '/'), { engine, vault, failMode: 'open' });
   assert.ok(prepared);
   assert.equal(res.output.decision, 'block');
-  assert.match(res.output.reason, /zn secret set DB_PASS/);
+  assert.match(res.output.reason, /secret set DB_PASS/);
 });
 
 test('vault unavailable: the real engine redacts irreversibly and the user is told to unlock', async () => {
@@ -444,7 +444,10 @@ test('vault unavailable: the real engine redacts irreversibly and the user is to
   const out = JSON.stringify(res.output.hookSpecificOutput.updatedToolOutput);
   assert.ok(!out.includes(AWS));
   assert.match(out, /__ZN_REDACTED_AWS_KEY__/);
-  assert.match(res.output.systemMessage, /zn unlock/);
+  assert.match(res.output.systemMessage, /(zn|zn-gate@\S+) unlock/);
+  assert.match(res.output.systemMessage, /cannot be put back afterwards/);
+  assert.doesNotMatch(JSON.stringify(res.output), /irreversib|ZN_LOCKED/);
+  assert.match(JSON.stringify(res.output), /do not retry/);
 });
 
 test('engine: only well-formed tokens are protected from detection (a key wrapped as a token is still caught)', async () => {

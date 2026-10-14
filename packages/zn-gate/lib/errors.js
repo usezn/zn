@@ -27,4 +27,24 @@ function notImplemented(what) {
   return err;
 }
 
-module.exports = { CODES, znError, notImplemented };
+/* The text a person sees for an error: what happened, then the detail. The
+ * code is printed only with ZN_VERBOSE=1 or DEBUG set. */
+function humanError(err, env = process.env) {
+  const code = err && typeof err.code === 'string' && err.code.startsWith('ZN_') ? err.code : '';
+  const detail = String((err && err.message) || '');
+  let text;
+  if (code === CODES.LOCKED) {
+    const { znCommand } = require('./zn-command');
+    text = 'Your secret vault is locked. Unlock it in this terminal with: ' + znCommand('unlock') +
+      ' (it asks for your vault passphrase). Then run this command again.';
+  } else if (code === CODES.POLICY_DENIED) {
+    text = 'Not allowed: ' + (detail || 'zn blocked this request');
+  } else if (code === CODES.NOT_FOUND) {
+    text = 'Not found: ' + (detail || 'the item does not exist');
+  } else {
+    text = detail;
+  }
+  return code && (env.DEBUG || env.ZN_VERBOSE === '1') ? '[' + code + '] ' + text : text;
+}
+
+module.exports = { CODES, znError, notImplemented, humanError };
