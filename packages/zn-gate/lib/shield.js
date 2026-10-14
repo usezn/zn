@@ -6,6 +6,7 @@ const readline = require('readline');
 // tool results never leave the machine (see lib/client.js data-flow contract).
 const { analyzeLocal, checkToolResult } = require('./client');
 const { logEvidence } = require('./evidence');
+const pins = require('./mcp-pins');
 
 /**
  * Starts an MCP Security Shield proxy over stdio.
@@ -17,6 +18,8 @@ const { logEvidence } = require('./evidence');
  *    in tool descriptions and parameter schemas before the LLM ingests them.
  * 2. Pre-flight Request Protection: Intercepts `tools/call` requests and blocks malicious arguments.
  * 3. Post-flight Response Protection: Intercepts tool execution outputs and neutralizes indirect prompt injections.
+ * 4. Tool pinning: compares every tools/list with the tools pinned the first time
+ *    (lib/mcp-pins.js) and warns about, or removes, tools that changed since.
  *
  * @param {string} command - The target MCP executable (e.g. 'uvx', 'npx', 'node', 'python')
  * @param {string[]} args - Arguments passed to the target MCP executable
@@ -51,6 +54,9 @@ function startMcpShield(command, args, options = {}) {
   // id -> { method, toolName, startTime }
   const MAX_PENDING_CALLS = 5000;
   const pendingCalls = new Map();
+  // Tools removed from the list because they changed since they were approved (block mode).
+  const unpinnedTools = new Set();
+  const pinMode = pins.mode(options);
 
   function trackPendingCall(id, meta) {
     if (pendingCalls.size >= MAX_PENDING_CALLS) {
@@ -97,6 +103,18 @@ function startMcpShield(command, args, options = {}) {
       const argsText = typeof toolArgs === 'string' ? toolArgs : JSON.stringify(toolArgs);
 
       log(`Intercepting request tools/call [${callId}]: tool=${toolName}`);
+
+      if (unpinnedTools.has(toolName) && !options.shadow) {
+        process.stdout.write(JSON.stringify({
+          jsonrpc: '2.0',
+          id: callId,
+          result: {
+            content: [{ type: 'text', text: `[zn-gate] The tool '${toolName}' changed since it was approved, so it is not available. Ask the user to review it and run zn-gate pins approve in their own terminal.` }],
+            isError: true,
+          },
+        }) + '\n');
+        return;
+      }
 
       // Inspect tool arguments for injection / exfiltration attempts
       const check = analyzeLocal(argsText, options);
@@ -186,7 +204,45 @@ function startMcpShield(command, args, options = {}) {
 
       // Handle tools/list response: sanitize tool descriptions and input schemas
       if (pending.method === 'tools/list') {
-        const tools = msg.result?.tools;
+        let tools = msg.result?.tools;
+        if (Array.isArray(tools) && pinMode !== 'off') {
+          let result = null;
+          try {
+            result = pins.check(command, args, tools);
+          } catch (err) {
+            process.stderr.write(`[zn-shield] Could not check the tool pins: ${err.message}\n`);
+          }
+          const flagged = new Set(result ? [...result.changed, ...result.added] : []);
+          if (flagged.size) {
+            const key = pins.serverKey(command, args);
+            process.stderr.write(`[zn-shield TOOLS CHANGED] ${[...flagged].join(', ')} changed or appeared since the tools of this server were approved` +
+              `${pinMode === 'block' && !options.shadow ? ' and are not available' : ''}. Review them, then run: zn-gate pins approve ${key}\n`);
+            logEvidence({
+              agent: options.agent || 'mcp-server',
+              phase: 'tool-pin',
+              tool_name: [...flagged].join(','),
+              payload: [...flagged].join(','),
+              verdict: pinMode === 'block' && !options.shadow ? 'block' : 'allow',
+              rule: 'mcp_tool_changed',
+              reason: 'Tool definition changed since it was approved',
+              engine: 'oss-deterministic',
+            });
+            if (!options.shadow) {
+              if (pinMode === 'block') {
+                for (const name of flagged) unpinnedTools.add(name);
+                tools = tools.filter((t) => !(t && flagged.has(t.name)));
+                msg.result.tools = tools;
+              } else {
+                for (const t of tools) {
+                  if (t && flagged.has(t.name)) {
+                    t.description = '[zn-gate: this tool is new or changed since the user approved this server\'s tools; ask the user before using it.] ' +
+                      (typeof t.description === 'string' ? t.description : '');
+                  }
+                }
+              }
+            }
+          }
+        }
         if (Array.isArray(tools)) {
           for (const tool of tools) {
             // 1. Inspect tool description
