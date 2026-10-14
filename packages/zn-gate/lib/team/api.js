@@ -144,7 +144,7 @@ function isSignedPolicy(data) {
 }
 
 /**
- * createApi({ base, token, timeoutMs, fetchImpl, userAgent }) -> { base, join, getPolicy, ingest }
+ * createApi({ base, token, timeoutMs, fetchImpl, userAgent }) -> { base, preview, join, getPolicy, ingest }
  *
  * base: zn cloud origin (see checkBase). token: install token (zni_...), needed
  * for getPolicy and ingest only. userAgent: the full User-Agent header value,
@@ -217,6 +217,33 @@ function createApi(options = {}) {
     }
   }
 
+  /**
+   * What a join token is for, before joining: POST /v1/org/join-preview (the token travels in the
+   * body and is not used up). Never throws for an HTTP answer:
+   *   {ok: true, org_name, invited_by, expires_at}
+   *   {ok: false, reason: 'invalid'}          unknown, expired or used-up token (404 invalid_join_token)
+   *   {ok: false, reason: 'no_subscription'}  the organization has no active Team subscription (402)
+   *   {ok: false, reason: 'unavailable', detail}  anything else (older server, rate limit, error, network)
+   */
+  async function preview(joinToken) {
+    let r;
+    try {
+      r = await request('POST', '/v1/org/join-preview', { body: { join_token: joinToken } });
+    } catch (err) {
+      return { ok: false, reason: 'unavailable', detail: err && err.code ? err.code : 'network error' };
+    }
+    const code = isObject(r.data) && typeof r.data.code === 'string' ? r.data.code : '';
+    if (r.status === 404 && code === 'invalid_join_token') return { ok: false, reason: 'invalid' };
+    if (r.status === 402 && code === 'no_subscription') return { ok: false, reason: 'no_subscription' };
+    if (r.status !== 200 || !isObject(r.data)) return { ok: false, reason: 'unavailable', detail: 'HTTP ' + r.status };
+    const d = r.data;
+    const okName = typeof d.org_name === 'string' && d.org_name.length > 0 && d.org_name.length <= 100;
+    const okBy = d.invited_by === null || (typeof d.invited_by === 'string' && d.invited_by.length > 0 && d.invited_by.length <= 60);
+    const okExp = typeof d.expires_at === 'string' && !Number.isNaN(Date.parse(d.expires_at));
+    if (!okName || !okBy || !okExp) return { ok: false, reason: 'unavailable', detail: 'malformed preview' };
+    return { ok: true, org_name: d.org_name, invited_by: d.invited_by, expires_at: d.expires_at };
+  }
+
   /** Register this installation. No token is sent; the join token travels in the body. */
   async function join(body) {
     const r = await request('POST', '/v1/org/join', { body });
@@ -245,7 +272,7 @@ function createApi(options = {}) {
     return { status: 200, body: r.data };
   }
 
-  return { base, join, getPolicy, ingest };
+  return { base, preview, join, getPolicy, ingest };
 }
 
 module.exports = { checkBase, createApi, TeamApiError };

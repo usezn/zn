@@ -1,16 +1,23 @@
 name: zn-gate scrubber and vault
 
+# Pull requests into next run the checks the rulesets require and Ubuntu with Node.js 22. The full matrix
+# (Windows and macOS, every Node.js version) runs on pushes to main and next, on pull requests into main
+# and release branches, and on any pull request labelled full-ci.
 on:
+  push:
+    branches: [ main, next ]
   pull_request:
-    branches: [ next, main ]
+    branches: [ next, main, 'release/**' ]
+    types: [ opened, synchronize, reopened, labeled ]
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# A new push to a pull request cancels the previous run for it; every push to main and next runs on its own.
 concurrency:
-  group: scrubber-${{ github.ref }}
-  cancel-in-progress: true
+  group: scrubber-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   scrubber-vault:
@@ -20,8 +27,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        node: [18, 20, 22, 24]
+        # "scrubber + vault (node 22 / ubuntu-latest)" is a required check: it always runs.
+        os: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["ubuntu-latest", "windows-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
+        node: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[18, 20, 22, 24]' || '[22]') }}
     defaults:
       run:
         working-directory: packages/zn-gate
@@ -29,14 +37,26 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Decide what this change needs
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FULL: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+        working-directory: .
+        run: bash .github/scripts/ci-scope.sh
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.scope.outputs.run == 'true'
         with:
           node-version: ${{ matrix.node }}
           cache: npm
           cache-dependency-path: packages/zn-gate/package-lock.json
       - name: Install dependencies
+        if: steps.scope.outputs.run == 'true'
         run: npm ci --ignore-scripts
       - name: Contract and scrubber tests
+        if: steps.scope.outputs.run == 'true'
         run: |
           node test/contract.test.js
           node test/scrub_patterns.test.js
@@ -44,26 +64,28 @@ jobs:
           node test/scrub_exact.test.js
           node test/scrub_engine.test.js
       - name: Vault tests (passphrase backend)
+        if: steps.scope.outputs.run == 'true'
         run: node test/vault.test.js
       - name: Vault tests (native keychain, Linux Secret Service)
-        if: runner.os == 'Linux'
+        if: steps.scope.outputs.run == 'true' && (runner.os == 'Linux')
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq libsecret-tools gnome-keyring dbus-x11 >/dev/null
           dbus-run-session -- bash -c 'printf "ci-keyring" | gnome-keyring-daemon --unlock --components=secrets >/dev/null && ZN_TEST_NATIVE_KEYCHAIN=1 node test/vault.test.js'
       - name: Vault tests (native keychain, macOS Keychain)
-        if: runner.os == 'macOS'
+        if: steps.scope.outputs.run == 'true' && (runner.os == 'macOS')
         run: |
           security create-keychain -p ci-keychain zn-ci.keychain
           security unlock-keychain -p ci-keychain zn-ci.keychain
           ZN_KEYCHAIN_PATH="$HOME/Library/Keychains/zn-ci.keychain-db" ZN_TEST_NATIVE_KEYCHAIN=1 node test/vault.test.js
           security delete-keychain zn-ci.keychain
       - name: Vault tests (native keychain, Windows Credential Manager)
-        if: runner.os == 'Windows'
+        if: steps.scope.outputs.run == 'true' && (runner.os == 'Windows')
         env:
           ZN_TEST_NATIVE_KEYCHAIN: '1'
         run: node test/vault.test.js
       - name: CLI smoke (unlock, status, lock)
+        if: steps.scope.outputs.run == 'true'
         shell: bash
         env:
           ZN_KEYCHAIN_BACKEND: passphrase

@@ -22,6 +22,7 @@ const { effective, approvalKey } = require('./effective');
 const { createApi, checkBase } = require('./api');
 const { uploadPending } = require('./upload');
 const { CODES, znError } = require('../errors');
+const { INVISIBLE } = require('../vault/confirm');
 
 const VERSION = require('../../package.json').version;
 const DEFAULT_API = 'https://api.usezn.com';
@@ -30,8 +31,9 @@ const AGENT_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const NAME_RE = /^[A-Z][A-Z0-9_]{0,63}$/;
 
 const osName = () => (['linux', 'darwin', 'win32'].includes(process.platform) ? process.platform : 'other');
-/* Text from the server shown in dialogs and in `zn team status`: printable only. */
-const printable = (s, max) => (typeof s === 'string' ? s.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, '').slice(0, max) : null);
+/* Text from the server shown in dialogs and in `zn team status`: printable only (same invisible set as the dialogs). */
+const INVISIBLE_RE = new RegExp('[' + INVISIBLE + ']', 'g');
+const printable = (s, max) => (typeof s === 'string' ? s.replace(INVISIBLE_RE, '').trim().slice(0, max) : null);
 
 function makeTeamOps(ctx) {
   const { state, writeAudit, confirmOutOfBand } = ctx;
@@ -97,11 +99,34 @@ function makeTeamOps(ctx) {
       const host = new URL(base).host;
       const warnings = [];
       if (base !== DEFAULT_API) warnings.push('This is not the zn service (api.usezn.com). Only continue if your organization runs its own server at ' + host + '.');
+      const api = createApi({ base, fetchImpl, userAgent: 'zn-gate/' + VERSION });
+      // Which organization the token is for, shown in the dialog before anything is shared.
+      // The preview does not use up the token; an unusable token stops here, without a dialog.
+      // Only against the zn service: another server gets the token only after the user confirms.
+      const pv = base === DEFAULT_API ? await api.preview(joinToken) : { ok: false, reason: 'unavailable', detail: 'not checked on a server other than api.usezn.com' };
+      if (!pv.ok && (pv.reason === 'invalid' || pv.reason === 'no_subscription')) {
+        writeAudit({ mode: 'set', decision: 'deny', reason: 'team_join_failed' });
+        throw znError(CODES.POLICY_DENIED, pv.reason === 'invalid'
+          ? 'join failed (this join token is invalid, expired or used up; ask your administrator for a new one)'
+          : 'join failed (this organization has no active Team subscription)');
+      }
+      const previewOrg = pv.ok ? printable(pv.org_name, 100) || null : null;
+      const previewBy = pv.ok ? printable(pv.invited_by, 60) || null : null;
+      if (!previewOrg) {
+        const why = pv.ok ? 'the server sent an empty name' : printable(String(pv.detail || ''), 80);
+        warnings.push('Could not check which organization this token is for (' + why + '); its name appears after joining.');
+      }
+      const orgFields = previewOrg
+        ? [['Organization', previewOrg + ' (as reported by ' + host + ')'], ['Invited by', previewBy ? previewBy + ' (their display name)' : 'not shown (no display name set)']]
+        : [];
       await confirmOutOfBand({
         kind: 'team',
-        title: current ? 'reconnect this machine to organization ' + current.org + '?' : 'connect this machine to a zn organization?',
+        title: current
+          ? 'reconnect this machine to organization ' + (previewOrg || current.org) + '?'
+          : previewOrg ? 'connect this machine to ' + previewOrg + '?' : 'connect this machine to a zn organization?',
         warnings,
         fields: [
+          ...orgFields,
           ['Server', host],
           ['Join token', 'ends in ' + joinToken.slice(-6) + ' (check it against the one your administrator sent you)'],
           ['Shares', 'audit records, including the ones already on this machine: secret names, agents, tools, commands, hosts and decisions. Never secret values.'],
@@ -112,7 +137,6 @@ function makeTeamOps(ctx) {
 
       const secrets = await state.loadSecrets();
       const installId = current ? current.install_id : crypto.randomUUID();
-      const api = createApi({ base, fetchImpl, userAgent: 'zn-gate/' + VERSION });
       let res;
       try {
         res = await api.join({ join_token: joinToken, install_id: installId, audit_key: secrets.auditKey, agent, zn_gate_version: VERSION, os: osName() });
@@ -125,6 +149,11 @@ function makeTeamOps(ctx) {
       if (!policy.checkPin(res.policy_public_key)) throw znError(CODES.POLICY_DENIED, 'the server sent an invalid organization key');
       if (current && current.pin.kid !== res.policy_public_key.kid) throw znError(CODES.POLICY_DENIED, "the organization's signing key changed; run `zn team leave` and join again to accept the new key");
       const orgName = printable(res.org_name, 100) || null;
+      // The organization joined must be the one shown in the dialog.
+      if (previewOrg && orgName !== previewOrg) {
+        writeAudit({ mode: 'set', decision: 'deny', reason: 'team_join_failed' });
+        throw znError(CODES.POLICY_DENIED, 'join refused: the server joined a different organization than the one you confirmed; this machine was not connected. Ask your administrator.');
+      }
       return state.serial(async () => {
         const s = await state.loadSecrets();
         s.team = {

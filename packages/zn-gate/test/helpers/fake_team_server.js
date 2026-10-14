@@ -188,6 +188,10 @@ async function startFakeTeamServer({ now = Date.now } = {}) {
   const state = {
     orgId: 'org_' + randomAlnum(16),
     orgName: 'Fake Org',
+    inviter: 'Dana Admin',
+    previewEnabled: true, // false: an older server without POST /v1/org/join-preview
+    previewOrgName: null, // a different name in the preview than in the join (mismatch test)
+    previewStatus: null, // force an HTTP status for the preview (e.g. 429, 500)
     active: true,
     policyVersion: 0,
     policyContent: null,
@@ -212,6 +216,18 @@ async function startFakeTeamServer({ now = Date.now } = {}) {
     const got = Buffer.from(sha256Hex(parsed[2]), 'hex');
     if (want.length !== got.length || !crypto.timingSafeEqual(want, got)) return null;
     return inst;
+  }
+
+  function handlePreview(res, body) {
+    if (!state.previewEnabled) return send(res, 404, { error: 'Not found' });
+    if (state.previewStatus) return send(res, state.previewStatus, { error: 'forced' });
+    const ok = isObject(body) && Object.keys(body).length === 1 && typeof body.join_token === 'string' && /^znj_[A-Za-z0-9]{40}$/.test(body.join_token);
+    const jt = ok ? state.joinTokens.get(sha256Hex(body.join_token)) : null;
+    if (!jt || jt.uses >= jt.maxUses || jt.expiresAt <= now()) {
+      return send(res, 404, { error: 'This join token is invalid, expired or used up', code: 'invalid_join_token' });
+    }
+    if (!state.active) return send(res, 402, { error: 'This organization has no active Team subscription', code: 'no_subscription' });
+    send(res, 200, { org_name: state.previewOrgName || state.orgName, invited_by: state.inviter, expires_at: new Date(jt.expiresAt).toISOString() });
   }
 
   function handleJoin(res, body, origin) {
@@ -328,6 +344,11 @@ async function startFakeTeamServer({ now = Date.now } = {}) {
 
     const origin = `http://127.0.0.1:${server.address().port}`;
     const isPost = req.method === 'POST';
+    if (isPost && url.pathname === '/v1/org/join-preview') {
+      let body;
+      try { body = JSON.parse(raw.toString('utf8')); } catch { return send(res, 400, { error: 'Invalid JSON body' }); }
+      return handlePreview(res, body);
+    }
     if (isPost && url.pathname === '/v1/org/join') {
       let body;
       try { body = JSON.parse(raw.toString('utf8')); } catch { return send(res, 400, { error: 'Invalid JSON body' }); }

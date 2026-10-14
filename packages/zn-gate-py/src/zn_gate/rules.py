@@ -821,6 +821,200 @@ SECRET_VALUE_FILTERS = {
     "secret:credential_default": _is_non_secret_default,
 }
 
+# ---------------------------------------------------------------------------
+# Provider token formats. The bodies, boundaries and checks follow the token
+# table in packages/zn-gate/lib/scrub/patterns.js (the Node.js scrubber), so
+# both engines redact the same credential formats. They are kept apart from
+# SECRET_PATTERNS, which mirrors the rules.js secret:* list one for one
+# (tests/test_rules_parity.py). Each entry is (rule id, regex, replacement).
+#   PROVIDER_MATCH_CHECKS: a check on the whole match (patterns.js `check`).
+#   PROVIDER_VALUE_FILTERS: group 2 with group 1 as the prefix; True means
+#     "not a secret", as in SECRET_VALUE_FILTERS.
+# Every regex is linear: bounded repeats and token boundaries, no nesting.
+# ---------------------------------------------------------------------------
+_TB = r'(?<![A-Za-z0-9_-])'    # start of a token
+_TA = r'(?![A-Za-z0-9_-])'     # end of a token
+_ALNUM_B = r'(?<![A-Za-z0-9])'
+_ALNUM_A = r'(?![A-Za-z0-9])'
+_TOKEN_ALPHA_RE = re.compile(r'[A-Za-z]')
+
+
+def _pv_shannon(s: str) -> float:
+    """Shannon entropy in bits per character (patterns.js shannon)."""
+    if not s:
+        return 0.0
+    n = len(s)
+    h = 0.0
+    for count in Counter(s).values():
+        p = count / n
+        h -= p * math.log2(p)
+    return h
+
+
+def _pv_random(s: str, classes: int = 2, bits: float = 3.0) -> bool:
+    """patterns.js looksRandom: enough character classes and entropy."""
+    found = ((1 if _LOWER_RE.search(s) else 0) + (1 if _UPPER_RE.search(s) else 0)
+             + (1 if _DIGIT_RE.search(s) else 0) + (1 if _SYMBOL_RE.search(s) else 0))
+    return found >= classes and _pv_shannon(s) >= bits
+
+
+_PV_PLACEHOLDER_RE = re.compile(
+    r'x{3,}|\*{3,}|\.{3,}|-+|_+|<[^>]*>|\$\{?[^}]*\}?|\{\{?[^}]*\}?\}|%\(?[a-z_]*\)?s|:[a-z_]+|\[[^\]]*\]',
+    re.IGNORECASE | re.ASCII)
+_PV_PLACEHOLDER_WORDS = re.compile(
+    r'(?:^|[^a-z])(?:password|passwd|passw0rd|secret|changeme|change_me|example|placeholder|your[_-]?|'
+    r'redacted|dummy|sample|foobar|hunter2|xxxx|todo|insert|replace|mypass|pass(?:word)?123)(?:[^a-z]|$)',
+    re.IGNORECASE | re.ASCII)
+_PV_PLACEHOLDER_SEQ = re.compile(r'0123456789|1234567890|abcdef|qwerty', re.IGNORECASE | re.ASCII)
+_PV_POLAR_PREFIX = re.compile(r'polar_(?:oat|pat|(?:at|rt)_[uo]|ci|cs)_')
+
+
+def _pv_placeholder(s: str) -> bool:
+    """patterns.js isPlaceholder."""
+    if not s or _PV_PLACEHOLDER_RE.fullmatch(s) or _PV_PLACEHOLDER_WORDS.search(s):
+        return True
+    return bool(re.fullmatch(r'(.)\1+', s) or _PV_PLACEHOLDER_SEQ.match(s))
+
+
+def _pv_hf_check(v: str) -> bool:
+    # Letters-only bodies are exactly 34 characters; CamelCase identifiers do not count.
+    body = v[3:]
+    if re.fullmatch(r'[A-Za-z]{34}', body) and not re.fullmatch(r'[a-z]*(?:[A-Z][a-z]{2,})*[A-Z]{0,3}[a-z]{0,2}', body):
+        return True
+    return _pv_random(body, 3, 3.8)
+
+
+def _pv_url_password_not_secret(pw: str, prefix: str) -> bool:
+    # prefix is "scheme://user:"; the same exclusions as patterns.js DB_PASSWORD.
+    cut = prefix.find('://')
+    scheme = prefix[:cut].lower()
+    user = prefix[cut + 3:-1]
+    if len(pw) < 6 or _pv_placeholder(pw) or pw == user or pw.lower() == scheme:
+        return True
+    # A user that is a shell reference ("https://$TOKEN:x-oauth-basic@host") is a template.
+    # A password that is only a reference ($NAME, ${NAME}, %NAME%, <name>, {{name}}) is not a
+    # literal secret; one that merely starts with one of those characters still is.
+    if user[:1] in ("$", "%", "<", "{"):
+        return True
+    if re.fullmatch(r'\$\{?\w+\}?|%\w+%|<[^<>\s]+>|\{\{?\s*[\w.]+\s*\}?\}', pw):
+        return True
+    if re.fullmatch(r'[A-Za-z]{1,8}', pw) or re.fullmatch(r'(?:%[0-9A-Fa-f]{2}){1,2}', pw):
+        return True
+    return False
+
+
+def _pv_bearer_not_secret(token: str, prefix: str) -> bool:
+    return _pv_placeholder(token)
+
+
+PROVIDER_SECRET_PATTERNS: List[Tuple[str, re.Pattern, str]] = [
+    ("secret:aws_key_id", re.compile(_ALNUM_B + r'(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}' + _ALNUM_A), "[REDACTED_AWS_KEY]"),
+    ("secret:gitlab_token", re.compile(_TB + r'gl(?:pat|dt|rt|ptt|cbt|ft|soat)-[A-Za-z0-9_-]{20,}' + _TA), "[REDACTED_GITLAB_TOKEN]"),
+    ("secret:slack_token", re.compile(_TB + r'(?:xox[abeprs]-[0-9]{6,}-[A-Za-z0-9-]{8,}|xapp-[0-9]-[A-Z0-9]{6,}-[0-9]{6,}-[a-f0-9]{32,})' + _TA), "[REDACTED_SLACK_TOKEN]"),
+    ("secret:slack_webhook", re.compile(r'https://hooks\.slack\.com/(?:services|workflows|triggers)/[A-Za-z0-9/_-]{20,}'), "[REDACTED_SLACK_WEBHOOK]"),
+    ("secret:discord_webhook", re.compile(r'https://(?:ptb\.|canary\.)?discord(?:app)?\.com/api/webhooks/[0-9]{15,20}/[A-Za-z0-9_-]{60,}'), "[REDACTED_DISCORD_WEBHOOK]"),
+    ("secret:stripe_key", re.compile(_TB + r'(?:sk|rk)_(?:live|test|prod)_[A-Za-z0-9]{20,247}' + _TA), "[REDACTED_STRIPE_KEY]"),
+    ("secret:stripe_webhook_secret", re.compile(_TB + r'whsec_[A-Za-z0-9+/]{32,}' + _TA), "[REDACTED_STRIPE_WEBHOOK_SECRET]"),
+    ("secret:google_api_key", re.compile(_TB + r'AIza[0-9A-Za-z_-]{35}' + _TA), "[REDACTED_GOOGLE_API_KEY]"),
+    ("secret:google_oauth_secret", re.compile(_TB + r'GOCSPX-[A-Za-z0-9_-]{28}' + _TA), "[REDACTED_GOOGLE_OAUTH_SECRET]"),
+    ("secret:hf_token", re.compile(_TB + r'hf_[A-Za-z0-9]{34,40}' + _TA), "[REDACTED_HF_TOKEN]"),
+    ("secret:npm_token", re.compile(_TB + r'npm_[A-Za-z0-9]{36}' + _TA), "[REDACTED_NPM_TOKEN]"),
+    ("secret:pypi_token", re.compile(_TB + r'pypi-AgE[A-Za-z0-9_-]{50,}' + _TA), "[REDACTED_PYPI_TOKEN]"),
+    ("secret:sendgrid_key", re.compile(_TB + r'SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}' + _TA), "[REDACTED_SENDGRID_KEY]"),
+    ("secret:twilio_key", re.compile(_ALNUM_B + r'SK(?:[0-9a-f]{32}|[0-9A-F]{32})' + _ALNUM_A), "[REDACTED_TWILIO_KEY]"),
+    ("secret:mailgun_key", re.compile(_TB + r'key-[0-9a-f]{32}' + _TA), "[REDACTED_MAILGUN_KEY]"),
+    ("secret:shopify_token", re.compile(_TB + r'shp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}' + _TA), "[REDACTED_SHOPIFY_TOKEN]"),
+    ("secret:digitalocean_token", re.compile(_TB + r'do[opr]_v1_[a-f0-9]{64}' + _TA), "[REDACTED_DIGITALOCEAN_TOKEN]"),
+    ("secret:linear_key", re.compile(_TB + r'lin_api_[A-Za-z0-9]{40}' + _TA), "[REDACTED_LINEAR_KEY]"),
+    ("secret:telegram_bot_token", re.compile(_ALNUM_B + r'[0-9]{8,10}:AA[A-Za-z0-9_-]{33}' + _TA), "[REDACTED_TELEGRAM_BOT_TOKEN]"),
+    ("secret:azure_storage_key", re.compile(r'(AccountKey=)([A-Za-z0-9+/]{86}==)'), r'\1[REDACTED_AZURE_STORAGE_KEY]'),
+    ("secret:databricks_token", re.compile(_TB + r'dapi[a-f0-9]{32}(?:-[0-9])?' + _TA), "[REDACTED_DATABRICKS_TOKEN]"),
+    ("secret:vault_token", re.compile(_TB + r'hv[sb]\.[A-Za-z0-9_-]{24,}' + _TA), "[REDACTED_VAULT_TOKEN]"),
+    ("secret:doppler_token", re.compile(_TB + r'dp\.(?:st|pt|sa|scim|audit|ct)\.[A-Za-z0-9_.-]{40,}' + _TA), "[REDACTED_DOPPLER_TOKEN]"),
+    ("secret:newrelic_key", re.compile(_TB + r'NR(?:AK|II)-[A-Z0-9]{27}' + _TA), "[REDACTED_NEWRELIC_KEY]"),
+    ("secret:groq_key", re.compile(_TB + r'gsk_[A-Za-z0-9]{52}' + _TA), "[REDACTED_GROQ_KEY]"),
+    ("secret:xai_key", re.compile(_TB + r'xai-[A-Za-z0-9]{80}' + _TA), "[REDACTED_XAI_KEY]"),
+    ("secret:dockerhub_pat", re.compile(_TB + r'dckr_(?:pat|oat)_[A-Za-z0-9_-]{20,}' + _TA), "[REDACTED_DOCKERHUB_PAT]"),
+    ("secret:tavily_key", re.compile(_TB + r'tvly-[A-Za-z0-9_-]{20,}' + _TA), "[REDACTED_TAVILY_KEY]"),
+    ("secret:firecrawl_key", re.compile(_TB + r'fc-[A-Za-z0-9]{20,}' + _TA), "[REDACTED_FIRECRAWL_KEY]"),
+    ("secret:polar_token", re.compile(_TB + r'polar_(?:oat|pat|(?:at|rt)_[uo]|ci|cs)_[A-Za-z0-9_-]{20,}' + _TA), "[REDACTED_POLAR_TOKEN]"),
+    ("secret:replicate_token", re.compile(_TB + r'r8_[A-Za-z0-9]{37}' + _TA), "[REDACTED_REPLICATE_TOKEN]"),
+    ("secret:supabase_pat", re.compile(_TB + r'sbp_[A-Za-z0-9_-]{30,}' + _TA), "[REDACTED_SUPABASE_PAT]"),
+    ("secret:azure_ad_client_secret", re.compile(r'(?<![A-Za-z0-9_~.-])[A-Za-z0-9_~.]{3}[0-9]Q~[A-Za-z0-9_~.-]{30,33}[A-Za-z0-9_~-](?![A-Za-z0-9_~-])(?!\.[A-Za-z0-9_~-])'), "[REDACTED_AZURE_AD_CLIENT_SECRET]"),
+    # Password segment of scheme://user:password@host (any scheme, as DB_PASSWORD in patterns.js).
+    # The scheme does not start inside a longer word, Unicode letters included (a long s is not an s).
+    ("secret:url_password", re.compile(r"((?<!\w)[a-zA-Z][a-zA-Z0-9+.-]{1,24}://[^\s:@/?#'\"`<>]{0,128}:)([^\s@/?#'\"`<>]{1,256})(@(?:[A-Za-z0-9.-]+|\[[0-9a-fA-F:]+\]))"), r'\1[REDACTED_URL_PASSWORD]\3'),
+    # Authorization header with a bearer token (not in patterns.js). zn's own
+    # __ZN_ markers are not secrets.
+    ("secret:bearer_token", re.compile(r'(Authorization[ \t]*:[ \t]*Bearer[ \t]+)([A-Za-z0-9._~+/=-]{20,})', re.IGNORECASE | re.ASCII), r'\1[REDACTED_BEARER_TOKEN]'),
+]
+
+# Whole-match checks (patterns.js `check`), keyed by rule id.
+PROVIDER_MATCH_CHECKS: Dict[str, Any] = {
+    "secret:aws_key_id": lambda v: re.fullmatch(r'(.)\1+', v[4:]) is None and not v.endswith('EXAMPLE'),
+    "secret:stripe_key": lambda v: _pv_random(v[8:], 2, 3.5),
+    "secret:gitlab_token": lambda v: _pv_random(v[v.index('-') + 1:], 2, 3.3),
+    "secret:hf_token": _pv_hf_check,
+    "secret:npm_token": lambda v: _pv_random(v[4:], 3, 3.8),
+    "secret:twilio_key": lambda v: bool(_DIGIT_RE.search(v[2:])) and bool(re.search(r'[a-fA-F]', v[2:])),
+    "secret:mailgun_key": lambda v: bool(_DIGIT_RE.search(v[4:])) and bool(re.search(r'[a-f]', v[4:])),
+    "secret:databricks_token": lambda v: bool(_DIGIT_RE.search(v[4:])) and bool(re.search(r'[a-f]', v[4:])),
+    "secret:dockerhub_pat": lambda v: _pv_random(v.split('_', 2)[2], 2, 3.3),
+    "secret:tavily_key": lambda v: bool(_DIGIT_RE.search(v[5:])) and _pv_random(v[5:], 2, 3.3),
+    "secret:firecrawl_key": lambda v: bool(_DIGIT_RE.search(v[3:])) and _pv_random(v[3:], 2, 3.3),
+    "secret:polar_token": lambda v: _pv_random(_PV_POLAR_PREFIX.sub('', v, count=1), 2, 3.3),
+    "secret:replicate_token": lambda v: _pv_random(v[3:], 2, 3.3),
+    "secret:supabase_pat": lambda v: bool(_DIGIT_RE.search(v[4:])) and _pv_random(v[4:], 2, 3.3),
+    "secret:azure_ad_client_secret": lambda v: _pv_random(v, 3, 3.5),
+}
+
+# Value filters (group 2, prefix group 1); True means the value is not a secret.
+PROVIDER_VALUE_FILTERS: Dict[str, Any] = {
+    "secret:url_password": _pv_url_password_not_secret,
+    "secret:bearer_token": _pv_bearer_not_secret,
+}
+
+# Literal hints, as in patterns.js: the rule runs only when the text holds one of
+# them (a substring search, much cheaper than a regex pass on every line).
+# A rule without an entry always runs (the bearer rule: its header name is
+# matched without case rules).
+PROVIDER_HINTS: Dict[str, Tuple[str, ...]] = {
+    "secret:aws_key_id": ("AKIA", "ASIA", "ABIA", "ACCA"),
+    "secret:gitlab_token": ("glpat-", "gldt-", "glrt-", "glptt-", "glcbt-", "glft-", "glsoat-"),
+    "secret:slack_token": ("xox", "xapp-"),
+    "secret:slack_webhook": ("hooks.slack.com",),
+    "secret:discord_webhook": ("/api/webhooks/",),
+    "secret:stripe_key": ("_live_", "_test_", "_prod_"),
+    "secret:stripe_webhook_secret": ("whsec_",),
+    "secret:google_api_key": ("AIza",),
+    "secret:google_oauth_secret": ("GOCSPX-",),
+    "secret:hf_token": ("hf_",),
+    "secret:npm_token": ("npm_",),
+    "secret:pypi_token": ("pypi-",),
+    "secret:sendgrid_key": ("SG.",),
+    "secret:twilio_key": ("SK",),
+    "secret:mailgun_key": ("key-",),
+    "secret:shopify_token": ("shpat_", "shpca_", "shppa_", "shpss_"),
+    "secret:digitalocean_token": ("_v1_",),
+    "secret:linear_key": ("lin_api_",),
+    "secret:telegram_bot_token": (":AA",),
+    "secret:azure_storage_key": ("AccountKey=",),
+    "secret:databricks_token": ("dapi",),
+    "secret:vault_token": ("hvs.", "hvb."),
+    "secret:doppler_token": ("dp.",),
+    "secret:newrelic_key": ("NRAK-", "NRII-"),
+    "secret:groq_key": ("gsk_",),
+    "secret:xai_key": ("xai-",),
+    "secret:dockerhub_pat": ("dckr_pat_", "dckr_oat_"),
+    "secret:tavily_key": ("tvly-",),
+    "secret:firecrawl_key": ("fc-",),
+    "secret:polar_token": ("polar_",),
+    "secret:replicate_token": ("r8_",),
+    "secret:supabase_pat": ("sbp_",),
+    "secret:azure_ad_client_secret": ("Q~",),
+    "secret:url_password": ("://",),
+}
+
 
 def _apply_edits(text: str, edits: List[Tuple[int, int, str]]) -> str:
     """Replaces the (start, end, replacement) spans, in ascending order, in text."""
@@ -853,10 +1047,11 @@ def _expand_template(template: str, groups: List[Optional[Tuple[int, int]]], tex
 
 def _rule_candidates(rule_id: str, pattern: re.Pattern, replacement: str, text: str,
                      view: Optional[Tuple[str, array]], budget: List[int], value_filter,
-                     out: List[Tuple[int, int, str, str]]) -> None:
+                     out: List[Tuple[int, int, str, str]], match_check=None) -> None:
     """Candidate redactions of one rule as (start, end, rule_id, replacement) in
     original coordinates. The rule runs on the original text and on the text
-    without invisible characters (see ruleCandidates in rules.js)."""
+    without invisible characters (see ruleCandidates in rules.js). match_check,
+    when given, receives the whole match and returns False to skip it."""
     passes: List[Tuple[str, Optional[array]]] = [(text, None)]
     if view is not None:
         passes.append(view)
@@ -864,11 +1059,16 @@ def _rule_candidates(rule_id: str, pattern: re.Pattern, replacement: str, text: 
         required = SECRET_PATTERN_REQUIRES.get(rule_id)
         if required and required not in hay:
             continue
+        hints = PROVIDER_HINTS.get(rule_id)
+        if hints and not any(h in hay for h in hints):
+            continue
         prefilter = SECRET_PATTERN_PREFILTERS.get(rule_id)
         if prefilter is not None and not prefilter.search(hay):
             continue
         for m in pattern.finditer(hay):
             if m.end() == m.start():
+                continue
+            if match_check is not None and not match_check(m.group(0)):
                 continue
             groups: List[Optional[Tuple[int, int]]] = [None]
             for k in range(1, pattern.groups + 1):
@@ -924,13 +1124,14 @@ def redact_secrets(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     view = None
     dirty = True
 
-    for rule_id, pattern, replacement in SECRET_PATTERNS:
+    for rule_id, pattern, replacement in SECRET_PATTERNS + PROVIDER_SECRET_PATTERNS:
         if dirty:
             view = invisible_view(redacted)
             dirty = False
         cands: List[Tuple[int, int, str, str]] = []
+        value_filter = SECRET_VALUE_FILTERS.get(rule_id) or PROVIDER_VALUE_FILTERS.get(rule_id)
         _rule_candidates(rule_id, pattern, replacement, redacted, view, budget,
-                         SECRET_VALUE_FILTERS.get(rule_id), cands)
+                         value_filter, cands, PROVIDER_MATCH_CHECKS.get(rule_id))
         if not cands:
             continue
         edits: List[Tuple[int, int, str]] = []
@@ -941,6 +1142,46 @@ def redact_secrets(text: str) -> Tuple[str, List[Dict[str, Any]]]:
         dirty = True
 
     return redacted, detections
+
+
+# Display defence in depth, applied after redact_secrets to snippets, CLI
+# output and the ledger preview: a run of 24 or more token characters that
+# holds both a letter and a digit is masked, so a credential format the table
+# above does not know does not reach a terminal, a CI log or the ledger. A UUID
+# is kept (an identifier, not a credential); a 64-hex digest is masked.
+_TOKEN_RUN_RE = re.compile(r'[A-Za-z0-9_\-+/=]{24,}')
+_UUID_FULL_RE = re.compile(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}')
+_UUID_RE = re.compile(r'(?<![0-9A-Za-z])[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?![0-9A-Za-z])')
+_RUN_SEP_RE = re.compile(r'[-_/]+')
+# One part of an identifier: a word (lower, Capitalized or camelCase) with an
+# optional short number, or a short number.
+_WORDY_PART_RE = re.compile(r'(?:[A-Z]+\d{0,4}|[A-Za-z][a-z]*(?:[A-Z][a-z]+)*[A-Z]?\d{0,4}|\d{1,4})?')
+
+
+def _wordy_run(run: str) -> bool:
+    """True for names, paths and identifiers such as test_case_v2, MAX_SIZE_2048,
+    ../components/Header2/indexFile or user-<uuid>: every part between - _ /
+    is a word or a short number."""
+    if _RUN_SEP_RE.search(run) is None:
+        return False
+    parts = _RUN_SEP_RE.split(_UUID_RE.sub("uuid", run))
+    return all(_WORDY_PART_RE.fullmatch(p) for p in parts)
+
+
+def mask_token_runs(text: str) -> str:
+    """Masks token-like runs left in a text that was already passed through redact_secrets."""
+    if not text:
+        return text
+
+    def _sub(m: "re.Match[str]") -> str:
+        run = m.group(0)
+        if _TOKEN_ALPHA_RE.search(run) is None or _DIGIT_RE.search(run) is None:
+            return run
+        if _UUID_FULL_RE.fullmatch(run) or _wordy_run(run):
+            return run
+        return "[REDACTED_TOKEN]"
+
+    return _TOKEN_RUN_RE.sub(_sub, text)
 
 # Tool output can be large (file reads, search results). Instead of the
 # head + tail view used by evaluate(), it is scanned in windows of

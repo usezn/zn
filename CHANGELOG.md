@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The Rust engine's prompt-injection rules return a stable rule ID (for example `pi:ignore_previous`; the block message reads "Prompt Injection blocked: pi:<id>") and use a grammar based on the Node.js rules for "ignore / disregard / forget ... instructions", so phrasings such as "ignore the instructions above" or "ignore these instructions" are caught while "you can ignore the build instructions" is not. Phrases that are common in ordinary text are no longer blocked: "act as a", "respond as a", "debug mode", "root access", "shell access", "user message:", "end of conversation", "end of transmission", "stay in character", "prompt injection", "stop what you are doing", "without any restrictions", "imagine you are a", "into developer mode", "switch to developer mode" and "override system" (now only "override the system prompt" and similar). "system message:" and "new instructions:" count only at the start of a line, "forget everything" only at the end of a clause or followed by "above", "before" or "you know/were told", "do anything now" only as "you can do anything now" or with "DAN", and "jailbreak" must be a whole word.
+
 ### Added
 - Claude Code plugin: an optional API key setting (`api_key`, stored as a sensitive value) turns on the zn cloud classifier for the `analyze_prompt` tool only; the text it checks is sent to api.usezn.com with secrets redacted first. Without a key the plugin stays local, and `ZN_CLOUD`, `ZN_API_KEY`, `ZN_API_URL` and `ZN_STAGE` from the environment are still ignored.
 - Claude Code plugin: the plugin has a listing icon for the Claude plugin directory, and its contact email is now support@usezn.com (security reports still go to security@usezn.com).
@@ -18,10 +21,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cursor checks the arguments of MCP tool calls: a call that would send a secret value, or a `__ZN_` marker, to an MCP server other than zn's `secrets` server is denied. Run `zn hooks install cursor` again to add this hook.
 
 ### Fixed
+- The Rust engine's restricted-commands rule now matches whole words in tool names too, so tools such as `transform_data`, `perform_search` or `add_item` are no longer blocked as `rm` or `dd`; `format_disk`, `runShutdown` and `rm` still are.
+- The Rust engine's log scrubber now redacts card numbers only when they pass the Luhn check and match a card network, US SSNs only with a valid area, group and serial, and phone numbers only in E.164 form or as a formatted North American number, never a digit run inside a longer number. IDs and timestamps are no longer redacted as phone numbers.
+- The agent hooks read glob bracket expressions as the shell does. A command with one that is not a valid regular expression (for example `[z-a]` or `[a\]`) no longer makes the hook fail, and a `]` as the first member or a POSIX class such as `[[:alpha:]]` is now understood, so words like `.e[!]]v` or `.en[[:alpha:]]` are recognised as naming `.env` (`POLICY_RULES_VERSION` is now `2026-10-14.8`).
 - `zn audit` no longer reports zn's own `secrets` MCP server as an unknown server when its command ends with the `--agent <id>` that `zn hooks install` adds.
 - The tests of the suggested `zn` command now pass on Windows, where a program on the PATH needs an extension such as `.cmd`.
 - `zn init` finds the Antigravity MCP settings: it checks `~/.gemini/antigravity/mcp_config.json` and `~/.gemini/config/mcp_config.json` (each one only if it exists). It looked for `~/.gemini/antigravity/mcp.json`, which Antigravity does not use, so Antigravity was never found.
 - The threat model said that `zn run` keeps interpreter start-up variables such as `NODE_OPTIONS`; since 1.5.1 it removes them whenever it injects secret values.
+
+### Security
+- The Python package (`zn-gate` on PyPI) now redacts the same provider token formats as the Node.js scrubber: Stripe, Slack, GitLab, npm, PyPI, SendGrid, Google, Hugging Face, Twilio, AWS STS, Azure storage and AD secrets, DigitalOcean, Shopify, Mailgun, Groq, Replicate, xAI, Docker Hub, Tavily, Firecrawl, Polar, Supabase and other provider tokens, passwords in URLs, and `Authorization: Bearer` tokens. Generic assignments such as `password = "..."` in source files are not yet redacted by the Python package. Token-like runs of 24 or more characters that remain after redaction are masked in printed output and in the evidence ledger preview.
+- `zn-gate scan --format github` prints the rule, the reason and the file and line only. It no longer prints the matched line, so CI logs do not show credential text.
+- The evidence ledger directory is created with mode 0700 and the ledger file with mode 0600 on POSIX systems, in both the Node.js and the Python packages. A ledger that others can read is restricted on the next write.
 
 ## [1.6.0] - 2026-10-14
 
@@ -76,6 +87,13 @@ Pre-release for testing. Install it with `npm install -g zn-gate@beta` or `pip i
   only decides who can be offered a new host. When the policy expires while offline, only its restrictions keep applying. The
   audit log (metadata only, never values) is uploaded in batches that resume from the last record
   the server confirmed. Join and leave are confirmed on the vault's own channel, outside the agent.
+- `zn team join` shows the organization name and who invited you in the vault's confirmation
+  dialog, from `POST /v1/org/join-preview`, before this machine sends its audit key. The preview
+  does not use up the join token; an invalid, expired or used-up token, or an organization without
+  an active subscription, stops before the dialog. The check is made only against `api.usezn.com`:
+  another server given with `--api` gets the token only after you confirm, as before. If the
+  organization joined is not the one shown, the join is refused and nothing is saved. Names from
+  the server are shown without control, zero-width or bidirectional characters.
 - `zn hooks install` now starts the `secrets` MCP server with `--agent <id>` for Claude Code, Codex,
   Cursor and OpenCode.
 - `zn vault log export --otlp [--since 7d] [--out FILE]`: the local audit log as OpenTelemetry logs

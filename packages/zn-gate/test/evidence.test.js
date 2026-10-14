@@ -197,3 +197,22 @@ test('evidence dashboard - listens on loopback only and serves the escaping rend
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+test('evidence ledger - directory is 0700 and file is 0600 on POSIX', { skip: process.platform === 'win32' }, () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-ev-mode-'));
+  const ledgerDir = path.join(tmpDir, 'zn');
+  const ledger = path.join(ledgerDir, 'evidence.jsonl');
+  try {
+    logEvidence({ agent: 'mode-test', payload: 'ok', verdict: 'allow' }, ledger);
+    assert.equal(fs.statSync(ledgerDir).mode & 0o777, 0o700);
+    assert.equal(fs.statSync(ledger).mode & 0o777, 0o600);
+
+    // A ledger that others can read is restricted again on the next write.
+    fs.chmodSync(ledger, 0o644);
+    logEvidence({ agent: 'mode-test', payload: 'ok', verdict: 'allow' }, ledger);
+    assert.equal(fs.statSync(ledger).mode & 0o777, 0o600);
+    assert.equal(verifyEvidenceLedger(ledger).valid, true);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});

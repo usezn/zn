@@ -11,10 +11,36 @@ const ZN_DIR = path.join(os.homedir(), '.zn');
 const EVIDENCE_FILE = path.join(ZN_DIR, 'evidence.jsonl');
 const GENESIS_HASH = '0000000000000000000000000000000000000000000000000000000000000000';
 
+// The ledger directory is private to the user; modes are POSIX only (ignored on Windows).
+const LEDGER_DIR_MODE = 0o700;
+const LEDGER_FILE_MODE = 0o600;
+
 function ensureZnDir(filePath = EVIDENCE_FILE) {
   const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(dir, { recursive: true, mode: LEDGER_DIR_MODE });
+  }
+}
+
+/**
+ * Appends one line to the ledger. The file is created with mode 0600, and an
+ * existing ledger that others can read or write is restricted to 0600 through
+ * the open descriptor before the line is written (POSIX only), so a symlink
+ * swapped in between cannot redirect the chmod.
+ */
+function appendLedgerLine(filePath, line) {
+  const fd = fs.openSync(filePath, 'a', LEDGER_FILE_MODE);
+  try {
+    if (process.platform !== 'win32') {
+      try {
+        if ((fs.fstatSync(fd).mode & 0o077) !== 0) fs.fchmodSync(fd, LEDGER_FILE_MODE);
+      } catch {
+        // Best effort: a file system without POSIX modes keeps its own.
+      }
+    }
+    fs.writeSync(fd, line, null, 'utf8');
+  } finally {
+    fs.closeSync(fd);
   }
 }
 
@@ -86,7 +112,7 @@ function logEvidence(event, filePath = EVIDENCE_FILE) {
 
   const finalRecord = { ...baseRecord, record_hash: recordHash };
 
-  fs.appendFileSync(filePath, JSON.stringify(finalRecord) + '\n', 'utf8');
+  appendLedgerLine(filePath, JSON.stringify(finalRecord) + '\n');
   return finalRecord;
 }
 

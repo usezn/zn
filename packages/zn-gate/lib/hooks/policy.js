@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-14.6';
+const POLICY_RULES_VERSION = '2026-10-14.8';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -254,17 +254,87 @@ function expandBraces(s, limit = 64) {
   return out;
 }
 
+// POSIX character classes inside a bracket expression ("[[:alpha:]]").
+const GLOB_POSIX_CLASSES = {
+  alpha: [['a', 'z'], ['A', 'Z']],
+  digit: [['0', '9']],
+  alnum: [['a', 'z'], ['A', 'Z'], ['0', '9']],
+  lower: [['a', 'z']],
+  upper: [['A', 'Z']],
+  xdigit: [['0', '9'], ['a', 'f'], ['A', 'F']],
+  space: [[' ', ' '], ['\t', '\r']],
+  blank: [[' ', ' '], ['\t', '\t']],
+  punct: [['!', '/'], [':', '@'], ['[', '`'], ['{', '~']],
+};
+
+/**
+ * Index of the "]" that closes the bracket expression opened at `open`, read
+ * as the shell reads it: after an optional "!" or "^", a "]" is a member, and
+ * "[:name:]" is one item. Returns -1 when the expression is not closed (the
+ * "[" is then a literal character).
+ */
+function globClassEnd(pattern, open) {
+  let k = open + 1;
+  if (pattern[k] === '!' || pattern[k] === '^') k++;
+  if (pattern[k] === ']') k++;
+  while (k < pattern.length) {
+    if (pattern.startsWith('[:', k)) {
+      const end = pattern.indexOf(':]', k + 2);
+      if (end !== -1) { k = end + 2; continue; }
+    }
+    if (pattern[k] === ']') return k;
+    k++;
+  }
+  return -1;
+}
+
+/**
+ * A glob bracket expression ("[abc]", "[a-z]", "[!.]", "[]x]", "[[:alpha:]]")
+ * as a regular expression that always compiles. Every character is written as
+ * a \uXXXX escape (so "\", "]" and "^" are literal); a range written backwards
+ * matches nothing, as in the shell; a negated class never matches "/"; an
+ * unknown "[:name:]" class matches any character but "/" (matching more is the
+ * safe side for a policy check). Characters outside the BMP are read as two
+ * UTF-16 units, as before; no protected path name uses them.
+ */
+function globClassSource(body) {
+  const esc = (ch) => '\\u' + ch.charCodeAt(0).toString(16).padStart(4, '0');
+  let neg = false;
+  if (body[0] === '!' || body[0] === '^') { neg = true; body = body.slice(1); }
+  let out = '';
+  let any = false;
+  for (let k = 0; k < body.length; k++) {
+    if (body.startsWith('[:', k)) {
+      const end = body.indexOf(':]', k + 2);
+      if (end !== -1) {
+        const ranges = GLOB_POSIX_CLASSES[body.slice(k + 2, end)];
+        if (ranges) for (const [a, b] of ranges) out += a === b ? esc(a) : esc(a) + '-' + esc(b);
+        else any = true;
+        k = end + 1;
+        continue;
+      }
+    }
+    if (body[k + 1] === '-' && k + 2 < body.length) {
+      if (body[k] <= body[k + 2]) out += esc(body[k]) + '-' + esc(body[k + 2]);
+      k += 2;
+    } else out += esc(body[k]);
+  }
+  if (any) return '[^/]';
+  if (neg) return '[^/' + out + ']';
+  return out ? '[' + out + ']' : '(?!)';
+}
+
 /** Shell glob to a regular expression over a whole path (* and ? stop at a separator). */
 function globRegExp(pattern) {
   let re = '';
   for (let i = 0; i < pattern.length; i++) {
     const c = pattern[i];
+    const end = c === '[' ? globClassEnd(pattern, i) : -1;
     if (c === '*') re += '[^/]*';
     else if (c === '?') re += '[^/]';
-    else if (c === '[' && pattern.indexOf(']', i + 1) > i) {
-      const j = pattern.indexOf(']', i + 1);
-      re += '[' + pattern.slice(i + 1, j).replace(/^!/, '^') + ']';
-      i = j;
+    else if (end !== -1) {
+      re += globClassSource(pattern.slice(i + 1, end));
+      i = end;
     } else re += c.replace(/[.+^${}()|\\[\]]/g, '\\$&');
   }
   return new RegExp('^' + re + '$');
@@ -729,6 +799,7 @@ module.exports = {
   classifyPath,
   classifyWord,
   globClass,
+  globRegExp,
   expandBraces,
   readDenial,
   writeDenial,

@@ -91,6 +91,19 @@ test('join is confirmed outside the agent; declining sends nothing', async () =>
   assert.ok(!fs.readFileSync(policy.paths().teamFile, 'utf8').includes('zni_'), 'the install token is not in team.json');
 });
 
+test('another server never gets the join token before the user confirms', async () => {
+  const token = cloud.createJoinToken({ maxUses: 2 });
+  const seen = cloud.requests.length;
+  answer = false;
+  const before = confirmations.length;
+  await assert.rejects(vault.teamJoin({ join_token: token, api_base: cloud.base, agent: 'claude-code' }), /declined/);
+  assert.strictEqual(cloud.requests.length, seen, 'no request at all before the dialog');
+  const dialog = confirmations.slice(before).find((c) => c.kind === 'team');
+  assert.ok(dialog.warnings.some((w) => /Could not check which organization/.test(w) && /api\.usezn\.com/.test(w)));
+  assert.ok(!dialog.fields.some(([k]) => k === 'Organization'));
+  answer = true;
+});
+
 test('a signed policy denies a secret for every agent, and the audit log is uploaded', async () => {
   cloud.publishPolicy({ rules: [
     { secret: 'PROD_*', agents: ['codex'], deny: true, reason: 'No production credentials in Codex' },

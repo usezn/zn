@@ -1,10 +1,14 @@
 name: zn CI
 
+# Pull requests into next run the checks the rulesets require and Ubuntu with Node.js 22. The full matrix
+# (Windows and macOS, every Node.js version) runs on pushes to main and next, on pull requests into main
+# and release branches, and on any pull request labelled full-ci.
 on:
   push:
     branches: [ main, next ]
   pull_request:
-    branches: [ main, next ]
+    branches: [ main, next, 'release/**' ]
+    types: [ opened, synchronize, reopened, labeled ]
 
 permissions:
   contents: read
@@ -12,7 +16,7 @@ permissions:
 # A new push to a pull request cancels the previous run for it.
 # Runs for pushes to main and next always complete.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -23,27 +27,42 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: [18.x, 20.x, 22.x, 24.x]
+        # 18.x, 22.x and 24.x are required checks: they always run.
+        node-version: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["18.x", "20.x", "22.x", "24.x"]' || '["18.x", "22.x", "24.x"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Decide what this change needs
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FULL: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+        working-directory: .
+        run: bash .github/scripts/ci-scope.sh
       - name: Use Node.js ${{ matrix.node-version }}
+        if: steps.scope.outputs.run == 'true'
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
           cache-dependency-path: packages/zn-gate/package-lock.json
       - name: Install zn-gate dependencies
+        if: steps.scope.outputs.run == 'true'
         working-directory: packages/zn-gate
         run: npm ci --ignore-scripts
       - name: Run zn-gate unit tests
+        if: steps.scope.outputs.run == 'true'
         working-directory: packages/zn-gate
         run: npm test
       - name: Run zn-gate integration tests
+        if: steps.scope.outputs.run == 'true'
         working-directory: packages/zn-gate
         run: node test/integration/test_agent_workflows.js
       - name: Run benchmark verification
+        if: steps.scope.outputs.run == 'true'
         run: node bench/bench_node.js
 
   test-python:
@@ -53,13 +72,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
-        include:
-          - os: windows-latest
-            python-version: "3.12"
-          - os: macos-latest
-            python-version: "3.12"
+        # "Python 3.12 tests & benchmarks (ubuntu-latest)" is a required check: it always runs.
+        include: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[{"os":"ubuntu-latest","python-version":"3.9"},{"os":"ubuntu-latest","python-version":"3.10"},{"os":"ubuntu-latest","python-version":"3.11"},{"os":"ubuntu-latest","python-version":"3.12"},{"os":"ubuntu-latest","python-version":"3.13"},{"os":"windows-latest","python-version":"3.12"},{"os":"macos-latest","python-version":"3.12"}]' || '[{"os":"ubuntu-latest","python-version":"3.12"}]') }}
     defaults:
       run:
         shell: bash
@@ -67,7 +81,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Decide what this change needs
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FULL: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+        working-directory: .
+        run: bash .github/scripts/ci-scope.sh
       - name: Set up Python ${{ matrix.python-version }}
+        if: steps.scope.outputs.run == 'true'
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
@@ -76,14 +100,17 @@ jobs:
             packages/zn-gate-py/pyproject.toml
             .github/ci-test-requirements.txt
       - name: Install package and test dependencies
+        if: steps.scope.outputs.run == 'true'
         # Test tools pinned with hashes; the package itself has no dependencies.
         run: |
           python -m pip install --require-hashes -r .github/ci-test-requirements.txt
           python -m pip install --no-deps --no-build-isolation -e packages/zn-gate-py
       - name: Run pytest (unit + integration)
+        if: steps.scope.outputs.run == 'true'
         working-directory: packages/zn-gate-py
         run: python -m pytest tests/ -v
       - name: Run benchmark verification
+        if: steps.scope.outputs.run == 'true'
         run: python bench/bench_python.py
 
   pack-node:
@@ -94,29 +121,44 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Decide what this change needs
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FULL: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+        working-directory: .
+        run: bash .github/scripts/ci-scope.sh
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.scope.outputs.run == 'true'
         with:
           node-version: 22.x
           cache: npm
           cache-dependency-path: packages/zn-gate/package-lock.json
       - name: Install dependencies (bundled into the tarball)
+        if: steps.scope.outputs.run == 'true'
         working-directory: packages/zn-gate
         run: npm ci --ignore-scripts
       - name: Pack
+        if: steps.scope.outputs.run == 'true'
         working-directory: packages/zn-gate
         run: |
           mkdir -p "$RUNNER_TEMP/pack"
           npm pack --json --pack-destination "$RUNNER_TEMP/pack" > "$RUNNER_TEMP/pack/pack.json"
           ls -l "$RUNNER_TEMP/pack"
       - name: Check tarball contents
+        if: steps.scope.outputs.run == 'true'
         run: node .github/scripts/check-npm-pack.js "$RUNNER_TEMP/pack/pack.json" packages/zn-gate
       - name: Install the tarball in an empty project (offline)
+        if: steps.scope.outputs.run == 'true'
         run: |
           mkdir -p "$RUNNER_TEMP/smoke"
           cd "$RUNNER_TEMP/smoke"
           npm init -y > /dev/null
           npm install --offline --no-audit --no-fund "$RUNNER_TEMP"/pack/zn-gate-*.tgz
       - name: Smoke test the installed CLI
+        if: steps.scope.outputs.run == 'true'
         working-directory: ${{ runner.temp }}/smoke
         run: |
           expected="$(node -p "require('./node_modules/zn-gate/package.json').version")"
@@ -128,12 +170,14 @@ jobs:
           esac
           npx --no-install zn-gate test
       - name: Check the bundled vault crypto loads
+        if: steps.scope.outputs.run == 'true'
         working-directory: ${{ runner.temp }}/smoke
         run: >-
           node -e "require('zn-gate/lib/vault/store.js').generateIdentity()
           .then((r) => { if (!/^age1/.test(r.recipient)) process.exit(1); console.log('vault crypto OK'); })
           .catch((e) => { console.error(e); process.exit(1); })"
       - name: Upload tarball
+        if: steps.scope.outputs.run == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: zn-gate-npm-tarball
@@ -148,7 +192,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Decide what this change needs
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FULL: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+        working-directory: .
+        run: bash .github/scripts/ci-scope.sh
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: steps.scope.outputs.run == 'true'
         with:
           python-version: "3.12"
           cache: pip
@@ -156,24 +210,31 @@ jobs:
             packages/zn-gate-py/pyproject.toml
             .github/release-requirements.txt
       - name: Install build tools
+        if: steps.scope.outputs.run == 'true'
         # The hash-pinned tools the release workflow uses.
         run: python -m pip install --require-hashes -r .github/release-requirements.txt
       - name: Build sdist and wheel
+        if: steps.scope.outputs.run == 'true'
         run: python -m build --no-isolation packages/zn-gate-py --outdir "$RUNNER_TEMP/dist"
       - name: twine check
+        if: steps.scope.outputs.run == 'true'
         run: python -m twine check --strict "$RUNNER_TEMP"/dist/*
       - name: List sdist contents
+        if: steps.scope.outputs.run == 'true'
         run: tar -tzf "$RUNNER_TEMP"/dist/*.tar.gz
       - name: Install the wheel in a fresh virtualenv
+        if: steps.scope.outputs.run == 'true'
         run: |
           python -m venv "$RUNNER_TEMP/venv"
           "$RUNNER_TEMP/venv/bin/python" -m pip install "$RUNNER_TEMP"/dist/*.whl
       - name: Smoke test the installed CLI
+        if: steps.scope.outputs.run == 'true'
         working-directory: ${{ runner.temp }}
         run: |
           "$RUNNER_TEMP/venv/bin/zn-gate" --version
           "$RUNNER_TEMP/venv/bin/python" -c "import zn_gate, zn_gate.integrations; print(zn_gate.__file__)"
       - name: Upload distributions
+        if: steps.scope.outputs.run == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: zn-gate-python-dist
