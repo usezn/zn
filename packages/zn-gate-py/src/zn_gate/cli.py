@@ -28,6 +28,23 @@ _MULTILINE_RULES = [
     for name, rx, _ in SECRET_PATTERNS if name == "secret:private_key"
 ]
 
+# A BEGIN marker with no END (a key cut short when pasted or truncated): the
+# lines after it that look like PEM headers or base64 are treated as key
+# material, up to the first empty or other line (an encrypted key has one
+# empty line after its Proc-Type / DEK-Info headers, which is kept).
+_KEY_BEGIN = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
+_KEY_END = re.compile(r"-----END [A-Z ]*PRIVATE KEY-----")
+_KEY_BODY = re.compile(r"^(?:[A-Za-z0-9+/=]{16,}|[A-Za-z-]+: )")
+_KEY_HEADER = re.compile(r"^[A-Za-z-]+: ")
+_TRUNCATED_KEY_REASON = "Exposed credential detected by DLP filter (private key without an END marker)"
+
+# Private key files that usually have no extension.
+_KEY_FILE_NAMES = {"id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "id_ecdsa_sk", "id_ed25519_sk"}
+# Files of this size or larger are not scanned, and neither are .key files
+# with a NUL byte near the start (a Keynote document, not a key).
+_MAX_SCAN_BYTES = 2 * 1024 * 1024
+_BINARY_SNIFF = 8192
+
 SHIELD = "\U0001f6e1\ufe0f"
 ALERT = "\U0001f6a8"
 CHECK = "\u2705"
@@ -89,6 +106,9 @@ def cmd_test(args: argparse.Namespace) -> int:
         print(f"Rule:       {assessment.rule}")
         if assessment.reason:
             print(f"Reason:     {assessment.reason}")
+        if assessment.advisory:
+            print(f"Note:       not blocked, but worth a look: {assessment.advisory['reason']} "
+                  f"({assessment.advisory['rule']}).")
         if findings:
             noun = "secret" if len(findings) == 1 else "secrets"
             print(f"DLP Alert:  {len(findings)} {noun} detected (verdict unchanged). Redacted: {clean_text}")
@@ -107,6 +127,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         "stage": getattr(args, "stage", None) or os.environ.get("ZN_STAGE") or "v30",
         "api_url": getattr(args, "url", None) or os.environ.get("ZN_API_URL"),
         "local_only": getattr(args, "local_only", False),
+        "long_input": getattr(args, "long_input", None),
     }
 
     t0 = time.perf_counter()
@@ -125,9 +146,14 @@ def cmd_analyze(args: argparse.Namespace) -> int:
 def _scan_file(file_path: Path) -> List[Dict[str, Any]]:
     violations: List[Dict[str, Any]] = []
     try:
-        content = file_path.read_text(encoding="utf-8", errors="ignore")
+        if file_path.stat().st_size >= _MAX_SCAN_BYTES:
+            return []
+        raw = file_path.read_bytes()
     except Exception:
         return []
+    if file_path.suffix.lower() == ".key" and b"\0" in raw[:_BINARY_SNIFF]:
+        return []
+    content = raw.decode("utf-8", errors="ignore")
 
     # Line numbers as the line pass counts them (str.splitlines boundaries).
     starts = [0]
@@ -146,10 +172,30 @@ def _scan_file(file_path: Path) -> List[Dict[str, Any]]:
             first = bisect.bisect_right(starts, m.start())
             last = bisect.bisect_right(starts, m.end() - 1)
             h = header_rx.match(m.group(0))
-            blocks.append((name, first, last, h.group(0)[:100] if h else "[REDACTED_PRIVATE_KEY]"))
+            blocks.append((name, first, last, h.group(0)[:100] if h else "[REDACTED_PRIVATE_KEY]",
+                           "Exposed credential detected by DLP filter"))
             key_lines.update(range(first, last + 1))
 
     lines = content.splitlines()
+    # BEGIN markers outside any complete block: a truncated key.
+    for i, line in enumerate(lines, 1):
+        if i in key_lines:
+            continue
+        h = _KEY_BEGIN.search(line)
+        if not h or _KEY_END.search(line, h.end()):
+            continue  # no marker, or a whole key on one line (the line pass redacts it)
+        last = i
+        while last < len(lines) and not _KEY_BEGIN.search(lines[last]):
+            body = lines[last].strip()
+            if _KEY_BODY.match(body):
+                last += 1
+            elif (not body and _KEY_HEADER.match(lines[last - 1].strip())
+                  and last + 1 < len(lines) and _KEY_BODY.match(lines[last + 1].strip())):
+                last += 1  # the empty line after encrypted-key headers
+            else:
+                break
+        key_lines.update(range(i, last + 1))
+        blocks.append(("secret:private_key", i, last, h.group(0)[:100], _TRUNCATED_KEY_REASON))
     for i, line in enumerate(lines, 1):
         if not line.strip():
             continue
@@ -157,7 +203,8 @@ def _scan_file(file_path: Path) -> List[Dict[str, Any]]:
         # logs: always show the line with any detected secret redacted.
         redacted, findings = redact_secrets(line)
         snippet = "[REDACTED_PRIVATE_KEY]" if i in key_lines else redacted.strip()[:100]
-        res = evaluate(line)
+        # A scan reports every match, including the rules that only warn by default.
+        res = evaluate(line, strict=True)
         if not res.allowed:
             violations.append({
                 "file": str(file_path),
@@ -177,7 +224,7 @@ def _scan_file(file_path: Path) -> List[Dict[str, Any]]:
                 "content": snippet,
             })
     seen = {(v["line"], v["rule"]) for v in violations}
-    for name, first, _last, header in blocks:
+    for name, first, _last, header, reason in blocks:
         if (first, name) in seen:
             continue
         seen.add((first, name))
@@ -186,7 +233,7 @@ def _scan_file(file_path: Path) -> List[Dict[str, Any]]:
             "file": str(file_path),
             "line": first,
             "rule": name,
-            "reason": "Exposed credential detected by DLP filter",
+            "reason": reason,
             "type": "secret_leak",
             "content": header,
         })
@@ -224,7 +271,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
             dirs[:] = [d for d in dirs if d not in skip_dirs]
             for f in files:
                 p = Path(root) / f
-                if p.suffix in valid_exts or p.name.startswith(".env"):
+                if p.suffix.lower() in valid_exts or p.name.startswith(".env") or p.name in _KEY_FILE_NAMES:
                     files_to_scan.append(p)
 
     all_violations: List[Dict[str, Any]] = []
@@ -301,6 +348,20 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_stats(args) -> int:
+    from . import stats as _stats
+    if not (isinstance(args.days, int) and 1 <= args.days <= _stats.KEEP_DAYS):
+        sys.stderr.write("zn-gate stats: --days must be between 1 and {}\n".format(_stats.KEEP_DAYS))
+        return 2
+    days = args.days
+    s = _stats.summary(days=days)
+    if args.json:
+        print(json.dumps(s, indent=2))
+    else:
+        sys.stdout.write(_stats.render(s))
+    return 0
+
+
 def main() -> int:
     _configure_output_streams()
     parser = argparse.ArgumentParser(
@@ -322,6 +383,7 @@ def main() -> int:
     analyze_parser.add_argument("--stage", default="v30", help="Cloud gate stage (default: v30)")
     analyze_parser.add_argument("--url", help="Custom API endpoint URL")
     analyze_parser.add_argument("--local-only", action="store_true", help="Force local deterministic rules only")
+    analyze_parser.add_argument("--long-input", choices=["windows", "off"], help="Long texts sent to the cloud: overlapping 512-token windows (default) or the first 512 tokens only")
     analyze_parser.add_argument("--json", action="store_true", default=True, help="Output results as JSON")
 
     # scan command
@@ -342,6 +404,11 @@ def main() -> int:
     # status command
     subparsers.add_parser("status", help="Show engine status and configuration")
 
+    # stats command
+    st_parser = subparsers.add_parser("stats", help="What zn-gate did on this machine (local counts only)")
+    st_parser.add_argument("--days", type=int, default=30, help="Days to count (1-90, default 30)")
+    st_parser.add_argument("--json", action="store_true", help="Output as JSON")
+
     args = parser.parse_args()
     if args.command == "test":
         return cmd_test(args)
@@ -353,6 +420,8 @@ def main() -> int:
         return cmd_evidence(args)
     elif args.command == "status":
         return cmd_status(args)
+    elif args.command == "stats":
+        return cmd_stats(args)
     else:
         parser.print_help()
         return 0

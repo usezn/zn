@@ -12,17 +12,22 @@
 
 `zn-gate` is an open-source security layer that runs in your process. It checks prompts, tool arguments and tool output for prompt injection, and redacts secrets from tool output before the model sees it. No account, no network by default, Python standard library only.
 
-**For:** developers building agents with LangChain, CrewAI, LlamaIndex or plain Python tool calling. Using Claude Code, Codex CLI, Cursor or OpenCode? Use the MCP server from [`zn-gate` on npm](https://www.npmjs.com/package/zn-gate).
+**For:** developers building their own agents with LangChain, CrewAI, LlamaIndex or plain Python tool calling.
+
+> **Using Claude Code, Codex CLI, Cursor or OpenCode?** This Python package does not protect them. Install the Claude Code plugin or the npm package instead: see [Install](https://github.com/usezn/zn#install).
 
 ---
 
 ## Install
 
+Install it in a virtual environment. Many recent Linux systems, and Homebrew's Python on macOS, refuse `pip install` outside one, with an "externally-managed-environment" error:
+
 ```bash
-pip install zn-gate
+python3 -m venv .venv
+.venv/bin/pip install zn-gate      # Windows: .venv\Scripts\pip install zn-gate
 ```
 
-Python 3.8+ (CI tests 3.9 to 3.13). Zero runtime dependencies.
+Inside an environment you already use (your project's virtualenv, Poetry, uv), `pip install zn-gate` is enough. Python 3.8+ (CI tests 3.9 to 3.13). Zero runtime dependencies.
 
 ## Check that it works
 
@@ -75,6 +80,8 @@ print(r.verdict)           # allow
 **Nothing, by default.** `evaluate`, `guard`, `check_tool_call`, `check_tool_result`, `sanitize_tool_result`, `redact_secrets` and the LangChain / CrewAI / LlamaIndex / Promptfoo integrations are always local.
 
 The only function that can reach the network is `analyze()`, and only if you set **both** `ZN_CLOUD=1` and `ZN_API_KEY`. The text is secret-redacted locally before it is sent. `ZN_API_KEY` alone enables nothing, and `ZN_LOCAL_ONLY=true` overrides `ZN_CLOUD=1`. `zn-gate status` prints what your configuration sends. Data-flow diagrams: [repository README](https://github.com/usezn/zn#what-leaves-your-machine).
+
+A long text (over 1,000 characters) is checked by the cloud classifier in overlapping 512-token windows, up to 20, so an injection in the middle or at the end of a long document is not missed. Set `ZN_LONG_INPUT=off` (or `analyze(..., long_input="off")`, `zn-gate analyze --long-input off`) to check only the first 512 tokens, as before. Cloud checks are billed by text size, with or without windows (`off` does not lower the count): 1 call up to 2,000 characters, and 1 more for each further 1,000 characters or part of them (up to 19 calls for the 20,000-character limit); the gate reports the count in `billed_calls`.
 
 > **1.4.0 and earlier:** with `ZN_API_KEY` set, `analyze()` sent the text to `api.usezn.com` without redaction. 1.4.1 makes cloud analysis opt-in (`ZN_CLOUD=1`) and redacted.
 
@@ -168,6 +175,7 @@ We only publish numbers we can reproduce, with the method next to them.
 - `ZN_CLOUD`: `1` lets `analyze()` also query the cloud classifier. Requires `ZN_API_KEY`. Off by default.
 - `ZN_API_KEY`: API key from [usezn.com/dashboard](https://usezn.com/dashboard/). No effect without `ZN_CLOUD=1`.
 - `ZN_LOCAL_ONLY`: `true` forces local-only.
+- `ZN_STRICT`: `1` also blocks the rules that only warn by default (same as `evaluate(text, strict=True)`; also `check_tool_call`, `check_tool_result` and `sanitize_tool_result` take `strict=True`).
 - `ZN_STAGE` / `ZN_API_URL`: cloud endpoint selection.
 
 ## FAQ

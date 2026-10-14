@@ -17,9 +17,12 @@
  *    Agent Plugins 1.0;
  *  - no unpinned installs: no "@latest", no npx/bunx/uvx/pnpm dlx in the
  *    plugin, and every zn-gate install instruction names an exact version;
- *  - every hook and MCP server runs scripts/zn-launch.js;
+ *  - every hook and MCP server runs scripts/zn-launch.js, and the MCP servers
+ *    are exactly zn-gate (local rules only) and secrets;
+ *  - package.json / package-lock.json, when present, pin the same release;
  *  - --release: the lock file has the npm integrity, a provenance attestation
- *    and the file digests, and no placeholder is left in the plugin docs.
+ *    and the file digests, the npm files exist, and no placeholder is left in
+ *    the plugin docs.
  * No dependencies; Node.js 18 or later.
  */
 
@@ -106,10 +109,16 @@ for (const f of ['hooks/hooks.json', 'com.openai/hooks.json', 'cursor/hooks.json
   if (cmds.length === 0) fail(f + ': no hooks');
   for (const c of cmds) if (!LAUNCHER.test(String(c))) fail(f + ': hook command does not run the launcher: ' + c);
 }
+// Each MCP server and the launcher mode that starts it (zn-gate-mcp forces local rules).
+const MCP_MODES = { 'zn-gate': 'zn-gate-mcp', secrets: 'secrets-mcp' };
 for (const [f, root] of [['mcp.json', '${PLUGIN_ROOT}'], ['.mcp.json', '${CLAUDE_PLUGIN_ROOT}'], ['cursor/mcp.json', '${CURSOR_PLUGIN_ROOT}']]) {
-  for (const [name, s] of Object.entries(json(PLUGIN + '/' + f).mcpServers || {})) {
-    if (s.command !== 'node' || JSON.stringify(s.args) !== JSON.stringify([root + '/scripts/zn-launch.js', 'secrets-mcp'])) {
-      fail(f + ': MCP server ' + name + ' does not run the launcher');
+  const servers = json(PLUGIN + '/' + f).mcpServers || {};
+  if (JSON.stringify(Object.keys(servers).sort()) !== JSON.stringify(Object.keys(MCP_MODES).sort())) {
+    fail(f + ': MCP servers must be exactly ' + Object.keys(MCP_MODES).join(', '));
+  }
+  for (const [name, s] of Object.entries(servers)) {
+    if (s.command !== 'node' || JSON.stringify(s.args) !== JSON.stringify([root + '/scripts/zn-launch.js', MCP_MODES[name]]) || s.env) {
+      fail(f + ': MCP server ' + name + ' does not run the launcher in ' + MCP_MODES[name] + ' mode');
     }
   }
 }
@@ -157,9 +166,46 @@ for (const f of walk('plugins').filter((x) => x.endsWith('.md'))) {
   for (const u of uses) if (!/@([0-9a-f]{40}|<commit-sha-of-v\d+\.\d+\.\d+>)$/.test(u)) fail(f + ': action not pinned by commit SHA: ' + u);
 }
 
+/* ----------------------- npm install for Claude Code ----------------------- */
+
+// Claude Code installs the plugin's dependencies from package.json and
+// package-lock.json (written by pin-release.js). When they exist they must
+// pin the same zn-gate release, from the registry, with no inBundle entries.
+const npmPkgFile = PLUGIN + '/package.json';
+const npmLockFile = PLUGIN + '/package-lock.json';
+const hasNpm = fs.existsSync(path.join(ROOT, npmPkgFile)) || fs.existsSync(path.join(ROOT, npmLockFile));
+if (hasNpm) {
+  const npmPkg = json(npmPkgFile);
+  const npmLock = json(npmLockFile);
+  const pkgs = npmLock.packages || {};
+  const z = pkgs['node_modules/zn-gate'] || {};
+  if ((npmPkg.dependencies || {})['zn-gate'] !== v) fail(npmPkgFile + ': must depend on zn-gate ' + v + ' exactly');
+  if (npmPkg.scripts) fail(npmPkgFile + ': must have no scripts');
+  // Dependencies: zn-gate and the top-level packages bundled in its tarball,
+  // at their bundled versions; the same list in the root of the npm lock.
+  const bundledTop = Object.keys(lock.files || {})
+    .map((f) => /^node_modules\/((?:@[^/]+\/)?[^/]+)\/package\.json$/.exec(f)).filter(Boolean).map((m) => m[1]).sort();
+  const wantDeps = ['zn-gate', ...bundledTop].sort();
+  const pkgDeps = Object.keys(npmPkg.dependencies || {}).sort();
+  if (Object.keys(lock.files || {}).length && JSON.stringify(pkgDeps) !== JSON.stringify(wantDeps)) {
+    fail(npmPkgFile + ': dependencies must be exactly ' + wantDeps.join(', '));
+  }
+  if (JSON.stringify((pkgs[''] || {}).dependencies || {}) !== JSON.stringify(npmPkg.dependencies || {})) {
+    fail(npmLockFile + ': root dependencies differ from ' + npmPkgFile);
+  }
+  if (z.version !== v || z.integrity !== lock.integrity) fail(npmLockFile + ': must pin zn-gate ' + v + ' with the integrity in the lock file');
+  for (const [k, e] of Object.entries(pkgs)) {
+    if (!k) continue;
+    if (e.inBundle || k.startsWith('node_modules/zn-gate/')) fail(npmLockFile + ': ' + k + ' is a bundled entry (Claude Code rejects those)');
+    if (e.hasInstallScript) fail(npmLockFile + ': ' + k + ' has an install script');
+    if (!/^sha512-/.test(e.integrity || '') || !String(e.resolved || '').startsWith('https://registry.npmjs.org/')) fail(npmLockFile + ': ' + k + ' has no sha512 integrity or registry URL');
+  }
+}
+
 /* ------------------------------ release ------------------------------ */
 
 if (release) {
+  if (!hasNpm) fail(npmPkgFile + ' and ' + npmLockFile + ' are missing; run plugins/tools/pin-release.js ' + v);
   if (!/^sha512-/.test(lock.integrity || '')) fail('lock file: no npm integrity; run plugins/tools/pin-release.js ' + v);
   if (Object.keys(lock.files || {}).length === 0) fail('lock file: no file digests; run plugins/tools/pin-release.js ' + v);
   if (lock.attestations !== true) fail('lock file: zn-gate ' + v + ' has no npm provenance attestation; publish it with provenance first');

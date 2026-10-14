@@ -43,6 +43,7 @@ const { findPatterns, findPii, hintsIn, SECRET_TYPES, PII_TYPES } = require('./p
 const { collectSources, buildMatcher } = require('./exact');
 const { find: findCustom } = require('../team/detectors');
 const { CODES } = require('../errors');
+const { invisibleView } = require('../rules');
 
 const TOKEN_SOURCE = '__ZN_([A-Z0-9](?:[A-Z0-9_]*[A-Z0-9])?)__';
 const TOKEN_RE = new RegExp(TOKEN_SOURCE, 'g');
@@ -151,6 +152,22 @@ function scan(text, ctx) {
   if (typeof text !== 'string') throw new TypeError('scan(text, ctx): text must be a string');
   if (text.length === 0) return [];
   const c = ctx || {};
+  // Invisible characters (zero-width, variation selectors, tag characters) can
+  // split a value or a token. The text is scanned as it is and without them;
+  // the spans of the second scan are mapped back to the original text, and the
+  // union is resolved as one set of spans.
+  const direct = scanText(text, c);
+  const view = invisibleView(text);
+  if (!view) return direct;
+  const viaView = scanText(view.clean, c).map((s) => ({
+    ...s,
+    start: view.map[s.start],
+    end: s.end > s.start ? view.map[s.end - 1] + 1 : view.map[s.start],
+  }));
+  return resolveOverlaps(direct.concat(viaView));
+}
+
+function scanText(text, c) {
   let spans = [];
   const matcher = matcherFor(c);
   if (matcher) spans = spans.concat(matcher.find(text));
@@ -259,7 +276,10 @@ function isToken(s) {
   return typeof s === 'string' && new RegExp('^' + TOKEN_SOURCE + '$').test(s);
 }
 
-const LOCKED_WARNING = 'vault locked: values were redacted irreversibly; run `zn unlock` to enable exact-value redaction and restore';
+const { znCommand } = require('../zn-command');
+
+const LOCKED_WARNING = 'Your secret vault is locked, so the hidden secret values cannot be put back afterwards. ' +
+  'To keep them restorable next time, unlock it in your terminal with: ' + znCommand('unlock');
 
 function expectedToken(type) {
   return new RegExp('^__ZN_' + normalizeType(type) + '_[1-9][0-9]{0,8}__$');

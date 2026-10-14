@@ -212,3 +212,22 @@ test('an approved overwrite of a file with other hard links is refused, and the 
   assert.match(r.data.message, /hard links/);
   assert.equal(fs.readFileSync(b, 'utf8'), 'mine\n');
 });
+
+test('agent guard: versioned npm, npx and pnpm/bun launches of zn-gate are still admin commands', () => {
+  const adminCommands = [
+    'npx -y zn-gate@1.6.0 unlock',
+    'npx zn-gate@latest hooks uninstall',
+    'pnpm dlx zn-gate@1.6.0 env shadow .env',
+    'bunx zn-gate@1.6.0 secret approve X',
+    'npm exec zn-gate@1 -- hooks uninstall',
+    'npm exec zn-gate@1 -- unlock',
+    'npm x zn-gate@1 -- unlock',
+    'npx -y zn-gate@1.6.0-beta.1 secret set DB_PASSWORD',
+    'zn-gate@1.6.0 unlock',
+  ];
+  for (const cmd of adminCommands) {
+    assert.ok(policy.bashDenial(cmd), 'expected a denial for: ' + cmd);
+  }
+  // An ordinary zn-gate command is not an admin command.
+  assert.equal(policy.bashDenial('npx -y zn-gate@1.6.0 status'), null);
+});

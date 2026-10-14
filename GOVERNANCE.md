@@ -77,7 +77,7 @@ Releases follow [Semantic Versioning](https://semver.org/). Prereleases use
 `-alpha.N`, `-beta.N` and `-rc.N`.
 
 1. A maintainer prepares the release on a `release/X.Y.Z` branch made from
-   `main`: version numbers in every package and the `## [X.Y.Z]` section of the
+   `next`: version numbers in every package and the `## [X.Y.Z]` section of the
    changelog, with a pull request into `main` that must pass the required CI
    checks.
 2. A maintainer pushes an annotated tag `vX.Y.Z` on that commit (see Branches
@@ -95,8 +95,12 @@ Releases follow [Semantic Versioning](https://semver.org/). Prereleases use
      publishes).
 5. The MCP Registry entry is published by the `MCP Registry` workflow, from `main`,
    after another approval in the protected `mcp-registry` environment.
-6. The release pull request is merged into `main`, and `main` is merged back
-   into `next`.
+6. After npm publishes the version, the agent plugin is pinned to it on the
+   release branch (`node plugins/tools/pin-release.js X.Y.Z`), because `main`
+   only accepts a plugin pinned to a published release.
+7. The release branch is merged into `main` with a merge commit, never with
+   squash, so the tagged commit stays in the history of `main`. Then `main` is
+   merged back into `next`, also with a merge commit.
 
 How to verify a release: [docs/verify-release.md](docs/verify-release.md).
 
@@ -108,10 +112,20 @@ understanding of the security model ([docs/threat-model.md](docs/threat-model.md
 and agreement to follow this document and [SECURITY.md](SECURITY.md).
 
 The existing maintainers decide on the invitation. New maintainers are added to
-[MAINTAINERS.md](MAINTAINERS.md) in a pull request, must enable two-factor
-authentication on GitHub, and get access step by step: review rights first,
-then merge rights, then release approval. Maintainers who stop being active may
-step down or be moved to an emeritus list.
+[MAINTAINERS.md](MAINTAINERS.md) in a pull request and get access step by step:
+review rights first, then merge rights, then release approval. Maintainers who
+stop being active may step down or be moved to an emeritus list.
+
+## Account security
+
+The `usezn` GitHub organization requires two-factor authentication for all
+members, outside collaborators and billing managers, and allows only secure
+methods: authenticator apps, passkeys, security keys and GitHub Mobile. SMS is
+not accepted, and an account that still has SMS configured is treated as
+non-compliant. Invitations can only be accepted after a secure method is set
+up. Members who are not compliant cannot access the organization's
+repositories or other resources until they fix it, and outside collaborators
+who are not compliant are removed.
 
 ## Changes to this document
 

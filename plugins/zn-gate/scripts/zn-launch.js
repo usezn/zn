@@ -8,11 +8,17 @@
  *
  *   node zn-launch.js hook <agent>     agent hook (event JSON on stdin)
  *   node zn-launch.js secrets-mcp      the "secrets" MCP server (stdio)
+ *   node zn-launch.js zn-gate-mcp      the "zn-gate" MCP server (stdio), local
+ *                                     rules only: text is never sent to the
+ *                                     zn cloud API
  *   node zn-launch.js check [agent]    report the installation status; never blocks
  *
- * It does not download, install or update anything. On every run it:
+ * It does not download, install or update anything. Claude Code installs
+ * the zn-gate release pinned by this plugin's package-lock.json into the
+ * plugin's own node_modules when the plugin is installed; other agents use
+ * a copy the user installed. On every run it:
  *
- *  1. finds the zn-gate package the user installed (see findPackage);
+ *  1. finds the zn-gate package (see candidates);
  *  2. walks the whole package directory and requires it to hold exactly the
  *     files listed in zn-gate.lock.json: no extra file or directory, no
  *     symbolic link, nothing missing, every file with the SHA-256 digest of
@@ -97,8 +103,9 @@ function loadLock() {
 }
 
 function installHint(lock) {
-  return 'Install the pinned release with: npm install -g zn-gate@' + lock.version +
-    ' && npm audit signatures (see the plugin README).';
+  return 'In Claude Code, the plugin installs it: make sure npm is on your PATH, then run ' +
+    'claude plugin update zn-gate@usezn and start a new session. In other agents, install the pinned release with: ' +
+    'npm install -g zn-gate@' + lock.version + ' && npm audit signatures (see the plugin README).';
 }
 
 /* ----------------------------- lookup ----------------------------- */
@@ -111,14 +118,17 @@ function isPackageDir(dir) {
 /**
  * Candidate package directories, in order:
  *   1. "plugin": {"packageDir": "<dir>"} in ~/.zn/config.json (only that one);
- *   2. for each PATH entry with a zn-gate executable, the npm global layouts
+ *   2. node_modules/zn-gate in the plugin's own directory, where Claude Code
+ *      installs the release pinned by the plugin's package-lock.json;
+ *   3. for each PATH entry with a zn-gate executable, the npm global layouts
  *      of Linux and macOS (<prefix>/bin -> <prefix>/lib/node_modules) and of
  *      Windows (<prefix>\zn-gate.cmd next to <prefix>\node_modules).
+ * Every candidate must still match the lock file exactly (see verify).
  */
 function candidates() {
   const cfg = znConfig();
   if (cfg.plugin && typeof cfg.plugin.packageDir === 'string') return [path.resolve(cfg.plugin.packageDir)];
-  const out = [];
+  const out = [path.resolve(__dirname, '..', 'node_modules', 'zn-gate')];
   const dirs = String(process.env.PATH || '').split(path.delimiter).filter(Boolean);
   for (const dir of dirs) {
     const bin = path.join(dir, 'zn-gate');
@@ -205,7 +215,7 @@ function verify(lock) {
     if (res.files) return { dir: real, files: res.files };
     reasons.push(real + ' does not match the published zn-gate ' + lock.version + ': ' + res.error);
   }
-  if (!reasons.length) return { error: 'zn-gate ' + lock.version + ' is not installed (no zn-gate executable on PATH). ' + installHint(lock) };
+  if (!reasons.length) return { error: 'zn-gate ' + lock.version + ' is not installed (not in the plugin folder, and no zn-gate executable on PATH). ' + installHint(lock) };
   return { error: 'this plugin needs zn-gate ' + lock.version + ', but ' + reasons.join('; ') + '. ' + installHint(lock) };
 }
 
@@ -492,6 +502,21 @@ function runMcp() {
   makeLoader(res.dir, res.files).load('lib/broker/mcp.js').startSecretsMcp();
 }
 
+function runZnGateMcp() {
+  const fail = (msg) => {
+    process.stderr.write('zn plugin: ' + msg + '\n');
+    process.exit(1);
+  };
+  process.on('uncaughtException', (err) => fail('zn-gate failed (' + ((err && err.message) || String(err)) + ')'));
+  process.on('unhandledRejection', (err) => fail('zn-gate failed (' + ((err && err.message) || String(err)) + ')'));
+  // Local rules only, whatever ZN_CLOUD and ZN_API_KEY say.
+  process.env.ZN_LOCAL_ONLY = 'true';
+  const lock = loadLock();
+  const res = verify(lock);
+  if (res.error) return fail(res.error);
+  makeLoader(res.dir, res.files).load('lib/mcp.js').startMcpServer({ localOnly: true });
+}
+
 /* Hooks that `zn hooks install` wrote into the agent's own settings run too. */
 function settingsHooks(agent) {
   if (agent !== 'claude-code') return false;
@@ -530,8 +555,9 @@ function main(argv) {
   const [mode, agent] = argv;
   if (mode === 'hook') return runHook(agent);
   if (mode === 'secrets-mcp') return runMcp();
+  if (mode === 'zn-gate-mcp') return runZnGateMcp();
   if (mode === 'check') return runCheck(agent || '');
-  process.stderr.write('usage: zn-launch.js hook <claude-code|codex|cursor> | secrets-mcp | check [agent]\n');
+  process.stderr.write('usage: zn-launch.js hook <claude-code|codex|cursor> | secrets-mcp | zn-gate-mcp | check [agent]\n');
   process.exitCode = 1;
 }
 

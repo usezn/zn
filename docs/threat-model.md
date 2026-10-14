@@ -100,11 +100,15 @@ right before starting it, and starts that path; it never looks the name up on
   and `zn run` says so once. Without injected values the environment is passed
   unchanged. On Windows, a program that loads DLLs from its own directory is not
   covered; that is not documented per program here.
-- **Interpreter variables are a limit.** `NODE_OPTIONS`, `PYTHONPATH`,
-  `PYTHONSTARTUP`, `RUBYOPT`, `PERL5LIB`, `PERL5OPT` and `BASH_ENV` make an
-  interpreter load code of their own choosing, and zn does not remove them.
-  Approve interpreters only with that in mind: zn already warns that they run
-  any code they are given.
+- **Interpreter start-up variables are removed too.** Since 1.5.1, the
+  variables that make an interpreter load code of the caller's choosing
+  (`NODE_OPTIONS`, `NODE_PATH`, `PYTHONPATH`, `PYTHONHOME`, `PYTHONSTARTUP`,
+  `PERL5OPT`, `PERL5LIB`, `RUBYOPT`, `RUBYLIB`, `JAVA_TOOL_OPTIONS`,
+  `BASH_ENV`, `ENV` and similar) are removed together with the loader
+  variables whenever secret values are injected. An interpreter still runs
+  any code it is given (a script path, `-e`, a file it reads), so approve
+  interpreters only with that in mind: zn warns that they run any code they
+  are given.
 
 zn warns when you approve a program (in the dialog and in `zn secret allow`)
 if your user can write the program or any directory above it. Version

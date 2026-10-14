@@ -31,7 +31,7 @@ const MAX_REQUEST_BYTES = 4 * 1024 * 1024;
 
 function randomAlnum(n) {
   let out = '';
-  for (const b of crypto.randomBytes(n)) out += ALNUM[b % ALNUM.length];
+  for (let i = 0; i < n; i++) out += ALNUM[crypto.randomInt(ALNUM.length)];
   return out;
 }
 

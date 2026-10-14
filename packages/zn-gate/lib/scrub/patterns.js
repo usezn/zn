@@ -25,6 +25,10 @@
  *   opts.pii = {email, phone, iban, card, dni, ssn, ipv4}  (booleans; ipv4 off by default)
  */
 
+// Version of the type catalogue (secret and PII patterns, validators). Bump it
+// when a pattern, validator or type name changes; see CONTRIBUTING.md.
+const SCRUB_RULES_VERSION = '2026-10-14.2';
+
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
@@ -353,6 +357,11 @@ const PATTERNS = [
   { type: 'ANTHROPIC_KEY', hints: ['sk-ant-'], re: re(NB + 'sk-ant-[a-z]{3,8}\\d{2}-[A-Za-z0-9_-]{32,200}' + NA) },
   { type: 'OPENAI_KEY', hints: ['sk-'], re: re(NB + 'sk-(?!ant-)(?:proj-|svcacct-|admin-|or-v1-)?[A-Za-z0-9_-]{40,200}' + NA),
     check: (v) => looksRandom(v.replace(/^sk-(?:proj-|svcacct-|admin-|or-v1-)?/, ''), 2, 3.5) },
+  /* Legacy DeepSeek-style key: `sk-` + 32 hex digits. The length and charset
+   * are not stated in the provider's docs (checked 2026-10-14); the shape
+   * follows rules.js secret:openai_key, which already accepts it. */
+  { type: 'OPENAI_KEY', hints: ['sk-'], re: re(NB + 'sk-[0-9a-f]{32}' + NA),
+    check: (v) => hexSecret(v.slice(3)) },
   { type: 'AWS_KEY', hints: ['AKIA', 'ASIA', 'ABIA', 'ACCA'], re: re('(?<![A-Za-z0-9])(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}(?![A-Za-z0-9])'),
     check: (v) => !/^(.)\1+$/.test(v.slice(4)) && !/EXAMPLE$/.test(v) },
   { type: 'AWS_SECRET', hints: ['ecret', 'ECRET'], re: re(NB64 + '[A-Za-z0-9+/]{40}' + NA64),
@@ -367,19 +376,26 @@ const PATTERNS = [
   { type: 'SLACK_TOKEN', hints: ['xox', 'xapp-'], re: re(NB + '(?:xox[abeprs]-[0-9]{6,}-[A-Za-z0-9-]{8,}|xapp-\\d-[A-Z0-9]{6,}-\\d{6,}-[a-f0-9]{32,})' + NA) },
   { type: 'SLACK_WEBHOOK', hints: ['hooks.slack.com'], re: re('https://hooks\\.slack\\.com/(?:services|workflows|triggers)/[A-Za-z0-9/_-]{20,}') },
   { type: 'DISCORD_WEBHOOK', hints: ['/api/webhooks/'], re: re('https://(?:ptb\\.|canary\\.)?discord(?:app)?\\.com/api/webhooks/\\d{15,20}/[A-Za-z0-9_-]{60,}') },
-  { type: 'STRIPE_KEY', hints: ['_live_', '_test_'], re: re(NB + '(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{20,247}' + NA),
+  { type: 'STRIPE_KEY', hints: ['_live_', '_test_', '_prod_'], re: re(NB + '(?:sk|rk)_(?:live|test|prod)_[A-Za-z0-9]{20,247}' + NA),
     check: (v) => looksRandom(v.slice(8), 2, 3.5) },
   { type: 'STRIPE_WEBHOOK_SECRET', hints: ['whsec_'], re: re(NB + 'whsec_[A-Za-z0-9+/]{32,}' + NA) },
   { type: 'GOOGLE_API_KEY', hints: ['AIza'], re: re(NB + 'AIza[0-9A-Za-z_-]{35}' + NA) },
   { type: 'GOOGLE_OAUTH_SECRET', hints: ['GOCSPX-'], re: re(NB + 'GOCSPX-[A-Za-z0-9_-]{28}' + NA) },
+  /* Letters-only tokens are exactly 34 characters (gitleaks
+   * huggingface-access-token rule). Identifier-like bodies (CamelCase words)
+   * are rejected so that a 34-letter class or function name is not a token;
+   * mixed tokens keep the random-body check. */
   { type: 'HF_TOKEN', hints: ['hf_'], re: re(NB + 'hf_[A-Za-z0-9]{34,40}' + NA),
-    check: (v) => looksRandom(v.slice(3), 3, 3.8) },
+    check: (v) => (/^[A-Za-z]{34}$/.test(v.slice(3)) && !/^[a-z]*(?:[A-Z][a-z]{2,})*[A-Z]{0,3}[a-z]{0,2}$/.test(v.slice(3))) ||
+      looksRandom(v.slice(3), 3, 3.8) },
   { type: 'NPM_TOKEN', hints: ['npm_'], re: re(NB + 'npm_[A-Za-z0-9]{36}' + NA),
     check: (v) => looksRandom(v.slice(4), 3, 3.8) },
   { type: 'PYPI_TOKEN', hints: ['pypi-'], re: re(NB + 'pypi-AgE[A-Za-z0-9_-]{50,}' + NA) },
   { type: 'SENDGRID_KEY', hints: ['SG.'], re: re(NB + 'SG\\.[A-Za-z0-9_-]{22}\\.[A-Za-z0-9_-]{43}' + NA) },
-  { type: 'TWILIO_KEY', hints: ['SK', 'AC'], re: re('(?<![A-Za-z0-9])SK[0-9a-f]{32}(?![A-Za-z0-9])'),
-    check: (v) => /\d/.test(v.slice(2)) && /[a-f]/.test(v.slice(2)) },
+  /* Twilio API key SID: `SK` + 32 hex digits in one case only (lower or
+   * upper; mixed case is not a SID). Same shape as gitleaks twilio-api-key. */
+  { type: 'TWILIO_KEY', hints: ['SK', 'AC'], re: re('(?<![A-Za-z0-9])SK(?:[0-9a-f]{32}|[0-9A-F]{32})(?![A-Za-z0-9])'),
+    check: (v) => /\d/.test(v.slice(2)) && /[a-fA-F]/.test(v.slice(2)) },
   { type: 'MAILGUN_KEY', hints: ['key-'], re: re(NB + 'key-[0-9a-f]{32}' + NA),
     check: (v) => /\d/.test(v.slice(4)) && /[a-f]/.test(v.slice(4)) },
   { type: 'SHOPIFY_TOKEN', hints: ['shpat_', 'shpca_', 'shppa_', 'shpss_'], re: re(NB + 'shp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}' + NA) },
@@ -394,6 +410,45 @@ const PATTERNS = [
   { type: 'NEWRELIC_KEY', hints: ['NRAK-', 'NRII-'], re: re(NB + 'NR(?:AK|II)-[A-Z0-9]{27}' + NA) },
   { type: 'GROQ_KEY', hints: ['gsk_'], re: re(NB + 'gsk_[A-Za-z0-9]{52}' + NA) },
   { type: 'XAI_KEY', hints: ['xai-'], re: re(NB + 'xai-[A-Za-z0-9]{80}' + NA) },
+  /* Docker Hub personal (`dckr_pat_`) and organization (`dckr_oat_`) access
+   * tokens: prefix + URL-safe characters. Docker's docs do not state the
+   * length (checked 2026-10-14); the body minimum of 20 is assumed. */
+  { type: 'DOCKERHUB_PAT', hints: ['dckr_pat_', 'dckr_oat_'], re: re(NB + 'dckr_(?:pat|oat)_[A-Za-z0-9_-]{20,}' + NA),
+    check: (v) => looksRandom(v.replace(/^dckr_(?:pat|oat)_/, ''), 2, 3.3) },
+  /* Tavily API key: `tvly-` + alphanumeric body. No length or charset in the
+   * official docs (checked 2026-10-14); the body minimum of 20 and the digit
+   * requirement are assumed. */
+  { type: 'TAVILY_KEY', hints: ['tvly-'], re: re(NB + 'tvly-[A-Za-z0-9_-]{20,}' + NA),
+    check: (v) => /\d/.test(v.slice(5)) && looksRandom(v.slice(5), 2, 3.3) },
+  /* Firecrawl API key: `fc-` + alphanumeric body. No length in the docs
+   * (checked 2026-10-14); a body minimum of 20 with a digit is assumed. The
+   * boundaries keep slugs and CSS classes such as `fc-icon-...` apart. */
+  { type: 'FIRECRAWL_KEY', hints: ['fc-'], re: re(NB + 'fc-[A-Za-z0-9]{20,}' + NA),
+    check: (v) => /\d/.test(v.slice(3)) && looksRandom(v.slice(3), 2, 3.3) },
+  /* Polar tokens: organization access tokens (`polar_oat_`), personal
+   * tokens (`polar_pat_`), user and organization access tokens (`polar_at_u_`,
+   * `polar_at_o_`), refresh tokens (`polar_rt_u_`, `polar_rt_o_`), client IDs
+   * (`polar_ci_`) and client secrets (`polar_cs_`). The prefixes come from
+   * Polar's docs (checked 2026-10-14); the body length is not stated, so a
+   * minimum of 20 is assumed. */
+  { type: 'POLAR_TOKEN', hints: ['polar_'], re: re(NB + 'polar_(?:oat|pat|(?:at|rt)_[uo]|ci|cs)_[A-Za-z0-9_-]{20,}' + NA),
+    check: (v) => looksRandom(v.replace(/^polar_(?:oat|pat|(?:at|rt)_[uo]|ci|cs)_/, ''), 2, 3.3) },
+  /* Replicate API token: `r8_` + 37 characters, 40 in total (official API
+   * token docs, checked 2026-10-14). */
+  { type: 'REPLICATE_TOKEN', hints: ['r8_'], re: re(NB + 'r8_[A-Za-z0-9]{37}' + NA),
+    check: (v) => looksRandom(v.slice(3), 2, 3.3) },
+  /* Supabase personal access token: `sbp_`, scoped ones as `sbp_fc...`. No
+   * length in the docs (checked 2026-10-14); a body minimum of 30 with a
+   * digit is assumed. */
+  { type: 'SUPABASE_PAT', hints: ['sbp_'], re: re(NB + 'sbp_[A-Za-z0-9_-]{30,}' + NA),
+    check: (v) => /\d/.test(v.slice(4)) && looksRandom(v.slice(4), 2, 3.3) },
+  /* Azure AD client secret, as in gitleaks' azure-ad-client-secret rule:
+   * three characters, a digit, `Q~`, then 31-34 characters. The body may
+   * hold dots but ends on a non-dot character, so a full stop that closes a
+   * sentence is not part of the span; the trailing lookahead still rejects
+   * a dotted continuation such as `.json`. */
+  { type: 'AZURE_AD_CLIENT_SECRET', hints: ['Q~'], re: re('(?<![A-Za-z0-9_~.-])[A-Za-z0-9_~.]{3}[0-9]Q~[A-Za-z0-9_~.-]{30,33}[A-Za-z0-9_~-](?![A-Za-z0-9_~-])(?!\\.[A-Za-z0-9_~-])'),
+    check: (v) => looksRandom(v, 3, 3.5) },
   { type: 'JWT', hints: ['eyJ'], re: re(NB + 'eyJ[A-Za-z0-9_-]{8,}\\.eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{16,}' + NA) },
   { type: 'PRIVATE_KEY', hints: [PEM_BEGIN],
     re: re(PEM_BEGIN + PEM_LABEL + '-----[\\s\\S]{16,16384}?-----END \\1-----') },
@@ -591,6 +646,7 @@ function findPii(text, opts) {
 }
 
 module.exports = {
+  SCRUB_RULES_VERSION,
   findPatterns,
   hintsIn,
   findPii,

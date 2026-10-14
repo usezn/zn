@@ -39,11 +39,16 @@ function getKnownEnvironments() {
 
   const codexHome = process.env.CODEX_HOME || path.join(home, '.codex');
 
+  // Antigravity: Google's MCP guides use ~/.gemini/antigravity/mcp_config.json;
+  // other setup guides use a shared ~/.gemini/config/mcp_config.json. Both are
+  // checked (each only if it exists), so servers in either file are covered.
+
   return [
     { name: 'Claude Desktop', id: 'claude-desktop', filePath: claudeDesktopPath, key: 'mcpServers', format: 'mcpServers-json' },
     { name: 'Claude Code', id: 'claude-code', filePath: path.join(home, '.claude.json'), key: 'mcpServers', format: 'mcpServers-json' },
     { name: 'Cursor', id: 'cursor', filePath: path.join(home, '.cursor', 'mcp.json'), key: 'mcpServers', format: 'mcpServers-json' },
-    { name: 'Antigravity (AGY)', id: 'antigravity', filePath: path.join(home, '.gemini', 'antigravity', 'mcp.json'), key: 'mcpServers', format: 'mcpServers-json' },
+    { name: 'Antigravity (AGY)', id: 'antigravity', filePath: path.join(home, '.gemini', 'antigravity', 'mcp_config.json'), key: 'mcpServers', format: 'mcpServers-json' },
+    { name: 'Antigravity (shared settings)', id: 'antigravity-shared', filePath: path.join(home, '.gemini', 'config', 'mcp_config.json'), key: 'mcpServers', format: 'mcpServers-json' },
     { name: 'Codex', id: 'codex', filePath: path.join(codexHome, 'config.toml'), key: 'mcp_servers', format: 'codex-toml' },
     { name: 'OpenCode', id: 'opencode', filePath: opencodePath, key: 'mcp', format: 'opencode-json' },
     { name: 'Hermes / PiAgent', id: 'hermes-piagent', filePath: path.join(home, '.hermes', 'mcp.json'), key: 'mcpServers', format: 'mcpServers-json' },

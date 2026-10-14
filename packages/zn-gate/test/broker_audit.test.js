@@ -1,6 +1,6 @@
 'use strict';
 /*
- * The vault audit log (`zn vault log`, `zn secret log`, and `zn audit` in 1.5 with a notice on stderr)
+ * The vault audit log (`zn vault log`, `zn secret log`)
  * works with no vault, with a locked vault and with an unlocked one.
  */
 const test = require('node:test');
@@ -12,13 +12,11 @@ const { tempDir } = require('./helpers/tmp');
 
 const CLI = path.join(__dirname, '..', 'bin', 'cli.js');
 
-const NOTICE = 'zn: `zn audit` is moving: use `zn vault log` (alias `zn secret log`) to see this log. In 1.6, `zn audit` will audit your configuration instead.\n';
-const LOG_COMMANDS = [['vault', 'log'], ['secret', 'log'], ['audit']];
+const LOG_COMMANDS = [['vault', 'log'], ['secret', 'log']];
 
-/** Only `zn audit` prints the deprecation notice, and only on stderr. */
+/** The log commands print nothing about `zn audit` on stderr. */
 function assertNotice(cmd, r) {
-  if (cmd[0] === 'audit') assert.ok(r.stderr.includes(NOTICE), r.stderr);
-  else assert.doesNotMatch(r.stderr, /zn audit/, r.stderr);
+  assert.doesNotMatch(r.stderr, /zn audit/, r.stderr);
 }
 
 function zn(home, args) {
@@ -39,22 +37,26 @@ test('the log with no vault lists nothing and does not crash', (t) => {
   }
 });
 
-test('zn audit prints the same stdout as zn vault log, plus the notice on stderr', (t) => {
+test('zn secret log prints the same as zn vault log; zn audit --since and zn audit log point to it', (t) => {
   const home = tempDir(t, 'zn-audit-');
   fs.mkdirSync(path.join(home, '.zn'), { recursive: true });
   const rec = { seq: 1, ts: new Date().toISOString(), decision: 'allow', secret: 'DB_PASSWORD', mode: 'run', agent: 'claude-code', tool: 'Bash', prev: '0', mac: '00' };
   fs.writeFileSync(path.join(home, '.zn', 'audit.jsonl'), JSON.stringify(rec) + '\n');
-  const a = zn(home, ['audit']);
   const v = zn(home, ['vault', 'log']);
   const s = zn(home, ['secret', 'log']);
-  assert.strictEqual(a.stdout, v.stdout);
   assert.strictEqual(s.stdout, v.stdout);
-  assert.strictEqual(a.stderr, NOTICE);
   assert.strictEqual(v.stderr, '');
   assert.strictEqual(s.stderr, '');
+  // `zn audit` reviews agent configs now; the old log forms are a usage error with a pointer.
+  for (const args of [['audit', '--since', '1h'], ['audit', 'log']]) {
+    const r = spawnSync(process.execPath, [CLI, ...args], { cwd: home, env: { ...process.env, HOME: home, USERPROFILE: home, ZN_HOME: path.join(home, '.zn') }, encoding: 'utf8', timeout: 30000 });
+    assert.strictEqual(r.status, 2, r.stdout + r.stderr);
+    assert.match(r.stderr, /zn vault log/);
+    assert.doesNotMatch(r.stdout, /DB_PASSWORD/);
+  }
 });
 
-test('--since filters the log in all three commands', (t) => {
+test('--since filters the log in both commands', (t) => {
   const home = tempDir(t, 'zn-audit-');
   fs.mkdirSync(path.join(home, '.zn'), { recursive: true });
   const old = { seq: 1, ts: new Date(Date.now() - 3 * 3600000).toISOString(), decision: 'allow', secret: 'OLD_SECRET', mode: 'run', agent: 'claude-code', tool: 'Bash', prev: '0', mac: '00' };
@@ -93,7 +95,7 @@ test('the log lists records of a locked vault and says the chain was not checked
   }
 });
 
-test('the log checks the chain of an unlocked vault and exits 1 when it is broken, in all three commands', async (t) => {
+test('the log checks the chain of an unlocked vault and exits 1 when it is broken, in both commands', async (t) => {
   // Own cleanup (not tempDir): the daemon must stop before its home is removed.
   const home = fs.mkdtempSync(path.join(require('os').tmpdir(), 'zn-audit-'));
   const env = { HOME: home, USERPROFILE: home, ZN_HOME: path.join(home, '.zn'), ZN_KEYCHAIN_BACKEND: 'passphrase' };
@@ -147,7 +149,7 @@ test('the log checks the chain of an unlocked vault and exits 1 when it is broke
   }
 });
 
-test('a large log is printed completely through a pipe by all three commands', async (t) => {
+test('a large log is printed completely through a pipe by both commands', async (t) => {
   const home = tempDir(t, 'zn-audit-');
   fs.mkdirSync(path.join(home, '.zn'), { recursive: true });
   const N = 5000;

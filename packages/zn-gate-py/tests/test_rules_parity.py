@@ -80,10 +80,13 @@ class TestPatternParity(unittest.TestCase):
             with self.subTest(table=name):
                 self.assertEqual(_py_table(getattr(R, name)), _js_table(self.js["tables"][name]))
 
+    def test_advisory_by_default_list(self):
+        self.assertEqual(sorted(R.ADVISORY_BY_DEFAULT), self.js["advisory_by_default"])
+
     def test_exfil_compound(self):
         (rule,) = self.js["exfil"]
         self.assertEqual(rule["id"], "exfil:credentials")
-        self.assertEqual([_py_regex(R.EXFIL_VERBS), _py_regex(R.CRED_OBJECTS)],
+        self.assertEqual([_py_regex(R.EXFIL_VERBS), _py_regex(R.CRED_OBJECTS), _py_regex(R.EXFIL_CLAUSE_RE)],
                          [_js_regex(e) for e in rule["compound"]])
 
     def test_helper_patterns(self):

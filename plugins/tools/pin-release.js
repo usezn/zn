@@ -13,8 +13,17 @@
  * file in the package. The launcher refuses an installed zn-gate whose files
  * differ from these digests.
  *
- * Run it after the release is published, review the diff of the lock file,
- * and commit it together with the version bump of the plugin manifests.
+ * It also writes plugins/zn-gate/package.json and package-lock.json, from
+ * which Claude Code installs that exact release into the plugin's own
+ * node_modules when the plugin is installed (the launcher then checks that
+ * copy against zn-gate.lock.json like any other). zn-gate's bundled
+ * dependencies are listed as the plugin's own dependencies; npm writes the
+ * lock (it needs npm on PATH), and the "inBundle" entries are then removed:
+ * Claude Code rejects those, and without the bundled packages listed npm ci
+ * fails.
+ *
+ * Run it after the release is published, review the diff of the lock files,
+ * and commit them together with the version bump of the plugin manifests.
  * No dependencies; Node.js 18 or later.
  */
 
@@ -22,10 +31,13 @@ const crypto = require('crypto');
 const fs = require('fs');
 const https = require('https');
 const path = require('path');
+const { spawnSync } = require('child_process');
 const zlib = require('zlib');
 
 const REGISTRY = 'https://registry.npmjs.org';
-const LOCK = path.resolve(__dirname, '..', 'zn-gate', 'scripts', 'zn-gate.lock.json');
+const PLUGIN = path.resolve(__dirname, '..', 'zn-gate');
+const LOCK = path.join(PLUGIN, 'scripts', 'zn-gate.lock.json');
+const NPM_NAME = 'zn-gate-plugin';
 
 function get(url, redirects = 3) {
   return new Promise((resolve, reject) => {
@@ -113,13 +125,21 @@ async function main(argv) {
   if (actual !== integrity) throw new Error('tarball integrity mismatch: registry ' + integrity + ', file ' + actual);
 
   const files = {};
+  const bundled = new Map();  // name -> version, from node_modules/*/package.json in the tarball
   for (const e of tarEntries(zlib.gunzipSync(tgz))) {
     const rel = e.name.replace(/^package\//, '');
     if (rel.includes('..') || path.isAbsolute(rel)) throw new Error('unexpected path in tarball: ' + e.name);
     if (Object.prototype.hasOwnProperty.call(files, rel)) throw new Error('duplicate path in tarball: ' + rel);
     files[rel] = crypto.createHash('sha256').update(e.body).digest('hex');
+    // Only the top level of zn-gate's node_modules: nested copies stay inside the bundle.
+    const m = /^node_modules\/((?:@[^/]+\/)?[^/]+)\/package\.json$/.exec(rel);
+    if (m) {
+      const v = JSON.parse(e.body.toString('utf8')).version;
+      if (bundled.has(m[1]) && bundled.get(m[1]) !== v) throw new Error('two versions of bundled ' + m[1] + ' in the tarball');
+      bundled.set(m[1], v);
+    }
   }
-  if (!files['package.json'] || !files['lib/hooks/runner.js'] || !files['lib/broker/mcp.js']) {
+  if (!files['package.json'] || !files['lib/hooks/runner.js'] || !files['lib/broker/mcp.js'] || !files['lib/mcp.js']) {
     throw new Error('the tarball lacks files the launcher loads');
   }
   const sorted = Object.fromEntries(Object.keys(files).sort().map((k) => [k, files[k]]));
@@ -131,12 +151,74 @@ async function main(argv) {
     attestations: !!(meta.dist && meta.dist.attestations),
     files: sorted,
   };
+  // Everything is computed before anything is written, so a failure leaves the plugin unchanged.
+  const npm = buildNpmFiles(version, meta, bundled);
+  fs.writeFileSync(path.join(PLUGIN, 'package.json'), JSON.stringify(npm.pkg, null, 2) + '\n');
+  fs.writeFileSync(path.join(PLUGIN, 'package-lock.json'), JSON.stringify(npm.npmLock, null, 2) + '\n');
   fs.writeFileSync(LOCK, JSON.stringify(lock, null, 2) + '\n');
+  process.stdout.write('Wrote plugins/zn-gate/package.json and package-lock.json (zn-gate ' + version + ', ' +
+    (Object.keys(npm.npmLock.packages).length - 1) + ' packages)\n');
   process.stdout.write('Pinned zn-gate@' + version + ' (' + Object.keys(sorted).length + ' files, provenance attestation: ' +
     (lock.attestations ? 'yes' : 'NO') + ') in ' + path.relative(process.cwd(), LOCK) + '\n');
 }
 
-main(process.argv.slice(2)).catch((err) => {
+/*
+ * npm resolves the plugin's lock (nested copies included) from the registry;
+ * then the "inBundle" entries under node_modules/zn-gate are removed, since
+ * those files come from the zn-gate tarball itself.
+ */
+function stripBundled(npmLock) {
+  for (const k of Object.keys(npmLock.packages)) {
+    if (k.startsWith('node_modules/zn-gate/node_modules/') || npmLock.packages[k].inBundle) delete npmLock.packages[k];
+  }
+  return npmLock;
+}
+
+function buildNpmFiles(version, meta, bundled) {
+  const deps = { 'zn-gate': version };
+  for (const name of bundled.keys()) deps[name] = bundled.get(name);
+  const sortedDeps = Object.fromEntries(Object.keys(deps).sort().map((k) => [k, deps[k]]));
+  const pkg = {
+    name: NPM_NAME,
+    version,
+    private: true,
+    description: 'The zn-gate release this plugin runs. Claude Code installs it into the plugin folder; the launcher checks it against scripts/zn-gate.lock.json.',
+    license: 'MIT',
+    dependencies: sortedDeps,
+  };
+  // npm resolves the lock in a scratch directory, from this package.json only.
+  const work = fs.mkdtempSync(path.join(require('os').tmpdir(), 'zn-pin-'));
+  let npmLock;
+  try {
+    fs.writeFileSync(path.join(work, 'package.json'), JSON.stringify(pkg, null, 2) + '\n');
+    // npm's own CLI script, run with this node (no shell, no npm.cmd): next to
+    // node on Windows, under <prefix>/lib on Linux and macOS; else npm from PATH.
+    const prefix = path.dirname(process.execPath);
+    const npmCli = [path.join(prefix, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+      path.join(prefix, '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js')].find((f) => fs.existsSync(f));
+    const args = ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund', '--registry', REGISTRY];
+    const r = npmCli
+      ? spawnSync(process.execPath, [npmCli, ...args], { cwd: work, encoding: 'utf8', windowsHide: true })
+      : spawnSync('npm', args, { cwd: work, encoding: 'utf8', windowsHide: true });
+    if (r.status !== 0) throw new Error('npm install --package-lock-only failed: ' + String(r.stderr || r.error || '').trim().slice(0, 500));
+    npmLock = stripBundled(JSON.parse(fs.readFileSync(path.join(work, 'package-lock.json'), 'utf8')));
+  } finally {
+    fs.rmSync(work, { recursive: true, force: true });
+  }
+  const z = npmLock.packages['node_modules/zn-gate'];
+  if (!z || z.version !== version || z.integrity !== meta.dist.integrity) throw new Error('the npm lock does not pin the checked zn-gate tarball');
+  for (const [k, e] of Object.entries(npmLock.packages)) {
+    if (k && (!/^sha512-/.test(e.integrity || '') || !String(e.resolved || '').startsWith(REGISTRY + '/'))) {
+      throw new Error('the npm lock entry ' + k + ' has no sha512 integrity or registry URL');
+    }
+    if (e.hasInstallScript) throw new Error('the npm lock entry ' + k + ' has an install script');
+  }
+  return { pkg, npmLock };
+}
+
+module.exports = { buildNpmFiles, stripBundled };
+
+if (require.main === module) main(process.argv.slice(2)).catch((err) => {
   process.stderr.write('pin-release: ' + err.message + '\n');
   process.exitCode = 1;
 });

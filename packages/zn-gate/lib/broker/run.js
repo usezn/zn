@@ -32,6 +32,8 @@ const exe = require('../exe');
 const { createMasker } = require('./mask');
 const { approvalStore } = require('./approvals');
 const { znError, loadVault, findProjectRoot } = require('../deps');
+const { humanError } = require('../errors');
+const { znCommand } = require('../zn-command');
 
 const USAGE = 'usage: zn run [--secrets NAME[,NAME...]] [--agent ID] -- <command> [args...]';
 
@@ -369,7 +371,7 @@ function spawnChecked(prep, opts) {
     };
     child.on('error', (err) => {
       cleanup();
-      reject(err.code === 'ENOENT' ? znError('ZN_NOT_FOUND', 'command not found: ' + prep.argv[0]) : err);
+      reject(err.code === 'ENOENT' ? znError('ZN_NOT_FOUND', '`' + prep.argv[0] + '` is not installed, or it is not on your PATH') : err);
     });
     child.on('close', (code, signal) => {
       cleanup();
@@ -400,7 +402,7 @@ async function runBroker(args, opts = {}) {
         prep = await prepare(parsed, { ...opts, env, vault });
       } catch (err) {
         if (err.code !== 'ZN_LOCKED') throw err;
-        stderr.write('zn run: vault locked; environment markers left unresolved\n');
+        stderr.write('zn run: your secret vault is locked, so secrets were not filled in. Unlock it in your terminal with: ' + znCommand('unlock') + '\n');
         prep = { argv: parsed.command, env: { ...env }, secrets: [], resolved: null };
       }
     } else {
@@ -408,8 +410,7 @@ async function runBroker(args, opts = {}) {
     }
     return await spawnMasked(prep, { ...opts, originalArgs: parsed.command });
   } catch (err) {
-    const tag = err.code && String(err.code).startsWith('ZN_') ? '[' + err.code + '] ' : '';
-    stderr.write('zn run: ' + tag + err.message + '\n');
+    stderr.write('zn run: ' + humanError(err) + '\n');
     if (err.code === 'ZN_USAGE') return 64;
     if (err.code === 'ZN_POLICY_DENIED') return 77;
     if (err.code === 'ZN_NOT_FOUND') return 127;

@@ -14,15 +14,22 @@ impl ManagedRuleset {
         arguments: &str,
     ) -> std::result::Result<(), String> {
         // 1. Restricted Commands
-        // Tool names are server-controlled tokens (substring ok); argument
-        // text must match whole words only ("confirm"/"address"/"odd" are not "rm"/"dd").
+        // Both the tool name and the argument text match whole words only:
+        // "confirm"/"address"/"odd" are not "rm"/"dd", and neither are the
+        // tools "transform_data" or "addItem".
         if config.restricted_commands {
             let dangerous = [
                 "rm", "format", "mkfs", "dd", "chmod", "chown", "shutdown", "reboot",
             ];
             let folded_tool = fold_system1(tool_name);
             let folded_args = fold_system1(arguments);
-            let tool_hit = dangerous.iter().any(|&cmd| folded_tool.contains(cmd));
+            // Each part of the tool name is checked whole (lowercased, so
+            // "ShutDown" and "chMod" count) and split on camelCase.
+            let tool_hit = folded_tool
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .map(|part| part.to_ascii_lowercase())
+                .chain(tool_name_words(&folded_tool))
+                .any(|w| restricted_tool_word(&w));
             let args_hit = folded_args
                 .split(|c: char| !c.is_ascii_alphanumeric())
                 .any(|w| dangerous.iter().any(|&cmd| w.eq_ignore_ascii_case(cmd)));
@@ -74,6 +81,55 @@ impl ManagedRuleset {
 
         Ok(())
     }
+}
+
+/// A word of a tool name that names a restricted command. Joined forms
+/// such as "rmrf" or "rmtree" are listed, and the longer commands also match
+/// as a prefix ("shutdownhost", "chmodfile"); "rm", "dd" and "format" do not
+/// ("rms_norm", "formatter").
+fn restricted_tool_word(w: &str) -> bool {
+    const EXACT: &[&str] = &[
+        "rm", "dd", "format", "rmdir", "rmtree", "rmrf", "rimraf", "deltree", "mkfs", "chmod",
+        "chown", "shutdown", "reboot",
+    ];
+    const PREFIX: &[&str] = &["mkfs", "chmod", "chown", "shutdown", "reboot"];
+    EXACT.contains(&w) || PREFIX.iter().any(|p| w.starts_with(p))
+}
+
+/// Split a tool name into words on separators and camelCase boundaries:
+/// "format_disk" -> [format, disk], "runShutdown" -> [run, shutdown],
+/// "MKFSVolume" -> [mkfs, volume].
+fn tool_name_words(name: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    for part in name.split(|c: char| !c.is_ascii_alphanumeric()) {
+        let chars: Vec<char> = part.chars().collect();
+        let mut start = 0;
+        for i in 1..chars.len() {
+            let (prev, cur) = (chars[i - 1], chars[i]);
+            let next_lower = chars.get(i + 1).is_some_and(|c| c.is_ascii_lowercase());
+            let boundary = (prev.is_ascii_lowercase() && cur.is_ascii_uppercase())
+                || (prev.is_ascii_uppercase() && cur.is_ascii_uppercase() && next_lower)
+                || (prev.is_ascii_alphabetic() != cur.is_ascii_alphabetic());
+            if boundary {
+                words.push(
+                    chars[start..i]
+                        .iter()
+                        .collect::<String>()
+                        .to_ascii_lowercase(),
+                );
+                start = i;
+            }
+        }
+        if start < chars.len() {
+            words.push(
+                chars[start..]
+                    .iter()
+                    .collect::<String>()
+                    .to_ascii_lowercase(),
+            );
+        }
+    }
+    words
 }
 
 /// Fold untrusted text before System 1 matching.
@@ -152,6 +208,60 @@ mod tests {
     fn test_restricted_tool_name_still_blocks() {
         assert!(ManagedRuleset::evaluate(&cfg(), "format_disk", "").is_err());
         assert!(ManagedRuleset::evaluate(&cfg(), "disk_shutdown", "").is_err());
+        assert!(ManagedRuleset::evaluate(&cfg(), "rm", "").is_err());
+        assert!(ManagedRuleset::evaluate(&cfg(), "runShutdown", "").is_err());
+        assert!(ManagedRuleset::evaluate(&cfg(), "MKFSVolume", "").is_err());
+        assert!(ManagedRuleset::evaluate(&cfg(), "fs.chmod", "").is_err());
+        assert!(ManagedRuleset::evaluate(&cfg(), "dd2", "").is_err());
+        for tool in [
+            "rmrf",
+            "rm-rf",
+            "sudo_rm",
+            "RmDir",
+            "rmdir",
+            "rmtree",
+            "rimraf",
+            "deltree",
+            "shutdownhost",
+            "chmodfile",
+            "ShutDown",
+            "chMod",
+            "rM",
+            "ReBoot",
+            "SHUTDOWN",
+        ] {
+            assert!(
+                ManagedRuleset::evaluate(&cfg(), tool, "").is_err(),
+                "{tool}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_restricted_tool_name_substrings_do_not_block() {
+        for tool in [
+            "transform_data",
+            "perform_search",
+            "confirm_order",
+            "add_item",
+            "addItem",
+            "odd_numbers",
+            "formatter",
+            "reformat_text",
+            "information",
+            "rms_norm",
+            "formatted_output",
+        ] {
+            assert!(ManagedRuleset::evaluate(&cfg(), tool, "").is_ok(), "{tool}");
+        }
+    }
+
+    #[test]
+    fn tool_name_words_split() {
+        assert_eq!(tool_name_words("format_disk"), ["format", "disk"]);
+        assert_eq!(tool_name_words("runShutdown"), ["run", "shutdown"]);
+        assert_eq!(tool_name_words("MKFSVolume"), ["mkfs", "volume"]);
+        assert_eq!(tool_name_words("dd2"), ["dd", "2"]);
     }
 
     #[test]

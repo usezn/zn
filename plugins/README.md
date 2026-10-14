@@ -7,10 +7,10 @@ agent:
 
 | Agent | What the plugin adds | How it is installed |
 | --- | --- | --- |
-| Claude Code | hooks, `secrets` MCP server, skill | marketplace in this repository |
-| Codex | `secrets` MCP server, skill (hooks: `zn hooks install codex`) | marketplace in this repository |
-| Cursor | hooks, `secrets` MCP server, skill | plugin from this repository |
-| Other Agent Plugins clients | `secrets` MCP server, skill | the `plugins/zn-gate` directory |
+| Claude Code | hooks, `zn-gate` and `secrets` MCP servers, skill; installs zn-gate itself | marketplace in this repository |
+| Codex | `zn-gate` and `secrets` MCP servers, skill (hooks: `zn hooks install codex`) | marketplace in this repository |
+| Cursor | hooks, `zn-gate` and `secrets` MCP servers, skill | plugin from this repository |
+| Other Agent Plugins clients | `zn-gate` and `secrets` MCP servers, skill | the `plugins/zn-gate` directory |
 | OpenCode | (no plugin manifest) | `zn hooks install opencode` |
 
 What zn-gate can and cannot do in each agent is listed in
@@ -23,8 +23,12 @@ plugin has not been tested yet.
 The plugin is part of zn-gate's attack surface, so it does as little as
 possible:
 
-- **Nothing is downloaded or installed by the plugin.** You install zn-gate
-  yourself, at an exact version, and check its signatures:
+- **One pinned download, at install.** In Claude Code, installing the plugin
+  installs zn-gate 1.6.0 into the plugin folder from the npm registry, as
+  pinned by `package-lock.json` (registry integrity for every package,
+  install scripts disabled). The plugin downloads nothing after that. In
+  other agents you install zn-gate yourself, at an exact version, and check
+  its signatures:
 
   ```bash
   npm install -g zn-gate@1.6.0
@@ -35,15 +39,15 @@ possible:
   and every install instruction name zn-gate 1.6.0. There is no `@latest` and
   no version range, and the plugin itself runs no package launcher such as
   `npx`.
-- **Checked on every call.** `scripts/zn-launch.js` requires the installed
-  package to hold exactly the files in `scripts/zn-gate.lock.json` (generated
+- **Checked on every call.** Wherever it was installed, `scripts/zn-launch.js`
+  requires the package to hold exactly the files in `scripts/zn-gate.lock.json` (generated
   from the published npm tarball after checking the registry's sha512
   integrity), with matching SHA-256 digests and nothing else, then runs
   zn-gate from the checked bytes in memory. Any mismatch or error fails closed.
 - **No self-update.** The plugin never updates itself or zn-gate. Install new
   releases on purpose; marketplaces are added at a release tag, and
   auto-update for third-party marketplaces is off by default in Claude Code.
-- **Least privilege.** The hooks and the MCP server run zn-gate locally with
+- **Least privilege.** The hooks and the MCP servers run zn-gate locally with
   your user's rights and send nothing over the network except the HTTP
   requests you allow per secret.
 
@@ -59,7 +63,8 @@ hook call.
 
 ## Install
 
-First install zn-gate as shown above (Node.js 20.12 or later). Then:
+You need Node.js 20.12 or later. Claude Code installs zn-gate with the
+plugin; for the other agents, first install zn-gate as shown above. Then:
 
 ### Claude Code
 
@@ -69,8 +74,8 @@ claude plugin install zn-gate@usezn
 ```
 
 Leave auto-update off for this marketplace (the default), and upgrade on
-purpose with `claude plugin update zn-gate@usezn` after installing the new
-zn-gate release. If you installed hooks before with
+purpose with `claude plugin update zn-gate@usezn`, which also installs the
+newly pinned zn-gate. If you installed hooks before with
 `zn hooks install claude-code`, remove them: `zn hooks uninstall claude-code`.
 
 ### Codex
@@ -80,7 +85,7 @@ codex plugin marketplace add usezn/zn --ref v1.6.0
 ```
 
 Install `zn-gate` from the `usezn` marketplace with `/plugins`. That adds the
-`secrets` MCP server and the skill. Codex does not run hooks from plugins
+`zn-gate` and `secrets` MCP servers and the skill. Codex does not run hooks from plugins
 (Codex 0.162.1 lists the `plugin_hooks` feature as removed), so install the
 hooks with zn-gate's own installer too, then open `/hooks` in Codex and trust
 them (Codex asks again whenever they change):
@@ -104,7 +109,7 @@ a crash or a timeout blocks the action (stricter than
 ### Other Agent Plugins clients
 
 Point the client at the `plugins/zn-gate` directory of the `v1.6.0` tag. These
-clients load the `secrets` MCP server and the skill; hooks are agent-specific
+clients load the `zn-gate` and `secrets` MCP servers and the skill; hooks are agent-specific
 and need one of the agents above.
 
 ### OpenCode
