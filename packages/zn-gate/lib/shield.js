@@ -57,6 +57,18 @@ function startMcpShield(command, args, options = {}) {
   // Tools removed from the list because they changed since they were approved (block mode).
   const unpinnedTools = new Set();
   const pinMode = pins.mode(options);
+  // Set when this session pinned the server for the first time (later pages are pinned too).
+  const pinSession = {};
+  const refuseCall = (callId, toolName) => {
+    process.stdout.write(JSON.stringify({
+      jsonrpc: '2.0',
+      id: callId,
+      result: {
+        content: [{ type: 'text', text: `[zn-gate] The tool '${pins.displayName(toolName)}' is new or changed since the user approved this server's tools, so it is not available. Ask the user to review it and run zn-gate pins approve in their own terminal.` }],
+        isError: true,
+      },
+    }) + '\n');
+  };
 
   function trackPendingCall(id, meta) {
     if (pendingCalls.size >= MAX_PENDING_CALLS) {
@@ -104,16 +116,16 @@ function startMcpShield(command, args, options = {}) {
 
       log(`Intercepting request tools/call [${callId}]: tool=${toolName}`);
 
-      if (unpinnedTools.has(toolName) && !options.shadow) {
-        process.stdout.write(JSON.stringify({
-          jsonrpc: '2.0',
-          id: callId,
-          result: {
-            content: [{ type: 'text', text: `[zn-gate] The tool '${toolName}' changed since it was approved, so it is not available. Ask the user to review it and run zn-gate pins approve in their own terminal.` }],
-            isError: true,
-          },
-        }) + '\n');
-        return;
+      if (pinMode === 'block' && !options.shadow) {
+        // Also for a client that calls from a list it cached earlier: only approved tools.
+        let approved = null;
+        try {
+          approved = pins.approvedTools(command, args);
+        } catch (_) { /* treated as nothing approved */ }
+        if (unpinnedTools.has(toolName) || !approved || !approved[toolName]) {
+          refuseCall(callId, toolName);
+          return;
+        }
       }
 
       // Inspect tool arguments for injection / exfiltration attempts
@@ -205,36 +217,49 @@ function startMcpShield(command, args, options = {}) {
       // Handle tools/list response: sanitize tool descriptions and input schemas
       if (pending.method === 'tools/list') {
         let tools = msg.result?.tools;
+        if (Array.isArray(tools)) {
+          // Text from the server cannot pass for a zn-gate notice.
+          for (const t of tools) {
+            if (t && typeof t.description === 'string') t.description = t.description.replace(/\[(\s*)zn-(gate|shield)/gi, '[server text: zn-$2');
+          }
+        }
         if (Array.isArray(tools) && pinMode !== 'off') {
           let result = null;
           try {
-            result = pins.check(command, args, tools);
+            result = pins.check(command, args, tools, pinSession);
           } catch (err) {
-            process.stderr.write(`[zn-shield] Could not check the tool pins: ${err.message}\n`);
+            process.stderr.write(`[zn-shield] Could not check the tool pins (${err.message}); every tool of this list is treated as unapproved.\n`);
           }
-          const flagged = new Set(result ? [...result.changed, ...result.added] : []);
-          if (flagged.size) {
-            const key = pins.serverKey(command, args);
-            process.stderr.write(`[zn-shield TOOLS CHANGED] ${[...flagged].join(', ')} changed or appeared since the tools of this server were approved` +
-              `${pinMode === 'block' && !options.shadow ? ' and are not available' : ''}. Review them, then run: zn-gate pins approve ${key}\n`);
+          const key = pins.serverKey(command, args);
+          const flagged = result ? result.flagged : new Set(tools.filter((t) => t && typeof t.name === 'string').map((t) => t.name));
+          const invalid = result ? result.invalid : 0;
+          if (result && result.first && !flagged.size && !invalid) {
+            process.stderr.write(`[zn-shield] Pinned the tools of a new MCP server (${key}): ${pins.label(command, args)}\n`);
+          }
+          // The approved state of the tools of this page, for later calls.
+          for (const t of tools) if (t && typeof t.name === 'string') (flagged.has(t.name) ? unpinnedTools.add(t.name) : unpinnedTools.delete(t.name));
+          if (flagged.size || invalid) {
+            const shown = [...flagged].slice(0, 20).map(pins.displayName).join(', ') + (flagged.size > 20 ? ', ...' : '') + (invalid ? (flagged.size ? ', ' : '') + invalid + ' tool(s) without a valid name' : '');
+            process.stderr.write(`[zn-shield TOOLS CHANGED] ${shown}: new, changed, duplicated or unnamed since the tools of this server were approved` +
+              `${pinMode === 'block' && !options.shadow ? ', and not available' : ''}. Review them, then run in your own terminal: zn-gate pins approve ${key}\n`);
             logEvidence({
               agent: options.agent || 'mcp-server',
               phase: 'tool-pin',
-              tool_name: [...flagged].join(','),
-              payload: [...flagged].join(','),
+              tool_name: key,
+              payload: shown,
               verdict: pinMode === 'block' && !options.shadow ? 'block' : 'allow',
               rule: 'mcp_tool_changed',
               reason: 'Tool definition changed since it was approved',
               engine: 'oss-deterministic',
             });
             if (!options.shadow) {
+              const unapproved = (t) => !t || typeof t.name !== 'string' || !t.name || flagged.has(t.name);
               if (pinMode === 'block') {
-                for (const name of flagged) unpinnedTools.add(name);
-                tools = tools.filter((t) => !(t && flagged.has(t.name)));
+                tools = tools.filter((t) => !unapproved(t));
                 msg.result.tools = tools;
               } else {
                 for (const t of tools) {
-                  if (t && flagged.has(t.name)) {
+                  if (t && typeof t === 'object' && unapproved(t)) {
                     t.description = '[zn-gate: this tool is new or changed since the user approved this server\'s tools; ask the user before using it.] ' +
                       (typeof t.description === 'string' ? t.description : '');
                   }
