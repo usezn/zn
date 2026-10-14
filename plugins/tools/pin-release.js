@@ -216,7 +216,7 @@ function buildNpmFiles(version, meta, bundled) {
   return { pkg, npmLock };
 }
 
-module.exports = { buildNpmFiles, stripBundled };
+module.exports = { buildNpmFiles, stripBundled, get, tarEntries };
 
 if (require.main === module) main(process.argv.slice(2)).catch((err) => {
   process.stderr.write('pin-release: ' + err.message + '\n');
