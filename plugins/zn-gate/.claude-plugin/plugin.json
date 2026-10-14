@@ -9,7 +9,7 @@
     "email": "support@usezn.com",
     "url": "https://usezn.com"
   },
-  "homepage": "https://github.com/usezn/zn/tree/v1.6.0/plugins/zn-gate",
+  "homepage": "https://usezn.com",
   "repository": "https://github.com/usezn/zn",
   "license": "MIT",
   "keywords": [
@@ -19,7 +19,7 @@
     "hooks",
     "prompt-injection"
   ],
-  "documentationUrl": "https://github.com/usezn/zn/blob/v1.6.0/docs/secrets.md",
+  "documentationUrl": "https://usezn.com/docs",
   "supportUrl": "https://github.com/usezn/zn/issues",
   "privacyPolicyUrl": "https://usezn.com/privacy",
   "termsOfServiceUrl": "https://usezn.com/terms",

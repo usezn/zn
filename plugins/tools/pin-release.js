@@ -65,35 +65,46 @@ function get(url, redirects = 3) {
  * directories, GNU long names (L) and PAX headers (x, g) with a path record.
  * Any other entry type (links, devices) makes the pin fail.
  */
-function paxPath(body) {
-  const text = body.toString('utf8');
+function paxRecords(body) {
+  // Record lengths count bytes, so the records are cut from the buffer, not from decoded text.
+  const out = {};
   let off = 0;
-  let found = null;
-  while (off < text.length) {
-    const sp = text.indexOf(' ', off);
+  while (off < body.length) {
+    const sp = body.indexOf(0x20, off);
     if (sp < 0) break;
-    const len = parseInt(text.slice(off, sp), 10);
-    if (!(len > 0)) throw new Error('malformed PAX header');
-    const rec = text.slice(sp + 1, off + len - 1);
+    const len = parseInt(body.subarray(off, sp).toString('ascii'), 10);
+    if (!(len > 0) || off + len > body.length) throw new Error('malformed PAX header');
+    const rec = body.subarray(sp + 1, off + len - 1).toString('utf8');
     const eq = rec.indexOf('=');
-    if (rec.slice(0, eq) === 'path') found = rec.slice(eq + 1);
+    if (eq < 0) throw new Error('malformed PAX header');
+    out[rec.slice(0, eq)] = rec.slice(eq + 1);
     off += len;
   }
-  return found;
+  return out;
+}
+
+function paxPath(body) {
+  const rec = paxRecords(body);
+  if ('size' in rec) throw new Error('PAX size records are not supported');
+  return rec.path || null;
 }
 
 function tarEntries(buf) {
   const out = [];
   let off = 0;
   let nextName = null;
+  let ended = false;
   while (off + 512 <= buf.length) {
     const header = buf.subarray(off, off + 512);
-    if (header.every((b) => b === 0)) break;
+    if (header.every((b) => b === 0)) { ended = true; break; }
     const field = (start, len) => header.subarray(start, start + len).toString('utf8').replace(/\0.*$/s, '');
     let name = field(0, 100);
     const prefix = field(345, 155);
     if (prefix) name = prefix + '/' + name;
-    const size = parseInt(field(124, 12).trim() || '0', 8);
+    const sizeField = field(124, 12).trim() || '0';
+    if (!/^[0-7]+$/.test(sizeField)) throw new Error('unsupported size field in tar entry ' + name);
+    const size = parseInt(sizeField, 8);
+    if (off + 512 + size > buf.length) throw new Error('truncated tar entry ' + name);
     const type = field(156, 1) || '0';
     const body = buf.subarray(off + 512, off + 512 + size);
     off += 512 + Math.ceil(size / 512) * 512;
@@ -107,6 +118,7 @@ function tarEntries(buf) {
     if (type === '0' || type === '\0') out.push({ name, body });
     else if (type !== '5') throw new Error('unsupported tar entry type "' + type + '" for ' + name);
   }
+  if (!ended) throw new Error('the tar archive has no end marker (truncated?)');
   return out;
 }
 

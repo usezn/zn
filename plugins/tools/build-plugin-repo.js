@@ -5,24 +5,34 @@
  * Build the tree of the Claude Code plugin repository (usezn/zn-gate-plugin)
  * from this monorepo and a published zn-gate tarball.
  *
- *   node plugins/tools/build-plugin-repo.js --tarball <zn-gate-X.Y.Z.tgz> --out <dir> [--integrity <sha512-...>]
+ *   node plugins/tools/build-plugin-repo.js --tarball <zn-gate-X.Y.Z.tgz> --out <dir>
  *
  * The plugin repository is never edited by hand: the release workflow runs
- * this script and opens a pull request with its output.
+ * this script and opens a pull request with its output. That repository's
+ * own CI checks the result again, independently: every bundled file against
+ * the npm tarball, the tarball's provenance attestation, and every other
+ * file against this repository at the release tag.
  *
  * 1. The tarball must match the sha512 integrity that the npm registry lists
- *    for zn-gate@X.Y.Z (--integrity replaces the registry lookup in tests).
- * 2. zn-gate is written to vendor/zn-gate without type declarations and
- *    source maps (never package.json, .js, .cjs, .mjs or .json), so the plugin
- *    stays well under the directory's file limit. Every bundled file is the
- *    exact bytes from the tarball.
- * 3. Every require/import with a literal name in the bundled code must
- *    resolve inside the bundle (or to a Node.js built-in): Node resolves
- *    bundled ES modules from disk, and a name that is not bundled would be
- *    looked up in parent node_modules folders the plugin does not control.
- * 4. The plugin files are copied unchanged from plugins/zn-gate (a fixed
- *    list), and scripts/zn-gate.lock.json lists the bundled files with their
- *    SHA-256 and "bundled": "vendor/zn-gate", so the launcher uses only them.
+ *    for zn-gate@X.Y.Z, and the release the plugin is pinned to
+ *    (plugins/zn-gate/scripts/zn-gate.lock.json).
+ * 2. zn-gate is written to vendor/zn-gate without TypeScript sources, type
+ *    declarations and source maps, so the plugin stays well under the
+ *    directory's file limit. Every bundled file is the exact bytes from the
+ *    tarball.
+ * 3. ES modules are resolved by Node from disk, outside the launcher's
+ *    verified loader (CommonJS require() goes through that loader and can
+ *    only reach verified files). So every static import of every ES module,
+ *    read with Node's own parser, and every import() in any bundled file must
+ *    name a module inside the bundle or a Node.js built-in. A name that is
+ *    not bundled would be looked up in parent node_modules folders the plugin
+ *    does not control. import() with a computed name, createRequire and
+ *    import.meta.resolve are refused, since they cannot be checked.
+ * 4. The plugin files are copied unchanged: the shared ones from
+ *    plugins/zn-gate, the README, SECURITY and PROVENANCE files of the plugin
+ *    repository from plugins/claude-dir. scripts/zn-gate.lock.json lists the
+ *    bundled files with their SHA-256 and "bundled": "vendor/zn-gate", so the
+ *    launcher uses only them.
  * 5. .gitattributes turns off line-ending conversion: Git for Windows would
  *    otherwise rewrite the bundled files on clone and every check would fail.
  * 6. The directory's limits are checked: at most 512 files, no file other
@@ -35,47 +45,59 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
+const { spawnSync } = require('child_process');
 const { builtinModules } = require('module');
 const { get, tarEntries } = require('./pin-release');
 
 const REGISTRY = 'https://registry.npmjs.org';
 const PLUGIN = path.resolve(__dirname, '..', 'zn-gate');
+const CLAUDE_DIR = path.resolve(__dirname, '..', 'claude-dir');
 const BUNDLED_DIR = 'vendor/zn-gate';
-// Copied byte for byte from plugins/zn-gate. Nothing else of the monorepo
-// plugin (Cursor, Codex and Agent Plugins manifests, npm files) is shipped.
+// Copied byte for byte. Nothing else of the monorepo plugin (Cursor, Codex
+// and Agent Plugins manifests, npm files, its README) is shipped.
 const PLUGIN_FILES = [
-  '.claude-plugin/plugin.json',
-  '.mcp.json',
-  'hooks/hooks.json',
-  'icon.png',
-  'LICENSE',
-  'README.md',
-  'scripts/zn-launch.js',
-  'skills/zn-secrets/SKILL.md',
+  ['.claude-plugin/plugin.json', PLUGIN],
+  ['.mcp.json', PLUGIN],
+  ['hooks/hooks.json', PLUGIN],
+  ['icon.png', PLUGIN],
+  ['LICENSE', PLUGIN],
+  ['scripts/zn-launch.js', PLUGIN],
+  ['skills/zn-secrets/SKILL.md', PLUGIN],
+  ['README.md', CLAUDE_DIR],
+  ['SECURITY.md', CLAUDE_DIR],
+  ['PROVENANCE.md', CLAUDE_DIR],
 ];
 const GITATTRIBUTES = '* -text\n';
 const PRUNE = /\.(?:d\.[mc]?ts|[mc]?ts|map)$/;
-const NEVER_PRUNE = /(?:^|\/)package\.json$|\.(?:[mc]?js|json)$/;
 const MAX_FILES = 512;
 const MAX_TEXT_BYTES = 256 * 1024;
 const MAX_BYTES = 5 * 1024 * 1024;
-const IMAGE = /\.(?:png|jpe?g|gif|webp|svg)$/i;
+const IMAGE = /\.(?:png|jpe?g|gif|webp)$/i;
 const BUILTINS = new Set(builtinModules.flatMap((m) => [m, 'node:' + m]));
 
 function sha256(buf) {
   return crypto.createHash('sha256').update(buf).digest('hex');
 }
 
-/** The bundled files: tarball paths without "package/", type declarations and source maps removed. */
+/** Refuse names that could leave the output folder or collide on Windows and macOS. */
+function checkName(rel, seen) {
+  if (!rel || /[\\:\0-\x1f]/.test(rel) || rel.split('/').some((p) => p === '' || p === '.' || p === '..')) {
+    throw new Error('unexpected path in tarball: ' + JSON.stringify(rel));
+  }
+  const key = rel.normalize('NFC').toLowerCase();
+  if (seen.has(key)) throw new Error('duplicate path in tarball: ' + rel);
+  seen.add(key);
+}
+
+/** The bundled files: tarball paths without "package/", TypeScript sources, declarations and source maps removed. */
 function bundleFiles(tgz) {
   const files = new Map();
+  const seen = new Set();
   for (const e of tarEntries(zlib.gunzipSync(tgz))) {
-    const rel = e.name.replace(/^package\//, '');
-    if (!rel || rel.split('/').some((p) => p === '' || p === '.' || p === '..') || path.isAbsolute(rel)) {
-      throw new Error('unexpected path in tarball: ' + e.name);
-    }
-    if (files.has(rel)) throw new Error('duplicate path in tarball: ' + rel);
-    if (PRUNE.test(rel) && !NEVER_PRUNE.test(rel)) continue;
+    if (!e.name.startsWith('package/')) throw new Error('unexpected path in tarball: ' + JSON.stringify(e.name));
+    const rel = e.name.slice('package/'.length);
+    checkName(rel, seen);
+    if (PRUNE.test(rel)) continue;
     files.set(rel, e.body);
   }
   for (const need of ['package.json', 'lib/hooks/runner.js', 'lib/broker/mcp.js', 'lib/mcp.js']) {
@@ -86,117 +108,181 @@ function bundleFiles(tgz) {
 
 /* ------------------------- import resolution ------------------------- */
 
-// Literal module names in require(), import ... from, import() and export ... from.
-const SPECIFIER_RES = [
-  /\brequire\s*\(\s*(['"])([^'"\n]+)\1\s*\)/g,
-  /\bimport\s*\(\s*(['"])([^'"\n]+)\1\s*\)/g,
-  /^\s*import\s+(?:[\w*{}\s,$]+\s+from\s+)?(['"])([^'"\n]+)\1/gm,
-  /^\s*export\s+(?:\*(?:\s+as\s+[\w$]+)?|\{[^}]*\})\s+from\s+(['"])([^'"\n]+)\1/gm,
-];
+function pkgJson(files, dir) {
+  const buf = files.get((dir ? dir + '/' : '') + 'package.json');
+  if (!buf) return null;
+  try {
+    return JSON.parse(buf.toString('utf8'));
+  } catch (_) {
+    return null;
+  }
+}
+
+/** True when Node loads the bundled file as an ES module. */
+function isEsm(files, rel) {
+  if (rel.endsWith('.mjs')) return true;
+  if (!rel.endsWith('.js')) return false;
+  let dir = path.posix.dirname(rel);
+  for (;;) {
+    const pkg = pkgJson(files, dir === '.' ? '' : dir);
+    if (pkg) return pkg.type === 'module';
+    if (dir === '.') return false;
+    dir = path.posix.dirname(dir);
+  }
+}
 
 /**
- * The source with comments blanked out (strings and template literals kept),
- * so examples in doc comments are not read as imports. Regular expression
- * literals are not recognised: a quote inside one is read as the start of a
- * string (to the end of the line for ' and "). The end-to-end test of the
- * built plugin, which plants a decoy package outside the bundle, covers what
- * this static check could miss.
+ * The static import and export-from specifiers of each ES module, read with
+ * Node's own parser (vm.SourceTextModule, in a child process). A module that
+ * does not parse is reported.
  */
-function stripComments(src) {
-  let out = '';
-  let i = 0;
-  while (i < src.length) {
-    const c = src[i];
-    const d = src[i + 1];
-    if (c === '/' && d === '*') {
-      const end = src.indexOf('*/', i + 2);
-      const stop = end < 0 ? src.length : end + 2;
-      out += src.slice(i, stop).replace(/[^\n]/g, ' ');
-      i = stop;
-    } else if (c === '/' && d === '/') {
-      const end = src.indexOf('\n', i);
-      const stop = end < 0 ? src.length : end;
-      out += ' '.repeat(stop - i);
-      i = stop;
-    } else if (c === '"' || c === "'" || c === '`') {
-      let j = i + 1;
-      while (j < src.length && src[j] !== c) {
-        if (src[j] === '\\') j++;
-        else if (c !== '`' && src[j] === '\n') break;
-        j++;
-      }
-      out += src.slice(i, j + 1);
-      i = j + 1;
-    } else {
-      out += c;
-      i++;
+function esmRequests(sources) {
+  const code = [
+    "const vm = require('vm');",
+    "const src = JSON.parse(require('fs').readFileSync(0, 'utf8'));",
+    'const out = {};',
+    'for (const [rel, text] of Object.entries(src)) {',
+    '  try { out[rel] = new vm.SourceTextModule(text, { identifier: rel }).moduleRequests.map((r) => r.specifier); }',
+    "  catch (err) { out[rel] = { error: String(err && err.message) }; }",
+    '}',
+    'process.stdout.write(JSON.stringify(out));',
+  ].join('\n');
+  const r = spawnSync(process.execPath, ['--experimental-vm-modules', '--no-warnings', '-e', code], {
+    input: JSON.stringify(sources),
+    encoding: 'utf8',
+    maxBuffer: 256 * 1024 * 1024,
+  });
+  if (r.status !== 0) throw new Error('could not parse the bundled ES modules: ' + (r.stderr || r.error));
+  return JSON.parse(r.stdout);
+}
+
+// import() anywhere, as a call (not a method named import).
+const DYNAMIC_IMPORT = /(?<![.\w$])import\s*\(/g;
+const LITERAL_ARG = /^\s*(['"])([^'"\n]+)\1\s*\)/;
+const UNCHECKABLE = /\bcreateRequire\s*\(|\bimport\.meta\.resolve\b/;
+
+/**
+ * True for a method named import ("async import(key, format) { ... }"): the
+ * parenthesis that opens at `from` closes before a "{". A call to import()
+ * is never followed by a block.
+ */
+function isMethodDefinition(text, from) {
+  let depth = 1;
+  let i = from;
+  for (; i < text.length && depth > 0; i++) {
+    if (text[i] === '(') depth++;
+    else if (text[i] === ')') depth--;
+  }
+  // Same line only: "import(n)" followed by "{ }" on the next line is a call and a block.
+  return depth === 0 && /^[ \t]*\{/.test(text.slice(i, i + 64));
+}
+
+/** import() specifiers of a file; problems for calls whose name is not a plain string. */
+function dynamicImports(rel, text, problems) {
+  const out = [];
+  DYNAMIC_IMPORT.lastIndex = 0;
+  let m;
+  while ((m = DYNAMIC_IMPORT.exec(text))) {
+    if (isMethodDefinition(text, m.index + m[0].length)) continue;
+    const lit = LITERAL_ARG.exec(text.slice(m.index + m[0].length));
+    if (lit) out.push(lit[2]);
+    else problems.push(rel + ': import() with a computed name cannot be checked');
+  }
+  if (UNCHECKABLE.test(text)) problems.push(rel + ': createRequire or import.meta.resolve cannot be checked');
+  return out;
+}
+
+function hasFile(files, rel) {
+  return files.has(rel);
+}
+
+/** True when a target in "exports" names a bundled file (null and missing targets are not). */
+function exportTarget(files, pkgDir, target) {
+  if (typeof target === 'string') return hasFile(files, path.posix.normalize(pkgDir + '/' + target.replace(/^\.\//, '')));
+  if (Array.isArray(target)) return target.some((t) => exportTarget(files, pkgDir, t));
+  if (target && typeof target === 'object') {
+    for (const cond of ['node', 'import', 'require', 'default']) {
+      if (cond in target) return exportTarget(files, pkgDir, target[cond]);
     }
   }
-  return out;
+  return false;
 }
 
-function specifiers(source) {
-  source = stripComments(source);
-  const out = new Set();
-  for (const re of SPECIFIER_RES) {
-    re.lastIndex = 0;
-    let m;
-    while ((m = re.exec(source))) out.add(m[2]);
+/** True when the bundled package at pkgDir provides the subpath, the way Node resolves it. */
+function packageProvides(files, pkgDir, sub) {
+  const pkg = pkgJson(files, pkgDir) || {};
+  const key = sub ? './' + sub : '.';
+  const exp = pkg.exports;
+  if (exp !== undefined && exp !== null) {
+    const map = typeof exp === 'object' && !Array.isArray(exp) && Object.keys(exp).some((k) => k.startsWith('.')) ? exp : { '.': exp };
+    if (key in map) return exportTarget(files, pkgDir, map[key]);
+    for (const [k, v] of Object.entries(map)) {
+      const star = k.indexOf('*');
+      if (star >= 0 && key.startsWith(k.slice(0, star)) && key.endsWith(k.slice(star + 1)) && key.length >= k.length - 1) {
+        const middle = key.slice(star, key.length - (k.length - star - 1));
+        return exportTarget(files, pkgDir, JSON.parse(JSON.stringify(v).split('*').join(middle)));
+      }
+    }
+    return false;
   }
-  return out;
+  const base = pkgDir ? pkgDir + '/' : '';
+  if (sub) return [sub, sub + '.js', sub + '.json', sub + '/index.js'].some((c) => hasFile(files, base + c));
+  const main = (pkg.main || 'index.js').replace(/^\.\//, '');
+  return [main, main + '.js', main + '/index.js'].some((c) => hasFile(files, path.posix.normalize(base + c)));
 }
 
-function packageName(spec) {
+/** Problems with one specifier imported by the bundled file rel. */
+function resolveProblem(files, rel, spec) {
+  if (BUILTINS.has(spec)) return null;
+  if (spec.startsWith('/') || /^[a-z]+:/i.test(spec)) return rel + ': ' + spec + ' is not a bundled module';
+  if (spec.startsWith('.')) {
+    // ES modules name the file exactly (no extension search).
+    const target = path.posix.normalize(path.posix.join(path.posix.dirname(rel), spec));
+    if (target.startsWith('..') || !hasFile(files, target)) return rel + ': ' + spec + ' is not in the bundle';
+    return null;
+  }
   const parts = spec.split('/');
   const n = spec.startsWith('@') ? 2 : 1;
-  return { name: parts.slice(0, n).join('/'), sub: parts.slice(n).join('/') };
-}
-
-function fileOrIndex(files, rel) {
-  const tries = [rel, rel + '.js', rel + '.cjs', rel + '.mjs', rel + '.json', rel + '/index.js', rel + '/index.cjs', rel + '/index.mjs'];
-  return tries.find((t) => files.has(t)) || null;
-}
-
-/** True when the package at pkgDir (a bundle path) has the subpath, through "exports" or as a file. */
-function hasSubpath(files, pkgDir, sub) {
-  const pkg = JSON.parse(files.get(pkgDir + '/package.json').toString('utf8'));
-  const key = sub ? './' + sub : '.';
-  if (pkg.exports !== undefined) {
-    if (typeof pkg.exports === 'string' || Array.isArray(pkg.exports)) return key === '.';
-    const keys = Object.keys(pkg.exports);
-    if (!keys.some((k) => k.startsWith('.'))) return key === '.'; // conditions only
-    return keys.some((k) => k === key || (k.includes('*') && key.startsWith(k.split('*')[0]) && key.endsWith(k.split('*')[1])));
+  const name = parts.slice(0, n).join('/');
+  const sub = parts.slice(n).join('/');
+  // Node looks in node_modules of each parent folder; the walk stops at the
+  // bundle root, since anything above it is outside the plugin's control.
+  let dir = path.posix.dirname(rel);
+  for (;;) {
+    const cand = (dir === '.' ? '' : dir + '/') + 'node_modules/' + name;
+    if (files.has(cand + '/package.json')) {
+      return packageProvides(files, cand, sub) ? null : rel + ': ' + spec + ' is not in the bundled ' + name;
+    }
+    if (dir === '.') break;
+    dir = path.posix.dirname(dir);
   }
-  if (!sub) return !!(fileOrIndex(files, pkgDir + '/' + (pkg.main || 'index.js').replace(/^\.\//, '')) || fileOrIndex(files, pkgDir + '/index'));
-  return !!fileOrIndex(files, pkgDir + '/' + sub);
+  // A package can import itself by name only through its own "exports".
+  const root = pkgJson(files, '');
+  if (root && root.name === name && root.exports !== undefined && packageProvides(files, '', sub)) return null;
+  return rel + ': ' + spec + ' would be loaded from outside the bundle';
 }
 
-/** Problems with the literal imports of every bundled module, as strings. */
+/** Problems with the imports that Node resolves from disk, as strings. */
 function checkImports(files) {
   const problems = [];
+  const esm = {};
+  const requests = new Map();
   for (const [rel, body] of files) {
     if (!/\.(?:[mc]?js)$/.test(rel)) continue;
-    for (const spec of specifiers(body.toString('utf8'))) {
-      if (BUILTINS.has(spec)) continue;
-      if (spec.startsWith('.') || spec.startsWith('/')) {
-        if (spec.startsWith('/')) { problems.push(rel + ': absolute import ' + spec); continue; }
-        const target = path.posix.normalize(path.posix.join(path.posix.dirname(rel), spec));
-        if (target.startsWith('..') || !fileOrIndex(files, target)) problems.push(rel + ': ' + spec + ' is not in the bundle');
-        continue;
-      }
-      const { name, sub } = packageName(spec);
-      if (name === 'zn-gate') continue; // the package itself
-      // Node looks in node_modules of each parent folder, up to the bundle root.
-      let dir = path.posix.dirname(rel);
-      let found = null;
-      for (;;) {
-        const cand = (dir === '.' ? '' : dir + '/') + 'node_modules/' + name;
-        if (files.has(cand + '/package.json')) { found = cand; break; }
-        if (dir === '.') break;
-        dir = path.posix.dirname(dir);
-      }
-      if (!found) problems.push(rel + ': ' + spec + ' would be loaded from outside the bundle');
-      else if (!hasSubpath(files, found, sub)) problems.push(rel + ': ' + spec + ' is not in the bundled ' + name);
+    const text = body.toString('utf8');
+    requests.set(rel, dynamicImports(rel, text, problems));
+    if (isEsm(files, rel)) esm[rel] = text;
+  }
+  if (Object.keys(esm).length) {
+    for (const [rel, specs] of Object.entries(esmRequests(esm))) {
+      if (!Array.isArray(specs)) problems.push(rel + ': does not parse as an ES module (' + specs.error + ')');
+      else requests.get(rel).push(...specs);
+    }
+  }
+  for (const [rel, specs] of requests) {
+    for (const spec of new Set(specs)) {
+      const p = resolveProblem(files, rel, spec);
+      if (p) problems.push(p);
     }
   }
   return problems;
@@ -206,9 +292,9 @@ function checkImports(files) {
 
 function pluginTree(bundle, version, integrity) {
   const out = new Map();
-  for (const rel of PLUGIN_FILES) {
-    const abs = path.join(PLUGIN, ...rel.split('/'));
-    if (fs.lstatSync(abs).isSymbolicLink()) throw new Error('plugins/zn-gate/' + rel + ' is a symbolic link');
+  for (const [rel, from] of PLUGIN_FILES) {
+    const abs = path.join(from, ...rel.split('/'));
+    if (fs.lstatSync(abs).isSymbolicLink()) throw new Error(path.relative(path.resolve(__dirname, '..', '..'), abs) + ' is a symbolic link');
     out.set(rel, fs.readFileSync(abs));
   }
   const manifest = JSON.parse(out.get('.claude-plugin/plugin.json').toString('utf8'));
@@ -242,45 +328,57 @@ async function registryIntegrity(version) {
   return integrity;
 }
 
+/**
+ * Build the tree into out. opts.integrity replaces the registry lookup; only
+ * the tests use it (the command line has no such option).
+ */
 async function build({ tarball, out, integrity }) {
   const tgz = fs.readFileSync(tarball);
   const bundle = bundleFiles(tgz);
-  const pkg = JSON.parse(bundle.get('package.json').toString('utf8'));
-  if (pkg.name !== 'zn-gate' || !/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(pkg.version || '')) throw new Error('not a zn-gate release tarball');
+  const pkg = pkgJson(bundle, '');
+  if (!pkg || pkg.name !== 'zn-gate' || !/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(pkg.version || '')) throw new Error('not a zn-gate release tarball');
   const expected = integrity || await registryIntegrity(pkg.version);
   const actual = 'sha512-' + crypto.createHash('sha512').update(tgz).digest('base64');
   if (actual !== expected) throw new Error('tarball integrity mismatch: expected ' + expected + ', file ' + actual);
+  if (!integrity) {
+    const pin = JSON.parse(fs.readFileSync(path.join(PLUGIN, 'scripts', 'zn-gate.lock.json'), 'utf8'));
+    if (pin.version !== pkg.version || pin.integrity !== actual) {
+      throw new Error('the tarball is not the release plugins/zn-gate is pinned to (' + pin.version + ')');
+    }
+  }
 
   const importProblems = checkImports(bundle);
-  if (importProblems.length) throw new Error('imports that do not resolve inside the bundle:\n  ' + importProblems.join('\n  '));
+  if (importProblems.length) throw new Error('imports that are not checked or do not resolve inside the bundle:\n  ' + importProblems.join('\n  '));
   const tree = pluginTree(bundle, pkg.version, expected);
   const limitProblems = checkLimits(tree);
   if (limitProblems.length) throw new Error('over the plugin directory limits:\n  ' + limitProblems.join('\n  '));
 
-  if (fs.existsSync(out) && fs.readdirSync(out).some((n) => n !== '.git')) throw new Error(out + ' is not empty');
+  const root = path.resolve(out);
+  if (fs.existsSync(root) && fs.readdirSync(root).some((n) => n !== '.git')) throw new Error(out + ' is not empty');
   for (const [rel, body] of tree) {
-    const abs = path.join(out, ...rel.split('/'));
+    const abs = path.resolve(root, ...rel.split('/'));
+    if (!abs.startsWith(root + path.sep)) throw new Error('path outside the output folder: ' + rel);
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     fs.writeFileSync(abs, body);
   }
   return { version: pkg.version, files: tree.size, bundled: bundle.size };
 }
 
+const USAGE = 'usage: build-plugin-repo.js --tarball <zn-gate-X.Y.Z.tgz> --out <dir>';
+
 function parseArgs(argv) {
   const opts = {};
   for (let i = 0; i < argv.length; i += 2) {
     const k = argv[i];
     const v = argv[i + 1];
-    if (!['--tarball', '--out', '--integrity'].includes(k) || v === undefined) {
-      throw new Error('usage: build-plugin-repo.js --tarball <zn-gate-X.Y.Z.tgz> --out <dir> [--integrity <sha512-...>]');
-    }
+    if (!['--tarball', '--out'].includes(k) || v === undefined) throw new Error(USAGE);
     opts[k.slice(2)] = v;
   }
-  if (!opts.tarball || !opts.out) throw new Error('usage: build-plugin-repo.js --tarball <zn-gate-X.Y.Z.tgz> --out <dir> [--integrity <sha512-...>]');
+  if (!opts.tarball || !opts.out) throw new Error(USAGE);
   return opts;
 }
 
-module.exports = { build, bundleFiles, checkImports, checkLimits, specifiers, stripComments, PLUGIN_FILES, BUNDLED_DIR };
+module.exports = { build, bundleFiles, checkImports, checkLimits, PLUGIN_FILES, BUNDLED_DIR };
 
 if (require.main === module) {
   build(parseArgs(process.argv.slice(2))).then((r) => {
