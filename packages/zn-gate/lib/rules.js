@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-14.2
+ * RULES_VERSION: 2026-10-14.3
  */
 
-const RULES_VERSION = '2026-10-14.2';
+const RULES_VERSION = '2026-10-14.3';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -284,6 +284,30 @@ const MARKDOWN_EXFIL_RULES = [
   },
 ];
 
+// Default policy by tiers. These heuristic injection rules also match a lot of
+// ordinary text (YAML `system:` keys, "bypass the cache", "you are now ready",
+// security docs), so by default a match is an advisory: the verdict stays
+// "allow" and the result carries `advisory`. Strict mode blocks them:
+// options.strict, ZN_STRICT=1, or `"strict": true` in zn.config.json (a line
+// `strict` in .znrules). Everything else (credential files, secrets, exfiltration,
+// evasion, "ignore previous instructions" and the narrow forms) always blocks.
+const ADVISORY_BY_DEFAULT = new Set([
+  'pi:identity_override',
+  'pi:system_tag',
+  'pi:system_bracket',
+  'pi:new_instructions',
+  'pi:pretend',
+  'pi:roleplay',
+  'pi:jailbreak',
+  'pi:bypass',
+  'pi:override',
+  'pi:template_boundary',
+]);
+
+function strictMode(options, cfg) {
+  return (options && options.strict === true) || process.env.ZN_STRICT === '1' || (cfg && cfg.strict === true);
+}
+
 // Local custom rules cache (.znrules or zn.config.json)
 let customConfig = null;
 let lastConfigCheck = 0;
@@ -294,7 +318,7 @@ function loadCustomConfig(forceReload = false) {
     return customConfig;
   }
   lastConfigCheck = now;
-  customConfig = { bannedPatterns: [], forbiddenPaths: [] };
+  customConfig = { bannedPatterns: [], forbiddenPaths: [], strict: false };
 
   const candidates = [
     path.join(process.cwd(), '.znrules'),
@@ -312,6 +336,7 @@ function loadCustomConfig(forceReload = false) {
           if (Array.isArray(parsed.forbiddenPaths)) {
             customConfig.forbiddenPaths = parsed.forbiddenPaths;
           }
+          if (parsed.strict === true) customConfig.strict = true;
         } else {
           const lines = fs.readFileSync(file, 'utf8').split('\n');
           for (let line of lines) {
@@ -320,6 +345,7 @@ function loadCustomConfig(forceReload = false) {
             // `secret:` lines feed the scrubber's exact-value layer; they are
             // values, not patterns, and must never be compiled as regexes.
             if (line.startsWith('secret:')) continue;
+            if (line === 'strict') { customConfig.strict = true; continue; }
             if (line.startsWith('path:')) {
               customConfig.forbiddenPaths.push(line.slice(5).trim());
             } else {
@@ -492,6 +518,9 @@ function evaluateUncached(input, options = {}) {
   // Pre-normalization passes: stripped (preserves non-Latin) and normalized (maps homoglyphs)
   const { normalized, stripped } = normalizeInput(input);
 
+  const strict = strictMode(options, loadCustomConfig());
+  let tierAdvisory = null;
+
   // Check Base64 payload smuggling
   let b64Advisory = null;
   const b64Match = normalized.match(B64_EXEC_RE) || stripped.match(B64_EXEC_RE);
@@ -547,6 +576,10 @@ function evaluateUncached(input, options = {}) {
     // 4. Standard Prompt Injection Rules
     for (const rule of INJECTION_RULES) {
       if (rule.test ? rule.test(text) : rule.pattern.test(text)) {
+        if (!strict && ADVISORY_BY_DEFAULT.has(rule.id)) {
+          if (!tierAdvisory) tierAdvisory = { rule: rule.id, reason: rule.description };
+          continue;
+        }
         return { verdict: 'block', confidence: 0.95, reason: rule.description, rule: rule.id, engine: 'oss-local', rules_version: RULES_VERSION };
       }
     }
@@ -570,6 +603,13 @@ function evaluateUncached(input, options = {}) {
     if (input.includes(fpath)) {
       return { verdict: 'block', confidence: 1.0, reason: `Matches custom repository forbidden path: ${fpath}`, rule: 'custom:forbidden_path', engine: 'oss-local', rules_version: RULES_VERSION };
     }
+  }
+
+  if (tierAdvisory) {
+    return {
+      verdict: 'allow', confidence: 0.99, rule: 'none', reason: null, engine: 'oss-local', rules_version: RULES_VERSION,
+      advisory: tierAdvisory,
+    };
   }
 
   for (const text of targets) {
@@ -1058,14 +1098,15 @@ const evalCache = new Map();
 function evaluate(input, options = {}) {
   if (typeof input !== 'string' || input.length > EVAL_CACHE_MAX_INPUT) return evaluateUncached(input, options);
   const cfg = loadCustomConfig();
+  const strict = strictMode(options, cfg);
   const hit = evalCache.get(input);
-  if (hit !== undefined && hit.ver === RULES_VERSION && hit.cfg === cfg) {
+  if (hit !== undefined && hit.ver === RULES_VERSION && hit.cfg === cfg && hit.strict === strict) {
     evalCache.delete(input);
     evalCache.set(input, hit);
     return copyResult(hit.res);
   }
   const res = evaluateUncached(input, options);
-  evalCache.set(input, { res, cfg, ver: RULES_VERSION });
+  evalCache.set(input, { res, cfg, strict, ver: RULES_VERSION });
   if (evalCache.size > EVAL_CACHE_MAX) {
     evalCache.delete(evalCache.keys().next().value);
   }
@@ -1078,6 +1119,7 @@ function copyResult(res) {
 
 module.exports = {
   evaluate,
+  ADVISORY_BY_DEFAULT,
   analyzePrompt: evaluate,
   loadCustomConfig,
   redactSecrets,
