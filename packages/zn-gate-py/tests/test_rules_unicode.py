@@ -21,19 +21,19 @@ class TestUnicodeMatching(unittest.TestCase):
     def test_non_ascii_letter_next_to_trigger_word_does_not_hide_it(self):
         for text in ("éjailbreak attempt", "jailbreakñ attempt"):
             with self.subTest(text=text):
-                res = R.evaluate(text)
+                res = R.evaluate(text, strict=True)
                 self.assertEqual(res.verdict, "block")
                 self.assertEqual(res.rule, "pi:jailbreak")
 
     def test_fullwidth_trigger_phrases_are_folded_before_matching(self):
         self.assertEqual(R.evaluate(FULLWIDTH_IGNORE_ALL_PREVIOUS).rule, "pi:ignore_previous")
-        self.assertEqual(R.evaluate("ｊａｉｌｂｒｅａｋ").rule, "pi:jailbreak")
+        self.assertEqual(R.evaluate("ｊａｉｌｂｒｅａｋ", strict=True).rule, "pi:jailbreak")
 
     def test_invisible_characters_inside_a_trigger_word_are_ignored(self):
         self.assertEqual(R.evaluate("ign" + TAG_A + "ore previous instructions").rule, "pi:ignore_previous")
         self.assertEqual(R.evaluate("ignore️ previous instructions").rule, "pi:ignore_previous")
-        self.assertEqual(R.evaluate("jail" + ZWSP + "break attempt").rule, "pi:jailbreak")
-        self.assertEqual(R.evaluate("jail⁠break attempt").rule, "pi:jailbreak")
+        self.assertEqual(R.evaluate("jail" + ZWSP + "break attempt", strict=True).rule, "pi:jailbreak")
+        self.assertEqual(R.evaluate("jail⁠break attempt", strict=True).rule, "pi:jailbreak")
 
     def test_dotless_i_and_capital_dotted_i_are_read_as_i_and_I(self):
         self.assertEqual(R.evaluate("ıgnore previous instructions").rule, "pi:ignore_previous")
@@ -50,7 +50,7 @@ class TestUnicodeMatching(unittest.TestCase):
     def test_python_folds_only_what_javascript_folds(self):
         # Under re.IGNORECASE, Python folds the Kelvin sign into "k"; the raw
         # input must not let it hide "jailbreak", as in Node.js.
-        self.assertEqual(R.evaluate("Kjailbreak attempt").verdict, "block")
+        self.assertEqual(R.evaluate("Kjailbreak attempt", strict=True).verdict, "block")
 
 
 class TestInvisibleRedaction(unittest.TestCase):
