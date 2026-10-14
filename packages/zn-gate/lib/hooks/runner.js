@@ -364,8 +364,7 @@ function isOurSecretsServer(ev, root) {
   if (!ev.mcp || ev.mcp.server !== 'secrets') return false;
   if (raw.url || raw.mcp_server_url) return false;
   if (typeof raw.command !== 'string' || !raw.command.trim()) return false;
-  let argv = require('../audit/patterns').splitCommand(raw.command);
-  if (argv.length >= 4 && argv[argv.length - 2] === '--agent') argv = argv.slice(0, -2);
+  const argv = require('../audit/patterns').splitCommand(raw.command);
   return Boolean(require('../audit')._internal.isOurMcp(argv, { rec: { root } }));
 }
 

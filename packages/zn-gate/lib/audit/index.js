@@ -354,7 +354,11 @@ function endpointValue(ctx, key, value, line) {
 // or `<node> <abs>/zn-gate/bin/cli.js secrets-mcp`, with nothing else, the
 // paths resolved to a real zn-gate installation outside the repository.
 function isOurMcp(argv, ctx) {
-  const words = argv.map(String);
+  let words = argv.map(String);
+  // `zn hooks install` adds "--agent <id>" (an id as `zn run` accepts it).
+  if (words.length >= 4 && words[words.length - 2] === '--agent' && /^[a-z0-9-]{1,32}$/.test(words[words.length - 1])) {
+    words = words.slice(0, -2);
+  }
   if (words[words.length - 1] !== 'secrets-mcp') return false;
   if (words.length === 2) return /^zn(?:-gate)?(?:\.cmd|\.exe)?$/.test(words[0]);
   if (words.length !== 3) return false;
