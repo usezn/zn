@@ -45,15 +45,43 @@ function flag(args, name) {
   return i >= 0 ? args[i + 1] : undefined;
 }
 
-function promptHidden(question) {
-  return new Promise((resolve, reject) => {
-    if (!process.stdin.isTTY) { reject(new Error('no terminal for the passphrase prompt; use --passphrase-stdin')); return; }
-    const rl = readline.createInterface({ input: process.stdin, output: process.stderr, terminal: true });
-    let muted = false;
-    rl._writeToOutput = (s) => { if (!muted) rl.output.write(s); };
-    rl.question(question, (answer) => { rl.close(); process.stderr.write('\n'); resolve(answer); });
-    muted = true;
+// One line reader for all the passphrase prompts of a command. A reader per
+// prompt loses what was typed or pasted before the second prompt appeared:
+// the first reader had already buffered it, and closing it dropped the rest,
+// so `zn unlock` waited for ever on "Repeat passphrase".
+function createHiddenPrompter(opts) {
+  const o = opts || {};
+  const input = o.input || process.stdin;
+  const output = o.output || process.stderr;
+  if (!input.isTTY) throw new Error('zn needs a terminal to ask for the passphrase. Run this command in your terminal, or pass it with --passphrase-stdin.');
+  const rl = readline.createInterface({ input, output, terminal: true });
+  rl._writeToOutput = () => {}; // never echo what is typed
+  const lines = [];
+  const waiters = [];
+  let closed = false;
+  rl.on('line', (line) => {
+    const w = waiters.shift();
+    if (w) w.resolve(line);
+    else lines.push(line);
   });
+  const cancelled = () => new Error('Cancelled: no passphrase was entered.');
+  rl.on('close', () => {
+    closed = true;
+    if (waiters.length) output.write('\n');
+    while (waiters.length) waiters.shift().reject(cancelled());
+  });
+  return {
+    ask(question) {
+      output.write(question);
+      return new Promise((resolve, reject) => {
+        const done = (line) => { output.write('\n'); resolve(line); };
+        if (lines.length) done(lines.shift());
+        else if (closed) { output.write('\n'); reject(cancelled()); }
+        else waiters.push({ resolve: done, reject });
+      });
+    },
+    close() { rl.close(); },
+  };
 }
 
 async function readStdin() {
@@ -63,14 +91,19 @@ async function readStdin() {
   return data.replace(/\r?\n$/, '');
 }
 
-async function getPassphrase(args, creating) {
+async function getPassphrase(args, creating, prompterOpts) {
   if (args.includes('--passphrase-stdin')) return readStdin();
-  const p1 = await promptHidden(creating ? 'New vault passphrase (min ' + keychain.MIN_PASSPHRASE + ' chars): ' : 'Vault passphrase: ');
-  if (creating) {
-    const p2 = await promptHidden('Repeat passphrase: ');
-    if (p1 !== p2) throw new Error('passphrases do not match');
+  const prompter = createHiddenPrompter(prompterOpts);
+  try {
+    const p1 = await prompter.ask(creating ? 'New vault passphrase (min ' + keychain.MIN_PASSPHRASE + ' chars): ' : 'Vault passphrase: ');
+    if (creating) {
+      const p2 = await prompter.ask('Repeat passphrase: ');
+      if (p1 !== p2) throw new Error('The two passphrases do not match. Nothing was created; run zn unlock again.');
+    }
+    return p1;
+  } finally {
+    prompter.close();
   }
-  return p1;
 }
 
 function out(s) { process.stdout.write(s + '\n'); }
@@ -177,4 +210,4 @@ async function runVaultCommand(args) {
   }
 }
 
-module.exports = { runVaultCommand, parseDuration };
+module.exports = { runVaultCommand, parseDuration, getPassphrase, createHiddenPrompter };

@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI fails when the local rules block more benign text. A new gate runs the rules engine over the pinned benign corpus and over a list of ordinary developer sentences, and compares the block counts per rule with a committed baseline.
 - CI also fails when a rule layer changes without a higher version, or when its rule ids change without an updated snapshot. When the block counts fall, the gate passes and warns that its baseline is stale.
 
+### Fixed
+- `zn unlock` no longer hangs at "Repeat passphrase" when the second line arrives before its prompt (for example when both lines are pasted at once). Each prompt used its own line reader and the second line was lost, so the vault was never created and `zn env shadow` then reported that the vault was locked. Wait for each prompt before typing: text typed before a prompt appears can be shown on screen by the terminal. Different passphrases, Ctrl+C and Ctrl+D now end with a clear message instead of waiting.
+
 ### Security
 - Trigger words are now found in the same way in Node.js and Python. A non-ASCII letter next to a trigger word (for example `éjailbreak`) no longer hides it: Python previously allowed this while Node.js blocked it, and both now block.
 - Compatibility characters are folded before matching: fullwidth Latin text such as `ｉｇｎｏｒｅ` is treated as `ignore`, in both languages. The folding is used only for detection; the text returned to you is not changed.
