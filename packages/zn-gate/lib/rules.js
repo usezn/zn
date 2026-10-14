@@ -5,10 +5,15 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-12.6
+ * RULES_VERSION: 2026-10-14.1
  */
 
-const RULES_VERSION = '2026-10-12.6';
+const RULES_VERSION = '2026-10-14.1';
+
+// Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
+// \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
+// as "é" next to a trigger word therefore counts as a boundary in both engines,
+// so a non-ASCII letter never hides a trigger word.
 
 // "ignore" and "disregard" are ordinary words ("ignore the noise in the
 // logs", "ignore whitespace changes"). They only count as an override when
@@ -18,7 +23,7 @@ const RULES_VERSION = '2026-10-12.6';
 // Every group is a fixed list of words and whitespace runs are bounded, so a
 // match attempt does bounded work.
 const OVERRIDE_NOUN_SOURCE =
-  '(?:instructions?|prompts?|rules|guidelines?|directives?|guidance|restrictions?|guardrails?|context|constraints?|commands?|policies|programming|orders|limitations?|directions|requests?|tasks?)\\b';
+  '(?:instructions?|prompts?|rules|guidelines?|directives?|guidance|restrictions?|guardrails?|context|constraints?|commands?|policies|programming|orders|limitations?|directions|requests?|tasks?)(?![A-Za-z0-9_])';
 const OVERRIDE_QUANTIFIER_SOURCE = '(?:all|any|every|each|your|my|these|those)(?:\\s{1,32}of)?\\s{1,32}';
 const OVERRIDE_DETERMINER_SOURCE = '(?:(?:the|your|my|these|those|our|its|their)\\s{1,32})?';
 const OVERRIDE_QUALIFIER_SOURCE =
@@ -27,15 +32,15 @@ const OVERRIDE_QUALIFIER_SOURCE =
 // of a clause, before "and" or before a word for text ("ignore the above
 // text"), so "ignore the previous build output" stays allowed.
 const OVERRIDE_END_SOURCE =
-  '(?=[ \\t]*(?:[.,;:!)\\r\\n]|$)|\\s{1,32}and\\b|\\s{1,32}(?:text|content|message|messages|input|lines?|one|ones)\\b)';
+  '(?=[ \\t]*(?:[.,;:!)\\r\\n]|$)|\\s{1,32}and(?![A-Za-z0-9_])|\\s{1,32}(?:text|content|message|messages|input|lines?|one|ones)(?![A-Za-z0-9_]))';
 
 function overrideRuleSource(verb) {
   return [
     `${verb}\\s{1,32}(?:${OVERRIDE_QUANTIFIER_SOURCE})?${OVERRIDE_DETERMINER_SOURCE}(?:${OVERRIDE_QUALIFIER_SOURCE}){1,2}${OVERRIDE_NOUN_SOURCE}`,
     `${verb}\\s{1,32}${OVERRIDE_QUANTIFIER_SOURCE}${OVERRIDE_DETERMINER_SOURCE}${OVERRIDE_NOUN_SOURCE}`,
-    `${verb}\\s{1,32}(?:the\\s{1,32})?(?:instructions|guardrails|directives)\\b`,
+    `${verb}\\s{1,32}(?:the\\s{1,32})?(?:instructions|guardrails|directives)(?![A-Za-z0-9_])`,
     `${verb}\\s{1,32}(?:${OVERRIDE_QUANTIFIER_SOURCE})?(?:the\\s{1,32})?(?:previous|prior|above|earlier|preceding|foregoing)${OVERRIDE_END_SOURCE}`,
-    `${verb}\\s{1,32}(?:everything|anything|all)\\s{1,32}(?:above|before|previously|prior|earlier|you(?:'ve|\\s{1,32}have|\\s{1,32}were|\\s{1,32}was)?\\s{1,32}(?:been\\s{1,32})?(?:told|said|given|received))\\b`,
+    `${verb}\\s{1,32}(?:everything|anything|all)\\s{1,32}(?:above|before|previously|prior|earlier|you(?:'ve|\\s{1,32}have|\\s{1,32}were|\\s{1,32}was)?\\s{1,32}(?:been\\s{1,32})?(?:told|said|given|received))(?![A-Za-z0-9_])`,
   ].join('|');
 }
 
@@ -90,17 +95,17 @@ const INJECTION_RULES = [
   { id: 'pi:forget', pattern: /forget\s+(about\s+)?(everything|all|your)/i, description: 'Forget-context attack' },
   { id: 'pi:identity_override', pattern: /you\s+are\s+now/i, description: 'Identity override' },
   { id: 'pi:new_instructions', pattern: /new\s+instructions?:/i, description: 'Instruction replacement' },
-  { id: 'pi:system_tag', pattern: /(?:^|[\r\n"'`\[<])[ \t]*system\s*:|<[\s/]*system\b[^<>]*>/i, description: 'Fake system tag' },
+  { id: 'pi:system_tag', pattern: /(?:^|[\r\n"'`\[<])[ \t]*system\s*:|<[\s/]*system(?![A-Za-z0-9_])[^<>]*>/i, description: 'Fake system tag' },
   { id: 'pi:system_bracket', pattern: /\[system\]/i, description: 'Bracketed system tag' },
   { id: 'pi:act_as', pattern: /act\s+as\s+(if|a)/i, description: 'Role hijack (act as)' },
   { id: 'pi:pretend', pattern: /pretend\s+(you|to\s+be)/i, description: 'Role hijack (pretend)' },
   { id: 'pi:roleplay', pattern: /roleplay\s+as/i, description: 'Role hijack (roleplay)' },
-  { id: 'pi:jailbreak', pattern: /\bjailbreak\b/i, description: 'Explicit jailbreak term' },
+  { id: 'pi:jailbreak', pattern: /(?<![A-Za-z0-9_])jailbreak(?![A-Za-z0-9_])/i, description: 'Explicit jailbreak term' },
   { id: 'pi:bypass', pattern: /bypass\s+(your|the|all)/i, description: 'Guardrail bypass attempt' },
-  { id: 'pi:override', pattern: /\boverride\s+(?:all\s+|your\s+|the\s+)?(?:system|policy|safety|rules|instructions|guidelines|restrictions)\b|\bsystem\s+override\s*:/i, description: 'Policy override attempt' },
+  { id: 'pi:override', pattern: /(?<![A-Za-z0-9_])override\s+(?:all\s+|your\s+|the\s+)?(?:system|policy|safety|rules|instructions|guidelines|restrictions)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])system\s+override\s*:/i, description: 'Policy override attempt' },
   { id: 'pi:template_boundary', pattern: /\[INST\]|\[\/INST\]|<<<SYS>>>|<\/<<SYS>>>|<\|im_start\|>|<\|im_end\|>/i, description: 'Chat template boundary injection' },
   { id: 'pi:multi_es', pattern: /ignora\s+(todas\s+las\s+)?(instrucciones|anteriores|previas)|olvida\s+(todo|las\s+instrucciones)|act[uú]a\s+como|ahora\s+eres/iu, description: 'Multilingual prompt injection (Spanish)' },
-  { id: 'pi:multi_pt', pattern: /ignor(?:e|a|em|ar)\s+(?:(?:todas|todos|qualquer|quaisquer|cualquier)\s+)?(?:(?:as|os|las|los|suas|seus|sus|tus|estas|estes|essas|esses)\s+)?(?:instru[cç][oõ]es|instrucciones|regras|reglas|diretrizes|directrices|orienta[cç][oõ]es|ordens|[oó]rdenes|comandos|restri[cç][oõ]es|restricciones|mensagens|anteriores|pr[eé]vias)|ignore\s+(?:tudo|qualquer|quaisquer)\b|ignora\s+(?:todo|tudo|cualquier)\b/i, description: 'Multilingual prompt injection (Portuguese)' },
+  { id: 'pi:multi_pt', pattern: /ignor(?:e|a|em|ar)\s+(?:(?:todas|todos|qualquer|quaisquer|cualquier)\s+)?(?:(?:as|os|las|los|suas|seus|sus|tus|estas|estes|essas|esses)\s+)?(?:instru[cç][oõ]es|instrucciones|regras|reglas|diretrizes|directrices|orienta[cç][oõ]es|ordens|[oó]rdenes|comandos|restri[cç][oõ]es|restricciones|mensagens|anteriores|pr[eé]vias)|ignore\s+(?:tudo|qualquer|quaisquer)(?![A-Za-z0-9_])|ignora\s+(?:todo|tudo|cualquier)(?![A-Za-z0-9_])/i, description: 'Multilingual prompt injection (Portuguese)' },
   { id: 'pi:multi_fr', pattern: /ignore[rz]?\s+(toutes\s+les\s+)?instructions|oublie[rz]?\s+tout|agis\s+comme|tu\s+es\s+maintenant/iu, description: 'Multilingual prompt injection (French)' },
   { id: 'pi:multi_de', pattern: /ignoriere\s+(alle\s+)?(anweisungen|instruktionen)|vergiss\s+(alles|jede)|du\s+bist\s+jetzt|handle\s+als/iu, description: 'Multilingual prompt injection (German)' },
   { id: 'pi:multi_ru', pattern: /забудь\s+[^\n]{0,80}?(все|инструкции)|игнорируй\s+[^\n]{0,80}?(все|предыдущие)|действуй\s+как|ты\s+теперь|найди\s+пароли/iu, test: testMultiRu, description: 'Multilingual prompt injection (Russian)' },
@@ -114,8 +119,8 @@ const INJECTION_RULES = [
 // a tag only when that run is closed by ">". (A single regex with a lazy
 // `[\s\S]*?` tail, or an attribute run that may cross "<", re-scans the rest
 // of the input from every candidate and is super-linear on crafted markup.)
-const OPEN_TAG_RE = /<[a-z0-9]+\b([^<>]*)(>?)/gi;
-const HIDDEN_ATTR_RE = /\b(?:display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0|font-size\s*:\s*0(?:px)?|color\s*:\s*transparent|text-indent\s*:\s*-[0-9]{3,}px|hidden\b)/i;
+const OPEN_TAG_RE = /<[a-z0-9]+(?![A-Za-z0-9_])([^<>]*)(>?)/gi;
+const HIDDEN_ATTR_RE = /(?<![A-Za-z0-9_])(?:display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0|font-size\s*:\s*0(?:px)?|color\s*:\s*transparent|text-indent\s*:\s*-[0-9]{3,}px|hidden(?![A-Za-z0-9_]))/i;
 const HIDDEN_PAYLOAD_RE = /ignore|system|instruction|prompt|bypass|override|exfil|leak/gi;
 
 function testHiddenTag(text) {
@@ -154,9 +159,9 @@ const EVASION_RULES = [
   },
 ];
 
-const EXFIL_VERB_SOURCE = '\\b(give|reveal|send|show|print|expose|leak|paste|dump|read|open|cat|fetch|extract|steal)\\b';
+const EXFIL_VERB_SOURCE = '(?<![A-Za-z0-9_])(give|reveal|send|show|print|expose|leak|paste|dump|read|open|cat|fetch|extract|steal)(?![A-Za-z0-9_])';
 const CRED_OBJECT_SOURCE =
-  '\\b(passwords?|api[_ -]?keys?|secrets?|credentials?|tokens?|ssh[ _-]?keys?|private[ _-]?keys?|aws_secret[a-z0-9_]*|aws_access[a-z0-9_]*)\\b|(?:^|\\s|[\'"\`])\\.env(?:\\.[a-z0-9]+)?\\b';
+  '(?<![A-Za-z0-9_])(passwords?|api[_ -]?keys?|secrets?|credentials?|tokens?|ssh[ _-]?keys?|private[ _-]?keys?|aws_secret[a-z0-9_]*|aws_access[a-z0-9_]*)(?![A-Za-z0-9_])|(?:^|\\s|[\'"\`])\\.env(?:\\.[a-z0-9]+)?(?![A-Za-z0-9_])';
 
 const EXFIL_RULES = [
   {
@@ -169,7 +174,7 @@ const EXFIL_RULES = [
 const SENSITIVE_PATH_RULES = [
   {
     id: 'path:sensitive_file',
-    pattern: /(?:^|[\s"'`(\[])(?:~|\/home\/[^\s/]+|\/root)?\/?\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)\b|\/etc\/(?:shadow|passwd)\b/i,
+    pattern: /(?:^|[\s"'`(\[])(?:~|\/home\/[^\s/]+|\/root)?\/?\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])/i,
     description: 'Targeting sensitive system credentials or environment file',
   },
 ];
@@ -262,7 +267,14 @@ const HOMOGLYPH_MAP = {
   '\u0456': 'i', '\u0455': 's', '\u0443': 'y', '\u0445': 'x',
   '\u0410': 'A', '\u0415': 'E', '\u041e': 'O', '\u0420': 'P', '\u0421': 'C',
 };
-const ZERO_WIDTH_RE = /[\u200B-\u200D\uFEFF\u00AD]/g;
+// Invisible characters removed before matching: zero-width spaces and joiners,
+// word joiner, BOM, soft hyphen, and variation selectors. The Unicode tag
+// characters (U+E0000-E007F) and the supplementary variation selectors
+// (U+E0100-E01EF) are astral and live in INVISIBLE_ASTRAL_RE.
+const ZERO_WIDTH_RE = /[\u200B-\u200D\u2060\uFEFF\u00AD\uFE00-\uFE0F]/g;
+const INVISIBLE_ASTRAL_RE = /[\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
+// ASCII-only text needs no compatibility folding.
+const NON_ASCII_RE = /[^\x00-\x7f]/;
 const ANSI_ESCAPE_RE = /\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07\x1b]*\x07/g;
 const B64_EXEC_RE = /(?:echo|printf)\s+([A-Za-z0-9+/=]{16,})\s*\|\s*(?:base64\s+-(?:d|-decode)|openssl)/i;
 
@@ -291,15 +303,51 @@ function stripCComments(str) {
   return out + str.slice(from);
 }
 
+// Removes invisible characters (zero-width, variation selectors, tag
+// characters) for matching only; the caller's text is never changed.
+function stripInvisible(str) {
+  return str.replace(ZERO_WIDTH_RE, '').replace(INVISIBLE_ASTRAL_RE, '');
+}
+
+// Index map for a text with invisible characters removed: `clean` is the text
+// without them and `map[i]` is the index in `text` of clean[i] (map[clean.length]
+// is text.length). Returns null when the text has no invisible character. A
+// match [s, e) in `clean` covers text [map[s], map[e - 1] + 1), which includes
+// the invisible characters inside it.
+function invisibleView(text) {
+  const runs = [];
+  for (const m of text.matchAll(ZERO_WIDTH_RE)) runs.push(m.index, m.index + m[0].length);
+  for (const m of text.matchAll(INVISIBLE_ASTRAL_RE)) runs.push(m.index, m.index + m[0].length);
+  if (runs.length === 0) return null;
+  // The runs of both patterns are merged in index order.
+  const sorted = [];
+  for (let r = 0; r < runs.length; r += 2) sorted.push([runs[r], runs[r + 1]]);
+  sorted.sort((a, b) => a[0] - b[0]);
+  const clean = text.replace(ZERO_WIDTH_RE, '').replace(INVISIBLE_ASTRAL_RE, '');
+  const map = new Int32Array(clean.length + 1);
+  let c = 0;
+  let pos = 0;
+  for (const [start, end] of sorted) {
+    for (let i = pos; i < start; i++) map[c++] = i;
+    pos = end;
+  }
+  for (let i = pos; i < text.length; i++) map[c++] = i;
+  map[c] = text.length;
+  return { clean, map };
+}
+
 function normalizeInput(str) {
   if (typeof str !== 'string') return { normalized: '', stripped: '' };
-  // 1. Strip zero-width evasion characters
-  let stripped = str.replace(ZERO_WIDTH_RE, '');
+  // 1. Strip invisible evasion characters (zero-width, variation selectors, tag characters)
+  let stripped = stripInvisible(str);
   // 2. Strip ANSI escape sequences
   stripped = stripped.replace(ANSI_ESCAPE_RE, '');
   // 3. Strip inline C-style comments (e.g. sys/*safe*/tem -> system)
   stripped = stripCComments(stripped);
-  // 4. Rejoin words and tokens split across newlines (e.g. sys\ntem -> system, /l\neak -> /leak, Cyrillic & Chinese).
+  // 4. Compatibility folding for matching: fullwidth Latin and other
+  //    compatibility forms become their ASCII equivalents (NFKC).
+  if (NON_ASCII_RE.test(stripped)) stripped = stripped.normalize('NFKC');
+  // 5. Rejoin words and tokens split across newlines (e.g. sys\ntem -> system, /l\neak -> /leak, Cyrillic & Chinese).
   //    Linear: only the character on each side of a newline run is inspected.
   if (LINE_BREAK_RE.test(stripped)) {
     stripped = stripped.replace(WHITESPACE_RUN_RE, (run, offset, whole) => {
@@ -671,6 +719,15 @@ function isNonSecretDefault(value, prefix = '') {
   return credentialValueKind(value, prefix) !== GENERATED_SECRET;
 }
 
+// Expands $1..$9 in a replacement template, as String.prototype.replace does.
+function expandTemplate(template, m) {
+  return template.replace(/\$(\d)/g, (_, d) => m[Number(d)] ?? '');
+}
+
+// Redacts secrets. Each rule matches on the text without invisible characters
+// (see invisibleView), so a secret split by a zero-width or tag character is
+// still found, and its replacement covers the whole original span, invisible
+// characters included. Texts without invisible characters are handled as before.
 function redactSecrets(text) {
   if (typeof text !== 'string' || !text) {
     return { sanitized: text, detections: [] };
@@ -678,31 +735,47 @@ function redactSecrets(text) {
   let sanitized = text;
   const detections = [];
   let filterBudget = MAX_FILTERED_CHARS;
+  let view = null;
+  let dirty = true;
   for (const item of SECRET_PATTERNS) {
-    if (item.requires && !sanitized.includes(item.requires)) continue;
-    if (item.prefilter && !item.prefilter.test(sanitized)) continue;
-    if (item.valueFilter) {
-      // One pass: the value (group 2) decides whether the match is redacted.
-      sanitized = sanitized.replace(item.pattern, (...m) => {
-        const n = m[2].length;
+    if (dirty) {
+      view = invisibleView(sanitized);
+      dirty = false;
+    }
+    const clean = view ? view.clean : sanitized;
+    if (item.requires && !clean.includes(item.requires)) continue;
+    if (item.prefilter && !item.prefilter.test(clean)) continue;
+    const regex = new RegExp(item.pattern.source, item.pattern.flags);
+    const edits = [];
+    let match;
+    while ((match = regex.exec(clean)) !== null) {
+      if (match[0].length === 0) {
+        regex.lastIndex++;
+        continue;
+      }
+      const start = view ? view.map[match.index] : match.index;
+      const end = view ? view.map[match.index + match[0].length - 1] + 1 : match.index + match[0].length;
+      if (item.valueFilter) {
+        // The value (group 2) decides whether the match is redacted.
+        const n = match[2].length;
         if (n <= MAX_FILTERED_VALUE && n <= filterBudget) {
           filterBudget -= n;
-          if (item.valueFilter(m[2], m[1])) return m[0];
+          if (item.valueFilter(match[2], match[1])) continue;
         }
-        detections.push({ rule: item.id, index: m[m.length - 2] });
-        return m[1] + '[REDACTED_SECRET]' + m[3];
-      });
-      continue;
+      }
+      detections.push({ rule: item.id, index: start });
+      edits.push({ start, end, text: expandTemplate(item.replacement, match) });
     }
-    let match;
-    const regex = new RegExp(item.pattern.source, item.pattern.flags);
-    while ((match = regex.exec(sanitized)) !== null) {
-      detections.push({
-        rule: item.id,
-        index: match.index,
-      });
+    if (edits.length > 0) {
+      let out = '';
+      let last = 0;
+      for (const e of edits) {
+        out += sanitized.slice(last, e.start) + e.text;
+        last = e.end;
+      }
+      sanitized = out + sanitized.slice(last);
+      dirty = true;
     }
-    sanitized = sanitized.replace(item.pattern, item.replacement);
   }
   return { sanitized, detections };
 }
@@ -828,6 +901,7 @@ module.exports = {
   redactSecrets,
   sanitizeToolResult,
   normalizeInput,
+  invisibleView,
   scanWindows,
   MAX_SCAN_CHARS,
   MAX_TOOL_RESULT_SCAN_CHARS,

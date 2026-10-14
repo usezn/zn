@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-12.6
+RULES_VERSION: 2026-10-14.1
 Zero external dependencies. Pure Python stdlib.
 """
 
@@ -8,16 +8,25 @@ from __future__ import annotations
 
 import base64
 import json
+from array import array
 import math
 import os
 import re
 import sys
 import time
+import unicodedata
 from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-RULES_VERSION = "2026-10-12.6"
+RULES_VERSION = "2026-10-14.1"
+
+# Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
+# is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
+# Under re.IGNORECASE, Python also folds four non-ASCII characters into ASCII
+# letters (U+0130, U+0131, U+017F, U+212A); JavaScript does not. Matching targets
+# have them replaced by NUL first (see the uses of _CASE_FOLD_GUARD), so both engines agree.
+_CASE_FOLD_GUARD = str.maketrans({'İ': '\x00', 'ı': '\x00', 'ſ': '\x00', 'K': '\x00'})
 
 # Cyrillic homoglyphs mapping to Latin
 HOMOGLYPH_MAP = {
@@ -30,7 +39,9 @@ HOMOGLYPH_MAP = {
 # identical (tests/test_rules_parity.py compares them) and the JavaScript "i"
 # flag maps to re.IGNORECASE. Every pattern runs in linear time: no unbounded
 # lazy wildcards, and repeated character classes are bounded.
-ZERO_WIDTH_RE = re.compile(r'[\u200B-\u200D\uFEFF\u00AD]')
+ZERO_WIDTH_RE = re.compile(r'[\u200B-\u200D\u2060\uFEFF\u00AD\uFE00-\uFE0F]')
+INVISIBLE_ASTRAL_RE = re.compile(r'[\U000E0000-\U000E007F\U000E0100-\U000E01EF]')
+NON_ASCII_RE = re.compile(r'[^\x00-\x7f]')
 ANSI_ESCAPE_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07\x1b]*\x07')
 B64_EXEC_RE = re.compile(r'(?:echo|printf)\s+([A-Za-z0-9+/=]{16,})\s*\|\s*(?:base64\s+-(?:d|-decode)|openssl)', re.IGNORECASE)
 # Maximal whitespace runs; only runs that contain a line break are joined.
@@ -47,23 +58,23 @@ _JOIN_EXTRA_RIGHT = frozenset('_>|/.-')
 # back at earlier text ("ignore the above", "everything before"). Every group
 # is a fixed list of words and whitespace runs are bounded, so a match
 # attempt does bounded work.
-_OVERRIDE_NOUN = r'(?:instructions?|prompts?|rules|guidelines?|directives?|guidance|restrictions?|guardrails?|context|constraints?|commands?|policies|programming|orders|limitations?|directions|requests?|tasks?)\b'
+_OVERRIDE_NOUN = r'(?:instructions?|prompts?|rules|guidelines?|directives?|guidance|restrictions?|guardrails?|context|constraints?|commands?|policies|programming|orders|limitations?|directions|requests?|tasks?)(?![A-Za-z0-9_])'
 _OVERRIDE_QUANTIFIER = r'(?:all|any|every|each|your|my|these|those)(?:\s{1,32}of)?\s{1,32}'
 _OVERRIDE_DETERMINER = r'(?:(?:the|your|my|these|those|our|its|their)\s{1,32})?'
 _OVERRIDE_QUALIFIER = r'(?:previous|prior|above|earlier|preceding|foregoing|original|initial|existing|system|safety|security|former|developer)\s{1,32}'
 # "ignore the above" / "ignore previous" without a noun counts only at the end
 # of a clause, before "and" or before a word for text ("ignore the above
 # text"), so "ignore the previous build output" stays allowed.
-_OVERRIDE_END = r'(?=[ \t]*(?:[.,;:!)\r\n]|$)|\s{1,32}and\b|\s{1,32}(?:text|content|message|messages|input|lines?|one|ones)\b)'
+_OVERRIDE_END = r'(?=[ \t]*(?:[.,;:!)\r\n]|$)|\s{1,32}and(?![A-Za-z0-9_])|\s{1,32}(?:text|content|message|messages|input|lines?|one|ones)(?![A-Za-z0-9_]))'
 
 
 def _override_rule_source(verb: str) -> str:
     return '|'.join([
         verb + r'\s{1,32}(?:' + _OVERRIDE_QUANTIFIER + r')?' + _OVERRIDE_DETERMINER + r'(?:' + _OVERRIDE_QUALIFIER + r'){1,2}' + _OVERRIDE_NOUN,
         verb + r'\s{1,32}' + _OVERRIDE_QUANTIFIER + _OVERRIDE_DETERMINER + _OVERRIDE_NOUN,
-        verb + r'\s{1,32}(?:the\s{1,32})?(?:instructions|guardrails|directives)\b',
+        verb + r'\s{1,32}(?:the\s{1,32})?(?:instructions|guardrails|directives)(?![A-Za-z0-9_])',
         verb + r'\s{1,32}(?:' + _OVERRIDE_QUANTIFIER + r')?(?:the\s{1,32})?(?:previous|prior|above|earlier|preceding|foregoing)' + _OVERRIDE_END,
-        verb + r"\s{1,32}(?:everything|anything|all)\s{1,32}(?:above|before|previously|prior|earlier|you(?:'ve|\s{1,32}have|\s{1,32}were|\s{1,32}was)?\s{1,32}(?:been\s{1,32})?(?:told|said|given|received))\b",
+        verb + r"\s{1,32}(?:everything|anything|all)\s{1,32}(?:above|before|previously|prior|earlier|you(?:'ve|\s{1,32}have|\s{1,32}were|\s{1,32}was)?\s{1,32}(?:been\s{1,32})?(?:told|said|given|received))(?![A-Za-z0-9_])",
     ])
 
 
@@ -117,17 +128,17 @@ INJECTION_RULES: List[Tuple[str, re.Pattern, str]] = [
     ('pi:forget', re.compile(r'forget\s+(about\s+)?(everything|all|your)', re.IGNORECASE), 'Forget-context attack'),
     ('pi:identity_override', re.compile(r'you\s+are\s+now', re.IGNORECASE), 'Identity override'),
     ('pi:new_instructions', re.compile(r'new\s+instructions?:', re.IGNORECASE), 'Instruction replacement'),
-    ('pi:system_tag', re.compile(r"""(?:^|[\r\n"'`\[<])[ \t]*system\s*:|<[\s/]*system\b[^<>]*>""", re.IGNORECASE), 'Fake system tag'),
+    ('pi:system_tag', re.compile(r"""(?:^|[\r\n"'`\[<])[ \t]*system\s*:|<[\s/]*system(?![A-Za-z0-9_])[^<>]*>""", re.IGNORECASE), 'Fake system tag'),
     ('pi:system_bracket', re.compile(r'\[system\]', re.IGNORECASE), 'Bracketed system tag'),
     ('pi:act_as', re.compile(r'act\s+as\s+(if|a)', re.IGNORECASE), 'Role hijack (act as)'),
     ('pi:pretend', re.compile(r'pretend\s+(you|to\s+be)', re.IGNORECASE), 'Role hijack (pretend)'),
     ('pi:roleplay', re.compile(r'roleplay\s+as', re.IGNORECASE), 'Role hijack (roleplay)'),
-    ('pi:jailbreak', re.compile(r'\bjailbreak\b', re.IGNORECASE), 'Explicit jailbreak term'),
+    ('pi:jailbreak', re.compile(r'(?<![A-Za-z0-9_])jailbreak(?![A-Za-z0-9_])', re.IGNORECASE), 'Explicit jailbreak term'),
     ('pi:bypass', re.compile(r'bypass\s+(your|the|all)', re.IGNORECASE), 'Guardrail bypass attempt'),
-    ('pi:override', re.compile(r'\boverride\s+(?:all\s+|your\s+|the\s+)?(?:system|policy|safety|rules|instructions|guidelines|restrictions)\b|\bsystem\s+override\s*:', re.IGNORECASE), 'Policy override attempt'),
+    ('pi:override', re.compile(r'(?<![A-Za-z0-9_])override\s+(?:all\s+|your\s+|the\s+)?(?:system|policy|safety|rules|instructions|guidelines|restrictions)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])system\s+override\s*:', re.IGNORECASE), 'Policy override attempt'),
     ('pi:template_boundary', re.compile(r'\[INST\]|\[\/INST\]|<<<SYS>>>|<\/<<SYS>>>|<\|im_start\|>|<\|im_end\|>', re.IGNORECASE), 'Chat template boundary injection'),
     ('pi:multi_es', re.compile(r'ignora\s+(todas\s+las\s+)?(instrucciones|anteriores|previas)|olvida\s+(todo|las\s+instrucciones)|act[uú]a\s+como|ahora\s+eres', re.IGNORECASE), 'Multilingual prompt injection (Spanish)'),
-    ('pi:multi_pt', re.compile(r'ignor(?:e|a|em|ar)\s+(?:(?:todas|todos|qualquer|quaisquer|cualquier)\s+)?(?:(?:as|os|las|los|suas|seus|sus|tus|estas|estes|essas|esses)\s+)?(?:instru[cç][oõ]es|instrucciones|regras|reglas|diretrizes|directrices|orienta[cç][oõ]es|ordens|[oó]rdenes|comandos|restri[cç][oõ]es|restricciones|mensagens|anteriores|pr[eé]vias)|ignore\s+(?:tudo|qualquer|quaisquer)\b|ignora\s+(?:todo|tudo|cualquier)\b', re.IGNORECASE), 'Multilingual prompt injection (Portuguese)'),
+    ('pi:multi_pt', re.compile(r'ignor(?:e|a|em|ar)\s+(?:(?:todas|todos|qualquer|quaisquer|cualquier)\s+)?(?:(?:as|os|las|los|suas|seus|sus|tus|estas|estes|essas|esses)\s+)?(?:instru[cç][oõ]es|instrucciones|regras|reglas|diretrizes|directrices|orienta[cç][oõ]es|ordens|[oó]rdenes|comandos|restri[cç][oõ]es|restricciones|mensagens|anteriores|pr[eé]vias)|ignore\s+(?:tudo|qualquer|quaisquer)(?![A-Za-z0-9_])|ignora\s+(?:todo|tudo|cualquier)(?![A-Za-z0-9_])', re.IGNORECASE), 'Multilingual prompt injection (Portuguese)'),
     ('pi:multi_fr', re.compile(r'ignore[rz]?\s+(toutes\s+les\s+)?instructions|oublie[rz]?\s+tout|agis\s+comme|tu\s+es\s+maintenant', re.IGNORECASE), 'Multilingual prompt injection (French)'),
     ('pi:multi_de', re.compile(r'ignoriere\s+(alle\s+)?(anweisungen|instruktionen)|vergiss\s+(alles|jede)|du\s+bist\s+jetzt|handle\s+als', re.IGNORECASE), 'Multilingual prompt injection (German)'),
     ('pi:multi_ru', re.compile(r'забудь\s+[^\n]{0,80}?(все|инструкции)|игнорируй\s+[^\n]{0,80}?(все|предыдущие)|действуй\s+как|ты\s+теперь|найди\s+пароли', re.IGNORECASE), 'Multilingual prompt injection (Russian)'),
@@ -149,8 +160,8 @@ EVASION_RULES: List[Tuple[str, re.Pattern, str]] = [
 # tag only when that run is closed by ">". (A single regex with a lazy
 # [\s\S]*? tail, or an attribute run that may cross "<", re-scans the rest of
 # the input from every candidate and is super-linear on crafted markup.)
-OPEN_TAG_RE = re.compile(r'<[a-z0-9]+\b([^<>]*)(>?)', re.IGNORECASE)
-HIDDEN_ATTR_RE = re.compile(r'\b(?:display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0|font-size\s*:\s*0(?:px)?|color\s*:\s*transparent|text-indent\s*:\s*-[0-9]{3,}px|hidden\b)', re.IGNORECASE)
+OPEN_TAG_RE = re.compile(r'<[a-z0-9]+(?![A-Za-z0-9_])([^<>]*)(>?)', re.IGNORECASE)
+HIDDEN_ATTR_RE = re.compile(r'(?<![A-Za-z0-9_])(?:display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0|font-size\s*:\s*0(?:px)?|color\s*:\s*transparent|text-indent\s*:\s*-[0-9]{3,}px|hidden(?![A-Za-z0-9_]))', re.IGNORECASE)
 HIDDEN_PAYLOAD_RE = re.compile(r'ignore|system|instruction|prompt|bypass|override|exfil|leak', re.IGNORECASE)
 
 
@@ -205,13 +216,13 @@ RULE_TESTERS: Dict[str, Any] = {
     'pi:multi_zh': _test_multi_zh,
 }
 
-EXFIL_VERBS = re.compile(r'\b(give|reveal|send|show|print|expose|leak|paste|dump|read|open|cat|fetch|extract|steal)\b', re.IGNORECASE)
-CRED_OBJECTS = re.compile(r"""\b(passwords?|api[_ -]?keys?|secrets?|credentials?|tokens?|ssh[ _-]?keys?|private[ _-]?keys?|aws_secret[a-z0-9_]*|aws_access[a-z0-9_]*)\b|(?:^|\s|['"`])\.env(?:\.[a-z0-9]+)?\b""", re.IGNORECASE)
+EXFIL_VERBS = re.compile(r'(?<![A-Za-z0-9_])(give|reveal|send|show|print|expose|leak|paste|dump|read|open|cat|fetch|extract|steal)(?![A-Za-z0-9_])', re.IGNORECASE)
+CRED_OBJECTS = re.compile(r"""(?<![A-Za-z0-9_])(passwords?|api[_ -]?keys?|secrets?|credentials?|tokens?|ssh[ _-]?keys?|private[ _-]?keys?|aws_secret[a-z0-9_]*|aws_access[a-z0-9_]*)(?![A-Za-z0-9_])|(?:^|\s|['"`])\.env(?:\.[a-z0-9]+)?(?![A-Za-z0-9_])""", re.IGNORECASE)
 
 SENSITIVE_PATH_RULES: List[Tuple[str, re.Pattern, str]] = [
     (
         'path:sensitive_file',
-        re.compile(r"""(?:^|[\s"'`(\[])(?:~|\/home\/[^\s/]+|\/root)?\/?\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)\b|\/etc\/(?:shadow|passwd)\b""", re.IGNORECASE),
+        re.compile(r"""(?:^|[\s"'`(\[])(?:~|\/home\/[^\s/]+|\/root)?\/?\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE),
         'Targeting sensitive system credentials or environment file',
     ),
 ]
@@ -294,20 +305,46 @@ def _join_line_break(m: Any) -> str:
     return run
 
 
+def _strip_invisible(text: str) -> str:
+    """Removes invisible characters (zero-width, variation selectors, tag characters)."""
+    return INVISIBLE_ASTRAL_RE.sub('', ZERO_WIDTH_RE.sub('', text))
+
+
+def invisible_view(text: str) -> Optional[Tuple[str, array]]:
+    """Text without invisible characters and the index map back to `text`
+    (map[i] is the index of clean[i]; map[len(clean)] is len(text)). None when
+    the text has no invisible character. See invisibleView in rules.js."""
+    runs = sorted([m.span() for m in ZERO_WIDTH_RE.finditer(text)]
+                  + [m.span() for m in INVISIBLE_ASTRAL_RE.finditer(text)])
+    if not runs:
+        return None
+    mapping = array('q')
+    pos = 0
+    for start, end in runs:
+        mapping.extend(range(pos, start))
+        pos = end
+    mapping.extend(range(pos, len(text)))
+    mapping.append(len(text))
+    return _strip_invisible(text), mapping
+
+
 def normalize_input(text: str) -> Tuple[str, str]:
     if not isinstance(text, str):
         return '', ''
-    # 1. Strip zero-width evasion characters
-    stripped = ZERO_WIDTH_RE.sub('', text)
+    # 1. Strip invisible evasion characters (zero-width, variation selectors, tag characters)
+    stripped = _strip_invisible(text)
     # 1b. Strip ANSI escape sequences
     stripped = ANSI_ESCAPE_RE.sub('', stripped)
     # 2. Strip inline C-style comments (e.g. sys/*safe*/tem -> system)
     stripped = _strip_c_comments(stripped)
-    # 3. Rejoin words and tokens split across newlines (sys\ntem -> system).
+    # 3. Compatibility folding for matching (NFKC): fullwidth Latin becomes ASCII.
+    if NON_ASCII_RE.search(stripped):
+        stripped = unicodedata.normalize('NFKC', stripped)
+    # 4. Rejoin words and tokens split across newlines (sys\ntem -> system).
     #    Linear: only the character on each side of a newline run is inspected.
     if '\n' in stripped or '\r' in stripped:
         stripped = WHITESPACE_RUN_RE.sub(_join_line_break, stripped)
-    # 4. Normalize homoglyphs (Cyrillic to Latin for English hijack detection)
+    # 5. Normalize homoglyphs (Cyrillic to Latin for English hijack detection)
     normalized = "".join(HOMOGLYPH_MAP.get(c, c) for c in stripped)
     return normalized, stripped
 
@@ -324,6 +361,10 @@ def _evaluate_uncached(input_text: str) -> Assessment:
         return res
 
     normalized, stripped = normalize_input(input_text)
+    # Matching sees the same characters as the Node.js engine (see _CASE_FOLD_GUARD).
+    normalized = normalized.translate(_CASE_FOLD_GUARD)
+    stripped = stripped.translate(_CASE_FOLD_GUARD)
+    raw = input_text.translate(_CASE_FOLD_GUARD)
 
     # Check Base64 payload smuggling
     for text_candidate in (normalized, stripped):
@@ -342,7 +383,7 @@ def _evaluate_uncached(input_text: str) -> Assessment:
             except Exception:
                 pass
 
-    targets = list(dict.fromkeys([normalized, stripped, input_text]))
+    targets = list(dict.fromkeys([normalized, stripped, raw]))
 
     for text in targets:
         # 0. Evasion Rules (BiDi Trojan Source)
@@ -648,24 +689,24 @@ SECRET_VALUE_FILTERS = {
 }
 
 
-def _redact_filtered(pattern: re.Pattern, rule_id: str, is_non_secret, text: str,
-                     detections: List[Dict[str, Any]], budget: List[int]) -> str:
-    def repl(m: "re.Match[str]") -> str:
-        value = m.group(2)
-        n = _utf16_len(value)
-        if n <= MAX_FILTERED_VALUE and n <= budget[0]:
-            budget[0] -= n
-            if is_non_secret(value, m.group(1)):
-                return m.group(0)
-        detections.append({"rule": rule_id, "start": m.start(), "end": m.end()})
-        return m.group(1) + "[REDACTED_SECRET]" + m.group(3)
-    return pattern.sub(repl, text)
+def _apply_edits(text: str, edits: List[Tuple[int, int, str]]) -> str:
+    """Replaces the (start, end, replacement) spans, in ascending order, in text."""
+    parts = []
+    last = 0
+    for start, end, new in edits:
+        parts.append(text[last:start])
+        parts.append(new)
+        last = end
+    parts.append(text[last:])
+    return ''.join(parts)
 
 
 def redact_secrets(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     """
     Scans a text for sensitive credentials (API keys, private keys, passwords)
     and redacts them in place. Returns (redacted_text, detected_secrets_list).
+    Each rule matches on the text without invisible characters, and its
+    replacement covers the whole original span (see redactSecrets in rules.js).
     """
     if not isinstance(text, str) or not text:
         return text, []
@@ -673,27 +714,42 @@ def redact_secrets(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     redacted = text
     detections: List[Dict[str, Any]] = []
     budget = [MAX_FILTERED_CHARS]
+    view = None
+    dirty = True
 
     for rule_id, pattern, replacement in SECRET_PATTERNS:
+        if dirty:
+            view = invisible_view(redacted)
+            dirty = False
+        clean, mapping = (view if view is not None else (redacted, None))
         required = SECRET_PATTERN_REQUIRES.get(rule_id)
-        if required and required not in redacted:
+        if required and required not in clean:
             continue
         prefilter = SECRET_PATTERN_PREFILTERS.get(rule_id)
-        if prefilter is not None and not prefilter.search(redacted):
+        if prefilter is not None and not prefilter.search(clean):
             continue
         value_filter = SECRET_VALUE_FILTERS.get(rule_id)
-        if value_filter is not None:
-            redacted = _redact_filtered(pattern, rule_id, value_filter, redacted, detections, budget)
-            continue
-        matches = list(pattern.finditer(redacted))
-        if matches:
-            for m in matches:
-                detections.append({
-                    "rule": rule_id,
-                    "start": m.start(),
-                    "end": m.end(),
-                })
-            redacted = pattern.sub(replacement, redacted)
+        edits: List[Tuple[int, int, str]] = []
+        for m in pattern.finditer(clean):
+            if m.end() == m.start():
+                continue
+            if mapping is None:
+                start, end = m.start(), m.end()
+            else:
+                start, end = mapping[m.start()], mapping[m.end() - 1] + 1
+            if value_filter is not None:
+                # The value (group 2) decides whether the match is redacted.
+                value = m.group(2)
+                n = _utf16_len(value)
+                if n <= MAX_FILTERED_VALUE and n <= budget[0]:
+                    budget[0] -= n
+                    if value_filter(value, m.group(1)):
+                        continue
+            detections.append({"rule": rule_id, "start": start, "end": end})
+            edits.append((start, end, m.expand(replacement)))
+        if edits:
+            redacted = _apply_edits(redacted, edits)
+            dirty = True
 
     return redacted, detections
 

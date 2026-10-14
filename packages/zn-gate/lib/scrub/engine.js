@@ -43,6 +43,7 @@ const { findPatterns, findPii, hintsIn, SECRET_TYPES, PII_TYPES } = require('./p
 const { collectSources, buildMatcher } = require('./exact');
 const { find: findCustom } = require('../team/detectors');
 const { CODES } = require('../errors');
+const { invisibleView } = require('../rules');
 
 const TOKEN_SOURCE = '__ZN_([A-Z0-9](?:[A-Z0-9_]*[A-Z0-9])?)__';
 const TOKEN_RE = new RegExp(TOKEN_SOURCE, 'g');
@@ -151,6 +152,19 @@ function scan(text, ctx) {
   if (typeof text !== 'string') throw new TypeError('scan(text, ctx): text must be a string');
   if (text.length === 0) return [];
   const c = ctx || {};
+  // Invisible characters (zero-width, variation selectors, tag characters) are
+  // removed before matching, so a value split by one is still found. The spans
+  // are mapped back to the original text, invisible characters included.
+  const view = invisibleView(text);
+  if (!view) return scanText(text, c);
+  return scanText(view.clean, c).map((s) => ({
+    ...s,
+    start: view.map[s.start],
+    end: s.end > s.start ? view.map[s.end - 1] + 1 : view.map[s.start],
+  }));
+}
+
+function scanText(text, c) {
   let spans = [];
   const matcher = matcherFor(c);
   if (matcher) spans = spans.concat(matcher.find(text));
