@@ -11,11 +11,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `zn-gate stats` (Node and Python) shows what zn-gate did on this machine: checks, blocks, secret values replaced before the model saw them, and the secret types found, per agent, for the last 30 days (`--days N`, `--json`). The agent hooks, the MCP tools and the shield proxy keep these counts in `~/.zn/stats.json` (numbers only; never values, prompts, paths or hosts). `ZN_STATS=off` turns counting off. Nothing is sent: sharing anonymous daily counts is a separate opt-in (`zn-gate stats share on`, `off`, `status`, `show`), off by default; when on, `zn-gate stats` sends one report per complete day with only the fields that `zn-gate stats share show` prints first.
-- Sharing can only be turned on by you, in your own terminal, after a yes/no question: the agent hooks treat `zn-gate stats share on` as an admin command an agent cannot run (`POLICY_RULES_VERSION` is now `2026-10-14.4`). Only built-in secret types are counted: a variable or secret name you chose is counted as `OTHER` (or `ENV_VALUE` for a value matched by its variable name), never by its name.
+- Sharing can only be turned on by you, in your own terminal, after a yes/no question: the agent hooks treat `zn-gate stats share on` as an admin command an agent cannot run (`POLICY_RULES_VERSION` is now `2026-10-14.6`). Only built-in secret types are counted: a variable or secret name you chose is counted as `OTHER` (or `ENV_VALUE` for a value matched by its variable name), never by its name.
 - `zn vault team` says that a shared vault for teams is planned and counts the request on this machine only. Nothing is sent and no contact details are asked for.
-- Every rule layer has a version: `SCRUB_RULES_VERSION` (secret and PII patterns), `AUDIT_RULES_VERSION` (`zn audit` rules) and `POLICY_RULES_VERSION` (hook policy). `SCRUB_RULES_VERSION` and `POLICY_RULES_VERSION` are `2026-10-14.2`, and `AUDIT_RULES_VERSION` is `2026-10-14.1`. `zn-gate --version` and `zn-gate status` show the scrub and audit versions next to the rules engine version.
+- Cursor checks the arguments of MCP tool calls: a call that would send a secret value, or a `__ZN_` marker, to an MCP server other than zn's `secrets` server is denied. Run `zn hooks install cursor` again to add this hook.
+
+### Fixed
+- `zn init` finds the Antigravity MCP settings: it checks `~/.gemini/antigravity/mcp_config.json` and `~/.gemini/config/mcp_config.json` (each one only if it exists). It looked for `~/.gemini/antigravity/mcp.json`, which Antigravity does not use, so Antigravity was never found.
+- The threat model said that `zn run` keeps interpreter start-up variables such as `NODE_OPTIONS`; since 1.5.1 it removes them whenever it injects secret values.
+
+## [1.6.0] - 2026-10-14
+
+**If you use zn-gate 1.5.x, update.** In 1.5.x, `zn-gate scan` (Node.js) printed `PASSED` for a folder whose `.env` or other files held API keys, because it only reported prompt-injection text. 1.6.0 reports exposed credentials too (see 1.6.0-beta.1 below). After updating, run `zn-gate scan` again on your projects. This release also includes everything in 1.6.0-beta.1.
+
+### Added
+- Every rule layer has a version: `SCRUB_RULES_VERSION` (secret and PII patterns), `AUDIT_RULES_VERSION` (`zn audit` rules) and `POLICY_RULES_VERSION` (hook policy). `SCRUB_RULES_VERSION` is `2026-10-14.2`, `POLICY_RULES_VERSION` is `2026-10-14.4`, and `AUDIT_RULES_VERSION` is `2026-10-14.1`. `zn-gate --version` and `zn-gate status` show the scrub and audit versions next to the rules engine version.
 
 ### Changed
+- Block and error messages now say what happened and what to do next, in plain words. The CLI prints the code (such as `ZN_LOCKED`) only with `ZN_VERBOSE=1` or `DEBUG` set, and the suggested commands (`zn unlock`, `zn secret set NAME`, `zn env shadow FILE`) fall back to `npx -y zn-gate@<version>` when `zn` is not on your PATH.
 - Default policy by tiers. zn-gate still blocks what is almost certainly an attack or a leak: credential files, requests for secrets, exfiltration links, Base64 or invisible-character evasion, "ignore previous instructions", the narrow forms of the rules above and dangerous commands. Ten heuristic rules that also match ordinary text (`pi:identity_override`, `pi:system_tag`, `pi:system_bracket`, `pi:new_instructions`, `pi:pretend`, `pi:roleplay`, `pi:jailbreak`, `pi:bypass`, `pi:override`, `pi:template_boundary`) now give an advisory by default instead of a block. Strict mode blocks them as before: `ZN_STRICT=1`, `"strict": true` in `zn.config.json`, a `strict` line in `.znrules`, the `strict` option in Node.js or `evaluate(text, strict=True)` in Python. In our tests, benign texts blocked on a public prompt-injection dataset went from 8 of 7,150 to 0; injections blocked went from 24.0% to 22.4% and from 27.7% to 21.3% on two public datasets, and every injection that is no longer blocked gets an advisory. `zn-gate test` counts an advisory on an attack sample as detected and shows it as ADVISORY. `zn audit` and `zn-gate scan` keep reporting these patterns (they use strict mode). The Python `check_tool_call`, `check_tool_result` and `sanitize_tool_result` return the advisory and take `strict=True`. Strict mode set in the environment or a config file cannot be turned off by passing `strict: false`. `RULES_VERSION` is now `2026-10-14.3`.
 - Fewer false blocks from the local rules. Four rules blocked a lot of ordinary text, such as documentation, code and requests like "act as a gateway". They now block only the clear form, and the broader match is reported as an advisory: the verdict stays `allow` and the result carries `advisory` with the rule and a short reason (`zn-gate analyze`, `analyze_prompt`, Python `evaluate()` and `analyze()`).
   - `exfil:credentials` blocks when a verb such as "send", "print" or "read" starts an instruction and a credential word ("API key", "password", "token", `.env`) follows in the same sentence, within 80 characters. Before, the two words could be anywhere in the text, so whole documents were blocked.
@@ -30,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `zn unlock` no longer hangs at "Repeat passphrase" when the second line arrives before its prompt (for example when both lines are pasted at once). Each prompt used its own line reader and the second line was lost, so the vault was never created and `zn env shadow` then reported that the vault was locked. Wait for each prompt before typing: text typed before a prompt appears can be shown on screen by the terminal. Different passphrases, Ctrl+C and Ctrl+D now end with a clear message instead of waiting.
 
 ### Security
+- Agent hooks: an AI agent could run the zn commands that manage your secrets and protection (`zn unlock`, `zn lock`, `zn secret ...`, `zn env shadow|unshadow`, `zn hooks install|uninstall`) by calling a specific package version, for example `npx -y zn-gate@1.5.1 hooks uninstall` or `npm exec zn-gate@1.5.1 -- unlock`: the hook only recognised the plain `zn` and `zn-gate` names. Most of these commands also refuse to run without an interactive terminal or when they detect a coding agent, which stopped the usual agents; `zn lock` had no such check. The hooks now deny the versioned forms with `npx`, `npm exec`, `pnpm dlx`, `yarn dlx` and `bunx`. Affected: 1.5.0-beta.1 to 1.6.0-beta.1.
 - Trigger words are now found in the same way in Node.js and Python. A non-ASCII letter next to a trigger word (for example `éjailbreak`) no longer hides it: Python previously allowed this while Node.js blocked it, and both now block.
 - Compatibility characters are folded before matching: fullwidth Latin text such as `ｉｇｎｏｒｅ` is treated as `ignore`, in both languages. The folding is used only for detection; the text returned to you is not changed.
 - Invisible characters (zero-width spaces and joiners, the word joiner, variation selectors and Unicode tag characters) are ignored when matching, so a trigger word or a secret split by them is still detected.
@@ -301,7 +314,8 @@ Limits: [docs/threat-model.md](docs/threat-model.md). Per-agent support:
 - MCP Server interface for Claude Code, Cursor, and custom agent loops.
 - Bidirectional inspection for prompt inputs and tool returns.
 
-[Unreleased]: https://github.com/usezn/zn/compare/v1.6.0-beta.1...next
+[Unreleased]: https://github.com/usezn/zn/compare/v1.6.0...next
+[1.6.0]: https://github.com/usezn/zn/compare/v1.5.1...v1.6.0
 [1.6.0-beta.1]: https://github.com/usezn/zn/compare/v1.5.1...v1.6.0-beta.1
 [1.5.1]: https://github.com/usezn/zn/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/usezn/zn/compare/v1.4.1...v1.5.0

@@ -276,7 +276,10 @@ function isToken(s) {
   return typeof s === 'string' && new RegExp('^' + TOKEN_SOURCE + '$').test(s);
 }
 
-const LOCKED_WARNING = 'vault locked: values were redacted irreversibly; run `zn unlock` to enable exact-value redaction and restore';
+const { znCommand } = require('../zn-command');
+
+const LOCKED_WARNING = 'Your secret vault is locked, so the hidden secret values cannot be put back afterwards. ' +
+  'To keep them restorable next time, unlock it in your terminal with: ' + znCommand('unlock');
 
 function expectedToken(type) {
   return new RegExp('^__ZN_' + normalizeType(type) + '_[1-9][0-9]{0,8}__$');

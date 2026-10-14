@@ -8,12 +8,12 @@
     "subfolder": "packages/zn-gate"
   },
   "websiteUrl": "https://usezn.com",
-  "version": "1.6.0-beta.1",
+  "version": "1.6.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "zn-gate",
-      "version": "1.6.0-beta.1",
+      "version": "1.6.0",
       "transport": {
         "type": "stdio"
       },

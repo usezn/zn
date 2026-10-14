@@ -189,7 +189,7 @@ test('zn run refuses a command outside allowCommands and points to secrets_http_
   const stderr = sink();
   const code = await runBroker(['--', NODE, '-e', 'console.log(process.argv[1])', '__ZN_DB_PASSWORD__'], { vault, env: nodeEnv, stdout: sink(), stderr, stdin: { isTTY: false } });
   assert.equal(code, 77);
-  assert.match(stderr.text(), /ZN_POLICY_DENIED/);
+  assert.match(stderr.text(), /Not allowed: /);
   assert.match(stderr.text(), /secrets_http_request/);
   assert.ok(vault.auditLog.some((e) => e.decision === 'deny'));
 });

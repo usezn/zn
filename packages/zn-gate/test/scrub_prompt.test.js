@@ -122,8 +122,8 @@ test('prompt hook blocks a typed credential and suggests zn secret set with its 
   const d = await decidePrompt(ev, deps(), 'claude-code');
   assert.equal(d.decision, 'deny');
   assert.match(d.message, /contains a secret \(STRIPE_KEY\)/);
-  assert.match(d.message, /zn secret set STRIPE_KEY/);
-  assert.match(d.message, /__ZN_STRIPE_KEY__/);
+  assert.match(d.message, /secret set STRIPE_KEY/);
+  assert.match(d.message, /ask your agent to use it/);
 });
 
 test('prompt hook allows a question about configuration with a placeholder', async () => {

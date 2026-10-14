@@ -23,10 +23,11 @@ const dotenv = require('../broker/dotenv');
 const markers = require('../broker/markers');
 const { realTargetOf } = require('../broker/files');
 const { powershellQuote, portablePath } = require('../shell-quote');
+const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-14.4';
+const POLICY_RULES_VERSION = '2026-10-14.6';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -373,12 +374,12 @@ function readDenial(p, opts = {}) {
       return null; // missing file: nothing to protect
     }
     if (dotenv.isShadowed(text)) return null;
-    return 'zn: ' + path.basename(abs) + ' holds plain-text secrets. Ask the user to run `zn env shadow ' +
-      path.basename(abs) + '` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.';
+    return 'zn: ' + path.basename(abs) + ' holds plain-text secrets. Ask the user to run `' +
+      znCommand('env shadow ' + path.basename(abs)) + '` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.';
   }
   if (c.kind === 'zn_state') return 'zn: ~/.zn is the local secret vault; agents may not read or change it.';
   return 'zn: reading ' + c.reason + ' (' + p + ') is blocked so secret values never reach the model. ' +
-    'If a command needs it, ask the user to add the value with `zn secret set <NAME>` and use the __ZN_<NAME>__ marker.';
+    'If a command needs it, ask the user to add the value with `' + znCommand('secret set <NAME>') + '` and use the __ZN_<NAME>__ marker.';
 }
 
 function agentConfigDenial(p, c) {
@@ -657,11 +658,12 @@ function hasNetworkSignals(cmd) {
   try { return require('../scrub/engine').isNetworkCommand(s); } catch (_) { return false; }
 }
 
-const ZN_ADMIN_RE = /(^|[\s;&|(`$'"\\/])(zn|zn-gate|cli\.js)(@[\w.^~-]+)?(\.cmd|\.js)?["']?\s+(secret\s+(set|get|rm|remove|import|adopt|approve|allow|reveal|link)|env\s+(shadow|unshadow)|unlock|lock|hooks\s+(install|uninstall)|stats(?:\s+--?\S+)*\s+share\s+on)\b/i;
+// The program is zn, zn-gate (also with a version: npx -y zn-gate@1.6.0, pnpm dlx zn-gate@latest) or the bin file.
+const ZN_ADMIN_RE = /(^|[\s;&|(`$'"\\/])((?:zn|zn-gate(?:@[^\s"'`;&|]+)?|cli\.js))(\.cmd|\.js)?["']?\s+(?:--\s+)?(secret\s+(set|get|rm|remove|import|adopt|approve|allow|reveal|link)|env\s+(shadow|unshadow)|unlock|lock|hooks\s+(install|uninstall)|stats(?:\s+--?\S+)*\s+share\s+on)\b/i;
 
 function adminCommand(cmd) {
   const m = ZN_ADMIN_RE.exec(String(cmd || ''));
-  return m ? m[5].replace(/\s+/g, ' ') : null;
+  return m ? m[4].replace(/\s+/g, ' ') : null;
 }
 
 /**
@@ -719,7 +721,7 @@ function denialOf(c, text, opts) {
   if (c.kind === 'zn_state') return 'zn: ~/.zn is the local secret vault; agents may not read or change it.';
   if (c.kind === 'dotenv') return readDenial(text, opts);
   return 'zn: reading ' + c.reason + ' (' + text + ') is blocked so secret values never reach the model. ' +
-    'If a command needs it, ask the user to add the value with `zn secret set <NAME>` and use the __ZN_<NAME>__ marker.';
+    'If a command needs it, ask the user to add the value with `' + znCommand('secret set <NAME>') + '` and use the __ZN_<NAME>__ marker.';
 }
 
 module.exports = {
