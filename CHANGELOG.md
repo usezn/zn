@@ -17,6 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `pi:forget` no longer blocks "forget all cached entries", "forget your password" and similar phrases about data.
   In our tests on 747 public files (package READMEs and code, docs), files blocked by the local rules went from 5.6% to 1.1%; on two public prompt-injection datasets, benign texts blocked went from 2.1% to 0.1%, injections blocked went from 28.1% to 24.0% and from 30.9% to 27.7%, and every injection that is no longer blocked gets an advisory. The local rules are a first layer; the cloud check (`ZN_CLOUD=1`) is unchanged. `RULES_VERSION` is now `2026-10-14.2`.
 
+### Security
+- Trigger words are now found in the same way in Node.js and Python. A non-ASCII letter next to a trigger word (for example `éjailbreak`) no longer hides it: Python previously allowed this while Node.js blocked it, and both now block.
+- Compatibility characters are folded before matching: fullwidth Latin text such as `ｉｇｎｏｒｅ` is treated as `ignore`, in both languages. The folding is used only for detection; the text returned to you is not changed.
+- Invisible characters (zero-width spaces and joiners, the word joiner, variation selectors and Unicode tag characters) are ignored when matching, so a trigger word or a secret split by them is still detected.
+- The dotless i (`ı`) and the capital dotted I (`İ`) are read as `i` and `I` when matching, so trigger words spelled with them are detected in both languages.
+- A secret that contains invisible characters is redacted as a whole, including those characters. Before, a key such as `AKIA` followed by a zero-width space was not redacted.
+- The Node.js scrubber finds such secrets too and reports their full span.
+- The PII & secret scrubber now recognizes more credential formats: Docker Hub personal and organization access tokens (`dckr_pat_`, `dckr_oat_`), Tavily keys (`tvly-`), Firecrawl keys (`fc-`), Polar tokens (`polar_oat_`, `polar_pat_`, `polar_at_u_`, `polar_at_o_`, `polar_rt_u_`, `polar_rt_o_`, `polar_ci_`, `polar_cs_`), Replicate tokens (`r8_`, 40 characters), Supabase personal access tokens (`sbp_`) and Azure AD client secrets.
+- Coverage fixes: Hugging Face tokens made only of letters, Stripe `sk_prod_` keys, Twilio API key SIDs in upper case, and legacy 32-character hexadecimal `sk-` keys are now detected by the scrubber as well.
+
 ## [1.6.0-beta.1] - 2026-10-14
 
 Pre-release for testing. Install it with `npm install -g zn-gate@beta` or `pip install --pre zn-gate`. The agent plugin in `plugins/zn-gate` is not published with this beta; it ships with 1.6.0.
