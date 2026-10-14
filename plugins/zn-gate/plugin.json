@@ -5,7 +5,7 @@
   "description": "Local security layer for coding agents: keeps secret values out of what the agent sends to its model, gives it a secrets MCP server that uses credentials without revealing them, and checks untrusted text for prompt injection with local rules.",
   "author": {
     "name": "usezn",
-    "email": "security@usezn.com",
+    "email": "support@usezn.com",
     "url": "https://usezn.com"
   },
   "homepage": "https://github.com/usezn/zn/tree/v1.6.0/plugins/zn-gate",
