@@ -145,7 +145,8 @@ test('cursor: MCP output is tokenized, built-in output cannot be, prompts with s
 
 test('cursor: install writes version 1 hooks.json with our events', (t) => {
   const home = tempDir(t, 'zn-cu-');
-  cursor.install({ home, nodePath: '/usr/bin/node', runnerPath: '/x/lib/hooks/runner.js' });
+  // platform is explicit: on Windows the default is the PowerShell form (below).
+  cursor.install({ home, nodePath: '/usr/bin/node', runnerPath: '/x/lib/hooks/runner.js', platform: 'linux' });
   const data = JSON.parse(fs.readFileSync(cursor.hooksFile({ home }), 'utf8'));
   assert.equal(data.version, 1);
   assert.deepEqual(Object.keys(data.hooks).sort(), [...cursor.EVENTS].sort());
@@ -154,11 +155,22 @@ test('cursor: install writes version 1 hooks.json with our events', (t) => {
   assert.deepEqual(JSON.parse(fs.readFileSync(cursor.hooksFile({ home }), 'utf8')).hooks, {});
 });
 
+test('cursor: install on Windows wraps the hook command in powershell.exe', (t) => {
+  const home = tempDir(t, 'zn-cu-win-');
+  cursor.install({ home, nodePath: '/usr/bin/node', runnerPath: '/x/lib/hooks/runner.js', platform: 'win32' });
+  const data = JSON.parse(fs.readFileSync(cursor.hooksFile({ home }), 'utf8'));
+  const expected = 'powershell.exe -NoProfile -NonInteractive -Command "& \'/usr/bin/node\' \'/x/lib/hooks/runner.js\' cursor"';
+  assert.equal(data.hooks.beforeReadFile[0].command, expected);
+  assert.equal(data.hooks.beforeMCPExecution[0].command, expected);
+  cursor.uninstall({ home, platform: 'win32' });
+  assert.deepEqual(JSON.parse(fs.readFileSync(cursor.hooksFile({ home }), 'utf8')).hooks, {});
+});
+
 const FAKE_AWS_KEY = 'AKIA' + 'Z'.repeat(16); // built at runtime, never a literal
 
 test('cursor: beforeMCPExecution is installed without failClosed', (t) => {
   const home = tempDir(t, 'zn-cu-mcp-');
-  cursor.install({ home, nodePath: '/usr/bin/node', runnerPath: '/x/lib/hooks/runner.js' });
+  cursor.install({ home, nodePath: '/usr/bin/node', runnerPath: '/x/lib/hooks/runner.js', platform: 'linux' });
   const data = JSON.parse(fs.readFileSync(cursor.hooksFile({ home }), 'utf8'));
   const entry = data.hooks.beforeMCPExecution[0];
   assert.equal(entry.command, "'/usr/bin/node' '/x/lib/hooks/runner.js' cursor");
