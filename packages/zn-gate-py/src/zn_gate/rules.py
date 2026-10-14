@@ -24,16 +24,32 @@ RULES_VERSION = "2026-10-14.1"
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
 # Under re.IGNORECASE, Python also folds four non-ASCII characters into ASCII
-# letters (U+0130, U+0131, U+017F, U+212A); JavaScript does not. Matching targets
-# have them replaced by NUL first (see the uses of _CASE_FOLD_GUARD), so both engines agree.
+# letters (U+0130, U+0131, U+017F, U+212A); JavaScript does not. The raw input
+# target has them replaced by NUL first, so both engines agree. The normalized
+# texts are not guarded: U+0130 and U+0131 are mapped to I and i, and U+017F and
+# U+212A are folded to s and K by the compatibility fold.
 _CASE_FOLD_GUARD = str.maketrans({'İ': '\x00', 'ı': '\x00', 'ſ': '\x00', 'K': '\x00'})
+# Compatibility characters folded for matching, one at a time (same ranges as
+# COMPAT_FOLD in rules.js; full NFKC expands some characters to 18). The table
+# maps code points to their folded text and is applied with str.translate.
+_COMPAT_FOLD_TABLE: Dict[int, str] = {}
+for _lo, _hi in ((0xFF01, 0xFF5E), (0xFB00, 0xFB06), (0x017F, 0x017F), (0x212A, 0x212A),
+                 (0x2070, 0x209F), (0x2460, 0x24FF), (0x1D400, 0x1D7FF)):
+    for _cp in range(_lo, _hi + 1):
+        _folded = unicodedata.normalize('NFKC', chr(_cp))
+        if _folded != chr(_cp):
+            _COMPAT_FOLD_TABLE[_cp] = _folded
 
 # Cyrillic homoglyphs mapping to Latin
 HOMOGLYPH_MAP = {
     '\u0430': 'a', '\u0435': 'e', '\u043e': 'o', '\u0440': 'p', '\u0441': 'c',
     '\u0456': 'i', '\u0455': 's', '\u0443': 'y', '\u0445': 'x',
     '\u0410': 'A', '\u0415': 'E', '\u041e': 'O', '\u0420': 'P', '\u0421': 'C',
+    # Dotless i and capital dotted I read as i and I.
+    '\u0131': 'i', '\u0130': 'I',
 }
+# Homoglyphs as a translation table (str.translate runs in C).
+_HOMOGLYPH_TABLE = {ord(k): v for k, v in HOMOGLYPH_MAP.items()}
 
 # Rule patterns mirror packages/zn-gate/lib/rules.js: the source strings are
 # identical (tests/test_rules_parity.py compares them) and the JavaScript "i"
@@ -339,13 +355,13 @@ def normalize_input(text: str) -> Tuple[str, str]:
     stripped = _strip_c_comments(stripped)
     # 3. Compatibility folding for matching (NFKC): fullwidth Latin becomes ASCII.
     if NON_ASCII_RE.search(stripped):
-        stripped = unicodedata.normalize('NFKC', stripped)
+        stripped = stripped.translate(_COMPAT_FOLD_TABLE)
     # 4. Rejoin words and tokens split across newlines (sys\ntem -> system).
     #    Linear: only the character on each side of a newline run is inspected.
     if '\n' in stripped or '\r' in stripped:
         stripped = WHITESPACE_RUN_RE.sub(_join_line_break, stripped)
     # 5. Normalize homoglyphs (Cyrillic to Latin for English hijack detection)
-    normalized = "".join(HOMOGLYPH_MAP.get(c, c) for c in stripped)
+    normalized = stripped.translate(_HOMOGLYPH_TABLE)
     return normalized, stripped
 
 
@@ -361,9 +377,7 @@ def _evaluate_uncached(input_text: str) -> Assessment:
         return res
 
     normalized, stripped = normalize_input(input_text)
-    # Matching sees the same characters as the Node.js engine (see _CASE_FOLD_GUARD).
-    normalized = normalized.translate(_CASE_FOLD_GUARD)
-    stripped = stripped.translate(_CASE_FOLD_GUARD)
+    # The raw input is matched with the same characters as in Node.js (see _CASE_FOLD_GUARD).
     raw = input_text.translate(_CASE_FOLD_GUARD)
 
     # Check Base64 payload smuggling
@@ -701,12 +715,86 @@ def _apply_edits(text: str, edits: List[Tuple[int, int, str]]) -> str:
     return ''.join(parts)
 
 
+def _span_in(mapping: Optional[array], start: int, end: int) -> Tuple[int, int]:
+    """Span [start, end) of a text without invisible characters, as a span of the
+    original text. mapping is None for the original text itself."""
+    if mapping is None:
+        return start, end
+    return mapping[start], (mapping[end - 1] + 1 if end > start else mapping[start])
+
+
+def _expand_template(template: str, groups: List[Optional[Tuple[int, int]]], text: str) -> str:
+    """Replacement template with \\1..\\9 expanded from the group spans of the
+    original text (see expandTemplate in rules.js)."""
+    def sub(m: "re.Match[str]") -> str:
+        g = groups[int(m.group(1))]
+        return text[g[0]:g[1]] if g is not None else ''
+    return re.sub(r'\\(\d)', sub, template)
+
+
+def _rule_candidates(rule_id: str, pattern: re.Pattern, replacement: str, text: str,
+                     view: Optional[Tuple[str, array]], budget: List[int], value_filter,
+                     out: List[Tuple[int, int, str, str]]) -> None:
+    """Candidate redactions of one rule as (start, end, rule_id, replacement) in
+    original coordinates. The rule runs on the original text and on the text
+    without invisible characters (see ruleCandidates in rules.js)."""
+    passes: List[Tuple[str, Optional[array]]] = [(text, None)]
+    if view is not None:
+        passes.append(view)
+    for hay, mapping in passes:
+        required = SECRET_PATTERN_REQUIRES.get(rule_id)
+        if required and required not in hay:
+            continue
+        prefilter = SECRET_PATTERN_PREFILTERS.get(rule_id)
+        if prefilter is not None and not prefilter.search(hay):
+            continue
+        for m in pattern.finditer(hay):
+            if m.end() == m.start():
+                continue
+            groups: List[Optional[Tuple[int, int]]] = [None]
+            for k in range(1, pattern.groups + 1):
+                if m.start(k) == -1:
+                    groups.append(None)
+                else:
+                    groups.append(_span_in(mapping, m.start(k), m.end(k)))
+            if value_filter is not None:
+                # The value (group 2) decides whether the match is redacted.
+                vs, ve = groups[2]
+                value = _strip_invisible(text[vs:ve])
+                prefix = ''
+                if groups[1] is not None:
+                    prefix = _strip_invisible(text[groups[1][0]:groups[1][1]])
+                n = _utf16_len(value)
+                if n <= MAX_FILTERED_VALUE and n <= budget[0]:
+                    budget[0] -= n
+                    if value_filter(value, prefix):
+                        continue
+            start, end = _span_in(mapping, m.start(), m.end())
+            out.append((start, end, rule_id, _expand_template(replacement, groups, text)))
+
+
+def _merge_candidates(cands: List[Tuple[int, int, str, str]]) -> List[Tuple[int, int, str, str]]:
+    """Overlapping candidates become one redaction covering their union; the first
+    candidate (earliest start, then longest) supplies the replacement text."""
+    cands.sort(key=lambda c: (c[0], -c[1]))
+    merged: List[Tuple[int, int, str, str]] = []
+    for c in cands:
+        if merged and c[0] < merged[-1][1]:
+            last = merged[-1]
+            if c[1] > last[1]:
+                merged[-1] = (last[0], c[1], last[2], last[3])
+            continue
+        merged.append(c)
+    return merged
+
+
 def redact_secrets(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     """
     Scans a text for sensitive credentials (API keys, private keys, passwords)
     and redacts them in place. Returns (redacted_text, detected_secrets_list).
-    Each rule matches on the text without invisible characters, and its
-    replacement covers the whole original span (see redactSecrets in rules.js).
+    Every rule runs on the original text and on the text without invisible
+    characters; the redacted spans are the union of both (see redactSecrets in
+    rules.js).
     """
     if not isinstance(text, str) or not text:
         return text, []
@@ -721,35 +809,17 @@ def redact_secrets(text: str) -> Tuple[str, List[Dict[str, Any]]]:
         if dirty:
             view = invisible_view(redacted)
             dirty = False
-        clean, mapping = (view if view is not None else (redacted, None))
-        required = SECRET_PATTERN_REQUIRES.get(rule_id)
-        if required and required not in clean:
+        cands: List[Tuple[int, int, str, str]] = []
+        _rule_candidates(rule_id, pattern, replacement, redacted, view, budget,
+                         SECRET_VALUE_FILTERS.get(rule_id), cands)
+        if not cands:
             continue
-        prefilter = SECRET_PATTERN_PREFILTERS.get(rule_id)
-        if prefilter is not None and not prefilter.search(clean):
-            continue
-        value_filter = SECRET_VALUE_FILTERS.get(rule_id)
         edits: List[Tuple[int, int, str]] = []
-        for m in pattern.finditer(clean):
-            if m.end() == m.start():
-                continue
-            if mapping is None:
-                start, end = m.start(), m.end()
-            else:
-                start, end = mapping[m.start()], mapping[m.end() - 1] + 1
-            if value_filter is not None:
-                # The value (group 2) decides whether the match is redacted.
-                value = m.group(2)
-                n = _utf16_len(value)
-                if n <= MAX_FILTERED_VALUE and n <= budget[0]:
-                    budget[0] -= n
-                    if value_filter(value, m.group(1)):
-                        continue
-            detections.append({"rule": rule_id, "start": start, "end": end})
-            edits.append((start, end, m.expand(replacement)))
-        if edits:
-            redacted = _apply_edits(redacted, edits)
-            dirty = True
+        for start, end, found_rule, new in _merge_candidates(cands):
+            detections.append({"rule": found_rule, "start": start, "end": end})
+            edits.append((start, end, new))
+        redacted = _apply_edits(redacted, edits)
+        dirty = True
 
     return redacted, detections
 

@@ -266,6 +266,8 @@ const HOMOGLYPH_MAP = {
   '\u0430': 'a', '\u0435': 'e', '\u043e': 'o', '\u0440': 'p', '\u0441': 'c',
   '\u0456': 'i', '\u0455': 's', '\u0443': 'y', '\u0445': 'x',
   '\u0410': 'A', '\u0415': 'E', '\u041e': 'O', '\u0420': 'P', '\u0421': 'C',
+  // Dotless i and capital dotted I read as i and I.
+  '\u0131': 'i', '\u0130': 'I',
 };
 // Invisible characters removed before matching: zero-width spaces and joiners,
 // word joiner, BOM, soft hyphen, and variation selectors. The Unicode tag
@@ -275,6 +277,38 @@ const ZERO_WIDTH_RE = /[\u200B-\u200D\u2060\uFEFF\u00AD\uFE00-\uFE0F]/g;
 const INVISIBLE_ASTRAL_RE = /[\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
 // ASCII-only text needs no compatibility folding.
 const NON_ASCII_RE = /[^\x00-\x7f]/;
+// Compatibility characters folded for matching, one character at a time: fullwidth
+// ASCII variants (including fullwidth punctuation), Latin ligatures, super- and
+// subscripts, enclosed alphanumerics and mathematical alphanumerics. Full NFKC
+// is not used: some characters (such as U+FDFA) expand to 18 characters, which
+// makes the cost of a long input grow far beyond its length.
+// A run of fullwidth ASCII (U+FF01-FF5E) folds to ASCII by a fixed offset; the
+// other characters of the ranges are looked up in a table computed once.
+// The long s (U+017F) and the Kelvin sign (U+212A) are included: they fold to
+// s and K, which Python's case-insensitive matching would otherwise read as
+// letters of the trigger words on the stripped text.
+const COMPAT_FOLD_RE = /[！-～]+|[ﬀ-ﬆſK⁰-₟①-⓿]|[\u{1D400}-\u{1D7FF}]/gu;
+const COMPAT_FOLD = new Map();
+for (const [lo, hi] of [[0xfb00, 0xfb06], [0x17f, 0x17f], [0x212a, 0x212a], [0x2070, 0x209f], [0x2460, 0x24ff], [0x1d400, 0x1d7ff]]) {
+  for (let cp = lo; cp <= hi; cp++) {
+    const ch = String.fromCodePoint(cp);
+    const folded = ch.normalize('NFKC');
+    if (folded !== ch) COMPAT_FOLD.set(ch, folded);
+  }
+}
+function foldCompatMatch(run) {
+  if (run.charCodeAt(0) >= 0xff01 && run.charCodeAt(0) <= 0xff5e) {
+    const parts = [];
+    for (let i = 0; i < run.length; i += 4096) {
+      const end = Math.min(run.length, i + 4096);
+      const codes = new Array(end - i);
+      for (let j = i; j < end; j++) codes[j - i] = run.charCodeAt(j) - 0xfee0;
+      parts.push(String.fromCharCode.apply(null, codes));
+    }
+    return parts.join('');
+  }
+  return COMPAT_FOLD.get(run);
+}
 const ANSI_ESCAPE_RE = /\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07\x1b]*\x07/g;
 const B64_EXEC_RE = /(?:echo|printf)\s+([A-Za-z0-9+/=]{16,})\s*\|\s*(?:base64\s+-(?:d|-decode)|openssl)/i;
 
@@ -346,7 +380,7 @@ function normalizeInput(str) {
   stripped = stripCComments(stripped);
   // 4. Compatibility folding for matching: fullwidth Latin and other
   //    compatibility forms become their ASCII equivalents (NFKC).
-  if (NON_ASCII_RE.test(stripped)) stripped = stripped.normalize('NFKC');
+  if (NON_ASCII_RE.test(stripped)) stripped = stripped.replace(COMPAT_FOLD_RE, foldCompatMatch);
   // 5. Rejoin words and tokens split across newlines (e.g. sys\ntem -> system, /l\neak -> /leak, Cyrillic & Chinese).
   //    Linear: only the character on each side of a newline run is inspected.
   if (LINE_BREAK_RE.test(stripped)) {
@@ -358,7 +392,7 @@ function normalizeInput(str) {
     });
   }
   // 5. Normalize homoglyphs (Cyrillic to Latin for English hijack detection)
-  let normalized = stripped.replace(/[\u0410-\u0456]/g, (m) => HOMOGLYPH_MAP[m] || m);
+  let normalized = stripped.replace(/[\u0130\u0131\u0410-\u0456]/g, (m) => HOMOGLYPH_MAP[m] || m);
   return { normalized, stripped };
 }
 
@@ -719,22 +753,90 @@ function isNonSecretDefault(value, prefix = '') {
   return credentialValueKind(value, prefix) !== GENERATED_SECRET;
 }
 
-// Expands $1..$9 in a replacement template, as String.prototype.replace does.
-function expandTemplate(template, m) {
-  return template.replace(/\$(\d)/g, (_, d) => m[Number(d)] ?? '');
+// Replacement template with $1..$9 expanded from the groups of a match. A group
+// is a [start, end] span of the original text, or null when it did not take part;
+// the text kept around a secret is copied from the original, invisible characters
+// included.
+function expandTemplate(template, groups, text) {
+  return template.replace(/\$(\d)/g, (_, d) => {
+    const g = groups[Number(d)];
+    return g ? text.slice(g[0], g[1]) : '';
+  });
 }
 
-// Redacts secrets. Each rule matches on the text without invisible characters
-// (see invisibleView), so a secret split by a zero-width or tag character is
-// still found, and its replacement covers the whole original span, invisible
-// characters included. Texts without invisible characters are handled as before.
+// Span [start, end) of a text without invisible characters, as a span of the
+// original text. `map` is null for the original text itself.
+function spanIn(map, start, end) {
+  if (!map) return [start, end];
+  return [map[start], end > start ? map[end - 1] + 1 : map[start]];
+}
+
+// Candidate redactions of one rule, pushed to `out` as {start, end, rule, text}
+// in original coordinates. The rule runs on the original text and, when the text
+// has invisible characters, on the text without them, so a secret is found when
+// either run finds it: "AKIA" + 16 characters + zero-width space + "foo" is found
+// on the original text, and "AKIA" + zero-width space + 16 characters on the view.
+function ruleCandidates(item, text, view, budget, out) {
+  const passes = view ? [[text, null], [view.clean, view.map]] : [[text, null]];
+  const flags = item.pattern.flags.includes('d') ? item.pattern.flags : item.pattern.flags + 'd';
+  const regex = new RegExp(item.pattern.source, flags);
+  for (const [hay, map] of passes) {
+    if (item.requires && !hay.includes(item.requires)) continue;
+    if (item.prefilter && !item.prefilter.test(hay)) continue;
+    regex.lastIndex = 0;
+    let m;
+    while ((m = regex.exec(hay)) !== null) {
+      if (m[0].length === 0) {
+        regex.lastIndex++;
+        continue;
+      }
+      const groups = [null];
+      for (let k = 1; k < m.length; k++) {
+        groups.push(m.indices[k] ? spanIn(map, m.indices[k][0], m.indices[k][1]) : null);
+      }
+      if (item.valueFilter) {
+        // The value (group 2) decides whether the match is redacted.
+        const value = stripInvisible(text.slice(groups[2][0], groups[2][1]));
+        const prefix = groups[1] ? stripInvisible(text.slice(groups[1][0], groups[1][1])) : '';
+        const n = value.length;
+        if (n <= MAX_FILTERED_VALUE && n <= budget.left) {
+          budget.left -= n;
+          if (item.valueFilter(value, prefix)) continue;
+        }
+      }
+      const [start, end] = spanIn(map, m.index, m.index + m[0].length);
+      out.push({ start, end, rule: item.id, text: expandTemplate(item.replacement, groups, text) });
+    }
+  }
+}
+
+// Overlapping candidates become one redaction covering their union. The first
+// candidate (earliest start, then longest) supplies the replacement text.
+function mergeCandidates(cands) {
+  cands.sort((a, b) => a.start - b.start || b.end - a.end);
+  const merged = [];
+  for (const c of cands) {
+    const last = merged[merged.length - 1];
+    if (last && c.start < last.end) {
+      if (c.end > last.end) last.end = c.end;
+      continue;
+    }
+    merged.push({ ...c });
+  }
+  return merged;
+}
+
+// Redacts secrets. Every rule runs on the original text and on the text without
+// invisible characters (see ruleCandidates), and the redacted spans are the union
+// of what both find, so a secret split by a zero-width or tag character is
+// redacted whole. Texts without invisible characters are handled as before.
 function redactSecrets(text) {
   if (typeof text !== 'string' || !text) {
     return { sanitized: text, detections: [] };
   }
   let sanitized = text;
   const detections = [];
-  let filterBudget = MAX_FILTERED_CHARS;
+  const budget = { left: MAX_FILTERED_CHARS };
   let view = null;
   let dirty = true;
   for (const item of SECRET_PATTERNS) {
@@ -742,40 +844,18 @@ function redactSecrets(text) {
       view = invisibleView(sanitized);
       dirty = false;
     }
-    const clean = view ? view.clean : sanitized;
-    if (item.requires && !clean.includes(item.requires)) continue;
-    if (item.prefilter && !item.prefilter.test(clean)) continue;
-    const regex = new RegExp(item.pattern.source, item.pattern.flags);
-    const edits = [];
-    let match;
-    while ((match = regex.exec(clean)) !== null) {
-      if (match[0].length === 0) {
-        regex.lastIndex++;
-        continue;
-      }
-      const start = view ? view.map[match.index] : match.index;
-      const end = view ? view.map[match.index + match[0].length - 1] + 1 : match.index + match[0].length;
-      if (item.valueFilter) {
-        // The value (group 2) decides whether the match is redacted.
-        const n = match[2].length;
-        if (n <= MAX_FILTERED_VALUE && n <= filterBudget) {
-          filterBudget -= n;
-          if (item.valueFilter(match[2], match[1])) continue;
-        }
-      }
-      detections.push({ rule: item.id, index: start });
-      edits.push({ start, end, text: expandTemplate(item.replacement, match) });
+    const cands = [];
+    ruleCandidates(item, sanitized, view, budget, cands);
+    if (cands.length === 0) continue;
+    let out = '';
+    let last = 0;
+    for (const e of mergeCandidates(cands)) {
+      out += sanitized.slice(last, e.start) + e.text;
+      last = e.end;
+      detections.push({ rule: e.rule, index: e.start });
     }
-    if (edits.length > 0) {
-      let out = '';
-      let last = 0;
-      for (const e of edits) {
-        out += sanitized.slice(last, e.start) + e.text;
-        last = e.end;
-      }
-      sanitized = out + sanitized.slice(last);
-      dirty = true;
-    }
+    sanitized = out + sanitized.slice(last);
+    dirty = true;
   }
   return { sanitized, detections };
 }
