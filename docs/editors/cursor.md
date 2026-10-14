@@ -5,19 +5,23 @@ Set up zn-gate in Cursor in two minutes, then the technical details: the MCP ser
 ## Quick start (no coding needed)
 
 1. **Check that Node.js is installed.** In Cursor, open **Terminal → New Terminal**, paste `node --version` and press Enter. If you see a version number (18 or later), go on. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/), then close and reopen Cursor.
-2. **Install zn-gate and turn on its protection for Cursor.** Paste this in the same terminal and press Enter:
+2. **Install zn-gate and turn on its protection for Cursor.** Paste each line in the same terminal and press Enter after each one:
 
    ```bash
-   npm install -g zn-gate && zn hooks install cursor
+   npm install -g zn-gate
+   zn hooks install cursor
    ```
 
+   On a Mac, if you see `EACCES`, follow npm's guide to [fixing permission errors](https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally). On Windows, if PowerShell says running scripts is disabled, type `zn.cmd hooks install cursor` instead (not yet verified).
 3. **Restart Cursor.**
 
-That is all. From now on, Cursor's agent cannot read your `.env` files with real values or your credential files, a secret you paste into the chat is blocked before it is sent, and results from MCP tools have secrets removed.
+Status: these steps follow Cursor's documentation; we have not run them end to end in Cursor yet (Cursor has no command-line mode with hooks that we can test automatically), and not at all on Windows.
+
+Once it works, Cursor's agent is blocked from reading `.env` files with real values and common credential files (file reads and most shell commands), a secret zn-gate recognizes in your chat message is blocked before it is sent, and secrets it recognizes are removed from MCP tool results.
+
+4. **If the agent says it cannot read your `.env` file** (optional): run `zn unlock` (it creates your local vault the first time), then `zn env shadow .env`. Your `.env` then holds markers instead of real values, and zn-gate fills the values in only for commands you allow.
 
 To undo it: `zn hooks uninstall cursor`.
-
-Status: these steps follow Cursor's documentation; we have not run them end to end in Cursor yet (Cursor has no command-line mode with hooks that we can test automatically).
 
 ## What zn-gate protects in Cursor, and what it does not
 
@@ -30,7 +34,7 @@ Status: these steps follow Cursor's documentation; we have not run them end to e
 | Checks your other MCP servers for prompt injection | Yes, if you wrap them (below) |
 | Cursor CLI (`cursor-agent`) | Not covered: its hook support is not documented |
 
-**Not covered:** a secret printed by a shell command, or written in a file the agent reads that is not blocked, reaches the model. Keep secrets in zn-gate's vault (`zn env shadow .env`) so your files hold markers instead of real values: see [Scrubber](https://usezn.com/docs/zn-gate/scrubber/). Hooks are a guardrail, not a sandbox.
+**Not covered:** a secret printed by a shell command, or written in a file the agent reads that is not blocked, reaches the model. Keep secrets in zn-gate's vault (`zn unlock`, then `zn env shadow .env`) so your files hold markers instead of real values: see [Scrubber](https://usezn.com/docs/zn-gate/scrubber/). Hooks are a guardrail, not a sandbox.
 
 ## Technical reference
 
@@ -57,7 +61,7 @@ npx -y zn-gate init --dry-run   # shows what would change
 npx -y zn-gate init             # wraps each local server with zn-gate shield (a backup is written first)
 ```
 
-Every result of a wrapped server is checked for prompt injection and has secrets removed before the agent sees it. `npx -y zn-gate init --revert` restores the backup.
+Every result of a wrapped server is checked for prompt injection, and secrets zn-gate recognizes are removed, before the agent sees it. `npx -y zn-gate init --revert` restores the backup.
 
 ### The hooks
 

@@ -5,7 +5,7 @@ Set up zn-gate in Windsurf (Devin Desktop, Cascade) in two minutes: add it as an
 ## Quick start (no coding needed)
 
 1. **Check that Node.js is installed.** Open a terminal (in most editors: menu **Terminal → New Terminal**; or your computer's Terminal app), type `node --version` and press Enter. If you see a version number (18 or later), go on. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/) and restart Windsurf.
-2. Open the MCP configuration file: on macOS and Linux `~/.config/devin/mcp_config.json`, on Windows `%APPDATA%\devin\mcp_config.json`. If it does not exist, create it. (Older Windsurf versions used `~/.codeium/windsurf/mcp_config.json`.)
+2. Open the MCP configuration file: on macOS and Linux `~/.config/devin/mcp_config.json`, on Windows `%APPDATA%\devin\mcp_config.json`. If it does not exist, create it. (`~` is your user folder. Older Windsurf versions used `~/.codeium/windsurf/mcp_config.json`, not verified.)
 3. Paste this:
 
    ```json
@@ -40,7 +40,7 @@ In Windsurf, zn-gate works as an **MCP server**: the agent can ask it to check a
 | Removes secrets from shell output and file contents | **No** |
 | Blocks a secret pasted into the chat | **No** |
 
-Cascade has hooks: `pre_mcp_tool_use`, `pre_run_command` and `pre_read_code` can block an action (exit code 2), but its hooks cannot change a tool's output, and zn-gate does not install hooks for Cascade yet. So in Windsurf zn-gate does not block reads of your `.env` or credential files and does not remove secrets from shell output or file contents. If you need that today, use zn-gate with Claude Code, Codex CLI, Cursor or OpenCode: see [compat.md](../compat.md).
+Cascade has hooks: `pre_mcp_tool_use`, `pre_run_command` and `pre_read_code` can block an action (exit code 2), but its documentation does not describe a way for hooks to change a tool's output, and zn-gate does not install hooks for Cascade yet. So in Windsurf zn-gate does not block reads of your `.env` or credential files and does not remove secrets from shell output or file contents. If you need that today, use zn-gate with Claude Code, Codex CLI, Cursor or OpenCode: see [compat.md](../compat.md).
 
 ## Technical reference
 
@@ -70,7 +70,7 @@ To check the output of the other MCP servers you use in Windsurf, start each loc
 }
 ```
 
-Every result of that server is then checked for prompt injection and has secrets removed before the agent sees it. `zn-gate init`, which does this automatically for Claude Code, Cursor, Codex and OpenCode, does not edit Windsurf's settings.
+Every result of that server is then checked for prompt injection, and secrets zn-gate recognizes are removed, before the agent sees it. `zn-gate init`, which does this automatically for Claude Desktop, Claude Code, Cursor, Codex and OpenCode, does not edit Windsurf's settings.
 
 ## Windsurf documentation
 

@@ -25,7 +25,7 @@ Set up zn-gate in VS Code with GitHub Copilot agent mode in two minutes: add it 
    ```
 
    If the file already has a `"servers"` section, add only the `"zn-gate": {...}` part inside it.
-4. Save the file. VS Code shows a **Start** button above the `zn-gate` entry: click it.
+4. Save the file, then click **Start** in the small links shown above the `zn-gate` entry (or run **MCP: List Servers** from the Command Palette).
 
 Status: these steps follow VS Code's documentation; not yet verified by us in VS Code.
 
@@ -47,7 +47,7 @@ VS Code has agent hooks in preview (`PreToolUse`, `PostToolUse` and others, in `
 
 ### Where the configuration lives
 
-User: **MCP: Open User Configuration**. One project: `.vscode/mcp.json` (top-level key `servers`).
+User: **MCP: Open User Configuration**. One project: `.mcp.json` at the project root (top-level key `mcpServers`), which VS Code now recommends; `.vscode/mcp.json` (top-level key `servers`) still works.
 
 ### Check the output of your other MCP servers
 
@@ -72,7 +72,7 @@ To check the output of the other MCP servers you use in VS Code, start each loca
 }
 ```
 
-Every result of that server is then checked for prompt injection and has secrets removed before the agent sees it. `zn-gate init`, which does this automatically for Claude Code, Cursor, Codex and OpenCode, does not edit VS Code's settings.
+Every result of that server is then checked for prompt injection, and secrets zn-gate recognizes are removed, before the agent sees it. `zn-gate init`, which does this automatically for Claude Desktop, Claude Code, Cursor, Codex and OpenCode, does not edit VS Code's settings.
 
 ## VS Code documentation
 

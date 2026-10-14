@@ -72,7 +72,7 @@ To check the output of the other MCP servers you use in Zed, start each local se
 }
 ```
 
-Every result of that server is then checked for prompt injection and has secrets removed before the agent sees it. `zn-gate init`, which does this automatically for Claude Code, Cursor, Codex and OpenCode, does not edit Zed's settings.
+Every result of that server is then checked for prompt injection, and secrets zn-gate recognizes are removed, before the agent sees it. `zn-gate init`, which does this automatically for Claude Desktop, Claude Code, Cursor, Codex and OpenCode, does not edit Zed's settings.
 
 ## Zed documentation
 

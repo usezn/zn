@@ -5,7 +5,7 @@ Set up zn-gate in Google Antigravity in two minutes: add it as an MCP server, an
 ## Quick start (no coding needed)
 
 1. **Check that Node.js is installed.** Open a terminal (in most editors: menu **Terminal → New Terminal**; or your computer's Terminal app), type `node --version` and press Enter. If you see a version number (18 or later), go on. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/) and restart Antigravity.
-2. Open the file `~/.gemini/config/mcp_config.json` in your home folder (all projects), or `.agents/mcp_config.json` inside one project. If it does not exist, create it.
+2. At the top of the agent panel, open the **…** menu → **MCP Servers** → **Manage MCP Servers** → **View raw config**. (This is the file `~/.gemini/config/mcp_config.json`, where `~` is your user folder, for example `C:\Users\you` on Windows.)
 3. Paste this:
 
    ```json
@@ -46,7 +46,7 @@ Antigravity has hooks (`PreToolUse`, `PostToolUse` and others, in `.agents/hooks
 
 ### Where the configuration lives
 
-All projects: `~/.gemini/config/mcp_config.json`. One project: `.agents/mcp_config.json`.
+All projects: `~/.gemini/config/mcp_config.json`. One project: `.agents/mcp_config.json`. `zn-gate init` does not find this file yet, so wrap servers by hand as below.
 
 ### Check the output of your other MCP servers
 
@@ -70,7 +70,7 @@ To check the output of the other MCP servers you use in Antigravity, start each 
 }
 ```
 
-Every result of that server is then checked for prompt injection and has secrets removed before the agent sees it. `zn-gate init`, which does this automatically for Claude Code, Cursor, Codex and OpenCode, does not edit Antigravity's settings.
+Every result of that server is then checked for prompt injection, and secrets zn-gate recognizes are removed, before the agent sees it. `zn-gate init`, which does this automatically for Claude Desktop, Claude Code, Cursor, Codex and OpenCode, does not edit Antigravity's settings.
 
 ## Antigravity documentation
 

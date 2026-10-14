@@ -4,7 +4,7 @@ Set up zn-gate in Cline in two minutes: add it as an MCP server, and what zn-gat
 
 ## Quick start (no coding needed)
 
-1. **Check that Node.js is installed.** Open a terminal (in most editors: menu **Terminal → New Terminal**; or your computer's Terminal app), type `node --version` and press Enter. If you see a version number (18 or later), go on. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/) and restart Cline.
+1. **Check that Node.js is installed.** Open a terminal (in most editors: menu **Terminal → New Terminal**; or your computer's Terminal app), type `node --version` and press Enter. If you see a version number (18 or later), go on. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/) and restart VS Code (or your editor).
 2. In the Cline panel, click the **MCP Servers** icon, open the **Configure** tab and click **Configure MCP Servers**. Cline opens its settings file.
 3. Paste this:
 
@@ -72,7 +72,7 @@ To check the output of the other MCP servers you use in Cline, start each local 
 }
 ```
 
-Every result of that server is then checked for prompt injection and has secrets removed before the agent sees it. `zn-gate init`, which does this automatically for Claude Code, Cursor, Codex and OpenCode, does not edit Cline's settings.
+Every result of that server is then checked for prompt injection, and secrets zn-gate recognizes are removed, before the agent sees it. `zn-gate init`, which does this automatically for Claude Desktop, Claude Code, Cursor, Codex and OpenCode, does not edit Cline's settings.
 
 ## Cline documentation
 

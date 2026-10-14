@@ -4,7 +4,7 @@ Set up zn-gate in Continue in two minutes: add it as an MCP server, and what zn-
 
 ## Quick start (no coding needed)
 
-1. **Check that Node.js is installed.** Open a terminal (in most editors: menu **Terminal → New Terminal**; or your computer's Terminal app), type `node --version` and press Enter. If you see a version number (18 or later), go on. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/) and restart Continue.
+1. **Check that Node.js is installed.** Open a terminal (in most editors: menu **Terminal → New Terminal**; or your computer's Terminal app), type `node --version` and press Enter. If you see a version number (18 or later), go on. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/) and restart VS Code (or your editor).
 2. Open your Continue configuration file (`config.yaml`; in the Continue panel, open the settings and choose to edit the configuration).
 3. Paste this:
 
@@ -17,7 +17,7 @@ Set up zn-gate in Continue in two minutes: add it as an MCP server, and what zn-
    ```
 
    If the file already has an `mcpServers:` list, add only the `- name: zn-gate` entry to it.
-4. Save the file.
+4. Save the file. zn-gate's tools are available in Continue's **Agent** mode only.
 
 Status: these steps follow Continue's documentation; not yet verified by us in Continue.
 
@@ -39,7 +39,7 @@ We found no agent hooks in Continue's documentation, so zn-gate can only work as
 
 ### Where the configuration lives
 
-Your Continue `config.yaml` (`mcpServers` is a list), or a file in `.continue/mcpServers/` in your project.
+Your Continue `config.yaml` (`mcpServers` is a list), or a file in `.continue/mcpServers/` in your project (a standalone file there also needs `name`, `version` and `schema` at the top).
 
 ### Check the output of your other MCP servers
 
@@ -53,7 +53,7 @@ mcpServers:
     args: ["-y", "zn-gate", "shield", "--", "uvx", "mcp-server-fetch"]
 ```
 
-Every result of that server is then checked for prompt injection and has secrets removed before the agent sees it. `zn-gate init`, which does this automatically for Claude Code, Cursor, Codex and OpenCode, does not edit Continue's settings.
+Every result of that server is then checked for prompt injection, and secrets zn-gate recognizes are removed, before the agent sees it. `zn-gate init`, which does this automatically for Claude Desktop, Claude Code, Cursor, Codex and OpenCode, does not edit Continue's settings.
 
 ## Continue documentation
 

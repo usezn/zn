@@ -4,8 +4,8 @@ Set up zn-gate in JetBrains AI Assistant (IntelliJ IDEA, PyCharm and other JetBr
 
 ## Quick start (no coding needed)
 
-1. **Check that Node.js is installed.** Open a terminal (in most editors: menu **Terminal → New Terminal**; or your computer's Terminal app), type `node --version` and press Enter. If you see a version number (18 or later), go on. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/) and restart JetBrains AI Assistant.
-2. Open **Settings → Tools → AI Assistant → Model Context Protocol (MCP)** and click **New MCP Server**. Choose to paste the configuration as JSON.
+1. **Check that Node.js is installed.** Open a terminal (in most editors: menu **Terminal → New Terminal**; or your computer's Terminal app), type `node --version` and press Enter. If you see a version number (18 or later), go on. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/) and restart your JetBrains IDE.
+2. Open **Settings → Tools → AI Assistant → Model Context Protocol (MCP)**, click **Add** (+), and paste the JSON below into the New MCP Server dialog.
 3. Paste this:
 
    ```json
@@ -70,7 +70,7 @@ To check the output of the other MCP servers you use in JetBrains AI Assistant, 
 }
 ```
 
-Every result of that server is then checked for prompt injection and has secrets removed before the agent sees it. `zn-gate init`, which does this automatically for Claude Code, Cursor, Codex and OpenCode, does not edit JetBrains AI Assistant's settings.
+Every result of that server is then checked for prompt injection, and secrets zn-gate recognizes are removed, before the agent sees it. `zn-gate init`, which does this automatically for Claude Desktop, Claude Code, Cursor, Codex and OpenCode, does not edit JetBrains AI Assistant's settings.
 
 ## JetBrains AI Assistant documentation
 
