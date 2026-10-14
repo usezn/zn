@@ -891,8 +891,12 @@ def _pv_url_password_not_secret(pw: str, prefix: str) -> bool:
     user = prefix[cut + 3:-1]
     if len(pw) < 6 or _pv_placeholder(pw) or pw == user or pw.lower() == scheme:
         return True
-    # A reference ($NAME, %NAME%, <name>, {name}) in the user or the password is not a literal secret.
-    if user[:1] in ("$", "%", "<", "{") or pw[:1] in ("$", "%", "<", "{"):
+    # A user that is a shell reference ("https://$TOKEN:x-oauth-basic@host") is a template.
+    # A password that is only a reference ($NAME, ${NAME}, %NAME%, <name>, {{name}}) is not a
+    # literal secret; one that merely starts with one of those characters still is.
+    if user[:1] in ("$", "%", "<", "{"):
+        return True
+    if re.fullmatch(r'\$\{?\w+\}?|%\w+%|<[^<>\s]+>|\{\{?\s*[\w.]+\s*\}?\}', pw):
         return True
     if re.fullmatch(r'[A-Za-z]{1,8}', pw) or re.fullmatch(r'(?:%[0-9A-Fa-f]{2}){1,2}', pw):
         return True
@@ -1147,6 +1151,21 @@ def redact_secrets(text: str) -> Tuple[str, List[Dict[str, Any]]]:
 # is kept (an identifier, not a credential); a 64-hex digest is masked.
 _TOKEN_RUN_RE = re.compile(r'[A-Za-z0-9_\-+/=]{24,}')
 _UUID_FULL_RE = re.compile(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}')
+_UUID_RE = re.compile(r'(?<![0-9A-Za-z])[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?![0-9A-Za-z])')
+_RUN_SEP_RE = re.compile(r'[-_/]+')
+# One part of an identifier: a word (lower, Capitalized or camelCase) with an
+# optional short number, or a short number.
+_WORDY_PART_RE = re.compile(r'(?:[A-Z]+\d{0,4}|[A-Za-z][a-z]*(?:[A-Z][a-z]+)*[A-Z]?\d{0,4}|\d{1,4})?')
+
+
+def _wordy_run(run: str) -> bool:
+    """True for names, paths and identifiers such as test_case_v2, MAX_SIZE_2048,
+    ../components/Header2/indexFile or user-<uuid>: every part between - _ /
+    is a word or a short number."""
+    if _RUN_SEP_RE.search(run) is None:
+        return False
+    parts = _RUN_SEP_RE.split(_UUID_RE.sub("uuid", run))
+    return all(_WORDY_PART_RE.fullmatch(p) for p in parts)
 
 
 def mask_token_runs(text: str) -> str:
@@ -1158,7 +1177,7 @@ def mask_token_runs(text: str) -> str:
         run = m.group(0)
         if _TOKEN_ALPHA_RE.search(run) is None or _DIGIT_RE.search(run) is None:
             return run
-        if _UUID_FULL_RE.fullmatch(run):
+        if _UUID_FULL_RE.fullmatch(run) or _wordy_run(run):
             return run
         return "[REDACTED_TOKEN]"
 

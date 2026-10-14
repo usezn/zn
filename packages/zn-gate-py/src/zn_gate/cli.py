@@ -203,7 +203,7 @@ def _scan_file(file_path: Path) -> List[Dict[str, Any]]:
         # Snippets are printed to the terminal and, with --format github, to CI
         # logs: always show the line with any detected secret redacted.
         redacted, findings = redact_secrets(line)
-        snippet = "[REDACTED_PRIVATE_KEY]" if i in key_lines else mask_token_runs(redacted.strip()[:100])
+        snippet = "[REDACTED_PRIVATE_KEY]" if i in key_lines else mask_token_runs(redacted.strip())[:100]
         # A scan reports every match, including the rules that only warn by default.
         res = evaluate(line, strict=True)
         if not res.allowed:

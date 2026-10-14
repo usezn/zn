@@ -22,15 +22,25 @@ function ensureZnDir(filePath = EVIDENCE_FILE) {
   }
 }
 
-/** Restricts an existing ledger that others can read or write to 0600 (POSIX only). */
-function restrictLedgerMode(filePath) {
-  if (process.platform === 'win32') return;
+/**
+ * Appends one line to the ledger. The file is created with mode 0600, and an
+ * existing ledger that others can read or write is restricted to 0600 through
+ * the open descriptor before the line is written (POSIX only), so a symlink
+ * swapped in between cannot redirect the chmod.
+ */
+function appendLedgerLine(filePath, line) {
+  const fd = fs.openSync(filePath, 'a', LEDGER_FILE_MODE);
   try {
-    if ((fs.statSync(filePath).mode & 0o077) !== 0) {
-      fs.chmodSync(filePath, LEDGER_FILE_MODE);
+    if (process.platform !== 'win32') {
+      try {
+        if ((fs.fstatSync(fd).mode & 0o077) !== 0) fs.fchmodSync(fd, LEDGER_FILE_MODE);
+      } catch {
+        // Best effort: a file system without POSIX modes keeps its own.
+      }
     }
-  } catch {
-    // Best effort: the record is already written.
+    fs.writeSync(fd, line, null, 'utf8');
+  } finally {
+    fs.closeSync(fd);
   }
 }
 
@@ -102,8 +112,7 @@ function logEvidence(event, filePath = EVIDENCE_FILE) {
 
   const finalRecord = { ...baseRecord, record_hash: recordHash };
 
-  fs.appendFileSync(filePath, JSON.stringify(finalRecord) + '\n', { encoding: 'utf8', mode: LEDGER_FILE_MODE });
-  restrictLedgerMode(filePath);
+  appendLedgerLine(filePath, JSON.stringify(finalRecord) + '\n');
   return finalRecord;
 }
 
