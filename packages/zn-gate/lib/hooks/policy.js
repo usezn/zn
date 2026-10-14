@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-14.6';
+const POLICY_RULES_VERSION = '2026-10-14.7';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -255,6 +255,27 @@ function expandBraces(s, limit = 64) {
 }
 
 /** Shell glob to a regular expression over a whole path (* and ? stop at a separator). */
+/**
+ * A glob bracket expression ("[abc]", "[a-z]", "[!.]") as a regular
+ * expression that always compiles: every character is written as a \uXXXX
+ * escape (so "\", "]" and "^" are literal), a range written backwards matches
+ * nothing (as in the shell), and a negated class never matches "/".
+ */
+function globClassSource(body) {
+  const esc = (ch) => '\\u' + ch.charCodeAt(0).toString(16).padStart(4, '0');
+  let neg = false;
+  if (body[0] === '!' || body[0] === '^') { neg = true; body = body.slice(1); }
+  let out = '';
+  for (let k = 0; k < body.length; k++) {
+    if (body[k + 1] === '-' && k + 2 < body.length) {
+      if (body[k] <= body[k + 2]) out += esc(body[k]) + '-' + esc(body[k + 2]);
+      k += 2;
+    } else out += esc(body[k]);
+  }
+  if (neg) return '[^/' + out + ']';
+  return out ? '[' + out + ']' : '(?!)';
+}
+
 function globRegExp(pattern) {
   let re = '';
   for (let i = 0; i < pattern.length; i++) {
@@ -263,7 +284,7 @@ function globRegExp(pattern) {
     else if (c === '?') re += '[^/]';
     else if (c === '[' && pattern.indexOf(']', i + 1) > i) {
       const j = pattern.indexOf(']', i + 1);
-      re += '[' + pattern.slice(i + 1, j).replace(/^!/, '^') + ']';
+      re += globClassSource(pattern.slice(i + 1, j));
       i = j;
     } else re += c.replace(/[.+^${}()|\\[\]]/g, '\\$&');
   }
@@ -729,6 +750,7 @@ module.exports = {
   classifyPath,
   classifyWord,
   globClass,
+  globRegExp,
   expandBraces,
   readDenial,
   writeDenial,
