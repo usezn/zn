@@ -57,8 +57,18 @@ function startMcpShield(command, args, options = {}) {
   // Tools removed from the list because they changed since they were approved (block mode).
   const unpinnedTools = new Set();
   const pinMode = pins.mode(options);
-  // Set when this session pinned the server for the first time (later pages are pinned too).
+  // Set while the first list of a new server is being read, page by page: those
+  // pages are pinned. Any later list is compared with the pins.
   const pinSession = {};
+  if (pinMode !== 'off' && pins.pinsMoved()) {
+    process.stderr.write(`[zn-shield] MCP tool pins are kept in ${pins.pinsDir()}, not in your own ~/.zn (set by HOME or ZN_HOME).\n`);
+  }
+  // Server text that looks like a zn-gate notice (also with invisible or fullwidth characters) is marked as server text.
+  const neutral = (text) => {
+    if (typeof text !== 'string') return text;
+    const n = text.normalize('NFKC').replace(/\p{Cf}/gu, '');
+    return /\[\s*zn-(gate|shield)/i.test(n) ? n.replace(/\[(\s*)zn-(gate|shield)/gi, '[server text: zn-$2') : text;
+  };
   const refuseCall = (callId, toolName) => {
     process.stdout.write(JSON.stringify({
       jsonrpc: '2.0',
@@ -103,6 +113,7 @@ function startMcpShield(command, args, options = {}) {
       log(`Tracking tools/list request [${callId}] for tool poisoning inspection`);
       trackPendingCall(callId, {
         method: 'tools/list',
+        cursor: msg.params && msg.params.cursor,
         startTime: Date.now(),
       });
     }
@@ -220,16 +231,28 @@ function startMcpShield(command, args, options = {}) {
         if (Array.isArray(tools)) {
           // Text from the server cannot pass for a zn-gate notice.
           for (const t of tools) {
-            if (t && typeof t.description === 'string') t.description = t.description.replace(/\[(\s*)zn-(gate|shield)/gi, '[server text: zn-$2');
+            if (!t || typeof t !== 'object') continue;
+            t.description = neutral(t.description);
+            t.title = neutral(t.title);
+            if (t.annotations && typeof t.annotations === 'object') t.annotations.title = neutral(t.annotations.title);
+            const props = t.inputSchema && t.inputSchema.properties;
+            if (props && typeof props === 'object') {
+              for (const def of Object.values(props)) if (def && typeof def === 'object') def.description = neutral(def.description);
+            }
           }
         }
         if (Array.isArray(tools) && pinMode !== 'off') {
           let result = null;
+          // A new list (not the next page of the first one) ends the first-run pinning.
+          if (pinSession.listed && !pending.cursor) pinSession.first = false;
           try {
             result = pins.check(command, args, tools, pinSession);
           } catch (err) {
-            process.stderr.write(`[zn-shield] Could not check the tool pins (${err.message}); every tool of this list is treated as unapproved.\n`);
+            process.stderr.write(`[zn-shield] Could not read or write the MCP tool pins in ${pins.pinsDir()} (${err.message}). ` +
+              'Every tool of this list is treated as unapproved until the pins can be used again; approving will not help before that.\n');
           }
+          pinSession.listed = true;
+          if (!msg.result.nextCursor) pinSession.first = false;
           const key = pins.serverKey(command, args);
           const flagged = result ? result.flagged : new Set(tools.filter((t) => t && typeof t.name === 'string').map((t) => t.name));
           const invalid = result ? result.invalid : 0;
@@ -239,9 +262,21 @@ function startMcpShield(command, args, options = {}) {
           // The approved state of the tools of this page, for later calls.
           for (const t of tools) if (t && typeof t.name === 'string') (flagged.has(t.name) ? unpinnedTools.add(t.name) : unpinnedTools.delete(t.name));
           if (flagged.size || invalid) {
-            const shown = [...flagged].slice(0, 20).map(pins.displayName).join(', ') + (flagged.size > 20 ? ', ...' : '') + (invalid ? (flagged.size ? ', ' : '') + invalid + ' tool(s) without a valid name' : '');
-            process.stderr.write(`[zn-shield TOOLS CHANGED] ${shown}: new, changed, duplicated or unnamed since the tools of this server were approved` +
-              `${pinMode === 'block' && !options.shadow ? ', and not available' : ''}. Review them, then run in your own terminal: zn-gate pins approve ${key}\n`);
+            const counts = Object.create(null);
+            for (const t of tools) if (t && typeof t.name === 'string') counts[t.name] = (counts[t.name] || 0) + 1;
+            const dup = [...flagged].filter((n) => counts[n] > 1);
+            const changed = [...flagged].filter((n) => !(counts[n] > 1));
+            const list = (names) => names.slice(0, 20).map(pins.displayName).join(', ') + (names.length > 20 ? ', ...' : '');
+            const unavailable = pinMode === 'block' && !options.shadow ? ', and not available' : '';
+            if (changed.length && result) {
+              process.stderr.write(`[zn-shield TOOLS CHANGED] ${list(changed)}: new or changed since the tools of this server were approved${unavailable}. ` +
+                `Review them, then run in your own terminal: zn-gate pins approve ${key}\n`);
+            }
+            if (dup.length || invalid) {
+              process.stderr.write(`[zn-shield TOOLS REFUSED] The server lists ${dup.length ? 'more than one tool named ' + list(dup) : ''}${dup.length && invalid ? ' and ' : ''}` +
+                `${invalid ? invalid + ' tool(s) without a valid name' : ''}${unavailable}. These cannot be approved; the server has to fix its tool list.\n`);
+            }
+            const shown = list([...flagged]) + (invalid ? (flagged.size ? ', ' : '') + invalid + ' unnamed' : '');
             logEvidence({
               agent: options.agent || 'mcp-server',
               phase: 'tool-pin',

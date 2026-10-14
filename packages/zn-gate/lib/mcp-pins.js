@@ -38,37 +38,52 @@ const path = require('path');
 const MODES = ['off', 'warn', 'block']; // weakest to strictest
 const MAX_NAME = 80;
 
-/** ~/.zn, or ZN_HOME when it is inside the home directory (a folder outside it is not protected by the hooks). */
+/** The account's real home folder, from the system, not from $HOME (which an MCP server's environment can set). */
+function accountHome() {
+  try {
+    const h = os.userInfo().homedir;
+    if (h) return h;
+  } catch (_) { /* no passwd entry */ }
+  return os.homedir();
+}
+
+/** ~/.zn as the environment names it ($HOME, ZN_HOME): where pins are kept. */
 function znHome() {
-  const def = path.join(os.homedir(), '.zn');
-  if (!process.env.ZN_HOME) return def;
-  const z = path.resolve(process.env.ZN_HOME);
-  const rel = path.relative(os.homedir(), z);
-  if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) return z;
-  return def;
+  if (process.env.ZN_HOME) return path.resolve(process.env.ZN_HOME);
+  return path.join(os.homedir(), '.zn');
 }
 
 function pinsDir() {
   return path.join(znHome(), 'mcp-pins');
 }
 
+/** True when pins are kept somewhere else than the account's own ~/.zn (only tests and unusual setups do that). */
+function pinsMoved() {
+  return path.resolve(znHome()) !== path.resolve(path.join(accountHome(), '.zn'));
+}
+
 function modeName(m) {
   return typeof m === 'string' && MODES.includes(m.trim().toLowerCase()) ? m.trim().toLowerCase() : null;
 }
 
+function configMode(dir) {
+  try {
+    return modeName(JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8')).mcpPinning);
+  } catch (_) {
+    return null;
+  }
+}
+
 /**
- * The mode: "mcpPinning" in ~/.zn/config.json (warn when it is not set), raised
- * by ZN_MCP_PINNING or the shield options when they are stricter. Only the
- * user's config can lower it, since an MCP server's environment is written in
- * project files an agent can edit.
+ * The mode: "mcpPinning" in the account's ~/.zn/config.json (warn when it is
+ * not set), raised by a config in $HOME/ZN_HOME, ZN_MCP_PINNING or the shield
+ * options when they are stricter. Only the account's own config can lower it,
+ * since an MCP server's environment is written in project files an agent can
+ * edit.
  */
 function mode(options = {}) {
-  let fromConfig;
-  try {
-    fromConfig = JSON.parse(fs.readFileSync(path.join(znHome(), 'config.json'), 'utf8')).mcpPinning;
-  } catch (_) { /* no config */ }
-  let best = modeName(fromConfig) || 'warn';
-  for (const m of [options.pinning, process.env.ZN_MCP_PINNING].map(modeName)) {
+  let best = configMode(path.join(accountHome(), '.zn')) || 'warn';
+  for (const m of [configMode(znHome()), modeName(options.pinning), modeName(process.env.ZN_MCP_PINNING)]) {
     if (m && MODES.indexOf(m) > MODES.indexOf(best)) best = m;
   }
   return best;
@@ -123,18 +138,33 @@ function fileOf(key) {
   return path.join(pinsDir(), key + '.json');
 }
 
-/** A server's pins, null when there are none, or { corrupt: true } when the file cannot be read as pins. */
+/** A map without a prototype: a tool named __proto__ or constructor is just a name. */
+function dict(from) {
+  const d = Object.create(null);
+  if (from && typeof from === 'object') for (const k of Object.keys(from)) d[k] = from[k];
+  return d;
+}
+
+/**
+ * A server's pins, null when there are none, or { corrupt: true } when the file
+ * is not valid pins. A read error (permissions, too many open files) is thrown,
+ * so the shield treats the list as unapproved without discarding the pins.
+ */
 function loadServer(key) {
   let raw;
   try {
     raw = fs.readFileSync(fileOf(key), 'utf8');
   } catch (err) {
     if (err.code === 'ENOENT') return null;
-    return { corrupt: true };
+    throw err;
   }
   try {
     const s = JSON.parse(raw);
-    if (s && typeof s === 'object' && s.tools && typeof s.tools === 'object' && s.pending && typeof s.pending === 'object') return s;
+    if (s && typeof s === 'object' && s.tools && typeof s.tools === 'object' && s.pending && typeof s.pending === 'object') {
+      s.tools = dict(s.tools);
+      s.pending = dict(s.pending);
+      return s;
+    }
   } catch (_) { /* below */ }
   return { corrupt: true };
 }
@@ -146,7 +176,16 @@ function saveServer(key, s) {
   const tmp = file + '.' + process.pid + '.' + crypto.randomBytes(4).toString('hex') + '.tmp';
   try {
     fs.writeFileSync(tmp, JSON.stringify(s, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
-    fs.renameSync(tmp, file);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        fs.renameSync(tmp, file);
+        break;
+      } catch (err) {
+        // Windows refuses to replace a file another process is reading; retry briefly.
+        if (attempt >= 4 || !['EPERM', 'EBUSY', 'EACCES'].includes(err.code)) throw err;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20 * (attempt + 1));
+      }
+    }
   } finally {
     try { fs.unlinkSync(tmp); } catch (_) { /* renamed */ }
   }
@@ -164,8 +203,8 @@ function check(command, args, tools, session = {}) {
   const now = new Date().toISOString();
   const flagged = new Set();
   let invalid = 0;
-  const current = {};
-  const counts = {};
+  const current = dict();
+  const counts = dict();
   for (const t of tools) {
     if (!t || typeof t !== 'object' || typeof t.name !== 'string' || !t.name) {
       invalid++;
@@ -184,11 +223,11 @@ function check(command, args, tools, session = {}) {
   if (s && s.corrupt) {
     // Never trust again silently: keep the bad file aside and treat every tool as unapproved.
     try { fs.renameSync(fileOf(key), fileOf(key) + '.corrupt-' + Date.now()); } catch (_) { /* gone */ }
-    s = { command: label(command, args), pinnedAt: null, tools: {}, pending: {}, corruptAt: now };
+    s = { command: label(command, args), pinnedAt: null, tools: dict(), pending: dict(), corruptAt: now };
     session.corrupt = true;
   }
   if (!s || session.first) {
-    const base = s || { command: label(command, args), pinnedAt: now, tools: {}, pending: {} };
+    const base = s || { command: label(command, args), pinnedAt: now, tools: dict(), pending: dict() };
     Object.assign(base.tools, current);
     saveServer(key, base);
     if (!s) session.first = true;
@@ -213,8 +252,8 @@ function check(command, args, tools, session = {}) {
 /** The approved names of a server, or null when the server has no pins. */
 function approvedTools(command, args) {
   const s = loadServer(serverKey(command, args));
-  if (!s || s.corrupt) return s && s.corrupt ? {} : null;
-  const ok = {};
+  if (!s || s.corrupt) return s && s.corrupt ? dict() : null;
+  const ok = dict();
   for (const name of Object.keys(s.tools)) if (!s.pending[name]) ok[name] = true;
   return ok;
 }
@@ -254,4 +293,4 @@ function list() {
   });
 }
 
-module.exports = { mode, check, approve, approvedTools, list, toolHash, serverKey, label, displayName, pinsDir, canonical };
+module.exports = { mode, check, approve, approvedTools, list, toolHash, serverKey, label, displayName, pinsDir, pinsMoved, canonical };
