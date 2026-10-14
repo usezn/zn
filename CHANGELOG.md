@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `zn init` looks for the Antigravity MCP settings where Antigravity keeps them: `~/.gemini/config/mcp_config.json` when it exists, otherwise `~/.gemini/antigravity/mcp_config.json` (it looked for `~/.gemini/antigravity/mcp.json`, so Antigravity was never found).
+- The threat model said that `zn run` keeps interpreter start-up variables such as `NODE_OPTIONS`; since 1.5.1 it removes them whenever it injects secret values.
+
 ## [1.6.0] - 2026-10-14
 
 **If you use zn-gate 1.5.x, update.** In 1.5.x, `zn-gate scan` (Node.js) printed `PASSED` for a folder whose `.env` or other files held API keys, because it only reported prompt-injection text. 1.6.0 reports exposed credentials too (see 1.6.0-beta.1 below). After updating, run `zn-gate scan` again on your projects. This release also includes everything in 1.6.0-beta.1.

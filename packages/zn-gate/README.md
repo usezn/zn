@@ -66,7 +66,8 @@ npx -y zn-gate init --revert    # restore the latest backup
 | Cursor | `~/.cursor/mcp.json` | `mcpServers` JSON |
 | Codex CLI | `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`) | `[mcp_servers.<name>]` TOML |
 | OpenCode | `~/.config/opencode/opencode.json` | `mcp` JSON, `command` array |
-| Antigravity, Hermes / PiAgent | `~/.gemini/antigravity/mcp.json`, `~/.hermes/mcp.json` | `mcpServers` JSON (paths not verified against official docs) |
+| Antigravity | `~/.gemini/config/mcp_config.json` when it exists, otherwise `~/.gemini/antigravity/mcp_config.json` | `mcpServers` JSON |
+| Hermes / PiAgent | `~/.hermes/mcp.json` | `mcpServers` JSON (path not verified against official docs) |
 
 Remote (URL) servers are left as they are. `init` never rewrites a file it cannot round-trip safely: OpenCode JSONC files with comments and Codex entries with multi-line `args` are reported as "wrap manually".
 
