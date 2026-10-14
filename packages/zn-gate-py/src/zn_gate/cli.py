@@ -349,7 +349,10 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 def cmd_stats(args) -> int:
     from . import stats as _stats
-    days = args.days if isinstance(args.days, int) and 1 <= args.days <= _stats.KEEP_DAYS else 30
+    if not (isinstance(args.days, int) and 1 <= args.days <= _stats.KEEP_DAYS):
+        sys.stderr.write("zn-gate stats: --days must be between 1 and {}\n".format(_stats.KEEP_DAYS))
+        return 2
+    days = args.days
     s = _stats.summary(days=days)
     if args.json:
         print(json.dumps(s, indent=2))

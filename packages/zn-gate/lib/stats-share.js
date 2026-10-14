@@ -8,7 +8,7 @@
  * A report holds a random installation id (rotated by `share off` then `share on`), the day, the zn-gate
  * version, the OS, the Node.js major version, the agent and layer used most that day, and the number of
  * detections per secret type. Never values, prompts, paths, file names, repository names, hosts or emails.
- * The fields are exactly those of the published schema (usezn.com/schemas/telemetry.json).
+ * These are the only fields the server accepts (its /v1/telemetry schema).
  *
  * Settings live in ~/.zn/config.json under "stats": { "share": true, "install_id": "...", "sent_until": "YYYY-MM-DD" }.
  */
@@ -20,7 +20,8 @@ const crypto = require('crypto');
 const https = require('https');
 const stats = require('./stats');
 
-const ENDPOINT = process.env.ZN_STATS_ENDPOINT || 'https://api.usezn.com/v1/telemetry';
+const ENDPOINT = 'https://api.usezn.com/v1/telemetry';
+const MAX_TYPES = 100;
 const MAX_DAYS_BACK = 3;
 // Only known agent names are shared; anything else (a name passed on the command line, for example) is sent as "other".
 const KNOWN_AGENTS = new Set(['claude-code', 'codex', 'cursor', 'opencode', 'mcp-client', 'mcp-server']);
@@ -50,8 +51,9 @@ function setShare(on) {
   const cfg = readConfig();
   const prev = cfg.stats || {};
   // A new random id each time sharing is turned on: turning it off and on again unlinks old reports.
+  if (on && prev.share === true && prev.install_id) return status();
   cfg.stats = on
-    ? { ...prev, share: true, install_id: prev.share === true && prev.install_id ? prev.install_id : crypto.randomUUID(), sent_until: stats.today() }
+    ? { ...prev, share: true, install_id: crypto.randomUUID(), sent_until: stats.today() }
     : { ...prev, share: false, install_id: undefined };
   writeConfig(cfg);
   return status();
@@ -67,8 +69,8 @@ function version() {
 }
 
 /** The reports that sharing would send now: complete days after sent_until, within the last 3 days. */
-function pendingReports(now = new Date()) {
-  const st = status();
+function pendingReports(now = new Date(), { preview = false } = {}) {
+  const st = preview ? { share: true, install_id: '<random id>', sent_until: null } : status();
   if (!st.share || !st.install_id) return [];
   const data = stats.load();
   const today = stats.today(now);
@@ -90,7 +92,12 @@ function pendingReports(now = new Date()) {
       install_id: st.install_id, day, zn_gate_version: version(), os: osName(),
       node_major: Number(process.versions.node.split('.')[0]), agent, layer,
     };
-    if (Object.keys(detections).length) report.detections = detections;
+    const sorted = Object.entries(detections).sort((a, b) => b[1] - a[1]);
+    const kept = Object.fromEntries(sorted.slice(0, MAX_TYPES - 1));
+    const rest = sorted.slice(MAX_TYPES - 1).reduce((n, [, v]) => n + v, 0);
+    if (rest) kept.OTHER = (kept.OTHER || 0) + rest;
+    for (const k of Object.keys(kept)) kept[k] = Math.min(kept[k], 100000000);
+    if (Object.keys(kept).length) report.detections = kept;
     out.push(report);
   }
   return out;

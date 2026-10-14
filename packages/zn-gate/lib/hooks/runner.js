@@ -374,7 +374,7 @@ async function decidePrompt(ev, d, agentId) {
     : String(secrets[0].type || 'MY_SECRET').toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/_\d+$/, '') || 'MY_SECRET';
   return {
     decision: 'deny',
-    stats: { detections: Object.fromEntries(kinds.map((k) => [k, 1])) },
+    stats: { detections: Object.fromEntries([...new Set(secrets.map((s) => s.type || 'SECRET'))].map((k) => [k, 1])) },
     message: 'zn: this prompt was not sent because it contains a secret (' + kinds.join(', ') + '). ' +
       'Store it locally instead: run `zn secret set ' + suggestion + '` in your terminal, then refer to it as __ZN_' +
       suggestion + '__ in your prompt.',
@@ -402,8 +402,8 @@ function failClosed(ev, err, msg) {
         : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, shape(x)])) : v);
     return { decision: 'allow', updatedOutput: shape(ev.output), message: msg };
   }
-  if (ev && ev.event === 'pre_tool') return { decision: 'deny', message: msg + ' (fail-closed)' };
-  return { decision: 'deny', message: msg + ' (fail-closed)', userMessage: msg };
+  if (ev && ev.event === 'pre_tool') return { decision: 'deny', failClosed: true, message: msg + ' (fail-closed)' };
+  return { decision: 'deny', failClosed: true, message: msg + ' (fail-closed)', userMessage: msg };
 }
 
 /**
@@ -427,20 +427,29 @@ async function handle(adapter, rawEvent, opts = {}) {
     decision = failDecision(ev, err, mode);
   }
   const output = adapter.respond({ ...decision, event: ev });
-  countHook(adapter.id, ev, decision);
+  countHook(adapter.id, ev, decision, opts);
   return { output, stderr: decision.warning || null, decision };
 }
 
-/** Local counts for `zn-gate stats` (best effort; never changes the decision). */
-function countHook(agentId, ev, decision) {
-  if (!ev || !ev.event || !decision) return;
-  const extra = decision.stats || {};
-  require('../stats').record({
-    layer: 'hook', agent: agentId, checked: 1,
-    blocked: decision.decision === 'deny' ? 1 : 0,
-    redacted: extra.redacted || 0,
-    detections: extra.detections || {},
-  });
+/**
+ * Local counts for `zn-gate stats` (best effort; never changes the decision). A denial because zn itself
+ * failed (fail-closed) is not counted as a block; asks and fail-open passes count as warnings.
+ */
+function countHook(agentId, ev, decision, opts = {}) {
+  try {
+    if (!ev || !ev.event || !decision) return;
+    const extra = decision.stats || {};
+    const file = opts.home ? path.join(opts.home, '.zn', 'stats.json') : undefined;
+    require('../stats').record({
+      layer: 'hook', agent: agentId, checked: 1,
+      blocked: decision.decision === 'deny' && !decision.failClosed ? 1 : 0,
+      warned: decision.decision === 'ask' || decision.failOpen ? 1 : 0,
+      redacted: extra.redacted || 0,
+      detections: extra.detections || {},
+    }, file ? { file } : {});
+  } catch {
+    /* counting must never affect a hook */
+  }
 }
 
 function readStdin() {

@@ -22,7 +22,7 @@ def test_summary_counts_window_and_types(tmp_path, monkeypatch):
     assert s["detections"] == {"AWS_KEY": 2, "GITHUB_TOKEN": 1}
     assert s["since"] == "2026-10-13"
     text = stats.render(s)
-    assert "4 checks" in text and "AWS_KEY 2" in text and "codex (agent hooks)" in text
+    assert "4 events checked" in text and "AWS_KEY 2" in text and "codex (agent hooks)" in text
     assert "stay on this machine" in text
 
 

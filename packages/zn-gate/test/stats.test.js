@@ -15,7 +15,7 @@ const cli = require('../lib/stats-cli');
 
 test.after(() => fs.rmSync(home, { recursive: true, force: true }));
 const reset = () => { for (const f of fs.readdirSync(home)) fs.rmSync(path.join(home, f), { force: true }); };
-const capture = async (args) => { let out = ''; const code = await cli.run(args, (s) => { out += s; }); return { code, out }; };
+const capture = async (args, confirm = async () => false) => { let out = ''; const code = await cli.run(args, (s) => { out += s; }, { confirm }); return { code, out }; };
 
 test('records counts per day, layer and agent; never content', () => {
   reset();
@@ -57,7 +57,7 @@ test('the CLI shows the counts and says nothing is shared', async () => {
   stats.record({ layer: 'hook', agent: 'cursor', checked: 4, blocked: 1, redacted: 3, detections: { AWS_KEY: 3 } });
   const { code, out } = await capture([]);
   assert.equal(code, 0);
-  assert.match(out, /4 checks/);
+  assert.match(out, /4 events checked/);
   assert.match(out, /1 blocked/);
   assert.match(out, /3 secret values replaced/);
   assert.match(out, /AWS_KEY 3/);
@@ -102,8 +102,61 @@ test('share subcommands explain what is sent', async () => {
   reset();
   assert.match((await capture(['share', 'status'])).out, /off \(the default\)/);
   const show = (await capture(['share', 'show'])).out;
-  assert.match(show, /Never secret values, prompts, file names, paths/);
-  assert.match((await capture(['share', 'on'])).out, /is on/);
+  assert.match(show, /Never secret values, prompts, variable or secret names, file names, paths/);
+  const refused = await capture(['share', 'on']);
+  assert.equal(refused.code, 1, 'without a yes in a terminal, sharing stays off');
+  assert.match(refused.out, /Sharing stays off/);
+  assert.equal(share.status().share, false);
+  assert.match((await capture(['share', 'on'], async () => true)).out, /is on/);
   assert.match((await capture(['share', 'off'])).out, /Sharing is off/);
   assert.equal((await capture(['share', 'bogus'])).code, 2);
+});
+
+test('only built-in detector types are kept: names a user chose never are', () => {
+  assert.equal(stats.normType('ACME_BIGBANK_PROD_TOKEN'), 'OTHER', 'a variable name typed in a prompt');
+  assert.equal(stats.normType('ENV_ACME_DB_PASSWORD'), 'ENV_VALUE', 'a value matched by its variable name');
+  assert.equal(stats.normType('aws_access_key'), 'AWS_KEY', 'MCP rule id mapped to the scrubber type');
+  assert.equal(stats.normType('GITHUB_TOKEN'), 'GITHUB_TOKEN');
+  assert.equal(stats.normType('email'), 'EMAIL');
+  reset();
+  stats.record({ layer: 'hook', agent: 'claude-code', checked: 1, detections: { ACME_BIGBANK_PROD_TOKEN: 1, ENV_MY_SECRET: 2, AWS_KEY: 1 } });
+  const day = Object.values(stats.load().days)[0];
+  assert.deepEqual(day['hook:claude-code'].detections, { OTHER: 1, ENV_VALUE: 2, AWS_KEY: 1 });
+});
+
+test('a shared report keeps at most 100 types, the rest as OTHER', () => {
+  reset();
+  share.setShare(true);
+  const cfg = JSON.parse(fs.readFileSync(path.join(home, 'config.json'), 'utf8'));
+  cfg.stats.sent_until = '2026-10-12';
+  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify(cfg));
+  const many = [...stats.known()].filter((t) => t !== 'OTHER').slice(0, 120);
+  const detections = Object.fromEntries(many.map((t, i) => [t, i + 1]));
+  stats.record({ layer: 'hook', agent: 'codex', checked: 1, detections }, { now: new Date('2026-10-13T12:00:00Z') });
+  const [r] = share.pendingReports(new Date('2026-10-14T12:00:00Z'));
+  assert.ok(Object.keys(r.detections).length <= 100);
+  const total = Object.values(r.detections).reduce((a, b) => a + b, 0);
+  assert.equal(total, many.reduce((a, _t, i) => a + i + 1, 0), 'nothing lost, only grouped');
+  share.setShare(false);
+});
+
+test('an agent cannot turn sharing on: the hook policy treats it as an admin command', () => {
+  const policy = require('../lib/hooks/policy');
+  const re = /stats share on/;
+  const fn = policy.adminCommand || (policy._test && policy._test.adminCommand);
+  if (fn) {
+    assert.match(String(fn('npx zn-gate stats share on')), re);
+    assert.equal(fn('npx zn-gate stats'), null);
+  } else {
+    const src = fs.readFileSync(require.resolve('../lib/hooks/policy'), 'utf8');
+    assert.match(src, /stats\s\+share\s\+on/);
+  }
+});
+
+test('bad options print the usage with exit code 2', async () => {
+  for (const args of [['--days', '0'], ['--days', 'x'], ['--nope'], ['foo']]) {
+    const r = await capture(args);
+    assert.equal(r.code, 2, args.join(' '));
+    assert.match(r.out, /Usage: zn-gate stats/);
+  }
 });

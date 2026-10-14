@@ -167,7 +167,7 @@
     },
     "policy": {
       "version_const": "POLICY_RULES_VERSION",
-      "version": "2026-10-14.2",
+      "version": "2026-10-14.3",
       "ids": [
         "adminCommand",
         "bashDenial",
@@ -184,7 +184,7 @@
         "writeDenial"
       ],
       "sha256": {
-        "lib/hooks/policy.js": "8dcb565b6b6a3106a780c759d1b7e52be130ec47df6b0c70b87d40b80fa90bcc",
+        "lib/hooks/policy.js": "826799b380bb70b703a933d97c93271e84b30d1440da5141e57a556c3d4baf5b",
         "lib/broker/files.js": "3cd64900574d09a5703e4124fd4ad3a6e1e576763126a6157a3ba10d5a7f388a",
         "lib/broker/markers.js": "301eb1d763e8e88c32e32a02c344be8f44b342b06b61897f3a2d478dbe55d6b4",
         "lib/broker/dotenv.js": "d12a12bd12108a38f84e9f4772ed50f0b015962a1e68f75362142b9b3449e8fe",

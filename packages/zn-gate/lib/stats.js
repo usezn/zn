@@ -38,10 +38,34 @@ function today(now = new Date()) {
   return now.toISOString().slice(0, 10);
 }
 
-/** A detector type as the telemetry schema accepts it (upper case, digits and underscores). */
+// MCP rule ids that name the same secret as a scrubber type.
+const TYPE_ALIASES = { AWS_ACCESS_KEY: 'AWS_KEY', AWS_SECRET_KEY: 'AWS_SECRET', DB_URL_PASSWORD: 'DB_PASSWORD', JWT_TOKEN: 'JWT' };
+let knownTypes = null;
+
+/** Built-in detector types only (scrubber secret and PII types, rule ids). Anything else is never stored. */
+function known() {
+  if (knownTypes) return knownTypes;
+  knownTypes = new Set(['DB_PASSWORD', 'CREDENTIAL', 'SECRET', 'ENV_VALUE', 'OTHER']);
+  try {
+    const p = require('./scrub/patterns');
+    for (const t of [...(p.SECRET_TYPES || []), ...(p.PII_TYPES || [])]) knownTypes.add(String(t).toUpperCase());
+  } catch { /* scrubber missing: built-ins above */ }
+  try {
+    for (const r of require('./rules').SECRET_PATTERNS || []) knownTypes.add(String(r.id || '').replace(/^secret:/, '').toUpperCase());
+  } catch { /* rules missing */ }
+  return knownTypes;
+}
+
+/**
+ * A detector type for the counts. Only built-in types are kept: a value matched by its variable name
+ * (ENV_<NAME>) becomes ENV_VALUE, and any other name (a variable typed in a prompt, a secret's own name,
+ * an organization's custom detector) becomes OTHER, so no name a user chose is stored or shared.
+ */
 function normType(t) {
-  const s = String(t || '').toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 64);
-  return TYPE_RE.test(s) ? s : 'OTHER';
+  let s = String(t || '').toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 64);
+  s = TYPE_ALIASES[s] || s;
+  if (s.startsWith('ENV_')) return 'ENV_VALUE';
+  return TYPE_RE.test(s) && known().has(s) ? s : 'OTHER';
 }
 
 function normName(a) {
@@ -67,8 +91,12 @@ function load(file = statsFile()) {
 function save(data, file = statsFile()) {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(data), { mode: 0o600 });
-  fs.renameSync(tmp, file);
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(data), { mode: 0o600 });
+    fs.renameSync(tmp, file);
+  } finally {
+    try { fs.unlinkSync(tmp); } catch { /* renamed: nothing left */ }
+  }
 }
 
 function prune(data, now = new Date()) {
@@ -141,4 +169,4 @@ function summary({ days = 30, now = new Date(), file } = {}) {
   return { days, since: first, total, byKey, detections, events: { ...data.events } };
 }
 
-module.exports = { record, recordEvent, summary, load, statsFile, enabled, normType, normName, today, KEEP_DAYS };
+module.exports = { record, recordEvent, summary, load, statsFile, enabled, normType, normName, today, KEEP_DAYS, known };

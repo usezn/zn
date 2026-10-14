@@ -17,15 +17,28 @@ function fmt(n) {
   return Number(n || 0).toLocaleString('en-US');
 }
 
+const USAGE = 'Usage: zn-gate stats [--days 1-90] [--json]\n       zn-gate stats share on|off|status|show\n';
+
 function parse(args) {
-  const o = { days: 30, json: false, rest: [] };
+  const o = { days: 30, json: false, rest: [], bad: false };
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--json') o.json = true;
-    else if (args[i] === '--days' && args[i + 1]) o.days = Number(args[++i]);
+    else if (args[i] === '--days') o.days = Number(args[++i]);
+    else if (args[i].startsWith('-')) o.bad = true;
     else o.rest.push(args[i]);
   }
-  if (!Number.isInteger(o.days) || o.days < 1 || o.days > stats.KEEP_DAYS) o.days = 30;
+  if (!Number.isInteger(o.days) || o.days < 1 || o.days > stats.KEEP_DAYS) o.bad = true;
+  if (o.rest.length && o.rest[0] !== 'share') o.bad = true;
   return o;
+}
+
+/** Turning sharing on is a choice for the person, in their own terminal: never for an agent or a script. */
+function confirmInTerminal(question) {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const rl = require('readline').createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(question, (a) => { rl.close(); resolve(/^y(es)?$/i.test(String(a).trim())); });
+  });
 }
 
 function printSummary(s, out) {
@@ -34,7 +47,7 @@ function printSummary(s, out) {
   if (!t.checked && !t.blocked && !t.redacted && !t.warned) {
     out('  Nothing recorded yet. Counts start once zn-gate checks something (hooks, MCP tools or wrapped servers).\n');
   } else {
-    out(`  ${fmt(t.checked)} checks\n`);
+    out(`  ${fmt(t.checked)} events checked (prompts, tool calls and tool results)\n`);
     out(`  ${fmt(t.blocked)} blocked (a secret file read, a pasted secret, a prompt injection or a risky call)\n`);
     out(`  ${fmt(t.redacted)} secret values replaced before the model saw them\n`);
     if (t.warned) out(`  ${fmt(t.warned)} warnings\n`);
@@ -45,7 +58,7 @@ function printSummary(s, out) {
       out('\n  By agent:\n');
       for (const [key, c] of keys) {
         const [layer, agent] = key.split(':');
-        out(`    ${agent} (${LAYER_NAMES[layer] || layer}): ${fmt(c.checked)} checks, ${fmt(c.blocked)} blocked, ${fmt(c.redacted)} replaced\n`);
+        out(`    ${agent} (${LAYER_NAMES[layer] || layer}): ${fmt(c.checked)} events, ${fmt(c.blocked)} blocked, ${fmt(c.redacted)} replaced\n`);
       }
     }
   }
@@ -57,18 +70,24 @@ function printSummary(s, out) {
 }
 
 function explainShare(out) {
-  out('What is shared, once a day, only if you turn sharing on: a random id for this installation (a new one each time you turn sharing on), the day, the zn-gate version, the operating system, the Node.js version, the agent and part of zn-gate used most that day, and how many secrets of each type were found (for example AWS_KEY 3). Never secret values, prompts, file names, paths, repository names, hosts or emails.\n');
-  out(`Where: ${share.ENDPOINT}. Schema: https://usezn.com/schemas/telemetry.json\n`);
+  out('What is shared, once a day, only if you turn sharing on: a random id for this installation (a new one each time you turn sharing on), the day, the zn-gate version, the operating system, the Node.js version, the agent and part of zn-gate used most that day, and how many secrets of each built-in type were found (for example AWS_KEY 3). Never secret values, prompts, variable or secret names, file names, paths, repository names, hosts or emails.\n');
+  out(`Where: ${share.ENDPOINT}.\n`);
 }
 
-async function run(args, out = (s) => process.stdout.write(s)) {
+async function run(args, out = (s) => process.stdout.write(s), { confirm = confirmInTerminal } = {}) {
   const o = parse(args);
+  if (o.bad) { out(USAGE); return 2; }
   if (o.rest[0] === 'share') {
     const sub = o.rest[1] || 'status';
     if (sub === 'on') {
+      if (share.status().share) { out('Sharing anonymous daily counts is already on.\n'); return 0; }
+      explainShare(out);
+      if (!(await confirm('Turn on sharing of these anonymous daily counts? [y/N] '))) {
+        out('Sharing stays off. (It can only be turned on by you, in your own terminal.)\n');
+        return 1;
+      }
       share.setShare(true);
       out('Sharing anonymous daily counts is on. Counts from today on are sent when you run `zn-gate stats`.\n');
-      explainShare(out);
       return 0;
     }
     if (sub === 'off') {
@@ -77,11 +96,16 @@ async function run(args, out = (s) => process.stdout.write(s)) {
       return 0;
     }
     if (sub === 'show') {
-      const pending = share.pendingReports();
       explainShare(out);
-      if (!share.status().share) out('\nSharing is off, so nothing is sent. With sharing on, a report looks like the ones above in the schema.\n');
-      else if (!pending.length) out('\nNothing to send right now (only complete days are sent).\n');
-      else out('\nWould be sent now:\n' + pending.map((r) => JSON.stringify(r)).join('\n') + '\n');
+      if (!share.status().share) {
+        const example = share.pendingReports(new Date(), { preview: true }).slice(-1);
+        out('\nSharing is off, so nothing is sent.' + (example.length
+          ? ' With sharing on, a report built from your counts would look like this:\n' + JSON.stringify(example[0]) + '\n'
+          : ' There are no complete days of counts yet to show an example.\n'));
+      } else {
+        const pending = share.pendingReports();
+        out(pending.length ? '\nWould be sent now:\n' + pending.map((r) => JSON.stringify(r)).join('\n') + '\n' : '\nNothing to send right now (only complete days are sent).\n');
+      }
       return 0;
     }
     if (sub === 'status') {
@@ -92,11 +116,15 @@ async function run(args, out = (s) => process.stdout.write(s)) {
     return 2;
   }
   const s = stats.summary({ days: o.days });
-  if (o.json) out(JSON.stringify({ ...s, sharing: share.status().share }, null, 2) + '\n');
-  else printSummary(s, out);
-  if (share.status().share) {
-    const res = await share.sendPending({ print: (r) => { if (!o.json) out(`  Sent anonymous counts for ${r.day}.\n`); } });
-    if (res.failed && !o.json) out(`  ${res.failed} day(s) could not be sent; they will be tried next time.\n`);
+  let res = { sent: 0, failed: 0 };
+  const sentDays = [];
+  if (share.status().share) res = await share.sendPending({ print: (r) => sentDays.push(r.day) });
+  if (o.json) {
+    out(JSON.stringify({ ...s, sharing: share.status().share, sent_days: sentDays, send_failed: res.failed }, null, 2) + '\n');
+  } else {
+    printSummary(s, out);
+    for (const d of sentDays) out(`  Shared anonymous counts for ${d}.\n`);
+    if (res.failed) out(`  ${res.failed} day(s) could not be shared; they will be tried next time.\n`);
   }
   return 0;
 }

@@ -37,8 +37,16 @@ def load(path: Optional[str] = None) -> Dict[str, Any]:
     return {"version": 1, "days": {}, "events": {}}
 
 
+def _num(v: Any) -> int:
+    try:
+        n = int(v or 0)
+    except (TypeError, ValueError):
+        return 0
+    return n if n > 0 else 0
+
+
 def summary(days: int = 30, now: Optional[datetime.date] = None, path: Optional[str] = None) -> Dict[str, Any]:
-    today = now or datetime.datetime.utcnow().date()
+    today = now or datetime.datetime.now(datetime.timezone.utc).date()
     cutoff = (today - datetime.timedelta(days=days - 1)).isoformat()
     data = load(path)
     total = {"checked": 0, "blocked": 0, "warned": 0, "redacted": 0}
@@ -51,13 +59,16 @@ def summary(days: int = 30, now: Optional[datetime.date] = None, path: Optional[
         if first is None or day < first:
             first = day
         for key, c in entries.items():
+            if not isinstance(c, dict):
+                continue
             k = by_key.setdefault(key, {"checked": 0, "blocked": 0, "warned": 0, "redacted": 0})
             for f in total:
-                n = int(c.get(f, 0) or 0)
+                n = _num(c.get(f))
                 total[f] += n
                 k[f] += n
-            for t, n in (c.get("detections") or {}).items():
-                detections[t] = detections.get(t, 0) + int(n or 0)
+            dets = c.get("detections")
+            for t, n in (dets.items() if isinstance(dets, dict) else []):
+                detections[t] = detections.get(t, 0) + _num(n)
     return {"days": days, "since": first, "total": total, "byKey": by_key, "detections": detections,
             "events": dict(data.get("events") or {})}
 
@@ -69,7 +80,7 @@ def render(s: Dict[str, Any]) -> str:
     if not any(t.values()):
         lines.append("  Nothing recorded yet. Counts are written by zn-gate's agent hooks, MCP tools and shield proxy (npm package).")
     else:
-        lines.append("  {:,} checks".format(t["checked"]))
+        lines.append("  {:,} events checked (prompts, tool calls and tool results)".format(t["checked"]))
         lines.append("  {:,} blocked (a secret file read, a pasted secret, a prompt injection or a risky call)".format(t["blocked"]))
         lines.append("  {:,} secret values replaced before the model saw them".format(t["redacted"]))
         if t["warned"]:
@@ -83,7 +94,7 @@ def render(s: Dict[str, Any]) -> str:
             lines.append("  By agent:")
             for key, c in sorted(s["byKey"].items(), key=lambda kv: -kv[1]["checked"]):
                 layer, _, agent = key.partition(":")
-                lines.append("    {} ({}): {:,} checks, {:,} blocked, {:,} replaced".format(
+                lines.append("    {} ({}): {:,} events, {:,} blocked, {:,} replaced".format(
                     agent, LAYER_NAMES.get(layer, layer), c["checked"], c["blocked"], c["redacted"]))
     lines.append("")
     lines.append("  These counts stay on this machine. Sharing anonymous daily counts is opt-in: `npx zn-gate stats share show`.")
