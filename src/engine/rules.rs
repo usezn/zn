@@ -23,9 +23,13 @@ impl ManagedRuleset {
             ];
             let folded_tool = fold_system1(tool_name);
             let folded_args = fold_system1(arguments);
-            let tool_hit = tool_name_words(&folded_tool)
-                .iter()
-                .any(|w| dangerous.iter().any(|&cmd| w.eq_ignore_ascii_case(cmd)));
+            // Each part of the tool name is checked whole (lowercased, so
+            // "ShutDown" and "chMod" count) and split on camelCase.
+            let tool_hit = folded_tool
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .map(|part| part.to_ascii_lowercase())
+                .chain(tool_name_words(&folded_tool))
+                .any(|w| restricted_tool_word(&w));
             let args_hit = folded_args
                 .split(|c: char| !c.is_ascii_alphanumeric())
                 .any(|w| dangerous.iter().any(|&cmd| w.eq_ignore_ascii_case(cmd)));
@@ -77,6 +81,19 @@ impl ManagedRuleset {
 
         Ok(())
     }
+}
+
+/// A word of a tool name that names a restricted command. Joined forms
+/// such as "rmrf" or "rmtree" are listed, and the longer commands also match
+/// as a prefix ("shutdownhost", "chmodfile"); "rm", "dd" and "format" do not
+/// ("rms_norm", "formatter").
+fn restricted_tool_word(w: &str) -> bool {
+    const EXACT: &[&str] = &[
+        "rm", "dd", "format", "rmdir", "rmtree", "rmrf", "rimraf", "deltree", "mkfs", "chmod",
+        "chown", "shutdown", "reboot",
+    ];
+    const PREFIX: &[&str] = &["mkfs", "chmod", "chown", "shutdown", "reboot"];
+    EXACT.contains(&w) || PREFIX.iter().any(|p| w.starts_with(p))
 }
 
 /// Split a tool name into words on separators and camelCase boundaries:
@@ -196,6 +213,28 @@ mod tests {
         assert!(ManagedRuleset::evaluate(&cfg(), "MKFSVolume", "").is_err());
         assert!(ManagedRuleset::evaluate(&cfg(), "fs.chmod", "").is_err());
         assert!(ManagedRuleset::evaluate(&cfg(), "dd2", "").is_err());
+        for tool in [
+            "rmrf",
+            "rm-rf",
+            "sudo_rm",
+            "RmDir",
+            "rmdir",
+            "rmtree",
+            "rimraf",
+            "deltree",
+            "shutdownhost",
+            "chmodfile",
+            "ShutDown",
+            "chMod",
+            "rM",
+            "ReBoot",
+            "SHUTDOWN",
+        ] {
+            assert!(
+                ManagedRuleset::evaluate(&cfg(), tool, "").is_err(),
+                "{tool}"
+            );
+        }
     }
 
     #[test]
@@ -210,6 +249,8 @@ mod tests {
             "formatter",
             "reformat_text",
             "information",
+            "rms_norm",
+            "formatted_output",
         ] {
             assert!(ManagedRuleset::evaluate(&cfg(), tool, "").is_ok(), "{tool}");
         }
