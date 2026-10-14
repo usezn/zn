@@ -38,81 +38,84 @@
 
 ## Install
 
-**Keep secrets out of your agent's context.** The secrets scrubber and broker for coding agents keeps real values in an encrypted vault on your machine, and your agent works with markers such as `__ZN_STRIPE_KEY__`.
+Everything runs on your machine; no account or API key is needed. You need Node.js 18 or later (the LTS version from [nodejs.org](https://nodejs.org/)).
+
+**Claude Code (recommended): the plugin.** You also need Git and Claude Code 2.1.295 or later.
 
 ```bash
-npm install -g zn-gate             # Node.js 18+
-zn unlock                          # create or unlock the local vault
-zn env shadow .env                 # move .env values into the vault, leave markers
-zn hooks install claude-code       # or: codex, cursor, opencode
+claude plugin marketplace add usezn/zn
+claude plugin install zn-gate@usezn
 ```
+
+Start a new Claude Code session. Claude Code is then blocked from reading `.env` files with real values and credential files, secrets in what its tools return are replaced with markers before the model sees them, a secret pasted into a prompt is blocked, and Claude can check untrusted text for prompt injection. Not covered: Claude Code sessions in the cloud, Cowork and chat. Details: [plugins/claude/zn-gate](plugins/claude/zn-gate/README.md).
+
+**Codex CLI, Cursor or OpenCode: the hooks.**
+
+```bash
+npm install -g zn-gate
+zn hooks install codex           # or: cursor, opencode
+```
+
+In Codex, approve the new hooks with `/hooks`. In Cursor, shell output and file contents are not scrubbed. What each agent supports: [docs/compat.md](docs/compat.md).
+
+**Other editors** (VS Code, Antigravity, Windsurf, Cline, Zed, JetBrains, Continue): zn-gate works there as an MCP server only. Setup for each one: [docs/editors/](docs/editors/README.md).
+
+**Then keep your `.env` values in the vault.** The agent cannot read `.env` files with real values; move them into zn-gate's encrypted vault, and the file keeps markers such as `__ZN_STRIPE_KEY__`:
+
+```bash
+npx -y zn-gate unlock            # creates the vault the first time
+npx -y zn-gate env shadow .env
+```
+
+Five-minute walkthrough: [docs/secrets.md](docs/secrets.md). Limits: [docs/threat-model.md](docs/threat-model.md).
 
 > **Windows PowerShell:** `npm` and `npx` can fail with "running scripts is disabled on this system", because the default execution policy blocks `npm.ps1`. Use `npm.cmd` and `npx.cmd` instead (for example `npm.cmd install -g zn-gate`), run the commands from Command Prompt, or allow local scripts for your account with `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 
-Cursor support is partial: zn-gate can only rewrite the output of MCP tools there, not of shell commands or file reads.
+**Python: for agents you build yourself** (rules engine and secret redaction for LangChain, CrewAI, LlamaIndex or plain tool calling). It does not protect Claude Code, Codex, Cursor or other coding agents. Install it in a virtual environment; recent Linux and macOS systems refuse `pip install` outside one ("externally-managed-environment"):
 
-Five-minute walkthrough: [docs/secrets.md](docs/secrets.md). What each agent supports: [docs/compat.md](docs/compat.md). Limits: [docs/threat-model.md](docs/threat-model.md).
-
-**Add zn-gate as an MCP server.** Pick your agent. Each command adds zn-gate as an MCP server (Node.js 18+).
-
-**Claude Code**
 ```bash
-claude mcp add zn-gate -- npx -y zn-gate mcp
+python3 -m venv .venv
+.venv/bin/pip install zn-gate      # Windows: .venv\Scripts\pip install zn-gate
 ```
 
-**Codex CLI**
+**zn-gate as an MCP server only** (the agent calls it when it decides to; not automatic protection):
+
 ```bash
-codex mcp add zn-gate -- npx -y zn-gate mcp
+claude mcp add zn-gate -- npx -y zn-gate mcp     # Claude Code
+codex mcp add zn-gate -- npx -y zn-gate mcp      # Codex CLI
 ```
 
-**Cursor**: add to `~/.cursor/mcp.json`
-```json
-{ "mcpServers": { "zn-gate": { "command": "npx", "args": ["-y", "zn-gate", "mcp"] } } }
-```
-
-**OpenCode**: add to `~/.config/opencode/opencode.json`
-```json
-{ "mcp": { "zn-gate": { "type": "local", "command": ["npx", "-y", "zn-gate", "mcp"], "enabled": true } } }
-```
+Cursor (`~/.cursor/mcp.json`) and other editors: `{ "mcpServers": { "zn-gate": { "command": "npx", "args": ["-y", "zn-gate", "mcp"] } } }`. OpenCode (`~/.config/opencode/opencode.json`): `{ "mcp": { "zn-gate": { "type": "local", "command": ["npx", "-y", "zn-gate", "mcp"], "enabled": true } } }`.
 
 **Protect the MCP servers you already use.** `init` finds them in your agent configs, writes a backup, and wraps each local server with the zn-gate proxy:
+
 ```bash
 npx -y zn-gate init --dry-run   # preview
 npx -y zn-gate init             # wrap (backup first)
 npx -y zn-gate init --revert    # undo
 ```
-It reads Claude Desktop, Claude Code (`~/.claude.json`), Cursor (`~/.cursor/mcp.json`), Codex CLI (`~/.codex/config.toml`) and OpenCode (`~/.config/opencode/opencode.json`). [Full list and rules](packages/zn-gate/README.md#wrap-the-mcp-servers-you-already-use).
 
-**Python** (rules engine and secret redaction; the vault, hooks and `zn run` are in the npm package)
-```bash
-pip install zn-gate
-```
+It reads Claude Desktop, Claude Code (`~/.claude.json`), Cursor (`~/.cursor/mcp.json`), Codex CLI (`~/.codex/config.toml`) and OpenCode (`~/.config/opencode/opencode.json`). [Full list and rules](packages/zn-gate/README.md#wrap-the-mcp-servers-you-already-use).
 
 ## Check that it works
 
-Send a tool output with a fake AWS key (AWS's documentation example) and a database password through zn-gate, exactly as your agent would. Requires zn-gate 1.4.1 or later.
+```bash
+npx -y zn-gate test
+```
+
+This runs the local self-test (51 curated vectors: 26 attacks, 25 benign) and shows per-decision latency on your machine. It is a smoke test, not a detection rate. Nothing is sent over the network.
+
+To see the redaction itself, send a tool output with a fake AWS key (AWS's documentation example) and a database password through zn-gate, exactly as your agent would, and look for `sanitized_content` in the output; that field is what the model would see:
 
 ```bash
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"check_tool_result","arguments":{"tool_name":"read_file","content":"AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\nDATABASE_URL=postgres://app:hunter2@db:5432/main"}}}' \
-  | npx -y zn-gate@latest mcp | jq -r '.result.content[0].text'
+  | npx -y zn-gate@latest mcp
 ```
 
-`jq` only pretty-prints; without it, look for `sanitized_content` in the raw JSON. That field is what the model would see:
-
-```text
-"secrets_redacted": 2,
-"sanitized_content": "AWS_ACCESS_KEY_ID=[REDACTED_AWS_KEY]\nDATABASE_URL=postgres://app:[REDACTED_DB_PASSWORD]@db:5432/main"
-```
-
-Nothing was sent over the network. Python equivalent:
+Python equivalent:
 
 ```bash
-python -c "from zn_gate import sanitize_tool_result as s; print(s('read_file', 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE')['sanitized_content'])"
-```
-
-Then run the local self-test (51 curated vectors: 26 attacks, 25 benign):
-```bash
-npx -y zn-gate test
+.venv/bin/python -c "from zn_gate import sanitize_tool_result as s; print(s('read_file', 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE')['sanitized_content'])"
 ```
 
 ## What each piece does
