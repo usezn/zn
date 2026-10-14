@@ -163,13 +163,18 @@ to `api.usezn.com` and counts against your plan's quota. `check_tool_call`,
 `check_tool_result`, the `secrets` server and the hooks never send anything,
 with or without a key.
 
-Claude Code asks for the key when you enable the plugin, and you can change
-or remove it later from the `/plugin` menu. The key is marked
-sensitive, so Claude Code keeps it in your system's credential store, not in
-a settings file. Leave it empty to keep everything on your machine. The key
-is used only with the default zn endpoint: `ZN_API_URL` and `ZN_STAGE` from
-your environment are ignored by the plugin. Cursor and other agents run the
-plugin with local rules only. What is sent and kept: https://usezn.com/privacy
+Claude Code asks for the key when you enable the plugin. You can change or
+remove it later with `/plugin` (Installed, zn-gate, Configure options); it
+does not appear in `/config`. The key is marked sensitive, so Claude Code
+stores it with its own credentials (in the macOS Keychain, or in Claude Code's
+credentials file on other systems), not in `settings.json`. Leave it empty to
+keep everything on your machine.
+
+The key is used only with the default zn endpoint, with certificate checks
+on: `ZN_API_URL`, `ZN_STAGE` and `NODE_TLS_REJECT_UNAUTHORIZED` from your
+environment are ignored by the plugin, and the key is not passed to the hooks.
+Cursor and other agents run the plugin with local rules only. What is sent
+and kept: https://usezn.com/privacy
 
 ## Updates
 

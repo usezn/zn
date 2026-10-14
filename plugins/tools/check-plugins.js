@@ -122,7 +122,9 @@ for (const [f, root] of [['mcp.json', '${PLUGIN_ROOT}'], ['.mcp.json', '${CLAUDE
   for (const [name, s] of Object.entries(servers)) {
     const env = (MCP_ENV[f] || {})[name];
     const envOk = env ? JSON.stringify(s.env) === JSON.stringify(env) : !s.env;
-    if (s.command !== 'node' || JSON.stringify(s.args) !== JSON.stringify([root + '/scripts/zn-launch.js', MCP_MODES[name]]) || !envOk) {
+    // Only the Claude Code zn-gate server is started as "claude-code" (it may use the key option).
+    const args = [root + '/scripts/zn-launch.js', MCP_MODES[name]].concat(env ? ['claude-code'] : []);
+    if (s.command !== 'node' || JSON.stringify(s.args) !== JSON.stringify(args) || !envOk) {
       fail(f + ': MCP server ' + name + ' does not run the launcher in ' + MCP_MODES[name] + ' mode');
     }
   }
@@ -132,9 +134,16 @@ for (const [f, root] of [['mcp.json', '${PLUGIN_ROOT}'], ['.mcp.json', '${CLAUDE
 const claudeUserConfig = json(PLUGIN + '/.claude-plugin/plugin.json').userConfig || {};
 for (const [k, v] of Object.entries(claudeUserConfig)) {
   if (k !== 'api_key') fail('.claude-plugin/plugin.json: unexpected userConfig option ' + k);
-  else if (v.sensitive !== true || v.required !== false || v.default !== '') {
-    fail('.claude-plugin/plugin.json: userConfig api_key must be sensitive, optional and empty by default');
+  else if (v.type !== 'string' || !v.title || !v.description || v.sensitive !== true || v.required !== false || v.default !== '') {
+    fail('.claude-plugin/plugin.json: userConfig api_key must be a string option with a title and description, sensitive, optional and empty by default');
   }
+}
+if (JSON.stringify(json(PLUGIN + '/.mcp.json')).includes('${user_config.api_key}') && !claudeUserConfig.api_key) {
+  fail('.mcp.json: uses ${user_config.api_key} but .claude-plugin/plugin.json has no api_key option');
+}
+// Plugin options never go to hooks (Claude Code exports them to hook processes anyway; the launcher drops them).
+for (const f of ['hooks/hooks.json', 'com.openai/hooks.json', 'cursor/hooks.json']) {
+  if (fs.readFileSync(PLUGIN + '/' + f, 'utf8').includes('${user_config')) fail(f + ': hooks must not use plugin options');
 }
 
 const cursorManifest = json(PLUGIN + '/.cursor-plugin/plugin.json');

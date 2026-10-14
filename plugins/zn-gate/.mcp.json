@@ -4,7 +4,8 @@
       "command": "node",
       "args": [
         "${CLAUDE_PLUGIN_ROOT}/scripts/zn-launch.js",
-        "zn-gate-mcp"
+        "zn-gate-mcp",
+        "claude-code"
       ],
       "env": {
         "ZN_PLUGIN_API_KEY": "${user_config.api_key}"
