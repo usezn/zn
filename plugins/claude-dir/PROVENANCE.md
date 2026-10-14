@@ -17,6 +17,6 @@ For a release `X.Y.Z` (the `version` in `.claude-plugin/plugin.json`), you can c
 
 3. Every SHA-256 in `scripts/zn-gate.lock.json` must match its file in `vendor/zn-gate`, and no other file may be there.
 
-4. Every other file, except `scripts/zn-gate.lock.json` (step 3) and `.gitattributes`, must be identical to the file in [usezn/zn](https://github.com/usezn/zn) at the tag `vX.Y.Z`: `.claude-plugin/plugin.json`, `.mcp.json`, `hooks/hooks.json`, `icon.png`, `LICENSE`, `scripts/zn-launch.js` and `skills/` from `plugins/zn-gate/`, and `README.md`, `SECURITY.md` and `PROVENANCE.md` from `plugins/claude-dir/`. `.gitattributes` contains only `* -text`, which keeps Git from changing line endings on checkout.
+4. Every other file, except `scripts/zn-gate.lock.json` (step 3), `.gitattributes` and `.github/workflows/verify.yml`, must be identical to the file in [usezn/zn](https://github.com/usezn/zn) at the tag `vX.Y.Z`: `.claude-plugin/plugin.json`, `.mcp.json`, `hooks/hooks.json`, `icon.png`, `LICENSE`, `scripts/zn-launch.js` and `skills/` from `plugins/zn-gate/`, and `README.md`, `SECURITY.md` and `PROVENANCE.md` from `plugins/claude-dir/`. `.gitattributes` contains only `* -text`, which keeps Git from changing line endings on checkout. `.github/workflows/verify.yml` is the file `plugins/claude-dir/verify.yml` in usezn/zn: it runs these checks.
 
-Each release pull request is checked this way before it is merged into `main`.
+Each release pull request is checked this way before it is merged into `main`, with `plugins/tools/verify-plugin-repo.js` from usezn/zn at the tag.

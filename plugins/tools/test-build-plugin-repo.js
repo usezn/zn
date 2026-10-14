@@ -60,6 +60,11 @@ function paxRecord(key, value) {
   return Buffer.from(len + rest);
 }
 
+function write(file, text) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, text);
+}
+
 function sri(buf) {
   return 'sha512-' + crypto.createHash('sha512').update(buf).digest('base64');
 }
@@ -229,6 +234,52 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
       const bad = Buffer.from(archive);
       bad.write('\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00', 124, 'latin1'); // base-256 size
       await attempt(bad, /unsupported size field/);
+    });
+
+    await test('verify-plugin-repo accepts a built tree and finds each kind of change', async () => {
+      const { verify } = require('./verify-plugin-repo');
+      const file = path.join(tmp, 'verify.tgz');
+      const archive = tgz(BASE);
+      fs.writeFileSync(file, archive);
+      const out = path.join(tmp, 'verify-out');
+      await builder.build({ tarball: file, out, integrity: sri(archive) });
+      const check = () => verify({ repo: out, tarball: file, integrity: sri(archive) });
+      assert.deepStrictEqual((await check()).problems, []);
+      // The plugin repository's own workflow must be the one in plugins/claude-dir.
+      write(path.join(out, '.github', 'workflows', 'verify.yml'), fs.readFileSync(path.join(CLAUDE_DIR, 'verify.yml')));
+      assert.deepStrictEqual((await check()).problems, []);
+      const expectProblem = async (change, undo, re) => {
+        change();
+        try {
+          const { problems } = await check();
+          assert.ok(problems.some((p) => re.test(p)), re + ' in ' + JSON.stringify(problems));
+        } finally {
+          undo();
+        }
+      };
+      const at = (rel) => path.join(out, ...rel.split('/'));
+      const keep = (rel) => fs.readFileSync(at(rel));
+      for (const [rel, re] of [
+        ['vendor/zn-gate/lib/index.js', /vendor\/zn-gate\/lib\/index\.js differs from the npm package/],
+        ['README.md', /README\.md differs from usezn\/zn/],
+        ['scripts/zn-launch.js', /scripts\/zn-launch\.js differs from usezn\/zn/],
+        ['.github/workflows/verify.yml', /verify\.yml differs from usezn\/zn/],
+        ['.gitattributes', /\.gitattributes differs from usezn\/zn/],
+      ]) {
+        const before = keep(rel);
+        await expectProblem(() => fs.appendFileSync(at(rel), '\n// changed\n'), () => fs.writeFileSync(at(rel), before), re);
+      }
+      await expectProblem(() => write(at('vendor/zn-gate/lib/extra.js'), ''), () => fs.rmSync(at('vendor/zn-gate/lib/extra.js')), /lib\/extra\.js is not in the npm package/);
+      await expectProblem(() => write(at('hooks/extra.json'), '{}'), () => fs.rmSync(at('hooks/extra.json')), /hooks\/extra\.json is not expected/);
+      await expectProblem(() => write(at('vendor/zn-gate/lib/types.d.ts'), 'export {};\n'), () => fs.rmSync(at('vendor/zn-gate/lib/types.d.ts')), /should have been left out/);
+      const lockBefore = keep('scripts/zn-gate.lock.json');
+      const lock = JSON.parse(lockBefore.toString('utf8'));
+      await expectProblem(() => fs.writeFileSync(at('scripts/zn-gate.lock.json'), JSON.stringify({ ...lock, bundled: 'node_modules/zn-gate' })),
+        () => fs.writeFileSync(at('scripts/zn-gate.lock.json'), lockBefore), /bundled in vendor\/zn-gate/);
+      const sub = keep('vendor/zn-gate/lib/sub.js');
+      await expectProblem(() => fs.rmSync(at('vendor/zn-gate/lib/sub.js')), () => fs.writeFileSync(at('vendor/zn-gate/lib/sub.js'), sub), /lib\/sub\.js is missing/);
+      const bad = await verify({ repo: out, tarball: file, integrity: 'sha512-' + Buffer.alloc(64).toString('base64') });
+      assert.ok(bad.problems.some((p) => /does not match the npm registry integrity/.test(p)));
     });
 
     await test('the output folder must be empty (a .git folder is allowed)', async () => {

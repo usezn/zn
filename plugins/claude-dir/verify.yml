@@ -1,0 +1,81 @@
+# Checks every pull request into main, and main itself, against usezn/zn at
+# the release tag and the published zn-gate package. The checks are the ones
+# in PROVENANCE.md; the script that runs them comes from usezn/zn at the tag.
+# This file is changed only by a pull request that a maintainer reviews: the
+# release workflow that opens release pull requests cannot change workflows.
+name: Verify
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the plugin
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: plugin
+          persist-credentials: false
+
+      - name: Read the release version
+        id: version
+        run: |
+          v="$(node -p "require('./plugin/.claude-plugin/plugin.json').version")"
+          if ! printf '%s' "$v" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::.claude-plugin/plugin.json has no release version: $v"
+            exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Check out usezn/zn at the release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: usezn/zn
+          ref: v${{ steps.version.outputs.version }}
+          path: src
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.x
+
+      - name: Download the published package
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # Right after a release, the package can take a few minutes to reach every npm mirror.
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if npm pack "zn-gate@$VERSION" --silent; then exit 0; fi
+            sleep 30
+          done
+          echo "::error::zn-gate@$VERSION is not on npm"
+          exit 1
+
+      - name: Check the package's provenance attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh attestation verify "zn-gate-$VERSION.tgz" --repo usezn/zn \
+            --signer-workflow usezn/zn/.github/workflows/release.yml \
+            --source-ref "refs/tags/v$VERSION"
+
+      - name: Compare the plugin with usezn/zn and the package
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: node src/plugins/tools/verify-plugin-repo.js --repo plugin --tarball "zn-gate-$VERSION.tgz"
+
+      - name: Validate the plugin with Claude Code
+        run: |
+          npm install -g --silent @anthropic-ai/claude-code@2.1.299
+          claude plugin validate --strict plugin
