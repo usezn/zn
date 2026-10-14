@@ -19,7 +19,7 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-RULES_VERSION = "2026-10-14.2"
+RULES_VERSION = "2026-10-14.3"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -441,20 +441,44 @@ def normalize_input(text: str) -> Tuple[str, str]:
     return normalized, stripped
 
 
-def _evaluate_uncached(input_text: str) -> Assessment:
+# Default policy by tiers (same list as ADVISORY_BY_DEFAULT in rules.js). A
+# match of these heuristic rules is an advisory unless strict mode is on
+# (strict=True, or ZN_STRICT=1 in the environment).
+ADVISORY_BY_DEFAULT = frozenset([
+    'pi:identity_override',
+    'pi:system_tag',
+    'pi:system_bracket',
+    'pi:new_instructions',
+    'pi:pretend',
+    'pi:roleplay',
+    'pi:jailbreak',
+    'pi:bypass',
+    'pi:override',
+    'pi:template_boundary',
+])
+
+
+def _strict(strict: Optional[bool]) -> bool:
+    # The environment can only harden: strict=False does not lift ZN_STRICT=1 (as in Node.js).
+    return bool(strict) or os.environ.get('ZN_STRICT') == '1'
+
+
+def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
     if not isinstance(input_text, str) or not input_text.strip():
         return Assessment(verdict='allow', confidence=1.0, rule='none', reason=None)
     if len(input_text) > MAX_SCAN_CHARS:
         # NUL is neither whitespace nor a word character, so normalization
         # cannot join the end of the head and the start of the tail.
         window = input_text[:SCAN_HEAD_CHARS] + '\u0000' + input_text[-SCAN_TAIL_CHARS:]
-        res = _evaluate_uncached(window)
+        res = _evaluate_uncached(window, strict)
         res.truncated = True
         return res
 
     normalized, stripped = normalize_input(input_text)
     # The raw input is matched with the same characters as in Node.js (see _CASE_FOLD_GUARD).
     raw = input_text.translate(_CASE_FOLD_GUARD)
+
+    tier_advisory = None
 
     # Check Base64 payload smuggling
     b64_advisory = None
@@ -463,7 +487,7 @@ def _evaluate_uncached(input_text: str) -> Assessment:
         if b64_match:
             try:
                 decoded = base64.b64decode(b64_match.group(1)).decode('utf-8', errors='ignore')
-                inner_res = evaluate(decoded)
+                inner_res = evaluate(decoded, strict=strict)
                 if inner_res.advisory:
                     b64_advisory = dict(inner_res.advisory)
                 if not inner_res.allowed:
@@ -505,6 +529,10 @@ def _evaluate_uncached(input_text: str) -> Assessment:
         for rule_id, pat, desc in INJECTION_RULES:
             tester = RULE_TESTERS.get(rule_id)
             if tester(text) if tester else pat.search(text):
+                if not strict and rule_id in ADVISORY_BY_DEFAULT:
+                    if tier_advisory is None:
+                        tier_advisory = {'rule': rule_id, 'reason': desc}
+                    continue
                 return Assessment(verdict='block', confidence=0.95, rule=rule_id, reason=desc)
 
         # 5. Exfiltration Compound (verb + credentials)
@@ -515,6 +543,9 @@ def _evaluate_uncached(input_text: str) -> Assessment:
                 rule='exfil:credentials',
                 reason='Imperative verb requesting credentials/secrets'
             )
+
+    if tier_advisory:
+        return Assessment(verdict='allow', confidence=0.99, rule='none', reason=None, advisory=tier_advisory)
 
     for text in targets:
         for rule_id, test, desc in ADVISORY_RULES:
@@ -921,23 +952,24 @@ SCAN_WINDOW_OVERLAP = 4 * 1024
 MAX_TOOL_RESULT_SCAN_CHARS = 4 * 1024 * 1024
 
 
-def scan_windows(text: str) -> Assessment:
+def scan_windows(text: str, strict: Optional[bool] = None) -> Assessment:
+    strict = _strict(strict)
     if not isinstance(text, str) or len(text) <= MAX_SCAN_CHARS:
-        return evaluate(text)
+        return evaluate(text, strict=strict)
     step = MAX_SCAN_CHARS - SCAN_WINDOW_OVERLAP
     limit = min(len(text), MAX_TOOL_RESULT_SCAN_CHARS)
     start = 0
     advisory = None
     while True:
         end = min(start + MAX_SCAN_CHARS, limit)
-        res = _evaluate_uncached(text[start:end])
+        res = _evaluate_uncached(text[start:end], strict)
         if advisory is None and res.advisory:
             advisory = res.advisory
         if not res.allowed or end >= limit:
             break
         start += step
     if res.allowed and len(text) > limit:
-        res = _evaluate_uncached(text[-MAX_SCAN_CHARS:])
+        res = _evaluate_uncached(text[-MAX_SCAN_CHARS:], strict)
         if advisory is None and res.advisory:
             advisory = res.advisory
     if res.allowed and advisory:
@@ -951,6 +983,7 @@ def sanitize_tool_result(
     content: Optional[Any] = None,
     mask_secrets: bool = True,
     block_truncated: bool = False,
+    strict: Optional[bool] = None,
 ) -> Any:
     """
     Sanitizes tool output to prevent prompt injection and credential leakage.
@@ -965,7 +998,7 @@ def sanitize_tool_result(
     if content is not None:
         tool_name = str(tool_or_result)
         text_content = content if isinstance(content, str) else str(content)
-        assessment = scan_windows(text_content)
+        assessment = scan_windows(text_content, strict=strict)
         truncated = assessment.truncated
         if truncated and assessment.allowed and (block_truncated or os.environ.get('ZN_BLOCK_TRUNCATED') == '1'):
             assessment = Assessment(verdict='block', confidence=1.0, rule='size:truncated',
@@ -1021,20 +1054,25 @@ _eval_cache = {}
 _eval_cache_ver = RULES_VERSION
 
 
-def evaluate(input_text: str) -> Assessment:
-    """Cached entry point: LRU(2048) keyed on raw input, version-guarded."""
+def evaluate(input_text: str, strict: Optional[bool] = None) -> Assessment:
+    """Cached entry point: LRU(2048) keyed on raw input and strict mode, version-guarded.
+
+    strict=True (or ZN_STRICT=1) also blocks the heuristic rules that are
+    advisories by default (ADVISORY_BY_DEFAULT)."""
     global _eval_cache_ver
+    strict = _strict(strict)
     if not isinstance(input_text, str) or len(input_text) > EVAL_CACHE_MAX_INPUT:
-        return _evaluate_uncached(input_text)
+        return _evaluate_uncached(input_text, strict)
     if RULES_VERSION != _eval_cache_ver:
         _eval_cache.clear()
         _eval_cache_ver = RULES_VERSION
-    hit = _eval_cache.get(input_text)
+    key = (strict, input_text)
+    hit = _eval_cache.get(key)
     if hit is not None:
-        _eval_cache[input_text] = _eval_cache.pop(input_text)
+        _eval_cache[key] = _eval_cache.pop(key)
         return Assessment(*hit[:7], advisory=dict(hit[7]) if hit[7] else None)
-    res = _evaluate_uncached(input_text)
-    _eval_cache[input_text] = (res.verdict, res.confidence, res.rule,
+    res = _evaluate_uncached(input_text, strict)
+    _eval_cache[key] = (res.verdict, res.confidence, res.rule,
                                res.reason, res.engine, res.rules_version, res.truncated,
                                dict(res.advisory) if res.advisory else None)
     if len(_eval_cache) > _EVAL_CACHE_MAX:

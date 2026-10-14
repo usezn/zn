@@ -638,7 +638,7 @@ function insideQuotedExample(text) {
   const without = text.replace(EXAMPLE_QUOTED_TEXT, '$1""');
   if (without === text) return false;
   let res = null;
-  try { res = rules().evaluate(without); } catch (_) { return false; }
+  try { res = rules().evaluate(without, { strict: true }); } catch (_) { return false; }
   return !(res && res.verdict === 'block' && STRONG_IN_DOCS.test(String(res.rule)));
 }
 const STRONG_IN_DOCS =/^(?:pi:(?:ignore_previous|disregard|system_tag|system_bracket|template_boundary|multi_\w+)|indirect:|evasion:|exfil:markdown_image)/;
@@ -677,7 +677,8 @@ function checkInstructions(ctx) {
       ctx.add('ZNA012', 'high', ln, 'The line contains invisible Unicode (tag or bidirectional control characters) that can hide text from reviewers.', { evidence: line.replace(INVISIBLE_ALL, '?') });
     } else {
       let res = null;
-      try { res = rules().evaluate(t); } catch (_) { res = null; }
+      // Strict mode: audit grades each finding itself (high, medium, info).
+      try { res = rules().evaluate(t, { strict: true }); } catch (_) { res = null; }
       if (res && res.verdict === 'block' && !NOISY_IN_DOCS.test(String(res.rule))) {
         // Strong patterns are high, weaker ones medium. In the files an agent
         // reads as its instructions a strong pattern is never lowered: the

@@ -203,7 +203,8 @@ def _scan_file(file_path: Path) -> List[Dict[str, Any]]:
         # logs: always show the line with any detected secret redacted.
         redacted, findings = redact_secrets(line)
         snippet = "[REDACTED_PRIVATE_KEY]" if i in key_lines else redacted.strip()[:100]
-        res = evaluate(line)
+        # A scan reports every match, including the rules that only warn by default.
+        res = evaluate(line, strict=True)
         if not res.allowed:
             violations.append({
                 "file": str(file_path),
