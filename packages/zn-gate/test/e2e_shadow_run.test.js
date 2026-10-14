@@ -1,4 +1,7 @@
 'use strict';
+
+// zn-gate stats: these tests must never count into the real ~/.zn/stats.json.
+process.env.ZN_STATS = 'off';
 /**
  * End to end (in process, with the test doubles for the vault and engine):
  *

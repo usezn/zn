@@ -1,5 +1,8 @@
 'use strict';
 
+// zn-gate stats: these tests must never count into the real ~/.zn/stats.json.
+process.env.ZN_STATS = 'off';
+
 // Paths in the commands zn writes for a shell (hook commands, the `zn run`
 // prefix of rewritten Bash commands, the Monitor wrapper, the PowerShell
 // wrapper) reach the program literally, whatever characters they hold.

@@ -44,6 +44,8 @@ jobs:
         run: bash packages/zn-gate/test/fixtures/benign/fetch_corpus.sh
       - name: Verify corpus checksums
         run: node packages/zn-gate/test/fixtures/benign/build_manifest.js --verify
+      - name: Rules false-positive gate
+        run: node bench/rules_fp_gate.js
       - name: Self-check fake secrets fixtures
         run: node packages/zn-gate/test/fixtures/fake_secrets.js --selftest
       - name: Run leak bench

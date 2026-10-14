@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-12.6
+RULES_VERSION: 2026-10-14.1
 Zero external dependencies. Pure Python stdlib.
 """
 
@@ -8,29 +8,56 @@ from __future__ import annotations
 
 import base64
 import json
+from array import array
 import math
 import os
 import re
 import sys
 import time
+import unicodedata
 from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-RULES_VERSION = "2026-10-12.6"
+RULES_VERSION = "2026-10-14.3"
+
+# Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
+# is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
+# Under re.IGNORECASE, Python also folds four non-ASCII characters into ASCII
+# letters (U+0130, U+0131, U+017F, U+212A); JavaScript does not. The raw input
+# target has them replaced by NUL first, so both engines agree. The normalized
+# texts are not guarded: U+0130 and U+0131 are mapped to I and i, and U+017F and
+# U+212A are folded to s and K by the compatibility fold.
+_CASE_FOLD_GUARD = str.maketrans({'İ': '\x00', 'ı': '\x00', 'ſ': '\x00', 'K': '\x00'})
+# Compatibility characters folded for matching, one at a time (same ranges as
+# COMPAT_FOLD in rules.js; full NFKC expands some characters to 18). The table
+# maps code points to their folded text and is applied with str.translate.
+_COMPAT_FOLD_TABLE: Dict[int, str] = {}
+for _lo, _hi in ((0xFF01, 0xFF5E), (0xFB00, 0xFB06), (0x017F, 0x017F), (0x212A, 0x212A),
+                 (0x2070, 0x209F), (0x2460, 0x24FF), (0x1D400, 0x1D7FF)):
+    for _cp in range(_lo, _hi + 1):
+        _folded = unicodedata.normalize('NFKC', chr(_cp))
+        if _folded != chr(_cp):
+            _COMPAT_FOLD_TABLE[_cp] = _folded
 
 # Cyrillic homoglyphs mapping to Latin
 HOMOGLYPH_MAP = {
     '\u0430': 'a', '\u0435': 'e', '\u043e': 'o', '\u0440': 'p', '\u0441': 'c',
     '\u0456': 'i', '\u0455': 's', '\u0443': 'y', '\u0445': 'x',
     '\u0410': 'A', '\u0415': 'E', '\u041e': 'O', '\u0420': 'P', '\u0421': 'C',
+    # Dotless i and capital dotted I read as i and I.
+    '\u0131': 'i', '\u0130': 'I',
 }
+# Homoglyphs as a translation table (str.translate runs in C).
+_HOMOGLYPH_TABLE = {ord(k): v for k, v in HOMOGLYPH_MAP.items()}
 
 # Rule patterns mirror packages/zn-gate/lib/rules.js: the source strings are
 # identical (tests/test_rules_parity.py compares them) and the JavaScript "i"
 # flag maps to re.IGNORECASE. Every pattern runs in linear time: no unbounded
 # lazy wildcards, and repeated character classes are bounded.
-ZERO_WIDTH_RE = re.compile(r'[\u200B-\u200D\uFEFF\u00AD]')
+ZERO_WIDTH_RE = re.compile(r'[\u200B-\u200D\u2060\uFEFF\u00AD\uFE00-\uFE0F]')
+INVISIBLE_ASTRAL_RE = re.compile(r'[\U000E0000-\U000E007F\U000E0100-\U000E01EF]')
+NON_ASCII_RE = re.compile(r'[^\x00-\x7f]')
 ANSI_ESCAPE_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07\x1b]*\x07')
 B64_EXEC_RE = re.compile(r'(?:echo|printf)\s+([A-Za-z0-9+/=]{16,})\s*\|\s*(?:base64\s+-(?:d|-decode)|openssl)', re.IGNORECASE)
 # Maximal whitespace runs; only runs that contain a line break are joined.
@@ -47,23 +74,23 @@ _JOIN_EXTRA_RIGHT = frozenset('_>|/.-')
 # back at earlier text ("ignore the above", "everything before"). Every group
 # is a fixed list of words and whitespace runs are bounded, so a match
 # attempt does bounded work.
-_OVERRIDE_NOUN = r'(?:instructions?|prompts?|rules|guidelines?|directives?|guidance|restrictions?|guardrails?|context|constraints?|commands?|policies|programming|orders|limitations?|directions|requests?|tasks?)\b'
+_OVERRIDE_NOUN = r'(?:instructions?|prompts?|rules|guidelines?|directives?|guidance|restrictions?|guardrails?|context|constraints?|commands?|policies|programming|orders|limitations?|directions|requests?|tasks?)(?![A-Za-z0-9_])'
 _OVERRIDE_QUANTIFIER = r'(?:all|any|every|each|your|my|these|those)(?:\s{1,32}of)?\s{1,32}'
 _OVERRIDE_DETERMINER = r'(?:(?:the|your|my|these|those|our|its|their)\s{1,32})?'
 _OVERRIDE_QUALIFIER = r'(?:previous|prior|above|earlier|preceding|foregoing|original|initial|existing|system|safety|security|former|developer)\s{1,32}'
 # "ignore the above" / "ignore previous" without a noun counts only at the end
 # of a clause, before "and" or before a word for text ("ignore the above
 # text"), so "ignore the previous build output" stays allowed.
-_OVERRIDE_END = r'(?=[ \t]*(?:[.,;:!)\r\n]|$)|\s{1,32}and\b|\s{1,32}(?:text|content|message|messages|input|lines?|one|ones)\b)'
+_OVERRIDE_END = r'(?=[ \t]*(?:[.,;:!)\r\n]|$)|\s{1,32}and(?![A-Za-z0-9_])|\s{1,32}(?:text|content|message|messages|input|lines?|one|ones)(?![A-Za-z0-9_]))'
 
 
 def _override_rule_source(verb: str) -> str:
     return '|'.join([
         verb + r'\s{1,32}(?:' + _OVERRIDE_QUANTIFIER + r')?' + _OVERRIDE_DETERMINER + r'(?:' + _OVERRIDE_QUALIFIER + r'){1,2}' + _OVERRIDE_NOUN,
         verb + r'\s{1,32}' + _OVERRIDE_QUANTIFIER + _OVERRIDE_DETERMINER + _OVERRIDE_NOUN,
-        verb + r'\s{1,32}(?:the\s{1,32})?(?:instructions|guardrails|directives)\b',
+        verb + r'\s{1,32}(?:the\s{1,32})?(?:instructions|guardrails|directives)(?![A-Za-z0-9_])',
         verb + r'\s{1,32}(?:' + _OVERRIDE_QUANTIFIER + r')?(?:the\s{1,32})?(?:previous|prior|above|earlier|preceding|foregoing)' + _OVERRIDE_END,
-        verb + r"\s{1,32}(?:everything|anything|all)\s{1,32}(?:above|before|previously|prior|earlier|you(?:'ve|\s{1,32}have|\s{1,32}were|\s{1,32}was)?\s{1,32}(?:been\s{1,32})?(?:told|said|given|received))\b",
+        verb + r"\s{1,32}(?:everything|anything|all)\s{1,32}(?:above|before|previously|prior|earlier|you(?:'ve|\s{1,32}have|\s{1,32}were|\s{1,32}was)?\s{1,32}(?:been\s{1,32})?(?:told|said|given|received))(?![A-Za-z0-9_])",
     ])
 
 
@@ -114,20 +141,20 @@ def _test_multi_zh(text: str) -> bool:
 INJECTION_RULES: List[Tuple[str, re.Pattern, str]] = [
     ('pi:ignore_previous', re.compile(_override_rule_source('ignore'), re.IGNORECASE), 'Override prior instructions'),
     ('pi:disregard', re.compile(_override_rule_source('disregard'), re.IGNORECASE), 'Disregard instructions'),
-    ('pi:forget', re.compile(r'forget\s+(about\s+)?(everything|all|your)', re.IGNORECASE), 'Forget-context attack'),
+    ('pi:forget', re.compile(r"""(?<![A-Za-z0-9_])forget\s+(?:about\s+)?(?:everything|all|your)(?![A-Za-z0-9_])(?!\s+(?:of\s+)?(?:the\s+)?(?:cached?|caches|entries|changes|data|files?|records|sessions?|cookies|state|tabs|devices?|passwords?|history|items|keys|tokens|credentials|settings|preferences|accounts?|connections?|logins?|networks?)(?![A-Za-z0-9_]))""", re.IGNORECASE), 'Forget-context attack'),
     ('pi:identity_override', re.compile(r'you\s+are\s+now', re.IGNORECASE), 'Identity override'),
     ('pi:new_instructions', re.compile(r'new\s+instructions?:', re.IGNORECASE), 'Instruction replacement'),
-    ('pi:system_tag', re.compile(r"""(?:^|[\r\n"'`\[<])[ \t]*system\s*:|<[\s/]*system\b[^<>]*>""", re.IGNORECASE), 'Fake system tag'),
+    ('pi:system_tag', re.compile(r"""(?:^|[\r\n"'`\[<])[ \t]*system\s*:|<[\s/]*system(?![A-Za-z0-9_])[^<>]*>""", re.IGNORECASE), 'Fake system tag'),
     ('pi:system_bracket', re.compile(r'\[system\]', re.IGNORECASE), 'Bracketed system tag'),
-    ('pi:act_as', re.compile(r'act\s+as\s+(if|a)', re.IGNORECASE), 'Role hijack (act as)'),
+    ('pi:act_as', re.compile(r"""(?:(?<![A-Za-z0-9_])you\s+(?:(?:will|must|should|shall|now)\s+|are\s+to\s+)?|(?:^|[.!?\r\n\u2028\u2029])[ \t]*(?:[\"'`(\[*-][ \t]*)?|(?<![A-Za-z0-9_])please\s+|(?<![A-Za-z0-9_])now\s+|(?<![A-Za-z0-9_])from\s+now\s+on,?\s+(?:you\s+)?)(?=act(?![A-Za-z0-9_]))act\s+as\s+(?:if\s+you(?![A-Za-z0-9_])|an?\s+(?:[a-z-]+\s+){0,3}?(?:ai|assistant|chatbot|bot|model|llm|gpt|persona|character|version|mode|jailbroken|unrestricted|unfiltered|uncensored|evil|malicious|rogue|harmful|unethical|amoral|hacker|dan)(?![A-Za-z0-9_])|my(?![A-Za-z0-9_])|though\s+you(?![A-Za-z0-9_]))""", re.IGNORECASE), 'Role hijack (act as)'),
     ('pi:pretend', re.compile(r'pretend\s+(you|to\s+be)', re.IGNORECASE), 'Role hijack (pretend)'),
     ('pi:roleplay', re.compile(r'roleplay\s+as', re.IGNORECASE), 'Role hijack (roleplay)'),
-    ('pi:jailbreak', re.compile(r'\bjailbreak\b', re.IGNORECASE), 'Explicit jailbreak term'),
+    ('pi:jailbreak', re.compile(r'(?<![A-Za-z0-9_])jailbreak(?![A-Za-z0-9_])', re.IGNORECASE), 'Explicit jailbreak term'),
     ('pi:bypass', re.compile(r'bypass\s+(your|the|all)', re.IGNORECASE), 'Guardrail bypass attempt'),
-    ('pi:override', re.compile(r'\boverride\s+(?:all\s+|your\s+|the\s+)?(?:system|policy|safety|rules|instructions|guidelines|restrictions)\b|\bsystem\s+override\s*:', re.IGNORECASE), 'Policy override attempt'),
+    ('pi:override', re.compile(r'(?<![A-Za-z0-9_])override\s+(?:all\s+|your\s+|the\s+)?(?:system|policy|safety|rules|instructions|guidelines|restrictions)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])system\s+override\s*:', re.IGNORECASE), 'Policy override attempt'),
     ('pi:template_boundary', re.compile(r'\[INST\]|\[\/INST\]|<<<SYS>>>|<\/<<SYS>>>|<\|im_start\|>|<\|im_end\|>', re.IGNORECASE), 'Chat template boundary injection'),
     ('pi:multi_es', re.compile(r'ignora\s+(todas\s+las\s+)?(instrucciones|anteriores|previas)|olvida\s+(todo|las\s+instrucciones)|act[uú]a\s+como|ahora\s+eres', re.IGNORECASE), 'Multilingual prompt injection (Spanish)'),
-    ('pi:multi_pt', re.compile(r'ignor(?:e|a|em|ar)\s+(?:(?:todas|todos|qualquer|quaisquer|cualquier)\s+)?(?:(?:as|os|las|los|suas|seus|sus|tus|estas|estes|essas|esses)\s+)?(?:instru[cç][oõ]es|instrucciones|regras|reglas|diretrizes|directrices|orienta[cç][oõ]es|ordens|[oó]rdenes|comandos|restri[cç][oõ]es|restricciones|mensagens|anteriores|pr[eé]vias)|ignore\s+(?:tudo|qualquer|quaisquer)\b|ignora\s+(?:todo|tudo|cualquier)\b', re.IGNORECASE), 'Multilingual prompt injection (Portuguese)'),
+    ('pi:multi_pt', re.compile(r'ignor(?:e|a|em|ar)\s+(?:(?:todas|todos|qualquer|quaisquer|cualquier)\s+)?(?:(?:as|os|las|los|suas|seus|sus|tus|estas|estes|essas|esses)\s+)?(?:instru[cç][oõ]es|instrucciones|regras|reglas|diretrizes|directrices|orienta[cç][oõ]es|ordens|[oó]rdenes|comandos|restri[cç][oõ]es|restricciones|mensagens|anteriores|pr[eé]vias)|ignore\s+(?:tudo|qualquer|quaisquer)(?![A-Za-z0-9_])|ignora\s+(?:todo|tudo|cualquier)(?![A-Za-z0-9_])', re.IGNORECASE), 'Multilingual prompt injection (Portuguese)'),
     ('pi:multi_fr', re.compile(r'ignore[rz]?\s+(toutes\s+les\s+)?instructions|oublie[rz]?\s+tout|agis\s+comme|tu\s+es\s+maintenant', re.IGNORECASE), 'Multilingual prompt injection (French)'),
     ('pi:multi_de', re.compile(r'ignoriere\s+(alle\s+)?(anweisungen|instruktionen)|vergiss\s+(alles|jede)|du\s+bist\s+jetzt|handle\s+als', re.IGNORECASE), 'Multilingual prompt injection (German)'),
     ('pi:multi_ru', re.compile(r'забудь\s+[^\n]{0,80}?(все|инструкции)|игнорируй\s+[^\n]{0,80}?(все|предыдущие)|действуй\s+как|ты\s+теперь|найди\s+пароли', re.IGNORECASE), 'Multilingual prompt injection (Russian)'),
@@ -149,12 +176,60 @@ EVASION_RULES: List[Tuple[str, re.Pattern, str]] = [
 # tag only when that run is closed by ">". (A single regex with a lazy
 # [\s\S]*? tail, or an attribute run that may cross "<", re-scans the rest of
 # the input from every candidate and is super-linear on crafted markup.)
-OPEN_TAG_RE = re.compile(r'<[a-z0-9]+\b([^<>]*)(>?)', re.IGNORECASE)
-HIDDEN_ATTR_RE = re.compile(r'\b(?:display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0|font-size\s*:\s*0(?:px)?|color\s*:\s*transparent|text-indent\s*:\s*-[0-9]{3,}px|hidden\b)', re.IGNORECASE)
+OPEN_TAG_RE = re.compile(r'<[a-z0-9]+(?![A-Za-z0-9_])([^<>]*)(>?)', re.IGNORECASE)
+HIDDEN_ATTR_RE = re.compile(r'(?<![A-Za-z0-9_])(?:display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0|font-size\s*:\s*0(?:px)?|color\s*:\s*transparent|text-indent\s*:\s*-[0-9]{3,}px|hidden(?![A-Za-z0-9_]))', re.IGNORECASE)
 HIDDEN_PAYLOAD_RE = re.compile(r'ignore|system|instruction|prompt|bypass|override|exfil|leak', re.IGNORECASE)
 
 
+# The payload must be in the text of the hidden element itself: its content
+# up to the matching close tag (nested tags removed), at most
+# HIDDEN_TEXT_CHARS characters after the opening tag. Text after the element
+# does not count.
+HIDDEN_TEXT_CHARS = 4096
+TAG_RE = re.compile(r'<(/?)([a-z0-9]+)(?![A-Za-z0-9_])[^<>]*>', re.IGNORECASE)
+_TAG_NAME_RE = re.compile(r'<([a-z0-9]+)', re.IGNORECASE)
+
+
+def _hidden_element_text(text: str, start: int, name: str) -> Tuple[str, int]:
+    """Returns the element's text and the index where reading stopped."""
+    end = min(len(text), start + HIDDEN_TEXT_CHARS)
+    depth = 1
+    out = []
+    pos = start
+    for m in TAG_RE.finditer(text, start):
+        if m.start() >= end:
+            break
+        out.append(text[pos:m.start()])
+        out.append(' ')
+        pos = m.end()
+        if m.group(2).lower() == name:
+            depth += -1 if m.group(1) else 1
+            if depth == 0:
+                return ''.join(out), pos
+    out.append(text[pos:max(pos, end)])
+    return ''.join(out), max(pos, end)
+
+
 def _test_hidden_tag(text: str) -> bool:
+    pos = 0
+    while True:
+        m = OPEN_TAG_RE.search(text, pos)
+        if m is None:
+            return False
+        pos = m.end()
+        if m.group(2) == '>' and HIDDEN_ATTR_RE.search(m.group(1)):
+            name = _TAG_NAME_RE.match(m.group(0)).group(1).lower()
+            inner, stop = _hidden_element_text(text, m.end(), name)
+            if HIDDEN_PAYLOAD_RE.search(inner):
+                return True
+            # Hidden elements nested in this one were part of its text: each
+            # character is read once.
+            pos = max(pos, stop)
+
+
+# Earlier, broader form: a hidden element followed anywhere later by a
+# payload word. Used only for advisories.
+def _test_hidden_tag_anywhere(text: str) -> bool:
     for m in OPEN_TAG_RE.finditer(text):
         if m.group(2) == '>' and HIDDEN_ATTR_RE.search(m.group(1)):
             return HIDDEN_PAYLOAD_RE.search(text, m.end()) is not None
@@ -205,13 +280,38 @@ RULE_TESTERS: Dict[str, Any] = {
     'pi:multi_zh': _test_multi_zh,
 }
 
-EXFIL_VERBS = re.compile(r'\b(give|reveal|send|show|print|expose|leak|paste|dump|read|open|cat|fetch|extract|steal)\b', re.IGNORECASE)
-CRED_OBJECTS = re.compile(r"""\b(passwords?|api[_ -]?keys?|secrets?|credentials?|tokens?|ssh[ _-]?keys?|private[ _-]?keys?|aws_secret[a-z0-9_]*|aws_access[a-z0-9_]*)\b|(?:^|\s|['"`])\.env(?:\.[a-z0-9]+)?\b""", re.IGNORECASE)
+EXFIL_VERB_SOURCE = r'(?<![A-Za-z0-9_])(give|reveal|send|show|print|expose|leak|paste|dump|read|open|cat|fetch|extract|steal)(?![A-Za-z0-9_])'
+EXFIL_VERBS = re.compile(EXFIL_VERB_SOURCE, re.IGNORECASE)
+CRED_OBJECTS = re.compile(r"""(?<![A-Za-z0-9_])(passwords?|api[_ -]?keys?|secrets?|credentials?|tokens?|ssh[ _-]?keys?|private[ _-]?keys?|aws_secret[a-z0-9_]*|aws_access[a-z0-9_]*)(?![A-Za-z0-9_])|(?:^|\s|['"`])\.env(?:\.[a-z0-9]+)?(?![A-Za-z0-9_])""", re.IGNORECASE)
+
+# The verb must start a clause (an instruction, not a description such as
+# "this library reads tokens from ...") or be followed by "me"/"us", and the
+# credential must follow it in the same clause, within EXFIL_CLAUSE_CHARS
+# characters. No MULTILINE flag: line starts are matched by the newline
+# itself, so a run of blank lines is read once.
+EXFIL_CLAUSE_CHARS = 80
+EXFIL_CLAUSE_PREFIX = r"""(?:^|[.!?;:\r\n\u2028\u2029])[ \t]*(?:[\"'`(\[*-][ \t]*)?|(?<![A-Za-z0-9_])(?:please|now|then|and|also|just|first|immediately|go\s+ahead\s+and|(?:can|could|would|will)\s+you|(?:want|need|ask)\s+you\s+to|you\s+(?:must|should|will|need\s+to|have\s+to))\s+"""
+EXFIL_CLAUSE_RE = re.compile(
+    r'(?:(?:' + EXFIL_CLAUSE_PREFIX + r')' + EXFIL_VERB_SOURCE + r'|' + EXFIL_VERB_SOURCE + r'(?=\s+(?:me|us)(?![A-Za-z0-9_])))'
+    + r'[^.!?;\r\n]{0,' + str(EXFIL_CLAUSE_CHARS) + r'}?(?:' + CRED_OBJECTS.pattern + r')',
+    re.IGNORECASE,
+)
+
+# Advisory tier: the broader forms of four rules. They match much benign
+# text (documentation, code, role-play requests), so a match does not block:
+# the verdict stays "allow" and the result carries `advisory` with the rule.
+# A blocking rule always wins over an advisory.
+ADVISORY_RULES: List[Tuple[str, Any, str]] = [
+    ('exfil:credentials', lambda t: EXFIL_VERBS.search(t) is not None and CRED_OBJECTS.search(t) is not None, 'Mentions reading or sending credentials'),
+    ('pi:act_as', re.compile(r'act\s+as\s+(?:if|a)', re.IGNORECASE).search, 'Role-play request (act as)'),
+    ('pi:forget', re.compile(r'forget\s+(?:about\s+)?(?:everything|all|your)', re.IGNORECASE).search, 'Asks to forget context'),
+    ('indirect:hidden_tag', _test_hidden_tag_anywhere, 'Hidden element in markup followed by instruction-like words'),
+]
 
 SENSITIVE_PATH_RULES: List[Tuple[str, re.Pattern, str]] = [
     (
         'path:sensitive_file',
-        re.compile(r"""(?:^|[\s"'`(\[])(?:~|\/home\/[^\s/]+|\/root)?\/?\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)\b|\/etc\/(?:shadow|passwd)\b""", re.IGNORECASE),
+        re.compile(r"""(?:^|[\s"'`(\[])(?:~|\/home\/[^\s/]+|\/root)?\/?\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE),
         'Targeting sensitive system credentials or environment file',
     ),
 ]
@@ -243,6 +343,7 @@ class Assessment:
     engine: str = 'oss-local'
     rules_version: str = RULES_VERSION
     truncated: bool = False
+    advisory: Optional[Dict[str, str]] = None
 
     @property
     def allowed(self) -> bool:
@@ -260,6 +361,8 @@ class Assessment:
         }
         if self.truncated:
             d['truncated'] = True
+        if self.advisory:
+            d['advisory'] = dict(self.advisory)
         return d
 
 def _strip_c_comments(text: str) -> str:
@@ -294,44 +397,99 @@ def _join_line_break(m: Any) -> str:
     return run
 
 
+def _strip_invisible(text: str) -> str:
+    """Removes invisible characters (zero-width, variation selectors, tag characters)."""
+    return INVISIBLE_ASTRAL_RE.sub('', ZERO_WIDTH_RE.sub('', text))
+
+
+def invisible_view(text: str) -> Optional[Tuple[str, array]]:
+    """Text without invisible characters and the index map back to `text`
+    (map[i] is the index of clean[i]; map[len(clean)] is len(text)). None when
+    the text has no invisible character. See invisibleView in rules.js."""
+    runs = sorted([m.span() for m in ZERO_WIDTH_RE.finditer(text)]
+                  + [m.span() for m in INVISIBLE_ASTRAL_RE.finditer(text)])
+    if not runs:
+        return None
+    mapping = array('q')
+    pos = 0
+    for start, end in runs:
+        mapping.extend(range(pos, start))
+        pos = end
+    mapping.extend(range(pos, len(text)))
+    mapping.append(len(text))
+    return _strip_invisible(text), mapping
+
+
 def normalize_input(text: str) -> Tuple[str, str]:
     if not isinstance(text, str):
         return '', ''
-    # 1. Strip zero-width evasion characters
-    stripped = ZERO_WIDTH_RE.sub('', text)
+    # 1. Strip invisible evasion characters (zero-width, variation selectors, tag characters)
+    stripped = _strip_invisible(text)
     # 1b. Strip ANSI escape sequences
     stripped = ANSI_ESCAPE_RE.sub('', stripped)
     # 2. Strip inline C-style comments (e.g. sys/*safe*/tem -> system)
     stripped = _strip_c_comments(stripped)
-    # 3. Rejoin words and tokens split across newlines (sys\ntem -> system).
+    # 3. Compatibility folding for matching (NFKC): fullwidth Latin becomes ASCII.
+    if NON_ASCII_RE.search(stripped):
+        stripped = stripped.translate(_COMPAT_FOLD_TABLE)
+    # 4. Rejoin words and tokens split across newlines (sys\ntem -> system).
     #    Linear: only the character on each side of a newline run is inspected.
     if '\n' in stripped or '\r' in stripped:
         stripped = WHITESPACE_RUN_RE.sub(_join_line_break, stripped)
-    # 4. Normalize homoglyphs (Cyrillic to Latin for English hijack detection)
-    normalized = "".join(HOMOGLYPH_MAP.get(c, c) for c in stripped)
+    # 5. Normalize homoglyphs (Cyrillic to Latin for English hijack detection)
+    normalized = stripped.translate(_HOMOGLYPH_TABLE)
     return normalized, stripped
 
 
-def _evaluate_uncached(input_text: str) -> Assessment:
+# Default policy by tiers (same list as ADVISORY_BY_DEFAULT in rules.js). A
+# match of these heuristic rules is an advisory unless strict mode is on
+# (strict=True, or ZN_STRICT=1 in the environment).
+ADVISORY_BY_DEFAULT = frozenset([
+    'pi:identity_override',
+    'pi:system_tag',
+    'pi:system_bracket',
+    'pi:new_instructions',
+    'pi:pretend',
+    'pi:roleplay',
+    'pi:jailbreak',
+    'pi:bypass',
+    'pi:override',
+    'pi:template_boundary',
+])
+
+
+def _strict(strict: Optional[bool]) -> bool:
+    # The environment can only harden: strict=False does not lift ZN_STRICT=1 (as in Node.js).
+    return bool(strict) or os.environ.get('ZN_STRICT') == '1'
+
+
+def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
     if not isinstance(input_text, str) or not input_text.strip():
         return Assessment(verdict='allow', confidence=1.0, rule='none', reason=None)
     if len(input_text) > MAX_SCAN_CHARS:
         # NUL is neither whitespace nor a word character, so normalization
         # cannot join the end of the head and the start of the tail.
         window = input_text[:SCAN_HEAD_CHARS] + '\u0000' + input_text[-SCAN_TAIL_CHARS:]
-        res = _evaluate_uncached(window)
+        res = _evaluate_uncached(window, strict)
         res.truncated = True
         return res
 
     normalized, stripped = normalize_input(input_text)
+    # The raw input is matched with the same characters as in Node.js (see _CASE_FOLD_GUARD).
+    raw = input_text.translate(_CASE_FOLD_GUARD)
+
+    tier_advisory = None
 
     # Check Base64 payload smuggling
+    b64_advisory = None
     for text_candidate in (normalized, stripped):
         b64_match = B64_EXEC_RE.search(text_candidate)
         if b64_match:
             try:
                 decoded = base64.b64decode(b64_match.group(1)).decode('utf-8', errors='ignore')
-                inner_res = evaluate(decoded)
+                inner_res = evaluate(decoded, strict=strict)
+                if inner_res.advisory:
+                    b64_advisory = dict(inner_res.advisory)
                 if not inner_res.allowed:
                     return Assessment(
                         verdict='block',
@@ -342,7 +500,7 @@ def _evaluate_uncached(input_text: str) -> Assessment:
             except Exception:
                 pass
 
-    targets = list(dict.fromkeys([normalized, stripped, input_text]))
+    targets = list(dict.fromkeys([normalized, stripped, raw]))
 
     for text in targets:
         # 0. Evasion Rules (BiDi Trojan Source)
@@ -371,16 +529,32 @@ def _evaluate_uncached(input_text: str) -> Assessment:
         for rule_id, pat, desc in INJECTION_RULES:
             tester = RULE_TESTERS.get(rule_id)
             if tester(text) if tester else pat.search(text):
+                if not strict and rule_id in ADVISORY_BY_DEFAULT:
+                    if tier_advisory is None:
+                        tier_advisory = {'rule': rule_id, 'reason': desc}
+                    continue
                 return Assessment(verdict='block', confidence=0.95, rule=rule_id, reason=desc)
 
         # 5. Exfiltration Compound (verb + credentials)
-        if EXFIL_VERBS.search(text) and CRED_OBJECTS.search(text):
+        if EXFIL_VERBS.search(text) and CRED_OBJECTS.search(text) and EXFIL_CLAUSE_RE.search(text):
             return Assessment(
                 verdict='block',
                 confidence=0.90,
                 rule='exfil:credentials',
                 reason='Imperative verb requesting credentials/secrets'
             )
+
+    if tier_advisory:
+        return Assessment(verdict='allow', confidence=0.99, rule='none', reason=None, advisory=tier_advisory)
+
+    for text in targets:
+        for rule_id, test, desc in ADVISORY_RULES:
+            if test(text):
+                return Assessment(verdict='allow', confidence=0.99, rule='none', reason=None,
+                                  advisory={'rule': rule_id, 'reason': desc})
+
+    if b64_advisory:
+        return Assessment(verdict='allow', confidence=0.99, rule='none', reason=None, advisory=b64_advisory)
 
     return Assessment(verdict='allow', confidence=0.99, rule='none', reason=None)
 
@@ -648,24 +822,98 @@ SECRET_VALUE_FILTERS = {
 }
 
 
-def _redact_filtered(pattern: re.Pattern, rule_id: str, is_non_secret, text: str,
-                     detections: List[Dict[str, Any]], budget: List[int]) -> str:
-    def repl(m: "re.Match[str]") -> str:
-        value = m.group(2)
-        n = _utf16_len(value)
-        if n <= MAX_FILTERED_VALUE and n <= budget[0]:
-            budget[0] -= n
-            if is_non_secret(value, m.group(1)):
-                return m.group(0)
-        detections.append({"rule": rule_id, "start": m.start(), "end": m.end()})
-        return m.group(1) + "[REDACTED_SECRET]" + m.group(3)
-    return pattern.sub(repl, text)
+def _apply_edits(text: str, edits: List[Tuple[int, int, str]]) -> str:
+    """Replaces the (start, end, replacement) spans, in ascending order, in text."""
+    parts = []
+    last = 0
+    for start, end, new in edits:
+        parts.append(text[last:start])
+        parts.append(new)
+        last = end
+    parts.append(text[last:])
+    return ''.join(parts)
+
+
+def _span_in(mapping: Optional[array], start: int, end: int) -> Tuple[int, int]:
+    """Span [start, end) of a text without invisible characters, as a span of the
+    original text. mapping is None for the original text itself."""
+    if mapping is None:
+        return start, end
+    return mapping[start], (mapping[end - 1] + 1 if end > start else mapping[start])
+
+
+def _expand_template(template: str, groups: List[Optional[Tuple[int, int]]], text: str) -> str:
+    """Replacement template with \\1..\\9 expanded from the group spans of the
+    original text (see expandTemplate in rules.js)."""
+    def sub(m: "re.Match[str]") -> str:
+        g = groups[int(m.group(1))]
+        return text[g[0]:g[1]] if g is not None else ''
+    return re.sub(r'\\(\d)', sub, template)
+
+
+def _rule_candidates(rule_id: str, pattern: re.Pattern, replacement: str, text: str,
+                     view: Optional[Tuple[str, array]], budget: List[int], value_filter,
+                     out: List[Tuple[int, int, str, str]]) -> None:
+    """Candidate redactions of one rule as (start, end, rule_id, replacement) in
+    original coordinates. The rule runs on the original text and on the text
+    without invisible characters (see ruleCandidates in rules.js)."""
+    passes: List[Tuple[str, Optional[array]]] = [(text, None)]
+    if view is not None:
+        passes.append(view)
+    for hay, mapping in passes:
+        required = SECRET_PATTERN_REQUIRES.get(rule_id)
+        if required and required not in hay:
+            continue
+        prefilter = SECRET_PATTERN_PREFILTERS.get(rule_id)
+        if prefilter is not None and not prefilter.search(hay):
+            continue
+        for m in pattern.finditer(hay):
+            if m.end() == m.start():
+                continue
+            groups: List[Optional[Tuple[int, int]]] = [None]
+            for k in range(1, pattern.groups + 1):
+                if m.start(k) == -1:
+                    groups.append(None)
+                else:
+                    groups.append(_span_in(mapping, m.start(k), m.end(k)))
+            if value_filter is not None:
+                # The value (group 2) decides whether the match is redacted.
+                vs, ve = groups[2]
+                value = _strip_invisible(text[vs:ve])
+                prefix = ''
+                if groups[1] is not None:
+                    prefix = _strip_invisible(text[groups[1][0]:groups[1][1]])
+                n = _utf16_len(value)
+                if n <= MAX_FILTERED_VALUE and n <= budget[0]:
+                    budget[0] -= n
+                    if value_filter(value, prefix):
+                        continue
+            start, end = _span_in(mapping, m.start(), m.end())
+            out.append((start, end, rule_id, _expand_template(replacement, groups, text)))
+
+
+def _merge_candidates(cands: List[Tuple[int, int, str, str]]) -> List[Tuple[int, int, str, str]]:
+    """Overlapping candidates become one redaction covering their union; the first
+    candidate (earliest start, then longest) supplies the replacement text."""
+    cands.sort(key=lambda c: (c[0], -c[1]))
+    merged: List[Tuple[int, int, str, str]] = []
+    for c in cands:
+        if merged and c[0] < merged[-1][1]:
+            last = merged[-1]
+            if c[1] > last[1]:
+                merged[-1] = (last[0], c[1], last[2], last[3])
+            continue
+        merged.append(c)
+    return merged
 
 
 def redact_secrets(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     """
     Scans a text for sensitive credentials (API keys, private keys, passwords)
     and redacts them in place. Returns (redacted_text, detected_secrets_list).
+    Every rule runs on the original text and on the text without invisible
+    characters; the redacted spans are the union of both (see redactSecrets in
+    rules.js).
     """
     if not isinstance(text, str) or not text:
         return text, []
@@ -673,27 +921,24 @@ def redact_secrets(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     redacted = text
     detections: List[Dict[str, Any]] = []
     budget = [MAX_FILTERED_CHARS]
+    view = None
+    dirty = True
 
     for rule_id, pattern, replacement in SECRET_PATTERNS:
-        required = SECRET_PATTERN_REQUIRES.get(rule_id)
-        if required and required not in redacted:
+        if dirty:
+            view = invisible_view(redacted)
+            dirty = False
+        cands: List[Tuple[int, int, str, str]] = []
+        _rule_candidates(rule_id, pattern, replacement, redacted, view, budget,
+                         SECRET_VALUE_FILTERS.get(rule_id), cands)
+        if not cands:
             continue
-        prefilter = SECRET_PATTERN_PREFILTERS.get(rule_id)
-        if prefilter is not None and not prefilter.search(redacted):
-            continue
-        value_filter = SECRET_VALUE_FILTERS.get(rule_id)
-        if value_filter is not None:
-            redacted = _redact_filtered(pattern, rule_id, value_filter, redacted, detections, budget)
-            continue
-        matches = list(pattern.finditer(redacted))
-        if matches:
-            for m in matches:
-                detections.append({
-                    "rule": rule_id,
-                    "start": m.start(),
-                    "end": m.end(),
-                })
-            redacted = pattern.sub(replacement, redacted)
+        edits: List[Tuple[int, int, str]] = []
+        for start, end, found_rule, new in _merge_candidates(cands):
+            detections.append({"rule": found_rule, "start": start, "end": end})
+            edits.append((start, end, new))
+        redacted = _apply_edits(redacted, edits)
+        dirty = True
 
     return redacted, detections
 
@@ -707,20 +952,28 @@ SCAN_WINDOW_OVERLAP = 4 * 1024
 MAX_TOOL_RESULT_SCAN_CHARS = 4 * 1024 * 1024
 
 
-def scan_windows(text: str) -> Assessment:
+def scan_windows(text: str, strict: Optional[bool] = None) -> Assessment:
+    strict = _strict(strict)
     if not isinstance(text, str) or len(text) <= MAX_SCAN_CHARS:
-        return evaluate(text)
+        return evaluate(text, strict=strict)
     step = MAX_SCAN_CHARS - SCAN_WINDOW_OVERLAP
     limit = min(len(text), MAX_TOOL_RESULT_SCAN_CHARS)
     start = 0
+    advisory = None
     while True:
         end = min(start + MAX_SCAN_CHARS, limit)
-        res = _evaluate_uncached(text[start:end])
+        res = _evaluate_uncached(text[start:end], strict)
+        if advisory is None and res.advisory:
+            advisory = res.advisory
         if not res.allowed or end >= limit:
             break
         start += step
     if res.allowed and len(text) > limit:
-        res = _evaluate_uncached(text[-MAX_SCAN_CHARS:])
+        res = _evaluate_uncached(text[-MAX_SCAN_CHARS:], strict)
+        if advisory is None and res.advisory:
+            advisory = res.advisory
+    if res.allowed and advisory:
+        res.advisory = dict(advisory)
     res.truncated = len(text) > limit
     return res
 
@@ -730,6 +983,7 @@ def sanitize_tool_result(
     content: Optional[Any] = None,
     mask_secrets: bool = True,
     block_truncated: bool = False,
+    strict: Optional[bool] = None,
 ) -> Any:
     """
     Sanitizes tool output to prevent prompt injection and credential leakage.
@@ -744,7 +998,7 @@ def sanitize_tool_result(
     if content is not None:
         tool_name = str(tool_or_result)
         text_content = content if isinstance(content, str) else str(content)
-        assessment = scan_windows(text_content)
+        assessment = scan_windows(text_content, strict=strict)
         truncated = assessment.truncated
         if truncated and assessment.allowed and (block_truncated or os.environ.get('ZN_BLOCK_TRUNCATED') == '1'):
             assessment = Assessment(verdict='block', confidence=1.0, rule='size:truncated',
@@ -800,21 +1054,27 @@ _eval_cache = {}
 _eval_cache_ver = RULES_VERSION
 
 
-def evaluate(input_text: str) -> Assessment:
-    """Cached entry point: LRU(2048) keyed on raw input, version-guarded."""
+def evaluate(input_text: str, strict: Optional[bool] = None) -> Assessment:
+    """Cached entry point: LRU(2048) keyed on raw input and strict mode, version-guarded.
+
+    strict=True (or ZN_STRICT=1) also blocks the heuristic rules that are
+    advisories by default (ADVISORY_BY_DEFAULT)."""
     global _eval_cache_ver
+    strict = _strict(strict)
     if not isinstance(input_text, str) or len(input_text) > EVAL_CACHE_MAX_INPUT:
-        return _evaluate_uncached(input_text)
+        return _evaluate_uncached(input_text, strict)
     if RULES_VERSION != _eval_cache_ver:
         _eval_cache.clear()
         _eval_cache_ver = RULES_VERSION
-    hit = _eval_cache.get(input_text)
+    key = (strict, input_text)
+    hit = _eval_cache.get(key)
     if hit is not None:
-        _eval_cache[input_text] = _eval_cache.pop(input_text)
-        return Assessment(*hit)
-    res = _evaluate_uncached(input_text)
-    _eval_cache[input_text] = (res.verdict, res.confidence, res.rule,
-                               res.reason, res.engine, res.rules_version, res.truncated)
+        _eval_cache[key] = _eval_cache.pop(key)
+        return Assessment(*hit[:7], advisory=dict(hit[7]) if hit[7] else None)
+    res = _evaluate_uncached(input_text, strict)
+    _eval_cache[key] = (res.verdict, res.confidence, res.rule,
+                               res.reason, res.engine, res.rules_version, res.truncated,
+                               dict(res.advisory) if res.advisory else None)
     if len(_eval_cache) > _EVAL_CACHE_MAX:
         _eval_cache.pop(next(iter(_eval_cache)))
     return res

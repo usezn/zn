@@ -136,7 +136,7 @@ test('vault locked or missing: irreversible __ZN_REDACTED_<TYPE>__ and a warning
     assert.ok(!r.text.includes(pw) && !r.text.includes('a.b@example.org'));
     assert.ok(r.text.includes('__ZN_REDACTED_EMAIL__') && r.text.includes('__ZN_REDACTED_DB_PASSWORD__'), r.text);
     assert.strictEqual(r.locked, true);
-    assert.ok(/zn unlock/.test(r.warning));
+    assert.ok(/(zn|zn-gate@\S+) unlock/.test(r.warning));
   }
 });
 

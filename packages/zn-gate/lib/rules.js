@@ -5,10 +5,15 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-12.6
+ * RULES_VERSION: 2026-10-14.3
  */
 
-const RULES_VERSION = '2026-10-12.6';
+const RULES_VERSION = '2026-10-14.3';
+
+// Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
+// \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
+// as "é" next to a trigger word therefore counts as a boundary in both engines,
+// so a non-ASCII letter never hides a trigger word.
 
 // "ignore" and "disregard" are ordinary words ("ignore the noise in the
 // logs", "ignore whitespace changes"). They only count as an override when
@@ -18,7 +23,7 @@ const RULES_VERSION = '2026-10-12.6';
 // Every group is a fixed list of words and whitespace runs are bounded, so a
 // match attempt does bounded work.
 const OVERRIDE_NOUN_SOURCE =
-  '(?:instructions?|prompts?|rules|guidelines?|directives?|guidance|restrictions?|guardrails?|context|constraints?|commands?|policies|programming|orders|limitations?|directions|requests?|tasks?)\\b';
+  '(?:instructions?|prompts?|rules|guidelines?|directives?|guidance|restrictions?|guardrails?|context|constraints?|commands?|policies|programming|orders|limitations?|directions|requests?|tasks?)(?![A-Za-z0-9_])';
 const OVERRIDE_QUANTIFIER_SOURCE = '(?:all|any|every|each|your|my|these|those)(?:\\s{1,32}of)?\\s{1,32}';
 const OVERRIDE_DETERMINER_SOURCE = '(?:(?:the|your|my|these|those|our|its|their)\\s{1,32})?';
 const OVERRIDE_QUALIFIER_SOURCE =
@@ -27,15 +32,15 @@ const OVERRIDE_QUALIFIER_SOURCE =
 // of a clause, before "and" or before a word for text ("ignore the above
 // text"), so "ignore the previous build output" stays allowed.
 const OVERRIDE_END_SOURCE =
-  '(?=[ \\t]*(?:[.,;:!)\\r\\n]|$)|\\s{1,32}and\\b|\\s{1,32}(?:text|content|message|messages|input|lines?|one|ones)\\b)';
+  '(?=[ \\t]*(?:[.,;:!)\\r\\n]|$)|\\s{1,32}and(?![A-Za-z0-9_])|\\s{1,32}(?:text|content|message|messages|input|lines?|one|ones)(?![A-Za-z0-9_]))';
 
 function overrideRuleSource(verb) {
   return [
     `${verb}\\s{1,32}(?:${OVERRIDE_QUANTIFIER_SOURCE})?${OVERRIDE_DETERMINER_SOURCE}(?:${OVERRIDE_QUALIFIER_SOURCE}){1,2}${OVERRIDE_NOUN_SOURCE}`,
     `${verb}\\s{1,32}${OVERRIDE_QUANTIFIER_SOURCE}${OVERRIDE_DETERMINER_SOURCE}${OVERRIDE_NOUN_SOURCE}`,
-    `${verb}\\s{1,32}(?:the\\s{1,32})?(?:instructions|guardrails|directives)\\b`,
+    `${verb}\\s{1,32}(?:the\\s{1,32})?(?:instructions|guardrails|directives)(?![A-Za-z0-9_])`,
     `${verb}\\s{1,32}(?:${OVERRIDE_QUANTIFIER_SOURCE})?(?:the\\s{1,32})?(?:previous|prior|above|earlier|preceding|foregoing)${OVERRIDE_END_SOURCE}`,
-    `${verb}\\s{1,32}(?:everything|anything|all)\\s{1,32}(?:above|before|previously|prior|earlier|you(?:'ve|\\s{1,32}have|\\s{1,32}were|\\s{1,32}was)?\\s{1,32}(?:been\\s{1,32})?(?:told|said|given|received))\\b`,
+    `${verb}\\s{1,32}(?:everything|anything|all)\\s{1,32}(?:above|before|previously|prior|earlier|you(?:'ve|\\s{1,32}have|\\s{1,32}were|\\s{1,32}was)?\\s{1,32}(?:been\\s{1,32})?(?:told|said|given|received))(?![A-Za-z0-9_])`,
   ].join('|');
 }
 
@@ -87,20 +92,20 @@ function testMultiZh(text) {
 const INJECTION_RULES = [
   { id: 'pi:ignore_previous', pattern: new RegExp(overrideRuleSource('ignore'), 'i'), description: 'Override prior instructions' },
   { id: 'pi:disregard', pattern: new RegExp(overrideRuleSource('disregard'), 'i'), description: 'Disregard instructions' },
-  { id: 'pi:forget', pattern: /forget\s+(about\s+)?(everything|all|your)/i, description: 'Forget-context attack' },
+  { id: 'pi:forget', pattern: /(?<![A-Za-z0-9_])forget\s+(?:about\s+)?(?:everything|all|your)(?![A-Za-z0-9_])(?!\s+(?:of\s+)?(?:the\s+)?(?:cached?|caches|entries|changes|data|files?|records|sessions?|cookies|state|tabs|devices?|passwords?|history|items|keys|tokens|credentials|settings|preferences|accounts?|connections?|logins?|networks?)(?![A-Za-z0-9_]))/i, description: 'Forget-context attack' },
   { id: 'pi:identity_override', pattern: /you\s+are\s+now/i, description: 'Identity override' },
   { id: 'pi:new_instructions', pattern: /new\s+instructions?:/i, description: 'Instruction replacement' },
-  { id: 'pi:system_tag', pattern: /(?:^|[\r\n"'`\[<])[ \t]*system\s*:|<[\s/]*system\b[^<>]*>/i, description: 'Fake system tag' },
+  { id: 'pi:system_tag', pattern: /(?:^|[\r\n"'`\[<])[ \t]*system\s*:|<[\s/]*system(?![A-Za-z0-9_])[^<>]*>/i, description: 'Fake system tag' },
   { id: 'pi:system_bracket', pattern: /\[system\]/i, description: 'Bracketed system tag' },
-  { id: 'pi:act_as', pattern: /act\s+as\s+(if|a)/i, description: 'Role hijack (act as)' },
+  { id: 'pi:act_as', pattern: /(?:(?<![A-Za-z0-9_])you\s+(?:(?:will|must|should|shall|now)\s+|are\s+to\s+)?|(?:^|[.!?\r\n\u2028\u2029])[ \t]*(?:[\"'`(\[*-][ \t]*)?|(?<![A-Za-z0-9_])please\s+|(?<![A-Za-z0-9_])now\s+|(?<![A-Za-z0-9_])from\s+now\s+on,?\s+(?:you\s+)?)(?=act(?![A-Za-z0-9_]))act\s+as\s+(?:if\s+you(?![A-Za-z0-9_])|an?\s+(?:[a-z-]+\s+){0,3}?(?:ai|assistant|chatbot|bot|model|llm|gpt|persona|character|version|mode|jailbroken|unrestricted|unfiltered|uncensored|evil|malicious|rogue|harmful|unethical|amoral|hacker|dan)(?![A-Za-z0-9_])|my(?![A-Za-z0-9_])|though\s+you(?![A-Za-z0-9_]))/i, description: 'Role hijack (act as)' },
   { id: 'pi:pretend', pattern: /pretend\s+(you|to\s+be)/i, description: 'Role hijack (pretend)' },
   { id: 'pi:roleplay', pattern: /roleplay\s+as/i, description: 'Role hijack (roleplay)' },
-  { id: 'pi:jailbreak', pattern: /\bjailbreak\b/i, description: 'Explicit jailbreak term' },
+  { id: 'pi:jailbreak', pattern: /(?<![A-Za-z0-9_])jailbreak(?![A-Za-z0-9_])/i, description: 'Explicit jailbreak term' },
   { id: 'pi:bypass', pattern: /bypass\s+(your|the|all)/i, description: 'Guardrail bypass attempt' },
-  { id: 'pi:override', pattern: /\boverride\s+(?:all\s+|your\s+|the\s+)?(?:system|policy|safety|rules|instructions|guidelines|restrictions)\b|\bsystem\s+override\s*:/i, description: 'Policy override attempt' },
+  { id: 'pi:override', pattern: /(?<![A-Za-z0-9_])override\s+(?:all\s+|your\s+|the\s+)?(?:system|policy|safety|rules|instructions|guidelines|restrictions)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])system\s+override\s*:/i, description: 'Policy override attempt' },
   { id: 'pi:template_boundary', pattern: /\[INST\]|\[\/INST\]|<<<SYS>>>|<\/<<SYS>>>|<\|im_start\|>|<\|im_end\|>/i, description: 'Chat template boundary injection' },
   { id: 'pi:multi_es', pattern: /ignora\s+(todas\s+las\s+)?(instrucciones|anteriores|previas)|olvida\s+(todo|las\s+instrucciones)|act[uú]a\s+como|ahora\s+eres/iu, description: 'Multilingual prompt injection (Spanish)' },
-  { id: 'pi:multi_pt', pattern: /ignor(?:e|a|em|ar)\s+(?:(?:todas|todos|qualquer|quaisquer|cualquier)\s+)?(?:(?:as|os|las|los|suas|seus|sus|tus|estas|estes|essas|esses)\s+)?(?:instru[cç][oõ]es|instrucciones|regras|reglas|diretrizes|directrices|orienta[cç][oõ]es|ordens|[oó]rdenes|comandos|restri[cç][oõ]es|restricciones|mensagens|anteriores|pr[eé]vias)|ignore\s+(?:tudo|qualquer|quaisquer)\b|ignora\s+(?:todo|tudo|cualquier)\b/i, description: 'Multilingual prompt injection (Portuguese)' },
+  { id: 'pi:multi_pt', pattern: /ignor(?:e|a|em|ar)\s+(?:(?:todas|todos|qualquer|quaisquer|cualquier)\s+)?(?:(?:as|os|las|los|suas|seus|sus|tus|estas|estes|essas|esses)\s+)?(?:instru[cç][oõ]es|instrucciones|regras|reglas|diretrizes|directrices|orienta[cç][oõ]es|ordens|[oó]rdenes|comandos|restri[cç][oõ]es|restricciones|mensagens|anteriores|pr[eé]vias)|ignore\s+(?:tudo|qualquer|quaisquer)(?![A-Za-z0-9_])|ignora\s+(?:todo|tudo|cualquier)(?![A-Za-z0-9_])/i, description: 'Multilingual prompt injection (Portuguese)' },
   { id: 'pi:multi_fr', pattern: /ignore[rz]?\s+(toutes\s+les\s+)?instructions|oublie[rz]?\s+tout|agis\s+comme|tu\s+es\s+maintenant/iu, description: 'Multilingual prompt injection (French)' },
   { id: 'pi:multi_de', pattern: /ignoriere\s+(alle\s+)?(anweisungen|instruktionen)|vergiss\s+(alles|jede)|du\s+bist\s+jetzt|handle\s+als/iu, description: 'Multilingual prompt injection (German)' },
   { id: 'pi:multi_ru', pattern: /забудь\s+[^\n]{0,80}?(все|инструкции)|игнорируй\s+[^\n]{0,80}?(все|предыдущие)|действуй\s+как|ты\s+теперь|найди\s+пароли/iu, test: testMultiRu, description: 'Multilingual prompt injection (Russian)' },
@@ -114,11 +119,56 @@ const INJECTION_RULES = [
 // a tag only when that run is closed by ">". (A single regex with a lazy
 // `[\s\S]*?` tail, or an attribute run that may cross "<", re-scans the rest
 // of the input from every candidate and is super-linear on crafted markup.)
-const OPEN_TAG_RE = /<[a-z0-9]+\b([^<>]*)(>?)/gi;
-const HIDDEN_ATTR_RE = /\b(?:display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0|font-size\s*:\s*0(?:px)?|color\s*:\s*transparent|text-indent\s*:\s*-[0-9]{3,}px|hidden\b)/i;
+const OPEN_TAG_RE = /<[a-z0-9]+(?![A-Za-z0-9_])([^<>]*)(>?)/gi;
+const HIDDEN_ATTR_RE = /(?<![A-Za-z0-9_])(?:display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0|font-size\s*:\s*0(?:px)?|color\s*:\s*transparent|text-indent\s*:\s*-[0-9]{3,}px|hidden(?![A-Za-z0-9_]))/i;
 const HIDDEN_PAYLOAD_RE = /ignore|system|instruction|prompt|bypass|override|exfil|leak/gi;
 
+// The payload must be in the text of the hidden element itself: its content
+// up to the matching close tag (nested tags removed), at most
+// HIDDEN_TEXT_CHARS characters after the opening tag. Text after the element
+// does not count.
+const HIDDEN_TEXT_CHARS = 4096;
+const TAG_RE = /<(\/?)([a-z0-9]+)(?![A-Za-z0-9_])[^<>]*>/gi;
+
+// Returns the element's text and the index where reading stopped.
+function hiddenElementText(text, start, name) {
+  const end = Math.min(text.length, start + HIDDEN_TEXT_CHARS);
+  const re = new RegExp(TAG_RE.source, TAG_RE.flags);
+  re.lastIndex = start;
+  let depth = 1;
+  let out = '';
+  let pos = start;
+  let m;
+  while ((m = re.exec(text)) !== null && m.index < end) {
+    out += text.slice(pos, m.index) + ' ';
+    pos = re.lastIndex;
+    if (m[2].toLowerCase() === name) {
+      depth += m[1] ? -1 : 1;
+      if (depth === 0) return { text: out, stop: pos };
+    }
+  }
+  return { text: out + text.slice(pos, Math.max(pos, end)), stop: Math.max(pos, end) };
+}
+
 function testHiddenTag(text) {
+  const tagRe = new RegExp(OPEN_TAG_RE.source, OPEN_TAG_RE.flags);
+  let m;
+  while ((m = tagRe.exec(text)) !== null) {
+    if (m[2] === '>' && HIDDEN_ATTR_RE.test(m[1])) {
+      const name = m[0].slice(1).match(/^[a-z0-9]+/i)[0].toLowerCase();
+      const el = hiddenElementText(text, tagRe.lastIndex, name);
+      if (new RegExp(HIDDEN_PAYLOAD_RE.source, 'i').test(el.text)) return true;
+      // Hidden elements nested in this one were part of its text: each
+      // character is read once.
+      tagRe.lastIndex = Math.max(tagRe.lastIndex, el.stop);
+    }
+  }
+  return false;
+}
+
+// Earlier, broader form: a hidden element followed anywhere later by a
+// payload word. Used only for advisories.
+function testHiddenTagAnywhere(text) {
   const tagRe = new RegExp(OPEN_TAG_RE.source, OPEN_TAG_RE.flags);
   let m;
   while ((m = tagRe.exec(text)) !== null) {
@@ -154,22 +204,51 @@ const EVASION_RULES = [
   },
 ];
 
-const EXFIL_VERB_SOURCE = '\\b(give|reveal|send|show|print|expose|leak|paste|dump|read|open|cat|fetch|extract|steal)\\b';
+const EXFIL_VERB_SOURCE = '(?<![A-Za-z0-9_])(give|reveal|send|show|print|expose|leak|paste|dump|read|open|cat|fetch|extract|steal)(?![A-Za-z0-9_])';
 const CRED_OBJECT_SOURCE =
-  '\\b(passwords?|api[_ -]?keys?|secrets?|credentials?|tokens?|ssh[ _-]?keys?|private[ _-]?keys?|aws_secret[a-z0-9_]*|aws_access[a-z0-9_]*)\\b|(?:^|\\s|[\'"\`])\\.env(?:\\.[a-z0-9]+)?\\b';
+  '(?<![A-Za-z0-9_])(passwords?|api[_ -]?keys?|secrets?|credentials?|tokens?|ssh[ _-]?keys?|private[ _-]?keys?|aws_secret[a-z0-9_]*|aws_access[a-z0-9_]*)(?![A-Za-z0-9_])|(?:^|\\s|[\'"\`])\\.env(?:\\.[a-z0-9]+)?(?![A-Za-z0-9_])';
+
+// The verb must start a clause (an instruction, not a description such as
+// "this library reads tokens from ...") or be followed by "me"/"us", and the
+// credential must follow it in the same clause, within EXFIL_CLAUSE_CHARS
+// characters. No multiline flag: line starts are matched by the newline
+// itself, so a run of blank lines is read once.
+const EXFIL_CLAUSE_CHARS = 80;
+const EXFIL_CLAUSE_PREFIX = '(?:^|[.!?;:\\r\\n\\u2028\\u2029])[ \\t]*(?:[\\"\'`(\\[*-][ \\t]*)?|(?<![A-Za-z0-9_])(?:please|now|then|and|also|just|first|immediately|go\\s+ahead\\s+and|(?:can|could|would|will)\\s+you|(?:want|need|ask)\\s+you\\s+to|you\\s+(?:must|should|will|need\\s+to|have\\s+to))\\s+';
+const EXFIL_CLAUSE_RE = new RegExp(
+  '(?:(?:' + EXFIL_CLAUSE_PREFIX + ')' + EXFIL_VERB_SOURCE + '|' + EXFIL_VERB_SOURCE + '(?=\\s+(?:me|us)(?![A-Za-z0-9_])))' +
+    '[^.!?;\\r\\n]{0,' + EXFIL_CLAUSE_CHARS + '}?(?:' + CRED_OBJECT_SOURCE + ')',
+  'i'
+);
 
 const EXFIL_RULES = [
   {
     id: 'exfil:credentials',
-    compound: [new RegExp(EXFIL_VERB_SOURCE, 'i'), new RegExp(CRED_OBJECT_SOURCE, 'i')],
+    compound: [new RegExp(EXFIL_VERB_SOURCE, 'i'), new RegExp(CRED_OBJECT_SOURCE, 'i'), EXFIL_CLAUSE_RE],
     description: 'Imperative verb requesting credentials/secrets',
   },
 ];
 
+// Advisory tier: the broader forms of four rules. They match much benign
+// text (documentation, code, role-play requests), so a match does not block:
+// the verdict stays "allow" and the result carries `advisory` with the rule.
+// A blocking rule always wins over an advisory.
+const ADVISORY_RULES = [
+  { id: 'exfil:credentials', compound: [new RegExp(EXFIL_VERB_SOURCE, 'i'), new RegExp(CRED_OBJECT_SOURCE, 'i')], description: 'Mentions reading or sending credentials' },
+  { id: 'pi:act_as', pattern: /act\s+as\s+(?:if|a)/i, description: 'Role-play request (act as)' },
+  { id: 'pi:forget', pattern: /forget\s+(?:about\s+)?(?:everything|all|your)/i, description: 'Asks to forget context' },
+  { id: 'indirect:hidden_tag', test: testHiddenTagAnywhere, description: 'Hidden element in markup followed by instruction-like words' },
+];
+
+function matchesRule(rule, text) {
+  if (rule.compound) return rule.compound.every((re) => re.test(text));
+  return rule.test ? rule.test(text) : rule.pattern.test(text);
+}
+
 const SENSITIVE_PATH_RULES = [
   {
     id: 'path:sensitive_file',
-    pattern: /(?:^|[\s"'`(\[])(?:~|\/home\/[^\s/]+|\/root)?\/?\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)\b|\/etc\/(?:shadow|passwd)\b/i,
+    pattern: /(?:^|[\s"'`(\[])(?:~|\/home\/[^\s/]+|\/root)?\/?\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])/i,
     description: 'Targeting sensitive system credentials or environment file',
   },
 ];
@@ -205,6 +284,30 @@ const MARKDOWN_EXFIL_RULES = [
   },
 ];
 
+// Default policy by tiers. These heuristic injection rules also match a lot of
+// ordinary text (YAML `system:` keys, "bypass the cache", "you are now ready",
+// security docs), so by default a match is an advisory: the verdict stays
+// "allow" and the result carries `advisory`. Strict mode blocks them:
+// options.strict, ZN_STRICT=1, or `"strict": true` in zn.config.json (a line
+// `strict` in .znrules). Everything else (credential files, secrets, exfiltration,
+// evasion, "ignore previous instructions" and the narrow forms) always blocks.
+const ADVISORY_BY_DEFAULT = new Set([
+  'pi:identity_override',
+  'pi:system_tag',
+  'pi:system_bracket',
+  'pi:new_instructions',
+  'pi:pretend',
+  'pi:roleplay',
+  'pi:jailbreak',
+  'pi:bypass',
+  'pi:override',
+  'pi:template_boundary',
+]);
+
+function strictMode(options, cfg) {
+  return (options && options.strict === true) || process.env.ZN_STRICT === '1' || (cfg && cfg.strict === true);
+}
+
 // Local custom rules cache (.znrules or zn.config.json)
 let customConfig = null;
 let lastConfigCheck = 0;
@@ -215,7 +318,7 @@ function loadCustomConfig(forceReload = false) {
     return customConfig;
   }
   lastConfigCheck = now;
-  customConfig = { bannedPatterns: [], forbiddenPaths: [] };
+  customConfig = { bannedPatterns: [], forbiddenPaths: [], strict: false };
 
   const candidates = [
     path.join(process.cwd(), '.znrules'),
@@ -233,6 +336,7 @@ function loadCustomConfig(forceReload = false) {
           if (Array.isArray(parsed.forbiddenPaths)) {
             customConfig.forbiddenPaths = parsed.forbiddenPaths;
           }
+          if (parsed.strict === true) customConfig.strict = true;
         } else {
           const lines = fs.readFileSync(file, 'utf8').split('\n');
           for (let line of lines) {
@@ -241,6 +345,7 @@ function loadCustomConfig(forceReload = false) {
             // `secret:` lines feed the scrubber's exact-value layer; they are
             // values, not patterns, and must never be compiled as regexes.
             if (line.startsWith('secret:')) continue;
+            if (line === 'strict') { customConfig.strict = true; continue; }
             if (line.startsWith('path:')) {
               customConfig.forbiddenPaths.push(line.slice(5).trim());
             } else {
@@ -261,8 +366,49 @@ const HOMOGLYPH_MAP = {
   '\u0430': 'a', '\u0435': 'e', '\u043e': 'o', '\u0440': 'p', '\u0441': 'c',
   '\u0456': 'i', '\u0455': 's', '\u0443': 'y', '\u0445': 'x',
   '\u0410': 'A', '\u0415': 'E', '\u041e': 'O', '\u0420': 'P', '\u0421': 'C',
+  // Dotless i and capital dotted I read as i and I.
+  '\u0131': 'i', '\u0130': 'I',
 };
-const ZERO_WIDTH_RE = /[\u200B-\u200D\uFEFF\u00AD]/g;
+// Invisible characters removed before matching: zero-width spaces and joiners,
+// word joiner, BOM, soft hyphen, and variation selectors. The Unicode tag
+// characters (U+E0000-E007F) and the supplementary variation selectors
+// (U+E0100-E01EF) are astral and live in INVISIBLE_ASTRAL_RE.
+const ZERO_WIDTH_RE = /[\u200B-\u200D\u2060\uFEFF\u00AD\uFE00-\uFE0F]/g;
+const INVISIBLE_ASTRAL_RE = /[\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
+// ASCII-only text needs no compatibility folding.
+const NON_ASCII_RE = /[^\x00-\x7f]/;
+// Compatibility characters folded for matching, one character at a time: fullwidth
+// ASCII variants (including fullwidth punctuation), Latin ligatures, super- and
+// subscripts, enclosed alphanumerics and mathematical alphanumerics. Full NFKC
+// is not used: some characters (such as U+FDFA) expand to 18 characters, which
+// makes the cost of a long input grow far beyond its length.
+// A run of fullwidth ASCII (U+FF01-FF5E) folds to ASCII by a fixed offset; the
+// other characters of the ranges are looked up in a table computed once.
+// The long s (U+017F) and the Kelvin sign (U+212A) are included: they fold to
+// s and K, which Python's case-insensitive matching would otherwise read as
+// letters of the trigger words on the stripped text.
+const COMPAT_FOLD_RE = /[！-～]+|[ﬀ-ﬆſK⁰-₟①-⓿]|[\u{1D400}-\u{1D7FF}]/gu;
+const COMPAT_FOLD = new Map();
+for (const [lo, hi] of [[0xfb00, 0xfb06], [0x17f, 0x17f], [0x212a, 0x212a], [0x2070, 0x209f], [0x2460, 0x24ff], [0x1d400, 0x1d7ff]]) {
+  for (let cp = lo; cp <= hi; cp++) {
+    const ch = String.fromCodePoint(cp);
+    const folded = ch.normalize('NFKC');
+    if (folded !== ch) COMPAT_FOLD.set(ch, folded);
+  }
+}
+function foldCompatMatch(run) {
+  if (run.charCodeAt(0) >= 0xff01 && run.charCodeAt(0) <= 0xff5e) {
+    const parts = [];
+    for (let i = 0; i < run.length; i += 4096) {
+      const end = Math.min(run.length, i + 4096);
+      const codes = new Array(end - i);
+      for (let j = i; j < end; j++) codes[j - i] = run.charCodeAt(j) - 0xfee0;
+      parts.push(String.fromCharCode.apply(null, codes));
+    }
+    return parts.join('');
+  }
+  return COMPAT_FOLD.get(run);
+}
 const ANSI_ESCAPE_RE = /\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07\x1b]*\x07/g;
 const B64_EXEC_RE = /(?:echo|printf)\s+([A-Za-z0-9+/=]{16,})\s*\|\s*(?:base64\s+-(?:d|-decode)|openssl)/i;
 
@@ -291,15 +437,51 @@ function stripCComments(str) {
   return out + str.slice(from);
 }
 
+// Removes invisible characters (zero-width, variation selectors, tag
+// characters) for matching only; the caller's text is never changed.
+function stripInvisible(str) {
+  return str.replace(ZERO_WIDTH_RE, '').replace(INVISIBLE_ASTRAL_RE, '');
+}
+
+// Index map for a text with invisible characters removed: `clean` is the text
+// without them and `map[i]` is the index in `text` of clean[i] (map[clean.length]
+// is text.length). Returns null when the text has no invisible character. A
+// match [s, e) in `clean` covers text [map[s], map[e - 1] + 1), which includes
+// the invisible characters inside it.
+function invisibleView(text) {
+  const runs = [];
+  for (const m of text.matchAll(ZERO_WIDTH_RE)) runs.push(m.index, m.index + m[0].length);
+  for (const m of text.matchAll(INVISIBLE_ASTRAL_RE)) runs.push(m.index, m.index + m[0].length);
+  if (runs.length === 0) return null;
+  // The runs of both patterns are merged in index order.
+  const sorted = [];
+  for (let r = 0; r < runs.length; r += 2) sorted.push([runs[r], runs[r + 1]]);
+  sorted.sort((a, b) => a[0] - b[0]);
+  const clean = text.replace(ZERO_WIDTH_RE, '').replace(INVISIBLE_ASTRAL_RE, '');
+  const map = new Int32Array(clean.length + 1);
+  let c = 0;
+  let pos = 0;
+  for (const [start, end] of sorted) {
+    for (let i = pos; i < start; i++) map[c++] = i;
+    pos = end;
+  }
+  for (let i = pos; i < text.length; i++) map[c++] = i;
+  map[c] = text.length;
+  return { clean, map };
+}
+
 function normalizeInput(str) {
   if (typeof str !== 'string') return { normalized: '', stripped: '' };
-  // 1. Strip zero-width evasion characters
-  let stripped = str.replace(ZERO_WIDTH_RE, '');
+  // 1. Strip invisible evasion characters (zero-width, variation selectors, tag characters)
+  let stripped = stripInvisible(str);
   // 2. Strip ANSI escape sequences
   stripped = stripped.replace(ANSI_ESCAPE_RE, '');
   // 3. Strip inline C-style comments (e.g. sys/*safe*/tem -> system)
   stripped = stripCComments(stripped);
-  // 4. Rejoin words and tokens split across newlines (e.g. sys\ntem -> system, /l\neak -> /leak, Cyrillic & Chinese).
+  // 4. Compatibility folding for matching: fullwidth Latin and other
+  //    compatibility forms become their ASCII equivalents (NFKC).
+  if (NON_ASCII_RE.test(stripped)) stripped = stripped.replace(COMPAT_FOLD_RE, foldCompatMatch);
+  // 5. Rejoin words and tokens split across newlines (e.g. sys\ntem -> system, /l\neak -> /leak, Cyrillic & Chinese).
   //    Linear: only the character on each side of a newline run is inspected.
   if (LINE_BREAK_RE.test(stripped)) {
     stripped = stripped.replace(WHITESPACE_RUN_RE, (run, offset, whole) => {
@@ -310,7 +492,7 @@ function normalizeInput(str) {
     });
   }
   // 5. Normalize homoglyphs (Cyrillic to Latin for English hijack detection)
-  let normalized = stripped.replace(/[\u0410-\u0456]/g, (m) => HOMOGLYPH_MAP[m] || m);
+  let normalized = stripped.replace(/[\u0130\u0131\u0410-\u0456]/g, (m) => HOMOGLYPH_MAP[m] || m);
   return { normalized, stripped };
 }
 
@@ -336,12 +518,17 @@ function evaluateUncached(input, options = {}) {
   // Pre-normalization passes: stripped (preserves non-Latin) and normalized (maps homoglyphs)
   const { normalized, stripped } = normalizeInput(input);
 
+  const strict = strictMode(options, loadCustomConfig());
+  let tierAdvisory = null;
+
   // Check Base64 payload smuggling
+  let b64Advisory = null;
   const b64Match = normalized.match(B64_EXEC_RE) || stripped.match(B64_EXEC_RE);
   if (b64Match && b64Match[1]) {
     try {
       const decoded = Buffer.from(b64Match[1], 'base64').toString('utf8');
       const innerRes = evaluate(decoded, options);
+      if (innerRes.advisory) b64Advisory = innerRes.advisory;
       if (innerRes.verdict === 'block') {
         return {
           ...innerRes,
@@ -389,6 +576,10 @@ function evaluateUncached(input, options = {}) {
     // 4. Standard Prompt Injection Rules
     for (const rule of INJECTION_RULES) {
       if (rule.test ? rule.test(text) : rule.pattern.test(text)) {
+        if (!strict && ADVISORY_BY_DEFAULT.has(rule.id)) {
+          if (!tierAdvisory) tierAdvisory = { rule: rule.id, reason: rule.description };
+          continue;
+        }
         return { verdict: 'block', confidence: 0.95, reason: rule.description, rule: rule.id, engine: 'oss-local', rules_version: RULES_VERSION };
       }
     }
@@ -412,6 +603,31 @@ function evaluateUncached(input, options = {}) {
     if (input.includes(fpath)) {
       return { verdict: 'block', confidence: 1.0, reason: `Matches custom repository forbidden path: ${fpath}`, rule: 'custom:forbidden_path', engine: 'oss-local', rules_version: RULES_VERSION };
     }
+  }
+
+  if (tierAdvisory) {
+    return {
+      verdict: 'allow', confidence: 0.99, rule: 'none', reason: null, engine: 'oss-local', rules_version: RULES_VERSION,
+      advisory: tierAdvisory,
+    };
+  }
+
+  for (const text of targets) {
+    for (const rule of ADVISORY_RULES) {
+      if (matchesRule(rule, text)) {
+        return {
+          verdict: 'allow', confidence: 0.99, rule: 'none', reason: null, engine: 'oss-local', rules_version: RULES_VERSION,
+          advisory: { rule: rule.id, reason: rule.description },
+        };
+      }
+    }
+  }
+
+  if (b64Advisory) {
+    return {
+      verdict: 'allow', confidence: 0.99, rule: 'none', reason: null, engine: 'oss-local', rules_version: RULES_VERSION,
+      advisory: { ...b64Advisory },
+    };
   }
 
   return { verdict: 'allow', confidence: 0.99, rule: 'none', reason: null, engine: 'oss-local', rules_version: RULES_VERSION };
@@ -671,38 +887,109 @@ function isNonSecretDefault(value, prefix = '') {
   return credentialValueKind(value, prefix) !== GENERATED_SECRET;
 }
 
+// Replacement template with $1..$9 expanded from the groups of a match. A group
+// is a [start, end] span of the original text, or null when it did not take part;
+// the text kept around a secret is copied from the original, invisible characters
+// included.
+function expandTemplate(template, groups, text) {
+  return template.replace(/\$(\d)/g, (_, d) => {
+    const g = groups[Number(d)];
+    return g ? text.slice(g[0], g[1]) : '';
+  });
+}
+
+// Span [start, end) of a text without invisible characters, as a span of the
+// original text. `map` is null for the original text itself.
+function spanIn(map, start, end) {
+  if (!map) return [start, end];
+  return [map[start], end > start ? map[end - 1] + 1 : map[start]];
+}
+
+// Candidate redactions of one rule, pushed to `out` as {start, end, rule, text}
+// in original coordinates. The rule runs on the original text and, when the text
+// has invisible characters, on the text without them, so a secret is found when
+// either run finds it: "AKIA" + 16 characters + zero-width space + "foo" is found
+// on the original text, and "AKIA" + zero-width space + 16 characters on the view.
+function ruleCandidates(item, text, view, budget, out) {
+  const passes = view ? [[text, null], [view.clean, view.map]] : [[text, null]];
+  const flags = item.pattern.flags.includes('d') ? item.pattern.flags : item.pattern.flags + 'd';
+  const regex = new RegExp(item.pattern.source, flags);
+  for (const [hay, map] of passes) {
+    if (item.requires && !hay.includes(item.requires)) continue;
+    if (item.prefilter && !item.prefilter.test(hay)) continue;
+    regex.lastIndex = 0;
+    let m;
+    while ((m = regex.exec(hay)) !== null) {
+      if (m[0].length === 0) {
+        regex.lastIndex++;
+        continue;
+      }
+      const groups = [null];
+      for (let k = 1; k < m.length; k++) {
+        groups.push(m.indices[k] ? spanIn(map, m.indices[k][0], m.indices[k][1]) : null);
+      }
+      if (item.valueFilter) {
+        // The value (group 2) decides whether the match is redacted.
+        const value = stripInvisible(text.slice(groups[2][0], groups[2][1]));
+        const prefix = groups[1] ? stripInvisible(text.slice(groups[1][0], groups[1][1])) : '';
+        const n = value.length;
+        if (n <= MAX_FILTERED_VALUE && n <= budget.left) {
+          budget.left -= n;
+          if (item.valueFilter(value, prefix)) continue;
+        }
+      }
+      const [start, end] = spanIn(map, m.index, m.index + m[0].length);
+      out.push({ start, end, rule: item.id, text: expandTemplate(item.replacement, groups, text) });
+    }
+  }
+}
+
+// Overlapping candidates become one redaction covering their union. The first
+// candidate (earliest start, then longest) supplies the replacement text.
+function mergeCandidates(cands) {
+  cands.sort((a, b) => a.start - b.start || b.end - a.end);
+  const merged = [];
+  for (const c of cands) {
+    const last = merged[merged.length - 1];
+    if (last && c.start < last.end) {
+      if (c.end > last.end) last.end = c.end;
+      continue;
+    }
+    merged.push({ ...c });
+  }
+  return merged;
+}
+
+// Redacts secrets. Every rule runs on the original text and on the text without
+// invisible characters (see ruleCandidates), and the redacted spans are the union
+// of what both find, so a secret split by a zero-width or tag character is
+// redacted whole. Texts without invisible characters are handled as before.
 function redactSecrets(text) {
   if (typeof text !== 'string' || !text) {
     return { sanitized: text, detections: [] };
   }
   let sanitized = text;
   const detections = [];
-  let filterBudget = MAX_FILTERED_CHARS;
+  const budget = { left: MAX_FILTERED_CHARS };
+  let view = null;
+  let dirty = true;
   for (const item of SECRET_PATTERNS) {
-    if (item.requires && !sanitized.includes(item.requires)) continue;
-    if (item.prefilter && !item.prefilter.test(sanitized)) continue;
-    if (item.valueFilter) {
-      // One pass: the value (group 2) decides whether the match is redacted.
-      sanitized = sanitized.replace(item.pattern, (...m) => {
-        const n = m[2].length;
-        if (n <= MAX_FILTERED_VALUE && n <= filterBudget) {
-          filterBudget -= n;
-          if (item.valueFilter(m[2], m[1])) return m[0];
-        }
-        detections.push({ rule: item.id, index: m[m.length - 2] });
-        return m[1] + '[REDACTED_SECRET]' + m[3];
-      });
-      continue;
+    if (dirty) {
+      view = invisibleView(sanitized);
+      dirty = false;
     }
-    let match;
-    const regex = new RegExp(item.pattern.source, item.pattern.flags);
-    while ((match = regex.exec(sanitized)) !== null) {
-      detections.push({
-        rule: item.id,
-        index: match.index,
-      });
+    const cands = [];
+    ruleCandidates(item, sanitized, view, budget, cands);
+    if (cands.length === 0) continue;
+    let out = '';
+    let last = 0;
+    for (const e of mergeCandidates(cands)) {
+      out += sanitized.slice(last, e.start) + e.text;
+      last = e.end;
+      detections.push({ rule: e.rule, index: e.start });
     }
-    sanitized = sanitized.replace(item.pattern, item.replacement);
+    sanitized = out + sanitized.slice(last);
+    dirty = true;
   }
   return { sanitized, detections };
 }
@@ -721,15 +1008,19 @@ function scanWindows(text, options = {}) {
   const step = MAX_SCAN_CHARS - SCAN_WINDOW_OVERLAP;
   const limit = Math.min(text.length, MAX_TOOL_RESULT_SCAN_CHARS);
   let res = null;
+  let advisory = null;
   for (let start = 0; ; start += step) {
     const end = Math.min(start + MAX_SCAN_CHARS, limit);
     res = evaluateUncached(text.slice(start, end), options);
+    if (!advisory && res.advisory) advisory = res.advisory;
     if (res.verdict === 'block' || end >= limit) break;
   }
   if (res.verdict !== 'block' && text.length > limit) {
     res = evaluateUncached(text.slice(-MAX_SCAN_CHARS), options);
+    if (!advisory && res.advisory) advisory = res.advisory;
   }
   res = { ...res };
+  if (res.verdict !== 'block' && advisory) res.advisory = { ...advisory };
   delete res.truncated;
   if (text.length > limit) res.truncated = true;
   return res;
@@ -807,27 +1098,34 @@ const evalCache = new Map();
 function evaluate(input, options = {}) {
   if (typeof input !== 'string' || input.length > EVAL_CACHE_MAX_INPUT) return evaluateUncached(input, options);
   const cfg = loadCustomConfig();
+  const strict = strictMode(options, cfg);
   const hit = evalCache.get(input);
-  if (hit !== undefined && hit.ver === RULES_VERSION && hit.cfg === cfg) {
+  if (hit !== undefined && hit.ver === RULES_VERSION && hit.cfg === cfg && hit.strict === strict) {
     evalCache.delete(input);
     evalCache.set(input, hit);
-    return { ...hit.res };
+    return copyResult(hit.res);
   }
   const res = evaluateUncached(input, options);
-  evalCache.set(input, { res, cfg, ver: RULES_VERSION });
+  evalCache.set(input, { res, cfg, strict, ver: RULES_VERSION });
   if (evalCache.size > EVAL_CACHE_MAX) {
     evalCache.delete(evalCache.keys().next().value);
   }
-  return { ...res };
+  return copyResult(res);
+}
+
+function copyResult(res) {
+  return res.advisory ? { ...res, advisory: { ...res.advisory } } : { ...res };
 }
 
 module.exports = {
   evaluate,
+  ADVISORY_BY_DEFAULT,
   analyzePrompt: evaluate,
   loadCustomConfig,
   redactSecrets,
   sanitizeToolResult,
   normalizeInput,
+  invisibleView,
   scanWindows,
   MAX_SCAN_CHARS,
   MAX_TOOL_RESULT_SCAN_CHARS,

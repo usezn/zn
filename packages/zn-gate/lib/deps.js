@@ -47,7 +47,8 @@ async function loadVault() {
     mod = require('./vault/client');
   } catch (err) {
     if (isMissing(err, 'vault/client')) {
-      throw znError('ZN_LOCKED', 'secret vault is not available (lib/vault/client.js). Run: zn unlock');
+      const { znCommand } = require('./zn-command');
+      throw znError('ZN_LOCKED', 'secret vault is not available. Unlock it in your terminal with: ' + znCommand('unlock'));
     }
     throw err;
   }

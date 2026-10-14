@@ -125,6 +125,7 @@ def analyze(
             "mode": "oss-local",
             "engine": "oss-local",
             "rules_version": local_eval.rules_version,
+            **({"advisory": dict(local_eval.advisory)} if local_eval.advisory else {}),
         }
 
     # 2. Cloud Gate deep neural analysis
@@ -159,4 +160,5 @@ def analyze(
             "engine": "oss-local",
             "fallback": True,
             "cloud_error": str(exc),
+            **({"advisory": dict(local_eval.advisory)} if local_eval.advisory else {}),
         }
