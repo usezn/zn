@@ -83,7 +83,7 @@ class TestPatternParity(unittest.TestCase):
     def test_exfil_compound(self):
         (rule,) = self.js["exfil"]
         self.assertEqual(rule["id"], "exfil:credentials")
-        self.assertEqual([_py_regex(R.EXFIL_VERBS), _py_regex(R.CRED_OBJECTS)],
+        self.assertEqual([_py_regex(R.EXFIL_VERBS), _py_regex(R.CRED_OBJECTS), _py_regex(R.EXFIL_CLAUSE_RE)],
                          [_js_regex(e) for e in rule["compound"]])
 
     def test_helper_patterns(self):

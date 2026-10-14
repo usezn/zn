@@ -106,6 +106,9 @@ def cmd_test(args: argparse.Namespace) -> int:
         print(f"Rule:       {assessment.rule}")
         if assessment.reason:
             print(f"Reason:     {assessment.reason}")
+        if assessment.advisory:
+            print(f"Note:       not blocked, but worth a look: {assessment.advisory['reason']} "
+                  f"({assessment.advisory['rule']}).")
         if findings:
             noun = "secret" if len(findings) == 1 else "secrets"
             print(f"DLP Alert:  {len(findings)} {noun} detected (verdict unchanged). Redacted: {clean_text}")

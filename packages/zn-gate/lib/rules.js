@@ -8,7 +8,7 @@ const path = require('path');
  * RULES_VERSION: 2026-10-12.6
  */
 
-const RULES_VERSION = '2026-10-12.6';
+const RULES_VERSION = '2026-10-14.2';
 
 // "ignore" and "disregard" are ordinary words ("ignore the noise in the
 // logs", "ignore whitespace changes"). They only count as an override when
@@ -87,12 +87,12 @@ function testMultiZh(text) {
 const INJECTION_RULES = [
   { id: 'pi:ignore_previous', pattern: new RegExp(overrideRuleSource('ignore'), 'i'), description: 'Override prior instructions' },
   { id: 'pi:disregard', pattern: new RegExp(overrideRuleSource('disregard'), 'i'), description: 'Disregard instructions' },
-  { id: 'pi:forget', pattern: /forget\s+(about\s+)?(everything|all|your)/i, description: 'Forget-context attack' },
+  { id: 'pi:forget', pattern: /\bforget\s+(?:about\s+)?(?:everything|all|your)\b(?!\s+(?:of\s+)?(?:the\s+)?(?:cached?|caches|entries|changes|data|files?|records|sessions?|cookies|state|tabs|devices?|passwords?|history|items|keys|tokens|credentials|settings|preferences|accounts?|connections?|logins?|networks?)\b)/i, description: 'Forget-context attack' },
   { id: 'pi:identity_override', pattern: /you\s+are\s+now/i, description: 'Identity override' },
   { id: 'pi:new_instructions', pattern: /new\s+instructions?:/i, description: 'Instruction replacement' },
   { id: 'pi:system_tag', pattern: /(?:^|[\r\n"'`\[<])[ \t]*system\s*:|<[\s/]*system\b[^<>]*>/i, description: 'Fake system tag' },
   { id: 'pi:system_bracket', pattern: /\[system\]/i, description: 'Bracketed system tag' },
-  { id: 'pi:act_as', pattern: /act\s+as\s+(if|a)/i, description: 'Role hijack (act as)' },
+  { id: 'pi:act_as', pattern: /\b(?:you\s+(?:will|must|should|shall|are\s+to|now)\s+|(?:^|[.!?\n]\s*|please\s+|now\s+|from\s+now\s+on,?\s+)(?=act\b))act\s+as\s+(?:if\s+you\b|an?\s+(?:[a-z-]+\s+){0,3}?(?:ai|assistant|chatbot|bot|model|llm|gpt|persona|character|version|mode|jailbroken|unrestricted|unfiltered|uncensored|evil|hacker|dan)\b|my\b|though\s+you\b)/im, description: 'Role hijack (act as)' },
   { id: 'pi:pretend', pattern: /pretend\s+(you|to\s+be)/i, description: 'Role hijack (pretend)' },
   { id: 'pi:roleplay', pattern: /roleplay\s+as/i, description: 'Role hijack (roleplay)' },
   { id: 'pi:jailbreak', pattern: /\bjailbreak\b/i, description: 'Explicit jailbreak term' },
@@ -118,7 +118,27 @@ const OPEN_TAG_RE = /<[a-z0-9]+\b([^<>]*)(>?)/gi;
 const HIDDEN_ATTR_RE = /\b(?:display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0|font-size\s*:\s*0(?:px)?|color\s*:\s*transparent|text-indent\s*:\s*-[0-9]{3,}px|hidden\b)/i;
 const HIDDEN_PAYLOAD_RE = /ignore|system|instruction|prompt|bypass|override|exfil|leak/gi;
 
+// The payload must be in the text of the hidden element itself (up to the
+// next tag, at most HIDDEN_TEXT_CHARS characters), not anywhere after it.
+const HIDDEN_TEXT_CHARS = 4096;
+
 function testHiddenTag(text) {
+  const tagRe = new RegExp(OPEN_TAG_RE.source, OPEN_TAG_RE.flags);
+  let m;
+  while ((m = tagRe.exec(text)) !== null) {
+    if (m[2] === '>' && HIDDEN_ATTR_RE.test(m[1])) {
+      const start = tagRe.lastIndex;
+      const next = text.indexOf('<', start);
+      const end = Math.min(next === -1 ? text.length : next, start + HIDDEN_TEXT_CHARS);
+      if (new RegExp(HIDDEN_PAYLOAD_RE.source, 'i').test(text.slice(start, end))) return true;
+    }
+  }
+  return false;
+}
+
+// Earlier, broader form: a hidden element followed anywhere later by a
+// payload word. Used only for advisories.
+function testHiddenTagAnywhere(text) {
   const tagRe = new RegExp(OPEN_TAG_RE.source, OPEN_TAG_RE.flags);
   let m;
   while ((m = tagRe.exec(text)) !== null) {
@@ -158,13 +178,39 @@ const EXFIL_VERB_SOURCE = '\\b(give|reveal|send|show|print|expose|leak|paste|dum
 const CRED_OBJECT_SOURCE =
   '\\b(passwords?|api[_ -]?keys?|secrets?|credentials?|tokens?|ssh[ _-]?keys?|private[ _-]?keys?|aws_secret[a-z0-9_]*|aws_access[a-z0-9_]*)\\b|(?:^|\\s|[\'"\`])\\.env(?:\\.[a-z0-9]+)?\\b';
 
+// The verb must start a clause (an instruction, not a description such as
+// "this library reads tokens from ...") and the credential must follow it in
+// the same clause, within EXFIL_CLAUSE_CHARS characters.
+const EXFIL_CLAUSE_CHARS = 80;
+const EXFIL_CLAUSE_RE = new RegExp(
+  '(?:^|[.!?;:\\n]\\s*|\\b(?:please|now|then|and|also|just|first|immediately|go\\s+ahead\\s+and|(?:can|could|would|will)\\s+you|(?:want|need|ask)\\s+you\\s+to|you\\s+(?:must|should|will|need\\s+to|have\\s+to))\\s+|["\'`(\\[]\\s*)' +
+    EXFIL_VERB_SOURCE + '(?:\\s+(?:me|us|all|every|the|your|my|our|their|any)\\b)*[^.!?;\\n]{0,' + EXFIL_CLAUSE_CHARS + '}?(?:' + CRED_OBJECT_SOURCE + ')',
+  'im'
+);
+
 const EXFIL_RULES = [
   {
     id: 'exfil:credentials',
-    compound: [new RegExp(EXFIL_VERB_SOURCE, 'i'), new RegExp(CRED_OBJECT_SOURCE, 'i')],
+    compound: [new RegExp(EXFIL_VERB_SOURCE, 'i'), new RegExp(CRED_OBJECT_SOURCE, 'i'), EXFIL_CLAUSE_RE],
     description: 'Imperative verb requesting credentials/secrets',
   },
 ];
+
+// Advisory tier: the broader forms of four rules. They match much benign
+// text (documentation, code, role-play requests), so a match does not block:
+// the verdict stays "allow" and the result carries `advisory` with the rule.
+// A blocking rule always wins over an advisory.
+const ADVISORY_RULES = [
+  { id: 'exfil:credentials', compound: [new RegExp(EXFIL_VERB_SOURCE, 'i'), new RegExp(CRED_OBJECT_SOURCE, 'i')], description: 'Mentions reading or sending credentials' },
+  { id: 'pi:act_as', pattern: /act\s+as\s+(?:if|a)/i, description: 'Role-play request (act as)' },
+  { id: 'pi:forget', pattern: /forget\s+(?:about\s+)?(?:everything|all|your)/i, description: 'Asks to forget context' },
+  { id: 'indirect:hidden_tag', test: testHiddenTagAnywhere, description: 'Hidden element in markup followed by instruction-like words' },
+];
+
+function matchesRule(rule, text) {
+  if (rule.compound) return rule.compound.every((re) => re.test(text));
+  return rule.test ? rule.test(text) : rule.pattern.test(text);
+}
 
 const SENSITIVE_PATH_RULES = [
   {
@@ -411,6 +457,17 @@ function evaluateUncached(input, options = {}) {
   for (const fpath of cfg.forbiddenPaths) {
     if (input.includes(fpath)) {
       return { verdict: 'block', confidence: 1.0, reason: `Matches custom repository forbidden path: ${fpath}`, rule: 'custom:forbidden_path', engine: 'oss-local', rules_version: RULES_VERSION };
+    }
+  }
+
+  for (const text of targets) {
+    for (const rule of ADVISORY_RULES) {
+      if (matchesRule(rule, text)) {
+        return {
+          verdict: 'allow', confidence: 0.99, rule: 'none', reason: null, engine: 'oss-local', rules_version: RULES_VERSION,
+          advisory: { rule: rule.id, reason: rule.description },
+        };
+      }
     }
   }
 

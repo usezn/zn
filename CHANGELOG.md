@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Fewer false blocks from the local rules. Four rules blocked a lot of ordinary text, such as documentation, code and requests like "act as a gateway". They now block only the clear form, and the broader match is reported as an advisory: the verdict stays `allow` and the result carries `advisory` with the rule and a short reason (`zn-gate analyze`, `analyze_prompt`, Python `evaluate()` and `analyze()`).
+  - `exfil:credentials` blocks when a verb such as "send", "print" or "read" starts an instruction and a credential word ("API key", "password", "token", `.env`) follows in the same sentence, within 80 characters. Before, the two words could be anywhere in the text, so whole documents were blocked.
+  - `indirect:hidden_tag` blocks when the instruction-like word is inside the hidden element. Before, any later word such as "system" counted.
+  - `pi:act_as` blocks a request to the model to act as an assistant, a model, a persona or an unrestricted mode ("You will act as …"), not "act as a gateway".
+  - `pi:forget` no longer blocks "forget all cached entries", "forget your password" and similar phrases about data.
+  In our tests on 747 public files (package READMEs and code, docs), files blocked by the local rules went from 5.6% to 1.1%; on two public prompt-injection datasets, benign texts blocked went from 2.1% to 0.1%, injections blocked went from 28.1% to 24.0% and from 30.9% to 27.7%, and every injection that is no longer blocked gets an advisory. The local rules are a first layer; the cloud check (`ZN_CLOUD=1`) is unchanged. `RULES_VERSION` is now `2026-10-14.2`.
+
 ## [1.6.0-beta.1] - 2026-10-14
 
 Pre-release for testing. Install it with `npm install -g zn-gate@beta` or `pip install --pre zn-gate`. The agent plugin in `plugins/zn-gate` is not published with this beta; it ships with 1.6.0.
