@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Claude Code plugin: the plugin has a listing icon for the Claude plugin directory, and its contact email is now support@usezn.com (security reports still go to security@usezn.com).
 - `zn-gate stats` (Node and Python) shows what zn-gate did on this machine: checks, blocks, secret values replaced before the model saw them, and the secret types found, per agent, for the last 30 days (`--days N`, `--json`). The agent hooks, the MCP tools and the shield proxy keep these counts in `~/.zn/stats.json` (numbers only; never values, prompts, paths or hosts). `ZN_STATS=off` turns counting off. Nothing is sent: sharing anonymous daily counts is a separate opt-in (`zn-gate stats share on`, `off`, `status`, `show`), off by default; when on, `zn-gate stats` sends one report per complete day with only the fields that `zn-gate stats share show` prints first.
 - Sharing can only be turned on by you, in your own terminal, after a yes/no question: the agent hooks treat `zn-gate stats share on` as an admin command an agent cannot run (`POLICY_RULES_VERSION` is now `2026-10-14.6`). Only built-in secret types are counted: a variable or secret name you chose is counted as `OTHER` (or `ENV_VALUE` for a value matched by its variable name), never by its name.
 - `zn vault team` says that a shared vault for teams is planned and counts the request on this machine only. Nothing is sent and no contact details are asked for.
