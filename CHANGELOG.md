@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `zn init` finds the Antigravity MCP settings: it checks `~/.gemini/antigravity/mcp_config.json` and `~/.gemini/config/mcp_config.json` (each one only if it exists). It looked for `~/.gemini/antigravity/mcp.json`, which Antigravity does not use, so Antigravity was never found.
 - The threat model said that `zn run` keeps interpreter start-up variables such as `NODE_OPTIONS`; since 1.5.1 it removes them whenever it injects secret values.
 
+### Security
+- The Python package (`zn-gate` on PyPI) now redacts the same credential formats as the Node.js scrubber: Stripe, Slack, GitLab, npm, PyPI, SendGrid, Google, Hugging Face, Twilio, AWS STS, Azure storage and AD secrets, DigitalOcean, Shopify, Mailgun, Groq, Replicate, xAI, Docker Hub, Tavily, Firecrawl, Polar, Supabase and other provider tokens, passwords in URLs, and `Authorization: Bearer` tokens. Token-like runs of 24 or more characters that remain after redaction are masked in printed output and in the evidence ledger preview.
+- `zn-gate scan --format github` prints the rule, the reason and the file and line only. It no longer prints the matched line, so CI logs do not show credential text.
+- The evidence ledger directory is created with mode 0700 and the ledger file with mode 0600 on POSIX systems, in both the Node.js and the Python packages. A ledger that others can read is restricted on the next write.
+
 ## [1.6.0] - 2026-10-14
 
 **If you use zn-gate 1.5.x, update.** In 1.5.x, `zn-gate scan` (Node.js) printed `PASSED` for a folder whose `.env` or other files held API keys, because it only reported prompt-injection text. 1.6.0 reports exposed credentials too (see 1.6.0-beta.1 below). After updating, run `zn-gate scan` again on your projects. This release also includes everything in 1.6.0-beta.1.

@@ -11,10 +11,26 @@ const ZN_DIR = path.join(os.homedir(), '.zn');
 const EVIDENCE_FILE = path.join(ZN_DIR, 'evidence.jsonl');
 const GENESIS_HASH = '0000000000000000000000000000000000000000000000000000000000000000';
 
+// The ledger directory is private to the user; modes are POSIX only (ignored on Windows).
+const LEDGER_DIR_MODE = 0o700;
+const LEDGER_FILE_MODE = 0o600;
+
 function ensureZnDir(filePath = EVIDENCE_FILE) {
   const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(dir, { recursive: true, mode: LEDGER_DIR_MODE });
+  }
+}
+
+/** Restricts an existing ledger that others can read or write to 0600 (POSIX only). */
+function restrictLedgerMode(filePath) {
+  if (process.platform === 'win32') return;
+  try {
+    if ((fs.statSync(filePath).mode & 0o077) !== 0) {
+      fs.chmodSync(filePath, LEDGER_FILE_MODE);
+    }
+  } catch {
+    // Best effort: the record is already written.
   }
 }
 
@@ -86,7 +102,8 @@ function logEvidence(event, filePath = EVIDENCE_FILE) {
 
   const finalRecord = { ...baseRecord, record_hash: recordHash };
 
-  fs.appendFileSync(filePath, JSON.stringify(finalRecord) + '\n', 'utf8');
+  fs.appendFileSync(filePath, JSON.stringify(finalRecord) + '\n', { encoding: 'utf8', mode: LEDGER_FILE_MODE });
+  restrictLedgerMode(filePath);
   return finalRecord;
 }
 

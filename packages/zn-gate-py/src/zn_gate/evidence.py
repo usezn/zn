@@ -16,8 +16,8 @@ from typing import Any, Dict, List, Optional
 
 
 def _redact(text: str) -> str:
-    from .rules import redact_secrets  # local import avoids import cycles
-    return redact_secrets(text)[0]
+    from .rules import mask_token_runs, redact_secrets  # local import avoids import cycles
+    return mask_token_runs(redact_secrets(text)[0])
 
 ZN_DIR = os.path.expanduser("~/.zn")
 EVIDENCE_FILE = os.path.join(ZN_DIR, "evidence.jsonl")
@@ -25,9 +25,19 @@ GENESIS_HASH = "0" * 64
 
 
 def _ensure_dir(file_path: str) -> None:
+    # The ledger directory is private to the user (POSIX; the mode is ignored on Windows).
     dirname = os.path.dirname(file_path)
     if dirname and not os.path.exists(dirname):
-        os.makedirs(dirname, exist_ok=True)
+        os.makedirs(dirname, mode=0o700, exist_ok=True)
+
+
+def _open_for_append(file_path: str):
+    """Opens the ledger for appending. New files are created 0600 and an existing
+    file that is readable by others is restricted to 0600 (POSIX only)."""
+    fd = os.open(file_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    if os.name == "posix" and os.fstat(fd).st_mode & 0o077:
+        os.fchmod(fd, 0o600)
+    return os.fdopen(fd, "a", encoding="utf-8")
 
 
 def get_last_hash(file_path: str = EVIDENCE_FILE) -> str:
@@ -87,7 +97,7 @@ def log_evidence(event: Dict[str, Any], file_path: str = EVIDENCE_FILE) -> Dict[
     final_record = dict(base_record)
     final_record["record_hash"] = record_hash
 
-    with open(file_path, "a", encoding="utf-8") as f:
+    with _open_for_append(file_path) as f:
         f.write(json.dumps(final_record, separators=(",", ":")) + "\n")
 
     return final_record
