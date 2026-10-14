@@ -126,19 +126,7 @@ Python equivalent:
 
 Where zn-gate sits in a tool call, as an MCP server or as the `shield` proxy around other servers:
 
-```mermaid
-sequenceDiagram
-    participant A as Agent
-    participant Z as zn-gate (on your machine)
-    participant T as Tool or MCP server
-    A->>Z: analyze_prompt
-    Z-->>A: allow, or block with the rule that fired
-    A->>Z: check_tool_call (name, arguments)
-    Z-->>A: allow with secrets masked, or block
-    A->>T: run the tool
-    T-->>Z: output (check_tool_result, or through shield)
-    Z-->>A: output with secrets redacted, or neutralized if it carries an injection
-```
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/tool-call-sequence-dark.svg"><img alt="Sequence diagram. The agent sends analyze_prompt to zn-gate on your machine, which allows or blocks it. Then check_tool_call, which allows the call with secrets masked or blocks it. The agent runs the tool. The output comes back through check_tool_result or shield, and zn-gate returns it with secrets redacted, or neutralized if it carries an injection." src="docs/diagrams/tool-call-sequence-light.svg" width="800"></picture>
 
 ### Scrubber: secrets stay out of the model's context
 - **Today, through zn-gate:** redacts AWS keys, OpenAI and Anthropic keys, GitHub tokens, JWTs, private keys and database URL passwords in everything that passes through zn-gate: tool output checked with `check_tool_result`, tool arguments checked with `check_tool_call`, and output of MCP servers wrapped by `zn-gate shield` / `init`. Python: `sanitize_tool_result`, `@guard(mask_secrets=True)` and the framework integrations.
@@ -167,20 +155,7 @@ By default nothing is sent. If you set `ZN_CLOUD=1` and an API key, `analyze` se
 
 **Nothing, by default.**
 
-```mermaid
-flowchart LR
-    subgraph local["Your machine"]
-        A["Agent"]
-        Z["zn-gate<br/>rules engine + secret redaction"]
-        T["Tools and MCP servers<br/>files, shell, web, databases"]
-    end
-    C["api.usezn.com<br/>Galvanize 2 classifier"]
-    A -- "tool calls and prompts" --> Z
-    Z -- "allowed calls, secrets masked" --> T
-    T -- "tool output" --> Z
-    Z -- "redacted output, verdicts" --> A
-    Z -. "prompts only, detected secrets removed,<br/>only with ZN_CLOUD=1 and ZN_API_KEY" .-> C
-```
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/data-flow-dark.svg"><img alt="Flow diagram. The agent, zn-gate and the tools or MCP servers run on your machine, and tool calls and prompts go through zn-gate. Tool output comes back redacted. Nothing leaves the machine by default. Only with ZN_CLOUD=1 and ZN_API_KEY set, prompts with detected secrets removed go to api.usezn.com, the Galvanize 2 classifier." src="docs/diagrams/data-flow-light.svg" width="800"></picture>
 
 | Data | Evaluated | Sent anywhere? |
 |---|---|---|
