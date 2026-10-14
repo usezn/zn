@@ -104,9 +104,10 @@ function tally(t, text) {
     t.blocked += 1;
     bump(t.by_rule, res.rule || 'unknown');
   }
+  // An advisory is { rule, reason } on an allowed result: count it by its rule.
   if (res.advisory) {
     t.advisories += 1;
-    bump(t.advisory_by_rule, res.rule || 'unknown');
+    bump(t.advisory_by_rule, (typeof res.advisory === 'object' && res.advisory.rule) || 'unknown');
   }
 }
 
