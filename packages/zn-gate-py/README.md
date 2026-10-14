@@ -20,7 +20,7 @@
 
 ## Install
 
-Install it in a virtual environment. Recent Linux and macOS systems refuse `pip install` outside one, with an "externally-managed-environment" error:
+Install it in a virtual environment. Many recent Linux systems, and Homebrew's Python on macOS, refuse `pip install` outside one, with an "externally-managed-environment" error:
 
 ```bash
 python3 -m venv .venv
