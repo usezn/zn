@@ -51,7 +51,7 @@ zn hooks install claude-code       # or: codex, cursor, opencode
 
 Cursor support is partial: zn-gate can only rewrite the output of MCP tools there, not of shell commands or file reads.
 
-Five-minute walkthrough: [docs/secrets.md](docs/secrets.md). What each agent supports: [docs/compat.md](docs/compat.md). Limits: [docs/threat-model.md](docs/threat-model.md).
+Five-minute walkthrough: [docs/secrets.md](docs/secrets.md). What each agent supports: [docs/compat.md](docs/compat.md). Setup for each editor (Cursor, VS Code, Antigravity, Windsurf, Cline, Zed, JetBrains, Continue): [docs/editors/](docs/editors/README.md). Limits: [docs/threat-model.md](docs/threat-model.md).
 
 **Add zn-gate as an MCP server.** Pick your agent. Each command adds zn-gate as an MCP server (Node.js 18+).
 
