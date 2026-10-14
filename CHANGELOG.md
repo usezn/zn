@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cursor checks the arguments of MCP tool calls: a call that would send a secret value, or a `__ZN_` marker, to an MCP server other than zn's `secrets` server is denied. Run `zn hooks install cursor` again to add this hook.
 
 ### Fixed
-- The agent hooks read glob bracket expressions as the shell does. A command with one that is not a valid regular expression (for example `[z-a]` or `[a\]`) no longer makes the hook fail, and a `]` as the first member or a POSIX class such as `[[:alpha:]]` is now understood, so words like `.e[!]]v` or `.en[[:alpha:]]` are recognised as naming `.env` (`POLICY_RULES_VERSION` is now `2026-10-14.7`).
+- The agent hooks read glob bracket expressions as the shell does. A command with one that is not a valid regular expression (for example `[z-a]` or `[a\]`) no longer makes the hook fail, and a `]` as the first member or a POSIX class such as `[[:alpha:]]` is now understood, so words like `.e[!]]v` or `.en[[:alpha:]]` are recognised as naming `.env` (`POLICY_RULES_VERSION` is now `2026-10-14.8`).
 - `zn audit` no longer reports zn's own `secrets` MCP server as an unknown server when its command ends with the `--agent <id>` that `zn hooks install` adds.
 - The tests of the suggested `zn` command now pass on Windows, where a program on the PATH needs an extension such as `.cmd`.
 - `zn init` finds the Antigravity MCP settings: it checks `~/.gemini/antigravity/mcp_config.json` and `~/.gemini/config/mcp_config.json` (each one only if it exists). It looked for `~/.gemini/antigravity/mcp.json`, which Antigravity does not use, so Antigravity was never found.
