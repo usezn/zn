@@ -97,7 +97,7 @@ const INJECTION_RULES = [
   { id: 'pi:new_instructions', pattern: /new\s+instructions?:/i, description: 'Instruction replacement' },
   { id: 'pi:system_tag', pattern: /(?:^|[\r\n"'`\[<])[ \t]*system\s*:|<[\s/]*system(?![A-Za-z0-9_])[^<>]*>/i, description: 'Fake system tag' },
   { id: 'pi:system_bracket', pattern: /\[system\]/i, description: 'Bracketed system tag' },
-  { id: 'pi:act_as', pattern: /(?:(?<![A-Za-z0-9_])you\s+(?:(?:will|must|should|shall|now)\s+|are\s+to\s+)?|(?:^|[.!?\r\n\u2028\u2029\u0000])[ \t]*(?:[\"'`(\[*-][ \t]*)?|(?<![A-Za-z0-9_])please\s+|(?<![A-Za-z0-9_])now\s+|(?<![A-Za-z0-9_])from\s+now\s+on,?\s+(?:you\s+)?)(?=act(?![A-Za-z0-9_]))act\s+as\s+(?:if\s+you(?![A-Za-z0-9_])|an?\s+(?:[a-z-]+\s+){0,3}?(?:ai|assistant|chatbot|bot|model|llm|gpt|persona|character|version|mode|jailbroken|unrestricted|unfiltered|uncensored|evil|hacker|dan)(?![A-Za-z0-9_])|my(?![A-Za-z0-9_])|though\s+you(?![A-Za-z0-9_]))/i, description: 'Role hijack (act as)' },
+  { id: 'pi:act_as', pattern: /(?:(?<![A-Za-z0-9_])you\s+(?:(?:will|must|should|shall|now)\s+|are\s+to\s+)?|(?:^|[.!?\r\n\u2028\u2029])[ \t]*(?:[\"'`(\[*-][ \t]*)?|(?<![A-Za-z0-9_])please\s+|(?<![A-Za-z0-9_])now\s+|(?<![A-Za-z0-9_])from\s+now\s+on,?\s+(?:you\s+)?)(?=act(?![A-Za-z0-9_]))act\s+as\s+(?:if\s+you(?![A-Za-z0-9_])|an?\s+(?:[a-z-]+\s+){0,3}?(?:ai|assistant|chatbot|bot|model|llm|gpt|persona|character|version|mode|jailbroken|unrestricted|unfiltered|uncensored|evil|hacker|dan)(?![A-Za-z0-9_])|my(?![A-Za-z0-9_])|though\s+you(?![A-Za-z0-9_]))/i, description: 'Role hijack (act as)' },
   { id: 'pi:pretend', pattern: /pretend\s+(you|to\s+be)/i, description: 'Role hijack (pretend)' },
   { id: 'pi:roleplay', pattern: /roleplay\s+as/i, description: 'Role hijack (roleplay)' },
   { id: 'pi:jailbreak', pattern: /(?<![A-Za-z0-9_])jailbreak(?![A-Za-z0-9_])/i, description: 'Explicit jailbreak term' },
@@ -214,7 +214,7 @@ const CRED_OBJECT_SOURCE =
 // characters. No multiline flag: line starts are matched by the newline
 // itself, so a run of blank lines is read once.
 const EXFIL_CLAUSE_CHARS = 80;
-const EXFIL_CLAUSE_PREFIX = '(?:^|[.!?;:\\r\\n\\u2028\\u2029\\u0000])[ \\t]*(?:[\\"\'`(\\[*-][ \\t]*)?|(?<![A-Za-z0-9_])(?:please|now|then|and|also|just|first|immediately|go\\s+ahead\\s+and|(?:can|could|would|will)\\s+you|(?:want|need|ask)\\s+you\\s+to|you\\s+(?:must|should|will|need\\s+to|have\\s+to))\\s+';
+const EXFIL_CLAUSE_PREFIX = '(?:^|[.!?;:\\r\\n\\u2028\\u2029])[ \\t]*(?:[\\"\'`(\\[*-][ \\t]*)?|(?<![A-Za-z0-9_])(?:please|now|then|and|also|just|first|immediately|go\\s+ahead\\s+and|(?:can|could|would|will)\\s+you|(?:want|need|ask)\\s+you\\s+to|you\\s+(?:must|should|will|need\\s+to|have\\s+to))\\s+';
 const EXFIL_CLAUSE_RE = new RegExp(
   '(?:(?:' + EXFIL_CLAUSE_PREFIX + ')' + EXFIL_VERB_SOURCE + '|' + EXFIL_VERB_SOURCE + '(?=\\s+(?:me|us)(?![A-Za-z0-9_])))' +
     '[^.!?;\\r\\n]{0,' + EXFIL_CLAUSE_CHARS + '}?(?:' + CRED_OBJECT_SOURCE + ')',

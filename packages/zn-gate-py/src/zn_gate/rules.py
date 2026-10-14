@@ -146,7 +146,7 @@ INJECTION_RULES: List[Tuple[str, re.Pattern, str]] = [
     ('pi:new_instructions', re.compile(r'new\s+instructions?:', re.IGNORECASE), 'Instruction replacement'),
     ('pi:system_tag', re.compile(r"""(?:^|[\r\n"'`\[<])[ \t]*system\s*:|<[\s/]*system(?![A-Za-z0-9_])[^<>]*>""", re.IGNORECASE), 'Fake system tag'),
     ('pi:system_bracket', re.compile(r'\[system\]', re.IGNORECASE), 'Bracketed system tag'),
-    ('pi:act_as', re.compile(r"""(?:(?<![A-Za-z0-9_])you\s+(?:(?:will|must|should|shall|now)\s+|are\s+to\s+)?|(?:^|[.!?\r\n\u2028\u2029\u0000])[ \t]*(?:[\"'`(\[*-][ \t]*)?|(?<![A-Za-z0-9_])please\s+|(?<![A-Za-z0-9_])now\s+|(?<![A-Za-z0-9_])from\s+now\s+on,?\s+(?:you\s+)?)(?=act(?![A-Za-z0-9_]))act\s+as\s+(?:if\s+you(?![A-Za-z0-9_])|an?\s+(?:[a-z-]+\s+){0,3}?(?:ai|assistant|chatbot|bot|model|llm|gpt|persona|character|version|mode|jailbroken|unrestricted|unfiltered|uncensored|evil|hacker|dan)(?![A-Za-z0-9_])|my(?![A-Za-z0-9_])|though\s+you(?![A-Za-z0-9_]))""", re.IGNORECASE), 'Role hijack (act as)'),
+    ('pi:act_as', re.compile(r"""(?:(?<![A-Za-z0-9_])you\s+(?:(?:will|must|should|shall|now)\s+|are\s+to\s+)?|(?:^|[.!?\r\n\u2028\u2029])[ \t]*(?:[\"'`(\[*-][ \t]*)?|(?<![A-Za-z0-9_])please\s+|(?<![A-Za-z0-9_])now\s+|(?<![A-Za-z0-9_])from\s+now\s+on,?\s+(?:you\s+)?)(?=act(?![A-Za-z0-9_]))act\s+as\s+(?:if\s+you(?![A-Za-z0-9_])|an?\s+(?:[a-z-]+\s+){0,3}?(?:ai|assistant|chatbot|bot|model|llm|gpt|persona|character|version|mode|jailbroken|unrestricted|unfiltered|uncensored|evil|hacker|dan)(?![A-Za-z0-9_])|my(?![A-Za-z0-9_])|though\s+you(?![A-Za-z0-9_]))""", re.IGNORECASE), 'Role hijack (act as)'),
     ('pi:pretend', re.compile(r'pretend\s+(you|to\s+be)', re.IGNORECASE), 'Role hijack (pretend)'),
     ('pi:roleplay', re.compile(r'roleplay\s+as', re.IGNORECASE), 'Role hijack (roleplay)'),
     ('pi:jailbreak', re.compile(r'(?<![A-Za-z0-9_])jailbreak(?![A-Za-z0-9_])', re.IGNORECASE), 'Explicit jailbreak term'),
@@ -290,7 +290,7 @@ CRED_OBJECTS = re.compile(r"""(?<![A-Za-z0-9_])(passwords?|api[_ -]?keys?|secret
 # characters. No MULTILINE flag: line starts are matched by the newline
 # itself, so a run of blank lines is read once.
 EXFIL_CLAUSE_CHARS = 80
-EXFIL_CLAUSE_PREFIX = r"""(?:^|[.!?;:\r\n\u2028\u2029\u0000])[ \t]*(?:[\"'`(\[*-][ \t]*)?|(?<![A-Za-z0-9_])(?:please|now|then|and|also|just|first|immediately|go\s+ahead\s+and|(?:can|could|would|will)\s+you|(?:want|need|ask)\s+you\s+to|you\s+(?:must|should|will|need\s+to|have\s+to))\s+"""
+EXFIL_CLAUSE_PREFIX = r"""(?:^|[.!?;:\r\n\u2028\u2029])[ \t]*(?:[\"'`(\[*-][ \t]*)?|(?<![A-Za-z0-9_])(?:please|now|then|and|also|just|first|immediately|go\s+ahead\s+and|(?:can|could|would|will)\s+you|(?:want|need|ask)\s+you\s+to|you\s+(?:must|should|will|need\s+to|have\s+to))\s+"""
 EXFIL_CLAUSE_RE = re.compile(
     r'(?:(?:' + EXFIL_CLAUSE_PREFIX + r')' + EXFIL_VERB_SOURCE + r'|' + EXFIL_VERB_SOURCE + r'(?=\s+(?:me|us)(?![A-Za-z0-9_])))'
     + r'[^.!?;\r\n]{0,' + str(EXFIL_CLAUSE_CHARS) + r'}?(?:' + CRED_OBJECTS.pattern + r')',
