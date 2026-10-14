@@ -9,6 +9,8 @@ const { scanEnvironments, configureEnvironments } = require('../lib/init');
 const { logEvidence, verifyEvidenceLedger, getEvidenceStats, exportEvidenceLedger, startEvidenceUi, EVIDENCE_FILE } = require('../lib/evidence');
 const { analyze, analyzeLocal, isCloudEnabled, resolveEndpoint, RULES_VERSION } = require('../lib/client');
 const { evaluate, redactSecrets, SECRET_PATTERNS } = require('../lib/rules');
+const { SCRUB_RULES_VERSION } = require('../lib/scrub/patterns');
+const { AUDIT_RULES_VERSION } = require('../lib/audit/rules');
 
 // Secrets that span several lines (a PEM private key block). The line-by-line
 // scan never sees BEGIN and END together, so these run on the whole file.
@@ -114,6 +116,7 @@ COMMANDS:
   mcp                 Run as standalone bidirectional MCP server for AI agents
   analyze <text>      Inspect a prompt from the CLI (local; cloud only with ZN_CLOUD=1 + key)
   test                Run the local self-test (51 curated vectors: 26 attacks, 25 benign)
+  stats               What zn-gate did on this machine (local counts; --days N, --json; "stats share" to opt in)
   status              Show engine configuration and gateway connectivity
   version, -V         Show package version
 
@@ -224,12 +227,14 @@ Evaluating ${TEST_VECTORS.length} curated test vectors (${TEST_VECTORS.filter(v 
     const elapsedMs = (Number(elapsedNs) / 1e6).toFixed(2);
 
     const isBlock = result.verdict === 'block';
-    const isPass = (vec.type === 'attack' && isBlock) || (vec.type === 'benign' && !isBlock);
+    // Default policy: some heuristic rules give an advisory instead of a block.
+    const isFlagged = isBlock || Boolean(result.advisory);
+    const isPass = (vec.type === 'attack' && isFlagged) || (vec.type === 'benign' && !isBlock);
 
     if (isPass) {
       passed++;
-      const verdictTag = isBlock ? `\x1b[31mBLOCKED\x1b[0m` : `\x1b[32mALLOWED\x1b[0m`;
-      const ruleDetail = result.reason ? `(${result.reason})` : (isBlock ? `(${result.rule})` : '');
+      const verdictTag = isBlock ? `\x1b[31mBLOCKED\x1b[0m` : (result.advisory ? `\x1b[33mADVISORY\x1b[0m` : `\x1b[32mALLOWED\x1b[0m`);
+      const ruleDetail = result.reason ? `(${result.reason})` : (isBlock ? `(${result.rule})` : (result.advisory ? `(${result.advisory.reason})` : ''));
       process.stdout.write(`  \x1b[32m✔\x1b[0m [${elapsedMs}ms] ${verdictTag} ${vec.label} \x1b[90m${ruleDetail}\x1b[0m\n`);
     } else {
       failed++;
@@ -237,7 +242,7 @@ Evaluating ${TEST_VECTORS.length} curated test vectors (${TEST_VECTORS.filter(v 
         falsePositives++;
       }
       const expectedTag = vec.type === 'attack' ? 'BLOCK' : 'ALLOW';
-      const gotTag = isBlock ? 'BLOCKED' : 'ALLOWED';
+      const gotTag = isBlock ? 'BLOCKED' : (result.advisory ? 'ADVISORY' : 'ALLOWED');
       process.stdout.write(`  \x1b[31m✖\x1b[0m [${elapsedMs}ms] FAILED ${vec.label} (Expected: ${expectedTag}, Got: ${gotTag})\n`);
     }
   }
@@ -400,7 +405,8 @@ Files   : ${files.length} file(s) queued for audit\n
       // Printed to the terminal and CI logs: never show a detected secret.
       const redacted = redactSecrets(line);
       const sample = keyLines.has(lineIdx + 1) ? '[REDACTED_PRIVATE_KEY]' : redacted.sanitized.slice(0, 100);
-      const evalRes = evaluate(line, options);
+      // A scan reports every match, including the rules that only warn by default.
+      const evalRes = evaluate(line, { ...options, strict: true });
       if (evalRes.verdict === 'block') {
         totalFindings++;
         findings.push({ file: relPath, line: lineIdx + 1, rule: evalRes.rule, reason: evalRes.reason, sample });
@@ -508,7 +514,7 @@ async function main() {
   }
 
   if (args.includes('-V') || args.includes('--version') || args[0] === 'version') {
-    process.stdout.write(`zn-gate ${VERSION} (rules engine: ${RULES_VERSION})\n`);
+    process.stdout.write(`zn-gate ${VERSION} (rules engine: ${RULES_VERSION}; scrub rules: ${SCRUB_RULES_VERSION}; audit rules: ${AUDIT_RULES_VERSION})\n`);
     process.exit(0);
   }
 
@@ -703,6 +709,11 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
     return;
   }
 
+  if (command === 'stats') {
+    process.exitCode = await require('../lib/stats-cli').run(args.slice(1));
+    return;
+  }
+
   if (command === 'analyze') {
     const textArgs = args.filter((a, idx) => {
       if (idx === 0) return false;
@@ -728,7 +739,7 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
     process.stdout.write(`
 🛡️  zn-gate Status:
   Package Version : ${VERSION}
-  Rules Version   : ${RULES_VERSION}
+  Rules Version   : ${RULES_VERSION} (scrub ${SCRUB_RULES_VERSION}, audit ${AUDIT_RULES_VERSION})
   Active Engine   : ${cloud ? 'Local rules + cloud for analyze_prompt (ZN_CLOUD=1)' : 'Local rules only'}
   Endpoint        : ${cloud ? resolveEndpoint(options) : 'None (nothing leaves this machine)'}
   API key         : ${hasKey ? 'Set' + (cloud ? '' : ' (unused: cloud requires ZN_CLOUD=1)') : 'Not set'}

@@ -77,7 +77,7 @@ Releases follow [Semantic Versioning](https://semver.org/). Prereleases use
 `-alpha.N`, `-beta.N` and `-rc.N`.
 
 1. A maintainer prepares the release on a `release/X.Y.Z` branch made from
-   `main`: version numbers in every package and the `## [X.Y.Z]` section of the
+   `next`: version numbers in every package and the `## [X.Y.Z]` section of the
    changelog, with a pull request into `main` that must pass the required CI
    checks.
 2. A maintainer pushes an annotated tag `vX.Y.Z` on that commit (see Branches
@@ -95,8 +95,12 @@ Releases follow [Semantic Versioning](https://semver.org/). Prereleases use
      publishes).
 5. The MCP Registry entry is published by the `MCP Registry` workflow, from `main`,
    after another approval in the protected `mcp-registry` environment.
-6. The release pull request is merged into `main`, and `main` is merged back
-   into `next`.
+6. After npm publishes the version, the agent plugin is pinned to it on the
+   release branch (`node plugins/tools/pin-release.js X.Y.Z`), because `main`
+   only accepts a plugin pinned to a published release.
+7. The release branch is merged into `main` with a merge commit, never with
+   squash, so the tagged commit stays in the history of `main`. Then `main` is
+   merged back into `next`, also with a merge commit.
 
 How to verify a release: [docs/verify-release.md](docs/verify-release.md).
 

@@ -20,6 +20,8 @@ const { approvalStore } = require('./approvals');
 const { writeFileAtomic } = require('./files');
 const deps = require('../deps');
 const exe = require('../exe');
+const { humanError } = require('../errors');
+const { znCommand } = require('../zn-command');
 
 const MODES = new Set(['proxy', 'env', 'file']);
 const PLACEMENTS = new Set(['header', 'query', 'body']);
@@ -482,7 +484,7 @@ async function dispatch(group, args, ioIn) {
       if (sub === 'adopt') return await secretAdopt(rest, io);
       if (sub === 'log') return await audit(rest, io);
       if (sub === 'get' || sub === 'reveal') {
-        throw deps.znError('ZN_POLICY_DENIED', 'zn does not print secret values. Use the marker with zn run or the secrets MCP tools.');
+        throw deps.znError('ZN_POLICY_DENIED', 'zn does not print secret values. To use one in a command, run: ' + znCommand('run --secrets NAME -- <command>'));
       }
       throw deps.znError('ZN_USAGE', SECRET_USAGE);
     }
@@ -500,8 +502,7 @@ async function dispatch(group, args, ioIn) {
     if (group === 'hooks') return await hooks(args, io);
     throw deps.znError('ZN_USAGE', 'unknown command ' + group);
   } catch (err) {
-    const tag = err.code && String(err.code).startsWith('ZN_') ? '[' + err.code + '] ' : '';
-    io.stderr.write('zn ' + group + ': ' + tag + err.message + '\n');
+    io.stderr.write('zn ' + group + ': ' + humanError(err) + '\n');
     return err.code === 'ZN_USAGE' ? 64 : err.code === 'ZN_POLICY_DENIED' ? 77 : 1;
   }
 }

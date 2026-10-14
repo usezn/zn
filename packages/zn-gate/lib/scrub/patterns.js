@@ -25,6 +25,10 @@
  *   opts.pii = {email, phone, iban, card, dni, ssn, ipv4}  (booleans; ipv4 off by default)
  */
 
+// Version of the type catalogue (secret and PII patterns, validators). Bump it
+// when a pattern, validator or type name changes; see CONTRIBUTING.md.
+const SCRUB_RULES_VERSION = '2026-10-14.2';
+
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
@@ -642,6 +646,7 @@ function findPii(text, opts) {
 }
 
 module.exports = {
+  SCRUB_RULES_VERSION,
   findPatterns,
   hintsIn,
   findPii,

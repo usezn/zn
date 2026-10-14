@@ -28,6 +28,7 @@ const { samples, redact_samples: redactSamples } = JSON.parse(fs.readFileSync(sa
 
 const out = {
   rules_version: rules.RULES_VERSION,
+  advisory_by_default: [...rules.ADVISORY_BY_DEFAULT].sort(),
   tables: {
     INJECTION_RULES: table(rules.INJECTION_RULES),
     INDIRECT_INJECTION_RULES: table(rules.INDIRECT_INJECTION_RULES),

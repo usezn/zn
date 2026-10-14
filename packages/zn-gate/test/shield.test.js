@@ -1,5 +1,8 @@
 'use strict';
 
+// zn-gate stats: these tests must never count into the real ~/.zn/stats.json.
+process.env.ZN_STATS = 'off';
+
 const assert = require('assert');
 const { spawn } = require('child_process');
 const path = require('path');

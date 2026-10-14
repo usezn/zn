@@ -89,7 +89,8 @@ npx -y zn-gate init --revert    # restore the latest backup
 | Cursor | `~/.cursor/mcp.json` | `mcpServers` JSON |
 | Codex CLI | `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`) | `[mcp_servers.<name>]` TOML |
 | OpenCode | `~/.config/opencode/opencode.json` | `mcp` JSON, `command` array |
-| Antigravity, Hermes / PiAgent | `~/.gemini/antigravity/mcp.json`, `~/.hermes/mcp.json` | `mcpServers` JSON (paths not verified against official docs) |
+| Antigravity | `~/.gemini/antigravity/mcp_config.json` (Google's MCP guides) and `~/.gemini/config/mcp_config.json` (shared settings, used by some setups); each one only if it exists | `mcpServers` JSON |
+| Hermes / PiAgent | `~/.hermes/mcp.json` | `mcpServers` JSON (path not verified against official docs) |
 
 Remote (URL) servers are left as they are. `init` never rewrites a file it cannot round-trip safely: OpenCode JSONC files with comments and Codex entries with multi-line `args` are reported as "wrap manually".
 
@@ -153,6 +154,7 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"c
 | Tool output (`check_tool_result`, `shield`) | Locally | **Never**, in any configuration |
 | Tool-call arguments (`check_tool_call`, `shield`) | Locally | **Never**, in any configuration |
 | MCP tool and parameter descriptions (`shield`) | Locally | **Never**, in any configuration |
+| Counts of what zn-gate did (`zn-gate stats`: checks, blocks, secrets replaced, per secret type) | Written locally to `~/.zn/stats.json` | **Never**, unless you turn on `zn-gate stats share on`: then one report a day with a random installation id, the day, the zn-gate, OS and Node.js versions, the agent and part of zn-gate used most, and the number of secrets found per built-in type (never values, prompts, variable or secret names, paths, hosts or emails). `zn-gate stats share show` shows it first. |
 | Prompts (`analyze_prompt`, `zn-gate analyze`) | Locally | Only if you set **both** `ZN_CLOUD=1` and `ZN_API_KEY`. Secrets are redacted locally before sending. |
 
 `ZN_API_KEY` alone enables nothing. `ZN_LOCAL_ONLY=true` (or `--local-only`) overrides `ZN_CLOUD=1`. `npx -y zn-gate status` prints what your configuration sends. Data-flow diagrams: [repository README](https://github.com/usezn/zn#what-leaves-your-machine).
@@ -190,6 +192,7 @@ The local engine is a deterministic signature and normalization layer. It is fas
 - `ZN_CLOUD`: `1` lets `analyze_prompt` / `zn-gate analyze` also query the cloud classifier. Requires `ZN_API_KEY`. Off by default.
 - `ZN_API_KEY`: API key from [usezn.com/dashboard](https://usezn.com/dashboard/). No effect without `ZN_CLOUD=1`.
 - `ZN_LOCAL_ONLY`: `true` forces local-only, even with `ZN_CLOUD=1`.
+- `ZN_STRICT`: `1` also blocks the rules that only warn by default (see below).
 - `ZN_LONG_INPUT`: how a long text (over 1,000 characters) is sent to the cloud classifier. `windows` (default) asks it to check overlapping 512-token windows, up to 20, so an injection in the middle or at the end of a long document is not missed; `off` checks only the first 512 tokens. Also `--long-input windows|off`. Windows are slower and slightly more likely to flag a long benign text, and cloud checks are billed by text size with or without windows, so `off` does not lower the count (1 call up to 2,000 characters, 1 more per further 1,000; `billed_calls` in the result); see the [changelog](https://github.com/usezn/zn/blob/main/CHANGELOG.md).
 - `ZN_STAGE`: `v30` (default, current production API) or `prod` (legacy endpoint). `ZN_API_URL` overrides both.
 
@@ -215,6 +218,14 @@ npx -y zn-gate evidence --tail 20
 ```
 
 ---
+
+## What is blocked and what only warns
+
+zn-gate blocks what is almost certainly an attack or a leak: reading credential files (`.env`, `~/.aws/credentials`, SSH keys), asking for API keys or passwords, sending data out through hidden image links, hidden instructions in Base64 or invisible characters, "ignore all previous instructions", and dangerous commands.
+
+Some other patterns also appear in ordinary text, such as `system:` keys in YAML, "bypass the cache" or an article that explains what a jailbreak is. For those, zn-gate lets the text through and adds a short warning (`advisory` in the result) so you or your agent can take a look.
+
+To block those too, turn on strict mode: set `ZN_STRICT=1`, or add `"strict": true` to `zn.config.json` in your project (or a line `strict` in `.znrules`).
 
 ## FAQ
 

@@ -203,7 +203,8 @@ def _scan_file(file_path: Path) -> List[Dict[str, Any]]:
         # logs: always show the line with any detected secret redacted.
         redacted, findings = redact_secrets(line)
         snippet = "[REDACTED_PRIVATE_KEY]" if i in key_lines else redacted.strip()[:100]
-        res = evaluate(line)
+        # A scan reports every match, including the rules that only warn by default.
+        res = evaluate(line, strict=True)
         if not res.allowed:
             violations.append({
                 "file": str(file_path),
@@ -347,6 +348,20 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_stats(args) -> int:
+    from . import stats as _stats
+    if not (isinstance(args.days, int) and 1 <= args.days <= _stats.KEEP_DAYS):
+        sys.stderr.write("zn-gate stats: --days must be between 1 and {}\n".format(_stats.KEEP_DAYS))
+        return 2
+    days = args.days
+    s = _stats.summary(days=days)
+    if args.json:
+        print(json.dumps(s, indent=2))
+    else:
+        sys.stdout.write(_stats.render(s))
+    return 0
+
+
 def main() -> int:
     _configure_output_streams()
     parser = argparse.ArgumentParser(
@@ -389,6 +404,11 @@ def main() -> int:
     # status command
     subparsers.add_parser("status", help="Show engine status and configuration")
 
+    # stats command
+    st_parser = subparsers.add_parser("stats", help="What zn-gate did on this machine (local counts only)")
+    st_parser.add_argument("--days", type=int, default=30, help="Days to count (1-90, default 30)")
+    st_parser.add_argument("--json", action="store_true", help="Output as JSON")
+
     args = parser.parse_args()
     if args.command == "test":
         return cmd_test(args)
@@ -400,6 +420,8 @@ def main() -> int:
         return cmd_evidence(args)
     elif args.command == "status":
         return cmd_status(args)
+    elif args.command == "stats":
+        return cmd_stats(args)
     else:
         parser.print_help()
         return 0
