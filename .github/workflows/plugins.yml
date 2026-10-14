@@ -5,13 +5,14 @@ on:
     branches: [ main, next ]
     tags: [ 'v*' ]
   pull_request:
-    branches: [ main, next ]
+    branches: [ main, next, 'release/**' ]
+    types: [ opened, synchronize, reopened, labeled ]
 
 permissions:
   contents: read
 
 concurrency:
-  group: plugins-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: plugins-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -22,25 +23,37 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        node-version: [20.x, 22.x, 24.x]
+        os: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["ubuntu-latest", "windows-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
+        node-version: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["20.x", "22.x", "24.x"]' || '["22.x"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Decide what this change needs
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FULL: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+        working-directory: .
+        run: bash .github/scripts/ci-scope.sh
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.scope.outputs.run == 'true'
         with:
           node-version: ${{ matrix.node-version }}
       - name: Pinning and consistency checks
+        if: steps.scope.outputs.run == 'true'
         run: node plugins/tools/check-plugins.js
       - name: Launcher tests
+        if: steps.scope.outputs.run == 'true'
         run: node plugins/tools/test-launch.js
       - name: Install zn-gate dependencies for the benchmark
-        if: hashFiles('plugins/tools/bench-launch.js') != ''
+        if: steps.scope.outputs.run == 'true' && (hashFiles('plugins/tools/bench-launch.js') != '')
         working-directory: packages/zn-gate
         run: npm ci --ignore-scripts
       - name: Launcher overhead benchmark (informational)
-        if: hashFiles('plugins/tools/bench-launch.js') != ''
+        if: steps.scope.outputs.run == 'true' && (hashFiles('plugins/tools/bench-launch.js') != '')
         run: node plugins/tools/bench-launch.js packages/zn-gate
 
   release:

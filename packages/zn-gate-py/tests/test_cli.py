@@ -69,7 +69,8 @@ class TestCliScanCommand(unittest.TestCase):
                 code, out = self._scan(fmt)
                 self.assertEqual(code, 1)
                 self.assertNotIn(FAKE_AWS, out)
-                self.assertIn("AWS_ACCESS_KEY_ID=", out)
+                if fmt != "github":  # CI format carries no snippet
+                    self.assertIn("AWS_ACCESS_KEY_ID=", out)
 
     def test_json_reports_both_findings(self):
         _, out = self._scan("json")

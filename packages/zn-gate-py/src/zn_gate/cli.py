@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from . import __version__
-from .rules import RULES_VERSION, SECRET_PATTERNS, evaluate, redact_secrets
+from .rules import RULES_VERSION, SECRET_PATTERNS, evaluate, mask_token_runs, redact_secrets
 from .client import analyze, is_cloud_enabled, resolve_endpoint
 from .evidence import log_evidence, verify_evidence_ledger, get_evidence_stats, export_evidence_ledger, EVIDENCE_FILE
 
@@ -88,6 +88,7 @@ def cmd_test(args: argparse.Namespace) -> int:
     t0 = time.perf_counter()
     assessment = evaluate(text)
     clean_text, findings = redact_secrets(text)
+    clean_text = mask_token_runs(clean_text)
     latency_us = (time.perf_counter() - t0) * 1_000_000
 
     if args.json:
@@ -202,7 +203,7 @@ def _scan_file(file_path: Path) -> List[Dict[str, Any]]:
         # Snippets are printed to the terminal and, with --format github, to CI
         # logs: always show the line with any detected secret redacted.
         redacted, findings = redact_secrets(line)
-        snippet = "[REDACTED_PRIVATE_KEY]" if i in key_lines else redacted.strip()[:100]
+        snippet = "[REDACTED_PRIVATE_KEY]" if i in key_lines else mask_token_runs(redacted.strip())[:100]
         # A scan reports every match, including the rules that only warn by default.
         res = evaluate(line, strict=True)
         if not res.allowed:
@@ -280,8 +281,9 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
     fmt = getattr(args, "format", "text")
     if fmt == "github":
+        # CI logs are public: rule, reason and location only, never the snippet.
         for v in all_violations:
-            print(f"::error file={v['file']},line={v['line']},title=Security Threat ({v['rule']})::{v['reason']} in: {v['content']}")
+            print(f"::error file={v['file']},line={v['line']},title=Security Threat ({v['rule']})::{v['reason']}")
         print(f"\n[zn-gate] Scanned {len(files_to_scan)} files. Found {len(all_violations)} security threats.")
     elif fmt == "json":
         print(json.dumps({
