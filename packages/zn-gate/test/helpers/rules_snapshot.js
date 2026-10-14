@@ -17,7 +17,7 @@ const SNAPSHOT_FILE = path.join(PKG, 'test', 'fixtures', 'rules_snapshot.json');
 const VERSION_FORMAT = /^\d{4}-\d{2}-\d{2}\.\d+$/;
 const UPDATE_HINT = 'run node scripts/update-rules-snapshot.js';
 // Codes that the update script refuses to write over (unless --force).
-const BLOCKING_CODES = ['unbumped', 'backwards'];
+const BLOCKING_CODES = ['unbumped', 'backwards', 'invalid'];
 
 function load(rel) {
   return require(path.join(PKG, rel));
@@ -129,7 +129,7 @@ function writeSnapshot(snapshot) {
 }
 
 // Returns a list of { code, message }:
-//   missing    the layer is not in the snapshot
+//   invalid    the layer is not in the snapshot, or its snapshot version is malformed
 //   unbumped   files changed but the version is the same as the snapshot's
 //   backwards  files changed and the version is older than the snapshot's
 //   stale      the snapshot needs regenerating (files changed with a newer version,
@@ -139,10 +139,10 @@ function compareLayer(name, expected, actual) {
   const def = LAYERS[name];
   const problems = [];
   if (!expected) {
-    return [{ code: 'missing', message: `layer "${name}" is missing from the snapshot: ${UPDATE_HINT}` }];
+    return [{ code: 'invalid', message: `layer "${name}" is missing from the snapshot: ${UPDATE_HINT}` }];
   }
   if (typeof expected.version !== 'string' || !VERSION_FORMAT.test(expected.version)) {
-    return [{ code: 'stale', message: `layer "${name}" has an invalid version in the snapshot: ${UPDATE_HINT}` }];
+    return [{ code: 'invalid', message: `layer "${name}" has an invalid version in the snapshot: ${UPDATE_HINT}` }];
   }
 
   const changed = [];

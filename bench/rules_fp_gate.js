@@ -51,7 +51,8 @@ function parseArgs(argv) {
   const args = { update: false, json: null };
   for (let i = 2; i < argv.length; i++) {
     if (argv[i] === '--update-baseline') args.update = true;
-    else if (argv[i] === '--json' && argv[i + 1]) args.json = argv[++i];
+    // Resolved here, before the gate changes into an empty temp directory.
+    else if (argv[i] === '--json' && argv[i + 1]) args.json = path.resolve(argv[++i]);
     else fail('unknown argument: ' + argv[i]);
   }
   return args;
