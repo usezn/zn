@@ -160,4 +160,5 @@ def analyze(
             "engine": "oss-local",
             "fallback": True,
             "cloud_error": str(exc),
+            **({"advisory": dict(local_eval.advisory)} if local_eval.advisory else {}),
         }
