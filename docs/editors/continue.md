@@ -53,7 +53,7 @@ mcpServers:
     args: ["-y", "zn-gate", "shield", "--", "uvx", "mcp-server-fetch"]
 ```
 
-Every result of that server is then checked for prompt injection, and secrets zn-gate recognizes are removed, before the agent sees it. `zn-gate init`, which does this automatically for Claude Desktop, Claude Code, Cursor, Codex and OpenCode, does not edit Continue's settings.
+Every result of that server is then checked for prompt injection, and secrets zn-gate recognizes are removed, before the agent sees it. `zn-gate init`, which does this automatically for Claude Desktop, Claude Code, Cursor, Codex, OpenCode and Antigravity, does not edit Continue's settings.
 
 ## Continue documentation
 
