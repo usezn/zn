@@ -6,6 +6,7 @@ import argparse
 import io
 import json
 import os
+import shutil
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -79,6 +80,9 @@ class TestTestCommandMasking(unittest.TestCase):
         self.assertNotIn(FAKE_AWS, preview)
 
 
+def pathlib_name(p):
+    return os.path.basename(p)
+
 
 class TestScanSkipped(unittest.TestCase):
     def _dir(self):
@@ -108,7 +112,38 @@ class TestScanSkipped(unittest.TestCase):
             reasons = sorted(s["reason"] for s in data["skipped"])
             self.assertEqual(reasons, ["2 MiB or larger", "binary .key file, not a key"])
         finally:
-            import shutil
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_github_annotations_cannot_be_forged_by_a_file_name(self):
+        d = tempfile.mkdtemp()
+        try:
+            name = "evil\n::error file=x::forged,title=Z.md"
+            try:
+                with open(os.path.join(d, name), "w", encoding="utf-8") as f:
+                    f.write("x" * (2 * 1024 * 1024))
+            except OSError:
+                self.skipTest("this file system does not allow a newline in a file name")
+            _, gh = self._run(d, "github")
+            commands = [ln for ln in gh.splitlines() if ln.startswith("::")]
+            self.assertEqual(len(commands), 1, gh)
+            self.assertTrue(commands[0].startswith("::notice file="))
+            self.assertIn("%0A%3A%3Aerror file=x%3A%3Aforged%2Ctitle=Z.md", commands[0])
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_unreadable_and_special_files_are_reported(self):
+        d = tempfile.mkdtemp()
+        try:
+            with open(os.path.join(d, "ok.md"), "w", encoding="utf-8") as f:
+                f.write("hello there\n")
+            if hasattr(os, "mkfifo"):
+                os.mkfifo(os.path.join(d, "pipe.md"))
+            data = json.loads(self._run(d, "json")[1])
+            reasons = {pathlib_name(s["file"]): s["reason"] for s in data["skipped"]}
+            if hasattr(os, "mkfifo"):
+                self.assertEqual(reasons.get("pipe.md"), "not a regular file")
+            self.assertEqual(data["total_files"], 1)
+        finally:
             shutil.rmtree(d, ignore_errors=True)
 
     def test_text_and_github_mention_skipped_files(self):
@@ -121,7 +156,6 @@ class TestScanSkipped(unittest.TestCase):
             self.assertEqual(len([ln for ln in gh.splitlines() if ln.startswith("::notice ")]), 2)
             self.assertIn("(2 not scanned)", gh)
         finally:
-            import shutil
             shutil.rmtree(d, ignore_errors=True)
 
 if __name__ == "__main__":
