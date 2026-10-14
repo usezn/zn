@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Every rule layer has a version: `SCRUB_RULES_VERSION` (secret and PII patterns), `AUDIT_RULES_VERSION` (`zn audit` rules) and `POLICY_RULES_VERSION` (hook policy). `SCRUB_RULES_VERSION` is `2026-10-14.2`, `POLICY_RULES_VERSION` is `2026-10-14.3`, and `AUDIT_RULES_VERSION` is `2026-10-14.1`. `zn-gate --version` and `zn-gate status` show the scrub and audit versions next to the rules engine version.
+- Every rule layer has a version: `SCRUB_RULES_VERSION` (secret and PII patterns), `AUDIT_RULES_VERSION` (`zn audit` rules) and `POLICY_RULES_VERSION` (hook policy). `SCRUB_RULES_VERSION` is `2026-10-14.2`, `POLICY_RULES_VERSION` is `2026-10-14.4`, and `AUDIT_RULES_VERSION` is `2026-10-14.1`. `zn-gate --version` and `zn-gate status` show the scrub and audit versions next to the rules engine version.
 
 ### Changed
 - Block and error messages now say what happened and what to do next, in plain words. The CLI prints the code (such as `ZN_LOCKED`) only with `ZN_VERBOSE=1` or `DEBUG` set, and the suggested commands (`zn unlock`, `zn secret set NAME`, `zn env shadow FILE`) fall back to `npx -y zn-gate@<version>` when `zn` is not on your PATH.

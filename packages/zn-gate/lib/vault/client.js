@@ -114,14 +114,18 @@ function approvalArgs(args) {
   return [project, secret, name, resolveExecutable(argv0)];
 }
 
-function lockedError(detail) {
-  return znError(CODES.LOCKED, 'vault is locked' + (detail ? ' (' + detail + ')' : '') + '; run `zn unlock`');
+// notRunning: the daemon is not running (no session key, or no socket to it),
+// the one case the plain "unlock it" message is for.
+function lockedError(detail, notRunning = false) {
+  const err = znError(CODES.LOCKED, 'vault is locked' + (detail ? ' (' + detail + ')' : '') + '; run `zn unlock`');
+  if (notRunning) err.vaultNotRunning = true;
+  return err;
 }
 
 function readSessionKey(keyFile) {
   let buf;
   try { buf = store.readPrivateFile(keyFile); } catch (err) { throw lockedError(err.code); }
-  if (buf === null) throw lockedError();
+  if (buf === null) throw lockedError(null, true);
   const hex = buf.toString('utf8').trim();
   if (!/^[0-9a-f]{64}$/.test(hex)) throw lockedError('bad session key');
   return Buffer.from(hex, 'hex');
@@ -150,7 +154,7 @@ class VaultClient {
         reject(err);
       };
       const timer = setTimeout(() => fail(lockedError('timeout')), TIMEOUT_MS);
-      socket.on('error', (err) => { clearTimeout(timer); fail(lockedError(err.code)); });
+      socket.on('error', (err) => { clearTimeout(timer); fail(lockedError(err.code, true)); });
       socket.on('close', () => {
         clearTimeout(timer);
         for (const p of state.pending.values()) p.reject(lockedError('connection closed'));

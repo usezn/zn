@@ -33,10 +33,14 @@ function humanError(err, env = process.env) {
   const code = err && typeof err.code === 'string' && err.code.startsWith('ZN_') ? err.code : '';
   const detail = String((err && err.message) || '');
   let text;
-  if (code === CODES.LOCKED) {
+  if (code === CODES.LOCKED && err.vaultNotRunning === true) {
+    // Only the plain "the vault is not unlocked" case gets the unlock steps;
+    // integrity and keychain failures keep their own detail.
     const { znCommand } = require('./zn-command');
     text = 'Your secret vault is locked. Unlock it in this terminal with: ' + znCommand('unlock') +
-      ' (it asks for your vault passphrase). Then run this command again.';
+      '. Then run this command again.';
+  } else if (code === CODES.LOCKED) {
+    text = 'zn could not use your secret vault: ' + (detail || 'unknown error');
   } else if (code === CODES.POLICY_DENIED) {
     text = 'Not allowed: ' + (detail || 'zn blocked this request');
   } else if (code === CODES.NOT_FOUND) {

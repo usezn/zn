@@ -7,11 +7,19 @@
  * package points to bin/cli.js, so both forms run the same program.
  */
 
+const path = require('path');
 const exe = require('./exe');
 const { version } = require('../package.json');
 
+// Only absolute directories count: a relative PATH entry (".", "") would find
+// a zn in whatever folder the person happens to be in.
+function absoluteDirs(pathValue) {
+  return String(pathValue || '').split(path.delimiter).filter((d) => d && path.isAbsolute(d)).join(path.delimiter);
+}
+
 function onPath(env) {
-  return exe.resolveExecutable('zn', { PATH: env.PATH || env.Path || '', PATHEXT: env.PATHEXT }) !== null;
+  const dirs = absoluteDirs(env.PATH || env.Path || '');
+  return exe.resolveExecutable('zn', { PATH: dirs, PATHEXT: env.PATHEXT }) !== null;
 }
 
 // The PATH lookup is done once per process for the real environment.
