@@ -8,10 +8,15 @@
  *   node plugins/tools/build-plugin-repo.js --tarball <zn-gate-X.Y.Z.tgz> --out <dir>
  *
  * The plugin repository is never edited by hand: the release workflow runs
- * this script and opens a pull request with its output. That repository's
- * own CI checks the result again, independently: every bundled file against
- * the npm tarball, the tarball's provenance attestation, and every other
- * file against this repository at the release tag.
+ * this script and opens a pull request with its output, which is checked
+ * again, independently, before it is merged: every bundled file against the
+ * npm tarball, the tarball's provenance attestation, and every other file
+ * against this repository at the release tag.
+ *
+ * These checks catch a build that ships the wrong files and code that would
+ * load modules from outside the plugin. They are not a defence against a
+ * malicious zn-gate release: code in the package can use Node's built-in
+ * modules directly.
  *
  * 1. The tarball must match the sha512 integrity that the npm registry lists
  *    for zn-gate@X.Y.Z, and the release the plugin is pinned to
@@ -21,13 +26,15 @@
  *    directory's file limit. Every bundled file is the exact bytes from the
  *    tarball.
  * 3. ES modules are resolved by Node from disk, outside the launcher's
- *    verified loader (CommonJS require() goes through that loader and can
- *    only reach verified files). So every static import of every ES module,
- *    read with Node's own parser, and every import() in any bundled file must
- *    name a module inside the bundle or a Node.js built-in. A name that is
- *    not bundled would be looked up in parent node_modules folders the plugin
- *    does not control. import() with a computed name, createRequire and
- *    import.meta.resolve are refused, since they cannot be checked.
+ *    verified loader (require() calls are resolved by the launcher, only to
+ *    verified files). So every static import of every ES module, read with
+ *    Node's own parser, and every import() in any bundled file must name a
+ *    module inside the bundle or a Node.js built-in. A name that is not
+ *    bundled would be looked up in parent node_modules folders the plugin
+ *    does not control. Code that reaches Node's module system another way
+ *    cannot be checked and is refused: import() with a computed name,
+ *    createRequire, import.meta.resolve, process.mainModule, and the
+ *    "module" built-in.
  * 4. The plugin files are copied unchanged: the shared ones from
  *    plugins/zn-gate, the README, SECURITY and PROVENANCE files of the plugin
  *    repository from plugins/claude-dir. scripts/zn-gate.lock.json lists the
@@ -156,25 +163,23 @@ function esmRequests(sources) {
   return JSON.parse(r.stdout);
 }
 
-// import() anywhere, as a call (not a method named import).
-const DYNAMIC_IMPORT = /(?<![.\w$])import\s*\(/g;
+// import() anywhere, as a call (not a method named import); comments may sit
+// between import and the parenthesis.
+const DYNAMIC_IMPORT = /(?<![.\w$])import\s*(?:\/\*[\s\S]*?\*\/\s*|\/\/[^\n]*\n\s*)*\(/g;
 const LITERAL_ARG = /^\s*(['"])([^'"\n]+)\1\s*\)/;
-const UNCHECKABLE = /\bcreateRequire\s*\(|\bimport\.meta\.resolve\b/;
+const UNCHECKABLE = /\bcreateRequire\b|\bimport\.meta\.resolve\b|\bprocess\.mainModule\b|\brequire\s*\(\s*(['"])(?:node:)?module\1/;
+const MODULE_BUILTINS = new Set(['module', 'node:module']);
 
 /**
- * True for a method named import ("async import(key, format) { ... }"): the
- * parenthesis that opens at `from` closes before a "{". A call to import()
- * is never followed by a block.
+ * True for a method named import ("async import(key, format) { ... }"): it
+ * follows "async", "{", "," or ";" (or starts a line), its parameters are
+ * plain names, and a "{" follows on the same line. A call to import() takes
+ * an expression, and never has a block on the same line.
  */
-function isMethodDefinition(text, from) {
-  let depth = 1;
-  let i = from;
-  for (; i < text.length && depth > 0; i++) {
-    if (text[i] === '(') depth++;
-    else if (text[i] === ')') depth--;
-  }
-  // Same line only: "import(n)" followed by "{ }" on the next line is a call and a block.
-  return depth === 0 && /^[ \t]*\{/.test(text.slice(i, i + 64));
+function isMethodDefinition(text, start, from) {
+  const before = text.slice(Math.max(0, start - 64), start);
+  if (!/(?:\basync\s+|[{,;]\s*|(?:^|\n)[ \t]*)$/.test(before)) return false;
+  return /^[ \t]*[\w$]+(?:[ \t]*,[ \t]*[\w$]+)*[ \t]*\)[ \t]*\{/.test(text.slice(from, from + 200));
 }
 
 /** import() specifiers of a file; problems for calls whose name is not a plain string. */
@@ -183,12 +188,14 @@ function dynamicImports(rel, text, problems) {
   DYNAMIC_IMPORT.lastIndex = 0;
   let m;
   while ((m = DYNAMIC_IMPORT.exec(text))) {
-    if (isMethodDefinition(text, m.index + m[0].length)) continue;
+    if (isMethodDefinition(text, m.index, m.index + m[0].length)) continue;
     const lit = LITERAL_ARG.exec(text.slice(m.index + m[0].length));
     if (lit) out.push(lit[2]);
     else problems.push(rel + ': import() with a computed name cannot be checked');
   }
-  if (UNCHECKABLE.test(text)) problems.push(rel + ': createRequire or import.meta.resolve cannot be checked');
+  if (UNCHECKABLE.test(text)) {
+    problems.push(rel + ': uses createRequire, import.meta.resolve, process.mainModule or the "module" built-in, which cannot be checked');
+  }
   return out;
 }
 
@@ -196,14 +203,26 @@ function hasFile(files, rel) {
   return files.has(rel);
 }
 
-/** True when a target in "exports" names a bundled file (null and missing targets are not). */
+// Conditions active when Node imports an ES module or runs import().
+const IMPORT_CONDITIONS = new Set(['node', 'import', 'module-sync', 'default']);
+
+/**
+ * True when a target in "exports" names a bundled file inside the package
+ * (null, missing and "../" targets are not). In a condition object, the
+ * first key that is an active condition decides, as in Node.
+ */
 function exportTarget(files, pkgDir, target) {
-  if (typeof target === 'string') return hasFile(files, path.posix.normalize(pkgDir + '/' + target.replace(/^\.\//, '')));
+  if (typeof target === 'string') {
+    if (!target.startsWith('./')) return false;
+    const rel = path.posix.normalize((pkgDir ? pkgDir + '/' : '') + target.slice(2));
+    if (pkgDir && !rel.startsWith(pkgDir + '/')) return false;
+    if (!pkgDir && rel.startsWith('..')) return false;
+    return hasFile(files, rel);
+  }
   if (Array.isArray(target)) return target.some((t) => exportTarget(files, pkgDir, t));
   if (target && typeof target === 'object') {
-    for (const cond of ['node', 'import', 'require', 'default']) {
-      if (cond in target) return exportTarget(files, pkgDir, target[cond]);
-    }
+    const cond = Object.keys(target).find((k) => IMPORT_CONDITIONS.has(k));
+    return cond !== undefined && exportTarget(files, pkgDir, target[cond]);
   }
   return false;
 }
@@ -233,6 +252,7 @@ function packageProvides(files, pkgDir, sub) {
 
 /** Problems with one specifier imported by the bundled file rel. */
 function resolveProblem(files, rel, spec) {
+  if (MODULE_BUILTINS.has(spec)) return rel + ': imports the "module" built-in, which cannot be checked';
   if (BUILTINS.has(spec)) return null;
   if (spec.startsWith('/') || /^[a-z]+:/i.test(spec)) return rel + ': ' + spec + ' is not a bundled module';
   if (spec.startsWith('.')) {

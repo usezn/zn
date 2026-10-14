@@ -51,6 +51,15 @@ function tgz(entries) {
   return zlib.gzipSync(Buffer.concat(blocks));
 }
 
+/** One PAX extended header record; its length field counts bytes, itself included. */
+function paxRecord(key, value) {
+  const rest = ' ' + key + '=' + value + '\n';
+  const restBytes = Buffer.byteLength(rest);
+  let len = restBytes + 1;
+  while (String(len).length + restBytes !== len) len = String(len).length + restBytes;
+  return Buffer.from(len + rest);
+}
+
 function sri(buf) {
   return 'sha512-' + crypto.createHash('sha512').update(buf).digest('base64');
 }
@@ -141,6 +150,26 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
       await rejects({ ...BASE, 'lib/extra.js': "import('left-pad');\n" }, /left-pad would be loaded from outside the bundle/);
       await rejects({ ...BASE, 'lib/extra.js': 'const n = "x"; import(n);\n' }, /computed name cannot be checked/);
       await rejects({ ...BASE, 'lib/extra.js': "require('module').createRequire(__filename);\n" }, /createRequire/);
+      // Comments between import and the parenthesis do not hide the call.
+      await rejects({ ...BASE, 'lib/extra.js': "import /* c */ ('left-pad');\n" }, /left-pad would be loaded from outside the bundle/);
+      await rejects({ ...BASE, 'lib/extra.js': "import // c\n('left-pad');\n" }, /left-pad would be loaded from outside the bundle/);
+      // A parenthesis inside a string does not make a call look like a method definition.
+      await rejects({ ...BASE, 'lib/extra.js': "import('left-pad' + ') {'.slice(3));\n" }, /computed name cannot be checked/);
+      // Node's module system reached another way is refused.
+      await rejects({ ...BASE, 'lib/extra.js': "process.mainModule.require('x');\n" }, /process\.mainModule/);
+      await rejects({ ...BASE, 'lib/extra.js': "const M = require('node:module');\n" }, /"module" built-in/);
+      await rejects(esm("import M from 'module';\n"), /"module" built-in/);
+      // "exports": the first active condition decides; "require" alone does not serve import; no "../" targets.
+      const pkgWith = (exportsField) => ({
+        ...BASE,
+        'node_modules/cond/package.json': JSON.stringify({ name: 'cond', type: 'module', exports: exportsField }),
+        'node_modules/cond/ok.js': 'export const ok = 1;\n',
+        'node_modules/esm-dep/extra.js': "import 'cond';\n",
+      });
+      await rejects(pkgWith({ default: './missing.js', import: './ok.js' }), /cond is not in the bundled cond/);
+      await rejects(pkgWith({ require: './ok.js' }), /cond is not in the bundled cond/);
+      await rejects(pkgWith('../esm-dep/index.js'), /cond is not in the bundled cond/);
+      await build(pkgWith({ import: './ok.js', default: './missing.js' }));
       // A method named import is not a call; a call followed by a block on the next line is.
       await build(esm('const o = { async import(k, f) { return k; } };\nexport { o };\n'));
       await rejects({ ...BASE, 'lib/extra.js': 'const n = 1; import(n)\n{ }\n' }, /computed name cannot be checked/);
@@ -176,16 +205,30 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
       await rejects({ ...BASE, 'c:evil.js': '' }, /unexpected path in tarball/);
       await rejects({ ...BASE, 'evil.js': { raw: true, body: '' } }, /unexpected path in tarball/);
       await rejects({ ...BASE, 'Lib/Index.js': '' }, /duplicate path in tarball/);
+      await rejects({ ...BASE, 'lib/café.js': '', 'lib/café.js': '' }, /duplicate path in tarball/);
+      await rejects({ ...BASE, 'lib/bad\u0007.js': '' }, /unexpected path in tarball/);
+      // PAX headers: a path record is used for the next entry; a size record is refused.
+      await rejects({ ...BASE, 'pax': { type: 'x', body: paxRecord('path', 'package/../evil-pax.js') }, 'lib/x.js': '' }, /unexpected path in tarball/);
+      await rejects({ ...BASE, 'pax': { type: 'x', body: paxRecord('size', '12') }, 'lib/x.js': '' }, /PAX size records are not supported/);
+      // Record lengths count bytes: a multi-byte name is read whole.
+      await rejects({ ...BASE, 'pax': { type: 'x', body: paxRecord('path', 'package/lib/éé/../../../x.js') }, 'lib/x.js': '' }, /unexpected path in tarball/);
       await rejects({ ...BASE, 'lib/link.js': { type: '2', body: '' } }, /unsupported tar entry type "2"/);
       await rejects({ ...BASE, 'lib/hard.js': { type: '1', body: '' } }, /unsupported tar entry type "1"/);
     });
 
-    await test('a truncated archive is refused', async () => {
+    await test('a truncated archive or a size that is not octal is refused', async () => {
       const archive = zlib.gunzipSync(tgz(BASE));
-      const cut = zlib.gzipSync(archive.subarray(0, archive.length - 1024));
-      const file = path.join(tmp, 'cut.tgz');
-      fs.writeFileSync(file, cut);
-      await assert.rejects(builder.build({ tarball: file, out: path.join(tmp, 'out-cut'), integrity: sri(cut) }), /no end marker/);
+      const attempt = async (raw, re) => {
+        const gz = zlib.gzipSync(raw);
+        const file = path.join(tmp, 'raw-' + Math.random().toString(36).slice(2) + '.tgz');
+        fs.writeFileSync(file, gz);
+        await assert.rejects(builder.build({ tarball: file, out: path.join(tmp, 'out-raw'), integrity: sri(gz) }), re);
+      };
+      await attempt(archive.subarray(0, archive.length - 1024), /no end marker/);
+      await attempt(archive.subarray(0, 512 + 10), /truncated tar entry/);
+      const bad = Buffer.from(archive);
+      bad.write('\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00', 124, 'latin1'); // base-256 size
+      await attempt(bad, /unsupported size field/);
     });
 
     await test('the output folder must be empty (a .git folder is allowed)', async () => {

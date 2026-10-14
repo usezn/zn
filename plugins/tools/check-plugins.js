@@ -133,7 +133,7 @@ for (const [f, root] of [['mcp.json', '${PLUGIN_ROOT}'], ['.mcp.json', '${CLAUDE
 // The listing icon named in the Claude Code manifest exists inside the plugin, outside .claude-plugin/.
 {
   const icon = json(PLUGIN + '/.claude-plugin/plugin.json').icon;
-  if (icon !== undefined && (typeof icon !== 'string' || !/^\.\/[^/]+\.png$/.test(icon) || !fs.existsSync(path.join(PLUGIN, icon)))) {
+  if (icon !== undefined && (typeof icon !== 'string' || !/^\.\/[\w.-]+\.png$/.test(icon) || !fs.existsSync(path.join(PLUGIN, icon)))) {
     fail('.claude-plugin/plugin.json: icon must name a PNG file at the plugin root that exists');
   }
 }

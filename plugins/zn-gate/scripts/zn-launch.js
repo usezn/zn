@@ -265,9 +265,11 @@ function verify(lock) {
 const isBuiltin = Module.isBuiltin || ((id) => Module.builtinModules.includes(String(id).replace(/^node:/, '')));
 
 /**
- * A CommonJS loader over the verified file set. require() of a relative path
- * or a package resolves only to verified files; built-in modules come from
- * Node. import() is handed to Node's own loader: ES modules cannot be
+ * A CommonJS loader over the verified file set. require() calls of a relative
+ * path or a package are resolved by this loader, only to verified files;
+ * built-in modules come from Node. Code that reaches Node's module system
+ * directly (the "module" built-in, process.mainModule) is not covered: the
+ * release build refuses a bundle that does. import() is handed to Node's own loader: ES modules cannot be
  * evaluated from memory without experimental flags. The tree holds no file
  * outside the lock, so a name that the lock includes resolves to a verified
  * file, which Node reads from disk again. A name that is not in the tree is
