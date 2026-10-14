@@ -10,11 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Every rule layer has a version: `SCRUB_RULES_VERSION` (secret and PII patterns), `AUDIT_RULES_VERSION` (`zn audit` rules) and `POLICY_RULES_VERSION` (hook policy). They start at `2026-10-14.1`. `zn-gate --version` and `zn-gate status` show the scrub and audit versions next to the rules engine version.
+- Every rule layer has a version: `SCRUB_RULES_VERSION` (secret and PII patterns), `AUDIT_RULES_VERSION` (`zn audit` rules) and `POLICY_RULES_VERSION` (hook policy). `SCRUB_RULES_VERSION` and `POLICY_RULES_VERSION` are `2026-10-14.2`, and `AUDIT_RULES_VERSION` is `2026-10-14.1`. `zn-gate --version` and `zn-gate status` show the scrub and audit versions next to the rules engine version.
 
 ### Changed
 - CI fails when the local rules block more benign text. A new gate runs the rules engine over the pinned benign corpus and over a list of ordinary developer sentences, and compares the block counts per rule with a committed baseline.
-- CI also fails when a rule layer changes without a version bump, or when its rule ids change without an updated snapshot.
+- CI also fails when a rule layer changes without a higher version, or when its rule ids change without an updated snapshot. When the block counts fall, the gate passes and warns that its baseline is stale.
 
 ### Security
 - The PII & secret scrubber now recognizes more credential formats: Docker Hub personal and organization access tokens (`dckr_pat_`, `dckr_oat_`), Tavily keys (`tvly-`), Firecrawl keys (`fc-`), Polar tokens (`polar_oat_`, `polar_pat_`, `polar_at_u_`, `polar_at_o_`, `polar_rt_u_`, `polar_rt_o_`, `polar_ci_`, `polar_cs_`), Replicate tokens (`r8_`, 40 characters), Supabase personal access tokens (`sbp_`) and Azure AD client secrets.

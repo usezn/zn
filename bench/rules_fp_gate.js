@@ -11,8 +11,13 @@
  *
  * It fails when the engine blocks more of this text than the committed
  * baseline (bench/rules_fp_baseline.json): a higher total, a higher count for
- * any rule, or a different number of scanned texts. A lower count passes;
- * lock an improvement in with --update-baseline.
+ * any rule, or a different number of scanned texts. When the counts are lower,
+ * it passes and (in CI) prints a warning that the baseline is stale: lock the
+ * improvement in with --update-baseline.
+ *
+ * The rules read .znrules and zn.config.json from the working directory, so
+ * the gate evaluates from a fresh empty directory: a local config file cannot
+ * change the counts.
  *
  * Usage:
  *   node bench/rules_fp_gate.js                     check against the baseline
@@ -24,6 +29,7 @@
  */
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
@@ -49,6 +55,17 @@ function parseArgs(argv) {
     else fail('unknown argument: ' + argv[i]);
   }
   return args;
+}
+
+// Evaluate from a fresh empty directory so .znrules / zn.config.json in the
+// caller's working directory cannot change the counts.
+function enterEmptyWorkingDir() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-fp-gate-'));
+  process.chdir(dir);
+  process.on('exit', () => {
+    process.chdir(ROOT);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
 }
 
 function corpusPresent() {
@@ -128,6 +145,30 @@ function describe(name, t) {
   ];
 }
 
+// Reject a hand-edited or truncated baseline before comparing against it.
+function validateBaseline(b) {
+  const bad = (why) => fail(`baseline file is malformed (${path.relative(ROOT, BASELINE_FILE)}): ${why}`);
+  const isCount = (v) => Number.isInteger(v) && v >= 0;
+  if (!b || typeof b !== 'object' || Array.isArray(b)) bad('expected a JSON object');
+  if (!isCount(b.files)) bad('"files" must be a non-negative integer');
+  if (!isCount(b.blocked)) bad('"blocked" must be a non-negative integer');
+  if (!b.by_rule || typeof b.by_rule !== 'object' || Array.isArray(b.by_rule)) bad('"by_rule" must be an object');
+  for (const [rule, n] of Object.entries(b.by_rule)) {
+    if (!isCount(n)) bad(`"by_rule.${rule}" must be a non-negative integer`);
+  }
+}
+
+function readBaseline() {
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(BASELINE_FILE, 'utf8'));
+  } catch (err) {
+    fail(`baseline file is not valid JSON (${path.relative(ROOT, BASELINE_FILE)}): ${err.message}`);
+  }
+  validateBaseline(parsed);
+  return parsed;
+}
+
 function compare(base, cur) {
   const problems = [];
   if (cur.files !== base.files) {
@@ -143,6 +184,11 @@ function compare(base, cur) {
   return problems;
 }
 
+function isLower(base, cur) {
+  if (cur.blocked < base.blocked) return true;
+  return Object.keys(base.by_rule).some((r) => (cur.by_rule[r] || 0) < base.by_rule[r]);
+}
+
 function main() {
   const args = parseArgs(process.argv);
   const phrases = JSON.parse(fs.readFileSync(PHRASES_FILE, 'utf8')).phrases;
@@ -152,6 +198,7 @@ function main() {
   if (!hasCorpus) {
     if (IN_CI) fail('benign corpus is missing in CI; run packages/zn-gate/test/fixtures/benign/fetch_corpus.sh first');
     if (args.update) fail('refusing to write the baseline without the benign corpus; run fetch_corpus.sh first');
+    enterEmptyWorkingDir();
     const phraseTally = emptyTally();
     for (const p of phrases) tally(phraseTally, p);
     console.log(`rules false-positive gate (rules ${RULES_VERSION})`);
@@ -161,6 +208,7 @@ function main() {
     process.exit(0);
   }
 
+  enterEmptyWorkingDir();
   const corpus = emptyTally();
   for (const f of corpusFiles()) tally(corpus, fs.readFileSync(f, 'utf8'));
   const phraseTally = emptyTally();
@@ -195,7 +243,7 @@ function main() {
     fail(`no baseline at ${path.relative(ROOT, BASELINE_FILE)}; copy the JSON printed above into that file (or run with --update-baseline locally)`);
   }
 
-  const base = JSON.parse(fs.readFileSync(BASELINE_FILE, 'utf8'));
+  const base = readBaseline();
   const problems = compare(base, total);
   if (problems.length) {
     console.error('rules false-positive gate: FAILED');
@@ -204,8 +252,11 @@ function main() {
     process.exit(1);
   }
 
-  const improved = base.blocked > total.blocked || Object.keys(base.by_rule).some((r) => (total.by_rule[r] || 0) < base.by_rule[r]);
-  if (improved) console.log('note: block counts fell below the baseline; run --update-baseline to lock in the improvement.');
+  if (isLower(base, total)) {
+    const msg = 'the rules block fewer benign texts than the baseline records; the baseline is stale. Update bench/rules_fp_baseline.json with --update-baseline to lock in the improvement.';
+    if (IN_CI) console.log('::warning::rules false-positive baseline is stale: ' + msg);
+    else console.log('note: ' + msg);
+  }
   console.log('rules false-positive gate: PASS');
 }
 

@@ -26,7 +26,7 @@ const { powershellQuote, portablePath } = require('../shell-quote');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-14.1';
+const POLICY_RULES_VERSION = '2026-10-14.2';
 
 /* ------------------------------ paths ------------------------------ */
 

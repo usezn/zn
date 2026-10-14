@@ -5,7 +5,8 @@
 //
 // A layer is a set of source files plus the version constant that must move
 // with them. The snapshot stores, per layer, the version, the sorted rule ids
-// and a sha256 of each file (line endings normalized to LF).
+// and a sha256 of each file (line endings normalized to LF). Adding or
+// removing a file in a layer counts as a change.
 
 const fs = require('fs');
 const path = require('path');
@@ -14,13 +15,17 @@ const crypto = require('crypto');
 const PKG = path.join(__dirname, '..', '..');
 const SNAPSHOT_FILE = path.join(PKG, 'test', 'fixtures', 'rules_snapshot.json');
 const VERSION_FORMAT = /^\d{4}-\d{2}-\d{2}\.\d+$/;
+const UPDATE_HINT = 'run node scripts/update-rules-snapshot.js';
+// Codes that the update script refuses to write over (unless --force).
+const BLOCKING_CODES = ['unbumped', 'backwards'];
 
 function load(rel) {
   return require(path.join(PKG, rel));
 }
 
 // Exported names, without the version constant. For layers that have no rule
-// ids of their own (policy, command patterns), the exported API is the id set.
+// ids of their own (policy, command patterns, helpers), the exported API is
+// the id set.
 function exportedNames(mod) {
   return Object.keys(mod).filter((k) => !/_VERSION$/.test(k));
 }
@@ -45,12 +50,13 @@ const LAYERS = {
     ids: () => ruleTableIds(load('lib/rules.js')),
   },
   scrub: {
-    files: ['lib/scrub/patterns.js'],
+    files: ['lib/scrub/patterns.js', 'lib/scrub/exact.js'],
     versionFile: 'lib/scrub/patterns.js',
     versionConst: 'SCRUB_RULES_VERSION',
     ids: () => {
       const m = load('lib/scrub/patterns.js');
-      return [...m.SECRET_TYPES, ...m.PII_TYPES];
+      const exact = load('lib/scrub/exact.js');
+      return [...m.SECRET_TYPES, ...m.PII_TYPES].concat(exportedNames(exact).map((k) => 'exact.' + k));
     },
   },
   audit: {
@@ -64,7 +70,13 @@ const LAYERS = {
     },
   },
   policy: {
-    files: ['lib/hooks/policy.js'],
+    files: [
+      'lib/hooks/policy.js',
+      'lib/broker/files.js',
+      'lib/broker/markers.js',
+      'lib/broker/dotenv.js',
+      'lib/shell-quote.js',
+    ],
     versionFile: 'lib/hooks/policy.js',
     versionConst: 'POLICY_RULES_VERSION',
     ids: () => exportedNames(load('lib/hooks/policy.js')),
@@ -74,6 +86,15 @@ const LAYERS = {
 function sha256Normalized(absFile) {
   const text = fs.readFileSync(absFile, 'utf8').replace(/\r\n/g, '\n');
   return crypto.createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+// Versions are YYYY-MM-DD.N. Dates compare as strings; N compares as a number,
+// so 2026-10-14.10 is newer than 2026-10-14.9. Returns <0, 0 or >0.
+function compareVersions(a, b) {
+  const [dateA, numA] = a.split('.');
+  const [dateB, numB] = b.split('.');
+  if (dateA !== dateB) return dateA < dateB ? -1 : 1;
+  return Number(numA) - Number(numB);
 }
 
 function computeLayer(name) {
@@ -107,44 +128,59 @@ function writeSnapshot(snapshot) {
   fs.writeFileSync(SNAPSHOT_FILE, JSON.stringify(snapshot, null, 2) + '\n');
 }
 
-const UPDATE_HINT = 'run node scripts/update-rules-snapshot.js';
-
-// Returns a list of { code, message }. code 'unbumped' means a file changed
-// while its layer version stayed the same.
+// Returns a list of { code, message }:
+//   missing    the layer is not in the snapshot
+//   unbumped   files changed but the version is the same as the snapshot's
+//   backwards  files changed and the version is older than the snapshot's
+//   stale      the snapshot needs regenerating (files changed with a newer version,
+//              or the version moved without a file change)
+//   ids        rule ids were added or removed
 function compareLayer(name, expected, actual) {
   const def = LAYERS[name];
   const problems = [];
   if (!expected) {
     return [{ code: 'missing', message: `layer "${name}" is missing from the snapshot: ${UPDATE_HINT}` }];
   }
+  if (typeof expected.version !== 'string' || !VERSION_FORMAT.test(expected.version)) {
+    return [{ code: 'stale', message: `layer "${name}" has an invalid version in the snapshot: ${UPDATE_HINT}` }];
+  }
+
+  const changed = [];
   for (const file of Object.keys(actual.sha256)) {
-    if (expected.sha256[file] === undefined) {
-      problems.push({ code: 'stale', message: `${file} is not in the snapshot: ${UPDATE_HINT}` });
-    } else if (expected.sha256[file] !== actual.sha256[file]) {
-      if (expected.version === actual.version) {
+    if (expected.sha256[file] === undefined) changed.push(`${file} (added to layer "${name}")`);
+    else if (expected.sha256[file] !== actual.sha256[file]) changed.push(file);
+  }
+  for (const file of Object.keys(expected.sha256)) {
+    if (actual.sha256[file] === undefined) changed.push(`${file} (removed from layer "${name}")`);
+  }
+
+  const order = compareVersions(actual.version, expected.version);
+  if (changed.length) {
+    for (const file of changed) {
+      if (order === 0) {
         problems.push({
           code: 'unbumped',
           message: `rules changed in ${file}: bump ${def.versionConst} and run node scripts/update-rules-snapshot.js`,
         });
+      } else if (order < 0) {
+        problems.push({
+          code: 'backwards',
+          message: `rules changed in ${file} but ${def.versionConst} went backwards (${actual.version} is older than ${expected.version}): versions must increase`,
+        });
       } else {
         problems.push({
           code: 'stale',
-          message: `${file} changed and ${def.versionConst} is now ${actual.version}: ${UPDATE_HINT}`,
+          message: `rules changed in ${file} and ${def.versionConst} moved to ${actual.version}: ${UPDATE_HINT}`,
         });
       }
     }
-  }
-  for (const file of Object.keys(expected.sha256)) {
-    if (actual.sha256[file] === undefined) {
-      problems.push({ code: 'stale', message: `${file} is in the snapshot but no longer in layer "${name}": ${UPDATE_HINT}` });
-    }
-  }
-  if (expected.version !== actual.version && problems.length === 0) {
+  } else if (order !== 0) {
     problems.push({
       code: 'stale',
       message: `${def.versionConst} is ${actual.version} but the snapshot has ${expected.version}: ${UPDATE_HINT}`,
     });
   }
+
   const before = new Set(expected.ids);
   const now = new Set(actual.ids);
   const added = actual.ids.filter((id) => !before.has(id));
@@ -161,6 +197,8 @@ function compareLayer(name, expected, actual) {
 module.exports = {
   LAYERS,
   SNAPSHOT_FILE,
+  BLOCKING_CODES,
+  compareVersions,
   computeLayer,
   computeSnapshot,
   readSnapshot,

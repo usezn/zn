@@ -1,5 +1,5 @@
 {
-  "description": "Ordinary sentences a developer writes. Used by bench/rules_fp_gate.js: none of them should be blocked by the local rules. Benign text only.",
+  "description": "Ordinary sentences a developer writes, used by bench/rules_fp_gate.js. None should be blocked by the local rules. Known false positives are not removed from this list: they are tracked in bench/rules_fp_baseline.json, and the gate fails if any block count rises above it. Today one sentence (the .env.example mention) is blocked by path:sensitive_file. Benign text only.",
   "phrases": [
     "Set the cache TTL to 300 seconds in config/cache.yaml.",
     "The reverse proxy forwards every request to the app on port 8080.",

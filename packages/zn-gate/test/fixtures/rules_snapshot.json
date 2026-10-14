@@ -48,7 +48,7 @@
     },
     "scrub": {
       "version_const": "SCRUB_RULES_VERSION",
-      "version": "2026-10-14.1",
+      "version": "2026-10-14.2",
       "ids": [
         "ANTHROPIC_KEY",
         "AWS_KEY",
@@ -100,10 +100,21 @@
         "TWILIO_KEY",
         "URL_PASSWORD",
         "VAULT_TOKEN",
-        "XAI_KEY"
+        "XAI_KEY",
+        "exact.AC_PREFIX",
+        "exact.AhoCorasick",
+        "exact.MIN_LENGTH",
+        "exact.buildMatcher",
+        "exact.collectSources",
+        "exact.isSensitiveName",
+        "exact.looksNonSecret",
+        "exact.parseDotenv",
+        "exact.urlPassword",
+        "exact.variants"
       ],
       "sha256": {
-        "lib/scrub/patterns.js": "a99fe10e43605ed7d15cd086a49b73eeb8ee26a51f7ea7865189a01908589df5"
+        "lib/scrub/patterns.js": "5543a859dfbf695635d6288272132ba37a7312ff816914d63707b5fc332856b4",
+        "lib/scrub/exact.js": "38c79642502843d4a88c94cfdb34c1b60f04fce6d778b9a8a3eb751c5aed2888"
       }
     },
     "audit": {
@@ -156,7 +167,7 @@
     },
     "policy": {
       "version_const": "POLICY_RULES_VERSION",
-      "version": "2026-10-14.1",
+      "version": "2026-10-14.2",
       "ids": [
         "adminCommand",
         "bashDenial",
@@ -173,7 +184,11 @@
         "writeDenial"
       ],
       "sha256": {
-        "lib/hooks/policy.js": "c95a20d28264066faa9f31aeeafb077584456d36a7576e5053cf008f5f4ab0a1"
+        "lib/hooks/policy.js": "8dcb565b6b6a3106a780c759d1b7e52be130ec47df6b0c70b87d40b80fa90bcc",
+        "lib/broker/files.js": "3cd64900574d09a5703e4124fd4ad3a6e1e576763126a6157a3ba10d5a7f388a",
+        "lib/broker/markers.js": "301eb1d763e8e88c32e32a02c344be8f44b342b06b61897f3a2d478dbe55d6b4",
+        "lib/broker/dotenv.js": "d12a12bd12108a38f84e9f4772ed50f0b015962a1e68f75362142b9b3449e8fe",
+        "lib/shell-quote.js": "7892cbb5237f533bb33d9660642e4c20837bca502f588b2db45a47ca6b6adff1"
       }
     }
   }
