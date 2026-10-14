@@ -404,7 +404,8 @@ Files   : ${files.length} file(s) queued for audit\n
       // Printed to the terminal and CI logs: never show a detected secret.
       const redacted = redactSecrets(line);
       const sample = keyLines.has(lineIdx + 1) ? '[REDACTED_PRIVATE_KEY]' : redacted.sanitized.slice(0, 100);
-      const evalRes = evaluate(line, options);
+      // A scan reports every match, including the rules that only warn by default.
+      const evalRes = evaluate(line, { ...options, strict: true });
       if (evalRes.verdict === 'block') {
         totalFindings++;
         findings.push({ file: relPath, line: lineIdx + 1, rule: evalRes.rule, reason: evalRes.reason, sample });

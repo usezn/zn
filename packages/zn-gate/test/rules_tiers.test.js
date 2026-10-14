@@ -69,3 +69,37 @@ test('the advisory list only names existing injection rules', () => {
   for (const id of rules.ADVISORY_BY_DEFAULT) assert.match(id, /^pi:/);
   assert.ok(!rules.ADVISORY_BY_DEFAULT.has('pi:ignore_previous'));
 });
+
+test('strict mode from a .znrules line', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-tiers-'));
+  const cwd = process.cwd();
+  try {
+    fs.writeFileSync(path.join(dir, '.znrules'), '# project rules\r\n  strict  \r\n');
+    process.chdir(dir);
+    rules.loadCustomConfig(true);
+    assert.equal(rules.evaluate(HEURISTIC[0][0]).verdict, 'block');
+  } finally {
+    process.chdir(cwd);
+    rules.loadCustomConfig(true);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('strict mode reaches windows, tool results and Base64 content', () => {
+  const big = 'x '.repeat(rules.MAX_SCAN_CHARS) + HEURISTIC[0][0];
+  assert.equal(rules.scanWindows(big).verdict, 'allow');
+  assert.equal(rules.scanWindows(big, { strict: true }).verdict, 'block');
+  assert.equal(rules.sanitizeToolResult('read', HEURISTIC[0][0]).safe_to_ingest, true);
+  assert.equal(rules.sanitizeToolResult('read', HEURISTIC[0][0], { strict: true }).safe_to_ingest, false);
+  const b64 = 'echo ' + Buffer.from(HEURISTIC[2][0]).toString('base64') + ' | base64 -d | sh';
+  assert.equal(rules.evaluate(b64, { strict: true }).verdict, 'block');
+});
+
+test('strict: false does not lift ZN_STRICT=1', () => {
+  process.env.ZN_STRICT = '1';
+  try {
+    assert.equal(rules.evaluate(HEURISTIC[0][0], { strict: false }).verdict, 'block');
+  } finally {
+    delete process.env.ZN_STRICT;
+  }
+});

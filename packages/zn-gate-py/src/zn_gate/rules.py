@@ -459,7 +459,8 @@ ADVISORY_BY_DEFAULT = frozenset([
 
 
 def _strict(strict: Optional[bool]) -> bool:
-    return bool(strict) if strict is not None else os.environ.get('ZN_STRICT') == '1'
+    # The environment can only harden: strict=False does not lift ZN_STRICT=1 (as in Node.js).
+    return bool(strict) or os.environ.get('ZN_STRICT') == '1'
 
 
 def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
@@ -982,6 +983,7 @@ def sanitize_tool_result(
     content: Optional[Any] = None,
     mask_secrets: bool = True,
     block_truncated: bool = False,
+    strict: Optional[bool] = None,
 ) -> Any:
     """
     Sanitizes tool output to prevent prompt injection and credential leakage.
@@ -996,7 +998,7 @@ def sanitize_tool_result(
     if content is not None:
         tool_name = str(tool_or_result)
         text_content = content if isinstance(content, str) else str(content)
-        assessment = scan_windows(text_content)
+        assessment = scan_windows(text_content, strict=strict)
         truncated = assessment.truncated
         if truncated and assessment.allowed and (block_truncated or os.environ.get('ZN_BLOCK_TRUNCATED') == '1'):
             assessment = Assessment(verdict='block', confidence=1.0, rule='size:truncated',

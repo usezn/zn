@@ -176,6 +176,9 @@ async function handleRequest(message, options) {
                 isBlock = true;
                 break;
               }
+              if (!worstAssessment.advisory && subRes.advisory) {
+                worstAssessment = { ...worstAssessment, advisory: { ...subRes.advisory } };
+              }
             }
           }
         }
