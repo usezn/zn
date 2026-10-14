@@ -49,6 +49,7 @@ const SOURCES = {
     "  if (s.includes('throw')) throw new Error('runner exploded');",
     "  if (s.includes('echo-exit1')) { process.stdout.write(s); process.exit(1); }",
     "  if (s.includes('reject')) { Promise.reject(new Error('stray rejection')); await new Promise((r) => setTimeout(r, 50)); }",
+    "  if (s.includes('escape')) { const o = await import('outside-dep'); process.stdout.write('LOADED ' + o.name); return; }",
     "  const esm = await import('esm-dep');",
     "  process.stdout.write(['ran', a[0], policy.name, dep.name, data.name, esm.name, s.trim()].join(' '));",
     '};',
@@ -408,6 +409,29 @@ try {
       }
     } finally {
       setLock({ package: 'zn-gate', version: '9.9.9', files });
+    }
+  });
+
+  test('an ES module outside the verified package is never loaded', () => {
+    // A package next to zn-gate in node_modules: Node would find it by walking up from the package.
+    const outside = path.join(path.dirname(pkgDir), 'outside-dep');
+    write(path.join(outside, 'package.json'), '{"name": "outside-dep", "type": "module", "exports": "./index.js"}\n');
+    write(path.join(outside, 'index.js'), "export const name = 'outside';\n");
+    try {
+      const r = run(['hook', 'codex'], '{"escape":1}');
+      if (typeof require('module').registerHooks === 'function') {
+        refused(r, /refusing to load .*outside-dep.*not one of the verified zn-gate files/);
+        assert.doesNotMatch(r.stdout, /LOADED/);
+        // The verified ES module of the package still loads.
+        const ok = run(['hook', 'codex'], '{"x":4}');
+        assert.strictEqual(ok.status, 0, ok.stderr);
+        assert.match(ok.stdout, / esm \{"x":4\}$/);
+      } else {
+        // Node.js before 22.15: hooks rely on the release build's import check.
+        process.stdout.write('# skip: module.registerHooks is not available on ' + process.version + '\n');
+      }
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
     }
   });
 

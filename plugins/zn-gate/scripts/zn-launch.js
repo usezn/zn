@@ -277,6 +277,87 @@ const isBuiltin = Module.isBuiltin || ((id) => Module.builtinModules.includes(St
  * check: the release build checks that every literal import of the shipped
  * files resolves inside the bundle.
  */
+/**
+ * Keep ES modules inside the verified package. import() goes to Node's own
+ * loader, which resolves names from disk and would look in node_modules
+ * folders above the package for a name the package does not hold. With
+ * module.registerHooks (Node.js 22.15 and 23.5 or later; synchronous, no
+ * measurable cost) every ES module and package that Node resolves must be one
+ * of the verified files, and ES module source is served from the verified
+ * bytes, so a file changed after the check is never run. On older Node.js
+ * versions, the long-running MCP servers use module.register instead (it
+ * starts a loader thread, about 100 ms, too slow for every hook); its check
+ * reads the file again and compares the digest. Hooks on those versions rely
+ * on the release build, which checks that every import of the shipped files
+ * resolves inside the package.
+ */
+function guardModules(dir, files, lock, longRunning) {
+  const mod = require('module');
+  const { fileURLToPath, pathToFileURL } = require('url');
+  const root = path.resolve(dir);
+  const relOf = (url) => {
+    if (typeof url !== 'string' || !url.startsWith('file:')) return null;
+    const rel = path.relative(root, fileURLToPath(url));
+    if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return null;
+    return rel.split(path.sep).join('/');
+  };
+  const refuse = (url) => {
+    throw new Error('zn plugin: refusing to load ' + url + ': it is not one of the verified zn-gate files');
+  };
+  if (typeof mod.registerHooks === 'function') {
+    mod.registerHooks({
+      resolve(specifier, context, nextResolve) {
+        const r = nextResolve(specifier, context);
+        if (!r.url.startsWith('node:') && !files.has(relOf(r.url))) refuse(r.url);
+        return r;
+      },
+      load(url, context, nextLoad) {
+        const r = nextLoad(url, context);
+        if (url.startsWith('node:')) return r;
+        const rel = relOf(url);
+        if (!files.has(rel)) refuse(url);
+        return r.format === 'module' ? { ...r, source: files.get(rel) } : r;
+      },
+    });
+    return 'sync';
+  }
+  if (!longRunning || typeof mod.register !== 'function') return 'none';
+  const hooks = [
+    "import { fileURLToPath } from 'node:url';",
+    "import { createHash } from 'node:crypto';",
+    "import path from 'node:path';",
+    'let root, digests;',
+    'export async function initialize(data) { root = data.root; digests = new Map(Object.entries(data.digests)); }',
+    'function relOf(url) {',
+    "  if (!url.startsWith('file:')) return null;",
+    '  const rel = path.relative(root, fileURLToPath(url));',
+    "  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return null;",
+    "  return rel.split(path.sep).join('/');",
+    '}',
+    "function refuse(url) { throw new Error('zn plugin: refusing to load ' + url + ': it is not one of the verified zn-gate files'); }",
+    'export async function resolve(specifier, context, nextResolve) {',
+    '  const r = await nextResolve(specifier, context);',
+    "  if (!r.url.startsWith('node:') && !digests.has(relOf(r.url))) refuse(r.url);",
+    '  return r;',
+    '}',
+    'export async function load(url, context, nextLoad) {',
+    '  const r = await nextLoad(url, context);',
+    "  if (url.startsWith('node:')) return r;",
+    '  const rel = relOf(url);',
+    '  if (!digests.has(rel)) refuse(url);',
+    "  if (r.source != null && createHash('sha256').update(r.source).digest('hex') !== digests.get(rel)) {",
+    "    throw new Error('zn plugin: ' + rel + ' was changed after it was checked');",
+    '  }',
+    '  return r;',
+    '}',
+  ].join('\n');
+  mod.register('data:text/javascript,' + encodeURIComponent(hooks), {
+    parentURL: pathToFileURL(__filename),
+    data: { root, digests: lock.files },
+  });
+  return 'thread';
+}
+
 function makeLoader(dir, files) {
   const cache = new Map();
   const has = (rel) => files.has(rel);
@@ -525,6 +606,7 @@ function runHook(agent) {
     const lock = loadLock();
     const res = verify(lock);
     if (res.error) return refuseHook(res.error);
+    guardModules(res.dir, res.files, lock, false);
     const runner = makeLoader(res.dir, res.files).load('lib/hooks/runner.js');
     // The runner reads the event from (the replacement) stdin and writes its answer.
     Promise.resolve(runner.main([agent])).catch((err) => {
@@ -545,6 +627,7 @@ function runMcp() {
   const lock = loadLock();
   const res = verify(lock);
   if (res.error) return fail(res.error);
+  guardModules(res.dir, res.files, lock, true);
   makeLoader(res.dir, res.files).load('lib/broker/mcp.js').startSecretsMcp();
 }
 
@@ -591,6 +674,7 @@ function runZnGateMcp(agent) {
   const lock = loadLock();
   const res = verify(lock);
   if (res.error) return fail(res.error);
+  guardModules(res.dir, res.files, lock, true);
   makeLoader(res.dir, res.files).load('lib/mcp.js').startMcpServer({ localOnly: !cloud });
 }
 
@@ -638,6 +722,6 @@ function main(argv) {
   process.exitCode = 1;
 }
 
-module.exports = { verify, loadLock, makeLoader, readVerified, znGateMcpEnv };
+module.exports = { verify, loadLock, makeLoader, readVerified, znGateMcpEnv, guardModules };
 
 if (require.main === module) main(process.argv.slice(2));
