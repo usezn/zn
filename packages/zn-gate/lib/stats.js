@@ -6,7 +6,7 @@
  * ~/.zn/stats.json (0600; ZN_HOME overrides ~/.zn) holds counts only, per day and per layer and agent:
  * checks, blocked, warned, redacted and the number of detections per secret type (AWS_KEY, GITHUB_TOKEN...).
  * Never values, prompts, paths, file names, hosts or hashes of any of them. Nothing here is sent anywhere:
- * sharing anonymous counts is a separate, explicit opt-in (`zn-gate stats share on`, lib/stats-share.js).
+ * sharing pseudonymous counts is a separate, explicit opt-in (`zn-gate stats share on`, lib/stats-share.js).
  *
  * Recording is best effort and must never slow down or change a decision: every error is swallowed, and
  * concurrent writers may lose an increment (counts are approximate). ZN_STATS=off turns recording off.

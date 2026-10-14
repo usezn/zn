@@ -5,7 +5,7 @@
  * zn-gate stats --days N   another window (1-90)
  * zn-gate stats --json     the same as JSON
  * zn-gate stats share on|off|status|show
- *                          opt-in sharing of anonymous daily counts (off by default; see lib/stats-share.js)
+ *                          opt-in sharing of pseudonymous daily counts (off by default; see lib/stats-share.js)
  */
 
 const stats = require('./stats');
@@ -64,8 +64,8 @@ function printSummary(s, out) {
   }
   const st = share.status();
   out('\n' + (st.share
-    ? '  Sharing anonymous daily counts: on. Turn it off with `zn-gate stats share off`.\n'
-    : '  These counts stay on this machine. To help improve zn-gate, you can share anonymous daily counts:\n  `zn-gate stats share show` shows exactly what would be sent, `zn-gate stats share on` turns it on.\n'));
+    ? '  Sharing pseudonymous daily counts: on. Turn it off with `zn-gate stats share off`.\n'
+    : '  These counts stay on this machine. To help improve zn-gate, you can share pseudonymous daily counts:\n  `zn-gate stats share show` shows exactly what would be sent, `zn-gate stats share on` turns it on.\n'));
   if (!stats.enabled()) out('  Counting is off on this machine (ZN_STATS=off).\n');
 }
 
@@ -80,14 +80,14 @@ async function run(args, out = (s) => process.stdout.write(s), { confirm = confi
   if (o.rest[0] === 'share') {
     const sub = o.rest[1] || 'status';
     if (sub === 'on') {
-      if (share.status().share) { out('Sharing anonymous daily counts is already on.\n'); return 0; }
+      if (share.status().share) { out('Sharing pseudonymous daily counts is already on.\n'); return 0; }
       explainShare(out);
-      if (!(await confirm('Turn on sharing of these anonymous daily counts? [y/N] '))) {
+      if (!(await confirm('Turn on sharing of these pseudonymous daily counts? [y/N] '))) {
         out('Sharing stays off. (It can only be turned on by you, in your own terminal.)\n');
         return 1;
       }
       share.setShare(true);
-      out('Sharing anonymous daily counts is on. Counts from today on are sent when you run `zn-gate stats`.\n');
+      out('Sharing pseudonymous daily counts is on. Counts from today on are sent when you run `zn-gate stats`.\n');
       return 0;
     }
     if (sub === 'off') {
@@ -109,7 +109,7 @@ async function run(args, out = (s) => process.stdout.write(s), { confirm = confi
       return 0;
     }
     if (sub === 'status') {
-      out(share.status().share ? 'Sharing anonymous daily counts: on.\n' : 'Sharing anonymous daily counts: off (the default).\n');
+      out(share.status().share ? 'Sharing pseudonymous daily counts: on.\n' : 'Sharing pseudonymous daily counts: off (the default).\n');
       return 0;
     }
     out('Usage: zn-gate stats share on|off|status|show\n');
@@ -123,7 +123,7 @@ async function run(args, out = (s) => process.stdout.write(s), { confirm = confi
     out(JSON.stringify({ ...s, sharing: share.status().share, sent_days: sentDays, send_failed: res.failed }, null, 2) + '\n');
   } else {
     printSummary(s, out);
-    for (const d of sentDays) out(`  Shared anonymous counts for ${d}.\n`);
+    for (const d of sentDays) out(`  Shared pseudonymous counts for ${d}.\n`);
     if (res.failed) out(`  ${res.failed} day(s) could not be shared; they will be tried next time.\n`);
   }
   return 0;

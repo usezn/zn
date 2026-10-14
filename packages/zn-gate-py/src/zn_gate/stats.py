@@ -2,7 +2,7 @@
 
 The counts live in ~/.zn/stats.json (ZN_HOME overrides ~/.zn), written by the npm package (agent hooks, MCP tools
 and the shield proxy). They are numbers only: no values, prompts, paths or hosts. Nothing is sent from here;
-opt-in sharing of anonymous daily counts is managed with the npm package (`npx zn-gate stats share`).
+opt-in sharing of pseudonymous daily counts is managed with the npm package (`npx zn-gate stats share`).
 """
 
 import datetime
@@ -97,5 +97,5 @@ def render(s: Dict[str, Any]) -> str:
                 lines.append("    {} ({}): {:,} events, {:,} blocked, {:,} replaced".format(
                     agent, LAYER_NAMES.get(layer, layer), c["checked"], c["blocked"], c["redacted"]))
     lines.append("")
-    lines.append("  These counts stay on this machine. Sharing anonymous daily counts is opt-in: `npx zn-gate stats share show`.")
+    lines.append("  These counts stay on this machine. Sharing pseudonymous daily counts is opt-in: `npx zn-gate stats share show`.")
     return "\n".join(lines) + "\n"
