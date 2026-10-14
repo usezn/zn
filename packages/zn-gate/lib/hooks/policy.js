@@ -24,6 +24,10 @@ const markers = require('../broker/markers');
 const { realTargetOf } = require('../broker/files');
 const { powershellQuote, portablePath } = require('../shell-quote');
 
+// Version of the policy rules (credential paths, zn home, secret commands,
+// command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
+const POLICY_RULES_VERSION = '2026-10-14.2';
+
 /* ------------------------------ paths ------------------------------ */
 
 // Home and zn-home references written as shell variables (bash, PowerShell,
@@ -719,6 +723,7 @@ function denialOf(c, text, opts) {
 }
 
 module.exports = {
+  POLICY_RULES_VERSION,
   classifyPath,
   classifyWord,
   globClass,

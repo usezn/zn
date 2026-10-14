@@ -170,6 +170,7 @@ We only publish numbers we can reproduce, with the method next to them.
 - `ZN_CLOUD`: `1` lets `analyze()` also query the cloud classifier. Requires `ZN_API_KEY`. Off by default.
 - `ZN_API_KEY`: API key from [usezn.com/dashboard](https://usezn.com/dashboard/). No effect without `ZN_CLOUD=1`.
 - `ZN_LOCAL_ONLY`: `true` forces local-only.
+- `ZN_STRICT`: `1` blocks everything the local rules flag (same as `evaluate(text, strict=True)`). By default some rules only warn.
 - `ZN_STAGE` / `ZN_API_URL`: cloud endpoint selection.
 
 ## FAQ
