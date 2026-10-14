@@ -47,17 +47,19 @@ fn api_re() -> &'static Regex {
 
 fn card_re() -> &'static Regex {
     // 13-19 digits in groups of four, optionally separated by spaces or dashes.
-    CREDIT_CARD_REGEX
-        .get_or_init(|| Regex::new(r"(?:\d{4}[ -]?){2,3}\d{1,4}(?:[ -]?\d{1,3})?").unwrap())
+    // ASCII digits only ([0-9]): `\d` in the regex crate also matches other scripts' digits.
+    CREDIT_CARD_REGEX.get_or_init(|| {
+        Regex::new(r"(?:[0-9]{4}[ -]?){2,3}[0-9]{1,4}(?:[ -]?[0-9]{1,3})?").unwrap()
+    })
 }
 
 fn ssn_re() -> &'static Regex {
     // US Social Security Numbers (XXX-XX-XXXX)
-    SSN_REGEX.get_or_init(|| Regex::new(r"\d{3}-\d{2}-\d{4}").unwrap())
+    SSN_REGEX.get_or_init(|| Regex::new(r"[0-9]{3}-[0-9]{2}-[0-9]{4}").unwrap())
 }
 
 fn e164_re() -> &'static Regex {
-    E164_REGEX.get_or_init(|| Regex::new(r"\+[1-9]\d{7,14}").unwrap())
+    E164_REGEX.get_or_init(|| Regex::new(r"\+[1-9][0-9]{7,14}").unwrap())
 }
 
 fn nanp_re() -> &'static Regex {
@@ -65,7 +67,7 @@ fn nanp_re() -> &'static Regex {
     // A bare run of ten digits is not a phone number here: it is far more
     // often an ID or a timestamp.
     NANP_REGEX.get_or_init(|| {
-        Regex::new(r"(?:\+?1[-. ])?(?:\(\d{3}\) ?|\d{3}[-. ])\d{3}[-. ]\d{4}").unwrap()
+        Regex::new(r"(?:\+?1[-. ])?(?:\([0-9]{3}\) ?|[0-9]{3}[-. ])[0-9]{3}[-. ][0-9]{4}").unwrap()
     })
 }
 
@@ -96,7 +98,7 @@ fn luhn_valid(digits: &str) -> bool {
         sum += d;
         dbl = !dbl;
     }
-    sum % 10 == 0
+    sum.is_multiple_of(10)
 }
 
 fn all_same(digits: &str) -> bool {
@@ -225,6 +227,7 @@ fn formatted_nanp_valid(raw: &str) -> bool {
 
 /* ------------------------------------------------------------------ */
 /* Boundaries: a candidate must not be part of a longer token          */
+/* (letters and digits of any script count as part of a token)        */
 /* ------------------------------------------------------------------ */
 
 fn char_before(text: &str, start: usize) -> Option<char> {
@@ -245,23 +248,32 @@ fn continues_number(text: &str, end: usize, seps: &[char]) -> bool {
 
 fn card_bounded(text: &str, s: usize, e: usize) -> bool {
     let before_ok =
-        !matches!(char_before(text, s), Some(c) if c.is_ascii_alphanumeric() || ".,_-".contains(c));
-    let after_ok = !matches!(char_after(text, e), Some(c) if c.is_ascii_alphanumeric() || c == '_')
+        !matches!(char_before(text, s), Some(c) if c.is_alphanumeric() || ".,_-".contains(c));
+    let after_ok = !matches!(char_after(text, e), Some(c) if c.is_alphanumeric() || c == '_')
         && !continues_number(text, e, &['.', ',']);
     before_ok && after_ok
 }
 
 fn ssn_bounded(text: &str, s: usize, e: usize) -> bool {
     let before_ok =
-        !matches!(char_before(text, s), Some(c) if c.is_ascii_alphanumeric() || ".-".contains(c));
-    let after_ok = !matches!(char_after(text, e), Some(c) if c.is_ascii_alphanumeric())
+        !matches!(char_before(text, s), Some(c) if c.is_alphanumeric() || ".-".contains(c));
+    let after_ok = !matches!(char_after(text, e), Some(c) if c.is_alphanumeric())
         && !continues_number(text, e, &['-']);
     before_ok && after_ok
 }
 
-fn phone_bounded(text: &str, s: usize, e: usize) -> bool {
-    let before_ok = !matches!(char_before(text, s), Some(c) if c.is_ascii_alphanumeric() || "+_./-".contains(c));
-    let after_ok = !matches!(char_after(text, e), Some(c) if c.is_ascii_alphanumeric() || c == '_')
+/// E.164: the Node.js scrubber's boundaries.
+fn e164_bounded(text: &str, s: usize, e: usize) -> bool {
+    !matches!(char_before(text, s), Some(c) if c.is_alphanumeric() || c == '+')
+        && !matches!(char_after(text, e), Some(c) if c.is_numeric())
+}
+
+/// Formatted NANP numbers have no `+`, so they need stricter boundaries
+/// to stay out of version strings and longer dashed numbers.
+fn nanp_bounded(text: &str, s: usize, e: usize) -> bool {
+    let before_ok =
+        !matches!(char_before(text, s), Some(c) if c.is_alphanumeric() || "+_-".contains(c));
+    let after_ok = !matches!(char_after(text, e), Some(c) if c.is_alphanumeric() || c == '_')
         && !continues_number(text, e, &['.', ',', '-']);
     before_ok && after_ok
 }
@@ -270,11 +282,32 @@ type Check = fn(&str) -> bool;
 type Bound = fn(&str, usize, usize) -> bool;
 
 /// Spans of `re` matches that stand on their own and pass `valid`.
+///
+/// The regex crate has no lookaround and does not backtrack into a match
+/// that fails these checks, so when a candidate fails, shorter versions of
+/// it (ending at an earlier digit) are tried, longest first. This keeps
+/// "4111 1111 1111 1111 2025" or two cards separated by a space redacted.
 fn checked_spans(re: &Regex, text: &str, bound: Bound, valid: Check) -> Vec<(usize, usize)> {
-    re.find_iter(text)
-        .filter(|m| bound(text, m.start(), m.end()) && valid(m.as_str()))
-        .map(|m| (m.start(), m.end()))
-        .collect()
+    let mut spans = Vec::new();
+    let mut pos = 0;
+    while pos < text.len() {
+        let Some(m) = re.find_at(text, pos) else {
+            break;
+        };
+        let (s, e) = (m.start(), m.end());
+        let found = (s + 1..=e)
+            .rev()
+            .filter(|&end| text.as_bytes()[end - 1].is_ascii_digit())
+            .find(|&end| bound(text, s, end) && valid(&text[s..end]));
+        match found {
+            Some(end) => {
+                spans.push((s, end));
+                pos = end;
+            }
+            None => pos = e,
+        }
+    }
+    spans
 }
 
 fn replace_spans(text: &str, spans: &[(usize, usize)], marker: &str) -> String {
@@ -298,11 +331,11 @@ fn ssn_spans(text: &str) -> Vec<(usize, usize)> {
 }
 
 fn e164_spans(text: &str) -> Vec<(usize, usize)> {
-    checked_spans(e164_re(), text, phone_bounded, e164_valid)
+    checked_spans(e164_re(), text, e164_bounded, e164_valid)
 }
 
 fn nanp_spans(text: &str) -> Vec<(usize, usize)> {
-    checked_spans(nanp_re(), text, phone_bounded, formatted_nanp_valid)
+    checked_spans(nanp_re(), text, nanp_bounded, formatted_nanp_valid)
 }
 
 impl Scrubber {
@@ -412,10 +445,24 @@ mod tests {
             "Card: 4111 1111 1111 1111.",
             "card=4111111111111111",
             "Amex 378282246310005",
+            "exp 4111 1111 1111 1111 2025",
         ] {
             let scrubbed = Scrubber::scrub(input);
             assert!(scrubbed.contains("[CARD_REDACTED]"), "{input}");
         }
+    }
+
+    #[test]
+    fn test_cards_next_to_other_digits() {
+        let out = Scrubber::scrub("cards: 4111111111111111 5500000000000004");
+        assert_eq!(out, "cards: [CARD_REDACTED] [CARD_REDACTED]");
+        let out = Scrubber::scrub("card 4111 1111 1111 1111 2025");
+        assert_eq!(out, "card [CARD_REDACTED] 2025");
+        let out = Scrubber::scrub("card 4111 1111 1111 1111 12/25");
+        assert!(out.starts_with("card [CARD_REDACTED]"), "{out}");
+        // Digits from other scripts are not part of a card number.
+        let out = Scrubber::scrub("card 4111111111111111\u{0663}");
+        assert!(!out.contains("[CARD_REDACTED]"), "{out}");
     }
 
     #[test]
@@ -470,6 +517,9 @@ mod tests {
             "Call me at +1 415 555 2671",
             "Call +34612345678 tomorrow",
             "Ring +447911123456 today",
+            "Tel.415-555-2671",
+            "wa.me/+14155552671",
+            "call +14155552671-2",
         ] {
             let scrubbed = Scrubber::scrub(input);
             assert!(scrubbed.contains("[PHONE_REDACTED]"), "{input}");
