@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `zn-gate stats` (Node and Python) shows what zn-gate did on this machine: checks, blocks, secret values replaced before the model saw them, and the secret types found, per agent, for the last 30 days (`--days N`, `--json`). The agent hooks, the MCP tools and the shield proxy keep these counts in `~/.zn/stats.json` (numbers only; never values, prompts, paths or hosts). `ZN_STATS=off` turns counting off. Nothing is sent: sharing anonymous daily counts is a separate opt-in (`zn-gate stats share on`, `off`, `status`, `show`), off by default; when on, `zn-gate stats` sends one report per complete day with the fields of the published telemetry schema, and `share show` prints it first.
+- `zn vault team` says that a shared vault for teams is planned and counts the request on this machine only. Nothing is sent and no contact details are asked for.
 - Every rule layer has a version: `SCRUB_RULES_VERSION` (secret and PII patterns), `AUDIT_RULES_VERSION` (`zn audit` rules) and `POLICY_RULES_VERSION` (hook policy). `SCRUB_RULES_VERSION` and `POLICY_RULES_VERSION` are `2026-10-14.2`, and `AUDIT_RULES_VERSION` is `2026-10-14.1`. `zn-gate --version` and `zn-gate status` show the scrub and audit versions next to the rules engine version.
 
 ### Changed

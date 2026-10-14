@@ -347,6 +347,17 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_stats(args) -> int:
+    from . import stats as _stats
+    days = args.days if isinstance(args.days, int) and 1 <= args.days <= _stats.KEEP_DAYS else 30
+    s = _stats.summary(days=days)
+    if args.json:
+        print(json.dumps(s, indent=2))
+    else:
+        sys.stdout.write(_stats.render(s))
+    return 0
+
+
 def main() -> int:
     _configure_output_streams()
     parser = argparse.ArgumentParser(
@@ -389,6 +400,11 @@ def main() -> int:
     # status command
     subparsers.add_parser("status", help="Show engine status and configuration")
 
+    # stats command
+    st_parser = subparsers.add_parser("stats", help="What zn-gate did on this machine (local counts only)")
+    st_parser.add_argument("--days", type=int, default=30, help="Days to count (1-90, default 30)")
+    st_parser.add_argument("--json", action="store_true", help="Output as JSON")
+
     args = parser.parse_args()
     if args.command == "test":
         return cmd_test(args)
@@ -400,6 +416,8 @@ def main() -> int:
         return cmd_evidence(args)
     elif args.command == "status":
         return cmd_status(args)
+    elif args.command == "stats":
+        return cmd_stats(args)
     else:
         parser.print_help()
         return 0

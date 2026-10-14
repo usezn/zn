@@ -339,6 +339,7 @@ async function decidePost(ev, d, agentId) {
   const summary = [...types.entries()].map(([t, n]) => t + (n > 1 ? ' x' + n : '')).join(', ');
   return {
     decision: 'allow',
+    stats: { redacted: total, detections: Object.fromEntries(types) },
     updatedOutput: updated,
     message: 'zn: ' + total + ' secret value(s) in this output were replaced with __ZN_ tokens (' + summary + '). ' +
       (locked ? '__ZN_REDACTED_ markers cannot be restored. ' : 'Real values stay on this machine; use the tokens as they are.'),
@@ -373,6 +374,7 @@ async function decidePrompt(ev, d, agentId) {
     : String(secrets[0].type || 'MY_SECRET').toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/_\d+$/, '') || 'MY_SECRET';
   return {
     decision: 'deny',
+    stats: { detections: Object.fromEntries(kinds.map((k) => [k, 1])) },
     message: 'zn: this prompt was not sent because it contains a secret (' + kinds.join(', ') + '). ' +
       'Store it locally instead: run `zn secret set ' + suggestion + '` in your terminal, then refer to it as __ZN_' +
       suggestion + '__ in your prompt.',
@@ -425,7 +427,20 @@ async function handle(adapter, rawEvent, opts = {}) {
     decision = failDecision(ev, err, mode);
   }
   const output = adapter.respond({ ...decision, event: ev });
+  countHook(adapter.id, ev, decision);
   return { output, stderr: decision.warning || null, decision };
+}
+
+/** Local counts for `zn-gate stats` (best effort; never changes the decision). */
+function countHook(agentId, ev, decision) {
+  if (!ev || !ev.event || !decision) return;
+  const extra = decision.stats || {};
+  require('../stats').record({
+    layer: 'hook', agent: agentId, checked: 1,
+    blocked: decision.decision === 'deny' ? 1 : 0,
+    redacted: extra.redacted || 0,
+    detections: extra.detections || {},
+  });
 }
 
 function readStdin() {

@@ -201,6 +201,12 @@ async function runVaultCommand(args) {
     if (cmd === 'vault' && sub === 'forget') return await forgetCmd(args);
     if (cmd === 'vault' && sub === 'verify') return await auditVerifyCmd();
     if (cmd === 'vault' && sub === 'log') return await require('../broker/cli').dispatch('vault', args.slice(1));
+    if (cmd === 'vault' && sub === 'team') {
+      require('../stats').recordEvent('team-vault-request');
+      process.stdout.write('A shared vault for teams is planned, not available yet. Today the vault is personal: each person keeps their own secrets on their own machine.\n' +
+        'Your request was counted on this machine only (see `zn-gate stats`). Nothing was sent.\n');
+      return 0;
+    }
     process.stderr.write('usage: zn unlock | zn lock | zn vault status | zn vault verify | zn vault log [--since 1h] | zn vault forget [dir]\n');
     return 2;
   } catch (err) {

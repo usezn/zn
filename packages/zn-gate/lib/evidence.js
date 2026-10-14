@@ -46,6 +46,12 @@ function getLastHash(filePath = EVIDENCE_FILE) {
  */
 function logEvidence(event, filePath = EVIDENCE_FILE) {
   ensureZnDir(filePath);
+  if (filePath === EVIDENCE_FILE) {
+    require('./stats').record({
+      layer: 'shield', agent: event.agent || event.agent_environment || 'other', checked: 1,
+      blocked: String(event.verdict || '').toLowerCase() === 'block' ? 1 : 0,
+    });
+  }
 
   const prevHash = getLastHash(filePath);
   const timestamp = new Date().toISOString();
