@@ -21,8 +21,10 @@
  *     "source", the commit of this repository the script runs from.
  *  4. Every other file is byte for byte the file it comes from here
  *     (plugins/zn-gate or plugins/claude-dir); .gitattributes is "* -text";
- *     .github/workflows/verify.yml is plugins/claude-dir/verify.yml. Nothing
- *     else may be there, not even an empty folder.
+ *     .github/workflows/verify.yml is there (the Verify workflow compares it
+ *     with plugins/claude-dir/verify.yml on usezn/zn main, which can be newer
+ *     than the source commit). Nothing else may be there, not even an empty
+ *     folder.
  *  5. The plugin version is the tarball's version, and the directory limits
  *     hold.
  *
@@ -145,13 +147,13 @@ async function verify({ repo, tarball, integrity, source }) {
   const expected = new Map();
   for (const [rel, from] of builder.PLUGIN_FILES) expected.set(rel, fs.readFileSync(path.join(from, ...rel.split('/'))));
   expected.set('.gitattributes', Buffer.from('* -text\n'));
-  expected.set(WORKFLOW, fs.readFileSync(path.join(ROOT, 'plugins', 'claude-dir', 'verify.yml')));
   for (const [rel, body] of expected) {
     if (!files.has(rel)) problems.push(rel + ' is missing');
     else if (!files.get(rel).equals(body)) problems.push(rel + ' differs from usezn/zn at ' + commit);
   }
+  if (!files.has(WORKFLOW)) problems.push(WORKFLOW + ' is missing');
   for (const rel of files.keys()) {
-    if (rel.startsWith('vendor/zn-gate/') || rel === 'scripts/zn-gate.lock.json' || expected.has(rel)) continue;
+    if (rel.startsWith('vendor/zn-gate/') || rel === 'scripts/zn-gate.lock.json' || rel === WORKFLOW || expected.has(rel)) continue;
     problems.push(rel + ' is not expected');
   }
 

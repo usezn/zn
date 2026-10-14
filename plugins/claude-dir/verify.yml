@@ -1,12 +1,13 @@
-# Checks every pull request into main, and main itself, against usezn/zn at
-# the commit the plugin was generated from and the published zn-gate package.
-# The checks are the ones in PROVENANCE.md; the script that runs them comes
-# from usezn/zn at that commit.
+# Checks every pull request into main, and main itself, against usezn/zn and
+# the published zn-gate package. The checks are the ones in PROVENANCE.md; the
+# script that runs them comes from usezn/zn at the commit that pinned the
+# plugin to this release.
 #
 # pull_request_target: the workflow that runs is this file as it is on main,
 # so a pull request cannot change or replace its own check. The pull request
 # is checked out only as data: none of its code runs, no secret is used and
-# the token can only read.
+# the token can only read. main requires this check and branches that are up
+# to date with main, so the check always ran against the current main.
 name: Verify
 
 on:
@@ -32,12 +33,21 @@ jobs:
           path: plugin
           persist-credentials: false
 
-      - name: Check out main (for the version check)
+      - name: Check out main of this repository (for the version check)
         if: github.event_name == 'pull_request_target'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           path: base
+          persist-credentials: false
+
+      - name: Check out usezn/zn main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: usezn/zn
+          ref: main
+          path: zn
+          fetch-depth: 0
           persist-credentials: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -54,8 +64,31 @@ jobs:
             exit 1
           fi
 
+      - name: The workflow is the one in usezn/zn
+        run: |
+          f=plugin/.github/workflows/verify.yml
+          if [ ! -f "$f" ] || [ -L "$f" ] || ! cmp -s "$f" zn/plugins/claude-dir/verify.yml; then
+            echo "::error::.github/workflows/verify.yml must be plugins/claude-dir/verify.yml from usezn/zn main"
+            exit 1
+          fi
+
+      - name: What this change is
+        id: kind
+        run: |
+          # A change of the workflow file alone (to bring it up to date with usezn/zn),
+          # or main before its first release, has no release to check.
+          if [ ! -e plugin/.claude-plugin/plugin.json ]; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "pull_request_target" ] \
+            && [ "$(diff -rq -x .git base plugin | tr -d '\r')" = "Files base/.github/workflows/verify.yml and plugin/.github/workflows/verify.yml differ" ]; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Read the release version and the source commit
         id: meta
+        if: steps.kind.outputs.release == 'true'
         run: |
           set -euo pipefail
           for f in plugin/.claude-plugin/plugin.json plugin/scripts/zn-gate.lock.json; do
@@ -69,7 +102,7 @@ jobs:
           echo "source=$s" >> "$GITHUB_OUTPUT"
 
       - name: Newer than main
-        if: github.event_name == 'pull_request_target'
+        if: steps.kind.outputs.release == 'true' && github.event_name == 'pull_request_target'
         env:
           VERSION: ${{ steps.meta.outputs.version }}
         run: |
@@ -83,24 +116,23 @@ jobs:
             exit 1
           fi
 
-      - name: Check out usezn/zn at the source commit
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: usezn/zn
-          ref: ${{ steps.meta.outputs.source }}
-          path: src
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: The source commit is published, and comes after the release tag
+      - name: The source is the commit on usezn/zn main that pinned the plugin
+        if: steps.kind.outputs.release == 'true'
         env:
           VERSION: ${{ steps.meta.outputs.version }}
           SOURCE: ${{ steps.meta.outputs.source }}
         run: |
-          git -C src merge-base --is-ancestor "$SOURCE" origin/main || { echo "::error::the source commit is not in usezn/zn main"; exit 1; }
-          git -C src merge-base --is-ancestor "v$VERSION" "$SOURCE" || { echo "::error::the source commit does not contain the release tag v$VERSION"; exit 1; }
+          set -euo pipefail
+          pin="$(git -C zn log -1 --format=%H HEAD -- plugins/zn-gate/scripts/zn-gate.lock.json)"
+          if [ "$SOURCE" != "$pin" ]; then
+            echo "::error::the plugin must be generated from $pin, the commit on usezn/zn main that last pinned the plugin"
+            exit 1
+          fi
+          git -C zn merge-base --is-ancestor "refs/tags/v$VERSION" "$SOURCE" || { echo "::error::the source commit does not contain the release tag"; exit 1; }
+          git -C zn worktree add --quiet --detach ../src "$SOURCE"
 
       - name: Download the published package
+        if: steps.kind.outputs.release == 'true'
         env:
           VERSION: ${{ steps.meta.outputs.version }}
         run: |
@@ -113,6 +145,7 @@ jobs:
           exit 1
 
       - name: Check the package's provenance attestation
+        if: steps.kind.outputs.release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.meta.outputs.version }}
@@ -125,14 +158,16 @@ jobs:
           # The package was built from a commit that the source commit contains.
           built="$(node -e "const a=JSON.parse(require('fs').readFileSync('attestation.json','utf8'));process.stdout.write(String(a[0].verificationResult.signature.certificate.sourceRepositoryDigest))")"
           if [[ ! "$built" =~ ^[0-9a-f]{40}$ ]]; then echo "::error::the attestation names no source commit"; exit 1; fi
-          git -C src merge-base --is-ancestor "$built" "$SOURCE" || { echo "::error::the package was not built from a commit in the source history"; exit 1; }
+          git -C zn merge-base --is-ancestor "$built" "$SOURCE" || { echo "::error::the package was not built from a commit in the source history"; exit 1; }
 
       - name: Compare the plugin with usezn/zn and the package
+        if: steps.kind.outputs.release == 'true'
         env:
           VERSION: ${{ steps.meta.outputs.version }}
         run: node src/plugins/tools/verify-plugin-repo.js --repo plugin --tarball "zn-gate-$VERSION.tgz"
 
       - name: Validate the plugin with Claude Code
+        if: steps.kind.outputs.release == 'true'
         run: |
           npm install -g --silent @anthropic-ai/claude-code@2.1.299
           claude plugin validate --strict plugin

@@ -264,7 +264,6 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
         ['vendor/zn-gate/lib/index.js', /vendor\/zn-gate\/lib\/index\.js differs from the npm package/],
         ['README.md', /README\.md differs from usezn\/zn/],
         ['scripts/zn-launch.js', /scripts\/zn-launch\.js differs from usezn\/zn/],
-        ['.github/workflows/verify.yml', /verify\.yml differs from usezn\/zn/],
         ['.gitattributes', /\.gitattributes differs from usezn\/zn/],
         ['scripts/zn-gate.lock.json', /zn-gate\.lock\.json is not the lock/],
       ]) {
@@ -289,7 +288,15 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
         await expectProblem(() => fs.writeFileSync(at('scripts/zn-gate.lock.json'), JSON.stringify(changed, null, 2) + '\n'),
           () => fs.writeFileSync(at('scripts/zn-gate.lock.json'), lockBefore), /zn-gate\.lock\.json is not the lock/);
       }
+      // Byte for byte: the same lock with another key order, or without its last newline, is reported.
+      const reordered = { files: lock.files, ...lock };
+      await expectProblem(() => fs.writeFileSync(at('scripts/zn-gate.lock.json'), JSON.stringify(reordered, null, 2) + '\n'),
+        () => fs.writeFileSync(at('scripts/zn-gate.lock.json'), lockBefore), /zn-gate\.lock\.json is not the lock/);
+      await expectProblem(() => fs.writeFileSync(at('scripts/zn-gate.lock.json'), lockBefore.toString('utf8').trimEnd()),
+        () => fs.writeFileSync(at('scripts/zn-gate.lock.json'), lockBefore), /zn-gate\.lock\.json is not the lock/);
       const manifest = keep('.claude-plugin/plugin.json');
+      await expectProblem(() => fs.writeFileSync(at('.claude-plugin/plugin.json'), 'not json'),
+        () => fs.writeFileSync(at('.claude-plugin/plugin.json'), manifest), /has version null, the package is/);
       await expectProblem(() => fs.writeFileSync(at('.claude-plugin/plugin.json'), JSON.stringify({ ...JSON.parse(manifest), version: '0.0.1' })),
         () => fs.writeFileSync(at('.claude-plugin/plugin.json'), manifest), /has version 0\.0\.1, the package is/);
       const sub = keep('vendor/zn-gate/lib/sub.js');
@@ -302,8 +309,29 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
     await test('the output folder must be empty (.git and .github are kept)', async () => {
       const out = path.join(tmp, 'busy');
       fs.mkdirSync(path.join(out, '.git'), { recursive: true });
+      write(path.join(out, '.github', 'workflows', 'verify.yml'), 'kept');
       await build(BASE, { out });
+      assert.strictEqual(fs.readFileSync(path.join(out, '.github', 'workflows', 'verify.yml'), 'utf8'), 'kept');
       await rejects(BASE, /is not empty/, { out });
+      const stray = path.join(tmp, 'stray');
+      write(path.join(stray, '.github', 'x'), '');
+      write(path.join(stray, 'old.txt'), '');
+      await rejects(BASE, /is not empty/, { out: stray });
+    });
+
+    await test('PROVENANCE.md lists exactly the files that are copied', async () => {
+      const text = fs.readFileSync(path.join(CLAUDE_DIR, 'PROVENANCE.md'), 'utf8');
+      const start = text.indexOf('\n4. ');
+      const step4 = text.slice(start, text.indexOf('\n\n', start + 4));
+      for (const [rel] of builder.PLUGIN_FILES) {
+        assert.ok(step4.includes('`' + rel + '`'), rel + ' is named in PROVENANCE.md step 4');
+      }
+      for (const named of step4.match(/`[^`]+`/g) || []) {
+        const n = named.slice(1, -1);
+        if (!/[./]/.test(n) || n.startsWith('plugins/') || n.includes(' ') || n.includes('X.Y.Z') || n === 'source' || n === '* -text') continue;
+        const known = builder.PLUGIN_FILES.some(([rel]) => rel === n) || ['.gitattributes', '.github/workflows/verify.yml'].includes(n);
+        assert.ok(known, n + ' in PROVENANCE.md step 4 is not a copied file');
+      }
     });
 
     process.stdout.write('1..' + n + '\n');
