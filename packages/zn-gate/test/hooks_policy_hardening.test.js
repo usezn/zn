@@ -219,6 +219,9 @@ test('agent guard: versioned npm, npx and pnpm/bun launches of zn-gate are still
     'npx zn-gate@latest hooks uninstall',
     'pnpm dlx zn-gate@1.6.0 env shadow .env',
     'bunx zn-gate@1.6.0 secret approve X',
+    'npm exec zn-gate@1 -- hooks uninstall',
+    'npm exec zn-gate@1 -- unlock',
+    'npm x zn-gate@1 -- unlock',
     'npx -y zn-gate@1.6.0-beta.1 secret set DB_PASSWORD',
     'zn-gate@1.6.0 unlock',
   ];
