@@ -27,7 +27,8 @@ test('records counts per day, layer and agent; never content', () => {
   stats.record({ layer: 'mcp', agent: 'mcp-client', checked: 1 }, { now });
   const data = JSON.parse(fs.readFileSync(stats.statsFile(), 'utf8'));
   assert.deepEqual(data.days['2026-10-14']['hook:claude-code'], { checked: 2, blocked: 1, warned: 0, redacted: 2, detections: { AWS_KEY: 1, GITHUB_TOKEN: 2 } });
-  assert.equal((fs.statSync(stats.statsFile()).mode & 0o777).toString(8), '600');
+  // Windows has no POSIX file modes (files report 0o666); the user's profile folder protects the file there.
+  if (process.platform !== 'win32') assert.equal((fs.statSync(stats.statsFile()).mode & 0o777).toString(8), '600');
   const s = stats.summary({ days: 30, now });
   assert.deepEqual(s.total, { checked: 3, blocked: 1, warned: 0, redacted: 2 });
   assert.deepEqual(s.detections, { AWS_KEY: 1, GITHUB_TOKEN: 2 });
