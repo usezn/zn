@@ -1,0 +1,123 @@
+# Opens the release pull request in the Claude Code plugin repository
+# (usezn/zn-gate-plugin) when main pins the agent plugin to a new zn-gate
+# release. The plugin repository's main branch only changes when a maintainer
+# merges that pull request, after its own checks (plugins/claude-dir/verify.yml).
+#
+# Credential: a GitHub App installed only on usezn/zn-gate-plugin, with
+# Contents and Pull requests write access and no Workflows permission, so
+# this job cannot change the plugin repository's checks. Its ID is the
+# repository variable PLUGIN_REPO_APP_ID and its key the secret
+# PLUGIN_REPO_APP_KEY of the "release" environment.
+name: Plugin repository
+
+on:
+  push:
+    branches: [ main ]
+    paths: [ 'plugins/zn-gate/scripts/zn-gate.lock.json' ]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: plugin-repository
+  cancel-in-progress: false
+
+jobs:
+  release-pr:
+    name: Open the plugin repository release pull request
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: release
+    permissions:
+      contents: read
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: src
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.x
+
+      - name: Read the pinned zn-gate version
+        id: version
+        run: |
+          v="$(node -p "require('./src/plugins/zn-gate/.claude-plugin/plugin.json').version")"
+          if ! printf '%s' "$v" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::the plugin is not pinned to a final release: $v"
+            exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Download the published package
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if npm pack "zn-gate@$VERSION" --silent; then exit 0; fi
+            sleep 30
+          done
+          echo "::error::zn-gate@$VERSION is not on npm"
+          exit 1
+
+      - name: Check the package's provenance attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh attestation verify "zn-gate-$VERSION.tgz" --repo usezn/zn \
+            --signer-workflow usezn/zn/.github/workflows/release.yml \
+            --source-ref "refs/tags/v$VERSION"
+
+      - name: Create a token for the plugin repository
+        id: token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.PLUGIN_REPO_APP_ID }}
+          private-key: ${{ secrets.PLUGIN_REPO_APP_KEY }}
+          owner: usezn
+          repositories: zn-gate-plugin
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Build the release branch
+        id: build
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SOURCE: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git clone --quiet "https://x-access-token:${GH_TOKEN}@github.com/usezn/zn-gate-plugin.git" plugin
+          current="$(node -p "try { require('./plugin/.claude-plugin/plugin.json').version } catch { '0.0.0' }")"
+          # Only a newer release: a patch of an older line never moves the plugin back.
+          if [ "$(printf '%s\n%s\n' "$current" "$VERSION" | sort -V | tail -1)" != "$VERSION" ] || [ "$current" = "$VERSION" ]; then
+            echo "The plugin repository already has $current; nothing to do."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git -C plugin checkout --quiet -b "release/$VERSION"
+          # Everything except .git and the repository's own checks is replaced.
+          find plugin -mindepth 1 -maxdepth 1 ! -name .git ! -name .github -exec rm -rf {} +
+          node src/plugins/tools/build-plugin-repo.js --tarball "zn-gate-$VERSION.tgz" --out plugin --source "$SOURCE"
+          node src/plugins/tools/verify-plugin-repo.js --repo plugin --tarball "zn-gate-$VERSION.tgz"
+          git -C plugin config user.name zn
+          git -C plugin config user.email tljohnsilver@users.noreply.github.com
+          git -C plugin add -A
+          git -C plugin commit --quiet -m "zn-gate $VERSION" -m "Generated from usezn/zn at $SOURCE by its Plugin repository workflow."
+          git -C plugin push --quiet origin "release/$VERSION"
+
+      - name: Open the pull request
+        if: steps.build.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SOURCE: ${{ github.sha }}
+        run: |
+          gh pr create --repo usezn/zn-gate-plugin --base main --head "release/$VERSION" \
+            --title "zn-gate $VERSION" \
+            --body "The zn-gate $VERSION plugin, generated from usezn/zn at $SOURCE. Merging it publishes this version to the Claude plugin directory. Before merging: the Verify check is green, and a maintainer has run the identity and secret checks on this branch."

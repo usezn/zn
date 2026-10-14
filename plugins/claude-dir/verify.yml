@@ -1,12 +1,16 @@
 # Checks every pull request into main, and main itself, against usezn/zn at
-# the release tag and the published zn-gate package. The checks are the ones
-# in PROVENANCE.md; the script that runs them comes from usezn/zn at the tag.
-# This file is changed only by a pull request that a maintainer reviews: the
-# release workflow that opens release pull requests cannot change workflows.
+# the commit the plugin was generated from and the published zn-gate package.
+# The checks are the ones in PROVENANCE.md; the script that runs them comes
+# from usezn/zn at that commit.
+#
+# pull_request_target: the workflow that runs is this file as it is on main,
+# so a pull request cannot change or replace its own check. The pull request
+# is checked out only as data: none of its code runs, no secret is used and
+# the token can only read.
 name: Verify
 
 on:
-  pull_request:
+  pull_request_target:
     branches: [ main ]
   push:
     branches: [ main ]
@@ -21,58 +25,111 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Check out the plugin
+      - name: Check out the plugin (as data)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           path: plugin
           persist-credentials: false
 
-      - name: Read the release version
-        id: version
-        run: |
-          v="$(node -p "require('./plugin/.claude-plugin/plugin.json').version")"
-          if ! printf '%s' "$v" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "::error::.claude-plugin/plugin.json has no release version: $v"
-            exit 1
-          fi
-          echo "version=$v" >> "$GITHUB_OUTPUT"
-
-      - name: Check out usezn/zn at the release tag
+      - name: Check out main (for the version check)
+        if: github.event_name == 'pull_request_target'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: usezn/zn
-          ref: v${{ steps.version.outputs.version }}
-          path: src
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
           persist-credentials: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.x
 
+      - name: Check git file modes
+        run: |
+          # Only regular files with mode 100644: no links, submodules or executables.
+          bad="$(git -C plugin ls-tree -r HEAD | awk '$1 != "100644" || $2 != "blob"' | head -5)"
+          if [ -n "$bad" ]; then
+            echo "::error::the plugin has entries that are not regular files with mode 100644"
+            printf '%s\n' "$bad" | cut -c1-200
+            exit 1
+          fi
+
+      - name: Read the release version and the source commit
+        id: meta
+        run: |
+          set -euo pipefail
+          for f in plugin/.claude-plugin/plugin.json plugin/scripts/zn-gate.lock.json; do
+            if [ ! -f "$f" ] || [ -L "$f" ]; then echo "::error::$f is missing or not a regular file"; exit 1; fi
+          done
+          v="$(node -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync('plugin/.claude-plugin/plugin.json','utf8')).version))")"
+          s="$(node -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync('plugin/scripts/zn-gate.lock.json','utf8')).source))")"
+          if [[ ! "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "::error::.claude-plugin/plugin.json has no release version"; exit 1; fi
+          if [[ ! "$s" =~ ^[0-9a-f]{40}$ ]]; then echo "::error::scripts/zn-gate.lock.json has no source commit"; exit 1; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "source=$s" >> "$GITHUB_OUTPUT"
+
+      - name: Newer than main
+        if: github.event_name == 'pull_request_target'
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          current="0.0.0"
+          f=base/.claude-plugin/plugin.json
+          if [ -f "$f" ] && [ ! -L "$f" ]; then
+            current="$(node -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync('$f','utf8')).version))")"
+          fi
+          if [ "$current" = "$VERSION" ] || [ "$(printf '%s\n%s\n' "$current" "$VERSION" | sort -V | tail -1)" != "$VERSION" ]; then
+            echo "::error::a release pull request must bring a version newer than the one on main"
+            exit 1
+          fi
+
+      - name: Check out usezn/zn at the source commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: usezn/zn
+          ref: ${{ steps.meta.outputs.source }}
+          path: src
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: The source commit is published, and comes after the release tag
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          SOURCE: ${{ steps.meta.outputs.source }}
+        run: |
+          git -C src merge-base --is-ancestor "$SOURCE" origin/main || { echo "::error::the source commit is not in usezn/zn main"; exit 1; }
+          git -C src merge-base --is-ancestor "v$VERSION" "$SOURCE" || { echo "::error::the source commit does not contain the release tag v$VERSION"; exit 1; }
+
       - name: Download the published package
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ steps.meta.outputs.version }}
         run: |
           # Right after a release, the package can take a few minutes to reach every npm mirror.
           for i in 1 2 3 4 5 6 7 8 9 10; do
-            if npm pack "zn-gate@$VERSION" --silent; then exit 0; fi
+            if npm pack "zn-gate@$VERSION" --silent --ignore-scripts; then exit 0; fi
             sleep 30
           done
-          echo "::error::zn-gate@$VERSION is not on npm"
+          echo "::error::zn-gate is not on npm in the version of this pull request"
           exit 1
 
       - name: Check the package's provenance attestation
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          SOURCE: ${{ steps.meta.outputs.source }}
         run: |
+          set -euo pipefail
           gh attestation verify "zn-gate-$VERSION.tgz" --repo usezn/zn \
             --signer-workflow usezn/zn/.github/workflows/release.yml \
-            --source-ref "refs/tags/v$VERSION"
+            --source-ref "refs/tags/v$VERSION" --format json > attestation.json
+          # The package was built from a commit that the source commit contains.
+          built="$(node -e "const a=JSON.parse(require('fs').readFileSync('attestation.json','utf8'));process.stdout.write(String(a[0].verificationResult.signature.certificate.sourceRepositoryDigest))")"
+          if [[ ! "$built" =~ ^[0-9a-f]{40}$ ]]; then echo "::error::the attestation names no source commit"; exit 1; fi
+          git -C src merge-base --is-ancestor "$built" "$SOURCE" || { echo "::error::the package was not built from a commit in the source history"; exit 1; }
 
       - name: Compare the plugin with usezn/zn and the package
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ steps.meta.outputs.version }}
         run: node src/plugins/tools/verify-plugin-repo.js --repo plugin --tarball "zn-gate-$VERSION.tgz"
 
       - name: Validate the plugin with Claude Code

@@ -5,7 +5,7 @@
  * Build the tree of the Claude Code plugin repository (usezn/zn-gate-plugin)
  * from this monorepo and a published zn-gate tarball.
  *
- *   node plugins/tools/build-plugin-repo.js --tarball <zn-gate-X.Y.Z.tgz> --out <dir>
+ *   node plugins/tools/build-plugin-repo.js --tarball <zn-gate-X.Y.Z.tgz> --out <dir> [--source <commit>]
  *
  * The plugin repository is never edited by hand: the release workflow runs
  * this script and opens a pull request with its output, which is checked
@@ -39,7 +39,9 @@
  *    plugins/zn-gate, the README, SECURITY and PROVENANCE files of the plugin
  *    repository from plugins/claude-dir. scripts/zn-gate.lock.json lists the
  *    bundled files with their SHA-256 and "bundled": "vendor/zn-gate", so the
- *    launcher uses only them.
+ *    launcher uses only them, and "source", the commit of this repository it
+ *    was built from (the current commit unless --source names it), which the
+ *    plugin repository's checks compare against.
  * 5. .gitattributes turns off line-ending conversion: Git for Windows would
  *    otherwise rewrite the bundled files on clone and every check would fail.
  * 6. The directory's limits are checked: at most 512 files, no file other
@@ -52,7 +54,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
-const { spawnSync } = require('child_process');
+const { spawnSync, execFileSync } = require('child_process');
 const { builtinModules } = require('module');
 const { get, tarEntries } = require('./pin-release');
 
@@ -314,7 +316,7 @@ function checkImports(files) {
 
 /* ------------------------------ build ------------------------------ */
 
-function pluginTree(bundle, version, integrity) {
+function pluginTree(bundle, version, integrity, source) {
   const out = new Map();
   for (const [rel, from] of PLUGIN_FILES) {
     const abs = path.join(from, ...rel.split('/'));
@@ -327,7 +329,7 @@ function pluginTree(bundle, version, integrity) {
   }
   const files = {};
   for (const rel of [...bundle.keys()].sort()) files[rel] = sha256(bundle.get(rel));
-  const lock = { package: 'zn-gate', version, registry: REGISTRY, integrity, bundled: BUNDLED_DIR, files };
+  const lock = { package: 'zn-gate', version, registry: REGISTRY, integrity, bundled: BUNDLED_DIR, source, files };
   out.set('scripts/zn-gate.lock.json', Buffer.from(JSON.stringify(lock, null, 2) + '\n'));
   out.set('.gitattributes', Buffer.from(GITATTRIBUTES));
   for (const [rel, body] of bundle) out.set(BUNDLED_DIR + '/' + rel, body);
@@ -356,7 +358,9 @@ async function registryIntegrity(version) {
  * Build the tree into out. opts.integrity replaces the registry lookup; only
  * the tests use it (the command line has no such option).
  */
-async function build({ tarball, out, integrity }) {
+async function build({ tarball, out, integrity, source }) {
+  const commit = source || execFileSync('git', ['-C', path.resolve(__dirname, '..', '..'), 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error('the source must be a full commit hash: ' + commit);
   const tgz = fs.readFileSync(tarball);
   const bundle = bundleFiles(tgz);
   const pkg = pkgJson(bundle, '');
@@ -373,12 +377,13 @@ async function build({ tarball, out, integrity }) {
 
   const importProblems = checkImports(bundle);
   if (importProblems.length) throw new Error('imports that are not checked or do not resolve inside the bundle:\n  ' + importProblems.join('\n  '));
-  const tree = pluginTree(bundle, pkg.version, expected);
+  const tree = pluginTree(bundle, pkg.version, expected, commit);
   const limitProblems = checkLimits(tree);
   if (limitProblems.length) throw new Error('over the plugin directory limits:\n  ' + limitProblems.join('\n  '));
 
   const root = path.resolve(out);
-  if (fs.existsSync(root) && fs.readdirSync(root).some((n) => n !== '.git')) throw new Error(out + ' is not empty');
+  // The plugin repository's .git and its own checks (.github) are kept; anything else must be gone.
+  if (fs.existsSync(root) && fs.readdirSync(root).some((n) => n !== '.git' && n !== '.github')) throw new Error(out + ' is not empty');
   for (const [rel, body] of tree) {
     const abs = path.resolve(root, ...rel.split('/'));
     if (!abs.startsWith(root + path.sep)) throw new Error('path outside the output folder: ' + rel);
@@ -388,21 +393,21 @@ async function build({ tarball, out, integrity }) {
   return { version: pkg.version, files: tree.size, bundled: bundle.size };
 }
 
-const USAGE = 'usage: build-plugin-repo.js --tarball <zn-gate-X.Y.Z.tgz> --out <dir>';
+const USAGE = 'usage: build-plugin-repo.js --tarball <zn-gate-X.Y.Z.tgz> --out <dir> [--source <commit>]';
 
 function parseArgs(argv) {
   const opts = {};
   for (let i = 0; i < argv.length; i += 2) {
     const k = argv[i];
     const v = argv[i + 1];
-    if (!['--tarball', '--out'].includes(k) || v === undefined) throw new Error(USAGE);
+    if (!['--tarball', '--out', '--source'].includes(k) || v === undefined) throw new Error(USAGE);
     opts[k.slice(2)] = v;
   }
   if (!opts.tarball || !opts.out) throw new Error(USAGE);
   return opts;
 }
 
-module.exports = { build, bundleFiles, checkImports, checkLimits, PLUGIN_FILES, BUNDLED_DIR };
+module.exports = { build, bundleFiles, checkImports, checkLimits, PLUGIN_FILES, BUNDLED_DIR, PRUNE };
 
 if (require.main === module) {
   build(parseArgs(process.argv.slice(2))).then((r) => {

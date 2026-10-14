@@ -237,16 +237,17 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
     });
 
     await test('verify-plugin-repo accepts a built tree and finds each kind of change', async () => {
-      const { verify } = require('./verify-plugin-repo');
+      const { verify, PRUNE } = require('./verify-plugin-repo');
+      assert.strictEqual(String(PRUNE), String(builder.PRUNE), 'the build and the check prune the same files');
       const file = path.join(tmp, 'verify.tgz');
       const archive = tgz(BASE);
       fs.writeFileSync(file, archive);
       const out = path.join(tmp, 'verify-out');
-      await builder.build({ tarball: file, out, integrity: sri(archive) });
-      const check = () => verify({ repo: out, tarball: file, integrity: sri(archive) });
-      assert.deepStrictEqual((await check()).problems, []);
-      // The plugin repository's own workflow must be the one in plugins/claude-dir.
+      const source = 'a'.repeat(40);
+      // The plugin repository keeps its own checks; the build leaves .github alone.
       write(path.join(out, '.github', 'workflows', 'verify.yml'), fs.readFileSync(path.join(CLAUDE_DIR, 'verify.yml')));
+      await builder.build({ tarball: file, out, integrity: sri(archive), source });
+      const check = () => verify({ repo: out, tarball: file, integrity: sri(archive), source });
       assert.deepStrictEqual((await check()).problems, []);
       const expectProblem = async (change, undo, re) => {
         change();
@@ -265,24 +266,40 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
         ['scripts/zn-launch.js', /scripts\/zn-launch\.js differs from usezn\/zn/],
         ['.github/workflows/verify.yml', /verify\.yml differs from usezn\/zn/],
         ['.gitattributes', /\.gitattributes differs from usezn\/zn/],
+        ['scripts/zn-gate.lock.json', /zn-gate\.lock\.json is not the lock/],
       ]) {
         const before = keep(rel);
         await expectProblem(() => fs.appendFileSync(at(rel), '\n// changed\n'), () => fs.writeFileSync(at(rel), before), re);
       }
-      await expectProblem(() => write(at('vendor/zn-gate/lib/extra.js'), ''), () => fs.rmSync(at('vendor/zn-gate/lib/extra.js')), /lib\/extra\.js is not in the npm package/);
-      await expectProblem(() => write(at('hooks/extra.json'), '{}'), () => fs.rmSync(at('hooks/extra.json')), /hooks\/extra\.json is not expected/);
-      await expectProblem(() => write(at('vendor/zn-gate/lib/types.d.ts'), 'export {};\n'), () => fs.rmSync(at('vendor/zn-gate/lib/types.d.ts')), /should have been left out/);
+      const gone = (rel) => () => fs.rmSync(at(rel), { recursive: true, force: true });
+      await expectProblem(() => write(at('vendor/zn-gate/lib/extra.js'), ''), gone('vendor/zn-gate/lib/extra.js'), /lib\/extra\.js is not in the npm package/);
+      await expectProblem(() => write(at('hooks/extra.json'), '{}'), gone('hooks/extra.json'), /hooks\/extra\.json is not expected/);
+      await expectProblem(() => write(at('.github/workflows/other.yml'), 'x'), gone('.github/workflows/other.yml'), /other\.yml is not expected/);
+      await expectProblem(() => write(at('vendor/zn-gate/lib/types.d.ts'), 'export {};\n'), gone('vendor/zn-gate/lib/types.d.ts'), /should have been left out/);
+      await expectProblem(() => fs.mkdirSync(at('vendor/zn-gate/node_modules/empty')), gone('vendor/zn-gate/node_modules/empty'), /empty is an empty folder/);
+      if (process.platform !== 'win32') {
+        await expectProblem(() => fs.symlinkSync('index.js', at('vendor/zn-gate/lib/link.js')), gone('vendor/zn-gate/lib/link.js'), /link\.js is a symbolic link/);
+      }
+      const wf = keep('.github/workflows/verify.yml');
+      await expectProblem(gone('.github/workflows/verify.yml'), () => write(at('.github/workflows/verify.yml'), wf), /verify\.yml is missing/);
+      // The lock is compared byte for byte: an extra field, another registry or another source is reported.
       const lockBefore = keep('scripts/zn-gate.lock.json');
       const lock = JSON.parse(lockBefore.toString('utf8'));
-      await expectProblem(() => fs.writeFileSync(at('scripts/zn-gate.lock.json'), JSON.stringify({ ...lock, bundled: 'node_modules/zn-gate' })),
-        () => fs.writeFileSync(at('scripts/zn-gate.lock.json'), lockBefore), /bundled in vendor\/zn-gate/);
+      for (const changed of [{ ...lock, bundled: 'node_modules/zn-gate' }, { ...lock, registry: 'https://example.invalid' }, { ...lock, extra: 1 }, { ...lock, source: 'b'.repeat(40) }]) {
+        await expectProblem(() => fs.writeFileSync(at('scripts/zn-gate.lock.json'), JSON.stringify(changed, null, 2) + '\n'),
+          () => fs.writeFileSync(at('scripts/zn-gate.lock.json'), lockBefore), /zn-gate\.lock\.json is not the lock/);
+      }
+      const manifest = keep('.claude-plugin/plugin.json');
+      await expectProblem(() => fs.writeFileSync(at('.claude-plugin/plugin.json'), JSON.stringify({ ...JSON.parse(manifest), version: '0.0.1' })),
+        () => fs.writeFileSync(at('.claude-plugin/plugin.json'), manifest), /has version 0\.0\.1, the package is/);
       const sub = keep('vendor/zn-gate/lib/sub.js');
-      await expectProblem(() => fs.rmSync(at('vendor/zn-gate/lib/sub.js')), () => fs.writeFileSync(at('vendor/zn-gate/lib/sub.js'), sub), /lib\/sub\.js is missing/);
-      const bad = await verify({ repo: out, tarball: file, integrity: 'sha512-' + Buffer.alloc(64).toString('base64') });
+      await expectProblem(gone('vendor/zn-gate/lib/sub.js'), () => fs.writeFileSync(at('vendor/zn-gate/lib/sub.js'), sub), /lib\/sub\.js is missing/);
+      const bad = await verify({ repo: out, tarball: file, integrity: 'sha512-' + Buffer.alloc(64).toString('base64'), source });
       assert.ok(bad.problems.some((p) => /does not match the npm registry integrity/.test(p)));
+      await assert.rejects(builder.build({ tarball: file, out: path.join(tmp, 'bad-source'), integrity: sri(archive), source: 'main' }), /full commit hash/);
     });
 
-    await test('the output folder must be empty (a .git folder is allowed)', async () => {
+    await test('the output folder must be empty (.git and .github are kept)', async () => {
       const out = path.join(tmp, 'busy');
       fs.mkdirSync(path.join(out, '.git'), { recursive: true });
       await build(BASE, { out });

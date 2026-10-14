@@ -4,22 +4,25 @@
 /**
  * Check a checkout of the Claude Code plugin repository (usezn/zn-gate-plugin)
  * against this repository and the published zn-gate tarball. The plugin
- * repository's CI runs it from this repository at the release tag, on every
- * pull request into its main branch.
+ * repository's Verify workflow runs it from this repository at the commit
+ * the plugin was generated from (the "source" in its lock file), on every
+ * pull request into its main branch and on main itself.
  *
  *   node plugins/tools/verify-plugin-repo.js --repo <plugin checkout> --tarball <zn-gate-X.Y.Z.tgz>
  *
- * The checks do not reuse the build: each one compares the checkout with a
- * source directly (PROVENANCE.md in the plugin repository lists them).
- *  1. The tarball's sha512 matches the npm registry and the lock file.
+ * Each check compares the checkout with a source directly; only the plugin
+ * file list, the size limits and the tar reader are shared with the build.
+ * PROVENANCE.md in the plugin repository lists the checks:
+ *  1. The tarball is zn-gate, its sha512 matches the npm registry.
  *  2. vendor/zn-gate holds exactly the tarball's files minus TypeScript
  *     sources, declarations and source maps, byte for byte.
- *  3. scripts/zn-gate.lock.json lists exactly those files with their SHA-256,
- *     "bundled": "vendor/zn-gate", and the tarball's version and integrity.
- *  4. Every other file is byte for byte the file it comes from in this
- *     repository (plugins/zn-gate or plugins/claude-dir), except
- *     .gitattributes, which is "* -text", and .github/workflows/verify.yml,
- *     which is plugins/claude-dir/verify.yml. Nothing else may be there.
+ *  3. scripts/zn-gate.lock.json is exactly the lock for those files: the
+ *     version, the integrity, "bundled": "vendor/zn-gate", every SHA-256, and
+ *     "source", the commit of this repository the script runs from.
+ *  4. Every other file is byte for byte the file it comes from here
+ *     (plugins/zn-gate or plugins/claude-dir); .gitattributes is "* -text";
+ *     .github/workflows/verify.yml is plugins/claude-dir/verify.yml. Nothing
+ *     else may be there, not even an empty folder.
  *  5. The plugin version is the tarball's version, and the directory limits
  *     hold.
  *
@@ -30,26 +33,28 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
+const { execFileSync } = require('child_process');
 const { get, tarEntries } = require('./pin-release');
 const builder = require('./build-plugin-repo');
 
 const ROOT = path.resolve(__dirname, '..', '..');
+const REGISTRY = 'https://registry.npmjs.org';
+// Kept separate from the build's copy on purpose; a test checks they agree.
 const PRUNE = /\.(?:d\.[mc]?ts|[mc]?ts|map)$/;
-const EXTRA_FILES = {
-  '.gitattributes': Buffer.from('* -text\n'),
-  '.github/workflows/verify.yml': null, // compared with plugins/claude-dir/verify.yml
-};
+const WORKFLOW = '.github/workflows/verify.yml';
 
 function sha256(buf) {
   return crypto.createHash('sha256').update(buf).digest('hex');
 }
 
-/** Every file in the checkout (not .git), as relative POSIX paths; links are problems. */
+/** Every file in the checkout (not .git); links, other file types and empty folders are problems. */
 function listFiles(dir, problems) {
   const out = new Map();
   const walk = (rel) => {
     const abs = rel ? path.join(dir, ...rel.split('/')) : dir;
-    for (const name of fs.readdirSync(abs)) {
+    const names = fs.readdirSync(abs);
+    if (rel && names.length === 0) problems.push(rel + ' is an empty folder');
+    for (const name of names) {
       const r = rel ? rel + '/' + name : name;
       if (r === '.git') continue;
       const st = fs.lstatSync(path.join(abs, name));
@@ -63,25 +68,43 @@ function listFiles(dir, problems) {
   return out;
 }
 
-async function verify({ repo, tarball, integrity }) {
+function sourceCommit() {
+  return execFileSync('git', ['-C', ROOT, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+}
+
+async function registryIntegrity(version) {
+  const meta = JSON.parse((await get(REGISTRY + '/zn-gate/' + version)).toString('utf8'));
+  if (meta.name !== 'zn-gate' || meta.version !== version) throw new Error('unexpected registry metadata for zn-gate@' + version);
+  const integrity = meta.dist && meta.dist.integrity;
+  if (!/^sha512-/.test(integrity || '')) throw new Error('the registry has no sha512 integrity for zn-gate@' + version);
+  return integrity;
+}
+
+/**
+ * opts.integrity replaces the registry lookup and opts.source the commit of
+ * this repository; only the tests use them.
+ */
+async function verify({ repo, tarball, integrity, source }) {
   const problems = [];
   const tgz = fs.readFileSync(tarball);
   const actual = 'sha512-' + crypto.createHash('sha512').update(tgz).digest('base64');
 
   const pkgFiles = new Map();
+  const seen = new Set();
   for (const e of tarEntries(zlib.gunzipSync(tgz))) {
-    if (!e.name.startsWith('package/')) throw new Error('unexpected path in tarball: ' + e.name);
-    pkgFiles.set(e.name.slice('package/'.length), e.body);
+    if (!e.name.startsWith('package/')) throw new Error('unexpected path in tarball: ' + JSON.stringify(e.name));
+    const rel = e.name.slice('package/'.length);
+    const key = rel.normalize('NFC').toLowerCase();
+    if (seen.has(key)) throw new Error('duplicate path in tarball: ' + rel);
+    seen.add(key);
+    pkgFiles.set(rel, e.body);
   }
-  const pkg = JSON.parse(pkgFiles.get('package.json').toString('utf8'));
+  const pkg = JSON.parse((pkgFiles.get('package.json') || Buffer.from('{}')).toString('utf8'));
+  if (pkg.name !== 'zn-gate' || !/^\d+\.\d+\.\d+$/.test(pkg.version || '')) throw new Error('not a zn-gate release tarball');
   const version = pkg.version;
 
   // 1. Integrity.
-  let registry = integrity;
-  if (!registry) {
-    const meta = JSON.parse((await get('https://registry.npmjs.org/zn-gate/' + version)).toString('utf8'));
-    registry = meta.dist && meta.dist.integrity;
-  }
+  const registry = integrity || await registryIntegrity(version);
   if (actual !== registry) problems.push('the tarball does not match the npm registry integrity for zn-gate ' + version);
 
   const files = listFiles(path.resolve(repo), problems);
@@ -89,45 +112,43 @@ async function verify({ repo, tarball, integrity }) {
   // 2. vendor/zn-gate is the tarball minus pruned files.
   const vendor = new Map();
   for (const [rel, body] of files) if (rel.startsWith('vendor/zn-gate/')) vendor.set(rel.slice('vendor/zn-gate/'.length), body);
-  for (const [rel, body] of pkgFiles) {
+  const shippedPkg = [...pkgFiles.keys()].filter((rel) => !PRUNE.test(rel)).sort();
+  for (const rel of pkgFiles.keys()) {
     if (PRUNE.test(rel)) {
       if (vendor.has(rel)) problems.push('vendor/zn-gate/' + rel + ' should have been left out');
-      continue;
+    } else if (!vendor.has(rel)) {
+      problems.push('vendor/zn-gate/' + rel + ' is missing');
+    } else if (!vendor.get(rel).equals(pkgFiles.get(rel))) {
+      problems.push('vendor/zn-gate/' + rel + ' differs from the npm package');
     }
-    if (!vendor.has(rel)) problems.push('vendor/zn-gate/' + rel + ' is missing');
-    else if (!vendor.get(rel).equals(body)) problems.push('vendor/zn-gate/' + rel + ' differs from the npm package');
   }
   for (const rel of vendor.keys()) if (!pkgFiles.has(rel)) problems.push('vendor/zn-gate/' + rel + ' is not in the npm package');
-  for (const rel of files.keys()) if (rel.startsWith('vendor/') && !rel.startsWith('vendor/zn-gate/')) problems.push(rel + ' is not expected');
 
-  // 3. The lock file.
-  let lock = null;
-  try {
-    lock = JSON.parse((files.get('scripts/zn-gate.lock.json') || Buffer.from('')).toString('utf8'));
-  } catch (_) {
-    problems.push('scripts/zn-gate.lock.json is not valid JSON');
-  }
-  if (lock) {
-    if (lock.package !== 'zn-gate' || lock.version !== version || lock.integrity !== actual || lock.bundled !== 'vendor/zn-gate') {
-      problems.push('scripts/zn-gate.lock.json does not name zn-gate ' + version + ' bundled in vendor/zn-gate with the tarball integrity');
-    }
-    const listed = lock.files && typeof lock.files === 'object' ? lock.files : {};
-    for (const [rel, body] of vendor) if (listed[rel] !== sha256(body)) problems.push('the lock file digest of ' + rel + ' is wrong or missing');
-    for (const rel of Object.keys(listed)) if (!vendor.has(rel)) problems.push('the lock file lists ' + rel + ', which is not in vendor/zn-gate');
+  // 3. The lock file, byte for byte.
+  const commit = source || sourceCommit();
+  const lock = {
+    package: 'zn-gate',
+    version,
+    registry: REGISTRY,
+    integrity: actual,
+    bundled: 'vendor/zn-gate',
+    source: commit,
+    files: Object.fromEntries(shippedPkg.map((rel) => [rel, sha256(pkgFiles.get(rel))])),
+  };
+  const lockBytes = Buffer.from(JSON.stringify(lock, null, 2) + '\n');
+  if (!files.has('scripts/zn-gate.lock.json')) problems.push('scripts/zn-gate.lock.json is missing');
+  else if (!files.get('scripts/zn-gate.lock.json').equals(lockBytes)) {
+    problems.push('scripts/zn-gate.lock.json is not the lock of zn-gate ' + version + ' generated from usezn/zn at ' + commit);
   }
 
   // 4. Every other file comes from this repository, unchanged.
   const expected = new Map();
   for (const [rel, from] of builder.PLUGIN_FILES) expected.set(rel, fs.readFileSync(path.join(from, ...rel.split('/'))));
-  for (const [rel, body] of Object.entries(EXTRA_FILES)) {
-    expected.set(rel, body || fs.readFileSync(path.join(ROOT, 'plugins', 'claude-dir', 'verify.yml')));
-  }
+  expected.set('.gitattributes', Buffer.from('* -text\n'));
+  expected.set(WORKFLOW, fs.readFileSync(path.join(ROOT, 'plugins', 'claude-dir', 'verify.yml')));
   for (const [rel, body] of expected) {
-    if (!files.has(rel)) {
-      if (rel !== '.github/workflows/verify.yml') problems.push(rel + ' is missing');
-    } else if (!files.get(rel).equals(body)) {
-      problems.push(rel + ' differs from usezn/zn');
-    }
+    if (!files.has(rel)) problems.push(rel + ' is missing');
+    else if (!files.get(rel).equals(body)) problems.push(rel + ' differs from usezn/zn at ' + commit);
   }
   for (const rel of files.keys()) {
     if (rel.startsWith('vendor/zn-gate/') || rel === 'scripts/zn-gate.lock.json' || expected.has(rel)) continue;
@@ -135,12 +156,15 @@ async function verify({ repo, tarball, integrity }) {
   }
 
   // 5. Version and limits.
-  const manifest = JSON.parse((files.get('.claude-plugin/plugin.json') || Buffer.from('{}')).toString('utf8'));
-  if (manifest.version !== version) problems.push('.claude-plugin/plugin.json has version ' + manifest.version + ', the package is ' + version);
+  let manifestVersion = null;
+  try {
+    manifestVersion = JSON.parse(files.get('.claude-plugin/plugin.json').toString('utf8')).version;
+  } catch (_) { /* reported as missing or different above */ }
+  if (manifestVersion !== version) problems.push('.claude-plugin/plugin.json has version ' + manifestVersion + ', the package is ' + version);
   const shipped = new Map([...files].filter(([rel]) => !rel.startsWith('.github/')));
   problems.push(...builder.checkLimits(shipped));
 
-  return { version, files: files.size, problems };
+  return { version, source: commit, files: files.size, problems };
 }
 
 function parseArgs(argv) {
@@ -153,7 +177,7 @@ function parseArgs(argv) {
   return opts;
 }
 
-module.exports = { verify };
+module.exports = { verify, PRUNE };
 
 if (require.main === module) {
   verify(parseArgs(process.argv.slice(2))).then((r) => {
@@ -161,7 +185,7 @@ if (require.main === module) {
       process.stderr.write('verify-plugin-repo: ' + r.problems.length + ' problem(s) with zn-gate ' + r.version + ':\n  ' + r.problems.join('\n  ') + '\n');
       process.exitCode = 1;
     } else {
-      process.stdout.write('verify-plugin-repo: OK, zn-gate ' + r.version + ', ' + r.files + ' files\n');
+      process.stdout.write('verify-plugin-repo: OK, zn-gate ' + r.version + ' from usezn/zn at ' + r.source + ', ' + r.files + ' files\n');
     }
   }).catch((err) => {
     process.stderr.write('verify-plugin-repo: ' + err.message + '\n');
