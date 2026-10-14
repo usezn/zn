@@ -6,6 +6,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+const realStats = path.join(os.homedir(), '.zn', 'stats.json');
+const realBefore = fs.existsSync(realStats) ? fs.statSync(realStats).mtimeMs : null;
 const home = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'zn-stats-test-'));
 process.env.ZN_HOME = home;
 delete process.env.ZN_STATS;
@@ -142,10 +144,12 @@ test('a shared report keeps at most 100 types, the rest as OTHER', () => {
 
 test('an agent cannot turn sharing on: the hook policy treats it as an admin command', () => {
   const policy = require('../lib/hooks/policy');
-  const re = /stats share on/;
+  const re = /stats.*share on/;
   const fn = policy.adminCommand || (policy._test && policy._test.adminCommand);
   if (fn) {
-    assert.match(String(fn('npx zn-gate stats share on')), re);
+    for (const c of ['npx zn-gate stats share on', 'npx zn-gate@latest stats share on', 'zn-gate stats --json share on', 'zn stats share on']) {
+      assert.match(String(fn(c)), re, c);
+    }
     assert.equal(fn('npx zn-gate stats'), null);
   } else {
     const src = fs.readFileSync(require.resolve('../lib/hooks/policy'), 'utf8');
@@ -159,4 +163,9 @@ test('bad options print the usage with exit code 2', async () => {
     assert.equal(r.code, 2, args.join(' '));
     assert.match(r.out, /Usage: zn-gate stats/);
   }
+});
+
+test('this test file never touched the real ~/.zn/stats.json', () => {
+  const after = fs.existsSync(realStats) ? fs.statSync(realStats).mtimeMs : null;
+  assert.equal(after, realBefore);
 });

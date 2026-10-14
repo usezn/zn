@@ -22,6 +22,7 @@ const stats = require('./stats');
 
 const ENDPOINT = 'https://api.usezn.com/v1/telemetry';
 const MAX_TYPES = 100;
+const LAYERS = new Set(['hook', 'shield', 'mcp', 'broker', 'cli']);
 const MAX_DAYS_BACK = 3;
 // Only known agent names are shared; anything else (a name passed on the command line, for example) is sent as "other".
 const KNOWN_AGENTS = new Set(['claude-code', 'codex', 'cursor', 'opencode', 'mcp-client', 'mcp-server']);
@@ -83,10 +84,16 @@ function pendingReports(now = new Date(), { preview = false } = {}) {
     const detections = {};
     for (const [key, c] of Object.entries(entries)) {
       if (!best || (c.checked || 0) > (entries[best].checked || 0)) best = key;
-      for (const [t, n] of Object.entries(c.detections || {})) detections[t] = (detections[t] || 0) + n;
+      for (const [t, n] of Object.entries(c.detections || {})) {
+        const v = Number(n);
+        if (!Number.isFinite(v) || v <= 0) continue;
+        const k = stats.normType(t);
+        detections[k] = (detections[k] || 0) + Math.floor(v);
+      }
     }
     if (!best) continue;
-    const [layer, rawAgent] = best.split(':');
+    const [rawLayer, rawAgent] = best.split(':');
+    const layer = LAYERS.has(rawLayer) ? rawLayer : 'cli';
     const agent = KNOWN_AGENTS.has(rawAgent) ? rawAgent : 'other';
     const report = {
       install_id: st.install_id, day, zn_gate_version: version(), os: osName(),

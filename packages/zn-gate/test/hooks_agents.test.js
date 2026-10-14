@@ -1,5 +1,8 @@
 'use strict';
 
+// zn-gate stats: these tests must never count into the real ~/.zn/stats.json.
+process.env.ZN_STATS = 'off';
+
 // Codex, Cursor and OpenCode adapters: event normalisation, responses within
 // each agent's documented limits, install/uninstall, and the OpenCode plugin
 // running against the real hook runner. Values are fake (fixtures generator).

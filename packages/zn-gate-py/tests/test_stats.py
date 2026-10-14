@@ -1,7 +1,11 @@
 import datetime
 import json
+import os
+import pathlib
 import subprocess
 import sys
+
+SRC = pathlib.Path(__file__).resolve().parents[1] / "src"
 
 from zn_gate import stats
 
@@ -37,5 +41,6 @@ def test_cli_stats_json(tmp_path, monkeypatch):
     monkeypatch.setenv("ZN_HOME", str(tmp_path))
     today = datetime.datetime.utcnow().date().isoformat()
     write(tmp_path, {today: {"hook:claude-code": {"checked": 2, "blocked": 1, "warned": 0, "redacted": 0, "detections": {}}}})
-    out = subprocess.run([sys.executable, "-m", "zn_gate.cli", "stats", "--json"], capture_output=True, text=True, check=True).stdout
+    env = dict(os.environ, PYTHONPATH=str(SRC) + os.pathsep + os.environ.get("PYTHONPATH", ""))
+    out = subprocess.run([sys.executable, "-m", "zn_gate.cli", "stats", "--json"], capture_output=True, text=True, check=True, env=env).stdout
     assert json.loads(out)["total"]["checked"] == 2

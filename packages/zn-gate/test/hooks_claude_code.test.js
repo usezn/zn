@@ -1,5 +1,8 @@
 'use strict';
 
+// zn-gate stats: these tests must never count into the real ~/.zn/stats.json.
+process.env.ZN_STATS = 'off';
+
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');

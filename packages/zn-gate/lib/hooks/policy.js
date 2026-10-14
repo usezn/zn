@@ -26,7 +26,7 @@ const { powershellQuote, portablePath } = require('../shell-quote');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-14.3';
+const POLICY_RULES_VERSION = '2026-10-14.4';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -657,11 +657,11 @@ function hasNetworkSignals(cmd) {
   try { return require('../scrub/engine').isNetworkCommand(s); } catch (_) { return false; }
 }
 
-const ZN_ADMIN_RE = /(^|[\s;&|(`$'"\\/])(zn|zn-gate|cli\.js)(\.cmd|\.js)?["']?\s+(secret\s+(set|get|rm|remove|import|adopt|approve|allow|reveal|link)|env\s+(shadow|unshadow)|unlock|lock|hooks\s+(install|uninstall)|stats\s+share\s+on)\b/i;
+const ZN_ADMIN_RE = /(^|[\s;&|(`$'"\\/])(zn|zn-gate|cli\.js)(@[\w.^~-]+)?(\.cmd|\.js)?["']?\s+(secret\s+(set|get|rm|remove|import|adopt|approve|allow|reveal|link)|env\s+(shadow|unshadow)|unlock|lock|hooks\s+(install|uninstall)|stats(?:\s+--?\S+)*\s+share\s+on)\b/i;
 
 function adminCommand(cmd) {
   const m = ZN_ADMIN_RE.exec(String(cmd || ''));
-  return m ? m[4].replace(/\s+/g, ' ') : null;
+  return m ? m[5].replace(/\s+/g, ' ') : null;
 }
 
 /**
