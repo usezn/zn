@@ -10,12 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Claude Code plugin: the plugin has a listing icon for the Claude plugin directory, and its contact email is now support@usezn.com (security reports still go to security@usezn.com).
 - `zn-gate stats` (Node and Python) shows what zn-gate did on this machine: checks, blocks, secret values replaced before the model saw them, and the secret types found, per agent, for the last 30 days (`--days N`, `--json`). The agent hooks, the MCP tools and the shield proxy keep these counts in `~/.zn/stats.json` (numbers only; never values, prompts, paths or hosts). `ZN_STATS=off` turns counting off. Nothing is sent: sharing anonymous daily counts is a separate opt-in (`zn-gate stats share on`, `off`, `status`, `show`), off by default; when on, `zn-gate stats` sends one report per complete day with only the fields that `zn-gate stats share show` prints first.
 - Sharing can only be turned on by you, in your own terminal, after a yes/no question: the agent hooks treat `zn-gate stats share on` as an admin command an agent cannot run (`POLICY_RULES_VERSION` is now `2026-10-14.6`). Only built-in secret types are counted: a variable or secret name you chose is counted as `OTHER` (or `ENV_VALUE` for a value matched by its variable name), never by its name.
 - `zn vault team` says that a shared vault for teams is planned and counts the request on this machine only. Nothing is sent and no contact details are asked for.
 - Cursor checks the arguments of MCP tool calls: a call that would send a secret value, or a `__ZN_` marker, to an MCP server other than zn's `secrets` server is denied. Run `zn hooks install cursor` again to add this hook.
 
 ### Fixed
+- The Rust engine's restricted-commands rule now matches whole words in tool names too, so tools such as `transform_data`, `perform_search` or `add_item` are no longer blocked as `rm` or `dd`; `format_disk`, `runShutdown` and `rm` still are.
 - The Rust engine's log scrubber now redacts card numbers only when they pass the Luhn check and match a card network, US SSNs only with a valid area, group and serial, and phone numbers only in E.164 form or as a formatted North American number, never a digit run inside a longer number. IDs and timestamps are no longer redacted as phone numbers.
 - `zn audit` no longer reports zn's own `secrets` MCP server as an unknown server when its command ends with the `--agent <id>` that `zn hooks install` adds.
 - The tests of the suggested `zn` command now pass on Windows, where a program on the PATH needs an extension such as `.cmd`.
