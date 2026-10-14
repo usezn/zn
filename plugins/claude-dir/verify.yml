@@ -19,6 +19,7 @@ on:
 
 permissions:
   contents: read
+  attestations: read
 
 jobs:
   verify:
@@ -74,17 +75,36 @@ jobs:
 
       - name: What this change is
         id: kind
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
         run: |
-          # A change of the workflow file alone (to bring it up to date with usezn/zn),
-          # or main before its first release, has no release to check.
+          set -euo pipefail
+          # Before the first release the repository holds only its README, LICENSE and
+          # this workflow; a pull request can never remove a released plugin.
           if [ ! -e plugin/.claude-plugin/plugin.json ]; then
+            if [ "$EVENT" = "pull_request_target" ] && [ -e base/.claude-plugin/plugin.json ]; then
+              echo "::error::a pull request cannot remove the plugin"
+              exit 1
+            fi
+            files="$(git -C plugin ls-tree -r --name-only HEAD | sort | tr '\n' ' ')"
+            if [ "$files" != ".github/workflows/verify.yml LICENSE README.md " ] && [ "$files" != ".github/workflows/verify.yml " ]; then
+              echo "::error::before the first release the repository holds only README.md, LICENSE and .github/workflows/verify.yml"
+              exit 1
+            fi
             echo "release=false" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event_name }}" = "pull_request_target" ] \
-            && [ "$(diff -rq -x .git base plugin | tr -d '\r')" = "Files base/.github/workflows/verify.yml and plugin/.github/workflows/verify.yml differ" ]; then
-            echo "release=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "release=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          # A pull request that changes only the workflow file (to bring it up to date
+          # with usezn/zn) has no release to check; compared as git objects.
+          if [ "$EVENT" = "pull_request_target" ]; then
+            changed="$(diff <(git -C base ls-tree -r HEAD) <(git -C plugin ls-tree -r HEAD) | grep -E '^[<>]' | sed -E 's/^[<>] [0-9]+ [a-z]+ [0-9a-f]+\t//' | sort -u | tr '\n' ' ')"
+            if [ "$changed" = ".github/workflows/verify.yml " ]; then
+              echo "release=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          echo "release=true" >> "$GITHUB_OUTPUT"
 
       - name: Read the release version and the source commit
         id: meta
@@ -119,14 +139,26 @@ jobs:
       - name: The source is the commit on usezn/zn main that pinned the plugin
         if: steps.kind.outputs.release == 'true'
         env:
+          EVENT: ${{ github.event_name }}
           VERSION: ${{ steps.meta.outputs.version }}
           SOURCE: ${{ steps.meta.outputs.source }}
         run: |
           set -euo pipefail
-          pin="$(git -C zn log -1 --format=%H HEAD -- plugins/zn-gate/scripts/zn-gate.lock.json)"
-          if [ "$SOURCE" != "$pin" ]; then
-            echo "::error::the plugin must be generated from $pin, the commit on usezn/zn main that last pinned the plugin"
-            exit 1
+          lock=plugins/zn-gate/scripts/zn-gate.lock.json
+          if [ "$EVENT" = "pull_request_target" ]; then
+            # A release pull request: exactly the latest pin, so a stale one fails.
+            pin="$(git -C zn log -1 --format=%H HEAD -- "$lock")"
+            if [ "$SOURCE" != "$pin" ]; then
+              echo "::error::the plugin must be generated from $pin, the commit on usezn/zn main that last pinned the plugin"
+              exit 1
+            fi
+          else
+            # main itself: a commit on usezn/zn main that pinned this version (a later
+            # change of the pin without a newer release does not make main fail).
+            git -C zn merge-base --is-ancestor "$SOURCE" HEAD || { echo "::error::the source commit is not in usezn/zn main"; exit 1; }
+            git -C zn log --format=%H HEAD -- "$lock" | grep -qx "$SOURCE" || { echo "::error::the source commit did not pin the plugin"; exit 1; }
+            pinned="$(git -C zn show "$SOURCE:$lock" | node -e "let s='';process.stdin.on('data',(c)=>s+=c).on('end',()=>process.stdout.write(String(JSON.parse(s).version)))")"
+            [ "$pinned" = "$VERSION" ] || { echo "::error::the source commit pins another version"; exit 1; }
           fi
           git -C zn merge-base --is-ancestor "refs/tags/v$VERSION" "$SOURCE" || { echo "::error::the source commit does not contain the release tag"; exit 1; }
           git -C zn worktree add --quiet --detach ../src "$SOURCE"

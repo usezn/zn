@@ -36,6 +36,7 @@ jobs:
       name: plugin-repo
     permissions:
       contents: read
+      attestations: read
     steps:
       - name: Check out this repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -67,6 +68,7 @@ jobs:
       - name: Check the plugin repository
         id: plugin
         env:
+          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
@@ -79,9 +81,14 @@ jobs:
             exit 0
           fi
           if [ -n "$(git -C plugin ls-remote --heads origin "release/$VERSION")" ]; then
-            echo "release/$VERSION already exists in the plugin repository; nothing to do."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
+            open="$(gh pr list --repo usezn/zn-gate-plugin --head "release/$VERSION" --state open --json number --jq 'length')"
+            if [ "$open" != "0" ]; then
+              echo "The release pull request for $VERSION is already open; nothing to do."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::error::release/$VERSION exists in the plugin repository without an open pull request. Delete that branch to run this again."
+            exit 1
           fi
           if ! cmp -s plugin/.github/workflows/verify.yml zn/plugins/claude-dir/verify.yml; then
             echo "::error::the plugin repository's .github/workflows/verify.yml is not plugins/claude-dir/verify.yml from main. Copy it there with a pull request first; this job cannot change workflows."
@@ -105,10 +112,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
+          SOURCE: ${{ steps.version.outputs.source }}
         run: |
+          set -euo pipefail
+          # The same checks as the plugin repository's Verify workflow, so a pull request
+          # that it would refuse is never opened.
+          git -C zn merge-base --is-ancestor "refs/tags/v$VERSION" "$SOURCE" || { echo "::error::the pin commit does not contain the release tag"; exit 1; }
           gh attestation verify "zn-gate-$VERSION.tgz" --repo usezn/zn \
             --signer-workflow usezn/zn/.github/workflows/release.yml \
-            --source-ref "refs/tags/v$VERSION"
+            --source-ref "refs/tags/v$VERSION" --format json > attestation.json
+          built="$(node -e "const a=JSON.parse(require('fs').readFileSync('attestation.json','utf8'));process.stdout.write(String(a[0].verificationResult.signature.certificate.sourceRepositoryDigest))")"
+          if [[ ! "$built" =~ ^[0-9a-f]{40}$ ]]; then echo "::error::the attestation names no source commit"; exit 1; fi
+          git -C zn merge-base --is-ancestor "$built" "$SOURCE" || { echo "::error::the package was not built from a commit in the pin's history"; exit 1; }
 
       - name: Build and check the release branch
         if: steps.plugin.outputs.skip != 'true'
