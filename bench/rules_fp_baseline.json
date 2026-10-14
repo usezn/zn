@@ -1,0 +1,13 @@
+{
+  "files": 1937,
+  "blocked": 57,
+  "by_rule": {
+    "exfil:credentials": 43,
+    "path:sensitive_file": 1,
+    "pi:act_as": 5,
+    "pi:bypass": 4,
+    "pi:forget": 2,
+    "pi:identity_override": 1,
+    "pi:template_boundary": 1
+  }
+}
