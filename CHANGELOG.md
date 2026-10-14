@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0-beta.1] - 2026-10-14
+
+Pre-release for testing. Install it with `npm install -g zn-gate@beta` or `pip install --pre zn-gate`. The agent plugin in `plugins/zn-gate` is not published with this beta; it ships with 1.6.0.
+
 ### Added
 - Cloud checks of long texts (`analyze_prompt`, `zn-gate analyze`, Python `analyze()`, only with `ZN_CLOUD=1` and a key): a text over 1,000 characters asks the classifier for overlapping 512-token windows (stride 256, up to 20) instead of reading only the first 512 tokens; the verdict comes from the window with the highest score, and a text that fits in one window gets the same result as before. In our internal tests (long documents with one hidden injection; results depend on the text), detection went from about 1% to 91% when it was in the middle and to 86% at the end; false positives on long benign documents went from 3.7% to 5.7%, and long texts take about three times as long (the client allows 12 s instead of 4 s). Cloud checks are billed by text size, with or without windows (`off` does not lower the count): 1 call up to 2,000 characters, and 1 more for each further 1,000 characters or part of them (up to 19 calls for the 20,000-character limit); the gate reports the count in `billed_calls`. When more windows would be needed, or the gate falls back to checking only the first 512 tokens, the result carries a `warning`. Turn it off with `ZN_LONG_INPUT=off`, `--long-input off` or `long_input="off"`. Needs a cloud gate that supports `long_input`; an older one ignores the field.
 - `zn audit [path]` (also `zn-gate audit`) reviews the agent configuration a repository ships before you open it, without running anything: hooks and other commands that run automatically, project MCP servers, unpinned packages, model endpoint and proxy overrides, code-loading environment variables, credential helpers, broad permissions, secrets, dangerous instructions in `AGENTS.md`, `CLAUDE.md` and similar files, agent extensions, executables in the root that shadow common tools, and CI workflows that run an agent on untrusted input. It covers Claude Code, Codex, Cursor, OpenCode, Amazon Q, Copilot and Gemini CLI. Output as text, JSON or SARIF 2.1.0 (GitHub code scanning); `--fail-on` sets the exit code. Rules `ZNA001`-`ZNA020` and the public vulnerabilities behind them: [docs/audit.md](docs/audit.md). The secret-use log that `zn audit` showed in 1.5 is `zn vault log` (alias `zn secret log`); `zn audit log` and `zn audit --since` exit with code 2 and point there.
@@ -41,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mcpName` in package.json). Needs Node.js 20.12 or later.
 
 ### Changed
+- Cloud checks (`ZN_CLOUD=1`) are billed by text size, for every request and with or without windows: 1 call up to 2,000 characters, and 1 more for each further 1,000 characters or part of them, up to 19 calls for the 20,000-character limit. Before, every check counted as 1 call. Requests up to 2,000 characters are billed as before. The count comes back in `billed_calls` and counts toward your plan's quota.
+- The project now documents how it is run: [GOVERNANCE.md](GOVERNANCE.md) (decisions, releases, contributions, new maintainers), [MAINTAINERS.md](MAINTAINERS.md) and an updated [SECURITY.md](SECURITY.md) (supported versions, how to report a vulnerability, response times and coordinated disclosure).
 - GitHub Action (`action.yml`): `actions/setup-python` is now v7, which runs on Node.js 24. Self-hosted runners need runner version 2.327.1 or later; GitHub-hosted runners already have it.
 - The `usezn` plugin marketplace in this repository now lists the agent plugin in `plugins/zn-gate`, which replaces the Claude Code plugin shipped with 1.5.x (`plugins/claude/zn-gate`). In Claude Code it still installs zn-gate itself: Claude Code installs the release pinned by the plugin's `package-lock.json` into the plugin folder, and the launcher checks that copy file by file against the published release before running it; other agents use a copy you install (`npm install -g zn-gate@1.6.0`). It keeps both MCP servers of the 1.5.x plugin, `zn-gate` (`analyze_prompt`, `check_tool_call`, `check_tool_result`, `zn_status`) and `secrets`, and starts the `zn-gate` one with local rules only; its skill is now `zn-secrets`. To upgrade in Claude Code, update the marketplace and the plugin (`claude plugin marketplace update usezn`, then `claude plugin update zn-gate@usezn`) and start a new session. `plugins/tools/pin-release.js` now also writes the plugin's `package.json` and `package-lock.json`.
 
@@ -265,7 +271,8 @@ Limits: [docs/threat-model.md](docs/threat-model.md). Per-agent support:
 - MCP Server interface for Claude Code, Cursor, and custom agent loops.
 - Bidirectional inspection for prompt inputs and tool returns.
 
-[Unreleased]: https://github.com/usezn/zn/compare/v1.5.1...next
+[Unreleased]: https://github.com/usezn/zn/compare/v1.6.0-beta.1...next
+[1.6.0-beta.1]: https://github.com/usezn/zn/compare/v1.5.1...v1.6.0-beta.1
 [1.5.1]: https://github.com/usezn/zn/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/usezn/zn/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/usezn/zn/compare/v1.4.0...v1.4.1
