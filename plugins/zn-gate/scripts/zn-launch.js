@@ -101,15 +101,21 @@ function znConfig() {
   return readJson(path.join(homeDir(), '.zn', 'config.json')) || {};
 }
 
+// A plugin built with zn-gate inside it ("bundled" in the lock file) uses only
+// that copy, at this fixed path under the plugin folder.
+const BUNDLED_DIR = 'vendor/zn-gate';
+
 function loadLock() {
   const lock = readJson(LOCK_FILE);
-  if (!lock || lock.package !== 'zn-gate' || typeof lock.version !== 'string' || !lock.files || typeof lock.files !== 'object') {
+  if (!lock || lock.package !== 'zn-gate' || typeof lock.version !== 'string' || !lock.files || typeof lock.files !== 'object' ||
+      ('bundled' in lock && lock.bundled !== BUNDLED_DIR)) {
     throw new Error('the plugin lock file (scripts/zn-gate.lock.json) is missing or invalid');
   }
   return lock;
 }
 
 function installHint(lock) {
+  if (lock.bundled) return 'Reinstall the zn-gate plugin to restore its copy of zn-gate ' + lock.version + '.';
   return 'In Claude Code, the plugin installs it: make sure npm is on your PATH, then run ' +
     'claude plugin update zn-gate@usezn and start a new session. In other agents, install the pinned release with: ' +
     'npm install -g zn-gate@' + lock.version + ' && npm audit signatures (see the plugin README).';
@@ -132,7 +138,9 @@ function isPackageDir(dir) {
  *      Windows (<prefix>\zn-gate.cmd next to <prefix>\node_modules).
  * Every candidate must still match the lock file exactly (see verify).
  */
-function candidates() {
+function candidates(lock) {
+  // Bundled: only the copy inside the plugin (no ~/.zn/config.json packageDir, no PATH).
+  if (lock && lock.bundled) return [path.resolve(__dirname, '..', ...BUNDLED_DIR.split('/'))];
   const cfg = znConfig();
   if (cfg.plugin && typeof cfg.plugin.packageDir === 'string') return [path.resolve(cfg.plugin.packageDir)];
   const out = [path.resolve(__dirname, '..', 'node_modules', 'zn-gate')];
@@ -209,8 +217,23 @@ function verify(lock) {
     return { error: 'this plugin build has no file digests for zn-gate ' + lock.version + ' (development build), so it cannot run. ' +
       'Use a released plugin version.' };
   }
+  if (lock.bundled) {
+    // verify() follows the package directory to its real path: the bundled
+    // folders themselves must not be links to somewhere else.
+    let rel = '..';
+    for (const part of BUNDLED_DIR.split('/')) {
+      rel = path.join(rel, part);
+      try {
+        if (fs.lstatSync(path.resolve(__dirname, rel)).isSymbolicLink()) {
+          return { error: 'the plugin\'s ' + BUNDLED_DIR + ' folder is a symbolic link. ' + installHint(lock) };
+        }
+      } catch (_) {
+        return { error: 'the plugin\'s copy of zn-gate ' + lock.version + ' (' + BUNDLED_DIR + ') is missing. ' + installHint(lock) };
+      }
+    }
+  }
   const reasons = [];
-  for (const dir of candidates()) {
+  for (const dir of candidates(lock)) {
     if (!isPackageDir(dir)) continue;
     const real = fs.realpathSync(dir);
     const pkg = readJson(path.join(real, 'package.json')) || {};
