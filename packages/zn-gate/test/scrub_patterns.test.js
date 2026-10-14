@@ -106,6 +106,11 @@ const EXTRA = [
   ['STRIPE_KEY', () => 'sk_prod_' + pick(ALNUM, 24) + 'a1'],
   ['TWILIO_KEY', () => 'SK' + pick('0123456789ABCDEF', 30) + 'C3'],
   ['OPENAI_KEY', () => 'sk-' + pick(HEX, 30) + 'a1'],
+  ['DOCKERHUB_PAT', () => 'dckr_oat_' + pick(URLSAFE, 27)],
+  ['TAVILY_KEY', () => 'tvly-dev-' + pick(ALNUM, 30) + 'a1'],
+  ['POLAR_TOKEN', () => 'polar_pat_' + pick(ALNUM, 40)],
+  ['POLAR_TOKEN', () => 'polar_rt_u_' + pick(ALNUM, 40)],
+  ['POLAR_TOKEN', () => 'polar_rt_o_' + pick(ALNUM, 40)],
 ];
 
 test('additional prefix types are detected in context', () => {
@@ -122,6 +127,8 @@ test('additional prefix types are detected in context', () => {
 test('new and extended formats: near-miss lengths and look-alikes are not secrets', () => {
   const lower = 'abcdefghijklmnopqrstuvwxyz';
   const ALPHA = ALNUM.slice(0, 52);
+  const HF_PASCAL = 'ModelLoaderConfigFactoryModuleHelper'.slice(0, 34);
+  assert.strictEqual(HF_PASCAL.length, 34);
   for (const t of [
     'dckr_pat_' + pick(URLSAFE, 19),                        // Docker Hub: below the 20-character minimum
     'Create a dckr_pat_ token under Account Settings',      // prefix in prose
@@ -149,9 +156,26 @@ test('new and extended formats: near-miss lengths and look-alikes are not secret
     'sk-' + pick(HEX, 31),                                  // legacy sk-: 31 hex digits
     'sk-' + 'a'.repeat(32),                                 // legacy sk-: one character class
     'task-' + pick(HEX, 32),                                // sk- inside a word
+    'dckr_oat_' + pick(URLSAFE, 19),                        // Docker Hub org token: below the minimum
+    'polar_rt_x' + pick(ALNUM, 12),                         // Polar refresh prefix, too short
+    'polar_pat_' + 'a'.repeat(25),                          // Polar: one character class
+    'hf_' + HF_PASCAL,                                      // 34-letter PascalCase identifier
+    'SK' + pick('0123456789abcdef', 16) + pick('0123456789ABCDEF', 16), // Twilio: mixed case
+    'Set the secret to ' + 'abc9Q~' + pick(URLSAFE, 31) + '9.json.',    // Azure: dotted continuation
   ]) {
     assert.deepStrictEqual(types(t), [], t);
   }
+});
+
+test('Azure AD client secret at the end of a sentence: the full stop is not part of the span', () => {
+  const secret = 'abc9Q~' + pick(URLSAFE, 15) + '.' + pick(URLSAFE, 15) + '9';
+  assert.strictEqual(secret.length, 38);
+  const text = 'Set the client secret to ' + secret + '. Rotate it soon.\n';
+  const spans = P.findPatterns(text, {}).filter((s) => s.type === 'AZURE_AD_CLIENT_SECRET');
+  assert.strictEqual(spans.length, 1);
+  assert.strictEqual(text.slice(spans[0].start, spans[0].end), secret);
+  const dotted = 'Set the client secret to ' + secret + '.json.\n';
+  assert.strictEqual(P.findPatterns(dotted, {}).filter((s) => s.type === 'AZURE_AD_CLIENT_SECRET').length, 0);
 });
 
 test('Azure storage key: only the key is a span', () => {
