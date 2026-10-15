@@ -41,7 +41,7 @@ test('an empty event is refused with exit code 2 and the reason on stderr', () =
   const res = hook('codex', '', tmpHome());
   assert.equal(res.status, 2);
   assert.match(res.stderr, /stdin was empty/);
-  assert.match(res.stderr, /denied/);
+  assert.match(res.stderr, /was blocked/);
   assert.equal(res.stdout, '');
 });
 
@@ -56,6 +56,16 @@ test('Cursor gets its deny answer on stdout as well', () => {
   assert.equal(res.status, 2);
   assert.match(res.stdout, /"permission":"deny"/);
   assert.match(res.stdout, /"continue":false/);
+});
+
+test('the model is never told how to let unchecked actions pass', () => {
+  for (const agent of ['claude-code', 'codex', 'cursor']) {
+    const res = hook(agent, 'not json', tmpHome());
+    assert.equal(res.status, 2);
+    assert.doesNotMatch(res.stderr, /whenUnavailable/, agent);
+    assert.doesNotMatch(res.stdout, /whenUnavailable/, agent);
+    assert.match(res.stderr, /hooks install/, agent);
+  }
 });
 
 test('whenUnavailable "allow" passes such events, with a note on stderr', () => {
@@ -81,7 +91,7 @@ test('an unexpected failure while handling the event is refused, not passed thro
   const res = hook('codex', JSON.stringify(ev), tmpHome());
   assert.equal(res.status, 0, res.stderr);
   assert.match(res.stdout, /"permissionDecision":"deny"/);
-  assert.match(res.stdout, /hook error .*fail-closed/);
+  assert.match(res.stdout, /something went wrong inside the zn hook/);
 });
 
 test('a readable event is still handled as before', () => {

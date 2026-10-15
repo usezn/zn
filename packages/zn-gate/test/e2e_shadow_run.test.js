@@ -178,7 +178,7 @@ test('E2E: shadowed .env + zn run with an allowed command never shows a value; o
   });
   assert.equal(denied, 77);
   assert.equal(denyOut.text(), '', 'the command never ran');
-  assert.match(denyErr.text(), /not in allowCommands for GITHUB_TOKEN/);
+  assert.match(denyErr.text(), /is not allowed to use GITHUB_TOKEN yet/);
   assert.match(denyErr.text(), /secrets_http_request/);
   transcript.push(denyErr.text());
 

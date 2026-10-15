@@ -35,10 +35,11 @@ function memoryVault(opts) {
     },
     async resolve(project, token, ropts) {
       calls.push('resolve:' + ((ropts && ropts.destination) || ''));
+      const wrap = (v) => (ropts && ropts.withPolicy === true && !o.bare ? { value: v, policy: 1 } : v);
       const m = /^__ZN_(.+)__$/.exec(token);
-      if (m && named.has(m[1])) return named.get(m[1]);
+      if (m && named.has(m[1])) return wrap(named.get(m[1]));
       const v = byToken.get(project + '\0' + token);
-      return v === undefined ? null : v;
+      return wrap(v === undefined ? null : v);
     },
     async exactValues() {
       calls.push('exactValues');
@@ -247,6 +248,71 @@ test('tokenize -> detokenize round-trips for the assistant', async () => {
   const t = await E.tokenize(text, ctx(vault));
   const back = await E.detokenize(t.text, ctx(vault, { destination: 'assistant' }));
   assert.strictEqual(back.text, text);
+});
+
+/* ---------------- detokenize: organization policy (zn Team) ---------------- */
+
+/* A vault that answers withPolicy like the daemon: deny, warn or plain. */
+function orgVault(values, rules) {
+  const audits = [];
+  return {
+    audits,
+    async resolve(project, token, o) {
+      const name = /^__ZN_(.+)__$/.exec(token)[1];
+      const value = Object.prototype.hasOwnProperty.call(values, name) ? values[name] : null;
+      const r = rules[name] || {};
+      if (!o || o.withPolicy !== true) return r.deny ? null : value;
+      if (r.deny) return { value: null, policy: 1, deny: true };
+      return r.warn ? { value, policy: 1, warn: true, warnReason: r.reason } : { value, policy: 1 };
+    },
+    async audit(ev) { audits.push(ev); },
+  };
+}
+
+test('org policy: a blocked named secret keeps its marker', async () => {
+  const vault = orgVault({ PROD_DB: 'prod-' + pick(24) }, { PROD_DB: { deny: true } });
+  const r = await E.detokenize('DB=__ZN_PROD_DB__', ctx(vault, { destination: 'write_ignored' }));
+  assert.strictEqual(r.text, 'DB=__ZN_PROD_DB__');
+  assert.deepStrictEqual(r.restored, []);
+  assert.deepStrictEqual(r.withheld, [{ token: '__ZN_PROD_DB__', reason: 'org_deny', action: 'keep' }]);
+  assert.strictEqual(r.notices, undefined);
+  assert.deepStrictEqual(vault.audits.map((a) => [a.decision, a.reason]), [['withhold', 'org_deny']]);
+});
+
+test('org policy: a warn rule restores, adds the notice and records one "warn"', async () => {
+  const value = 'stg-' + pick(24);
+  const vault = orgVault({ STAGING_KEY: value }, { STAGING_KEY: { warn: true, reason: 'Staging keys need review' } });
+  const r = await E.detokenize('A=__ZN_STAGING_KEY__\nB=__ZN_STAGING_KEY__', ctx(vault, { destination: 'write_ignored' }));
+  assert.strictEqual(r.text, 'A=' + value + '\nB=' + value);
+  assert.deepStrictEqual(r.restored, ['__ZN_STAGING_KEY__']);
+  assert.deepStrictEqual(r.notices, ['zn: your team policy would block STAGING_KEY here (policy note: "Staging keys need review"). It was allowed and recorded for your organization.']);
+  assert.deepStrictEqual(vault.audits.map((a) => [a.decision, a.reason, a.secret]), [['warn', 'policy:warn', 'STAGING_KEY']]);
+});
+
+test('a vault that does not apply the organization policy restores nothing (fail closed)', async () => {
+  const value = 'dev-' + pick(24);
+  const bare = memoryVault({ named: { DEV_KEY: value }, bare: true });
+  const tok = await E.tokenize('contact jane.roe@example.org', ctx(bare));
+  for (const text of ['K=__ZN_DEV_KEY__', 'to: ' + tok.replaced[0].token]) {
+    const r = await E.detokenize(text, ctx(bare, { destination: 'write_ignored' }));
+    assert.strictEqual(r.text, text);
+    assert.deepStrictEqual(r.withheld.map((w) => [w.reason, w.action]), [['vault_outdated', 'keep']]);
+  }
+  const odd = orgVault({ DEV_KEY: value }, {});
+  const resolve = odd.resolve;
+  odd.resolve = async (...a) => ({ ...(await resolve(...a)), policy: 2 });
+  const r = await E.detokenize('K=__ZN_DEV_KEY__', ctx(odd, { destination: 'write_ignored' }));
+  assert.deepStrictEqual(r.withheld.map((w) => w.reason), ['vault_error']);
+});
+
+test('org policy: without a rule restores are unchanged', async () => {
+  const value = 'dev-' + pick(24);
+  for (const vault of [orgVault({ DEV_KEY: value }, {}), memoryVault({ named: { DEV_KEY: value } })]) {
+    const r = await E.detokenize('K=__ZN_DEV_KEY__', ctx(vault, { destination: 'write_ignored' }));
+    assert.strictEqual(r.text, 'K=' + value);
+    assert.deepStrictEqual(r.restored, ['__ZN_DEV_KEY__']);
+    assert.deepStrictEqual(Object.keys(r).sort(), ['restored', 'text', 'withheld']);
+  }
 });
 
 if (require.main === module) run('scrub engine');

@@ -108,6 +108,61 @@ async function getPassphrase(args, creating, prompterOpts) {
 
 function out(s) { process.stdout.write(s + '\n'); }
 
+const RESOLVE_POLICY_FEATURE = 'resolve-policy';
+
+/** The running vault's status, or null when none answers. */
+async function runningStatus(clientFactory) {
+  const c = (clientFactory || createClient)({});
+  try { return await c.status(); } catch (err) { return null; } finally { c.close(); }
+}
+
+/** A running vault started by an older zn-gate (it does not check the organization policy on restores). */
+function isOutdatedVault(s) {
+  return Boolean(s) && !(Array.isArray(s.features) && s.features.includes(RESOLVE_POLICY_FEATURE));
+}
+
+/* Is the process still there? EPERM means it exists but is not ours to signal. */
+function pidAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch (err) { return Boolean(err && err.code === 'EPERM'); }
+}
+
+const OLD_VAULT_STUCK = 'The old vault did not stop; run `zn lock`, wait a moment, then `zn unlock`.';
+
+/**
+ * zn unlock with an older vault still running: lock it so this version can
+ * start. Only from `zn unlock`, which a person runs in their own terminal;
+ * never from a hook.
+ *
+ * The identity is checked first (deps.verify), so a mistyped passphrase
+ * leaves the old vault running. lock() answers before the old process has
+ * exited (it still writes its files and then removes its socket and session
+ * key), so this waits until its pid is gone before a new vault may start.
+ */
+async function restartIfOutdated(deps) {
+  const d = deps || {};
+  const s = await runningStatus(d.clientFactory);
+  if (!isOutdatedVault(s)) return false;
+  if (d.verify) await d.verify();
+  (d.out || out)('The running vault is from an older zn-gate; restarting it.');
+  const pid = Number.isSafeInteger(s.pid) && s.pid > 0 ? s.pid : null;
+  await (d.lock || daemon.lock)({});
+  const alive = d.isAlive || pidAlive;
+  const sleep = d.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
+  const deadline = (d.timeoutMs == null ? 5000 : d.timeoutMs);
+  if (pid === null) throw new Error(OLD_VAULT_STUCK);
+  for (let waited = 0; alive(pid); waited += 100) {
+    if (waited >= deadline) throw new Error(OLD_VAULT_STUCK);
+    await sleep(100);
+  }
+  return true;
+}
+
+/** The `zn vault status` line for an unlocked vault. */
+function unlockedLine(meta, s) {
+  const line = 'Vault: unlocked (backend ' + meta.backend + ', expires ' + s.expiresAt + (s.version ? ', zn-gate ' + s.version : '') + ')';
+  return isOutdatedVault(s) ? line + ', outdated: restart with `zn lock`, then `zn unlock`' : line;
+}
+
 async function unlockCmd(args) {
   const agent = agentEnvDetected(process.env);
   if (agent) throw new Error('zn unlock must be run by you in your own terminal, not by an AI agent (detected ' + agent + ')');
@@ -120,6 +175,9 @@ async function unlockCmd(args) {
   if (!keychain.BACKENDS.includes(backend)) throw new Error('unknown backend ' + backend);
   opts.backend = backend;
   if (backend === 'passphrase') opts.passphrase = await getPassphrase(args, !meta);
+  // An older vault still running: check the identity (passphrase or keychain)
+  // before stopping it, then wait for it to exit.
+  await restartIfOutdated({ verify: meta ? () => keychain.loadIdentity(opts).then(() => undefined) : null });
   if (args.includes('--foreground')) return unlockForegroundCmd(opts, backend);
   const res = await daemon.unlock(opts);
   if (res.created) out('Created a new vault (' + backend + ') in ' + store.paths().vaultDir);
@@ -159,7 +217,7 @@ async function statusCmd() {
   const c = createClient({});
   try {
     const s = await c.status();
-    out('Vault: unlocked (backend ' + meta.backend + ', expires ' + s.expiresAt + ')');
+    out(unlockedLine(meta, s));
   } catch (err) {
     out('Vault: locked (backend ' + meta.backend + ')');
   } finally {
@@ -216,4 +274,4 @@ async function runVaultCommand(args) {
   }
 }
 
-module.exports = { runVaultCommand, parseDuration, getPassphrase, createHiddenPrompter };
+module.exports = { runVaultCommand, parseDuration, getPassphrase, createHiddenPrompter, restartIfOutdated, isOutdatedVault, unlockedLine, OLD_VAULT_STUCK };

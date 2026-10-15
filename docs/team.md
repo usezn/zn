@@ -50,6 +50,7 @@ by value:
 ```json
 { "secret": "PROD_*", "agents": ["*"], "deny": true, "reason": "No production credentials in AI agents" }
 { "secret": "STRIPE_KEY", "agents": ["claude-code"], "allowHosts": ["api.stripe.com"] }
+{ "secret": "STAGING_*", "agents": ["*"], "warn": true, "reason": "Staging credentials need review" }
 ```
 
 zn-gate applies a downloaded policy only if:
@@ -67,7 +68,7 @@ is a readable copy: editing or deleting it does not remove any restriction.
 
 | | |
 |---|---|
-| **Always** | Block a secret (`deny`). Narrow the hosts (`allowHosts`) or commands (`allowCommands`) a secret may be used with. Force `proxy` mode. Limit where `secrets_http_request` may put the value (`injectAt`). Add custom secret formats for the scrubber (`detectors`). |
+| **Always** | Block a secret (`deny`) or warn about its use (`warn`). Narrow the hosts (`allowHosts`) or commands (`allowCommands`) a secret may be used with. Force `proxy` mode. Limit where `secrets_http_request` may put the value (`injectAt`). Add custom secret formats for the scrubber (`detectors`). |
 | **Only after you approve it on this machine** | Let a secret go to a host your local settings do not allow. The first time an agent needs that host, the vault asks you; the approval is kept per organization, secret and host. A wildcard host (`*.example.com`) is flagged as such in the dialog. |
 | **Never** | Open a new command, mode or HTTP placement for a secret. Change or switch off the protections for credential files, `~/.zn` and agent configuration. Read secret values. |
 
@@ -86,6 +87,56 @@ is never widened by a later one.
 
 Only `proxy` is applied from a rule's `mode`; other modes in a rule are
 ignored.
+
+### The three choices: Not blocked, Warn, Block
+
+The dashboard sets one choice per rule. In the policy file the choice is a
+field of the rule:
+
+| Choice | Field | What happens on the machine |
+|---|---|---|
+| **Not blocked** (default) | none | The use goes ahead within the rule's other limits. Nothing is shown and nothing is recorded as a warning. |
+| **Warn** | `"warn": true` | The use goes ahead within the rule's other limits. You and the agent see a notice, and the audit record has the decision `warn`. |
+| **Block** | `"deny": true` | The use is stopped. |
+
+A rule cannot have both `deny` and `warn`. For a Warn rule the use goes
+ahead, and:
+
+- writes an audit record with the decision `warn` (reason `policy:warn`),
+  which is uploaded to your organization with the other records;
+- shows this line to you and to the agent, with the rule's `reason` quoted
+  as a policy note:
+
+  ```
+  zn: your team policy would block STAGING_TOKEN here (policy note: "Staging credentials need review"). It was allowed and recorded for your organization.
+  ```
+
+`zn run` prints it on the command's error output; the `secrets` MCP server
+adds it to the tool result (`notice`) and prints it on its own error output.
+This happens wherever a `deny` would have blocked: `zn run`,
+`secrets_http_request`, `secrets_render_file`, and the agent hooks when
+they put a secret's value back in place of its `__ZN_NAME__` marker (a
+file the agent writes outside git or in a git-ignored path). There, a
+`deny` leaves the marker in the file and the hook says why, and a `warn`
+puts the value back and adds the line above to the hook's message. Today
+only the Claude Code hooks put values back into files; with other agents
+the marker stays in the file.
+
+The rule's other fields (`allowHosts`, `allowCommands`, `mode`, `injectAt`)
+still apply. A rule cannot have both `deny` and `warn`: such a policy is
+refused like any other invalid policy. When one rule blocks a secret and
+another warns, the block wins. Like every rule, a warning applies to all
+agents, whatever its `agents` list says.
+
+zn-gate 1.7.x and earlier do not know `warn` and would refuse a whole
+policy that uses it. zn-gate 1.8.0 and later say on each policy download
+that they understand it (see [What is sent](#what-is-sent)). For older
+versions the zn service removes only the `warn` field: the rule and its
+other restrictions still apply, but those machines use the secret without
+showing the notice and do not record `warn` decisions. Update them to
+zn-gate 1.8.0 or later to see and record warnings. The table in
+[compat.md](compat.md#zn-team-policy-choices-by-zn-gate-version) lists the
+choices per version.
 
 Custom `detectors` run with the built-in patterns and only add redactions.
 A pattern runs only if its cost is bounded before it runs: a flat sequence
@@ -112,7 +163,9 @@ patterns are skipped on the machine, and all custom detectors together get
 - **At join:** the join token, a random installation id, this machine's
   audit key (it lets the server check that uploaded records were not
   altered), the zn-gate version, the OS family and, if given, the agent.
-- **Policy download:** the install token and the policy version already held.
+- **Policy download:** the install token, the policy version already held
+  and the policy features this zn-gate understands (header
+  `X-ZN-Policy-Features: warn`).
 - **Audit upload:** the records of `~/.zn/audit.jsonl`, including the ones
   written before joining: time, secret name, mode, agent, tool, command name,
   host, decision and reason, with their sequence number and HMAC chain. Never
@@ -144,7 +197,9 @@ service:
     logs: { receivers: [otlpjsonfile], exporters: [debug] }
 ```
 
-Each record is a `zn.gate.decision` event. The HMAC chain travels with it
-(`zn.audit.seq`, `zn.audit.prev`, `zn.audit.mac`), so a gap or a reordered
-record stays visible after the export. The mapping is the same as the export
+Each record is a `zn.gate.decision` event. `deny`, `warn`, `withhold` and
+`ask:no` have severity `WARN`, `error` has `ERROR`, the others `INFO`. The
+HMAC chain travels with it (`zn.audit.seq`, `zn.audit.prev`,
+`zn.audit.mac`), so a gap or a reordered record stays visible after the
+export. The mapping is the same as the export
 from the zn dashboard. No account is needed for the local export.

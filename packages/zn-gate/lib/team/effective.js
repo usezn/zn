@@ -6,6 +6,9 @@
  * Every rule whose secret pattern matches restricts the secret, for every
  * caller, whatever agents it names:
  *   - `deny` blocks the secret;
+ *   - `warn` lets the use go ahead, records it with decision "warn" and
+ *     tells the user (a `deny` in another matching rule still wins; the
+ *     rule's other restrictions still apply);
  *   - `allowHosts` / `allowCommands` drop local entries the rule does not list;
  *   - `mode: proxy` is the most restrictive mode;
  *   - `injectAt` limits where secrets_http_request may put the value
@@ -31,8 +34,12 @@
  * opened, approved or not.
  */
 
+const { INVISIBLE } = require('../vault/confirm');
+
 const RESTRICTIVE_MODE = 'proxy';
 const DEFAULT_ALLOW_IN = ['header'];
+/** Audit reason of a use that a `warn` rule let through. */
+const WARN_REASON = 'policy:warn';
 
 function secretMatches(pattern, name) {
   if (pattern === '*') return true;
@@ -62,7 +69,7 @@ const approvalKey = (org, secret, kind, value) => [org, secret, kind, value].joi
 
 /**
  * effective(name, local, {policy, state, org, agent, agentTrusted, approvals}) ->
- *   {meta, deny, reason?, rule?, pending: [{kind, value}], org?}
+ *   {meta, deny, warn, reason?, rule?, warnRule?, warnReason?, pending: [{kind, value}], org?}
  *
  * local: the secret's local settings ({mode, allowHosts, allowCommands, allowIn, ...}).
  * state: 'active' | 'expired' (anything else: the policy is ignored).
@@ -79,7 +86,7 @@ function effective(name, local, opts) {
     allowCommands: (local && local.allowCommands) || [],
     allowIn: (local && Array.isArray(local.allowIn) && local.allowIn.length) ? local.allowIn : DEFAULT_ALLOW_IN,
   });
-  const out = { meta, deny: false, pending: [] };
+  const out = { meta, deny: false, warn: false, pending: [] };
   if (!o.policy || (o.state !== 'active' && o.state !== 'expired')) return out;
   out.org = o.org || o.policy.org;
   const all = rulesOf(o.policy);
@@ -92,6 +99,12 @@ function effective(name, local, opts) {
     out.reason = 'policy:org_deny';
     out.rule = all.indexOf(denying);
     return out;
+  }
+  const warning = matching.find((r) => r.warn === true);
+  if (warning) {
+    out.warn = true;
+    out.warnRule = all.indexOf(warning);
+    if (typeof warning.reason === 'string') out.warnReason = warning.reason;
   }
 
   const strict = o.state === 'expired';
@@ -154,6 +167,23 @@ function pickOpening(pending, kind, matches) {
   return { kind, value: best.value, wildcard: /[*]/.test(best.value) };
 }
 
+const INVISIBLE_RE = new RegExp('[' + INVISIBLE + ']', 'g');
+
+/**
+ * The line shown to the user (and the agent) when a `warn` rule lets a
+ * secret through. `reason` is the rule's text from the signed policy: text
+ * from the organization's admin that reaches the agent, so it is cleaned
+ * (the same invisible and control characters as the vault dialogs, cut at
+ * 200 characters), quoted and labelled as a policy note. One line.
+ */
+function warnNotice(name, reason) {
+  const why = typeof reason === 'string'
+    ? reason.replace(INVISIBLE_RE, ' ').replace(/"/g, "'").replace(/\s+/g, ' ').trim().slice(0, 200).trim()
+    : '';
+  return 'zn: your team policy would block ' + name + ' here' + (why ? ' (policy note: "' + why + '")' : '') +
+    '. It was allowed and recorded for your organization.';
+}
+
 /**
  * detectorsOf(state) -> [{id, pattern, type}] of the policy (also in strict
  * mode: an extra detector only redacts more).
@@ -163,4 +193,4 @@ function detectorsOf(st) {
   return Array.isArray(st.policy.detectors) ? st.policy.detectors : [];
 }
 
-module.exports = { effective, hostCovered, approvalKey, pickOpening, detectorsOf, secretMatches };
+module.exports = { effective, hostCovered, approvalKey, pickOpening, detectorsOf, secretMatches, warnNotice, WARN_REASON };

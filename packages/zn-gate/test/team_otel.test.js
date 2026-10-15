@@ -87,7 +87,7 @@ test('timestamps are nanosecond decimal strings equal to the record time', (t) =
 test('severity follows the cloud mapping: WARN, ERROR, INFO', (t) => {
   const ctx = newLog(t);
   const cases = [
-    ['deny', 'WARN', 13], ['withhold', 'WARN', 13], ['ask:no', 'WARN', 13],
+    ['deny', 'WARN', 13], ['warn', 'WARN', 13], ['withhold', 'WARN', 13], ['ask:no', 'WARN', 13],
     ['error', 'ERROR', 17],
     ['allow', 'INFO', 9], ['ask:yes', 'INFO', 9], ['ask', 'INFO', 9], ['restore', 'INFO', 9], ['other', 'INFO', 9],
   ];

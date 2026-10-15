@@ -282,7 +282,9 @@ async function startFakeTeamServer({ now = Date.now } = {}) {
     if (state.policyVersion === 0) return send(res, 404, { error: 'No policy published for this organization' });
     const dayStart = Math.floor(now() / DAY) * DAY;
     const day = new Date(dayStart).toISOString().slice(0, 10).replace(/-/g, '');
-    const etag = `W/"${state.orgId}:${state.policyVersion}:${day}"`;
+    const features = String(req.headers['x-zn-policy-features'] || '').split(',').map((s) => s.trim());
+    const warnOk = features.includes('warn');
+    const etag = `W/"${state.orgId}:${state.policyVersion}:${day}${warnOk ? ':w' : ''}"`;
     const inm = req.headers['if-none-match'];
     if (inm && inm.split(',').map((s) => s.trim()).includes(etag)) {
       res.writeHead(304, { ETag: etag });
@@ -295,6 +297,9 @@ async function startFakeTeamServer({ now = Date.now } = {}) {
       expires_at: new Date(dayStart + 7 * DAY).toISOString(),
       ...clone(state.policyContent),
     };
+    // Older clients refuse a policy with a field they do not know: like the
+    // zn service, drop only the `warn` field (the rule's other restrictions stay).
+    if (!warnOk) policy.rules = policy.rules.map((r) => { const { warn, ...rest } = r; return rest; });
     return send(res, 200, signRaw(policy), { ETag: etag, 'Cache-Control': 'private, max-age=300' });
   }
 

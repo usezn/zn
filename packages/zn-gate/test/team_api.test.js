@@ -221,7 +221,7 @@ test('getPolicy returns 404 before a policy is published, then 200, 304 and 401 
   srv.publishPolicy({ rules: [{ secret: 'STRIPE_KEY', agents: ['claude-code'], deny: true }] });
   const first = await inst.api.getPolicy();
   assert.strictEqual(first.status, 200);
-  assert.match(first.etag, /^W\/"org_[A-Za-z0-9]{16}:1:\d{8}"$/);
+  assert.match(first.etag, /^W\/"org_[A-Za-z0-9]{16}:1:\d{8}:w"$/);
   assert.strictEqual(first.body.policy.version, 1);
   assert.strictEqual(first.body.policy.org, srv.state.orgId);
   assert.strictEqual(first.body.signature.kid, srv.state.kid);
@@ -234,9 +234,26 @@ test('getPolicy returns 404 before a policy is published, then 200, 304 and 401 
   assert.strictEqual(authReq.authorized, true);
   assert.strictEqual(authReq.headers.authorization, undefined);
   assert.strictEqual(authReq.headers['if-none-match'], first.etag);
+  // The client says it understands warn rules, so the server may send them.
+  assert.strictEqual(authReq.headers['x-zn-policy-features'], 'warn');
+  assert.ok(srv.requests.filter((r) => r.path === '/v1/org/policy').every((r) => r.headers['x-zn-policy-features'] === 'warn'));
 
   srv.revokeInstall(inst.installId);
   await assert.rejects(inst.api.getPolicy(), (err) => err instanceof TeamApiError && err.status === 401 && err.code === 'ZN_TEAM_HTTP');
+});
+
+test('a client that does not declare warn gets warn rules without the warn field', async (t) => {
+  const srv = await startServer(t);
+  const inst = await joinInstall(t, srv);
+  srv.publishPolicy({ rules: [{ secret: 'STAGING_*', agents: ['*'], warn: true, allowHosts: ['api.example.com'], reason: 'Needs review' }] });
+  const declared = await inst.api.getPolicy();
+  assert.strictEqual(declared.body.policy.rules[0].warn, true);
+  // An older client: same request without the features header.
+  const old = createApi({ base: srv.base, token: inst.token, userAgent: 'zn-gate/1.7.1',
+    fetchImpl: (url, init) => { const h = { ...init.headers }; delete h['X-ZN-Policy-Features']; return fetch(url, { ...init, headers: h }); } });
+  const r = await old.getPolicy();
+  assert.deepStrictEqual(r.body.policy.rules, [{ secret: 'STAGING_*', agents: ['*'], allowHosts: ['api.example.com'], reason: 'Needs review' }]);
+  assert.notStrictEqual(r.etag, declared.etag);
 });
 
 test('the signed policy verifies with node:crypto and the raw public key', async (t) => {

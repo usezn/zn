@@ -78,9 +78,14 @@ function failModeOf(opts) {
 // Reinstall the running version: `npm install -g zn-gate` alone could install an
 // older release without hooks.
 const { version: ZN_VERSION } = require('../../package.json');
-const REINSTALL = 'The zn scrubber engine is missing from this installation (lib/scrub/engine.js), so zn cannot check this. ' +
-  'Reinstall zn-gate (`npm install -g zn-gate@' + ZN_VERSION + '`) and run `zn hooks install` again. To let events pass unchecked while it is missing, ' +
-  'set {"hooks": {"whenUnavailable": "allow"}} in ~/.zn/config.json.';
+const REINSTALL = 'part of zn-gate is missing from this installation, so zn cannot check this action and blocked it. ' +
+  'Ask the user to reinstall it with `npm install -g zn-gate@' + ZN_VERSION + '` and then run `zn hooks install`.';
+// Only the person sees how to let actions pass unchecked; the model never gets that hint.
+const REINSTALL_USER = 'part of zn-gate is missing from this installation, so zn blocks what it cannot check. ' +
+  'Reinstall it with `npm install -g zn-gate@' + ZN_VERSION + '` and then run `zn hooks install`. ' +
+  'To let actions pass unchecked until then, set {"hooks": {"whenUnavailable": "allow"}} in ~/.zn/config.json.';
+const HOOK_FAILED = 'something went wrong inside the zn hook, so this action was blocked to keep the user\'s secrets safe. ' +
+  'If it happens again, ask the user to run `' + znCommand('hooks install') + '`.';
 
 /** Map every string leaf of a JSON value through an async function, keeping the shape. */
 async function mapStrings(value, fn) {
@@ -212,6 +217,7 @@ async function decidePre(ev, d, agentId, opts) {
     }
 
     const detected = markers.findMarkers(command).filter((m) => m.detected);
+    let context;
     if (detected.length) {
       const network = policy.hasNetworkSignals(command);
       const ctx = await ctxFor(ev, d, agentId, network ? 'bash_network' : 'bash_local');
@@ -223,6 +229,10 @@ async function decidePre(ev, d, agentId, opts) {
       if (res && res.withheld && res.withheld.length) {
         notes.push('kept ' + res.withheld.length + ' token(s) unresolved: ' +
           res.withheld.map((w) => w.token + ' (' + w.reason + ')').join(', '));
+        if (isOutdated(res.withheld)) {
+          notes.push(outdatedLine().replace(/\.$/, ''));
+          context = 'zn: ' + outdatedLine();
+        }
       }
     }
 
@@ -231,12 +241,12 @@ async function decidePre(ev, d, agentId, opts) {
         // A command that carries markers always asks, even when nothing was rewritten
         // (already wrapped in `zn run` by the agent, or tokens kept unresolved).
         // Never let it run on the user's allow rules alone.
-        return { decision: 'ask', message: 'zn: this command carries secret markers' + (notes.length ? '; ' + notes.join('; ') : '') + '.' };
+        return { decision: 'ask', message: 'zn: this command carries secret markers' + (notes.length ? '; ' + notes.join('; ') : '') + '.', context };
       }
       return notes.length ? { decision: 'allow', message: 'zn: ' + notes.join('; ') } : { decision: 'allow' };
     }
     // kind tells adapters that cannot rewrite input what the rewrite was for.
-    return { decision: 'ask', updatedInput: { command }, kind: wrap.wrapped ? 'wrap' : 'restore', message: 'zn: this command ' + notes.join('; ') + '.' };
+    return { decision: 'ask', updatedInput: { command }, kind: wrap.wrapped ? 'wrap' : 'restore', message: 'zn: this command ' + notes.join('; ') + '.', context };
   }
 
   if ((tool === 'write' || tool === 'edit' || tool === 'multiedit' || tool === 'notebookedit') && Array.isArray(input.texts)) {
@@ -248,6 +258,7 @@ async function decidePre(ev, d, agentId, opts) {
     const updates = [];
     let restored = 0;
     const withheld = [];
+    const notices = new Set();
     for (const t of withMarkers) {
       const res = await d.engine().detokenize(t.value, ctx);
       if (res && res.restored && res.restored.length && res.text !== t.value) {
@@ -255,22 +266,50 @@ async function decidePre(ev, d, agentId, opts) {
         restored += res.restored.length;
       }
       if (res && res.withheld) withheld.push(...res.withheld);
+      if (res && Array.isArray(res.notices)) for (const n of res.notices) notices.add(n);
     }
-    const why = withheld.length
-      ? ' Kept as tokens: ' + withheld.map((w) => w.token).join(', ') + (destination === 'write_tracked'
+    // Secrets the organization policy blocks: the file keeps the marker.
+    const blocked = [...new Set(withheld.filter((w) => w.reason === 'org_deny').map((w) => w.token.slice(5, -2)))];
+    const why = (withheld.length
+      ? ' Kept as tokens: ' + [...new Set(withheld.map((w) => w.token))].join(', ') + (destination === 'write_tracked'
         ? ' (this file can be committed, so secrets stay as markers; put real values in a git-ignored file such as .env.local).'
         : '.')
-      : '';
+      : '') +
+      (blocked.length ? ' ' + blockedLine(blocked) : '') +
+      (isOutdated(withheld) ? ' ' + outdatedLine() : '') +
+      (notices.size ? ' ' + [...notices].join(' ') : '');
+    // A secret the organization blocks: the write keeps the marker, and the
+    // user is asked so the reason is shown (a plain allow shows nothing).
+    // context: the model reads it, so it knows the value was not put back.
+    const outdated = isOutdated(withheld);
+    const told = [blocked.length ? blockedLine(blocked) : null, outdated ? outdatedLine() : null].filter(Boolean);
+    const context = told.length ? 'zn: ' + told.join(' ') : undefined;
+    if (updates.length === 0 && told.length) return { decision: 'ask', message: 'zn:' + why, context };
     if (updates.length === 0) return { decision: 'allow', message: why ? 'zn:' + why : undefined };
     return {
       decision: 'ask',
       updatedInput: { texts: updates },
       kind: 'restore',
       message: 'zn: restores ' + restored + ' secret value(s) in a git-ignored file.' + why,
+      context,
     };
   }
 
   return { decision: 'allow' };
+}
+
+/* The vault process was started by an older zn-gate: it does not check the
+ * organization policy, so nothing is put back until it is restarted. */
+function outdatedLine() {
+  return 'Your zn vault was started by an older zn-gate version, so secrets stay as markers. Run `' +
+    znCommand('lock') + '`, then `' + znCommand('unlock') + '`.';
+}
+const isOutdated = (list) => (list || []).some((w) => w.reason === 'vault_outdated');
+
+/* A secret the organization policy blocks (for every agent): the file keeps its marker. */
+function blockedLine(names) {
+  return 'Secret ' + names.join(', ') + (names.length > 1 ? ' are' : ' is') +
+    ' blocked by your organization policy, so the file keeps the marker.';
 }
 
 /*
@@ -516,25 +555,26 @@ function suggestedName(span) {
 
 function failDecision(ev, err, mode) {
   const missing = err.code === 'ZN_UNAVAILABLE';
-  const msg = 'zn: hook error (' + (err.code || 'error') + '): ' + (missing ? REINSTALL : err.message);
+  const detail = missing ? '' : ' (' + (err.code ? err.code + ': ' : '') + String(err.message || 'unknown error') + ')';
+  const msg = 'zn: ' + (missing ? REINSTALL : HOOK_FAILED) + detail;
   // Fail open only when the engine itself is missing and the user chose so.
-  if (mode === 'open' && missing) return { decision: 'allow', failOpen: true, warning: msg };
+  if (mode === 'open' && missing) return { decision: 'allow', failOpen: true, warning: 'zn: ' + REINSTALL_USER };
   const r = failClosed(ev, err, msg);
   // The user (not only the model) needs to hear how to fix a broken install.
-  if (missing) r.userMessage = msg;
+  if (missing) r.userMessage = 'zn: ' + REINSTALL_USER;
   return r;
 }
 
 function failClosed(ev, err, msg) {
   if (ev && ev.event === 'post_tool' && ev.output !== undefined) {
-    const withheld = '[zn: output withheld because the secret scrubber is unavailable: ' + (err.code || 'error') + ']';
+    const withheld = '[zn: this output was hidden because zn could not check it for secrets (' + (err.code || 'error') + ')]';
     const shape = (v) => (typeof v === 'string' ? withheld
       : Array.isArray(v) ? v.map(shape)
         : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, shape(x)])) : v);
     return { decision: 'allow', updatedOutput: shape(ev.output), message: msg };
   }
-  if (ev && ev.event === 'pre_tool') return { decision: 'deny', failClosed: true, message: msg + ' (fail-closed)' };
-  return { decision: 'deny', failClosed: true, message: msg + ' (fail-closed)', userMessage: msg };
+  if (ev && ev.event === 'pre_tool') return { decision: 'deny', failClosed: true, message: msg };
+  return { decision: 'deny', failClosed: true, message: msg, userMessage: msg };
 }
 
 /**
@@ -608,8 +648,10 @@ function refuseInput(agentId, why) {
     process.stderr.write('zn hook: ' + why + '; passed through (hooks.whenUnavailable is "allow")\n');
     return;
   }
-  const msg = 'zn: ' + why + ', so zn cannot check this call and it is denied. ' +
-    'Set {"hooks": {"whenUnavailable": "allow"}} in ~/.zn/config.json to let such events pass.';
+  // Claude Code and Codex show this stderr to the model, so it never says how to
+  // let actions pass unchecked (docs/compat.md documents that for the user).
+  const msg = 'zn: could not read this action (' + why + '), so it was blocked. ' +
+    'If it happens again, ask the user to run `' + znCommand('hooks install') + '`.';
   process.stderr.write('zn hook: ' + msg + '\n');
   if (agentId === 'cursor') process.stdout.write(JSON.stringify({ permission: 'deny', continue: false, user_message: msg, agent_message: msg }));
   process.exitCode = 2;
@@ -642,7 +684,8 @@ async function handleEvent(args) {
   try {
     raw = JSON.parse(text);
   } catch (err) {
-    return refuseInput(agentId, 'the event on stdin is not valid JSON (' + err.message + ')');
+    // Node's parse error quotes part of the input, which can be tool output: never pass it on.
+    return refuseInput(agentId, 'the event on stdin is not valid JSON');
   }
   // Valid JSON that is not an object (a number, a string, an array) is not an event.
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {

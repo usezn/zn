@@ -307,3 +307,36 @@ test('a batch file runs through the system cmd.exe even when ComSpec points else
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout.trim(), 'ran:one:two words');
 });
+
+/* zn Team: the vault applies the organization policy in listSecrets({effective: true}). */
+function withOrg(vault, fields) {
+  const list = vault.listSecrets.bind(vault);
+  vault.listSecrets = async (o) => (await list(o)).map((s) => (s.name === 'DB_PASSWORD' ? { ...s, ...fields } : s));
+  return vault;
+}
+
+test('zn run: a warn rule lets the secret through, says so and records "warn"', async () => {
+  const vault = withOrg(await setup(), { warn: true, warnReason: 'Database passwords need review' });
+  const stdout = sink();
+  const stderr = sink();
+  const code = await runBroker(['--secrets', 'DB_PASSWORD', '--', NODE, '-e', 'console.log(process.env.DB_PASSWORD ? "set" : "unset")'], {
+    vault, env: nodeEnv, stdout, stderr, stdin: { isTTY: false },
+  });
+  assert.equal(code, 0, stderr.text());
+  assert.equal(stdout.text().trim(), 'set');
+  assert.match(stderr.text(), /zn: your team policy would block DB_PASSWORD here \(policy note: "Database passwords need review"\)\. It was allowed and recorded for your organization\./);
+  const uses = vault.auditLog.filter((e) => e.secret === 'DB_PASSWORD' && e.tool === 'zn run');
+  assert.deepEqual(uses.map((e) => [e.decision, e.reason]), [['warn', 'policy:warn']]);
+});
+
+test('zn run: an organization deny still blocks', async () => {
+  const vault = withOrg(await setup(), { deny: true, denyReason: 'policy:org_deny' });
+  const stderr = sink();
+  const code = await runBroker(['--secrets', 'DB_PASSWORD', '--', NODE, '-e', 'console.log(1)'], {
+    vault, env: nodeEnv, stdout: sink(), stderr, stdin: { isTTY: false },
+  });
+  assert.equal(code, 77);
+  assert.match(stderr.text(), /blocked for this agent by your organization policy/);
+  assert.ok(vault.auditLog.some((e) => e.secret === 'DB_PASSWORD' && e.decision === 'deny'));
+  assert.ok(!vault.auditLog.some((e) => e.decision === 'warn' || (e.secret === 'DB_PASSWORD' && e.decision === 'allow' && e.tool === 'zn run')));
+});

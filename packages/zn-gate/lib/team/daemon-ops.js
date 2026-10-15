@@ -302,7 +302,8 @@ function makeTeamOps(ctx) {
 
     /**
      * effectiveList(list, agent, agentTrusted) -> list with the organization
-     * policy applied: each entry gets the settings to enforce, `deny`, and
+     * policy applied: each entry gets the settings to enforce, `deny`,
+     * `warn` (with the rule's `warnReason`, printable only) and
      * `orgPending`. In a team, a policy that does not verify (or none yet)
      * leaves the local settings: the vault copy cannot be edited from outside.
      */
@@ -318,6 +319,8 @@ function makeTeamOps(ctx) {
           name: entry.name,
           deny: eff.deny,
           denyReason: eff.deny ? eff.reason : undefined,
+          warn: eff.warn === true,
+          warnReason: eff.warn ? printable(eff.warnReason, 200) || undefined : undefined,
           orgPending: eff.pending.length ? eff.pending : undefined,
           orgPolicy: { version: st.version, state: st.state },
         });

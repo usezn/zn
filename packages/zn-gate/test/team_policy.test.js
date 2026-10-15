@@ -129,3 +129,41 @@ test('the cache goes to strict mode when it expires and is ignored if edited', (
   assert.strictEqual(st.state, 'invalid');
   assert.strictEqual(st.policy, null);
 });
+
+test('warn rules: accepted alone, refused with deny or as a non-boolean; old rules unchanged', () => {
+  const k = orgKey();
+  const ok = (rules) => policy.verifyEnvelope(sign(body({ rules }), k), k.pin, { now: NOW });
+  assert.strictEqual(ok([{ secret: 'PROD_*', agents: ['*'], warn: true, reason: 'Production credentials need review' }]).ok, true);
+  assert.strictEqual(ok([{ secret: 'PROD_*', agents: ['*'], warn: true, allowHosts: ['api.stripe.com'], mode: 'proxy' }]).ok, true);
+  assert.strictEqual(ok([{ secret: 'PROD_*', agents: ['*'], warn: false, deny: true }]).ok, true);
+  assert.strictEqual(ok([{ secret: 'PROD_*', agents: ['*'], deny: true, reason: 'No production credentials in AI agents' }]).ok, true);
+  const both = ok([{ secret: 'PROD_*', agents: ['*'], deny: true, warn: true }]);
+  assert.strictEqual(both.ok, false);
+  assert.match(both.error, /deny and warn together/);
+  const notBool = ok([{ secret: 'PROD_*', agents: ['*'], warn: 'yes' }]);
+  assert.strictEqual(notBool.ok, false);
+  assert.match(notBool.error, /invalid warn/);
+});
+
+test('the vault applies a deny for another agent, also from an expired policy (strict mode)', async () => {
+  const { makeTeamOps } = require('../lib/team/daemon-ops');
+  const k = orgKey();
+  const opsFor = (issued, expires) => {
+    const env = sign(body({
+      issued_at: new Date(issued).toISOString(), expires_at: new Date(expires).toISOString(),
+      rules: [{ secret: 'PROD_*', agents: ['other'], deny: true }],
+    }), k);
+    const team = { org: 'org_TestOrg12345678', pin: k.pin, policy: { envelope: env, version: 3 } };
+    const state = { opts: {}, loadSecrets: async () => ({ team, secrets: {} }) };
+    return makeTeamOps({ state, writeAudit: () => {}, confirmOutOfBand: async () => true });
+  };
+  const local = [{ name: 'PROD_DB', mode: 'env', allowHosts: [], allowCommands: ['psql'] }, { name: 'DEV_DB', mode: 'env', allowHosts: [], allowCommands: ['psql'] }];
+  const now = Date.now();
+  const active = await opsFor(now - DAY, now + DAY).effectiveList(local, 'claude-code', false);
+  assert.strictEqual(active[0].deny, true);
+  assert.strictEqual(active[1].deny, false);
+  const expired = await opsFor(now - 10 * DAY, now - 3 * DAY).effectiveList(local, 'claude-code', true);
+  assert.strictEqual(expired[0].deny, true);
+  assert.strictEqual(expired[0].orgPolicy.state, 'expired');
+  assert.strictEqual(expired[1].deny, false);
+});

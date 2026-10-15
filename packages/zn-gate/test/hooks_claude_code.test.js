@@ -252,12 +252,16 @@ test('every error fails closed, a missing engine too unless the user allows it',
   try {
     const def = await runner.handle(adapter, ev, { engine: absent, vault: createFakeVault(), home });
     assert.ok(!JSON.stringify(def.output).includes(AWS));
-    assert.match(def.output.hookSpecificOutput.updatedToolOutput.stdout, /output withheld/);
-    assert.match(def.output.systemMessage, /Reinstall zn-gate/);
+    assert.match(def.output.hookSpecificOutput.updatedToolOutput.stdout, /output was hidden/);
+    assert.match(def.output.systemMessage, /[Rr]einstall it with/);
     assert.ok(def.output.systemMessage.includes('npm install -g zn-gate@' + require('../package.json').version),
       def.output.systemMessage);
     const defPre = await runner.handle(adapter, preBash('node a.js __ZN_AWS_KEY_1__', '/'), { engine: absent, vault: createFakeVault(), home, znRunPrefix: PREFIX });
     assert.equal(defPre.output.hookSpecificOutput.permissionDecision, 'deny');
+    // The way to let actions pass unchecked is for the person only, never in what the model reads.
+    assert.doesNotMatch(defPre.output.hookSpecificOutput.permissionDecisionReason, /whenUnavailable/);
+    assert.doesNotMatch(JSON.stringify(def.output.hookSpecificOutput), /whenUnavailable/);
+    assert.match(def.output.systemMessage, /whenUnavailable/);
     fs.mkdirSync(path.join(home, '.zn'), { recursive: true });
     fs.writeFileSync(path.join(home, '.zn', 'config.json'), JSON.stringify({ hooks: { whenUnavailable: 'allow' } }));
     const allowed = await runner.handle(adapter, ev, { engine: absent, vault: createFakeVault(), home });
@@ -282,15 +286,15 @@ test('every error fails closed, a missing engine too unless the user allows it',
   }
   const open = await runner.handle(adapter, ev, { engine: absent, vault: createFakeVault(), failMode: 'open' });
   assert.equal(open.output, null);
-  assert.match(open.stderr, /ZN_UNAVAILABLE/);
+  assert.match(open.stderr, /part of zn-gate is missing/);
   const err = await runner.handle(adapter, ev, { engine: broken, vault: createFakeVault(), failMode: 'open' });
   assert.ok(!JSON.stringify(err.output).includes(AWS), 'an engine error never passes the output through');
-  assert.match(err.output.hookSpecificOutput.updatedToolOutput.stdout, /output withheld/);
+  assert.match(err.output.hookSpecificOutput.updatedToolOutput.stdout, /output was hidden/);
   const closedMissing = await runner.handle(adapter, ev, { engine: absent, vault: createFakeVault(), failMode: 'closed' });
   assert.ok(!JSON.stringify(closedMissing.output).includes(AWS));
   const closed = await runner.handle(adapter, ev, { engine: broken, vault: createFakeVault(), failMode: 'closed' });
   assert.ok(!JSON.stringify(closed.output).includes(AWS));
-  assert.match(closed.output.hookSpecificOutput.updatedToolOutput.stdout, /output withheld/);
+  assert.match(closed.output.hookSpecificOutput.updatedToolOutput.stdout, /output was hidden/);
   const p = await runner.handle(adapter, prompt('x ' + AWS, '/'), { engine: broken, vault: createFakeVault(), failMode: 'closed' });
   assert.equal(p.output.decision, 'block');
   const pre = await runner.handle(adapter, preBash('node a.js __ZN_AWS_KEY_1__', '/'), { engine: broken, vault: createFakeVault(), failMode: 'closed', znRunPrefix: PREFIX });
@@ -601,4 +605,102 @@ test('OpenCode plugin: a hook that fails or times out blocks the call and the me
   assert.match(src, /action: "error", message: "timeout"/);
   assert.match(src, /if \(r\.action === "error"\) throw new Error\("zn: the secret scrubber is not working \(" \+ r\.message \+ "\); call blocked"\)/);
   assert.match(src, /if \(r\.action === "error"\) throw new Error\("zn: the secret scrubber is not working \(" \+ r\.message \+ "\); message not sent"\)/);
+});
+
+/* zn Team: restoring a named marker into a file follows the organization policy. */
+/* Every string in a hook answer, joined: where the message lands depends on the adapter. */
+function texts(o) {
+  if (typeof o === 'string') return o;
+  if (!o || typeof o !== 'object') return '';
+  return Object.values(o).map(texts).join('\n');
+}
+
+function orgRestoreVault(values, rules) {
+  const vault = createFakeVault();
+  const audits = [];
+  vault.audit = async (ev) => { audits.push(ev); };
+  vault.audits = audits;
+  vault.resolve = async (project, token, o) => {
+    const name = /^__ZN_(.+)__$/.exec(String(token))[1];
+    const value = Object.prototype.hasOwnProperty.call(values, name) ? values[name] : null;
+    const r = rules[name] || {};
+    if (!o || o.withPolicy !== true) return r.deny ? null : value;
+    if (r.deny) return { value: null, policy: 1, deny: true };
+    return r.warn ? { value, policy: 1, warn: true, warnReason: r.reason } : { value, policy: 1 };
+  };
+  return vault;
+}
+
+test('restoring a named marker into a git-ignored file follows the organization policy', async (t) => {
+  const dir = tmpProject(t);
+  const engine = require('../lib/scrub/engine');
+  const file = path.join(dir, '.env.local');
+  const PROD = 'prod-value-0123456789abcdef';
+  const STG = 'staging-value-0123456789abc';
+  const DEV = 'dev-value-0123456789abcdefg';
+  const write = (content, vault) => run(preTool('Write', { file_path: file, content }, dir), { vault, engine });
+
+  // deny: the marker stays and the message says why
+  const denyVault = orgRestoreVault({ PROD_DB: PROD }, { PROD_DB: { deny: true } });
+  const denied = await write('DB=__ZN_PROD_DB__\n', denyVault);
+  assert.ok(!JSON.stringify(denied.output || {}).includes(PROD));
+  assert.equal(denied.output.hookSpecificOutput.permissionDecision, 'ask');
+  assert.equal(denied.output.hookSpecificOutput.updatedInput, undefined);
+  const dMsg = texts(denied.output);
+  assert.match(dMsg, /Secret PROD_DB is blocked by your organization policy, so the file keeps the marker\./);
+  assert.equal(denied.output.hookSpecificOutput.additionalContext, 'zn: Secret PROD_DB is blocked by your organization policy, so the file keeps the marker.');
+
+  // one blocked and one restorable secret in the same write
+  const mixVault = orgRestoreVault({ PROD_DB: PROD, DEV_KEY: DEV }, { PROD_DB: { deny: true } });
+  const mixed = await write('A=__ZN_PROD_DB__\nB=__ZN_DEV_KEY__\n', mixVault);
+  assert.equal(mixed.output.hookSpecificOutput.permissionDecision, 'ask');
+  assert.equal(mixed.output.hookSpecificOutput.updatedInput.content, 'A=__ZN_PROD_DB__\nB=' + DEV + '\n');
+  assert.match(mixed.output.hookSpecificOutput.permissionDecisionReason, /restores 1 secret value.*Secret PROD_DB is blocked by your organization policy, so the file keeps the marker\./);
+  assert.match(mixed.output.hookSpecificOutput.additionalContext, /Secret PROD_DB is blocked/);
+  assert.ok(!JSON.stringify(mixed.output).includes(PROD));
+
+  // warn: restored, the message carries the notice, one "warn" record
+  const warnVault = orgRestoreVault({ STAGING_KEY: STG }, { STAGING_KEY: { warn: true, reason: 'Staging keys need review' } });
+  const warned = await write('K=__ZN_STAGING_KEY__\n', warnVault);
+  assert.equal(warned.output.hookSpecificOutput.permissionDecision, 'ask');
+  assert.equal(warned.output.hookSpecificOutput.updatedInput.content, 'K=' + STG + '\n');
+  assert.match(texts(warned.output), /zn: your team policy would block STAGING_KEY here \(policy note: "Staging keys need review"\)\. It was allowed and recorded for your organization\./);
+  assert.deepEqual(warnVault.audits.filter((a) => a.decision === 'warn').map((a) => [a.secret, a.reason]), [['STAGING_KEY', 'policy:warn']]);
+
+  // no organization rule: restored as before, no notice
+  const plainVault = orgRestoreVault({ DEV_KEY: DEV }, {});
+  const plain = await write('K=__ZN_DEV_KEY__\n', plainVault);
+  assert.equal(plain.output.hookSpecificOutput.permissionDecision, 'ask');
+  assert.equal(plain.output.hookSpecificOutput.updatedInput.content, 'K=' + DEV + '\n');
+  assert.doesNotMatch(JSON.stringify(plain.output), /team policy|organization policy/);
+  assert.equal(plain.output.hookSpecificOutput.additionalContext, undefined);
+  assert.ok(!plainVault.audits.some((a) => a.decision === 'warn'));
+});
+
+/* A vault process started by an older zn-gate answers resolve with the bare value. */
+test('an older vault process: Write and Bash keep the markers and say how to restart it', async (t) => {
+  const dir = tmpProject(t);
+  const engine = require('../lib/scrub/engine');
+  const vault = createFakeVault();
+  const DEV = 'dev-value-0123456789abcdefg';
+  await vault.setSecret('DEV_KEY', DEV, { mode: 'file' });
+  const token = await vault.mapToken(dir, 'AWS_KEY', AWS);
+  const plain = vault.resolve.bind(vault);
+  vault.resolve = async (project, tok) => plain(project, tok); // no withPolicy answer
+  const OLD = /Your zn vault was started by an older zn-gate version, so secrets stay as markers\. Run `[^`]*lock`, then `[^`]*unlock`\./;
+
+  const w = await run(preTool('Write', { file_path: path.join(dir, '.env.local'), content: 'K=__ZN_DEV_KEY__\nA=' + token + '\n' }, dir), { vault, engine });
+  const wo = w.output.hookSpecificOutput;
+  assert.equal(wo.permissionDecision, 'ask');
+  assert.equal(wo.updatedInput, undefined);
+  assert.match(wo.permissionDecisionReason, OLD);
+  assert.match(wo.additionalContext, OLD);
+  assert.ok(!JSON.stringify(w.output).includes(DEV) && !JSON.stringify(w.output).includes(AWS));
+
+  const b = await run(preBash('node check.js ' + token, dir), { vault, engine });
+  const bo = b.output.hookSpecificOutput;
+  assert.equal(bo.permissionDecision, 'ask');
+  assert.ok(!JSON.stringify(b.output).includes(AWS));
+  assert.match(bo.permissionDecisionReason, /Your zn vault was started by an older zn-gate version/);
+  assert.match(bo.additionalContext, OLD);
 });

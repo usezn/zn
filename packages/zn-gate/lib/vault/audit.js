@@ -21,7 +21,7 @@ const crypto = require('crypto');
 const GENESIS = '0'.repeat(64);
 const FIELDS = ['secret', 'mode', 'agent', 'tool', 'argv0', 'host', 'decision', 'reason'];
 const MODES = new Set(['proxy', 'env', 'file', 'named', 'detected', 'resolve', 'set', 'remove', 'unlock', 'lock', 'expire']);
-const DECISIONS = new Set(['allow', 'deny', 'ask', 'ask:yes', 'ask:no', 'restore', 'withhold', 'error']);
+const DECISIONS = new Set(['allow', 'deny', 'warn', 'ask', 'ask:yes', 'ask:no', 'restore', 'withhold', 'error']);
 const FORMATS = {
   secret: /^[A-Z0-9_]{1,80}$/,
   agent: /^[A-Za-z0-9_.:/-]{1,64}$/,

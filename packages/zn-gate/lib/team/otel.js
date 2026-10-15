@@ -51,7 +51,7 @@ const RE = {
   orgId: /^[A-Za-z0-9_-]{1,64}$/,
 };
 const GATE_MODES = new Set(['proxy', 'env', 'file', 'named', 'detected', 'resolve', 'set', 'remove', 'unlock', 'lock', 'expire', 'other', '[redacted]']);
-const GATE_DECISIONS = new Set(['allow', 'deny', 'ask', 'ask:yes', 'ask:no', 'restore', 'withhold', 'error', 'other', '[redacted]']);
+const GATE_DECISIONS = new Set(['allow', 'deny', 'warn', 'ask', 'ask:yes', 'ask:no', 'restore', 'withhold', 'error', 'other', '[redacted]']);
 
 function ok(re, v, masked) {
   return typeof v === 'string' && (re.test(v) || (masked && MASKED.has(v))) ? v : null;
@@ -85,7 +85,7 @@ class Attrs {
 
 function gateSeverity(decision) {
   if (decision === 'error') return 'ERROR';
-  if (decision === 'deny' || decision === 'withhold' || decision === 'ask:no') return 'WARN';
+  if (decision === 'deny' || decision === 'warn' || decision === 'withhold' || decision === 'ask:no') return 'WARN';
   return 'INFO';
 }
 

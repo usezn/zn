@@ -6,7 +6,7 @@
  */
 const test = require('node:test');
 const assert = require('node:assert');
-const { effective, approvalKey, hostCovered, pickOpening } = require('../lib/team/effective');
+const { effective, approvalKey, hostCovered, pickOpening, warnNotice, WARN_REASON } = require('../lib/team/effective');
 
 const ORG = 'org_TestOrg12345678';
 const LOCAL = { mode: 'env', allowHosts: ['api.stripe.com', 'files.stripe.com'], allowCommands: ['stripe'], allowIn: ['header', 'body', 'query'] };
@@ -130,4 +130,49 @@ test('narrowing commands keeps an organization entry that a local entry covers b
   const r = effective('GH_TOKEN', local, { policy: p, state: 'active', agent: 'codex', agentTrusted: true });
   // "git push" is narrower than local "git"; "npm" would widen "npm publish"; curl was never allowed.
   assert.deepStrictEqual(r.meta.allowCommands, ['git push']);
+});
+
+test('warn lets the secret through, keeps the other restrictions, and loses to a deny', () => {
+  const p = pol([{ secret: 'PROD_*', agents: ['codex'], warn: true, reason: 'Needs review', allowHosts: ['api.stripe.com'], mode: 'proxy' }]);
+  for (const who of [trusted('codex'), trusted('claude-code'), { agent: null }]) {
+    const r = eff('PROD_DB', p, who);
+    assert.strictEqual(r.deny, false);
+    assert.strictEqual(r.warn, true);
+    assert.strictEqual(r.warnReason, 'Needs review');
+    assert.strictEqual(r.warnRule, 0);
+    assert.deepStrictEqual(r.meta.allowHosts, ['api.stripe.com']);
+    assert.strictEqual(r.meta.mode, 'proxy');
+  }
+  assert.strictEqual(eff('PROD_DB', p, trusted('codex'), { state: 'expired' }).warn, true);
+  assert.strictEqual(eff('DEV_DB', p, trusted('codex')).warn, false);
+  const denyToo = pol([
+    { secret: 'PROD_*', agents: ['*'], warn: true },
+    { secret: 'PROD_DB', agents: ['*'], deny: true },
+  ]);
+  const r = eff('PROD_DB', denyToo, trusted('codex'));
+  assert.strictEqual(r.deny, true);
+  assert.strictEqual(r.warn, false);
+  assert.strictEqual(r.reason, 'policy:org_deny');
+});
+
+test('a policy without warn rules gives the same result as before', () => {
+  const p = pol([{ secret: 'PROD_*', agents: ['*'], deny: true }, { secret: 'STRIPE_KEY', agents: ['*'], allowCommands: ['stripe'] }]);
+  assert.strictEqual(eff('PROD_DB', p, trusted('codex')).warn, false);
+  const s = eff('STRIPE_KEY', p, trusted('codex'));
+  assert.strictEqual(s.warn, false);
+  assert.strictEqual(s.deny, false);
+  assert.deepStrictEqual(s.meta.allowCommands, ['stripe']);
+});
+
+test('the warn notice names the secret and the rule reason in plain words', () => {
+  assert.strictEqual(warnNotice('PROD_DB', 'Production credentials need review.'),
+    'zn: your team policy would block PROD_DB here (policy note: "Production credentials need review."). It was allowed and recorded for your organization.');
+  assert.strictEqual(warnNotice('PROD_DB'),
+    'zn: your team policy would block PROD_DB here. It was allowed and recorded for your organization.');
+  assert.ok(!/[\u0000-\u001f]/.test(warnNotice('PROD_DB', 'a\nb\u001b[31m')));
+  const odd = warnNotice('PROD_DB', 'ok\u202e\u200b\u0085\u2028 "quoted" ' + 'x'.repeat(300));
+  assert.ok(!/[\u0080-\u009f\u200b-\u200f\u2028-\u202e]/.test(odd));
+  assert.match(odd, /\(policy note: "ok 'quoted' x+"\)\. It was allowed/);
+  assert.ok(odd.length < 320);
+  assert.strictEqual(WARN_REASON, 'policy:warn');
 });

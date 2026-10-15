@@ -88,7 +88,7 @@ const uniqueStrings = (a, re, max) => Array.isArray(a) && a.length <= max &&
   a.every((x) => typeof x === 'string' && re.test(x)) && new Set(a).size === a.length;
 
 function checkRule(r) {
-  if (!isObj(r) || !onlyKeys(r, ['secret', 'agents', 'mode', 'allowHosts', 'allowCommands', 'injectAt', 'deny', 'reason'])) return 'unknown field';
+  if (!isObj(r) || !onlyKeys(r, ['secret', 'agents', 'mode', 'allowHosts', 'allowCommands', 'injectAt', 'deny', 'warn', 'reason'])) return 'unknown field';
   if (typeof r.secret !== 'string' || !SECRET_PATTERN_RE.test(r.secret)) return 'invalid secret pattern';
   if (!uniqueStrings(r.agents, AGENT_RE, 16) || r.agents.length < 1) return 'invalid agents';
   if (r.mode !== undefined && !MODES.includes(r.mode)) return 'invalid mode';
@@ -96,6 +96,8 @@ function checkRule(r) {
   if (r.allowCommands !== undefined && !uniqueStrings(r.allowCommands, COMMAND_RE, 64)) return 'invalid allowCommands';
   if (r.injectAt !== undefined && !INJECT_AT.includes(r.injectAt)) return 'invalid injectAt';
   if (r.deny !== undefined && typeof r.deny !== 'boolean') return 'invalid deny';
+  if (r.warn !== undefined && typeof r.warn !== 'boolean') return 'invalid warn';
+  if (r.deny === true && r.warn === true) return 'invalid rule: deny and warn together';
   if (r.reason !== undefined && (typeof r.reason !== 'string' || r.reason.length < 1 || r.reason.length > 200 || /[\u0000-\u001f]/.test(r.reason))) return 'invalid reason';
   return null;
 }

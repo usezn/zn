@@ -24,6 +24,11 @@ Manager, or Secret Service on Linux), or behind a passphrase when there is no
 keychain. The vault stays unlocked for 8 hours, or until 30 minutes without
 use, or until `zn lock`.
 
+After you update zn-gate, a vault that is still running from the older
+version keeps secrets as markers in the agent hooks until it is restarted.
+`zn vault status` shows the version of the running vault and flags an
+outdated one, and `zn unlock` restarts it for you.
+
 zn asks you to confirm some things outside the agent (step 4). On a desktop it
 shows a system dialog. On a server or over SSH there is no dialog: run the
 vault in a terminal of its own instead, and answer there:

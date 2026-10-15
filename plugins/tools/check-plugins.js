@@ -233,6 +233,33 @@ if (hasNpm) {
   }
 }
 
+/* ------------------------ Codex plugin layout ------------------------ */
+
+// Codex (OpenAI docs, "Package your plugin"): the root plugin.json is the
+// manifest, its OpenAI settings live under extensions["com.openai"], and the
+// repository marketplace is .agents/plugins/marketplace.json, whose plugin
+// entries need source.path (./ prefixed, inside the marketplace root),
+// policy.installation, policy.authentication and category.
+const codexExt = ap.extensions || {};
+// Other keys under extensions and extensions.com.openai (presentation, apps,
+// onboardingSkill, MCP server mappings) are documented by OpenAI and not checked here.
+const codexOpenAI = codexExt['com.openai'] || {};
+if (codexOpenAI.hooks !== './com.openai/hooks.json') fail(PLUGIN + '/plugin.json: extensions.com.openai.hooks must be ./com.openai/hooks.json');
+if (!fs.existsSync(path.join(ROOT, PLUGIN, 'com.openai', 'hooks.json'))) fail(PLUGIN + '/com.openai/hooks.json: missing');
+const codexMarket = json('.agents/plugins/marketplace.json');
+const CODEX_INSTALL = new Set(['AVAILABLE', 'INSTALLED_BY_DEFAULT', 'NOT_AVAILABLE']);
+const codexEntries = (codexMarket.plugins || []).filter((p) => p.name === ap.name);
+if (codexEntries.length !== 1) {
+  fail('.agents/plugins/marketplace.json: needs exactly one entry named ' + ap.name);
+} else {
+  const e = codexEntries[0];
+  const src = e.source || {};
+  if (src.path !== './' + PLUGIN) fail('.agents/plugins/marketplace.json: source.path must be ./' + PLUGIN);
+  if (!CODEX_INSTALL.has((e.policy || {}).installation)) fail('.agents/plugins/marketplace.json: policy.installation must be AVAILABLE, INSTALLED_BY_DEFAULT or NOT_AVAILABLE');
+  if (!(e.policy || {}).authentication) fail('.agents/plugins/marketplace.json: policy.authentication is required');
+  if (!e.category) fail('.agents/plugins/marketplace.json: category is required');
+}
+
 /* ------------------------------ release ------------------------------ */
 
 if (release) {

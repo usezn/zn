@@ -74,7 +74,10 @@ function memoryVault() {
       }
       return byKey.get(key);
     },
-    resolve(project, token) { return byToken.has(project + '\0' + token) ? byToken.get(project + '\0' + token) : null; },
+    resolve(project, token, o) {
+      const v = byToken.has(project + '\0' + token) ? byToken.get(project + '\0' + token) : null;
+      return o && o.withPolicy === true ? { value: v, policy: 1 } : v;
+    },
     setSecret() {}, listSecrets() { return []; }, removeSecret() {},
     exactValues() { return []; }, audit() {},
   };

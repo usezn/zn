@@ -1,0 +1,176 @@
+{
+  "_comment": "Public facts of zn-gate, checked on every pull request by .github/scripts/check-public-facts.mjs. A release changes version.value in the same pull request as the manifests and the pinned docs.",
+  "version": {
+    "value": "1.7.1",
+    "files": [
+      {
+        "file": "packages/zn-gate/package.json",
+        "json": "version"
+      },
+      {
+        "file": "packages/zn-gate/server.json",
+        "json": "version"
+      },
+      {
+        "file": "packages/zn-gate/server.json",
+        "json": "packages.0.version"
+      },
+      {
+        "file": "packages/zn-gate-py/pyproject.toml",
+        "regex": "^version = \"([^\"]+)\""
+      },
+      {
+        "file": "packages/zn-gate-py/src/zn_gate/__init__.py",
+        "regex": "^__version__ = \"([^\"]+)\""
+      },
+      {
+        "file": "plugins/zn-gate/plugin.json",
+        "json": "version"
+      },
+      {
+        "file": "plugins/zn-gate/.claude-plugin/plugin.json",
+        "json": "version"
+      },
+      {
+        "file": "plugins/zn-gate/.cursor-plugin/plugin.json",
+        "json": "version"
+      },
+      {
+        "file": "plugins/mcp-registry/server.json",
+        "json": "version"
+      },
+      {
+        "file": "plugins/mcp-registry/server.json",
+        "json": "packages.0.version"
+      },
+      {
+        "file": "plugins/zn-gate/package.json",
+        "json": "version"
+      },
+      {
+        "file": "plugins/zn-gate/package.json",
+        "json": "dependencies.zn-gate"
+      },
+      {
+        "file": "plugins/zn-gate/scripts/zn-gate.lock.json",
+        "json": "version"
+      }
+    ],
+    "pinsExclude": [
+      "CHANGELOG.md",
+      ".github/public-facts.json",
+      "packages/zn-gate/test/",
+      "packages/zn-gate-py/tests/",
+      "packages/zn-gate/package-lock.json",
+      "plugins/zn-gate/package-lock.json",
+      "bench/",
+      "SECURITY.md"
+    ],
+    "allowPins": [
+      {
+        "file": "docs/verify-release.md",
+        "pin": "zn-gate@1.5.0",
+        "why": "example of reading the attestations of a past release"
+      },
+      {
+        "file": "packages/zn-gate/README.md",
+        "pin": "zn-gate 1.4.1",
+        "why": "the version the latency table was measured with"
+      },
+      {
+        "file": "docs/team.md",
+        "pin": "zn-gate 1.8.0",
+        "why": "first zn-gate version with the Team Warn choice; matches the version once 1.8.0 is released"
+      }
+    ]
+  },
+  "text": [
+    {
+      "id": "agents with hooks",
+      "files": [
+        "packages/zn-gate/package.json"
+      ],
+      "must": [
+        "(Claude Code, Codex CLI, Cursor, OpenCode)"
+      ]
+    },
+    {
+      "id": "agents with hooks",
+      "files": [
+        "README.md"
+      ],
+      "must": [
+        "Claude Code, Codex CLI, Cursor, OpenCode"
+      ]
+    },
+    {
+      "id": "agents with hooks",
+      "files": [
+        "docs/compat.md"
+      ],
+      "must": [
+        "| | Claude Code | Codex CLI | Cursor (IDE) | OpenCode |"
+      ]
+    },
+    {
+      "id": "install command",
+      "files": [
+        "README.md",
+        "packages/zn-gate/README.md"
+      ],
+      "must": [
+        "npx -y zn-gate"
+      ]
+    },
+    {
+      "id": "license",
+      "files": [
+        "LICENSE"
+      ],
+      "must": [
+        "MIT License"
+      ]
+    },
+    {
+      "id": "supported versions",
+      "files": [
+        "SECURITY.md"
+      ],
+      "must": [
+        "| 1.7.x   | :white_check_mark: |"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "license",
+      "value": "MIT",
+      "files": [
+        {
+          "file": "packages/zn-gate/package.json",
+          "json": "license"
+        },
+        {
+          "file": "plugins/zn-gate/plugin.json",
+          "json": "license"
+        },
+        {
+          "file": "plugins/zn-gate/.claude-plugin/plugin.json",
+          "json": "license"
+        },
+        {
+          "file": "plugins/zn-gate/.cursor-plugin/plugin.json",
+          "json": "license"
+        },
+        {
+          "file": "packages/zn-gate-py/pyproject.toml",
+          "regex": "^license = \\{ text = \"([^\"]+)\" \\}"
+        },
+        {
+          "file": "Cargo.toml",
+          "regex": "^license = \"([^\"]+)\""
+        }
+      ]
+    }
+  ]
+}

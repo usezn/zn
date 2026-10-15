@@ -1,0 +1,33 @@
+name: Public facts
+
+# The version, agents with hooks, license and install command must read the same in every manifest and
+# doc of this repository (.github/public-facts.json). A release changes them in the same pull request.
+on:
+  push:
+    branches: [ main, next ]
+  pull_request:
+    branches: [ main, next, 'release/**' ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-facts-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  public-facts:
+    name: Public facts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Test the checker
+        run: node --test .github/scripts/check-public-facts.test.mjs
+      - name: Check the public facts
+        run: node .github/scripts/check-public-facts.mjs

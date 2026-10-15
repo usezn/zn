@@ -31,7 +31,7 @@ const { createMasker } = require('./mask');
 const { gitStatusOf, realTargetOf } = require('./files');
 const policy = require('../hooks/policy');
 const deps = require('../deps');
-const { pickOpening } = require('../team/effective');
+const { pickOpening, warnNotice, WARN_REASON } = require('../team/effective');
 
 // Not available on Windows: 0 there, and the path checks still run.
 const O_NOFOLLOW = fs.constants.O_NOFOLLOW || 0;
@@ -232,6 +232,12 @@ function createSecretsServer(opts = {}) {
       }
     }
     getEngine(); // fail before sending if the response cannot be scrubbed
+    // `warn` rules of the organization policy: the request goes ahead, the
+    // use is recorded as "warn" and the user and the agent are told.
+    const warned = (m) => meta.get(m.name).warn === true;
+    const notices = named.filter(warned).map((m) => warnNotice(m.name, meta.get(m.name).warnReason));
+    const notice = notices.length ? notices.join(' ') : undefined;
+    const used = (m, why) => (warned(m) ? { decision: 'warn', reason: WARN_REASON } : { decision: 'allow', reason: why });
     for (const m of named) {
       const v = await (await getVault()).resolve(project, m.marker);
       if (v == null) return textResult({ error: 'ZN_NOT_FOUND', message: 'secret ' + m.name + ' has no value' }, true);
@@ -253,10 +259,12 @@ function createSecretsServer(opts = {}) {
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
     } catch (err) {
-      for (const m of named) await audit({ secret: m.name, mode: meta.get(m.name).mode, tool: 'mcp:secrets_http_request', argv0: null, host, decision: 'allow', reason: 'request failed' });
-      return textResult({ error: 'ZN_HTTP_ERROR', message: await scrub(String(err && err.message || err), masker) }, true);
+      for (const m of named) await audit({ secret: m.name, mode: meta.get(m.name).mode, tool: 'mcp:secrets_http_request', argv0: null, host, ...used(m, 'request failed') });
+      for (const n of notices) notify(n);
+      return textResult({ error: 'ZN_HTTP_ERROR', message: await scrub(String(err && err.message || err), masker), notice }, true);
     }
-    for (const m of named) await audit({ secret: m.name, mode: meta.get(m.name).mode, tool: 'mcp:secrets_http_request', argv0: null, host, decision: 'allow', reason: method + ' ' + res.status });
+    for (const m of named) await audit({ secret: m.name, mode: meta.get(m.name).mode, tool: 'mcp:secrets_http_request', argv0: null, host, ...used(m, method + ' ' + res.status) });
+    for (const n of notices) notify(n);
 
     const buf = Buffer.from(await res.arrayBuffer());
     const truncated = buf.length > MAX_RESPONSE_BYTES;
@@ -271,6 +279,7 @@ function createSecretsServer(opts = {}) {
       body: await scrub(text, masker),
       truncated,
       note: redirectNote(res.status),
+      notice,
     });
   }
 
@@ -394,6 +403,10 @@ function createSecretsServer(opts = {}) {
     for (const m of named) {
       const s = meta.get(m.name);
       if (!s) return textResult({ error: 'ZN_NOT_FOUND', message: 'secret ' + m.name + ' is not in the vault' }, true);
+      if (s.deny) {
+        await audit({ secret: m.name, mode: s.mode, tool: 'mcp:secrets_render_file', argv0: null, host: null, decision: 'deny', reason: 'policy:org_deny' });
+        return denied(m.marker + ' is blocked for this agent by your organization policy. Nothing was written.');
+      }
       if (s.mode !== 'file') {
         await audit({ secret: m.name, mode: s.mode, tool: 'mcp:secrets_render_file', argv0: null, host: null, decision: 'deny', reason: 'mode is not file' });
         return denied(m.name + ' is in ' + (s.mode || 'proxy') + ' mode; only "file" mode secrets can be written to disk');
@@ -440,12 +453,23 @@ function createSecretsServer(opts = {}) {
     } finally {
       fs.closeSync(opened.fd);
     }
-    for (const m of named) await audit({ secret: m.name, mode: 'file', tool: 'mcp:secrets_render_file', argv0: null, host: null, decision: 'allow', reason: 'rendered to a ' + opened.where + ' path' });
+    const renderNotices = [];
+    for (const m of named) {
+      const s = meta.get(m.name);
+      if (s.warn === true) {
+        await audit({ secret: m.name, mode: 'file', tool: 'mcp:secrets_render_file', argv0: null, host: null, decision: 'warn', reason: WARN_REASON });
+        renderNotices.push(warnNotice(m.name, s.warnReason));
+      } else {
+        await audit({ secret: m.name, mode: 'file', tool: 'mcp:secrets_render_file', argv0: null, host: null, decision: 'allow', reason: 'rendered to a ' + opened.where + ' path' });
+      }
+    }
+    for (const n of renderNotices) notify(n);
     return textResult({
       written: out,
       secrets: named.map((m) => m.name),
       unresolved: found.filter((m) => m.detected).map((m) => m.marker),
       note: 'The file holds real values; reading it back returns markers.',
+      notice: renderNotices.length ? renderNotices.join(' ') : undefined,
     });
   }
 

@@ -352,3 +352,66 @@ test('zn secrets-mcp speaks JSON-RPC over stdio', async () => {
   assert.equal(lines[0].result.serverInfo.name, 'zn-secrets');
   assert.equal(lines[1].result.tools.length, 4);
 });
+
+/* zn Team: the vault applies the organization policy in listSecrets({effective: true}). */
+function withOrg(vault, name, fields) {
+  const list = vault.listSecrets.bind(vault);
+  vault.listSecrets = async (o) => (await list(o)).map((s) => (s.name === name ? { ...s, ...fields } : s));
+  return vault;
+}
+
+test('secrets_http_request: a warn rule sends the request, tells the agent and the user, records "warn"', async () => {
+  const { server, seen, port } = await startServer();
+  try {
+    const vault = withOrg(await vaultWith(), 'GITHUB_TOKEN', { warn: true, warnReason: 'GitHub tokens need review' });
+    const told = [];
+    const srv = createSecretsServer({ vault, engine: fakeEngine, notify: (l) => told.push(l) });
+    const r = await call(srv, 'secrets_http_request', { method: 'GET', url: 'http://127.0.0.1:' + port + '/x', headers: { Authorization: 'Bearer __ZN_GITHUB_TOKEN__' } });
+    assert.equal(r.isError, false, JSON.stringify(r.data));
+    assert.equal(seen.length, 1);
+    const notice = 'zn: your team policy would block GITHUB_TOKEN here (policy note: "GitHub tokens need review"). It was allowed and recorded for your organization.';
+    assert.equal(r.data.notice, notice);
+    assert.deepEqual(told, [notice]);
+    const uses = vault.auditLog.filter((e) => e.secret === 'GITHUB_TOKEN' && e.tool === 'mcp:secrets_http_request');
+    assert.deepEqual(uses.map((e) => [e.decision, e.reason, e.host]), [['warn', 'policy:warn', '127.0.0.1']]);
+  } finally {
+    server.close();
+  }
+});
+
+test('secrets_http_request: without a warn rule there is no notice', async () => {
+  const { server, port } = await startServer();
+  try {
+    const srv = createSecretsServer({ vault: await vaultWith(), engine: fakeEngine, notify: () => assert.fail('no notice expected') });
+    const r = await call(srv, 'secrets_http_request', { method: 'GET', url: 'http://127.0.0.1:' + port + '/x', headers: { Authorization: 'Bearer __ZN_GITHUB_TOKEN__' } });
+    assert.equal(r.isError, false);
+    assert.equal(r.data.notice, undefined);
+  } finally {
+    server.close();
+  }
+});
+
+test('secrets_render_file: an organization deny blocks, a warn rule writes and says so', async (t) => {
+  const dir = tempDir(t, 'zn-render-org-');
+  spawnSync('git', ['init', '-q'], { cwd: dir });
+  fs.writeFileSync(path.join(dir, '.gitignore'), 'out.rc\nout2.rc\n');
+  fs.writeFileSync(path.join(dir, 'npmrc.tpl'), '//registry.npmjs.org/:_authToken=__ZN_NPM_TOKEN__\n');
+  const denyVault = withOrg(await vaultWith(), 'NPM_TOKEN', { deny: true, denyReason: 'policy:org_deny' });
+  denyVault.confirmFileWrite = async () => true;
+  const no = await call(createSecretsServer({ vault: denyVault, engine: fakeEngine, cwd: dir, home: dir }), 'secrets_render_file', { template: 'npmrc.tpl', out: 'out.rc' });
+  assert.equal(no.isError, true);
+  assert.match(no.data.message, /organization policy/);
+  assert.ok(!fs.existsSync(path.join(dir, 'out.rc')));
+  assert.ok(denyVault.auditLog.some((e) => e.secret === 'NPM_TOKEN' && e.decision === 'deny' && e.reason === 'policy:org_deny'));
+
+  const warnVault = withOrg(await vaultWith(), 'NPM_TOKEN', { warn: true, warnReason: 'Registry tokens need review' });
+  warnVault.confirmFileWrite = async () => true;
+  const told = [];
+  const yes = await call(createSecretsServer({ vault: warnVault, engine: fakeEngine, cwd: dir, home: dir, notify: (l) => told.push(l) }), 'secrets_render_file', { template: 'npmrc.tpl', out: 'out2.rc' });
+  assert.equal(yes.isError, false, JSON.stringify(yes.data));
+  assert.equal(fs.readFileSync(path.join(dir, 'out2.rc'), 'utf8'), '//registry.npmjs.org/:_authToken=' + NPM + '\n');
+  assert.match(yes.data.notice, /^zn: your team policy would block NPM_TOKEN here \(policy note: "Registry tokens need review"\)\. It was allowed/);
+  assert.equal(told.length, 1);
+  const uses = warnVault.auditLog.filter((e) => e.secret === 'NPM_TOKEN' && e.tool === 'mcp:secrets_render_file');
+  assert.deepEqual(uses.map((e) => [e.decision, e.reason]), [['warn', 'policy:warn']]);
+});
