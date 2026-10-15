@@ -241,9 +241,9 @@ if (hasNpm) {
 // entries need source.path (./ prefixed, inside the marketplace root),
 // policy.installation, policy.authentication and category.
 const codexExt = ap.extensions || {};
-for (const k of Object.keys(codexExt)) if (k !== 'com.openai') fail(PLUGIN + '/plugin.json: unexpected extension ' + k);
+// Other keys under extensions and extensions.com.openai (presentation, apps,
+// onboardingSkill, MCP server mappings) are documented by OpenAI and not checked here.
 const codexOpenAI = codexExt['com.openai'] || {};
-for (const k of Object.keys(codexOpenAI)) if (k !== 'hooks') fail(PLUGIN + '/plugin.json: unexpected extensions.com.openai key ' + k);
 if (codexOpenAI.hooks !== './com.openai/hooks.json') fail(PLUGIN + '/plugin.json: extensions.com.openai.hooks must be ./com.openai/hooks.json');
 if (!fs.existsSync(path.join(ROOT, PLUGIN, 'com.openai', 'hooks.json'))) fail(PLUGIN + '/com.openai/hooks.json: missing');
 const codexMarket = json('.agents/plugins/marketplace.json');

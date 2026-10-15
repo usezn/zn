@@ -13,6 +13,10 @@ and Cursor read for hooks.
 
 **Codex:** this plugin bundles zn-gate's hooks, and Codex runs them once you review and trust them in `/hooks` ([OpenAI hooks documentation](https://learn.chatgpt.com/docs/hooks)). If `/hooks` does not list zn-gate's hooks (an older Codex version, or hooks turned off in your config or by managed settings), run `zn hooks install codex` instead, which writes them into your Codex configuration. `com.openai/hooks.json` declares the plugin's hooks.
 
+If you installed them earlier with `zn hooks install codex`, remove them with `zn hooks uninstall codex` (add `--project` if you installed them per project).
+
+Hook scripts run on your machine: installing the plugin on the web does not install them.
+
 ## Requirements
 
 - Node.js 20.12 or later, on your `PATH` (`node --version`). The native Claude

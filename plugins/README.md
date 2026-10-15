@@ -102,6 +102,10 @@ zn hooks install codex
 
 Use one set of hooks only: if `/hooks` shows both, each call is checked twice.
 
+If you installed them earlier with `zn hooks install codex`, remove them with `zn hooks uninstall codex` (add `--project` if you installed them per project).
+
+Hook scripts run on your machine: installing the plugin on the web does not install them.
+
 Plugins with lifecycle hooks are not eligible for OpenAI's public plugin
 directory ([plugin packaging guide](https://developers.openai.com/codex/plugins/build)),
 so zn-gate's Codex plugin is distributed through the repository marketplace
