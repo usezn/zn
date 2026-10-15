@@ -328,7 +328,7 @@ function makeOps(state, ctl) {
       // names: the stored secrets the policy blocks (for a detected token, the
       // secrets with the same value): one local audit record each.
       const orgDenied = async (names) => {
-        for (const name of names) await writeAudit({ secret: name, mode: 'resolve', agent: o.agent, tool: o.tool, decision: 'deny', reason: name === inner ? 'policy:org_deny' : 'policy:org_deny:' + inner });
+        for (const name of names) await writeAudit({ secret: name, mode: 'resolve', agent: o.agent, tool: o.tool, decision: 'deny', reason: name === inner ? 'policy:org_deny' : 'policy:org_deny:' + inner.slice(0, 48) });
         if (o.withPolicy === true) return { value: null, policy: RESOLVE_POLICY_VERSION, deny: true };
         throw znError(CODES.POLICY_DENIED, 'secret ' + inner + ' is blocked by your organization policy');
       };
