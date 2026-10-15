@@ -38,16 +38,14 @@ const SCAN_FORMATS = new Set(['text', 'json', 'github']);
 // scrubber's secret patterns are replaced, so no matched value is printed.
 function scanSnippet(line) {
   let out = redactSecrets(line).sanitized;
-  const spans = require('../lib/scrub/engine')
-    .scan(out, { exact: false, pii: false })
-    .slice()
-    .sort((a, b) => b.start - a.start);
-  let floor = Infinity;
-  for (const s of spans) {
-    if (s.end > floor) continue; // overlapping span, already covered
-    out = out.slice(0, s.start) + `[REDACTED_${s.type}]` + out.slice(s.end);
-    floor = s.start;
+  // Overlapping spans are joined first, so no part of a value stays visible.
+  const merged = [];
+  for (const s of require('../lib/scrub/engine').scan(out, { exact: false, pii: false }).slice().sort((a, b) => a.start - b.start)) {
+    const last = merged[merged.length - 1];
+    if (last && s.start < last.end) last.end = Math.max(last.end, s.end);
+    else merged.push({ start: s.start, end: s.end, type: s.type });
   }
+  for (const s of merged.reverse()) out = out.slice(0, s.start) + `[REDACTED_${s.type}]` + out.slice(s.end);
   return out.slice(0, 100);
 }
 
