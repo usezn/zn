@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 - When an event cannot be read or part of zn-gate is missing, the message the agent reads no longer says how to let actions pass unchecked (`hooks.whenUnavailable`). That setting is still documented and is shown only to you (as the hook's message to the user in Claude Code).
+- When an agent event is not valid JSON, the refusal no longer quotes the part of it that Node's parser shows, which could be tool output.
 - The agent hooks' check for zn admin commands no longer takes exponential time on a crafted `zn stats` command with many flags, which could stall the hook (`POLICY_RULES_VERSION` bumped).
 - `zn-gate scan --format github` (Python) escapes file names and messages in its `::error` and `::notice` lines, so a file name cannot add a line or a workflow command of its own to the CI log.
 - Agent plugin launcher: JavaScript modules that Node loads by itself (zn-gate's encryption libraries) can only come from the verified zn-gate files, and are run from the bytes that were checked. This covers ES modules, CommonJS and JSON that Node loads, and the require() calls inside them. It needs Node.js 22.15 or 23.5 or later for the hooks; the MCP servers have it on every supported version (before Node.js 22.15 without createRequire(), which the release build refuses). Before, a module missing from the package could be looked up in node_modules folders outside it, and the source was read from disk again after the check.
