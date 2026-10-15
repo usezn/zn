@@ -76,6 +76,11 @@
         "file": "packages/zn-gate/README.md",
         "pin": "zn-gate 1.4.1",
         "why": "the version the latency table was measured with"
+      },
+      {
+        "file": "docs/team.md",
+        "pin": "zn-gate 1.8.0",
+        "why": "first zn-gate version with the Team Warn choice; matches the version once 1.8.0 is released"
       }
     ]
   },
