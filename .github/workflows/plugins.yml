@@ -30,13 +30,16 @@ on:
       - 'skill/**'
       - 'bench/**'
       - '.github/**'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+# A new push to a pull request, or to next, cancels the run still going for it, so a burst of
+# merges into next tests only the newest commit. Runs for main, tags and manual runs always complete.
 concurrency:
-  group: plugins-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: plugins-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
 
 jobs:
   check:
@@ -50,6 +53,8 @@ jobs:
       matrix:
         os: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["ubuntu-latest", "windows-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
         node-version: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["20.x", "22.x", "24.x"]' || '["22.x"]') }}
+        # Pushes to next run macOS with Node.js 22.x only; every other full run tests all three.
+        exclude: ${{ fromJSON((github.event_name == 'push' && github.ref == 'refs/heads/next') && '[{"os":"macos-latest","node-version":"20.x"},{"os":"macos-latest","node-version":"24.x"}]' || '[]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

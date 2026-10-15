@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - CI: draft pull requests skip the test, package, plugin, Rust, Windows and action jobs until they are marked ready for review, and pushes that change only documentation skip the test and plugin workflows (Markdown in the packages and plugins still runs them); the plugin checks also skip documentation-only pull requests. On release pull requests, which are opened before the plugin can be pinned, a plugin pin one step behind the release is a warning in `Public facts`; it still fails on `main` and `next`, so `main` stays red after a release merge until the plugin is pinned. The `Plugin repository` workflow ends with a warning instead of failing while the plugin repository's copy of its checks is out of date.
+- CI: pushes to `next` leave out the macOS jobs of the leak bench and the scrubber and vault tests, and run the plugin checks on macOS with Node.js 22 only; Ubuntu and Windows still run every version. The full matrix still runs on `main`, on pull requests into `main` and release branches, with the `full-ci` label and on manual runs. A new push to `next` cancels the CI runs still going for the previous one; runs on `main` always complete.
 - In Codex and OpenCode, a patch (`apply_patch`) longer than 100 KB is blocked, like shell commands over 100 KB, because zn could not check it within the time the agent waits for the hook.
 
 ## [1.8.0] - 2026-10-15

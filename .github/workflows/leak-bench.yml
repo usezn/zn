@@ -1,8 +1,9 @@
 name: zn-gate leak bench
 
-# Pull requests into next run the checks the rulesets require and Ubuntu with Node.js 22. The full matrix
-# (Windows and macOS, every Node.js version) runs on pushes to main and next, on pull requests into main
-# and release branches, and on any pull request labelled full-ci.
+# Pull requests into next run the checks the rulesets require and Ubuntu with Node.js 22. Pushes to next
+# run every Node.js version on Ubuntu and Windows, without macOS. The full matrix (Windows and macOS,
+# every Node.js version) runs on pushes to main, on pull requests into main and release branches, on any
+# pull request labelled full-ci, and on manual runs.
 on:
   push:
     branches: [ main, next ]
@@ -28,10 +29,11 @@ on:
 permissions:
   contents: read
 
-# A new push to a pull request cancels the previous run for it; every push to main and next runs on its own.
+# A new push to a pull request, or to next, cancels the run still going for it, so a burst of
+# merges into next tests only the newest commit. Runs for main and manual runs always complete.
 concurrency:
-  group: leak-bench-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: leak-bench-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
 
 jobs:
   leak-bench:
@@ -46,6 +48,8 @@ jobs:
         # "leak bench (node 22 / ubuntu-latest)" is a required check: it always runs.
         os: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["ubuntu-latest", "windows-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
         node: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[20, 22, 24]' || '[22]') }}
+        # Pushes to next leave macOS out (3 jobs); every other full run keeps it.
+        exclude: ${{ fromJSON((github.event_name == 'push' && github.ref == 'refs/heads/next') && '[{"os":"macos-latest"}]' || '[]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
