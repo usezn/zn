@@ -209,3 +209,21 @@ test('the class end table gives the same answers as a direct scan', () => {
     for (let i = 0; i < g.length; i++) if (g[i] === '[') assert.equal(policy._globClassEnd(g, i), direct(g, i), JSON.stringify([g, i]));
   }
 });
+
+test('brace patterns are read without backtracking, and very large ones are refused quickly', () => {
+  const opts = { cwd: '/home/u/project', home: '/home/u', env: {} };
+  const braces = '{a,b,c,d,e,f,g,h}{a,b,c,d,e,f,g,h}';
+  const cases = [['{' + ','.repeat(50000), 500], ['{' + ','.repeat(50000) + '}', 500], [braces + '*/'.repeat(100000) + 'x', 2000]];
+  for (const [w, limit] of cases) {
+    const t0 = process.hrtime.bigint();
+    policy.classifyWord(w, opts);
+    policy.bashDenial('cat ' + w, opts);
+    const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+    assert.ok(ms < limit, w.slice(0, 12) + '... took ' + ms.toFixed(1) + ' ms');
+  }
+  const big = policy.classifyWord(braces + '*/'.repeat(100000) + 'x', opts);
+  assert.equal(big && big.kind, 'credential');
+  // Ordinary brace patterns still expand and match as before.
+  assert.ok(policy.classifyWord('~/.aws/{config,credentials}', opts));
+  assert.ok(policy.classifyWord('~/.ssh/id_{rsa,ed25519}', opts));
+});

@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-15.8';
+const POLICY_RULES_VERSION = '2026-10-15.10';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -236,7 +236,8 @@ function classifyPath(p, opts = {}) {
 /* ---------------------------- globs, braces ---------------------------- */
 
 const GLOB_RE = /[*?[\]{}]/;
-const BRACE_RE = /\{([^{}]*,[^{}]*)\}/;
+// The first comma is matched by [^{},]*, so the pattern has one way to match and cannot backtrack.
+const BRACE_RE = /\{([^{},]*,[^{}]*)\}/;
 
 /** Alternatives of a word with brace lists (`a{b,c}` -> ab, ac); null when there are too many. */
 function expandBraces(s, limit = 64) {
@@ -430,6 +431,8 @@ const PROJECT_EXAMPLES = ['.env', '.env.local', '.claude/settings.json', 'openco
 // Most "[" a glob word may have: each one is read up to its "]", so more than
 // this is refused as too broad to check instead of being read.
 const GLOB_BRACKETS_MAX = 1000;
+// Most characters times brace alternatives a glob word may need to check.
+const GLOB_WORK_MAX = 2000000;
 
 function globClass(word, opts = {}) {
   if (!GLOB_RE.test(word)) return null;
@@ -440,6 +443,9 @@ function globClass(word, opts = {}) {
   const ctx = contextOf(opts);
   const alts = expandBraces(word);
   if (alts === null) return { kind: 'credential', reason: 'a brace pattern too broad to check' };
+  // Each alternative is resolved and matched in full: past this much work the
+  // pattern is refused as too broad instead of being checked.
+  if (alts.length * word.length > GLOB_WORK_MAX) return { kind: 'credential', reason: 'a pattern too broad to check' };
   const examples = [...GLOB_EXAMPLES.map((e) => path.join(ctx.home, e)), ...PROJECT_EXAMPLES.map((e) => path.join(ctx.cwd, e))];
   for (const alt of alts) {
     const e = expandEnv(expandHome(alt, ctx.home), ctx.env);
