@@ -11,7 +11,7 @@ The plugin follows the [Agent Plugins 1.0](https://github.com/agentplugins/agent
 layout (`plugin.json`, `mcp.json`, `skills/`) and adds the files Claude Code
 and Cursor read for hooks.
 
-**Codex:** this plugin bundles zn-gate's hooks, and Codex runs them once you review and trust them in `/hooks` ([OpenAI hooks documentation](https://learn.chatgpt.com/docs/hooks)). If `/hooks` does not list zn-gate's hooks (an older Codex version, or hooks turned off in your config or by managed settings), run `zn hooks install codex` instead, which writes them into your Codex configuration. `com.openai/hooks.json` declares the plugin's hooks.
+**Codex:** this plugin declares zn-gate's hooks. Codex documents plugin hooks as loaded after you review and trust them in `/hooks` ([OpenAI hooks documentation](https://learn.chatgpt.com/docs/hooks)). In our test with Codex 0.162.1 we could not confirm that they load. If `/hooks` does not list zn-gate's hooks, run `zn hooks install codex` instead, which writes them into your Codex configuration; that is the tested path. The plugin's hooks need zn-gate 1.7.1 installed on the machine (`npm install -g zn-gate@1.7.1`, then `npm audit signatures`); without it, every tool call is refused. Use one set of hooks only. `com.openai/hooks.json` declares the plugin's hooks.
 
 If you installed them earlier with `zn hooks install codex`, remove them with `zn hooks uninstall codex` (add `--project` if you installed them per project).
 
