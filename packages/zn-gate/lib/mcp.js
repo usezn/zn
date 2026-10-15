@@ -324,7 +324,6 @@ module.exports = {
   toolsFor,
   startMcpServer,
   handleRequest,
-  TOOLS,
   SERVER_NAME,
   SERVER_VERSION,
   PROTOCOL_VERSION,

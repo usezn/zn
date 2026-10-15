@@ -54,8 +54,10 @@ test('analyze_prompt reaches the outside world only with the optional cloud chec
 });
 
 test('the secrets server lists its tools with annotations', async () => {
-  const server = broker.createSecretsServer({ home: require('os').tmpdir(), agent: 'test', vault: {} });
+  const home = require('fs').mkdtempSync(require('path').join(require('os').tmpdir(), 'zn-ann-'));
+  const server = broker.createSecretsServer({ home, agent: 'test', vault: {} });
   const r = await server.handleMessage({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
   assert.equal(r.result.tools.length, 4);
   assert.ok(r.result.tools.every((t) => t.annotations && typeof t.annotations.readOnlyHint === 'boolean'));
+  require('fs').rmSync(home, { recursive: true, force: true });
 });
