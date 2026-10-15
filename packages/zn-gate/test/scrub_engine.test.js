@@ -35,10 +35,11 @@ function memoryVault(opts) {
     },
     async resolve(project, token, ropts) {
       calls.push('resolve:' + ((ropts && ropts.destination) || ''));
+      const wrap = (v) => (ropts && ropts.withPolicy === true && !o.bare ? { value: v, policy: 1 } : v);
       const m = /^__ZN_(.+)__$/.exec(token);
-      if (m && named.has(m[1])) return named.get(m[1]);
+      if (m && named.has(m[1])) return wrap(named.get(m[1]));
       const v = byToken.get(project + '\0' + token);
-      return v === undefined ? null : v;
+      return wrap(v === undefined ? null : v);
     },
     async exactValues() {
       calls.push('exactValues');
@@ -261,8 +262,8 @@ function orgVault(values, rules) {
       const value = Object.prototype.hasOwnProperty.call(values, name) ? values[name] : null;
       const r = rules[name] || {};
       if (!o || o.withPolicy !== true) return r.deny ? null : value;
-      if (r.deny) return { value: null, deny: true };
-      return r.warn ? { value, warn: true, warnReason: r.reason } : { value };
+      if (r.deny) return { value: null, policy: 1, deny: true };
+      return r.warn ? { value, policy: 1, warn: true, warnReason: r.reason } : { value, policy: 1 };
     },
     async audit(ev) { audits.push(ev); },
   };
@@ -288,7 +289,23 @@ test('org policy: a warn rule restores, adds the notice and records one "warn"',
   assert.deepStrictEqual(vault.audits.map((a) => [a.decision, a.reason, a.secret]), [['warn', 'policy:warn', 'STAGING_KEY']]);
 });
 
-test('org policy: without a rule (or with an older vault) restores are unchanged', async () => {
+test('a vault that does not apply the organization policy restores nothing (fail closed)', async () => {
+  const value = 'dev-' + pick(24);
+  const bare = memoryVault({ named: { DEV_KEY: value }, bare: true });
+  const tok = await E.tokenize('contact jane.roe@example.org', ctx(bare));
+  for (const text of ['K=__ZN_DEV_KEY__', 'to: ' + tok.replaced[0].token]) {
+    const r = await E.detokenize(text, ctx(bare, { destination: 'write_ignored' }));
+    assert.strictEqual(r.text, text);
+    assert.deepStrictEqual(r.withheld.map((w) => [w.reason, w.action]), [['vault_error', 'keep']]);
+  }
+  const odd = orgVault({ DEV_KEY: value }, {});
+  const resolve = odd.resolve;
+  odd.resolve = async (...a) => ({ ...(await resolve(...a)), policy: 2 });
+  const r = await E.detokenize('K=__ZN_DEV_KEY__', ctx(odd, { destination: 'write_ignored' }));
+  assert.deepStrictEqual(r.withheld.map((w) => w.reason), ['vault_error']);
+});
+
+test('org policy: without a rule restores are unchanged', async () => {
   const value = 'dev-' + pick(24);
   for (const vault of [orgVault({ DEV_KEY: value }, {}), memoryVault({ named: { DEV_KEY: value } })]) {
     const r = await E.detokenize('K=__ZN_DEV_KEY__', ctx(vault, { destination: 'write_ignored' }));

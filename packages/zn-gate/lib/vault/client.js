@@ -7,7 +7,7 @@
  *   resolve(project, token, opts)  -> value|null     broker and detokenize only; never exposed to the agent
  *                                  opts {destination, agent, tool, withPolicy}: with a destination the
  *                                  organization policy applies to named secrets; withPolicy returns
- *                                  {value, deny?, warn?, warnReason?}
+ *                                  {value, policy: 1, deny?, warn?, warnReason?}
  *       optional third argument {destination, agent, tool}: the daemon re-checks
  *       the restoration policy and records it in the audit log
  *   setSecret(name, value, meta) / listSecrets() / removeSecret(name)

@@ -53,6 +53,11 @@ const TOKEN_RE = /^__ZN_([A-Z0-9](?:[A-Z0-9_]*[A-Z0-9])?)__$/;
 const HOST_RE = /^(?:\*\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*(?::\d{1,5})?$/;
 const COMMAND_RE = /^[A-Za-z0-9_.+\-/ *]{1,128}$/;
 const DENIED_RESOLVE = new Set(['bash_network', 'mcp_input', 'write_tracked']);
+/* What this vault does beyond the protocol. resolve-policy: resolve() with
+ * {withPolicy: true} applies the organization policy and answers
+ * {value, policy: RESOLVE_POLICY_VERSION, deny?, warn?, warnReason?}. */
+const RESOLVE_POLICY_VERSION = 1;
+const VAULT_FEATURES = Object.freeze(['resolve-policy']);
 const ALLOW_IN = ['header', 'query', 'body'];
 // Commands that run arbitrary code given to them (python3.12, node22, pwsh...):
 // approving one lets any script it runs read the secret. The confirmation
@@ -283,7 +288,7 @@ function makeOps(state, ctl) {
 
   return {
     async status() {
-      return { unlocked: true, protocol: PROTOCOL, pid: process.pid, expiresAt: new Date(ctl.expiresAt).toISOString(), idleMs: ctl.idleMs, confirm: channel.kind };
+      return { unlocked: true, protocol: PROTOCOL, pid: process.pid, expiresAt: new Date(ctl.expiresAt).toISOString(), idleMs: ctl.idleMs, confirm: channel.kind, features: VAULT_FEATURES };
     },
 
     async mapToken(project, type, value) {
@@ -317,30 +322,45 @@ function makeOps(state, ctl) {
       }
       let value = null;
       let org = null;
+      const agentId = typeof o.agent === 'string' ? o.agent : null;
+      const asLocal = (name, s) => ({ name, mode: s.mode, allowHosts: s.allowHosts || [], allowCommands: s.allowCommands || [], allowIn: s.allowIn || ['header'] });
+      const orgDenied = async () => {
+        await writeAudit({ secret: inner, mode: 'resolve', agent: o.agent, tool: o.tool, decision: 'deny', reason: 'policy:org_deny' });
+        if (o.withPolicy === true) return { value: null, policy: RESOLVE_POLICY_VERSION, deny: true };
+        throw znError(CODES.POLICY_DENIED, 'secret ' + inner + ' is blocked by your organization policy');
+      };
       const ordinal = /_(\d+)$/.exec(inner);
       if (ordinal) {
         const p = await state.loadProject(String(project == null ? '' : project));
         value = Object.prototype.hasOwnProperty.call(p.data.tokens, token) ? p.data.tokens[token] : null;
+        // A detected value that is also a stored secret: the organization
+        // policy for that secret applies, so a blocked secret is not put back
+        // through the scrubber's token for the same value.
+        if (value !== null && o.destination) {
+          const secrets = await state.loadSecrets();
+          const same = Object.entries(secrets.secrets)
+            .filter(([, s]) => s && typeof s.value === 'string' && s.value === value)
+            .map(([name, s]) => asLocal(name, s));
+          if (same.length) {
+            const effs = await team.effectiveList(same, agentId, false);
+            if (effs.some((e) => e && e.deny)) return orgDenied();
+          }
+        }
       } else {
         const secrets = await state.loadSecrets();
         const s = secrets.secrets[inner];
         // A marker the agent hooks put back (they always give a destination):
         // the organization policy applies, as in zn run and the secrets MCP tools.
         if (s && o.destination) {
-          const local = { name: inner, mode: s.mode, allowHosts: s.allowHosts || [], allowCommands: s.allowCommands || [], allowIn: s.allowIn || ['header'] };
-          const [eff] = await team.effectiveList([local], typeof o.agent === 'string' ? o.agent : null, false);
-          if (eff && eff.deny) {
-            await writeAudit({ secret: inner, mode: 'resolve', agent: o.agent, tool: o.tool, decision: 'deny', reason: 'policy:org_deny' });
-            if (o.withPolicy === true) return { value: null, deny: true };
-            throw znError(CODES.POLICY_DENIED, 'secret ' + inner + ' is blocked for this agent by your organization policy');
-          }
+          const [eff] = await team.effectiveList([asLocal(inner, s)], agentId, false);
+          if (eff && eff.deny) return orgDenied();
           if (eff && eff.warn === true) org = { warn: true, warnReason: eff.warnReason };
         }
         if (s) { value = s.value; s.lastUsed = new Date().toISOString(); state.dirtySecrets = true; }
       }
       await writeAudit({ secret: inner, mode: 'resolve', agent: o.agent, tool: o.tool, decision: value === null ? 'deny' : 'allow', reason: value === null ? 'not_found' : (o.destination || 'unspecified') });
-      // withPolicy: {value, deny?, warn?, warnReason?} instead of the bare value.
-      return o.withPolicy === true ? Object.assign({ value }, value === null ? null : org) : value;
+      // withPolicy: {value, policy, deny?, warn?, warnReason?} instead of the bare value.
+      return o.withPolicy === true ? Object.assign({ value, policy: RESOLVE_POLICY_VERSION }, value === null ? null : org) : value;
     },
 
     async setSecret(name, value, meta) {

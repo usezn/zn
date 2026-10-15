@@ -625,8 +625,8 @@ function orgRestoreVault(values, rules) {
     const value = Object.prototype.hasOwnProperty.call(values, name) ? values[name] : null;
     const r = rules[name] || {};
     if (!o || o.withPolicy !== true) return r.deny ? null : value;
-    if (r.deny) return { value: null, deny: true };
-    return r.warn ? { value, warn: true, warnReason: r.reason } : { value };
+    if (r.deny) return { value: null, policy: 1, deny: true };
+    return r.warn ? { value, policy: 1, warn: true, warnReason: r.reason } : { value, policy: 1 };
   };
   return vault;
 }

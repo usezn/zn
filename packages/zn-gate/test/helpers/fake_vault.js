@@ -36,12 +36,14 @@ function createFakeVault(opts = {}) {
       }
       return p.byKey.get(key);
     },
-    async resolve(project, token) {
+    async resolve(project, token, o) {
+      // withPolicy: answer like a vault daemon that applies the organization policy (none here).
+      const wrap = (v) => (o && o.withPolicy === true ? { value: v, policy: 1 } : v);
       const m = /^__ZN_(.+)__$/.exec(String(token));
-      if (!m) return null;
-      if (secrets.has(m[1])) return secrets.get(m[1]).value;
+      if (!m) return wrap(null);
+      if (secrets.has(m[1])) return wrap(secrets.get(m[1]).value);
       const p = proj(project);
-      return p.byToken.has(token) ? p.byToken.get(token) : null;
+      return wrap(p.byToken.has(token) ? p.byToken.get(token) : null);
     },
     async setSecret(name, value, meta = {}) {
       secrets.set(name, { value: String(value), meta: { ...meta } });
