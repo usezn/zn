@@ -316,6 +316,7 @@ function makeOps(state, ctl) {
         throw znError(CODES.POLICY_DENIED, 'destination ' + o.destination + ' does not receive real values');
       }
       let value = null;
+      let org = null;
       const ordinal = /_(\d+)$/.exec(inner);
       if (ordinal) {
         const p = await state.loadProject(String(project == null ? '' : project));
@@ -323,10 +324,23 @@ function makeOps(state, ctl) {
       } else {
         const secrets = await state.loadSecrets();
         const s = secrets.secrets[inner];
+        // A marker the agent hooks put back (they always give a destination):
+        // the organization policy applies, as in zn run and the secrets MCP tools.
+        if (s && o.destination) {
+          const local = { name: inner, mode: s.mode, allowHosts: s.allowHosts || [], allowCommands: s.allowCommands || [], allowIn: s.allowIn || ['header'] };
+          const [eff] = await team.effectiveList([local], typeof o.agent === 'string' ? o.agent : null, false);
+          if (eff && eff.deny) {
+            await writeAudit({ secret: inner, mode: 'resolve', agent: o.agent, tool: o.tool, decision: 'deny', reason: 'policy:org_deny' });
+            if (o.withPolicy === true) return { value: null, deny: true };
+            throw znError(CODES.POLICY_DENIED, 'secret ' + inner + ' is blocked for this agent by your organization policy');
+          }
+          if (eff && eff.warn === true) org = { warn: true, warnReason: eff.warnReason };
+        }
         if (s) { value = s.value; s.lastUsed = new Date().toISOString(); state.dirtySecrets = true; }
       }
       await writeAudit({ secret: inner, mode: 'resolve', agent: o.agent, tool: o.tool, decision: value === null ? 'deny' : 'allow', reason: value === null ? 'not_found' : (o.destination || 'unspecified') });
-      return value;
+      // withPolicy: {value, deny?, warn?, warnReason?} instead of the bare value.
+      return o.withPolicy === true ? Object.assign({ value }, value === null ? null : org) : value;
     },
 
     async setSecret(name, value, meta) {

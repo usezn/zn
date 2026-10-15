@@ -105,7 +105,11 @@ lets the use go ahead, and:
 `zn run` prints it on the command's error output; the `secrets` MCP server
 adds it to the tool result (`notice`) and prints it on its own error output.
 This happens wherever a `deny` would have blocked: `zn run`,
-`secrets_http_request` and `secrets_render_file`.
+`secrets_http_request`, `secrets_render_file`, and the agent hooks when
+they put a secret's value back in place of its `__ZN_NAME__` marker (a
+file the agent writes outside git or in a git-ignored path). There, a
+`deny` leaves the marker in the file and the hook says why, and a `warn`
+puts the value back and adds the line above to the hook's message.
 
 The rule's other fields (`allowHosts`, `allowCommands`, `mode`, `injectAt`)
 still apply. A rule cannot have both `deny` and `warn`: such a policy is

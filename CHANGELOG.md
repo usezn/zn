@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Release tooling: `plugins/tools/pin-release.js` also moves the plugin manifests, the MCP Registry entry of the plugin and the version named in the plugin docs, in the same commit as the pin. The Plugin repository workflow reads the version from the pin and stops with a message when the plugin manifest names another version.
 
 ### Security
+- Marker restores in the agent hooks now apply the organization's policy. When an agent writes a `__ZN_NAME__` marker into a git-ignored file, a secret the zn Team policy blocks stays a marker and the hook says why; a secret under a `warn` rule is restored, recorded with the decision `warn`, and the hook's message shows the warning.
 - The Rust gateway's lockfile uses wasmtime 48.0.6, which fixes RUSTSEC-2026-0353, 0358, 0359, 0361, 0362, 0363 and 0364 in 48.0.5. The gateway runs WebAssembly rules through the synchronous module API, without the component model or async calls where most of these issues are. The npm and PyPI packages do not contain the Rust gateway.
 - When an event cannot be read or part of zn-gate is missing, the message the agent reads no longer says how to let actions pass unchecked (`hooks.whenUnavailable`). That setting is still documented and is shown only to you (as the hook's message to the user in Claude Code).
 - When an agent event is not valid JSON, the refusal no longer quotes the part of it that Node's parser shows, which could be tool output.

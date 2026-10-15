@@ -253,6 +253,7 @@ async function decidePre(ev, d, agentId, opts) {
     const updates = [];
     let restored = 0;
     const withheld = [];
+    const notices = new Set();
     for (const t of withMarkers) {
       const res = await d.engine().detokenize(t.value, ctx);
       if (res && res.restored && res.restored.length && res.text !== t.value) {
@@ -260,12 +261,21 @@ async function decidePre(ev, d, agentId, opts) {
         restored += res.restored.length;
       }
       if (res && res.withheld) withheld.push(...res.withheld);
+      if (res && Array.isArray(res.notices)) for (const n of res.notices) notices.add(n);
     }
-    const why = withheld.length
-      ? ' Kept as tokens: ' + withheld.map((w) => w.token).join(', ') + (destination === 'write_tracked'
+    // Secrets the organization policy blocks: the file keeps the marker.
+    const blocked = [...new Set(withheld.filter((w) => w.reason === 'org_deny').map((w) => w.token.slice(5, -2)))];
+    const why = (withheld.length
+      ? ' Kept as tokens: ' + [...new Set(withheld.map((w) => w.token))].join(', ') + (destination === 'write_tracked'
         ? ' (this file can be committed, so secrets stay as markers; put real values in a git-ignored file such as .env.local).'
         : '.')
-      : '';
+      : '') +
+      (blocked.length ? ' Secret ' + blocked.join(', ') + (blocked.length > 1 ? ' are' : ' is') +
+        ' blocked for this agent by your organization policy, so the file keeps the marker.' : '') +
+      (notices.size ? ' ' + [...notices].join(' ') : '');
+    // A secret the organization blocks: the write keeps the marker, and the
+    // user is asked so the reason is shown (a plain allow shows nothing).
+    if (updates.length === 0 && blocked.length) return { decision: 'ask', message: 'zn:' + why };
     if (updates.length === 0) return { decision: 'allow', message: why ? 'zn:' + why : undefined };
     return {
       decision: 'ask',

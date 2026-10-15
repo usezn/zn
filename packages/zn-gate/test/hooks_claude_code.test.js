@@ -606,3 +606,62 @@ test('OpenCode plugin: a hook that fails or times out blocks the call and the me
   assert.match(src, /if \(r\.action === "error"\) throw new Error\("zn: the secret scrubber is not working \(" \+ r\.message \+ "\); call blocked"\)/);
   assert.match(src, /if \(r\.action === "error"\) throw new Error\("zn: the secret scrubber is not working \(" \+ r\.message \+ "\); message not sent"\)/);
 });
+
+/* zn Team: restoring a named marker into a file follows the organization policy. */
+/* Every string in a hook answer, joined: where the message lands depends on the adapter. */
+function texts(o) {
+  if (typeof o === 'string') return o;
+  if (!o || typeof o !== 'object') return '';
+  return Object.values(o).map(texts).join('\n');
+}
+
+function orgRestoreVault(values, rules) {
+  const vault = createFakeVault();
+  const audits = [];
+  vault.audit = async (ev) => { audits.push(ev); };
+  vault.audits = audits;
+  vault.resolve = async (project, token, o) => {
+    const name = /^__ZN_(.+)__$/.exec(String(token))[1];
+    const value = Object.prototype.hasOwnProperty.call(values, name) ? values[name] : null;
+    const r = rules[name] || {};
+    if (!o || o.withPolicy !== true) return r.deny ? null : value;
+    if (r.deny) return { value: null, deny: true };
+    return r.warn ? { value, warn: true, warnReason: r.reason } : { value };
+  };
+  return vault;
+}
+
+test('restoring a named marker into a git-ignored file follows the organization policy', async (t) => {
+  const dir = tmpProject(t);
+  const engine = require('../lib/scrub/engine');
+  const file = path.join(dir, '.env.local');
+  const PROD = 'prod-value-0123456789abcdef';
+  const STG = 'staging-value-0123456789abc';
+  const DEV = 'dev-value-0123456789abcdefg';
+  const write = (content, vault) => run(preTool('Write', { file_path: file, content }, dir), { vault, engine });
+
+  // deny: the marker stays and the message says why
+  const denyVault = orgRestoreVault({ PROD_DB: PROD }, { PROD_DB: { deny: true } });
+  const denied = await write('DB=__ZN_PROD_DB__\n', denyVault);
+  assert.ok(!JSON.stringify(denied.output || {}).includes(PROD));
+  assert.equal(denied.output.hookSpecificOutput.permissionDecision, 'ask');
+  assert.equal(denied.output.hookSpecificOutput.updatedInput, undefined);
+  const dMsg = texts(denied.output);
+  assert.match(dMsg, /Secret PROD_DB is blocked for this agent by your organization policy, so the file keeps the marker\./);
+
+  // warn: restored, the message carries the notice, one "warn" record
+  const warnVault = orgRestoreVault({ STAGING_KEY: STG }, { STAGING_KEY: { warn: true, reason: 'Staging keys need review' } });
+  const warned = await write('K=__ZN_STAGING_KEY__\n', warnVault);
+  assert.equal(warned.output.hookSpecificOutput.permissionDecision, 'ask');
+  assert.equal(warned.output.hookSpecificOutput.updatedInput.content, 'K=' + STG + '\n');
+  assert.match(texts(warned.output), /zn: your team policy would block STAGING_KEY here \(policy note: "Staging keys need review"\)\. It was allowed and recorded for your organization\./);
+  assert.deepEqual(warnVault.audits.filter((a) => a.decision === 'warn').map((a) => [a.secret, a.reason]), [['STAGING_KEY', 'policy:warn']]);
+
+  // no organization rule: restored as before, no notice
+  const plainVault = orgRestoreVault({ DEV_KEY: DEV }, {});
+  const plain = await write('K=__ZN_DEV_KEY__\n', plainVault);
+  assert.equal(plain.output.hookSpecificOutput.permissionDecision, 'ask');
+  assert.equal(plain.output.hookSpecificOutput.updatedInput.content, 'K=' + DEV + '\n');
+  assert.doesNotMatch(JSON.stringify(plain.output), /team policy|organization policy/);
+  assert.ok(!plainVault.audits.some((a) => a.decision === 'warn'));
+});

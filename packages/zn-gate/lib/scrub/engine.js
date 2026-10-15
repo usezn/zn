@@ -43,6 +43,7 @@ const { findPatterns, findPii, hintsIn, SECRET_TYPES, PII_TYPES } = require('./p
 const { collectSources, buildMatcher } = require('./exact');
 const { find: findCustom } = require('../team/detectors');
 const { CODES } = require('../errors');
+const { warnNotice, WARN_REASON } = require('../team/effective');
 const { invisibleView } = require('../rules');
 
 const TOKEN_SOURCE = '__ZN_([A-Z0-9](?:[A-Z0-9_]*[A-Z0-9])?)__';
@@ -373,6 +374,7 @@ const ACTIONS = Object.freeze({
   not_restorable: 'keep',
   locked: 'keep',
   vault_error: 'keep',
+  org_deny: 'keep',            // the organization policy blocks this secret
 });
 
 const NET_COMMANDS = new RegExp('(?:^|[\\s;&|()`$\'"])(?:' + [
@@ -448,13 +450,23 @@ async function detokenize(text, ctx) {
     const trackedCheck = reason === 'tracked_file' && typeof c.trackedContent === 'string' && c.trackedContent.length > 0;
     if (trackedCheck) reason = null;
     let value = null;
+    let warn = null;
     if (!reason) {
       if (!vault || typeof vault.resolve !== 'function') {
         reason = 'locked';
       } else {
         try {
-          value = await vault.resolve(project, f.token, { destination: dest, agent: c.agent, tool: c.tool });
-          if (value === null || value === undefined) reason = 'unknown_token';
+          // withPolicy: the vault applies the organization policy to named
+          // secrets and says so. An older vault returns the bare value.
+          value = await vault.resolve(project, f.token, { destination: dest, agent: c.agent, tool: c.tool, withPolicy: true });
+          if (value !== null && typeof value === 'object') {
+            const got = value;
+            value = got.deny === true ? null : got.value;
+            if (got.deny === true) reason = 'org_deny';
+            else if (got.warn === true && kind === 'named') warn = { reason: typeof got.warnReason === 'string' ? got.warnReason : undefined };
+          }
+          if (reason) value = null;
+          else if (value === null || value === undefined) reason = 'unknown_token';
           else if (typeof value !== 'string') { reason = 'vault_error'; value = null; }
         } catch (err) {
           reason = err && err.code === CODES.LOCKED ? 'locked' : 'vault_error';
@@ -463,14 +475,15 @@ async function detokenize(text, ctx) {
       if (trackedCheck && !reason && !c.trackedContent.includes(value)) { reason = 'tracked_file'; value = null; }
       if (trackedCheck && reason && reason !== 'tracked_file') reason = 'tracked_file';
     }
-    decisions.set(f.token, reason ? { reason } : { value });
+    if (reason) warn = null;
+    decisions.set(f.token, reason ? { reason } : { value, warn });
     await safeAudit(vault, {
       secret: f.inner,
       mode: kind === 'named' ? 'named' : 'detected',
       agent: c.agent,
       tool: c.tool,
-      decision: reason ? (ACTIONS[reason] === 'ask' ? 'ask' : 'withhold') : 'restore',
-      reason: reason || dest,
+      decision: reason ? (ACTIONS[reason] === 'ask' ? 'ask' : 'withhold') : (warn ? 'warn' : 'restore'),
+      reason: reason || (warn ? WARN_REASON : dest),
     });
   }
 
@@ -478,6 +491,7 @@ async function detokenize(text, ctx) {
   let last = 0;
   const seenRestored = new Set();
   const seenWithheld = new Set();
+  const notices = [];
   for (const f of found) {
     const d = decisions.get(f.token);
     out += text.slice(last, f.start);
@@ -489,12 +503,17 @@ async function detokenize(text, ctx) {
       }
     } else {
       out += d.value;
-      if (!seenRestored.has(f.token)) { seenRestored.add(f.token); restored.push(f.token); }
+      if (!seenRestored.has(f.token)) {
+        seenRestored.add(f.token);
+        restored.push(f.token);
+        if (d.warn) notices.push(warnNotice(f.inner, d.warn.reason));
+      }
     }
     last = f.end;
   }
   out += text.slice(last);
-  return { text: out, restored, withheld };
+  // notices: lines for the user and the agent (a `warn` rule of the organization policy).
+  return notices.length ? { text: out, restored, withheld, notices } : { text: out, restored, withheld };
 }
 
 module.exports = {

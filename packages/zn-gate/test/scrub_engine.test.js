@@ -249,4 +249,53 @@ test('tokenize -> detokenize round-trips for the assistant', async () => {
   assert.strictEqual(back.text, text);
 });
 
+/* ---------------- detokenize: organization policy (zn Team) ---------------- */
+
+/* A vault that answers withPolicy like the daemon: deny, warn or plain. */
+function orgVault(values, rules) {
+  const audits = [];
+  return {
+    audits,
+    async resolve(project, token, o) {
+      const name = /^__ZN_(.+)__$/.exec(token)[1];
+      const value = Object.prototype.hasOwnProperty.call(values, name) ? values[name] : null;
+      const r = rules[name] || {};
+      if (!o || o.withPolicy !== true) return r.deny ? null : value;
+      if (r.deny) return { value: null, deny: true };
+      return r.warn ? { value, warn: true, warnReason: r.reason } : { value };
+    },
+    async audit(ev) { audits.push(ev); },
+  };
+}
+
+test('org policy: a blocked named secret keeps its marker', async () => {
+  const vault = orgVault({ PROD_DB: 'prod-' + pick(24) }, { PROD_DB: { deny: true } });
+  const r = await E.detokenize('DB=__ZN_PROD_DB__', ctx(vault, { destination: 'write_ignored' }));
+  assert.strictEqual(r.text, 'DB=__ZN_PROD_DB__');
+  assert.deepStrictEqual(r.restored, []);
+  assert.deepStrictEqual(r.withheld, [{ token: '__ZN_PROD_DB__', reason: 'org_deny', action: 'keep' }]);
+  assert.strictEqual(r.notices, undefined);
+  assert.deepStrictEqual(vault.audits.map((a) => [a.decision, a.reason]), [['withhold', 'org_deny']]);
+});
+
+test('org policy: a warn rule restores, adds the notice and records one "warn"', async () => {
+  const value = 'stg-' + pick(24);
+  const vault = orgVault({ STAGING_KEY: value }, { STAGING_KEY: { warn: true, reason: 'Staging keys need review' } });
+  const r = await E.detokenize('A=__ZN_STAGING_KEY__\nB=__ZN_STAGING_KEY__', ctx(vault, { destination: 'write_ignored' }));
+  assert.strictEqual(r.text, 'A=' + value + '\nB=' + value);
+  assert.deepStrictEqual(r.restored, ['__ZN_STAGING_KEY__']);
+  assert.deepStrictEqual(r.notices, ['zn: your team policy would block STAGING_KEY here (policy note: "Staging keys need review"). It was allowed and recorded for your organization.']);
+  assert.deepStrictEqual(vault.audits.map((a) => [a.decision, a.reason, a.secret]), [['warn', 'policy:warn', 'STAGING_KEY']]);
+});
+
+test('org policy: without a rule (or with an older vault) restores are unchanged', async () => {
+  const value = 'dev-' + pick(24);
+  for (const vault of [orgVault({ DEV_KEY: value }, {}), memoryVault({ named: { DEV_KEY: value } })]) {
+    const r = await E.detokenize('K=__ZN_DEV_KEY__', ctx(vault, { destination: 'write_ignored' }));
+    assert.strictEqual(r.text, 'K=' + value);
+    assert.deepStrictEqual(r.restored, ['__ZN_DEV_KEY__']);
+    assert.deepStrictEqual(Object.keys(r).sort(), ['restored', 'text', 'withheld']);
+  }
+});
+
 if (require.main === module) run('scrub engine');

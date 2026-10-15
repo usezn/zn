@@ -173,6 +173,26 @@ test('a warn rule allows the use, tells the agent and the user, and the "warn" r
   assert.strictEqual(warned[0].host, '127.0.0.1');
 });
 
+test('the vault applies the organization policy when the hooks restore a named marker', async () => {
+  const opts = { destination: 'write_ignored', agent: 'claude-code', tool: 'Write', withPolicy: true };
+  // deny (PROD_*): nothing comes back, and the refusal is recorded
+  const denied = await vault.resolve(HOME, '__ZN_PROD_DB_URL__', opts);
+  assert.deepStrictEqual(denied, { value: null, deny: true });
+  await assert.rejects(vault.resolve(HOME, '__ZN_PROD_DB_URL__', { destination: 'write_ignored' }), /organization policy/);
+  // warn (STAGING_*): the value comes back with the rule's reason
+  const warned = await vault.resolve(HOME, '__ZN_STAGING_TOKEN__', opts);
+  assert.strictEqual(warned.value, 'stg_' + 'q'.repeat(28));
+  assert.strictEqual(warned.warn, true);
+  assert.strictEqual(warned.warnReason, 'Staging credentials need review.');
+  // no rule (STRIPE_KEY has only hosts): the plain value, as before
+  const plain = await vault.resolve(HOME, '__ZN_STRIPE_KEY__', opts);
+  assert.deepStrictEqual(plain, { value: 'sk_test_' + 'x'.repeat(24) });
+  // zn run and the secrets MCP tools resolve without a destination and apply the policy themselves
+  assert.strictEqual(await vault.resolve(HOME, '__ZN_STAGING_TOKEN__'), 'stg_' + 'q'.repeat(28));
+  const log = fs.readFileSync(path.join(process.env.ZN_HOME, 'audit.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.ok(log.some((r) => r.secret === 'PROD_DB_URL' && r.decision === 'deny' && r.reason === 'policy:org_deny' && r.mode === 'resolve'));
+});
+
 test('a self-reported agent id (ZN_AGENT) cannot dodge a rule for another agent', async () => {
   const saved = process.env.ZN_AGENT;
   process.env.ZN_AGENT = 'claude-code';
