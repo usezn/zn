@@ -79,3 +79,10 @@ test('getPath reads array indexes', () => {
   assert.equal(getPath({ a: [{ b: 1 }] }, 'a.0.b'), 1);
   assert.equal(getPath({}, 'a.0.b'), undefined);
 });
+
+test('the version in prose is checked too', () => {
+  const prose = 'It installs zn-gate 1.9.0, pins zn-gate **1.9.0**, needs exactly version 1.9.0 and the `v1.9.0` tag.\n';
+  const errs = run({ ...GOOD, 'README.md': GOOD['README.md'] + prose });
+  assert.equal(errs.length, 4, errs.join('\n'));
+  assert.deepEqual(run({ ...GOOD, 'README.md': GOOD['README.md'] + prose.replace(/1\.9\.0/g, '2.0.0') }), []);
+});

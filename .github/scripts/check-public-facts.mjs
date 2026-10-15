@@ -18,6 +18,10 @@ export const PIN_PATTERNS = [
   /usezn\/zn@v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)/g,
   /--ref v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)/g,
   /\/(?:blob|tree)\/v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)(?=[/"'\s)#]|$)/g,
+  // The version in prose: "installs zn-gate 1.6.0", "zn-gate **1.6.0**", "exactly version 1.6.0", "the `v1.6.0` tag".
+  /zn-gate \*{0,2}(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)\b/g,
+  /exactly version (\d+\.\d+\.\d+)/g,
+  /`v(\d+\.\d+\.\d+)` tag/g,
 ];
 
 /** Value at a dotted path ("packages.0.version") of a parsed JSON document. */
