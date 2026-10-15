@@ -8,14 +8,14 @@ agent:
 | Agent | What the plugin adds | How it is installed |
 | --- | --- | --- |
 | Claude Code | hooks, `zn-gate` and `secrets` MCP servers, skill; installs zn-gate itself | marketplace in this repository |
-| Codex | `zn-gate` and `secrets` MCP servers, skill (hooks: `zn hooks install codex`) | marketplace in this repository |
+| Codex | `zn-gate` and `secrets` MCP servers, skill, hooks (review and trust them in `/hooks`) | marketplace in this repository |
 | Cursor | hooks, `zn-gate` and `secrets` MCP servers, skill | plugin from this repository |
 | Other Agent Plugins clients | `zn-gate` and `secrets` MCP servers, skill | the `plugins/zn-gate` directory |
 | OpenCode | (no plugin manifest) | `zn hooks install opencode` |
 
 What zn-gate can and cannot do in each agent is listed in
-[docs/compat.md](https://github.com/usezn/zn/blob/v1.7.1/docs/compat.md). Codex
-does not run hooks from plugins today, and Cursor loading these hooks from a
+[docs/compat.md](https://github.com/usezn/zn/blob/v1.7.1/docs/compat.md). The Codex plugin bundles zn-gate's hooks. Codex runs them once you review
+and trust them in `/hooks` (see below). Cursor loading these hooks from a
 plugin has not been tested yet.
 
 ## Security model
@@ -85,18 +85,27 @@ codex plugin marketplace add usezn/zn --ref v1.7.1
 ```
 
 Install `zn-gate` from the `usezn` marketplace with `/plugins`. That adds the
-`zn-gate` and `secrets` MCP servers and the skill. Codex does not run hooks from plugins
-(Codex 0.162.1 lists the `plugin_hooks` feature as removed), so install the
-hooks with zn-gate's own installer too, then open `/hooks` in Codex and trust
-them (Codex asks again whenever they change):
+`zn-gate` and `secrets` MCP servers, the skill and zn-gate's hooks.
+
+Codex skips plugin hooks until you review and trust them. Open `/hooks` in
+Codex, check the zn-gate hooks and trust them (Codex asks again whenever they
+change). OpenAI's [hooks documentation](https://learn.chatgpt.com/docs/hooks)
+explains this.
+
+If `/hooks` does not list zn-gate's hooks (an older Codex version, or hooks
+turned off in your config or by managed settings), install them with zn-gate's
+own installer instead:
 
 ```bash
 zn hooks install codex
 ```
 
-`com.openai/hooks.json` in the plugin is kept for when Codex runs plugin hooks
-again; until then the hooks installed this way call zn-gate directly, without
-the plugin launcher and its file check.
+Use one set of hooks only: if `/hooks` shows both, each call is checked twice.
+
+Plugins with lifecycle hooks are not eligible for OpenAI's public plugin
+directory ([plugin packaging guide](https://developers.openai.com/codex/plugins/build)),
+so zn-gate's Codex plugin is distributed through the repository marketplace
+(`codex plugin marketplace add usezn/zn`).
 
 ### Cursor
 

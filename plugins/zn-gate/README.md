@@ -11,11 +11,7 @@ The plugin follows the [Agent Plugins 1.0](https://github.com/agentplugins/agent
 layout (`plugin.json`, `mcp.json`, `skills/`) and adds the files Claude Code
 and Cursor read for hooks.
 
-**Codex:** Codex does not run hooks from plugins (Codex 0.162.1 lists the
-`plugin_hooks` feature as removed). In Codex this plugin adds the MCP servers
-and the skill only. For the hooks, also run `zn hooks install codex`,
-which writes them into your Codex configuration. `com.openai/hooks.json` is
-kept for when Codex runs plugin hooks again.
+**Codex:** this plugin bundles zn-gate's hooks, and Codex runs them once you review and trust them in `/hooks` ([OpenAI hooks documentation](https://learn.chatgpt.com/docs/hooks)). If `/hooks` does not list zn-gate's hooks (an older Codex version, or hooks turned off in your config or by managed settings), run `zn hooks install codex` instead, which writes them into your Codex configuration. `com.openai/hooks.json` declares the plugin's hooks.
 
 ## Requirements
 
@@ -211,7 +207,7 @@ event is not checked twice: `zn hooks uninstall claude-code`.
 | `plugin.json`, `mcp.json`, `skills/` | Agent Plugins clients | Manifest, MCP servers, skill |
 | `.claude-plugin/plugin.json`, `hooks/hooks.json`, `.mcp.json` | Claude Code | Manifest, hooks, MCP servers |
 | `package.json`, `package-lock.json` | Claude Code | The pinned zn-gate release, installed into the plugin folder |
-| `com.openai/hooks.json` | Codex | Hooks; not run by current Codex versions (use `zn hooks install codex`) |
+| `com.openai/hooks.json` | Codex | Hooks, loaded after you trust them in `/hooks` |
 | `.cursor-plugin/plugin.json`, `cursor/hooks.json`, `cursor/mcp.json` | Cursor | Manifest, hooks, MCP servers |
 | `scripts/zn-launch.js` | all | Finds and verifies zn-gate, then runs it |
 | `scripts/zn-gate.lock.json` | all | Pinned version and file digests |
