@@ -704,3 +704,22 @@ test('an older vault process: Write and Bash keep the markers and say how to res
   assert.match(bo.permissionDecisionReason, /Your zn vault was started by an older zn-gate version/);
   assert.match(bo.additionalContext, OLD);
 });
+
+/* 1.8.0 review: Bash, PowerShell and Monitor commands over 100 KB. */
+test('Bash, PowerShell and Monitor commands over 100 KB are blocked before they are checked', async (t) => {
+  const dir = tmpProject(t);
+  const cap = policy.SHELL_SCAN_CAP;
+  const long = 'echo ' + 'a'.repeat(cap + 1 - 5);
+  for (const tool of ['Bash', 'PowerShell', 'Monitor']) {
+    const start = process.hrtime.bigint();
+    const r = await run(preTool(tool, { command: long, description: 'x' }, dir), { nodePath: '/usr/bin/node' });
+    const ms = Number(process.hrtime.bigint() - start) / 1e6;
+    assert.equal(r.output.hookSpecificOutput.permissionDecision, 'deny', tool);
+    assert.match(r.output.hookSpecificOutput.permissionDecisionReason, /too long for zn to check \(over 100 KB\)/, tool);
+    assert.match(r.output.hookSpecificOutput.permissionDecisionReason, /do not resend it in parts/, tool);
+    assert.ok(ms < 50, tool + ' took ' + ms + ' ms');
+  }
+  // A normal command is unchanged.
+  const ok = await run(preTool('Bash', { command: 'npm test', description: 'x' }, dir));
+  assert.notEqual(ok.output && ok.output.hookSpecificOutput && ok.output.hookSpecificOutput.permissionDecision, 'deny');
+});

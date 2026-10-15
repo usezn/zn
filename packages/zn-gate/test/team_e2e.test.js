@@ -209,6 +209,16 @@ test('the vault applies the organization policy when the hooks restore a named m
   assert.ok(log.some((r) => r.secret === 'PROD_DB_URL' && r.decision === 'deny' && r.reason === 'policy:org_deny' && r.mode === 'resolve'));
 });
 
+/* 1.8.0 review: the vault reports a warn rule for a scrubber token of a stored secret. */
+test('a scrubber token with the value of a stored secret under a warn rule comes back with the warning', async () => {
+  const opts = { destination: 'write_ignored', agent: 'claude-code', tool: 'Write', withPolicy: true };
+  const detected = await vault.mapToken(HOME, 'API_KEY', 'stg_' + 'q'.repeat(28));
+  const got = await vault.resolve(HOME, detected, opts);
+  assert.deepStrictEqual(got, { value: 'stg_' + 'q'.repeat(28), policy: 1, warn: true, warnReason: 'Staging credentials need review.', warnName: 'STAGING_TOKEN' });
+  // Without a destination (zn run, the MCP tools) the token resolves as before.
+  assert.strictEqual(await vault.resolve(HOME, detected), 'stg_' + 'q'.repeat(28));
+});
+
 test('a self-reported agent id (ZN_AGENT) cannot dodge a rule for another agent', async () => {
   const saved = process.env.ZN_AGENT;
   process.env.ZN_AGENT = 'claude-code';

@@ -474,7 +474,11 @@ async function detokenize(text, ctx) {
             const got = value;
             value = got.deny === true ? null : got.value;
             if (got.deny === true) reason = 'org_deny';
-            else if (got.warn === true && kind === 'named') warn = { reason: typeof got.warnReason === 'string' ? got.warnReason : undefined };
+            else if (got.warn === true) {
+              // A scrubber token names the stored secret it matched (warnName) in the notice.
+              const name = kind === 'named' || typeof got.warnName !== 'string' || !/^[A-Za-z0-9_.-]{1,128}$/.test(got.warnName) ? f.inner : got.warnName;
+              warn = { reason: typeof got.warnReason === 'string' ? got.warnReason : undefined, name };
+            }
           }
           if (reason) value = null;
           else if (value === null || value === undefined) reason = 'unknown_token';
@@ -517,7 +521,7 @@ async function detokenize(text, ctx) {
       if (!seenRestored.has(f.token)) {
         seenRestored.add(f.token);
         restored.push(f.token);
-        if (d.warn) notices.push(warnNotice(f.inner, d.warn.reason));
+        if (d.warn) notices.push(warnNotice(d.warn.name || f.inner, d.warn.reason));
       }
     }
     last = f.end;

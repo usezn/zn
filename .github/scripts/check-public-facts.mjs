@@ -85,6 +85,35 @@ export function check(facts, files, read) {
     }
   }
 
+  // The agent plugin follows the release one step later (pinned after npm publishes it): its files and
+  // the pins under its folders are checked against pluginVersion instead of the release version.
+  const plugin = facts.pluginVersion;
+  if (plugin) {
+    for (const v of plugin.files || []) {
+      let got;
+      if (v.json) got = getPath(json(v.file), v.json);
+      else {
+        const s = text(v.file);
+        if (s === null) continue;
+        const m = s.match(new RegExp(v.regex, 'm'));
+        got = m ? m[1] : undefined;
+      }
+      if (got !== plugin.value) errors.push(`${v.file}${v.json ? ` (${v.json})` : ''}: version ${got ?? 'not found'}, public-facts.json pluginVersion says ${plugin.value}`);
+    }
+    const prefixes = plugin.pins || [];
+    for (const f of files.filter((x) => /\.(md|json)$/.test(x) && prefixes.some((p) => x.startsWith(p)) && !/package-lock\.json$/.test(x))) {
+      const s = text(f);
+      if (s === null) continue;
+      for (const re of PIN_PATTERNS) {
+        for (const m of s.matchAll(re)) {
+          if (m[1] === plugin.value || allowed.has(`${f}\0${m[0]}`)) continue;
+          const line = s.slice(0, m.index).split('\n').length;
+          errors.push(`${f}:${line}: pins ${m[0]}, public-facts.json pluginVersion says ${plugin.value}`);
+        }
+      }
+    }
+  }
+
   for (const fact of facts.text || []) {
     for (const f of fact.files) {
       const s = text(f);
@@ -121,7 +150,7 @@ function main() {
     console.log(`\n${errors.length} difference(s) with .github/public-facts.json. Update the file or the fact, in the same pull request.`);
     process.exit(1);
   }
-  console.log(`public facts OK: version ${facts.version.value}, ${(facts.text || []).length + (facts.fields || []).length} other facts`);
+  console.log(`public facts OK: version ${facts.version.value}${facts.pluginVersion ? `, plugin ${facts.pluginVersion.value}` : ''}, ${(facts.text || []).length + (facts.fields || []).length} other facts`);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

@@ -268,7 +268,7 @@ test('cursor: benign MCP calls get no answer; large arguments are scanned in ful
   assert.ok(!JSON.stringify(deep.output).includes(FAKE_AWS_KEY));
   const big = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'put', mcp_server_name: 'files', tool_input: { text: 'a'.repeat(1024 * 1024) } }));
   assert.equal(big.output.permission, 'deny');
-  assert.match(big.output.agent_message, /larger than 1 MB/);
+  assert.match(big.output.agent_message, /too large for zn to check/);
 });
 
 /* ------------------------------ OpenCode ----------------------------- */
@@ -346,4 +346,13 @@ test('opencode project plugin: cmd.exe does not look for zn in the project direc
   assert.match(call, /NoDefaultCurrentDirectoryInExePath: "1"/);
   const user = require('../lib/agents/opencode').pluginSource({ scope: 'user', nodePath: '/usr/bin/node', runnerPath: '/opt/zn/lib/hooks/runner.js' });
   assert.match(user.match(/spawn\(NODE,[^\n]*\)/)[0], /shell: false/);
+});
+
+/* 1.8.0 review: the MCP size notice does not suggest splitting the content. */
+test('cursor: the MCP size notice tells the agent to tell the user, not to resend in parts', async (t) => {
+  const dir = tmpProject(t);
+  const big = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'put', mcp_server_name: 'files', tool_input: { text: 'a'.repeat(1024 * 1024) } }));
+  assert.equal(big.output.permission, 'deny');
+  assert.match(big.output.agent_message, /Next step: tell the user; do not resend this content in parts\./);
+  assert.doesNotMatch(big.output.agent_message, /split|smaller calls/);
 });

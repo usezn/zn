@@ -34,7 +34,7 @@ const MIN_PASSPHRASE = 12;
 
 function service() {
   const s = process.env.ZN_KEYCHAIN_SERVICE || 'zn-vault';
-  if (!SAFE_NAME.test(s)) throw znError(CODES.POLICY_DENIED, 'invalid ZN_KEYCHAIN_SERVICE');
+  if (!SAFE_NAME.test(s)) throw znError(CODES.POLICY_DENIED, 'invalid ZN_KEYCHAIN_SERVICE. Next step: fix or remove this setting, or, if you are an agent, ask the user to do it.');
   return s;
 }
 
@@ -59,7 +59,7 @@ function powershellPath() {
 function detectBackend() {
   const forced = process.env.ZN_KEYCHAIN_BACKEND;
   if (forced) {
-    if (!BACKENDS.includes(forced)) throw znError(CODES.POLICY_DENIED, 'unknown keychain backend: ' + forced);
+    if (!BACKENDS.includes(forced)) throw znError(CODES.POLICY_DENIED, 'unknown keychain backend: ' + forced + '. Next step: set a backend this system supports, or remove the setting, or, if you are an agent, ask the user to do it.');
     return forced;
   }
   if (process.platform === 'darwin' && fs.existsSync('/usr/bin/security')) return 'macos';
@@ -95,7 +95,7 @@ const macos = {
     // `security -i` reads the command from stdin, so the identity never
     // shows up in the process list.
     const kc = process.env.ZN_KEYCHAIN_PATH;
-    if (kc && /\s/.test(kc)) throw znError(CODES.POLICY_DENIED, 'ZN_KEYCHAIN_PATH must not contain spaces');
+    if (kc && /\s/.test(kc)) throw znError(CODES.POLICY_DENIED, 'ZN_KEYCHAIN_PATH must not contain spaces. Next step: choose a folder path without spaces, or, if you are an agent, ask the user to do it.');
     const line = ['add-generic-password', '-U', '-s', service(), '-a', ACCOUNT, '-l', 'zn-vault-identity', '-w', identity].concat(kc ? [kc] : []).join(' ') + '\n';
     const res = run('/usr/bin/security', ['-i'], line);
     if (res.status !== 0) throw znError(CODES.LOCKED, 'macOS keychain refused the identity (security exit ' + res.status + ')');
@@ -262,7 +262,7 @@ function writeMeta(meta, opts) {
 
 function checkPassphrase(p) {
   if (typeof p !== 'string' || p.length < MIN_PASSPHRASE) {
-    throw znError(CODES.POLICY_DENIED, 'passphrase must be at least ' + MIN_PASSPHRASE + ' characters');
+    throw znError(CODES.POLICY_DENIED, 'passphrase must be at least ' + MIN_PASSPHRASE + ' characters. Next step: choose a longer passphrase.');
   }
 }
 
@@ -273,7 +273,7 @@ function checkPassphrase(p) {
 async function storeIdentity(identity, opts) {
   const o = opts || {};
   const backend = o.backend || detectBackend();
-  if (!/^AGE-SECRET-KEY-1[0-9A-Z]+$/.test(identity || '')) throw znError(CODES.POLICY_DENIED, 'not an age X25519 identity');
+  if (!/^AGE-SECRET-KEY-1[0-9A-Z]+$/.test(identity || '')) throw znError(CODES.POLICY_DENIED, 'not an age X25519 identity. Next step: paste the full identity line, which starts with AGE-SECRET-KEY-1.');
   if (backend === 'passphrase') {
     checkPassphrase(o.passphrase);
     store.ensureLayout(o);
@@ -293,13 +293,13 @@ async function storeIdentity(identity, opts) {
 async function loadIdentity(opts) {
   const o = opts || {};
   const meta = readMeta(o);
-  if (!meta) throw znError(CODES.NOT_FOUND, 'vault not initialised (run `zn unlock` once to create it)');
+  if (!meta) throw znError(CODES.NOT_FOUND, 'vault not initialised. Next step: run zn unlock once in your own terminal to create it, or, if you are an agent, ask the user to do it.');
   const backend = o.backend || meta.backend;
   let identity = null;
   if (backend === 'passphrase') {
     if (typeof o.passphrase !== 'string') throw znError(CODES.LOCKED, 'passphrase required');
     const buf = store.readPrivateFile(store.paths(o).identityFile);
-    if (buf === null) throw znError(CODES.NOT_FOUND, 'identity.age missing');
+    if (buf === null) throw znError(CODES.NOT_FOUND, 'identity.age missing. Next step: restore the vault files from a backup; do not create a new vault over an existing one.');
     try {
       identity = await store.decryptWithPassphrase(o.passphrase, new Uint8Array(buf));
     } catch (err) {
@@ -307,7 +307,7 @@ async function loadIdentity(opts) {
     }
   } else {
     identity = NATIVE[backend].load();
-    if (identity === null) throw znError(CODES.NOT_FOUND, 'identity not found in the ' + backend + ' keychain');
+    if (identity === null) throw znError(CODES.NOT_FOUND, 'identity not found in the ' + backend + ' keychain. Next step: sign in to the user account that created the vault, or restore the keychain entry from a backup.');
   }
   const recipient = await store.recipientOf(identity);
   if (recipient !== meta.recipient) throw znError(CODES.LOCKED, 'identity does not match this vault');
@@ -320,7 +320,7 @@ async function loadIdentity(opts) {
  */
 async function initIdentity(opts) {
   const o = opts || {};
-  if (readMeta(o)) throw znError(CODES.POLICY_DENIED, 'vault already initialised');
+  if (readMeta(o)) throw znError(CODES.POLICY_DENIED, 'vault already initialised. Next step: nothing to do; the vault already exists.');
   const backend = o.backend || detectBackend();
   store.ensureLayout(o);
   const { identity, recipient } = await store.generateIdentity();

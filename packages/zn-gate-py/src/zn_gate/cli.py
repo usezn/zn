@@ -17,7 +17,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from . import __version__
-from .rules import RULES_VERSION, SECRET_PATTERNS, evaluate, mask_token_runs, redact_secrets
+from .rules import RULES_VERSION, evaluate, mask_token_runs
+from .rules import SECRET_PATTERNS as _DLP_PATTERNS, redact_secrets as _dlp_redact
 from .client import analyze, is_cloud_enabled, resolve_endpoint
 from .evidence import log_evidence, verify_evidence_ledger, get_evidence_stats, export_evidence_ledger, EVIDENCE_FILE
 
@@ -26,7 +27,7 @@ from .evidence import log_evidence, verify_evidence_ledger, get_evidence_stats, 
 # Each entry: (rule name, pattern, header pattern shown instead of the match).
 _MULTILINE_RULES = [
     (name, rx, re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"))
-    for name, rx, _ in SECRET_PATTERNS if name == "secret:private_key"
+    for name, rx, _ in _DLP_PATTERNS if name == "secret:private_key"
 ]
 
 # A BEGIN marker with no END (a key cut short when pasted or truncated): the
@@ -88,7 +89,7 @@ def cmd_test(args: argparse.Namespace) -> int:
     text = args.text
     t0 = time.perf_counter()
     assessment = evaluate(text)
-    clean_text, findings = redact_secrets(text)
+    clean_text, findings = _dlp_redact(text)
     clean_text = mask_token_runs(clean_text)
     latency_us = (time.perf_counter() - t0) * 1_000_000
 
@@ -231,7 +232,7 @@ def _scan_file(file_path: Path) -> List[Dict[str, Any]]:
             continue
         # Snippets are printed to the terminal and, with --format github, to CI
         # logs: always show the line with any detected secret redacted.
-        redacted, findings = redact_secrets(line)
+        redacted, findings = _dlp_redact(line)
         snippet = "[REDACTED_PRIVATE_KEY]" if i in key_lines else mask_token_runs(redacted.strip())[:100]
         # A scan reports every match, including the rules that only warn by default.
         res = evaluate(line, strict=True)
@@ -315,7 +316,14 @@ def cmd_scan(args: argparse.Namespace) -> int:
         scanned += 1
         all_violations.extend(_scan_file(fp))
 
-    fmt = getattr(args, "format", "text")
+    _print_report(getattr(args, "format", "text"), scanned, skipped, all_violations)
+    if all_violations and not getattr(args, "no_fail", False):
+        return 1
+    return 0
+
+
+def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_violations: List[Dict[str, Any]]) -> None:
+    """Print the scan report: rule names, fixed text, counts and redacted snippets only."""
     if fmt == "github":
         # CI logs are public: rule, reason and location only, never the snippet.
         for v in all_violations:
@@ -342,15 +350,11 @@ def cmd_scan(args: argparse.Namespace) -> int:
                 print(f"  ... and {len(skipped) - 20} more")
         if not all_violations:
             print(f"{_icon(CHECK)} All scanned prompts, tool definitions, and files are clean!\n")
-            return 0
+            return
         print(f"{_icon(ALERT)} Found {len(all_violations)} threat vectors:\n")
         for v in all_violations:
             print(f"  {v['file']}:{v['line']} [{v['rule']}] {v['reason']}")
             print(f"    Snippet: {v['content']}\n")
-
-    if all_violations and not getattr(args, "no_fail", False):
-        return 1
-    return 0
 
 
 def cmd_evidence(args: argparse.Namespace) -> int:

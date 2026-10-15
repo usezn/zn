@@ -231,3 +231,49 @@ test('agent guard: versioned npm, npx and pnpm/bun launches of zn-gate are still
   // An ordinary zn-gate command is not an admin command.
   assert.equal(policy.bashDenial('npx -y zn-gate@1.6.0 status'), null);
 });
+
+/* 1.8.0 review: zn admin commands written with a Windows path or .cmd. */
+test('agent guard: zn admin commands with a Windows path or .cmd are refused', () => {
+  const adminCommands = [
+    'C:\\Users\\u\\AppData\\Roaming\\npm\\zn.cmd secret reveal X',
+    '.\\zn.cmd secret get X',
+    'zn.cmd hooks uninstall',
+    'zn env unshadow',
+    'zn-gate.cmd pins approve --all',
+    'C:\\npm\\zn.cmd hooks uninstall',
+    'C:\\Users\\u\\AppData\\Roaming\\npm\\zn.cmd env unshadow .env',
+    'C:\\Users\\u\\AppData\\Roaming\\npm\\zn-gate.cmd pins approve --all',
+    '& "C:\\Program Files\\nodejs\\zn.ps1" unlock',
+    'node C:\\npm\\node_modules\\zn-gate\\bin\\cli.js secret set A',
+  ];
+  for (const cmd of adminCommands) {
+    assert.ok(policy.bashDenial(cmd), 'expected a denial for: ' + cmd);
+  }
+  assert.match(policy.bashDenial('zn-gate.cmd pins approve --all'), /pins approve/);
+  assert.equal(policy.adminCommand('C:\\npm\\zn.cmd secret reveal X'), 'secret reveal');
+  // Ordinary commands and other programs whose name ends in zn are not admin commands.
+  assert.equal(policy.bashDenial('C:\\npm\\zn.cmd status'), null);
+  assert.equal(policy.adminCommand('C:\\tools\\myzn.cmd unlock'), null);
+});
+
+/* 1.8.0 review: commands over 100 KB are refused before any parsing. */
+test('a shell command over 100 KB is refused at once; one just under the limit gets the normal check', () => {
+  const cap = policy.SHELL_SCAN_CAP;
+  assert.equal(cap, 100 * 1024);
+  const tooLong = 'echo ' + 'a'.repeat(cap + 1 - 5);
+  assert.equal(tooLong.length, cap + 1);
+  const start = process.hrtime.bigint();
+  const deny = policy.bashDenial(tooLong);
+  const ms = Number(process.hrtime.bigint() - start) / 1e6;
+  assert.equal(deny, 'zn: this command is too long for zn to check (over 100 KB), so it was blocked. Next step: tell the user; do not resend it in parts.');
+  assert.ok(ms < 50, 'took ' + ms + ' ms');
+  // Exactly at the limit and just under it: the normal check runs.
+  assert.equal(policy.bashDenial('echo ' + 'a'.repeat(cap - 5)), null);
+  const head = 'cat ~/.aws/credentials ';
+  const under = head + 'a'.repeat(cap - 1 - head.length);
+  assert.equal(under.length, cap - 1);
+  assert.match(policy.bashDenial(under), /credential/);
+  // Normal commands are unchanged.
+  assert.equal(policy.bashDenial('npm test'), null);
+  assert.match(policy.bashDenial('cat ~/.aws/credentials'), /credential/);
+});

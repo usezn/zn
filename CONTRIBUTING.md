@@ -15,7 +15,7 @@ How the project is maintained, how pull requests are reviewed and how releases a
 
 ### Prerequisites
 - Node.js >= 18.0.0
-- Python >= 3.8
+- Python >= 3.10
 - (Optional, legacy Rust gateway) Rust stable, `protoc` 29 or later
 
 ### Running Tests Locally

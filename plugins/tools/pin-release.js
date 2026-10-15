@@ -167,6 +167,14 @@ async function main(argv) {
   const npm = buildNpmFiles(version, meta, bundled);
   const previous = fs.existsSync(LOCK) ? JSON.parse(fs.readFileSync(LOCK, 'utf8')).version : null;
   const texts = versionedTexts(previous, version);
+  // The public facts of the repository name the version the plugin is pinned to.
+  const factsFile = path.join(PLUGIN, '..', '..', '.github', 'public-facts.json');
+  if (previous && previous !== version && fs.existsSync(factsFile)) {
+    const facts = fs.readFileSync(factsFile, 'utf8');
+    const moved = facts.replace(/("pluginVersion": \{[\s\S]*?"value": )"[^"]*"/, '$1"' + version + '"');
+    if (moved === facts && !facts.includes('"pluginVersion"')) throw new Error('public-facts.json has no pluginVersion');
+    texts.push([factsFile, moved]);
+  }
   for (const [file, text] of texts) fs.writeFileSync(file, text);
   fs.writeFileSync(path.join(PLUGIN, 'package.json'), JSON.stringify(npm.pkg, null, 2) + '\n');
   fs.writeFileSync(path.join(PLUGIN, 'package-lock.json'), JSON.stringify(npm.npmLock, null, 2) + '\n');

@@ -9,7 +9,7 @@ const path = require('path');
 const { tempDir } = require('./helpers/tmp');
 const { znCommand, znOnPath, PACKAGE_VERSION } = require('../lib/zn-command');
 const { humanError, CODES } = require('../lib/errors');
-const { decidePrompt } = require('../lib/hooks/runner');
+const { decidePrompt, decidePre } = require('../lib/hooks/runner');
 const { dispatch } = require('../lib/broker/cli');
 const { createClient } = require('../lib/vault/client');
 
@@ -185,4 +185,66 @@ test('prompt block: a name over 64 characters falls back to the kind; 64 is kept
   assert.doesNotMatch(long.message, /AAAA/);
   const max = await promptFor([awsSpan({ name: 'A'.repeat(64), source: 'exact' })]);
   assert.match(max.message, new RegExp('contains a secret \\(' + 'A'.repeat(64) + '\\)'));
+});
+
+test('PowerShell refusals: the reason in plain words and one next step', () => {
+  const policy = require('../lib/hooks/policy');
+  const opts = { nodePath: 'C:/n/node.exe', runJs: 'C:/z/run.js', agent: 'claude-code' };
+  const cases = [
+    ['Get-Content a.txt | Out-File __ZN_GH__', /uses a pipeline, a variable or a script block/],
+    ['Get-Content __ZN_GH__', /"Get-Content" is a PowerShell command, not a program/],
+    ['./deploy.ps1 __ZN_GH__', /runs a PowerShell script \(\.ps1\)/],
+    ['tool+x __ZN_GH__', /does not start with a plain program name/],
+  ];
+  for (const [cmd, reason] of cases) {
+    const r = policy.wrapPowerShell(cmd, opts);
+    assert.equal(r.ok, false, cmd);
+    assert.match(r.reason, reason, cmd);
+    assert.match(r.reason, /Next step: start the command with the program name/, cmd);
+    assert.doesNotMatch(r.reason, /cannot be rewritten|cmdlet|could not identify|scrubber/, cmd);
+  }
+});
+
+test('real refusals from the vault code carry a specific next step', async (t) => {
+  const keychain = require('../lib/vault/keychain');
+  const home = tempDir(t, 'zn-home-next-');
+  const saved = process.env.ZN_HOME;
+  process.env.ZN_HOME = home;
+  try {
+    await assert.rejects(keychain.loadIdentity({}), (e) => {
+      assert.equal(e.code, 'ZN_NOT_FOUND');
+      assert.equal(humanError(e, {}), 'Not found: vault not initialised. Next step: run zn unlock once in your own terminal to create it, or, if you are an agent, ask the user to do it.');
+      return true;
+    });
+    await assert.rejects(keychain.storeIdentity('not-an-identity', { backend: 'passphrase' }), (e) => {
+      assert.equal(e.code, 'ZN_POLICY_DENIED');
+      assert.equal(humanError(e, {}), 'Not allowed: not an age X25519 identity. Next step: paste the full identity line, which starts with AGE-SECRET-KEY-1.');
+      return true;
+    });
+  } finally {
+    if (saved === undefined) delete process.env.ZN_HOME; else process.env.ZN_HOME = saved;
+  }
+});
+
+test('MCP notice: a stored secret cannot go to this server; the next step is the web-request tool', async () => {
+  const ev = { event: 'pre_tool', tool: 'mcp', mcp: { server: 'github' }, input: { args: { text: AWS_PROMPT } }, cwd: process.cwd() };
+  const d = await decidePre(ev, deps([awsSpan()]), 'claude-code', { home: process.cwd() });
+  assert.equal(d.decision, 'deny');
+  assert.match(d.message, /^zn: this call would send a secret \(an AWS key\) to the MCP server github, so zn blocked it\. A stored secret cannot be passed to this server\. Next step: for a web request, use the secrets_http_request tool of the zn "secrets" MCP server, which sends the stored value itself; do not put the value in this call\.$/);
+});
+
+test('Monitor notices: WebSocket, placeholders and the allowed monitor', async () => {
+  const opts = { nodePath: '/usr/bin/node', home: process.cwd() };
+  const cwd = process.cwd();
+  const ws = await decidePre({ event: 'pre_tool', tool: 'monitor', input: {}, raw: { tool_input: { ws: { url: 'wss://x' } } }, cwd }, deps(), 'claude-code', opts);
+  assert.equal(ws.decision, 'deny');
+  assert.match(ws.message, /^zn: a WebSocket monitor sends its data to the model without the secret check\. Next step: use a monitor that runs a command instead, because zn checks the output of commands\.$/);
+
+  const marked = await decidePre({ event: 'pre_tool', tool: 'monitor', input: { command: 'curl __ZN_GH__' }, raw: { tool_input: { command: 'curl __ZN_GH__' } }, cwd }, deps(), 'claude-code', opts);
+  assert.equal(marked.decision, 'deny');
+  assert.match(marked.message, /^zn: a monitor cannot use secret placeholders \(such as __ZN_NAME__\)\. Next step: run the command with the Bash tool instead; zn fills in the placeholders there\.$/);
+
+  const ok = await decidePre({ event: 'pre_tool', tool: 'monitor', input: { command: 'tail -f app.log' }, raw: { tool_input: { command: 'tail -f app.log' } }, cwd }, deps(), 'claude-code', opts);
+  assert.equal(ok.decision, 'ask');
+  assert.match(ok.message, /^zn: this monitor's output is checked on this computer before the model sees it\. Secret values are replaced with placeholders such as __ZN_AWS_KEY_1__\.$/);
 });

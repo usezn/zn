@@ -81,6 +81,17 @@ write `__ZN_NAME__` in the prompt instead.
 
 Codex runs new hooks only after you trust them: open Codex and use `/hooks`.
 
+On a computer managed by an organization, Claude Code can be set up to ignore
+the hooks and MCP servers you install yourself (`disableAllHooks`,
+`allowManagedHooksOnly`, `managed-mcp.json`, or an MCP allowlist or denylist),
+and it does not tell you. `zn hooks install claude-code` and `zn-gate status`
+read the managed settings files on this computer and your own settings, and
+say when one of these stops zn's hooks or its `secrets` server. Ask your
+administrator to add zn to the managed settings. Policy sent through claude.ai,
+device management (MDM) or the Windows registry is not read, and when such a
+policy exists Claude Code may ignore the managed settings files; `claude
+doctor` and `/status` show which source Claude Code used.
+
 ## 4. Let a command use a secret
 
 Allow the program that needs the value:

@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-15.13';
+const POLICY_RULES_VERSION = '2026-10-15.15';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -785,23 +785,22 @@ function wrapPowerShell(cmd, opts) {
   const s = String(cmd);
   const named = markers.findNamedMarkers(s);
   if (named.length === 0) return { ok: true, command: s, wrapped: false };
-  const guidance = ' In PowerShell, put the secret in a single native command with plain arguments ' +
-    "(for example: psql 'postgres://app:__ZN_DB_PASSWORD__@db/app' -c 'select 1'). " +
-    'For HTTP APIs use the secrets_http_request tool of the zn "secrets" MCP server instead of Invoke-WebRequest or curl.';
+  const guidance = ' Next step: start the command with the program name and put the secret in its arguments, for example: ' +
+    "psql 'postgres://app:__ZN_DB_PASSWORD__@db/app' -c 'select 1'. For web requests, use the secrets_http_request tool of the zn \"secrets\" MCP server instead.";
   const scan = scanPowerShell(s);
   if (!scan.simple || scan.words.length === 0) {
-    return { ok: false, reason: 'zn: this PowerShell command cannot be rewritten safely for secret injection (pipelines, variables, script blocks and expanding strings are not supported).' + guidance };
+    return { ok: false, reason: 'zn: this PowerShell command uses a pipeline, a variable or a script block, so zn cannot safely put a secret into it.' + guidance };
   }
   const first = scan.words[0].text;
   const base = path.basename(first.replace(/\\/g, '/')).toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/, '');
   if (/^[a-z]+-[a-z]+$/i.test(first) || PS_ALIASES.has(first.toLowerCase())) {
-    return { ok: false, reason: 'zn: `' + first + '` is a PowerShell cmdlet or alias; zn can only pass secrets to native programs.' + guidance };
+    return { ok: false, reason: 'zn: "' + first + '" is a PowerShell command, not a program, so zn cannot pass a secret to it.' + guidance };
   }
   if (/\.ps1$/i.test(first)) {
-    return { ok: false, reason: 'zn: PowerShell scripts (.ps1) cannot receive secrets through zn run.' + guidance };
+    return { ok: false, reason: 'zn: this runs a PowerShell script (.ps1), and zn cannot pass secrets into scripts.' + guidance };
   }
   if (!/^[A-Za-z0-9_.\-\\/:]+$/.test(first)) {
-    return { ok: false, reason: 'zn: could not identify the program in this command.' + guidance };
+    return { ok: false, reason: 'zn: this command does not start with a plain program name, so zn cannot tell which program to run.' + guidance };
   }
   if ((base === 'zn' || base === 'zn-gate') && scan.words[1] && scan.words[1].text === 'run') {
     return { ok: true, command: s, wrapped: false };
@@ -821,18 +820,26 @@ function hasNetworkSignals(cmd) {
 }
 
 // The program is zn, zn-gate (also with a version: npx -y zn-gate@1.6.0, pnpm dlx zn-gate@latest) or the bin file.
-const ZN_ADMIN_RE = /(^|[\s;&|(`$'"\/])((?:zn|zn-gate(?:@[^\s"'`;&|]+)?|cli\.js))(\.cmd|\.js|\.ps1)?["']?\s+(?:--\s+)?(secret\s+(set|get|rm|remove|import|adopt|approve|allow|reveal|link)|env\s+(shadow|unshadow)|unlock|lock|hooks\s+(install|uninstall)|stats(?:\s+(?:-{1,2}[^\s-]\S*|\d+))*\s+share\s+on|["']?pins["']?\s+["']?approve)\b/i;
+const ZN_ADMIN_RE = /(^|[\s;&|(`$'"\\\/])((?:zn|zn-gate(?:@[^\s"'`;&|]+)?|cli\.js))(\.cmd|\.js|\.ps1)?["']?\s+(?:--\s+)?(secret\s+(set|get|rm|remove|import|adopt|approve|allow|reveal|link)|env\s+(shadow|unshadow)|unlock|lock|hooks\s+(install|uninstall)|stats(?:\s+(?:-{1,2}[^\s-]\S*|\d+))*\s+share\s+on|["']?pins["']?\s+["']?approve)\b/i;
 
 function adminCommand(cmd) {
   const m = ZN_ADMIN_RE.exec(String(cmd || ''));
   return m ? m[4].replace(/\s+/g, ' ') : null;
 }
 
+// Shell, PowerShell and Monitor commands longer than this are refused before
+// any parsing, like the 1 MB limit for MCP calls: checking them could take
+// longer than the agent waits for the hook, and a hook that times out lets the
+// command run unchecked.
+const SHELL_SCAN_CAP = 100 * 1024; // characters
+const TOO_LONG_MESSAGE = 'zn: this command is too long for zn to check (over 100 KB), so it was blocked. Next step: tell the user; do not resend it in parts.';
+
 /**
  * Bash commands that read credential files or touch ~/.zn.
  * Returns null or a deny message.
  */
 function bashDenial(cmd, opts = {}) {
+  if (String(cmd || '').length > SHELL_SCAN_CAP) return TOO_LONG_MESSAGE;
   const admin = adminCommand(cmd);
   if (admin) {
     if (/pins/i.test(admin)) {
@@ -906,4 +913,5 @@ module.exports = {
   hasNetworkSignals,
   adminCommand,
   bashDenial,
+  SHELL_SCAN_CAP,
 };

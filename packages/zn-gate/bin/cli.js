@@ -833,6 +833,24 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
   Leaves machine  : ${cloud ? 'analyze_prompt text only, secrets redacted locally first' : 'Nothing'}
 
 `);
+    // Claude Code settings that stop zn's hooks or its MCP server (read-only).
+    try {
+      const cc = require('../lib/agents/claude-code');
+      if (cc.detect()) {
+        const path = require('path');
+        // The user-scope MCP servers live in .claude.json (in CLAUDE_CONFIG_DIR when set).
+        const claudeJson = process.env.CLAUDE_CONFIG_DIR ? path.join(cc.configDir(), '.claude.json') : path.join(require('os').homedir(), '.claude.json');
+        let mcp = null;
+        try { mcp = (JSON.parse(require('fs').readFileSync(claudeJson, 'utf8')).mcpServers || {}).secrets || null; } catch (_) { /* not registered */ }
+        const notes = require('../lib/agents/managed-policy').claudeCodePolicyWarnings({
+          userSettings: [path.join(cc.configDir(), 'settings.json')],
+          mcp: Boolean(mcp && JSON.stringify(mcp).includes('secrets-mcp')),
+          mcpCommand: mcp && mcp.command ? [mcp.command, ...(Array.isArray(mcp.args) ? mcp.args : [])] : null,
+        });
+        for (const n of notes) process.stdout.write('  Claude Code     : ' + n + '\n');
+        if (notes.length) process.stdout.write('\n');
+      }
+    } catch (_) { /* status never fails on this check */ }
     process.exit(0);
   }
 

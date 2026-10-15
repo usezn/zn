@@ -93,8 +93,13 @@ Releases follow [Semantic Versioning](https://semver.org/). Prereleases use
    pull request checks that the version named as the first to support a Team
    policy option (today Warn: 1.8.0 in docs/team.md and docs/compat.md) matches
    this release, and corrects those documents if it differs.
-2. A maintainer pushes an annotated tag `vX.Y.Z` on that commit (see Branches
-   for who can create tags).
+2. Before tagging, a maintainer checks that commit: every CI check is green,
+   no code scanning alert is open, every dependency (Dependabot) alert is
+   either fixed in that commit or reviewed and explicitly accepted, the
+   changes since the last release have had a security review, and the
+   packages built from it install and pass an end-to-end test in a clean
+   environment. Then the maintainer pushes an annotated tag `vX.Y.Z` on that
+   commit (see Branches for who can create tags).
 3. The [`Release` workflow](.github/workflows/release.yml) builds the npm package
    and the Python distributions once, from the tag, and checks that the tag, the
    package versions and the branch match.

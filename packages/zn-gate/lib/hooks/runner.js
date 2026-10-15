@@ -212,8 +212,8 @@ async function decidePre(ev, d, agentId, opts) {
     if (!wrap.ok) return { decision: 'deny', message: wrap.reason };
     if (wrap.wrapped) {
       command = wrap.command;
-      notes.push('runs through `zn run` for ' + markers.findNamedMarkers(original).map((m) => m.name).join(', ') +
-        ' (allowCommands, first-use approval and output masking apply)');
+      notes.push('runs through zn run (zn\'s secret wrapper) for ' + markers.findNamedMarkers(original).map((m) => m.name).join(', ') +
+        '; the first time, you approve the command, and secret values in its output stay hidden');
     }
 
     const detected = markers.findMarkers(command).filter((m) => m.detected);
@@ -224,10 +224,10 @@ async function decidePre(ev, d, agentId, opts) {
       const res = await d.engine().detokenize(command, ctx);
       if (res && typeof res.text === 'string' && res.restored && res.restored.length) {
         command = res.text;
-        notes.push('restores ' + res.restored.length + ' scrubbed value(s) for a local command');
+        notes.push('puts back ' + res.restored.length + ' hidden value(s) for a local command');
       }
       if (res && res.withheld && res.withheld.length) {
-        notes.push('kept ' + res.withheld.length + ' token(s) unresolved: ' +
+        notes.push('left ' + res.withheld.length + ' placeholder(s) unfilled: ' +
           res.withheld.map((w) => w.token + ' (' + w.reason + ')').join(', '));
         if (isOutdated(res.withheld)) {
           notes.push(outdatedLine().replace(/\.$/, ''));
@@ -241,7 +241,7 @@ async function decidePre(ev, d, agentId, opts) {
         // A command that carries markers always asks, even when nothing was rewritten
         // (already wrapped in `zn run` by the agent, or tokens kept unresolved).
         // Never let it run on the user's allow rules alone.
-        return { decision: 'ask', message: 'zn: this command carries secret markers' + (notes.length ? '; ' + notes.join('; ') : '') + '.', context };
+        return { decision: 'ask', message: 'zn: this command contains secret placeholders (such as __ZN_NAME__)' + (notes.length ? '; ' + notes.join('; ') : '') + ', so it needs your approval before it runs.', context };
       }
       return notes.length ? { decision: 'allow', message: 'zn: ' + notes.join('; ') } : { decision: 'allow' };
     }
@@ -346,18 +346,19 @@ function isMonitorWrapper(command, opts) {
 function decideMonitor(ev, pathOpts, opts) {
   const raw = (ev.raw && ev.raw.tool_input) || {};
   if (raw.ws !== undefined && raw.command === undefined) {
-    return { decision: 'deny', message: 'zn: a WebSocket monitor streams data to the model without passing through the secret scrubber. Use a command instead (its output is scrubbed).' };
+    return { decision: 'deny', message: 'zn: a WebSocket monitor sends its data to the model without the secret check. Next step: use a monitor that runs a command instead, because zn checks the output of commands.' };
   }
   const original = String(ev.input.command || '');
+  if (original.length > policy.SHELL_SCAN_CAP) return { decision: 'deny', message: policy.bashDenial(original, pathOpts) };
   if (!original.trim()) return { decision: 'allow' };
   const deny = policy.bashDenial(original, pathOpts);
   if (deny) return { decision: 'deny', message: deny };
   if (markers.findMarkers(original).length) {
-    return { decision: 'deny', message: 'zn: secret markers are not supported in Monitor commands. Run the command with the Bash tool (it goes through `zn run`).' };
+    return { decision: 'deny', message: 'zn: a monitor cannot use secret placeholders (such as __ZN_NAME__). Next step: run the command with the Bash tool instead; zn fills in the placeholders there.' };
   }
-  if (isMonitorWrapper(original, opts)) return { decision: 'ask', message: 'zn: this monitor already pipes through the secret scrubber.' };
+  if (isMonitorWrapper(original, opts)) return { decision: 'ask', message: 'zn: this monitor already checks its output for secrets.' };
   const command = wrapMonitor(original, opts);
-  return { decision: 'ask', updatedInput: { command }, kind: 'monitor', message: 'zn: the monitor output is piped through the local secret scrubber, so secret values in it are replaced with __ZN_ tokens.' };
+  return { decision: 'ask', updatedInput: { command }, kind: 'monitor', message: 'zn: this monitor\'s output is checked on this computer before the model sees it. Secret values are replaced with placeholders such as __ZN_AWS_KEY_1__.' };
 }
 
 /*
@@ -416,7 +417,7 @@ function mcpServerLabel(server) {
 async function decideMcp(ev, d, agentId) {
   const text = mcpArgumentText(ev.input.args);
   if (text === null) {
-    return { decision: 'deny', message: 'zn: the arguments of this MCP call are larger than 1 MB (counted in characters), so zn cannot check them.' };
+    return { decision: 'deny', message: 'zn: this MCP call is too large for zn to check (its arguments are over 1 MB). Next step: tell the user; do not resend this content in parts.' };
   }
   if (!text) return { decision: 'allow' }; // nothing to check, so the vault is not loaded
   const server = ev.mcp && ev.mcp.server ? String(ev.mcp.server) : '';
@@ -424,8 +425,8 @@ async function decideMcp(ev, d, agentId) {
   if (!ours && markers.findMarkers(text).length) {
     return {
       decision: 'deny',
-      message: 'zn: MCP tools from other servers never receive secret values. For an authenticated HTTP call use the secrets_http_request tool ' +
-        'of the zn "secrets" MCP server.',
+      message: 'zn: ' + mcpServerLabel(server) + ' never receives secret values, so zn blocked this call. ' +
+        'Next step: for an authenticated web request, use the secrets_http_request tool of the zn "secrets" MCP server; otherwise remove the placeholder from the call.',
     };
   }
 
@@ -442,8 +443,9 @@ async function decideMcp(ev, d, agentId) {
   if (kinds.size === 0) return { decision: 'allow' };
   return {
     decision: 'deny',
-    message: 'zn: this call would send a secret (' + [...kinds].join(', ') + ') to ' + mcpServerLabel(server) + '. ' +
-      'Keep secrets in the vault and pass them with zn run or secrets_http_request.',
+    message: 'zn: this call would send a secret (' + [...kinds].join(', ') + ') to ' + mcpServerLabel(server) + ', so zn blocked it. ' +
+      'A stored secret cannot be passed to this server. ' +
+      'Next step: for a web request, use the secrets_http_request tool of the zn "secrets" MCP server, which sends the stored value itself; do not put the value in this call.',
   };
 }
 
