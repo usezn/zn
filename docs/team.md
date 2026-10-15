@@ -68,7 +68,7 @@ is a readable copy: editing or deleting it does not remove any restriction.
 
 | | |
 |---|---|
-| **Always** | Block a secret (`deny`). Narrow the hosts (`allowHosts`) or commands (`allowCommands`) a secret may be used with. Force `proxy` mode. Limit where `secrets_http_request` may put the value (`injectAt`). Add custom secret formats for the scrubber (`detectors`). |
+| **Always** | Block a secret (`deny`) or warn about its use (`warn`). Narrow the hosts (`allowHosts`) or commands (`allowCommands`) a secret may be used with. Force `proxy` mode. Limit where `secrets_http_request` may put the value (`injectAt`). Add custom secret formats for the scrubber (`detectors`). |
 | **Only after you approve it on this machine** | Let a secret go to a host your local settings do not allow. The first time an agent needs that host, the vault asks you; the approval is kept per organization, secret and host. A wildcard host (`*.example.com`) is flagged as such in the dialog. |
 | **Never** | Open a new command, mode or HTTP placement for a secret. Change or switch off the protections for credential files, `~/.zn` and agent configuration. Read secret values. |
 
@@ -88,10 +88,19 @@ is never widened by a later one.
 Only `proxy` is applied from a rule's `mode`; other modes in a rule are
 ignored.
 
-### Block or warn
+### The three choices: Not blocked, Warn, Block
 
-A rule with `"deny": true` blocks the secret. A rule with `"warn": true`
-lets the use go ahead, and:
+The dashboard sets one choice per rule. In the policy file the choice is a
+field of the rule:
+
+| Choice | Field | What happens on the machine |
+|---|---|---|
+| **Not blocked** (default) | none | The use goes ahead within the rule's other limits. Nothing is shown and nothing is recorded as a warning. |
+| **Warn** | `"warn": true` | The use goes ahead within the rule's other limits. You and the agent see a notice, and the audit record has the decision `warn`. |
+| **Block** | `"deny": true` | The use is stopped. |
+
+A rule cannot have both `deny` and `warn`. For a Warn rule the use goes
+ahead, and:
 
 - writes an audit record with the decision `warn` (reason `policy:warn`),
   which is uploaded to your organization with the other records;
@@ -119,13 +128,15 @@ refused like any other invalid policy. When one rule blocks a secret and
 another warns, the block wins. Like every rule, a warning applies to all
 agents, whatever its `agents` list says.
 
-zn-gate 1.7 and earlier do not know `warn` and would refuse a whole policy
-that uses it. Newer versions say on each policy download that they
-understand it (see [What is sent](#what-is-sent)). For older versions the
-zn service removes only the `warn` field: the rule and its other
-restrictions still apply, but those machines use the secret without
-showing the warning and do not record `warn` decisions. Update them to
-see and record warnings.
+zn-gate 1.7.x and earlier do not know `warn` and would refuse a whole
+policy that uses it. zn-gate 1.8.0 and later say on each policy download
+that they understand it (see [What is sent](#what-is-sent)). For older
+versions the zn service removes only the `warn` field: the rule and its
+other restrictions still apply, but those machines use the secret without
+showing the notice and do not record `warn` decisions. Update them to
+zn-gate 1.8.0 or later to see and record warnings. The table in
+[compat.md](compat.md#zn-team-policy-choices-by-zn-gate-version) lists the
+choices per version.
 
 Custom `detectors` run with the built-in patterns and only add redactions.
 A pattern runs only if its cost is bounded before it runs: a flat sequence
