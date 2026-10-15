@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Opt-in sharing of anonymous daily counts (`zn-gate stats share on|off|status|show`).
+ * Opt-in sharing of pseudonymous daily counts (`zn-gate stats share on|off|status|show`).
  *
  * Off unless you turn it on. When on, `zn-gate stats` sends one report per complete day (at most the last
  * 3 days, which is what the server accepts) to https://api.usezn.com/v1/telemetry, after printing it.

@@ -169,9 +169,8 @@ function esmRequests(sources) {
   return JSON.parse(r.stdout);
 }
 
-// import() anywhere, as a call (not a method named import); comments may sit
-// between import and the parenthesis.
-const DYNAMIC_IMPORT = /(?<![.\w$])import\s*(?:\/\*[\s\S]*?\*\/\s*|\/\/[^\n]*\n\s*)*\(/g;
+// The word import, not as a property (obj.import) or part of a name.
+const IMPORT_WORD = /(?<![.\w$])import\b/g;
 const LITERAL_ARG = /^\s*(['"])([^'"\n]+)\1\s*\)/;
 const UNCHECKABLE = /\bcreateRequire\b|\bimport\.meta\.resolve\b|\bprocess\.mainModule\b|\brequire\s*\(\s*(['"])(?:node:)?module\1/;
 const MODULE_BUILTINS = new Set(['module', 'node:module']);
@@ -188,14 +187,40 @@ function isMethodDefinition(text, start, from) {
   return /^[ \t]*[\w$]+(?:[ \t]*,[ \t]*[\w$]+)*[ \t]*\)[ \t]*\{/.test(text.slice(from, from + 200));
 }
 
+/**
+ * Calls of import(): for each word import followed by "(" (with spaces and
+ * comments allowed in between), its position and the position after "(".
+ * A plain scan without backtracking (only our own release files are read).
+ */
+function importCalls(text) {
+  const calls = [];
+  IMPORT_WORD.lastIndex = 0;
+  let m;
+  while ((m = IMPORT_WORD.exec(text))) {
+    let i = m.index + m[0].length;
+    for (;;) {
+      while (i < text.length && /\s/.test(text[i])) i++;
+      if (text.startsWith('/*', i)) {
+        const end = text.indexOf('*/', i + 2);
+        i = end < 0 ? text.length : end + 2;
+      } else if (text.startsWith('//', i)) {
+        const end = text.indexOf('\n', i + 2);
+        i = end < 0 ? text.length : end + 1;
+      } else {
+        break;
+      }
+    }
+    if (text[i] === '(') calls.push({ start: m.index, from: i + 1 });
+  }
+  return calls;
+}
+
 /** import() specifiers of a file; problems for calls whose name is not a plain string. */
 function dynamicImports(rel, text, problems) {
   const out = [];
-  DYNAMIC_IMPORT.lastIndex = 0;
-  let m;
-  while ((m = DYNAMIC_IMPORT.exec(text))) {
-    if (isMethodDefinition(text, m.index, m.index + m[0].length)) continue;
-    const lit = LITERAL_ARG.exec(text.slice(m.index + m[0].length));
+  for (const call of importCalls(text)) {
+    if (isMethodDefinition(text, call.start, call.from)) continue;
+    const lit = LITERAL_ARG.exec(text.slice(call.from));
     if (lit) out.push(lit[2]);
     else problems.push(rel + ': import() with a computed name cannot be checked');
   }

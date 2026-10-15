@@ -7,8 +7,8 @@ Upgrade to it to receive them.
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 1.5.x   | :white_check_mark: |
-| < 1.5.0 | :x:                |
+| 1.6.x   | :white_check_mark: |
+| < 1.6.0 | :x:                |
 
 Prereleases (`-alpha`, `-beta`, `-rc`) are not supported once the final release is out.
 
@@ -75,12 +75,17 @@ We gratefully acknowledge independent security researchers who have helped prote
 | :--- | :--- | :--- | :--- |
 | **2026-09-07** | [SEC-2026-01](docs/advisories/SEC-2026-01.md) | Control-plane authorization gap on policy and consensus handlers | **[WinstonRedGuard (github.com/WRG-11)](https://github.com/WRG-11)** |
 | **2026-09-30** | [SEC-2026-02](docs/advisories/SEC-2026-02.md) | Insufficient session and token revocation on password reset (CWE-613) | **[Ganesh RK](https://www.linkedin.com/in/ganesh-rk-6b827828a/)** |
+| **2026-10** | [SEC-2026-03](https://usezn.com/security/) | Incomplete session revocation on password change (CWE-613 follow-up) | **[Akshay Gore](https://www.linkedin.com/in/akshay-gore-512737345/)** |
+| **2026-10** | [SEC-2026-04](https://usezn.com/security/) | Session termination flow hardening (logout redirects & error handling) | **Sudarshan Dhanvai** |
 
 ---
 
 ## Security Advisories
 
+* [GHSA-wvv2-f3m6-6wrq](https://github.com/usezn/zn/security/advisories/GHSA-wvv2-f3m6-6wrq) — *zn-gate for Node.js: an agent could run zn admin commands through a versioned package call (`npx -y zn-gate@<version> ...`), skipping the hook that denies them (fixed in 1.6.0)*
 * [GHSA-rf3f-ppm5-3xrx](https://github.com/usezn/zn/security/advisories/GHSA-rf3f-ppm5-3xrx) — *zn-gate for Node.js on Windows: `zn run` could hand secrets to a program chosen through the environment (fixed in 1.5.1)*
 * [GHSA-r4h2-qcf2-8227](https://github.com/usezn/zn/security/advisories/GHSA-r4h2-qcf2-8227) — *zn-gate 1.4.0 and earlier sent tool output and tool-call arguments to api.usezn.com without redaction when `ZN_API_KEY` was set (fixed in 1.4.1)*
 * [SEC-2026-01](docs/advisories/SEC-2026-01.md) — *Control-plane authorization gap in zn management API (Remediated in commit 6ebce2f)*
 * [SEC-2026-02](docs/advisories/SEC-2026-02.md) — *Insufficient session and token revocation on password reset (Remediated in the usezn.com platform, which is not part of this repository)*
+* [SEC-2026-03](https://usezn.com/security/) — *Incomplete session revocation on password change (Remediated in the usezn.com platform, which is not part of this repository)*
+* [SEC-2026-04](https://usezn.com/security/) — *Session termination flow hardening: logout redirects and error handling (Remediated in the usezn.com platform, which is not part of this repository)*

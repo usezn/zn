@@ -288,6 +288,9 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
   }
 
   const filesToScan = [];
+  // Files that match the scan but are not read, reported in the summary.
+  const skipped = [];
+  filesToScan.skipped = skipped;
 
   function walk(current) {
     let stat;
@@ -316,6 +319,8 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
       const isCandidate = SCANNABLE_EXTS.has(ext) || base.startsWith('.env') || KEY_FILE_NAMES.has(path.basename(current));
       if (isCandidate && stat.size < 2 * 1024 * 1024) {
         filesToScan.push(current);
+      } else if (isCandidate) {
+        skipped.push({ file: current, reason: '2 MiB or larger' });
       }
     }
   }
@@ -341,15 +346,23 @@ Files   : ${files.length} file(s) queued for audit\n
 
   let totalFindings = 0;
   const findings = [];
+  // Queued files that turn out not to be read (binary .key files, read errors).
+  let notRead = 0;
 
   for (const filePath of files) {
     const relPath = path.relative(process.cwd(), filePath);
     let content = '';
     try {
       const raw = fs.readFileSync(filePath);
-      if (path.extname(filePath).toLowerCase() === '.key' && raw.subarray(0, BINARY_SNIFF).includes(0)) continue;
+      if (path.extname(filePath).toLowerCase() === '.key' && raw.subarray(0, BINARY_SNIFF).includes(0)) {
+        files.skipped.push({ file: filePath, reason: 'binary .key file, not a key' });
+        notRead++;
+        continue;
+      }
       content = raw.toString('utf8');
     } catch (e) {
+      files.skipped.push({ file: filePath, reason: 'cannot be read' });
+      notRead++;
       continue;
     }
 
@@ -442,10 +455,17 @@ Files   : ${files.length} file(s) queued for audit\n
   process.stdout.write(`
 ─────────────────────────────────────────────────────────────────────────────
 Audit Result : ${totalFindings === 0 ? '\x1b[32mPASSED - NO THREATS DETECTED\x1b[0m' : `\x1b[31mFAILED - ${totalFindings} THREAT(S) FOUND\x1b[0m`}
-Files Scanned: ${files.length}
+Files Scanned: ${files.length - notRead}
+Files Skipped: ${files.skipped.length}${files.skipped.length ? ' (not read: see below)' : ''}
 Status       : ${totalFindings === 0 ? 'Clean workspace' : 'Review and neutralize detected vectors'}
 ─────────────────────────────────────────────────────────────────────────────\n
 `);
+  if (files.skipped.length) {
+    process.stdout.write(`Not scanned (${files.skipped.length}):\n`);
+    for (const s of files.skipped.slice(0, 20)) process.stdout.write(`  ${path.relative(process.cwd(), s.file)} (${s.reason})\n`);
+    if (files.skipped.length > 20) process.stdout.write(`  ... and ${files.skipped.length - 20} more\n`);
+    process.stdout.write('\n');
+  }
 
   // exitCode, not process.exit(): a large report written to a pipe must be
   // flushed completely before the process ends.
