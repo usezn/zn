@@ -98,7 +98,9 @@ jobs:
           # A pull request that changes only the workflow file (to bring it up to date
           # with usezn/zn) has no release to check; compared as git objects.
           if [ "$EVENT" = "pull_request_target" ]; then
-            changed="$(diff <(git -C base ls-tree -r HEAD) <(git -C plugin ls-tree -r HEAD) | grep -E '^[<>]' | sed -E 's/^[<>] [0-9]+ [a-z]+ [0-9a-f]+\t//' | sort -u | tr '\n' ' ')"
+            # diff exits 1 when the trees differ and grep exits 1 when nothing matches;
+            # with -o pipefail either would end the step, so both are allowed here.
+            changed="$({ diff <(git -C base ls-tree -r HEAD) <(git -C plugin ls-tree -r HEAD) || true; } | { grep -E '^[<>]' || true; } | sed -E 's/^[<>] [0-9]+ [a-z]+ [0-9a-f]+\t//' | sort -u | tr '\n' ' ')"
             if [ "$changed" = ".github/workflows/verify.yml " ]; then
               echo "release=false" >> "$GITHUB_OUTPUT"
               exit 0
