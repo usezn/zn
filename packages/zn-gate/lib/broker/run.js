@@ -218,7 +218,7 @@ async function prepare(parsed, opts) {
     if (!m) {
       await deny(name, null, 'secret ' + name + ' is not in the vault. Add it from your own terminal: zn secret set ' + name, 'ZN_NOT_FOUND');
     }
-    if (m.deny) await deny(name, m.mode, 'secret ' + name + ' is blocked for this agent by your organization policy. Next step: do not use this secret here; ask the user if the task needs it.', 'ZN_POLICY_DENIED');
+    if (m.deny) await deny(name, m.mode, 'secret ' + name + ' is blocked for this agent by your organization policy. Next step: do not use this secret here. If the task needs it, review the organization policy, or, if you are an agent, ask the user.', 'ZN_POLICY_DENIED');
     if (m.mode !== 'env') {
       await deny(name, m.mode, 'secret ' + name + ' is in ' + (m.mode || 'proxy') + ' mode, so zn run never puts it in a process. ' +
         'For HTTP APIs use the secrets_http_request tool of the zn "secrets" MCP server.');
@@ -264,7 +264,7 @@ async function prepare(parsed, opts) {
   const values = new Map();
   for (const c of chosen) {
     const v = await vault.resolve(project, markers.markerFor(c.name));
-    if (v == null) await deny(c.name, c.mode, 'secret ' + c.name + ' has no value in the vault. Next step: ask the user to save its value with zn secret set ' + c.name + ' from their own terminal.', 'ZN_NOT_FOUND');
+    if (v == null) await deny(c.name, c.mode, 'secret ' + c.name + ' has no value in the vault. Next step: save its value with zn secret set ' + c.name + ' in your own terminal, or, if you are an agent, ask the user to do it.', 'ZN_NOT_FOUND');
     values.set(c.name, String(v));
   }
 

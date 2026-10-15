@@ -34,7 +34,7 @@ const MIN_PASSPHRASE = 12;
 
 function service() {
   const s = process.env.ZN_KEYCHAIN_SERVICE || 'zn-vault';
-  if (!SAFE_NAME.test(s)) throw znError(CODES.POLICY_DENIED, 'invalid ZN_KEYCHAIN_SERVICE. Next step: ask the user to fix or remove this setting.');
+  if (!SAFE_NAME.test(s)) throw znError(CODES.POLICY_DENIED, 'invalid ZN_KEYCHAIN_SERVICE. Next step: fix or remove this setting, or, if you are an agent, ask the user to do it.');
   return s;
 }
 
@@ -59,7 +59,7 @@ function powershellPath() {
 function detectBackend() {
   const forced = process.env.ZN_KEYCHAIN_BACKEND;
   if (forced) {
-    if (!BACKENDS.includes(forced)) throw znError(CODES.POLICY_DENIED, 'unknown keychain backend: ' + forced + '. Next step: ask the user to set a backend this system supports, or remove the setting.');
+    if (!BACKENDS.includes(forced)) throw znError(CODES.POLICY_DENIED, 'unknown keychain backend: ' + forced + '. Next step: set a backend this system supports, or remove the setting, or, if you are an agent, ask the user to do it.');
     return forced;
   }
   if (process.platform === 'darwin' && fs.existsSync('/usr/bin/security')) return 'macos';
@@ -95,7 +95,7 @@ const macos = {
     // `security -i` reads the command from stdin, so the identity never
     // shows up in the process list.
     const kc = process.env.ZN_KEYCHAIN_PATH;
-    if (kc && /\s/.test(kc)) throw znError(CODES.POLICY_DENIED, 'ZN_KEYCHAIN_PATH must not contain spaces. Next step: ask the user to choose a folder path without spaces.');
+    if (kc && /\s/.test(kc)) throw znError(CODES.POLICY_DENIED, 'ZN_KEYCHAIN_PATH must not contain spaces. Next step: choose a folder path without spaces, or, if you are an agent, ask the user to do it.');
     const line = ['add-generic-password', '-U', '-s', service(), '-a', ACCOUNT, '-l', 'zn-vault-identity', '-w', identity].concat(kc ? [kc] : []).join(' ') + '\n';
     const res = run('/usr/bin/security', ['-i'], line);
     if (res.status !== 0) throw znError(CODES.LOCKED, 'macOS keychain refused the identity (security exit ' + res.status + ')');
@@ -293,7 +293,7 @@ async function storeIdentity(identity, opts) {
 async function loadIdentity(opts) {
   const o = opts || {};
   const meta = readMeta(o);
-  if (!meta) throw znError(CODES.NOT_FOUND, 'vault not initialised. Next step: ask the user to run zn unlock once to create it.');
+  if (!meta) throw znError(CODES.NOT_FOUND, 'vault not initialised. Next step: run zn unlock once in your own terminal to create it, or, if you are an agent, ask the user to do it.');
   const backend = o.backend || meta.backend;
   let identity = null;
   if (backend === 'passphrase') {

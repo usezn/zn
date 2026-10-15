@@ -265,7 +265,7 @@ function makeOps(state, ctl) {
       ok = await channel.confirm(req);
     } catch (err) {
       writeAudit(Object.assign({}, auditEvent, { decision: 'deny', reason: err && err.noChannel ? 'no_confirmation_channel' : 'confirmation_failed' }));
-      throw znError(CODES.POLICY_DENIED, String((err && err.message) || 'confirmation failed').slice(0, 300) + '. Next step: try again; if it keeps failing, ask the user to check the zn confirmation prompt.');
+      throw znError(CODES.POLICY_DENIED, String((err && err.message) || 'confirmation failed').slice(0, 300) + '. Next step: try again; if it keeps failing, check the zn confirmation prompt, or, if you are an agent, ask the user to check it.');
     }
     if (ok !== true) {
       writeAudit(Object.assign({}, auditEvent, { decision: 'deny', reason: 'declined_by_user' }));
@@ -330,7 +330,7 @@ function makeOps(state, ctl) {
       const orgDenied = async (names) => {
         for (const name of names) await writeAudit({ secret: name, mode: 'resolve', agent: o.agent, tool: o.tool, decision: 'deny', reason: name === inner ? 'policy:org_deny' : 'policy:org_deny:' + inner.slice(0, 48) });
         if (o.withPolicy === true) return { value: null, policy: RESOLVE_POLICY_VERSION, deny: true };
-        throw znError(CODES.POLICY_DENIED, 'secret ' + inner + ' is blocked by your organization policy. Next step: do not use this secret here; ask the user if the task needs it.');
+        throw znError(CODES.POLICY_DENIED, 'secret ' + inner + ' is blocked by your organization policy. Next step: do not use this secret here. If the task needs it, review the organization policy, or, if you are an agent, ask the user.');
       };
       const ordinal = /_(\d+)$/.exec(inner);
       if (ordinal) {
@@ -389,7 +389,7 @@ function makeOps(state, ctl) {
         { type: prev.type, mode: prev.mode, allowHosts: prev.allowHosts, allowCommands: prev.allowCommands, injectAt: prev.injectAt, allowIn: prev.allowIn, source: prev.source },
         meta && typeof meta === 'object' ? meta : {}));
       const before = (await state.loadSecrets()).secrets[n];
-      if (!before) throw znError(CODES.NOT_FOUND, 'no secret named ' + n + '. Next step: check the name for a typo, or ask the user to save it with zn secret set ' + n + ' from their own terminal.');
+      if (!before) throw znError(CODES.NOT_FOUND, 'no secret named ' + n + '. Next step: check the name for a typo; if the secret is missing, save it with zn secret set ' + n + ' in your own terminal, or, if you are an agent, ask the user to do it.');
       const target = proposed(before);
       const adds = widening(before, target);
       if (adds.length) {
@@ -405,7 +405,7 @@ function makeOps(state, ctl) {
       return state.serial(async () => {
         const secrets = await state.loadSecrets();
         const prev = secrets.secrets[n];
-        if (!prev) throw znError(CODES.NOT_FOUND, 'no secret named ' + n + '. Next step: check the name for a typo, or ask the user to save it with zn secret set ' + n + ' from their own terminal.');
+        if (!prev) throw znError(CODES.NOT_FOUND, 'no secret named ' + n + '. Next step: check the name for a typo; if the secret is missing, save it with zn secret set ' + n + ' in your own terminal, or, if you are an agent, ask the user to do it.');
         const merged = proposed(prev);
         if (widening(prev, merged).some((x) => !adds.includes(x))) throw znError(CODES.POLICY_DENIED, 'the policy changed while waiting for confirmation; try again. Next step: run the request again.');
         secrets.secrets[n] = Object.assign(merged, { value: prev.value, created: prev.created, lastUsed: prev.lastUsed || null });
@@ -452,7 +452,7 @@ function makeOps(state, ctl) {
       if (openFp != null && openFp !== fp) throw znError(CODES.POLICY_DENIED, 'the executable changed while it was being checked. Next step: run the command again; if it keeps changing, check where the program is installed.');
       const cmd = normArgv0(argv0);
       const loaded = await state.loadSecrets();
-      if (!loaded.secrets[String(secret)]) throw znError(CODES.NOT_FOUND, 'no secret named ' + secret + '. Next step: check the name for a typo, or ask the user to save it with zn secret set ' + secret + ' from their own terminal.');
+      if (!loaded.secrets[String(secret)]) throw znError(CODES.NOT_FOUND, 'no secret named ' + secret + '. Next step: check the name for a typo; if the secret is missing, save it with zn secret set ' + secret + ' in your own terminal, or, if you are an agent, ask the user to do it.');
       const prev = loaded.approvals && loaded.approvals[key];
       const changed = prev && typeof prev === 'object' && prev.exe && (prev.exe !== exePath || prev.fp !== fp);
       const writable = exe.writableBy(exePath);
@@ -495,7 +495,7 @@ function makeOps(state, ctl) {
       if (list.length === 0) throw znError(CODES.POLICY_DENIED, 'no secret names. Next step: list at least one secret name to put in the file.');
       const why = ['the file already exists and would be overwritten', 'the file is outside the project', 'the file is a credential file'].includes(reason) ? reason : 'not a new file inside the project';
       const secrets = await state.loadSecrets();
-      for (const n of list) if (!secrets.secrets[n]) throw znError(CODES.NOT_FOUND, 'no secret named ' + n + '. Next step: check the name for a typo, or ask the user to save it with zn secret set ' + n + ' from their own terminal.');
+      for (const n of list) if (!secrets.secrets[n]) throw znError(CODES.NOT_FOUND, 'no secret named ' + n + '. Next step: check the name for a typo; if the secret is missing, save it with zn secret set ' + n + ' in your own terminal, or, if you are an agent, ask the user to do it.');
       await confirmOutOfBand({
         kind: 'file',
         title: 'write ' + list.join(', ') + ' to a file?',
@@ -590,13 +590,13 @@ function makeOps(state, ctl) {
 async function serve(opts) {
   const o = opts || {};
   const meta = keychain.readMeta(o);
-  if (!meta) throw znError(CODES.NOT_FOUND, 'vault not initialised. Next step: ask the user to run zn unlock once to create the vault.');
+  if (!meta) throw znError(CODES.NOT_FOUND, 'vault not initialised. Next step: run zn unlock once in your own terminal to create the vault, or, if you are an agent, ask the user to do it.');
   const recipient = await store.recipientOf(o.identity);
   if (recipient !== meta.recipient) throw znError(CODES.LOCKED, 'identity does not match this vault');
   store.ensureLayout(o);
   const ep = endpoint(o);
 
-  if (await isRunning(o)) throw znError(CODES.POLICY_DENIED, 'vault already unlocked. Next step: nothing to do; to unlock again, ask the user to run zn lock first.');
+  if (await isRunning(o)) throw znError(CODES.POLICY_DENIED, 'vault already unlocked. Next step: nothing to do. To unlock again, run zn lock in your own terminal first, or, if you are an agent, ask the user to do it.');
   if (ep.unix) { try { fs.unlinkSync(ep.address); } catch (err) { /* stale socket */ } }
 
   const state = new VaultState(o.identity, recipient, o);
@@ -735,7 +735,7 @@ async function serve(opts) {
       resolve();
     });
   }).catch((err) => {
-    if (err && err.code === 'EADDRINUSE') throw znError(CODES.POLICY_DENIED, 'vault already unlocked. Next step: nothing to do; to unlock again, ask the user to run zn lock first.');
+    if (err && err.code === 'EADDRINUSE') throw znError(CODES.POLICY_DENIED, 'vault already unlocked. Next step: nothing to do. To unlock again, run zn lock in your own terminal first, or, if you are an agent, ask the user to do it.');
     throw err;
   });
   if (ep.unix) fs.chmodSync(ep.address, 0o600);
@@ -773,11 +773,11 @@ async function isRunning(opts) {
  */
 async function unlock(opts) {
   const o = opts || {};
-  if (await isRunning(o)) throw znError(CODES.POLICY_DENIED, 'vault already unlocked. Next step: nothing to do; to unlock again, ask the user to run zn lock first.');
+  if (await isRunning(o)) throw znError(CODES.POLICY_DENIED, 'vault already unlocked. Next step: nothing to do. To unlock again, run zn lock in your own terminal first, or, if you are an agent, ask the user to do it.');
   let created = false;
   let identity;
   if (!keychain.readMeta(o)) {
-    if (o.init === false) throw znError(CODES.NOT_FOUND, 'vault not initialised. Next step: ask the user to run zn unlock once to create the vault.');
+    if (o.init === false) throw znError(CODES.NOT_FOUND, 'vault not initialised. Next step: run zn unlock once in your own terminal to create the vault, or, if you are an agent, ask the user to do it.');
     identity = (await keychain.initIdentity(o)).identity;
     created = true;
   } else {
@@ -820,11 +820,11 @@ async function unlock(opts) {
  */
 async function unlockForeground(opts) {
   const o = opts || {};
-  if (await isRunning(o)) throw znError(CODES.POLICY_DENIED, 'vault already unlocked. Next step: nothing to do; to unlock again, ask the user to run zn lock first.');
+  if (await isRunning(o)) throw znError(CODES.POLICY_DENIED, 'vault already unlocked. Next step: nothing to do. To unlock again, run zn lock in your own terminal first, or, if you are an agent, ask the user to do it.');
   let created = false;
   let identity;
   if (!keychain.readMeta(o)) {
-    if (o.init === false) throw znError(CODES.NOT_FOUND, 'vault not initialised. Next step: ask the user to run zn unlock once to create the vault.');
+    if (o.init === false) throw znError(CODES.NOT_FOUND, 'vault not initialised. Next step: run zn unlock once in your own terminal to create the vault, or, if you are an agent, ask the user to do it.');
     identity = (await keychain.initIdentity(o)).identity;
     created = true;
   } else {

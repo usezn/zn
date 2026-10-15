@@ -19,7 +19,7 @@ class TestBlockMessages(unittest.TestCase):
         msg = str(ctx.exception)
         self.assertTrue(msg.startswith("zn-gate blocked 'run'. Reason: "), msg)
         self.assertIn("(rule: ", msg)
-        self.assertIn("Next step: remove the flagged text", msg)
+        self.assertIn("do not retry with reworded text", msg)
         self.assertNotIn("Blocked execution", msg)
 
     def test_crewai_fallback_is_the_same_message(self):
@@ -51,6 +51,25 @@ class TestBlockMessages(unittest.TestCase):
         self.assertIn("blocked 'fetch:result'", msg)
         self.assertIn("do not use this result", msg)
         self.assertNotIn("try again", msg)
+
+
+    def test_input_block_does_not_invite_a_reworded_retry(self):
+        @guard()
+        def run(q):
+            return q
+
+        with self.assertRaises(GuardBlockError) as ctx:
+            run(INJECTION)
+        self.assertNotIn("try again", str(ctx.exception))
+
+    def test_empty_reason_names_the_rule_once(self):
+        from zn_gate.guard import block_message
+        from zn_gate.rules import Assessment
+
+        a = Assessment(verdict="block", confidence=1.0, rule="custom:x", reason=None)
+        msg = block_message(a, "t")
+        self.assertEqual(msg.count("custom:x"), 1, msg)
+        self.assertIn("Reason: the input matched rule custom:x.", msg)
 
 
 if __name__ == "__main__":
