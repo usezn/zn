@@ -48,6 +48,7 @@ const { spawnSync } = require('child_process');
 const { writeFileAtomic } = require('../broker/files');
 const { whichSync } = require('../broker/markers');
 const { shQuote, portablePath } = require('../shell-quote');
+const { claudeCodePolicyWarnings } = require('./managed-policy');
 
 const id = 'claude-code';
 
@@ -328,6 +329,10 @@ function install(opts = {}) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   writeFileAtomic(file, JSON.stringify(data, null, 2) + '\n', 0o644);
   if (opts.mcp !== false) installMcp(opts, report);
+  // Organization settings can turn these hooks or the MCP server off with no
+  // sign in Claude Code; say it here.
+  const users = [...new Set([file, path.join(configDir(opts), 'settings.json')])];
+  report.warnings.push(...claudeCodePolicyWarnings({ managedDir: opts.managedDir, userSettings: users, mcp: opts.mcp !== false }));
   return report;
 }
 
@@ -390,5 +395,6 @@ module.exports = {
   PRE_MATCHER,
   POST_MATCHER,
   settingsFile,
+  configDir,
   hookCommand,
 };
