@@ -80,16 +80,6 @@ const DYNAMIC_SOURCES = [
 // adversarial input):
 const KNOWN_SLOW = [
   {
-    // Measured on a loaded host (load average 8): 10.7 s and 7.6 s at 50k
-    // characters (the two flag variants), 20 ms at 2k, 103 ms at 5k. The time
-    // grows faster than the length.
-    file: 'lib/vault/audit.js',
-    body: '\\n+$',
-    sizeChars: 2000,
-    ceilingMs: 250,
-    note: 'the literal scales superlinearly; timed at 2k characters.',
-  },
-  {
     // Measured: 23.6 s at 50k characters, 0.5 ms at 255. programBase() returns
     // early for names longer than 255 characters, so the literal only ever runs
     // on up to 255 characters; the function itself is timed at 50k below.
@@ -243,7 +233,7 @@ test('the glob shapes stay fast through classifyWord and bashDenial at 50k', () 
 });
 
 test('programBase (through interpreterBase) stays under 100 ms on 50k inputs', () => {
-  const body = KNOWN_SLOW[0].body;
+  const body = KNOWN_SLOW.find((k) => k.file === 'lib/exe.js').body;
   const offenders = [];
   for (const input of adversarialInputs(body)) {
     const ms = bestOf(() => exe.interpreterBase(input));
