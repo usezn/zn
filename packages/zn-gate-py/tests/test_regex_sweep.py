@@ -1,4 +1,4 @@
-"""ReDoS sweep for the Python CLI and scanner.
+"""Timing sweep for the Python CLI and scanner.
 
 Every compiled pattern reachable from the module-level names of cli, rules,
 guard, client, evidence and stats (directly, or inside the rule tables those
@@ -22,21 +22,24 @@ SIZE = 50_000
 LIMIT_MS = 100
 RUNS = 2
 
-# A pattern whose only call site is fullmatch(): the full scan is quadratic on
+# A pattern whose only call site is fullmatch(): the full scan is superlinear on
 # it (about 1.5 s at 8k characters) but no caller runs it that way, so only the
 # fullmatch operation is timed. rules.py: _pv_placeholder().
 OP_OVERRIDES = {
     r'x{3,}|\*{3,}|\.{3,}|-+|_+|<[^>]*>|\$\{?[^}]*\}?|\{\{?[^}]*\}?\}|%\(?[a-z_]*\)?s|:[a-z_]+|\[[^\]]*\]': ('fullmatch',),
 }
 
-# Patterns the sweep reports but does not change here: source prefix -> (size in
-# characters, ceiling in ms). rules.py pi:act_as is linear (72 ms at 50k ';' on an
-# idle host, up to 166 ms under load): its ceiling is set above that, so a
-# change that makes it superlinear still fails. Remove the entry when it is faster.
+# Literals that still exceed LIMIT_MS at full size: source prefix -> (size in
+# characters, ceiling in ms). Measured on the merged code (timing sweep, worst
+# adversarial input, best of 2 runs):
+#   rules.py pi:act_as: 100.9 ms at 50k on the worst sweep input (152.9 ms in a loaded run).
+#   rules.py pi:multi_zh: 108.2 ms at 50k on the worst sweep input.
+# The ceilings (1000 ms) sit far above those numbers: a run on the shared 2-core
+# host with load 11 measured pi:act_as at 394 ms, and a superlinear regression at
+# 50k characters would take seconds.
 KNOWN_SLOW = {
-    r'(?:(?:(?:^|[.!?;:\r\n  ])[ \t]*': (SIZE, 250),
-    # rules.py ZH rules: linear with a lazy {0,80} gap (about 98 ms at 50k on an idle host).
-    '忽略[^\\n]{0,80}?': (SIZE, 250),
+    r'(?:(?:(?:^|[.!?;:\r\n\u2028\u2029])[ \t]*': (SIZE, 1000),
+    '忽略[^\\n]{0,80}?': (SIZE, 1000),
 }
 
 
