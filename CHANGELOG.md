@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- MCP tool annotations: every tool of the zn-gate and secrets MCP servers now has a title and says whether it is read-only, destructive, idempotent and reaches the outside world (readOnlyHint, destructiveHint, idempotentHint, openWorldHint), so MCP clients can show it and ask before the tools that change things. analyze_prompt reaches the outside world only with the optional cloud check on. No change in what the tools do.
 - `zn hooks install claude-code` and `zn-gate status` warn when Claude Code settings stop zn from running: an organization policy that turns off all hooks (`disableAllHooks`), runs only its own hooks (`allowManagedHooksOnly`), or does not allow the `secrets` MCP server (`managed-mcp.json`, `allowManagedMcpServersOnly`, `allowedMcpServers`, `deniedMcpServers`), or `disableAllHooks` in your own settings. Claude Code does not show these. Only the settings files are read, not policy sent through claude.ai, MDM or the Windows registry.
 
 ### Changed
