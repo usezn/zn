@@ -167,8 +167,10 @@
     },
     "policy": {
       "version_const": "POLICY_RULES_VERSION",
-      "version": "2026-10-15.3",
+      "version": "2026-10-15.10",
       "ids": [
+        "_globClassEnd",
+        "_globClassSource",
         "adminCommand",
         "bashDenial",
         "classifyPath",
@@ -185,8 +187,8 @@
         "writeDenial"
       ],
       "sha256": {
-        "lib/hooks/policy.js": "0b7640f926eb5e57be90874c94832b5bad1646deefb3a86fbf967227e1094b9d",
-        "lib/broker/files.js": "3cd64900574d09a5703e4124fd4ad3a6e1e576763126a6157a3ba10d5a7f388a",
+        "lib/hooks/policy.js": "7cd2de21dcdabcd30a7a6898241cdee57b018a47027bdc7978be7b0e7282fa2a",
+        "lib/broker/files.js": "45dd8927cc626ac35e8c036e5118ec3c584a3f3a396640c09cee8b545e67c097",
         "lib/broker/markers.js": "301eb1d763e8e88c32e32a02c344be8f44b342b06b61897f3a2d478dbe55d6b4",
         "lib/broker/dotenv.js": "d12a12bd12108a38f84e9f4772ed50f0b015962a1e68f75362142b9b3449e8fe",
         "lib/shell-quote.js": "7892cbb5237f533bb33d9660642e4c20837bca502f588b2db45a47ca6b6adff1"

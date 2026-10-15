@@ -48,16 +48,23 @@ function gitStatusOf(file) {
  */
 function realTargetOf(file) {
   const abs = path.resolve(file);
-  const rest = [];
-  let cur = abs;
-  for (;;) {
-    try {
-      return path.join(fs.realpathSync(cur), ...rest.reverse());
-    } catch (_) { /* not there yet: walk up */ }
-    const parent = path.dirname(cur);
-    if (parent === cur) return abs;
-    rest.push(path.basename(cur));
-    cur = parent;
+  const root = path.parse(abs).root;
+  const parts = abs.slice(root.length).split(path.sep).filter(Boolean);
+  // Walk down to the first name that does not exist (nothing below it can),
+  // then resolve that ancestor once: a long path that does not exist costs one
+  // check per existing level, not one realpath per missing one.
+  let cur = root;
+  let i = 0;
+  while (i < parts.length) {
+    const next = path.join(cur, parts[i]);
+    if (!fs.existsSync(next)) break;
+    cur = next;
+    i++;
+  }
+  try {
+    return path.join(fs.realpathSync(cur), ...parts.slice(i));
+  } catch (_) {
+    return abs;
   }
 }
 

@@ -54,12 +54,18 @@ jobs:
         run: |
           set -euo pipefail
           # The plugin repository is generated from the commit that last changed the pin,
-          # which is the commit its checks compare it with.
+          # which is the commit its checks compare it with. pin-release.js moves the
+          # plugin manifests and docs to the pinned version in that same commit.
           source="$(git -C zn log -1 --format=%H HEAD -- plugins/zn-gate/scripts/zn-gate.lock.json)"
           git -C zn worktree add --quiet --detach ../src "$source"
-          v="$(node -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync('src/plugins/zn-gate/.claude-plugin/plugin.json','utf8')).version))")"
+          v="$(node -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync('src/plugins/zn-gate/scripts/zn-gate.lock.json','utf8')).version))")"
           if [[ ! "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::the plugin is not pinned to a final release"
+            exit 1
+          fi
+          m="$(node -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync('src/plugins/zn-gate/.claude-plugin/plugin.json','utf8')).version))")"
+          if [ "$m" != "$v" ]; then
+            echo "::error::the plugin manifest says $m but the plugin is pinned to $v at $source: pin the release again with plugins/tools/pin-release.js, which moves both in one commit"
             exit 1
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
