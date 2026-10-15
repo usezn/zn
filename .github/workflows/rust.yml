@@ -17,7 +17,7 @@ permissions:
 # A new push to a pull request, or to next, cancels the run still going for it, so a burst of
 # merges into next tests only the newest commit. Runs for main, scheduled runs and manual runs always complete.
 concurrency:
-  group: rust-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next-push' || github.ref }}
+  group: rust-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next-push' || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
 
 jobs:
