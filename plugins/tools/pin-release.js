@@ -165,13 +165,88 @@ async function main(argv) {
   };
   // Everything is computed before anything is written, so a failure leaves the plugin unchanged.
   const npm = buildNpmFiles(version, meta, bundled);
+  const previous = fs.existsSync(LOCK) ? JSON.parse(fs.readFileSync(LOCK, 'utf8')).version : null;
+  const texts = versionedTexts(previous, version);
+  for (const [file, text] of texts) fs.writeFileSync(file, text);
   fs.writeFileSync(path.join(PLUGIN, 'package.json'), JSON.stringify(npm.pkg, null, 2) + '\n');
   fs.writeFileSync(path.join(PLUGIN, 'package-lock.json'), JSON.stringify(npm.npmLock, null, 2) + '\n');
   fs.writeFileSync(LOCK, JSON.stringify(lock, null, 2) + '\n');
   process.stdout.write('Wrote plugins/zn-gate/package.json and package-lock.json (zn-gate ' + version + ', ' +
     (Object.keys(npm.npmLock.packages).length - 1) + ' packages)\n');
+  if (texts.length) {
+    process.stdout.write('Moved ' + texts.length + ' plugin manifest and documentation file(s) from ' + previous + ' to ' + version + '\n');
+  }
   process.stdout.write('Pinned zn-gate@' + version + ' (' + Object.keys(sorted).length + ' files, provenance attestation: ' +
     (lock.attestations ? 'yes' : 'NO') + ') in ' + path.relative(process.cwd(), LOCK) + '\n');
+}
+
+/*
+ * The pin, the plugin manifests, the MCP Registry entry and the version named
+ * in the plugin docs change in the same commit: the plugin repository is
+ * generated from the commit that last changed the pin, and its checks expect
+ * every one of them to name that version. Returns [file, new text] pairs.
+ */
+const VERSIONED_JSON = [
+  ['zn-gate/plugin.json', ['version']],
+  ['zn-gate/.claude-plugin/plugin.json', ['version']],
+  ['zn-gate/.cursor-plugin/plugin.json', ['version']],
+  ['mcp-registry/server.json', ['version', 'packages.0.version']],
+];
+// Only docs that name the version the plugin installs: a sentence about an older
+// release written as "zn-gate X" in one of these files would be moved too.
+const VERSIONED_DOCS = ['README.md', 'zn-gate/README.md', 'zn-gate/plugin.json', 'zn-gate/.cursor-plugin/plugin.json',
+  'zn-gate/.claude-plugin/plugin.json'];
+
+function escapeRegExp(text) {
+  return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function versionedTexts(previous, version) {
+  if (previous && !/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(previous)) throw new Error('the current pin has an unexpected version: ' + previous);
+  if (!previous || previous === version) return [];
+  const root = path.join(PLUGIN, '..');
+  const out = new Map();
+  const read = (rel) => (out.has(rel) ? out.get(rel) : fs.readFileSync(path.join(root, rel), 'utf8'));
+  for (const [rel, keys] of VERSIONED_JSON) {
+    if (!fs.existsSync(path.join(root, rel))) continue;
+    const text = read(rel);
+    const data = JSON.parse(text);
+    for (const key of keys) {
+      const parts = key.split('.');
+      let obj = data;
+      for (const k of parts.slice(0, -1)) obj = obj[/^\d+$/.test(k) ? Number(k) : k];
+      obj[parts[parts.length - 1]] = version;
+    }
+    // Keep the file's own layout: only the version values change.
+    const re = new RegExp('("version"\\s*:\\s*)"' + escapeRegExp(previous) + '"', 'g');
+    const next = text.replace(re, '$1"' + version + '"');
+    if (JSON.stringify(JSON.parse(next)) !== JSON.stringify(data)) throw new Error(rel + ': could not move the version in place');
+    out.set(rel, next);
+  }
+  const esc = escapeRegExp(previous);
+  const forms = [
+    [new RegExp('(github\\.com/usezn/zn/(?:tree|blob)/)v' + esc + '/', 'g'), '$1v' + version + '/'],
+    [new RegExp('zn-gate@' + esc + '(?![0-9]|\\.[0-9])', 'g'), 'zn-gate@' + version],
+    [new RegExp('zn-gate ' + esc + '(?![0-9]|\\.[0-9])', 'g'), 'zn-gate ' + version],
+    [new RegExp('\\*\\*' + esc + '\\*\\*', 'g'), '**' + version + '**'],
+    [new RegExp('version ' + esc + '(?![0-9]|\\.[0-9])', 'g'), 'version ' + version],
+    [new RegExp('usezn/zn@v' + esc + '(?![0-9]|\\.[0-9])', 'g'), 'usezn/zn@v' + version],
+    [new RegExp('--ref v' + esc + '(?![0-9]|\\.[0-9])', 'g'), '--ref v' + version],
+    [new RegExp('`v' + esc + '`', 'g'), '`v' + version + '`'],
+  ];
+  const skills = path.join(root, 'zn-gate', 'skills');
+  const docs = [...VERSIONED_DOCS];
+  if (fs.existsSync(skills)) {
+    for (const d of fs.readdirSync(skills)) if (fs.existsSync(path.join(skills, d, 'SKILL.md'))) docs.push('zn-gate/skills/' + d + '/SKILL.md');
+  }
+  for (const rel of docs) {
+    if (!fs.existsSync(path.join(root, rel))) continue;
+    let text = read(rel);
+    for (const [re, to] of forms) text = text.replace(re, to);
+    out.set(rel, text);
+  }
+  return [...out].filter(([rel, text]) => text !== fs.readFileSync(path.join(root, rel), 'utf8'))
+    .map(([rel, text]) => [path.join(root, rel), text]);
 }
 
 /*
@@ -228,7 +303,7 @@ function buildNpmFiles(version, meta, bundled) {
   return { pkg, npmLock };
 }
 
-module.exports = { buildNpmFiles, stripBundled, get, tarEntries };
+module.exports = { buildNpmFiles, stripBundled, get, tarEntries, versionedTexts };
 
 if (require.main === module) main(process.argv.slice(2)).catch((err) => {
   process.stderr.write('pin-release: ' + err.message + '\n');

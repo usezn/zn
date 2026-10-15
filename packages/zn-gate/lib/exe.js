@@ -239,6 +239,9 @@ const INTERPRETER_BASES = new Set([
  */
 function programBase(file) {
   const b = String(file || '').split(/[\\/]/).pop().toLowerCase().replace(/\.(exe|cmd|bat|com)$/, '');
+  // No file system allows a name longer than 255 characters, so such a word
+  // cannot name a program; skipping it keeps the suffix pattern below linear.
+  if (b.length > 255) return b;
   return b.replace(/[-_]?(?:v?\d+(?:[._-]\d+)*[a-z]?)?(?:[-_](?:preview|beta|nightly))?$/, '');
 }
 

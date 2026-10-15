@@ -32,6 +32,31 @@ const KEY_FILE_NAMES = new Set(['id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', 'i
 // .key files with a NUL byte near the start (a Keynote document, not a key)
 // are not scanned.
 const BINARY_SNIFF = 8192;
+const SCAN_FORMATS = new Set(['text', 'json', 'github']);
+
+// The line shown with a scan finding: secrets found by the rules and by the
+// scrubber's secret patterns are replaced, so no matched value is printed.
+function scanSnippet(line) {
+  let out = redactSecrets(line).sanitized;
+  // Overlapping spans are joined first, so no part of a value stays visible.
+  const merged = [];
+  for (const s of require('../lib/scrub/engine').scan(out, { exact: false, pii: false }).slice().sort((a, b) => a.start - b.start)) {
+    const last = merged[merged.length - 1];
+    if (last && s.start < last.end) last.end = Math.max(last.end, s.end);
+    else merged.push({ start: s.start, end: s.end, type: s.type });
+  }
+  for (const s of merged.reverse()) out = out.slice(0, s.start) + `[REDACTED_${s.type}]` + out.slice(s.end);
+  return out.slice(0, 100);
+}
+
+// GitHub workflow command values: one line, no command of their own.
+function ghProperty(value) {
+  return String(value).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A')
+    .replace(/:/g, '%3A').replace(/,/g, '%2C');
+}
+function ghMessage(value) {
+  return String(value).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+}
 
 const VERSION = require('../package.json').version;
 
@@ -107,6 +132,7 @@ COMMANDS:
   init                Find and wrap MCP servers in known agent configs (Claude, Cursor, Codex, OpenCode...)
   shield, mcp-shield  Wrap and protect ANY external MCP server (uvx, npx, node, python)
   scan <path>         Recursively audit prompt templates, markdown, skills, and configs for injection traps
+                      [--format text|json|github] (matched values are never printed)
   audit [path]        Review a repository's agent configs before you open it: hooks, MCP servers,
                       endpoint overrides, permissions, instructions, planted executables
                       [--format text|json|sarif] [--output FILE] [--fail-on high]
@@ -336,8 +362,14 @@ async function handleScan(targetPath, options) {
     process.exit(1);
   }
 
+  const format = options.formatGiven ? String(options.format).toLowerCase() : 'text';
+  if (!SCAN_FORMATS.has(format)) {
+    process.stderr.write(`Error: --format for scan must be text, json or github\n`);
+    process.exit(2);
+  }
+
   const files = scanDirectory(resolved, options.includeCode, options);
-  process.stdout.write(`
+  if (format === 'text') process.stdout.write(`
 🛡️  zn-gate Static Security Audit
 Target  : ${resolved}
 Scope   : ${options.includeCode ? 'All files (prompts + code)' : 'Prompt templates, docs, configs (use --code to scan source)'}
@@ -416,20 +448,24 @@ Files   : ${files.length} file(s) queued for audit\n
       const line = lines[lineIdx].trim();
       if (!line || line.length < 8) continue;
 
-      // Printed to the terminal and CI logs: never show a detected secret.
-      const redacted = redactSecrets(line);
-      const sample = keyLines.has(lineIdx + 1) ? '[REDACTED_PRIVATE_KEY]' : redacted.sanitized.slice(0, 100);
+      // Printed to the terminal and CI logs: never show a matched value.
+      const detections = redactSecrets(line).detections;
+      let sample = null;
+      const sampleOf = () => {
+        if (sample === null) sample = keyLines.has(lineIdx + 1) ? '[REDACTED_PRIVATE_KEY]' : scanSnippet(line);
+        return sample;
+      };
       // A scan reports every match, including the rules that only warn by default.
       const evalRes = evaluate(line, { ...options, strict: true });
       if (evalRes.verdict === 'block') {
         totalFindings++;
-        findings.push({ file: relPath, line: lineIdx + 1, rule: evalRes.rule, reason: evalRes.reason, sample });
+        findings.push({ file: relPath, line: lineIdx + 1, rule: evalRes.rule, reason: evalRes.reason, type: 'injection', sample: sampleOf() });
       }
       // Secrets are reported too, once per rule and line.
-      for (const rule of new Set(redacted.detections.map((d) => d.rule))) {
+      for (const rule of new Set(detections.map((d) => d.rule))) {
         totalFindings++;
         seen.add((lineIdx + 1) + '\0' + rule);
-        findings.push({ file: relPath, line: lineIdx + 1, rule, reason: 'Exposed credential detected by DLP filter', sample });
+        findings.push({ file: relPath, line: lineIdx + 1, rule, reason: 'Exposed credential detected by DLP filter', type: 'secret_leak', sample: sampleOf() });
       }
     }
 
@@ -439,8 +475,32 @@ Files   : ${files.length} file(s) queued for audit\n
       seen.add(key);
       totalFindings++;
       // Only the BEGIN marker, never the key material.
-      findings.push({ file: relPath, line: b.line, rule: b.rule, reason: b.reason || 'Exposed credential detected by DLP filter', sample: b.header });
+      findings.push({ file: relPath, line: b.line, rule: b.rule, reason: b.reason || 'Exposed credential detected by DLP filter', type: 'secret_leak', sample: b.header });
     }
+  }
+
+  if (format === 'github') {
+    // CI logs are public: rule, reason and location only, never the line.
+    for (const f of findings) {
+      process.stdout.write(`::error file=${ghProperty(f.file)},line=${Number(f.line)},title=${ghProperty(`Security Threat (${f.rule})`)}::${ghMessage(f.reason || 'Security threat detected')}\n`);
+    }
+    for (const s of files.skipped) {
+      process.stdout.write(`::notice file=${ghProperty(path.relative(process.cwd(), s.file))},title=Not scanned::${ghMessage(s.reason)}\n`);
+    }
+    process.stdout.write(`\n[zn-gate] Scanned ${files.length - notRead} files (${files.skipped.length} not scanned). Found ${totalFindings} security threats.\n`);
+    if (totalFindings > 0) process.exitCode = 1;
+    return;
+  }
+  if (format === 'json') {
+    process.stdout.write(JSON.stringify({
+      total_files: files.length - notRead,
+      total_skipped: files.skipped.length,
+      total_threats: totalFindings,
+      threats: findings.map((f) => ({ file: f.file, line: f.line, rule: f.rule, reason: f.reason, type: f.type, content: f.sample })),
+      skipped: files.skipped.map((s) => ({ file: path.relative(process.cwd(), s.file), reason: s.reason })),
+    }, null, 2) + '\n');
+    if (totalFindings > 0) process.exitCode = 1;
+    return;
   }
 
   if (findings.length > 0) {
@@ -575,6 +635,7 @@ async function main() {
       options.export = true;
     } else if (args[i] === '--format' && args[i + 1]) {
       options.format = args[++i];
+      options.formatGiven = true;
     } else if (args[i] === '--output' && args[i + 1]) {
       options.output = args[++i];
     } else if (args[i] === '--include' && args[i + 1]) {

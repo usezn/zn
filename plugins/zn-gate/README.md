@@ -27,7 +27,7 @@ kept for when Codex runs plugin hooks again.
   Claude Code (the terminal or the desktop app).
 - Git (on Windows, Git for Windows), to add the marketplace from GitHub.
   Without it, `claude plugin marketplace add` fails because Git is not found.
-- zn-gate **1.7.0**.
+- zn-gate **1.7.1**.
   - **Claude Code** installs it with the plugin: it runs your `npm` to install
     the release pinned by the plugin's `package-lock.json` (with its registry
     integrity) into the plugin folder, with install scripts disabled. This
@@ -38,14 +38,14 @@ kept for when Codex runs plugin hooks again.
     you installed:
 
   ```bash
-  npm install -g zn-gate@1.7.0
+  npm install -g zn-gate@1.7.1
   npm audit signatures
   ```
 
   In Windows PowerShell, `npm` can fail with "running scripts is disabled on
   this system", because the default execution policy blocks `npm.ps1`. Use
   `npm.cmd` (and `zn.cmd`) instead (for example
-  `npm.cmd install -g zn-gate@1.7.0`), run the
+  `npm.cmd install -g zn-gate@1.7.1`), run the
   commands from Command Prompt, or allow local scripts for your account with
   `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 
@@ -79,7 +79,7 @@ file with no dependencies that you can read in full. On every call it:
    `"plugin": {"packageDir": "..."}` in `~/.zn/config.json`, or else the copy
    in the plugin folder (`node_modules/zn-gate`, installed by Claude Code),
    then each `zn-gate` executable on your `PATH` in turn (npm global layouts);
-2. requires exactly version 1.7.0;
+2. requires exactly version 1.7.1;
 3. reads the whole package directory and requires it to hold exactly the files
    listed in `scripts/zn-gate.lock.json`, each with the SHA-256 digest of the
    published release: no extra file or directory, no symbolic link, nothing
@@ -100,8 +100,8 @@ your account's home directory; `$HOME` does not change which file is read).
 
 What the hooks do with each event (deny reads of credential files, replace
 secret values in tool output with tokens, block prompts that contain a
-secret) is described in [docs/secrets.md](https://github.com/usezn/zn/blob/v1.7.0/docs/secrets.md),
-and what each agent allows in [docs/compat.md](https://github.com/usezn/zn/blob/v1.7.0/docs/compat.md).
+secret) is described in [docs/secrets.md](https://github.com/usezn/zn/blob/v1.7.1/docs/secrets.md),
+and what each agent allows in [docs/compat.md](https://github.com/usezn/zn/blob/v1.7.1/docs/compat.md).
 
 ## Limits
 
@@ -179,7 +179,7 @@ and kept: https://usezn.com/privacy
 
 ## Updates
 
-The plugin is pinned to zn-gate 1.7.0 and has no auto-update. A new zn-gate
+The plugin is pinned to zn-gate 1.7.1 and has no auto-update. A new zn-gate
 release comes with a new plugin release that pins it, with new file digests.
 Upgrade on purpose, after reading the release notes. In Claude Code,
 `claude plugin update zn-gate@usezn` installs the newly pinned zn-gate with
@@ -195,11 +195,11 @@ npm audit signatures
 Claude Code, from a marketplace pinned to the release tag:
 
 ```bash
-claude plugin marketplace add usezn/zn@v1.7.0
+claude plugin marketplace add usezn/zn@v1.7.1
 claude plugin install zn-gate@usezn
 ```
 
-Codex, Cursor and OpenCode: see [plugins/README.md](https://github.com/usezn/zn/blob/v1.7.0/plugins/README.md).
+Codex, Cursor and OpenCode: see [plugins/README.md](https://github.com/usezn/zn/blob/v1.7.1/plugins/README.md).
 
 If you used `zn hooks install claude-code` before, remove those hooks so each
 event is not checked twice: `zn hooks uninstall claude-code`.
@@ -220,7 +220,7 @@ event is not checked twice: `zn hooks uninstall claude-code`.
 
 Report vulnerabilities to security@usezn.com or through GitHub private
 vulnerability reporting on `usezn/zn`; see
-[SECURITY.md](https://github.com/usezn/zn/blob/v1.7.0/SECURITY.md).
+[SECURITY.md](https://github.com/usezn/zn/blob/v1.7.1/SECURITY.md).
 
 ## License
 
