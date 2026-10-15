@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- The vault audit log no longer slows down when the end of the file holds a long run of blank lines before a large record. Reading the last record used a regular expression that took seconds in that case, on every new audit record.
+
 ## [1.8.0] - 2026-10-15
 
 zn-gate 1.8.0 adds Warn rules for zn Team: an organization can have a secret use go ahead with a notice and an audit record instead of blocking it. Organization policy now also applies to `secrets_render_file` and to marker restores in the agent hooks. `zn-gate shield` pins the tools of the MCP servers it wraps, and block messages are written in plain words.
