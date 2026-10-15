@@ -29,7 +29,7 @@ To undo it: `zn hooks uninstall cursor`.
 | - | - |
 | Blocks reads of `.env` files with values, credential files (`~/.aws/credentials`, `~/.ssh/id_*`…) and `~/.zn` | Yes, for file reads and shell commands |
 | Removes secrets from MCP tool results | Yes |
-| Blocks secrets sent in MCP tool arguments | Yes, in the next release after 1.6.0 |
+| Blocks secrets sent in MCP tool arguments | Yes, from 1.7.0 |
 | Blocks a secret pasted into the chat | Yes |
 | Removes secrets from shell output and file contents | **No.** Cursor does not let hooks change them |
 | Checks your other MCP servers for prompt injection | Yes, if you wrap them (below) |
@@ -68,7 +68,7 @@ Every result of a wrapped server is checked for prompt injection, and secrets zn
 
 `zn hooks install cursor` writes Cursor's `hooks.json` (zn-gate 1.5 and later, npm):
 
-- `beforeMCPExecution` denies an MCP call whose arguments carry a secret value or a `__ZN_` marker, unless it goes to zn's `secrets` server (next release after 1.6.0; run `zn hooks install cursor` again to add it).
+- `beforeMCPExecution` denies an MCP call whose arguments carry a secret value or a `__ZN_` marker, unless it goes to zn's `secrets` server (from 1.7.0; run `zn hooks install cursor` again to add it).
 - `beforeReadFile` and `beforeSubmitPrompt` fail closed: if the hook crashes or times out, the read or the prompt is blocked.
 - `beforeShellExecution` blocks commands that read secret files and points the agent to `zn run` for commands that need a secret.
 - `postToolUse` removes secrets from MCP tool output (the only output Cursor lets a hook change).

@@ -78,9 +78,14 @@ function failModeOf(opts) {
 // Reinstall the running version: `npm install -g zn-gate` alone could install an
 // older release without hooks.
 const { version: ZN_VERSION } = require('../../package.json');
-const REINSTALL = 'The zn scrubber engine is missing from this installation (lib/scrub/engine.js), so zn cannot check this. ' +
-  'Reinstall zn-gate (`npm install -g zn-gate@' + ZN_VERSION + '`) and run `zn hooks install` again. To let events pass unchecked while it is missing, ' +
-  'set {"hooks": {"whenUnavailable": "allow"}} in ~/.zn/config.json.';
+const REINSTALL = 'part of zn-gate is missing from this installation, so zn cannot check this action and blocked it. ' +
+  'Ask the user to reinstall it with `npm install -g zn-gate@' + ZN_VERSION + '` and then run `zn hooks install`.';
+// Only the person sees how to let actions pass unchecked; the model never gets that hint.
+const REINSTALL_USER = 'part of zn-gate is missing from this installation, so zn blocks what it cannot check. ' +
+  'Reinstall it with `npm install -g zn-gate@' + ZN_VERSION + '` and then run `zn hooks install`. ' +
+  'To let actions pass unchecked until then, set {"hooks": {"whenUnavailable": "allow"}} in ~/.zn/config.json.';
+const HOOK_FAILED = 'something went wrong inside the zn hook, so this action was blocked to keep the user\'s secrets safe. ' +
+  'If it happens again, ask the user to run `' + znCommand('hooks install') + '`.';
 
 /** Map every string leaf of a JSON value through an async function, keeping the shape. */
 async function mapStrings(value, fn) {
@@ -516,25 +521,26 @@ function suggestedName(span) {
 
 function failDecision(ev, err, mode) {
   const missing = err.code === 'ZN_UNAVAILABLE';
-  const msg = 'zn: hook error (' + (err.code || 'error') + '): ' + (missing ? REINSTALL : err.message);
+  const detail = missing ? '' : ' (' + (err.code ? err.code + ': ' : '') + String(err.message || 'unknown error') + ')';
+  const msg = 'zn: ' + (missing ? REINSTALL : HOOK_FAILED) + detail;
   // Fail open only when the engine itself is missing and the user chose so.
-  if (mode === 'open' && missing) return { decision: 'allow', failOpen: true, warning: msg };
+  if (mode === 'open' && missing) return { decision: 'allow', failOpen: true, warning: 'zn: ' + REINSTALL_USER };
   const r = failClosed(ev, err, msg);
   // The user (not only the model) needs to hear how to fix a broken install.
-  if (missing) r.userMessage = msg;
+  if (missing) r.userMessage = 'zn: ' + REINSTALL_USER;
   return r;
 }
 
 function failClosed(ev, err, msg) {
   if (ev && ev.event === 'post_tool' && ev.output !== undefined) {
-    const withheld = '[zn: output withheld because the secret scrubber is unavailable: ' + (err.code || 'error') + ']';
+    const withheld = '[zn: this output was hidden because zn could not check it for secrets (' + (err.code || 'error') + ')]';
     const shape = (v) => (typeof v === 'string' ? withheld
       : Array.isArray(v) ? v.map(shape)
         : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, shape(x)])) : v);
     return { decision: 'allow', updatedOutput: shape(ev.output), message: msg };
   }
-  if (ev && ev.event === 'pre_tool') return { decision: 'deny', failClosed: true, message: msg + ' (fail-closed)' };
-  return { decision: 'deny', failClosed: true, message: msg + ' (fail-closed)', userMessage: msg };
+  if (ev && ev.event === 'pre_tool') return { decision: 'deny', failClosed: true, message: msg };
+  return { decision: 'deny', failClosed: true, message: msg, userMessage: msg };
 }
 
 /**
@@ -608,8 +614,10 @@ function refuseInput(agentId, why) {
     process.stderr.write('zn hook: ' + why + '; passed through (hooks.whenUnavailable is "allow")\n');
     return;
   }
-  const msg = 'zn: ' + why + ', so zn cannot check this call and it is denied. ' +
-    'Set {"hooks": {"whenUnavailable": "allow"}} in ~/.zn/config.json to let such events pass.';
+  // Claude Code and Codex show this stderr to the model, so it never says how to
+  // let actions pass unchecked (docs/compat.md documents that for the user).
+  const msg = 'zn: could not read this action (' + why + '), so it was blocked. ' +
+    'If it happens again, ask the user to run `' + znCommand('hooks install') + '`.';
   process.stderr.write('zn hook: ' + msg + '\n');
   if (agentId === 'cursor') process.stdout.write(JSON.stringify({ permission: 'deny', continue: false, user_message: msg, agent_message: msg }));
   process.exitCode = 2;
@@ -642,7 +650,8 @@ async function handleEvent(args) {
   try {
     raw = JSON.parse(text);
   } catch (err) {
-    return refuseInput(agentId, 'the event on stdin is not valid JSON (' + err.message + ')');
+    // Node's parse error quotes part of the input, which can be tool output: never pass it on.
+    return refuseInput(agentId, 'the event on stdin is not valid JSON');
   }
   // Valid JSON that is not an object (a number, a string, an array) is not an event.
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {

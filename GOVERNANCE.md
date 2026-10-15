@@ -86,6 +86,10 @@ Releases follow [Semantic Versioning](https://semver.org/). Prereleases use
    `bench/bench_by_size.js` run on the host named in the published table when
    the rules engine changed). The website is updated before the release is
    announced. A difference that stays is explained in the release notes.
+   The `Public facts` check ([`.github/public-facts.json`](.github/public-facts.json))
+   fails the pull request until the version, the agents with hooks, the license
+   and the install command read the same in every manifest and document of this
+   repository; the release changes that file in the same pull request.
 2. A maintainer pushes an annotated tag `vX.Y.Z` on that commit (see Branches
    for who can create tags).
 3. The [`Release` workflow](.github/workflows/release.yml) builds the npm package

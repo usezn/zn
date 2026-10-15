@@ -143,7 +143,7 @@ Rule ids are stable: a rule may get better, but its id never changes meaning.
 ### Text
 
 ```
-zn audit  ./some-repo  (zn-gate 1.6.0)
+zn audit  ./some-repo  (zn-gate 1.7.0)
 
 CRITICAL  ZNA007  .claude/settings.json:4  [claude]
           Model API endpoint overridden by the project
@@ -165,7 +165,7 @@ file names) are printed as `\x1b`, never sent to the terminal.
 {
   "version": 1,
   "tool": "zn-gate",
-  "toolVersion": "1.6.0",
+  "toolVersion": "1.7.0",
   "root": "/home/me/some-repo",
   "findings": [
     {
@@ -209,7 +209,7 @@ findings) so alerts survive line moves and stay unique. Findings from
 flag off in CI.
 
 ```yaml
-- run: npx -y zn-gate@1.6.0 audit --format sarif --output zn-audit.sarif --fail-on none
+- run: npx -y zn-gate@1.7.0 audit --format sarif --output zn-audit.sarif --fail-on none
 - uses: github/codeql-action/upload-sarif@v3
   with:
     sarif_file: zn-audit.sarif

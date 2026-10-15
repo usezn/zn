@@ -252,12 +252,16 @@ test('every error fails closed, a missing engine too unless the user allows it',
   try {
     const def = await runner.handle(adapter, ev, { engine: absent, vault: createFakeVault(), home });
     assert.ok(!JSON.stringify(def.output).includes(AWS));
-    assert.match(def.output.hookSpecificOutput.updatedToolOutput.stdout, /output withheld/);
-    assert.match(def.output.systemMessage, /Reinstall zn-gate/);
+    assert.match(def.output.hookSpecificOutput.updatedToolOutput.stdout, /output was hidden/);
+    assert.match(def.output.systemMessage, /[Rr]einstall it with/);
     assert.ok(def.output.systemMessage.includes('npm install -g zn-gate@' + require('../package.json').version),
       def.output.systemMessage);
     const defPre = await runner.handle(adapter, preBash('node a.js __ZN_AWS_KEY_1__', '/'), { engine: absent, vault: createFakeVault(), home, znRunPrefix: PREFIX });
     assert.equal(defPre.output.hookSpecificOutput.permissionDecision, 'deny');
+    // The way to let actions pass unchecked is for the person only, never in what the model reads.
+    assert.doesNotMatch(defPre.output.hookSpecificOutput.permissionDecisionReason, /whenUnavailable/);
+    assert.doesNotMatch(JSON.stringify(def.output.hookSpecificOutput), /whenUnavailable/);
+    assert.match(def.output.systemMessage, /whenUnavailable/);
     fs.mkdirSync(path.join(home, '.zn'), { recursive: true });
     fs.writeFileSync(path.join(home, '.zn', 'config.json'), JSON.stringify({ hooks: { whenUnavailable: 'allow' } }));
     const allowed = await runner.handle(adapter, ev, { engine: absent, vault: createFakeVault(), home });
@@ -282,15 +286,15 @@ test('every error fails closed, a missing engine too unless the user allows it',
   }
   const open = await runner.handle(adapter, ev, { engine: absent, vault: createFakeVault(), failMode: 'open' });
   assert.equal(open.output, null);
-  assert.match(open.stderr, /ZN_UNAVAILABLE/);
+  assert.match(open.stderr, /part of zn-gate is missing/);
   const err = await runner.handle(adapter, ev, { engine: broken, vault: createFakeVault(), failMode: 'open' });
   assert.ok(!JSON.stringify(err.output).includes(AWS), 'an engine error never passes the output through');
-  assert.match(err.output.hookSpecificOutput.updatedToolOutput.stdout, /output withheld/);
+  assert.match(err.output.hookSpecificOutput.updatedToolOutput.stdout, /output was hidden/);
   const closedMissing = await runner.handle(adapter, ev, { engine: absent, vault: createFakeVault(), failMode: 'closed' });
   assert.ok(!JSON.stringify(closedMissing.output).includes(AWS));
   const closed = await runner.handle(adapter, ev, { engine: broken, vault: createFakeVault(), failMode: 'closed' });
   assert.ok(!JSON.stringify(closed.output).includes(AWS));
-  assert.match(closed.output.hookSpecificOutput.updatedToolOutput.stdout, /output withheld/);
+  assert.match(closed.output.hookSpecificOutput.updatedToolOutput.stdout, /output was hidden/);
   const p = await runner.handle(adapter, prompt('x ' + AWS, '/'), { engine: broken, vault: createFakeVault(), failMode: 'closed' });
   assert.equal(p.output.decision, 'block');
   const pre = await runner.handle(adapter, preBash('node a.js __ZN_AWS_KEY_1__', '/'), { engine: broken, vault: createFakeVault(), failMode: 'closed', znRunPrefix: PREFIX });

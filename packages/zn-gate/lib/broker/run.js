@@ -224,9 +224,9 @@ async function prepare(parsed, opts) {
     }
     const entry = markers.matchAllowCommands(m.allowCommands, parsed.command);
     if (!entry) {
-      await deny(name, m.mode, '`' + exeName + '` is not in allowCommands for ' + name + '. ' +
-        'For HTTP APIs use the secrets_http_request tool of the zn "secrets" MCP server. ' +
-        'To allow this command, run in your own terminal: zn secret allow ' + name + ' --command ' + exeName);
+      await deny(name, m.mode, '`' + exeName + '` is not allowed to use ' + name + ' yet. ' +
+        'The user can allow it from their own terminal: zn secret allow ' + name + ' --command ' + exeName + ' ' +
+        '(for HTTP APIs, the secrets_http_request tool of the zn "secrets" MCP server needs no command allowed).');
     }
     if (planted) await deny(name, m.mode, '`' + argv0 + '` ' + planted + '; zn run will not give it ' + name);
     if (!opened) await deny(name, m.mode, '`' + argv0 + '` could not be opened for checking; zn run will not give it ' + name);
