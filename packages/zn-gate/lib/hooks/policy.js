@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-14.10';
+const POLICY_RULES_VERSION = '2026-10-15.2';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -448,8 +448,13 @@ function readDenial(p, opts = {}) {
       znCommand('env shadow ' + path.basename(abs)) + '` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.';
   }
   if (c.kind === 'zn_state') return 'zn: ~/.zn is the local secret vault; agents may not read or change it.';
-  return 'zn: reading ' + c.reason + ' (' + p + ') is blocked so secret values never reach the model. ' +
-    'If a command needs it, ask the user to add the value with `' + znCommand('secret set <NAME>') + '` and use the __ZN_<NAME>__ marker.';
+  return credentialDenial(p, c);
+}
+
+/* Reads of credential files: what was refused, why, and how to use a value instead. */
+function credentialDenial(p, c) {
+  return 'zn: ' + p + ' was not read because zn treats it as holding secrets (' + c.reason + '), and secret values never go to the model. ' +
+    'If a command needs a value, ask the user to run `' + znCommand('secret set NAME') + '`, then write __ZN_NAME__ where the value goes.';
 }
 
 function agentConfigDenial(p, c) {
@@ -585,19 +590,20 @@ function wrapWithZnRun(cmd, znRunPrefix) {
   if (named.length === 0) return { ok: true, command: s, wrapped: false };
   const scan = scanFirstCommand(s);
   const tail = s.slice(scan.end);
-  const guidance = ' Put the command that uses the secret first, as a single simple command ' +
-    '(for example: psql "postgres://app:__ZN_DB_PASSWORD__@db/app" -c "select 1"), in its own Bash call.';
-  if (scan.unterminated) return { ok: false, reason: 'zn: could not parse the command (unterminated quote).' };
+  const guidance = ' zn fills in secrets only in the first command of a Bash call: run that command on its own, ' +
+    'with __ZN_NAME__ where the value goes (for example: psql "postgres://app:__ZN_DB_PASSWORD__@db/app" -c "select 1").';
+  if (scan.unterminated) return { ok: false, reason: 'zn: this command has a quote that is not closed, so zn cannot read it. Close the quote and try again.' };
   if (markers.findNamedMarkers(tail).length > 0) {
-    return { ok: false, reason: 'zn: secret markers are only supported in the first command of a Bash call.' + guidance };
+    return { ok: false, reason: 'zn: this command uses a secret after its first command.' + guidance };
   }
   if (scan.substitution) {
-    return { ok: false, reason: 'zn: secret markers cannot be combined with $( ) or backtick substitution in the same command.' + guidance };
+    return { ok: false, reason: 'zn: a secret cannot be used in a command that also has $( ) or backticks.' + guidance };
   }
   let k = 0;
   while (k < scan.words.length && ASSIGNMENT_RE.test(scan.words[k].text)) k++;
   if (k >= scan.words.length) {
-    return { ok: false, reason: 'zn: a secret marker in a plain variable assignment would only store the marker.' + guidance };
+    return { ok: false, reason: 'zn: putting a secret in a shell variable would store only its placeholder, not the value. ' +
+      'To give a program a secret as an environment variable, use `zn run --secrets NAME -- <command>`.' };
   }
   for (let j = 0; j < k; j++) {
     if (markers.findNamedMarkers(scan.words[j].text).length) {
@@ -606,7 +612,7 @@ function wrapWithZnRun(cmd, znRunPrefix) {
   }
   const first = scan.words[k];
   if (RESERVED_WORDS.has(first.text)) {
-    return { ok: false, reason: 'zn: `' + first.text + '` cannot be wrapped for secret injection.' + guidance };
+    return { ok: false, reason: 'zn: a secret cannot be used with `' + first.text + '`.' + guidance };
   }
   // Already wrapped by the agent or a previous hook: leave it alone, zn run applies policy.
   if (/(^|[\\/])(zn|zn-gate)(\.js|\.cmd)?$/.test(first.text) && scan.words[k + 1] && scan.words[k + 1].text === 'run') {
@@ -790,8 +796,7 @@ function bashDenial(cmd, opts = {}) {
 function denialOf(c, text, opts) {
   if (c.kind === 'zn_state') return 'zn: ~/.zn is the local secret vault; agents may not read or change it.';
   if (c.kind === 'dotenv') return readDenial(text, opts);
-  return 'zn: reading ' + c.reason + ' (' + text + ') is blocked so secret values never reach the model. ' +
-    'If a command needs it, ask the user to add the value with `' + znCommand('secret set <NAME>') + '` and use the __ZN_<NAME>__ marker.';
+  return credentialDenial(text, c);
 }
 
 module.exports = {
