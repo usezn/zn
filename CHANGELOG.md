@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Block messages in plain words. When zn cannot read a credential file for the agent, the message names the file, says why and how to use the value instead (`zn secret set NAME`, then `__ZN_NAME__` in the command). A secret used in the wrong place of a shell command gets one short explanation and an example. When a command is not allowed to use a secret, `zn run` says so and gives the command to allow it. When the hook itself fails, the agent reads that the action was blocked and, if it happens again, to ask you to run `zn hooks install`, followed by the error detail. The text that replaces a tool output with instructions aimed at the agent now tells the agent not to act on it and to tell you (`POLICY_RULES_VERSION` is now `2026-10-15.3`).
 
 ### Fixed
-- CI: the Plugin repository workflow takes the version from the plugin's pin and the source from the last change to the plugin folder, and stops with a message when the plugin manifest and the pin name different versions.
+- Release tooling: `plugins/tools/pin-release.js` also moves the plugin manifests, the MCP Registry entry of the plugin and the version named in the plugin docs, in the same commit as the pin. The Plugin repository workflow reads the version from the pin and stops with a message when the plugin manifest names another version.
 
 ### Security
 - The Rust gateway's lockfile uses wasmtime 48.0.6, which fixes RUSTSEC-2026-0353, 0358, 0359, 0361, 0362, 0363 and 0364 in 48.0.5. The gateway runs WebAssembly rules through the synchronous module API, without the component model or async calls where most of these issues are. The npm and PyPI packages do not contain the Rust gateway.
