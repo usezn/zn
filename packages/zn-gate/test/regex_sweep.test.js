@@ -1,7 +1,7 @@
 'use strict';
 
-// Timing sweep for the hook policy and the CLI. Every regex literal in the files
-// below (found by test/helpers/regex_sweep.js), every pattern built with
+// Timing sweep for the package. Every regex literal in every JS file under lib/
+// and bin/ (found by test/helpers/regex_sweep.js), every pattern built with
 // `new RegExp` from a constant (broker/markers.js), the multiline secret scan
 // the CLI runs over its rules, and the glob-to-regex conversion and the glob
 // shapes of the policy must finish 50k-character adversarial inputs within
@@ -22,7 +22,7 @@ const { SECRET_PATTERNS } = require('../lib/rules');
 const ROOT = path.join(__dirname, '..');
 const LIMIT_MS = 100;
 
-const FILES = [
+const CORE_FILES = [
   'lib/hooks/policy.js',
   'lib/hooks/runner.js',
   'bin/cli.js',
@@ -53,19 +53,46 @@ const FILES = [
   'lib/scrub/engine.js',
 ];
 
+// Every JS file under lib/ and bin/, so a new file is timed without being listed.
+function listJs(dir) {
+  const out = [];
+  for (const e of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+    const rel = path.posix.join(dir, e.name);
+    if (e.isDirectory()) out.push(...listJs(rel));
+    else if (e.name.endsWith('.js')) out.push(rel);
+  }
+  return out;
+}
+const FILES = [...listJs('lib'), ...listJs('bin')].sort();
+
 // `new RegExp(...)` sites in each file. Sites built from a constant source are
 // timed where the source is listed (policy.js: GLOB_CASES; bin/cli.js: the
 // SECRET_PATTERNS rebuilt with g; markers.js: DYNAMIC_SOURCES). The other sites
 // are counted: a new one fails the count check until it is reviewed and, if it
 // builds a pattern from input-dependent text, added to the sweep.
 const EXPECTED_CTORS = {
-  'lib/hooks/policy.js': 2,
   'bin/cli.js': 1,
+  // Built from constants or from the agent id of the install command.
+  'lib/agents/config-file.js': 1,
+  // Hook command shapes, path globs from the audited config and a fixed trigger list.
+  'lib/audit/index.js': 7,
+  'lib/audit/patterns.js': 1,
   'lib/broker/markers.js': 2,
+  // Alternation of escaped literal secret values (escapeRe), no quantifiers from input.
+  'lib/broker/mask.js': 1,
   'lib/broker/run.js': 1,
-  'lib/team/daemon-ops.js': 1,
-  'lib/team/effective.js': 1,
+  'lib/hooks/policy.js': 2,
+  // Copies of constant sources with other flags, plus bannedPatterns from the
+  // user's own local config file (same trust as the user).
+  'lib/rules.js': 20,
   'lib/scrub/engine.js': 7,
+  'lib/scrub/patterns.js': 5,
+  'lib/team/daemon-ops.js': 1,
+  // Org detector patterns: checkPattern() limits them to a bounded subset with a
+  // cost cap, and find() runs them per window under a time budget.
+  'lib/team/detectors.js': 2,
+  'lib/team/effective.js': 1,
+  'lib/vault/confirm.js': 2,
 };
 
 const DYNAMIC_SOURCES = [
@@ -149,7 +176,13 @@ function worstOf(body, flags, size = SIZE) {
   return worst;
 }
 
-test('every regex literal of the hook policy and the CLI stays under 100 ms on 50k adversarial inputs', () => {
+test('the sweep covers every JS file of lib/ and bin/', () => {
+  for (const f of CORE_FILES) assert.ok(FILES.includes(f), `${f} is not discovered`);
+  for (const f of Object.keys(EXPECTED_CTORS)) assert.ok(FILES.includes(f), `${f} in EXPECTED_CTORS does not exist`);
+  assert.ok(FILES.length > CORE_FILES.length);
+});
+
+test('every regex literal under lib/ and bin/ stays under 100 ms on 50k adversarial inputs', () => {
   const offenders = [];
   let checked = 0;
   for (const file of FILES) {
