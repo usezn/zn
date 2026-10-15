@@ -14,13 +14,15 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
-const { scanJs, adversarialInputs, timeMatch, SIZE } = require('./helpers/regex_sweep');
+const { scanJs, adversarialInputs, timeMatch, SIZE, GuardedTimer } = require('./helpers/regex_sweep');
 const policy = require('../lib/hooks/policy');
 const exe = require('../lib/exe');
 const { SECRET_PATTERNS } = require('../lib/rules');
 
 const ROOT = path.join(__dirname, '..');
 const LIMIT_MS = 100;
+// Hard cap per literal and flag variant (all its inputs) in the main sweep.
+const CAP_MS = 10000;
 
 const CORE_FILES = [
   'lib/hooks/policy.js',
@@ -176,6 +178,18 @@ function worstOf(body, flags, size = SIZE) {
   return worst;
 }
 
+test('the guarded timer reports a pattern that hangs instead of waiting for it', () => {
+  const timer = new GuardedTimer(1500);
+  try {
+    assert.equal(timer.worst('^(a+)+$', '', SIZE, LIMIT_MS).timedOut, true);
+    const fine = timer.worst('^abc', '', SIZE, LIMIT_MS);
+    assert.equal(fine.timedOut, undefined);
+    assert.ok(fine.ms < LIMIT_MS);
+  } finally {
+    timer.close();
+  }
+});
+
 test('the sweep covers every JS file of lib/ and bin/', () => {
   for (const f of CORE_FILES) assert.ok(FILES.includes(f), `${f} is not discovered`);
   for (const f of Object.keys(EXPECTED_CTORS)) assert.ok(FILES.includes(f), `${f} in EXPECTED_CTORS does not exist`);
@@ -185,24 +199,31 @@ test('the sweep covers every JS file of lib/ and bin/', () => {
 test('every regex literal under lib/ and bin/ stays under 100 ms on 50k adversarial inputs', () => {
   const offenders = [];
   let checked = 0;
-  for (const file of FILES) {
-    const { literals, ctors } = scanJs(readJs(file));
-    assert.equal(ctors.length, EXPECTED_CTORS[file] || 0,
-      `${file}: the number of new RegExp() sites changed; cover the new one in regex_sweep.test.js`);
-    for (const lit of literals) {
-      compile(lit.body, lit.flags, `${file}:${lit.line}`);
-      const variants = lit.flags.includes('i') ? [lit.flags] : [lit.flags, lit.flags + 'i'];
-      const slow = knownSlowFor(file, lit.body);
-      const size = slow ? slow.sizeChars : SIZE;
-      for (const flags of variants) {
-        const worst = worstOf(lit.body, flags, size);
-        checked++;
-        const limit = slow ? slow.ceilingMs : LIMIT_MS;
-        if (worst.ms > limit) {
-          offenders.push(`${file}:${lit.line} /${lit.body}/${flags} took ${worst.ms.toFixed(1)} ms at ${size} chars (limit ${limit}) on input ${JSON.stringify(worst.input)}...`);
+  const timer = new GuardedTimer(CAP_MS);
+  try {
+    for (const file of FILES) {
+      const { literals, ctors } = scanJs(readJs(file));
+      assert.equal(ctors.length, EXPECTED_CTORS[file] || 0,
+        `${file}: the number of new RegExp() sites changed; cover the new one in regex_sweep.test.js`);
+      for (const lit of literals) {
+        compile(lit.body, lit.flags, `${file}:${lit.line}`);
+        const variants = lit.flags.includes('i') ? [lit.flags] : [lit.flags, lit.flags + 'i'];
+        const slow = knownSlowFor(file, lit.body);
+        const size = slow ? slow.sizeChars : SIZE;
+        for (const flags of variants) {
+          const limit = slow ? slow.ceilingMs : LIMIT_MS;
+          const worst = timer.worst(lit.body, flags, size, limit);
+          checked++;
+          if (worst.timedOut) {
+            offenders.push(`${file}:${lit.line} /${lit.body}/${flags} did not finish within ${CAP_MS} ms at ${size} chars`);
+          } else if (worst.ms > limit) {
+            offenders.push(`${file}:${lit.line} /${lit.body}/${flags} took ${worst.ms.toFixed(1)} ms at ${size} chars (limit ${limit}) on input ${JSON.stringify(worst.input)}...`);
+          }
         }
       }
     }
+  } finally {
+    timer.close();
   }
   assert.ok(checked > 100, `only ${checked} regex runs: the scanner found too few literals`);
   assert.deepEqual(offenders, []);

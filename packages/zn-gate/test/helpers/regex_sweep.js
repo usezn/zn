@@ -165,4 +165,43 @@ function timeMatch(body, flags, input, runs = 2) {
   return best;
 }
 
-module.exports = { scanJs, adversarialInputs, timeMatch, fill, SIZE };
+// Times literals in a worker with a hard cap per literal, so a pattern that
+// backtracks for minutes is reported as an offender instead of hanging the test
+// run until the CI job times out.
+class GuardedTimer {
+  constructor(capMs) {
+    this.capMs = capMs;
+    this.worker = null;
+  }
+
+  start() {
+    const { Worker } = require('worker_threads');
+    this.sab = new SharedArrayBuffer(16);
+    this.state = new Int32Array(this.sab, 0, 2);
+    this.result = new Float64Array(this.sab, 8, 1);
+    this.worker = new Worker(require('path').join(__dirname, 'regex_sweep_worker.js'), { workerData: { sab: this.sab } });
+  }
+
+  // -> { ms, input } with the worst time and the start of that input, or
+  //    { ms: Infinity, timedOut: true } when the literal ran past capMs.
+  worst(body, flags, size, limitMs) {
+    if (!this.worker) this.start();
+    Atomics.store(this.state, 0, 0);
+    this.worker.postMessage({ body, flags, size, limitMs });
+    if (Atomics.wait(this.state, 0, 0, this.capMs) === 'timed-out' && Atomics.load(this.state, 0) === 0) {
+      this.worker.terminate();
+      this.worker = null;
+      return { ms: Infinity, timedOut: true, input: '' };
+    }
+    const index = Atomics.load(this.state, 1);
+    const inputs = index >= 0 ? Array.from(adversarialInputs(body, size)) : [];
+    return { ms: this.result[0], input: index >= 0 ? inputs[index].slice(0, 16) : '' };
+  }
+
+  close() {
+    if (this.worker) this.worker.terminate();
+    this.worker = null;
+  }
+}
+
+module.exports = { scanJs, adversarialInputs, timeMatch, fill, SIZE, GuardedTimer };
