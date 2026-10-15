@@ -14,6 +14,7 @@ const { claudeCodePolicyWarnings, managedDir } = require('../lib/agents/managed-
 const adapter = require('../lib/agents/claude-code');
 
 const OUR_HOOK = { matcher: 'Bash', hooks: [{ type: 'command', command: "'/usr/bin/node' '/opt/zn/lib/hooks/runner.js' claude-code" }] };
+const CMD = ['/usr/bin/node', '/opt/zn/bin/cli.js', 'secrets-mcp', '--agent', 'claude-code'];
 
 function setup(t, { managed, drop, mcp, user } = {}) {
   const root = tempDir(t, 'zn-ccpol-');
@@ -27,7 +28,7 @@ function setup(t, { managed, drop, mcp, user } = {}) {
   if (mcp !== undefined) fs.writeFileSync(path.join(dir, 'managed-mcp.json'), JSON.stringify(mcp));
   const userFile = path.join(root, 'settings.json');
   if (user !== undefined) fs.writeFileSync(userFile, JSON.stringify(user));
-  return { managedDir: dir, userSettings: [userFile] };
+  return { managedDir: dir, userSettings: [userFile], mcpCommand: CMD };
 }
 
 const warn = (o, extra = {}) => claudeCodePolicyWarnings({ ...o, ...extra });
@@ -46,9 +47,12 @@ test('disableAllHooks in managed settings', (t) => {
 });
 
 test('allowManagedHooksOnly without zn in the managed hooks', (t) => {
-  const w = warn(setup(t, { managed: { allowManagedHooksOnly: true } }));
+  let w = warn(setup(t, { managed: { allowManagedHooksOnly: true } }));
   assert.equal(w.length, 1);
   assert.match(w[0], /allowManagedHooksOnly/);
+  // a string "true" is read the same way (fails toward warning)
+  w = warn(setup(t, { managed: { allowManagedHooksOnly: 'true' } }));
+  assert.equal(w.length, 1);
 });
 
 test('allowManagedHooksOnly with zn deployed in the managed hooks: no warning', (t) => {
@@ -57,10 +61,12 @@ test('allowManagedHooksOnly with zn deployed in the managed hooks: no warning', 
   assert.deepEqual(warn(setup(t, { managed: { allowManagedHooksOnly: true }, drop: { '10-zn.json': { hooks: { PreToolUse: [OUR_HOOK] } } } })), []);
 });
 
-test('a drop-in file is read too', (t) => {
+test('drop-in files are read, and a later file replaces a value', (t) => {
   const w = warn(setup(t, { drop: { '20-org.json': { disableAllHooks: true }, 'notes.txt': {} } }));
   assert.equal(w.length, 1);
   assert.match(w[0], /managed-settings\.d/);
+  assert.deepEqual(warn(setup(t, { managed: { disableAllHooks: true }, drop: { '20-x.json': { disableAllHooks: false } } })), []);
+  assert.deepEqual(warn(setup(t, { managed: { allowManagedHooksOnly: true }, drop: { '20-x.json': { allowManagedHooksOnly: false } } })), []);
 });
 
 test('disableAllHooks in the user settings', (t) => {
@@ -68,37 +74,61 @@ test('disableAllHooks in the user settings', (t) => {
   assert.equal(w.length, 1);
   assert.match(w[0], /settings\.json sets disableAllHooks/);
   assert.match(w[0], /Remove that setting/);
+  // it cannot turn off zn deployed as a managed hook
+  assert.deepEqual(warn(setup(t, { managed: { hooks: { PreToolUse: [OUR_HOOK] } }, user: { disableAllHooks: true } })), []);
 });
 
-test('managed-mcp.json without "secrets"', (t) => {
+test('managed-mcp.json without zn\'s server', (t) => {
   const w = warn(setup(t, { mcp: { mcpServers: { github: { command: 'gh-mcp' } } } }));
   assert.equal(w.length, 1);
   assert.match(w[0], /managed-mcp\.json\) loads only the MCP servers it lists/);
   assert.deepEqual(warn(setup(t, { mcp: { mcpServers: { secrets: { command: 'node', args: ['cli.js', 'secrets-mcp'] } } } })), []);
-  // --no-mcp: nothing to say about MCP
+  // listed under another name: it still runs
+  assert.deepEqual(warn(setup(t, { mcp: { mcpServers: { 'zn-secrets': { command: 'node', args: ['cli.js', 'secrets-mcp'] } } } })), []);
+  // the server is not installed: nothing to say about MCP
   assert.deepEqual(warn(setup(t, { mcp: { mcpServers: {} } }), { mcp: false }), []);
 });
 
-test('MCP allowlist and denylist', (t) => {
-  let w = warn(setup(t, { managed: { allowManagedMcpServersOnly: true, allowedMcpServers: [{ serverName: 'github' }] } }));
+test('exclusive MCP allowlist (allowManagedMcpServersOnly)', (t) => {
+  const w = warn(setup(t, { managed: { allowManagedMcpServersOnly: true, allowedMcpServers: [{ serverName: 'github' }] } }));
   assert.equal(w.length, 1);
   assert.match(w[0], /allowManagedMcpServersOnly/);
   assert.deepEqual(warn(setup(t, { managed: { allowManagedMcpServersOnly: true, allowedMcpServers: [{ serverName: 'secrets' }] } })), []);
-  // the exclusive allowlist ignores the user's own allowlist
-  w = warn(setup(t, { managed: { allowManagedMcpServersOnly: true, allowedMcpServers: [] }, user: { allowedMcpServers: [{ serverName: 'secrets' }] } }));
+  // the user's own allowlist does not count then
+  assert.equal(warn(setup(t, { managed: { allowManagedMcpServersOnly: true, allowedMcpServers: [] }, user: { allowedMcpServers: [{ serverName: 'secrets' }] } })).length, 1);
+  // no managed allowlist: nothing is restricted
+  assert.deepEqual(warn(setup(t, { managed: { allowManagedMcpServersOnly: true } })), []);
+});
+
+test('MCP allowlists add up across scopes', (t) => {
+  let w = warn(setup(t, { managed: { allowedMcpServers: [{ serverName: 'github' }] } }));
   assert.equal(w.length, 1);
-  // without it, the user's allowlist adds to the managed one
-  w = warn(setup(t, { managed: { allowedMcpServers: [{ serverName: 'github' }] } }));
-  assert.equal(w.length, 1);
-  assert.match(w[0], /Add \{"serverName": "secrets"\}/);
+  assert.match(w[0], /allowedMcpServers\) that does not include/);
   assert.deepEqual(warn(setup(t, { managed: { allowedMcpServers: [{ serverName: 'github' }] }, user: { allowedMcpServers: [{ serverName: 'secrets' }] } })), []);
-  // a denylist entry wins, from any scope
-  w = warn(setup(t, { managed: { allowedMcpServers: [{ serverName: 'secrets' }], deniedMcpServers: [{ serverName: 'secrets' }] } }));
+  // a user-only allowlist restricts too
+  w = warn(setup(t, { user: { allowedMcpServers: [{ serverName: 'github' }] } }));
+  assert.equal(w.length, 1);
+  assert.match(w[0], /^.*settings\.json has an MCP allowlist/);
+});
+
+test('a stdio server needs its exact command once the allowlist names commands', (t) => {
+  const other = { serverCommand: ['npx', 'other-mcp'] };
+  assert.equal(warn(setup(t, { managed: { allowedMcpServers: [{ serverName: 'secrets' }, other] } })).length, 1);
+  assert.deepEqual(warn(setup(t, { managed: { allowedMcpServers: [{ serverCommand: CMD }, other] } })), []);
+  // a near miss (another node path) does not match
+  const near = ['/opt/node', ...CMD.slice(1)];
+  assert.equal(warn(setup(t, { managed: { allowedMcpServers: [{ serverCommand: near }] } })).length, 1);
+});
+
+test('MCP denylist, from any scope', (t) => {
+  let w = warn(setup(t, { managed: { allowedMcpServers: [{ serverName: 'secrets' }], deniedMcpServers: [{ serverName: 'secrets' }] } }));
   assert.equal(w.length, 1);
   assert.match(w[0], /blocks the "secrets" MCP server \(deniedMcpServers\)/);
-  w = warn(setup(t, { user: { deniedMcpServers: [{ serverCommand: ['node', 'cli.js', 'secrets-mcp', '--agent', 'claude-code'] }] } }));
+  w = warn(setup(t, { user: { deniedMcpServers: [{ serverCommand: CMD }] } }));
   assert.equal(w.length, 1);
   assert.match(w[0], /^.*settings\.json blocks/);
+  // an unrelated command that also contains secrets-mcp is not ours
+  assert.deepEqual(warn(setup(t, { user: { deniedMcpServers: [{ serverCommand: ['other', 'secrets-mcp'] }] } })), []);
 });
 
 test('an unreadable or invalid managed file is reported, never thrown', (t) => {

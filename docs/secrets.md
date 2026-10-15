@@ -87,9 +87,10 @@ the hooks and MCP servers you install yourself (`disableAllHooks`,
 and it does not tell you. `zn hooks install claude-code` and `zn-gate status`
 read the managed settings files on this computer and your own settings, and
 say when one of these stops zn's hooks or its `secrets` server. Ask your
-administrator to add zn to the managed settings. Policy sent through device
-management (MDM) or the Windows registry is not read; `claude doctor` shows
-where Claude Code loaded its policy from.
+administrator to add zn to the managed settings. Policy sent through claude.ai,
+device management (MDM) or the Windows registry is not read, and when such a
+policy exists Claude Code may ignore the managed settings files; `claude
+doctor` and `/status` show which source Claude Code used.
 
 ## 4. Let a command use a secret
 

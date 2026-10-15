@@ -6,12 +6,15 @@
  * organization policy drops a user hook or MCP server, so zn says it.
  *
  * Verified against (read 2026-10-15):
- *  https://code.claude.com/docs/en/managed-settings  (file locations)
+ *  https://code.claude.com/docs/en/managed-settings  (file locations, drop-ins)
  *  https://code.claude.com/docs/en/settings-reference (disableAllHooks, allowManagedHooksOnly)
  *  https://code.claude.com/docs/en/managed-mcp       (managed-mcp.json, allow/deny lists)
  *
- * Only files are read. Policy delivered through MDM or the Windows registry
- * is not seen here; `claude doctor` shows where Claude Code loaded it from.
+ * Only files are read. Policy sent through claude.ai, MDM or the Windows
+ * registry is not seen here, and when it exists Claude Code may ignore the
+ * files; `claude doctor` shows which source it used. Hooks from plugins that
+ * managed settings force-enable also survive allowManagedHooksOnly; zn is not
+ * installed that way today.
  */
 
 const fs = require('fs');
@@ -45,7 +48,7 @@ function readSource(file) {
   }
 }
 
-/* managed-settings.json and the managed-settings.d/*.json drop-ins. */
+/* managed-settings.json, then the managed-settings.d/*.json drop-ins in name order. */
 function managedSources(dir) {
   const out = [];
   const main = readSource(path.join(dir, 'managed-settings.json'));
@@ -72,26 +75,40 @@ function hasOurHook(data) {
   return false;
 }
 
-/* An allow/deny list entry that names our server. */
-function namesSecrets(entry) {
-  if (!entry || typeof entry !== 'object') return false;
-  if (entry.serverName === MCP_SERVER_NAME) return true;
-  return Array.isArray(entry.serverCommand) && entry.serverCommand.some((a) => String(a) === 'secrets-mcp');
-}
-
 function list(v) {
   return Array.isArray(v) ? v : [];
 }
 
+// Commands match exactly: every argument, in order.
+function sameCmd(a, b) {
+  return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((x, i) => String(x) === String(b[i]));
+}
+
+function deniesUs(e, cmd) {
+  return !!e && typeof e === 'object' && (e.serverName === MCP_SERVER_NAME || (!!cmd && sameCmd(e.serverCommand, cmd)));
+}
+
+// A stdio server needs a serverCommand match once the allowlist has any
+// serverCommand entry; before that, a serverName match is enough.
+function allowsUs(entries, cmd) {
+  const hasCmd = entries.some((e) => e && Array.isArray(e.serverCommand));
+  return entries.some((e) => !!e && (hasCmd ? (!!cmd && sameCmd(e.serverCommand, cmd)) : e.serverName === MCP_SERVER_NAME));
+}
+
+function isTrue(v) {
+  return v === true || v === 'true';
+}
+
 /**
  * claudeCodePolicyWarnings(opts) -> [string]
- * opts: {platform, managedDir, userSettings: [file], mcp: bool}
- *  userSettings: the user's own settings files to check (disableAllHooks,
- *  MCP allow and deny lists), e.g. ~/.claude/settings.json.
+ * opts: {platform, managedDir, userSettings: [file], mcp: bool, mcpCommand: [command, ...args]}
+ *  userSettings: the user's own settings files (disableAllHooks, MCP allow
+ *  and deny lists), e.g. ~/.claude/settings.json.
+ *  mcp: false when the "secrets" server is not installed (no MCP checks).
  */
 function claudeCodePolicyWarnings(opts = {}) {
   const dir = opts.managedDir || managedDir(opts.platform || process.platform);
-  const checkMcp = opts.mcp !== false;
+  const cmd = Array.isArray(opts.mcpCommand) ? opts.mcpCommand : null;
   const warnings = [];
   const managed = managedSources(dir);
   for (const s of managed.filter((x) => x.error)) {
@@ -99,14 +116,18 @@ function claudeCodePolicyWarnings(opts = {}) {
   }
   const ok = managed.filter((x) => x.data);
   const where = (s) => 'Your organization\'s Claude Code policy (' + s.file + ')';
+  // A later drop-in replaces a single value set by an earlier file.
+  const lastSet = (key) => { let r = null; for (const s of ok) if (s.data[key] !== undefined) r = s; return r; };
+  const deployed = ok.some((s) => hasOurHook(s.data));
 
-  const off = ok.find((s) => s.data.disableAllHooks === true);
+  const offSrc = lastSet('disableAllHooks');
+  const off = offSrc && isTrue(offSrc.data.disableAllHooks) ? offSrc : null;
   if (off) {
     warnings.push(where(off) + ' turns off all hooks (disableAllHooks), so zn\'s hooks do not run. ' + ASK_ADMIN);
   } else {
-    const only = ok.find((s) => s.data.allowManagedHooksOnly === true);
-    if (only && !ok.some((s) => hasOurHook(s.data))) {
-      warnings.push(where(only) + ' runs only the hooks in its managed settings (allowManagedHooksOnly), so the zn hooks you install do not run. ' + ASK_ADMIN);
+    const onlySrc = lastSet('allowManagedHooksOnly');
+    if (onlySrc && isTrue(onlySrc.data.allowManagedHooksOnly) && !deployed) {
+      warnings.push(where(onlySrc) + ' runs only the hooks in its managed settings (allowManagedHooksOnly), so the zn hooks you install do not run. ' + ASK_ADMIN);
     }
   }
 
@@ -115,34 +136,44 @@ function claudeCodePolicyWarnings(opts = {}) {
     const s = readSource(file);
     if (s && s.data) users.push(s);
   }
-  if (!off) {
+  // A user's disableAllHooks cannot turn off managed hooks.
+  if (!off && !deployed) {
     const userOff = users.find((s) => s.data.disableAllHooks === true);
     if (userOff) warnings.push(userOff.file + ' sets disableAllHooks, so no hooks you install run, zn\'s included. Remove that setting to turn them on.');
   }
 
-  if (checkMcp) {
+  if (opts.mcp !== false) {
     const mcpFile = path.join(dir, 'managed-mcp.json');
     const m = readSource(mcpFile);
     if (m && m.error) {
       warnings.push('could not read ' + mcpFile + ' (' + m.error + '), so zn cannot tell whether it allows the "secrets" MCP server.');
     } else if (m) {
       const servers = m.data.mcpServers && typeof m.data.mcpServers === 'object' ? m.data.mcpServers : {};
-      if (!JSON.stringify(servers[MCP_SERVER_NAME] || '').includes('secrets-mcp')) {
-        warnings.push('Your organization\'s Claude Code policy (' + mcpFile + ') loads only the MCP servers it lists, and "secrets" is not one of them, so the server does not start. ' + ASK_ADMIN);
+      if (!Object.values(servers).some((v) => JSON.stringify(v || '').includes('secrets-mcp'))) {
+        warnings.push('Your organization\'s Claude Code policy (' + mcpFile + ') loads only the MCP servers it lists, and zn\'s "secrets" server is not one of them, so it does not start. ' + ASK_ADMIN);
       }
     }
-    const denied = [...ok, ...users].find((s) => list(s.data.deniedMcpServers).some(namesSecrets));
+    const denied = [...ok, ...users].find((s) => list(s.data.deniedMcpServers).some((e) => deniesUs(e, cmd)));
     if (denied) {
       const who = ok.includes(denied) ? where(denied) : denied.file;
       warnings.push(who + ' blocks the "secrets" MCP server (deniedMcpServers), so it does not start.');
     } else {
-      const onlyMcp = ok.find((s) => s.data.allowManagedMcpServersOnly === true);
-      const managedAllow = ok.filter((s) => Array.isArray(s.data.allowedMcpServers));
-      const allowed = (srcs) => srcs.some((s) => list(s.data.allowedMcpServers).some(namesSecrets));
-      if (onlyMcp && !allowed(ok)) {
-        warnings.push(where(onlyMcp) + ' allows only the MCP servers on its list (allowManagedMcpServersOnly), and "secrets" is not on it, so the server does not start. ' + ASK_ADMIN);
-      } else if (!onlyMcp && managedAllow.length && !allowed(ok) && !allowed(users)) {
-        warnings.push(where(managedAllow[0]) + ' has an MCP allowlist (allowedMcpServers) without "secrets", so the server does not start. Add {"serverName": "secrets"} to allowedMcpServers in your settings, or ask your administrator.');
+      const onlyMcp = ok.find((s) => isTrue(s.data.allowManagedMcpServersOnly));
+      const entries = (srcs) => srcs.flatMap((s) => list(s.data.allowedMcpServers));
+      const withList = (srcs) => srcs.filter((s) => Array.isArray(s.data.allowedMcpServers));
+      if (onlyMcp) {
+        // Only the managed lists count; with none, nothing is restricted.
+        if (withList(ok).length && !allowsUs(entries(ok), cmd)) {
+          warnings.push(where(onlyMcp) + ' allows only the MCP servers on its list (allowManagedMcpServersOnly), and zn\'s "secrets" server is not on it, so it does not start. ' + ASK_ADMIN);
+        }
+      } else {
+        // Allowlists from every scope add up.
+        const all = [...ok, ...users];
+        const src = withList(all)[0];
+        if (src && !allowsUs(entries(all), cmd)) {
+          const who = ok.includes(src) ? where(src) : src.file;
+          warnings.push(who + ' has an MCP allowlist (allowedMcpServers) that does not include zn\'s "secrets" server, so it does not start. Add it to allowedMcpServers (by its exact command if the list names commands), or ask your administrator.');
+        }
       }
     }
   }

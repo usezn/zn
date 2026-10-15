@@ -331,8 +331,14 @@ function install(opts = {}) {
   if (opts.mcp !== false) installMcp(opts, report);
   // Organization settings can turn these hooks or the MCP server off with no
   // sign in Claude Code; say it here.
-  const users = [...new Set([file, path.join(configDir(opts), 'settings.json')])];
-  report.warnings.push(...claudeCodePolicyWarnings({ managedDir: opts.managedDir, userSettings: users, mcp: opts.mcp !== false }));
+  // Advisory only: a failure here never fails an install already written.
+  try {
+    const users = [...new Set([file, path.join(configDir(opts), 'settings.json')])];
+    const conf = mcpServerConfig(opts);
+    report.warnings.push(...claudeCodePolicyWarnings({
+      managedDir: opts.managedDir, userSettings: users, mcp: opts.mcp !== false, mcpCommand: [conf.command, ...conf.args],
+    }));
+  } catch (_) { /* no policy note */ }
   return report;
 }
 
