@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-15.2';
+const POLICY_RULES_VERSION = '2026-10-15.3';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -603,7 +603,7 @@ function wrapWithZnRun(cmd, znRunPrefix) {
   while (k < scan.words.length && ASSIGNMENT_RE.test(scan.words[k].text)) k++;
   if (k >= scan.words.length) {
     return { ok: false, reason: 'zn: putting a secret in a shell variable would store only its placeholder, not the value. ' +
-      'To give a program a secret as an environment variable, use `zn run --secrets NAME -- <command>`.' };
+      'To give a program a secret as an environment variable, use `' + znCommand('run --secrets NAME -- <command>') + '`.' };
   }
   for (let j = 0; j < k; j++) {
     if (markers.findNamedMarkers(scan.words[j].text).length) {

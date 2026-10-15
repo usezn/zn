@@ -64,7 +64,7 @@ test('the model is never told how to let unchecked actions pass', () => {
     assert.equal(res.status, 2);
     assert.doesNotMatch(res.stderr, /whenUnavailable/, agent);
     assert.doesNotMatch(res.stdout, /whenUnavailable/, agent);
-    assert.match(res.stderr, /zn hooks install/, agent);
+    assert.match(res.stderr, /hooks install/, agent);
   }
 });
 

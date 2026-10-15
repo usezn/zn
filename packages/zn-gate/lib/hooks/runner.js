@@ -84,8 +84,8 @@ const REINSTALL = 'part of zn-gate is missing from this installation, so zn cann
 const REINSTALL_USER = 'part of zn-gate is missing from this installation, so zn blocks what it cannot check. ' +
   'Reinstall it with `npm install -g zn-gate@' + ZN_VERSION + '` and then run `zn hooks install`. ' +
   'To let actions pass unchecked until then, set {"hooks": {"whenUnavailable": "allow"}} in ~/.zn/config.json.';
-const HOOK_FAILED = 'something went wrong inside the zn hook, so this action was blocked to keep your secrets safe. ' +
-  'Try again; if it keeps happening, ask the user to run `zn hooks install`.';
+const HOOK_FAILED = 'something went wrong inside the zn hook, so this action was blocked to keep the user\'s secrets safe. ' +
+  'If it happens again, ask the user to run `' + znCommand('hooks install') + '`.';
 
 /** Map every string leaf of a JSON value through an async function, keeping the shape. */
 async function mapStrings(value, fn) {
@@ -617,7 +617,7 @@ function refuseInput(agentId, why) {
   // Claude Code and Codex show this stderr to the model, so it never says how to
   // let actions pass unchecked (docs/compat.md documents that for the user).
   const msg = 'zn: could not read this action (' + why + '), so it was blocked. ' +
-    'Try again; if it keeps happening, ask the user to run `zn hooks install`.';
+    'If it happens again, ask the user to run `' + znCommand('hooks install') + '`.';
   process.stderr.write('zn hook: ' + msg + '\n');
   if (agentId === 'cursor') process.stdout.write(JSON.stringify({ permission: 'deny', continue: false, user_message: msg, agent_message: msg }));
   process.exitCode = 2;
@@ -650,7 +650,8 @@ async function handleEvent(args) {
   try {
     raw = JSON.parse(text);
   } catch (err) {
-    return refuseInput(agentId, 'the event on stdin is not valid JSON (' + err.message + ')');
+    // Node's parse error quotes part of the input, which can be tool output: never pass it on.
+    return refuseInput(agentId, 'the event on stdin is not valid JSON');
   }
   // Valid JSON that is not an object (a number, a string, an array) is not an event.
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {

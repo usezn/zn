@@ -225,7 +225,7 @@ async function prepare(parsed, opts) {
     const entry = markers.matchAllowCommands(m.allowCommands, parsed.command);
     if (!entry) {
       await deny(name, m.mode, '`' + exeName + '` is not allowed to use ' + name + ' yet. ' +
-        'To allow it, run in your own terminal: zn secret allow ' + name + ' --command ' + exeName + ' ' +
+        'The user can allow it from their own terminal: zn secret allow ' + name + ' --command ' + exeName + ' ' +
         '(for HTTP APIs, the secrets_http_request tool of the zn "secrets" MCP server needs no command allowed).');
     }
     if (planted) await deny(name, m.mode, '`' + argv0 + '` ' + planted + '; zn run will not give it ' + name);
