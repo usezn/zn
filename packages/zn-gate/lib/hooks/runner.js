@@ -270,22 +270,30 @@ async function decidePre(ev, d, agentId, opts) {
         ? ' (this file can be committed, so secrets stay as markers; put real values in a git-ignored file such as .env.local).'
         : '.')
       : '') +
-      (blocked.length ? ' Secret ' + blocked.join(', ') + (blocked.length > 1 ? ' are' : ' is') +
-        ' blocked for this agent by your organization policy, so the file keeps the marker.' : '') +
+      (blocked.length ? ' ' + blockedLine(blocked) : '') +
       (notices.size ? ' ' + [...notices].join(' ') : '');
     // A secret the organization blocks: the write keeps the marker, and the
     // user is asked so the reason is shown (a plain allow shows nothing).
-    if (updates.length === 0 && blocked.length) return { decision: 'ask', message: 'zn:' + why };
+    // context: the model reads it, so it knows the value was not put back.
+    const context = blocked.length ? 'zn: ' + blockedLine(blocked) : undefined;
+    if (updates.length === 0 && blocked.length) return { decision: 'ask', message: 'zn:' + why, context };
     if (updates.length === 0) return { decision: 'allow', message: why ? 'zn:' + why : undefined };
     return {
       decision: 'ask',
       updatedInput: { texts: updates },
       kind: 'restore',
       message: 'zn: restores ' + restored + ' secret value(s) in a git-ignored file.' + why,
+      context,
     };
   }
 
   return { decision: 'allow' };
+}
+
+/* A secret the organization policy blocks (for every agent): the file keeps its marker. */
+function blockedLine(names) {
+  return 'Secret ' + names.join(', ') + (names.length > 1 ? ' are' : ' is') +
+    ' blocked by your organization policy, so the file keeps the marker.';
 }
 
 /*

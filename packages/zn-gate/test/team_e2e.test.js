@@ -175,9 +175,12 @@ test('a warn rule allows the use, tells the agent and the user, and the "warn" r
 
 test('the vault applies the organization policy when the hooks restore a named marker', async () => {
   const opts = { destination: 'write_ignored', agent: 'claude-code', tool: 'Write', withPolicy: true };
-  // deny (PROD_*): nothing comes back, and the refusal is recorded
+  // deny (PROD_*, a rule written for codex): nothing comes back for any agent, and the refusal is recorded
   const denied = await vault.resolve(HOME, '__ZN_PROD_DB_URL__', opts);
   assert.deepStrictEqual(denied, { value: null, deny: true });
+  for (const agent of ['codex', 'some-other-agent', undefined]) {
+    assert.deepStrictEqual(await vault.resolve(HOME, '__ZN_PROD_DB_URL__', { ...opts, agent }), { value: null, deny: true });
+  }
   await assert.rejects(vault.resolve(HOME, '__ZN_PROD_DB_URL__', { destination: 'write_ignored' }), /organization policy/);
   // warn (STAGING_*): the value comes back with the rule's reason
   const warned = await vault.resolve(HOME, '__ZN_STAGING_TOKEN__', opts);

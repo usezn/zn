@@ -144,3 +144,26 @@ test('warn rules: accepted alone, refused with deny or as a non-boolean; old rul
   assert.strictEqual(notBool.ok, false);
   assert.match(notBool.error, /invalid warn/);
 });
+
+test('the vault applies a deny for another agent, also from an expired policy (strict mode)', async () => {
+  const { makeTeamOps } = require('../lib/team/daemon-ops');
+  const k = orgKey();
+  const opsFor = (issued, expires) => {
+    const env = sign(body({
+      issued_at: new Date(issued).toISOString(), expires_at: new Date(expires).toISOString(),
+      rules: [{ secret: 'PROD_*', agents: ['other'], deny: true }],
+    }), k);
+    const team = { org: 'org_TestOrg12345678', pin: k.pin, policy: { envelope: env, version: 3 } };
+    const state = { opts: {}, loadSecrets: async () => ({ team, secrets: {} }) };
+    return makeTeamOps({ state, writeAudit: () => {}, confirmOutOfBand: async () => true });
+  };
+  const local = [{ name: 'PROD_DB', mode: 'env', allowHosts: [], allowCommands: ['psql'] }, { name: 'DEV_DB', mode: 'env', allowHosts: [], allowCommands: ['psql'] }];
+  const now = Date.now();
+  const active = await opsFor(now - DAY, now + DAY).effectiveList(local, 'claude-code', false);
+  assert.strictEqual(active[0].deny, true);
+  assert.strictEqual(active[1].deny, false);
+  const expired = await opsFor(now - 10 * DAY, now - 3 * DAY).effectiveList(local, 'claude-code', true);
+  assert.strictEqual(expired[0].deny, true);
+  assert.strictEqual(expired[0].orgPolicy.state, 'expired');
+  assert.strictEqual(expired[1].deny, false);
+});

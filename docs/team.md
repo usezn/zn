@@ -109,7 +109,9 @@ This happens wherever a `deny` would have blocked: `zn run`,
 they put a secret's value back in place of its `__ZN_NAME__` marker (a
 file the agent writes outside git or in a git-ignored path). There, a
 `deny` leaves the marker in the file and the hook says why, and a `warn`
-puts the value back and adds the line above to the hook's message.
+puts the value back and adds the line above to the hook's message. Today
+only the Claude Code hooks put values back into files; with other agents
+the marker stays in the file.
 
 The rule's other fields (`allowHosts`, `allowCommands`, `mode`, `injectAt`)
 still apply. A rule cannot have both `deny` and `warn`: such a policy is

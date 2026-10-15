@@ -18,7 +18,9 @@
  *    MCP tools are named mcp__<server>__<tool>. tool_input.file_path is absolute.
  *
  *  PreToolUse output: hookSpecificOutput.{hookEventName, permissionDecision
- *    (allow|deny|ask|defer), permissionDecisionReason, updatedInput}.
+ *    (allow|deny|ask|defer), permissionDecisionReason, updatedInput,
+ *    additionalContext}. additionalContext goes to the model; we use it to
+ *    say that a secret was kept as a marker (d.context).
  *    "updatedInput ... Replaces the entire input object, so include unchanged
  *    fields alongside modified ones"; combined with "allow" it auto-approves,
  *    with "ask" it shows the modified input to the user. We always use "ask"
@@ -153,7 +155,7 @@ function respondInner(d, ev) {
       return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: d.message || 'Blocked by zn' } };
     }
     if (d.updatedInput) {
-      return {
+      const out = {
         hookSpecificOutput: {
           hookEventName: 'PreToolUse',
           permissionDecision: d.decision === 'allow' ? 'allow' : 'ask',
@@ -161,9 +163,13 @@ function respondInner(d, ev) {
           updatedInput: buildUpdatedInput(ev, d.updatedInput),
         },
       };
+      if (d.context) out.hookSpecificOutput.additionalContext = d.context;
+      return out;
     }
     if (d.decision === 'ask') {
-      return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: d.message || 'zn asks for confirmation' } };
+      const out = { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: d.message || 'zn asks for confirmation' } };
+      if (d.context) out.hookSpecificOutput.additionalContext = d.context;
+      return out;
     }
     return null; // never emit a bare "allow": it would bypass the user's permission rules
   }

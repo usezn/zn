@@ -647,7 +647,17 @@ test('restoring a named marker into a git-ignored file follows the organization 
   assert.equal(denied.output.hookSpecificOutput.permissionDecision, 'ask');
   assert.equal(denied.output.hookSpecificOutput.updatedInput, undefined);
   const dMsg = texts(denied.output);
-  assert.match(dMsg, /Secret PROD_DB is blocked for this agent by your organization policy, so the file keeps the marker\./);
+  assert.match(dMsg, /Secret PROD_DB is blocked by your organization policy, so the file keeps the marker\./);
+  assert.equal(denied.output.hookSpecificOutput.additionalContext, 'zn: Secret PROD_DB is blocked by your organization policy, so the file keeps the marker.');
+
+  // one blocked and one restorable secret in the same write
+  const mixVault = orgRestoreVault({ PROD_DB: PROD, DEV_KEY: DEV }, { PROD_DB: { deny: true } });
+  const mixed = await write('A=__ZN_PROD_DB__\nB=__ZN_DEV_KEY__\n', mixVault);
+  assert.equal(mixed.output.hookSpecificOutput.permissionDecision, 'ask');
+  assert.equal(mixed.output.hookSpecificOutput.updatedInput.content, 'A=__ZN_PROD_DB__\nB=' + DEV + '\n');
+  assert.match(mixed.output.hookSpecificOutput.permissionDecisionReason, /restores 1 secret value.*Secret PROD_DB is blocked by your organization policy, so the file keeps the marker\./);
+  assert.match(mixed.output.hookSpecificOutput.additionalContext, /Secret PROD_DB is blocked/);
+  assert.ok(!JSON.stringify(mixed.output).includes(PROD));
 
   // warn: restored, the message carries the notice, one "warn" record
   const warnVault = orgRestoreVault({ STAGING_KEY: STG }, { STAGING_KEY: { warn: true, reason: 'Staging keys need review' } });
@@ -663,5 +673,6 @@ test('restoring a named marker into a git-ignored file follows the organization 
   assert.equal(plain.output.hookSpecificOutput.permissionDecision, 'ask');
   assert.equal(plain.output.hookSpecificOutput.updatedInput.content, 'K=' + DEV + '\n');
   assert.doesNotMatch(JSON.stringify(plain.output), /team policy|organization policy/);
+  assert.equal(plain.output.hookSpecificOutput.additionalContext, undefined);
   assert.ok(!plainVault.audits.some((a) => a.decision === 'warn'));
 });
