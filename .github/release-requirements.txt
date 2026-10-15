@@ -2,11 +2,18 @@
 # .github/workflows/release.yml with pip --require-hashes and
 # python -m build --no-isolation).
 #
-# Regenerate with uv from these inputs:
+# Not managed by Dependabot (.github/dependabot.yml has no entry for this
+# directory): its pip updater cannot rewrite uv's universal, hash-pinned
+# output. When a security alert names this file, regenerate it with the
+# command below, check every affected package is at or above the patched
+# version, and let CI install it with --require-hashes.
+#
+# Regenerate with uv from these inputs (saved as release-requirements.in):
 #   build==1.6.1
 #   twine==7.0.0
 #   setuptools
-# uv pip compile release-requirements.in --universal --python-version 3.12 #   --generate-hashes --no-header --no-annotate --exclude-newer <date two weeks ago>
+# uv pip compile release-requirements.in --universal --python-version 3.12 \
+#   --generate-hashes --no-header --no-annotate --exclude-newer <date two weeks ago>
 build==1.6.1 \
     --hash=sha256:51cc11666391ab6f092070437ac747002ff46f3e4113a3622177ee6b488bfc53 \
     --hash=sha256:ecd351a4be9d35a9eaaba244a7687143c9c7d4aea6ac964e7e7ddab20cbcf4e7

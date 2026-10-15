@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - File names in a Codex or OpenCode patch (`apply_patch`), values in `.env`, `.npmrc` and `.znrules` files, and a few `zn audit` checks are now read in linear time. Long runs of blank lines, spaces, `*` or `=` used to make them take seconds. `SCRUB_RULES_VERSION` is now `2026-10-15.2` and `AUDIT_RULES_VERSION` `2026-10-15.1`.
 
 ### Changed
+- The hash-pinned tool lists used by the CI and release workflows (`.github/ci-test-requirements.txt`, `.github/release-requirements.txt`) now say how to regenerate them with uv when a security alert names them, since Dependabot cannot update them.
 - In Codex and OpenCode, a patch (`apply_patch`) longer than 100 KB is blocked, like shell commands over 100 KB, because zn could not check it within the time the agent waits for the hook.
 
 ## [1.8.0] - 2026-10-15

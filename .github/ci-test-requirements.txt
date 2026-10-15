@@ -1,7 +1,13 @@
 # Hash-pinned tools for the Python test jobs of .github/workflows/ci.yml
 # (pip --require-hashes), so they are audited like a lockfile.
 #
-# Regenerate with uv from these inputs:
+# Not managed by Dependabot (.github/dependabot.yml has no entry for this
+# directory): its pip updater cannot rewrite uv's universal, hash-pinned
+# output. When a security alert names this file, regenerate it with the
+# command below, check every affected package is at or above the patched
+# version, and let CI install it with --require-hashes.
+#
+# Regenerate with uv from these inputs (saved as ci-test-requirements.in):
 #   pytest
 #   setuptools
 # uv pip compile ci-test-requirements.in --universal --python-version 3.10 \
