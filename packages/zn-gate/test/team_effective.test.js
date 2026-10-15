@@ -166,9 +166,13 @@ test('a policy without warn rules gives the same result as before', () => {
 
 test('the warn notice names the secret and the rule reason in plain words', () => {
   assert.strictEqual(warnNotice('PROD_DB', 'Production credentials need review.'),
-    'zn: your team policy would block PROD_DB here: Production credentials need review. It was allowed and recorded for your organization.');
+    'zn: your team policy would block PROD_DB here (policy note: "Production credentials need review."). It was allowed and recorded for your organization.');
   assert.strictEqual(warnNotice('PROD_DB'),
     'zn: your team policy would block PROD_DB here. It was allowed and recorded for your organization.');
   assert.ok(!/[\u0000-\u001f]/.test(warnNotice('PROD_DB', 'a\nb\u001b[31m')));
+  const odd = warnNotice('PROD_DB', 'ok\u202e\u200b\u0085\u2028 "quoted" ' + 'x'.repeat(300));
+  assert.ok(!/[\u0080-\u009f\u200b-\u200f\u2028-\u202e]/.test(odd));
+  assert.match(odd, /\(policy note: "ok 'quoted' x+"\)\. It was allowed/);
+  assert.ok(odd.length < 320);
   assert.strictEqual(WARN_REASON, 'policy:warn');
 });

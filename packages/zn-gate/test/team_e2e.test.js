@@ -154,7 +154,7 @@ test('a warn rule allows the use, tells the agent and the user, and the "warn" r
   const r = await srvMcp.handleMessage({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'secrets_http_request', arguments: { method: 'GET', url: 'http://127.0.0.1:9/x', headers: { Authorization: 'Bearer __ZN_STAGING_TOKEN__' } } } });
   assert.strictEqual(Boolean(r.result.isError), false, r.result.content[0].text);
   assert.strictEqual(sent.length, before + 1);
-  const notice = 'zn: your team policy would block STAGING_TOKEN here: Staging credentials need review. It was allowed and recorded for your organization.';
+  const notice = 'zn: your team policy would block STAGING_TOKEN here (policy note: "Staging credentials need review."). It was allowed and recorded for your organization.';
   assert.strictEqual(JSON.parse(r.result.content[0].text).notice, notice);
   assert.deepStrictEqual(told, [notice]);
 

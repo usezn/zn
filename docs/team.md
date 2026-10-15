@@ -95,10 +95,11 @@ lets the use go ahead, and:
 
 - writes an audit record with the decision `warn` (reason `policy:warn`),
   which is uploaded to your organization with the other records;
-- shows this line to you and to the agent, with the rule's `reason`:
+- shows this line to you and to the agent, with the rule's `reason` quoted
+  as a policy note:
 
   ```
-  zn: your team policy would block STAGING_TOKEN here: Staging credentials need review. It was allowed and recorded for your organization.
+  zn: your team policy would block STAGING_TOKEN here (policy note: "Staging credentials need review"). It was allowed and recorded for your organization.
   ```
 
 `zn run` prints it on the command's error output; the `secrets` MCP server
@@ -112,10 +113,13 @@ refused like any other invalid policy. When one rule blocks a secret and
 another warns, the block wins. Like every rule, a warning applies to all
 agents, whatever its `agents` list says.
 
-zn-gate 1.7 and earlier do not know `warn` and refuse a whole policy that
-uses it. Newer versions say on each policy download that they understand
-it (see [What is sent](#what-is-sent)), and the zn service sends `warn`
-rules only to those.
+zn-gate 1.7 and earlier do not know `warn` and would refuse a whole policy
+that uses it. Newer versions say on each policy download that they
+understand it (see [What is sent](#what-is-sent)). For older versions the
+zn service removes only the `warn` field: the rule and its other
+restrictions still apply, but those machines use the secret without
+showing the warning and do not record `warn` decisions. Update them to
+see and record warnings.
 
 Custom `detectors` run with the built-in patterns and only add redactions.
 A pattern runs only if its cost is bounded before it runs: a flat sequence

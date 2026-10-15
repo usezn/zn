@@ -324,7 +324,7 @@ test('zn run: a warn rule lets the secret through, says so and records "warn"', 
   });
   assert.equal(code, 0, stderr.text());
   assert.equal(stdout.text().trim(), 'set');
-  assert.match(stderr.text(), /zn: your team policy would block DB_PASSWORD here: Database passwords need review\. It was allowed and recorded for your organization\./);
+  assert.match(stderr.text(), /zn: your team policy would block DB_PASSWORD here \(policy note: "Database passwords need review"\)\. It was allowed and recorded for your organization\./);
   const uses = vault.auditLog.filter((e) => e.secret === 'DB_PASSWORD' && e.tool === 'zn run');
   assert.deepEqual(uses.map((e) => [e.decision, e.reason]), [['warn', 'policy:warn']]);
 });

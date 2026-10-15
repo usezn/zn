@@ -297,8 +297,9 @@ async function startFakeTeamServer({ now = Date.now } = {}) {
       expires_at: new Date(dayStart + 7 * DAY).toISOString(),
       ...clone(state.policyContent),
     };
-    // Older clients refuse a policy with a field they do not know.
-    if (!warnOk) policy.rules = policy.rules.filter((r) => r.warn !== true);
+    // Older clients refuse a policy with a field they do not know: like the
+    // zn service, drop only the `warn` field (the rule's other restrictions stay).
+    if (!warnOk) policy.rules = policy.rules.map((r) => { const { warn, ...rest } = r; return rest; });
     return send(res, 200, signRaw(policy), { ETag: etag, 'Cache-Control': 'private, max-age=300' });
   }
 

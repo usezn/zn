@@ -369,7 +369,7 @@ test('secrets_http_request: a warn rule sends the request, tells the agent and t
     const r = await call(srv, 'secrets_http_request', { method: 'GET', url: 'http://127.0.0.1:' + port + '/x', headers: { Authorization: 'Bearer __ZN_GITHUB_TOKEN__' } });
     assert.equal(r.isError, false, JSON.stringify(r.data));
     assert.equal(seen.length, 1);
-    const notice = 'zn: your team policy would block GITHUB_TOKEN here: GitHub tokens need review. It was allowed and recorded for your organization.';
+    const notice = 'zn: your team policy would block GITHUB_TOKEN here (policy note: "GitHub tokens need review"). It was allowed and recorded for your organization.';
     assert.equal(r.data.notice, notice);
     assert.deepEqual(told, [notice]);
     const uses = vault.auditLog.filter((e) => e.secret === 'GITHUB_TOKEN' && e.tool === 'mcp:secrets_http_request');
@@ -410,7 +410,7 @@ test('secrets_render_file: an organization deny blocks, a warn rule writes and s
   const yes = await call(createSecretsServer({ vault: warnVault, engine: fakeEngine, cwd: dir, home: dir, notify: (l) => told.push(l) }), 'secrets_render_file', { template: 'npmrc.tpl', out: 'out2.rc' });
   assert.equal(yes.isError, false, JSON.stringify(yes.data));
   assert.equal(fs.readFileSync(path.join(dir, 'out2.rc'), 'utf8'), '//registry.npmjs.org/:_authToken=' + NPM + '\n');
-  assert.match(yes.data.notice, /^zn: your team policy would block NPM_TOKEN here: Registry tokens need review\. It was allowed/);
+  assert.match(yes.data.notice, /^zn: your team policy would block NPM_TOKEN here \(policy note: "Registry tokens need review"\)\. It was allowed/);
   assert.equal(told.length, 1);
   const uses = warnVault.auditLog.filter((e) => e.secret === 'NPM_TOKEN' && e.tool === 'mcp:secrets_render_file');
   assert.deepEqual(uses.map((e) => [e.decision, e.reason]), [['warn', 'policy:warn']]);

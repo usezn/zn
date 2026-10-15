@@ -34,6 +34,8 @@
  * opened, approved or not.
  */
 
+const { INVISIBLE } = require('../vault/confirm');
+
 const RESTRICTIVE_MODE = 'proxy';
 const DEFAULT_ALLOW_IN = ['header'];
 /** Audit reason of a use that a `warn` rule let through. */
@@ -165,13 +167,21 @@ function pickOpening(pending, kind, matches) {
   return { kind, value: best.value, wildcard: /[*]/.test(best.value) };
 }
 
+const INVISIBLE_RE = new RegExp('[' + INVISIBLE + ']', 'g');
+
 /**
  * The line shown to the user (and the agent) when a `warn` rule lets a
- * secret through. `reason` is the rule's text from the signed policy.
+ * secret through. `reason` is the rule's text from the signed policy: text
+ * from the organization's admin that reaches the agent, so it is cleaned
+ * (the same invisible and control characters as the vault dialogs, cut at
+ * 200 characters), quoted and labelled as a policy note. One line.
  */
 function warnNotice(name, reason) {
-  const why = typeof reason === 'string' ? reason.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().replace(/[.\s]+$/, '').slice(0, 200) : '';
-  return 'zn: your team policy would block ' + name + ' here' + (why ? ': ' + why : '') + '. It was allowed and recorded for your organization.';
+  const why = typeof reason === 'string'
+    ? reason.replace(INVISIBLE_RE, ' ').replace(/"/g, "'").replace(/\s+/g, ' ').trim().slice(0, 200).trim()
+    : '';
+  return 'zn: your team policy would block ' + name + ' here' + (why ? ' (policy note: "' + why + '")' : '') +
+    '. It was allowed and recorded for your organization.';
 }
 
 /**
