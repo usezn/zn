@@ -82,6 +82,8 @@ We gratefully acknowledge independent security researchers who have helped prote
 
 ## Security Advisories
 
+* [GHSA-9v62-q43j-crjm](https://github.com/usezn/zn/security/advisories/GHSA-9v62-q43j-crjm) — *zn-gate agent hooks for Node.js 1.5.0-beta.1 to 1.8.0: a crafted `.env`, `.npmrc` or `.znrules` file could make the secret scrubber time out and let tool output through unscrubbed (fixed in 1.8.1)*
+* [GHSA-f927-55cp-x265](https://github.com/usezn/zn/security/advisories/GHSA-f927-55cp-x265) — *zn-gate agent hooks for Node.js 1.5.0-beta.1 to 1.8.0: a crafted Codex CLI patch could write to protected files without being checked (fixed in 1.8.1)*
 * [GHSA-2fg6-2frm-mr92](https://github.com/usezn/zn/security/advisories/GHSA-2fg6-2frm-mr92) — *zn-gate agent hooks for Node.js 1.5.0-beta.1 to 1.7.0: a slow path check on a crafted command word could let a protected read run unchecked (fixed in 1.7.1)*
 * [GHSA-q5w2-m7j6-v464](https://github.com/usezn/zn/security/advisories/GHSA-q5w2-m7j6-v464) — *`zn-gate scan` for Node.js 1.4.0 to 1.7.0 could print secret values in its output and CI logs (fixed in 1.7.1)*
 * [GHSA-wvv2-f3m6-6wrq](https://github.com/usezn/zn/security/advisories/GHSA-wvv2-f3m6-6wrq) — *zn-gate for Node.js: an agent could run zn admin commands through a versioned package call (`npx -y zn-gate@<version> ...`), skipping the hook that denies them (fixed in 1.6.0)*
