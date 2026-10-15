@@ -82,6 +82,8 @@ We gratefully acknowledge independent security researchers who have helped prote
 
 ## Security Advisories
 
+* [GHSA-2fg6-2frm-mr92](https://github.com/usezn/zn/security/advisories/GHSA-2fg6-2frm-mr92) — *zn-gate agent hooks for Node.js 1.5.0-beta.1 to 1.7.0: a slow path check on a crafted command word could let a protected read run unchecked (fixed in 1.7.1)*
+* [GHSA-q5w2-m7j6-v464](https://github.com/usezn/zn/security/advisories/GHSA-q5w2-m7j6-v464) — *`zn-gate scan` for Node.js 1.4.0 to 1.7.0 could print secret values in its output and CI logs (fixed in 1.7.1)*
 * [GHSA-wvv2-f3m6-6wrq](https://github.com/usezn/zn/security/advisories/GHSA-wvv2-f3m6-6wrq) — *zn-gate for Node.js: an agent could run zn admin commands through a versioned package call (`npx -y zn-gate@<version> ...`), skipping the hook that denies them (fixed in 1.6.0)*
 * [GHSA-rf3f-ppm5-3xrx](https://github.com/usezn/zn/security/advisories/GHSA-rf3f-ppm5-3xrx) — *zn-gate for Node.js on Windows: `zn run` could hand secrets to a program chosen through the environment (fixed in 1.5.1)*
 * [GHSA-r4h2-qcf2-8227](https://github.com/usezn/zn/security/advisories/GHSA-r4h2-qcf2-8227) — *zn-gate 1.4.0 and earlier sent tool output and tool-call arguments to api.usezn.com without redaction when `ZN_API_KEY` was set (fixed in 1.4.1)*
