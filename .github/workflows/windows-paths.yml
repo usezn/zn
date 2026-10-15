@@ -9,6 +9,7 @@ name: Windows checks for Windows-specific code
 on:
   pull_request:
     branches: [ next ]
+    types: [ opened, synchronize, reopened, ready_for_review ]
     paths:
       - 'packages/zn-gate/lib/exe.js'
       - 'packages/zn-gate/lib/shell-quote.js'
@@ -36,6 +37,8 @@ concurrency:
 jobs:
   windows:
     name: Windows (Node.js 22)
+    # Draft pull requests skip this job; marking the pull request ready for review runs it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: windows-latest
     timeout-minutes: 25
     steps:

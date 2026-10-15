@@ -10,8 +10,11 @@
 # "plugin-repo" environment, which only main can use.
 #
 # The plugin repository's .github/workflows/verify.yml is changed by hand,
-# by a pull request that copies plugins/claude-dir/verify.yml. This job stops
-# with a message when that copy is out of date.
+# by a pull request that copies plugins/claude-dir/verify.yml. While that copy
+# is out of date this job opens nothing and ends with a warning (not a
+# failure): a maintainer updates the copy and runs this workflow again by hand.
+# The checks on the published package (provenance, attestation, contents)
+# still fail the job.
 name: Plugin repository
 
 on:
@@ -97,8 +100,11 @@ jobs:
             exit 1
           fi
           if ! cmp -s plugin/.github/workflows/verify.yml zn/plugins/claude-dir/verify.yml; then
-            echo "::error::the plugin repository's .github/workflows/verify.yml is not plugins/claude-dir/verify.yml from main. Copy it there with a pull request first; this job cannot change workflows."
-            exit 1
+            msg="the plugin repository's .github/workflows/verify.yml is not plugins/claude-dir/verify.yml from main, so the release pull request for $VERSION was not opened. Copy it there with a pull request (this job cannot change workflows), then run this workflow again."
+            echo "::warning::$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
       - name: Download the published package

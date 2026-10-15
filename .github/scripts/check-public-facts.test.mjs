@@ -108,3 +108,44 @@ test('the plugin follows its own version (pluginVersion)', () => {
   tree['plugins/p.json'] = '{"version":"2.0.0"}';
   assert.match(check(facts, Object.keys(tree), read)[0], /plugins\/p\.json \(version\): version 2\.0\.0, public-facts\.json pluginVersion says 1\.9\.0/);
 });
+
+test('plugin pin differences can be reported as warnings, other differences still fail', () => {
+  const facts = {
+    version: { value: '2.0.0', files: [{ file: 'pkg.json', json: 'version' }], pinsExclude: ['plugins/'] },
+    pluginVersion: { value: '2.0.0', files: [{ file: 'plugins/p.json', json: 'version' }], pins: ['plugins/'] },
+  };
+  const tree = {
+    'pkg.json': '{"version":"2.0.0"}',
+    'plugins/p.json': '{"version":"1.9.0"}',
+    'plugins/README.md': 'npm install -g zn-gate@1.9.0',
+  };
+  const read = (f) => { if (!(f in tree)) throw new Error('missing'); return tree[f]; };
+  assert.equal(check(facts, Object.keys(tree), read).length, 2);
+  const pluginWarnings = [];
+  assert.deepEqual(check(facts, Object.keys(tree), read, { pluginWarnings }), []);
+  assert.equal(pluginWarnings.length, 2);
+  tree['pkg.json'] = '{"version":"1.9.0"}';
+  const errs = check(facts, Object.keys(tree), read, { pluginWarnings: [] });
+  assert.equal(errs.length, 1);
+  assert.match(errs[0], /^pkg\.json \(version\): version 1\.9\.0, public-facts\.json says 2\.0\.0/);
+});
+
+test('with plugin warnings, a half-done pin or an unrelated plugin version still fails', () => {
+  const facts = {
+    version: { value: '2.0.0', files: [{ file: 'pkg.json', json: 'version' }], pinsExclude: ['plugins/'] },
+    pluginVersion: { value: '1.9.0', files: [{ file: 'plugins/p.json', json: 'version' }, { file: 'plugins/q.json', json: 'version' }], pins: ['plugins/'] },
+  };
+  const tree = { 'pkg.json': '{"version":"2.0.0"}', 'plugins/p.json': '{"version":"1.9.0"}', 'plugins/q.json': '{"version":"2.0.0"}' };
+  const read = (f) => { if (!(f in tree)) throw new Error('missing'); return tree[f]; };
+  let pluginWarnings = [];
+  let errs = check(facts, Object.keys(tree), read, { pluginWarnings });
+  assert.equal(errs.length, 1, errs.join('\n'));
+  assert.match(errs[0], /plugin manifests disagree on the version \(1\.9\.0, 2\.0\.0\)/);
+  assert.equal(pluginWarnings.length, 1);
+  tree['plugins/p.json'] = '{"version":"1.7.0"}';
+  tree['plugins/q.json'] = '{"version":"1.7.0"}';
+  pluginWarnings = [];
+  errs = check(facts, Object.keys(tree), read, { pluginWarnings });
+  assert.equal(errs.length, 2, errs.join('\n'));
+  assert.equal(pluginWarnings.length, 0);
+});

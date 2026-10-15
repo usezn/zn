@@ -37,9 +37,14 @@ export function pinnedFiles(all, exclude) {
 /**
  * All differences between the facts and the files, as readable lines (empty = consistent).
  * read(file) returns the text of a file of the repository, or throws when it does not exist.
+ * With options.pluginWarnings (an array), differences in the plugin pin (pluginVersion) that only
+ * show the plugin one step behind the release being prepared go there instead of into the result:
+ * a release pull request is opened before the plugin can be pinned. The plugin files must still
+ * agree with each other (a half-done pin fails), and any other plugin value still fails.
  */
-export function check(facts, files, read) {
+export function check(facts, files, read, options = {}) {
   const errors = [];
+  const pluginErrors = Array.isArray(options.pluginWarnings) ? options.pluginWarnings : errors;
   const text = (f) => {
     try {
       return read(f);
@@ -89,6 +94,10 @@ export function check(facts, files, read) {
   // the pins under its folders are checked against pluginVersion instead of the release version.
   const plugin = facts.pluginVersion;
   if (plugin) {
+    const pending = pluginErrors !== errors;
+    // Only the plugin lagging the release: one of the two values is the release version.
+    const lag = (got) => (pending && (got === version || plugin.value === version) ? pluginErrors : errors);
+    const seen = new Set();
     for (const v of plugin.files || []) {
       let got;
       if (v.json) got = getPath(json(v.file), v.json);
@@ -98,8 +107,10 @@ export function check(facts, files, read) {
         const m = s.match(new RegExp(v.regex, 'm'));
         got = m ? m[1] : undefined;
       }
-      if (got !== plugin.value) errors.push(`${v.file}${v.json ? ` (${v.json})` : ''}: version ${got ?? 'not found'}, public-facts.json pluginVersion says ${plugin.value}`);
+      seen.add(String(got));
+      if (got !== plugin.value) lag(got).push(`${v.file}${v.json ? ` (${v.json})` : ''}: version ${got ?? 'not found'}, public-facts.json pluginVersion says ${plugin.value}`);
     }
+    if (pending && seen.size > 1) errors.push(`plugin manifests disagree on the version (${[...seen].sort().join(', ')}): pin the plugin in one commit with plugins/tools/pin-release.js`);
     const prefixes = plugin.pins || [];
     for (const f of files.filter((x) => /\.(md|json)$/.test(x) && prefixes.some((p) => x.startsWith(p)) && !/package-lock\.json$/.test(x))) {
       const s = text(f);
@@ -108,7 +119,7 @@ export function check(facts, files, read) {
         for (const m of s.matchAll(re)) {
           if (m[1] === plugin.value || allowed.has(`${f}\0${m[0]}`)) continue;
           const line = s.slice(0, m.index).split('\n').length;
-          errors.push(`${f}:${line}: pins ${m[0]}, public-facts.json pluginVersion says ${plugin.value}`);
+          lag(m[1]).push(`${f}:${line}: pins ${m[0]}, public-facts.json pluginVersion says ${plugin.value}`);
         }
       }
     }
@@ -144,7 +155,11 @@ function main() {
   const read = (f) => readFileSync(join(root, f), 'utf8');
   const facts = JSON.parse(read('.github/public-facts.json'));
   const files = execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' }).split('\0').filter(Boolean);
-  const errors = check(facts, files, read);
+  // Set by the workflow on release pull requests only (see .github/workflows/public-facts.yml).
+  const pluginWarnings = process.env.PLUGIN_PIN_PENDING === 'true' ? [] : undefined;
+  const errors = check(facts, files, read, { pluginWarnings });
+  for (const w of pluginWarnings || []) console.log(process.env.GITHUB_ACTIONS ? `::warning::${w.replace(/[\r\n%]/g, ' ')}` : `warning: ${w}`);
+  if (pluginWarnings && pluginWarnings.length) console.log(`\n${pluginWarnings.length} plugin pin difference(s), allowed on a release pull request: pin the plugin after npm publishes the release.`);
   if (errors.length) {
     for (const e of errors) console.log(process.env.GITHUB_ACTIONS ? `::error::${e.replace(/[\r\n%]/g, ' ')}` : e);
     console.log(`\n${errors.length} difference(s) with .github/public-facts.json. Update the file or the fact, in the same pull request.`);

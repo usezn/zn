@@ -4,7 +4,7 @@ name: Action self-test
 on:
   pull_request:
     branches: [ main, next, 'release/**' ]
-    types: [ opened, synchronize, reopened, labeled ]
+    types: [ opened, synchronize, reopened, labeled, ready_for_review ]
     paths:
       - 'action.yml'
       - '.github/workflows/action-selftest.yml'
@@ -27,6 +27,8 @@ concurrency:
 jobs:
   selftest:
     name: action (${{ matrix.os }})
+    # Draft pull requests skip this job; marking the pull request ready for review runs it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:

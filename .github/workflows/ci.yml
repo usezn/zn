@@ -6,9 +6,23 @@ name: zn CI
 on:
   push:
     branches: [ main, next ]
+    # Documentation-only pushes skip this workflow. Markdown under packages/, plugins/, skill/,
+    # bench/ and .github/ still runs it (the package and plugin checks read some of it): a stricter
+    # version of the split that .github/scripts/ci-scope.sh makes for pull requests.
+    paths:
+      - '**'
+      - '!docs/**'
+      - '!**/*.md'
+      - 'packages/**'
+      - 'plugins/**'
+      - 'skill/**'
+      - 'bench/**'
+      - '.github/**'
   pull_request:
     branches: [ main, next, 'release/**' ]
-    types: [ opened, synchronize, reopened, labeled ]
+    types: [ opened, synchronize, reopened, labeled, ready_for_review ]
+    # No paths filter here: these jobs give required checks, and a workflow skipped by a
+    # paths filter leaves them pending. ci-scope.sh skips their steps for documentation instead.
 
 permissions:
   contents: read
@@ -22,6 +36,8 @@ concurrency:
 jobs:
   test-node:
     name: Node.js ${{ matrix.node-version }} tests & benchmarks
+    # Draft pull requests skip this job; marking the pull request ready for review runs it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -67,6 +83,8 @@ jobs:
 
   test-python:
     name: Python ${{ matrix.python-version }} tests & benchmarks (${{ matrix.os }})
+    # Draft pull requests skip this job; marking the pull request ready for review runs it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
@@ -115,6 +133,8 @@ jobs:
 
   pack-node:
     name: npm package (pack, inspect, install)
+    # Draft pull requests skip this job; marking the pull request ready for review runs it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -186,6 +206,8 @@ jobs:
 
   build-python:
     name: Python package (build, twine check, install)
+    # Draft pull requests skip this job; marking the pull request ready for review runs it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

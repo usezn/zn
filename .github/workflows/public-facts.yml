@@ -30,4 +30,12 @@ jobs:
       - name: Test the checker
         run: node --test .github/scripts/check-public-facts.test.mjs
       - name: Check the public facts
+        env:
+          # A release pull request (from or into a release/* branch of this repository) is opened
+          # before npm publishes the release, so the agent plugin cannot be pinned to it yet.
+          # There, a plugin pin one step behind the release is a warning; everything else, and
+          # the plugin pin on main and next, still fails. A release pull request into main
+          # therefore merges with the plugin behind, and the push run on main fails until the
+          # pin commit lands after npm publishes the release.
+          PLUGIN_PIN_PENDING: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (startsWith(github.head_ref, 'release/') || startsWith(github.base_ref, 'release/')) }}
         run: node .github/scripts/check-public-facts.mjs
