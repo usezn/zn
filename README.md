@@ -221,10 +221,10 @@ jobs:
           persist-credentials: false
       - name: Scan AI agent prompts and tools
         # Pin the action to a full commit SHA; the comment names the release.
-        # v1.4.1 does not have the package-sha256 input (v1.5.0 and later).
-        uses: usezn/zn@d9da1b1a87e12c4da468cb9beec425dc3f972c5f # v1.4.1
+        uses: usezn/zn@dca953a154615595848b1367d0fd40b08ef0c7fd # v1.8.0
         with:
-          version: '1.5.0'
+          version: '1.8.0'
+          package-sha256: '2174e1d9647fb0e8c42922c72363b35c26b0b97065b909eaa7a7d6b7c3950e17'
           path: '.'
           fail-on-threat: 'true'
           format: 'github'
