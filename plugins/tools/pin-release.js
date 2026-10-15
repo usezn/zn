@@ -192,6 +192,8 @@ const VERSIONED_JSON = [
   ['zn-gate/.cursor-plugin/plugin.json', ['version']],
   ['mcp-registry/server.json', ['version', 'packages.0.version']],
 ];
+// Only docs that name the version the plugin installs: a sentence about an older
+// release written as "zn-gate X" in one of these files would be moved too.
 const VERSIONED_DOCS = ['README.md', 'zn-gate/README.md', 'zn-gate/plugin.json', 'zn-gate/.cursor-plugin/plugin.json',
   'zn-gate/.claude-plugin/plugin.json'];
 
@@ -296,9 +298,7 @@ function buildNpmFiles(version, meta, bundled) {
   return { pkg, npmLock };
 }
 
-module.exports = { buildNpmFiles, stripBundled, get, tarEntries };
-
-module.exports = { versionedTexts };
+module.exports = { buildNpmFiles, stripBundled, get, tarEntries, versionedTexts };
 
 if (require.main === module) main(process.argv.slice(2)).catch((err) => {
   process.stderr.write('pin-release: ' + err.message + '\n');
