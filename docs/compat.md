@@ -90,7 +90,7 @@ The organization policy sets one choice per rule: Not blocked, Warn or Block
 
 | zn-gate version | Block (`deny`) | Warn (`warn`) |
 |---|---|---|
-| 1.7.x (Team beta) | Yes | No. The zn service removes the `warn` field: the rule's other limits still apply, but there is no notice and no `warn` record. |
+| 1.6.0 to 1.7.x | Yes | No. The zn service removes the `warn` field: the rule's other limits still apply, but there is no notice and no `warn` record. |
 | 1.8.0 and later | Yes | Yes |
 
 zn-gate tells the server on each policy download which policy features it
