@@ -21,6 +21,9 @@ const { SECRET_PATTERNS } = require('../lib/rules');
 
 const ROOT = path.join(__dirname, '..');
 const LIMIT_MS = 100;
+// Files whose regexes can also run case-insensitively: policy.js adds the i flag
+// on case-insensitive file systems (ci()). Elsewhere a literal runs with its own flags.
+const CI_FILES = new Set(['lib/hooks/policy.js']);
 // Hard cap per literal and flag variant (all its inputs) in the main sweep.
 const CAP_MS = 10000;
 
@@ -207,7 +210,7 @@ test('every regex literal under lib/ and bin/ stays under 100 ms on 50k adversar
         `${file}: the number of new RegExp() sites changed; cover the new one in regex_sweep.test.js`);
       for (const lit of literals) {
         compile(lit.body, lit.flags, `${file}:${lit.line}`);
-        const variants = lit.flags.includes('i') ? [lit.flags] : [lit.flags, lit.flags + 'i'];
+        const variants = lit.flags.includes('i') || !CI_FILES.has(file) ? [lit.flags] : [lit.flags, lit.flags + 'i'];
         const slow = knownSlowFor(file, lit.body);
         const size = slow ? slow.sizeChars : SIZE;
         for (const flags of variants) {
