@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-15.3';
+const POLICY_RULES_VERSION = '2026-10-15.6';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -324,20 +324,76 @@ function globClassSource(body) {
   return out ? '[' + out + ']' : '(?!)';
 }
 
-/** Shell glob to a regular expression over a whole path (* and ? stop at a separator). */
+const GLOB_STAR = Symbol('*');
+const GLOB_ONE = Symbol('?');
+
+/** One pattern token against one character: a literal, "?", or a bracket expression. */
+function globOne(tok, ch) {
+  if (tok === GLOB_ONE) return ch !== '/';
+  if (typeof tok === 'string') return tok === ch;
+  return tok.test(ch);
+}
+
+/*
+ * Wildcard match of one path segment (no "/" in it) in O(pattern x text) time:
+ * on a mismatch the last "*" takes one more character, so no input can make it
+ * backtrack exponentially, whatever the number of "*".
+ */
+function globSegment(toks, s) {
+  let p = 0;
+  let t = 0;
+  let star = -1;
+  let mark = 0;
+  while (t < s.length) {
+    if (p < toks.length && toks[p] === GLOB_STAR) {
+      star = p++;
+      mark = t;
+    } else if (p < toks.length && globOne(toks[p], s[t])) {
+      p++;
+      t++;
+    } else if (star !== -1) {
+      p = star + 1;
+      t = ++mark;
+    } else return false;
+  }
+  while (p < toks.length && toks[p] === GLOB_STAR) p++;
+  return p === toks.length;
+}
+
+/**
+ * Shell glob matcher over a whole path: "*", "?" and bracket expressions stop
+ * at a separator, so the pattern and the path are matched segment by segment.
+ * Returns an object with test(path), like a regular expression. A bracket
+ * expression is a one-character regular expression (globClassSource), which
+ * cannot backtrack.
+ */
 function globRegExp(pattern) {
-  let re = '';
+  const segs = [[]];
   for (let i = 0; i < pattern.length; i++) {
     const c = pattern[i];
     const end = c === '[' ? globClassEnd(pattern, i) : -1;
-    if (c === '*') re += '[^/]*';
-    else if (c === '?') re += '[^/]';
+    const cur = segs[segs.length - 1];
+    if (c === '/') segs.push([]);
+    else if (c === '*') { if (cur[cur.length - 1] !== GLOB_STAR) cur.push(GLOB_STAR); }
+    else if (c === '?') cur.push(GLOB_ONE);
     else if (end !== -1) {
-      re += globClassSource(pattern.slice(i + 1, end));
+      cur.push(new RegExp('^' + globClassSource(pattern.slice(i + 1, end)) + '$'));
       i = end;
-    } else re += c.replace(/[.+^${}()|\\[\]]/g, '\\$&');
+    } else cur.push(c);
   }
-  return new RegExp('^' + re + '$');
+  // A name has at most 255 characters (NAME_MAX), so a segment that needs more
+  // characters than that, not counting "*", cannot name any file.
+  const impossible = segs.some((seg) => seg.filter((t) => t !== GLOB_STAR).length > 255);
+  return {
+    impossible,
+    test(s) {
+      if (impossible) return false;
+      const parts = String(s).split('/');
+      if (parts.length !== segs.length) return false;
+      for (let k = 0; k < parts.length; k++) if (!globSegment(segs[k], parts[k])) return false;
+      return true;
+    },
+  };
 }
 
 // Representative paths a glob could name: a glob that matches one of them
@@ -356,8 +412,16 @@ const PROJECT_EXAMPLES = ['.env', '.env.local', '.claude/settings.json', 'openco
  * A word with glob or brace characters that could name a protected path.
  * Returns the classification of the path it matches, or null.
  */
+// Most "[" a glob word may have: each one is read up to its "]", so more than
+// this is refused as too broad to check instead of being read.
+const GLOB_BRACKETS_MAX = 1000;
+
 function globClass(word, opts = {}) {
   if (!GLOB_RE.test(word)) return null;
+  let brackets = 0;
+  for (let k = word.indexOf('['); k !== -1; k = word.indexOf('[', k + 1)) {
+    if (++brackets > GLOB_BRACKETS_MAX) return { kind: 'credential', reason: 'a pattern too broad to check' };
+  }
   const ctx = contextOf(opts);
   const alts = expandBraces(word);
   if (alts === null) return { kind: 'credential', reason: 'a brace pattern too broad to check' };
@@ -370,6 +434,7 @@ function globClass(word, opts = {}) {
     // Any pattern whose last name starts with .env names a .env file.
     if (keyOf(path.posix.basename(abs)).startsWith('.env')) return { kind: 'credential', reason: 'a pattern that matches a .env file' };
     const re = globRegExp(keyOf(abs));
+    if (re.impossible) continue;
     for (const ex of examples) {
       const c = classifyResolved(ex, ctx);
       if (c && re.test(keyOf(slash(ex)))) {
@@ -805,6 +870,8 @@ module.exports = {
   classifyWord,
   globClass,
   globRegExp,
+  _globClassEnd: globClassEnd,
+  _globClassSource: globClassSource,
   expandBraces,
   readDenial,
   writeDenial,
