@@ -50,6 +50,7 @@ by value:
 ```json
 { "secret": "PROD_*", "agents": ["*"], "deny": true, "reason": "No production credentials in AI agents" }
 { "secret": "STRIPE_KEY", "agents": ["claude-code"], "allowHosts": ["api.stripe.com"] }
+{ "secret": "STAGING_*", "agents": ["*"], "warn": true, "reason": "Staging credentials need review" }
 ```
 
 zn-gate applies a downloaded policy only if:
@@ -87,6 +88,35 @@ is never widened by a later one.
 Only `proxy` is applied from a rule's `mode`; other modes in a rule are
 ignored.
 
+### Block or warn
+
+A rule with `"deny": true` blocks the secret. A rule with `"warn": true`
+lets the use go ahead, and:
+
+- writes an audit record with the decision `warn` (reason `policy:warn`),
+  which is uploaded to your organization with the other records;
+- shows this line to you and to the agent, with the rule's `reason`:
+
+  ```
+  zn: your team policy would block STAGING_TOKEN here: Staging credentials need review. It was allowed and recorded for your organization.
+  ```
+
+`zn run` prints it on the command's error output; the `secrets` MCP server
+adds it to the tool result (`notice`) and prints it on its own error output.
+This happens wherever a `deny` would have blocked: `zn run`,
+`secrets_http_request` and `secrets_render_file`.
+
+The rule's other fields (`allowHosts`, `allowCommands`, `mode`, `injectAt`)
+still apply. A rule cannot have both `deny` and `warn`: such a policy is
+refused like any other invalid policy. When one rule blocks a secret and
+another warns, the block wins. Like every rule, a warning applies to all
+agents, whatever its `agents` list says.
+
+zn-gate 1.7 and earlier do not know `warn` and refuse a whole policy that
+uses it. Newer versions say on each policy download that they understand
+it (see [What is sent](#what-is-sent)), and the zn service sends `warn`
+rules only to those.
+
 Custom `detectors` run with the built-in patterns and only add redactions.
 A pattern runs only if its cost is bounded before it runs: a flat sequence
 of characters, escapes and character classes, each with an optional `{n}`
@@ -112,7 +142,9 @@ patterns are skipped on the machine, and all custom detectors together get
 - **At join:** the join token, a random installation id, this machine's
   audit key (it lets the server check that uploaded records were not
   altered), the zn-gate version, the OS family and, if given, the agent.
-- **Policy download:** the install token and the policy version already held.
+- **Policy download:** the install token, the policy version already held
+  and the policy features this zn-gate understands (header
+  `X-ZN-Policy-Features: warn`).
 - **Audit upload:** the records of `~/.zn/audit.jsonl`, including the ones
   written before joining: time, secret name, mode, agent, tool, command name,
   host, decision and reason, with their sequence number and HMAC chain. Never
@@ -144,7 +176,9 @@ service:
     logs: { receivers: [otlpjsonfile], exporters: [debug] }
 ```
 
-Each record is a `zn.gate.decision` event. The HMAC chain travels with it
-(`zn.audit.seq`, `zn.audit.prev`, `zn.audit.mac`), so a gap or a reordered
-record stays visible after the export. The mapping is the same as the export
+Each record is a `zn.gate.decision` event. `deny`, `warn`, `withhold` and
+`ask:no` have severity `WARN`, `error` has `ERROR`, the others `INFO`. The
+HMAC chain travels with it (`zn.audit.seq`, `zn.audit.prev`,
+`zn.audit.mac`), so a gap or a reordered record stays visible after the
+export. The mapping is the same as the export
 from the zn dashboard. No account is needed for the local export.

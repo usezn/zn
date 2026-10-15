@@ -28,6 +28,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const markers = require('./markers');
+const { warnNotice, WARN_REASON } = require('../team/effective');
 const exe = require('../exe');
 const { createMasker } = require('./mask');
 const { approvalStore } = require('./approvals');
@@ -290,7 +291,14 @@ async function prepare(parsed, opts) {
   const argv = parsed.command.map((a) => markers.substitute(a, values));
 
   for (const c of chosen) {
-    await audit({ secret: c.name, mode: c.mode, agent, tool: 'zn run', argv0: exeName, host: null, decision: 'allow', reason: 'allowCommands: ' + c.command });
+    // A `warn` rule of the organization policy: allowed, recorded as "warn", and said.
+    const m = meta.get(c.name);
+    if (m && m.warn === true) {
+      await audit({ secret: c.name, mode: c.mode, agent, tool: 'zn run', argv0: exeName, host: null, decision: 'warn', reason: WARN_REASON });
+      if (opts.stderr !== false) (opts.stderr || process.stderr).write(warnNotice(c.name, m.warnReason) + '\n');
+    } else {
+      await audit({ secret: c.name, mode: c.mode, agent, tool: 'zn run', argv0: exeName, host: null, decision: 'allow', reason: 'allowCommands: ' + c.command });
+    }
   }
   return { argv, env: childEnv, secrets: chosen.map((c) => ({ ...c, value: values.get(c.name) })), project, resolved: found ? found.real : null };
   }

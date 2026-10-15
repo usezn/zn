@@ -65,6 +65,7 @@ test.before(async () => {
   vault = createClient({});
   await vault.setSecret('PROD_DB_URL', 'postgres://u:' + 'p'.repeat(24) + '@db.internal/app', { mode: 'proxy', allowHosts: ['127.0.0.1'] });
   await vault.setSecret('STRIPE_KEY', 'sk_test_' + 'x'.repeat(24), { mode: 'proxy', allowHosts: ['api.stripe.com'] });
+  await vault.setSecret('STAGING_TOKEN', 'stg_' + 'q'.repeat(28), { mode: 'proxy', allowHosts: ['127.0.0.1'] });
   cloud = await startFakeTeamServer();
 });
 
@@ -124,6 +125,52 @@ test('a signed policy denies a secret for every agent, and the audit log is uplo
   const claude = await request('claude-code', '__ZN_PROD_DB_URL__', 'http://127.0.0.1:9/x');
   assert.strictEqual(claude.isError, true);
   assert.strictEqual(sent.length, before);
+});
+
+test('a warn rule allows the use, tells the agent and the user, and the "warn" record is uploaded', async () => {
+  const rules = [
+    { secret: 'PROD_*', agents: ['codex'], deny: true, reason: 'No production credentials in Codex' },
+    { secret: 'STRIPE_KEY', agents: ['claude-code'], allowHosts: ['api.stripe.com', '127.0.0.1'] },
+    { secret: 'STAGING_*', agents: ['*'], warn: true, reason: 'Staging credentials need review.' },
+  ];
+  // A rule with both deny and warn: the whole policy is refused, the last good one stays.
+  cloud.publishPolicy({ rules: [...rules.slice(0, 2), { secret: 'STAGING_*', agents: ['*'], deny: true, warn: true }] });
+  const bad = await vault.teamSync({ upload: false });
+  assert.strictEqual(bad.policy.status, 'rejected');
+  assert.match(bad.policy.error, /deny and warn together/);
+
+  cloud.publishPolicy({ rules });
+  const s = await vault.teamSync({ upload: false });
+  assert.strictEqual(s.policy.status, 'updated');
+  // The warn rule reached this client because it declared the feature.
+  assert.ok(policy.state().policy.rules.some((r) => r.warn === true));
+
+  const told = [];
+  const srvMcp = createSecretsServer({
+    vault, engine: fakeEngine, agent: 'claude-code', notify: (l) => told.push(l),
+    fetch: async (url) => { sent.push(String(url)); return new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } }); },
+  });
+  const before = sent.length;
+  const r = await srvMcp.handleMessage({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'secrets_http_request', arguments: { method: 'GET', url: 'http://127.0.0.1:9/x', headers: { Authorization: 'Bearer __ZN_STAGING_TOKEN__' } } } });
+  assert.strictEqual(Boolean(r.result.isError), false, r.result.content[0].text);
+  assert.strictEqual(sent.length, before + 1);
+  const notice = 'zn: your team policy would block STAGING_TOKEN here: Staging credentials need review. It was allowed and recorded for your organization.';
+  assert.strictEqual(JSON.parse(r.result.content[0].text).notice, notice);
+  assert.deepStrictEqual(told, [notice]);
+
+  // The deny rule still blocks.
+  const codex = await request('codex', '__ZN_PROD_DB_URL__', 'http://127.0.0.1:9/x');
+  assert.strictEqual(codex.isError, true);
+
+  const up = await vault.teamSync({});
+  assert.strictEqual(up.upload.status, 'ok');
+  const inst = [...cloud.state.installs.values()][0];
+  const warned = inst.events.filter((e) => e.decision === 'warn');
+  assert.strictEqual(warned.length, 1);
+  assert.strictEqual(warned[0].secret, 'STAGING_TOKEN');
+  assert.strictEqual(warned[0].reason, 'policy:warn');
+  assert.strictEqual(warned[0].tool, 'mcp:secrets_http_request');
+  assert.strictEqual(warned[0].host, '127.0.0.1');
 });
 
 test('a self-reported agent id (ZN_AGENT) cannot dodge a rule for another agent', async () => {

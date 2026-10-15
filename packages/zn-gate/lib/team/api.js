@@ -16,6 +16,14 @@ const PUBLIC_KEY_RE = /^[A-Za-z0-9_-]{43}$/;
 const SIGNATURE_RE = /^[A-Za-z0-9_-]{86}$/;
 const JOIN_RESPONSE_FIELDS = new Set(['org', 'org_name', 'install_token', 'policy_url', 'audit_url', 'telemetry_url', 'policy_public_key']);
 const PUBLIC_KEY_FIELDS = ['alg', 'kid', 'key'];
+/*
+ * Policy features this client understands, sent with every policy download.
+ * A server must not send a rule that uses a feature the client did not list:
+ * older clients refuse the whole policy when a rule has a field they do not
+ * know.
+ */
+const POLICY_FEATURES_HEADER = 'X-ZN-Policy-Features';
+const POLICY_FEATURES = 'warn';
 
 class TeamApiError extends Error {
   constructor(message, { code, status = 0, body = null } = {}) {
@@ -175,8 +183,8 @@ function createApi(options = {}) {
     });
   };
 
-  async function request(method, path, { auth = false, body, etag } = {}) {
-    const headers = { 'User-Agent': userAgent, Accept: 'application/json' };
+  async function request(method, path, { auth = false, body, etag, extraHeaders } = {}) {
+    const headers = { 'User-Agent': userAgent, Accept: 'application/json', ...extraHeaders };
     if (auth) {
       if (typeof token !== 'string' || token === '') throw usageError('this request needs an install token');
       headers.Authorization = `Bearer ${token}`;
@@ -256,7 +264,7 @@ function createApi(options = {}) {
 
   /** Fetch the signed policy. 404 when nothing is published, 304 when `etag` is still current. */
   async function getPolicy({ etag } = {}) {
-    const r = await request('GET', '/v1/org/policy', { auth: true, etag });
+    const r = await request('GET', '/v1/org/policy', { auth: true, etag, extraHeaders: { [POLICY_FEATURES_HEADER]: POLICY_FEATURES } });
     if (r.status === 304) return { status: 304, etag: r.etag || etag };
     if (r.status === 404) return { status: 404 };
     if (r.status !== 200) throw httpError(r.status, r.data);
@@ -275,4 +283,4 @@ function createApi(options = {}) {
   return { base, preview, join, getPolicy, ingest };
 }
 
-module.exports = { checkBase, createApi, TeamApiError };
+module.exports = { checkBase, createApi, TeamApiError, POLICY_FEATURES_HEADER, POLICY_FEATURES };

@@ -129,3 +129,18 @@ test('the cache goes to strict mode when it expires and is ignored if edited', (
   assert.strictEqual(st.state, 'invalid');
   assert.strictEqual(st.policy, null);
 });
+
+test('warn rules: accepted alone, refused with deny or as a non-boolean; old rules unchanged', () => {
+  const k = orgKey();
+  const ok = (rules) => policy.verifyEnvelope(sign(body({ rules }), k), k.pin, { now: NOW });
+  assert.strictEqual(ok([{ secret: 'PROD_*', agents: ['*'], warn: true, reason: 'Production credentials need review' }]).ok, true);
+  assert.strictEqual(ok([{ secret: 'PROD_*', agents: ['*'], warn: true, allowHosts: ['api.stripe.com'], mode: 'proxy' }]).ok, true);
+  assert.strictEqual(ok([{ secret: 'PROD_*', agents: ['*'], warn: false, deny: true }]).ok, true);
+  assert.strictEqual(ok([{ secret: 'PROD_*', agents: ['*'], deny: true, reason: 'No production credentials in AI agents' }]).ok, true);
+  const both = ok([{ secret: 'PROD_*', agents: ['*'], deny: true, warn: true }]);
+  assert.strictEqual(both.ok, false);
+  assert.match(both.error, /deny and warn together/);
+  const notBool = ok([{ secret: 'PROD_*', agents: ['*'], warn: 'yes' }]);
+  assert.strictEqual(notBool.ok, false);
+  assert.match(notBool.error, /invalid warn/);
+});
