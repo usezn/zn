@@ -5,6 +5,7 @@ on:
     branches: [main, next]
     paths: ["src/**", "Cargo.toml", "Cargo.lock", ".cargo/**", "build.rs", ".github/workflows/rust.yml"]
   pull_request:
+    types: [ opened, synchronize, reopened, ready_for_review ]
     paths: ["src/**", "Cargo.toml", "Cargo.lock", ".cargo/**", "build.rs", ".github/workflows/rust.yml"]
   schedule:
     - cron: "17 6 * * 1" # weekly advisory check
@@ -20,6 +21,8 @@ concurrency:
 jobs:
   check:
     name: build, test, clippy, fmt
+    # Draft pull requests skip this job; marking the pull request ready for review runs it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -49,6 +52,8 @@ jobs:
 
   audit:
     name: cargo audit
+    # Draft pull requests skip this job; marking the pull request ready for review runs it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

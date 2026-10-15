@@ -44,7 +44,6 @@ const os = require('os');
 const path = require('path');
 const cfg = require('./config-file');
 const { whichSync } = require('../broker/markers');
-const { lines } = require('../linear-text');
 
 const id = 'codex';
 const PRE_MATCHER = '^(Bash|apply_patch)$';
@@ -57,16 +56,53 @@ const HOOK_TIMEOUT_S = 30;
 const PATCH_SCAN_CAP = 100 * 1024; // characters
 const PATCH_MARKERS = ['*** Add File: ', '*** Update File: ', '*** Delete File: ', '*** Move to: '];
 
-/* apply_patch: the files it touches, one marker line at a time (linear time). */
-function patchFiles(patch) {
-  const files = [];
-  for (const line of lines(String(patch || ''))) {
-    // Indented markers count too: a patch that puts spaces before them is still applied.
-    const t = line.trimStart();
-    const marker = PATCH_MARKERS.find((k) => t.startsWith(k));
-    if (marker && t.length > marker.length) files.push(t.slice(marker.length).trim());
+// How the agents read a patch: Codex and OpenCode split it at '\n' and drop a
+// trailing '\r'. Codex then trims the line with Rust's trim() (Unicode
+// White_Space, which includes U+0085 but not U+FEFF) and keeps the rest of the
+// line after the marker as the file name; OpenCode trims with JavaScript's
+// trim() and trims the name too. zn checks every form either agent could use.
+const RUST_SPACE = '\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000';
+const RUST_EDGE = new RegExp('^[' + RUST_SPACE + ']+|[' + RUST_SPACE + ']+$', 'g');
+const ANY_EDGE = /^[\s\u0085]+|[\s\u0085]+$/g;
+// A name with a control or line-separator character is not checked: the patch is refused.
+const ODD_NAME = /[\u0000-\u001f\u007f\u0085\u2028\u2029]/;
+// A line that looks like a file marker without being one the agents read, or a
+// marker that sends the patch to another environment: the patch is refused.
+const MARKER_LIKE = /^\*{3}\s*(?:(?:add|update|delete|rename)\s*file|move\s*to|environment\s*id)\s*:/i;
+
+/*
+ * apply_patch: every name the patch could touch, one line at a time (linear
+ * time), and whether a line or a name cannot be read safely (the patch is then
+ * refused rather than let through).
+ */
+function patchScan(patch) {
+  const files = new Set();
+  let suspicious = false;
+  for (let line of String(patch || '').split('\n')) {
+    // Every marker, and every marker-like line, has "***": other lines are skipped cheaply.
+    if (!line.includes('***')) continue;
+    if (line.endsWith('\r')) line = line.slice(0, -1);
+    const forms = new Set([line.replace(RUST_EDGE, ''), line.trim(), line.replace(ANY_EDGE, '')]);
+    let marked = false;
+    for (const t of forms) {
+      const marker = PATCH_MARKERS.find((k) => t.startsWith(k));
+      if (!marker) continue;
+      marked = true;
+      const rest = t.slice(marker.length);
+      const names = new Set([rest, rest.trim(), rest.replace(ANY_EDGE, '')].filter(Boolean));
+      if (names.size === 0) suspicious = true;
+      for (const name of names) {
+        if (ODD_NAME.test(name)) suspicious = true;
+        files.add(name);
+      }
+    }
+    if (!marked && [...forms].some((t) => MARKER_LIKE.test(t))) suspicious = true;
   }
-  return files;
+  return { files: [...files], suspicious };
+}
+
+function patchFiles(patch) {
+  return patchScan(patch).files;
 }
 
 function normalize(raw) {
@@ -86,13 +122,14 @@ function normalize(raw) {
     // Every file the patch touches is checked by the policy; a patch whose
     // file names cannot be read is refused rather than let through.
     const tooLong = String(ti.command || '').length > PATCH_SCAN_CAP;
-    const files = tooLong ? [] : patchFiles(ti.command);
+    const scan = tooLong ? { files: [], suspicious: false } : patchScan(ti.command);
+    const files = scan.files;
     const home = os.homedir();
     const zn = files.find((f) => path.resolve(base.cwd, f).replace(/\\/g, '/').startsWith(path.join(home, '.zn').replace(/\\/g, '/')));
     input.paths = files;
     input.path = zn || files[0];
     input.tooLong = tooLong;
-    input.unparsed = !tooLong && files.length === 0;
+    input.unparsed = !tooLong && (files.length === 0 || scan.suspicious);
     input.texts = [{ key: ['command'], value: String(ti.command || '') }];
     input.command = undefined;
     tool = 'write';
@@ -231,5 +268,6 @@ module.exports = {
   POST_MATCHER,
   hooksFile,
   patchFiles,
+  patchScan,
   PATCH_SCAN_CAP,
 };

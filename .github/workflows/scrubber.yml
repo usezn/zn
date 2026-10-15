@@ -6,9 +6,23 @@ name: zn-gate scrubber and vault
 on:
   push:
     branches: [ main, next ]
+    # Documentation-only pushes skip this workflow. Markdown under packages/, plugins/, skill/,
+    # bench/ and .github/ still runs it (the package and plugin checks read some of it): a stricter
+    # version of the split that .github/scripts/ci-scope.sh makes for pull requests.
+    paths:
+      - '**'
+      - '!docs/**'
+      - '!**/*.md'
+      - 'packages/**'
+      - 'plugins/**'
+      - 'skill/**'
+      - 'bench/**'
+      - '.github/**'
   pull_request:
     branches: [ next, main, 'release/**' ]
-    types: [ opened, synchronize, reopened, labeled ]
+    types: [ opened, synchronize, reopened, labeled, ready_for_review ]
+    # No paths filter here: these jobs give required checks, and a workflow skipped by a
+    # paths filter leaves them pending. ci-scope.sh skips their steps for documentation instead.
   workflow_dispatch:
 
 permissions:
@@ -22,6 +36,8 @@ concurrency:
 jobs:
   scrubber-vault:
     name: scrubber + vault (node ${{ matrix.node }} / ${{ matrix.os }})
+    # Draft pull requests skip this job; marking the pull request ready for review runs it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     strategy:

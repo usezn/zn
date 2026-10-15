@@ -46,10 +46,43 @@ function oldPatchFiles(patch) {
   return files;
 }
 
-test('patchFiles gives the same files as the old regex', () => {
+test('patchFiles sees at least every file the old regex saw', () => {
   const pieces = ['*** Add File: ', '*** Update File: ', '*** Delete File: ', '*** Move to: ', '*** Add File:', '** Add File: ',
-    ' ', '\t', '\n', '\r', '\r\n', '\u2028', '\v', '\f', '\u00a0', '\ufeff', '\u0085', 'a', 'b.js', ' x ', '*', '#'];
-  for (const s of randomStrings(pieces, 20000, 12)) assert.deepEqual(codex.patchFiles(s), oldPatchFiles(s), JSON.stringify(s));
+    ' ', '\t', '\n', '\r\n', 'a', 'b.js', ' x ', '*', '#', ' '];
+  for (const s of randomStrings(pieces, 20000, 12)) {
+    const now = new Set(codex.patchFiles(s));
+    for (const f of oldPatchFiles(s).filter(Boolean)) assert.ok(now.has(f), JSON.stringify([s, f]));
+  }
+});
+
+test('patchScan sees every marker Codex reads and flags marker-like lines it cannot read', () => {
+  const decoy = '*** Begin Patch\n*** Add File: ok.txt\n+x\n';
+  const scan = (s) => codex.patchScan(decoy + s + '\n*** End Patch');
+  assert.deepEqual(scan('\u0085*** Update File: ~/.zn/x').files, ['ok.txt', '~/.zn/x'], 'NEL before a marker');
+  const nel = scan('*** Update File: ~/.zn/x\u0085');
+  assert.ok(nel.files.includes('~/.zn/x'), 'NEL after the path: the name Codex uses');
+  assert.equal(nel.suspicious, true, 'NEL after the path: a name with U+0085 is refused');
+  for (const s of ['*** Update File:~/.zn/x', '*** update file: ~/.zn/x', '***Update File: x', '*** Rename File: x',
+    '*** Environment ID: other', '*** Add File: ', '*** Move to:x']) {
+    assert.equal(scan(s).suspicious, true, JSON.stringify(s));
+  }
+  // Codex keeps the spaces after the marker in the name: " /../.zn/x" is cwd/.zn/x.
+  assert.ok(scan('*** Add File:  /../.zn/x').files.includes(' /../.zn/x'));
+  // Codex and OpenCode split lines only at '\n': a '\r' or U+2028 inside a name is refused.
+  for (const s of ['*** Add File: a\r/../.zn/x', '*** Add File: a\u2028/../.zn/x', '*** Add File: a\u2029/x', '*** Add File: a\tb']) {
+    assert.equal(scan(s).suspicious, true, JSON.stringify(s));
+  }
+  assert.deepEqual(codex.patchFiles('*** Add File: a.txt\r\n+x\r\n'), ['a.txt'], 'CRLF patches still read');
+  for (const s of ['+*** Add File: x', ' context *** Add File: x', '@@ def f():', '-*** Update File: y', ' *** Update notes below',
+    '*** Additional notes', '*** Move to the next section', '***Update file names***', '*** Rename step']) {
+    assert.equal(scan(s).suspicious, false, JSON.stringify(s));
+  }
+  const ev = codex.normalize({ hook_event_name: 'PreToolUse', tool_name: 'apply_patch', cwd: '/w',
+    tool_input: { command: decoy + '*** Environment ID: other\n*** End Patch' } });
+  assert.equal(ev.input.unparsed, true);
+  const oc = opencode.normalize({ hook: 'tool.execute.before', tool: 'apply_patch', cwd: '/w',
+    args: { patchText: decoy + '*** update file: x\n*** End Patch' } });
+  assert.equal(oc.input.unparsed, true);
 });
 
 test('stripInlineComment gives the same value as the old regex, and .env values use it', () => {
