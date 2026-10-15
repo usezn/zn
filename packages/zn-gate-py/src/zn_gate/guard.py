@@ -15,10 +15,13 @@ from .rules import Assessment, evaluate, scan_windows
 
 
 def block_message(assessment: Assessment, target: str) -> str:
-    """Plain text for a blocked call: what was blocked, why, and the next step."""
+    """Plain text for a blocked call or tool result: what was blocked, why, and the next step."""
     reason = (assessment.reason or f"the input matched rule {assessment.rule}").rstrip(".")
-    return (f"zn-gate blocked '{target}'. Reason: {reason} (rule: {assessment.rule}). "
-            "Next step: remove the flagged text and try again, or ask the person who runs this agent to review it.")
+    if target.endswith((":result", ":tool_output")):
+        step = "Next step: do not use this result; ask the person who runs this agent where the data came from."
+    else:
+        step = "Next step: remove the flagged text and try again, or ask the person who runs this agent to review it."
+    return f"zn-gate blocked '{target}'. Reason: {reason} (rule: {assessment.rule}). {step}"
 
 
 class GuardBlockError(PermissionError):

@@ -131,12 +131,10 @@ test('client: a vault with no running daemon gives the plain unlock steps', asyn
 
 test('humanError: the code is shown only with ZN_VERBOSE=1 or DEBUG', () => {
   const err = Object.assign(new Error('nope'), { code: CODES.POLICY_DENIED });
-  assert.match(humanError(err, { ZN_VERBOSE: '1' }), /^\[ZN_POLICY_DENIED\] Not allowed: nope\. Next step: /);
-  assert.match(humanError(err, { DEBUG: '1' }), /^\[ZN_POLICY_DENIED\] Not allowed: nope\. Next step: /);
-  assert.match(humanError(err, { ZN_VERBOSE: '0' }), /^Not allowed: nope\. Next step: /);
-  assert.match(humanError(Object.assign(new Error('secret X is missing'), { code: CODES.NOT_FOUND }), {}), /^Not found: secret X is missing\. Next step: /);
-  // A detail that already ends with punctuation gets no second full stop.
-  assert.match(humanError(Object.assign(new Error('Blocked by policy!'), { code: CODES.POLICY_DENIED }), {}), /^Not allowed: Blocked by policy! Next step: /);
+  assert.equal(humanError(err, { ZN_VERBOSE: '1' }), '[ZN_POLICY_DENIED] Not allowed: nope');
+  assert.equal(humanError(err, { DEBUG: '1' }), '[ZN_POLICY_DENIED] Not allowed: nope');
+  assert.equal(humanError(err, { ZN_VERBOSE: '0' }), 'Not allowed: nope');
+  assert.equal(humanError(Object.assign(new Error('secret X is missing'), { code: CODES.NOT_FOUND }), {}), 'Not found: secret X is missing');
   assert.equal(humanError(new Error('plain failure'), {}), 'plain failure');
 });
 
@@ -204,5 +202,26 @@ test('PowerShell refusals: the reason in plain words and one next step', () => {
     assert.match(r.reason, reason, cmd);
     assert.match(r.reason, /Next step: start the command with the program name/, cmd);
     assert.doesNotMatch(r.reason, /cannot be rewritten|cmdlet|could not identify|scrubber/, cmd);
+  }
+});
+
+test('real refusals from the vault code carry a specific next step', async (t) => {
+  const keychain = require('../lib/vault/keychain');
+  const home = tempDir(t, 'zn-home-next-');
+  const saved = process.env.ZN_HOME;
+  process.env.ZN_HOME = home;
+  try {
+    await assert.rejects(keychain.loadIdentity({}), (e) => {
+      assert.equal(e.code, 'ZN_NOT_FOUND');
+      assert.equal(humanError(e, {}), 'Not found: vault not initialised. Next step: ask the user to run zn unlock once to create it.');
+      return true;
+    });
+    await assert.rejects(keychain.storeIdentity('not-an-identity', { backend: 'passphrase' }), (e) => {
+      assert.equal(e.code, 'ZN_POLICY_DENIED');
+      assert.equal(humanError(e, {}), 'Not allowed: not an age X25519 identity. Next step: paste the full identity line, which starts with AGE-SECRET-KEY-1.');
+      return true;
+    });
+  } finally {
+    if (saved === undefined) delete process.env.ZN_HOME; else process.env.ZN_HOME = saved;
   }
 });

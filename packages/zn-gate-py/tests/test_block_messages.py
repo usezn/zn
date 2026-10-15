@@ -40,5 +40,18 @@ class TestBlockMessages(unittest.TestCase):
         self.assertEqual(search(INJECTION), "BLOCKED")
 
 
+    def test_result_block_says_not_to_use_the_result(self):
+        @guard(check_args=False, check_result=True)
+        def fetch():
+            return INJECTION
+
+        with self.assertRaises(GuardBlockError) as ctx:
+            fetch()
+        msg = str(ctx.exception)
+        self.assertIn("blocked 'fetch:result'", msg)
+        self.assertIn("do not use this result", msg)
+        self.assertNotIn("try again", msg)
+
+
 if __name__ == "__main__":
     unittest.main()

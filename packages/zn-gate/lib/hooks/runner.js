@@ -424,8 +424,8 @@ async function decideMcp(ev, d, agentId) {
   if (!ours && markers.findMarkers(text).length) {
     return {
       decision: 'deny',
-      message: 'zn: MCP tools from other servers never receive secret values. For an authenticated HTTP call use the secrets_http_request tool ' +
-        'of the zn "secrets" MCP server.',
+      message: 'zn: ' + mcpServerLabel(server) + ' never receives secret values, so zn blocked this call. ' +
+        'Next step: for an authenticated web request, use the secrets_http_request tool of the zn "secrets" MCP server; otherwise remove the placeholder from the call.',
     };
   }
 
@@ -443,8 +443,8 @@ async function decideMcp(ev, d, agentId) {
   return {
     decision: 'deny',
     message: 'zn: this call would send a secret (' + [...kinds].join(', ') + ') to ' + mcpServerLabel(server) + ', so zn blocked it. ' +
-      'Next step: take the secret out of the call. For a web request, use the secrets_http_request tool of the zn "secrets" MCP server, which adds the stored value itself. ' +
-      'For anything else, ask the user to save the value with ' + znCommand('secret set NAME') + '.',
+      'A stored secret cannot be passed to this server. ' +
+      'Next step: for a web request, use the secrets_http_request tool of the zn "secrets" MCP server, which sends the stored value itself; do not put the value in this call.',
   };
 }
 
