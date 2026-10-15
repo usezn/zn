@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The threat model said that `zn run` keeps interpreter start-up variables such as `NODE_OPTIONS`; since 1.5.1 it removes them whenever it injects secret values.
 
 ### Security
+- The Rust gateway's lockfile uses wasmtime 48.0.6, which fixes RUSTSEC-2026-0353, 0358, 0359, 0361, 0362, 0363 and 0364 in 48.0.5. The gateway runs WebAssembly rules through the synchronous module API, without the component model or async calls where most of these issues are. The npm and PyPI packages do not contain the Rust gateway.
 - When an event cannot be read or part of zn-gate is missing, the message the agent reads no longer says how to let actions pass unchecked (`hooks.whenUnavailable`). That setting is still documented and is shown only to you (as the hook's message to the user in Claude Code).
 - When an agent event is not valid JSON, the refusal no longer quotes the part of it that Node's parser shows, which could be tool output.
 - The agent hooks' check for zn admin commands no longer takes exponential time on a crafted `zn stats` command with many flags, which could stall the hook (`POLICY_RULES_VERSION` bumped).
