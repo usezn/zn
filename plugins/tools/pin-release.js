@@ -219,12 +219,12 @@ function versionedTexts(previous, version) {
   const esc = previous.replace(/\./g, '\\.');
   const forms = [
     [new RegExp('(github\\.com/usezn/zn/(?:tree|blob)/)v' + esc + '/', 'g'), '$1v' + version + '/'],
-    [new RegExp('zn-gate@' + esc + '(?![0-9.])', 'g'), 'zn-gate@' + version],
-    [new RegExp('zn-gate ' + esc + '(?![0-9.])', 'g'), 'zn-gate ' + version],
+    [new RegExp('zn-gate@' + esc + '(?![0-9]|\\.[0-9])', 'g'), 'zn-gate@' + version],
+    [new RegExp('zn-gate ' + esc + '(?![0-9]|\\.[0-9])', 'g'), 'zn-gate ' + version],
     [new RegExp('\\*\\*' + esc + '\\*\\*', 'g'), '**' + version + '**'],
-    [new RegExp('version ' + esc + '(?![0-9.])', 'g'), 'version ' + version],
-    [new RegExp('usezn/zn@v' + esc + '(?![0-9.])', 'g'), 'usezn/zn@v' + version],
-    [new RegExp('--ref v' + esc + '(?![0-9.])', 'g'), '--ref v' + version],
+    [new RegExp('version ' + esc + '(?![0-9]|\\.[0-9])', 'g'), 'version ' + version],
+    [new RegExp('usezn/zn@v' + esc + '(?![0-9]|\\.[0-9])', 'g'), 'usezn/zn@v' + version],
+    [new RegExp('--ref v' + esc + '(?![0-9]|\\.[0-9])', 'g'), '--ref v' + version],
     [new RegExp('`v' + esc + '`', 'g'), '`v' + version + '`'],
   ];
   const skills = path.join(root, 'zn-gate', 'skills');
