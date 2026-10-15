@@ -85,6 +85,8 @@ test('managed-mcp.json without zn\'s server', (t) => {
   assert.deepEqual(warn(setup(t, { mcp: { mcpServers: { secrets: { command: 'node', args: ['cli.js', 'secrets-mcp'] } } } })), []);
   // listed under another name: it still runs
   assert.deepEqual(warn(setup(t, { mcp: { mcpServers: { 'zn-secrets': { command: 'node', args: ['cli.js', 'secrets-mcp'] } } } })), []);
+  // listed there, it skips the allowlist
+  assert.deepEqual(warn(setup(t, { mcp: { mcpServers: { zn: { command: 'node', args: ['cli.js', 'secrets-mcp'] } } }, managed: { allowedMcpServers: [{ serverName: 'github' }] } })), []);
   // the server is not installed: nothing to say about MCP
   assert.deepEqual(warn(setup(t, { mcp: { mcpServers: {} } }), { mcp: false }), []);
 });

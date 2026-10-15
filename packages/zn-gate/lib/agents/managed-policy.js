@@ -145,10 +145,13 @@ function claudeCodePolicyWarnings(opts = {}) {
   if (opts.mcp !== false) {
     const mcpFile = path.join(dir, 'managed-mcp.json');
     const m = readSource(mcpFile);
+    let inManagedMcp = false;
     if (m && m.error) {
       warnings.push('could not read ' + mcpFile + ' (' + m.error + '), so zn cannot tell whether it allows the "secrets" MCP server.');
     } else if (m) {
       const servers = m.data.mcpServers && typeof m.data.mcpServers === 'object' ? m.data.mcpServers : {};
+      // Servers listed here skip the allowlist, unless their entry uses ${VAR} expansion.
+      inManagedMcp = Object.values(servers).some((v) => { const j = JSON.stringify(v || ''); return j.includes('secrets-mcp') && !j.includes('${'); });
       if (!Object.values(servers).some((v) => JSON.stringify(v || '').includes('secrets-mcp'))) {
         warnings.push('Your organization\'s Claude Code policy (' + mcpFile + ') loads only the MCP servers it lists, and zn\'s "secrets" server is not one of them, so it does not start. ' + ASK_ADMIN);
       }
@@ -157,7 +160,7 @@ function claudeCodePolicyWarnings(opts = {}) {
     if (denied) {
       const who = ok.includes(denied) ? where(denied) : denied.file;
       warnings.push(who + ' blocks the "secrets" MCP server (deniedMcpServers), so it does not start.');
-    } else {
+    } else if (!inManagedMcp) {
       const onlyMcp = ok.find((s) => isTrue(s.data.allowManagedMcpServersOnly));
       const entries = (srcs) => srcs.flatMap((s) => list(s.data.allowedMcpServers));
       const withList = (srcs) => srcs.filter((s) => Array.isArray(s.data.allowedMcpServers));
