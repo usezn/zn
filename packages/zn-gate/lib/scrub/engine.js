@@ -377,6 +377,7 @@ const ACTIONS = Object.freeze({
   locked: 'keep',
   vault_error: 'keep',
   org_deny: 'keep',            // the organization policy blocks this secret
+  vault_outdated: 'keep',      // the vault process predates the organization policy check
 });
 
 const NET_COMMANDS = new RegExp('(?:^|[\\s;&|()`$\'"])(?:' + [
@@ -461,9 +462,12 @@ async function detokenize(text, ctx) {
           // withPolicy: the vault applies the organization policy and says so
           // ({value, policy: 1, ...}). A vault that answers with the bare value
           // (a daemon started before an update) cannot have checked the policy:
-          // nothing is restored (fail closed) until it is restarted.
+          // nothing is restored (fail closed, vault_outdated) until it is restarted.
           value = await vault.resolve(project, f.token, { destination: dest, agent: c.agent, tool: c.tool, withPolicy: true });
-          if (typeof value === 'string' || (value !== null && typeof value === 'object' && value.policy !== RESOLVE_POLICY)) {
+          if (typeof value === 'string' || (value !== null && typeof value === 'object' && value.policy === undefined)) {
+            reason = 'vault_outdated';
+            value = null;
+          } else if (value !== null && typeof value === 'object' && value.policy !== RESOLVE_POLICY) {
             reason = 'vault_error';
             value = null;
           } else if (value !== null && typeof value === 'object') {

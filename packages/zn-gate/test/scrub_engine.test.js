@@ -296,7 +296,7 @@ test('a vault that does not apply the organization policy restores nothing (fail
   for (const text of ['K=__ZN_DEV_KEY__', 'to: ' + tok.replaced[0].token]) {
     const r = await E.detokenize(text, ctx(bare, { destination: 'write_ignored' }));
     assert.strictEqual(r.text, text);
-    assert.deepStrictEqual(r.withheld.map((w) => [w.reason, w.action]), [['vault_error', 'keep']]);
+    assert.deepStrictEqual(r.withheld.map((w) => [w.reason, w.action]), [['vault_outdated', 'keep']]);
   }
   const odd = orgVault({ DEV_KEY: value }, {});
   const resolve = odd.resolve;

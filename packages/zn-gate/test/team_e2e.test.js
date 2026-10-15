@@ -198,7 +198,11 @@ test('the vault applies the organization policy when the hooks restore a named m
   assert.deepStrictEqual(await vault.resolve(HOME, other, opts), { value: 'jane.roe@example.org', policy: 1 });
   // Without a destination (zn run, the MCP tools) the token resolves as before.
   assert.strictEqual(await vault.resolve(HOME, detected), prodValue);
-  assert.ok((await vault.status()).features.includes('resolve-policy'));
+  const st = await vault.status();
+  assert.ok(st.features.includes('resolve-policy'));
+  assert.equal(st.version, require('../package.json').version);
+  const recs = fs.readFileSync(path.join(process.env.ZN_HOME, 'audit.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.ok(recs.some((r) => r.secret === 'PROD_DB_URL' && r.decision === 'deny' && /^policy:org_deny:DB_URL_\d+$/.test(r.reason)));
   // zn run and the secrets MCP tools resolve without a destination and apply the policy themselves
   assert.strictEqual(await vault.resolve(HOME, '__ZN_STAGING_TOKEN__'), 'stg_' + 'q'.repeat(28));
   const log = fs.readFileSync(path.join(process.env.ZN_HOME, 'audit.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));

@@ -676,3 +676,31 @@ test('restoring a named marker into a git-ignored file follows the organization 
   assert.equal(plain.output.hookSpecificOutput.additionalContext, undefined);
   assert.ok(!plainVault.audits.some((a) => a.decision === 'warn'));
 });
+
+/* A vault process started by an older zn-gate answers resolve with the bare value. */
+test('an older vault process: Write and Bash keep the markers and say how to restart it', async (t) => {
+  const dir = tmpProject(t);
+  const engine = require('../lib/scrub/engine');
+  const vault = createFakeVault();
+  const DEV = 'dev-value-0123456789abcdefg';
+  await vault.setSecret('DEV_KEY', DEV, { mode: 'file' });
+  const token = await vault.mapToken(dir, 'AWS_KEY', AWS);
+  const plain = vault.resolve.bind(vault);
+  vault.resolve = async (project, tok) => plain(project, tok); // no withPolicy answer
+  const OLD = /Your zn vault was started by an older zn-gate version, so secrets stay as markers\. Run `[^`]*lock`, then `[^`]*unlock`\./;
+
+  const w = await run(preTool('Write', { file_path: path.join(dir, '.env.local'), content: 'K=__ZN_DEV_KEY__\nA=' + token + '\n' }, dir), { vault, engine });
+  const wo = w.output.hookSpecificOutput;
+  assert.equal(wo.permissionDecision, 'ask');
+  assert.equal(wo.updatedInput, undefined);
+  assert.match(wo.permissionDecisionReason, OLD);
+  assert.match(wo.additionalContext, OLD);
+  assert.ok(!JSON.stringify(w.output).includes(DEV) && !JSON.stringify(w.output).includes(AWS));
+
+  const b = await run(preBash('node check.js ' + token, dir), { vault, engine });
+  const bo = b.output.hookSpecificOutput;
+  assert.equal(bo.permissionDecision, 'ask');
+  assert.ok(!JSON.stringify(b.output).includes(AWS));
+  assert.match(bo.permissionDecisionReason, /Your zn vault was started by an older zn-gate version/);
+  assert.match(bo.additionalContext, OLD);
+});

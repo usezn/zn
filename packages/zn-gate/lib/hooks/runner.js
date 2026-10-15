@@ -217,6 +217,7 @@ async function decidePre(ev, d, agentId, opts) {
     }
 
     const detected = markers.findMarkers(command).filter((m) => m.detected);
+    let context;
     if (detected.length) {
       const network = policy.hasNetworkSignals(command);
       const ctx = await ctxFor(ev, d, agentId, network ? 'bash_network' : 'bash_local');
@@ -228,6 +229,10 @@ async function decidePre(ev, d, agentId, opts) {
       if (res && res.withheld && res.withheld.length) {
         notes.push('kept ' + res.withheld.length + ' token(s) unresolved: ' +
           res.withheld.map((w) => w.token + ' (' + w.reason + ')').join(', '));
+        if (isOutdated(res.withheld)) {
+          notes.push(outdatedLine().replace(/\.$/, ''));
+          context = 'zn: ' + outdatedLine();
+        }
       }
     }
 
@@ -236,12 +241,12 @@ async function decidePre(ev, d, agentId, opts) {
         // A command that carries markers always asks, even when nothing was rewritten
         // (already wrapped in `zn run` by the agent, or tokens kept unresolved).
         // Never let it run on the user's allow rules alone.
-        return { decision: 'ask', message: 'zn: this command carries secret markers' + (notes.length ? '; ' + notes.join('; ') : '') + '.' };
+        return { decision: 'ask', message: 'zn: this command carries secret markers' + (notes.length ? '; ' + notes.join('; ') : '') + '.', context };
       }
       return notes.length ? { decision: 'allow', message: 'zn: ' + notes.join('; ') } : { decision: 'allow' };
     }
     // kind tells adapters that cannot rewrite input what the rewrite was for.
-    return { decision: 'ask', updatedInput: { command }, kind: wrap.wrapped ? 'wrap' : 'restore', message: 'zn: this command ' + notes.join('; ') + '.' };
+    return { decision: 'ask', updatedInput: { command }, kind: wrap.wrapped ? 'wrap' : 'restore', message: 'zn: this command ' + notes.join('; ') + '.', context };
   }
 
   if ((tool === 'write' || tool === 'edit' || tool === 'multiedit' || tool === 'notebookedit') && Array.isArray(input.texts)) {
@@ -271,12 +276,15 @@ async function decidePre(ev, d, agentId, opts) {
         : '.')
       : '') +
       (blocked.length ? ' ' + blockedLine(blocked) : '') +
+      (isOutdated(withheld) ? ' ' + outdatedLine() : '') +
       (notices.size ? ' ' + [...notices].join(' ') : '');
     // A secret the organization blocks: the write keeps the marker, and the
     // user is asked so the reason is shown (a plain allow shows nothing).
     // context: the model reads it, so it knows the value was not put back.
-    const context = blocked.length ? 'zn: ' + blockedLine(blocked) : undefined;
-    if (updates.length === 0 && blocked.length) return { decision: 'ask', message: 'zn:' + why, context };
+    const outdated = isOutdated(withheld);
+    const told = [blocked.length ? blockedLine(blocked) : null, outdated ? outdatedLine() : null].filter(Boolean);
+    const context = told.length ? 'zn: ' + told.join(' ') : undefined;
+    if (updates.length === 0 && told.length) return { decision: 'ask', message: 'zn:' + why, context };
     if (updates.length === 0) return { decision: 'allow', message: why ? 'zn:' + why : undefined };
     return {
       decision: 'ask',
@@ -289,6 +297,14 @@ async function decidePre(ev, d, agentId, opts) {
 
   return { decision: 'allow' };
 }
+
+/* The vault process was started by an older zn-gate: it does not check the
+ * organization policy, so nothing is put back until it is restarted. */
+function outdatedLine() {
+  return 'Your zn vault was started by an older zn-gate version, so secrets stay as markers. Run `' +
+    znCommand('lock') + '`, then `' + znCommand('unlock') + '`.';
+}
+const isOutdated = (list) => (list || []).some((w) => w.reason === 'vault_outdated');
 
 /* A secret the organization policy blocks (for every agent): the file keeps its marker. */
 function blockedLine(names) {
