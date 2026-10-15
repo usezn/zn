@@ -1,0 +1,3 @@
+# Synthetic AWS-format key used by the launcher tests in one commit (not a credential);
+# the tests now use the allowlisted AWS example key.
+8f60d42deed0634ede6e6431b3e431ef9446dd70:plugins/tools/test-launch.js:aws-access-token:236

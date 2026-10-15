@@ -23,4 +23,9 @@ paths = [
   # seed, never real credentials. Allowlisted explicitly so its format-valid fake
   # prefixes never fail a scan; this entry exempts that one file and nothing else.
   '''packages/zn-gate/test/fixtures/fake_secrets\.js''',
+  # The plugin's pin file lists each file of the published zn-gate package with
+  # its SHA-256 digest (written by plugins/tools/pin-release.js). File names such
+  # as api.js or keychain.js next to a hex digest look like a generic API key to
+  # the scanner; the file holds only digests of public package files.
+  '''plugins/zn-gate/scripts/zn-gate\.lock\.json''',
 ]

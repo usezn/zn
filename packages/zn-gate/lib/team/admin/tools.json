@@ -884,6 +884,9 @@
                         "deny": {
                           "type": "boolean"
                         },
+                        "warn": {
+                          "type": "boolean"
+                        },
                         "reason": {
                           "type": "string",
                           "minLength": 1,
@@ -1364,6 +1367,9 @@
                                 ]
                               },
                               "deny": {
+                                "type": "boolean"
+                              },
+                              "warn": {
                                 "type": "boolean"
                               },
                               "reason": {
