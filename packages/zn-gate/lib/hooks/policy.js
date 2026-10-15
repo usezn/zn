@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-15.6';
+const POLICY_RULES_VERSION = '2026-10-15.8';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -273,19 +273,31 @@ const GLOB_POSIX_CLASSES = {
  * "[:name:]" is one item. Returns -1 when the expression is not closed (the
  * "[" is then a literal character).
  */
-function globClassEnd(pattern, open) {
+function globClassEnd(pattern, open, ends = globClassEnds(pattern)) {
   let k = open + 1;
   if (pattern[k] === '!' || pattern[k] === '^') k++;
   if (pattern[k] === ']') k++;
-  while (k < pattern.length) {
-    if (pattern.startsWith('[:', k)) {
-      const end = pattern.indexOf(':]', k + 2);
-      if (end !== -1) { k = end + 2; continue; }
-    }
-    if (pattern[k] === ']') return k;
-    k++;
+  return k < pattern.length ? ends[k] : -1;
+}
+
+/*
+ * For every position k, where the scan of globClassEnd that reaches k stops:
+ * the index of the closing "]", or -1. Computed once per pattern from right to
+ * left, so a pattern with many "[" or "[:" costs one pass, not one per "[".
+ */
+function globClassEnds(pattern) {
+  const n = pattern.length;
+  const nextColonClose = new Int32Array(n + 2).fill(-1);
+  for (let i = n - 2; i >= 0; i--) {
+    nextColonClose[i] = pattern[i] === ':' && pattern[i + 1] === ']' ? i : nextColonClose[i + 1];
   }
-  return -1;
+  const ends = new Int32Array(n + 1).fill(-1);
+  for (let k = n - 1; k >= 0; k--) {
+    const colon = pattern[k] === '[' && pattern[k + 1] === ':' ? nextColonClose[k + 2] : -1;
+    if (colon !== -1) ends[k] = colon + 2 <= n ? ends[colon + 2] : -1;
+    else ends[k] = pattern[k] === ']' ? k : ends[k + 1];
+  }
+  return ends;
 }
 
 /**
@@ -303,8 +315,10 @@ function globClassSource(body) {
   if (body[0] === '!' || body[0] === '^') { neg = true; body = body.slice(1); }
   let out = '';
   let any = false;
+  // A "[:" with no ":]" after it is literal: look for ":]" only when one is left.
+  const lastColonClose = body.lastIndexOf(':]');
   for (let k = 0; k < body.length; k++) {
-    if (body.startsWith('[:', k)) {
+    if (body.startsWith('[:', k) && k + 2 <= lastColonClose) {
       const end = body.indexOf(':]', k + 2);
       if (end !== -1) {
         const ranges = GLOB_POSIX_CLASSES[body.slice(k + 2, end)];
@@ -369,9 +383,10 @@ function globSegment(toks, s) {
  */
 function globRegExp(pattern) {
   const segs = [[]];
+  const ends = pattern.includes('[') ? globClassEnds(pattern) : null;
   for (let i = 0; i < pattern.length; i++) {
     const c = pattern[i];
-    const end = c === '[' ? globClassEnd(pattern, i) : -1;
+    const end = c === '[' ? globClassEnd(pattern, i, ends) : -1;
     const cur = segs[segs.length - 1];
     if (c === '/') segs.push([]);
     else if (c === '*') { if (cur[cur.length - 1] !== GLOB_STAR) cur.push(GLOB_STAR); }

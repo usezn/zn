@@ -169,3 +169,43 @@ test('realTargetOf keeps its result for existing and missing paths', () => {
     fs.rmSync(d, { recursive: true, force: true });
   }
 });
+
+test('bracket expressions are scanned once per pattern', () => {
+  const opts = { cwd: '/home/u/project', home: '/home/u', env: {} };
+  const braces = '{a,b,c,d,e,f,g,h}{a,b,c,d,e,f,g,h}';
+  const words = ['[:'.repeat(1000) + 'a'.repeat(48000), braces + '[:'.repeat(300) + 'a'.repeat(20000),
+    braces + '[:'.repeat(990) + 'a'.repeat(48000), '[' + '[:'.repeat(20000) + ']', '[!' + ':]['.repeat(15000)];
+  for (const w of words) {
+    const t0 = process.hrtime.bigint();
+    policy.classifyWord(w, opts);
+    policy.bashDenial('cat ' + w, opts);
+    const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+    assert.ok(ms < 2000, w.slice(0, 12) + '... took ' + ms.toFixed(1) + ' ms');
+  }
+});
+
+test('the class end table gives the same answers as a direct scan', () => {
+  const direct = (pattern, open) => {
+    let k = open + 1;
+    if (pattern[k] === '!' || pattern[k] === '^') k++;
+    if (pattern[k] === ']') k++;
+    while (k < pattern.length) {
+      if (pattern.startsWith('[:', k)) {
+        const end = pattern.indexOf(':]', k + 2);
+        if (end !== -1) { k = end + 2; continue; }
+      }
+      if (pattern[k] === ']') return k;
+      k++;
+    }
+    return -1;
+  };
+  const parts = ['[', ']', ':', '[:', ':]', '!', '^', 'a', '-'];
+  let seed = 5;
+  const rnd = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+  for (let k = 0; k < 5000; k++) {
+    let g = '';
+    const len = 1 + rnd(10);
+    for (let j = 0; j < len; j++) g += parts[rnd(parts.length)];
+    for (let i = 0; i < g.length; i++) if (g[i] === '[') assert.equal(policy._globClassEnd(g, i), direct(g, i), JSON.stringify([g, i]));
+  }
+});
