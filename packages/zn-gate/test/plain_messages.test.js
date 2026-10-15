@@ -131,10 +131,12 @@ test('client: a vault with no running daemon gives the plain unlock steps', asyn
 
 test('humanError: the code is shown only with ZN_VERBOSE=1 or DEBUG', () => {
   const err = Object.assign(new Error('nope'), { code: CODES.POLICY_DENIED });
-  assert.equal(humanError(err, { ZN_VERBOSE: '1' }), '[ZN_POLICY_DENIED] Not allowed: nope');
-  assert.equal(humanError(err, { DEBUG: '1' }), '[ZN_POLICY_DENIED] Not allowed: nope');
-  assert.equal(humanError(err, { ZN_VERBOSE: '0' }), 'Not allowed: nope');
-  assert.equal(humanError(Object.assign(new Error('secret X is missing'), { code: CODES.NOT_FOUND }), {}), 'Not found: secret X is missing');
+  assert.match(humanError(err, { ZN_VERBOSE: '1' }), /^\[ZN_POLICY_DENIED\] Not allowed: nope\. Next step: /);
+  assert.match(humanError(err, { DEBUG: '1' }), /^\[ZN_POLICY_DENIED\] Not allowed: nope\. Next step: /);
+  assert.match(humanError(err, { ZN_VERBOSE: '0' }), /^Not allowed: nope\. Next step: /);
+  assert.match(humanError(Object.assign(new Error('secret X is missing'), { code: CODES.NOT_FOUND }), {}), /^Not found: secret X is missing\. Next step: /);
+  // A detail that already ends with punctuation gets no second full stop.
+  assert.match(humanError(Object.assign(new Error('Blocked by policy!'), { code: CODES.POLICY_DENIED }), {}), /^Not allowed: Blocked by policy! Next step: /);
   assert.equal(humanError(new Error('plain failure'), {}), 'plain failure');
 });
 
@@ -185,4 +187,22 @@ test('prompt block: a name over 64 characters falls back to the kind; 64 is kept
   assert.doesNotMatch(long.message, /AAAA/);
   const max = await promptFor([awsSpan({ name: 'A'.repeat(64), source: 'exact' })]);
   assert.match(max.message, new RegExp('contains a secret \\(' + 'A'.repeat(64) + '\\)'));
+});
+
+test('PowerShell refusals: the reason in plain words and one next step', () => {
+  const policy = require('../lib/hooks/policy');
+  const opts = { nodePath: 'C:/n/node.exe', runJs: 'C:/z/run.js', agent: 'claude-code' };
+  const cases = [
+    ['Get-Content a.txt | Out-File __ZN_GH__', /uses a pipeline, a variable or a script block/],
+    ['Get-Content __ZN_GH__', /"Get-Content" is a PowerShell command, not a program/],
+    ['./deploy.ps1 __ZN_GH__', /runs a PowerShell script \(\.ps1\)/],
+    ['tool+x __ZN_GH__', /does not start with a plain program name/],
+  ];
+  for (const [cmd, reason] of cases) {
+    const r = policy.wrapPowerShell(cmd, opts);
+    assert.equal(r.ok, false, cmd);
+    assert.match(r.reason, reason, cmd);
+    assert.match(r.reason, /Next step: start the command with the program name/, cmd);
+    assert.doesNotMatch(r.reason, /cannot be rewritten|cmdlet|could not identify|scrubber/, cmd);
+  }
 });

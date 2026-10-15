@@ -3,16 +3,16 @@ CrewAI tool protection for zn-gate.
 """
 from __future__ import annotations
 import functools
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
-from ..guard import GuardBlockError, check_tool_call
+from ..guard import GuardBlockError, block_message, check_tool_call
 from ..rules import sanitize_tool_result
 
 
 def guarded_tool(
     on_block: str = "raise",
     mask_secrets: bool = True,
-    fallback: str = "Tool call blocked by security policy."
+    fallback: Optional[str] = None
 ) -> Callable:
     """
     Decorator for CrewAI custom tools (either class methods or tool functions).
@@ -25,7 +25,9 @@ def guarded_tool(
             if not assessment.allowed:
                 if on_block == "raise":
                     raise GuardBlockError(assessment, target=f"crewai:{tool_name}", payload=kwargs)
-                return fallback
+                if fallback is not None:
+                    return fallback
+                return block_message(assessment, f"crewai:{tool_name}")
 
             result = tool_func(*args, **kwargs)
             if mask_secrets:

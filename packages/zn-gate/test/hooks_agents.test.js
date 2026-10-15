@@ -268,7 +268,7 @@ test('cursor: benign MCP calls get no answer; large arguments are scanned in ful
   assert.ok(!JSON.stringify(deep.output).includes(FAKE_AWS_KEY));
   const big = await run(cursor, cu('beforeMCPExecution', { cwd: dir, tool_name: 'put', mcp_server_name: 'files', tool_input: { text: 'a'.repeat(1024 * 1024) } }));
   assert.equal(big.output.permission, 'deny');
-  assert.match(big.output.agent_message, /larger than 1 MB/);
+  assert.match(big.output.agent_message, /too large for zn to check/);
 });
 
 /* ------------------------------ OpenCode ----------------------------- */

@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-15.13';
+const POLICY_RULES_VERSION = '2026-10-15.14';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -785,23 +785,22 @@ function wrapPowerShell(cmd, opts) {
   const s = String(cmd);
   const named = markers.findNamedMarkers(s);
   if (named.length === 0) return { ok: true, command: s, wrapped: false };
-  const guidance = ' In PowerShell, put the secret in a single native command with plain arguments ' +
-    "(for example: psql 'postgres://app:__ZN_DB_PASSWORD__@db/app' -c 'select 1'). " +
-    'For HTTP APIs use the secrets_http_request tool of the zn "secrets" MCP server instead of Invoke-WebRequest or curl.';
+  const guidance = ' Next step: start the command with the program name and put the secret in its arguments, for example: ' +
+    "psql 'postgres://app:__ZN_DB_PASSWORD__@db/app' -c 'select 1'. For web requests, use the secrets_http_request tool of the zn \"secrets\" MCP server instead.";
   const scan = scanPowerShell(s);
   if (!scan.simple || scan.words.length === 0) {
-    return { ok: false, reason: 'zn: this PowerShell command cannot be rewritten safely for secret injection (pipelines, variables, script blocks and expanding strings are not supported).' + guidance };
+    return { ok: false, reason: 'zn: this PowerShell command uses a pipeline, a variable or a script block, so zn cannot safely put a secret into it.' + guidance };
   }
   const first = scan.words[0].text;
   const base = path.basename(first.replace(/\\/g, '/')).toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/, '');
   if (/^[a-z]+-[a-z]+$/i.test(first) || PS_ALIASES.has(first.toLowerCase())) {
-    return { ok: false, reason: 'zn: `' + first + '` is a PowerShell cmdlet or alias; zn can only pass secrets to native programs.' + guidance };
+    return { ok: false, reason: 'zn: "' + first + '" is a PowerShell command, not a program, so zn cannot pass a secret to it.' + guidance };
   }
   if (/\.ps1$/i.test(first)) {
-    return { ok: false, reason: 'zn: PowerShell scripts (.ps1) cannot receive secrets through zn run.' + guidance };
+    return { ok: false, reason: 'zn: this runs a PowerShell script (.ps1), and zn cannot pass secrets into scripts.' + guidance };
   }
   if (!/^[A-Za-z0-9_.\-\\/:]+$/.test(first)) {
-    return { ok: false, reason: 'zn: could not identify the program in this command.' + guidance };
+    return { ok: false, reason: 'zn: this command does not start with a plain program name, so zn cannot tell which program to run.' + guidance };
   }
   if ((base === 'zn' || base === 'zn-gate') && scan.words[1] && scan.words[1].text === 'run') {
     return { ok: true, command: s, wrapped: false };

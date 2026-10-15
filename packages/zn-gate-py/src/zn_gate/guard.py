@@ -14,12 +14,17 @@ from typing import Any, Callable, Dict, List, Optional, Union
 from .rules import Assessment, evaluate, scan_windows
 
 
+def block_message(assessment: Assessment, target: str) -> str:
+    """Plain text for a blocked call: what was blocked, why, and the next step."""
+    reason = (assessment.reason or f"the input matched rule {assessment.rule}").rstrip(".")
+    return (f"zn-gate blocked '{target}'. Reason: {reason} (rule: {assessment.rule}). "
+            "Next step: remove the flagged text and try again, or ask the person who runs this agent to review it.")
+
+
 class GuardBlockError(PermissionError):
     """Raised when an LLM tool call or input is blocked by zn-gate."""
     def __init__(self, assessment: Assessment, target: str = "", payload: Any = None):
-        super().__init__(
-            f"[zn-gate] Blocked execution on '{target}': {assessment.reason or assessment.rule} (rule: {assessment.rule}, confidence: {assessment.confidence})"
-        )
+        super().__init__(block_message(assessment, target))
         self.assessment = assessment
         self.target = target
         self.payload = payload

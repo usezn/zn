@@ -27,6 +27,12 @@ function notImplemented(what) {
   return err;
 }
 
+/* A sentence ends with a full stop: add one unless the text already ends with punctuation. */
+function sentence(s) {
+  const t = String(s).trim();
+  return /[.!?]$/.test(t) ? t : t + '.';
+}
+
 /* The text a person sees for an error: what happened, then the detail. The
  * code is printed only with ZN_VERBOSE=1 or DEBUG set. */
 function humanError(err, env = process.env) {
@@ -42,9 +48,11 @@ function humanError(err, env = process.env) {
   } else if (code === CODES.LOCKED) {
     text = 'zn could not use your secret vault: ' + (detail || 'unknown error');
   } else if (code === CODES.POLICY_DENIED) {
-    text = 'Not allowed: ' + (detail || 'zn blocked this request');
+    text = 'Not allowed: ' + sentence(detail || 'zn blocked this request') +
+      ' Next step: change the request to use only what zn allows, or ask the user whether it should be allowed.';
   } else if (code === CODES.NOT_FOUND) {
-    text = 'Not found: ' + (detail || 'the item does not exist');
+    text = 'Not found: ' + sentence(detail || 'the item does not exist') +
+      ' Next step: check the name for a typo, or ask the user to save the item first.';
   } else {
     text = detail;
   }
