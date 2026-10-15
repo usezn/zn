@@ -197,7 +197,12 @@ const VERSIONED_JSON = [
 const VERSIONED_DOCS = ['README.md', 'zn-gate/README.md', 'zn-gate/plugin.json', 'zn-gate/.cursor-plugin/plugin.json',
   'zn-gate/.claude-plugin/plugin.json'];
 
+function escapeRegExp(text) {
+  return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function versionedTexts(previous, version) {
+  if (previous && !/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(previous)) throw new Error('the current pin has an unexpected version: ' + previous);
   if (!previous || previous === version) return [];
   const root = path.join(PLUGIN, '..');
   const out = new Map();
@@ -213,12 +218,12 @@ function versionedTexts(previous, version) {
       obj[parts[parts.length - 1]] = version;
     }
     // Keep the file's own layout: only the version values change.
-    const re = new RegExp('("version"\\s*:\\s*)"' + previous.replace(/\./g, '\\.') + '"', 'g');
+    const re = new RegExp('("version"\\s*:\\s*)"' + escapeRegExp(previous) + '"', 'g');
     const next = text.replace(re, '$1"' + version + '"');
     if (JSON.stringify(JSON.parse(next)) !== JSON.stringify(data)) throw new Error(rel + ': could not move the version in place');
     out.set(rel, next);
   }
-  const esc = previous.replace(/\./g, '\\.');
+  const esc = escapeRegExp(previous);
   const forms = [
     [new RegExp('(github\\.com/usezn/zn/(?:tree|blob)/)v' + esc + '/', 'g'), '$1v' + version + '/'],
     [new RegExp('zn-gate@' + esc + '(?![0-9]|\\.[0-9])', 'g'), 'zn-gate@' + version],
