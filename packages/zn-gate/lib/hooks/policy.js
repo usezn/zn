@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-17.28';
+const POLICY_RULES_VERSION = '2026-10-17.29';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -204,7 +204,8 @@ function classifyResolved(abs, ctx) {
   for (const d of creds.dirs) if (s === d || s.startsWith(d + '/')) return { kind: 'credential', reason: 'a directory named by a credential environment variable' };
   for (const [re, reason] of CREDENTIAL_RES) if (ci(re).test(s)) return { kind: 'credential', reason };
   if (s === h + '/.npmrc' || s === h + '/.pypirc') return { kind: 'credential', reason: 'package registry token' };
-  const base = path.basename(abs);
+  // With "\" a separator too, so a Windows spelling names the same file on every platform.
+  const base = path.basename(s);
   if (ci(DOTENV_BASENAME_RE).test(base) && !ci(DOTENV_SAFE_RE).test(base)) return { kind: 'dotenv', reason: '.env file' };
   if (ci(SSH_KEY_BASENAME_RE).test(base)) return { kind: 'credential', reason: 'SSH private key' };
   if (KEY_CONTAINER_RE.test(base)) return { kind: 'credential', reason: 'key store, which holds private keys' };
@@ -1918,8 +1919,14 @@ function dotenvElsewhereOf(text, opts, kind = 'dotenv') {
   // (`cat $(echo app)/.env` leaves the word /.env right after the closing bracket).
   const cmdText = opts.cmdText || '';
   const afterSubstitution = /[()]/.test(text) || cmdText.includes(')' + text) || cmdText.includes('`' + text);
+  // A path that starts at a Windows root or a network share (\\server\share\.env, \\?\C:\ruta\.env,
+  // \folder\.env, //server/share/.env): zn cannot follow it, so a .env reached through it is refused.
+  if (kind === 'dotenv' && (String(text).startsWith('\\') || String(text).startsWith('//'))) {
+    return 'zn: this command reads ' + text + ' through a path zn cannot check (a Windows root or a network share), so it was blocked. ' +
+      'Give the path from the current folder instead, for example `cat app/.env`.';
+  }
   // A key file is judged by its content where the cd leads; only a .env is refused for a path built while the command runs.
-  if (kind === 'dotenv' && (/[$`]/.test(expanded) || (missing && afterSubstitution))) {
+  if (kind === 'dotenv' && (/[$`]|%[A-Za-z_][A-Za-z0-9_]*%/.test(expanded) || (missing && afterSubstitution))) {
     return 'zn: this command builds the path of a .env file while it runs (' + text + '), so zn cannot check whether it holds secrets. ' +
       'Name the file directly, for example `cat app/.env`; if it holds values, ask the user to run `' + znCommand('env shadow .env', opts) + '` in that folder.';
   }
