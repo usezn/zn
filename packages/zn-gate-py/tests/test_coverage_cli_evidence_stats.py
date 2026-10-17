@@ -21,6 +21,7 @@ from zn_gate.evidence import (
     GENESIS_HASH,
     export_evidence_ledger,
     get_evidence_stats,
+    EvidenceLedgerError,
     get_last_hash,
     log_evidence,
     verify_evidence_ledger,
@@ -542,7 +543,8 @@ def test_get_last_hash_edge_cases(tmp_path):
     assert get_last_hash(str(empty)) == GENESIS_HASH
     bad = tmp_path / "bad"
     bad.write_text("{not json\n")
-    assert get_last_hash(str(bad)) == GENESIS_HASH
+    with pytest.raises(EvidenceLedgerError):  # a damaged last line never restarts the chain
+        get_last_hash(str(bad))
     p = _ledger(tmp_path, 2)
     with open(p, encoding="utf-8") as f:
         last = json.loads(f.read().splitlines()[-1])
@@ -670,7 +672,7 @@ def test_ledger_modes_are_private(tmp_path):
     assert os.stat(p).st_mode & 0o077 == 0
 
 
-# --------------------------- known bug: a ledger with invalid UTF-8 bytes
+# --------------------------- a ledger with invalid UTF-8 bytes
 
 def _corrupt_ledger(tmp_path):
     p = str(tmp_path / "evidence.jsonl")
@@ -680,32 +682,21 @@ def _corrupt_ledger(tmp_path):
     return p
 
 
-XFAIL_UTF8 = pytest.mark.xfail(
-    strict=True, raises=UnicodeDecodeError,
-    reason="known issue: the evidence ledger with invalid UTF-8 raises UnicodeDecodeError; fix in progress")
-XFAIL_LAST_HASH = pytest.mark.xfail(
-    strict=True, raises=AssertionError,
-    reason="known issue: a damaged ledger makes the next record restart the chain from the genesis hash; fix in progress")
-
-
-@XFAIL_UTF8
 def test_verify_reports_a_ledger_with_invalid_utf8(tmp_path):
     assert verify_evidence_ledger(_corrupt_ledger(tmp_path))["valid"] is False
 
 
-@XFAIL_UTF8
 def test_stats_report_a_ledger_with_invalid_utf8(tmp_path):
     assert get_evidence_stats(_corrupt_ledger(tmp_path))["valid"] is False
 
 
-@XFAIL_UTF8
 def test_export_reports_a_ledger_with_invalid_utf8(tmp_path):
     assert export_evidence_ledger(_corrupt_ledger(tmp_path))["valid"] is False
 
 
-@XFAIL_LAST_HASH
 def test_last_hash_does_not_fall_back_to_genesis_on_a_corrupted_ledger(tmp_path):
-    assert get_last_hash(_corrupt_ledger(tmp_path)) != GENESIS_HASH
+    with pytest.raises(EvidenceLedgerError):
+        get_last_hash(_corrupt_ledger(tmp_path))
 
 
 # --------------------------------------------------------------------- stats

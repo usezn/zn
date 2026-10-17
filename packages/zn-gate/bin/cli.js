@@ -25,7 +25,7 @@ const path = require('path');
 const { startMcpServer } = require('../lib/mcp');
 const { startMcpShield } = require('../lib/shield');
 const { scanEnvironments, configureEnvironments } = require('../lib/init');
-const { logEvidence, verifyEvidenceLedger, getEvidenceStats, exportEvidenceLedger, startEvidenceUi, EVIDENCE_FILE } = require('../lib/evidence');
+const { logEvidence, verifyEvidenceLedger, getEvidenceStats, exportEvidenceLedger, startEvidenceUi, recoveryHint, EVIDENCE_FILE } = require('../lib/evidence');
 const { analyze, analyzeLocal, isCloudEnabled, resolveEndpoint, usesStoredKey, RULES_VERSION } = require('../lib/client');
 const { evaluate, redactSecrets, redactScanSecrets, redactScanRules, SECRET_PATTERNS } = require('../lib/rules');
 const { SCRUB_RULES_VERSION } = require('../lib/scrub/patterns');
@@ -909,6 +909,7 @@ async function main() {
     if (command === 'export' || options.export) {
       const format = (options.format || 'jsonl').toLowerCase();
       const res = exportEvidenceLedger(EVIDENCE_FILE, format);
+      if (!res.valid) process.stderr.write(`Tamper detected: ${res.error}\n${recoveryHint()}\n`);
       if (options.output) {
         fs.writeFileSync(options.output, res.content, 'utf8');
         process.stdout.write(`Exported ${res.total} audit records to ${options.output} (Integrity: ${res.valid ? 'VALID' : 'TAMPERED'}).\n`);
@@ -932,7 +933,7 @@ async function main() {
   Integrity     : ${verification.valid ? '\x1b[32m✔ ALL SHA-256 HASHES VERIFIED (IMMUTABLE)\x1b[0m' : '\x1b[31m✖ TAMPER DETECTED AT RECORD ' + verification.broken_index + '\x1b[0m'}
 \n`);
       if (!verification.valid) {
-        process.stdout.write(`  Details: ${verification.error}\n\n`);
+        process.stdout.write(`  Details: ${verification.error}\n  ${recoveryHint()}\n\n`);
         process.exit(1);
       }
       return;
@@ -946,7 +947,7 @@ async function main() {
   Blocked Drops : ${stats.blocks}
   Allowed Passes: ${stats.allows}
   Shadow Alerts : ${stats.shadows || 0}
-  Integrity     : ${stats.valid ? '\x1b[32mVALID\x1b[0m' : '\x1b[31mCORRUPTED\x1b[0m'}
+  Integrity     : ${stats.valid ? '\x1b[32mVALID\x1b[0m' : '\x1b[31mCORRUPTED\x1b[0m'}${stats.valid ? '' : '\n  Details       : ' + stats.error + '\n  Recovery      : ' + recoveryHint()}
 ───────────────────────────────────────────────────
 Recent Events (last ${Math.min(options.tail, stats.total)}):
 `);
