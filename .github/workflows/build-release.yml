@@ -2,7 +2,7 @@ name: Build release
 
 # Reusable workflow called only by release.yml: builds the npm tarball and the
 # Python sdist and wheel once, then (after approval on the "release"
-# environment, never in a dry run) attests and signs them. Building and
+# environment) attests and signs them. Building and
 # attesting in a reusable workflow keeps those steps out of reach of the
 # calling workflow, which makes the build provenance SLSA Build Level 3: the
 # attestations name this file as their signer workflow.
@@ -26,10 +26,6 @@ on:
       py_version:
         required: true
         type: string
-      dry_run:
-        description: "Build only: nothing is attested or signed"
-        required: true
-        type: boolean
 
 permissions: {}
 
@@ -97,7 +93,7 @@ jobs:
           persist-credentials: false
       # Release tooling (tarball check, hash-pinned build tools) comes from the
       # commit that defines this workflow run. For a tag push it is the tagged
-      # commit; for a dry run it is the dispatched branch.
+      # commit.
       - name: Check out the release tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -174,8 +170,7 @@ jobs:
     name: Attest and sign
     needs: build
     # Nothing is signed or attested before the maintainer approves the release
-    # environment, and never in a dry run.
-    if: ${{ !inputs.dry_run }}
+    # environment.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
