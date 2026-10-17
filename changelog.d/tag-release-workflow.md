@@ -1,0 +1,2 @@
+### Security
+- Release tags are created and signed by a workflow, `tag-release.yml`, with gitsign (Sigstore keyless signing), so the signature names that workflow and no person's identity. It runs only from `main`, checks that the commit is the head of its release branch, that every version matches and that every check passed, and waits for approval before it signs. From 1.12.0 on, the release workflow refuses to publish a tag unless it carries a valid signature from `tag-release.yml`. How to check a tag: `docs/verify-release.md`.

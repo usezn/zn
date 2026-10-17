@@ -1,0 +1,206 @@
+name: Tag release
+
+# Creates the release tag vX.Y.Z, signed with gitsign by this workflow's own
+# identity (Sigstore keyless: no key to keep, and no person's identity in the
+# signature or the public transparency log), and pushes it, which starts the
+# Release workflow. Run from main by a maintainer; the tag job waits for
+# approval on the "release-tag" environment, which only main can use.
+#
+# The tag is pushed with a token of the release-tag GitHub App (Contents and
+# Workflows write on this repository, allowed to create release tags): a tag
+# pushed with the job's own token would start no workflow, and the tag rules
+# refuse it.
+#
+#   gh workflow run tag-release.yml --ref main -f version=X.Y.Z -f sha=<release branch head>
+#
+# The Release workflow refuses to publish a tag whose commit has this file
+# unless the tag carries a valid signature from it. How to check a tag
+# signature: docs/verify-release.md
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 1.12.0 or 1.12.0-beta.1"
+        required: true
+        type: string
+      sha:
+        description: "Commit to tag: the head of release/<version>"
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: tag-release-${{ inputs.version }}
+  cancel-in-progress: false
+
+env:
+  GITSIGN_VERSION: 0.17.1
+  GITSIGN_SHA256: 69213a8a0813a151e5a47d0060862952ff833a845d57309dff76f7ba6600abae
+
+jobs:
+  check:
+    name: Check the release commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      checks: read
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - name: Check the inputs and where this runs
+        env:
+          VERSION: ${{ inputs.version }}
+          SHA: ${{ inputs.sha }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          # The signature names this workflow at main: run anywhere else, the Release workflow would refuse the tag.
+          [ "$REF" = refs/heads/main ] || { echo "::error::run this workflow from main (it ran from $REF)"; exit 1; }
+          printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$' || { echo "::error::version '$VERSION' is not X.Y.Z or X.Y.Z-(alpha|beta|rc).N"; exit 1; }
+          printf '%s' "$SHA" | grep -Eq '^[0-9a-f]{40}$' || { echo "::error::sha must be a full 40-character commit id"; exit 1; }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check the release branch, the tag and the versions
+        env:
+          VERSION: ${{ inputs.version }}
+          SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          branch="release/$VERSION"
+          head="$(git ls-remote origin "refs/heads/$branch" | cut -f1)"
+          [ "$head" = "$SHA" ] || { echo "::error::$SHA is not the head of $branch (head: ${head:-none})"; exit 1; }
+          [ -z "$(git ls-remote origin "refs/tags/v$VERSION")" ] || { echo "::error::tag v$VERSION already exists"; exit 1; }
+          [ -f .github/workflows/tag-release.yml ] || { echo "::error::$SHA has no tag-release.yml, so the Release workflow would not check the tag signature"; exit 1; }
+          # The same version checks as the Release workflow: a tag cannot be deleted, so a mismatch found
+          # only after tagging would burn the version.
+          base="${VERSION%%-*}"
+          expected_py="$base"
+          if [ "$VERSION" != "$base" ]; then
+            pre="${VERSION#*-}"; kind="${pre%%.*}"; num="${pre#*.}"
+            case "$kind" in alpha) expected_py="${base}a${num}" ;; beta) expected_py="${base}b${num}" ;; rc) expected_py="${base}rc${num}" ;; esac
+          fi
+          fail=0
+          npm_version="$(node -p "require('./packages/zn-gate/package.json').version")"
+          [ "$npm_version" = "$VERSION" ] || { echo "::error::packages/zn-gate/package.json has $npm_version"; fail=1; }
+          py_version="$(python3 -c "import tomllib; print(tomllib.load(open('packages/zn-gate-py/pyproject.toml','rb'))['project']['version'])")"
+          [ "$py_version" = "$expected_py" ] || { echo "::error::pyproject.toml has $py_version, expected $expected_py"; fail=1; }
+          py_init="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' packages/zn-gate-py/src/zn_gate/__init__.py)"
+          [ "$py_init" = "$expected_py" ] || { echo "::error::zn_gate/__init__.py has $py_init, expected $expected_py"; fail=1; }
+          if [ -f packages/zn-gate/server.json ]; then
+            for v in $(node -p "const d=require('./packages/zn-gate/server.json'); [d.version, ...(d.packages||[]).filter(p=>p.identifier==='zn-gate').map(p=>p.version)].join(' ')"); do
+              [ "$v" = "$VERSION" ] || { echo "::error::packages/zn-gate/server.json has version $v"; fail=1; }
+            done
+          fi
+          grep -q "^## \[$VERSION\]" CHANGELOG.md || { echo "::error::CHANGELOG.md has no section for $VERSION"; fail=1; }
+          [ "$fail" -eq 0 ] || exit 1
+          echo "release/$VERSION is at $SHA; tag v$VERSION is free; npm, PyPI, MCP server and CHANGELOG versions match"
+      - name: Check that every check of the commit passed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$SHA/check-runs?per_page=100" \
+            --jq '.check_runs[] | [.name, .status, (.conclusion // "")] | @tsv' > "$RUNNER_TEMP/checks.tsv"
+          total="$(wc -l < "$RUNNER_TEMP/checks.tsv")"
+          [ "$total" -gt 0 ] || { echo "::error::no checks ran on $SHA"; exit 1; }
+          bad="$(awk -F'\t' '$2 != "completed" || ($3 != "success" && $3 != "skipped" && $3 != "neutral")' "$RUNNER_TEMP/checks.tsv")"
+          if [ -n "$bad" ]; then
+            echo "::error::checks of $SHA that did not pass or did not finish:"
+            printf '%s\n' "$bad"
+            exit 1
+          fi
+          echo "all $total checks of $SHA passed"
+
+  tag:
+    name: Create, sign and push the tag
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: release-tag
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      # The approval can come much later than the check: the branch and the tag are checked again.
+      - name: Check again that the commit is the head of its release branch and the tag is free
+        env:
+          VERSION: ${{ inputs.version }}
+          SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          head="$(git ls-remote origin "refs/heads/release/$VERSION" | cut -f1)"
+          [ "$head" = "$SHA" ] || { echo "::error::release/$VERSION moved to ${head:-nothing} since the check"; exit 1; }
+          [ -z "$(git ls-remote origin "refs/tags/v$VERSION")" ] || { echo "::error::tag v$VERSION exists now"; exit 1; }
+      - name: Install gitsign (checked by SHA-256)
+        run: |
+          set -euo pipefail
+          url="https://github.com/sigstore/gitsign/releases/download/v${GITSIGN_VERSION}/gitsign_${GITSIGN_VERSION}_linux_amd64"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/gitsign" "$url"
+          echo "${GITSIGN_SHA256}  $RUNNER_TEMP/gitsign" | sha256sum --strict -c -
+          chmod +x "$RUNNER_TEMP/gitsign"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Create the signed tag
+        env:
+          VERSION: ${{ inputs.version }}
+          SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          # The tagger is the Actions bot, and gitsign signs with this run's OIDC identity.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config gpg.format x509
+          git config gpg.x509.program gitsign
+          git tag -s -m "zn-gate $VERSION" "v$VERSION" "$SHA"
+          git cat-file -p "v$VERSION" | sed -n '1,4p'
+      - name: Verify the tag signature
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          gitsign verify-tag "v$VERSION" \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/tag-release.yml@refs/heads/main" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+      - name: Create a token of the release-tag app
+        id: token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_TAG_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_TAG_APP_KEY }}
+          owner: usezn
+          repositories: zn
+          permission-contents: write
+          permission-workflows: write
+      # Pushed with the app's token, the tag starts the Release workflow (on: push: tags).
+      - name: Push the tag
+        env:
+          VERSION: ${{ inputs.version }}
+          SHA: ${{ inputs.sha }}
+          TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          set -euo pipefail
+          auth="$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
+          # The token is masked in the log; its base64 form is a new string, so it is masked too.
+          echo "::add-mask::$auth"
+          git -c http.extraheader="AUTHORIZATION: basic $auth" push origin "refs/tags/v$VERSION"
+          remote="$(git ls-remote origin "refs/tags/v$VERSION^{}" | cut -f1)"
+          [ "$remote" = "$SHA" ] || { echo "::error::pushed tag points to '${remote}', expected $SHA"; exit 1; }
+          echo "v$VERSION pushed; the Release workflow starts from it: https://github.com/${GITHUB_REPOSITORY}/actions/workflows/release.yml"

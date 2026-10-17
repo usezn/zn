@@ -54,7 +54,7 @@ Example: [GHSA-rf3f-ppm5-3xrx](https://github.com/usezn/zn/security/advisories/G
 
 ## Verifying Releases
 
-Starting with the first release after 1.5.0-beta.1, the npm and PyPI packages are built and published by the [`Release` workflow](.github/workflows/release.yml) with trusted publishing; no long-lived publish tokens are used. 1.5.0-beta.1 and earlier versions were published by hand and have no signatures, attestations or provenance. Each GitHub Release from the workflow includes `SHA256SUMS` and Sigstore bundles, every file has a GitHub build provenance attestation, and npm and PyPI show provenance for each version. Step-by-step checks: [docs/verify-release.md](docs/verify-release.md).
+Starting with the first release after 1.5.0-beta.1, the npm and PyPI packages are built and published by the [`Release` workflow](.github/workflows/release.yml) with trusted publishing; no long-lived publish tokens are used. 1.5.0-beta.1 and earlier versions were published by hand and have no signatures, attestations or provenance. Each GitHub Release from the workflow includes `SHA256SUMS` and Sigstore bundles, every file has a GitHub build provenance attestation (SLSA Build Level 3 from 1.12.0 on: built and signed by the reusable `build-release.yml` workflow), and npm and PyPI show provenance for each version. Step-by-step checks: [docs/verify-release.md](docs/verify-release.md).
 
 ---
 

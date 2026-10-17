@@ -1,5 +1,5 @@
 # Hash-pinned tools for building the Python release (used by
-# .github/workflows/release.yml with pip --require-hashes and
+# .github/workflows/build-release.yml with pip --require-hashes and
 # python -m build --no-isolation).
 #
 # Not managed by Dependabot (.github/dependabot.yml has no entry for this
