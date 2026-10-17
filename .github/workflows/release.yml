@@ -181,7 +181,8 @@ jobs:
       attestations: write
     uses: ./.github/workflows/build-release.yml
     with:
-      sha: ${{ needs.verify.outputs.sha }}
+      tag: ${{ needs.verify.outputs.tag }}
+      expected_sha: ${{ needs.verify.outputs.sha }}
       npm_version: ${{ needs.verify.outputs.npm_version }}
       py_version: ${{ needs.verify.outputs.py_version }}
       dry_run: ${{ needs.verify.outputs.dry_run == 'true' }}
