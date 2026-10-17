@@ -95,11 +95,17 @@ const CONTEXT_RES = [
   new RegExp('(\\bbearer\\s{1,8})([A-Za-z0-9._~+/=-]{8,})', 'gi'),
   // The flag and its value as two items of a JSON or TOML array (MCP server args): "--api-key", "v" (also
   // escaped, single-quoted, or with the value on the next line).
-  new RegExp(String.raw`(\\?["']--?[A-Za-z0-9-]{0,40}(?:` + SECRET_WORD + String.raw`|pat|key)(?![a-z])[A-Za-z0-9-]{0,40}\\?["']\s{0,8},\s{0,64})(` + QUOTED + ')', 'gi'),
+  new RegExp(String.raw`(\\{0,3}["']--?[A-Za-z0-9-]{0,40}(?:` + SECRET_WORD + String.raw`|pat|key)(?![a-z])[A-Za-z0-9-]{0,40}\\{0,3}["']\s{0,8},\s{0,64})(` + String.raw`\\{2,3}"[^"\\\n]+(?:\\{1,3}")?|` + QUOTED + ')', 'gi'),
   new RegExp('(\\b[A-Za-z0-9_]{0,60}' + SECRET_WORD + '(?![A-Za-z0-9])\\\\?["\']?\\s{0,8}[=:]\\s{0,8})(' + QUOTED + '|[^\\s"\'\\\\,;`]+)', 'gi'),
 ];
 // A line that ends with a quoted flag item and a comma: the value is on the next line.
-const FLAG_ITEM_END = new RegExp(String.raw`\\?["']--?[A-Za-z0-9-]{0,40}(?:` + SECRET_WORD + String.raw`|pat|key)(?![a-z])[A-Za-z0-9-]{0,40}\\?["']\s{0,8},?\s{0,8}$`, 'i');
+// A comment (// or #) may follow it on the same line; group 1 is the flag item without that comment.
+const FLAG_ITEM_END = new RegExp(String.raw`(\\{0,3}["']--?[A-Za-z0-9-]{0,40}(?:` + SECRET_WORD + String.raw`|pat|key)(?![a-z])[A-Za-z0-9-]{0,40}\\{0,3}["']\s{0,8},?)\s{0,8}(?:(?:#|//)[^\n]{0,1024})?$`, 'i');
+const COMMENT_ONLY = /^\s*(?:#|\/\/|\/\*)/;
+// How many blank or comment-only lines may sit between a flag and its value, and how much of the flag line
+// (its end) is examined.
+const GAP_LINES = 8;
+const FLAG_LINE_TAIL = 512;
 function keepValue(v) {
   const t = v.replace(/^\\?["']|\\?["']$/g, '');
   return !t || /^(?:\$\{?[A-Za-z_]|%[A-Za-z_]|\[REDACTED|__ZN_|<)/.test(t);
@@ -148,14 +154,19 @@ class FileCtx {
     // Only the start of a long line is ever shown, so only that much is redacted (well past what is shown).
     if (!this.redacted.has(ln)) {
       const cur = redactSpan(this.lines[ln - 1] || '');
-      // A pretty-printed array puts a credential flag and its value on two lines: when the closest line
-      // above ends with a quoted flag item, redact both together and keep the second.
-      let prev = '';
-      for (let i = ln - 2; i >= Math.max(0, ln - 4); i--) {
-        if (this.lines[i].trim()) { prev = this.lines[i]; break; }
+      // A pretty-printed array puts a credential flag and its value on two lines, maybe with blank or comment
+      // lines between: when the closest code line above ends with a quoted flag item (and maybe a comment),
+      // redact both together and keep the second.
+      let flag = null;
+      for (let i = ln - 2, n = 0; i >= 0 && n < GAP_LINES + 1; i--, n++) {
+        const l = this.lines[i];
+        if (!l.trim() || COMMENT_ONLY.test(l)) continue;
+        const m = FLAG_ITEM_END.exec(l.length > FLAG_LINE_TAIL + 1024 ? l.slice(-(FLAG_LINE_TAIL + 1024)) : l);
+        if (m) flag = m[1].slice(-FLAG_LINE_TAIL);
+        break;
       }
-      if (prev && prev.length <= 512 && FLAG_ITEM_END.test(prev)) {
-        const joined = redact(prev + '\n' + cur);
+      if (flag) {
+        const joined = redact(flag + '\n' + cur);
         const at = joined.lastIndexOf('\n');
         this.redacted.set(ln, at >= 0 ? joined.slice(at + 1) : redact(cur));
       } else {
