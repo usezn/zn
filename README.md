@@ -39,7 +39,14 @@
 
 ## Install
 
-Everything runs on your machine; no account or API key is needed. You need Node.js 18 or later (the LTS version from [nodejs.org](https://nodejs.org/)). With an older Node.js, the `zn-gate` and `zn` commands stop and say how to install it.
+Everything runs on your machine; no account or API key is needed. You need Node.js 18 or later (the LTS version from [nodejs.org](https://nodejs.org/)). With an older Node.js, the `zn-gate` and `zn` commands stop and say how to install it. The Claude Code plugin needs Node.js 20.12 or later.
+
+**Getting started: four steps, one command each.** Run them in your own terminal.
+
+1. `npx -y zn-gate reach` shows what your coding agents can reach on this machine: secrets in your `.env` files (by name only), credential files and MCP servers. It is read only and sends nothing. Details in [docs/reach.md](docs/reach.md).
+2. `npx -y zn-gate init` sets up protection for the coding agents it finds, one step at a time, and asks before each change.
+3. `npx -y zn-gate check` tests that protection with a fake secret in a temporary folder. `init` runs it at the end too.
+4. `npx -y zn-gate env shadow .env` moves the real values of your `.env` into the local vault and leaves markers in the file. The first time, run `npx -y zn-gate unlock` to create the vault.
 
 **One command for the coding agents on your machine:**
 
@@ -150,7 +157,7 @@ Python equivalent:
 
 Where zn-gate sits in a tool call, as an MCP server or as the `shield` proxy around other servers:
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/tool-call-sequence-dark.svg"><img alt="Sequence diagram. The agent sends analyze_prompt to zn-gate on your machine, which allows or blocks it. Then check_tool_call, which allows the call with secrets masked or blocks it. The agent runs the tool. The output comes back through check_tool_result or shield, and zn-gate returns it with secrets redacted, or neutralized if it carries an injection." src="docs/diagrams/tool-call-sequence-light.svg" width="800"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/tool-call-sequence-animated-dark.svg"><img alt="Sequence diagram. The agent sends analyze_prompt to zn-gate on your machine, which allows or blocks it. Then check_tool_call, which allows the call with secrets masked or blocks it. The agent runs the tool. The output comes back through check_tool_result or shield, and zn-gate returns it with secrets redacted, or neutralized if it carries an injection." src="docs/diagrams/tool-call-sequence-animated-light.svg" width="800"></picture>
 
 ### Scrubber: secrets stay out of the model's context
 - **Today, through zn-gate:** redacts AWS keys, OpenAI and Anthropic keys, GitHub tokens, JWTs, private keys and database URL passwords in everything that passes through zn-gate: tool output checked with `check_tool_result`, tool arguments checked with `check_tool_call`, and output of MCP servers wrapped by `zn-gate shield` / `init`. Python: `sanitize_tool_result`, `@guard(mask_secrets=True)` and the framework integrations.
@@ -179,7 +186,7 @@ By default nothing is sent. If you set `ZN_CLOUD=1` and an API key (or the API k
 
 **Nothing, by default.**
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/data-flow-dark.svg"><img alt="Flow diagram. The agent, zn-gate and the tools or MCP servers run on your machine, and tool calls and prompts go through zn-gate. Tool output comes back redacted. Nothing leaves the machine by default. Only with ZN_CLOUD=1 and ZN_API_KEY set (or the Claude Code plugin's API key option), prompts with detected secrets removed go to api.usezn.com, the Galvanize 2 classifier." src="docs/diagrams/data-flow-light.svg" width="800"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/data-flow-animated-dark.svg"><img alt="Flow diagram. The agent, zn-gate and the tools or MCP servers run on your machine, and tool calls and prompts go through zn-gate. Tool output comes back redacted. Nothing leaves the machine by default. Only with ZN_CLOUD=1 and ZN_API_KEY set (or the Claude Code plugin's API key option), prompts with detected secrets removed go to api.usezn.com, the Galvanize 2 classifier." src="docs/diagrams/data-flow-animated-light.svg" width="800"></picture>
 
 | Data | Evaluated | Sent anywhere? |
 |---|---|---|
@@ -354,6 +361,12 @@ Permissions: the action itself needs only `contents: read`; add `security-events
 Report vulnerabilities to [security@usezn.com](mailto:security@usezn.com). Policy, scope and safe harbor: [SECURITY.md](SECURITY.md). Hall of Fame: [usezn.com/security](https://usezn.com/security/).
 
 Releases published by the release workflow, starting with the first one after 1.5.0-beta.1, are signed and carry build provenance. 1.5.0-beta.1 and earlier versions were published by hand and have no signatures or provenance. To check a download: [docs/verify-release.md](docs/verify-release.md).
+
+## Community and support
+
+- **[Discussions](https://github.com/usezn/zn/discussions)**: questions about setup and use, ideas, and show and tell. Start here if you are not sure where your question belongs.
+- **[Issues](https://github.com/usezn/zn/issues)**: reproducible bugs and concrete feature requests.
+- **Security vulnerabilities**: do not post them in Discussions or Issues. Report them privately as described in [SECURITY.md](SECURITY.md).
 
 ## Contributing
 

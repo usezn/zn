@@ -1,0 +1,227 @@
+name: Build release
+
+# Reusable workflow called only by release.yml: builds the npm tarball and the
+# Python sdist and wheel once, then (after approval on the "release"
+# environment, never in a dry run) attests and signs them. Building and
+# attesting in a reusable workflow keeps those steps out of reach of the
+# calling workflow, which makes the build provenance SLSA Build Level 3: the
+# attestations name this file as their signer workflow.
+#
+# How to verify a release: docs/verify-release.md
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: "Release tag to build; its commit is resolved and checked here again"
+        required: true
+        type: string
+      expected_sha:
+        description: "Commit the caller verified for the tag: only compared, never checked out"
+        required: true
+        type: string
+      npm_version:
+        required: true
+        type: string
+      py_version:
+        required: true
+        type: string
+      dry_run:
+        description: "Build only: nothing is attested or signed"
+        required: true
+        type: boolean
+
+permissions: {}
+
+env:
+  ARTIFACT_NAME: zn-gate-release
+
+jobs:
+  # This workflow does not take a commit from its caller: it finds the commit of the tag itself and checks
+  # again that it is on main or a release/* branch. Nothing from the repository is run here.
+  resolve:
+    name: Resolve the commit of the tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.sha.outputs.sha }}
+    steps:
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          sparse-checkout: .github
+          persist-credentials: false
+      - name: Find the commit of the tag on main or a release branch
+        id: sha
+        env:
+          TAG: ${{ inputs.tag }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$' || { echo "::error::'$TAG' is not a release tag"; exit 1; }
+          git fetch --force --no-tags origin "refs/tags/$TAG:refs/tags/$TAG"
+          sha="$(git rev-parse "refs/tags/$TAG^{commit}")"
+          # The tag must still point to the commit the caller verified (and whose tag signature it checked).
+          [ "$sha" = "$EXPECTED_SHA" ] || { echo "::error::$TAG is now $sha, but the release verified $EXPECTED_SHA"; exit 1; }
+          if git for-each-ref --contains "$sha" --format='%(refname:short)' refs/remotes/origin | grep -Eq '^origin/(main|release/.+)$'; then
+            echo "$TAG is $sha, on main or a release branch"
+          else
+            echo "::error::$TAG ($sha) is not on main or a release/* branch"; exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build npm tarball and Python distributions
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
+      # Release tooling (tarball check, hash-pinned build tools) comes from the
+      # commit that defines this workflow run. For a tag push it is the tagged
+      # commit; for a dry run it is the dispatched branch.
+      - name: Check out the release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tools
+          sparse-checkout: .github
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.x
+          # No Actions cache in a release build: nothing it builds can be read from or written to a cache.
+          package-manager-cache: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Set a reproducible build timestamp
+        run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+      - name: Pack the npm tarball
+        working-directory: packages/zn-gate
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts
+          mkdir -p "$RUNNER_TEMP/release"
+          npm pack --ignore-scripts --json --pack-destination "$RUNNER_TEMP/release" > "$RUNNER_TEMP/pack.json"
+      - name: Check tarball contents
+        run: node .release-tools/.github/scripts/check-npm-pack.js "$RUNNER_TEMP/pack.json" packages/zn-gate
+      - name: Install hash-pinned Python build tools
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/build-venv"
+          "$RUNNER_TEMP/build-venv/bin/python" -m pip install --disable-pip-version-check --no-cache-dir \
+            --require-hashes -r .release-tools/.github/release-requirements.txt
+      - name: Build the sdist and wheel
+        run: |
+          set -euo pipefail
+          # --no-isolation: build with the hash-pinned setuptools from the
+          # venv instead of resolving the build backend again from PyPI.
+          "$RUNNER_TEMP/build-venv/bin/python" -m build --no-isolation packages/zn-gate-py --outdir "$RUNNER_TEMP/release"
+          # setuptools stamps the files it generates with the build time: fix the times, owners, order
+          # and gzip header of the sdist, then build once more and require the same bytes.
+          "$RUNNER_TEMP/build-venv/bin/python" -I .release-tools/.github/scripts/normalize-sdist.py "$RUNNER_TEMP"/release/*.tar.gz
+          "$RUNNER_TEMP/build-venv/bin/python" -m build --no-isolation packages/zn-gate-py --outdir "$RUNNER_TEMP/rebuild"
+          "$RUNNER_TEMP/build-venv/bin/python" -I .release-tools/.github/scripts/normalize-sdist.py "$RUNNER_TEMP"/rebuild/*.tar.gz
+          (cd "$RUNNER_TEMP/release" && sha256sum zn_gate-*) > "$RUNNER_TEMP/release.sum"
+          (cd "$RUNNER_TEMP/rebuild" && sha256sum zn_gate-*) > "$RUNNER_TEMP/rebuild.sum"
+          diff "$RUNNER_TEMP/release.sum" "$RUNNER_TEMP/rebuild.sum" || { echo "::error::the Python sdist or wheel differs between two builds of the same commit"; exit 1; }
+          rm -rf "$RUNNER_TEMP/rebuild"
+          "$RUNNER_TEMP/build-venv/bin/python" -m twine check --strict "$RUNNER_TEMP"/release/*.whl "$RUNNER_TEMP"/release/*.tar.gz
+      - name: Check file names and write SHA256SUMS
+        working-directory: ${{ runner.temp }}/release
+        env:
+          NPM_VERSION: ${{ inputs.npm_version }}
+          PY_VERSION: ${{ inputs.py_version }}
+        run: |
+          set -euo pipefail
+          expected="zn-gate-${NPM_VERSION}.tgz zn_gate-${PY_VERSION}.tar.gz zn_gate-${PY_VERSION}-py3-none-any.whl"
+          for f in $expected; do
+            [ -f "$f" ] || { echo "::error::missing $f"; ls -l; exit 1; }
+          done
+          count="$(find . -maxdepth 1 -type f | wc -l)"
+          [ "$count" -eq 3 ] || { echo "::error::expected 3 files, found $count"; ls -l; exit 1; }
+          # shellcheck disable=SC2086
+          sha256sum $expected > SHA256SUMS
+          cat SHA256SUMS
+      - name: Upload unsigned build
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ env.ARTIFACT_NAME }}-unsigned
+          path: ${{ runner.temp }}/release/
+          if-no-files-found: error
+          retention-days: 7
+
+  sign:
+    name: Attest and sign
+    needs: build
+    # Nothing is signed or attested before the maintainer approves the release
+    # environment, and never in a dry run.
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: release
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download the build
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ env.ARTIFACT_NAME }}-unsigned
+          path: release
+      - name: Check SHA256SUMS
+        working-directory: release
+        run: sha256sum --strict -c SHA256SUMS
+      - name: GitHub artifact attestations (build provenance)
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            release/*.tgz
+            release/*.whl
+            release/*.tar.gz
+            release/SHA256SUMS
+      # In a called workflow the signing identity is this file at the ref of the
+      # run (the tag), not the calling release.yml.
+      - name: Sigstore signatures
+        uses: sigstore/gh-action-sigstore-python@790bc6befb9d733738f18d8f895854b453640ec9 # v3.5.0
+        with:
+          inputs: >-
+            release/*.tgz
+            release/*.whl
+            release/*.tar.gz
+            release/SHA256SUMS
+          verify: true
+          verify-cert-identity: https://github.com/${{ github.repository }}/.github/workflows/build-release.yml@${{ github.ref }}
+          verify-oidc-issuer: https://token.actions.githubusercontent.com
+          upload-signing-artifacts: false
+          release-signing-artifacts: false
+      - name: List signed files
+        run: ls -l release
+      - name: Upload signed release files
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: release/
+          if-no-files-found: error
+          retention-days: 30

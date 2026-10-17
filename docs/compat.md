@@ -2,7 +2,7 @@
 
 What the secrets scrubber and broker can do in each agent. It depends on what
 each agent's hooks allow; formats were checked against each agent's official
-documentation on 2026-10-11. End-to-end evidence is in [`bench/e2e/`](../bench/e2e/).
+documentation on 2026-10-11 (Cursor again on 2026-10-17). End-to-end evidence is in [`bench/e2e/`](../bench/e2e/).
 
 | | Claude Code | Codex CLI | Cursor (IDE) | OpenCode |
 |---|---|---|---|---|
@@ -10,14 +10,20 @@ documentation on 2026-10-11. End-to-end evidence is in [`bench/e2e/`](../bench/e
 | Mechanism | Hooks (`settings.json`) | Hooks (`hooks.json`) | Hooks (`hooks.json`) | Plugin (`plugins/zn-gate.js`) |
 | Block reads of `.env` with values, credential files, `~/.zn` | Yes (Read, Grep, LSP, shell) | Yes (shell, `apply_patch` into `~/.zn`) | Yes (file reads, shell) | Yes (all tools) |
 | Block writes to `~/.zn` and to the agents' hook and plugin configuration | Yes (Write, Edit, shell) | Yes (`apply_patch`, checked file by file; shell) | **Best effort**: Write, Delete and Grep through `preToolUse`; shell through `beforeShellExecution` | Yes (write, edit, `apply_patch`, shell) |
-| Scrub tool output before the model sees it | **Yes, every tool** (Bash, PowerShell, Read, Grep, LSP, WebFetch, MCP, MCP resources; Monitor through a streaming filter) | **Yes, lossy**: the result is replaced by its scrubbed text | **MCP output only**; shell and file output cannot be rewritten | **Yes, every tool** (and the TUI preview) |
+| Scrub tool output before the model sees it | **Yes, every tool** (Bash, PowerShell, Read, Grep, LSP, WebFetch, MCP, MCP resources; Monitor through a streaming filter) | **Yes, lossy**: the result is replaced by its scrubbed text (Codex has no field that rewrites a result: `updatedMCPToolOutput` is listed as not supported; checked 2026-10-17) | **MCP output only**; shell and file output cannot be rewritten | **Yes, every tool** (and the TUI preview) |
 | Block a pasted secret in the prompt | Yes | Yes | Yes | Yes (OpenCode shows it as an error) |
+| Settings that turn zn's hooks off with no sign in the agent | `disableAllHooks` (yours or your organization's), and `allowManagedHooksOnly` in managed settings. `zn-gate check` and `zn hooks install` say so | `[features] hooks = false` (in your organization's `requirements.toml` or `managed_config.toml`, or in your `config.toml`), and `allow_managed_hooks_only` in `requirements.toml`. `zn-gate check` and `zn hooks install` say so | None in Cursor's documentation (checked 2026-10-17) | None in OpenCode's documentation (checked 2026-10-17) |
 | If the zn hook cannot run (missing `node`, crash, timeout) | Tool calls run unchecked; errors inside zn deny the call or withhold the output. Prompts are blocked (`onFailure`, Claude Code 2.1.295 and later) | Codex does not document blocking here: the hook is reported as failed and calls and prompts run | Reads and prompts are blocked (`failClosed`); other events run unchecked | Calls and messages are blocked |
 | Commands with `__ZN_<NAME>__`: through `zn run` | Rewritten automatically, shown to you for confirmation | The agent is told the exact `zn run -- …` line to use | The agent is told the exact `zn run -- …` line to use; Cursor asks you once wrapped | Rewritten automatically; OpenCode's own permission rules apply |
 | Restore detected tokens into local commands and git-ignored files | Yes, shown in the confirmation dialog | No (tokens stay) | No (tokens stay) | No (tokens stay) |
 | `secrets` MCP server | Yes (registered on install) | Yes (snippet printed) | Yes (snippet printed) | Yes (snippet printed) |
-| Windows | Yes, including the PowerShell tool | The hook command was run by hand from PowerShell and from cmd.exe (not in CI) | Not tested | Not tested (wrapping is written for bash) |
+| Windows | Yes, including the PowerShell tool (Claude Code 2.1.299 or later: before it, without Git for Windows, `PreToolUse` let calls through when it could not run) | The hook command was run by hand from PowerShell and from cmd.exe (not in CI) | Not tested | Not tested (wrapping is written for bash) |
 | End-to-end run, 0 values sent to the provider | **Yes** | **Yes** | Not run (no CLI with hooks to drive) | **Yes** |
+
+zn's two MCP servers (`zn mcp` and the `secrets` server) speak MCP protocol version `2024-11-05` and answer
+with it whatever version the client asks for, as the protocol allows; the client then uses that version.
+Checked on 2026-10-17 with Claude Code 2.1.302 (`claude mcp list`: both connected) and with the official
+TypeScript MCP SDK client whose newest version is `2025-11-25` (both servers connect and list their tools).
 
 In every agent, a shell command longer than 100 KB (counted in characters; this
 includes PowerShell and Claude Code's Monitor tool) is blocked, because zn
@@ -55,6 +61,7 @@ limit applies to a patch (`apply_patch`) in Codex and OpenCode.
     message names the file when the patch writes to one such as `.env`. Known difference:
     the `apply_patch` tool may edit `.env` (writes are checked only for `~/.zn` and agent
     settings), while any patch sent as a shell command is refused.
+- **Settings that turn hooks off.** zn reads the settings files only: the managed settings of Claude Code (`managed-settings.json` and `managed-settings.d/` in `/etc/claude-code`, `/Library/Application Support/ClaudeCode` or `C:\Program Files\ClaudeCode`) and of Codex (`requirements.toml` and `managed_config.toml` in `/etc/codex`, or `requirements.toml` in `%ProgramData%\OpenAI\Codex` and `managed_config.toml` in your Codex folder on Windows), and your own settings. A policy sent through MDM or the agent's cloud is not seen. When such a setting stops every hook, zn's start-of-session hook does not run either, so `zn-gate check` is where you see it.
 - **Cursor** (best effort: its hook documentation leaves the input of some
   tools open, and zn fails closed where it cannot read a path):
   - `beforeReadFile` can only allow or deny. zn sets `failClosed: true` on it
@@ -80,7 +87,12 @@ limit applies to a patch (`apply_patch`) in Codex and OpenCode.
     skip Cursor's own confirmations. A Grep without a `path` searches the whole
     workspace, so files that zn would shadow or refuse can be found that way;
     zn does not filter those results.
-  - `postToolUse` can only replace the output of MCP tools.
+  - `postToolUse` can only replace the output of MCP tools. Checked again on
+    2026-10-17: no Cursor hook can change shell or file output before the model
+    sees it. `afterShellExecution` receives the output but returns nothing,
+    there is no hook after a file read (`beforeReadFile` can only allow or deny),
+    and `additional_context` from `postToolUse` is added after a result instead
+    of replacing it.
   - `preToolUse` rewrites only together with `allow`, and does not enforce `ask`.
   - Not covered: a secret written inside inline code (for example
     `python -c "open(...)"`) is checked only where zn can read the path as a word.

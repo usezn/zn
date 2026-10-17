@@ -18,9 +18,23 @@ Each release has:
 | `SHA256SUMS` | SHA-256 checksums of the three files above |
 | `<file>.sigstore.json` | Sigstore bundle (signature, certificate and transparency log proof) for each file, including `SHA256SUMS` |
 
-Every file also has a GitHub artifact attestation (SLSA build provenance, Build Level 2: built on a GitHub-hosted runner),
+Every file also has a GitHub artifact attestation (SLSA build provenance),
 npm shows a provenance statement for the package, and PyPI stores an
 attestation for each Python file.
+
+From 1.12.0 on, the files are built, attested and signed by a separate
+reusable workflow, [`build-release.yml`](../.github/workflows/build-release.yml),
+whose build and signing jobs `release.yml` calls but cannot reach. That makes
+the build provenance SLSA Build Level 3, and `build-release.yml` is the signer
+in steps 2 and 3. Releases up to 1.11.x were built and signed by `release.yml`
+itself (SLSA Build Level 2: built on a GitHub-hosted runner). The npm
+provenance (step 4) and the PyPI attestations (step 5) are made when the files
+are published, so for every version they name `release.yml` at the tag.
+
+| Version | Signer workflow |
+| --- | --- |
+| 1.12.0 and later | `usezn/zn/.github/workflows/build-release.yml` |
+| 1.5.0-beta.2 to 1.11.x | `usezn/zn/.github/workflows/release.yml` |
 
 Python versions use the PEP 440 spelling of the npm version: `1.5.0` is
 `1.5.0` on both, and `1.5.0-beta.2` on npm is `1.5.0b2` on PyPI.
@@ -45,8 +59,8 @@ A prerelease never moves `latest`. `npm install zn-gate` installs the latest
 final release; use `npm install zn-gate@beta` (or `@next`, `@alpha`) to opt in
 to a prerelease.
 
-In the examples below, replace `v1.5.0` / `1.5.0` with the version you are
-checking.
+In the examples below, replace `v1.12.0` / `1.12.0` with the version you are
+checking, and `build-release.yml` with `release.yml` for a version up to 1.11.x.
 
 ## 1. Checksums
 
@@ -66,20 +80,21 @@ Checksums only prove the files match `SHA256SUMS`. Check the signature on
 With the [GitHub CLI](https://cli.github.com/) 2.49 or later:
 
 ```sh
-gh attestation verify zn-gate-1.5.0.tgz \
+gh attestation verify zn-gate-1.12.0.tgz \
   --repo usezn/zn \
-  --signer-workflow usezn/zn/.github/workflows/release.yml \
-  --source-ref refs/tags/v1.5.0
+  --signer-workflow usezn/zn/.github/workflows/build-release.yml \
+  --source-ref refs/tags/v1.12.0
 ```
 
-Run it for each file. It checks that the file was built by the `Release`
-workflow of `usezn/zn` from that tag.
+Run it for each file. It checks that the file was built by the release
+workflows of `usezn/zn` from that tag.
 
 ## 3. Sigstore signatures
 
-The signing identity is the release workflow at the tag:
+The signing identity is the signer workflow at the tag:
 
-- identity: `https://github.com/usezn/zn/.github/workflows/release.yml@refs/tags/v1.5.0`
+- identity: `https://github.com/usezn/zn/.github/workflows/build-release.yml@refs/tags/v1.12.0`
+  (up to 1.11.x: `https://github.com/usezn/zn/.github/workflows/release.yml@refs/tags/v1.11.0`)
 - issuer: `https://token.actions.githubusercontent.com`
 
 With [sigstore-python](https://github.com/sigstore/sigstore-python):
@@ -88,7 +103,7 @@ With [sigstore-python](https://github.com/sigstore/sigstore-python):
 python -m pip install sigstore
 python -m sigstore verify identity \
   --bundle SHA256SUMS.sigstore.json \
-  --cert-identity https://github.com/usezn/zn/.github/workflows/release.yml@refs/tags/v1.5.0 \
+  --cert-identity https://github.com/usezn/zn/.github/workflows/build-release.yml@refs/tags/v1.12.0 \
   --cert-oidc-issuer https://token.actions.githubusercontent.com \
   SHA256SUMS
 ```
@@ -100,7 +115,7 @@ does not need `--new-bundle-format`):
 cosign verify-blob SHA256SUMS \
   --bundle SHA256SUMS.sigstore.json \
   --new-bundle-format \
-  --certificate-identity https://github.com/usezn/zn/.github/workflows/release.yml@refs/tags/v1.5.0 \
+  --certificate-identity https://github.com/usezn/zn/.github/workflows/build-release.yml@refs/tags/v1.12.0 \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
@@ -138,6 +153,24 @@ pypi-attestations verify pypi \
   --repository https://github.com/usezn/zn \
   pypi:zn_gate-1.5.0-py3-none-any.whl
 ```
+
+## 6. The release tag
+
+From 1.12.0 on, the tag `vX.Y.Z` is created and signed by the
+[`Tag release` workflow](../.github/workflows/tag-release.yml) with
+[gitsign](https://github.com/sigstore/gitsign) (Sigstore keyless signing): the
+signature names that workflow, not a person, and the Release workflow refuses
+to publish a tag of such a commit without that signature. With gitsign 0.17
+or later, in a clone of this repository:
+
+```sh
+git fetch origin tag v1.12.0
+gitsign verify-tag v1.12.0 \
+  --certificate-identity https://github.com/usezn/zn/.github/workflows/tag-release.yml@refs/heads/main \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+Tags up to 1.11.x are not signed.
 
 ## If something does not match
 

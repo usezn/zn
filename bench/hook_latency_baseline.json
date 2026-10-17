@@ -1,0 +1,88 @@
+{
+  "_comment": "p95 of each hook case divided by the p50 start-up of a bare node in the same run (bench/hook_latency_matrix.js). Update with: node bench/hook_latency_gate.js report.json --update-baseline",
+  "meta": {
+    "date": "2026-10-17",
+    "node": "v22.23.3",
+    "platform": "linux 6.17.0-1022-azure",
+    "cpu": "AMD EPYC 7763 64-Core Processor x4",
+    "runs": 40,
+    "bareNodeP50": 25
+  },
+  "results": [
+    {
+      "agent": "claude-code",
+      "case": "PreToolUse Bash",
+      "ratio": 2.188
+    },
+    {
+      "agent": "codex",
+      "case": "PreToolUse Bash",
+      "ratio": 2.152
+    },
+    {
+      "agent": "cursor",
+      "case": "beforeShellExecution",
+      "ratio": 2.344
+    },
+    {
+      "agent": "claude-code",
+      "case": "PostToolUse Bash 1 KB",
+      "ratio": 2.6
+    },
+    {
+      "agent": "codex",
+      "case": "PostToolUse Bash 1 KB",
+      "ratio": 2.612
+    },
+    {
+      "agent": "cursor",
+      "case": "postToolUse MCP 1 KB",
+      "ratio": 2.56
+    },
+    {
+      "agent": "claude-code",
+      "case": "PostToolUse Bash 100 KB",
+      "ratio": 2.816
+    },
+    {
+      "agent": "codex",
+      "case": "PostToolUse Bash 100 KB",
+      "ratio": 2.752
+    },
+    {
+      "agent": "cursor",
+      "case": "postToolUse MCP 100 KB",
+      "ratio": 2.756
+    },
+    {
+      "agent": "claude-code",
+      "case": "PostToolUse Bash 100 KB with 2 secrets",
+      "ratio": 3.052
+    },
+    {
+      "agent": "codex",
+      "case": "PostToolUse Bash 100 KB with 2 secrets",
+      "ratio": 3.1
+    },
+    {
+      "agent": "cursor",
+      "case": "postToolUse MCP 100 KB with 2 secrets",
+      "ratio": 3.116
+    },
+    {
+      "agent": "claude-code",
+      "case": "PostToolUse Bash 1000 KB",
+      "ratio": 3.576
+    },
+    {
+      "agent": "codex",
+      "case": "PostToolUse Bash 1000 KB",
+      "ratio": 3.54
+    },
+    {
+      "agent": "cursor",
+      "case": "postToolUse MCP 1000 KB",
+      "ratio": 3.692
+    }
+  ]
+}

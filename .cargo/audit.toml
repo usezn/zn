@@ -14,12 +14,6 @@ ignore = [
     "RUSTSEC-2023-0071", # rsa 0.9.10: Marvin Attack; no patched release; RSA path unused
 
     # --- Unmaintained / unsound, transitive, no drop-in replacement available ---
-    # pqcrypto-* is zn's Dilithium (post-quantum signing) implementation;
-    # successor pqcrypto-mldsa is an API-breaking migration, tracked separately.
-    "RUSTSEC-2024-0380", # pqcrypto-dilithium replaced by pqcrypto-mldsa; deliberate pin for Dilithium signatures
-    "RUSTSEC-2026-0163", # pqcrypto-internals unmaintained (PQClean archived); required by pqcrypto-dilithium
-    "RUSTSEC-2026-0162", # pqcrypto-traits unmaintained (PQClean archived); required by pqcrypto-dilithium
-
     # paste is a proc-macro used at build time only; via gemm <- candle-core.
     "RUSTSEC-2024-0436", # paste unmaintained (proc-macro, build-time only)
 

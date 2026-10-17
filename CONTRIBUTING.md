@@ -66,6 +66,10 @@ When you change a layer:
 
 CI also runs the false-positive gate, `node bench/rules_fp_gate.js`. It counts the blocks over the benign corpus and over `packages/zn-gate/test/fixtures/benign_phrases.json`, and fails when the total, or the count for any rule, rises above `bench/rules_fp_baseline.json`. Lower counts pass with a warning that the baseline is stale. If your change must block more benign text, explain why in the pull request, then run `node bench/rules_fp_gate.js --update-baseline`. Changing the phrase list also changes the scanned count, so update the baseline in the same commit. Known false positives stay in the phrase list and in the baseline. The gate evaluates from an empty directory, so a local `.znrules` or `zn.config.json` cannot change its counts.
 
+## Questions and Ideas
+
+Ask questions and share ideas in [GitHub Discussions](https://github.com/usezn/zn/discussions) rather than in issues. Open an issue for a reproducible bug or a change you are ready to propose.
+
 ## Security Vulnerability Reporting
 
 If you find a security vulnerability, please do NOT open a public issue. Follow our [Security Policy](SECURITY.md) and report it to `security@usezn.com`.

@@ -7,8 +7,8 @@ Upgrade to it to receive them.
 
 | Version  | Supported          |
 | -------- | ------------------ |
-| 1.11.x   | :white_check_mark: |
-| < 1.11.0 | :x:                |
+| 1.12.x   | :white_check_mark: |
+| < 1.12.0 | :x:                |
 
 Prereleases (`-alpha`, `-beta`, `-rc`) are not supported once the final release is out.
 
@@ -54,7 +54,7 @@ Example: [GHSA-rf3f-ppm5-3xrx](https://github.com/usezn/zn/security/advisories/G
 
 ## Verifying Releases
 
-Starting with the first release after 1.5.0-beta.1, the npm and PyPI packages are built and published by the [`Release` workflow](.github/workflows/release.yml) with trusted publishing; no long-lived publish tokens are used. 1.5.0-beta.1 and earlier versions were published by hand and have no signatures, attestations or provenance. Each GitHub Release from the workflow includes `SHA256SUMS` and Sigstore bundles, every file has a GitHub build provenance attestation, and npm and PyPI show provenance for each version. Step-by-step checks: [docs/verify-release.md](docs/verify-release.md).
+Starting with the first release after 1.5.0-beta.1, the npm and PyPI packages are built and published by the [`Release` workflow](.github/workflows/release.yml) with trusted publishing; no long-lived publish tokens are used. 1.5.0-beta.1 and earlier versions were published by hand and have no signatures, attestations or provenance. Each GitHub Release from the workflow includes `SHA256SUMS` and Sigstore bundles, every file has a GitHub build provenance attestation (SLSA Build Level 3 from 1.12.0 on: built and signed by the reusable `build-release.yml` workflow), and npm and PyPI show provenance for each version. Step-by-step checks: [docs/verify-release.md](docs/verify-release.md).
 
 ---
 
@@ -82,6 +82,7 @@ We gratefully acknowledge independent security researchers who have helped prote
 
 ## Security Advisories
 
+* [GHSA-rccq-h3xc-j9qj](https://github.com/usezn/zn/security/advisories/GHSA-rccq-h3xc-j9qj) — *zn-gate agent hooks for Node.js 1.5.0 to 1.11.0: a protected file reached indirectly, or a command too long or slow to check, could be read or run without being checked (fixed in 1.12.0)*
 * [GHSA-9v62-q43j-crjm](https://github.com/usezn/zn/security/advisories/GHSA-9v62-q43j-crjm) — *zn-gate agent hooks for Node.js 1.5.0-beta.1 to 1.8.0: a crafted `.env`, `.npmrc` or `.znrules` file could make the secret scrubber time out and let tool output through unscrubbed (fixed in 1.8.1)*
 * [GHSA-f927-55cp-x265](https://github.com/usezn/zn/security/advisories/GHSA-f927-55cp-x265) — *zn-gate agent hooks for Node.js 1.5.0-beta.1 to 1.8.0: a crafted Codex CLI patch could write to protected files without being checked (fixed in 1.8.1)*
 * [GHSA-2fg6-2frm-mr92](https://github.com/usezn/zn/security/advisories/GHSA-2fg6-2frm-mr92) — *zn-gate agent hooks for Node.js 1.5.0-beta.1 to 1.7.0: a slow path check on a crafted command word could let a protected read run unchecked (fixed in 1.7.1)*

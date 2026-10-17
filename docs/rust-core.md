@@ -21,6 +21,14 @@ A review of an older snapshot of this gateway found issues that only affect some
 
 Known limits that remain, because the gateway is not distributed: the OCR check of images uses a fixed list of phrases and recognises only `data:image/...;base64,` images; the audit vault, the consensus queue and the loop breaker have no size or age limit; a policy upload is written before it is verified; and the management API has no TLS of its own (it listens on `127.0.0.1`; outside loopback, put it behind a TLS proxy).
 
+## Post-quantum policy signatures
+
+A policy can carry a post-quantum signature next to its Ed25519 one (`.wasm.pqs`, base64). When `ZN_PQ_PUBLIC_KEY` is set (hex), that signature is required. From the release after 1.11.0 it is ML-DSA-65 (FIPS 204), verified with the RustCrypto `ml-dsa` crate. Sign the raw bytes of the `.wasm` file with pure ML-DSA-65 (not the pre-hash variant) and an empty context string, and write the signature as base64 to `.wasm.pqs`; a signature made with a context or a pre-hash does not verify. Earlier versions used Dilithium3 from the unmaintained PQClean bindings: a Dilithium3 key has the same size, but its signatures cannot be decoded as ML-DSA-65, so policies signed that way are refused until they are signed again with an ML-DSA-65 key.
+
+## Dependency advisories that cannot be fixed yet
+
+`cargo audit` ignores three advisories in `zip` 7.2.0 (RUSTSEC-2026-0367, RUSTSEC-2026-0368 and RUSTSEC-2026-0369); `.cargo/audit.toml` lists them with the reason. `zip` comes only through Candle (`candle-core`), and no Candle release accepts the fixed `zip` 9 yet: the latest, 0.11.0, needs `zip` 8. All three are in `extract()`, which unpacks an archive to disk. Candle only opens archives to read named entries from `.npz` and PyTorch `.pth` files, and the gateway loads neither kind. When a Candle release accepts `zip` 9, Candle and `zip` are updated and the three entries are removed.
+
 ## Management API authentication
 
 Send a key or token in `X-API-Key`, in `Authorization: Bearer <value>` (`Bearer` in any letter case), or (only on `/api/v1/events` and `/mcp/ws`, for SSE and WebSocket clients) in the `api_key` or `token` query parameter, percent-encoded. Prefer the headers: query strings can end up in proxy logs. The value is checked in this order:

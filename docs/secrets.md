@@ -65,7 +65,7 @@ zn hooks install claude-code     # or: codex, cursor, opencode
 ```
 
 From now on, every file read, command output and pasted prompt goes through the
-scrubber before it reaches the model. Known values, about 30 secret formats
+scrubber before it reaches the model. Known values, more than 60 secret formats
 (cloud keys, tokens, private keys, connection strings) and checksummed PII are
 replaced with tokens. Reads of `.env` files with real values, credential files
 (`~/.aws/credentials`, `~/.ssh/id_*`, `~/.npmrc`…) and zn's own `~/.zn` are

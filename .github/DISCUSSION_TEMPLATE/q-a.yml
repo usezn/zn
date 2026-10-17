@@ -1,0 +1,44 @@
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for asking. Please fill in the details below so others can help faster.
+  - type: input
+    id: version
+    attributes:
+      label: zn-gate version
+      placeholder: "for example 1.11.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Agent or client
+      options:
+        - Claude Code
+        - Codex CLI
+        - Cursor
+        - OpenCode
+        - Other MCP client
+        - Not applicable
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      description: What are you trying to do, and what have you already tried?
+    validations:
+      required: true

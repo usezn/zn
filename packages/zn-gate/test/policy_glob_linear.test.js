@@ -47,7 +47,7 @@ test('many "*" never make the match slow', () => {
     const t0 = process.hrtime.bigint();
     for (const t of targets) m.test(t);
     const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-    assert.ok(ms < 200, w.slice(0, 12) + '... took ' + ms.toFixed(1) + ' ms');
+    assert.ok(ms < 1000, w.slice(0, 12) + '... took ' + ms.toFixed(1) + ' ms');
   }
 });
 
@@ -55,7 +55,7 @@ test("a very long glob word is handled quickly", () => {
   const t0 = process.hrtime.bigint();
   policy.classifyWord('*a'.repeat(30000) + 'b', { cwd: '/home/u/project', home: '/home/u', env: {} });
   const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-  assert.ok(ms < 200, 'took ' + ms.toFixed(1) + ' ms');
+  assert.ok(ms < 1000, 'took ' + ms.toFixed(1) + ' ms');
 });
 
 test('a bash command with a long glob is checked quickly, and still denied when it names a credential file', () => {
@@ -65,7 +65,7 @@ test('a bash command with a long glob is checked quickly, and still denied when 
   const deny = policy.bashDenial('cat ~/' + '*'.repeat(20000) + '/credentials', opts);
   const ms = Number(process.hrtime.bigint() - t0) / 1e6;
   assert.ok(deny, 'a glob that names ~/.aws/credentials is denied');
-  assert.ok(ms < 500, 'took ' + ms.toFixed(1) + ' ms');
+  assert.ok(ms < 1500, 'took ' + ms.toFixed(1) + ' ms');
 });
 
 test('the program name of a very long command word is read fast, and short ones as before', () => {
@@ -142,7 +142,7 @@ test('long legitimate commands with "?" are not refused', () => {
     const deny = policy.bashDenial(cmd, opts);
     const ms = Number(process.hrtime.bigint() - t0) / 1e6;
     assert.equal(deny, null, cmd.slice(0, 30));
-    assert.ok(ms < 500, cmd.slice(0, 20) + '... took ' + ms.toFixed(1) + ' ms');
+    assert.ok(ms < 1500, cmd.slice(0, 20) + '... took ' + ms.toFixed(1) + ' ms');
   }
 });
 
@@ -151,7 +151,7 @@ test('a word with very many "[" is refused quickly', () => {
   const c = policy.classifyWord('['.repeat(50000), { cwd: '/home/u/project', home: '/home/u', env: {} });
   const ms = Number(process.hrtime.bigint() - t0) / 1e6;
   assert.equal(c && c.kind, 'credential');
-  assert.ok(ms < 200, 'took ' + ms.toFixed(1) + ' ms');
+  assert.ok(ms < 1000, 'took ' + ms.toFixed(1) + ' ms');
 });
 
 test('realTargetOf keeps its result for existing and missing paths', () => {

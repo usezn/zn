@@ -1,0 +1,80 @@
+name: Hook latency
+
+# How long an agent waits for zn's hook on each tool call, by agent, event and output size
+# (bench/hook_latency_matrix.js), with a budget: a case whose p95, relative to Node's own start-up in the
+# same run, is more than 20 % above bench/hook_latency_baseline.json fails. Runs when the hook code or the
+# benchmark changes. The report is kept as an artifact for 30 days.
+on:
+  push:
+    branches: [ main, next ]
+    paths:
+      - 'packages/zn-gate/lib/**'
+      - 'packages/zn-gate/bin/**'
+      - 'packages/zn-gate/package.json'
+      - 'packages/zn-gate/package-lock.json'
+      - 'packages/zn-gate/test/fixtures/fake_secrets*'
+      - 'bench/hook_latency*'
+      - '.github/workflows/hook-latency.yml'
+  pull_request:
+    branches: [ next, main, 'release/**' ]
+    # ready_for_review: a draft that is marked ready runs the budget without another push.
+    types: [ opened, synchronize, reopened, ready_for_review ]
+    paths:
+      - 'packages/zn-gate/lib/**'
+      - 'packages/zn-gate/bin/**'
+      - 'packages/zn-gate/package.json'
+      - 'packages/zn-gate/package-lock.json'
+      - 'packages/zn-gate/test/fixtures/fake_secrets*'
+      - 'bench/hook_latency*'
+      - '.github/workflows/hook-latency.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hook-latency-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  latency:
+    name: Hook latency budget
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.x
+          package-manager-cache: false
+      - name: Install
+        working-directory: packages/zn-gate
+        run: npm ci --ignore-scripts
+      - name: Budget check tests
+        run: node --test bench/hook_latency_gate.test.js
+      - name: Measure and check the budget
+        run: |
+          set -euo pipefail
+          args=(--runs 40 --json "$RUNNER_TEMP/hook_latency.json")
+          # Without the baseline there is no budget to check, so the run fails instead of only reporting.
+          if [ ! -f bench/hook_latency_baseline.json ]; then echo "::error::bench/hook_latency_baseline.json is missing; restore it or create it with --update-baseline"; exit 1; fi
+          args+=(--baseline bench/hook_latency_baseline.json)
+          node bench/hook_latency_matrix.js "${args[@]}" | tee "$RUNNER_TEMP/hook_latency.md"
+      - name: Summary
+        if: always()
+        run: '[ -f "$RUNNER_TEMP/hook_latency.md" ] && cat "$RUNNER_TEMP/hook_latency.md" >> "$GITHUB_STEP_SUMMARY" || true'
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hook-latency
+          path: ${{ runner.temp }}/hook_latency.json
+          if-no-files-found: ignore
+          retention-days: 30
