@@ -8,8 +8,8 @@ name: Release
 #   build-release.yml, then wait for approval on the "release" environment
 #   before anything is signed, attested or published (signing, the two publish
 #   jobs and the GitHub Release each ask for that approval).
-# - workflow_dispatch: dry run for an existing tag. It verifies and builds,
-#   uploads the unsigned workflow artifact and stops. It never signs or publishes.
+# The dry run for an existing tag is a separate workflow, release-dry-run.yml:
+# it builds without signing or publishing and uses no Actions cache.
 #
 # From 1.12.0 on (and for any commit that has tag-release.yml), a tag is
 # released only with a valid signature from tag-release.yml, which creates,
@@ -23,12 +23,6 @@ on:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
       - "v[0-9]+.[0-9]+.[0-9]+-*"
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "Existing tag to build (dry run, nothing is signed or published), e.g. v1.5.0"
-        required: true
-        type: string
 
 env:
   ARTIFACT_NAME: zn-gate-release
@@ -38,7 +32,7 @@ env:
 permissions: {}
 
 concurrency:
-  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  group: release-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -54,7 +48,6 @@ jobs:
       npm_version: ${{ steps.meta.outputs.npm_version }}
       py_version: ${{ steps.meta.outputs.py_version }}
       prerelease: ${{ steps.meta.outputs.prerelease }}
-      dry_run: ${{ steps.meta.outputs.dry_run }}
     steps:
       - name: Harden the runner (egress audit)
         if: runner.os == 'Linux'
@@ -64,7 +57,7 @@ jobs:
       - name: Check the tag name
         id: tag
         env:
-          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          TAG: ${{ github.ref_name }}
         run: |
           if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$'; then
             echo "::error::Tag '$TAG' is not vX.Y.Z or vX.Y.Z-(alpha|beta|rc).N"
@@ -80,7 +73,6 @@ jobs:
         id: meta
         env:
           TAG: ${{ steps.tag.outputs.tag }}
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
           set -euo pipefail
           tag_version="${TAG#v}"
@@ -139,9 +131,8 @@ jobs:
             echo "npm_version=$npm_version"
             echo "py_version=$py_version"
             echo "prerelease=$prerelease"
-            echo "dry_run=$DRY_RUN"
           } >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG sha=$sha npm=$npm_version pypi=$py_version prerelease=$prerelease dry_run=$DRY_RUN"
+          echo "tag=$TAG sha=$sha npm=$npm_version pypi=$py_version prerelease=$prerelease"
       # From 1.12.0 on, and for any commit that has tag-release.yml, a release comes only from a tag that
       # workflow signed: a tag pushed by hand, or by anyone else, is refused before anything is built.
       # The version rule holds even for a release commit from which tag-release.yml was removed.
@@ -171,7 +162,7 @@ jobs:
 
   # Build, attestations and signatures run in a reusable workflow, out of reach
   # of this one (SLSA Build Level 3). Its signing job waits for approval on the
-  # "release" environment and is skipped in a dry run.
+  # "release" environment.
   build:
     name: Build, attest and sign
     needs: verify
@@ -185,12 +176,10 @@ jobs:
       expected_sha: ${{ needs.verify.outputs.sha }}
       npm_version: ${{ needs.verify.outputs.npm_version }}
       py_version: ${{ needs.verify.outputs.py_version }}
-      dry_run: ${{ needs.verify.outputs.dry_run == 'true' }}
 
   publish-pypi:
     name: Publish to PyPI
     needs: [verify, build]
-    if: needs.verify.outputs.dry_run != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
@@ -222,7 +211,6 @@ jobs:
   publish-npm:
     name: Publish to npm
     needs: [verify, build]
-    if: needs.verify.outputs.dry_run != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
@@ -303,7 +291,6 @@ jobs:
   github-release:
     name: Create the GitHub Release
     needs: [verify, publish-pypi, publish-npm]
-    if: needs.verify.outputs.dry_run != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
