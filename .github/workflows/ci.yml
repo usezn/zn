@@ -91,50 +91,26 @@ jobs:
   # The Python tests also read files from packages/zn-gate (rule fixtures) and run bench/bench_python.py.
   # A pull request into next that touches any of them runs the whole Python matrix, not only 3.12:
   # a failure on an older Python version must show up before the merge, not on the push to next.
-  python-scope:
-    name: Decide the Python matrix
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      full: ${{ steps.scope.outputs.full }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: List the changed files
-        id: scope
-        shell: bash
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          # Any error while listing the files means the full matrix: when in doubt, test more.
-          full=true
-          if [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] && git fetch --no-tags --depth=1 origin "$BASE_SHA" > /dev/null 2>&1 \
-             && files="$(git diff --no-renames --name-only "$BASE_SHA" HEAD)"; then
-            full=false
-            while IFS= read -r f; do
-              case "$f" in
-                packages/zn-gate-py/*|packages/zn-gate/*|bench/*|.github/workflows/ci.yml|.github/ci-test-requirements.txt|.github/scripts/ci-scope.sh)
-                  full=true; echo "runs the full Python matrix: $f"; break ;;
-              esac
-            done <<< "$files"
-          fi
-          echo "full=$full" | tee -a "$GITHUB_OUTPUT"
-
   test-python:
     name: Python ${{ matrix.python-version }} tests & benchmarks (${{ matrix.os }})
-    needs: python-scope
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
-    # !cancelled(): on pushes python-scope is skipped, and this job must still run.
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.python-scope.result != 'cancelled' }}
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        # "Python 3.12 tests & benchmarks (ubuntu-latest)" is a required check: it always runs.
-        include: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') || needs.python-scope.outputs.full == 'true' || needs.python-scope.result == 'failure') && '[{"os":"ubuntu-latest","python-version":"3.10"},{"os":"ubuntu-latest","python-version":"3.11"},{"os":"ubuntu-latest","python-version":"3.12"},{"os":"ubuntu-latest","python-version":"3.13"},{"os":"windows-latest","python-version":"3.12"},{"os":"macos-latest","python-version":"3.12"}]' || '[{"os":"ubuntu-latest","python-version":"3.12"}]') }}
+        # The matrix is fixed so that every job name is known when the run starts (a matrix built from
+        # another job leaves a check with an unexpanded name when the run is cancelled early).
+        # "Python 3.12 tests & benchmarks (ubuntu-latest)" is a required check: it always runs. The
+        # other entries decide in their first step whether this change needs them and end quickly if not.
+        include:
+          - { os: ubuntu-latest, python-version: "3.10" }
+          - { os: ubuntu-latest, python-version: "3.11" }
+          - { os: ubuntu-latest, python-version: "3.12" }
+          - { os: ubuntu-latest, python-version: "3.13" }
+          - { os: windows-latest, python-version: "3.12" }
+          - { os: macos-latest, python-version: "3.12" }
     defaults:
       run:
         shell: bash
@@ -147,8 +123,37 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Decide whether this matrix entry runs
+        id: entry
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # Pushes, pull requests into main or a release branch and full-ci pull requests run every entry.
+          FULL: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+          PRIMARY: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12' }}
+        working-directory: .
+        run: |
+          # A pull request into next that touches the Python package, the Node package it shares fixtures
+          # with, bench/ or the CI setup runs the whole matrix; any other one runs Python 3.12 on Ubuntu only.
+          # Any error while listing the files means the full matrix: when in doubt, test more.
+          run=true
+          if [ "$PRIMARY" != "true" ] && [ "$FULL" != "true" ]; then
+            run=true
+            if [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] && git fetch --no-tags --depth=1 origin "$BASE_SHA" > /dev/null 2>&1                && files="$(git diff --no-renames --name-only "$BASE_SHA" HEAD)"; then
+              run=false
+              while IFS= read -r f; do
+                case "$f" in
+                  packages/zn-gate-py/*|packages/zn-gate/*|bench/*|.github/workflows/ci.yml|.github/ci-test-requirements.txt|.github/scripts/ci-scope.sh)
+                    run=true; echo "runs the full Python matrix: $f"; break ;;
+                esac
+              done <<< "$files"
+            fi
+          fi
+          [ "$run" = "true" ] || echo "this change does not need ${{ matrix.python-version }} on ${{ matrix.os }}"
+          echo "run=$run" | tee -a "$GITHUB_OUTPUT"
       - name: Decide what this change needs
         id: scope
+        if: steps.entry.outputs.run == 'true'
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
