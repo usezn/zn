@@ -86,7 +86,7 @@ const SECRET_WORD = '(?:token|secret|passw(?:or)?d|pwd|api[-_]?key|access[-_]?ke
 // backslash tried first so that a value ending in one (\\\\\") still ends at its own \".
 const QUOTED = String.raw`\\"(?:[^"\\\n]|\\\\\\\\|\\\\\\"|\\\\|\\[^"\\\n])+(?:\\")?|"(?:[^"\\\n]|\\.)+"?|'[^'\n]+'?`;
 const CONTEXT_RES = [
-  new RegExp('(--?[A-Za-z0-9-]{0,40}(?:' + SECRET_WORD + '|pat|key)(?![a-z])[A-Za-z0-9-]{0,40}(?:=|\\s{1,8}))(' + QUOTED + '|[^\\s"\'`]+)', 'gi'),
+  new RegExp('(--?(?:\\/\\/[^\\s"\'\\\\,=]{1,200}:)?[A-Za-z0-9_]{0,40}(?:' + SECRET_WORD + '|pat|key)(?![a-z])[A-Za-z0-9_-]{0,40}(?:=|\\s{1,8}))(' + QUOTED + '|[^\\s"\'`]+)', 'gi'),
   // user:password after -u or --user; attached to -u (-uuser:pass) too, but there not a URL, because a flag
   // such as -url:https://... is not a password.
   new RegExp('((?:^|\\s)(?:-u|--user)(?:=|\\s{1,8})["\']?[^\\s:"\']{1,128}:)([^\\s"\'@]+)', 'g'),
@@ -95,12 +95,12 @@ const CONTEXT_RES = [
   new RegExp('(\\bbearer\\s{1,8})([A-Za-z0-9._~+/=-]{8,})', 'gi'),
   // The flag and its value as two items of a JSON or TOML array (MCP server args): "--api-key", "v" (also
   // escaped, single-quoted, or with the value on the next line).
-  new RegExp(String.raw`(\\{0,7}["']--?[A-Za-z0-9-]{0,40}(?:` + SECRET_WORD + String.raw`|pat|key)(?![a-z])[A-Za-z0-9-]{0,40}\\{0,7}["']\s{0,8},(?:\s|\\{1,3}[nrt]){0,128})(` + String.raw`\\{2,7}"(?:[^"\\\n]|\\{1,7}(?!"))+(?:\\{1,7}")?|` + QUOTED + ')', 'gi'),
+  new RegExp(String.raw`(\\{0,7}["']--?(?:\/\/[^\s"'\\,=]{1,200}:)?[A-Za-z0-9_-]{0,40}(?:` + SECRET_WORD + String.raw`|pat|key)(?![a-z])[A-Za-z0-9_-]{0,40}\\{0,7}["']\s{0,8},(?:\s|\\{1,3}[nrt]){0,128})(` + String.raw`\\{2,7}"(?:[^"\\\n]|\\{1,7}(?!"))+(?:\\{1,7}")?|` + QUOTED + ')', 'gi'),
   new RegExp('(\\b[A-Za-z0-9_]{0,60}' + SECRET_WORD + '(?![A-Za-z0-9])\\\\?["\']?\\s{0,8}[=:]\\s{0,8})(' + QUOTED + '|[^\\s"\'\\\\,;`]+)', 'gi'),
 ];
 // A line that ends with a quoted flag item and a comma: the value is on the next line.
 // Group 1 is the flag item; the line is tested after its trailing comment has been removed (stripComment).
-const FLAG_ITEM_END = new RegExp(String.raw`(\\{0,7}["']--?[A-Za-z0-9-]{0,40}(?:` + SECRET_WORD + String.raw`|pat|key)(?![a-z])[A-Za-z0-9-]{0,40}\\{0,7}["']\s{0,8},?)$`, 'i');
+const FLAG_ITEM_END = new RegExp(String.raw`(\\{0,7}["']--?(?:\/\/[^\s"'\\,=]{1,200}:)?[A-Za-z0-9_-]{0,40}(?:` + SECRET_WORD + String.raw`|pat|key)(?![a-z])[A-Za-z0-9_-]{0,40}\\{0,7}["']\s{0,8},?)$`, 'i');
 // The line without its trailing comment (#, // or /*), found in one pass that knows about quoted strings.
 function stripComment(l) {
   let q = '';
@@ -498,7 +498,8 @@ function checkMcpServers(ctx, servers, keyPath, opts) {
           ctx.add('ZNA003', sev, line, 'MCP server "' + name + '" runs: ' + short(cmd, 200) + (o.note ? ' ' + o.note : ''));
         }
         for (const pkg of P.packagesOf(argv)) {
-          if (!pkg.pinned) ctx.add('ZNA005', 'medium', line, 'MCP server "' + name + '" runs ' + pkg.spec + ' through ' + pkg.manager + ' without an exact version.');
+          if (pkg.hidden) ctx.add('ZNA005', 'medium', line, 'MCP server "' + name + '" runs a package through ' + pkg.manager + ' without an exact version (its name follows a credential flag and is not shown).');
+          else if (!pkg.pinned) ctx.add('ZNA005', 'medium', line, 'MCP server "' + name + '" runs ' + pkg.spec + ' through ' + pkg.manager + ' without an exact version.');
         }
       }
     }

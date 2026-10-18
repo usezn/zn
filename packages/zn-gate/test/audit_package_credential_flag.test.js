@@ -33,6 +33,10 @@ test('packagesOf: the package is the real one around credential flags', () => {
     [['uvx', '--password', V(1), 'some-pkg'], 'some-pkg'],
     [['docker', 'run', '--password', V(1), 'example/image'], 'example/image'],
     [['npx', '--no-auth', 'some-pkg'], 'some-pkg'],
+    [['npx', '--auth_token', V(1), 'some-pkg'], 'some-pkg'],
+    [['npx', '--github_token', V(1), 'some-pkg'], 'some-pkg'],
+    [['npx', '--_authToken', V(1), 'some-pkg'], 'some-pkg'],
+    [['npx', '--//registry.npmjs.org/:_authToken', V(1), 'some-pkg'], 'some-pkg'],
   ];
   for (const [argv, spec] of cases) {
     const pk = P.packagesOf(argv);
@@ -49,7 +53,12 @@ const CONFIG = `{"mcpServers": {
   "e": {"command": "npx -y --password ${V(5)} pkg-e"},
   "f": {"command": "uvx", "args": ["--password", "${V(6)}", "pkg-f"]},
   "g": {"command": "npx", "args": ["--client-secret", "${V(7)}", "pkg-g"]},
-  "h": {"command": "npx", "args": ["--auth", "${V(8)}", "pkg-h"]}
+  "h": {"command": "npx", "args": ["--auth", "${V(8)}", "pkg-h"]},
+  "i": {"command": "npx", "args": ["--auth_token", "${V(9)}", "pkg-i"]},
+  "j": {"command": "npx", "args": ["--github_token", "${V(10)}", "pkg-j"]},
+  "k": {"command": "npx", "args": ["--_authToken", "${V(11)}", "pkg-k"]},
+  "l": {"command": "npx", "args": ["--//registry.npmjs.org/:_authToken", "${V(12)}", "pkg-l"]},
+  "m": {"command": "npx --auth_token ${V(13)} pkg-m"}
 }}
 `;
 
@@ -63,8 +72,27 @@ test('audit: ZNA005 reports the package and never a credential value', (t) => {
     assert.ok(!out.includes('fake-value'), 'a value after a credential flag was printed');
   }
   const found = JSON.parse(json).findings.filter((f) => f.id === 'ZNA005').map((f) => f.detail);
-  for (const name of ['a', 'b', 'c', 'd', 'e', 'g', 'h']) {
+  for (const name of ['a', 'b', 'c', 'd', 'e', 'g', 'i', 'j', 'k', 'l', 'm']) {
     assert.ok(found.some((d) => d.includes('"' + name + '" runs pkg-' + name + ' through npx')), 'package of ' + name + ': ' + found.join(' | '));
   }
   assert.ok(found.some((d) => d.includes('"f" runs pkg-f through uvx')));
+});
+
+test('a flag that looks like a credential flag cannot hide an unpinned package', (t) => {
+  // --auth and --compat take no value, but are treated as credential flags: the package after them is not
+  // named, yet it is still reported.
+  for (const flag of ['--auth', '--secret', '--oauth', '--use-auth', '--require-auth', '--compat', '--hotkey']) {
+    const pk = P.packagesOf(['npx', flag]);
+    assert.deepEqual(pk, [], flag + ' with nothing after it');
+    const hid = P.packagesOf(['npx', flag, 'some-pkg']);
+    assert.equal(hid.length, 1, flag);
+    assert.equal(hid[0].hidden, true, flag);
+    assert.equal(hid[0].pinned, false, flag);
+  }
+  const dir = tempDir(t, 'zn-audit-credflag-hidden-');
+  fs.writeFileSync(path.join(dir, '.mcp.json'), '{"mcpServers": {"x": {"command": "npx", "args": ["--auth", "some-pkg"]}}}\n');
+  const out = cli([dir, '--format', 'json', '--fail-on', 'none']).stdout;
+  const d = JSON.parse(out).findings.filter((f) => f.id === 'ZNA005').map((f) => f.detail);
+  assert.equal(d.length, 1);
+  assert.match(d[0], /runs a package through npx without an exact version \(its name follows a credential flag and is not shown\)/);
 });

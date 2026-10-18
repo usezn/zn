@@ -92,7 +92,7 @@ function pinnedNpm(version) {
 
 // A flag whose value is a credential (--password, --token, --api-key, --client-secret, --pat ...), by the
 // same names the redaction in index.js hides. A flag that only switches something off (--no-auth) takes no value.
-const CRED_FLAG_RE = /^--?[A-Za-z0-9-]{0,40}(?:token|secret|passw(?:or)?d|pwd|api[-_]?key|access[-_]?key|private[-_]?key|auth|credentials?|pat|key)(?![a-z])[A-Za-z0-9-]{0,40}$/i;
+const CRED_FLAG_RE = /^--?(?:\/\/[^\s=]{1,200}:)?[A-Za-z0-9_-]{0,40}(?:token|secret|passw(?:or)?d|passphrase|pwd|api[-_]?key|access[-_]?key|private[-_]?key|auth|credentials?|pat|key)(?![a-z])[A-Za-z0-9_-]{0,40}$/i;
 function isCredentialFlag(w) {
   return CRED_FLAG_RE.test(w) && !/^--(?:no|skip|disable|without)-/i.test(w);
 }
@@ -119,6 +119,7 @@ function packagesOf(argv) {
     if (['npx', 'bunx', 'npm', 'pnpm', 'yarn'].includes(tool)) {
       let explicit = null;
       let first = null;
+      let hidden = false;
       for (let j = 0; j < rest.length; j++) {
         const w = rest[j];
         if (w === '--') break;
@@ -126,13 +127,14 @@ function packagesOf(argv) {
         if (w === '-p' || w === '--package') { explicit = rest[j + 1]; j++; continue; }
         if (NPX_VALUE_FLAGS.has(w)) { j++; continue; }
         // The word after a credential flag is its value, never the package.
-        if (isCredentialFlag(w)) { if (!w.includes('=')) j++; continue; }
+        if (isCredentialFlag(w)) { if (!w.includes('=')) { if (j + 1 < rest.length) hidden = true; j++; } continue; }
         if (w.startsWith('-')) continue;
         first = w;
         break;
       }
       const spec = npmSpec(explicit || first);
       if (spec) out.push({ manager: tool, spec: explicit || first, pinned: pinnedNpm(spec.version) });
+      else if (hidden && !explicit && !first) out.push({ manager: tool, spec: null, pinned: false, hidden: true });
       continue;
     }
     if (tool === 'uvx' || (tool === 'uv' && rest[0] === 'tool' && rest[1] === 'run') || (tool === 'pipx' && rest[0] === 'run')) {
@@ -140,34 +142,40 @@ function packagesOf(argv) {
       if (tool === 'pipx') rest = rest.slice(1);
       let from = null;
       let first = null;
+      let hidden = false;
       for (let j = 0; j < rest.length; j++) {
         const w = rest[j];
         if (w.startsWith('--from=')) { from = w.slice(7); continue; }
         if (w === '--from' || w === '--spec') { from = rest[j + 1]; j++; continue; }
         if (UVX_VALUE_FLAGS.has(w)) { j++; continue; }
-        if (isCredentialFlag(w)) { if (!w.includes('=')) j++; continue; }
+        if (isCredentialFlag(w)) { if (!w.includes('=')) { if (j + 1 < rest.length) hidden = true; j++; } continue; }
         if (w.startsWith('-')) continue;
         first = w;
         break;
       }
       const spec = from || first;
+      if (!spec && hidden) out.push({ manager: tool === 'uv' ? 'uv' : tool, spec: null, pinned: false, hidden: true });
       if (spec && !/^[.~/]|^[A-Za-z]:[\\/]|^(?:git\+|https?:|file:)/.test(spec)) {
         out.push({ manager: tool === 'uv' ? 'uv' : tool, spec, pinned: /==\s*\d|@\s*\d+\.\d+/.test(spec) });
       }
       continue;
     }
     if ((tool === 'docker' || tool === 'podman') && rest[0] === 'run') {
+      let hidden = false;
+      let found = false;
       for (let j = 1; j < rest.length; j++) {
         const w = rest[j];
         if (w.includes('=') && w.startsWith('--')) continue;
         if (DOCKER_VALUE_FLAGS.has(w)) { j++; continue; }
-        if (isCredentialFlag(w)) { if (!w.includes('=')) j++; continue; }
+        if (isCredentialFlag(w)) { if (j + 1 < rest.length) hidden = true; j++; continue; }
         if (w.startsWith('-')) continue;
         const digest = w.includes('@sha256:');
         const tag = w.slice(w.lastIndexOf('/') + 1).split(':')[1];
         out.push({ manager: tool, spec: w, pinned: digest || Boolean(tag && tag !== 'latest') });
+        found = true;
         break;
       }
+      if (hidden && !found) out.push({ manager: tool, spec: null, pinned: false, hidden: true });
     }
   }
   return out;
