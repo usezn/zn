@@ -23,7 +23,9 @@
  *    updatedInput is accepted only with "allow", and "ask" is not supported
  *    (the hook is marked failed and the call runs).
  *  PostToolUse: no field rewrites the output; {decision: "block", reason}
- *    replaces the tool result with the reason.
+ *    replaces the tool result with the reason. With zn's opt-in
+ *    stopTurnOnSecret setting, a real secret also adds continue: false and
+ *    stopReason (the PostToolUse stop fields in the official docs).
  *  UserPromptSubmit: {decision: "block", reason}.
  *  PermissionRequest (runs only when Codex is about to ask the user: Bash,
  *    apply_patch, MCP tools): hookSpecificOutput.decision {behavior: "deny",
@@ -243,10 +245,17 @@ function respond(d) {
   }
   if (ev.event === 'post_tool') {
     if (d.updatedOutput !== undefined) {
-      return {
+      const out = {
         decision: 'block',
         reason: outputText(d.updatedOutput) + (d.message ? '\n\n[' + d.message + ']' : ''),
       };
+      // Opt-in (hooks.stopTurnOnSecret, see runner.js): also end the turn. Codex documents
+      // continue: false with stopReason for PostToolUse.
+      if (d.stopReason) {
+        out.continue = false;
+        out.stopReason = d.stopReason;
+      }
+      return out;
     }
     if (d.decision === 'deny') return { decision: 'block', reason: d.message || 'zn: output withheld' };
     return null;

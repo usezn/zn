@@ -65,7 +65,7 @@ only and have not been run against a live Codex.
 | Event | zn uses it | What it does for zn |
 |---|---|---|
 | `PreToolUse` | Yes, matcher `^(Bash\|apply_patch\|mcp__.+)$` | Checks shell commands, patches and MCP call arguments before they run, and denies with zn's reason. Exit code 2 also blocks (documented). zn never answers `allow`. Shell and `apply_patch` checked on 0.163.0; MCP calls not tested. |
-| `PostToolUse` | Yes, matcher `.*` | Scrubs tool output. Its `decision: "block"` replaces the result with zn's scrubbed copy. Checked on 0.163.0. |
+| `PostToolUse` | Yes, matcher `.*` | Scrubs tool output. Its `decision: "block"` replaces the result with zn's scrubbed copy. Checked on 0.163.0. Opt-in `stopTurnOnSecret` also sends `continue: false` with a `stopReason` for a real secret value; the fields are in the docs and the schema, not yet run on a live Codex. |
 | `PermissionRequest` | Yes, deny only | Runs the same check as `PreToolUse` when Codex is about to ask you to approve a call. zn answers `deny` with its reason and never `allow`. Not tested. |
 | `UserPromptSubmit` | Yes | Blocks a secret pasted into the prompt. Checked on 0.163.0. |
 | `SessionStart` | No | zn installs no session-start hook for Codex. |
@@ -91,6 +91,12 @@ only and have not been run against a live Codex.
   - PostToolUse cannot rewrite output; `decision: "block"` replaces the result
     with zn's scrubbed copy. The model gets text instead of the structured
     result.
+  - Opt-in stop (`stopTurnOnSecret`, off by default): set `{"hooks": {"stopTurnOnSecret": true}}` in
+    `~/.zn/config.json`. When a tool output holds a real secret value (not only a `__ZN_` marker), zn still
+    replaces it with tokens and also returns `continue: false` with a `stopReason`, so Codex ends the turn
+    after that tool result. The reason names the kind of secret, never the value. Markers alone do not stop
+    the turn. The official docs list `continue`, `stopReason` and `systemMessage` as supported for
+    PostToolUse; the stop has not been run on a live Codex yet. Environment variables do not turn it on.
   - Codex's own session log keeps the original output.
   - Hooks are a guardrail, not an enforcement boundary (Codex's own words).
   - MCP tool calls reach `PreToolUse` (matcher `^(Bash|apply_patch|mcp__.+)$`), and zn checks
