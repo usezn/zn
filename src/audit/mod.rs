@@ -14,8 +14,8 @@ use aes_gcm::{
     aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
 };
-use base64::{engine::general_purpose, Engine as _};
 use anyhow::{anyhow, Result};
+use base64::{engine::general_purpose, Engine as _};
 use chrono::Utc;
 use rusqlite::{params, Connection, Row};
 use serde::{Deserialize, Serialize};
