@@ -9,6 +9,9 @@
 
 pub mod exporter;
 
+#[cfg(test)]
+mod kat_tests;
+
 use crate::metrics;
 use aes_gcm::{
     aead::{Aead, KeyInit},
@@ -126,6 +129,18 @@ pub struct FusionEvidence {
     pub model_id: String,
 }
 
+/// Derive the 32-byte AES-256-GCM key from a passphrase and the per-database salt.
+///
+/// Argon2id, version 0x13, m = 19456 KiB, t = 2, p = 1 (the `Argon2::default()` parameters).
+/// Existing audit databases depend on this exact output; `kat_tests` pins it.
+fn derive_key(passphrase: &str, salt: &[u8]) -> Result<[u8; 32]> {
+    let mut key = [0u8; 32];
+    argon2::Argon2::default()
+        .hash_password_into(passphrase.as_bytes(), salt, &mut key)
+        .map_err(|e| anyhow!("Failed to derive encryption key: {}", e))?;
+    Ok(key)
+}
+
 /// Persistent storage for audit logs with built-in encryption support
 pub struct AuditVault {
     conn: Arc<Mutex<Connection>>,
@@ -174,10 +189,7 @@ impl AuditVault {
                 new_salt.to_vec()
             };
 
-            let mut key = [0u8; 32];
-            argon2::Argon2::default()
-                .hash_password_into(key_str.as_bytes(), &salt, &mut key)
-                .map_err(|e| anyhow!("Failed to derive encryption key: {}", e))?;
+            let key = derive_key(key_str, &salt)?;
             info!("Audit encryption enabled with persistent salt");
             Some(key)
         } else {
