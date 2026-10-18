@@ -260,7 +260,7 @@ impl AuditVault {
             }
             // Past this point the key is proven (a stored record opened with
             // it, or nothing is encrypted yet).
-            let report = migrate_v1_records(&mut conn, key, true)?;
+            let report = migrate_v1_records(&mut conn, key)?;
             if !had_key_check {
                 write_key_check(&conn, key)?;
             }
@@ -661,29 +661,6 @@ fn decrypt_legacy_payload(key_bytes: &[u8; 32], stored: &str) -> Option<String> 
     decrypt_body(key_bytes, stored, &[])
 }
 
-/// True when any bound (`v2:`) row opens with `key_bytes`. Rows that do not
-/// decrypt (for instance a planted `v2:garbage` row) are skipped, so they
-/// cannot hold the check open. The scan stops at the first row that opens, so
-/// a healthy database needs one row; it reads them all only when none opens
-/// (wrong passphrase or a hostile database). There is no row limit on purpose:
-/// a limit would let enough garbage rows lock out the right passphrase.
-fn existing_v2_record_decrypts(conn: &Connection, key_bytes: &[u8; 32]) -> Result<bool> {
-    let mut stmt = conn.prepare(
-        "SELECT id, namespace, payload FROM audit_logs
-         WHERE substr(payload, 1, 3) = 'v2:'",
-    )?;
-    let mut rows = stmt.query([])?;
-    while let Some(r) = rows.next()? {
-        let id: String = r.get(0)?;
-        let namespace: Option<String> = r.get(1)?;
-        let payload: String = r.get(2)?;
-        if decrypt_payload(key_bytes, &id, namespace.as_deref(), &payload).is_some() {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
 /// Metadata entry that proves which passphrase a database was created with.
 ///
 /// Construction: AES-256-GCM (the cipher that already protects the records)
@@ -829,18 +806,12 @@ fn is_legacy_shaped(stored: &str) -> bool {
 ///   open starts again.
 /// - Rows that do not decrypt with this key are never deleted or changed.
 ///   Rows that are not in the old shape (plain text from before encryption
-///   was on) are only counted. Old-shaped rows that fail (wrong passphrase or
-///   corruption) block the marker unless the key is proven right, that is, it
-///   opened an old record in this run or opens an existing bound record. So a
-///   wrong passphrase sets no marker and the right one can still upgrade
-///   later, while a right key closes the upgrade even if a corrupted row
-///   remains, and an old record planted afterwards is never rewritten as a
-///   valid bound one. The open vault never accepts the old format either way.
-fn migrate_v1_records(
-    conn: &mut Connection,
-    key_bytes: &[u8; 32],
-    key_proven: bool,
-) -> Result<MigrationReport> {
+///   was on) are only counted. The caller must have proven the key first, so
+///   the marker is set even if some old-shaped rows stay unreadable (corrupted):
+///   they are left as they are, and an old record planted afterwards is never
+///   rewritten as a valid bound one. The open vault never accepts the old
+///   format either way.
+fn migrate_v1_records(conn: &mut Connection, key_bytes: &[u8; 32]) -> Result<MigrationReport> {
     let tx = conn
         .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .map_err(|e| anyhow!("Failed to start audit upgrade: {}", e))?;
@@ -884,16 +855,10 @@ fn migrate_v1_records(
             }
         }
     }
-    // The key is proven right if it opened an old record in this run or opens
-    // an existing bound record. Then the marker is safe to set even if some
-    // old-shaped rows stay unreadable (corrupted): they are left as they are.
-    let v2_ok = key_proven || report.migrated > 0 || existing_v2_record_decrypts(&tx, key_bytes)?;
-    if report.unreadable == 0 || v2_ok {
-        tx.execute(
-            "INSERT OR REPLACE INTO metadata (key, value) VALUES (?1, ?2)",
-            params![FORMAT_KEY, FORMAT_V2],
-        )?;
-    }
+    tx.execute(
+        "INSERT OR REPLACE INTO metadata (key, value) VALUES (?1, ?2)",
+        params![FORMAT_KEY, FORMAT_V2],
+    )?;
     tx.commit()
         .map_err(|e| anyhow!("Failed to commit audit upgrade: {}", e))?;
     Ok(report)
@@ -1349,7 +1314,7 @@ mod tests {
         let key = vault_key(&path, LEGACY_KEY_PASSPHRASE);
         let mut conn = Connection::open(&path).unwrap();
         assert_eq!(
-            migrate_v1_records(&mut conn, &key, false).unwrap(),
+            migrate_v1_records(&mut conn, &key).unwrap(),
             MigrationReport::default()
         );
         fs::remove_file(&path).ok();
@@ -1627,7 +1592,7 @@ mod tests {
         set_metadata(&path, KEY_CHECK_KEY, None);
         let key = vault_key(&path, "right");
         let conn = Connection::open(&path).unwrap();
-        assert!(existing_v2_record_decrypts(&conn, &key).unwrap());
+        assert!(refuse_if_no_stored_record_opens(&conn, &key).is_ok());
         drop(conn);
         drop(AuditVault::new(&path, Some("right")).unwrap());
         assert!(key_check_value(&path).is_some());
