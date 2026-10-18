@@ -6,6 +6,7 @@ const os = require('os');
 const crypto = require('crypto');
 const http = require('http');
 const { redactSecrets } = require('./rules');
+const { sym } = require('./term');
 
 const ZN_DIR = path.join(os.homedir(), '.zn');
 const EVIDENCE_FILE = path.join(ZN_DIR, 'evidence.jsonl');
@@ -74,6 +75,8 @@ function readLockToken(lockPath) {
  * considered stale: it only releases, and only appends, while the file still holds its token.
  */
 function acquireLock(lockPath, waitMs = LOCK_WAIT_MS) {
+  // NaN, Infinity or a negative wait would never time out (or time out at once): use the default.
+  if (!(Number.isFinite(waitMs) && waitMs >= 0)) waitMs = LOCK_WAIT_MS;
   const deadline = Date.now() + waitMs;
   const token = `${process.pid}:${crypto.randomBytes(8).toString('hex')}`;
   let delay = 2;
@@ -82,6 +85,7 @@ function acquireLock(lockPath, waitMs = LOCK_WAIT_MS) {
     try {
       const fd = fs.openSync(lockPath, 'wx', LEDGER_FILE_MODE);
       try { fs.writeSync(fd, token); } finally { fs.closeSync(fd); }
+      sweepStaleLeftovers(lockPath);
       return token;
     } catch (e) {
       // On Windows a lock that is being deleted answers EPERM/EACCES instead of EEXIST. If the
@@ -107,15 +111,42 @@ function acquireLock(lockPath, waitMs = LOCK_WAIT_MS) {
       // Break it by renaming it away (atomic: when several writers try, only one rename wins),
       // then delete the renamed file. Never delete by the shared path.
       const aside = `${lockPath}.stale-${token.replace(':', '-')}`;
-      try {
-        fs.renameSync(lockPath, aside);
+      let moved = false;
+      try { fs.renameSync(lockPath, aside); moved = true; } catch { /* someone else broke it first */ }
+      if (moved) {
+        // Two breakers can both judge the same lock stale; the second rename then moves the
+        // first one's fresh lock aside. If what we moved is not stale, put it back with link()
+        // (atomic, fails if a lock exists again) before deleting our copy.
+        let fresh = false;
+        try { fresh = Math.abs(Date.now() - fs.statSync(aside).mtimeMs) <= LOCK_STALE_MS; } catch { /* gone */ }
+        if (fresh) {
+          try { fs.linkSync(aside, lockPath); } catch { /* a new lock exists: its owner checks its token */ }
+        }
         try { fs.unlinkSync(aside); } catch { /* best effort */ }
         continue;
-      } catch { /* someone else broke it first */ }
+      }
     }
     sleepMs(delay + Math.floor(Math.random() * delay));
     delay = Math.min(delay * 2, 50);
   }
+}
+
+// Leftovers `<log>.lock.stale-*` only exist when a process died between renaming a stale lock
+// and deleting it. Remove a few old ones each time the lock is taken; errors are ignored.
+function sweepStaleLeftovers(lockPath) {
+  try {
+    const prefix = path.basename(lockPath) + '.stale-';
+    const dir = path.dirname(lockPath);
+    let n = 0;
+    for (const name of fs.readdirSync(dir)) {
+      if (!name.startsWith(prefix)) continue;
+      if (++n > 5) break;
+      try {
+        const p = path.join(dir, name);
+        if (Math.abs(Date.now() - fs.statSync(p).mtimeMs) > LOCK_STALE_MS) fs.unlinkSync(p);
+      } catch { /* ignore */ }
+    }
+  } catch { /* ignore */ }
 }
 
 function ownsLock(lockPath, token) {
@@ -304,7 +335,8 @@ function logEvidence(event, filePath = EVIDENCE_FILE, opts = {}) {
       return null;
     }
     const finalRecord = buildRecord(event, prevHash);
-    if (typeof opts.beforeAppend === 'function') opts.beforeAppend(); // test hook
+    // _beforeAppend is a test-only hook (internal, not part of the public options).
+    if (typeof opts._beforeAppend === 'function') opts._beforeAppend();
     // Still our lock? If it was taken over (this process was stalled for over 10 s) the last
     // hash read above may be out of date: write nothing rather than fork the chain.
     if (!ownsLock(lockPath, token)) throw new EvidenceLockError('the write lock was taken over');
@@ -821,9 +853,10 @@ function startEvidenceUi(port = 3100, filePath = EVIDENCE_FILE) {
   });
 
   // Loopback only: the ledger must not be reachable from the network.
+  const banner = sym(process.env, '🛡️', null, '  ');
   server.listen(port, '127.0.0.1', () => {
     process.stdout.write(`
-🛡️  zn Evidence Engine Dashboard running at http://127.0.0.1:${server.address().port}
+${banner}zn Evidence Engine Dashboard running at http://127.0.0.1:${server.address().port}
 Ledger location: ${filePath}
 Press Ctrl+C to stop dashboard.
 \n`);

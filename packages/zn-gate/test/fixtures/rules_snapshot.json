@@ -197,7 +197,7 @@
     },
     "policy": {
       "version_const": "POLICY_RULES_VERSION",
-      "version": "2026-10-17.29",
+      "version": "2026-10-18.31",
       "ids": [
         "SHELL_SCAN_CAP",
         "_decodeAnsiC",
@@ -219,7 +219,7 @@
         "writeDenial"
       ],
       "sha256": {
-        "lib/hooks/policy.js": "c7c3aafdd701d484079c19d57621d3bb5f4561227683cd516e1e5f39e8174aa8",
+        "lib/hooks/policy.js": "13a9619c8ff328950e6a07c65bce73f4c6accae8557f08245cd124a7d04af0cf",
         "lib/broker/files.js": "45dd8927cc626ac35e8c036e5118ec3c584a3f3a396640c09cee8b545e67c097",
         "lib/broker/markers.js": "301eb1d763e8e88c32e32a02c344be8f44b342b06b61897f3a2d478dbe55d6b4",
         "lib/broker/dotenv.js": "d12a12bd12108a38f84e9f4772ed50f0b015962a1e68f75362142b9b3449e8fe",

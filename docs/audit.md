@@ -155,7 +155,7 @@ CRITICAL  ZNA007  .claude/settings.json:4  [claude]
 1 finding (1 critical, 0 high, 0 medium, 0 low) in 3 files. Failing: severity >= high.
 ```
 
-Colors are used only on a terminal and never when `NO_COLOR` is set. Control
+Colors are used only on a terminal and never when `NO_COLOR` is set or `TERM=dumb`. Control
 characters and escape sequences from the repository (in evidence, details and
 file names) are printed as `\x1b`, never sent to the terminal.
 
