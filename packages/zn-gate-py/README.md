@@ -80,7 +80,7 @@ print(r.verdict)           # allow
 - Roadmap: running Galvanize locally.
 
 **Scan: audit what your agent is about to trust**
-- Today: `zn-gate scan <path>` audits prompt templates, skill files and configs for injection traps and leaked secrets.
+- Today: `zn-gate scan <path>` audits prompt templates, skill files and configs for injection traps and leaked secrets. It also checks the MCP server configs (`.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `.codex/config.toml`, `claude_desktop_config.json` and others) for keys and passwords written in plain text in `env`, `headers`, arguments or URLs; it never prints the value, and `--include-home` checks your own MCP configs too.
 - Roadmap: auditing MCP servers and skills before you add them.
 
 ---
@@ -128,10 +128,14 @@ handler = ZnGuardCallbackHandler(raise_on_injection=True, mask_secrets=True)
 ```python
 from zn_gate.integrations import guarded_tool
 
-@guarded_tool(on_block="return", fallback="BLOCKED_BY_GUARD", mask_secrets=True)
+@guarded_tool(on_block="return", fallback="BLOCKED_BY_GUARD", mask_secrets=True, check_result=True)
 def query_knowledge_base(query: str) -> str:
     return "Query result..."
 ```
+
+`check_result=True` also scans what the tool returns for prompt injection before the agent sees it (off by default, so existing tools behave as before).
+
+`guarded_tool` also works on `async def` tools and on callable objects whose `__call__` is `async def`: the call is awaited, then the output is checked and masked exactly as for a sync tool. A sync function that returns a coroutine, and an async generator, are not checked or masked, so declare the tool with `async def` instead.
 
 ### LlamaIndex
 

@@ -14,6 +14,7 @@
  */
 
 const cloudKey = require('./cloud-key');
+const messages = require('./messages');
 
 const CONNECT_URL = 'https://usezn.com/connect?source=cli&utm_source=cli';
 // The only host this module talks to, and the routes on it.
@@ -147,7 +148,7 @@ async function connect(args, io) {
   if (rest.length) {
     // A key must never travel as an argument (shell history, process list).
     const looksLikeKey = rest.some((a) => /zn_[A-Za-z0-9._-]{8,}/.test(a) || /^--?(key|api-key|token)\b/.test(a));
-    c.err(looksLikeKey ? 'Never put the key on the command line. Run `zn-gate connect` and paste it at the hidden prompt.\n' : USAGE_CONNECT);
+    c.err(looksLikeKey ? messages.CONNECT_KEY_ON_COMMAND_LINE + '\n' : USAGE_CONNECT);
     return 2;
   }
   try { c.tty.requireHuman('zn-gate connect', c.ttyIo); } catch (e) {
@@ -180,32 +181,32 @@ async function connect(args, io) {
 
   let key;
   try { key = (await c.tty.readHidden('API key (hidden): ', c.ttyIo)).trim(); } catch (e) {
-    c.err('Cancelled. Nothing was saved.\n');
+    c.err(messages.CONNECT_CANCELLED + '\n');
     return 1;
   }
   if (!cloudKey.looksLikeZnKey(key)) {
-    c.err('That does not look like a zn API key (they start with zn_). Nothing was saved.\n');
+    c.err(messages.CONNECT_NOT_A_KEY + '\n');
     return 1;
   }
 
   const v = await verifyKey(c.https, key);
   if (v.state === 'rejected') {
-    c.err('usezn.com did not accept this key (it may be revoked or mistyped). Nothing was saved.\n');
+    c.err(messages.CONNECT_REJECTED + '\n');
     return 1;
   }
   if (v.state === 'full') {
-    c.err('This key can do more than analyze text, and zn-gate only accepts a key limited to analyzing. Create an analysis-only key on the connect page and paste that one: ' + CONNECT_URL + '\nNothing was saved.\n');
+    c.err(messages.connectFullAccess(CONNECT_URL) + '\n');
     return 1;
   }
   if (v.state !== 'analyze') {
-    c.err('Could not verify the key with usezn.com (' + v.detail + '), so nothing was saved. Try again later.\n');
+    c.err(messages.connectUnverified(v.detail) + '\n');
     return 1;
   }
 
   let where;
   try { where = await cloudKey.saveKey(key, c.deps); } catch (e) {
     if (e instanceof cloudKey.NoSecureStore || (e && e.code === 'ZN_NO_SECURE_STORE')) { c.out(noStoreText()); return 1; }
-    c.err('Could not save the key: ' + scrub(e && e.message, key) + '. Nothing was kept.\n');
+    c.err(messages.connectSaveFailed(scrub(e && e.message, key)) + '\n');
     return 1;
   }
   c.out('Key scope: analyze only. It cannot list or create keys; it can only revoke itself.\n');

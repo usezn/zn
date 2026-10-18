@@ -91,6 +91,62 @@ With `format: sarif` and the upload step, the findings appear in your repository
 
 Code scanning needs a public repository, or GitHub Code Security on a private one. Without it, use `format: github` (the default): the findings show as annotations in the workflow run and on the pull request, and no `security-events` permission is needed.
 
+## Warn without failing the build
+
+To see the findings on a pull request without blocking it, set `fail-on-threat: 'false'`. The step then ends green even when something is found, and with the default `format: github` each finding shows as an annotation in the workflow run and on the changed lines of the pull request.
+
+```yaml
+name: AI agent config audit (warn only)
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  zn-gate-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Audit agent configs (report only)
+        uses: usezn/zn@003a95ae7ef63c22b969496422131a49fa107f8d # v1.12.0
+        with:
+          version: '1.12.0'
+          mode: audit
+          format: github
+          fail-on-threat: 'false'
+```
+
+Always set `version` to the same release as the pinned Action. In the 1.12.0 Action the default `version` is still 1.10.0 (an older release), so do not rely on it.
+
+Both modes also check the MCP config files of the repository (such as `.mcp.json`, `.cursor/mcp.json` and `.vscode/mcp.json`) for keys and passwords written in plain text. The value is never printed.
+
+Releases up to and including 1.13.0 do not have this check. It comes in a later release, so the example above, which pins 1.12.0, does not show these annotations yet. Once the Action pins that release, `scan` reports the finding as `secret:mcp_config` and `audit` as `ZNA011`. Until then, both modes only report keys with a known format (for example an AWS access key) in these files, under the general secret rules.
+
+Each finding is an error annotation on the file and line. The audit's message names the key; the scan's message does not, and suggests a vault name to use instead. With `fail-on-threat: 'false'` the annotation is still an error (red), but the step ends green. A warn-mode scan of a `.mcp.json` with a key in an `env` block shows this, shortened:
+
+```text
+Secret found (secret:mcp_config)   .mcp.json, line 6
+Next: run npx -y zn-gate secret set MCP_API_KEY to store the value in the local vault ... and rotate the value if the file was ever committed or shared.
+```
+
+The audit shows, for the same key:
+
+```text
+Agent config audit (ZNA011)   .mcp.json, line 6
+Secret value in an agent file: A credential is written in plain text in this MCP server configuration (environment variable API_KEY).
+```
+
+Notes:
+
+- The Action does not write a job summary. The findings appear as annotations and in the log of the run. GitHub shows at most 10 error annotations and 10 warning annotations per step, so with many findings open the log of the run to see them all.
+- To keep a list of findings instead, use `format: sarif` with the upload step and the permissions from the [minimal workflow](#minimal-workflow), and keep `fail-on-threat: 'false'`. They appear as alerts under **Security** > **Code scanning** (public repositories, or private ones with GitHub Code Security).
+- In report-only mode the exit codes stay `0`, so do not use `audit-exit-code` or `scan-exit-code` to detect findings.
+- When you are ready to block, remove `fail-on-threat` (the default is `true`, which fails on findings at or above `severity-threshold`, `high` by default), or set `fail-on` to the lowest severity that should fail.
+
 ## Badge
 
 Show that the check runs, with the status badge of your own workflow (replace `OWNER`, `REPO` and the file name):

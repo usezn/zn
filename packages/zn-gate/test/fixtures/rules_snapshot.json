@@ -2,7 +2,7 @@
   "layers": {
     "rules": {
       "version_const": "RULES_VERSION",
-      "version": "2026-10-16.10",
+      "version": "2026-10-18.4",
       "ids": [
         "evasion:bidi_override",
         "exfil:credentials",
@@ -45,7 +45,8 @@
         "secret:private_key"
       ],
       "sha256": {
-        "lib/rules.js": "3af274958d75e4a214fcb1f7231adeab8d69fa372799eba2422f2c3f9b28318e"
+        "lib/rules.js": "a44e871a2ea84cdda2b8d0c758e8bccd001d0e8386e831965d662884b15707f7",
+        "lib/mcp-secrets.js": "980e233ba307057a204307eff899c50c5d052d44a4951c7db91c84e6b9ec30eb"
       }
     },
     "scrub": {
@@ -149,7 +150,7 @@
     },
     "audit": {
       "version_const": "AUDIT_RULES_VERSION",
-      "version": "2026-10-17.1",
+      "version": "2026-10-18.3",
       "ids": [
         "ZNA001",
         "ZNA002",
@@ -171,6 +172,8 @@
         "ZNA018",
         "ZNA019",
         "ZNA020",
+        "patterns.CRED_FLAG_NAME",
+        "patterns.CRED_FLAG_ONLY",
         "patterns.INTERPRETERS",
         "patterns.MAX_LINE",
         "patterns.SHADOWED_TOOLS",
@@ -180,6 +183,7 @@
         "patterns.downloadAndRun",
         "patterns.exfiltration",
         "patterns.hostOf",
+        "patterns.isCredentialFlag",
         "patterns.isLoopback",
         "patterns.isPlaceholder",
         "patterns.npmSpec",
@@ -191,13 +195,13 @@
         "patterns.weakening"
       ],
       "sha256": {
-        "lib/audit/rules.js": "e8610a99cfb1ef2782138cd48a8f9c64b236f48dbc13ee80da78ea8cd69eb8bd",
-        "lib/audit/patterns.js": "1711d1c0ea18693b91b97c6272affdc188eed7c944294a9620bb7330f4c33abd"
+        "lib/audit/rules.js": "93aff025d41bf9798cd2479560059f91244e90358ef35a5b6cdd2e7ab909d5de",
+        "lib/audit/patterns.js": "35080806c575285578977a1601c8550077161b3d79373ae388bff801fa9f1007"
       }
     },
     "policy": {
       "version_const": "POLICY_RULES_VERSION",
-      "version": "2026-10-18.33",
+      "version": "2026-10-18.40",
       "ids": [
         "SHELL_SCAN_CAP",
         "_decodeAnsiC",
@@ -219,7 +223,7 @@
         "writeDenial"
       ],
       "sha256": {
-        "lib/hooks/policy.js": "49bc59185fd457fbbab71ff4a756e36b20517d70b24b23be2846affc3b66eb57",
+        "lib/hooks/policy.js": "549db0f37c762a9c533a7bf846e42cb8d37fdc8b9d05bd67cfea5b687f80b126",
         "lib/broker/files.js": "45dd8927cc626ac35e8c036e5118ec3c584a3f3a396640c09cee8b545e67c097",
         "lib/broker/markers.js": "301eb1d763e8e88c32e32a02c344be8f44b342b06b61897f3a2d478dbe55d6b4",
         "lib/broker/dotenv.js": "d12a12bd12108a38f84e9f4772ed50f0b015962a1e68f75362142b9b3449e8fe",

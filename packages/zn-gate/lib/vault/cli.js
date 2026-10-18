@@ -28,15 +28,16 @@ const daemon = require('./daemon');
 const keychain = require('./keychain');
 const store = require('./store');
 const { createClient } = require('./client');
-const { agentDetected, agentNote } = require('../broker/tty');
+const { agentDetected } = require('../broker/tty');
+const messages = require('../messages');
 const { CODES } = require('../errors');
 
 function parseDuration(s, fallback) {
   if (s === undefined) return fallback;
   const m = /^(\d+)(s|m|h)$/.exec(String(s));
-  if (!m) throw new Error('invalid duration "' + s + '" (use e.g. 30m, 8h)');
+  if (!m) throw new Error(messages.invalidDuration(s));
   const n = Number(m[1]) * { s: 1000, m: 60000, h: 3600000 }[m[2]];
-  if (n < 60000 || n > 24 * 3600000) throw new Error('duration must be between 1m and 24h');
+  if (n < 60000 || n > 24 * 3600000) throw new Error(messages.DURATION_RANGE);
   return n;
 }
 
@@ -53,7 +54,7 @@ function createHiddenPrompter(opts) {
   const o = opts || {};
   const input = o.input || process.stdin;
   const output = o.output || process.stderr;
-  if (!input.isTTY) throw new Error('zn needs a terminal to ask for the passphrase. Run this command in your terminal, or pass it with --passphrase-stdin.');
+  if (!input.isTTY) throw new Error(messages.PASSPHRASE_NEEDS_TERMINAL);
   const rl = readline.createInterface({ input, output, terminal: true });
   rl._writeToOutput = () => {}; // never echo what is typed
   const lines = [];
@@ -64,7 +65,7 @@ function createHiddenPrompter(opts) {
     if (w) w.resolve(line);
     else lines.push(line);
   });
-  const cancelled = () => new Error('Cancelled: no passphrase was entered.');
+  const cancelled = () => new Error(messages.PASSPHRASE_CANCELLED);
   rl.on('close', () => {
     closed = true;
     if (waiters.length) output.write('\n');
@@ -98,7 +99,7 @@ async function getPassphrase(args, creating, prompterOpts) {
     const p1 = await prompter.ask(creating ? 'New vault passphrase (min ' + keychain.MIN_PASSPHRASE + ' chars): ' : 'Vault passphrase: ');
     if (creating) {
       const p2 = await prompter.ask('Repeat passphrase: ');
-      if (p1 !== p2) throw new Error('The two passphrases do not match. Nothing was created; run zn unlock again.');
+      if (p1 !== p2) throw new Error(messages.PASSPHRASE_MISMATCH);
     }
     return p1;
   } finally {
@@ -165,18 +166,18 @@ function unlockedLine(meta, s) {
 
 async function unlockCmd(args) {
   const agent = agentDetected(process.env);
-  if (agent) throw new Error('zn unlock must be run by you in your own terminal, not by an AI agent' + agentNote(agent));
+  if (agent) throw new Error(messages.agentRefusal('zn unlock', agent));
   const opts = {
     ttlMs: parseDuration(flag(args, '--ttl'), daemon.DEFAULT_TTL_MS),
     idleMs: parseDuration(flag(args, '--idle'), daemon.DEFAULT_IDLE_MS),
   };
   const meta = keychain.readMeta({});
   const backend = flag(args, '--backend') || (meta && meta.backend) || keychain.detectBackend();
-  if (!keychain.BACKENDS.includes(backend)) throw new Error('unknown backend ' + backend);
+  if (!keychain.BACKENDS.includes(backend)) throw new Error(messages.unknownBackend(backend, keychain.BACKENDS));
   opts.backend = backend;
   // The keychain unlocks without asking anything, so only a terminal tells a person from a detached process.
   // (The passphrase backend needs the passphrase, which `--passphrase-stdin` reads from a pipe on purpose.)
-  if (backend !== 'passphrase' && !process.stdin.isTTY) throw new Error('zn unlock needs an interactive terminal: run it in your own terminal window');
+  if (backend !== 'passphrase' && !process.stdin.isTTY) throw new Error(messages.UNLOCK_NEEDS_TERMINAL);
   if (backend === 'passphrase') opts.passphrase = await getPassphrase(args, !meta);
   // An older vault still running: check the identity (passphrase or keychain)
   // before stopping it, then wait for it to exit.
@@ -194,7 +195,7 @@ async function unlockCmd(args) {
 }
 
 async function unlockForegroundCmd(opts, backend) {
-  if (!process.stdin.isTTY) throw new Error('--foreground needs an interactive terminal (it asks you there)');
+  if (!process.stdin.isTTY) throw new Error(messages.FOREGROUND_NEEDS_TERMINAL);
   const res = await daemon.unlockForeground(opts);
   if (res.created) out('Created a new vault (' + backend + ') in ' + store.paths().vaultDir);
   out('Vault unlocked until ' + res.expiresAt + ' (locks after ' + Math.round(opts.idleMs / 60000) + ' min idle).');
@@ -235,7 +236,7 @@ async function forgetCmd(args) {
   const c = createClient({});
   const unlocked = await c.isUnlocked();
   c.close();
-  if (unlocked) { process.stderr.write('Lock the vault first (`zn lock`): the daemon may hold this project in memory.\n'); return 1; }
+  if (unlocked) { process.stderr.write(messages.FORGET_LOCK_FIRST + '\n'); return 1; }
   const real = fs.existsSync(dir) ? fs.realpathSync(dir) : dir;
   out(store.forgetProject(real) ? 'Forgot the token map of ' + real : 'No token map stored for ' + real);
   return 0;

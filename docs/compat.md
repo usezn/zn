@@ -53,6 +53,30 @@ limit applies to a patch (`apply_patch`) in Codex and OpenCode.
   cannot check the file when you mention it with `@`. A protected file
   (`.env`, credentials, a private key) is covered only when a tool call reads it.
 
+## Codex CLI hook events
+
+The table lists every Codex hook event named in the official hooks documentation
+(learn.chatgpt.com/docs/hooks, checked 2026-10-18; the same event names appear in
+openai/codex's generated hook schemas). It says which ones zn installs and why.
+The Codex CLI version it was run on is given only where a check was run; that
+check used Codex CLI 0.163.0. Rows marked "not tested" are from the documentation
+only and have not been run against a live Codex.
+
+| Event | zn uses it | What it does for zn |
+|---|---|---|
+| `PreToolUse` | Yes, matcher `^(Bash\|apply_patch\|mcp__.+)$` | Checks shell commands, patches and MCP call arguments before they run, and denies with zn's reason. Exit code 2 also blocks (documented). zn never answers `allow`. Shell and `apply_patch` checked on 0.163.0; MCP calls not tested. |
+| `PostToolUse` | Yes, matcher `.*` | Scrubs tool output. Its `decision: "block"` replaces the result with zn's scrubbed copy. Checked on 0.163.0. Opt-in `replaceToolOutputOnSecret` also sends `continue: false` with a `stopReason` for a real secret value. Codex then replaces the result with that stop text; see below. Not yet run on a live Codex. |
+| `PermissionRequest` | Yes, deny only | Runs the same check as `PreToolUse` when Codex is about to ask you to approve a call. zn answers `deny` with its reason and never `allow`. Not tested. |
+| `UserPromptSubmit` | Yes | Blocks a secret pasted into the prompt. Checked on 0.163.0. |
+| `SessionStart` | No | zn installs no session-start hook for Codex. |
+| `Stop` | Yes, warn by default | Reviews the model's final answer for a secret value, or for a `__ZN_` placeholder that zn did not see earlier in the session. It warns with `systemMessage`, which you see and the model does not. It blocks, with a reason for the model to rewrite the answer, only with `"stopReview": "block"` under `hooks` in `~/.zn/config.json`; it never blocks when Codex is already continuing because of a Stop hook. Not tested. |
+| `SubagentStart` | No | Not used. |
+| `SubagentStop` | No | Not used. |
+| `PreCompact` | No | Not used. |
+| `PostCompact` | No | Not used. |
+| `SessionEnd` | No | Not used. |
+| `Interrupt` | No | Not used. The documentation lists it with no matcher. |
+
 ## Why the differences
 
 - **Claude Code**: `PostToolUse` can replace the output of any tool
@@ -67,8 +91,34 @@ limit applies to a patch (`apply_patch`) in Codex and OpenCode.
   - PostToolUse cannot rewrite output; `decision: "block"` replaces the result
     with zn's scrubbed copy. The model gets text instead of the structured
     result.
+  - Opt-in (`replaceToolOutputOnSecret`, off by default): set `{"hooks": {"replaceToolOutputOnSecret": true}}` in
+    `~/.zn/config.json`. When a tool output holds a real secret value (not only a `__ZN_` marker), zn also
+    returns `continue: false` with a `stopReason` that names the kind of secret, never the value. Codex's docs
+    say it then replaces the tool result with that stop text and carries on. This does not end the turn on
+    its own. With the setting on, the model may therefore get zn's stop text instead of the tokenized copy of
+    the output. The stop text asks for a review and, if the value is real, a rotation. Markers alone change
+    nothing. Not yet run on a live Codex; a test in a VM is pending. Environment variables do not turn it on.
   - Codex's own session log keeps the original output.
   - Hooks are a guardrail, not an enforcement boundary (Codex's own words).
+  - MCP tool calls reach `PreToolUse` (matcher `^(Bash|apply_patch|mcp__.+)$`), and zn checks
+    their arguments for secret values and `__ZN_` markers, as it does for Cursor. Installs made
+    before this change keep the old matcher until you run `zn hooks install codex` again, and
+    Codex asks you to review the changed hook in `/hooks`. Only zn's own `secrets` server, as
+    set in `config.toml` (your own or the project's `.codex/config.toml`), may receive
+    placeholders. Known limit: a server set on the Codex command line with `-c mcp_servers.secrets...`
+    or in a profile is not visible to the hook, so it gets no exception.
+  - Approval prompts (`PermissionRequest`, same matcher as PreToolUse): when Codex is about to ask you
+    to approve a shell command, a patch or an MCP call, zn runs the same check as before the call. If zn
+    would deny it, the request is denied with zn's reason, so no Approve button is shown for it. zn never
+    answers Allow there; for every other call it gives no answer, and the approval prompt stays. Installs
+    made before this change get the new hook when you run `zn hooks install codex` again, and Codex asks
+    you to review it in `/hooks`.
+  - Final answers (`Stop`): zn only warns, and the warning does not reach the model. To
+    have Codex ask the model to rewrite an answer that contains a secret value, set
+    `"stopReview": "block"` under `hooks` in `~/.zn/config.json`. zn blocks at most once
+    per answer and never when the answer is already a continuation. Installs made before
+    this change get the new hook when you run `zn hooks install codex` again, and Codex
+    asks you to review it in `/hooks`.
   - Checked with Codex CLI 0.163.0 on 2026-10-16: the shell tool (`exec_command`
     inside Codex) reaches hooks as `tool_name: "Bash"`, with the command in
     `tool_input.command`. zn's `PreToolUse` hook blocked `cat .env` and allowed
@@ -84,7 +134,7 @@ limit applies to a patch (`apply_patch`) in Codex and OpenCode.
     message names the file when the patch writes to one such as `.env`. Known difference:
     the `apply_patch` tool may edit `.env` (writes are checked only for `~/.zn` and agent
     settings), while any patch sent as a shell command is refused.
-- **Settings that turn hooks off.** zn reads the settings files only: the managed settings of Claude Code (`managed-settings.json` and `managed-settings.d/` in `/etc/claude-code`, `/Library/Application Support/ClaudeCode` or `C:\Program Files\ClaudeCode`) and of Codex (`requirements.toml` and `managed_config.toml` in `/etc/codex`, or `requirements.toml` in `%ProgramData%\OpenAI\Codex` and `managed_config.toml` in your Codex folder on Windows), and your own settings. A policy sent through MDM or the agent's cloud is not seen. When such a setting stops every hook, zn's start-of-session hook does not run either, so `zn-gate check` is where you see it.
+- **Settings that turn hooks off.** zn reads the settings files only: the managed settings of Claude Code (`managed-settings.json` and `managed-settings.d/` in `/etc/claude-code`, `/Library/Application Support/ClaudeCode` or `C:\Program Files\ClaudeCode`) and of Codex (`requirements.toml` and `managed_config.toml` in `/etc/codex`, or `requirements.toml` in `%ProgramData%\OpenAI\Codex` and `managed_config.toml` in your Codex folder on Windows), and your own settings. A policy sent through MDM or the agent's cloud is not seen. When such a setting stops every hook, zn's start-of-session hook does not run either (zn installs no session-start hook for Codex), so `zn-gate check` is where you see it.
 - **Cursor** (best effort: its hook documentation leaves the input of some
   tools open, and zn fails closed where it cannot read a path):
   - `beforeReadFile` can only allow or deny. zn sets `failClosed: true` on it
@@ -193,6 +243,8 @@ prompts through in that case. To fix it, in your own terminal:
   JSON, exits with code 2 and the reason on stderr. Claude Code and Codex block
   the call on exit code 2; Cursor also gets its deny answer. Setting
   `whenUnavailable` to `"allow"` in `~/.zn/config.json` lets such events pass.
+  The Codex `Stop` event is the exception: zn never blocks it because it could not
+  read it, and it reports the problem on stderr.
 
 - **The unlocked vault answers any program of your user.** A command the
   agent runs can ask the vault daemon for a stored secret by name; the

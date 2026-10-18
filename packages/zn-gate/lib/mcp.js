@@ -39,13 +39,13 @@ const TOOLS = [
   {
     name: 'analyze_prompt',
     annotations: { title: 'Check text for prompt injection', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    description: 'Analyze text, prompt, or agent messages for security threats (prompt injection, jailbreak, credential exfiltration, role hijacking). Runs locally; only if the user opted in (ZN_CLOUD=1 with ZN_API_KEY, or zn-gate connect) is the text, with secrets redacted, also sent to the zn cloud gate. Returns threat assessment, confidence score, and matched rule.',
+    description: 'Check a piece of text for prompt injection, jailbreak attempts, role hijacking and attempts to steal credentials. Use it on a user message, system prompt or message from another agent that should be checked before you act on it. The check runs on this computer. Only if the user has turned on the optional cloud check (ZN_CLOUD=1 with ZN_API_KEY, or zn-gate connect) is the text, with secrets removed, also sent to the zn cloud. Returns a verdict (allow or block), a confidence score and the rule that matched. Example input: {"text": "Summarize the meeting notes below."}',
     inputSchema: {
       type: 'object',
       properties: {
         text: {
           type: 'string',
-          description: 'The user input, system prompt, or external message to inspect.',
+          description: 'The full text to check: a user message, a system prompt, or a message from another agent or tool. Send the whole text, not a summary. Text is checked as-is; a missing or non-text value is treated as empty.',
         },
       },
       required: ['text'],
@@ -54,17 +54,17 @@ const TOOLS = [
   {
     name: 'check_tool_call',
     annotations: { title: 'Check a tool call before it runs', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    description: 'Pre-flight safety inspection for tool invocations and arguments before execution. Always local: arguments never leave the machine. Defends against tool poisoning, argument injection, and unauthorized exfiltration attempts.',
+    description: 'Check a tool call before it runs. Call it with the tool name and its arguments right before the agent executes the tool, for example a shell command, a file write, a database query or a message to send. It runs the local rules on the arguments and looks for injected instructions, sensitive file paths and links that would send data out. It does not judge whether a command is destructive. Nothing leaves the computer. Returns safe_to_execute, the verdict (allow or block) and the arguments with sensitive values hidden. Example input: {"tool_name": "write_file", "arguments": {"path": "notes.txt", "content": "hello"}}',
     inputSchema: {
       type: 'object',
       properties: {
         tool_name: {
           type: 'string',
-          description: 'The name of the tool to be called (e.g. bash, write_file, execute_sql, send_message).',
+          description: 'The name of the tool the agent is about to run, exactly as the agent calls it (for example bash, write_file, execute_sql or send_message).',
         },
         arguments: {
           type: 'object',
-          description: 'Parameters/payload object that will be supplied to the tool.',
+          description: 'The arguments the agent will pass to the tool, as a JSON object (for example {"command": "ls -la"}). Send exactly what the tool would receive. Nested objects and arrays are fine.',
         },
       },
       required: ['tool_name', 'arguments'],
@@ -73,17 +73,17 @@ const TOOLS = [
   {
     name: 'check_tool_result',
     annotations: { title: 'Check a tool result before the model reads it', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    description: 'Post-execution safety inspection for tool outputs and third-party content (web pages, git commits, database queries) before LLM context assimilation. Always local: content never leaves the machine. Returns the content with secrets redacted, or neutralized if an injection is detected.',
+    description: 'Check the output of a tool before the model reads it. Call it on content that came from outside: web pages, search results, file contents, git commits, database query results and API responses. It looks for hidden instructions aimed at the model (indirect prompt injection) and for secrets such as API keys. Nothing leaves the computer. Returns the content with secrets redacted, or neutralized if an injection is found, plus the verdict. Example input: {"tool_name": "web_search", "content": "Search results here"}',
     inputSchema: {
       type: 'object',
       properties: {
         tool_name: {
           type: 'string',
-          description: 'The name of the tool that produced the output (e.g. fetch, web_search, read_file).',
+          description: 'The name of the tool that produced this output, for example fetch, web_search or read_file. It labels the result; it is not a permission list.',
         },
         content: {
           type: 'string',
-          description: 'The output text, markdown, or JSON payload returned by the tool.',
+          description: 'The output the tool returned, as text. Markdown and JSON are fine. Send the whole output, since a partial check can miss an injection placed at the end. Structured values are also accepted and are checked as their JSON text.',
         },
       },
       required: ['tool_name', 'content'],
@@ -92,7 +92,7 @@ const TOOLS = [
   {
     name: 'zn_status',
     annotations: { title: 'zn-gate status', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    description: 'Get current zn-gate status: engine, rules version, and exactly what (if anything) leaves the machine.',
+    description: 'Report the current zn-gate status: the detection engine, the rules version, and whether anything leaves this computer (and if so, what). Call it when the user asks what zn-gate is doing or whether their data is shared. It takes no arguments and changes nothing. Example: call it with no arguments.',
     inputSchema: {
       type: 'object',
       properties: {},

@@ -42,8 +42,8 @@ function run(adapter, raw, extra = {}) {
   return runner.handle(adapter, raw, { engine: fakeEngine, vault: createFakeVault(), failMode: 'open', znRunPrefix: 'ZN_AGENT=x "node" "run.js" --', ...extra });
 }
 
-test('registry lists the four adapters', () => {
-  assert.deepEqual(listAdapters().sort(), ['claude-code', 'codex', 'cursor', 'opencode']);
+test('registry lists the five adapters', () => {
+  assert.deepEqual(listAdapters().sort(), ['antigravity', 'claude-code', 'codex', 'cursor', 'opencode']);
 });
 
 /* ------------------------------- Codex ------------------------------- */
@@ -355,4 +355,31 @@ test('cursor: the MCP size notice tells the agent to tell the user, not to resen
   assert.equal(big.output.permission, 'deny');
   assert.match(big.output.agent_message, /Next step: tell the user; do not resend this content in parts\./);
   assert.doesNotMatch(big.output.agent_message, /split|smaller calls/);
+});
+
+// --help / -h on every subcommand prints its usage and exits 0 (no "needs a value").
+test('--help and -h print the usage for hooks, secret, env and team subcommands', () => {
+  const { spawnSync } = require('child_process');
+  const cli = require('path').join(__dirname, '..', 'bin', 'cli.js');
+  const cases = [
+    [['hooks', 'install', '--help'], /usage: zn hooks install\|uninstall/],
+    [['hooks', 'uninstall', '-h'], /usage: zn hooks install\|uninstall/],
+    [['hooks', 'install', 'codex', '--project', '--help'], /--no-mcp/],
+    [['secret', 'set', '--help'], /usage: zn secret/],
+    [['secret', 'allow', '-h'], /usage: zn secret/],
+    [['env', 'shadow', '--help'], /usage: zn env shadow/],
+    [['env', 'unshadow', '-h'], /usage: zn env shadow/],
+    [['env', 'unshadow', 'F', '--backup', '--help'], /usage: zn env shadow/],
+    [['team', '--help'], /usage: zn team join/],
+  ];
+  for (const [args, re] of cases) {
+    const r = spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8', env: { ...process.env, ZN_LOCAL_ONLY: 'true' } });
+    assert.strictEqual(r.status, 0, args.join(' ') + ': ' + r.stderr);
+    assert.match(r.stdout, re, args.join(' '));
+    assert.doesNotMatch(r.stderr + r.stdout, /needs a value/);
+  }
+  // A lone `--` stops help detection: the usage is not printed and the invalid-name error code is kept.
+  const r = spawnSync(process.execPath, [cli, 'secret', 'set', '--', '--help'], { encoding: 'utf8', env: { ...process.env, ZN_LOCAL_ONLY: 'true' } });
+  assert.doesNotMatch(r.stdout, /usage: zn secret/);
+  assert.strictEqual(r.status, 64, r.stderr);
 });

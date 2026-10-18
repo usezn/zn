@@ -18,6 +18,7 @@ const path = require('path');
 const { parseJsonc, parseToml } = require('./parse');
 const P = require('./patterns');
 const { BY_ID, RANK } = require('./rules');
+const mcpSecrets = require('../mcp-secrets');
 
 const AGENTS = ['claude', 'codex', 'cursor', 'opencode', 'amazonq', 'copilot', 'gemini'];
 const MAX_FILE_BYTES = 1024 * 1024;
@@ -77,7 +78,7 @@ function redact(text) {
 // or a name that ends in a secret word (API_TOKEN=v, "apiKey": "v", also inside escaped JSON).
 // The secret word must end the name, so MAX_TOKENS or author are not secrets.
 // References ($VAR, ${VAR}, %VAR%), zn markers and values already redacted are kept.
-const SECRET_WORD = '(?:token|secret|passw(?:or)?d|pwd|api[-_]?key|access[-_]?key|private[-_]?key|auth|credentials?)';
+const SECRET_WORD = '(?:token|secret|passw(?:or)?d|passphrase|pwd|api[-_]?key|access[-_]?key|private[-_]?key|auth|credentials?)';
 // A quoted value runs to its closing quote, or to the end of the text when it has none; an unquoted one to
 // the next delimiter. No length limit, so a long token (a JWT) is hidden whole. A value opened with \" (JSON
 // inside a string) ends at the next \"; one opened with " may hold escaped quotes. Each alternative excludes
@@ -86,7 +87,7 @@ const SECRET_WORD = '(?:token|secret|passw(?:or)?d|pwd|api[-_]?key|access[-_]?ke
 // backslash tried first so that a value ending in one (\\\\\") still ends at its own \".
 const QUOTED = String.raw`\\"(?:[^"\\\n]|\\\\\\\\|\\\\\\"|\\\\|\\[^"\\\n])+(?:\\")?|"(?:[^"\\\n]|\\.)+"?|'[^'\n]+'?`;
 const CONTEXT_RES = [
-  new RegExp('(--?[A-Za-z0-9]{0,40}(?:' + SECRET_WORD + '|pat|key)(?![a-z])[A-Za-z0-9-]{0,40}(?:=|\\s{1,8}))(' + QUOTED + '|[^\\s"\'`]+)', 'gi'),
+  new RegExp('(--?(?:\\/\\/[^\\s"\'\\\\,=]{1,200}:)?(?:[A-Za-z0-9_]{0,40}(?:' + SECRET_WORD + '|pat|key)|' + P.CRED_FLAG_NAME + ')(?![a-z])[A-Za-z0-9_-]{0,40}(?:=|\\s{1,8}))(' + QUOTED + '|[^\\s"\'`]+)', 'gi'),
   // user:password after -u or --user; attached to -u (-uuser:pass) too, but there not a URL, because a flag
   // such as -url:https://... is not a password.
   new RegExp('((?:^|\\s)(?:-u|--user)(?:=|\\s{1,8})["\']?[^\\s:"\']{1,128}:)([^\\s"\'@]+)', 'g'),
@@ -95,12 +96,12 @@ const CONTEXT_RES = [
   new RegExp('(\\bbearer\\s{1,8})([A-Za-z0-9._~+/=-]{8,})', 'gi'),
   // The flag and its value as two items of a JSON or TOML array (MCP server args): "--api-key", "v" (also
   // escaped, single-quoted, or with the value on the next line).
-  new RegExp(String.raw`(\\{0,7}["']--?[A-Za-z0-9-]{0,40}(?:` + SECRET_WORD + String.raw`|pat|key)(?![a-z])[A-Za-z0-9-]{0,40}\\{0,7}["']\s{0,8},(?:\s|\\{1,3}[nrt]){0,128})(` + String.raw`\\{2,7}"(?:[^"\\\n]|\\{1,7}(?!"))+(?:\\{1,7}")?|` + QUOTED + ')', 'gi'),
+  new RegExp(String.raw`(\\{0,7}["']--?(?:\/\/[^\s"'\\,=]{1,200}:)?(?:[A-Za-z0-9_-]{0,40}(?:` + SECRET_WORD + String.raw`|pat|key)|` + P.CRED_FLAG_NAME + String.raw`)(?![a-z])[A-Za-z0-9_-]{0,40}\\{0,7}["']\s{0,8},(?:\s|\\{1,3}[nrt]){0,128})(` + String.raw`\\{2,7}"(?:[^"\\\n]|\\{1,7}(?!"))+(?:\\{1,7}")?|` + QUOTED + ')', 'gi'),
   new RegExp('(\\b[A-Za-z0-9_]{0,60}' + SECRET_WORD + '(?![A-Za-z0-9])\\\\?["\']?\\s{0,8}[=:]\\s{0,8})(' + QUOTED + '|[^\\s"\'\\\\,;`]+)', 'gi'),
 ];
 // A line that ends with a quoted flag item and a comma: the value is on the next line.
 // Group 1 is the flag item; the line is tested after its trailing comment has been removed (stripComment).
-const FLAG_ITEM_END = new RegExp(String.raw`(\\{0,7}["']--?[A-Za-z0-9-]{0,40}(?:` + SECRET_WORD + String.raw`|pat|key)(?![a-z])[A-Za-z0-9-]{0,40}\\{0,7}["']\s{0,8},?)$`, 'i');
+const FLAG_ITEM_END = new RegExp(String.raw`(\\{0,7}["']--?(?:\/\/[^\s"'\\,=]{1,200}:)?(?:[A-Za-z0-9_-]{0,40}(?:` + SECRET_WORD + String.raw`|pat|key)|` + P.CRED_FLAG_NAME + String.raw`)(?![a-z])[A-Za-z0-9_-]{0,40}\\{0,7}["']\s{0,8},?)$`, 'i');
 // The line without its trailing comment (#, // or /*), found in one pass that knows about quoted strings.
 function stripComment(l) {
   let q = '';
@@ -286,7 +287,7 @@ function capHome(ctx, severity) {
 // The exact commands `zn hooks install` writes (lib/agents/config-file.js),
 // matched against the whole command. A path may not contain shell
 // metacharacters, so nothing can run before or after the zn runner.
-const HOOK_AGENTS = '(?:claude-code|codex|cursor|opencode)';
+const HOOK_AGENTS = '(?:claude-code|codex|cursor|opencode|antigravity)';
 const SAFE_ABS = '(?:/|[A-Za-z]:/)[^;&|$`<>(){}!*?"\'\\r\\n\\\\]{1,4096}';
 const OUR_HOOKS = [
   new RegExp('^zn(?:-gate)?(?:\\.cmd|\\.exe)? hook ' + HOOK_AGENTS + '$'),
@@ -498,7 +499,8 @@ function checkMcpServers(ctx, servers, keyPath, opts) {
           ctx.add('ZNA003', sev, line, 'MCP server "' + name + '" runs: ' + short(cmd, 200) + (o.note ? ' ' + o.note : ''));
         }
         for (const pkg of P.packagesOf(argv)) {
-          if (!pkg.pinned) ctx.add('ZNA005', 'medium', line, 'MCP server "' + name + '" runs ' + pkg.spec + ' through ' + pkg.manager + ' without an exact version.');
+          if (pkg.hidden) ctx.add('ZNA005', 'medium', line, 'MCP server "' + name + '" runs a package through ' + pkg.manager + ' without an exact version (its name follows a credential flag and is not shown).');
+          else if (!pkg.pinned) ctx.add('ZNA005', 'medium', line, 'MCP server "' + name + '" runs ' + pkg.spec + ' through ' + pkg.manager + ' without an exact version.');
         }
       }
     }
@@ -1313,12 +1315,23 @@ function auditFile(rec, out) {
   return true;
 }
 
+// Config kinds that hold MCP servers: a credential written in plain text under
+// the name that holds it (env, headers, arguments, URL keys) is found there too.
+const MCP_SECRET_KINDS = new Set(['mcp-json', 'vscode-mcp', 'codex-toml', 'claude-user-json', 'opencode-json', 'gemini-settings', 'amazonq-agent', 'claude-plugin']);
+
 function checkSecrets(ctx) {
-  const spans = secretSpans(ctx.raw);
-  if (!spans.length) return;
+  // In MCP configs the MCP check runs first and its values are masked, so the scrubber does not report them again.
+  let raw = ctx.raw;
+  let mcp = [];
+  if (MCP_SECRET_KINDS.has(ctx.rec.kind)) {
+    mcp = mcpSecrets.findMcpConfigSecretSpans(ctx.raw, { file: ctx.rec.rel });
+    raw = mcpSecrets.maskMcpValues(ctx.raw, mcp);
+  }
+  const spans = secretSpans(raw);
   const seen = new Set();
   let offset = 0;
-  const starts = ctx.lines.map((l) => { const s = offset; offset += l.length + 1; return s; });
+  const lines = raw === ctx.raw ? ctx.lines : raw.split(/\r?\n/);
+  const starts = lines.map((l) => { const s = offset; offset += l.length + 1; return s; });
   for (const sp of spans) {
     let lo = 0;
     let hi = starts.length - 1;
@@ -1327,6 +1340,14 @@ function checkSecrets(ctx) {
     if (seen.has(key)) continue;
     seen.add(key);
     ctx.add('ZNA011', 'high', lo + 1, 'A ' + sp.type + ' value is stored in the file.');
+  }
+  for (const m of mcp) {
+    if (m.silent) continue;
+    const step = mcpSecrets.mcpNextStep(m.kind, m.name);
+    ctx.add('ZNA011', 'high', m.line, 'A credential is written in plain text in this MCP server configuration (' + m.kind + ' ' + m.name + ').', {
+      evidence: mcpSecrets.mcpSample(m.kind, m.name).replace('[REDACTED]', '[REDACTED:SECRET]'),
+      fix: step.charAt(6).toUpperCase() + step.slice(7),
+    });
   }
 }
 
