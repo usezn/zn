@@ -289,6 +289,36 @@ class TestReviewFixes(_Base):
     def test_a_suggested_name_never_ends_with_an_underscore(self):
         self.assertFalse(mcp.suggested_name(mcp.normalize_name("a" * 55 + "_token")).endswith("_"))
 
+    def test_the_login_key_is_not_a_finding_of_any_rule_in_a_small_file_too(self):
+        home = tempfile.mkdtemp()
+        try:
+            key = "sk-ant-api03-" + "ZNTESTFAKE" + "q8v3Lm9x2W" * 8
+            self._write(".claude.json", '{\n  "primaryApiKey": "' + key + '",\n  "mcpServers": { "s": { "env": { "BRAVE_API_KEY": "'
+                        + FAKE + '" } } }\n}\n', base=home)
+            env = {"HOME": home, "USERPROFILE": home, "CODEX_HOME": "", "XDG_CONFIG_HOME": "", "APPDATA": ""}
+            with mock.patch.dict(os.environ, env), mock.patch("pathlib.Path.home", return_value=Path(home)):
+                _, data, out = self._json(include_home=True)
+            self._no_value(out)
+            self.assertEqual([[t["line"], t["rule"]] for t in data["threats"]], [[3, "secret:mcp_config"]])
+        finally:
+            shutil.rmtree(home, ignore_errors=True)
+
+    def test_include_home_does_not_follow_a_link_on_a_parent_folder_out_of_home(self):
+        if os.name == "nt":
+            self.skipTest("symbolic links need privileges on Windows")
+        home = tempfile.mkdtemp()
+        outside = tempfile.mkdtemp()
+        try:
+            self._write("config.toml", '[mcp_servers.x.env]\nBRAVE_API_KEY = "' + FAKE + '"\n', base=outside)
+            os.symlink(outside, os.path.join(home, ".codex"))
+            env = {"HOME": home, "USERPROFILE": home, "CODEX_HOME": "", "XDG_CONFIG_HOME": "", "APPDATA": ""}
+            with mock.patch.dict(os.environ, env), mock.patch("pathlib.Path.home", return_value=Path(home)):
+                _, data, _ = self._json(include_home=True)
+            self.assertEqual(data["threats"], [])
+        finally:
+            shutil.rmtree(home, ignore_errors=True)
+            shutil.rmtree(outside, ignore_errors=True)
+
 
 if __name__ == "__main__":
     unittest.main()

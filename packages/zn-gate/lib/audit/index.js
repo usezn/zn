@@ -1341,6 +1341,7 @@ function checkSecrets(ctx) {
     ctx.add('ZNA011', 'high', lo + 1, 'A ' + sp.type + ' value is stored in the file.');
   }
   for (const m of mcp) {
+    if (m.silent) continue;
     const step = mcpSecrets.mcpNextStep(m.kind, m.name);
     ctx.add('ZNA011', 'high', m.line, 'A credential is written in plain text in this MCP server configuration (' + m.kind + ' ' + m.name + ').', {
       evidence: mcpSecrets.mcpSample(m.kind, m.name).replace('[REDACTED]', '[REDACTED:SECRET]'),

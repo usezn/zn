@@ -132,7 +132,7 @@ const URL_START = /^[A-Za-z][A-Za-z0-9+.-]{1,15}:\/\//;
 const QUERY_PARAM = /[?&;#]([A-Za-z0-9_.-]{1,60})=([^&#\s]*)/g;
 // "Bearer abc": one token after the scheme. A sentence that starts with the word is not a credential.
 const SCHEME_VALUE = /^(?:bearer|basic)[ \t]+\S+$/i;
-// Names that hold a credential Claude Code itself uses to log in: not moved to the vault.
+// Names that hold a credential Claude Code itself uses to log in: not reported (moving it to the vault would break the login), and masked so no rule prints it.
 const OWN_LOGIN_NAMES = new Set(['primary_api_key']);
 
 // Credential values in the query of a URL: [{ norm, at, len }], `at` the offset of the value in `text`.
@@ -180,11 +180,13 @@ function findMcpConfigSecretSpans(text, options) {
   const lines = String(text).split('\n');
   let lineStart = 0;
   let ln = 0;
-  const add = (kind, name, s, e) => {
+  const add = (kind, name, s, e, silent) => {
     const key = ln + '\0' + kind + '\0' + name;
     if (seen.has(key)) return;
     seen.add(key);
-    found.push({ line: ln, kind, name: safeName(name), start: lineStart + s, end: lineStart + e });
+    const f = { line: ln, kind, name: safeName(name), start: lineStart + s, end: lineStart + e };
+    if (silent) f.silent = true; // masked for the other rules, never reported
+    found.push(f);
   };
   let pending = null; // a credential flag whose value is the next string
   for (let i = 0; i < lines.length; lineStart += lines[i].length + 1, i++) {
@@ -224,7 +226,7 @@ function findMcpConfigSecretSpans(text, options) {
 
 /** The same results without the offsets: { line, kind, name }. */
 function findMcpConfigSecrets(text, options) {
-  return findMcpConfigSecretSpans(text, options).map((f) => ({ line: f.line, kind: f.kind, name: f.name }));
+  return findMcpConfigSecretSpans(text, options).filter((f) => !f.silent).map((f) => ({ line: f.line, kind: f.kind, name: f.name }));
 }
 
 /** The text with each found value replaced, so no other rule can print it. Line numbers do not change. */
@@ -244,7 +246,7 @@ function pair(name, value, at, add, ownLogin) {
   const norm = normalizeName(name);
   const end = at + value.length;
   if (isSecretName(norm)) {
-    if (ownLogin && OWN_LOGIN_NAMES.has(norm)) return;
+    if (ownLogin && OWN_LOGIN_NAMES.has(norm)) { add('login', name, at, end, true); return; }
     if (holdsCredential(value, true)) {
       const kind = HEADER_NAMES.has(norm) ? 'header' : (/^[A-Z0-9_]+$/.test(name) ? 'environment variable' : 'setting');
       add(kind, name, at, end);

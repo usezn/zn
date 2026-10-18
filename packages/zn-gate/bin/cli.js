@@ -426,15 +426,13 @@ function homeMcpFiles() {
     path.join(xdg, 'opencode', 'opencode.jsonc'),
     path.join(home, '.aws', 'amazonq', 'mcp.json'),
   ];
-  // A symbolic link is followed only when its target is inside the home folder.
+  // A file is read only when its real path (every link followed) is inside the home folder.
   let realHome = home;
   try { realHome = fs.realpathSync(home); } catch (e) { /* keep home */ }
   return candidates.filter((f) => {
     try {
-      if (fs.lstatSync(f).isSymbolicLink()) {
-        const rel = path.relative(realHome, fs.realpathSync(f));
-        if (rel.startsWith('..') || path.isAbsolute(rel)) return false;
-      }
+      const rel = path.relative(realHome, fs.realpathSync(f));
+      if (rel.startsWith('..') || path.isAbsolute(rel)) return false;
       return fs.statSync(f).isFile();
     } catch (e) { return false; }
   });
@@ -665,6 +663,7 @@ Files   : ${files.length} file(s) queued for audit\n
     // MCP servers: every credential the MCP check found is a finding of its own; the
     // other rules ran on the text with those values masked (lib/mcp-secrets.js).
     for (const m of mcpFound) {
+      if (m.silent) continue;
       totalFindings++;
       findings.push({ file: relPath, line: m.line, rule: mcpSecrets.RULE_ID, reason: mcpSecrets.mcpReason(m.kind), type: 'secret_leak', sample: mcpSecrets.mcpSample(m.kind, m.name), next_step: mcpSecrets.mcpNextStep(m.kind, m.name) });
     }

@@ -144,7 +144,7 @@ zn scan --include-home     # also your own MCP configs (Claude Desktop, Claude C
 zn audit .                 # the same finding as ZNA011, also as SARIF for code scanning
 ```
 
-`--include-home` reads a config that is a symbolic link only when its target is inside your home folder. In `~/.claude.json` the key Claude Code uses to log in (`primaryApiKey`) is not reported, because moving it would break the login.
+`--include-home` reads a config only when its real path, after following every symbolic link (also on a folder such as `~/.codex`), is inside your home folder. In `~/.claude.json` the key Claude Code uses to log in (`primaryApiKey`) is not reported, because moving it would break the login.
 
 What the check calls a credential: a value under a name that ends in a secret
 word (`BRAVE_API_KEY`, `token`, `password`, `Authorization`, `X-Api-Key`), the

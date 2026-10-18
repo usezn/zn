@@ -235,6 +235,8 @@ def _mcp_violations(shown: str, found: List[Dict[str, Any]]) -> List[Dict[str, A
     is never printed."""
     out: List[Dict[str, Any]] = []
     for m in found:
+        if m.get("silent"):
+            continue
         kind, name = str(m["kind"]), str(m["name"])
         out.append({
             "file": shown,
@@ -379,7 +381,7 @@ def _home_mcp_files() -> List[Path]:
         xdg / "opencode" / "opencode.jsonc",
         home / ".aws" / "amazonq" / "mcp.json",
     ]
-    # A symbolic link is followed only when its target is inside the home folder.
+    # A file is read only when its real path (every link followed) is inside the home folder.
     try:
         real_home = home.resolve()
     except OSError:
@@ -387,11 +389,10 @@ def _home_mcp_files() -> List[Path]:
     out = []
     for c in candidates:
         try:
-            if c.is_symlink():
-                try:
-                    c.resolve().relative_to(real_home)
-                except ValueError:
-                    continue
+            try:
+                c.resolve().relative_to(real_home)
+            except ValueError:
+                continue
             if c.is_file():
                 out.append(c)
         except OSError:

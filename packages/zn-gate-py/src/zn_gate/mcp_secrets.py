@@ -150,11 +150,11 @@ _URL_START = re.compile(r"[A-Za-z][A-Za-z0-9+.-]{1,15}://")
 _QUERY_PARAM = re.compile(r"[?&;#]([A-Za-z0-9_.-]{1,60})=([^&#\s]*)")
 # "Bearer abc": one token after the scheme. A sentence that starts with the word is not a credential.
 _SCHEME_VALUE = re.compile(r"(?:bearer|basic)[ \t]+\S+", re.IGNORECASE)
-# Names that hold a credential Claude Code itself uses to log in: not moved to the vault.
+# Names that hold a credential Claude Code itself uses to log in: not reported (moving it to the vault would break the login), and masked so no rule prints it.
 _OWN_LOGIN_NAMES = {"primary_api_key"}
 _CLAUDE_JSON = re.compile(r"(^|[\\/])\.claude\.json$")
 # add(kind, name, start, end): offsets of the value in the line
-_AddFn = Callable[[str, str, int, int], None]
+_AddFn = Callable[..., None]
 
 
 def _url_params(text: str) -> List[Tuple[str, int, int]]:
@@ -195,13 +195,16 @@ def find_mcp_config_secret_spans(text: str, file: str = "") -> List[Dict[str, ob
     own_login = bool(_CLAUDE_JSON.search(str(file)))
     cur = {"ln": 0, "start": 0}
 
-    def add(kind: str, name: str, s: int, e: int) -> None:
+    def add(kind: str, name: str, s: int, e: int, silent: bool = False) -> None:
         key = (cur["ln"], kind, name)
         if key in seen:
             return
         seen.add(key)
-        found.append({"line": cur["ln"], "kind": kind, "name": _safe_name(name),
-                      "start": cur["start"] + s, "end": cur["start"] + e})
+        item: Dict[str, object] = {"line": cur["ln"], "kind": kind, "name": _safe_name(name),
+                                   "start": cur["start"] + s, "end": cur["start"] + e}
+        if silent:
+            item["silent"] = True  # masked for the other rules, never reported
+        found.append(item)
 
     pending: List[Optional[str]] = [None]  # a credential flag whose value is the next string
 
@@ -250,7 +253,7 @@ def find_mcp_config_secret_spans(text: str, file: str = "") -> List[Dict[str, ob
 
 def find_mcp_config_secrets(text: str, file: str = "") -> List[Dict[str, object]]:
     """The same results without the offsets: {"line", "kind", "name"}."""
-    return [{"line": f["line"], "kind": f["kind"], "name": f["name"]} for f in find_mcp_config_secret_spans(text, file)]
+    return [{"line": f["line"], "kind": f["kind"], "name": f["name"]} for f in find_mcp_config_secret_spans(text, file) if not f.get("silent")]
 
 
 def mask_mcp_values(text: str, spans: List[Dict[str, object]]) -> str:
@@ -273,6 +276,7 @@ def _pair(name: str, value: str, at: int, add: _AddFn, own_login: bool) -> None:
     end = at + len(value)
     if is_secret_name(norm):
         if own_login and norm in _OWN_LOGIN_NAMES:
+            add("login", name, at, end, True)
             return
         if _holds_credential(value, True):
             if norm in _HEADER_NAMES:

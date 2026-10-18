@@ -18,6 +18,7 @@ const CLI = path.join(__dirname, '..', 'bin', 'cli.js');
 const SAMPLES = path.join(__dirname, 'fixtures', 'mcp_config_secret_samples.json');
 const FAKE = 'ZNTESTFAKE' + 'q8v3Lm9x2W';
 const NEEDLES = ['ZNTESTFAKE', 'q8v3Lm9x2W'];
+const KEY = 'sk-ant-api03-' + 'ZNTESTFAKE' + 'q8v3Lm9x2W'.repeat(8);
 
 function expand(text) {
   return text.split('{V}').join(FAKE);
@@ -327,4 +328,26 @@ test('a home .claude.json over 2 MiB is checked for MCP credentials only', (t) =
 
 test('a suggested name never ends with an underscore', () => {
   assert.ok(!/_$/.test(mcp.suggestedName(mcp.normalizeName('a'.repeat(55) + '_token'))));
+});
+
+test('~/.claude.json: the login key is not a finding of any rule, in a small file too', (t) => {
+  const home = tempDir(t, 'zn-mcp-login-');
+  const empty = tempDir(t, 'zn-mcp-loginempty-');
+  write(home, { '.claude.json': '{\n  "primaryApiKey": "' + KEY + '",\n  "mcpServers": { "s": { "env": { "BRAVE_API_KEY": "' + FAKE + '" } } }\n}\n' });
+  const env = { HOME: home, USERPROFILE: home, CODEX_HOME: '', XDG_CONFIG_HOME: '', APPDATA: '' };
+  const { data, out } = scanJson(empty, ['--include-home'], env);
+  noValue(out, 'login key');
+  assert.deepEqual(data.threats.map((x) => [x.line, x.rule]), [[3, 'secret:mcp_config']]);
+});
+
+test('--include-home does not follow a link on a parent folder out of home', (t) => {
+  if (process.platform === 'win32') { t.skip('symbolic links need privileges on Windows'); return; }
+  const home = tempDir(t, 'zn-mcp-dirlink-');
+  const outside = tempDir(t, 'zn-mcp-dirout-');
+  const empty = tempDir(t, 'zn-mcp-dirempty-');
+  write(outside, { 'config.toml': '[mcp_servers.x.env]\nBRAVE_API_KEY = "' + FAKE + '"\n' });
+  fs.symlinkSync(outside, path.join(home, '.codex'));
+  const env = { HOME: home, USERPROFILE: home, CODEX_HOME: '', XDG_CONFIG_HOME: '', APPDATA: '' };
+  const { data } = scanJson(empty, ['--include-home'], env);
+  assert.equal(data.threats.length, 0);
 });
