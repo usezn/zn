@@ -19,6 +19,7 @@ from zn_gate import cli
 SETTINGS = settings(
     max_examples=100,
     deadline=None,
+    database=None,
     suppress_health_check=[HealthCheck.too_slow],
 )
 
