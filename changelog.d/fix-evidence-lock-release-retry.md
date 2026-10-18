@@ -1,0 +1,2 @@
+### Fixed
+- The evidence log no longer stops recording for up to 10 seconds in a rare race: when one process released its write lock at the very moment another was restoring it, the restored lock could be left behind. The release now looks again and removes it. Leftover files from broken locks are also only searched for when a stale lock was actually broken, and the Python package ignores `True` and `False` as a lock wait, like the Node package.
