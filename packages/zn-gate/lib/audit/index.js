@@ -18,6 +18,7 @@ const path = require('path');
 const { parseJsonc, parseToml } = require('./parse');
 const P = require('./patterns');
 const { BY_ID, RANK } = require('./rules');
+const mcpSecrets = require('../mcp-secrets');
 
 const AGENTS = ['claude', 'codex', 'cursor', 'opencode', 'amazonq', 'copilot', 'gemini'];
 const MAX_FILE_BYTES = 1024 * 1024;
@@ -1313,9 +1314,28 @@ function auditFile(rec, out) {
   return true;
 }
 
+// Config kinds that hold MCP servers: a credential written in plain text under
+// the name that holds it (env, headers, arguments, URL keys) is found there too.
+const MCP_SECRET_KINDS = new Set(['mcp-json', 'vscode-mcp', 'codex-toml', 'claude-user-json', 'opencode-json', 'gemini-settings', 'amazonq-agent', 'claude-plugin']);
+
+function checkMcpSecrets(ctx, reportedLines) {
+  if (!MCP_SECRET_KINDS.has(ctx.rec.kind)) return;
+  // A finding of the scrubber stands for one value of its line; the MCP findings after
+  // as many as that are added, so a second credential on the line is not hidden.
+  const skip = new Map(reportedLines);
+  for (const m of mcpSecrets.findMcpConfigSecrets(ctx.raw)) {
+    if (skip.get(m.line) > 0) { skip.set(m.line, skip.get(m.line) - 1); continue; }
+    const step = mcpSecrets.mcpNextStep(m.kind, m.name);
+    ctx.add('ZNA011', 'high', m.line, 'A credential is written in plain text in this MCP server configuration (' + m.kind + ' ' + m.name + ').', {
+      evidence: mcpSecrets.mcpSample(m.kind, m.name),
+      fix: step.charAt(6).toUpperCase() + step.slice(7),
+    });
+  }
+}
+
 function checkSecrets(ctx) {
   const spans = secretSpans(ctx.raw);
-  if (!spans.length) return;
+  const reportedLines = new Map();
   const seen = new Set();
   let offset = 0;
   const starts = ctx.lines.map((l) => { const s = offset; offset += l.length + 1; return s; });
@@ -1326,8 +1346,10 @@ function checkSecrets(ctx) {
     const key = lo + ':' + sp.type;
     if (seen.has(key)) continue;
     seen.add(key);
+    reportedLines.set(lo + 1, (reportedLines.get(lo + 1) || 0) + 1);
     ctx.add('ZNA011', 'high', lo + 1, 'A ' + sp.type + ' value is stored in the file.');
   }
+  checkMcpSecrets(ctx, reportedLines);
 }
 
 function uncheckedFinding(u) {

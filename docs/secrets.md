@@ -128,6 +128,49 @@ headers (the URL or the body need `zn secret allow NAME --in query|body`), and
 returns the response with secrets replaced by markers. There is no tool that
 returns a value.
 
+## MCP server configs
+
+MCP server configs (`.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`,
+`.codex/config.toml`, `claude_desktop_config.json`, Antigravity's
+`mcp_config.json` and similar) often hold a key in plain text, in the server's
+`env`, in a header or in its arguments, and then travel with the repository or
+a backup. `zn scan` and `zn audit` find them, and never print the value: they
+show the kind (environment variable, header, argument, URL), the name that
+holds it, the file and the line.
+
+```bash
+zn scan .                  # this project's MCP configs, with the rest of the scan
+zn scan --include-home     # also your own MCP configs (Claude Desktop, Claude Code, Cursor, Codex, ...)
+zn audit .                 # the same finding as ZNA011, also as SARIF for code scanning
+```
+
+What the check calls a credential: a value under a name that ends in a secret
+word (`BRAVE_API_KEY`, `token`, `password`, `Authorization`, `X-Api-Key`), the
+value after a credential flag in `args` (`--api-key`, `--token`), and a key in a
+URL (`?api_key=...`). It does not report a reference (`${NAME}`, `$NAME`,
+`__ZN_NAME__`), a placeholder, a file path or a value that reads as ordinary
+text.
+
+To fix one:
+
+1. Store the value: `zn secret set BRAVE_API_KEY` (it asks for the value at a
+   hidden prompt).
+2. Allow the server's program to use it: `zn secret allow BRAVE_API_KEY
+   --command npx` (use the program the server's `command` runs).
+3. Write `__ZN_BRAVE_API_KEY__` where the value was, and start the server
+   through `zn run`: set the server's `command` to `zn` and put `run`, `--`
+   and the old command first in `args`. `zn run` replaces the marker in the
+   server's environment and arguments with the real value, only inside that
+   process (step 4 above).
+4. For a header or a URL of a remote server there is no process to start, so
+   refer to an environment variable instead, written the way your agent
+   expects (`${BRAVE_API_KEY}` in Claude Code, `${env:BRAVE_API_KEY}` in
+   Cursor and VS Code, `{env:BRAVE_API_KEY}` in OpenCode), and keep the value
+   in your shell settings or a secret manager. An agent that cannot read
+   variables in its config (Claude Desktop does not) needs the server kept in
+   a file outside the repository.
+5. Rotate the value if the file was ever committed, synced or shared.
+
 ## Useful commands
 
 | Command | What it does |

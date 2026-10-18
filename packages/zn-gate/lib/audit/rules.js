@@ -7,7 +7,7 @@
 
 // Version of the rule catalogue and of the command patterns in audit/patterns.js.
 // Bump it when a rule, a pattern or a rule id changes; see CONTRIBUTING.md.
-const AUDIT_RULES_VERSION = '2026-10-17.1';
+const AUDIT_RULES_VERSION = '2026-10-18.1';
 
 const SEVERITIES = ['low', 'medium', 'high', 'critical'];
 const RANK = { none: 99, low: 1, medium: 2, high: 3, critical: 4 };
@@ -95,7 +95,7 @@ const RULES = [
   {
     id: 'ZNA011', severity: 'high', name: 'secret-in-config',
     title: 'Secret value in an agent file',
-    help: 'Credentials committed with agent configs leak with the repository. The value is never printed in the report.',
+    help: 'Credentials committed with agent configs leak with the repository. This covers known key formats anywhere in the file and, in MCP server configs, a value written in plain text under a name such as an API key, token, password or Authorization header, in a credential argument or in a URL key. The value is never printed in the report.',
     fix: 'Revoke the secret, remove it from the file and its history, and reference it from the environment or a secret store.',
     references: [],
   },

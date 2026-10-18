@@ -21,6 +21,7 @@
 })();
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { startMcpServer } = require('../lib/mcp');
 const { startMcpShield } = require('../lib/shield');
@@ -31,6 +32,7 @@ const { evaluate, redactSecrets, redactScanSecrets, redactScanRules, SECRET_PATT
 const { SCRUB_RULES_VERSION } = require('../lib/scrub/patterns');
 const { AUDIT_RULES_VERSION } = require('../lib/audit/rules');
 const { styles, sym, ruleLine } = require('../lib/term');
+const mcpSecrets = require('../lib/mcp-secrets');
 // Colors are decided once per run: NO_COLOR, TERM=dumb or a stdout that is not a terminal turn them off.
 const col = styles(process.stdout, process.env);
 
@@ -284,6 +286,8 @@ OPTIONS:
   --all, --code       Include source code files in security scan
   --include <exts>    Custom extensions to scan (e.g. .rst,.xml)
   --exclude <dirs>    Additional directories to exclude (e.g. fixtures,legacy)
+  --include-home      Also check your own MCP configs (Claude Desktop, Claude Code, Cursor, Codex,
+                      Gemini, Antigravity, OpenCode, Amazon Q) for passwords and keys written in plain text
   --verbose           Enable debug logging to stderr
   -h, --help          Show this help message
 
@@ -400,10 +404,45 @@ ${ruleLine(process.env, 77)}\n
   }
 }
 
+// The user's own MCP configuration files that exist on this computer.
+function homeMcpFiles() {
+  const home = os.homedir();
+  const xdg = process.env.XDG_CONFIG_HOME || path.join(home, '.config');
+  const codexHome = process.env.CODEX_HOME || path.join(home, '.codex');
+  const claudeDesktop = process.platform === 'win32'
+    ? path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'Claude', 'claude_desktop_config.json')
+    : process.platform === 'darwin'
+      ? path.join(home, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json')
+      : path.join(xdg, 'Claude', 'claude_desktop_config.json');
+  const candidates = [
+    claudeDesktop,
+    path.join(home, '.claude.json'),
+    path.join(home, '.cursor', 'mcp.json'),
+    path.join(codexHome, 'config.toml'),
+    path.join(home, '.gemini', 'settings.json'),
+    path.join(home, '.gemini', 'antigravity', 'mcp_config.json'),
+    path.join(home, '.gemini', 'config', 'mcp_config.json'),
+    path.join(xdg, 'opencode', 'opencode.json'),
+    path.join(xdg, 'opencode', 'opencode.jsonc'),
+    path.join(home, '.aws', 'amazonq', 'mcp.json'),
+  ];
+  return candidates.filter((f) => { try { return fs.statSync(f).isFile(); } catch (e) { return false; } });
+}
+
+// A file as shown in a report: relative to the current directory; one of the
+// user's own MCP configs (--include-home) outside it is shown as ~/...
+function displayPath(filePath, homeFiles) {
+  if (homeFiles && homeFiles.has(filePath)) {
+    const fromHome = path.relative(os.homedir(), filePath);
+    if (!fromHome.startsWith('..') && !path.isAbsolute(fromHome)) return '~/' + fromHome.split(path.sep).join('/');
+  }
+  return path.relative(process.cwd(), filePath);
+}
+
 function scanDirectory(targetPath, includeCode = false, options = {}) {
   const IGNORED_DIRS = new Set([
     'node_modules', '.git', '.next', 'dist', 'build', '.turbo', 'vendor',
-    '.idea', '.vscode', 'test', 'tests', '__tests__', 'target',
+    '.idea', 'test', 'tests', '__tests__', 'target',
   ]);
   if (options.exclude) {
     options.exclude.split(',').forEach(d => {
@@ -447,13 +486,15 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
       } catch (e) {
         return;
       }
+      // Editor settings are not scanned; the MCP servers of VS Code are.
+      if (base.toLowerCase() === '.vscode') entries = entries.filter((e) => e.toLowerCase() === 'mcp.json');
       for (const entry of entries) {
         walk(path.join(current, entry));
       }
     } else if (stat.isFile()) {
       const ext = path.extname(current).toLowerCase();
       const base = path.basename(current).toLowerCase();
-      const isCandidate = SCANNABLE_EXTS.has(ext) || base.startsWith('.env') || KEY_FILE_NAMES.has(path.basename(current));
+      let isCandidate = SCANNABLE_EXTS.has(ext) || base.startsWith('.env') || KEY_FILE_NAMES.has(path.basename(current));
       if (isCandidate && stat.size < 2 * 1024 * 1024) {
         filesToScan.push(current);
       } else if (isCandidate) {
@@ -480,6 +521,19 @@ async function handleScan(targetPath, options) {
   }
 
   const files = scanDirectory(resolved, options.includeCode, options);
+  const homeFiles = new Set();
+  const mcpOnly = new Set();
+  if (options.includeHome) {
+    for (const f of homeMcpFiles()) {
+      homeFiles.add(f);
+      if (files.includes(f)) continue;
+      let size = 0;
+      try { size = fs.statSync(f).size; } catch (e) { continue; }
+      if (size < 2 * 1024 * 1024) files.push(f);
+      else if (size < 64 * 1024 * 1024) { files.push(f); mcpOnly.add(f); } // ~/.claude.json grows with history: only its MCP servers are checked
+      else files.skipped.push({ file: f, reason: '64 MiB or larger' });
+    }
+  }
   if (format === 'text') process.stdout.write(`
 ${sym(process.env, '🛡️', undefined, '  ')}zn-gate Static Security Audit
 Target  : ${resolved}
@@ -493,7 +547,8 @@ Files   : ${files.length} file(s) queued for audit\n
   let notRead = 0;
 
   for (const filePath of files) {
-    const relPath = path.relative(process.cwd(), filePath);
+    const relPath = displayPath(filePath, homeFiles);
+    const fileFirst = findings.length;
     let content = '';
     try {
       const raw = fs.readFileSync(filePath);
@@ -509,7 +564,8 @@ Files   : ${files.length} file(s) queued for audit\n
       continue;
     }
 
-    const lines = content.split('\n');
+    const generic = !mcpOnly.has(filePath);
+    const lines = generic ? content.split('\n') : [];
     // Line of a character offset, numbered like the line pass (split on \n).
     const starts = [0];
     for (const l of lines) starts.push(starts[starts.length - 1] + l.length + 1);
@@ -524,7 +580,7 @@ Files   : ${files.length} file(s) queued for audit\n
     // not look like a key, so it would not be redacted).
     const blocks = [];
     const keyLines = new Set();
-    for (const r of MULTILINE_SECRET_RULES) {
+    for (const r of (generic ? MULTILINE_SECRET_RULES : [])) {
       const rx = new RegExp(r.pattern.source, r.pattern.flags.includes('g') ? r.pattern.flags : r.pattern.flags + 'g');
       let m;
       while ((m = rx.exec(content)) !== null) {
@@ -588,6 +644,34 @@ Files   : ${files.length} file(s) queued for audit\n
       // Only the BEGIN marker, never the key material.
       findings.push({ file: relPath, line: b.line, rule: b.rule, reason: b.reason || 'Exposed credential detected by DLP filter', type: 'secret_leak', sample: b.header, next_step: secretNextStep(relPath, b.rule) });
     }
+
+    // MCP servers: a credential found by the name that holds it, by a flag in the
+    // arguments or by a key in a URL (lib/mcp-secrets.js). A line the other rules
+    // already report keeps its finding and gets the MCP next step; the value is
+    // never printed.
+    if (mcpSecrets.isMcpConfigPath(filePath)) {
+      const mcpByLine = new Map();
+      for (const m of mcpSecrets.findMcpConfigSecrets(content)) {
+        if (!mcpByLine.has(m.line)) mcpByLine.set(m.line, []);
+        mcpByLine.get(m.line).push(m);
+      }
+      // Another rule's finding stands for one value of its line: the MCP findings
+      // after as many as that are added, so a second credential is not hidden.
+      const reported = new Map();
+      for (let fi = fileFirst; fi < findings.length; fi++) {
+        const f = findings[fi];
+        if (f.file !== relPath || f.type !== 'secret_leak' || f.rule === 'secret:private_key') continue;
+        const first = mcpByLine.get(f.line);
+        if (first) f.next_step = mcpSecrets.mcpNextStep(first[0].kind, first[0].name);
+        reported.set(f.line, (reported.get(f.line) || 0) + 1);
+      }
+      for (const [line, list] of mcpByLine) {
+        for (const m of list.slice(reported.get(line) || 0)) {
+          totalFindings++;
+          findings.push({ file: relPath, line, rule: mcpSecrets.RULE_ID, reason: mcpSecrets.mcpReason(m.kind), type: 'secret_leak', sample: mcpSecrets.mcpSample(m.kind, m.name), next_step: mcpSecrets.mcpNextStep(m.kind, m.name) });
+        }
+      }
+    }
   }
 
   const totalSecrets = findings.filter((f) => f.type === 'secret_leak').length;
@@ -603,7 +687,7 @@ Files   : ${files.length} file(s) queued for audit\n
       }
     }
     for (const s of files.skipped) {
-      process.stdout.write(`::notice file=${ghProperty(path.relative(process.cwd(), s.file))},title=Not scanned::${ghMessage(s.reason)}\n`);
+      process.stdout.write(`::notice file=${ghProperty(displayPath(s.file, homeFiles))},title=Not scanned::${ghMessage(s.reason)}\n`);
     }
     process.stdout.write(`\n[zn-gate] Scanned ${files.length - notRead} files (${files.skipped.length} not scanned). Found ${totalSecrets} secrets and ${totalThreats} security threats.\n`);
     if (totalFindings > 0) process.exitCode = 1;
@@ -621,7 +705,7 @@ Files   : ${files.length} file(s) queued for audit\n
         if (f.next_step) out.next_step = f.next_step;
         return out;
       }),
-      skipped: files.skipped.map((s) => ({ file: path.relative(process.cwd(), s.file), reason: s.reason })),
+      skipped: files.skipped.map((s) => ({ file: displayPath(s.file, homeFiles), reason: s.reason })),
     }, null, 2) + '\n');
     if (totalFindings > 0) process.exitCode = 1;
     return;
@@ -655,7 +739,7 @@ ${ruleLine(process.env, 77)}\n
 `);
   if (files.skipped.length) {
     process.stdout.write(`Not scanned (${files.skipped.length}):\n`);
-    for (const s of files.skipped.slice(0, 20)) process.stdout.write(`  ${path.relative(process.cwd(), s.file)} (${s.reason})\n`);
+    for (const s of files.skipped.slice(0, 20)) process.stdout.write(`  ${displayPath(s.file, homeFiles)} (${s.reason})\n`);
     if (files.skipped.length > 20) process.stdout.write(`  ... and ${files.skipped.length - 20} more\n`);
     process.stdout.write('\n');
   }
@@ -805,6 +889,7 @@ async function main() {
     port: 3100,
     tail: 20,
     includeCode: args.includes('--code') || args.includes('--all'),
+    includeHome: args.includes('--include-home'),
     include: null,
     exclude: null,
   };

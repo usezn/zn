@@ -80,7 +80,7 @@ print(r.verdict)           # allow
 - Roadmap: running Galvanize locally.
 
 **Scan: audit what your agent is about to trust**
-- Today: `zn-gate scan <path>` audits prompt templates, skill files and configs for injection traps and leaked secrets.
+- Today: `zn-gate scan <path>` audits prompt templates, skill files and configs for injection traps and leaked secrets. It also checks the MCP server configs (`.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `.codex/config.toml`, `claude_desktop_config.json` and others) for keys and passwords written in plain text in `env`, `headers`, arguments or URLs; it never prints the value, and `--include-home` checks your own MCP configs too.
 - Roadmap: auditing MCP servers and skills before you add them.
 
 ---

@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional
 from . import __version__
 from .rules import RULES_VERSION, evaluate, mask_token_runs
 from .rules import SECRET_PATTERNS as _DLP_PATTERNS, redact_secrets as _dlp_redact, redact_scan_secrets as _scan_redact
+from . import mcp_secrets as _mcp
 from .client import analyze, is_cloud_enabled, resolve_endpoint
 from .evidence import log_evidence, verify_evidence_ledger, get_evidence_stats, export_evidence_ledger, recovery_hint, EVIDENCE_FILE
 
@@ -46,6 +47,8 @@ _KEY_FILE_NAMES = {"id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "id_ecdsa_sk", 
 # with a NUL byte near the start (a Keynote document, not a key).
 _MAX_SCAN_BYTES = 2 * 1024 * 1024
 _BINARY_SNIFF = 8192
+# A home MCP config this large (~/.claude.json grows with history) gets only the MCP check.
+_MAX_HOME_MCP_BYTES = 64 * 1024 * 1024
 _UTF16_BOMS = (b"\xff\xfe", b"\xfe\xff")
 
 
@@ -198,14 +201,14 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     return 2 if res.get("verdict") == "block" else 0
 
 
-def _skip_reason(file_path: Path) -> Optional[str]:
+def _skip_reason(file_path: Path, mcp_only: bool = False) -> Optional[str]:
     """Why a file that matches the scan is not read, or None."""
     try:
         st = os.lstat(file_path)
         if not stat.S_ISREG(st.st_mode):
             return "not a regular file"
-        if st.st_size >= _MAX_SCAN_BYTES:
-            return "2 MiB or larger"
+        if st.st_size >= (_MAX_HOME_MCP_BYTES if mcp_only else _MAX_SCAN_BYTES):
+            return "64 MiB or larger" if mcp_only else "2 MiB or larger"
         with open(file_path, "rb") as f:
             head = f.read(_BINARY_SNIFF)
         if file_path.suffix.lower() == ".key" and head[:2] not in _UTF16_BOMS and b"\0" in head:
@@ -226,10 +229,46 @@ def _gh_message(value: str) -> str:
     return str(value).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
 
 
-def _scan_file(file_path: Path) -> List[Dict[str, Any]]:
+def _mcp_violations(file_path: Path, shown: str, content: str, violations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """MCP servers: a credential found by the name that holds it, by a flag in the
+    arguments or by a key in a URL (mcp_secrets.py). A line the other rules already
+    report keeps its finding and gets the MCP next step; the value is never printed."""
+    if not _mcp.is_mcp_config_path(str(file_path)):
+        return []
+    by_line: Dict[int, List[Dict[str, Any]]] = {}
+    for m in _mcp.find_mcp_config_secrets(content):
+        by_line.setdefault(int(m["line"]), []).append(m)
+    reported = set()
+    for v in violations:
+        if v.get("type") != "secret_leak" or v.get("rule") == "secret:private_key":
+            continue
+        first = by_line.get(v["line"])
+        if first:
+            v["next_step"] = _mcp.mcp_next_step(str(first[0]["kind"]), str(first[0]["name"]))
+        reported.add(v["line"])
+    added: List[Dict[str, Any]] = []
+    for line, found in by_line.items():
+        if line in reported:
+            continue
+        for m in found:
+            kind, name = str(m["kind"]), str(m["name"])
+            added.append({
+                "file": shown,
+                "line": line,
+                "rule": _mcp.RULE_ID,
+                "reason": _mcp.mcp_reason(kind),
+                "type": "secret_leak",
+                "content": _mcp.mcp_sample(kind, name),
+                "next_step": _mcp.mcp_next_step(kind, name),
+            })
+    return added
+
+
+def _scan_file(file_path: Path, shown: Optional[str] = None, mcp_only: bool = False) -> List[Dict[str, Any]]:
     violations: List[Dict[str, Any]] = []
+    shown = str(file_path) if shown is None else shown
     try:
-        if file_path.stat().st_size >= _MAX_SCAN_BYTES:
+        if file_path.stat().st_size >= (_MAX_HOME_MCP_BYTES if mcp_only else _MAX_SCAN_BYTES):
             return []
         raw = file_path.read_bytes()
     except Exception:
@@ -237,6 +276,8 @@ def _scan_file(file_path: Path) -> List[Dict[str, Any]]:
     if file_path.suffix.lower() == ".key" and raw[:2] not in _UTF16_BOMS and b"\0" in raw[:_BINARY_SNIFF]:
         return []
     content = _decode_scan_text(raw)
+    if mcp_only:
+        return _mcp_violations(file_path, shown, content, [])
 
     # Line numbers as the line pass counts them (str.splitlines boundaries).
     starts = [0]
@@ -290,7 +331,7 @@ def _scan_file(file_path: Path) -> List[Dict[str, Any]]:
         res = evaluate(line, strict=True)
         if not res.allowed:
             violations.append({
-                "file": str(file_path),
+                "file": shown,
                 "line": i,
                 "rule": res.rule,
                 "reason": res.reason or res.rule,
@@ -299,13 +340,13 @@ def _scan_file(file_path: Path) -> List[Dict[str, Any]]:
             })
         for finding in findings:
             violations.append({
-                "file": str(file_path),
+                "file": shown,
                 "line": i,
                 "rule": finding["rule"],
                 "reason": "Exposed credential detected by DLP filter",
                 "type": "secret_leak",
                 "content": snippet,
-                "next_step": _leak_next_step(str(file_path), finding["rule"]),
+                "next_step": _leak_next_step(shown, finding["rule"]),
             })
     seen = {(v["line"], v["rule"]) for v in violations}
     for name, first, _last, header, reason in blocks:
@@ -314,15 +355,50 @@ def _scan_file(file_path: Path) -> List[Dict[str, Any]]:
         seen.add((first, name))
         # Only the BEGIN marker, never the key material.
         violations.append({
-            "file": str(file_path),
+            "file": shown,
             "line": first,
             "rule": name,
             "reason": reason,
             "type": "secret_leak",
             "content": header,
-            "next_step": _leak_next_step(str(file_path), name),
+            "next_step": _leak_next_step(shown, name),
         })
+    violations.extend(_mcp_violations(file_path, shown, content, violations))
     return violations
+
+
+def _home_mcp_files() -> List[Path]:
+    """The user's own MCP configuration files that exist on this computer."""
+    home = Path.home()
+    xdg = Path(os.environ.get("XDG_CONFIG_HOME") or (home / ".config"))
+    codex_home = Path(os.environ.get("CODEX_HOME") or (home / ".codex"))
+    if sys.platform == "win32":
+        claude_desktop = Path(os.environ.get("APPDATA") or (home / "AppData" / "Roaming")) / "Claude" / "claude_desktop_config.json"
+    elif sys.platform == "darwin":
+        claude_desktop = home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
+    else:
+        claude_desktop = xdg / "Claude" / "claude_desktop_config.json"
+    candidates = [
+        claude_desktop,
+        home / ".claude.json",
+        home / ".cursor" / "mcp.json",
+        codex_home / "config.toml",
+        home / ".gemini" / "settings.json",
+        home / ".gemini" / "antigravity" / "mcp_config.json",
+        home / ".gemini" / "config" / "mcp_config.json",
+        xdg / "opencode" / "opencode.json",
+        xdg / "opencode" / "opencode.jsonc",
+        home / ".aws" / "amazonq" / "mcp.json",
+    ]
+    return [c for c in candidates if c.is_file()]
+
+
+def _home_display(file_path: Path) -> str:
+    """A file of the user's home as ~/..., the way the Node.js package shows it."""
+    try:
+        return "~/" + file_path.relative_to(Path.home()).as_posix()
+    except ValueError:
+        return str(file_path)
 
 
 def cmd_scan(args: argparse.Namespace) -> int:
@@ -359,16 +435,32 @@ def cmd_scan(args: argparse.Namespace) -> int:
                 if p.suffix.lower() in valid_exts or p.name.startswith(".env") or p.name in _KEY_FILE_NAMES:
                     files_to_scan.append(p)
 
+    home_files = set()
+    mcp_only_files = set()
+    if getattr(args, "include_home", False):
+        queued = {str(f.resolve()) for f in files_to_scan}
+        for hf in _home_mcp_files():
+            home_files.add(str(hf))
+            if str(hf.resolve()) in queued:
+                continue
+            files_to_scan.append(hf)
+            try:
+                if hf.stat().st_size >= _MAX_SCAN_BYTES:
+                    mcp_only_files.add(str(hf))
+            except OSError:
+                pass
+
     all_violations: List[Dict[str, Any]] = []
     skipped: List[Dict[str, str]] = []
     scanned = 0
     for fp in files_to_scan:
-        reason = _skip_reason(fp)
+        shown = _home_display(fp) if str(fp) in home_files else str(fp)
+        reason = _skip_reason(fp, str(fp) in mcp_only_files)
         if reason:
-            skipped.append({"file": str(fp), "reason": reason})
+            skipped.append({"file": shown, "reason": reason})
             continue
         scanned += 1
-        all_violations.extend(_scan_file(fp))
+        all_violations.extend(_scan_file(fp, shown, str(fp) in mcp_only_files))
 
     _print_report(getattr(args, "format", "text"), scanned, skipped, all_violations)
     if all_violations and not getattr(args, "no_fail", False):
@@ -544,6 +636,7 @@ def main() -> int:
     scan_parser.add_argument("--no-fail", action="store_true", help="Do not exit with error code even if threats are found")
     scan_parser.add_argument("--include", help="Comma-separated custom extensions to include (e.g. .custom,.xml)")
     scan_parser.add_argument("--exclude", help="Comma-separated directory names to exclude")
+    scan_parser.add_argument("--include-home", action="store_true", help="Also check your own MCP configs (Claude Desktop, Claude Code, Cursor, Codex, Gemini, Antigravity, OpenCode, Amazon Q) for passwords and keys written in plain text")
 
     # evidence command
     ev_parser = subparsers.add_parser("evidence", help="Audit cryptographic evidence ledger")
