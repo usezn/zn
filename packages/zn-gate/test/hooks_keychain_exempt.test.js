@@ -116,3 +116,45 @@ test('the escape decoding is fast on a long run of escapes and ignores impossibl
   const ms = Number(process.hrtime.bigint() - start) / 1e6;
   assert.ok(ms < 1000, 'took ' + ms + ' ms');
 });
+
+test('a name built from quoted pieces, a path join or a Bun cache folder is recognised', () => {
+  const cmds = [
+    String.raw`node -e "require('zn-' + 'gate/lib/client').loadStoredKey()"`,
+    String.raw`node -e "require('zn-'+'gate/lib/client').loadStoredKey()"`,
+    String.raw`node -e "require('node_modules/zn-gate/' + 'lib/' + 'client').loadStoredKey()"`,
+    String.raw`node -e "require("zn-gate/" + "lib/client").loadStoredKey()"`,
+    String.raw`node -e "require(path.join('node_modules', 'zn-gate', 'lib', 'client')).loadStoredKey()"`,
+    String.raw`node -e "require(['node_modules','zn-gate','lib','client'].join('/')).loadStoredKey()"`,
+    String.raw`node -e "require(path.resolve('zn-gate', 'lib', 'vault', 'client')).analyze()"`,
+    String.raw`node -e "require(path.join('lib','vault','keychain')).loadStoredKey()"`,
+    String.raw`bun -e "require('/home/u/.bun/install/cache/zn-gate@1.11.0@@@1/lib/client.js').loadStoredKey()"`,
+    String.raw`bun -e "require('zn-gate@1.11.0@@@1/lib/client').loadStoredKey()"`,
+    String.raw`bun -e "require('ZN-GATE@1.0.0-beta.1@@@12/LIB/CLIENT').loadStoredKey()"`,
+  ];
+  for (const c of cmds) assert.ok(denied(c), 'not refused: ' + c);
+});
+
+test('joined pieces of other modules and look-alike names stay allowed', () => {
+  const cmds = [
+    String.raw`node -e "require('./lib/' + 'client').analyze()"`,
+    String.raw`node -e "require(path.join('src', 'lib', 'client')).analyze()"`,
+    String.raw`node -e "require(path.join('acme', 'lib', 'client')).analyze()"`,
+    String.raw`node -e "require('zn-gate@1.11.0@@@1/lib/clients').analyze()"`,
+    String.raw`node -e "require('zn-gate@1.11.0/lib/cache').analyze()"`,
+    String.raw`node -e "console.log('zn-gate', 'lib', 'client')"`,
+    String.raw`node -e "console.log('zn-' + 'gate/lib/client')"`,
+  ];
+  for (const c of cmds) assert.equal(denied(c), null, 'refused: ' + c);
+});
+
+test('the join and version patterns stay linear on long adversarial lines', () => {
+  const start = process.hrtime.bigint();
+  denied('node -e "require(' + "'" + ' '.repeat(40000) + "x')" + '.loadStoredKey()"');
+  denied('node -e "require(' + "' + ' + '".repeat(15000) + ').loadStoredKey()"');
+  denied('node -e "require(' + "', '".repeat(15000) + ').loadStoredKey()"');
+  denied('node -e "require(\'zn-gate' + '@a'.repeat(15000) + '/lib/clien\').loadStoredKey()"');
+  denied('node -e "require(' + "'zn-gate@'".repeat(8000) + ').loadStoredKey()"');
+  denied('node -e "require(\'' + "'   ".repeat(12000) + '\').loadStoredKey()"');
+  const ms = Number(process.hrtime.bigint() - start) / 1e6;
+  assert.ok(ms < 1500, 'took ' + ms + ' ms');
+});

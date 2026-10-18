@@ -1,0 +1,2 @@
+### Security
+- The key-protection rule now also recognises zn-gate's key module when its name is built in the command (`'zn-' + 'gate/lib/client'`, `path.join('zn-gate', 'lib', 'client')`) or sits in a Bun cache folder (`zn-gate@1.11.0@@@1/lib/client`). Names written with URL encoding or look-alike letters are not matched because Node does not resolve them either, and Windows 8.3 short names remain a known limit of this barrier.
