@@ -3,6 +3,7 @@ CrewAI tool protection for zn-gate.
 """
 from __future__ import annotations
 import functools
+import inspect
 from typing import Any, Callable, Optional
 
 from ..guard import GuardBlockError, block_message, check_tool_call, check_tool_result
@@ -32,33 +33,60 @@ def guarded_tool(
     - block_truncated: With check_result, block an output too large to scan in
                        full (rule size:truncated) (default False).
 
-    Sync tools only: an async tool returns a coroutine, which is neither checked nor
-    masked.
+    Async tools (`async def`, or a callable object whose `__call__` is `async def`)
+    get the same treatment: the call is awaited, then the output is checked and
+    masked exactly as for a sync tool. A sync function that returns a coroutine,
+    and an async generator, are not checked or masked: declare the tool with
+    `async def` instead.
     """
+    def _finish(tool_name: str, result: Any, check_result: bool, block_truncated: bool,
+                mask_secrets: bool, on_block: str, fallback: Optional[str]) -> Any:
+        if check_result:
+            res_assessment = check_tool_result(result, block_truncated=block_truncated)
+            if not res_assessment.allowed:
+                target = f"crewai:{tool_name}:result"
+                if on_block == "raise":
+                    raise GuardBlockError(res_assessment, target=target, payload=result)
+                if fallback is not None:
+                    return fallback
+                return block_message(res_assessment, target)
+        if mask_secrets:
+            result, _ = sanitize_tool_result(result)
+        return result
+
+    def _blocked_input(tool_name: str, assessment: Any, kwargs: dict,
+                       on_block: str, fallback: Optional[str]) -> Any:
+        if on_block == "raise":
+            raise GuardBlockError(assessment, target=f"crewai:{tool_name}", payload=kwargs)
+        if fallback is not None:
+            return fallback
+        return block_message(assessment, f"crewai:{tool_name}")
+
     def decorator(tool_func: Callable) -> Callable:
+        if inspect.iscoroutinefunction(tool_func) or inspect.iscoroutinefunction(
+            getattr(tool_func, "__call__", None)
+        ):
+            @functools.wraps(tool_func)
+            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+                tool_name = getattr(tool_func, "__name__", "crewai_tool")
+                assessment = check_tool_call(tool_name, {"args": args, "kwargs": kwargs})
+                if not assessment.allowed:
+                    return _blocked_input(tool_name, assessment, kwargs, on_block, fallback)
+
+                result = await tool_func(*args, **kwargs)
+                return _finish(tool_name, result, check_result, block_truncated,
+                               mask_secrets, on_block, fallback)
+            return async_wrapper
+
         @functools.wraps(tool_func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             tool_name = getattr(tool_func, "__name__", "crewai_tool")
             assessment = check_tool_call(tool_name, {"args": args, "kwargs": kwargs})
             if not assessment.allowed:
-                if on_block == "raise":
-                    raise GuardBlockError(assessment, target=f"crewai:{tool_name}", payload=kwargs)
-                if fallback is not None:
-                    return fallback
-                return block_message(assessment, f"crewai:{tool_name}")
+                return _blocked_input(tool_name, assessment, kwargs, on_block, fallback)
 
             result = tool_func(*args, **kwargs)
-            if check_result:
-                res_assessment = check_tool_result(result, block_truncated=block_truncated)
-                if not res_assessment.allowed:
-                    target = f"crewai:{tool_name}:result"
-                    if on_block == "raise":
-                        raise GuardBlockError(res_assessment, target=target, payload=result)
-                    if fallback is not None:
-                        return fallback
-                    return block_message(res_assessment, target)
-            if mask_secrets:
-                result, _ = sanitize_tool_result(result)
-            return result
+            return _finish(tool_name, result, check_result, block_truncated,
+                           mask_secrets, on_block, fallback)
         return wrapper
     return decorator
