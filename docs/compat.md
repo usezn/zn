@@ -53,6 +53,30 @@ limit applies to a patch (`apply_patch`) in Codex and OpenCode.
   cannot check the file when you mention it with `@`. A protected file
   (`.env`, credentials, a private key) is covered only when a tool call reads it.
 
+## Codex CLI hook events
+
+The table lists every Codex hook event named in the official hooks documentation
+(learn.chatgpt.com/docs/hooks, checked 2026-10-18; the same event names appear in
+openai/codex's generated hook schemas). It says which ones zn installs and why.
+The Codex CLI version it was run on is given only where a check was run; that
+check used Codex CLI 0.163.0. Rows marked "not tested" are from the documentation
+only and have not been run against a live Codex.
+
+| Event | zn uses it | What it does for zn |
+|---|---|---|
+| `PreToolUse` | Yes, matcher `^(Bash\|apply_patch\|mcp__.+)$` | Checks shell commands, patches and MCP call arguments before they run, and denies with zn's reason. Exit code 2 also blocks (documented). zn never answers `allow`. Shell and `apply_patch` checked on 0.163.0; MCP calls not tested. |
+| `PostToolUse` | Yes, matcher `.*` | Scrubs tool output. Its `decision: "block"` replaces the result with zn's scrubbed copy. Checked on 0.163.0. |
+| `PermissionRequest` | Yes, deny only | Runs the same check as `PreToolUse` when Codex is about to ask you to approve a call. zn answers `deny` with its reason and never `allow`. Not tested. |
+| `UserPromptSubmit` | Yes | Blocks a secret pasted into the prompt. Checked on 0.163.0. |
+| `SessionStart` | No | zn installs no session-start hook for Codex. |
+| `Stop` | No | Not used. zn does not review the model's final message. |
+| `SubagentStart` | No | Not used. |
+| `SubagentStop` | No | Not used. |
+| `PreCompact` | No | Not used. |
+| `PostCompact` | No | Not used. |
+| `SessionEnd` | No | Not used. |
+| `Interrupt` | No | Not used. The documentation lists it with no matcher. |
+
 ## Why the differences
 
 - **Claude Code**: `PostToolUse` can replace the output of any tool
@@ -69,6 +93,19 @@ limit applies to a patch (`apply_patch`) in Codex and OpenCode.
     result.
   - Codex's own session log keeps the original output.
   - Hooks are a guardrail, not an enforcement boundary (Codex's own words).
+  - MCP tool calls reach `PreToolUse` (matcher `^(Bash|apply_patch|mcp__.+)$`), and zn checks
+    their arguments for secret values and `__ZN_` markers, as it does for Cursor. Installs made
+    before this change keep the old matcher until you run `zn hooks install codex` again, and
+    Codex asks you to review the changed hook in `/hooks`. Only zn's own `secrets` server, as
+    set in `config.toml` (your own or the project's `.codex/config.toml`), may receive
+    placeholders. Known limit: a server set on the Codex command line with `-c mcp_servers.secrets...`
+    or in a profile is not visible to the hook, so it gets no exception.
+  - Approval prompts (`PermissionRequest`, same matcher as PreToolUse): when Codex is about to ask you
+    to approve a shell command, a patch or an MCP call, zn runs the same check as before the call. If zn
+    would deny it, the request is denied with zn's reason, so no Approve button is shown for it. zn never
+    answers Allow there; for every other call it gives no answer, and the approval prompt stays. Installs
+    made before this change get the new hook when you run `zn hooks install codex` again, and Codex asks
+    you to review it in `/hooks`.
   - Checked with Codex CLI 0.163.0 on 2026-10-16: the shell tool (`exec_command`
     inside Codex) reaches hooks as `tool_name: "Bash"`, with the command in
     `tool_input.command`. zn's `PreToolUse` hook blocked `cat .env` and allowed
@@ -84,7 +121,7 @@ limit applies to a patch (`apply_patch`) in Codex and OpenCode.
     message names the file when the patch writes to one such as `.env`. Known difference:
     the `apply_patch` tool may edit `.env` (writes are checked only for `~/.zn` and agent
     settings), while any patch sent as a shell command is refused.
-- **Settings that turn hooks off.** zn reads the settings files only: the managed settings of Claude Code (`managed-settings.json` and `managed-settings.d/` in `/etc/claude-code`, `/Library/Application Support/ClaudeCode` or `C:\Program Files\ClaudeCode`) and of Codex (`requirements.toml` and `managed_config.toml` in `/etc/codex`, or `requirements.toml` in `%ProgramData%\OpenAI\Codex` and `managed_config.toml` in your Codex folder on Windows), and your own settings. A policy sent through MDM or the agent's cloud is not seen. When such a setting stops every hook, zn's start-of-session hook does not run either, so `zn-gate check` is where you see it.
+- **Settings that turn hooks off.** zn reads the settings files only: the managed settings of Claude Code (`managed-settings.json` and `managed-settings.d/` in `/etc/claude-code`, `/Library/Application Support/ClaudeCode` or `C:\Program Files\ClaudeCode`) and of Codex (`requirements.toml` and `managed_config.toml` in `/etc/codex`, or `requirements.toml` in `%ProgramData%\OpenAI\Codex` and `managed_config.toml` in your Codex folder on Windows), and your own settings. A policy sent through MDM or the agent's cloud is not seen. When such a setting stops every hook, zn's start-of-session hook does not run either (zn installs no session-start hook for Codex), so `zn-gate check` is where you see it.
 - **Cursor** (best effort: its hook documentation leaves the input of some
   tools open, and zn fails closed where it cannot read a path):
   - `beforeReadFile` can only allow or deny. zn sets `failClosed: true` on it

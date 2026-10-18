@@ -10,6 +10,7 @@ const ADAPTERS = {
   codex: () => require('./codex'),
   cursor: () => require('./cursor'),
   opencode: () => require('./opencode'),
+  antigravity: () => require('./antigravity'),
 };
 
 const ALIASES = { claude: 'claude-code', claudecode: 'claude-code' };

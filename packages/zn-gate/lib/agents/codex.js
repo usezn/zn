@@ -3,7 +3,7 @@
 /**
  * OpenAI Codex CLI adapter.
  *
- * Hook format (learn.chatgpt.com/docs/hooks, read 2026-10-11; the old
+ * Hook format (learn.chatgpt.com/docs/hooks, checked 2026-10-18; the old
  * developers.openai.com/codex/hooks URL redirects there):
  *
  *  hooks.json in ~/.codex/ ($CODEX_HOME) or <repo>/.codex/:
@@ -15,7 +15,9 @@
  *
  *  stdin: session_id, transcript_path, cwd, hook_event_name, model; tool
  *    events add tool_name ("Bash", "apply_patch", "mcp__<server>__<tool>"),
- *    tool_use_id and tool_input. Bash and apply_patch use tool_input.command.
+ *    tool_use_id and tool_input. Bash and apply_patch use tool_input.command;
+ *    for an MCP tool, tool_input is the call's arguments. PreToolUse runs for
+ *    Bash, apply_patch and MCP tools (PRE_MATCHER).
  *
  *  PreToolUse: hookSpecificOutput.permissionDecision "deny" (+ reason).
  *    updatedInput is accepted only with "allow", and "ask" is not supported
@@ -23,6 +25,12 @@
  *  PostToolUse: no field rewrites the output; {decision: "block", reason}
  *    replaces the tool result with the reason.
  *  UserPromptSubmit: {decision: "block", reason}.
+ *  PermissionRequest (runs only when Codex is about to ask the user: Bash,
+ *    apply_patch, MCP tools): hookSpecificOutput.decision {behavior: "deny",
+ *    message}. zn answers only "deny", and only for a call its PreToolUse
+ *    check denies. "allow" is never sent (it would skip the approval prompt),
+ *    nor updatedInput, updatedPermissions or interrupt (they fail closed).
+ *    Anything else: no output, and the approval prompt stays.
  *  Exit 0 with no output: no opinion; Codex's own approval policy applies.
  *
  * What that means here (docs/compat.md):
@@ -46,7 +54,9 @@ const cfg = require('./config-file');
 const { whichSync } = require('../broker/markers');
 
 const id = 'codex';
-const PRE_MATCHER = '^(Bash|apply_patch)$';
+// MCP calls are checked before they run: their arguments go through the same
+// scan as other agents' MCP calls (see runner.js, decideMcp).
+const PRE_MATCHER = '^(Bash|apply_patch|mcp__.+)$';
 // Every tool: output of tools zn does not know is tokenized like MCP output.
 const POST_MATCHER = '.*';
 const HOOK_TIMEOUT_S = 30;
@@ -105,11 +115,73 @@ function patchFiles(patch) {
   return patchScan(patch).files;
 }
 
+// The tools of zn's own "secrets" MCP server (lib/broker/mcp.js). Only these
+// names can get the placeholder exception, so a third-party server called
+// "secrets__<something>" cannot take it.
+const OWN_SECRETS_TOOL = /^mcp__secrets__(secrets_list|secrets_http_request|secrets_render_file|secrets_request)$/;
+
+/*
+ * The command of a [mcp_servers.secrets] table in one config.toml. found is
+ * false when there is no such table; command is null when the table is there
+ * but cannot be read (or the file cannot be parsed), which fails closed.
+ */
+function configSecretsCommand(file) {
+  if (!fs.existsSync(file)) return { found: false, command: null };
+  try {
+    const data = require('../audit/parse').parseToml(fs.readFileSync(file, 'utf8')).data;
+    const s = data && data.mcp_servers && data.mcp_servers.secrets;
+    if (s === undefined) return { found: false, command: null };
+    if (!s || typeof s.command !== 'string' || !Array.isArray(s.args)) return { found: true, command: null };
+    const command = [s.command, ...s.args.map(String)]
+      .map((w) => (/^[\w./:\\-]+$/.test(w) ? w : '"' + w.replace(/["\\]/g, '') + '"'))
+      .join(' ');
+    return { found: true, command };
+  } catch (_) {
+    return { found: true, command: null };
+  }
+}
+
+// Every .codex/config.toml from cwd up to the project root (the first folder
+// with a .git entry), or up to the file system root when there is none.
+function projectConfigFiles(cwd) {
+  const out = [];
+  let dir = path.resolve(cwd || process.cwd());
+  for (;;) {
+    out.push(path.join(dir, '.codex', 'config.toml'));
+    if (fs.existsSync(path.join(dir, '.git'))) break;
+    const up = path.dirname(dir);
+    if (up === dir) break;
+    dir = up;
+  }
+  return out;
+}
+
+/*
+ * The command that starts zn's own "secrets" MCP server, as the user's
+ * config.toml has it (`zn hooks install` writes it there). Codex's hook input
+ * does not name the command of an MCP server, so runner.js can only tell zn's
+ * server apart when this is passed as raw.command. A project's own
+ * .codex/config.toml that defines "secrets" must name the same command, or
+ * there is no exception (fails closed). Null when the exception is not granted.
+ * Command-line overrides (-c) and profiles are not visible to the hook.
+ */
+function secretsServerCommand(env, cwd) {
+  const user = configSecretsCommand(path.join(codexHome({ env }), 'config.toml'));
+  if (!user.found || !user.command) return null;
+  for (const file of projectConfigFiles(cwd)) {
+    const project = configSecretsCommand(file);
+    if (project.found && project.command !== user.command) return null;
+    if (project.found && !project.command) return null;
+  }
+  return user.command;
+}
+
 function normalize(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const name = raw.hook_event_name;
-  const event = name === 'PreToolUse' ? 'pre_tool' : name === 'PostToolUse' ? 'post_tool' : name === 'UserPromptSubmit' ? 'user_prompt' : null;
-  const base = { event, cwd: raw.cwd || process.cwd(), sessionId: raw.session_id || null, raw };
+  const event = name === 'PreToolUse' || name === 'PermissionRequest' ? 'pre_tool' : name === 'PostToolUse' ? 'post_tool' : name === 'UserPromptSubmit' ? 'user_prompt' : null;
+  // PermissionRequest is checked by the same policy as PreToolUse; respond() answers it with deny only.
+  const base = { event, permissionRequest: name === 'PermissionRequest', cwd: raw.cwd || process.cwd(), sessionId: raw.session_id || null, raw };
   if (event === 'user_prompt') return { ...base, tool: null, input: { prompt: typeof raw.prompt === 'string' ? raw.prompt : '' } };
   if (!event) return base;
   const toolName = String(raw.tool_name || '');
@@ -118,6 +190,13 @@ function normalize(raw) {
   // Unknown tools are treated like MCP output: their text is tokenized.
   let tool = mcp ? 'mcp' : toolName === 'Bash' ? 'bash' : toolName === 'apply_patch' ? 'write' : 'mcp';
   const input = { command: typeof ti.command === 'string' ? ti.command : undefined, texts: [] };
+  let evRaw = raw;
+  if (mcp) {
+    // For MCP, tool_input is the call's arguments; runner.js checks them.
+    input.args = raw.tool_input === undefined || raw.tool_input === null ? {} : raw.tool_input;
+    const command = mcp[1] === 'secrets' && OWN_SECRETS_TOOL.test(toolName) ? secretsServerCommand(process.env, base.cwd) : null;
+    if (command) evRaw = { ...raw, command };
+  }
   if (toolName === 'apply_patch') {
     // Every file the patch touches is checked by the policy; a patch whose
     // file names cannot be read is refused rather than let through.
@@ -134,7 +213,7 @@ function normalize(raw) {
     input.command = undefined;
     tool = 'write';
   }
-  return { ...base, tool, toolName, mcp: mcp ? { server: mcp[1], tool: mcp[2] } : null, input, output: event === 'post_tool' ? raw.tool_response : undefined };
+  return { ...base, raw: evRaw, tool, toolName, mcp: mcp ? { server: mcp[1], tool: mcp[2] } : null, input, output: event === 'post_tool' ? raw.tool_response : undefined };
 }
 
 function outputText(v) {
@@ -150,14 +229,17 @@ function respond(d) {
   if (!ev || !ev.event) return null;
   if (ev.event === 'pre_tool') {
     const deny = (reason) => ({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } });
-    if (d.decision === 'deny') return deny(d.message || 'Blocked by zn');
-    if (d.updatedInput && d.kind === 'wrap' && typeof ev.input.command === 'string') {
-      return deny('zn: this command uses a stored secret. Run it through zn instead, exactly like this: zn run -- ' + ev.input.command +
+    let out = null;
+    if (d.decision === 'deny') out = deny(d.message || 'Blocked by zn');
+    else if (d.updatedInput && d.kind === 'wrap' && typeof ev.input.command === 'string') {
+      out = deny('zn: this command uses a stored secret. Run it through zn instead, exactly like this: zn run -- ' + ev.input.command +
         '  (zn puts the value only into that process, if the user allowed this command for the secret).');
     }
     // Restoring detected tokens or asking would need "allow" (skips the
     // user's approval policy) or "ask" (unsupported): stay silent.
-    return null;
+    if (!ev.permissionRequest) return out;
+    // PermissionRequest: the same deny and reason, in its own shape. Never "allow".
+    return out && { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: out.hookSpecificOutput.permissionDecisionReason } } };
   }
   if (ev.event === 'post_tool') {
     if (d.updatedOutput !== undefined) {
@@ -216,6 +298,8 @@ function install(opts = {}) {
   };
   const ours = {
     PreToolUse: { matcher: PRE_MATCHER, hooks: [h] },
+    // Same matcher as PreToolUse: the approval prompt is asked only for calls zn's PreToolUse check let through.
+    PermissionRequest: { matcher: PRE_MATCHER, hooks: [h] },
     PostToolUse: { matcher: POST_MATCHER, hooks: [h] },
     UserPromptSubmit: { hooks: [h] },
   };
