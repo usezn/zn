@@ -176,8 +176,30 @@ async function decidePre(ev, d, agentId, opts) {
   const tool = ev.tool;
 
   if (tool === 'read' || tool === 'lsp' || (tool === 'grep' && input.path)) {
-    const deny = policy.readDenial(input.path, pathOpts);
-    if (deny) return { decision: 'deny', message: deny };
+    // An adapter that finds several paths in one call lists them all in input.paths.
+    for (const p of Array.isArray(input.paths) && input.paths.length ? input.paths : [input.path]) {
+      const deny = policy.readDenial(p, pathOpts);
+      if (deny) return { decision: 'deny', message: deny };
+    }
+  }
+  if (tool === 'grep' && input.scanDir) {
+    // A search over a folder (or with no path) prints matching lines, and an agent that cannot redact that
+    // output would show a plain-text secret to the model: ask when the folder holds a .env or a key file.
+    let names = [];
+    try { names = fs.readdirSync(input.scanDir).slice(0, 5000); } catch (_) { names = []; }
+    for (const n of names) {
+      if (policy.readDenial(path.join(input.scanDir, n), pathOpts)) {
+        return { decision: 'ask', message: 'zn: this search covers a folder that holds ' + n + ', which has plain-text secrets, and matching lines are not hidden in this agent. Approve only if the search must include it, or name a narrower path.' };
+      }
+    }
+  }
+  if (tool === 'fileaccess') {
+    // A tool zn does not know that names files: every path gets the read and the write checks.
+    for (const p of Array.isArray(input.paths) ? input.paths : []) {
+      const deny = policy.readDenial(p, pathOpts) || policy.writeDenial(p, pathOpts);
+      if (deny) return { decision: 'deny', message: deny };
+    }
+    return { decision: 'allow' };
   }
   if (tool === 'write' || tool === 'edit' || tool === 'multiedit' || tool === 'notebookedit') {
     // A patch can touch several files: every one is checked, not only the first.
@@ -203,6 +225,13 @@ async function decidePre(ev, d, agentId, opts) {
   }
 
   if (tool === 'monitor') return decideMonitor(ev, pathOpts, opts);
+  if (tool === 'mcp' && Array.isArray(input.paths)) {
+    // An MCP tool that takes a file path (a filesystem server): its output cannot be redacted in every agent.
+    for (const p of input.paths) {
+      const deny = policy.readDenial(p, pathOpts) || policy.writeDenial(p, pathOpts);
+      if (deny) return { decision: 'deny', message: deny };
+    }
+  }
   if (tool === 'mcp' && ev.input && ev.input.args !== undefined) return decideMcp(ev, d, agentId);
 
   if (SHELL_TOOLS.has(tool)) {
@@ -713,6 +742,8 @@ function refuseInput(agentId, why) {
     'If it happens again, ask the user to run `' + znCommand('hooks install') + '`.';
   process.stderr.write('zn hook: ' + msg + '\n');
   if (agentId === 'cursor') process.stdout.write(JSON.stringify({ permission: 'deny', continue: false, user_message: msg, agent_message: msg }));
+  // Antigravity does not document its exit codes, so its deny answer is printed as well.
+  if (agentId === 'antigravity') process.stdout.write(JSON.stringify({ decision: 'deny', reason: msg }));
   process.exitCode = 2;
 }
 
