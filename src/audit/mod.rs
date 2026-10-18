@@ -255,7 +255,10 @@ impl AuditVault {
         // before anything is written.
         if let Some(key) = &derived_key {
             let had_key_check = verify_key_check(&conn, key)?;
-            let report = migrate_v1_records(&mut conn, key)?;
+            if !had_key_check {
+                refuse_if_no_bound_record_opens(&conn, key)?;
+            }
+            let report = migrate_v1_records(&mut conn, key, had_key_check)?;
             if !had_key_check {
                 write_key_check_if_verified(&conn, key, report.unreadable)?;
             }
@@ -656,20 +659,18 @@ fn decrypt_legacy_payload(key_bytes: &[u8; 32], stored: &str) -> Option<String> 
     decrypt_body(key_bytes, stored, &[])
 }
 
-/// Most `v2:` rows read when looking for one that decrypts with the key. The
-/// scan stops at the first that does, so a healthy database needs one row;
-/// the bound keeps the open fast on a huge or hostile database.
-const KEY_VERIFY_SCAN_LIMIT: usize = 1000;
-
-/// True when one of the first `KEY_VERIFY_SCAN_LIMIT` bound (`v2:`) rows opens
-/// with `key_bytes`. Rows that do not decrypt (for instance a planted
-/// `v2:garbage` row) are skipped, so they cannot hold the check open.
+/// True when any bound (`v2:`) row opens with `key_bytes`. Rows that do not
+/// decrypt (for instance a planted `v2:garbage` row) are skipped, so they
+/// cannot hold the check open. The scan stops at the first row that opens, so
+/// a healthy database needs one row; it reads them all only when none opens
+/// (wrong passphrase or a hostile database). There is no row limit on purpose:
+/// a limit would let enough garbage rows lock out the right passphrase.
 fn existing_v2_record_decrypts(conn: &Connection, key_bytes: &[u8; 32]) -> Result<bool> {
     let mut stmt = conn.prepare(
         "SELECT id, namespace, payload FROM audit_logs
-         WHERE substr(payload, 1, 3) = 'v2:' LIMIT ?1",
+         WHERE substr(payload, 1, 3) = 'v2:'",
     )?;
-    let mut rows = stmt.query([KEY_VERIFY_SCAN_LIMIT as i64])?;
+    let mut rows = stmt.query([])?;
     while let Some(r) = rows.next()? {
         let id: String = r.get(0)?;
         let namespace: Option<String> = r.get(1)?;
@@ -735,9 +736,25 @@ fn verify_key_check(conn: &Connection, key_bytes: &[u8; 32]) -> Result<bool> {
         None => Ok(false),
         Some(stored) if key_check_matches(key_bytes, &stored) => Ok(true),
         Some(_) => Err(anyhow!(
-            "Audit database cannot be opened: wrong passphrase (or the stored key check is damaged). Nothing was written."
+            "Audit database cannot be opened: wrong passphrase (or the stored key check is damaged). No audit records were changed."
         )),
     }
+}
+
+/// Without a key check, a database that holds bound records must open at
+/// least one of them with this key; otherwise the passphrase is wrong.
+fn refuse_if_no_bound_record_opens(conn: &Connection, key_bytes: &[u8; 32]) -> Result<()> {
+    let has_bound_rows: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM audit_logs WHERE substr(payload, 1, 3) = 'v2:')",
+        [],
+        |r| r.get(0),
+    )?;
+    if has_bound_rows && !existing_v2_record_decrypts(conn, key_bytes)? {
+        return Err(anyhow!(
+            "Audit database cannot be opened: wrong passphrase (no stored record opens with it). No audit records were changed."
+        ));
+    }
+    Ok(())
 }
 
 /// Write the key check when the database has none and the key is known to be
@@ -745,6 +762,9 @@ fn verify_key_check(conn: &Connection, key_bytes: &[u8; 32]) -> Result<bool> {
 /// already decrypts with this key. If encrypted rows exist and none can be
 /// verified, nothing is written (same caution as the upgrade marker): it could
 /// be a wrong passphrase, and the right one must still be able to verify later.
+/// A database with no encrypted rows at all (empty, or only plain text) has
+/// nothing the key could contradict, so the first passphrase used becomes the
+/// key, like the salt.
 fn write_key_check_if_verified(
     conn: &Connection,
     key_bytes: &[u8; 32],
@@ -816,7 +836,11 @@ fn is_legacy_shaped(stored: &str) -> bool {
 ///   later, while a right key closes the upgrade even if a corrupted row
 ///   remains, and an old record planted afterwards is never rewritten as a
 ///   valid bound one. The open vault never accepts the old format either way.
-fn migrate_v1_records(conn: &mut Connection, key_bytes: &[u8; 32]) -> Result<MigrationReport> {
+fn migrate_v1_records(
+    conn: &mut Connection,
+    key_bytes: &[u8; 32],
+    key_proven: bool,
+) -> Result<MigrationReport> {
     let tx = conn
         .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .map_err(|e| anyhow!("Failed to start audit upgrade: {}", e))?;
@@ -863,7 +887,7 @@ fn migrate_v1_records(conn: &mut Connection, key_bytes: &[u8; 32]) -> Result<Mig
     // The key is proven right if it opened an old record in this run or opens
     // an existing bound record. Then the marker is safe to set even if some
     // old-shaped rows stay unreadable (corrupted): they are left as they are.
-    let v2_ok = report.migrated > 0 || existing_v2_record_decrypts(&tx, key_bytes)?;
+    let v2_ok = key_proven || report.migrated > 0 || existing_v2_record_decrypts(&tx, key_bytes)?;
     if report.unreadable == 0 || v2_ok {
         tx.execute(
             "INSERT OR REPLACE INTO metadata (key, value) VALUES (?1, ?2)",
@@ -1325,7 +1349,7 @@ mod tests {
         let key = vault_key(&path, LEGACY_KEY_PASSPHRASE);
         let mut conn = Connection::open(&path).unwrap();
         assert_eq!(
-            migrate_v1_records(&mut conn, &key).unwrap(),
+            migrate_v1_records(&mut conn, &key, false).unwrap(),
             MigrationReport::default()
         );
         fs::remove_file(&path).ok();
@@ -1488,7 +1512,7 @@ mod tests {
             .expect("wrong passphrase must be refused")
             .to_string();
         assert!(err.contains("wrong passphrase"), "{err}");
-        // Nothing was written by the refused open.
+        // No record was changed by the refused open.
         let conn = Connection::open(&path).unwrap();
         let n: i64 = conn
             .query_row("SELECT COUNT(*) FROM audit_logs", [], |r| r.get(0))
@@ -1583,6 +1607,89 @@ mod tests {
             )
             .unwrap();
         }
+        drop(AuditVault::new(&path, Some("right")).unwrap());
+        assert_eq!(format_marker(&path).as_deref(), Some("v2"));
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn wrong_passphrase_is_refused_when_the_key_check_is_missing() {
+        let path = temp_db_path();
+        let vault = AuditVault::new(&path, Some("right")).unwrap();
+        log_payload(&vault, "secret");
+        drop(vault);
+        set_metadata(&path, KEY_CHECK_KEY, None);
+        let err = AuditVault::new(&path, Some("wrong"))
+            .err()
+            .expect("wrong passphrase must be refused")
+            .to_string();
+        assert!(err.contains("wrong passphrase"), "{err}");
+        let conn = Connection::open(&path).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM audit_logs", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1);
+        drop(conn);
+        assert_eq!(key_check_value(&path), None);
+        let vault = AuditVault::new(&path, Some("right")).unwrap();
+        assert_eq!(
+            vault.get_recent(5).unwrap()[0].payload.as_deref(),
+            Some("secret")
+        );
+        drop(vault);
+        assert!(key_check_value(&path).is_some());
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn many_garbage_rows_do_not_lock_out_the_right_passphrase() {
+        let path = temp_db_path();
+        drop(AuditVault::new(&path, Some("right")).unwrap());
+        {
+            let conn = Connection::open(&path).unwrap();
+            for i in 0..1001 {
+                conn.execute(
+                    "INSERT INTO audit_logs (id, timestamp, event, tool_name, status, payload)
+                     VALUES (?1, '2026-01-01T00:00:00Z', 'e', 't', 'ALLOWED', 'v2:garbage')",
+                    [format!("garbage-{i:05}")],
+                )
+                .unwrap();
+            }
+        }
+        let vault = AuditVault::new(&path, Some("right")).unwrap();
+        log_payload(&vault, "real");
+        drop(vault);
+        set_metadata(&path, KEY_CHECK_KEY, None);
+        // The good record sits after 1001 garbage rows and still verifies.
+        drop(AuditVault::new(&path, Some("right")).unwrap());
+        assert!(key_check_value(&path).is_some());
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn valid_key_check_sets_the_marker_behind_many_garbage_rows() {
+        const BAD: &str = "AAAAAAAAAAAAAAAA:bm90IGEgcmVhbCBjaXBoZXJ0ZXh0";
+        let path = temp_db_path();
+        drop(AuditVault::new(&path, Some("right")).unwrap());
+        {
+            let conn = Connection::open(&path).unwrap();
+            for i in 0..1001 {
+                conn.execute(
+                    "INSERT INTO audit_logs (id, timestamp, event, tool_name, status, payload)
+                     VALUES (?1, '2026-01-01T00:00:00Z', 'e', 't', 'ALLOWED', 'v2:garbage')",
+                    [format!("garbage-{i:05}")],
+                )
+                .unwrap();
+            }
+            conn.execute(
+                "INSERT INTO audit_logs (id, timestamp, event, tool_name, status, payload)
+                 VALUES ('old-bad', '2026-01-01T00:00:00Z', 'e', 't', 'ALLOWED', ?1)",
+                [BAD],
+            )
+            .unwrap();
+        }
+        set_metadata(&path, FORMAT_KEY, None);
+        assert!(key_check_value(&path).is_some());
         drop(AuditVault::new(&path, Some("right")).unwrap());
         assert_eq!(format_marker(&path).as_deref(), Some("v2"));
         fs::remove_file(&path).ok();

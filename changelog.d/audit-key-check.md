@@ -1,2 +1,2 @@
 ### Security
-- The audit log now refuses to open with the wrong passphrase instead of quietly writing new records under a different key that the right passphrase could not read. The check is stored when a database is first opened with a key (for existing databases, once a stored record has proved the key right).
+- The audit log now refuses to open with the wrong passphrase instead of quietly writing new records under a different key that the right passphrase could not read. A check value is stored the first time a database is opened with a key; for existing databases it is stored once a record has proved the key right, and until then a passphrase that opens none of the stored records is refused.
