@@ -256,11 +256,13 @@ impl AuditVault {
         if let Some(key) = &derived_key {
             let had_key_check = verify_key_check(&conn, key)?;
             if !had_key_check {
-                refuse_if_no_bound_record_opens(&conn, key)?;
+                refuse_if_no_stored_record_opens(&conn, key)?;
             }
-            let report = migrate_v1_records(&mut conn, key, had_key_check)?;
+            // Past this point the key is proven (a stored record opened with
+            // it, or nothing is encrypted yet).
+            let report = migrate_v1_records(&mut conn, key, true)?;
             if !had_key_check {
-                write_key_check_if_verified(&conn, key, report.unreadable)?;
+                write_key_check(&conn, key)?;
             }
             if report.migrated > 0 {
                 info!(
@@ -741,15 +743,34 @@ fn verify_key_check(conn: &Connection, key_bytes: &[u8; 32]) -> Result<bool> {
     }
 }
 
-/// Without a key check, a database that holds bound records must open at
-/// least one of them with this key; otherwise the passphrase is wrong.
-fn refuse_if_no_bound_record_opens(conn: &Connection, key_bytes: &[u8; 32]) -> Result<()> {
-    let has_bound_rows: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM audit_logs WHERE substr(payload, 1, 3) = 'v2:')",
-        [],
-        |r| r.get(0),
-    )?;
-    if has_bound_rows && !existing_v2_record_decrypts(conn, key_bytes)? {
+/// Without a key check, a database that holds encrypted records (bound or in
+/// the old shape) must open at least one of them with this key; otherwise the
+/// passphrase is wrong. A database with no encrypted records accepts the first
+/// passphrase, like the salt. A database whose encrypted records are all
+/// corrupted therefore opens with no passphrase at all (it fails closed).
+fn refuse_if_no_stored_record_opens(conn: &Connection, key_bytes: &[u8; 32]) -> Result<()> {
+    let mut stmt =
+        conn.prepare("SELECT id, namespace, payload FROM audit_logs WHERE payload IS NOT NULL")?;
+    let mut rows = stmt.query([])?;
+    let mut has_encrypted = false;
+    while let Some(r) = rows.next()? {
+        let id: String = r.get(0)?;
+        let namespace: Option<String> = r.get(1)?;
+        let payload: String = r.get(2)?;
+        let opens = if payload.starts_with(V2_PREFIX) {
+            has_encrypted = true;
+            decrypt_payload(key_bytes, &id, namespace.as_deref(), &payload).is_some()
+        } else if is_legacy_shaped(&payload) {
+            has_encrypted = true;
+            decrypt_legacy_payload(key_bytes, &payload).is_some()
+        } else {
+            false
+        };
+        if opens {
+            return Ok(());
+        }
+    }
+    if has_encrypted {
         return Err(anyhow!(
             "Audit database cannot be opened: wrong passphrase (no stored record opens with it). No audit records were changed."
         ));
@@ -757,35 +778,14 @@ fn refuse_if_no_bound_record_opens(conn: &Connection, key_bytes: &[u8; 32]) -> R
     Ok(())
 }
 
-/// Write the key check when the database has none and the key is known to be
-/// the right one: the database holds nothing encrypted yet, or a bound record
-/// already decrypts with this key. If encrypted rows exist and none can be
-/// verified, nothing is written (same caution as the upgrade marker): it could
-/// be a wrong passphrase, and the right one must still be able to verify later.
-/// A database with no encrypted rows at all (empty, or only plain text) has
-/// nothing the key could contradict, so the first passphrase used becomes the
-/// key, like the salt.
-fn write_key_check_if_verified(
-    conn: &Connection,
-    key_bytes: &[u8; 32],
-    unreadable_old_records: usize,
-) -> Result<()> {
-    let has_bound_rows: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM audit_logs WHERE substr(payload, 1, 3) = 'v2:')",
-        [],
-        |r| r.get(0),
+/// Store the key check. Only called after `refuse_if_no_stored_record_opens`
+/// let the open proceed: the key opened a stored record, or the database holds
+/// nothing encrypted that the key could contradict.
+fn write_key_check(conn: &Connection, key_bytes: &[u8; 32]) -> Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO metadata (key, value) VALUES (?1, ?2)",
+        params![KEY_CHECK_KEY, make_key_check(key_bytes)?],
     )?;
-    let verified = if has_bound_rows {
-        existing_v2_record_decrypts(conn, key_bytes)?
-    } else {
-        unreadable_old_records == 0
-    };
-    if verified {
-        conn.execute(
-            "INSERT OR REPLACE INTO metadata (key, value) VALUES (?1, ?2)",
-            params![KEY_CHECK_KEY, make_key_check(key_bytes)?],
-        )?;
-    }
     Ok(())
 }
 
@@ -1431,11 +1431,19 @@ mod tests {
     fn wrong_passphrase_does_not_lock_out_the_right_one() {
         let path = temp_db_path();
         let rows = legacy_db(&path, 2);
-        drop(AuditVault::new(&path, Some("wrong-passphrase")).unwrap());
+        let before: Vec<String> = rows.iter().map(|(id, _, _)| raw_payload(&path, id)).collect();
+        // An old-format-only database refuses the wrong passphrase.
+        let err = AuditVault::new(&path, Some("wrong-passphrase"))
+            .err()
+            .expect("wrong passphrase must be refused")
+            .to_string();
+        assert!(err.contains("wrong passphrase"), "{err}");
         assert_eq!(format_marker(&path), None);
-        for (id, _, _) in &rows {
-            assert!(!raw_payload(&path, id).starts_with("v2:"));
+        assert_eq!(key_check_value(&path), None);
+        for ((id, _, _), old) in rows.iter().zip(&before) {
+            assert_eq!(&raw_payload(&path, id), old);
         }
+        // The right one still gets in and upgrades everything.
         let vault = AuditVault::new(&path, Some(LEGACY_KEY_PASSPHRASE)).unwrap();
         let read = vault.get_recent(10).unwrap();
         for (id, _, plain) in &rows {
@@ -1443,7 +1451,42 @@ mod tests {
             assert_eq!(r.payload.as_deref(), Some(plain.as_str()));
         }
         assert_eq!(format_marker(&path).as_deref(), Some("v2"));
+        assert!(key_check_value(&path).is_some());
         drop(vault);
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn wrong_then_right_then_wrong_never_locks_out_the_right_one() {
+        let path = temp_db_path();
+        let rows = legacy_db(&path, 2);
+        for round in 0..2 {
+            assert!(
+                AuditVault::new(&path, Some("wrong-passphrase")).is_err(),
+                "round {round}"
+            );
+            let vault = AuditVault::new(&path, Some(LEGACY_KEY_PASSPHRASE)).unwrap();
+            log_payload(&vault, "after");
+            let read = vault.get_recent(10).unwrap();
+            for (id, _, plain) in &rows {
+                let r = read.iter().find(|r| &r.id == id).unwrap();
+                assert_eq!(r.payload.as_deref(), Some(plain.as_str()));
+            }
+            drop(vault);
+        }
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn database_with_only_corrupted_encrypted_rows_fails_closed() {
+        const BAD: &str = "AAAAAAAAAAAAAAAA:bm90IGEgcmVhbCBjaXBoZXJ0ZXh0";
+        let path = temp_db_path();
+        legacy_db(&path, 1);
+        let conn = Connection::open(&path).unwrap();
+        conn.execute("UPDATE audit_logs SET payload = ?1", [BAD]).unwrap();
+        drop(conn);
+        assert!(AuditVault::new(&path, Some(LEGACY_KEY_PASSPHRASE)).is_err());
+        assert_eq!(key_check_value(&path), None);
         fs::remove_file(&path).ok();
     }
 
@@ -1543,10 +1586,10 @@ mod tests {
     }
 
     #[test]
-    fn unverifiable_database_gets_no_key_check() {
+    fn refused_open_writes_no_key_check() {
         let path = temp_db_path();
         legacy_db(&path, 2);
-        drop(AuditVault::new(&path, Some("wrong-passphrase")).unwrap());
+        assert!(AuditVault::new(&path, Some("wrong-passphrase")).is_err());
         assert_eq!(key_check_value(&path), None);
         // The right passphrase still works and then writes it.
         drop(AuditVault::new(&path, Some(LEGACY_KEY_PASSPHRASE)).unwrap());
