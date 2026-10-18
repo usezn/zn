@@ -258,7 +258,7 @@ Audit log: `zn-gate shield` appends each decision to `~/.zn/evidence.jsonl` as a
 
 ### GitHub Action
 
-Guide for the audit mode (permissions, code scanning, badge): [docs/github-action.md](docs/github-action.md).
+Guide for the audit mode (permissions, code scanning, badge): [docs/github-action.md](docs/github-action.md). To report findings without failing the build, see [Warn without failing the build](docs/github-action.md#warn-without-failing-the-build).
 
 The action installs the published zn-gate packages at an exact version and runs on the runner only; it sends nothing anywhere. It has two checks, chosen with `mode`:
 
