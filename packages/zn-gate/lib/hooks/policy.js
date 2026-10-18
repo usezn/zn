@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-18.33';
+const POLICY_RULES_VERSION = '2026-10-18.40';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -85,6 +85,9 @@ const AGENT_CONFIG_RES = [
   [/(^|\/)\.claude\/settings[^/]*\.json$/, 'Claude Code settings'],
   [/(^|\/)\.codex\/[^/]*$/, 'Codex hooks and configuration'],
   [/(^|\/)\.cursor\/hooks\.json$/, 'Cursor hooks'],
+  [/(^|\/)\.agents\/hooks\.json$/, 'Antigravity hooks'],
+  [/(^|\/)\.gemini\/config\/hooks\.json$/, 'Antigravity hooks'],
+  [/(^|\/)\.gemini\/antigravity-cli\/settings\.json$/, 'Antigravity settings and permissions'],
   [/(^|\/)opencode\.jsonc?$/, 'OpenCode configuration'],
   [/(^|\/)\.(config\/)?opencode\/plugins?\//, 'OpenCode plugins'],
   [/(^|\/)\.opencode\/plugins?\//, 'OpenCode plugins'],
@@ -221,6 +224,28 @@ function resolvedOf(p, opts = {}) {
 }
 
 /**
+ * The path a typed path names when every ".." is applied to the real place its left side leads to (links followed),
+ * not to the text before it. null when the path has no "..". A part that does not exist is followed as written.
+ */
+function physicalDotDot(text, cwd) {
+  if (typeof text !== 'string' || !/(^|[\\/])\.\.([\\/]|$)/.test(text)) return null;
+  const full = path.isAbsolute(text) ? text : cwd + path.sep + text;
+  const rootDir = path.parse(full).root;
+  let cur = rootDir;
+  for (const seg of full.slice(rootDir.length).split(/[\\/]+/)) {
+    if (!seg || seg === '.') continue;
+    if (seg === '..') {
+      let real = cur;
+      try { real = fs.realpathSync(cur); } catch (_) { /* not there: followed as written */ }
+      cur = path.dirname(real);
+    } else {
+      cur = path.join(cur, seg);
+    }
+  }
+  return cur;
+}
+
+/**
  * Classify a path. Returns null or {kind, reason}:
  *   kind 'credential' | 'dotenv' | 'keyfile' | 'zn_state' | 'agent_config'
  * The path is checked as typed and where it really leads (symlinks resolved),
@@ -238,7 +263,11 @@ function classifyPath(p, opts = {}) {
     return { kind: 'agent_config', reason: 'the path comes from $' + expanded.agentVar + ', the agent configuration location' };
   }
   const abs = path.resolve(ctx.cwd, expanded.text);
-  for (const candidate of new Set([abs, realTargetOf(abs)])) {
+  const candidates = new Set([abs, realTargetOf(abs)]);
+  // ag/../hooks.json, with ag a link to .agents/skills, names .agents/hooks.json: ".." is applied to where the link leads.
+  const physical = physicalDotDot(expanded.text, ctx.cwd);
+  if (physical) { candidates.add(physical); candidates.add(realTargetOf(physical)); }
+  for (const candidate of candidates) {
     const c = classifyResolved(candidate, ctx);
     if (c) return c;
   }
@@ -761,7 +790,63 @@ function commandName(words) {
 // (less and tree are not here: tree writes its output with -o, less can run commands.)
 const READ_ONLY_CMDS = new Set(['cat', 'head', 'tail', 'more', 'grep', 'egrep', 'fgrep', 'rg', 'ls', 'stat', 'wc', 'diff',
   'file', 'bat', 'jq', 'type', 'gc', 'get-content', 'select-string', 'findstr', 'dir', 'pwd', 'echo']);
-const AGENT_CONFIG_MENTION_RE = /\.claude\/settings|\.codex\/|\.cursor\/hooks|opencode\.jsonc?|\.opencode\/|\.config\/opencode\//i;
+const AGENT_CONFIG_MENTION_RE = /\.claude\/settings|\.codex\/|\.cursor\/hooks|\.gemini\/config\/hooks|antigravity-cli\/settings|opencode\.jsonc?|\.opencode\/|\.config\/opencode\//i;
+// .agents is shared with other tools (Codex reads .agents/skills; Antigravity keeps rules and workflows there), so
+// only the folder itself, its hooks file, globs or ".." inside it, and changing into it count as touching the hook.
+const AGENTS_DIR_RISKY_RE = /(?:^|[\/\s"'=:])\.agents(?:\/*(?=$|[\s"';&|)])|\/(?:[^\s"'\/]*\/)*(?:hooks\.json|\.\.(?=$|[\/\s"';&|)])|[^\s"'\/]*[*?[{$`]))/i;
+const AGENTS_DIR_ANY_RE = /(?:^|[\/\s"'=:])\.agents(?:\/|$|[\s"';&|)])/i;
+// Commands that make a link: through a link, ".." no longer means what it says, so any mention of .agents counts.
+const LINK_CMDS = new Set(['ln', 'mklink']);
+
+const AGENTS_SEG_RE = /(^|\/)\.agents(\/|$)/i;
+// A word like ag/../hooks.json: ".." after a name, which a link can turn into a path outside the folder it seems to be in.
+const MID_DOTDOT_RE = /[^\/\\\s]\/\.\.(?:[\/\\]|$)/;
+const AGENTS_PROTECTED = 'zn: this command would change agent hook or plugin settings, which is protected. Ask the user to make this change.';
+
+/** Whether a writing word touches the .agents hook folder (see the notes above); w.link comes from markLinkWords. */
+function agentsDirRisky(t, w) {
+  // The first pattern is quadratic on long input: a word longer than a path can be is refused unchecked.
+  if (t.length > 4096) return /\.agents/i.test(t);
+  if (AGENTS_DIR_RISKY_RE.test(t)) return true;
+  if (!AGENTS_DIR_ANY_RE.test(t)) return false;
+  return CD_CMDS.has(bareHead(w.head).toLowerCase()) || w.link === true;
+}
+
+const LINK_WRAPPERS = new Set(['env', 'sudo', 'doas', 'command', 'exec', 'nohup', 'time', 'busybox', 'xargs', 'nice', 'builtin', 'stdbuf', 'timeout', '!', '{', 'then', 'do', 'else']);
+
+/**
+ * Marks (w.link) every word of a simple command that makes a link: ln, mklink, cp -s, New-Item with a link type,
+ * after env, sudo, command, exec, nohup, time, busybox or xargs, with a path in front of the name or quotes in it.
+ * The options are read only from that command's own words. A link made some other way (an interpreter) is not seen here;
+ * a link that already exists is followed instead (physicalDotDot, cdBasesOf).
+ */
+function markLinkWords(readings) {
+  for (const r of readings) {
+    let i = 0;
+    while (i < r.length) {
+      let j = i;
+      while (j < r.length && r[j].seq === r[i].seq) j++;
+      const clean = r.slice(i, j).map((x) => String(x.text).replace(/['"]/g, '').replace(/^\(+|[;)}]+$/g, ''));
+      let k = 0;
+      let head = '';
+      for (; k < clean.length; k++) {
+        const x = clean[k];
+        if (!x || x.startsWith('-') || ASSIGNMENT_RE.test(x)) continue;
+        const base = path.basename(slash(x)).toLowerCase().replace(/\.exe$/, '');
+        if (LINK_WRAPPERS.has(base)) continue;
+        head = base;
+        break;
+      }
+      const rest = clean.slice(k + 1);
+      const link = LINK_CMDS.has(head) ||
+        ((head === 'cp' || head === 'gcp') && rest.some((x) => /^-[A-Za-z]*[sl][A-Za-z]*$/.test(x) || x === '--symbolic-link' || x === '--link')) ||
+        ((head === 'new-item' || head === 'ni') && rest.some((x) => /symboliclink|junction|hardlink/i.test(x))) ||
+        (head === 'cmd' && rest.some((x) => LINK_CMDS.has(x.toLowerCase())));
+      if (link) for (let m = i; m < j; m++) r[m].link = true;
+      i = j;
+    }
+  }
+}
 
 const RESERVED_WORDS = new Set(['if', 'then', 'else', 'elif', 'fi', 'for', 'while', 'until', 'do', 'done', 'case', 'esac', 'function', '{', '}', '!', '[[', 'time', 'coproc', 'select', 'eval', 'exec', 'source', '.', 'sudo', 'doas', 'env', 'xargs', 'nohup', 'command', 'builtin', 'export', 'declare', 'local', 'readonly', 'typeset', 'alias', 'set', 'unset', 'let']);
 const ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
@@ -1673,6 +1758,9 @@ function bashDenialOf(cmd, opts = {}) {
   // Each reading is followed on its own, so a cd counts once.
   opts.cdBases = cdBasesOf(readings, opts);
   opts.elsewhere = new Map();
+  markLinkWords(readings);
+  const mentionsAgents = /\.agents/i.test(text);
+  const makesLink = words.some((x) => x.link === true);
   if (overBudget(opts.budget, 0)) return TOO_SLOW_MESSAGE;
   opts.cmdText = text;
   // A word is classified once per command: each classification resolves the path on disk, and a long command
@@ -1705,6 +1793,8 @@ function bashDenialOf(cmd, opts = {}) {
     // A git pathspec with magic names the path after it.
     if (anyGit && text.charCodeAt(0) === 58) text = text.replace(PATHSPEC_MAGIC_RE, '') || text;
     const writing = !READ_ONLY_CMDS.has(w.head);
+    // After a cd that leads, through a link, into .agents, a writing command works inside the hook folder.
+    if (writing && opts.cdBases.agentsDir && !CD_CMDS.has(bareHead(w.head).toLowerCase())) return AGENTS_PROTECTED;
     if (!classified.has(text)) {
       if (globDeny && ++afterGlob > GLOB_NAME_LOOKAHEAD) return globDeny;
       if (overBudget(opts.budget, 1)) return TOO_SLOW_MESSAGE;
@@ -1719,8 +1809,11 @@ function bashDenialOf(cmd, opts = {}) {
       if (deny) return deny;
     }
     if (!c) {
-      if (writing && AGENT_CONFIG_MENTION_RE.test(slash(text))) {
-        return 'zn: this command would change agent hook or plugin settings, which is protected. Ask the user to make this change.';
+      // Segments that are just "." name the same place (.agents/. is the folder itself).
+      const t = slash(text).replace(/(?:\/\.)+(?=\/|$)/g, '');
+      if ((writing && (AGENT_CONFIG_MENTION_RE.test(t) || agentsDirRisky(t, w))) ||
+          ((writing || w.redirectTarget) && (mentionsAgents || makesLink) && MID_DOTDOT_RE.test(t))) {
+        return AGENTS_PROTECTED;
       }
       continue;
     }
@@ -1910,6 +2003,7 @@ function cdBasesOf(readings, opts) {
   const all = new Set([cwd]);
   let unknown = false;
   let moved = false;
+  let agentsDir = false;
   for (const words of readings) {
     if (unknown) break;
     let bases = [cwd];
@@ -1930,13 +2024,26 @@ function cdBasesOf(readings, opts) {
       const target = t === '-' ? '-' : expandEnv(expandHome(t, home), env).text;
       if (target === '-' || /[$`*?[{]/.test(target)) { unknown = true; continue; }
       const next = new Set(bases);
-      for (const b of bases) next.add(path.resolve(b, target));
+      for (const b of bases) {
+        const lex = path.resolve(b, target);
+        next.add(lex);
+        // cd ag, cd -P ag/..: with ag a link into .agents, the real place is the hook folder.
+        const pd = physicalDotDot(target, b);
+        const real = new Set();
+        if (pd) real.add(pd);
+        for (const x of pd ? [lex, pd] : [lex]) { try { real.add(fs.realpathSync(x)); } catch (_) { /* not there */ } }
+        for (const x of real) {
+          if (x === lex) continue;
+          next.add(x);
+          if (AGENTS_SEG_RE.test(slash(x)) && !AGENTS_SEG_RE.test(slash(lex))) agentsDir = true;
+        }
+      }
       if (next.size > CD_BASES_MAX) { unknown = true; continue; }
       bases = [...next];
       for (const d of bases) all.add(d);
     }
   }
-  return { dirs: [...all], unknown, moved };
+  return { dirs: [...all], unknown, moved, agentsDir };
 }
 
 /* A .env path the working directory alone does not settle: one built while the command runs ($DIR/.env, $(...)/.env),

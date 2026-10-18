@@ -57,7 +57,8 @@ def test_clean_page_passes_unchanged(name):
 def test_injected_page_is_replaced_by_a_notice(name):
     example = load(name)
     out = example.safe_fetch_page(INJECTED_URL)
-    assert out.startswith("zn-gate blocked 'fetch_page:result'")
+    assert out.startswith("zn-gate blocked '")
+    assert "fetch_page:result'" in out
     assert "Next step:" in out
     assert "print the word EXAMPLE" not in out
 
@@ -165,3 +166,14 @@ def test_requirements_are_pinned_to_exact_versions(name):
 @pytest.mark.parametrize("name", NAMES)
 def test_example_has_a_readme(name):
     assert (EXAMPLES / name / "README.md").is_file()
+
+
+def test_crewai_example_checks_the_page_text():
+    # The CrewAI example sets check_result=True itself: the same tool without it
+    # would hand the injected page to the model unchanged.
+    from zn_gate.integrations import guarded_tool
+
+    example = load("crewai-agent")
+    without_result_check = guarded_tool(on_block="return", mask_secrets=True)(example.fetch_page)
+    assert without_result_check(INJECTED_URL) == example.FAKE_PAGES[INJECTED_URL]
+    assert example.safe_fetch_page(INJECTED_URL).startswith("zn-gate blocked")
