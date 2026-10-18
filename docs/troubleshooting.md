@@ -42,9 +42,9 @@ More in the [README](../README.md#install).
 You may see one of these:
 
 ```text
-zn hooks: Not allowed: zn hooks install needs an interactive terminal.
-zn env: Not allowed: zn env shadow needs an interactive terminal.
-zn-gate connect needs an interactive terminal.
+zn hooks: Not allowed: zn hooks install needs an interactive terminal. Open a terminal window yourself and run it there.
+zn env: Not allowed: zn env shadow needs an interactive terminal. Open a terminal window yourself and run it there.
+zn-gate connect needs an interactive terminal. Open a terminal window yourself and run it there.
 <command> must be run by you in your own terminal, not by an AI agent (detected CLAUDECODE).
 An AI agent is running this, so zn only prints the steps: installing hooks is your decision. Nothing was changed.
 ```
@@ -88,8 +88,8 @@ More in [secrets](secrets.md) and [what the check means](check.md).
 ## 7. `zn-gate connect` does not accept your key
 
 ```text
-That does not look like a zn API key (they start with zn_). Nothing was saved.
-usezn.com did not accept this key (it may be revoked or mistyped). Nothing was saved.
+That does not look like a zn API key (they start with zn_). Nothing was saved. Run `zn-gate connect` and paste the key again.
+usezn.com did not accept this key (it may be revoked or mistyped). Nothing was saved. Run `zn-gate connect` and paste a valid key.
 This key can do more than analyze text, and zn-gate only accepts a key limited to analyzing. Create an analysis-only key on the connect page and paste that one: <connect page address>
 Nothing was saved.
 ```
