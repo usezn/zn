@@ -105,7 +105,7 @@ for (const file of ['.mcp.json', '.cursor/mcp.json', '.vscode/mcp.json', 'claude
     for (const n of [5, 6, 10]) assert.ok(lines.has(n), `line ${n} reported in ${file}`);
     assert.ok(!lines.has(1) && !lines.has(7), 'no finding on a line without a credential');
     for (const th of data.threats) {
-      assert.equal(th.file, file);
+      assert.equal(th.file.split(path.sep).join('/'), file);
       assert.ok(th.next_step && /^Next: /.test(th.next_step));
     }
     // The line with only the credential flag and its value is the rule of this check.
@@ -272,7 +272,7 @@ test('only .vscode/mcp.json is read in the .vscode folder', (t) => {
   write(dir, { '.vscode/mcp.json': MCP_JSON, '.vscode/sub/conf.json': MCP_JSON, '.vscode/launch.json': MCP_JSON });
   const { data } = scanJson(dir);
   assert.equal(data.total_files, 1);
-  assert.ok(data.threats.every((x) => x.file === '.vscode/mcp.json'));
+  assert.ok(data.threats.every((x) => x.file.split(path.sep).join('/') === '.vscode/mcp.json'));
 });
 
 test('a home .claude.json over 2 MiB is checked for MCP credentials only', (t) => {
