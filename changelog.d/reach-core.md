@@ -1,5 +1,0 @@
-### Added
-- `zn-gate reach [path]` shows, in one screen, what the coding agents on this machine can reach: which agents are found and whether zn protects them, the `.env` files of the folder with the names of their secrets, the credential files in your home folder (`~/.aws/credentials`, SSH keys, `~/.npmrc` and others: checked only for whether they exist, never opened), the names of environment variables that hold a secret, and what `zn audit` finds in the MCP servers and agent settings of the folder and of your user. Each finding has the command that fixes it. It is read only: no value is ever shown, nothing is written or sent, and no hook is started. `--json` gives the same report as JSON. It exits 0 (2 only for an unknown option or a folder that does not exist).
-
-### Fixed
-- `zn audit` also hides secret values in a format it does not know when they follow a credential flag (`--token`, `--api-key`, `--password`), an auth header (`Authorization: Bearer ...`, `x-api-key: ...`) or a name such as `API_TOKEN=`, in the command lines and hook commands it quotes. References such as `$TOKEN` or `${API_KEY}` are kept.

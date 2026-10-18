@@ -1,0 +1,8 @@
+### Security
+- Hardened the audit log (`~/.zn/evidence.jsonl`), whose hash chain is what lets you notice if a record was changed or removed. Several processes writing at once (two agents in one project, or the Node and Python versions together) could each add a record after the same previous one and split the chain, so `evidence --verify` reported a break that was not tampering and a real break could be hidden among them. Every write now takes a short lock first (an `evidence.jsonl.lock` file next to the log, shared by both versions), so the records stay in one line. If the lock stays busy for 2 seconds the write is skipped with a warning instead of risking a split, and a lock left behind by a crashed process is cleared after 10 seconds. A writer that was paused for a long time and lost its lock checks this before writing, so it cannot add a record based on out-of-date information.
+- A `record_hash` that is not 64 lowercase hex characters is now treated as a damaged last record, like other damage, instead of being trusted as the start of the next link.
+
+### Fixed
+- A log that exists but cannot be written (no permission, full disk) no longer makes the hook or proxy fail: the event is skipped, a warning is shown (the first time, then every 5 minutes) and the decision is unaffected.
+- The Node and Python versions can now share one audit log that holds non-ASCII text (for example accented letters or CJK). Before, a record written by one failed verification in the other. New records are written as plain UTF-8 text; logs written by earlier versions of either one still verify.
+- The Windows recovery step for a damaged log now also shows the PowerShell form (`$env:USERPROFILE`).

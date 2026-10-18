@@ -1,2 +1,0 @@
-### Fixed
-- The agent hooks: a long patch sent as a shell command (`apply_patch` in Codex) is refused in a fraction of a second again. To name a secret file in the message, zn now checks only the first 32 files of the patch (and, in other refused commands, the next 32 words after a wildcard) instead of every one on disk, which took several seconds for a patch near the 100 KB limit and could reach the agent's time limit for the hook on a slow machine. The decision does not change. `POLICY_RULES_VERSION` is `2026-10-17.2`.

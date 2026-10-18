@@ -1,2 +1,0 @@
-### Security
-- The agent hooks: a `.env` file with values is refused when a shell command names it with bash `$'...'` quoting (`cat $'\x2eenv'`, also with a NUL that ends the string) or `$"..."`, through an input redirection with a descriptor number or in read-write mode (`cat 0<.env`, `cat <>.env`, `exec {fd}<.env`), or as the value of a `name=value` argument (`dd if=.env`). `POLICY_RULES_VERSION` is `2026-10-17.6`.

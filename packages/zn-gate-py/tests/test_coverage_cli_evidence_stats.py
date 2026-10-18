@@ -313,7 +313,9 @@ def test_scan_key_begin_and_end_on_one_line_is_left_to_line_pass(tmp_path):
 
 # ------------------------------------------------------------ console output
 
-def test_icon_falls_back_to_ascii():
+def test_icon_falls_back_to_ascii(monkeypatch):
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.delenv("TERM", raising=False)
     ascii_stream = SimpleNamespace(encoding="ascii")
     assert cli._icon(cli.SHIELD, ascii_stream) == "[+]"
     assert cli._icon(cli.CHECK, ascii_stream) == "[ok]"

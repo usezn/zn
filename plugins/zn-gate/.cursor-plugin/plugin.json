@@ -1,12 +1,12 @@
 {
   "name": "zn-gate",
-  "version": "1.10.0",
+  "version": "1.12.0",
   "description": "Local security layer for Cursor: blocks reads of secret files, blocks prompts that carry secrets, redacts MCP tool output, adds a secrets MCP server, and checks untrusted text for prompt injection with local rules.",
   "author": {
     "name": "usezn",
     "email": "support@usezn.com"
   },
-  "homepage": "https://github.com/usezn/zn/tree/v1.10.0/plugins/zn-gate",
+  "homepage": "https://github.com/usezn/zn/tree/v1.12.0/plugins/zn-gate",
   "repository": "https://github.com/usezn/zn",
   "license": "MIT",
   "keywords": [

@@ -1,0 +1,15 @@
+[
+  "unit_test.js",
+  "contract.test.js",
+  "scrub_patterns.test.js",
+  "scrub_structured.test.js",
+  "scrub_exact.test.js",
+  "scrub_engine.test.js",
+  "scrub_benign_properties.test.js",
+  "vault.test.js",
+  "fake_secrets.test.js",
+  "shield.test.js",
+  "init.test.js",
+  "local_only.test.js",
+  "evidence.test.js"
+]

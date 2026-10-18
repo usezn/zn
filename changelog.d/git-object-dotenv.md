@@ -1,2 +1,0 @@
-### Security
-- The agent hooks: reading a `.env` or credential file from the git repository (`git show HEAD:.env`, `git cat-file -p :app/.env`) or its history (`git log -p -- .env`, `git checkout HEAD -- .env`, `git archive HEAD .env`) is refused, like reading it from disk, also when the file is no longer on disk. Clean-up steps still work: `git rm --cached .env`, `git restore --staged .env`, `git checkout -- .env`, `git status`, `git check-ignore .env` and `git log --oneline -- .env`. `POLICY_RULES_VERSION` is `2026-10-17.7`.

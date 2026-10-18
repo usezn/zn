@@ -1,2 +1,0 @@
-### Added
-- `zn-gate check` and `zn hooks install codex` say when Codex will not run zn's hooks: hooks turned off with `[features] hooks = false` in your organization's `requirements.toml` or `managed_config.toml` or in your own `config.toml`, or `allow_managed_hooks_only` in `requirements.toml` without zn among the managed hooks. Codex gives no sign of it. Claude Code's `disableAllHooks` and `allowManagedHooksOnly` were already reported.

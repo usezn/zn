@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-17.29';
+const POLICY_RULES_VERSION = '2026-10-18.31';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1536,8 +1536,27 @@ const KEYCHAIN_LIB_LOAD_RE = /(?:require\s*\(|import\s*\(|\bimport\s|\bfrom\s)/;
 // zn-gate's own client modules count only by their full path (node_modules, a global install or packages/zn-gate): a
 // project's own lib/client is no business of ours. A relative ./lib/client inside zn-gate itself is not covered.
 // Matching ignores case (macOS and Windows load ZN-GATE/LIB/CLIENT) and drops `/./` segments first.
-const KEYCHAIN_LIB_NAME_RE = /(?:cloud-key|vault[\\/]+keychain|zn-gate[\\/]+lib[\\/]+(?:vault[\\/]+)?client(?![A-Za-z0-9_-]))/i;
+const KEYCHAIN_LIB_NAME_RE = /(?:cloud-key(?![A-Za-z0-9_-])|vault[\\/]+keychain|zn-gate[\\/]+lib[\\/]+(?:vault[\\/]+)?client(?![A-Za-z0-9_-]))/i;
 const KEYCHAIN_DOT_RE = /[\\/]\.(?=[\\/])/g;
+// A name written with escapes (\x2f, \x2F, \u{2f}, \057) is the same name once the shell or the interpreter decodes
+// it, so the name is also looked for in decoded copies. The decoded copies only add matches. One pass, no backtracking.
+const KEYCHAIN_ESC_RE = /\\(?:x([0-9A-Fa-f]{2})|u([0-9A-Fa-f]{4})|u\{0*([0-9A-Fa-f]{1,6})\}|([0-7]{1,3}))/g;
+// bash $'...', printf and echo -e also take \x with 1-2 digits, \u with 1-4, \U with 1-8 and \0nnn.
+const KEYCHAIN_SH_ESC_RE = /\\(?:x([0-9A-Fa-f]{1,2})|u([0-9A-Fa-f]{1,4})|U([0-9A-Fa-f]{1,8})|0?([0-7]{1,3}))/g;
+function keychainUnescape(t, re = KEYCHAIN_ESC_RE) {
+  return t.replace(re, (m, x, u, b, o) => {
+    const cp = o !== undefined ? parseInt(o, 8) : parseInt(x || u || b, 16);
+    return cp <= 0x10ffff ? String.fromCodePoint(cp) : m;
+  });
+}
+// The shell drops quotes and line continuations before the interpreter decodes, so an escape split by them counts too.
+const KEYCHAIN_SHELL_JOIN_RE = /\\\r?\n|['"]/g;
+// A name that merely ends in zn-gate/lib/client (acme-zn-gate/lib/client) is refused on purpose: no left boundary, so a
+// trick that leaves a letter before the name cannot get past the rule.
+const keychainLibName = (t) => {
+  const j = t.replace(KEYCHAIN_SHELL_JOIN_RE, '');
+  return [t, keychainUnescape(j), keychainUnescape(j, KEYCHAIN_SH_ESC_RE)].some((c) => KEYCHAIN_LIB_NAME_RE.test(c.replace(KEYCHAIN_DOT_RE, '')));
+};
 const KEYCHAIN_LIB_USE_RE = /(?:loadStoredKey|resolveApiKey|\b_native\b|CLOUD_SLOT|loadIdentity|storeIdentity|\banalyze\b|\bisCloudEnabled\b)/;
 
 /*
@@ -1579,7 +1598,7 @@ function keychainQuery(cmd, env) {
     // Dumping the keychain would include zn's entries whatever name is given.
     if (KEYCHAIN_DUMP_RE.test(t) && KEYCHAIN_SECURITY_RE.test(t)) return true;
     if (KEYCHAIN_WORD_RE.test(t) && named(t)) return true;
-    if (KEYCHAIN_LIB_NAME_RE.test(t.replace(KEYCHAIN_DOT_RE, '')) && KEYCHAIN_LIB_LOAD_RE.test(t) && KEYCHAIN_LIB_USE_RE.test(t)) return true;
+    if (keychainLibName(t) && KEYCHAIN_LIB_LOAD_RE.test(t) && KEYCHAIN_LIB_USE_RE.test(t)) return true;
   }
   return false;
 }

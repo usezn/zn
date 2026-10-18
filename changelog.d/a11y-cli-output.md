@@ -1,0 +1,2 @@
+### Changed
+- The command line output of the Node.js and Python packages has no color codes when NO_COLOR is set to any non-empty value, when TERM=dumb, or when the output is not a terminal. With NO_COLOR or TERM=dumb it also leaves out symbols and box-drawing lines. The status words (ALLOWED, BLOCKED, FAILED, PASSED, ALLOW, BLOCK, clean) keep the meaning. Exit codes and the JSON, SARIF and agent hook outputs do not change.
