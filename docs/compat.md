@@ -69,7 +69,7 @@ only and have not been run against a live Codex.
 | `PermissionRequest` | Yes, deny only | Runs the same check as `PreToolUse` when Codex is about to ask you to approve a call. zn answers `deny` with its reason and never `allow`. Not tested. |
 | `UserPromptSubmit` | Yes | Blocks a secret pasted into the prompt. Checked on 0.163.0. |
 | `SessionStart` | No | zn installs no session-start hook for Codex. |
-| `Stop` | No | Not used. zn does not review the model's final message. |
+| `Stop` | Yes, warn by default | Reviews the model's final answer for a secret value, or for a `__ZN_` placeholder that zn did not see earlier in the session. It warns with `systemMessage`, which you see and the model does not. It blocks, with a reason for the model to rewrite the answer, only with `"stopReview": "block"` under `hooks` in `~/.zn/config.json`; it never blocks when Codex is already continuing because of a Stop hook. Not tested. |
 | `SubagentStart` | No | Not used. |
 | `SubagentStop` | No | Not used. |
 | `PreCompact` | No | Not used. |
@@ -106,6 +106,12 @@ only and have not been run against a live Codex.
     answers Allow there; for every other call it gives no answer, and the approval prompt stays. Installs
     made before this change get the new hook when you run `zn hooks install codex` again, and Codex asks
     you to review it in `/hooks`.
+  - Final answers (`Stop`): zn only warns, and the warning does not reach the model. To
+    have Codex ask the model to rewrite an answer that contains a secret value, set
+    `"stopReview": "block"` under `hooks` in `~/.zn/config.json`. zn blocks at most once
+    per answer and never when the answer is already a continuation. Installs made before
+    this change get the new hook when you run `zn hooks install codex` again, and Codex
+    asks you to review it in `/hooks`.
   - Checked with Codex CLI 0.163.0 on 2026-10-16: the shell tool (`exec_command`
     inside Codex) reaches hooks as `tool_name: "Bash"`, with the command in
     `tool_input.command`. zn's `PreToolUse` hook blocked `cat .env` and allowed
@@ -230,6 +236,8 @@ prompts through in that case. To fix it, in your own terminal:
   JSON, exits with code 2 and the reason on stderr. Claude Code and Codex block
   the call on exit code 2; Cursor also gets its deny answer. Setting
   `whenUnavailable` to `"allow"` in `~/.zn/config.json` lets such events pass.
+  The Codex `Stop` event is the exception: zn never blocks it because it could not
+  read it, and it reports the problem on stderr.
 
 - **The unlocked vault answers any program of your user.** A command the
   agent runs can ask the vault daemon for a stored secret by name; the
