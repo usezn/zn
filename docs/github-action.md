@@ -122,6 +122,14 @@ jobs:
 
 Always set `version` to the same release as the pinned Action. In the 1.12.0 Action the default `version` is still 1.10.0 (an older release), so do not rely on it.
 
+Both modes also check the MCP config files of the repository (such as `.mcp.json`, `.cursor/mcp.json` and `.vscode/mcp.json`) for keys and passwords written in plain text. The value is never printed: the finding names the file, the line and the key. With `fail-on-threat: 'false'` it is reported as an annotation and the step still passes. The rule ID is `secret:mcp_config` for `scan` and `ZNA011` for `audit`, in the releases that include this check, so set `version` to one of them to see those IDs.
+
+A warn-mode run on a `.mcp.json` with a key in an `env` block shows an annotation like this (shortened), and the step ends green:
+
+```text
+.mcp.json:6  Secret found (secret:mcp_config): Plaintext credential in an MCP server configuration (environment variable)
+```
+
 Notes:
 
 - The Action does not write a job summary. The findings appear as annotations and in the log of the run. GitHub shows at most 10 error annotations and 10 warning annotations per step, so with many findings open the log of the run to see them all.
