@@ -9,6 +9,7 @@ from __future__ import annotations
 import errno
 import hashlib
 import json
+import math
 import os
 import random
 import re
@@ -169,6 +170,9 @@ def _acquire_lock(lock_path: str, wait: float = LOCK_WAIT) -> str:
     """Takes the lock and returns this writer's token (pid + random bytes), which is written into
     the lock file. The token lets a writer tell its own lock from one taken over after it was
     considered stale: it only releases, and only appends, while the file still holds its token."""
+    # NaN, infinity or a negative wait would never time out (or time out at once): use the default.
+    if not (isinstance(wait, (int, float)) and math.isfinite(wait) and wait >= 0):
+        wait = LOCK_WAIT
     deadline = time.monotonic() + wait
     token = f"{os.getpid()}:{secrets.token_hex(8)}"
     delay = 0.002
@@ -180,6 +184,7 @@ def _acquire_lock(lock_path: str, wait: float = LOCK_WAIT) -> str:
                 os.write(fd, token.encode("ascii"))
             finally:
                 os.close(fd)
+            _sweep_stale_leftovers(lock_path)
             return token
         except FileExistsError:
             pass
@@ -214,6 +219,18 @@ def _acquire_lock(lock_path: str, wait: float = LOCK_WAIT) -> str:
             except OSError:
                 pass  # someone else broke it first
             else:
+                # Two breakers can both judge the same lock stale; the second rename then moves
+                # the first one's fresh lock aside. If what we moved is not stale, put it back
+                # with link() (atomic, fails if a lock exists again) before deleting our copy.
+                try:
+                    fresh = abs(time.time() - os.stat(aside).st_mtime) <= LOCK_STALE
+                except OSError:
+                    fresh = False
+                if fresh:
+                    try:
+                        os.link(aside, lock_path)
+                    except OSError:
+                        pass  # a new lock exists: its owner checks its token
                 try:
                     os.unlink(aside)
                 except OSError:
@@ -221,6 +238,29 @@ def _acquire_lock(lock_path: str, wait: float = LOCK_WAIT) -> str:
                 continue
         time.sleep(delay + random.random() * delay)
         delay = min(delay * 2, 0.05)
+
+
+def _sweep_stale_leftovers(lock_path: str) -> None:
+    """Leftovers `<log>.lock.stale-*` only exist when a process died between renaming a stale lock
+    and deleting it. Remove a few old ones each time the lock is taken; errors are ignored."""
+    try:
+        directory = os.path.dirname(lock_path) or "."
+        prefix = os.path.basename(lock_path) + ".stale-"
+        n = 0
+        for name in os.listdir(directory):
+            if not name.startswith(prefix):
+                continue
+            n += 1
+            if n > 5:
+                break
+            try:
+                p = os.path.join(directory, name)
+                if abs(time.time() - os.stat(p).st_mtime) > LOCK_STALE:
+                    os.unlink(p)
+            except OSError:
+                pass
+    except OSError:
+        pass
 
 
 def _owns_lock(lock_path: str, token: str) -> bool:
