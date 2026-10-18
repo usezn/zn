@@ -31,6 +31,9 @@ def guarded_tool(
                     `fallback` / the block message.
     - block_truncated: With check_result, block an output too large to scan in
                        full (rule size:truncated) (default False).
+
+    Sync tools only: an async tool returns a coroutine, which is neither checked nor
+    masked.
     """
     def decorator(tool_func: Callable) -> Callable:
         @functools.wraps(tool_func)
