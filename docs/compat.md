@@ -72,7 +72,10 @@ limit applies to a patch (`apply_patch`) in Codex and OpenCode.
   - MCP tool calls reach `PreToolUse` (matcher `^(Bash|apply_patch|mcp__.+)$`), and zn checks
     their arguments for secret values and `__ZN_` markers, as it does for Cursor. Installs made
     before this change keep the old matcher until you run `zn hooks install codex` again, and
-    Codex asks you to review the changed hook in `/hooks`.
+    Codex asks you to review the changed hook in `/hooks`. Only zn's own `secrets` server, as
+    set in `config.toml` (your own or the project's `.codex/config.toml`), may receive
+    placeholders. Known limit: a server set on the Codex command line with `-c mcp_servers.secrets...`
+    or in a profile is not visible to the hook, so it gets no exception.
   - Checked with Codex CLI 0.163.0 on 2026-10-16: the shell tool (`exec_command`
     inside Codex) reaches hooks as `tool_name: "Bash"`, with the command in
     `tool_input.command`. zn's `PreToolUse` hook blocked `cat .env` and allowed

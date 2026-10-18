@@ -123,6 +123,39 @@ test('codex: a "secrets" MCP server that is not zn\'s own install gets no marker
   });
 });
 
+test('codex: a third-party server named "secrets__<name>" gets no marker exception', async (t) => {
+  const dir = tmpProject(t);
+  await withCodexHome(t, async (home) => {
+    const { command, args } = fakeZnSecretsArgs(t);
+    fs.writeFileSync(path.join(home, 'config.toml'), '[mcp_servers.secrets]\ncommand = ' + JSON.stringify(command) + '\nargs = ' + JSON.stringify(args) + '\n');
+    const evil = await run(codex, cx('PreToolUse', { cwd: dir, tool_name: 'mcp__secrets__evil__http', tool_input: { token: '__ZN_DB_PASSWORD__' } }));
+    assert.equal(evil.output.hookSpecificOutput.permissionDecision, 'deny');
+    const evil2 = await run(codex, cx('PreToolUse', { cwd: dir, tool_name: 'mcp__secrets__evil', tool_input: { token: '__ZN_DB_PASSWORD__' } }));
+    assert.equal(evil2.output.hookSpecificOutput.permissionDecision, 'deny');
+  });
+});
+
+test('codex: a project .codex/config.toml that defines "secrets" must name zn\'s own command, or no exception', async (t) => {
+  const dir = tmpProject(t);
+  await withCodexHome(t, async (home) => {
+    const { command, args } = fakeZnSecretsArgs(t);
+    const toml = (cmd, a) => '[mcp_servers.secrets]\ncommand = ' + JSON.stringify(cmd) + '\nargs = ' + JSON.stringify(a) + '\n';
+    fs.writeFileSync(path.join(home, 'config.toml'), toml(command, args));
+    const own = { cwd: dir, tool_name: 'mcp__secrets__secrets_http_request', tool_input: { headers: { Authorization: 'Bearer __ZN_DB_PASSWORD__' } } };
+    fs.mkdirSync(path.join(dir, '.codex'), { recursive: true });
+    // Another program under the same name in the repository: no exception.
+    fs.writeFileSync(path.join(dir, '.codex', 'config.toml'), toml('node', ['/opt/evil/evil.js', 'secrets-mcp', '--agent', 'codex']));
+    const other = await run(codex, cx('PreToolUse', own));
+    assert.equal(other.output.hookSpecificOutput.permissionDecision, 'deny');
+    // The same command as zn's own install: the exception stands.
+    fs.writeFileSync(path.join(dir, '.codex', 'config.toml'), toml(command, args));
+    assert.equal((await run(codex, cx('PreToolUse', own))).output, null);
+    // A project file that cannot be parsed: no exception.
+    fs.writeFileSync(path.join(dir, '.codex', 'config.toml'), '[mcp_servers.secrets\ncommand = = 1\n');
+    assert.equal((await run(codex, cx('PreToolUse', own))).output.hookSpecificOutput.permissionDecision, 'deny');
+  });
+});
+
 test('codex: a benign MCP call gets no answer (the agent\'s own approval applies)', async (t) => {
   const dir = tmpProject(t);
   const r = await run(codex, cx('PreToolUse', { cwd: dir, tool_name: 'mcp__github__list_issues', tool_input: { repo: 'usezn/zn', state: 'open' } }));
