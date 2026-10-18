@@ -33,8 +33,11 @@ def guarded_tool(
     - block_truncated: With check_result, block an output too large to scan in
                        full (rule size:truncated) (default False).
 
-    Async tools (`async def`) get the same treatment: the call is awaited, then
-    the output is checked and masked exactly as for a sync tool.
+    Async tools (`async def`, or a callable object whose `__call__` is `async def`)
+    get the same treatment: the call is awaited, then the output is checked and
+    masked exactly as for a sync tool. A sync function that returns a coroutine,
+    and an async generator, are not checked or masked: declare the tool with
+    `async def` instead.
     """
     def _finish(tool_name: str, result: Any, check_result: bool, block_truncated: bool,
                 mask_secrets: bool, on_block: str, fallback: Optional[str]) -> Any:
@@ -60,7 +63,9 @@ def guarded_tool(
         return block_message(assessment, f"crewai:{tool_name}")
 
     def decorator(tool_func: Callable) -> Callable:
-        if inspect.iscoroutinefunction(tool_func):
+        if inspect.iscoroutinefunction(tool_func) or inspect.iscoroutinefunction(
+            getattr(tool_func, "__call__", None)
+        ):
             @functools.wraps(tool_func)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 tool_name = getattr(tool_func, "__name__", "crewai_tool")

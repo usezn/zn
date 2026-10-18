@@ -82,6 +82,23 @@ class TestCrewAIAsyncTool(unittest.TestCase):
         out = asyncio.run(fetch())
         self.assertNotIn("AKIAIOSFODNN7EXAMPLE", out)
 
+    def test_async_callable_object(self):
+        class Fetch:
+            async def __call__(self):
+                return {"page": INJECTION}
+
+        tool = guarded_tool(check_result=True)(Fetch())
+        with self.assertRaises(GuardBlockError) as ctx:
+            asyncio.run(tool())
+        self.assertTrue(ctx.exception.target.endswith(":result"), ctx.exception.target)
+
+        class Key:
+            async def __call__(self):
+                return "key AKIAIOSFODNN7EXAMPLE"
+
+        masked = guarded_tool()(Key())
+        self.assertNotIn("AKIAIOSFODNN7EXAMPLE", asyncio.run(masked()))
+
     def test_async_tool_clean_output_passes(self):
         @guarded_tool(check_result=True)
         async def fetch():
