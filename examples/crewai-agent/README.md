@@ -12,12 +12,13 @@ Everything runs on your machine. The pages in the example are made up, so there 
 
 ## Install
 
-> This example uses features from the release after 1.13.0 of zn-gate. Until that release is published, install zn-gate from this repository first: run `pip install -e ../../packages/zn-gate-py` from this folder, then run the `pip install -r requirements.txt` below for the rest.
+> This example uses features from the release after 1.13.0 of zn-gate. Until that release is published, run `pip install -r requirements.txt` below first, then install zn-gate from this repository over it: `pip install -e ../../packages/zn-gate-py` (from this folder).
 
 Use Python 3.10 to 3.13 in a virtual environment, then:
 
 ```bash
 pip install -r requirements.txt
+pip install -e ../../packages/zn-gate-py   # only until the release after 1.13.0 is published
 ```
 
 The versions in `requirements.txt` are exact, so the example behaves the same on your machine as it did when it was written. The check itself needs only `zn-gate`; the framework is needed only for `build_crewai_tool()`.
