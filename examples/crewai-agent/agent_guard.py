@@ -13,9 +13,7 @@ call and no model call, so you can run this file without an API key:
 
 CrewAI is only needed for build_crewai_tool(); the check itself needs only zn-gate.
 """
-import functools
-
-from zn_gate import GuardBlockError, guard
+from zn_gate.integrations import guarded_tool
 
 # Made-up pages. The second one carries a harmless fake instruction.
 FAKE_PAGES = {
@@ -30,24 +28,11 @@ def fetch_page(url: str) -> str:
     return FAKE_PAGES.get(url, "Page not found.")
 
 
-def with_zn_gate(tool_function):
-    """Wrap a tool so zn-gate checks its output before the model sees it.
-
-    A blocked output becomes a short notice that says what was blocked and why.
-    """
-    checked = guard(on_block="raise", check_result=True, mask_secrets=True)(tool_function)
-
-    @functools.wraps(tool_function)
-    def run(*args, **kwargs):
-        try:
-            return checked(*args, **kwargs)
-        except GuardBlockError as blocked:
-            return str(blocked)
-
-    return run
-
-
-safe_fetch_page = with_zn_gate(fetch_page)
+# check_result=True makes the tool scan the page text for orders aimed at the
+# model. It is off by default in guarded_tool, so it is set here on purpose.
+# on_block="return" makes a blocked page come back as a notice the agent can
+# read, instead of an exception. mask_secrets=True hides keys in the page.
+safe_fetch_page = guarded_tool(on_block="return", check_result=True, mask_secrets=True)(fetch_page)
 
 
 def build_crewai_tool():
