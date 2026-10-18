@@ -12,6 +12,8 @@ Everything runs on your machine. The pages in the example are made up, so there 
 
 ## Install
 
+> This example uses features from the release after 1.13.0 of zn-gate. Until that release is published, install zn-gate from this repository first: run `pip install -e ../../packages/zn-gate-py` from this folder, then run the `pip install -r requirements.txt` below for the rest.
+
 Use Python 3.10 to 3.13 in a virtual environment, then:
 
 ```bash
