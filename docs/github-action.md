@@ -120,12 +120,12 @@ jobs:
           fail-on-threat: 'false'
 ```
 
-Set `version` to the same release as the pinned Action. In 1.12.0 the Action's own default is out of date, so do not rely on it.
+Always set `version` to the same release as the pinned Action. In the 1.12.0 Action the default `version` is still 1.10.0 (an older release), so do not rely on it.
 
 Notes:
 
-- The Action does not write a job summary. The annotations and the log of the run are where the findings appear.
-- To keep a list of findings instead, use `format: sarif` with the upload step from the [minimal workflow](#minimal-workflow) and keep `fail-on-threat: 'false'`. They appear as alerts under **Security** > **Code scanning**.
+- The Action does not write a job summary. The findings appear as annotations and in the log of the run. GitHub shows at most 10 error annotations and 10 warning annotations per step, so with many findings open the log of the run to see them all.
+- To keep a list of findings instead, use `format: sarif` with the upload step and the permissions from the [minimal workflow](#minimal-workflow), and keep `fail-on-threat: 'false'`. They appear as alerts under **Security** > **Code scanning** (public repositories, or private ones with GitHub Code Security).
 - In report-only mode the exit codes stay `0`, so do not use `audit-exit-code` or `scan-exit-code` to detect findings.
 - When you are ready to block, remove `fail-on-threat` (the default is `true`, which fails on findings at or above `severity-threshold`, `high` by default), or set `fail-on` to the lowest severity that should fail.
 
