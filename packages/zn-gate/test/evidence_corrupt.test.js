@@ -544,10 +544,12 @@ test('a lock that turns out not to be stale is put back, not deleted', () => {
   }
 });
 
-test('old leftovers of broken locks are cleaned when the lock is taken, recent ones are kept', () => {
+test('old leftovers of broken locks are cleaned after a stale lock is broken, recent ones are kept', () => {
   const { dir, file } = tmpLedger(1);
   try {
     const old = new Date(Date.now() - 60000);
+    fs.writeFileSync(file + '.lock', '1:crashed');
+    fs.utimesSync(file + '.lock', old, old);
     fs.writeFileSync(file + '.lock.stale-1-aa', 'x');
     fs.utimesSync(file + '.lock.stale-1-aa', old, old);
     fs.writeFileSync(file + '.lock.stale-2-bb', 'x');
@@ -555,6 +557,38 @@ test('old leftovers of broken locks are cleaned when the lock is taken, recent o
     assert.ok(!fs.existsSync(file + '.lock.stale-1-aa'));
     assert.ok(fs.existsSync(file + '.lock.stale-2-bb'));
   } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a lock put back by a breaker after its owner released is not left behind', () => {
+  const { dir, file } = tmpLedger(1);
+  const realRead = fs.readFileSync;
+  const lockPath = file + '.lock';
+  const aside = lockPath + '.stale-9-zz';
+  try {
+    let reads = 0;
+    // The owner's lock is renamed aside before its write (a breaker took it), so the owner
+    // finds no lock when it checks and when it releases; right after the release first looks,
+    // the breaker links the lock back.
+    fs.readFileSync = function (p, ...rest) {
+      if (p !== lockPath) return realRead.call(fs, p, ...rest);
+      reads++;
+      if (reads === 1) fs.renameSync(lockPath, aside);
+      try {
+        return realRead.call(fs, p, ...rest);
+      } finally {
+        if (reads === 2) { fs.linkSync(aside, lockPath); fs.unlinkSync(aside); }
+      }
+    };
+    let r;
+    captureStderr(() => { r = logEvidence({ payload: 'x' }, file); });
+    fs.readFileSync = realRead;
+    assert.equal(r, null, 'the write is skipped: its lock was taken');
+    assert.ok(reads >= 3, 'the release looked again');
+    assert.deepEqual(fs.readdirSync(dir).filter((f) => f.includes('.lock')), [], 'no orphan lock left');
+  } finally {
+    fs.readFileSync = realRead;
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
