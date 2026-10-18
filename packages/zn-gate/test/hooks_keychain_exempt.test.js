@@ -158,3 +158,39 @@ test('the join and version patterns stay linear on long adversarial lines', () =
   const ms = Number(process.hrtime.bigint() - start) / 1e6;
   assert.ok(ms < 1500, 'took ' + ms + ' ms');
 });
+
+test('joins with escaped quotes, line breaks, .concat, join(empty), shell-decoded quotes and a Deno cache folder are recognised', () => {
+  const NL = String.fromCharCode(10);
+  const CRLF = String.fromCharCode(13, 10);
+  const BS = String.fromCharCode(92);
+  const cmds = [
+    'node -e "require(' + BS + '"./node_modules/zn-' + BS + '" + ' + BS + '"gate/lib/client' + BS + '").loadStoredKey()"',
+    'node -e "require(path.resolve(' + BS + '"node_modules' + BS + '", ' + BS + '"zn-gate' + BS + '", ' + BS + '"lib' + BS + '", ' + BS + '"client' + BS + '")).loadStoredKey()"',
+    "node -e \"require('zn-' +" + NL + "'gate/lib/client').loadStoredKey()\"",
+    "node -e \"require('zn-'" + NL + "+ 'gate/lib/client').loadStoredKey()\"",
+    "node -e \"require('zn-' +" + CRLF + "'gate/lib/client').loadStoredKey()\"",
+    "node -e \"require('zn-' + " + BS + NL + "'gate/lib/client').loadStoredKey()\"",
+    "node -e \"require('zn-' +" + String.fromCharCode(160) + "'gate/lib/client').loadStoredKey()\"",
+    "node -e \"require(path.resolve('a'," + NL + "'zn-gate'," + NL + "'lib'," + NL + "'client')).loadStoredKey()\"",
+    "node -e \"require('zn-'.concat('gate/lib/client')).loadStoredKey()\"",
+    "node -e \"require(['node_modules/zn-', 'gate/lib/client'].join('')).loadStoredKey()\"",
+    "node -e $'require(" + BS + "x27zn-" + BS + "x27 + " + BS + "x27gate/lib/client" + BS + "x27).loadStoredKey()'",
+    "printf 'require(" + BS + "x27zn-" + BS + "x27 + " + BS + "x27gate/lib/client" + BS + "x27).loadStoredKey()' | node",
+    "deno eval \"require('/home/u/.cache/deno/npm/registry.npmjs.org/zn-gate/1.11.0/lib/client').loadStoredKey()\"",
+  ];
+  for (const c of cmds) assert.ok(denied(c), 'not refused: ' + c);
+});
+
+test('the new join patterns stay linear on long adversarial lines', () => {
+  const NL = String.fromCharCode(10);
+  const BS = String.fromCharCode(92);
+  const start = process.hrtime.bigint();
+  denied('node -e "require(' + ("'" + NL).repeat(30000) + ').loadStoredKey()"');
+  denied('node -e "require(' + (BS + '" ' + BS).repeat(20000) + ').loadStoredKey()"');
+  denied('node -e "require(' + "'.concat(".repeat(15000) + ').loadStoredKey()"');
+  denied('node -e "require(' + ("'" + BS + NL + ' ').repeat(15000) + ').loadStoredKey()"');
+  denied('node -e "require(\'zn-gate/1' + '/2'.repeat(15000) + '/lib/clien\').loadStoredKey()"');
+  denied("printf '" + (BS + 'x27 + ').repeat(15000) + "' | node");
+  const ms = Number(process.hrtime.bigint() - start) / 1e6;
+  assert.ok(ms < 1500, 'took ' + ms + ' ms');
+});

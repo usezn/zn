@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-18.32';
+const POLICY_RULES_VERSION = '2026-10-18.33';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1536,7 +1536,7 @@ const KEYCHAIN_LIB_LOAD_RE = /(?:require\s*\(|import\s*\(|\bimport\s|\bfrom\s)/;
 // zn-gate's own client modules count only by their full path (node_modules, a global install or packages/zn-gate): a
 // project's own lib/client is no business of ours. A relative ./lib/client inside zn-gate itself is not covered.
 // Matching ignores case (macOS and Windows load ZN-GATE/LIB/CLIENT) and drops `/./` segments first.
-const KEYCHAIN_LIB_NAME_RE = /(?:cloud-key(?![A-Za-z0-9_-])|vault[\\/]+keychain|zn-gate(?:@[A-Za-z0-9._+-]*){0,6}[\\/]+lib[\\/]+(?:vault[\\/]+)?client(?![A-Za-z0-9_-]))/i;
+const KEYCHAIN_LIB_NAME_RE = /(?:cloud-key(?![A-Za-z0-9_-])|vault[\\/]+keychain|zn-gate(?:@[A-Za-z0-9._+-]*){0,6}(?:[\\/]+[0-9][A-Za-z0-9._+-]*)?[\\/]+lib[\\/]+(?:vault[\\/]+)?client(?![A-Za-z0-9_-]))/i;
 const KEYCHAIN_DOT_RE = /[\\/]\.(?=[\\/])/g;
 // A name written with escapes (\x2f, \x2F, \u{2f}, \057) is the same name once the shell or the interpreter decodes
 // it, so the name is also looked for in decoded copies. The decoded copies only add matches. One pass, no backtracking.
@@ -1553,22 +1553,30 @@ function keychainUnescape(t, re = KEYCHAIN_ESC_RE) {
 const KEYCHAIN_SHELL_JOIN_RE = /\\\r?\n|['"]/g;
 // A name that merely ends in zn-gate/lib/client (acme-zn-gate/lib/client) is refused on purpose: no left boundary, so a
 // trick that leaves a letter before the name cannot get past the rule.
-// A name built in the command is the same name: 'zn-' + 'gate/lib/client' (a `+` between two quoted pieces) and
-// path.join('zn-gate', 'lib', 'client') or ['zn-gate', 'lib', 'client'].join('/') (a `,` between two quoted pieces,
-// read as a path separator). Each pattern is anchored on a quote and the whitespace after it, so it runs in linear time.
-// Not covered, on purpose: a name assembled from variables or with a function, a URL-encoded name (%2D; require does not
-// decode it), fullwidth look-alike letters (require does not fold them) and Windows 8.3 short names.
-const KEYCHAIN_CONCAT_RE = /(['"`])[ \t]*\+[ \t]*(['"`])/g;
-const KEYCHAIN_LIST_RE = /(['"`])[ \t]*,[ \t]*(['"`])/g;
+// A name built in the command is the same name: a `+` or `.concat(` between two quoted pieces ('zn-' + 'gate/lib/client'),
+// and a `,` between two quoted pieces in path.join('zn-gate', 'lib', 'client') or ['zn-gate', 'lib', 'client'].join('/')
+// (read as a separator, and also as nothing for .join('')). Any whitespace, line break, line continuation or escaped quote
+// may sit between the pieces, also after the shell decodes \x27. A Bun or Deno cache folder with a version is the same
+// module. Each pattern is anchored on a quote, so it runs in linear time.
+// Not covered, on purpose: a comment or parentheses between the pieces, `${"..."}` interpolation, a name assembled from
+// variables or with String.fromCharCode, a URL-encoded name (%2D; require does not decode it), fullwidth look-alike
+// letters (require does not fold them) and Windows 8.3 short names. This is a barrier, not a boundary.
+const KEYCHAIN_CONCAT_RE = /\\?['"`][\s\\]*(?:\+|\.concat\()[\s\\]*['"`]/g;
+const KEYCHAIN_LIST_RE = /\\?['"`][\s\\]*,[\s\\]*['"`]/g;
 const keychainLibName = (t) => {
-  const joined = t.replace(KEYCHAIN_CONCAT_RE, '').replace(KEYCHAIN_LIST_RE, '/');
+  const sh = keychainUnescape(t, KEYCHAIN_SH_ESC_RE);
+  const joins = [];
+  for (const b of sh === t ? [t] : [t, sh]) {
+    const c = b.replace(KEYCHAIN_CONCAT_RE, '');
+    for (const x of [c.replace(KEYCHAIN_LIST_RE, '/'), c.replace(KEYCHAIN_LIST_RE, '')]) if (x !== t && !joins.includes(x)) joins.push(x);
+  }
   const out = [t];
-  for (const u of joined === t ? [t] : [t, joined]) {
+  for (const u of [t, ...joins]) {
     const j = u.replace(KEYCHAIN_SHELL_JOIN_RE, '');
     out.push(keychainUnescape(j), keychainUnescape(j, KEYCHAIN_SH_ESC_RE));
   }
-  if (joined !== t) out.push(joined);
-  return out.some((c) => KEYCHAIN_LIB_NAME_RE.test(c.replace(KEYCHAIN_DOT_RE, '')));
+  out.push(...joins);
+  return out.some((x) => KEYCHAIN_LIB_NAME_RE.test(x.replace(KEYCHAIN_DOT_RE, '')));
 };
 const KEYCHAIN_LIB_USE_RE = /(?:loadStoredKey|resolveApiKey|\b_native\b|CLOUD_SLOT|loadIdentity|storeIdentity|\banalyze\b|\bisCloudEnabled\b)/;
 
