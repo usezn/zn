@@ -66,7 +66,7 @@ aws-config = { version = "1.11", default-features = false, features = ["behavior
 aws-sdk-kms = { version = "1.117", default-features = false, features = ["rt-tokio", "default-https-client"] }
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
 candle-core = "0.9.2"
-candle-nn = "0.9.2"
+candle-nn = "0.11.0"
 candle-transformers = { version = "0.9.2", default-features = false }
 candle-onnx = "0.9.2"
 tokenizers = "0.22.2"
