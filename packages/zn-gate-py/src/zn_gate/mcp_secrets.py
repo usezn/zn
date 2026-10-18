@@ -148,19 +148,25 @@ _HEADER_ARG = re.compile(
     re.IGNORECASE | re.DOTALL)
 _URL_START = re.compile(r"[A-Za-z][A-Za-z0-9+.-]{1,15}://")
 _QUERY_PARAM = re.compile(r"[?&;#]([A-Za-z0-9_.-]{1,60})=([^&#\s]*)")
-_SCHEME_VALUE = re.compile(r"(?:bearer|basic)[ \t]+\S", re.IGNORECASE)
-_AddFn = Callable[[int, str, str], None]
+# "Bearer abc": one token after the scheme. A sentence that starts with the word is not a credential.
+_SCHEME_VALUE = re.compile(r"(?:bearer|basic)[ \t]+\S+", re.IGNORECASE)
+# Names that hold a credential Claude Code itself uses to log in: not moved to the vault.
+_OWN_LOGIN_NAMES = {"primary_api_key"}
+_CLAUDE_JSON = re.compile(r"(^|[\\/])\.claude\.json$")
+# add(kind, name, start, end): offsets of the value in the line
+_AddFn = Callable[[str, str, int, int], None]
 
 
-def _url_param_names(text: str) -> List[str]:
+def _url_params(text: str) -> List[Tuple[str, int, int]]:
+    """Credential values in the query of a URL: (norm, offset, length)."""
     if not _URL_START.match(text) or not any(c in text for c in "?#;"):
         return []
-    names = []
+    out = []
     for m in _QUERY_PARAM.finditer(text):
         norm = normalize_name(m.group(1))
         if (is_secret_name(norm) or norm in ("key", "sig", "signature")) and _holds_credential(m.group(2), False):
-            names.append(norm)
-    return names
+            out.append((norm, m.end() - len(m.group(2)), len(m.group(2))))
+    return out
 
 
 def suggested_name(norm: str) -> str:
@@ -177,19 +183,25 @@ def _safe_name(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]", "_", str(name))[:80]
 
 
-def find_mcp_config_secrets(text: str) -> List[Dict[str, object]]:
-    """Credentials in the text of an MCP configuration file: one result per
-    value, {"line", "kind", "name"} (1-based lines, counted on newline characters only).
-    ``kind`` is "environment variable", "header", "setting", "argument" or "URL"."""
+def find_mcp_config_secret_spans(text: str, file: str = "") -> List[Dict[str, object]]:
+    """Credentials in the text of an MCP configuration file, with where each value
+    sits: {"line", "kind", "name", "start", "end"} (offsets in ``text``, lines counted
+    on newline characters only). The offsets are for masking the value
+    (``mask_mcp_values``); they are never part of a report. ``kind`` is "environment
+    variable", "header", "setting", "argument" or "URL". ``file`` is the file name: in
+    ~/.claude.json the key Claude Code logs in with is left alone."""
     found: List[Dict[str, object]] = []
     seen: Set[Tuple[int, str, str]] = set()
+    own_login = bool(_CLAUDE_JSON.search(str(file)))
+    cur = {"ln": 0, "start": 0}
 
-    def add(line: int, kind: str, name: str) -> None:
-        key = (line, kind, name)
+    def add(kind: str, name: str, s: int, e: int) -> None:
+        key = (cur["ln"], kind, name)
         if key in seen:
             return
         seen.add(key)
-        found.append({"line": line, "kind": kind, "name": _safe_name(name)})
+        found.append({"line": cur["ln"], "kind": kind, "name": _safe_name(name),
+                      "start": cur["start"] + s, "end": cur["start"] + e})
 
     pending: List[Optional[str]] = [None]  # a credential flag whose value is the next string
 
@@ -197,7 +209,11 @@ def find_mcp_config_secrets(text: str) -> List[Dict[str, object]]:
         pending[0] = flag
 
     lines = str(text).split("\n")
-    for ln, raw in enumerate(lines, 1):
+    line_start = 0
+    for idx, raw in enumerate(lines):
+        cur["ln"] = idx + 1
+        cur["start"] = line_start
+        line_start += len(raw) + 1
         line = raw[:-1] if raw.endswith("\r") else raw
         if not line.strip():
             continue
@@ -212,7 +228,7 @@ def find_mcp_config_secrets(text: str) -> List[Dict[str, object]]:
             if tok.sep:
                 # A key. Its value is the string that follows it.
                 if nxt is not None and nxt.is_str and nxt.start == tok.value_at:
-                    _pair(ln, tok.text, nxt.text, add)
+                    _pair(tok.text, nxt.text, nxt.start + 1, add, own_login)
                     t += 1
                 continue
             if not tok.is_str:
@@ -223,18 +239,41 @@ def find_mcp_config_secrets(text: str) -> List[Dict[str, object]]:
                 pending[0] = None
                 used_pending = True
                 if not s.startswith("-") and _holds_credential(s, True):
-                    add(ln, "argument", flag)
+                    add("argument", flag, tok.start + 1, tok.end - 1)
                     continue
-            _argument(ln, s, add, set_pending)
+            _argument(s, tok.start + 1, add, set_pending)
         # A flag waits for its value only across comment and blank lines.
         if had_pending and not used_pending and pending[0] is not None and not re.match(r"^\s*(?:#|//|/\*|\*)", line):
             pending[0] = None
     return found
 
 
-def _pair(ln: int, name: str, value: str, add: _AddFn) -> None:
+def find_mcp_config_secrets(text: str, file: str = "") -> List[Dict[str, object]]:
+    """The same results without the offsets: {"line", "kind", "name"}."""
+    return [{"line": f["line"], "kind": f["kind"], "name": f["name"]} for f in find_mcp_config_secret_spans(text, file)]
+
+
+def mask_mcp_values(text: str, spans: List[Dict[str, object]]) -> str:
+    """The text with each found value replaced, so no other rule can print it.
+    Line numbers do not change."""
+    out = []
+    last = 0
+    for sp in sorted(spans, key=lambda f: (int(f["start"]), -int(f["end"]))):
+        if int(sp["start"]) < last:
+            continue
+        out.append(text[last:int(sp["start"])])
+        out.append("[REDACTED_MCP]")
+        last = int(sp["end"])
+    out.append(text[last:])
+    return "".join(out)
+
+
+def _pair(name: str, value: str, at: int, add: _AddFn, own_login: bool) -> None:
     norm = normalize_name(name)
+    end = at + len(value)
     if is_secret_name(norm):
+        if own_login and norm in _OWN_LOGIN_NAMES:
+            return
         if _holds_credential(value, True):
             if norm in _HEADER_NAMES:
                 kind = "header"
@@ -242,21 +281,28 @@ def _pair(ln: int, name: str, value: str, add: _AddFn) -> None:
                 kind = "environment variable"
             else:
                 kind = "setting"
-            add(ln, kind, name)
+            add(kind, name, at, end)
             return
-    elif _SCHEME_VALUE.match(value) and _holds_credential(value, True):
-        add(ln, "header", name)
+    elif _SCHEME_VALUE.fullmatch(value) and _holds_credential(value, True):
+        add("header", name, at, end)
         return
-    for p in _url_param_names(value):
-        add(ln, "URL", p)
+    for norm_p, off, ln_ in _url_params(value):
+        add("URL", norm_p, at + off, at + off + ln_)
 
 
-def _argument(ln: int, s: str, add: _AddFn, set_pending: Callable[[str], None]) -> None:
+def _argument(s: str, at: int, add: _AddFn, set_pending: Callable[[str], None]) -> None:
     short = len(s) <= 4096
     eq = _FLAG_EQ.fullmatch(s) if short else None
     if eq:
-        if is_secret_name(normalize_name(eq.group(1))) and _holds_credential(eq.group(2), False):
-            add(ln, "argument", eq.group(1).lstrip("-"))
+        value_at = at + len(eq.group(1)) + 1
+        if is_secret_name(normalize_name(eq.group(1))):
+            if _holds_credential(eq.group(2), False):
+                add("argument", eq.group(1).lstrip("-"), value_at, at + len(s))
+            return
+        # --header=Authorization: Bearer value
+        hv = _HEADER_ARG.fullmatch(eq.group(2))
+        if hv and _holds_credential(hv.group(2), True):
+            add("header", hv.group(1), at + len(s) - len(hv.group(2)), at + len(s))
         return
     if _FLAG.fullmatch(s):
         if is_secret_name(normalize_name(s)):
@@ -265,10 +311,10 @@ def _argument(ln: int, s: str, add: _AddFn, set_pending: Callable[[str], None]) 
     h = _HEADER_ARG.fullmatch(s) if short else None
     if h:
         if _holds_credential(h.group(2), True):
-            add(ln, "header", h.group(1))
+            add("header", h.group(1), at + len(s) - len(h.group(2)), at + len(s))
         return
-    for p in _url_param_names(s):
-        add(ln, "URL", p)
+    for norm_p, off, ln_ in _url_params(s):
+        add("URL", norm_p, at + off, at + off + ln_)
 
 
 def mcp_sample(kind: str, name: str) -> str:

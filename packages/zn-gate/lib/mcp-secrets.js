@@ -130,18 +130,24 @@ const FLAG_EQ = /^(--?[A-Za-z][A-Za-z0-9_-]{0,60})=([\s\S]*)$/;
 const HEADER_ARG = /^(authorization|proxy-authorization|x-api-key|api-key|x-auth-token|x-access-token|cookie)[ \t]*:[ \t]*([\s\S]*)$/i;
 const URL_START = /^[A-Za-z][A-Za-z0-9+.-]{1,15}:\/\//;
 const QUERY_PARAM = /[?&;#]([A-Za-z0-9_.-]{1,60})=([^&#\s]*)/g;
-const SCHEME_VALUE = /^(?:bearer|basic)[ \t]+\S/i;
+// "Bearer abc": one token after the scheme. A sentence that starts with the word is not a credential.
+const SCHEME_VALUE = /^(?:bearer|basic)[ \t]+\S+$/i;
+// Names that hold a credential Claude Code itself uses to log in: not moved to the vault.
+const OWN_LOGIN_NAMES = new Set(['primary_api_key']);
 
-function urlParamNames(text) {
-  const names = [];
-  if (!URL_START.test(text) || (!text.includes('?') && !text.includes('#') && !text.includes(';'))) return names;
+// Credential values in the query of a URL: [{ norm, at, len }], `at` the offset of the value in `text`.
+function urlParams(text) {
+  const out = [];
+  if (!URL_START.test(text) || (!text.includes('?') && !text.includes('#') && !text.includes(';'))) return out;
   QUERY_PARAM.lastIndex = 0;
   let m;
   while ((m = QUERY_PARAM.exec(text)) !== null) {
     const norm = normalizeName(m[1]);
-    if ((isSecretName(norm) || norm === 'key' || norm === 'sig' || norm === 'signature') && holdsCredential(m[2], false)) names.push(norm);
+    if ((isSecretName(norm) || norm === 'key' || norm === 'sig' || norm === 'signature') && holdsCredential(m[2], false)) {
+      out.push({ norm, at: m.index + m[0].length - m[2].length, len: m[2].length });
+    }
   }
-  return names;
+  return out;
 }
 
 // The environment variable name suggested for a value: the name that holds it,
@@ -158,24 +164,32 @@ function safeName(name) {
 }
 
 /**
- * Credentials in the text of an MCP configuration file: one result per
- * value, { line, kind, name }. `kind` is "environment variable", "header",
- * "setting", "argument" or "URL". `name` is the name that holds the value (a
- * key, a flag or a URL parameter), restricted to plain characters.
+ * Credentials in the text of an MCP configuration file, with where each value
+ * sits: { line, kind, name, start, end } (start and end are offsets in `text`).
+ * The offsets are for masking the value (maskMcpValues); they are never part
+ * of a report. `kind` is "environment variable", "header", "setting",
+ * "argument" or "URL". `name` is the name that holds the value (a key, a flag
+ * or a URL parameter), restricted to plain characters. `options.file` is the
+ * file name: in ~/.claude.json the key Claude Code logs in with is left alone.
  */
-function findMcpConfigSecrets(text) {
+function findMcpConfigSecretSpans(text, options) {
   const found = [];
   const seen = new Set();
-  const add = (line, kind, name) => {
-    const key = line + '\0' + kind + '\0' + name;
+  const file = options && options.file ? String(options.file) : '';
+  const ownLogin = /(^|[\\/])\.claude\.json$/.test(file);
+  const lines = String(text).split('\n');
+  let lineStart = 0;
+  let ln = 0;
+  const add = (kind, name, s, e) => {
+    const key = ln + '\0' + kind + '\0' + name;
     if (seen.has(key)) return;
     seen.add(key);
-    found.push({ line, kind, name: safeName(name) });
+    found.push({ line: ln, kind, name: safeName(name), start: lineStart + s, end: lineStart + e });
   };
-  const lines = String(text).split('\n');
   let pending = null; // a credential flag whose value is the next string
-  for (let ln = 1; ln <= lines.length; ln++) {
-    const line = lines[ln - 1].replace(/\r$/, '');
+  for (let i = 0; i < lines.length; lineStart += lines[i].length + 1, i++) {
+    ln = i + 1;
+    const line = lines[i].replace(/\r$/, '');
     if (!line.trim()) continue;
     const toks = tokenize(line);
     const hadPending = pending !== null;
@@ -186,7 +200,7 @@ function findMcpConfigSecrets(text) {
       if (tok.sep) {
         // A key. Its value is the string that follows it.
         if (next && next.str && next.start === tok.valueAt) {
-          pair(ln, tok.text, next.text, add);
+          pair(tok.text, next.text, next.start + 1, add, ownLogin);
           t++;
         }
         continue;
@@ -198,9 +212,9 @@ function findMcpConfigSecrets(text) {
         const flag = pending;
         pending = null;
         usedPending = true;
-        if (!s.startsWith('-') && holdsCredential(s, true)) { add(ln, 'argument', flag); continue; }
+        if (!s.startsWith('-') && holdsCredential(s, true)) { add('argument', flag, tok.start + 1, tok.end - 1); continue; }
       }
-      argument(ln, s, add, (f) => { pending = f; });
+      argument(s, tok.start + 1, add, (f) => { pending = f; });
     }
     // A flag waits for its value only across comment and blank lines.
     if (hadPending && !usedPending && pending !== null && !/^\s*(?:#|\/\/|\/\*|\*)/.test(line)) pending = null;
@@ -208,37 +222,68 @@ function findMcpConfigSecrets(text) {
   return found;
 }
 
-function pair(ln, name, value, add) {
+/** The same results without the offsets: { line, kind, name }. */
+function findMcpConfigSecrets(text, options) {
+  return findMcpConfigSecretSpans(text, options).map((f) => ({ line: f.line, kind: f.kind, name: f.name }));
+}
+
+/** The text with each found value replaced, so no other rule can print it. Line numbers do not change. */
+function maskMcpValues(text, spans) {
+  const sorted = spans.slice().sort((a, b) => a.start - b.start || b.end - a.end);
+  let out = '';
+  let last = 0;
+  for (const sp of sorted) {
+    if (sp.start < last) continue;
+    out += text.slice(last, sp.start) + '[REDACTED_MCP]';
+    last = sp.end;
+  }
+  return out + text.slice(last);
+}
+
+function pair(name, value, at, add, ownLogin) {
   const norm = normalizeName(name);
+  const end = at + value.length;
   if (isSecretName(norm)) {
+    if (ownLogin && OWN_LOGIN_NAMES.has(norm)) return;
     if (holdsCredential(value, true)) {
       const kind = HEADER_NAMES.has(norm) ? 'header' : (/^[A-Z0-9_]+$/.test(name) ? 'environment variable' : 'setting');
-      add(ln, kind, name);
+      add(kind, name, at, end);
       return;
     }
   } else if (SCHEME_VALUE.test(value) && holdsCredential(value, true)) {
-    add(ln, 'header', name);
+    add('header', name, at, end);
     return;
   }
-  for (const p of urlParamNames(value)) add(ln, 'URL', p);
+  for (const p of urlParams(value)) add('URL', p.norm, at + p.at, at + p.at + p.len);
 }
 
-function argument(ln, s, add, setPending) {
-  const eq = FLAG_EQ.exec(s.length > 4096 ? s.slice(0, 4096) : s);
-  if (eq && s.length <= 4096) {
-    if (isSecretName(normalizeName(eq[1])) && holdsCredential(eq[2], false)) add(ln, 'argument', eq[1].replace(/^-+/, ''));
+function argument(s, at, add, setPending) {
+  const small = s.length <= 4096;
+  const eq = small ? FLAG_EQ.exec(s) : null;
+  if (eq) {
+    const valueAt = at + eq[1].length + 1;
+    if (isSecretName(normalizeName(eq[1]))) {
+      if (holdsCredential(eq[2], false)) add('argument', eq[1].replace(/^-+/, ''), valueAt, at + s.length);
+      return;
+    }
+    // --header=Authorization: Bearer value
+    const hv = HEADER_ARG.exec(eq[2]);
+    if (hv) {
+      if (holdsCredential(hv[2], true)) add('header', hv[1], at + s.length - hv[2].length, at + s.length);
+      return;
+    }
     return;
   }
   if (FLAG.test(s)) {
     if (isSecretName(normalizeName(s))) setPending(s.replace(/^-+/, ''));
     return;
   }
-  const h = s.length <= 4096 ? HEADER_ARG.exec(s) : null;
+  const h = small ? HEADER_ARG.exec(s) : null;
   if (h) {
-    if (holdsCredential(h[2], true)) add(ln, 'header', h[1]);
+    if (holdsCredential(h[2], true)) add('header', h[1], at + s.length - h[2].length, at + s.length);
     return;
   }
-  for (const p of urlParamNames(s)) add(ln, 'URL', p);
+  for (const p of urlParams(s)) add('URL', p.norm, at + p.at, at + p.at + p.len);
 }
 
 function mcpSample(kind, name) {
@@ -260,4 +305,4 @@ function mcpNextStep(kind, name) {
   return `Next: run npx -y zn-gate secret set ${use} to store the value in the local vault (it asks for the value, so it is never typed on a command line), run zn secret allow ${use} --command <the server's command> so zn run may use it, put __ZN_${use}__ in this file instead, start the server through zn run (see docs/secrets.md), and rotate the value if the file was ever committed or shared.`;
 }
 
-module.exports = { RULE_ID, isMcpConfigPath, findMcpConfigSecrets, mcpNextStep, mcpSample, mcpReason, normalizeName, isSecretName, suggestedName };
+module.exports = { RULE_ID, isMcpConfigPath, findMcpConfigSecrets, findMcpConfigSecretSpans, maskMcpValues, mcpNextStep, mcpSample, mcpReason, normalizeName, isSecretName, suggestedName };

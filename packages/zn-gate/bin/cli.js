@@ -426,7 +426,18 @@ function homeMcpFiles() {
     path.join(xdg, 'opencode', 'opencode.jsonc'),
     path.join(home, '.aws', 'amazonq', 'mcp.json'),
   ];
-  return candidates.filter((f) => { try { return fs.statSync(f).isFile(); } catch (e) { return false; } });
+  // A symbolic link is followed only when its target is inside the home folder.
+  let realHome = home;
+  try { realHome = fs.realpathSync(home); } catch (e) { /* keep home */ }
+  return candidates.filter((f) => {
+    try {
+      if (fs.lstatSync(f).isSymbolicLink()) {
+        const rel = path.relative(realHome, fs.realpathSync(f));
+        if (rel.startsWith('..') || path.isAbsolute(rel)) return false;
+      }
+      return fs.statSync(f).isFile();
+    } catch (e) { return false; }
+  });
 }
 
 // A file as shown in a report: relative to the current directory; one of the
@@ -530,7 +541,7 @@ async function handleScan(targetPath, options) {
       let size = 0;
       try { size = fs.statSync(f).size; } catch (e) { continue; }
       if (size < 2 * 1024 * 1024) files.push(f);
-      else if (size < 64 * 1024 * 1024) { files.push(f); mcpOnly.add(f); } // ~/.claude.json grows with history: only its MCP servers are checked
+      else if (size < 64 * 1024 * 1024) { files.push(f); mcpOnly.add(f); } // ~/.claude.json grows with history: only the MCP credential check runs on it, not the other rules
       else files.skipped.push({ file: f, reason: '64 MiB or larger' });
     }
   }
@@ -550,6 +561,7 @@ Files   : ${files.length} file(s) queued for audit\n
     const relPath = displayPath(filePath, homeFiles);
     const fileFirst = findings.length;
     let content = '';
+    let mcpFound = [];
     try {
       const raw = fs.readFileSync(filePath);
       if (path.extname(filePath).toLowerCase() === '.key' && !hasUtf16Bom(raw) && raw.subarray(0, BINARY_SNIFF).includes(0)) {
@@ -564,6 +576,11 @@ Files   : ${files.length} file(s) queued for audit\n
       continue;
     }
 
+    // The MCP check runs first and its values are masked, so no other rule prints one.
+    if (mcpSecrets.isMcpConfigPath(filePath)) {
+      mcpFound = mcpSecrets.findMcpConfigSecretSpans(content, { file: filePath });
+      content = mcpSecrets.maskMcpValues(content, mcpFound);
+    }
     const generic = !mcpOnly.has(filePath);
     const lines = generic ? content.split('\n') : [];
     // Line of a character offset, numbered like the line pass (split on \n).
@@ -645,32 +662,11 @@ Files   : ${files.length} file(s) queued for audit\n
       findings.push({ file: relPath, line: b.line, rule: b.rule, reason: b.reason || 'Exposed credential detected by DLP filter', type: 'secret_leak', sample: b.header, next_step: secretNextStep(relPath, b.rule) });
     }
 
-    // MCP servers: a credential found by the name that holds it, by a flag in the
-    // arguments or by a key in a URL (lib/mcp-secrets.js). A line the other rules
-    // already report keeps its finding and gets the MCP next step; the value is
-    // never printed.
-    if (mcpSecrets.isMcpConfigPath(filePath)) {
-      const mcpByLine = new Map();
-      for (const m of mcpSecrets.findMcpConfigSecrets(content)) {
-        if (!mcpByLine.has(m.line)) mcpByLine.set(m.line, []);
-        mcpByLine.get(m.line).push(m);
-      }
-      // Another rule's finding stands for one value of its line: the MCP findings
-      // after as many as that are added, so a second credential is not hidden.
-      const reported = new Map();
-      for (let fi = fileFirst; fi < findings.length; fi++) {
-        const f = findings[fi];
-        if (f.file !== relPath || f.type !== 'secret_leak' || f.rule === 'secret:private_key') continue;
-        const first = mcpByLine.get(f.line);
-        if (first) f.next_step = mcpSecrets.mcpNextStep(first[0].kind, first[0].name);
-        reported.set(f.line, (reported.get(f.line) || 0) + 1);
-      }
-      for (const [line, list] of mcpByLine) {
-        for (const m of list.slice(reported.get(line) || 0)) {
-          totalFindings++;
-          findings.push({ file: relPath, line, rule: mcpSecrets.RULE_ID, reason: mcpSecrets.mcpReason(m.kind), type: 'secret_leak', sample: mcpSecrets.mcpSample(m.kind, m.name), next_step: mcpSecrets.mcpNextStep(m.kind, m.name) });
-        }
-      }
+    // MCP servers: every credential the MCP check found is a finding of its own; the
+    // other rules ran on the text with those values masked (lib/mcp-secrets.js).
+    for (const m of mcpFound) {
+      totalFindings++;
+      findings.push({ file: relPath, line: m.line, rule: mcpSecrets.RULE_ID, reason: mcpSecrets.mcpReason(m.kind), type: 'secret_leak', sample: mcpSecrets.mcpSample(m.kind, m.name), next_step: mcpSecrets.mcpNextStep(m.kind, m.name) });
     }
   }
 

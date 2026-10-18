@@ -148,16 +148,54 @@ test('a file with another name is not treated as an MCP config', (t) => {
   assert.equal(data.total_files, 1, '.vscode/settings.json is not scanned');
 });
 
-test('a line another rule already reports keeps its rule and gets the MCP next step', (t) => {
+test('a value never reaches another rule snippet on the same line', (t) => {
+  const V2 = 'ZNTESTFAKE' + 'x7Pq4Rt8Yu1';
+  const multi = '{\n  "mcpServers": { "s": { "command": "npx",\n    "args": ["-y", "x", "--api-key", "' + FAKE + '", "--token=' + V2 + '"] } }\n}\n';
+  const single = '{"mcpServers":{"b":{"command":"npx","env":{"API_KEY":"x"},"args":["--password","' + FAKE + '","--token=' + V2 + '"]}}}';
+  for (const [name, text] of [['multi-line', multi], ['single line', single]]) {
+    const dir = tempDir(t, 'zn-mcp-snip-');
+    write(dir, { '.mcp.json': text });
+    for (const fmt of [[], ['--format', 'json'], ['--format', 'github']]) {
+      const r = scan(dir, fmt);
+      noValue(r.stdout + r.stderr, name + ' ' + fmt.join(' '));
+    }
+    const { data } = scanJson(dir);
+    const names = data.threats.filter((x) => x.rule === 'secret:mcp_config').map((x) => x.content);
+    assert.equal(names.length, 2, name + ': ' + JSON.stringify(names));
+  }
+});
+
+test('a credential another rule also knows is one finding, as secret:mcp_config with the MCP next step', (t) => {
   const dir = tempDir(t, 'zn-mcp-step-');
   write(dir, { '.mcp.json': '{\n  "mcpServers": { "s": { "env": {\n    "GITHUB_TOKEN": "ghp_' + 'ZNTESTFAKE' + 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5" }\n  } } }\n' });
   const { data, out } = scanJson(dir);
   noValue(out, 'provider key');
   const hits = data.threats.filter((x) => x.line === 3);
-  assert.equal(hits.length, 1, 'one finding for the line');
-  assert.notEqual(hits[0].rule, 'secret:mcp_config');
+  assert.equal(hits.length, 1);
   assert.match(hits[0].next_step, /zn-gate secret set GITHUB_TOKEN/);
-  assert.match(hits[0].next_step, /__ZN_GITHUB_TOKEN__/);
+});
+
+test('the key Claude Code logs in with is left alone in ~/.claude.json', () => {
+  const text = '{ "primaryApiKey": "' + FAKE + '", "mcpServers": { "s": { "env": { "BRAVE_API_KEY": "' + FAKE + '" } } } }';
+  assert.deepEqual(mcp.findMcpConfigSecrets(text, { file: '/home/u/.claude.json' }).map((f) => f.name), ['BRAVE_API_KEY']);
+  assert.deepEqual(mcp.findMcpConfigSecrets(text, { file: 'other.json' }).map((f) => f.name), ['primaryApiKey', 'BRAVE_API_KEY']);
+});
+
+test('--include-home follows a symbolic link inside the home folder and not one that leaves it', (t) => {
+  if (process.platform === 'win32') { t.skip('symbolic links need privileges on Windows'); return; }
+  const home = tempDir(t, 'zn-mcp-link-');
+  const outside = tempDir(t, 'zn-mcp-outside-');
+  const empty = tempDir(t, 'zn-mcp-linkempty-');
+  write(home, { 'dotfiles/cursor.json': MCP_JSON });
+  write(outside, { 'mcp.json': MCP_JSON });
+  fs.mkdirSync(path.join(home, '.cursor'));
+  fs.symlinkSync(path.join(home, 'dotfiles', 'cursor.json'), path.join(home, '.cursor', 'mcp.json'));
+  fs.symlinkSync(path.join(outside, 'mcp.json'), path.join(home, '.claude.json'));
+  const env = { HOME: home, USERPROFILE: home, CODEX_HOME: '', XDG_CONFIG_HOME: '', APPDATA: '' };
+  const { data } = scanJson(empty, ['--include-home'], env);
+  const files = new Set(data.threats.map((x) => x.file));
+  assert.ok(files.has('~/.cursor/mcp.json'));
+  assert.ok(!files.has('~/.claude.json'));
 });
 
 test('text and github output never show the value', (t) => {

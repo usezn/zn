@@ -49,12 +49,12 @@ Each rule layer has a version constant that must increase whenever the layer's r
 
 | Layer | Constant | Files covered by the snapshot |
 | --- | --- | --- |
-| Detection rules | `RULES_VERSION` | `lib/rules.js` |
+| Detection rules | `RULES_VERSION` | `lib/rules.js`, `lib/mcp-secrets.js` |
 | Scrubber types | `SCRUB_RULES_VERSION` | `lib/scrub/patterns.js`, `lib/scrub/exact.js` |
 | `zn audit` | `AUDIT_RULES_VERSION` | `lib/audit/rules.js`, `lib/audit/patterns.js` |
 | Hook policy | `POLICY_RULES_VERSION` | `lib/hooks/policy.js`, `lib/broker/files.js`, `lib/broker/markers.js`, `lib/broker/dotenv.js`, `lib/shell-quote.js` |
 
-The Python `rules.py` is not in the snapshot. The parity test (`test/rules_parity.test.js`) keeps it equal to `rules.js`.
+The Python `rules.py` and `mcp_secrets.py` are not in the snapshot. The parity test (`test/rules_parity.test.js`) keeps it equal to `rules.js`.
 
 When you change a layer:
 

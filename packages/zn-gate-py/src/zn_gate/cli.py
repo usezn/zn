@@ -47,7 +47,7 @@ _KEY_FILE_NAMES = {"id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "id_ecdsa_sk", 
 # with a NUL byte near the start (a Keynote document, not a key).
 _MAX_SCAN_BYTES = 2 * 1024 * 1024
 _BINARY_SNIFF = 8192
-# A home MCP config this large (~/.claude.json grows with history) gets only the MCP check.
+# A home MCP config this large (~/.claude.json grows with history) gets only the MCP credential check, not the other rules.
 _MAX_HOME_MCP_BYTES = 64 * 1024 * 1024
 _UTF16_BOMS = (b"\xff\xfe", b"\xfe\xff")
 
@@ -201,10 +201,10 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     return 2 if res.get("verdict") == "block" else 0
 
 
-def _skip_reason(file_path: Path, mcp_only: bool = False) -> Optional[str]:
+def _skip_reason(file_path: Path, mcp_only: bool = False, follow: bool = False) -> Optional[str]:
     """Why a file that matches the scan is not read, or None."""
     try:
-        st = os.lstat(file_path)
+        st = os.stat(file_path) if follow else os.lstat(file_path)
         if not stat.S_ISREG(st.st_mode):
             return "not a regular file"
         if st.st_size >= (_MAX_HOME_MCP_BYTES if mcp_only else _MAX_SCAN_BYTES):
@@ -229,39 +229,23 @@ def _gh_message(value: str) -> str:
     return str(value).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
 
 
-def _mcp_violations(file_path: Path, shown: str, content: str, violations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """MCP servers: a credential found by the name that holds it, by a flag in the
-    arguments or by a key in a URL (mcp_secrets.py). A line the other rules already
-    report keeps its finding and gets the MCP next step; the value is never printed."""
-    if not _mcp.is_mcp_config_path(str(file_path)):
-        return []
-    by_line: Dict[int, List[Dict[str, Any]]] = {}
-    for m in _mcp.find_mcp_config_secrets(content):
-        by_line.setdefault(int(m["line"]), []).append(m)
-    reported = set()
-    for v in violations:
-        if v.get("type") != "secret_leak" or v.get("rule") == "secret:private_key":
-            continue
-        first = by_line.get(v["line"])
-        if first:
-            v["next_step"] = _mcp.mcp_next_step(str(first[0]["kind"]), str(first[0]["name"]))
-        reported.add(v["line"])
-    added: List[Dict[str, Any]] = []
-    for line, found in by_line.items():
-        if line in reported:
-            continue
-        for m in found:
-            kind, name = str(m["kind"]), str(m["name"])
-            added.append({
-                "file": shown,
-                "line": line,
-                "rule": _mcp.RULE_ID,
-                "reason": _mcp.mcp_reason(kind),
-                "type": "secret_leak",
-                "content": _mcp.mcp_sample(kind, name),
-                "next_step": _mcp.mcp_next_step(kind, name),
-            })
-    return added
+def _mcp_violations(shown: str, found: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """MCP servers: every credential the MCP check found is a finding of its own; the
+    other rules ran on the text with those values masked (mcp_secrets.py). The value
+    is never printed."""
+    out: List[Dict[str, Any]] = []
+    for m in found:
+        kind, name = str(m["kind"]), str(m["name"])
+        out.append({
+            "file": shown,
+            "line": m["line"],
+            "rule": _mcp.RULE_ID,
+            "reason": _mcp.mcp_reason(kind),
+            "type": "secret_leak",
+            "content": _mcp.mcp_sample(kind, name),
+            "next_step": _mcp.mcp_next_step(kind, name),
+        })
+    return out
 
 
 def _scan_file(file_path: Path, shown: Optional[str] = None, mcp_only: bool = False) -> List[Dict[str, Any]]:
@@ -276,8 +260,13 @@ def _scan_file(file_path: Path, shown: Optional[str] = None, mcp_only: bool = Fa
     if file_path.suffix.lower() == ".key" and raw[:2] not in _UTF16_BOMS and b"\0" in raw[:_BINARY_SNIFF]:
         return []
     content = _decode_scan_text(raw)
+    mcp_found: List[Dict[str, Any]] = []
+    if _mcp.is_mcp_config_path(str(file_path)):
+        # The MCP check runs first and its values are masked, so no other rule prints one.
+        mcp_found = _mcp.find_mcp_config_secret_spans(content, str(file_path))
+        content = _mcp.mask_mcp_values(content, mcp_found)
     if mcp_only:
-        return _mcp_violations(file_path, shown, content, [])
+        return _mcp_violations(shown, mcp_found)
 
     # Line numbers as the line pass counts them (str.splitlines boundaries).
     starts = [0]
@@ -363,7 +352,7 @@ def _scan_file(file_path: Path, shown: Optional[str] = None, mcp_only: bool = Fa
             "content": header,
             "next_step": _leak_next_step(shown, name),
         })
-    violations.extend(_mcp_violations(file_path, shown, content, violations))
+    violations.extend(_mcp_violations(shown, mcp_found))
     return violations
 
 
@@ -390,7 +379,24 @@ def _home_mcp_files() -> List[Path]:
         xdg / "opencode" / "opencode.jsonc",
         home / ".aws" / "amazonq" / "mcp.json",
     ]
-    return [c for c in candidates if c.is_file()]
+    # A symbolic link is followed only when its target is inside the home folder.
+    try:
+        real_home = home.resolve()
+    except OSError:
+        real_home = home
+    out = []
+    for c in candidates:
+        try:
+            if c.is_symlink():
+                try:
+                    c.resolve().relative_to(real_home)
+                except ValueError:
+                    continue
+            if c.is_file():
+                out.append(c)
+        except OSError:
+            continue
+    return out
 
 
 def _home_display(file_path: Path) -> str:
@@ -455,7 +461,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
     scanned = 0
     for fp in files_to_scan:
         shown = _home_display(fp) if str(fp) in home_files else str(fp)
-        reason = _skip_reason(fp, str(fp) in mcp_only_files)
+        reason = _skip_reason(fp, str(fp) in mcp_only_files, str(fp) in home_files)
         if reason:
             skipped.append({"file": shown, "reason": reason})
             continue

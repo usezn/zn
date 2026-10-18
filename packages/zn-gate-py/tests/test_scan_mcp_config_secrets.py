@@ -169,16 +169,57 @@ class TestScanMcpConfigs(_Base):
         _, data, _ = self._json()
         self.assertFalse(any(t["rule"] == "secret:mcp_config" for t in data["threats"]))
 
-    def test_a_line_another_rule_reports_keeps_its_rule_and_gets_the_mcp_next_step(self):
+    def test_a_value_never_reaches_another_rule_snippet_on_the_same_line(self):
+        v2 = "ZNTESTFAKE" + "x7Pq4Rt8Yu1"
+        multi = ('{\n  "mcpServers": { "s": { "command": "npx",\n    "args": ["-y", "x", "--api-key", "' + FAKE
+                 + '", "--token=' + v2 + '"] } }\n}\n')
+        single = ('{"mcpServers":{"b":{"command":"npx","env":{"API_KEY":"x"},"args":["--password","' + FAKE
+                  + '","--token=' + v2 + '"]}}}')
+        for name, text in (("multi-line", multi), ("single line", single)):
+            with self.subTest(name):
+                shutil.rmtree(self.dir, ignore_errors=True)
+                self.dir = tempfile.mkdtemp()
+                self._write(".mcp.json", text)
+                for fmt in ("text", "json", "github"):
+                    _, out = self._scan(fmt)
+                    self._no_value(out)
+                _, data, _ = self._json()
+                self.assertEqual(len([t for t in data["threats"] if t["rule"] == "secret:mcp_config"]), 2)
+
+    def test_a_credential_another_rule_also_knows_is_one_finding_with_the_mcp_next_step(self):
         self._write(".mcp.json", '{\n  "mcpServers": { "s": { "env": {\n    "GITHUB_TOKEN": "ghp_ZNTESTFAKE'
                     'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5" }\n  } } }\n')
         _, data, out = self._json()
         self._no_value(out)
         hits = [t for t in data["threats"] if t["line"] == 3]
         self.assertEqual(len(hits), 1)
-        self.assertNotEqual(hits[0]["rule"], "secret:mcp_config")
         self.assertIn("zn-gate secret set GITHUB_TOKEN", hits[0]["next_step"])
-        self.assertIn("__ZN_GITHUB_TOKEN__", hits[0]["next_step"])
+
+    def test_the_key_claude_code_logs_in_with_is_left_alone(self):
+        text = ('{ "primaryApiKey": "' + FAKE + '", "mcpServers": { "s": { "env": { "BRAVE_API_KEY": "' + FAKE + '" } } } }')
+        self.assertEqual([f["name"] for f in mcp.find_mcp_config_secrets(text, "/home/u/.claude.json")], ["BRAVE_API_KEY"])
+        self.assertEqual([f["name"] for f in mcp.find_mcp_config_secrets(text, "other.json")], ["primaryApiKey", "BRAVE_API_KEY"])
+
+    def test_include_home_follows_a_link_inside_home_and_not_one_that_leaves_it(self):
+        if os.name == "nt":
+            self.skipTest("symbolic links need privileges on Windows")
+        home = tempfile.mkdtemp()
+        outside = tempfile.mkdtemp()
+        try:
+            self._write("dotfiles/cursor.json", MCP_JSON, base=home)
+            self._write("mcp.json", MCP_JSON, base=outside)
+            os.mkdir(os.path.join(home, ".cursor"))
+            os.symlink(os.path.join(home, "dotfiles", "cursor.json"), os.path.join(home, ".cursor", "mcp.json"))
+            os.symlink(os.path.join(outside, "mcp.json"), os.path.join(home, ".claude.json"))
+            env = {"HOME": home, "USERPROFILE": home, "CODEX_HOME": "", "XDG_CONFIG_HOME": "", "APPDATA": ""}
+            with mock.patch.dict(os.environ, env), mock.patch("pathlib.Path.home", return_value=Path(home)):
+                _, data, _ = self._json(include_home=True)
+            files = {t["file"] for t in data["threats"]}
+            self.assertIn("~/.cursor/mcp.json", files)
+            self.assertNotIn("~/.claude.json", files)
+        finally:
+            shutil.rmtree(home, ignore_errors=True)
+            shutil.rmtree(outside, ignore_errors=True)
 
     def test_text_and_github_output_never_show_the_value(self):
         self._write(".mcp.json", MCP_JSON)
