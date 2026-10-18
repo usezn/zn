@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-18.35';
+const POLICY_RULES_VERSION = '2026-10-18.36';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -764,7 +764,11 @@ function commandName(words) {
 // (less and tree are not here: tree writes its output with -o, less can run commands.)
 const READ_ONLY_CMDS = new Set(['cat', 'head', 'tail', 'more', 'grep', 'egrep', 'fgrep', 'rg', 'ls', 'stat', 'wc', 'diff',
   'file', 'bat', 'jq', 'type', 'gc', 'get-content', 'select-string', 'findstr', 'dir', 'pwd', 'echo']);
-const AGENT_CONFIG_MENTION_RE = /\.claude\/settings|\.codex\/|\.cursor\/hooks|\.agents(?:\/|["']?(?:\s|$))|\.gemini\/config\/hooks|antigravity-cli\/settings|opencode\.jsonc?|\.opencode\/|\.config\/opencode\//i;
+const AGENT_CONFIG_MENTION_RE = /\.claude\/settings|\.codex\/|\.cursor\/hooks|\.gemini\/config\/hooks|antigravity-cli\/settings|opencode\.jsonc?|\.opencode\/|\.config\/opencode\//i;
+// .agents is shared with other tools (Codex reads .agents/skills; Antigravity keeps rules and workflows there), so
+// only the folder itself, its hooks file, globs or ".." inside it, and changing into it count as touching the hook.
+const AGENTS_DIR_RISKY_RE = /(?:^|[\/\s"'=:])\.agents(?:\/*(?=$|[\s"';&|)])|\/(?:[^\s"'\/]*\/)*(?:hooks\.json|\.\.(?=$|[\/\s"';&|)])|[^\s"'\/]*[*?[{]))/i;
+const AGENTS_DIR_ANY_RE = /(?:^|[\/\s"'=:])\.agents(?:\/|$|[\s"';&|)])/i;
 
 const RESERVED_WORDS = new Set(['if', 'then', 'else', 'elif', 'fi', 'for', 'while', 'until', 'do', 'done', 'case', 'esac', 'function', '{', '}', '!', '[[', 'time', 'coproc', 'select', 'eval', 'exec', 'source', '.', 'sudo', 'doas', 'env', 'xargs', 'nohup', 'command', 'builtin', 'export', 'declare', 'local', 'readonly', 'typeset', 'alias', 'set', 'unset', 'let']);
 const ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
@@ -1722,7 +1726,9 @@ function bashDenialOf(cmd, opts = {}) {
       if (deny) return deny;
     }
     if (!c) {
-      if (writing && AGENT_CONFIG_MENTION_RE.test(slash(text))) {
+      const t = slash(text);
+      if (writing && (AGENT_CONFIG_MENTION_RE.test(t) || AGENTS_DIR_RISKY_RE.test(t) ||
+          (CD_CMDS.has(String(w.head).toLowerCase()) && AGENTS_DIR_ANY_RE.test(t)))) {
         return 'zn: this command would change agent hook or plugin settings, which is protected. Ask the user to make this change.';
       }
       continue;

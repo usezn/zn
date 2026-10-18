@@ -59,7 +59,7 @@ function firstString(obj, keys) {
 }
 
 /**
- * Every string argument whose key looks like a file or folder (content-like keys are skipped), one level of
+ * Every string argument whose key looks like a file or folder (content-like keys are skipped), three levels of
  * objects and arrays deep. A key called url counts only when its value is a file: URI. A file: URI that cannot
  * be turned into a path sets `bad`, so the call is refused instead of passed.
  */
@@ -82,7 +82,7 @@ function pathsOf(args) {
       if (keyOk(k)) {
         if (Array.isArray(v)) v.forEach((x) => add(k, x)); else add(k, v);
       }
-      if (depth < 1) {
+      if (depth < 3) {
         if (isObj(v)) walk(v, depth + 1);
         else if (Array.isArray(v)) v.forEach((x) => { if (isObj(x)) walk(x, depth + 1); });
       }
@@ -106,7 +106,12 @@ function normalize(raw) {
   const ev = { ...base, event: 'pre_tool', toolName, rawArgs: args };
 
   const mcp = /^mcp[_.\-:/]+(.+?)[_.\-:/]+(.+)$/i.exec(toolName);
-  if (mcp) return { ...ev, tool: 'mcp', mcp: { server: mcp[1], tool: mcp[2] }, input: { args, texts: [] } };
+  if (mcp) {
+    const mp = pathsOf(args);
+    const e = { ...ev, tool: 'mcp', mcp: { server: mcp[1], tool: mcp[2] }, input: { args, paths: mp.paths, texts: [] } };
+    if (mp.bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
+    return e;
+  }
   const cmd = firstString(args, COMMAND_KEYS);
   if (SHELL_TOOLS.has(toolName) || (!READ_TOOLS.has(toolName) && !WRITE_TOOLS.has(toolName) && cmd !== undefined)) {
     const e = { ...ev, tool: 'bash', input: { command: cmd || '', texts: [] } };
@@ -115,9 +120,10 @@ function normalize(raw) {
   }
   const { paths, bad } = pathsOf(args);
   const input = { path: paths[0], paths, texts: [] };
+  const searchDir = toolName === 'grep_search' ? (paths[0] ? path.resolve(cwd, paths[0]) : cwd) : null;
   const kind = toolName === 'view_file' ? 'read' : toolName === 'grep_search' ? 'grep' : WRITE_TOOLS.has(toolName) ? 'write' : null;
   if (kind) {
-    const e = { ...ev, tool: kind, input };
+    const e = { ...ev, tool: kind, input: searchDir ? { ...input, scanDir: searchDir } : input };
     if (bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
     else if ((kind === 'read' || kind === 'write') && !paths.length) e.unreadable = 'zn: could not read the file this call uses, so zn cannot check it. Name the file explicitly.';
     return e;
@@ -198,6 +204,7 @@ function install(opts = {}) {
   const file = hooksFile(opts);
   const data = cfg.readJson(file);
   const report = { settings: file, backup: cfg.backup(file), warnings: [] };
+  if (report.backup && (opts.scope || 'user') === 'project') report.warnings.push('The backup ' + report.backup + ' sits inside the project: do not commit it.');
   stripOurs(data);
   const command = !opts.command && (opts.platform || process.platform) === 'win32' && (opts.scope || 'user') !== 'project'
     ? cfg.hookCommandWindows(id, opts)
@@ -208,6 +215,7 @@ function install(opts = {}) {
   data[name] = { enabled: true, PreToolUse: [{ matcher: MATCHER, hooks: [{ type: 'command', command, timeout: HOOK_TIMEOUT_S }] }] };
   cfg.writeJson(file, data);
   report.warnings.push('Antigravity support is experimental. zn checks tool calls before they run (PreToolUse): it blocks reads and writes of secret files and shell commands that handle secrets.');
+  if ((opts.scope || 'user') === 'project' && !opts.command) report.warnings.push('The project hook runs `zn` from your PATH (zn hook antigravity): every teammate who opens this project in Antigravity needs zn-gate installed, otherwise the hook cannot start and Antigravity may let the call through.');
   report.warnings.push('Antigravity hooks cannot rewrite or redact what a tool returns, so a value printed by a command or a file the agent is allowed to read reaches the model. Keep secrets in the vault.');
   report.warnings.push('Antigravity does not document what happens when a hook fails or times out, so zn cannot promise that such a call is blocked.');
   return report;

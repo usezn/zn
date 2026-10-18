@@ -182,6 +182,17 @@ async function decidePre(ev, d, agentId, opts) {
       if (deny) return { decision: 'deny', message: deny };
     }
   }
+  if (tool === 'grep' && input.scanDir) {
+    // A search over a folder (or with no path) prints matching lines, and an agent that cannot redact that
+    // output would show a plain-text secret to the model: ask when the folder holds a .env or a key file.
+    let names = [];
+    try { names = fs.readdirSync(input.scanDir).slice(0, 500); } catch (_) { names = []; }
+    for (const n of names) {
+      if (policy.readDenial(path.join(input.scanDir, n), pathOpts)) {
+        return { decision: 'ask', message: 'zn: this search covers a folder that holds ' + n + ', which has plain-text secrets, and matching lines are not hidden in this agent. Approve only if the search must include it, or name a narrower path.' };
+      }
+    }
+  }
   if (tool === 'fileaccess') {
     // A tool zn does not know that names files: every path gets the read and the write checks.
     for (const p of Array.isArray(input.paths) ? input.paths : []) {
@@ -214,6 +225,13 @@ async function decidePre(ev, d, agentId, opts) {
   }
 
   if (tool === 'monitor') return decideMonitor(ev, pathOpts, opts);
+  if (tool === 'mcp' && Array.isArray(input.paths)) {
+    // An MCP tool that takes a file path (a filesystem server): its output cannot be redacted in every agent.
+    for (const p of input.paths) {
+      const deny = policy.readDenial(p, pathOpts) || policy.writeDenial(p, pathOpts);
+      if (deny) return { decision: 'deny', message: deny };
+    }
+  }
   if (tool === 'mcp' && ev.input && ev.input.args !== undefined) return decideMcp(ev, d, agentId);
 
   if (SHELL_TOOLS.has(tool)) {

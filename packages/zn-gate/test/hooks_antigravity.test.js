@@ -229,3 +229,36 @@ test('zn-gate check does not read Antigravity-style entries for other agents, an
 test('deny: shell commands that move or delete the .agents folder', async () => {
   assert.equal((await run(pre('run_command', { CommandLine: 'rm -rf .agents' }))).output.decision, 'deny');
 });
+
+test('MCP calls with a path argument get the path checks', async () => {
+  const cred = path.join(HOME, '.aws', 'credentials');
+  assert.equal((await run(pre('mcp_filesystem_read_file', { path: cred }))).output.decision, 'deny');
+  assert.equal((await run(pre('mcp_filesystem_read_file', { path: '/work/proj/ok.txt' }))).output.decision, 'allow');
+});
+
+test('paths two levels down in the arguments are checked', async () => {
+  const r = await run(pre('future_editor', { Edits: [{ Change: { Path: '/work/proj/.agents/hooks.json' } }] }));
+  assert.equal(r.output.decision, 'deny');
+});
+
+test('a search over a folder that holds a plain-text .env asks; a clean folder or a shadowed one does not', async (t) => {
+  const dir = tempDir(t, 'zn-agy-grep-');
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'hello');
+  assert.equal((await run(pre('grep_search', { Query: 'x', SearchPath: dir }))).output.decision, 'allow');
+  fs.writeFileSync(path.join(dir, '.env'), 'API_KEY=sk_live_abcdefghijklmnop1234\n');
+  const r = await run(pre('grep_search', { Query: 'x', SearchPath: dir }));
+  assert.equal(r.output.decision, 'force_ask');
+  assert.match(r.output.reason, /\.env/);
+  // no path at all: the workspace folder is the search folder
+  const r2 = await run(pre('grep_search', { Query: 'x' }, { workspacePaths: [dir] }));
+  assert.equal(r2.output.decision, 'force_ask');
+});
+
+test('install warns that a project hook needs zn on PATH, and that its backup must not be committed', (t) => {
+  const dir = tempDir(t, 'zn-agy-warn-');
+  const first = agy.install({ scope: 'project', projectDir: dir });
+  assert.ok(first.warnings.some((w) => /needs zn-gate installed/.test(w)));
+  const second = agy.install({ scope: 'project', projectDir: dir });
+  assert.ok(second.warnings.some((w) => /do not commit it/.test(w)));
+  assert.equal(agy.install({ scope: 'user', home: dir, nodePath: '/usr/bin/node', platform: 'linux' }).warnings.some((w) => /needs zn-gate installed/.test(w)), false);
+});
