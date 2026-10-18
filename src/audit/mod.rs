@@ -15,6 +15,7 @@ use aes_gcm::{
     Aes256Gcm, Nonce,
 };
 use anyhow::{anyhow, Result};
+use base64::{engine::general_purpose, Engine as _};
 use chrono::Utc;
 use rusqlite::{params, Connection, Row};
 use serde::{Deserialize, Serialize};
@@ -254,20 +255,7 @@ impl AuditVault {
         // Encrypt payload if key is available
         let payload = if let (Some(key_bytes), Some(p_raw)) = (&self.encryption_key, &entry.payload)
         {
-            let cipher = Aes256Gcm::new(key_bytes.into());
-            let nonce_bytes = Uuid::new_v4().as_bytes()[..12].to_vec();
-            let nonce = Nonce::from_slice(&nonce_bytes);
-
-            let encrypted = cipher
-                .encrypt(nonce, p_raw.as_bytes())
-                .map_err(|_| anyhow!("Payload encryption failed"))?;
-
-            use base64::{engine::general_purpose, Engine as _};
-            let encoded = format!(
-                "{}:{}",
-                general_purpose::STANDARD.encode(&nonce_bytes),
-                general_purpose::STANDARD.encode(&encrypted)
-            );
+            let encoded = encrypt_payload(key_bytes, p_raw)?;
             Some(encoded)
         } else {
             entry.payload.clone()
@@ -338,24 +326,8 @@ impl AuditVault {
 
                 // Decrypt payload if key is available
                 if let (Some(key_bytes), Some(p_enc)) = (&self.encryption_key, &payload) {
-                    if p_enc.contains(':') {
-                        let parts: Vec<&str> = p_enc.split(':').collect();
-                        if parts.len() == 2 {
-                            use base64::{engine::general_purpose, Engine as _};
-                            if let (Ok(nonce_bytes), Ok(ciphertext)) = (
-                                general_purpose::STANDARD.decode(parts[0]),
-                                general_purpose::STANDARD.decode(parts[1]),
-                            ) {
-                                let cipher = Aes256Gcm::new(key_bytes.into());
-                                let nonce = Nonce::from_slice(&nonce_bytes);
-                                if let Ok(decrypted) = cipher.decrypt(nonce, ciphertext.as_slice())
-                                {
-                                    if let Ok(s) = String::from_utf8(decrypted) {
-                                        payload = Some(s);
-                                    }
-                                }
-                            }
-                        }
+                    if let Some(s) = decrypt_payload(key_bytes, p_enc) {
+                        payload = Some(s);
                     }
                 }
 
@@ -458,24 +430,8 @@ impl AuditVault {
 
                 // Decrypt payload if key is available
                 if let (Some(key_bytes), Some(p_enc)) = (&self.encryption_key, &payload) {
-                    if p_enc.contains(':') {
-                        let parts: Vec<&str> = p_enc.split(':').collect();
-                        if parts.len() == 2 {
-                            use base64::{engine::general_purpose, Engine as _};
-                            if let (Ok(nonce_bytes), Ok(ciphertext)) = (
-                                general_purpose::STANDARD.decode(parts[0]),
-                                general_purpose::STANDARD.decode(parts[1]),
-                            ) {
-                                let cipher = Aes256Gcm::new(key_bytes.into());
-                                let nonce = Nonce::from_slice(&nonce_bytes);
-                                if let Ok(decrypted) = cipher.decrypt(nonce, ciphertext.as_slice())
-                                {
-                                    if let Ok(s) = String::from_utf8(decrypted) {
-                                        payload = Some(s);
-                                    }
-                                }
-                            }
-                        }
+                    if let Some(s) = decrypt_payload(key_bytes, p_enc) {
+                        payload = Some(s);
                     }
                 }
 
@@ -537,6 +493,54 @@ impl AuditVault {
     pub fn get_connection(&self) -> Arc<Mutex<Connection>> {
         Arc::clone(&self.conn)
     }
+}
+
+/// Length in bytes of an AES-GCM nonce.
+const NONCE_LEN: usize = 12;
+
+/// Draw a fresh 12-byte nonce from the cryptographically secure,
+/// OS-seeded random generator (`rand::rng()`).
+fn random_nonce_bytes() -> [u8; NONCE_LEN] {
+    use rand::Rng;
+    let mut nonce = [0u8; NONCE_LEN];
+    rand::rng().fill_bytes(&mut nonce);
+    nonce
+}
+
+/// Build a nonce from stored bytes. Returns `None` when the length is not 12
+/// instead of panicking.
+fn nonce_from_bytes(bytes: &[u8]) -> Option<aes_gcm::aead::Nonce<Aes256Gcm>> {
+    <[u8; NONCE_LEN]>::try_from(bytes).ok().map(Nonce::from)
+}
+
+/// Encrypt a payload as `base64(nonce):base64(ciphertext)`.
+fn encrypt_payload(key_bytes: &[u8; 32], plaintext: &str) -> Result<String> {
+    let cipher = Aes256Gcm::new(key_bytes.into());
+    let nonce_bytes = random_nonce_bytes();
+    let nonce = Nonce::from(nonce_bytes);
+    let encrypted = cipher
+        .encrypt(&nonce, plaintext.as_bytes())
+        .map_err(|_| anyhow!("Payload encryption failed"))?;
+    Ok(format!(
+        "{}:{}",
+        general_purpose::STANDARD.encode(nonce_bytes),
+        general_purpose::STANDARD.encode(&encrypted)
+    ))
+}
+
+/// Decrypt a stored `base64(nonce):base64(ciphertext)` payload. Returns `None`
+/// for anything malformed, including a nonce that is not 12 bytes long.
+fn decrypt_payload(key_bytes: &[u8; 32], stored: &str) -> Option<String> {
+    let parts: Vec<&str> = stored.split(':').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+    let nonce_bytes = general_purpose::STANDARD.decode(parts[0]).ok()?;
+    let ciphertext = general_purpose::STANDARD.decode(parts[1]).ok()?;
+    let nonce = nonce_from_bytes(&nonce_bytes)?;
+    let cipher = Aes256Gcm::new(key_bytes.into());
+    let decrypted = cipher.decrypt(&nonce, ciphertext.as_slice()).ok()?;
+    String::from_utf8(decrypted).ok()
 }
 
 #[cfg(test)]
@@ -720,5 +724,56 @@ mod tests {
         assert!(recent[0].payload.as_ref().unwrap().contains("secret"));
 
         fs::remove_file(&path).ok();
+    }
+
+    const TEST_KEY: [u8; 32] = [7u8; 32];
+
+    #[test]
+    fn nonces_differ_between_encryptions_and_are_12_bytes() {
+        let a = encrypt_payload(&TEST_KEY, "same plaintext").unwrap();
+        let b = encrypt_payload(&TEST_KEY, "same plaintext").unwrap();
+        let nonce_a = general_purpose::STANDARD
+            .decode(a.split(':').next().unwrap())
+            .unwrap();
+        let nonce_b = general_purpose::STANDARD
+            .decode(b.split(':').next().unwrap())
+            .unwrap();
+        assert_eq!(nonce_a.len(), 12);
+        assert_eq!(nonce_b.len(), 12);
+        assert_ne!(nonce_a, nonce_b);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn encrypt_decrypt_round_trip() {
+        let plain = r#"{"path": "/example/test"}"#;
+        let stored = encrypt_payload(&TEST_KEY, plain).unwrap();
+        assert_eq!(decrypt_payload(&TEST_KEY, &stored).as_deref(), Some(plain));
+        assert_eq!(decrypt_payload(&[8u8; 32], &stored), None);
+    }
+
+    #[test]
+    fn wrong_length_nonce_is_rejected_without_panic() {
+        let stored = encrypt_payload(&TEST_KEY, "payload").unwrap();
+        let ciphertext = stored.split(':').nth(1).unwrap();
+        for len in [0usize, 11, 13, 16, 32] {
+            let bad_nonce = general_purpose::STANDARD.encode(vec![1u8; len]);
+            let record = format!("{bad_nonce}:{ciphertext}");
+            assert_eq!(decrypt_payload(&TEST_KEY, &record), None, "len {len}");
+        }
+        assert!(nonce_from_bytes(&[0u8; 11]).is_none());
+        assert!(nonce_from_bytes(&[0u8; 12]).is_some());
+    }
+
+    #[test]
+    fn record_with_uuid_derived_nonce_still_decrypts() {
+        // Written by the previous implementation: nonce = first 12 bytes of
+        // UUID f47ac10b-58cc-4372-a567-0e02b2c3d479, key = bytes 0..32.
+        let key: [u8; 32] = core::array::from_fn(|i| i as u8);
+        let stored = "9HrBC1jMQ3KlZw4C:L/y1YqQCZUTXTgxQwtxWpwR43HyLXNyF9bCDJUsoYcmfaX8+qmP4L4M=";
+        assert_eq!(
+            decrypt_payload(&key, stored).as_deref(),
+            Some(r#"{"path": "/example/test"}"#)
+        );
     }
 }
