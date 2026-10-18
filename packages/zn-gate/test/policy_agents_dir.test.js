@@ -188,3 +188,10 @@ test('allowed: copying with -a and a dot source, and other dot segments', () => 
     assert.equal(policy.bashDenial(c, OPTS), null, c);
   }
 });
+
+test('allowed: cp -L and cp -S are not link options; -l and -s still are', () => {
+  assert.equal(policy.bashDenial('cp -L x .agents/skills/x', OPTS), null);
+  assert.equal(policy.bashDenial('cp -S .bak y .agents/skills/y', OPTS), null);
+  assert.match(String(policy.bashDenial('cp -Rs .agents/skills ag2', OPTS)), /protected/);
+  assert.match(String(policy.bashDenial('cp -l .agents/skills bk', OPTS)), /protected/);
+});

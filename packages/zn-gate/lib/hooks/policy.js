@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-18.39';
+const POLICY_RULES_VERSION = '2026-10-18.40';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -839,7 +839,7 @@ function markLinkWords(readings) {
       }
       const rest = clean.slice(k + 1);
       const link = LINK_CMDS.has(head) ||
-        ((head === 'cp' || head === 'gcp') && rest.some((x) => /^-[a-z]*[sl][a-z]*$/i.test(x) || x === '--symbolic-link' || x === '--link')) ||
+        ((head === 'cp' || head === 'gcp') && rest.some((x) => /^-[A-Za-z]*[sl][A-Za-z]*$/.test(x) || x === '--symbolic-link' || x === '--link')) ||
         ((head === 'new-item' || head === 'ni') && rest.some((x) => /symboliclink|junction|hardlink/i.test(x))) ||
         (head === 'cmd' && rest.some((x) => LINK_CMDS.has(x.toLowerCase())));
       if (link) for (let m = i; m < j; m++) r[m].link = true;
