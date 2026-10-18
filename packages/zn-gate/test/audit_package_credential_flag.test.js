@@ -96,3 +96,79 @@ test('a flag that looks like a credential flag cannot hide an unpinned package',
   assert.equal(d.length, 1);
   assert.match(d[0], /runs a package through npx without an exact version \(its name follows a credential flag and is not shown\)/);
 });
+
+// More credential flags, recognised by name: --passphrase, --bearer, --pass, --tokens, --keys, --jwt, --cookie.
+const NEW_FLAGS = ['--passphrase', '--bearer', '--pass', '--tokens', '--keys', '--jwt', '--cookie', '--access-tokens', '--user_pass'];
+
+test('packagesOf: the newer credential flags do not hide the package', () => {
+  for (const flag of NEW_FLAGS) {
+    for (const tool of [['npx'], ['uvx'], ['docker', 'run']]) {
+      const img = tool[0] === 'docker' ? 'example/image' : 'some-pkg';
+      const pk = P.packagesOf([...tool, flag, V(1), img]);
+      assert.equal(pk.length, 1, tool[0] + ' ' + flag);
+      assert.equal(pk[0].spec, img, tool[0] + ' ' + flag);
+      const eq = P.packagesOf([...tool, flag + '=' + V(1), img]);
+      assert.equal(eq[0].spec, img, tool[0] + ' ' + flag + '=');
+    }
+  }
+});
+
+test('packagesOf: flags that only look like credential flags are not treated as one', () => {
+  // These take no value, or are not credentials: the word after them is the package.
+  for (const flag of ['--pass-through', '--keys-only', '--bypass', '--compass', '--keep', '--cookies-from', '--passenger', '--license', '-t', '-k', '--keystore-type']) {
+    assert.equal(P.isCredentialFlag(flag), false, flag);
+    const pk = P.packagesOf(['npx', flag, 'some-pkg']);
+    assert.equal(pk.length, 1, flag);
+    assert.equal(pk[0].spec, 'some-pkg', flag);
+    assert.ok(!pk[0].hidden, flag);
+  }
+  for (const flag of NEW_FLAGS) assert.equal(P.isCredentialFlag(flag), true, flag);
+});
+
+const CONFIG2 = `{"mcpServers": {
+  "a": {"command": "npx", "args": ["--passphrase", "${V(21)}", "pkg-a"]},
+  "b": {"command": "npx", "args": ["--bearer", "${V(22)}", "pkg-b"]},
+  "c": {"command": "npx", "args": ["--pass", "${V(23)}", "pkg-c"]},
+  "d": {"command": "npx", "args": ["--tokens=${V(24)}", "pkg-d"]},
+  "e": {"command": "npx", "args": ["--keys", "${V(25)}", "pkg-e"]},
+  "f": {"command": "npx", "args": ["--jwt", "${V(26)}", "pkg-f"]},
+  "g": {"command": "npx", "args": ["--cookie", "${V(27)}", "pkg-g"]},
+  "h": {"command": "npx -y --passphrase ${V(28)} pkg-h"},
+  "i": {"command": "npx --bearer ${V(29)} --jwt ${V(30)} pkg-i"},
+  "j": {"command": "npx --cookie=${V(31)} pkg-j"},
+  "k": {"command": "npx", "args": ["--pass-through", "pkg-k"]},
+  "l": {"command": "npx", "args": ["--keys-only", "pkg-l"]}
+}}
+`;
+
+test('audit: the newer credential flags never print their value', (t) => {
+  const dir = tempDir(t, 'zn-audit-credflag2-');
+  fs.writeFileSync(path.join(dir, '.mcp.json'), CONFIG2);
+  const text = cli([dir, '--fail-on', 'none']).stdout;
+  const json = cli([dir, '--format', 'json', '--fail-on', 'none']).stdout;
+  const sarif = cli([dir, '--format', 'sarif', '--fail-on', 'none']).stdout;
+  for (const out of [text, json, sarif]) {
+    assert.ok(!out.includes('fake-value'), 'a value after a credential flag was printed');
+  }
+  const found = JSON.parse(json).findings.filter((f) => f.id === 'ZNA005').map((f) => f.detail);
+  for (const name of ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l']) {
+    assert.ok(found.some((d) => d.includes('"' + name + '" runs pkg-' + name + ' through npx')), 'package of ' + name + ': ' + found.join(' | '));
+  }
+  // The server command in ZNA003 hides the value too, and still shows the flags that take no value.
+  const z3 = JSON.parse(json).findings.filter((f) => f.id === 'ZNA003').map((f) => f.detail).join('\n');
+  assert.match(z3, /--passphrase \[REDACTED\] pkg-h/);
+  assert.match(z3, /--pass-through pkg-k|--pass-through/);
+});
+
+test('audit: the newer credential flags stay linear on hostile input', (t) => {
+  const dir = tempDir(t, 'zn-audit-credflag2-linear-');
+  for (const unit of ['--pass-', '--keys-', '--cookie ', '--jwt ', '--//a:']) {
+    const big = unit.repeat(40000);
+    P.packagesOf(['npx', big, 'x']);
+    P.isCredentialFlag(big);
+    fs.writeFileSync(path.join(dir, '.mcp.json'), '{"mcpServers": {"x": {"command": "npx ' + big + ' pkg"}}}' + String.fromCharCode(10));
+    const t0 = Date.now();
+    cli([dir, '--format', 'json', '--fail-on', 'none']);
+    assert.ok(Date.now() - t0 < 8000, unit + ' took ' + (Date.now() - t0) + ' ms');
+  }
+});
