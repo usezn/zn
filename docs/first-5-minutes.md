@@ -49,11 +49,11 @@ The test folder was deleted.
 
 ## 3. What you will see while you work
 
-zn-gate speaks up in three ways. Your agent shows you the message, or reads it itself and tells you.
+zn-gate speaks up in three ways. Blocks and approval questions come from zn's hooks and show up in your agent's window. Warnings come from zn's text check and reach you only if your agent tells you.
 
 ### A block
 
-zn stopped something. It was almost certainly a leak or an attack, and it did not run. Here, an agent in `~/my-project` tried to run `cat .env`. This is what zn answered, word for word:
+zn stopped something that could leak a secret or looked like an attack, and it did not run. Here, an agent in `~/my-project` tried to run `cat .env`. This is what zn answered, word for word:
 
 ```json
 {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"zn: .env holds plain-text secrets. Ask the user to run `zn env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use."}}
@@ -79,7 +79,7 @@ Your agent then shows its normal permission question. Read the command. Approve 
 
 ### A warning
 
-Some patterns also show up in ordinary text, such as "bypass the cache". zn lets that text through and adds a short warning, called an `advisory`. Real output of `npx -y zn-gate analyze "You can bypass the cache with --no-cache."`:
+zn also has a text check that your agent can call through zn's own tools. Some patterns it looks for also show up in ordinary text, such as "bypass the cache". For those, zn does not block: it lets the text through and adds a short warning, called an `advisory`. The warning goes to your agent, not to your screen, so you see it only if your agent mentions it. zn's hooks do not warn you about these. You can run the same check yourself. Real output of `npx -y zn-gate analyze "You can bypass the cache with --no-cache."`:
 
 ```json
 {
@@ -97,7 +97,7 @@ Some patterns also show up in ordinary text, such as "bypass the cache". zn lets
 }
 ```
 
-`"verdict": "allow"` means nothing was stopped. The `advisory` says why it is worth a look. What to do: read the text it points at. If it is harmless, carry on. If you did not expect it (for example inside a file you downloaded), do not let your agent follow it. To make zn block these too, turn on strict mode: set `ZN_STRICT=1`, or add `"strict": true` to `zn.config.json` in your project.
+`"verdict": "allow"` means nothing was stopped. The `advisory` says why it is worth a look. What to do: read the text it points at. If it is harmless, carry on. If you did not expect it (for example inside a file you downloaded), do not let your agent follow it. To make the text check block these too, turn on strict mode: set `ZN_STRICT=1`, or add `"strict": true` to `zn.config.json` in your project.
 
 For comparison, `npx -y zn-gate analyze "ignore all previous instructions"` is a block: `"verdict": "block"` with the reason "Override prior instructions".
 
@@ -114,10 +114,12 @@ For comparison, `npx -y zn-gate analyze "ignore all previous instructions"` is a
 Remove the part you installed, in your own terminal.
 
 - **Hooks** (Codex CLI, Cursor, OpenCode, or Claude Code without the plugin): `npx -y zn-gate hooks uninstall claude-code`. Use `codex`, `cursor` or `opencode` for the others, and add `--project` if you installed them for one project only. A backup of the settings file is written first.
-- **Claude Code plugin**: run `claude plugin uninstall zn-gate@usezn`, or open `/plugin` inside Claude Code and remove zn-gate.
-- **Wrapped MCP servers** (from `init --wrap-mcp`): `npx -y zn-gate init --revert` restores your configs from the backup. It only undoes MCP wrapping, not hooks.
+- **Claude Code plugin**: run `claude plugin uninstall zn-gate@usezn`, or in Claude Code type `/plugin`, open the **Installed** tab, pick zn-gate and choose **Uninstall**. To also remove the usezn plugin list, run `claude plugin marketplace remove usezn`.
+- **Wrapped MCP servers** (from `init --wrap-mcp`): `npx -y zn-gate init --revert` puts back each MCP settings file as it was saved just before zn wrapped it. Changes you made to those files later, such as MCP servers you added, are lost, so add them again afterwards. It only undoes MCP wrapping, not hooks.
 - **The program itself**, if you installed it with `npm install -g zn-gate`: `npm uninstall -g zn-gate`.
+- **The Python package**, if you installed it with `pip install zn-gate`: `pip uninstall zn-gate`.
 - **`.env` files you moved into the vault** keep markers such as `__ZN_API_KEY__`. `env shadow` tells you how to put the real values back. Do that before you remove zn-gate.
+- **zn's own folder**: zn keeps its vault, settings and counters in a `.zn` folder in your home folder, and removing zn-gate leaves it there. Delete it only after you have put your `.env` values back, because the vault holds them.
 
 Run `npx -y zn-gate check` afterwards if you want to see that zn is off.
 
