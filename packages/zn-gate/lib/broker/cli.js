@@ -480,7 +480,7 @@ const HELP = {
   'secret': [
     'usage: zn secret set|list|rm|allow|approve|import|adopt|log ...',
     'Stores secrets in the zn vault so your agent can use them without seeing them.',
-    'Run zn secret set NAME and type the value at the hidden prompt; values are never passed as arguments.',
+    'Run zn secret set NAME and type the value at the hidden prompt (or use --clipboard); values are never passed as arguments.',
   ],
   'env': [
     'usage: zn env shadow [FILE] | zn env unshadow FILE --backup NAME',

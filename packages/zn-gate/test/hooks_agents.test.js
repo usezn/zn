@@ -369,6 +369,7 @@ test('--help and -h print the usage for hooks, secret, env and team subcommands'
     [['secret', 'allow', '-h'], /usage: zn secret/],
     [['env', 'shadow', '--help'], /usage: zn env shadow/],
     [['env', 'unshadow', '-h'], /usage: zn env shadow/],
+    [['env', 'unshadow', 'F', '--backup', '--help'], /usage: zn env shadow/],
     [['team', '--help'], /usage: zn team join/],
   ];
   for (const [args, re] of cases) {
@@ -377,4 +378,8 @@ test('--help and -h print the usage for hooks, secret, env and team subcommands'
     assert.match(r.stdout, re, args.join(' '));
     assert.doesNotMatch(r.stderr + r.stdout, /needs a value/);
   }
+  // A lone `--` stops help detection: the usage is not printed and the invalid-name error code is kept.
+  const r = spawnSync(process.execPath, [cli, 'secret', 'set', '--', '--help'], { encoding: 'utf8', env: { ...process.env, ZN_LOCAL_ONLY: 'true' } });
+  assert.doesNotMatch(r.stdout, /usage: zn secret/);
+  assert.strictEqual(r.status, 64, r.stderr);
 });
