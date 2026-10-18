@@ -59,7 +59,7 @@ An AI agent is running this, so zn only prints the steps: installing hooks is yo
 Your secret vault is locked. Unlock it in this terminal with: zn unlock. Then run this command again.
 ```
 
-**What it means:** zn keeps the real values of your secrets in an encrypted vault, and the vault is closed. It closes by itself after a few hours or when you restart your computer. If `zn` is not installed on your computer, the message gives the `npx -y zn-gate@<version> unlock` form instead.
+**What it means:** zn keeps the real values of your secrets in an encrypted vault, and the vault is closed. It locks itself after 30 minutes without use, after 8 hours at most, or when you restart your computer. If `zn` is not installed on your computer, the message gives the `npx -y zn-gate@<version> unlock` form instead.
 
 **What to do:**
 
@@ -110,9 +110,13 @@ More in [connect](connect.md). You do not need `connect` to use zn-gate: without
 NODE_TLS_REJECT_UNAUTHORIZED=0 is set, so zn-gate will not send the saved key over a connection whose certificate is not checked
 ```
 
-**What it means:** your terminal has a setting that turns off the check of website certificates, or that changes how secure connections work. zn-gate refuses to send your saved key through such a connection. Similar messages name `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `OPENSSL_CONF`, `NODE_DEBUG` or `NODE_OPTIONS` instead. Your local checks keep working.
+**What it means:** your terminal has a setting that turns off the check of website certificates, changes how secure connections work, or could print or read your key. zn-gate refuses to send your saved key through such a connection. Similar messages name `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `OPENSSL_CONF`, `NODE_DEBUG` or `NODE_OPTIONS` instead. Your local checks keep working.
 
-**What to do:** remove the setting named in the message, open a new terminal and try again. On macOS or Linux, `unset NODE_TLS_REJECT_UNAUTHORIZED` removes it for this terminal. Look in your shell startup file (such as `~/.zshrc` or `~/.bashrc`) if it comes back. If a company proxy needs its own certificate, ask your administrator. Do not turn off certificate checks.
+**What to do:** zn-gate refuses on purpose: with that setting, someone between you and usezn.com could read your key. Nothing is broken, and the local checks keep working without the cloud check.
+
+- If you set it yourself, for example for a test, remove it, open a new terminal and try again. On macOS or Linux, `unset NODE_TLS_REJECT_UNAUTHORIZED` (or the name in the message) removes it for this terminal. If it comes back, look in your shell startup file (such as `~/.zshrc` or `~/.bashrc`).
+- If your company needs it, for example for a proxy with its own certificate, keep it and ask your administrator. Until then zn-gate uses only its local checks on this computer.
+- Never turn off certificate checks to make this message go away.
 
 ## 9. Your agent ignores zn's hooks on a managed computer
 
@@ -122,11 +126,11 @@ Your organization's Claude Code policy (<file>) turns off all hooks (disableAllH
 
 Other versions say that the policy "runs only the hooks in its managed settings (allowManagedHooksOnly)", that a settings file of yours "sets disableAllHooks", or that a managed MCP list does not include zn's "secrets" server.
 
-**What it means:** your company or school controls Claude Code's settings and they stop zn's hooks from running. Claude Code itself shows no warning, so zn tells you when you install hooks or run `zn-gate status`. Until this is fixed, zn is not protecting that agent.
+**What it means:** a setting stops zn's hooks from running. Usually your company or school controls Claude Code's settings; sometimes it is a line in your own settings file. Claude Code itself shows no warning, so zn tells you when you install hooks or run `npx -y zn-gate check` or `npx -y zn-gate status`. Until this is fixed, zn is not protecting that agent.
 
 **What to do:**
 
-- If the message names your own settings file, remove the `disableAllHooks` line and run `zn-gate check`.
+- If the message names your own settings file, that line turns off every hook you install, zn's included. Remove the `disableAllHooks` line, unless you set it on purpose, and run `npx -y zn-gate check`.
 - If it names an organization policy, ask your administrator to add zn to the managed settings. Send them the message.
 - Run `npx -y zn-gate check` to see which agents are protected.
 
