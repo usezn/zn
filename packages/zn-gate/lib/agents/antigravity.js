@@ -33,6 +33,7 @@
  */
 
 const fs = require('fs');
+const { fileURLToPath } = require('url');
 const os = require('os');
 const path = require('path');
 const cfg = require('./config-file');
@@ -47,26 +48,48 @@ const READ_TOOLS = new Set(['view_file', 'list_dir', 'find_by_name']);
 const WRITE_TOOLS = new Set(['write_to_file', 'replace_file_content', 'multi_replace_file_content']);
 const COMMAND_KEYS = ['CommandLine', 'commandLine', 'command_line', 'command', 'Command'];
 const PATH_KEY_RE = /path|file|target|uri|dir/i;
-const NOT_PATH_KEY_RE = /content|text|instruction|description|query|pattern|code|chunk|summary|title|name$/i;
+const NOT_PATH_KEY_RE = /content|text|instruction|description|query|pattern|code|chunk|summary|title/i;
 const MAX_PATH_LEN = 4096;
+
+const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 
 function firstString(obj, keys) {
   for (const k of keys) if (typeof obj[k] === 'string' && obj[k]) return obj[k];
   return undefined;
 }
 
-/** Every string argument whose key looks like a file or folder (content-like keys are skipped). */
+/**
+ * Every string argument whose key looks like a file or folder (content-like keys are skipped), one level of
+ * objects and arrays deep. A key called url counts only when its value is a file: URI. A file: URI that cannot
+ * be turned into a path sets `bad`, so the call is refused instead of passed.
+ */
 function pathsOf(args) {
   const out = [];
-  const add = (v) => {
-    if (typeof v !== 'string' || !v || v.length > MAX_PATH_LEN || /[\r\n]/.test(v)) return;
-    out.push(v.replace(/^file:\/\/(?=\/|[A-Za-z]:)/, ''));
+  let bad = false;
+  const add = (k, v) => {
+    if (typeof v !== 'string' || !v) return;
+    if (/^file:/i.test(v)) {
+      try { out.push(fileURLToPath(v)); } catch (_) { bad = true; }
+      return;
+    }
+    if (/url/i.test(k) && !PATH_KEY_RE.test(k)) return;
+    if (v.length > MAX_PATH_LEN || /[\r\n]/.test(v)) return;
+    out.push(v);
   };
-  for (const [k, v] of Object.entries(args)) {
-    if (!PATH_KEY_RE.test(k) || NOT_PATH_KEY_RE.test(k)) continue;
-    if (Array.isArray(v)) v.forEach(add); else add(v);
-  }
-  return out;
+  const keyOk = (k) => (PATH_KEY_RE.test(k) || /url/i.test(k)) && !NOT_PATH_KEY_RE.test(k);
+  const walk = (obj, depth) => {
+    for (const [k, v] of Object.entries(obj)) {
+      if (keyOk(k)) {
+        if (Array.isArray(v)) v.forEach((x) => add(k, x)); else add(k, v);
+      }
+      if (depth < 1) {
+        if (isObj(v)) walk(v, depth + 1);
+        else if (Array.isArray(v)) v.forEach((x) => { if (isObj(x)) walk(x, depth + 1); });
+      }
+    }
+  };
+  walk(args, 0);
+  return { paths: out, bad };
 }
 
 function normalize(raw) {
@@ -86,13 +109,26 @@ function normalize(raw) {
   if (mcp) return { ...ev, tool: 'mcp', mcp: { server: mcp[1], tool: mcp[2] }, input: { args, texts: [] } };
   const cmd = firstString(args, COMMAND_KEYS);
   if (SHELL_TOOLS.has(toolName) || (!READ_TOOLS.has(toolName) && !WRITE_TOOLS.has(toolName) && cmd !== undefined)) {
-    return { ...ev, tool: 'bash', input: { command: cmd || '', texts: [] } };
+    const e = { ...ev, tool: 'bash', input: { command: cmd || '', texts: [] } };
+    if (cmd === undefined) e.unreadable = 'zn: could not read the command of this call, so zn cannot check it.';
+    return e;
   }
-  const paths = pathsOf(args);
-  if (toolName === 'view_file') return { ...ev, tool: 'read', input: { path: paths[0], paths, texts: [] } };
-  if (toolName === 'grep_search') return { ...ev, tool: 'grep', input: { path: paths[0], paths, texts: [] } };
-  if (WRITE_TOOLS.has(toolName)) return { ...ev, tool: 'write', input: { path: paths[0], paths, texts: [] } };
-  // list_dir and find_by_name show names only; every other tool gets no opinion.
+  const { paths, bad } = pathsOf(args);
+  const input = { path: paths[0], paths, texts: [] };
+  const kind = toolName === 'view_file' ? 'read' : toolName === 'grep_search' ? 'grep' : WRITE_TOOLS.has(toolName) ? 'write' : null;
+  if (kind) {
+    const e = { ...ev, tool: kind, input };
+    if (bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
+    else if ((kind === 'read' || kind === 'write') && !paths.length) e.unreadable = 'zn: could not read the file this call uses, so zn cannot check it. Name the file explicitly.';
+    return e;
+  }
+  // Any other tool that names a file (a viewer, a reader, a future tool) gets the read and write checks on
+  // every path in it. list_dir and find_by_name show names only, and tools with no path get no opinion.
+  if (!READ_TOOLS.has(toolName) && (paths.length || bad)) {
+    const e = { ...ev, tool: 'fileaccess', input };
+    if (bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
+    return e;
+  }
   return { ...ev, tool: toolName || 'unknown', input: { texts: [] } };
 }
 
@@ -107,6 +143,7 @@ function respond(d) {
   if (!ev) return null;
   if (!ev.event) return {}; // any event that is not PreToolUse: Antigravity expects an object
   if (d.decision === 'deny') return out('deny', d.message || 'Blocked by zn');
+  if (ev.unreadable) return out('deny', ev.unreadable);
   if (d.updatedInput && d.kind === 'wrap') {
     const msg = 'zn: this command uses a stored secret. Run it through zn instead, exactly like this: zn run -- ' + ev.input.command +
       '  (zn puts the value only into that process, if the user allowed this command for the secret).';
@@ -124,8 +161,6 @@ function hooksFile(opts = {}) {
   if ((opts.scope || 'user') === 'project') return path.join(path.resolve(opts.projectDir || process.cwd()), '.agents', 'hooks.json');
   return path.join(opts.home || os.homedir(), '.gemini', 'config', 'hooks.json');
 }
-
-const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 
 /** Removes zn's handlers from every named hook; returns true when something was removed. */
 function stripOurs(data) {
@@ -167,13 +202,10 @@ function install(opts = {}) {
   const command = !opts.command && (opts.platform || process.platform) === 'win32' && (opts.scope || 'user') !== 'project'
     ? cfg.hookCommandWindows(id, opts)
     : cfg.hookCommand(id, opts);
-  const name = isObj(data[HOOK_NAME]) || data[HOOK_NAME] === undefined ? HOOK_NAME : HOOK_NAME + '-zn';
-  const entry = isObj(data[name]) ? data[name] : {};
-  entry.enabled = true;
-  entry.PreToolUse = (Array.isArray(entry.PreToolUse) ? entry.PreToolUse : []).concat([
-    { matcher: MATCHER, hooks: [{ type: 'command', command, timeout: HOOK_TIMEOUT_S }] },
-  ]);
-  data[name] = entry;
+  // After the strip, a hook still called zn-gate is someone else's: zn never touches it (not even its enabled flag).
+  let name = HOOK_NAME;
+  while (data[name] !== undefined) name += '-zn';
+  data[name] = { enabled: true, PreToolUse: [{ matcher: MATCHER, hooks: [{ type: 'command', command, timeout: HOOK_TIMEOUT_S }] }] };
   cfg.writeJson(file, data);
   report.warnings.push('Antigravity support is experimental. zn checks tool calls before they run (PreToolUse): it blocks reads and writes of secret files and shell commands that handle secrets.');
   report.warnings.push('Antigravity hooks cannot rewrite or redact what a tool returns, so a value printed by a command or a file the agent is allowed to read reaches the model. Keep secrets in the vault.');

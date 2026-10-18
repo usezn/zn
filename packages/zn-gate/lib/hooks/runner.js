@@ -176,8 +176,19 @@ async function decidePre(ev, d, agentId, opts) {
   const tool = ev.tool;
 
   if (tool === 'read' || tool === 'lsp' || (tool === 'grep' && input.path)) {
-    const deny = policy.readDenial(input.path, pathOpts);
-    if (deny) return { decision: 'deny', message: deny };
+    // An adapter that finds several paths in one call lists them all in input.paths.
+    for (const p of Array.isArray(input.paths) && input.paths.length ? input.paths : [input.path]) {
+      const deny = policy.readDenial(p, pathOpts);
+      if (deny) return { decision: 'deny', message: deny };
+    }
+  }
+  if (tool === 'fileaccess') {
+    // A tool zn does not know that names files: every path gets the read and the write checks.
+    for (const p of Array.isArray(input.paths) ? input.paths : []) {
+      const deny = policy.readDenial(p, pathOpts) || policy.writeDenial(p, pathOpts);
+      if (deny) return { decision: 'deny', message: deny };
+    }
+    return { decision: 'allow' };
   }
   if (tool === 'write' || tool === 'edit' || tool === 'multiedit' || tool === 'notebookedit') {
     // A patch can touch several files: every one is checked, not only the first.

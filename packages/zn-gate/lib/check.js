@@ -82,12 +82,17 @@ function readJson(file) {
 }
 
 /* [{event, matcher, command}] from a hooks file: Claude Code and Codex use groups with a matcher, Cursor plain entries. */
-function hookEntries(tree) {
+function hookEntries(tree, agentId) {
   const out = [];
-  // Claude Code, Codex and Cursor keep events under "hooks"; Antigravity keeps named hooks at the top level.
-  const sets = [tree && typeof tree.hooks === 'object' ? tree.hooks : {}];
-  if (tree && typeof tree === 'object' && tree.hooks === undefined) {
-    for (const v of Object.values(tree)) if (v && typeof v === 'object' && !Array.isArray(v) && v.enabled !== false) sets.push(v);
+  // Claude Code, Codex and Cursor keep events under "hooks". Antigravity keeps named hooks at the top level
+  // (and only there), each with its own "enabled" flag.
+  const sets = [];
+  if (agentId === 'antigravity') {
+    for (const v of Object.values(tree && typeof tree === 'object' ? tree : {})) {
+      if (v && typeof v === 'object' && !Array.isArray(v) && v.enabled !== false) sets.push(v);
+    }
+  } else {
+    sets.push(tree && typeof tree.hooks === 'object' ? tree.hooks : {});
   }
   for (const hooks of sets) {
     for (const [event, list] of Object.entries(hooks || {})) {
@@ -202,7 +207,7 @@ function znOnPath(env) {
  */
 function cliHooks(spec, ctx, userFile) {
   const out = { installed: false, problem: '', fix: '', live: null, notes: [] };
-  const entries = hookEntries(readJson(userFile)).filter((e) => parseCommand(e.command, spec.id));
+  const entries = hookEntries(readJson(userFile), spec.id).filter((e) => parseCommand(e.command, spec.id));
   out.installed = entries.length > 0;
   if (!out.installed) return out;
   // Set up with `zn hooks install`, so that is also how to repair it (not the plugin: both would run).
@@ -259,7 +264,7 @@ async function checkAgent(spec, ctx) {
   let installed = false;
   if (spec.id === 'claude-code') {
     const plugin = claudePlugin(ctx.home, ctx.env);
-    const hasCliHooks = hookEntries(readJson(userFile)).some((e) => parseCommand(e.command, spec.id));
+    const hasCliHooks = hookEntries(readJson(userFile), spec.id).some((e) => parseCommand(e.command, spec.id));
     // A plugin that is turned off runs nothing: with zn's own hooks next to it, those hooks are what protects
     // the agent, so they are checked as such (below) and never offered for removal.
     if (plugin.root && plugin.off && hasCliHooks) res.notes.push('the zn-gate plugin is also installed, but turned off');
@@ -301,11 +306,11 @@ async function checkAgent(spec, ctx) {
   }
   if (spec.id === 'claude-code' && installed && res.where === userFile) {
     // Without onFailure "block", a prompt hook that cannot run lets every prompt through (Claude Code 2.1.295 and later read it).
-    const prompt = hookEntries(readJson(userFile)).find((e) => e.event === 'UserPromptSubmit' && parseCommand(e.command, spec.id));
+    const prompt = hookEntries(readJson(userFile), spec.id).find((e) => e.event === 'UserPromptSubmit' && parseCommand(e.command, spec.id));
     if (prompt && prompt.onFailure !== 'block') res.notes.push('its prompt hook lets prompts through when it cannot run; run `zn hooks install claude-code` again to have them blocked instead');
     // Hooks written by an older zn-gate have no hook for typed skills and commands. The Claude Code version is not
     // known here, so the note is harmless on a version without that event.
-    const hasExpansion = hookEntries(readJson(userFile)).some((e) => e.event === 'UserPromptExpansion' && parseCommand(e.command, spec.id));
+    const hasExpansion = hookEntries(readJson(userFile), spec.id).some((e) => e.event === 'UserPromptExpansion' && parseCommand(e.command, spec.id));
     if (!hasExpansion) res.notes.push('its hooks lack the newer prompt-expansion check (for typed skills and commands); run `zn hooks install claude-code` again to add it');
   }
   if (spec.id === 'claude-code' && installed && (!res.problem || res.pluginFault)) {

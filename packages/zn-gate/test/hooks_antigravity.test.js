@@ -136,15 +136,18 @@ test('install (user) backs up, keeps foreign hooks and uninstall removes only zn
   assert.deepEqual(data, { mine, off });
 });
 
-test('install does not clobber a foreign hook that is already named zn-gate', (t) => {
+test('install never touches a foreign hook already named zn-gate, not even its enabled flag', (t) => {
   const dir = tempDir(t, 'zn-agy-name-');
   const file = path.join(dir, '.agents', 'hooks.json');
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  const theirs = { enabled: true, PreToolUse: [{ matcher: '*', hooks: [{ command: './theirs.sh' }] }] };
+  const theirs = { enabled: false, PreToolUse: [{ matcher: '*', hooks: [{ command: './theirs.sh' }] }] };
   fs.writeFileSync(file, JSON.stringify({ 'zn-gate': theirs }));
   agy.install({ scope: 'project', projectDir: dir });
+  agy.install({ scope: 'project', projectDir: dir });
   const data = JSON.parse(fs.readFileSync(file, 'utf8'));
-  assert.equal(data['zn-gate'].PreToolUse.length, 2);
+  assert.deepEqual(data['zn-gate'], theirs);
+  assert.equal(data['zn-gate-zn'].PreToolUse.length, 1);
+  assert.equal(data['zn-gate-zn'].enabled, true);
   agy.uninstall({ scope: 'project', projectDir: dir });
   assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { 'zn-gate': theirs });
 });
@@ -181,4 +184,48 @@ test('project MCP path is looked for next to the two global ones', () => {
   assert.equal(p.filePath, path.join(process.cwd(), '.agents', 'mcp_config.json'));
   assert.ok(envs.find((e) => e.id === 'antigravity'));
   assert.ok(envs.find((e) => e.id === 'antigravity-shared'));
+});
+
+test('fail closed: known file tools with no readable path, and run_command with no command', async () => {
+  for (const [name, args] of [['view_file', {}], ['write_to_file', { CodeContent: 'x' }], ['replace_file_content', { Renamed: '.agents/hooks.json' }], ['run_command', { Cwd: '/work' }]]) {
+    const r = await run(pre(name, args));
+    assert.equal(r.output.decision, 'deny', name);
+    assert.ok(r.output.reason);
+  }
+  // names only: no path needed
+  assert.equal((await run(pre('list_dir', { DirectoryPath: '/work/proj' }))).output.decision, 'allow');
+});
+
+test('unknown tools that name a file get the read and write checks on every path', async () => {
+  const cred = path.join(HOME, '.aws', 'credentials');
+  assert.equal((await run(pre('view_code_item', { File: cred, NodePath: 'a.b' }))).output.decision, 'deny');
+  assert.equal((await run(pre('read_url_content', { Url: 'file://' + cred }))).output.decision, 'deny');
+  assert.equal((await run(pre('future_editor', { Edits: [{ Path: '/work/proj/ok.js' }, { Path: '/work/proj/.agents/hooks.json' }] }))).output.decision, 'deny');
+  assert.equal((await run(pre('read_url_content', { Url: 'https://example.com/a' }))).output.decision, 'allow');
+  assert.equal((await run(pre('mystery', { q: 1 }))).output.decision, 'allow');
+});
+
+test('reads check every path of the call, not only the first', async () => {
+  const r = await run(pre('view_file', { AbsolutePath: '/work/proj/ok.txt', OtherFile: path.join(HOME, '.aws', 'credentials') }));
+  assert.equal(r.output.decision, 'deny');
+});
+
+test('file: addresses are turned into paths; a bad one is refused', async () => {
+  const n = agy.normalize(pre('view_file', { AbsolutePath: 'file:///home/u/a%20b.txt' }));
+  assert.equal(n.input.path, '/home/u/a b.txt');
+  assert.equal((await run(pre('view_file', { AbsolutePath: 'file://remote-host/etc/x' }))).output.decision, process.platform === 'win32' ? 'allow' : 'deny');
+  assert.equal((await run(pre('view_file', { AbsolutePath: 'file:///%zz' }))).output.decision, 'deny');
+});
+
+test('zn-gate check does not read Antigravity-style entries for other agents, and ignores a hook named "hooks"', () => {
+  const { _internal } = require('../lib/check');
+  const spoof = { x: { preToolUse: [{ command: 'zn hook cursor' }] } };
+  assert.equal(_internal.hookEntries(spoof, 'cursor').length, 0);
+  const named = { hooks: { enabled: true, PreToolUse: [{ matcher: '*', hooks: [{ command: 'zn hook antigravity' }] }] } };
+  assert.equal(_internal.hookEntries(named, 'antigravity').length, 1);
+  assert.equal(_internal.hookEntries({ hooks: { PreToolUse: [{ command: 'zn hook cursor' }] } }, 'cursor').length, 1);
+});
+
+test('deny: shell commands that move or delete the .agents folder', async () => {
+  assert.equal((await run(pre('run_command', { CommandLine: 'rm -rf .agents' }))).output.decision, 'deny');
 });
