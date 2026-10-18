@@ -57,3 +57,62 @@ test('the other forms stay refused', () => {
     assert.ok(denied(c), 'not refused: ' + c);
   }
 });
+
+test('the cloud-key name must be a whole name; a name ending in zn-gate/lib/client is refused on purpose', () => {
+  const load = (n) => 'node -e "require(\'' + n + '\').loadStoredKey()"';
+  for (const n of ['@acme/Cloud-Key-Manager', './lib/cloud-keys', 'cloud-key-manager']) {
+    assert.equal(denied(load(n)), null, 'refused: ' + n);
+  }
+  for (const n of ['./lib/cloud-key', '../cloud-key', './lib/cloud-key.js', 'node_modules/zn-gate/lib/client', 'zn-gate\\lib\\client', 'zn-gate/lib/client', 'ZN-GATE/LIB/CLIENT', 'acme-zn-gate/lib/client']) {
+    assert.ok(denied(load(n)), 'not refused: ' + n);
+  }
+});
+
+test('a name whose separator or letters are written as escapes is still recognised', () => {
+  const load = (n) => 'node -e "require(\'' + n + '\').loadStoredKey()"';
+  for (const n of [
+    'node_modules\\x2fzn-gate/lib/client',
+    'node_modules\\x2Fzn-gate/lib/client',
+    'node_modules\\u002fzn-gate/lib/client',
+    'node_modules\\u{2f}zn-gate/lib/client',
+    'node_modules\\u{0000002f}zn-gate/lib/client',
+    'node_modules\\x5czn-gate\\lib\\client',
+    'zn-gate/lib\\x2fcloud-key',
+    'zn-gate/lib\\u002Fcloud-key',
+    'node_modules\\057zn-gate/lib/client',
+    'zn\\x2dgate/lib/client',
+    'zn-gat\\u{0000065}/lib/client',
+  ]) {
+    assert.ok(denied(load(n)), 'not refused: ' + n);
+  }
+  assert.equal(denied(load('@acme\\x2fCloud-Key-Manager')), null);
+});
+
+test('escapes split by shell quotes or a line continuation, and shell-only escapes, are recognised', () => {
+  const P = 'node_modules';
+  const cmds = [
+    String.raw`node -e $'require("node_modules\x2fzn-gate/lib/client").loadStoredKey()'`,
+    String.raw`node -e "require('node_modules\x""2fzn-gate/lib/client').loadStoredKey()"`,
+    String.raw`node -e "require('node_modules\x2""fzn-gate/lib/client').loadStoredKey()"`,
+    String.raw`node -e "require('node_modules\x"2"fzn-gate/lib/client').loadStoredKey()"`,
+    String.raw`node -e 'require("node_modules\x2''fzn-gate/lib/client").loadStoredKey()'`,
+    String.raw`node -e "require('node_modules\05""7zn-gate/lib/client').loadStoredKey()"`,
+    String.raw`node -e "require('node_modules\u002""fzn-gate/lib/client').loadStoredKey()"`,
+    'node -e "require(\'' + P + '\\x2\\\nfzn-gate/lib/client\').loadStoredKey()"',
+    String.raw`node -e $'require("node_modules\u2fzn-gate/lib/client").loadStoredKey()'`,
+    String.raw`node -e $'require("node_modules\U2fzn-gate/lib/client").loadStoredKey()'`,
+    String.raw`node -e $'require("node_modules\U0000002fzn-gate/lib/client").loadStoredKey()'`,
+    String.raw`printf 'require("node_modules\u2fzn-gate/lib/client").loadStoredKey()' | node`,
+    String.raw`echo -e 'require("node_modules\0057zn-gate/lib/client").loadStoredKey()' | node`,
+  ];
+  for (const c of cmds) assert.ok(denied(c), 'not refused: ' + c);
+});
+
+test('the escape decoding is fast on a long run of escapes and ignores impossible code points', () => {
+  const start = process.hrtime.bigint();
+  denied('node -e "require(\'' + '\\x2f'.repeat(15000) + 'x\').loadStoredKey()"');
+  denied('node -e "require(\'' + '\\u{110000}\\u{ffffff}'.repeat(3000) + '\').loadStoredKey()"');
+  denied('node -e "require(\'' + '\\x"'.repeat(20000) + 'x\').loadStoredKey()"');
+  const ms = Number(process.hrtime.bigint() - start) / 1e6;
+  assert.ok(ms < 1000, 'took ' + ms + ' ms');
+});

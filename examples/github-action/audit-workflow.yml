@@ -23,7 +23,7 @@ jobs:
         # mode input. The zn-gate package version is set by version below.
         uses: usezn/zn@<commit-sha> # <first Action release with mode>
         with:
-          version: '1.10.0'
+          version: '1.12.0'
           mode: 'both'
           format: 'sarif'
           severity-threshold: 'medium'   # stricter than the default (high)

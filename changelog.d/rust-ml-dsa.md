@@ -1,2 +1,0 @@
-### Security
-- Rust gateway in `src/` (experimental, not distributed: not part of the npm or PyPI packages or the plugin): post-quantum policy signatures are ML-DSA-65 (FIPS 204), verified with the maintained RustCrypto `ml-dsa` crate, instead of Dilithium3 from the unmaintained PQClean bindings; three `cargo audit` exceptions are gone. A policy signed with a Dilithium3 key must be signed again with an ML-DSA-65 key. See `docs/rust-core.md`.

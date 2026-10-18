@@ -1,7 +1,7 @@
 {
   "_comment": "Public facts of zn-gate, checked on every pull request by .github/scripts/check-public-facts.mjs. A release changes version.value in the same pull request as the manifests and the pinned docs.",
   "version": {
-    "value": "1.11.0",
+    "value": "1.12.0",
     "files": [
       {
         "file": "packages/zn-gate/package.json",
@@ -145,7 +145,7 @@
   ],
   "pluginVersion": {
     "_comment": "The zn-gate version the agent plugin is pinned to. It follows the release one step later: plugins/tools/pin-release.js moves it, the plugin manifests and the plugin docs in one commit after npm publishes the release.",
-    "value": "1.10.0",
+    "value": "1.12.0",
     "files": [
       {
         "file": "plugins/zn-gate/plugin.json",

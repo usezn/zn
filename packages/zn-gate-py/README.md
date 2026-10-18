@@ -187,6 +187,7 @@ We only publish numbers we can reproduce, with the method next to them.
 - `ZN_LOCAL_ONLY`: `true` forces local-only.
 - `ZN_STRICT`: `1` also blocks the rules that only warn by default (same as `evaluate(text, strict=True)`; also `check_tool_call`, `check_tool_result` and `sanitize_tool_result` take `strict=True`).
 - `ZN_STAGE` / `ZN_API_URL`: cloud endpoint selection.
+- `NO_COLOR` (any non-empty value) or `TERM=dumb`: the command line output leaves out its symbols; the status words (ALLOW, BLOCK, clean, ...) stay.
 
 ## FAQ
 

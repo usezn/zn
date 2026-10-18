@@ -1,2 +1,0 @@
-### Security
-- The agent hooks: a `.env` file with values is refused when a command reaches it after changing directory (`cd app && cat .env`, also when the current folder's `.env` is shadowed), through a path built while the command runs (`cat $DIR/.env`, `cat $(...)/.env`), or from code given to an interpreter or shell (`python -c "open('app/.env')"`, `bash -c "cat app/.env"`). Earlier versions only checked the path as typed, from the current folder. `POLICY_RULES_VERSION` is `2026-10-17.5`.
