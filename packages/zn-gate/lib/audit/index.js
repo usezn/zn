@@ -86,7 +86,7 @@ const SECRET_WORD = '(?:token|secret|passw(?:or)?d|pwd|api[-_]?key|access[-_]?ke
 // backslash tried first so that a value ending in one (\\\\\") still ends at its own \".
 const QUOTED = String.raw`\\"(?:[^"\\\n]|\\\\\\\\|\\\\\\"|\\\\|\\[^"\\\n])+(?:\\")?|"(?:[^"\\\n]|\\.)+"?|'[^'\n]+'?`;
 const CONTEXT_RES = [
-  new RegExp('(--?[A-Za-z0-9]{0,40}(?:' + SECRET_WORD + '|pat|key)(?![a-z])[A-Za-z0-9-]{0,40}(?:=|\\s{1,8}))(' + QUOTED + '|[^\\s"\'`]+)', 'gi'),
+  new RegExp('(--?[A-Za-z0-9-]{0,40}(?:' + SECRET_WORD + '|pat|key)(?![a-z])[A-Za-z0-9-]{0,40}(?:=|\\s{1,8}))(' + QUOTED + '|[^\\s"\'`]+)', 'gi'),
   // user:password after -u or --user; attached to -u (-uuser:pass) too, but there not a URL, because a flag
   // such as -url:https://... is not a password.
   new RegExp('((?:^|\\s)(?:-u|--user)(?:=|\\s{1,8})["\']?[^\\s:"\']{1,128}:)([^\\s"\'@]+)', 'g'),

@@ -90,6 +90,13 @@ function pinnedNpm(version) {
   return EXACT_VERSION.test(version);
 }
 
+// A flag whose value is a credential (--password, --token, --api-key, --client-secret, --pat ...), by the
+// same names the redaction in index.js hides. A flag that only switches something off (--no-auth) takes no value.
+const CRED_FLAG_RE = /^--?[A-Za-z0-9-]{0,40}(?:token|secret|passw(?:or)?d|pwd|api[-_]?key|access[-_]?key|private[-_]?key|auth|credentials?|pat|key)(?![a-z])[A-Za-z0-9-]{0,40}$/i;
+function isCredentialFlag(w) {
+  return CRED_FLAG_RE.test(w) && !/^--(?:no|skip|disable|without)-/i.test(w);
+}
+
 const NPX_VALUE_FLAGS = new Set(['-p', '--package', '-c', '--call', '--cache', '--registry', '--prefix', '--userconfig']);
 const UVX_VALUE_FLAGS = new Set(['--from', '--with', '-w', '--python', '-p', '--index', '--index-url', '--extra-index-url', '--with-requirements', '--directory', '--env-file']);
 const DOCKER_VALUE_FLAGS = new Set(['-e', '--env', '-v', '--volume', '--name', '-p', '--publish', '--network', '--net', '--mount', '-w', '--workdir', '--entrypoint', '-u', '--user', '--env-file', '-l', '--label', '--platform', '--add-host', '--cap-add', '--cap-drop', '--device', '--memory', '-m', '--cpus', '--pull', '--restart', '--hostname', '-h', '--ipc', '--pid', '--security-opt', '--tmpfs', '--ulimit', '--gpus', '--runtime', '--log-driver', '--log-opt', '--dns', '--shm-size', '--stop-signal', '--init-path', '--expose']);
@@ -118,6 +125,8 @@ function packagesOf(argv) {
         if (w.startsWith('--package=')) { explicit = w.slice(10); continue; }
         if (w === '-p' || w === '--package') { explicit = rest[j + 1]; j++; continue; }
         if (NPX_VALUE_FLAGS.has(w)) { j++; continue; }
+        // The word after a credential flag is its value, never the package.
+        if (isCredentialFlag(w)) { if (!w.includes('=')) j++; continue; }
         if (w.startsWith('-')) continue;
         first = w;
         break;
@@ -136,6 +145,7 @@ function packagesOf(argv) {
         if (w.startsWith('--from=')) { from = w.slice(7); continue; }
         if (w === '--from' || w === '--spec') { from = rest[j + 1]; j++; continue; }
         if (UVX_VALUE_FLAGS.has(w)) { j++; continue; }
+        if (isCredentialFlag(w)) { if (!w.includes('=')) j++; continue; }
         if (w.startsWith('-')) continue;
         first = w;
         break;
@@ -151,6 +161,7 @@ function packagesOf(argv) {
         const w = rest[j];
         if (w.includes('=') && w.startsWith('--')) continue;
         if (DOCKER_VALUE_FLAGS.has(w)) { j++; continue; }
+        if (isCredentialFlag(w)) { if (!w.includes('=')) j++; continue; }
         if (w.startsWith('-')) continue;
         const digest = w.includes('@sha256:');
         const tag = w.slice(w.lastIndexOf('/') + 1).split(':')[1];
