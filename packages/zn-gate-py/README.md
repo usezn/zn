@@ -128,10 +128,12 @@ handler = ZnGuardCallbackHandler(raise_on_injection=True, mask_secrets=True)
 ```python
 from zn_gate.integrations import guarded_tool
 
-@guarded_tool(on_block="return", fallback="BLOCKED_BY_GUARD", mask_secrets=True)
+@guarded_tool(on_block="return", fallback="BLOCKED_BY_GUARD", mask_secrets=True, check_result=True)
 def query_knowledge_base(query: str) -> str:
     return "Query result..."
 ```
+
+`check_result=True` also scans what the tool returns for prompt injection before the agent sees it (off by default, so existing tools behave as before).
 
 ### LlamaIndex
 

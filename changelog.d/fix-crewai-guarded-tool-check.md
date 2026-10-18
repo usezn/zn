@@ -1,0 +1,2 @@
+### Added
+- The Python `guarded_tool` decorator for CrewAI takes a new option, `check_result=True`, that scans a tool's output for prompt injection before the agent sees it, as `guard(check_result=True)` does. A blocked output raises `GuardBlockError`, or with `on_block="return"` returns the fallback or a short notice that does not repeat the blocked text. `block_truncated=True` also blocks output too large to scan in full. The option is off by default, so existing tools behave as before; secrets in the output are still hidden as before.
