@@ -18,7 +18,10 @@
  *               and pipe Monitor commands through the streaming scrubber.
  *   post_tool   replace secrets in the tool output with tokens (Read, Bash,
  *               PowerShell, Monitor, Grep, LSP, WebFetch, MCP tools and MCP
- *               resources), keeping the output's shape.
+ *               resources), keeping the output's shape. Codex, with the opt-in
+ *               hooks.replaceToolOutputOnSecret setting, also gets zn's stop
+ *               text in place of the result when the output holds a real
+ *               secret value (not only a marker).
  *   user_prompt block prompts that contain a secret and suggest
  *               `zn secret set`.
  *   prompt_expansion  (Claude Code) a typed skill or command, expanded: block
@@ -76,6 +79,18 @@ function failModeOf(opts) {
   if (when === 'allow') return 'open';
   if (when === 'deny') return 'closed';
   return String(hooks.failMode || '').toLowerCase() === 'open' ? 'open' : 'closed';
+}
+
+/*
+ * Opt-in (off by default): when a tool output holds a real secret value, not
+ * only a marker, zn also returns a stop reason for Codex's PostToolUse (see
+ * respond() in lib/agents/codex.js). Set in ~/.zn/config.json as
+ * {"hooks": {"replaceToolOutputOnSecret": true}}. Environment variables are not
+ * read here: the project an agent works in can set them.
+ */
+function replaceOnSecretOf(opts) {
+  const hooks = readConfig(opts.home).hooks || {};
+  return hooks.replaceToolOutputOnSecret === true;
 }
 
 // Reinstall the running version: `npm install -g zn-gate` alone could install an
@@ -486,25 +501,29 @@ async function decideMcp(ev, d, agentId) {
 
 /* ---------------------------- post_tool --------------------------- */
 
-async function decidePost(ev, d, agentId) {
+async function decidePost(ev, d, agentId, opts = {}) {
   if (!POST_TOOLS.has(ev.tool)) return { decision: 'allow' };
   if (ev.output === undefined || ev.output === null) return { decision: 'allow' };
   const engine = d.engine();
   const ctx = await ctxFor(ev, d, agentId, 'assistant');
   const types = new Map();
+  const secretKinds = new Set();
   let locked = false;
   const updated = await mapStrings(ev.output, async (s) => {
     if (s.length < 8) return s;
     const res = await engine.tokenize(s, ctx);
     if (!res || typeof res.text !== 'string') throw deps.znError('ZN_ENGINE', 'tokenize returned an unexpected shape');
     if (res.locked) locked = true;
-    for (const r of res.replaced || []) types.set(r.type, (types.get(r.type) || 0) + 1);
+    for (const r of res.replaced || []) {
+      types.set(r.type, (types.get(r.type) || 0) + 1);
+      if (SECRET_SOURCES.has(r.source)) secretKinds.add(kindLabel(r.type));
+    }
     return res.text;
   });
   if (types.size === 0) return { decision: 'allow' };
   const total = [...types.values()].reduce((a, b) => a + b, 0);
   const summary = [...types.entries()].map(([t, n]) => t + (n > 1 ? ' x' + n : '')).join(', ');
-  return {
+  const out = {
     decision: 'allow',
     stats: { redacted: total, detections: Object.fromEntries(types) },
     updatedOutput: updated,
@@ -512,6 +531,12 @@ async function decidePost(ev, d, agentId) {
       (locked ? '__ZN_REDACTED_ markers cannot be restored, so do not retry to get the values. ' : 'Real values stay on this machine; use the tokens as they are.'),
     userMessage: locked ? lockedNotice() : undefined,
   };
+  // Opt-in, Codex only (respond() in lib/agents/codex.js): a real secret value also gets a stop reason.
+  if (agentId === 'codex' && secretKinds.size > 0 && replaceOnSecretOf(opts)) {
+    out.stopReason = 'zn: this tool output contained ' + [...secretKinds].join(', ') +
+      '. zn replaced it with a token. Stop and ask the user to review the output, and to rotate the value if it is real, before you continue.';
+  }
+  return out;
 }
 
 /* Shown to the person (systemMessage) when the vault is locked. */
@@ -746,7 +771,7 @@ async function handle(adapter, rawEvent, opts = {}) {
     const d = lazyDeps(opts);
     if (!ev || !ev.event) decision = { decision: 'allow' };
     else if (ev.event === 'pre_tool') decision = await decidePre(ev, d, adapter.id, opts);
-    else if (ev.event === 'post_tool') decision = await decidePost(ev, d, adapter.id);
+    else if (ev.event === 'post_tool') decision = await decidePost(ev, d, adapter.id, opts);
     else if (ev.event === 'user_prompt') decision = await decidePrompt(ev, d, adapter.id);
     else if (ev.event === 'stop') decision = await decideStop(ev, d, adapter.id, opts);
     else if (ev.event === 'prompt_expansion') decision = await decideExpansion(ev, d, adapter.id);

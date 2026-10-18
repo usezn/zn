@@ -813,3 +813,52 @@ test('zn\'s own secrets server is recognised by its exact command, not by the wo
   assert.equal(cc.isZnSecretsServer({ command: 'node', args: ['/opt/zn-gate/bin/cli.js', 'secrets-mcp', '--agent', 'claude-code'] }), true);
   assert.equal(cc.isZnSecretsServer({ command: 'node', args: ['/opt/acme/bin/cli.js', 'secrets-mcp'] }), false);
 });
+
+test('settings.json or .mcp.json that is not a JSON object: install and uninstall refuse it and leave it unchanged', (t) => {
+  const home = tempDir(t, 'zn-cc-notobj-');
+  const file = path.join(home, '.claude', 'settings.json');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const opts = { scope: 'user', home, env: { HOME: home }, mcp: false, nodePath: '/usr/bin/node', runnerPath: '/opt/zn/lib/hooks/runner.js' };
+  for (const text of ['[]', 'null', '42', '"x"']) {
+    fs.writeFileSync(file, text + '\n');
+    assert.throws(() => adapter.install(opts), (err) => err.message.includes(file) && /must hold a JSON object/.test(err.message));
+    assert.throws(() => adapter.uninstall(opts), (err) => err.message.includes(file) && /must hold a JSON object/.test(err.message));
+    assert.equal(fs.readFileSync(file, 'utf8'), text + '\n');
+  }
+  fs.writeFileSync(file, '{"hooks": []}\n');
+  assert.throws(() => adapter.install(opts), /"hooks" in .* must be an object/);
+  assert.equal(fs.readFileSync(file, 'utf8'), '{"hooks": []}\n');
+});
+
+test('project install: a .mcp.json whose mcpServers is not an object stops the install before any write', (t) => {
+  const dir = tempDir(t, 'zn-cc-mcpobj-');
+  fs.writeFileSync(path.join(dir, '.mcp.json'), '{"mcpServers": []}\n');
+  const opts = { scope: 'project', projectDir: dir, nodePath: 'node', cliPath: '/opt/zn-gate/bin/cli.js', runnerPath: '/opt/zn/lib/hooks/runner.js' };
+  assert.throws(() => adapter.install(opts), /"mcpServers" in .* must be an object/);
+  assert.equal(fs.existsSync(path.join(dir, '.claude', 'settings.json')), false);
+  assert.equal(fs.readFileSync(path.join(dir, '.mcp.json'), 'utf8'), '{"mcpServers": []}\n');
+});
+
+test('an empty settings.json, {} and a file with other user hooks all install; the user hooks stay', (t) => {
+  const home = tempDir(t, 'zn-cc-okobj-');
+  const file = path.join(home, '.claude', 'settings.json');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const opts = { scope: 'user', home, env: { HOME: home }, mcp: false, nodePath: '/usr/bin/node', runnerPath: '/opt/zn/lib/hooks/runner.js' };
+  for (const text of ['', '{}\n']) {
+    fs.writeFileSync(file, text);
+    adapter.install(opts);
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert.ok(Object.keys(data.hooks).length > 0, 'hooks installed from ' + JSON.stringify(text));
+  }
+  const user = { theme: 'dark', hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'echo mine' }] }] } };
+  fs.writeFileSync(file, JSON.stringify(user, null, 2));
+  adapter.install(opts);
+  const after = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.equal(after.theme, 'dark');
+  assert.ok(JSON.stringify(after.hooks.PreToolUse).includes('echo mine'), 'the user hook is kept');
+  assert.ok(JSON.stringify(after.hooks.PreToolUse).includes('claude-code'), 'zn hook is added');
+  adapter.uninstall(opts);
+  const left = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.equal(left.theme, 'dark');
+  assert.deepEqual(left.hooks, user.hooks);
+});
