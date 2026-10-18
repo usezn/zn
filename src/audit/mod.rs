@@ -262,8 +262,14 @@ impl AuditVault {
             }
             if report.unreadable > 0 {
                 warn!(
-                    "{} audit records could not be read with this key and were left unchanged",
+                    "{} old-format audit records could not be read with this key and were left unchanged",
                     report.unreadable
+                );
+            }
+            if report.not_encrypted > 0 {
+                warn!(
+                    "{} audit records are not encrypted and were left unchanged",
+                    report.not_encrypted
                 );
             }
         }
@@ -657,6 +663,22 @@ struct MigrationReport {
     migrated: usize,
     /// Records in the old shape that did not decrypt with this key.
     unreadable: usize,
+    /// Rows that are not in the old shape at all (plain text stored before
+    /// encryption was enabled). Left as they are.
+    not_encrypted: usize,
+}
+
+/// True when `stored` has the shape of an old-format record: base64 of a
+/// 12-byte nonce, ':', base64 of at least a 16-byte tag.
+fn is_legacy_shaped(stored: &str) -> bool {
+    let mut parts = stored.split(':');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(n), Some(c), None) => {
+            matches!(general_purpose::STANDARD.decode(n), Ok(v) if v.len() == NONCE_LEN)
+                && matches!(general_purpose::STANDARD.decode(c), Ok(v) if v.len() >= 16)
+        }
+        _ => false,
+    }
 }
 
 /// Rewrite every old-format record as a `v2:` record bound to its own id and
@@ -667,11 +689,15 @@ struct MigrationReport {
 ///   trigger: record timestamps and contents are writable and prove nothing).
 /// - If the process stops half way, the transaction rolls back and the next
 ///   open starts again.
-/// - Records that do not decrypt with this key (wrong passphrase, corrupted,
-///   or plain text from a vault used before encryption was on) are never
-///   deleted or changed. While any exist the marker is NOT written, so that a
-///   run with the right passphrase can still upgrade them later; the open
-///   vault never accepts the old format either way.
+/// - Rows that do not decrypt with this key are never deleted or changed.
+///   Rows that are not in the old shape (plain text from before encryption
+///   was on) are only counted. Old-shaped rows that fail (wrong passphrase or
+///   corruption) block the marker unless the key is proven right, that is, it
+///   opened an old record in this run or opens an existing bound record. So a
+///   wrong passphrase sets no marker and the right one can still upgrade
+///   later, while a right key closes the upgrade even if a corrupted row
+///   remains, and an old record planted afterwards is never rewritten as a
+///   valid bound one. The open vault never accepts the old format either way.
 fn migrate_v1_records(conn: &mut Connection, key_bytes: &[u8; 32]) -> Result<MigrationReport> {
     let tx = conn
         .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
@@ -707,10 +733,36 @@ fn migrate_v1_records(conn: &mut Connection, key_bytes: &[u8; 32]) -> Result<Mig
                 )?;
                 report.migrated += 1;
             }
-            None => report.unreadable += 1,
+            None => {
+                if is_legacy_shaped(&stored) {
+                    report.unreadable += 1;
+                } else {
+                    report.not_encrypted += 1;
+                }
+            }
         }
     }
-    if report.unreadable == 0 {
+    // The key is proven right if it opened an old record in this run or opens
+    // an existing bound record. Then the marker is safe to set even if some
+    // old-shaped rows stay unreadable (corrupted): they are left as they are.
+    let v2_ok = report.migrated > 0
+        || tx
+            .query_row(
+                "SELECT id, namespace, payload FROM audit_logs
+                 WHERE substr(payload, 1, 3) = 'v2:' LIMIT 1",
+                [],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, Option<String>>(1)?,
+                        r.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .ok()
+            .map(|(id, ns, p)| decrypt_payload(key_bytes, &id, ns.as_deref(), &p).is_some())
+            .unwrap_or(false);
+    if report.unreadable == 0 || v2_ok {
         tx.execute(
             "INSERT OR REPLACE INTO metadata (key, value) VALUES (?1, ?2)",
             params![FORMAT_KEY, FORMAT_V2],
@@ -1199,20 +1251,55 @@ mod tests {
                 assert!(raw_payload(&path, id).starts_with("v2:"));
             }
         }
-        // No marker while a row stays unreadable.
-        assert_eq!(format_marker(&path), None);
+        // The key is proven right by the rows that migrated, so the marker is set.
+        assert_eq!(format_marker(&path).as_deref(), Some("v2"));
         drop(vault);
-        let key = vault_key(&path, LEGACY_KEY_PASSPHRASE);
-        let mut conn = Connection::open(&path).unwrap();
-        let report = migrate_v1_records(&mut conn, &key).unwrap();
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn plain_text_rows_do_not_block_the_marker() {
+        let path = temp_db_path();
+        let rows = legacy_db(&path, 3);
+        set_payload(&path, &rows[1].0, "stored before encryption was on");
+        let vault = AuditVault::new(&path, Some(LEGACY_KEY_PASSPHRASE)).unwrap();
+        assert_eq!(format_marker(&path).as_deref(), Some("v2"));
         assert_eq!(
-            report,
-            MigrationReport {
-                migrated: 0,
-                unreadable: 1
-            }
+            raw_payload(&path, &rows[1].0),
+            "stored before encryption was on"
         );
-        drop(conn);
+        assert!(raw_payload(&path, &rows[0].0).starts_with("v2:"));
+        drop(vault);
+        // Only plain text rows and no old records: nothing proves the key, but
+        // nothing is unreadable either, so the marker is set.
+        let path2 = temp_db_path();
+        let rows2 = legacy_db(&path2, 1);
+        set_payload(&path2, &rows2[0].0, "plain");
+        drop(AuditVault::new(&path2, Some(LEGACY_KEY_PASSPHRASE)).unwrap());
+        assert_eq!(format_marker(&path2).as_deref(), Some("v2"));
+        fs::remove_file(&path).ok();
+        fs::remove_file(&path2).ok();
+    }
+
+    #[test]
+    fn old_record_planted_after_a_corrupted_row_is_not_rewritten() {
+        const BAD: &str = "AAAAAAAAAAAAAAAA:bm90IGEgcmVhbCBjaXBoZXJ0ZXh0";
+        let path = temp_db_path();
+        let rows = legacy_db(&path, 3);
+        set_payload(&path, &rows[1].0, BAD);
+        drop(AuditVault::new(&path, Some(LEGACY_KEY_PASSPHRASE)).unwrap());
+        assert_eq!(format_marker(&path).as_deref(), Some("v2"));
+        assert_eq!(raw_payload(&path, &rows[1].0), BAD);
+        // Plant a valid old record (as if copied from an old backup).
+        let key = vault_key(&path, LEGACY_KEY_PASSPHRASE);
+        let planted = legacy_record(&key, "planted");
+        set_payload(&path, &rows[2].0, &planted);
+        let vault = AuditVault::new(&path, Some(LEGACY_KEY_PASSPHRASE)).unwrap();
+        assert_eq!(raw_payload(&path, &rows[2].0), planted);
+        let read = vault.get_recent(10).unwrap();
+        let r = read.iter().find(|r| r.id == rows[2].0).unwrap();
+        assert_eq!(r.payload.as_deref(), Some(planted.as_str()));
+        drop(vault);
         fs::remove_file(&path).ok();
     }
 
