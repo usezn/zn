@@ -82,7 +82,7 @@ npx -y zn-gate env shadow .env
 
 After this, your own app also reads the markers in `.env`: start it with zn-gate's `run` command once you allow it ([docs/secrets.md](docs/secrets.md)). `env shadow` tells you how to undo it.
 
-Five-minute walkthrough: [docs/secrets.md](docs/secrets.md). Limits: [docs/threat-model.md](docs/threat-model.md). Words you do not know: [docs/glossary.md](docs/glossary.md).
+New here? [First 5 minutes](docs/first-5-minutes.md). Five-minute walkthrough: [docs/secrets.md](docs/secrets.md). Limits: [docs/threat-model.md](docs/threat-model.md). Words you do not know: [docs/glossary.md](docs/glossary.md).
 
 <details>
 <summary><strong>Other ways to install</strong>: one agent at a time, other editors, Python, MCP server only, wrapping the MCP servers you already use</summary>
@@ -258,7 +258,7 @@ Audit log: `zn-gate shield` appends each decision to `~/.zn/evidence.jsonl` as a
 
 ### GitHub Action
 
-Guide for the audit mode (permissions, code scanning, badge): [docs/github-action.md](docs/github-action.md).
+Guide for the audit mode (permissions, code scanning, badge): [docs/github-action.md](docs/github-action.md). To report findings without failing the build, see [Warn without failing the build](docs/github-action.md#warn-without-failing-the-build).
 
 The action installs the published zn-gate packages at an exact version and runs on the runner only; it sends nothing anywhere. It has two checks, chosen with `mode`:
 

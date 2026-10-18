@@ -468,11 +468,43 @@ async function hooks(args, io) {
 
 /* ------------------------------ entry ------------------------------ */
 
+const HELP = {
+  'hooks': [
+    'usage: zn hooks install|uninstall claude-code|codex|cursor|opencode [--project] [--no-mcp]',
+    'Adds the zn hooks to a coding agent, or removes them again.',
+    '  install     add the hooks (and the secrets MCP server unless --no-mcp)',
+    '  uninstall   remove them',
+    '  --project   change the settings of this project instead of your user settings',
+    '  --no-mcp    do not add the secrets MCP server',
+  ],
+  'secret': [
+    'usage: zn secret set|list|rm|allow|approve|import|adopt|log ...',
+    'Stores secrets in the zn vault so your agent can use them without seeing them.',
+    'Run zn secret set NAME and type the value at the hidden prompt; values are never passed as arguments.',
+  ],
+  'env': [
+    'usage: zn env shadow [FILE] | zn env unshadow FILE --backup NAME',
+    'shadow moves the secrets of a .env file into the vault and leaves placeholders; unshadow puts them back.',
+  ],
+};
+
+/* -h / --help anywhere before a lone "--" prints the usage and exits 0,
+ * before any option that takes a value can swallow it. */
+function wantsHelp(args) {
+  const end = args.indexOf('--');
+  return (end === -1 ? args : args.slice(0, end)).some((a) => a === '-h' || a === '--help');
+}
+
 const SECRET_USAGE = 'usage: zn secret set|list|rm|allow|approve|import|adopt|log ...';
 
 async function dispatch(group, args, ioIn) {
   const io = makeIo(ioIn);
   try {
+    const helpKey = group === 'secrets' ? 'secret' : group;
+    if (HELP[helpKey] && !(helpKey === 'secret' && args[0] === 'log') && wantsHelp(args)) {
+      for (const line of HELP[helpKey]) out(io, line);
+      return 0;
+    }
     if (group === 'secret' || group === 'secrets') {
       const [sub, ...rest] = args;
       if (sub === 'set') return await secretSet(rest, io);
