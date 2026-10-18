@@ -18,6 +18,7 @@ const path = require('path');
 const { parseJsonc, parseToml } = require('./parse');
 const P = require('./patterns');
 const { BY_ID, RANK } = require('./rules');
+const mcpSecrets = require('../mcp-secrets');
 
 const AGENTS = ['claude', 'codex', 'cursor', 'opencode', 'amazonq', 'copilot', 'gemini'];
 const MAX_FILE_BYTES = 1024 * 1024;
@@ -1314,12 +1315,23 @@ function auditFile(rec, out) {
   return true;
 }
 
+// Config kinds that hold MCP servers: a credential written in plain text under
+// the name that holds it (env, headers, arguments, URL keys) is found there too.
+const MCP_SECRET_KINDS = new Set(['mcp-json', 'vscode-mcp', 'codex-toml', 'claude-user-json', 'opencode-json', 'gemini-settings', 'amazonq-agent', 'claude-plugin']);
+
 function checkSecrets(ctx) {
-  const spans = secretSpans(ctx.raw);
-  if (!spans.length) return;
+  // In MCP configs the MCP check runs first and its values are masked, so the scrubber does not report them again.
+  let raw = ctx.raw;
+  let mcp = [];
+  if (MCP_SECRET_KINDS.has(ctx.rec.kind)) {
+    mcp = mcpSecrets.findMcpConfigSecretSpans(ctx.raw, { file: ctx.rec.rel });
+    raw = mcpSecrets.maskMcpValues(ctx.raw, mcp);
+  }
+  const spans = secretSpans(raw);
   const seen = new Set();
   let offset = 0;
-  const starts = ctx.lines.map((l) => { const s = offset; offset += l.length + 1; return s; });
+  const lines = raw === ctx.raw ? ctx.lines : raw.split(/\r?\n/);
+  const starts = lines.map((l) => { const s = offset; offset += l.length + 1; return s; });
   for (const sp of spans) {
     let lo = 0;
     let hi = starts.length - 1;
@@ -1328,6 +1340,14 @@ function checkSecrets(ctx) {
     if (seen.has(key)) continue;
     seen.add(key);
     ctx.add('ZNA011', 'high', lo + 1, 'A ' + sp.type + ' value is stored in the file.');
+  }
+  for (const m of mcp) {
+    if (m.silent) continue;
+    const step = mcpSecrets.mcpNextStep(m.kind, m.name);
+    ctx.add('ZNA011', 'high', m.line, 'A credential is written in plain text in this MCP server configuration (' + m.kind + ' ' + m.name + ').', {
+      evidence: mcpSecrets.mcpSample(m.kind, m.name).replace('[REDACTED]', '[REDACTED:SECRET]'),
+      fix: step.charAt(6).toUpperCase() + step.slice(7),
+    });
   }
 }
 
