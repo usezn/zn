@@ -47,7 +47,7 @@ const SHELL_TOOLS = new Set(['run_command']);
 const READ_TOOLS = new Set(['view_file', 'list_dir', 'find_by_name']);
 const WRITE_TOOLS = new Set(['write_to_file', 'replace_file_content', 'multi_replace_file_content']);
 const COMMAND_KEYS = ['CommandLine', 'commandLine', 'command_line', 'command', 'Command'];
-const PATH_KEY_RE = /path|file|target|uri|dir/i;
+const PATH_KEY_RE = /path|file|target|uri|dir|source|destination/i;
 const NOT_PATH_KEY_RE = /content|text|instruction|description|query|pattern|code|chunk|summary|title/i;
 const MAX_PATH_LEN = 4096;
 

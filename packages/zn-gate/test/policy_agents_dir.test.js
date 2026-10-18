@@ -27,6 +27,8 @@ const ALLOW = [
   'ls .agents',
   'cat .agents/hooks.json',
   'grep -r foo .agents/skills',
+  'cp -r a b .agents/skills/',
+  'ln -s src/a src/b',
 ];
 
 const DENY = [
@@ -53,6 +55,16 @@ const DENY = [
   'rm -rf ~/.gemini/config/hooks.json',
   'sed -i s/true/false/ .gemini/config/hooks.json',
   'rm ".agents"',
+  'ln -s .agents/skills ag',
+  'ln -s "$PWD/.agents/rules" r',
+  'cp -rs .agents/skills ag',
+  'cp --symbolic-link .agents/skills ag',
+  'New-Item -ItemType SymbolicLink -Path ag -Target .agents' + BS + 'skills',
+  'New-Item -ItemType Junction -Path ag -Value .agents/skills',
+  'mklink /D ag .agents' + BS + 'skills',
+  'H=hooks.json; rm .agents/$H',
+  'rm .agents/`echo hooks.json`',
+  'rm .agents/${H}',
 ];
 
 for (const c of ALLOW) {
@@ -67,10 +79,17 @@ for (const c of DENY) {
   });
 }
 
-test('a very long command naming .agents is checked in linear time', () => {
-  const t0 = Date.now();
-  policy.bashDenial('echo ' + '.agents/'.repeat(12000) + ' > x', OPTS);
-  assert.ok(Date.now() - t0 < 1500);
+test('a very long writing command naming .agents is refused in linear time', () => {
+  for (const n of [12500, 50000]) {
+    const t0 = Date.now();
+    const r = policy.bashDenial('cp x ' + '.agents/'.repeat(n), OPTS);
+    assert.ok(Date.now() - t0 < 200, 'took ' + (Date.now() - t0) + ' ms');
+    assert.ok(r);
+  }
+  // long but not naming .agents: still checked quickly
+  const t1 = Date.now();
+  policy.bashDenial('cp x ' + 'a/'.repeat(50000), OPTS);
+  assert.ok(Date.now() - t1 < 500);
 });
 
 test('denied: a glob that expands to the hooks file (the folder exists)', (t) => {

@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-18.36';
+const POLICY_RULES_VERSION = '2026-10-18.37';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -767,8 +767,25 @@ const READ_ONLY_CMDS = new Set(['cat', 'head', 'tail', 'more', 'grep', 'egrep', 
 const AGENT_CONFIG_MENTION_RE = /\.claude\/settings|\.codex\/|\.cursor\/hooks|\.gemini\/config\/hooks|antigravity-cli\/settings|opencode\.jsonc?|\.opencode\/|\.config\/opencode\//i;
 // .agents is shared with other tools (Codex reads .agents/skills; Antigravity keeps rules and workflows there), so
 // only the folder itself, its hooks file, globs or ".." inside it, and changing into it count as touching the hook.
-const AGENTS_DIR_RISKY_RE = /(?:^|[\/\s"'=:])\.agents(?:\/*(?=$|[\s"';&|)])|\/(?:[^\s"'\/]*\/)*(?:hooks\.json|\.\.(?=$|[\/\s"';&|)])|[^\s"'\/]*[*?[{]))/i;
+const AGENTS_DIR_RISKY_RE = /(?:^|[\/\s"'=:])\.agents(?:\/*(?=$|[\s"';&|)])|\/(?:[^\s"'\/]*\/)*(?:hooks\.json|\.\.(?=$|[\/\s"';&|)])|[^\s"'\/]*[*?[{$`]))/i;
 const AGENTS_DIR_ANY_RE = /(?:^|[\/\s"'=:])\.agents(?:\/|$|[\s"';&|)])/i;
+// Commands that make a link: through a link, ".." no longer means what it says, so any mention of .agents counts.
+const LINK_CMDS = new Set(['ln', 'mklink']);
+
+/** Whether a writing command segment touches the .agents hook folder (see the notes above). */
+function agentsDirRisky(t, head, cmdText) {
+  // The first pattern is quadratic on long input: a segment longer than a path can be is refused unchecked.
+  if (t.length > 4096) return /\.agents/i.test(t);
+  if (AGENTS_DIR_RISKY_RE.test(t)) return true;
+  if (!AGENTS_DIR_ANY_RE.test(t)) return false;
+  const h = String(head).toLowerCase();
+  if (CD_CMDS.has(h) || LINK_CMDS.has(h)) return true;
+  // The words are checked one by one: the flags that make this a link are read from the whole command.
+  const whole = String(cmdText || '');
+  if (h === 'cp' && /\s(?:-[a-z]*s[a-z]*|--symbolic-link)(?=\s)/i.test(whole)) return true;
+  if ((h === 'new-item' || h === 'ni') && /symboliclink|junction|hardlink/i.test(whole)) return true;
+  return false;
+}
 
 const RESERVED_WORDS = new Set(['if', 'then', 'else', 'elif', 'fi', 'for', 'while', 'until', 'do', 'done', 'case', 'esac', 'function', '{', '}', '!', '[[', 'time', 'coproc', 'select', 'eval', 'exec', 'source', '.', 'sudo', 'doas', 'env', 'xargs', 'nohup', 'command', 'builtin', 'export', 'declare', 'local', 'readonly', 'typeset', 'alias', 'set', 'unset', 'let']);
 const ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
@@ -1727,8 +1744,7 @@ function bashDenialOf(cmd, opts = {}) {
     }
     if (!c) {
       const t = slash(text);
-      if (writing && (AGENT_CONFIG_MENTION_RE.test(t) || AGENTS_DIR_RISKY_RE.test(t) ||
-          (CD_CMDS.has(String(w.head).toLowerCase()) && AGENTS_DIR_ANY_RE.test(t)))) {
+      if (writing && (AGENT_CONFIG_MENTION_RE.test(t) || agentsDirRisky(t, w.head, opts.cmdText))) {
         return 'zn: this command would change agent hook or plugin settings, which is protected. Ask the user to make this change.';
       }
       continue;

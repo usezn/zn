@@ -186,7 +186,7 @@ async function decidePre(ev, d, agentId, opts) {
     // A search over a folder (or with no path) prints matching lines, and an agent that cannot redact that
     // output would show a plain-text secret to the model: ask when the folder holds a .env or a key file.
     let names = [];
-    try { names = fs.readdirSync(input.scanDir).slice(0, 500); } catch (_) { names = []; }
+    try { names = fs.readdirSync(input.scanDir).slice(0, 5000); } catch (_) { names = []; }
     for (const n of names) {
       if (policy.readDenial(path.join(input.scanDir, n), pathOpts)) {
         return { decision: 'ask', message: 'zn: this search covers a folder that holds ' + n + ', which has plain-text secrets, and matching lines are not hidden in this agent. Approve only if the search must include it, or name a narrower path.' };

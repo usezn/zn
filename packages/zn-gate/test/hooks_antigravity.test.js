@@ -262,3 +262,8 @@ test('install warns that a project hook needs zn on PATH, and that its backup mu
   assert.ok(second.warnings.some((w) => /do not commit it/.test(w)));
   assert.equal(agy.install({ scope: 'user', home: dir, nodePath: '/usr/bin/node', platform: 'linux' }).warnings.some((w) => /needs zn-gate installed/.test(w)), false);
 });
+
+test('MCP move calls with source and destination are checked', async () => {
+  const r = await run(pre('mcp_filesystem_move_file', { source: path.join(HOME, '.aws', 'credentials'), destination: '/work/proj/x' }));
+  assert.equal(r.output.decision, 'deny');
+});
