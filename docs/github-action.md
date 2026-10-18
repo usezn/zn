@@ -122,12 +122,22 @@ jobs:
 
 Always set `version` to the same release as the pinned Action. In the 1.12.0 Action the default `version` is still 1.10.0 (an older release), so do not rely on it.
 
-Both modes also check the MCP config files of the repository (such as `.mcp.json`, `.cursor/mcp.json` and `.vscode/mcp.json`) for keys and passwords written in plain text. The value is never printed: the finding names the file, the line and the key. With `fail-on-threat: 'false'` it is reported as an annotation and the step still passes. The rule ID is `secret:mcp_config` for `scan` and `ZNA011` for `audit`, in the releases that include this check, so set `version` to one of them to see those IDs.
+Both modes also check the MCP config files of the repository (such as `.mcp.json`, `.cursor/mcp.json` and `.vscode/mcp.json`) for keys and passwords written in plain text. The value is never printed.
 
-A warn-mode run on a `.mcp.json` with a key in an `env` block shows an annotation like this (shortened), and the step ends green:
+zn-gate 1.12.0 and earlier do not have this check. It comes in the next release, so the example below, which pins 1.12.0, does not show these annotations yet. Once the Action pins that release, `scan` reports the finding as `secret:mcp_config` and `audit` as `ZNA011`. Until then, both modes report a plain-text key in these files under older rule IDs and messages.
+
+Each finding is an error annotation on the file and line. The audit's message names the key; the scan's message does not, and suggests a vault name to use instead. With `fail-on-threat: 'false'` the annotation is still an error (red), but the step ends green. A warn-mode scan of a `.mcp.json` with a key in an `env` block shows this, shortened:
 
 ```text
-.mcp.json:6  Secret found (secret:mcp_config): Plaintext credential in an MCP server configuration (environment variable)
+Secret found (secret:mcp_config)   .mcp.json, line 6
+Next: run npx -y zn-gate secret set MCP_API_KEY to store the value in the local vault ... and rotate the value if the file was ever committed or shared.
+```
+
+The audit shows, for the same key:
+
+```text
+Agent config audit (ZNA011)   .mcp.json, line 6
+Secret value in an agent file: A credential is written in plain text in this MCP server configuration (environment variable API_KEY).
 ```
 
 Notes:
