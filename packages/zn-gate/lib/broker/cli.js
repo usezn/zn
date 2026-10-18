@@ -450,7 +450,7 @@ async function hooks(args, io) {
   const { flags, positional } = parseFlags(args, { bool: ['project', 'no-mcp'] });
   const [action, agentId] = positional;
   if (!['install', 'uninstall'].includes(action) || !agentId) {
-    throw deps.znError('ZN_USAGE', 'usage: zn hooks install|uninstall claude-code|codex|cursor|opencode [--project] [--no-mcp]');
+    throw deps.znError('ZN_USAGE', 'usage: zn hooks install|uninstall claude-code|codex|cursor|opencode|vscode [--project] [--no-mcp]');
   }
   needHuman(io, 'zn hooks ' + action);
   const adapter = require('../agents').getAdapter(agentId);

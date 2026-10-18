@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-18.33';
+const POLICY_RULES_VERSION = '2026-10-18.34';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -85,6 +85,8 @@ const AGENT_CONFIG_RES = [
   [/(^|\/)\.claude\/settings[^/]*\.json$/, 'Claude Code settings'],
   [/(^|\/)\.codex\/[^/]*$/, 'Codex hooks and configuration'],
   [/(^|\/)\.cursor\/hooks\.json$/, 'Cursor hooks'],
+  [/(^|\/)\.github\/hooks\/[^/]*$/, 'VS Code and Copilot hooks'],
+  [/(^|\/)\.copilot\/hooks\/[^/]*$/, 'VS Code and Copilot hooks'],
   [/(^|\/)opencode\.jsonc?$/, 'OpenCode configuration'],
   [/(^|\/)\.(config\/)?opencode\/plugins?\//, 'OpenCode plugins'],
   [/(^|\/)\.opencode\/plugins?\//, 'OpenCode plugins'],
@@ -761,7 +763,7 @@ function commandName(words) {
 // (less and tree are not here: tree writes its output with -o, less can run commands.)
 const READ_ONLY_CMDS = new Set(['cat', 'head', 'tail', 'more', 'grep', 'egrep', 'fgrep', 'rg', 'ls', 'stat', 'wc', 'diff',
   'file', 'bat', 'jq', 'type', 'gc', 'get-content', 'select-string', 'findstr', 'dir', 'pwd', 'echo']);
-const AGENT_CONFIG_MENTION_RE = /\.claude\/settings|\.codex\/|\.cursor\/hooks|opencode\.jsonc?|\.opencode\/|\.config\/opencode\//i;
+const AGENT_CONFIG_MENTION_RE = /\.claude\/settings|\.codex\/|\.cursor\/hooks|\.github\/hooks|\.copilot\/hooks|opencode\.jsonc?|\.opencode\/|\.config\/opencode\//i;
 
 const RESERVED_WORDS = new Set(['if', 'then', 'else', 'elif', 'fi', 'for', 'while', 'until', 'do', 'done', 'case', 'esac', 'function', '{', '}', '!', '[[', 'time', 'coproc', 'select', 'eval', 'exec', 'source', '.', 'sudo', 'doas', 'env', 'xargs', 'nohup', 'command', 'builtin', 'export', 'declare', 'local', 'readonly', 'typeset', 'alias', 'set', 'unset', 'let']);
 const ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
