@@ -24,8 +24,10 @@
  *    (the hook is marked failed and the call runs).
  *  PostToolUse: no field rewrites the output; {decision: "block", reason}
  *    replaces the tool result with the reason. With zn's opt-in
- *    stopTurnOnSecret setting, a real secret also adds continue: false and
- *    stopReason (the PostToolUse stop fields in the official docs).
+ *    replaceToolOutputOnSecret setting, a real secret also adds continue: false
+ *    and stopReason. Codex's docs say this stops normal processing of the
+ *    result and continues with the stop text in its place; it does not end the
+ *    turn on its own, and it is not yet run on a live Codex.
  *  UserPromptSubmit: {decision: "block", reason}.
  *  PermissionRequest (runs only when Codex is about to ask the user: Bash,
  *    apply_patch, MCP tools): hookSpecificOutput.decision {behavior: "deny",
@@ -249,8 +251,8 @@ function respond(d) {
         decision: 'block',
         reason: outputText(d.updatedOutput) + (d.message ? '\n\n[' + d.message + ']' : ''),
       };
-      // Opt-in (hooks.stopTurnOnSecret, see runner.js): also end the turn. Codex documents
-      // continue: false with stopReason for PostToolUse.
+      // Opt-in (hooks.replaceToolOutputOnSecret, see runner.js): also return continue: false
+      // with stopReason. Codex then replaces the result with the stop text and carries on.
       if (d.stopReason) {
         out.continue = false;
         out.stopReason = d.stopReason;

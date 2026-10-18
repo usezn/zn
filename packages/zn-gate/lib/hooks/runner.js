@@ -19,8 +19,9 @@
  *   post_tool   replace secrets in the tool output with tokens (Read, Bash,
  *               PowerShell, Monitor, Grep, LSP, WebFetch, MCP tools and MCP
  *               resources), keeping the output's shape. Codex, with the opt-in
- *               hooks.stopTurnOnSecret setting, also stops the turn when the
- *               output holds a real secret value (not only a marker).
+ *               hooks.replaceToolOutputOnSecret setting, also gets zn's stop
+ *               text in place of the result when the output holds a real
+ *               secret value (not only a marker).
  *   user_prompt block prompts that contain a secret and suggest
  *               `zn secret set`.
  *   prompt_expansion  (Claude Code) a typed skill or command, expanded: block
@@ -81,14 +82,15 @@ function failModeOf(opts) {
 }
 
 /*
- * Opt-in (off by default): stop the agent's turn when a tool output holds a real
- * secret value, not only a marker. Set in ~/.zn/config.json as
- * {"hooks": {"stopTurnOnSecret": true}}. Environment variables are not read here:
- * the project an agent works in can set them.
+ * Opt-in (off by default): when a tool output holds a real secret value, not
+ * only a marker, zn also returns a stop reason for Codex's PostToolUse (see
+ * respond() in lib/agents/codex.js). Set in ~/.zn/config.json as
+ * {"hooks": {"replaceToolOutputOnSecret": true}}. Environment variables are not
+ * read here: the project an agent works in can set them.
  */
-function stopOnSecretOf(opts) {
+function replaceOnSecretOf(opts) {
   const hooks = readConfig(opts.home).hooks || {};
-  return hooks.stopTurnOnSecret === true;
+  return hooks.replaceToolOutputOnSecret === true;
 }
 
 // Reinstall the running version: `npm install -g zn-gate` alone could install an
@@ -500,10 +502,10 @@ async function decidePost(ev, d, agentId, opts = {}) {
       (locked ? '__ZN_REDACTED_ markers cannot be restored, so do not retry to get the values. ' : 'Real values stay on this machine; use the tokens as they are.'),
     userMessage: locked ? lockedNotice() : undefined,
   };
-  // Opt-in, Codex only (respond() in lib/agents/codex.js): a real secret value also stops the turn.
-  if (agentId === 'codex' && secretKinds.size > 0 && stopOnSecretOf(opts)) {
-    out.stopReason = 'zn stopped this turn: this tool output contained ' + [...secretKinds].join(', ') +
-      '. Zn replaced it with a token. Ask the user to review the output, and to rotate the value if it is real, before you continue.';
+  // Opt-in, Codex only (respond() in lib/agents/codex.js): a real secret value also gets a stop reason.
+  if (agentId === 'codex' && secretKinds.size > 0 && replaceOnSecretOf(opts)) {
+    out.stopReason = 'zn: this tool output contained ' + [...secretKinds].join(', ') +
+      '. zn replaced it with a token. Stop and ask the user to review the output, and to rotate the value if it is real, before you continue.';
   }
   return out;
 }

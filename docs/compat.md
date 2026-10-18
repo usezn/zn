@@ -65,7 +65,7 @@ only and have not been run against a live Codex.
 | Event | zn uses it | What it does for zn |
 |---|---|---|
 | `PreToolUse` | Yes, matcher `^(Bash\|apply_patch\|mcp__.+)$` | Checks shell commands, patches and MCP call arguments before they run, and denies with zn's reason. Exit code 2 also blocks (documented). zn never answers `allow`. Shell and `apply_patch` checked on 0.163.0; MCP calls not tested. |
-| `PostToolUse` | Yes, matcher `.*` | Scrubs tool output. Its `decision: "block"` replaces the result with zn's scrubbed copy. Checked on 0.163.0. Opt-in `stopTurnOnSecret` also sends `continue: false` with a `stopReason` for a real secret value; the fields are in the docs and the schema, not yet run on a live Codex. |
+| `PostToolUse` | Yes, matcher `.*` | Scrubs tool output. Its `decision: "block"` replaces the result with zn's scrubbed copy. Checked on 0.163.0. Opt-in `replaceToolOutputOnSecret` also sends `continue: false` with a `stopReason` for a real secret value. Codex then replaces the result with that stop text; see below. Not yet run on a live Codex. |
 | `PermissionRequest` | Yes, deny only | Runs the same check as `PreToolUse` when Codex is about to ask you to approve a call. zn answers `deny` with its reason and never `allow`. Not tested. |
 | `UserPromptSubmit` | Yes | Blocks a secret pasted into the prompt. Checked on 0.163.0. |
 | `SessionStart` | No | zn installs no session-start hook for Codex. |
@@ -91,12 +91,13 @@ only and have not been run against a live Codex.
   - PostToolUse cannot rewrite output; `decision: "block"` replaces the result
     with zn's scrubbed copy. The model gets text instead of the structured
     result.
-  - Opt-in stop (`stopTurnOnSecret`, off by default): set `{"hooks": {"stopTurnOnSecret": true}}` in
-    `~/.zn/config.json`. When a tool output holds a real secret value (not only a `__ZN_` marker), zn still
-    replaces it with tokens and also returns `continue: false` with a `stopReason`, so Codex ends the turn
-    after that tool result. The reason names the kind of secret, never the value. Markers alone do not stop
-    the turn. The official docs list `continue`, `stopReason` and `systemMessage` as supported for
-    PostToolUse; the stop has not been run on a live Codex yet. Environment variables do not turn it on.
+  - Opt-in (`replaceToolOutputOnSecret`, off by default): set `{"hooks": {"replaceToolOutputOnSecret": true}}` in
+    `~/.zn/config.json`. When a tool output holds a real secret value (not only a `__ZN_` marker), zn also
+    returns `continue: false` with a `stopReason` that names the kind of secret, never the value. Codex's docs
+    say it then replaces the tool result with that stop text and carries on. This does not end the turn on
+    its own. With the setting on, the model may therefore get zn's stop text instead of the tokenized copy of
+    the output. The stop text asks for a review and, if the value is real, a rotation. Markers alone change
+    nothing. Not yet run on a live Codex; a test in a VM is pending. Environment variables do not turn it on.
   - Codex's own session log keeps the original output.
   - Hooks are a guardrail, not an enforcement boundary (Codex's own words).
   - MCP tool calls reach `PreToolUse` (matcher `^(Bash|apply_patch|mcp__.+)$`), and zn checks

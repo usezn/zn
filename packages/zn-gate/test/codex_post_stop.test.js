@@ -3,7 +3,7 @@
 // zn-gate stats: these tests must never count into the real ~/.zn/stats.json.
 process.env.ZN_STATS = 'off';
 
-// Codex PostToolUse with the opt-in hooks.stopTurnOnSecret setting. Values are obvious
+// Codex PostToolUse with the opt-in hooks.replaceToolOutputOnSecret setting. Values are obvious
 // fakes: the AWS documentation example key and a placeholder.
 
 const test = require('node:test');
@@ -63,20 +63,21 @@ test('off by default: a secret gets the same block as before, with no stop field
   assert.match(unset.output.reason, /__ZN_/);
   assert.ok(!JSON.stringify(unset.output).includes(FAKE_KEY));
 
-  const explicitOff = await run(t, WITH_SECRET, { hooks: { stopTurnOnSecret: false } });
+  const explicitOff = await run(t, WITH_SECRET, { hooks: { replaceToolOutputOnSecret: false } });
   assert.equal(JSON.stringify(explicitOff.output), JSON.stringify(unset.output));
 
   // Only the boolean true turns it on; a string does not.
-  const stringTrue = await run(t, WITH_SECRET, { hooks: { stopTurnOnSecret: 'true' } });
+  const stringTrue = await run(t, WITH_SECRET, { hooks: { replaceToolOutputOnSecret: 'true' } });
   assert.equal(JSON.stringify(stringTrue.output), JSON.stringify(unset.output));
 });
 
 test('on with a fake secret: continue false and a stopReason, and the value is still masked', async (t) => {
-  const r = await run(t, WITH_SECRET, { hooks: { stopTurnOnSecret: true } });
+  const r = await run(t, WITH_SECRET, { hooks: { replaceToolOutputOnSecret: true } });
   assert.equal(r.output.decision, 'block');
   assert.equal(r.output.continue, false);
   assert.equal(typeof r.output.stopReason, 'string');
-  assert.match(r.output.stopReason, /^zn stopped this turn/);
+  assert.match(r.output.stopReason, /^zn: this tool output contained/);
+  assert.match(r.output.stopReason, /Stop and ask the user/);
   assert.match(r.output.stopReason, /AWS/);
   assert.match(r.output.reason, /__ZN_/);
   const text = JSON.stringify(r.output);
@@ -84,11 +85,11 @@ test('on with a fake secret: continue false and a stopReason, and the value is s
 });
 
 test('on with benign output: no stop and no output', async (t) => {
-  const r = await run(t, 'total 0\nnpm test ok\n', { hooks: { stopTurnOnSecret: true } });
+  const r = await run(t, 'total 0\nnpm test ok\n', { hooks: { replaceToolOutputOnSecret: true } });
   assert.equal(r.output, null);
 });
 
 test('on with a marker only: no stop', async (t) => {
-  const r = await run(t, 'aws_access_key_id = __ZN_AWS_KEY_1__\n', { hooks: { stopTurnOnSecret: true } });
+  const r = await run(t, 'aws_access_key_id = __ZN_AWS_KEY_1__\n', { hooks: { replaceToolOutputOnSecret: true } });
   assert.equal(r.output, null);
 });
