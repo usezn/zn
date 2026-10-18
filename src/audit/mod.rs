@@ -1431,7 +1431,10 @@ mod tests {
     fn wrong_passphrase_does_not_lock_out_the_right_one() {
         let path = temp_db_path();
         let rows = legacy_db(&path, 2);
-        let before: Vec<String> = rows.iter().map(|(id, _, _)| raw_payload(&path, id)).collect();
+        let before: Vec<String> = rows
+            .iter()
+            .map(|(id, _, _)| raw_payload(&path, id))
+            .collect();
         // An old-format-only database refuses the wrong passphrase.
         let err = AuditVault::new(&path, Some("wrong-passphrase"))
             .err()
@@ -1483,7 +1486,8 @@ mod tests {
         let path = temp_db_path();
         legacy_db(&path, 1);
         let conn = Connection::open(&path).unwrap();
-        conn.execute("UPDATE audit_logs SET payload = ?1", [BAD]).unwrap();
+        conn.execute("UPDATE audit_logs SET payload = ?1", [BAD])
+            .unwrap();
         drop(conn);
         assert!(AuditVault::new(&path, Some(LEGACY_KEY_PASSPHRASE)).is_err());
         assert_eq!(key_check_value(&path), None);
