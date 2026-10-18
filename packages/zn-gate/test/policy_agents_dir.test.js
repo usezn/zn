@@ -163,3 +163,28 @@ test('allowed: link options are read only from their own command', () => {
 test('documented limit: a link made by interpreter code is not seen; the link on disk is followed instead', () => {
   assert.equal(policy.bashDenial("python3 -c \"import os; os.symlink('x', 'y')\"", OPTS), null);
 });
+
+test('denied: hard links and the folder written as .agents/.', () => {
+  for (const c of [
+    'cp -al .agents/. bk && echo {} > bk/hooks.json',
+    'cp -l .agents/hooks.json bk',
+    'cp -la .agents bk',
+    'cp -rl .agents/skills bk',
+    'cp --link .agents/skills bk',
+    'mklink /H bk .agents' + BS + 'hooks.json',
+    'rm -rf .agents/.',
+    'rm -rf .agents/./',
+    'mv .agents/. old',
+    'cp x .agents/./hooks.json',
+    'D=.age; ln -s ${D}nts/skills ag2 && rm ag2/../hooks.json',
+    'ln -s .age*/skills ag2 && rm ag2/../hooks.json',
+  ]) {
+    assert.match(String(policy.bashDenial(c, OPTS)), /protected/, c);
+  }
+});
+
+test('allowed: copying with -a and a dot source, and other dot segments', () => {
+  for (const c of ['cp -a src/. dst', 'cp -r src/./a dst', 'git add .agents/skills/./x.md', 'ls -l .agents']) {
+    assert.equal(policy.bashDenial(c, OPTS), null, c);
+  }
+});
