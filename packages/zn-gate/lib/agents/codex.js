@@ -25,6 +25,12 @@
  *  PostToolUse: no field rewrites the output; {decision: "block", reason}
  *    replaces the tool result with the reason.
  *  UserPromptSubmit: {decision: "block", reason}.
+ *  PermissionRequest (runs only when Codex is about to ask the user: Bash,
+ *    apply_patch, MCP tools): hookSpecificOutput.decision {behavior: "deny",
+ *    message}. zn answers only "deny", and only for a call its PreToolUse
+ *    check denies. "allow" is never sent (it would skip the approval prompt),
+ *    nor updatedInput, updatedPermissions or interrupt (they fail closed).
+ *    Anything else: no output, and the approval prompt stays.
  *  Exit 0 with no output: no opinion; Codex's own approval policy applies.
  *
  * What that means here (docs/compat.md):
@@ -173,8 +179,9 @@ function secretsServerCommand(env, cwd) {
 function normalize(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const name = raw.hook_event_name;
-  const event = name === 'PreToolUse' ? 'pre_tool' : name === 'PostToolUse' ? 'post_tool' : name === 'UserPromptSubmit' ? 'user_prompt' : null;
-  const base = { event, cwd: raw.cwd || process.cwd(), sessionId: raw.session_id || null, raw };
+  const event = name === 'PreToolUse' || name === 'PermissionRequest' ? 'pre_tool' : name === 'PostToolUse' ? 'post_tool' : name === 'UserPromptSubmit' ? 'user_prompt' : null;
+  // PermissionRequest is checked by the same policy as PreToolUse; respond() answers it with deny only.
+  const base = { event, permissionRequest: name === 'PermissionRequest', cwd: raw.cwd || process.cwd(), sessionId: raw.session_id || null, raw };
   if (event === 'user_prompt') return { ...base, tool: null, input: { prompt: typeof raw.prompt === 'string' ? raw.prompt : '' } };
   if (!event) return base;
   const toolName = String(raw.tool_name || '');
@@ -222,14 +229,17 @@ function respond(d) {
   if (!ev || !ev.event) return null;
   if (ev.event === 'pre_tool') {
     const deny = (reason) => ({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } });
-    if (d.decision === 'deny') return deny(d.message || 'Blocked by zn');
-    if (d.updatedInput && d.kind === 'wrap' && typeof ev.input.command === 'string') {
-      return deny('zn: this command uses a stored secret. Run it through zn instead, exactly like this: zn run -- ' + ev.input.command +
+    let out = null;
+    if (d.decision === 'deny') out = deny(d.message || 'Blocked by zn');
+    else if (d.updatedInput && d.kind === 'wrap' && typeof ev.input.command === 'string') {
+      out = deny('zn: this command uses a stored secret. Run it through zn instead, exactly like this: zn run -- ' + ev.input.command +
         '  (zn puts the value only into that process, if the user allowed this command for the secret).');
     }
     // Restoring detected tokens or asking would need "allow" (skips the
     // user's approval policy) or "ask" (unsupported): stay silent.
-    return null;
+    if (!ev.permissionRequest) return out;
+    // PermissionRequest: the same deny and reason, in its own shape. Never "allow".
+    return out && { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: out.hookSpecificOutput.permissionDecisionReason } } };
   }
   if (ev.event === 'post_tool') {
     if (d.updatedOutput !== undefined) {
@@ -288,6 +298,8 @@ function install(opts = {}) {
   };
   const ours = {
     PreToolUse: { matcher: PRE_MATCHER, hooks: [h] },
+    // Same matcher as PreToolUse: the approval prompt is asked only for calls zn's PreToolUse check let through.
+    PermissionRequest: { matcher: PRE_MATCHER, hooks: [h] },
     PostToolUse: { matcher: POST_MATCHER, hooks: [h] },
     UserPromptSubmit: { hooks: [h] },
   };

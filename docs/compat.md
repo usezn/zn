@@ -76,6 +76,12 @@ limit applies to a patch (`apply_patch`) in Codex and OpenCode.
     set in `config.toml` (your own or the project's `.codex/config.toml`), may receive
     placeholders. Known limit: a server set on the Codex command line with `-c mcp_servers.secrets...`
     or in a profile is not visible to the hook, so it gets no exception.
+  - Approval prompts (`PermissionRequest`, same matcher as PreToolUse): when Codex is about to ask you
+    to approve a shell command, a patch or an MCP call, zn runs the same check as before the call. If zn
+    would deny it, the request is denied with zn's reason, so no Approve button is shown for it. zn never
+    answers Allow there; for every other call it gives no answer, and the approval prompt stays. Installs
+    made before this change get the new hook when you run `zn hooks install codex` again, and Codex asks
+    you to review it in `/hooks`.
   - Checked with Codex CLI 0.163.0 on 2026-10-16: the shell tool (`exec_command`
     inside Codex) reaches hooks as `tool_name: "Bash"`, with the command in
     `tool_input.command`. zn's `PreToolUse` hook blocked `cat .env` and allowed
