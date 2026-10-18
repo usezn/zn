@@ -22,6 +22,18 @@
       {
         "file": "packages/zn-gate-py/src/zn_gate/__init__.py",
         "regex": "^__version__ = \"([^\"]+)\""
+      },
+      {
+        "file": "examples/crewai-agent/requirements.txt",
+        "regex": "^zn-gate==(\\S+)$"
+      },
+      {
+        "file": "examples/llamaindex-agent/requirements.txt",
+        "regex": "^zn-gate==(\\S+)$"
+      },
+      {
+        "file": "examples/openai-agents-sdk/requirements.txt",
+        "regex": "^zn-gate==(\\S+)$"
       }
     ],
     "pinsExclude": [

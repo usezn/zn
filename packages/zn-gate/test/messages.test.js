@@ -26,14 +26,16 @@ test('terminal and agent refusals', () => {
 
 test('vault messages', () => {
   assert.equal(m.invalidDuration('5x'), 'invalid duration "5x" (use e.g. 30m, 8h)');
-  assert.equal(m.DURATION_RANGE, 'The time must be between 1m and 24h. Choose a value in that range, for example 8h.');
+  assert.equal(m.DURATION_RANGE, 'The --ttl and --idle times must be between 1m and 24h, for example 8h.');
   assert.equal(m.unknownBackend('foo', ['keychain', 'passphrase']), 'Unknown vault backend "foo". Use one of: keychain, passphrase.');
+  assert.equal(m.unknownBackend('foo', require('../lib/vault/keychain').BACKENDS),
+    'Unknown vault backend "foo". Use one of: macos, windows, libsecret, passphrase.');
   assert.equal(m.UNLOCK_NEEDS_TERMINAL, 'zn unlock needs an interactive terminal: run it in your own terminal window');
   assert.equal(m.FOREGROUND_NEEDS_TERMINAL, '--foreground needs an interactive terminal (it asks you there). Run it in your own terminal window.');
   assert.equal(m.PASSPHRASE_NEEDS_TERMINAL,
     'zn needs a terminal to ask for the passphrase. Run this command in your terminal, or pass it with --passphrase-stdin.');
-  assert.equal(m.PASSPHRASE_CANCELLED, 'Cancelled: no passphrase was entered. Run zn unlock again when you are ready.');
-  assert.equal(m.PASSPHRASE_MISMATCH, 'The two passphrases do not match. Nothing was created; run zn unlock again.');
+  assert.equal(m.PASSPHRASE_CANCELLED, 'Cancelled: no passphrase was entered. Run `zn unlock` again when you are ready.');
+  assert.equal(m.PASSPHRASE_MISMATCH, 'The two passphrases do not match. Nothing was created; run `zn unlock` again.');
   assert.equal(m.FORGET_LOCK_FIRST, 'Lock the vault first (`zn lock`): the daemon may hold this project in memory.');
 });
 
@@ -57,7 +59,7 @@ test('pins messages', () => {
   assert.equal(m.PINS_NEEDS_TERMINAL,
     'zn-gate pins approve runs only in your own terminal, so that an agent cannot approve tool changes. Run it there.');
   assert.equal(m.PINS_NOT_APPROVED, 'Not approved: what you typed did not match, so nothing was changed. Run the command again to retry.');
-  assert.equal(m.pinsError('unknown server'), 'zn-gate pins: unknown server. Run zn-gate pins to see the servers and their full keys.');
+  assert.equal(m.pinsError('unknown server'), 'zn-gate pins: unknown server. Run `zn-gate pins` to see the servers and their full keys.');
 });
 
 test('team messages', () => {
@@ -68,6 +70,10 @@ test('team messages', () => {
   assert.equal(m.TEAM_NOT_ASKED, 'the organization policy does not ask for this, so nothing was approved.');
   assert.equal(m.TEAM_INVALID_ORG_KEY, 'the server sent an invalid organization key, so this machine was not connected. Ask your administrator.');
   assert.equal(m.teamJoinFailed('HTTP 403'), 'join failed (HTTP 403). This machine was not connected.');
+  assert.equal(m.teamJoinFailed('this join token is invalid, expired or used up; ask your administrator for a new one'),
+    'join failed (this join token is invalid, expired or used up; ask your administrator for a new one). This machine was not connected.');
+  assert.equal(m.teamJoinFailed('this organization has no active Team subscription'),
+    'join failed (this organization has no active Team subscription). This machine was not connected.');
 });
 
 test('the callers use the shared messages', () => {
