@@ -786,7 +786,10 @@ mod tests {
     fn encrypt_decrypt_round_trip() {
         let plain = r#"{"path": "/example/test"}"#;
         let stored = encrypt_payload(&TEST_KEY, ID_A, plain).unwrap();
-        assert_eq!(decrypt_payload(&TEST_KEY, ID_A, &stored).as_deref(), Some(plain));
+        assert_eq!(
+            decrypt_payload(&TEST_KEY, ID_A, &stored).as_deref(),
+            Some(plain)
+        );
         assert_eq!(decrypt_payload(&[8u8; 32], ID_A, &stored), None);
     }
 
@@ -825,7 +828,10 @@ mod tests {
     #[test]
     fn v2_record_does_not_decrypt_for_another_row() {
         let stored = encrypt_payload(&TEST_KEY, ID_A, "payload").unwrap();
-        assert_eq!(decrypt_payload(&TEST_KEY, ID_A, &stored).as_deref(), Some("payload"));
+        assert_eq!(
+            decrypt_payload(&TEST_KEY, ID_A, &stored).as_deref(),
+            Some("payload")
+        );
         assert_eq!(decrypt_payload(&TEST_KEY, ID_B, &stored), None);
     }
 
