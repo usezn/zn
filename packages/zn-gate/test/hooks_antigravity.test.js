@@ -8,6 +8,7 @@ process.env.ZN_STATS = 'off';
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { pathToFileURL } = require('url');
 const path = require('path');
 
 const { getAdapter, listAdapters } = require('../lib/agents');
@@ -44,9 +45,9 @@ test('normalize: file tools collect paths and skip content keys', () => {
   const v = agy.normalize(pre('view_file', { AbsolutePath: '/home/u/.ssh/id_rsa' }));
   assert.equal(v.tool, 'read');
   assert.equal(v.input.path, '/home/u/.ssh/id_rsa');
-  const w = agy.normalize(pre('replace_file_content', { TargetFile: 'file:///work/proj/a.js', TargetContent: 'secret\nline', ReplacementContent: 'x' }));
+  const w = agy.normalize(pre('replace_file_content', { TargetFile: pathToFileURL(path.resolve('/work/proj/a.js')).href, TargetContent: 'secret\nline', ReplacementContent: 'x' }));
   assert.equal(w.tool, 'write');
-  assert.deepEqual(w.input.paths, ['/work/proj/a.js']);
+  assert.deepEqual(w.input.paths, [path.resolve('/work/proj/a.js')]);
   assert.equal(agy.normalize(pre('grep_search', { Query: 'x', SearchPath: '/work' })).tool, 'grep');
 });
 
@@ -126,11 +127,11 @@ test('install (user) backs up, keeps foreign hooks and uninstall removes only zn
   const mine = { enabled: true, PreToolUse: [{ matcher: 'run_command', hooks: [{ type: 'command', command: './mine.sh' }] }], Stop: [{ hooks: [{ command: './bye.sh' }] }] };
   const off = { enabled: false };
   fs.writeFileSync(file, JSON.stringify({ mine, off }));
-  const rep = agy.install({ scope: 'user', home, nodePath: '/usr/bin/node', platform: 'linux' });
+  const rep = agy.install({ scope: 'user', home, nodePath: '/usr/bin/node' });
   assert.ok(rep.backup && fs.existsSync(rep.backup));
   let data = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.deepEqual(data.mine, mine);
-  assert.match(data['zn-gate'].PreToolUse[0].hooks[0].command, /runner\.js' antigravity$/);
+  assert.match(data['zn-gate'].PreToolUse[0].hooks[0].command, /runner\.js'? antigravity/);
   agy.uninstall({ scope: 'user', home });
   data = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.deepEqual(data, { mine, off });
@@ -167,7 +168,7 @@ test('zn-gate check reads the Antigravity hook state (set up, off, absent)', asy
   const cwd = tempDir(t, 'zn-agy-check-cwd-');
   const find = async () => (await check.check({ home, cwd, env: { ...process.env, HOME: home }, live: false })).results.find((r) => r.id === 'antigravity');
   assert.equal((await find()).state, 'not-set-up');
-  agy.install({ scope: 'user', home, nodePath: process.execPath, platform: 'linux' });
+  agy.install({ scope: 'user', home, nodePath: process.execPath });
   const ok = await find();
   assert.notEqual(ok.state, 'not-set-up');
   const file = agy.hooksFile({ home });
@@ -211,8 +212,8 @@ test('reads check every path of the call, not only the first', async () => {
 });
 
 test('file: addresses are turned into paths; a bad one is refused', async () => {
-  const n = agy.normalize(pre('view_file', { AbsolutePath: 'file:///home/u/a%20b.txt' }));
-  assert.equal(n.input.path, '/home/u/a b.txt');
+  const n = agy.normalize(pre('view_file', { AbsolutePath: pathToFileURL(path.resolve('/home/u/a b.txt')).href }));
+  assert.equal(n.input.path, path.resolve('/home/u/a b.txt'));
   assert.equal((await run(pre('view_file', { AbsolutePath: 'file://remote-host/etc/x' }))).output.decision, process.platform === 'win32' ? 'allow' : 'deny');
   assert.equal((await run(pre('view_file', { AbsolutePath: 'file:///%zz' }))).output.decision, 'deny');
 });
@@ -260,7 +261,7 @@ test('install warns that a project hook needs zn on PATH, and that its backup mu
   assert.ok(first.warnings.some((w) => /needs zn-gate installed/.test(w)));
   const second = agy.install({ scope: 'project', projectDir: dir });
   assert.ok(second.warnings.some((w) => /do not commit it/.test(w)));
-  assert.equal(agy.install({ scope: 'user', home: dir, nodePath: '/usr/bin/node', platform: 'linux' }).warnings.some((w) => /needs zn-gate installed/.test(w)), false);
+  assert.equal(agy.install({ scope: 'user', home: dir, nodePath: '/usr/bin/node' }).warnings.some((w) => /needs zn-gate installed/.test(w)), false);
 });
 
 test('MCP move calls with source and destination are checked', async () => {
