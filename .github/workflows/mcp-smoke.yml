@@ -1,0 +1,56 @@
+name: MCP smoke
+
+# Starts the packed zn-gate in a clean node:22-slim container, the way an MCP directory checks a server:
+# initialize and tools/list over stdio must answer within 30 s with exactly the expected tools.
+# Keeps the directory listing from breaking with a release. Also runnable locally:
+#   (cd packages/zn-gate && npm pack --pack-destination /tmp) && .github/scripts/mcp-smoke-docker.sh /tmp/zn-gate-*.tgz
+on:
+  push:
+    branches: [ main, next ]
+    paths:
+      - 'packages/zn-gate/**'
+      - '.github/scripts/mcp-smoke*'
+      - '.github/workflows/mcp-smoke.yml'
+  pull_request:
+    branches: [ next, main, 'release/**' ]
+    paths:
+      - 'packages/zn-gate/**'
+      - '.github/scripts/mcp-smoke*'
+      - '.github/workflows/mcp-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcp-smoke-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: MCP smoke (node 22 slim)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.x
+          package-manager-cache: false
+      - name: Pack the package
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/pack"
+          (cd packages/zn-gate && npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/pack")
+          ls "$RUNNER_TEMP/pack"
+      - name: Install in node:22-slim and ask for the tools
+        run: |
+          set -euo pipefail
+          tgz=$(ls "$RUNNER_TEMP"/pack/zn-gate-*.tgz)
+          .github/scripts/mcp-smoke-docker.sh "$tgz"

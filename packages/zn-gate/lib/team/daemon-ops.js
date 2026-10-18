@@ -107,9 +107,9 @@ function makeTeamOps(ctx) {
       const pv = base === DEFAULT_API ? await api.preview(joinToken) : { ok: false, reason: 'unavailable', detail: 'not checked on a server other than api.usezn.com' };
       if (!pv.ok && (pv.reason === 'invalid' || pv.reason === 'no_subscription')) {
         writeAudit({ mode: 'set', decision: 'deny', reason: 'team_join_failed' });
-        throw znError(CODES.POLICY_DENIED, pv.reason === 'invalid'
-          ? 'join failed (this join token is invalid, expired or used up; ask your administrator for a new one)'
-          : 'join failed (this organization has no active Team subscription)');
+        throw znError(CODES.POLICY_DENIED, messages.teamJoinFailed(pv.reason === 'invalid'
+          ? 'this join token is invalid, expired or used up; ask your administrator for a new one'
+          : 'this organization has no active Team subscription'));
       }
       const previewOrg = pv.ok ? printable(pv.org_name, 100) || null : null;
       const previewBy = pv.ok ? printable(pv.invited_by, 60) || null : null;

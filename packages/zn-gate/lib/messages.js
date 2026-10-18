@@ -45,7 +45,7 @@ function invalidDuration(value) {
   return 'invalid duration "' + value + '" (use e.g. 30m, 8h)';
 }
 
-const DURATION_RANGE = 'The time must be between 1m and 24h. Choose a value in that range, for example 8h.';
+const DURATION_RANGE = 'The --ttl and --idle times must be between 1m and 24h, for example 8h.';
 
 function unknownBackend(name, known) {
   return 'Unknown vault backend "' + name + '". Use one of: ' + known.join(', ') + '.';
@@ -57,9 +57,9 @@ const FOREGROUND_NEEDS_TERMINAL = '--foreground needs an interactive terminal (i
 
 const PASSPHRASE_NEEDS_TERMINAL = 'zn needs a terminal to ask for the passphrase. Run this command in your terminal, or pass it with --passphrase-stdin.';
 
-const PASSPHRASE_CANCELLED = 'Cancelled: no passphrase was entered. Run zn unlock again when you are ready.';
+const PASSPHRASE_CANCELLED = 'Cancelled: no passphrase was entered. Run `zn unlock` again when you are ready.';
 
-const PASSPHRASE_MISMATCH = 'The two passphrases do not match. Nothing was created; run zn unlock again.';
+const PASSPHRASE_MISMATCH = 'The two passphrases do not match. Nothing was created; run `zn unlock` again.';
 
 const FORGET_LOCK_FIRST = 'Lock the vault first (`zn lock`): the daemon may hold this project in memory.';
 
@@ -99,7 +99,7 @@ const PINS_NEEDS_TERMINAL = 'zn-gate pins approve runs only in your own terminal
 const PINS_NOT_APPROVED = 'Not approved: what you typed did not match, so nothing was changed. Run the command again to retry.';
 
 function pinsError(reason) {
-  return 'zn-gate pins: ' + reason + '. Run zn-gate pins to see the servers and their full keys.';
+  return 'zn-gate pins: ' + reason + '. Run `zn-gate pins` to see the servers and their full keys.';
 }
 
 /* ------------------------------- teams ------------------------------- */
