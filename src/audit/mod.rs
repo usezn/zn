@@ -11,7 +11,7 @@ pub mod exporter;
 
 use crate::metrics;
 use aes_gcm::{
-    aead::{Aead, KeyInit},
+    aead::{Aead, KeyInit, Payload},
     Aes256Gcm, Nonce,
 };
 use anyhow::{anyhow, Result};
@@ -255,7 +255,7 @@ impl AuditVault {
         // Encrypt payload if key is available
         let payload = if let (Some(key_bytes), Some(p_raw)) = (&self.encryption_key, &entry.payload)
         {
-            let encoded = encrypt_payload(key_bytes, p_raw)?;
+            let encoded = encrypt_payload(key_bytes, &entry.id, p_raw)?;
             Some(encoded)
         } else {
             entry.payload.clone()
@@ -326,7 +326,7 @@ impl AuditVault {
 
                 // Decrypt payload if key is available
                 if let (Some(key_bytes), Some(p_enc)) = (&self.encryption_key, &payload) {
-                    if let Some(s) = decrypt_payload(key_bytes, p_enc) {
+                    if let Some(s) = decrypt_payload(key_bytes, &id, p_enc) {
                         payload = Some(s);
                     }
                 }
@@ -430,7 +430,7 @@ impl AuditVault {
 
                 // Decrypt payload if key is available
                 if let (Some(key_bytes), Some(p_enc)) = (&self.encryption_key, &payload) {
-                    if let Some(s) = decrypt_payload(key_bytes, p_enc) {
+                    if let Some(s) = decrypt_payload(key_bytes, &id, p_enc) {
                         payload = Some(s);
                     }
                 }
@@ -513,25 +513,53 @@ fn nonce_from_bytes(bytes: &[u8]) -> Option<aes_gcm::aead::Nonce<Aes256Gcm>> {
     <[u8; NONCE_LEN]>::try_from(bytes).ok().map(Nonce::from)
 }
 
-/// Encrypt a payload as `base64(nonce):base64(ciphertext)`.
-fn encrypt_payload(key_bytes: &[u8; 32], plaintext: &str) -> Result<String> {
+/// Prefix of the current record format.
+const V2_PREFIX: &str = "v2:";
+
+/// Fixed namespace mixed into the additional authenticated data of v2 records.
+const AAD_NAMESPACE: &str = "zn-audit-v2";
+
+/// Additional authenticated data of a v2 record: the namespace string and the
+/// id of the row the record belongs to.
+fn record_aad(record_id: &str) -> Vec<u8> {
+    format!("{AAD_NAMESPACE}:{record_id}").into_bytes()
+}
+
+/// Encrypt a payload as `v2:base64(nonce):base64(ciphertext)`. The record id is
+/// authenticated together with the ciphertext, so the record only decrypts for
+/// the row it was written for.
+fn encrypt_payload(key_bytes: &[u8; 32], record_id: &str, plaintext: &str) -> Result<String> {
     let cipher = Aes256Gcm::new(key_bytes.into());
     let nonce_bytes = random_nonce_bytes();
     let nonce = Nonce::from(nonce_bytes);
+    let aad = record_aad(record_id);
     let encrypted = cipher
-        .encrypt(&nonce, plaintext.as_bytes())
+        .encrypt(
+            &nonce,
+            Payload {
+                msg: plaintext.as_bytes(),
+                aad: &aad,
+            },
+        )
         .map_err(|_| anyhow!("Payload encryption failed"))?;
     Ok(format!(
-        "{}:{}",
+        "{}{}:{}",
+        V2_PREFIX,
         general_purpose::STANDARD.encode(nonce_bytes),
         general_purpose::STANDARD.encode(&encrypted)
     ))
 }
 
-/// Decrypt a stored `base64(nonce):base64(ciphertext)` payload. Returns `None`
-/// for anything malformed, including a nonce that is not 12 bytes long.
-fn decrypt_payload(key_bytes: &[u8; 32], stored: &str) -> Option<String> {
-    let parts: Vec<&str> = stored.split(':').collect();
+/// Decrypt a stored payload. Records starting with `v2:` are checked against
+/// the id of their row. Older records (`base64(nonce):base64(ciphertext)`, no
+/// prefix) have no authenticated id and are still read as before. Returns
+/// `None` for anything malformed, including a nonce that is not 12 bytes long.
+fn decrypt_payload(key_bytes: &[u8; 32], record_id: &str, stored: &str) -> Option<String> {
+    let (body, aad) = match stored.strip_prefix(V2_PREFIX) {
+        Some(rest) => (rest, record_aad(record_id)),
+        None => (stored, Vec::new()),
+    };
+    let parts: Vec<&str> = body.split(':').collect();
     if parts.len() != 2 {
         return None;
     }
@@ -539,7 +567,15 @@ fn decrypt_payload(key_bytes: &[u8; 32], stored: &str) -> Option<String> {
     let ciphertext = general_purpose::STANDARD.decode(parts[1]).ok()?;
     let nonce = nonce_from_bytes(&nonce_bytes)?;
     let cipher = Aes256Gcm::new(key_bytes.into());
-    let decrypted = cipher.decrypt(&nonce, ciphertext.as_slice()).ok()?;
+    let decrypted = cipher
+        .decrypt(
+            &nonce,
+            Payload {
+                msg: ciphertext.as_slice(),
+                aad: &aad,
+            },
+        )
+        .ok()?;
     String::from_utf8(decrypted).ok()
 }
 
@@ -727,16 +763,18 @@ mod tests {
     }
 
     const TEST_KEY: [u8; 32] = [7u8; 32];
+    const ID_A: &str = "3f2b8c1e-0000-4000-8000-000000000001";
+    const ID_B: &str = "3f2b8c1e-0000-4000-8000-000000000002";
 
     #[test]
     fn nonces_differ_between_encryptions_and_are_12_bytes() {
-        let a = encrypt_payload(&TEST_KEY, "same plaintext").unwrap();
-        let b = encrypt_payload(&TEST_KEY, "same plaintext").unwrap();
+        let a = encrypt_payload(&TEST_KEY, ID_A, "same plaintext").unwrap();
+        let b = encrypt_payload(&TEST_KEY, ID_A, "same plaintext").unwrap();
         let nonce_a = general_purpose::STANDARD
-            .decode(a.split(':').next().unwrap())
+            .decode(a.split(':').nth(1).unwrap())
             .unwrap();
         let nonce_b = general_purpose::STANDARD
-            .decode(b.split(':').next().unwrap())
+            .decode(b.split(':').nth(1).unwrap())
             .unwrap();
         assert_eq!(nonce_a.len(), 12);
         assert_eq!(nonce_b.len(), 12);
@@ -747,19 +785,19 @@ mod tests {
     #[test]
     fn encrypt_decrypt_round_trip() {
         let plain = r#"{"path": "/example/test"}"#;
-        let stored = encrypt_payload(&TEST_KEY, plain).unwrap();
-        assert_eq!(decrypt_payload(&TEST_KEY, &stored).as_deref(), Some(plain));
-        assert_eq!(decrypt_payload(&[8u8; 32], &stored), None);
+        let stored = encrypt_payload(&TEST_KEY, ID_A, plain).unwrap();
+        assert_eq!(decrypt_payload(&TEST_KEY, ID_A, &stored).as_deref(), Some(plain));
+        assert_eq!(decrypt_payload(&[8u8; 32], ID_A, &stored), None);
     }
 
     #[test]
     fn wrong_length_nonce_is_rejected_without_panic() {
-        let stored = encrypt_payload(&TEST_KEY, "payload").unwrap();
-        let ciphertext = stored.split(':').nth(1).unwrap();
+        let stored = encrypt_payload(&TEST_KEY, ID_A, "payload").unwrap();
+        let ciphertext = stored.split(':').nth(2).unwrap();
         for len in [0usize, 11, 13, 16, 32] {
             let bad_nonce = general_purpose::STANDARD.encode(vec![1u8; len]);
-            let record = format!("{bad_nonce}:{ciphertext}");
-            assert_eq!(decrypt_payload(&TEST_KEY, &record), None, "len {len}");
+            let record = format!("v2:{bad_nonce}:{ciphertext}");
+            assert_eq!(decrypt_payload(&TEST_KEY, ID_A, &record), None, "len {len}");
         }
         assert!(nonce_from_bytes(&[0u8; 11]).is_none());
         assert!(nonce_from_bytes(&[0u8; 12]).is_some());
@@ -772,8 +810,83 @@ mod tests {
         let key: [u8; 32] = core::array::from_fn(|i| i as u8);
         let stored = "9HrBC1jMQ3KlZw4C:L/y1YqQCZUTXTgxQwtxWpwR43HyLXNyF9bCDJUsoYcmfaX8+qmP4L4M=";
         assert_eq!(
-            decrypt_payload(&key, stored).as_deref(),
+            decrypt_payload(&key, ID_A, stored).as_deref(),
             Some(r#"{"path": "/example/test"}"#)
         );
+    }
+
+    #[test]
+    fn new_records_use_the_v2_format() {
+        let stored = encrypt_payload(&TEST_KEY, ID_A, "payload").unwrap();
+        assert!(stored.starts_with("v2:"));
+        assert_eq!(stored.split(':').count(), 3);
+    }
+
+    #[test]
+    fn v2_record_does_not_decrypt_for_another_row() {
+        let stored = encrypt_payload(&TEST_KEY, ID_A, "payload").unwrap();
+        assert_eq!(decrypt_payload(&TEST_KEY, ID_A, &stored).as_deref(), Some("payload"));
+        assert_eq!(decrypt_payload(&TEST_KEY, ID_B, &stored), None);
+    }
+
+    #[test]
+    fn v2_payload_moved_between_rows_is_not_readable() {
+        let path = temp_db_path();
+        let vault = AuditVault::new(&path, Some("test-passphrase")).expect("vault");
+        let mut first = AuditEntry::new("event_a", "tool", "ALLOWED");
+        first.payload = Some("first secret".to_string());
+        let mut second = AuditEntry::new("event_b", "tool", "ALLOWED");
+        second.payload = Some("second secret".to_string());
+        let (first_id, second_id) = (first.id.clone(), second.id.clone());
+        vault.log(first).unwrap();
+        vault.log(second).unwrap();
+        {
+            let conn = vault.get_connection();
+            let conn = conn.lock().unwrap();
+            conn.execute(
+                "UPDATE audit_logs SET payload = (SELECT payload FROM audit_logs WHERE id = ?1) WHERE id = ?2",
+                params![first_id, second_id],
+            )
+            .unwrap();
+        }
+        let rows = vault.get_recent(10).unwrap();
+        let moved = rows.iter().find(|r| r.id == second_id).unwrap();
+        // Not decrypted: the stored text comes back as it is.
+        assert!(moved.payload.as_deref().unwrap().starts_with("v2:"));
+        let original = rows.iter().find(|r| r.id == first_id).unwrap();
+        assert_eq!(original.payload.as_deref(), Some("first secret"));
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn v1_record_still_decrypts_under_any_id() {
+        let key: [u8; 32] = core::array::from_fn(|i| i as u8);
+        let stored = "9HrBC1jMQ3KlZw4C:L/y1YqQCZUTXTgxQwtxWpwR43HyLXNyF9bCDJUsoYcmfaX8+qmP4L4M=";
+        for id in [ID_A, ID_B, ""] {
+            assert_eq!(
+                decrypt_payload(&key, id, stored).as_deref(),
+                Some(r#"{"path": "/example/test"}"#)
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_v2_records_return_none_without_panic() {
+        let good = encrypt_payload(&TEST_KEY, ID_A, "payload").unwrap();
+        let nonce = good.split(':').nth(1).unwrap().to_string();
+        let ct = good.split(':').nth(2).unwrap().to_string();
+        let cases = [
+            "v2:".to_string(),
+            "v2:abc".to_string(),
+            format!("v2:{nonce}"),
+            format!("v2:{nonce}:{ct}:extra"),
+            "v2:!!!:!!!".to_string(),
+            format!("v2:{nonce}:!!!"),
+            format!("v2::{ct}"),
+            format!("v2:v2:{nonce}:{ct}"),
+        ];
+        for case in cases {
+            assert_eq!(decrypt_payload(&TEST_KEY, ID_A, &case), None, "{case}");
+        }
     }
 }
