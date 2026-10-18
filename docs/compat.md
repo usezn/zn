@@ -69,6 +69,10 @@ limit applies to a patch (`apply_patch`) in Codex and OpenCode.
     result.
   - Codex's own session log keeps the original output.
   - Hooks are a guardrail, not an enforcement boundary (Codex's own words).
+  - MCP tool calls reach `PreToolUse` (matcher `^(Bash|apply_patch|mcp__.+)$`), and zn checks
+    their arguments for secret values and `__ZN_` markers, as it does for Cursor. Installs made
+    before this change keep the old matcher until you run `zn hooks install codex` again, and
+    Codex asks you to review the changed hook in `/hooks`.
   - Checked with Codex CLI 0.163.0 on 2026-10-16: the shell tool (`exec_command`
     inside Codex) reaches hooks as `tool_name: "Bash"`, with the command in
     `tool_input.command`. zn's `PreToolUse` hook blocked `cat .env` and allowed

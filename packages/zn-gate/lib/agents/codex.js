@@ -15,7 +15,9 @@
  *
  *  stdin: session_id, transcript_path, cwd, hook_event_name, model; tool
  *    events add tool_name ("Bash", "apply_patch", "mcp__<server>__<tool>"),
- *    tool_use_id and tool_input. Bash and apply_patch use tool_input.command.
+ *    tool_use_id and tool_input. Bash and apply_patch use tool_input.command;
+ *    for an MCP tool, tool_input is the call's arguments. PreToolUse runs for
+ *    Bash, apply_patch and MCP tools (PRE_MATCHER).
  *
  *  PreToolUse: hookSpecificOutput.permissionDecision "deny" (+ reason).
  *    updatedInput is accepted only with "allow", and "ask" is not supported
@@ -46,7 +48,9 @@ const cfg = require('./config-file');
 const { whichSync } = require('../broker/markers');
 
 const id = 'codex';
-const PRE_MATCHER = '^(Bash|apply_patch)$';
+// MCP calls are checked before they run: their arguments go through the same
+// scan as other agents' MCP calls (see runner.js, decideMcp).
+const PRE_MATCHER = '^(Bash|apply_patch|mcp__.+)$';
 // Every tool: output of tools zn does not know is tokenized like MCP output.
 const POST_MATCHER = '.*';
 const HOOK_TIMEOUT_S = 30;
@@ -105,6 +109,27 @@ function patchFiles(patch) {
   return patchScan(patch).files;
 }
 
+/*
+ * The command that starts zn's own "secrets" MCP server, as the user's
+ * config.toml has it (`zn hooks install` writes it there). Codex's hook input
+ * does not name the command of an MCP server, so runner.js can only tell zn's
+ * server apart when this is passed as raw.command. Null when it is not there.
+ */
+function secretsServerCommand(env) {
+  try {
+    const file = path.join(codexHome({ env }), 'config.toml');
+    if (!fs.existsSync(file)) return null;
+    const data = require('../audit/parse').parseToml(fs.readFileSync(file, 'utf8')).data;
+    const s = data && data.mcp_servers && data.mcp_servers.secrets;
+    if (!s || typeof s.command !== 'string' || !Array.isArray(s.args)) return null;
+    return [s.command, ...s.args.map(String)]
+      .map((w) => (/^[\w./:\\-]+$/.test(w) ? w : '"' + w.replace(/["\\]/g, '') + '"'))
+      .join(' ');
+  } catch (_) {
+    return null;
+  }
+}
+
 function normalize(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const name = raw.hook_event_name;
@@ -118,6 +143,13 @@ function normalize(raw) {
   // Unknown tools are treated like MCP output: their text is tokenized.
   let tool = mcp ? 'mcp' : toolName === 'Bash' ? 'bash' : toolName === 'apply_patch' ? 'write' : 'mcp';
   const input = { command: typeof ti.command === 'string' ? ti.command : undefined, texts: [] };
+  let evRaw = raw;
+  if (mcp) {
+    // For MCP, tool_input is the call's arguments; runner.js checks them.
+    input.args = raw.tool_input === undefined || raw.tool_input === null ? {} : raw.tool_input;
+    const command = mcp[1] === 'secrets' ? secretsServerCommand(process.env) : null;
+    if (command) evRaw = { ...raw, command };
+  }
   if (toolName === 'apply_patch') {
     // Every file the patch touches is checked by the policy; a patch whose
     // file names cannot be read is refused rather than let through.
@@ -134,7 +166,7 @@ function normalize(raw) {
     input.command = undefined;
     tool = 'write';
   }
-  return { ...base, tool, toolName, mcp: mcp ? { server: mcp[1], tool: mcp[2] } : null, input, output: event === 'post_tool' ? raw.tool_response : undefined };
+  return { ...base, raw: evRaw, tool, toolName, mcp: mcp ? { server: mcp[1], tool: mcp[2] } : null, input, output: event === 'post_tool' ? raw.tool_response : undefined };
 }
 
 function outputText(v) {
