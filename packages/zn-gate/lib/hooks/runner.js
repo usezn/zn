@@ -18,7 +18,10 @@
  *               and pipe Monitor commands through the streaming scrubber.
  *   post_tool   replace secrets in the tool output with tokens (Read, Bash,
  *               PowerShell, Monitor, Grep, LSP, WebFetch, MCP tools and MCP
- *               resources), keeping the output's shape.
+ *               resources), keeping the output's shape. Codex, with the opt-in
+ *               hooks.replaceToolOutputOnSecret setting, also gets zn's stop
+ *               text in place of the result when the output holds a real
+ *               secret value (not only a marker).
  *   user_prompt block prompts that contain a secret and suggest
  *               `zn secret set`.
  *   prompt_expansion  (Claude Code) a typed skill or command, expanded: block
@@ -76,6 +79,18 @@ function failModeOf(opts) {
   if (when === 'allow') return 'open';
   if (when === 'deny') return 'closed';
   return String(hooks.failMode || '').toLowerCase() === 'open' ? 'open' : 'closed';
+}
+
+/*
+ * Opt-in (off by default): when a tool output holds a real secret value, not
+ * only a marker, zn also returns a stop reason for Codex's PostToolUse (see
+ * respond() in lib/agents/codex.js). Set in ~/.zn/config.json as
+ * {"hooks": {"replaceToolOutputOnSecret": true}}. Environment variables are not
+ * read here: the project an agent works in can set them.
+ */
+function replaceOnSecretOf(opts) {
+  const hooks = readConfig(opts.home).hooks || {};
+  return hooks.replaceToolOutputOnSecret === true;
 }
 
 // Reinstall the running version: `npm install -g zn-gate` alone could install an
@@ -486,25 +501,29 @@ async function decideMcp(ev, d, agentId) {
 
 /* ---------------------------- post_tool --------------------------- */
 
-async function decidePost(ev, d, agentId) {
+async function decidePost(ev, d, agentId, opts = {}) {
   if (!POST_TOOLS.has(ev.tool)) return { decision: 'allow' };
   if (ev.output === undefined || ev.output === null) return { decision: 'allow' };
   const engine = d.engine();
   const ctx = await ctxFor(ev, d, agentId, 'assistant');
   const types = new Map();
+  const secretKinds = new Set();
   let locked = false;
   const updated = await mapStrings(ev.output, async (s) => {
     if (s.length < 8) return s;
     const res = await engine.tokenize(s, ctx);
     if (!res || typeof res.text !== 'string') throw deps.znError('ZN_ENGINE', 'tokenize returned an unexpected shape');
     if (res.locked) locked = true;
-    for (const r of res.replaced || []) types.set(r.type, (types.get(r.type) || 0) + 1);
+    for (const r of res.replaced || []) {
+      types.set(r.type, (types.get(r.type) || 0) + 1);
+      if (SECRET_SOURCES.has(r.source)) secretKinds.add(kindLabel(r.type));
+    }
     return res.text;
   });
   if (types.size === 0) return { decision: 'allow' };
   const total = [...types.values()].reduce((a, b) => a + b, 0);
   const summary = [...types.entries()].map(([t, n]) => t + (n > 1 ? ' x' + n : '')).join(', ');
-  return {
+  const out = {
     decision: 'allow',
     stats: { redacted: total, detections: Object.fromEntries(types) },
     updatedOutput: updated,
@@ -512,6 +531,12 @@ async function decidePost(ev, d, agentId) {
       (locked ? '__ZN_REDACTED_ markers cannot be restored, so do not retry to get the values. ' : 'Real values stay on this machine; use the tokens as they are.'),
     userMessage: locked ? lockedNotice() : undefined,
   };
+  // Opt-in, Codex only (respond() in lib/agents/codex.js): a real secret value also gets a stop reason.
+  if (agentId === 'codex' && secretKinds.size > 0 && replaceOnSecretOf(opts)) {
+    out.stopReason = 'zn: this tool output contained ' + [...secretKinds].join(', ') +
+      '. zn replaced it with a token. Stop and ask the user to review the output, and to rotate the value if it is real, before you continue.';
+  }
+  return out;
 }
 
 /* Shown to the person (systemMessage) when the vault is locked. */
@@ -638,9 +663,77 @@ function suggestedName(span) {
   return t && !GENERIC_TYPES.has(t) ? t : 'MY_SECRET';
 }
 
+/* ------------------------------- stop ------------------------------ */
+
+// Codex's Stop hook reads the model's final answer. Default: a warning only.
+// "hooks": {"stopReview": "block"} in ~/.zn/config.json asks the agent to
+// rewrite it. zn never blocks when the agent already continues because of a
+// Stop hook (stopHookActive), so the check cannot loop.
+const STOP_TRANSCRIPT_CAP = 64 * 1024 * 1024;
+
+function stopReviewMode(opts) {
+  const hooks = readConfig(opts.home).hooks || {};
+  return String(hooks.stopReview || '').toLowerCase() === 'block' ? 'block' : 'warn';
+}
+
+// Markers in the answer that appear nowhere else in the transcript (no prompt,
+// no tool output, no earlier message). The answer itself is counted out. An
+// unreadable or very large transcript skips this check. A marker repeated in
+// an answer whose transcript lacks that answer can be reported falsely.
+function unseenMarkers(message, transcriptPath) {
+  const found = markers.findMarkers(message).map((m) => m.marker);
+  if (found.length === 0 || !transcriptPath) return [];
+  let text;
+  try {
+    if (fs.statSync(transcriptPath).size > STOP_TRANSCRIPT_CAP) return [];
+    text = fs.readFileSync(transcriptPath, 'utf8');
+  } catch (_) {
+    return [];
+  }
+  const count = (s, needle) => s.split(needle).length - 1;
+  return found.filter((m) => count(text, m) - count(message, m) <= 0);
+}
+
+async function decideStop(ev, d, agentId, opts) {
+  const message = String((ev.input && ev.input.message) || '');
+  const stopHookActive = Boolean(ev.input && ev.input.stopHookActive);
+  const kinds = new Set();
+  if (message.length >= 8) {
+    const engine = d.engine();
+    let ctx = await ctxFor(ev, d, agentId, 'assistant');
+    if (typeof engine.prepare === 'function') ctx = await engine.prepare(ctx);
+    for (const span of engine.scan(message, ctx) || []) {
+      if (SECRET_SOURCES.has(span.source)) kinds.add(kindLabel(span.type));
+    }
+  }
+  const stray = unseenMarkers(message, ev.input && ev.input.transcriptPath);
+  if (kinds.size === 0 && stray.length === 0) return { decision: 'allow' };
+  const found = [
+    ...(kinds.size ? ['a secret value (' + [...kinds].join(', ') + ')'] : []),
+    ...(stray.length ? ['a placeholder zn did not see earlier in this session (' + stray.join(', ') + ')'] : []),
+  ].join(' and ');
+  if (stopReviewMode(opts) === 'block' && !stopHookActive) {
+    return {
+      decision: 'deny',
+      message: 'zn: your last answer contains ' + found + '. Rewrite it without that value or placeholder: ' +
+        'do not repeat the value, and refer to a stored secret only by a placeholder that you got from a tool or from the user.',
+      notice: 'zn: the last answer contains ' + found + '. zn asked the agent to rewrite it.',
+    };
+  }
+  const notice = stopHookActive
+    ? 'zn: the last answer still contains ' + found + '. zn does not block a second time, so check it before you share it.'
+    : 'zn: the last answer contains ' + found + '. zn did not stop it. To have zn ask the agent to rewrite such answers, ' +
+      'set "stopReview" to "block" under "hooks" in ~/.zn/config.json.';
+  return { decision: 'ask', notice };
+}
+
 /* ------------------------------ entry ----------------------------- */
 
 function failDecision(ev, err, mode) {
+  // A Stop check never blocks because zn failed: that could keep the agent going.
+  if (ev && ev.event === 'stop') {
+    return { decision: 'ask', failOpen: true, notice: 'zn: could not check the last answer for secrets' + (err && err.code ? ' (' + err.code + ')' : '') + '.' };
+  }
   const missing = err.code === 'ZN_UNAVAILABLE';
   const detail = missing ? '' : ' (' + (err.code ? err.code + ': ' : '') + String(err.message || 'unknown error') + ')';
   const msg = 'zn: ' + (missing ? REINSTALL : HOOK_FAILED) + detail;
@@ -678,8 +771,9 @@ async function handle(adapter, rawEvent, opts = {}) {
     const d = lazyDeps(opts);
     if (!ev || !ev.event) decision = { decision: 'allow' };
     else if (ev.event === 'pre_tool') decision = await decidePre(ev, d, adapter.id, opts);
-    else if (ev.event === 'post_tool') decision = await decidePost(ev, d, adapter.id);
+    else if (ev.event === 'post_tool') decision = await decidePost(ev, d, adapter.id, opts);
     else if (ev.event === 'user_prompt') decision = await decidePrompt(ev, d, adapter.id);
+    else if (ev.event === 'stop') decision = await decideStop(ev, d, adapter.id, opts);
     else if (ev.event === 'prompt_expansion') decision = await decideExpansion(ev, d, adapter.id);
     else decision = { decision: 'allow' };
   } catch (err) {
@@ -697,6 +791,9 @@ async function handle(adapter, rawEvent, opts = {}) {
 function countHook(agentId, ev, decision, opts = {}) {
   try {
     if (!ev || !ev.event || !decision) return;
+    // Codex asks PreToolUse first, then PermissionRequest for the same call when it shows an approval prompt.
+    // The check runs twice but the call is one call: count it at PreToolUse only.
+    if (ev.permissionRequest) return;
     const extra = decision.stats || {};
     const file = opts.home ? path.join(opts.home, '.zn', 'stats.json') : undefined;
     require('../stats').record({
@@ -774,6 +871,11 @@ async function handleEvent(args) {
   try {
     raw = JSON.parse(text);
   } catch (err) {
+    // A Stop event is never blocked here: exit 2 would make Codex continue the answer.
+    if (agentId === 'codex' && /"hook_event_name"\s*:\s*"Stop"/.test(text)) {
+      process.stderr.write('zn hook: could not read this Stop event, so the last answer was not checked\n');
+      return;
+    }
     // Node's parse error quotes part of the input, which can be tool output: never pass it on.
     return refuseInput(agentId, 'the event on stdin is not valid JSON');
   }
@@ -787,7 +889,7 @@ async function handleEvent(args) {
   if (res.output !== null && res.output !== undefined) process.stdout.write(JSON.stringify(res.output));
 }
 
-module.exports = { handle, main, mapStrings, decidePre, decidePost, decidePrompt, decideExpansion };
+module.exports = { handle, main, mapStrings, decidePre, decidePost, decidePrompt, decideExpansion, decideStop };
 
 // Direct entry (`node lib/hooks/runner.js <agent>`): what installed hooks call,
 // so a hook does not pay for loading the rest of the CLI.
