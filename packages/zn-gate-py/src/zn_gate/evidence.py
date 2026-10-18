@@ -171,7 +171,8 @@ def _acquire_lock(lock_path: str, wait: float = LOCK_WAIT) -> str:
     the lock file. The token lets a writer tell its own lock from one taken over after it was
     considered stale: it only releases, and only appends, while the file still holds its token."""
     # NaN, infinity or a negative wait would never time out (or time out at once): use the default.
-    if not (isinstance(wait, (int, float)) and math.isfinite(wait) and wait >= 0):
+    if not (isinstance(wait, (int, float)) and not isinstance(wait, bool)
+            and math.isfinite(wait) and wait >= 0):
         wait = LOCK_WAIT
     deadline = time.monotonic() + wait
     token = f"{os.getpid()}:{secrets.token_hex(8)}"
@@ -184,7 +185,6 @@ def _acquire_lock(lock_path: str, wait: float = LOCK_WAIT) -> str:
                 os.write(fd, token.encode("ascii"))
             finally:
                 os.close(fd)
-            _sweep_stale_leftovers(lock_path)
             return token
         except FileExistsError:
             pass
@@ -235,6 +235,7 @@ def _acquire_lock(lock_path: str, wait: float = LOCK_WAIT) -> str:
                     os.unlink(aside)
                 except OSError:
                     pass
+                _sweep_stale_leftovers(lock_path)
                 continue
         time.sleep(delay + random.random() * delay)
         delay = min(delay * 2, 0.05)
@@ -242,7 +243,7 @@ def _acquire_lock(lock_path: str, wait: float = LOCK_WAIT) -> str:
 
 def _sweep_stale_leftovers(lock_path: str) -> None:
     """Leftovers `<log>.lock.stale-*` only exist when a process died between renaming a stale lock
-    and deleting it. Remove a few old ones each time the lock is taken; errors are ignored."""
+    and deleting it. Remove a few old ones after a stale lock was broken; errors are ignored."""
     try:
         directory = os.path.dirname(lock_path) or "."
         prefix = os.path.basename(lock_path) + ".stale-"
@@ -269,12 +270,20 @@ def _owns_lock(lock_path: str, token: str) -> bool:
 
 def _release_lock(lock_path: str, token: str) -> None:
     # Only remove the lock if it is still ours; after a takeover it belongs to someone else.
-    if not _owns_lock(lock_path, token):
-        return
-    try:
-        os.unlink(lock_path)
-    except OSError:
-        pass  # already gone
+    # If the file is missing it may be renamed aside by a breaker that is about to put it back
+    # (link-back): look again a few times, and delete it if it reappears with our token.
+    for i in range(4):
+        current = _read_lock_token(lock_path)
+        if current == token:
+            try:
+                os.unlink(lock_path)
+            except OSError:
+                pass  # already gone
+            return
+        if current is not None:
+            return
+        if i < 3:
+            time.sleep(0.005)
 
 
 _LONE_SURROGATE = re.compile("[\ud800-\udfff]")
