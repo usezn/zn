@@ -85,7 +85,6 @@ function acquireLock(lockPath, waitMs = LOCK_WAIT_MS) {
     try {
       const fd = fs.openSync(lockPath, 'wx', LEDGER_FILE_MODE);
       try { fs.writeSync(fd, token); } finally { fs.closeSync(fd); }
-      sweepStaleLeftovers(lockPath);
       return token;
     } catch (e) {
       // On Windows a lock that is being deleted answers EPERM/EACCES instead of EEXIST. If the
@@ -123,6 +122,7 @@ function acquireLock(lockPath, waitMs = LOCK_WAIT_MS) {
           try { fs.linkSync(aside, lockPath); } catch { /* a new lock exists: its owner checks its token */ }
         }
         try { fs.unlinkSync(aside); } catch { /* best effort */ }
+        sweepStaleLeftovers(lockPath);
         continue;
       }
     }
@@ -132,7 +132,7 @@ function acquireLock(lockPath, waitMs = LOCK_WAIT_MS) {
 }
 
 // Leftovers `<log>.lock.stale-*` only exist when a process died between renaming a stale lock
-// and deleting it. Remove a few old ones each time the lock is taken; errors are ignored.
+// and deleting it. Remove a few old ones after a stale lock was broken; errors are ignored.
 function sweepStaleLeftovers(lockPath) {
   try {
     const prefix = path.basename(lockPath) + '.stale-';
@@ -155,8 +155,17 @@ function ownsLock(lockPath, token) {
 
 function releaseLock(lockPath, token) {
   // Only remove the lock if it is still ours; after a takeover it belongs to someone else.
-  if (!ownsLock(lockPath, token)) return;
-  try { fs.unlinkSync(lockPath); } catch { /* already gone */ }
+  // If the file is missing it may be renamed aside by a breaker that is about to put it back
+  // (link-back): look again a few times, and delete it if it reappears with our token.
+  for (let i = 0; i < 4; i++) {
+    const current = readLockToken(lockPath);
+    if (current === token) {
+      try { fs.unlinkSync(lockPath); } catch { /* already gone */ }
+      return;
+    }
+    if (current !== null) return;
+    if (i < 3) sleepMs(5);
+  }
 }
 
 // Canonical serialization of a record for hashing. Node writes UTF-8 as is; Python used to
