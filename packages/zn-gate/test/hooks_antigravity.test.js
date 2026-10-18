@@ -267,3 +267,11 @@ test('MCP move calls with source and destination are checked', async () => {
   const r = await run(pre('mcp_filesystem_move_file', { source: path.join(HOME, '.aws', 'credentials'), destination: '/work/proj/x' }));
   assert.equal(r.output.decision, 'deny');
 });
+
+test('a link already on disk: write_to_file through ag/../hooks.json is denied', async (t) => {
+  const dir = tempDir(t, 'zn-agy-link-');
+  fs.mkdirSync(path.join(dir, '.agents', 'skills'), { recursive: true });
+  fs.symlinkSync(path.join('.agents', 'skills'), path.join(dir, 'ag'));
+  const r = await run(pre('write_to_file', { TargetFile: dir + '/ag/../hooks.json', CodeContent: '{}' }, { workspacePaths: [dir] }));
+  assert.equal(r.output.decision, 'deny');
+});

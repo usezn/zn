@@ -98,3 +98,68 @@ test('denied: a glob that expands to the hooks file (the folder exists)', (t) =>
   fs.writeFileSync(path.join(dir, '.agents', 'hooks.json'), '{}');
   assert.match(String(policy.bashDenial('rm .ag*/hooks.json', { cwd: dir })), /protected/);
 });
+
+// A link that is already on disk: ".." is applied to where the link leads, not to the text before it.
+function projectWithLink(t) {
+  const dir = tempDir(t, 'zn-agents-link-');
+  fs.mkdirSync(path.join(dir, '.agents', 'skills'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.agents', 'hooks.json'), '{}');
+  fs.symlinkSync(path.join('.agents', 'skills'), path.join(dir, 'ag'));
+  return dir;
+}
+
+test('denied with a link on disk: .. through the link reaches the hooks file', (t) => {
+  const dir = projectWithLink(t);
+  for (const c of ['rm ag/../hooks.json', 'echo {} > ag/../hooks.json', 'cd ag && rm ../hooks.json', 'cd -P ag/.. && rm hooks.json', 'cd ag; sed -i s/a/b/ ../hooks.json']) {
+    assert.match(String(policy.bashDenial(c, { cwd: dir })), /protected/, c);
+  }
+  assert.ok(policy.writeDenial(dir + '/ag/../hooks.json', { cwd: dir }));
+  assert.ok(policy.classifyPath(dir + '/ag/../hooks.json', { cwd: dir }));
+});
+
+test('allowed with a link on disk: reading, and a plain use of the link', (t) => {
+  const dir = projectWithLink(t);
+  assert.equal(policy.bashDenial('cat ag/../hooks.json', { cwd: dir }), null);
+  assert.equal(policy.bashDenial('git status ag', { cwd: dir }), null);
+  assert.equal(policy.bashDenial('cd ag', { cwd: dir }), null);
+});
+
+test('denied in one command: a link made and used together (no link on disk yet)', () => {
+  for (const c of [
+    'env ln -s .agents/skills ag2 && rm ag2/../hooks.json',
+    'ln -s .agents/skills ag2 && rm ag2/../hooks.json',
+    'sudo ln -s .agents/skills ag2',
+    '/bin/ln -s .agents/skills ag2',
+    'command ln -s .agents/skills ag2',
+    'exec ln -s .agents/skills ag2',
+    'nohup ln -s .agents/skills ag2',
+    'time ln -s .agents/skills ag2',
+    'busybox ln -s .agents/skills ag2',
+    'env -i FOO=1 ln -s .agents/skills ag2',
+    'echo x | xargs ln -s .agents/skills ag2',
+    "cp '-s' .agents/skills ag2",
+    'cp "-r" "-s" .agents/skills ag2',
+    'cp -r a b -s .agents/skills',
+    'gcp -s .agents/skills ag2',
+    'env New-Item -ItemType SymbolicLink -Path ag2 -Target .agents/skills',
+    'touch x && rm ag2/../hooks.json; echo .agents',
+  ]) {
+    assert.match(String(policy.bashDenial(c, OPTS)), /protected/, c);
+  }
+});
+
+test('allowed: link options are read only from their own command', () => {
+  for (const c of [
+    'curl -s https://example.com/x -o y && cp y .agents/skills/y',
+    'ln -s ../shared/x src/x && cp a .agents/skills/a',
+    'cp ../shared/s.md .agents/skills/',
+    'git add .agents/skills/x && cp ../a b',
+    'tar -s x f && mkdir -p .agents/skills/new',
+  ]) {
+    assert.equal(policy.bashDenial(c, OPTS), null, c);
+  }
+});
+
+test('documented limit: a link made by interpreter code is not seen; the link on disk is followed instead', () => {
+  assert.equal(policy.bashDenial("python3 -c \"import os; os.symlink('x', 'y')\"", OPTS), null);
+});
