@@ -534,6 +534,9 @@ def test_lock_that_turns_out_not_to_be_stale_is_put_back(tmp_path, capsys, monke
 def test_old_leftovers_of_broken_locks_are_cleaned_and_recent_ones_kept(tmp_path):
     p = _ledger(tmp_path, n=1)
     old = time.time() - 60
+    with open(p + ".lock", "w") as f:
+        f.write("1:crashed")
+    os.utime(p + ".lock", (old, old))
     for name in ("old", "new"):
         with open(p + ".lock.stale-" + name, "w") as f:
             f.write("x")
@@ -541,6 +544,43 @@ def test_old_leftovers_of_broken_locks_are_cleaned_and_recent_ones_kept(tmp_path
     assert log_evidence({"payload": "x"}, file_path=p)
     assert not os.path.exists(p + ".lock.stale-old")
     assert os.path.exists(p + ".lock.stale-new")
+
+
+def test_lock_put_back_by_a_breaker_after_its_owner_released_is_not_left_behind(tmp_path, capsys, monkeypatch):
+    p = _ledger(tmp_path, n=1)
+    lock = p + ".lock"
+    aside = lock + ".stale-9-zz"
+    real_read = evidence._read_lock_token
+    reads = []
+
+    def read(path):
+        # The owner's lock is renamed aside before its write (a breaker took it), so the owner
+        # finds no lock when it checks and when it releases; right after the release first
+        # looks, the breaker links the lock back.
+        reads.append(path)
+        if len(reads) == 1:
+            os.rename(lock, aside)
+        result = real_read(path)
+        if len(reads) == 2:
+            os.link(aside, lock)
+            os.unlink(aside)
+        return result
+
+    monkeypatch.setattr(evidence, "_read_lock_token", read)
+    assert log_evidence({"payload": "x"}, file_path=p) is None
+    monkeypatch.setattr(evidence, "_read_lock_token", real_read)
+    assert len(reads) >= 3
+    assert [n for n in os.listdir(tmp_path) if ".lock" in n] == []
+
+
+@pytest.mark.parametrize("bad", [True, False])
+def test_lock_wait_that_is_a_bool_falls_back_to_the_default(tmp_path, bad):
+    p = _ledger(tmp_path, n=1)
+    with open(p + ".lock", "w") as f:
+        f.write("4242:other")
+    t0 = time.monotonic()
+    assert log_evidence({"payload": "x"}, file_path=p, lock_wait=bad) is None
+    assert 1.5 <= time.monotonic() - t0 < 6
 
 
 @pytest.mark.parametrize("bad", [float("nan"), float("inf"), -1.0])

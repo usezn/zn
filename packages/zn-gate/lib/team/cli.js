@@ -114,6 +114,7 @@ async function leaveCmd() {
 async function runTeamCommand(args) {
   try {
     const sub = args[1];
+    if (args.slice(1).some((a) => a === '-h' || a === '--help')) { out(USAGE); return 0; }
     if (sub === 'join') return await joinCmd(args);
     if (sub === 'status' || sub === undefined) return await statusCmd(args);
     if (sub === 'sync') return await syncCmd();
