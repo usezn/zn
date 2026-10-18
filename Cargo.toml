@@ -50,7 +50,7 @@ crossbeam-channel = "0.5"
 walkdir = "2.4"
 tempfile = "3.27"
 aes-gcm = "0.11"
-argon2 = "0.5"
+argon2 = "0.6"
 base64 = "0.22"
 ed25519-dalek = "3.0"
 opentelemetry = { version = "0.33", features = ["trace"] }
