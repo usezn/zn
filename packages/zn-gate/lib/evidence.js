@@ -6,6 +6,7 @@ const os = require('os');
 const crypto = require('crypto');
 const http = require('http');
 const { redactSecrets } = require('./rules');
+const { sym } = require('./term');
 
 const ZN_DIR = path.join(os.homedir(), '.zn');
 const EVIDENCE_FILE = path.join(ZN_DIR, 'evidence.jsonl');
@@ -852,9 +853,10 @@ function startEvidenceUi(port = 3100, filePath = EVIDENCE_FILE) {
   });
 
   // Loopback only: the ledger must not be reachable from the network.
+  const banner = sym(process.env, '🛡️', null, '  ');
   server.listen(port, '127.0.0.1', () => {
     process.stdout.write(`
-🛡️  zn Evidence Engine Dashboard running at http://127.0.0.1:${server.address().port}
+${banner}zn Evidence Engine Dashboard running at http://127.0.0.1:${server.address().port}
 Ledger location: ${filePath}
 Press Ctrl+C to stop dashboard.
 \n`);

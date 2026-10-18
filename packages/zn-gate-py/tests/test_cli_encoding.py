@@ -26,6 +26,9 @@ def _run_cli(args, encoding):
     env["PYTHONUTF8"] = "0"
     env["PYTHONPATH"] = SRC + os.pathsep + env.get("PYTHONPATH", "")
     env.pop("ZN_CLOUD", None)
+    # These cases check the symbol markers, so the child must not inherit a plain-text request.
+    env.pop("NO_COLOR", None)
+    env.pop("TERM", None)
     return subprocess.run(
         [sys.executable, "-m", "zn_gate.cli"] + args,
         capture_output=True, env=env, timeout=60,
