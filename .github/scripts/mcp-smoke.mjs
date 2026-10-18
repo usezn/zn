@@ -5,6 +5,8 @@ import { spawn } from 'node:child_process';
 
 const EXPECTED_TOOLS = ['analyze_prompt', 'check_tool_call', 'check_tool_result', 'zn_status'];
 const TIMEOUT_MS = 30_000;
+// Protocol version sent in initialize. Set MCP_SMOKE_PROTOCOL to test another version (the workflow runs both).
+const PROTOCOL = process.env.MCP_SMOKE_PROTOCOL || '2024-11-05';
 const [cmd, ...args] = process.argv.length > 2 ? process.argv.slice(2) : ['zn-gate', 'mcp'];
 
 const child = spawn(cmd, args, {
@@ -50,7 +52,7 @@ child.stdout.on('data', (chunk) => {
     } else if (msg.id === 2) {
       const names = ((msg.result && msg.result.tools) || []).map((t) => t.name).sort();
       const want = [...EXPECTED_TOOLS].sort();
-      if (JSON.stringify(names) !== JSON.stringify(want)) return finish(1, `FAIL: tools ${JSON.stringify(names)} != expected ${JSON.stringify(want)}`);
+      if (JSON.stringify(names) !== JSON.stringify(want)) return finish(1, `FAIL: tools ${JSON.stringify(names)} != expected ${JSON.stringify(want)}. If the change is intended, update EXPECTED_TOOLS and every public surface that lists the tools (README, MCP Registry, Glama, same release cycle).`);
       return finish(0, `PASS: tools/list returned ${names.length} tools: ${names.join(', ')}`);
     }
   }
@@ -59,5 +61,5 @@ child.stdout.on('data', (chunk) => {
 send({
   id: 1,
   method: 'initialize',
-  params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'mcp-smoke', version: '1.0.0' } },
+  params: { protocolVersion: PROTOCOL, capabilities: {}, clientInfo: { name: 'mcp-smoke', version: '1.0.0' } },
 });
