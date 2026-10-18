@@ -4,6 +4,7 @@ const https = require('https');
 const http = require('http');
 const { URL } = require('url');
 const { evaluate, redactSecrets, sanitizeToolResult, RULES_VERSION } = require('./rules');
+const localModel = require('./local-model');
 let PKG_VERSION = '1.6.0';
 try {
   PKG_VERSION = require('../package.json').version || '1.6.0';
@@ -23,6 +24,8 @@ try {
  *    redactSecrets() before the request is built. `connect` and `disconnect`
  *    (lib/connect-cli.js) are the only other code that contacts the network
  *    here, only on the person's command, and only to https://api.usezn.com.
+ *  - With ZN_LOCAL_MODEL=1 the prompt check runs on the device (lib/local-model.js);
+ *    that module only touches the network in an explicit model download.
  */
 
 const FIXED_API_ORIGIN = 'https://api.usezn.com';
@@ -170,6 +173,17 @@ function analyzeLocal(input, options = {}) {
  * locally before it is sent.
  */
 async function analyze(input, options = {}) {
+  if (!localModel.isEnabled(options)) return analyzeRulesAndCloud(input, options);
+  // Optional on-device model (ZN_LOCAL_MODEL=1): runs after the rules, sends nothing, and replaces the cloud check.
+  const rules = evaluate(input, options);
+  if (rules.verdict === 'block') return { ...rules, mode: 'hybrid-local-fastpath' };
+  const m = await localModel.analyze(input, options);
+  if (m.ready) return { ...m.result, rules_version: RULES_VERSION };
+  const res = await analyzeRulesAndCloud(input, options);
+  return { ...res, local_model_unavailable: m.reason };
+}
+
+async function analyzeRulesAndCloud(input, options = {}) {
   const local = evaluate(input, options);
   if (local.verdict === 'block') {
     return {
