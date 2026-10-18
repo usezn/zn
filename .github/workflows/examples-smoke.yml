@@ -1,0 +1,54 @@
+name: Examples smoke
+
+# Installs each Python example from its requirements.txt, then runs its agent_guard.py offline (network
+# namespace with no interface, no API keys). An example that needs a zn-gate release that is not out yet has
+# examples/<name>/.requires-next and runs against this repository's package; the job prints a notice for it.
+# The marker must be removed once the pin reaches its release (the job fails until then).
+on:
+  push:
+    branches: [ main, next ]
+    paths:
+      - 'examples/**'
+      - 'packages/zn-gate-py/**'
+      - '.github/scripts/examples-smoke*'
+      - '.github/workflows/examples-smoke.yml'
+  pull_request:
+    branches: [ next, main, 'release/**' ]
+    paths:
+      - 'examples/**'
+      - 'packages/zn-gate-py/**'
+      - '.github/scripts/examples-smoke*'
+      - '.github/workflows/examples-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: examples-smoke-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Examples smoke (python 3.12)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            examples/*/requirements.txt
+            packages/zn-gate-py/pyproject.toml
+      - name: Check the requires-next markers
+        run: python3 .github/scripts/examples-smoke.py markers
+      - name: Install and run the examples offline
+        run: python3 .github/scripts/examples-smoke.py run --netns
