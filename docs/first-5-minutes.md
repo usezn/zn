@@ -108,6 +108,7 @@ For comparison, `npx -y zn-gate analyze "ignore all previous instructions"` is a
 - `init` only prints steps and changes nothing: an AI agent or a script ran it. Run it yourself in your own terminal.
 - `check` says `NOT protected`: the line says what to run.
 - zn blocked something you need: use `npx -y zn-gate env shadow .env` for secrets, or ask in [Discussions](https://github.com/usezn/zn/discussions).
+- Another message? The [troubleshooting guide](troubleshooting.md) explains the ten most common ones.
 
 ## Remove zn-gate
 

@@ -22,6 +22,7 @@ const { effective, approvalKey } = require('./effective');
 const { createApi, checkBase } = require('./api');
 const { uploadPending } = require('./upload');
 const { CODES, znError } = require('../errors');
+const messages = require('../messages');
 const { INVISIBLE } = require('../vault/confirm');
 
 const VERSION = require('../../package.json').version;
@@ -90,7 +91,7 @@ function makeTeamOps(ctx) {
     async teamJoin(args) {
       const a = args && typeof args === 'object' ? args : {};
       const joinToken = String(a.join_token || '');
-      if (!JOIN_TOKEN_RE.test(joinToken)) throw znError(CODES.POLICY_DENIED, 'invalid join token (expected znj_...)');
+      if (!JOIN_TOKEN_RE.test(joinToken)) throw znError(CODES.POLICY_DENIED, messages.TEAM_INVALID_JOIN_TOKEN);
       let base;
       try { base = checkBase(a.api_base || DEFAULT_API); } catch (err) { throw znError(CODES.POLICY_DENIED, 'invalid API address: ' + String(err.message).slice(0, 120)); }
       const agent = a.agent && AGENT_RE.test(String(a.agent)) ? String(a.agent) : undefined;
@@ -106,9 +107,9 @@ function makeTeamOps(ctx) {
       const pv = base === DEFAULT_API ? await api.preview(joinToken) : { ok: false, reason: 'unavailable', detail: 'not checked on a server other than api.usezn.com' };
       if (!pv.ok && (pv.reason === 'invalid' || pv.reason === 'no_subscription')) {
         writeAudit({ mode: 'set', decision: 'deny', reason: 'team_join_failed' });
-        throw znError(CODES.POLICY_DENIED, pv.reason === 'invalid'
-          ? 'join failed (this join token is invalid, expired or used up; ask your administrator for a new one)'
-          : 'join failed (this organization has no active Team subscription)');
+        throw znError(CODES.POLICY_DENIED, messages.teamJoinFailed(pv.reason === 'invalid'
+          ? 'this join token is invalid, expired or used up; ask your administrator for a new one'
+          : 'this organization has no active Team subscription'));
       }
       const previewOrg = pv.ok ? printable(pv.org_name, 100) || null : null;
       const previewBy = pv.ok ? printable(pv.invited_by, 60) || null : null;
@@ -143,10 +144,10 @@ function makeTeamOps(ctx) {
       } catch (err) {
         const why = err && err.status ? 'HTTP ' + err.status + (err.body && err.body.error ? ': ' + printable(String(err.body.error), 160) : '') : (err && err.code) || 'network error';
         writeAudit({ mode: 'set', decision: 'deny', reason: 'team_join_failed' });
-        throw znError(CODES.POLICY_DENIED, 'join failed (' + why + ')');
+        throw znError(CODES.POLICY_DENIED, messages.teamJoinFailed(why));
       }
       if (current && res.org !== current.org) throw znError(CODES.POLICY_DENIED, 'the token is for another organization; run `zn team leave` first');
-      if (!policy.checkPin(res.policy_public_key)) throw znError(CODES.POLICY_DENIED, 'the server sent an invalid organization key');
+      if (!policy.checkPin(res.policy_public_key)) throw znError(CODES.POLICY_DENIED, messages.TEAM_INVALID_ORG_KEY);
       if (current && current.pin.kid !== res.policy_public_key.kid) throw znError(CODES.POLICY_DENIED, "the organization's signing key changed; run `zn team leave` and join again to accept the new key");
       const orgName = printable(res.org_name, 100) || null;
       // The organization joined must be the one shown in the dialog.
@@ -273,14 +274,14 @@ function makeTeamOps(ctx) {
      */
     async confirmOrgOpening(secret, kind, value, agent, agentTrusted) {
       const name = String(secret || '');
-      if (!NAME_RE.test(name) || kind !== 'host' || typeof value !== 'string' || value.length > 253) throw znError(CODES.POLICY_DENIED, 'invalid request');
+      if (!NAME_RE.test(name) || kind !== 'host' || typeof value !== 'string' || value.length > 253) throw znError(CODES.POLICY_DENIED, messages.TEAM_INVALID_REQUEST);
       const t = await team();
       const st = await policyState();
       const secrets = await state.loadSecrets();
       const local = secrets.secrets[name];
-      if (!t || !local) throw znError(CODES.NOT_FOUND, 'nothing to approve');
+      if (!t || !local) throw znError(CODES.NOT_FOUND, messages.TEAM_NOTHING_TO_APPROVE);
       const eff = effective(name, local, { policy: st.policy, state: st.state, org: t.org, agent: agent || null, agentTrusted: agentTrusted === true, approvals: secrets.orgApprovals });
-      if (!eff.pending.some((p) => p.kind === kind && p.value === value)) throw znError(CODES.POLICY_DENIED, 'the organization policy does not ask for this');
+      if (!eff.pending.some((p) => p.kind === kind && p.value === value)) throw znError(CODES.POLICY_DENIED, messages.TEAM_NOT_ASKED);
       const warnings = ["Your organization's policy (version " + st.version + ') allows this, but this machine never did. It applies only after you approve it here.'];
       if (value.startsWith('*.')) warnings.push('This is a wildcard: it allows every host that ends in ' + value.slice(1) + ', not only the one being used now.');
       await confirmOutOfBand({
