@@ -509,7 +509,7 @@ fn random_nonce_bytes() -> [u8; NONCE_LEN] {
 
 /// Build a nonce from stored bytes. Returns `None` when the length is not 12
 /// instead of panicking.
-fn nonce_from_bytes(bytes: &[u8]) -> Option<Nonce> {
+fn nonce_from_bytes(bytes: &[u8]) -> Option<aes_gcm::aead::Nonce<Aes256Gcm>> {
     <[u8; NONCE_LEN]>::try_from(bytes).ok().map(Nonce::from)
 }
 
