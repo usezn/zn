@@ -91,6 +91,44 @@ With `format: sarif` and the upload step, the findings appear in your repository
 
 Code scanning needs a public repository, or GitHub Code Security on a private one. Without it, use `format: github` (the default): the findings show as annotations in the workflow run and on the pull request, and no `security-events` permission is needed.
 
+## Warn without failing the build
+
+To see the findings on a pull request without blocking it, set `fail-on-threat: 'false'`. The step then ends green even when something is found, and with the default `format: github` each finding shows as an annotation in the workflow run and on the changed lines of the pull request.
+
+```yaml
+name: AI agent config audit (warn only)
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  zn-gate-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Audit agent configs (report only)
+        uses: usezn/zn@003a95ae7ef63c22b969496422131a49fa107f8d # v1.12.0
+        with:
+          version: '1.12.0'
+          mode: audit
+          format: github
+          fail-on-threat: 'false'
+```
+
+Set `version` to the same release as the pinned Action. In 1.12.0 the Action's own default is out of date, so do not rely on it.
+
+Notes:
+
+- The Action does not write a job summary. The annotations and the log of the run are where the findings appear.
+- To keep a list of findings instead, use `format: sarif` with the upload step from the [minimal workflow](#minimal-workflow) and keep `fail-on-threat: 'false'`. They appear as alerts under **Security** > **Code scanning**.
+- In report-only mode the exit codes stay `0`, so do not use `audit-exit-code` or `scan-exit-code` to detect findings.
+- When you are ready to block, remove `fail-on-threat` (the default is `true`, which fails on findings at or above `severity-threshold`, `high` by default), or set `fail-on` to the lowest severity that should fail.
+
 ## Badge
 
 Show that the check runs, with the status badge of your own workflow (replace `OWNER`, `REPO` and the file name):
