@@ -35,6 +35,12 @@
  *    check denies. "allow" is never sent (it would skip the approval prompt),
  *    nor updatedInput, updatedPermissions or interrupt (they fail closed).
  *    Anything else: no output, and the approval prompt stays.
+ *  Stop (no matcher; runs after each final answer): stdin has
+ *    last_assistant_message and stop_hook_active. zn warns with systemMessage,
+ *    which Codex shows to you and the model does not see. With
+ *    "hooks": {"stopReview": "block"} in ~/.zn/config.json, zn returns
+ *    {decision: "block", reason}: Codex then continues with the reason as a
+ *    new prompt. zn never blocks when stop_hook_active is true.
  *  Exit 0 with no output: no opinion; Codex's own approval policy applies.
  *
  * What that means here (docs/compat.md):
@@ -183,10 +189,21 @@ function secretsServerCommand(env, cwd) {
 function normalize(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const name = raw.hook_event_name;
-  const event = name === 'PreToolUse' || name === 'PermissionRequest' ? 'pre_tool' : name === 'PostToolUse' ? 'post_tool' : name === 'UserPromptSubmit' ? 'user_prompt' : null;
+  const event = name === 'PreToolUse' || name === 'PermissionRequest' ? 'pre_tool' : name === 'PostToolUse' ? 'post_tool' : name === 'UserPromptSubmit' ? 'user_prompt' : name === 'Stop' ? 'stop' : null;
   // PermissionRequest is checked by the same policy as PreToolUse; respond() answers it with deny only.
   const base = { event, permissionRequest: name === 'PermissionRequest', cwd: raw.cwd || process.cwd(), sessionId: raw.session_id || null, raw };
   if (event === 'user_prompt') return { ...base, tool: null, input: { prompt: typeof raw.prompt === 'string' ? raw.prompt : '' } };
+  if (event === 'stop') {
+    return {
+      ...base,
+      tool: null,
+      input: {
+        message: typeof raw.last_assistant_message === 'string' ? raw.last_assistant_message : '',
+        stopHookActive: raw.stop_hook_active === true,
+        transcriptPath: typeof raw.transcript_path === 'string' ? raw.transcript_path : null,
+      },
+    };
+  }
   if (!event) return base;
   const toolName = String(raw.tool_name || '');
   const mcp = /^mcp__(.+?)__(.+)$/.exec(toolName);
@@ -263,6 +280,11 @@ function respond(d) {
     return null;
   }
   if (ev.event === 'user_prompt' && d.decision === 'deny') return { decision: 'block', reason: d.message || 'Blocked by zn' };
+  if (ev.event === 'stop') {
+    // Only "block" is a decision; a warning is shown to the user as systemMessage.
+    if (d.decision === 'deny') return { decision: 'block', reason: d.message || 'zn: rewrite the last answer without the secret value' };
+    return d.notice ? { systemMessage: d.notice } : null;
+  }
   return null;
 }
 
@@ -313,6 +335,8 @@ function install(opts = {}) {
     PermissionRequest: { matcher: PRE_MATCHER, hooks: [h] },
     PostToolUse: { matcher: POST_MATCHER, hooks: [h] },
     UserPromptSubmit: { hooks: [h] },
+    // Stop ignores matchers in Codex; the group has none.
+    Stop: { hooks: [h] },
   };
   for (const [event, group] of Object.entries(ours)) {
     data.hooks[event] = strip(data.hooks[event]);

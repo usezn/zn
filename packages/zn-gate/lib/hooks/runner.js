@@ -191,8 +191,30 @@ async function decidePre(ev, d, agentId, opts) {
   const tool = ev.tool;
 
   if (tool === 'read' || tool === 'lsp' || (tool === 'grep' && input.path)) {
-    const deny = policy.readDenial(input.path, pathOpts);
-    if (deny) return { decision: 'deny', message: deny };
+    // An adapter that finds several paths in one call lists them all in input.paths.
+    for (const p of Array.isArray(input.paths) && input.paths.length ? input.paths : [input.path]) {
+      const deny = policy.readDenial(p, pathOpts);
+      if (deny) return { decision: 'deny', message: deny };
+    }
+  }
+  if (tool === 'grep' && input.scanDir) {
+    // A search over a folder (or with no path) prints matching lines, and an agent that cannot redact that
+    // output would show a plain-text secret to the model: ask when the folder holds a .env or a key file.
+    let names = [];
+    try { names = fs.readdirSync(input.scanDir).slice(0, 5000); } catch (_) { names = []; }
+    for (const n of names) {
+      if (policy.readDenial(path.join(input.scanDir, n), pathOpts)) {
+        return { decision: 'ask', message: 'zn: this search covers a folder that holds ' + n + ', which has plain-text secrets, and matching lines are not hidden in this agent. Approve only if the search must include it, or name a narrower path.' };
+      }
+    }
+  }
+  if (tool === 'fileaccess') {
+    // A tool zn does not know that names files: every path gets the read and the write checks.
+    for (const p of Array.isArray(input.paths) ? input.paths : []) {
+      const deny = policy.readDenial(p, pathOpts) || policy.writeDenial(p, pathOpts);
+      if (deny) return { decision: 'deny', message: deny };
+    }
+    return { decision: 'allow' };
   }
   if (tool === 'write' || tool === 'edit' || tool === 'multiedit' || tool === 'notebookedit') {
     // A patch can touch several files: every one is checked, not only the first.
@@ -218,6 +240,13 @@ async function decidePre(ev, d, agentId, opts) {
   }
 
   if (tool === 'monitor') return decideMonitor(ev, pathOpts, opts);
+  if (tool === 'mcp' && Array.isArray(input.paths)) {
+    // An MCP tool that takes a file path (a filesystem server): its output cannot be redacted in every agent.
+    for (const p of input.paths) {
+      const deny = policy.readDenial(p, pathOpts) || policy.writeDenial(p, pathOpts);
+      if (deny) return { decision: 'deny', message: deny };
+    }
+  }
   if (tool === 'mcp' && ev.input && ev.input.args !== undefined) return decideMcp(ev, d, agentId);
 
   if (SHELL_TOOLS.has(tool)) {
@@ -634,9 +663,77 @@ function suggestedName(span) {
   return t && !GENERIC_TYPES.has(t) ? t : 'MY_SECRET';
 }
 
+/* ------------------------------- stop ------------------------------ */
+
+// Codex's Stop hook reads the model's final answer. Default: a warning only.
+// "hooks": {"stopReview": "block"} in ~/.zn/config.json asks the agent to
+// rewrite it. zn never blocks when the agent already continues because of a
+// Stop hook (stopHookActive), so the check cannot loop.
+const STOP_TRANSCRIPT_CAP = 64 * 1024 * 1024;
+
+function stopReviewMode(opts) {
+  const hooks = readConfig(opts.home).hooks || {};
+  return String(hooks.stopReview || '').toLowerCase() === 'block' ? 'block' : 'warn';
+}
+
+// Markers in the answer that appear nowhere else in the transcript (no prompt,
+// no tool output, no earlier message). The answer itself is counted out. An
+// unreadable or very large transcript skips this check. A marker repeated in
+// an answer whose transcript lacks that answer can be reported falsely.
+function unseenMarkers(message, transcriptPath) {
+  const found = markers.findMarkers(message).map((m) => m.marker);
+  if (found.length === 0 || !transcriptPath) return [];
+  let text;
+  try {
+    if (fs.statSync(transcriptPath).size > STOP_TRANSCRIPT_CAP) return [];
+    text = fs.readFileSync(transcriptPath, 'utf8');
+  } catch (_) {
+    return [];
+  }
+  const count = (s, needle) => s.split(needle).length - 1;
+  return found.filter((m) => count(text, m) - count(message, m) <= 0);
+}
+
+async function decideStop(ev, d, agentId, opts) {
+  const message = String((ev.input && ev.input.message) || '');
+  const stopHookActive = Boolean(ev.input && ev.input.stopHookActive);
+  const kinds = new Set();
+  if (message.length >= 8) {
+    const engine = d.engine();
+    let ctx = await ctxFor(ev, d, agentId, 'assistant');
+    if (typeof engine.prepare === 'function') ctx = await engine.prepare(ctx);
+    for (const span of engine.scan(message, ctx) || []) {
+      if (SECRET_SOURCES.has(span.source)) kinds.add(kindLabel(span.type));
+    }
+  }
+  const stray = unseenMarkers(message, ev.input && ev.input.transcriptPath);
+  if (kinds.size === 0 && stray.length === 0) return { decision: 'allow' };
+  const found = [
+    ...(kinds.size ? ['a secret value (' + [...kinds].join(', ') + ')'] : []),
+    ...(stray.length ? ['a placeholder zn did not see earlier in this session (' + stray.join(', ') + ')'] : []),
+  ].join(' and ');
+  if (stopReviewMode(opts) === 'block' && !stopHookActive) {
+    return {
+      decision: 'deny',
+      message: 'zn: your last answer contains ' + found + '. Rewrite it without that value or placeholder: ' +
+        'do not repeat the value, and refer to a stored secret only by a placeholder that you got from a tool or from the user.',
+      notice: 'zn: the last answer contains ' + found + '. zn asked the agent to rewrite it.',
+    };
+  }
+  const notice = stopHookActive
+    ? 'zn: the last answer still contains ' + found + '. zn does not block a second time, so check it before you share it.'
+    : 'zn: the last answer contains ' + found + '. zn did not stop it. To have zn ask the agent to rewrite such answers, ' +
+      'set "stopReview" to "block" under "hooks" in ~/.zn/config.json.';
+  return { decision: 'ask', notice };
+}
+
 /* ------------------------------ entry ----------------------------- */
 
 function failDecision(ev, err, mode) {
+  // A Stop check never blocks because zn failed: that could keep the agent going.
+  if (ev && ev.event === 'stop') {
+    return { decision: 'ask', failOpen: true, notice: 'zn: could not check the last answer for secrets' + (err && err.code ? ' (' + err.code + ')' : '') + '.' };
+  }
   const missing = err.code === 'ZN_UNAVAILABLE';
   const detail = missing ? '' : ' (' + (err.code ? err.code + ': ' : '') + String(err.message || 'unknown error') + ')';
   const msg = 'zn: ' + (missing ? REINSTALL : HOOK_FAILED) + detail;
@@ -676,6 +773,7 @@ async function handle(adapter, rawEvent, opts = {}) {
     else if (ev.event === 'pre_tool') decision = await decidePre(ev, d, adapter.id, opts);
     else if (ev.event === 'post_tool') decision = await decidePost(ev, d, adapter.id, opts);
     else if (ev.event === 'user_prompt') decision = await decidePrompt(ev, d, adapter.id);
+    else if (ev.event === 'stop') decision = await decideStop(ev, d, adapter.id, opts);
     else if (ev.event === 'prompt_expansion') decision = await decideExpansion(ev, d, adapter.id);
     else decision = { decision: 'allow' };
   } catch (err) {
@@ -693,6 +791,9 @@ async function handle(adapter, rawEvent, opts = {}) {
 function countHook(agentId, ev, decision, opts = {}) {
   try {
     if (!ev || !ev.event || !decision) return;
+    // Codex asks PreToolUse first, then PermissionRequest for the same call when it shows an approval prompt.
+    // The check runs twice but the call is one call: count it at PreToolUse only.
+    if (ev.permissionRequest) return;
     const extra = decision.stats || {};
     const file = opts.home ? path.join(opts.home, '.zn', 'stats.json') : undefined;
     require('../stats').record({
@@ -738,6 +839,8 @@ function refuseInput(agentId, why) {
     'If it happens again, ask the user to run `' + znCommand('hooks install') + '`.';
   process.stderr.write('zn hook: ' + msg + '\n');
   if (agentId === 'cursor') process.stdout.write(JSON.stringify({ permission: 'deny', continue: false, user_message: msg, agent_message: msg }));
+  // Antigravity does not document its exit codes, so its deny answer is printed as well.
+  if (agentId === 'antigravity') process.stdout.write(JSON.stringify({ decision: 'deny', reason: msg }));
   process.exitCode = 2;
 }
 
@@ -768,6 +871,11 @@ async function handleEvent(args) {
   try {
     raw = JSON.parse(text);
   } catch (err) {
+    // A Stop event is never blocked here: exit 2 would make Codex continue the answer.
+    if (agentId === 'codex' && /"hook_event_name"\s*:\s*"Stop"/.test(text)) {
+      process.stderr.write('zn hook: could not read this Stop event, so the last answer was not checked\n');
+      return;
+    }
     // Node's parse error quotes part of the input, which can be tool output: never pass it on.
     return refuseInput(agentId, 'the event on stdin is not valid JSON');
   }
@@ -781,7 +889,7 @@ async function handleEvent(args) {
   if (res.output !== null && res.output !== undefined) process.stdout.write(JSON.stringify(res.output));
 }
 
-module.exports = { handle, main, mapStrings, decidePre, decidePost, decidePrompt, decideExpansion };
+module.exports = { handle, main, mapStrings, decidePre, decidePost, decidePrompt, decideExpansion, decideStop };
 
 // Direct entry (`node lib/hooks/runner.js <agent>`): what installed hooks call,
 // so a hook does not pay for loading the rest of the CLI.
