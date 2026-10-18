@@ -53,7 +53,7 @@ safe_fetch_page = guarded_tool(on_block="return", check_result=True, mask_secret
 - `on_block="return"` makes a blocked page come back as the notice above, so the agent can carry on and tell the person what happened. Use `on_block="raise"` if you prefer an error: it raises `GuardBlockError`.
 - `mask_secrets=True` hides keys and passwords in the output.
 
-The tool is synchronous. An `async def` tool is not checked by `guarded_tool`, so use a regular `def` for tools that read pages.
+The tool is synchronous. `guarded_tool` also works on `async def` tools: the call is awaited and the output gets the same check.
 
 To give the tool to an agent: `Agent(role="Researcher", goal="...", backstory="...", tools=[build_crewai_tool()])`.
 
