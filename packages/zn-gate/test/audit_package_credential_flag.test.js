@@ -115,7 +115,7 @@ test('packagesOf: the newer credential flags do not hide the package', () => {
 
 test('packagesOf: flags that only look like credential flags are not treated as one', () => {
   // These take no value, or are not credentials: the word after them is the package.
-  for (const flag of ['--pass-through', '--keys-only', '--bypass', '--compass', '--keep', '--cookies-from', '--passenger', '--license', '-t', '-k', '--keystore-type']) {
+  for (const flag of ['--pass-through', '--pass_through', '--keys-only', '--bypass', '--compass', '--keep', '--cookies-from', '--passenger', '--license', '-t', '-k', '--keystore-type']) {
     assert.equal(P.isCredentialFlag(flag), false, flag);
     const pk = P.packagesOf(['npx', flag, 'some-pkg']);
     assert.equal(pk.length, 1, flag);
@@ -137,7 +137,15 @@ const CONFIG2 = `{"mcpServers": {
   "i": {"command": "npx --bearer ${V(29)} --jwt ${V(30)} pkg-i"},
   "j": {"command": "npx --cookie=${V(31)} pkg-j"},
   "k": {"command": "npx", "args": ["--pass-through", "pkg-k"]},
-  "l": {"command": "npx", "args": ["--keys-only", "pkg-l"]}
+  "l": {"command": "npx", "args": ["--keys-only", "pkg-l"]},
+  "m": {"command": "npx", "args": ["--access-tokens", "${V(32)}", "pkg-m"]},
+  "n": {"command": "npx", "args": ["--user_pass", "${V(33)}", "pkg-n"]},
+  "o": {"command": "npx", "args": ["--api-keys", "${V(34)}", "pkg-o"]},
+  "p": {"command": "npx", "args": ["--my_jwt", "${V(35)}", "pkg-p"]},
+  "q": {"command": "npx", "args": ["--user_pass=${V(36)}", "pkg-q"]},
+  "r": {"command": "npx --session-cookie ${V(37)} pkg-r"},
+  "s": {"command": "npx --user_pass ${V(38)} pkg-s"},
+  "u": {"command": "npx", "args": ["--pass_through", "pkg-u"]}
 }}
 `;
 
@@ -151,7 +159,7 @@ test('audit: the newer credential flags never print their value', (t) => {
     assert.ok(!out.includes('fake-value'), 'a value after a credential flag was printed');
   }
   const found = JSON.parse(json).findings.filter((f) => f.id === 'ZNA005').map((f) => f.detail);
-  for (const name of ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l']) {
+  for (const name of ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 'u']) {
     assert.ok(found.some((d) => d.includes('"' + name + '" runs pkg-' + name + ' through npx')), 'package of ' + name + ': ' + found.join(' | '));
   }
   // The server command in ZNA003 hides the value too, and still shows the flags that take no value.

@@ -97,8 +97,10 @@ function pinnedNpm(version) {
 // --bypass or --compass must not count. --pass-through and --keys-only take no value, so they do not count.
 // Not included on purpose: --license (usually a name such as MIT, or a file) and the short flags -t and -k
 // (tag or tty, insecure for curl), which mean something else in many tools.
-const CRED_FLAG_ONLY = '(?:bearer|pass|tokens|keys|jwt|cookie)(?![a-z])(?!-?(?:through|only)(?![a-z]))';
-const CRED_FLAG_RE = new RegExp('^--?(?:\\/\\/[^\\s=]{1,200}:)?(?:[A-Za-z0-9_-]{0,40}(?:token|secret|passw(?:or)?d|passphrase|pwd|api[-_]?key|access[-_]?key|private[-_]?key|auth|credentials?|pat|key)(?![a-z])[A-Za-z0-9_-]{0,40}|(?:[A-Za-z0-9_-]{0,40}[-_])?' + CRED_FLAG_ONLY + '[A-Za-z0-9_-]{0,40})$', 'i');
+const CRED_FLAG_ONLY = '(?:bearer|pass|tokens|keys|jwt|cookie)(?![a-z])(?![-_]?(?:through|only)(?![a-z]))';
+// The same with an optional prefix: --access-tokens, --user_pass, --my_jwt.
+const CRED_FLAG_NAME = '(?:[A-Za-z0-9_-]{0,40}[-_])?' + CRED_FLAG_ONLY;
+const CRED_FLAG_RE = new RegExp('^--?(?:\\/\\/[^\\s=]{1,200}:)?(?:[A-Za-z0-9_-]{0,40}(?:token|secret|passw(?:or)?d|passphrase|pwd|api[-_]?key|access[-_]?key|private[-_]?key|auth|credentials?|pat|key)(?![a-z])[A-Za-z0-9_-]{0,40}|' + CRED_FLAG_NAME + '[A-Za-z0-9_-]{0,40})$', 'i');
 function isCredentialFlag(w) {
   return CRED_FLAG_RE.test(w) && !/^--(?:no|skip|disable|without)-/i.test(w);
 }
@@ -351,6 +353,7 @@ const WINDOWS_EXEC_EXT = new Set(['.exe', '.com', '.bat', '.cmd', '.ps1', '.vbs'
 module.exports = {
   MAX_LINE,
   CRED_FLAG_ONLY,
+  CRED_FLAG_NAME,
   isCredentialFlag,
   downloadAndRun,
   splitCommand,
