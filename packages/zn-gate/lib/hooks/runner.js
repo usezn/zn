@@ -697,6 +697,9 @@ async function handle(adapter, rawEvent, opts = {}) {
 function countHook(agentId, ev, decision, opts = {}) {
   try {
     if (!ev || !ev.event || !decision) return;
+    // Codex asks PreToolUse first, then PermissionRequest for the same call when it shows an approval prompt.
+    // The check runs twice but the call is one call: count it at PreToolUse only.
+    if (ev.permissionRequest) return;
     const extra = decision.stats || {};
     const file = opts.home ? path.join(opts.home, '.zn', 'stats.json') : undefined;
     require('../stats').record({

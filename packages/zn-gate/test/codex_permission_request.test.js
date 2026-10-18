@@ -138,3 +138,55 @@ test('codex hooks file: PermissionRequest is installed with the PreToolUse match
     assert.equal(kept.length, 1);
   });
 });
+
+// zn-gate stats counts each Codex call once, also when Codex asks for approval (PreToolUse, then PermissionRequest).
+test('codex PermissionRequest: a call that asks for approval is counted once in zn-gate stats', async (t) => {
+  const home = tempDir(t, 'zn-codex-permreq-stats-');
+  const before = process.env.ZN_STATS;
+  delete process.env.ZN_STATS; // this test reads the counts, so recording is on here
+  try {
+    // A placeholder in a plain command: PreToolUse asks, Codex then shows the prompt and PermissionRequest asks too.
+    const dir = tmpProject(t);
+    const bash = { tool_name: 'Bash', tool_input: { command: 'echo __ZN_AWS_KEY_1__' } };
+    const pre = await run(codex, cx('PreToolUse', { cwd: dir, ...bash }), { home });
+    const req = await run(codex, cx('PermissionRequest', { cwd: dir, ...bash }), { home });
+    assert.equal(pre.decision.decision, 'ask');
+    assert.equal(req.decision.decision, 'ask');
+    assert.equal(req.output, null, 'no answer from zn: the prompt stays');
+    const data = JSON.parse(fs.readFileSync(path.join(home, '.zn', 'stats.json'), 'utf8'));
+    const day = Object.values(data.days)[0];
+    assert.deepEqual(day['hook:codex'], { checked: 1, blocked: 0, warned: 1, redacted: 0, detections: {} });
+  } finally {
+    if (before === undefined) delete process.env.ZN_STATS; else process.env.ZN_STATS = before;
+  }
+});
+
+// Fail closed: an engine error on PermissionRequest is a deny in the Codex PermissionRequest shape, never allow.
+test('codex PermissionRequest: an engine that throws gets deny in its own shape, also when the engine fails open', async (t) => {
+  const dir = tmpProject(t);
+  const throwing = new Proxy({}, { get() { const e = new Error('engine exploded'); e.code = 'ZN_BOOM'; throw e; } });
+  for (const failMode of ['open', 'closed']) {
+    const r = await run(codex, cx('PermissionRequest', { cwd: dir, tool_name: 'mcp__github__create_issue', tool_input: { body: 'hello' } }), { engine: throwing, failMode });
+    assert.deepEqual(Object.keys(r.output), ['hookSpecificOutput'], failMode);
+    assert.equal(r.output.hookSpecificOutput.hookEventName, 'PermissionRequest', failMode);
+    assert.equal(r.output.hookSpecificOutput.decision.behavior, 'deny', failMode);
+    assert.match(r.output.hookSpecificOutput.decision.message, /something went wrong inside the zn hook/, failMode);
+    assert.match(r.output.hookSpecificOutput.decision.message, /ZN_BOOM/, failMode);
+    assertDenyOnly(r.output);
+  }
+});
+
+// Fail closed: input the hook cannot read is refused by the process (exit 2, nothing on stdout), and its text is never echoed.
+test('codex PermissionRequest: malformed stdin is refused with exit 2 and no answer, without echoing the input', async (t) => {
+  const home = tempDir(t, 'zn-codex-permreq-bad-');
+  const env = { ...process.env, HOME: home, USERPROFILE: home, ZN_HOME: path.join(home, '.zn'), ZN_STATS: 'off', CODEX_HOME: home };
+  delete env.ZN_HOOK_FAIL_MODE;
+  const aws = 'AKIA' + 'Z'.repeat(16);
+  for (const input of ['', 'not json ' + aws, '[1, 2]', '"PermissionRequest"']) {
+    const r = spawnSync(process.execPath, [RUNNER, 'codex'], { input, env, encoding: 'utf8' });
+    assert.equal(r.status, 2, JSON.stringify(input));
+    assert.equal(r.stdout, '', 'no allow and no deny JSON on stdout');
+    assert.match(r.stderr, /could not read this action/);
+    assert.ok(!r.stderr.includes(aws), 'the input is not echoed');
+  }
+});
