@@ -287,7 +287,7 @@ function capHome(ctx, severity) {
 // The exact commands `zn hooks install` writes (lib/agents/config-file.js),
 // matched against the whole command. A path may not contain shell
 // metacharacters, so nothing can run before or after the zn runner.
-const HOOK_AGENTS = '(?:claude-code|codex|cursor|opencode)';
+const HOOK_AGENTS = '(?:claude-code|codex|cursor|opencode|antigravity)';
 const SAFE_ABS = '(?:/|[A-Za-z]:/)[^;&|$`<>(){}!*?"\'\\r\\n\\\\]{1,4096}';
 const OUR_HOOKS = [
   new RegExp('^zn(?:-gate)?(?:\\.cmd|\\.exe)? hook ' + HOOK_AGENTS + '$'),
