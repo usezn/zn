@@ -379,16 +379,7 @@ Permissions: the action itself needs only `contents: read`; add `security-events
 
 ## Examples
 
-Runnable examples in [`examples/`](examples/). Each one runs locally with made-up data and needs no API key.
-
-- [`examples/python-basic`](examples/python-basic/): check a prompt and guard a function with the Python SDK.
-- [`examples/langchain-agent`](examples/langchain-agent/): attach the callback handler to a LangChain or LangGraph agent.
-- [`examples/crewai-agent`](examples/crewai-agent/): check what a CrewAI tool returns before the model reads it.
-- [`examples/llamaindex-agent`](examples/llamaindex-agent/): check what a LlamaIndex tool returns before the model reads it.
-- [`examples/openai-agents-sdk`](examples/openai-agents-sdk/): check what an OpenAI Agents SDK tool returns before the model reads it.
-- [`examples/node-basic`](examples/node-basic/): the same checks with the Node.js package.
-- [`examples/promptfoo`](examples/promptfoo/): test zn-gate's rules with Promptfoo.
-- [`examples/github-action`](examples/github-action/): run the audit and scan in GitHub Actions.
+Runnable examples are in [`examples/`](examples/): the Python SDK, agents built with LangChain, CrewAI, LlamaIndex or the OpenAI Agents SDK, the Node.js package, custom rules, Promptfoo and the GitHub Action.
 
 ## FAQ
 

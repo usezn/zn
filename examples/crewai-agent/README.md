@@ -12,7 +12,7 @@ Everything runs on your machine. The pages in the example are made up, so there 
 
 ## Install
 
-Use a Python virtual environment, then:
+Use Python 3.10 to 3.13 in a virtual environment, then:
 
 ```bash
 pip install -r requirements.txt
