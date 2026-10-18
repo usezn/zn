@@ -822,7 +822,11 @@ mod tests {
         for len in [0usize, 11, 13, 16, 32] {
             let bad_nonce = general_purpose::STANDARD.encode(vec![1u8; len]);
             let record = format!("v2:{bad_nonce}:{ciphertext}");
-            assert_eq!(decrypt_payload(&TEST_KEY, ID_A, None, &record), None, "len {len}");
+            assert_eq!(
+                decrypt_payload(&TEST_KEY, ID_A, None, &record),
+                None,
+                "len {len}"
+            );
         }
         assert!(nonce_from_bytes(&[0u8; 11]).is_none());
         assert!(nonce_from_bytes(&[0u8; 12]).is_some());
@@ -914,7 +918,11 @@ mod tests {
             format!("v2:v2:{nonce}:{ct}"),
         ];
         for case in cases {
-            assert_eq!(decrypt_payload(&TEST_KEY, ID_A, None, &case), None, "{case}");
+            assert_eq!(
+                decrypt_payload(&TEST_KEY, ID_A, None, &case),
+                None,
+                "{case}"
+            );
         }
     }
 
