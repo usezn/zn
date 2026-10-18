@@ -1,0 +1,2 @@
+### Added
+- Experimental: `zn hooks install antigravity [--project]` adds a pre-execution hook for Google Antigravity (`.agents/hooks.json` in a project, `~/.gemini/config/hooks.json` for your user). It blocks reads and writes of secret files and shell commands that handle secrets, and it protects its own hook files from edits by the agent. Antigravity hooks cannot rewrite tool output, and Antigravity does not document what happens when a hook fails. `zn-gate check` reports the Antigravity hook, and `zn-gate init` also looks for a project `.agents/mcp_config.json`.

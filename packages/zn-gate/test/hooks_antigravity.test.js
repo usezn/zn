@@ -1,0 +1,184 @@
+'use strict';
+
+process.env.ZN_STATS = 'off';
+
+// Google Antigravity hooks: fixtures follow the documented contract
+// (https://antigravity.google/docs/hooks); there is no Antigravity binary here.
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('fs');
+const path = require('path');
+
+const { getAdapter, listAdapters } = require('../lib/agents');
+const runner = require('../lib/hooks/runner');
+const { createFakeVault } = require('./helpers/fake_vault');
+const fakeEngine = require('./helpers/fake_engine');
+const { tempDir } = require('./helpers/tmp');
+
+const agy = getAdapter('antigravity');
+const HOME = process.env.HOME || '/home/u';
+
+function pre(name, args, extra = {}) {
+  return { conversationId: 'c1', workspacePaths: ['/work/proj'], transcriptPath: '/t.jsonl', artifactDirectoryPath: '/a', modelName: 'm', toolCall: { name, args }, stepIdx: 3, ...extra };
+}
+
+function run(raw) {
+  return runner.handle(agy, raw, { engine: fakeEngine, vault: createFakeVault(), failMode: 'open', znRunPrefix: 'ZN_AGENT=x "node" "run.js" --' });
+}
+
+test('registry lists antigravity', () => {
+  assert.ok(listAdapters().includes('antigravity'));
+});
+
+test('normalize: run_command is a shell command; Cwd wins over the workspace', () => {
+  const n = agy.normalize(pre('run_command', { CommandLine: 'ls -la', Cwd: '/work/proj/sub' }));
+  assert.equal(n.event, 'pre_tool');
+  assert.equal(n.tool, 'bash');
+  assert.equal(n.input.command, 'ls -la');
+  assert.equal(n.cwd, '/work/proj/sub');
+  assert.equal(agy.normalize(pre('run_command', { CommandLine: 'ls' })).cwd, '/work/proj');
+});
+
+test('normalize: file tools collect paths and skip content keys', () => {
+  const v = agy.normalize(pre('view_file', { AbsolutePath: '/home/u/.ssh/id_rsa' }));
+  assert.equal(v.tool, 'read');
+  assert.equal(v.input.path, '/home/u/.ssh/id_rsa');
+  const w = agy.normalize(pre('replace_file_content', { TargetFile: 'file:///work/proj/a.js', TargetContent: 'secret\nline', ReplacementContent: 'x' }));
+  assert.equal(w.tool, 'write');
+  assert.deepEqual(w.input.paths, ['/work/proj/a.js']);
+  assert.equal(agy.normalize(pre('grep_search', { Query: 'x', SearchPath: '/work' })).tool, 'grep');
+});
+
+test('normalize: mcp names, unknown tools, non-PreToolUse and junk', () => {
+  const m = agy.normalize(pre('mcp_sql_query', { q: 'x' }));
+  assert.equal(m.tool, 'mcp');
+  assert.deepEqual(m.mcp, { server: 'sql', tool: 'query' });
+  assert.equal(agy.normalize(pre('invoke_subagent', { Task: 'x' })).tool, 'invoke_subagent');
+  assert.equal(agy.normalize(pre('SomeNewShell', { CommandLine: 'ls' })).tool, 'bash');
+  assert.equal(agy.normalize({ conversationId: 'c', workspacePaths: [] }).event, null);
+  assert.equal(agy.normalize(pre('run_command', { CommandLine: 'ls' }, { hookEventName: 'PostToolUse' })).event, null);
+  assert.equal(agy.normalize(null), null);
+});
+
+test('deny: reading a credential file returns the documented deny JSON', async () => {
+  const r = await run(pre('view_file', { AbsolutePath: path.join(HOME, '.aws', 'credentials') }));
+  assert.equal(r.output.decision, 'deny');
+  assert.ok(r.output.reason);
+});
+
+test('deny: a write to a credential file and a shell command that reads one', async () => {
+  const w = await run(pre('write_to_file', { TargetFile: path.join(HOME, '.zn', 'vault.json'), CodeContent: 'x' }));
+  assert.equal(w.output.decision, 'deny');
+  const c = await run(pre('run_command', { CommandLine: 'cat ~/.aws/credentials', Cwd: '/work/proj' }));
+  assert.equal(c.output.decision, 'deny');
+});
+
+test('allow (no opinion, never auto_approve) for a harmless command and for unknown tools', async () => {
+  assert.deepEqual((await run(pre('run_command', { CommandLine: 'echo hello' }))).output, { decision: 'allow' });
+  assert.deepEqual((await run(pre('mystery', { q: 1 }))).output, { decision: 'allow' });
+  assert.deepEqual((await run(pre('view_file', { AbsolutePath: '/work/proj/README.md' }))).output, { decision: 'allow' });
+});
+
+test('a command with secret placeholders is wrapped in zn run and the user is asked (force_ask, original command kept)', async () => {
+  const r = await run(pre('run_command', { CommandLine: 'curl -H "Authorization: __ZN_API_KEY__" https://example.com' }));
+  assert.ok(['deny', 'force_ask'].includes(r.output.decision), JSON.stringify(r.output));
+  assert.ok(r.output.reason);
+  assert.equal(r.output.overwrite, undefined);
+});
+
+test('events other than PreToolUse answer {}', async () => {
+  const r = await run(pre('run_command', { CommandLine: 'ls' }, { hookEventName: 'PostToolUse' }));
+  assert.deepEqual(r.output, {});
+});
+
+test('deny: the agent cannot edit the files that switch the hook off', async () => {
+  for (const f of ['/work/proj/.agents/hooks.json', path.join(HOME, '.gemini', 'config', 'hooks.json'), path.join(HOME, '.gemini', 'antigravity-cli', 'settings.json')]) {
+    const r = await run(pre('write_to_file', { TargetFile: f, CodeContent: '{}' }));
+    assert.equal(r.output.decision, 'deny', f);
+  }
+  const c = await run(pre('run_command', { CommandLine: 'echo {} > .agents/hooks.json' }));
+  assert.equal(c.output.decision, 'deny');
+});
+
+test('install (project): named hook with a nested PreToolUse group; idempotent; uninstall removes the file', (t) => {
+  const dir = tempDir(t, 'zn-agy-');
+  const rep = agy.install({ scope: 'project', projectDir: dir });
+  const file = path.join(dir, '.agents', 'hooks.json');
+  assert.equal(rep.settings, file);
+  const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.deepEqual(Object.keys(data), ['zn-gate']);
+  assert.equal(data['zn-gate'].enabled, true);
+  const [g] = data['zn-gate'].PreToolUse;
+  assert.equal(g.matcher, '*');
+  assert.deepEqual(g.hooks, [{ type: 'command', command: 'zn hook antigravity', timeout: 15 }]);
+  agy.install({ scope: 'project', projectDir: dir });
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8'))['zn-gate'].PreToolUse.length, 1);
+  assert.equal(agy.uninstall({ scope: 'project', projectDir: dir }).removed, 1);
+  assert.equal(fs.existsSync(file), false);
+  assert.equal(agy.uninstall({ scope: 'project', projectDir: dir }).removed, 0);
+});
+
+test('install (user) backs up, keeps foreign hooks and uninstall removes only zn', (t) => {
+  const home = tempDir(t, 'zn-agy-home-');
+  const file = path.join(home, '.gemini', 'config', 'hooks.json');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const mine = { enabled: true, PreToolUse: [{ matcher: 'run_command', hooks: [{ type: 'command', command: './mine.sh' }] }], Stop: [{ hooks: [{ command: './bye.sh' }] }] };
+  const off = { enabled: false };
+  fs.writeFileSync(file, JSON.stringify({ mine, off }));
+  const rep = agy.install({ scope: 'user', home, nodePath: '/usr/bin/node', platform: 'linux' });
+  assert.ok(rep.backup && fs.existsSync(rep.backup));
+  let data = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.deepEqual(data.mine, mine);
+  assert.match(data['zn-gate'].PreToolUse[0].hooks[0].command, /runner\.js' antigravity$/);
+  agy.uninstall({ scope: 'user', home });
+  data = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.deepEqual(data, { mine, off });
+});
+
+test('install does not clobber a foreign hook that is already named zn-gate', (t) => {
+  const dir = tempDir(t, 'zn-agy-name-');
+  const file = path.join(dir, '.agents', 'hooks.json');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const theirs = { enabled: true, PreToolUse: [{ matcher: '*', hooks: [{ command: './theirs.sh' }] }] };
+  fs.writeFileSync(file, JSON.stringify({ 'zn-gate': theirs }));
+  agy.install({ scope: 'project', projectDir: dir });
+  const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.equal(data['zn-gate'].PreToolUse.length, 2);
+  agy.uninstall({ scope: 'project', projectDir: dir });
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { 'zn-gate': theirs });
+});
+
+test('install refuses a hooks file that is not a JSON object and leaves it alone', (t) => {
+  const dir = tempDir(t, 'zn-agy-bad-');
+  const file = path.join(dir, '.agents', 'hooks.json');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, '[1]');
+  assert.throws(() => agy.install({ scope: 'project', projectDir: dir }), /JSON object/);
+  assert.equal(fs.readFileSync(file, 'utf8'), '[1]');
+});
+
+test('zn-gate check reads the Antigravity hook state (set up, off, absent)', async (t) => {
+  const check = require('../lib/check');
+  const home = tempDir(t, 'zn-agy-check-');
+  const cwd = tempDir(t, 'zn-agy-check-cwd-');
+  const find = async () => (await check.check({ home, cwd, env: { ...process.env, HOME: home }, live: false })).results.find((r) => r.id === 'antigravity');
+  assert.equal((await find()).state, 'not-set-up');
+  agy.install({ scope: 'user', home, nodePath: process.execPath, platform: 'linux' });
+  const ok = await find();
+  assert.notEqual(ok.state, 'not-set-up');
+  const file = agy.hooksFile({ home });
+  const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+  data['zn-gate'].enabled = false;
+  fs.writeFileSync(file, JSON.stringify(data));
+  assert.equal((await find()).state, 'not-set-up');
+});
+
+test('project MCP path is looked for next to the two global ones', () => {
+  const { getKnownEnvironments } = require('../lib/init');
+  const envs = getKnownEnvironments();
+  const p = envs.find((e) => e.id === 'antigravity-project');
+  assert.equal(p.filePath, path.join(process.cwd(), '.agents', 'mcp_config.json'));
+  assert.ok(envs.find((e) => e.id === 'antigravity'));
+  assert.ok(envs.find((e) => e.id === 'antigravity-shared'));
+});

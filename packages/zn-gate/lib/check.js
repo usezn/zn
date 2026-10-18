@@ -65,6 +65,12 @@ const AGENTS = [
     file: (a, o) => a.pluginPath(o), project: (dir) => path.join(dir, '.opencode', 'plugins', 'zn-gate.js'),
     request: (dir, file) => ({ hook: 'tool.execute.before', tool: 'read', cwd: dir, args: { filePath: file } }),
   },
+  {
+    id: 'antigravity', name: 'Antigravity', event: 'PreToolUse', tool: 'view_file',
+    fix: 'run `zn hooks install antigravity` in your own terminal',
+    file: (a, o) => a.hooksFile(o), project: (dir) => path.join(dir, '.agents', 'hooks.json'),
+    request: (dir, file) => ({ conversationId: 'zn-check', workspacePaths: [dir], toolCall: { name: 'view_file', args: { AbsolutePath: file } }, stepIdx: 0 }),
+  },
 ];
 
 function readJson(file) {
@@ -78,13 +84,19 @@ function readJson(file) {
 /* [{event, matcher, command}] from a hooks file: Claude Code and Codex use groups with a matcher, Cursor plain entries. */
 function hookEntries(tree) {
   const out = [];
-  const hooks = tree && typeof tree.hooks === 'object' ? tree.hooks : {};
-  for (const [event, list] of Object.entries(hooks)) {
-    for (const g of Array.isArray(list) ? list : []) {
-      if (!g || typeof g !== 'object') continue;
-      if (typeof g.command === 'string') out.push({ event, matcher: g.matcher, command: g.command, onFailure: g.onFailure });
-      for (const h of Array.isArray(g.hooks) ? g.hooks : []) {
-        if (h && typeof h.command === 'string') out.push({ event, matcher: g.matcher, command: h.command, onFailure: h.onFailure });
+  // Claude Code, Codex and Cursor keep events under "hooks"; Antigravity keeps named hooks at the top level.
+  const sets = [tree && typeof tree.hooks === 'object' ? tree.hooks : {}];
+  if (tree && typeof tree === 'object' && tree.hooks === undefined) {
+    for (const v of Object.values(tree)) if (v && typeof v === 'object' && !Array.isArray(v) && v.enabled !== false) sets.push(v);
+  }
+  for (const hooks of sets) {
+    for (const [event, list] of Object.entries(hooks || {})) {
+      for (const g of Array.isArray(list) ? list : []) {
+        if (!g || typeof g !== 'object') continue;
+        if (typeof g.command === 'string') out.push({ event, matcher: g.matcher, command: g.command, onFailure: g.onFailure });
+        for (const h of Array.isArray(g.hooks) ? g.hooks : []) {
+          if (h && typeof h.command === 'string') out.push({ event, matcher: g.matcher, command: h.command, onFailure: h.onFailure });
+        }
       }
     }
   }

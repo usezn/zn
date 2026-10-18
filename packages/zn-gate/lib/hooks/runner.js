@@ -713,6 +713,8 @@ function refuseInput(agentId, why) {
     'If it happens again, ask the user to run `' + znCommand('hooks install') + '`.';
   process.stderr.write('zn hook: ' + msg + '\n');
   if (agentId === 'cursor') process.stdout.write(JSON.stringify({ permission: 'deny', continue: false, user_message: msg, agent_message: msg }));
+  // Antigravity does not document its exit codes, so its deny answer is printed as well.
+  if (agentId === 'antigravity') process.stdout.write(JSON.stringify({ decision: 'deny', reason: msg }));
   process.exitCode = 2;
 }
 
