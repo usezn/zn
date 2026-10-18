@@ -150,7 +150,7 @@
     },
     "audit": {
       "version_const": "AUDIT_RULES_VERSION",
-      "version": "2026-10-18.2",
+      "version": "2026-10-18.3",
       "ids": [
         "ZNA001",
         "ZNA002",
@@ -172,6 +172,8 @@
         "ZNA018",
         "ZNA019",
         "ZNA020",
+        "patterns.CRED_FLAG_NAME",
+        "patterns.CRED_FLAG_ONLY",
         "patterns.INTERPRETERS",
         "patterns.MAX_LINE",
         "patterns.SHADOWED_TOOLS",
@@ -181,6 +183,7 @@
         "patterns.downloadAndRun",
         "patterns.exfiltration",
         "patterns.hostOf",
+        "patterns.isCredentialFlag",
         "patterns.isLoopback",
         "patterns.isPlaceholder",
         "patterns.npmSpec",
@@ -192,8 +195,8 @@
         "patterns.weakening"
       ],
       "sha256": {
-        "lib/audit/rules.js": "fc40189c2c6242718063447022bf3ba824a94197101036b658741fae88fd281f",
-        "lib/audit/patterns.js": "2858cdbc0b53a776115e8f61169372f2d10a97feda0062cb540b6c20eedabe50"
+        "lib/audit/rules.js": "93aff025d41bf9798cd2479560059f91244e90358ef35a5b6cdd2e7ab909d5de",
+        "lib/audit/patterns.js": "35080806c575285578977a1601c8550077161b3d79373ae388bff801fa9f1007"
       }
     },
     "policy": {
