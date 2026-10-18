@@ -377,6 +377,10 @@ Permissions: the action itself needs only `contents: read`; add `security-events
 - `bench/`: benchmark scripts and results.
 - `assets/brand/`: logo files (SVG master and light/dark variants, PNG lockup and banners).
 
+## Examples
+
+Runnable examples are in [`examples/`](examples/): the Python SDK, agents built with LangChain, CrewAI, LlamaIndex or the OpenAI Agents SDK, the Node.js package, custom rules, Promptfoo and the GitHub Action.
+
 ## FAQ
 
 **Do I need an account or API key?** No. Everything local works without one. An account is only needed for the optional cloud (team audit and the larger detection model).
