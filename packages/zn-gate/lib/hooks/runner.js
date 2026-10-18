@@ -651,8 +651,9 @@ function stopReviewMode(opts) {
   return String(hooks.stopReview || '').toLowerCase() === 'block' ? 'block' : 'warn';
 }
 
-// Transcripts are streamed in chunks of this size, so memory stays flat
-// whatever the file size. Above STOP_TRANSCRIPT_CAP the check is skipped.
+// Transcripts are streamed in chunks of this size; the heap stays small
+// whatever the file size, though process memory still grows with it. Above
+// STOP_TRANSCRIPT_CAP the check is skipped.
 const STOP_CHUNK_BYTES = 256 * 1024;
 
 // Non-overlapping occurrences, the same count as split(needle).length - 1.
@@ -682,7 +683,7 @@ async function unseenMarkers(message, transcriptPath) {
     }
     // Markers are ASCII, so they are searched as bytes: no UTF-8 decoding per chunk.
     // Each chunk is searched in place. Only a marker that straddles two chunks
-    // needs a joined window, and that window is a few bytes, so memory stays flat.
+    // needs a joined window of a few bytes, so no chunk is copied.
     const needle = {};
     for (const m of found) needle[m] = Buffer.from(m, 'utf8');
     let pending = found;
