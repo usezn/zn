@@ -1,3 +1,5 @@
+import asyncio
+import inspect
 import unittest
 
 from zn_gate import GuardBlockError
@@ -60,6 +62,71 @@ class TestCrewAIResultCheck(unittest.TestCase):
             return big
 
         self.assertEqual(fetch(), "BIG")
+
+    def test_sync_tool_still_returns_plain_function_result(self):
+        @guarded_tool()
+        def add(a, b):
+            return a + b
+
+        self.assertEqual(add(2, 3), 5)
+        self.assertFalse(inspect.iscoroutinefunction(add))
+
+
+class TestCrewAIAsyncTool(unittest.TestCase):
+    def test_async_tool_output_is_masked(self):
+        @guarded_tool()
+        async def fetch():
+            return "key AKIAIOSFODNN7EXAMPLE"
+
+        self.assertTrue(inspect.iscoroutinefunction(fetch))
+        out = asyncio.run(fetch())
+        self.assertNotIn("AKIAIOSFODNN7EXAMPLE", out)
+
+    def test_async_tool_clean_output_passes(self):
+        @guarded_tool(check_result=True)
+        async def fetch():
+            return "The weather is sunny."
+
+        self.assertEqual(asyncio.run(fetch()), "The weather is sunny.")
+
+    def test_check_result_blocks_injection_in_async_output(self):
+        @guarded_tool(check_result=True)
+        async def fetch():
+            return {"page": INJECTION}
+
+        with self.assertRaises(GuardBlockError) as ctx:
+            asyncio.run(fetch())
+        self.assertEqual(ctx.exception.target, "crewai:fetch:result")
+
+    def test_async_injection_returns_message_or_fallback(self):
+        @guarded_tool(on_block="return", check_result=True)
+        async def fetch():
+            return INJECTION
+
+        out = asyncio.run(fetch())
+        self.assertTrue(out.startswith("zn-gate blocked 'crewai:fetch:result'. Reason: "), out)
+
+        @guarded_tool(on_block="return", fallback="BLOCKED", check_result=True)
+        async def fetch2():
+            return INJECTION
+
+        self.assertEqual(asyncio.run(fetch2()), "BLOCKED")
+
+    def test_check_result_off_leaves_async_output_alone(self):
+        @guarded_tool(on_block="return")
+        async def fetch():
+            return INJECTION
+
+        self.assertEqual(asyncio.run(fetch()), INJECTION)
+
+    def test_async_block_truncated(self):
+        big = "lorem ipsum dolor sit amet " * 200000
+
+        @guarded_tool(on_block="return", fallback="BIG", check_result=True, block_truncated=True)
+        async def fetch():
+            return big
+
+        self.assertEqual(asyncio.run(fetch()), "BIG")
 
 
 if __name__ == "__main__":
