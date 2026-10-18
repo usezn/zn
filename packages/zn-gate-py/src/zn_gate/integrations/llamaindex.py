@@ -2,7 +2,7 @@
 LlamaIndex query and tool protection for zn-gate.
 """
 from __future__ import annotations
-from typing import Any
+from typing import Any, Optional
 
 from ..guard import GuardBlockError
 from ..rules import evaluate, sanitize_tool_result
