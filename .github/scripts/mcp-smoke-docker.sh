@@ -11,10 +11,12 @@ cp "$tgz" "$work/zn-gate.tgz"
 cp "$here/mcp-smoke.mjs" "$work/mcp-smoke.mjs"
 chmod -R a+rwX "$work"
 image=node:22-slim
+# Containers run as the caller, so nothing they write is root-owned and the cleanup below works.
+user=(--user "$(id -u):$(id -g)" -e HOME=/w/home)
 
 echo "== install (network on, scripts disabled)"
-docker run --rm -v "$work:/w" -w /w "$image" sh -c 'npm install -g --ignore-scripts --prefix /w/prefix /w/zn-gate.tgz >/dev/null && ls /w/prefix/bin'
+docker run --rm "${user[@]}" -v "$work:/w" -w /w "$image" sh -c 'npm install -g --ignore-scripts --prefix /w/prefix /w/zn-gate.tgz >/dev/null && ls /w/prefix/bin'
 
 echo "== smoke (no network)"
-docker run --rm --network none -v "$work:/w:ro" -w /tmp -e PATH=/w/prefix/bin:/usr/local/bin:/usr/bin:/bin "$image" \
+docker run --rm "${user[@]}" --network none -v "$work:/w:ro" -w /tmp -e PATH=/w/prefix/bin:/usr/local/bin:/usr/bin:/bin "$image" \
   timeout 60 node /w/mcp-smoke.mjs zn-gate mcp
