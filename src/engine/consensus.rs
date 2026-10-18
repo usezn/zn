@@ -106,6 +106,11 @@ impl ConsensusManager {
             .get_mut(action_id)
             .ok_or_else(|| "Action not found or already processed".to_string())?;
 
+        // Only a pending action can collect signatures or change status.
+        if action.status != ActionStatus::Pending {
+            return Err("Action not found or already processed".to_string());
+        }
+
         // Prevent duplicate signatures from same witness type
         if action
             .signatures
@@ -141,6 +146,9 @@ impl ConsensusManager {
             .pending
             .get_mut(action_id)
             .ok_or_else(|| "Action not found".to_string())?;
+        if action.status != ActionStatus::Pending {
+            return Err("Action not found or already processed".to_string());
+        }
         action.status = ActionStatus::Denied;
         Ok(())
     }
@@ -165,9 +173,10 @@ impl ConsensusManager {
         }
 
         if let Some(id) = approved_id {
-            // "Consume" the approval so it can't be reused (TOCTOU fix)
-            self.pending.remove(&id);
-            return true;
+            // "Consume" the approval so it can't be reused (TOCTOU fix).
+            // Only the caller that removes the entry gets the approval, so two
+            // concurrent checks can't both use the same one.
+            return self.pending.remove(&id).is_some();
         }
 
         false
@@ -426,16 +435,53 @@ mod tests {
         assert_eq!(mgr.get_status("missing"), None);
     }
 
-    /// Known bug: `sign_action` does not check the action status, so a denied
-    /// action is approved by a later signature once the threshold is reached.
     #[test]
-    #[ignore = "known bug: sign_action approves a denied action (see PR body)"]
     fn signing_a_denied_action_must_not_approve_it() {
         let mgr = manager(true, &["x"], 1);
         let id = propose(&mgr, "x", "{}");
         mgr.deny_action(&id, "no").unwrap();
-        let status = mgr.sign_action(&id, WitnessType::NeuralJudge).unwrap();
-        assert_eq!(status, ActionStatus::Denied);
+        let err = mgr.sign_action(&id, WitnessType::NeuralJudge).unwrap_err();
+        assert_eq!(err, "Action not found or already processed");
+        assert_eq!(mgr.get_status(&id), Some(ActionStatus::Denied));
         assert!(!mgr.check_approval("agent-1", "x", "{}"));
+    }
+
+    #[test]
+    fn signing_an_approved_action_changes_nothing() {
+        let mgr = manager(true, &["x"], 1);
+        let id = propose(&mgr, "x", "{}");
+        mgr.sign_action(&id, WitnessType::NeuralJudge).unwrap();
+        assert!(mgr
+            .sign_action(&id, WitnessType::HumanAdmin("dave".into()))
+            .is_err());
+        assert_eq!(mgr.get_status(&id), Some(ActionStatus::Approved));
+    }
+
+    #[test]
+    fn denying_an_approved_action_is_rejected() {
+        let mgr = manager(true, &["x"], 1);
+        let id = propose(&mgr, "x", "{}");
+        mgr.sign_action(&id, WitnessType::NeuralJudge).unwrap();
+        assert!(mgr.deny_action(&id, "too late").is_err());
+        assert_eq!(mgr.get_status(&id), Some(ActionStatus::Approved));
+        assert!(mgr.check_approval("agent-1", "x", "{}"));
+    }
+
+    #[test]
+    fn concurrent_checks_consume_an_approval_only_once() {
+        let mgr = manager(true, &["x"], 1);
+        let id = propose(&mgr, "x", "{}");
+        mgr.sign_action(&id, WitnessType::NeuralJudge).unwrap();
+        let granted = std::thread::scope(|s| {
+            let handles: Vec<_> = (0..8)
+                .map(|_| s.spawn(|| mgr.check_approval("agent-1", "x", "{}")))
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| h.join().unwrap())
+                .filter(|&ok| ok)
+                .count()
+        });
+        assert_eq!(granted, 1);
     }
 }
