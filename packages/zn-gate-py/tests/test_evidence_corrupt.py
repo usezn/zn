@@ -507,3 +507,48 @@ def test_unreadable_lock_path_does_not_spin_the_cpu(tmp_path, capsys):
     cpu0 = time.process_time()
     assert log_evidence({"payload": "x"}, file_path=p, lock_wait=0.6) is None
     assert time.process_time() - cpu0 < 0.4
+
+
+def test_lock_that_turns_out_not_to_be_stale_is_put_back(tmp_path, capsys, monkeypatch):
+    p = _ledger(tmp_path, n=1)
+    with open(p + ".lock", "w") as f:
+        f.write("1:crashed")
+    old = time.time() - 60
+    os.utime(p + ".lock", (old, old))
+    real_rename = os.rename
+
+    def rename_after_new_lock(src, dst):
+        # Simulates a second breaker that won the race: a new lock appears just before our rename.
+        if src == p + ".lock":
+            with open(src, "w") as f:
+                f.write("4242:newowner")
+        return real_rename(src, dst)
+
+    monkeypatch.setattr(os, "rename", rename_after_new_lock)
+    assert log_evidence({"payload": "x"}, file_path=p, lock_wait=0.3) is None
+    monkeypatch.setattr(os, "rename", real_rename)
+    assert open(p + ".lock").read() == "4242:newowner"
+    assert [n for n in os.listdir(tmp_path) if ".stale-" in n] == []
+
+
+def test_old_leftovers_of_broken_locks_are_cleaned_and_recent_ones_kept(tmp_path):
+    p = _ledger(tmp_path, n=1)
+    old = time.time() - 60
+    for name in ("old", "new"):
+        with open(p + ".lock.stale-" + name, "w") as f:
+            f.write("x")
+    os.utime(p + ".lock.stale-old", (old, old))
+    assert log_evidence({"payload": "x"}, file_path=p)
+    assert not os.path.exists(p + ".lock.stale-old")
+    assert os.path.exists(p + ".lock.stale-new")
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -1.0])
+def test_lock_wait_that_is_not_a_usable_number_falls_back_to_the_default(tmp_path, bad):
+    p = _ledger(tmp_path, n=1)
+    with open(p + ".lock", "w") as f:
+        f.write("4242:other")
+    t0 = time.monotonic()
+    assert log_evidence({"payload": "x"}, file_path=p, lock_wait=bad) is None
+    waited = time.monotonic() - t0
+    assert 1.5 <= waited < 6, waited
