@@ -3,7 +3,7 @@
 /**
  * OpenAI Codex CLI adapter.
  *
- * Hook format (learn.chatgpt.com/docs/hooks, read 2026-10-11; the old
+ * Hook format (learn.chatgpt.com/docs/hooks, checked 2026-10-18; the old
  * developers.openai.com/codex/hooks URL redirects there):
  *
  *  hooks.json in ~/.codex/ ($CODEX_HOME) or <repo>/.codex/:
