@@ -3,8 +3,7 @@ Integration tests for zn-gate in realistic mock LLM agent workflows.
 Simulates LangChain, CrewAI, LlamaIndex, and Promptfoo agent execution pipelines.
 """
 import unittest
-from typing import Any, Dict, List
-from zn_gate import evaluate, guard, redact_secrets, sanitize_tool_result, GuardBlockError
+from zn_gate import evaluate, GuardBlockError
 from zn_gate.integrations import (
     ZnGuardCallbackHandler,
     guarded_tool,

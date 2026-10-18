@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from ..guard import GuardBlockError, check_tool_call, check_tool_result
-from ..rules import Assessment, evaluate, sanitize_tool_result
+from ..rules import evaluate, sanitize_tool_result
 
 try:
     from langchain_core.callbacks.base import BaseCallbackHandler

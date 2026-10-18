@@ -7,17 +7,15 @@ Zero external dependencies. Pure Python stdlib.
 from __future__ import annotations
 
 import base64
-import json
+import binascii
 from array import array
 import math
 import os
 import re
-import sys
-import time
 import unicodedata
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 RULES_VERSION = "2026-10-18.4"
 
@@ -993,7 +991,7 @@ def _pv_discord_check(v: str) -> bool:
     mac = rest.partition('.')[2]
     try:
         digits = base64.urlsafe_b64decode(ident + '=' * (-len(ident) % 4)).decode('latin-1')
-    except (ValueError, base64.binascii.Error):
+    except (ValueError, binascii.Error):
         return False
     return re.fullmatch(r'[0-9]{17,20}', digits) is not None and _pv_random(mac, 2, 3.0)
 
