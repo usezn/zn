@@ -160,6 +160,18 @@ function strip(list) {
   return Array.isArray(list) ? list.filter((h) => !(h && cfg.isOurs(h.command, id))) : [];
 }
 
+/* The hook entry zn writes for each event, for one command (also used to print a managed hooks.json). */
+function hookEntries(command) {
+  const out = {};
+  for (const event of EVENTS) {
+    const entry = { command, timeout: HOOK_TIMEOUT_S };
+    if (event === 'preToolUse') entry.matcher = PRE_TOOL_MATCHER;
+    if (FAIL_CLOSED.has(event)) entry.failClosed = true;
+    out[event] = entry;
+  }
+  return out;
+}
+
 function install(opts = {}) {
   const file = hooksFile(opts);
   const data = cfg.readJson(file);
@@ -171,12 +183,10 @@ function install(opts = {}) {
   const command = !opts.command && (opts.platform || process.platform) === 'win32'
     ? cfg.hookCommandWindows(id, opts)
     : cfg.hookCommand(id, opts);
+  const entries = hookEntries(command);
   for (const event of EVENTS) {
     data.hooks[event] = strip(data.hooks[event]);
-    const entry = { command, timeout: HOOK_TIMEOUT_S };
-    if (event === 'preToolUse') entry.matcher = PRE_TOOL_MATCHER;
-    if (FAIL_CLOSED.has(event)) entry.failClosed = true;
-    data.hooks[event].push(entry);
+    data.hooks[event].push(entries[event]);
   }
   cfg.writeJson(file, data);
   report.warnings.push('Cursor cannot rewrite the output of shell commands or file reads: zn blocks reads of secret files and redacts MCP output only (see docs/compat.md).');
@@ -221,5 +231,7 @@ module.exports = {
   respond,
   capabilities: { ask: 'shell', rewriteInput: false, rewriteOutput: 'mcp' },
   EVENTS,
+  FAIL_CLOSED,
+  hookEntries,
   hooksFile,
 };
