@@ -631,7 +631,9 @@ async function decidePromptText(ev, d, agentId, expansion) {
     if (!secrets.some((s) => s.start < a.end && a.start < s.end)) secrets.push(a);
   }
   if (secrets.length === 0) return { decision: 'allow' };
-  const names = secrets.map(nameOf);
+  const others = [...spans, ...secrets];
+  const scanText = (t) => { try { return engine.scan(t, ctx) || []; } catch (_) { return []; } };
+  const names = secrets.map((s) => nameOf(s) || keyBefore(prompt, s, others, scanText));
   const shown = [...new Set(secrets.map((s, i) => names[i] || kindLabel(s.type)))];
   const suggestion = names[0] || suggestedName(secrets[0]);
   const stats = { detections: Object.fromEntries([...new Set(secrets.map((s) => s.type || 'SECRET'))].map((k) => [k, 1])) };
@@ -683,6 +685,31 @@ function kindLabel(type) {
   });
   const label = words.join(' ') || 'secret';
   return (/^([AEIOU]|AWS\b|API\b|SSH\b|SSN\b|IBAN\b|OAUTH\b)/i.test(label) ? 'an ' : 'a ') + label;
+}
+
+// A generic detection has no name of its own. The credential name written just
+// before the value ("db_password = ...", "-e API_KEY=...") is the kind a person
+// can recognise. Only the text before the value is read, never the value.
+const KEY_BEFORE_RE = /([A-Za-z_][A-Za-z0-9_.-]{0,127})["'`]?[ 	]*(?:=>|:=|=|:)[ 	]*["'`]?[ 	]*$/;
+const KEY_IDENT_RE = /^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/;
+// The text before a value can be another secret ("<id>:<secret>"). It is used
+// as a name only if it overlaps no other detection, looks like a key
+// identifier (not a random token) and is not itself detected as a secret.
+function keyBefore(text, span, others, scanText) {
+  if (span.name || !GENERIC_TYPES.has(String(span.type || '').toUpperCase())) return null;
+  const from = Math.max(0, span.start - 140);
+  const m = KEY_BEFORE_RE.exec(String(text).slice(from, span.start));
+  if (!m) return null;
+  const raw = m[1];
+  const start = from + m.index;
+  const end = start + raw.length;
+  if ((others || []).some((o) => o !== span && o.start < end && start < o.end)) return null;
+  if (!KEY_IDENT_RE.test(raw)) return null;
+  if (/\d/.test(raw) && /[a-z]/.test(raw) && /[A-Z]/.test(raw)) return null;
+  if ((raw.match(/\d/g) || []).length > 3) return null;
+  if (scanText && scanText(raw).length > 0) return null;
+  const n = raw.replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/[-.]/g, '_').toUpperCase();
+  return NAME_RE.test(n) ? n : null;
 }
 
 /* The name to suggest for `zn secret set` when the detection has no name. */
