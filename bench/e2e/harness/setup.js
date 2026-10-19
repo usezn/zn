@@ -11,7 +11,10 @@
  *   <run>/secrets.json   what the test vault stores
  *   <run>/scenario.json  the scripted model turns for <agent>
  *
- *   node setup.js --pkg <packages/zn-gate> --run <dir> --agent claude-code|codex|opencode|copilot
+ *   node setup.js --pkg <packages/zn-gate> --run <dir> --agent claude-code|codex|opencode|copilot [--scenario <name>]
+ *
+ * With --scenario (Codex only, see run_codex_scenarios.sh) the scripted turns
+ * are those of one hook scenario instead of the main task.
  *
  * All values come from the fake-secret generator of the leak bench.
  */
@@ -28,6 +31,7 @@ function arg(name, def) {
 const PKG = path.resolve(arg('--pkg'));
 const RUN = path.resolve(arg('--run'));
 const AGENT = arg('--agent', 'claude-code');
+const SCENARIO = arg('--scenario', '');
 const { generateAll } = require(path.join(PKG, 'test', 'fixtures', 'fake_secrets'));
 
 const FAKE = generateAll(20261011, { perType: 1, piiPerType: 1 });
@@ -105,5 +109,32 @@ scenarios.copilot = [
   { tool: 'view', input: { path: path.join(home, '.aws', 'credentials') } },
   { tool: 'bash', input: { command: 'cat config/settings.yml', description: 'read the config again' } },
 ];
-fs.writeFileSync(path.join(RUN, 'scenario.json'), JSON.stringify({ steps: scenarios[AGENT], final: 'All steps done.' }, null, 2));
+let script = { steps: scenarios[AGENT], final: 'All steps done.' };
+if (SCENARIO) {
+  // A value the scripted model itself writes into an MCP call. It is kept out
+  // of values.json: the model's own call comes back in the next request, so it
+  // would count as sent. mcp-values.json is checked against what the server got.
+  const MCP_KEY = pick('anthropic_api_key').value;
+  fs.writeFileSync(path.join(RUN, 'mcp-values.json'), JSON.stringify([{ name: 'MCP_ARG_KEY', value: MCP_KEY }], null, 2));
+  const ex = (cmd) => ({ tool: 'exec_command', input: { cmd } });
+  const echo = (text) => ({ tool: 'echo', namespace: 'mcp__echo', input: { text } });
+  // A call that asks to run outside the sandbox, which needs an approval.
+  const ask = (cmd) => ({ tool: 'exec_command', input: { cmd, sandbox_permissions: 'require_escalated', justification: 'end-to-end test' } });
+  const DONE = 'All steps done.';
+  const byName = {
+    permission: { steps: [ask(PRINT_NODE), ask('node -e "console.log(\'ran-after-approval\')"')], final: DONE },
+    // A placeholder, then a secret value, then nothing to hide.
+    mcp: { steps: [echo('token __ZN_GITHUB_TOKEN__'), echo('key ' + MCP_KEY), echo('hello from the end-to-end run')], final: DONE },
+    'stop-warn': { steps: [], final: 'Deploy with this key: ' + PASTED },
+    // The answer holds a secret value: with stopReview "block", Stop asks for a rewrite once.
+    'stop-block': { steps: [], finals: ['Deploy with this key: ' + MCP_KEY, 'Rewritten without the key.'] },
+    // The answer holds a placeholder that no tool or user message ever had (observation).
+    'stop-placeholder': { steps: [], final: 'Use the token __ZN_GITHUB_TOKEN__ for the call.' },
+    replace: { steps: [ex('cat config/settings.yml')], final: DONE },
+    thirdparty: { steps: [ex('echo benign-ok')], final: DONE },
+  };
+  if (!byName[SCENARIO]) throw new Error('unknown scenario ' + SCENARIO);
+  script = byName[SCENARIO];
+}
+fs.writeFileSync(path.join(RUN, 'scenario.json'), JSON.stringify(script, null, 2));
 process.stdout.write(RUN + '\n');
