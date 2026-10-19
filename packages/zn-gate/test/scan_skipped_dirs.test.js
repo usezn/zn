@@ -114,7 +114,7 @@ test('audit reports pruned directories and reads target without a build file', (
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('scan reads test directories and skips the same caches whatever the ecosystem', () => {
+test('scan reads test directories and skips caches and reports the editor and venv folders', () => {
   const dir = tree({
     'tests/fixture.md': 'hello\n',
     '__tests__/fixture.md': 'hello\n',
@@ -127,7 +127,7 @@ test('scan reads test directories and skips the same caches whatever the ecosyst
   try {
     const data = scanJson(dir);
     assert.strictEqual(data.total_files, 3);
-    assert.strictEqual(data.total_skipped_dirs, 0);
+    assert.strictEqual(data.total_skipped_dirs, 4);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -137,5 +137,36 @@ test('scan names the dependencies reason for vendor next to a manifest', () => {
     const data = scanJson(dir);
     assert.strictEqual(data.skipped_dirs.length, 1);
     assert.strictEqual(data.skipped_dirs[0].reason, 'skipped by name: dependencies next to go.mod');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('scan text output escapes control characters in directory and file names', () => {
+  const esc = String.fromCharCode(27);
+  const bs = String.fromCharCode(92);
+  const dir = tree({ ok: 'x' });
+  try {
+    const odd = 'x' + esc + '[2Jx';
+    fs.mkdirSync(path.join(dir, odd, 'dist'), { recursive: true });
+    fs.writeFileSync(path.join(dir, odd, 'dist', 'a.md'), 'hello\n');
+    const text = spawnSync(process.execPath, [CLI, 'scan', dir], { encoding: 'utf8', env: ENV }).stdout;
+    assert.ok(!text.includes(esc), 'no raw ESC in the output');
+    assert.ok(text.includes('x' + bs + 'x1b[2Jx'), text);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('scan lists editor and virtual-environment directories it skips', () => {
+  const dir = tree({
+    'ok.md': 'hello\n',
+    '.idea/agent.md': 'hello\n',
+    '.venv/a.md': 'hello\n',
+    'venv/a.md': 'hello\n',
+    '__pycache__/a.md': 'hello\n',
+    '.eggs/a.md': 'hello\n',
+  });
+  try {
+    const data = scanJson(dir);
+    assert.strictEqual(data.total_files, 1);
+    assert.deepStrictEqual(data.skipped_dirs.map((s) => path.basename(s.dir)).sort(), ['.eggs', '.idea', '.venv', '__pycache__', 'venv']);
+    assert.ok(data.skipped_dirs.every((s) => s.reason === 'skipped by name: build output'));
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

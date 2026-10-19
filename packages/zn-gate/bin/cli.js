@@ -34,6 +34,7 @@ const { AUDIT_RULES_VERSION } = require('../lib/audit/rules');
 const { styles, sym, ruleLine } = require('../lib/term');
 const mcpSecrets = require('../lib/mcp-secrets');
 const { pruneInfo, SCAN_DIRS } = require('../lib/prune');
+const { safeText } = require('../lib/audit/report');
 // Colors are decided once per run: NO_COLOR, TERM=dumb or a stdout that is not a terminal turn them off.
 const col = styles(process.stdout, process.env);
 
@@ -751,13 +752,13 @@ ${ruleLine(process.env, 77)}\n
 `);
   if (files.skipped.length) {
     process.stdout.write(`Not scanned (${files.skipped.length}):\n`);
-    for (const s of files.skipped.slice(0, 20)) process.stdout.write(`  ${displayPath(s.file, homeFiles)} (${s.reason})\n`);
+    for (const s of files.skipped.slice(0, 20)) process.stdout.write(`  ${safeText(displayPath(s.file, homeFiles))} (${safeText(s.reason)})\n`);
     if (files.skipped.length > 20) process.stdout.write(`  ... and ${files.skipped.length - 20} more\n`);
     process.stdout.write('\n');
   }
   if (files.skippedDirs.length) {
     process.stdout.write(`Directories not scanned (${files.skippedDirs.length}):\n`);
-    for (const s of files.skippedDirs.slice(0, 20)) process.stdout.write(`  ${displayPath(s.dir, homeFiles)} (${s.reason})\n`);
+    for (const s of files.skippedDirs.slice(0, 20)) process.stdout.write(`  ${safeText(displayPath(s.dir, homeFiles))} (${safeText(s.reason)})\n`);
     if (files.skippedDirs.length > 20) process.stdout.write(`  ... and ${files.skippedDirs.length - 20} more\n`);
     process.stdout.write('\n');
   }
