@@ -198,6 +198,15 @@ For these reasons, zn is installed correctly, but a setting stops your agent fro
 
   An `enabled = false` entry under `[hooks.state]` in `config.toml` makes Codex skip the hook without a message.
 
+- **Another hook runs next to zn's.**
+
+  ```text
+  another hook runs before Codex calls (<event> in <file>); it can change a call after zn has checked it, so zn cannot fully protect Codex
+  review that hook and remove it if you do not need it, or have your administrator manage hooks with `allow_managed_hooks_only`, then run `zn-gate check` again
+  ```
+
+  Codex runs every hook for an event at the same time, each with the original call. Another tool's hook can change the call after zn has checked it, or answer an approval prompt, and zn cannot see what it does. See [compat](compat.md) for the details.
+
 ### zn-gate could not finish the check
 
 ```text
