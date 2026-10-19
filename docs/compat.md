@@ -59,17 +59,18 @@ The table lists every Codex hook event named in the official hooks documentation
 (learn.chatgpt.com/docs/hooks, checked 2026-10-18; the same event names appear in
 openai/codex's generated hook schemas). It says which ones zn installs and why.
 The Codex CLI version it was run on is given only where a check was run; that
-check used Codex CLI 0.163.0. Rows marked "not tested" are from the documentation
-only and have not been run against a live Codex.
+check used Codex CLI 0.163.0. The runs are in `bench/e2e/codex/scenarios/`: they use a scripted
+model provider on 127.0.0.1, so no account or key is needed, and every value is fake. Rows marked
+"not tested" are from the documentation only and have not been run against a live Codex.
 
 | Event | zn uses it | What it does for zn |
 |---|---|---|
-| `PreToolUse` | Yes, matcher `^(Bash\|apply_patch\|mcp__.+)$` | Checks shell commands, patches and MCP call arguments before they run, and denies with zn's reason. Exit code 2 also blocks (documented). zn never answers `allow`. Shell and `apply_patch` checked on 0.163.0; MCP calls not tested. |
-| `PostToolUse` | Yes, matcher `.*` | Scrubs tool output. Its `decision: "block"` replaces the result with zn's scrubbed copy. Checked on 0.163.0. Opt-in `replaceToolOutputOnSecret` also sends `continue: false` with a `stopReason` for a real secret value. Codex then replaces the result with that stop text; see below. Not yet run on a live Codex. |
-| `PermissionRequest` | Yes, deny only | Runs the same check as `PreToolUse` when Codex is about to ask you to approve a call. zn answers `deny` with its reason and never `allow`. Not tested. |
+| `PreToolUse` | Yes, matcher `^(Bash\|apply_patch\|mcp__.+)$` | Checks shell commands, patches and MCP call arguments before they run, and denies with zn's reason. Exit code 2 also blocks (documented). zn never answers `allow`. Shell, `apply_patch` and MCP calls checked on 0.163.0: a placeholder or a secret value in the arguments is denied and never reaches the server. |
+| `PostToolUse` | Yes, matcher `.*` | Scrubs tool output. Its `decision: "block"` replaces the result with zn's scrubbed copy. Checked on 0.163.0. Opt-in `replaceToolOutputOnSecret` also sends `continue: false` with a `stopReason` for a real secret value. Checked on 0.163.0: the model still gets the scrubbed copy, not the stop text, and the turn goes on; see below. |
+| `PermissionRequest` | Yes, deny only | Runs the same check as `PreToolUse` when Codex is about to ask you to approve a call. zn answers `deny` with its reason and never `allow`. Checked on 0.163.0 in the terminal UI: `codex exec` never asks for approval, so the event does not run there. |
 | `UserPromptSubmit` | Yes | Blocks a secret pasted into the prompt. Checked on 0.163.0. |
 | `SessionStart` | No | zn installs no session-start hook for Codex. |
-| `Stop` | Yes, warn by default | Reviews the model's final answer for a secret value, or for a `__ZN_` placeholder that zn did not see earlier in the session. It warns with `systemMessage`, which you see and the model does not. It blocks, with a reason for the model to rewrite the answer, only with `"stopReview": "block"` under `hooks` in `~/.zn/config.json`; it never blocks when Codex is already continuing because of a Stop hook. Not tested. |
+| `Stop` | Yes, warn by default | Reviews the model's final answer for a secret value, or for a `__ZN_` placeholder that zn did not see earlier in the session. It warns with `systemMessage`, which you see and the model does not. It blocks, with a reason for the model to rewrite the answer, only with `"stopReview": "block"` under `hooks` in `~/.zn/config.json`; it never blocks when Codex is already continuing because of a Stop hook. Checked on 0.163.0: a secret value in the answer is warned about, or blocked once with `stopReview`. A placeholder zn did not see earlier is not caught on Codex, because Codex writes each answer to its session log more than once. |
 | `SubagentStart` | No | Not used. |
 | `SubagentStop` | No | Not used. |
 | `PreCompact` | No | Not used. |
@@ -95,10 +96,15 @@ only and have not been run against a live Codex.
     `~/.zn/config.json`. When a tool output holds a real secret value (not only a `__ZN_` marker), zn also
     returns `continue: false` with a `stopReason` that names the kind of secret, never the value. Codex's docs
     say it then replaces the tool result with that stop text and carries on. This does not end the turn on
-    its own. With the setting on, the model may therefore get zn's stop text instead of the tokenized copy of
-    the output. The stop text asks for a review and, if the value is real, a rotation. Markers alone change
-    nothing. Not yet run on a live Codex; a test in a VM is pending. Environment variables do not turn it on.
+    its own. Checked on Codex CLI 0.163.0: the model still gets the tokenized copy of the output and the turn
+    goes on; the stop text is not what the model sees. Markers alone change nothing. Environment variables
+    do not turn it on.
   - Codex's own session log keeps the original output.
+  - Another tool's `PreToolUse` hook that answers `allow` with `updatedInput` changes the command Codex
+    runs, and zn does not see the change: its `PreToolUse` check gets the original command. Checked on
+    Codex CLI 0.163.0 with a stand-in hook that turned a harmless `echo` into a read of a credentials file:
+    the read ran, and zn's `PostToolUse` check still replaced the secret values in the output before the
+    model saw them. Do not install another hook that rewrites commands next to zn's.
   - Hooks are a guardrail, not an enforcement boundary (Codex's own words).
   - MCP tool calls reach `PreToolUse` (matcher `^(Bash|apply_patch|mcp__.+)$`), and zn checks
     their arguments for secret values and `__ZN_` markers, as it does for Cursor. Installs made
