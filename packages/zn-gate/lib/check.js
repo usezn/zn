@@ -42,6 +42,48 @@ function pluginNodeMessage(version) {
   return 'the zn-gate plugin needs Node.js ' + PLUGIN_NODE_MIN + ' or later (you have ' + String(version || process.versions.node) + ')';
 }
 
+/* The plugin's hooks run `node` as Claude Code finds it on its PATH, which is not always the Node.js that runs
+   zn-gate (npx, nvm, several installs). This finds that `node` and asks it for its version. Never throws:
+   null means it could not be found or run. Same binary as this process: no need to start it. */
+function resolveHookNode(env) {
+  try {
+    const exe = require('./exe');
+    const isWin = process.platform === 'win32';
+    const absPath = String((env || process.env).PATH || '').split(path.delimiter).filter((d) => d && path.isAbsolute(d)).join(path.delimiter);
+    const found = exe.whichSync(isWin ? 'node.exe' : 'node', absPath);
+    if (!found) return null;
+    const file = path.resolve(found);
+    const norm = (f) => { let r = path.resolve(f); try { r = fs.realpathSync(r); } catch (err) { /* keep it */ } return isWin ? r.toLowerCase() : r; };
+    if (norm(file) === norm(process.execPath)) return { version: process.versions.node, path: file };
+    const r = spawnSync(file, ['--version'], { encoding: 'utf8', timeout: 3000, windowsHide: true, shell: false });
+    const m = /^v(\d+\.\d+\.\d+)/.exec(String(r.stdout || '').trim());
+    return r.status === 0 && m ? { version: m[1], path: file } : null;
+  } catch (err) {
+    return null;
+  }
+}
+
+/* What the plugin's hooks will run on: {ok, unknown, version, why}. opts: nodeVersion (this zn-gate's, injected in
+   tests), hookNode (injected: a {version, path}, null for "unknown", or a function(env) returning one). Given only
+   nodeVersion, the hooks are taken to run on that same Node.js. */
+function pluginNodeStatus(opts = {}) {
+  const zn = opts.nodeVersion || process.versions.node;
+  let hook = opts.hookNode;
+  if (typeof hook === 'function') hook = hook(opts.env || process.env);
+  else if (hook === undefined) hook = opts.nodeVersion ? { version: opts.nodeVersion, path: null } : resolveHookNode(opts.env);
+  if (!hook || !hook.version) {
+    return { ok: false, unknown: true, version: null, zn, why: 'zn-gate could not find or run the `node` that Claude Code will start the hooks of the plugin with (the first one on your PATH)' };
+  }
+  const same = !hook.path || hook.version === zn;
+  const why = same ? 'you have ' + hook.version
+    : 'Claude Code will run the hooks of the plugin with Node.js ' + hook.version + (hook.path ? ' (from ' + hook.path + ')' : '') + '; zn-gate itself runs on Node.js ' + zn;
+  return { ok: pluginNodeOk(hook.version), unknown: false, version: hook.version, zn, why };
+}
+function pluginNodeProblem(st) {
+  return st.unknown ? 'the zn-gate plugin could not be checked: ' + st.why
+    : 'the zn-gate plugin needs Node.js ' + PLUGIN_NODE_MIN + ' or later (' + st.why + ')';
+}
+
 const AGENTS = [
   {
     id: 'claude-code', name: 'Claude Code', event: 'PreToolUse', tool: 'Read',
@@ -339,9 +381,10 @@ async function checkAgent(spec, ctx) {
         res.problem = 'the zn-gate plugin is turned off in your Claude Code settings';
         res.fix = 'turn it on: run `claude plugin enable zn-gate@usezn` in your own terminal';
       }
-      if (!plugin.off && !pluginNodeOk(ctx.nodeVersion)) {
-        res.problem = pluginNodeMessage(ctx.nodeVersion);
-        res.fix = 'update Node.js to ' + PLUGIN_NODE_MIN + ' or later (the current LTS from nodejs.org), or use zn\'s hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, and after that turn the plugin off with `claude plugin disable zn-gate@usezn`, all in your own terminal';
+      const nodeSt = plugin.off ? null : (ctx.pluginNode || (ctx.pluginNode = pluginNodeStatus(ctx)));
+      if (nodeSt && !nodeSt.ok) {
+        res.problem = pluginNodeProblem(nodeSt);
+        res.fix = (nodeSt.unknown ? 'make sure `node --version` works in a new terminal and shows ' + PLUGIN_NODE_MIN + ' or later' : 'update Node.js to ' + PLUGIN_NODE_MIN + ' or later (the current LTS from nodejs.org), and make it the first `node` on your PATH') + ', or use zn\'s hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, and after that turn the plugin off with `claude plugin disable zn-gate@usezn`, all in your own terminal';
         res.pluginFault = true;
         res.pluginNode = true;
       }
@@ -508,7 +551,7 @@ async function check(opts = {}) {
   const env = opts.env || process.env;
   const cwd = opts.cwd || process.cwd();
   if (opts.live === false) {
-    const ctx = { home, env, cwd, live: false, dir: cwd, codexPolicy: opts.codexPolicy, geminiSystemFile: opts.geminiSystemFile, nodeVersion: opts.nodeVersion };
+    const ctx = { home, env, cwd, live: false, dir: cwd, codexPolicy: opts.codexPolicy, geminiSystemFile: opts.geminiSystemFile, nodeVersion: opts.nodeVersion, hookNode: opts.hookNode, pluginNode: opts.pluginNode };
     const results = [];
     for (const spec of AGENTS) {
       try {
@@ -520,7 +563,7 @@ async function check(opts = {}) {
     return { results, removed: true };
   }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-check-'));
-  const ctx = { home, env, cwd, live: true, dir, envFile: path.join(dir, '.env'), readme: path.join(dir, 'README.txt'), codexPolicy: opts.codexPolicy, geminiSystemFile: opts.geminiSystemFile, nodeVersion: opts.nodeVersion };
+  const ctx = { home, env, cwd, live: true, dir, envFile: path.join(dir, '.env'), readme: path.join(dir, 'README.txt'), codexPolicy: opts.codexPolicy, geminiSystemFile: opts.geminiSystemFile, nodeVersion: opts.nodeVersion, hookNode: opts.hookNode, pluginNode: opts.pluginNode };
   const results = [];
   try {
     fs.writeFileSync(path.join(dir, '.gitignore'), '.env\n');
@@ -594,4 +637,4 @@ function report({ results, removed }, write) {
   return setUp && !bad ? 0 : 1;
 }
 
-module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin } };
+module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin } };
