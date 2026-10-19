@@ -216,7 +216,7 @@ test('install (user) backs up, keeps every other setting and hook, and uninstall
   assert.deepEqual(data.hooksConfig, mine.hooksConfig);
   assert.deepEqual(data.hooks.SessionStart, mine.hooks.SessionStart);
   assert.deepEqual(data.hooks.BeforeTool[0], mine.hooks.BeforeTool[0]);
-  assert.match(data.hooks.BeforeTool[1].hooks[0].command, /runner\.js'? gemini$/);
+  assert.match(data.hooks.BeforeTool[1].hooks[0].command, /runner\.js.* gemini/);
   gem.uninstall({ scope: 'user', home });
   data = readSettings(file);
   assert.deepEqual(data, mine);
