@@ -7,7 +7,7 @@
  * evidence committed in bench/e2e/<agent>/, ignoring wording the agents own
  * (error text, timings, ids). A case is "the same" when every step has the
  * same tool name, the same error flag, the same __ZN_ tokens in the result
- * and the same zn notes count, and when the exit codes and the vault answers
+ * (the __ZN_NAME__ placeholder in help text does not count) and the same zn notes count, and when the exit codes and the vault answers
  * match. It also fails when anything sent to the provider holds a fake secret
  * (the leak check), or when an agent produced no evidence.
  *
@@ -40,7 +40,7 @@ function steps(text) {
     const r = /^\s+result( \(error\))?:\s?(.*)$/.exec(line);
     if (r && cur) {
       cur.error = !!r[1];
-      cur.tokens = [...new Set(r[2].match(/__ZN_[A-Z0-9_]+__/g) || [])].sort().join(',');
+      cur.tokens = [...new Set(r[2].match(/__ZN_[A-Z0-9_]+__/g) || [])].filter((t) => t !== '__ZN_NAME__').sort().join(',');
       cur.hook = /\bzn( run)?:|ZN_POLICY_DENIED|PreToolUse/.test(r[2]);
     }
   }
