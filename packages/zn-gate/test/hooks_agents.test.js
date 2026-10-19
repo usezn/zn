@@ -298,6 +298,8 @@ test('opencode: the installed plugin, driven like OpenCode does, blocks, rewrite
   const rep = opencode.install({ env });
   assert.ok(rep.settings.endsWith(path.join('opencode', 'plugins', 'zn-gate.js')));
   const saved = process.env.ZN_HOME;
+  const savedShell = process.env.SHELL;
+  process.env.SHELL = 'bash'; // the plugin reads it at load; Windows runners have none, which means PowerShell
   process.env.ZN_HOME = znHome; // vault locked: the real engine redacts irreversibly
   try {
     // OpenCode loads the plugin as an ES module; Node 18 needs the .mjs extension for that.
@@ -327,6 +329,7 @@ test('opencode: the installed plugin, driven like OpenCode does, blocks, rewrite
     await hooks['chat.message']({ sessionID: 's' }, { message: {}, parts: [{ type: 'text', text: 'hello' }] });
   } finally {
     if (saved === undefined) delete process.env.ZN_HOME; else process.env.ZN_HOME = saved;
+    if (savedShell === undefined) delete process.env.SHELL; else process.env.SHELL = savedShell;
   }
   opencode.uninstall({ env });
   assert.ok(!fs.existsSync(rep.settings));
