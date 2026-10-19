@@ -3,7 +3,8 @@
 // Every reason `zn-gate check` can give for "NOT protected" is explained in
 // docs/check.md. This test reads the messages out of lib/check.js and
 // lib/agents/managed-policy.js and fails when the doc lacks one, so the two
-// cannot drift apart. A message built from pieces counts as explained when the
+// cannot drift apart. The check goes one way (code to doc): a line of the doc
+// whose message no longer exists in the code does not fail it. A message built from pieces counts as explained when the
 // doc quotes each fixed piece (the blanks, such as <file>, stay free).
 
 const test = require('node:test');
@@ -12,8 +13,10 @@ const fs = require('fs');
 const path = require('path');
 
 const root = path.join(__dirname, '..');
-const checkSrc = fs.readFileSync(path.join(root, 'lib', 'check.js'), 'utf8');
-const policySrc = fs.readFileSync(path.join(root, 'lib', 'agents', 'managed-policy.js'), 'utf8');
+// A checkout with Windows line endings must read the same as one with Unix line endings.
+const read = (file) => fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+const checkSrc = read(path.join(root, 'lib', 'check.js'));
+const policySrc = read(path.join(root, 'lib', 'agents', 'managed-policy.js'));
 const docFile = path.join(root, '..', '..', 'docs', 'check.md');
 const MIN_LEN = 12;
 
@@ -33,6 +36,7 @@ function functionBody(src, name) {
   const start = src.indexOf('function ' + name + '(');
   assert.ok(start >= 0, 'lib/check.js has no function ' + name + ': update this test');
   const end = src.indexOf('\n}\n', start);
+  assert.ok(end >= 0, 'the end of function ' + name + ' in lib/check.js was not found (expected a closing brace at the start of a line): update this test');
   return src.slice(start, end);
 }
 
@@ -69,7 +73,7 @@ test('the message extractor finds the reasons', () => {
 
 test('docs/check.md explains every NOT protected reason', (t) => {
   if (!fs.existsSync(docFile)) { t.skip('docs/check.md is not part of this checkout'); return; }
-  const doc = squash(fs.readFileSync(docFile, 'utf8'));
+  const doc = squash(read(docFile));
   const missing = messagePieces().filter((p) => !doc.includes(p));
   assert.deepEqual(missing, [], 'docs/check.md ("What each NOT protected line means") lacks an entry that quotes these pieces of lib/check.js or lib/agents/managed-policy.js messages. Add the reason with its fix, or reword the doc to quote them exactly:\n  ' + missing.join('\n  '));
 });
