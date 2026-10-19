@@ -13,8 +13,8 @@ chmod -R a+rwX "$work"
 # Pinned by digest for reproducible runs. To update: read the Docker-Content-Digest header of a HEAD request to
 # https://registry-1.docker.io/v2/library/node/manifests/22-slim (with a pull token), replace the digest below, and re-run the smoke.
 image=node:22-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392
-# Protocol versions sent in initialize: the one older clients use and the current one.
-protocols=(2024-11-05 2025-11-25)
+# Protocol versions sent in initialize: every version the server supports.
+protocols=(2024-11-05 2025-03-26 2025-06-18 2025-11-25)
 # Containers run as the caller, so nothing they write is root-owned and the cleanup below works.
 user=(--user "$(id -u):$(id -g)" -e HOME=/w/home)
 

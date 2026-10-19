@@ -20,8 +20,10 @@ documentation on 2026-10-11 (Cursor again on 2026-10-17). End-to-end evidence is
 | Windows | Yes, including the PowerShell tool (Claude Code 2.1.299 or later: before it, without Git for Windows, `PreToolUse` let calls through when it could not run) | The hook command was run by hand from PowerShell and from cmd.exe (not in CI) | Not tested | Not tested (wrapping is written for bash) |
 | End-to-end run, 0 values sent to the provider | **Yes** | **Yes** | Not run (no CLI with hooks to drive) | **Yes** |
 
-zn's two MCP servers (`zn mcp` and the `secrets` server) speak MCP protocol version `2024-11-05` and answer
-with it whatever version the client asks for, as the protocol allows; the client then uses that version.
+zn's two MCP servers (`zn mcp` and the `secrets` server) support MCP protocol versions `2025-11-25`,
+`2025-06-18`, `2025-03-26` and `2024-11-05`. They answer initialize with the version the client asks for, or with
+`2025-11-25` if the client asks for one they do not know (the client then decides). Tool annotations are sent from
+`2025-03-26`, tool titles from `2025-06-18`, and JSON-RPC batches are accepted up to `2025-03-26` and rejected after.
 Checked on 2026-10-17 with Claude Code 2.1.302 (`claude mcp list`: both connected) and with the official
 TypeScript MCP SDK client whose newest version is `2025-11-25` (both servers connect and list their tools).
 
