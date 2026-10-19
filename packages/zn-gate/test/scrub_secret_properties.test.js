@@ -19,8 +19,7 @@
  * Nothing here is a credential: prefixes are public and the bodies are
  * random and marked as fake.
  *
- * Deliberately not generated: AWS key ids ending in EXAMPLE (the rule
- * exempts the AWS documentation example key), PEM blocks, Azure AD client
+ * Deliberately not generated: PEM blocks, Azure AD client
  * secrets, Discord bot tokens and database passwords. Each has its own
  * structure and its own tests.
  *

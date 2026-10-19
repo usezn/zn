@@ -19,6 +19,7 @@ const { parseJsonc, parseToml } = require('./parse');
 const P = require('./patterns');
 const { BY_ID, RANK } = require('./rules');
 const mcpSecrets = require('../mcp-secrets');
+const { pruneInfo } = require('../prune');
 
 const AGENTS = ['claude', 'codex', 'cursor', 'opencode', 'amazonq', 'copilot', 'gemini'];
 const MAX_FILE_BYTES = 1024 * 1024;
@@ -985,6 +986,7 @@ function walk(root, deadline, maxEntries) {
   const files = [];
   const extDirs = [];
   const unchecked = [];
+  const skippedDirs = [];
   let entries = 0;
   let truncated = null;
   let realRoot = root;
@@ -1029,7 +1031,14 @@ function walk(root, deadline, maxEntries) {
         continue;
       }
       if (d.isDirectory()) {
-        if (d.name === '.git' || (!agentHere && SKIP_DIRS.has(d.name))) continue;
+        if (d.name === '.git') continue;
+        if (!agentHere && SKIP_DIRS.has(d.name)) {
+          const pruned = pruneInfo(d.name, dir);
+          if (pruned) {
+            if (!pruned.silent) skippedDirs.push({ dir: r, reason: pruned.reason });
+            continue;
+          }
+        }
         const ext = EXTENSION_DIRS.find(([re]) => re.test(r));
         if (ext) extDirs.push({ rel: r, abs, agent: ext[1], what: ext[2] });
         if (depth < MAX_DEPTH) visit(abs, r, depth + 1, agentHere);
@@ -1039,7 +1048,7 @@ function walk(root, deadline, maxEntries) {
     }
   }
   visit(root, '', 0, false);
-  return { files, extDirs, unchecked, truncated, entries };
+  return { files, extDirs, unchecked, truncated, entries, skippedDirs };
 }
 
 function homeFiles(home, env) {
@@ -1395,7 +1404,7 @@ function audit(opts) {
   const deadline = Date.now() + (o.timeBudgetMs || TIME_BUDGET_MS);
   const out = [];
   const maxEntries = o.maxEntries || MAX_ENTRIES;
-  const { files, extDirs, unchecked, truncated, entries } = walk(root, deadline, maxEntries);
+  const { files, extDirs, unchecked, truncated, entries, skippedDirs } = walk(root, deadline, maxEntries);
   const known = new Set(files.map((f) => f.rel));
   for (const rec of redirectedConfigs(root, unchecked)) if (!known.has(rec.rel)) files.push(rec);
   let scanned = 0;
@@ -1437,7 +1446,7 @@ function audit(opts) {
     findings.push(f);
   }
   findings.sort((a, b) => (RANK[b.severity] - RANK[a.severity]) || (a.file < b.file ? -1 : a.file > b.file ? 1 : 0) || (a.line - b.line) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  return { root, files: scanned, findings, truncated: Boolean(truncated) || timedOut, entries, agents: Array.from(selected) };
+  return { root, files: scanned, findings, truncated: Boolean(truncated) || timedOut, entries, skippedDirs, agents: Array.from(selected) };
 }
 
 module.exports = { audit, classify, redact, AGENTS, _internal: { hookCommands, isOurHook, isOurMcp, gitIgnored, readBounded, grantsWrite, withoutTrailingEquals, OUR_HOOKS, SAFE_ABS, znGateFile } };
