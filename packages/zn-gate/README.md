@@ -274,6 +274,8 @@ CONFIDENTIAL_INTERNAL_PROJECT_[A-Z0-9]+
 
 `zn-gate shield` appends every decision to `~/.zn/evidence.jsonl` as a hash-chained (SHA-256) record with a secret-redacted preview. It detects accidental or partial edits. It is not tamper-proof against someone with write access to the file, who can recompute the whole chain.
 
+The agent hooks write to the same log. When a hook blocks a tool call, a prompt or a final answer, or hides a secret in a tool result, `zn-gate evidence` shows one more event with the agent, the kind of event, the tool name, a rule name (such as `hook-pre_tool-policy` or `hook-redacted-output`) and the kinds of secret found. It never stores a secret value, a command, a file path or the text of your prompt. Calls that are allowed are not written, so the log stays short. If the log cannot be written (a full disk, a damaged log, a busy lock), zn prints one line about it and the block still holds. Counts of all checks, including allowed ones, are in `npx -y zn-gate stats`.
+
 ```bash
 npx -y zn-gate evidence --verify
 npx -y zn-gate evidence --ui        # local dashboard on http://localhost:3100

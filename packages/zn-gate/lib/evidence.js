@@ -359,7 +359,7 @@ function getLastHash(filePath = EVIDENCE_FILE) {
  *   write lock stays busy for 2 seconds; it never throws for a log problem.
  */
 function logEvidence(event, filePath = EVIDENCE_FILE, opts = {}) {
-  if (filePath === EVIDENCE_FILE) {
+  if (filePath === EVIDENCE_FILE && !opts.noStats) {
     require('./stats').record({
       layer: 'shield', agent: event.agent || event.agent_environment || 'other', checked: 1,
       blocked: String(event.verdict || '').toLowerCase() === 'block' ? 1 : 0,
