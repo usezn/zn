@@ -128,5 +128,6 @@ Run `npx -y zn-gate check` afterwards if you want to see that zn is off.
 
 - [What the check means](check.md)
 - [Keep your `.env` values in the vault](secrets.md)
+- [Every command and exit code](cli.md)
 - [Words you do not know](glossary.md)
 - [What zn-gate cannot protect](threat-model.md)
