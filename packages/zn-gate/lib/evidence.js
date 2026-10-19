@@ -69,6 +69,36 @@ function readLockToken(lockPath) {
   try { return fs.readFileSync(lockPath, 'utf8'); } catch { return null; }
 }
 
+// Test seams: they let a test run code between two steps of the break protocol.
+const testHooks = { afterMutexCreate: null, beforeMutexRelease: null, beforeMutexReclaim: null };
+
+// The break mutex holds its owner's token, like the lock: a breaker only deletes the mutex while
+// it is still its own. If it took longer than the stale window, another breaker may have
+// reclaimed it and created a new one, and deleting by path would remove that one.
+function releaseMutex(mutex, token) {
+  if (readLockToken(mutex) === token) {
+    try { fs.unlinkSync(mutex); } catch { /* best effort */ }
+  }
+}
+
+// A mutex older than the stale window belongs to a breaker that died. Move it aside first (never
+// delete by the shared path: a new mutex may have been created since we looked), and put it back
+// with link() if what we moved turns out to be fresh.
+function reclaimStaleMutex(mutex, token) {
+  try {
+    if (Math.abs(Date.now() - fs.statSync(mutex).mtimeMs) <= LOCK_STALE_MS) return;
+    if (testHooks.beforeMutexReclaim) testHooks.beforeMutexReclaim(mutex);
+    const aside = `${mutex}-reclaim-${token.replace(':', '-')}`;
+    fs.renameSync(mutex, aside);
+    let fresh = false;
+    try { fresh = Math.abs(Date.now() - fs.statSync(aside).mtimeMs) <= LOCK_STALE_MS; } catch { /* gone */ }
+    if (fresh) {
+      try { fs.linkSync(aside, mutex); } catch { /* another mutex exists again: its owner checks its token */ }
+    }
+    try { fs.unlinkSync(aside); } catch { /* best effort */ }
+  } catch { /* gone or busy: wait and retry */ }
+}
+
 /**
  * Breaks a stale lock. Breakers take a short-lived `<log>.lock.break` mutex first and judge the
  * lock stale again inside it: without it, a breaker that judged the old lock stale could rename
@@ -80,15 +110,15 @@ function breakStaleLock(lockPath, token) {
   let fd;
   try {
     fd = fs.openSync(mutex, 'wx', LEDGER_FILE_MODE);
+    try { fs.writeSync(fd, token); } catch { /* best effort: without it the mutex is never released by us */ }
   } catch {
     // Another breaker is working. A mutex left by a dead process is removed after a while.
-    try {
-      if (Math.abs(Date.now() - fs.statSync(mutex).mtimeMs) > LOCK_STALE_MS) fs.unlinkSync(mutex);
-    } catch { /* gone or busy: wait and retry */ }
+    reclaimStaleMutex(mutex, token);
     return false;
   }
   try {
     try { fs.closeSync(fd); } catch { /* best effort */ }
+    if (testHooks.afterMutexCreate) testHooks.afterMutexCreate(mutex);
     // Inside the mutex only breakers touch a stale lock, and a fresh one cannot appear while
     // the stale file still exists, so what is judged stale here is still the stale file.
     let stale = false;
@@ -111,7 +141,8 @@ function breakStaleLock(lockPath, token) {
     }
     return moved;
   } finally {
-    try { fs.unlinkSync(mutex); } catch { /* best effort */ }
+    if (testHooks.beforeMutexRelease) testHooks.beforeMutexRelease(mutex);
+    releaseMutex(mutex, token);
   }
 }
 
@@ -926,4 +957,5 @@ module.exports = {
   renderAuditRow,
   EVIDENCE_FILE,
   GENESIS_HASH,
+  _testHooks: testHooks,
 };
