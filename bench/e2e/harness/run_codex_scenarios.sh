@@ -31,7 +31,7 @@ ROOT=$(cd "$H/../../.." && pwd)
 PKG=$ROOT/packages/zn-gate
 WORK=$(mkdir -p "$1" && cd "$1" && pwd)
 CODEX=${2:-codex}
-[ $# -ge 2 ] && shift 2 || shift $#
+if [ $# -ge 2 ]; then shift 2; else shift $#; fi
 SCENARIOS=("$@")
 [ ${#SCENARIOS[@]} -eq 0 ] && SCENARIOS=(permission mcp stop-warn stop-block stop-placeholder replace thirdparty)
 EVIDENCE=${EVIDENCE_DIR:-$ROOT/bench/e2e/codex/scenarios}
@@ -48,7 +48,8 @@ run_one() {
   ln -sf "$PKG/bin/cli.js" "$RUN/bin/zn"
   (
     export HOME=$RUN/home ZN_HOME=$RUN/zn CODEX_HOME=$RUN/home/.codex MOCK_API_KEY=mock-provider-key
-    export PATH=$RUN/bin:$(dirname "$NODE"):/usr/local/bin:/usr/bin:/bin
+    NODE_DIR=$(dirname "$NODE")
+    export PATH=$RUN/bin:$NODE_DIR:/usr/local/bin:/usr/bin:/bin
     {
       echo 'model = "mock-model"'
       echo 'model_provider = "mock"'
@@ -88,6 +89,7 @@ run_one() {
     else
       FLAGS=(--dangerously-bypass-approvals-and-sandbox)
     fi
+    # shellcheck disable=SC2164 # $RUN/proj is created by setup.js just above; this subshell deliberately has no errexit
     cd "$RUN/proj"
     if [ "$S" = permission ]; then
       # codex exec never asks for approval (its policy is fixed to "never"), so PermissionRequest
