@@ -246,7 +246,7 @@ def _gh_message(value: str) -> str:
     return str(value).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
 
 
-def _mcp_violations(shown: str, found: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _mcp_violations(shown: str, found: List[_mcp.McpSpan]) -> List[Dict[str, Any]]:
     """MCP servers: every credential the MCP check found is a finding of its own; the
     other rules ran on the text with those values masked (mcp_secrets.py). The value
     is never printed."""
@@ -279,7 +279,7 @@ def _scan_file(file_path: Path, shown: Optional[str] = None, mcp_only: bool = Fa
     if file_path.suffix.lower() == ".key" and raw[:2] not in _UTF16_BOMS and b"\0" in raw[:_BINARY_SNIFF]:
         return []
     content = _decode_scan_text(raw)
-    mcp_found: List[Dict[str, Any]] = []
+    mcp_found: List[_mcp.McpSpan] = []
     if _mcp.is_mcp_config_path(str(file_path)):
         # The MCP check runs first and its values are masked, so no other rule prints one.
         mcp_found = _mcp.find_mcp_config_secret_spans(content, str(file_path))
