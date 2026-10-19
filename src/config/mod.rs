@@ -342,6 +342,11 @@ pub struct KmsConfig {
     pub key_id: Option<String>,
     /// Region (if applicable)
     pub region: Option<String>,
+    /// When `key_id` is set and the key cannot be fetched from the KMS, start
+    /// anyway with the key from the config. Off by default: the gateway
+    /// refuses to start instead.
+    #[serde(default)]
+    pub allow_config_fallback: bool,
 }
 
 impl Default for KmsConfig {
@@ -350,6 +355,7 @@ impl Default for KmsConfig {
             kms_type: default_kms_type(),
             key_id: std::env::var("ZN_KMS_KEY_ID").ok(),
             region: std::env::var("ZN_KMS_REGION").ok(),
+            allow_config_fallback: false,
         }
     }
 }
@@ -776,6 +782,11 @@ impl ZnConfig {
 
         if let Ok(key_id) = std::env::var("ZN_KMS_KEY_ID") {
             self.kms.key_id = Some(key_id);
+        }
+
+        if let Ok(allow) = std::env::var("ZN_KMS_ALLOW_CONFIG_FALLBACK") {
+            self.kms.allow_config_fallback =
+                matches!(allow.as_str(), "1" | "true" | "TRUE" | "True");
         }
 
         if let Ok(neural_enabled) = std::env::var("ZN_NEURAL_ENABLED") {
