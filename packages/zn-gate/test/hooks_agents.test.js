@@ -340,6 +340,53 @@ test('opencode: install refuses to overwrite a plugin it did not write', (t) => 
   assert.throws(() => opencode.install({ env: { XDG_CONFIG_HOME: xdg } }), /not written by zn/);
 });
 
+test('opencode: with PowerShell as the shell, a marker command is wrapped in PowerShell form', async (t) => {
+  const dir = tmpProject(t);
+  const opts = { nodePath: String.raw`C:\Program Files\nodejs\node.exe`, runJs: String.raw`C:\Users\ana\zn\run.js` };
+  for (const shell of ['pwsh', 'pwsh.exe', 'powershell.exe', String.raw`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`]) {
+    const r = await run(opencode, { hook: 'tool.execute.before', tool: 'bash', shell, cwd: dir, args: { command: "psql 'postgres://app:__ZN_DB_PASSWORD__@db.example.test/app' -c 'select 1'" } }, opts);
+    assert.equal(r.output.action, 'args', shell);
+    const c = r.output.args.command;
+    assert.match(c, /^& '[^']*node(\.exe)?' '[^']*run\.js' --agent opencode -- psql 'postgres:\/\/app:__ZN_DB_PASSWORD__@db\.example\.test\/app' -c 'select 1'$/, shell);
+    assert.doesNotMatch(c, /ZN_AGENT=|cmd(\.exe)?\s|\/c /);
+    assert.ok(c.includes('Program Files'), 'a path with a space stays in one quoted word');
+  }
+  // A path with a single quote is doubled inside PowerShell single quotes.
+  const q = await run(opencode, { hook: 'tool.execute.before', tool: 'bash', shell: 'pwsh', cwd: dir, args: { command: 'psql __ZN_DB_PASSWORD__' } }, { nodePath: String.raw`C:\Users\o'brien\node.exe`, runJs: String.raw`C:\x\run.js` });
+  const bs = String.fromCharCode(92);
+  assert.ok(q.output.args.command.startsWith("& 'C:" + bs + 'Users' + bs + "o''brien" + bs + "node.exe' "));
+  assert.match(q.output.args.command, / --agent opencode -- psql __ZN_DB_PASSWORD__$/);
+  // Already wrapped, or no marker: left alone.
+  const none = await run(opencode, { hook: 'tool.execute.before', tool: 'bash', shell: 'pwsh', cwd: dir, args: { command: 'Get-ChildItem' } }, opts);
+  assert.deepEqual(none.output, { action: 'none' });
+  // Not one plain native command: refused, never run with a placeholder.
+  for (const command of ['Get-Content x | psql __ZN_DB_PASSWORD__', 'Invoke-WebRequest __ZN_API_KEY__', 'psql $env:X __ZN_DB_PASSWORD__']) {
+    const d = await run(opencode, { hook: 'tool.execute.before', tool: 'bash', shell: 'pwsh', cwd: dir, args: { command } }, opts);
+    assert.equal(d.output.action, 'deny', command);
+    assert.match(d.output.message, /PowerShell/);
+  }
+});
+
+test('opencode: bash and unknown shells keep the bash wrapping', async (t) => {
+  const dir = tmpProject(t);
+  for (const shell of [undefined, '', 'bash', '/usr/bin/zsh', 'sh', 'fish', 'nushell']) {
+    const r = await run(opencode, { hook: 'tool.execute.before', tool: 'bash', shell, cwd: dir, args: { command: 'psql __ZN_DB_PASSWORD__' } });
+    assert.equal(r.output.action, 'args', String(shell));
+    assert.match(r.output.args.command, /^ZN_AGENT=x "node" "run\.js" -- psql __ZN_DB_PASSWORD__$/, String(shell));
+  }
+  assert.equal(opencode.isPowerShellName('pwsh-preview'), true);
+  assert.equal(opencode.isPowerShellName('powershell-core'), false);
+});
+
+test('opencode plugin: sends only the name of the shell, not its path', () => {
+  const src = opencode.pluginSource({ scope: 'user', nodePath: '/usr/bin/node', runnerPath: '/opt/zn/lib/hooks/runner.js' });
+  assert.match(src, /process\.env\.SHELL/);
+  assert.match(src, /\.split\("\/"\)\.pop\(\)/);
+  assert.match(src, /args: output\.args, shell: SHELL/);
+  // The generated plugin is valid JavaScript.
+  assert.doesNotThrow(() => new (require('vm').Script)(src.replace(/^import .*$/m, '').replace(/^export const/m, 'const')));
+});
+
 test('opencode project plugin: cmd.exe does not look for zn in the project directory first', () => {
   const src = require('../lib/agents/opencode').pluginSource({ scope: 'project' });
   const call = src.match(/spawn\(NODE,[^\n]*\)/)[0];

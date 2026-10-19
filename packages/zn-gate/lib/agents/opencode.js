@@ -61,6 +61,13 @@ function textsOf(tool, args) {
   return texts;
 }
 
+// The plugin sends the base name of $SHELL (never a path). powershell.exe, pwsh and pwsh-preview all count.
+function isPowerShellName(name) {
+  if (typeof name !== 'string') return false;
+  const base = name.replace(/\\/g, '/').split('/').pop().toLowerCase().replace(/\.exe$/, '');
+  return base === 'powershell' || /^pwsh(-preview)?$/.test(base);
+}
+
 function normalize(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const args = raw.args && typeof raw.args === 'object' ? raw.args : {};
@@ -77,6 +84,9 @@ function normalize(raw) {
   else if (TOKENIZED_OUTPUT.has(t)) tool = 'mcp';
   else if (BUILTIN.has(t)) tool = t;
   else tool = 'mcp';
+  // OpenCode's bash tool runs in the user's shell. When the plugin saw that it is PowerShell,
+  // the command is checked and wrapped as PowerShell, not as POSIX sh.
+  if (tool === 'bash' && isPowerShellName(raw.shell)) tool = 'powershell';
   const input = {
     command: typeof args.command === 'string' ? args.command : undefined,
     path: args.filePath || args.path || undefined,
@@ -154,6 +164,9 @@ const TIMEOUT_MS = 20000;
 // The only answers the plugin acts on. Any other answer is an error, which
 // blocks the call (before), withholds the output (after) or stops the message.
 const ACTIONS = ["none", "deny", "error", "args", "output"];
+// OpenCode runs its bash tool in $SHELL. The runner needs only the program's
+// name (not its path) to tell PowerShell from a POSIX shell.
+const SHELL = String(process.env.SHELL || "").replace(/\\\\/g, "/").split("/").pop();
 
 // Copy scrubbed string leaves from src into target, in place.
 function applyStrings(target, src) {
@@ -195,7 +208,7 @@ function runHook(event) {
 
 export const ZnGate = async ({ directory }) => ({
   "tool.execute.before": async (input, output) => {
-    const r = await runHook({ hook: "tool.execute.before", tool: input.tool, sessionID: input.sessionID, cwd: directory, args: output.args });
+    const r = await runHook({ hook: "tool.execute.before", tool: input.tool, sessionID: input.sessionID, cwd: directory, args: output.args, shell: SHELL });
     if (r.action === "deny") throw new Error(r.message);
     if (r.action === "error") throw new Error("zn: the secret scrubber is not working (" + r.message + "); call blocked");
     if (r.action === "args" && r.args) for (const [k, v] of Object.entries(r.args)) output.args[k] = v;
@@ -203,7 +216,7 @@ export const ZnGate = async ({ directory }) => ({
   "tool.execute.after": async (input, output) => {
     const content = Array.isArray(output.content) ? output.content : null;
     const r = await runHook({
-      hook: "tool.execute.after", tool: input.tool, sessionID: input.sessionID, cwd: directory, args: input.args,
+      hook: "tool.execute.after", tool: input.tool, sessionID: input.sessionID, cwd: directory, args: input.args, shell: SHELL,
       output: typeof output.output === "string" ? output.output : undefined,
       metadata: output.metadata && typeof output.metadata === "object" ? output.metadata : undefined,
       content: content ? content.map((c) => (c && typeof c.text === "string" ? { type: c.type, text: c.text } : { type: c && c.type })) : undefined,
@@ -280,6 +293,7 @@ module.exports = {
   install,
   uninstall,
   normalize,
+  isPowerShellName,
   respond,
   capabilities: { ask: false, rewriteInput: true, rewriteOutput: 'all' },
   pluginSource,

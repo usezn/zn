@@ -17,7 +17,7 @@ documentation on 2026-10-11 (Cursor again on 2026-10-17). End-to-end evidence is
 | Commands with `__ZN_<NAME>__`: through `zn run` | Rewritten automatically, shown to you for confirmation | The agent is told the exact `zn run -- …` line to use | The agent is told the exact `zn run -- …` line to use; Cursor asks you once wrapped | Rewritten automatically; OpenCode's own permission rules apply |
 | Restore detected tokens into local commands and git-ignored files | Yes, shown in the confirmation dialog | No (tokens stay) | No (tokens stay) | No (tokens stay) |
 | `secrets` MCP server | Yes (registered on install) | Yes (snippet printed) | Yes (snippet printed) | Yes (snippet printed) |
-| Windows | Yes, including the PowerShell tool (Claude Code 2.1.299 or later: before it, without Git for Windows, `PreToolUse` let calls through when it could not run) | The hook command was run by hand from PowerShell and from cmd.exe (not in CI) | Not tested | Not tested (wrapping is written for bash) |
+| Windows | Yes, including the PowerShell tool (Claude Code 2.1.299 or later: before it, without Git for Windows, `PreToolUse` let calls through when it could not run) | The hook command was run by hand from PowerShell and from cmd.exe (not in CI) | Not tested | Not tested end to end (PowerShell wrapping is covered by unit tests; other Windows shells are wrapped for bash) |
 | End-to-end run, 0 values sent to the provider | **Yes** | **Yes** | Not run (no CLI with hooks to drive) | **Yes** |
 
 zn's two MCP servers (`zn mcp` and the `secrets` server) speak MCP protocol version `2024-11-05` and answer
@@ -194,9 +194,13 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
     local paths of `node` and zn (no secret value).
   - Live output that OpenCode stores while a command runs stays in its local
     database.
-  - On Windows, the `zn run` wrapping is written for bash: with PowerShell as
-    OpenCode's shell, a command with a marker fails instead of running (no
-    value is exposed).
+  - On Windows, when OpenCode's shell is PowerShell (`powershell.exe` or `pwsh`,
+    named by the `SHELL` environment variable), zn checks and wraps the command
+    as PowerShell, the way it does for Claude Code's PowerShell tool: the command
+    must be one program with plain arguments (no pipeline, variable or script
+    block), and zn says so when it is not. Commands for other shells are wrapped
+    for bash as before. The PowerShell form is covered by unit tests, not yet run
+    end to end on Windows.
 
 ## zn Team policy choices by zn-gate version
 
