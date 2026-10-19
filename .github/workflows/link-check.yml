@@ -21,7 +21,7 @@ concurrency:
 
 env:
   # Pinned release binary; the archive is verified against this SHA-256 before it is unpacked.
-  LYCHEE_VERSION: v0.24.2
+  LYCHEE_VERSION: lychee-v0.24.2
   LYCHEE_SHA256: 1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a
   LINK_TARGETS: README.md docs packages/*/README.md plugins
 
