@@ -125,7 +125,32 @@ test('the login key is left alone in a Windows-style ~/.claude.json, and reporte
   assert.deepEqual(kinds(text, path.win32.join('C:\\Users\\Ana María', 'settings.json')), [[1, 'setting', 'primaryApiKey']]);
 });
 
-test('a credential nested under a secret-named object is reported (known gap)', { todo: 'known gap: a value under a secret-named object key is not reported; no product decision yet' }, () => {
-  const text = '{"API_TOKEN": {"value": "' + FAKE + '"}}';
-  assert.deepEqual(kinds(text), [[1, 'environment variable', 'API_TOKEN']]);
+test('a credential nested under a secret-named object is reported', () => {
+  assert.deepEqual(kinds('{"API_TOKEN": {"value": "' + FAKE + '"}}'), [[1, 'environment variable', 'API_TOKEN']]);
+  assert.deepEqual(kinds('{"env": {"DB_PASSWORD": {"default": "' + FAKE + '"}}}'), [[1, 'environment variable', 'DB_PASSWORD']]);
+  assert.deepEqual(kinds('env = { API_TOKEN = { value = "' + FAKE + '" } }'), [[1, 'environment variable', 'API_TOKEN']]);
+});
+
+test('a nested value is found across lines, masked, and arrays under a secret key are read', () => {
+  const text = '{\n "apiKey": {\n  "type": "string",\n  "value": "' + FAKE + '"\n },\n "other": {"value": "' + FAKE + '"}\n}';
+  assert.deepEqual(kinds(text), [[4, 'setting', 'apiKey']]);
+  assert.equal(mcp.maskMcpValues(text, mcp.findMcpConfigSecretSpans(text)).split(FAKE).length - 1, 1);
+  assert.deepEqual(kinds('{"A_TOKEN": ["' + FAKE + '"], "B_TOKEN": ["--x", "' + FAKE + '"]}').map((k) => k[2]), ['A_TOKEN', 'B_TOKEN']);
+});
+
+test('references, placeholders, empty values, other keys and deep nesting are not reported under a secret key', () => {
+  for (const v of ['${API_TOKEN}', '<key>', 'YOUR_KEY', '__ZN_API_TOKEN__', '$API_TOKEN', '', 'true']) {
+    assert.deepEqual(kinds('{"API_TOKEN": {"value": "' + v + '", "default": "' + v + '"}}'), [], v);
+  }
+  assert.deepEqual(kinds('{"auth": {"client_id": "' + FAKE + '", "type": "oauth"}}'), []);
+  assert.deepEqual(kinds('{"API_TOKEN": {"description": "' + FAKE + '"}}'), []);
+  assert.deepEqual(kinds('{"API_TOKEN": {"a": {"b": ["' + FAKE + '"]}}, "LOG": {"value": "' + FAKE + '"}}'), []);
+  assert.deepEqual(kinds('{"API_TOKEN": ' + '{"x": '.repeat(10) + '{"value": "' + FAKE + '"}' + '}'.repeat(11)), []);
+  for (const t of ['{"API_TOKEN": {"value": ', '{"API_TOKEN": [[[[[[[[[[["' + FAKE + '"']) mcp.findMcpConfigSecrets(t);
+});
+
+test('offsets count UTF-16 code units, so an emoji before a credential counts as two', () => {
+  const text = '{"\u{1F4C1}": "x", "BRAVE_API_KEY": "' + FAKE + '"}';
+  const [sp] = mcp.findMcpConfigSecretSpans(text);
+  assert.equal(text.slice(sp.start, sp.end), FAKE);
 });

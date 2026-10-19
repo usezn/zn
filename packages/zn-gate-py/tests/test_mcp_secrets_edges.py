@@ -340,24 +340,53 @@ class TestSharedFixtureParity(unittest.TestCase):
                 self.assertEqual(mcp.find_mcp_config_secrets(t), n["findings"])
                 self.assertEqual(mcp.mask_mcp_values(t, mcp.find_mcp_config_secret_spans(t)), n["masked"])
 
-    @unittest.expectedFailure
     def test_offsets_after_an_astral_character_match_node(self):
-        # Known divergence: Node.js reports offsets in UTF-16 code units, Python in code points.
-        # An emoji before a credential on the same line shifts the spans by one. Masking is still
-        # correct in each language (the output text is the same); only the offsets differ.
+        # Both engines report offsets in UTF-16 code units: an emoji before a credential on the
+        # same line counts as two, in Python too, and masking gives the same text.
         text = '{"\U0001F4C1": "x", "BRAVE_API_KEY": "%s"}' % FAKE
         node = _run_node([{"text": text, "file": ""}])[0]
-        self.assertEqual(mcp.find_mcp_config_secret_spans(text), node["spans"])
+        spans = mcp.find_mcp_config_secret_spans(text)
+        self.assertEqual(spans, node["spans"])
+        self.assertEqual(mcp.mask_mcp_values(text, spans), node["masked"])
 
 
-class TestKnownGaps(unittest.TestCase):
-    @unittest.expectedFailure
+class TestNestedSecretValues(unittest.TestCase):
     def test_credential_nested_under_a_secret_named_object_is_reported(self):
-        # Known gap, same as the Node.js side: a value under a key like "API_TOKEN" whose value is
-        # an object is not reported, because the key holds no string. Expected to pass once fixed.
         text = '{"API_TOKEN": {"value": "%s"}}' % FAKE
-        self.assertEqual(mcp.find_mcp_config_secrets(text), [{"line": 1, "kind": "environment variable",
-                                                              "name": "API_TOKEN"}])
+        self.assertEqual(_kinds(text), [(1, "environment variable", "API_TOKEN")])
+        text = '{"env": {"DB_PASSWORD": {"default": "%s"}}}' % FAKE
+        self.assertEqual(_kinds(text), [(1, "environment variable", "DB_PASSWORD")])
+
+    def test_nested_value_is_found_across_lines_and_masked(self):
+        text = '{\n "apiKey": {\n  "type": "string",\n  "value": "%s"\n },\n "other": {"value": "%s"}\n}' % (FAKE, FAKE)
+        self.assertEqual(_kinds(text), [(4, "setting", "apiKey")])
+        out = mcp.mask_mcp_values(text, mcp.find_mcp_config_secret_spans(text))
+        self.assertEqual(out.count(FAKE), 1)
+
+    def test_array_items_under_a_secret_named_key_are_reported(self):
+        text = '{"A_TOKEN": ["%s"], "B_TOKEN": ["--x", "%s"]}' % (FAKE, FAKE)
+        self.assertEqual([g[2] for g in _kinds(text)], ["A_TOKEN", "B_TOKEN"])
+
+    def test_references_placeholders_and_empty_nested_values_are_not_reported(self):
+        for v in ("${API_TOKEN}", "<key>", "YOUR_KEY", "__ZN_API_TOKEN__", "$API_TOKEN", "", "true"):
+            with self.subTest(value=v):
+                self.assertEqual(_kinds('{"API_TOKEN": {"value": "%s", "default": "%s"}}' % (v, v)), [])
+
+    def test_other_keys_and_other_objects_are_not_reported(self):
+        self.assertEqual(_kinds('{"auth": {"client_id": "%s", "type": "oauth"}}' % FAKE), [])
+        self.assertEqual(_kinds('{"API_TOKEN": {"description": "%s"}}' % FAKE), [])
+        self.assertEqual(_kinds('{"API_TOKEN": {"a": {"b": ["%s"]}}, "LOG": {"value": "%s"}}' % (FAKE, FAKE)), [])
+
+    def test_nesting_is_bounded_and_broken_input_does_not_raise(self):
+        deep = '{"API_TOKEN": ' + '{"x": ' * 10 + '{"value": "%s"}' % FAKE + "}" * 11
+        self.assertEqual(_kinds(deep), [])
+        for text in ('{"API_TOKEN": {"value": ', '{"API_TOKEN": [[[[[[[[[[["%s"' % FAKE,
+                     '"API_TOKEN": {' + "\n" * 300 + '"value": "%s"' % FAKE):
+            mcp.find_mcp_config_secrets(text)
+
+    def test_toml_inline_table(self):
+        text = 'env = { API_TOKEN = { value = "%s" } }' % FAKE
+        self.assertEqual(_kinds(text), [(1, "environment variable", "API_TOKEN")])
 
 
 if __name__ == "__main__":

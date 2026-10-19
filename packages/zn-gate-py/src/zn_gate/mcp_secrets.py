@@ -183,10 +183,86 @@ def _safe_name(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]", "_", str(name))[:80]
 
 
+# A credential can sit in an object or array under a secret-named key
+# ({"API_TOKEN": {"value": "..."}}): the strings under these keys, and the items
+# of the array itself, are reported under the name of that key.
+_NEST_LEAF_KEYS = {"value", "default", "string", "literal", "plain", "plaintext"}
+_NEST_MAX_LEAF_DEPTH = 4
+_NEST_MAX_STACK = 8
+_NEST_MAX_LINES = 200
+
+
+class _Nest:
+    __slots__ = ("name", "stack", "lines")
+
+    def __init__(self) -> None:
+        self.name = ""
+        self.stack: List[str] = []
+        self.lines = 0
+
+
+def _follow_nest(line: str, toks: List[_Token], nest: _Nest, ctx: Dict[int, Tuple[str, int, str]]) -> None:
+    """Follows the braces and brackets of an object or array under a secret-named key
+    across lines. Fills ``ctx`` (index -> (top, depth, name)) for what sits inside it on this line."""
+    opens: Dict[int, str] = {}
+    for t in toks:
+        if t.sep and t.value_at >= 0 and is_secret_name(normalize_name(t.text)):
+            opens[t.value_at] = t.text
+    if nest.stack:
+        nest.lines += 1
+        if nest.lines > _NEST_MAX_LINES:
+            nest.stack = []
+    n = len(line)
+    i = 0
+    while i < n:
+        c = line[i]
+        active = bool(nest.stack)
+        if active:
+            ctx[i] = (nest.stack[-1], len(nest.stack), nest.name)
+        if c == '"' or c == "'":
+            j = i + 1
+            while j < n and line[j] != c:
+                j += 2 if (c == '"' and line[j] == "\\") else 1
+            if j >= n:
+                break
+            i = j + 1
+            continue
+        if c == "#" or (c == "/" and line[i + 1:i + 2] == "/"):
+            break
+        if c in "{[":
+            if active:
+                if len(nest.stack) >= _NEST_MAX_STACK:
+                    nest.stack = []
+                else:
+                    nest.stack.append(c)
+            elif i in opens:
+                nest.name = opens[i]
+                nest.stack = [c]
+                nest.lines = 0
+        elif c in "}]" and active:
+            nest.stack.pop()
+        i += 1
+
+
+def _has_astral(text: str) -> bool:
+    return not text.isascii() and max(text) > chr(0xFFFF)
+
+
+def _utf16_offsets(text: str, spans: List[Dict[str, object]]) -> List[Dict[str, object]]:
+    """Offsets in UTF-16 code units, as the Node.js package reports them (and as a
+    JavaScript string is indexed), so both engines give the same spans."""
+    if not _has_astral(text):
+        return spans
+    for sp in spans:
+        for k in ("start", "end"):
+            sp[k] = len(text[:int(sp[k])].encode("utf-16-le", "surrogatepass")) // 2
+    return spans
+
+
 def find_mcp_config_secret_spans(text: str, file: str = "") -> List[Dict[str, object]]:
     """Credentials in the text of an MCP configuration file, with where each value
-    sits: {"line", "kind", "name", "start", "end"} (offsets in ``text``, lines counted
-    on newline characters only). The offsets are for masking the value
+    sits: {"line", "kind", "name", "start", "end"} (offsets in ``text`` in UTF-16 code
+    units, as the Node.js package gives them; lines counted on newline characters only). The offsets are for masking the value
     (``mask_mcp_values``); they are never part of a report. ``kind`` is "environment
     variable", "header", "setting", "argument" or "URL". ``file`` is the file name: in
     ~/.claude.json the key Claude Code logs in with is left alone."""
@@ -211,7 +287,9 @@ def find_mcp_config_secret_spans(text: str, file: str = "") -> List[Dict[str, ob
     def set_pending(flag: str) -> None:
         pending[0] = flag
 
-    lines = str(text).split("\n")
+    text = str(text)
+    nest = _Nest()
+    lines = text.split("\n")
     line_start = 0
     for idx, raw in enumerate(lines):
         cur["ln"] = idx + 1
@@ -223,11 +301,27 @@ def find_mcp_config_secret_spans(text: str, file: str = "") -> List[Dict[str, ob
         toks = _tokenize(line)
         had_pending = pending[0] is not None
         used_pending = False
+        ctx: Dict[int, Tuple[str, int, str]] = {}
+        _follow_nest(line, toks, nest, ctx)
         t = 0
         while t < len(toks):
             tok = toks[t]
             nxt = toks[t + 1] if t + 1 < len(toks) else None
             t += 1
+            in_nest = ctx.get(tok.start)
+            if in_nest is not None:
+                # Inside an object or array under a secret-named key: a string under a value-like
+                # key, or an item of that array.
+                top, depth, nest_name = in_nest
+                if tok.sep:
+                    if (nxt is not None and nxt.is_str and nxt.start == tok.value_at
+                            and not is_secret_name(normalize_name(tok.text))
+                            and top == "{" and depth <= _NEST_MAX_LEAF_DEPTH and tok.text.lower() in _NEST_LEAF_KEYS):
+                        _pair(nest_name, nxt.text, nxt.start + 1, add, own_login)
+                        t += 1
+                        continue
+                elif tok.is_str and top == "[" and depth == 1 and pending[0] is None:
+                    _pair(nest_name, tok.text, tok.start + 1, add, own_login)
             if tok.sep:
                 # A key. Its value is the string that follows it.
                 if nxt is not None and nxt.is_str and nxt.start == tok.value_at:
@@ -248,7 +342,7 @@ def find_mcp_config_secret_spans(text: str, file: str = "") -> List[Dict[str, ob
         # A flag waits for its value only across comment and blank lines.
         if had_pending and not used_pending and pending[0] is not None and not re.match(r"^\s*(?:#|//|/\*|\*)", line):
             pending[0] = None
-    return found
+    return _utf16_offsets(text, found)
 
 
 def find_mcp_config_secrets(text: str, file: str = "") -> List[Dict[str, object]]:
@@ -259,6 +353,19 @@ def find_mcp_config_secrets(text: str, file: str = "") -> List[Dict[str, object]
 def mask_mcp_values(text: str, spans: List[Dict[str, Any]]) -> str:
     """The text with each found value replaced, so no other rule can print it.
     Line numbers do not change."""
+    if _has_astral(text):
+        # The offsets count UTF-16 code units: cut the text the same way.
+        raw = text.encode("utf-16-le", "surrogatepass")
+        pieces = []
+        last = 0
+        for sp in sorted(spans, key=lambda f: (int(f["start"]), -int(f["end"]))):
+            if int(sp["start"]) < last:
+                continue
+            pieces.append(raw[2 * last:2 * int(sp["start"])])
+            pieces.append("[REDACTED_MCP]".encode("utf-16-le"))
+            last = int(sp["end"])
+        pieces.append(raw[2 * last:])
+        return b"".join(pieces).decode("utf-16-le", "surrogatepass")
     out = []
     last = 0
     for sp in sorted(spans, key=lambda f: (int(f["start"]), -int(f["end"]))):
