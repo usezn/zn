@@ -1,0 +1,7 @@
+UserPromptSubmit 
+  input: 
+  zn answered: (nothing), exit 0
+
+Stop 
+  input: last message: Use the token __ZN_GITHUB_TOKEN__ for the call.
+  zn answered: (nothing), exit 0

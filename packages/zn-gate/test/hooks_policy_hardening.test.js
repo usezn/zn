@@ -536,7 +536,7 @@ test('reading a key or .env file never blocks and a repeated word is read once',
 });
 
 test('a command with many paths after several cd is refused within the time budget, never let through', (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-budget-'));
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zn-budget-')));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   for (const d of ['a', 'b', 'c', 'd']) fs.mkdirSync(path.join(dir, d));
   fs.writeFileSync(path.join(dir, '.env'), 'EXAMPLE_API_KEY=zn-test-fake-value-0000\n');

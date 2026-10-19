@@ -1,0 +1,10 @@
+requests to the provider: 4 (4 agent turns)
+
+step 1: echo {"text":"token __ZN_GITHUB_TOKEN__"}
+  result: Tool call blocked by PreToolUse hook: zn: the MCP server echo never receives secret values, so zn blocked this call. Next step: for an authenticated web request, use the secrets_http_request tool of the zn "secrets" MCP server; otherwise remove the placeholder from the call.. Tool: mcp__echo__echo
+
+step 2: echo {"text":"key <<VALUE:MCP_ARG_KEY>>"}
+  result: Tool call blocked by PreToolUse hook: zn: this call would send a secret (an Anthropic key) to the MCP server echo, so zn blocked it. A stored secret cannot be passed to this server. Next step: for a web request, use the secrets_http_request tool of the zn "secrets" MCP server, which sends the stored value itself; do not put the value in this call.. Tool: mcp__echo__echo
+
+step 3: echo {"text":"hello from the end-to-end run"}
+  result: [{"type":"input_text","text":"Wall time: 0.0026 seconds\nOutput:"},{"type":"input_text","text":"echo received 29 characters"}]

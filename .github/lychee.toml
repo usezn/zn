@@ -1,0 +1,16 @@
+# Settings for .github/workflows/link-check.yml.
+# Network checks are patient and forgiving: they only report, they never fail a pull request.
+max_retries = 3
+retry_wait_time = 5
+timeout = 20
+max_concurrency = 8
+accept = ["200..=299", "403", "429"]
+user_agent = "Mozilla/5.0 (compatible; zn-link-check)"
+exclude_all_private = true
+exclude_path = ["docs/diagrams/NOTICE.md"]
+exclude = [
+  '^https?://(localhost|127\.0\.0\.1)',
+  '^https?://(www\.)?example\.(com|org)',
+  '^https?://[^/]*\.(invalid|test)(/|$)',
+  '^https?://(www\.)?linkedin\.com',
+]

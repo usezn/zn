@@ -79,8 +79,8 @@ def analyze_cloud(
     }
     req = urllib.request.Request(endpoint, data=payload, headers=headers, method="POST")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
-        body = resp.read().decode("utf-8")
-        parsed = json.loads(body)
+        raw = resp.read().decode("utf-8")
+        parsed = json.loads(raw)
         parsed["engine"] = "cloud-v30" if "/v30" in endpoint else "cloud-prod"
         return parsed
 
@@ -134,7 +134,7 @@ def analyze(
         sanitized, detections = redact_secrets(input_text)
         # Length in UTF-16 units, as the Node.js client counts it.
         windows = long_input_mode(long_input) == "windows" and len(sanitized.encode("utf-16-le")) // 2 > LONG_INPUT_MIN_CHARS
-        cloud_res = analyze_cloud(input_text, key, target_url,
+        cloud_res = analyze_cloud(input_text, key or "", target_url,
                                   timeout=timeout if timeout is not None else (WINDOWS_TIMEOUT if windows else 4.0),
                                   long_input="windows" if windows else None)
         cloud_res["mode"] = "hybrid-cloud"

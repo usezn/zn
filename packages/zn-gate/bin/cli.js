@@ -12,7 +12,7 @@
   var msg = 'zn-gate needs Node.js 18 or later, and this is Node.js ' + process.version + '.\n' +
     'Install the LTS version from https://nodejs.org/ (or run: nvm install --lts), then run the command again.\n';
   var agentRun = { hook: 1, run: 1, mcp: 1, 'secrets-mcp': 1, 'mcp-shield': 1, shield: 1 };
-  if (agentRun.hasOwnProperty(process.argv[2])) {
+  if (Object.prototype.hasOwnProperty.call(agentRun, process.argv[2])) {
     process.stderr.write('Warning: ' + msg);
     return;
   }
@@ -25,14 +25,15 @@ const os = require('os');
 const path = require('path');
 const { startMcpServer } = require('../lib/mcp');
 const { startMcpShield } = require('../lib/shield');
-const { scanEnvironments, configureEnvironments } = require('../lib/init');
-const { logEvidence, verifyEvidenceLedger, getEvidenceStats, exportEvidenceLedger, startEvidenceUi, recoveryHint, EVIDENCE_FILE } = require('../lib/evidence');
+const { configureEnvironments } = require('../lib/init');
+const { verifyEvidenceLedger, getEvidenceStats, exportEvidenceLedger, startEvidenceUi, recoveryHint, EVIDENCE_FILE } = require('../lib/evidence');
 const { analyze, analyzeLocal, isCloudEnabled, resolveEndpoint, usesStoredKey, RULES_VERSION } = require('../lib/client');
 const { evaluate, redactSecrets, redactScanSecrets, redactScanRules, SECRET_PATTERNS } = require('../lib/rules');
 const { SCRUB_RULES_VERSION } = require('../lib/scrub/patterns');
 const { AUDIT_RULES_VERSION } = require('../lib/audit/rules');
 const { styles, sym, ruleLine } = require('../lib/term');
 const mcpSecrets = require('../lib/mcp-secrets');
+const { pruneInfo, SCAN_DIRS } = require('../lib/prune');
 // Colors are decided once per run: NO_COLOR, TERM=dumb or a stdout that is not a terminal turn them off.
 const col = styles(process.stdout, process.env);
 
@@ -268,6 +269,7 @@ VAULT (local, encrypted with age; the key stays in the OS keychain):
   vault log           Show the audit log of secret use [--since 1h]; checks the chain when unlocked
   vault verify        Verify the HMAC-chained audit log of secret use
   vault forget [dir]  Forget the token map of a project (vault locked)
+  vault reset         Lost the passphrase? Set the old vault aside and start empty (your terminal only)
   vault log export --otlp
                       Export the audit log as OpenTelemetry logs (OTLP/JSON Lines)
                       [--since 7d] [--out FILE]
@@ -277,6 +279,8 @@ TEAM (zn Team: organization policy and audit upload; needs the vault unlocked):
   team status         Organization, policy version and upload state [--json]
   team sync           Download the policy and upload the audit log now
   team leave          Disconnect this machine (confirmed outside the agent)
+  team managed-config Print the managed settings an admin deploys with MDM (nothing is written)
+                      [--agent claude-code|cursor|codex|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--json]
 
 INIT --wrap-mcp OPTIONS (each one also selects --wrap-mcp):
   --dry-run           Scan environments and preview changes without modifying configs
@@ -411,21 +415,39 @@ function homeMcpFiles() {
 // user's own MCP configs (--include-home) outside it is shown as ~/...
 function displayPath(filePath, homeFiles) {
   if (homeFiles && homeFiles.has(filePath)) {
-    const fromHome = path.relative(os.homedir(), filePath);
+    let realHome = os.homedir();
+    try { realHome = fs.realpathSync(realHome); } catch (e) { /* keep it */ }
+    const fromHome = path.relative(realHome, realFolderOf(filePath));
     if (!fromHome.startsWith('..') && !path.isAbsolute(fromHome)) return '~/' + fromHome.split(path.sep).join('/');
   }
-  return path.relative(process.cwd(), filePath);
+  return relativeToCwd(filePath);
+}
+
+// The folder of a path with every link followed (the name itself is kept), or
+// the path unchanged when it cannot be resolved.
+function realFolderOf(p) {
+  const abs = path.resolve(p);
+  try { return path.join(fs.realpathSync(path.dirname(abs)), path.basename(abs)); } catch (e) { return abs; }
+}
+
+// A path relative to the current directory. Both sides are resolved first: on
+// macOS the temporary folder is /var/..., a link to /private/var/..., and the
+// current directory is reported as /private/var/..., so comparing them as
+// they are gives "../../private/var/...".
+function relativeToCwd(filePath) {
+  let cwd = process.cwd();
+  try { cwd = fs.realpathSync(cwd); } catch (e) { /* keep it */ }
+  return path.relative(cwd, realFolderOf(filePath));
 }
 
 function scanDirectory(targetPath, includeCode = false, options = {}) {
-  const IGNORED_DIRS = new Set([
-    'node_modules', '.git', '.next', 'dist', 'build', '.turbo', 'vendor',
-    '.idea', 'test', 'tests', '__tests__', 'target',
-  ]);
+  const IGNORED_DIRS = SCAN_DIRS;
+  // Names the user passes with --exclude are skipped everywhere and never reported.
+  const userExcluded = new Set();
   if (options.exclude) {
     options.exclude.split(',').forEach(d => {
       const trimmed = d.trim();
-      if (trimmed) IGNORED_DIRS.add(trimmed);
+      if (trimmed) userExcluded.add(trimmed);
     });
   }
   
@@ -445,6 +467,9 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
   // Files that match the scan but are not read, reported in the summary.
   const skipped = [];
   filesToScan.skipped = skipped;
+  // Directories that are not entered, reported next to the skipped files.
+  const skippedDirs = [];
+  filesToScan.skippedDirs = skippedDirs;
 
   function walk(current) {
     let stat;
@@ -457,7 +482,17 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
 
     if (stat.isDirectory()) {
       const base = path.basename(current);
-      if (IGNORED_DIRS.has(base)) return;
+      // The directory you pass is always read, whatever its name.
+      if (current !== targetPath) {
+        if (userExcluded.has(base)) return;
+        if (IGNORED_DIRS.has(base)) {
+          const pruned = pruneInfo(base, path.dirname(current));
+          if (pruned) {
+            if (!pruned.silent) skippedDirs.push({ dir: current, reason: pruned.reason });
+            return;
+          }
+        }
+      }
       let entries = [];
       try {
         entries = fs.readdirSync(current);
@@ -526,7 +561,6 @@ Files   : ${files.length} file(s) queued for audit\n
 
   for (const filePath of files) {
     const relPath = displayPath(filePath, homeFiles);
-    const fileFirst = findings.length;
     let content = '';
     let mcpFound = [];
     try {
@@ -653,7 +687,11 @@ Files   : ${files.length} file(s) queued for audit\n
     for (const s of files.skipped) {
       process.stdout.write(`::notice file=${ghProperty(displayPath(s.file, homeFiles))},title=Not scanned::${ghMessage(s.reason)}\n`);
     }
-    process.stdout.write(`\n[zn-gate] Scanned ${files.length - notRead} files (${files.skipped.length} not scanned). Found ${totalSecrets} secrets and ${totalThreats} security threats.\n`);
+    for (const s of files.skippedDirs) {
+      process.stdout.write(`::notice file=${ghProperty(displayPath(s.dir, homeFiles))},title=Directory not scanned::${ghMessage(s.reason)}\n`);
+    }
+    const dirNote = files.skippedDirs.length ? ` and ${files.skippedDirs.length} director${files.skippedDirs.length === 1 ? 'y' : 'ies'} skipped` : '';
+    process.stdout.write(`\n[zn-gate] Scanned ${files.length - notRead} files (${files.skipped.length} not scanned${dirNote}). Found ${totalSecrets} secrets and ${totalThreats} security threats.\n`);
     if (totalFindings > 0) process.exitCode = 1;
     return;
   }
@@ -661,6 +699,7 @@ Files   : ${files.length} file(s) queued for audit\n
     process.stdout.write(JSON.stringify({
       total_files: files.length - notRead,
       total_skipped: files.skipped.length,
+      total_skipped_dirs: files.skippedDirs.length,
       // Every finding, secrets included (as before); total_secrets counts the secrets alone.
       total_threats: totalFindings,
       total_secrets: totalSecrets,
@@ -670,6 +709,7 @@ Files   : ${files.length} file(s) queued for audit\n
         return out;
       }),
       skipped: files.skipped.map((s) => ({ file: displayPath(s.file, homeFiles), reason: s.reason })),
+      skipped_dirs: files.skippedDirs.map((s) => ({ dir: displayPath(s.dir, homeFiles), reason: s.reason })),
     }, null, 2) + '\n');
     if (totalFindings > 0) process.exitCode = 1;
     return;
@@ -705,6 +745,12 @@ ${ruleLine(process.env, 77)}\n
     process.stdout.write(`Not scanned (${files.skipped.length}):\n`);
     for (const s of files.skipped.slice(0, 20)) process.stdout.write(`  ${displayPath(s.file, homeFiles)} (${s.reason})\n`);
     if (files.skipped.length > 20) process.stdout.write(`  ... and ${files.skipped.length - 20} more\n`);
+    process.stdout.write('\n');
+  }
+  if (files.skippedDirs.length) {
+    process.stdout.write(`Directories not scanned (${files.skippedDirs.length}):\n`);
+    for (const s of files.skippedDirs.slice(0, 20)) process.stdout.write(`  ${displayPath(s.dir, homeFiles)} (${s.reason})\n`);
+    if (files.skippedDirs.length > 20) process.stdout.write(`  ... and ${files.skippedDirs.length - 20} more\n`);
     process.stdout.write('\n');
   }
 
