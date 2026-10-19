@@ -24,6 +24,10 @@
         "regex": "^__version__ = \"([^\"]+)\""
       },
       {
+        "file": "examples/ag2-agent/requirements.txt",
+        "regex": "^zn-gate==(\\S+)$"
+      },
+      {
         "file": "examples/crewai-agent/requirements.txt",
         "regex": "^zn-gate==(\\S+)$"
       },

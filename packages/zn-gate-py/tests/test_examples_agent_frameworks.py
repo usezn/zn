@@ -16,6 +16,7 @@ import pytest
 
 EXAMPLES = Path(__file__).resolve().parents[3] / "examples"
 NAMES = ["crewai-agent", "llamaindex-agent", "openai-agents-sdk"]
+AG2 = "ag2-agent"
 
 CLEAN_URL = "https://example.com/weather"
 INJECTED_URL = "https://example.com/notes"
@@ -177,3 +178,28 @@ def test_crewai_example_checks_the_page_text():
     without_result_check = guarded_tool(on_block="return", mask_secrets=True)(example.fetch_page)
     assert without_result_check(INJECTED_URL) == example.FAKE_PAGES[INJECTED_URL]
     assert example.safe_fetch_page(INJECTED_URL).startswith("zn-gate blocked")
+
+
+def test_ag2_example_guards_the_call_and_the_result():
+    example = load(AG2)
+    assert example.safe_fetch_page(CLEAN_URL) == example.FAKE_PAGES[CLEAN_URL]
+    assert example.safe_fetch_page(INJECTED_URL).startswith("zn-gate blocked 'fetch_page:result'")
+    assert "[REDACTED_AWS_KEY]" in example.safe_fetch_page(SECRET_URL)
+    # The injected request is stopped before the tool runs.
+    assert example.safe_fetch_page(example.INJECTED_REQUEST).startswith("zn-gate blocked 'fetch_page'.")
+    assert example.safe_fetch_page.__name__ == "fetch_page"
+
+
+def test_ag2_example_runs_without_the_framework(capsys, monkeypatch):
+    monkeypatch.setitem(sys.modules, "ag2", None)
+    load(AG2).main()
+    out = capsys.readouterr().out
+    assert "AG2 is not installed" in out
+    assert "[REDACTED_AWS_KEY]" in out
+
+
+def test_ag2_example_has_pinned_requirements_and_readme():
+    lines = [line for line in (EXAMPLES / AG2 / "requirements.txt").read_text().split() if line]
+    assert any(line.startswith("ag2==") for line in lines)
+    assert all(re.fullmatch(r"[A-Za-z0-9_.-]+==\d+(\.\d+)*", line) for line in lines)
+    assert (EXAMPLES / AG2 / "README.md").is_file()
