@@ -487,7 +487,10 @@ def cmd_scan(args: argparse.Namespace) -> int:
             if ie:
                 valid_exts.add(ie)
 
-    if target_path.is_file():
+    # The file the user named is read even when it is a link; links found while
+    # walking a folder are not (os.walk lists them but does not enter them).
+    root_file = str(target_path) if target_path.is_file() else None
+    if root_file:
         files_to_scan.append(target_path)
     else:
         for root, dirs, files in os.walk(target_path):
@@ -528,24 +531,27 @@ def cmd_scan(args: argparse.Namespace) -> int:
     scanned = 0
     for fp in files_to_scan:
         shown = _home_display(fp) if str(fp) in home_files else str(fp)
-        reason = _skip_reason(fp, str(fp) in mcp_only_files, str(fp) in home_files)
+        reason = _skip_reason(fp, str(fp) in mcp_only_files, str(fp) in home_files or str(fp) == root_file)
         if reason:
             skipped.append({"file": shown, "reason": reason})
             continue
         scanned += 1
         all_violations.extend(_scan_file(fp, shown, str(fp) in mcp_only_files))
 
-    _print_report(getattr(args, "format", "text"), scanned, skipped, all_violations, skipped_dirs)
+    _print_report(getattr(args, "format", "text"), scanned, skipped, all_violations, skipped_dirs, str(args.path))
     if all_violations and not getattr(args, "no_fail", False):
         return 1
     return 0
 
 
-def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_violations: List[Dict[str, Any]], skipped_dirs: Optional[List[Dict[str, str]]] = None) -> None:
+def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_violations: List[Dict[str, Any]], skipped_dirs: Optional[List[Dict[str, str]]] = None, target: str = ".") -> None:
     """Print the scan report: rule names, fixed text, counts and redacted snippets only."""
     skipped_dirs = skipped_dirs or []
     leak_count = sum(1 for v in all_violations if v.get("type") == "secret_leak")
     other_count = len(all_violations) - leak_count
+    # An empty result is not a clean one: say so. The exit code stays 0 (a folder
+    # with nothing to scan is not an error for CI), but the output is explicit.
+    nothing = f"No files were scanned in {target}" if scanned == 0 else ""
     if fmt == "github":
         # CI logs are public: rule, reason and location only, never the snippet.
         for v in all_violations:
@@ -560,6 +566,8 @@ def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_vio
             print(f"::notice file={_gh_property(s['file'])},title=Not scanned::{_gh_message(s['reason'])}")
         for sd in skipped_dirs:
             print(f"::notice file={_gh_property(sd['dir'])},title=Directory not scanned::{_gh_message(sd['reason'])}")
+        if nothing:
+            print(f"::warning title=Nothing scanned::{_gh_message(nothing)}")
         dir_note = f" and {len(skipped_dirs)} director{'y' if len(skipped_dirs) == 1 else 'ies'} skipped" if skipped_dirs else ""
         print(f"\n[zn-gate] Scanned {scanned} files ({len(skipped)} not scanned{dir_note}). Found {leak_count} secrets and {other_count} security threats.")
     elif fmt == "json":
@@ -573,9 +581,12 @@ def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_vio
             "threats": all_violations,
             "skipped": skipped,
             "skipped_dirs": skipped_dirs,
+            **({"warning": nothing} if nothing else {}),
         }, indent=2))
     else:
         print(f"\n{_lead(SHIELD)}zn-gate Security Scanner — Scanned {scanned} files")
+        if nothing:
+            print(f"{_lead(ALERT)}{nothing}")
         if skipped:
             print(f"Not scanned ({len(skipped)}):")
             for s in skipped[:20]:
@@ -588,6 +599,9 @@ def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_vio
                 print(f"  {sd['dir']} ({sd['reason']})")
             if len(skipped_dirs) > 20:
                 print(f"  ... and {len(skipped_dirs) - 20} more")
+        if not all_violations and nothing:
+            print()
+            return
         if not all_violations:
             print(f"{_lead(CHECK)}All scanned prompts, tool definitions, and files are clean!\n")
             return

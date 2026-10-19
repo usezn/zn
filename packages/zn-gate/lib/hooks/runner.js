@@ -39,6 +39,9 @@
  * {"hooks": {"whenUnavailable": "allow"}} in ~/.zn/config.json.
  */
 
+// First, so the modules below are compiled through the cache too (a hook is a new process per call).
+if (require.main === module) require('../compile-cache').enable();
+
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -48,6 +51,7 @@ const { gitStatusOf } = require('../broker/files');
 const deps = require('../deps');
 const { shQuote, SH_QUOTE_ESCAPE, portablePath } = require('../shell-quote');
 const { znCommand } = require('../zn-command');
+const { isUnsafeText, hasUnsafeText } = require('../safe-text');
 
 const SECRET_SOURCES = new Set(['exact', 'pattern']);
 const POST_TOOLS = new Set(['read', 'bash', 'powershell', 'monitor', 'grep', 'lsp', 'webfetch', 'mcp', 'mcpresource']);
@@ -118,6 +122,21 @@ const REINSTALL_USER = 'part of zn-gate is missing from this installation, so zn
   'To let actions pass unchecked until then, set {"hooks": {"whenUnavailable": "allow"}} in ~/.zn/config.json.';
 const HOOK_FAILED = 'something went wrong inside the zn hook, so this action was blocked to keep the user\'s secrets safe. ' +
   'If it happens again, ask the user to run `' + znCommand('hooks install') + '`.';
+
+/**
+ * Refuse text that a native call could not survive (see safe-text.js) before any file, process or network call
+ * sees it. The working directory and transcript path of every event are checked; a tool call, whose command and
+ * paths the policy turns into file system calls, is checked whole.
+ */
+function guardNativeText(ev) {
+  const bad = ev.event === 'pre_tool'
+    ? hasUnsafeText(ev)
+    : isUnsafeText(ev.cwd) || isUnsafeText(ev.input && ev.input.transcriptPath);
+  if (!bad) return;
+  const err = new Error('malformed text in the event');
+  err.code = 'ZN_MALFORMED_TEXT';
+  throw err;
+}
 
 /** Map every string leaf of a JSON value through an async function, keeping the shape. */
 async function mapStrings(value, fn) {
@@ -517,6 +536,15 @@ async function decideMcp(ev, d, agentId) {
 
 async function decidePost(ev, d, agentId, opts = {}) {
   if (!POST_TOOLS.has(ev.tool)) return { decision: 'allow' };
+  if (agentId === 'codex' && ev.tool === 'bash') {
+    // Codex runs every PreToolUse hook at once with the original call, so another tool's hook can change the
+    // command after zn checked it. PostToolUse carries the command that really ran: if zn blocks that one,
+    // the output is withheld. The command has already run, so this limits what the model sees, not what happened.
+    const denial = policy.bashDenial(String(ev.input.command || ''), { cwd: ev.cwd, home: opts.home });
+    if (denial) {
+      return { decision: 'deny', message: 'zn: A command different from the one zn checked was run (another tool changed it). zn withheld its output because zn blocks that command. Review the other hooks configured for Codex.' };
+    }
+  }
   if (ev.output === undefined || ev.output === null) return { decision: 'allow' };
   const engine = d.engine();
   const ctx = await ctxFor(ev, d, agentId, 'assistant');
@@ -797,6 +825,10 @@ function failDecision(ev, err, mode) {
   if (ev && ev.event === 'stop') {
     return { decision: 'ask', failOpen: true, notice: 'zn: could not check the last answer for secrets' + (err && err.code ? ' (' + err.code + ')' : '') + '.' };
   }
+  if (err.code === 'ZN_MALFORMED_TEXT') {
+    return failClosed(ev, err, 'zn: this action names a file or text that is not valid Unicode text, so it was blocked. ' +
+      'Ask the user to check the file names in the request.');
+  }
   const missing = err.code === 'ZN_UNAVAILABLE';
   const detail = missing ? '' : ' (' + (err.code ? err.code + ': ' : '') + String(err.message || 'unknown error') + ')';
   const msg = 'zn: ' + (missing ? REINSTALL : HOOK_FAILED) + detail;
@@ -832,6 +864,7 @@ async function handle(adapter, rawEvent, opts = {}) {
   try {
     ev = adapter.normalize(rawEvent);
     const d = lazyDeps(opts);
+    if (ev && ev.event) guardNativeText(ev);
     if (!ev || !ev.event) decision = { decision: 'allow' };
     else if (ev.event === 'pre_tool') decision = await decidePre(ev, d, adapter.id, opts);
     else if (ev.event === 'post_tool') decision = await decidePost(ev, d, adapter.id, opts);

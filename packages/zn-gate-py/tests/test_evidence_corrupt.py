@@ -330,14 +330,14 @@ _PY_WRITER = (
     "from zn_gate.evidence import log_evidence\n"
     "file, wid, n = sys.argv[2], sys.argv[3], int(sys.argv[4])\n"
     "for i in range(n):\n"
-    "    if log_evidence({'payload': 'py-%s-%d' % (wid, i), 'tool_name': 'bash'}, file_path=file) is None:\n"
+    "    if log_evidence({'payload': 'py-%s-%d' % (wid, i), 'tool_name': 'bash'}, file_path=file, lock_wait=60) is None:\n"
     "        sys.exit(3)\n"
 )
 _NODE_WRITER = (
     "const { logEvidence } = require(process.argv[1]);\n"
     "const [, , file, id, n] = process.argv;\n"
     "for (let i = 0; i < Number(n); i++) {\n"
-    "  if (!logEvidence({ payload: 'node-' + id + '-' + i, tool_name: 'bash' }, file)) process.exit(3);\n"
+    "  if (!logEvidence({ payload: 'node-' + id + '-' + i, tool_name: 'bash' }, file, { lockWaitMs: 60000 })) process.exit(3);\n"
     "}\n"
 )
 
@@ -382,6 +382,33 @@ def test_python_and_node_writers_at_the_same_time_share_one_chain(tmp_path):
     assert v["error"] is None
     assert v["valid"] is True
     assert v["total"] == 6 * per
+
+
+def test_stale_lock_is_left_alone_while_another_breaker_holds_the_break_mutex(tmp_path):
+    p = _ledger(tmp_path, n=1)
+    with open(p + ".lock", "w") as f:
+        f.write("1:crashed")
+    old = time.time() - 60
+    os.utime(p + ".lock", (old, old))
+    with open(p + ".lock.break", "w") as f:
+        f.write("busy")
+    assert log_evidence({"payload": "x"}, file_path=p, lock_wait=0.2) is None
+    assert open(p + ".lock").read() == "1:crashed"  # a second breaker does not touch it
+    assert verify_evidence_ledger(p)["total"] == 1
+
+
+def test_repeated_stale_lock_races_never_drop_a_record(tmp_path):
+    for rnd in range(3):
+        p = str(tmp_path / f"race{rnd}.jsonl")
+        with open(p + ".lock", "w") as f:
+            f.write("1:crashed")
+        old = time.time() - 60
+        os.utime(p + ".lock", (old, old))
+        _wait_all([_spawn_py(p, i, 3) for i in range(8)])
+        v = verify_evidence_ledger(p)
+        assert v["valid"] is True
+        assert v["total"] == 8 * 3
+        assert not os.path.exists(p + ".lock.break")
 
 
 # ---- one canonical form for non-ASCII text, shared with Node ----
