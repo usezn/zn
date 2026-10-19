@@ -471,10 +471,12 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
   const skippedDirs = [];
   filesToScan.skippedDirs = skippedDirs;
 
-  function walk(current) {
+  function walk(current, isRoot = false) {
     let stat;
     try {
-      stat = fs.lstatSync(current);
+      // The folder or file the user named is followed when it is a link; links
+      // found inside the tree are never followed (loops, escapes).
+      stat = isRoot ? fs.statSync(current) : fs.lstatSync(current);
     } catch (e) {
       return;
     }
@@ -516,7 +518,7 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
     }
   }
 
-  walk(targetPath);
+  walk(targetPath, true);
   return filesToScan;
 }
 
@@ -674,6 +676,9 @@ Files   : ${files.length} file(s) queued for audit\n
 
   const totalSecrets = findings.filter((f) => f.type === 'secret_leak').length;
   const totalThreats = totalFindings - totalSecrets;
+  // An empty result is not a clean one: say so. The exit code stays 0 (a folder
+  // with nothing to scan is not an error for CI), but the output is explicit.
+  const nothingScanned = `No files were scanned in ${targetPath || '.'}`;
 
   if (format === 'github') {
     // CI logs are public: rule, reason and location only, never the line.
@@ -690,6 +695,7 @@ Files   : ${files.length} file(s) queued for audit\n
     for (const s of files.skippedDirs) {
       process.stdout.write(`::notice file=${ghProperty(displayPath(s.dir, homeFiles))},title=Directory not scanned::${ghMessage(s.reason)}\n`);
     }
+    if (files.length - notRead === 0) process.stdout.write(`::warning title=Nothing scanned::${ghMessage(nothingScanned)}\n`);
     const dirNote = files.skippedDirs.length ? ` and ${files.skippedDirs.length} director${files.skippedDirs.length === 1 ? 'y' : 'ies'} skipped` : '';
     process.stdout.write(`\n[zn-gate] Scanned ${files.length - notRead} files (${files.skipped.length} not scanned${dirNote}). Found ${totalSecrets} secrets and ${totalThreats} security threats.\n`);
     if (totalFindings > 0) process.exitCode = 1;
@@ -710,11 +716,13 @@ Files   : ${files.length} file(s) queued for audit\n
       }),
       skipped: files.skipped.map((s) => ({ file: displayPath(s.file, homeFiles), reason: s.reason })),
       skipped_dirs: files.skippedDirs.map((s) => ({ dir: displayPath(s.dir, homeFiles), reason: s.reason })),
+      ...(files.length - notRead === 0 ? { warning: nothingScanned } : {}),
     }, null, 2) + '\n');
     if (totalFindings > 0) process.exitCode = 1;
     return;
   }
 
+  if (files.length - notRead === 0) process.stdout.write(`${sym(process.env, '!', col.yellow)}${col.yellow(nothingScanned)}\n\n`);
   if (findings.length > 0) {
     process.stdout.write(`Findings (${findings.length}):\n`);
     for (const f of findings) {

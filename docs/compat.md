@@ -106,6 +106,16 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
     the read ran, and zn's `PostToolUse` check still replaced the secret values in the output before the
     model saw them. Do not install another hook that rewrites commands next to zn's.
   - Hooks are a guardrail, not an enforcement boundary (Codex's own words).
+  - **Other tools' hooks (Codex).** Codex runs every matching `PreToolUse` hook at the same time, each with the
+    original call. A hook from another tool can answer "allow" with a changed command, and Codex then runs the
+    changed command, which zn did not check before it ran. A hook that answers a `PermissionRequest` with "allow"
+    can also remove an approval prompt. zn cannot see what another hook does. `zn-gate check` reports Codex as
+    not fully protected when your Codex folder (`hooks.json` or `config.toml`) or the project's `.codex` folder
+    holds another `PreToolUse` or `PermissionRequest` hook that is not zn's and does not run in the
+    background; review it and remove it if you do not need it. After the command has run, zn's
+    `PostToolUse` hook sees the command that really ran: it still hides secret values in the output, and
+    it withholds the output when that command is one zn blocks. It cannot undo what the command did, and
+    it does not read hooks that a plugin or your organization sets.
   - MCP tool calls reach `PreToolUse` (matcher `^(Bash|apply_patch|mcp__.+)$`), and zn checks
     their arguments for secret values and `__ZN_` markers, as it does for Cursor. Installs made
     before this change keep the old matcher until you update them

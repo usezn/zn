@@ -71,7 +71,7 @@ Every case checks the exit code and that no fake value was sent to the provider.
 | `stop-block` | The same with `"stopReview": "block"`. | Codex continues once with zn's reason; the second answer is not blocked again. |
 | `stop-placeholder` | `Stop` with a placeholder no tool produced (observation). | Not flagged: Codex writes the answer to its session log three times. |
 | `replace` | `PostToolUse` with `replaceToolOutputOnSecret`. | zn returns `continue: false` and a stop reason; the model gets the tokenized copy and the turn goes on. |
-| `thirdparty` | Another tool's `PreToolUse` hook answers `allow` with `updatedInput` (observation). | zn sees the original command, the rewritten one runs, and `PostToolUse` still scrubs its output. |
+| `thirdparty` | Another tool's `PreToolUse` hook answers `allow` with `updatedInput` (observation). | zn's `PreToolUse` sees the original command and the rewritten one runs. zn's `PostToolUse` sees the command that ran, answers `block`, and the model gets zn's "output was withheld" message instead of a scrubbed copy. Nothing reaches the provider. |
 
 The `mcp` and `stop-block` cases use a fake key that the scripted model writes
 itself, so it comes back in the next request; it is checked against what the MCP
