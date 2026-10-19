@@ -7,7 +7,7 @@
  * sits next to it, and `vendor` is third-party code only next to a package
  * manifest. Without that context they are ordinary directories and are read.
  * Every other pruned name that a project could use for its own files (`dist`,
- * `build`, `out`, `test`, ...) is still skipped, but reported, so a prompt or
+ * `build`, `out`, ...) is still skipped, but reported, so a prompt or
  * agent file inside it never disappears without a word.
  */
 
@@ -28,7 +28,14 @@ const SILENT = new Set([
   '.cache', 'site-packages', '.terraform', '.yarn', '.pnpm-store',
 ]);
 
-const TEST_DIRS = new Set(['test', 'tests', '__tests__']);
+// Names `zn-gate scan` considers. The Python scan keeps the same list, the same
+// silent subset and the same markers (a parity test compares them). Test
+// directories are not here: fixtures and sample configs in them can hold real
+// secrets, so scan reads them.
+const SCAN_DIRS = new Set([
+  'node_modules', '.git', '.next', '.turbo', '.idea', '.venv', 'venv', '__pycache__', '.eggs',
+  'dist', 'build', 'target', 'vendor',
+]);
 
 /**
  * Decide whether to skip the directory `name` found inside `parentDir`, given
@@ -45,8 +52,7 @@ function pruneInfo(name, parentDir) {
   if (SILENT.has(name)) return { silent: true, reason: 'skipped by name' };
   const kind = name === 'vendor' ? 'dependencies' : 'build output';
   if (marker) return { silent: false, reason: 'skipped by name: ' + kind + ' next to ' + marker };
-  if (TEST_DIRS.has(name)) return { silent: false, reason: 'skipped by name: tests' };
   return { silent: false, reason: 'skipped by name: ' + kind };
 }
 
-module.exports = { pruneInfo, MARKERS };
+module.exports = { pruneInfo, MARKERS, SILENT, SCAN_DIRS };

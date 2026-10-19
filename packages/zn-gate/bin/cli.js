@@ -33,7 +33,7 @@ const { SCRUB_RULES_VERSION } = require('../lib/scrub/patterns');
 const { AUDIT_RULES_VERSION } = require('../lib/audit/rules');
 const { styles, sym, ruleLine } = require('../lib/term');
 const mcpSecrets = require('../lib/mcp-secrets');
-const { pruneInfo } = require('../lib/prune');
+const { pruneInfo, SCAN_DIRS } = require('../lib/prune');
 // Colors are decided once per run: NO_COLOR, TERM=dumb or a stdout that is not a terminal turn them off.
 const col = styles(process.stdout, process.env);
 
@@ -269,6 +269,7 @@ VAULT (local, encrypted with age; the key stays in the OS keychain):
   vault log           Show the audit log of secret use [--since 1h]; checks the chain when unlocked
   vault verify        Verify the HMAC-chained audit log of secret use
   vault forget [dir]  Forget the token map of a project (vault locked)
+  vault reset         Lost the passphrase? Set the old vault aside and start empty (your terminal only)
   vault log export --otlp
                       Export the audit log as OpenTelemetry logs (OTLP/JSON Lines)
                       [--since 7d] [--out FILE]
@@ -278,6 +279,8 @@ TEAM (zn Team: organization policy and audit upload; needs the vault unlocked):
   team status         Organization, policy version and upload state [--json]
   team sync           Download the policy and upload the audit log now
   team leave          Disconnect this machine (confirmed outside the agent)
+  team managed-config Print the managed settings an admin deploys with MDM (nothing is written)
+                      [--agent claude-code|cursor|codex|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--json]
 
 INIT --wrap-mcp OPTIONS (each one also selects --wrap-mcp):
   --dry-run           Scan environments and preview changes without modifying configs
@@ -438,10 +441,7 @@ function relativeToCwd(filePath) {
 }
 
 function scanDirectory(targetPath, includeCode = false, options = {}) {
-  const IGNORED_DIRS = new Set([
-    'node_modules', '.git', '.next', 'dist', 'build', '.turbo', 'vendor',
-    '.idea', 'test', 'tests', '__tests__', 'target',
-  ]);
+  const IGNORED_DIRS = SCAN_DIRS;
   // Names the user passes with --exclude are skipped everywhere and never reported.
   const userExcluded = new Set();
   if (options.exclude) {
