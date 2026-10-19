@@ -56,7 +56,7 @@ where = ["src"]
 zn_gate = ["py.typed"]
 
 [tool.ruff]
-target-version = "py38"
+target-version = "py310"
 
 [tool.ruff.lint]
 # Minimal set: syntax errors and undefined names (E9), pyflakes (F), and the
@@ -69,7 +69,7 @@ select = ["E9", "F", "B"]
 "tests/test_rules_redos.py" = ["B023"]
 
 [tool.mypy]
-# Informational only: the CI job is non-blocking until the findings are fixed.
+# The CI job blocks the run, so the package has to stay clean.
 files = ["src/zn_gate"]
 mypy_path = "src"
 

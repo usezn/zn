@@ -187,7 +187,7 @@ runs:
         ZN_NPM_VERSION: ${{ steps.plan.outputs.npm-version }}
         ZN_NPM_INTEGRITY: ${{ inputs.npm-integrity }}
         ZN_NPM_DIR: ${{ runner.temp }}/zn-gate-npm
-      run: |
+      run: | # zizmor: ignore[adhoc-packages] install scripts are disabled and dependencies ship inside the tarball
         set -euo pipefail
         rm -rf "$ZN_NPM_DIR"
         mkdir -p "$ZN_NPM_DIR/pkg" "$ZN_NPM_DIR/install"

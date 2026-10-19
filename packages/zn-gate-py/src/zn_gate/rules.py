@@ -217,7 +217,10 @@ def _test_hidden_tag(text: str) -> bool:
             return False
         pos = m.end()
         if m.group(2) == '>' and HIDDEN_ATTR_RE.search(m.group(1)):
-            name = cast('re.Match[str]', _TAG_NAME_RE.match(m.group(0))).group(1).lower()
+            tag = _TAG_NAME_RE.match(m.group(0))
+            if tag is None:
+                continue
+            name = tag.group(1).lower()
             inner, stop = _hidden_element_text(text, m.end(), name)
             if HIDDEN_PAYLOAD_RE.search(inner):
                 return True
@@ -1202,7 +1205,9 @@ def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, t
                     groups.append(_span_in(mapping, m.start(k), m.end(k)))
             if value_filter is not None:
                 # The value (group 2) decides whether the match is redacted.
-                vs, ve = cast(Tuple[int, int], groups[2])
+                span = groups[2]
+                assert span is not None
+                vs, ve = span
                 value = _strip_invisible(text[vs:ve])
                 prefix = ''
                 if groups[1] is not None:
@@ -1459,7 +1464,7 @@ def sanitize_tool_result(
 _EVAL_CACHE_MAX = 2048
 # Only inputs up to 8 KB are cached, so the cache itself stays small.
 EVAL_CACHE_MAX_INPUT = 8 * 1024
-_eval_cache: Dict[Tuple[bool, str], Tuple[str, float, str, Optional[str], str, str, bool, Optional[Dict[str, str]]]] = {}
+_eval_cache: Dict[Tuple[bool, str], Tuple[Any, ...]] = {}
 _eval_cache_ver = RULES_VERSION
 
 
@@ -1479,7 +1484,7 @@ def evaluate(input_text: str, strict: Optional[bool] = None) -> Assessment:
     hit = _eval_cache.get(key)
     if hit is not None:
         _eval_cache[key] = _eval_cache.pop(key)
-        return Assessment(*hit[:7], advisory=dict(hit[7]) if hit[7] else None)
+        return Assessment(hit[0], hit[1], hit[2], hit[3], hit[4], hit[5], hit[6], advisory=dict(hit[7]) if hit[7] else None)
     res = _evaluate_uncached(input_text, strict)
     _eval_cache[key] = (res.verdict, res.confidence, res.rule,
                                res.reason, res.engine, res.rules_version, res.truncated,
