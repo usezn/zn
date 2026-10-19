@@ -62,7 +62,7 @@ Things to know:
 
 - **It is experimental.** It is built from Antigravity's public documentation. Antigravity does not document what happens when a hook crashes or times out, so zn-gate cannot promise that such a call is blocked.
 - **Values can still reach the model.** A value printed by a command, or found in a file the agent is allowed to read, is not removed. Keep secrets in the vault.
-- **A tool zn-gate cannot classify** (or whose arguments it cannot read as a command or a file path) is left to Antigravity's own rules.
+- **A tool that names no command and no file path**, or that zn-gate does not recognise, is left to Antigravity's own rules. A shell or file tool whose command or file zn-gate cannot read is refused.
 - **Which files the agent cannot edit:** `.agents/hooks.json` in a project, `~/.gemini/config/hooks.json` and `~/.gemini/antigravity-cli/settings.json`.
 - **Which files are not protected:** Antigravity's MCP configuration (`.agents/mcp_config.json`, `~/.gemini/antigravity/mcp_config.json` and `~/.gemini/config/mcp_config.json`) and the other files in a project's `.agents` folder (rules and workflows). An agent that can write files could change them.
 
