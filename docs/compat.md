@@ -65,11 +65,11 @@ only and have not been run against a live Codex.
 | Event | zn uses it | What it does for zn |
 |---|---|---|
 | `PreToolUse` | Yes, matcher `^(Bash\|apply_patch\|mcp__.+)$` | Checks shell commands, patches and MCP call arguments before they run, and denies with zn's reason. Exit code 2 also blocks (documented). zn never answers `allow`. Shell and `apply_patch` checked on 0.163.0; MCP calls not tested. |
-| `PostToolUse` | Yes, matcher `.*` | Scrubs tool output. Its `decision: "block"` replaces the result with zn's scrubbed copy. Checked on 0.163.0. Opt-in `replaceToolOutputOnSecret` also sends `continue: false` with a `stopReason` for a real secret value. Codex then replaces the result with that stop text; see below. Not yet run on a live Codex. |
+| `PostToolUse` | Yes, matcher `.*` | Scrubs tool output. Its `decision: "block"` replaces the result with zn's scrubbed copy. Checked on 0.163.0. Opt-in `replaceToolOutputOnSecret` also sends `continue: false` with a `stopReason` for a real secret value. Run on Codex 0.163.0: the model received the tokenized copy of the output, not the stop text, and the turn continued; see below. |
 | `PermissionRequest` | Yes, deny only | Runs the same check as `PreToolUse` when Codex is about to ask you to approve a call. zn answers `deny` with its reason and never `allow`. Not tested. |
 | `UserPromptSubmit` | Yes | Blocks a secret pasted into the prompt. Checked on 0.163.0. |
 | `SessionStart` | No | zn installs no session-start hook for Codex. |
-| `Stop` | Yes, warn by default | Reviews the model's final answer for a secret value, or for a `__ZN_` placeholder that zn did not see earlier in the session. It warns with `systemMessage`, which you see and the model does not. It blocks, with a reason for the model to rewrite the answer, only with `"stopReview": "block"` under `hooks` in `~/.zn/config.json`; it never blocks when Codex is already continuing because of a Stop hook. Not tested. |
+| `Stop` | Yes, warn by default | Reviews the model's final answer for a secret value, or for a `__ZN_` placeholder that zn did not see earlier in the session. It warns with `systemMessage`, which you see and the model does not. It blocks, with a reason for the model to rewrite the answer, only with `"stopReview": "block"` under `hooks` in `~/.zn/config.json`; it never blocks when Codex is already continuing because of a Stop hook. Codex 0.163.0 writes each final answer to its session log three times, so zn counts every copy of the answer before it decides that a placeholder is unseen. |
 | `SubagentStart` | No | Not used. |
 | `SubagentStop` | No | Not used. |
 | `PreCompact` | No | Not used. |
@@ -120,7 +120,8 @@ only and have not been run against a live Codex.
     this change get the new hook when you run `zn hooks install codex` again, and Codex
     asks you to review it in `/hooks`.
     To tell whether a placeholder came from a tool, zn reads the session transcript in
-    pieces of 256 KB and stops as soon as it finds the placeholder earlier in the session. A transcript larger than 64 MB is not read, so
+    pieces of 256 KB, counts every copy of the final answer (Codex writes it to the log three times) and finds out whether the placeholder
+    appears anywhere else. A transcript larger than 64 MB is not read, so
     that check is skipped for it. A final answer with nothing to report prints nothing and
     exits with code 0, which Codex reads as success. A problem inside zn while it checks an
     answer also exits with code 0 and prints a warning, never code 2, because code 2 would

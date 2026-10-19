@@ -229,6 +229,72 @@ test('a marker that straddles a read chunk is still seen in the transcript', asy
   assert.equal(r.output, null, 'seen in a tool output, so not flagged');
 });
 
+// Codex 0.163.0 writes the final answer to its session log three times (an event
+// message, a response item and the task-complete record). These fixtures have
+// that shape, with fake values.
+function codexLog(parts) {
+  const lines = [];
+  for (const p of parts.before || []) lines.push(JSON.stringify(p));
+  const a = parts.answer;
+  for (let i = 0; i < 3; i++) {
+    lines.push(JSON.stringify([
+      { type: 'event_msg', payload: { type: 'agent_message', message: a } },
+      { type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: a }] } },
+      { type: 'event_msg', payload: { type: 'task_complete', last_agent_message: a } },
+    ][i]));
+  }
+  return lines.join('\n') + '\n';
+}
+
+test('an unseen placeholder is flagged although Codex wrote the answer three times', async (t) => {
+  const home = homeWith(t);
+  const dir = tempDir(t, 'zn-stop-x3-');
+  const transcript = path.join(dir, 'rollout.jsonl');
+  const answer = 'Use the token __ZN_GITHUB_TOKEN__ for the call.\nThen "quote" it.';
+  const before = [{ type: 'event_msg', payload: { type: 'user_message', message: 'Use the token for the call.' } }];
+  fs.writeFileSync(transcript, codexLog({ before, answer }));
+  const r = await run(stop({ last_assistant_message: answer, transcript_path: transcript }), home);
+  assert.match(r.output.systemMessage, /did not see earlier in this session \(__ZN_GITHUB_TOKEN__\)/);
+  const blocked = await run(stop({ last_assistant_message: answer, transcript_path: transcript }), homeWith(t, { hooks: { stopReview: 'block' } }));
+  assert.equal(blocked.output.decision, 'block');
+});
+
+test('a placeholder shown by a tool earlier is not flagged with the answer written three times', async (t) => {
+  const home = homeWith(t);
+  const dir = tempDir(t, 'zn-stop-x3b-');
+  const transcript = path.join(dir, 'rollout.jsonl');
+  const answer = 'Use the token __ZN_GITHUB_TOKEN__ for the call.';
+  const before = [{ type: 'response_item', payload: { type: 'function_call_output', output: 'found __ZN_GITHUB_TOKEN__ in the vault' } }];
+  fs.writeFileSync(transcript, codexLog({ before, answer }));
+  const r = await run(stop({ last_assistant_message: answer, transcript_path: transcript }), home);
+  assert.equal(r.output, null);
+});
+
+test('answer copies are counted across a read chunk, and a marker used twice in the answer counts twice per copy', async (t) => {
+  const home = homeWith(t);
+  const dir = tempDir(t, 'zn-stop-x3c-');
+  const transcript = path.join(dir, 'rollout.jsonl');
+  const answer = 'Use __ZN_DB_PASSWORD__ and then __ZN_DB_PASSWORD__ again.';
+  const filler = JSON.stringify({ type: 'event_msg', payload: { message: 'x'.repeat(256 * 1024 - 120) } }) + '\n';
+  fs.writeFileSync(transcript, filler + codexLog({ answer }));
+  const r = await run(stop({ last_assistant_message: answer, transcript_path: transcript }), home);
+  assert.match(r.output.systemMessage, /\(__ZN_DB_PASSWORD__\)/);
+  // One extra use of the marker outside the answer makes it seen.
+  fs.writeFileSync(transcript, filler + JSON.stringify({ output: '__ZN_DB_PASSWORD__' }) + '\n' + codexLog({ answer }));
+  const seen = await run(stop({ last_assistant_message: answer, transcript_path: transcript }), home);
+  assert.equal(seen.output, null);
+});
+
+test('with an answer escaped differently in the log, one copy is assumed as before', async (t) => {
+  const home = homeWith(t);
+  const dir = tempDir(t, 'zn-stop-x1-');
+  const transcript = path.join(dir, 'rollout.jsonl');
+  const answer = 'Use __ZN_DB_PASSWORD__ é';
+  fs.writeFileSync(transcript, JSON.stringify({ text: 'Use __ZN_DB_PASSWORD__ \\u00e9' }) + '\n');
+  const r = await run(stop({ last_assistant_message: answer, transcript_path: transcript }), home);
+  assert.match(r.output.systemMessage, /\(__ZN_DB_PASSWORD__\)/);
+});
+
 test('a final-answer review counts as a stop review, not as a checked tool call', async (t) => {
   const home = homeWith(t);
   const before = process.env.ZN_STATS;

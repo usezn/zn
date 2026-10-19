@@ -25,9 +25,10 @@
  *  PostToolUse: no field rewrites the output; {decision: "block", reason}
  *    replaces the tool result with the reason. With zn's opt-in
  *    replaceToolOutputOnSecret setting, a real secret also adds continue: false
- *    and stopReason. Codex's docs say this stops normal processing of the
- *    result and continues with the stop text in its place; it does not end the
- *    turn on its own, and it is not yet run on a live Codex.
+ *    and stopReason. Codex then replaces the result with the stop text and
+ *    continues the turn; it does not end it. Run on a live Codex CLI 0.163.0
+ *    (2026-10-19, bench/e2e/codex/scenarios/replace): the model received the
+ *    tokenized copy of the output, not the stop text, and the turn went on.
  *  UserPromptSubmit: {decision: "block", reason}.
  *  PermissionRequest (runs only when Codex is about to ask the user: Bash,
  *    apply_patch, MCP tools): hookSpecificOutput.decision {behavior: "deny",
@@ -41,6 +42,12 @@
  *    "hooks": {"stopReview": "block"} in ~/.zn/config.json, zn returns
  *    {decision: "block", reason}: Codex then continues with the reason as a
  *    new prompt. zn never blocks when stop_hook_active is true.
+ *    An unseen placeholder is looked for in the session log (transcript_path).
+ *    Codex 0.163.0 writes each final answer there three times (event message,
+ *    response item, task-complete record), so zn counts the copies of the
+ *    answer it finds and leaves them all out, not just one (runner.js,
+ *    unseenMarkers). If the log escapes the answer differently from JSON, one
+ *    copy is assumed and a placeholder only the answer contains can go unflagged.
  *  Exit 0 with no output: no opinion; Codex's own approval policy applies.
  *
  * What that means here (docs/compat.md):
