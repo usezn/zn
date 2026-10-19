@@ -861,6 +861,12 @@ async function main() {
     process.exitCode = await runReachCommand(args.slice(1));
     return;
   }
+  // Help of the vault commands and of env shadow: their own usage, not the general help.
+  const subHelp = require('../lib/vault/help').helpFor(args);
+  if (subHelp) {
+    process.stdout.write(subHelp.join('\n') + '\n');
+    return;
+  }
   // zn Team and the OpenTelemetry export of the audit log. exitCode (not
   // process.exit) so a large export is flushed completely through a pipe.
   if (args[0] === 'team') {

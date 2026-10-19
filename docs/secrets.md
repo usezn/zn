@@ -51,6 +51,11 @@ STRIPE_KEY=__ZN_STRIPE_KEY__
 PORT=3000
 ```
 
+For a connection string with a long password, only the password moves, as
+`NAME_PASSWORD` (here `DATABASE_URL_PASSWORD`). With a short password, the
+whole URL moves to the vault as `DATABASE_URL`, and `.env` keeps
+`DATABASE_URL=__ZN_DATABASE_URL__`.
+
 An encrypted copy of the original is kept (`zn env unshadow` restores it). To
 add a single secret, type it at a hidden prompt (never as an argument):
 
@@ -99,6 +104,9 @@ Allow the program that needs the value:
 ```bash
 zn secret allow DATABASE_URL_PASSWORD --command psql
 ```
+
+(If your password was short, the whole URL is in the vault, so allow
+`DATABASE_URL` instead and write `psql "__ZN_DATABASE_URL__"`.)
 
 When the agent runs `psql "postgres://app:__ZN_DATABASE_URL_PASSWORD__@db/app"`,
 the hook routes it through `zn run`. The value goes only into that process, its
