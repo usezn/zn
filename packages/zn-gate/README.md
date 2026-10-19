@@ -12,7 +12,7 @@
 
 `zn-gate` is an open-source security layer that runs on your machine, between your agent and the tools and content it touches. It checks what the agent reads and calls for prompt injection, redacts secrets from tool output before the model sees it, and audits prompts, skills and configs. No account, no network by default, and no runtime dependencies except `age-encryption` (and its `@noble`/`@scure` dependencies) for the secret vault, bundled in the package at the versions pinned in `package-lock.json`.
 
-**For:** developers using Claude Code, Codex CLI, Cursor, OpenCode or any MCP client. Python SDK: [`zn-gate` on PyPI](https://pypi.org/project/zn-gate/). Building with the OpenAI Agents SDK for JavaScript? See the [offline example](https://github.com/usezn/zn/tree/main/examples/openai-agents-js).
+**For:** developers using Claude Code, Codex CLI, Cursor, OpenCode or any MCP client. Python SDK: [`zn-gate` on PyPI](https://pypi.org/project/zn-gate/).
 
 ---
 
@@ -289,6 +289,10 @@ zn-gate blocks what is almost certainly an attack or a leak: reading credential 
 Some other patterns also appear in ordinary text, such as `system:` keys in YAML, "bypass the cache" or an article that explains what a jailbreak is. For those, zn-gate lets the text through and adds a short warning (`advisory` in the result) so you or your agent can take a look.
 
 To block those too, turn on strict mode: set `ZN_STRICT=1`, or add `"strict": true` to `zn.config.json` in your project (or a line `strict` in `.znrules`).
+
+## Examples
+
+Runnable examples, including [the OpenAI Agents SDK for JavaScript](https://github.com/usezn/zn/tree/main/examples/openai-agents-js) (block a dangerous tool call, scrub the output, all offline), are in [`examples/`](https://github.com/usezn/zn/tree/main/examples).
 
 ## FAQ
 
