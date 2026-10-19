@@ -1,15 +1,18 @@
 name: Examples smoke
 
-# Installs each Python example from its requirements.txt, then runs its agent_guard.py offline (network
+# Python examples: installs each one from its requirements.txt, then runs its agent_guard.py offline (network
 # namespace with no interface, no API keys). An example that needs a zn-gate release that is not out yet has
 # examples/<name>/.requires-next and runs against this repository's package; the job prints a notice for it.
 # The marker must be removed once the pin reaches its release (the job fails until then).
+# Node examples: packs packages/zn-gate with npm pack, installs the tarball into a copy of each example and
+# runs it the same way (no network, no API keys).
 on:
   push:
     branches: [ main, next ]
     paths:
       - 'examples/**'
       - 'packages/zn-gate-py/**'
+      - 'packages/zn-gate/**'
       - '.github/scripts/examples-smoke*'
       - '.github/workflows/examples-smoke.yml'
   pull_request:
@@ -17,6 +20,7 @@ on:
     paths:
       - 'examples/**'
       - 'packages/zn-gate-py/**'
+      - 'packages/zn-gate/**'
       - '.github/scripts/examples-smoke*'
       - '.github/workflows/examples-smoke.yml'
   workflow_dispatch:
@@ -43,12 +47,29 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
+          # No pip cache here: the example requirements pull in large agent frameworks, and the
+          # cache key changes with every release, so each run saved a new 300 MB cache that was
+          # never reused and pushed the repository toward its 10 GB cache limit.
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: |
-            examples/*/requirements.txt
-            packages/zn-gate-py/pyproject.toml
       - name: Check the requires-next markers
         run: python3 .github/scripts/examples-smoke.py markers
       - name: Install and run the examples offline
         run: python3 .github/scripts/examples-smoke.py run --netns
+
+  smoke-node:
+    name: Examples smoke (node 22)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22.x"
+      - name: Pack the package and run the Node examples offline
+        run: bash .github/scripts/examples-smoke-node.sh

@@ -12,9 +12,12 @@
  * exactly what the agent sent to "the provider", and the leak check greps it.
  *
  * The script is a JSON file: {"steps": [{"tool": "<name>", "input": {...}}, ...], "final": "text"}.
+ * A step may add "namespace" (Responses API: how Codex names the tools of an MCP server).
  * The step to play is the number of tool results already in the request, so
  * side requests (titles, summaries) do not advance it. Requests without
- * tools get a short text answer.
+ * tools get a short text answer. Instead of "final", a script may give
+ * "finals": the text of the first answer, of the second one (after the agent
+ * continued because a Stop hook asked it to), and so on (Responses API only).
  *
  *   node mock_llm.js --port 8787 --script scenario.json --out dir
  */
@@ -93,6 +96,13 @@ function responsesToolResults(body) {
   return input.filter((i) => i && (i.type === 'function_call_output' || i.type === 'custom_tool_call_output' || i.type === 'local_shell_call_output')).length;
 }
 
+function finalText(body) {
+  if (!Array.isArray(SCRIPT.finals) || !SCRIPT.finals.length) return SCRIPT.final || 'Done.';
+  const input = Array.isArray(body.input) ? body.input : [];
+  const earlier = input.filter((i) => i && i.type === 'message' && i.role === 'assistant').length;
+  return SCRIPT.finals[Math.min(earlier, SCRIPT.finals.length - 1)];
+}
+
 function responses(body, res) {
   const hasTools = Array.isArray(body.tools) && body.tools.length > 0;
   const step = hasTools ? stepFor(responsesToolResults(body)) : null;
@@ -101,9 +111,9 @@ function responses(body, res) {
   if (step) {
     item = step.custom
       ? { type: 'custom_tool_call', id: id('ctc'), call_id: id('call'), name: step.tool, input: step.input, status: 'completed' }
-      : { type: 'function_call', id: id('fc'), call_id: id('call'), name: step.tool, arguments: JSON.stringify(step.input), status: 'completed' };
+      : { type: 'function_call', id: id('fc'), call_id: id('call'), name: step.tool, ...(step.namespace ? { namespace: step.namespace } : {}), arguments: JSON.stringify(step.input), status: 'completed' };
   } else {
-    item = { type: 'message', id: id('m'), role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: hasTools ? (SCRIPT.final || 'Done.') : 'ok', annotations: [] }] };
+    item = { type: 'message', id: id('m'), role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: hasTools ? finalText(body) : 'ok', annotations: [] }] };
   }
   res.setHeader('content-type', 'text/event-stream');
   let n = 0;
