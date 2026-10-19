@@ -37,6 +37,9 @@ use zn::engine::reputation::ReputationSystem;
 use zn::engine::rules::ManagedRuleset;
 use zn::engine::watcher::PolicyWatcher;
 use zn::engine::{ZnEngine, ZnEngineConfig};
+#[cfg(test)]
+use zn::jsonrpc::ArgSource;
+use zn::jsonrpc::{jsonrpc_error, validate_jsonrpc, with_arguments, JsonRpcValidation};
 use zn::metrics;
 use zn::proxy::McpPool;
 use zn::scrubber::Scrubber;
@@ -44,33 +47,6 @@ use zn::shield;
 use zn::tenants::{TenantContext, TenantRole, TenantStore, GLOBAL_NAMESPACE};
 use zn::tui;
 use zn::webhooks::{self, WebhookManager};
-
-/// JSON-RPC 2.0 request structure with full spec compliance
-#[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
-struct JsonRpcRequest {
-    /// JSON-RPC version - must be "2.0"
-    jsonrpc: Option<String>,
-    /// Request ID (can be string, number, or null for notifications)
-    #[serde(default)]
-    id: Option<serde_json::Value>,
-    /// Method name
-    #[serde(default)]
-    method: String,
-    /// Parameters (positional array or named object)
-    #[serde(default)]
-    pub params: Option<serde_json::Value>,
-    /// Optional Agent Identifier
-    #[serde(default)]
-    pub agent_id: Option<String>,
-}
-
-/// JSON-RPC 2.0 error codes
-mod jsonrpc_error {
-    pub const PARSE_ERROR: i32 = -32700;
-    pub const INVALID_REQUEST: i32 = -32600;
-    pub const INVALID_PARAMS: i32 = -32602;
-    pub const POLICY_DENIED: i32 = -32000; // Server error range
-}
 
 /// Longest agent id kept from a message; longer ids are cut (the id is a label, not an identity).
 const MAX_AGENT_ID_CHARS: usize = 128;
@@ -93,56 +69,6 @@ fn reputation_key(namespace: &str, agent_id: &str) -> String {
     format!("{}\u{1f}{}", namespace, agent_id)
 }
 
-/// Where validate_jsonrpc took the tool arguments from.
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum ArgSource {
-    /// `params.<key>` of a tools/call (`arguments`, `args` or `input`).
-    Key(&'static str),
-    /// No arguments in the frame (checked as `{}`).
-    Missing,
-    /// The whole `params` (A2A methods).
-    WholeParams,
-}
-
-/// The JSON-RPC frame with its tool arguments replaced by `arguments` (a JSON text), in exactly the place
-/// validate_jsonrpc took them from. None if either side does not parse or that place is not there.
-/// serde_json does not keep key order, so the rebuilt frame may list keys in another order.
-fn with_arguments(frame: &str, arguments: &str, source: ArgSource) -> Option<String> {
-    let mut v: serde_json::Value = serde_json::from_str(frame).ok()?;
-    let new_args: serde_json::Value = serde_json::from_str(arguments).ok()?;
-    let params = v.get_mut("params")?;
-    match source {
-        ArgSource::Key(k) => {
-            params.get(k)?;
-            params[k] = new_args;
-        }
-        ArgSource::WholeParams => *params = new_args,
-        ArgSource::Missing => return None,
-    }
-    serde_json::to_string(&v).ok()
-}
-
-/// Result of validating a JSON-RPC request
-#[derive(Debug)]
-enum JsonRpcValidation {
-    /// Valid tool call with extracted name and arguments
-    ToolCall {
-        id: Option<serde_json::Value>,
-        tool_name: String,
-        arguments: String,
-        agent_id: Option<String>,
-        source: ArgSource,
-    },
-    /// Valid JSON-RPC but not a tool call - pass through
-    PassThrough,
-    /// Invalid JSON-RPC - return error response
-    Error {
-        id: Option<serde_json::Value>,
-        code: i32,
-        message: String,
-    },
-}
-
 /// Build a JSON-RPC 2.0 error response
 fn jsonrpc_error_response(id: Option<serde_json::Value>, code: i32, message: &str) -> String {
     serde_json::json!({
@@ -154,111 +80,6 @@ fn jsonrpc_error_response(id: Option<serde_json::Value>, code: i32, message: &st
         }
     })
     .to_string()
-}
-
-/// Validate and extract tool call from JSON-RPC request
-fn validate_jsonrpc(json_str: &str) -> JsonRpcValidation {
-    // Parse JSON
-    let request: JsonRpcRequest = match serde_json::from_str(json_str) {
-        Ok(r) => r,
-        Err(_) => {
-            return JsonRpcValidation::Error {
-                id: None,
-                code: jsonrpc_error::PARSE_ERROR,
-                message: "Parse error: Invalid JSON".to_string(),
-            }
-        }
-    };
-
-    // Validate JSON-RPC version if present
-    if let Some(ref version) = request.jsonrpc {
-        if version != "2.0" {
-            return JsonRpcValidation::Error {
-                id: request.id,
-                code: jsonrpc_error::INVALID_REQUEST,
-                message: format!("Invalid Request: jsonrpc must be '2.0', got '{}'", version),
-            };
-        }
-    }
-
-    // Check if method is empty
-    if request.method.is_empty() {
-        return JsonRpcValidation::Error {
-            id: request.id,
-            code: jsonrpc_error::INVALID_REQUEST,
-            message: "Invalid Request: method is required".to_string(),
-        };
-    }
-
-    // Check for Tool Call OR A2A Task
-    if request.method == "tools/call" {
-        let params = match request.params {
-            Some(p) => p,
-            None => {
-                return JsonRpcValidation::Error {
-                    id: request.id,
-                    code: jsonrpc_error::INVALID_PARAMS,
-                    message: "Invalid params: params object required".to_string(),
-                }
-            }
-        };
-
-        let tool_name = match params
-            .get("name")
-            .and_then(|n| n.as_str())
-            .map(|s| s.to_string())
-        {
-            Some(n) if !n.is_empty() => n,
-            _ => {
-                return JsonRpcValidation::Error {
-                    id: request.id,
-                    code: jsonrpc_error::INVALID_PARAMS,
-                    message: "Invalid params: tool name is required".to_string(),
-                }
-            }
-        };
-
-        // Extract arguments as JSON string
-        let source = ["arguments", "args", "input"]
-            .into_iter()
-            .find(|k| params.get(*k).is_some())
-            .map(ArgSource::Key)
-            .unwrap_or(ArgSource::Missing);
-        let arguments = match source {
-            ArgSource::Key(k) => params[k].to_string(),
-            _ => "{}".to_string(),
-        };
-
-        return JsonRpcValidation::ToolCall {
-            id: request.id,
-            tool_name,
-            arguments,
-            agent_id: request.agent_id,
-            source,
-        };
-    } else if zn::a2a::is_a2a_method(&request.method) {
-        // A2A Protocol Handler - Full Parity
-        let params = match request.params {
-            Some(p) => p,
-            None => serde_json::json!({}),
-        };
-
-        // Use robust policy resolution from A2A module
-        let virt_tool_name = zn::a2a::resolve_policy_context(&request.method, &params);
-
-        // For A2A, the "arguments" for inspection are the full task payload
-        let arguments = params.to_string();
-
-        return JsonRpcValidation::ToolCall {
-            id: request.id,
-            tool_name: virt_tool_name,
-            arguments,
-            agent_id: request.agent_id,
-            source: ArgSource::WholeParams,
-        };
-    }
-
-    JsonRpcValidation::PassThrough
 }
 
 #[derive(Parser, Debug)]
@@ -506,21 +327,29 @@ async fn start_proxy(args: Args) -> Result<()> {
     };
 
     // If key_id is provided, try to fetch key from KMS
-    let db_key = if let Some(key_id) = &zn_config.kms.key_id {
-        match kms_vault.get_encryption_key(key_id).await {
-            Ok(k) => Some(hex::encode(k)),
-            Err(e) => {
-                log::warning(format!(
-                    "Failed to fetch key from KMS: {}. Falling back to config.",
-                    e
-                ))
-                .ok();
-                zn_config.audit.encryption_key.clone()
-            }
-        }
-    } else {
-        zn_config.audit.encryption_key.clone()
+    let kms_fetch = match &zn_config.kms.key_id {
+        Some(key_id) => Some(
+            kms_vault
+                .get_encryption_key(key_id)
+                .await
+                .map(hex::encode)
+                .map_err(|e| e.to_string()),
+        ),
+        None => None,
     };
+    let (db_key, fell_back) = resolve_db_key(
+        kms_fetch,
+        zn_config.kms.allow_config_fallback,
+        zn_config.audit.encryption_key.clone(),
+    )
+    .map_err(|e| anyhow!(e))?;
+    if fell_back {
+        log::warning(
+            "KMS key could not be fetched; running with the key from the config because kms.allow_config_fallback is enabled. Fix the KMS access and turn the option off."
+                .to_string(),
+        )
+        .ok();
+    }
 
     // Initialize Audit Vault
     let vault = Arc::new(AuditVault::new(
@@ -880,7 +709,7 @@ impl AnalyzerPipeline {
                 }
             };
 
-        // 1.5 Fusion Gate (B-3): block iff rules hit OR head score >= tau.
+        // 1.5 Fusion Gate: block iff rules hit OR head score >= tau.
         // Disabled config / missing model degrades to exactly (rules_hit,
         // None): byte-identical output, no "fusion" key.
         let (fused_blocked, fusion_ev) = zn::engine::neural::evaluate(
@@ -946,7 +775,7 @@ impl AnalyzerPipeline {
             "rule": matched_rule,
             "score": risk_score
         });
-        // B-3 evidence rides with the verdict (same FusionEvidence schema as
+        // Fusion Gate evidence rides with the verdict (same FusionEvidence schema as
         // AuditEntry.fusion); serialized ONLY when the neural camera actually
         // participated in a block, mirroring the audit serde contract.
         if let Some(ev) = &fusion_ev {
@@ -1158,17 +987,7 @@ async fn process_mcp_message(
                 }
             };
 
-            // 0. CLOUDFLARE STYLE: CACHE CHECK
-            if let Some(cached_result) = state.cache.get(&agent_id_str, &tool_name, &arguments) {
-                log::info(format!(
-                    "✨ CACHE HIT: {} (Agent: {})",
-                    tool_name, agent_id_str
-                ))
-                .ok();
-                return Ok(Some(cached_result));
-            }
-
-            // 1. ACTIVE DEFENSE CHECK
+            // 0. ACTIVE DEFENSE CHECK (before the cache, so a ban always wins)
             // Before processing, check if this agent is BANNED
             if let Err(ban_msg) = state.reputation.check_agent_status(&rep_key) {
                 log::error(format!(
@@ -1180,6 +999,16 @@ async fn process_mcp_message(
                     id, -32003, // Custom error code for BANNED
                     &ban_msg,
                 )));
+            }
+
+            // 1. CLOUDFLARE STYLE: CACHE CHECK (only for agents that are not banned)
+            if let Some(cached_result) = state.cache.get(&agent_id_str, &tool_name, &arguments) {
+                log::info(format!(
+                    "✨ CACHE HIT: {} (Agent: {})",
+                    tool_name, agent_id_str
+                ))
+                .ok();
+                return Ok(Some(cached_result));
             }
 
             log::info(format!(
@@ -1407,7 +1236,7 @@ async fn process_mcp_message(
                 namespace: state.config.security.namespace.clone(),
                 anomaly_score,
                 nearest_neighbor: nearest_neighbor_entry.clone(),
-                // B-3: live-path fusion evidence is attached where the fused
+                // Fusion Gate: live-path fusion evidence is attached where the fused
                 // decision is wired in; schema field defaults to absent here.
                 fusion: None,
             };
@@ -1477,9 +1306,6 @@ async fn process_mcp_message(
     }
 }
 
-/// Largest MCP WebSocket message or frame the gateway reads.
-const MAX_WS_MESSAGE_BYTES: usize = 1024 * 1024;
-
 async fn mcp_ws_handler(
     State(state): State<AppState>,
     ws: WebSocketUpgrade,
@@ -1519,9 +1345,8 @@ async fn mcp_ws_handler(
     }
 
     let namespace = tenant.namespace.clone();
-    // A frame or message over 1 MiB closes the connection (the default limit is 64 MiB).
-    ws.max_message_size(MAX_WS_MESSAGE_BYTES)
-        .max_frame_size(MAX_WS_MESSAGE_BYTES)
+    // A frame or message over the configured limit closes the connection.
+    zn::handlers::websocket::apply_limits(ws, &state.config.server)
         .on_upgrade(move |socket| handle_ws_socket(socket, state, namespace))
 }
 
@@ -2215,6 +2040,57 @@ mod fusion_wiring_tests {
             .await;
         assert_eq!(benign["verdict"], "allow");
         assert!(benign.get("fusion").is_none());
+    }
+}
+
+/// Picks the audit database key. `kms_fetch` is `None` when no KMS key is
+/// configured, otherwise the result of fetching it. Returns the key and
+/// whether the config key was used because the KMS fetch failed.
+fn resolve_db_key(
+    kms_fetch: Option<Result<String, String>>,
+    allow_config_fallback: bool,
+    config_key: Option<String>,
+) -> Result<(Option<String>, bool), String> {
+    match kms_fetch {
+        None => Ok((config_key, false)),
+        Some(Ok(key)) => Ok((Some(key), false)),
+        Some(Err(_)) if allow_config_fallback => Ok((config_key, true)),
+        Some(Err(e)) => Err(format!(
+            "Failed to fetch the encryption key from the KMS: {e}. Refusing to start with a different key. Fix the KMS access, or set kms.allow_config_fallback = true to allow the key from the config."
+        )),
+    }
+}
+
+#[cfg(test)]
+mod kms_key_tests {
+    use super::resolve_db_key;
+
+    fn cfg() -> Option<String> {
+        Some("config-key".to_string())
+    }
+
+    #[test]
+    fn kms_key_wins_when_fetched() {
+        let r = resolve_db_key(Some(Ok("kms-key".into())), false, cfg()).unwrap();
+        assert_eq!(r, (Some("kms-key".to_string()), false));
+    }
+
+    #[test]
+    fn kms_failure_without_opt_in_refuses_to_start() {
+        let e = resolve_db_key(Some(Err("denied".into())), false, cfg()).unwrap_err();
+        assert!(e.contains("denied") && e.contains("allow_config_fallback"));
+    }
+
+    #[test]
+    fn kms_failure_with_opt_in_falls_back_and_says_so() {
+        let r = resolve_db_key(Some(Err("denied".into())), true, cfg()).unwrap();
+        assert_eq!(r, (cfg(), true));
+    }
+
+    #[test]
+    fn no_kms_configured_uses_config_key() {
+        assert_eq!(resolve_db_key(None, false, cfg()).unwrap(), (cfg(), false));
+        assert_eq!(resolve_db_key(None, false, None).unwrap(), (None, false));
     }
 }
 
