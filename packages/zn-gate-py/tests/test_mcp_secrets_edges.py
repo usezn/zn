@@ -4,6 +4,8 @@ as the Node.js package on the same configs. Every value is invented and
 assembled at run time."""
 
 import json
+import ntpath
+import posixpath
 import shutil
 import subprocess
 import tempfile
@@ -15,6 +17,7 @@ from zn_gate import mcp_secrets as mcp
 
 NODE_PKG = Path(__file__).resolve().parents[2] / "zn-gate"
 NODE_LIB = NODE_PKG / "lib" / "mcp-secrets.js"
+SHARED_FIXTURE = NODE_PKG / "test" / "fixtures" / "mcp_config_secret_samples.json"
 FAKE = "ZNTESTFAKE" + "q8v3Lm9x2W"
 
 # Reads {"cases": [{"text", "file"}]} on stdin; prints one result per case.
@@ -294,6 +297,67 @@ class TestNodeParity(unittest.TestCase):
                 self.assertEqual(got, [norm, mcp.is_secret_name(norm), mcp.suggested_name(norm),
                                        mcp.mcp_next_step("environment variable", name), mcp.mcp_next_step("header", name),
                                        mcp.mcp_sample("argument", name), mcp.mcp_sample("URL", name), mcp.mcp_sample("header", name)])
+
+
+class TestSharedFixtureParity(unittest.TestCase):
+    """The shared fixture (lines, file, paths) gives the same results in Python and Node."""
+
+    def test_shared_fixture_cases_match_node_spans_findings_and_masking(self):
+        cases = json.loads(SHARED_FIXTURE.read_text(encoding="utf-8"))["cases"]
+        texts = [("\n".join(c["lines"]).replace("{V}", FAKE), c.get("file", "")) for c in cases]
+        node = _run_node([{"text": t, "file": f} for t, f in texts])
+        self.assertEqual(len(node), len(texts))
+        for (text, file), (c, n) in zip(texts, zip(cases, node, strict=True), strict=True):
+            with self.subTest(case=c["name"]):
+                spans = mcp.find_mcp_config_secret_spans(text, file)
+                self.assertEqual(spans, n["spans"])
+                self.assertEqual(mcp.find_mcp_config_secrets(text, file), n["findings"])
+                self.assertEqual(mcp.mask_mcp_values(text, spans), n["masked"])
+
+    def test_shared_fixture_paths_match_node(self):
+        paths = json.loads(SHARED_FIXTURE.read_text(encoding="utf-8"))["paths"]
+        node = _run_node([{"text": "", "file": p["path"]} for p in paths])
+        for p, n in zip(paths, node, strict=True):
+            with self.subTest(path=p["path"]):
+                self.assertEqual(mcp.is_mcp_config_path(p["path"]), p["mcp"])
+                self.assertEqual(n["isConfig"], p["mcp"])
+
+    def test_windows_and_posix_shapes_built_with_ntpath_and_posixpath(self):
+        home = ntpath.join("C:\\Users\\Ana María", ".claude.json")
+        text = '{"primaryApiKey": "%s", "BRAVE_API_KEY": "%s"}' % (FAKE, FAKE)
+        self.assertEqual([f["name"] for f in mcp.find_mcp_config_secrets(text, home)], ["BRAVE_API_KEY"])
+        self.assertTrue(mcp.is_mcp_config_path(ntpath.join("D:\\work", ".gemini", "settings.json")))
+        self.assertFalse(mcp.is_mcp_config_path(ntpath.join("C:\\Users\\u", "mcp.json.bak")))
+        self.assertTrue(mcp.is_mcp_config_path(posixpath.join("/home/u", "proyecto ñandú", ".mcp.json")))
+        self.assertFalse(mcp.is_mcp_config_path(posixpath.join("/home/u", "My Dir", "mcp.json.bak")))
+
+    def test_empty_and_broken_inputs_match_node(self):
+        texts = ["", "\n\n", "{", "}", '"', "=", "{ /* unterminated\n  \"BRAVE_API_KEY\": \"%s\"\n}" % FAKE,
+                 '{"s": {"env": {}, "headers": null, "args": []}}', '{"args": ["--api-key"]}']
+        node = _run_node([{"text": t, "file": ""} for t in texts])
+        for t, n in zip(texts, node, strict=True):
+            with self.subTest(text=t[:20]):
+                self.assertEqual(mcp.find_mcp_config_secrets(t), n["findings"])
+                self.assertEqual(mcp.mask_mcp_values(t, mcp.find_mcp_config_secret_spans(t)), n["masked"])
+
+    @unittest.expectedFailure
+    def test_offsets_after_an_astral_character_match_node(self):
+        # Known divergence: Node.js reports offsets in UTF-16 code units, Python in code points.
+        # An emoji before a credential on the same line shifts the spans by one. Masking is still
+        # correct in each language (the output text is the same); only the offsets differ.
+        text = '{"\U0001F4C1": "x", "BRAVE_API_KEY": "%s"}' % FAKE
+        node = _run_node([{"text": text, "file": ""}])[0]
+        self.assertEqual(mcp.find_mcp_config_secret_spans(text), node["spans"])
+
+
+class TestKnownGaps(unittest.TestCase):
+    @unittest.expectedFailure
+    def test_credential_nested_under_a_secret_named_object_is_reported(self):
+        # Known gap, same as the Node.js side: a value under a key like "API_TOKEN" whose value is
+        # an object is not reported, because the key holds no string. Expected to pass once fixed.
+        text = '{"API_TOKEN": {"value": "%s"}}' % FAKE
+        self.assertEqual(mcp.find_mcp_config_secrets(text), [{"line": 1, "kind": "environment variable",
+                                                              "name": "API_TOKEN"}])
 
 
 if __name__ == "__main__":
