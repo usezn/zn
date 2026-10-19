@@ -503,6 +503,15 @@ async function decideMcp(ev, d, agentId) {
 
 async function decidePost(ev, d, agentId, opts = {}) {
   if (!POST_TOOLS.has(ev.tool)) return { decision: 'allow' };
+  if (agentId === 'codex' && ev.tool === 'bash') {
+    // Codex runs every PreToolUse hook at once with the original call, so another tool's hook can change the
+    // command after zn checked it. PostToolUse carries the command that really ran: if zn blocks that one,
+    // the output is withheld. The command has already run, so this limits what the model sees, not what happened.
+    const denial = policy.bashDenial(String(ev.input.command || ''), { cwd: ev.cwd, home: opts.home });
+    if (denial) {
+      return { decision: 'deny', message: 'zn: the command that ran is one zn blocks. Another tool changed it after zn checked it, so its output was withheld. ' + denial };
+    }
+  }
   if (ev.output === undefined || ev.output === null) return { decision: 'allow' };
   const engine = d.engine();
   const ctx = await ctxFor(ev, d, agentId, 'assistant');
