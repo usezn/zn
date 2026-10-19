@@ -1,0 +1,86 @@
+{
+  "_comment": "PROVISIONAL Windows budget: the Linux ratios times 3, a loose starting point until it is replaced with numbers measured on a Windows runner. Update with: node bench/hook_latency_gate.js report.json --baseline bench/hook_latency_baseline_windows.json --update-baseline",
+  "meta": {
+    "provisional": true,
+    "platform": "win32",
+    "runs": 40,
+    "note": "not measured yet"
+  },
+  "results": [
+    {
+      "agent": "claude-code",
+      "case": "PreToolUse Bash",
+      "ratio": 6.564
+    },
+    {
+      "agent": "codex",
+      "case": "PreToolUse Bash",
+      "ratio": 6.456
+    },
+    {
+      "agent": "cursor",
+      "case": "beforeShellExecution",
+      "ratio": 7.032
+    },
+    {
+      "agent": "claude-code",
+      "case": "PostToolUse Bash 1 KB",
+      "ratio": 7.8
+    },
+    {
+      "agent": "codex",
+      "case": "PostToolUse Bash 1 KB",
+      "ratio": 7.836
+    },
+    {
+      "agent": "cursor",
+      "case": "postToolUse MCP 1 KB",
+      "ratio": 7.68
+    },
+    {
+      "agent": "claude-code",
+      "case": "PostToolUse Bash 100 KB",
+      "ratio": 8.448
+    },
+    {
+      "agent": "codex",
+      "case": "PostToolUse Bash 100 KB",
+      "ratio": 8.256
+    },
+    {
+      "agent": "cursor",
+      "case": "postToolUse MCP 100 KB",
+      "ratio": 8.268
+    },
+    {
+      "agent": "claude-code",
+      "case": "PostToolUse Bash 100 KB with 2 secrets",
+      "ratio": 9.156
+    },
+    {
+      "agent": "codex",
+      "case": "PostToolUse Bash 100 KB with 2 secrets",
+      "ratio": 9.3
+    },
+    {
+      "agent": "cursor",
+      "case": "postToolUse MCP 100 KB with 2 secrets",
+      "ratio": 9.348
+    },
+    {
+      "agent": "claude-code",
+      "case": "PostToolUse Bash 1000 KB",
+      "ratio": 10.728
+    },
+    {
+      "agent": "codex",
+      "case": "PostToolUse Bash 1000 KB",
+      "ratio": 10.62
+    },
+    {
+      "agent": "cursor",
+      "case": "postToolUse MCP 1000 KB",
+      "ratio": 11.076
+    }
+  ]
+}
