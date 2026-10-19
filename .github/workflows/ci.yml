@@ -46,7 +46,7 @@ jobs:
       fail-fast: false
       matrix:
         # 18.x, 22.x and 24.x are required checks: they always run.
-        node-version: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["18.x", "20.x", "22.x", "24.x"]' || '["18.x", "22.x", "24.x"]') }}
+        node-version: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["18.x", "20.x", "22.x", "24.x", "26.x"]' || '["18.x", "22.x", "24.x"]') }}
     steps:
       - name: Harden the runner (egress audit)
         if: runner.os == 'Linux'
