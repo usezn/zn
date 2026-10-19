@@ -33,7 +33,7 @@ const { SCRUB_RULES_VERSION } = require('../lib/scrub/patterns');
 const { AUDIT_RULES_VERSION } = require('../lib/audit/rules');
 const { styles, sym, ruleLine } = require('../lib/term');
 const mcpSecrets = require('../lib/mcp-secrets');
-const { pruneInfo } = require('../lib/prune');
+const { pruneInfo, SCAN_DIRS } = require('../lib/prune');
 // Colors are decided once per run: NO_COLOR, TERM=dumb or a stdout that is not a terminal turn them off.
 const col = styles(process.stdout, process.env);
 
@@ -438,10 +438,7 @@ function relativeToCwd(filePath) {
 }
 
 function scanDirectory(targetPath, includeCode = false, options = {}) {
-  const IGNORED_DIRS = new Set([
-    'node_modules', '.git', '.next', 'dist', 'build', '.turbo', 'vendor',
-    '.idea', 'test', 'tests', '__tests__', 'target',
-  ]);
+  const IGNORED_DIRS = SCAN_DIRS;
   // Names the user passes with --exclude are skipped everywhere and never reported.
   const userExcluded = new Set();
   if (options.exclude) {
