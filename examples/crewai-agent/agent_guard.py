@@ -32,7 +32,9 @@ def fetch_page(url: str) -> str:
 # model. It is off by default in guarded_tool, so it is set here on purpose.
 # on_block="return" makes a blocked page come back as a notice the agent can
 # read, instead of an exception. mask_secrets=True hides keys in the page.
-safe_fetch_page = guarded_tool(on_block="return", check_result=True, mask_secrets=True)(fetch_page)
+safe_fetch_page = guarded_tool(
+    on_block="return", check_result=True, mask_secrets=True, framework="crewai"
+)(fetch_page)
 
 
 def build_crewai_tool():

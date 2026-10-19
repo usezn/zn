@@ -173,6 +173,14 @@ To fix one:
    a file outside the repository.
 5. Rotate the value if the file was ever committed, synced or shared.
 
+## AWS documentation example keys
+
+Access key ids are redacted by their format, whatever their last characters
+are. The key id used in AWS documentation (it ends in `EXAMPLE`) is
+redacted too, for every prefix (`AKIA`, `ASIA`, `ABIA`, `ACCA`). A real key id
+is never skipped because of how it ends, and redacting a documentation
+example costs nothing.
+
 ## Useful commands
 
 | Command | What it does |
@@ -183,6 +191,7 @@ To fix one:
 | `zn vault log export --otlp` | The same log as OpenTelemetry logs (OTLP/JSON Lines) for an OpenTelemetry Collector; `--since 7d`, `--out FILE`. See [team.md](team.md#export-the-audit-log-to-opentelemetry) |
 | `zn vault verify` | Check the audit log's HMAC chain |
 | `zn lock` | Lock the vault now |
+| `zn vault reset` | Forgot the passphrase? Sets the old vault aside and starts a new, empty one. Your own terminal only; the old values are lost. See "If something fails" |
 | `zn hooks uninstall <agent>` | Remove the hooks. For Claude Code it also removes zn's own `secrets` MCP server, and keeps any other server with that name |
 
 If the vault is locked, the hooks still redact what they can recognise, but
@@ -196,6 +205,7 @@ you to run `zn unlock`.
 - **You updated zn-gate and secrets still show as markers in the hooks**: the vault is still the old version. Run `zn vault status`, then `zn unlock`, which restarts it.
 - **Codex does not run the hooks**: open Codex and approve them with `/hooks`.
 - **Claude Code ignores the hooks on a computer managed by an organization**: `zn hooks install claude-code` and `zn-gate status` say when a managed setting stops them. Ask your administrator to add zn to the managed settings.
+- **You forgot the vault passphrase**: nobody can recover it, so the values in that vault cannot be opened again. Run `zn lock`, then `zn vault reset` in your own terminal and type `reset my vault` when it asks. zn keeps the old vault in a `vault-backup-<date>-<time>` folder inside `~/.zn`, and the next `zn unlock` creates a new empty vault. Store your values again with `zn env shadow .env` or `zn secret set NAME`, and rotate any secret you cannot re-enter. It refuses if your agent runs it, if there is no terminal, or if this computer belongs to a zn Team organization.
 - **You want your old `.env` back**: run the restore command that `zn env shadow` printed, for example `zn env unshadow .env --backup <name>`, in your own terminal.
 - **Not sure what is protected**: run `npx -y zn-gate check`.
 
