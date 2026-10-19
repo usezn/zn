@@ -169,18 +169,20 @@ test('multibyte characters in a long partial line survive the cut', async () => 
 });
 
 test('a cut inside a surrogate pair never writes half of a character', async () => {
-  const total = MAX_LINE + 600;
-  const cut = total - WINDOW_MIN;
-  // The first half of the emoji is the last unit before the cut.
-  const text = 'a'.repeat(cut - 1) + '😀' + 'b'.repeat(total - cut - 1);
-  const c = collector();
-  const s = createStream({ ctx: CTX, write: c.write });
-  await s.push(text);
-  await s.end();
-  for (const piece of c.out) {
-    assert.equal(Buffer.from(piece, 'utf8').toString('utf8'), piece, 'a piece was cut inside a surrogate pair');
+  // A line made of emoji, with and without a one-unit shift: whatever the
+  // size of the held-back window, one of the two puts the cut between the
+  // two halves of a pair.
+  for (const lead of ['', 'a']) {
+    const text = lead + '😀'.repeat(Math.ceil((MAX_LINE + 600) / 2));
+    const c = collector();
+    const s = createStream({ ctx: CTX, write: c.write });
+    await s.push(text);
+    await s.end();
+    for (const piece of c.out) {
+      assert.equal(Buffer.from(piece, 'utf8').toString('utf8'), piece, 'lead "' + lead + '": a piece was cut inside a surrogate pair');
+    }
+    assert.equal(c.text(), text);
   }
-  assert.equal(c.text(), text);
 });
 
 function runCli(chunks, delayMs) {
