@@ -20,6 +20,8 @@ EXAMPLES=(
   "node-basic|index.js|Verdict: block|Cannot find module"
   "node-basic|index.js|Safe to ingest: false|Cannot find module"
   "custom-rules|demo.js|Custom rule verdict: block|Cannot find module"
+  "mastra-agent|index.mjs|[REDACTED_AWS_KEY]|Cannot find module"
+  "mastra-agent|index.mjs|blocked the call to 'read_file'|Cannot find module"
 )
 
 echo "Packing packages/zn-gate"
@@ -27,13 +29,18 @@ echo "Packing packages/zn-gate"
 TARBALL="$(ls "$WORK"/zn-gate-*.tgz)"
 
 declare -A OUT
-for name in node-basic custom-rules; do
+for name in node-basic custom-rules mastra-agent; do
   entry="$(printf '%s\n' "${EXAMPLES[@]}" | awk -F'|' -v n="$name" '$1==n {print $2; exit}')"
   dir="$WORK/$name"
   mkdir "$dir"
   cp -a "$ROOT/examples/$name/." "$dir/"
   # The tarball bundles its one dependency, so the install needs no registry.
-  (cd "$dir" && npm init -y >/dev/null && npm install --offline --ignore-scripts --no-audit --no-fund "$TARBALL" >/dev/null)
+  if [ -f "$dir/package.json" ]; then
+    # An example with its own package.json installs its pinned dependencies from the registry (the run below stays offline).
+    (cd "$dir" && npm install --ignore-scripts --no-audit --no-fund "$TARBALL" >/dev/null)
+  else
+    (cd "$dir" && npm init -y >/dev/null && npm install --offline --ignore-scripts --no-audit --no-fund "$TARBALL" >/dev/null)
+  fi
   echo "Running examples/$name/$entry offline"
   run=(env -i PATH="$PATH" HOME="$WORK/home" node "$entry")
   mkdir -p "$WORK/home"
