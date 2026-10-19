@@ -190,7 +190,7 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"c
 - Roadmap: running Galvanize locally inside zn-gate.
 
 **Scan: audit what your agent is about to trust**
-- Today: `npx -y zn-gate scan <path>` audits prompt templates, `AGENTS.md` / `SKILL.md` files and configs for injection traps and leaked secrets. It exits with code 1 on findings, for CI. It also checks the MCP server configs (`.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `.codex/config.toml`, `claude_desktop_config.json` and others) for keys and passwords written in plain text in `env`, `headers`, arguments or URLs; it never prints the value, and `--include-home` checks your own MCP configs too. MCP servers can be checked on the web at [usezn.com/scan](https://usezn.com/scan).
+- Today: `npx -y zn-gate scan <path>` audits prompt templates, `AGENTS.md` / `SKILL.md` files and configs for injection traps and leaked secrets. It exits with code 1 on findings, for CI. A link given as the folder to scan is followed. When no file is scanned, the report says "No files were scanned in <path>" and the exit code stays 0. It also checks the MCP server configs (`.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `.codex/config.toml`, `claude_desktop_config.json` and others) for keys and passwords written in plain text in `env`, `headers`, arguments or URLs; it never prints the value, and `--include-home` checks your own MCP configs too. MCP servers can be checked on the web at [usezn.com/scan](https://usezn.com/scan).
 - Roadmap: auditing MCP servers and skills from the CLI before you add them.
 
 ### MCP tools
