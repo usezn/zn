@@ -236,7 +236,7 @@ function stop(child) {
 
 test('(e2e) MCP server with ZN_API_KEY + ZN_CLOUD=1: check_tool_result / check_tool_call send nothing; analyze_prompt sends redacted text', async (t) => {
   const { srv, hits, url } = await startCountingServer();
-  const { env, home } = childEnv(t, { ZN_API_KEY: FAKE.apiKey, ZN_CLOUD: '1', ZN_API_URL: url });
+  const { env } = childEnv(t, { ZN_API_KEY: FAKE.apiKey, ZN_CLOUD: '1', ZN_API_URL: url });
   const child = spawn(process.execPath, [CLI, 'mcp'], { env, stdio: ['pipe', 'pipe', 'pipe'] });
   const call = rpcSession(child);
   try {
@@ -271,7 +271,7 @@ test('(e2e) MCP server with ZN_API_KEY + ZN_CLOUD=1: check_tool_result / check_t
 
 test('(e2e) MCP server with ZN_API_KEY but no ZN_CLOUD: analyze_prompt sends nothing', async (t) => {
   const { srv, hits, url } = await startCountingServer();
-  const { env, home } = childEnv(t, { ZN_API_KEY: FAKE.apiKey, ZN_API_URL: url });
+  const { env } = childEnv(t, { ZN_API_KEY: FAKE.apiKey, ZN_API_URL: url });
   delete env.ZN_CLOUD;
   const child = spawn(process.execPath, [CLI, 'mcp'], { env, stdio: ['pipe', 'pipe', 'pipe'] });
   const call = rpcSession(child);
