@@ -55,6 +55,7 @@ const { writeFileAtomic } = require('../broker/files');
 const { whichSync } = require('../broker/markers');
 const { shQuote, portablePath } = require('../shell-quote');
 const { claudeCodePolicyWarnings } = require('./managed-policy');
+const { hooksOf } = require('./config-file');
 
 const id = 'claude-code';
 
@@ -242,13 +243,35 @@ function hookCommand(opts = {}) {
 }
 
 function readJson(file) {
+  let data;
   try {
     const text = fs.readFileSync(file, 'utf8');
-    return text.trim() ? JSON.parse(text) : {};
+    data = text.trim() ? JSON.parse(text) : {};
   } catch (err) {
     if (err.code === 'ENOENT') return {};
     throw new Error('cannot parse ' + file + ': ' + err.message);
   }
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error(file + ' must hold a JSON object, not ' + (data === null ? 'null' : Array.isArray(data) ? 'an array' : typeof data) + ' (left unchanged)');
+  }
+  return data;
+}
+
+/* A field that must hold a JSON object: missing or null is empty; an array or a scalar is refused, never overwritten. */
+function objectField(data, key, file) {
+  const v = data[key];
+  if (v === undefined || v === null) return {};
+  if (typeof v !== 'object' || Array.isArray(v)) {
+    throw new Error('"' + key + '" in ' + file + ' must be an object, not ' + (Array.isArray(v) ? 'an array' : typeof v) + ' (left unchanged)');
+  }
+  return v;
+}
+
+/* Checks the project .mcp.json before anything is written, so a refusal never leaves hooks without their MCP server. */
+function assertMcpFile(opts = {}) {
+  if (opts.mcp === false || (opts.scope || 'user') !== 'project') return;
+  const file = path.join(path.resolve(opts.projectDir || process.cwd()), '.mcp.json');
+  if (fs.existsSync(file)) objectField(readJson(file), 'mcpServers', file);
 }
 
 function backup(file) {
@@ -292,7 +315,7 @@ function installMcp(opts, report) {
   if ((opts.scope || 'user') === 'project') {
     const file = path.join(path.resolve(opts.projectDir || process.cwd()), '.mcp.json');
     const data = readJson(file);
-    data.mcpServers = data.mcpServers || {};
+    data.mcpServers = objectField(data, 'mcpServers', file);
     const existing = data.mcpServers[MCP_SERVER_NAME];
     if (existing && !isZnSecretsServer(existing)) {
       report.warnings.push('an MCP server named "' + MCP_SERVER_NAME + '" already exists in ' + file + '; left unchanged');
@@ -331,9 +354,10 @@ function installMcp(opts, report) {
  */
 function install(opts = {}) {
   const file = settingsFile(opts);
+  assertMcpFile(opts);
   const data = readJson(file);
   const report = { settings: file, backup: backup(file), warnings: [] };
-  data.hooks = data.hooks && typeof data.hooks === 'object' ? data.hooks : {};
+  data.hooks = hooksOf(data, file);
   const ours = ourHooks(hookCommand(opts));
   for (const [event, group] of Object.entries(ours)) {
     data.hooks[event] = stripOurs(data.hooks[event]);
@@ -358,20 +382,20 @@ function install(opts = {}) {
 function uninstall(opts = {}) {
   const file = settingsFile(opts);
   const report = { settings: file, backup: null, removed: 0, warnings: [] };
+  assertMcpFile(opts);
   if (fs.existsSync(file)) {
     const data = readJson(file);
-    if (data.hooks && typeof data.hooks === 'object') {
-      const before = JSON.stringify(data.hooks);
-      for (const event of Object.keys(data.hooks)) {
-        const kept = stripOurs(data.hooks[event]);
-        if (kept.length) data.hooks[event] = kept; else delete data.hooks[event];
-      }
-      if (Object.keys(data.hooks).length === 0) delete data.hooks;
-      if (JSON.stringify(data.hooks || {}) !== before) {
-        report.backup = backup(file);
-        report.removed = 1;
-        writeFileAtomic(file, JSON.stringify(data, null, 2) + '\n', 0o644);
-      }
+    const hooks = hooksOf(data, file);
+    const before = JSON.stringify(hooks);
+    for (const event of Object.keys(hooks)) {
+      const kept = stripOurs(hooks[event]);
+      if (kept.length) hooks[event] = kept; else delete hooks[event];
+    }
+    if (Object.keys(hooks).length === 0) delete data.hooks;
+    if (JSON.stringify(hooks) !== before) {
+      report.backup = backup(file);
+      report.removed = 1;
+      writeFileAtomic(file, JSON.stringify(data, null, 2) + '\n', 0o644);
     }
   }
   if (opts.mcp !== false) {
@@ -379,7 +403,7 @@ function uninstall(opts = {}) {
       const mcpFile = path.join(path.resolve(opts.projectDir || process.cwd()), '.mcp.json');
       if (fs.existsSync(mcpFile)) {
         const data = readJson(mcpFile);
-        const s = data.mcpServers && data.mcpServers[MCP_SERVER_NAME];
+        const s = objectField(data, 'mcpServers', mcpFile)[MCP_SERVER_NAME];
         if (s && isZnSecretsServer(s)) {
           backup(mcpFile);
           delete data.mcpServers[MCP_SERVER_NAME];

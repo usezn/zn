@@ -92,3 +92,99 @@ impl SiemExporter {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    const ENDPOINT: &str = "https://siem.example.test/ingest";
+
+    fn entry(id: &str, payload: Option<&str>) -> AuditEntry {
+        AuditEntry {
+            id: id.to_string(),
+            timestamp: "2026-10-18T00:00:00Z".to_string(),
+            event: "TOOL_CALL".to_string(),
+            tool_name: "shell".to_string(),
+            status: "DENIED".to_string(),
+            policy_match: Some("no-rm".to_string()),
+            payload: payload.map(str::to_string),
+            agent_id: Some("agent-1".to_string()),
+            namespace: None,
+            anomaly_score: None,
+            nearest_neighbor: None,
+            fusion: None,
+        }
+    }
+
+    fn config(endpoint: Option<&str>, batch_size: usize) -> SiemConfig {
+        SiemConfig {
+            endpoint: endpoint.map(str::to_string),
+            token: None,
+            batch_size,
+        }
+    }
+
+    #[tokio::test]
+    async fn exporter_without_endpoint_returns_immediately() {
+        let (_tx, rx) = broadcast::channel::<AuditEntry>(4);
+        let exporter = SiemExporter::new(config(None, 10));
+        tokio::time::timeout(Duration::from_secs(1), exporter.run(rx))
+            .await
+            .expect("run should return without an endpoint");
+    }
+
+    #[tokio::test]
+    async fn exporter_stops_when_the_channel_closes_with_nothing_pending() {
+        let (tx, rx) = broadcast::channel::<AuditEntry>(4);
+        drop(tx);
+        let exporter = SiemExporter::new(config(Some(ENDPOINT), 10));
+        tokio::time::timeout(Duration::from_secs(1), exporter.run(rx))
+            .await
+            .expect("run should stop when the channel is closed");
+    }
+
+    #[tokio::test]
+    async fn lagged_receiver_keeps_running_until_the_channel_closes() {
+        let (tx, rx) = broadcast::channel::<AuditEntry>(2);
+        for i in 0..4 {
+            tx.send(entry(&format!("e{i}"), None)).unwrap();
+        }
+        drop(tx);
+        // The batch size is above the event count, so nothing is flushed over HTTP.
+        let exporter = SiemExporter::new(config(Some(ENDPOINT), 100));
+        tokio::time::timeout(Duration::from_secs(1), exporter.run(rx))
+            .await
+            .expect("run should stop after the lag and the close");
+    }
+
+    #[test]
+    fn batch_body_is_a_json_array_with_escaped_strings() {
+        let batch = vec![entry("e1", Some("line1\n\"quoted\" \\ path\t\u{1F600}"))];
+        let req = Client::new()
+            .post(ENDPOINT)
+            .json(&batch)
+            .build()
+            .expect("request should build");
+        let body = req
+            .body()
+            .and_then(|b| b.as_bytes())
+            .expect("JSON body should be buffered");
+
+        let parsed: serde_json::Value =
+            serde_json::from_slice(body).expect("body should be valid JSON");
+        assert_eq!(parsed[0]["id"], "e1");
+        assert_eq!(parsed[0]["tool_name"], "shell");
+        assert_eq!(parsed[0]["payload"], "line1\n\"quoted\" \\ path\t\u{1F600}");
+        assert!(parsed[0]["namespace"].is_null());
+
+        let raw = std::str::from_utf8(body).expect("body should be UTF-8");
+        assert!(raw.contains(r#""payload":"line1\n\"quoted\" \\ path\t"#));
+        // `fusion` is skipped when absent.
+        assert!(!raw.contains("fusion"));
+        assert_eq!(
+            req.headers()[reqwest::header::CONTENT_TYPE],
+            "application/json"
+        );
+    }
+}
