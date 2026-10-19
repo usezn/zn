@@ -4,7 +4,7 @@ You use an AI coding agent (Claude Code, Codex CLI, Cursor or OpenCode) and you 
 
 ## Before you start
 
-You need Node.js 18 or later. If `node --version` says "command not found", install the LTS version from [nodejs.org](https://nodejs.org/) and open a new terminal. Run every command below in your own terminal, not through your agent.
+Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.12 or later. If `node --version` says "command not found", install the LTS version from [nodejs.org](https://nodejs.org/) and open a new terminal. Run every command below in your own terminal, not through your agent.
 
 ## 1. Install
 

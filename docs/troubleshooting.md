@@ -69,6 +69,21 @@ Your secret vault is locked. Unlock it in this terminal with: zn unlock. Then ru
 
 More in [secrets](secrets.md). If it asks for a terminal to enter the passphrase and you have none (for example over SSH), see "If something fails" there.
 
+**If the passphrase is right but the vault will not open:** `zn unlock` says so when the vault file is damaged or the system keychain refuses. It then tells you not to reset. Do not run `zn vault reset`: it would delete values that may still be fine. Run `zn vault verify` to see whether the vault files are intact, restore the vault folder from a backup if you have one, or sign in to the user account that created the vault. If a keychain is the cause, the message names it.
+
+**If you forgot the passphrase:** nobody can recover it, zn included. That is what keeps your secrets safe. After three wrong passphrases in a row (other errors do not count), `zn unlock` points you to the way out:
+
+```text
+Forgot the passphrase? `zn vault reset` starts a new, empty vault (the old values are lost).
+```
+
+1. Run `zn lock` if the vault is unlocked, then run `zn vault reset` in your own terminal. It does nothing in a script or when your AI agent runs it.
+2. Read what it says, then type `reset my vault` and press Enter. Anything else cancels and changes nothing.
+3. zn saves the old vault in a folder named `vault-backup-<date>-<time>` inside your zn folder (`~/.zn`), then removes it. The values stored in it are lost, because only the old passphrase opens them. If you find the passphrase later, the backup still opens with it.
+4. Run `zn unlock` to create the new vault, then store your values again, for example `zn env shadow .env` or `zn secret set NAME`. Rotate any secret you cannot re-enter from another source.
+
+If your computer is part of a zn Team organization, `zn vault reset` refuses, because a reset would remove the organization's controls. Ask your administrator.
+
 ## 6. Your agent was blocked: "`.env` holds plain-text secrets"
 
 ```text

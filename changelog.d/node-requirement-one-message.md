@@ -1,0 +1,2 @@
+### Changed
+- The Node.js requirement now reads the same everywhere: Node.js 22 LTS is recommended, 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.12 or later. The README "see the redaction by hand" example now explains that `verdict: allow` means no prompt injection was found while the secrets are hidden in `sanitized_content`, and the Python README names the `python3-venv` package before the commands that need it.
