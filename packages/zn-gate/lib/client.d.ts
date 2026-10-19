@@ -1,9 +1,13 @@
 // Type definitions for zn-gate (package entry: lib/client.js). Hand-written; keep in step with lib/client.js.
-// This file declares the tool-call guard and the four helpers it is used with. Other exports of
-// lib/client.js are not declared here yet.
 
-import type { RuleAssessment, ToolCallAssessment } from './guard';
+import type { Assessment, EvaluateOptions, ToolResultReport, SanitizeToolResultOptions } from './rules';
 
+export type { Assessment, Advisory, EvaluateOptions, SanitizeToolResultOptions } from './rules';
+export { evaluate, RULES_VERSION } from './rules';
+export { sanitizeToolResult, redactSecrets } from './rules';
+export type { SecretDetection, RedactResult } from './rules';
+export { logEvidence, verifyEvidenceLedger } from './evidence';
+export type { EvidenceEvent, EvidenceRecord, EvidenceVerification } from './evidence';
 export { checkToolCall, guardTool, GuardBlockError } from './guard';
 export type {
   RuleAssessment,
@@ -14,99 +18,87 @@ export type {
   GuardBlockedValue,
 } from './guard';
 
-/** A secret that redactSecrets() or sanitizeToolResult() replaced. */
-export interface SecretDetection {
-  rule: string;
-  /** Character offset of the secret in the input. */
-  index: number;
+export type LongInputMode = 'off' | 'windows';
+
+/** Options for analyze(). */
+export interface AnalyzeOptions extends EvaluateOptions {
+  /** API key for cloud analysis. Used only together with ZN_CLOUD=1. Falls back to ZN_API_KEY. */
+  apiKey?: string;
+  /** Never use the cloud for this call (also ZN_LOCAL_ONLY=true). */
+  localOnly?: boolean;
+  /** Custom gateway URL. Ignored for a key saved by `zn-gate connect`. Falls back to ZN_API_URL. */
+  apiUrl?: string;
+  /** Gateway stage, "v30" (default) or "prod". Falls back to ZN_STAGE. */
+  stage?: string;
+  /** Request timeout in milliseconds. */
+  timeout?: number;
+  /** How long texts are sent to the cloud gate: "windows" (default) or "off". Falls back to ZN_LONG_INPUT. */
+  longInput?: string;
 }
 
-export interface RedactResult {
-  sanitized: string;
-  detections: SecretDetection[];
+export interface LongInputInfo {
+  mode?: string;
+  windows?: number;
+  capped?: boolean;
+  reason?: string;
+  [key: string]: unknown;
 }
 
-export interface SanitizeToolResultOptions {
-  /** Block output too large to scan in full (rule "size:truncated"). Also ZN_BLOCK_TRUNCATED=1. */
-  blockTruncated?: boolean;
-  /** Redact credentials from the returned content. Default true. */
-  maskSecrets?: boolean;
-  /** Also block the heuristic rules that are advisories by default. Also ZN_STRICT=1. */
-  strict?: boolean;
+/** Result of analyze() and analyzeLocal(): a rule assessment plus where it came from. */
+export interface AnalyzeResult extends Assessment {
+  mode: 'oss-local' | 'hybrid-local-fastpath' | 'hybrid-cloud';
+  /** True when the cloud was enabled but local rules were used instead. */
+  fallback?: boolean;
+  /** Why the cloud result was not used (set with fallback). */
+  cloud_error?: string;
+  /** Number of secrets redacted from the text before it was sent to the cloud. */
+  secrets_redacted_before_upload?: number;
+  note?: string;
+  warning?: string;
+  long_input?: LongInputInfo;
+  /** A cloud response can carry more fields. */
+  [key: string]: unknown;
 }
 
-export interface ToolResultReport {
-  tool_name: string;
-  safe_to_ingest: boolean;
-  /** True when some part of the output was not scanned in full. */
-  truncated: boolean;
-  assessment: RuleAssessment;
-  secrets_redacted: number;
-  sanitized_content: string;
-}
-
-/**
- * Scans a tool output for indirect prompt injection and redacts secrets.
- * Local only; nothing is sent over the network.
- */
-export function sanitizeToolResult(toolName: string, content: unknown, options?: SanitizeToolResultOptions): ToolResultReport;
-/** Deep-redacts secrets in any string, array or object (no injection scan). */
-export function sanitizeToolResult(value: unknown): { sanitized: unknown; detections: SecretDetection[] };
-
-/** Replaces credentials in a text with placeholders. */
-export function redactSecrets(text: string): RedactResult;
-
-/** Event passed to logEvidence(). Only a short redacted preview and a SHA-256 of the payload are stored. */
-export interface EvidenceEvent {
-  agent?: string;
-  agent_environment?: string;
-  phase?: string;
-  tool_name?: string;
-  tool?: string;
-  /** A string, or any JSON value (it is serialized). */
-  payload?: unknown;
-  verdict?: string;
-  rule?: string | null;
+/** Assessment attached to a checkToolResult() report. */
+export interface ToolResultAssessment extends Omit<Assessment, 'reason'> {
+  /** Absent for empty or tiny output. */
   reason?: string | null;
-  confidence?: number;
-  latency_us?: number;
-  engine?: string;
+  mode: 'oss-local' | 'hybrid-local-fastpath';
 }
 
-export interface EvidenceRecord {
-  id: string;
-  /** ISO 8601. */
-  timestamp: string;
-  agent_environment: string;
-  phase: string;
-  tool_name: string;
-  payload_sha256: string;
-  payload_preview: string;
-  verdict: string;
-  rule: string | null;
-  reason: string | null;
-  confidence: number;
-  latency_us: number;
-  engine: string;
-  prev_hash: string;
-  /** 64 lowercase hex characters. */
-  record_hash: string;
+export interface CheckedToolResult extends Omit<ToolResultReport, 'assessment'> {
+  assessment: ToolResultAssessment;
 }
 
-export interface EvidenceVerification {
-  valid: boolean;
-  total: number;
-  verified: number;
-  /** Index of the first broken record, or null. */
-  broken_index: number | null;
-  error: string | null;
+export interface ResolveEndpointOptions {
+  apiUrl?: string;
+  stage?: string;
 }
+
+/** Minimum text length (in characters) that asks the cloud gate for windowed scanning. */
+export const LONG_INPUT_MIN_CHARS: number;
 
 /**
- * Appends an event to the evidence log (default ~/.zn/evidence.jsonl). Returns the
- * record, or null when the write was skipped. It does not throw.
+ * Prompt analysis. Local rules first; the cloud is asked only when the user
+ * opted in. Secrets are redacted locally before any upload.
  */
-export function logEvidence(event: EvidenceEvent, filePath?: string, opts?: { lockWaitMs?: number }): EvidenceRecord | null;
+export function analyze(input: string, options?: AnalyzeOptions): Promise<AnalyzeResult>;
 
-/** Verifies the SHA-256 chain of the evidence log. A damaged log gives valid: false, never an exception. */
-export function verifyEvidenceLedger(filePath?: string): EvidenceVerification;
+/** Local-only evaluation. Never touches the network. */
+export function analyzeLocal(input: string, options?: EvaluateOptions): AnalyzeResult;
+
+/**
+ * Inspects tool output before it enters the model context. Local only; secrets
+ * are always redacted from sanitized_content.
+ */
+export function checkToolResult(toolName: string, content: unknown, options?: SanitizeToolResultOptions): Promise<CheckedToolResult>;
+
+/** "windows" (default) or "off", from options.longInput or ZN_LONG_INPUT. */
+export function longInputMode(options?: Pick<AnalyzeOptions, 'longInput'>): LongInputMode;
+
+export function isCloudEnabled(options?: AnalyzeOptions): boolean;
+export function usesStoredKey(options?: AnalyzeOptions): boolean;
+/** The key when it has the expected shape, otherwise null. */
+export function usableApiKey(value: unknown): string | null;
+export function resolveEndpoint(options?: ResolveEndpointOptions, flags?: { stored?: boolean }): string;
