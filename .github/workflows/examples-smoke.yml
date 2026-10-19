@@ -43,11 +43,10 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
+          # No pip cache here: the example requirements pull in large agent frameworks, and the
+          # cache key changes with every release, so each run saved a new 300 MB cache that was
+          # never reused and pushed the repository toward its 10 GB cache limit.
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: |
-            examples/*/requirements.txt
-            packages/zn-gate-py/pyproject.toml
       - name: Check the requires-next markers
         run: python3 .github/scripts/examples-smoke.py markers
       - name: Install and run the examples offline
