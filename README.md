@@ -344,7 +344,7 @@ jobs:
 
 | Input | Default | Description |
 |---|---|---|
-| `version` | `1.12.0` | Exact `zn-gate` version to install. Ranges and `latest` are refused. `audit` needs 1.6.0 or later. |
+| `version` | `1.13.0` | Exact `zn-gate` version to install. Ranges and `latest` are refused. `audit` needs 1.6.0 or later. |
 | `mode` | `scan` | Requires a release of the action that includes audit mode (see the [CHANGELOG](CHANGELOG.md)). `scan`, `audit` or `both`. |
 | `path` | `.` | File or directory to scan. `audit` needs a directory: with `both` a file skips the audit with a warning; with `audit` the step fails. |
 | `fail-on-threat` | `true` | Fail the step on findings. For `scan`, anything found (an injection trap or a secret); for `audit`, findings at or above `severity-threshold`. Set `false` to report only. Any value other than `true` or `false` fails the step. `true` or `false`, in any case; other values fail the step. |

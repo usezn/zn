@@ -57,7 +57,7 @@ On pull requests from forks, GitHub may not allow the SARIF upload. The audit st
 
 ## Which version runs
 
-The `version` input is the exact `zn-gate` version that gets installed; ranges and `latest` are refused. When you leave it out, you get the version that the pinned release of the Action sets as its default, so pinning the Action by SHA also pins what runs. Set `version` when you want to move the two separately. For a stronger check, set `package-sha256` (the hash of the PyPI wheel, used by `scan`) and `npm-integrity` (the `sha512-...` integrity of the npm tarball, used by `audit`): the install fails when the downloaded file differs.
+The `version` input is the exact `zn-gate` version that gets installed; ranges and `latest` are refused. When you leave it out, you get the version that the pinned release of the Action sets as its default, so pinning the Action by SHA also pins what runs. Set `version` when you want to move the two separately. We recommend setting `version` in every workflow: from 1.13.0 on, each release of the Action defaults to its own `zn-gate` version, but the 1.12.0 release of the Action still defaults to 1.10.0. For a stronger check, set `package-sha256` (the hash of the PyPI wheel, used by `scan`) and `npm-integrity` (the `sha512-...` integrity of the npm tarball, used by `audit`): the install fails when the downloaded file differs.
 
 `audit` needs `zn-gate` 1.6.0 or later. With an older version, `mode: both` runs the scan only and prints a warning, and `mode: audit` fails.
 
