@@ -197,13 +197,18 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
     local paths of `node` and zn (no secret value).
   - Live output that OpenCode stores while a command runs stays in its local
     database.
-  - On Windows, when OpenCode's shell is PowerShell (`powershell.exe` or `pwsh`,
-    named by the `SHELL` environment variable), zn checks and wraps the command
-    as PowerShell, the way it does for Claude Code's PowerShell tool: the command
-    must be one program with plain arguments (no pipeline, variable or script
-    block), and zn says so when it is not. Commands for other shells are wrapped
-    for bash as before. The PowerShell form is covered by unit tests, not yet run
-    end to end on Windows.
+  - On Windows, OpenCode's command tool runs in PowerShell unless the `SHELL`
+    environment variable names another shell (measured with OpenCode 1.19.3 on
+    Windows Server 2022: with `SHELL` unset it used PowerShell, and with `SHELL`
+    set to Git Bash it used Git Bash). zn follows the same rule. When `SHELL` is
+    unset, or names anything other than a bash-like shell (`bash`, `sh`, `zsh`),
+    zn checks and wraps the command as PowerShell, the way it does for Claude
+    Code's PowerShell tool: the command must be one program with plain arguments
+    (no pipeline, variable or script block), and zn says so when it is not. When
+    `SHELL` names a bash-like shell, such as Git Bash, commands are wrapped for
+    bash as before. On macOS and Linux only an explicit `powershell` or `pwsh`
+    in `SHELL` selects the PowerShell form. The plugin sends zn only the shell's
+    program name (never its path) and the platform.
 
 ## zn Team policy choices by zn-gate version
 

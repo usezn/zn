@@ -379,11 +379,32 @@ test('opencode: bash and unknown shells keep the bash wrapping', async (t) => {
   assert.equal(opencode.isPowerShellName('powershell-core'), false);
 });
 
+test('opencode: on Windows an unset or non-bash SHELL means PowerShell, a bash SHELL keeps bash', async (t) => {
+  const dir = tmpProject(t);
+  const opts = { nodePath: String.raw`C:\node.exe`, runJs: String.raw`C:\x\run.js` };
+  const call = (shell, platform) => run(opencode, { hook: 'tool.execute.before', tool: 'bash', shell, platform, cwd: dir, args: { command: 'psql __ZN_DB_PASSWORD__' } }, opts);
+  for (const shell of [undefined, '', 'cmd', 'fish']) {
+    const r = await call(shell, 'win32');
+    assert.equal(r.output.action, 'args', String(shell));
+    assert.match(r.output.args.command, /^&\s/, String(shell));
+  }
+  for (const shell of ['bash', 'bash.exe', 'sh.exe', 'zsh']) {
+    const r = await call(shell, 'win32');
+    assert.match(r.output.args.command, /^ZN_AGENT=x /, String(shell));
+  }
+  for (const shell of [undefined, '', 'bash']) {
+    const r = await call(shell, 'linux');
+    assert.match(r.output.args.command, /^ZN_AGENT=x /, String(shell));
+  }
+  assert.equal(opencode.usesPowerShell('', 'win32'), true);
+  assert.equal(opencode.usesPowerShell('', 'darwin'), false);
+});
+
 test('opencode plugin: sends only the name of the shell, not its path', () => {
   const src = opencode.pluginSource({ scope: 'user', nodePath: '/usr/bin/node', runnerPath: '/opt/zn/lib/hooks/runner.js' });
   assert.match(src, /process\.env\.SHELL/);
   assert.match(src, /\.split\("\/"\)\.pop\(\)/);
-  assert.match(src, /args: output\.args, shell: SHELL/);
+  assert.match(src, /args: output\.args, shell: SHELL, platform: process\.platform/);
   // The generated plugin is valid JavaScript.
   assert.doesNotThrow(() => new (require('vm').Script)(src.replace(/^import .*$/m, '').replace(/^export const/m, 'const')));
 });
