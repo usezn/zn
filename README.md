@@ -380,7 +380,7 @@ Permissions: the action itself needs only `contents: read`; add `security-events
 
 ## Examples
 
-Runnable examples are in [`examples/`](examples/): the Python SDK, agents built with LangChain, CrewAI, LlamaIndex or the OpenAI Agents SDK, the Node.js package, custom rules, Promptfoo and the GitHub Action.
+Runnable examples are in [`examples/`](examples/): the Python SDK, agents built with LangChain, CrewAI, LlamaIndex or the OpenAI Agents SDK, the Node.js package, LangChain.js and LangGraph.js, custom rules, Promptfoo and the GitHub Action.
 
 ## FAQ
 
