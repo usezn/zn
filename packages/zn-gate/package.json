@@ -32,6 +32,7 @@
     "zn": "bin/cli.js"
   },
   "main": "lib/client.js",
+  "types": "lib/client.d.ts",
   "scripts": {
     "test": "node test/run-all.js"
   },
@@ -52,6 +53,7 @@
     "age-encryption"
   ],
   "devDependencies": {
-    "fast-check": "4.10.2"
+    "fast-check": "4.10.2",
+    "typescript": "5.9.3"
   }
 }
