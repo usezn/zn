@@ -20,6 +20,11 @@ const { tempDir } = require('./helpers/tmp');
 const FIX = path.join(__dirname, 'fixtures', 'managed-config');
 const CLI = path.join(__dirname, '..', 'bin', 'cli.js');
 
+// A Windows checkout may turn the fixtures' line ends into CRLF.
+const read = (f) => fs.readFileSync(f, 'utf8').replace(/
+/g, '
+');
+
 const PATHS = {
   'claude-code': {
     macos: '/Library/Application Support/ClaudeCode/managed-settings.json',
@@ -57,7 +62,7 @@ test('every agent and OS matches its fixture, with the right path', () => {
       assert.equal(f.file, PATHS[f.agent][f.os], f.agent + ' ' + f.os);
       const fx = path.join(FIX, fixtureName(f, v.name));
       if (update) fs.writeFileSync(fx, f.content);
-      assert.equal(f.content, fs.readFileSync(fx, 'utf8'), path.basename(fx));
+      assert.equal(f.content, read(fx), path.basename(fx));
     }
   }
   const mcp = mc.build({ agent: 'claude-code', os: 'all', exclusiveMcp: true }).filter((f) => f.file.endsWith('managed-mcp.json'));
@@ -65,7 +70,7 @@ test('every agent and OS matches its fixture, with the right path', () => {
   for (const f of mcp) {
     const fx = path.join(FIX, 'claude-code-' + f.os + '-managed-mcp.json');
     if (update) fs.writeFileSync(fx, f.content);
-    assert.equal(f.content, fs.readFileSync(fx, 'utf8'));
+    assert.equal(f.content, read(fx));
     assert.match(f.notes.join(' '), /exclusive control of MCP/);
   }
 });
