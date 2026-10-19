@@ -1,0 +1,11 @@
+UserPromptSubmit 
+  input: 
+  zn answered: (nothing), exit 0
+
+PermissionRequest Bash
+  input: node -e "console.log('db:', process.argv[1])" __ZN_DB_PASSWORD__
+  zn answered: {"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"zn: this command uses a stored secret. Run it through zn instead, exactly like this: zn run -- node -e \"console.log('db:', process.argv[1])\" __ZN_DB_PASSWORD__  (zn puts the value only into that process, if the user allowed this command for the secret)."}}}, exit 0
+
+PermissionRequest Bash
+  input: node -e "console.log('ran-after-approval')"
+  zn answered: (nothing), exit 0
