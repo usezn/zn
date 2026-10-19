@@ -294,7 +294,7 @@ jobs:
         run: node .github/scripts/check-npm-pack.js "$RUNNER_TEMP/pack/pack.json" packages/zn-gate
       - name: Install the tarball in an empty project (offline)
         if: steps.scope.outputs.run == 'true'
-        run: |
+        run: | # zizmor: ignore[adhoc-packages] the tarball just built by this job is installed offline
           mkdir -p "$RUNNER_TEMP/smoke"
           cd "$RUNNER_TEMP/smoke"
           npm init -y > /dev/null
@@ -368,7 +368,8 @@ jobs:
         # name and byte of content and fixes the times, owners, order and gzip header.
         run: |
           set -euo pipefail
-          export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          export SOURCE_DATE_EPOCH
           for out in dist rebuild; do
             python -m build --no-isolation packages/zn-gate-py --outdir "$RUNNER_TEMP/$out"
             python -I .github/scripts/normalize-sdist.py "$RUNNER_TEMP"/$out/*.tar.gz
