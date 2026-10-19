@@ -55,7 +55,7 @@ jobs:
         working-directory: packages/zn-gate
         run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund
       - name: Install the latest agent CLIs
-        run: |
+        run: | # zizmor: ignore[adhoc-packages] this weekly job tests the latest published agent CLIs on purpose
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/agents"
           pkgs=()
