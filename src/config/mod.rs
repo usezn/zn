@@ -50,7 +50,7 @@ pub struct ZnConfig {
     #[serde(default)]
     pub neural: NeuralConfig,
 
-    /// Fusion Gate (B-3): rules ∥ neural head. Missing section = disabled.
+    /// Fusion Gate: rules ∥ neural head. Missing section = disabled.
     #[serde(default)]
     pub fusion: FusionConfig,
 
@@ -407,7 +407,7 @@ fn default_false() -> bool {
     false
 }
 
-/// Fusion Gate (B-3): block iff rules hit OR neural score >= tau.
+/// Fusion Gate: block iff rules hit OR neural score >= tau.
 ///
 /// A missing `[fusion]` section deserializes to `enabled: false`, which must
 /// degrade EXACTLY to the rules-only gate (regression-guarded in evals).

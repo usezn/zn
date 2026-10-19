@@ -870,7 +870,7 @@ impl AnalyzerPipeline {
                 }
             };
 
-        // 1.5 Fusion Gate (B-3): block iff rules hit OR head score >= tau.
+        // 1.5 Fusion Gate: block iff rules hit OR head score >= tau.
         // Disabled config / missing model degrades to exactly (rules_hit,
         // None): byte-identical output, no "fusion" key.
         let (fused_blocked, fusion_ev) = zn::engine::neural::evaluate(
@@ -936,7 +936,7 @@ impl AnalyzerPipeline {
             "rule": matched_rule,
             "score": risk_score
         });
-        // B-3 evidence rides with the verdict (same FusionEvidence schema as
+        // Fusion Gate evidence rides with the verdict (same FusionEvidence schema as
         // AuditEntry.fusion); serialized ONLY when the neural camera actually
         // participated in a block, mirroring the audit serde contract.
         if let Some(ev) = &fusion_ev {
@@ -1397,7 +1397,7 @@ async fn process_mcp_message(
                 namespace: state.config.security.namespace.clone(),
                 anomaly_score,
                 nearest_neighbor: nearest_neighbor_entry.clone(),
-                // B-3: live-path fusion evidence is attached where the fused
+                // Fusion Gate: live-path fusion evidence is attached where the fused
                 // decision is wired in; schema field defaults to absent here.
                 fusion: None,
             };
