@@ -1,0 +1,67 @@
+name: zn-gate Node.js on macOS
+
+# Runs the whole zn-gate Node.js test suite on macOS with Node.js 22, including the vault tests against
+# the native macOS Keychain. It runs on pull requests into main and release branches, on any pull request
+# labelled full-ci, and on manual runs. Other pull requests skip it to save macOS minutes.
+on:
+  pull_request:
+    branches: [ main, next, 'release/**' ]
+    types: [ opened, synchronize, reopened, labeled, ready_for_review ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: node-macos-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test-node-macos:
+    name: Node.js 22 tests (macOS)
+    # Draft pull requests skip this job; marking the pull request ready for review runs it.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.draft == false &&
+       (github.base_ref == 'main' || startsWith(github.base_ref, 'release/') ||
+        contains(github.event.pull_request.labels.*.name, 'full-ci')))
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      # step-security/harden-runner does not support macOS runners, so this job has no hardening step.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.x
+          cache: npm
+          cache-dependency-path: packages/zn-gate/package-lock.json
+      - name: Install zn-gate dependencies
+        working-directory: packages/zn-gate
+        run: npm ci --ignore-scripts
+      - name: Create a temporary keychain
+        # A throwaway keychain with a random password, made the default for this job. The login
+        # keychain is never used. It is deleted in the last step, even if the tests fail.
+        run: |
+          kc="$RUNNER_TEMP/zn-ci.keychain-db"
+          pw="$(openssl rand -hex 16)"
+          echo "::add-mask::$pw"
+          security create-keychain -p "$pw" "$kc"
+          security set-keychain-settings -lut 3600 "$kc"
+          security unlock-keychain -p "$pw" "$kc"
+          security list-keychains -d user -s "$kc"
+          security default-keychain -d user -s "$kc"
+          echo "ZN_CI_KEYCHAIN=$kc" >> "$GITHUB_ENV"
+      - name: Run zn-gate tests (native Keychain backend)
+        working-directory: packages/zn-gate
+        env:
+          ZN_TEST_NATIVE_KEYCHAIN: '1'
+          ZN_KEYCHAIN_PATH: ${{ runner.temp }}/zn-ci.keychain-db
+        run: npm test
+      - name: Delete the temporary keychain
+        if: always()
+        run: |
+          if [ -n "$ZN_CI_KEYCHAIN" ]; then
+            security delete-keychain "$ZN_CI_KEYCHAIN" || true
+          fi

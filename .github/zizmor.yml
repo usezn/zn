@@ -1,0 +1,6 @@
+# Configuration for zizmor, the workflow security linter (.github/workflows/workflow-lint.yml).
+rules:
+  # Asks for the "$/" spelling of "uses: ./". The "./" form works on every runner and in actionlint,
+  # and rewriting it is a style change with no security effect.
+  self-repository:
+    disable: true

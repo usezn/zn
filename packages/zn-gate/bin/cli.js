@@ -12,7 +12,7 @@
   var msg = 'zn-gate needs Node.js 18 or later, and this is Node.js ' + process.version + '.\n' +
     'Install the LTS version from https://nodejs.org/ (or run: nvm install --lts), then run the command again.\n';
   var agentRun = { hook: 1, run: 1, mcp: 1, 'secrets-mcp': 1, 'mcp-shield': 1, shield: 1 };
-  if (agentRun.hasOwnProperty(process.argv[2])) {
+  if (Object.prototype.hasOwnProperty.call(agentRun, process.argv[2])) {
     process.stderr.write('Warning: ' + msg);
     return;
   }
@@ -25,8 +25,8 @@ const os = require('os');
 const path = require('path');
 const { startMcpServer } = require('../lib/mcp');
 const { startMcpShield } = require('../lib/shield');
-const { scanEnvironments, configureEnvironments } = require('../lib/init');
-const { logEvidence, verifyEvidenceLedger, getEvidenceStats, exportEvidenceLedger, startEvidenceUi, recoveryHint, EVIDENCE_FILE } = require('../lib/evidence');
+const { configureEnvironments } = require('../lib/init');
+const { verifyEvidenceLedger, getEvidenceStats, exportEvidenceLedger, startEvidenceUi, recoveryHint, EVIDENCE_FILE } = require('../lib/evidence');
 const { analyze, analyzeLocal, isCloudEnabled, resolveEndpoint, usesStoredKey, RULES_VERSION } = require('../lib/client');
 const { evaluate, redactSecrets, redactScanSecrets, redactScanRules, SECRET_PATTERNS } = require('../lib/rules');
 const { SCRUB_RULES_VERSION } = require('../lib/scrub/patterns');
@@ -411,10 +411,29 @@ function homeMcpFiles() {
 // user's own MCP configs (--include-home) outside it is shown as ~/...
 function displayPath(filePath, homeFiles) {
   if (homeFiles && homeFiles.has(filePath)) {
-    const fromHome = path.relative(os.homedir(), filePath);
+    let realHome = os.homedir();
+    try { realHome = fs.realpathSync(realHome); } catch (e) { /* keep it */ }
+    const fromHome = path.relative(realHome, realFolderOf(filePath));
     if (!fromHome.startsWith('..') && !path.isAbsolute(fromHome)) return '~/' + fromHome.split(path.sep).join('/');
   }
-  return path.relative(process.cwd(), filePath);
+  return relativeToCwd(filePath);
+}
+
+// The folder of a path with every link followed (the name itself is kept), or
+// the path unchanged when it cannot be resolved.
+function realFolderOf(p) {
+  const abs = path.resolve(p);
+  try { return path.join(fs.realpathSync(path.dirname(abs)), path.basename(abs)); } catch (e) { return abs; }
+}
+
+// A path relative to the current directory. Both sides are resolved first: on
+// macOS the temporary folder is /var/..., a link to /private/var/..., and the
+// current directory is reported as /private/var/..., so comparing them as
+// they are gives "../../private/var/...".
+function relativeToCwd(filePath) {
+  let cwd = process.cwd();
+  try { cwd = fs.realpathSync(cwd); } catch (e) { /* keep it */ }
+  return path.relative(cwd, realFolderOf(filePath));
 }
 
 function scanDirectory(targetPath, includeCode = false, options = {}) {
@@ -526,7 +545,6 @@ Files   : ${files.length} file(s) queued for audit\n
 
   for (const filePath of files) {
     const relPath = displayPath(filePath, homeFiles);
-    const fileFirst = findings.length;
     let content = '';
     let mcpFound = [];
     try {
