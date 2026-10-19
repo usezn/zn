@@ -153,14 +153,36 @@ fn ensure_model(repo: &str, dir: &Path) -> Result<PathBuf> {
     ensure_model_from(&endpoint, repo, MODEL_REVISION, &MODEL_FILES, dir)
 }
 
-fn all_present(files: &[(&str, &str)], dir: &Path) -> bool {
-    files.iter().all(|(name, _)| dir.join(name).exists())
+/// True if `path` exists and its SHA-256 equals `expected` (hashed in a stream).
+fn file_matches(path: &Path, expected: &str) -> bool {
+    use std::io::Read;
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        match f.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => hasher.update(&buf[..n]),
+            Err(_) => return false,
+        }
+    }
+    hex::encode(hasher.finalize()).eq_ignore_ascii_case(expected)
 }
 
-/// Make sure every file in `files` exists in `dir`, downloading the missing
-/// ones from `<endpoint>/<repo>/resolve/<revision>/<file>` and checking each
-/// against its pinned SHA-256. Nothing else is fetched and no credentials are
-/// sent.
+/// True if every file exists and matches its pinned hash.
+fn all_valid(files: &[(&str, &str)], dir: &Path) -> bool {
+    files
+        .iter()
+        .all(|(name, sha)| file_matches(&dir.join(name), sha))
+}
+
+/// Make sure every file in `files` exists in `dir` and matches its pinned
+/// SHA-256. Missing files, and present files that do not match (tampered or
+/// truncated), are (re-)downloaded from `<endpoint>/<repo>/resolve/<revision>/<file>` and checking each
+/// and checked again; a second mismatch is an error. Nothing else is fetched
+/// and no credentials are sent.
 fn ensure_model_from(
     endpoint: &str,
     repo: &str,
@@ -168,28 +190,32 @@ fn ensure_model_from(
     files: &[(&str, &str)],
     dir: &Path,
 ) -> Result<PathBuf> {
-    if all_present(files, dir) {
+    if all_valid(files, dir) {
         return Ok(dir.to_path_buf());
     }
     let _guard = download_lock();
     // Double-check: another thread may have finished downloading while we
     // waited on the lock above.
-    if all_present(files, dir) {
+    if all_valid(files, dir) {
         return Ok(dir.to_path_buf());
     }
     std::fs::create_dir_all(dir)?;
     let base = endpoint.trim_end_matches('/');
-    let jobs: Vec<(String, &str, &str)> = files
-        .iter()
-        .filter(|(name, _)| !dir.join(name).exists())
-        .map(|(name, sha)| {
-            (
-                format!("{base}/{repo}/resolve/{revision}/{name}"),
-                *name,
-                *sha,
-            )
-        })
-        .collect();
+    let mut jobs: Vec<(String, &str, &str)> = Vec::new();
+    for (name, sha) in files {
+        let path = dir.join(name);
+        if path.exists() {
+            if file_matches(&path, sha) {
+                continue;
+            }
+            std::fs::remove_file(&path)?;
+        }
+        jobs.push((
+            format!("{base}/{repo}/resolve/{revision}/{name}"),
+            *name,
+            *sha,
+        ));
+    }
 
     // Run on a dedicated thread with its own runtime: callers may already be
     // inside an async runtime, where a nested block_on would panic.
@@ -474,10 +500,10 @@ mod tests {
     }
 
     #[test]
-    fn present_files_are_not_downloaded() {
+    fn present_and_correct_files_are_not_downloaded() {
         let (base, hits) = serve(HashMap::new());
-        let sha = sha_hex(b"x");
-        let files = [("a.json", sha.as_str()), ("b.bin", sha.as_str())];
+        let (sa, sb) = (sha_hex(b"local a"), sha_hex(b"local b"));
+        let files = [("a.json", sa.as_str()), ("b.bin", sb.as_str())];
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.json"), b"local a").unwrap();
         std::fs::write(dir.path().join("b.bin"), b"local b").unwrap();
@@ -490,12 +516,43 @@ mod tests {
     }
 
     #[test]
+    fn present_but_corrupted_file_is_replaced() {
+        let good = b"the real content".to_vec();
+        let mut routes = HashMap::new();
+        routes.insert(route("a.json"), (200, good.clone()));
+        let (base, hits) = serve(routes);
+        let (sa, sb) = (sha_hex(&good), sha_hex(b"local b"));
+        let files = [("a.json", sa.as_str()), ("b.bin", sb.as_str())];
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.json"), b"tampered or trunc").unwrap();
+        std::fs::write(dir.path().join("b.bin"), b"local b").unwrap();
+        ensure_model_from(&base, "owner/model", REV, &files, dir.path()).unwrap();
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        assert_eq!(std::fs::read(dir.path().join("a.json")).unwrap(), good);
+        assert_eq!(leftovers(dir.path()), vec!["a.json", "b.bin"]);
+    }
+
+    #[test]
+    fn corrupted_file_that_redownloads_wrong_is_an_error() {
+        let mut routes = HashMap::new();
+        routes.insert(route("a.json"), (200, b"still wrong".to_vec()));
+        let (base, _) = serve(routes);
+        let sa = sha_hex(b"the real content");
+        let files = [("a.json", sa.as_str())];
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.json"), b"corrupted").unwrap();
+        let err = ensure_model_from(&base, "owner/model", REV, &files, dir.path()).unwrap_err();
+        assert!(err.to_string().contains("mismatch"), "{err}");
+        assert!(leftovers(dir.path()).is_empty());
+    }
+
+    #[test]
     fn only_missing_files_are_downloaded() {
         let b = b"second".to_vec();
         let mut routes = HashMap::new();
         routes.insert(route("b.bin"), (200, b.clone()));
         let (base, hits) = serve(routes);
-        let (sa, sb) = (sha_hex(b"x"), sha_hex(&b));
+        let (sa, sb) = (sha_hex(b"local a"), sha_hex(&b));
         let files = [("a.json", sa.as_str()), ("b.bin", sb.as_str())];
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.json"), b"local a").unwrap();
