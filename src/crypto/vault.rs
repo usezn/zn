@@ -24,12 +24,36 @@ pub struct LocalVault {
     encryption_key: Option<Vec<u8>>,
 }
 
+/// Length in bytes of a local vault key.
+const LOCAL_KEY_LEN: usize = 32;
+
 impl LocalVault {
-    pub fn new(encryption_key: Option<String>) -> Self {
-        let key = encryption_key.and_then(|k| hex::decode(k).ok());
-        Self {
+    /// Build a local vault.
+    ///
+    /// `None` means no key is configured: the vault is created and
+    /// `get_encryption_key` reports that no key is configured. `Some(key)`
+    /// must be exactly 64 hex characters (32 bytes); anything else is an
+    /// error, so a typo is never mistaken for "no key". The error never
+    /// contains the key.
+    pub fn new(encryption_key: Option<String>) -> Result<Self> {
+        let key = match encryption_key {
+            None => None,
+            Some(k) => {
+                let bytes = hex::decode(&k).map_err(|_| anyhow!("Vault key is not valid hex"))?;
+                if bytes.len() != LOCAL_KEY_LEN {
+                    return Err(anyhow!(
+                        "Vault key must be {} bytes ({} hex characters), got {} bytes",
+                        LOCAL_KEY_LEN,
+                        LOCAL_KEY_LEN * 2,
+                        bytes.len()
+                    ));
+                }
+                Some(bytes)
+            }
+        };
+        Ok(Self {
             encryption_key: key,
-        }
+        })
     }
 }
 
@@ -98,5 +122,64 @@ impl SecretVault for AwsKmsVault {
             .ok_or_else(|| anyhow!("KMS response missing signature"))?;
 
         Ok(signature.into_inner())
+    }
+}
+
+#[cfg(test)]
+mod strict_key_tests {
+    use super::*;
+
+    // Fake 32-byte key (hex of 0x00..0x1f); not a real secret.
+    const FAKE_KEY_HEX: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+
+    #[tokio::test]
+    async fn accepts_exactly_32_bytes() {
+        let vault = LocalVault::new(Some(FAKE_KEY_HEX.to_string())).unwrap();
+        let key = vault.get_encryption_key("k").await.unwrap();
+        assert_eq!(key, (0u8..32).collect::<Vec<u8>>());
+    }
+
+    #[tokio::test]
+    async fn no_key_is_ok_and_reports_not_configured() {
+        let vault = LocalVault::new(None).unwrap();
+        let err = vault.get_encryption_key("k").await.unwrap_err();
+        assert!(err.to_string().contains("not configured"));
+    }
+
+    #[test]
+    fn empty_key_is_rejected() {
+        let err = LocalVault::new(Some(String::new())).err().unwrap();
+        assert!(err.to_string().contains("32 bytes"));
+    }
+
+    #[test]
+    fn malformed_hex_is_rejected() {
+        for bad in ["not-hex", "zz", "abc", "0g", " 00"] {
+            let err = LocalVault::new(Some(bad.to_string())).err().unwrap();
+            assert!(err.to_string().contains("not valid hex"), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn wrong_length_is_rejected() {
+        for len in [1usize, 16, 31, 33, 64] {
+            let key = "ab".repeat(len);
+            assert!(LocalVault::new(Some(key)).is_err(), "{len} bytes");
+        }
+    }
+
+    #[test]
+    fn error_does_not_leak_the_key() {
+        let secret = "deadbeefdeadbeef";
+        let msg = LocalVault::new(Some(secret.to_string()))
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(!msg.contains(secret));
+        let msg = LocalVault::new(Some("zz-fake-secret".to_string()))
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(!msg.contains("fake-secret"));
     }
 }
