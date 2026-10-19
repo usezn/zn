@@ -410,11 +410,21 @@ def _home_display(file_path: Path) -> str:
 
 # Directory names that scan does not enter. Caches and dependency stores are
 # skipped quietly; the other names are skipped by name and reported, because a
-# project can keep its own prompt or agent files there. `target` is build
-# output only next to a build file, so without one it is read.
-_SILENT_SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "__pycache__", ".eggs", ".next"}
+# project can keep its own prompt or agent files there. `target` and `vendor`
+# are build output or dependencies only next to a build file or manifest, so
+# without one they are read. Test directories are read too: fixtures in them
+# can hold real secrets. This list mirrors packages/zn-gate/lib/prune.js, and a
+# parity test compares the two.
+_SCAN_SKIP_DIRS = {
+    "node_modules", ".git", ".next", ".turbo", ".idea", ".venv", "venv", "__pycache__", ".eggs",
+    "dist", "build", "target", "vendor",
+}
+_SILENT_SKIP_DIRS = {
+    "node_modules", ".git", ".next", ".turbo", ".idea", ".venv", "venv", "__pycache__", ".eggs",
+}
 _SKIP_MARKERS = {
     "target": ("Cargo.toml", "pom.xml", "build.gradle", "build.gradle.kts", "build.sbt"),
+    "vendor": ("go.mod", "composer.json", "Gemfile", "Cargo.toml"),
 }
 
 
@@ -428,7 +438,7 @@ def _prune_info(name: str, parent: str) -> Optional[Dict[str, Any]]:
             return None
     if name in _SILENT_SKIP_DIRS:
         return {"silent": True, "reason": "skipped by name"}
-    reason = "skipped by name: build output"
+    reason = "skipped by name: " + ("dependencies" if name == "vendor" else "build output")
     if marker:
         reason += " next to " + marker
     return {"silent": False, "reason": reason}
@@ -441,7 +451,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
         return 2
 
     files_to_scan: List[Path] = []
-    skip_dirs = {".git", "node_modules", "venv", ".venv", "__pycache__", "dist", "build", ".eggs", "target", ".next"}
+    skip_dirs = _SCAN_SKIP_DIRS
     user_excluded = set()
     skipped_dirs: List[Dict[str, str]] = []
 
