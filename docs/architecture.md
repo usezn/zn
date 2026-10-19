@@ -11,7 +11,7 @@ zn-gate checks each step of a tool call. The same local pieces serve all three c
 | Check | When it runs | What it looks for |
 |---|---|---|
 | `analyze_prompt` | Before the agent acts on a prompt | Prompt injection, jailbreaks and role-play tricks, file-read and exfiltration requests |
-| `check_tool_call` | Before a tool runs | Dangerous tool arguments (shell commands, database queries, file operations), secrets in arguments (masked) |
+| `check_tool_call` | Before a tool runs | Prompt-injection wording, requests for secrets and secret-file names in the arguments, and secrets in arguments (masked). It is a text check: it does not judge whether a shell command or a query is destructive |
 | `check_tool_result` | After a tool runs, before the model sees the output | Indirect injection hidden in the output, secrets and personal data (redacted) |
 
 The local pieces:
@@ -23,7 +23,7 @@ The local pieces:
 
 ## How it attaches to your agent
 
-- **Local hooks.** For Claude Code, Codex CLI and OpenCode, `zn hooks install <agent>` registers zn-gate's hooks, so it also sees the agent's built-in tools: it blocks reads of secret files and pasted secrets, and scrubs shell output and file contents. In Cursor, only MCP tool output is scrubbed. What each agent allows is in [Agent compatibility](compat.md).
+- **Local hooks.** For Claude Code, Codex CLI, Cursor and OpenCode, `zn hooks install <agent>` registers zn-gate's hooks, so it also sees the agent's built-in tools: it blocks reads of secret files and pasted secrets, and scrubs shell output and file contents. (In Cursor, only MCP tool output is scrubbed.) What each agent allows is in [Agent compatibility](compat.md).
 - **MCP server and `shield`.** In editors that only support MCP servers, zn-gate offers its checks as MCP tools (`analyze_prompt`, `check_tool_call`, `check_tool_result`) and can wrap your other MCP servers with `zn-gate shield`. See [Editors and coding agents](editors/README.md).
 - **Library.** Node.js and Python functions, and framework integrations, run the same checks inside your own code ([API reference](api-reference.md)).
 
