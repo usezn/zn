@@ -336,6 +336,10 @@ async function checkAgent(spec, ctx) {
       res.fix = 'change that Codex setting as it says, then run `zn-gate check` again';
     }
   }
+  if (spec.id === 'cursor' && installed) {
+    // Cursor's enterprise hooks.json (read-only): zn's hook there without failClosed, or enterprise hooks without zn's.
+    try { res.notes.push(...require('./agents/managed-policy').cursorPolicyWarnings({ ...(ctx.cursorPolicy || {}), env: ctx.env }).map((w) => oneLine(w, 400))); } catch (_) { /* never fails the check */ }
+  }
   if (spec.id === 'opencode' && installed) res.notes.push('zn\'s rules were checked; its plugin runs inside OpenCode, so it was not started here');
 
   if (!installed) {
@@ -414,7 +418,7 @@ async function check(opts = {}) {
   const env = opts.env || process.env;
   const cwd = opts.cwd || process.cwd();
   if (opts.live === false) {
-    const ctx = { home, env, cwd, live: false, dir: cwd, codexPolicy: opts.codexPolicy, nodeVersion: opts.nodeVersion };
+    const ctx = { home, env, cwd, live: false, dir: cwd, codexPolicy: opts.codexPolicy, cursorPolicy: opts.cursorPolicy, nodeVersion: opts.nodeVersion };
     const results = [];
     for (const spec of AGENTS) {
       try {
@@ -426,7 +430,7 @@ async function check(opts = {}) {
     return { results, removed: true };
   }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-check-'));
-  const ctx = { home, env, cwd, live: true, dir, envFile: path.join(dir, '.env'), readme: path.join(dir, 'README.txt'), codexPolicy: opts.codexPolicy, nodeVersion: opts.nodeVersion };
+  const ctx = { home, env, cwd, live: true, dir, envFile: path.join(dir, '.env'), readme: path.join(dir, 'README.txt'), codexPolicy: opts.codexPolicy, cursorPolicy: opts.cursorPolicy, nodeVersion: opts.nodeVersion };
   const results = [];
   try {
     fs.writeFileSync(path.join(dir, '.gitignore'), '.env\n');

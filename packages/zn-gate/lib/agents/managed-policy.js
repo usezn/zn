@@ -282,4 +282,53 @@ function codexPolicyWarnings(opts = {}) {
   return warnings;
 }
 
-module.exports = { claudeCodePolicyWarnings, managedDir, codexPolicyWarnings, _internal: { codexRequirementsFile, codexManagedConfigFile } };
+/* ------------------------------ Cursor ------------------------------ */
+
+/*
+ * Cursor's enterprise hooks.json (read 2026-10-19, https://cursor.com/docs/hooks):
+ *  macOS /Library/Application Support/Cursor/hooks.json, Linux and WSL /etc/cursor/hooks.json,
+ *  Windows C:\ProgramData\Cursor\hooks.json. Format: {"version": 1, "hooks": {"<event>": [{command, failClosed, ...}]}}.
+ *  Priority: Enterprise, Team, Project, User. Hooks from every source run and Cursor merges their responses
+ *  (a deny beats an ask, an ask beats an allow), so an enterprise file does not switch off hooks of the user.
+ *  failClosed (default false) makes a crash, timeout or empty reply block the action.
+ * Team hooks live in Cursor's dashboard and are not seen here.
+ */
+const CURSOR_FAIL_CLOSED_EVENTS = ['beforeReadFile', 'beforeSubmitPrompt'];
+
+function cursorEnterpriseFile(platform, env) {
+  if (platform === 'darwin') return '/Library/Application Support/Cursor/hooks.json';
+  if (platform === 'win32') return path.join((env && env.ProgramData) || 'C:\\ProgramData', 'Cursor', 'hooks.json');
+  return '/etc/cursor/hooks.json';
+}
+
+/**
+ * cursorPolicyWarnings(opts) -> [string]
+ * opts: {platform, env, hooksFile}  (hooksFile replaces the system path, for tests)
+ * Read-only. Empty when the enterprise file does not exist.
+ */
+function cursorPolicyWarnings(opts = {}) {
+  const { isOurs } = require('./config-file');
+  const file = opts.hooksFile || cursorEnterpriseFile(opts.platform || process.platform, opts.env || process.env);
+  const src = readSource(file);
+  if (!src) return [];
+  if (src.error) return ['could not read the Cursor enterprise hooks ' + src.file + ' (' + src.error + '), so zn cannot tell whether zn\'s hooks are set to fail closed there.'];
+  const hooks = src.data.hooks && typeof src.data.hooks === 'object' ? src.data.hooks : {};
+  const entries = (event) => (Array.isArray(hooks[event]) ? hooks[event] : []).filter((h) => h && typeof h === 'object');
+  const ours = (h) => isOurs(h.command, 'cursor');
+  const hasOurs = Object.keys(hooks).some((ev) => entries(ev).some(ours));
+  const hasAny = Object.keys(hooks).some((ev) => entries(ev).length > 0);
+  const warnings = [];
+  if (hasOurs) {
+    for (const ev of CURSOR_FAIL_CLOSED_EVENTS) {
+      if (!entries(ev).some((h) => ours(h) && h.failClosed === true)) {
+        warnings.push('The Cursor enterprise hooks ' + src.file + ' have no zn hook with "failClosed": true under hooks.' + ev
+          + ', so if zn\'s hook crashes or times out Cursor lets the ' + (ev === 'beforeReadFile' ? 'file read' : 'prompt') + ' through. Ask your administrator to add it.');
+      }
+    }
+  } else if (hasAny) {
+    warnings.push('The Cursor enterprise hooks ' + src.file + ' do not include zn\'s hook. They do not turn off the zn hooks you install: Cursor runs the hooks of every source and merges their replies, enterprise first. Run `zn team managed-config --agent cursor` to see what an administrator can add so zn fails closed.');
+  }
+  return warnings;
+}
+
+module.exports = { claudeCodePolicyWarnings, managedDir, codexPolicyWarnings, cursorPolicyWarnings, _internal: { codexRequirementsFile, codexManagedConfigFile, cursorEnterpriseFile } };

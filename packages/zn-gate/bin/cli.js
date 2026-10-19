@@ -1127,6 +1127,14 @@ ${sym(process.env, '🛡️', undefined, '  ')}zn-gate Status:
         if (notes.length) process.stdout.write('\n');
       }
     } catch (_) { /* status never fails on this check */ }
+    // Cursor's enterprise hooks.json (read-only).
+    try {
+      if (require('../lib/agents/cursor').detect()) {
+        const notes = require('../lib/agents/managed-policy').cursorPolicyWarnings();
+        for (const n of notes) process.stdout.write('  Cursor          : ' + n + '\n');
+        if (notes.length) process.stdout.write('\n');
+      }
+    } catch (_) { /* status never fails on this check */ }
     process.exit(0);
   }
 
