@@ -174,3 +174,13 @@ test('check: plugin and zn hooks on an older Node.js say the plugin is what does
   assert.equal(r.state, 'not-protected');
   assert.match(r.problem, /the zn-gate plugin does not work here \(the zn-gate plugin needs Node\.js 20\.12 or later \(you have 18\.19\.0\)\)/);
 });
+
+test('one constant sets the plugin Node.js version: code, messages and the launcher agree', () => {
+  const { PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage } = require('../lib/check')._internal;
+  assert.equal(PLUGIN_NODE_MIN, '20.12');
+  assert.equal(pluginNodeOk(PLUGIN_NODE_MIN + '.0'), true);
+  assert.equal(pluginNodeOk('20.11.9'), false);
+  assert.ok(pluginNodeMessage('18.19.0').includes('Node.js ' + PLUGIN_NODE_MIN + ' or later'));
+  const launcher = require('fs').readFileSync(require('path').join(__dirname, '..', '..', '..', 'plugins', 'zn-gate', 'scripts', 'zn-launch.js'), 'utf8');
+  assert.ok(launcher.includes('Node.js ' + PLUGIN_NODE_MIN + ' or later'), 'the plugin launcher names the same version');
+});

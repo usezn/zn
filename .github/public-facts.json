@@ -34,6 +34,14 @@
       {
         "file": "examples/openai-agents-sdk/requirements.txt",
         "regex": "^zn-gate==(\\S+)$"
+      },
+      {
+        "file": "examples/pydantic-ai-agent/requirements.txt",
+        "regex": "^zn-gate==(\\S+)$"
+      },
+      {
+        "file": "examples/google-adk-agent/requirements.txt",
+        "regex": "^zn-gate==(\\S+)$"
       }
     ],
     "pinsExclude": [
