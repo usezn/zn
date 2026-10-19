@@ -32,6 +32,17 @@ pub struct WsState {
     pub webhook_tx: tokio::sync::mpsc::Sender<webhooks::AlertPayload>,
 }
 
+/// Apply the configured message and frame size limits to a WebSocket upgrade.
+/// A message or frame over the limit closes the connection (the library
+/// defaults are 64 MiB and 16 MiB).
+pub fn apply_limits(
+    ws: WebSocketUpgrade,
+    server: &crate::config::ServerConfig,
+) -> WebSocketUpgrade {
+    ws.max_message_size(server.ws_max_message_bytes)
+        .max_frame_size(server.ws_max_frame_bytes)
+}
+
 /// MCP WebSocket handler with security checks
 pub async fn mcp_handler(
     State(state): State<WsState>,
@@ -71,7 +82,8 @@ pub async fn mcp_handler(
     }
 
     let namespace = tenant.namespace.clone();
-    ws.on_upgrade(move |socket| handle_socket(socket, state, namespace))
+    apply_limits(ws, &state.config.server)
+        .on_upgrade(move |socket| handle_socket(socket, state, namespace))
 }
 
 /// Handle individual WebSocket connection
