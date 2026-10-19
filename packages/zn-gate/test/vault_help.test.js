@@ -19,6 +19,13 @@ test('helpFor answers only the vault commands and env shadow', () => {
   assert.equal(helpFor(['reach', '--help']), null);
 });
 
+test('arguments after a lone -- are not a request for the vault help', () => {
+  assert.equal(helpFor(['unlock', '--', '--help']), null);
+  assert.equal(helpFor(['env', 'shadow', '--', '-h']), null);
+  assert.equal(helpFor(['vault', '--', '--help']), null);
+  assert.match(helpFor(['vault', '--help', '--', 'status'])[0], /^usage: zn vault /);
+});
+
 test('the unlock help lists every flag of zn unlock', () => {
   const text = helpFor(['unlock', '--help']).join('\n');
   for (const flag of ['--ttl', '--idle', '--backend', '--passphrase-stdin', '--foreground']) {

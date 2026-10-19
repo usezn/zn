@@ -46,8 +46,11 @@ const HELP = {
  * arguments are not one of those (the general help or the command's own help answers).
  */
 function helpFor(args) {
-  if (!args.includes('-h') && !args.includes('--help')) return null;
-  const [cmd, sub] = args;
+  // As the broker's wantsHelp: arguments after a lone "--" belong to the wrapped command.
+  const end = args.indexOf('--');
+  const own = end === -1 ? args : args.slice(0, end);
+  if (!own.includes('-h') && !own.includes('--help')) return null;
+  const [cmd, sub] = own;
   if (cmd === 'unlock' || cmd === 'lock') return HELP[cmd];
   if (cmd === 'vault') return sub === 'log' ? null : HELP.vault; // `vault log --help` has its own text
   if (cmd === 'env' && sub === 'shadow') return HELP['env shadow'];
