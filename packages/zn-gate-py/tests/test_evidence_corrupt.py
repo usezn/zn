@@ -411,33 +411,6 @@ def test_repeated_stale_lock_races_never_drop_a_record(tmp_path):
         assert not os.path.exists(p + ".lock.break")
 
 
-def test_stale_lock_is_left_alone_while_another_breaker_holds_the_break_mutex(tmp_path):
-    p = _ledger(tmp_path, n=1)
-    with open(p + ".lock", "w") as f:
-        f.write("1:crashed")
-    old = time.time() - 60
-    os.utime(p + ".lock", (old, old))
-    with open(p + ".lock.break", "w") as f:
-        f.write("busy")
-    assert log_evidence({"payload": "x"}, file_path=p, lock_wait=0.2) is None
-    assert open(p + ".lock").read() == "1:crashed"  # a second breaker does not touch it
-    assert verify_evidence_ledger(p)["total"] == 1
-
-
-def test_repeated_stale_lock_races_never_drop_a_record(tmp_path):
-    for rnd in range(3):
-        p = str(tmp_path / f"race{rnd}.jsonl")
-        with open(p + ".lock", "w") as f:
-            f.write("1:crashed")
-        old = time.time() - 60
-        os.utime(p + ".lock", (old, old))
-        _wait_all([_spawn_py(p, i, 3) for i in range(8)])
-        v = verify_evidence_ledger(p)
-        assert v["valid"] is True
-        assert v["total"] == 8 * 3
-        assert not os.path.exists(p + ".lock.break")
-
-
 # ---- one canonical form for non-ASCII text, shared with Node ----
 
 NON_ASCII = "café ñandú 漢字 \U0001F600 end"
