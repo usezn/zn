@@ -163,3 +163,84 @@ test('install adds one Stop group, keeps the user hooks, is idempotent, and unin
     Stop: [{ hooks: [{ type: 'command', command: 'mine.sh' }] }],
   });
 });
+
+// Follow-ups (B-365f): an internal error on Stop never exits 2, the transcript is streamed, and Stop reviews have their own counters.
+
+test('an internal error on a Stop event exits 0 with a warning, never 2', async () => {
+  const realRespond = codex.respond;
+  const realExit = process.exitCode;
+  const outBuf = [];
+  const errBuf = [];
+  const ow = process.stdout.write;
+  const ew = process.stderr.write;
+  process.stdout.write = (s) => { outBuf.push(String(s)); return true; };
+  process.stderr.write = (s) => { errBuf.push(String(s)); return true; };
+  codex.respond = () => { throw Object.assign(new Error('boom'), { code: 'EBOOM' }); };
+  try {
+    process.exitCode = undefined;
+    await runner.main(['codex'], async () => JSON.stringify(stop({ last_assistant_message: 'ok' })));
+    assert.notEqual(process.exitCode, 2, 'exit 2 would make Codex continue the answer');
+    const warn = JSON.parse(outBuf.join(''));
+    assert.match(warn.systemMessage, /could not check the last answer for secrets \(EBOOM\)/);
+    assert.equal(warn.decision, undefined, 'a warning only, never a block');
+    assert.match(errBuf.join(''), /could not check the last answer \(EBOOM\)/);
+  } finally {
+    codex.respond = realRespond;
+    process.stdout.write = ow;
+    process.stderr.write = ew;
+    process.exitCode = realExit;
+  }
+});
+
+test('the same internal error on a PreToolUse event still refuses the call (exit 2)', async () => {
+  const realRespond = codex.respond;
+  const realExit = process.exitCode;
+  const ow = process.stdout.write;
+  const ew = process.stderr.write;
+  process.stdout.write = () => true;
+  process.stderr.write = () => true;
+  codex.respond = () => { throw Object.assign(new Error('boom'), { code: 'EBOOM' }); };
+  try {
+    process.exitCode = undefined;
+    await runner.main(['codex'], async () => JSON.stringify({
+      session_id: 's', turn_id: 't', transcript_path: null, cwd: '/', hook_event_name: 'PreToolUse',
+      tool_name: 'Bash', tool_input: { command: 'ls' },
+    }));
+    assert.equal(process.exitCode, 2);
+  } finally {
+    codex.respond = realRespond;
+    process.stdout.write = ow;
+    process.stderr.write = ew;
+    process.exitCode = realExit;
+  }
+});
+
+test('a marker that straddles a read chunk is still seen in the transcript', async (t) => {
+  const home = homeWith(t);
+  const dir = tempDir(t, 'zn-stop-chunk-');
+  const transcript = path.join(dir, 'transcript.jsonl');
+  const marker = '__ZN_DB_PASSWORD__';
+  const chunk = 256 * 1024;
+  const prefix = '{"output":"';
+  // The marker starts 9 bytes before the first chunk ends: it is split across two reads.
+  const filler = 'x'.repeat(chunk - prefix.length - marker.length / 2);
+  fs.writeFileSync(transcript, prefix + filler + marker + '"}\n' + JSON.stringify({ role: 'assistant', text: 'Use ' + marker }) + '\n');
+  const r = await run(stop({ last_assistant_message: 'Use ' + marker, transcript_path: transcript }), home);
+  assert.equal(r.output, null, 'seen in a tool output, so not flagged');
+});
+
+test('a final-answer review counts as a stop review, not as a checked tool call', async (t) => {
+  const home = homeWith(t);
+  const before = process.env.ZN_STATS;
+  delete process.env.ZN_STATS; // this test reads the counts, so recording is on here
+  try {
+    await run(stop({ last_assistant_message: 'The key is ' + AWS }), home);
+    await run(stop({ last_assistant_message: 'The tests pass.' }), home);
+    const data = JSON.parse(fs.readFileSync(path.join(home, '.zn', 'stats.json'), 'utf8'));
+    assert.equal(data.events["stop-review"], 2);
+    assert.equal(data.events["stop-review-flagged"], 1);
+    assert.equal(Object.values(data.days).some((day) => 'hook:codex' in day), false, 'no tool check counted');
+  } finally {
+    if (before === undefined) delete process.env.ZN_STATS; else process.env.ZN_STATS = before;
+  }
+});

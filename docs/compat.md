@@ -119,6 +119,12 @@ only and have not been run against a live Codex.
     per answer and never when the answer is already a continuation. Installs made before
     this change get the new hook when you run `zn hooks install codex` again, and Codex
     asks you to review it in `/hooks`.
+    To tell whether a placeholder came from a tool, zn reads the session transcript in
+    pieces of 256 KB and stops as soon as it finds the placeholder earlier in the session. A transcript larger than 64 MB is not read, so
+    that check is skipped for it. A final answer with nothing to report prints nothing and
+    exits with code 0, which Codex reads as success. A problem inside zn while it checks an
+    answer also exits with code 0 and prints a warning, never code 2, because code 2 would
+    make Codex continue the answer.
   - Checked with Codex CLI 0.163.0 on 2026-10-16: the shell tool (`exec_command`
     inside Codex) reaches hooks as `tool_name: "Bash"`, with the command in
     `tool_input.command`. zn's `PreToolUse` hook blocked `cat .env` and allowed
@@ -243,8 +249,9 @@ prompts through in that case. To fix it, in your own terminal:
   JSON, exits with code 2 and the reason on stderr. Claude Code and Codex block
   the call on exit code 2; Cursor also gets its deny answer. Setting
   `whenUnavailable` to `"allow"` in `~/.zn/config.json` lets such events pass.
-  The Codex `Stop` event is the exception: zn never blocks it because it could not
-  read it, and it reports the problem on stderr.
+  The Codex `Stop` event is the exception: zn never blocks it, because exit code 2 would
+  make Codex continue the answer. It reports the problem on stderr, and a failure inside
+  zn prints a warning instead.
 
 - **The unlocked vault answers any program of your user.** A command the
   agent runs can ask the vault daemon for a stored secret by name; the
