@@ -8,7 +8,7 @@ For each wrapped server the shield:
 2. **Checks tool-call arguments.** A call whose arguments carry an injection is refused and never reaches the server.
 3. **Checks tool output.** Secrets are redacted, and output that carries an injection is replaced by a short notice.
 4. **Pins the tools.** It remembers what each tool looked like the first time and flags any tool that changes later (see [Tool pinning](#tool-pinning)).
-5. **Records each decision** in the local audit log (`~/.zn/evidence.jsonl`, see [docs/audit.md](audit.md)).
+5. **Records each decision** in the local audit log (`~/.zn/evidence.jsonl`; check it with `npx -y zn-gate evidence --verify`, and see [how the log works](architecture.md)).
 
 ## Wrap one server: `shield`
 
@@ -173,4 +173,4 @@ Pins live in `~/.zn/mcp-pins/`, one file per server, readable only by your accou
 - Pinning protects only servers that run through `zn-gate shield`. Remote (URL) servers are not covered.
 - The checks look at what goes in and out of a tool. They do not decide which tools an agent should have. After wrapping, keep only the tools your agent needs and put destructive operations behind explicit approval.
 
-More: [Protect MCP servers on usezn.com](https://usezn.com/docs/zn-gate/shield), [what zn-gate cannot do](threat-model.md), [the audit log](audit.md).
+More: [Protect MCP servers on usezn.com](https://usezn.com/docs/zn-gate/shield), [what zn-gate cannot do](threat-model.md), [how the audit log works](architecture.md).
