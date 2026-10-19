@@ -21,9 +21,7 @@ const FIX = path.join(__dirname, 'fixtures', 'managed-config');
 const CLI = path.join(__dirname, '..', 'bin', 'cli.js');
 
 // A Windows checkout may turn the fixtures' line ends into CRLF.
-const read = (f) => fs.readFileSync(f, 'utf8').replace(/
-/g, '
-');
+const read = (f) => fs.readFileSync(f, 'utf8').replace(/\r\n/g, '\n');
 
 const PATHS = {
   'claude-code': {
