@@ -180,6 +180,76 @@ impl TuiApp {
     }
 }
 
+/// Body text of a stat tile.
+fn stat_text(value: u64) -> String {
+    format!(
+        "
+  {}",
+        value
+    )
+}
+
+/// Footer line shown at the bottom of the screen.
+fn footer_text(api_url: &str) -> String {
+    format!(
+        " Press 'q' to exit | API: {} | Active Shields: SQL, LFI, Loop, Caching ",
+        api_url
+    )
+}
+
+/// Icon and colour for an audit log status.
+fn status_style(status: &str) -> (&'static str, Color) {
+    if status == "DENIED" {
+        (" ✖ ", Color::Rgb(255, 120, 120))
+    } else {
+        (" ✔ ", Color::Rgb(120, 255, 120))
+    }
+}
+
+/// Tag appended to a log line based on the anomaly score.
+fn neural_tag(score: Option<f32>) -> &'static str {
+    match score {
+        Some(score) if score > 1.2 => " 🔥 RISKY",
+        Some(_) => " ✨ SAFE",
+        None => "",
+    }
+}
+
+/// `HH:MM` part of an ISO-8601 timestamp, or an empty string if absent.
+fn short_time(timestamp: &str) -> String {
+    timestamp
+        .split('T')
+        .nth(1)
+        .unwrap_or("")
+        .split(':')
+        .take(2)
+        .collect::<Vec<_>>()
+        .join(":")
+}
+
+/// Text and colour of one row in the audit stream.
+fn format_log_line(log: &ApiLogEntry) -> (String, Color) {
+    let (icon, color) = status_style(&log.status);
+    let content = format!(
+        "{} {} | {:<15} | {}{}",
+        icon,
+        short_time(&log.timestamp),
+        log.tool_name,
+        log.event,
+        neural_tag(log.anomaly_score)
+    );
+    (content, color)
+}
+
+/// Text of one row in the governance queue.
+fn format_pending_line(action: &ApiPendingAction) -> String {
+    format!(
+        " ⏳ {} ({} Sigs Required)
+    Agent: {}",
+        action.tool_name, action.required_m, action.agent_id
+    )
+}
+
 fn ui(f: &mut ratatui::Frame, app: &TuiApp) {
     let size = f.area();
     let chunks = Layout::default()
@@ -283,31 +353,7 @@ fn ui(f: &mut ratatui::Frame, app: &TuiApp) {
         .iter()
         .take(50)
         .map(|log| {
-            let (icon, color) = if log.status == "DENIED" {
-                (" ✖ ", Color::Rgb(255, 120, 120))
-            } else {
-                (" ✔ ", Color::Rgb(120, 255, 120))
-            };
-
-            let neural_tag = match log.anomaly_score {
-                Some(score) if score > 1.2 => " 🔥 RISKY".to_string(),
-                Some(_) => " ✨ SAFE".to_string(),
-                None => "".to_string(),
-            };
-
-            let time = log
-                .timestamp
-                .split('T')
-                .nth(1)
-                .unwrap_or("")
-                .split(':')
-                .take(2)
-                .collect::<Vec<_>>()
-                .join(":");
-            let content = format!(
-                "{} {} | {:<15} | {}{}",
-                icon, time, log.tool_name, log.event, neural_tag
-            );
+            let (content, color) = format_log_line(log);
             ListItem::new(content).style(Style::default().fg(color))
         })
         .collect();
@@ -325,10 +371,7 @@ fn ui(f: &mut ratatui::Frame, app: &TuiApp) {
         .pending_actions
         .iter()
         .map(|action| {
-            let content = format!(
-                " ⏳ {} ({} Sigs Required)\n    Agent: {}",
-                action.tool_name, action.required_m, action.agent_id
-            );
+            let content = format_pending_line(action);
             ListItem::new(content).style(Style::default().fg(Color::Rgb(255, 180, 100)))
         })
         .collect();
@@ -342,12 +385,119 @@ fn ui(f: &mut ratatui::Frame, app: &TuiApp) {
     f.render_widget(gov_list, content_chunks[1]);
 
     // 4. FOOTER
-    let footer_text = format!(
-        " Press 'q' to exit | API: {} | Active Shields: SQL, LFI, Loop, Caching ",
-        app.api_url
-    );
+    let footer_text = footer_text(&app.api_url);
     let footer = Paragraph::new(footer_text)
         .style(Style::default().fg(Color::DarkGray))
         .alignment(ratatui::layout::Alignment::Left);
     f.render_widget(footer, chunks[3]);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn log(status: &str, ts: &str, score: Option<f32>) -> ApiLogEntry {
+        ApiLogEntry {
+            timestamp: ts.to_string(),
+            tool_name: "bash".to_string(),
+            status: status.to_string(),
+            event: "run".to_string(),
+            anomaly_score: score,
+        }
+    }
+
+    #[test]
+    fn short_time_extracts_hours_and_minutes() {
+        assert_eq!(short_time("2026-01-02T12:34:56Z"), "12:34");
+        assert_eq!(short_time("2026-01-02T12:34:56.789+00:00"), "12:34");
+    }
+
+    #[test]
+    fn short_time_handles_missing_parts() {
+        assert_eq!(short_time(""), "");
+        assert_eq!(short_time("2026-01-02"), "");
+        assert_eq!(short_time("2026-01-02T09"), "09");
+    }
+
+    #[test]
+    fn neural_tag_thresholds() {
+        assert_eq!(neural_tag(None), "");
+        assert_eq!(neural_tag(Some(0.0)), " ✨ SAFE");
+        assert_eq!(neural_tag(Some(1.2)), " ✨ SAFE");
+        assert_eq!(neural_tag(Some(1.21)), " 🔥 RISKY");
+    }
+
+    #[test]
+    fn status_style_denied_vs_other() {
+        assert_eq!(status_style("DENIED"), (" ✖ ", Color::Rgb(255, 120, 120)));
+        assert_eq!(status_style("ALLOWED"), (" ✔ ", Color::Rgb(120, 255, 120)));
+        assert_eq!(status_style("denied").0, " ✔ ");
+    }
+
+    #[test]
+    fn format_log_line_full() {
+        let (text, color) = format_log_line(&log("DENIED", "2026-01-02T12:34:56Z", Some(2.0)));
+        assert_eq!(text, " ✖  12:34 | bash            | run 🔥 RISKY");
+        assert_eq!(color, Color::Rgb(255, 120, 120));
+    }
+
+    #[test]
+    fn format_log_line_without_score_or_time() {
+        let (text, color) = format_log_line(&log("ALLOWED", "bad", None));
+        assert_eq!(text, " ✔   | bash            | run");
+        assert_eq!(color, Color::Rgb(120, 255, 120));
+    }
+
+    #[test]
+    fn format_log_line_does_not_truncate_long_tool_names() {
+        let mut l = log("ALLOWED", "x", None);
+        l.tool_name = "a_very_long_tool_name_here".to_string();
+        assert!(format_log_line(&l)
+            .0
+            .contains("| a_very_long_tool_name_here |"));
+    }
+
+    #[test]
+    fn format_pending_line_layout() {
+        let action = ApiPendingAction {
+            id: "p1".to_string(),
+            agent_id: "agent-1".to_string(),
+            tool_name: "deploy".to_string(),
+            timestamp: "2026-01-02T00:00:00Z".to_string(),
+            required_m: 2,
+            signatures: vec![],
+        };
+        assert_eq!(
+            format_pending_line(&action),
+            " ⏳ deploy (2 Sigs Required)
+    Agent: agent-1"
+        );
+    }
+
+    #[test]
+    fn stat_and_footer_text() {
+        assert_eq!(
+            stat_text(42),
+            "
+  42"
+        );
+        let f = footer_text("http://localhost:9090");
+        assert!(f.starts_with(" Press 'q' to exit | API: http://localhost:9090 |"));
+    }
+
+    #[test]
+    fn api_payloads_deserialize() {
+        let logs: ApiLogsResponse = serde_json::from_str(
+            r#"{"entries":[{"timestamp":"2026-01-02T12:34:56Z","tool_name":"t","status":"DENIED","event":"e","anomaly_score":null}]}"#,
+        )
+        .unwrap();
+        assert_eq!(logs.entries.len(), 1);
+        assert!(logs.entries[0].anomaly_score.is_none());
+        let stats: ApiStatsResponse =
+            serde_json::from_str(r#"{"stats":{"total":3,"allowed":2,"denied":1}}"#).unwrap();
+        assert_eq!(
+            (stats.stats.total, stats.stats.allowed, stats.stats.denied),
+            (3, 2, 1)
+        );
+    }
 }
