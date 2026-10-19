@@ -177,6 +177,8 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"c
   | npx -y zn-gate@latest mcp
 ```
 
+Example: [protect the tools of a Vercel AI SDK agent](https://github.com/usezn/zn/tree/main/examples/vercel-ai-sdk) (needs zn-gate 1.12.0 or newer).
+
 ---
 
 ## What each piece does
