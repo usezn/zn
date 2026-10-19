@@ -1,0 +1,4 @@
+requests to the provider: 3 (2 agent turns)
+
+step 1: exec_command {"cmd":"node -e \"console.log('db:', process.argv[1])\" __ZN_DB_PASSWORD__","sandbox_permissions":"require_escalated","justification":"end-to-end test"}
+  result: exec_command failed: CreateProcess { message: "Rejected(\"zn: this command uses a stored secret. Run it through zn instead, exactly like this: zn run -- node -e \\\"console.log('db:', process.argv[1])\\\" __ZN_DB_PASSWORD__ (zn puts the value only into that process, if the user allowed this command for the secret).\")" }

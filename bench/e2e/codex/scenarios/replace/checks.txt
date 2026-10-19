@@ -1,0 +1,6 @@
+PASS Codex exited with code 0 (exit task exit=0)
+PASS no hook run failed (0,0,0,0)
+PASS PostToolUse fired for the read (1 call(s))
+PASS zn answered block with continue false and a stop reason (decision,reason,continue,stopReason)
+PASS the model got a result without the values (region: eu-west-1 aws_access_key_id: __ZN_AWS_KEY_1__ aws_secret_access_key: __ZN_AWS_SECRET_1__ retries: 3 [zn: 2 secret value(s) in this output were replaced with __ZN_ tokens (AWS_KEY, AWS_SECRET).)
+INFO result the model got: region: eu-west-1 aws_access_key_id: __ZN_AWS_KEY_1__ aws_secret_access_key: __ZN_AWS_SECRET_1__ retries: 3 [zn: 2 secret value(s) in this output were replaced with __ZN_ tokens (AWS_KEY, AWS_SECRET). Real values stay on this machine; use the tokens as they are.]; turns to the provider: 2
