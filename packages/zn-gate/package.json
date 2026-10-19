@@ -31,6 +31,7 @@
     "zn-mcp": "bin/cli.js",
     "zn": "bin/cli.js"
   },
+  "type": "commonjs",
   "main": "lib/client.js",
   "scripts": {
     "test": "node test/run-all.js"
