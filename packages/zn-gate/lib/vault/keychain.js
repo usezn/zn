@@ -322,7 +322,11 @@ async function loadIdentity(opts) {
     try {
       identity = await store.decryptWithPassphrase(o.passphrase, new Uint8Array(buf));
     } catch (err) {
-      throw znError(CODES.LOCKED, 'wrong passphrase, or vault file identity.age is corrupted');
+      // age reports a wrong passphrase as "no identity matched"; a damaged file fails earlier
+      // (bad header, bad tag). Only the first is a passphrase failure, so only it sets `reason`.
+      const e = znError(CODES.LOCKED, 'wrong passphrase, or vault file identity.age is corrupted');
+      if (err && /no identity matched/i.test(String(err.message))) e.reason = WRONG_PASSPHRASE;
+      throw e;
     }
   } else {
     identity = NATIVE[backend].load();
@@ -377,7 +381,11 @@ async function deleteIdentity(opts) {
   return { deleted: true, backend };
 }
 
+/** `err.reason` of a ZN_LOCKED error that came from a wrong passphrase (and from nothing else). */
+const WRONG_PASSPHRASE = 'wrong_passphrase';
+
 module.exports = {
+  WRONG_PASSPHRASE,
   BACKENDS,
   detectBackend,
   storeIdentity,
