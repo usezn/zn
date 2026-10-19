@@ -180,6 +180,53 @@ test('after three failed unlocks the hint points to zn vault reset; a good unloc
   assert.equal(reset.recordUnlockFailure({}), null);
 });
 
+/** The error `zn unlock` really gets for this attempt, so the test follows what lib/vault reports. */
+async function unlockError(pass) {
+  try { await keychain.loadIdentity({ backend: 'passphrase', passphrase: pass }); } catch (err) { return err; }
+  throw new Error('loadIdentity did not fail');
+}
+
+test('only wrong passphrases count: three of them show the reset hint', async (t) => {
+  const s = setup(t);
+  await s.makeVault(OLD);
+  for (let i = 0; i < 2; i++) {
+    const err = await unlockError('not the passphrase');
+    assert.equal(err.code, 'ZN_LOCKED');
+    assert.equal(err.reason, keychain.WRONG_PASSPHRASE);
+    assert.equal(reset.hintForUnlockError(err, {}), null);
+  }
+  assert.equal(reset.hintForUnlockError(await unlockError('still not it'), {}), reset.HINT);
+});
+
+test('a damaged identity file never shows the reset hint, however many times', async (t) => {
+  const s = setup(t);
+  await s.makeVault(OLD);
+  const file = store.paths({}).identityFile;
+  fs.writeFileSync(file, fs.readFileSync(file).subarray(0, 20));
+  for (let i = 0; i < 4; i++) {
+    const err = await unlockError(OLD);
+    assert.equal(err.code, 'ZN_LOCKED', 'public code is unchanged');
+    assert.notEqual(err.reason, keychain.WRONG_PASSPHRASE);
+    const tip = reset.hintForUnlockError(err, {});
+    assert.equal(tip, reset.UNREADABLE_HINT);
+    assert.doesNotMatch(tip, /zn vault reset/);
+    assert.match(tip, /troubleshooting\.md/);
+  }
+});
+
+test('keychain and other non-passphrase errors restart the count', (t) => {
+  setup(t);
+  fs.mkdirSync(process.env.ZN_HOME, { recursive: true });
+  const wrong = Object.assign(new Error('wrong passphrase'), { code: 'ZN_LOCKED', reason: keychain.WRONG_PASSPHRASE });
+  const keychainDown = Object.assign(new Error('Secret Service refused the identity'), { code: 'ZN_LOCKED' });
+  assert.equal(reset.hintForUnlockError(wrong, {}), null);
+  assert.equal(reset.hintForUnlockError(wrong, {}), null);
+  assert.equal(reset.hintForUnlockError(keychainDown, {}), reset.UNREADABLE_HINT);
+  assert.equal(reset.hintForUnlockError(wrong, {}), null, 'the count started over');
+  assert.equal(reset.hintForUnlockError(wrong, {}), null);
+  assert.equal(reset.hintForUnlockError(wrong, {}), reset.HINT);
+});
+
 test('the hooks stop an agent from running zn vault reset', () => {
   const OPTS = { cwd: os.tmpdir(), home: os.tmpdir(), env: {} };
   for (const cmd of ['zn vault reset', 'npx -y zn-gate vault reset', 'cd x && zn-gate  vault   reset']) {
