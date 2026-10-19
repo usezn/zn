@@ -85,13 +85,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/report"
+          read -ra agents <<< "$AGENTS"
           node bench/e2e/harness/weekly_check.js "$RUNNER_TEMP/baseline" bench/e2e \
-            "$RUNNER_TEMP/report/results.json" "$RUNNER_TEMP/report/summary.md" $AGENTS | tee -a "$GITHUB_STEP_SUMMARY"
+            "$RUNNER_TEMP/report/results.json" "$RUNNER_TEMP/report/summary.md" "${agents[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Show run diagnostics
         if: failure()
         run: |
           for f in "$RUNNER_TEMP"/zn-e2e/*/out/mock.log "$RUNNER_TEMP"/zn-e2e/*/out/*stderr* "$RUNNER_TEMP"/zn-e2e/*/out/vault.error "$RUNNER_TEMP"/zn-e2e/*/out/exit_codes.txt; do
-            [ -f "$f" ] && { echo "== ${f#$RUNNER_TEMP/}"; tail -n 20 "$f" | cut -c1-300; }
+            [ -f "$f" ] && { echo "== ${f#"$RUNNER_TEMP"/}"; tail -n 20 "$f" | cut -c1-300; }
           done
           true
       - name: Collect the evidence
