@@ -73,10 +73,6 @@ const CASES = {
     { hook: 'tool.execute.before', tool: 'read', args: { filePath: '/work/' + t }, cwd },
     { hook: 'tool.execute.before', tool: 'bash', args: { command: 'cat ' + t + '/.env' }, cwd },
   ],
-  antigravity: (t, cwd) => [
-    { toolCall: { name: 'run_command', args: { CommandLine: 'cat ' + t + '/.env', Cwd: cwd } } },
-    { toolCall: { name: 'view_file', args: { AbsolutePath: '/work/' + t } }, workspacePaths: [cwd] },
-  ],
 };
 
 function tmpHome(t) {

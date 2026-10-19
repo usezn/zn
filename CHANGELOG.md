@@ -68,6 +68,7 @@ zn-gate 1.13.0 adds `zn-gate connect`, which turns on the optional cloud check f
 - The key-protection rule now also recognises the module names when they are written with escape sequences (JavaScript or shell, such as `\x2f`) or split by quotes.
 - The agent hooks: a `.env` file reached through a Windows root, a network share or an extended-length path (`type %CD%\.env`, `more \\server\share\.env`, `gc \\?\C:\path\.env`) is refused, because zn cannot read a path like that to check whether the file holds values, and a `.env` name is now recognised after a backslash separator on every platform.
 - More automated tests read a `.env` with the commands of cmd.exe and Windows PowerShell (`type`, `more`, `copy`, `findstr`, `Get-Content`, `gc`, `-Path`, `-LiteralPath`, `Select-String`) over relative, absolute, drive-relative, profile-variable and UNC paths: a `.env` with values is refused and an ordinary file is allowed in every form, on Linux and in the Windows checks job. No change beyond the refusal above.
+- The agent hooks now refuse malformed file names and text (such as unpaired surrogates or characters that Windows cannot convert) before any file call. Before, on some Windows systems the hook stopped with an error code that agents treat as no opinion, so the action went through. Affects 1.12.0.
 
 ## [1.12.0] - 2026-10-18
 
