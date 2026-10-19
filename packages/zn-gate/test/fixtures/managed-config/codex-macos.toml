@@ -1,0 +1,52 @@
+# zn-gate hooks for Codex (zn team managed-config).
+
+[features]
+hooks = true
+
+[[hooks.PreToolUse]]
+matcher = "^(Bash|apply_patch|mcp__.+)$"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "zn hook codex"
+command_windows = "zn hook codex"
+timeout = 30
+statusMessage = "zn: checking for secrets"
+
+[[hooks.PermissionRequest]]
+matcher = "^(Bash|apply_patch|mcp__.+)$"
+
+[[hooks.PermissionRequest.hooks]]
+type = "command"
+command = "zn hook codex"
+command_windows = "zn hook codex"
+timeout = 30
+statusMessage = "zn: checking for secrets"
+
+[[hooks.PostToolUse]]
+matcher = ".*"
+
+[[hooks.PostToolUse.hooks]]
+type = "command"
+command = "zn hook codex"
+command_windows = "zn hook codex"
+timeout = 30
+statusMessage = "zn: checking for secrets"
+
+[[hooks.UserPromptSubmit]]
+
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = "zn hook codex"
+command_windows = "zn hook codex"
+timeout = 30
+statusMessage = "zn: checking for secrets"
+
+[[hooks.Stop]]
+
+[[hooks.Stop.hooks]]
+type = "command"
+command = "zn hook codex"
+command_windows = "zn hook codex"
+timeout = 30
+statusMessage = "zn: checking for secrets"

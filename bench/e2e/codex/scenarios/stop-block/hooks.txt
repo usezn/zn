@@ -1,0 +1,11 @@
+UserPromptSubmit 
+  input: 
+  zn answered: (nothing), exit 0
+
+Stop 
+  input: last message: Deploy with this key: <<VALUE:MCP_ARG_KEY>>
+  zn answered: {"decision":"block","reason":"zn: your last answer contains a secret value (an Anthropic key). Rewrite it without that value or placeholder: do not repeat the value, and refer to a stored secret only by a placeholder that you got from a tool or from the user."}, exit 0
+
+Stop  (stop_hook_active)
+  input: last message: Rewritten without the key.
+  zn answered: (nothing), exit 0

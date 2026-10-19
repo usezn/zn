@@ -164,7 +164,7 @@ test('install adds one Stop group, keeps the user hooks, is idempotent, and unin
   });
 });
 
-// Follow-ups (B-365f): an internal error on Stop never exits 2, the transcript is streamed, and Stop reviews have their own counters.
+// Follow-ups: an internal error on Stop never exits 2, the transcript is streamed, and Stop reviews have their own counters.
 
 test('an internal error on a Stop event exits 0 with a warning, never 2', async () => {
   const realRespond = codex.respond;
