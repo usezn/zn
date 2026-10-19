@@ -11,7 +11,7 @@
  *   <run>/secrets.json   what the test vault stores
  *   <run>/scenario.json  the scripted model turns for <agent>
  *
- *   node setup.js --pkg <packages/zn-gate> --run <dir> --agent claude-code|codex|opencode
+ *   node setup.js --pkg <packages/zn-gate> --run <dir> --agent claude-code|codex|opencode|copilot
  *
  * All values come from the fake-secret generator of the leak bench.
  */
@@ -96,5 +96,14 @@ const scenarios = {
     { tool: 'bash', input: { command: 'cat config/settings.yml', description: 'read the config again' } },
   ],
 };
+scenarios.copilot = [
+  { tool: 'view', input: { path: P('.env') } },
+  { tool: 'view', input: { path: P('config', 'settings.yml') } },
+  { tool: 'create', input: { path: P('src', 'client.js'), file_text: 'const token = process.env.GITHUB_TOKEN; // stored as __ZN_GITHUB_TOKEN__\n' } },
+  { tool: 'bash', input: { command: PRINT_NODE, description: 'allowed command' } },
+  { tool: 'bash', input: { command: PRINT_PY, description: 'command not approved' } },
+  { tool: 'view', input: { path: path.join(home, '.aws', 'credentials') } },
+  { tool: 'bash', input: { command: 'cat config/settings.yml', description: 'read the config again' } },
+];
 fs.writeFileSync(path.join(RUN, 'scenario.json'), JSON.stringify({ steps: scenarios[AGENT], final: 'All steps done.' }, null, 2));
 process.stdout.write(RUN + '\n');

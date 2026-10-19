@@ -35,6 +35,10 @@
  * named is not documented: a tool zn cannot classify gets the path checks if it names a file and no opinion
  * otherwise.
  *
+ * Checked against a real Copilot CLI 1.0.98 (bench/e2e/harness/run_copilot.sh, scripted provider): tool names bash, view,
+ * create with the arguments command, path, file_text; a deny is shown to the model as "Denied by preToolUse hook: <reason>";
+ * postToolUse modifiedResult reaches the model; no secret value reached the provider. Copilot's own events.jsonl keeps the original output.
+ *
  * Switching hooks off: "disableAllHooks": true at the top of a hooks file skips that file; in a repository's
  * .github/copilot/settings(.local).json it skips every hook except the policy ones. `zn-gate check` reports both.
  */
@@ -255,6 +259,7 @@ function install(opts = {}) {
   }
   cfg.writeJson(file, data);
   report.warnings.push('GitHub Copilot CLI support is experimental. zn checks tool calls before they run (preToolUse): it blocks reads and writes of secret files and shell commands that handle secrets, and it replaces secret values in the results of read-type and shell tools (postToolUse).');
+  report.warnings.push('Copilot keeps its own session log (events.jsonl) with the original tool output on this machine: zn replaces secret values in what goes to the model, not in that local log.');
   report.warnings.push('Copilot does not let a command hook block a typed prompt, so a secret pasted into a prompt is not stopped.');
   report.warnings.push('Copilot lets a call through when a hook times out (30 s by default; zn asks for ' + HOOK_TIMEOUT_S + ' s), and its machine policy files (/etc/github-copilot/policy.d, or the Windows policy folder) are loaded in addition to this one.');
   if (project && !opts.command) report.warnings.push('The project hook runs `zn` from your PATH (zn hook copilot): every teammate who opens this project in Copilot CLI needs zn-gate installed, otherwise the hook cannot start. Copilot also asks each person to trust the folder before it runs repository hooks.');
