@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-19.43';
+const POLICY_RULES_VERSION = '2026-10-19.44';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1718,16 +1718,6 @@ function bashDenialOf(cmd, opts = {}) {
   const admin = adminCommand(cmd);
   if (admin) return adminDenial(admin, opts, cmd);
   if (keychainQuery(cmd, opts.env || process.env)) return KEYCHAIN_MESSAGE;
-  // Destructive shell commands (see lib/destructive.js). The runner passes the rules from the user's settings; with no
-  // list, the two default rules apply.
-  {
-    const rules = Array.isArray(opts.destructiveRules) ? opts.destructiveRules : require('./../destructive').DEFAULT_RULES;
-    if (rules.length) {
-      // Loaded only now, so a hook with the check off does not pay for it.
-      const destructiveDeny = require('../destructive').denial(cmd, rules);
-      if (destructiveDeny) return destructiveDeny;
-    }
-  }
   // The context (home, project, agent directories) is built once per command.
   opts = { ...opts, ctx: contextOf(opts) };
   // The code of a shell inside the command (sh -c "...") is checked as a command of its own, with the same budget.
@@ -1735,6 +1725,16 @@ function bashDenialOf(cmd, opts = {}) {
   if (!depth || !opts.budget) opts.budget = { until: Date.now() + CHECK_BUDGET_MS, disk: CHECK_BUDGET_DISK };
   // The bodies of the here-documents read as data are data, not command-line words, and are dropped first.
   const text = stripHeredocs(cmd, opts.budget);
+  // Destructive shell commands (see lib/destructive.js). The runner passes the rules from the user's settings; with no
+  // list, the two default rules apply. The bodies of data here-documents are not shell code and are not read.
+  {
+    const rules = Array.isArray(opts.destructiveRules) ? opts.destructiveRules : require('./../destructive').DEFAULT_RULES;
+    if (rules.length) {
+      // Loaded only now, so a hook with the check off does not pay for it.
+      const destructiveDeny = require('../destructive').denial(text, rules);
+      if (destructiveDeny) return destructiveDeny;
+    }
+  }
   // The command is read three times: a backslash before a letter is a Windows
   // path separator or a bash escape, and a PowerShell backtick is an escape too.
   // A word protected in any reading is refused.
