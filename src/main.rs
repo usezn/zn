@@ -1467,9 +1467,6 @@ async fn process_mcp_message(
     }
 }
 
-/// Largest MCP WebSocket message or frame the gateway reads.
-const MAX_WS_MESSAGE_BYTES: usize = 1024 * 1024;
-
 async fn mcp_ws_handler(
     State(state): State<AppState>,
     ws: WebSocketUpgrade,
@@ -1509,9 +1506,8 @@ async fn mcp_ws_handler(
     }
 
     let namespace = tenant.namespace.clone();
-    // A frame or message over 1 MiB closes the connection (the default limit is 64 MiB).
-    ws.max_message_size(MAX_WS_MESSAGE_BYTES)
-        .max_frame_size(MAX_WS_MESSAGE_BYTES)
+    // A frame or message over the configured limit closes the connection.
+    zn::handlers::websocket::apply_limits(ws, &state.config.server)
         .on_upgrade(move |socket| handle_ws_socket(socket, state, namespace))
 }
 
