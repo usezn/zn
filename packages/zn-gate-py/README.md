@@ -183,6 +183,8 @@ zn-gate analyze "some prompt"   # local check; cloud only with ZN_CLOUD=1 + key
 zn-gate status                  # engine and what leaves the machine
 ```
 
+A DSPy ReAct agent whose tools are guarded by zn-gate is in [examples/dspy-agent](https://github.com/usezn/zn/tree/main/examples/dspy-agent).
+
 ---
 
 ## Performance and accuracy
