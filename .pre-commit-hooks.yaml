@@ -3,8 +3,6 @@
 # The repository has no package.json at its root, so pre-commit's own node environment
 # cannot build it; npx fetches the published npm package instead. The entries name the exact
 # zn-gate version that belongs to this tag, so `rev: vX.Y.Z` pins the command that runs on every
-# commit. The pin moves with each release (check: .github/public-facts.json). The entries name the exact
-# zn-gate version that belongs to this tag, so `rev: vX.Y.Z` pins the command that runs on every
 # commit. The pin moves with each release (check: .github/public-facts.json).
 - id: zn-gate-scan
   name: zn-gate scan
