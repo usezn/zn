@@ -19,17 +19,21 @@ on:
   pull_request:
     branches: [ main, next, 'release/**' ]
     types: [ opened, synchronize, reopened, labeled, ready_for_review ]
-    # Documentation-only pull requests skip this workflow (it gives no required check), with the
-    # same split as the push filter above.
+    # Pull requests run this workflow (it gives no required check) only when they change what the
+    # plugin checks read: the plugins, the marketplace files and the zn-gate version the plugin pins.
     paths:
-      - '**'
-      - '!docs/**'
-      - '!**/*.md'
-      - 'packages/**'
       - 'plugins/**'
       - 'skill/**'
-      - 'bench/**'
-      - '.github/**'
+      - '.claude-plugin/**'
+      - '.cursor-plugin/**'
+      - '.agents/**'
+      - 'packages/zn-gate/package.json'
+      - 'packages/zn-gate/package-lock.json'
+      - '.github/scripts/ci-scope.sh'
+      - '.github/workflows/plugins.yml'
+  # Daily full run on the default branch.
+  schedule:
+    - cron: '30 6 * * *'
   workflow_dispatch:
 
 permissions:
