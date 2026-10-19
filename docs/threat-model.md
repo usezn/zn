@@ -73,9 +73,9 @@ project). It adds a hook that runs before each tool call.
 - **What it does not cover:** Antigravity hooks cannot rewrite or redact what a
   tool returns. A value printed by a command, or found in a file the agent is
   allowed to read, still reaches the model, so keep secrets in the vault. A
-  tool that zn cannot classify, or whose arguments zn cannot read as a
-  command or a file path, is left to Antigravity's own rules (zn gives no
-  opinion). Antigravity does not document how it treats a hook that crashes
+  tool that names no command and no file path, or that zn does not
+  recognise, is left to Antigravity's own rules (zn gives no opinion). A shell
+  or file tool whose command or file zn cannot read is refused. Antigravity does not document how it treats a hook that crashes
   or times out, so zn cannot promise that such a call is blocked.
 - **Which configuration files the agent cannot edit:** the rule described
   under "What zn does not protect against" (the hooks refuse writes to the
