@@ -9,6 +9,8 @@ const { analyze, checkToolResult } = require('zn-gate/lib/client');
 const { logEvidence, verifyEvidenceLedger } = require('zn-gate/lib/evidence');
 ```
 
+The package ships TypeScript type definitions (`lib/client.d.ts`, `lib/rules.d.ts`, `lib/evidence.d.ts`); no `@types` package is needed.
+
 ### `evaluate(text, options)`
 - Synchronous in-memory deterministic rule evaluation. Never touches the network.
 - Options: `strict` (boolean; also blocks the heuristic rules that are advisories by default; `ZN_STRICT=1` does the same).

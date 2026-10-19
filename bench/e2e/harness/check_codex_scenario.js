@@ -143,9 +143,14 @@ if (SCEN === 'thirdparty') {
   info('zn saw: ' + pre.map((s) => s.input.tool_input && s.input.tool_input.command).join(' | ') + ' (zn answered: ' + pre.map((s) => (answer(s) ? 'deny' : 'nothing')).join(',') + ')');
   const outs = toolOutputs();
   info('what the model got back: ' + (outs[0] ? redact(outs[0]).replace(/\s+/g, ' ').slice(0, 300) : 'none'));
-  info('command ran as rewritten: ' + (outs[0] && /aws_access_key_id/.test(outs[0]) ? 'yes' : 'no'));
   const post = ofEvent('PostToolUse');
+  const ranCmd = post[0] && post[0].input.tool_input && post[0].input.tool_input.command;
   info('PostToolUse saw command: ' + post.map((s) => s.input.tool_input && s.input.tool_input.command).join(' | '));
+  info('command ran as rewritten: ' + (ranCmd && ranCmd !== 'echo benign-ok' ? 'yes' : 'no'));
+  check('PostToolUse saw the command that really ran, not the original', !!ranCmd && ranCmd !== 'echo benign-ok', String(ranCmd));
+  const pa = post[0] && answer(post[0]);
+  check('zn answered block and withheld the output', !!pa && pa.decision === 'block' && /withheld/.test(pa.reason || ''), pa ? Object.keys(pa).join(',') : 'no answer');
+  check('the model got the withheld message, not the file content', outs.length >= 1 && /withheld/.test(outs[0]) && !hasValue(outs[0]) && !/aws_access_key_id/.test(outs[0]), outs[0] ? redact(outs[0]).replace(/\s+/g, ' ').slice(0, 120) : 'no result');
 }
 
 fs.writeFileSync(path.join(OUT, 'checks.txt'), report.join('\n') + '\n');
