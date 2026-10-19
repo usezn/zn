@@ -67,6 +67,23 @@ def _decode_scan_text(raw: bytes) -> str:
 _SAFE_FILE_ARG = re.compile(r"[A-Za-z0-9._/@+-]+")
 
 
+def _relative_to_cwd(file: str) -> str:
+    """The path relative to the current directory, with the links on both sides
+    followed first. On macOS the temporary folder is /var/..., a link to
+    /private/var/..., and the current directory is reported as /private/var/...,
+    so comparing them as they are gives "../../private/var/..."."""
+    try:
+        cwd = os.path.realpath(os.getcwd())
+    except OSError:
+        cwd = os.getcwd()
+    absolute = os.path.abspath(file)
+    try:
+        resolved = os.path.join(os.path.realpath(os.path.dirname(absolute)), os.path.basename(absolute))
+    except OSError:
+        resolved = absolute
+    return os.path.relpath(resolved, cwd)
+
+
 def _leak_next_step(file: str, rule: str) -> str:
     """What to do about a secret found by the scan, in plain words (never the
     value). The same text as secretNextStep in the Node.js package; the file
@@ -76,7 +93,7 @@ def _leak_next_step(file: str, rule: str) -> str:
                 "and replace it if the file was ever committed or shared.")
     if re.match(r"\.env", os.path.basename(file), re.IGNORECASE):
         try:
-            rel = os.path.relpath(file)
+            rel = _relative_to_cwd(file)
         except ValueError:  # another drive on Windows
             rel = file
         if os.sep != "/":  # Windows: npx takes forward slashes too
