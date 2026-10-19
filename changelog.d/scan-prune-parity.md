@@ -1,0 +1,2 @@
+### Changed
+- `zn-gate scan` skips the same directories in the Node and Python versions. Both now read `test`, `tests` and `__tests__` (fixtures there can hold real secrets; the Node scan used to skip them), both skip `vendor` only next to `go.mod`, `composer.json`, `Gemfile` or `Cargo.toml` (the Python scan used to skip nothing named `vendor`), and both skip `.venv`, `venv`, `__pycache__`, `.eggs`, `.idea` and `.turbo` without a notice.

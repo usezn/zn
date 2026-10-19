@@ -248,7 +248,7 @@ test('the 13 fixed must-not-touch snippets stay intact in the pattern layer', ()
 test('prefixes quoted in docs and look-alikes are not secrets', () => {
   for (const t of [
     'Anthropic keys start with sk-ant- and OpenAI keys with sk-.',
-    'Use AKIA as prefix; e.g. AKIAIOSFODNN7EXAMPLE',
+    'Use AKIA as a prefix for access key ids',
     'github tokens look like ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
     'commit 3f786850e387550fdab836ed7e6dc881de23001b',
     'sha1: 2fd4e1c67a2d28fced849ee1bb76e7391b93eb12 and aws secret mention',
@@ -478,5 +478,12 @@ test('provider formats from gitleaks: placeholder bodies are not tokens', () => 
     'sha256~abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ', 'pul-' + '0123456789abcdef'.repeat(3).slice(0, 40),
     'LTAIabcdefghijKLMNOP1234']) {
     assert.deepStrictEqual(types(t), [], t);
+  }
+});
+
+test('AWS key ids ending in EXAMPLE are redacted for every prefix', () => {
+  for (const prefix of ['AKIA', 'ASIA', 'ABIA', 'ACCA']) {
+    const t = 'key ' + prefix + 'IOSFODNN7' + 'EXAMPLE' + ' here';
+    assert.deepStrictEqual(types(t), ['AWS_KEY'], t);
   }
 });

@@ -144,7 +144,33 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
     message names the file when the patch writes to one such as `.env`. Known difference:
     the `apply_patch` tool may edit `.env` (writes are checked only for `~/.zn` and agent
     settings), while any patch sent as a shell command is refused.
+- **Background hooks (Codex).** A Codex hook with `async` set runs in the background and cannot block a call or change a result. If zn's hook is set that way in `hooks.json` or `config.toml` in your Codex folder, `zn-gate check` reports Codex as not protected; remove `async` from zn's hook.
+- **Trust and updates (Codex).** Installing zn-gate as a Codex plugin would not skip the `/hooks` review: Codex ignores a plugin's hooks until you review and trust them, and it asks again after every plugin update. zn installs its hooks with `zn hooks install codex` instead, and you trust them in `/hooks`.
+- **Ways Codex turns zn's hooks off.** `async`, a `[hooks.state]` entry with `enabled = false` for one of zn's hooks, `[features] hooks = false`, and `allow_managed_hooks_only = true` in your organization's requirements (when zn's hooks are not among the managed ones) each stop zn's hooks from protecting anything, and Codex says nothing. `zn-gate check` reports all four as not protected and says what to change. It reads `hooks.state` only in your own `config.toml`; a setting passed on the Codex command line with `-c` is not seen. The Python package has no `check` command.
 - **Settings that turn hooks off.** zn reads the settings files only: the managed settings of Claude Code (`managed-settings.json` and `managed-settings.d/` in `/etc/claude-code`, `/Library/Application Support/ClaudeCode` or `C:\Program Files\ClaudeCode`) and of Codex (`requirements.toml` and `managed_config.toml` in `/etc/codex`, or `requirements.toml` in `%ProgramData%\OpenAI\Codex` and `managed_config.toml` in your Codex folder on Windows), and your own settings. A policy sent through MDM or the agent's cloud is not seen. When such a setting stops every hook, zn's start-of-session hook does not run either (zn installs no session-start hook for Codex), so `zn-gate check` is where you see it.
+- **Copilot CLI** (experimental: `zn hooks install copilot [--project]`;
+  `zn-gate check` and `zn-gate init` list it as "Copilot CLI (experimental)").
+  Covered: `preToolUse` blocks reads and writes of secret files by path,
+  shell commands that handle secrets, and edits of Copilot's own hook and
+  settings files; `postToolUse` replaces secret values in the results of
+  read-type and shell tools (successful results only). zn writes its own
+  `zn-gate.json` in `~/.copilot/hooks/` (or `$COPILOT_HOME/hooks/` when you set
+  a custom Copilot folder) and, with `--project`, in `.github/hooks/`. Checked
+  end to end with Copilot CLI 1.0.98 against a scripted model provider: 0 secret
+  values sent. Not covered, and limits:
+  - Copilot's `userPromptSubmitted` hook cannot block or rewrite a typed
+    prompt, so a pasted secret is not blocked.
+  - A hook that takes longer than its timeout lets the call through (Copilot
+    fails open there). Machine policy hooks in `/etc/github-copilot/policy.d`
+    run in addition and are not seen by zn.
+  - MCP tools Copilot does not name as read or shell tools are not checked and
+    their output is not scrubbed. The docs do not list the argument names of
+    each tool, so zn refuses a known tool whose arguments it cannot read.
+  - Not tested on Windows.
+  - Copilot's own session log (`events.jsonl`) keeps the original tool output
+    on your machine.
+  - `disableAllHooks` in zn's file or in `.github/copilot/settings(.local).json`
+    turns the hooks off; `zn-gate check` reports it.
 - **Cursor** (best effort: its hook documentation leaves the input of some
   tools open, and zn fails closed where it cannot read a path):
   - `beforeReadFile` can only allow or deny. zn sets `failClosed: true` on it
@@ -262,5 +288,5 @@ until it is fixed), is in [upgrading.md](upgrading.md#nodejs-was-upgraded-moved-
 
 ## Not covered yet
 
-Hermes Agent, Gemini CLI, Copilot CLI and the Cursor CLI. A proxy for outgoing
+Hermes Agent, Gemini CLI and the Cursor CLI. GitHub Copilot CLI has experimental hooks (see the Copilot CLI entry above). A proxy for outgoing
 HTTP from `zn run` (for `curl`, `gh` or SDKs) is planned for a later release.

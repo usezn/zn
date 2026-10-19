@@ -154,10 +154,10 @@ impl ReputationScore {
         }
 
         if self.score <= BAN_THRESHOLD {
-            if self.status != AgentStatus::Banned {
-                self.status = AgentStatus::Banned;
-                self.banned_until = Some(Utc::now() + Duration::minutes(BAN_DURATION_MINUTES));
-            }
+            // Reaching here means no ban is active: either the agent was never
+            // banned or its previous ban has expired. Ban (again) with a fresh timer.
+            self.status = AgentStatus::Banned;
+            self.banned_until = Some(Utc::now() + Duration::minutes(BAN_DURATION_MINUTES));
         } else if self.score < 20 {
             self.status = AgentStatus::Suspicious;
         } else if self.score > 80 {
@@ -292,6 +292,31 @@ mod tests {
         assert_eq!(s.score, 1);
         assert_eq!(s.status, AgentStatus::Banned);
         assert!(sys.check_agent_status("agent-1").is_err());
+    }
+
+    #[test]
+    fn violation_after_expired_ban_bans_again() {
+        let sys = ReputationSystem::new();
+        sys.record_violation("agent-1", "x", 60);
+        set_ban_expiry(&sys, "agent-1", Utc::now() - Duration::minutes(1));
+        assert!(sys.check_agent_status("agent-1").is_ok());
+        // The score is still at or below the threshold; a new violation must ban again.
+        sys.record_violation("agent-1", "again", 1);
+        let s = score_of(&sys, "agent-1");
+        assert_eq!(s.status, AgentStatus::Banned);
+        assert!(matches!(s.banned_until, Some(end) if end > Utc::now()));
+        assert!(sys.check_agent_status("agent-1").is_err());
+    }
+
+    #[test]
+    fn violation_during_active_ban_does_not_extend_it() {
+        let sys = ReputationSystem::new();
+        sys.record_violation("agent-1", "x", 60);
+        let first = score_of(&sys, "agent-1").banned_until;
+        sys.record_violation("agent-1", "y", 5);
+        let s = score_of(&sys, "agent-1");
+        assert_eq!(s.status, AgentStatus::Banned);
+        assert_eq!(s.banned_until, first);
     }
 
     #[test]

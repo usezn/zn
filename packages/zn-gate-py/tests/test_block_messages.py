@@ -28,7 +28,7 @@ class TestBlockMessages(unittest.TestCase):
             return "ok"
 
         out = search(INJECTION)
-        self.assertTrue(out.startswith("zn-gate blocked 'crewai:search'. Reason: "), out)
+        self.assertTrue(out.startswith("zn-gate blocked 'tool:search'. Reason: "), out)
         self.assertIn("Next step:", out)
         self.assertNotEqual(out, "Tool call blocked by security policy.")
 

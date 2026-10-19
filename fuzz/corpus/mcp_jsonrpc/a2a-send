@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":2,"method":"tasks/send","params":{"recipient":"worker","task":{"text":"hello"}}}
