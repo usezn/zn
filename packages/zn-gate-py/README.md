@@ -138,6 +138,8 @@ def query_knowledge_base(query: str) -> str:
     return "Query result..."
 ```
 
+`@guarded_tool` also works on plain Python tool functions (Pydantic AI, Google ADK). Block messages name the target as `tool:<name>`; `framework="crewai"` makes it `crewai:<name>`.
+
 `check_result=True` also scans what the tool returns for prompt injection before the agent sees it (off by default, so existing tools behave as before).
 
 `guarded_tool` also works on `async def` tools and on callable objects whose `__call__` is `async def`: the call is awaited, then the output is checked and masked exactly as for a sync tool. A sync function that returns a coroutine, and an async generator, are not checked or masked, so declare the tool with `async def` instead.

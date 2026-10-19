@@ -69,7 +69,9 @@ Your secret vault is locked. Unlock it in this terminal with: zn unlock. Then ru
 
 More in [secrets](secrets.md). If it asks for a terminal to enter the passphrase and you have none (for example over SSH), see "If something fails" there.
 
-**If you forgot the passphrase:** nobody can recover it, zn included. That is what keeps your secrets safe. After three wrong tries, `zn unlock` points you to the way out:
+**If the passphrase is right but the vault will not open:** `zn unlock` says so when the vault file is damaged or the system keychain refuses. It then tells you not to reset. Do not run `zn vault reset`: it would delete values that may still be fine. Run `zn vault verify` to see whether the vault files are intact, restore the vault folder from a backup if you have one, or sign in to the user account that created the vault. If a keychain is the cause, the message names it.
+
+**If you forgot the passphrase:** nobody can recover it, zn included. That is what keeps your secrets safe. After three wrong passphrases in a row (other errors do not count), `zn unlock` points you to the way out:
 
 ```text
 Forgot the passphrase? `zn vault reset` starts a new, empty vault (the old values are lost).

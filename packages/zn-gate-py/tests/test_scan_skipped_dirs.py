@@ -131,8 +131,15 @@ class NodePythonPruneParityTests(unittest.TestCase):
                                timeout=120, env={**os.environ, "ZN_LOCAL_ONLY": "true"})
             node = json.loads(r.stdout)
 
+            # The two engines print the same root in different forms: Python keeps the path
+            # it was given, Node prints it relative to the working directory with links
+            # resolved. On macOS the temp folder is /var/... -> /private/var/..., so both
+            # sides are resolved before they are compared.
+            real_d = os.path.realpath(d)
+
             def rel(report):
-                return sorted((os.path.relpath(s["dir"], d).replace("\\", "/"), s["reason"]) for s in report["skipped_dirs"])
+                return sorted((os.path.relpath(os.path.realpath(s["dir"]), real_d).replace("\\", "/"), s["reason"])
+                              for s in report["skipped_dirs"])
 
             self.assertEqual(rel(py), rel(node))
             self.assertEqual(py["total_files"], node["total_files"])
