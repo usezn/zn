@@ -21,7 +21,6 @@ EXAMPLES=(
   "node-basic|index.js|Safe to ingest: false|Cannot find module"
   "custom-rules|demo.js|Custom rule verdict: block|Cannot find module"
   "langchain-js|index.js|zn-gate demo OK|zn-gate demo FAILED"
-  "langchain-js|index.js|zn-gate demo OK|zn-gate demo FAILED"
 )
 
 echo "Packing packages/zn-gate"
@@ -40,13 +39,7 @@ for name in node-basic custom-rules langchain-js; do
     # then swap in the packed zn-gate.
     (cd "$dir" && npm ci --ignore-scripts --no-audit --no-fund >/dev/null && npm install --no-save --ignore-scripts --no-audit --no-fund "$TARBALL" >/dev/null)
   else
-    if [ -f "$dir/package-lock.json" ]; then
-    # Examples with their own dependencies install them from the lockfile (the run itself stays offline),
-    # then swap in the packed zn-gate.
-    (cd "$dir" && npm ci --ignore-scripts --no-audit --no-fund >/dev/null && npm install --no-save --ignore-scripts --no-audit --no-fund "$TARBALL" >/dev/null)
-  else
     (cd "$dir" && npm init -y >/dev/null && npm install --offline --ignore-scripts --no-audit --no-fund "$TARBALL" >/dev/null)
-  fi
   fi
   echo "Running examples/$name/$entry offline"
   run=(env -i PATH="$PATH" HOME="$WORK/home" node "$entry")
