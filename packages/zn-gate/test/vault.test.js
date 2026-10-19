@@ -484,6 +484,26 @@ test('lifecycle: idle expiry drops the session', async () => {
   srv = null;
 });
 
+test('lifecycle: a slow start does not use up the idle time before the first client', async () => {
+  await stopDaemon();
+  // Simulate a slow disk: the unlock audit write blocks the loop for longer
+  // than the idle time, so the idle timer is already due when serve() returns.
+  const realAppend = audit.append;
+  audit.append = function () {
+    const end = Date.now() + 700;
+    while (Date.now() < end) { /* busy wait */ }
+    return realAppend.apply(this, arguments);
+  };
+  let reason = null;
+  try { await startDaemon({ idleMs: 400, onExit: (r) => { reason = r; } }); } finally { audit.append = realAppend; }
+  const c = clientMod.createClient({});
+  const st = await c.status();
+  assert.strictEqual(st.unlocked, true);
+  assert.strictEqual(reason, null);
+  c.close();
+  await stopDaemon();
+});
+
 test('lifecycle: zn unlock spawns a detached daemon; zn lock stops it', async () => {
   const u = await daemon.unlock({ passphrase: PASS });
   assert.ok(u.pid > 0 && !u.created);

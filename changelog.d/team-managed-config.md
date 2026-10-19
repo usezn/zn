@@ -1,0 +1,2 @@
+### Added
+- `zn team managed-config` prints the managed settings an administrator deploys with device management so zn-gate's hooks run on every developer machine: Claude Code `managed-settings.json`, Cursor enterprise `hooks.json` and Codex `requirements.toml`, with the path for macOS, Linux and Windows. It writes nothing; `allowManagedHooksOnly` and `allow_managed_hooks_only` are printed only with `--managed-hooks-only`.

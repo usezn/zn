@@ -2,7 +2,7 @@
   "layers": {
     "rules": {
       "version_const": "RULES_VERSION",
-      "version": "2026-10-19.3",
+      "version": "2026-10-19.5",
       "ids": [
         "evasion:bidi_override",
         "exfil:credentials",
@@ -45,13 +45,13 @@
         "secret:private_key"
       ],
       "sha256": {
-        "lib/rules.js": "64425c70ae6e56fcbf96e1eb1ed46ede6246760211f9942d13d38aaa6b8e04b5",
+        "lib/rules.js": "b76b59e5b7508a03705bb9e1c9b6f42d8d4c449a29e9228fa6667eaef08a6fbb",
         "lib/mcp-secrets.js": "980e233ba307057a204307eff899c50c5d052d44a4951c7db91c84e6b9ec30eb"
       }
     },
     "scrub": {
       "version_const": "SCRUB_RULES_VERSION",
-      "version": "2026-10-17.3",
+      "version": "2026-10-19.5",
       "ids": [
         "AGE_SECRET_KEY",
         "ALIBABA_KEY_ID",
@@ -144,7 +144,7 @@
         "exact.variants"
       ],
       "sha256": {
-        "lib/scrub/patterns.js": "1f836da9f9cee692d55d1ea46fbe16451b9e02c52f243aaab4cd1e9b147ad145",
+        "lib/scrub/patterns.js": "db3f543087baa37063daece190f0f87ca6483a7bd16f12d42b0a26cdefca99b1",
         "lib/scrub/exact.js": "d104e85ec6a25e7d6d4b6c428bd0bf8b25d43c3ead313f6872f508b65793bf6b"
       }
     },
@@ -201,7 +201,7 @@
     },
     "policy": {
       "version_const": "POLICY_RULES_VERSION",
-      "version": "2026-10-19.1",
+      "version": "2026-10-19.43",
       "ids": [
         "SHELL_SCAN_CAP",
         "_decodeAnsiC",
@@ -223,7 +223,7 @@
         "writeDenial"
       ],
       "sha256": {
-        "lib/hooks/policy.js": "a0f62c9bb351242a6b6efa3461d921145ba635aff9933aa2d5e6d6c15ee6481d",
+        "lib/hooks/policy.js": "578e3159e1dd27ee77201d40b4b4a36ace17de681566d0b5d303fc297bf91c3b",
         "lib/broker/files.js": "45dd8927cc626ac35e8c036e5118ec3c584a3f3a396640c09cee8b545e67c097",
         "lib/broker/markers.js": "301eb1d763e8e88c32e32a02c344be8f44b342b06b61897f3a2d478dbe55d6b4",
         "lib/broker/dotenv.js": "d12a12bd12108a38f84e9f4772ed50f0b015962a1e68f75362142b9b3449e8fe",

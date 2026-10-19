@@ -1,0 +1,1 @@
+{"neural":{"enabled":true,"threshold":0.5},"fusion":{"weights":[0.1,0.2]},"guardrails":{"mode":"strict"}}

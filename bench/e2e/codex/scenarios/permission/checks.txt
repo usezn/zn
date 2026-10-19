@@ -1,0 +1,11 @@
+PASS Codex exited with code 0 (exit task exit=0)
+PASS no hook run failed (0,0,0)
+PASS PermissionRequest fired for both commands (2 call(s))
+PASS marker command: zn answered deny with its reason (deny)
+PASS ordinary command: zn gave no answer
+PASS zn never answered allow
+PASS PreToolUse was not installed for this run (the approval hook alone decides)
+PASS the user was asked only for the ordinary command (declined once) (1 approval prompt(s) shown)
+PASS the marker command did not run (the model got the deny reason) (exec_command failed: CreateProcess { message: "Rejected(\"zn: this command uses a stored secret. Run it through zn instead, exactly like this: zn run -- node -e \\\"console.log('db:', process.argv[1]))
+PASS the screen showed the approval prompt for the ordinary command only, and it was declined
+PASS the ordinary command did not run (1 result(s) after the first)
