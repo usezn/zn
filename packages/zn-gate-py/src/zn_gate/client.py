@@ -17,7 +17,7 @@ import urllib.request
 import urllib.error
 from typing import Any, Dict, Optional
 
-from .rules import evaluate, redact_secrets, Assessment, RULES_VERSION
+from .rules import evaluate, redact_secrets
 from . import __version__
 
 DEFAULT_ENDPOINT = "https://api.usezn.com/v30/analyze"

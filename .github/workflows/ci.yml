@@ -187,6 +187,67 @@ jobs:
         if: steps.scope.outputs.run == 'true'
         run: python bench/bench_python.py
 
+  # Lint and type-check the Python package. The ruff rules (a minimal set) live in
+  # packages/zn-gate-py/pyproject.toml and block the run. mypy is informational.
+  lint-python:
+    name: Python lint (ruff)
+    # Draft pull requests skip this job; marking the pull request ready for review runs it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            packages/zn-gate-py/pyproject.toml
+            .github/ci-test-requirements.txt
+      - name: Install lint tools
+        # Ruff and mypy are pinned with hashes in the same file as the test tools.
+        run: python -m pip install --require-hashes -r .github/ci-test-requirements.txt
+      - name: Run ruff
+        working-directory: packages/zn-gate-py
+        run: python -m ruff check .
+
+  typecheck-python:
+    name: Python types (mypy, informational)
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            packages/zn-gate-py/pyproject.toml
+            .github/ci-test-requirements.txt
+      - name: Install lint tools
+        run: python -m pip install --require-hashes -r .github/ci-test-requirements.txt
+      - name: Run mypy
+        # Informational: the findings are not fixed yet, so this step never fails the job.
+        # The check stays green; the error count is in the log.
+        continue-on-error: true
+        working-directory: packages/zn-gate-py
+        run: python -m mypy
+
   pack-node:
     name: npm package (pack, inspect, install)
     # Draft pull requests skip this job; marking the pull request ready for review runs it.

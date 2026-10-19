@@ -8,7 +8,6 @@ and `node` must be installed, otherwise the test is skipped.
 """
 
 import json
-import re
 import shutil
 import subprocess
 import tempfile
