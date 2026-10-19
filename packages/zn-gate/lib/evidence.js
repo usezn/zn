@@ -180,6 +180,19 @@ function ownsLock(lockPath, token) {
   return readLockToken(lockPath) === token;
 }
 
+// On Windows, deleting a file can fail for a moment while another process (a virus scanner, an
+// indexer) has it open. A lock that stays behind blocks every other writer until it goes stale,
+// so try again briefly before giving up. A missing file is fine.
+function unlinkLock(lockPath) {
+  for (let i = 0; i < 40; i++) {
+    try { fs.unlinkSync(lockPath); return; } catch (e) {
+      if (e.code === 'ENOENT') return;
+      if (!(process.platform === 'win32' && (e.code === 'EPERM' || e.code === 'EACCES' || e.code === 'EBUSY')) || i === 39) return;
+    }
+    sleepMs(5);
+  }
+}
+
 function releaseLock(lockPath, token) {
   // Only remove the lock if it is still ours; after a takeover it belongs to someone else.
   // If the file is missing it may be renamed aside by a breaker that is about to put it back
@@ -187,7 +200,7 @@ function releaseLock(lockPath, token) {
   for (let i = 0; i < 4; i++) {
     const current = readLockToken(lockPath);
     if (current === token) {
-      try { fs.unlinkSync(lockPath); } catch { /* already gone */ }
+      unlinkLock(lockPath);
       return;
     }
     if (current !== null) return;
