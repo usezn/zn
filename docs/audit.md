@@ -24,7 +24,7 @@ It runs locally and sends nothing anywhere.
 
 ## Usage
 
-```
+```text
 zn audit [path] [--format text|json|sarif] [--output <file>]
          [--fail-on low|medium|high|critical|none]
          [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home]
@@ -148,7 +148,7 @@ Rule ids are stable: a rule may get better, but its id never changes meaning.
 
 ### Text
 
-```
+```text
 zn audit  ./some-repo  (zn-gate 1.12.0)
 
 CRITICAL  ZNA007  .claude/settings.json:4  [claude]

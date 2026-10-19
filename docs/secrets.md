@@ -45,7 +45,7 @@ zn env shadow .env
 
 Every sensitive value moves into the vault and `.env` keeps only markers:
 
-```
+```text
 DATABASE_URL=postgres://app:__ZN_DATABASE_URL_PASSWORD__@db:5432/app
 STRIPE_KEY=__ZN_STRIPE_KEY__
 PORT=3000

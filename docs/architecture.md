@@ -8,7 +8,7 @@ zn operates as a **sacrificial, lightweight checkpoint** situated directly betwe
 
 zn enforces security across three distinct lifecycle phases:
 
-```
+```text
 [User / External Input]
          │
          ▼

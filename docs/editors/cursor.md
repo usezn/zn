@@ -19,6 +19,7 @@ Status: these steps follow Cursor's documentation; we have not run them end to e
 
 Once it works, Cursor's agent is blocked from reading `.env` files with real values and common credential files (file reads and most shell commands), a secret zn-gate recognizes in your chat message is blocked before it is sent, and secrets it recognizes are removed from MCP tool results.
 
+<!-- markdownlint-disable-next-line MD029 -->
 4. **If the agent says it cannot read your `.env` file** (optional): run `zn unlock` (it creates your local vault the first time), then `zn env shadow .env`. Your `.env` then holds markers instead of real values, and zn-gate fills the values in only for commands you allow.
 
 To undo it: `zn hooks uninstall cursor`.

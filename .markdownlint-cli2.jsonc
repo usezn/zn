@@ -1,0 +1,9 @@
+// Settings for markdownlint-cli2 (.github/workflows/markdownlint.yml). The rules are in .markdownlint.jsonc.
+{
+  "globs": [
+    "docs/**/*.md",
+    "README*.md",
+    "packages/*/README.md",
+    "changelog.d/*.md"
+  ]
+}

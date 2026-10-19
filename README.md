@@ -194,15 +194,18 @@ Where zn-gate sits in a tool call, as an MCP server or as the `shield` proxy aro
 <picture><source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/tool-call-sequence-animated-dark.svg"><img alt="Sequence diagram. The agent sends analyze_prompt to zn-gate on your machine, which allows or blocks it. Then check_tool_call, which allows the call with secrets masked or blocks it. The agent runs the tool. The output comes back through check_tool_result or shield, and zn-gate returns it with secrets redacted, or neutralized if it carries an injection." src="docs/diagrams/tool-call-sequence-animated-light.svg" width="800"></picture>
 
 ### Scrubber: secrets stay out of the model's context
+
 - **Today, through zn-gate:** redacts AWS keys, OpenAI and Anthropic keys, GitHub tokens, JWTs, private keys and database URL passwords in everything that passes through zn-gate: tool output checked with `check_tool_result`, tool arguments checked with `check_tool_call`, and output of MCP servers wrapped by `zn-gate shield` / `init`. Python: `sanitize_tool_result`, `@guard(mask_secrets=True)` and the framework integrations.
 - **Today, agent hooks and vault (npm package):** hooks for Claude Code, Codex CLI and OpenCode scrub the output of the agents' built-in tools and block pasted secrets (in Cursor only MCP tool output is scrubbed); a local encrypted vault with stable markers (`__ZN_AWS_KEY_1__`); `zn run` fills values only into commands you approved; personal data (cards, IBAN, national IDs, e-mail, phone) is detected too. What each agent allows differs: see [docs/compat.md](docs/compat.md).
 
 ### Galvanize: prompt-injection detection
+
 - **Today, local:** a deterministic rules engine (signatures plus normalization against homoglyphs, zero-width characters, BiDi overrides, comment splicing and Base64) checks prompts, tool arguments, tool output and MCP tool descriptions.
 - **Today, optional cloud check:** the Galvanize 2 classifier ([open weights on Hugging Face](https://huggingface.co/usezn/Galvanize-2), Apache-2.0) can also check prompts sent to `analyze_prompt`, only if you set `ZN_CLOUD=1` and `ZN_API_KEY`. The secrets zn-gate detects are removed from the prompt on your machine before it is sent; personal data is not removed on this path.
 - **Roadmap:** running Galvanize locally inside zn-gate.
 
 ### Scan: audit what your agent is about to trust
+
 - **Today:** `zn-gate scan <path>` audits prompt templates, `AGENTS.md` / `SKILL.md` files and configs for injection traps and leaked secrets (exit code 1 on findings, for CI). A leaked secret is reported as **Secret found**, with the next step: `npx -y zn-gate env shadow <file>` moves the values of a `.env` file into the local vault, `npx -y zn-gate secret set NAME` stores any other one. It finds provider keys and tokens, opaque `Authorization: Bearer` tokens, passwords in URLs, and secrets passed as command-line flags (`--token=...`) or assigned to a name such as `password` or `api_key`. The same check runs as a [GitHub Action](#github-action). It also checks the MCP server configs (`.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `.codex/config.toml`, `claude_desktop_config.json` and others) for keys and passwords written in plain text in `env`, `headers`, arguments or URLs; it never prints the value, and `--include-home` checks your own MCP configs too. MCP servers can be checked on the web at [usezn.com/scan](https://usezn.com/scan).
 - **Roadmap:** auditing MCP servers and skills from the CLI before you add them.
 
