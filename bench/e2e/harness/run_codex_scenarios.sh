@@ -13,7 +13,9 @@
 #   replace     PostToolUse with "replaceToolOutputOnSecret": continue false
 #               and a stop reason; the model never gets the value
 #   thirdparty  another tool's PreToolUse hook answers allow + updatedInput:
-#               what zn sees and what runs (observation, not a pass/fail)
+#               zn's PreToolUse sees the original command, the rewritten one
+#               runs, and PostToolUse withholds the output of the command
+#               that really ran
 #
 #   bash run_codex_scenarios.sh <work dir> [codex binary] [scenario ...]
 #

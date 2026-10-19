@@ -1,4 +1,4 @@
 requests to the provider: 2 (2 agent turns)
 
 step 1: exec_command {"cmd":"echo benign-ok"}
-  result: [default] aws_access_key_id = __ZN_AWS_KEY_1__ aws_secret_access_key = __ZN_AWS_SECRET_1__ [zn: 2 secret value(s) in this output were replaced with __ZN_ tokens (AWS_KEY, AWS_SECRET). Real values stay on this machine; use the tokens as they are.]
+  result: zn: the command that ran is one zn blocks. Another tool changed it after zn checked it, so its output was withheld. zn: ~/.aws/credentials was not read because zn treats it as holding secrets (AWS credentials file), and secret values never go to the model. If a command needs a value, ask the user to run `zn secret set NAME`, then write __ZN_NAME__ where the value goes.

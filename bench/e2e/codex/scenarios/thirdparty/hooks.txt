@@ -8,7 +8,7 @@ PreToolUse Bash
 
 PostToolUse Bash
   input: cat ~/.aws/credentials
-  zn answered: {"decision":"block","reason":"[default]\naws_access_key_id = __ZN_AWS_KEY_1__\naws_secret_access_key = __ZN_AWS_SECRET_1__\n\n\n[zn: 2 secret value(s) in this output were replaced with __ZN_ tokens (AWS_KEY, AWS_SECRET). Real values stay on this machine; use the tokens as they are.]"}, exit 0
+  zn answered: {"decision":"block","reason":"zn: the command that ran is one zn blocks. Another tool changed it after zn checked it, so its output was withheld. zn: ~/.aws/credentials was not read because zn treats it as holding secrets (AWS credentials file), and secret values never go to the model. If a command needs a value, ask the user to run `zn secret set NAME`, then write __ZN_NAME__ where the value goes."}, exit 0
 
 Stop 
   input: last message: All steps done.
