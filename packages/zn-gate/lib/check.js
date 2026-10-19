@@ -199,6 +199,39 @@ function codexBackgroundFile(codexHome, hooksFile) {
   return null;
 }
 
+/* Codex keeps a per-hook switch in config.toml: [hooks.state."<hooks file>:<event>:<group>:<hook>"] enabled = false.
+   The key is the file that declares the hook, the event in snake case, and the 0-based position of the group and of the hook in it. */
+function samePath(a, b) {
+  const x = path.resolve(String(a));
+  const y = path.resolve(String(b));
+  return process.platform === 'win32' ? x.toLowerCase() === y.toLowerCase() : x === y;
+}
+
+/* The first of zn's Codex hooks (in the files given) that the user's config.toml switches off with hooks.state; null if none. */
+function codexHookSwitchedOff(codexHome, files) {
+  let state;
+  try {
+    const data = require('./audit/parse').parseToml(fs.readFileSync(path.join(codexHome, 'config.toml'), 'utf8')).data;
+    state = data && data.hooks && data.hooks.state;
+  } catch (_) { return null; /* no config.toml, or one zn cannot read: nothing to say here */ }
+  if (!state || typeof state !== 'object') return null;
+  const { isOurs } = require('./agents/config-file');
+  for (const [key, st] of Object.entries(state)) {
+    if (!st || typeof st !== 'object' || (st.enabled !== false && st.enabled !== 'false')) continue;
+    const m = /^(.*):([a-z_]+):(\d+):(\d+)$/.exec(key.trim());
+    if (!m) continue;
+    const src = files.find((f) => samePath(f, m[1]));
+    if (!src) continue;
+    const tree = src.endsWith('.toml') ? (() => { try { return require('./audit/parse').parseToml(fs.readFileSync(src, 'utf8')).data; } catch (_) { return null; } })() : readJson(src);
+    const hooks = tree && typeof tree.hooks === 'object' && tree.hooks ? tree.hooks : {};
+    const event = Object.keys(hooks).find((e) => e.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase() === m[2]);
+    const group = event && Array.isArray(hooks[event]) ? hooks[event][Number(m[3])] : null;
+    const hook = group && Array.isArray(group.hooks) ? group.hooks[Number(m[4])] : null;
+    if (hook && isOurs(hook.command, 'codex')) return { file: path.join(codexHome, 'config.toml'), event };
+  }
+  return null;
+}
+
 function oneLine(s, n) {
   return String(s || '').replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n);
 }
@@ -360,6 +393,14 @@ async function checkAgent(spec, ctx) {
     if (bg) {
       res.problem = 'zn\'s ' + bg.event + ' hook runs in the background (async) in ' + bg.file + ', and a background hook cannot block anything, so zn does not protect Codex';
       res.fix = 'remove `async` from zn\'s hooks in that file, or run `zn hooks install codex` again, then run `zn-gate check` again';
+    }
+  }
+  if (spec.id === 'codex' && installed && !res.problem && res.where === userFile) {
+    // [hooks.state] in the user's config.toml can switch one hook off: Codex then skips it without a word.
+    const off = codexHookSwitchedOff(path.dirname(userFile), [userFile, path.join(path.dirname(userFile), 'config.toml')]);
+    if (off) {
+      res.problem = 'zn\'s ' + off.event + ' hook is switched off in ' + off.file + ' ([hooks.state] enabled = false), so Codex skips it and zn does not protect Codex';
+      res.fix = 'delete that [hooks.state] entry, or turn zn\'s hook back on in `/hooks` in Codex, then run `zn-gate check` again';
     }
   }
   if (spec.id === 'opencode' && installed) res.notes.push('zn\'s rules were checked; its plugin runs inside OpenCode, so it was not started here');
