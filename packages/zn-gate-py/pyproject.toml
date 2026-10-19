@@ -49,3 +49,26 @@ zn-gate = "zn_gate.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.ruff]
+target-version = "py38"
+
+[tool.ruff.lint]
+# Minimal set: syntax errors and undefined names (E9), pyflakes (F), and the
+# bugbear checks (B). Style rules are left out on purpose.
+select = ["E9", "F", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# The lambdas here are passed to time_ms and called in the same loop iteration,
+# so the late-binding warning cannot bite.
+"tests/test_rules_redos.py" = ["B023"]
+
+[tool.mypy]
+# Informational only: the CI job is non-blocking until the findings are fixed.
+files = ["src/zn_gate"]
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+# Optional integration; its stubs are not installed in CI.
+module = ["langchain_core.*"]
+ignore_missing_imports = true

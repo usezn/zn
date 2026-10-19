@@ -63,8 +63,9 @@ def guarded_tool(
         return block_message(assessment, f"crewai:{tool_name}")
 
     def decorator(tool_func: Callable) -> Callable:
+        # getattr with a default, not hasattr: an object without __call__ takes the sync path.
         if inspect.iscoroutinefunction(tool_func) or inspect.iscoroutinefunction(
-            getattr(tool_func, "__call__", None)
+            getattr(tool_func, "__call__", None)  # noqa: B004
         ):
             @functools.wraps(tool_func)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:

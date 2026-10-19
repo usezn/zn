@@ -449,8 +449,9 @@ def verify_evidence_ledger(file_path: str = EVIDENCE_FILE) -> Dict[str, Any]:
             
         # Records written by the Node package or an older version may differ in how non-ASCII
         # text is written: accept both canonical forms.
+        # Called only within this iteration, before expected_prev is reassigned.
         def _hash_of(text: str) -> str:
-            return hashlib.sha256(f"{expected_prev}:{text}".encode("utf-8", errors="replace")).hexdigest()
+            return hashlib.sha256(f"{expected_prev}:{text}".encode("utf-8", errors="replace")).hexdigest()  # noqa: B023
 
         if recorded_hash not in (_hash_of(_canonical(base_record)), _hash_of(_canonical_ascii(base_record))):
             return {
