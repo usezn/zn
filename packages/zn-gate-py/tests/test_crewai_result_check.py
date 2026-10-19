@@ -30,7 +30,7 @@ class TestCrewAIResultCheck(unittest.TestCase):
 
         with self.assertRaises(GuardBlockError) as ctx:
             fetch()
-        self.assertEqual(ctx.exception.target, "crewai:fetch:result")
+        self.assertEqual(ctx.exception.target, "tool:fetch:result")
         self.assertIn("do not use this result", str(ctx.exception))
 
     def test_injection_in_output_returns_message_or_fallback(self):
@@ -39,7 +39,7 @@ class TestCrewAIResultCheck(unittest.TestCase):
             return INJECTION
 
         out = fetch()
-        self.assertTrue(out.startswith("zn-gate blocked 'crewai:fetch:result'. Reason: "), out)
+        self.assertTrue(out.startswith("zn-gate blocked 'tool:fetch:result'. Reason: "), out)
 
         @guarded_tool(on_block="return", fallback="BLOCKED", check_result=True)
         def fetch2():
@@ -113,7 +113,7 @@ class TestCrewAIAsyncTool(unittest.TestCase):
 
         with self.assertRaises(GuardBlockError) as ctx:
             asyncio.run(fetch())
-        self.assertEqual(ctx.exception.target, "crewai:fetch:result")
+        self.assertEqual(ctx.exception.target, "tool:fetch:result")
 
     def test_async_injection_returns_message_or_fallback(self):
         @guarded_tool(on_block="return", check_result=True)
@@ -121,7 +121,7 @@ class TestCrewAIAsyncTool(unittest.TestCase):
             return INJECTION
 
         out = asyncio.run(fetch())
-        self.assertTrue(out.startswith("zn-gate blocked 'crewai:fetch:result'. Reason: "), out)
+        self.assertTrue(out.startswith("zn-gate blocked 'tool:fetch:result'. Reason: "), out)
 
         @guarded_tool(on_block="return", fallback="BLOCKED", check_result=True)
         async def fetch2():
@@ -144,6 +144,46 @@ class TestCrewAIAsyncTool(unittest.TestCase):
             return big
 
         self.assertEqual(asyncio.run(fetch()), "BIG")
+
+
+class TestBlockTargetLabel(unittest.TestCase):
+    def test_default_label_is_neutral(self):
+        @guarded_tool(on_block="return", check_result=True)
+        def fetch_page():
+            return INJECTION
+
+        self.assertIn("'tool:fetch_page:result'", fetch_page())
+
+        @guarded_tool(on_block="return")
+        def run(q):
+            return "ok"
+
+        self.assertIn("'tool:run'", run(INJECTION))
+
+    def test_custom_label(self):
+        @guarded_tool(check_result=True, framework="pydantic-ai")
+        def fetch():
+            return INJECTION
+
+        with self.assertRaises(GuardBlockError) as ctx:
+            fetch()
+        self.assertEqual(ctx.exception.target, "pydantic-ai:fetch:result")
+
+    def test_crewai_label_unchanged_when_passed(self):
+        @guarded_tool(on_block="return", framework="crewai")
+        def search(q):
+            return "ok"
+
+        out = search(INJECTION)
+        self.assertTrue(out.startswith("zn-gate blocked 'crewai:search'. Reason: "), out)
+
+        @guarded_tool(framework="crewai", check_result=True)
+        async def fetch():
+            return INJECTION
+
+        with self.assertRaises(GuardBlockError) as ctx:
+            asyncio.run(fetch())
+        self.assertEqual(ctx.exception.target, "crewai:fetch:result")
 
 
 if __name__ == "__main__":
