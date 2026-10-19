@@ -165,6 +165,7 @@ npx -y zn-gate check
 
 For each agent set up for your user, zn-gate asks its hook to let the agent read a `.env` file with a fake key and an ordinary file, in a temporary folder. It shows what your agent would be told, and a line that says **NOT protected** says how to fix it. Nothing is sent over the network and no setting changes. [What the output means](docs/check.md).
 
+<!-- snippet-test -->
 ```bash
 npx -y zn-gate test
 ```

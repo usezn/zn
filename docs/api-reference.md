@@ -2,6 +2,7 @@
 
 ## Node.js (`zn-gate`)
 
+<!-- snippet-test -->
 ```javascript
 const { evaluate, redactSecrets, sanitizeToolResult } = require('zn-gate/lib/rules');
 const { analyze, checkToolResult } = require('zn-gate/lib/client');
@@ -37,6 +38,7 @@ const { logEvidence, verifyEvidenceLedger } = require('zn-gate/lib/evidence');
 
 ## Python (`zn-gate`)
 
+<!-- snippet-test -->
 ```python
 from zn_gate import evaluate, guard, check_tool_call, check_tool_result, redact_secrets
 from zn_gate.client import analyze
