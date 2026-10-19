@@ -7,8 +7,6 @@
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use aws_config::BehaviorVersion;
-use aws_sdk_kms as kms;
 
 #[async_trait]
 pub trait SecretVault: Send + Sync {
@@ -48,58 +46,7 @@ impl SecretVault for LocalVault {
     }
 }
 
-/// AWS KMS Vault implementation
-pub struct AwsKmsVault {
-    client: kms::Client,
-}
-
-impl AwsKmsVault {
-    pub async fn new() -> Self {
-        let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
-        let client = kms::Client::new(&config);
-        Self { client }
-    }
-}
-
-#[async_trait]
-impl SecretVault for AwsKmsVault {
-    async fn get_encryption_key(&self, key_id: &str) -> Result<Vec<u8>> {
-        let resp = self
-            .client
-            .generate_data_key()
-            .key_id(key_id)
-            .key_spec(kms::types::DataKeySpec::Aes256)
-            .send()
-            .await
-            .map_err(|e| anyhow!("AWS KMS error: {}", e))?;
-
-        let blob = resp
-            .plaintext
-            .ok_or_else(|| anyhow!("KMS response missing plaintext key"))?;
-
-        Ok(blob.into_inner())
-    }
-
-    async fn sign_data(&self, key_id: &str, data: &[u8]) -> Result<Vec<u8>> {
-        use aws_sdk_kms::primitives::Blob;
-
-        let resp = self
-            .client
-            .sign()
-            .key_id(key_id)
-            .message(Blob::new(data))
-            .signing_algorithm(kms::types::SigningAlgorithmSpec::RsassaPssSha256)
-            .send()
-            .await
-            .map_err(|e| anyhow!("AWS KMS signing error: {}", e))?;
-
-        let signature = resp
-            .signature
-            .ok_or_else(|| anyhow!("KMS response missing signature"))?;
-
-        Ok(signature.into_inner())
-    }
-}
+pub use super::kms_vault::AwsKmsVault;
 
 #[cfg(test)]
 mod tests {

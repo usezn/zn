@@ -309,7 +309,15 @@ async fn start_proxy(args: Args) -> Result<()> {
     let kms_vault: Arc<Box<dyn SecretVault>> = match zn_config.kms.kms_type.as_str() {
         "aws" => {
             log::info("Initializing AWS KMS Vault...").ok();
-            Arc::new(Box::new(AwsKmsVault::new().await))
+            // The data key is kept across restarts through its encrypted copy,
+            // saved next to the audit database.
+            Arc::new(Box::new(
+                AwsKmsVault::new(
+                    zn::crypto::kms_vault::data_key_file_for(&zn_config.audit.db_path),
+                    zn::crypto::kms_vault::recover_flag_from_env(),
+                )
+                .await,
+            ))
         }
         _ => Arc::new(Box::new(LocalVault::new(
             zn_config.audit.encryption_key.clone(),
