@@ -19,7 +19,7 @@ its kind, the name that holds it and the line.
 from __future__ import annotations
 
 import re
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict
 
 from .rules import _is_non_secret_value
 
@@ -244,29 +244,43 @@ def _follow_nest(line: str, toks: List[_Token], nest: _Nest, ctx: Dict[int, Tupl
         i += 1
 
 
+class _SpanBase(TypedDict):
+    line: int
+    kind: str
+    name: str
+    start: int
+    end: int
+
+
+class McpSpan(_SpanBase, total=False):
+    """One credential found: where it sits (UTF-16 offsets in the text) and what holds it."""
+
+    silent: bool
+
+
 def _has_astral(text: str) -> bool:
     return not text.isascii() and max(text) > chr(0xFFFF)
 
 
-def _utf16_offsets(text: str, spans: List[Dict[str, object]]) -> List[Dict[str, object]]:
+def _utf16_offsets(text: str, spans: List[McpSpan]) -> List[McpSpan]:
     """Offsets in UTF-16 code units, as the Node.js package reports them (and as a
     JavaScript string is indexed), so both engines give the same spans."""
     if not _has_astral(text):
         return spans
     for sp in spans:
-        for k in ("start", "end"):
-            sp[k] = len(text[:int(sp[k])].encode("utf-16-le", "surrogatepass")) // 2
+        sp["start"] = len(text[:sp["start"]].encode("utf-16-le", "surrogatepass")) // 2
+        sp["end"] = len(text[:sp["end"]].encode("utf-16-le", "surrogatepass")) // 2
     return spans
 
 
-def find_mcp_config_secret_spans(text: str, file: str = "") -> List[Dict[str, object]]:
+def find_mcp_config_secret_spans(text: str, file: str = "") -> List[McpSpan]:
     """Credentials in the text of an MCP configuration file, with where each value
     sits: {"line", "kind", "name", "start", "end"} (offsets in ``text`` in UTF-16 code
     units, as the Node.js package gives them; lines counted on newline characters only). The offsets are for masking the value
     (``mask_mcp_values``); they are never part of a report. ``kind`` is "environment
     variable", "header", "setting", "argument" or "URL". ``file`` is the file name: in
     ~/.claude.json the key Claude Code logs in with is left alone."""
-    found: List[Dict[str, object]] = []
+    found: List[McpSpan] = []
     seen: Set[Tuple[int, str, str]] = set()
     own_login = bool(_CLAUDE_JSON.search(str(file)))
     cur = {"ln": 0, "start": 0}
@@ -276,7 +290,7 @@ def find_mcp_config_secret_spans(text: str, file: str = "") -> List[Dict[str, ob
         if key in seen:
             return
         seen.add(key)
-        item: Dict[str, object] = {"line": cur["ln"], "kind": kind, "name": _safe_name(name),
+        item: McpSpan = {"line": cur["ln"], "kind": kind, "name": _safe_name(name),
                                    "start": cur["start"] + s, "end": cur["start"] + e}
         if silent:
             item["silent"] = True  # masked for the other rules, never reported
