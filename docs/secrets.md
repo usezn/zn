@@ -173,6 +173,14 @@ To fix one:
    a file outside the repository.
 5. Rotate the value if the file was ever committed, synced or shared.
 
+## AWS documentation example keys
+
+Access key ids are redacted by their format, whatever their last characters
+are. The key id used in AWS documentation (it ends in `EXAMPLE`) is
+redacted too, for every prefix (`AKIA`, `ASIA`, `ABIA`, `ACCA`). A real key id
+is never skipped because of how it ends, and redacting a documentation
+example costs nothing.
+
 ## Useful commands
 
 | Command | What it does |
