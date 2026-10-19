@@ -15,7 +15,7 @@ import re
 import unicodedata
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, cast, overload
+from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, overload
 
 
 RULES_VERSION = "2026-10-19.3"
