@@ -173,7 +173,9 @@ test('a cut inside a surrogate pair never writes half of a character', async () 
   // size of the held-back window, one of the two puts the cut between the
   // two halves of a pair.
   for (const lead of ['', 'a']) {
-    const text = lead + '😀'.repeat(Math.ceil((MAX_LINE + 600) / 2));
+    // Same length either way, so the cut is at the same index.
+    const n = Math.ceil((MAX_LINE + 600) / 2);
+    const text = lead ? lead + '😀'.repeat(n - 1) + 'b' : '😀'.repeat(n);
     const c = collector();
     const s = createStream({ ctx: CTX, write: c.write });
     await s.push(text);
