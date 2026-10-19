@@ -5,7 +5,7 @@
 <!-- snippet-test -->
 ```javascript
 const { evaluate, redactSecrets, sanitizeToolResult } = require('zn-gate/lib/rules');
-const { analyze, checkToolResult } = require('zn-gate/lib/client');
+const { analyze, checkToolResult, checkCommand } = require('zn-gate/lib/client');
 const { logEvidence, verifyEvidenceLedger } = require('zn-gate/lib/evidence');
 ```
 
@@ -38,6 +38,11 @@ const { logEvidence, verifyEvidenceLedger } = require('zn-gate/lib/evidence');
 - Same scanning and `blockTruncated` option as `sanitizeToolResult`.
 - Returns: `Promise<{ tool_name, safe_to_ingest, truncated, secrets_redacted, sanitized_content, assessment }>`
 
+### `checkCommand(command)`
+- Optional check for destructive shell commands (Bash, sh, zsh or PowerShell text). Synchronous, local, never touches the network. Calling it is the opt-in: it always applies the check. The agent hooks apply the same check only when `hooks.blockDestructiveCommands` is on (see [Destructive commands](destructive-commands.md)).
+- Blocks only a few narrow shapes: recursive delete of the home folder or the root, a download piped to a shell, writes to a disk device, `chmod -R` or `chown -R` on the root or a system folder, a fork bomb, and a download written into a shell startup file. It reads the command text only: a path built at run time, or a script saved first and run later, is not seen.
+- Returns the shape of `evaluate`: `{ verdict, confidence, rule, reason, engine, rules_version }`, with `rule` such as `destructive:rm_root_home` or `destructive:pipe_to_shell` when blocked.
+
 ### `logEvidence(event, filePath, options)`
 - Appends one hash-chained record to the evidence log (`filePath` defaults to `~/.zn/evidence.jsonl`). `options.lockWaitMs` sets how long to wait for the write lock (default 2000).
 - Returns: the record that was written, or `null` when nothing was written (see the notes on damaged logs and the lock under `verifyEvidenceLedger`). It never throws for a log problem.
@@ -58,7 +63,7 @@ const { logEvidence, verifyEvidenceLedger } = require('zn-gate/lib/evidence');
 <!-- snippet-test -->
 ```python
 from zn_gate import evaluate, guard, check_tool_call, check_tool_result, redact_secrets, sanitize_tool_result
-from zn_gate import analyze, log_evidence, verify_evidence_ledger
+from zn_gate import analyze, log_evidence, verify_evidence_ledger, check_command
 # The submodules work too: zn_gate.rules, zn_gate.client, zn_gate.evidence
 ```
 
@@ -78,6 +83,10 @@ from zn_gate import analyze, log_evidence, verify_evidence_ledger
 
 ### `check_tool_result(result: Any, block_truncated: bool = False, strict: bool | None = None) -> Assessment`
 - Inspects external tool return values for indirect injection payloads. Long strings are scanned in overlapping windows up to 4 MB; `Assessment.truncated` is `True` when a string was not scanned in full. Pass `block_truncated=True` or set `ZN_BLOCK_TRUNCATED=1` to block such output (rule `size:truncated`); `@guard(check_result=True)` uses this check.
+
+### `check_command(command: str) -> Assessment`
+- Optional check for destructive shell commands (Bash, sh, zsh or PowerShell text). Local, never touches the network. Calling it is the opt-in: it always applies the check. Same rules and same answers as `checkCommand` in Node.js; see [Destructive commands](destructive-commands.md) for what it blocks and what it does not see.
+- Returns an `Assessment` with `rule` such as `destructive:rm_root_home` when blocked.
 
 ### `redact_secrets(text: str) -> tuple[str, list[dict]]`
 - Replaces credentials in a string with placeholders such as `[REDACTED_AWS_KEY]`. Local only.

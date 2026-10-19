@@ -93,6 +93,20 @@ function replaceOnSecretOf(opts) {
   return hooks.replaceToolOutputOnSecret === true;
 }
 
+/*
+ * Opt-in (off by default): refuse shell commands of a few destructive shapes (recursive delete of the home folder or
+ * the root, a download piped to a shell, writes to a disk device, chmod -R 777 /, a fork bomb, a download written into
+ * a shell startup file; see lib/destructive.js). Set in ~/.zn/config.json as
+ * {"hooks": {"blockDestructiveCommands": true}}, or with ZN_BLOCK_DESTRUCTIVE=1. The environment variable can only
+ * turn the check on, never off, so a project cannot use it to loosen the policy.
+ */
+function blockDestructiveOf(opts) {
+  if (opts.blockDestructive === true) return true;
+  if (process.env.ZN_BLOCK_DESTRUCTIVE === '1') return true;
+  const hooks = readConfig(opts.home).hooks || {};
+  return hooks.blockDestructiveCommands === true;
+}
+
 // Reinstall the running version: `npm install -g zn-gate` alone could install an
 // older release without hooks.
 const { version: ZN_VERSION } = require('../../package.json');
@@ -251,7 +265,7 @@ async function decidePre(ev, d, agentId, opts) {
 
   if (SHELL_TOOLS.has(tool)) {
     const original = String(input.command || '');
-    const deny = policy.bashDenial(original, pathOpts);
+    const deny = policy.bashDenial(original, { ...pathOpts, blockDestructive: blockDestructiveOf(opts) });
     if (deny) return { decision: 'deny', message: deny };
 
     let command = original;
@@ -401,7 +415,7 @@ function decideMonitor(ev, pathOpts, opts) {
   const original = String(ev.input.command || '');
   if (original.length > policy.SHELL_SCAN_CAP) return { decision: 'deny', message: policy.bashDenial(original, pathOpts) };
   if (!original.trim()) return { decision: 'allow' };
-  const deny = policy.bashDenial(original, pathOpts);
+  const deny = policy.bashDenial(original, { ...pathOpts, blockDestructive: blockDestructiveOf(opts) });
   if (deny) return { decision: 'deny', message: deny };
   if (markers.findMarkers(original).length) {
     return { decision: 'deny', message: 'zn: a monitor cannot use secret placeholders (such as __ZN_NAME__). Next step: run the command with the Bash tool instead; zn fills in the placeholders there.' };

@@ -1,0 +1,344 @@
+'use strict';
+
+/**
+ * Optional policy for destructive shell commands.
+ *
+ * Off by default. The agent hooks apply it only when the user turns it on
+ * (`{"hooks": {"blockDestructiveCommands": true}}` in ~/.zn/config.json, or
+ * ZN_BLOCK_DESTRUCTIVE=1); the SDK function checkCommand() always applies it,
+ * because calling it is the opt-in.
+ *
+ * Narrow on purpose: a command is blocked only when its shape is one of the
+ * few below. It is a guardrail against a model's mistake or a bad suggestion,
+ * not a sandbox: a command built at run time (`rm -rf "$DIR"` with an empty
+ * variable, a script file the agent wrote and then runs) is not seen.
+ *
+ *   rm_root_home     recursive delete of the home folder, the filesystem root,
+ *                    a top-level system folder or a drive root
+ *   pipe_to_shell    a download that is run as a script without being read
+ *   disk_overwrite   dd, mkfs, wipefs ... on a block device, or a redirect to one
+ *   perm_root        chmod -R 777 or chown -R on the root or a system folder
+ *   fork_bomb        the classic shell fork bomb
+ *   rc_download     a download written into a shell startup file
+ *
+ * The command is split with the hook policy's own tokenizer (scanFirstCommand),
+ * so quotes and escapes read the same as in the rest of the policy.
+ */
+
+const COMMAND_RULES_VERSION = '2026-10-19.1';
+
+const REASONS = {
+  rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
+  pipe_to_shell: 'it downloads a script and runs it without anyone reading it first',
+  disk_overwrite: 'it writes to or formats a disk device',
+  perm_root: 'it changes permissions or owners across the whole filesystem or a system folder',
+  fork_bomb: 'it is a fork bomb, which freezes the machine',
+  rc_download: 'it writes downloaded content into a shell startup file, which runs in every new terminal',
+};
+
+const MAX_DEPTH = 3;
+const MAX_SEGMENTS = 5000;
+const MAX_CHARS = 200 * 1024;
+const QUOTE_SCAN_MAX = 20000;
+
+const ASSIGN_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
+const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'ash', 'mksh', 'rbash']);
+const POWERSHELLS = new Set(['pwsh', 'powershell']);
+const DOWNLOADERS = new Set(['curl', 'wget', 'iwr', 'irm', 'invoke-webrequest', 'invoke-restmethod', 'aria2c', 'fetch']);
+const RM_HEADS = new Set(['rm', 'remove-item', 'ri', 'del', 'erase', 'rd', 'rmdir']);
+const CMD_HEADS = new Set(['rd', 'rmdir', 'del', 'erase']);
+const DISK_TOOLS = /^(?:mkfs(?:\.[a-z0-9]+)?|mke2fs|mkswap|wipefs|shred|blkdiscard)$/;
+const FIND_TESTS = /^-(?:i?name|i?path|i?wholename|i?regex|type|[acm]time|[acm]min|newer\w*|size|user|group|perm|empty|links|inum|samefile|executable|readable|writable|uid|gid)$/;
+const SUDO_ARG_FLAGS = new Set(['-u', '-g', '-h', '-p', '-C', '-T', '-r', '-t', '-U', '-D', '-R']);
+
+const SYSTEM_DIRS = new Set(['/bin', '/boot', '/dev', '/etc', '/home', '/lib', '/lib32', '/lib64', '/opt', '/proc', '/root',
+  '/sbin', '/srv', '/sys', '/usr', '/var', '/Users', '/System', '/Library', '/Applications', '/private', '/Volumes']);
+const HOME_WORDS = new Set(['~', '$home', '${home}', '$userprofile', '${userprofile}', '%userprofile%', '$env:userprofile', '$env:home', '$env:homepath']);
+const BLOCK_DEVICE_RE = /^\/dev\/(?:sd[a-z]+\d*|hd[a-z]+\d*|vd[a-z]+\d*|xvd[a-z]+\d*|nvme\d+n\d+(?:p\d+)?|mmcblk\d+(?:p\d+)?|disk\d+(?:s\d+)?|rdisk\d+(?:s\d+)?|md\d+|dm-\d+|mapper\/[A-Za-z0-9._-]+)$/;
+const RC_UNIX_RE = /\/\.(?:bashrc|bash_profile|bash_login|bash_aliases|profile|zshrc|zprofile|zshenv|zlogin|kshrc|cshrc|tcshrc)$|\/fish\/config\.fish$|^\/etc\/(?:profile|bash\.bashrc|zshrc|zsh\/zshrc|environment)$|^\/etc\/profile\.d\//;
+const RC_PS_RE = /^\$profile(?:\.\w+)?$|(?:^|[\\/])(?:microsoft\.powershell_)?profile\.ps1$/i;
+
+const QUOTED_RE = /'[^']*'|"(?:[^"\\]|\\.)*"/g;
+const FORK_BOMB_RE = /(?<![\w:])([A-Za-z_:][\w:]*)\s*\(\s*\)\s*\{\s*\1\s*\|\s*\1\s*&\s*\}\s*;?\s*\1(?!\w)/;
+// Unquoted command substitutions and process substitutions are not split into words by the tokenizer.
+const SHELL_RUNS_DOWNLOAD_RE = /(?:^|[\s;&|(])(?:eval|(?:ba|z|da|k)?sh\s+(?:-\w+\s+)*-\w*c)\s+["']?(?:\$\(|`)\s*(?:curl|wget)\b/;
+const SOURCE_DOWNLOAD_RE = /(?:^|[\s;&|(])(?:source|\.|(?:ba|z|da|k)?sh)\s+(?:-\w+\s+)*<\(\s*(?:curl|wget)\b/;
+const PS_PIPE_RE = /\b(?:iwr|irm|invoke-webrequest|invoke-restmethod|curl|wget)\b[^|;\n]{0,300}\|\s*(?:iex|invoke-expression)\b|\bdownloadstring\([^)]{0,300}\)\s*\|\s*(?:iex|invoke-expression)\b/i;
+const PS_CALL_RE = /(?:^|[\s;&|(])(?:iex|invoke-expression)\b[\s($]*(?:\(\s*)*(?:iwr|irm|invoke-webrequest|invoke-restmethod|curl|wget|new-object\s+(?:system\.)?net\.webclient)\b/i;
+const PS_DISK_RE = /(?:^|[\s;&|(])(?:format-volume|clear-disk)\b/i;
+
+function programName(text) {
+  return String(text).replace(/^\\+/, '').split(/[\\/]/).pop().toLowerCase().replace(/\.exe$/, '');
+}
+
+/* Simple commands of a command line, with the operator that follows each: [{ words: string[], sep }]. */
+function segmentsOf(cmd) {
+  const { scanFirstCommand } = require('./hooks/policy');
+  // 2>&1 and &> are redirections, not the control operator &.
+  // A drive root C:\ before a space is a path, not an escaped space.
+  let rest = String(cmd).replace(/(\d*[<>]+)&(\d+|-)/g, '$1_$2').replace(/&>>?/g, '>').replace(/(^|[\s"'])([A-Za-z]:)\\(?=\s|$)/g, '$1$2/');
+  const out = [];
+  for (let guard = 0; rest.length && guard < MAX_SEGMENTS; guard++) {
+    const scan = scanFirstCommand(rest, false);
+    let sep = scan.operator;
+    let adv = scan.end + 1;
+    if (sep === '|' || sep === '&') {
+      const next = rest[scan.end + 1];
+      if (next === sep) { sep += sep; adv++; } else if (sep === '|' && next === '&') { sep = '|&'; adv++; }
+    }
+    out.push({ words: scan.words.map((w) => w.text), sep });
+    rest = rest.slice(adv);
+  }
+  return out;
+}
+
+const isPipe = (sep) => sep === '|' || sep === '|&';
+
+/* The words of a command after wrappers that only run it (sudo, env, VAR=x, nohup, nice, time ...). */
+function unwrap(args) {
+  let i = 0;
+  for (let guard = 0; guard < 8 && i < args.length; guard++) {
+    const a = args[i];
+    if (ASSIGN_RE.test(a)) { i++; continue; }
+    const name = programName(a);
+    if (name === 'sudo' || name === 'doas') {
+      i++;
+      while (i < args.length && args[i].startsWith('-')) { const f = args[i++]; if (SUDO_ARG_FLAGS.has(f)) i++; }
+      continue;
+    }
+    if (name === 'env') {
+      i++;
+      while (i < args.length && (args[i].startsWith('-') || ASSIGN_RE.test(args[i]))) { const f = args[i++]; if (f === '-u' || f === '-C' || f === '-S') i++; }
+      continue;
+    }
+    if (name === 'command' || name === 'exec' || name === 'nohup' || name === 'time' || name === 'builtin' || name === 'setsid') {
+      i++;
+      while (i < args.length && args[i].startsWith('-')) i++;
+      continue;
+    }
+    if (name === 'nice' || name === 'ionice') {
+      i++;
+      while (i < args.length && args[i].startsWith('-')) { const f = args[i++]; if (f === '-n' || f === '-c') i++; }
+      continue;
+    }
+    if (name === 'timeout') {
+      i++;
+      while (i < args.length && args[i].startsWith('-')) i++;
+      i++; // the duration
+      continue;
+    }
+    break;
+  }
+  return args.slice(i);
+}
+
+/* The dangerous path a word names, as 'root', 'home' or 'system', or ''. */
+function dangerousPath(word) {
+  let t = String(word).replace(/\\/g, '/').replace(/\/{2,}/g, '/');
+  if (!t) return '';
+  // Trailing "/", "/*", "/.*", "/." and a bare "*" (a PowerShell "~\*" reaches the tokenizer as "~*") name the same folder.
+  for (let n = 0; n < 4; n++) {
+    let s = t.replace(/\/(?:\*|\.\*|\.|\{\*,\.\*\})?$/, '');
+    if (s === t && t.length > 1 && t.endsWith('*')) s = t.slice(0, -1);
+    if (s === t) break;
+    t = s;
+    if (t === '') return 'root';
+  }
+  if (t === '*') return '';
+  const low = t.toLowerCase();
+  if (HOME_WORDS.has(low)) return 'home';
+  if (SYSTEM_DIRS.has(t)) return 'system';
+  if (/^\/(?:home|Users)\/[^/*.][^/*]*$/.test(t)) return 'home';
+  if (/^[A-Za-z]:$/.test(t)) return 'root';
+  if (/^[A-Za-z]:\/(?:windows|windows\/system32|users|program files|program files \(x86\)|programdata)$/i.test(t)) return 'system';
+  if (/^[A-Za-z]:\/users\/[^/*]+$/i.test(t)) return 'home';
+  return '';
+}
+
+function recursiveFlag(w, head) {
+  // rm's own short flags only, so PowerShell's -Force is not read as a bundle with an r in it.
+  if (/^-[fiIrRdvx]*[rR][fiIrRdvx]*$/.test(w) || w === '--recursive') return true;
+  if (/^-r(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?$/i.test(w)) return true;
+  return CMD_HEADS.has(head) && /^\/s$/i.test(w);
+}
+
+function isCmdFlag(w, head) { return CMD_HEADS.has(head) && /^\/[sqfaA]$/i.test(w); }
+
+/* Words after the command name that are not flags (everything after "--" counts). */
+function operands(args, head) {
+  const out = [];
+  let rest = false;
+  for (const w of args) {
+    if (!rest && w === '--') { rest = true; continue; }
+    if (!rest && (w.startsWith('-') || isCmdFlag(w, head))) continue;
+    out.push(w);
+  }
+  return out;
+}
+
+function redirectTargets(words) {
+  const out = [];
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    if (/^\d*>>?\|?$/.test(w)) { if (i + 1 < words.length) out.push(words[i + 1]); continue; }
+    const m = /^\d*>>?\|?(.+)$/.exec(w);
+    if (m) out.push(m[1]);
+  }
+  return out;
+}
+
+function checkSimple(words, depth) {
+  const args = unwrap(words);
+  if (!args.length) return null;
+  const head = programName(args[0]);
+  const rest = args.slice(1);
+
+  // Shell code inside the command: sh -c "...", eval "...", pwsh -Command "...", cmd /c "...", su -c "..."
+  let code = null;
+  if (SHELLS.has(head) || head === 'su') {
+    const k = rest.findIndex((w) => /^-[A-Za-z]*c[A-Za-z]*$/.test(w));
+    if (k >= 0 && k + 1 < rest.length) code = rest[k + 1];
+  } else if (head === 'eval') {
+    code = rest.join(' ');
+  } else if (POWERSHELLS.has(head)) {
+    const k = rest.findIndex((w) => /^-c(?:ommand)?$/i.test(w));
+    if (k >= 0) code = rest.slice(k + 1).join(' ');
+  } else if (head === 'cmd') {
+    const k = rest.findIndex((w) => /^\/[ck]$/i.test(w));
+    if (k >= 0) code = rest.slice(k + 1).join(' ');
+  }
+  if (code !== null && depth < MAX_DEPTH) {
+    const hit = analyze(code, depth + 1);
+    if (hit) return hit;
+  }
+
+  if (RM_HEADS.has(head)) {
+    if (rest.some((w) => recursiveFlag(w, head)) && operands(rest, head).some((w) => dangerousPath(w))) return 'rm_root_home';
+  }
+  if (head === 'find') {
+    const paths = [];
+    for (const w of rest) { if (w.startsWith('-') || w === '(' || w === '!') break; paths.push(w); }
+    const del = rest.includes('-delete') || rest.some((w, i) => w === '-exec' && /^(?:rm|shred)$/.test(programName(rest[i + 1] || '')));
+    // With a test (-name, -type, -mtime ...) find removes only some files; with none it removes everything below the path.
+    const filtered = rest.some((w) => FIND_TESTS.test(w));
+    if (del && !filtered && paths.some((w) => dangerousPath(w))) return 'rm_root_home';
+  }
+  if (head === 'chmod' || head === 'chown' || head === 'chgrp') {
+    if (rest.some((w) => /^-[A-Za-z]*R[A-Za-z]*$/.test(w) || w === '--recursive')) {
+      const ops = operands(rest, head);
+      const mode = ops[0] || '';
+      const targets = ops.slice(1).map(dangerousPath).filter(Boolean);
+      if (targets.includes('root') || targets.includes('system')) return 'perm_root';
+      if (head === 'chmod' && targets.includes('home') && worldWritable(mode)) return 'perm_root';
+    }
+  }
+  if (head === 'dd') {
+    if (rest.some((w) => w.startsWith('of=') && BLOCK_DEVICE_RE.test(w.slice(3)))) return 'disk_overwrite';
+  }
+  if (DISK_TOOLS.test(head) && rest.some((w) => BLOCK_DEVICE_RE.test(w))) return 'disk_overwrite';
+  return null;
+}
+
+function worldWritable(mode) {
+  if (/^0?[0-7]{2}[2367]$/.test(mode) || /^[0-7]{4}$/.test(mode) && /[2367]$/.test(mode)) return true;
+  const m = /^([ugoa]*)[+=][rwxXst]*w[rwxXst]*$/.exec(mode);
+  return Boolean(m && (m[1] === '' || /[ao]/.test(m[1])));
+}
+
+function isRcPath(w) {
+  const t = String(w).replace(/\\/g, '/').replace(/^~\//, '/').replace(/^\$\{?home\}?\//i, '/');
+  return RC_UNIX_RE.test(t) || RC_PS_RE.test(String(w));
+}
+
+/* The flag before the file a download is saved to: curl -o / --output, wget -O / --output-document, iwr -OutFile. */
+function outFlag(w) {
+  return /^-[A-Za-z]*[oO]$/.test(w) || /^--output(?:-document)?$/.test(w) || /^-out(?:f(?:i(?:l(?:e)?)?)?)?$/i.test(w);
+}
+
+function checkPipeline(pipe) {
+  const heads = pipe.map((s) => { const a = unwrap(s.words); return { args: a, head: a.length ? programName(a[0]) : '' }; });
+  const firstDl = heads.findIndex((h) => DOWNLOADERS.has(h.head));
+  if (firstDl >= 0) {
+    // a download whose output reaches a shell
+    for (let j = firstDl + 1; j < pipe.length; j++) {
+      const h = heads[j];
+      if (!SHELLS.has(h.head)) continue;
+      const rest = h.args.slice(1);
+      // -c runs the code of its argument (checked on its own); -n only reads the script to check its syntax.
+      if (rest.some((w) => /^-[A-Za-z]*[cn][A-Za-z]*$/.test(w))) continue;
+      const files = rest.filter((w) => !w.startsWith('-'));
+      if (!files.length || rest.includes('-s') || rest.includes('-')) return 'pipe_to_shell';
+    }
+    // a download written into a startup file
+    for (let j = 0; j < pipe.length; j++) {
+      const words = pipe[j].words;
+      for (let i = 0; i < words.length; i++) {
+        const w = words[i];
+        const prev = i > 0 ? words[i - 1] : '';
+        let target = null;
+        if (/^\d*>>?\|?$/.test(prev)) target = w;
+        else if (/^\d*>>?\|?.+$/.test(w)) target = w.replace(/^\d*>>?\|?/, '');
+        else if (outFlag(prev)) target = w;
+        else if (/^(?:--output|--output-document|-OutFile)[=:]/i.test(w)) target = w.replace(/^[^=:]*[=:]/, '');
+        else if (heads[j].head === 'tee' && !w.startsWith('-') && i > 0) target = w;
+        if (target !== null && isRcPath(target)) return 'rc_download';
+      }
+    }
+  }
+  // A redirect to a block device, with or without a download.
+  for (const s of pipe) {
+    for (const t of redirectTargets(s.words)) if (BLOCK_DEVICE_RE.test(t)) return 'disk_overwrite';
+  }
+  return null;
+}
+
+function analyze(cmd, depth = 0) {
+  const text = String(cmd);
+  if (text.length > MAX_CHARS) return null;
+  // Text inside quotes is data (echo "a fork bomb is :(){ :|:& };:"); the code a shell runs from a string is checked
+  // again on its own below, so the patterns that do not need the quotes read the text without them.
+  // (Past QUOTE_SCAN_MAX the quotes are left in: finding every pair is the one step that is not linear.)
+  const bare = text.length > QUOTE_SCAN_MAX ? text : text.replace(QUOTED_RE, "''");
+  if (FORK_BOMB_RE.test(bare)) return 'fork_bomb';
+  if (SHELL_RUNS_DOWNLOAD_RE.test(text) || SOURCE_DOWNLOAD_RE.test(bare) || PS_PIPE_RE.test(bare) || PS_CALL_RE.test(bare)) return 'pipe_to_shell';
+  if (PS_DISK_RE.test(bare)) return 'disk_overwrite';
+  const segs = segmentsOf(text);
+  let pipe = [];
+  for (const seg of segs) {
+    const hit = checkSimple(seg.words, depth);
+    if (hit) return hit;
+    pipe.push(seg);
+    if (!isPipe(seg.sep)) {
+      const hit2 = checkPipeline(pipe);
+      if (hit2) return hit2;
+      pipe = [];
+    }
+  }
+  return pipe.length ? checkPipeline(pipe) : null;
+}
+
+/**
+ * Check one shell command (Bash, sh, zsh or PowerShell text).
+ * Returns the same shape as evaluate(): { verdict: 'allow' | 'block', confidence, rule, reason, engine, rules_version }.
+ */
+function checkCommand(command) {
+  const hit = typeof command === 'string' ? analyze(command, 0) : null;
+  if (!hit) return { verdict: 'allow', confidence: 1.0, rule: 'none', reason: null, engine: 'oss-local', rules_version: COMMAND_RULES_VERSION };
+  return {
+    verdict: 'block',
+    confidence: 0.95,
+    rule: 'destructive:' + hit,
+    reason: 'Destructive command: ' + REASONS[hit],
+    engine: 'oss-local',
+    rules_version: COMMAND_RULES_VERSION,
+  };
+}
+
+/** The deny message for the agent hooks, or null. */
+function denial(command) {
+  const hit = typeof command === 'string' ? analyze(command, 0) : null;
+  if (!hit) return null;
+  return 'zn blocked this: ' + REASONS[hit] + '. Next step: do not run it; tell the user what you meant to do and let them run it in their own terminal if they want it.';
+}
+
+module.exports = { checkCommand, denial, COMMAND_RULES_VERSION, RULES: Object.keys(REASONS).map((k) => 'destructive:' + k) };

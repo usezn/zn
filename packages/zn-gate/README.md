@@ -258,6 +258,7 @@ The local engine is a deterministic signature and normalization layer. It is fas
 - `ZN_STAGE`: `v30` (default, current production API) or `prod` (legacy endpoint). `ZN_API_URL` overrides both.
 - `NO_COLOR` (any non-empty value) or `TERM=dumb`: command output has no colors, symbols or box-drawing lines; the status words (ALLOWED, BLOCKED, PASSED, ...) stay. Colors are also off when the output is not a terminal.
 - `hooks.replaceToolOutputOnSecret` in `~/.zn/config.json` (`{"hooks": {"replaceToolOutputOnSecret": true}}`): Codex only, off by default. When a tool output holds a real secret value (not only a marker), zn also returns `continue: false` with a stop reason. Codex then replaces the tool result with that text, so the model may get it instead of zn's tokenized copy of the output. Environment variables do not turn it on.
+- `hooks.blockDestructiveCommands` in `~/.zn/config.json` (`{"hooks": {"blockDestructiveCommands": true}}`): off by default. The agent hooks then refuse a few destructive shell commands (recursive delete of the home folder or the root, a download piped to a shell, writes to a disk device, `chmod -R 777 /`, a fork bomb, a download written into a shell startup file). `ZN_BLOCK_DESTRUCTIVE=1` also turns it on and can never turn it off. It reads command text only and is not a sandbox; see [Destructive commands](https://github.com/usezn/zn/blob/main/docs/destructive-commands.md).
 
 To enable the cloud check for one MCP server, add to its entry: `"env": { "ZN_CLOUD": "1", "ZN_API_KEY": "zn_live_..." }`.
 

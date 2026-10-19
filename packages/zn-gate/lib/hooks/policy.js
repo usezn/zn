@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-19.41';
+const POLICY_RULES_VERSION = '2026-10-19.42';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1718,6 +1718,12 @@ function bashDenialOf(cmd, opts = {}) {
   const admin = adminCommand(cmd);
   if (admin) return adminDenial(admin, opts, cmd);
   if (keychainQuery(cmd, opts.env || process.env)) return KEYCHAIN_MESSAGE;
+  // Optional (off by default): recursive delete of home or root, download piped to a shell, disk writes ... see lib/destructive.js.
+  if (opts.blockDestructive === true) {
+    // Loaded only now, so a hook with the check off does not pay for it.
+    const destructiveDeny = require('../destructive').denial(cmd);
+    if (destructiveDeny) return destructiveDeny;
+  }
   // The context (home, project, agent directories) is built once per command.
   opts = { ...opts, ctx: contextOf(opts) };
   // The code of a shell inside the command (sh -c "...") is checked as a command of its own, with the same budget.
