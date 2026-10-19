@@ -2,7 +2,6 @@ import json
 import os
 import shutil
 import tempfile
-import pytest
 
 from zn_gate.evidence import log_evidence, verify_evidence_ledger, get_evidence_stats, export_evidence_ledger, GENESIS_HASH
 

@@ -21,7 +21,7 @@ from .rules import RULES_VERSION, evaluate, mask_token_runs
 from .rules import SECRET_PATTERNS as _DLP_PATTERNS, redact_secrets as _dlp_redact, redact_scan_secrets as _scan_redact
 from . import mcp_secrets as _mcp
 from .client import analyze, is_cloud_enabled, resolve_endpoint
-from .evidence import log_evidence, verify_evidence_ledger, get_evidence_stats, export_evidence_ledger, recovery_hint, EVIDENCE_FILE
+from .evidence import verify_evidence_ledger, get_evidence_stats, export_evidence_ledger, recovery_hint, EVIDENCE_FILE
 
 # Secrets that span several lines (a PEM private key block). The line-by-line
 # scan never sees BEGIN and END together, so these run on the whole file.

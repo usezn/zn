@@ -239,12 +239,6 @@ def test_node_scrub_engine_hides_the_same_keys_as_python(index):
     assert not mismatches, f"{len(mismatches)} of {len(cases)} keys hidden by one engine only: {mismatches[:3]}"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=("Node lib/rules.js redactSecrets only runs the SECRET_PATTERNS table; the Python redact_secrets "
-            "also runs the provider formats (PROVIDER_SECRET_PATTERNS). Provider keys therefore survive "
-            "redactSecrets on the Node side. Open: port or share the table."),
-)
 def test_node_rules_redact_secrets_gives_the_same_text_as_python():
     items = [text for text, _key, _ in _CORPUS]
     node = _run_node(NODE_RULES_SCRIPT, NODE_RULES, items)
