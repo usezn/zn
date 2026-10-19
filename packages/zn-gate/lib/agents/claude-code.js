@@ -479,4 +479,5 @@ module.exports = {
   settingsFile,
   configDir,
   hookCommand,
+  ourHooks,
 };

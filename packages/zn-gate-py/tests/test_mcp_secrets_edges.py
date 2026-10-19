@@ -269,7 +269,7 @@ class TestNodeParity(unittest.TestCase):
         cases = _parity_corpus()
         node = _run_node([{"text": c["text"], "file": c["file"]} for c in cases])
         self.assertEqual(len(node), len(cases))
-        for c, n in zip(cases, node):
+        for c, n in zip(cases, node, strict=True):
             with self.subTest(case=c["name"], file=c["file"]):
                 spans = mcp.find_mcp_config_secret_spans(c["text"], c["file"])
                 self.assertEqual(spans, n["spans"])
@@ -288,7 +288,7 @@ class TestNodeParity(unittest.TestCase):
         out = subprocess.run([node, "-e", _NODE_HELPERS, str(NODE_LIB), json.dumps(names)], capture_output=True, text=True,
                              encoding="utf-8", timeout=60)
         self.assertEqual(out.returncode, 0, out.stderr[:300])
-        for name, got in zip(names, json.loads(out.stdout)):
+        for name, got in zip(names, json.loads(out.stdout), strict=True):
             with self.subTest(name=name):
                 norm = mcp.normalize_name(name)
                 self.assertEqual(got, [norm, mcp.is_secret_name(norm), mcp.suggested_name(norm),

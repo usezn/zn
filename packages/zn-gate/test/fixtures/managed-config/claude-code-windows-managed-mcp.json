@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "secrets": {
+      "type": "stdio",
+      "command": "zn",
+      "args": [
+        "secrets-mcp",
+        "--agent",
+        "claude-code"
+      ]
+    }
+  }
+}
