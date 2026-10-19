@@ -23,7 +23,7 @@ for h in hooks:
 print("schema OK:", ids)
 PY
 
-repo="$work/target"
+repo="$work/project"
 mkdir -p "$repo"
 cd "$repo"
 git init -q
