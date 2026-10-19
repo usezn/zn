@@ -51,7 +51,7 @@ const { gitStatusOf } = require('../broker/files');
 const deps = require('../deps');
 const { shQuote, SH_QUOTE_ESCAPE, portablePath } = require('../shell-quote');
 const { znCommand } = require('../zn-command');
-const { isUnsafeText, hasUnsafeText } = require('../safe-text');
+const { hasUnsafeText } = require('../safe-text');
 
 const SECRET_SOURCES = new Set(['exact', 'pattern']);
 const POST_TOOLS = new Set(['read', 'bash', 'powershell', 'monitor', 'grep', 'lsp', 'webfetch', 'mcp', 'mcpresource']);
