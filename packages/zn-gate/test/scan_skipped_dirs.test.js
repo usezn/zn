@@ -140,14 +140,19 @@ test('scan names the dependencies reason for vendor next to a manifest', () => {
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('scan text output escapes control characters in directory and file names', () => {
+test('scan text output escapes control characters in directory and file names', (t) => {
   const esc = String.fromCharCode(27);
   const bs = String.fromCharCode(92);
   const dir = tree({ ok: 'x' });
   try {
     const odd = 'x' + esc + '[2Jx';
-    fs.mkdirSync(path.join(dir, odd, 'dist'), { recursive: true });
-    fs.writeFileSync(path.join(dir, odd, 'dist', 'a.md'), 'hello\n');
+    try {
+      fs.mkdirSync(path.join(dir, odd, 'dist'), { recursive: true });
+      fs.writeFileSync(path.join(dir, odd, 'dist', 'a.md'), 'hello\n');
+    } catch (err) {
+      t.skip('filesystem refuses control characters in names: ' + err.code);
+      return;
+    }
     const text = spawnSync(process.execPath, [CLI, 'scan', dir], { encoding: 'utf8', env: ENV }).stdout;
     assert.ok(!text.includes(esc), 'no raw ESC in the output');
     assert.ok(text.includes('x' + bs + 'x1b[2Jx'), text);
