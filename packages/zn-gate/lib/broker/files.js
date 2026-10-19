@@ -8,8 +8,7 @@
 
 const fs = require('fs');
 const path = require('path');
-// Loaded on first use: a hook that never starts a process does not pay for the module.
-const childProcess = () => require('child_process');
+const { spawnSync } = require('child_process');
 
 function existingDir(p) {
   let cur = path.resolve(p);
@@ -33,10 +32,10 @@ function existingDir(p) {
 function gitStatusOf(file) {
   const abs = path.resolve(file);
   const dir = existingDir(path.dirname(abs));
-  const top = childProcess().spawnSync('git', ['-C', dir, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', windowsHide: true });
+  const top = spawnSync('git', ['-C', dir, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', windowsHide: true });
   if (top.error) return 'unknown';
   if (top.status !== 0) return 'outside';
-  const ign = childProcess().spawnSync('git', ['-C', dir, 'check-ignore', '-q', '--', abs], { encoding: 'utf8', windowsHide: true });
+  const ign = spawnSync('git', ['-C', dir, 'check-ignore', '-q', '--', abs], { encoding: 'utf8', windowsHide: true });
   if (ign.error) return 'unknown';
   if (ign.status === 0) return 'ignored';
   if (ign.status === 1) return 'tracked';

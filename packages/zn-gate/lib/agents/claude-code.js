@@ -50,8 +50,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-// Loaded on first use: a hook that never starts a process does not pay for the module.
-const childProcess = () => require('child_process');
+const { spawnSync } = require('child_process');
 const { writeFileAtomic } = require('../broker/files');
 const { whichSync } = require('../broker/markers');
 const { shQuote, portablePath } = require('../shell-quote');
@@ -343,7 +342,7 @@ function installMcp(opts, report) {
     report.warnings.push('`claude` is a batch file (' + path.basename(claude) + '), which zn does not run through cmd.exe: register the MCP server yourself with: ' + manual);
     return;
   }
-  const r = childProcess().spawnSync(claude, ['mcp', 'add-json', '--scope', 'user', MCP_SERVER_NAME, JSON.stringify({ type: 'stdio', ...conf })],
+  const r = spawnSync(claude, ['mcp', 'add-json', '--scope', 'user', MCP_SERVER_NAME, JSON.stringify({ type: 'stdio', ...conf })],
     { encoding: 'utf8', windowsHide: true });
   if (r.status === 0) report.mcp = 'claude mcp (user scope)';
   else report.warnings.push('`claude mcp add-json` failed (' + String(r.stderr || r.stdout || r.error || '').trim().slice(0, 300) + '): register the MCP server yourself with: ' + manual);
@@ -422,7 +421,7 @@ function uninstall(opts = {}) {
       } else if (claude && /\.(?:cmd|bat)$/i.test(claude)) {
         report.warnings.push('`claude` is a batch file (' + path.basename(claude) + '), which zn does not run through cmd.exe: remove the MCP server yourself with: claude mcp remove --scope user ' + MCP_SERVER_NAME);
       } else if (claude) {
-        childProcess().spawnSync(claude, ['mcp', 'remove', '--scope', 'user', MCP_SERVER_NAME], { encoding: 'utf8', windowsHide: true });
+        spawnSync(claude, ['mcp', 'remove', '--scope', 'user', MCP_SERVER_NAME], { encoding: 'utf8', windowsHide: true });
       } else if (ours === true) {
         report.warnings.push('`claude` is not on your PATH: remove zn\'s MCP server yourself with: claude mcp remove --scope user ' + MCP_SERVER_NAME);
       }
