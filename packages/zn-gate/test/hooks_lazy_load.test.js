@@ -77,7 +77,8 @@ test('the compile cache lives under ZN_HOME, closed to other users', { skip: pro
   fs.mkdirSync(home, { mode: 0o700 });
   const dir = enableIn(home);
   if (dir === null) return; // Node older than 22.1: no compile cache, nothing to check
-  assert.ok(dir.startsWith(fs.realpathSync(home)), 'cache directory: ' + dir);
+  // Compared as real paths: on macOS the temporary folder is under /var, a link to /private/var.
+  assert.ok(fs.realpathSync(dir).startsWith(fs.realpathSync(home)), 'cache directory: ' + dir);
   for (const d of [home, path.join(home, 'cache'), path.join(home, 'cache', 'compile')]) {
     assert.equal(fs.statSync(d).mode & 0o077, 0, d + ' must be private');
   }
