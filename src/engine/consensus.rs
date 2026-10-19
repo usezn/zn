@@ -140,17 +140,22 @@ impl ConsensusManager {
         Ok(action.status.clone())
     }
 
-    /// Deny an action
+    /// Deny an action. A denied action is final and is removed from the queue
+    /// at once, so it can neither collect signatures later nor pile up.
     pub fn deny_action(&self, action_id: &str, _reason: &str) -> std::result::Result<(), String> {
-        let mut action = self
+        // Atomic: only a still-pending entry is removed.
+        if self
             .pending
-            .get_mut(action_id)
-            .ok_or_else(|| "Action not found".to_string())?;
-        if action.status != ActionStatus::Pending {
-            return Err("Action not found or already processed".to_string());
+            .remove_if(action_id, |_, a| a.status == ActionStatus::Pending)
+            .is_some()
+        {
+            return Ok(());
         }
-        action.status = ActionStatus::Denied;
-        Ok(())
+        if self.pending.contains_key(action_id) {
+            Err("Action not found or already processed".to_string())
+        } else {
+            Err("Action not found".to_string())
+        }
     }
 
     /// Check if a specific action has been approved and matches the current request
@@ -390,7 +395,7 @@ mod tests {
         let mgr = manager(true, &["x"], 1);
         let id = propose(&mgr, "x", "{}");
         mgr.deny_action(&id, "policy said no").unwrap();
-        assert_eq!(mgr.get_status(&id), Some(ActionStatus::Denied));
+        assert_eq!(mgr.get_status(&id), None);
         assert!(!mgr.check_approval("agent-1", "x", "{}"));
         assert!(mgr.list_pending().is_empty());
     }
@@ -442,7 +447,7 @@ mod tests {
         mgr.deny_action(&id, "no").unwrap();
         let err = mgr.sign_action(&id, WitnessType::NeuralJudge).unwrap_err();
         assert_eq!(err, "Action not found or already processed");
-        assert_eq!(mgr.get_status(&id), Some(ActionStatus::Denied));
+        assert_eq!(mgr.get_status(&id), None);
         assert!(!mgr.check_approval("agent-1", "x", "{}"));
     }
 
@@ -465,6 +470,34 @@ mod tests {
         assert!(mgr.deny_action(&id, "too late").is_err());
         assert_eq!(mgr.get_status(&id), Some(ActionStatus::Approved));
         assert!(mgr.check_approval("agent-1", "x", "{}"));
+    }
+
+    #[test]
+    fn denied_actions_are_purged_and_do_not_pile_up() {
+        let mgr = manager(true, &["x"], 1);
+        for i in 0..50 {
+            let id = propose(&mgr, "x", &format!("{{\"n\":{i}}}"));
+            mgr.deny_action(&id, "no").unwrap();
+        }
+        assert!(mgr.pending.is_empty());
+    }
+
+    #[test]
+    fn denying_twice_is_an_error() {
+        let mgr = manager(true, &["x"], 1);
+        let id = propose(&mgr, "x", "{}");
+        mgr.deny_action(&id, "no").unwrap();
+        assert!(mgr.deny_action(&id, "again").is_err());
+    }
+
+    #[test]
+    fn denial_leaves_other_pending_actions_untouched() {
+        let mgr = manager(true, &["x"], 1);
+        let a = propose(&mgr, "x", "{\"a\":1}");
+        let b = propose(&mgr, "x", "{\"b\":2}");
+        mgr.deny_action(&a, "no").unwrap();
+        assert_eq!(mgr.get_status(&b), Some(ActionStatus::Pending));
+        assert_eq!(mgr.list_pending().len(), 1);
     }
 
     #[test]
