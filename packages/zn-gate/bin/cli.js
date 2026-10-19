@@ -411,10 +411,29 @@ function homeMcpFiles() {
 // user's own MCP configs (--include-home) outside it is shown as ~/...
 function displayPath(filePath, homeFiles) {
   if (homeFiles && homeFiles.has(filePath)) {
-    const fromHome = path.relative(os.homedir(), filePath);
+    let realHome = os.homedir();
+    try { realHome = fs.realpathSync(realHome); } catch (e) { /* keep it */ }
+    const fromHome = path.relative(realHome, realFolderOf(filePath));
     if (!fromHome.startsWith('..') && !path.isAbsolute(fromHome)) return '~/' + fromHome.split(path.sep).join('/');
   }
-  return path.relative(process.cwd(), filePath);
+  return relativeToCwd(filePath);
+}
+
+// The folder of a path with every link followed (the name itself is kept), or
+// the path unchanged when it cannot be resolved.
+function realFolderOf(p) {
+  const abs = path.resolve(p);
+  try { return path.join(fs.realpathSync(path.dirname(abs)), path.basename(abs)); } catch (e) { return abs; }
+}
+
+// A path relative to the current directory. Both sides are resolved first: on
+// macOS the temporary folder is /var/..., a link to /private/var/..., and the
+// current directory is reported as /private/var/..., so comparing them as
+// they are gives "../../private/var/...".
+function relativeToCwd(filePath) {
+  let cwd = process.cwd();
+  try { cwd = fs.realpathSync(cwd); } catch (e) { /* keep it */ }
+  return path.relative(cwd, realFolderOf(filePath));
 }
 
 function scanDirectory(targetPath, includeCode = false, options = {}) {
