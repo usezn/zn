@@ -18,6 +18,7 @@ function summarize(result, failOn) {
     failed,
     agents: result.agents,
     truncated: Boolean(result.truncated),
+    skippedDirs: (result.skippedDirs || []).length,
   };
 }
 
@@ -39,6 +40,7 @@ function toJson(result, meta) {
       fix: f.fix,
       references: f.references,
     })),
+    skippedDirs: (result.skippedDirs || []).map((d) => ({ dir: d.dir, reason: d.reason })),
     summary: summarize(result, meta.failOn),
   }, null, 2) + '\n';
 }
@@ -81,6 +83,13 @@ function toText(result, meta) {
   if (s.findings === 0) tail = 'No findings in ' + s.files + ' agent file' + (s.files === 1 ? '' : 's') + '.';
   lines.push(s.failed ? paint('31;1', tail) : tail);
   if (result.truncated) lines.push('Note: the scan stopped early (see ZNA020); some files were not checked.');
+  const dirs = result.skippedDirs || [];
+  if (dirs.length) {
+    lines.push('');
+    lines.push('Directories not read (' + dirs.length + '):');
+    for (const d of dirs.slice(0, 20)) lines.push('  ' + safeText(d.dir) + ' (' + d.reason + ')');
+    if (dirs.length > 20) lines.push('  ... and ' + (dirs.length - 20) + ' more');
+  }
   return lines.join('\n') + '\n';
 }
 

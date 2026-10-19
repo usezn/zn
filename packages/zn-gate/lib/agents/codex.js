@@ -76,6 +76,7 @@ const PRE_MATCHER = '^(Bash|apply_patch|mcp__.+)$';
 // Every tool: output of tools zn does not know is tokenized like MCP output.
 const POST_MATCHER = '.*';
 const HOOK_TIMEOUT_S = 30;
+const HOOK_STATUS = 'zn: checking for secrets';
 
 // Patches longer than this are refused before parsing, like shell commands over
 // 100 KB: checking them could take longer than the agent waits for the hook.
@@ -328,19 +329,9 @@ function mcpSnippet(opts = {}) {
     '\nargs = [' + JSON.stringify(cli) + ', "secrets-mcp", "--agent", "codex"]';
 }
 
-function install(opts = {}) {
-  const file = hooksFile(opts);
-  const data = cfg.readJson(file);
-  const report = { settings: file, backup: cfg.backup(file), warnings: [] };
-  data.hooks = cfg.hooksOf(data, file);
-  const h = {
-    type: 'command',
-    command: cfg.hookCommand(id, opts),
-    commandWindows: cfg.hookCommandWindows(id, opts),
-    timeout: HOOK_TIMEOUT_S,
-    statusMessage: 'zn: checking for secrets',
-  };
-  const ours = {
+/* The hook groups zn writes, by event, for one handler (also used to print a managed requirements.toml). */
+function hookGroups(h) {
+  return {
     PreToolUse: { matcher: PRE_MATCHER, hooks: [h] },
     // Same matcher as PreToolUse: the approval prompt is asked only for calls zn's PreToolUse check let through.
     PermissionRequest: { matcher: PRE_MATCHER, hooks: [h] },
@@ -352,6 +343,21 @@ function install(opts = {}) {
     // Stop ignores matchers in Codex; the group has none.
     Stop: { hooks: [h] },
   };
+}
+
+function install(opts = {}) {
+  const file = hooksFile(opts);
+  const data = cfg.readJson(file);
+  const report = { settings: file, backup: cfg.backup(file), warnings: [] };
+  data.hooks = cfg.hooksOf(data, file);
+  const h = {
+    type: 'command',
+    command: cfg.hookCommand(id, opts),
+    commandWindows: cfg.hookCommandWindows(id, opts),
+    timeout: HOOK_TIMEOUT_S,
+    statusMessage: HOOK_STATUS,
+  };
+  const ours = hookGroups(h);
   for (const [event, group] of Object.entries(ours)) {
     data.hooks[event] = strip(data.hooks[event]);
     data.hooks[event].push(group);
@@ -406,6 +412,9 @@ module.exports = {
   capabilities: { ask: false, rewriteInput: false, rewriteOutput: 'block' },
   PRE_MATCHER,
   POST_MATCHER,
+  HOOK_TIMEOUT_S,
+  HOOK_STATUS,
+  hookGroups,
   hooksFile,
   patchFiles,
   patchScan,
