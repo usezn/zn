@@ -20,7 +20,8 @@ on:
     branches: [ main, next, 'release/**' ]
     types: [ opened, synchronize, reopened, labeled, ready_for_review ]
     # Pull requests run this workflow (it gives no required check) only when they change what the
-    # plugin checks read: the plugins, the marketplace files and the zn-gate version the plugin pins.
+    # plugin checks read: the plugins, the marketplace files, the zn-gate version the plugin pins and the
+    # hook runner and CLI the launcher benchmark compares against.
     paths:
       - 'plugins/**'
       - 'skill/**'
@@ -29,6 +30,8 @@ on:
       - '.agents/**'
       - 'packages/zn-gate/package.json'
       - 'packages/zn-gate/package-lock.json'
+      - 'packages/zn-gate/lib/hooks/**'
+      - 'packages/zn-gate/bin/**'
       - '.github/scripts/ci-scope.sh'
       - '.github/workflows/plugins.yml'
   # Daily full run on the default branch.
