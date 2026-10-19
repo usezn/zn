@@ -1,0 +1,2 @@
+### Changed
+- Docs: a new upgrading guide, `docs/upgrading.md`, says what to do when you update zn-gate: when to run `zn hooks install <agent>` again, why Codex asks you to trust the hooks again, what to do after Node.js is upgraded or moved (for example with nvm), how to check with `zn-gate check`, and a table of what each release since 1.8.0 asks you to do. `docs/compat.md` now links to it instead of repeating the steps.

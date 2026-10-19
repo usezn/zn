@@ -1,0 +1,2 @@
+sent: 1 file(s), 0 finding(s)
+local: 2 file(s), 4 finding(s) -> AWS_ACCESS_KEY_ID(raw) in rollout-2026-10-19T08-17-36-01a1533c-ce02-7d10-b973-5fc41108c76d.jsonl, AWS_SECRET_ACCESS_KEY(raw) in rollout-2026-10-19T08-17-36-01a1533c-ce02-7d10-b973-5fc41108c76d.jsonl, AWS_ACCESS_KEY_ID(raw) in codex_events.jsonl, AWS_SECRET_ACCESS_KEY(raw) in codex_events.jsonl

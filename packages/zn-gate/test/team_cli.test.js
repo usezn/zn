@@ -114,7 +114,7 @@ test('a failed join exits 1 and names the reason; a locked vault adds the unlock
 });
 
 test('a thrown value that is not an Error is still reported', async () => {
-  fake.teamLeave = async () => { throw 'plain failure'; }; // eslint-disable-line no-throw-literal
+  fake.teamLeave = async () => { throw 'plain failure'; };
   const r = await capture(() => runTeamCommand(['team', 'leave']));
   assert.strictEqual(r.code, 1);
   assert.strictEqual(r.stderr, '[zn] plain failure\n');

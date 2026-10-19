@@ -14,7 +14,7 @@ import re
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from . import __version__
 from .rules import RULES_VERSION, evaluate, mask_token_runs
@@ -67,6 +67,23 @@ def _decode_scan_text(raw: bytes) -> str:
 _SAFE_FILE_ARG = re.compile(r"[A-Za-z0-9._/@+-]+")
 
 
+def _relative_to_cwd(file: str) -> str:
+    """The path relative to the current directory, with the links on both sides
+    followed first. On macOS the temporary folder is /var/..., a link to
+    /private/var/..., and the current directory is reported as /private/var/...,
+    so comparing them as they are gives "../../private/var/..."."""
+    try:
+        cwd = os.path.realpath(os.getcwd())
+    except OSError:
+        cwd = os.getcwd()
+    absolute = os.path.abspath(file)
+    try:
+        resolved = os.path.join(os.path.realpath(os.path.dirname(absolute)), os.path.basename(absolute))
+    except OSError:
+        resolved = absolute
+    return os.path.relpath(resolved, cwd)
+
+
 def _leak_next_step(file: str, rule: str) -> str:
     """What to do about a secret found by the scan, in plain words (never the
     value). The same text as secretNextStep in the Node.js package; the file
@@ -76,7 +93,7 @@ def _leak_next_step(file: str, rule: str) -> str:
                 "and replace it if the file was ever committed or shared.")
     if re.match(r"\.env", os.path.basename(file), re.IGNORECASE):
         try:
-            rel = os.path.relpath(file)
+            rel = _relative_to_cwd(file)
         except ValueError:  # another drive on Windows
             rel = file
         if os.sep != "/":  # Windows: npx takes forward slashes too
@@ -180,7 +197,7 @@ def cmd_test(args: argparse.Namespace) -> int:
 
 def cmd_analyze(args: argparse.Namespace) -> int:
     text = args.text
-    options = {
+    options: Dict[str, Any] = {
         "api_key": getattr(args, "key", None) or os.environ.get("ZN_API_KEY"),
         "stage": getattr(args, "stage", None) or os.environ.get("ZN_STAGE") or "v30",
         "api_url": getattr(args, "url", None) or os.environ.get("ZN_API_URL"),
@@ -278,7 +295,7 @@ def _scan_file(file_path: Path, shown: Optional[str] = None, mcp_only: bool = Fa
     # printed, even when another rule fires on it (the line on its own does
     # not look like a key, so it would not be redacted).
     blocks = []  # (rule, first line, last line, header)
-    key_lines = set()
+    key_lines: Set[int] = set()
     for name, rx, header_rx in _MULTILINE_RULES:
         for m in rx.finditer(content):
             # A block on one line is redacted by the line pass.
@@ -408,6 +425,42 @@ def _home_display(file_path: Path) -> str:
         return str(file_path)
 
 
+# Directory names that scan does not enter. Caches and dependency stores are
+# skipped quietly; the other names are skipped by name and reported, because a
+# project can keep its own prompt or agent files there. `target` and `vendor`
+# are build output or dependencies only next to a build file or manifest, so
+# without one they are read. Test directories are read too: fixtures in them
+# can hold real secrets. This list mirrors packages/zn-gate/lib/prune.js, and a
+# parity test compares the two.
+_SCAN_SKIP_DIRS = {
+    "node_modules", ".git", ".next", ".turbo", ".idea", ".venv", "venv", "__pycache__", ".eggs",
+    "dist", "build", "target", "vendor",
+}
+_SILENT_SKIP_DIRS = {
+    "node_modules", ".git", ".next", ".turbo", ".idea", ".venv", "venv", "__pycache__", ".eggs",
+}
+_SKIP_MARKERS = {
+    "target": ("Cargo.toml", "pom.xml", "build.gradle", "build.gradle.kts", "build.sbt"),
+    "vendor": ("go.mod", "composer.json", "Gemfile", "Cargo.toml"),
+}
+
+
+def _prune_info(name: str, parent: str) -> Optional[Dict[str, Any]]:
+    """None when the directory must be read, else {"silent": bool, "reason": str}."""
+    marker = None
+    needed = _SKIP_MARKERS.get(name)
+    if needed:
+        marker = next((m for m in needed if os.path.exists(os.path.join(parent, m))), None)
+        if marker is None:
+            return None
+    if name in _SILENT_SKIP_DIRS:
+        return {"silent": True, "reason": "skipped by name"}
+    reason = "skipped by name: " + ("dependencies" if name == "vendor" else "build output")
+    if marker:
+        reason += " next to " + marker
+    return {"silent": False, "reason": reason}
+
+
 def cmd_scan(args: argparse.Namespace) -> int:
     target_path = Path(args.path)
     if not target_path.exists():
@@ -415,13 +468,15 @@ def cmd_scan(args: argparse.Namespace) -> int:
         return 2
 
     files_to_scan: List[Path] = []
-    skip_dirs = {".git", "node_modules", "venv", ".venv", "__pycache__", "dist", "build", ".eggs", "target", ".next"}
-    
+    skip_dirs = _SCAN_SKIP_DIRS
+    user_excluded = set()
+    skipped_dirs: List[Dict[str, str]] = []
+
     if getattr(args, "exclude", None):
         for ed in args.exclude.split(","):
             ed = ed.strip()
             if ed:
-                skip_dirs.add(ed)
+                user_excluded.add(ed)
 
     valid_exts = {".txt", ".md", ".json", ".yaml", ".yml", ".py", ".ts", ".js", ".prompt", ".env", ".toml", ".pem", ".key"}
     if getattr(args, "include", None):
@@ -436,7 +491,18 @@ def cmd_scan(args: argparse.Namespace) -> int:
         files_to_scan.append(target_path)
     else:
         for root, dirs, files in os.walk(target_path):
-            dirs[:] = [d for d in dirs if d not in skip_dirs]
+            kept = []
+            for d in dirs:
+                if d in user_excluded:
+                    continue
+                if d in skip_dirs:
+                    pruned = _prune_info(d, root)
+                    if pruned:
+                        if not pruned["silent"]:
+                            skipped_dirs.append({"dir": str(Path(root) / d), "reason": pruned["reason"]})
+                        continue
+                kept.append(d)
+            dirs[:] = kept
             for f in files:
                 p = Path(root) / f
                 if p.suffix.lower() in valid_exts or p.name.startswith(".env") or p.name in _KEY_FILE_NAMES:
@@ -469,14 +535,15 @@ def cmd_scan(args: argparse.Namespace) -> int:
         scanned += 1
         all_violations.extend(_scan_file(fp, shown, str(fp) in mcp_only_files))
 
-    _print_report(getattr(args, "format", "text"), scanned, skipped, all_violations)
+    _print_report(getattr(args, "format", "text"), scanned, skipped, all_violations, skipped_dirs)
     if all_violations and not getattr(args, "no_fail", False):
         return 1
     return 0
 
 
-def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_violations: List[Dict[str, Any]]) -> None:
+def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_violations: List[Dict[str, Any]], skipped_dirs: Optional[List[Dict[str, str]]] = None) -> None:
     """Print the scan report: rule names, fixed text, counts and redacted snippets only."""
+    skipped_dirs = skipped_dirs or []
     leak_count = sum(1 for v in all_violations if v.get("type") == "secret_leak")
     other_count = len(all_violations) - leak_count
     if fmt == "github":
@@ -491,16 +558,21 @@ def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_vio
             print(f"::error file={_gh_property(v['file'])},line={int(v['line'])},title={title}::{_gh_message(message)}")
         for s in skipped:
             print(f"::notice file={_gh_property(s['file'])},title=Not scanned::{_gh_message(s['reason'])}")
-        print(f"\n[zn-gate] Scanned {scanned} files ({len(skipped)} not scanned). Found {leak_count} secrets and {other_count} security threats.")
+        for sd in skipped_dirs:
+            print(f"::notice file={_gh_property(sd['dir'])},title=Directory not scanned::{_gh_message(sd['reason'])}")
+        dir_note = f" and {len(skipped_dirs)} director{'y' if len(skipped_dirs) == 1 else 'ies'} skipped" if skipped_dirs else ""
+        print(f"\n[zn-gate] Scanned {scanned} files ({len(skipped)} not scanned{dir_note}). Found {leak_count} secrets and {other_count} security threats.")
     elif fmt == "json":
         print(json.dumps({
             "total_files": scanned,
             "total_skipped": len(skipped),
+            "total_skipped_dirs": len(skipped_dirs),
             # Every finding, secrets included (as before); total_secrets counts the secrets alone.
             "total_threats": len(all_violations),
             "total_secrets": leak_count,
             "threats": all_violations,
             "skipped": skipped,
+            "skipped_dirs": skipped_dirs,
         }, indent=2))
     else:
         print(f"\n{_lead(SHIELD)}zn-gate Security Scanner — Scanned {scanned} files")
@@ -510,6 +582,12 @@ def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_vio
                 print(f"  {s['file']} ({s['reason']})")
             if len(skipped) > 20:
                 print(f"  ... and {len(skipped) - 20} more")
+        if skipped_dirs:
+            print(f"Directories not scanned ({len(skipped_dirs)}):")
+            for sd in skipped_dirs[:20]:
+                print(f"  {sd['dir']} ({sd['reason']})")
+            if len(skipped_dirs) > 20:
+                print(f"  ... and {len(skipped_dirs) - 20} more")
         if not all_violations:
             print(f"{_lead(CHECK)}All scanned prompts, tool definitions, and files are clean!\n")
             return

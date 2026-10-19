@@ -1252,4 +1252,167 @@ mod tests {
         assert_eq!(texts_in(&b, "victim", "v", 1).await, vec!["v0", "v1", "v2"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn memory_error_messages_and_give_up_classification() {
+        let deadline: anyhow::Error = MemoryError::SearchDeadline(1000).into();
+        assert_eq!(deadline.to_string(), "search did not finish within 1000 ms");
+        assert!(MemoryError::is_search_give_up(&deadline));
+        // A context layer keeps the typed error reachable.
+        let wrapped = deadline.context("searching");
+        assert!(MemoryError::is_search_give_up(&wrapped));
+
+        let busy: anyhow::Error = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
+            None,
+        )
+        .into();
+        assert!(MemoryError::is_search_give_up(&busy));
+        let locked: anyhow::Error = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_LOCKED),
+            None,
+        )
+        .into();
+        assert!(MemoryError::is_search_give_up(&locked));
+
+        // Other errors are real failures, not deliberate give-ups.
+        assert!(!MemoryError::is_search_give_up(&anyhow!("disk full")));
+        let other: anyhow::Error = rusqlite::Error::QueryReturnedNoRows.into();
+        assert!(!MemoryError::is_search_give_up(&other));
+    }
+
+    #[tokio::test]
+    async fn dimension_and_value_errors_name_the_problem() {
+        let dir = temp_dir("errmsg");
+        let m = VectorMemory::new(dir.to_str().unwrap(), 3, "m");
+        let e = m.store(NS, "a", "x", &[1.0, 2.0]).await.unwrap_err();
+        assert!(e.to_string().contains("2 dimensions"), "{e}");
+        assert!(e.to_string().contains("expects 3"), "{e}");
+        let e = m.search(NS, "a", &[], 1).await.unwrap_err();
+        assert!(e.to_string().contains("0 dimensions"), "{e}");
+        let e = m
+            .store(NS, "a", "x", &[0.0, f32::NEG_INFINITY, 0.0])
+            .await
+            .unwrap_err();
+        assert!(e.to_string().contains("NaN or infinite"), "{e}");
+        assert!(!gave_up(&e));
+        // Rejected input never creates the file.
+        assert!(!m.db_path().exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_zero_limit_returns_nothing_and_a_large_one_returns_everything() {
+        let dir = temp_dir("limits-k");
+        let m = VectorMemory::new(dir.to_str().unwrap(), 2, "m");
+        m.store(NS, "a", "one", &[1.0, 0.0]).await.unwrap();
+        m.store(NS, "a", "two", &[2.0, 0.0]).await.unwrap();
+        assert!(m.search(NS, "a", &[0.0, 0.0], 0).await.unwrap().is_empty());
+        // A zero limit still validates the query.
+        assert!(m.search(NS, "a", &[0.0], 0).await.is_err());
+        let all = m.search(NS, "a", &[0.0, 0.0], usize::MAX).await.unwrap();
+        assert_eq!(
+            all,
+            vec![("one".to_string(), 1.0), ("two".to_string(), 4.0)]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn equal_distances_and_repeated_texts_are_all_kept() {
+        let dir = temp_dir("ties");
+        let m = VectorMemory::new(dir.to_str().unwrap(), 2, "m");
+        m.store(NS, "a", "left", &[-1.0, 0.0]).await.unwrap();
+        m.store(NS, "a", "right", &[1.0, 0.0]).await.unwrap();
+        m.store(NS, "a", "right", &[1.0, 0.0]).await.unwrap();
+        m.store(NS, "a", "far", &[5.0, 0.0]).await.unwrap();
+        let r = m.search(NS, "a", &[0.0, 0.0], 3).await.unwrap();
+        assert_eq!(r.len(), 3);
+        assert!(r.iter().all(|(_, d)| *d == 1.0));
+        let r = m.search(NS, "a", &[0.0, 0.0], 4).await.unwrap();
+        assert_eq!(r[3], ("far".to_string(), 25.0));
+        assert!(r.windows(2).all(|w| w[0].1 <= w[1].1));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn rows_of_another_dimension_are_ignored_by_search() {
+        let dir = temp_dir("otherdim");
+        let m = VectorMemory::new(dir.to_str().unwrap(), 2, "m");
+        m.store(NS, "a", "good", &[1.0, 0.0]).await.unwrap();
+        let blob: Vec<u8> = [1.0f32, 0.0, 0.0]
+            .iter()
+            .flat_map(|v| v.to_le_bytes())
+            .collect();
+        Connection::open(m.db_path())
+            .unwrap()
+            .execute(
+                "INSERT INTO memory (namespace, agent_id, text, vector) VALUES (?1, ?2, ?3, ?4)",
+                params![NS, "a", "wrong size", blob],
+            )
+            .unwrap();
+        let r = m.search(NS, "a", &[0.0, 0.0], 5).await.unwrap();
+        assert_eq!(r, vec![("good".to_string(), 1.0)]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn stored_rows_survive_reopening_the_file() {
+        let dir = temp_dir("reopen");
+        {
+            let m = VectorMemory::new(dir.to_str().unwrap(), 2, "m");
+            m.store(NS, "a", "kept", &[1.0, 1.0]).await.unwrap();
+        }
+        let m = VectorMemory::new(dir.to_str().unwrap(), 2, "m");
+        assert_eq!(texts(&m, "a", 2).await, vec!["kept"]);
+        // Another model id uses another file and sees nothing.
+        let other = VectorMemory::new(dir.to_str().unwrap(), 2, "other");
+        assert!(texts(&other, "a", 2).await.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn input_errors_do_not_reach_the_failure_log() {
+        let dir = temp_dir("failcount");
+        let m = VectorMemory::new(dir.to_str().unwrap(), 2, "m");
+        assert!(m.search(NS, "a", &[1.0], 1).await.is_err());
+        // Input errors fail before the log; only database failures count.
+        assert_eq!(m.failures.suppressed.load(Ordering::Relaxed), 0);
+        assert!(m.failures.last_warning.lock().unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_failure_log_resets_its_count_on_each_warning() {
+        let log = FailureLog::new();
+        assert_eq!(log.suppressed.load(Ordering::Relaxed), 0);
+        let t0 = Instant::now();
+        assert_eq!(log.warn_now(t0), Some(0));
+        for i in 1..=5u64 {
+            assert_eq!(log.warn_now(t0 + Duration::from_secs(i)), None);
+        }
+        assert_eq!(log.suppressed.load(Ordering::Relaxed), 5);
+        assert_eq!(
+            log.warn_now(t0 + WARN_INTERVAL + Duration::from_secs(1)),
+            Some(5)
+        );
+        assert_eq!(log.suppressed.load(Ordering::Relaxed), 0);
+        // A clock reading before the last warning counts as inside the interval.
+        assert_eq!(log.warn_now(t0), None);
+    }
+
+    #[test]
+    fn reporting_failures_covers_every_branch() {
+        let log = FailureLog::new();
+        let err = anyhow!("disk full");
+        // The first call warns, the next ones go to debug level.
+        log.report("store", &err);
+        log.report("search", &err);
+        log.report("search", &err);
+        assert_eq!(log.suppressed.load(Ordering::Relaxed), 2);
+        // Make the next failure a warning that carries the earlier count.
+        *log.last_warning.lock().unwrap() = Some(Instant::now() - WARN_INTERVAL * 2);
+        log.report("store", &err);
+        assert_eq!(log.suppressed.load(Ordering::Relaxed), 0);
+    }
 }

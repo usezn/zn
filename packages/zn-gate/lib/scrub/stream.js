@@ -89,6 +89,13 @@ function createStream(opts) {
     let cut = text.length - windowFor(c);
     if (cut <= 0) return;
     cut = safeCut(text, cut, c);
+    /* Never cut between the two halves of a surrogate pair: each half would
+       be written to stdout as a replacement character. */
+    if (cut > 0 && cut < text.length) {
+      const hi = text.charCodeAt(cut - 1);
+      const lo = text.charCodeAt(cut);
+      if (hi >= 0xd800 && hi <= 0xdbff && lo >= 0xdc00 && lo <= 0xdfff) cut -= 1;
+    }
     if (cut <= 0) return;
     pending = pending.slice(cut);
     write(await scrub(text.slice(0, cut)));
