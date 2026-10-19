@@ -714,6 +714,7 @@ async function serve(opts) {
             return;
           }
           stage = 'ready';
+          if (!closed) bumpIdle();
           send({ ok: true });
           continue;
         }
@@ -752,13 +753,16 @@ async function serve(opts) {
   });
   if (ep.unix) fs.chmodSync(ep.address, 0o600);
   store.writePrivateFile(ep.keyFile, sessionKey.toString('hex'));
-  bumpIdle();
   await state.serial(async () => {
     const rec = audit.append({ mode: 'unlock', decision: 'allow', reason: 'ttl:' + Math.round(ttlMs / 60000) + 'm' },
       { file: state.paths.auditFile, key: Buffer.from(state.secrets.auditKey, 'hex') });
     state.secrets.auditHead = { seq: rec.seq, mac: rec.mac };
     await state.saveSecrets();
   });
+  // The idle clock starts only now that the daemon is ready to serve, not
+  // before the first (possibly slow) write above: otherwise a slow disk can
+  // expire the session before the first client connects.
+  if (!closed) bumpIdle();
 
   return { address: ep.address, close: () => shutdown('lock'), expiresAt: ctl.expiresAt };
 }
