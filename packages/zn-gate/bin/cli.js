@@ -279,6 +279,8 @@ TEAM (zn Team: organization policy and audit upload; needs the vault unlocked):
   team status         Organization, policy version and upload state [--json]
   team sync           Download the policy and upload the audit log now
   team leave          Disconnect this machine (confirmed outside the agent)
+  team managed-config Print the managed settings an admin deploys with MDM (nothing is written)
+                      [--agent claude-code|cursor|codex|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--json]
 
 INIT --wrap-mcp OPTIONS (each one also selects --wrap-mcp):
   --dry-run           Scan environments and preview changes without modifying configs
