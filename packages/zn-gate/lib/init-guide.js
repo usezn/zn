@@ -86,7 +86,7 @@ function globalInstall(env) {
 /* The plan: {items: [{id, name, found, state, problem, steps}], setup: [step]} ; a step is {label, run: [file, args] | null, manual}. */
 async function plan(opts = {}) {
   const { getAdapter } = require('./agents');
-  const { check, _internal: { pluginNodeOk } } = require('./check');
+  const { check, _internal: { pluginNodeOk, PLUGIN_NODE_MIN } } = require('./check');
   const env = opts.env || process.env;
   const home = opts.home;
   const nodeVersion = opts.nodeVersion || process.versions.node;
@@ -114,8 +114,8 @@ async function plan(opts = {}) {
         hooksVerb = 'install';
         dropPlugin = r.via === 'plugin' && !r.pluginOff;
         item.note = dropPlugin
-          ? 'Claude Code plugin will be turned off: it needs Node.js 20.12 or later (you have ' + nodeVersion + '); zn\'s hooks will be used instead. Update Node.js to use the plugin.'
-          : 'Claude Code plugin skipped: it needs Node.js 20.12 or later (you have ' + nodeVersion + '). zn\'s hooks are set up instead; update Node.js to use the plugin.';
+          ? 'Claude Code plugin will be turned off: it needs Node.js ' + PLUGIN_NODE_MIN + ' or later (you have ' + nodeVersion + '); zn\'s hooks will be used instead. Update Node.js to use the plugin.'
+          : 'Claude Code plugin skipped: it needs Node.js ' + PLUGIN_NODE_MIN + ' or later (you have ' + nodeVersion + '). zn\'s hooks are set up instead; update Node.js to use the plugin.';
       }
       const disablePlugin = () => {
         const claude = opts.claude !== undefined ? opts.claude : findProgram('claude', env);

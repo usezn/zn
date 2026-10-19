@@ -108,8 +108,8 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
   - Hooks are a guardrail, not an enforcement boundary (Codex's own words).
   - MCP tool calls reach `PreToolUse` (matcher `^(Bash|apply_patch|mcp__.+)$`), and zn checks
     their arguments for secret values and `__ZN_` markers, as it does for Cursor. Installs made
-    before this change keep the old matcher until you run `zn hooks install codex` again, and
-    Codex asks you to review the changed hook in `/hooks`. Only zn's own `secrets` server, as
+    before this change keep the old matcher until you update them
+    (see [upgrading.md](upgrading.md)). Only zn's own `secrets` server, as
     set in `config.toml` (your own or the project's `.codex/config.toml`), may receive
     placeholders. Known limit: a server set on the Codex command line with `-c mcp_servers.secrets...`
     or in a profile is not visible to the hook, so it gets no exception.
@@ -117,14 +117,12 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
     to approve a shell command, a patch or an MCP call, zn runs the same check as before the call. If zn
     would deny it, the request is denied with zn's reason, so no Approve button is shown for it. zn never
     answers Allow there; for every other call it gives no answer, and the approval prompt stays. Installs
-    made before this change get the new hook when you run `zn hooks install codex` again, and Codex asks
-    you to review it in `/hooks`.
+    made before this change get the new hook when you update them (see [upgrading.md](upgrading.md)).
   - Final answers (`Stop`): zn only warns, and the warning does not reach the model. To
     have Codex ask the model to rewrite an answer that contains a secret value, set
     `"stopReview": "block"` under `hooks` in `~/.zn/config.json`. zn blocks at most once
     per answer and never when the answer is already a continuation. Installs made before
-    this change get the new hook when you run `zn hooks install codex` again, and Codex
-    asks you to review it in `/hooks`.
+    this change get the new hook when you update them (see [upgrading.md](upgrading.md)).
     To tell whether a placeholder came from a tool, zn reads the session transcript in
     pieces of 256 KB and stops as soon as it finds the placeholder earlier in the session. A transcript larger than 64 MB is not read, so
     that check is skipped for it. A final answer with nothing to report prints nothing and
@@ -146,6 +144,9 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
     message names the file when the patch writes to one such as `.env`. Known difference:
     the `apply_patch` tool may edit `.env` (writes are checked only for `~/.zn` and agent
     settings), while any patch sent as a shell command is refused.
+- **Background hooks (Codex).** A Codex hook with `async` set runs in the background and cannot block a call or change a result. If zn's hook is set that way in `hooks.json` or `config.toml` in your Codex folder, `zn-gate check` reports Codex as not protected; remove `async` from zn's hook.
+- **Trust and updates (Codex).** Installing zn-gate as a Codex plugin would not skip the `/hooks` review: Codex ignores a plugin's hooks until you review and trust them, and it asks again after every plugin update. zn installs its hooks with `zn hooks install codex` instead, and you trust them in `/hooks`.
+- **Ways Codex turns zn's hooks off.** `async`, a `[hooks.state]` entry with `enabled = false` for one of zn's hooks, `[features] hooks = false`, and `allow_managed_hooks_only = true` in your organization's requirements (when zn's hooks are not among the managed ones) each stop zn's hooks from protecting anything, and Codex says nothing. `zn-gate check` reports all four as not protected and says what to change. It reads `hooks.state` only in your own `config.toml`; a setting passed on the Codex command line with `-c` is not seen. The Python package has no `check` command.
 - **Settings that turn hooks off.** zn reads the settings files only: the managed settings of Claude Code (`managed-settings.json` and `managed-settings.d/` in `/etc/claude-code`, `/Library/Application Support/ClaudeCode` or `C:\Program Files\ClaudeCode`) and of Codex (`requirements.toml` and `managed_config.toml` in `/etc/codex`, or `requirements.toml` in `%ProgramData%\OpenAI\Codex` and `managed_config.toml` in your Codex folder on Windows), and your own settings. A policy sent through MDM or the agent's cloud is not seen. When such a setting stops every hook, zn's start-of-session hook does not run either (zn installs no session-start hook for Codex), so `zn-gate check` is where you see it.
 - **Cursor** (best effort: its hook documentation leaves the input of some
   tools open, and zn fails closed where it cannot read a path):
@@ -237,17 +238,10 @@ Install zn on every machine that runs the agent.
 ## If your agent blocks every prompt
 
 When zn's hook cannot run, Claude Code 2.1.295 or later (with the zn-gate plugin or `zn hooks install`), Cursor and OpenCode block
-prompts instead of letting them through unchecked (see the table above). This usually happens after Node.js is
-upgraded, moved or removed (for example with nvm), because the hook command points to the old one. Codex CLI lets
-prompts through in that case. To fix it, in your own terminal:
-
-1. Run `npx -y zn-gate check`. It names each agent that is not protected and the command that fixes it.
-2. Usually that is `npm install -g zn-gate`, then `zn hooks install <agent>`. With the zn-gate plugin for Claude Code,
-   start a new Claude Code session after fixing Node.js.
-3. If you need your agent right away, turn zn off for it until you have fixed it: `npx -y zn-gate hooks uninstall <agent>`
-   (the `zn` command may be gone with the old Node.js), or `claude plugin disable zn-gate@usezn` for the plugin (or `/plugin`
-   inside Claude Code). Turn it back on with `zn hooks install <agent>` or `claude plugin enable zn-gate@usezn`, then run
-   `zn-gate check` again.
+prompts instead of letting them through unchecked (see the table above). Codex CLI lets prompts through in that case.
+This usually happens after Node.js is upgraded, moved or removed (for example with nvm). The fix, step by step
+(`npx -y zn-gate check`, then `npm install -g zn-gate` and `zn hooks install <agent>`, or turning zn off for that agent
+until it is fixed), is in [upgrading.md](upgrading.md#nodejs-was-upgraded-moved-or-removed-nvm-fnm-homebrew).
 
 ## Limits that apply to every agent
 
