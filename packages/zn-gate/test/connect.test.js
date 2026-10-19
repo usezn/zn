@@ -17,7 +17,6 @@ const { spawnSync } = require('child_process');
 const cloudKey = require('../lib/cloud-key');
 const connectCli = require('../lib/connect-cli');
 const client = require('../lib/client');
-const tty = require('../lib/broker/tty');
 
 const BIN = path.join(__dirname, '..', 'bin', 'cli.js');
 const freshKey = () => 'zn_' + crypto.randomBytes(24).toString('hex');

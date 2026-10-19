@@ -8,7 +8,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { agentAncestor, _internal } = require('../lib/broker/ancestry');
+const { _internal } = require('../lib/broker/ancestry');
 const tty = require('../lib/broker/tty');
 const { tempDir } = require('./helpers/tmp');
 
