@@ -19,6 +19,7 @@ machine that stops reporting is visible.
 | `zn team status` | Organization, installation id, policy version and expiry, upload state. `--json` for scripts. Never shows the install token. |
 | `zn team sync` | Downloads the policy and uploads pending audit records now. This also happens on its own while the vault is unlocked: a few seconds after `zn unlock`, then every 15 minutes. |
 | `zn team leave` | Disconnects this machine. The organization's policy stops applying here. |
+| `zn team managed-config` | Prints the files an admin deploys with device management so zn-gate's hooks run on every machine. Writes nothing; see [Deploy zn-gate's hooks to every machine](#deploy-zn-gates-hooks-to-every-machine-managed-settings). |
 | `zn vault log export --otlp` | Writes the local audit log as OpenTelemetry logs (works without zn Team; see below). |
 
 `zn team join` and `zn team leave` are confirmed on the vault's own channel
@@ -175,6 +176,45 @@ patterns are skipped on the machine, and all custom detectors together get
 
 The install token is kept in the encrypted vault and is sent only to the
 server you joined.
+
+## Deploy zn-gate's hooks to every machine (managed settings)
+
+An organization can push the agents' hooks to every developer machine with its device management tool (Jamf, Intune, Group Policy, Ansible and the like). Managed hooks sit above the developer's own settings, so a developer cannot switch them off by editing a file in their home folder.
+
+`zn team managed-config` prints the files to deploy. It does not write anything and does not read the machine you run it on: copy each printed file to the path shown with your own tooling.
+
+```
+zn team managed-config --agent claude-code --os macos
+zn team managed-config --agent all --os all --json
+```
+
+| Option | What it does |
+|---|---|
+| `--agent claude-code\|cursor\|codex\|all` | Which agent to print for. Default: `all`. |
+| `--os macos\|linux\|windows\|all` | Which operating system's path to print. Default: the system you run it on. |
+| `--managed-hooks-only` | Also run only managed hooks (Claude Code and Codex). Off by default: see the warning below. |
+| `--exclusive-mcp` | Claude Code only: also print a `managed-mcp.json` with zn's `secrets` server. Off by default: see the warning below. |
+| `--json` | Machine-readable output (`{"schema": 1, "files": [...]}`), for scripts and for generating your own guide. |
+
+Each machine needs zn-gate installed with the `zn` command on the PATH (`npm install -g zn-gate`). The printed hooks call `zn hook <agent>`, the same command `zn hooks install` writes for a project.
+
+| Agent | File | macOS | Linux | Windows |
+|---|---|---|---|---|
+| Claude Code | `managed-settings.json` | `/Library/Application Support/ClaudeCode/` | `/etc/claude-code/` | `C:\Program Files\ClaudeCode\` |
+| Cursor | `hooks.json` | `/Library/Application Support/Cursor/` | `/etc/cursor/` | `C:\ProgramData\Cursor\` |
+| Codex | `requirements.toml` | `/etc/codex/` | `/etc/codex/` | `%ProgramData%\OpenAI\Codex\` |
+
+If one of these files already exists on your machines, merge the printed entries into it instead of replacing it. For Claude Code you can save the printed settings as `managed-settings.d/50-zn.json` in the same folder, which Claude Code merges with `managed-settings.json`.
+
+**Claude Code.** The file holds zn's hooks. With `--managed-hooks-only` it also sets `allowManagedHooksOnly`, which makes Claude Code run only managed hooks: your developers' own hooks, and those of their plugins, stop running. Turn it on only if you accept that, and put into managed settings any hook you still need. zn's `secrets` server is a local program, and Claude Code's `managedMcpServers` setting accepts only remote servers, so it cannot carry it. A `managed-mcp.json` can, but it takes exclusive control of MCP: Claude Code then loads only the servers in that file, and developers cannot add their own. `--exclusive-mcp` prints it for that case, and you must add every server your organization approves before you deploy it.
+
+**Cursor.** The enterprise `hooks.json` has `failClosed` on the file-read and prompt hooks: if the hook crashes, times out or returns nothing, Cursor blocks the read or the prompt instead of letting it through. Cursor's documentation does not describe a way to stop developers from adding hooks of their own, or to deploy zn's `secrets` server, so `--managed-hooks-only` and `--exclusive-mcp` change nothing for Cursor.
+
+**Codex.** `requirements.toml` turns hooks on (`[features] hooks = true`, which also applies when a developer turned hooks off in their own `config.toml`) and lists zn's hooks as managed hooks. With `--managed-hooks-only` it also sets `allow_managed_hooks_only = true`, so Codex skips user, project, session and plugin hooks. On macOS, device management can deliver the same text as a base64 payload (`requirements_toml_base64`) in the `com.openai.codex` preference domain. The `mcp_servers` table of `requirements.toml` is an approved list, so zn does not print an entry for it; if you use that list, add the `secrets` server to it yourself.
+
+The formats come from each vendor's documentation, read on 2026-10-19: [Claude Code managed settings](https://code.claude.com/docs/en/managed-settings) and [managed MCP](https://code.claude.com/docs/en/managed-mcp), [Cursor hooks](https://cursor.com/docs/hooks), and [Codex managed configuration](https://learn.chatgpt.com/docs/enterprise/managed-configuration). Run the command again after you update zn-gate, and check the vendor pages if an agent rejects a file.
+
+After a machine has the policy, `zn hooks install` for that agent warns if a managed policy leaves zn's hooks out.
 
 ## Export the audit log to OpenTelemetry
 

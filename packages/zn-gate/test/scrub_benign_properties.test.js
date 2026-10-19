@@ -209,7 +209,8 @@ test('real lockfiles and docs of the repository give no span', () => {
     for (let i = 0; i < lines.length; i += 40) {
       const chunk = lines.slice(i, i + 40).join('\n');
       // Docs name contact emails on purpose: only secret types count here.
-      for (const h of hits(chunk)) if (!P.PII_TYPES.includes(h.type)) bad.push(path.basename(f) + ':' + (i + 1) + ' ' + h.type);
+      // The docs also show AWS's documentation example key on purpose; it is redacted now.
+      for (const h of hits(chunk)) if (!P.PII_TYPES.includes(h.type) && !/^AKIAIOSFODNN7EXAMPLE$/.test(h.text)) bad.push(path.basename(f) + ':' + (i + 1) + ' ' + h.type);
     }
   }
   assert.strictEqual(bad.length, 0, 'fired on real files:\n  ' + bad.slice(0, 5).join('\n  '));

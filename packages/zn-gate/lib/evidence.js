@@ -70,6 +70,52 @@ function readLockToken(lockPath) {
 }
 
 /**
+ * Breaks a stale lock. Breakers take a short-lived `<log>.lock.break` mutex first and judge the
+ * lock stale again inside it: without it, a breaker that judged the old lock stale could rename
+ * away a fresh lock another writer had just created, and that writer would then see its lock
+ * "taken over" and drop its record. Returns true when the caller should retry at once.
+ */
+function breakStaleLock(lockPath, token) {
+  const mutex = `${lockPath}.break`;
+  let fd;
+  try {
+    fd = fs.openSync(mutex, 'wx', LEDGER_FILE_MODE);
+  } catch {
+    // Another breaker is working. A mutex left by a dead process is removed after a while.
+    try {
+      if (Math.abs(Date.now() - fs.statSync(mutex).mtimeMs) > LOCK_STALE_MS) fs.unlinkSync(mutex);
+    } catch { /* gone or busy: wait and retry */ }
+    return false;
+  }
+  try {
+    try { fs.closeSync(fd); } catch { /* best effort */ }
+    // Inside the mutex only breakers touch a stale lock, and a fresh one cannot appear while
+    // the stale file still exists, so what is judged stale here is still the stale file.
+    let stale = false;
+    try { stale = Math.abs(Date.now() - fs.statSync(lockPath).mtimeMs) > LOCK_STALE_MS; } catch { /* gone */ }
+    if (!stale) return true;
+    // Break it by renaming it away, then delete the renamed file. Never delete by the shared path.
+    const aside = `${lockPath}.stale-${token.replace(':', '-')}`;
+    let moved = false;
+    try { fs.renameSync(lockPath, aside); moved = true; } catch { /* already gone, or busy on Windows: retry */ }
+    if (moved) {
+      // Defense in depth: if what we moved is not stale after all, put it back with link()
+      // (atomic, fails if a lock exists again) before deleting our copy.
+      let fresh = false;
+      try { fresh = Math.abs(Date.now() - fs.statSync(aside).mtimeMs) <= LOCK_STALE_MS; } catch { /* gone */ }
+      if (fresh) {
+        try { fs.linkSync(aside, lockPath); } catch { /* a new lock exists: its owner checks its token */ }
+      }
+      try { fs.unlinkSync(aside); } catch { /* best effort */ }
+      sweepStaleLeftovers(lockPath);
+    }
+    return moved;
+  } finally {
+    try { fs.unlinkSync(mutex); } catch { /* best effort */ }
+  }
+}
+
+/**
  * Takes the lock and returns this writer's token (pid + random bytes), which is written into
  * the lock file. The token lets a writer tell its own lock from one taken over after it was
  * considered stale: it only releases, and only appends, while the file still holds its token.
@@ -106,26 +152,7 @@ function acquireLock(lockPath, waitMs = LOCK_WAIT_MS) {
       // abs(): a lock dated in the future (clock moved back) is stale too.
       stale = Math.abs(Date.now() - fs.statSync(lockPath).mtimeMs) > LOCK_STALE_MS;
     } catch { /* gone or unreadable: wait a moment and try again */ }
-    if (stale) {
-      // Break it by renaming it away (atomic: when several writers try, only one rename wins),
-      // then delete the renamed file. Never delete by the shared path.
-      const aside = `${lockPath}.stale-${token.replace(':', '-')}`;
-      let moved = false;
-      try { fs.renameSync(lockPath, aside); moved = true; } catch { /* someone else broke it first */ }
-      if (moved) {
-        // Two breakers can both judge the same lock stale; the second rename then moves the
-        // first one's fresh lock aside. If what we moved is not stale, put it back with link()
-        // (atomic, fails if a lock exists again) before deleting our copy.
-        let fresh = false;
-        try { fresh = Math.abs(Date.now() - fs.statSync(aside).mtimeMs) <= LOCK_STALE_MS; } catch { /* gone */ }
-        if (fresh) {
-          try { fs.linkSync(aside, lockPath); } catch { /* a new lock exists: its owner checks its token */ }
-        }
-        try { fs.unlinkSync(aside); } catch { /* best effort */ }
-        sweepStaleLeftovers(lockPath);
-        continue;
-      }
-    }
+    if (stale && breakStaleLock(lockPath, token)) continue;
     sleepMs(delay + Math.floor(Math.random() * delay));
     delay = Math.min(delay * 2, 50);
   }

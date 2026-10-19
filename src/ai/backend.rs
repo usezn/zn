@@ -164,7 +164,7 @@ impl OnnxModel {
 
     /// Sentence-transformers-compatible embedding: masked mean over NON-pad
     /// tokens + L2 normalize — bit-matches the Python calibration path that
-    /// produces `head.json` and the B-3 score fixture. (`embed()` keeps the
+    /// produces `head.json` and the Fusion Gate score fixture. (`embed()` keeps the
     /// legacy pooling for existing consumers.)
     pub fn embed_masked(&self, text: &str) -> Result<Embedding> {
         let (tokens_out, mask) = self.run_encoder(text)?;
