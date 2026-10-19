@@ -6,6 +6,7 @@ the monorepo checkout and a `node` binary; they are skipped with a message when 
 is missing (for example when testing an sdist).
 """
 
+import importlib.util
 import json
 import shutil
 import subprocess
@@ -18,6 +19,14 @@ from zn_gate.guard import check_tool_call, check_tool_result
 NODE_PKG = Path(__file__).resolve().parents[2] / "zn-gate"
 EXPORT_SCRIPT = NODE_PKG / "test" / "helpers" / "export_tool_guard.js"
 CASES_FILE = NODE_PKG / "test" / "fixtures" / "tool_guard_parity.json"
+PY_HELPER = NODE_PKG / "test" / "helpers" / "py_tool_guard.py"
+
+
+def _build():
+    spec = importlib.util.spec_from_file_location("py_tool_guard", PY_HELPER)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.build
 
 
 def _node_export():
@@ -34,9 +43,10 @@ def _node_export():
 class ToolGuardParityTest(unittest.TestCase):
     def test_verdicts_match_node(self):
         js = _node_export()
+        build = _build()
         cases = json.loads(CASES_FILE.read_text(encoding="utf8"))
-        py_calls = [{"verdict": a.verdict, "rule": a.rule} for a in (check_tool_call(c["tool"], c["args"]) for c in cases["calls"])]
-        py_results = [{"verdict": a.verdict, "rule": a.rule} for a in (check_tool_result(c["result"]) for c in cases["results"])]
+        py_calls = [{"verdict": a.verdict, "rule": a.rule} for a in (check_tool_call(c["tool"], build(c["args"])) for c in cases["calls"])]
+        py_results = [{"verdict": a.verdict, "rule": a.rule} for a in (check_tool_result(build(c["result"])) for c in cases["results"])]
         self.assertEqual(js["calls"], py_calls)
         self.assertEqual(js["results"], py_results)
 
