@@ -4,10 +4,12 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 
+from zn_gate import cli
 from zn_gate.cli import cmd_scan
 
 
@@ -78,6 +80,70 @@ class SkippedDirsTests(unittest.TestCase):
             data = json.loads(_run(os.path.join(d, "build")))
             self.assertEqual(data["total_files"], 1)
             self.assertEqual(data["total_skipped_dirs"], 0)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+class PythonScanDirsTests(unittest.TestCase):
+    def test_test_dirs_are_read_and_vendor_follows_the_manifest_rule(self):
+        d = _tree({"tests/f.md": "hello\n", "__tests__/f.md": "hello\n", "test/f.md": "hello\n",
+                   "plain/vendor/n.md": "hello\n", "go/go.mod": "module x\n", "go/vendor/dep.md": "hello\n",
+                   ".idea/x.md": "hello\n", ".turbo/x.md": "hello\n"})
+        try:
+            data = json.loads(_run(d))
+            self.assertEqual(data["total_files"], 4)  # three test files and plain/vendor/n.md
+            self.assertEqual(len(data["skipped_dirs"]), 1)
+            self.assertEqual(data["skipped_dirs"][0]["reason"], "skipped by name: dependencies next to go.mod")
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+_NODE = shutil.which("node")
+_REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+_PRUNE_JS = os.path.join(_REPO, "packages", "zn-gate", "lib", "prune.js")
+_CLI_JS = os.path.join(_REPO, "packages", "zn-gate", "bin", "cli.js")
+
+
+@unittest.skipUnless(_NODE and os.path.exists(_PRUNE_JS), "needs node and the Node package in the repo")
+class NodePythonPruneParityTests(unittest.TestCase):
+    def test_lists_and_markers_match(self):
+        code = ("const p=require(process.argv[1]);"
+                "console.log(JSON.stringify({scan:[...p.SCAN_DIRS].sort(),"
+                "silent:[...p.SILENT].filter(n=>p.SCAN_DIRS.has(n)).sort(),markers:p.MARKERS}))")
+        r = subprocess.run([_NODE, "-e", code, _PRUNE_JS], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        node = json.loads(r.stdout)
+        self.assertEqual(sorted(cli._SCAN_SKIP_DIRS), node["scan"])
+        self.assertEqual(sorted(cli._SILENT_SKIP_DIRS), node["silent"])
+        self.assertEqual({k: list(v) for k, v in cli._SKIP_MARKERS.items()}, node["markers"])
+
+    def test_same_tree_gives_the_same_report(self):
+        names = ["node_modules", ".git", ".next", ".turbo", ".idea", ".venv", "venv", "__pycache__", ".eggs",
+                 "dist", "build", "test", "tests", "__tests__", "out", "coverage"]
+        files = {n + "/f.md": "hello\n" for n in names}
+        files.update({"plain/target/f.md": "hello\n", "plain/vendor/f.md": "hello\n", "rust/Cargo.toml": "[package]\n",
+                      "rust/target/f.md": "hello\n", "rust/vendor/f.md": "hello\n", "go/go.mod": "module x\n",
+                      "go/vendor/f.md": "hello\n", "mvn/pom.xml": "<project/>\n", "mvn/target/f.md": "hello\n"})
+        d = _tree(files)
+        try:
+            py = json.loads(_run(d))
+            r = subprocess.run([_NODE, _CLI_JS, "scan", d, "--format", "json"], capture_output=True, text=True,
+                               timeout=120, env={**os.environ, "ZN_LOCAL_ONLY": "true"})
+            node = json.loads(r.stdout)
+
+            # The two engines print the same root in different forms: Python keeps the path
+            # it was given, Node prints it relative to the working directory with links
+            # resolved. On macOS the temp folder is /var/... -> /private/var/..., so both
+            # sides are resolved before they are compared.
+            real_d = os.path.realpath(d)
+
+            def rel(report):
+                return sorted((os.path.relpath(os.path.realpath(s["dir"]), real_d).replace("\\", "/"), s["reason"])
+                              for s in report["skipped_dirs"])
+
+            self.assertEqual(rel(py), rel(node))
+            self.assertEqual(py["total_files"], node["total_files"])
+            self.assertTrue(rel(py))
         finally:
             shutil.rmtree(d, ignore_errors=True)
 
