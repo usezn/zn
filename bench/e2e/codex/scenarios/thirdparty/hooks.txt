@@ -8,7 +8,7 @@ PreToolUse Bash
 
 PostToolUse Bash
   input: cat ~/.aws/credentials
-  zn answered: {"decision":"block","reason":"zn: the command that ran is one zn blocks. Another tool changed it after zn checked it, so its output was withheld. zn: ~/.aws/credentials was not read because zn treats it as holding secrets (AWS credentials file), and secret values never go to the model. If a command needs a value, ask the user to run `zn secret set NAME`, then write __ZN_NAME__ where the value goes."}, exit 0
+  zn answered: {"decision":"block","reason":"zn: A command different from the one zn checked was run (another tool changed it). zn withheld its output because zn blocks that command. Review the other hooks configured for Codex."}, exit 0
 
 Stop 
   input: last message: All steps done.

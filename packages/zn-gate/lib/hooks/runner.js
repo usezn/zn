@@ -509,7 +509,7 @@ async function decidePost(ev, d, agentId, opts = {}) {
     // the output is withheld. The command has already run, so this limits what the model sees, not what happened.
     const denial = policy.bashDenial(String(ev.input.command || ''), { cwd: ev.cwd, home: opts.home });
     if (denial) {
-      return { decision: 'deny', message: 'zn: the command that ran is one zn blocks. Another tool changed it after zn checked it, so its output was withheld. ' + denial };
+      return { decision: 'deny', message: 'zn: A command different from the one zn checked was run (another tool changed it). zn withheld its output because zn blocks that command. Review the other hooks configured for Codex.' };
     }
   }
   if (ev.output === undefined || ev.output === null) return { decision: 'allow' };

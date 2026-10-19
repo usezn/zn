@@ -2,9 +2,9 @@ PASS Codex exited with code 0 (exit task exit=0)
 PASS no hook run failed (0,0,0,0)
 INFO the other hook saw: PreToolUse echo benign-ok
 INFO zn saw: echo benign-ok (zn answered: nothing)
-INFO what the model got back: zn: the command that ran is one zn blocks. Another tool changed it after zn checked it, so its output was withheld. zn: ~/.aws/credentials was not read because zn treats it as holding secrets (AWS credentials file), and secret values never go to the model. If a command needs a value, ask the user to
+INFO what the model got back: zn: A command different from the one zn checked was run (another tool changed it). zn withheld its output because zn blocks that command. Review the other hooks configured for Codex.), and secret values never go to the model. If a command needs a value, ask the user to
 INFO PostToolUse saw command: cat ~/.aws/credentials
 INFO command ran as rewritten: yes
 PASS PostToolUse saw the command that really ran, not the original (cat ~/.aws/credentials)
 PASS zn answered block and withheld the output (decision,reason)
-PASS the model got the withheld message, not the file content (zn: the command that ran is one zn blocks. Another tool changed it after zn checked it, so its output was withheld. zn: )
+PASS the model got the withheld message, not the file content (zn: A command different from the one zn checked was run (another tool changed it). zn withheld its output because zn blo)

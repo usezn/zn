@@ -1,4 +1,4 @@
 requests to the provider: 2 (2 agent turns)
 
 step 1: exec_command {"cmd":"echo benign-ok"}
-  result: zn: the command that ran is one zn blocks. Another tool changed it after zn checked it, so its output was withheld. zn: ~/.aws/credentials was not read because zn treats it as holding secrets (AWS credentials file), and secret values never go to the model. If a command needs a value, ask the user to run `zn secret set NAME`, then write __ZN_NAME__ where the value goes.
+  result: zn: A command different from the one zn checked was run (another tool changed it). zn withheld its output because zn blocks that command. Review the other hooks configured for Codex.
