@@ -229,7 +229,7 @@ def test_node_scrub_engine_hides_the_same_keys_as_python(index):
     cases = [(text, key) for text, key, i in _CORPUS if i == index]
     spans = _run_node(NODE_SCRUB_SCRIPT, NODE_SCRUB, [text for text, _ in cases])
     mismatches = []
-    for (text, key), node_spans in zip(cases, spans):
+    for (text, key), node_spans in zip(cases, spans, strict=False):
         start = text.index(key)
         end = start + len(key)
         node_hides = any(s < end and e > start for s, e, _type in node_spans)
@@ -243,7 +243,7 @@ def test_node_rules_redact_secrets_gives_the_same_text_as_python():
     items = [text for text, _key, _ in _CORPUS]
     node = _run_node(NODE_RULES_SCRIPT, NODE_RULES, items)
     mismatches = []
-    for i, (text, expected) in enumerate(zip(items, node)):
+    for i, (text, expected) in enumerate(zip(items, node, strict=False)):
         out, _found = R.redact_secrets(text)
         if out != expected:
             mismatches.append((i, out[:70], expected[:70]))

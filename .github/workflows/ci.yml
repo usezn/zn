@@ -236,7 +236,7 @@ jobs:
         run: python bench/bench_python.py
 
   # Lint and type-check the Python package. The ruff rules (a minimal set) live in
-  # packages/zn-gate-py/pyproject.toml and block the run. mypy is informational.
+  # packages/zn-gate-py/pyproject.toml and block the run, and so does mypy.
   lint-python:
     name: Python lint (ruff)
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
@@ -267,7 +267,7 @@ jobs:
         run: python -m ruff check .
 
   typecheck-python:
-    name: Python types (mypy, informational)
+    name: Python types (mypy)
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -290,9 +290,6 @@ jobs:
       - name: Install lint tools
         run: python -m pip install --require-hashes -r .github/ci-test-requirements.txt
       - name: Run mypy
-        # Informational: the findings are not fixed yet, so this step never fails the job.
-        # The check stays green; the error count is in the log.
-        continue-on-error: true
         working-directory: packages/zn-gate-py
         run: python -m mypy
 
