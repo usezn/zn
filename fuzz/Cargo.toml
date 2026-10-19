@@ -1,0 +1,45 @@
+[package]
+name = "zn-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Fuzz targets for the zn gateway parsers (cargo-fuzz)."
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1.0"
+zn = { path = ".." }
+
+# Keep this crate out of the root package, so a normal build never needs a nightly toolchain.
+[workspace]
+
+[[bin]]
+name = "config_parse"
+path = "fuzz_targets/config_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "a2a_message"
+path = "fuzz_targets/a2a_message.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mcp_jsonrpc"
+path = "fuzz_targets/mcp_jsonrpc.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "policy_wasm"
+path = "fuzz_targets/policy_wasm.rs"
+test = false
+doc = false
+bench = false

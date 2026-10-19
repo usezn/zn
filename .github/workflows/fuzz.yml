@@ -1,0 +1,140 @@
+name: Fuzz
+
+# Weekly fuzzing of the parsers that read untrusted input, plus a short smoke run when the fuzz setup itself
+# changes. Not a required check: a crash opens no merge block, it uploads the crashing input as an artifact.
+#
+#   Rust    cargo-fuzz targets in fuzz/ (configuration, A2A messages, MCP JSON-RPC frames, policy modules)
+#   Node.js the hook entry point (packages/zn-gate/lib/hooks/runner.js) fed arbitrary stdin
+#
+# Cost of one weekly run: about 25 minutes of Actions time for Rust (a cold build of the gateway with the
+# sanitizer, then 4 targets x 120 s; the build cache of main cuts it) and about 4 minutes for Node.js.
+
+on:
+  schedule:
+    - cron: "41 4 * * 0"
+  pull_request:
+    paths:
+      - "fuzz/**"
+      - "src/jsonrpc.rs"
+      - "packages/zn-gate/test/hooks_fuzz.test.js"
+      - ".github/workflows/fuzz.yml"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: "Seconds per Rust target (the Node.js run gets 4 x this, at most 600)"
+        required: false
+        default: "120"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # cargo-fuzz needs a nightly compiler (the sanitizers). Pinned by date so a nightly regression cannot
+  # fail a weekly run; bump it deliberately.
+  FUZZ_NIGHTLY: nightly-2026-10-01
+  CARGO_FUZZ_VERSION: "0.13.1"
+  # A pull request only checks that the targets build and start; the schedule fuzzes for real.
+  FUZZ_SECONDS: ${{ github.event_name == 'pull_request' && '15' || inputs.seconds || '120' }}
+
+jobs:
+  rust:
+    name: cargo-fuzz targets
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: ${{ env.FUZZ_NIGHTLY }}
+      - uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.3"
+          repo-token: ${{ github.token }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: fuzz
+          # Same rule as the Rust workflow: only main saves a cache (each one is several GB).
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --version "$CARGO_FUZZ_VERSION" --locked
+      - name: Build the fuzz targets
+        # Same dependency versions as the gateway: start from its lock file.
+        run: |
+          cp Cargo.lock fuzz/Cargo.lock
+          cd fuzz
+          cargo fuzz build
+      - name: Fuzz
+        run: |
+          set -u
+          cd fuzz
+          failed=0
+          for target in config_parse a2a_message mcp_jsonrpc policy_wasm; do
+            echo "::group::$target ($FUZZ_SECONDS s)"
+            # New inputs go to a scratch folder; the committed seeds stay as they are.
+            mkdir -p "$RUNNER_TEMP/corpus/$target"
+            if ! cargo fuzz run "$target" "$RUNNER_TEMP/corpus/$target" "corpus/$target" -- \
+                -max_total_time="$FUZZ_SECONDS" -max_len=65536 -rss_limit_mb=4096 -timeout=10; then
+              echo "::error::fuzz target $target found a crash"
+              failed=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$failed"
+      - name: Keep crashing inputs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-crashes-rust
+          path: fuzz/artifacts/
+          if-no-files-found: ignore
+          retention-days: 30
+
+  node-hooks:
+    name: hook input fuzz (Node.js)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: packages/zn-gate
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.x
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Fuzz the hook entry point
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            export ZN_FUZZ_RUNS=200 ZN_FUZZ_SECONDS=20
+          else
+            secs=$((FUZZ_SECONDS * 4))
+            [ "$secs" -gt 600 ] && secs=600
+            export ZN_FUZZ_RUNS=1000000 ZN_FUZZ_SECONDS="$secs"
+          fi
+          node --test test/hooks_fuzz.test.js 2>&1 | tee "$RUNNER_TEMP/node-fuzz.log"
+      - name: Keep the failing case
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-failure-node
+          path: ${{ runner.temp }}/node-fuzz.log
+          if-no-files-found: ignore
+          retention-days: 30
