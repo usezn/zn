@@ -448,6 +448,16 @@ async function checkAgent(spec, ctx) {
       res.fix = 'delete that [hooks.state] entry, or turn zn\'s hook back on in `/hooks` in Codex, then run `zn-gate check` again';
     }
   }
+  if (spec.id === 'codex' && installed && !res.problem) {
+    // Codex runs every PreToolUse hook at the same time, each with the original call: another tool's hook can
+    // change a call after zn checked it, or answer an approval prompt. zn cannot see what that hook does.
+    let other = null;
+    try { other = require('./codex-other-hooks').findOtherHooks(path.dirname(userFile), ctx.cwd); } catch (_) { other = null; }
+    if (other) {
+      res.problem = 'another hook runs before Codex calls (' + other.event + ' in ' + other.file + '); it can change a call after zn has checked it, so zn cannot fully protect Codex';
+      res.fix = 'review that hook and remove it if you do not need it, or have your administrator manage hooks with `allow_managed_hooks_only`, then run `zn-gate check` again';
+    }
+  }
   if (spec.id === 'opencode' && installed) res.notes.push('zn\'s rules were checked; its plugin runs inside OpenCode, so it was not started here');
 
   if (!installed) {
