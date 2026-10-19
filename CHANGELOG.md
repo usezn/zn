@@ -9,9 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-- Docs: a new upgrading guide, `docs/upgrading.md`, says what to do when you update zn-gate: when to run `zn hooks install <agent>` again, why Codex asks you to trust the hooks again, what to do after Node.js is upgraded or moved (for example with nvm), how to check with `zn-gate check`, and a table of what each release since 1.8.0 asks you to do. `docs/compat.md` now links to it instead of repeating the steps.
-
 ## [1.12.0] - 2026-10-18
 
 zn-gate 1.12.0 adds `zn-gate reach`, a read-only report of what the coding agents on this machine can reach (secret names, credential files, MCP servers and agent settings) with the command that fixes each finding, also as SARIF for code scanning. Releases are now built and signed in a separate workflow (SLSA Build Level 3), and release tags are signed by a workflow with gitsign. `zn audit` stops showing secret values it did not recognise in the commands it quotes, and the agent hooks refuse long shell patches quickly again. The agent hooks also refuse more of the ways a shell command can reach a `.env` file with values (see Security). Update with `npm install -g zn-gate@1.12.0` and `pip install -U zn-gate`.
