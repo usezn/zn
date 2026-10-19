@@ -274,10 +274,16 @@ function secretNameForKey(key) {
  * Plan which .env values move to the vault. Returns
  * {parsed, items: [{entry, name, value, start, end}], skipped: [{key, why}]}
  */
+function shortWhy(n) {
+  return 'the value is only ' + n + ' character(s); values under ' + dotenv.MIN_SECRET_LEN
+    + ' are not moved because they cannot be told apart from ordinary text. It stays in the file in plain text. Use a longer value, or store it anyway with: zn env shadow --keys NAME';
+}
+
 function planImport(text, flags) {
   const parsed = dotenv.parseDotenv(text);
   const items = [];
   const skipped = [];
+  const notes = [];
   const only = flags.keys ? new Set(flags.keys) : null;
   for (const e of parsed.entries) {
     if (only && !only.has(e.key)) continue;
@@ -290,19 +296,29 @@ function planImport(text, flags) {
     let start = e.start;
     let end = e.end;
     if (pw) {
-      name = name + '_PASSWORD';
-      value = e.value.slice(pw.start, pw.end);
-      start = e.start + pw.start;
-      end = e.start + pw.end;
+      const pass = e.value.slice(pw.start, pw.end);
+      if (pass.length >= dotenv.MIN_SECRET_LEN || only) {
+        name = name + '_PASSWORD';
+        value = pass;
+        start = e.start + pw.start;
+        end = e.start + pw.end;
+      } else if (e.value.length >= dotenv.MIN_SECRET_LEN) {
+        // The password alone is too short to be found and hidden later, so
+        // the whole URL moves to the vault instead and the password goes with it.
+        notes.push({ key: e.key, why: 'the password in the URL is only ' + pass.length + ' character(s) long, so the whole URL was moved to the vault instead of just the password' });
+      } else {
+        skipped.push({ key: e.key, why: shortWhy(e.value.length) });
+        continue;
+      }
     } else if (/^[a-z][a-z0-9+.-]*:\/\//i.test(e.value)) {
       continue; // URL without credentials: nothing secret
     }
-    if (value.length < dotenv.MIN_SECRET_LEN && !only) { skipped.push({ key: e.key, why: 'shorter than 8 characters' }); continue; }
+    if (value.length < dotenv.MIN_SECRET_LEN && !only) { skipped.push({ key: e.key, why: shortWhy(value.length) }); continue; }
     const bad = markers.validateSecretName(name);
     if (bad) { skipped.push({ key: e.key, why: bad + ' (store it with zn secret set OTHER_NAME)' }); continue; }
     items.push({ entry: e, name, value, start, end });
   }
-  return { parsed, items, skipped };
+  return { parsed, items, skipped, notes };
 }
 
 async function storeItems(vault, items, flags, source, io) {
@@ -334,6 +350,7 @@ async function secretImport(args, io) {
   const stored = await storeItems(vault, plan.items, flags, 'dotenv:' + path.basename(file), io);
   out(io, 'Imported ' + stored.length + ' secret(s) from ' + path.basename(file) + ': ' + (stored.map((s) => s.name).join(', ') || '-'));
   for (const s of plan.skipped) out(io, '  skipped ' + s.key + ': ' + s.why);
+  for (const s of plan.notes) out(io, '  note ' + s.key + ': ' + s.why);
   out(io, 'The file is unchanged. To replace its values with markers run: zn env shadow ' + path.relative(io.cwd, file));
   return 0;
 }
@@ -357,6 +374,8 @@ async function envShadow(args, io) {
   }
   if (flags['dry-run']) {
     for (const it of plan.items) out(io, '  ' + it.entry.key + ' -> ' + markers.markerFor(it.name));
+    for (const s of plan.notes) out(io, '  note ' + s.key + ': ' + s.why);
+    for (const s of plan.skipped) out(io, '  skipped ' + s.key + ': ' + s.why);
     return 0;
   }
   const vault = await vaultOf(io);
@@ -372,6 +391,7 @@ async function envShadow(args, io) {
   writeFileAtomic(file, shadowed, mode);
   out(io, 'Shadowed ' + edits.length + ' value(s) in ' + path.basename(file) + '. The file now holds only markers; the values are in the local vault.');
   out(io, 'Encrypted copy of the original: ' + bak + ' (restore with: zn env unshadow ' + path.relative(io.cwd, file) + ' --backup ' + bak + ')');
+  for (const s of plan.notes) out(io, '  note ' + s.key + ': ' + s.why);
   for (const s of plan.skipped) out(io, '  skipped ' + s.key + ': ' + s.why);
   const names = stored.map((s) => s.name).join(',');
   if (!flags.command) {
