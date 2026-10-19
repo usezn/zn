@@ -17,7 +17,7 @@ documentation on 2026-10-11 (Cursor again on 2026-10-17). End-to-end evidence is
 | Commands with `__ZN_<NAME>__`: through `zn run` | Rewritten automatically, shown to you for confirmation | The agent is told the exact `zn run -- …` line to use | The agent is told the exact `zn run -- …` line to use; Cursor asks you once wrapped | Rewritten automatically; OpenCode's own permission rules apply |
 | Restore detected tokens into local commands and git-ignored files | Yes, shown in the confirmation dialog | No (tokens stay) | No (tokens stay) | No (tokens stay) |
 | `secrets` MCP server | Yes (registered on install) | Yes (snippet printed) | Yes (snippet printed) | Yes (snippet printed) |
-| Windows | Yes, including the PowerShell tool (Claude Code 2.1.299 or later: before it, without Git for Windows, `PreToolUse` let calls through when it could not run) | The hook command was run by hand from PowerShell and from cmd.exe. The end-to-end run also passed on Windows Server 2022 with Codex 0.163.0 and PowerShell, 0 values sent to the provider ([evidence](../bench/e2e/windows/); one run, not in CI) | Not tested | End-to-end run on Windows Server 2022 with OpenCode 1.19.3 ([evidence](../bench/e2e/windows/); one run, not in CI), 0 values sent to the provider. With PowerShell, OpenCode's default shell there, a command with a marker fails instead of running (the wrapping is written for bash); with Git Bash (`SHELL` set) it runs |
+| Windows | Yes, including the PowerShell tool (Claude Code 2.1.299 or later: before it, without Git for Windows, `PreToolUse` let calls through when it could not run) | The hook command was run by hand from PowerShell and from cmd.exe. The end-to-end run also passed on Windows Server 2022 with Codex 0.163.0 and PowerShell, 0 values sent to the provider ([evidence](../bench/e2e/windows/); one run, not in CI) | Not tested | End-to-end run on Windows Server 2022 with OpenCode 1.19.3 ([evidence](../bench/e2e/windows/); one run, not in CI), 0 values sent to the provider. With PowerShell, OpenCode's default shell there, a command with a marker failed instead of running in that run (the wrapping was then written for bash only; the PowerShell wrapping added since is covered by unit tests but not re-run end to end); with Git Bash (`SHELL` set) it runs |
 | End-to-end run, 0 values sent to the provider | **Yes** | **Yes** | Not run (no CLI with hooks to drive) | **Yes** |
 
 zn's two MCP servers (`zn mcp` and the `secrets` server) speak MCP protocol version `2024-11-05` and answer
@@ -197,9 +197,18 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
     local paths of `node` and zn (no secret value).
   - Live output that OpenCode stores while a command runs stays in its local
     database.
-  - On Windows, the `zn run` wrapping is written for bash: with PowerShell as
-    OpenCode's shell, a command with a marker fails instead of running (no
-    value is exposed).
+  - On Windows, OpenCode's command tool runs in PowerShell unless the `SHELL`
+    environment variable names another shell (measured with OpenCode 1.19.3 on
+    Windows Server 2022: with `SHELL` unset it used PowerShell, and with `SHELL`
+    set to Git Bash it used Git Bash). zn follows the same rule. When `SHELL` is
+    unset, or names anything other than a bash-like shell (`bash`, `sh`, `zsh`),
+    zn checks and wraps the command as PowerShell, the way it does for Claude
+    Code's PowerShell tool: the command must be one program with plain arguments
+    (no pipeline, variable or script block), and zn says so when it is not. When
+    `SHELL` names a bash-like shell, such as Git Bash, commands are wrapped for
+    bash as before. On macOS and Linux only an explicit `powershell` or `pwsh`
+    in `SHELL` selects the PowerShell form. The plugin sends zn only the shell's
+    program name (never its path) and the platform.
 
 ## zn Team policy choices by zn-gate version
 
