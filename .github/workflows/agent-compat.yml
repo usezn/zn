@@ -76,6 +76,12 @@ jobs:
           set -euo pipefail
           # Only the agents installed above are in this bin dir; run_all.sh skips the ones it does not find.
           bash bench/e2e/harness/run_all.sh "$RUNNER_TEMP/zn-e2e" "$RUNNER_TEMP/agents/bin"
+      - name: Check the contract and the leak check
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/report"
+          node bench/e2e/harness/weekly_check.js "$RUNNER_TEMP/baseline" bench/e2e \
+            "$RUNNER_TEMP/report/results.json" "$RUNNER_TEMP/report/summary.md" $AGENTS | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Show run diagnostics
         if: failure()
         run: |
@@ -83,12 +89,6 @@ jobs:
             [ -f "$f" ] && { echo "== ${f#$RUNNER_TEMP/}"; tail -n 20 "$f" | cut -c1-300; }
           done
           true
-      - name: Check the contract and the leak check
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/report"
-          node bench/e2e/harness/weekly_check.js "$RUNNER_TEMP/baseline" bench/e2e \
-            "$RUNNER_TEMP/report/results.json" "$RUNNER_TEMP/report/summary.md" $AGENTS | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Collect the evidence
         if: always()
         run: |
