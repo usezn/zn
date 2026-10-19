@@ -369,6 +369,10 @@ With `mode: both` and `format: sarif`, the file holds one SARIF run per check (`
 
 Permissions: the action itself needs only `contents: read`; add `security-events: write` to the job only when you upload SARIF (and, in private repositories, `actions: read`, which `upload-sarif` needs). Packages are installed without running install scripts or build steps (`--only-binary=:all: --no-deps` for the wheel, `--ignore-scripts` for the npm tarball, whose dependencies are bundled) into private directories under the runner temp directory. pip still reads the runner's own pip settings (`PIP_*` environment variables and `pip.conf`), so a mirror or proxy you configure there is used; set `package-sha256` so that the wheel is checked whatever index it comes from (and `npm-integrity` for the npm tarball). Run it on `pull_request`, never on `pull_request_target`: do not check out untrusted pull-request code in a `pull_request_target` workflow. With `mode: audit` or `both` the action also sets up Node.js 22 for the rest of the job.
 
+### pre-commit
+
+Run both checks before each commit with the [pre-commit](https://pre-commit.com) framework (needs Node.js 18 or later; ids `zn-gate-scan` and `zn-audit`): add `repos: [{repo: https://github.com/usezn/zn, rev: v1.12.0, hooks: [{id: zn-gate-scan}, {id: zn-audit}]}]` to `.pre-commit-config.yaml`.
+
 ### Repository layout
 
 - `packages/zn-gate`: Node.js CLI, MCP server and `shield` proxy (npm).
