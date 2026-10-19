@@ -61,7 +61,7 @@ npx -y zn-gate env shadow .env
 
 After this, your own app also reads the markers in `.env`: start it with zn-gate's `run` command once you allow it ([docs/secrets.md](https://github.com/usezn/zn/blob/main/docs/secrets.md)). `env shadow` tells you how to undo it.
 
-Five-minute walkthrough: [docs/secrets.md](https://github.com/usezn/zn/blob/main/docs/secrets.md). Limits: [docs/threat-model.md](https://github.com/usezn/zn/blob/main/docs/threat-model.md). Words you do not know: [glossary](https://github.com/usezn/zn/blob/main/docs/glossary.md).
+Five-minute walkthrough: [docs/secrets.md](https://github.com/usezn/zn/blob/main/docs/secrets.md). Limits: [docs/threat-model.md](https://github.com/usezn/zn/blob/main/docs/threat-model.md). Words you do not know: [glossary](https://github.com/usezn/zn/blob/main/docs/glossary.md). Every command and exit code: [command line reference](https://github.com/usezn/zn/blob/main/docs/cli.md).
 
 <details>
 <summary><strong>Other ways to install</strong>: one agent at a time, other editors, Python, MCP server only</summary>
