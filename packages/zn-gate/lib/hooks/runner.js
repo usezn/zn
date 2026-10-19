@@ -115,13 +115,24 @@ const HOOK_FAILED = 'something went wrong inside the zn hook, so this action was
  * paths the policy turns into file system calls, is checked whole.
  */
 function guardNativeText(ev) {
-  const bad = ev.event === 'pre_tool'
-    ? hasUnsafeText(ev)
-    : isUnsafeText(ev.cwd) || isUnsafeText(ev.input && ev.input.transcriptPath);
-  if (!bad) return;
+  if (!(ev.event === 'pre_tool' ? hasUnsafeText(ev) : hasUnsafeEventPaths(ev))) return;
   const err = new Error('malformed text in the event');
   err.code = 'ZN_MALFORMED_TEXT';
   throw err;
+}
+
+// What the model wrote or read is content, never a path: a tool output, a prompt or an answer is checked by the
+// scanner and does not reach a file call, so malformed text there is not a reason to refuse the event.
+const CONTENT_KEYS = new Set(['prompt', 'tool_response', 'tool_output', 'output', 'result', 'response', 'last_assistant_message']);
+
+/** Every other field of a post-tool, prompt or stop event (working directory, transcript, workspace roots, tool input) is checked. */
+function hasUnsafeEventPaths(ev) {
+  const input = ev.input && typeof ev.input === 'object' ? { ...ev.input, prompt: undefined } : ev.input;
+  const raw = {};
+  if (ev.raw && typeof ev.raw === 'object') {
+    for (const [k, v] of Object.entries(ev.raw)) if (!CONTENT_KEYS.has(k) && v !== ev.output) raw[k] = v;
+  }
+  return hasUnsafeText([ev.cwd, ev.sessionId, ev.toolName, input, raw]);
 }
 
 /** Map every string leaf of a JSON value through an async function, keeping the shape. */
