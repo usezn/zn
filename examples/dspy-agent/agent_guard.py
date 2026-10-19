@@ -18,6 +18,10 @@ model would make, so there is no network call, no model server and no API key:
     python agent_guard.py
 """
 import functools
+import os
+
+# Keep LiteLLM (used by DSPy) from downloading its model price map when it is imported.
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
 import dspy
 from dspy.utils import DummyLM
