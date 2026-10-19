@@ -450,7 +450,7 @@ async function hooks(args, io) {
   const { flags, positional } = parseFlags(args, { bool: ['project', 'no-mcp'] });
   const [action, agentId] = positional;
   if (!['install', 'uninstall'].includes(action) || !agentId) {
-    throw deps.znError('ZN_USAGE', 'usage: zn hooks install|uninstall claude-code|codex|cursor|opencode|antigravity [--project] [--no-mcp]');
+    throw deps.znError('ZN_USAGE', 'usage: zn hooks install|uninstall claude-code|codex|cursor|opencode|antigravity|copilot [--project] [--no-mcp]');
   }
   needHuman(io, 'zn hooks ' + action);
   const adapter = require('../agents').getAdapter(agentId);
@@ -470,7 +470,7 @@ async function hooks(args, io) {
 
 const HELP = {
   'hooks': [
-    'usage: zn hooks install|uninstall claude-code|codex|cursor|opencode|antigravity [--project] [--no-mcp]',
+    'usage: zn hooks install|uninstall claude-code|codex|cursor|opencode|antigravity|copilot [--project] [--no-mcp]',
     'Adds the zn hooks to a coding agent, or removes them again.',
     '  install     add the hooks (and the secrets MCP server unless --no-mcp)',
     '  uninstall   remove them',

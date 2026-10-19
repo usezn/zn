@@ -898,6 +898,8 @@ function refuseInput(agentId, why) {
   if (agentId === 'cursor') process.stdout.write(JSON.stringify({ permission: 'deny', continue: false, user_message: msg, agent_message: msg }));
   // Antigravity does not document its exit codes, so its deny answer is printed as well.
   if (agentId === 'antigravity') process.stdout.write(JSON.stringify({ decision: 'deny', reason: msg }));
+  // Copilot CLI: exit 2 denies preToolUse (other events only warn); the documented deny answer is printed as well.
+  if (agentId === 'copilot') process.stdout.write(JSON.stringify({ permissionDecision: 'deny', permissionDecisionReason: msg }));
   process.exitCode = 2;
 }
 
