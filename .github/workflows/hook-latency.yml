@@ -109,7 +109,7 @@ jobs:
           node bench/hook_latency_matrix.js --runs 40 --json "$RUNNER_TEMP/hook_latency.json" --baseline bench/hook_latency_baseline_windows.json | tee "$RUNNER_TEMP/hook_latency.md"
       - name: Summary
         if: always()
-        run: '[ -f "$RUNNER_TEMP/hook_latency.md" ] && { echo "### Windows"; cat "$RUNNER_TEMP/hook_latency.md"; } >> "$GITHUB_STEP_SUMMARY" || true'
+        run: 'if [ -f "$RUNNER_TEMP/hook_latency.md" ]; then { echo "### Windows"; cat "$RUNNER_TEMP/hook_latency.md"; } >> "$GITHUB_STEP_SUMMARY" || true; fi'
       - name: Keep the report
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
