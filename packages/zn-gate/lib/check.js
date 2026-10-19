@@ -98,9 +98,9 @@ function hookEntries(tree, agentId) {
     for (const [event, list] of Object.entries(hooks || {})) {
       for (const g of Array.isArray(list) ? list : []) {
         if (!g || typeof g !== 'object') continue;
-        if (typeof g.command === 'string') out.push({ event, matcher: g.matcher, command: g.command, onFailure: g.onFailure });
+        if (typeof g.command === 'string') out.push({ event, matcher: g.matcher, command: g.command, onFailure: g.onFailure, async: g.async });
         for (const h of Array.isArray(g.hooks) ? g.hooks : []) {
-          if (h && typeof h.command === 'string') out.push({ event, matcher: g.matcher, command: h.command, onFailure: h.onFailure });
+          if (h && typeof h.command === 'string') out.push({ event, matcher: g.matcher, command: h.command, onFailure: h.onFailure, async: h.async });
         }
       }
     }
@@ -179,6 +179,24 @@ function claudePolicy(home, env) {
   } catch (err) {
     return [];
   }
+}
+
+/* Codex hooks with `async` set (true, or the string "true" from TOML) run in the background: they cannot block or change anything. */
+function isBackground(e) {
+  return e.async === true || e.async === 'true';
+}
+
+/* The first file that sets one of zn's Codex hooks to run in the background: the Codex home's hooks.json and config.toml. */
+function codexBackgroundFile(codexHome, hooksFile) {
+  const trees = [[hooksFile, readJson(hooksFile)]];
+  try {
+    trees.push([path.join(codexHome, 'config.toml'), require('./audit/parse').parseToml(fs.readFileSync(path.join(codexHome, 'config.toml'), 'utf8')).data]);
+  } catch (_) { /* no config.toml, or one zn cannot read: nothing to say here */ }
+  for (const [file, tree] of trees) {
+    const hit = hookEntries(tree, 'codex').find((e) => isBackground(e) && parseCommand(e.command, 'codex'));
+    if (hit) return { file, event: hit.event };
+  }
+  return null;
 }
 
 function oneLine(s, n) {
@@ -334,6 +352,14 @@ async function checkAgent(spec, ctx) {
     if (p.length) {
       res.problem = bare(oneLine(p[0], 300));
       res.fix = 'change that Codex setting as it says, then run `zn-gate check` again';
+    }
+  }
+  if (spec.id === 'codex' && installed && !res.problem && res.where === userFile) {
+    // A hook Codex runs in the background cannot block a call or change a result, so it protects nothing.
+    const bg = codexBackgroundFile(path.dirname(userFile), userFile);
+    if (bg) {
+      res.problem = 'zn\'s ' + bg.event + ' hook runs in the background (async) in ' + bg.file + ', and a background hook cannot block anything, so zn does not protect Codex';
+      res.fix = 'remove `async` from zn\'s hooks in that file, or run `zn hooks install codex` again, then run `zn-gate check` again';
     }
   }
   if (spec.id === 'opencode' && installed) res.notes.push('zn\'s rules were checked; its plugin runs inside OpenCode, so it was not started here');
