@@ -24,7 +24,7 @@
  *  BeforeTool output (exit 0): {decision: "deny" | "block", reason} blocks the tool and the reason goes to the
  *    agent as a tool error. hookSpecificOutput.tool_input is merged over the model's arguments (zn does not use it).
  *    The documented decisions are deny and block only: there is no "ask" and no "allow", so zn blocks or says
- *    nothing. No output at all (exit 0, empty stdout) means no opinion.
+ *    nothing. No output at all (exit 0, empty stdout) means no opinion, and Gemini CLI's own approval applies.
  *  Exit 2 blocks the tool and stderr is the reason. Any other exit code is a warning and the tool RUNS:
  *    a hook that crashes, times out or cannot start does not block anything. Output that is not JSON is read
  *    as a system message and counts as allow.
@@ -162,8 +162,10 @@ function deny(reason) {
 
 /**
  * Internal decision -> Gemini CLI hook JSON, or null for "no opinion" (zn never says allow).
- * The documented BeforeTool decisions are deny and block, so anything zn would ask about is blocked with its
- * reason, and a command that needs a secret is blocked with the exact zn run command to use instead.
+ * The documented BeforeTool decisions are deny and block. A command that needs a secret is blocked with the exact
+ * zn run command to use instead. Anything zn would only ask about stays silent, as in the Codex adapter (Gemini CLI's
+ * own approval applies, and a command already wrapped in zn run still needs the user's approval in the vault),
+ * except a search that would print plain-text secrets: it cannot be redacted afterwards, so it is blocked.
  */
 function respond(d) {
   const ev = d && d.event;
@@ -174,8 +176,8 @@ function respond(d) {
     return deny('zn: this command uses a stored secret. Run it through zn instead, exactly like this: zn run -- ' + ev.input.command +
       '  (zn puts the value only into that process, if the user allowed this command for the secret).');
   }
-  if (d.decision === 'ask' || d.updatedInput) {
-    return deny((d.message || 'zn asks for confirmation') + ' Gemini CLI hooks cannot ask the user, so this call was blocked: ask the user to approve it in their own terminal.');
+  if (d.decision === 'ask' && ev.tool === 'grep') {
+    return deny((d.message || 'zn asks for confirmation') + ' Gemini CLI hooks cannot ask the user, so this search was blocked: name a narrower path.');
   }
   return null;
 }
@@ -227,7 +229,7 @@ function install(opts = {}) {
   cfg.writeJson(file, data);
   report.warnings.push('Gemini CLI support is experimental. zn checks tool calls before they run (BeforeTool): it blocks reads and writes of secret files and shell commands that handle secrets.');
   report.warnings.push('Gemini CLI treats a hook that crashes, times out or cannot start as a warning and runs the tool anyway (only exit code 2 blocks). If zn cannot start, calls are not checked: run `zn-gate check` to see that the hook works.');
-  report.warnings.push('Gemini CLI hooks cannot ask the user and cannot hide what a tool returns here, so zn blocks instead of asking, and a value printed by a command or a file the agent may read reaches the model. Keep secrets in the vault.');
+  report.warnings.push('Gemini CLI hooks cannot ask the user and zn does not use AfterTool, so what a tool returns is not hidden: a value printed by a command or a file the agent may read reaches the model. Keep secrets in the vault.');
   if (scope === 'project') {
     report.warnings.push('Gemini CLI treats a project hook as untrusted until the user approves it, and runs `zn` from your PATH (zn hook gemini): every teammate who opens this project needs zn-gate installed.');
   }

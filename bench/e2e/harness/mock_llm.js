@@ -2,11 +2,12 @@
 'use strict';
 /**
  * Scripted model provider for end-to-end runs. It speaks just enough of
- * three wire APIs for real agents to run against it on 127.0.0.1:
+ * four wire APIs for real agents to run against it on 127.0.0.1:
  *
  *   POST /v1/messages           Anthropic Messages (Claude Code), SSE or JSON
  *   POST /v1/responses          OpenAI Responses (Codex), SSE
  *   POST /v1/chat/completions   OpenAI Chat Completions (OpenCode), SSE
+ *   POST /v1beta/models/<m>:streamGenerateContent | :generateContent | :countTokens   Gemini API (Gemini CLI)
  *
  * Every request body is appended to <out>/requests.jsonl: that file is
  * exactly what the agent sent to "the provider", and the leak check greps it.
@@ -149,6 +150,37 @@ function chat(body, res) {
   res.end();
 }
 
+/* ------------------------------ Gemini API ------------------------------ */
+
+function geminiToolResults(body) {
+  let n = 0;
+  for (const c of body.contents || []) {
+    if (c && Array.isArray(c.parts)) n += c.parts.filter((p) => p && p.functionResponse).length;
+  }
+  return n;
+}
+
+function gemini(body, res, stream) {
+  const hasTools = Array.isArray(body.tools) && body.tools.some((t) => t && Array.isArray(t.functionDeclarations) && t.functionDeclarations.length);
+  const step = hasTools ? stepFor(geminiToolResults(body)) : null;
+  const parts = step
+    ? [{ functionCall: { name: step.tool, args: step.input } }]
+    : [{ text: hasTools ? (SCRIPT.final || 'Done.') : 'ok' }];
+  const resp = {
+    candidates: [{ content: { role: 'model', parts }, finishReason: 'STOP', index: 0 }],
+    usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5, totalTokenCount: 15 },
+    modelVersion: 'mock-model',
+  };
+  if (stream) {
+    res.setHeader('content-type', 'text/event-stream');
+    res.write('data: ' + JSON.stringify(resp) + '\r\n\r\n');
+    res.end();
+    return;
+  }
+  res.setHeader('content-type', 'application/json');
+  res.end(JSON.stringify(resp));
+}
+
 /* -------------------------------- server ------------------------------- */
 
 const server = http.createServer((req, res) => {
@@ -165,6 +197,11 @@ const server = http.createServer((req, res) => {
         res.end(JSON.stringify({ input_tokens: 10 }));
       } else if (req.method === 'POST' && /\/v1\/messages$/.test(url)) anthropic(body, res);
       else if (req.method === 'POST' && /\/responses$/.test(url)) responses(body, res);
+      else if (req.method === 'POST' && /:countTokens$/.test(url)) {
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ totalTokens: 10 }));
+      } else if (req.method === 'POST' && /:streamGenerateContent$/.test(url)) gemini(body, res, true);
+      else if (req.method === 'POST' && /:generateContent$/.test(url)) gemini(body, res, false);
       else if (req.method === 'POST' && /\/chat\/completions$/.test(url)) chat(body, res);
       else if (req.method === 'GET' && /\/models$/.test(url)) {
         res.setHeader('content-type', 'application/json');

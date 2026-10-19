@@ -147,6 +147,12 @@ test('deny: the agent cannot edit the files that switch the hook off', async () 
   assert.equal((await run(bt('run_shell_command', { command: 'sed -i s/a/b/ ~/.gemini/settings.json' }))).output.decision, 'deny');
 });
 
+test('a command already wrapped in zn run, or one with a restorable token, gets no opinion (Gemini CLI approval applies)', async () => {
+  const wrapped = await run(bt('run_shell_command', { command: 'zn run -- node -e "console.log(1)" __ZN_DB_PASSWORD__' }));
+  assert.equal(wrapped.output, null);
+  assert.equal(wrapped.decision.decision, 'ask');
+});
+
 test('a search over a folder that holds a plain-text .env is blocked (Gemini hooks cannot ask); a clean folder is not', async (t) => {
   const dir = tempDir(t, 'zn-gem-grep-');
   fs.writeFileSync(path.join(dir, 'a.txt'), 'hello');
@@ -156,6 +162,7 @@ test('a search over a folder that holds a plain-text .env is blocked (Gemini hoo
   assert.equal(r.output.decision, 'deny');
   assert.match(r.output.reason, /\.env/);
   assert.match(r.output.reason, /cannot ask the user/);
+  assert.match(r.output.reason, /narrower path/);
 });
 
 test('an unreadable hook input is refused with exit code 2 and the reason on stderr (the documented block)', (t) => {
@@ -249,13 +256,14 @@ test('install on Windows (user scope) writes the powershell form; project scope 
   assert.equal(readSettings(path.join(dir, '.gemini', 'settings.json')).hooks.BeforeTool[0].hooks[0].command, 'zn hook gemini');
 });
 
-test('install warnings: experimental, fail-open on crash, blocks instead of asking, project trust, how it is turned off', (t) => {
+test('install warnings: experimental, fail-open on crash, no asking and no scrubbing, project trust, how it is turned off', (t) => {
   const dir = tempDir(t, 'zn-gem-warn-');
   const first = gem.install({ scope: 'project', projectDir: dir });
   const all = first.warnings.join('\n');
   assert.match(all, /experimental/);
   assert.match(all, /only exit code 2 blocks/);
   assert.match(all, /cannot ask the user/);
+  assert.match(all, /not hidden/);
   assert.match(all, /untrusted until the user approves/);
   assert.match(all, /hooksConfig\.enabled/);
   assert.ok(gem.install({ scope: 'project', projectDir: dir }).warnings.some((w) => /do not commit it/.test(w)));
