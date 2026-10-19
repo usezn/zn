@@ -98,17 +98,27 @@ function replaceOnSecretOf(opts) {
 }
 
 /*
- * Opt-in (off by default): refuse shell commands of a few destructive shapes (recursive delete of the home folder or
- * the root, a download piped to a shell, writes to a disk device, chmod -R 777 /, a fork bomb, a download written into
- * a shell startup file; see lib/destructive.js). Set in ~/.zn/config.json as
- * {"hooks": {"blockDestructiveCommands": true}}, or with ZN_BLOCK_DESTRUCTIVE=1. The environment variable can only
- * turn the check on, never off, so a project cannot use it to loosen the policy.
+ * Destructive shell commands (see lib/destructive.js). Two rules are on by default: a recursive delete of the home
+ * folder or the filesystem root (rm_root_home) and a write to a disk device (disk_overwrite). The other four
+ * (pipe_to_shell, rc_download, perm_root, fork_bomb) are opt-in. Returns the list of rules to apply; an empty list
+ * turns the check off.
+ *
+ * ~/.zn/config.json, {"hooks": {"blockDestructiveCommands": ...}}:
+ *   true = all six rules, false = off, an array of rule names = exactly those; absent = the default two.
+ * ZN_BLOCK_DESTRUCTIVE overrides the file: 1 = all six rules, 0 = off.
  */
-function blockDestructiveOf(opts) {
-  if (opts.blockDestructive === true) return true;
-  if (process.env.ZN_BLOCK_DESTRUCTIVE === '1') return true;
-  const hooks = readConfig(opts.home).hooks || {};
-  return hooks.blockDestructiveCommands === true;
+function destructiveRulesOf(opts) {
+  const { DEFAULT_RULES, RULES } = require('../destructive');
+  const all = RULES.map((r) => r.replace(/^destructive:/, ''));
+  if (opts.blockDestructive === true) return all;
+  const env = process.env.ZN_BLOCK_DESTRUCTIVE;
+  if (env === '1') return all;
+  if (env === '0') return [];
+  const v = (readConfig(opts.home).hooks || {}).blockDestructiveCommands;
+  if (v === true) return all;
+  if (v === false) return [];
+  if (Array.isArray(v)) return v.filter((r) => all.includes(r));
+  return DEFAULT_RULES;
 }
 
 // Reinstall the running version: `npm install -g zn-gate` alone could install an
@@ -284,7 +294,7 @@ async function decidePre(ev, d, agentId, opts) {
 
   if (SHELL_TOOLS.has(tool)) {
     const original = String(input.command || '');
-    const deny = policy.bashDenial(original, { ...pathOpts, blockDestructive: blockDestructiveOf(opts) });
+    const deny = policy.bashDenial(original, { ...pathOpts, destructiveRules: destructiveRulesOf(opts) });
     if (deny) return { decision: 'deny', message: deny };
 
     let command = original;
@@ -434,7 +444,7 @@ function decideMonitor(ev, pathOpts, opts) {
   const original = String(ev.input.command || '');
   if (original.length > policy.SHELL_SCAN_CAP) return { decision: 'deny', message: policy.bashDenial(original, pathOpts) };
   if (!original.trim()) return { decision: 'allow' };
-  const deny = policy.bashDenial(original, { ...pathOpts, blockDestructive: blockDestructiveOf(opts) });
+  const deny = policy.bashDenial(original, { ...pathOpts, destructiveRules: destructiveRulesOf(opts) });
   if (deny) return { decision: 'deny', message: deny };
   if (markers.findMarkers(original).length) {
     return { decision: 'deny', message: 'zn: a monitor cannot use secret placeholders (such as __ZN_NAME__). Next step: run the command with the Bash tool instead; zn fills in the placeholders there.' };
@@ -540,7 +550,7 @@ async function decidePost(ev, d, agentId, opts = {}) {
     // Codex runs every PreToolUse hook at once with the original call, so another tool's hook can change the
     // command after zn checked it. PostToolUse carries the command that really ran: if zn blocks that one,
     // the output is withheld. The command has already run, so this limits what the model sees, not what happened.
-    const denial = policy.bashDenial(String(ev.input.command || ''), { cwd: ev.cwd, home: opts.home });
+    const denial = policy.bashDenial(String(ev.input.command || ''), { cwd: ev.cwd, home: opts.home, destructiveRules: destructiveRulesOf(opts) });
     if (denial) {
       return { decision: 'deny', message: 'zn: A command different from the one zn checked was run (another tool changed it). zn withheld its output because zn blocks that command. Review the other hooks configured for Codex.' };
     }

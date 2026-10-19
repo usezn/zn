@@ -213,7 +213,7 @@ function checkSimple(words, depth) {
   }
 
   if (RM_HEADS.has(head)) {
-    if (rest.some((w) => recursiveFlag(w, head)) && operands(rest, head).some((w) => dangerousPath(w))) return 'rm_root_home';
+    if ((rest.some((w) => recursiveFlag(w, head)) && operands(rest, head).some((w) => dangerousPath(w))) && on('rm_root_home')) return 'rm_root_home';
   }
   if (head === 'find') {
     const paths = [];
@@ -221,21 +221,21 @@ function checkSimple(words, depth) {
     const del = rest.includes('-delete') || rest.some((w, i) => w === '-exec' && /^(?:rm|shred)$/.test(programName(rest[i + 1] || '')));
     // With a test (-name, -type, -mtime ...) find removes only some files; with none it removes everything below the path.
     const filtered = rest.some((w) => FIND_TESTS.test(w));
-    if (del && !filtered && paths.some((w) => dangerousPath(w))) return 'rm_root_home';
+    if ((del && !filtered && paths.some((w) => dangerousPath(w))) && on('rm_root_home')) return 'rm_root_home';
   }
   if (head === 'chmod' || head === 'chown' || head === 'chgrp') {
     if (rest.some((w) => /^-[A-Za-z]*R[A-Za-z]*$/.test(w) || w === '--recursive')) {
       const ops = operands(rest, head);
       const mode = ops[0] || '';
       const targets = ops.slice(1).map(dangerousPath).filter(Boolean);
-      if (targets.includes('root') || targets.includes('system')) return 'perm_root';
-      if (head === 'chmod' && targets.includes('home') && worldWritable(mode)) return 'perm_root';
+      if ((targets.includes('root') || targets.includes('system')) && on('perm_root')) return 'perm_root';
+      if ((head === 'chmod' && targets.includes('home') && worldWritable(mode)) && on('perm_root')) return 'perm_root';
     }
   }
   if (head === 'dd') {
-    if (rest.some((w) => w.startsWith('of=') && BLOCK_DEVICE_RE.test(w.slice(3)))) return 'disk_overwrite';
+    if ((rest.some((w) => w.startsWith('of=') && BLOCK_DEVICE_RE.test(w.slice(3)))) && on('disk_overwrite')) return 'disk_overwrite';
   }
-  if (DISK_TOOLS.test(head) && rest.some((w) => BLOCK_DEVICE_RE.test(w))) return 'disk_overwrite';
+  if ((DISK_TOOLS.test(head) && rest.some((w) => BLOCK_DEVICE_RE.test(w))) && on('disk_overwrite')) return 'disk_overwrite';
   return null;
 }
 
@@ -267,7 +267,7 @@ function checkPipeline(pipe) {
       // -c runs the code of its argument (checked on its own); -n only reads the script to check its syntax.
       if (rest.some((w) => /^-[A-Za-z]*[cn][A-Za-z]*$/.test(w))) continue;
       const files = rest.filter((w) => !w.startsWith('-'));
-      if (!files.length || rest.includes('-s') || rest.includes('-')) return 'pipe_to_shell';
+      if ((!files.length || rest.includes('-s') || rest.includes('-')) && on('pipe_to_shell')) return 'pipe_to_shell';
     }
     // a download written into a startup file
     for (let j = 0; j < pipe.length; j++) {
@@ -281,16 +281,20 @@ function checkPipeline(pipe) {
         else if (outFlag(prev)) target = w;
         else if (/^(?:--output|--output-document|-OutFile)[=:]/i.test(w)) target = w.replace(/^[^=:]*[=:]/, '');
         else if (heads[j].head === 'tee' && !w.startsWith('-') && i > 0) target = w;
-        if (target !== null && isRcPath(target)) return 'rc_download';
+        if ((target !== null && isRcPath(target)) && on('rc_download')) return 'rc_download';
       }
     }
   }
   // A redirect to a block device, with or without a download.
   for (const s of pipe) {
-    for (const t of redirectTargets(s.words)) if (BLOCK_DEVICE_RE.test(t)) return 'disk_overwrite';
+    for (const t of redirectTargets(s.words)) if ((BLOCK_DEVICE_RE.test(t)) && on('disk_overwrite')) return 'disk_overwrite';
   }
   return null;
 }
+
+// The rules the current call looks for (null = all six). Set by checkCommand and denial; the check is synchronous.
+let ENABLED = null;
+function on(rule) { return ENABLED === null || ENABLED.has(rule); }
 
 function analyze(cmd, depth = 0) {
   const text = String(cmd);
@@ -299,9 +303,9 @@ function analyze(cmd, depth = 0) {
   // again on its own below, so the patterns that do not need the quotes read the text without them.
   // (Past QUOTE_SCAN_MAX the quotes are left in: finding every pair is the one step that is not linear.)
   const bare = text.length > QUOTE_SCAN_MAX ? text : text.replace(QUOTED_RE, "''");
-  if (FORK_BOMB_RE.test(bare)) return 'fork_bomb';
-  if (SHELL_RUNS_DOWNLOAD_RE.test(text) || SOURCE_DOWNLOAD_RE.test(bare) || PS_PIPE_RE.test(bare) || PS_CALL_RE.test(bare)) return 'pipe_to_shell';
-  if (PS_DISK_RE.test(bare)) return 'disk_overwrite';
+  if ((FORK_BOMB_RE.test(bare)) && on('fork_bomb')) return 'fork_bomb';
+  if ((SHELL_RUNS_DOWNLOAD_RE.test(text) || SOURCE_DOWNLOAD_RE.test(bare) || PS_PIPE_RE.test(bare) || PS_CALL_RE.test(bare)) && on('pipe_to_shell')) return 'pipe_to_shell';
+  if ((PS_DISK_RE.test(bare)) && on('disk_overwrite')) return 'disk_overwrite';
   const segs = segmentsOf(text);
   let pipe = [];
   for (const seg of segs) {
@@ -335,10 +339,17 @@ function checkCommand(command) {
 }
 
 /** The deny message for the agent hooks, or null. */
-function denial(command) {
-  const hit = typeof command === 'string' ? analyze(command, 0) : null;
+function denial(command, rules) {
+  if (typeof command !== 'string') return null;
+  const saved = ENABLED;
+  ENABLED = rules ? new Set(rules) : null;
+  let hit;
+  try { hit = analyze(command, 0); } finally { ENABLED = saved; }
   if (!hit) return null;
-  return 'zn blocked this: ' + REASONS[hit] + '. Next step: do not run it; tell the user what you meant to do and let them run it in their own terminal if they want it.';
+  return 'zn blocked this: ' + REASONS[hit] + '. Ask the user to confirm before running this command. If they want it, they can run it in their own terminal; do not run it yourself.';
 }
 
-module.exports = { checkCommand, denial, COMMAND_RULES_VERSION, RULES: Object.keys(REASONS).map((k) => 'destructive:' + k) };
+/** The rules the agent hooks apply when the user has not changed anything. The other four are opt-in. */
+const DEFAULT_RULES = ['rm_root_home', 'disk_overwrite'];
+
+module.exports = { checkCommand, denial, DEFAULT_RULES, COMMAND_RULES_VERSION, RULES: Object.keys(REASONS).map((k) => 'destructive:' + k) };

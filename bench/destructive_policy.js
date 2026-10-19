@@ -47,8 +47,8 @@ const opts = { cwd: process.cwd(), home: '/home/example-user' };
 const latency = {
   commands: all.length,
   checkCommand_us: Math.round(time((c) => checkCommand(c), all, 20) * 10) / 10,
-  hook_policy_off_us: Math.round(time((c) => policy.bashDenial(c, opts), corpus.benign, 3) * 10) / 10,
-  hook_policy_on_us: Math.round(time((c) => policy.bashDenial(c, { ...opts, blockDestructive: true }), corpus.benign, 3) * 10) / 10,
+  hook_policy_off_us: Math.round(time((c) => policy.bashDenial(c, { ...opts, destructiveRules: [] }), corpus.benign, 3) * 10) / 10,
+  hook_policy_on_us: Math.round(time((c) => policy.bashDenial(c, { ...opts, destructiveRules: require('../packages/zn-gate/lib/destructive').RULES.map((r) => r.replace('destructive:', '')) }), corpus.benign, 3) * 10) / 10,
 };
 
 const tp = corpus.risky.length - misses.length;
