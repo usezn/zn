@@ -417,6 +417,19 @@ def _home_mcp_files() -> List[Path]:
     return out
 
 
+# Control characters (C0, DEL, C1) and bidirectional controls in a path from a
+# repository must not reach the terminal: an ESC sequence could rewrite the
+# lines above it. They are shown as \xNN or \u{NNNN}, like the Node.js package.
+_UNSAFE_CHARS = re.compile("[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069\u200e\u200f\u061c]")
+
+
+def _safe_text(value: Any) -> str:
+    def esc(m: "re.Match[str]") -> str:
+        cp = ord(m.group(0))
+        return "\\x%02x" % cp if cp <= 0xFF else "\\u{%x}" % cp
+    return _UNSAFE_CHARS.sub(esc, "" if value is None else str(value))
+
+
 def _home_display(file_path: Path) -> str:
     """A file of the user's home as ~/..., the way the Node.js package shows it."""
     try:
@@ -437,7 +450,7 @@ _SCAN_SKIP_DIRS = {
     "dist", "build", "target", "vendor",
 }
 _SILENT_SKIP_DIRS = {
-    "node_modules", ".git", ".next", ".turbo", ".idea", ".venv", "venv", "__pycache__", ".eggs",
+    "node_modules", ".git", ".next", ".turbo",
 }
 _SKIP_MARKERS = {
     "target": ("Cargo.toml", "pom.xml", "build.gradle", "build.gradle.kts", "build.sbt"),
@@ -590,13 +603,13 @@ def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_vio
         if skipped:
             print(f"Not scanned ({len(skipped)}):")
             for s in skipped[:20]:
-                print(f"  {s['file']} ({s['reason']})")
+                print(f"  {_safe_text(s['file'])} ({_safe_text(s['reason'])})")
             if len(skipped) > 20:
                 print(f"  ... and {len(skipped) - 20} more")
         if skipped_dirs:
             print(f"Directories not scanned ({len(skipped_dirs)}):")
             for sd in skipped_dirs[:20]:
-                print(f"  {sd['dir']} ({sd['reason']})")
+                print(f"  {_safe_text(sd['dir'])} ({_safe_text(sd['reason'])})")
             if len(skipped_dirs) > 20:
                 print(f"  ... and {len(skipped_dirs) - 20} more")
         if not all_violations and nothing:
