@@ -136,8 +136,22 @@ function recordUnlockFailure(opts) {
   return n >= FAILS_BEFORE_HINT ? HINT : null;
 }
 
+const NOT_PASSPHRASE = 'This was not a wrong passphrase, so `zn vault reset` would not help. Your secrets are untouched: fix the problem above and run `zn unlock` again.';
+const VAULT_DAMAGED = 'A vault file looks damaged or changed. Do not reset: restore it from a backup (a reset sets the old vault aside and starts empty).';
+
+/**
+ * What `zn unlock` adds after a ZN_LOCKED failure. Only a wrong passphrase counts
+ * towards the reset hint; a damaged vault file or a keychain problem gets its own
+ * guidance and leaves the count alone. Returns a line to print, or null.
+ */
+function unlockFailureTip(err, opts) {
+  if (err && err.wrongPassphrase === true) return recordUnlockFailure(opts);
+  if (err && err.vaultDamaged === true) return VAULT_DAMAGED;
+  return NOT_PASSPHRASE;
+}
+
 function clearUnlockFailures(opts) {
   try { fs.unlinkSync(failFile(opts)); } catch (err) { /* none */ }
 }
 
-module.exports = { resetVault, recordUnlockFailure, clearUnlockFailures, vaultFiles, PHRASE, FAILS_BEFORE_HINT, HINT, TEAM_REFUSAL, LOCK_FIRST, NOTHING, CANCELLED };
+module.exports = { resetVault, recordUnlockFailure, unlockFailureTip, NOT_PASSPHRASE, VAULT_DAMAGED, clearUnlockFailures, vaultFiles, PHRASE, FAILS_BEFORE_HINT, HINT, TEAM_REFUSAL, LOCK_FIRST, NOTHING, CANCELLED };

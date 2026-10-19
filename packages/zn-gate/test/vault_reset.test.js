@@ -180,6 +180,41 @@ test('after three failed unlocks the hint points to zn vault reset; a good unloc
   assert.equal(reset.recordUnlockFailure({}), null);
 });
 
+function lockedError(flag) {
+  const e = new Error('vault locked');
+  e.code = 'ZN_LOCKED';
+  if (flag) e[flag] = true;
+  return e;
+}
+
+test('only wrong-passphrase failures count towards the hint; damaged files and keychain errors get their own guidance', (t) => {
+  setup(t);
+  fs.mkdirSync(process.env.ZN_HOME, { recursive: true });
+  for (let i = 0; i < 6; i++) {
+    assert.equal(reset.unlockFailureTip(lockedError('vaultDamaged'), {}), reset.VAULT_DAMAGED);
+    assert.equal(reset.unlockFailureTip(lockedError(), {}), reset.NOT_PASSPHRASE);
+  }
+  assert.doesNotMatch(reset.VAULT_DAMAGED, /Forgot the passphrase/);
+  assert.doesNotMatch(reset.NOT_PASSPHRASE, /Forgot the passphrase/);
+  assert.match(reset.VAULT_DAMAGED, /Do not reset/);
+  // Other errors in between do not count: the third wrong passphrase triggers the hint.
+  assert.equal(reset.unlockFailureTip(lockedError('wrongPassphrase'), {}), null);
+  assert.equal(reset.unlockFailureTip(lockedError('vaultDamaged'), {}), reset.VAULT_DAMAGED);
+  assert.equal(reset.unlockFailureTip(lockedError('wrongPassphrase'), {}), null);
+  assert.equal(reset.unlockFailureTip(lockedError(), {}), reset.NOT_PASSPHRASE);
+  assert.equal(reset.unlockFailureTip(lockedError('wrongPassphrase'), {}), reset.HINT);
+  reset.clearUnlockFailures({});
+  assert.equal(reset.unlockFailureTip(lockedError('wrongPassphrase'), {}), null);
+});
+
+test('the real errors carry the right kind: wrong passphrase versus a damaged vault file', async (t) => {
+  const s = setup(t);
+  await s.makeVault(OLD);
+  await assert.rejects(keychain.loadIdentity({ passphrase: 'not the passphrase' }), (e) => e.wrongPassphrase === true && !e.vaultDamaged);
+  fs.writeFileSync(store.paths({}).metaFile, '{not json', { mode: 0o600 });
+  await assert.rejects(keychain.loadIdentity({ passphrase: OLD }), (e) => e.vaultDamaged === true && !e.wrongPassphrase);
+});
+
 test('the hooks stop an agent from running zn vault reset', () => {
   const OPTS = { cwd: os.tmpdir(), home: os.tmpdir(), env: {} };
   for (const cmd of ['zn vault reset', 'npx -y zn-gate vault reset', 'cd x && zn-gate  vault   reset']) {

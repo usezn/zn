@@ -110,16 +110,20 @@ class VaultState {
       // A missing vault next to an existing audit log or project maps means
       // it was deleted or lost: never start over silently with a new audit key.
       if (store.hasPriorState(this.opts)) {
-        throw znError(CODES.LOCKED, 'vault file secrets.age is missing but this vault has history (audit log or project maps). ' +
+        const bad = znError(CODES.LOCKED, 'vault file secrets.age is missing but this vault has history (audit log or project maps). ' +
           'Restore secrets.age from a backup. To start over on purpose, first move ~/.zn/audit.jsonl and the project maps ~/.zn/vault/<hash>.age somewhere else.');
+        bad.vaultDamaged = true;
+        throw bad;
       }
       data = { v: 1, auditKey: crypto.randomBytes(32).toString('hex'), auditHead: null, secrets: {} };
       data.mac = this.tagOf(data);
       await store.writeEncrypted(this.paths.secretsFile, data, this.recipient);
     } else if (typeof data.mac !== 'string' || !/^[0-9a-f]{64}$/.test(data.mac) ||
         !crypto.timingSafeEqual(Buffer.from(data.mac, 'hex'), Buffer.from(this.tagOf(data), 'hex'))) {
-      throw znError(CODES.LOCKED, 'vault file secrets.age failed its integrity check: it was edited, forged with the public key, ' +
+      const bad = znError(CODES.LOCKED, 'vault file secrets.age failed its integrity check: it was edited, forged with the public key, ' +
         'or written by a pre-release build. Restore it from a backup.');
+      bad.vaultDamaged = true;
+      throw bad;
     }
     if (!data.secrets || typeof data.secrets !== 'object') data.secrets = {};
     if (!/^[0-9a-f]{64}$/.test(data.auditKey || '')) data.auditKey = crypto.randomBytes(32).toString('hex');
