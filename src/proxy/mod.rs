@@ -20,6 +20,9 @@ use tokio::sync::Mutex;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tracing::{error, info, warn};
 
+/// Maximum time to wait for a pong when checking a WebSocket connection.
+const WS_HEALTH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+
 /// Configuration for an MCP server
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct McpServerConfig {
@@ -191,11 +194,36 @@ impl McpConnection {
         }
     }
 
-    /// Check if the MCP connection is still alive
-    pub fn is_alive(&mut self) -> bool {
+    /// Check if the MCP connection is still alive.
+    ///
+    /// Stdio: the child process has not exited. WebSocket: a ping is sent and
+    /// the connection is healthy only if the peer answers with a pong within
+    /// `WS_HEALTH_TIMEOUT`.
+    pub async fn is_alive(&mut self) -> bool {
+        self.is_alive_within(WS_HEALTH_TIMEOUT).await
+    }
+
+    async fn is_alive_within(&mut self, timeout: std::time::Duration) -> bool {
         match self {
             Self::Stdio { child, .. } => matches!(child.try_wait(), Ok(None)),
-            Self::WebSocket { .. } => true, // TODO: Better health check for WS
+            Self::WebSocket { ws_stream, .. } => {
+                let ping = async {
+                    ws_stream
+                        .send(Message::Ping(b"zn-health".to_vec().into()))
+                        .await
+                        .ok()?;
+                    // Other frames may arrive first; skip them until the pong.
+                    while let Some(msg) = ws_stream.next().await {
+                        match msg {
+                            Ok(Message::Pong(_)) => return Some(()),
+                            Ok(Message::Close(_)) | Err(_) => return None,
+                            Ok(_) => continue,
+                        }
+                    }
+                    None
+                };
+                matches!(tokio::time::timeout(timeout, ping).await, Ok(Some(())))
+            }
         }
     }
 
@@ -378,7 +406,7 @@ impl McpPool {
 
         let conn = match connections.entry(name.to_string()) {
             Entry::Occupied(mut entry) => {
-                if !entry.get_mut().is_alive() {
+                if !entry.get_mut().is_alive().await {
                     info!("MCP '{}' connection died, reconnecting", name);
                     let new_conn = McpConnection::connect(name, &config).await?;
                     entry.insert(new_conn);
@@ -421,7 +449,7 @@ impl McpPool {
         let mut status = HashMap::new();
 
         for (name, conn) in connections.iter_mut() {
-            status.insert(name.clone(), conn.is_alive());
+            status.insert(name.clone(), conn.is_alive().await);
         }
 
         for name in self.configs.keys() {
@@ -456,5 +484,77 @@ mod tests {
     fn test_validate_command_blocked() {
         assert!(validate_command("bash").is_err());
         assert!(validate_command("rm").is_err());
+    }
+
+    async fn ws_conn(addr: std::net::SocketAddr) -> McpConnection {
+        let url = format!("ws://{}", addr);
+        let (ws, _) = connect_async(&url).await.unwrap();
+        McpConnection::WebSocket {
+            name: "t".into(),
+            url,
+            ws_stream: Box::new(ws),
+        }
+    }
+
+    #[tokio::test]
+    async fn ws_health_check_healthy_server() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            // Reading drives the automatic pong reply.
+            while ws.next().await.is_some() {}
+        });
+        let mut conn = ws_conn(addr).await;
+        assert!(conn.is_alive_within(std::time::Duration::from_secs(2)).await);
+        assert!(conn.is_alive_within(std::time::Duration::from_secs(2)).await);
+    }
+
+    #[tokio::test]
+    async fn ws_health_check_closed_peer_is_unhealthy() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            drop(ws);
+        });
+        let mut conn = ws_conn(addr).await;
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert!(!conn.is_alive_within(std::time::Duration::from_secs(2)).await);
+    }
+
+    #[tokio::test]
+    async fn ws_health_check_unresponsive_peer_times_out() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let _ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            // Complete the handshake but never read, so no pong is sent.
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        });
+        let mut conn = ws_conn(addr).await;
+        let start = std::time::Instant::now();
+        assert!(!conn.is_alive_within(std::time::Duration::from_millis(300)).await);
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn ws_connect_fails_when_server_does_not_upgrade() {
+        use tokio::io::AsyncWriteExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut tcp, _) = listener.accept().await.unwrap();
+            let _ = tcp
+                .write_all(b"HTTP/1.1 200 OK
+Content-Length: 0
+
+")
+                .await;
+        });
+        assert!(connect_async(format!("ws://{}", addr)).await.is_err());
     }
 }
