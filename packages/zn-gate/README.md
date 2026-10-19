@@ -297,7 +297,7 @@ So `evaluate` is not a command or tool-call firewall: deleting files or piping a
 
 ## What is blocked and what only warns
 
-zn-gate blocks what is almost certainly an attack or a leak: reading credential files (`.env`, `~/.aws/credentials`, SSH keys), asking for API keys or passwords, sending data out through hidden image links, hidden instructions in Base64 or invisible characters, "ignore all previous instructions", and dangerous commands.
+zn-gate blocks what is almost certainly an attack or a leak: reading credential files (`.env`, `~/.aws/credentials`, SSH keys), asking for API keys or passwords, sending data out through hidden image links, hidden instructions in Base64 or invisible characters, "ignore all previous instructions" and other injection wording. It does not judge whether a shell command is destructive: `rm -rf ~/` or `curl ... | sh` are not blocked on their own.
 
 Some other patterns also appear in ordinary text, such as `system:` keys in YAML, "bypass the cache" or an article that explains what a jailbreak is. For those, zn-gate lets the text through and adds a short warning (`advisory` in the result) so you or your agent can take a look.
 
