@@ -50,7 +50,7 @@ pub struct ZnConfig {
     #[serde(default)]
     pub neural: NeuralConfig,
 
-    /// Fusion Gate (B-3): rules ∥ neural head. Missing section = disabled.
+    /// Fusion Gate: rules ∥ neural head. Missing section = disabled.
     #[serde(default)]
     pub fusion: FusionConfig,
 
@@ -115,6 +115,16 @@ pub struct ServerConfig {
     /// Broadcast channel capacity
     #[serde(default = "default_channel_capacity")]
     pub channel_capacity: usize,
+
+    /// Largest WebSocket message the gateway accepts, in bytes (default 1 MiB).
+    /// A larger message closes the connection.
+    #[serde(default = "default_ws_max_message_bytes")]
+    pub ws_max_message_bytes: usize,
+
+    /// Largest single WebSocket frame the gateway accepts, in bytes (default 1 MiB).
+    /// A larger frame closes the connection.
+    #[serde(default = "default_ws_max_frame_bytes")]
+    pub ws_max_frame_bytes: usize,
 }
 
 impl Default for ServerConfig {
@@ -123,12 +133,20 @@ impl Default for ServerConfig {
             port: default_port(),
             bind_address: default_bind_address(),
             channel_capacity: default_channel_capacity(),
+            ws_max_message_bytes: default_ws_max_message_bytes(),
+            ws_max_frame_bytes: default_ws_max_frame_bytes(),
         }
     }
 }
 
 fn default_port() -> u16 {
     9090
+}
+fn default_ws_max_message_bytes() -> usize {
+    1024 * 1024
+}
+fn default_ws_max_frame_bytes() -> usize {
+    1024 * 1024
 }
 fn default_bind_address() -> String {
     "127.0.0.1".to_string()
@@ -324,6 +342,11 @@ pub struct KmsConfig {
     pub key_id: Option<String>,
     /// Region (if applicable)
     pub region: Option<String>,
+    /// When `key_id` is set and the key cannot be fetched from the KMS, start
+    /// anyway with the key from the config. Off by default: the gateway
+    /// refuses to start instead.
+    #[serde(default)]
+    pub allow_config_fallback: bool,
 }
 
 impl Default for KmsConfig {
@@ -332,6 +355,7 @@ impl Default for KmsConfig {
             kms_type: default_kms_type(),
             key_id: std::env::var("ZN_KMS_KEY_ID").ok(),
             region: std::env::var("ZN_KMS_REGION").ok(),
+            allow_config_fallback: false,
         }
     }
 }
@@ -407,7 +431,7 @@ fn default_false() -> bool {
     false
 }
 
-/// Fusion Gate (B-3): block iff rules hit OR neural score >= tau.
+/// Fusion Gate: block iff rules hit OR neural score >= tau.
 ///
 /// A missing `[fusion]` section deserializes to `enabled: false`, which must
 /// degrade EXACTLY to the rules-only gate (regression-guarded in evals).
@@ -566,6 +590,10 @@ pub struct ConsensusConfig {
     /// Allow neural core to act as one witness if risk is low
     #[serde(default = "default_true")]
     pub neural_as_witness: bool,
+    /// Seconds a proposed action stays valid (default 900). After that it can no
+    /// longer be approved and is removed. 0 means the default.
+    #[serde(default = "default_pending_ttl_secs")]
+    pub pending_ttl_secs: u64,
 }
 
 impl Default for ConsensusConfig {
@@ -575,8 +603,13 @@ impl Default for ConsensusConfig {
             critical_tools: Vec::new(),
             required_signatures: 2,
             neural_as_witness: true,
+            pending_ttl_secs: default_pending_ttl_secs(),
         }
     }
+}
+
+fn default_pending_ttl_secs() -> u64 {
+    900
 }
 
 fn default_m() -> u32 {
@@ -749,6 +782,11 @@ impl ZnConfig {
 
         if let Ok(key_id) = std::env::var("ZN_KMS_KEY_ID") {
             self.kms.key_id = Some(key_id);
+        }
+
+        if let Ok(allow) = std::env::var("ZN_KMS_ALLOW_CONFIG_FALLBACK") {
+            self.kms.allow_config_fallback =
+                matches!(allow.as_str(), "1" | "true" | "TRUE" | "True");
         }
 
         if let Ok(neural_enabled) = std::env::var("ZN_NEURAL_ENABLED") {

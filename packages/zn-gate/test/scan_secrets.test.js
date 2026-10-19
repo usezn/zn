@@ -22,7 +22,7 @@ function expand(text) {
 }
 
 function scanDir(files, args = []) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-scan-secrets-'));
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zn-scan-secrets-')));
   try {
     for (const [name, content] of Object.entries(files)) fs.writeFileSync(path.join(dir, name), content);
     const r = spawnSync(process.execPath, [CLI, 'scan', dir, ...args], {
@@ -94,7 +94,7 @@ test('a file name is put in the suggested command only when it is plain', () => 
     assert.equal(steps[0], `Next: run npx -y zn-gate env shadow ${shown} to move the values into the local vault, and rotate any value that was ever committed or shared.`, name);
   }
   // In a subfolder the path is shown with forward slashes, also on Windows.
-  const sub = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-scan-sub-'));
+  const sub = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zn-scan-sub-')));
   try {
     fs.mkdirSync(path.join(sub, 'app'));
     fs.writeFileSync(path.join(sub, 'app', '.env'), env);
@@ -105,7 +105,7 @@ test('a file name is put in the suggested command only when it is plain', () => 
     fs.rmSync(sub, { recursive: true, force: true });
   }
   // A path that starts with "-" would be read as an option.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-scan-dash-'));
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zn-scan-dash-')));
   try {
     fs.mkdirSync(path.join(dir, '-x'));
     fs.writeFileSync(path.join(dir, '-x', '.env'), env);
