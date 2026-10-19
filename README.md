@@ -371,7 +371,7 @@ Permissions: the action itself needs only `contents: read`; add `security-events
 
 ### pre-commit
 
-Run both checks before each commit with the [pre-commit](https://pre-commit.com) framework (needs Node.js 18 or later; ids `zn-gate-scan` and `zn-audit`): add `repos: [{repo: https://github.com/usezn/zn, rev: v1.12.0, hooks: [{id: zn-gate-scan}, {id: zn-audit}]}]` to `.pre-commit-config.yaml`.
+Run both checks before each commit with the [pre-commit](https://pre-commit.com) framework (needs Node.js 18 or later; ids `zn-gate-scan` and `zn-audit`): add `repos: [{repo: https://github.com/usezn/zn, rev: v1.12.0, hooks: [{id: zn-gate-scan}, {id: zn-audit}]}]` to `.pre-commit-config.yaml`. Each tag's hooks run the exact zn-gate version of that tag (`npx --yes zn-gate@1.12.0 ...`), so the `rev` you pin decides which version runs on every commit.
 
 ### Repository layout
 
