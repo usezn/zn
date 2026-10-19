@@ -166,9 +166,12 @@ test('redactSecrets keeps the schemes it already redacted, and leaves references
   assert.equal(redactSecrets(`postgres://u:${pw}@h.example.test/x`).sanitized, 'postgres://u:[REDACTED_DB_PASSWORD]@h.example.test/x');
   assert.equal(redactSecrets(`mssql://u:$` + `{DB_PASS}@h.example.test/x`).sanitized, 'mssql://u:$' + '{DB_PASS}@h.example.test/x');
   assert.equal(redactSecrets('mssql://u:abc@h.example.test/x').sanitized, 'mssql://u:abc@h.example.test/x');
-  // A scheme that starts inside a longer word is not a URL for Python, Unicode letters included.
-  for (const prefix of ['é', 'ſ']) {
-    const text = `${prefix}mssql://u:${pw}@h.example.test/x`;
-    assert.equal(redactSecrets(text).sanitized, text, JSON.stringify(prefix));
+  // A scheme after non-ASCII letters (CJK, accents) is still a URL: the password is redacted, never left in clear.
+  for (const prefix of ['连接', '数据库', 'é', 'ſ']) {
+    for (const scheme of ['https', 'mssql']) {
+      const out = redactSecrets(`${prefix}${scheme}://u:${pw}@h.example.test/x`);
+      assert.equal(out.sanitized, `${prefix}${scheme}://u:[REDACTED_URL_PASSWORD]@h.example.test/x`, prefix + scheme);
+      assert.ok(!out.sanitized.includes(pw));
+    }
   }
 });

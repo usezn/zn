@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-19.4
+ * RULES_VERSION: 2026-10-19.5
  */
 
-const RULES_VERSION = '2026-10-19.4';
+const RULES_VERSION = '2026-10-19.5';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -1013,15 +1013,6 @@ const SCRUB_PROVIDER_RULES = new Map([
 // the Python package has one rule and one label for every scheme.
 const SCRUB_PROVIDER_LABELS = new Map([['DB_PASSWORD', 'URL_PASSWORD']]);
 
-// The scheme of a URL password must not start inside a longer word, Unicode
-// letters and digits included (Python's rule uses (?<!\w), the scrubber's
-// word boundary is ASCII-only: a long s before "mssql" is a word character for Python). The
-// window is one character longer than the longest scheme://user: prefix.
-const URL_PASSWORD_PREFIX = /(?<![\p{L}\p{N}_])[a-zA-Z][a-zA-Z0-9+.-]{1,24}:\/\/[^\s:@\/?#'"`<>]{0,128}:$/u;
-function urlPasswordSchemeStartsWord(text, passwordStart) {
-  return !URL_PASSWORD_PREFIX.test(text.slice(Math.max(0, passwordStart - 158), passwordStart));
-}
-
 // The provider token formats of the scrubber engine (GitLab, Slack, Stripe,
 // Google, npm, ...), run on text the SECRET_PATTERNS already redacted. The
 // engine is required here, not at the top, because it requires this file.
@@ -1034,7 +1025,6 @@ function redactProviderFormats(text) {
   let last = 0;
   for (const s of spans) {
     if (s.start < last) continue;
-    if ((s.type === 'DB_PASSWORD' || s.type === 'URL_PASSWORD') && urlPasswordSchemeStartsWord(text, s.start)) continue;
     detections.push({ rule: SCRUB_PROVIDER_RULES.get(s.type), index: s.start });
     out += text.slice(last, s.start) + `[REDACTED_${SCRUB_PROVIDER_LABELS.get(s.type) || s.type}]`;
     last = s.end;

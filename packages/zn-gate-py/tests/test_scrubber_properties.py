@@ -190,14 +190,15 @@ def _corpus() -> list:
     for word in ["note", "build finished", "deploy ok", "v1.2.3 released", "no secrets here"]:
         items.append((f"{word}\n  plain text with a path /usr/local/bin and a number 42", None, None))
     # Connection URLs with any scheme: the password is redacted as in Python, a scheme that
-    # starts inside a longer Unicode word is not a URL, and short or reference passwords stay.
+    # keeps being redacted after non-ASCII letters (CJK, accents), and short or reference passwords stay.
     for scheme in DB_URL_SCHEMES:
         for host in ["db.example.test:1433/app", "192.0.2.10", "[::1]:5432/x"]:
             pw = "FAKE-" + draw(ALNUM, 10, 0)
             items.append((f"conn = {scheme}://svc:{pw}@{host} # fake", None, None))
         items.append((f"{scheme}://svc:{'$'}{{DB_PASS}}@db.example.test/app", None, None))
         items.append((f"{scheme}://svc:abc@db.example.test/app", None, None))
-        items.append((f"ſ{scheme}://svc:FAKE-{draw(ALNUM, 10, 0)}@db.example.test/app", None, None))
+        for prefix in ["连接", "数据库", "é", "ſ"]:
+            items.append((f"{prefix}{scheme}://svc:FAKE-{draw(ALNUM, 10, 0)}@db.example.test/app", None, None))
         items.append((f"x{scheme}://svc:FAKE-{draw(ALNUM, 10, 0)}@db.example.test/app", None, None))
     return items
 
