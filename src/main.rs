@@ -37,7 +37,9 @@ use zn::engine::reputation::ReputationSystem;
 use zn::engine::rules::ManagedRuleset;
 use zn::engine::watcher::PolicyWatcher;
 use zn::engine::{ZnEngine, ZnEngineConfig};
-use zn::jsonrpc::{jsonrpc_error, validate_jsonrpc, with_arguments, ArgSource, JsonRpcValidation};
+#[cfg(test)]
+use zn::jsonrpc::ArgSource;
+use zn::jsonrpc::{jsonrpc_error, validate_jsonrpc, with_arguments, JsonRpcValidation};
 use zn::metrics;
 use zn::proxy::McpPool;
 use zn::scrubber::Scrubber;

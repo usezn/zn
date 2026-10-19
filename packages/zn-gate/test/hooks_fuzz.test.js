@@ -53,6 +53,8 @@ const AGENTS = ['claude-code', 'codex', 'cursor', 'opencode', 'antigravity'];
 
 // Runs the hook in this process with stdin replaced by `text`; returns what it wrote and its exit code.
 async function run(agent, text) {
+  if (process.platform === 'win32') fs.writeSync(2, 'FUZZCASE ' + agent + ' ' + JSON.stringify(text).slice(0, 3000) + '
+'); // TEMP
   const out = [];
   const err = [];
   const write = { out: process.stdout.write, err: process.stderr.write };
