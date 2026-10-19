@@ -113,3 +113,29 @@ test('audit reports pruned directories and reads target without a build file', (
     assert.match(text, /rust\/target \(skipped by name: build output next to Cargo\.toml\)/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('scan reads test directories and skips the same caches whatever the ecosystem', () => {
+  const dir = tree({
+    'tests/fixture.md': 'hello\n',
+    '__tests__/fixture.md': 'hello\n',
+    'test/fixture.md': 'hello\n',
+    '.venv/r.md': 'hello\n',
+    '__pycache__/r.md': 'hello\n',
+    '.eggs/r.md': 'hello\n',
+    'venv/r.md': 'hello\n',
+  });
+  try {
+    const data = scanJson(dir);
+    assert.strictEqual(data.total_files, 3);
+    assert.strictEqual(data.total_skipped_dirs, 0);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('scan names the dependencies reason for vendor next to a manifest', () => {
+  const dir = tree({ 'go/go.mod': 'module x\n', 'go/vendor/dep.md': 'hello\n' });
+  try {
+    const data = scanJson(dir);
+    assert.strictEqual(data.skipped_dirs.length, 1);
+    assert.strictEqual(data.skipped_dirs[0].reason, 'skipped by name: dependencies next to go.mod');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
