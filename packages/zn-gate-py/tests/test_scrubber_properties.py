@@ -154,12 +154,6 @@ def test_several_fake_keys_in_one_text_are_all_redacted(picks, data, pre, post):
     assert len(found) >= len(keys), [d["rule"] for d in found]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=("Python redact_secrets skips AWS ASIA/ABIA/ACCA ids whose value ends in EXAMPLE "
-            "(PROVIDER_MATCH_CHECKS secret:aws_key_id), while AKIA ids with that suffix are redacted "
-            "by secret:aws_access_key. Open: decide whether the exemption stays."),
-)
 @SETTINGS
 @given(prefix=st.sampled_from(["ASIA", "ABIA", "ACCA"]), data=st.data(), pre=WORD, post=WORD)
 def test_aws_session_key_id_with_example_suffix_is_redacted(prefix, data, pre, post):
@@ -229,7 +223,7 @@ def test_node_scrub_engine_hides_the_same_keys_as_python(index):
     cases = [(text, key) for text, key, i in _CORPUS if i == index]
     spans = _run_node(NODE_SCRUB_SCRIPT, NODE_SCRUB, [text for text, _ in cases])
     mismatches = []
-    for (text, key), node_spans in zip(cases, spans):
+    for (text, key), node_spans in zip(cases, spans, strict=False):
         start = text.index(key)
         end = start + len(key)
         node_hides = any(s < end and e > start for s, e, _type in node_spans)
@@ -243,7 +237,7 @@ def test_node_rules_redact_secrets_gives_the_same_text_as_python():
     items = [text for text, _key, _ in _CORPUS]
     node = _run_node(NODE_RULES_SCRIPT, NODE_RULES, items)
     mismatches = []
-    for i, (text, expected) in enumerate(zip(items, node)):
+    for i, (text, expected) in enumerate(zip(items, node, strict=False)):
         out, _found = R.redact_secrets(text)
         if out != expected:
             mismatches.append((i, out[:70], expected[:70]))

@@ -1,5 +1,5 @@
 """
-The agent framework examples in examples/ (CrewAI, LlamaIndex, OpenAI Agents SDK).
+The agent framework examples in examples/ (CrewAI, LlamaIndex, OpenAI Agents SDK, Pydantic AI, Google ADK).
 
 The frameworks are not installed here: each test replaces the few framework
 pieces an example touches with small stand-ins, and there is no model and no
@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 EXAMPLES = Path(__file__).resolve().parents[3] / "examples"
-NAMES = ["crewai-agent", "llamaindex-agent", "openai-agents-sdk"]
+NAMES = ["crewai-agent", "llamaindex-agent", "openai-agents-sdk", "pydantic-ai-agent", "google-adk-agent"]
 
 CLEAN_URL = "https://example.com/weather"
 INJECTED_URL = "https://example.com/notes"
@@ -83,7 +83,8 @@ def test_wrapped_tool_keeps_name_and_signature(name):
 def test_main_runs_without_the_framework(name, capsys, monkeypatch):
     # A module set to None makes "import" fail, as when the package is missing.
     for module in ("crewai", "crewai.tools", "llama_index", "llama_index.core",
-                   "llama_index.core.tools", "agents"):
+                   "llama_index.core.tools", "agents", "pydantic_ai", "google.adk",
+                   "google.adk.agents"):
         monkeypatch.setitem(sys.modules, module, None)
     example = load(name)
     example.main()
@@ -177,3 +178,33 @@ def test_crewai_example_checks_the_page_text():
     without_result_check = guarded_tool(on_block="return", mask_secrets=True)(example.fetch_page)
     assert without_result_check(INJECTED_URL) == example.FAKE_PAGES[INJECTED_URL]
     assert example.safe_fetch_page(INJECTED_URL).startswith("zn-gate blocked")
+
+
+def test_pydantic_ai_agent_uses_the_guarded_tool(monkeypatch):
+    class Agent:
+        def __init__(self, model, instructions, tools):
+            self.model, self.instructions, self.tools = model, instructions, tools
+
+    stub_module(monkeypatch, "pydantic_ai", Agent=Agent)
+    example = load("pydantic-ai-agent")
+    agent = example.build_agent(model="test-model")
+    assert agent.model == "test-model"
+    assert [tool.__name__ for tool in agent.tools] == ["fetch_page"]
+    assert agent.tools[0](INJECTED_URL).startswith("zn-gate blocked")
+    assert agent.tools[0](CLEAN_URL) == example.FAKE_PAGES[CLEAN_URL]
+
+
+def test_google_adk_agent_uses_the_guarded_tool(monkeypatch):
+    class LlmAgent:
+        def __init__(self, name, model, instruction, tools):
+            self.name, self.model, self.instruction, self.tools = name, model, instruction, tools
+
+    stub_module(monkeypatch, "google")
+    stub_module(monkeypatch, "google.adk")
+    stub_module(monkeypatch, "google.adk.agents", LlmAgent=LlmAgent)
+    example = load("google-adk-agent")
+    agent = example.build_agent(model="test-model")
+    assert agent.model == "test-model"
+    assert [tool.__name__ for tool in agent.tools] == ["fetch_page"]
+    assert agent.tools[0](INJECTED_URL).startswith("zn-gate blocked")
+    assert agent.tools[0](CLEAN_URL) == example.FAKE_PAGES[CLEAN_URL]

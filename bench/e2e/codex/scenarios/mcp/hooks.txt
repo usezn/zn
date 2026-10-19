@@ -1,0 +1,23 @@
+UserPromptSubmit 
+  input: 
+  zn answered: (nothing), exit 0
+
+PreToolUse mcp__echo__echo
+  input: {"text":"token __ZN_GITHUB_TOKEN__"}
+  zn answered: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"zn: the MCP server echo never receives secret values, so zn blocked this call. Next step: for an authenticated web request, use the secrets_http_request tool of the zn \"secrets\" MCP server; otherwise remove the placeholder from the call."}}, exit 0
+
+PreToolUse mcp__echo__echo
+  input: {"text":"key <<VALUE:MCP_ARG_KEY>>"}
+  zn answered: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"zn: this call would send a secret (an Anthropic key) to the MCP server echo, so zn blocked it. A stored secret cannot be passed to this server. Next step: for a web request, use the secrets_http_request tool of the zn \"secrets\" MCP server, which sends the stored value itself; do not put the value in this call."}}, exit 0
+
+PreToolUse mcp__echo__echo
+  input: {"text":"hello from the end-to-end run"}
+  zn answered: (nothing), exit 0
+
+PostToolUse mcp__echo__echo
+  input: {"text":"hello from the end-to-end run"}
+  zn answered: (nothing), exit 0
+
+Stop 
+  input: last message: All steps done.
+  zn answered: (nothing), exit 0

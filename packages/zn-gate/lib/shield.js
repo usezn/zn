@@ -204,6 +204,11 @@ function startMcpShield(command, args, options = {}) {
     child.stdin.write(line + '\n');
   });
 
+  // The client is gone (its input closed): tell the wrapped server by closing its input, so it does not stay running.
+  clientRl.on('close', () => {
+    try { child.stdin.end(); } catch (_) { /* already closed */ }
+  });
+
   // 2. Read from child (child.stdout) -> inspect responses -> send to process.stdout
   const serverRl = readline.createInterface({
     input: child.stdout,

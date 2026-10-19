@@ -6,6 +6,7 @@
  *   zn lock
  *   zn vault status
  *   zn vault forget [<project dir>]     (vault must be locked)
+ *   zn vault reset                      (lost passphrase: set the old vault aside, start empty; own terminal only)
  *   zn vault verify                     (audit log: chain, MACs, truncation)
  *   zn vault log [--since 1h]           (audit log: who used which secret; alias: zn secret log)
  *   zn vault log export --otlp          (the same log as OpenTelemetry logs; lib/team/cli.js)
@@ -31,6 +32,7 @@ const { createClient } = require('./client');
 const { agentDetected } = require('../broker/tty');
 const messages = require('../messages');
 const { CODES } = require('../errors');
+const vaultReset = require('./reset');
 
 function parseDuration(s, fallback) {
   if (s === undefined) return fallback;
@@ -164,9 +166,15 @@ function unlockedLine(meta, s) {
   return isOutdatedVault(s) ? line + ', outdated: restart with `zn lock`, then `zn unlock`' : line;
 }
 
-async function unlockCmd(args) {
-  const agent = agentDetected(process.env);
+const ALREADY_UNLOCKED = 'vault already unlocked. Next step: nothing to do. To unlock again, run zn lock in your own terminal first, or, if you are an agent, ask the user to do it.';
+
+async function unlockCmd(args, deps) {
+  const d = deps || {};
+  const agent = d.agent !== undefined ? d.agent : agentDetected(process.env);
   if (agent) throw new Error(messages.agentRefusal('zn unlock', agent));
+  // Already unlocked: say so before anything is asked. An outdated vault still goes on to the restart below.
+  const running = await runningStatus(d.clientFactory);
+  if (running && !isOutdatedVault(running)) throw new Error(ALREADY_UNLOCKED);
   const opts = {
     ttlMs: parseDuration(flag(args, '--ttl'), daemon.DEFAULT_TTL_MS),
     idleMs: parseDuration(flag(args, '--idle'), daemon.DEFAULT_IDLE_MS),
@@ -178,13 +186,14 @@ async function unlockCmd(args) {
   // The keychain unlocks without asking anything, so only a terminal tells a person from a detached process.
   // (The passphrase backend needs the passphrase, which `--passphrase-stdin` reads from a pipe on purpose.)
   if (backend !== 'passphrase' && !process.stdin.isTTY) throw new Error(messages.UNLOCK_NEEDS_TERMINAL);
-  if (backend === 'passphrase') opts.passphrase = await getPassphrase(args, !meta);
+  if (backend === 'passphrase') opts.passphrase = await (d.getPassphrase || getPassphrase)(args, !meta);
   // An older vault still running: check the identity (passphrase or keychain)
   // before stopping it, then wait for it to exit.
   await restartIfOutdated({ verify: meta ? () => keychain.loadIdentity(opts).then(() => undefined) : null });
   if (args.includes('--foreground')) return unlockForegroundCmd(opts, backend);
   const res = await daemon.unlock(opts);
   if (res.created) out('Created a new vault (' + backend + ') in ' + store.paths().vaultDir);
+  vaultReset.clearUnlockFailures({});
   out('Vault unlocked until ' + res.expiresAt + ' (locks after ' + Math.round(opts.idleMs / 60000) + ' min idle). Run `zn lock` to lock now.');
   if (res.confirm === 'gui') out('Confirmations (first use of a secret by a command, policy changes) appear as a system dialog.');
   else {
@@ -262,6 +271,7 @@ async function runVaultCommand(args) {
     if (cmd === 'vault' && (sub === 'status' || sub === undefined)) return await statusCmd();
     if (cmd === 'vault' && sub === 'forget') return await forgetCmd(args);
     if (cmd === 'vault' && sub === 'verify') return await auditVerifyCmd();
+    if (cmd === 'vault' && sub === 'reset') return await vaultReset.resetVault({});
     if (cmd === 'vault' && sub === 'log') return await require('../broker/cli').dispatch('vault', args.slice(1));
     if (cmd === 'vault' && sub === 'team') {
       require('../stats').recordEvent('team-vault-request');
@@ -269,13 +279,18 @@ async function runVaultCommand(args) {
         'Your request was counted on this machine only (see `zn-gate stats`). Nothing was sent.\n');
       return 0;
     }
-    process.stderr.write('usage: zn unlock | zn lock | zn vault status | zn vault verify | zn vault log [--since 1h] | zn vault forget [dir]\n');
+    process.stderr.write('usage: zn unlock | zn lock | zn vault status | zn vault verify | zn vault log [--since 1h] | zn vault forget [dir] | zn vault reset\n');
     return 2;
   } catch (err) {
     const hint = err && err.code === CODES.LOCKED ? ' (vault locked: run `zn unlock`)' : '';
     process.stderr.write('[zn] ' + (err && err.message ? err.message : err) + hint + '\n');
+    // A wrong passphrase, again and again: point to the way out.
+    if (args[0] === 'unlock' && err && err.code === CODES.LOCKED) {
+      const tip = vaultReset.hintForUnlockError(err, {});
+      if (tip) process.stderr.write('[zn] ' + tip + '\n');
+    }
     return 1;
   }
 }
 
-module.exports = { runVaultCommand, parseDuration, getPassphrase, createHiddenPrompter, restartIfOutdated, isOutdatedVault, unlockedLine, OLD_VAULT_STUCK };
+module.exports = { runVaultCommand, unlockCmd, ALREADY_UNLOCKED, parseDuration, getPassphrase, createHiddenPrompter, restartIfOutdated, isOutdatedVault, unlockedLine, OLD_VAULT_STUCK };
