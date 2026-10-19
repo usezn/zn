@@ -33,6 +33,7 @@ const { agentDetected } = require('../broker/tty');
 const messages = require('../messages');
 const { CODES } = require('../errors');
 const vaultReset = require('./reset');
+const { EXIT } = require('../exit-codes');
 
 function parseDuration(s, fallback) {
   if (s === undefined) return fallback;
@@ -166,7 +167,7 @@ function unlockedLine(meta, s) {
   return isOutdatedVault(s) ? line + ', outdated: restart with `zn lock`, then `zn unlock`' : line;
 }
 
-const ALREADY_UNLOCKED = 'vault already unlocked. Next step: nothing to do. To unlock again, run zn lock in your own terminal first, or, if you are an agent, ask the user to do it.';
+const ALREADY_UNLOCKED = 'Vault already unlocked. Nothing to do. To unlock again, run zn lock in your own terminal first, or, if you are an agent, ask the user to do it.';
 
 async function unlockCmd(args, deps) {
   const d = deps || {};
@@ -174,7 +175,8 @@ async function unlockCmd(args, deps) {
   if (agent) throw new Error(messages.agentRefusal('zn unlock', agent));
   // Already unlocked: say so before anything is asked. An outdated vault still goes on to the restart below.
   const running = await runningStatus(d.clientFactory);
-  if (running && !isOutdatedVault(running)) throw new Error(ALREADY_UNLOCKED);
+  // That is a no-op success (exit 0), like `zn lock` on a locked vault: the vault is in the state the user asked for.
+  if (running && !isOutdatedVault(running)) { out(ALREADY_UNLOCKED); return; }
   const opts = {
     ttlMs: parseDuration(flag(args, '--ttl'), daemon.DEFAULT_TTL_MS),
     idleMs: parseDuration(flag(args, '--idle'), daemon.DEFAULT_IDLE_MS),
@@ -279,8 +281,8 @@ async function runVaultCommand(args) {
         'Your request was counted on this machine only (see `zn-gate stats`). Nothing was sent.\n');
       return 0;
     }
-    process.stderr.write('usage: zn unlock | zn lock | zn vault status | zn vault verify | zn vault log [--since 1h] | zn vault forget [dir] | zn vault reset\n');
-    return 2;
+    process.stderr.write('usage: zn unlock | zn lock | zn vault status | zn vault verify | zn vault log [--since 1h] | zn vault forget [dir] | zn vault reset | zn vault team\n');
+    return EXIT.USAGE;
   } catch (err) {
     const hint = err && err.code === CODES.LOCKED ? ' (vault locked: run `zn unlock`)' : '';
     process.stderr.write('[zn] ' + (err && err.message ? err.message : err) + hint + '\n');

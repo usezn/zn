@@ -35,6 +35,8 @@ const { styles, sym, ruleLine } = require('../lib/term');
 const mcpSecrets = require('../lib/mcp-secrets');
 const { pruneInfo, SCAN_DIRS } = require('../lib/prune');
 const { safeText } = require('../lib/audit/report');
+const { EXIT } = require('../lib/exit-codes');
+const { listAdapters } = require('../lib/agents');
 // Colors are decided once per run: NO_COLOR, TERM=dumb or a stdout that is not a terminal turn them off.
 const col = styles(process.stdout, process.env);
 
@@ -191,6 +193,12 @@ const TEST_VECTORS = [
   { type: 'benign', text: 'query GetUserProfile($id: ID!) { user(id: $id) { name email avatar preferences { theme } } }', label: 'GraphQL query document' },
 ];
 
+// The agents `hooks install` takes, from the adapter registry, so a new agent shows up in the help by itself.
+function agentList() {
+  const ids = listAdapters();
+  return ids.length > 1 ? ids.slice(0, -1).join(', ') + ' or ' + ids[ids.length - 1] : ids.join('');
+}
+
 function printHelp() {
   process.stdout.write(`
 ${sym(process.env, '🛡️', undefined, '  ')}zn-gate v${VERSION} - Zero-Trust Security Gate for AI Agents & MCP
@@ -233,7 +241,7 @@ SECRETS (values stay on this machine; agents only see __ZN_<NAME>__ markers):
                       and its output masked [--secrets A,B to set env vars]
   secret log          Show the local audit log of secret use [--since 1h] (same as vault log)
   hooks install <agent> [--project]
-                      Install zn's hooks for claude-code, codex, cursor or opencode
+                      Install zn's hooks for ${agentList()}
                       (zn-gate init picks the right setup for each agent)
   check               Show that zn blocks your agent from reading a fake secret
                       (also: doctor). Safe: a temporary folder, nothing is sent
@@ -274,6 +282,7 @@ VAULT (local, encrypted with age; the key stays in the OS keychain):
   vault verify        Verify the HMAC-chained audit log of secret use
   vault forget [dir]  Forget the token map of a project (vault locked)
   vault reset         Lost the passphrase? Set the old vault aside and start empty (your terminal only)
+  vault team          Say that a shared team vault is planned, and count the request on this machine
   vault log export --otlp
                       Export the audit log as OpenTelemetry logs (OTLP/JSON Lines)
                       [--since 7d] [--out FILE]
@@ -530,7 +539,7 @@ async function handleScan(targetPath, options) {
   const resolved = path.resolve(targetPath || '.');
   if (!fs.existsSync(resolved)) {
     process.stderr.write(`Error: Target path does not exist: ${resolved}\n`);
-    process.exit(1);
+    process.exit(EXIT.USAGE);
   }
 
   // --json is the same as --format json (as in reach, report and stats).
@@ -541,7 +550,7 @@ async function handleScan(targetPath, options) {
   const format = options.json ? 'json' : options.formatGiven ? String(options.format).toLowerCase() : 'text';
   if (!SCAN_FORMATS.has(format)) {
     process.stderr.write(`Error: --format for scan must be text, json or github\n`);
-    process.exit(2);
+    process.exit(EXIT.USAGE);
   }
 
   const files = scanDirectory(resolved, options.includeCode, options);
@@ -1178,7 +1187,7 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
     if (targetArgs.length === 0) {
       process.stderr.write('Error: Please provide command to wrap: zn-gate shield -- <command> [args...]\n');
       process.stderr.write('Example: zn-gate shield -- uvx mcp-server-fetch\n');
-      process.exit(1);
+      process.exit(EXIT.USAGE);
     }
 
     startMcpShield(targetArgs[0], targetArgs.slice(1), options);
@@ -1276,7 +1285,7 @@ ${sym(process.env, '🛡️', undefined, '  ')}zn-gate Status:
   }
 
   process.stderr.write(`Unknown command: ${command}\nRun 'zn-gate --help' for usage.\n`);
-  process.exit(1);
+  process.exit(EXIT.USAGE);
 }
 
 main().catch((err) => {
