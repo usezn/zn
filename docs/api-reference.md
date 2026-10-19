@@ -55,6 +55,9 @@ const { logEvidence, verifyEvidenceLedger } = require('zn-gate/lib/evidence');
   - `blockTruncated`: with `checkResult`, block output too large to scan in full (rule `size:truncated`). `ZN_BLOCK_TRUNCATED=1` does the same for every guard.
   - `onBlockCallback(assessment, name, payload)`: called before a block is applied.
   - `strict`: passed to the rules engine.
+
+### `GuardBlockError`
+
 - `GuardBlockError` extends `Error` and has `assessment`, `target` (`name`, or `name:result` for a blocked result), `payload` and `code` (`'ZN_GUARD_BLOCK'`).
 
 ```javascript
