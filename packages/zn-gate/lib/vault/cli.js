@@ -280,7 +280,7 @@ async function runVaultCommand(args) {
     process.stderr.write('[zn] ' + (err && err.message ? err.message : err) + hint + '\n');
     // A wrong passphrase, again and again: point to the way out.
     if (args[0] === 'unlock' && err && err.code === CODES.LOCKED) {
-      const tip = vaultReset.recordUnlockFailure({});
+      const tip = vaultReset.hintForUnlockError(err, {});
       if (tip) process.stderr.write('[zn] ' + tip + '\n');
     }
     return 1;
