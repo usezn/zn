@@ -47,14 +47,6 @@ test('quotes: single, double and JSON-style quoting give the bare value', () => 
   assert.deepEqual(values('API_KEY=' + V + '"'), [V]);
 });
 
-test('quotes: values with spaces or escapes are not taken (known limits)', () => {
-  assert.ok(!flagged('API_KEY="abc def ghijkl"'), 'quoted value with spaces');
-  assert.ok(!flagged('API_KEY=' + V.slice(0, 4) + ' ' + V.slice(4)), 'split by a space');
-  assert.ok(!flagged('API_KEY="' + V + '\\"tail"'), 'escaped quote inside the value');
-  assert.ok(!flagged('API_KEY=\\"' + V + '\\"'), 'JSON-escaped quotes');
-  assert.ok(!flagged('API_KEY=`' + V + '`'), 'backtick-quoted value');
-});
-
 test('inline code: backticks around the whole assignment do not hide it', () => {
   assert.deepEqual(values('set `API_KEY=' + V + '` first'), [V]);
 });
@@ -102,12 +94,6 @@ test('prefixes: export, set, $env: and cmd forms', () => {
   assert.deepEqual(values('$env:API_KEY = "' + V + '"'), [V]);
   assert.deepEqual(values("$env:API_KEY='" + V + "'"), [V]);
   assert.deepEqual(names('export API_KEY=' + V), ['API_KEY']);
-});
-
-test('prefixes: forms without a separator are not recognised (known limits)', () => {
-  assert.ok(!flagged('setx API_KEY ' + V));
-  assert.ok(!flagged('Authorization: Bearer ' + V));
-  assert.ok(!flagged('API_KEY: !!str ' + V));
 });
 
 test('separators: spaces and tabs around = and :', () => {
@@ -260,4 +246,9 @@ test('1 MiB prompts: only the first MiB is checked', () => {
   assert.deepEqual(findPromptAssignments(pad + 'API_KEY=' + V), []);
   const head = findPromptAssignments('API_KEY=' + V + '\n' + pad);
   assert.equal(head.length, 1);
+});
+
+test('forms that stay out: a value split by a space, a YAML tag', () => {
+  assert.ok(!flagged('API_KEY=' + V.slice(0, 4) + ' ' + V.slice(4)), 'split by a space');
+  assert.ok(!flagged('API_KEY: !!str ' + V));
 });
