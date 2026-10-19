@@ -507,8 +507,14 @@ mod tests {
             while ws.next().await.is_some() {}
         });
         let mut conn = ws_conn(addr).await;
-        assert!(conn.is_alive_within(std::time::Duration::from_secs(2)).await);
-        assert!(conn.is_alive_within(std::time::Duration::from_secs(2)).await);
+        assert!(
+            conn.is_alive_within(std::time::Duration::from_secs(2))
+                .await
+        );
+        assert!(
+            conn.is_alive_within(std::time::Duration::from_secs(2))
+                .await
+        );
     }
 
     #[tokio::test]
@@ -522,7 +528,11 @@ mod tests {
         });
         let mut conn = ws_conn(addr).await;
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-        assert!(!conn.is_alive_within(std::time::Duration::from_secs(2)).await);
+        assert!(
+            !conn
+                .is_alive_within(std::time::Duration::from_secs(2))
+                .await
+        );
     }
 
     #[tokio::test]
@@ -537,7 +547,11 @@ mod tests {
         });
         let mut conn = ws_conn(addr).await;
         let start = std::time::Instant::now();
-        assert!(!conn.is_alive_within(std::time::Duration::from_millis(300)).await);
+        assert!(
+            !conn
+                .is_alive_within(std::time::Duration::from_millis(300))
+                .await
+        );
         assert!(start.elapsed() < std::time::Duration::from_secs(5));
     }
 
@@ -549,10 +563,12 @@ mod tests {
         tokio::spawn(async move {
             let (mut tcp, _) = listener.accept().await.unwrap();
             let _ = tcp
-                .write_all(b"HTTP/1.1 200 OK
+                .write_all(
+                    b"HTTP/1.1 200 OK
 Content-Length: 0
 
-")
+",
+                )
                 .await;
         });
         assert!(connect_async(format!("ws://{}", addr)).await.is_err());
