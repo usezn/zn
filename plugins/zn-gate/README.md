@@ -164,9 +164,15 @@ to `api.usezn.com` and counts against your plan's quota. `check_tool_call`,
 `check_tool_result`, the `secrets` server and the hooks never send anything,
 with or without a key.
 
-Claude Code asks for the key when you enable the plugin. You can change or
-remove it later with `/plugin` (Installed, zn-gate, Configure options); it
-does not appear in `/config`. The key is marked sensitive, so Claude Code
+This setting is optional, and the plugin works fully without it. After
+`claude plugin install zn-gate@usezn`, Claude Code prints "1 userConfig option
+not yet set, run /plugin configure". That line comes from Claude Code, which
+prints it for every plugin option that has no value yet; it adds "(1 required)"
+only for a required option, and this one is not. You can ignore it. To add the
+key later, run `/plugin configure zn-gate@usezn` in Claude Code, or pass
+`--config api_key=YOUR_KEY` when you install. You can also change or remove it
+with `/plugin` (Installed, zn-gate, Configure options); it does not appear in
+`/config`. The key is marked sensitive, so Claude Code
 stores it with its own credentials (in the macOS Keychain, or in Claude Code's
 credentials file on other systems), not in `settings.json`. Leave it empty to
 keep everything on your machine.
