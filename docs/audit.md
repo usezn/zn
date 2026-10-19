@@ -71,7 +71,13 @@ Project files at any depth (configs in a subdirectory apply when an agent
 starts there). Agent directories (`.claude`, `.codex`, `.cursor`, `.github`,
 `skills`, ...) are read first. Outside them, `node_modules`, `vendor`, build
 and virtualenv directories are skipped; inside them nothing is skipped, so a
-skill called `build` is still read. `.git` is never read.
+skill called `build` is still read. `.git` is never read. The skipped
+directories that a project could use for its own files (`build`, `dist`,
+`out`, `vendor`, `target`) are listed under "Directories not read" in the text
+report and in `skippedDirs` in the JSON report. `target` is skipped only next
+to a `Cargo.toml`, `pom.xml`, Gradle or sbt build file, and `vendor` only next
+to `go.mod`, `composer.json`, `Gemfile` or `Cargo.toml`; without one they are
+ordinary directories and are read.
 
 Nothing the repository controls can make a file disappear from the report
 silently:

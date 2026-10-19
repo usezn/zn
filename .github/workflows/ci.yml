@@ -77,9 +77,32 @@ jobs:
         working-directory: packages/zn-gate
         run: npm ci --ignore-scripts
       - name: Run zn-gate unit tests
-        if: steps.scope.outputs.run == 'true'
+        if: steps.scope.outputs.run == 'true' && matrix.node-version != '22.x'
         working-directory: packages/zn-gate
         run: npm test
+      - name: Run zn-gate unit tests with a coverage report
+        # The same tests as `npm test`, run under c8 on one Node.js version. Report only, no threshold.
+        if: steps.scope.outputs.run == 'true' && matrix.node-version == '22.x'
+        working-directory: packages/zn-gate
+        run: |
+          set -o pipefail
+          npx --no-install c8 --reporter=lcov --reporter=text --reporter=text-summary \
+            --report-dir="$RUNNER_TEMP/coverage-node" --include='lib/**' --include='bin/**' \
+            node test/run-all.js 2>&1 | tee "$RUNNER_TEMP/coverage-node.log"
+          {
+            echo '### zn-gate (Node.js) coverage'
+            echo '```'
+            sed -n '/^=* Coverage summary =*/,/^=*$/p' "$RUNNER_TEMP/coverage-node.log" | grep -E '^(Statements|Branches|Functions|Lines)'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload Node.js coverage report
+        if: always() && steps.scope.outputs.run == 'true' && matrix.node-version == '22.x'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-node
+          path: ${{ runner.temp }}/coverage-node/lcov.info
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Run zn-gate integration tests
         if: steps.scope.outputs.run == 'true'
         working-directory: packages/zn-gate
@@ -180,15 +203,40 @@ jobs:
           python -m pip install --require-hashes -r .github/ci-test-requirements.txt
           python -m pip install --no-deps --no-build-isolation -e packages/zn-gate-py
       - name: Run pytest (unit + integration)
-        if: steps.scope.outputs.run == 'true'
+        if: steps.scope.outputs.run == 'true' && !(matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12')
         working-directory: packages/zn-gate-py
         run: python -m pytest tests/ -v
+      - name: Run pytest (unit + integration) with a coverage report
+        # The same tests, measured with pytest-cov on one entry. Report only, no threshold.
+        # One wall-clock test is left out here (tracing slows it past its limit) and runs untraced in the next step.
+        if: steps.scope.outputs.run == 'true' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        working-directory: packages/zn-gate-py
+        run: |
+          python -m pytest tests/ -v --deselect tests/test_cli.py::TestCliScanCommand::test_many_key_blocks_scan_in_linear_time --cov=zn_gate --cov-report=term --cov-report=xml:"$RUNNER_TEMP/coverage-python.xml" 2>&1 | tee "$RUNNER_TEMP/coverage-python.log"
+          {
+            echo '### zn-gate (Python) coverage'
+            echo '```'
+            grep -E '^TOTAL' "$RUNNER_TEMP/coverage-python.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Run the wall-clock test left out of the coverage run
+        if: steps.scope.outputs.run == 'true' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        working-directory: packages/zn-gate-py
+        run: python -m pytest -v tests/test_cli.py::TestCliScanCommand::test_many_key_blocks_scan_in_linear_time
+      - name: Upload Python coverage report
+        if: always() && steps.scope.outputs.run == 'true' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-python
+          path: ${{ runner.temp }}/coverage-python.xml
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Run benchmark verification
         if: steps.scope.outputs.run == 'true'
         run: python bench/bench_python.py
 
   # Lint and type-check the Python package. The ruff rules (a minimal set) live in
-  # packages/zn-gate-py/pyproject.toml and block the run. mypy is informational.
+  # packages/zn-gate-py/pyproject.toml and block the run, and so does mypy.
   lint-python:
     name: Python lint (ruff)
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
@@ -219,7 +267,7 @@ jobs:
         run: python -m ruff check .
 
   typecheck-python:
-    name: Python types (mypy, informational)
+    name: Python types (mypy)
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -242,9 +290,6 @@ jobs:
       - name: Install lint tools
         run: python -m pip install --require-hashes -r .github/ci-test-requirements.txt
       - name: Run mypy
-        # Informational: the findings are not fixed yet, so this step never fails the job.
-        # The check stays green; the error count is in the log.
-        continue-on-error: true
         working-directory: packages/zn-gate-py
         run: python -m mypy
 
@@ -294,7 +339,7 @@ jobs:
         run: node .github/scripts/check-npm-pack.js "$RUNNER_TEMP/pack/pack.json" packages/zn-gate
       - name: Install the tarball in an empty project (offline)
         if: steps.scope.outputs.run == 'true'
-        run: |
+        run: | # zizmor: ignore[adhoc-packages] the tarball just built by this job is installed offline
           mkdir -p "$RUNNER_TEMP/smoke"
           cd "$RUNNER_TEMP/smoke"
           npm init -y > /dev/null
@@ -368,7 +413,8 @@ jobs:
         # name and byte of content and fixes the times, owners, order and gzip header.
         run: |
           set -euo pipefail
-          export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          export SOURCE_DATE_EPOCH
           for out in dist rebuild; do
             python -m build --no-isolation packages/zn-gate-py --outdir "$RUNNER_TEMP/$out"
             python -I .github/scripts/normalize-sdist.py "$RUNNER_TEMP"/$out/*.tar.gz

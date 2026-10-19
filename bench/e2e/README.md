@@ -56,6 +56,30 @@ The Codex sandbox (`-s workspace-write`) could not start on the test host
 (bubblewrap: `Failed RTM_NEWADDR`), so `zn run` inside the Codex sandbox is not
 verified. The runs above use `--dangerously-bypass-approvals-and-sandbox`.
 
+## Codex hook scenarios
+
+`harness/run_codex_scenarios.sh` adds one case per hook event to the Codex run
+(same scripted provider, same fake values). Evidence is in `codex/scenarios/<case>/`
+(`summary.txt`, `leak-check.txt`, `hooks.txt`, `checks.txt`, `exit-codes.txt`).
+Every case checks the exit code and that no fake value was sent to the provider.
+
+| Case | What it runs | Result (Codex CLI 0.163.0) |
+|---|---|---|
+| `permission` | `PermissionRequest` with approvals on, in the terminal UI through a pseudo-terminal (`codex exec` never asks for approval, so the event does not run there). A command with a placeholder, then an ordinary one that needs approval; the driver never approves. | zn denies the first with its reason; for the second it gives no answer and the approval prompt stays (declined). |
+| `mcp` | Three calls to a small MCP server through `PreToolUse`: a placeholder, a secret value, plain text. | The first two are denied with zn's reason and never reach the server; the third goes through. |
+| `stop-warn` | `Stop` with a secret value in the final answer. | zn warns with `systemMessage`; nothing is blocked. `codex exec` does not show the warning. |
+| `stop-block` | The same with `"stopReview": "block"`. | Codex continues once with zn's reason; the second answer is not blocked again. |
+| `stop-placeholder` | `Stop` with a placeholder no tool produced (observation). | Not flagged: Codex writes the answer to its session log three times. |
+| `replace` | `PostToolUse` with `replaceToolOutputOnSecret`. | zn returns `continue: false` and a stop reason; the model gets the tokenized copy and the turn goes on. |
+| `thirdparty` | Another tool's `PreToolUse` hook answers `allow` with `updatedInput` (observation). | zn sees the original command, the rewritten one runs, and `PostToolUse` still scrubs its output. |
+
+The `mcp` and `stop-block` cases use a fake key that the scripted model writes
+itself, so it comes back in the next request; it is checked against what the MCP
+server received instead of against what was sent. Run them with
+`bash bench/e2e/harness/run_codex_scenarios.sh <work dir> <codex binary> [case ...]`.
+These cases pair with the weekly compatibility check, which compares fresh runs
+with the committed evidence.
+
 ## Files
 
 - `<agent>/summary.txt`: every tool call and the result the model got, as the provider received them (fake values would show as `<<LEAK:NAME>>`).
