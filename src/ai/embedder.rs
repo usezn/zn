@@ -355,7 +355,7 @@ mod tests {
     // --- download tests: a tiny local HTTP server, no network ---------------
 
     use std::collections::HashMap;
-    use std::io::{Read, Write as _};
+    use std::io::Read;
     use std::net::TcpListener;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
