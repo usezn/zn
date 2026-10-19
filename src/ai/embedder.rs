@@ -3,7 +3,7 @@ use anyhow::{Error as E, Result};
 use candle_core::{Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config};
-use hf_hub::{api::sync::Api, Repo, RepoType};
+use hf_hub::HFClientSync;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use tokenizers::Tokenizer;
@@ -137,10 +137,17 @@ fn ensure_model(repo: &str, dir: &Path) -> Result<PathBuf> {
         return Ok(dir.to_path_buf());
     }
     std::fs::create_dir_all(dir)?;
-    let api = Api::new()?;
-    let repo = api.repo(Repo::new(repo.to_string(), RepoType::Model));
+    let (owner, name) = repo
+        .split_once('/')
+        .ok_or_else(|| E::msg(format!("invalid model repo id: {repo}")))?;
+    let client = HFClientSync::new().map_err(E::new)?;
+    let repo = client.model(owner, name);
     for f in MODEL_FILES {
-        let src = repo.get(f)?;
+        let src = repo
+            .download_file()
+            .filename(*f)
+            .send()
+            .map_err(E::new)?;
         std::fs::copy(&src, dir.join(f))?;
     }
     Ok(dir.to_path_buf())
