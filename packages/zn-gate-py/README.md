@@ -41,6 +41,7 @@ Inside an environment you already use (your project's virtualenv, Poetry, uv), `
 
 ## Check that it works
 
+<!-- snippet-test -->
 ```python
 from zn_gate import sanitize_tool_result
 
@@ -56,6 +57,7 @@ print(out["sanitized_content"])
 
 `AKIAIOSFODNN7EXAMPLE` is AWS's documentation example key. Nothing was sent over the network.
 
+<!-- snippet-test -->
 ```python
 from zn_gate import evaluate
 
@@ -101,6 +103,7 @@ A long text (over 1,000 characters) is checked by the cloud classifier in overla
 
 ### Guard a tool function
 
+<!-- snippet-test -->
 ```python
 from zn_gate import guard
 
@@ -116,6 +119,7 @@ Arguments are checked before the function runs; with `on_block="raise"` a blocke
 
 ### LangChain / LangGraph
 
+<!-- snippet-test -->
 ```python
 from zn_gate.integrations import ZnGuardCallbackHandler
 
@@ -125,6 +129,7 @@ handler = ZnGuardCallbackHandler(raise_on_injection=True, mask_secrets=True)
 
 ### CrewAI
 
+<!-- snippet-test -->
 ```python
 from zn_gate.integrations import guarded_tool
 
@@ -157,6 +162,7 @@ providers:
 
 ### Local audit log
 
+<!-- snippet-test -->
 ```python
 from zn_gate import log_evidence, verify_evidence_ledger
 

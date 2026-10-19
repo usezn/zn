@@ -1,0 +1,8 @@
+PASS Codex exited with code 0 (exit task exit=0)
+PASS no hook run failed (0,0)
+PASS Stop fired once with the final answer (1 call(s))
+PASS zn warned with systemMessage and did not block (systemMessage)
+PASS the agent did not continue (one turn to the provider) (1 turn(s))
+PASS the warning does not carry the value
+INFO the answer reached the user unchanged; turns to the provider: 1
+INFO warning shown by codex exec: no
