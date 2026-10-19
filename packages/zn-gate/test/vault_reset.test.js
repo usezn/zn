@@ -99,7 +99,7 @@ test('a confirmed reset backs up the old vault and a new empty vault works', asy
   await s.makeVault(OLD);
   const p = store.paths({});
   const before = snapshot(s.znHome);
-  assert.ok(before['audit.jsonl'] && before['vault/secrets.age'] && before['vault/identity.age'] && before['vault/keychain.json']);
+  for (const rel of ['audit.jsonl', path.join('vault', 'secrets.age'), path.join('vault', 'identity.age'), path.join('vault', 'keychain.json')]) assert.ok(before[rel], rel);
 
   assert.equal(await reset.resetVault({}, person({ ask: async () => '  Reset My Vault ' })), 0);
 
