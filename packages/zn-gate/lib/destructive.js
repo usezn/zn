@@ -37,7 +37,10 @@ const REASONS = {
 };
 
 const MAX_DEPTH = 3;
-const MAX_SEGMENTS = 5000;
+// Same limit as the policy's own tokenizer: enough simple commands for any text under the shell scan cap.
+const MAX_SEGMENTS = 50000;
+const OVERFLOW = 'too_many_commands';
+const OVERFLOW_REASON = 'it has more commands than can be checked, so it is refused rather than guessed at';
 const MAX_CHARS = 200 * 1024;
 const QUOTE_SCAN_MAX = 20000;
 
@@ -78,7 +81,8 @@ function segmentsOf(cmd) {
   // A drive root C:\ before a space is a path, not an escaped space.
   let rest = String(cmd).replace(/(\d*[<>]+)&(\d+|-)/g, '$1_$2').replace(/&>>?/g, '>').replace(/(^|[\s"'])([A-Za-z]:)\\(?=\s|$)/g, '$1$2/');
   const out = [];
-  for (let guard = 0; rest.length && guard < MAX_SEGMENTS; guard++) {
+  let guard = 0;
+  for (; rest.length && guard < MAX_SEGMENTS; guard++) {
     const scan = scanFirstCommand(rest, false);
     let sep = scan.operator;
     let adv = scan.end + 1;
@@ -89,6 +93,8 @@ function segmentsOf(cmd) {
     out.push({ words: scan.words.map((w) => w.text), sep });
     rest = rest.slice(adv);
   }
+  // Unread text left over: the caller must not treat the commands read so far as the whole line.
+  out.truncated = rest.length > 0;
   return out;
 }
 
@@ -298,7 +304,7 @@ function on(rule) { return ENABLED === null || ENABLED.has(rule); }
 
 function analyze(cmd, depth = 0) {
   const text = String(cmd);
-  if (text.length > MAX_CHARS) return null;
+  if (text.length > MAX_CHARS) return ENABLED === null || ENABLED.size > 0 ? OVERFLOW : null;
   // Text inside quotes is data (echo "a fork bomb is :(){ :|:& };:"); the code a shell runs from a string is checked
   // again on its own below, so the patterns that do not need the quotes read the text without them.
   // (Past QUOTE_SCAN_MAX the quotes are left in: finding every pair is the one step that is not linear.)
@@ -318,7 +324,10 @@ function analyze(cmd, depth = 0) {
       pipe = [];
     }
   }
-  return pipe.length ? checkPipeline(pipe) : null;
+  const last = pipe.length ? checkPipeline(pipe) : null;
+  if (last) return last;
+  // Fail closed: never allow a line whose tail was not read.
+  return segs.truncated && (ENABLED === null || ENABLED.size > 0) ? OVERFLOW : null;
 }
 
 /**
@@ -332,7 +341,7 @@ function checkCommand(command) {
     verdict: 'block',
     confidence: 0.95,
     rule: 'destructive:' + hit,
-    reason: 'Destructive command: ' + REASONS[hit],
+    reason: 'Destructive command: ' + (REASONS[hit] || OVERFLOW_REASON),
     engine: 'oss-local',
     rules_version: COMMAND_RULES_VERSION,
   };
@@ -346,7 +355,7 @@ function denial(command, rules) {
   let hit;
   try { hit = analyze(command, 0); } finally { ENABLED = saved; }
   if (!hit) return null;
-  return 'zn blocked this: ' + REASONS[hit] + '. Ask the user to confirm before running this command. If they want it, they can run it in their own terminal; do not run it yourself.';
+  return 'zn blocked this: ' + (REASONS[hit] || OVERFLOW_REASON) + '. Ask the user to confirm before running this command. If they want it, they can run it in their own terminal; do not run it yourself.';
 }
 
 /** The rules the agent hooks apply when the user has not changed anything. The other four are opt-in. */

@@ -59,6 +59,17 @@ class DestructiveCommandShape(unittest.TestCase):
             check_command(text)
             self.assertLess(time.time() - t0, 3, text[:12])
 
+    def test_long_line_cannot_hide_a_command_after_the_segment_limit(self):
+        for sep in (";", "\n"):
+            long = ("true" + sep) * 5001 + "rm -rf ~"
+            self.assertFalse(check_command(long).allowed, repr(sep))
+        self.assertFalse(check_command("true;" * 5001 + "rm -rf ~").allowed)
+        self.assertTrue(check_command("true;" * 5001).allowed)
+        # past the segment limit the rest cannot be read, so the line is refused
+        res = check_command("true;" * 60000)
+        self.assertFalse(res.allowed)
+        self.assertEqual(res.rule, "destructive:too_many_commands")
+
     def test_quoting_and_nesting(self):
         for c in ['rm -rf "~"', "rm -rf '/'", "rm -rf -- ~", "rm\t-rf\t~", "sh -c \"sh -c 'rm -rf ~'\""]:
             self.assertFalse(check_command(c).allowed, c)

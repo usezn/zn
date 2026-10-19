@@ -41,7 +41,7 @@ The package ships TypeScript type definitions (`lib/client.d.ts`, `lib/rules.d.t
 - Returns: `Promise<{ tool_name, safe_to_ingest, truncated, secrets_redacted, sanitized_content, assessment }>`
 
 ### `checkCommand(command)`
-- Optional check for destructive shell commands (Bash, sh, zsh or PowerShell text). Synchronous, local, never touches the network. Calling it is the opt-in: it always applies the check. The agent hooks apply two of the rules by default (a recursive delete of the home folder or the root, and a write to a disk device) and the rest only when you turn them on with `hooks.blockDestructiveCommands` or `ZN_BLOCK_DESTRUCTIVE` (see [Destructive commands](destructive-commands.md)).
+- Optional check for destructive shell commands (Bash, sh, zsh or PowerShell text). Synchronous, local, never touches the network. Calling it is the opt-in: it always applies the check. The agent hooks apply two of the rules by default (a recursive delete of the home folder or the root, and a write to a disk device) and the rest only when you turn them on with `hooks.blockDestructiveCommands` or `ZN_BLOCK_DESTRUCTIVE=1` (see [Destructive commands](destructive-commands.md)).
 - Blocks only a few narrow shapes: recursive delete of the home folder or the root, a download piped to a shell, writes to a disk device, `chmod -R` or `chown -R` on the root or a system folder, a fork bomb, and a download written into a shell startup file. It reads the command text only: a path built at run time, or a script saved first and run later, is not seen.
 - Returns the shape of `evaluate`: `{ verdict, confidence, rule, reason, engine, rules_version }`, with `rule` such as `destructive:rm_root_home` or `destructive:pipe_to_shell` when blocked.
 

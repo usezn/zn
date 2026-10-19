@@ -40,7 +40,10 @@ _REASONS = {
 }
 
 _MAX_DEPTH = 3
-_MAX_SEGMENTS = 5000
+# Same limit as the policy's own tokenizer: enough simple commands for any text under the shell scan cap.
+_MAX_SEGMENTS = 50000
+_OVERFLOW = "too_many_commands"
+_OVERFLOW_REASON = "it has more commands than can be checked, so it is refused rather than guessed at"
 _MAX_CHARS = 200 * 1024
 _QUOTE_SCAN_MAX = 20000
 _A = re.ASCII
@@ -184,7 +187,7 @@ def _scan_first(s: str) -> Tuple[int, List[str], Optional[str]]:
     return n, words, None
 
 
-def _segments_of(cmd: str) -> List[Tuple[List[str], Optional[str]]]:
+def _segments_of(cmd: str) -> Tuple[List[Tuple[List[str], Optional[str]]], bool]:
     rest = re.sub(r"(\d*[<>]+)&(\d+|-)", r"\1_\2", str(cmd), flags=_A)
     rest = re.sub(r"&>>?", ">", rest)
     # A drive root C:\ before a space is a path, not an escaped space.
@@ -205,7 +208,8 @@ def _segments_of(cmd: str) -> List[Tuple[List[str], Optional[str]]]:
                 adv += 1
         out.append((words, sep))
         rest = rest[adv:]
-    return out
+    # Unread text left over: the caller must not treat the commands read so far as the whole line.
+    return out, bool(rest)
 
 
 def _is_pipe(sep: Optional[str]) -> bool:
@@ -455,7 +459,7 @@ def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]]) -> Optional[str
 def _analyze(cmd: str, depth: int = 0) -> Optional[str]:
     text = str(cmd)
     if len(text) > _MAX_CHARS:
-        return None
+        return _OVERFLOW
     bare = text if len(text) > _QUOTE_SCAN_MAX else _QUOTED_RE.sub("''", text)
     if _FORK_BOMB_RE.search(bare):
         return "fork_bomb"
@@ -469,7 +473,8 @@ def _analyze(cmd: str, depth: int = 0) -> Optional[str]:
     if _PS_DISK_RE.search(bare):
         return "disk_overwrite"
     pipe: List[Tuple[List[str], Optional[str]]] = []
-    for words, sep in _segments_of(text):
+    segs, truncated = _segments_of(text)
+    for words, sep in segs:
         hit = _check_simple(words, depth)
         if hit:
             return hit
@@ -479,7 +484,11 @@ def _analyze(cmd: str, depth: int = 0) -> Optional[str]:
             if hit2:
                 return hit2
             pipe = []
-    return _check_pipeline(pipe) if pipe else None
+    last = _check_pipeline(pipe) if pipe else None
+    if last:
+        return last
+    # Fail closed: never allow a line whose tail was not read.
+    return _OVERFLOW if truncated else None
 
 
 def check_command(command: str) -> Assessment:
@@ -495,6 +504,6 @@ def check_command(command: str) -> Assessment:
         verdict="block",
         confidence=0.95,
         rule="destructive:" + hit,
-        reason="Destructive command: " + _REASONS[hit],
+        reason="Destructive command: " + (_REASONS.get(hit) or _OVERFLOW_REASON),
         rules_version=COMMAND_RULES_VERSION,
     )

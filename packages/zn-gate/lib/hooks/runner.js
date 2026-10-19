@@ -105,7 +105,9 @@ function replaceOnSecretOf(opts) {
  *
  * ~/.zn/config.json, {"hooks": {"blockDestructiveCommands": ...}}:
  *   true = all six rules, false = off, an array of rule names = exactly those; absent = the default two.
- * ZN_BLOCK_DESTRUCTIVE overrides the file: 1 = all six rules, 0 = off.
+ * ZN_BLOCK_DESTRUCTIVE=1 turns on all six rules. The environment can only add protection, like ZN_HOOK_FAIL_MODE:
+ * 0 or any other value is ignored, because the environment of an agent can be influenced by the project it works in.
+ * Turning rules off is only possible from the config file.
  */
 function destructiveRulesOf(opts) {
   const { DEFAULT_RULES, RULES } = require('../destructive');
@@ -113,7 +115,6 @@ function destructiveRulesOf(opts) {
   if (opts.blockDestructive === true) return all;
   const env = process.env.ZN_BLOCK_DESTRUCTIVE;
   if (env === '1') return all;
-  if (env === '0') return [];
   const v = (readConfig(opts.home).hooks || {}).blockDestructiveCommands;
   if (v === true) return all;
   if (v === false) return [];

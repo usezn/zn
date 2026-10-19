@@ -21,7 +21,7 @@ For the agent hooks (Claude Code, Codex CLI, Cursor, OpenCode and the others `zn
 {"hooks": {"blockDestructiveCommands": false}}
 ```
 
-The environment variable `ZN_BLOCK_DESTRUCTIVE` overrides the file: `ZN_BLOCK_DESTRUCTIVE=0` turns the check off, and `ZN_BLOCK_DESTRUCTIVE=1` turns on all six rules. Any other value, or no value, leaves the file (or the default) in charge. Because an environment variable can also be set by a project an agent works in, use the config file if you want a setting that only you can change: the agent's file tools cannot write to `~/.zn`.
+The environment variable `ZN_BLOCK_DESTRUCTIVE=1` turns on all six rules. The environment can only add protection, never remove it: `ZN_BLOCK_DESTRUCTIVE=0`, any other value, or no value is ignored and leaves the file (or the default) in charge. An environment variable can be set by a project an agent works in, so turning rules off is only possible from the config file, which the agent's file tools cannot write (they cannot write to `~/.zn`).
 
 When the check applies, the hooks use it on the shell tools (Bash, PowerShell and monitors).
 
