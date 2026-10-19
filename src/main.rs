@@ -514,7 +514,7 @@ async fn start_proxy(args: Args) -> Result<()> {
     .map_err(|e| anyhow!(e))?;
     if fell_back {
         log::warning(
-            "KMS key could not be fetched; running with the key from the config because              kms.allow_config_fallback is enabled. Fix the KMS access and turn the option off."
+            "KMS key could not be fetched; running with the key from the config because kms.allow_config_fallback is enabled. Fix the KMS access and turn the option off."
                 .to_string(),
         )
         .ok();
@@ -2227,12 +2227,9 @@ fn resolve_db_key(
     match kms_fetch {
         None => Ok((config_key, false)),
         Some(Ok(key)) => Ok((Some(key), false)),
-        Some(Err(e)) if allow_config_fallback => {
-            let _ = e;
-            Ok((config_key, true))
-        }
+        Some(Err(_)) if allow_config_fallback => Ok((config_key, true)),
         Some(Err(e)) => Err(format!(
-            "Failed to fetch the encryption key from the KMS: {e}. Refusing to start with a              different key. Fix the KMS access, or set kms.allow_config_fallback = true to              allow the key from the config."
+            "Failed to fetch the encryption key from the KMS: {e}. Refusing to start with a different key. Fix the KMS access, or set kms.allow_config_fallback = true to allow the key from the config."
         )),
     }
 }
