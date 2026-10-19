@@ -111,6 +111,8 @@ In Codex, approve the new hooks with `/hooks`. In Cursor, shell output and file 
 
 **Other editors** (VS Code, Antigravity, Windsurf, Cline, Zed, JetBrains, Continue): zn-gate works there as an MCP server only. Setup for each one: [usezn.com/docs/integrations/editors](https://usezn.com/docs/integrations/editors/).
 
+Wrap any MCP server with the `shield` proxy, try it in shadow mode first, and review changes to its tools with `pins`: [docs/shield.md](docs/shield.md).
+
 **Python: for agents you build yourself** (rules engine and secret redaction for LangChain, CrewAI, LlamaIndex or plain tool calling). It does not protect Claude Code, Codex, Cursor or other coding agents. Install it in a virtual environment; many recent Linux systems, and Homebrew's Python on macOS, refuse `pip install` outside one ("externally-managed-environment"):
 
 On Debian and Ubuntu, `python3 -m venv` needs the `python3-venv` package first: `sudo apt install python3-venv`.
@@ -388,7 +390,7 @@ Runnable examples are in [`examples/`](examples/): the Python SDK, agents built 
 
 **Does zn-gate slow my agent down?** The local check adds under a millisecond for typical prompts and tool outputs (p99 0.8 ms at 4 KB on our test host). See the measured table above.
 
-**Will it block legitimate content?** Sometimes. Use `init --shadow` or `shield --shadow` to log detections without blocking while you evaluate it.
+**Will it block legitimate content?** Sometimes. Use `init --shadow` or `shield --shadow` to log detections without blocking while you evaluate it. Details in [docs/shield.md](docs/shield.md).
 
 **Can zn-gate block keys in tool output?** Yes. When a tool returns a secret value (an AWS, OpenAI or Anthropic key, a GitHub token, a JWT, a private key or a password in a database URL), zn-gate replaces each value it recognises with a marker or redacts it before the model sees it. "Block" here means that rewrite of the output; the tool call itself is not stopped. What is covered depends on the agent (the full table is in [docs/compat.md](docs/compat.md)):
 
