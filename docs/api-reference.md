@@ -50,6 +50,7 @@ from zn_gate.evidence import verify_evidence_ledger
 
 ### `@guard(on_block='raise'|'return', check_args=True, check_result=False, mask_secrets=False, block_truncated=False)`
 - Python decorator protecting sync and async agent functions and tool handlers.
+- `on_block` must be `'raise'`, `'return'` or `'custom'` (the last calls `callback`); any other value raises `ValueError` when the decorator is created.
 - With `check_result=True`, `block_truncated=True` blocks a result too large to scan in full (rule `size:truncated`); `ZN_BLOCK_TRUNCATED=1` does the same for every guard.
 
 ### `check_tool_call(tool_name: str, arguments: Any) -> Assessment`

@@ -8,7 +8,7 @@ from __future__ import annotations
 import functools
 import inspect
 import os
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, List, Optional, Tuple
 
 from .rules import Assessment, evaluate, scan_windows
 
@@ -96,6 +96,18 @@ def check_tool_result(result: Any, block_truncated: bool = False, strict: Option
                       advisory=dict(advisory) if advisory else None)
 
 
+def validate_on_block(value: Any, allowed: Tuple[str, ...]) -> str:
+    """Return `value` if it is one of the `allowed` modes, else raise ValueError.
+
+    An unknown mode (for example a typo such as "rasie") would otherwise skip the
+    block silently, so every integration checks it when it is created.
+    """
+    if not isinstance(value, str) or value not in allowed:
+        valid = ", ".join(repr(v) for v in allowed)
+        raise ValueError(f"on_block must be one of {valid}; got {value!r}")
+    return value
+
+
 def guard(
     on_block: str = "raise",
     fallback: Any = None,
@@ -121,6 +133,8 @@ def guard(
                        (rule size:truncated). ZN_BLOCK_TRUNCATED=1 does the same
                        for every guard (default False).
     """
+    validate_on_block(on_block, ("raise", "return", "custom"))
+
     def decorator(func: Callable) -> Callable:
         func_name = getattr(func, "__name__", "anonymous")
 
