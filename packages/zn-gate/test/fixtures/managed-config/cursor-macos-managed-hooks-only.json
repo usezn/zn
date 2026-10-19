@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeMCPExecution": [
+      {
+        "command": "zn hook cursor",
+        "timeout": 30
+      }
+    ],
+    "beforeReadFile": [
+      {
+        "command": "zn hook cursor",
+        "timeout": 30,
+        "failClosed": true
+      }
+    ],
+    "beforeShellExecution": [
+      {
+        "command": "zn hook cursor",
+        "timeout": 30
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "zn hook cursor",
+        "timeout": 30,
+        "failClosed": true
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "zn hook cursor",
+        "timeout": 30
+      }
+    ],
+    "preToolUse": [
+      {
+        "command": "zn hook cursor",
+        "timeout": 30,
+        "matcher": "Grep|Write|Delete"
+      }
+    ]
+  }
+}
