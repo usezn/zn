@@ -384,7 +384,21 @@ Permissions: the action itself needs only `contents: read`; add `security-events
 
 ## Examples
 
-Runnable examples are in [`examples/`](examples/): the Python SDK, agents built with LangChain, CrewAI, LlamaIndex or the OpenAI Agents SDK, the Node.js package, custom rules, Promptfoo and the GitHub Action.
+Runnable examples are in [`examples/`](examples/). The code API checks text for sensitive paths, prompt injection in tool output and secrets, and redacts the secrets; it does not block destructive shell commands.
+
+| Example | Language | Framework | What it shows |
+|---|---|---|---|
+| [`python-basic`](examples/python-basic) | Python | None | Evaluate a prompt and guard a tool function. |
+| [`node-basic`](examples/node-basic) | JavaScript | None | Inspect a prompt and sanitize a tool result with the Node.js package. |
+| [`custom-rules`](examples/custom-rules) | JavaScript | None | Load project rules from `.znrules`. |
+| [`langchain-agent`](examples/langchain-agent) | Python | LangChain / LangGraph | Attach a callback handler that checks tool calls and results. |
+| [`crewai-agent`](examples/crewai-agent) | Python | CrewAI | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`llamaindex-agent`](examples/llamaindex-agent) | Python | LlamaIndex | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`openai-agents-sdk`](examples/openai-agents-sdk) | Python | OpenAI Agents SDK | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`pydantic-ai-agent`](examples/pydantic-ai-agent) | Python | Pydantic AI | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`google-adk-agent`](examples/google-adk-agent) | Python | Google ADK | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`promptfoo`](examples/promptfoo) | YAML | Promptfoo | Run a deterministic guardrail suite with Promptfoo. |
+| [`github-action`](examples/github-action) | YAML | GitHub Actions | Scan agent prompts and configs in pull requests with the GitHub Action. |
 
 ## FAQ
 
