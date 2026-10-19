@@ -115,6 +115,16 @@ pub struct ServerConfig {
     /// Broadcast channel capacity
     #[serde(default = "default_channel_capacity")]
     pub channel_capacity: usize,
+
+    /// Largest WebSocket message the gateway accepts, in bytes (default 1 MiB).
+    /// A larger message closes the connection.
+    #[serde(default = "default_ws_max_message_bytes")]
+    pub ws_max_message_bytes: usize,
+
+    /// Largest single WebSocket frame the gateway accepts, in bytes (default 1 MiB).
+    /// A larger frame closes the connection.
+    #[serde(default = "default_ws_max_frame_bytes")]
+    pub ws_max_frame_bytes: usize,
 }
 
 impl Default for ServerConfig {
@@ -123,12 +133,20 @@ impl Default for ServerConfig {
             port: default_port(),
             bind_address: default_bind_address(),
             channel_capacity: default_channel_capacity(),
+            ws_max_message_bytes: default_ws_max_message_bytes(),
+            ws_max_frame_bytes: default_ws_max_frame_bytes(),
         }
     }
 }
 
 fn default_port() -> u16 {
     9090
+}
+fn default_ws_max_message_bytes() -> usize {
+    1024 * 1024
+}
+fn default_ws_max_frame_bytes() -> usize {
+    1024 * 1024
 }
 fn default_bind_address() -> String {
     "127.0.0.1".to_string()
@@ -566,6 +584,10 @@ pub struct ConsensusConfig {
     /// Allow neural core to act as one witness if risk is low
     #[serde(default = "default_true")]
     pub neural_as_witness: bool,
+    /// Seconds a proposed action stays valid (default 900). After that it can no
+    /// longer be approved and is removed. 0 means the default.
+    #[serde(default = "default_pending_ttl_secs")]
+    pub pending_ttl_secs: u64,
 }
 
 impl Default for ConsensusConfig {
@@ -575,8 +597,13 @@ impl Default for ConsensusConfig {
             critical_tools: Vec::new(),
             required_signatures: 2,
             neural_as_witness: true,
+            pending_ttl_secs: default_pending_ttl_secs(),
         }
     }
+}
+
+fn default_pending_ttl_secs() -> u64 {
+    900
 }
 
 fn default_m() -> u32 {
