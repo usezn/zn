@@ -12,7 +12,7 @@
 
 `zn-gate` is an open-source security layer that runs on your machine, between your agent and the tools and content it touches. It checks what the agent reads and calls for prompt injection, redacts secrets from tool output before the model sees it, and audits prompts, skills and configs. No account, no network by default, and no runtime dependencies except `age-encryption` (and its `@noble`/`@scure` dependencies) for the secret vault, bundled in the package at the versions pinned in `package-lock.json`.
 
-**For:** developers using Claude Code, Codex CLI, Cursor, OpenCode or any MCP client. Python SDK: [`zn-gate` on PyPI](https://pypi.org/project/zn-gate/).
+**For:** developers using Claude Code, Codex CLI, Cursor, OpenCode or any MCP client. Python SDK: [`zn-gate` on PyPI](https://pypi.org/project/zn-gate/). Building with the OpenAI Agents SDK for JavaScript? See the [offline example](https://github.com/usezn/zn/tree/main/examples/openai-agents-js).
 
 ---
 
