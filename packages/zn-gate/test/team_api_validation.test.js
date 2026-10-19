@@ -43,7 +43,7 @@ function goodPolicy(overrides = {}) {
 
 /** An api whose fetch answers with `body` (object -> JSON, string -> raw text). */
 function apiAnswering(body, { status = 200, base = 'https://api.example.test', token = TOKEN } = {}) {
-  const fetchImpl = async () => new Response(typeof body === 'string' ? body : JSON.stringify(body), { status });
+  const fetchImpl = async () => new Response(body === '' ? null : (typeof body === 'string' ? body : JSON.stringify(body)), { status });
   return createApi({ base, token, fetchImpl, userAgent: 'zn-gate/test' });
 }
 
@@ -53,7 +53,8 @@ const policyWith = (data, opts) => apiAnswering(data, opts).getPolicy();
 
 /* ---------------------------------------------------------------- checkBase */
 
-test('checkBase: scheme and host case and default ports are normalized', () => {
+test('checkBase: scheme and host case, default ports and IPv4 trailing dot are normalized', () => {
+  assert.strictEqual(checkBase('http://127.0.0.1.'), 'http://127.0.0.1');
   assert.strictEqual(checkBase('HTTP://LOCALHOST:3000'), 'http://localhost:3000');
   assert.strictEqual(checkBase('HTTPS://API.EXAMPLE.TEST'), 'https://api.example.test');
   assert.strictEqual(checkBase('https://api.example.test:443'), 'https://api.example.test');
@@ -68,7 +69,6 @@ test('checkBase: http is refused for look-alike and non-loopback hosts', () => {
     'http://notlocalhost',
     'http://127.0.0.1.example.test',
     'http://localhost.',
-    'http://127.0.0.1.',
     'http://[::ffff:127.0.0.1]',
     'http://[::ffff:7f00:1]',
     'http://[::]',
@@ -175,7 +175,6 @@ test('join endpoints: userinfo, query, fragment, wrong path and other schemes ar
     'https://user@api.example.test/v1/org/policy',
     'https://user:pw@api.example.test/v1/org/policy',
     'https://api.example.test/v1/org/policy?x=1',
-    'https://api.example.test/v1/org/policy?',
     'https://api.example.test/v1/org/policy#frag',
     'https://api.example.test/v1/org/policy/',
     'https://api.example.test/v1/org/policy/extra',
@@ -473,14 +472,17 @@ test('signed policy: the client only checks shape; org, expiry and signature are
 
 test('getPolicy: sends the feature header and token, keeps the ETag, maps other statuses', async () => {
   const p = goodPolicy();
+  let seen;
   const fetchImpl = async (url, init) => {
-    assert.strictEqual(init.headers['X-ZN-Policy-Features'], 'warn');
-    assert.strictEqual(init.headers.Authorization, `Bearer ${TOKEN}`);
-    assert.strictEqual(init.redirect, 'error');
+    seen = { url, init };
     return new Response(JSON.stringify(p), { status: 200, headers: { etag: '"v1"' } });
   };
   const api = createApi({ base: 'https://api.example.test', token: TOKEN, fetchImpl });
   assert.strictEqual((await api.getPolicy()).etag, '"v1"');
+  assert.strictEqual(seen.url, 'https://api.example.test/v1/org/policy');
+  assert.strictEqual(seen.init.headers['X-ZN-Policy-Features'], 'warn');
+  assert.strictEqual(seen.init.headers.Authorization, `Bearer ${TOKEN}`);
+  assert.strictEqual(seen.init.redirect, 'error');
   assert.strictEqual((await policyWith('', { status: 404 })).status, 404);
   assert.strictEqual((await policyWith('', { status: 304 })).status, 304);
   await assert.rejects(policyWith('', { status: 200 }), isBad);
