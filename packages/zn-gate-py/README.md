@@ -181,6 +181,8 @@ zn-gate analyze "some prompt"   # local check; cloud only with ZN_CLOUD=1 + key
 zn-gate status                  # engine and what leaves the machine
 ```
 
+More runnable examples, including [a smolagents agent with a guarded tool](https://github.com/usezn/zn/tree/main/examples/smolagents-agent), are in [examples/](https://github.com/usezn/zn/tree/main/examples).
+
 ---
 
 ## Performance and accuracy
