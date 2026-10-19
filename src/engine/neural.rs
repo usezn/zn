@@ -1,4 +1,4 @@
-//! Fusion Gate neural camera (B-3).
+//! Fusion Gate neural camera.
 //!
 //! Mirrors `vision.rs`: the heavy resources (ONNX encoder + tokenizer +
 //! linear head) are loaded ONCE into a lazy static. Decision semantics:
@@ -112,7 +112,7 @@ pub fn shared_engine(cfg: &FusionConfig) -> Option<Arc<NeuralEngine>> {
         .clone()
 }
 
-/// B-3 OR semantics: block iff rules hit OR `neural_score >= tau`.
+/// Fusion Gate OR semantics: block iff rules hit OR `neural_score >= tau`.
 /// `None` score (fusion inactive) reduces to exactly the rules decision.
 pub fn fused_block(rules_hit: bool, neural_score: Option<f32>, tau: f32) -> bool {
     rules_hit || neural_score.is_some_and(|s| s >= tau)
@@ -290,7 +290,7 @@ mod tests {
             let py = py_scores[id.as_str()] as f32;
             max_diff = max_diff.max((rust - py).abs());
         }
-        // B-3 abort-trigger note, superseded by measurement: with the fp32
+        // Fusion Gate abort-trigger note, superseded by measurement: with the fp32
         // export the parity target IS met (see assert below); int8 dynamic
         // quantization was measured at max |py - rust| = 0.0114 (run
         // zn-minilm-l6-v2-sec-1787490939) and 0.078 (run ...-1787474325,
