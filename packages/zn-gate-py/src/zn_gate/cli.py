@@ -408,6 +408,32 @@ def _home_display(file_path: Path) -> str:
         return str(file_path)
 
 
+# Directory names that scan does not enter. Caches and dependency stores are
+# skipped quietly; the other names are skipped by name and reported, because a
+# project can keep its own prompt or agent files there. `target` is build
+# output only next to a build file, so without one it is read.
+_SILENT_SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "__pycache__", ".eggs", ".next"}
+_SKIP_MARKERS = {
+    "target": ("Cargo.toml", "pom.xml", "build.gradle", "build.gradle.kts", "build.sbt"),
+}
+
+
+def _prune_info(name: str, parent: str) -> Optional[Dict[str, Any]]:
+    """None when the directory must be read, else {"silent": bool, "reason": str}."""
+    marker = None
+    needed = _SKIP_MARKERS.get(name)
+    if needed:
+        marker = next((m for m in needed if os.path.exists(os.path.join(parent, m))), None)
+        if marker is None:
+            return None
+    if name in _SILENT_SKIP_DIRS:
+        return {"silent": True, "reason": "skipped by name"}
+    reason = "skipped by name: build output"
+    if marker:
+        reason += " next to " + marker
+    return {"silent": False, "reason": reason}
+
+
 def cmd_scan(args: argparse.Namespace) -> int:
     target_path = Path(args.path)
     if not target_path.exists():
@@ -416,12 +442,14 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
     files_to_scan: List[Path] = []
     skip_dirs = {".git", "node_modules", "venv", ".venv", "__pycache__", "dist", "build", ".eggs", "target", ".next"}
-    
+    user_excluded = set()
+    skipped_dirs: List[Dict[str, str]] = []
+
     if getattr(args, "exclude", None):
         for ed in args.exclude.split(","):
             ed = ed.strip()
             if ed:
-                skip_dirs.add(ed)
+                user_excluded.add(ed)
 
     valid_exts = {".txt", ".md", ".json", ".yaml", ".yml", ".py", ".ts", ".js", ".prompt", ".env", ".toml", ".pem", ".key"}
     if getattr(args, "include", None):
@@ -436,7 +464,18 @@ def cmd_scan(args: argparse.Namespace) -> int:
         files_to_scan.append(target_path)
     else:
         for root, dirs, files in os.walk(target_path):
-            dirs[:] = [d for d in dirs if d not in skip_dirs]
+            kept = []
+            for d in dirs:
+                if d in user_excluded:
+                    continue
+                if d in skip_dirs:
+                    pruned = _prune_info(d, root)
+                    if pruned:
+                        if not pruned["silent"]:
+                            skipped_dirs.append({"dir": str(Path(root) / d), "reason": pruned["reason"]})
+                        continue
+                kept.append(d)
+            dirs[:] = kept
             for f in files:
                 p = Path(root) / f
                 if p.suffix.lower() in valid_exts or p.name.startswith(".env") or p.name in _KEY_FILE_NAMES:
@@ -469,14 +508,15 @@ def cmd_scan(args: argparse.Namespace) -> int:
         scanned += 1
         all_violations.extend(_scan_file(fp, shown, str(fp) in mcp_only_files))
 
-    _print_report(getattr(args, "format", "text"), scanned, skipped, all_violations)
+    _print_report(getattr(args, "format", "text"), scanned, skipped, all_violations, skipped_dirs)
     if all_violations and not getattr(args, "no_fail", False):
         return 1
     return 0
 
 
-def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_violations: List[Dict[str, Any]]) -> None:
+def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_violations: List[Dict[str, Any]], skipped_dirs: Optional[List[Dict[str, str]]] = None) -> None:
     """Print the scan report: rule names, fixed text, counts and redacted snippets only."""
+    skipped_dirs = skipped_dirs or []
     leak_count = sum(1 for v in all_violations if v.get("type") == "secret_leak")
     other_count = len(all_violations) - leak_count
     if fmt == "github":
@@ -491,16 +531,21 @@ def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_vio
             print(f"::error file={_gh_property(v['file'])},line={int(v['line'])},title={title}::{_gh_message(message)}")
         for s in skipped:
             print(f"::notice file={_gh_property(s['file'])},title=Not scanned::{_gh_message(s['reason'])}")
-        print(f"\n[zn-gate] Scanned {scanned} files ({len(skipped)} not scanned). Found {leak_count} secrets and {other_count} security threats.")
+        for sd in skipped_dirs:
+            print(f"::notice file={_gh_property(sd['dir'])},title=Directory not scanned::{_gh_message(sd['reason'])}")
+        dir_note = f" and {len(skipped_dirs)} director{'y' if len(skipped_dirs) == 1 else 'ies'} skipped" if skipped_dirs else ""
+        print(f"\n[zn-gate] Scanned {scanned} files ({len(skipped)} not scanned{dir_note}). Found {leak_count} secrets and {other_count} security threats.")
     elif fmt == "json":
         print(json.dumps({
             "total_files": scanned,
             "total_skipped": len(skipped),
+            "total_skipped_dirs": len(skipped_dirs),
             # Every finding, secrets included (as before); total_secrets counts the secrets alone.
             "total_threats": len(all_violations),
             "total_secrets": leak_count,
             "threats": all_violations,
             "skipped": skipped,
+            "skipped_dirs": skipped_dirs,
         }, indent=2))
     else:
         print(f"\n{_lead(SHIELD)}zn-gate Security Scanner — Scanned {scanned} files")
@@ -510,6 +555,12 @@ def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_vio
                 print(f"  {s['file']} ({s['reason']})")
             if len(skipped) > 20:
                 print(f"  ... and {len(skipped) - 20} more")
+        if skipped_dirs:
+            print(f"Directories not scanned ({len(skipped_dirs)}):")
+            for sd in skipped_dirs[:20]:
+                print(f"  {sd['dir']} ({sd['reason']})")
+            if len(skipped_dirs) > 20:
+                print(f"  ... and {len(skipped_dirs) - 20} more")
         if not all_violations:
             print(f"{_lead(CHECK)}All scanned prompts, tool definitions, and files are clean!\n")
             return

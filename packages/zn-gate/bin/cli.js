@@ -33,6 +33,7 @@ const { SCRUB_RULES_VERSION } = require('../lib/scrub/patterns');
 const { AUDIT_RULES_VERSION } = require('../lib/audit/rules');
 const { styles, sym, ruleLine } = require('../lib/term');
 const mcpSecrets = require('../lib/mcp-secrets');
+const { pruneInfo } = require('../lib/prune');
 // Colors are decided once per run: NO_COLOR, TERM=dumb or a stdout that is not a terminal turn them off.
 const col = styles(process.stdout, process.env);
 
@@ -453,10 +454,12 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
     'node_modules', '.git', '.next', 'dist', 'build', '.turbo', 'vendor',
     '.idea', 'test', 'tests', '__tests__', 'target',
   ]);
+  // Names the user passes with --exclude are skipped everywhere and never reported.
+  const userExcluded = new Set();
   if (options.exclude) {
     options.exclude.split(',').forEach(d => {
       const trimmed = d.trim();
-      if (trimmed) IGNORED_DIRS.add(trimmed);
+      if (trimmed) userExcluded.add(trimmed);
     });
   }
   
@@ -476,6 +479,9 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
   // Files that match the scan but are not read, reported in the summary.
   const skipped = [];
   filesToScan.skipped = skipped;
+  // Directories that are not entered, reported next to the skipped files.
+  const skippedDirs = [];
+  filesToScan.skippedDirs = skippedDirs;
 
   function walk(current) {
     let stat;
@@ -488,7 +494,17 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
 
     if (stat.isDirectory()) {
       const base = path.basename(current);
-      if (IGNORED_DIRS.has(base)) return;
+      // The directory you pass is always read, whatever its name.
+      if (current !== targetPath) {
+        if (userExcluded.has(base)) return;
+        if (IGNORED_DIRS.has(base)) {
+          const pruned = pruneInfo(base, path.dirname(current));
+          if (pruned) {
+            if (!pruned.silent) skippedDirs.push({ dir: current, reason: pruned.reason });
+            return;
+          }
+        }
+      }
       let entries = [];
       try {
         entries = fs.readdirSync(current);
@@ -684,7 +700,11 @@ Files   : ${files.length} file(s) queued for audit\n
     for (const s of files.skipped) {
       process.stdout.write(`::notice file=${ghProperty(displayPath(s.file, homeFiles))},title=Not scanned::${ghMessage(s.reason)}\n`);
     }
-    process.stdout.write(`\n[zn-gate] Scanned ${files.length - notRead} files (${files.skipped.length} not scanned). Found ${totalSecrets} secrets and ${totalThreats} security threats.\n`);
+    for (const s of files.skippedDirs) {
+      process.stdout.write(`::notice file=${ghProperty(displayPath(s.dir, homeFiles))},title=Directory not scanned::${ghMessage(s.reason)}\n`);
+    }
+    const dirNote = files.skippedDirs.length ? ` and ${files.skippedDirs.length} director${files.skippedDirs.length === 1 ? 'y' : 'ies'} skipped` : '';
+    process.stdout.write(`\n[zn-gate] Scanned ${files.length - notRead} files (${files.skipped.length} not scanned${dirNote}). Found ${totalSecrets} secrets and ${totalThreats} security threats.\n`);
     if (totalFindings > 0) process.exitCode = 1;
     return;
   }
@@ -692,6 +712,7 @@ Files   : ${files.length} file(s) queued for audit\n
     process.stdout.write(JSON.stringify({
       total_files: files.length - notRead,
       total_skipped: files.skipped.length,
+      total_skipped_dirs: files.skippedDirs.length,
       // Every finding, secrets included (as before); total_secrets counts the secrets alone.
       total_threats: totalFindings,
       total_secrets: totalSecrets,
@@ -701,6 +722,7 @@ Files   : ${files.length} file(s) queued for audit\n
         return out;
       }),
       skipped: files.skipped.map((s) => ({ file: displayPath(s.file, homeFiles), reason: s.reason })),
+      skipped_dirs: files.skippedDirs.map((s) => ({ dir: displayPath(s.dir, homeFiles), reason: s.reason })),
     }, null, 2) + '\n');
     if (totalFindings > 0) process.exitCode = 1;
     return;
@@ -736,6 +758,12 @@ ${ruleLine(process.env, 77)}\n
     process.stdout.write(`Not scanned (${files.skipped.length}):\n`);
     for (const s of files.skipped.slice(0, 20)) process.stdout.write(`  ${displayPath(s.file, homeFiles)} (${s.reason})\n`);
     if (files.skipped.length > 20) process.stdout.write(`  ... and ${files.skipped.length - 20} more\n`);
+    process.stdout.write('\n');
+  }
+  if (files.skippedDirs.length) {
+    process.stdout.write(`Directories not scanned (${files.skippedDirs.length}):\n`);
+    for (const s of files.skippedDirs.slice(0, 20)) process.stdout.write(`  ${displayPath(s.dir, homeFiles)} (${s.reason})\n`);
+    if (files.skippedDirs.length > 20) process.stdout.write(`  ... and ${files.skippedDirs.length - 20} more\n`);
     process.stdout.write('\n');
   }
 

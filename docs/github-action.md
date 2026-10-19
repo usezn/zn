@@ -85,6 +85,10 @@ Outputs:
 | `scan-exit-code` | Exit code of the scan: `0` clean, `1` findings, `2` error; empty if it did not run. |
 | `audit-exit-code` | Exit code of the audit: `0` clean, `1` findings at or above the threshold, `2` error; empty if it did not run. |
 
+## What the scan does not read
+
+The scan lists what it leaves out, so a gap never goes unnoticed. Files it does not read (binary files, files of 2 MiB or more) and directories it does not enter (`build`, `dist`, `vendor`, `target`, `test`, `tests`, `__tests__`) appear as notices in the workflow run, as a count in the text output, and as `skipped` and `skipped_dirs` in the JSON output. Dependency stores and caches such as `node_modules` and `.git` are skipped without a notice. A directory named `target` is skipped only when a `Cargo.toml`, `pom.xml`, Gradle or sbt file sits next to it, and `vendor` only next to `go.mod`, `composer.json`, `Gemfile` or `Cargo.toml`. The directory you pass to the scan is always read, whatever its name. A name you pass with `--exclude` is skipped everywhere and is not listed.
+
 ## Read the results in code scanning
 
 With `format: sarif` and the upload step, the findings appear in your repository under **Security** > **Code scanning**, one alert per finding, with the rule ID, the file and the line, and the evidence with any secret value hidden. On a pull request, GitHub also annotates the changed lines. The audit and the scan are separate runs (categories `zn-gate/audit/` and `zn-gate/scan/`), so you can filter by tool. [audit.md](audit.md) lists each audit rule and how to fix it.
