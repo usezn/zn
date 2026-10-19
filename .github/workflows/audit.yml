@@ -1,0 +1,91 @@
+name: Lint and audit
+
+on:
+  push:
+    branches: [main, next]
+    paths: ["packages/**", ".github/eslint/**", ".github/audit-requirements.txt", ".github/workflows/audit.yml"]
+  pull_request:
+    types: [ opened, synchronize, reopened, ready_for_review ]
+    paths: ["packages/**", ".github/eslint/**", ".github/audit-requirements.txt", ".github/workflows/audit.yml"]
+  schedule:
+    - cron: "41 6 * * 1" # weekly advisory check
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  eslint:
+    name: eslint (zn-gate)
+    # Draft pull requests skip this job; marking the pull request ready for review runs it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Install the lint tooling
+        working-directory: .github/eslint
+        run: npm ci --ignore-scripts
+      - name: eslint
+        working-directory: packages/zn-gate
+        run: ../../.github/eslint/node_modules/.bin/eslint -c ../../.github/eslint/eslint.config.mjs --max-warnings 0 .
+
+  # The two audits below only report for now: they never fail the workflow.
+  npm-audit:
+    name: npm audit (zn-gate, informational)
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: npm audit
+        working-directory: packages/zn-gate
+        run: npm audit --omit=dev
+
+  pip-audit:
+    name: pip-audit (zn-gate-py, informational)
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Install pip-audit
+        run: python -m pip install --require-hashes -r .github/audit-requirements.txt
+      - name: pip-audit
+        run: pip-audit packages/zn-gate-py

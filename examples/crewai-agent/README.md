@@ -49,7 +49,9 @@ CrewAI tool output for the blocked page:
 In `agent_guard.py`, `guarded_tool` from `zn_gate.integrations` wraps the tool function:
 
 ```python
-safe_fetch_page = guarded_tool(on_block="return", check_result=True, mask_secrets=True)(fetch_page)
+safe_fetch_page = guarded_tool(
+    on_block="return", check_result=True, mask_secrets=True, framework="crewai"
+)(fetch_page)
 ```
 
 - `check_result=True` makes zn-gate scan the page text for orders aimed at the model before the model reads it. This option is off by default in `guarded_tool`, so the example turns it on. Without it, the injected page in this example would reach the model unchanged.
