@@ -806,6 +806,15 @@ function failClosed(ev, err, msg) {
   return { decision: 'deny', failClosed: true, message: msg, userMessage: msg };
 }
 
+/*
+ * Context for the model when a session or a subagent starts (Codex SessionStart
+ * and SubagentStart). Short on purpose: it is added to every session.
+ */
+function SESSION_CONTEXT() {
+  return 'zn is on in this project: it blocks reads of .env files and of the secrets vault. ' +
+    'To run a command that needs a stored secret, write the placeholder __ZN_<NAME>__ and run the command with `' + znCommand('run -- <command>') + '`.';
+}
+
 /**
  * Handle one raw event. Returns {output, stderr} where output is the JSON
  * value to print (or null for "no opinion").
@@ -823,6 +832,7 @@ async function handle(adapter, rawEvent, opts = {}) {
     else if (ev.event === 'post_tool') decision = await decidePost(ev, d, adapter.id, opts);
     else if (ev.event === 'user_prompt') decision = await decidePrompt(ev, d, adapter.id);
     else if (ev.event === 'stop') decision = await decideStop(ev, d, adapter.id, opts);
+    else if (ev.event === 'session_start') decision = { decision: 'allow', context: SESSION_CONTEXT() };
     else if (ev.event === 'prompt_expansion') decision = await decideExpansion(ev, d, adapter.id);
     else decision = { decision: 'allow' };
   } catch (err) {
@@ -843,6 +853,8 @@ function countHook(agentId, ev, decision, opts = {}) {
     // Codex asks PreToolUse first, then PermissionRequest for the same call when it shows an approval prompt.
     // The check runs twice but the call is one call: count it at PreToolUse only.
     if (ev.permissionRequest) return;
+    // A reminder at the start of a session checks nothing: it is not counted.
+    if (ev.event === 'session_start') return;
     if (ev.event === 'stop') {
       // A check of the final answer is not a tool check: it has its own counters.
       const statsFile = opts.home ? path.join(opts.home, '.zn', 'stats.json') : undefined;
