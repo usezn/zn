@@ -27,7 +27,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-10-17.3';
+const SCRUB_RULES_VERSION = '2026-10-19.5';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -383,7 +383,7 @@ const PATTERNS = [
   { type: 'OPENAI_KEY', hints: ['sk-'], re: re(NB + 'sk-[0-9a-f]{32}' + NA),
     check: (v) => hexSecret(v.slice(3)) },
   { type: 'AWS_KEY', hints: ['AKIA', 'ASIA', 'ABIA', 'ACCA'], re: re('(?<![A-Za-z0-9])(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}(?![A-Za-z0-9])'),
-    check: (v) => !/^(.)\1+$/.test(v.slice(4)) && !/EXAMPLE$/.test(v) },
+    check: (v) => !/^(.)\1+$/.test(v.slice(4)) },
   { type: 'AWS_SECRET', hints: ['ecret', 'ECRET'], re: re(NB64 + '[A-Za-z0-9+/]{40}' + NA64),
     check: (v, text, index) => looksRandom(v, 3, 4.0) &&
       /(?:aws|secret[_ -]?access[_ -]?key|SecretAccessKey)/i.test(text.slice(Math.max(0, index - 160), index)) &&

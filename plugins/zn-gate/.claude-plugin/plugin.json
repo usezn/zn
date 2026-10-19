@@ -27,7 +27,7 @@
     "api_key": {
       "type": "string",
       "title": "zn API key (optional)",
-      "description": "A Pro or Team API key from usezn.com/dashboard. With a key, the analyze_prompt tool also asks the zn cloud classifier, and the text it checks (secrets redacted first) is sent to api.usezn.com. Leave it empty to keep everything on this machine.",
+      "description": "Optional: zn-gate works fully without it, so you can skip this. A Pro or Team API key from usezn.com/dashboard. With a key, the analyze_prompt tool also asks the zn cloud classifier, and the text it checks (secrets redacted first) is sent to api.usezn.com. Leave it empty to keep everything on this machine.",
       "sensitive": true,
       "required": false,
       "default": ""

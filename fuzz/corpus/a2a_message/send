@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":1,"method":"tasks/send","params":{"recipient":"finance-agent","task":{"text":"summarize the report"},"priority":"high","thread_id":"t-1"}}
