@@ -1127,6 +1127,16 @@ ${sym(process.env, '🛡️', undefined, '  ')}zn-gate Status:
         if (notes.length) process.stdout.write('\n');
       }
     } catch (_) { /* status never fails on this check */ }
+    // zn installed through the organization's managed configuration (read-only).
+    try {
+      const mp = require('../lib/agents/managed-policy');
+      for (const [id, label] of [['claude-code', 'Claude Code'], ['codex', 'Codex CLI'], ['cursor', 'Cursor']]) {
+        let there = false;
+        try { there = Boolean(require('../lib/agents').getAdapter(id).detect()); } catch (_) { there = false; }
+        const m = there ? mp.managedInstall(id) : null;
+        if (m) process.stdout.write('  ' + label.padEnd(16) + ': zn is installed (managed): ' + m.files.join(', ') + '\n\n');
+      }
+    } catch (_) { /* status never fails on this check */ }
     // Cursor's enterprise hooks.json (read-only).
     try {
       if (require('../lib/agents/cursor').detect()) {

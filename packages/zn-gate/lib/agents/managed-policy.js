@@ -331,4 +331,62 @@ function cursorPolicyWarnings(opts = {}) {
   return warnings;
 }
 
-module.exports = { claudeCodePolicyWarnings, managedDir, codexPolicyWarnings, cursorPolicyWarnings, _internal: { codexRequirementsFile, codexManagedConfigFile, cursorEnterpriseFile } };
+/* ------------------------- zn installed by the organization ------------------------- */
+
+/*
+ * Whether zn's hooks are in the agent's managed configuration (what an administrator deploys with MDM or
+ * configuration management; `zn team managed-config` prints it). Read-only. Verified 2026-10-19 against:
+ *  https://code.claude.com/docs/en/settings  (managed-settings.json, managed-settings.d/*.json)
+ *  https://cursor.com/docs/hooks             (enterprise hooks.json)
+ *  https://learn.chatgpt.com/docs/enterprise/managed-configuration (requirements.toml: [[hooks.<Event>]])
+ * Hooks of the managed layer and of the user both run, so a user-level setup next to it runs twice.
+ * Policy sent through MDM profiles, the Windows registry or the agent's cloud is not seen here.
+ */
+
+/* [{event, matcher, command}] for every hook command in a hooks tree that is zn's own for this agent. */
+function ourHookEntries(hooks, agentId) {
+  const { isOurs } = require('./config-file');
+  const out = [];
+  if (!hooks || typeof hooks !== 'object' || Array.isArray(hooks)) return out;
+  for (const [event, list] of Object.entries(hooks)) {
+    for (const g of Array.isArray(list) ? list : []) {
+      if (!g || typeof g !== 'object') continue;
+      const cands = [g];
+      for (const h of Array.isArray(g.hooks) ? g.hooks : []) cands.push(h);
+      for (const h of cands) {
+        if (!h || typeof h !== 'object') continue;
+        const command = [h.command, h.command_windows, h.commandWindows].find((c) => isOurs(c, agentId));
+        if (command) out.push({ event, matcher: g.matcher, command });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * managedInstall(agentId, opts) -> {files: [path], entries: [{event, matcher, command}]} | null
+ * null when no managed file holds a zn hook. agentId: 'claude-code', 'codex' or 'cursor'.
+ * opts: the same injectable paths as the policy checks above (managedDir; requirementsFile; hooksFile;
+ * platform, env), so tests never read the real system folders.
+ */
+function managedInstall(agentId, opts = {}) {
+  const platform = opts.platform || process.platform;
+  const env = opts.env || process.env;
+  const found = [];
+  if (agentId === 'claude-code') {
+    for (const s of managedSources(opts.managedDir || managedDir(platform))) {
+      if (s.data) found.push({ file: s.file, entries: ourHookEntries(s.data.hooks, agentId) });
+    }
+  } else if (agentId === 'codex') {
+    const r = readToml(opts.requirementsFile || codexRequirementsFile(platform, env));
+    if (r && r.data) found.push({ file: r.file, entries: ourHookEntries(r.data.hooks, agentId) });
+  } else if (agentId === 'cursor') {
+    const r = readSource(opts.hooksFile || cursorEnterpriseFile(platform, env));
+    if (r && r.data) found.push({ file: r.file, entries: ourHookEntries(r.data.hooks, agentId) });
+  }
+  const withZn = found.filter((f) => f.entries.length);
+  if (!withZn.length) return null;
+  return { files: withZn.map((f) => f.file), entries: withZn.flatMap((f) => f.entries) };
+}
+
+module.exports = { claudeCodePolicyWarnings, managedDir, codexPolicyWarnings, cursorPolicyWarnings, managedInstall, _internal: { codexRequirementsFile, codexManagedConfigFile, cursorEnterpriseFile, ourHookEntries } };

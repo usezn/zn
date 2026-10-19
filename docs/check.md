@@ -16,7 +16,8 @@ zn-gate makes a temporary folder with two files: a `.env` file that holds a fake
 - **Codex CLI and Cursor**: zn-gate checks the hooks of `zn hooks install`.
 - **What it runs**: for Claude Code, Codex CLI and Cursor it runs the hook that is installed, exactly as your agent would. On Windows, a hook installed as `zn hook <agent>` is not started; zn-gate checks zn's rules for it instead and says so in the output. A hook that cannot start, or that blocks every file because part of zn is missing, is reported as **NOT protected**.
 - **OpenCode**: zn-gate checks zn's rules. The zn plugin runs inside OpenCode, so it is not started here.
-- **What it leaves alone**: it checks the setup for your user. A setup made for one project only (`--project`) is listed but not run.
+- **Managed setups**: when your organization deploys zn through managed configuration (Claude Code managed settings, Cursor's enterprise `hooks.json`, Codex's `requirements.toml`), `zn-gate check` counts the agent as set up and names the file ("zn is installed through your organization's managed configuration"). `zn-gate status` lists it too. If zn is also set up for your user, both run, and the check says so. Policy sent only through MDM profiles, the Windows registry or an agent's cloud is not seen. Nothing is written.
+- **What it leaves alone**: it checks the setup for your user and the managed configuration files above. A setup made for one project only (`--project`) is listed but not run.
 - **Nothing changes**: nothing is sent over the network, no agent is started and no setting changes. The folder is deleted at the end.
 
 ## What you will see
@@ -34,7 +35,7 @@ Your agent cannot read secret files such as .env through these tools. Nothing wa
 ```
 
 - **OK**: zn is protecting that agent. The quoted text is what your agent is told when it tries to read the file.
-- **-**: zn is not set up for that agent, or only for one project. The line gives the command that sets it up for your user. If you only ran zn-gate with `npx`, that command starts with `npm install -g zn-gate`, because `zn hooks install` needs zn-gate installed for your user. An agent that is not on this machine is listed as *not found on this machine*.
+- **-**: zn is not set up for that agent (neither for your user nor in managed configuration), or only for one project. The line gives the command that sets it up for your user. If you only ran zn-gate with `npx`, that command starts with `npm install -g zn-gate`, because `zn hooks install` needs zn-gate installed for your user. An agent that is not on this machine is listed as *not found on this machine*.
 - When an agent is found but not set up, the summary points to `npx -y zn-gate init`, which shows each step and asks before it runs one.
 - **X ... NOT protected**: zn is set up but would not protect the agent. The line says why and what to run to fix it. When a hook cannot start because the Node.js it was installed with is gone (for example after `nvm uninstall`), the fix is a fresh `npm install -g zn-gate` and then `zn hooks install <agent>`, since the old Node.js took its `zn` with it.
 
