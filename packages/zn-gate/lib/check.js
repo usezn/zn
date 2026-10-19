@@ -30,14 +30,16 @@ const FAKE_LINE = 'ZN_CHECK_EXAMPLE_KEY=zn-check-fake-value-not-a-real-key\n';
 const HOOK_TIMEOUT_MS = 15000;
 const PLUGIN_ID = 'zn-gate@usezn';
 
-/* The zn-gate Claude Code plugin needs Node.js 20.12 or later; zn-gate itself runs on 18 and later. */
+/* The zn-gate Claude Code plugin needs Node.js 20.12 or later; zn-gate itself runs on 18 and later.
+   This is the one place that says which version; the messages below and in init are built from it. */
+const PLUGIN_NODE_MIN = '20.12';
 function pluginNodeOk(version) {
   const [major, minor] = String(version || process.versions.node).split('.').map((x) => parseInt(x, 10) || 0);
   // The loader constant the plugin needs arrives in Node.js 20.12 and in 21.7.
   return major > 21 || (major === 21 && minor >= 7) || (major === 20 && minor >= 12);
 }
 function pluginNodeMessage(version) {
-  return 'the zn-gate plugin needs Node.js 20.12 or later (you have ' + String(version || process.versions.node) + ')';
+  return 'the zn-gate plugin needs Node.js ' + PLUGIN_NODE_MIN + ' or later (you have ' + String(version || process.versions.node) + ')';
 }
 
 const AGENTS = [
@@ -333,7 +335,7 @@ async function checkAgent(spec, ctx) {
       }
       if (!plugin.off && !pluginNodeOk(ctx.nodeVersion)) {
         res.problem = pluginNodeMessage(ctx.nodeVersion);
-        res.fix = 'update Node.js to 20.12 or later, or use zn\'s hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, and after that turn the plugin off with `claude plugin disable zn-gate@usezn`, all in your own terminal';
+        res.fix = 'update Node.js to ' + PLUGIN_NODE_MIN + ' or later (the current LTS from nodejs.org), or use zn\'s hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, and after that turn the plugin off with `claude plugin disable zn-gate@usezn`, all in your own terminal';
         res.pluginFault = true;
         res.pluginNode = true;
       }
@@ -567,4 +569,4 @@ function report({ results, removed }, write) {
   return setUp && !bad ? 0 : 1;
 }
 
-module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { pluginNodeOk, pluginNodeMessage, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin } };
+module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin } };
