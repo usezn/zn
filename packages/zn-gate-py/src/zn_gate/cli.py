@@ -14,7 +14,7 @@ import re
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from . import __version__
 from .rules import RULES_VERSION, evaluate, mask_token_runs
@@ -180,7 +180,7 @@ def cmd_test(args: argparse.Namespace) -> int:
 
 def cmd_analyze(args: argparse.Namespace) -> int:
     text = args.text
-    options = {
+    options: Dict[str, Any] = {
         "api_key": getattr(args, "key", None) or os.environ.get("ZN_API_KEY"),
         "stage": getattr(args, "stage", None) or os.environ.get("ZN_STAGE") or "v30",
         "api_url": getattr(args, "url", None) or os.environ.get("ZN_API_URL"),
@@ -278,7 +278,7 @@ def _scan_file(file_path: Path, shown: Optional[str] = None, mcp_only: bool = Fa
     # printed, even when another rule fires on it (the line on its own does
     # not look like a key, so it would not be redacted).
     blocks = []  # (rule, first line, last line, header)
-    key_lines = set()
+    key_lines: Set[int] = set()
     for name, rx, header_rx in _MULTILINE_RULES:
         for m in rx.finditer(content):
             # A block on one line is redacted by the line pass.
