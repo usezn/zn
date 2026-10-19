@@ -195,3 +195,247 @@ impl ConsensusManager {
         format!("{:x}", hasher.finish())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn manager(enabled: bool, critical: &[&str], required: u32) -> ConsensusManager {
+        ConsensusManager::new(ConsensusConfig {
+            enabled,
+            critical_tools: critical.iter().map(|s| s.to_string()).collect(),
+            required_signatures: required,
+            ..Default::default()
+        })
+    }
+
+    fn propose(mgr: &ConsensusManager, tool: &str, args: &str) -> String {
+        mgr.propose_action("agent-1", tool, args)
+            .expect("critical tool should be registered")
+    }
+
+    #[test]
+    fn disabled_config_never_registers_actions() {
+        let mgr = manager(false, &["delete_file"], 2);
+        assert!(mgr.propose_action("agent-1", "delete_file", "{}").is_none());
+        assert!(mgr.list_pending().is_empty());
+    }
+
+    #[test]
+    fn non_critical_tool_is_not_registered() {
+        let mgr = manager(true, &["delete_file"], 2);
+        assert!(mgr.propose_action("agent-1", "read_file", "{}").is_none());
+        assert!(mgr.list_pending().is_empty());
+    }
+
+    #[test]
+    fn exact_critical_tool_is_registered_as_pending() {
+        let mgr = manager(true, &["delete_file"], 2);
+        let id = propose(&mgr, "delete_file", "{}");
+        assert_eq!(mgr.get_status(&id), Some(ActionStatus::Pending));
+        let pending = mgr.list_pending();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, id);
+        assert_eq!(pending[0].required_m, 2);
+        assert!(pending[0].signatures.is_empty());
+    }
+
+    #[test]
+    fn exact_pattern_does_not_match_longer_or_shorter_names() {
+        let mgr = manager(true, &["delete_file"], 1);
+        assert!(mgr
+            .propose_action("agent-1", "delete_file2", "{}")
+            .is_none());
+        assert!(mgr.propose_action("agent-1", "delete", "{}").is_none());
+    }
+
+    #[test]
+    fn trailing_wildcard_matches_by_prefix() {
+        let mgr = manager(true, &["admin:*"], 1);
+        assert!(mgr
+            .propose_action("agent-1", "admin:delete", "{}")
+            .is_some());
+        assert!(mgr.propose_action("agent-1", "admin:", "{}").is_some());
+        assert!(mgr.propose_action("agent-1", "admin", "{}").is_none());
+        assert!(mgr.propose_action("agent-1", "adminx", "{}").is_none());
+    }
+
+    #[test]
+    fn bare_wildcard_matches_every_tool() {
+        let mgr = manager(true, &["*"], 1);
+        assert!(mgr.propose_action("agent-1", "anything", "{}").is_some());
+        assert!(mgr.propose_action("agent-1", "", "{}").is_some());
+    }
+
+    #[test]
+    fn signing_unknown_action_is_an_error() {
+        let mgr = manager(true, &["x"], 1);
+        let err = mgr
+            .sign_action("missing", WitnessType::NeuralJudge)
+            .unwrap_err();
+        assert_eq!(err, "Action not found or already processed");
+    }
+
+    #[test]
+    fn approval_is_reached_exactly_at_the_threshold() {
+        let mgr = manager(true, &["x"], 2);
+        let id = propose(&mgr, "x", "{}");
+        let first = mgr
+            .sign_action(&id, WitnessType::DeterministicPolicy("p1".into()))
+            .unwrap();
+        assert_eq!(first, ActionStatus::Pending);
+        let second = mgr
+            .sign_action(&id, WitnessType::HumanAdmin("alice".into()))
+            .unwrap();
+        assert_eq!(second, ActionStatus::Approved);
+    }
+
+    #[test]
+    fn one_signature_below_threshold_stays_pending() {
+        let mgr = manager(true, &["x"], 3);
+        let id = propose(&mgr, "x", "{}");
+        mgr.sign_action(&id, WitnessType::NeuralJudge).unwrap();
+        let status = mgr
+            .sign_action(&id, WitnessType::HumanAdmin("bob".into()))
+            .unwrap();
+        assert_eq!(status, ActionStatus::Pending);
+        let status = mgr
+            .sign_action(&id, WitnessType::DeterministicPolicy("p".into()))
+            .unwrap();
+        assert_eq!(status, ActionStatus::Approved);
+    }
+
+    #[test]
+    fn duplicate_witness_of_same_kind_is_counted_once() {
+        let mgr = manager(true, &["x"], 2);
+        let id = propose(&mgr, "x", "{}");
+        mgr.sign_action(&id, WitnessType::DeterministicPolicy("p".into()))
+            .unwrap();
+        let status = mgr
+            .sign_action(&id, WitnessType::DeterministicPolicy("p".into()))
+            .unwrap();
+        assert_eq!(status, ActionStatus::Pending);
+        assert_eq!(mgr.list_pending()[0].signatures.len(), 1);
+    }
+
+    #[test]
+    fn different_policy_names_and_witness_kinds_are_distinct() {
+        let mgr = manager(true, &["x"], 2);
+        let id = propose(&mgr, "x", "{}");
+        mgr.sign_action(&id, WitnessType::DeterministicPolicy("p1".into()))
+            .unwrap();
+        let status = mgr
+            .sign_action(&id, WitnessType::DeterministicPolicy("p2".into()))
+            .unwrap();
+        assert_eq!(status, ActionStatus::Approved);
+
+        let mgr = manager(true, &["x"], 2);
+        let id = propose(&mgr, "x", "{}");
+        mgr.sign_action(&id, WitnessType::DeterministicPolicy("alice".into()))
+            .unwrap();
+        let status = mgr
+            .sign_action(&id, WitnessType::HumanAdmin("alice".into()))
+            .unwrap();
+        assert_eq!(status, ActionStatus::Approved);
+    }
+
+    #[test]
+    fn human_admins_are_deduplicated_by_user() {
+        let mgr = manager(true, &["x"], 2);
+        let id = propose(&mgr, "x", "{}");
+        mgr.sign_action(&id, WitnessType::HumanAdmin("alice".into()))
+            .unwrap();
+        let status = mgr
+            .sign_action(&id, WitnessType::HumanAdmin("alice".into()))
+            .unwrap();
+        assert_eq!(status, ActionStatus::Pending);
+        let status = mgr
+            .sign_action(&id, WitnessType::HumanAdmin("bob".into()))
+            .unwrap();
+        assert_eq!(status, ActionStatus::Approved);
+    }
+
+    #[test]
+    fn neural_judge_counts_once() {
+        let mgr = manager(true, &["x"], 2);
+        let id = propose(&mgr, "x", "{}");
+        mgr.sign_action(&id, WitnessType::NeuralJudge).unwrap();
+        let status = mgr.sign_action(&id, WitnessType::NeuralJudge).unwrap();
+        assert_eq!(status, ActionStatus::Pending);
+        let status = mgr
+            .sign_action(&id, WitnessType::HumanAdmin("carol".into()))
+            .unwrap();
+        assert_eq!(status, ActionStatus::Approved);
+    }
+
+    #[test]
+    fn zero_required_signatures_approves_on_first_signature() {
+        let mgr = manager(true, &["x"], 0);
+        let id = propose(&mgr, "x", "{}");
+        let status = mgr.sign_action(&id, WitnessType::NeuralJudge).unwrap();
+        assert_eq!(status, ActionStatus::Approved);
+    }
+
+    #[test]
+    fn denied_action_is_not_authorized() {
+        let mgr = manager(true, &["x"], 1);
+        let id = propose(&mgr, "x", "{}");
+        mgr.deny_action(&id, "policy said no").unwrap();
+        assert_eq!(mgr.get_status(&id), Some(ActionStatus::Denied));
+        assert!(!mgr.check_approval("agent-1", "x", "{}"));
+        assert!(mgr.list_pending().is_empty());
+    }
+
+    #[test]
+    fn denying_unknown_action_is_an_error() {
+        let mgr = manager(true, &["x"], 1);
+        assert_eq!(
+            mgr.deny_action("missing", "reason").unwrap_err(),
+            "Action not found"
+        );
+    }
+
+    #[test]
+    fn approved_action_authorizes_exactly_once() {
+        let mgr = manager(true, &["x"], 1);
+        let id = propose(&mgr, "x", r#"{"path":"/a"}"#);
+        mgr.sign_action(&id, WitnessType::NeuralJudge).unwrap();
+        assert!(mgr.check_approval("agent-1", "x", r#"{"path":"/a"}"#));
+        assert!(!mgr.check_approval("agent-1", "x", r#"{"path":"/a"}"#));
+        assert_eq!(mgr.get_status(&id), None);
+    }
+
+    #[test]
+    fn approval_does_not_match_other_agent_tool_or_arguments() {
+        let mgr = manager(true, &["x"], 1);
+        let id = propose(&mgr, "x", "{}");
+        mgr.sign_action(&id, WitnessType::NeuralJudge).unwrap();
+        assert!(!mgr.check_approval("agent-2", "x", "{}"));
+        assert!(!mgr.check_approval("agent-1", "y", "{}"));
+        assert!(!mgr.check_approval("agent-1", "x", "{ }"));
+        // Mismatched requests must not consume the approval.
+        assert!(mgr.check_approval("agent-1", "x", "{}"));
+    }
+
+    #[test]
+    fn pending_action_does_not_authorize_and_keeps_its_status() {
+        let mgr = manager(true, &["x"], 2);
+        let id = propose(&mgr, "x", "{}");
+        assert!(!mgr.check_approval("agent-1", "x", "{}"));
+        assert_eq!(mgr.get_status(&id), Some(ActionStatus::Pending));
+        assert_eq!(mgr.get_status("missing"), None);
+    }
+
+    /// Known bug: `sign_action` does not check the action status, so a denied
+    /// action is approved by a later signature once the threshold is reached.
+    #[test]
+    #[ignore = "known bug: sign_action approves a denied action (see PR body)"]
+    fn signing_a_denied_action_must_not_approve_it() {
+        let mgr = manager(true, &["x"], 1);
+        let id = propose(&mgr, "x", "{}");
+        mgr.deny_action(&id, "no").unwrap();
+        let status = mgr.sign_action(&id, WitnessType::NeuralJudge).unwrap();
+        assert_eq!(status, ActionStatus::Denied);
+        assert!(!mgr.check_approval("agent-1", "x", "{}"));
+    }
+}

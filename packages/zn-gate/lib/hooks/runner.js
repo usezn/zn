@@ -676,22 +676,71 @@ function stopReviewMode(opts) {
   return String(hooks.stopReview || '').toLowerCase() === 'block' ? 'block' : 'warn';
 }
 
+// Transcripts are streamed in chunks of this size; the heap stays small
+// whatever the file size, though process memory still grows with it. Above
+// STOP_TRANSCRIPT_CAP the check is skipped.
+const STOP_CHUNK_BYTES = 256 * 1024;
+
+// Non-overlapping occurrences, the same count as split(needle).length - 1.
+function countIn(text, needle) {
+  return text.split(needle).length - 1;
+}
+
 // Markers in the answer that appear nowhere else in the transcript (no prompt,
-// no tool output, no earlier message). The answer itself is counted out. An
-// unreadable or very large transcript skips this check. A marker repeated in
-// an answer whose transcript lacks that answer can be reported falsely.
-function unseenMarkers(message, transcriptPath) {
-  const found = markers.findMarkers(message).map((m) => m.marker);
+// no tool output, no earlier message). The answer itself is counted out. The
+// transcript is streamed, and the scan stops as soon as every marker has been
+// seen outside the answer, so a marker used early in a session costs little.
+// An unreadable or larger-than-cap transcript skips this check. A marker
+// repeated in an answer whose transcript lacks that answer can be reported
+// falsely.
+async function unseenMarkers(message, transcriptPath) {
+  const found = [...new Set(markers.findMarkers(message).map((m) => m.marker))];
   if (found.length === 0 || !transcriptPath) return [];
-  let text;
   try {
     if (fs.statSync(transcriptPath).size > STOP_TRANSCRIPT_CAP) return [];
-    text = fs.readFileSync(transcriptPath, 'utf8');
+    const own = {};
+    const seen = {};
+    const lastEnd = {}; // absolute offset just past the last counted occurrence
+    for (const m of found) {
+      own[m] = countIn(message, m);
+      seen[m] = 0;
+      lastEnd[m] = 0;
+    }
+    // Markers are ASCII, so they are searched as bytes: no UTF-8 decoding per chunk.
+    // Each chunk is searched in place. Only a marker that straddles two chunks
+    // needs a joined window of a few bytes, so no chunk is copied.
+    const needle = {};
+    for (const m of found) needle[m] = Buffer.from(m, 'utf8');
+    let pending = found;
+    const keep = Math.max(...found.map((m) => m.length)) - 1;
+    const scan = (buf, absBase) => {
+      for (const m of pending) {
+        for (let i = buf.indexOf(needle[m]); i !== -1; i = buf.indexOf(needle[m], i + 1)) {
+          const abs = absBase + i;
+          if (abs >= lastEnd[m]) {
+            seen[m] += 1;
+            lastEnd[m] = abs + m.length;
+          }
+        }
+      }
+    };
+    let carry = Buffer.alloc(0); // last bytes of the previous chunk
+    let carryAbs = 0; // absolute offset of carry[0]
+    let chunkAbs = 0; // absolute offset of the next chunk
+    const stream = fs.createReadStream(transcriptPath, { highWaterMark: STOP_CHUNK_BYTES });
+    for await (const chunk of stream) {
+      if (carry.length) scan(Buffer.concat([carry, chunk.subarray(0, keep)]), carryAbs);
+      scan(chunk, chunkAbs);
+      pending = pending.filter((m) => seen[m] - own[m] <= 0);
+      if (pending.length === 0) break;
+      carry = chunk.subarray(Math.max(0, chunk.length - keep));
+      carryAbs = chunkAbs + chunk.length - carry.length;
+      chunkAbs += chunk.length;
+    }
+    return pending;
   } catch (_) {
     return [];
   }
-  const count = (s, needle) => s.split(needle).length - 1;
-  return found.filter((m) => count(text, m) - count(message, m) <= 0);
 }
 
 async function decideStop(ev, d, agentId, opts) {
@@ -706,7 +755,7 @@ async function decideStop(ev, d, agentId, opts) {
       if (SECRET_SOURCES.has(span.source)) kinds.add(kindLabel(span.type));
     }
   }
-  const stray = unseenMarkers(message, ev.input && ev.input.transcriptPath);
+  const stray = await unseenMarkers(message, ev.input && ev.input.transcriptPath);
   if (kinds.size === 0 && stray.length === 0) return { decision: 'allow' };
   const found = [
     ...(kinds.size ? ['a secret value (' + [...kinds].join(', ') + ')'] : []),
@@ -794,6 +843,14 @@ function countHook(agentId, ev, decision, opts = {}) {
     // Codex asks PreToolUse first, then PermissionRequest for the same call when it shows an approval prompt.
     // The check runs twice but the call is one call: count it at PreToolUse only.
     if (ev.permissionRequest) return;
+    if (ev.event === 'stop') {
+      // A check of the final answer is not a tool check: it has its own counters.
+      const statsFile = opts.home ? path.join(opts.home, '.zn', 'stats.json') : undefined;
+      const stats = require('../stats');
+      stats.recordEvent('stop-review', statsFile ? { file: statsFile } : {});
+      if (decision.decision !== 'allow') stats.recordEvent('stop-review-flagged', statsFile ? { file: statsFile } : {});
+      return;
+    }
     const extra = decision.stats || {};
     const file = opts.home ? path.join(opts.home, '.zn', 'stats.json') : undefined;
     require('../stats').record({
@@ -844,16 +901,31 @@ function refuseInput(agentId, why) {
   process.exitCode = 2;
 }
 
-async function main(args) {
+async function main(args, readText = readStdin) {
+  const state = { stopEvent: false };
   try {
-    await handleEvent(args);
+    await handleEvent(args, state, readText);
   } catch (err) {
+    if (state.stopEvent) return stopFailSafe(err);
     // Anything unexpected fails closed: the call is refused, not passed through.
     refuseInput(args[0], 'the hook failed (' + ((err && err.message) || String(err)) + ')');
   }
 }
 
-async function handleEvent(args) {
+/*
+ * An internal error while handling a Stop event must never exit 2: Codex and
+ * Claude Code read exit 2 on Stop as "keep going", which would send the
+ * answer back to the model. Warn the user instead and exit 0 with a
+ * systemMessage (a warning only, which the Stop output schema allows). The
+ * error text is not printed: it may carry content from the event.
+ */
+function stopFailSafe(err) {
+  const code = (err && err.code) || 'internal error';
+  process.stderr.write('zn hook: could not check the last answer (' + code + ')\n');
+  process.stdout.write(JSON.stringify({ systemMessage: 'zn: could not check the last answer for secrets (' + code + ').' }));
+}
+
+async function handleEvent(args, state, readText) {
   const agentId = args[0];
   let adapter;
   try {
@@ -865,14 +937,14 @@ async function handleEvent(args) {
   }
   // Windows PowerShell 5.1 writes a byte order mark when it pipes text to a
   // native command, which JSON.parse rejects.
-  const text = (await readStdin()).replace(/^﻿/, '');
+  const text = (await readText()).replace(/^﻿/, '');
   if (!text.trim()) return refuseInput(agentId, 'stdin was empty');
   let raw;
   try {
     raw = JSON.parse(text);
   } catch (err) {
-    // A Stop event is never blocked here: exit 2 would make Codex continue the answer.
-    if (agentId === 'codex' && /"hook_event_name"\s*:\s*"Stop"/.test(text)) {
+    // A Stop event is never blocked here: exit 2 would make the agent continue the answer.
+    if (/"hook_event_name"\s*:\s*"Stop"/.test(text)) {
       process.stderr.write('zn hook: could not read this Stop event, so the last answer was not checked\n');
       return;
     }
@@ -883,6 +955,7 @@ async function handleEvent(args) {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
     return refuseInput(agentId, 'the event on stdin is not a JSON object');
   }
+  state.stopEvent = raw.hook_event_name === 'Stop';
   const res = await handle(adapter, raw);
   if (res.stderr) process.stderr.write(res.stderr + ' (fail-open: event passed through)\n');
   try { require('../vault/client').close(); } catch (_) { /* not loaded */ }

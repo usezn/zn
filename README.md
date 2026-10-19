@@ -389,6 +389,15 @@ Runnable examples are in [`examples/`](examples/): the Python SDK, agents built 
 
 **Will it block legitimate content?** Sometimes. Use `init --shadow` or `shield --shadow` to log detections without blocking while you evaluate it.
 
+**Can zn-gate block keys in tool output?** Yes. When a tool returns a secret value (an AWS, OpenAI or Anthropic key, a GitHub token, a JWT, a private key or a password in a database URL), zn-gate replaces each value it recognises with a marker or redacts it before the model sees it. "Block" here means that rewrite of the output; the tool call itself is not stopped. What is covered depends on the agent (the full table is in [docs/compat.md](docs/compat.md)):
+
+- **Claude Code and OpenCode:** every tool, including shell commands, file reads, search and MCP.
+- **Codex CLI:** the result is replaced by its scrubbed text, so the model gets text instead of the structured result. Codex's own session log keeps the original output.
+- **Cursor:** MCP tool output only. Cursor's hooks cannot rewrite shell or file-read output.
+- **Hermes Agent, Gemini CLI, Copilot CLI and the Cursor CLI:** not covered yet. For any MCP client, the output of an MCP server wrapped with `zn-gate shield` or `init` is scrubbed.
+
+For Codex CLI, zn also reviews the model's final answer. By default it only warns you; with `"stopReview": "block"` under `hooks` in `~/.zn/config.json`, Codex asks the model to rewrite a final answer that contains a secret value. A second opt-in, `"replaceToolOutputOnSecret": true` under `hooks` in the same file, makes Codex replace a tool result that holds a real secret with zn's stop text and carry on, so the model gets that text instead of the output. See [docs/compat.md](docs/compat.md).
+
 **Which agents are supported?** Any MCP client. `init` can rewrite configs for the agents listed under [Install](#install).
 
 **How do I remove it?** `npx -y zn-gate init --revert` restores your configs from the backup. For a standalone server, remove the `zn-gate` entry from your agent config.
