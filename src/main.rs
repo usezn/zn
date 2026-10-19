@@ -496,21 +496,29 @@ async fn start_proxy(args: Args) -> Result<()> {
     };
 
     // If key_id is provided, try to fetch key from KMS
-    let db_key = if let Some(key_id) = &zn_config.kms.key_id {
-        match kms_vault.get_encryption_key(key_id).await {
-            Ok(k) => Some(hex::encode(k)),
-            Err(e) => {
-                log::warning(format!(
-                    "Failed to fetch key from KMS: {}. Falling back to config.",
-                    e
-                ))
-                .ok();
-                zn_config.audit.encryption_key.clone()
-            }
-        }
-    } else {
-        zn_config.audit.encryption_key.clone()
+    let kms_fetch = match &zn_config.kms.key_id {
+        Some(key_id) => Some(
+            kms_vault
+                .get_encryption_key(key_id)
+                .await
+                .map(hex::encode)
+                .map_err(|e| e.to_string()),
+        ),
+        None => None,
     };
+    let (db_key, fell_back) = resolve_db_key(
+        kms_fetch,
+        zn_config.kms.allow_config_fallback,
+        zn_config.audit.encryption_key.clone(),
+    )
+    .map_err(|e| anyhow!(e))?;
+    if fell_back {
+        log::warning(
+            "KMS key could not be fetched; running with the key from the config because              kms.allow_config_fallback is enabled. Fix the KMS access and turn the option off."
+                .to_string(),
+        )
+        .ok();
+    }
 
     // Initialize Audit Vault
     let vault = Arc::new(AuditVault::new(
@@ -2205,6 +2213,60 @@ mod fusion_wiring_tests {
             .await;
         assert_eq!(benign["verdict"], "allow");
         assert!(benign.get("fusion").is_none());
+    }
+}
+
+/// Picks the audit database key. `kms_fetch` is `None` when no KMS key is
+/// configured, otherwise the result of fetching it. Returns the key and
+/// whether the config key was used because the KMS fetch failed.
+fn resolve_db_key(
+    kms_fetch: Option<Result<String, String>>,
+    allow_config_fallback: bool,
+    config_key: Option<String>,
+) -> Result<(Option<String>, bool), String> {
+    match kms_fetch {
+        None => Ok((config_key, false)),
+        Some(Ok(key)) => Ok((Some(key), false)),
+        Some(Err(e)) if allow_config_fallback => {
+            let _ = e;
+            Ok((config_key, true))
+        }
+        Some(Err(e)) => Err(format!(
+            "Failed to fetch the encryption key from the KMS: {e}. Refusing to start with a              different key. Fix the KMS access, or set kms.allow_config_fallback = true to              allow the key from the config."
+        )),
+    }
+}
+
+#[cfg(test)]
+mod kms_key_tests {
+    use super::resolve_db_key;
+
+    fn cfg() -> Option<String> {
+        Some("config-key".to_string())
+    }
+
+    #[test]
+    fn kms_key_wins_when_fetched() {
+        let r = resolve_db_key(Some(Ok("kms-key".into())), false, cfg()).unwrap();
+        assert_eq!(r, (Some("kms-key".to_string()), false));
+    }
+
+    #[test]
+    fn kms_failure_without_opt_in_refuses_to_start() {
+        let e = resolve_db_key(Some(Err("denied".into())), false, cfg()).unwrap_err();
+        assert!(e.contains("denied") && e.contains("allow_config_fallback"));
+    }
+
+    #[test]
+    fn kms_failure_with_opt_in_falls_back_and_says_so() {
+        let r = resolve_db_key(Some(Err("denied".into())), true, cfg()).unwrap();
+        assert_eq!(r, (cfg(), true));
+    }
+
+    #[test]
+    fn no_kms_configured_uses_config_key() {
+        assert_eq!(resolve_db_key(None, false, cfg()).unwrap(), (cfg(), false));
+        assert_eq!(resolve_db_key(None, false, None).unwrap(), (None, false));
     }
 }
 
