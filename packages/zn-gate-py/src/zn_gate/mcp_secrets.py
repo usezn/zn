@@ -19,7 +19,7 @@ its kind, the name that holds it and the line.
 from __future__ import annotations
 
 import re
-from typing import Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from .rules import _is_non_secret_value
 
@@ -256,7 +256,7 @@ def find_mcp_config_secrets(text: str, file: str = "") -> List[Dict[str, object]
     return [{"line": f["line"], "kind": f["kind"], "name": f["name"]} for f in find_mcp_config_secret_spans(text, file) if not f.get("silent")]
 
 
-def mask_mcp_values(text: str, spans: List[Dict[str, object]]) -> str:
+def mask_mcp_values(text: str, spans: List[Dict[str, Any]]) -> str:
     """The text with each found value replaced, so no other rule can print it.
     Line numbers do not change."""
     out = []
