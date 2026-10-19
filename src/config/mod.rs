@@ -121,7 +121,7 @@ pub struct ServerConfig {
     #[serde(default = "default_ws_max_message_bytes")]
     pub ws_max_message_bytes: usize,
 
-    /// Largest single WebSocket frame the gateway accepts, in bytes (default 256 KiB).
+    /// Largest single WebSocket frame the gateway accepts, in bytes (default 1 MiB).
     /// A larger frame closes the connection.
     #[serde(default = "default_ws_max_frame_bytes")]
     pub ws_max_frame_bytes: usize,
@@ -146,7 +146,7 @@ fn default_ws_max_message_bytes() -> usize {
     1024 * 1024
 }
 fn default_ws_max_frame_bytes() -> usize {
-    256 * 1024
+    1024 * 1024
 }
 fn default_bind_address() -> String {
     "127.0.0.1".to_string()

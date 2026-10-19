@@ -70,10 +70,10 @@ fn small_limits(message: usize, frame: usize) -> ServerConfig {
 }
 
 #[test]
-fn defaults_are_one_mib_message_and_256_kib_frame() {
+fn defaults_are_one_mib_message_and_frame() {
     let cfg = ServerConfig::default();
     assert_eq!(cfg.ws_max_message_bytes, 1024 * 1024);
-    assert_eq!(cfg.ws_max_frame_bytes, 256 * 1024);
+    assert_eq!(cfg.ws_max_frame_bytes, 1024 * 1024);
 }
 
 #[test]
