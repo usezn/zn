@@ -82,17 +82,26 @@ for (const [name, args, call] of SERVERS) {
     }
   });
 
-  test(`${name}: batches work up to 2025-03-26 and are rejected from 2025-06-18`, async () => {
+  test(`${name}: batches work only in 2025-03-26 (added there, removed in 2025-06-18)`, async () => {
     const batch = [{ jsonrpc: '2.0', id: 10, method: 'ping' }, { jsonrpc: '2.0', id: 11, method: 'tools/list' }];
-    for (const version of ['2024-11-05', '2025-03-26']) {
-      const [, b] = await session(args, [init(version), batch], 2);
-      assert.ok(Array.isArray(b) && b.length === 2, version);
+    {
+      const [, b] = await session(args, [init('2025-03-26'), batch], 2);
+      assert.ok(Array.isArray(b) && b.length === 2);
       assert.deepEqual(b.map((r) => r.id).sort(), [10, 11]);
     }
-    for (const version of ['2025-06-18', '2025-11-25']) {
+    for (const version of ['2024-11-05', '2025-06-18', '2025-11-25']) {
       const [, b] = await session(args, [init(version), batch], 2);
       assert.equal(b.error.code, -32600, version);
       assert.equal(b.id, null);
+    }
+  });
+
+  test(`${name}: an unknown tool is -32602 from 2025-06-18 and -32601 before`, async () => {
+    for (const version of proto.SUPPORTED_PROTOCOL_VERSIONS) {
+      const [, e] = await session(args, [init(version),
+        { jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'no_such_tool', arguments: {} } }], 2);
+      assert.equal(e.id, 7);
+      assert.equal(e.error.code, version >= '2025-06-18' ? -32602 : -32601, version);
     }
   });
 }

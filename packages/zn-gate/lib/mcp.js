@@ -279,7 +279,7 @@ async function handleRequest(message, options) {
         });
       }
 
-      return sendError(id, -32601, `Method or tool '${toolName}' not found`);
+      return sendError(id, proto.unknownToolCode(negotiated), `Method or tool '${toolName}' not found`);
     }
 
     default: {
@@ -290,7 +290,7 @@ async function handleRequest(message, options) {
   }
 }
 
-/* Batches are valid up to 2025-03-26; from 2025-06-18 they are rejected. The replies go back as one array. */
+/* Batches exist only in 2025-03-26 (added there, removed in 2025-06-18); other versions are rejected. The replies go back as one array. */
 async function handleBatch(messages, options) {
   if (!proto.allowsBatching(negotiated) || messages.length === 0) {
     return sendError(null, proto.BATCH_REJECTED.code, proto.BATCH_REJECTED.message);

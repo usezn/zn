@@ -23,7 +23,7 @@ documentation on 2026-10-11 (Cursor again on 2026-10-17). End-to-end evidence is
 zn's two MCP servers (`zn mcp` and the `secrets` server) support MCP protocol versions `2025-11-25`,
 `2025-06-18`, `2025-03-26` and `2024-11-05`. They answer initialize with the version the client asks for, or with
 `2025-11-25` if the client asks for one they do not know (the client then decides). Tool annotations are sent from
-`2025-03-26`, tool titles from `2025-06-18`, and JSON-RPC batches are accepted up to `2025-03-26` and rejected after.
+`2025-03-26`, tool titles from `2025-06-18`, JSON-RPC batches are accepted only in `2025-03-26` (added there, removed in `2025-06-18`), and an unknown tool is error `-32602` from `2025-06-18` on (`-32601` before).
 Checked on 2026-10-17 with Claude Code 2.1.302 (`claude mcp list`: both connected) and with the official
 TypeScript MCP SDK client whose newest version is `2025-11-25` (both servers connect and list their tools).
 

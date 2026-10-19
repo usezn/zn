@@ -525,7 +525,7 @@ function createSecretsServer(opts = {}) {
   // Version agreed in initialize (one client per stdio process); until then the latest.
   let negotiated = null;
 
-  /** Handles a JSON-RPC batch: an array of replies, or one error when batches are not allowed (2025-06-18 and later). */
+  /** Handles a JSON-RPC batch: an array of replies, or one error when batches are not allowed (only 2025-03-26 has them). */
   async function handleBatch(messages) {
     if (!proto.allowsBatching(negotiated) || messages.length === 0) {
       return { jsonrpc: '2.0', id: null, error: { ...proto.BATCH_REJECTED } };
@@ -556,7 +556,7 @@ function createSecretsServer(opts = {}) {
       case 'tools/call': {
         if (!params || typeof params.name !== 'string') return fail(-32602, 'Invalid params: name is required');
         const result = await callTool(params.name, params.arguments || {});
-        if (!result) return fail(-32601, "Tool '" + params.name + "' not found. " + NO_GET);
+        if (!result) return fail(proto.unknownToolCode(negotiated), "Tool '" + params.name + "' not found. " + NO_GET);
         return ok(result);
       }
       default:
