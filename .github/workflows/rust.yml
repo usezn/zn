@@ -85,8 +85,9 @@ jobs:
 
   coverage:
     name: coverage report
-    # Report only, no threshold. Draft pull requests skip this job; marking the pull request ready for review runs it.
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    # Report only, no threshold, and it repeats the build and tests, so it runs on pushes to main and next
+    # and on manual runs, not on pull requests or the weekly schedule.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
