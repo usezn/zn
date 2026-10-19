@@ -80,8 +80,8 @@ jobs:
           retention-days: 30
 
   # Windows starts processes more slowly than Linux, so it has its own baseline and is checked apart.
-  # Not a required check: the job is allowed to fail and only reports. The baseline is marked provisional
-  # until it is replaced with numbers measured on a Windows runner.
+  # Not a required check: the job is allowed to fail and only reports. The baseline is made of numbers
+  # measured on a Windows runner.
   latency-windows:
     name: Hook latency budget (Windows, not required)
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
