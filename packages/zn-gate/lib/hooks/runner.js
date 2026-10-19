@@ -603,7 +603,7 @@ async function decidePromptText(ev, d, agentId, expansion) {
     if (!secrets.some((s) => s.start < a.end && a.start < s.end)) secrets.push(a);
   }
   if (secrets.length === 0) return { decision: 'allow' };
-  const names = secrets.map(nameOf);
+  const names = secrets.map((s) => nameOf(s) || keyBefore(prompt, s));
   const shown = [...new Set(secrets.map((s, i) => names[i] || kindLabel(s.type)))];
   const suggestion = names[0] || suggestedName(secrets[0]);
   const stats = { detections: Object.fromEntries([...new Set(secrets.map((s) => s.type || 'SECRET'))].map((k) => [k, 1])) };
@@ -655,6 +655,18 @@ function kindLabel(type) {
   });
   const label = words.join(' ') || 'secret';
   return (/^([AEIOU]|AWS\b|API\b|SSH\b|SSN\b|IBAN\b|OAUTH\b)/i.test(label) ? 'an ' : 'a ') + label;
+}
+
+// A generic detection has no name of its own. The credential name written just
+// before the value ("db_password = ...", "-e API_KEY=...") is the kind a person
+// can recognise. Only the text before the value is read, never the value.
+const KEY_BEFORE_RE = /([A-Za-z_][A-Za-z0-9_-]{1,127})["'`]?[ 	]*(?:=>|:=|=|:)[ 	]*["'`]?[ 	]*$/;
+function keyBefore(text, span) {
+  if (span.name || !GENERIC_TYPES.has(String(span.type || '').toUpperCase())) return null;
+  const m = KEY_BEFORE_RE.exec(String(text).slice(Math.max(0, span.start - 140), span.start));
+  if (!m) return null;
+  const n = m[1].replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/-/g, '_').toUpperCase();
+  return NAME_RE.test(n) ? n : null;
 }
 
 /* The name to suggest for `zn secret set` when the detection has no name. */
