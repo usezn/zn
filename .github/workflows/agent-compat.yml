@@ -1,0 +1,105 @@
+name: Weekly agent compatibility
+
+# Once a week (and on demand), runs the end-to-end scenario in bench/e2e with the latest published Claude
+# Code, Codex and OpenCode against the scripted provider on 127.0.0.1 (no account, no API key, fake values),
+# with the zn-gate package built from this repository's next branch. It fails when what an agent hands the
+# hooks, or what the hooks hand back, no longer matches the committed evidence in bench/e2e/<agent>/, or
+# when a fake secret value shows up in anything sent to the provider.
+# One job, Ubuntu only, no cache: a few minutes of Actions time per week.
+on:
+  schedule:
+    - cron: '23 5 * * 1'
+  # Changes to this workflow or its checker run it once, so a broken edit shows before the next scheduled run.
+  pull_request:
+    branches: [ next ]
+    paths:
+      - '.github/workflows/agent-compat.yml'
+      - 'bench/e2e/harness/weekly_check.js'
+  workflow_dispatch:
+    inputs:
+      agents:
+        description: 'Agents to run, space separated (default: all three)'
+        required: false
+        default: 'claude-code codex opencode'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-compat
+  cancel-in-progress: false
+
+jobs:
+  agent-compat:
+    name: agent compatibility (latest CLIs, node 22)
+    if: github.repository == 'usezn/zn'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      AGENTS: ${{ github.event.inputs.agents || 'claude-code codex opencode' }}
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      # Scheduled runs use the default branch of this repository (next); a manual run builds the branch it is started on.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Install the latest agent CLIs
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/agents"
+          pkgs=()
+          for a in $AGENTS; do
+            case "$a" in
+              claude-code) pkgs+=(@anthropic-ai/claude-code@latest) ;;
+              codex) pkgs+=(@openai/codex@latest) ;;
+              opencode) pkgs+=(opencode-ai@latest) ;;
+              *) echo "unknown agent: $a" >&2; exit 1 ;;
+            esac
+          done
+          npm install -g --prefix "$RUNNER_TEMP/agents" --no-audit --no-fund "${pkgs[@]}"
+          ls "$RUNNER_TEMP/agents/bin"
+      - name: Keep the committed evidence as the baseline
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/baseline"
+          for a in claude-code codex opencode; do cp -r "bench/e2e/$a" "$RUNNER_TEMP/baseline/$a"; done
+          # Drop the committed copies so an agent that does not run cannot pass on old evidence.
+          for a in claude-code codex opencode; do rm -rf "bench/e2e/$a"; done
+      - name: Run the scenario on each agent
+        run: |
+          set -euo pipefail
+          # Only the agents installed above are in this bin dir; run_all.sh skips the ones it does not find.
+          bash bench/e2e/harness/run_all.sh "$RUNNER_TEMP/zn-e2e" "$RUNNER_TEMP/agents/bin"
+      - name: Check the contract and the leak check
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/report"
+          node bench/e2e/harness/weekly_check.js "$RUNNER_TEMP/baseline" bench/e2e \
+            "$RUNNER_TEMP/report/results.json" "$RUNNER_TEMP/report/summary.md" $AGENTS | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Collect the evidence
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/report"
+          {
+            echo "zn-gate built from: $(git rev-parse HEAD)"
+            echo "node: $(node -v)"
+            for a in claude codex opencode; do
+              if [ -x "$RUNNER_TEMP/agents/bin/$a" ]; then echo "$a: $("$RUNNER_TEMP/agents/bin/$a" --version 2>&1 | head -1)"; fi
+            done
+          } > "$RUNNER_TEMP/report/versions.txt"
+          { echo; echo '### Versions'; echo '```'; cat "$RUNNER_TEMP/report/versions.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          cp -r bench/e2e/claude-code bench/e2e/codex bench/e2e/opencode "$RUNNER_TEMP/report/" 2>/dev/null || true
+      - name: Upload the summary
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: agent-compat-${{ github.run_id }}
+          path: ${{ runner.temp }}/report
+          retention-days: 30
+          if-no-files-found: ignore
