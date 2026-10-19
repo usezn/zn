@@ -1148,17 +1148,7 @@ async fn process_mcp_message(
                 }
             };
 
-            // 0. CLOUDFLARE STYLE: CACHE CHECK
-            if let Some(cached_result) = state.cache.get(&agent_id_str, &tool_name, &arguments) {
-                log::info(format!(
-                    "✨ CACHE HIT: {} (Agent: {})",
-                    tool_name, agent_id_str
-                ))
-                .ok();
-                return Ok(Some(cached_result));
-            }
-
-            // 1. ACTIVE DEFENSE CHECK
+            // 0. ACTIVE DEFENSE CHECK (before the cache, so a ban always wins)
             // Before processing, check if this agent is BANNED
             if let Err(ban_msg) = state.reputation.check_agent_status(&rep_key) {
                 log::error(format!(
@@ -1170,6 +1160,16 @@ async fn process_mcp_message(
                     id, -32003, // Custom error code for BANNED
                     &ban_msg,
                 )));
+            }
+
+            // 1. CLOUDFLARE STYLE: CACHE CHECK (only for agents that are not banned)
+            if let Some(cached_result) = state.cache.get(&agent_id_str, &tool_name, &arguments) {
+                log::info(format!(
+                    "✨ CACHE HIT: {} (Agent: {})",
+                    tool_name, agent_id_str
+                ))
+                .ok();
+                return Ok(Some(cached_result));
             }
 
             log::info(format!(
