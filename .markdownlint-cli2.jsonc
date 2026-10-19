@@ -1,9 +1,12 @@
 // Settings for markdownlint-cli2 (.github/workflows/markdownlint.yml). The rules are in .markdownlint.jsonc.
+// Only changelog.d/README.md is linted from changelog.d/: the fragments next to it keep the format the
+// changelog tool defines and validates ("### Section" directly followed by "- " bullets, plain URLs), which
+// the structure rules would rewrite.
 {
   "globs": [
     "docs/**/*.md",
     "README*.md",
     "packages/*/README.md",
-    "changelog.d/*.md"
+    "changelog.d/README.md"
   ]
 }
