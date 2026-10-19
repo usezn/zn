@@ -61,7 +61,7 @@ function commandsFromCode() {
   for (const line of body.split('\n')) {
     const g = /if \(group === '([a-z]+)'/.exec(line);
     if (g) group = g[1] === 'secrets' ? 'secret' : g[1];
-    for (const s of matches(/\bsub === '([a-z]+)'/, line)) if (group) add(group + ' ' + s);
+    for (const s of matches(/\bsub === '([a-z][a-z0-9-]*)'/, line)) if (group) add(group + ' ' + s);
   }
   // zn hooks install|uninstall.
   const hooksFn = functionBody(brokerSrc, 'hooks');
@@ -71,18 +71,18 @@ function commandsFromCode() {
 
   // vault (lib/vault/cli.js, runVaultCommand).
   const vaultFn = functionBody(read(path.join(pkgRoot, 'lib', 'vault', 'cli.js')), 'runVaultCommand');
-  for (const s of matches(/cmd === 'vault' && sub === '([a-z]+)'/, vaultFn)) add('vault ' + s);
+  for (const s of matches(/cmd === 'vault' && sub === '([a-z][a-z0-9-]*)'/, vaultFn)) add('vault ' + s);
 
   // team (lib/team/cli.js, runTeamCommand).
   const teamFn = functionBody(read(path.join(pkgRoot, 'lib', 'team', 'cli.js')), 'runTeamCommand');
-  for (const s of matches(/sub === '([a-z]+)'/, teamFn)) add('team ' + s);
+  for (const s of matches(/sub === '([a-z][a-z0-9-]*)'/, teamFn)) add('team ' + s);
 
   // pins (lib/pins-cli.js) and stats share (lib/stats-cli.js).
   const pinsFn = functionBody(read(path.join(pkgRoot, 'lib', 'pins-cli.js')), 'run');
-  for (const s of matches(/\bsub === '([a-z]+)'/, pinsFn)) if (s !== 'list') add('pins ' + s);
+  for (const s of matches(/\bsub === '([a-z][a-z0-9-]*)'/, pinsFn)) if (s !== 'list') add('pins ' + s);
   const statsFn = functionBody(read(path.join(pkgRoot, 'lib', 'stats-cli.js')), 'run');
   if (/o\.rest\[0\] === 'share'/.test(statsFn)) add('stats share');
-  for (const s of matches(/\bsub === '([a-z]+)'/, statsFn)) add('stats share ' + s);
+  for (const s of matches(/\bsub === '([a-z][a-z0-9-]*)'/, statsFn)) add('stats share ' + s);
 
   return set;
 }
@@ -106,7 +106,8 @@ function commandsFromHelp() {
     for (const spec of m[1].split(', ')) {
       const words = [];
       for (const w of spec.split(/\s+/)) {
-        if (/^[<\[-]/.test(w) || /^[A-Z_]+$/.test(w)) break;
+        // A capitalized word starts the description (a long command leaves only one space before it).
+        if (/^[<\[-]/.test(w) || /^[A-Z]/.test(w)) break;
         words.push(w);
       }
       if (words.length) set.add(words.join(' '));

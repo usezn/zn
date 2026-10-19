@@ -316,7 +316,7 @@ Locks the vault now. Exit code `0`.
 ### `vault`
 
 ```bash
-zn-gate vault <status|log|verify|forget|team>
+zn-gate vault <status|log|verify|forget|team|reset>
 ```
 
 With no subcommand it is the same as `vault status`. Usage errors exit `2`.
@@ -352,6 +352,14 @@ zn-gate vault forget [dir]
 ```
 
 Forgets the token map of a project (default: the current folder). The vault must be locked: otherwise it exits `1`.
+
+#### `vault reset`
+
+```bash
+zn-gate vault reset
+```
+
+The way out when you lost the vault passphrase. It sets the old vault aside in a backup folder (`~/.zn/vault-backup-<date>`, still encrypted) and starts again with a new, empty vault the next time you run `unlock`. The values stored in the old vault are lost: nobody can read them without the old passphrase. It needs a person at a terminal, the vault must be locked, and you confirm by typing a phrase. It refuses on a machine that belongs to a zn Team organization. Exit codes: `0` done (or there was no vault), `1` refused or cancelled.
 
 #### `vault team`
 
@@ -490,7 +498,7 @@ Needs the vault unlocked. Joining and leaving are confirmed outside the agent. [
 ### `team`
 
 ```bash
-zn-gate team <join|status|sync|leave>
+zn-gate team <join|status|sync|leave|managed-config>
 ```
 
 With no subcommand it is the same as `team status`. Exit codes: `0` done, `1` an error, `2` wrong usage.
@@ -518,3 +526,11 @@ Downloads the policy and uploads the audit log now. Exit `1` when the policy is 
 #### `team leave`
 
 Disconnects this machine from the organization.
+
+#### `team managed-config`
+
+```bash
+zn-gate team managed-config [--agent claude-code|cursor|codex|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--json]
+```
+
+For administrators. Prints the managed configuration files you deploy with MDM or configuration management so that the zn hooks run for every developer. Nothing is written and nothing is read from the machine. `--agent` defaults to `all` and `--os` to this computer's system. `--managed-hooks-only` makes the agent run only managed hooks. `--exclusive-mcp` also prints the managed MCP file for Claude Code (it takes exclusive control of MCP servers). `--json` prints the files as JSON. zn-gate must be installed on each machine. Exit codes: `0` done, `2` wrong usage.
