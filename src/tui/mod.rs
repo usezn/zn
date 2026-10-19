@@ -304,7 +304,7 @@ fn ui(f: &mut ratatui::Frame, app: &TuiApp) {
         )
         .split(chunks[1]);
 
-    let total_block = Paragraph::new(format!("\n  {}", app.stats.total))
+    let total_block = Paragraph::new(stat_text(app.stats.total))
         .block(
             Block::default()
                 .borders(Borders::ALL)
@@ -317,7 +317,7 @@ fn ui(f: &mut ratatui::Frame, app: &TuiApp) {
         );
     f.render_widget(total_block, stats_chunks[0]);
 
-    let blocks_block = Paragraph::new(format!("\n  {}", app.stats.denied))
+    let blocks_block = Paragraph::new(stat_text(app.stats.denied))
         .block(Block::default().borders(Borders::ALL).title(" ⛔ BLOCKED "))
         .style(
             Style::default()
@@ -326,7 +326,7 @@ fn ui(f: &mut ratatui::Frame, app: &TuiApp) {
         );
     f.render_widget(blocks_block, stats_chunks[1]);
 
-    let allowed_block = Paragraph::new(format!("\n  {}", app.stats.allowed))
+    let allowed_block = Paragraph::new(stat_text(app.stats.allowed))
         .block(Block::default().borders(Borders::ALL).title(" ✅ ALLOWED "))
         .style(
             Style::default()
