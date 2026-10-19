@@ -39,6 +39,9 @@
  * {"hooks": {"whenUnavailable": "allow"}} in ~/.zn/config.json.
  */
 
+// First, so the modules below are compiled through the cache too (a hook is a new process per call).
+if (require.main === module) require('../compile-cache').enable();
+
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

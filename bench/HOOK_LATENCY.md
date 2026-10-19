@@ -59,3 +59,39 @@ server. The floor is Node's own start-up (42 to 50 ms), so the 60 ms target
 can only be met by moving the scan out of the hook process and into the vault
 daemon. That puts the scanner next to the vault keys, so it gets its own
 security review after 1.5.0.
+
+## Update 2026-10-19: lazy loading and the compile cache
+
+Two changes to the hook process, with the same decisions and output as before:
+
+- **Lazy loading.** A plain PreToolUse already did not load the scrubber engine, the vault client or the
+  team policy (`lib/deps.js` loads them on first use, and a test now checks it). The `child_process`
+  module, used only to ask git about a file, is now loaded when it is first needed instead of at start-up.
+- **Compile cache.** On Node.js 22.1 and later, `lib/hooks/runner.js` calls `module.enableCompileCache()`
+  before it loads the rest of the hook (`lib/compile-cache.js`). The cache is in `~/.zn/cache/compile`
+  (`ZN_HOME` is respected). It holds code that every hook runs, so it is only used when the directories
+  are real directories (not links), belong to the current user and are closed to others (mode 0700);
+  otherwise the hook runs without it. `ZN_NO_COMPILE_CACHE=1` turns it off.
+
+Method: `bench/hook_latency.js --runs 50`, vault unlocked (locked in the last row), run twice in a row,
+each time for three variants in this order: `next` before the change, lazy loading only
+(`ZN_NO_COMPILE_CACHE=1`) and lazy loading with the cache. One ephemeral GCP VM (n2-standard-4, Xeon
+2.8 GHz, Debian 12, Node 24.12, bare `node -e ""` 23 to 25 ms p50). The table is the mean of the two
+rounds, p50 / p95 in ms. The first run after the cache directory is created (cold) is the warm-up run of
+the benchmark and is not in the numbers.
+
+| Case | Before | Lazy loading only | Lazy loading + compile cache |
+|---|---|---|---|
+| PreToolUse Bash, no markers | 57.9 / 62.6 | 58.6 / 61.9 | **56.8 / 60.8** |
+| UserPromptSubmit, 1 KB | 71.8 / 76.1 | 73.8 / 78.5 | **69.6 / 73.2** |
+| PostToolUse Bash, 4 KB clean | 73.4 / 78.2 | 74.5 / 79.4 | **69.8 / 75.4** |
+| PostToolUse Bash, 64 KB clean | 77.7 / 81.0 | 80.8 / 88.0 | **72.9 / 77.7** |
+| PostToolUse Bash, 64 KB with 2 secrets | 85.6 / 92.5 | 89.4 / 94.3 | **82.9 / 87.7** |
+| PostToolUse Bash, 64 KB with 2 secrets, vault locked | 78.1 / 82.7 | 80.0 / 84.2 | **72.0 / 78.2** |
+
+Reading: the compile cache saves about 1 ms on PreToolUse and 3 to 6 ms on the events that load the
+scrubber (4 to 8 % of the call). Lazy loading by itself is inside the noise of the VM (the loading of the
+hook and the adapter drops from about 7.6 to 4.7 ms inside the process, but that does not show in
+the wall-clock time of the whole process). The floor is still Node's own start-up; the 60 ms target for the
+64 KB case is still not met on this machine, and the plan above (scanning inside the vault daemon) is
+still the way to meet it.
