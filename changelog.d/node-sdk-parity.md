@@ -1,0 +1,2 @@
+### Added
+- The Node.js package now has the same tool guard as the Python one: `checkToolCall(toolName, args)` and `guardTool(fn, options)`, which wraps a sync or async function, checks its arguments (and, with `checkResult: true`, its result) and throws a `GuardBlockError` by default (`onBlock: 'return'` returns a fallback instead; any other `onBlock` value is an error). `sanitizeToolResult`, `redactSecrets`, `verifyEvidenceLedger` and `logEvidence`, which the API reference already documents, are now also exported from `require('zn-gate')`.

@@ -165,4 +165,4 @@ function toSarif(result, meta) {
   }, null, 2) + '\n';
 }
 
-module.exports = { toJson, toText, toSarif, summarize, BY_ID };
+module.exports = { toJson, toText, toSarif, summarize, safeText, BY_ID };

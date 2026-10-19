@@ -61,7 +61,7 @@ npx -y zn-gate env shadow .env
 
 After this, your own app also reads the markers in `.env`: start it with zn-gate's `run` command once you allow it ([docs/secrets.md](https://github.com/usezn/zn/blob/main/docs/secrets.md)). `env shadow` tells you how to undo it.
 
-Five-minute walkthrough: [docs/secrets.md](https://github.com/usezn/zn/blob/main/docs/secrets.md). Limits: [docs/threat-model.md](https://github.com/usezn/zn/blob/main/docs/threat-model.md). Words you do not know: [glossary](https://github.com/usezn/zn/blob/main/docs/glossary.md).
+Five-minute walkthrough: [docs/secrets.md](https://github.com/usezn/zn/blob/main/docs/secrets.md). Limits: [docs/threat-model.md](https://github.com/usezn/zn/blob/main/docs/threat-model.md). Words you do not know: [glossary](https://github.com/usezn/zn/blob/main/docs/glossary.md). Every command and exit code: [command line reference](https://github.com/usezn/zn/blob/main/docs/cli.md).
 
 <details>
 <summary><strong>Other ways to install</strong>: one agent at a time, other editors, Python, MCP server only</summary>
@@ -88,7 +88,9 @@ zn hooks install codex           # or: cursor, opencode
 
 In Codex, approve the new hooks with `/hooks`. In Cursor, shell output and file contents are not scrubbed. What each agent supports: [docs/compat.md](https://github.com/usezn/zn/blob/main/docs/compat.md).
 
-**Other editors** (VS Code, Antigravity, Windsurf, Cline, Zed, JetBrains, Continue): zn-gate works there as an MCP server only. Setup for each one: [usezn.com/docs/integrations/editors](https://usezn.com/docs/integrations/editors/).
+**Other editors** (VS Code, Windsurf, Cline, Zed, JetBrains, Continue): zn-gate works there as an MCP server only. Setup for each one: [usezn.com/docs/integrations/editors](https://usezn.com/docs/integrations/editors/).
+
+**Antigravity (experimental).** `zn hooks install antigravity` (or `npx -y zn-gate init`) adds a hook that runs before each tool call. It blocks reads and writes of secret files and shell commands that handle secrets, and the agent cannot edit the hook files. It cannot remove secrets from what a tool returns, Antigravity's MCP configuration files are not protected, and Antigravity does not document what happens when a hook fails, so treat it as a first layer. The MCP server works there too. Details: [Antigravity page](https://github.com/usezn/zn/blob/main/docs/editors/antigravity.md).
 
 **Python: for agents you build yourself** (rules engine and secret redaction for LangChain, CrewAI, LlamaIndex or plain tool calling). It does not protect Claude Code, Codex, Cursor or other coding agents. Install it in a virtual environment; many recent Linux systems, and Homebrew's Python on macOS, refuse `pip install` outside one ("externally-managed-environment"):
 
@@ -192,7 +194,7 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"c
 - Roadmap: running Galvanize locally inside zn-gate.
 
 **Scan: audit what your agent is about to trust**
-- Today: `npx -y zn-gate scan <path>` audits prompt templates, `AGENTS.md` / `SKILL.md` files and configs for injection traps and leaked secrets. It exits with code 1 on findings, for CI. It also checks the MCP server configs (`.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `.codex/config.toml`, `claude_desktop_config.json` and others) for keys and passwords written in plain text in `env`, `headers`, arguments or URLs; it never prints the value, and `--include-home` checks your own MCP configs too. MCP servers can be checked on the web at [usezn.com/scan](https://usezn.com/scan).
+- Today: `npx -y zn-gate scan <path>` audits prompt templates, `AGENTS.md` / `SKILL.md` files and configs for injection traps and leaked secrets. It exits with code 1 on findings, for CI. A link given as the folder to scan is followed. When no file is scanned, the report says "No files were scanned in <path>" and the exit code stays 0. It also checks the MCP server configs (`.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `.codex/config.toml`, `claude_desktop_config.json` and others) for keys and passwords written in plain text in `env`, `headers`, arguments or URLs; it never prints the value, and `--include-home` checks your own MCP configs too. MCP servers can be checked on the web at [usezn.com/scan](https://usezn.com/scan).
 - Roadmap: auditing MCP servers and skills from the CLI before you add them.
 
 ### MCP tools
@@ -273,6 +275,8 @@ CONFIDENTIAL_INTERNAL_PROJECT_[A-Z0-9]+
 ### Local audit log
 
 `zn-gate shield` appends every decision to `~/.zn/evidence.jsonl` as a hash-chained (SHA-256) record with a secret-redacted preview. It detects accidental or partial edits. It is not tamper-proof against someone with write access to the file, who can recompute the whole chain.
+
+The agent hooks write to the same log. When a hook blocks a tool call, a prompt or a final answer, or hides a secret in a tool result, `zn-gate evidence` shows one more event with the agent, the kind of event, the tool name, a rule name (such as `hook-pre_tool-policy` or `hook-redacted-output`) and the kinds of secret found. It never stores a secret value, a command, a file path or the text of your prompt. Calls that are allowed are not written, so the log stays short. If the log cannot be written (a full disk, a damaged log, a busy lock), zn prints one line about it and the block still holds. Counts of all checks, including allowed ones, are in `npx -y zn-gate stats`.
 
 ```bash
 npx -y zn-gate evidence --verify

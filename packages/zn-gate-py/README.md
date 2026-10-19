@@ -203,6 +203,20 @@ We only publish numbers we can reproduce, with the method next to them.
 - `ZN_STAGE` / `ZN_API_URL`: cloud endpoint selection.
 - `NO_COLOR` (any non-empty value) or `TERM=dumb`: the command line output leaves out its symbols; the status words (ALLOW, BLOCK, clean, ...) stay.
 
+## Examples
+
+Runnable examples for the Python package, in [`examples/`](https://github.com/usezn/zn/tree/main/examples):
+
+| Example | Language | Framework | What it shows |
+|---|---|---|---|
+| [`python-basic`](https://github.com/usezn/zn/tree/main/examples/python-basic) | Python | None | Evaluate a prompt and guard a tool function. |
+| [`langchain-agent`](https://github.com/usezn/zn/tree/main/examples/langchain-agent) | Python | LangChain / LangGraph | Attach a callback handler that checks tool calls and results. |
+| [`crewai-agent`](https://github.com/usezn/zn/tree/main/examples/crewai-agent) | Python | CrewAI | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`llamaindex-agent`](https://github.com/usezn/zn/tree/main/examples/llamaindex-agent) | Python | LlamaIndex | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`openai-agents-sdk`](https://github.com/usezn/zn/tree/main/examples/openai-agents-sdk) | Python | OpenAI Agents SDK | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`pydantic-ai-agent`](https://github.com/usezn/zn/tree/main/examples/pydantic-ai-agent) | Python | Pydantic AI | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`google-adk-agent`](https://github.com/usezn/zn/tree/main/examples/google-adk-agent) | Python | Google ADK | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+
 ## FAQ
 
 **Do I need an account?** No.
