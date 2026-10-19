@@ -17,7 +17,7 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
-RULES_VERSION = "2026-10-19.3"
+RULES_VERSION = "2026-10-19.5"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -1000,7 +1000,7 @@ def _pv_discord_check(v: str) -> bool:
 
 
 PROVIDER_MATCH_CHECKS: Dict[str, Any] = {
-    "secret:aws_key_id": lambda v: re.fullmatch(r'(.)\1+', v[4:]) is None and not v.endswith('EXAMPLE'),
+    "secret:aws_key_id": lambda v: re.fullmatch(r'(.)\1+', v[4:]) is None,
     "secret:stripe_key": lambda v: _pv_random(v[8:], 2, 3.5),
     "secret:gitlab_token": lambda v: _pv_random(v[v.index('-') + 1:], 2, 3.3),
     "secret:hf_token": _pv_hf_check,
