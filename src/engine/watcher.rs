@@ -79,3 +79,36 @@ impl PolicyWatcher {
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::ZnEngineConfig;
+
+    fn test_engine() -> Arc<ZnEngine> {
+        Arc::new(
+            ZnEngine::new(ZnEngineConfig {
+                gas_limit: 10_000_000,
+                memory_limit: 10 * 1024 * 1024,
+                timeout_ms: 50,
+                allowed_hashes: vec![],
+                signing_public_key: None,
+            })
+            .expect("engine init"),
+        )
+    }
+
+    #[test]
+    fn watching_a_missing_directory_fails() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let missing = dir.path().join("does-not-exist");
+        assert!(PolicyWatcher::new(test_engine(), missing).is_err());
+    }
+
+    #[tokio::test]
+    async fn watching_an_existing_directory_starts() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let watcher = PolicyWatcher::new(test_engine(), dir.path());
+        assert!(watcher.is_ok());
+    }
+}

@@ -8,7 +8,7 @@ Tests for zn-gate 1.2.3 features:
 - Framework integrations: LangChain, CrewAI, LlamaIndex, Promptfoo
 """
 import unittest
-from zn_gate import evaluate, guard, redact_secrets, sanitize_tool_result, GuardBlockError
+from zn_gate import guard, redact_secrets, sanitize_tool_result, GuardBlockError
 from zn_gate.integrations import (
     ZnGuardCallbackHandler,
     guarded_tool,

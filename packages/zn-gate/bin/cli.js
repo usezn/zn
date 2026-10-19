@@ -58,45 +58,14 @@ const KEY_FILE_NAMES = new Set(['id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', 'i
 const BINARY_SNIFF = 8192;
 const SCAN_FORMATS = new Set(['text', 'json', 'github']);
 
-// Scrubber secret types that the scan reports, with the rule id the Python
-// package uses for the same format (its PROVIDER_SECRET_PATTERNS). The other
-// scrubber types are only redacted in the snippet.
-const SCRUB_SCAN_RULES = new Map([
-  'GITLAB_TOKEN', 'SLACK_TOKEN', 'SLACK_WEBHOOK', 'DISCORD_WEBHOOK', 'STRIPE_KEY', 'STRIPE_WEBHOOK_SECRET',
-  'GOOGLE_API_KEY', 'GOOGLE_OAUTH_SECRET', 'HF_TOKEN', 'NPM_TOKEN', 'PYPI_TOKEN', 'SENDGRID_KEY', 'TWILIO_KEY',
-  'MAILGUN_KEY', 'SHOPIFY_TOKEN', 'DIGITALOCEAN_TOKEN', 'LINEAR_KEY', 'TELEGRAM_BOT_TOKEN', 'AZURE_STORAGE_KEY',
-  'DATABRICKS_TOKEN', 'VAULT_TOKEN', 'DOPPLER_TOKEN', 'NEWRELIC_KEY', 'GROQ_KEY', 'XAI_KEY', 'DOCKERHUB_PAT',
-  'ZN_API_KEY', 'TAVILY_KEY', 'FIRECRAWL_KEY', 'POLAR_TOKEN', 'REPLICATE_TOKEN', 'SUPABASE_PAT', 'AZURE_AD_CLIENT_SECRET',
-  'SQUARE_TOKEN', 'DISCORD_BOT_TOKEN',
-  'ONEPASSWORD_SA_TOKEN', 'AGE_SECRET_KEY', 'ALIBABA_KEY_ID', 'ARTIFACTORY_KEY', 'CLOUDFLARE_ORIGIN_CA_KEY', 'DYNATRACE_TOKEN', 'EASYPOST_KEY', 'FLYIO_TOKEN', 'GRAFANA_TOKEN', 'TERRAFORM_CLOUD_TOKEN', 'HEROKU_KEY_V2', 'NOTION_TOKEN', 'PERPLEXITY_KEY', 'PLANETSCALE_TOKEN', 'POSTMAN_KEY', 'PREFECT_KEY', 'PULUMI_TOKEN', 'README_KEY', 'RUBYGEMS_KEY', 'BREVO_KEY', 'SENTRY_USER_TOKEN', 'SHIPPO_KEY', 'OPENSHIFT_TOKEN', 'TEAMS_WEBHOOK',
-  'BEARER_TOKEN',
-].map((t) => [t, 'secret:' + t.toLowerCase()]).concat([
-  ['AWS_KEY', 'secret:aws_key_id'],
-  ['URL_PASSWORD', 'secret:url_password'],
-  ['DB_PASSWORD', 'secret:url_password'],
-]));
-
 // Secrets in a line, as rule ids, in the order the Python package finds them:
-// the rules of lib/rules.js, then the scrubber formats above, then the
-// scan-only rules. Each step runs on the text the previous ones redacted, so
-// one value is reported once.
+// the rules of lib/rules.js and the scrubber provider formats (both done by
+// redactSecrets), then the scan-only rules. Each step runs on the text the
+// previous ones redacted, so one value is reported once.
 function scanSecretRules(line) {
   const first = redactSecrets(line);
   const rules = first.detections.map((d) => d.rule);
-  const text = first.sanitized;
-  const spans = require('../lib/scrub/engine').scan(text, { exact: false, pii: false })
-    .filter((s) => SCRUB_SCAN_RULES.has(s.type))
-    .sort((a, b) => a.start - b.start || b.end - a.end);
-  let rest = '';
-  let last = 0;
-  for (const s of spans) {
-    if (s.start < last) continue;
-    rules.push(SCRUB_SCAN_RULES.get(s.type));
-    rest += text.slice(last, s.start) + `[REDACTED_${s.type}]`;
-    last = s.end;
-  }
-  rest += text.slice(last);
-  for (const d of redactScanRules(rest).detections) rules.push(d.rule);
+  for (const d of redactScanRules(first.sanitized).detections) rules.push(d.rule);
   return rules;
 }
 
