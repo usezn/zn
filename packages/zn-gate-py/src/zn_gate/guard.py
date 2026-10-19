@@ -8,9 +8,12 @@ from __future__ import annotations
 import functools
 import inspect
 import os
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, List, Optional, TypeVar, cast
 
 from .rules import Assessment, evaluate, scan_windows
+
+
+_F = TypeVar("_F", bound=Callable[..., Any])
 
 
 def block_message(assessment: Assessment, target: str) -> str:
@@ -104,7 +107,7 @@ def guard(
     mask_secrets: bool = False,
     callback: Optional[Callable[[Assessment, str, Any], None]] = None,
     block_truncated: bool = False,
-) -> Callable:
+) -> Callable[[_F], _F]:
     """
     Decorator for Python functions and agent tools.
 
@@ -121,7 +124,7 @@ def guard(
                        (rule size:truncated). ZN_BLOCK_TRUNCATED=1 does the same
                        for every guard (default False).
     """
-    def decorator(func: Callable) -> Callable:
+    def decorator(func: _F) -> _F:
         func_name = getattr(func, "__name__", "anonymous")
 
         if inspect.iscoroutinefunction(func):
@@ -155,7 +158,7 @@ def guard(
                     res, _ = sanitize_tool_result(res)
 
                 return res
-            return async_wrapper
+            return cast(_F, async_wrapper)
         else:
             @functools.wraps(func)
             def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -187,7 +190,7 @@ def guard(
                     res, _ = sanitize_tool_result(res)
 
                 return res
-            return sync_wrapper
+            return cast(_F, sync_wrapper)
 
     return decorator
 
