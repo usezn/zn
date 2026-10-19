@@ -269,6 +269,7 @@ VAULT (local, encrypted with age; the key stays in the OS keychain):
   vault log           Show the audit log of secret use [--since 1h]; checks the chain when unlocked
   vault verify        Verify the HMAC-chained audit log of secret use
   vault forget [dir]  Forget the token map of a project (vault locked)
+  vault reset         Lost the passphrase? Set the old vault aside and start empty (your terminal only)
   vault log export --otlp
                       Export the audit log as OpenTelemetry logs (OTLP/JSON Lines)
                       [--since 7d] [--out FILE]
