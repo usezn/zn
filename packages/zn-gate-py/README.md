@@ -14,7 +14,7 @@
 
 **For:** developers building their own agents with LangChain, CrewAI, LlamaIndex or plain Python tool calling.
 
-> **Using Claude Code, Codex CLI, Cursor or OpenCode?** This Python package does not protect them. Run `npx -y zn-gate init` in your own terminal instead (it needs Node.js 18 or later): see [Install](https://github.com/usezn/zn#install).
+> **Using Claude Code, Codex CLI, Cursor or OpenCode?** This Python package does not protect them. Run `npx -y zn-gate init` in your own terminal instead (it needs Node.js 18 or later; 22 LTS is recommended, and the Claude Code plugin needs 20.12 or later): see [Install](https://github.com/usezn/zn#install).
 
 ---
 
@@ -22,12 +22,12 @@
 
 Install it in a virtual environment. Many recent Linux systems, and Homebrew's Python on macOS, refuse `pip install` outside one, with an "externally-managed-environment" error:
 
+On Debian and Ubuntu, `python3 -m venv` needs the `python3-venv` package first: `sudo apt install python3-venv`.
+
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install zn-gate      # Windows: .venv\Scripts\pip install zn-gate
 ```
-
-On Debian and Ubuntu, `python3 -m venv` needs the `python3-venv` package first: `sudo apt install python3-venv`.
 
 Inside an environment you already use (your project's virtualenv, Poetry, uv), `pip install zn-gate` is enough. Python 3.10 or later (CI tests 3.10 to 3.14). Zero runtime dependencies.
 
@@ -137,6 +137,8 @@ from zn_gate.integrations import guarded_tool
 def query_knowledge_base(query: str) -> str:
     return "Query result..."
 ```
+
+`@guarded_tool` also works on plain Python tool functions (Pydantic AI, Google ADK). Block messages name the target as `tool:<name>`; `framework="crewai"` makes it `crewai:<name>`.
 
 `check_result=True` also scans what the tool returns for prompt injection before the agent sees it (off by default, so existing tools behave as before).
 
