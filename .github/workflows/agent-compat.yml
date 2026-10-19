@@ -76,6 +76,13 @@ jobs:
           set -euo pipefail
           # Only the agents installed above are in this bin dir; run_all.sh skips the ones it does not find.
           bash bench/e2e/harness/run_all.sh "$RUNNER_TEMP/zn-e2e" "$RUNNER_TEMP/agents/bin"
+      - name: Show run diagnostics
+        if: failure()
+        run: |
+          for f in "$RUNNER_TEMP"/zn-e2e/*/out/mock.log "$RUNNER_TEMP"/zn-e2e/*/out/*stderr* "$RUNNER_TEMP"/zn-e2e/*/out/vault.error "$RUNNER_TEMP"/zn-e2e/*/out/exit_codes.txt; do
+            [ -f "$f" ] && { echo "== ${f#$RUNNER_TEMP/}"; tail -n 20 "$f" | cut -c1-300; }
+          done
+          true
       - name: Check the contract and the leak check
         run: |
           set -euo pipefail
