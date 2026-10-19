@@ -261,7 +261,7 @@ zn Team: `zn team join <token>` connects a machine to your organization's signed
 
 Custom rules: add banned patterns and forbidden paths in `.znrules` or `zn.config.json` at your project root ([example](packages/zn-gate/README.md#custom-rules-znrules-or-znconfigjson)).
 
-Audit log: `zn-gate shield` appends each decision to `~/.zn/evidence.jsonl` as a hash-chained (SHA-256) record with a redacted preview. It detects accidental or partial edits; it is not tamper-proof against someone with write access to the file. Check it with `npx -y zn-gate evidence --verify`.
+Audit log: `zn-gate shield` appends each decision to `~/.zn/evidence.jsonl` as a hash-chained (SHA-256) record with a redacted preview. It detects accidental or partial edits; it is not tamper-proof against someone with write access to the file. Check it with `npx -y zn-gate evidence --verify`. The agent hooks add to the same log when they block something or hide a secret in a tool result: it records the agent, the kind of event, a rule name and the kinds of secret, never a secret value, a command, a file path or your prompt.
 
 ### GitHub Action
 

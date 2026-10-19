@@ -523,6 +523,7 @@ async function decideMcp(ev, d, agentId) {
   if (kinds.size === 0) return { decision: 'allow' };
   return {
     decision: 'deny',
+    kinds: [...kinds],
     message: 'zn: this call would send a secret (' + [...kinds].join(', ') + ') to ' + mcpServerLabel(server) + ', so zn blocked it. ' +
       'A stored secret cannot be passed to this server. ' +
       'Next step: for a web request, use the secrets_http_request tool of the zn "secrets" MCP server, which sends the stored value itself; do not put the value in this call.',
@@ -911,6 +912,7 @@ async function handle(adapter, rawEvent, opts = {}) {
   }
   const output = adapter.respond({ ...decision, event: ev });
   countHook(adapter.id, ev, decision, opts);
+  recordEvidence(adapter.id, ev, decision, opts);
   return { output, stderr: decision.warning || null, decision };
 }
 
@@ -945,6 +947,43 @@ function countHook(agentId, ev, decision, opts = {}) {
     }, file ? { file } : {});
   } catch {
     /* counting must never affect a hook */
+  }
+}
+
+/**
+ * Puts a hook block (and a redaction of tool output) in the hash-chained evidence ledger, so
+ * `zn-gate evidence` shows it. It writes: the agent, the event, the tool name, a rule id and the
+ * kinds of secret found. It never writes a secret value, a path, a command or prompt text. Only
+ * blocks and redactions are written (an allow, the common case, costs nothing), and the ledger
+ * code is loaded only then. A problem with the ledger is reported on stderr by the ledger itself
+ * and never changes the decision: the answer is already built when this runs.
+ */
+function recordEvidence(agentId, ev, decision, opts = {}) {
+  try {
+    if (!ev || !ev.event || !decision || ev.permissionRequest) return;
+    const denied = decision.decision === 'deny' && !decision.failClosed;
+    const stats = decision.stats || {};
+    const redacted = ev.event === 'post_tool' && decision.decision === 'allow' && stats.redacted > 0;
+    if (!denied && !redacted) return;
+    const kinds = Object.keys(stats.detections || {}).concat(Array.isArray(decision.kinds) ? decision.kinds : [])
+      .filter((k, i, a) => typeof k === 'string' && /^[A-Za-z0-9_ .-]{1,64}$/.test(k) && a.indexOf(k) === i).sort();
+    const evidence = require('../evidence');
+    const file = opts.home ? path.join(opts.home, '.zn', 'evidence.jsonl') : undefined;
+    evidence.logEvidence({
+      agent: agentId,
+      phase: redacted ? 'tool-result' : 'hook-' + ev.event,
+      tool_name: ev.tool || ev.event,
+      // Only the shape of the event is hashed and previewed, never its content.
+      payload: JSON.stringify({ event: ev.event, tool: ev.tool || null, kinds }),
+      verdict: redacted ? 'allow' : 'block',
+      rule: redacted ? 'hook-redacted-output' : 'hook-' + ev.event + (kinds.length ? '-secret' : '-policy'),
+      reason: redacted
+        ? stats.redacted + ' secret value(s) in the tool output replaced with tokens' + (kinds.length ? ' (' + kinds.join(', ') + ')' : '')
+        : (kinds.length ? 'secret kinds: ' + kinds.join(', ') : 'blocked by the zn hook policy'),
+      engine: 'zn-hook',
+    }, file, { lockWaitMs: 500, noStats: true });
+  } catch (e) {
+    try { process.stderr.write('zn-gate: could not record the block in the evidence log (' + (e && e.code || 'error') + ').' + String.fromCharCode(10)); } catch (_) { /* nothing more to do */ }
   }
 }
 
