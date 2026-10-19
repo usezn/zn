@@ -34,21 +34,56 @@ class GuardBlockError extends Error {
   }
 }
 
-/** Every string in a nested structure, object keys included (depth-limited, like the Python package). */
-function extractStrings(data, maxDepth = MAX_DEPTH) {
-  if (maxDepth <= 0) return [];
-  const out = [];
-  if (typeof data === 'string') {
-    out.push(data);
-  } else if (Array.isArray(data) || data instanceof Set) {
-    for (const item of data) out.push(...extractStrings(item, maxDepth - 1));
+/** Internal: a payload is nested deeper than the scanner is willing to walk. */
+class NestingTooDeep extends Error {}
+
+/**
+ * Every string in a nested structure, object keys included. Walks arrays, sets,
+ * maps (keys and values) and plain objects, and decodes Buffer / Uint8Array as
+ * UTF-8. Throws NestingTooDeep instead of skipping content below the depth
+ * limit, so callers can fail closed. A container that contains itself is walked
+ * once.
+ */
+function extractStrings(data, maxDepth = MAX_DEPTH, path = new WeakSet()) {
+  if (typeof data === 'string') return [data];
+  if (data instanceof Uint8Array) return [Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString('utf8')];
+  let children;
+  if (Array.isArray(data) || data instanceof Set) {
+    children = Array.from(data);
+  } else if (data instanceof Map) {
+    children = [];
+    for (const [k, v] of data) children.push(k, v);
   } else if (data && typeof data === 'object') {
-    for (const [k, v] of Object.entries(data)) {
-      out.push(k);
-      out.push(...extractStrings(v, maxDepth - 1));
-    }
+    children = [];
+    for (const [k, v] of Object.entries(data)) children.push(k, v);
+  } else {
+    return [];
   }
-  return out;
+  if (maxDepth <= 0) throw new NestingTooDeep();
+  if (path.has(data)) return [];
+  path.add(data);
+  try {
+    const out = [];
+    for (const child of children) out.push(...extractStrings(child, maxDepth - 1, path));
+    return out;
+  } finally {
+    path.delete(data);
+  }
+}
+
+/** extractStrings, or a block assessment when the payload is nested too deeply to check. */
+function stringsOrBlock(data, what) {
+  try {
+    return { strings: extractStrings(data) };
+  } catch (e) {
+    if (!(e instanceof NestingTooDeep)) throw e;
+    return {
+      block: {
+        allowed: false, verdict: 'block', confidence: 1.0, rule: 'size:nesting',
+        reason: `${what} nested too deeply to check`,
+      },
+    };
+  }
 }
 
 function allow(advisory, extra) {
@@ -59,12 +94,15 @@ function allow(advisory, extra) {
 
 /**
  * Decide whether an agent tool call is safe to run. Every string in `args`
- * (nested values and keys) is evaluated; the first block wins.
+ * (nested values and keys) is evaluated; the first block wins. Arguments nested
+ * too deeply to check are blocked (rule size:nesting).
  * Returns { allowed, verdict, confidence, rule, reason, advisory? }.
  */
 function checkToolCall(toolName, args, opts = {}) {
   let advisory = null;
-  for (const s of extractStrings(args)) {
+  const { strings, block } = stringsOrBlock(args, 'Arguments');
+  if (block) return block;
+  for (const s of strings) {
     const res = evaluate(s, opts);
     if (res.verdict === 'block') return { allowed: false, ...res };
     advisory = advisory || res.advisory;
@@ -82,7 +120,9 @@ function checkToolCall(toolName, args, opts = {}) {
 function scanToolResult(result, opts = {}) {
   let truncated = false;
   let advisory = null;
-  for (const s of extractStrings(result)) {
+  const { strings, block } = stringsOrBlock(result, 'Result');
+  if (block) return block;
+  for (const s of strings) {
     const res = scanWindows(s, opts);
     if (res.verdict === 'block') return { allowed: false, ...res };
     truncated = truncated || res.truncated === true;

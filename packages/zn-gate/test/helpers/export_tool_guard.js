@@ -12,9 +12,30 @@ const { checkToolCall, scanToolResult } = require('../../lib/guard');
 
 const file = process.argv[2] || path.join(__dirname, '..', 'fixtures', 'tool_guard_parity.json');
 const { calls, results } = JSON.parse(fs.readFileSync(file, 'utf8'));
+
+// Cases with a "$build" key describe structures JSON cannot hold (maps, cycles, bytes).
+function build(v) {
+  if (!v || typeof v !== 'object' || !v.$build) return v;
+  if (v.$build === 'nest') {
+    let x = v.leaf;
+    for (let i = 0; i < v.levels; i++) x = { a: [x] };
+    return x;
+  }
+  if (v.$build === 'map') return { x: new Map([['k', new Map([['p', v.leaf]])]]) };
+  if (v.$build === 'bytes') return { p: Buffer.from(v.leaf) };
+  if (v.$build === 'cycle') {
+    const d = { k: 'hello' };
+    d.self = d;
+    const lst = [d];
+    lst.push(lst);
+    if (v.leaf !== 'hello') d.bad = v.leaf;
+    return lst;
+  }
+  throw new Error('unknown $build ' + v.$build);
+}
 const pick = (a) => ({ verdict: a.verdict, rule: a.rule });
 
 process.stdout.write(JSON.stringify({
-  calls: calls.map((c) => pick(checkToolCall(c.tool, c.args))),
-  results: results.map((c) => pick(scanToolResult(c.result))),
+  calls: calls.map((c) => pick(checkToolCall(c.tool, build(c.args)))),
+  results: results.map((c) => pick(scanToolResult(build(c.result)))),
 }));
