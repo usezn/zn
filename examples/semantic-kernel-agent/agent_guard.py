@@ -40,7 +40,7 @@ FAKE_PAGES = {
 # Made-up files. The path is what zn-gate checks before the file is opened.
 FAKE_FILES = {
     "notes/todo.txt": "Buy milk. Book the dentist.",
-    "~/.ssh/id_rsa": "-----BEGIN OPENSSH PRIVATE KEY-----\nnot a real key\n",
+    "~/.ssh/id_rsa": "made-up key file for the example",
 }
 
 

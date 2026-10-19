@@ -7,7 +7,7 @@ The plugin has two functions:
 - `fetch_page` reads a web page. zn-gate checks the page text: a page that tries to give the model orders is replaced by a short notice, and a secret in the page (an access key, for example) is hidden.
 - `read_file` reads a local file. zn-gate checks the path before the file is opened: a path to a sensitive file, such as `~/.ssh/id_rsa`, is refused with a notice.
 
-**What zn-gate checks, exactly.** zn-gate's code API applies text rules. It blocks prompt injection in text, it blocks sensitive paths, and it redacts secrets from output. It does **not** judge what a shell command does. In this example, `rm -rf` in a command string is not blocked. Do not rely on zn-gate to stop destructive commands; give the agent only the permissions it needs.
+**What zn-gate checks, exactly.** zn-gate's code API applies text rules. It blocks prompt injection in text, it blocks sensitive paths, and it redacts secrets from output. It does **not** judge what a shell command does, so it does not block destructive shell commands such as `rm -rf`. Do not rely on zn-gate to stop them; give the agent only the permissions it needs.
 
 Everything runs on your machine. The pages and files are made up, and the chat model is a simulated stand-in, so there is no network call, no model server and no API key. zn-gate works locally by default and this example does not turn on the cloud check.
 
