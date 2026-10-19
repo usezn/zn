@@ -42,6 +42,10 @@
       {
         "file": "examples/google-adk-agent/requirements.txt",
         "regex": "^zn-gate==(\\S+)$"
+      },
+      {
+        "file": "examples/mastra-agent/package.json",
+        "json": "dependencies.zn-gate"
       }
     ],
     "pinsExclude": [

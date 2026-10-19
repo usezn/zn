@@ -177,8 +177,6 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"c
   | npx -y zn-gate@latest mcp
 ```
 
-Example: [protect the tools of a Mastra agent](https://github.com/usezn/zn/tree/main/examples/mastra-agent) (needs zn-gate 1.12.0 or newer).
-
 ---
 
 ## What each piece does
@@ -299,6 +297,10 @@ To block those too, turn on strict mode: set `ZN_STRICT=1`, or add `"strict": tr
 **Will it block legitimate content?** Sometimes. Use `--shadow` with `init` or `shield` to log detections without blocking while you evaluate it.
 
 **How do I remove it?** `npx -y zn-gate init --revert` restores your configs from the backup. For a standalone server, remove the `zn-gate` entry from your agent config.
+
+## Examples
+
+Runnable examples are in [`examples/`](https://github.com/usezn/zn/tree/main/examples), including [protect the tools of a Mastra agent](https://github.com/usezn/zn/tree/main/examples/mastra-agent).
 
 ## Security
 

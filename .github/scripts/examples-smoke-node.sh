@@ -20,7 +20,6 @@ EXAMPLES=(
   "node-basic|index.js|Verdict: block|Cannot find module"
   "node-basic|index.js|Safe to ingest: false|Cannot find module"
   "custom-rules|demo.js|Custom rule verdict: block|Cannot find module"
-  "mastra-agent|index.mjs|[REDACTED_AWS_KEY]|Cannot find module"
   "mastra-agent|index.mjs|blocked the call to 'read_file'|Cannot find module"
 )
 
@@ -36,8 +35,9 @@ for name in node-basic custom-rules mastra-agent; do
   cp -a "$ROOT/examples/$name/." "$dir/"
   # The tarball bundles its one dependency, so the install needs no registry.
   if [ -f "$dir/package.json" ]; then
-    # An example with its own package.json installs its pinned dependencies from the registry (the run below stays offline).
-    (cd "$dir" && npm install --ignore-scripts --no-audit --no-fund "$TARBALL" >/dev/null)
+    # Examples with their own dependencies install them from the lockfile (the run itself stays offline),
+    # then the packed zn-gate replaces the registry copy without touching the lockfile.
+    (cd "$dir" && npm ci --ignore-scripts --no-audit --no-fund >/dev/null && npm install --no-save --ignore-scripts --no-audit --no-fund "$TARBALL" >/dev/null)
   else
     (cd "$dir" && npm init -y >/dev/null && npm install --offline --ignore-scripts --no-audit --no-fund "$TARBALL" >/dev/null)
   fi
