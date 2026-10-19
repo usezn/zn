@@ -35,9 +35,10 @@ for name in node-basic custom-rules vercel-ai-sdk; do
   mkdir "$dir"
   cp -a "$ROOT/examples/$name/." "$dir/"
   # The tarball bundles its one dependency, so the install needs no registry.
-  if [ -f "$dir/package.json" ]; then
-    # An example with its own package.json installs its pinned dependencies from the registry (the run below stays offline).
-    (cd "$dir" && npm install --ignore-scripts --no-audit --no-fund "$TARBALL" >/dev/null)
+  if [ -f "$dir/package-lock.json" ]; then
+    # Examples with their own dependencies install them from the lockfile (the run itself stays offline),
+    # then swap in the packed zn-gate.
+    (cd "$dir" && npm ci --ignore-scripts --no-audit --no-fund >/dev/null && npm install --no-save --ignore-scripts --no-audit --no-fund "$TARBALL" >/dev/null)
   else
     (cd "$dir" && npm init -y >/dev/null && npm install --offline --ignore-scripts --no-audit --no-fund "$TARBALL" >/dev/null)
   fi
