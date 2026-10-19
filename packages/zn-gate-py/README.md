@@ -117,6 +117,8 @@ print(get_user_profile("user_123"))
 
 Arguments are checked before the function runs; with `on_block="raise"` a blocked call raises `GuardBlockError`. `mask_secrets` is off by default in `@guard`.
 
+Runnable example with Microsoft Semantic Kernel: [examples/semantic-kernel-agent](https://github.com/usezn/zn/tree/main/examples/semantic-kernel-agent).
+
 ### LangChain / LangGraph
 
 <!-- snippet-test -->
