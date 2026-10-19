@@ -42,6 +42,10 @@
       {
         "file": "examples/google-adk-agent/requirements.txt",
         "regex": "^zn-gate==(\\S+)$"
+      },
+      {
+        "file": "examples/haystack-agent/requirements.txt",
+        "regex": "^zn-gate==(\\S+)$"
       }
     ],
     "pinsExclude": [
