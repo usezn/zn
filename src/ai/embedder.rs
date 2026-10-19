@@ -143,7 +143,7 @@ fn ensure_model(repo: &str, dir: &Path) -> Result<PathBuf> {
     let client = HFClientSync::new().map_err(E::new)?;
     let repo = client.model(owner, name);
     for f in MODEL_FILES {
-        let src = repo.download_file().filename(*f).send().map_err(E::new)?;
+        let src = repo.download_file().filename(f.to_string()).send().map_err(E::new)?;
         std::fs::copy(&src, dir.join(f))?;
     }
     Ok(dir.to_path_buf())
