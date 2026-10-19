@@ -53,7 +53,6 @@ const AGENTS = ['claude-code', 'codex', 'cursor', 'opencode', 'antigravity'];
 
 // Runs the hook in this process with stdin replaced by `text`; returns what it wrote and its exit code.
 async function run(agent, text) {
-  if (process.platform === 'win32') fs.writeSync(2, 'FUZZCASE ' + agent + ' ' + JSON.stringify(text).slice(0, 3000) + '\n'); // TEMP
   const out = [];
   const err = [];
   const write = { out: process.stdout.write, err: process.stderr.write };
@@ -194,7 +193,6 @@ test('raw bytes through a real process end with a refusal or valid JSON', () => 
     fc.nat(REAL.length).chain((n) => fc.uint8Array({ minLength: 1, maxLength: 4 }).map((b) => Buffer.concat([Buffer.from(REAL).subarray(0, n), Buffer.from(b)]))),
   );
   fc.assert(fc.property(fc.constantFrom(...AGENTS), bytes, (agent, buf) => {
-    if (process.platform === 'win32') fs.writeSync(2, 'FUZZBYTES ' + agent + ' ' + Buffer.from(buf).toString('hex').slice(0, 3000) + '\n'); // TEMP
     const res = spawnSync(process.execPath, [RUNNER, agent], {
       input: Buffer.from(buf),
       encoding: 'utf8',
