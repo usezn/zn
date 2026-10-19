@@ -12,15 +12,15 @@ use std::sync::{Arc, RwLock};
 
 const MAX_SCORE: i32 = 100;
 const INITIAL_SCORE: i32 = 50;
-const BAN_THRESHOLD: i32 = 0; // If score drops below 0, ban agent
+const BAN_THRESHOLD: i32 = 0; // A score at or below 0 bans the agent
 const BAN_DURATION_MINUTES: i64 = 10;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum AgentStatus {
     Trusted,    // Score > 80
     Neutral,    // Score 20-80
-    Suspicious, // Score 0-20
-    Banned,     // Score < 0
+    Suspicious, // Score 1-19
+    Banned,     // Score <= BAN_THRESHOLD, until banned_until
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -146,6 +146,13 @@ impl ReputationSystem {
 
 impl ReputationScore {
     fn update_status(&mut self) {
+        // An active ban holds until `banned_until`, whatever the score does.
+        let ban_active = self.status == AgentStatus::Banned
+            && matches!(self.banned_until, Some(end) if Utc::now() < end);
+        if ban_active {
+            return;
+        }
+
         if self.score <= BAN_THRESHOLD {
             if self.status != AgentStatus::Banned {
                 self.status = AgentStatus::Banned;
@@ -275,18 +282,15 @@ mod tests {
         assert!(s.banned_until.is_none());
     }
 
-    /// Known bug: `record_success` only lifts a ban after it expires, but it
-    /// still recomputes the status from the score. Once the score is above zero
-    /// the status leaves `Banned` and `check_agent_status` stops blocking the
-    /// agent, even though the ban window is still open.
     #[test]
-    #[ignore = "known bug: record_success lifts an active ban (see PR body)"]
     fn active_ban_survives_a_success_that_raises_the_score() {
         let sys = ReputationSystem::new();
         sys.record_violation("agent-1", "x", 50);
         assert!(sys.check_agent_status("agent-1").is_err());
         sys.record_success("agent-1");
-        assert_eq!(score_of(&sys, "agent-1").status, AgentStatus::Banned);
+        let s = score_of(&sys, "agent-1");
+        assert_eq!(s.score, 1);
+        assert_eq!(s.status, AgentStatus::Banned);
         assert!(sys.check_agent_status("agent-1").is_err());
     }
 
