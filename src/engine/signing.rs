@@ -135,6 +135,20 @@ impl PolicyVerifier {
 
         Ok(())
     }
+    /// Verify the signatures over the in-memory `wasm_bytes`, run `check` on
+    /// them, and only then save them at `wasm_path` (atomically, see
+    /// `write_policy_file`). When the verification or the check fails nothing
+    /// is written and a file already at `wasm_path` is left untouched.
+    pub fn verify_then_write(
+        &self,
+        wasm_bytes: &[u8],
+        wasm_path: &Path,
+        check: impl FnOnce(&[u8]) -> Result<()>,
+    ) -> Result<()> {
+        self.verify(wasm_bytes, wasm_path)?;
+        check(wasm_bytes)?;
+        super::policy_file::write_policy_file(wasm_path, wasm_bytes)
+    }
 }
 
 #[cfg(test)]
@@ -288,5 +302,102 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let wasm = pq_policy(dir.path(), MESSAGE, Some(&[0u8; 3293]));
         assert!(ml_dsa_verifier(&sk).verify(MESSAGE, &wasm).is_err());
+    }
+
+    fn files_in(dir: &Path) -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
+    }
+
+    fn ed_key() -> ed25519_dalek::SigningKey {
+        ed25519_dalek::SigningKey::from_bytes(&[9u8; 32])
+    }
+
+    fn ed_verifier(sk: &ed25519_dalek::SigningKey) -> PolicyVerifier {
+        PolicyVerifier::with_keys(Some(&hex::encode(sk.verifying_key().to_bytes())), None).unwrap()
+    }
+
+    fn write_ed_sig(dir: &Path, sk: &ed25519_dalek::SigningKey, signed: &[u8]) {
+        use ed25519_dalek::Signer;
+        let sig = sk.sign(signed);
+        let b64 =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, sig.to_bytes());
+        std::fs::write(dir.join("p.wasm.sig"), b64).unwrap();
+    }
+
+    #[test]
+    fn bad_signature_writes_nothing() {
+        let sk = ed_key();
+        let dir = tempfile::tempdir().unwrap();
+        write_ed_sig(dir.path(), &sk, b"other policy");
+        let path = dir.path().join("p.wasm");
+        let r = ed_verifier(&sk).verify_then_write(b"new policy", &path, |_| Ok(()));
+        assert!(r.is_err());
+        assert_eq!(files_in(dir.path()), vec!["p.wasm.sig"]);
+    }
+
+    #[test]
+    fn bad_signature_keeps_the_existing_policy() {
+        let sk = ed_key();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("p.wasm");
+        std::fs::write(&path, b"old policy").unwrap();
+        write_ed_sig(dir.path(), &sk, b"other policy");
+        let r = ed_verifier(&sk).verify_then_write(b"new policy", &path, |_| Ok(()));
+        assert!(r.is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"old policy");
+        assert_eq!(files_in(dir.path()), vec!["p.wasm", "p.wasm.sig"]);
+    }
+
+    #[test]
+    fn good_signature_is_written_without_leftovers() {
+        let sk = ed_key();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("p.wasm");
+        std::fs::write(&path, b"old policy").unwrap();
+        write_ed_sig(dir.path(), &sk, b"new policy");
+        ed_verifier(&sk)
+            .verify_then_write(b"new policy", &path, |_| Ok(()))
+            .unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"new policy");
+        assert_eq!(files_in(dir.path()), vec!["p.wasm", "p.wasm.sig"]);
+    }
+
+    #[test]
+    fn a_failed_check_writes_nothing() {
+        let sk = ed_key();
+        let dir = tempfile::tempdir().unwrap();
+        write_ed_sig(dir.path(), &sk, b"new policy");
+        let path = dir.path().join("p.wasm");
+        let r = ed_verifier(&sk).verify_then_write(b"new policy", &path, |_| {
+            Err(anyhow::anyhow!("not valid WASM"))
+        });
+        assert!(r.is_err());
+        assert_eq!(files_in(dir.path()), vec!["p.wasm.sig"]);
+    }
+
+    #[test]
+    fn missing_pq_signature_is_rejected_and_nothing_is_written() {
+        let sk = ml_dsa_key();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("policy.wasm");
+        let r = ml_dsa_verifier(&sk).verify_then_write(MESSAGE, &path, |_| Ok(()));
+        assert!(r.is_err());
+        assert!(files_in(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn pq_signed_policy_is_written() {
+        let sk = ml_dsa_key();
+        let dir = tempfile::tempdir().unwrap();
+        let path = pq_policy(dir.path(), b"old", Some(&ml_dsa_sign(&sk, MESSAGE)));
+        ml_dsa_verifier(&sk)
+            .verify_then_write(MESSAGE, &path, |_| Ok(()))
+            .unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), MESSAGE);
     }
 }
