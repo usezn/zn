@@ -53,7 +53,7 @@ reaches `main` only through a pull request with the required checks.
 ## Contributions
 
 - Open pull requests against `next`. Keep each one focused on one change, with
-  tests, and add a line to the `[Unreleased]` section of [CHANGELOG.md](CHANGELOG.md)
+  tests, and add a changelog fragment in [changelog.d/](changelog.d/README.md)
   for anything a user would notice.
 - Pull requests from contributors are reviewed by a maintainer before they are
   merged, and the required CI checks must pass. With a single maintainer today,
@@ -75,6 +75,32 @@ By contributing, you agree that your contribution is licensed under the
 
 Releases follow [Semantic Versioning](https://semver.org/). Prereleases use
 `-alpha.N`, `-beta.N` and `-rc.N`.
+
+### Release schedule
+
+zn-gate ships once a week, with a release candidate first:
+
+- **Thursday: freeze and release candidate.** The `release/X.Y.0` branch is made
+  from `next`, and `vX.Y.0-rc.1` is published: on npm under the `next` dist-tag
+  (`npm install -g zn-gate@next`) and on PyPI as a pre-release (`X.Y.0rc1`,
+  installed only with `pip install --pre zn-gate`). A normal install does not
+  get it. The agent plugin pin and the MCP Registry entry are not updated for
+  a release candidate. Pull requests merged into `next` after the freeze go
+  into the following week's release.
+- **Friday to Monday: testing.** The release candidate is installed in clean
+  environments (Linux and Windows) and used for real work, the changes since the
+  last release get a security review, and the website pages for the version are
+  prepared. A fix found during testing is merged into `next` and also applied
+  to the release branch; if it changes the packages, a new `-rc.N` is published.
+- **Tuesday: release.** `vX.Y.0` is tagged on the commit that passed the
+  testing, and published with its release notes, any security advisories of the
+  week, the plugin pin, the MCP Registry entry and the website.
+
+Patch releases outside this schedule are made only for a high or critical
+vulnerability (CVSS 7.0 or higher) in a published version, or when installing or
+starting zn-gate is broken for users. Other fixes, including medium and low
+severity security fixes, go into `next` and ship in the next weekly release with
+their advisory.
 
 1. A maintainer prepares the release on a `release/X.Y.Z` branch made from
    `next`: version numbers in every package and the `## [X.Y.Z]` section of the

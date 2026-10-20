@@ -2,7 +2,7 @@
 
 Thank you for your interest in contributing to **zn**! We welcome bug reports, rule improvements, security research, and pull requests.
 
-How the project is maintained, how pull requests are reviewed and how releases are made: [GOVERNANCE.md](GOVERNANCE.md). Pull requests target the `next` branch.
+How the project is maintained, how pull requests are reviewed and how releases are made: [GOVERNANCE.md](GOVERNANCE.md). Pull requests target the `next` branch. Releases ship weekly: a pull request merged into `next` by Thursday goes into that week's release candidate and, after testing, into the release on Tuesday ([release schedule](GOVERNANCE.md#release-schedule)).
 
 ## Architecture Overview
 
