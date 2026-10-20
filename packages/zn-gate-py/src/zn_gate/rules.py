@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-19.1
+RULES_VERSION: 2026-10-20.1
 Zero external dependencies. Pure Python stdlib.
 """
 
@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, overload
 
 
-RULES_VERSION = "2026-10-19.7"
+RULES_VERSION = "2026-10-20.1"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -310,10 +310,67 @@ ADVISORY_RULES: List[Tuple[str, Any, str]] = [
     ('indirect:hidden_tag', _test_hidden_tag_anywhere, 'Hidden element in markup followed by instruction-like words'),
 ]
 
+# Protected files and the path view: same rules and steps as rules.js
+# (testSensitivePath). The view is lexical only: it never touches the file
+# system, so symbolic links and Windows short (8.3) names are not resolved.
+SENSITIVE_PATH_RE = re.compile(r"""(?:^|[\s"'`(\[=\/])\.(?:ssh\/(?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?![A-Za-z0-9_]))|authorized_keys)|aws\/credentials|env(?!\.(?:example|sample|template|dist|defaults|schema)(?![A-Za-z0-9_]))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE)
+PATH_HOME_VAR_RE = re.compile(r'\$\{(?:env:)?(?:home|userprofile)\}|\$(?:env:)?(?:home|userprofile)(?![a-z0-9_])|%(?:userprofile|home)%|%homedrive%%homepath%')
+PATH_CWD_VAR_RE = re.compile(r'\$\{(?:env:)?pwd\}|\$(?:env:)?pwd(?![a-z0-9_])|%cd%')
+PATH_WORD_SPLIT_RE = re.compile(r"""[ \t\r\n\f\v|&;<>()\[\]{}`,=]+""")
+PATH_QUOTE_RE = re.compile(r"""["']""")
+PATH_TILDE_USER_RE = re.compile(r'^~[^/]*')
+PATH_DRIVE_RE = re.compile(r'^[a-z]:$')
+_ASCII_LOWER = str.maketrans('ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')
+
+
+def _normalize_path_word(word: str) -> str:
+    """Lexical normalization of one word that uses / as its only separator."""
+    absolute = word.startswith('/')
+    s = PATH_TILDE_USER_RE.sub('~', word, count=1) if word.startswith('~') else word
+    out: List[str] = []
+    for seg in s.split('/'):
+        if seg not in ('.', '..'):
+            # Windows ignores trailing dots and spaces.
+            seg = seg.rstrip('. ')
+        if seg in ('', '.'):
+            continue
+        if seg == '..':
+            last = out[-1] if out else None
+            # A parent of the root or of a drive root is the root itself.
+            if (absolute and last is None) or (last is not None and PATH_DRIVE_RE.search(last)):
+                continue
+            if last is not None and last not in ('..', '~'):
+                out.pop()
+                continue
+        out.append(seg)
+    return ('/' if absolute else '') + '/'.join(out)
+
+
+def sensitive_path_view(text: str) -> str:
+    """The path view of a text: its normalized words, one per line."""
+    lowered = PATH_CWD_VAR_RE.sub('.', PATH_HOME_VAR_RE.sub('~', text.translate(_ASCII_LOWER)))
+    words: List[str] = []
+    for raw in PATH_WORD_SPLIT_RE.split(lowered):
+        if not raw:
+            continue
+        word = PATH_QUOTE_RE.sub('', raw)
+        words.append(_normalize_path_word(word.replace('\\', '/')))
+        if '\\' in word:
+            words.append(_normalize_path_word(word.replace('\\', '')))
+    return '\n'.join(words)
+
+
+def _test_sensitive_path(text: str) -> bool:
+    return SENSITIVE_PATH_RE.search(text) is not None or SENSITIVE_PATH_RE.search(sensitive_path_view(text)) is not None
+
+
+RULE_TESTERS['path:sensitive_file'] = _test_sensitive_path
+
 SENSITIVE_PATH_RULES: List[Tuple[str, re.Pattern[str], str]] = [
     (
         'path:sensitive_file',
-        re.compile(r"""(?:^|[\s"'`(\[])(?:~|\/home\/[^\s/]+|\/root)?\/?\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE),
+        # The pattern matches the text as written; the rule is _test_sensitive_path().
+        SENSITIVE_PATH_RE,
         'Targeting sensitive system credentials or environment file',
     ),
 ]
@@ -518,7 +575,8 @@ def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
 
         # 2. Sensitive Path Traversal
         for rule_id, pat, desc in SENSITIVE_PATH_RULES:
-            if pat.search(text):
+            tester = RULE_TESTERS.get(rule_id)
+            if tester(text) if tester else pat.search(text):
                 return Assessment(verdict='block', confidence=0.92, rule=rule_id, reason=desc)
 
         # 3. Indirect Injections (HTML comments & hidden tags)

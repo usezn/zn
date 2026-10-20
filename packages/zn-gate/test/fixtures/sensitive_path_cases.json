@@ -1,0 +1,295 @@
+{
+  "description": "Paths for the path:sensitive_file rule, shared by the Node.js and Python tests. Each path is checked as a tool argument and inside a shell command. All paths are fictitious. Symbolic links and Windows short (8.3) names are not listed: a text rule cannot resolve them.",
+  "cases": [
+    {
+      "kind": "base",
+      "path": ".env",
+      "expect": "block"
+    },
+    {
+      "kind": "base",
+      "path": "~/.ssh/id_rsa",
+      "expect": "block"
+    },
+    {
+      "kind": "base",
+      "path": "~/.aws/credentials",
+      "expect": "block"
+    },
+    {
+      "kind": "base",
+      "path": "/home/example/project/.env",
+      "expect": "block"
+    },
+    {
+      "kind": "base",
+      "path": "/home/example/.ssh/id_rsa",
+      "expect": "block"
+    },
+    {
+      "kind": "base",
+      "path": "/etc/shadow",
+      "expect": "block"
+    },
+    {
+      "kind": "base",
+      "path": "C:\\Users\\example\\project\\.env",
+      "expect": "block"
+    },
+    {
+      "kind": "base",
+      "path": "C:/Users/example/.ssh/id_rsa",
+      "expect": "block"
+    },
+    {
+      "kind": "base",
+      "path": "~/.ssh/id_ecdsa",
+      "expect": "block"
+    },
+    {
+      "kind": "base",
+      "path": ".env.example",
+      "expect": "allow"
+    },
+    {
+      "kind": "base",
+      "path": "src/environment.ts",
+      "expect": "allow"
+    },
+    {
+      "kind": "base",
+      "path": "~/.ssh/id_rsa.pub",
+      "expect": "allow"
+    },
+    {
+      "kind": "base",
+      "path": "project/.env",
+      "expect": "block"
+    },
+    {
+      "kind": "case",
+      "path": ".ENV",
+      "expect": "block"
+    },
+    {
+      "kind": "case",
+      "path": "~/.SSH/ID_RSA",
+      "expect": "block"
+    },
+    {
+      "kind": "case",
+      "path": "~/.Aws/Credentials",
+      "expect": "block"
+    },
+    {
+      "kind": "case",
+      "path": "C:\\USERS\\EXAMPLE\\.SSH\\ID_RSA",
+      "expect": "block"
+    },
+    {
+      "kind": "case",
+      "path": "/ETC/SHADOW",
+      "expect": "block"
+    },
+    {
+      "kind": "sep",
+      "path": "~\\.ssh\\id_rsa",
+      "expect": "block"
+    },
+    {
+      "kind": "sep",
+      "path": "C:\\Users\\example\\.ssh\\id_rsa",
+      "expect": "block"
+    },
+    {
+      "kind": "sep",
+      "path": "C:\\Users\\example\\.aws\\credentials",
+      "expect": "block"
+    },
+    {
+      "kind": "sep",
+      "path": ".\\.env",
+      "expect": "block"
+    },
+    {
+      "kind": "sep",
+      "path": "project\\.env",
+      "expect": "block"
+    },
+    {
+      "kind": "sep",
+      "path": "~/.ssh\\id_rsa",
+      "expect": "block"
+    },
+    {
+      "kind": "dot",
+      "path": "./.env",
+      "expect": "block"
+    },
+    {
+      "kind": "dot",
+      "path": "~/./.ssh/id_rsa",
+      "expect": "block"
+    },
+    {
+      "kind": "dot",
+      "path": "~/.ssh/./id_rsa",
+      "expect": "block"
+    },
+    {
+      "kind": "dot",
+      "path": "~/project/../.ssh/id_rsa",
+      "expect": "block"
+    },
+    {
+      "kind": "dot",
+      "path": "/home/example/project/../.env",
+      "expect": "block"
+    },
+    {
+      "kind": "dot",
+      "path": "../.env",
+      "expect": "block"
+    },
+    {
+      "kind": "dot",
+      "path": "/etc/./shadow",
+      "expect": "block"
+    },
+    {
+      "kind": "dot",
+      "path": "/var/../etc/shadow",
+      "expect": "block"
+    },
+    {
+      "kind": "dup",
+      "path": "~//.ssh/id_rsa",
+      "expect": "block"
+    },
+    {
+      "kind": "dup",
+      "path": "~/.ssh//id_rsa",
+      "expect": "block"
+    },
+    {
+      "kind": "dup",
+      "path": "//etc//shadow",
+      "expect": "block"
+    },
+    {
+      "kind": "dup",
+      "path": "/home/example//project//.env",
+      "expect": "block"
+    },
+    {
+      "kind": "dup",
+      "path": "~/.aws//credentials",
+      "expect": "block"
+    },
+    {
+      "kind": "var",
+      "path": "$HOME/.ssh/id_rsa",
+      "expect": "block"
+    },
+    {
+      "kind": "var",
+      "path": "${HOME}/.aws/credentials",
+      "expect": "block"
+    },
+    {
+      "kind": "var",
+      "path": "%USERPROFILE%\\.ssh\\id_rsa",
+      "expect": "block"
+    },
+    {
+      "kind": "var",
+      "path": "$env:USERPROFILE\\.aws\\credentials",
+      "expect": "block"
+    },
+    {
+      "kind": "var",
+      "path": "~example/.ssh/id_rsa",
+      "expect": "block"
+    },
+    {
+      "kind": "var",
+      "path": "$PWD/.env",
+      "expect": "block"
+    },
+    {
+      "kind": "var",
+      "path": "/root/.ssh/id_rsa",
+      "expect": "block"
+    },
+    {
+      "kind": "quote",
+      "path": "\"~/.ssh/id_rsa\"",
+      "expect": "block"
+    },
+    {
+      "kind": "quote",
+      "path": "'.env'",
+      "expect": "block"
+    },
+    {
+      "kind": "quote",
+      "path": "~/\".ssh\"/id_rsa",
+      "expect": "block"
+    },
+    {
+      "kind": "quote",
+      "path": "~/.ss''h/id_rsa",
+      "expect": "block"
+    },
+    {
+      "kind": "quote",
+      "path": ".e\"n\"v",
+      "expect": "block"
+    },
+    {
+      "kind": "quote",
+      "path": "~/.ssh/id_\\rsa",
+      "expect": "block"
+    },
+    {
+      "kind": "quote",
+      "path": "/etc/sha\"\"dow",
+      "expect": "block"
+    },
+    {
+      "kind": "trail",
+      "path": ".env.",
+      "expect": "block"
+    },
+    {
+      "kind": "trail",
+      "path": ".env ",
+      "expect": "block"
+    },
+    {
+      "kind": "trail",
+      "path": "C:\\Users\\example\\project\\.env.",
+      "expect": "block"
+    },
+    {
+      "kind": "trail",
+      "path": "C:\\Users\\example\\.ssh\\id_rsa.",
+      "expect": "block"
+    },
+    {
+      "kind": "trail",
+      "path": "C:\\Users\\example\\.ssh\\id_rsa ",
+      "expect": "block"
+    },
+    {
+      "kind": "trail",
+      "path": ".env::$DATA",
+      "expect": "block"
+    },
+    {
+      "kind": "short",
+      "path": "C:\\PROGRA~1\\example\\.env",
+      "expect": "block"
+    }
+  ]
+}

@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-19.7
+ * RULES_VERSION: 2026-10-20.1
  */
 
-const RULES_VERSION = '2026-10-19.7';
+const RULES_VERSION = '2026-10-20.1';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -245,10 +245,86 @@ function matchesRule(rule, text) {
   return rule.test ? rule.test(text) : rule.pattern.test(text);
 }
 
+// Protected files: .env files (not templates such as .env.example), SSH
+// private keys and authorized_keys under .ssh (not the .pub public keys),
+// .aws/credentials, /etc/shadow and /etc/passwd, in any directory.
+//
+// The rule matches the text as written and also a path view of it, in which
+// every word is read the way a shell or the Windows file functions would read
+// it. The view is lexical only: it never touches the file system, so symbolic
+// links and Windows short (8.3) names are not resolved.
+//   - ASCII letters are lower-cased;
+//   - home variables ($HOME, ${HOME}, %USERPROFILE%, $env:USERPROFILE) become
+//     ~ and working-directory variables ($PWD, %CD%) become .;
+//   - quotes inside a word are removed; a backslash is read both as a path
+//     separator and as an escape (two forms of the word);
+//   - ~user becomes ~; ./, repeated separators and dir/.. are collapsed;
+//   - trailing dots and spaces of every segment are dropped (Windows).
+// Every step is linear in the length of the text.
+const SENSITIVE_PATH_RE = /(?:^|[\s"'`(\[=\/])\.(?:ssh\/(?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?![A-Za-z0-9_]))|authorized_keys)|aws\/credentials|env(?!\.(?:example|sample|template|dist|defaults|schema)(?![A-Za-z0-9_]))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])/i;
+const PATH_HOME_VAR_RE = /\$\{(?:env:)?(?:home|userprofile)\}|\$(?:env:)?(?:home|userprofile)(?![a-z0-9_])|%(?:userprofile|home)%|%homedrive%%homepath%/g;
+const PATH_CWD_VAR_RE = /\$\{(?:env:)?pwd\}|\$(?:env:)?pwd(?![a-z0-9_])|%cd%/g;
+const PATH_WORD_SPLIT_RE = /[ \t\r\n\f\v|&;<>()\[\]{}`,=]+/;
+const PATH_QUOTE_RE = /["']/g;
+const PATH_TILDE_USER_RE = /^~[^/]*/;
+const PATH_DRIVE_RE = /^[a-z]:$/;
+
+function lowerAscii(s) {
+  return s.replace(/[A-Z]+/g, (m) => m.toLowerCase());
+}
+
+// Drop the trailing dots and spaces of a path segment (Windows ignores them).
+function trimSegmentTail(seg) {
+  let end = seg.length;
+  while (end > 0 && (seg[end - 1] === '.' || seg[end - 1] === ' ')) end--;
+  return seg.slice(0, end);
+}
+
+// Lexical normalization of one word that uses / as its only separator.
+function normalizePathWord(word) {
+  const abs = word.startsWith('/');
+  const s = word.startsWith('~') ? word.replace(PATH_TILDE_USER_RE, '~') : word;
+  const out = [];
+  for (let seg of s.split('/')) {
+    if (seg !== '.' && seg !== '..') seg = trimSegmentTail(seg);
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..') {
+      const last = out.length ? out[out.length - 1] : null;
+      // A parent of the root or of a drive root is the root itself.
+      if ((abs && last === null) || (last !== null && PATH_DRIVE_RE.test(last))) continue;
+      if (last !== null && last !== '..' && last !== '~') {
+        out.pop();
+        continue;
+      }
+    }
+    out.push(seg);
+  }
+  return (abs ? '/' : '') + out.join('/');
+}
+
+// The path view of a text: its normalized words, one per line.
+function sensitivePathView(text) {
+  const lowered = lowerAscii(text).replace(PATH_HOME_VAR_RE, '~').replace(PATH_CWD_VAR_RE, '.');
+  const words = [];
+  for (const raw of lowered.split(PATH_WORD_SPLIT_RE)) {
+    if (!raw) continue;
+    const word = raw.replace(PATH_QUOTE_RE, '');
+    words.push(normalizePathWord(word.replace(/\\/g, '/')));
+    if (word.includes('\\')) words.push(normalizePathWord(word.replace(/\\/g, '')));
+  }
+  return words.join('\n');
+}
+
+function testSensitivePath(text) {
+  return SENSITIVE_PATH_RE.test(text) || SENSITIVE_PATH_RE.test(sensitivePathView(text));
+}
+
 const SENSITIVE_PATH_RULES = [
   {
     id: 'path:sensitive_file',
-    pattern: /(?:^|[\s"'`(\[])(?:~|\/home\/[^\s/]+|\/root)?\/?\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])/i,
+    // `.pattern` matches the text as written; the rule itself is test().
+    pattern: SENSITIVE_PATH_RE,
+    test: testSensitivePath,
     description: 'Targeting sensitive system credentials or environment file',
   },
 ];
@@ -561,7 +637,7 @@ function evaluateUncached(input, options = {}) {
 
     // 2. Sensitive Path Traversal / Credential File Access
     for (const rule of SENSITIVE_PATH_RULES) {
-      if (rule.pattern.test(text)) {
+      if (rule.test ? rule.test(text) : rule.pattern.test(text)) {
         return { verdict: 'block', confidence: 0.92, reason: rule.description, rule: rule.id, engine: 'oss-local', rules_version: RULES_VERSION };
       }
     }
@@ -1228,7 +1304,9 @@ module.exports = {
     CREDENTIAL_PLACEHOLDER_WORDS, CREDENTIAL_CODE_RE, CREDENTIAL_IDENTIFIER_RE, CREDENTIAL_PATH_RE,
     CREDENTIAL_FILE_NAME_RE, CREDENTIAL_HOST_NAME_RE, CREDENTIAL_SLUG_RE, CREDENTIAL_SLUG_SHORT_WORD_RE, CREDENTIAL_OBJECT_NAME_RE,
     CREDENTIAL_DOTTED_WORDS_RE, CREDENTIAL_FILE_EXT_RE, CREDENTIAL_LETTERS_RE, CREDENTIAL_DESCRIPTIVE_WORDS, CREDENTIAL_HEX_RE, WORD_TOKEN_RE,
+    PATH_HOME_VAR_RE, PATH_CWD_VAR_RE, PATH_WORD_SPLIT_RE, PATH_QUOTE_RE, PATH_TILDE_USER_RE, PATH_DRIVE_RE,
   },
+  sensitivePathView,
   SECRET_PATTERNS,
   SCAN_SECRET_PATTERNS,
   RULES_VERSION,
