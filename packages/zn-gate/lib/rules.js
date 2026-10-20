@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-20.4
+ * RULES_VERSION: 2026-10-20.6
  */
 
-const RULES_VERSION = '2026-10-20.4';
+const RULES_VERSION = '2026-10-20.6';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -381,7 +381,7 @@ const INVISIBLE_ASTRAL_RE = /[\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
 // Line breaks are joined only in texts up to this size: wrapped keys are short, and a view of a huge text
 // full of short lines would cost far more than it finds (a 32 MB file of 20-character lines).
 const MAX_WRAP_VIEW_CHARS = 1 << 20;
-const WRAP_BREAK_RE = /(?<=[A-Za-z0-9_\-+/=]{10})[ \t]*\r?\n[ \t]*(?=[A-Za-z0-9_\-+/=]{10})(?![A-Za-z_][A-Za-z0-9_]*[ \t]*[=:])/g;
+const WRAP_BREAK_RE = /(?<=[A-Za-z0-9_\-+/=]{10})[ \t]*\r?\n[ \t]*(?=[A-Za-z0-9_\-+/=]{10})(?![A-Za-z_][A-Za-z0-9_]*[ \t]*[=:](?!=))/g;
 // ASCII-only text needs no compatibility folding.
 const NON_ASCII_RE = /[^\x00-\x7f]/;
 // Compatibility characters folded for matching, one character at a time: fullwidth

@@ -28,6 +28,14 @@ test('a short word on the next line is kept', () => {
   assert.ok(out.endsWith('\nend'), out);
 });
 
+test('a wrapped base64 value whose last line ends in == padding is redacted whole', () => {
+  // Fictitious value: the last line is letters plus "==", which is padding, not a NAME= setting.
+  const value = 'QWxhZGRpbjpvcGVuIHNlc2FtZQ' + 'xYzAbCdEfGh' + 'IjKlMnOpQrStUv' + '==';
+  const out = rules.redactSecrets('DB_PASSWORD=' + wrap(value, 20) + '\n').sanitized;
+  assert.ok(out.includes('[REDACTED_SECRET]'), out);
+  for (const part of wrap(value, 20).split('\n')) assert.ok(!out.includes(part), part);
+});
+
 test('a NAME= line after a long value is not joined to it', () => {
   const text = 'ALPHA_VALUE=abcdefghijklmnop\nNEXT_SETTING_NAME=abcdefghij';
   assert.equal(rules.redactSecrets(text).sanitized, text);

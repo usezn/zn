@@ -208,6 +208,9 @@ stop malware running as the same user (see above).
 - **Vault locked:** the hooks still run the scrubber without it. They redact
   patterns, PII and values found in local files with irreversible markers. The
   broker refuses to fill any value.
+- **Very large outputs:** a key printed across several lines is joined and
+  redacted whole only in texts up to 1 MiB. In a larger tool output each line is
+  checked on its own, so part of a key wrapped there can stay visible.
 - **Scrubber error:** fails closed. The tool call is denied, the output
   withheld or the prompt blocked. A missing engine also fails closed, and the
   message explains how to reinstall. To let events pass while it is missing,
