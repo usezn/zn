@@ -490,7 +490,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
     target_path = Path(args.path)
     if not target_path.exists():
         print(f"Error: target path not found: {target_path}", file=sys.stderr)
-        return 2
+        return 1
 
     files_to_scan: List[Path] = []
     skip_dirs = _SCAN_SKIP_DIRS
@@ -752,6 +752,9 @@ def main() -> int:
     if first == "version":
         print(f"zn-gate {__version__} (rules: {RULES_VERSION})")
         return 0
+    if first is not None and not first.startswith("-") and first not in KNOWN_COMMANDS and first not in NPM_ONLY_COMMANDS:
+        sys.stderr.write(f"Unknown command: {first}\nRun 'zn-gate --help' for usage.\n")
+        return 1
     if len(sys.argv) > 1 and sys.argv[1] in NPM_ONLY_COMMANDS:
         sys.stderr.write(npm_only_message(sys.argv[1]))
         return 2
