@@ -165,7 +165,10 @@ def test_github_has_no_raw_line_breaks_inside_a_command(scanned, skipped, violat
 def test_text_mentions_each_finding_rule_once(scanned, skipped, violations):
     output = _render("text", scanned, skipped, violations)
     if not violations:
-        assert "All scanned prompts, tool definitions, and files are clean!" in output
+        if scanned:
+            assert "All scanned prompts, tool definitions, and files are clean!" in output
+        else:
+            assert "No files were scanned in" in output
         return
     for rule in set(v["rule"] for v in violations):
         expected = sum(1 for v in violations if v["rule"] == rule)
@@ -181,7 +184,7 @@ def test_text_prints_one_entry_per_finding(scanned, skipped, violations):
     output = _render("text", scanned, skipped, violations)
     for v in violations:
         label = "Secret found" if v["type"] == "secret_leak" else "Threat"
-        entry = f"  {v['file']}:{v['line']} {label} [{v['rule']}] {v['reason']}"
+        entry = f"  {cli._safe_text(v['file'])}:{v['line']} {label} [{v['rule']}] {v['reason']}"
         assert output.count(entry) >= 1
     # Entries are one per finding: the count of rule tags equals the count of findings.
     tags = re.findall(r"\[(?:%s)\]" % "|".join(re.escape(r) for r in RULE_IDS), output)

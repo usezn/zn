@@ -1,0 +1,14 @@
+{
+  "session_id": "sess-1",
+  "transcript_path": "${HOME}/.gemini/tmp/proj/chats/session.json",
+  "cwd": "/work/proj",
+  "hook_event_name": "BeforeTool",
+  "timestamp": "2026-10-19T10:00:00.000Z",
+  "tool_name": "replace",
+  "tool_input": {
+    "file_path": "${HOME}/.gemini/settings.json",
+    "old_string": "a",
+    "new_string": "b",
+    "instruction": "edit"
+  }
+}

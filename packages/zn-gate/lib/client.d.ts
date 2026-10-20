@@ -4,6 +4,19 @@ import type { Assessment, EvaluateOptions, ToolResultReport, SanitizeToolResultO
 
 export type { Assessment, Advisory, EvaluateOptions, SanitizeToolResultOptions } from './rules';
 export { evaluate, RULES_VERSION } from './rules';
+export { sanitizeToolResult, redactSecrets } from './rules';
+export type { SecretDetection, RedactResult } from './rules';
+export { logEvidence, verifyEvidenceLedger } from './evidence';
+export type { EvidenceEvent, EvidenceRecord, EvidenceVerification } from './evidence';
+export { checkToolCall, guardTool, GuardBlockError } from './guard';
+export type {
+  RuleAssessment,
+  ToolCallAssessment,
+  GuardToolOptions,
+  GuardEngineOptions,
+  GuardOnBlock,
+  GuardBlockedValue,
+} from './guard';
 
 export type LongInputMode = 'off' | 'windows';
 
