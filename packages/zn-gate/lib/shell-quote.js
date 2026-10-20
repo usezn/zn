@@ -101,4 +101,16 @@ function windowsCommandScript(command) {
   return null;
 }
 
-module.exports = { shQuote, SH_QUOTE_ESCAPE, powershellQuote, portablePath, windowsCommand, windowsCommandScript };
+/**
+ * A windowsCommand() result in its readable -Command form, so code that
+ * recognises zn's own hook commands sees one shape for both spellings. Any
+ * other command is returned as it is.
+ */
+function readableWindowsCommand(command) {
+  const s = String(command || '');
+  if (!/^powershell\.exe -NoProfile -NonInteractive -EncodedCommand /.test(s)) return s;
+  const script = windowsCommandScript(s);
+  return script === null ? s : 'powershell.exe -NoProfile -NonInteractive -Command "' + script + '"';
+}
+
+module.exports = { shQuote, SH_QUOTE_ESCAPE, powershellQuote, portablePath, windowsCommand, windowsCommandScript, readableWindowsCommand };

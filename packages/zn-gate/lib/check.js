@@ -178,7 +178,7 @@ function matcherCovers(matcher, tool) {
 /* A zn hook command: {node, runner} (run directly), {onPath} (`zn hook <agent>`) or null. */
 function parseCommand(command, agentId) {
   const { _internal: audit } = require('./audit');
-  const c = String(command).trim();
+  const c = require('./shell-quote').readableWindowsCommand(String(command).trim());
   if (!c.endsWith(' ' + agentId) && !c.endsWith(' ' + agentId + '"')) return null;
   if (audit.OUR_HOOKS[0].test(c)) return { onPath: true };
   const quoted = new RegExp("^'(" + audit.SAFE_ABS + ")' '(" + audit.SAFE_ABS + "/zn-gate/lib/hooks/runner\\.js)' " + agentId + '$');

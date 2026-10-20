@@ -131,7 +131,8 @@ test('install (user) backs up, keeps foreign hooks and uninstall removes only zn
   assert.ok(rep.backup && fs.existsSync(rep.backup));
   let data = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.deepEqual(data.mine, mine);
-  assert.match(data['zn-gate'].PreToolUse[0].hooks[0].command, /runner\.js'? antigravity/);
+  const written = data['zn-gate'].PreToolUse[0].hooks[0].command;
+  assert.match(require('../lib/shell-quote').readableWindowsCommand(written), /runner\.js'? antigravity/);
   agy.uninstall({ scope: 'user', home });
   data = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.deepEqual(data, { mine, off });
@@ -149,6 +150,8 @@ test('install (user, Windows) writes a command with no quotes or spaces inside a
   assert.ok(!/["']/.test(command));
   assert.equal(windowsCommandScript(command), "& 'C:/Program Files/nodejs/node.exe' 'C:/Users/a b/zn/lib/hooks/runner.js' antigravity");
   assert.ok(cfg.isOurs(command, 'antigravity'));
+  // zn-gate check and zn audit read it in the same shape as the -Command form.
+  assert.equal(require('../lib/shell-quote').readableWindowsCommand(command), cfg.hookCommandWindows('antigravity', opts));
   // Other agents keep the readable -Command form for the same paths.
   assert.match(cfg.hookCommandWindows('cursor', opts), / -Command "/);
   // An older -Command entry is recognised and replaced, not duplicated.
