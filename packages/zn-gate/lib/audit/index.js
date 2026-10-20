@@ -1133,6 +1133,133 @@ function redirectedConfigs(root, unchecked) {
   return out;
 }
 
+/* ----------------------- imported instructions ---------------------- */
+
+// Claude Code follows `@path` imports in CLAUDE.md up to this many hops.
+const MAX_IMPORT_HOPS = 5;
+const MAX_IMPORTED = 200;
+const MAX_GLOB_ENTRIES = 5000;
+
+function insideReal(realRoot, abs) {
+  let real;
+  try { real = fs.realpathSync(abs); } catch (_) { return null; }
+  const r = path.relative(realRoot, real);
+  return r.startsWith('..') || path.isAbsolute(r) ? null : real;
+}
+
+function toRel(root, abs) {
+  return path.relative(root, abs).split(path.sep).join('/');
+}
+
+/** `@path` imports of a CLAUDE.md, outside code blocks and code spans. */
+function claudeImports(text) {
+  const out = [];
+  let fence = false;
+  for (const line of text.split(/\r?\n/)) {
+    if (/^\s*(```|~~~)/.test(line)) { fence = !fence; continue; }
+    if (fence) continue;
+    const plain = line.replace(/`[^`]*`/g, ' ');
+    const re = /(?:^|\s)@((?:\.{0,2}\/|~\/|[A-Za-z0-9_.-])[^\s`'"<>()]*)/g;
+    let m;
+    while ((m = re.exec(plain))) {
+      const target = m[1].replace(/[.,;:!?]+$/, '');
+      if (target && !/^[^/]*@/.test(target) && /[./]/.test(target)) out.push(target);
+    }
+  }
+  return out;
+}
+
+function globRegex(glob) {
+  let re = '';
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    if (c === '*' && glob[i + 1] === '*') { re += glob[i + 2] === '/' ? '(?:.*/)?' : '.*'; i += glob[i + 2] === '/' ? 2 : 1; }
+    else if (c === '*') re += '[^/]*';
+    else if (c === '?') re += '[^/]';
+    else re += c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+  }
+  return new RegExp('^' + re + '$');
+}
+
+/** Files under `base` (relative to root) whose path matches an OpenCode `instructions` glob. */
+function globFiles(root, glob) {
+  const star = glob.search(/[*?]/);
+  if (star < 0) return [glob];
+  const prefix = glob.slice(0, glob.lastIndexOf('/', star) + 1);
+  const re = globRegex(glob);
+  const found = [];
+  let entries = 0;
+  (function visit(rel, depth) {
+    let list;
+    try { list = fs.readdirSync(path.join(root, ...rel.split('/').filter(Boolean)), { withFileTypes: true }); } catch (_) { return; }
+    for (const d of list) {
+      if (++entries > MAX_GLOB_ENTRIES || found.length >= MAX_IMPORTED) return;
+      const r = rel + d.name;
+      if (d.isDirectory()) {
+        if (d.name === '.git' || SKIP_DIRS.has(d.name) || depth >= 16) continue;
+        visit(r + '/', depth + 1);
+      } else if (d.isFile() && re.test(r)) found.push(r);
+    }
+  })(prefix, 0);
+  return found;
+}
+
+/**
+ * Instruction files an agent loads because another one points to them: `@path`
+ * imports in CLAUDE.md (followed recursively, as Claude Code does) and the
+ * `instructions` list of opencode.json. Only files inside the audited
+ * directory are returned; the rest is out of scope like any other path.
+ */
+function importedInstructions(root, files) {
+  let realRoot;
+  try { realRoot = fs.realpathSync(root); } catch (_) { return []; }
+  const known = new Set(files.map((f) => f.rel));
+  const out = [];
+  const add = (abs, agent, from) => {
+    if (out.length >= MAX_IMPORTED) return null;
+    const real = insideReal(realRoot, abs);
+    if (!real) return null;
+    let st;
+    try { st = fs.statSync(real); } catch (_) { return null; }
+    if (!st.isFile()) return null;
+    const rel = toRel(root, abs);
+    if (!rel || rel.startsWith('..') || known.has(rel)) return null;
+    known.add(rel);
+    const rec = { abs: real, rel, display: rel, scope: 'project', kind: 'instructions', agent, readers: [agent], importedBy: from };
+    out.push(rec);
+    return rec;
+  };
+  const queue = files.filter((f) => f.kind === 'instructions' && f.agent === 'claude' && /(^|\/)claude(\.local)?\.md$/i.test(f.rel))
+    .map((f) => ({ rec: f, hops: 0 }));
+  while (queue.length) {
+    const { rec, hops } = queue.shift();
+    if (hops >= MAX_IMPORT_HOPS) continue;
+    const r = readBounded(rec.abs, MAX_FILE_BYTES, false);
+    if (!r.text) continue;
+    for (const target of claudeImports(r.text)) {
+      if (target.startsWith('~/') || path.isAbsolute(target)) continue;
+      const added = add(path.resolve(path.dirname(path.join(root, rec.rel)), target), 'claude', rec.rel);
+      if (added) queue.push({ rec: added, hops: hops + 1 });
+    }
+  }
+  for (const f of files) {
+    if (f.kind !== 'opencode-json') continue;
+    const r = readBounded(f.abs, MAX_FILE_BYTES, false);
+    if (!r.text) continue;
+    let data;
+    try { data = parseJsonc(r.text); } catch (_) { continue; }
+    const list = data && Array.isArray(data.instructions) ? data.instructions : [];
+    const base = path.dirname(f.rel) === '.' ? '' : path.dirname(f.rel) + '/';
+    for (const item of list) {
+      if (typeof item !== 'string' || !item || /^[a-z]+:\/\//i.test(item) || item.startsWith('~/') || path.isAbsolute(item)) continue;
+      const rel = path.posix.normalize(base + item.replace(/^\.\//, ''));
+      if (rel.startsWith('..')) continue;
+      for (const m of globFiles(root, rel)) add(path.join(root, ...m.split('/')), 'opencode', f.rel);
+    }
+  }
+  return out;
+}
+
 /* ----------------------- shadowing executables ---------------------- */
 
 function readHead(abs) {
@@ -1407,6 +1534,7 @@ function audit(opts) {
   const { files, extDirs, unchecked, truncated, entries, skippedDirs } = walk(root, deadline, maxEntries);
   const known = new Set(files.map((f) => f.rel));
   for (const rec of redirectedConfigs(root, unchecked)) if (!known.has(rec.rel)) files.push(rec);
+  for (const rec of importedInstructions(root, files)) files.push(rec);
   let scanned = 0;
   let timedOut = truncated && truncated.reason === 'time';
   const wanted = (readers, agent) => agent === 'any' || (readers || []).some((r) => selected.has(r)) || selected.has(agent);
