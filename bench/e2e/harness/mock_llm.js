@@ -12,9 +12,12 @@
  * exactly what the agent sent to "the provider", and the leak check greps it.
  *
  * The script is a JSON file: {"steps": [{"tool": "<name>", "input": {...}}, ...], "final": "text"}.
+ * A step may add "namespace" (Responses API: how Codex names the tools of an MCP server).
  * The step to play is the number of tool results already in the request, so
  * side requests (titles, summaries) do not advance it. Requests without
- * tools get a short text answer.
+ * tools get a short text answer. Instead of "final", a script may give
+ * "finals": the text of the first answer, of the second one (after the agent
+ * continued because a Stop hook asked it to), and so on (Responses API only).
  *
  *   node mock_llm.js --port 8787 --script scenario.json --out dir
  */
@@ -41,8 +44,25 @@ function record(req, body) {
   fs.appendFileSync(LOG, JSON.stringify({ ts: new Date().toISOString(), method: req.method, url: req.url, body }) + '\n');
 }
 
-function stepFor(count) {
-  return count < SCRIPT.steps.length ? SCRIPT.steps[count] : null;
+function stepFor(count, steps = SCRIPT.steps) {
+  return count < steps.length ? steps[count] : null;
+}
+
+// A script may give "child": the turns of a subagent. A request is the parent's when it holds the
+// first user prompt ("parentMarker"); any other request is a subagent's and plays the child script.
+function isChildRequest(body) {
+  return !!SCRIPT.child && !JSON.stringify(body.input || []).includes(SCRIPT.parentMarker || 'Follow the setup task.');
+}
+
+// A "spawn_agent" step with "auto": the tool is a plain function (task_name + message) or lives in a
+// namespace (message only), depending on the Codex version; what the request offers decides.
+function spawnStep(step, body) {
+  for (const t of body.tools || []) {
+    if (t.type === 'function' && t.name === 'spawn_agent') return { ...step, input: { task_name: 'child_task', message: step.input.message } };
+    if (t.type === 'namespace' && (t.tools || []).some((x) => x.name === 'spawn_agent')) return { ...step, namespace: t.name, input: { message: step.input.message } };
+  }
+  process.stderr.write('mock: spawn_agent is not offered to the model\n');
+  return null;
 }
 
 /* ----------------------------- Anthropic ----------------------------- */
@@ -93,17 +113,27 @@ function responsesToolResults(body) {
   return input.filter((i) => i && (i.type === 'function_call_output' || i.type === 'custom_tool_call_output' || i.type === 'local_shell_call_output')).length;
 }
 
+function finalText(body) {
+  if (!Array.isArray(SCRIPT.finals) || !SCRIPT.finals.length) return SCRIPT.final || 'Done.';
+  const input = Array.isArray(body.input) ? body.input : [];
+  const earlier = input.filter((i) => i && i.type === 'message' && i.role === 'assistant').length;
+  return SCRIPT.finals[Math.min(earlier, SCRIPT.finals.length - 1)];
+}
+
 function responses(body, res) {
   const hasTools = Array.isArray(body.tools) && body.tools.length > 0;
-  const step = hasTools ? stepFor(responsesToolResults(body)) : null;
+  const child = isChildRequest(body);
+  let step = hasTools ? stepFor(responsesToolResults(body), child ? SCRIPT.child.steps : SCRIPT.steps) : null;
+  if (step && step.auto) step = spawnStep(step, body);
+  fs.appendFileSync(path.join(OUT, 'mock_notes.jsonl'), JSON.stringify({ ts: new Date().toISOString(), note: 'responses', child, offered: (body.tools || []).map((t) => t.name || t.type).slice(0, 60) }) + '\n');
   const respId = id('resp');
   let item;
   if (step) {
     item = step.custom
       ? { type: 'custom_tool_call', id: id('ctc'), call_id: id('call'), name: step.tool, input: step.input, status: 'completed' }
-      : { type: 'function_call', id: id('fc'), call_id: id('call'), name: step.tool, arguments: JSON.stringify(step.input), status: 'completed' };
+      : { type: 'function_call', id: id('fc'), call_id: id('call'), name: step.tool, ...(step.namespace ? { namespace: step.namespace } : {}), arguments: JSON.stringify(step.input), status: 'completed' };
   } else {
-    item = { type: 'message', id: id('m'), role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: hasTools ? (SCRIPT.final || 'Done.') : 'ok', annotations: [] }] };
+    item = { type: 'message', id: id('m'), role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: hasTools ? finalText(body) : 'ok', annotations: [] }] };
   }
   res.setHeader('content-type', 'text/event-stream');
   let n = 0;

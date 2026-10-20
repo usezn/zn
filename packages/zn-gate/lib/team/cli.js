@@ -23,7 +23,7 @@ const store = require('../vault/store');
 const { createClient } = require('../vault/client');
 const { CODES } = require('../errors');
 
-const USAGE = 'usage: zn team join <token> [--api URL] [--agent ID] | zn team status [--json] | zn team sync | zn team leave';
+const USAGE = 'usage: zn team join <token> [--api URL] [--agent ID] | zn team status [--json] | zn team sync | zn team leave | zn team managed-config [--agent ID|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--json]';
 const EXPORT_USAGE = 'usage: zn vault log export --otlp [--since 7d] [--out FILE]';
 
 const out = (s) => process.stdout.write(s + '\n');
@@ -119,6 +119,7 @@ async function runTeamCommand(args) {
     if (sub === 'status' || sub === undefined) return await statusCmd(args);
     if (sub === 'sync') return await syncCmd();
     if (sub === 'leave') return await leaveCmd();
+    if (sub === 'managed-config') return require('./managed-config').run(args.slice(2));
     err(USAGE);
     return 2;
   } catch (e) {

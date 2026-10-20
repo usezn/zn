@@ -12,6 +12,9 @@ pub mod exporter;
 #[cfg(test)]
 mod kat_tests;
 
+#[cfg(test)]
+mod entry_vault_tests;
+
 use crate::metrics;
 use aes_gcm::{
     aead::{Aead, KeyInit, Payload},
@@ -51,7 +54,7 @@ pub struct AuditEntry {
     pub anomaly_score: Option<f32>,
     /// Nearest neighbor entry for audit (format: "text:distance")
     pub nearest_neighbor: Option<String>,
-    /// B-3 Fusion Gate evidence; present only when the neural camera
+    /// Fusion Gate evidence; present only when the neural camera
     /// participated in a block decision.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fusion: Option<FusionEvidence>,
@@ -107,14 +110,14 @@ impl AuditEntry {
         self
     }
 
-    /// B-3: attach Fusion Gate evidence (block events, fusion active only).
+    /// Attach Fusion Gate evidence (block events, fusion active only).
     pub fn with_fusion(mut self, fusion: FusionEvidence) -> Self {
         self.fusion = Some(fusion);
         self
     }
 }
 
-/// B-3 Fusion Gate evidence: which cameras fired plus the neural inputs that
+/// Fusion Gate evidence: which cameras fired plus the neural inputs that
 /// produced the decision. Attached to audit entries only when the neural
 /// camera actively participated AND the call was blocked.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -235,7 +238,7 @@ impl AuditVault {
             .ok();
         }
 
-        // Migration: add fusion column if missing (B-3)
+        // Migration: add fusion column if missing
         let has_fusion: bool = conn
             .query_row(
                 "SELECT COUNT(*) FROM pragma_table_info('audit_logs') WHERE name = 'fusion'",
@@ -897,7 +900,7 @@ mod tests {
         assert!(entry.nearest_neighbor.is_none());
     }
 
-    /// B-3: the fusion object must appear in serialized records ONLY when
+    /// The fusion object must appear in serialized records ONLY when
     /// fusion actively participated (cameras/score/tau absent otherwise).
     #[test]
     fn fusion_evidence_serialized_only_when_fusion_active() {
@@ -925,7 +928,7 @@ mod tests {
         assert!(fused_json.contains("zn-minilm-l6-v2-sec-1787490939"));
     }
 
-    /// B-3: fusion evidence survives the audit vault round-trip.
+    /// Fusion evidence survives the audit vault round-trip.
     #[test]
     fn fusion_evidence_persists_through_audit_vault() {
         let path = temp_db_path();

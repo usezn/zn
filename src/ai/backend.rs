@@ -164,7 +164,7 @@ impl OnnxModel {
 
     /// Sentence-transformers-compatible embedding: masked mean over NON-pad
     /// tokens + L2 normalize — bit-matches the Python calibration path that
-    /// produces `head.json` and the B-3 score fixture. (`embed()` keeps the
+    /// produces `head.json` and the Fusion Gate score fixture. (`embed()` keeps the
     /// legacy pooling for existing consumers.)
     pub fn embed_masked(&self, text: &str) -> Result<Embedding> {
         let (tokens_out, mask) = self.run_encoder(text)?;
@@ -318,5 +318,346 @@ mod tests {
             let p = m.classify(&va).expect("classify").expect("head present");
             assert!((0.0..=1.0).contains(&p), "probability out of range: {p}");
         }
+    }
+
+    // ----- helpers ---------------------------------------------------------
+
+    /// Smallest valid tokenizer file (word-level, whitespace split). `pad_id`
+    /// is only emitted when `Some`, so both padding branches can be driven.
+    fn tokenizer_json(pad_id: Option<u32>) -> String {
+        let padding = match pad_id {
+            Some(id) => format!(
+                r#"{{"strategy":"BatchLongest","direction":"Right","pad_to_multiple_of":null,"pad_id":{id},"pad_type_id":0,"pad_token":"[PAD]"}}"#
+            ),
+            None => "null".to_string(),
+        };
+        format!(
+            r#"{{"version":"1.0","truncation":null,"padding":{padding},"added_tokens":[],"normalizer":null,"pre_tokenizer":{{"type":"Whitespace"}},"post_processor":null,"decoder":null,"model":{{"type":"WordLevel","vocab":{{"[UNK]":0,"hello":1}},"unk_token":"[UNK]"}}}}"#
+        )
+    }
+
+    /// A model dir with an (empty, but decodable) `model.onnx` and a valid
+    /// tokenizer. No model is ever downloaded.
+    fn stub_model_dir(pad_id: Option<u32>) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("model.onnx"), b"").unwrap();
+        std::fs::write(dir.path().join("tokenizer.json"), tokenizer_json(pad_id)).unwrap();
+        dir
+    }
+
+    fn load_err(dir: &Path) -> String {
+        match OnnxModel::new(dir) {
+            Ok(_) => panic!("expected load error for {}", dir.display()),
+            Err(e) => format!("{e:#}"),
+        }
+    }
+
+    // ----- Head ------------------------------------------------------------
+
+    #[test]
+    fn head_load_missing_file_is_none() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(Head::load(dir.path()).unwrap().is_none());
+    }
+
+    #[test]
+    fn head_load_parses_valid_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("head.json"),
+            r#"{"weights":[0.5,-1.0],"bias":0.25,"threshold":0.9,"extra":true}"#,
+        )
+        .unwrap();
+        let h = Head::load(dir.path()).unwrap().expect("head present");
+        assert_eq!(h.weights, vec![0.5, -1.0]);
+        assert_eq!(h.bias, 0.25);
+        assert_eq!(h.threshold, 0.9);
+    }
+
+    #[test]
+    fn head_load_rejects_malformed_json() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("head.json"), "{not json").unwrap();
+        assert!(Head::load(dir.path()).is_err());
+    }
+
+    #[test]
+    fn head_load_rejects_missing_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("head.json"),
+            r#"{"weights":[1.0],"bias":0.0}"#,
+        )
+        .unwrap();
+        assert!(Head::load(dir.path()).is_err());
+    }
+
+    #[test]
+    fn head_load_directory_named_head_json_errors() {
+        // exists() is true but reading a directory fails: surfaced, not None.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("head.json")).unwrap();
+        assert!(Head::load(dir.path()).is_err());
+    }
+
+    #[test]
+    fn head_probability_is_a_sigmoid_of_the_linear_logit() {
+        let h = Head {
+            weights: vec![1.0, 2.0],
+            bias: -1.0,
+            threshold: 0.5,
+        };
+        // logit = 1*1 + 2*0 - 1 = 0 -> 0.5
+        assert!((h.probability(&[1.0, 0.0]) - 0.5).abs() < 1e-6);
+        let hi = h.probability(&[10.0, 10.0]);
+        let lo = h.probability(&[-10.0, -10.0]);
+        assert!(hi > 0.999 && lo < 0.001, "hi={hi} lo={lo}");
+        assert!(hi > h.probability(&[1.0, 1.0]));
+    }
+
+    #[test]
+    fn head_probability_extreme_logits_do_not_overflow() {
+        let h = Head {
+            weights: vec![1.0],
+            bias: 0.0,
+            threshold: 0.5,
+        };
+        assert_eq!(h.probability(&[1.0e30]), 1.0);
+        assert_eq!(h.probability(&[-1.0e30]), 0.0);
+        assert!(h.probability(&[f32::NAN]).is_nan());
+    }
+
+    #[test]
+    fn head_probability_truncates_to_the_shorter_vector() {
+        // Length mismatch is silently zipped; pin the behavior so a change is deliberate.
+        let h = Head {
+            weights: vec![1.0, 1.0],
+            bias: 0.0,
+            threshold: 0.5,
+        };
+        assert_eq!(h.probability(&[2.0]), h.probability(&[2.0, 0.0]));
+        assert_eq!(h.probability(&[2.0, 0.0, 99.0]), h.probability(&[2.0, 0.0]));
+        assert!((h.probability(&[]) - 0.5).abs() < 1e-6);
+    }
+
+    // ----- mean_pool_l2 ------------------------------------------------------
+
+    #[test]
+    fn mean_pool_l2_averages_then_normalizes() {
+        let t = Tensor::from_vec(vec![3.0f32, 0.0, 1.0, 0.0], (1, 2, 2), &Device::Cpu).unwrap();
+        let out = mean_pool_l2(&t).unwrap().to_vec2::<f32>().unwrap();
+        assert_eq!(out.len(), 1);
+        assert!((out[0][0] - 1.0).abs() < 1e-6 && out[0][1].abs() < 1e-6);
+    }
+
+    #[test]
+    fn mean_pool_l2_output_has_unit_norm() {
+        let t = Tensor::from_vec(
+            vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0],
+            (1, 3, 2),
+            &Device::Cpu,
+        )
+        .unwrap();
+        let out = mean_pool_l2(&t).unwrap().to_vec2::<f32>().unwrap();
+        let norm: f32 = out[0].iter().map(|x| x * x).sum::<f32>().sqrt();
+        assert!((norm - 1.0).abs() < 1e-5, "norm={norm}");
+    }
+
+    #[test]
+    fn mean_pool_l2_rejects_non_3d_input() {
+        let t = Tensor::from_vec(vec![1.0f32, 2.0], (1, 2), &Device::Cpu).unwrap();
+        assert!(mean_pool_l2(&t).is_err());
+    }
+
+    // ----- FastBootBackend ---------------------------------------------------
+
+    #[test]
+    fn fast_boot_reports_identity_and_has_no_classifier() {
+        let b = FastBootBackend::new(16);
+        assert_eq!(b.name(), "fast-boot");
+        assert_eq!(b.dim(), 16);
+        assert_eq!(b.classify(&[0.1; 16]).unwrap(), None);
+    }
+
+    #[test]
+    fn fast_boot_embedding_is_deterministic_and_normalized() {
+        let b = FastBootBackend::new(8);
+        let a = b.embed("list the files").unwrap();
+        let a2 = b.embed("list the files").unwrap();
+        let c = b.embed("something else entirely").unwrap();
+        assert_eq!(a.len(), 8);
+        assert_eq!(a, a2);
+        assert_ne!(a, c);
+        let norm: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+        assert!((norm - 1.0).abs() < 1e-5, "norm={norm}");
+    }
+
+    #[test]
+    fn fast_boot_empty_text_is_the_zero_vector() {
+        let v = FastBootBackend::new(4).embed("").unwrap();
+        assert_eq!(v, vec![0.0; 4]);
+    }
+
+    #[test]
+    fn fast_boot_folds_bytes_modulo_dim() {
+        // dim 1: every byte lands in slot 0, so any non-empty text normalizes to [1.0].
+        let v = FastBootBackend::new(1).embed("abc").unwrap();
+        assert_eq!(v, vec![1.0]);
+        // dim 2 with "ab": slots hold b'a' and b'b'.
+        let v = FastBootBackend::new(2).embed("ab").unwrap();
+        let n = ((b'a' as f32).powi(2) + (b'b' as f32).powi(2)).sqrt();
+        assert!((v[0] - b'a' as f32 / n).abs() < 1e-6);
+        assert!((v[1] - b'b' as f32 / n).abs() < 1e-6);
+    }
+
+    #[test]
+    fn fast_boot_is_usable_as_a_trait_object() {
+        let b: Box<dyn ModelBackend> = Box::new(FastBootBackend::new(3));
+        assert_eq!(b.embed("x").unwrap().len(), b.dim());
+    }
+
+    // ----- OnnxModel loading and fallbacks -----------------------------------
+
+    #[test]
+    fn onnx_new_fails_when_model_dir_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("nope");
+        assert!(!load_err(&missing).is_empty());
+    }
+
+    #[test]
+    fn onnx_new_fails_when_weights_file_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("tokenizer.json"), tokenizer_json(None)).unwrap();
+        assert!(!load_err(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn onnx_new_fails_on_corrupt_weights() {
+        let dir = stub_model_dir(None);
+        std::fs::write(
+            dir.path().join("model.onnx"),
+            b"\xff\xff\xff\xff not protobuf",
+        )
+        .unwrap();
+        assert!(!load_err(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn onnx_new_fails_when_tokenizer_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("model.onnx"), b"").unwrap();
+        assert!(!load_err(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn onnx_new_fails_on_corrupt_tokenizer() {
+        let dir = stub_model_dir(None);
+        std::fs::write(
+            dir.path().join("tokenizer.json"),
+            "{ definitely not a tokenizer",
+        )
+        .unwrap();
+        assert!(!load_err(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn onnx_open_uses_the_requested_weights_file() {
+        let dir = stub_model_dir(None);
+        // The default file exists, the alternate one does not: open() must not fall back.
+        assert!(OnnxModel::open(dir.path(), "model_int8.onnx").is_err());
+        std::fs::write(dir.path().join("model_int8.onnx"), b"").unwrap();
+        assert!(OnnxModel::open(dir.path(), "model_int8.onnx").is_ok());
+    }
+
+    #[test]
+    fn onnx_defaults_without_config_json() {
+        let dir = stub_model_dir(None);
+        let m = OnnxModel::new(dir.path()).expect("load stub");
+        assert_eq!(m.seq, DEFAULT_SEQ);
+        assert_eq!(m.dim(), 384);
+        assert_eq!(m.pad_id, 0, "no padding configured -> pad id 0");
+        assert!(m.head.is_none());
+        let expected = dir
+            .path()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(m.name(), expected);
+    }
+
+    #[test]
+    fn onnx_reads_seq_dim_and_pad_id_from_files() {
+        let dir = stub_model_dir(Some(7));
+        std::fs::write(
+            dir.path().join("config.json"),
+            r#"{"zn_onnx_seq":128,"hidden_size":768}"#,
+        )
+        .unwrap();
+        let m = OnnxModel::new(dir.path()).expect("load stub");
+        assert_eq!(m.seq, 128);
+        assert_eq!(m.dim(), 768);
+        assert_eq!(m.pad_id, 7);
+    }
+
+    #[test]
+    fn onnx_config_without_known_keys_falls_back_to_defaults() {
+        let dir = stub_model_dir(None);
+        std::fs::write(dir.path().join("config.json"), r#"{"other":1}"#).unwrap();
+        let m = OnnxModel::new(dir.path()).expect("load stub");
+        assert_eq!((m.seq, m.dim()), (DEFAULT_SEQ, 384));
+    }
+
+    #[test]
+    fn onnx_config_with_non_numeric_values_falls_back_to_defaults() {
+        let dir = stub_model_dir(None);
+        std::fs::write(
+            dir.path().join("config.json"),
+            r#"{"zn_onnx_seq":"512","hidden_size":-3}"#,
+        )
+        .unwrap();
+        let m = OnnxModel::new(dir.path()).expect("load stub");
+        assert_eq!((m.seq, m.dim()), (DEFAULT_SEQ, 384));
+    }
+
+    #[test]
+    fn onnx_new_fails_on_invalid_config_json() {
+        let dir = stub_model_dir(None);
+        std::fs::write(dir.path().join("config.json"), "{oops").unwrap();
+        assert!(!load_err(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn onnx_new_fails_on_invalid_head_json() {
+        let dir = stub_model_dir(None);
+        std::fs::write(dir.path().join("head.json"), "[]").unwrap();
+        assert!(!load_err(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn onnx_head_json_turns_classify_into_a_probability() {
+        let dir = stub_model_dir(None);
+        std::fs::write(
+            dir.path().join("head.json"),
+            r#"{"weights":[1.0,1.0],"bias":0.0,"threshold":0.5}"#,
+        )
+        .unwrap();
+        let m = OnnxModel::new(dir.path()).expect("load stub");
+        let p = m.classify(&[0.0, 0.0]).unwrap().expect("head present");
+        assert!((p - 0.5).abs() < 1e-6);
+
+        let bare_dir = stub_model_dir(None);
+        let bare = OnnxModel::new(bare_dir.path()).expect("load stub");
+        assert_eq!(bare.classify(&[0.0, 0.0]).unwrap(), None);
+    }
+
+    #[test]
+    fn onnx_embed_errors_instead_of_panicking_on_an_empty_graph() {
+        let dir = stub_model_dir(None);
+        let m = OnnxModel::new(dir.path()).expect("load stub");
+        assert!(m.embed("hello").is_err());
+        assert!(m.embed_masked("hello").is_err());
+        assert!(m.embed("").is_err());
     }
 }

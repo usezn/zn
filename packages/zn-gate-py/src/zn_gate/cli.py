@@ -67,6 +67,23 @@ def _decode_scan_text(raw: bytes) -> str:
 _SAFE_FILE_ARG = re.compile(r"[A-Za-z0-9._/@+-]+")
 
 
+def _relative_to_cwd(file: str) -> str:
+    """The path relative to the current directory, with the links on both sides
+    followed first. On macOS the temporary folder is /var/..., a link to
+    /private/var/..., and the current directory is reported as /private/var/...,
+    so comparing them as they are gives "../../private/var/..."."""
+    try:
+        cwd = os.path.realpath(os.getcwd())
+    except OSError:
+        cwd = os.getcwd()
+    absolute = os.path.abspath(file)
+    try:
+        resolved = os.path.join(os.path.realpath(os.path.dirname(absolute)), os.path.basename(absolute))
+    except OSError:
+        resolved = absolute
+    return os.path.relpath(resolved, cwd)
+
+
 def _leak_next_step(file: str, rule: str) -> str:
     """What to do about a secret found by the scan, in plain words (never the
     value). The same text as secretNextStep in the Node.js package; the file
@@ -76,7 +93,7 @@ def _leak_next_step(file: str, rule: str) -> str:
                 "and replace it if the file was ever committed or shared.")
     if re.match(r"\.env", os.path.basename(file), re.IGNORECASE):
         try:
-            rel = os.path.relpath(file)
+            rel = _relative_to_cwd(file)
         except ValueError:  # another drive on Windows
             rel = file
         if os.sep != "/":  # Windows: npx takes forward slashes too
@@ -229,7 +246,7 @@ def _gh_message(value: str) -> str:
     return str(value).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
 
 
-def _mcp_violations(shown: str, found: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _mcp_violations(shown: str, found: List[_mcp.McpSpan]) -> List[Dict[str, Any]]:
     """MCP servers: every credential the MCP check found is a finding of its own; the
     other rules ran on the text with those values masked (mcp_secrets.py). The value
     is never printed."""
@@ -262,7 +279,7 @@ def _scan_file(file_path: Path, shown: Optional[str] = None, mcp_only: bool = Fa
     if file_path.suffix.lower() == ".key" and raw[:2] not in _UTF16_BOMS and b"\0" in raw[:_BINARY_SNIFF]:
         return []
     content = _decode_scan_text(raw)
-    mcp_found: List[Dict[str, Any]] = []
+    mcp_found: List[_mcp.McpSpan] = []
     if _mcp.is_mcp_config_path(str(file_path)):
         # The MCP check runs first and its values are masked, so no other rule prints one.
         mcp_found = _mcp.find_mcp_config_secret_spans(content, str(file_path))
@@ -400,12 +417,61 @@ def _home_mcp_files() -> List[Path]:
     return out
 
 
+# Control characters (C0, DEL, C1) and bidirectional controls in a path from a
+# repository must not reach the terminal: an ESC sequence could rewrite the
+# lines above it. They are shown as \xNN or \u{NNNN}, like the Node.js package.
+_UNSAFE_CHARS = re.compile("[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069\u200e\u200f\u061c]")
+
+
+def _safe_text(value: Any) -> str:
+    def esc(m: "re.Match[str]") -> str:
+        cp = ord(m.group(0))
+        return "\\x%02x" % cp if cp <= 0xFF else "\\u{%x}" % cp
+    return _UNSAFE_CHARS.sub(esc, "" if value is None else str(value))
+
+
 def _home_display(file_path: Path) -> str:
     """A file of the user's home as ~/..., the way the Node.js package shows it."""
     try:
         return "~/" + file_path.relative_to(Path.home()).as_posix()
     except ValueError:
         return str(file_path)
+
+
+# Directory names that scan does not enter. Caches and dependency stores are
+# skipped quietly; the other names are skipped by name and reported, because a
+# project can keep its own prompt or agent files there. `target` and `vendor`
+# are build output or dependencies only next to a build file or manifest, so
+# without one they are read. Test directories are read too: fixtures in them
+# can hold real secrets. This list mirrors packages/zn-gate/lib/prune.js, and a
+# parity test compares the two.
+_SCAN_SKIP_DIRS = {
+    "node_modules", ".git", ".next", ".turbo", ".idea", ".venv", "venv", "__pycache__", ".eggs",
+    "dist", "build", "target", "vendor",
+}
+_SILENT_SKIP_DIRS = {
+    "node_modules", ".git", ".next", ".turbo",
+}
+_SKIP_MARKERS = {
+    "target": ("Cargo.toml", "pom.xml", "build.gradle", "build.gradle.kts", "build.sbt"),
+    "vendor": ("go.mod", "composer.json", "Gemfile", "Cargo.toml"),
+}
+
+
+def _prune_info(name: str, parent: str) -> Optional[Dict[str, Any]]:
+    """None when the directory must be read, else {"silent": bool, "reason": str}."""
+    marker = None
+    needed = _SKIP_MARKERS.get(name)
+    if needed:
+        marker = next((m for m in needed if os.path.exists(os.path.join(parent, m))), None)
+        if marker is None:
+            return None
+    if name in _SILENT_SKIP_DIRS:
+        return {"silent": True, "reason": "skipped by name"}
+    reason = "skipped by name: " + ("dependencies" if name == "vendor" else "build output")
+    if marker:
+        reason += " next to " + marker
+    return {"silent": False, "reason": reason}
 
 
 def cmd_scan(args: argparse.Namespace) -> int:
@@ -415,13 +481,15 @@ def cmd_scan(args: argparse.Namespace) -> int:
         return 2
 
     files_to_scan: List[Path] = []
-    skip_dirs = {".git", "node_modules", "venv", ".venv", "__pycache__", "dist", "build", ".eggs", "target", ".next"}
-    
+    skip_dirs = _SCAN_SKIP_DIRS
+    user_excluded = set()
+    skipped_dirs: List[Dict[str, str]] = []
+
     if getattr(args, "exclude", None):
         for ed in args.exclude.split(","):
             ed = ed.strip()
             if ed:
-                skip_dirs.add(ed)
+                user_excluded.add(ed)
 
     valid_exts = {".txt", ".md", ".json", ".yaml", ".yml", ".py", ".ts", ".js", ".prompt", ".env", ".toml", ".pem", ".key"}
     if getattr(args, "include", None):
@@ -432,11 +500,25 @@ def cmd_scan(args: argparse.Namespace) -> int:
             if ie:
                 valid_exts.add(ie)
 
-    if target_path.is_file():
+    # The file the user named is read even when it is a link; links found while
+    # walking a folder are not (os.walk lists them but does not enter them).
+    root_file = str(target_path) if target_path.is_file() else None
+    if root_file:
         files_to_scan.append(target_path)
     else:
         for root, dirs, files in os.walk(target_path):
-            dirs[:] = [d for d in dirs if d not in skip_dirs]
+            kept = []
+            for d in dirs:
+                if d in user_excluded:
+                    continue
+                if d in skip_dirs:
+                    pruned = _prune_info(d, root)
+                    if pruned:
+                        if not pruned["silent"]:
+                            skipped_dirs.append({"dir": str(Path(root) / d), "reason": pruned["reason"]})
+                        continue
+                kept.append(d)
+            dirs[:] = kept
             for f in files:
                 p = Path(root) / f
                 if p.suffix.lower() in valid_exts or p.name.startswith(".env") or p.name in _KEY_FILE_NAMES:
@@ -462,23 +544,27 @@ def cmd_scan(args: argparse.Namespace) -> int:
     scanned = 0
     for fp in files_to_scan:
         shown = _home_display(fp) if str(fp) in home_files else str(fp)
-        reason = _skip_reason(fp, str(fp) in mcp_only_files, str(fp) in home_files)
+        reason = _skip_reason(fp, str(fp) in mcp_only_files, str(fp) in home_files or str(fp) == root_file)
         if reason:
             skipped.append({"file": shown, "reason": reason})
             continue
         scanned += 1
         all_violations.extend(_scan_file(fp, shown, str(fp) in mcp_only_files))
 
-    _print_report(getattr(args, "format", "text"), scanned, skipped, all_violations)
+    _print_report(getattr(args, "format", "text"), scanned, skipped, all_violations, skipped_dirs, str(args.path))
     if all_violations and not getattr(args, "no_fail", False):
         return 1
     return 0
 
 
-def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_violations: List[Dict[str, Any]]) -> None:
+def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_violations: List[Dict[str, Any]], skipped_dirs: Optional[List[Dict[str, str]]] = None, target: str = ".") -> None:
     """Print the scan report: rule names, fixed text, counts and redacted snippets only."""
+    skipped_dirs = skipped_dirs or []
     leak_count = sum(1 for v in all_violations if v.get("type") == "secret_leak")
     other_count = len(all_violations) - leak_count
+    # An empty result is not a clean one: say so. The exit code stays 0 (a folder
+    # with nothing to scan is not an error for CI), but the output is explicit.
+    nothing = f"No files were scanned in {target}" if scanned == 0 else ""
     if fmt == "github":
         # CI logs are public: rule, reason and location only, never the snippet.
         for v in all_violations:
@@ -491,25 +577,44 @@ def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_vio
             print(f"::error file={_gh_property(v['file'])},line={int(v['line'])},title={title}::{_gh_message(message)}")
         for s in skipped:
             print(f"::notice file={_gh_property(s['file'])},title=Not scanned::{_gh_message(s['reason'])}")
-        print(f"\n[zn-gate] Scanned {scanned} files ({len(skipped)} not scanned). Found {leak_count} secrets and {other_count} security threats.")
+        for sd in skipped_dirs:
+            print(f"::notice file={_gh_property(sd['dir'])},title=Directory not scanned::{_gh_message(sd['reason'])}")
+        if nothing:
+            print(f"::warning title=Nothing scanned::{_gh_message(nothing)}")
+        dir_note = f" and {len(skipped_dirs)} director{'y' if len(skipped_dirs) == 1 else 'ies'} skipped" if skipped_dirs else ""
+        print(f"\n[zn-gate] Scanned {scanned} files ({len(skipped)} not scanned{dir_note}). Found {leak_count} secrets and {other_count} security threats.")
     elif fmt == "json":
         print(json.dumps({
             "total_files": scanned,
             "total_skipped": len(skipped),
+            "total_skipped_dirs": len(skipped_dirs),
             # Every finding, secrets included (as before); total_secrets counts the secrets alone.
             "total_threats": len(all_violations),
             "total_secrets": leak_count,
             "threats": all_violations,
             "skipped": skipped,
+            "skipped_dirs": skipped_dirs,
+            **({"warning": nothing} if nothing else {}),
         }, indent=2))
     else:
         print(f"\n{_lead(SHIELD)}zn-gate Security Scanner — Scanned {scanned} files")
+        if nothing:
+            print(f"{_lead(ALERT)}{nothing}")
         if skipped:
             print(f"Not scanned ({len(skipped)}):")
             for s in skipped[:20]:
-                print(f"  {s['file']} ({s['reason']})")
+                print(f"  {_safe_text(s['file'])} ({_safe_text(s['reason'])})")
             if len(skipped) > 20:
                 print(f"  ... and {len(skipped) - 20} more")
+        if skipped_dirs:
+            print(f"Directories not scanned ({len(skipped_dirs)}):")
+            for sd in skipped_dirs[:20]:
+                print(f"  {_safe_text(sd['dir'])} ({_safe_text(sd['reason'])})")
+            if len(skipped_dirs) > 20:
+                print(f"  ... and {len(skipped_dirs) - 20} more")
+        if not all_violations and nothing:
+            print()
+            return
         if not all_violations:
             print(f"{_lead(CHECK)}All scanned prompts, tool definitions, and files are clean!\n")
             return

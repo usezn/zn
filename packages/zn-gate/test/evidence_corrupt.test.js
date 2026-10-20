@@ -490,6 +490,43 @@ test('several writers meeting one stale lock: all writes land, one chain', async
   }
 });
 
+test('a stale lock is left alone while another breaker holds the break mutex', () => {
+  const { dir, file } = tmpLedger(1);
+  try {
+    fs.writeFileSync(file + '.lock', '1:crashed');
+    const old = new Date(Date.now() - 60000);
+    fs.utimesSync(file + '.lock', old, old);
+    fs.writeFileSync(file + '.lock.break', 'busy');
+    const fresh = freshEvidence();
+    let r;
+    captureStderr(() => { r = fresh.logEvidence({ payload: 'x' }, file, { lockWaitMs: 200 }); });
+    assert.equal(r, null);
+    assert.equal(fs.readFileSync(file + '.lock', 'utf8'), '1:crashed', 'the stale lock is not touched by a second breaker');
+    assert.equal(verifyEvidenceLedger(file).total, 1);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('repeated stale-lock races never drop a record', async () => {
+  for (let round = 0; round < 5; round++) {
+    const { dir, file } = tmpLedger(0);
+    try {
+      fs.writeFileSync(file + '.lock', '1:crashed');
+      const old = new Date(Date.now() - 60000);
+      fs.utimesSync(file + '.lock', old, old);
+      const results = await Promise.all(Array.from({ length: 8 }, (_, i) => run(process.execPath, ['-e', NODE_WRITER, EVIDENCE_JS, file, String(i), '3'])));
+      for (const r of results) assert.equal(r.code, 0, r.err);
+      const v = verifyEvidenceLedger(file);
+      assert.equal(v.valid, true);
+      assert.equal(v.total, 24);
+      assert.deepEqual(fs.readdirSync(dir).filter((f) => f.includes('.lock')), []);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
+
 test('a lock dated in the future counts as stale', () => {
   const { dir, file } = tmpLedger(1);
   try {
@@ -610,5 +647,87 @@ test('a lock wait that is not a usable number falls back to the default', () => 
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  }
+});
+
+test('a breaker never deletes a break mutex that another breaker re-created', () => {
+  const { dir, file } = tmpLedger(1);
+  try {
+    const fresh = freshEvidence();
+    fs.writeFileSync(file + '.lock', '1:crashed');
+    const old = new Date(Date.now() - 60000);
+    fs.utimesSync(file + '.lock', old, old);
+    // Between creating its mutex and releasing it, the mutex is replaced by another breaker's.
+    fresh._testHooks.beforeMutexRelease = (mutex) => {
+      fresh._testHooks.beforeMutexRelease = null;
+      fs.unlinkSync(mutex);
+      fs.writeFileSync(mutex, '999:other-breaker');
+    };
+    let r;
+    try { r = fresh.logEvidence({ payload: 'x' }, file, { lockWaitMs: 200 }); } finally { fresh._testHooks.beforeMutexRelease = null; }
+    assert.notEqual(r, null, 'the stale lock was still broken and the record written');
+    assert.equal(fs.readFileSync(file + '.lock.break', 'utf8'), '999:other-breaker', 'the other breaker mutex is untouched');
+    assert.equal(verifyEvidenceLedger(file).total, 2);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a breaker writes its token into the break mutex and deletes it afterwards', () => {
+  const { dir, file } = tmpLedger(1);
+  try {
+    const fresh = freshEvidence();
+    fs.writeFileSync(file + '.lock', '1:crashed');
+    const old = new Date(Date.now() - 60000);
+    fs.utimesSync(file + '.lock', old, old);
+    let seen = null;
+    fresh._testHooks.afterMutexCreate = (mutex) => { seen = fs.readFileSync(mutex, 'utf8'); };
+    try { fresh.logEvidence({ payload: 'x' }, file); } finally { fresh._testHooks.afterMutexCreate = null; }
+    assert.match(seen, /^\d+:[0-9a-f]{16}$/);
+    assert.equal(fs.existsSync(file + '.lock.break'), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('reclaiming a stale break mutex does not delete one created in the meantime', () => {
+  const { dir, file } = tmpLedger(1);
+  try {
+    const fresh = freshEvidence();
+    fs.writeFileSync(file + '.lock', '1:crashed');
+    const old = new Date(Date.now() - 60000);
+    fs.utimesSync(file + '.lock', old, old);
+    fs.writeFileSync(file + '.lock.break', '1:dead-breaker');
+    fs.utimesSync(file + '.lock.break', old, old);
+    // After it judged the mutex stale, a live breaker replaces it with a fresh one.
+    fresh._testHooks.beforeMutexReclaim = (mutex) => {
+      fresh._testHooks.beforeMutexReclaim = null;
+      fs.unlinkSync(mutex);
+      fs.writeFileSync(mutex, '999:live-breaker');
+    };
+    let r;
+    try { r = fresh.logEvidence({ payload: 'x' }, file, { lockWaitMs: 100 }); } finally { fresh._testHooks.beforeMutexReclaim = null; }
+    assert.equal(r, null, 'the live breaker still holds the mutex, so this writer gives up');
+    assert.equal(fs.readFileSync(file + '.lock.break', 'utf8'), '999:live-breaker');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a stale break mutex left by a dead breaker is reclaimed', () => {
+  const { dir, file } = tmpLedger(1);
+  try {
+    const fresh = freshEvidence();
+    fs.writeFileSync(file + '.lock', '1:crashed');
+    const old = new Date(Date.now() - 60000);
+    fs.utimesSync(file + '.lock', old, old);
+    fs.writeFileSync(file + '.lock.break', '1:dead-breaker');
+    fs.utimesSync(file + '.lock.break', old, old);
+    const r = fresh.logEvidence({ payload: 'x' }, file, { lockWaitMs: 2000 });
+    assert.notEqual(r, null);
+    assert.equal(verifyEvidenceLedger(file).total, 2);
+    assert.deepEqual(fs.readdirSync(dir).filter((f) => f.includes('.lock')), []);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -39,7 +39,8 @@ way to read a file. The point is that the agent's normal tools do not hand
 values to the model. The hooks also block the agent's file tools and shell
 commands from writing `~/.zn` and the agents' own hook and plugin settings:
 the files (`.claude/settings*.json`, `.codex/` files, `.cursor/hooks.json`, the
-OpenCode plugin and `opencode.json`) and the directories that hold them
+OpenCode plugin and `opencode.json`, and Antigravity's hook and settings files,
+listed under "Experimental adapters" below) and the directories that hold them
 (`~/.claude`, `~/.codex`, `~/.cursor`, `~/.config/opencode`, the same in the
 project, and the locations `CODEX_HOME`, `OPENCODE_CONFIG`,
 `OPENCODE_CONFIG_DIR`, `CLAUDE_CONFIG_DIR` and `XDG_CONFIG_HOME` name). A command that moves,
@@ -50,6 +51,48 @@ command (a path built inside a script, in inline code such as
 not seen. Paths are checked after `~`, variables and symlinks are resolved,
 and globs and brace lists are checked against the files that exist now and
 against the names they could match.
+
+## Experimental adapters
+
+Some agents are supported through an adapter that is still experimental. It
+is built from the agent's public documentation and has not had the same
+end-to-end testing as the agents above, so read this section before relying on
+it. Each adapter lists its limits when you install it.
+
+### Google Antigravity
+
+Install it with `zn hooks install antigravity` (add `--project` for one
+project). It adds a hook that runs before each tool call.
+
+- **What it covers:** before a tool call runs, zn checks it. It blocks reading
+  or writing secret files (such as `.env` files and credential files) by path,
+  and shell commands that handle secrets. For a command that uses a stored
+  secret, it tells the agent to run it through `zn run`. A search over a folder
+  asks for confirmation when that folder itself holds a plain-text `.env` or
+  key file.
+- **What it does not cover:** Antigravity hooks cannot rewrite or redact what a
+  tool returns. A value printed by a command, or found in a file the agent is
+  allowed to read, still reaches the model, so keep secrets in the vault. A
+  tool that names no command and no file path, or that zn does not
+  recognise, is left to Antigravity's own rules (zn gives no opinion). A shell
+  or file tool whose command or file zn cannot read is refused. Antigravity does not document how it treats a hook that crashes
+  or times out, so zn cannot promise that such a call is blocked.
+- **Which configuration files the agent cannot edit:** the rule described
+  under "What zn does not protect against" (the hooks refuse writes to the
+  agents' hook and plugin settings) covers three Antigravity files:
+  `.agents/hooks.json` in a project, `~/.gemini/config/hooks.json`, and
+  `~/.gemini/antigravity-cli/settings.json`. The same limits as above apply:
+  a write the hooks cannot read as a word of the command is not seen.
+- **Not covered by that rule:** Antigravity's MCP configuration
+  (`.agents/mcp_config.json`, `~/.gemini/antigravity/mcp_config.json` and
+  `~/.gemini/config/mcp_config.json`), and the other files in a project's
+  `.agents` folder (rules and workflows). Only the folder itself, its
+  `hooks.json` and changes to the folder's path are treated as protected.
+  The directories `~/.gemini` and `~/.gemini/antigravity-cli` are not
+  protected either, only the files named above.
+
+More experimental adapters will be listed here when they ship, each with its
+own coverage and limits.
 
 ## What the vault daemon protects, and what it does not
 

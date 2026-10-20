@@ -30,14 +30,58 @@ const FAKE_LINE = 'ZN_CHECK_EXAMPLE_KEY=zn-check-fake-value-not-a-real-key\n';
 const HOOK_TIMEOUT_MS = 15000;
 const PLUGIN_ID = 'zn-gate@usezn';
 
-/* The zn-gate Claude Code plugin needs Node.js 20.12 or later; zn-gate itself runs on 18 and later. */
+/* The zn-gate Claude Code plugin needs Node.js 20.12 or later; zn-gate itself runs on 18 and later.
+   This is the one place that says which version; the messages below and in init are built from it. */
+const PLUGIN_NODE_MIN = '20.12';
 function pluginNodeOk(version) {
   const [major, minor] = String(version || process.versions.node).split('.').map((x) => parseInt(x, 10) || 0);
   // The loader constant the plugin needs arrives in Node.js 20.12 and in 21.7.
   return major > 21 || (major === 21 && minor >= 7) || (major === 20 && minor >= 12);
 }
 function pluginNodeMessage(version) {
-  return 'the zn-gate plugin needs Node.js 20.12 or later (you have ' + String(version || process.versions.node) + ')';
+  return 'the zn-gate plugin needs Node.js ' + PLUGIN_NODE_MIN + ' or later (you have ' + String(version || process.versions.node) + ')';
+}
+
+/* The plugin's hooks run `node` as Claude Code finds it on its PATH, which is not always the Node.js that runs
+   zn-gate (npx, nvm, several installs). This finds that `node` and asks it for its version. Never throws:
+   null means it could not be found or run. Same binary as this process: no need to start it. */
+function resolveHookNode(env) {
+  try {
+    const exe = require('./exe');
+    const isWin = process.platform === 'win32';
+    const absPath = String((env || process.env).PATH || '').split(path.delimiter).filter((d) => d && path.isAbsolute(d)).join(path.delimiter);
+    const found = exe.whichSync(isWin ? 'node.exe' : 'node', absPath);
+    if (!found) return null;
+    const file = path.resolve(found);
+    const norm = (f) => { let r = path.resolve(f); try { r = fs.realpathSync(r); } catch (err) { /* keep it */ } return isWin ? r.toLowerCase() : r; };
+    if (norm(file) === norm(process.execPath)) return { version: process.versions.node, path: file };
+    const r = spawnSync(file, ['--version'], { encoding: 'utf8', timeout: 3000, windowsHide: true, shell: false });
+    const m = /^v(\d+\.\d+\.\d+)/.exec(String(r.stdout || '').trim());
+    return r.status === 0 && m ? { version: m[1], path: file } : null;
+  } catch (err) {
+    return null;
+  }
+}
+
+/* What the plugin's hooks will run on: {ok, unknown, version, why}. opts: nodeVersion (this zn-gate's, injected in
+   tests), hookNode (injected: a {version, path}, null for "unknown", or a function(env) returning one). Given only
+   nodeVersion, the hooks are taken to run on that same Node.js. */
+function pluginNodeStatus(opts = {}) {
+  const zn = opts.nodeVersion || process.versions.node;
+  let hook = opts.hookNode;
+  if (typeof hook === 'function') hook = hook(opts.env || process.env);
+  else if (hook === undefined) hook = opts.nodeVersion ? { version: opts.nodeVersion, path: null } : resolveHookNode(opts.env);
+  if (!hook || !hook.version) {
+    return { ok: false, unknown: true, version: null, zn, why: 'zn-gate could not find or run the `node` that Claude Code will start the hooks of the plugin with (the first one on your PATH)' };
+  }
+  const same = !hook.path || hook.version === zn;
+  const why = same ? 'you have ' + hook.version
+    : 'Claude Code will run the hooks of the plugin with Node.js ' + hook.version + (hook.path ? ' (from ' + hook.path + ')' : '') + '; zn-gate itself runs on Node.js ' + zn;
+  return { ok: pluginNodeOk(hook.version), unknown: false, version: hook.version, zn, why };
+}
+function pluginNodeProblem(st) {
+  return st.unknown ? 'the zn-gate plugin could not be checked: ' + st.why
+    : 'the zn-gate plugin needs Node.js ' + PLUGIN_NODE_MIN + ' or later (' + st.why + ')';
 }
 
 const AGENTS = [
@@ -98,9 +142,9 @@ function hookEntries(tree, agentId) {
     for (const [event, list] of Object.entries(hooks || {})) {
       for (const g of Array.isArray(list) ? list : []) {
         if (!g || typeof g !== 'object') continue;
-        if (typeof g.command === 'string') out.push({ event, matcher: g.matcher, command: g.command, onFailure: g.onFailure });
+        if (typeof g.command === 'string') out.push({ event, matcher: g.matcher, command: g.command, onFailure: g.onFailure, async: g.async });
         for (const h of Array.isArray(g.hooks) ? g.hooks : []) {
-          if (h && typeof h.command === 'string') out.push({ event, matcher: g.matcher, command: h.command, onFailure: h.onFailure });
+          if (h && typeof h.command === 'string') out.push({ event, matcher: g.matcher, command: h.command, onFailure: h.onFailure, async: h.async });
         }
       }
     }
@@ -179,6 +223,57 @@ function claudePolicy(home, env) {
   } catch (err) {
     return [];
   }
+}
+
+/* Codex hooks with `async` set (true, or the string "true" from TOML) run in the background: they cannot block or change anything. */
+function isBackground(e) {
+  return e.async === true || e.async === 'true';
+}
+
+/* The first file that sets one of zn's Codex hooks to run in the background: the Codex home's hooks.json and config.toml. */
+function codexBackgroundFile(codexHome, hooksFile) {
+  const trees = [[hooksFile, readJson(hooksFile)]];
+  try {
+    trees.push([path.join(codexHome, 'config.toml'), require('./audit/parse').parseToml(fs.readFileSync(path.join(codexHome, 'config.toml'), 'utf8')).data]);
+  } catch (_) { /* no config.toml, or one zn cannot read: nothing to say here */ }
+  for (const [file, tree] of trees) {
+    const hit = hookEntries(tree, 'codex').find((e) => isBackground(e) && parseCommand(e.command, 'codex'));
+    if (hit) return { file, event: hit.event };
+  }
+  return null;
+}
+
+/* Codex keeps a per-hook switch in config.toml: [hooks.state."<hooks file>:<event>:<group>:<hook>"] enabled = false.
+   The key is the file that declares the hook, the event in snake case, and the 0-based position of the group and of the hook in it. */
+function samePath(a, b) {
+  const x = path.resolve(String(a));
+  const y = path.resolve(String(b));
+  return process.platform === 'win32' ? x.toLowerCase() === y.toLowerCase() : x === y;
+}
+
+/* The first of zn's Codex hooks (in the files given) that the user's config.toml switches off with hooks.state; null if none. */
+function codexHookSwitchedOff(codexHome, files) {
+  let state;
+  try {
+    const data = require('./audit/parse').parseToml(fs.readFileSync(path.join(codexHome, 'config.toml'), 'utf8')).data;
+    state = data && data.hooks && data.hooks.state;
+  } catch (_) { return null; /* no config.toml, or one zn cannot read: nothing to say here */ }
+  if (!state || typeof state !== 'object') return null;
+  const { isOurs } = require('./agents/config-file');
+  for (const [key, st] of Object.entries(state)) {
+    if (!st || typeof st !== 'object' || (st.enabled !== false && st.enabled !== 'false')) continue;
+    const m = /^(.*):([a-z_]+):(\d+):(\d+)$/.exec(key.trim());
+    if (!m) continue;
+    const src = files.find((f) => samePath(f, m[1]));
+    if (!src) continue;
+    const tree = src.endsWith('.toml') ? (() => { try { return require('./audit/parse').parseToml(fs.readFileSync(src, 'utf8')).data; } catch (_) { return null; } })() : readJson(src);
+    const hooks = tree && typeof tree.hooks === 'object' && tree.hooks ? tree.hooks : {};
+    const event = Object.keys(hooks).find((e) => e.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase() === m[2]);
+    const group = event && Array.isArray(hooks[event]) ? hooks[event][Number(m[3])] : null;
+    const hook = group && Array.isArray(group.hooks) ? group.hooks[Number(m[4])] : null;
+    if (hook && isOurs(hook.command, 'codex')) return { file: path.join(codexHome, 'config.toml'), event };
+  }
+  return null;
 }
 
 function oneLine(s, n) {
@@ -280,9 +375,10 @@ async function checkAgent(spec, ctx) {
         res.problem = 'the zn-gate plugin is turned off in your Claude Code settings';
         res.fix = 'turn it on: run `claude plugin enable zn-gate@usezn` in your own terminal';
       }
-      if (!plugin.off && !pluginNodeOk(ctx.nodeVersion)) {
-        res.problem = pluginNodeMessage(ctx.nodeVersion);
-        res.fix = 'update Node.js to 20.12 or later, or use zn\'s hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, and after that turn the plugin off with `claude plugin disable zn-gate@usezn`, all in your own terminal';
+      const nodeSt = plugin.off ? null : (ctx.pluginNode || (ctx.pluginNode = pluginNodeStatus(ctx)));
+      if (nodeSt && !nodeSt.ok) {
+        res.problem = pluginNodeProblem(nodeSt);
+        res.fix = (nodeSt.unknown ? 'make sure `node --version` works in a new terminal and shows ' + PLUGIN_NODE_MIN + ' or later' : 'update Node.js to ' + PLUGIN_NODE_MIN + ' or later (the current LTS from nodejs.org), and make it the first `node` on your PATH') + ', or use zn\'s hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, and after that turn the plugin off with `claude plugin disable zn-gate@usezn`, all in your own terminal';
         res.pluginFault = true;
         res.pluginNode = true;
       }
@@ -334,6 +430,32 @@ async function checkAgent(spec, ctx) {
     if (p.length) {
       res.problem = bare(oneLine(p[0], 300));
       res.fix = 'change that Codex setting as it says, then run `zn-gate check` again';
+    }
+  }
+  if (spec.id === 'codex' && installed && !res.problem && res.where === userFile) {
+    // A hook Codex runs in the background cannot block a call or change a result, so it protects nothing.
+    const bg = codexBackgroundFile(path.dirname(userFile), userFile);
+    if (bg) {
+      res.problem = 'zn\'s ' + bg.event + ' hook runs in the background (async) in ' + bg.file + ', and a background hook cannot block anything, so zn does not protect Codex';
+      res.fix = 'remove `async` from zn\'s hooks in that file, or run `zn hooks install codex` again, then run `zn-gate check` again';
+    }
+  }
+  if (spec.id === 'codex' && installed && !res.problem && res.where === userFile) {
+    // [hooks.state] in the user's config.toml can switch one hook off: Codex then skips it without a word.
+    const off = codexHookSwitchedOff(path.dirname(userFile), [userFile, path.join(path.dirname(userFile), 'config.toml')]);
+    if (off) {
+      res.problem = 'zn\'s ' + off.event + ' hook is switched off in ' + off.file + ' ([hooks.state] enabled = false), so Codex skips it and zn does not protect Codex';
+      res.fix = 'delete that [hooks.state] entry, or turn zn\'s hook back on in `/hooks` in Codex, then run `zn-gate check` again';
+    }
+  }
+  if (spec.id === 'codex' && installed && !res.problem) {
+    // Codex runs every PreToolUse hook at the same time, each with the original call: another tool's hook can
+    // change a call after zn checked it, or answer an approval prompt. zn cannot see what that hook does.
+    let other = null;
+    try { other = require('./codex-other-hooks').findOtherHooks(path.dirname(userFile), ctx.cwd); } catch (_) { other = null; }
+    if (other) {
+      res.problem = 'another hook runs before Codex calls (' + other.event + ' in ' + other.file + '); it can change a call after zn has checked it, so zn cannot fully protect Codex';
+      res.fix = 'review that hook and remove it if you do not need it, or have your administrator manage hooks with `allow_managed_hooks_only`, then run `zn-gate check` again';
     }
   }
   if (spec.id === 'opencode' && installed) res.notes.push('zn\'s rules were checked; its plugin runs inside OpenCode, so it was not started here');
@@ -414,7 +536,7 @@ async function check(opts = {}) {
   const env = opts.env || process.env;
   const cwd = opts.cwd || process.cwd();
   if (opts.live === false) {
-    const ctx = { home, env, cwd, live: false, dir: cwd, codexPolicy: opts.codexPolicy, nodeVersion: opts.nodeVersion };
+    const ctx = { home, env, cwd, live: false, dir: cwd, codexPolicy: opts.codexPolicy, nodeVersion: opts.nodeVersion, hookNode: opts.hookNode, pluginNode: opts.pluginNode };
     const results = [];
     for (const spec of AGENTS) {
       try {
@@ -426,7 +548,7 @@ async function check(opts = {}) {
     return { results, removed: true };
   }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-check-'));
-  const ctx = { home, env, cwd, live: true, dir, envFile: path.join(dir, '.env'), readme: path.join(dir, 'README.txt'), codexPolicy: opts.codexPolicy, nodeVersion: opts.nodeVersion };
+  const ctx = { home, env, cwd, live: true, dir, envFile: path.join(dir, '.env'), readme: path.join(dir, 'README.txt'), codexPolicy: opts.codexPolicy, nodeVersion: opts.nodeVersion, hookNode: opts.hookNode, pluginNode: opts.pluginNode };
   const results = [];
   try {
     fs.writeFileSync(path.join(dir, '.gitignore'), '.env\n');
@@ -500,4 +622,4 @@ function report({ results, removed }, write) {
   return setUp && !bad ? 0 : 1;
 }
 
-module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { pluginNodeOk, pluginNodeMessage, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin } };
+module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin } };

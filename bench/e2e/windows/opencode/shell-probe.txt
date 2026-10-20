@@ -1,0 +1,5 @@
+load platform=win32 SHELL=undefined ComSpec="C:\\Windows\\system32\\cmd.exe" PSModulePath_set=yes
+bash-call platform=win32 SHELL=undefined ComSpec="C:\\Windows\\system32\\cmd.exe" PSModulePath_set=yes
+bash-call platform=win32 SHELL=undefined ComSpec="C:\\Windows\\system32\\cmd.exe" PSModulePath_set=yes
+bash-call platform=win32 SHELL=undefined ComSpec="C:\\Windows\\system32\\cmd.exe" PSModulePath_set=yes
+load platform=win32 SHELL=undefined ComSpec="C:\\Windows\\system32\\cmd.exe" PSModulePath_set=yes
