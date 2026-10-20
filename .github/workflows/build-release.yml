@@ -149,6 +149,10 @@ jobs:
           diff "$RUNNER_TEMP/release.sum" "$RUNNER_TEMP/rebuild.sum" || { echo "::error::the Python sdist or wheel differs between two builds of the same commit"; exit 1; }
           rm -rf "$RUNNER_TEMP/rebuild"
           "$RUNNER_TEMP/build-venv/bin/python" -m twine check --strict "$RUNNER_TEMP"/release/*.whl "$RUNNER_TEMP"/release/*.tar.gz
+      - name: Check wheel and sdist contents
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/build-venv/bin/python" -I .release-tools/.github/scripts/check-python-pack.py "$RUNNER_TEMP"/release/*.whl "$RUNNER_TEMP"/release/*.tar.gz
       - name: Check file names and write SHA256SUMS
         working-directory: ${{ runner.temp }}/release
         env:
