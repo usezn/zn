@@ -520,3 +520,62 @@ test('permissionFailure: a global folder that is not writable counts, a missing 
   assert.equal(permissionFailure('', path.join(tempDir(t, 'zn-prefix-'), 'does-not-exist')), false);
   assert.equal(permissionFailure('', tempDir(t, 'zn-prefix-')), false);
 });
+
+/* A fake program that writes `megabytes` of stderr, then `tailText`, and exits with `code`. */
+function fakeNoisy(t, { megabytes, tailText, code }) {
+  const script = path.join(tempDir(t, 'zn-noisy-'), 'noisy.js');
+  fs.writeFileSync(script, "const line = 'x'.repeat(1023) + '\\n';\n" +
+    'for (let i = 0; i < ' + (megabytes * 1024) + '; i++) process.stderr.write(line);\n' +
+    'process.stderr.write(' + JSON.stringify(tailText) + ');\n' +
+    'process.exitCode = ' + code + ';\n');
+  return [process.execPath, [script]];
+}
+
+test('runStep: more than 1 MiB of stderr does not kill the step, and the tail keeps EACCES', posixOnly, async (t) => {
+  const { runStep } = _internal;
+  const realWrite = process.stderr.write;
+  let shown = 0;
+  process.stderr.write = (chunk) => { shown += String(chunk).length; return true; };
+  let ok;
+  try {
+    ok = await runStep({ run: fakeNoisy(t, { megabytes: 2, tailText: 'npm error code EACCES\n', code: 1 }) }, { PATH: '' });
+  } finally {
+    process.stderr.write = realWrite;
+  }
+  assert.equal(ok.ok, false);
+  assert.ok(shown > 2 * 1024 * 1024, 'the terminal got the whole output as it came: ' + shown);
+  assert.ok(ok.stderr.length <= 64 * 1024, 'the kept tail is bounded: ' + ok.stderr.length);
+  assert.match(ok.stderr, /npm error code EACCES/);
+  assert.equal(_internal.permissionFailure(ok.stderr, ''), true);
+});
+
+test('runStep: a long successful run is ok, and a missing program is not', async (t) => {
+  const { runStep } = _internal;
+  const realWrite = process.stderr.write;
+  process.stderr.write = () => true;
+  let r;
+  try {
+    r = await runStep({ run: fakeNoisy(t, { megabytes: 1, tailText: 'done\n', code: 0 }) }, { PATH: '' });
+  } finally {
+    process.stderr.write = realWrite;
+  }
+  assert.equal(r.ok, true);
+  assert.equal((await runStep({ run: [path.resolve('/opt/npm/bin/does-not-exist-zn'), []] }, { PATH: '' })).ok, false);
+});
+
+test('shell rc: SHELL decides the file; the platform is only a fallback when SHELL is unset', () => {
+  const { permissionAdvice } = _internal;
+  const advice = (env, platform, shell) => permissionAdvice({ prefix: '/usr/local', env, todo: [], shell, platform });
+  // bash on macOS: the login file is ~/.bash_profile, not the zsh one.
+  assert.match(advice({ SHELL: '/bin/bash' }, 'darwin'), /echo 'export PATH="\$HOME\/\.npm-global\/bin:\$PATH"' >> ~\/\.bash_profile/);
+  assert.doesNotMatch(advice({ SHELL: '/bin/bash' }, 'darwin'), /zshrc/);
+  // SHELL unset on macOS falls back to zsh; on Linux to bash.
+  assert.match(advice({}, 'darwin'), />> ~\/\.zshrc/);
+  assert.match(advice({}, 'linux'), />> ~\/\.bashrc/);
+  // zsh on Linux still gets .zshrc; the SHELL argument wins over the environment.
+  assert.match(advice({ SHELL: '/bin/bash' }, 'linux', '/usr/bin/zsh'), />> ~\/\.zshrc/);
+  // fish gets its own file and its own syntax.
+  const fish = advice({ SHELL: '/usr/bin/fish' }, 'linux');
+  assert.match(fish, /set -gx PATH \$HOME\/\.npm-global\/bin \$PATH' >> ~\/\.config\/fish\/config\.fish/);
+  assert.doesNotMatch(fish, /export PATH/);
+});

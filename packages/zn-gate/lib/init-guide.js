@@ -24,7 +24,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
 const PKG_ROOT = path.join(__dirname, '..');
 const VERSION = require('../package.json').version;
@@ -58,15 +58,21 @@ function cmp(a, b) {
   return preA === preB ? 0 : (preA ? -1 : 1);
 }
 
-/* Run a program found by findProgram, with fixed arguments. */
-function spawnProgram(file, args, env, extra = {}) {
+/* The call for a program found by findProgram, with fixed arguments: {file, args, opts} for spawn or spawnSync. */
+function programCall(file, args, env, extra = {}) {
   const childEnv = { ...env };
   if (isWin) childEnv.NoDefaultCurrentDirectoryInExePath = '1';
   // A .cmd file (npm, claude, zn on Windows) only starts through cmd.exe; its path is absolute and quoted.
   if (isWin && /\.cmd$/i.test(file)) {
-    return spawnSync('"' + file + '"', args, { ...extra, env: childEnv, shell: true, windowsHide: true });
+    return { file: '"' + file + '"', args, opts: { ...extra, env: childEnv, shell: true, windowsHide: true } };
   }
-  return spawnSync(file, args, { ...extra, env: childEnv, windowsHide: true });
+  return { file, args, opts: { ...extra, env: childEnv, windowsHide: true } };
+}
+
+/* Run a program found by findProgram, with fixed arguments, and wait for it. */
+function spawnProgram(file, args, env, extra = {}) {
+  const c = programCall(file, args, env, extra);
+  return spawnSync(c.file, c.args, c.opts);
 }
 
 /* {npm, prefix, pkgDir, version, zn} of the global npm install of zn-gate, or {} when npm is not found. */
@@ -188,13 +194,46 @@ async function hooksWorkNextToPlugin(opts, id) {
   return r.problem || 'zn-gate check did not find them working';
 }
 
-/* Run one step in the user's terminal (inherits stdio). Absolute program path and fixed arguments only. */
+/* How much of a step's stderr is kept (the last characters), enough for the permission check to see its EACCES/EPERM lines. */
+const STDERR_KEEP = 64 * 1024;
+
+/*
+ * Run one step in the user's terminal. stdout is inherited; stderr is copied to the terminal as it arrives, so a long
+ * npm run shows progress, and only its last STDERR_KEEP characters are kept. Absolute program path and fixed arguments only.
+ * Resolves {ok, stderr}.
+ */
 function runStep(step, env) {
   const [file, args] = step.run;
-  // stderr is copied to the terminal as it is, and kept to tell a permission failure from any other.
-  const r = spawnProgram(file, args, env, { stdio: ['inherit', 'inherit', 'pipe'], encoding: 'utf8' });
-  if (r.stderr) process.stderr.write(r.stderr);
-  return { ok: !r.error && r.status === 0, stderr: String(r.stderr || '') };
+  const c = programCall(file, args, env, { stdio: ['inherit', 'inherit', 'pipe'] });
+  return new Promise((resolve) => {
+    let tail = '';
+    let settled = false;
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      resolve({ ok, stderr: tail });
+    };
+    let child;
+    try {
+      child = spawn(c.file, c.args, c.opts);
+    } catch (err) {
+      finish(false);
+      return;
+    }
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk) => {
+      process.stderr.write(chunk);
+      tail += chunk;
+      if (tail.length > STDERR_KEEP) tail = tail.slice(-STDERR_KEEP);
+    });
+    child.on('error', () => finish(false));
+    child.on('close', (code) => finish(code === 0));
+  });
+}
+
+/* Whether a step result counts as done: the runner returns {ok} (or a bare boolean, in tests). */
+function stepDone(res) {
+  return res === true || Boolean(res && res.ok);
 }
 
 const isPosix = process.platform !== 'win32';
@@ -214,10 +253,31 @@ function permissionFailure(stderr, prefix) {
   try { fs.accessSync(prefix, fs.constants.W_OK); return false; } catch (e) { return e.code === 'EACCES' || e.code === 'EPERM'; }
 }
 
+/*
+ * The shell start-up file and the PATH line for it, decided by the user's shell (SHELL) first. The platform is only a
+ * fallback when SHELL is unset: macOS defaults to zsh, other systems to bash.
+ */
+function shellPathLine(shell, platform = process.platform) {
+  const name = path.posix.basename(String(shell || '').replace(/\\/g, '/'));
+  const npmBin = '$HOME/.npm-global/bin';
+  if (/^fish$/.test(name)) {
+    return { profile: '~/.config/fish/config.fish', line: 'set -gx PATH ' + npmBin + ' $PATH' };
+  }
+  const posixLine = 'export PATH="' + npmBin + ':$PATH"';
+  if (/^zsh$/.test(name)) return { profile: '~/.zshrc', line: posixLine };
+  if (/^bash$/.test(name)) {
+    // macOS bash starts login shells from ~/.bash_profile, not ~/.bashrc.
+    return { profile: platform === 'darwin' ? '~/.bash_profile' : '~/.bashrc', line: posixLine };
+  }
+  // SHELL unset or another shell: the platform default.
+  return platform === 'darwin' ? { profile: '~/.zshrc', line: posixLine } : { profile: '~/.bashrc', line: posixLine };
+}
+
 /* The next step after a permission failure: never sudo; same commands as https://usezn.com/docs/install. */
-function permissionAdvice({ prefix, env, todo, shell }) {
+function permissionAdvice({ prefix, env, todo, shell, platform }) {
   const sh = shell || String((env && env.SHELL) || '');
-  const profile = /zsh/.test(sh) || process.platform === 'darwin' ? '~/.zshrc' : '~/.bashrc';
+  const rc = shellPathLine(sh, platform || process.platform);
+  const profile = rc.profile;
   const left = (todo || []).filter((i) => i.steps.some((x) => x.needsGlobal)).map((i) => i.name);
   const lines = [
     '  that did not finish: npm is not allowed to write to its global folder' + (prefix ? ' (' + prefix + ')' : '') + '.',
@@ -226,7 +286,7 @@ function permissionAdvice({ prefix, env, todo, shell }) {
       : '  Until zn-gate is installed for your user, the agents above that need it stay unprotected.',
     '  Fix it without administrator rights, in your own terminal:',
     '    mkdir -p ~/.npm-global && npm config set prefix ~/.npm-global',
-    '    echo \'export PATH="$HOME/.npm-global/bin:$PATH"\' >> ' + profile,
+    '    echo \'' + rc.line + '\' >> ' + profile,
     '  Then open a new terminal and run: npx -y zn-gate init',
     '  Or install Node.js with a version manager such as nvm (https://github.com/nvm-sh/nvm), which needs no special permissions.',
     '  More: https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally',
@@ -286,8 +346,8 @@ async function guide(opts = {}) {
   for (const s of setup) {
     if (!s.run) { w(`First, ${s.label}: ${s.manual}\n`); skipped++; break; }
     if (!(await ask(`${s.label}: run \`${s.manual}\`?`))) { w(`  skipped. You can run it later: ${s.manual}\n`); skipped++; break; }
-    const res = run(s, env);
-    if (!(res === true || (res && res.ok))) {
+    const res = await run(s, env);
+    if (!stepDone(res)) {
       if (s.run && permissionFailure(res && res.stderr, globalPrefix(opts, s))) w(permissionAdvice({ prefix: globalPrefix(opts, s), env, todo, shell: opts.shell }));
       else w(`  that did not finish. Run it yourself: ${s.manual}\n`);
       skipped++; break;
@@ -314,7 +374,7 @@ async function guide(opts = {}) {
       }
       if (!step.run) { w(`  ${s.label}: ${s.manual}\n`); skipped++; break; }
       if (!(await ask(`  ${s.label}: run \`${s.manual}\`?`))) { w(`  skipped. You can run it later: ${s.manual}\n`); skipped++; break; }
-      if (!run(step, env)) { w(`  that did not finish. Run it yourself: ${s.manual}\n`); skipped++; break; }
+      if (!stepDone(await run(step, env))) { w(`  that did not finish. Run it yourself: ${s.manual}\n`); skipped++; break; }
       if (step.done) w(`  ${step.done}\n`);
     }
   }
@@ -324,4 +384,4 @@ async function guide(opts = {}) {
   return skipped ? 1 : code;
 }
 
-module.exports = { guide, plan, fromTemporaryCopy, _internal: { permissionFailure, permissionAdvice, findProgram, globalInstall, cmp, runStep, spawnProgram } };
+module.exports = { guide, plan, fromTemporaryCopy, _internal: { permissionFailure, permissionAdvice, shellPathLine, findProgram, globalInstall, cmp, runStep, spawnProgram } };
