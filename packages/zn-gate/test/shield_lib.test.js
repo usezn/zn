@@ -351,3 +351,102 @@ test('SIGTERM to the shield stops the wrapped server too', { skip: process.platf
   const exit = await Promise.race([s.exited, new Promise((r) => setTimeout(() => r(null), 10000))]);
   assert.ok(exit, 'the shield must stop after SIGTERM');
 });
+
+// Server-to-agent text outside tool results: notifications, server requests, resources, prompts and errors.
+const rpc = (id, method, params = {}) => ({ jsonrpc: '2.0', id, method, params });
+const until = (s, pred) => new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error('message not seen; stderr: ' + s.stderr)), 15000);
+  const check = () => {
+    const m = s.json().find(pred);
+    if (m) { clearTimeout(timer); s.waiters = s.waiters.filter((w) => w !== check); resolve(m); }
+  };
+  s.waiters.push(check);
+  check();
+});
+
+test('a server notification that carries an injection is neutralized', async () => {
+  const s = startShield();
+  try {
+    s.send(call(20, 'notify'));
+    const n = await until(s, (m) => m.method === 'notifications/message');
+    assert.ok(!JSON.stringify(n).includes(INJECTION));
+    assert.ok(/zn-gate/i.test(n.params.data));
+    assert.ok(/BLOCKED SERVER MESSAGE\] notifications\/message/.test(s.stderr), s.stderr);
+  } finally {
+    await s.stop();
+  }
+});
+
+test('a sampling request from the server is checked in its messages and its system prompt', async () => {
+  const s = startShield();
+  try {
+    s.send(call(21, 'sample'));
+    const q = await until(s, (m) => m.method === 'sampling/createMessage');
+    assert.ok(!JSON.stringify(q).includes(INJECTION));
+    assert.ok(/zn-gate/i.test(q.params.messages[0].content.text));
+    assert.ok(/zn-gate/i.test(q.params.systemPrompt));
+    assert.strictEqual(q.params.maxTokens, 10, 'other fields are kept');
+    assert.ok(/BLOCKED SERVER MESSAGE\] sampling\/createMessage/.test(s.stderr), s.stderr);
+  } finally {
+    await s.stop();
+  }
+});
+
+test('a resources/read result that carries an injection is neutralized', async () => {
+  const s = startShield();
+  try {
+    s.send(rpc(22, 'resources/read', { uri: 'file:///example/page.txt' }));
+    const r = await s.reply(22);
+    assert.ok(!JSON.stringify(r).includes(INJECTION));
+    assert.ok(/zn-gate/i.test(r.result.contents[0].text));
+    assert.strictEqual(r.result.contents[0].uri, 'file:///example/page.txt');
+    assert.ok(/BLOCKED SERVER MESSAGE\] resources\/read/.test(s.stderr), s.stderr);
+  } finally {
+    await s.stop();
+  }
+});
+
+test('a prompts/get result that carries an injection is neutralized', async () => {
+  const s = startShield();
+  try {
+    s.send(rpc(23, 'prompts/get', { name: 'example' }));
+    const r = await s.reply(23);
+    assert.ok(!JSON.stringify(r).includes(INJECTION));
+    assert.ok(/zn-gate/i.test(r.result.messages[0].content.text));
+    assert.ok(/BLOCKED SERVER MESSAGE\] prompts\/get/.test(s.stderr), s.stderr);
+  } finally {
+    await s.stop();
+  }
+});
+
+test('an error message that carries an injection is neutralized', async () => {
+  const s = startShield();
+  try {
+    s.send(call(24, 'error_inject'));
+    const r = await s.reply(24);
+    assert.strictEqual(r.error.code, -32000);
+    assert.ok(!r.error.message.includes(INJECTION));
+    assert.ok(/zn-gate/i.test(r.error.message));
+    assert.ok(/BLOCKED SERVER MESSAGE\] error/.test(s.stderr), s.stderr);
+  } finally {
+    await s.stop();
+  }
+});
+
+test('shadow mode leaves server messages untouched and only reports', async () => {
+  const s = startShield({ opts: { shadow: true } });
+  try {
+    s.send(rpc(25, 'resources/read', { uri: 'file:///example/page.txt' }));
+    s.send(call(26, 'notify'));
+    s.send(call(27, 'error_inject'));
+    const r = await s.reply(25);
+    assert.ok(r.result.contents[0].text.includes(INJECTION));
+    const n = await until(s, (m) => m.method === 'notifications/message');
+    assert.ok(n.params.data.includes(INJECTION));
+    const e = await s.reply(27);
+    assert.ok(e.error.message.includes(INJECTION));
+    assert.ok(/BLOCKED SERVER MESSAGE/.test(s.stderr));
+  } finally {
+    await s.stop();
+  }
+});
