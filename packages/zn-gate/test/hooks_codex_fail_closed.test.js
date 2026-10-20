@@ -9,7 +9,6 @@ process.env.ZN_STATS = 'off';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
