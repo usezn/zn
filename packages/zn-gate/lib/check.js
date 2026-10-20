@@ -178,7 +178,7 @@ function matcherCovers(matcher, tool) {
 /* A zn hook command: {node, runner} (run directly), {onPath} (`zn hook <agent>`) or null. */
 function parseCommand(command, agentId) {
   const { _internal: audit } = require('./audit');
-  const c = String(command).trim();
+  const c = require('./shell-quote').readableWindowsCommand(String(command).trim());
   // zn's launcher script (lib/agents/launcher.js): '<dir>/zn-hook-<agent>.sh' <Event>. It names the Node.js and
   // runner it was installed with in ZN_NODE=... and ZN_RUNNER=... lines.
   const lm = new RegExp("^'(" + audit.SAFE_ABS + '/zn-hook-' + agentId + "\\.sh)' ([A-Za-z]+)$").exec(c);
