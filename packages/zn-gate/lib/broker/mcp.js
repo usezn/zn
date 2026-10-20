@@ -532,8 +532,15 @@ function createSecretsServer(opts = {}) {
     }
     const replies = [];
     for (const m of messages) {
-      const r = await handleMessage(m);
-      if (r) replies.push(r);
+      try {
+        const r = await handleMessage(m);
+        if (r) replies.push(r);
+      } catch (err) {
+        // One failing message must not cost the replies of the others; notifications (no id) get no reply.
+        if (m && m.id !== undefined && m.id !== null) {
+          replies.push({ jsonrpc: '2.0', id: m.id, error: { code: -32603, message: 'Internal error' } });
+        }
+      }
     }
     return replies.length ? replies : null;
   }
@@ -545,6 +552,8 @@ function createSecretsServer(opts = {}) {
     const fail = (code, message) => ({ jsonrpc: '2.0', id, error: { code, message } });
     switch (method) {
       case 'initialize':
+        // One session per stdio process: a second initialize must not renegotiate the version.
+        if (negotiated !== null) return fail(-32600, 'Invalid request: already initialized');
         negotiated = proto.negotiateProtocolVersion(params);
         return ok({ protocolVersion: negotiated, capabilities: { tools: {} }, serverInfo: { name: SERVER_NAME, version: SERVER_VERSION } });
       case 'notifications/initialized':
