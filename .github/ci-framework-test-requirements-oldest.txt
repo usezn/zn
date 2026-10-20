@@ -7,7 +7,7 @@
 #
 # Not managed by Dependabot, like ci-test-requirements.txt. Regenerate with uv from
 # these inputs (saved as ci-framework-test-requirements-oldest.in):
-#   langchain-core==1.2.31
+#   langchain-core==1.3.3
 #   llama-index-core>=0.14,<0.15
 # uv pip compile ci-framework-test-requirements-oldest.in --python-version 3.12 #   --python-platform x86_64-manylinux_2_28 --generate-hashes --no-header --no-annotate #   --exclude-newer <date two weeks ago> -c ci-test-requirements.txt
 # The -c keeps the shared packages at the versions ci-test-requirements.txt pins.
@@ -650,7 +650,7 @@ jsonpatch==1.33 \
 jsonpointer==3.1.1 \
     --hash=sha256:0b801c7db33a904024f6004d526dcc53bbb8a4a0f4e32bfd10beadf60adf1900 \
     --hash=sha256:8ff8b95779d071ba472cf5bc913028df06031797532f08a7d5b602d8b2a488ca
-langchain-core==1.2.31 \
+langchain-core==1.3.3 \
     --hash=sha256:aad3ecc9e4dce2dd2bb79526c81b92e5322fd81db7834a031cb80359f2e3ebaa \
     --hash=sha256:c407193edb99311cc36ec3e4d3667a065bbc4d7d72fbb6e368538b9b134d4033
 langsmith==0.14.4 \
