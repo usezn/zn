@@ -184,3 +184,67 @@ test('one constant sets the plugin Node.js version: code, messages and the launc
   const launcher = require('fs').readFileSync(require('path').join(__dirname, '..', '..', '..', 'plugins', 'zn-gate', 'scripts', 'zn-launch.js'), 'utf8');
   assert.ok(launcher.includes('Node.js ' + PLUGIN_NODE_MIN + ' or later'), 'the plugin launcher names the same version');
 });
+
+// The plugin's hooks run the `node` found on PATH, which can differ from the Node.js running zn-gate (npx, nvm).
+const HOOK18 = { version: '18.19.0', path: path.join(path.sep, 'usr', 'bin', 'node') };
+const HOOK22 = { version: '22.3.0', path: path.join(path.sep, 'opt', 'node22', 'bin', 'node') };
+
+test('pluginNodeStatus: the Node.js of the hooks decides, and the message says which one', () => {
+  const st = _internal.pluginNodeStatus;
+  const a = st({ nodeVersion: '22.0.0', hookNode: HOOK18 });
+  assert.equal(a.ok, false);
+  assert.equal(a.why, 'Claude Code will run the hooks of the plugin with Node.js 18.19.0 (from ' + HOOK18.path + '); zn-gate itself runs on Node.js 22.0.0');
+  assert.equal(st({ nodeVersion: '18.19.0', hookNode: HOOK22 }).ok, true);
+  assert.equal(st({ nodeVersion: '22.0.0', hookNode: () => HOOK22 }).ok, true);
+  const same = st({ nodeVersion: '18.19.0' });
+  assert.equal(same.why, 'you have 18.19.0');
+  const unknown = st({ nodeVersion: '22.0.0', hookNode: null });
+  assert.equal(unknown.ok, false);
+  assert.equal(unknown.unknown, true);
+});
+
+test('init plan: zn-gate on Node.js 22 but the hooks on 18 skips the plugin and says why', async (t) => {
+  const m = machine(t);
+  const cc = ccOf((await plan({ ...m, nodeVersion: '22.0.0', hookNode: HOOK18 })).items);
+  assert.deepEqual(cc.steps.map(line), ['zn hooks install claude-code']);
+  assert.match(cc.note, /^Claude Code plugin skipped: it needs Node\.js 20\.12 or later \(Claude Code will run the hooks of the plugin with Node\.js 18\.19\.0 \(from .*\); zn-gate itself runs on Node\.js 22\.0\.0\)\./);
+});
+
+test('init plan: zn-gate on Node.js 18 but the hooks on 22 still installs the plugin', async (t) => {
+  const m = machine(t);
+  const cc = ccOf((await plan({ ...m, nodeVersion: '18.19.0', hookNode: HOOK22 })).items);
+  assert.deepEqual(cc.steps.map(line), PLUGIN_STEPS);
+  assert.equal(cc.note, undefined);
+});
+
+test('init plan: a node that cannot be found or run never installs the plugin silently', async (t) => {
+  const m = machine(t);
+  const cc = ccOf((await plan({ ...m, nodeVersion: '22.0.0', hookNode: null })).items);
+  assert.deepEqual(cc.steps.map(line), ['zn hooks install claude-code']);
+  assert.match(cc.note, /^Claude Code plugin skipped: zn-gate could not find or run the `node` that the hooks of the plugin start with/);
+});
+
+test('check: a plugin whose hooks run on an older Node.js than zn-gate is reported with both versions', async (t) => {
+  const m = machine(t);
+  pluginIn(m.home);
+  const r = (await check({ home: m.home, env: m.env, cwd: m.cwd, nodeVersion: '22.0.0', hookNode: HOOK18 })).results.find((x) => x.id === 'claude-code');
+  assert.equal(r.state, 'not-protected');
+  assert.match(r.problem, /Claude Code will run the hooks of the plugin with Node\.js 18\.19\.0 .*zn-gate itself runs on Node\.js 22\.0\.0/);
+  assert.match(r.fix, /first `node` on your PATH/);
+});
+
+test('check: a node that cannot be found is reported as unknown, not as a pass', async (t) => {
+  const m = machine(t);
+  pluginIn(m.home);
+  const r = (await check({ home: m.home, env: m.env, cwd: m.cwd, nodeVersion: '22.0.0', hookNode: null })).results.find((x) => x.id === 'claude-code');
+  assert.equal(r.state, 'not-protected');
+  assert.match(r.problem, /could not find or run the `node`/);
+  assert.match(r.fix, /node --version/);
+});
+
+test('resolveHookNode: finds nothing on an empty PATH and never throws', () => {
+  assert.equal(_internal.resolveHookNode({ PATH: '' }), null);
+  assert.equal(_internal.resolveHookNode({ PATH: path.join(path.sep, 'no', 'such', 'dir') }), null);
+  const own = _internal.resolveHookNode({ PATH: path.dirname(process.execPath) });
+  assert.ok(own && own.version === process.versions.node);
+});
