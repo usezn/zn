@@ -1,7 +1,8 @@
 'use strict';
 // Keeps docs/api-reference.md in step with the code: every function heading must be a real export
-// of the documented entry point, and every name in the documented import lines (and every public
-// function of the Python package) must have a heading, so the page cannot drift from the code.
+// of the documented entry point, and every name in the documented import lines, every export the
+// typings declare and every public name of the Python package must be documented, so the page
+// cannot drift from the code.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -11,13 +12,11 @@ const path = require('path');
 const repo = path.resolve(__dirname, '..', '..', '..');
 const docPath = path.join(repo, 'docs', 'api-reference.md');
 const pyInit = path.join(repo, 'packages', 'zn-gate-py', 'src', 'zn_gate', '__init__.py');
-const present = fs.existsSync(docPath) && fs.existsSync(pyInit);
+const pyIntegrationsInit = path.join(repo, 'packages', 'zn-gate-py', 'src', 'zn_gate', 'integrations', '__init__.py');
+const present = fs.existsSync(docPath) && fs.existsSync(pyInit) && fs.existsSync(pyIntegrationsInit);
 
-// Public Python names that are deliberately not given a heading in the reference.
-const PY_NOT_DOCUMENTED = new Set([
-  'normalize_input', 'analyze_cloud', 'is_cloud_enabled', 'resolve_endpoint',
-  'get_evidence_stats', 'export_evidence_ledger',
-]);
+// Names deliberately left out of the Python reference (none today).
+const PY_NOT_DOCUMENTED = new Set([]);
 
 function sections(md) {
   // Split into the Node.js and Python parts at their level-2 headings.
@@ -37,6 +36,11 @@ function headingNames(part) {
   return names;
 }
 
+// A name is documented when it has a heading, or (constants and types) appears in backticks.
+function mentioned(part, name) {
+  return new RegExp('`@?' + name + '[`(\\s,.:;)]').test(part);
+}
+
 function nodeImports(part) {
   // const { a, b } = require('zn-gate/lib/x');
   const out = [];
@@ -46,10 +50,21 @@ function nodeImports(part) {
   return out;
 }
 
-function pyAll() {
-  const src = fs.readFileSync(pyInit, 'utf8');
+function dtsExports(file) {
+  // Value exports declared by a typings file: functions, classes and constants (types are not checked).
+  const src = fs.readFileSync(file, 'utf8');
+  const names = new Set();
+  for (const m of src.matchAll(/^export (?:declare )?(?:function|class|const) ([A-Za-z_][A-Za-z0-9_]*)/gm)) names.add(m[1]);
+  for (const m of src.matchAll(/^export \{([^}]+)\} from/gm)) {
+    for (const n of m[1].split(',').map((x) => x.trim()).filter(Boolean)) names.add(n);
+  }
+  return names;
+}
+
+function pyAllOf(file) {
+  const src = fs.readFileSync(file, 'utf8');
   const m = src.match(/__all__\s*=\s*\[([\s\S]*?)\]/);
-  assert.ok(m, '__all__ not found in zn_gate/__init__.py');
+  assert.ok(m, `__all__ not found in ${file}`);
   return [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]);
 }
 
@@ -83,24 +98,42 @@ test('Node.js: documented import names are exports and have a heading', { skip: 
   }
 });
 
-test('Python: headings and import lines match __all__, and the public functions are documented', { skip: !present && 'repository docs not in this checkout' }, () => {
+test('Node.js: every export the typings declare is documented', { skip: !present && 'repository docs not in this checkout' }, () => {
+  const { node } = sections(fs.readFileSync(docPath, 'utf8'));
+  const headings = new Set(headingNames(node));
+  const libDir = path.join(__dirname, '..', 'lib');
+  for (const f of ['client.d.ts', 'rules.d.ts', 'guard.d.ts', 'evidence.d.ts']) {
+    for (const name of dtsExports(path.join(libDir, f))) {
+      assert.ok(headings.has(name) || mentioned(node, name),
+        `${name} is exported in lib/${f} but is not in docs/api-reference.md (add a heading, or a line under Constants)`);
+    }
+  }
+});
+
+test('Python: headings and import lines match __all__, and every public name is documented', { skip: !present && 'repository docs not in this checkout' }, () => {
   const { python } = sections(fs.readFileSync(docPath, 'utf8'));
-  const all = new Set(pyAll());
+  const all = new Set(pyAllOf(pyInit));
+  const integrations = new Set(pyAllOf(pyIntegrationsInit));
   const headings = new Set(headingNames(python));
-  for (const h of headings) assert.ok(all.has(h), `heading ${h} is not in zn_gate.__all__`);
+  for (const h of headings) {
+    assert.ok(all.has(h) || integrations.has(h), `heading ${h} is not in zn_gate.__all__ or zn_gate.integrations.__all__`);
+  }
   for (const n of pyImportedNames(python)) {
     assert.ok(all.has(n), `${n} is imported in the Python example but is not in zn_gate.__all__`);
     assert.ok(headings.has(n), `${n} is imported in the Python example but has no heading`);
   }
-  const code = fs.readFileSync(path.join(path.dirname(pyInit), 'rules.py'), 'utf8')
-    + fs.readFileSync(path.join(path.dirname(pyInit), 'client.py'), 'utf8')
-    + fs.readFileSync(path.join(path.dirname(pyInit), 'guard.py'), 'utf8')
-    + fs.readFileSync(path.join(path.dirname(pyInit), 'evidence.py'), 'utf8');
-  for (const n of all) {
-    // Public functions (a def with this name in the package); classes, constants and the version are not headings.
-    const isFunction = new RegExp(`^def ${n}\\(`, 'm').test(code);
-    if (!isFunction || PY_NOT_DOCUMENTED.has(n)) continue;
-    assert.ok(headings.has(n), `public function ${n} has no heading in docs/api-reference.md (add one, or list it in PY_NOT_DOCUMENTED)`);
+  const srcDir = path.dirname(pyInit);
+  const code = ['rules.py', 'client.py', 'guard.py', 'evidence.py']
+    .map((f) => fs.readFileSync(path.join(srcDir, f), 'utf8')).join('\n');
+  for (const n of [...all, ...integrations]) {
+    if (PY_NOT_DOCUMENTED.has(n)) continue;
+    // Functions and the exception class need a heading; constants, types, the version and integration aliases a mention.
+    const needsHeading = new RegExp(`^def ${n}\\(`, 'm').test(code) || n === 'GuardBlockError';
+    if (needsHeading) {
+      assert.ok(headings.has(n), `public name ${n} has no heading in docs/api-reference.md (add one, or list it in PY_NOT_DOCUMENTED)`);
+    } else {
+      assert.ok(mentioned(python, n), `public name ${n} is not mentioned in docs/api-reference.md`);
+    }
   }
   for (const n of PY_NOT_DOCUMENTED) assert.ok(all.has(n), `${n} in PY_NOT_DOCUMENTED is no longer exported: remove it from the list`);
 });
