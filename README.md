@@ -71,7 +71,7 @@ Run it yourself, in your own terminal, with no arguments. When an AI agent or a 
 - "running scripts is disabled on this system" on Windows: see the PowerShell note above.
 - `init` only prints steps and changes nothing: an AI agent or a script ran it. Run it yourself in your own terminal.
 - `check` shows **NOT protected**: that line says why and what to run. [What the output means](docs/check.md).
-- You want to undo what `init` changed: `npx -y zn-gate init --revert`.
+- You want to remove zn-gate: `npx -y zn-gate uninstall` shows what it will remove (the Claude Code plugin, zn's hooks, wrapped MCP servers) and asks first. `init --revert` only puts back MCP configs saved before wrapping.
 
 **Then keep your `.env` values in the vault.** With the plugin or the hooks, the agent cannot read `.env` files with real values; move them into zn-gate's encrypted vault, and the file keeps markers such as `__ZN_STRIPE_KEY__`:
 
@@ -140,7 +140,7 @@ Cursor (`~/.cursor/mcp.json`) and other editors: `{ "mcpServers": { "zn-gate": {
 ```bash
 npx -y zn-gate init --dry-run   # preview
 npx -y zn-gate init --wrap-mcp  # wrap (backup first)
-npx -y zn-gate init --revert    # undo
+npx -y zn-gate init --revert    # put back the MCP configs saved before wrapping
 ```
 
 It reads Claude Desktop, Claude Code (`~/.claude.json`), Cursor (`~/.cursor/mcp.json`), Codex CLI (`~/.codex/config.toml`), OpenCode (`~/.config/opencode/opencode.json`) and Antigravity (`~/.gemini/antigravity/mcp_config.json`). [Full list and rules](packages/zn-gate/README.md#wrap-the-mcp-servers-you-already-use).
@@ -421,7 +421,7 @@ For Codex CLI, zn also reviews the model's final answer. By default it only warn
 
 **Which agents are supported?** Any MCP client. `init` can rewrite configs for the agents listed under [Install](#install).
 
-**How do I remove it?** `npx -y zn-gate init --revert` restores your configs from the backup. For a standalone server, remove the `zn-gate` entry from your agent config.
+**How do I remove it?** Run `npx -y zn-gate uninstall` in your own terminal. It lists what it found (the Claude Code plugin, zn's hooks for each agent, wrapped MCP servers), asks before removing, and ends with `zn-gate check`. Your vault is only deleted if you confirm that separately. `npx -y zn-gate uninstall --dry-run` shows the list and changes nothing. `init --revert` is narrower: it only puts back the MCP configs that were saved before `init --wrap-mcp` wrapped them. For a standalone server, remove the `zn-gate` entry from your agent config.
 
 ## Security
 

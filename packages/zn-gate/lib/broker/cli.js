@@ -66,6 +66,7 @@ function makeIo(io = {}) {
     readSecret: io.readSecret,
     confirm: io.confirm,
     human: io.human, // tests: skip the terminal check
+    ancestry: io.ancestry, claude: io.claude, run: io.run, envList: io.envList, // tests (zn-gate uninstall)
   };
 }
 
@@ -502,6 +503,13 @@ const HELP = {
     'Stores secrets in the zn vault so your agent can use them without seeing them.',
     'Run zn secret set NAME and type the value at the hidden prompt (or use --clipboard); values are never passed as arguments.',
   ],
+  'uninstall': [
+    'usage: zn-gate uninstall [--dry-run]',
+    'Removes zn-gate from this computer: the zn-gate plugin of Claude Code, zn\'s hooks (your user and this project),',
+    'and MCP servers wrapped by zn-gate init --wrap-mcp. It shows the plan and asks first; run it in your own terminal.',
+    'The vault is only deleted if you confirm it separately (default no). .env files with markers are left alone.',
+    '  --dry-run   show the plan and change nothing',
+  ],
   'env': [
     'usage: zn env shadow [FILE] | zn env unshadow FILE --backup NAME',
     'shadow moves the secrets of a .env file into the vault and leaves placeholders; unshadow puts them back.',
@@ -552,6 +560,7 @@ async function dispatch(group, args, ioIn) {
       throw deps.znError('ZN_USAGE', 'usage: zn vault log [--since 1h]');
     }
     if (group === 'hooks') return await hooks(args, io);
+    if (group === 'uninstall') return await require('../uninstall').run(args, io);
     throw deps.znError('ZN_USAGE', 'unknown command ' + group);
   } catch (err) {
     io.stderr.write('zn ' + group + ': ' + humanError(err) + '\n');
