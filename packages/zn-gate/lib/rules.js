@@ -8,7 +8,7 @@ const path = require('path');
  * RULES_VERSION: 2026-10-19.7
  */
 
-const RULES_VERSION = '2026-10-19.7';
+const RULES_VERSION = '2026-10-20.4';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -1079,15 +1079,17 @@ function redactWith(text, patterns) {
 // head + tail view used by evaluate(), it is scanned in windows of
 // MAX_SCAN_CHARS that overlap by SCAN_WINDOW_OVERLAP, so a payload in the
 // middle is not skipped. Past MAX_TOOL_RESULT_SCAN_CHARS only the last window
-// is added and the result is marked `truncated: true`. A match that spans more
-// than SCAN_WINDOW_OVERLAP characters across a window boundary can be missed.
+// is added and the result is marked `truncated: true`; options.maxScanChars
+// raises that limit (the MCP shield scans more). A match that spans more than
+// SCAN_WINDOW_OVERLAP characters across a window boundary can be missed.
 const SCAN_WINDOW_OVERLAP = 4 * 1024;
 const MAX_TOOL_RESULT_SCAN_CHARS = 4 * 1024 * 1024;
 
 function scanWindows(text, options = {}) {
   if (typeof text !== 'string' || text.length <= MAX_SCAN_CHARS) return evaluate(text, options);
   const step = MAX_SCAN_CHARS - SCAN_WINDOW_OVERLAP;
-  const limit = Math.min(text.length, MAX_TOOL_RESULT_SCAN_CHARS);
+  const cap = Number.isFinite(options.maxScanChars) && options.maxScanChars > 0 ? options.maxScanChars : MAX_TOOL_RESULT_SCAN_CHARS;
+  const limit = Math.min(text.length, cap);
   let res = null;
   let advisory = null;
   for (let start = 0; ; start += step) {
