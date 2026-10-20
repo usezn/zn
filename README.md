@@ -346,25 +346,27 @@ jobs:
           sarif_file: ${{ steps.zn.outputs.sarif-file }}
 ```
 
+The `audit` mode, `format: sarif` and the `agents` input need a zn-gate version of 1.6.0 or later. The default `version` is already newer, so this only matters if you set an older version.
+
 | Input | Default | Description |
 |---|---|---|
 | `version` | `1.12.0` | Exact `zn-gate` version to install. Ranges and `latest` are refused. `audit` needs 1.6.0 or later. |
-| `mode` | `scan` | Requires a release of the action that includes audit mode (see the [CHANGELOG](CHANGELOG.md)). `scan`, `audit` or `both`. |
+| `mode` | `scan` | `scan`, `audit` or `both`. |
 | `path` | `.` | File or directory to scan. `audit` needs a directory: with `both` a file skips the audit with a warning; with `audit` the step fails. |
-| `fail-on-threat` | `true` | Fail the step on findings. For `scan`, anything found (an injection trap or a secret); for `audit`, findings at or above `severity-threshold`. Set `false` to report only. Any value other than `true` or `false` fails the step. `true` or `false`, in any case; other values fail the step. |
-| `severity-threshold` | `high` | Requires a release of the action that includes audit mode (see the [CHANGELOG](CHANGELOG.md)). Audit only: lowest severity that fails the step when `fail-on-threat` is `true`: `critical`, `high` (high and critical), `medium` or `low`. The scan has no severities, so any scan finding fails. |
-| `fail-on` | empty | Requires a release of the action that includes audit mode (see the [CHANGELOG](CHANGELOG.md)). Audit only: lowest severity that fails the step (`low`, `medium`, `high`, `critical`, `none`), passed as is to `zn audit --fail-on`. When set, it overrides `fail-on-threat` and `severity-threshold` for the audit. |
-| `agents` | empty | Requires a release of the action that includes audit mode (see the [CHANGELOG](CHANGELOG.md)). Audit only: comma-separated agents to audit (`zn audit --agents`). Empty audits all supported agents. |
-| `format` | `github` | `github` (inline annotations), `text`, `json` or `sarif` (`sarif` requires a release of the action that includes audit mode). |
-| `sarif-file` | empty | Requires a release of the action that includes audit mode (see the [CHANGELOG](CHANGELOG.md)). With `format: sarif`, where to write the file: inside the workspace or the runner temp directory, and not a symbolic link or under one. Empty writes `zn-gate.sarif` in a new directory under the runner temp directory. |
+| `fail-on-threat` | `true` | Fail the step on findings. For `scan`, anything found (an injection trap or a secret); for `audit`, findings at or above `severity-threshold`. Set `false` to report only. `true` or `false`, in any case; other values fail the step. |
+| `severity-threshold` | `high` | Audit only: lowest severity that fails the step when `fail-on-threat` is `true`: `critical`, `high` (high and critical), `medium` or `low`. The scan has no severities, so any scan finding fails. |
+| `fail-on` | empty | Audit only: lowest severity that fails the step (`low`, `medium`, `high`, `critical`, `none`), passed as is to `zn audit --fail-on`. When set, it overrides `fail-on-threat` and `severity-threshold` for the audit. |
+| `agents` | empty | Audit only: comma-separated agents to audit (`zn audit --agents`). Empty audits all supported agents. |
+| `format` | `github` | `github` (inline annotations), `text`, `json` or `sarif`. |
+| `sarif-file` | empty | With `format: sarif`, where to write the file: inside the workspace or the runner temp directory, and not a symbolic link or under one. Empty writes `zn-gate.sarif` in a new directory under the runner temp directory. |
 | `package-sha256` | empty | Requires v1.5.0 or later of the action. SHA-256 of the PyPI wheel for `version`, as listed on PyPI. When set, the install fails if the downloaded file has a different hash. Older releases of the action ignore this input with only a warning, so no hash is checked. |
-| `npm-integrity` | empty | Requires a release of the action that includes audit mode (see the [CHANGELOG](CHANGELOG.md)). Integrity string (`sha512-...`) of the npm tarball for `version`. When set, the audit fails if the tarball has a different hash. |
+| `npm-integrity` | empty | Integrity string (`sha512-...`) of the npm tarball for `version`. When set, the audit fails if the tarball has a different hash. |
 
 | Output | Description |
 |---|---|
-| `sarif-file` | Requires a release of the action that includes audit mode (see the [CHANGELOG](CHANGELOG.md)). Path of the SARIF file (`format: sarif` only). Empty if no check produced a report (for example, the scan ended in an error) or the file could not be written. |
+| `sarif-file` | Path of the SARIF file (`format: sarif` only). Empty if no check produced a report (for example, the scan ended in an error) or the file could not be written. |
 | `scan-exit-code` | Exit code of the scan: 0 clean (or `fail-on-threat: 'false'`), 1 something found (an injection trap or a secret), 2 error. Empty if the scan did not run. |
-| `audit-exit-code` | Requires a release of the action that includes audit mode (see the [CHANGELOG](CHANGELOG.md)). Exit code of the audit: 0 clean, 1 findings at or above `fail-on`, 2 error. Empty if it did not run. |
+| `audit-exit-code` | Exit code of the audit: 0 clean, 1 findings at or above `fail-on`, 2 error. Empty if it did not run. |
 
 The scan finds more secret types with each release (1.9.1 added secrets passed as command-line flags and assigned to names such as `password` or `api_key`), so a job that fails on findings can start failing on files that passed before: pin `version` and read the findings before you update it.
 
