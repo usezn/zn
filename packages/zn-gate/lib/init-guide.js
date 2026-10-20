@@ -191,8 +191,48 @@ async function hooksWorkNextToPlugin(opts, id) {
 /* Run one step in the user's terminal (inherits stdio). Absolute program path and fixed arguments only. */
 function runStep(step, env) {
   const [file, args] = step.run;
-  const r = spawnProgram(file, args, env, { stdio: 'inherit' });
-  return !r.error && r.status === 0;
+  // stderr is copied to the terminal as it is, and kept to tell a permission failure from any other.
+  const r = spawnProgram(file, args, env, { stdio: ['inherit', 'inherit', 'pipe'], encoding: 'utf8' });
+  if (r.stderr) process.stderr.write(r.stderr);
+  return { ok: !r.error && r.status === 0, stderr: String(r.stderr || '') };
+}
+
+const isPosix = process.platform !== 'win32';
+
+/* The folder `npm install -g` writes to, when known. */
+function globalPrefix(opts, step) {
+  if (opts.prefix) return opts.prefix;
+  if (opts.global && opts.global.prefix) return opts.global.prefix;
+  try { return globalInstall(opts.env || process.env).prefix || ''; } catch { return ''; }
+}
+
+/* True when npm could not write its global folder: EACCES/EPERM in its output, or that folder is not writable. POSIX only. */
+function permissionFailure(stderr, prefix) {
+  if (!isPosix) return false;
+  if (/\b(EACCES|EPERM)\b|permission denied/i.test(String(stderr || ''))) return true;
+  if (!prefix) return false;
+  try { fs.accessSync(prefix, fs.constants.W_OK); return false; } catch (e) { return e.code === 'EACCES' || e.code === 'EPERM'; }
+}
+
+/* The next step after a permission failure: never sudo; same commands as https://usezn.com/docs/install. */
+function permissionAdvice({ prefix, env, todo, shell }) {
+  const sh = shell || String((env && env.SHELL) || '');
+  const profile = /zsh/.test(sh) || process.platform === 'darwin' ? '~/.zshrc' : '~/.bashrc';
+  const left = (todo || []).filter((i) => i.steps.some((x) => x.needsGlobal)).map((i) => i.name);
+  const lines = [
+    '  that did not finish: npm is not allowed to write to its global folder' + (prefix ? ' (' + prefix + ')' : '') + '.',
+    left.length
+      ? '  Until zn-gate is installed for your user, ' + left.join(', ') + ' stay' + (left.length === 1 ? 's' : '') + ' unprotected.'
+      : '  Until zn-gate is installed for your user, the agents above that need it stay unprotected.',
+    '  Fix it without administrator rights, in your own terminal:',
+    '    mkdir -p ~/.npm-global && npm config set prefix ~/.npm-global',
+    '    echo \'export PATH="$HOME/.npm-global/bin:$PATH"\' >> ' + profile,
+    '  Then open a new terminal and run: npx -y zn-gate init',
+    '  Or install Node.js with a version manager such as nvm (https://github.com/nvm-sh/nvm), which needs no special permissions.',
+    '  More: https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally',
+    ''
+  ];
+  return lines.join(String.fromCharCode(10)) + String.fromCharCode(10);
 }
 
 /**
@@ -246,7 +286,12 @@ async function guide(opts = {}) {
   for (const s of setup) {
     if (!s.run) { w(`First, ${s.label}: ${s.manual}\n`); skipped++; break; }
     if (!(await ask(`${s.label}: run \`${s.manual}\`?`))) { w(`  skipped. You can run it later: ${s.manual}\n`); skipped++; break; }
-    if (!run(s, env)) { w(`  that did not finish. Run it yourself: ${s.manual}\n`); skipped++; break; }
+    const res = run(s, env);
+    if (!(res === true || (res && res.ok))) {
+      if (s.run && permissionFailure(res && res.stderr, globalPrefix(opts, s))) w(permissionAdvice({ prefix: globalPrefix(opts, s), env, todo, shell: opts.shell }));
+      else w(`  that did not finish. Run it yourself: ${s.manual}\n`);
+      skipped++; break;
+    }
     globalReady = true;
   }
   let glob = null;
@@ -279,4 +324,4 @@ async function guide(opts = {}) {
   return skipped ? 1 : code;
 }
 
-module.exports = { guide, plan, fromTemporaryCopy, _internal: { findProgram, globalInstall, cmp, runStep, spawnProgram } };
+module.exports = { guide, plan, fromTemporaryCopy, _internal: { permissionFailure, permissionAdvice, findProgram, globalInstall, cmp, runStep, spawnProgram } };
