@@ -37,6 +37,7 @@ const { fileURLToPath } = require('url');
 const os = require('os');
 const path = require('path');
 const cfg = require('./config-file');
+const messages = require('../messages');
 
 const id = 'antigravity';
 const HOOK_NAME = 'zn-gate';
@@ -109,13 +110,13 @@ function normalize(raw) {
   if (mcp) {
     const mp = pathsOf(args);
     const e = { ...ev, tool: 'mcp', mcp: { server: mcp[1], tool: mcp[2] }, input: { args, paths: mp.paths, texts: [] } };
-    if (mp.bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
+    if (mp.bad) e.unreadable = messages.UNREADABLE_FILE;
     return e;
   }
   const cmd = firstString(args, COMMAND_KEYS);
   if (SHELL_TOOLS.has(toolName) || (!READ_TOOLS.has(toolName) && !WRITE_TOOLS.has(toolName) && cmd !== undefined)) {
     const e = { ...ev, tool: 'bash', input: { command: cmd || '', texts: [] } };
-    if (cmd === undefined) e.unreadable = 'zn: could not read the command of this call, so zn cannot check it.';
+    if (cmd === undefined) e.unreadable = messages.unreadableCall('the command');
     return e;
   }
   const { paths, bad } = pathsOf(args);
@@ -124,15 +125,15 @@ function normalize(raw) {
   const kind = toolName === 'view_file' ? 'read' : toolName === 'grep_search' ? 'grep' : WRITE_TOOLS.has(toolName) ? 'write' : null;
   if (kind) {
     const e = { ...ev, tool: kind, input: searchDir ? { ...input, scanDir: searchDir } : input };
-    if (bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
-    else if ((kind === 'read' || kind === 'write') && !paths.length) e.unreadable = 'zn: could not read the file this call uses, so zn cannot check it. Name the file explicitly.';
+    if (bad) e.unreadable = messages.UNREADABLE_FILE;
+    else if ((kind === 'read' || kind === 'write') && !paths.length) e.unreadable = messages.UNREADABLE_FILE;
     return e;
   }
   // Any other tool that names a file (a viewer, a reader, a future tool) gets the read and write checks on
   // every path in it. list_dir and find_by_name show names only, and tools with no path get no opinion.
   if (!READ_TOOLS.has(toolName) && (paths.length || bad)) {
     const e = { ...ev, tool: 'fileaccess', input };
-    if (bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
+    if (bad) e.unreadable = messages.UNREADABLE_FILE;
     return e;
   }
   return { ...ev, tool: toolName || 'unknown', input: { texts: [] } };

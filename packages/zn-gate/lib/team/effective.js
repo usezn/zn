@@ -35,6 +35,7 @@
  */
 
 const { INVISIBLE } = require('../vault/confirm');
+const messages = require('../messages');
 
 const RESTRICTIVE_MODE = 'proxy';
 const DEFAULT_ALLOW_IN = ['header'];
@@ -181,7 +182,7 @@ function warnNotice(name, reason) {
     ? reason.replace(INVISIBLE_RE, ' ').replace(/"/g, "'").replace(/\s+/g, ' ').trim().slice(0, 200).trim()
     : '';
   return 'zn: your team policy would block ' + name + ' here' + (why ? ' (policy note: "' + why + '")' : '') +
-    '. It was allowed and recorded for your organization.';
+    messages.TEAM_WARN_END;
 }
 
 /**

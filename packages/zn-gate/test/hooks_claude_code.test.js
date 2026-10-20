@@ -652,8 +652,8 @@ test('the prompt hook blocks the prompt when it cannot run; tool hooks do not', 
 test('OpenCode plugin: a hook that fails or times out blocks the call and the message', () => {
   const src = require('../lib/agents/opencode').pluginSource({ scope: 'user', nodePath: '/usr/bin/node', runnerPath: '/opt/zn/lib/hooks/runner.js' });
   assert.match(src, /action: "error", message: "timeout"/);
-  assert.match(src, /if \(r\.action === "error"\) throw new Error\("zn: the secret scrubber is not working \(" \+ r\.message \+ "\); call blocked"\)/);
-  assert.match(src, /if \(r\.action === "error"\) throw new Error\("zn: the secret scrubber is not working \(" \+ r\.message \+ "\); message not sent"\)/);
+  assert.ok(src.includes('throw new Error(' + JSON.stringify(require('../lib/messages').OPENCODE_CALL_BLOCKED) + ')'));
+  assert.ok(src.includes('throw new Error(' + JSON.stringify(require('../lib/messages').OPENCODE_MESSAGE_BLOCKED) + ')'));
 });
 
 /* zn Team: restoring a named marker into a file follows the organization policy. */

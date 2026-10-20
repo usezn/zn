@@ -369,7 +369,7 @@ test('secrets_http_request: a warn rule sends the request, tells the agent and t
     const r = await call(srv, 'secrets_http_request', { method: 'GET', url: 'http://127.0.0.1:' + port + '/x', headers: { Authorization: 'Bearer __ZN_GITHUB_TOKEN__' } });
     assert.equal(r.isError, false, JSON.stringify(r.data));
     assert.equal(seen.length, 1);
-    const notice = 'zn: your team policy would block GITHUB_TOKEN here (policy note: "GitHub tokens need review"). It was allowed and recorded for your organization.';
+    const notice = 'zn: your team policy would block GITHUB_TOKEN here (policy note: "GitHub tokens need review"). It was allowed and recorded for your organization. Ask your administrator if this should be allowed.';
     assert.equal(r.data.notice, notice);
     assert.deepEqual(told, [notice]);
     const uses = vault.auditLog.filter((e) => e.secret === 'GITHUB_TOKEN' && e.tool === 'mcp:secrets_http_request');

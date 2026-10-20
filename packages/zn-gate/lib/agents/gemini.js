@@ -43,6 +43,7 @@ const { fileURLToPath } = require('url');
 const os = require('os');
 const path = require('path');
 const cfg = require('./config-file');
+const messages = require('../messages');
 const { whichSync } = require('../broker/markers');
 
 const id = 'gemini';
@@ -109,7 +110,7 @@ function normalize(raw) {
   const cwd = typeof args.dir_path === 'string' && args.dir_path && !/[\r\n]/.test(args.dir_path) && SHELL_TOOLS.has(toolName)
     ? path.resolve(base.cwd, args.dir_path) : base.cwd;
   const ev = { ...base, cwd, event: 'pre_tool', toolName, rawArgs: args };
-  const unreadable = (what) => ({ ...ev, tool: 'unreadable', input: { texts: [] }, unreadable: 'zn: could not read ' + what + ' of this call, so zn cannot check it.' });
+  const unreadable = (what) => ({ ...ev, tool: 'unreadable', input: { texts: [] }, unreadable: messages.unreadableCall(what) });
 
   if (!toolName) return unreadable('the tool name');
 
@@ -120,7 +121,7 @@ function normalize(raw) {
     const tool = typeof mc.tool_name === 'string' && mc.tool_name ? mc.tool_name : mcp[2];
     const mp = pathsOf(args);
     const e = { ...ev, tool: 'mcp', mcp: { server, tool }, input: { args, paths: mp.paths, texts: [] } };
-    if (mp.bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
+    if (mp.bad) e.unreadable = messages.UNREADABLE_FILE;
     return e;
   }
   if (SHELL_TOOLS.has(toolName)) {
@@ -137,20 +138,20 @@ function normalize(raw) {
   if (GREP_TOOLS.has(toolName)) {
     const dir = typeof args.dir_path === 'string' && args.dir_path ? args.dir_path : '';
     const e = { ...ev, tool: 'grep', input: { ...input, scanDir: dir ? path.resolve(base.cwd, dir) : base.cwd } };
-    if (bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
+    if (bad) e.unreadable = messages.UNREADABLE_FILE;
     return e;
   }
   const kind = READ_TOOLS.has(toolName) || toolName === 'read_many_files' ? 'read' : WRITE_TOOLS.has(toolName) ? 'write' : null;
   if (kind) {
     const e = { ...ev, tool: kind, input };
-    if (bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
+    if (bad) e.unreadable = messages.UNREADABLE_FILE;
     else if (!paths.length) e.unreadable = 'zn: could not read the file this call uses, so zn cannot check it. Name the file explicitly.';
     return e;
   }
   // Any other tool that names a file (a future tool, an extension) gets the read and write checks on every path.
   if (!NAMES_ONLY_TOOLS.has(toolName) && (paths.length || bad)) {
     const e = { ...ev, tool: 'fileaccess', input };
-    if (bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
+    if (bad) e.unreadable = messages.UNREADABLE_FILE;
     return e;
   }
   return { ...ev, tool: toolName.toLowerCase(), input: { texts: [] } };

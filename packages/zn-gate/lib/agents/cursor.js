@@ -40,6 +40,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const cfg = require('./config-file');
+const messages = require('../messages');
 const { whichSync } = require('../broker/markers');
 
 const id = 'cursor';
@@ -110,7 +111,7 @@ function respond(d) {
   if (h === 'preToolUse') {
     if (d.decision === 'deny') return { permission: 'deny', user_message: d.message || 'Blocked by zn', agent_message: d.message || 'Blocked by zn' };
     if (ev.tool === 'write' && !ev.input.path) {
-      const msg = 'zn: could not read the file this call writes, so zn cannot check it. Name the file explicitly.';
+      const msg = messages.UNREADABLE_FILE;
       return { permission: 'deny', user_message: msg, agent_message: msg };
     }
     // No opinion, not "allow": an allow could skip Cursor's own confirmations.

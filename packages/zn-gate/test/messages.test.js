@@ -85,3 +85,21 @@ test('the callers use the shared messages', () => {
   assert.throws(() => parseDuration('5x'), { message: m.invalidDuration('5x') });
   assert.throws(() => parseDuration('1s'), { message: m.DURATION_RANGE });
 });
+
+test('agent hook messages: plain cause plus a next step', () => {
+  assert.equal(m.UNREADABLE_FILE,
+    'zn could not tell which file this call uses, so it blocked it. Next step: name the file explicitly in your request. If it keeps happening, run `zn-gate check`.');
+  assert.equal(m.unreadableCall('the command'),
+    'zn could not read the command of this call, so it blocked it. Next step: run `zn-gate check`. If it keeps happening, update zn-gate with `npm install -g zn-gate@latest`.');
+  assert.equal(m.OPENCODE_CALL_BLOCKED,
+    'zn could not check this call for secrets, so it was blocked. Next step: run `zn-gate check`, then `zn hooks install opencode`.');
+  assert.equal(m.OPENCODE_MESSAGE_BLOCKED,
+    'zn could not check this message for secrets, so it was not sent. Next step: run `zn-gate check`, then `zn hooks install opencode`.');
+  assert.equal(m.OPENCODE_OUTPUT_WITHHELD,
+    '[zn: output withheld because zn could not check it for secrets. Run `zn-gate check`.]');
+  assert.equal(m.TEAM_WARN_END,
+    '. It was allowed and recorded for your organization. Ask your administrator if this should be allowed.');
+  for (const t of [m.UNREADABLE_FILE, m.OPENCODE_CALL_BLOCKED, m.OPENCODE_MESSAGE_BLOCKED, m.OPENCODE_OUTPUT_WITHHELD]) {
+    assert.ok(!/scrubber|file address|cannot check/.test(t), t);
+  }
+});

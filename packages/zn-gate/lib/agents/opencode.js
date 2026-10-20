@@ -43,6 +43,7 @@ const path = require('path');
 const { whichSync } = require('../broker/markers');
 const { writeFileAtomic } = require('../broker/files');
 const cfg = require('./config-file');
+const messages = require('../messages');
 const { patchScan, PATCH_SCAN_CAP } = require('./codex');
 
 const id = 'opencode';
@@ -224,7 +225,7 @@ export const ZnGate = async ({ directory }) => ({
   "tool.execute.before": async (input, output) => {
     const r = await runHook({ hook: "tool.execute.before", tool: input.tool, sessionID: input.sessionID, cwd: directory, args: output.args, shell: SHELL, platform: process.platform });
     if (r.action === "deny") throw new Error(r.message);
-    if (r.action === "error") throw new Error("zn: the secret scrubber is not working (" + r.message + "); call blocked");
+    if (r.action === "error") throw new Error(${JSON.stringify(messages.OPENCODE_CALL_BLOCKED)});
     if (r.action === "args" && r.args) for (const [k, v] of Object.entries(r.args)) output.args[k] = v;
   },
   "tool.execute.after": async (input, output) => {
@@ -236,7 +237,7 @@ export const ZnGate = async ({ directory }) => ({
       content: content ? content.map((c) => (c && typeof c.text === "string" ? { type: c.type, text: c.text } : { type: c && c.type })) : undefined,
     });
     if (r.action === "error") {
-      if (typeof output.output === "string") output.output = "[zn: output withheld: the secret scrubber is not working]";
+      if (typeof output.output === "string") output.output = ${JSON.stringify(messages.OPENCODE_OUTPUT_WITHHELD)};
       if (output.metadata && typeof output.metadata === "object") output.metadata = {};
       if (content) for (const c of content) if (c && typeof c.text === "string") c.text = "[zn: output withheld]";
       return;
@@ -252,7 +253,7 @@ export const ZnGate = async ({ directory }) => ({
     if (!prompt) return;
     const r = await runHook({ hook: "chat.message", sessionID: input.sessionID, cwd: directory, prompt });
     if (r.action === "deny") throw new Error(r.message);
-    if (r.action === "error") throw new Error("zn: the secret scrubber is not working (" + r.message + "); message not sent");
+    if (r.action === "error") throw new Error(${JSON.stringify(messages.OPENCODE_MESSAGE_BLOCKED)});
   },
 });
 `;

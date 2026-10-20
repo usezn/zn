@@ -285,7 +285,7 @@ test('org policy: a warn rule restores, adds the notice and records one "warn"',
   const r = await E.detokenize('A=__ZN_STAGING_KEY__\nB=__ZN_STAGING_KEY__', ctx(vault, { destination: 'write_ignored' }));
   assert.strictEqual(r.text, 'A=' + value + '\nB=' + value);
   assert.deepStrictEqual(r.restored, ['__ZN_STAGING_KEY__']);
-  assert.deepStrictEqual(r.notices, ['zn: your team policy would block STAGING_KEY here (policy note: "Staging keys need review"). It was allowed and recorded for your organization.']);
+  assert.deepStrictEqual(r.notices, ['zn: your team policy would block STAGING_KEY here (policy note: "Staging keys need review"). It was allowed and recorded for your organization. Ask your administrator if this should be allowed.']);
   assert.deepStrictEqual(vault.audits.map((a) => [a.decision, a.reason, a.secret]), [['warn', 'policy:warn', 'STAGING_KEY']]);
 });
 
@@ -332,7 +332,7 @@ test('org policy: a warn rule also applies to a scrubber token of a stored secre
   const r = await E.detokenize('A=__ZN_API_KEY_1__\nB=__ZN_API_KEY_1__', ctx(vault, { destination: 'write_ignored' }));
   assert.strictEqual(r.text, 'A=' + value + '\nB=' + value);
   assert.deepStrictEqual(r.restored, ['__ZN_API_KEY_1__']);
-  assert.deepStrictEqual(r.notices, ['zn: your team policy would block STAGING_KEY here (policy note: "Staging keys need review"). It was allowed and recorded for your organization.']);
+  assert.deepStrictEqual(r.notices, ['zn: your team policy would block STAGING_KEY here (policy note: "Staging keys need review"). It was allowed and recorded for your organization. Ask your administrator if this should be allowed.']);
   assert.deepStrictEqual(audits.map((a) => [a.decision, a.reason, a.mode]), [['warn', 'policy:warn', 'detected']]);
   // A name that is not a plain secret name is not shown: the token name is used instead.
   const odd = { ...vault, async resolve() { return { value, policy: 1, warn: true, warnName: 'bad name"' }; } };

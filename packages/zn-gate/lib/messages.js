@@ -118,7 +118,27 @@ function teamJoinFailed(why) {
   return 'join failed (' + why + '). This machine was not connected.';
 }
 
+/* ----------------------- agent hooks: calls zn cannot read ----------------------- */
+
+const UNREADABLE_FILE = 'zn could not tell which file this call uses, so it blocked it. ' +
+  'Next step: name the file explicitly in your request. If it keeps happening, run `zn-gate check`.';
+
+/* what: "the command", "the tool name"... of a call the agent sent in a shape zn does not know. */
+function unreadableCall(what) {
+  return 'zn could not read ' + what + ' of this call, so it blocked it. ' +
+    'Next step: run `zn-gate check`. If it keeps happening, update zn-gate with `npm install -g zn-gate@latest`.';
+}
+
+/* The secret check did not run, so the call, the message or the output is held back (fail closed). */
+const SECRETS_CHECK_STEP = 'Next step: run `zn-gate check`, then `zn hooks install opencode`.';
+const OPENCODE_CALL_BLOCKED = 'zn could not check this call for secrets, so it was blocked. ' + SECRETS_CHECK_STEP;
+const OPENCODE_MESSAGE_BLOCKED = 'zn could not check this message for secrets, so it was not sent. ' + SECRETS_CHECK_STEP;
+const OPENCODE_OUTPUT_WITHHELD = '[zn: output withheld because zn could not check it for secrets. Run `zn-gate check`.]';
+
+/* The end of the line that says a team policy rule would have blocked a secret. */
+const TEAM_WARN_END = '. It was allowed and recorded for your organization. Ask your administrator if this should be allowed.';
 module.exports = {
+  UNREADABLE_FILE, unreadableCall, OPENCODE_CALL_BLOCKED, OPENCODE_MESSAGE_BLOCKED, OPENCODE_OUTPUT_WITHHELD, TEAM_WARN_END,
   agentNote, agentRefusal, notInteractive, PROMPT_CANCELLED, CLIPBOARD_NO_POWERSHELL, clipboardUnreadable,
   invalidDuration, DURATION_RANGE, unknownBackend, UNLOCK_NEEDS_TERMINAL, FOREGROUND_NEEDS_TERMINAL,
   PASSPHRASE_NEEDS_TERMINAL, PASSPHRASE_CANCELLED, PASSPHRASE_MISMATCH, FORGET_LOCK_FIRST,
