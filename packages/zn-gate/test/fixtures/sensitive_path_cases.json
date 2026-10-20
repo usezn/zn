@@ -47,7 +47,7 @@
       "expect": "block"
     },
     {
-      "kind": "base",
+      "kind": "template",
       "path": ".env.example",
       "expect": "allow"
     },
@@ -289,6 +289,41 @@
     {
       "kind": "short",
       "path": "C:\\PROGRA~1\\example\\.env",
+      "expect": "block"
+    },
+    {
+      "kind": "template",
+      "path": ".env.sample",
+      "expect": "allow"
+    },
+    {
+      "kind": "template",
+      "path": ".env.template",
+      "expect": "allow"
+    },
+    {
+      "kind": "template",
+      "path": ".env.dist",
+      "expect": "allow"
+    },
+    {
+      "kind": "template",
+      "path": ".env.defaults",
+      "expect": "allow"
+    },
+    {
+      "kind": "template",
+      "path": ".env.schema",
+      "expect": "allow"
+    },
+    {
+      "kind": "base",
+      "path": ".env.local",
+      "expect": "block"
+    },
+    {
+      "kind": "base",
+      "path": ".env.production",
       "expect": "block"
     }
   ]

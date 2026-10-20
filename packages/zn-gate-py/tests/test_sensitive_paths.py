@@ -31,7 +31,8 @@ class TestSensitivePathTable(unittest.TestCase):
                         # Other rules may still flag a shell command (for example
                         # "cat" of an .env template); this table checks the path rule.
                         self.assertNotEqual(res.rule, "path:sensitive_file")
-                        if tool == "read_file":
+                        # An .env template is not a credential for any rule, in a shell command too.
+                        if tool == "read_file" or case["kind"] == "template":
                             self.assertEqual(res.verdict, "allow", res.rule)
 
 

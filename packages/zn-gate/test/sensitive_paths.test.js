@@ -12,7 +12,7 @@ const { sensitivePathView } = require('../lib/rules');
 const { cases } = require(path.join(__dirname, 'fixtures', 'sensitive_path_cases.json'));
 
 test('every protected path is blocked; the path rule lets the others pass', () => {
-  for (const { path: p, expect } of cases) {
+  for (const { kind, path: p, expect } of cases) {
     for (const [tool, args] of [['read_file', { path: p }], ['shell', { command: 'cat ' + p }]]) {
       const res = checkToolCall(tool, args);
       const what = `${tool} ${JSON.stringify(p)}: ${res.verdict} (${res.rule})`;
@@ -22,7 +22,8 @@ test('every protected path is blocked; the path rule lets the others pass', () =
         // Other rules may still flag a shell command (for example "cat" of an
         // .env template); this table only checks the path rule.
         assert.notStrictEqual(res.rule, 'path:sensitive_file', what);
-        if (tool === 'read_file') assert.strictEqual(res.verdict, 'allow', what);
+        // An .env template is not a credential for any rule, in a shell command too.
+        if (tool === 'read_file' || kind === 'template') assert.strictEqual(res.verdict, 'allow', what);
       }
     }
   }
