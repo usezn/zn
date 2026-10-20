@@ -250,6 +250,17 @@ jobs:
         if: ${{ !cancelled() && steps.python-tools.outcome == 'success' }}
         working-directory: packages/zn-gate-py
         run: python -m mypy
+      - name: Run mypy --strict on the public API
+        if: ${{ !cancelled() && steps.python-tools.outcome == 'success' }}
+        # Blocking. The modules behind everything in zn_gate.__all__ are checked in
+        # strict mode, together with a file of type-level assertions that fails to
+        # type-check if a public signature changes shape.
+        working-directory: packages/zn-gate-py
+        run: >-
+          python -m mypy --strict
+          src/zn_gate/__init__.py src/zn_gate/rules.py src/zn_gate/guard.py
+          src/zn_gate/client.py src/zn_gate/evidence.py
+          typing_check/check_public_api.py
 
   pack-node:
     name: npm package (pack, inspect, install)
