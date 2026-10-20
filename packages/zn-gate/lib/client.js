@@ -5,6 +5,7 @@ const http = require('http');
 const { URL } = require('url');
 const { evaluate, redactSecrets, sanitizeToolResult, RULES_VERSION } = require('./rules');
 const { checkCommand } = require('./destructive');
+const { checkToolCall, guardTool, GuardBlockError } = require('./guard');
 let PKG_VERSION = '1.6.0';
 try {
   PKG_VERSION = require('../package.json').version || '1.6.0';
@@ -265,11 +266,27 @@ async function checkToolResult(toolName, content, options = {}) {
   };
 }
 
+// The evidence ledger is loaded on first use, so requiring the client stays light.
+function verifyEvidenceLedger(...args) {
+  return require('./evidence').verifyEvidenceLedger(...args);
+}
+
+function logEvidence(...args) {
+  return require('./evidence').logEvidence(...args);
+}
+
 module.exports = {
   usableApiKey,
   analyze,
   analyzeLocal,
   checkToolResult,
+  checkToolCall,
+  guardTool,
+  GuardBlockError,
+  sanitizeToolResult,
+  redactSecrets,
+  verifyEvidenceLedger,
+  logEvidence,
   isCloudEnabled,
   longInputMode,
   LONG_INPUT_MIN_CHARS,

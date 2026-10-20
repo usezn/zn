@@ -19,6 +19,7 @@ from zn_gate import client
 from zn_gate.guard import (
     GuardBlockError,
     block_message,
+    _NestingTooDeep,
     _extract_strings,
     check_tool_call,
     check_tool_result,
@@ -269,14 +270,15 @@ class TestAnalyzeFallbacks(_EnvCase):
 
 class TestExtractStrings(unittest.TestCase):
     def test_depth_limit_and_types(self):
-        self.assertEqual(_extract_strings("abc", max_depth=0), [])
-        self.assertEqual(_extract_strings(["a", ("b",), {"k": "v"}, 5, None, b"x"]), ["a", "b", "k", "v"])
+        self.assertEqual(_extract_strings("abc", max_depth=0), ["abc"])
+        self.assertEqual(_extract_strings(["a", ("b",), {"k": "v"}, 5, None, b"x"]), ["a", "b", "k", "v", "x"])
         self.assertEqual(sorted(_extract_strings({"s": {"x"}})), ["s", "x"])
         self.assertEqual(_extract_strings({1: "only-value"}), ["only-value"])
         nested = "leaf"
         for _ in range(20):
             nested = [nested]
-        self.assertEqual(_extract_strings(nested), [])
+        with self.assertRaises(_NestingTooDeep):
+            _extract_strings(nested)
         self.assertEqual(_extract_strings(None), [])
 
 

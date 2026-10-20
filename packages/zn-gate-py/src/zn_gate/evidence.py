@@ -216,6 +216,49 @@ def _acquire_lock(lock_path: str, wait: float = LOCK_WAIT) -> str:
         delay = min(delay * 2, 0.05)
 
 
+# Test seams: they let a test run code between two steps of the break protocol.
+_test_hooks: Dict[str, Any] = {}
+
+
+def _release_mutex(mutex: str, token: str) -> None:
+    """The break mutex holds its owner's token, like the lock: a breaker only deletes the mutex
+    while it is still its own. If it took longer than the stale window, another breaker may have
+    reclaimed it and created a new one, and deleting by path would remove that one."""
+    if _read_lock_token(mutex) == token:
+        try:
+            os.unlink(mutex)
+        except OSError:
+            pass
+
+
+def _reclaim_stale_mutex(mutex: str, token: str) -> None:
+    """A mutex older than the stale window belongs to a breaker that died. Move it aside first
+    (never delete by the shared path: a new mutex may have been created since we looked), and put
+    it back with link() if what we moved turns out to be fresh."""
+    try:
+        if abs(time.time() - os.stat(mutex).st_mtime) <= LOCK_STALE:
+            return
+        if _test_hooks.get("before_mutex_reclaim"):
+            _test_hooks["before_mutex_reclaim"](mutex)
+        aside = f"{mutex}-reclaim-{token.replace(':', '-')}"
+        os.rename(mutex, aside)
+        try:
+            fresh = abs(time.time() - os.stat(aside).st_mtime) <= LOCK_STALE
+        except OSError:
+            fresh = False
+        if fresh:
+            try:
+                os.link(aside, mutex)
+            except OSError:
+                pass  # another mutex exists again: its owner checks its token
+        try:
+            os.unlink(aside)
+        except OSError:
+            pass
+    except OSError:
+        pass  # gone or busy: wait and retry
+
+
 def _break_stale_lock(lock_path: str, token: str) -> bool:
     """Breaks a stale lock. Breakers take a short-lived `<log>.lock.break` mutex first and judge the
     lock stale again inside it: without it, a breaker that judged the old lock stale could rename
@@ -226,17 +269,19 @@ def _break_stale_lock(lock_path: str, token: str) -> bool:
         fd = os.open(mutex, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except OSError:
         # Another breaker is working. A mutex left by a dead process is removed after a while.
-        try:
-            if abs(time.time() - os.stat(mutex).st_mtime) > LOCK_STALE:
-                os.unlink(mutex)
-        except OSError:
-            pass  # gone or busy: wait and retry
+        _reclaim_stale_mutex(mutex, token)
         return False
+    try:
+        os.write(fd, token.encode("utf-8"))
+    except OSError:
+        pass  # best effort: without it the mutex is never released by us
     try:
         try:
             os.close(fd)
         except OSError:
             pass
+        if _test_hooks.get("after_mutex_create"):
+            _test_hooks["after_mutex_create"](mutex)
         # Inside the mutex only breakers touch a stale lock, and a fresh one cannot appear while
         # the stale file still exists, so what is judged stale here is still the stale file.
         stale = False
@@ -270,10 +315,9 @@ def _break_stale_lock(lock_path: str, token: str) -> bool:
         _sweep_stale_leftovers(lock_path)
         return True
     finally:
-        try:
-            os.unlink(mutex)
-        except OSError:
-            pass
+        if _test_hooks.get("before_mutex_release"):
+            _test_hooks["before_mutex_release"](mutex)
+        _release_mutex(mutex, token)
 
 
 def _sweep_stale_leftovers(lock_path: str) -> None:
