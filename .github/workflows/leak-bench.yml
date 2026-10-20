@@ -68,6 +68,8 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          SCOPE: core
+          OWN: .github/workflows/leak-bench.yml
           FULL: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
         working-directory: .
         run: bash .github/scripts/ci-scope.sh

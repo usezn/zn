@@ -79,17 +79,38 @@ for (const c of DENY) {
   });
 }
 
-test('a very long writing command naming .agents is refused in linear time', () => {
-  for (const n of [12500, 50000]) {
-    const t0 = Date.now();
-    const r = policy.bashDenial('cp x ' + '.agents/'.repeat(n), OPTS);
-    assert.ok(Date.now() - t0 < 200, 'took ' + (Date.now() - t0) + ' ms');
-    assert.ok(r);
+// Scaling check instead of a wall-clock limit: a busy CI host can make any absolute bound flaky, but a
+// quadratic blowup still multiplies the time by about 16 when the input grows 4x (linear: about 4).
+function fastest(fn, runs) {
+  let best = Infinity;
+  for (let i = 0; i < runs; i++) {
+    const t0 = process.hrtime.bigint();
+    fn();
+    best = Math.min(best, Number(process.hrtime.bigint() - t0) / 1e6);
   }
-  // long but not naming .agents: still checked quickly
-  const t1 = Date.now();
-  policy.bashDenial('cp x ' + 'a/'.repeat(50000), OPTS);
-  assert.ok(Date.now() - t1 < 500);
+  return best;
+}
+
+function scalingRatio(run, small, large) {
+  run(small); // warm up
+  run(large);
+  const tSmall = fastest(() => run(small), 5);
+  const tLarge = fastest(() => run(large), 5);
+  // The floor keeps a sub-millisecond base from turning timer noise into a huge ratio.
+  return tLarge / Math.max(tSmall, 2);
+}
+
+test('a very long writing command naming .agents is refused in linear time', () => {
+  const run = (n) => {
+    const r = policy.bashDenial('cp x ' + '.agents/'.repeat(n), OPTS);
+    assert.ok(r);
+  };
+  const ratio = scalingRatio(run, 3000, 12000);
+  assert.ok(ratio < 10, 'time grew ' + ratio.toFixed(1) + 'x for 4x the input (quadratic would be about 16x)');
+  // long but not naming .agents: still checked in linear time (both sizes stay under the 100 KB cap, above it the command is refused unscanned)
+  const runPlain = (n) => policy.bashDenial('cp x ' + 'a/'.repeat(n), OPTS);
+  const plainRatio = scalingRatio(runPlain, 12500, 50000);
+  assert.ok(plainRatio < 10, 'time grew ' + plainRatio.toFixed(1) + 'x for 4x the input (quadratic would be about 16x)');
 });
 
 test('denied: a glob that expands to the hooks file (the folder exists)', (t) => {
