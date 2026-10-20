@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-19.43';
+const POLICY_RULES_VERSION = '2026-10-20.4';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -582,7 +582,7 @@ function readDenial(p, opts = {}) {
     if (text !== null && Buffer.byteLength(head, 'latin1') >= DOTENV_SCAN_BYTES) text = null;
     if (text !== null && dotenv.isShadowed(text)) return null;
     return 'zn: ' + path.basename(abs) + ' holds plain-text secrets. Ask the user to run `' +
-      znCommand('env shadow ' + path.basename(abs)) + '` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.';
+      znCommand('env shadow ' + path.basename(abs)) + '` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use. More: https://usezn.com/docs/check/#if-your-agent-needs-a-value-from-env';
   }
   if (c.kind === 'zn_state') return vaultMessage(opts);
   if (c.kind === 'keyfile') return keyFileDenial(p, c, opts);
