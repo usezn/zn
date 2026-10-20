@@ -283,7 +283,7 @@ function createSecretsServer(opts = {}) {
     const truncated = buf.length > MAX_RESPONSE_BYTES;
     const text = buf.subarray(0, MAX_RESPONSE_BYTES).toString('utf8');
     const outHeaders = {};
-    for (const [k, v] of res.headers.entries()) outHeaders[k] = await scrub(v, masker);
+    for (const [k, v] of res.headers.entries()) outHeaders[await scrub(k, masker)] = await scrub(v, masker);
     return textResult({
       status: res.status,
       statusText: await scrub(String(res.statusText || ''), masker),
