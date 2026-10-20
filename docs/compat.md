@@ -20,8 +20,10 @@ documentation on 2026-10-11 (Cursor again on 2026-10-17). End-to-end evidence is
 | Windows | Yes, including the PowerShell tool (Claude Code 2.1.299 or later: before it, without Git for Windows, `PreToolUse` let calls through when it could not run) | The hook command was run by hand from PowerShell and from cmd.exe. The end-to-end run also passed on Windows Server 2022 with Codex 0.163.0 and PowerShell, 0 values sent to the provider ([evidence](../bench/e2e/windows/); one run, not in CI) | Not tested | End-to-end run on Windows Server 2022 with OpenCode 1.19.3 ([evidence](../bench/e2e/windows/); one run, not in CI), 0 values sent to the provider. With PowerShell, OpenCode's default shell there, a command with a marker failed instead of running in that run (the wrapping was then written for bash only; the PowerShell wrapping added since is covered by unit tests but not re-run end to end); with Git Bash (`SHELL` set) it runs |
 | End-to-end run, 0 values sent to the provider | **Yes** | **Yes** | Not run (no CLI with hooks to drive) | **Yes** |
 
-zn's two MCP servers (`zn mcp` and the `secrets` server) speak MCP protocol version `2024-11-05` and answer
-with it whatever version the client asks for, as the protocol allows; the client then uses that version.
+zn's two MCP servers (`zn mcp` and the `secrets` server) support MCP protocol versions `2025-11-25`,
+`2025-06-18`, `2025-03-26` and `2024-11-05`. They answer initialize with the version the client asks for, or with
+`2025-11-25` if the client asks for one they do not know (the client then decides). Tool annotations are sent from
+`2025-03-26`, tool titles from `2025-06-18`, JSON-RPC batches are accepted only in `2025-03-26` (added there, removed in `2025-06-18`), and an unknown tool is error `-32602` from `2025-06-18` on (`-32601` before).
 Checked on 2026-10-17 with Claude Code 2.1.302 (`claude mcp list`: both connected) and with the official
 TypeScript MCP SDK client whose newest version is `2025-11-25` (both servers connect and list their tools).
 
@@ -158,7 +160,30 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
 - **Background hooks (Codex).** A Codex hook with `async` set runs in the background and cannot block a call or change a result. If zn's hook is set that way in `hooks.json` or `config.toml` in your Codex folder, `zn-gate check` reports Codex as not protected; remove `async` from zn's hook.
 - **Trust and updates (Codex).** Installing zn-gate as a Codex plugin would not skip the `/hooks` review: Codex ignores a plugin's hooks until you review and trust them, and it asks again after every plugin update. zn installs its hooks with `zn hooks install codex` instead, and you trust them in `/hooks`.
 - **Ways Codex turns zn's hooks off.** `async`, a `[hooks.state]` entry with `enabled = false` for one of zn's hooks, `[features] hooks = false`, and `allow_managed_hooks_only = true` in your organization's requirements (when zn's hooks are not among the managed ones) each stop zn's hooks from protecting anything, and Codex says nothing. `zn-gate check` reports all four as not protected and says what to change. It reads `hooks.state` only in your own `config.toml`; a setting passed on the Codex command line with `-c` is not seen. The Python package has no `check` command.
-- **Settings that turn hooks off.** zn reads the settings files only: the managed settings of Claude Code (`managed-settings.json` and `managed-settings.d/` in `/etc/claude-code`, `/Library/Application Support/ClaudeCode` or `C:\Program Files\ClaudeCode`) and of Codex (`requirements.toml` and `managed_config.toml` in `/etc/codex`, or `requirements.toml` in `%ProgramData%\OpenAI\Codex` and `managed_config.toml` in your Codex folder on Windows), and your own settings. A policy sent through MDM or the agent's cloud is not seen. When such a setting stops every hook, the session-start reminder that zn adds for Codex does not appear either, so `zn-gate check` is where you see it.
+- **Settings that turn hooks off.** zn reads the settings files only: the managed settings of Claude Code (`managed-settings.json` and `managed-settings.d/` in `/etc/claude-code`, `/Library/Application Support/ClaudeCode` or `C:\Program Files\ClaudeCode`) and of Codex (`requirements.toml` and `managed_config.toml` in `/etc/codex`, or `requirements.toml` in `%ProgramData%\OpenAI\Codex` and `managed_config.toml` in your Codex folder on Windows), the enterprise `hooks.json` of Cursor (`/etc/cursor/hooks.json`, `/Library/Application Support/Cursor/hooks.json` or `C:\ProgramData\Cursor\hooks.json`), and your own settings. zn also recognises its own hooks in those same managed files (Cursor: the enterprise `hooks.json`; Codex: `[[hooks.<Event>]]` in `requirements.toml`), so `zn-gate check` and `zn-gate status` report an agent set up by your administrator as installed (managed) and name the file. A policy sent through MDM or the agent's cloud is not seen. When such a setting stops every hook, the session-start reminder that zn adds for Codex does not appear either, so `zn-gate check` is where you see it. Cursor runs the hooks of every source, so its enterprise file cannot turn zn's hooks off; zn only warns when zn's hook there lacks `failClosed` on `beforeReadFile` or `beforeSubmitPrompt`, or when the file has hooks without zn's. Hooks set in Cursor's team dashboard are not seen.
+- **Copilot CLI** (experimental: `zn hooks install copilot [--project]`;
+  `zn-gate check` and `zn-gate init` list it as "Copilot CLI (experimental)").
+  Covered: `preToolUse` blocks reads and writes of secret files by path,
+  shell commands that handle secrets, and edits of Copilot's own hook and
+  settings files; `postToolUse` replaces secret values in the results of
+  read-type and shell tools (successful results only). zn writes its own
+  `zn-gate.json` in `~/.copilot/hooks/` (or `$COPILOT_HOME/hooks/` when you set
+  a custom Copilot folder) and, with `--project`, in `.github/hooks/`. Checked
+  end to end with Copilot CLI 1.0.98 against a scripted model provider: 0 secret
+  values sent. Not covered, and limits:
+  - Copilot's `userPromptSubmitted` hook cannot block or rewrite a typed
+    prompt, so a pasted secret is not blocked.
+  - A hook that takes longer than its timeout lets the call through (Copilot
+    fails open there). Machine policy hooks in `/etc/github-copilot/policy.d`
+    run in addition and are not seen by zn.
+  - MCP tools Copilot does not name as read or shell tools are not checked and
+    their output is not scrubbed. The docs do not list the argument names of
+    each tool, so zn refuses a known tool whose arguments it cannot read.
+  - Not tested on Windows.
+  - Copilot's own session log (`events.jsonl`) keeps the original tool output
+    on your machine.
+  - `disableAllHooks` in zn's file or in `.github/copilot/settings(.local).json`
+    turns the hooks off; `zn-gate check` reports it.
 - **Cursor** (best effort: its hook documentation leaves the input of some
   tools open, and zn fails closed where it cannot read a path):
   - `beforeReadFile` can only allow or deny. zn sets `failClosed: true` on it
@@ -285,5 +310,5 @@ until it is fixed), is in [upgrading.md](upgrading.md#nodejs-was-upgraded-moved-
 
 ## Not covered yet
 
-Hermes Agent, Gemini CLI, Copilot CLI and the Cursor CLI. A proxy for outgoing
+Hermes Agent, Gemini CLI and the Cursor CLI. GitHub Copilot CLI has experimental hooks (see the Copilot CLI entry above). A proxy for outgoing
 HTTP from `zn run` (for `curl`, `gh` or SDKs) is planned for a later release.

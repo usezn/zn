@@ -50,7 +50,7 @@ jobs:
       fail-fast: false
       matrix:
         # 18.x, 22.x and 24.x are required checks: they always run.
-        node-version: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["18.x", "20.x", "22.x", "24.x"]' || '["18.x", "22.x", "24.x"]') }}
+        node-version: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["18.x", "20.x", "22.x", "24.x", "26.x"]' || '["18.x", "22.x", "24.x"]') }}
     steps:
       - name: Harden the runner (egress audit)
         if: runner.os == 'Linux'
@@ -166,6 +166,11 @@ jobs:
         run: |
           python -m pip install --require-hashes -r .github/ci-test-requirements.txt
           python -m pip install --no-deps --no-build-isolation -e packages/zn-gate-py
+      - name: Install LangChain and LlamaIndex for the integration tests
+        # One entry is enough: the tests that drive the integrations through the real frameworks run here
+        # and skip on the other entries.
+        if: steps.scope.outputs.run == 'true' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: python -m pip install --require-hashes -r .github/ci-framework-test-requirements.txt
       - name: Run pytest (unit + integration)
         if: steps.scope.outputs.run == 'true' && !(matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12')
         working-directory: packages/zn-gate-py
@@ -175,6 +180,9 @@ jobs:
         # One wall-clock test is left out here (tracing slows it past its limit) and runs untraced in the next step.
         if: steps.scope.outputs.run == 'true' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         working-directory: packages/zn-gate-py
+        env:
+          # The frameworks were installed above: their tests must run, not skip.
+          ZN_REQUIRE_FRAMEWORKS: "1"
         run: |
           python -m pytest tests/ -v --deselect tests/test_cli.py::TestCliScanCommand::test_many_key_blocks_scan_in_linear_time --cov=zn_gate --cov-report=term --cov-report=xml:"$RUNNER_TEMP/coverage-python.xml" 2>&1 | tee "$RUNNER_TEMP/coverage-python.log"
           {
@@ -187,6 +195,20 @@ jobs:
         if: steps.scope.outputs.run == 'true' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         working-directory: packages/zn-gate-py
         run: python -m pytest -v tests/test_cli.py::TestCliScanCommand::test_many_key_blocks_scan_in_linear_time
+      - name: Run the LangChain and LlamaIndex integration tests on the oldest supported langchain-core
+        # The same real-framework tests, in a separate virtual environment with langchain-core 1.2.31, the
+        # oldest version the integration supports. The frameworks are installed: the tests must run, not skip.
+        if: steps.scope.outputs.run == 'true' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        env:
+          ZN_REQUIRE_FRAMEWORKS: "1"
+        run: |
+          python -m venv "$RUNNER_TEMP/venv-oldest-langchain"
+          "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -m pip install --require-hashes -r .github/ci-test-requirements.txt
+          "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -m pip install --require-hashes -r .github/ci-framework-test-requirements-oldest.txt
+          "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -m pip install --no-deps --no-build-isolation -e packages/zn-gate-py
+          "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -c "import langchain_core; assert langchain_core.__version__ == '1.2.31', langchain_core.__version__"
+          cd packages/zn-gate-py
+          "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -m pytest tests/test_langchain_real.py tests/test_llamaindex_real.py -v
       - name: Upload Python coverage report
         if: always() && steps.scope.outputs.run == 'true' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -250,6 +272,17 @@ jobs:
         if: ${{ !cancelled() && steps.python-tools.outcome == 'success' }}
         working-directory: packages/zn-gate-py
         run: python -m mypy
+      - name: Run mypy --strict on the public API
+        if: ${{ !cancelled() && steps.python-tools.outcome == 'success' }}
+        # Blocking. The modules behind everything in zn_gate.__all__ are checked in
+        # strict mode, together with a file of type-level assertions that fails to
+        # type-check if a public signature changes shape.
+        working-directory: packages/zn-gate-py
+        run: >-
+          python -m mypy --strict
+          src/zn_gate/__init__.py src/zn_gate/rules.py src/zn_gate/guard.py
+          src/zn_gate/client.py src/zn_gate/evidence.py
+          typing_check/check_public_api.py
 
   pack-node:
     name: npm package (pack, inspect, install)

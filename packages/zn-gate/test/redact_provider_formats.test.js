@@ -150,3 +150,28 @@ test('the text sent to the cloud analysis has the provider tokens redacted', asy
     assert.ok(!body.includes(key) && !body.includes(slack), 'a provider token was sent to the cloud');
   }
 });
+
+test('redactSecrets hides the password of a connection URL with any scheme, as the Python package does', () => {
+  const pw = 'FAKE-pass-' + r(8);
+  for (const scheme of ['mssql', 'sqlserver', 'oracle', 'clickhouse', 'cockroachdb', 'mariadb', 'jdbc']) {
+    const text = `conn = ${scheme}://sa:${pw}@db.example.test:1433/app`;
+    const out = redactSecrets(text);
+    assert.equal(out.sanitized, `conn = ${scheme}://sa:[REDACTED_URL_PASSWORD]@db.example.test:1433/app`);
+    assert.ok(out.detections.some((d) => d.rule === 'secret:url_password'), scheme);
+  }
+});
+
+test('redactSecrets keeps the schemes it already redacted, and leaves references, short passwords and non-URLs alone', () => {
+  const pw = 'FAKE-pass-' + r(8);
+  assert.equal(redactSecrets(`postgres://u:${pw}@h.example.test/x`).sanitized, 'postgres://u:[REDACTED_DB_PASSWORD]@h.example.test/x');
+  assert.equal(redactSecrets(`mssql://u:$` + `{DB_PASS}@h.example.test/x`).sanitized, 'mssql://u:$' + '{DB_PASS}@h.example.test/x');
+  assert.equal(redactSecrets('mssql://u:abc@h.example.test/x').sanitized, 'mssql://u:abc@h.example.test/x');
+  // A scheme after non-ASCII letters (CJK, accents) is still a URL: the password is redacted, never left in clear.
+  for (const prefix of ['连接', '数据库', 'é', 'ſ']) {
+    for (const scheme of ['https', 'mssql']) {
+      const out = redactSecrets(`${prefix}${scheme}://u:${pw}@h.example.test/x`);
+      assert.equal(out.sanitized, `${prefix}${scheme}://u:[REDACTED_URL_PASSWORD]@h.example.test/x`, prefix + scheme);
+      assert.ok(!out.sanitized.includes(pw));
+    }
+  }
+});

@@ -21,12 +21,13 @@ ln -sf "$PKG/bin/cli.js" "$RUN/bin/zn"
 export HOME=$RUN/home
 export GEMINI_API_KEY=mock-provider-key GOOGLE_GEMINI_BASE_URL=http://127.0.0.1:$PORT
 export GEMINI_CLI_TRUST_WORKSPACE=true GEMINI_TELEMETRY_ENABLED=false NO_COLOR=1 CI=1
-export PATH=$RUN/bin:$(dirname "$NODE"):$(dirname "$GEMINI"):/usr/local/bin:/usr/bin:/bin
+PATH=$RUN/bin:$(dirname "$NODE"):$(dirname "$GEMINI"):/usr/local/bin:/usr/bin:/bin
+export PATH
 
 ZN_HOME=$RUN/home/.zn node "$H/vault_daemon.js" --pkg "$PKG" --secrets "$RUN/secrets.json" --out "$OUT" & VPID=$!
 node "$H/mock_llm.js" --port "$PORT" --script "$RUN/scenario.json" --out "$OUT" > "$OUT/mock.log" & MPID=$!
 trap 'kill $VPID $MPID 2>/dev/null || true' EXIT
-for i in $(seq 50); do [ -f "$OUT/vault.ready" ] && break; sleep 0.2; done
+for _ in $(seq 50); do [ -f "$OUT/vault.ready" ] && break; sleep 0.2; done
 [ -f "$OUT/vault.ready" ] || { cat "$OUT/vault.error"; exit 1; }
 
 # Headless runs need an auth method in the settings; the base URL variable selects the "gateway" type.
@@ -41,4 +42,4 @@ timeout 300 "$GEMINI" -m mock-model --approval-mode yolo -p "Follow the setup ta
 echo "task exit=$?" > "$OUT/exit_codes.txt"
 set -e
 cp -r "$HOME/.gemini/tmp" "$OUT/transcripts" 2>/dev/null || true
-echo done
+echo "done"

@@ -131,8 +131,17 @@ const REINSTALL = 'part of zn-gate is missing from this installation, so zn cann
 const REINSTALL_USER = 'part of zn-gate is missing from this installation, so zn blocks what it cannot check. ' +
   'Reinstall it with `npm install -g zn-gate@' + ZN_VERSION + '` and then run `zn hooks install`. ' +
   'To let actions pass unchecked until then, set {"hooks": {"whenUnavailable": "allow"}} in ~/.zn/config.json.';
-const HOOK_FAILED = 'something went wrong inside the zn hook, so this action was blocked to keep the user\'s secrets safe. ' +
-  'If it happens again, ask the user to run `' + znCommand('hooks install') + '`.';
+/* Claude Code sets CLAUDE_PLUGIN_ROOT only for the hooks of a plugin: there `zn hooks install` does not apply. */
+const AGENT_NAMES = { 'claude-code': 'Claude Code', codex: 'Codex CLI', cursor: 'Cursor', opencode: 'OpenCode', antigravity: 'Antigravity' };
+function fixHint(agentId) {
+  if (agentId === 'claude-code' && process.env.CLAUDE_PLUGIN_ROOT) {
+    return 'If it happens again, ask the user to update or reinstall the zn-gate plugin (`claude plugin update zn-gate@usezn`).';
+  }
+  const name = AGENT_NAMES[agentId];
+  return 'If it happens again, ask the user to run `' + znCommand('hooks install' + (name ? ' ' + agentId : '')) + '`' +
+    (name ? ' to set up zn for ' + name + ' again.' : '.');
+}
+const HOOK_FAILED = 'something went wrong inside the zn hook, so this action was blocked to keep the user\'s secrets safe. ';
 
 /**
  * Refuse text that a native call could not survive (see safe-text.js) before any file, process or network call
@@ -880,7 +889,7 @@ async function decideStop(ev, d, agentId, opts) {
 
 /* ------------------------------ entry ----------------------------- */
 
-function failDecision(ev, err, mode) {
+function failDecision(ev, err, mode, agentId) {
   // A Stop check never blocks because zn failed: that could keep the agent going.
   if (ev && ev.event === 'stop') {
     return { decision: 'ask', failOpen: true, notice: 'zn: could not check the last answer for secrets' + (err && err.code ? ' (' + err.code + ')' : '') + '.' };
@@ -891,7 +900,7 @@ function failDecision(ev, err, mode) {
   }
   const missing = err.code === 'ZN_UNAVAILABLE';
   const detail = missing ? '' : ' (' + (err.code ? err.code + ': ' : '') + String(err.message || 'unknown error') + ')';
-  const msg = 'zn: ' + (missing ? REINSTALL : HOOK_FAILED) + detail;
+  const msg = 'zn: ' + (missing ? REINSTALL : HOOK_FAILED + fixHint(agentId)) + detail;
   // Fail open only when the engine itself is missing and the user chose so.
   if (mode === 'open' && missing) return { decision: 'allow', failOpen: true, warning: 'zn: ' + REINSTALL_USER };
   const r = failClosed(ev, err, msg);
@@ -943,7 +952,7 @@ async function handle(adapter, rawEvent, opts = {}) {
     else if (ev.event === 'prompt_expansion') decision = await decideExpansion(ev, d, adapter.id);
     else decision = { decision: 'allow' };
   } catch (err) {
-    decision = failDecision(ev, err, mode);
+    decision = failDecision(ev, err, mode, adapter.id);
   }
   const output = adapter.respond({ ...decision, event: ev });
   countHook(adapter.id, ev, decision, opts);
@@ -1049,12 +1058,13 @@ function refuseInput(agentId, why) {
   }
   // Claude Code and Codex show this stderr to the model, so it never says how to
   // let actions pass unchecked (docs/compat.md documents that for the user).
-  const msg = 'zn: could not read this action (' + why + '), so it was blocked. ' +
-    'If it happens again, ask the user to run `' + znCommand('hooks install') + '`.';
+  const msg = 'zn: could not read this action (' + why + '), so it was blocked. ' + fixHint(agentId);
   process.stderr.write('zn hook: ' + msg + '\n');
   if (agentId === 'cursor') process.stdout.write(JSON.stringify({ permission: 'deny', continue: false, user_message: msg, agent_message: msg }));
   // Antigravity does not document its exit codes, so its deny answer is printed as well.
   if (agentId === 'antigravity') process.stdout.write(JSON.stringify({ decision: 'deny', reason: msg }));
+  // Copilot CLI: exit 2 denies preToolUse (other events only warn); the documented deny answer is printed as well.
+  if (agentId === 'copilot') process.stdout.write(JSON.stringify({ permissionDecision: 'deny', permissionDecisionReason: msg }));
   // Gemini CLI documents exit 2 as a block with stderr as the reason, so it needs no JSON on stdout (stdout that
   // is not JSON counts as allow there); any other exit code only warns and lets the tool run.
   process.exitCode = 2;
