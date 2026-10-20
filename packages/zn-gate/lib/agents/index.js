@@ -26,12 +26,9 @@ function getAdapter(id) {
   return load();
 }
 
-// Agents zn has no hooks for yet (display name by the name people type).
-const NOT_COVERED = {
-  copilot: 'GitHub Copilot CLI',
-  'copilot-cli': 'GitHub Copilot CLI',
-  'github-copilot': 'GitHub Copilot CLI',
-};
+// Agents zn has no hooks for yet (display name by the name people type). None today:
+// GitHub Copilot CLI got its adapter, so it is listed in ADAPTERS.
+const NOT_COVERED = {};
 
 function distance(a, b) {
   let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
