@@ -180,6 +180,32 @@ def query_knowledge_base(query: str) -> str:
 
 `guarded_tool` also works on `async def` tools, on callable objects whose `__call__` is `async def` and on sync functions that return a coroutine: the call is awaited, then the output is checked and masked exactly as for a sync tool.
 
+### Google ADK, OpenAI Agents SDK and Pydantic AI (native hooks)
+
+Tools that these frameworks supply themselves (MCP servers, for example) never pass through `@guard` or `guarded_tool`. Each framework has its own place to check a tool call and its result, and zn-gate plugs into it. The checks are the same ones `guarded_tool` runs: a blocked call does not run the tool, text that tries to give the model orders is blocked in the result, and secrets in the result are masked. Each helper loads its framework only when you call it.
+
+```python
+from zn_gate.integrations import adk_tool_callbacks, openai_agents_tool_guardrails, guard_pydantic_ai_toolset
+
+# Google ADK: LlmAgent(..., before_tool_callback=before, after_tool_callback=after)
+before, after = adk_tool_callbacks()
+
+# OpenAI Agents SDK: @function_tool(tool_input_guardrails=inputs, tool_output_guardrails=outputs)
+# (the same lists also go on MCPServerStdio and the other MCP servers)
+inputs, outputs = openai_agents_tool_guardrails()
+
+# Pydantic AI: Agent(model, toolsets=[guard_pydantic_ai_toolset(toolset)])
+```
+
+All three take `on_block` (`"return"` by default: the model gets a zn-gate message instead of the tool's result; `"raise"` stops the run), `mask_secrets`, `check_result`, `block_truncated` and `fallback`. Verified against google-adk 2.12.0, openai-agents 0.24.0 and pydantic-ai-slim 2.58.0.
+
+What is not covered:
+
+- **Google ADK**: the callbacks see only the tools of the agent they are set on, and not a tool's exceptions (`on_tool_error_callback`).
+- **OpenAI Agents SDK**: tool guardrails exist for function tools and MCP servers only. Hosted tools (web search, code interpreter and similar) have none, so they are not checked. The SDK cannot replace an output with an edited one, so a secret is masked by replacing the whole output with its masked text (JSON text for a dict or list).
+- **Pydantic AI**: tools added with `@agent.tool` are not in a toolset you hold. Put them in a `FunctionToolset` and wrap that, or use `guarded_tool`.
+- Other frameworks have no native hook yet: use `guarded_tool`.
+
 ### LlamaIndex
 
 ```python

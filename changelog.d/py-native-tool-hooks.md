@@ -1,0 +1,2 @@
+### Added
+- Python: native hooks for the tool layers of Google ADK (`adk_tool_callbacks`), the OpenAI Agents SDK (`openai_agents_tool_guardrails`) and Pydantic AI (`guard_pydantic_ai_toolset`), in `zn_gate.integrations`. Tools that these frameworks supply themselves, such as MCP servers, never passed through `guard` or `guarded_tool`; now a blocked call does not run, injected text in a result is blocked and secrets in a result are masked. OpenAI hosted tools and tools added with `@agent.tool` in Pydantic AI are not covered, and the README says so.
