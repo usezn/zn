@@ -28,26 +28,62 @@ const { znHomeDir } = require('../zn-home');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-20.44';
+const POLICY_RULES_VERSION = '2026-10-20.45';
 
 /* ------------------------------ paths ------------------------------ */
 
 // Home and zn-home references written as shell variables (bash, PowerShell,
 // cmd), so `cat $HOME/.zn/...` or `gc $env:USERPROFILE\.aws\credentials`
-// are classified like their literal paths.
-const HOME_VAR_RE = /^(?:\$\{?HOME\}?|\$env:(?:HOME|USERPROFILE)|%USERPROFILE%|%HOMEDRIVE%%HOMEPATH%)(?=$|[\\/])/i;
+// are classified like their literal paths. The braced PowerShell form and
+// %HOME% are the same home.
+const HOME_VAR_RE = /^(?:\$\{(?:env:)?(?:HOME|USERPROFILE)\}|\$(?:env:)?(?:HOME|USERPROFILE)|%(?:HOME|USERPROFILE)%|%HOMEDRIVE%%HOMEPATH%|\$env:HOMEDRIVE\$env:HOMEPATH)(?=$|[\\/])/i;
 const ZN_HOME_VAR_RE = /^(?:\$\{?ZN_HOME\}?|\$env:ZN_HOME|%ZN_HOME%)(?=$|[\\/])/i;
+// ~name: the home of the user called name. Only the current user's name is the home here.
+const TILDE_USER_RE = /^~([^\\/~$%]+)(?=$|[\\/])/;
 
 function expandHome(p, home) {
   if (p === '~') return home;
   if (p.startsWith('~/') || p.startsWith('~\\')) return path.join(home, p.slice(2));
   if (ZN_HOME_VAR_RE.test(p)) return path.join(home, '.zn', p.replace(ZN_HOME_VAR_RE, ''));
   if (HOME_VAR_RE.test(p)) return path.join(home, p.replace(HOME_VAR_RE, ''));
+  const user = TILDE_USER_RE.exec(p);
+  if (user && keyOf(user[1]) === keyOf(path.basename(path.resolve(home)))) return path.join(home, p.slice(user[0].length));
   return p;
 }
 
 function slash(p) {
   return String(p).replace(/\\/g, '/');
+}
+
+// Lexical view of a path written with "/" as its separator, read the way the
+// file system would: quotes inside the path dropped, "." and repeated
+// separators removed, "dir/.." collapsed and, on Windows, the trailing dots
+// and spaces of each segment dropped (Windows ignores them). It runs after
+// ~ and the variables are expanded, never touches the file system, keeps the
+// case and substitutes nothing. Linear in the length of the path.
+const DRIVE_SEG_RE = /^[A-Za-z]:$/;
+function lexicalPath(p, win = process.platform === 'win32') {
+  const s = String(p).replace(/["']/g, '');
+  const lead = s.startsWith('//') ? '//' : s.startsWith('/') ? '/' : '';
+  // A UNC path keeps its server and share; a drive path keeps its drive.
+  const floor = lead === '//' ? 2 : 0;
+  const out = [];
+  for (let seg of s.slice(lead.length).split('/')) {
+    if (win && seg !== '.' && seg !== '..') {
+      let end = seg.length;
+      while (end > 0 && (seg[end - 1] === '.' || seg[end - 1] === ' ')) end--;
+      seg = seg.slice(0, end);
+    }
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..') {
+      const last = out.length ? out[out.length - 1] : null;
+      const atRoot = (lead && out.length <= floor) || (out.length === 1 && DRIVE_SEG_RE.test(last));
+      if (atRoot) continue; // the parent of a root is the root itself
+      if (last !== null && last !== '..') { out.pop(); continue; }
+    }
+    out.push(seg);
+  }
+  return lead + out.join('/');
 }
 
 const DOTENV_BASENAME_RE = /^\.env(\.[A-Za-z0-9_.-]+)?$/;
@@ -162,8 +198,13 @@ function keysOf(p) {
 function agentContext(home, cwd, env) {
   const dirs = new Set();
   const files = new Set();
-  const rel = ['.claude', '.codex', '.cursor', '.opencode', path.join('.config', 'opencode')];
-  for (const root of [home, projectRootOf(cwd)]) {
+  const rel = [
+    '.claude', '.codex', '.cursor', '.opencode', path.join('.config', 'opencode'),
+    // Gemini CLI and Antigravity (settings, hooks and permissions).
+    '.gemini', path.join('.gemini', 'config'), path.join('.gemini', 'antigravity-cli'),
+  ];
+  const projectRoot = projectRootOf(cwd);
+  for (const root of [home, projectRoot]) {
     for (const r of rel) for (const k of keysOf(path.join(root, r))) dirs.add(k);
   }
   const at = (p) => path.resolve(cwd, expandHome(p, home));
@@ -176,6 +217,9 @@ function agentContext(home, cwd, env) {
   // Roots that hold agent configuration: removing or moving them removes it.
   // Only the directory itself is protected (listing it or reading it is fine).
   const roots = new Set(keysOf(path.join(home, '.config')));
+  // .agents holds the Antigravity hooks file but is shared with other tools (skills, rules,
+  // workflows), so only the folder itself is protected here; its hooks file has its own rule.
+  for (const root of [home, projectRoot]) for (const k of keysOf(path.join(root, '.agents'))) roots.add(k);
   if (env.XDG_CONFIG_HOME) for (const k of keysOf(at(env.XDG_CONFIG_HOME))) roots.add(k);
   return { dirs: [...dirs], files, roots: [...roots] };
 }
@@ -200,9 +244,17 @@ function contextOf(opts = {}) {
  * Classify a resolved absolute path. `ctx` comes from contextOf.
  */
 function classifyResolved(abs, ctx) {
-  const { home, creds, agent, znHome } = ctx;
+  // The lexical view of the path (lexicalPath) first, so the home-anchored checks and the agent
+  // configuration patterns see one spelling of each file whatever separators, ".." or Windows
+  // trailing dots and spaces it was written with; then the path as resolved.
   const s = keyOf(slash(abs));
-  const h = keyOf(slash(path.resolve(home)));
+  const lex = lexicalPath(s);
+  return classifyKey(lex, ctx) || (lex === s ? null : classifyKey(s, ctx));
+}
+
+function classifyKey(s, ctx) {
+  const { home, creds, agent, znHome } = ctx;
+  const h = keyOf(lexicalPath(slash(path.resolve(home))));
   if (s === h + '/.zn' || s.startsWith(h + '/.zn/')) return { kind: 'zn_state', reason: 'zn keeps its vault and audit log in ~/.zn' };
   if (znHome && (s === znHome || s.startsWith(znHome + '/'))) return { kind: 'zn_state', reason: 'zn keeps its vault and audit log in ~/.zn' };
   for (const [re, reason] of AGENT_CONFIG_RES) if (ci(re).test(s)) return { kind: 'agent_config', reason };
@@ -2170,6 +2222,7 @@ module.exports = {
   globClass,
   globRegExp,
   _globClassEnd: globClassEnd,
+  _lexicalPath: lexicalPath,
   _decodeAnsiC: decodeAnsiC,
   _globClassSource: globClassSource,
   expandBraces,
