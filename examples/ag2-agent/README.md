@@ -11,7 +11,7 @@ A tool that reads web pages is a common way for an attack to reach a model: the 
 
 Everything runs on your machine. The pages in the example are made up and the model is a scripted stand-in that ships with AG2 (`ag2.testing.TestConfig`), so there is no network call and no model call, and you need no API key. zn-gate works locally by default and this example does not turn on the cloud check.
 
-> This example needs zn-gate 1.12.0 or newer (the version pinned in `requirements.txt`).
+> This example needs the zn-gate version pinned in `requirements.txt`.
 
 ## Install
 
