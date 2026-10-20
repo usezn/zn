@@ -7,11 +7,14 @@ from __future__ import annotations
 
 import functools
 import inspect
+import io
+import itertools
 import os
-from collections.abc import Mapping
-from typing import Any, Callable, List, Optional, Set, Tuple, TypeVar, cast
+import types
+from collections.abc import AsyncIterator, ItemsView, Iterable, Iterator, KeysView, Mapping, ValuesView
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypeVar, cast
 
-from .rules import Assessment, evaluate, scan_windows
+from .rules import Assessment, scan_windows
 
 
 _F = TypeVar("_F", bound=Callable[..., Any])
@@ -44,27 +47,109 @@ class _NestingTooDeep(Exception):
     """Raised when a payload is nested deeper than the scanner is willing to walk."""
 
 
-def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] = None) -> List[str]:
+class _Unscannable(Exception):
+    """Raised when part of a payload cannot be checked without changing it, or is too big to walk."""
+
+    def __init__(self, rule: str, reason: str):
+        super().__init__(reason)
+        self.rule = rule
+        self.reason = reason
+
+
+# Most values taken from objects and generic iterables (not lists, tuples,
+# sets or dicts) that one payload may hold before it is blocked as too big to check.
+MAX_OBJECT_VALUES = 100_000
+
+_DICT_VIEWS = (KeysView, ValuesView, ItemsView)
+
+
+def _object_fields(data: Any) -> Optional[List[Any]]:
+    """Attribute names and values of an object (its __dict__ and __slots__), or None if it has none."""
+    found = False
+    children: List[Any] = []
+    attrs = getattr(data, "__dict__", None)
+    if isinstance(attrs, dict):
+        found = True
+        for k, v in attrs.items():
+            children.append(k)
+            children.append(v)
+    seen: Set[str] = set()
+    for klass in type(data).__mro__:
+        slots = klass.__dict__.get("__slots__", ())
+        if isinstance(slots, str):
+            slots = (slots,)
+        for name in slots:
+            if not isinstance(name, str) or name in ("__dict__", "__weakref__") or name in seen:
+                continue
+            seen.add(name)
+            try:
+                value = object.__getattribute__(data, name)
+            except AttributeError:
+                continue
+            found = True
+            children.append(name)
+            children.append(value)
+    return children if found else None
+
+
+def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] = None,
+                     _budget: Optional[List[int]] = None) -> List[str]:
     """Recursively extract all strings from nested structures.
 
-    Walks every Mapping (keys and values), list, tuple, set and frozenset, and
-    decodes bytes. Raises _NestingTooDeep instead of silently skipping content
-    that sits below the depth limit, so callers can fail closed. A container
-    that contains itself is walked once.
+    Walks every Mapping (keys and values), list, tuple, set, frozenset and dict
+    view, decodes bytes, reads file-system paths, and walks the attributes of
+    other objects (dataclasses, pydantic models and plain class instances,
+    through __dict__ and __slots__) and the items of other re-iterable
+    containers. Classes, modules and functions are skipped.
+
+    Raises _NestingTooDeep instead of silently skipping content that sits
+    below the depth limit, and _Unscannable for a one-shot iterator such as a
+    generator (checking it would consume it, so the guarded function would get
+    an empty iterator) or when objects and generic iterables hold more than
+    MAX_OBJECT_VALUES values, so callers can fail closed. A container that
+    contains itself is walked once.
     """
     if isinstance(data, str):
         return [data]
-    if isinstance(data, (bytes, bytearray)):
+    if isinstance(data, (bytes, bytearray, memoryview)):
         return [bytes(data).decode("utf-8", errors="replace")]
+    if data is None or isinstance(data, (bool, int, float, complex, type, types.ModuleType)) \
+            or inspect.isroutine(data):
+        return []
+    budget = _budget if _budget is not None else [MAX_OBJECT_VALUES]
+    children: Optional[List[Any]]
     if isinstance(data, Mapping):
-        children: List[Any] = []
+        children = []
         for k, v in data.items():
             children.append(k)
             children.append(v)
     elif isinstance(data, (list, tuple, set, frozenset)):
         children = list(data)
+    elif isinstance(data, os.PathLike):
+        path_value = os.fspath(data)
+        return _extract_strings(path_value, max_depth, _path, budget)
+    elif isinstance(data, io.IOBase):
+        # An open file or stream: its contents are read by the tool, not passed
+        # as text, and reading them here would move the file position. Check its name.
+        name = getattr(data, "name", None)
+        return _extract_strings(name, max_depth, _path, budget) if isinstance(name, (str, bytes)) else []
+    elif isinstance(data, Iterator) or isinstance(data, AsyncIterator):
+        raise _Unscannable("type:unscannable",
+                           "A one-shot iterator (such as a generator) cannot be checked "
+                           "without consuming it; pass a list instead")
+    elif isinstance(data, _DICT_VIEWS):
+        children = list(data)
     else:
-        return []
+        children = _object_fields(data)
+        if children is None and isinstance(data, Iterable):
+            children = []
+            for item in itertools.islice(data, budget[0] + 1):
+                children.append(item)
+        if children is None:
+            return []
+        budget[0] -= len(children)
+        if budget[0] < 0:
+            raise _Unscannable("size:items", "Too many values to check")
     if max_depth <= 0:
         raise _NestingTooDeep()
     path = _path if _path is not None else set()
@@ -74,46 +159,42 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
     try:
         strings: List[str] = []
         for child in children:
-            strings.extend(_extract_strings(child, max_depth - 1, path))
+            strings.extend(_extract_strings(child, max_depth - 1, path, budget))
         return strings
     finally:
         path.discard(id(data))
 
 
-def check_tool_call(tool_name: str, arguments: Any = None, strict: Optional[bool] = None) -> Assessment:
-    """
-    Evaluates whether an agent tool call is safe to execute.
-    Inspects tool arguments recursively for injection, evasion, or exfiltration attacks.
-    """
+def _strings_or_block(data: Any, what: str) -> Tuple[List[str], Optional[Assessment]]:
+    """_extract_strings, or a block Assessment when the payload cannot be checked in full."""
     try:
-        strings_to_check = _extract_strings(arguments)
+        return _extract_strings(data), None
     except _NestingTooDeep:
-        return Assessment(verdict="block", confidence=1.0, rule="size:nesting",
-                          reason="Arguments nested too deeply to check")
-    advisory = None
-    for s in strings_to_check:
-        res = evaluate(s, strict=strict)
-        if not res.allowed:
-            return res
-        advisory = advisory or res.advisory
-    return Assessment(verdict="allow", confidence=1.0, rule="none", reason=None,
-                      advisory=dict(advisory) if advisory else None)
+        return [], Assessment(verdict="block", confidence=1.0, rule="size:nesting",
+                              reason=f"{what} nested too deeply to check")
+    except _Unscannable as e:
+        return [], Assessment(verdict="block", confidence=1.0, rule=e.rule,
+                              reason=f"{what}: {e.reason}")
 
 
-def check_tool_result(result: Any, block_truncated: bool = False, strict: Optional[bool] = None) -> Assessment:
-    """
-    Evaluates data returned by external tools (e.g. web search, file content, DB queries)
-    for indirect prompt injections or leaked credentials.
-    Large strings are scanned in overlapping windows (see rules.scan_windows);
-    the result has truncated=True when some string was not fully analysed. Such
-    output is blocked (rule size:truncated) when block_truncated is set or the
-    ZN_BLOCK_TRUNCATED environment variable is "1".
-    """
-    try:
-        strings_to_check = _extract_strings(result)
-    except _NestingTooDeep:
-        return Assessment(verdict="block", confidence=1.0, rule="size:nesting",
-                          reason="Result nested too deeply to check")
+def _call_payload(func: Any, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    """The arguments a guard checks: all of them, except the instance (self or cls) of a method."""
+    qualname = getattr(func, "__qualname__", "") or ""
+    owner = qualname.rsplit(".", 1)[0] if "." in qualname else ""
+    if args and owner and not owner.endswith("<locals>"):
+        try:
+            params = list(inspect.signature(func).parameters)
+        except (TypeError, ValueError):
+            params = []
+        if params and params[0] in ("self", "cls"):
+            args = args[1:]
+    return {"args": args, "kwargs": kwargs}
+
+
+def _scan_strings(data: Any, what: str, block_truncated: bool, strict: Optional[bool]) -> Assessment:
+    strings_to_check, blocked = _strings_or_block(data, what)
+    if blocked is not None:
+        return blocked
     truncated = False
     advisory = None
     for s in strings_to_check:
@@ -124,9 +205,42 @@ def check_tool_result(result: Any, block_truncated: bool = False, strict: Option
         advisory = advisory or res.advisory
     if truncated and (block_truncated or os.environ.get("ZN_BLOCK_TRUNCATED") == "1"):
         return Assessment(verdict="block", confidence=1.0, rule="size:truncated",
-                          reason="Output too large to scan in full", truncated=True)
+                          reason=f"{what} too large to scan in full", truncated=True)
     return Assessment(verdict="allow", confidence=1.0, rule="none", reason=None, truncated=truncated,
                       advisory=dict(advisory) if advisory else None)
+
+
+def check_tool_call(tool_name: str, arguments: Any = None, strict: Optional[bool] = None,
+                    block_truncated: bool = False) -> Assessment:
+    """
+    Evaluates whether an agent tool call is safe to execute.
+    Inspects tool arguments recursively for injection, evasion, or exfiltration attacks:
+    every string, mapping key and object attribute (see _extract_strings).
+    Arguments that cannot be checked in full are blocked: nested too deeply
+    (rule size:nesting), a one-shot iterator such as a generator (rule
+    type:unscannable) or too many values (rule size:items).
+    Long strings are scanned in overlapping windows up to 4 MB, as tool results
+    are; the result has truncated=True when some string was not fully analysed,
+    and such arguments are blocked (rule size:truncated) when block_truncated
+    is set or the ZN_BLOCK_TRUNCATED environment variable is "1".
+    """
+    return _scan_strings(arguments, "Arguments", block_truncated, strict)
+
+
+def check_tool_result(result: Any, block_truncated: bool = False, strict: Optional[bool] = None) -> Assessment:
+    """
+    Evaluates data returned by external tools (e.g. web search, file content, DB queries)
+    for indirect prompt injections or leaked credentials.
+    Large strings are scanned in overlapping windows (see rules.scan_windows);
+    the result has truncated=True when some string was not fully analysed. Such
+    output is blocked (rule size:truncated) when block_truncated is set or the
+    ZN_BLOCK_TRUNCATED environment variable is "1". A result that cannot be
+    checked in full is blocked as for check_tool_call (for example a generator).
+    """
+    res = _scan_strings(result, "Result", block_truncated, strict)
+    if res.rule == "size:truncated":
+        res.reason = "Output too large to scan in full"
+    return res
 
 
 def validate_on_block(value: Any, allowed: Tuple[str, ...]) -> str:
@@ -156,85 +270,75 @@ def guard(
     Parameters:
     - on_block: "raise" (default) raises GuardBlockError,
                 "return" returns `fallback` (or the Assessment if fallback is None),
-                "custom" calls `callback`.
+                "custom" calls `callback` and then raises GuardBlockError, unless
+                the callback raises its own exception first. "custom" needs a
+                callback (ValueError otherwise). A blocked call never runs the
+                function, and a blocked result is never returned.
     - fallback: Value to return if on_block="return".
-    - check_args: Whether to inspect input arguments (default True).
+    - check_args: Whether to inspect input arguments (default True). The instance
+                  of a method (`self` or `cls`) is not inspected.
     - check_result: Whether to inspect function return value (default False).
     - mask_secrets: Automatically redact leaked credentials in result (default False).
     - callback: Optional hook called on block: callback(assessment, func_name, payload).
-    - block_truncated: With check_result, block a result too large to scan in full
-                       (rule size:truncated). ZN_BLOCK_TRUNCATED=1 does the same
-                       for every guard (default False).
+    - block_truncated: Block arguments, and with check_result a result, too large
+                       to scan in full (rule size:truncated). ZN_BLOCK_TRUNCATED=1
+                       does the same for every guard (default False).
     """
     validate_on_block(on_block, ("raise", "return", "custom"))
+    if on_block == "custom" and callback is None:
+        raise ValueError('on_block="custom" needs a callback; use on_block="raise" or pass callback=...')
 
     def decorator(func: _F) -> _F:
         func_name = getattr(func, "__name__", "anonymous")
+
+        def _on_args(args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Tuple[bool, Any]:
+            """(True, value to return) when the call is blocked; raises in the raise and custom modes."""
+            combined_args = {"args": args, "kwargs": kwargs}
+            assessment = check_tool_call(func_name, _call_payload(func, args, kwargs),
+                                         block_truncated=block_truncated)
+            if assessment.allowed:
+                return False, None
+            if callback:
+                callback(assessment, func_name, combined_args)
+            if on_block == "return":
+                return True, fallback if fallback is not None else assessment
+            raise GuardBlockError(assessment, target=func_name, payload=combined_args)
+
+        def _on_result(res: Any) -> Any:
+            if check_result:
+                res_assessment = check_tool_result(res, block_truncated=block_truncated)
+                if not res_assessment.allowed:
+                    if callback:
+                        callback(res_assessment, func_name, res)
+                    if on_block == "return":
+                        return fallback if fallback is not None else res_assessment
+                    raise GuardBlockError(res_assessment, target=f"{func_name}:result", payload=res)
+
+            if mask_secrets:
+                from .rules import sanitize_tool_result
+                res, _ = sanitize_tool_result(res)
+
+            return res
 
         if inspect.iscoroutinefunction(func):
             @functools.wraps(func)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 if check_args:
-                    combined_args = {"args": args, "kwargs": kwargs}
-                    assessment = check_tool_call(func_name, combined_args)
-                    if not assessment.allowed:
-                        if callback:
-                            callback(assessment, func_name, combined_args)
-                        if on_block == "raise":
-                            raise GuardBlockError(assessment, target=func_name, payload=combined_args)
-                        elif on_block == "return":
-                            return fallback if fallback is not None else assessment
-
+                    blocked, value = _on_args(args, kwargs)
+                    if blocked:
+                        return value
                 res = await func(*args, **kwargs)
-
-                if check_result:
-                    res_assessment = check_tool_result(res, block_truncated=block_truncated)
-                    if not res_assessment.allowed:
-                        if callback:
-                            callback(res_assessment, func_name, res)
-                        if on_block == "raise":
-                            raise GuardBlockError(res_assessment, target=f"{func_name}:result", payload=res)
-                        elif on_block == "return":
-                            return fallback if fallback is not None else res_assessment
-
-                if mask_secrets:
-                    from .rules import sanitize_tool_result
-                    res, _ = sanitize_tool_result(res)
-
-                return res
+                return _on_result(res)
             return cast(_F, async_wrapper)
         else:
             @functools.wraps(func)
             def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
                 if check_args:
-                    combined_args = {"args": args, "kwargs": kwargs}
-                    assessment = check_tool_call(func_name, combined_args)
-                    if not assessment.allowed:
-                        if callback:
-                            callback(assessment, func_name, combined_args)
-                        if on_block == "raise":
-                            raise GuardBlockError(assessment, target=func_name, payload=combined_args)
-                        elif on_block == "return":
-                            return fallback if fallback is not None else assessment
-
+                    blocked, value = _on_args(args, kwargs)
+                    if blocked:
+                        return value
                 res = func(*args, **kwargs)
-
-                if check_result:
-                    res_assessment = check_tool_result(res, block_truncated=block_truncated)
-                    if not res_assessment.allowed:
-                        if callback:
-                            callback(res_assessment, func_name, res)
-                        if on_block == "raise":
-                            raise GuardBlockError(res_assessment, target=f"{func_name}:result", payload=res)
-                        elif on_block == "return":
-                            return fallback if fallback is not None else res_assessment
-
-                if mask_secrets:
-                    from .rules import sanitize_tool_result
-                    res, _ = sanitize_tool_result(res)
-
-                return res
+                return _on_result(res)
             return cast(_F, sync_wrapper)
 
     return decorator
-

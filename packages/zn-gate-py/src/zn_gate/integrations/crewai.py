@@ -6,7 +6,7 @@ import functools
 import inspect
 from typing import Any, Callable, Optional
 
-from ..guard import GuardBlockError, block_message, check_tool_call, check_tool_result, validate_on_block
+from ..guard import GuardBlockError, _call_payload, block_message, check_tool_call, check_tool_result, validate_on_block
 from ..rules import sanitize_tool_result
 
 
@@ -39,9 +39,10 @@ def guarded_tool(
 
     Async tools (`async def`, or a callable object whose `__call__` is `async def`)
     get the same treatment: the call is awaited, then the output is checked and
-    masked exactly as for a sync tool. A sync function that returns a coroutine,
-    and an async generator, are not checked or masked: declare the tool with
-    `async def` instead.
+    masked exactly as for a sync tool. A sync function that returns a coroutine
+    is not checked or masked: declare the tool with `async def` instead. With
+    check_result, a generator or async generator result is blocked, because it
+    cannot be checked without consuming it.
     """
     validate_on_block(on_block, ("raise", "return"))
     prefix = framework if framework else "tool"
@@ -77,7 +78,7 @@ def guarded_tool(
             @functools.wraps(tool_func)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 tool_name = getattr(tool_func, "__name__", "tool")
-                assessment = check_tool_call(tool_name, {"args": args, "kwargs": kwargs})
+                assessment = check_tool_call(tool_name, _call_payload(tool_func, args, kwargs))
                 if not assessment.allowed:
                     return _blocked_input(tool_name, assessment, kwargs, on_block, fallback)
 
@@ -89,7 +90,7 @@ def guarded_tool(
         @functools.wraps(tool_func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             tool_name = getattr(tool_func, "__name__", "tool")
-            assessment = check_tool_call(tool_name, {"args": args, "kwargs": kwargs})
+            assessment = check_tool_call(tool_name, _call_payload(tool_func, args, kwargs))
             if not assessment.allowed:
                 return _blocked_input(tool_name, assessment, kwargs, on_block, fallback)
 

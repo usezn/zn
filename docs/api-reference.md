@@ -103,12 +103,14 @@ from zn_gate import analyze, log_evidence, verify_evidence_ledger
 
 ### `@guard(on_block='raise'|'return'|'custom', fallback=None, check_args=True, check_result=False, mask_secrets=False, callback=None, block_truncated=False)`
 - Python decorator protecting sync and async agent functions and tool handlers.
-- `on_block='raise'` raises `GuardBlockError`; `'return'` returns `fallback` (or the `Assessment` when `fallback` is `None`); `'custom'` calls `callback(assessment, function_name, payload)`.
-- `on_block` must be `'raise'`, `'return'` or `'custom'` (the last calls `callback`); any other value raises `ValueError` when the decorator is created.
-- With `check_result=True`, `block_truncated=True` blocks a result too large to scan in full (rule `size:truncated`); `ZN_BLOCK_TRUNCATED=1` does the same for every guard.
+- `on_block='raise'` raises `GuardBlockError`; `'return'` returns `fallback` (or the `Assessment` when `fallback` is `None`); `'custom'` calls `callback(assessment, function_name, payload)` and then raises `GuardBlockError`, unless the callback raises its own exception first. A blocked call never runs the function.
+- `on_block` must be `'raise'`, `'return'` or `'custom'`; any other value, or `'custom'` without a `callback`, raises `ValueError` when the decorator is created.
+- `block_truncated=True` blocks arguments, and with `check_result=True` a result, too large to scan in full (rule `size:truncated`); `ZN_BLOCK_TRUNCATED=1` does the same for every guard. The `self` or `cls` of a method is not checked.
 
-### `check_tool_call(tool_name: str, arguments: Any = None, strict: bool | None = None) -> Assessment`
-- Recursively extracts and inspects all strings in arguments for malicious commands or credentials.
+### `check_tool_call(tool_name: str, arguments: Any = None, strict: bool | None = None, block_truncated: bool = False) -> Assessment`
+- Recursively extracts and inspects all strings in arguments for malicious commands or credentials: dict keys and values, lists, tuples, sets, dict views, dataclasses, pydantic models and the attributes of other objects.
+- A generator or other one-shot iterator is blocked (rule `type:unscannable`), because checking it would use it up; more than 100,000 values taken from objects and other iterables is blocked (rule `size:items`); nesting deeper than ten levels is blocked (rule `size:nesting`).
+- Long strings are scanned in overlapping windows up to 4 MB, as tool results are; `Assessment.truncated` is `True` when a string was not scanned in full, and `block_truncated=True` or `ZN_BLOCK_TRUNCATED=1` blocks it (rule `size:truncated`).
 
 ### `check_tool_result(result: Any, block_truncated: bool = False, strict: bool | None = None) -> Assessment`
 - Inspects external tool return values for indirect injection payloads. Long strings are scanned in overlapping windows up to 4 MB; `Assessment.truncated` is `True` when a string was not scanned in full. Pass `block_truncated=True` or set `ZN_BLOCK_TRUNCATED=1` to block such output (rule `size:truncated`); `@guard(check_result=True)` uses this check.
@@ -119,7 +121,7 @@ from zn_gate import analyze, log_evidence, verify_evidence_ledger
 
 ### `sanitize_tool_result(tool_or_result, content=None, mask_secrets=True, block_truncated=False, strict=None)`
 - Two call forms, as in Node. `sanitize_tool_result(data)` redacts secrets in strings, lists, dicts and tuples and returns a **tuple** `(clean_data, detections)`, with detections shaped as for `redact_secrets`. The Node version returns `{ sanitized, detections }`.
-- `sanitize_tool_result(tool_name, content)` scans the output and returns a dict `{ tool_name, safe_to_ingest, truncated, assessment, secrets_redacted, sanitized_content }`, where `assessment` is an `Assessment`.
+- `sanitize_tool_result(tool_name, content)` scans the output and returns a dict `{ tool_name, safe_to_ingest, truncated, assessment, secrets_redacted, sanitized_content }`, where `assessment` is an `Assessment`. Content that is not a string is checked string by string, as `check_tool_result` does, and as JSON text; `sanitized_content` is that JSON text, as in Node.
 
 ### `analyze(input_text, api_key=None, endpoint=None, timeout=None, local_only=False, long_input=None, **kwargs) -> dict`
 - Synchronous (the Node function returns a Promise). Same data flow as Node: local rules first, and the cloud only when the user opted in with `ZN_API_KEY` and `ZN_CLOUD=1`, with `ZN_LOCAL_ONLY` not `true`. Text is secret-redacted before it is sent.
