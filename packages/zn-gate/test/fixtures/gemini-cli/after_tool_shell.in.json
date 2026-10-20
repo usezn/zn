@@ -1,0 +1,15 @@
+{
+  "session_id": "sess-1",
+  "transcript_path": "${HOME}/.gemini/tmp/proj/chats/session.json",
+  "cwd": "/work/proj",
+  "hook_event_name": "AfterTool",
+  "timestamp": "2026-10-19T10:00:00.000Z",
+  "tool_name": "run_shell_command",
+  "tool_input": {
+    "command": "echo hi"
+  },
+  "tool_response": {
+    "llmContent": "hi",
+    "returnDisplay": "hi"
+  }
+}

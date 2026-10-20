@@ -9,7 +9,6 @@ RUN=$2
 OPENCODE=${3:-opencode}
 H=$(cd "$(dirname "$0")" && pwd)
 PORT=${PORT:-8789}
-NODE=$(command -v node)
 
 rm -rf "$RUN"; mkdir -p "$RUN"
 node "$H/setup.js" --pkg "$PKG" --run "$RUN" --agent opencode >/dev/null
@@ -38,7 +37,7 @@ EOF
 node "$H/vault_daemon.js" --pkg "$PKG" --secrets "$RUN/secrets.json" --out "$OUT" & VPID=$!
 node "$H/mock_llm.js" --port "$PORT" --script "$RUN/scenario.json" --out "$OUT" > "$OUT/mock.log" & MPID=$!
 trap 'kill $VPID $MPID 2>/dev/null || true' EXIT
-for i in $(seq 50); do [ -f "$OUT/vault.ready" ] && break; sleep 0.2; done
+for _ in $(seq 50); do [ -f "$OUT/vault.ready" ] && break; sleep 0.2; done
 [ -f "$OUT/vault.ready" ] || { cat "$OUT/vault.error"; exit 1; }
 
 node -e "require('$PKG/lib/agents/opencode').install({ scope: 'user', mcp: false })" >/dev/null
@@ -51,4 +50,4 @@ timeout 120 "$OPENCODE" run "$(cat "$RUN/pasted.txt")" < /dev/null > "$OUT/openc
 echo "paste exit=$?" >> "$OUT/exit_codes.txt"
 set -e
 cp -r "$XDG_DATA_HOME/opencode/storage" "$OUT/transcripts" 2>/dev/null || true
-echo done
+echo "done"

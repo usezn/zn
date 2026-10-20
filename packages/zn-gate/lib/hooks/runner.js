@@ -106,8 +106,17 @@ const REINSTALL = 'part of zn-gate is missing from this installation, so zn cann
 const REINSTALL_USER = 'part of zn-gate is missing from this installation, so zn blocks what it cannot check. ' +
   'Reinstall it with `npm install -g zn-gate@' + ZN_VERSION + '` and then run `zn hooks install`. ' +
   'To let actions pass unchecked until then, set {"hooks": {"whenUnavailable": "allow"}} in ~/.zn/config.json.';
-const HOOK_FAILED = 'something went wrong inside the zn hook, so this action was blocked to keep the user\'s secrets safe. ' +
-  'If it happens again, ask the user to run `' + znCommand('hooks install') + '`.';
+/* Claude Code sets CLAUDE_PLUGIN_ROOT only for the hooks of a plugin: there `zn hooks install` does not apply. */
+const AGENT_NAMES = { 'claude-code': 'Claude Code', codex: 'Codex CLI', cursor: 'Cursor', opencode: 'OpenCode', antigravity: 'Antigravity' };
+function fixHint(agentId) {
+  if (agentId === 'claude-code' && process.env.CLAUDE_PLUGIN_ROOT) {
+    return 'If it happens again, ask the user to update or reinstall the zn-gate plugin (`claude plugin update zn-gate@usezn`).';
+  }
+  const name = AGENT_NAMES[agentId];
+  return 'If it happens again, ask the user to run `' + znCommand('hooks install' + (name ? ' ' + agentId : '')) + '`' +
+    (name ? ' to set up zn for ' + name + ' again.' : '.');
+}
+const HOOK_FAILED = 'something went wrong inside the zn hook, so this action was blocked to keep the user\'s secrets safe. ';
 
 /**
  * Refuse text that a native call could not survive (see safe-text.js) before any file, process or network call
@@ -754,43 +763,53 @@ function countIn(text, needle) {
 }
 
 // Markers in the answer that appear nowhere else in the transcript (no prompt,
-// no tool output, no earlier message). The answer itself is counted out. The
-// transcript is streamed, and the scan stops as soon as every marker has been
-// seen outside the answer, so a marker used early in a session costs little.
-// An unreadable or larger-than-cap transcript skips this check. A marker
-// repeated in an answer whose transcript lacks that answer can be reported
-// falsely.
+// no tool output, no earlier message). The answer itself is counted out, and so
+// is every verbatim copy of it: Codex writes its final answer to the session log
+// more than once (3 times on 0.163.0), so subtracting a single copy would hide a
+// placeholder that only the answer contains. A copy is the answer as the log
+// writes it in JSON; when none is found (a different escaping) one copy is
+// assumed, which is the earlier behaviour. The transcript is streamed, so the
+// whole file is read, up to STOP_TRANSCRIPT_CAP. An unreadable or larger-than-cap
+// transcript skips this check. A marker repeated in an answer whose transcript
+// lacks that answer can be reported falsely.
+const STOP_COPY_CAP = 1024 * 1024; // answers longer than this (as JSON) are counted as one copy
+
 async function unseenMarkers(message, transcriptPath) {
   const found = [...new Set(markers.findMarkers(message).map((m) => m.marker))];
   if (found.length === 0 || !transcriptPath) return [];
   try {
     if (fs.statSync(transcriptPath).size > STOP_TRANSCRIPT_CAP) return [];
-    const own = {};
-    const seen = {};
-    const lastEnd = {}; // absolute offset just past the last counted occurrence
-    for (const m of found) {
-      own[m] = countIn(message, m);
-      seen[m] = 0;
-      lastEnd[m] = 0;
-    }
     // Markers are ASCII, so they are searched as bytes: no UTF-8 decoding per chunk.
-    // Each chunk is searched in place. Only a marker that straddles two chunks
-    // needs a joined window of a few bytes, so no chunk is copied.
+    // The answer copy is searched the same way, as the bytes of its JSON string body.
+    const copyBytes = Buffer.from(JSON.stringify(message).slice(1, -1), 'utf8');
+    const copyKey = '\u0000answer';
+    const keys = found.slice();
     const needle = {};
     for (const m of found) needle[m] = Buffer.from(m, 'utf8');
-    let pending = found;
-    const keep = Math.max(...found.map((m) => m.length)) - 1;
+    if (copyBytes.length > 0 && copyBytes.length <= STOP_COPY_CAP) {
+      keys.push(copyKey);
+      needle[copyKey] = copyBytes;
+    }
+    const count = {};
+    const lastEnd = {}; // absolute offset just past the last counted occurrence
+    for (const k of keys) {
+      count[k] = 0;
+      lastEnd[k] = 0;
+    }
+    // Each chunk is searched in place. Only a needle that straddles two chunks
+    // needs a joined window, so no chunk is copied.
     const scan = (buf, absBase) => {
-      for (const m of pending) {
-        for (let i = buf.indexOf(needle[m]); i !== -1; i = buf.indexOf(needle[m], i + 1)) {
+      for (const k of keys) {
+        for (let i = buf.indexOf(needle[k]); i !== -1; i = buf.indexOf(needle[k], i + 1)) {
           const abs = absBase + i;
-          if (abs >= lastEnd[m]) {
-            seen[m] += 1;
-            lastEnd[m] = abs + m.length;
+          if (abs >= lastEnd[k]) {
+            count[k] += 1;
+            lastEnd[k] = abs + needle[k].length;
           }
         }
       }
     };
+    const keep = Math.max(...keys.map((k) => needle[k].length)) - 1;
     let carry = Buffer.alloc(0); // last bytes of the previous chunk
     let carryAbs = 0; // absolute offset of carry[0]
     let chunkAbs = 0; // absolute offset of the next chunk
@@ -798,13 +817,13 @@ async function unseenMarkers(message, transcriptPath) {
     for await (const chunk of stream) {
       if (carry.length) scan(Buffer.concat([carry, chunk.subarray(0, keep)]), carryAbs);
       scan(chunk, chunkAbs);
-      pending = pending.filter((m) => seen[m] - own[m] <= 0);
-      if (pending.length === 0) break;
       carry = chunk.subarray(Math.max(0, chunk.length - keep));
       carryAbs = chunkAbs + chunk.length - carry.length;
       chunkAbs += chunk.length;
     }
-    return pending;
+    const copies = Math.max(1, count[copyKey] || 0);
+    // The marker may sit inside a copy more than once; each copy accounts for that many.
+    return found.filter((m) => count[m] - copies * countIn(message, m) <= 0);
   } catch (_) {
     return [];
   }
@@ -845,7 +864,7 @@ async function decideStop(ev, d, agentId, opts) {
 
 /* ------------------------------ entry ----------------------------- */
 
-function failDecision(ev, err, mode) {
+function failDecision(ev, err, mode, agentId) {
   // A Stop check never blocks because zn failed: that could keep the agent going.
   if (ev && ev.event === 'stop') {
     return { decision: 'ask', failOpen: true, notice: 'zn: could not check the last answer for secrets' + (err && err.code ? ' (' + err.code + ')' : '') + '.' };
@@ -856,7 +875,7 @@ function failDecision(ev, err, mode) {
   }
   const missing = err.code === 'ZN_UNAVAILABLE';
   const detail = missing ? '' : ' (' + (err.code ? err.code + ': ' : '') + String(err.message || 'unknown error') + ')';
-  const msg = 'zn: ' + (missing ? REINSTALL : HOOK_FAILED) + detail;
+  const msg = 'zn: ' + (missing ? REINSTALL : HOOK_FAILED + fixHint(agentId)) + detail;
   // Fail open only when the engine itself is missing and the user chose so.
   if (mode === 'open' && missing) return { decision: 'allow', failOpen: true, warning: 'zn: ' + REINSTALL_USER };
   const r = failClosed(ev, err, msg);
@@ -908,7 +927,7 @@ async function handle(adapter, rawEvent, opts = {}) {
     else if (ev.event === 'prompt_expansion') decision = await decideExpansion(ev, d, adapter.id);
     else decision = { decision: 'allow' };
   } catch (err) {
-    decision = failDecision(ev, err, mode);
+    decision = failDecision(ev, err, mode, adapter.id);
   }
   const output = adapter.respond({ ...decision, event: ev });
   countHook(adapter.id, ev, decision, opts);
@@ -1014,12 +1033,13 @@ function refuseInput(agentId, why) {
   }
   // Claude Code and Codex show this stderr to the model, so it never says how to
   // let actions pass unchecked (docs/compat.md documents that for the user).
-  const msg = 'zn: could not read this action (' + why + '), so it was blocked. ' +
-    'If it happens again, ask the user to run `' + znCommand('hooks install') + '`.';
+  const msg = 'zn: could not read this action (' + why + '), so it was blocked. ' + fixHint(agentId);
   process.stderr.write('zn hook: ' + msg + '\n');
   if (agentId === 'cursor') process.stdout.write(JSON.stringify({ permission: 'deny', continue: false, user_message: msg, agent_message: msg }));
   // Antigravity does not document its exit codes, so its deny answer is printed as well.
   if (agentId === 'antigravity') process.stdout.write(JSON.stringify({ decision: 'deny', reason: msg }));
+  // Gemini CLI documents exit 2 as a block with stderr as the reason, so it needs no JSON on stdout (stdout that
+  // is not JSON counts as allow there); any other exit code only warns and lets the tool run.
   process.exitCode = 2;
 }
 
