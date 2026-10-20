@@ -354,6 +354,262 @@ def validate_on_block(value: Any, allowed: Tuple[str, ...]) -> str:
     return value
 
 
+class MaskedToolError(RuntimeError):
+    """A tool's exception whose message had to be masked, raised in place of it when
+    the original exception type cannot be rebuilt with only the masked message."""
+
+
+# Characters of the previous streamed chunk that are checked again with the
+# next one, so a blocked phrase split between two chunks is still found.
+STREAM_OVERLAP = 256
+_ERROR_CHAIN_LIMIT = 8
+
+
+def _safe_text(fn: Callable[[Any], str], value: Any) -> str:
+    try:
+        return fn(value)
+    except Exception:
+        return ""
+
+
+def _mask_text(text: str) -> str:
+    from . import rules
+    masked, _ = rules.sanitize_tool_result(text)
+    return masked if isinstance(masked, str) else text
+
+
+def _error_texts(exc: BaseException) -> List[str]:
+    """str() and repr() of an exception and of the exceptions chained to it."""
+    texts: List[str] = []
+    seen: Set[int] = set()
+    cur: Optional[BaseException] = exc
+    while cur is not None and id(cur) not in seen and len(seen) < _ERROR_CHAIN_LIMIT:
+        seen.add(id(cur))
+        texts.append(_safe_text(str, cur))
+        texts.append(_safe_text(repr, cur))
+        cur = cur.__cause__ or cur.__context__
+    return texts
+
+
+def _rebuild_error(exc: BaseException, message: str) -> BaseException:
+    """A new exception of the same type as `exc` that carries only `message`.
+
+    Agent frameworks send str(exc) (or repr) to the model, so the copy must not
+    keep the original arguments, attributes, notes or chained exceptions. When
+    the type cannot be rebuilt that way, MaskedToolError is used instead.
+    """
+    cls = type(exc)
+    candidates: List[BaseException] = []
+    try:
+        candidates.append(cls(message))
+    except Exception:
+        pass
+    try:
+        bare = cls.__new__(cls)
+        bare.args = (message,)
+        candidates.append(bare)
+    except Exception:
+        pass
+    for new in candidates:
+        text, rtext = _safe_text(str, new), _safe_text(repr, new)
+        if message not in text:
+            continue
+        if _mask_text(text) != text or _mask_text(rtext) != rtext:
+            continue
+        return new
+    return MaskedToolError(message)
+
+
+class _ResultPolicy:
+    """What a guard does with what a tool gives back: its return value, the
+    chunks of a streamed (generator) result, an awaitable, or an exception."""
+
+    def __init__(self, name: str, target: str, check: bool, mask: bool, block_truncated: bool,
+                 on_block: str, fallback: Any, callback: Optional[Callable[[Assessment, str, Any], None]],
+                 default: Callable[[Assessment, str], Any]):
+        self.name = name
+        self.target = target
+        self.check = check
+        self.mask = mask
+        self.block_truncated = block_truncated
+        self.on_block = on_block
+        self.fallback = fallback
+        self.callback = callback
+        self.default = default
+        self.active = check or mask
+
+    def blocked(self, assessment: Assessment, payload: Any) -> Any:
+        """Return the stand-in value (on_block="return") or raise GuardBlockError."""
+        if self.callback:
+            self.callback(assessment, self.name, payload)
+        if self.on_block == "return":
+            return self.fallback if self.fallback is not None else self.default(assessment, self.target)
+        raise GuardBlockError(assessment, target=self.target, payload=payload)
+
+    def value(self, res: Any) -> Any:
+        if self.check:
+            assessment = check_tool_result(res, block_truncated=self.block_truncated)
+            if not assessment.allowed:
+                return self.blocked(assessment, res)
+        if self.mask:
+            from . import rules
+            res, _ = rules.sanitize_tool_result(res)
+        return res
+
+    def finish(self, res: Any) -> Any:
+        if not self.active:
+            return res
+        if inspect.isgenerator(res):
+            return self._stream(res)
+        if inspect.isasyncgen(res):
+            return self._astream(res)
+        if inspect.isawaitable(res):
+            return self._awaited(res)
+        return self.value(res)
+
+    def handle_error(self, exc: Exception) -> Any:
+        """Check and mask the message of a tool's exception, as a result would be.
+
+        Must be called outside the `except` block, so the exception raised in
+        its place has no link back to the original. Raises GuardBlockError
+        (or returns the stand-in value with on_block="return") when the
+        message is blocked, raises a copy with the masked message when it held
+        a secret, and raises the original exception otherwise.
+        """
+        message = _safe_text(str, exc)
+        if self.check:
+            assessment = check_tool_result([message, _safe_text(repr, exc)],
+                                           block_truncated=self.block_truncated)
+            if not assessment.allowed:
+                return self.blocked(assessment, _mask_text(message) if self.mask else None)
+        if self.mask and any(_mask_text(t) != t for t in _error_texts(exc)):
+            new = _rebuild_error(exc, _mask_text(message))
+            raise new.with_traceback(exc.__traceback__) from None
+        raise exc
+
+    def call(self, func: Callable[..., Any], args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Any:
+        caught: Optional[Exception] = None
+        try:
+            res = func(*args, **kwargs)
+        except GuardBlockError:
+            raise
+        except Exception as exc:
+            if not self.active:
+                raise
+            caught = exc
+        if caught is not None:
+            return self.handle_error(caught)
+        return self.finish(res)
+
+    async def acall(self, func: Callable[..., Any], args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Any:
+        caught: Optional[Exception] = None
+        try:
+            res = await func(*args, **kwargs)
+        except GuardBlockError:
+            raise
+        except Exception as exc:
+            if not self.active:
+                raise
+            caught = exc
+        if caught is not None:
+            return self.handle_error(caught)
+        return self.finish(res)
+
+    async def _awaited(self, awaitable: Any) -> Any:
+        caught: Optional[Exception] = None
+        try:
+            res = await awaitable
+        except GuardBlockError:
+            raise
+        except Exception as exc:
+            caught = exc
+        if caught is not None:
+            return self.handle_error(caught)
+        return self.finish(res)
+
+    def _chunk(self, chunk: Any, tail: str) -> Tuple[Any, str, bool]:
+        """(chunk to pass on, new overlap tail, stop after this chunk)."""
+        if self.check:
+            assessment = check_tool_result(chunk, block_truncated=self.block_truncated)
+            if assessment.allowed and tail and isinstance(chunk, str):
+                joined = check_tool_result(tail + chunk, block_truncated=self.block_truncated)
+                if not joined.allowed:
+                    assessment = joined
+            if not assessment.allowed:
+                return self.blocked(assessment, chunk), "", True
+        new_tail = (tail + chunk)[-STREAM_OVERLAP:] if isinstance(chunk, str) else ""
+        if self.mask:
+            from . import rules
+            chunk, _ = rules.sanitize_tool_result(chunk)
+        return chunk, new_tail, False
+
+    def _stream(self, gen: Any) -> Any:
+        policy = self
+
+        def guarded_stream() -> Any:
+            tail = ""
+            sent = None
+            try:
+                while True:
+                    caught: Optional[Exception] = None
+                    try:
+                        chunk = gen.send(sent)
+                    except StopIteration as stop:
+                        return stop.value
+                    except GuardBlockError:
+                        raise
+                    except Exception as exc:
+                        caught = exc
+                    if caught is not None:
+                        yield policy.handle_error(caught)
+                        return None
+                    out, tail, done = policy._chunk(chunk, tail)
+                    sent = yield out
+                    if done:
+                        return None
+            finally:
+                gen.close()
+
+        return guarded_stream()
+
+    def _astream(self, agen: Any) -> Any:
+        policy = self
+
+        async def guarded_astream() -> Any:
+            tail = ""
+            sent = None
+            try:
+                while True:
+                    caught: Optional[Exception] = None
+                    try:
+                        chunk = await agen.asend(sent)
+                    except StopAsyncIteration:
+                        return
+                    except GuardBlockError:
+                        raise
+                    except Exception as exc:
+                        caught = exc
+                    if caught is not None:
+                        yield policy.handle_error(caught)
+                        return
+                    out, tail, done = policy._chunk(chunk, tail)
+                    sent = yield out
+                    if done:
+                        return
+            finally:
+                await agen.aclose()
+
+        return guarded_astream()
+
+
+def _is_async_callable(func: Any) -> bool:
+    """`async def` functions and callable objects whose `__call__` is `async def`."""
+    # getattr with a default, not hasattr: an object without __call__ takes the sync path.
+    return inspect.iscoroutinefunction(func) or inspect.iscoroutinefunction(
+        getattr(func, "__call__", None)  # noqa: B004
+    )
+
+
 def guard(
     on_block: str = "raise",
     fallback: Any = None,
@@ -382,6 +638,26 @@ def guard(
     - block_truncated: Block arguments, and with check_result a result, too large
                        to scan in full (rule size:truncated). ZN_BLOCK_TRUNCATED=1
                        does the same for every guard (default False).
+
+    With check_result or mask_secrets, what the function gives back is handled
+    the same way whatever its form:
+    - async: `async def` functions, callable objects whose `__call__` is
+      `async def`, and sync functions that return a coroutine or other
+      awaitable are awaited first, then checked and masked;
+    - streamed: a generator or async generator result is passed on chunk by
+      chunk, each chunk checked (together with the end of the previous one)
+      and masked. A blocked chunk ends the stream: GuardBlockError, or the
+      fallback as the last chunk with on_block="return". A secret split
+      across two chunks is not masked;
+    - exceptions: the message of an exception raised by the function is
+      checked and masked like a result, because agent frameworks pass it to
+      the model. A blocked message raises GuardBlockError (or returns the
+      fallback); a message with a secret is raised again as an exception of
+      the same type (MaskedToolError when the type cannot be rebuilt) that
+      carries only the masked message, without the original as its cause.
+    Framework run-context arguments (pydantic-ai RunContext, Google ADK
+    ToolContext, OpenAI Agents SDK ToolContext / RunContextWrapper, LangChain
+    callback managers and RunnableConfig) are not checked.
     """
     validate_on_block(on_block, ("raise", "return", "custom"))
     if on_block == "custom" and callback is None:
@@ -403,31 +679,18 @@ def guard(
                 return True, fallback if fallback is not None else assessment
             raise GuardBlockError(assessment, target=func_name, payload=combined_args)
 
-        def _on_result(res: Any) -> Any:
-            if check_result:
-                res_assessment = check_tool_result(res, block_truncated=block_truncated)
-                if not res_assessment.allowed:
-                    if callback:
-                        callback(res_assessment, func_name, res)
-                    if on_block == "return":
-                        return fallback if fallback is not None else res_assessment
-                    raise GuardBlockError(res_assessment, target=f"{func_name}:result", payload=res)
+        policy = _ResultPolicy(func_name, f"{func_name}:result", check_result, mask_secrets,
+                               block_truncated, on_block, fallback, callback,
+                               default=lambda assessment, _target: assessment)
 
-            if mask_secrets:
-                from .rules import sanitize_tool_result
-                res, _ = sanitize_tool_result(res)
-
-            return res
-
-        if inspect.iscoroutinefunction(func):
+        if _is_async_callable(func):
             @functools.wraps(func)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 if check_args:
                     blocked, value = _on_args(args, kwargs)
                     if blocked:
                         return value
-                res = await func(*args, **kwargs)
-                return _on_result(res)
+                return await policy.acall(func, args, kwargs)
             return cast(_F, async_wrapper)
         else:
             @functools.wraps(func)
@@ -436,8 +699,7 @@ def guard(
                     blocked, value = _on_args(args, kwargs)
                     if blocked:
                         return value
-                res = func(*args, **kwargs)
-                return _on_result(res)
+                return policy.call(func, args, kwargs)
             return cast(_F, sync_wrapper)
 
     return decorator

