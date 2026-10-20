@@ -21,9 +21,8 @@ LAYER_NAMES = {
 
 
 def stats_file() -> str:
-    home = os.environ.get("ZN_HOME")
-    base = os.path.abspath(home) if home else os.path.join(os.path.expanduser("~"), ".zn")
-    return os.path.join(base, "stats.json")
+    from .env import zn_home
+    return os.path.join(zn_home(), "stats.json")
 
 
 def load(path: Optional[str] = None) -> Dict[str, Any]:

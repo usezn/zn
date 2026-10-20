@@ -40,7 +40,7 @@ The commands that start a long-running server (`mcp`, `shield`, `secrets-mcp`) e
 | `ZN_API_URL` or `--url <url>` | Use another cloud address. |
 | `--long-input <windows\|off>` | How long texts are sent to the cloud check: in overlapping windows (default, up to 20), or only the first 512 tokens. Any other value exits `2`. |
 | `ZN_STATS=off` | Turns off the local counts shown by `stats` and `report`. |
-| `ZN_VERBOSE=1` or `--verbose` | Prints debug messages to the error output. |
+| `ZN_VERBOSE=1` (or `true`, `yes`, `on`) or `--verbose` | Prints debug messages to the error output. `0`, `false`, `no`, `off` or empty leave it off. |
 | `NO_COLOR` | Turns off colors. |
 
 ## Set up and check

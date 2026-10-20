@@ -315,7 +315,7 @@ function startMcpServer(options = {}) {
     terminal: false,
   });
 
-  if (process.env.DEBUG || process.env.ZN_VERBOSE) {
+  if (require('./env').debugEnabled()) {
     process.stderr.write(`[zn-gate] MCP server listening on stdio (engine: ${isCloudEnabled(options) ? 'local + cloud for analyze_prompt' : 'local only'})...\n`);
   }
 

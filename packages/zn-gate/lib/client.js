@@ -226,7 +226,7 @@ async function analyze(input, options = {}) {
     }
     return out;
   } catch (err) {
-    if (process.env.DEBUG || process.env.ZN_VERBOSE) {
+    if (require('./env').debugEnabled()) {
       process.stderr.write(`[zn-gate] Warning: Cloud gate error (${err.message}). Using local rules result.\n`);
     }
     return {

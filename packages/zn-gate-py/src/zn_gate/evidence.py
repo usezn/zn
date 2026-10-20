@@ -20,11 +20,14 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 
+from .env import zn_home
+
+
 def _redact(text: str) -> str:
     from .rules import mask_token_runs, redact_secrets  # local import avoids import cycles
     return mask_token_runs(redact_secrets(text)[0])
 
-ZN_DIR = os.path.expanduser("~/.zn")
+ZN_DIR = zn_home()
 EVIDENCE_FILE = os.path.join(ZN_DIR, "evidence.jsonl")
 GENESIS_HASH = "0" * 64
 

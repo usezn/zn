@@ -48,7 +48,7 @@ function humanError(err, env = process.env) {
   } else {
     text = detail;
   }
-  return code && (env.DEBUG || env.ZN_VERBOSE === '1') ? '[' + code + '] ' + text : text;
+  return code && require('./env').debugEnabled(env) ? '[' + code + '] ' + text : text;
 }
 
 /* The message of an error for a command line, with the unlock hint added once: a locked-vault

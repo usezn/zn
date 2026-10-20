@@ -2,13 +2,13 @@
 
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
+const { znHome } = require('./env');
 const crypto = require('crypto');
 const http = require('http');
 const { redactSecrets } = require('./rules');
 const { sym } = require('./term');
 
-const ZN_DIR = path.join(os.homedir(), '.zn');
+const ZN_DIR = znHome();
 const EVIDENCE_FILE = path.join(ZN_DIR, 'evidence.jsonl');
 const GENESIS_HASH = '0000000000000000000000000000000000000000000000000000000000000000';
 
