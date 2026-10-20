@@ -217,6 +217,27 @@ For these reasons, zn is installed correctly, but a setting stops your agent fro
 
   Codex runs every hook for an event at the same time, each with the original call. Another tool's hook can change the call after zn has checked it, or answer an approval prompt, and zn cannot see what it does. See [compat](compat.md) for the details.
 
+### Gemini CLI settings switch the hook off
+
+- **Hooks are turned off, or zn's hook is on the disabled list.**
+
+  ```text
+  <label> (<file>) turn all hooks off (hooksConfig.enabled is false), so zn's hook does not run. Set it to true to turn hooks on.
+  <label> (<file>) list zn's hook in hooksConfig.disabled (for example after `/hooks disable`), so it does not run. Remove it from that list, or run `/hooks enable zn-gate` in Gemini CLI.
+  change that Gemini CLI setting as it says, then run `zn-gate check` again
+  ```
+
+  `<label>` is your Gemini CLI settings, this folder's Gemini CLI settings or the system Gemini CLI settings. With `hooksConfig.enabled` set to `false`, Gemini CLI runs no hooks at all. A name in `hooksConfig.disabled` skips just that hook. Edit the file as the line says, then run the check again.
+
+- **A Gemini CLI settings file that zn-gate could not read** is not a NOT protected line. It adds a note under an **OK** line instead:
+
+  ```text
+  could not read <file> (invalid JSON), so zn cannot tell whether it turns off its hooks.
+  could not read <file> (<error>), so zn cannot tell whether it turns off its hooks.
+  ```
+
+  Fix the JSON or the file permissions, then run the check again.
+
 ### zn-gate could not finish the check
 
 ```text
