@@ -5,6 +5,7 @@ Pure Python stdlib. Zero external dependencies.
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import inspect
 import io
@@ -12,7 +13,7 @@ import itertools
 import os
 import types
 from collections.abc import AsyncIterator, ItemsView, Iterable, Iterator, KeysView, Mapping, ValuesView
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypeVar, cast
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set, Tuple, TypeVar, cast
 
 from .rules import Assessment, scan_windows
 
@@ -92,15 +93,62 @@ def _object_fields(data: Any) -> Optional[List[Any]]:
     return children if found else None
 
 
+# Context objects that agent frameworks pass to a tool next to the model's
+# arguments: (module prefix, class names, or None for every class there).
+# They hold the run state (messages, model, dependencies, callbacks), never
+# text the model chose for this call, so they are not checked.
+_FRAMEWORK_CONTEXT_TYPES: Tuple[Tuple[str, Optional[FrozenSet[str]]], ...] = (
+    ("pydantic_ai", frozenset({"RunContext"})),
+    ("google.adk", frozenset({"ToolContext", "CallbackContext", "InvocationContext",
+                              "ReadonlyContext", "Context"})),
+    ("agents.tool_context", frozenset({"ToolContext"})),
+    ("agents.run_context", frozenset({"RunContextWrapper"})),
+    ("langchain_core.callbacks", None),
+    ("llama_index.core.workflow", frozenset({"Context"})),
+)
+
+
+def _is_framework_context(value: Any) -> bool:
+    """True for a run-context object of a known agent framework (see _FRAMEWORK_CONTEXT_TYPES)."""
+    if isinstance(value, (str, bytes, bytearray, Mapping, list, tuple, set, frozenset, type)):
+        return False
+    try:
+        mro = type(value).__mro__
+    except Exception:  # pragma: no cover - exotic metaclasses
+        return False
+    for klass in mro:
+        module = getattr(klass, "__module__", None)
+        if not isinstance(module, str):
+            continue
+        for prefix, names in _FRAMEWORK_CONTEXT_TYPES:
+            if module == prefix or module.startswith(prefix + "."):
+                if names is None or klass.__name__ in names:
+                    return True
+    return False
+
+
+def _is_data_object(value: Any) -> bool:
+    """True for objects that carry plain data: dataclasses, pydantic, attrs and msgspec models.
+
+    Agent frameworks build these from the model's tool-call arguments, so they
+    are walked as strictly as dicts and lists.
+    """
+    klass = type(value)
+    return (dataclasses.is_dataclass(value)
+            or hasattr(klass, "__pydantic_fields__") or hasattr(klass, "__fields__")
+            or hasattr(klass, "__attrs_attrs__") or hasattr(klass, "__struct_fields__"))
+
+
 def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] = None,
-                     _budget: Optional[List[int]] = None) -> List[str]:
+                     _budget: Optional[List[int]] = None, _lenient: bool = False) -> List[str]:
     """Recursively extract all strings from nested structures.
 
     Walks every Mapping (keys and values), list, tuple, set, frozenset and dict
     view, decodes bytes, reads file-system paths, and walks the attributes of
     other objects (dataclasses, pydantic models and plain class instances,
     through __dict__ and __slots__) and the items of other re-iterable
-    containers. Classes, modules and functions are skipped.
+    containers. Classes, modules, functions and the run-context objects of
+    agent frameworks (see _FRAMEWORK_CONTEXT_TYPES) are skipped.
 
     Raises _NestingTooDeep instead of silently skipping content that sits
     below the depth limit, and _Unscannable for a one-shot iterator such as a
@@ -108,6 +156,13 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
     an empty iterator) or when objects and generic iterables hold more than
     MAX_OBJECT_VALUES values, so callers can fail closed. A container that
     contains itself is walked once.
+
+    Inside an object that is not a data model (a plain class instance such as
+    a client, a session or an agent's dependencies), the walk is best effort:
+    what sits below the depth limit or past the value budget, or cannot be
+    read, is left out instead of blocking. Such objects are built by the
+    application, not from the model's arguments, and walking them in full
+    blocked every call that passed one.
     """
     if isinstance(data, str):
         return [data]
@@ -116,7 +171,10 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
     if data is None or isinstance(data, (bool, int, float, complex, type, types.ModuleType)) \
             or inspect.isroutine(data):
         return []
+    if _is_framework_context(data):
+        return []
     budget = _budget if _budget is not None else [MAX_OBJECT_VALUES]
+    lenient = _lenient
     children: Optional[List[Any]]
     if isinstance(data, Mapping):
         children = []
@@ -140,17 +198,32 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
     elif isinstance(data, _DICT_VIEWS):
         children = list(data)
     else:
-        children = _object_fields(data)
-        if children is None and isinstance(data, Iterable):
-            children = []
-            for item in itertools.islice(data, budget[0] + 1):
-                children.append(item)
+        # An object with attributes that is not a data model is walked best
+        # effort; containers without attributes (deque, array, custom
+        # sequences) and data models are walked strictly.
+        is_model = _is_data_object(data)
+        try:
+            children = _object_fields(data)
+            if children is not None:
+                lenient = lenient or not is_model
+            elif isinstance(data, Iterable):
+                children = []
+                for item in itertools.islice(data, max(budget[0], 0) + 1):
+                    children.append(item)
+        except Exception:
+            if lenient or not is_model:
+                return []
+            raise _Unscannable("type:unscannable", "An object could not be read to check it") from None
         if children is None:
+            return []
+        if lenient and budget[0] - len(children) < 0:
             return []
         budget[0] -= len(children)
         if budget[0] < 0:
             raise _Unscannable("size:items", "Too many values to check")
     if max_depth <= 0:
+        if lenient:
+            return []
         raise _NestingTooDeep()
     path = _path if _path is not None else set()
     if id(data) in path:
@@ -159,7 +232,7 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
     try:
         strings: List[str] = []
         for child in children:
-            strings.extend(_extract_strings(child, max_depth - 1, path, budget))
+            strings.extend(_extract_strings(child, max_depth - 1, path, budget, lenient))
         return strings
     finally:
         path.discard(id(data))
@@ -177,17 +250,43 @@ def _strings_or_block(data: Any, what: str) -> Tuple[List[str], Optional[Assessm
                               reason=f"{what}: {e.reason}")
 
 
+# Annotations of parameters that a framework fills with its own run settings
+# (LangChain's RunnableConfig is a plain dict, so it cannot be told apart by type).
+_CONTEXT_ANNOTATIONS = ("RunnableConfig",)
+
+
+def _context_params(func: Any) -> Tuple[List[str], Set[str]]:
+    """(parameter names in order, names annotated as a framework config such as RunnableConfig)."""
+    try:
+        params = inspect.signature(func).parameters
+    except (TypeError, ValueError):
+        return [], set()
+    skip: Set[str] = set()
+    for name, param in params.items():
+        ann = param.annotation
+        text = ann if isinstance(ann, str) else getattr(ann, "__name__", "") or repr(ann)
+        if any(marker in text for marker in _CONTEXT_ANNOTATIONS):
+            skip.add(name)
+    return list(params), skip
+
+
 def _call_payload(func: Any, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Dict[str, Any]:
-    """The arguments a guard checks: all of them, except the instance (self or cls) of a method."""
+    """The arguments a guard checks: all of them, except the instance (self or cls) of a
+    method and the run-context objects of agent frameworks (pydantic-ai RunContext,
+    Google ADK ToolContext, OpenAI Agents SDK ToolContext / RunContextWrapper,
+    LangChain callback managers and RunnableConfig)."""
     qualname = getattr(func, "__qualname__", "") or ""
     owner = qualname.rsplit(".", 1)[0] if "." in qualname else ""
+    names, config_params = _context_params(func)
     if args and owner and not owner.endswith("<locals>"):
-        try:
-            params = list(inspect.signature(func).parameters)
-        except (TypeError, ValueError):
-            params = []
-        if params and params[0] in ("self", "cls"):
+        if names and names[0] in ("self", "cls"):
             args = args[1:]
+            names = names[1:]
+    if config_params:
+        args = tuple(a for i, a in enumerate(args) if not (i < len(names) and names[i] in config_params))
+        kwargs = {k: v for k, v in kwargs.items() if k not in config_params}
+    args = tuple(a for a in args if not _is_framework_context(a))
+    kwargs = {k: v for k, v in kwargs.items() if not _is_framework_context(v)}
     return {"args": args, "kwargs": kwargs}
 
 
