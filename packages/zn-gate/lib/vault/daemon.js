@@ -39,6 +39,10 @@ const { variants } = require('../scrub/exact');
 const exe = require('../exe');
 const { makeTeamOps } = require('../team/daemon-ops');
 const { CODES, znError } = require('../errors');
+const messages = require('../messages');
+
+/* A message already written for a person: errors.humanError prints it as it is. */
+function plain(err) { err.plain = true; return err; }
 
 const PROTOCOL = 1;
 const DEFAULT_TTL_MS = 8 * 3600 * 1000;
@@ -811,13 +815,13 @@ async function unlock(opts) {
     env,
   });
   const ready = new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(znError(CODES.LOCKED, 'daemon did not start in time')), 20000);
+    const timer = setTimeout(() => reject(plain(znError(CODES.LOCKED, messages.daemonStartTimeout()))), 20000);
     child.once('message', (m) => {
       clearTimeout(timer);
       if (m && m.ready) resolve(m);
-      else reject(znError((m && m.code) || CODES.LOCKED, (m && m.message) || 'daemon failed to start'));
+      else reject(znError((m && m.code) || CODES.LOCKED, (m && m.message) || messages.DAEMON_START_FAILED));
     });
-    child.once('exit', (code) => { clearTimeout(timer); reject(znError(CODES.LOCKED, 'daemon exited during start (' + code + ')')); });
+    child.once('exit', (code) => { clearTimeout(timer); reject(plain(znError(CODES.LOCKED, messages.daemonExitedAtStart(code)))); });
   });
   child.stdin.end(JSON.stringify({ identity }) + '\n');
   identity = null;

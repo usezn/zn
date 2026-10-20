@@ -78,12 +78,95 @@ function connectFullAccess(url) {
     'Create an analysis-only key on the connect page and paste that one: ' + url + '\nNothing was saved.';
 }
 
-function connectUnverified(detail) {
-  return 'Could not verify the key with usezn.com (' + detail + '), so nothing was saved. Try again later.';
+/* kind: 'network' (no answer), 'refusal' (the environment forbids sending; envVar names it) or 'http'. */
+function connectUnverified(kind, detail, envVar, env) {
+  const raw = rawCode(detail, env);
+  if (kind === 'refusal') return connectEnvRefusal(envVar) + ' Nothing was saved.';
+  if (kind === 'network') return 'Could not reach usezn.com (check your internet connection, then run `zn-gate connect` again). Nothing was saved.' + raw;
+  return 'usezn.com had a problem checking the key, so nothing was saved. Try again in a few minutes.' + raw;
+}
+
+function connectEnvRefusal(envVar) {
+  const v = envVar || 'a setting in your environment';
+  return 'zn-gate will not contact usezn.com while ' + v + ' is set, to protect your key. Unset ' + (envVar || 'it') + ' in this terminal and try again.';
 }
 
 function connectSaveFailed(detail) {
-  return 'Could not save the key: ' + detail + '. Nothing was kept. Run `zn-gate connect` to try again.';
+  return 'Could not save the key: ' + String(detail).replace(/\.+$/, '') + '. Nothing was kept. Run `zn-gate connect` to try again.';
+}
+
+function connectNoStore() {
+  return [
+    'zn-gate could not keep the key. It will not store it in a plain file, this computer has no system keychain, and the zn vault is locked. Nothing was saved.',
+    '',
+    'Next step: run `zn unlock`, then run `zn-gate connect` again.',
+    '',
+    'Or use the key for one terminal session without saving it, in the terminal where you start your agent:',
+    '  macOS or Linux:      export ZN_API_KEY=<your key> ZN_CLOUD=1',
+    '  Windows PowerShell:  $env:ZN_API_KEY = "<your key>"; $env:ZN_CLOUD = "1"',
+    'ZN_CLOUD=1 turns the cloud check on; a key in ZN_API_KEY alone does nothing.',
+    '',
+  ].join('\n');
+}
+
+/* ------------------- keychain, vault daemon and audit log ------------------- */
+
+/* The raw code (exit status, ENOENT, ...) is for support: it shows only with ZN_VERBOSE=1. */
+function rawCode(raw, env = process.env) {
+  return env.ZN_VERBOSE === '1' && raw !== undefined && raw !== null && raw !== '' ? ' [' + raw + ']' : '';
+}
+
+const PASSPHRASE_WAY = 'run `zn unlock --backend passphrase`';
+const MAC_NEXT = 'Next step: open Keychain Access, allow zn to use the keychain, then try again.';
+const WIN_NEXT = 'Next step: check Windows Credential Manager (Windows Credentials), or ' + PASSPHRASE_WAY + '.';
+const LINUX_NEXT = 'Next step: install libsecret-tools and make sure a keyring is running, or ' + PASSPHRASE_WAY + '.';
+
+function keychainRefused(platform, status, env) {
+  const raw = rawCode(platform + ' exit ' + status, env);
+  if (platform === 'macos') return 'zn could not save its key in the macOS keychain. ' + MAC_NEXT + raw;
+  if (platform === 'windows') return 'zn could not save its key in Windows Credential Manager. ' + WIN_NEXT + raw;
+  return 'zn could not save its key in the Linux keyring. ' + LINUX_NEXT + raw;
+}
+
+function keychainReadFailed(platform, status, env) {
+  const raw = rawCode(platform + ' exit ' + status, env);
+  if (platform === 'macos') return 'zn could not read its key from the macOS keychain. ' + MAC_NEXT + raw;
+  if (platform === 'windows') return 'zn could not read its key from Windows Credential Manager. ' + WIN_NEXT + raw;
+  return 'zn could not read its key from the Linux keyring. ' + LINUX_NEXT + raw;
+}
+
+function keychainHelperFailedToStart(cmd, code, env) {
+  const raw = rawCode(String(cmd) + ' ' + code, env);
+  const name = String(cmd).split(/[\\/]/).pop().toLowerCase();
+  if (name === 'security') return 'zn could not start the macOS keychain tool. ' + MAC_NEXT + raw;
+  if (name === 'secret-tool') return 'zn could not start secret-tool, which it needs for the Linux keyring. ' + LINUX_NEXT + raw;
+  return 'zn could not start PowerShell, which it needs for Windows Credential Manager. ' + WIN_NEXT + raw;
+}
+
+const SECRET_TOOL_MISSING = 'zn needs secret-tool to use the Linux keyring and could not find it. ' + LINUX_NEXT;
+
+const LOCK_THEN_UNLOCK = 'run `zn lock`, then `zn unlock`.';
+
+function daemonStartTimeout(env) {
+  return 'The zn vault did not start in time. Next step: ' + LOCK_THEN_UNLOCK + rawCode('timeout', env);
+}
+
+function daemonExitedAtStart(code, env) {
+  return 'The zn vault stopped while it was starting. Next step: ' + LOCK_THEN_UNLOCK + rawCode('exit ' + code, env);
+}
+
+const DAEMON_START_FAILED = 'The zn vault could not start. Next step: ' + LOCK_THEN_UNLOCK;
+
+/* The vault answered too slowly, or a leftover session is in the way (this is not "the vault is locked"). */
+function vaultNotAnswering(detail, env) {
+  return 'the vault did not answer. It may be busy, or an old session may be stuck. Next step: ' + LOCK_THEN_UNLOCK + rawCode(detail, env);
+}
+
+const DOCS_TROUBLESHOOTING = 'https://usezn.com/docs/troubleshooting';
+
+function auditVerifyFailed(record, error, env) {
+  return 'The audit log did not pass its check: it may have been changed or damaged' + (record ? ' (at record ' + record + ')' : '') + '. ' +
+    'Do not delete it, it is the record of what happened. What to do: ' + DOCS_TROUBLESHOOTING + rawCode(error, env);
 }
 
 /* ------------------------------ MCP pins ------------------------------ */
@@ -123,7 +206,9 @@ module.exports = {
   invalidDuration, DURATION_RANGE, unknownBackend, UNLOCK_NEEDS_TERMINAL, FOREGROUND_NEEDS_TERMINAL,
   PASSPHRASE_NEEDS_TERMINAL, PASSPHRASE_CANCELLED, PASSPHRASE_MISMATCH, FORGET_LOCK_FIRST,
   CONNECT_KEY_ON_COMMAND_LINE, CONNECT_CANCELLED, CONNECT_NOT_A_KEY, CONNECT_REJECTED,
-  connectFullAccess, connectUnverified, connectSaveFailed,
+  connectFullAccess, connectUnverified, connectSaveFailed, connectEnvRefusal, connectNoStore,
+  rawCode, keychainRefused, keychainReadFailed, keychainHelperFailedToStart, SECRET_TOOL_MISSING,
+  daemonStartTimeout, daemonExitedAtStart, DAEMON_START_FAILED, vaultNotAnswering, auditVerifyFailed, DOCS_TROUBLESHOOTING,
   PINS_USAGE_APPROVE, pinsAgentRefusal, PINS_NEEDS_TERMINAL, PINS_NOT_APPROVED, pinsError,
   TEAM_INVALID_JOIN_TOKEN, TEAM_INVALID_REQUEST, TEAM_NOTHING_TO_APPROVE, TEAM_NOT_ASKED, TEAM_INVALID_ORG_KEY,
   teamJoinFailed,

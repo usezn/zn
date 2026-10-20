@@ -255,8 +255,9 @@ async function auditVerifyCmd() {
   const c = createClient({});
   try {
     const r = await c.auditVerify();
-    out(r.ok ? 'Audit log OK: ' + r.records + ' records, chain and MACs verified.' : 'Audit log FAILED at record ' + (r.line || r.records) + ': ' + r.error);
-    return r.ok ? 0 : 1;
+    if (!r.ok) { process.stderr.write(messages.auditVerifyFailed(r.line || r.records, r.error) + '\n'); return 1; }
+    out('Audit log OK: ' + r.records + ' records, chain and MACs verified.');
+    return 0;
   } finally {
     c.close();
   }

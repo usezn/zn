@@ -67,6 +67,10 @@ Your secret vault is locked. Unlock it in this terminal with: zn unlock. Then ru
 2. Run `zn vault status` to see that it says unlocked.
 3. Run the command that failed again.
 
+**If the message names your keychain** (Keychain Access on macOS, Credential Manager on Windows, the Linux keyring): on macOS open Keychain Access and allow zn; on Windows check Credential Manager; on Linux install `libsecret-tools`, or unlock with `zn unlock --backend passphrase`. If the message says the vault did not answer, run `zn lock` and then `zn unlock`. Set `ZN_VERBOSE=1` to also see the technical code for support.
+
+**If `zn vault verify` says the audit log did not pass its check:** do not delete the log. It is the record of what happened, and deleting it hides the problem. Keep a copy of the vault folder and contact security@usezn.com.
+
 More in [secrets](secrets.md). If it asks for a terminal to enter the passphrase and you have none (for example over SSH), see "If something fails" there.
 
 **If the passphrase is right but the vault will not open:** `zn unlock` says so when the vault file is damaged or the system keychain refuses. It then tells you not to reset. Do not run `zn vault reset`: it would delete values that may still be fine. Run `zn vault verify` to see whether the vault files are intact, restore the vault folder from a backup if you have one, or sign in to the user account that created the vault. If a keychain is the cause, the message names it.

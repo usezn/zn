@@ -276,7 +276,7 @@ test('a 403 that is not key_scope does not count as an analysis-only key', async
       const h = harness({ key: freshKey(), https: fakeHttps({ status: 403, body }) });
       assert.equal(await connectCli.connect([], h.io), 1, body);
       assert.equal(h.kc.map.size, 0);
-      assert.match(h.err.join(''), /Could not verify the key.*HTTP 403.*nothing was saved/);
+      assert.match(h.err.join(''), /usezn\.com had a problem checking the key, so nothing was saved/);
     }
   } finally { cleanup(home); }
 });
@@ -301,7 +301,7 @@ test('when the check cannot run (network error, HTTP 503) nothing is stored', as
       const key = freshKey();
       const h = harness({ key, https: fakeHttps(ans) });
       assert.equal(await connectCli.connect([], h.io), 1);
-      assert.match(h.err.join(''), /Could not verify the key with usezn\.com \(.+\), so nothing was saved/);
+      assert.match(h.err.join(''), /(Could not reach usezn\.com \(check your internet connection, then run `zn-gate connect` again\)|usezn\.com had a problem checking the key).*[Nn]othing was saved|so nothing was saved/);
       assert.equal(h.kc.map.size, 0);
       assert.equal(cloudKey.readMarker(), null);
       assert.ok(!h.text().includes(key));
@@ -339,8 +339,10 @@ test('without a keychain or an unlocked vault nothing is stored, ZN_API_KEY is e
     const deps = { native: null, vault: fakeVault({ unlocked: false }) };
     const h = harness({ key, deps });
     assert.equal(await connectCli.connect([], h.io), 1);
-    assert.match(h.out.join(''), /will not keep the key in a plain file/);
-    assert.match(h.out.join(''), /ZN_API_KEY=<your key> and ZN_CLOUD=1/);
+    assert.match(h.err.join(''), /will not store it in a plain file/);
+    assert.match(h.err.join(''), /export ZN_API_KEY=<your key> ZN_CLOUD=1/);
+    assert.match(h.err.join(''), /\$env:ZN_API_KEY/);
+    assert.equal(h.out.join(''), '');
     assert.equal(h.t.calls.hidden.length, 0, 'asked for a key it cannot keep');
     assert.equal(h.h.calls.length, 0);
     assert.equal(h.opened.length, 0);

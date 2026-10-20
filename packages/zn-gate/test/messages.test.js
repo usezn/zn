@@ -48,7 +48,8 @@ test('connect messages', () => {
     'usezn.com did not accept this key (it may be revoked or mistyped). Nothing was saved. Run `zn-gate connect` and paste a valid key.');
   assert.equal(m.connectFullAccess('https://example.com/connect'),
     'This key can do more than analyze text, and zn-gate only accepts a key limited to analyzing. Create an analysis-only key on the connect page and paste that one: https://example.com/connect\nNothing was saved.');
-  assert.equal(m.connectUnverified('HTTP 500'), 'Could not verify the key with usezn.com (HTTP 500), so nothing was saved. Try again later.');
+  assert.equal(m.connectUnverified('http', 'HTTP 500', null, {}), 'usezn.com had a problem checking the key, so nothing was saved. Try again in a few minutes.');
+  assert.equal(m.connectUnverified('network', 'ENOTFOUND', null, {}), 'Could not reach usezn.com (check your internet connection, then run `zn-gate connect` again). Nothing was saved.');
   assert.equal(m.connectSaveFailed('disk full'), 'Could not save the key: disk full. Nothing was kept. Run `zn-gate connect` to try again.');
 });
 

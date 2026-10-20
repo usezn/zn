@@ -110,7 +110,7 @@ test('yes + 200: one DELETE to the fixed host, the key is revoked, the local cop
   } finally { cleanup(home); }
 });
 
-for (const [status, re] of [[401, /did not accept/], [404, /could not revoke key .* \(HTTP 404\)/], [400, /could not revoke key .* \(HTTP 400\)/], [500, /may still work/], [302, /Could not reach/]]) {
+for (const [status, re] of [[401, /did not accept/], [404, /cannot revoke key .* from here yet/], [400, /cannot revoke key .* from here yet/], [500, /may still work/], [302, /had a problem/]]) {
   test('yes + ' + status + ': says so, links the dashboard, still deletes the local copy', async () => {
     const home = tmpHome();
     try {
@@ -130,7 +130,8 @@ test('yes + network error: the dashboard is linked and the local copy is gone', 
   try {
     const r = await run({ ans: { error: 'ECONNRESET' } });
     assert.equal(r.code, 1);
-    assert.match(r.err, /Could not reach usezn\.com \(ECONNRESET\)/);
+    assert.match(r.err, /Could not reach usezn\.com \(check your internet connection\)/);
+    assert.ok(!/ECONNRESET/.test(r.err));
     assert.match(r.err, LINK);
     assert.equal(r.kc.get(), null);
     assert.equal(cloudKey.readMarker(), null);
@@ -211,7 +212,7 @@ test('TLS environment refusal: no request is sent, the local copy is still delet
     const r = await run();
     assert.equal(r.h.calls.length, 0);
     assert.equal(r.code, 1);
-    assert.match(r.err, /NODE_TLS_REJECT_UNAUTHORIZED=0/);
+    assert.match(r.err, /will not contact usezn\.com while NODE_TLS_REJECT_UNAUTHORIZED is set/);
     assert.match(r.err, LINK);
     assert.equal(r.kc.get(), null);
     assert.equal(cloudKey.readMarker(), null);

@@ -39,18 +39,25 @@ const TLS_REFUSAL = 'NODE_TLS_REJECT_UNAUTHORIZED=0 is set, so zn-gate will not 
  * -r, --use-openssl-ca, --tls-keylog or --inspect*). A key given with --key or ZN_API_KEY is the person's own choice and is not held back.
  */
 function tlsRefusal(env = process.env) {
-  if (env.NODE_TLS_REJECT_UNAUTHORIZED === '0') return TLS_REFUSAL;
+  const name = tlsRefusalVar(env);
+  if (name === null) return null;
+  if (name === 'NODE_TLS_REJECT_UNAUTHORIZED') return TLS_REFUSAL;
+  if (name === 'NODE_EXTRA_CA_CERTS' || name === 'SSL_CERT_FILE') return name + ' is set, so zn-gate will not send the saved key: the connection could trust other certificate authorities';
+  if (name === 'OPENSSL_CONF') return 'OPENSSL_CONF is set, so zn-gate will not send the saved key: the TLS settings could be changed';
+  if (name === 'NODE_DEBUG') return 'NODE_DEBUG is set, so zn-gate will not use the saved key: Node could print it';
+  return 'NODE_OPTIONS loads code, changes the TLS settings or opens a debugger, so zn-gate will not send the saved key';
+}
+
+/** The name of the environment variable that holds the key back (see tlsRefusal), or null. */
+function tlsRefusalVar(env = process.env) {
+  if (env.NODE_TLS_REJECT_UNAUTHORIZED === '0') return 'NODE_TLS_REJECT_UNAUTHORIZED';
   for (const name of ['NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE']) {
-    if (env[name]) return name + ' is set, so zn-gate will not send the saved key: the connection could trust other certificate authorities';
+    if (env[name]) return name;
   }
-  if (env.OPENSSL_CONF) return 'OPENSSL_CONF is set, so zn-gate will not send the saved key: the TLS settings could be changed';
+  if (env.OPENSSL_CONF) return 'OPENSSL_CONF';
   // Node prints the request headers, Authorization included, when NODE_DEBUG names http, https, tls or net: any value is refused.
-  if (typeof env.NODE_DEBUG === 'string' && env.NODE_DEBUG.trim()) {
-    return 'NODE_DEBUG is set, so zn-gate will not use the saved key: Node could print it';
-  }
-  if (nodeOptionsList(env.NODE_OPTIONS).some((t) => RISKY_NODE_OPTION.test(optionName(t)))) {
-    return 'NODE_OPTIONS loads code, changes the TLS settings or opens a debugger, so zn-gate will not send the saved key';
-  }
+  if (typeof env.NODE_DEBUG === 'string' && env.NODE_DEBUG.trim()) return 'NODE_DEBUG';
+  if (nodeOptionsList(env.NODE_OPTIONS).some((t) => RISKY_NODE_OPTION.test(optionName(t)))) return 'NODE_OPTIONS';
   return null;
 }
 
@@ -305,6 +312,7 @@ module.exports = {
   NoSecureStore,
   TLS_REFUSAL,
   tlsRefusal,
+  tlsRefusalVar,
   VAULT_SECRET,
   RESOLVE_PURPOSE,
   _use,

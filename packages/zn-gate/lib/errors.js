@@ -39,6 +39,8 @@ function humanError(err, env = process.env) {
     const { znCommand } = require('./zn-command');
     text = 'Your secret vault is locked. Unlock it in this terminal with: ' + znCommand('unlock') +
       '. Then run this command again.';
+  } else if (code === CODES.LOCKED && err.plain === true) {
+    text = detail;
   } else if (code === CODES.LOCKED) {
     text = 'zn could not use your secret vault: ' + (detail || 'unknown error');
   } else if (code === CODES.POLICY_DENIED) {

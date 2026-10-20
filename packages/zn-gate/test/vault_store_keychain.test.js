@@ -296,7 +296,7 @@ test('an invalid service name or keychain path is refused before any helper runs
 test('a native helper that cannot start is reported as locked, and the blocked launcher saw the call', (t) => {
   withEnv(t, { ZN_KEYCHAIN_SERVICE: 'zn-vault-test', ZN_KEYCHAIN_PATH: undefined });
   const before = helperCalls.length;
-  assert.throws(() => keychain._native.macos.load(), (e) => e.code === 'ZN_LOCKED' && /failed to start/.test(e.message));
+  assert.throws(() => keychain._native.macos.load(), (e) => e.code === 'ZN_LOCKED' && /could not start the macOS keychain tool/.test(e.message) && /Keychain Access/.test(e.message));
   assert.equal(helperCalls.length, before + 1);
 });
 

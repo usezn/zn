@@ -23,6 +23,10 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const messages = require('../messages');
+
+/* A message already written for a person: errors.humanError prints it as it is. */
+function plain(err) { err.plain = true; return err; }
 const store = require('./store');
 const { CODES, znError } = require('../errors');
 
@@ -84,7 +88,7 @@ function run(cmd, args, input, extraEnv) {
     env: Object.assign({}, process.env, extraEnv || {}),
     maxBuffer: 1024 * 1024,
   });
-  if (res.error) throw znError(CODES.LOCKED, 'keychain helper failed to start: ' + cmd + ' (' + res.error.code + ')');
+  if (res.error) throw plain(znError(CODES.LOCKED, messages.keychainHelperFailedToStart(cmd, res.error.code)));
   return res;
 }
 
@@ -106,13 +110,13 @@ const macos = {
     if (kc && /\s/.test(kc)) throw znError(CODES.POLICY_DENIED, 'ZN_KEYCHAIN_PATH must not contain spaces. Next step: choose a folder path without spaces, or, if you are an agent, ask the user to do it.');
     const line = ['add-generic-password', '-U', '-s', sl.service, '-a', sl.account, '-l', sl.label || 'zn-vault-identity', '-w', identity].concat(kc ? [kc] : []).join(' ') + '\n';
     const res = run('/usr/bin/security', ['-i'], line);
-    if (res.status !== 0) throw znError(CODES.LOCKED, 'macOS keychain refused the identity (security exit ' + res.status + ')');
+    if (res.status !== 0) throw plain(znError(CODES.LOCKED, messages.keychainRefused('macos', res.status)));
   },
   load(slot) {
     const sl = slot || defaultSlot();
     const res = run('/usr/bin/security', ['find-generic-password', '-s', sl.service, '-a', sl.account, '-w'].concat(macKeychainArgs()));
     if (res.status === 44) return null; // errSecItemNotFound
-    if (res.status !== 0) throw znError(CODES.LOCKED, 'macOS keychain read failed (security exit ' + res.status + ')');
+    if (res.status !== 0) throw plain(znError(CODES.LOCKED, messages.keychainReadFailed('macos', res.status)));
     return res.stdout.trim();
   },
   remove(slot) {
@@ -208,12 +212,12 @@ function winCred(op, input, slot) {
 const windows = {
   store(identity, slot) {
     const res = winCred('write', identity, slot);
-    if (res.status !== 0 || res.stdout.trim() !== 'ok') throw znError(CODES.LOCKED, 'Windows Credential Manager refused the identity (exit ' + res.status + ')');
+    if (res.status !== 0 || res.stdout.trim() !== 'ok') throw plain(znError(CODES.LOCKED, messages.keychainRefused('windows', res.status)));
   },
   load(slot) {
     const res = winCred('read', undefined, slot);
     if (res.status === 3) return null;
-    if (res.status !== 0) throw znError(CODES.LOCKED, 'Windows Credential Manager read failed (exit ' + res.status + ')');
+    if (res.status !== 0) throw plain(znError(CODES.LOCKED, messages.keychainReadFailed('windows', res.status)));
     return res.stdout.trim();
   },
   remove(slot) {
@@ -227,7 +231,7 @@ const windows = {
 
 function secretTool() {
   const p = secretToolPath();
-  if (!p) throw znError(CODES.LOCKED, 'secret-tool not found in /usr/bin, /bin or /usr/local/bin');
+  if (!p) throw plain(znError(CODES.LOCKED, messages.SECRET_TOOL_MISSING));
   return p;
 }
 
@@ -235,7 +239,7 @@ const libsecret = {
   store(identity, slot) {
     const sl = slot || defaultSlot();
     const res = run(secretTool(), ['store', '--label=' + (slot ? 'zn-gate cloud API key' : 'zn vault identity'), 'service', sl.service, 'account', sl.account], identity);
-    if (res.status !== 0) throw znError(CODES.LOCKED, 'Secret Service refused the identity (secret-tool exit ' + res.status + ')');
+    if (res.status !== 0) throw plain(znError(CODES.LOCKED, messages.keychainRefused('linux', res.status)));
   },
   load(slot) {
     const sl = slot || defaultSlot();
@@ -243,7 +247,7 @@ const libsecret = {
     const out = (res.stdout || '').trim();
     if (res.status !== 0 && !out) {
       if (res.status === 1) return null;
-      throw znError(CODES.LOCKED, 'Secret Service read failed (secret-tool exit ' + res.status + ')');
+      throw plain(znError(CODES.LOCKED, messages.keychainReadFailed('linux', res.status)));
     }
     return out || null;
   },

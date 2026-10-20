@@ -1,0 +1,2 @@
+### Changed
+- Keychain, vault and `zn-gate connect` errors now say what happened in one plain sentence and what to do next (for example, open Keychain Access on macOS, check Credential Manager on Windows, install `libsecret-tools` or use `--backend passphrase` on Linux, run `zn lock` then `zn unlock` when the vault is slow, unset the named variable when the environment blocks connecting). The technical code is shown only with `ZN_VERBOSE=1`, and the setup text for a computer without a keychain now goes to stderr with the commands for each shell.
