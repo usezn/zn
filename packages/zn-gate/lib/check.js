@@ -194,7 +194,7 @@ function parseCommand(command, agentId) {
   const ws = require('./shell-quote').windowsCommandScript(c);
   if (ws) {
     // Both the current script and the one written by earlier versions (no progress line, unconditional exit).
-    const wm = /^(?:\$ProgressPreference='SilentlyContinue'; \$zt=0; )?if \(\(Test-Path -LiteralPath '([^']+)'\) -and \(Test-Path -LiteralPath '([^']+)'\)\) \{ (?:\$zt=1; )?& '[^']+' '[^']+' ([a-z-]+); (?:if \(\$LASTEXITCODE -eq 0 -or \$LASTEXITCODE -eq 2\) \{ exit \$LASTEXITCODE \}|exit \$LASTEXITCODE) \}; .* # zn hook ([a-z-]+)$/s.exec(ws);
+    const wm = /^(?:\$ProgressPreference='SilentlyContinue'; \$zt=0; )?if \(\(Test-Path -LiteralPath '([^']+)'\) -and \(Test-Path -LiteralPath '([^']+)'\)\) \{ (?:\$zt=1; )?& '[^']+' '[^']+' ([a-z-]+); (?:if \(\$LASTEXITCODE -eq 0 -or \$LASTEXITCODE -eq 2\) \{ exit (?:\$LASTEXITCODE|0) \}|exit \$LASTEXITCODE) \}; .* # zn hook ([a-z-]+)$/s.exec(ws);
     if (wm && wm[3] === agentId && wm[4] === agentId) return { winScript: c, node: wm[1], runner: wm[2] };
   }
   if (!c.endsWith(' ' + agentId) && !c.endsWith(' ' + agentId + '"')) return null;

@@ -172,7 +172,7 @@ test('install replaces, and uninstall removes, hooks written with double quotes 
   assert.ok(m, 'an encoded PowerShell launcher');
   const script = Buffer.from(m[1], 'base64').toString('utf16le');
   assert.match(script, /'\/usr\/bin\/node' '\/new\/lib\/hooks\/runner\.js' cursor/);
-  assert.match(script, /exit 2/, 'blocks when Node.js or the runner is gone');
+  assert.match(script, /"permission":"deny".*exit 0 # zn hook cursor/, 'blocks when Node.js or the runner is gone (deny JSON with exit 0, which Cursor reads)');
   cursor.uninstall(opts);
   assert.deepEqual(JSON.parse(fs.readFileSync(cuFile, 'utf8')).hooks, {});
 });

@@ -170,19 +170,26 @@ function windowsScript(agentId, event, nodePath, runnerPath) {
     gemini: (r) => ({ decision: 'deny', reason: r }),
   };
   let tail;
+  // A PowerShell inside the agent's own PowerShell (Cursor) turns a nested exit 2 into 1, and both Cursor and
+  // Gemini CLI read the deny JSON only with exit 0. So for them a block is the deny JSON plus exit 0; the
+  // runner's own refusal (exit 2, deny JSON already on stdout) is passed on as exit 0 too.
+  const jsonDeny = Boolean(DENY_JSON[agentId]);
   if (blockExit(agentId).has(event)) {
-    // PowerShell inside PowerShell (Cursor) turns a nested exit 2 into 1, so the deny is also printed on stdout.
-    const out = DENY_JSON[agentId] ? "[Console]::Out.WriteLine('" + JSON.stringify(DENY_JSON[agentId](reason)) + "'); " : '';
-    tail = out + "[Console]::Error.WriteLine('" + reason + "'); exit 2";
+    tail = jsonDeny
+      ? "[Console]::Out.WriteLine('" + JSON.stringify(DENY_JSON[agentId](reason)) + "'); [Console]::Error.WriteLine('" + reason + "'); exit 0"
+      : "[Console]::Error.WriteLine('" + reason + "'); exit 2";
   }
   else if (blockJson(agentId).has(event)) tail = "[Console]::Out.WriteLine('" + JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: reason } } }) + "'); exit 0";
   else if (WARN_STDERR.has(agentId)) tail = "[Console]::Error.WriteLine('" + warnText(agentId) + "'); exit 0";
   else tail = "[Console]::Out.WriteLine('" + JSON.stringify({ systemMessage: warnText(agentId) }) + "'); exit 0";
   // Only 0 (done) and 2 (blocked) leave early: a crash, an empty $LASTEXITCODE (a script the execution policy
   // refused) or any other code falls through to the block. zn.cmd, not zn.ps1, which Restricted refuses to run.
+  const leave = jsonDeny
+    ? 'if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 2) { exit 0 }'
+    : 'if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 2) { exit $LASTEXITCODE }';
   return "$ProgressPreference='SilentlyContinue'; $zt=0; " +
-    "if ((Test-Path -LiteralPath '" + n + "') -and (Test-Path -LiteralPath '" + r + "')) { $zt=1; & '" + n + "' '" + r + "' " + agentId + '; if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 2) { exit $LASTEXITCODE } }; ' +
-    "if (($zt -eq 0) -and (Get-Command zn.cmd -CommandType Application -ErrorAction SilentlyContinue) -and (Get-Command node -ErrorAction SilentlyContinue)) { & zn.cmd hook " + agentId + '; if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 2) { exit $LASTEXITCODE } }; ' +
+    "if ((Test-Path -LiteralPath '" + n + "') -and (Test-Path -LiteralPath '" + r + "')) { $zt=1; & '" + n + "' '" + r + "' " + agentId + '; ' + leave + ' }; ' +
+    "if (($zt -eq 0) -and (Get-Command zn.cmd -CommandType Application -ErrorAction SilentlyContinue) -and (Get-Command node -ErrorAction SilentlyContinue)) { & zn.cmd hook " + agentId + '; ' + leave + ' }; ' +
     tail + ' # zn hook ' + agentId;
 }
 
