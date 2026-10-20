@@ -68,8 +68,16 @@ jobs:
       - name: Check the requires-next markers
         if: ${{ !cancelled() && steps.python.outcome == 'success' }}
         run: python3 .github/scripts/examples-smoke.py markers
+      - name: Install pip-audit (hash-pinned) for the example dependency audit
+        id: pipaudit
+        if: ${{ !cancelled() && steps.python.outcome == 'success' }}
+        continue-on-error: true
+        run: python3 -m pip install --require-hashes -r .github/audit-requirements.txt
       - name: Install and run the Python examples offline
         if: ${{ !cancelled() && steps.python.outcome == 'success' }}
+        env:
+          # Report-only: advisories in each example's installed dependencies become warnings, never a failure.
+          ZN_EXAMPLES_AUDIT: ${{ steps.pipaudit.outcome == 'success' && '1' || '0' }}
         run: python3 .github/scripts/examples-smoke.py run --netns
       - name: Pack the package and run the Node examples offline
         if: ${{ !cancelled() && steps.node.outcome == 'success' }}
