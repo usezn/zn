@@ -14,10 +14,10 @@ npx -y zn-gate uninstall
 
 What it does:
 
-1. **It looks first.** It finds what zn-gate set up for your user and for the folder you are in: the Claude Code plugin, zn's hooks for each agent, and MCP servers that `init --wrap-mcp` wrapped. It prints the list with the file paths.
+1. **It looks first.** It finds what zn-gate set up for your user and for the folder you are in: the Claude Code plugin, zn's hooks for each agent, and MCP servers that `init --wrap-mcp` wrapped. It prints the list with the file paths. Only the hooks of the folder you are in are found: if you used `--project` in several projects, run it again from each project folder.
 2. **It asks in your terminal.** Nothing is removed until you answer yes to "Remove what is listed above?".
-3. **It removes what it listed.** For wrapped MCP servers it puts back the copy of the config saved before wrapping (changes you made to that file since are lost). Hooks and the plugin are removed as the manual steps below do.
-4. **It keeps your vault.** The vault holds your stored secrets. It is only deleted if you answer yes to a second, separate question, and the default is no. Deleting it cannot be undone.
+3. **It removes what it listed.** For wrapped MCP servers it puts back the copy of the config saved before wrapping (changes you made to that file since are lost). Hooks and the plugin are removed as the manual steps below do. If a step cannot be done, it says so and prints what to run yourself: for example, a wrapped MCP server with no saved copy is left as it is (remove the "zn-gate shield" wrapper by hand), and if the `claude` command is not found, the plugin is not removed and the command to remove it is printed.
+4. **It keeps your vault.** The vault holds your stored secrets. It is only deleted if you answer yes to a second, separate question, and the default is no. That second yes deletes the vault files and the vault key in your system keychain; the rest of the `.zn` folder (your settings) stays, so delete it by hand if you want. The vault is kept, not deleted, if it is unlocked (run `zn-gate lock`, then run uninstall again) or if the computer is managed by a zn Team organization. Deleting it cannot be undone.
 5. **It ends with `zn-gate check`**, so you see that zn-gate is off, and prints the last step: `npm uninstall -g zn-gate`, which removes the program itself.
 
 To see the list without changing anything, add `--dry-run`:
@@ -40,13 +40,13 @@ claude plugin uninstall zn-gate@usezn
 
 Or, inside Claude Code, type `/plugin`, open the **Installed** tab, pick zn-gate and choose **Uninstall**. To also remove the usezn plugin list, run `claude plugin marketplace remove usezn`.
 
-### Hooks (Codex CLI, Cursor, OpenCode, or Claude Code without the plugin)
+### Hooks (Codex CLI, Cursor, OpenCode, Antigravity, or Claude Code without the plugin)
 
 ```bash
 npx -y zn-gate hooks uninstall claude-code
 ```
 
-Use `codex`, `cursor` or `opencode` instead of `claude-code` for the others. Add `--project` if you installed the hooks for one project only; run it from that project's folder. A backup of the settings file is written first. For Claude Code it also removes zn's own `secrets` MCP server. Add `--no-mcp` to leave MCP servers alone.
+Use `codex`, `cursor`, `opencode` or `antigravity` instead of `claude-code` for the others. Add `--project` if you installed the hooks for one project only; run it from that project's folder. A backup of the settings file is written first. For Claude Code it also removes zn's own `secrets` MCP server. Add `--no-mcp` to leave MCP servers alone.
 
 ### MCP servers wrapped by `init --wrap-mcp`
 
@@ -66,7 +66,7 @@ If you ran `env shadow`, your `.env` file holds markers, and the real values are
 npx -y zn-gate env unshadow .env --backup <name>
 ```
 
-zn-gate keeps the vault and its settings in a `.zn` folder in your home folder. Removing the plugin, the hooks or the program leaves it there. To delete it, answer yes to the second question of `zn-gate uninstall` (it also removes the key from your system keychain), or delete the folder by hand once you have your values back. A vault cannot be recovered after that.
+zn-gate keeps the vault and its settings in a `.zn` folder in your home folder. Removing the plugin, the hooks or the program leaves it there. To delete the vault, answer yes to the second question of `zn-gate uninstall`: it deletes the vault files and the vault key in your system keychain, and the rest of the `.zn` folder (your settings) stays. It keeps the vault if it is unlocked (run `zn-gate lock`, then run uninstall again) or if the computer is managed by a zn Team organization. You can also delete the whole folder by hand once you have your values back. A vault cannot be recovered after that.
 
 ### The program itself
 
