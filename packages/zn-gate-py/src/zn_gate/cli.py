@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import bisect
+import difflib
 import json
 import os
 import stat
@@ -726,6 +727,17 @@ def npm_only_message(command: str) -> str:
     )
 
 
+def _unknown_option(sub: Optional[argparse.ArgumentParser], parser: argparse.ArgumentParser, extras: List[str]) -> None:
+    """An option the command does not know exits 2 with the closest known one, like the npm package."""
+    opts = [e for e in extras if e.startswith("-") and e != "--"]
+    if sub is not None and opts:
+        known = [o for a in sub._actions for o in a.option_strings if o.startswith("--") and o != "--help"]
+        name = opts[0].split("=")[0]
+        near = difflib.get_close_matches(name.lower(), known, n=1, cutoff=0.6)
+        sub.error("unknown option " + name + ("; did you mean " + near[0] + "?" if near else ""))
+    parser.error("unrecognized arguments: " + " ".join(extras))
+
+
 def main() -> int:
     _configure_output_streams()
     if len(sys.argv) > 1 and sys.argv[1] in NPM_ONLY_COMMANDS:
@@ -737,11 +749,13 @@ def main() -> int:
     )
     parser.add_argument("--version", action="version", version=f"zn-gate {__version__} (rules: {RULES_VERSION})")
     subparsers = parser.add_subparsers(dest="command", help="Sub-commands")
+    sub_by_name: Dict[str, argparse.ArgumentParser] = {}
 
     # test command
     test_parser = subparsers.add_parser("test", help="Test a single text payload against guardrail rules")
     test_parser.add_argument("text", help="Prompt or tool argument string to test")
     test_parser.add_argument("--json", action="store_true", help="Output results as JSON")
+    sub_by_name["test"] = test_parser
 
     # analyze command
     analyze_parser = subparsers.add_parser("analyze", help="Inspect a prompt (local; cloud only with ZN_CLOUD=1 + key, redacted)")
@@ -752,11 +766,14 @@ def main() -> int:
     analyze_parser.add_argument("--local-only", action="store_true", help="Force local deterministic rules only")
     analyze_parser.add_argument("--long-input", choices=["windows", "off"], help="Long texts sent to the cloud: overlapping 512-token windows (default) or the first 512 tokens only")
     analyze_parser.add_argument("--json", action="store_true", default=True, help="Output results as JSON")
+    sub_by_name["analyze"] = analyze_parser
 
     # scan command
     scan_parser = subparsers.add_parser("scan", help="Scan directory or files for injection traps & secret leaks")
     scan_parser.add_argument("path", default=".", nargs="?", help="File or directory path to scan (default: current directory)")
-    scan_parser.add_argument("--format", choices=["text", "json", "github"], default="text", help="Output format")
+    scan_parser.add_argument("--format", choices=["text", "json", "github"], default=None, help="Output format (default: text)")
+    scan_parser.add_argument("--json", action="store_true", help="Same as --format json")
+    sub_by_name["scan"] = scan_parser
     scan_parser.add_argument("--no-fail", action="store_true", help="Do not exit with error code even if threats are found")
     scan_parser.add_argument("--include", help="Comma-separated custom extensions to include (e.g. .custom,.xml)")
     scan_parser.add_argument("--exclude", help="Comma-separated directory names to exclude")
@@ -768,16 +785,27 @@ def main() -> int:
     ev_parser.add_argument("--export", action="store_true", help="Export audit records")
     ev_parser.add_argument("--format", choices=["jsonl", "csv"], default="jsonl", help="Export format")
     ev_parser.add_argument("--output", help="Write export output to file")
+    sub_by_name["evidence"] = ev_parser
 
     # status command
-    subparsers.add_parser("status", help="Show engine status and configuration")
+    sub_by_name["status"] = subparsers.add_parser("status", help="Show engine status and configuration")
 
     # stats command
     st_parser = subparsers.add_parser("stats", help="What zn-gate did on this machine (local counts only)")
     st_parser.add_argument("--days", type=int, default=30, help="Days to count (1-90, default 30)")
     st_parser.add_argument("--json", action="store_true", help="Output as JSON")
+    sub_by_name["stats"] = st_parser
 
-    args = parser.parse_args()
+    args, extras = parser.parse_known_args()
+    if extras:
+        _unknown_option(sub_by_name.get(getattr(args, "command", None) or ""), parser, extras)
+    if args.command == "scan":
+        if args.json:
+            if args.format not in (None, "json"):
+                scan_parser.error("--json cannot be used with --format " + args.format)
+            args.format = "json"
+        elif args.format is None:
+            args.format = "text"
     if args.command == "test":
         return cmd_test(args)
     elif args.command == "analyze":

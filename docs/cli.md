@@ -22,10 +22,21 @@ A command that succeeds exits with `0`. The other codes depend on the command an
 |---|---|
 | `0` | Done, or nothing to report. |
 | `1` | The command ran and found a problem (findings, a check that failed, an error), or the command name is unknown. |
-| `2` | The command was used wrongly (an option it does not know, a missing value), or `analyze` blocked the text. |
+| `2` | The command was used wrongly (an option it does not know, a missing value), or `analyze` blocked the text. See [Unknown options](#unknown-options). |
 | `64` | Wrong usage, for the secrets commands (`secret`, `env`, `hooks`, `vault log`, `run`). |
 | `77` | zn refused on purpose, for example to print a secret value, or to run a command you have not allowed. |
 | `127` | `run` could not find the program you asked it to start. |
+
+### Unknown options
+
+An option a command does not know is never ignored. The command prints what it does not know, the closest option it does know, and exits with `2` before it does anything. For example, `zn-gate scan proj --jsn` prints `zn-gate scan: unknown option --jsn; did you mean --json?`.
+
+| Command | Unknown option | Option without its value | Same result as `--format json` |
+|---|---|---|---|
+| `scan`, `check` (`doctor`), `init`, `evidence` (`logs`, `export`) | exit `2` | exit `2` | `scan --json` |
+| `audit`, `reach`, `report`, `stats` | exit `2` | exit `2` | `audit --json`, `reach --json`, `report --json`, `stats --json` |
+
+`--name=value` works for every option that takes a value, and `--` ends the options (`zn-gate scan -- ./--odd-folder`). The Python package (`python -m zn_gate.cli`) behaves the same for `scan`, `evidence`, `stats`, `test` and `analyze`.
 
 The commands that start a long-running server (`mcp`, `shield`, `secrets-mcp`) exit when the server stops. A hook (`hook`) exits `2` to block an action, as the agent expects.
 
@@ -105,28 +116,28 @@ Prints the version and the versions of the rules. Exit code `0`. `-V` and `--ver
 ### `scan`
 
 ```bash
-zn-gate scan [path] [--format text|json|github] [--all] [--include .rst,.xml] [--exclude fixtures,legacy] [--include-home]
+zn-gate scan [path] [--format text|json|github | --json] [--all] [--include .rst,.xml] [--exclude fixtures,legacy] [--include-home]
 ```
 
 Looks through prompt templates, markdown, skills and configs for injection traps and secrets. `path` defaults to the current folder. Matched values are never printed.
 
-- `--format`: `text` (default), `json`, or `github` (workflow annotations for CI).
+- `--format`: `text` (default), `json`, or `github` (workflow annotations for CI). `--json` is the same as `--format json`.
 - `--all` (or `--code`): include source code files.
 - `--include`: more file extensions to scan.
 - `--exclude`: more folders to skip.
 - `--include-home`: also check your own MCP configs for passwords and keys written in plain text.
 
-Exit codes: `0` nothing found, `1` something was found or the path does not exist, `2` an unknown `--format`.
+Exit codes: `0` nothing found, `1` something was found or the path does not exist, `2` an unknown option or `--format`.
 
 ### `audit`
 
 ```bash
-zn-gate audit [path] [--format text|json|sarif] [--output file] [--fail-on high] [--agents claude,codex,all] [--include-home]
+zn-gate audit [path] [--format text|json|sarif | --json] [--output file] [--fail-on high] [--agents claude,codex,all] [--include-home]
 ```
 
 Reviews the agent configs of a folder before you open it: hooks, MCP servers, endpoint overrides, permissions, instructions and planted programs. It runs nothing. [What it finds](audit.md).
 
-- `--format`: `text` (default), `json` or `sarif`.
+- `--format`: `text` (default), `json` or `sarif`. `--json` is the same as `--format json`.
 - `--output` (or `-o`): write the report to a file.
 - `--fail-on`: `low`, `medium`, `high` (default), `critical` or `none`.
 - `--agents`: a comma-separated list of `claude`, `codex`, `cursor`, `opencode`, `amazonq`, `copilot`, `gemini`, or `all` (default).

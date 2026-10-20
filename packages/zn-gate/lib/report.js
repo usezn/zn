@@ -14,6 +14,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { unknownOption } = require('./cli-options');
 const stats = require('./stats');
 const pins = require('./mcp-pins');
 
@@ -41,7 +42,7 @@ function parse(args) {
     else if (a === '--no-team-line') o.teamLine = false;
     else if (a === '--since') v = args[++i];
     else if (a.startsWith('--since=')) v = a.slice(8);
-    else o.bad = true;
+    else { o.bad = true; if (a.startsWith('-') && o.unknown === undefined) o.unknown = a; }
     if (v !== null) {
       const m = /^(\d{1,3})d$/.exec(String(v));
       const n = m ? Number(m[1]) : NaN;
@@ -227,7 +228,11 @@ function toJson(r) {
 
 function run(args, out = (s) => process.stdout.write(s), { now = new Date() } = {}) {
   const o = parse(args);
-  if (o.bad) { out(USAGE); return 2; }
+  if (o.bad) {
+    if (o.unknown !== undefined) out('zn-gate report: ' + unknownOption(o.unknown, ['--json', '--no-team-line', '--since']) + '\n');
+    out(USAGE);
+    return 2;
+  }
   const r = collect(o.days, now);
   if (o.json) { out(JSON.stringify(toJson(r), null, 2) + '\n'); return 0; }
 

@@ -8,6 +8,7 @@
  *                          opt-in sharing of pseudonymous daily counts (off by default; see lib/stats-share.js)
  */
 
+const { unknownOption } = require('./cli-options');
 const stats = require('./stats');
 const share = require('./stats-share');
 
@@ -24,7 +25,7 @@ function parse(args) {
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--json') o.json = true;
     else if (args[i] === '--days') o.days = Number(args[++i]);
-    else if (args[i].startsWith('-')) o.bad = true;
+    else if (args[i].startsWith('-')) { o.bad = true; if (o.unknown === undefined) o.unknown = args[i]; }
     else o.rest.push(args[i]);
   }
   if (!Number.isInteger(o.days) || o.days < 1 || o.days > stats.KEEP_DAYS) o.bad = true;
@@ -76,7 +77,11 @@ function explainShare(out) {
 
 async function run(args, out = (s) => process.stdout.write(s), { confirm = confirmInTerminal } = {}) {
   const o = parse(args);
-  if (o.bad) { out(USAGE); return 2; }
+  if (o.bad) {
+    if (o.unknown !== undefined) out('zn-gate stats: ' + unknownOption(o.unknown, ['--json', '--days']) + '\n');
+    out(USAGE);
+    return 2;
+  }
   if (o.rest[0] === 'share') {
     const sub = o.rest[1] || 'status';
     if (sub === 'on') {

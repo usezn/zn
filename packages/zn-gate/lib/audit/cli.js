@@ -1,6 +1,6 @@
 'use strict';
 /**
- * zn audit [path] [--format text|json|sarif] [--output <file>]
+ * zn audit [path] [--format text|json|sarif | --json] [--output <file>]
  *          [--fail-on low|medium|high|critical|none]
  *          [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home]
  *
@@ -13,8 +13,9 @@ const path = require('path');
 const { colorEnabled } = require('../term');
 const { audit, AGENTS } = require('./index');
 const report = require('./report');
+const { unknownOption } = require('../cli-options');
 
-const USAGE = 'usage: zn audit [path] [--format text|json|sarif] [--output <file>] [--fail-on low|medium|high|critical|none] [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home]';
+const USAGE = 'usage: zn audit [path] [--format text|json|sarif | --json] [--output <file>] [--fail-on low|medium|high|critical|none] [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home]';
 const FORMATS = ['text', 'json', 'sarif'];
 const FAIL_ON = ['low', 'medium', 'high', 'critical', 'none'];
 
@@ -25,12 +26,15 @@ const LOG_MOVED = '`zn audit` reviews agent configs; the secret-use log is `zn v
 
 function parseArgs(args) {
   const opts = { path: null, format: 'text', output: null, failOn: 'high', agents: ['all'], includeHome: false, help: false };
+  let formatGiven = false;
   const takesValue = { '--format': 'format', '--output': 'output', '-o': 'output', '--fail-on': 'failOn', '--agents': 'agents' };
   for (let i = 0; i < args.length; i++) {
     const a = String(args[i]);
     if (a === '-h' || a === '--help') { opts.help = true; continue; }
     if (a === '--since' || a.startsWith('--since=')) throw new UsageError(LOG_MOVED);
     if (a === '--include-home') { opts.includeHome = true; continue; }
+    // --json is the same as --format json (as in reach, report and stats).
+    if (a === '--json') { opts.json = true; continue; }
     const eq = a.indexOf('=');
     const name = a.startsWith('--') && eq > 0 ? a.slice(0, eq) : a;
     if (takesValue[name]) {
@@ -42,13 +46,18 @@ function parseArgs(args) {
         if (v === undefined || String(v).startsWith('--')) throw new UsageError(name + ' needs a value');
       }
       opts[takesValue[name]] = String(v);
+      if (name === '--format') formatGiven = true;
       continue;
     }
-    if (a.startsWith('-') && a !== '-') throw new UsageError('unknown option ' + a);
+    if (a.startsWith('-') && a !== '-') throw new UsageError(unknownOption(name, [...Object.keys(takesValue), '--include-home', '--json', '--help']));
     if (opts.path !== null) throw new UsageError('only one path can be audited at a time');
     opts.path = a;
   }
   opts.format = opts.format.toLowerCase();
+  if (opts.json) {
+    if (formatGiven && opts.format !== 'json') throw new UsageError('--json cannot be used with --format ' + opts.format);
+    opts.format = 'json';
+  }
   if (!FORMATS.includes(opts.format)) throw new UsageError('--format must be one of ' + FORMATS.join(', '));
   opts.failOn = opts.failOn.toLowerCase();
   if (!FAIL_ON.includes(opts.failOn)) throw new UsageError('--fail-on must be one of ' + FAIL_ON.join(', '));

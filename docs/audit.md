@@ -25,7 +25,7 @@ It runs locally and sends nothing anywhere.
 ## Usage
 
 ```
-zn audit [path] [--format text|json|sarif] [--output <file>]
+zn audit [path] [--format text|json|sarif | --json] [--output <file>]
          [--fail-on low|medium|high|critical|none]
          [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home]
 ```

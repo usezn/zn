@@ -343,7 +343,7 @@ test('the guided init refuses any argument, on the real argument list', () => {
   for (const a of ['x --wrap-mcp', '--WRAP-MCP', '--wrap-mcp\u00a0', 'extra']) {
     const r = spawnSync(process.execPath, [cli, 'init', a], { encoding: 'utf8', env: { ...process.env, ZN_STATS: 'off' }, timeout: 20000 });
     assert.equal(r.status, 2, a + ': ' + r.stderr);
-    assert.match(r.stderr, /^zn-gate init: unknown argument "/);
+    assert.match(r.stderr, /^zn-gate init: unknown (argument|option) /);
     assert.doesNotMatch(r.stdout, /guided|zn-gate check/i);
   }
 });

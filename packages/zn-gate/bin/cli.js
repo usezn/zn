@@ -59,6 +59,18 @@ const KEY_FILE_NAMES = new Set(['id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', 'i
 // are not scanned.
 const BINARY_SNIFF = 8192;
 const SCAN_FORMATS = new Set(['text', 'json', 'github']);
+const cliOptions = require('../lib/cli-options');
+// The options each command knows (the program-wide ones, such as --verbose, are always accepted).
+const EVIDENCE_OPTIONS = { flags: ['--verify', '--ui', '--export'], values: ['--format', '--output', '--port', '--tail'] };
+const OPTION_SPECS = {
+  scan: { flags: ['--code', '--all', '--include-home', '--json'], values: ['--format', '--include', '--exclude'] },
+  check: {},
+  doctor: {},
+  init: { flags: ['--wrap-mcp', '--dry-run', '--shadow', '--revert'] },
+  evidence: EVIDENCE_OPTIONS,
+  logs: EVIDENCE_OPTIONS,
+  export: EVIDENCE_OPTIONS,
+};
 
 // Secrets in a line, as rule ids, in the order the Python package finds them:
 // the rules of lib/rules.js and the scrubber provider formats (both done by
@@ -200,10 +212,10 @@ COMMANDS:
   init --wrap-mcp     Find and wrap the MCP servers in known agent configs (Claude, Cursor, Codex, OpenCode...)
   shield, mcp-shield  Wrap and protect ANY external MCP server (uvx, npx, node, python)
   scan <path>         Recursively audit prompt templates, markdown, skills, and configs for injection traps and secrets
-                      [--format text|json|github] (matched values are never printed)
+                      [--format text|json|github | --json] (matched values are never printed)
   audit [path]        Review a repository's agent configs before you open it: hooks, MCP servers,
                       endpoint overrides, permissions, instructions, planted executables
-                      [--format text|json|sarif] [--output FILE] [--fail-on high]
+                      [--format text|json|sarif | --json] [--output FILE] [--fail-on high]
                       [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home]
   evidence            Query the local hash-chained audit log and run the UI dashboard
   logs                Tail or inspect security event logs
@@ -530,7 +542,12 @@ async function handleScan(targetPath, options) {
     process.exit(1);
   }
 
-  const format = options.formatGiven ? String(options.format).toLowerCase() : 'text';
+  // --json is the same as --format json (as in reach, report and stats).
+  if (options.json && options.formatGiven && String(options.format).toLowerCase() !== 'json') {
+    process.stderr.write('Error: --json cannot be used with --format ' + options.format + '\n');
+    process.exit(2);
+  }
+  const format = options.json ? 'json' : options.formatGiven ? String(options.format).toLowerCase() : 'text';
   if (!SCAN_FORMATS.has(format)) {
     process.stderr.write(`Error: --format for scan must be text, json or github\n`);
     process.exit(2);
@@ -828,7 +845,7 @@ async function runReachCommand(rest) {
       failOn = String(v).toLowerCase();
       continue;
     }
-    if (a.startsWith('-') && a !== '-') return usage('unknown option ' + a);
+    if (a.startsWith('-') && a !== '-') return usage(cliOptions.unknownOption(a, ['--json', '--sarif', '--fail-on', '--remember', '--help']));
     if (target !== null) return usage('only one folder at a time');
     target = a;
   }
@@ -852,7 +869,7 @@ async function runReachCommand(rest) {
 }
 
 async function main() {
-  const args = process.argv.slice(2);
+  let args = process.argv.slice(2);
   if (args[0] === 'audit') {
     await runAuditCommand(args.slice(1));
     return;
@@ -897,6 +914,21 @@ async function main() {
     process.exit(0);
   }
 
+  // A command that reads fixed options refuses one it does not know (exit 2, with the closest known one),
+  // instead of running as if it had not been given. `--name=value` is split here, and so is a bare `--`.
+  let positionals = args.slice(1).filter((a) => !a.startsWith('-'));
+  const optionSpec = OPTION_SPECS[args[0]];
+  if (optionSpec) {
+    const checked = cliOptions.check(args.slice(1), optionSpec);
+    if (checked.error) {
+      process.stderr.write('zn-gate ' + args[0] + ': ' + checked.error + "\nRun 'zn-gate --help' for usage.\n");
+      process.exitCode = 2;
+      return;
+    }
+    args = [args[0], ...checked.args];
+    positionals = checked.positionals;
+  }
+
   // Parse options
   const options = {
     apiKey: process.env.ZN_API_KEY,
@@ -915,6 +947,7 @@ async function main() {
     tail: 20,
     includeCode: args.includes('--code') || args.includes('--all'),
     includeHome: args.includes('--include-home'),
+    json: args.includes('--json'),
     include: null,
     exclude: null,
   };
@@ -1013,7 +1046,7 @@ ${ruleLine(process.env, 60)}\n`);
   }
 
   if (command === 'scan') {
-    const targetPath = args[1] && !args[1].startsWith('--') ? args[1] : '.';
+    const targetPath = positionals[0] || '.';
     await handleScan(targetPath, options);
     return;
   }
