@@ -111,7 +111,9 @@ zn hooks install codex           # or: cursor, opencode
 
 In Codex, approve the new hooks with `/hooks`. In Cursor, shell output and file contents are not scrubbed. What each agent supports: [docs/compat.md](docs/compat.md).
 
-**Other editors** (VS Code, Antigravity, Windsurf, Cline, Zed, JetBrains, Continue): zn-gate works there as an MCP server only. Setup for each one: [usezn.com/docs/integrations/editors](https://usezn.com/docs/integrations/editors/).
+**Other editors** (VS Code, Windsurf, Cline, Zed, JetBrains, Continue): zn-gate works there as an MCP server only. Setup for each one: [usezn.com/docs/integrations/editors](https://usezn.com/docs/integrations/editors/).
+
+**Antigravity (experimental).** `zn hooks install antigravity` (or `npx -y zn-gate init`) adds a hook that runs before each tool call. It blocks reads and writes of secret files and shell commands that handle secrets, and the agent cannot edit the hook files. It cannot remove secrets from what a tool returns, Antigravity's MCP configuration files are not protected, and Antigravity does not document what happens when a hook fails, so treat it as a first layer. The MCP server works there too. Details: [Antigravity page](docs/editors/antigravity.md).
 
 Wrap any MCP server with the `shield` proxy, try it in shadow mode first, and review changes to its tools with `pins`: [docs/shield.md](docs/shield.md).
 
@@ -259,7 +261,7 @@ zn Team: `zn team join <token>` connects a machine to your organization's signed
 
 Custom rules: add banned patterns and forbidden paths in `.znrules` or `zn.config.json` at your project root ([example](packages/zn-gate/README.md#custom-rules-znrules-or-znconfigjson)).
 
-Audit log: `zn-gate shield` appends each decision to `~/.zn/evidence.jsonl` as a hash-chained (SHA-256) record with a redacted preview. It detects accidental or partial edits; it is not tamper-proof against someone with write access to the file. Check it with `npx -y zn-gate evidence --verify`.
+Audit log: `zn-gate shield` appends each decision to `~/.zn/evidence.jsonl` as a hash-chained (SHA-256) record with a redacted preview. It detects accidental or partial edits; it is not tamper-proof against someone with write access to the file. Check it with `npx -y zn-gate evidence --verify`. The agent hooks add to the same log when they block something or hide a secret in a tool result: it records the agent, the kind of event, a rule name and the kinds of secret, never a secret value, a command, a file path or your prompt.
 
 ### GitHub Action
 
@@ -346,7 +348,7 @@ jobs:
 
 | Input | Default | Description |
 |---|---|---|
-| `version` | `1.12.0` | Exact `zn-gate` version to install. Ranges and `latest` are refused. `audit` needs 1.6.0 or later. |
+| `version` | `1.13.0` | Exact `zn-gate` version to install. Ranges and `latest` are refused. `audit` needs 1.6.0 or later. |
 | `mode` | `scan` | Requires a release of the action that includes audit mode (see the [CHANGELOG](CHANGELOG.md)). `scan`, `audit` or `both`. |
 | `path` | `.` | File or directory to scan. `audit` needs a directory: with `both` a file skips the audit with a warning; with `audit` the step fails. |
 | `fail-on-threat` | `true` | Fail the step on findings. For `scan`, anything found (an injection trap or a secret); for `audit`, findings at or above `severity-threshold`. Set `false` to report only. Any value other than `true` or `false` fails the step. `true` or `false`, in any case; other values fail the step. |
@@ -384,7 +386,21 @@ Permissions: the action itself needs only `contents: read`; add `security-events
 
 ## Examples
 
-Runnable examples are in [`examples/`](examples/): the Python SDK, agents built with LangChain, CrewAI, LlamaIndex or the OpenAI Agents SDK, the Node.js package, custom rules, Promptfoo and the GitHub Action.
+Runnable examples are in [`examples/`](examples/). The code API checks text for sensitive paths, prompt injection in tool output and secrets, and redacts the secrets; it does not block destructive shell commands.
+
+| Example | Language | Framework | What it shows |
+|---|---|---|---|
+| [`python-basic`](examples/python-basic) | Python | None | Evaluate a prompt and guard a tool function. |
+| [`node-basic`](examples/node-basic) | JavaScript | None | Inspect a prompt and sanitize a tool result with the Node.js package. |
+| [`custom-rules`](examples/custom-rules) | JavaScript | None | Load project rules from `.znrules`. |
+| [`langchain-agent`](examples/langchain-agent) | Python | LangChain / LangGraph | Attach a callback handler that checks tool calls and results. |
+| [`crewai-agent`](examples/crewai-agent) | Python | CrewAI | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`llamaindex-agent`](examples/llamaindex-agent) | Python | LlamaIndex | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`openai-agents-sdk`](examples/openai-agents-sdk) | Python | OpenAI Agents SDK | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`pydantic-ai-agent`](examples/pydantic-ai-agent) | Python | Pydantic AI | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`google-adk-agent`](examples/google-adk-agent) | Python | Google ADK | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`promptfoo`](examples/promptfoo) | YAML | Promptfoo | Run a deterministic guardrail suite with Promptfoo. |
+| [`github-action`](examples/github-action) | YAML | GitHub Actions | Scan agent prompts and configs in pull requests with the GitHub Action. |
 
 ## FAQ
 

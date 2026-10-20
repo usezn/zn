@@ -1,2 +1,0 @@
-### Security
-- Claude Code: zn now also checks what a typed skill or command expands into. A new `UserPromptExpansion` hook blocks the expansion, with the reason and the next step, when it would show the model a secret value, a private key or the lines of a `.env` file. If the hook cannot run, the expansion is blocked. Run `zn-gate hooks install claude-code` again to add it; the plugin has it already. To turn off `!` shell commands in skills altogether, set `disableSkillShellExecution: true` in Claude Code.

@@ -88,7 +88,9 @@ zn hooks install codex           # or: cursor, opencode
 
 In Codex, approve the new hooks with `/hooks`. In Cursor, shell output and file contents are not scrubbed. What each agent supports: [docs/compat.md](https://github.com/usezn/zn/blob/main/docs/compat.md).
 
-**Other editors** (VS Code, Antigravity, Windsurf, Cline, Zed, JetBrains, Continue): zn-gate works there as an MCP server only. Setup for each one: [usezn.com/docs/integrations/editors](https://usezn.com/docs/integrations/editors/).
+**Other editors** (VS Code, Windsurf, Cline, Zed, JetBrains, Continue): zn-gate works there as an MCP server only. Setup for each one: [usezn.com/docs/integrations/editors](https://usezn.com/docs/integrations/editors/).
+
+**Antigravity (experimental).** `zn hooks install antigravity` (or `npx -y zn-gate init`) adds a hook that runs before each tool call. It blocks reads and writes of secret files and shell commands that handle secrets, and the agent cannot edit the hook files. It cannot remove secrets from what a tool returns, Antigravity's MCP configuration files are not protected, and Antigravity does not document what happens when a hook fails, so treat it as a first layer. The MCP server works there too. Details: [Antigravity page](https://github.com/usezn/zn/blob/main/docs/editors/antigravity.md).
 
 **Python: for agents you build yourself** (rules engine and secret redaction for LangChain, CrewAI, LlamaIndex or plain tool calling). It does not protect Claude Code, Codex, Cursor or other coding agents. Install it in a virtual environment; many recent Linux systems, and Homebrew's Python on macOS, refuse `pip install` outside one ("externally-managed-environment"):
 
@@ -273,6 +275,8 @@ CONFIDENTIAL_INTERNAL_PROJECT_[A-Z0-9]+
 ### Local audit log
 
 `zn-gate shield` appends every decision to `~/.zn/evidence.jsonl` as a hash-chained (SHA-256) record with a secret-redacted preview. It detects accidental or partial edits. It is not tamper-proof against someone with write access to the file, who can recompute the whole chain.
+
+The agent hooks write to the same log. When a hook blocks a tool call, a prompt or a final answer, or hides a secret in a tool result, `zn-gate evidence` shows one more event with the agent, the kind of event, the tool name, a rule name (such as `hook-pre_tool-policy` or `hook-redacted-output`) and the kinds of secret found. It never stores a secret value, a command, a file path or the text of your prompt. Calls that are allowed are not written, so the log stays short. If the log cannot be written (a full disk, a damaged log, a busy lock), zn prints one line about it and the block still holds. Counts of all checks, including allowed ones, are in `npx -y zn-gate stats`.
 
 ```bash
 npx -y zn-gate evidence --verify

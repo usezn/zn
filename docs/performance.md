@@ -64,3 +64,7 @@ when a case's p95, divided by Node's start-up in the same run, is more than 20 %
 `bench/hook_latency_baseline.json`. A case over the limit is measured again with twice the samples first,
 so one slow sample does not fail it. The run fails too when the baseline file is missing. A deliberate change of the baseline is a commit of its own:
 `node bench/hook_latency_gate.js report.json --update-baseline`.
+
+The same benchmark also runs on a Windows runner, where starting a process is slower. That job has its own
+baseline, `bench/hook_latency_baseline_windows.json`, and is not a required check: it reports but does not
+block a merge. The summary of each run has one table with the Linux and Windows numbers side by side.

@@ -1,2 +1,2 @@
-zn-gate==1.12.0
+zn-gate==1.13.0
 semantic-kernel==1.44.1
