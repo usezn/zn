@@ -6,7 +6,7 @@
 #
 # Not managed by Dependabot, like ci-test-requirements.txt. Regenerate with uv from
 # these inputs (saved as ci-framework-test-requirements.in):
-#   langchain-core>=1,<2
+#   langchain-core>=1.3.3,<2
 #   llama-index-core>=0.14,<0.15
 # uv pip compile ci-framework-test-requirements.in --python-version 3.12 #   --python-platform x86_64-manylinux_2_28 --generate-hashes --no-header --no-annotate #   --exclude-newer <date two weeks ago> -c ci-test-requirements.txt
 # The -c keeps the shared packages at the versions ci-test-requirements.txt pins.
