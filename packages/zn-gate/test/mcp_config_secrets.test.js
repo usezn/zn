@@ -63,11 +63,14 @@ const MCP_JSON = expand(`{
 `);
 
 test('shared samples: each credential is found at its line, with its kind and name', () => {
-  const { cases } = JSON.parse(fs.readFileSync(SAMPLES, 'utf8'));
+  const { cases, paths } = JSON.parse(fs.readFileSync(SAMPLES, 'utf8'));
   assert.ok(cases.length >= 8);
   for (const c of cases) {
-    const got = mcp.findMcpConfigSecrets(expand(c.lines.join('\n'))).map((f) => [f.line, f.kind, f.name]);
+    const got = mcp.findMcpConfigSecrets(expand(c.lines.join('\n')), { file: c.file || '' }).map((f) => [f.line, f.kind, f.name]);
     assert.deepEqual(got, c.expect, c.name);
+  }
+  for (const p of paths) {
+    assert.equal(mcp.isMcpConfigPath(p.path), p.mcp, JSON.stringify(p.path));
   }
 });
 

@@ -64,6 +64,13 @@ const NOT_VALUES = /^(?:true|false|null|none|oauth2?|basic|bearer|required|optio
 const REFERENCE = /\$\{|\$\(|\$[A-Za-z_]|%[A-Za-z_][A-Za-z0-9_]*%|\{\{|\{(?:env|file):|__ZN_[A-Za-z0-9_]+__|^<|\[REDACTED/;
 const SCHEME = /^(?:bearer|basic|token)[ \t]+/i;
 const MIN_VALUE = 6;
+// A credential can sit in an object or array under a secret-named key
+// ({"API_TOKEN": {"value": "..."}}): the strings under these keys, and the
+// items of the array itself, are reported under the name of that key.
+const NEST_LEAF_KEYS = new Set(['value', 'default', 'string', 'literal', 'plain', 'plaintext']);
+const NEST_MAX_LEAF_DEPTH = 4;
+const NEST_MAX_STACK = 8;
+const NEST_MAX_LINES = 200;
 
 function isSecretName(norm) {
   if (!norm) return false;
@@ -163,6 +170,43 @@ function safeName(name) {
   return String(name).replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 80);
 }
 
+// Follows the braces and brackets of an object or array under a secret-named key
+// across lines. Fills `ctx` (index -> { top, depth, name }) for what sits inside it on
+// this line; `nest` is { name, stack, lines } and lives across lines.
+function followNest(line, toks, nest, ctx) {
+  const opens = new Map();
+  for (const t of toks) if (t.sep && t.valueAt !== undefined && isSecretName(normalizeName(t.text))) opens.set(t.valueAt, t.text);
+  if (nest.stack.length > 0 && ++nest.lines > NEST_MAX_LINES) nest.stack = [];
+  const n = line.length;
+  let i = 0;
+  while (i < n) {
+    const c = line[i];
+    const active = nest.stack.length > 0;
+    if (active) ctx[i] = { top: nest.stack[nest.stack.length - 1], depth: nest.stack.length, name: nest.name };
+    if (c === '"' || c === "'") {
+      let j = i + 1;
+      while (j < n && line[j] !== c) j += (c === '"' && line[j] === '\\') ? 2 : 1;
+      if (j >= n) break;
+      i = j + 1;
+      continue;
+    }
+    if (c === '#' || (c === '/' && line[i + 1] === '/')) break;
+    if (c === '{' || c === '[') {
+      if (active) {
+        if (nest.stack.length >= NEST_MAX_STACK) nest.stack = [];
+        else nest.stack.push(c);
+      } else if (opens.has(i)) {
+        nest.name = opens.get(i);
+        nest.stack = [c];
+        nest.lines = 0;
+      }
+    } else if ((c === '}' || c === ']') && active) {
+      nest.stack.pop();
+    }
+    i++;
+  }
+}
+
 /**
  * Credentials in the text of an MCP configuration file, with where each value
  * sits: { line, kind, name, start, end } (start and end are offsets in `text`).
@@ -189,6 +233,7 @@ function findMcpConfigSecretSpans(text, options) {
     found.push(f);
   };
   let pending = null; // a credential flag whose value is the next string
+  const nest = { name: '', stack: [], lines: 0 };
   for (let i = 0; i < lines.length; lineStart += lines[i].length + 1, i++) {
     ln = i + 1;
     const line = lines[i].replace(/\r$/, '');
@@ -196,9 +241,25 @@ function findMcpConfigSecretSpans(text, options) {
     const toks = tokenize(line);
     const hadPending = pending !== null;
     let usedPending = false;
+    const ctx = {};
+    followNest(line, toks, nest, ctx);
     for (let t = 0; t < toks.length; t++) {
       const tok = toks[t];
       const next = toks[t + 1];
+      const inNest = ctx[tok.start];
+      if (inNest) {
+        // Inside an object or array under a secret-named key: a string under a value-like key, or an item of that array.
+        if (tok.sep) {
+          if (next && next.str && next.start === tok.valueAt && !isSecretName(normalizeName(tok.text))
+              && inNest.top === '{' && inNest.depth <= NEST_MAX_LEAF_DEPTH && NEST_LEAF_KEYS.has(tok.text.toLowerCase())) {
+            pair(inNest.name, next.text, next.start + 1, add, ownLogin);
+            t++;
+            continue;
+          }
+        } else if (tok.str && inNest.top === '[' && inNest.depth === 1 && pending === null) {
+          pair(inNest.name, tok.text, tok.start + 1, add, ownLogin);
+        }
+      }
       if (tok.sep) {
         // A key. Its value is the string that follows it.
         if (next && next.str && next.start === tok.valueAt) {

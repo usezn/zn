@@ -6,7 +6,7 @@ import functools
 import inspect
 from typing import Any, Callable, Optional
 
-from ..guard import GuardBlockError, block_message, check_tool_call, check_tool_result
+from ..guard import GuardBlockError, block_message, check_tool_call, check_tool_result, validate_on_block
 from ..rules import sanitize_tool_result
 
 
@@ -43,6 +43,7 @@ def guarded_tool(
     and an async generator, are not checked or masked: declare the tool with
     `async def` instead.
     """
+    validate_on_block(on_block, ("raise", "return"))
     prefix = framework if framework else "tool"
 
     def _finish(tool_name: str, result: Any, check_result: bool, block_truncated: bool,

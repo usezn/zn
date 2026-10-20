@@ -7,8 +7,6 @@
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use aws_config::BehaviorVersion;
-use aws_sdk_kms as kms;
 
 #[async_trait]
 pub trait SecretVault: Send + Sync {
@@ -24,12 +22,36 @@ pub struct LocalVault {
     encryption_key: Option<Vec<u8>>,
 }
 
+/// Length in bytes of a local vault key.
+const LOCAL_KEY_LEN: usize = 32;
+
 impl LocalVault {
-    pub fn new(encryption_key: Option<String>) -> Self {
-        let key = encryption_key.and_then(|k| hex::decode(k).ok());
-        Self {
+    /// Build a local vault.
+    ///
+    /// `None` means no key is configured: the vault is created and
+    /// `get_encryption_key` reports that no key is configured. `Some(key)`
+    /// must be exactly 64 hex characters (32 bytes); anything else is an
+    /// error, so a typo is never mistaken for "no key". The error never
+    /// contains the key.
+    pub fn new(encryption_key: Option<String>) -> Result<Self> {
+        let key = match encryption_key {
+            None => None,
+            Some(k) => {
+                let bytes = hex::decode(&k).map_err(|_| anyhow!("Vault key is not valid hex"))?;
+                if bytes.len() != LOCAL_KEY_LEN {
+                    return Err(anyhow!(
+                        "Vault key must be {} bytes ({} hex characters), got {} bytes",
+                        LOCAL_KEY_LEN,
+                        LOCAL_KEY_LEN * 2,
+                        bytes.len()
+                    ));
+                }
+                Some(bytes)
+            }
+        };
+        Ok(Self {
             encryption_key: key,
-        }
+        })
     }
 }
 
@@ -48,58 +70,7 @@ impl SecretVault for LocalVault {
     }
 }
 
-/// AWS KMS Vault implementation
-pub struct AwsKmsVault {
-    client: kms::Client,
-}
-
-impl AwsKmsVault {
-    pub async fn new() -> Self {
-        let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
-        let client = kms::Client::new(&config);
-        Self { client }
-    }
-}
-
-#[async_trait]
-impl SecretVault for AwsKmsVault {
-    async fn get_encryption_key(&self, key_id: &str) -> Result<Vec<u8>> {
-        let resp = self
-            .client
-            .generate_data_key()
-            .key_id(key_id)
-            .key_spec(kms::types::DataKeySpec::Aes256)
-            .send()
-            .await
-            .map_err(|e| anyhow!("AWS KMS error: {}", e))?;
-
-        let blob = resp
-            .plaintext
-            .ok_or_else(|| anyhow!("KMS response missing plaintext key"))?;
-
-        Ok(blob.into_inner())
-    }
-
-    async fn sign_data(&self, key_id: &str, data: &[u8]) -> Result<Vec<u8>> {
-        use aws_sdk_kms::primitives::Blob;
-
-        let resp = self
-            .client
-            .sign()
-            .key_id(key_id)
-            .message(Blob::new(data))
-            .signing_algorithm(kms::types::SigningAlgorithmSpec::RsassaPssSha256)
-            .send()
-            .await
-            .map_err(|e| anyhow!("AWS KMS signing error: {}", e))?;
-
-        let signature = resp
-            .signature
-            .ok_or_else(|| anyhow!("KMS response missing signature"))?;
-
-        Ok(signature.into_inner())
-    }
-}
+pub use super::kms_vault::AwsKmsVault;
 
 #[cfg(test)]
 mod tests {
@@ -112,9 +83,13 @@ mod tests {
         (0u8..32).collect()
     }
 
+    fn new_ok(key: &str) -> LocalVault {
+        LocalVault::new(Some(key.to_string())).unwrap()
+    }
+
     #[tokio::test]
     async fn local_vault_returns_decoded_key() {
-        let vault = LocalVault::new(Some(FAKE_KEY_HEX.to_string()));
+        let vault = new_ok(FAKE_KEY_HEX);
         let key = vault.get_encryption_key("any").await.unwrap();
         assert_eq!(key, fake_key_bytes());
         assert_eq!(key.len(), 32);
@@ -122,14 +97,14 @@ mod tests {
 
     #[tokio::test]
     async fn local_vault_accepts_uppercase_hex() {
-        let vault = LocalVault::new(Some(FAKE_KEY_HEX.to_uppercase()));
+        let vault = new_ok(&FAKE_KEY_HEX.to_uppercase());
         let key = vault.get_encryption_key("any").await.unwrap();
         assert_eq!(key, fake_key_bytes());
     }
 
     #[tokio::test]
     async fn local_vault_ignores_key_id() {
-        let vault = LocalVault::new(Some(FAKE_KEY_HEX.to_string()));
+        let vault = new_ok(FAKE_KEY_HEX);
         let a = vault.get_encryption_key("audit").await.unwrap();
         let b = vault.get_encryption_key("").await.unwrap();
         assert_eq!(a, b);
@@ -137,7 +112,7 @@ mod tests {
 
     #[tokio::test]
     async fn local_vault_returns_same_key_on_repeated_calls() {
-        let vault = LocalVault::new(Some(FAKE_KEY_HEX.to_string()));
+        let vault = new_ok(FAKE_KEY_HEX);
         let first = vault.get_encryption_key("k").await.unwrap();
         let second = vault.get_encryption_key("k").await.unwrap();
         assert_eq!(first, second);
@@ -145,47 +120,63 @@ mod tests {
 
     #[tokio::test]
     async fn local_vault_without_key_errors() {
-        let vault = LocalVault::new(None);
+        let vault = LocalVault::new(None).unwrap();
         let err = vault.get_encryption_key("k").await.unwrap_err();
         assert!(err.to_string().contains("not configured"));
     }
 
-    #[tokio::test]
-    async fn local_vault_invalid_hex_is_treated_as_missing() {
-        for bad in ["not-hex", "zz", "abc", "0g"] {
-            let vault = LocalVault::new(Some(bad.to_string()));
-            assert!(
-                vault.get_encryption_key("k").await.is_err(),
-                "input {bad:?} must not produce a key"
-            );
+    #[test]
+    fn local_vault_invalid_hex_is_rejected() {
+        for bad in ["not-hex", "zz", "abc", "0g", " 00"] {
+            let err = LocalVault::new(Some(bad.to_string())).err().unwrap();
+            assert!(err.to_string().contains("not valid hex"), "{bad:?}");
         }
     }
 
-    #[tokio::test]
-    async fn local_vault_odd_length_hex_is_rejected() {
-        let vault = LocalVault::new(Some(FAKE_KEY_HEX[..FAKE_KEY_HEX.len() - 1].to_string()));
-        assert!(vault.get_encryption_key("k").await.is_err());
+    #[test]
+    fn local_vault_odd_length_hex_is_rejected() {
+        let key = FAKE_KEY_HEX[..FAKE_KEY_HEX.len() - 1].to_string();
+        assert!(LocalVault::new(Some(key)).is_err());
     }
 
-    #[tokio::test]
-    async fn local_vault_empty_string_yields_empty_key() {
-        // hex::decode("") is Ok(empty), so the vault reports a zero-length key.
-        // Callers must validate the key length themselves.
-        let vault = LocalVault::new(Some(String::new()));
-        let key = vault.get_encryption_key("k").await.unwrap();
-        assert!(key.is_empty());
+    #[test]
+    fn local_vault_empty_string_is_rejected() {
+        let err = LocalVault::new(Some(String::new())).err().unwrap();
+        assert!(err.to_string().contains("32 bytes"));
     }
 
-    #[tokio::test]
-    async fn local_vault_does_not_trim_whitespace() {
-        let vault = LocalVault::new(Some(format!(" {FAKE_KEY_HEX}")));
-        assert!(vault.get_encryption_key("k").await.is_err());
+    #[test]
+    fn local_vault_wrong_length_is_rejected() {
+        for len in [1usize, 16, 31, 33, 64] {
+            let key = "ab".repeat(len);
+            assert!(LocalVault::new(Some(key)).is_err(), "{len} bytes");
+        }
+    }
+
+    #[test]
+    fn local_vault_does_not_trim_whitespace() {
+        assert!(LocalVault::new(Some(format!(" {FAKE_KEY_HEX}"))).is_err());
+    }
+
+    #[test]
+    fn local_vault_error_does_not_leak_the_key() {
+        let secret = "deadbeefdeadbeef";
+        let msg = LocalVault::new(Some(secret.to_string()))
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(!msg.contains(secret));
+        let msg = LocalVault::new(Some("zz-fake-secret".to_string()))
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(!msg.contains("fake-secret"));
     }
 
     #[tokio::test]
     async fn local_vault_signing_is_not_implemented() {
-        let with_key = LocalVault::new(Some(FAKE_KEY_HEX.to_string()));
-        let without_key = LocalVault::new(None);
+        let with_key = new_ok(FAKE_KEY_HEX);
+        let without_key = LocalVault::new(None).unwrap();
         for vault in [&with_key, &without_key] {
             let err = vault.sign_data("k", b"data").await.unwrap_err();
             assert!(err.to_string().contains("not yet implemented"));
@@ -195,7 +186,7 @@ mod tests {
 
     #[tokio::test]
     async fn vault_is_usable_as_trait_object() {
-        let vault: Box<dyn SecretVault> = Box::new(LocalVault::new(Some(FAKE_KEY_HEX.to_string())));
+        let vault: Box<dyn SecretVault> = Box::new(new_ok(FAKE_KEY_HEX));
         assert_eq!(
             vault.get_encryption_key("k").await.unwrap(),
             fake_key_bytes()

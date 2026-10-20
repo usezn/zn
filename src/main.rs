@@ -309,11 +309,29 @@ async fn start_proxy(args: Args) -> Result<()> {
     let kms_vault: Arc<Box<dyn SecretVault>> = match zn_config.kms.kms_type.as_str() {
         "aws" => {
             log::info("Initializing AWS KMS Vault...").ok();
-            Arc::new(Box::new(AwsKmsVault::new().await))
+            // The data key is kept across restarts through its encrypted copy,
+            // saved next to the audit database.
+            Arc::new(Box::new(
+                AwsKmsVault::new(
+                    zn::crypto::kms_vault::data_key_file_for(&zn_config.audit.db_path),
+                    zn::crypto::kms_vault::recover_flag_from_env(),
+                )
+                .await,
+            ))
         }
-        _ => Arc::new(Box::new(LocalVault::new(
-            zn_config.audit.encryption_key.clone(),
-        ))),
+        _ => {
+            // The audit key is a passphrase for the audit log. The local
+            // vault reads it as a raw 32-byte hex key, and only when a key id
+            // asks the vault for one. Without a key id, no key is passed in.
+            let vault_key = if zn_config.kms.key_id.is_some() {
+                zn_config.audit.encryption_key.clone()
+            } else {
+                None
+            };
+            Arc::new(Box::new(
+                LocalVault::new(vault_key).map_err(|e| anyhow!("Invalid vault key: {}", e))?,
+            ))
+        }
     };
 
     // If key_id is provided, try to fetch key from KMS
@@ -1528,19 +1546,13 @@ async fn policies_upload_handler(
                 }
             };
 
-            // Save to the policy directory: temporary file + rename, no symlinks.
-            if let Err(e) = zn::engine::write_policy_file(&path, &data) {
+            // Verify the signatures on the bytes in memory, then save them
+            // (temporary file + rename, no symlinks) and register the policy.
+            // A policy that fails a check is never written.
+            if let Err(e) = state.engine.install_policy(&path, &data) {
                 return axum::response::Json(serde_json::json!({
                     "status": "error",
-                    "error": format!("Failed to save file: {}", e)
-                }));
-            }
-
-            // Register policy
-            if let Err(e) = state.engine.register_policy_from_file(&path) {
-                return axum::response::Json(serde_json::json!({
-                    "status": "error",
-                    "error": format!("Failed to register policy: {}", e)
+                    "error": format!("Failed to install policy: {}", e)
                 }));
             }
 

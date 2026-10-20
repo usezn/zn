@@ -1,0 +1,2 @@
+sent: 1 file(s), 0 finding(s)
+local: 32 file(s), 4 finding(s) -> AWS_ACCESS_KEY_ID(raw) in opencode.db, AWS_SECRET_ACCESS_KEY(raw) in opencode.db, AWS_ACCESS_KEY_ID(raw) in opencode.db-wal, AWS_SECRET_ACCESS_KEY(raw) in opencode.db-wal

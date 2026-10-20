@@ -34,6 +34,7 @@ const { AUDIT_RULES_VERSION } = require('../lib/audit/rules');
 const { styles, sym, ruleLine } = require('../lib/term');
 const mcpSecrets = require('../lib/mcp-secrets');
 const { pruneInfo, SCAN_DIRS } = require('../lib/prune');
+const { safeText } = require('../lib/audit/report');
 // Colors are decided once per run: NO_COLOR, TERM=dumb or a stdout that is not a terminal turn them off.
 const col = styles(process.stdout, process.env);
 
@@ -471,10 +472,12 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
   const skippedDirs = [];
   filesToScan.skippedDirs = skippedDirs;
 
-  function walk(current) {
+  function walk(current, isRoot = false) {
     let stat;
     try {
-      stat = fs.lstatSync(current);
+      // The folder or file the user named is followed when it is a link; links
+      // found inside the tree are never followed (loops, escapes).
+      stat = isRoot ? fs.statSync(current) : fs.lstatSync(current);
     } catch (e) {
       return;
     }
@@ -516,7 +519,7 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
     }
   }
 
-  walk(targetPath);
+  walk(targetPath, true);
   return filesToScan;
 }
 
@@ -549,7 +552,7 @@ async function handleScan(targetPath, options) {
   }
   if (format === 'text') process.stdout.write(`
 ${sym(process.env, '🛡️', undefined, '  ')}zn-gate Static Security Audit
-Target  : ${resolved}
+Target  : ${safeText(resolved)}
 Scope   : ${options.includeCode ? 'All files (prompts + code)' : 'Prompt templates, docs, configs (use --code to scan source)'}
 Files   : ${files.length} file(s) queued for audit\n
 `);
@@ -674,6 +677,9 @@ Files   : ${files.length} file(s) queued for audit\n
 
   const totalSecrets = findings.filter((f) => f.type === 'secret_leak').length;
   const totalThreats = totalFindings - totalSecrets;
+  // An empty result is not a clean one: say so. The exit code stays 0 (a folder
+  // with nothing to scan is not an error for CI), but the output is explicit.
+  const nothingScanned = `No files were scanned in ${targetPath || '.'}`;
 
   if (format === 'github') {
     // CI logs are public: rule, reason and location only, never the line.
@@ -690,6 +696,7 @@ Files   : ${files.length} file(s) queued for audit\n
     for (const s of files.skippedDirs) {
       process.stdout.write(`::notice file=${ghProperty(displayPath(s.dir, homeFiles))},title=Directory not scanned::${ghMessage(s.reason)}\n`);
     }
+    if (files.length - notRead === 0) process.stdout.write(`::warning title=Nothing scanned::${ghMessage(nothingScanned)}\n`);
     const dirNote = files.skippedDirs.length ? ` and ${files.skippedDirs.length} director${files.skippedDirs.length === 1 ? 'y' : 'ies'} skipped` : '';
     process.stdout.write(`\n[zn-gate] Scanned ${files.length - notRead} files (${files.skipped.length} not scanned${dirNote}). Found ${totalSecrets} secrets and ${totalThreats} security threats.\n`);
     if (totalFindings > 0) process.exitCode = 1;
@@ -710,16 +717,18 @@ Files   : ${files.length} file(s) queued for audit\n
       }),
       skipped: files.skipped.map((s) => ({ file: displayPath(s.file, homeFiles), reason: s.reason })),
       skipped_dirs: files.skippedDirs.map((s) => ({ dir: displayPath(s.dir, homeFiles), reason: s.reason })),
+      ...(files.length - notRead === 0 ? { warning: nothingScanned } : {}),
     }, null, 2) + '\n');
     if (totalFindings > 0) process.exitCode = 1;
     return;
   }
 
+  if (files.length - notRead === 0) process.stdout.write(`${sym(process.env, '!', col.yellow)}${col.yellow(safeText(nothingScanned))}\n\n`);
   if (findings.length > 0) {
     process.stdout.write(`Findings (${findings.length}):\n`);
     for (const f of findings) {
       const label = f.type === 'secret_leak' ? 'Secret found' : 'Threat';
-      process.stdout.write(`  ${sym(process.env, '✖', col.red)}${f.file}:${f.line} ${label}\n`);
+      process.stdout.write(`  ${sym(process.env, '✖', col.red)}${safeText(f.file)}:${f.line} ${label}\n`);
       process.stdout.write(`    ${col.gray('Rule:')} ${f.rule} (${f.reason || 'Security threat detected'})\n`);
       process.stdout.write(`    ${col.gray('Line:')} ${f.sample}\n`);
       if (f.next_step) process.stdout.write(`    ${f.next_step}\n`);
@@ -743,13 +752,13 @@ ${ruleLine(process.env, 77)}\n
 `);
   if (files.skipped.length) {
     process.stdout.write(`Not scanned (${files.skipped.length}):\n`);
-    for (const s of files.skipped.slice(0, 20)) process.stdout.write(`  ${displayPath(s.file, homeFiles)} (${s.reason})\n`);
+    for (const s of files.skipped.slice(0, 20)) process.stdout.write(`  ${safeText(displayPath(s.file, homeFiles))} (${safeText(s.reason)})\n`);
     if (files.skipped.length > 20) process.stdout.write(`  ... and ${files.skipped.length - 20} more\n`);
     process.stdout.write('\n');
   }
   if (files.skippedDirs.length) {
     process.stdout.write(`Directories not scanned (${files.skippedDirs.length}):\n`);
-    for (const s of files.skippedDirs.slice(0, 20)) process.stdout.write(`  ${displayPath(s.dir, homeFiles)} (${s.reason})\n`);
+    for (const s of files.skippedDirs.slice(0, 20)) process.stdout.write(`  ${safeText(displayPath(s.dir, homeFiles))} (${safeText(s.reason)})\n`);
     if (files.skippedDirs.length > 20) process.stdout.write(`  ... and ${files.skippedDirs.length - 20} more\n`);
     process.stdout.write('\n');
   }
@@ -852,6 +861,12 @@ async function main() {
     process.exitCode = await runReachCommand(args.slice(1));
     return;
   }
+  // Help of the vault commands and of env shadow: their own usage, not the general help.
+  const subHelp = require('../lib/vault/help').helpFor(args);
+  if (subHelp) {
+    process.stdout.write(subHelp.join('\n') + '\n');
+    return;
+  }
   // zn Team and the OpenTelemetry export of the audit log. exitCode (not
   // process.exit) so a large export is flushed completely through a pipe.
   if (args[0] === 'team') {
@@ -877,7 +892,7 @@ async function main() {
     process.exit(0);
   }
 
-  if (args.includes('-V') || args.includes('--version') || args[0] === 'version') {
+  if (args.includes('-V') || args.includes('--version') || args[0] === 'version' || args[0] === '-v') {
     process.stdout.write(`zn-gate ${VERSION} (rules engine: ${RULES_VERSION}; scrub rules: ${SCRUB_RULES_VERSION}; audit rules: ${AUDIT_RULES_VERSION})\n`);
     process.exit(0);
   }
@@ -1170,6 +1185,24 @@ ${sym(process.env, '🛡️', undefined, '  ')}zn-gate Status:
           mcpCommand: mcp && mcp.command ? [mcp.command, ...(Array.isArray(mcp.args) ? mcp.args : [])] : null,
         });
         for (const n of notes) process.stdout.write('  Claude Code     : ' + n + '\n');
+        if (notes.length) process.stdout.write('\n');
+      }
+    } catch (_) { /* status never fails on this check */ }
+    // zn installed through the organization's managed configuration (read-only).
+    try {
+      const mp = require('../lib/agents/managed-policy');
+      for (const [id, label] of [['claude-code', 'Claude Code'], ['codex', 'Codex CLI'], ['cursor', 'Cursor']]) {
+        let there = false;
+        try { there = Boolean(require('../lib/agents').getAdapter(id).detect()); } catch (_) { there = false; }
+        const m = there ? mp.managedInstall(id) : null;
+        if (m) process.stdout.write('  ' + label.padEnd(16) + ': zn is installed (managed): ' + m.files.join(', ') + '\n\n');
+      }
+    } catch (_) { /* status never fails on this check */ }
+    // Cursor's enterprise hooks.json (read-only).
+    try {
+      if (require('../lib/agents/cursor').detect()) {
+        const notes = require('../lib/agents/managed-policy').cursorPolicyWarnings();
+        for (const n of notes) process.stdout.write('  Cursor          : ' + n + '\n');
         if (notes.length) process.stdout.write('\n');
       }
     } catch (_) { /* status never fails on this check */ }

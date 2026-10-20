@@ -1,3 +1,6 @@
+// evaluate() is a text check (prompt-injection wording, secret-file names). It does not
+// parse shell commands: evaluate('rm -rf ~/') is allowed. See "What the code API checks"
+// in the zn-gate README.
 const { evaluate, sanitizeToolResult } = require('zn-gate/lib/rules');
 
 // 1. Direct prompt inspection
