@@ -43,6 +43,17 @@ class WrappedSecrets(unittest.TestCase):
         self.assertNotIn(other[-12:], out)
         self.assertEqual(len(found), 2)
 
+    def test_first_line_matching_alone_redacted_whole(self):
+        second = 'Rs8tUv1wXy4zAb7cDe0f'
+        self.assertNotIn(second, self.redact('API_KEY=Ab3dEf6hIj9kLm2nOp5q\n' + second))
+
+    def test_stripe_key_wrapped_after_28(self):
+        tail = 'Xy4zAb7cDe0f'
+        self.assertNotIn(tail, self.redact('sk_' + 'live_' + 'Ab3dEf6hIj9kLm2nOp5qRs8tUv1w\n' + tail))
+
+    def test_big_text_not_joined(self):
+        self.assertIsNone(R.invisible_view('x' * ((1 << 20) + 1) + '\nabcdefghijklmnopqrst'))
+
     def test_ordinary_text_unchanged(self):
         text = 'The quick brown fox\njumps over the lazy dog\nand_snake_case_names\nkeep_their_lines'
         self.assertEqual(self.redact(text), text)

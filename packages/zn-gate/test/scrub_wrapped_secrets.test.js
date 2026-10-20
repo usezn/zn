@@ -40,6 +40,23 @@ test('two secrets on consecutive lines are both redacted, each on its own', () =
   assert.equal(rules.redactSecrets(KEY + '\n' + other).detections.length, 2);
 });
 
+test('a wrapped value whose first line matches alone is redacted whole', () => {
+  const second = 'Rs8tUv1wXy4zAb7cDe0f';
+  const out = rules.redactSecrets('API_KEY=Ab3dEf6hIj9kLm2nOp5q\n' + second).sanitized;
+  assert.ok(!out.includes(second), out);
+});
+
+test('a Stripe key wrapped after 28 characters is redacted whole', () => {
+  const tail = 'Xy4zAb7cDe0f';
+  const out = rules.redactSecrets('sk_' + 'live_' + 'Ab3dEf6hIj9kLm2nOp5qRs8tUv1w\n' + tail).sanitized;
+  assert.ok(!out.includes(tail), out);
+});
+
+test('texts over 1 MiB are not joined across lines', () => {
+  const big = 'x'.repeat((1 << 20) + 1) + '\nabcdefghijklmnopqrst';
+  assert.equal(rules.invisibleView(big), null);
+});
+
 test('ordinary text across lines is unchanged', () => {
   const text = 'The quick brown fox\njumps over the lazy dog\nand_snake_case_names\nkeep_their_lines';
   assert.equal(rules.redactSecrets(text).sanitized, text);
