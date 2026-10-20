@@ -8,9 +8,8 @@
 //! - Race-condition-free connection management
 
 use anyhow::{anyhow, Result};
-use futures::{SinkExt, StreamExt};
+use futures::{future::join_all, SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -263,12 +262,17 @@ impl McpConnection {
     }
 }
 
+/// A connection slot: empty until the first successful connect.
+type ConnectionSlot = Arc<Mutex<Option<McpConnection>>>;
+
 /// Pool of MCP server connections
 pub struct McpPool {
     /// Server configurations
     configs: HashMap<String, McpServerConfig>,
-    /// Active connections
-    connections: Mutex<HashMap<String, McpConnection>>,
+    /// One slot per server. The outer lock only guards the map itself and is
+    /// never held across I/O; each slot has its own lock, so a slow server
+    /// only delays requests to that same server.
+    connections: Mutex<HashMap<String, ConnectionSlot>>,
     /// Optional Result Cache
     cache: Option<Arc<crate::engine::cache::ResultCache>>,
 }
@@ -402,25 +406,32 @@ impl McpPool {
             .ok_or_else(|| anyhow!("Unknown MCP server: {}", name))?
             .clone();
 
-        let mut connections = self.connections.lock().await;
-
-        let conn = match connections.entry(name.to_string()) {
-            Entry::Occupied(mut entry) => {
-                if !entry.get_mut().is_alive().await {
-                    info!("MCP '{}' connection died, reconnecting", name);
-                    let new_conn = McpConnection::connect(name, &config).await?;
-                    entry.insert(new_conn);
-                }
-                entry.into_mut()
-            }
-            Entry::Vacant(entry) => {
-                info!("Establishing new MCP connection: {}", name);
-                let conn = McpConnection::connect(name, &config).await?;
-                entry.insert(conn)
-            }
+        // Short critical section: only fetch or create this server's slot.
+        let slot = {
+            let mut connections = self.connections.lock().await;
+            connections.entry(name.to_string()).or_default().clone()
         };
 
+        // Connection work (ping, connect, request) holds only this slot's lock.
+        let mut guard = slot.lock().await;
+        match guard.as_mut() {
+            Some(conn) => {
+                if !conn.is_alive().await {
+                    info!("MCP '{}' connection died, reconnecting", name);
+                    *guard = Some(McpConnection::connect(name, &config).await?);
+                }
+            }
+            None => {
+                info!("Establishing new MCP connection: {}", name);
+                *guard = Some(McpConnection::connect(name, &config).await?);
+            }
+        }
+        let conn = guard
+            .as_mut()
+            .expect("connection slot was filled just above");
+
         let response = conn.send_request(request).await?;
+        drop(guard);
 
         // 2. Store in cache if successful and it looks like a tool call
         if let Some(ref cache) = self.cache {
@@ -443,14 +454,31 @@ impl McpPool {
         self.configs.keys().cloned().collect()
     }
 
-    /// Check the health of all MCP connections
-    pub async fn health_check(&self) -> HashMap<String, bool> {
-        let mut connections = self.connections.lock().await;
-        let mut status = HashMap::new();
+    /// Clone the slots out of the map so the map lock is released before any I/O.
+    async fn snapshot_slots(&self) -> Vec<(String, ConnectionSlot)> {
+        let connections = self.connections.lock().await;
+        connections
+            .iter()
+            .map(|(name, slot)| (name.clone(), slot.clone()))
+            .collect()
+    }
 
-        for (name, conn) in connections.iter_mut() {
-            status.insert(name.clone(), conn.is_alive().await);
-        }
+    /// Check the health of all MCP connections.
+    ///
+    /// Connections are checked in parallel, so the call takes about as long as
+    /// the slowest server rather than the sum of all pings.
+    pub async fn health_check(&self) -> HashMap<String, bool> {
+        let slots = self.snapshot_slots().await;
+
+        let checks = slots.into_iter().map(|(name, slot)| async move {
+            let mut guard = slot.lock().await;
+            let alive = match guard.as_mut() {
+                Some(conn) => conn.is_alive().await,
+                None => false,
+            };
+            (name, alive)
+        });
+        let mut status: HashMap<String, bool> = join_all(checks).await.into_iter().collect();
 
         for name in self.configs.keys() {
             status.entry(name.clone()).or_insert(false);
@@ -461,10 +489,15 @@ impl McpPool {
 
     /// Shutdown all MCP connections gracefully
     pub async fn shutdown_all(&self) {
-        let mut connections = self.connections.lock().await;
-        for (name, mut conn) in connections.drain() {
-            info!("Shutting down MCP: {}", name);
-            let _ = conn.shutdown().await;
+        let slots: Vec<(String, ConnectionSlot)> = {
+            let mut connections = self.connections.lock().await;
+            connections.drain().collect()
+        };
+        for (name, slot) in slots {
+            if let Some(mut conn) = slot.lock().await.take() {
+                info!("Shutting down MCP: {}", name);
+                let _ = conn.shutdown().await;
+            }
         }
     }
 }
@@ -572,5 +605,121 @@ Content-Length: 0
                 .await;
         });
         assert!(connect_async(format!("ws://{}", addr)).await.is_err());
+    }
+
+    /// Test server: echoes text frames after `reply_delay`, then stays
+    /// unresponsive for `pause_after_reply` before reading again, which delays
+    /// the automatic pong.
+    async fn slow_echo_server(
+        reply_delay: std::time::Duration,
+        pause_after_reply: std::time::Duration,
+    ) -> std::net::SocketAddr {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            while let Some(Ok(msg)) = ws.next().await {
+                if let Message::Text(text) = msg {
+                    tokio::time::sleep(reply_delay).await;
+                    if ws.send(Message::Text(text)).await.is_err() {
+                        break;
+                    }
+                    tokio::time::sleep(pause_after_reply).await;
+                }
+            }
+        });
+        addr
+    }
+
+    fn ws_pool(addrs: &[(&str, std::net::SocketAddr)]) -> Arc<McpPool> {
+        let configs = addrs
+            .iter()
+            .map(|(name, addr)| {
+                (
+                    name.to_string(),
+                    McpServerConfig {
+                        command: None,
+                        args: vec![],
+                        env: HashMap::new(),
+                        url: Some(format!("ws://{}", addr)),
+                    },
+                )
+            })
+            .collect();
+        Arc::new(McpPool::new(configs))
+    }
+
+    #[tokio::test]
+    async fn slow_server_does_not_block_other_servers() {
+        let slow = slow_echo_server(
+            std::time::Duration::from_millis(1500),
+            std::time::Duration::ZERO,
+        )
+        .await;
+        let fast = slow_echo_server(std::time::Duration::ZERO, std::time::Duration::ZERO).await;
+        let pool = ws_pool(&[("slow", slow), ("fast", fast)]);
+
+        let slow_pool = pool.clone();
+        let slow_task = tokio::spawn(async move {
+            let start = std::time::Instant::now();
+            let reply = slow_pool.send("slow", "{\"id\":1}", None).await.unwrap();
+            (reply, start.elapsed())
+        });
+        // Let the slow request take its connection lock first.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        let start = std::time::Instant::now();
+        let reply = pool.send("fast", "{\"id\":2}", None).await.unwrap();
+        let fast_elapsed = start.elapsed();
+        assert_eq!(reply, "{\"id\":2}");
+        assert!(
+            fast_elapsed < std::time::Duration::from_millis(1000),
+            "fast server waited for the slow one: {:?}",
+            fast_elapsed
+        );
+
+        let (slow_reply, slow_elapsed) = slow_task.await.unwrap();
+        assert_eq!(slow_reply, "{\"id\":1}");
+        assert!(slow_elapsed >= std::time::Duration::from_millis(1400));
+    }
+
+    #[tokio::test]
+    async fn health_check_runs_pings_in_parallel() {
+        let delay = std::time::Duration::from_millis(800);
+        let mut servers = Vec::new();
+        let names = ["a", "b", "c", "d"];
+        for _ in names {
+            servers.push(slow_echo_server(std::time::Duration::ZERO, delay).await);
+        }
+        let pairs: Vec<(&str, std::net::SocketAddr)> =
+            names.iter().copied().zip(servers.iter().copied()).collect();
+        let pool = ws_pool(&pairs);
+
+        // Open every connection; each server then stalls before it can pong.
+        for name in names {
+            pool.send(name, "{}", None).await.unwrap();
+        }
+
+        let start = std::time::Instant::now();
+        let status = pool.health_check().await;
+        let elapsed = start.elapsed();
+
+        assert_eq!(status.len(), 4);
+        assert!(status.values().all(|alive| *alive), "{:?}", status);
+        // Serial pings would take about 4 x 800 ms.
+        assert!(
+            elapsed < std::time::Duration::from_millis(2000),
+            "health_check was not parallel: {:?}",
+            elapsed
+        );
+    }
+
+    #[tokio::test]
+    async fn health_check_reports_unconnected_server_as_down() {
+        let addr: std::net::SocketAddr = "127.0.0.1:9".parse().unwrap();
+        let pool = ws_pool(&[("never", addr)]);
+        let status = pool.health_check().await;
+        assert_eq!(status.get("never"), Some(&false));
     }
 }
