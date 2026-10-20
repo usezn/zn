@@ -64,9 +64,10 @@ fn bounded_agent_id(agent_id: Option<&str>) -> String {
     }
 }
 
-/// Reputation key: the namespace of the connection and the agent id from the message.
-fn reputation_key(namespace: &str, agent_id: &str) -> String {
-    format!("{}\u{1f}{}", namespace, agent_id)
+/// Reputation and loop-breaker key: the namespace and the connection (not the agent id from the
+/// message, which a client can rotate or omit). Fixed key per stdio proxy; one per WebSocket.
+fn reputation_key(namespace: &str, connection: &str) -> String {
+    format!("{}\u{1f}{}", namespace, connection)
 }
 
 /// Build a JSON-RPC 2.0 error response
@@ -378,7 +379,9 @@ async fn start_proxy(args: Args) -> Result<()> {
     let (tx, _) = broadcast::channel(zn_config.server.channel_capacity);
 
     // Initialize Reputation System
-    let reputation = Arc::new(ReputationSystem::new());
+    let reputation = Arc::new(ReputationSystem::with_max_ids(
+        zn_config.security.max_agent_ids_per_namespace,
+    ));
 
     // Spawn Webhook Dispatcher
     let (webhook_manager, webhook_rx) = WebhookManager::new(zn_config.webhooks.clone());
@@ -596,7 +599,7 @@ async fn start_proxy(args: Args) -> Result<()> {
     let mut reader = BufReader::new(stdin).lines();
 
     while let Some(line) = reader.next_line().await? {
-        if let Ok(Some(response)) = process_mcp_message(&line, &state, None).await {
+        if let Ok(Some(response)) = process_mcp_message(&line, &state, None, "stdio").await {
             stdout.write_all(response.as_bytes()).await?;
             stdout.write_all(b"\n").await?;
             stdout.flush().await?;
@@ -906,6 +909,7 @@ async fn process_mcp_message(
     line: &str,
     state: &AppState,
     namespace: Option<String>,
+    connection: &str,
 ) -> Result<Option<String>> {
     // The vector memory is scoped to the authenticated namespace (WebSocket
     // tenants) or, for the local stdio proxy, to the configured one. The
@@ -933,7 +937,14 @@ async fn process_mcp_message(
             // and never an identity: the reputation (bans, violations) is kept per namespace, so one tenant can
             // neither ban another tenant's agent ids nor share a ban with it.
             let agent_id_str = bounded_agent_id(agent_id.as_deref());
-            let rep_key = reputation_key(&memory_namespace, &agent_id_str);
+            let rep_key = reputation_key(&memory_namespace, connection);
+            if let Err(msg) = state
+                .reputation
+                .admit_agent_id(&memory_namespace, &agent_id_str)
+            {
+                log::warning(format!("🚫 AGENT ID CAP: {}", msg)).ok();
+                return Ok(Some(jsonrpc_error_response(id, -32001, &msg)));
+            }
 
             // 🎯 OCR GUARD: detect malicious text embedded in images (prompt
             // injection, credentials, destructive commands) on the RAW input,
@@ -1039,10 +1050,9 @@ async fn process_mcp_message(
             }
 
             // 3. RECURSIVE LOOP BREAKER
-            if let Err(msg) =
-                state
-                    .loop_breaker
-                    .check_and_record(&agent_id_str, &tool_name, &arguments)
+            if let Err(msg) = state
+                .loop_breaker
+                .check_and_record(&rep_key, &tool_name, &arguments)
             {
                 log::warning(format!("🚫 LOOP BREAKER: {}", msg)).ok();
                 state
@@ -1367,10 +1377,15 @@ async fn handle_ws_socket(
     use futures::{SinkExt, StreamExt};
 
     let (mut sender, mut receiver) = socket.split();
+    static NEXT_CONNECTION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let connection = format!(
+        "ws-{}",
+        NEXT_CONNECTION.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
 
     while let Some(Ok(msg)) = receiver.next().await {
         if let Message::Text(text) = msg {
-            match process_mcp_message(&text, &state, Some(namespace.clone())).await {
+            match process_mcp_message(&text, &state, Some(namespace.clone()), &connection).await {
                 Ok(Some(response)) => {
                     if let Err(e) = sender.send(Message::Text(response)).await {
                         tracing::error!("WS send error: {}", e);

@@ -7,13 +7,17 @@
 
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 
 const MAX_SCORE: i32 = 100;
 const INITIAL_SCORE: i32 = 50;
 const BAN_THRESHOLD: i32 = 0; // A score at or below 0 bans the agent
 const BAN_DURATION_MINUTES: i64 = 10;
+/// Default cap on distinct agent ids seen per namespace.
+pub const DEFAULT_MAX_AGENT_IDS: usize = 256;
+/// Separator between the namespace and the rest of a reputation key.
+const KEY_SEP: char = '\u{1f}';
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum AgentStatus {
@@ -53,13 +57,51 @@ impl Default for ReputationScore {
 pub struct ReputationSystem {
     // Map of AgentID -> Score
     scores: Arc<RwLock<HashMap<String, ReputationScore>>>,
+    // Namespace -> end of the ban that every key of that namespace inherits. A key is
+    // `<namespace><US><connection>`; a ban earned on one connection holds for the namespace, so
+    // reconnecting or changing the agent id does not start clean.
+    ns_bans: Arc<RwLock<HashMap<String, DateTime<Utc>>>>,
+    // Namespace -> distinct agent ids seen (bounded by `max_ids`).
+    ids: Arc<RwLock<HashMap<String, HashSet<String>>>>,
+    max_ids: usize,
 }
 
 impl ReputationSystem {
     pub fn new() -> Self {
+        Self::with_max_ids(DEFAULT_MAX_AGENT_IDS)
+    }
+
+    /// Reputation system that admits at most `max_ids` distinct agent ids per namespace.
+    pub fn with_max_ids(max_ids: usize) -> Self {
         Self {
             scores: Arc::new(RwLock::new(HashMap::new())),
+            ns_bans: Arc::new(RwLock::new(HashMap::new())),
+            ids: Arc::new(RwLock::new(HashMap::new())),
+            max_ids,
         }
+    }
+
+    /// Namespace part of a key (`<namespace><US><connection>`), if the key has one.
+    fn namespace_of(key: &str) -> Option<&str> {
+        key.split_once(KEY_SEP).map(|(ns, _)| ns)
+    }
+
+    /// Admit an agent id for a namespace. Known ids always pass; a new id past the per-namespace
+    /// cap is refused, so rotating ids cannot grow state without limit.
+    pub fn admit_agent_id(&self, namespace: &str, agent_id: &str) -> Result<(), String> {
+        let mut ids = self.ids.write().unwrap();
+        let set = ids.entry(namespace.to_string()).or_default();
+        if set.contains(agent_id) {
+            return Ok(());
+        }
+        if set.len() >= self.max_ids {
+            return Err(format!(
+                "Too many distinct agent ids in this namespace (limit {})",
+                self.max_ids
+            ));
+        }
+        set.insert(agent_id.to_string());
+        Ok(())
     }
 }
 
@@ -72,6 +114,16 @@ impl Default for ReputationSystem {
 impl ReputationSystem {
     /// Get current status of an agent (Auth Check)
     pub fn check_agent_status(&self, agent_id: &str) -> Result<(), String> {
+        if let Some(ns) = Self::namespace_of(agent_id) {
+            if let Some(end) = self.ns_bans.read().unwrap().get(ns) {
+                if Utc::now() < *end {
+                    return Err(format!(
+                        "Namespace BANNED active defense system until {}",
+                        end
+                    ));
+                }
+            }
+        }
         let scores = self.scores.read().unwrap();
         if let Some(entry) = scores.get(agent_id) {
             if entry.status == AgentStatus::Banned {
@@ -136,6 +188,20 @@ impl ReputationSystem {
         }
 
         entry.update_status();
+
+        // A fresh or standing ban also covers the namespace.
+        let ban_end = match (&entry.status, entry.banned_until) {
+            (AgentStatus::Banned, Some(end)) if Utc::now() < end => Some(end),
+            _ => None,
+        };
+        drop(scores);
+        if let (Some(end), Some(ns)) = (ban_end, Self::namespace_of(agent_id)) {
+            let mut bans = self.ns_bans.write().unwrap();
+            let slot = bans.entry(ns.to_string()).or_insert(end);
+            if *slot < end {
+                *slot = end;
+            }
+        }
     }
 
     /// Get all scores for dashboard
@@ -190,6 +256,50 @@ mod tests {
         for _ in 0..n {
             sys.record_success(agent);
         }
+    }
+
+    fn key(ns: &str, conn: &str) -> String {
+        format!("{ns}{KEY_SEP}{conn}")
+    }
+
+    #[test]
+    fn ban_on_one_connection_holds_for_the_whole_namespace() {
+        let sys = ReputationSystem::default();
+        let banned = key("tenant-a", "ws-1");
+        sys.record_violation(&banned, "x", 60);
+        assert!(sys.check_agent_status(&banned).is_err());
+        // A new connection (rotated id, reconnect) in the same namespace inherits the ban.
+        assert!(sys.check_agent_status(&key("tenant-a", "ws-2")).is_err());
+        // Another namespace is untouched.
+        assert!(sys.check_agent_status(&key("tenant-b", "ws-1")).is_ok());
+    }
+
+    #[test]
+    fn namespace_ban_expires_with_the_ban() {
+        let sys = ReputationSystem::default();
+        let banned = key("tenant-a", "ws-1");
+        sys.record_violation(&banned, "x", 60);
+        sys.ns_bans
+            .write()
+            .unwrap()
+            .insert("tenant-a".into(), Utc::now() - Duration::seconds(1));
+        assert!(sys.check_agent_status(&key("tenant-a", "ws-2")).is_ok());
+    }
+
+    #[test]
+    fn agent_id_cap_is_enforced_per_namespace() {
+        let sys = ReputationSystem::with_max_ids(2);
+        assert!(sys.admit_agent_id("a", "x").is_ok());
+        assert!(sys.admit_agent_id("a", "y").is_ok());
+        assert!(
+            sys.admit_agent_id("a", "x").is_ok(),
+            "known id still passes"
+        );
+        assert!(sys.admit_agent_id("a", "z").is_err());
+        assert!(
+            sys.admit_agent_id("b", "z").is_ok(),
+            "other namespace has its own budget"
+        );
     }
 
     #[test]

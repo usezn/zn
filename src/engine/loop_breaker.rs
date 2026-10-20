@@ -104,6 +104,17 @@ mod tests {
     }
 
     #[test]
+    fn loop_state_is_per_namespace_and_connection_key() {
+        // The gateway keys the breaker by `<namespace><US><connection>`, not by the agent id.
+        let lb = breaker(true, 1);
+        let a = "tenant-a\u{1f}ws-1";
+        let b = "tenant-b\u{1f}ws-1";
+        assert!(lb.check_and_record(a, "shell", "{}").is_ok());
+        assert!(lb.check_and_record(a, "shell", "{}").is_err());
+        assert!(lb.check_and_record(b, "shell", "{}").is_ok());
+    }
+
+    #[test]
     fn disabled_breaker_allows_everything_and_records_nothing() {
         let lb = breaker(false, 1);
         for _ in 0..10 {

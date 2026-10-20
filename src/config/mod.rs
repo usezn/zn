@@ -181,6 +181,14 @@ pub struct SecurityConfig {
 
     /// Token for MCP WebSocket authentication
     pub mcp_ws_token: Option<String>,
+
+    /// Most distinct agent ids accepted per namespace; a new id past the cap is denied
+    #[serde(default = "default_max_agent_ids")]
+    pub max_agent_ids_per_namespace: usize,
+}
+
+fn default_max_agent_ids() -> usize {
+    crate::engine::reputation::DEFAULT_MAX_AGENT_IDS
 }
 
 impl Default for SecurityConfig {
@@ -198,6 +206,7 @@ impl Default for SecurityConfig {
             namespace: std::env::var("ZN_NAMESPACE").ok(),
             jwt_secret: std::env::var("ZN_JWT_SECRET").ok(),
             mcp_ws_token: normalize_credential(std::env::var("ZN_MCP_WS_TOKEN").ok()),
+            max_agent_ids_per_namespace: default_max_agent_ids(),
         }
     }
 }
