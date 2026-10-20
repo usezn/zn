@@ -68,7 +68,15 @@ pub enum JsonRpcValidation {
         agent_id: Option<String>,
         source: ArgSource,
     },
-    /// Valid JSON-RPC but not a tool call - pass through
+    /// Valid JSON-RPC for any other method that can carry data (resources/read, prompts/get,
+    /// sampling/createMessage, ...). The caller runs the managed rules on it.
+    Method {
+        id: Option<serde_json::Value>,
+        method: String,
+        arguments: String,
+        agent_id: Option<String>,
+    },
+    /// Valid JSON-RPC that carries nothing to check (handshake, ping, lists, notifications) - pass through
     PassThrough,
     /// Invalid JSON-RPC - return error response
     Error {
@@ -180,7 +188,39 @@ pub fn validate_jsonrpc(json_str: &str) -> JsonRpcValidation {
         };
     }
 
-    JsonRpcValidation::PassThrough
+    if is_unchecked_method(&request.method) {
+        return JsonRpcValidation::PassThrough;
+    }
+
+    // Every other method can carry user data (a file:// URI, a prompt argument, a sampling request).
+    let arguments = request
+        .params
+        .map(|p| p.to_string())
+        .unwrap_or_else(|| "{}".to_string());
+    JsonRpcValidation::Method {
+        id: request.id,
+        method: request.method,
+        arguments,
+        agent_id: request.agent_id,
+    }
+}
+
+/// Methods that carry no user data and are forwarded without the managed rules.
+fn is_unchecked_method(method: &str) -> bool {
+    method.starts_with("notifications/")
+        || matches!(
+            method,
+            "initialize" | "ping" | "tools/list" | "resources/list" | "prompts/list"
+        )
+}
+
+/// Run the managed rules on a non-tool method, under the virtual tool name `mcp:<method>`.
+pub fn check_method(
+    rules: &crate::config::ManagedRulesConfig,
+    method: &str,
+    arguments: &str,
+) -> Result<(), String> {
+    crate::engine::rules::ManagedRuleset::evaluate(rules, &format!("mcp:{method}"), arguments)
 }
 
 #[cfg(test)]
@@ -332,17 +372,19 @@ mod tests {
     }
 
     #[test]
-    fn unknown_method_passes_through() {
-        for m in [
-            "initialize",
-            "tools/list",
-            "ping",
-            "Tools/Call",
-            "tools/call ",
-        ] {
+    fn handshake_methods_pass_through_and_lookalikes_are_checked() {
+        for m in ["initialize", "tools/list", "ping"] {
             let frame = format!(r#"{{"jsonrpc":"2.0","id":1,"method":"{m}"}}"#);
             assert!(
                 matches!(validate_jsonrpc(&frame), JsonRpcValidation::PassThrough),
+                "{m}"
+            );
+        }
+        // Case and spacing variants of tools/call are not tool calls, but they are checked.
+        for m in ["Tools/Call", "tools/call "] {
+            let frame = format!(r#"{{"jsonrpc":"2.0","id":1,"method":"{m}"}}"#);
+            assert!(
+                matches!(validate_jsonrpc(&frame), JsonRpcValidation::Method { .. }),
                 "{m}"
             );
         }
@@ -519,6 +561,69 @@ mod tests {
             validate_jsonrpc(frame),
             JsonRpcValidation::PassThrough
         ));
+    }
+
+    // ---- non-tool methods ----
+
+    #[test]
+    fn data_carrying_methods_are_checked_and_handshake_methods_are_not() {
+        for m in [
+            "initialize",
+            "ping",
+            "tools/list",
+            "resources/list",
+            "prompts/list",
+        ] {
+            let frame = format!(r#"{{"jsonrpc":"2.0","id":1,"method":"{m}"}}"#);
+            assert!(
+                matches!(validate_jsonrpc(&frame), JsonRpcValidation::PassThrough),
+                "{m}"
+            );
+        }
+        let n = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
+        assert!(matches!(
+            validate_jsonrpc(n),
+            JsonRpcValidation::PassThrough
+        ));
+        for m in [
+            "resources/read",
+            "prompts/get",
+            "sampling/createMessage",
+            "completion/complete",
+        ] {
+            let frame = format!(r#"{{"jsonrpc":"2.0","id":7,"method":"{m}","params":{{"a":1}}}}"#);
+            match validate_jsonrpc(&frame) {
+                JsonRpcValidation::Method {
+                    id,
+                    method,
+                    arguments,
+                    ..
+                } => {
+                    assert_eq!(id, Some(json!(7)));
+                    assert_eq!(method, m);
+                    assert_eq!(arguments, r#"{"a":1}"#);
+                }
+                other => panic!("{m}: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn resources_read_with_a_local_file_uri_is_blocked() {
+        let rules = crate::config::ManagedRulesConfig::default();
+        let bad = r#"{"uri":"file:///etc/passwd"}"#;
+        assert!(check_method(&rules, "resources/read", bad).is_err());
+        let ok = r#"{"uri":"https://example.com/readme.md"}"#;
+        assert!(check_method(&rules, "resources/read", ok).is_ok());
+    }
+
+    #[test]
+    fn prompts_get_with_a_flagged_argument_is_blocked() {
+        let rules = crate::config::ManagedRulesConfig::default();
+        let bad = r#"{"name":"report","arguments":{"q":"x'; DROP TABLE users; --"}}"#;
+        assert!(check_method(&rules, "prompts/get", bad).is_err());
+        let ok = r#"{"name":"report","arguments":{"q":"quarterly summary"}}"#;
+        assert!(check_method(&rules, "prompts/get", ok).is_ok());
     }
 
     // ---- size ----

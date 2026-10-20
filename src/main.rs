@@ -1306,6 +1306,27 @@ async fn process_mcp_message(
                 )))
             }
         }
+        JsonRpcValidation::Method {
+            id,
+            method,
+            arguments,
+            agent_id,
+        } => {
+            // Other MCP methods (resources/read, prompts/get, sampling/createMessage, ...) go through
+            // the managed rules too, under the virtual tool name mcp:<method>.
+            if let Err(msg) =
+                zn::jsonrpc::check_method(&state.config.managed_rules, &method, &arguments)
+            {
+                log::warning(format!("🚫 MANAGED RULE BLOCKED: {}", msg)).ok();
+                let agent_id_str = bounded_agent_id(agent_id.as_deref());
+                let rep_key = reputation_key(&memory_namespace, &agent_id_str);
+                state
+                    .reputation
+                    .record_violation(&rep_key, "Managed Rules Violation", 10);
+                return Ok(Some(jsonrpc_error_response(id, -32001, &msg)));
+            }
+            Ok(Some(scrubbed_line))
+        }
         JsonRpcValidation::PassThrough => Ok(Some(scrubbed_line)),
         JsonRpcValidation::Error { id, code, message } => {
             log::warning(format!("JSON-RPC error: {}", message)).ok();
