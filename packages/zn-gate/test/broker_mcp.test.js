@@ -94,6 +94,28 @@ test('secrets_http_request substitutes for an allowed host and scrubs the respon
   }
 });
 
+test('secrets_http_request scrubs a secret echoed in the status text', async () => {
+  const server = http.createServer((req, res) => {
+    // A server can put anything in the reason phrase.
+    res.statusMessage = 'OK ' + String(req.headers.authorization || '').replace('Bearer ', '') + ' ' + OTHER;
+    res.end('{}');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const srv = createSecretsServer({ vault: await vaultWith(), engine: fakeEngine });
+    const r = await call(srv, 'secrets_http_request', {
+      method: 'GET', url: 'http://127.0.0.1:' + server.address().port + '/user', headers: { Authorization: 'Bearer __ZN_GITHUB_TOKEN__' },
+    });
+    assert.equal(r.isError, false, JSON.stringify(r.data));
+    assert.match(r.data.statusText, /^OK /);
+    const out = JSON.stringify(r.data);
+    assert.ok(!out.includes(GHP), 'token in the status text scrubbed');
+    assert.ok(!out.includes(OTHER), 'unrelated secret in the status text scrubbed');
+  } finally {
+    server.close();
+  }
+});
+
 test('secrets_http_request: markers only in headers unless the secret allows the URL or the body', async () => {
   const { server, seen, port } = await startServer();
   try {

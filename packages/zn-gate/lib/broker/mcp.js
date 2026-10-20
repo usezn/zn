@@ -286,7 +286,7 @@ function createSecretsServer(opts = {}) {
     for (const [k, v] of res.headers.entries()) outHeaders[k] = await scrub(v, masker);
     return textResult({
       status: res.status,
-      statusText: res.statusText,
+      statusText: await scrub(String(res.statusText || ''), masker),
       redirected_to: res.status >= 300 && res.status < 400 ? (outHeaders.location || null) : undefined,
       headers: outHeaders,
       body: await scrub(text, masker),

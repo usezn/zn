@@ -21,6 +21,68 @@ const INSTALL_HINTS = {
   python3: 'install Python: https://www.python.org/downloads/',
 };
 
+const SCHEMA_MAX_DEPTH = 32;
+const SCHEMA_MAX_NODES = 5000;
+const SCHEMA_TEXT_KEYS = ['description', 'title'];
+const SCHEMA_MAP_KEYS = ['properties', 'patternProperties', '$defs', 'definitions', 'dependentSchemas'];
+const SCHEMA_LIST_KEYS = ['anyOf', 'oneOf', 'allOf', 'prefixItems'];
+const SCHEMA_ONE_KEYS = ['items', 'additionalProperties', 'additionalItems', 'not', 'if', 'then', 'else', 'contains', 'propertyNames', 'unevaluatedItems', 'unevaluatedProperties'];
+
+/**
+ * Checks every description and title string of a tool's input schema with the
+ * same rule as the tool description and neutralizes the ones that block. It
+ * walks properties, items, anyOf/oneOf/allOf, $defs and the other schema
+ * keywords, to a bounded depth and size, and visits a shared or circular
+ * node only once.
+ */
+function inspectSchemaText(root, tool, options) {
+  const seen = new WeakSet();
+  let nodes = 0;
+  const visit = (node, where, depth) => {
+    if (!node || typeof node !== 'object' || seen.has(node) || depth > SCHEMA_MAX_DEPTH || ++nodes > SCHEMA_MAX_NODES) return;
+    seen.add(node);
+    for (const key of SCHEMA_TEXT_KEYS) {
+      const text = node[key];
+      if (typeof text !== 'string' || text.length === 0) continue;
+      const check = analyzeLocal(text, options);
+      if (check.verdict !== 'block') continue;
+      const ruleName = check.rule || check.reason || 'parameter_poisoning';
+      const label = where || '(schema)';
+      process.stderr.write(`[zn-shield BLOCKED PARAMETER DESCRIPTION] Poisoned parameter '${label}' in tool '${tool.name}'. Rule: ${ruleName}\n`);
+      logEvidence({
+        agent: options.agent || 'mcp-server',
+        phase: 'parameter-definition',
+        tool_name: `${tool.name}.${label}`,
+        payload: text,
+        verdict: 'block',
+        rule: ruleName,
+        reason: check.reason,
+        confidence: check.confidence || 0.99,
+        latency_us: check.latency_us || 12,
+        engine: check.engine || 'oss-deterministic',
+      });
+      if (!options.shadow) {
+        node[key] = `[zn-gate SECURITY BLOCKED] Parameter description neutralized: unauthorized prompt injection detected (${ruleName}).`;
+      }
+    }
+    const at = (suffix) => (where ? where + '.' + suffix : suffix);
+    for (const key of SCHEMA_MAP_KEYS) {
+      const map = node[key];
+      if (!map || typeof map !== 'object' || Array.isArray(map)) continue;
+      for (const [name, def] of Object.entries(map)) visit(def, at(key === 'properties' ? name : key + '.' + name), depth + 1);
+    }
+    for (const key of SCHEMA_LIST_KEYS) {
+      if (Array.isArray(node[key])) node[key].forEach((def, i) => visit(def, at(key + '[' + i + ']'), depth + 1));
+    }
+    for (const key of SCHEMA_ONE_KEYS) {
+      const v = node[key];
+      if (Array.isArray(v)) v.forEach((def, i) => visit(def, at(key + '[' + i + ']'), depth + 1));
+      else visit(v, at(key), depth + 1);
+    }
+  };
+  visit(root, '', 0);
+}
+
 /**
  * Plain-language text for a wrapped command that could not be started.
  * A missing program (ENOENT) and a file that is not executable (EACCES) get a
@@ -369,35 +431,9 @@ function startMcpShield(command, args, options = {}) {
               }
             }
 
-            // 2. Inspect inputSchema property descriptions
-            if (tool.inputSchema && typeof tool.inputSchema === 'object' && tool.inputSchema.properties) {
-              const props = tool.inputSchema.properties;
-              for (const [propName, propDef] of Object.entries(props)) {
-                if (propDef && typeof propDef.description === 'string' && propDef.description.length > 0) {
-                  const check = analyzeLocal(propDef.description, options);
-                  if (check.verdict === 'block') {
-                    const ruleName = check.rule || check.reason || 'parameter_poisoning';
-                    process.stderr.write(`[zn-shield BLOCKED PARAMETER DESCRIPTION] Poisoned parameter '${propName}' in tool '${tool.name}'. Rule: ${ruleName}\n`);
-
-                    logEvidence({
-                      agent: options.agent || 'mcp-server',
-                      phase: 'parameter-definition',
-                      tool_name: `${tool.name}.${propName}`,
-                      payload: propDef.description,
-                      verdict: 'block',
-                      rule: ruleName,
-                      reason: check.reason,
-                      confidence: check.confidence || 0.99,
-                      latency_us: check.latency_us || 12,
-                      engine: check.engine || 'oss-deterministic',
-                    });
-
-                    if (!options.shadow) {
-                      propDef.description = `[zn-gate SECURITY BLOCKED] Parameter description neutralized: unauthorized prompt injection detected (${ruleName}).`;
-                    }
-                  }
-                }
-              }
+            // 2. Inspect every description and title in the input schema, however deeply nested
+            if (tool.inputSchema && typeof tool.inputSchema === 'object') {
+              inspectSchemaText(tool.inputSchema, tool, options);
             }
           }
         }
