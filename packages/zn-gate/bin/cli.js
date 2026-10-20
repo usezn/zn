@@ -210,7 +210,7 @@ COMMANDS:
   init                Set up zn for the coding agents on this machine, one step at a time, then check it
   init --wrap-mcp     Find and wrap the MCP servers in known agent configs (Claude, Cursor, Codex, OpenCode...)
   shield, mcp-shield  Wrap and protect ANY external MCP server (uvx, npx, node, python)
-  scan <path>         Recursively audit prompt templates, markdown, skills, and configs for injection traps and secrets
+  scan [path]         Recursively audit prompt templates, markdown, skills, and configs for injection traps and secrets
                       [--format text|json|github | --json] (matched values are never printed)
   audit [path]        Review a repository's agent configs before you open it: hooks, MCP servers,
                       endpoint overrides, permissions, instructions, planted executables

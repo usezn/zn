@@ -131,6 +131,16 @@ async function runTeamCommand(args) {
 
 /** zn vault log export --otlp: args after "export". Returns the exit code. */
 function runLogExport(args) {
+  if (args.includes('-h') || args.includes('--help')) {
+    process.stdout.write([
+      EXPORT_USAGE,
+      'Exports the local audit log of secret use as OpenTelemetry logs (OTLP/JSON Lines). No secret values are in it.',
+      '  --otlp          required: the export format',
+      '  --since 7d      only the records of the last 7 days',
+      '  --out FILE      write to this file instead of the screen',
+    ].join('\n') + '\n');
+    return 0;
+  }
   if (!args.includes('--otlp')) { err(EXPORT_USAGE); return 2; }
   try {
     const team = policy.readTeam();
