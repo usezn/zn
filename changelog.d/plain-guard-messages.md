@@ -1,0 +1,2 @@
+### Changed
+- Block messages and rule descriptions for prompt injection are now plain English, the same in Node.js and Python. A custom rule from `.znrules` or `zn.config.json` no longer prints its raw pattern; the message names the rule and says how to change it. The text that replaces a blocked tool output says what was hidden and why, and the `zn-shield` messages explain what was stopped and what to check. The rule ids and what gets blocked do not change.

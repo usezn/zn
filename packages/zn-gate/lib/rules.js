@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-19.3
+ * RULES_VERSION: 2026-10-20.1
  */
 
-const RULES_VERSION = '2026-10-19.6';
+const RULES_VERSION = '2026-10-20.1';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -90,26 +90,26 @@ function testMultiZh(text) {
 }
 
 const INJECTION_RULES = [
-  { id: 'pi:ignore_previous', pattern: new RegExp(overrideRuleSource('ignore'), 'i'), description: 'Override prior instructions' },
-  { id: 'pi:disregard', pattern: new RegExp(overrideRuleSource('disregard'), 'i'), description: 'Disregard instructions' },
-  { id: 'pi:forget', pattern: /(?<![A-Za-z0-9_])forget\s+(?:about\s+)?(?:everything|all|your)(?![A-Za-z0-9_])(?!\s+(?:of\s+)?(?:the\s+)?(?:cached?|caches|entries|changes|data|files?|records|sessions?|cookies|state|tabs|devices?|passwords?|history|items|keys|tokens|credentials|settings|preferences|accounts?|connections?|logins?|networks?)(?![A-Za-z0-9_]))/i, description: 'Forget-context attack' },
-  { id: 'pi:identity_override', pattern: /you\s+are\s+now/i, description: 'Identity override' },
-  { id: 'pi:new_instructions', pattern: /new\s+instructions?:/i, description: 'Instruction replacement' },
-  { id: 'pi:system_tag', pattern: /(?:^|[\r\n"'`\[<])[ \t]*system\s*:|<[\s/]*system(?![A-Za-z0-9_])[^<>]*>/i, description: 'Fake system tag' },
-  { id: 'pi:system_bracket', pattern: /\[system\]/i, description: 'Bracketed system tag' },
-  { id: 'pi:act_as', pattern: /(?:(?<![A-Za-z0-9_])you\s+(?:(?:will|must|should|shall|now)\s+|are\s+to\s+)?|(?:^|[.!?\r\n\u2028\u2029])[ \t]*(?:[\"'`(\[*-][ \t]*)?|(?<![A-Za-z0-9_])please\s+|(?<![A-Za-z0-9_])now\s+|(?<![A-Za-z0-9_])from\s+now\s+on,?\s+(?:you\s+)?)(?=act(?![A-Za-z0-9_]))act\s+as\s+(?:if\s+you(?![A-Za-z0-9_])|an?\s+(?:[a-z-]+\s+){0,3}?(?:ai|assistant|chatbot|bot|model|llm|gpt|persona|character|version|mode|jailbroken|unrestricted|unfiltered|uncensored|evil|malicious|rogue|harmful|unethical|amoral|hacker|dan)(?![A-Za-z0-9_])|my(?![A-Za-z0-9_])|though\s+you(?![A-Za-z0-9_]))/i, description: 'Role hijack (act as)' },
-  { id: 'pi:pretend', pattern: /pretend\s+(you|to\s+be)/i, description: 'Role hijack (pretend)' },
-  { id: 'pi:roleplay', pattern: /roleplay\s+as/i, description: 'Role hijack (roleplay)' },
-  { id: 'pi:jailbreak', pattern: /(?<![A-Za-z0-9_])jailbreak(?![A-Za-z0-9_])/i, description: 'Explicit jailbreak term' },
-  { id: 'pi:bypass', pattern: /bypass\s+(your|the|all)/i, description: 'Guardrail bypass attempt' },
-  { id: 'pi:override', pattern: /(?<![A-Za-z0-9_])override\s+(?:all\s+|your\s+|the\s+)?(?:system|policy|safety|rules|instructions|guidelines|restrictions)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])system\s+override\s*:/i, description: 'Policy override attempt' },
-  { id: 'pi:template_boundary', pattern: /\[INST\]|\[\/INST\]|<<<SYS>>>|<\/<<SYS>>>|<\|im_start\|>|<\|im_end\|>/i, description: 'Chat template boundary injection' },
-  { id: 'pi:multi_es', pattern: /ignora\s+(todas\s+las\s+)?(instrucciones|anteriores|previas)|olvida\s+(todo|las\s+instrucciones)|act[uú]a\s+como|ahora\s+eres/iu, description: 'Multilingual prompt injection (Spanish)' },
-  { id: 'pi:multi_pt', pattern: /ignor(?:e|a|em|ar)\s+(?:(?:todas|todos|qualquer|quaisquer|cualquier)\s+)?(?:(?:as|os|las|los|suas|seus|sus|tus|estas|estes|essas|esses)\s+)?(?:instru[cç][oõ]es|instrucciones|regras|reglas|diretrizes|directrices|orienta[cç][oõ]es|ordens|[oó]rdenes|comandos|restri[cç][oõ]es|restricciones|mensagens|anteriores|pr[eé]vias)|ignore\s+(?:tudo|qualquer|quaisquer)(?![A-Za-z0-9_])|ignora\s+(?:todo|tudo|cualquier)(?![A-Za-z0-9_])/i, description: 'Multilingual prompt injection (Portuguese)' },
-  { id: 'pi:multi_fr', pattern: /ignore[rz]?\s+(toutes\s+les\s+)?instructions|oublie[rz]?\s+tout|agis\s+comme|tu\s+es\s+maintenant/iu, description: 'Multilingual prompt injection (French)' },
-  { id: 'pi:multi_de', pattern: /ignoriere\s+(alle\s+)?(anweisungen|instruktionen)|vergiss\s+(alles|jede)|du\s+bist\s+jetzt|handle\s+als/iu, description: 'Multilingual prompt injection (German)' },
-  { id: 'pi:multi_ru', pattern: /забудь\s+[^\n]{0,80}?(все|инструкции)|игнорируй\s+[^\n]{0,80}?(все|предыдущие)|действуй\s+как|ты\s+теперь|найди\s+пароли/iu, test: testMultiRu, description: 'Multilingual prompt injection (Russian)' },
-  { id: 'pi:multi_zh', pattern: /忽略[^\n]{0,80}?(指示|指令|提示)|忘记[^\n]{0,80}?(指示|指令|一切)|你现在是|初始提示词/u, test: testMultiZh, description: 'Multilingual prompt injection (Chinese)' },
+  { id: 'pi:ignore_previous', pattern: new RegExp(overrideRuleSource('ignore'), 'i'), description: 'Tells the agent to ignore or replace its earlier instructions' },
+  { id: 'pi:disregard', pattern: new RegExp(overrideRuleSource('disregard'), 'i'), description: 'Tells the agent to ignore or replace its earlier instructions' },
+  { id: 'pi:forget', pattern: /(?<![A-Za-z0-9_])forget\s+(?:about\s+)?(?:everything|all|your)(?![A-Za-z0-9_])(?!\s+(?:of\s+)?(?:the\s+)?(?:cached?|caches|entries|changes|data|files?|records|sessions?|cookies|state|tabs|devices?|passwords?|history|items|keys|tokens|credentials|settings|preferences|accounts?|connections?|logins?|networks?)(?![A-Za-z0-9_]))/i, description: 'Tells the agent to ignore or replace its earlier instructions' },
+  { id: 'pi:identity_override', pattern: /you\s+are\s+now/i, description: 'Tells the agent it is now someone else' },
+  { id: 'pi:new_instructions', pattern: /new\s+instructions?:/i, description: 'Tells the agent to ignore or replace its earlier instructions' },
+  { id: 'pi:system_tag', pattern: /(?:^|[\r\n"'`\[<])[ \t]*system\s*:|<[\s/]*system(?![A-Za-z0-9_])[^<>]*>/i, description: 'Text that pretends to be a system message' },
+  { id: 'pi:system_bracket', pattern: /\[system\]/i, description: 'Text that pretends to be a system message' },
+  { id: 'pi:act_as', pattern: /(?:(?<![A-Za-z0-9_])you\s+(?:(?:will|must|should|shall|now)\s+|are\s+to\s+)?|(?:^|[.!?\r\n\u2028\u2029])[ \t]*(?:[\"'`(\[*-][ \t]*)?|(?<![A-Za-z0-9_])please\s+|(?<![A-Za-z0-9_])now\s+|(?<![A-Za-z0-9_])from\s+now\s+on,?\s+(?:you\s+)?)(?=act(?![A-Za-z0-9_]))act\s+as\s+(?:if\s+you(?![A-Za-z0-9_])|an?\s+(?:[a-z-]+\s+){0,3}?(?:ai|assistant|chatbot|bot|model|llm|gpt|persona|character|version|mode|jailbroken|unrestricted|unfiltered|uncensored|evil|malicious|rogue|harmful|unethical|amoral|hacker|dan)(?![A-Za-z0-9_])|my(?![A-Za-z0-9_])|though\s+you(?![A-Za-z0-9_]))/i, description: 'Asks the agent to play a different role' },
+  { id: 'pi:pretend', pattern: /pretend\s+(you|to\s+be)/i, description: 'Asks the agent to play a different role' },
+  { id: 'pi:roleplay', pattern: /roleplay\s+as/i, description: 'Asks the agent to play a different role' },
+  { id: 'pi:jailbreak', pattern: /(?<![A-Za-z0-9_])jailbreak(?![A-Za-z0-9_])/i, description: 'Asks the agent to break out of its safety rules (a jailbreak)' },
+  { id: 'pi:bypass', pattern: /bypass\s+(your|the|all)/i, description: 'Tries to switch off the safety rules of the agent' },
+  { id: 'pi:override', pattern: /(?<![A-Za-z0-9_])override\s+(?:all\s+|your\s+|the\s+)?(?:system|policy|safety|rules|instructions|guidelines|restrictions)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])system\s+override\s*:/i, description: 'Tries to switch off the safety rules of the agent' },
+  { id: 'pi:template_boundary', pattern: /\[INST\]|\[\/INST\]|<<<SYS>>>|<\/<<SYS>>>|<\|im_start\|>|<\|im_end\|>/i, description: 'Text that imitates the hidden markers a chat model uses to separate system and user messages' },
+  { id: 'pi:multi_es', pattern: /ignora\s+(todas\s+las\s+)?(instrucciones|anteriores|previas)|olvida\s+(todo|las\s+instrucciones)|act[uú]a\s+como|ahora\s+eres/iu, description: 'Tells the agent to ignore its instructions (written in Spanish)' },
+  { id: 'pi:multi_pt', pattern: /ignor(?:e|a|em|ar)\s+(?:(?:todas|todos|qualquer|quaisquer|cualquier)\s+)?(?:(?:as|os|las|los|suas|seus|sus|tus|estas|estes|essas|esses)\s+)?(?:instru[cç][oõ]es|instrucciones|regras|reglas|diretrizes|directrices|orienta[cç][oõ]es|ordens|[oó]rdenes|comandos|restri[cç][oõ]es|restricciones|mensagens|anteriores|pr[eé]vias)|ignore\s+(?:tudo|qualquer|quaisquer)(?![A-Za-z0-9_])|ignora\s+(?:todo|tudo|cualquier)(?![A-Za-z0-9_])/i, description: 'Tells the agent to ignore its instructions (written in Portuguese)' },
+  { id: 'pi:multi_fr', pattern: /ignore[rz]?\s+(toutes\s+les\s+)?instructions|oublie[rz]?\s+tout|agis\s+comme|tu\s+es\s+maintenant/iu, description: 'Tells the agent to ignore its instructions (written in French)' },
+  { id: 'pi:multi_de', pattern: /ignoriere\s+(alle\s+)?(anweisungen|instruktionen)|vergiss\s+(alles|jede)|du\s+bist\s+jetzt|handle\s+als/iu, description: 'Tells the agent to ignore its instructions (written in German)' },
+  { id: 'pi:multi_ru', pattern: /забудь\s+[^\n]{0,80}?(все|инструкции)|игнорируй\s+[^\n]{0,80}?(все|предыдущие)|действуй\s+как|ты\s+теперь|найди\s+пароли/iu, test: testMultiRu, description: 'Tells the agent to ignore its instructions (written in Russian)' },
+  { id: 'pi:multi_zh', pattern: /忽略[^\n]{0,80}?(指示|指令|提示)|忘记[^\n]{0,80}?(指示|指令|一切)|你现在是|初始提示词/u, test: testMultiZh, description: 'Tells the agent to ignore its instructions (written in Chinese)' },
 ];
 
 // Hidden-element detection in two linear passes: find the first opening tag
@@ -185,14 +185,14 @@ const INDIRECT_INJECTION_RULES = [
   {
     id: 'indirect:html_comment',
     pattern: /<!--\s*(?:system|instruction|prompt|override|command)\s*:/i,
-    description: 'Hidden instruction in HTML comment',
+    description: 'Instructions hidden in a web page comment or an invisible element',
   },
   {
     id: 'indirect:hidden_tag',
     // `.pattern` is the linear tag scanner; the rule itself is test().
     pattern: new RegExp(OPEN_TAG_RE.source, 'i'),
     test: testHiddenTag,
-    description: 'Hidden DOM element with injection payload',
+    description: 'Instructions hidden in a web page comment or an invisible element',
   },
 ];
 
@@ -200,7 +200,7 @@ const EVASION_RULES = [
   {
     id: 'evasion:bidi_override',
     pattern: /[\u202A-\u202E\u2066-\u2069]/,
-    description: 'Unicode bidirectional override (Trojan Source evasion attempt)',
+    description: 'Invisible text-direction characters that can make text look different from what a program reads',
   },
 ];
 
@@ -225,7 +225,7 @@ const EXFIL_RULES = [
   {
     id: 'exfil:credentials',
     compound: [new RegExp(EXFIL_VERB_SOURCE, 'i'), new RegExp(CRED_OBJECT_SOURCE, 'i'), EXFIL_CLAUSE_RE],
-    description: 'Imperative verb requesting credentials/secrets',
+    description: 'Text that asks to read or send passwords or keys',
   },
 ];
 
@@ -234,10 +234,10 @@ const EXFIL_RULES = [
 // the verdict stays "allow" and the result carries `advisory` with the rule.
 // A blocking rule always wins over an advisory.
 const ADVISORY_RULES = [
-  { id: 'exfil:credentials', compound: [new RegExp(EXFIL_VERB_SOURCE, 'i'), new RegExp(CRED_OBJECT_SOURCE, 'i')], description: 'Mentions reading or sending credentials' },
-  { id: 'pi:act_as', pattern: /act\s+as\s+(?:if|a)/i, description: 'Role-play request (act as)' },
-  { id: 'pi:forget', pattern: /forget\s+(?:about\s+)?(?:everything|all|your)/i, description: 'Asks to forget context' },
-  { id: 'indirect:hidden_tag', test: testHiddenTagAnywhere, description: 'Hidden element in markup followed by instruction-like words' },
+  { id: 'exfil:credentials', compound: [new RegExp(EXFIL_VERB_SOURCE, 'i'), new RegExp(CRED_OBJECT_SOURCE, 'i')], description: 'Text that asks to read or send passwords or keys' },
+  { id: 'pi:act_as', pattern: /act\s+as\s+(?:if|a)/i, description: 'Asks the agent to play a different role' },
+  { id: 'pi:forget', pattern: /forget\s+(?:about\s+)?(?:everything|all|your)/i, description: 'Tells the agent to ignore or replace its earlier instructions' },
+  { id: 'indirect:hidden_tag', test: testHiddenTagAnywhere, description: 'Instructions hidden in a web page comment or an invisible element' },
 ];
 
 function matchesRule(rule, text) {
@@ -249,7 +249,7 @@ const SENSITIVE_PATH_RULES = [
   {
     id: 'path:sensitive_file',
     pattern: /(?:^|[\s"'`(\[])(?:~|\/home\/[^\s/]+|\/root)?\/?\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])/i,
-    description: 'Targeting sensitive system credentials or environment file',
+    description: 'Points at a file that usually holds passwords or keys (for example .env or ~/.ssh)',
   },
 ];
 
@@ -280,7 +280,7 @@ const MARKDOWN_EXFIL_RULES = [
     // `.pattern` is the linear image scanner; the rule itself is test().
     pattern: new RegExp(MD_IMAGE_RE.source, 'i'),
     test: testMarkdownImage,
-    description: 'Covert exfiltration via markdown image URL parameter',
+    description: 'An image link that carries data in its web address, which can leak information when the image loads',
   },
 ];
 
@@ -594,14 +594,14 @@ function evaluateUncached(input, options = {}) {
 
   // 6. Project-specific Custom Rules (.znrules / zn.config.json)
   const cfg = loadCustomConfig();
-  for (const pat of cfg.bannedPatterns) {
-    if (pat.test(input)) {
-      return { verdict: 'block', confidence: 1.0, reason: `Matches custom repository rule: ${pat.source}`, rule: 'custom:banned_pattern', engine: 'oss-local', rules_version: RULES_VERSION };
+  for (let i = 0; i < cfg.bannedPatterns.length; i++) {
+    if (cfg.bannedPatterns[i].test(input)) {
+      return { verdict: 'block', confidence: 1.0, reason: `Blocked by banned-pattern rule #${i + 1} in this repository's zn config (.znrules or zn.config.json). To allow it, edit or remove that rule.`, rule: 'custom:banned_pattern', engine: 'oss-local', rules_version: RULES_VERSION };
     }
   }
   for (const fpath of cfg.forbiddenPaths) {
     if (input.includes(fpath)) {
-      return { verdict: 'block', confidence: 1.0, reason: `Matches custom repository forbidden path: ${fpath}`, rule: 'custom:forbidden_path', engine: 'oss-local', rules_version: RULES_VERSION };
+      return { verdict: 'block', confidence: 1.0, reason: `The text mentions a path this repository's zn config forbids (${fpath}). To allow it, remove that path from .znrules or zn.config.json.`, rule: 'custom:forbidden_path', engine: 'oss-local', rules_version: RULES_VERSION };
     }
   }
 
@@ -1115,7 +1115,7 @@ function sanitizeToolResult(toolOrResult, content, options = {}) {
       assessment.verdict = 'block';
       assessment.confidence = 1.0;
       assessment.rule = 'size:truncated';
-      assessment.reason = 'Output too large to scan in full';
+      assessment.reason = 'Output too large to check completely (blocked because blockTruncated / ZN_BLOCK_TRUNCATED=1 is set)';
     }
     const isBlock = assessment.verdict?.toLowerCase() === 'block';
 
@@ -1123,7 +1123,7 @@ function sanitizeToolResult(toolOrResult, content, options = {}) {
     let secretsRedacted = 0;
 
     if (isBlock) {
-      sanitized = `[REDACTED BY ZN-GATE: Malicious prompt injection payload detected in ${toolName} output (${assessment.reason || assessment.rule})]`;
+      sanitized = `[REDACTED BY ZN-GATE: the output of ${toolName} was hidden because it tries to give your agent new orders (a prompt injection). Reason: ${assessment.reason || assessment.rule}]`;
     } else if (options.maskSecrets !== false) {
       const res = redactSecrets(textContent);
       sanitized = res.sanitized;

@@ -91,7 +91,7 @@ zn also has a text check that your agent can call through zn's own tools. Some p
   "rules_version": "2026-10-16.10",
   "advisory": {
     "rule": "pi:bypass",
-    "reason": "Guardrail bypass attempt"
+    "reason": "Tries to switch off the safety rules of the agent"
   },
   "mode": "oss-local"
 }
@@ -99,7 +99,7 @@ zn also has a text check that your agent can call through zn's own tools. Some p
 
 `"verdict": "allow"` means nothing was stopped. The `advisory` says why it is worth a look. What to do: read the text it points at. If it is harmless, carry on. If you did not expect it (for example inside a file you downloaded), do not let your agent follow it. To make the text check block these too, turn on strict mode: set `ZN_STRICT=1`, or add `"strict": true` to `zn.config.json` in your project.
 
-For comparison, `npx -y zn-gate analyze "ignore all previous instructions"` is a block: `"verdict": "block"` with the reason "Override prior instructions".
+For comparison, `npx -y zn-gate analyze "ignore all previous instructions"` is a block: `"verdict": "block"` with the reason "Tells the agent to ignore or replace its earlier instructions".
 
 ## If something fails
 
