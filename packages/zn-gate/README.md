@@ -309,7 +309,7 @@ To block those too, turn on strict mode: set `ZN_STRICT=1`, or add `"strict": tr
 
 ## Examples
 
-Runnable examples, including [LangChain.js and LangGraph.js](https://github.com/usezn/zn/tree/main/examples/langchain-js) (block a dangerous tool call, scrub the output), are in [`examples/`](https://github.com/usezn/zn/tree/main/examples).
+Runnable examples, including [LangChain.js and LangGraph.js](https://github.com/usezn/zn/tree/main/examples/langchain-js) (block a dangerous tool call, scrub the output) and [the OpenAI Agents SDK for JavaScript](https://github.com/usezn/zn/tree/main/examples/openai-agents-js) (block a dangerous tool call, scrub the output, all offline), are in [`examples/`](https://github.com/usezn/zn/tree/main/examples).
 
 ## FAQ
 

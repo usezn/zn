@@ -1,36 +1,107 @@
 """
 LangChain and LangGraph integration for zn-gate.
 Zero hard dependencies on langchain.
+
+Two pieces, because a LangChain callback can stop a run but cannot change it:
+
+- `guard_langchain_tool(tool)` wraps a LangChain tool. It checks the arguments
+  before the tool runs, checks what the tool returns, and hides secrets in that
+  output before the model reads it. With on_block="return" the model gets a short
+  block message instead of the tool output. Use it on every tool that reads
+  outside data or can touch files, shells or the network.
+- `ZnGuardCallbackHandler` is a callback for a whole agent, chain or model. It
+  stops the run (raises GuardBlockError) when a prompt, a tool call or a tool
+  output is blocked. It cannot replace a tool output: LangChain ignores what a
+  callback returns. So a secret in a tool output also stops the run while
+  mask_secrets is on, instead of being hidden.
 """
 from __future__ import annotations
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
-from ..guard import GuardBlockError, check_tool_call, check_tool_result, validate_on_block
-from ..rules import evaluate, sanitize_tool_result
+from ..guard import GuardBlockError, block_message, check_tool_call, check_tool_result, validate_on_block
+from ..rules import Assessment, evaluate, sanitize_tool_result
 
 try:
     from langchain_core.callbacks.base import BaseCallbackHandler
+    _HAVE_LANGCHAIN = True
 except ImportError:
+    _HAVE_LANGCHAIN = False
+
     class BaseCallbackHandler:  # type: ignore
         pass
 
 
-ON_BLOCK_MODES = ("raise", "return", "ignore")
+ON_BLOCK_MODES = ("raise", "ignore")
+TOOL_ON_BLOCK_MODES = ("raise", "return")
+
+_RETURN_NOT_SUPPORTED = (
+    "ZnGuardCallbackHandler does not support on_block='return': LangChain ignores what a "
+    "callback returns, so a blocked call would run anyway. Use on_block='raise' to stop the "
+    "run, or wrap the tool with guard_langchain_tool(tool, on_block='return') so the model "
+    "gets a block message instead of the tool output."
+)
+
+
+def _output_content(output: Any) -> Any:
+    """The part of a tool output the model reads: the content of a ToolMessage, else the output."""
+    if isinstance(output, (str, bytes, dict, list, tuple)) or output is None:
+        return output
+    content = getattr(output, "content", None)
+    return output if content is None else content
+
+
+def _secret_assessment(found: List[Dict[str, Any]]) -> Assessment:
+    rules = sorted({str(f.get("rule", "secret")) for f in found})
+    return Assessment(
+        verdict="block",
+        confidence=1.0,
+        rule=rules[0] if rules else "secret",
+        reason=("Tool output contains a secret, and a callback cannot hide it before the model "
+                "reads it; wrap the tool with guard_langchain_tool to hide secrets instead"),
+    )
 
 
 class ZnGuardCallbackHandler(BaseCallbackHandler):
     """
-    LangChain / LangGraph Callback Handler that intercepts prompt injection and sensitive path traversal
-    before LLM and tool execution, and redacts secrets / blocks indirect injection in tool outputs.
+    LangChain / LangGraph callback handler that stops a run when zn-gate blocks a
+    prompt, a tool call or a tool output.
+
+    Pass it in `callbacks=[handler]` (or `config={"callbacks": [handler]}`) to an
+    agent, chain, model or tool. With on_block="raise" (default) a block raises
+    GuardBlockError out of the run: a blocked tool call does not run, and a
+    blocked tool output does not reach the model.
+
+    What a callback cannot do: LangChain ignores its return value, so it cannot
+    replace or redact a tool output. With mask_secrets=True (default) a tool
+    output that contains a secret therefore stops the run as well. To hide the
+    secret and keep the run going, or to hand the model a block message, wrap
+    the tool with `guard_langchain_tool`.
+
+    Parameters:
+    - on_block: "raise" (default) stops the run with GuardBlockError; "ignore"
+                checks nothing that stops the run. "return" is not supported
+                here (it raises ValueError): use guard_langchain_tool.
+    - mask_secrets: Treat a secret in a tool output as a block (default True).
+    - block_truncated: Block a tool output too large to scan in full
+                       (rule size:truncated) (default False).
     """
-    def __init__(self, on_block: str = "raise", mask_secrets: bool = True, raise_on_injection: Optional[bool] = None):
+
+    # LangChain logs and swallows exceptions from a callback unless the handler
+    # sets raise_error. Without it a block would only write a warning.
+    raise_error: bool = True
+
+    def __init__(self, on_block: str = "raise", mask_secrets: bool = True,
+                 raise_on_injection: Optional[bool] = None, block_truncated: bool = False):
+        if on_block == "return":
+            raise ValueError(_RETURN_NOT_SUPPORTED)
         on_block = validate_on_block(on_block, ON_BLOCK_MODES)
         if raise_on_injection is not None:
             self.on_block = "raise" if raise_on_injection else "ignore"
         else:
             self.on_block = on_block
         self.mask_secrets = mask_secrets
+        self.block_truncated = block_truncated
 
     def on_llm_start(
         self,
@@ -43,6 +114,8 @@ class ZnGuardCallbackHandler(BaseCallbackHandler):
         metadata: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Any:
+        # Chat models reach this method too: LangChain turns the messages into
+        # text and calls on_llm_start when a handler has no on_chat_model_start.
         for p in prompts:
             assessment = evaluate(p)
             if not assessment.allowed:
@@ -78,14 +151,134 @@ class ZnGuardCallbackHandler(BaseCallbackHandler):
         parent_run_id: Optional[UUID] = None,
         **kwargs: Any,
     ) -> Any:
-        # Check for indirect prompt injection in tool outputs
-        assessment = check_tool_result(output)
+        """Stop the run when the tool output is blocked.
+
+        LangChain ignores the return value. For direct callers it is the output
+        with secrets hidden (when mask_secrets is on and nothing was blocked).
+        """
+        content = _output_content(output)
+        assessment = check_tool_result(content, block_truncated=self.block_truncated)
         if not assessment.allowed:
             if self.on_block == "raise":
-                raise GuardBlockError(assessment, target="langchain:tool_output", payload=output)
-            return f"[REDACTED BY ZN-GATE: Malicious prompt injection payload detected ({assessment.reason or assessment.rule})]"
+                raise GuardBlockError(assessment, target="langchain:tool_output", payload=content)
+            return output
+        if not self.mask_secrets:
+            return output
+        masked, found = sanitize_tool_result(content)
+        if found and self.on_block == "raise":
+            raise GuardBlockError(_secret_assessment(found), target="langchain:tool_output", payload=masked)
+        return masked if found else output
 
-        if self.mask_secrets:
-            sanitized, _ = sanitize_tool_result(output)
-            return sanitized
-        return output
+
+def _guard_settings(on_block: str) -> str:
+    return validate_on_block(on_block, TOOL_ON_BLOCK_MODES)
+
+
+if _HAVE_LANGCHAIN:
+    from langchain_core.callbacks import AsyncCallbackManagerForToolRun, CallbackManagerForToolRun
+    from langchain_core.runnables import RunnableConfig
+    from langchain_core.runnables.config import patch_config
+    from langchain_core.tools import BaseTool
+
+    class ZnGuardedTool(BaseTool):  # type: ignore[misc]
+        """A LangChain tool that runs another tool behind zn-gate. Build it with guard_langchain_tool."""
+
+        tool: BaseTool
+        on_block: str = "raise"
+        mask_secrets: bool = True
+        check_result: bool = True
+        block_truncated: bool = False
+        fallback: Optional[str] = None
+
+        def _input(self, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Any:
+            if kwargs:
+                return kwargs
+            if len(args) == 1:
+                return args[0]
+            return {}
+
+        def _blocked(self, assessment: Assessment, target: str, payload: Any) -> Any:
+            if self.on_block == "raise":
+                raise GuardBlockError(assessment, target=target, payload=payload)
+            if self.fallback is not None:
+                return self.fallback
+            return block_message(assessment, target)
+
+        def _before(self, tool_input: Any) -> Optional[Assessment]:
+            assessment = check_tool_call(self.name, tool_input)
+            return None if assessment.allowed else assessment
+
+        def _after(self, result: Any) -> Any:
+            target = f"langchain:{self.name}:result"
+            if self.check_result:
+                assessment = check_tool_result(result, block_truncated=self.block_truncated)
+                if not assessment.allowed:
+                    return self._blocked(assessment, target, result)
+            if self.mask_secrets:
+                result, _ = sanitize_tool_result(result)
+            return result
+
+        def _run(self, *args: Any, config: RunnableConfig,
+                 run_manager: Optional[CallbackManagerForToolRun] = None, **kwargs: Any) -> Any:
+            tool_input = self._input(args, kwargs)
+            blocked = self._before(tool_input)
+            if blocked is not None:
+                return self._blocked(blocked, f"langchain:{self.name}", tool_input)
+            child = patch_config(config, callbacks=run_manager.get_child()) if run_manager else config
+            return self._after(self.tool.invoke(tool_input, config=child))
+
+        async def _arun(self, *args: Any, config: RunnableConfig,
+                        run_manager: Optional[AsyncCallbackManagerForToolRun] = None, **kwargs: Any) -> Any:
+            tool_input = self._input(args, kwargs)
+            blocked = self._before(tool_input)
+            if blocked is not None:
+                return self._blocked(blocked, f"langchain:{self.name}", tool_input)
+            child = patch_config(config, callbacks=run_manager.get_child()) if run_manager else config
+            return self._after(await self.tool.ainvoke(tool_input, config=child))
+
+
+def guard_langchain_tool(
+    tool: Any,
+    on_block: str = "raise",
+    mask_secrets: bool = True,
+    check_result: bool = True,
+    block_truncated: bool = False,
+    fallback: Optional[str] = None,
+) -> Any:
+    """
+    Wrap a LangChain tool so zn-gate checks its arguments before it runs and its
+    output before the model reads it. Returns a new tool with the same name,
+    description and arguments; pass it to your agent instead of the original.
+
+    Parameters:
+    - on_block: "raise" (default) raises GuardBlockError (target
+                "langchain:<tool>" for arguments, "langchain:<tool>:result" for
+                the output); "return" gives the model `fallback`, or the plain
+                block message when fallback is None, and the tool does not run
+                (for a blocked output: its output is dropped).
+    - mask_secrets: Hide credentials in the tool output (default True).
+    - check_result: Scan the tool output for prompt injection (default True).
+    - block_truncated: Block an output too large to scan in full (default False).
+    - fallback: Text the model gets for a block when on_block="return".
+
+    A tool with response_format="content_and_artifact" loses its artifact: the
+    wrapper passes only the content on.
+    """
+    if not _HAVE_LANGCHAIN:
+        raise ImportError("guard_langchain_tool needs langchain-core: pip install langchain-core")
+    if not isinstance(tool, BaseTool):
+        raise TypeError("guard_langchain_tool expects a LangChain tool (BaseTool); "
+                        "decorate a plain function with @tool from langchain_core.tools first")
+    on_block = _guard_settings(on_block)
+    return ZnGuardedTool(
+        tool=tool,
+        name=tool.name,
+        description=tool.description,
+        args_schema=tool.args_schema,
+        return_direct=tool.return_direct,
+        on_block=on_block,
+        mask_secrets=mask_secrets,
+        check_result=check_result,
+        block_truncated=block_truncated,
+        fallback=fallback,
+    )

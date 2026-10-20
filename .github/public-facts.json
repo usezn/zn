@@ -54,6 +54,10 @@
       {
         "file": "examples/haystack-agent/requirements.txt",
         "regex": "^zn-gate==(\\S+)$"
+      },
+      {
+        "file": "examples/smolagents-agent/requirements.txt",
+        "regex": "^zn-gate==(\\S+)$"
       }
     ],
     "pinsExclude": [

@@ -1038,6 +1038,8 @@ function refuseInput(agentId, why) {
   if (agentId === 'cursor') process.stdout.write(JSON.stringify({ permission: 'deny', continue: false, user_message: msg, agent_message: msg }));
   // Antigravity does not document its exit codes, so its deny answer is printed as well.
   if (agentId === 'antigravity') process.stdout.write(JSON.stringify({ decision: 'deny', reason: msg }));
+  // Copilot CLI: exit 2 denies preToolUse (other events only warn); the documented deny answer is printed as well.
+  if (agentId === 'copilot') process.stdout.write(JSON.stringify({ permissionDecision: 'deny', permissionDecisionReason: msg }));
   // Gemini CLI documents exit 2 as a block with stderr as the reason, so it needs no JSON on stdout (stdout that
   // is not JSON counts as allow there); any other exit code only warns and lets the tool run.
   process.exitCode = 2;

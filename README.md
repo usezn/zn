@@ -399,13 +399,14 @@ Runnable examples are in [`examples/`](examples/). The code API checks text for 
 | [`python-basic`](examples/python-basic) | Python | None | Evaluate a prompt and guard a tool function. |
 | [`node-basic`](examples/node-basic) | JavaScript | None | Inspect a prompt and sanitize a tool result with the Node.js package. |
 | [`custom-rules`](examples/custom-rules) | JavaScript | None | Load project rules from `.znrules`. |
-| [`langchain-agent`](examples/langchain-agent) | Python | LangChain / LangGraph | Attach a callback handler that checks tool calls and results. |
+| [`langchain-agent`](examples/langchain-agent) | Python | LangChain / LangGraph | Wrap tools so a blocked call does not run and secrets in tool output are hidden; a callback handler stops the run on a block. |
 | [`crewai-agent`](examples/crewai-agent) | Python | CrewAI | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
 | [`llamaindex-agent`](examples/llamaindex-agent) | Python | LlamaIndex | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
 | [`openai-agents-sdk`](examples/openai-agents-sdk) | Python | OpenAI Agents SDK | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
 | [`pydantic-ai-agent`](examples/pydantic-ai-agent) | Python | Pydantic AI | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
 | [`google-adk-agent`](examples/google-adk-agent) | Python | Google ADK | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
 | [`langchain-js`](examples/langchain-js) | JavaScript | LangChain.js / LangGraph.js | Block a dangerous tool call and scrub what a tool returns before the model reads it. |
+| [`openai-agents-js`](examples/openai-agents-js) | JavaScript | OpenAI Agents SDK for JavaScript | Block a dangerous tool call and scrub what a tool returns before the model reads it. |
 | [`promptfoo`](examples/promptfoo) | YAML | Promptfoo | Run a deterministic guardrail suite with Promptfoo. |
 | [`github-action`](examples/github-action) | YAML | GitHub Actions | Scan agent prompts and configs in pull requests with the GitHub Action. |
 
@@ -422,7 +423,8 @@ Runnable examples are in [`examples/`](examples/). The code API checks text for 
 - **Claude Code and OpenCode:** every tool, including shell commands, file reads, search and MCP.
 - **Codex CLI:** the result is replaced by its scrubbed text, so the model gets text instead of the structured result. Codex's own session log keeps the original output.
 - **Cursor:** MCP tool output only. Cursor's hooks cannot rewrite shell or file-read output.
-- **Hermes Agent, Gemini CLI, Copilot CLI and the Cursor CLI:** not covered yet. For any MCP client, the output of an MCP server wrapped with `zn-gate shield` or `init` is scrubbed.
+- **Copilot CLI (experimental):** `zn hooks install copilot` blocks reads and writes of secret files and shell commands that handle secrets, and replaces secret values in the results of read-type and shell tools. It cannot block a typed prompt, lets a call through when its hook times out, has not been tested on Windows, and Copilot's own session log keeps the original output. Details: [docs/compat.md](docs/compat.md).
+- **Hermes Agent, Gemini CLI and the Cursor CLI:** not covered yet. For any MCP client, the output of an MCP server wrapped with `zn-gate shield` or `init` is scrubbed.
 
 For Codex CLI, zn also reviews the model's final answer. By default it only warns you; with `"stopReview": "block"` under `hooks` in `~/.zn/config.json`, Codex asks the model to rewrite a final answer that contains a secret value. A second opt-in, `"replaceToolOutputOnSecret": true` under `hooks` in the same file, makes Codex replace a tool result that holds a real secret with zn's stop text and carry on, so the model gets that text instead of the output. See [docs/compat.md](docs/compat.md).
 

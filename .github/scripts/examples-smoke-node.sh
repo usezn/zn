@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke test for the Node examples (examples/node-basic, examples/custom-rules, examples/langchain-js).
+# Smoke test for the Node examples (examples/node-basic, examples/custom-rules, examples/openai-agents-js, examples/langchain-js).
 #
 # Packs packages/zn-gate with `npm pack`, installs the tarball into a copy of each example, and runs the
 # example with no network (an empty network namespace) and no API keys. Each example must print the text
@@ -20,6 +20,8 @@ EXAMPLES=(
   "node-basic|index.js|Verdict: block|Cannot find module"
   "node-basic|index.js|Safe to ingest: false|Cannot find module"
   "custom-rules|demo.js|Custom rule verdict: block|Cannot find module"
+  "openai-agents-js|index.mjs|[REDACTED_AWS_KEY]|Cannot find module"
+  "openai-agents-js|index.mjs|blocked the call to 'read_file'|Cannot find module"
   "langchain-js|index.js|zn-gate demo OK|zn-gate demo FAILED"
 )
 
@@ -28,7 +30,7 @@ echo "Packing packages/zn-gate"
 TARBALL="$(ls "$WORK"/zn-gate-*.tgz)"
 
 declare -A OUT
-for name in node-basic custom-rules langchain-js; do
+for name in node-basic custom-rules openai-agents-js langchain-js; do
   entry="$(printf '%s\n' "${EXAMPLES[@]}" | awk -F'|' -v n="$name" '$1==n {print $2; exit}')"
   dir="$WORK/$name"
   mkdir "$dir"
