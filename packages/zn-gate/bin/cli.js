@@ -892,7 +892,7 @@ async function main() {
     process.exit(0);
   }
 
-  if (args.includes('-V') || args.includes('--version') || args[0] === 'version') {
+  if (args.includes('-V') || args.includes('--version') || args[0] === 'version' || args[0] === '-v') {
     process.stdout.write(`zn-gate ${VERSION} (rules engine: ${RULES_VERSION}; scrub rules: ${SCRUB_RULES_VERSION}; audit rules: ${AUDIT_RULES_VERSION})\n`);
     process.exit(0);
   }
