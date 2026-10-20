@@ -160,6 +160,8 @@ async function mapStrings(value, fn) {
   return value;
 }
 
+const HOOK_VAULT_BUDGET_MS = 2500;
+
 function lazyDeps(opts) {
   let engine = opts.engine;
   let vault = opts.vault === null ? null : opts.vault;
@@ -174,6 +176,10 @@ function lazyDeps(opts) {
       if (vault === undefined) {
         try {
           vault = await deps.loadVault();
+          // The agent kills a hook at its own timeout; a vault that does not answer
+          // in time must not hold the output back. Without the vault the engine
+          // redacts irreversibly, so a hung daemon costs only the restore markers.
+          if (vault && typeof vault.setBudget === 'function') vault.setBudget(HOOK_VAULT_BUDGET_MS);
         } catch (err) {
           if (err.code !== 'ZN_LOCKED') throw err;
           vault = null;

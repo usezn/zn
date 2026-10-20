@@ -57,6 +57,10 @@ const CONFIRMED_OPS = new Set(['recordApproval', 'updateSecretMeta', 'confirmFil
 const NETWORK_OPS = new Set(['teamSync']);
 const NETWORK_TIMEOUT_MS = 120000;
 const MAX_LINE = 64 * 1024 * 1024;
+// A hook has a hard timeout set by the agent (15 s for Claude Code). Hooks give the
+// vault a total budget well under it, so a daemon that hangs cannot make the hook
+// time out with the output still unredacted (see setBudget).
+const HOOK_BUDGET_MS = 2500;
 
 function endpoint(opts) {
   const p = store.paths(opts);
@@ -138,6 +142,21 @@ class VaultClient {
   constructor(opts) {
     this.opts = opts || {};
     this.conn = null;      // Promise<{socket, pending: Map, nextId}>
+    this.deadline = null;  // set by setBudget: when the vault stops being waited for
+  }
+
+  /* Total time, across every call of this client, the vault may take from now on.
+   * When it runs out, calls fail at once with ZN_LOCKED and the connection is
+   * dropped, so callers fall back to their no-vault path. */
+  setBudget(ms) { this.deadline = Date.now() + ms; }
+
+  // Milliseconds a wait of `ms` may last under the budget (0 = already spent).
+  _limit(ms) {
+    return this.deadline === null ? ms : Math.max(0, Math.min(ms, this.deadline - Date.now()));
+  }
+
+  _abandon(state) {
+    if (this.deadline !== null && state && state.socket) state.socket.destroy();
   }
 
   _connect() {
@@ -156,7 +175,7 @@ class VaultClient {
         socket.destroy();
         reject(err);
       };
-      const timer = setTimeout(() => fail(lockedError('timeout')), TIMEOUT_MS);
+      const timer = setTimeout(() => fail(lockedError('timeout')), this._limit(TIMEOUT_MS));
       socket.on('error', (err) => { clearTimeout(timer); fail(lockedError(err.code, true)); });
       socket.on('close', () => {
         clearTimeout(timer);
@@ -213,13 +232,16 @@ class VaultClient {
   }
 
   async call(op, args) {
+    if (this._limit(TIMEOUT_MS) === 0) throw lockedError('time budget spent');
     const state = await this._connect();
     return new Promise((resolve, reject) => {
       const id = state.nextId++;
+      const wait = this._limit(CONFIRMED_OPS.has(op) ? CONFIRM_TIMEOUT_MS : NETWORK_OPS.has(op) ? NETWORK_TIMEOUT_MS : TIMEOUT_MS);
       const timer = setTimeout(() => {
         state.pending.delete(id);
+        this._abandon(state);
         reject(lockedError('timeout'));
-      }, CONFIRMED_OPS.has(op) ? CONFIRM_TIMEOUT_MS : NETWORK_OPS.has(op) ? NETWORK_TIMEOUT_MS : TIMEOUT_MS);
+      }, wait);
       state.pending.set(id, {
         resolve: (v) => { clearTimeout(timer); resolve(v); },
         reject: (e) => { clearTimeout(timer); reject(e); },
@@ -232,7 +254,7 @@ class VaultClient {
   close() {
     const c = this.conn;
     this.conn = null;
-    if (c) c.then((s) => s.socket.end(), () => {});
+    if (c) c.then((s) => (this.deadline !== null ? s.socket.destroy() : s.socket.end()), () => {});
   }
 
   mapToken(project, type, value) { return this.call('mapToken', [project, type, value]); }
@@ -300,6 +322,8 @@ module.exports = {
   isUnlocked: () => client().isUnlocked(),
   lock: () => client().lock(),
   auditVerify: () => client().auditVerify(),
+  // Hooks: cap the total time the default client's vault calls may take.
+  setBudget: (ms) => client().setBudget(ms),
   close: () => { if (defaultClient) defaultClient.close(); defaultClient = null; },
   createClient: (opts) => new VaultClient(opts),
   resolveExecutable,
@@ -308,4 +332,5 @@ module.exports = {
   hmac,
   safeEqualHex,
   PROTOCOL,
+  HOOK_BUDGET_MS,
 };
