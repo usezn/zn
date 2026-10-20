@@ -167,6 +167,7 @@ Pins live in `~/.zn/mcp-pins/`, one file per server, readable only by your accou
 ## Limits
 
 - Pinning covers tool definitions (names, descriptions and parameters). It does not check the server's code.
+- The wrapped server does not get zn-gate's own secrets, nor the AI agents' credentials (such as `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`) unless you name them in `ZN_SHIELD_PASS_ENV`, for example `ZN_SHIELD_PASS_ENV=OPENAI_API_KEY` in the server's MCP configuration. Other variables are passed as they are.
 - The first list a server returns is trusted. If that list was already harmful, pinning does not catch it.
 - A server started as `npx some-tool@latest` can change its code while its tool list stays the same. Pin the package version in your MCP configuration, for example `npx -y some-tool@1.4.2`, and review each new version.
 - An agent that can run commands on your machine could edit the pin files or start a server without the shield. The hooks stop the commands they recognize, not every possible one.

@@ -302,6 +302,44 @@ test('a large tool result (1 MB) is forwarded whole', async () => {
   }
 });
 
+test('the wrapped server does not get zn-gate secrets or agent credentials unless they are named', async () => {
+  const env = { ZN_API_KEY: 'zn_test_EXAMPLE', OPENAI_API_KEY: 'sk-test-EXAMPLE', ZN_TEST_PLAIN: '1' };
+  let s = startShield({ env });
+  try {
+    s.send(call(21, 'env_keys'));
+    const keys = resultText(await s.reply(21)).split(',');
+    assert.ok(!keys.includes('ZN_API_KEY') && !keys.includes('OPENAI_API_KEY'));
+    assert.ok(keys.includes('ZN_TEST_PLAIN'));
+    assert.ok(/Not passed to the wrapped server: OPENAI_API_KEY/.test(s.stderr));
+    assert.ok(!s.stderr.includes('sk-test-EXAMPLE'));
+  } finally {
+    await s.stop();
+  }
+  s = startShield({ env: { ...env, ZN_SHIELD_PASS_ENV: 'OPENAI_API_KEY,ZN_API_KEY' } });
+  try {
+    s.send(call(22, 'env_keys'));
+    const keys = resultText(await s.reply(22)).split(',');
+    assert.ok(keys.includes('OPENAI_API_KEY'), 'named in ZN_SHIELD_PASS_ENV');
+    assert.ok(!keys.includes('ZN_API_KEY'), "zn-gate's own key is never passed");
+  } finally {
+    await s.stop();
+  }
+});
+
+test('a reply to a call dropped from the pending list is refused, not forwarded unchecked', async () => {
+  const s = startShield();
+  try {
+    for (let i = 1; i <= 5001; i++) s.send(call(1000 + i, 'silent'));
+    s.send(call(9999, 'reply_late', { id: 1001 }));
+    await s.reply(9999);
+    const late = await s.reply(1001);
+    assert.ok(late.error && /too late to be checked/.test(late.error.message));
+    assert.ok(!JSON.stringify(late).includes(INJECTION));
+  } finally {
+    await s.stop();
+  }
+});
+
 test('the shield exits when the client closes its input', async () => {
   const s = startShield();
   s.send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} });

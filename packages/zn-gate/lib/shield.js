@@ -58,6 +58,30 @@ function startFailureMessage(command, err) {
  * @param {string[]} args - Arguments passed to the target MCP executable
  * @param {object} [options] - Options (apiKey, stage, verbose, localOnly, shadow, agent)
  */
+// Credentials of the AI agents themselves. A wrapped server gets them only when
+// the user names them in ZN_SHIELD_PASS_ENV (comma-separated).
+const AGENT_CREDENTIALS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'OPENAI_API_KEY',
+  'CODEX_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'CURSOR_API_KEY', 'COPILOT_GITHUB_TOKEN'];
+
+/**
+ * The environment of the wrapped server: the shield's own, minus zn-gate's
+ * secrets (ZN_* names with KEY, TOKEN, SECRET or PASS, never passed) and the
+ * agents' credentials (passed only when listed in ZN_SHIELD_PASS_ENV).
+ * Returns { env, dropped } with the names left out.
+ */
+function childEnv(env) {
+  const keep = new Set(String(env.ZN_SHIELD_PASS_ENV || '').split(',').map((s) => s.trim()).filter(Boolean));
+  const out = {};
+  const dropped = [];
+  for (const [k, v] of Object.entries(env)) {
+    const upper = k.toUpperCase();
+    if (/^ZN_/.test(upper) && /(KEY|TOKEN|SECRET|PASS)/.test(upper) && upper !== 'ZN_SHIELD_PASS_ENV') { dropped.push(k); continue; }
+    if (AGENT_CREDENTIALS.includes(upper) && !keep.has(k)) { dropped.push(k); continue; }
+    out[k] = v;
+  }
+  return { env: out, dropped };
+}
+
 function startMcpShield(command, args, options = {}) {
   const verbose = options.verbose || false;
   const log = (...msg) => {
@@ -68,9 +92,14 @@ function startMcpShield(command, args, options = {}) {
 
   log(`Spawning wrapped MCP server: ${command} ${args.join(' ')}`);
 
+  const { env: serverEnv, dropped } = childEnv(process.env);
+  const agentCreds = dropped.filter((k) => AGENT_CREDENTIALS.includes(k.toUpperCase()));
+  if (agentCreds.length) {
+    process.stderr.write(`[zn-shield] Not passed to the wrapped server: ${agentCreds.join(', ')} (AI agent credentials). If the server needs one, set ZN_SHIELD_PASS_ENV=${agentCreds[0]} in its MCP configuration.\n`);
+  }
   const child = spawn(command, args, {
     stdio: ['pipe', 'pipe', 'inherit'],
-    env: process.env,
+    env: serverEnv,
   });
 
   child.on('error', (err) => {
@@ -87,6 +116,9 @@ function startMcpShield(command, args, options = {}) {
   // id -> { method, toolName, startTime }
   const MAX_PENDING_CALLS = 5000;
   const pendingCalls = new Map();
+  // Ids evicted from pendingCalls: their late replies cannot be checked, so they are refused.
+  const evictedCalls = new Set();
+  const MAX_EVICTED = 50000;
   // Tools removed from the list because they changed since they were approved (block mode).
   const unpinnedTools = new Set();
   const pinMode = pins.mode(options);
@@ -117,7 +149,10 @@ function startMcpShield(command, args, options = {}) {
     if (pendingCalls.size >= MAX_PENDING_CALLS) {
       const oldestKey = pendingCalls.keys().next().value;
       pendingCalls.delete(oldestKey);
+      if (evictedCalls.size >= MAX_EVICTED) evictedCalls.delete(evictedCalls.values().next().value);
+      evictedCalls.add(oldestKey);
     }
+    evictedCalls.delete(id);
     pendingCalls.set(id, meta);
   }
 
@@ -255,6 +290,14 @@ function startMcpShield(command, args, options = {}) {
       msg = JSON.parse(line);
     } catch {
       process.stdout.write(line + '\n');
+      return;
+    }
+
+    // A reply to a call that was dropped from the pending list cannot be checked: refuse it.
+    if (msg && msg.id !== undefined && !pendingCalls.has(msg.id) && evictedCalls.has(msg.id) && (msg.result !== undefined || msg.error !== undefined)) {
+      evictedCalls.delete(msg.id);
+      process.stderr.write(`[zn-shield BLOCKED RESPONSE] A reply arrived after more than ${MAX_PENDING_CALLS} other calls were waiting, so it could not be checked.\n`);
+      process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: 'zn-gate: this reply came too late to be checked, so it was blocked. Try the call again.' } }) + '\n');
       return;
     }
 
@@ -475,4 +518,5 @@ function startMcpShield(command, args, options = {}) {
   process.on('SIGTERM', cleanExit);
 }
 
-module.exports = { startMcpShield, startFailureMessage };
+module.exports = {
+  childEnv, startMcpShield, startFailureMessage };
