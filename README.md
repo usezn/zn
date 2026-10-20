@@ -331,11 +331,11 @@ jobs:
           persist-credentials: false
       - name: Audit agent configs
         id: zn
-        # Pin to the full commit SHA of the first Action release that has the
-        # mode input. The zn-gate package version is set by version below.
-        uses: usezn/zn@<commit-sha> # <first Action release with mode>
+        # Pin to the full commit SHA of an Action release v1.10.0 or later.
+        # The zn-gate package version is set by version below.
+        uses: usezn/zn@1174db0f8d980fb5e61facc7b63344f8da95e5ff # v1.13.0
         with:
-          version: '1.12.0'
+          version: '1.13.0'
           mode: 'both'
           format: 'sarif'
           severity-threshold: 'medium'   # stricter than the default (high)
@@ -346,7 +346,7 @@ jobs:
           sarif_file: ${{ steps.zn.outputs.sarif-file }}
 ```
 
-The `audit` mode, `format: sarif` and the `agents` input need a zn-gate version of 1.6.0 or later. The default `version` is already newer, so this only matters if you set an older version.
+The `mode`, `agents`, `fail-on`, `severity-threshold`, `sarif-file`, `npm-integrity` and `audit-exit-code` inputs need two things: an Action release of v1.10.0 or later (the ref in `uses:`) and a zn-gate package of 1.6.0 or later (the `version` input). The default `version` already meets the second. Pinning `uses:` to an older commit fails with "Unexpected input".
 
 | Input | Default | Description |
 |---|---|---|
