@@ -20,10 +20,10 @@ jobs:
           persist-credentials: false
       - name: Scan AI agent prompts and tools
         # Pin the action to a full commit SHA; the comment names the release.
-        uses: usezn/zn@003a95ae7ef63c22b969496422131a49fa107f8d # v1.12.0
+        uses: usezn/zn@1174db0f8d980fb5e61facc7b63344f8da95e5ff # v1.13.0
         with:
-          version: '1.12.0'
-          package-sha256: '9e7b7ac4a43722249c10623dcb5817c1cd956b6100d6ca02faa8b6451dd72dbf'
+          version: '1.13.0'
+          package-sha256: '2655200798bde877238968003a8e82d5934e683b675fb374fd26e2d87f20d61b'
           path: '.'
           fail-on-threat: 'true'
           format: 'github'
