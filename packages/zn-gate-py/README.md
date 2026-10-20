@@ -29,12 +29,23 @@ python3 -m venv .venv
 .venv/bin/pip install zn-gate      # Windows: .venv\Scripts\pip install zn-gate
 ```
 
+On Windows, in PowerShell (Python from python.org; `py` is the launcher it installs, so you do not need `python` on your PATH):
+
+```powershell
+py -m venv .venv
+.venv\Scripts\pip install zn-gate
+.venv\Scripts\zn-gate --version
+```
+
 Inside an environment you already use (your project's virtualenv, Poetry, uv), `pip install zn-gate` is enough. Python 3.10 or later (CI tests 3.10 to 3.14). Zero runtime dependencies.
 
 **If something fails:**
 
 - `externally-managed-environment`: install it in a virtual environment, as shown above.
 - `python3 -m venv` fails on Debian or Ubuntu: run `sudo apt install python3-venv`.
+- Windows: `python` or `python3` is not recognized: use `py` (the python.org installer leaves the "Add python.exe to PATH" box unticked by default).
+- Windows: `Activate.ps1` is blocked by the execution policy: you do not need to activate the environment; call `.venv\Scripts\pip` and `.venv\Scripts\zn-gate` directly.
+- Windows: `zn-gate` is not recognized after `pip install`: it is in the environment's `Scripts` folder, so run `.venv\Scripts\zn-gate`. A `pip install` outside an environment puts it in your user `Scripts` folder, which is often not on your PATH.
 - Python says it cannot find `zn_gate`: run your script with the Python of that environment (`.venv/bin/python`; Windows: `.venv\Scripts\python`).
 - Legitimate content is blocked: use `on_block="return"` with a fallback while you evaluate it.
 - You use Claude Code, Codex CLI, Cursor or OpenCode: this package does not protect them. Run `npx -y zn-gate init` in your own terminal instead.

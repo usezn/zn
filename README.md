@@ -126,6 +126,14 @@ python3 -m venv .venv
 .venv/bin/pip install zn-gate      # Windows: .venv\Scripts\pip install zn-gate
 ```
 
+On Windows, in PowerShell (Python from python.org; `py` is the launcher it installs, so you do not need `python` on your PATH):
+
+```powershell
+py -m venv .venv
+.venv\Scripts\pip install zn-gate
+.venv\Scripts\zn-gate --version
+```
+
 **zn-gate as an MCP server only** (the agent calls it when it decides to; not automatic protection):
 
 ```bash
