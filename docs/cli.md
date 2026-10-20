@@ -234,10 +234,10 @@ Approves the first use of a secret by a command that is already allowed. It is c
 #### `secret import`
 
 ```bash
-zn-gate secret import [FILE] [--all] [--keys A,B] [--host H] [--command C] [--force]
+zn-gate secret import [FILE] [--all] [--keys A,B] [--mode proxy|env|file] [--host H] [--command C] [--force]
 ```
 
-Copies the secret values of a `.env` file (default `.env`) into the vault. The file is not changed.
+Copies the secret values of a `.env` file (default `.env`) into the vault. The file is not changed. `--mode`, `--host` and `--command` set how and where the values may be used, as in `secret set`.
 
 #### `secret adopt`
 
@@ -272,10 +272,10 @@ Groups the two commands below. Run `zn-gate env --help` for the short usage.
 #### `env shadow`
 
 ```bash
-zn-gate env shadow [FILE] [--all] [--keys A,B] [--host H] [--command C] [--force] [--dry-run]
+zn-gate env shadow [FILE] [--all] [--keys A,B] [--mode proxy|env|file] [--host H] [--command C] [--force] [--dry-run]
 ```
 
-Moves the values of a `.env` file (default `.env`) into the vault and leaves markers in the file. It prints the name of an encrypted copy of the original, so you can undo it. `--dry-run` only lists what would move.
+Moves the values of a `.env` file (default `.env`) into the vault and leaves markers in the file. `--mode`, `--host` and `--command` set how and where the values may be used, as in `secret set`. It prints the name of an encrypted copy of the original, so you can undo it. `--dry-run` only lists what would move.
 
 #### `env unshadow`
 
@@ -301,7 +301,7 @@ Exit codes: the exit code of your command; `64` wrong usage, `77` refused (not a
 zn-gate unlock [--ttl 8h] [--idle 30m] [--backend name] [--passphrase-stdin] [--foreground]
 ```
 
-Unlocks the vault for this session. The first run creates it. `--ttl` and `--idle` take a number with `s`, `m` or `h` (between 1 minute and 24 hours). `--passphrase-stdin` reads the passphrase from a pipe when there is no system keychain. `--foreground` keeps the vault in this terminal and asks for confirmations here. It refuses to run under an AI agent.
+Unlocks the vault for this session. The first run creates it. `--ttl` and `--idle` take a number with `s`, `m` or `h` (between 1 minute and 24 hours). `--backend` picks where the vault key is kept: `macos`, `windows`, `libsecret` or `passphrase` (default: the one the vault already uses). `--passphrase-stdin` reads the passphrase from a pipe when there is no system keychain. `--foreground` keeps the vault in this terminal and asks for confirmations here. It refuses to run under an AI agent.
 
 Exit codes: `0` unlocked, `1` an error.
 
