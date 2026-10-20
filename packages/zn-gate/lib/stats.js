@@ -15,6 +15,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { znHomeDir } = require('./zn-home');
 
 const KEEP_DAYS = 90;
 const TYPE_RE = /^[A-Z0-9](?:[A-Z0-9_]{0,62}[A-Z0-9])?$/;
@@ -22,8 +23,7 @@ const NAME_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const LAYERS = new Set(['hook', 'shield', 'mcp', 'broker', 'cli']);
 
 function znHome() {
-  if (process.env.ZN_HOME) return path.resolve(process.env.ZN_HOME);
-  return path.join(os.homedir(), '.zn');
+  return znHomeDir(process.env, os.homedir());
 }
 
 function statsFile() {

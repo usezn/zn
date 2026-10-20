@@ -25,6 +25,7 @@ const fs = require('fs');
 const { trimTrailing } = require('../linear-text');
 const os = require('os');
 const path = require('path');
+const { znHomeDir } = require('../zn-home');
 const crypto = require('crypto');
 const { CODES, znError } = require('../errors');
 
@@ -37,8 +38,7 @@ const STALE_DAYS = 30;
 
 function znHome(opts) {
   if (opts && opts.home) return path.resolve(opts.home);
-  if (process.env.ZN_HOME) return path.resolve(process.env.ZN_HOME);
-  return path.join(os.homedir(), '.zn');
+  return znHomeDir(process.env, os.homedir());
 }
 
 function paths(opts) {

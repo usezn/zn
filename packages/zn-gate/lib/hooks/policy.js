@@ -24,10 +24,11 @@ const markers = require('../broker/markers');
 const { realTargetOf } = require('../broker/files');
 const { powershellQuote, portablePath } = require('../shell-quote');
 const { znCommand } = require('../zn-command');
+const { znHomeDir } = require('../zn-home');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-19.43';
+const POLICY_RULES_VERSION = '2026-10-20.44';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -186,17 +187,24 @@ function contextOf(opts = {}) {
   const home = opts.home || os.homedir();
   const cwd = opts.cwd || process.cwd();
   const env = opts.env || process.env;
-  return { home, cwd, env, creds: credentialEnvPaths(env, home, cwd), agent: agentContext(home, cwd, env) };
+  return {
+    home, cwd, env,
+    creds: credentialEnvPaths(env, home, cwd),
+    agent: agentContext(home, cwd, env),
+    // zn's own state folder when ZN_HOME moves it away from <home>/.zn.
+    znHome: env.ZN_HOME ? keyOf(slash(znHomeDir(env, home))) : null,
+  };
 }
 
 /**
  * Classify a resolved absolute path. `ctx` comes from contextOf.
  */
 function classifyResolved(abs, ctx) {
-  const { home, creds, agent } = ctx;
+  const { home, creds, agent, znHome } = ctx;
   const s = keyOf(slash(abs));
   const h = keyOf(slash(path.resolve(home)));
   if (s === h + '/.zn' || s.startsWith(h + '/.zn/')) return { kind: 'zn_state', reason: 'zn keeps its vault and audit log in ~/.zn' };
+  if (znHome && (s === znHome || s.startsWith(znHome + '/'))) return { kind: 'zn_state', reason: 'zn keeps its vault and audit log in ~/.zn' };
   for (const [re, reason] of AGENT_CONFIG_RES) if (ci(re).test(s)) return { kind: 'agent_config', reason };
   // The directory itself (`cd ~/.claude`, `mv ~/.codex`, `rm -r ~/.cursor`) and the files directly in it.
   if (agent.dirs.includes(s) || agent.roots.includes(s)) return { kind: 'agent_config', reason: 'an agent configuration directory' };
