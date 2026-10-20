@@ -38,6 +38,12 @@ const { shQuote, portablePath } = require('../shell-quote');
 const BLOCK_EXIT = new Set(['PreToolUse', 'UserPromptSubmit']);
 // PermissionRequest blocks with a decision on stdout (exit 2 is not documented there).
 const BLOCK_JSON = new Set(['PermissionRequest']);
+// Claude Code: exit 2 blocks PreToolUse, UserPromptSubmit and UserPromptExpansion; PermissionRequest is not hooked.
+// Every other event (PostToolUse) only warns: exit 2 there cannot undo the tool call.
+const BLOCK_EXIT_BY_AGENT = { 'claude-code': new Set(['PreToolUse', 'UserPromptSubmit', 'UserPromptExpansion']) };
+const BLOCK_JSON_BY_AGENT = { 'claude-code': new Set() };
+const blockExit = (agentId) => BLOCK_EXIT_BY_AGENT[agentId] || BLOCK_EXIT;
+const blockJson = (agentId) => BLOCK_JSON_BY_AGENT[agentId] || BLOCK_JSON;
 
 const FIX = 'run `npm install -g zn-gate` and then `zn hooks install codex` in your own terminal';
 
@@ -72,6 +78,8 @@ function unixScript(agentId, nodePath, runnerPath) {
   checkAgentId(agentId);
   const reason = reasonText(agentId);
   const warn = warnText(agentId);
+  const exitEvents = [...blockExit(agentId)];
+  const jsonEvents = [...blockJson(agentId)];
   return [
     '#!/bin/sh',
     '# Written by `zn hooks install ' + agentId + '`; replaced on every install. Do not edit.',
@@ -84,12 +92,14 @@ function unixScript(agentId, nodePath, runnerPath) {
     'case "$ZN_CMD" in /*) ;; *) ZN_CMD= ;; esac',
     'if [ -n "$ZN_CMD" ] && command -v node >/dev/null 2>&1; then exec "$ZN_CMD" hook ' + agentId + '; fi',
     'case "$ZN_EVENT" in',
-    '  ' + [...BLOCK_EXIT].join('|') + ')',
+    '  ' + exitEvents.join('|') + ')',
     '    printf ' + shQuote('%s\\n') + ' ' + shQuote(reason) + ' >&2',
     '    exit 2 ;;',
-    '  ' + [...BLOCK_JSON].join('|') + ')',
-    '    printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: reason } } })) + '',
-    '    exit 0 ;;',
+    ...(jsonEvents.length ? [
+      '  ' + jsonEvents.join('|') + ')',
+      '    printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: reason } } })) + '',
+      '    exit 0 ;;',
+    ] : []),
     '  *)',
     '    printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify({ systemMessage: warn })) + '',
     '    exit 0 ;;',
@@ -126,8 +136,8 @@ function windowsScript(agentId, event, nodePath, runnerPath) {
   if (/['‘’‚‛\u0000-\u001f]/.test(n + r)) return null;
   const reason = reasonText(agentId);
   let tail;
-  if (BLOCK_EXIT.has(event)) tail = "[Console]::Error.WriteLine('" + reason + "'); exit 2";
-  else if (BLOCK_JSON.has(event)) tail = "[Console]::Out.WriteLine('" + JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: reason } } }) + "'); exit 0";
+  if (blockExit(agentId).has(event)) tail = "[Console]::Error.WriteLine('" + reason + "'); exit 2";
+  else if (blockJson(agentId).has(event)) tail = "[Console]::Out.WriteLine('" + JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: reason } } }) + "'); exit 0";
   else tail = "[Console]::Out.WriteLine('" + JSON.stringify({ systemMessage: warnText(agentId) }) + "'); exit 0";
   return "if ((Test-Path -LiteralPath '" + n + "') -and (Test-Path -LiteralPath '" + r + "')) { & '" + n + "' '" + r + "' " + agentId + '; exit $LASTEXITCODE }; ' +
     "if ((Get-Command zn -ErrorAction SilentlyContinue) -and (Get-Command node -ErrorAction SilentlyContinue)) { & zn hook " + agentId + '; exit $LASTEXITCODE }; ' +
@@ -142,4 +152,4 @@ function windowsScriptCommand(script) {
   return 'powershell.exe -NoProfile -NonInteractive -EncodedCommand ' + Buffer.from(script, 'utf16le').toString('base64');
 }
 
-module.exports = { windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, windowsScript, BLOCK_EXIT, BLOCK_JSON };
+module.exports = { blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, windowsScript, BLOCK_EXIT, BLOCK_JSON };

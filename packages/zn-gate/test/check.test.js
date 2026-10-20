@@ -139,7 +139,10 @@ test('check: a hook whose Node.js is gone is not protected', async (t) => {
 });
 
 test('check: Claude Code set up with zn hooks is repaired with zn hooks, not with the plugin', async (t) => {
-  const ctx = homeWithHooks(t, ['claude-code']);
+  // A hook written by an older zn-gate: the plain command with the absolute Node.js and runner paths, no launcher.
+  const ctx = homeWithHooks(t, []);
+  const command = require('../lib/agents/claude-code').hookCommand({ nodePath: process.execPath, runnerPath: RUNNER });
+  getAdapter('claude-code').install({ scope: 'user', home: ctx.home, env: ctx.env, command, mcp: false });
   const file = getAdapter('claude-code').settingsFile(ctx);
   fs.writeFileSync(file, fs.readFileSync(file, 'utf8').split(process.execPath.replace(/\\/g, '/')).join(path.join(ctx.home, 'gone', 'node').replace(/\\/g, '/')));
   const r = byId(await check(ctx), 'claude-code');
@@ -420,7 +423,7 @@ test('check: a broken plugin next to zn hooks that do not work either: repair th
   assert.equal(r.hooksBroken, true);
   assert.equal(r.state, 'not-protected');
   // Nothing claims the hooks protect the agent: they were checked and they do not.
-  assert.match(r.problem, /do not work either \(its hook cannot start: its Node\.js .* is no longer there\)/);
+  assert.match(r.problem, /do not work either \(its hook cannot start: its Node\.js .* is no longer there/);
   assert.doesNotMatch(r.problem + r.fix, /keep protecting|keeps those hooks/);
   const npm = r.fix.indexOf('npm install -g zn-gate');
   const hooks = r.fix.indexOf('zn hooks install claude-code');

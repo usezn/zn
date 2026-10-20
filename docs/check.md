@@ -63,7 +63,7 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
   its hook cannot start: its Node.js (<path>) is no longer there, so zn now blocks the tool calls and prompts instead of checking them
   ```
 
-  The last form is a Codex CLI hook that goes through zn's launcher script, which blocks Codex's tool calls and prompts (instead of letting them run unchecked) when the Node.js it was installed with is gone and no `zn` can be found on your PATH. Until you repair it, Codex cannot run commands. If `zn` and `node` are on your PATH the hook keeps working and `zn-gate check` only notes that the Node.js it was installed with is gone.
+  The last form is a Codex CLI or Claude Code hook that goes through zn's launcher script, which blocks the agent's tool calls and prompts (instead of letting them run unchecked) when the Node.js it was installed with is gone and no `zn` can be found on your PATH. Until you repair it, the agent cannot run commands. If `zn` and `node` are on your PATH the hook keeps working and `zn-gate check` only notes that the Node.js it was installed with is gone.
 
   This usually happens after you removed or upgraded Node.js with a version manager such as nvm: the old Node.js took its copy of zn-gate with it. The repair is:
 
@@ -77,7 +77,7 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
   its hook cannot start: its launcher script (<path>) is missing or was changed
   ```
 
-  A Codex CLI hook calls a small script that `zn hooks install codex` writes under `~/.zn/hooks`. If the script was deleted or edited, run `zn hooks install codex` again.
+  A Codex CLI or Claude Code hook calls a small script that `zn hooks install <agent>` writes under `~/.zn/hooks`. If the script was deleted or edited, run `zn hooks install <agent>` again.
 
 - **The hook calls `zn`, and `zn` is not installed.**
 
