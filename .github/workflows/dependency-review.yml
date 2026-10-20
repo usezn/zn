@@ -9,16 +9,35 @@ name: Dependency and license review
 on:
   push:
     branches: [main, next]
+    # Same manifests as pull_request below.
     paths:
-      - "Cargo.toml"
-      - "Cargo.lock"
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
       - "deny.toml"
-      - "packages/**"
+      - "**/package.json"
+      - "**/package-lock.json"
+      - "**/pyproject.toml"
+      - "**/*requirements*.txt"
       - ".github/license-allowlist.txt"
       - ".github/scripts/license-check*"
       - ".github/workflows/dependency-review.yml"
   pull_request:
     types: [ opened, synchronize, reopened, ready_for_review ]
+    # Dependency and license checks only matter when a manifest, a lockfile or a license
+    # setting changes.
+    paths:
+      # Every dependency manifest anywhere in the repository (packages, plugins, examples,
+      # workflow tools, fuzz targets), so a new dependency never skips the review.
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - "deny.toml"
+      - "**/package.json"
+      - "**/package-lock.json"
+      - "**/pyproject.toml"
+      - "**/*requirements*.txt"
+      - ".github/license-allowlist.txt"
+      - ".github/scripts/license-check*"
+      - ".github/workflows/dependency-review.yml"
   schedule:
     - cron: "17 7 * * 1" # weekly license check
   workflow_dispatch:
@@ -29,6 +48,14 @@ permissions:
 concurrency:
   group: dependency-review-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Retry npm and pip downloads instead of failing a run on one network error.
+  NPM_CONFIG_FETCH_RETRIES: "5"
+  NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: "20000"
+  NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: "120000"
+  PIP_RETRIES: "5"
+  PIP_TIMEOUT: "60"
 
 jobs:
   dependency-review:
