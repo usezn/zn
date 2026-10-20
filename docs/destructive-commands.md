@@ -56,6 +56,7 @@ The check reads command text only. These are **not** covered, and the check lets
 - Other tools and languages (`rsync --delete`, `git clean`, `python -c "shutil.rmtree(...)"`), and paths below the top level (`rm -rf /usr/local`).
 - Commands that run inside a container (`docker run ... rm -rf /`) or on another machine (`ssh host "rm -rf /"`).
 - Anything an agent does by writing a file and then running it.
+- Paths written with shell escapes or expansions. The check reads `.` and `..` segments, repeated slashes and upper or lower case (macOS ignores case), but it does not emulate the shell: a backslash escape such as `/home/alice/project/\.\.`, brace expansion (`/home/alice/{project,..}`), `~alice/..` for another user's home folder and a Windows extended-length path (`\\?\C:\Users\alice\..`) are let through. Relative paths (`rm -rf ../..`) and symbolic links are not resolved either, because they depend on the folder the command runs in.
 
 For those, use a sandbox, a container or your agent's own permission prompts. This check adds a cheap last barrier for the most common catastrophic mistakes.
 

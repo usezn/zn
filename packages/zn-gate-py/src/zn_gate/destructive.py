@@ -28,7 +28,7 @@ from typing import List, Optional, Tuple
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-19.1"
+COMMAND_RULES_VERSION = "2026-10-20.1"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -66,12 +66,14 @@ _SYSTEM_DIRS = {
     "/bin", "/boot", "/dev", "/etc", "/home", "/lib", "/lib32", "/lib64", "/opt", "/proc", "/root",
     "/sbin", "/srv", "/sys", "/usr", "/var", "/Users", "/System", "/Library", "/Applications", "/private", "/Volumes",
 }
+# macOS (APFS) and Windows ignore case, so /users/bob is /Users/bob: system and home roots are compared in lower case.
+_SYSTEM_DIRS_LOW = {d.lower() for d in _SYSTEM_DIRS}
 _HOME_WORDS = {
     "~", "$home", "${home}", "$userprofile", "${userprofile}", "%userprofile%", "$env:userprofile", "$env:home", "$env:homepath",
 }
 _BLOCK_DEVICE_RE = re.compile(
     r"^/dev/(?:sd[a-z]+\d*|hd[a-z]+\d*|vd[a-z]+\d*|xvd[a-z]+\d*|nvme\d+n\d+(?:p\d+)?|mmcblk\d+(?:p\d+)?|disk\d+(?:s\d+)?|rdisk\d+(?:s\d+)?|md\d+|dm-\d+|mapper/[A-Za-z0-9._-]+)\Z",
-    _A,
+    _AI,
 )
 _RC_UNIX_RE = re.compile(
     r"/\.(?:bashrc|bash_profile|bash_login|bash_aliases|profile|zshrc|zprofile|zshenv|zlogin|kshrc|cshrc|tcshrc)\Z"
@@ -267,7 +269,8 @@ def _unwrap(args: List[str]) -> List[str]:
 
 def _resolve_dots(t: str) -> str:
     """Resolve "." and ".." lexically (no filesystem) for a path that starts at "/", a drive or a home word.
-    A ".." above "/" or a drive root stays there; a ".." out of the home folder names its parent. Relative paths are left alone."""
+    A ".." above "/" or a drive root stays there; a ".." out of the home folder lands in /home and goes on from there
+    ("~/.." is /home and "~/../alice" is /home/alice, but "~/../shared/x" is not a home folder). Relative paths are left alone."""
     if not re.search(r"(?:^|/)\.\.?(?:/|\Z)", t):
         return t
     home = False
@@ -290,8 +293,16 @@ def _resolve_dots(t: str) -> str:
         elif out:
             out.pop()
         elif home:
-            return "/home"
+            home = False
+            anchor = "/home/"
+        elif anchor == "/home/":
+            anchor = "/"
     return anchor + "/".join(out)
+
+
+def _device_path(word: str) -> str:
+    """A device path as the kernel reads it: repeated slashes collapsed, "." and ".." resolved ("//dev/./sda" is /dev/sda)."""
+    return _resolve_dots(re.sub(r"/{2,}", "/", str(word)))
 
 
 def _dangerous_path(word: str) -> str:
@@ -313,9 +324,9 @@ def _dangerous_path(word: str) -> str:
         return ""
     if t.lower() in _HOME_WORDS:
         return "home"
-    if t in _SYSTEM_DIRS:
+    if t.lower() in _SYSTEM_DIRS_LOW:
         return "system"
-    if re.match(r"^/(?:home|Users)/[^/*.][^/*]*\Z", t):
+    if re.match(r"^/(?:home|users)/[^/*.][^/*]*\Z", t, re.I):
         return "home"
     if re.match(r"^[A-Za-z]:\Z", t):
         return "root"
@@ -424,9 +435,9 @@ def _check_simple(words: List[str], depth: int) -> Optional[str]:
             if head == "chmod" and "home" in targets and _world_writable(mode):
                 return "perm_root"
     if head == "dd":
-        if any(w.startswith("of=") and _BLOCK_DEVICE_RE.match(w[3:]) for w in rest):
+        if any(w.startswith("of=") and _BLOCK_DEVICE_RE.match(_device_path(w[3:])) for w in rest):
             return "disk_overwrite"
-    if _DISK_TOOLS.match(head) and any(_BLOCK_DEVICE_RE.match(w) for w in rest):
+    if _DISK_TOOLS.match(head) and any(_BLOCK_DEVICE_RE.match(_device_path(w)) for w in rest):
         return "disk_overwrite"
     return None
 
@@ -481,7 +492,7 @@ def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]]) -> Optional[str
                     return "rc_download"
     for words, _sep in pipe:
         for t in _redirect_targets(words):
-            if _BLOCK_DEVICE_RE.match(t):
+            if _BLOCK_DEVICE_RE.match(_device_path(t)):
                 return "disk_overwrite"
     return None
 

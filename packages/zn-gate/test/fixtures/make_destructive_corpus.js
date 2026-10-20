@@ -253,6 +253,25 @@ for (const h of HOSTS.slice(0, 6)) {
   addRisk('rc_download', 'Invoke-WebRequest https://' + h + '/profile.ps1 -OutFile $PROFILE');
 }
 
+// Device paths written with extra slashes or dot segments, and system or home folders written in another case (macOS ignores case).
+for (const c of ['dd of=/dev/../dev/sda', 'dd of=/dev/./sda', 'dd of=//dev/sda', 'dd if=/dev/zero of=/dev/./sda bs=1M', 'dd if=image.iso of=/dev/../dev/sdb bs=4M',
+  'sudo dd if=/dev/urandom of=//dev//./nvme0n1 bs=1M', 'mkfs.ext4 /dev/../dev/sda1', 'mkfs.xfs //dev/./sdb1', 'wipefs -a /dev/../dev/nvme0n1', 'shred /dev/./sdc',
+  'echo x > /dev/./sda', 'cat image.img > //dev/sdb', 'cat image.img >/dev/../dev/sdb', 'dd of=/DEV/sda']) addRisk('disk_overwrite', c);
+for (const t of ['/users/bob', '/users/bob/project/..', '/USERS/bob', '/Users/bob/project/../..', '/system', '/library', '/APPLICATIONS', '/Private', '/HOME/alice', '/Home', '/ETC', '/usr/../ETC',
+  '~/../../etc', '~/../../..', '~/../..', '$HOME/../alice']) addRisk('rm_root_home', 'rm -rf ' + t);
+addRisk('rm_root_home', 'find /users/bob/project/.. -delete');
+addRisk('perm_root', 'chmod -R 777 /ETC');
+benign.add('rm -rf ~/../bob/project/build');
+benign.add('rm -rf ~/../shared/build');
+benign.add('rm -rf $HOME/../shared/x/build');
+benign.add('rm -rf /users/bob/project/build');
+benign.add('rm -rf /Users/bob/project/../other');
+benign.add('rm -rf /HOME/alice/project/build');
+benign.add('dd if=/dev/zero of=/dev/./null');
+benign.add('echo x > /dev/../dev/null');
+benign.add('dd of=/dev/../tmp/out.img');
+benign.add('mkfs.ext4 disk.img');
+
 /* ---------------------- shapes the policy does not read ---------------------- */
 const notCovered = [
   { cmd: 'rm -rf "$DIR"', note: 'a variable that may be empty: the value is not known' },
@@ -269,6 +288,10 @@ const notCovered = [
   { cmd: 'docker run --rm -v /:/host alpine rm -rf /host/etc', note: 'the delete runs inside a container' },
   { cmd: 'ssh deploy@203.0.113.5 "rm -rf /"', note: 'the command runs on another machine' },
   { cmd: 'truncate -s 0 ~/.bashrc', note: 'a different tool' },
+  { cmd: 'rm -rf /home/alice/project/\\.\\.', note: 'a backslash escape the shell reads as a dot segment: shell escapes are not emulated' },
+  { cmd: 'rm -rf /home/alice/{project,..}', note: 'brace expansion is not emulated' },
+  { cmd: 'rm -rf ~alice/..', note: 'the home folder of a named user is not resolved' },
+  { cmd: 'rm -rf \\\\?\\C:\\Users\\alice\\..', note: 'a Windows extended-length path is not read' },
 ];
 
 const out = {

@@ -295,9 +295,11 @@
   "dd if=/dev/sda of=backup.img bs=4M status=progress",
   "dd if=/dev/urandom of=test.bin bs=1k count=4",
   "dd if=/dev/zero of=./swap.img bs=1M count=1024",
+  "dd if=/dev/zero of=/dev/./null",
   "dd if=/dev/zero of=/dev/null bs=1M count=10",
   "dd if=/dev/zero of=/dev/stdout bs=1 count=1",
   "dd if=disk.iso of=/dev/null bs=4M",
+  "dd of=/dev/../tmp/out.img",
   "del /q *.tmp",
   "del /s /q .\\dist\\*.map",
   "df -h",
@@ -348,6 +350,7 @@
   "echo hi > /dev/null",
   "echo hi > /dev/stderr",
   "echo test > /dev/tty",
+  "echo x > /dev/../dev/null",
   "echo ~",
   "env CI=1 rm --recursive --force .gradle build",
   "env CI=1 rm --recursive --force .tox build",
@@ -528,6 +531,7 @@
   "mkfs.ext4 -F ./test-disk.img",
   "mkfs.ext4 ./disk.img",
   "mkfs.ext4 /dev/loop0",
+  "mkfs.ext4 disk.img",
   "mkfs.vfat -n TEST ./usb.img",
   "mkswap swapfile",
   "mount /dev/sdb1 /mnt/usb",
@@ -752,6 +756,7 @@
   "rm -rf \"$BUILD_DIR\"",
   "rm -rf \"$HOME/Library/Application Support/Example\"",
   "rm -rf \"${TMPDIR:-/tmp}/zn-test\"",
+  "rm -rf $HOME/../shared/x/build",
   "rm -rf $HOME/.cache/yarn",
   "rm -rf $HOME/.config/example-app",
   "rm -rf $HOME/project/../work/tmp",
@@ -770,7 +775,9 @@
   "rm -rf .pytest_cache target",
   "rm -rf .tox dist",
   "rm -rf .turbo site-packages",
+  "rm -rf /HOME/alice/project/build",
   "rm -rf /Library/Developer/CommandLineTools",
+  "rm -rf /Users/bob/project/../other",
   "rm -rf /etc/apt/sources.list.d/example.list",
   "rm -rf /home/$USER/.cache/pip",
   "rm -rf /home/alice/project/../other",
@@ -781,6 +788,7 @@
   "rm -rf /srv/www/old-site",
   "rm -rf /tmp",
   "rm -rf /tmp/../tmp/build",
+  "rm -rf /users/bob/project/build",
   "rm -rf /usr/local/go && tar -C /usr/local -xzf go1.23.linux-amd64.tar.gz",
   "rm -rf /usr/share/doc/example",
   "rm -rf /var/../var/tmp/build",
@@ -816,6 +824,8 @@
   "rm -rf target .pytest_cache",
   "rm -rf tmp .next",
   "rm -rf tmp out",
+  "rm -rf ~/../bob/project/build",
+  "rm -rf ~/../shared/build",
   "rm -rf ~/.cache/pip",
   "rm -rf ~/Library/Caches/com.example.app",
   "rm -rf ~/project/../project/build",
@@ -1144,6 +1154,14 @@
    "rule": "disk_overwrite"
   },
   {
+   "cmd": "cat image.img > //dev/sdb",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "cat image.img >/dev/../dev/sdb",
+   "rule": "disk_overwrite"
+  },
+  {
    "cmd": "dd if=/dev/urandom of=/dev/disk2 bs=4M status=progress",
    "rule": "disk_overwrite"
   },
@@ -1188,6 +1206,10 @@
    "rule": "disk_overwrite"
   },
   {
+   "cmd": "dd if=/dev/zero of=/dev/./sda bs=1M",
+   "rule": "disk_overwrite"
+  },
+  {
    "cmd": "dd if=/dev/zero of=/dev/mapper/vg0-root bs=1M",
    "rule": "disk_overwrite"
   },
@@ -1205,6 +1227,30 @@
   },
   {
    "cmd": "dd if=/dev/zero of=/dev/xvda bs=1M",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "dd if=image.iso of=/dev/../dev/sdb bs=4M",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "dd of=//dev/sda",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "dd of=/DEV/sda",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "dd of=/dev/../dev/sda",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "dd of=/dev/./sda",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "echo x > /dev/./sda",
    "rule": "disk_overwrite"
   },
   {
@@ -1252,6 +1298,14 @@
    "rule": "disk_overwrite"
   },
   {
+   "cmd": "mkfs.ext4 /dev/../dev/sda1",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "mkfs.xfs //dev/./sdb1",
+   "rule": "disk_overwrite"
+  },
+  {
    "cmd": "mkfs.xfs /dev/md0",
    "rule": "disk_overwrite"
   },
@@ -1277,6 +1331,14 @@
   },
   {
    "cmd": "shred -n1 -z /dev/sda",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "shred /dev/./sdc",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "sudo dd if=/dev/urandom of=//dev//./nvme0n1 bs=1M",
    "rule": "disk_overwrite"
   },
   {
@@ -1376,6 +1438,10 @@
    "rule": "disk_overwrite"
   },
   {
+   "cmd": "wipefs -a /dev/../dev/nvme0n1",
+   "rule": "disk_overwrite"
+  },
+  {
    "cmd": "wipefs -a /dev/sdc",
    "rule": "disk_overwrite"
   },
@@ -1461,6 +1527,10 @@
   },
   {
    "cmd": "chmod -R 777 /",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "chmod -R 777 /ETC",
    "rule": "perm_root"
   },
   {
@@ -2952,6 +3022,10 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "find /users/bob/project/.. -delete",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "find ~ -delete",
    "rule": "rm_root_home"
   },
@@ -3128,7 +3202,27 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "rm -rf /APPLICATIONS",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf /ETC",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf /HOME/alice",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf /Home",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "rm -rf /Library",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf /Private",
    "rule": "rm_root_home"
   },
   {
@@ -3136,7 +3230,15 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "rm -rf /USERS/bob",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "rm -rf /Users/bob/project/..",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf /Users/bob/project/../..",
    "rule": "rm_root_home"
   },
   {
@@ -3172,11 +3274,27 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "rm -rf /library",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "rm -rf /root",
    "rule": "rm_root_home"
   },
   {
+   "cmd": "rm -rf /system",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "rm -rf /tmp/../",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf /users/bob",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf /users/bob/project/..",
    "rule": "rm_root_home"
   },
   {
@@ -3185,6 +3303,10 @@
   },
   {
    "cmd": "rm -rf /usr/../*",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf /usr/../ETC",
    "rule": "rm_root_home"
   },
   {
@@ -3225,6 +3347,18 @@
   },
   {
    "cmd": "rm -rf ~/..",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf ~/../..",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf ~/../../..",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf ~/../../etc",
    "rule": "rm_root_home"
   },
   {
@@ -3432,6 +3566,22 @@
   {
    "cmd": "truncate -s 0 ~/.bashrc",
    "note": "a different tool"
+  },
+  {
+   "cmd": "rm -rf /home/alice/project/\\.\\.",
+   "note": "a backslash escape the shell reads as a dot segment: shell escapes are not emulated"
+  },
+  {
+   "cmd": "rm -rf /home/alice/{project,..}",
+   "note": "brace expansion is not emulated"
+  },
+  {
+   "cmd": "rm -rf ~alice/..",
+   "note": "the home folder of a named user is not resolved"
+  },
+  {
+   "cmd": "rm -rf \\\\?\\C:\\Users\\alice\\..",
+   "note": "a Windows extended-length path is not read"
   }
  ]
 }

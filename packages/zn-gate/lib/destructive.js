@@ -25,7 +25,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-10-19.1';
+const COMMAND_RULES_VERSION = '2026-10-20.1';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -56,8 +56,11 @@ const SUDO_ARG_FLAGS = new Set(['-u', '-g', '-h', '-p', '-C', '-T', '-r', '-t', 
 
 const SYSTEM_DIRS = new Set(['/bin', '/boot', '/dev', '/etc', '/home', '/lib', '/lib32', '/lib64', '/opt', '/proc', '/root',
   '/sbin', '/srv', '/sys', '/usr', '/var', '/Users', '/System', '/Library', '/Applications', '/private', '/Volumes']);
+// macOS (APFS) and Windows ignore case, so /users/bob is /Users/bob: system and home roots are compared in lower case.
+const SYSTEM_DIRS_LOW = new Set(Array.from(SYSTEM_DIRS, (d) => d.toLowerCase()));
 const HOME_WORDS = new Set(['~', '$home', '${home}', '$userprofile', '${userprofile}', '%userprofile%', '$env:userprofile', '$env:home', '$env:homepath']);
-const BLOCK_DEVICE_RE = /^\/dev\/(?:sd[a-z]+\d*|hd[a-z]+\d*|vd[a-z]+\d*|xvd[a-z]+\d*|nvme\d+n\d+(?:p\d+)?|mmcblk\d+(?:p\d+)?|disk\d+(?:s\d+)?|rdisk\d+(?:s\d+)?|md\d+|dm-\d+|mapper\/[A-Za-z0-9._-]+)$/;
+// Case-insensitive: macOS volumes are, and a guard gains nothing from telling /dev/SDA from /dev/sda.
+const BLOCK_DEVICE_RE = /^\/dev\/(?:sd[a-z]+\d*|hd[a-z]+\d*|vd[a-z]+\d*|xvd[a-z]+\d*|nvme\d+n\d+(?:p\d+)?|mmcblk\d+(?:p\d+)?|disk\d+(?:s\d+)?|rdisk\d+(?:s\d+)?|md\d+|dm-\d+|mapper\/[A-Za-z0-9._-]+)$/i;
 const RC_UNIX_RE = /\/\.(?:bashrc|bash_profile|bash_login|bash_aliases|profile|zshrc|zprofile|zshenv|zlogin|kshrc|cshrc|tcshrc)$|\/fish\/config\.fish$|^\/etc\/(?:profile|bash\.bashrc|zshrc|zsh\/zshrc|environment)$|^\/etc\/profile\.d\//;
 const RC_PS_RE = /^\$profile(?:\.\w+)?$|(?:^|[\\/])(?:microsoft\.powershell_)?profile\.ps1$/i;
 
@@ -139,7 +142,8 @@ function unwrap(args) {
 }
 
 /* Resolves "." and ".." segments lexically (no filesystem) for a path that starts at a known point: "/", a drive, or a home word.
-   A ".." above "/" or a drive root stays there; a ".." that steps out of the home folder names its parent. Relative paths are left alone. */
+   A ".." above "/" or a drive root stays there; a ".." that steps out of the home folder lands in /home and goes on from there
+   (so "~/.." is /home and "~/../alice" is /home/alice, but "~/../shared/x" is not a home folder). Relative paths are left alone. */
 function resolveDots(t) {
   if (!/(?:^|\/)\.\.?(?:\/|$)/.test(t)) return t;
   let anchor = '';
@@ -158,9 +162,15 @@ function resolveDots(t) {
     if (seg === '' || seg === '.') continue;
     if (seg !== '..') { out.push(seg); continue; }
     if (out.length) out.pop();
-    else if (home) return '/home';
+    else if (home) { home = false; anchor = '/home/'; }
+    else if (anchor === '/home/') anchor = '/';
   }
   return anchor + out.join('/');
+}
+
+/* A device path as the kernel reads it: repeated slashes collapsed and "." / ".." resolved ("//dev/./sda" is /dev/sda). */
+function devicePath(word) {
+  return resolveDots(String(word).replace(/\/{2,}/g, '/'));
 }
 
 /* The dangerous path a word names, as 'root', 'home' or 'system', or ''. */
@@ -179,8 +189,8 @@ function dangerousPath(word) {
   if (t === '*') return '';
   const low = t.toLowerCase();
   if (HOME_WORDS.has(low)) return 'home';
-  if (SYSTEM_DIRS.has(t)) return 'system';
-  if (/^\/(?:home|Users)\/[^/*.][^/*]*$/.test(t)) return 'home';
+  if (SYSTEM_DIRS_LOW.has(low)) return 'system';
+  if (/^\/(?:home|users)\/[^/*.][^/*]*$/i.test(t)) return 'home';
   if (/^[A-Za-z]:$/.test(t)) return 'root';
   if (/^[A-Za-z]:\/(?:windows|windows\/system32|users|program files|program files \(x86\)|programdata)$/i.test(t)) return 'system';
   if (/^[A-Za-z]:\/users\/[^/*]+$/i.test(t)) return 'home';
@@ -265,9 +275,9 @@ function checkSimple(words, depth) {
     }
   }
   if (head === 'dd') {
-    if ((rest.some((w) => w.startsWith('of=') && BLOCK_DEVICE_RE.test(w.slice(3)))) && on('disk_overwrite')) return 'disk_overwrite';
+    if ((rest.some((w) => w.startsWith('of=') && BLOCK_DEVICE_RE.test(devicePath(w.slice(3))))) && on('disk_overwrite')) return 'disk_overwrite';
   }
-  if ((DISK_TOOLS.test(head) && rest.some((w) => BLOCK_DEVICE_RE.test(w))) && on('disk_overwrite')) return 'disk_overwrite';
+  if ((DISK_TOOLS.test(head) && rest.some((w) => BLOCK_DEVICE_RE.test(devicePath(w)))) && on('disk_overwrite')) return 'disk_overwrite';
   return null;
 }
 
@@ -319,7 +329,7 @@ function checkPipeline(pipe) {
   }
   // A redirect to a block device, with or without a download.
   for (const s of pipe) {
-    for (const t of redirectTargets(s.words)) if ((BLOCK_DEVICE_RE.test(t)) && on('disk_overwrite')) return 'disk_overwrite';
+    for (const t of redirectTargets(s.words)) if ((BLOCK_DEVICE_RE.test(devicePath(t))) && on('disk_overwrite')) return 'disk_overwrite';
   }
   return null;
 }
