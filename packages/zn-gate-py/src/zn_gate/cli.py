@@ -86,7 +86,7 @@ def _relative_to_cwd(file: str) -> str:
 
 def _leak_next_step(file: str, rule: str) -> str:
     """What to do about a secret found by the scan, in plain words (never the
-    value). The same text as secretNextStep in the Node.js package; the file
+    value). The same as secretNextStep in the Node.js package, plus what to do without Node.js; the file
     is shown relative to the current directory, as there."""
     if rule == "secret:private_key":
         return ("Next: move the key out of this file (for example to ~/.ssh or a secret manager) "
@@ -99,10 +99,13 @@ def _leak_next_step(file: str, rule: str) -> str:
         if os.sep != "/":  # Windows: npx takes forward slashes too
             rel = rel.replace(os.sep, "/")
         arg = rel if _SAFE_FILE_ARG.fullmatch(rel) and not rel.startswith("-") else "<file>"
-        return (f"Next: run npx -y zn-gate env shadow {arg} to move the values into the local vault, "
-                "and rotate any value that was ever committed or shared.")
-    return ("Next: run npx -y zn-gate secret set NAME to store the value in the local vault, use the "
-            "__ZN_NAME__ marker in its place, and rotate it if it was ever committed or shared.")
+        return (f"Next: run npx -y zn-gate env shadow {arg} to move the values into the local vault (this needs Node.js)."
+                " Without Node.js, take the values out of this file and set them as environment variables instead"
+                " (the Python package has no vault), and rotate any value that was ever committed or shared.")
+    return ("Next: run npx -y zn-gate secret set NAME to store the value in the local vault (this needs Node.js), "
+            "use the __ZN_NAME__ marker in its place, and rotate it if it was ever committed or shared. "
+            "Without Node.js, take the value out of this file and set it as an environment variable instead "
+            "(the Python package has no vault).")
 
 SHIELD = "\U0001f6e1\ufe0f"
 ALERT = "\U0001f6a8"

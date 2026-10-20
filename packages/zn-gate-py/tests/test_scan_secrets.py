@@ -76,7 +76,8 @@ class TestSecretOutput(_ScanDir):
         self.assertIn("Found 2 secrets and 0 threat vectors", out)
         self.assertIn("Secret found [secret:", out)
         self.assertIn("Next: run npx -y zn-gate env shadow ", out)
-        self.assertIn("Next: run npx -y zn-gate secret set NAME to store the value in the local vault", out)
+        self.assertIn("Next: run npx -y zn-gate secret set NAME to store the value in the local vault (this needs Node.js)", out)
+        self.assertIn("Without Node.js", out)
         self.assertNotIn("ZNTESTFAKE", out)
 
     def test_github_titles_and_summary(self):
@@ -134,9 +135,12 @@ class TestNextStepFileName(_ScanDir):
             if os.name == "nt" and any(c in name for c in '<>:"|?*'):
                 continue  # not a valid file name on Windows
             with self.subTest(name=name):
-                self.assertEqual(self._step(name), "Next: run npx -y zn-gate env shadow " + shown
-                                 + " to move the values into the local vault, and rotate any value that was"
-                                 " ever committed or shared.")
+                step = self._step(name)
+                self.assertTrue(step.startswith("Next: run npx -y zn-gate env shadow " + shown
+                                                + " to move the values into the local vault (this needs Node.js)."), step)
+                self.assertIn("Without Node.js", step)
+                self.assertIn("environment variables", step)
+                self.assertTrue(step.endswith("rotate any value that was ever committed or shared."), step)
 
     def test_a_subfolder_is_shown_with_forward_slashes(self):
         os.mkdir(os.path.join(self.dir, "app"))
