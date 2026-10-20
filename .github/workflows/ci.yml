@@ -126,7 +126,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # "Python 3.12 tests & benchmarks (ubuntu-latest)" is a required check: it is in both lists. The
+        # "Python 3.12 tests & benchmarks (ubuntu-latest)" is a required check (plain pytest; the coverage
+        # report is the python-coverage job): it is in both lists. The
         # list depends only on the event (never on another job), so every job name is known when the
         # run starts.
         include: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[{"os":"ubuntu-latest","python-version":"3.10"},{"os":"ubuntu-latest","python-version":"3.11"},{"os":"ubuntu-latest","python-version":"3.12"},{"os":"ubuntu-latest","python-version":"3.13"},{"os":"ubuntu-latest","python-version":"3.14"},{"os":"windows-latest","python-version":"3.12"},{"os":"macos-latest","python-version":"3.12"}]' || '[{"os":"ubuntu-latest","python-version":"3.12"}]') }}
@@ -165,13 +166,40 @@ jobs:
           python -m pip install --require-hashes -r .github/ci-test-requirements.txt
           python -m pip install --no-deps --no-build-isolation -e packages/zn-gate-py
       - name: Run pytest (unit + integration)
-        if: steps.scope.outputs.run == 'true' && !(matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12')
+        if: steps.scope.outputs.run == 'true'
         working-directory: packages/zn-gate-py
         run: python -m pytest tests/ -v
+      - name: Run benchmark verification
+        if: steps.scope.outputs.run == 'true'
+        run: python bench/bench_python.py
+
+  # The coverage report for the Python package, off the pull request path: "Python 3.12 tests & benchmarks
+  # (ubuntu-latest)" above is a required check and runs plain pytest, so the tracing slowdown and the
+  # report upload never delay a merge. Runs on pushes to main and next, on the daily schedule and on
+  # manual runs; it is not a required check. Report only, no threshold.
+  python-coverage:
+    name: Python 3.12 coverage report (ubuntu-latest)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install package and test dependencies
+        run: |
+          python -m pip install --require-hashes -r .github/ci-test-requirements.txt
+          python -m pip install --no-deps --no-build-isolation -e packages/zn-gate-py
       - name: Run pytest (unit + integration) with a coverage report
-        # The same tests, measured with pytest-cov on one entry. Report only, no threshold.
-        # One wall-clock test is left out here (tracing slows it past its limit) and runs untraced in the next step.
-        if: steps.scope.outputs.run == 'true' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        # One wall-clock test is left out here (tracing slows it past its limit); the required job runs it untraced.
         working-directory: packages/zn-gate-py
         run: |
           python -m pytest tests/ -v --deselect tests/test_cli.py::TestCliScanCommand::test_many_key_blocks_scan_in_linear_time --cov=zn_gate --cov-report=term --cov-report=xml:"$RUNNER_TEMP/coverage-python.xml" 2>&1 | tee "$RUNNER_TEMP/coverage-python.log"
@@ -181,21 +209,14 @@ jobs:
             grep -E '^TOTAL' "$RUNNER_TEMP/coverage-python.log"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-      - name: Run the wall-clock test left out of the coverage run
-        if: steps.scope.outputs.run == 'true' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
-        working-directory: packages/zn-gate-py
-        run: python -m pytest -v tests/test_cli.py::TestCliScanCommand::test_many_key_blocks_scan_in_linear_time
       - name: Upload Python coverage report
-        if: always() && steps.scope.outputs.run == 'true' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-python
           path: ${{ runner.temp }}/coverage-python.xml
           if-no-files-found: ignore
           retention-days: 14
-      - name: Run benchmark verification
-        if: steps.scope.outputs.run == 'true'
-        run: python bench/bench_python.py
 
   # One job for the linters: eslint on zn-gate (rules in .github/eslint), ruff and mypy on the Python
   # package (rules in packages/zn-gate-py/pyproject.toml). Each one blocks the run, and each runs even
@@ -214,20 +235,30 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - name: Decide what this change needs
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FULL: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+        run: bash .github/scripts/ci-scope.sh
+      - if: steps.scope.outputs.run == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
       - name: Install the eslint tooling
         id: eslint-tools
+        if: steps.scope.outputs.run == 'true'
         working-directory: .github/eslint
         run: npm ci --ignore-scripts
       - name: eslint
-        if: ${{ !cancelled() && steps.eslint-tools.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.scope.outputs.run == 'true' && steps.eslint-tools.outcome == 'success' }}
         working-directory: packages/zn-gate
         run: ../../.github/eslint/node_modules/.bin/eslint -c ../../.github/eslint/eslint.config.mjs --max-warnings 0 .
       - name: Set up Python
         id: python
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.scope.outputs.run == 'true' }}
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
