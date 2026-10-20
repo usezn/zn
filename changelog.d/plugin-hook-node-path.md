@@ -1,0 +1,2 @@
+### Fixed
+- `zn-gate init` and `zn-gate check` now look at the `node` that Claude Code will start the plugin's hooks with (the first one on your PATH), not only at the Node.js running zn-gate. With nvm or several Node.js installs the two can differ: init could install the plugin from `npx` on Node.js 22 while the hooks ran on Node.js 18 and refused every call. When they differ the message names both versions; when that `node` cannot be found or run, init sets up zn's hooks instead of the plugin and check says why.
