@@ -30,7 +30,7 @@ on:
       - "**/package.json"
       - "**/package-lock.json"
       - "**/pyproject.toml"
-      - "**/requirements*.txt"
+      - "**/*requirements*.txt"
       - ".github/license-allowlist.txt"
       - ".github/scripts/license-check*"
       - ".github/workflows/dependency-review.yml"
