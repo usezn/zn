@@ -141,7 +141,8 @@ test('install replaces, and uninstall removes, hooks written with double quotes 
   claude.install(opts);
   const cc = JSON.parse(fs.readFileSync(ccFile, 'utf8'));
   assert.equal(cc.hooks.PreToolUse.length, 1, 'the old hook was replaced');
-  assert.match(cc.hooks.PreToolUse[0].hooks[0].command, /^'.*' claude-code$/);
+  // A user install now runs zn's launcher (the hook keeps working and fails closed if this Node.js is removed later).
+  assert.match(cc.hooks.PreToolUse[0].hooks[0].command, /^'.*zn-hook-claude-code\.sh' PreToolUse$/);
   fs.writeFileSync(ccFile, JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: old('claude-code') }] }] } }));
   claude.uninstall(opts);
   assert.deepEqual(JSON.parse(fs.readFileSync(ccFile, 'utf8')), {});
@@ -166,7 +167,12 @@ test('install replaces, and uninstall removes, hooks written with double quotes 
   cursor.install({ ...opts, platform: 'win32' });
   const win = JSON.parse(fs.readFileSync(cuFile, 'utf8')).hooks.beforeReadFile;
   assert.equal(win.length, 1);
-  assert.match(win[0].command, /^powershell\.exe -NoProfile -NonInteractive -Command "& '\/usr\/bin\/node' '\/new\/lib\/hooks\/runner\.js' cursor"$/);
+  // Cursor on Windows now runs the fail-closed launcher as an encoded PowerShell command.
+  const m = /^powershell\.exe -NoProfile -NonInteractive -EncodedCommand ([A-Za-z0-9+/=]+)$/.exec(win[0].command);
+  assert.ok(m, 'an encoded PowerShell launcher');
+  const script = Buffer.from(m[1], 'base64').toString('utf16le');
+  assert.match(script, /'\/usr\/bin\/node' '\/new\/lib\/hooks\/runner\.js' cursor/);
+  assert.match(script, /exit 2/, 'blocks when Node.js or the runner is gone');
   cursor.uninstall(opts);
   assert.deepEqual(JSON.parse(fs.readFileSync(cuFile, 'utf8')).hooks, {});
 });

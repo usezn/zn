@@ -179,6 +179,24 @@ function matcherCovers(matcher, tool) {
 function parseCommand(command, agentId) {
   const { _internal: audit } = require('./audit');
   const c = String(command).trim();
+  // zn's launcher script (lib/agents/launcher.js): '<dir>/zn-hook-<agent>.sh' <Event>. It names the Node.js and
+  // runner it was installed with in ZN_NODE=... and ZN_RUNNER=... lines.
+  const lm = new RegExp("^'(" + audit.SAFE_ABS + '/zn-hook-' + agentId + "\\.sh)' ([A-Za-z]+)$").exec(c);
+  if (lm) {
+    let text = '';
+    try { text = fs.readFileSync(lm[1], 'utf8'); } catch (err) { return { launcher: lm[1], event: lm[2], unreadable: true }; }
+    const n = new RegExp("^ZN_NODE='(" + audit.SAFE_ABS + ")'$", 'm').exec(text);
+    const r = new RegExp("^ZN_RUNNER='(" + audit.SAFE_ABS + ")'$", 'm').exec(text);
+    if (!n || !r) return { launcher: lm[1], event: lm[2], unreadable: true };
+    return { launcher: lm[1], event: lm[2], node: n[1], runner: r[1] };
+  }
+  // On Windows, Cursor and Gemini CLI run the same three steps as an encoded PowerShell script (launcher.windowsScript).
+  const ws = require('./shell-quote').windowsCommandScript(c);
+  if (ws) {
+    // Both the current script and the one written by earlier versions (no progress line, unconditional exit).
+    const wm = /^(?:\$ProgressPreference='SilentlyContinue'; \$zt=0; )?if \(\(Test-Path -LiteralPath '([^']+)'\) -and \(Test-Path -LiteralPath '([^']+)'\)\) \{ (?:\$zt=1; )?& '[^']+' '[^']+' ([a-z-]+); (?:if \(\$LASTEXITCODE -eq 0 -or \$LASTEXITCODE -eq 2\) \{ exit \$LASTEXITCODE \}|exit \$LASTEXITCODE) \}; .* # zn hook ([a-z-]+)$/s.exec(ws);
+    if (wm && wm[3] === agentId && wm[4] === agentId) return { winScript: c, node: wm[1], runner: wm[2] };
+  }
   if (!c.endsWith(' ' + agentId) && !c.endsWith(' ' + agentId + '"')) return null;
   if (audit.OUR_HOOKS[0].test(c)) return { onPath: true };
   const quoted = new RegExp("^'(" + audit.SAFE_ABS + ")' '(" + audit.SAFE_ABS + "/zn-gate/lib/hooks/runner\\.js)' " + agentId + '$');
@@ -313,6 +331,13 @@ function bare(s) {
 const RULES_FIX = 'install zn-gate again: run `npm install -g zn-gate` in your own terminal, then run `zn-gate check` again';
 const REINSTALL = (id) => 'install zn-gate again for the Node.js you use now: run `npm install -g zn-gate`, then `zn hooks install ' + id + '`, in your own terminal';
 
+/* Absolute path of `name`, searched only in absolute PATH entries; null when there is none. */
+function onAbsPath(name, env) {
+  const absPath = String((env || process.env).PATH || '').split(path.delimiter).filter((d) => d && path.isAbsolute(d)).join(path.delimiter);
+  const found = require('./exe').whichSync(process.platform === 'win32' ? name + (name === 'zn' ? '.cmd' : '.exe') : name, absPath);
+  return found ? path.resolve(found) : null;
+}
+
 /* Absolute path of the `zn` command, searched only in absolute PATH entries; null when there is none. */
 function znOnPath(env) {
   // Only absolute PATH entries: a relative one (node_modules/.bin, .) depends on the folder check runs from.
@@ -339,7 +364,26 @@ function cliHooks(spec, ctx, userFile, given) {
     return out;
   }
   const cmd = parseCommand(read.command, spec.id);
-  if (cmd.missing) {
+  if (cmd.launcher || cmd.winScript) {
+    // The launcher runs the Node.js it was installed with, else `zn` from the PATH, else it blocks (see launcher.js).
+    const isFile = (f) => { try { return fs.statSync(f).isFile(); } catch (err) { return false; } };
+    const recorded = !cmd.unreadable && isFile(cmd.node) && isFile(cmd.runner);
+    const viaPath = !recorded && !cmd.unreadable && Boolean(znOnPath(ctx.env) && onAbsPath('node', ctx.env));
+    if (cmd.unreadable) {
+      out.problem = 'its hook cannot start: its launcher script (' + cmd.launcher + ') is missing or was changed';
+      out.fix = REINSTALL(spec.id);
+    } else if (!recorded && !viaPath) {
+      out.problem = 'its hook cannot start: its ' + (isFile(cmd.node) ? 'zn-gate files (' + cmd.runner + ')' : 'Node.js (' + cmd.node + ')') + ' is no longer there, so zn now blocks the tool calls and prompts instead of checking them';
+      out.fix = REINSTALL(spec.id);
+    } else {
+      if (viaPath) out.notes.push('the Node.js zn was installed with is gone; the hook now runs `zn` from your PATH. Run `zn hooks install ' + spec.id + '` to set it up again');
+      // Run it with the PATH check was given, which is what decides whether `zn` and `node` are found.
+      // Windows cannot run a .sh file directly; Claude Code runs it with sh (Git Bash) there.
+      const run = cmd.winScript ? { file: 'powershell.exe', args: ['-NoProfile', '-NonInteractive', '-EncodedCommand', cmd.winScript.replace(/^.*-EncodedCommand /, '')] }
+        : process.platform === 'win32' ? { file: 'sh', args: [cmd.launcher, cmd.event] } : { file: cmd.launcher, args: [cmd.event] };
+      out.live = { ...run, env: ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {} };
+    }
+  } else if (cmd.missing) {
     out.problem = 'its hook cannot start: ' + (fs.existsSync(cmd.node) ? 'its zn-gate files (' + cmd.runner + ')' : 'its Node.js (' + cmd.node + ')') + ' is no longer there';
     // Usually a Node.js version removed with nvm (or similar), which takes its global zn-gate with it.
     out.fix = REINSTALL(spec.id);

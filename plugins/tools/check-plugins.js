@@ -166,6 +166,9 @@ for (const [event, entries] of Object.entries(json(PLUGIN + '/cursor/hooks.json'
   const prompt = ((json(PLUGIN + '/hooks/hooks.json').hooks || {}).UserPromptSubmit || []).flatMap((g) => (g && g.hooks) || []);
   if (!prompt.length) fail('hooks/hooks.json: no UserPromptSubmit hook');
   for (const h of prompt) if (h.onFailure !== 'block') fail('hooks/hooks.json: UserPromptSubmit hook is not onFailure "block"');
+  const pre = ((json(PLUGIN + '/hooks/hooks.json').hooks || {}).PreToolUse || []).flatMap((g) => (g && g.hooks) || []);
+  if (!pre.length) fail('hooks/hooks.json: no PreToolUse hook');
+  for (const h of pre) if (h.onFailure !== 'block') fail('hooks/hooks.json: PreToolUse hook is not onFailure "block" (a missing node would let tool calls run unchecked)');
   const expansion = ((json(PLUGIN + '/hooks/hooks.json').hooks || {}).UserPromptExpansion || []).flatMap((g) => (g && g.hooks) || []);
   if (!expansion.length) fail('hooks/hooks.json: no UserPromptExpansion hook');
   for (const h of expansion) if (h.onFailure !== 'block') fail('hooks/hooks.json: UserPromptExpansion hook is not onFailure "block"');
