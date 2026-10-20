@@ -116,9 +116,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Audit agent configs (report only)
-        uses: usezn/zn@003a95ae7ef63c22b969496422131a49fa107f8d # v1.12.0
+        uses: usezn/zn@1174db0f8d980fb5e61facc7b63344f8da95e5ff # v1.13.0
         with:
-          version: '1.12.0'
+          version: '1.13.0'
           mode: audit
           format: github
           fail-on-threat: 'false'
@@ -128,7 +128,7 @@ Always set `version` to the same release as the pinned Action. In the 1.12.0 Act
 
 Both modes also check the MCP config files of the repository (such as `.mcp.json`, `.cursor/mcp.json` and `.vscode/mcp.json`) for keys and passwords written in plain text. The value is never printed.
 
-Releases up to and including 1.13.0 do not have this check. It comes in a later release, so the example above, which pins 1.12.0, does not show these annotations yet. Once the Action pins that release, `scan` reports the finding as `secret:mcp_config` and `audit` as `ZNA011`. Until then, both modes only report keys with a known format (for example an AWS access key) in these files, under the general secret rules.
+Releases up to and including 1.13.0 do not have this check. It comes in a later release, so the example above, which pins 1.13.0, does not show these annotations yet. Once the Action pins that release, `scan` reports the finding as `secret:mcp_config` and `audit` as `ZNA011`. Until then, both modes only report keys with a known format (for example an AWS access key) in these files, under the general secret rules.
 
 Each finding is an error annotation on the file and line. The audit's message names the key; the scan's message does not, and suggests a vault name to use instead. With `fail-on-threat: 'false'` the annotation is still an error (red), but the step ends green. A warn-mode scan of a `.mcp.json` with a key in an `env` block shows this, shortened:
 
