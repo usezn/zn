@@ -201,11 +201,25 @@ test('windows (real PowerShell): a launcher whose Node.js is gone answers Cursor
     const cmd = (g.hooks ? g.hooks[0] : g).command;
     // The agent runs the hook command inside its own PowerShell: the nesting that turned exit 2 into 1.
     const ps = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-    // PATH without Node.js or zn, so the launcher reaches its own block step.
-    const r = spawnSync(ps, ['-NoProfile', '-NonInteractive', '-Command', cmd], { input: '{}', encoding: 'utf8', env: { ...process.env, PATH: path.join(process.env.SystemRoot || 'C:\\Windows', 'System32') } });
+    // PATH without Node.js or zn (so the launcher reaches its own block step), but with PowerShell itself:
+    // the hook command starts a nested powershell.exe.
+    const winPath = [path.join(process.env.SystemRoot || 'C:\\Windows', 'System32'), path.dirname(ps)].join(';');
+    const r = spawnSync(ps, ['-NoProfile', '-NonInteractive', '-Command', cmd], { input: '{}', encoding: 'utf8', env: { ...process.env, PATH: winPath } });
     assert.equal(r.status, 0, id + ': ' + r.stderr);
     const out = JSON.parse(r.stdout.trim().split(/\r?\n/).pop());
     assert.equal(out[field], 'deny', id);
     assert.ok(windowsCommandScript(cmd).includes('exit 0 # zn hook ' + id));
+
+    // The recorded Node.js starts, but the runner throws on load: still the deny JSON with exit 0.
+    const broken = path.join(tempDir(t, 'zn-b96-winbroken-'), 'runner.js');
+    fs.writeFileSync(broken, "throw new Error('broken install');\n");
+    const home2 = tempDir(t, 'zn-b96-winps2-');
+    adapter.install({ home: home2, env: { HOME: home2, ZN_HOME: path.join(home2, '.zn') }, platform: 'win32', nodePath: process.execPath, runnerPath: broken, mcp: false });
+    const data2 = JSON.parse(fs.readFileSync(adapter.hooksFile({ home: home2, env: { HOME: home2 } }), 'utf8'));
+    const g2 = data2.hooks[ev][0];
+    const cmd2 = (g2.hooks ? g2.hooks[0] : g2).command;
+    const r2 = spawnSync(ps, ['-NoProfile', '-NonInteractive', '-Command', cmd2], { input: '{}', encoding: 'utf8', env: { ...process.env, PATH: winPath } });
+    assert.equal(r2.status, 0, id + ' (runner throws): ' + r2.stderr);
+    assert.equal(JSON.parse(r2.stdout.trim().split(/\r?\n/).pop())[field], 'deny', id + ' (runner throws)');
   }
 });

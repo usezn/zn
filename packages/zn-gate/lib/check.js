@@ -195,7 +195,8 @@ function parseCommand(command, agentId) {
   if (ws) {
     // Both the current script and the one written by earlier versions (no progress line, unconditional exit).
     const wm = /^(?:\$ProgressPreference='SilentlyContinue'; \$zt=0; )?if \(\(Test-Path -LiteralPath '([^']+)'\) -and \(Test-Path -LiteralPath '([^']+)'\)\) \{ (?:\$zt=1; )?& '[^']+' '[^']+' ([a-z-]+); (?:if \(\$LASTEXITCODE -eq 0 -or \$LASTEXITCODE -eq 2\) \{ exit (?:\$LASTEXITCODE|0) \}|exit \$LASTEXITCODE) \}; .* # zn hook ([a-z-]+)$/s.exec(ws);
-    if (wm && wm[3] === agentId && wm[4] === agentId) return { winScript: c, node: wm[1], runner: wm[2] };
+    // winScript is the PowerShell text itself: c may be its readable -Command form, which is not base64.
+    if (wm && wm[3] === agentId && wm[4] === agentId) return { winScript: ws, node: wm[1], runner: wm[2] };
   }
   if (!c.endsWith(' ' + agentId) && !c.endsWith(' ' + agentId + '"')) return null;
   if (audit.OUR_HOOKS[0].test(c)) return { onPath: true };
@@ -379,7 +380,7 @@ function cliHooks(spec, ctx, userFile, given) {
       if (viaPath) out.notes.push('the Node.js zn was installed with is gone; the hook now runs `zn` from your PATH. Run `zn hooks install ' + spec.id + '` to set it up again');
       // Run it with the PATH check was given, which is what decides whether `zn` and `node` are found.
       // Windows cannot run a .sh file directly; Claude Code runs it with sh (Git Bash) there.
-      const run = cmd.winScript ? { file: 'powershell.exe', args: ['-NoProfile', '-NonInteractive', '-EncodedCommand', cmd.winScript.replace(/^.*-EncodedCommand /, '')] }
+      const run = cmd.winScript ? { file: 'powershell.exe', args: ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(cmd.winScript, 'utf16le').toString('base64')] }
         : process.platform === 'win32' ? { file: 'sh', args: [cmd.launcher, cmd.event] } : { file: cmd.launcher, args: [cmd.event] };
       out.live = { ...run, env: ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {} };
     }
