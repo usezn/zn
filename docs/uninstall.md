@@ -1,0 +1,91 @@
+# Remove zn-gate
+
+You can remove zn-gate in one step, or piece by piece. Either way, run the commands yourself, in your own terminal: zn-gate refuses to uninstall when an AI agent or a script runs it, and your agent is not allowed to run it for you.
+
+None of this changes your code.
+
+## One step: `zn-gate uninstall`
+
+```bash
+npx -y zn-gate uninstall
+```
+
+(If you installed zn-gate with `npm install -g zn-gate`, run `zn-gate uninstall`.)
+
+What it does:
+
+1. **It looks first.** It finds what zn-gate set up for your user and for the folder you are in: the Claude Code plugin, zn's hooks for each agent, and MCP servers that `init --wrap-mcp` wrapped. It prints the list with the file paths.
+2. **It asks in your terminal.** Nothing is removed until you answer yes to "Remove what is listed above?".
+3. **It removes what it listed.** For wrapped MCP servers it puts back the copy of the config saved before wrapping (changes you made to that file since are lost). Hooks and the plugin are removed as the manual steps below do.
+4. **It keeps your vault.** The vault holds your stored secrets. It is only deleted if you answer yes to a second, separate question, and the default is no. Deleting it cannot be undone.
+5. **It ends with `zn-gate check`**, so you see that zn-gate is off, and prints the last step: `npm uninstall -g zn-gate`, which removes the program itself.
+
+To see the list without changing anything, add `--dry-run`:
+
+```bash
+npx -y zn-gate uninstall --dry-run
+```
+
+Your `.env` files are never edited by `uninstall`. If you moved their values into the vault with `env shadow`, they hold markers such as `__ZN_API_KEY__`. Put the real values back before you delete the vault: see [Your `.env` files and the vault](#your-env-files-and-the-vault).
+
+## Piece by piece
+
+Use this if you want to remove only one part. Each command is run in your own terminal.
+
+### Claude Code plugin
+
+```bash
+claude plugin uninstall zn-gate@usezn
+```
+
+Or, inside Claude Code, type `/plugin`, open the **Installed** tab, pick zn-gate and choose **Uninstall**. To also remove the usezn plugin list, run `claude plugin marketplace remove usezn`.
+
+### Hooks (Codex CLI, Cursor, OpenCode, or Claude Code without the plugin)
+
+```bash
+npx -y zn-gate hooks uninstall claude-code
+```
+
+Use `codex`, `cursor` or `opencode` instead of `claude-code` for the others. Add `--project` if you installed the hooks for one project only; run it from that project's folder. A backup of the settings file is written first. For Claude Code it also removes zn's own `secrets` MCP server. Add `--no-mcp` to leave MCP servers alone.
+
+### MCP servers wrapped by `init --wrap-mcp`
+
+```bash
+npx -y zn-gate init --revert
+```
+
+This puts back each MCP settings file as it was saved just before zn wrapped it. Changes you made to those files later, such as MCP servers you added, are lost, so add them again afterwards. It only undoes MCP wrapping: it does not remove the plugin or any hooks. If you only ever ran `init` without `--wrap-mcp`, there is nothing for it to restore.
+
+A zn-gate MCP server you added by hand (an entry named `zn-gate` in your agent's MCP settings) is not touched by any command here: delete that entry yourself.
+
+### Your `.env` files and the vault
+
+If you ran `env shadow`, your `.env` file holds markers, and the real values are in the vault. If you remove zn-gate and delete the vault without putting the values back, those values are gone. Put them back first, with the name of the encrypted copy that `env shadow` printed when you ran it:
+
+```bash
+npx -y zn-gate env unshadow .env --backup <name>
+```
+
+zn-gate keeps the vault and its settings in a `.zn` folder in your home folder. Removing the plugin, the hooks or the program leaves it there. To delete it, answer yes to the second question of `zn-gate uninstall` (it also removes the key from your system keychain), or delete the folder by hand once you have your values back. A vault cannot be recovered after that.
+
+### The program itself
+
+```bash
+npm uninstall -g zn-gate
+```
+
+If you also installed the Python package, `pip uninstall zn-gate` removes it.
+
+## Check that it is off
+
+```bash
+npx -y zn-gate check
+```
+
+`uninstall` runs this for you at the end. If it still reports something as set up, the line says which part is left and what to run.
+
+## Related
+
+- [Every command and exit code](cli.md#uninstall)
+- [Keep your `.env` values in the vault](secrets.md)
+- [Words you do not know](glossary.md)

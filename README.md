@@ -82,7 +82,7 @@ npx -y zn-gate env shadow .env
 
 After this, your own app also reads the markers in `.env`: start it with zn-gate's `run` command once you allow it ([docs/secrets.md](docs/secrets.md)). `env shadow` tells you how to undo it.
 
-New here? [First 5 minutes](docs/first-5-minutes.md). Five-minute walkthrough: [docs/secrets.md](docs/secrets.md). Limits: [docs/threat-model.md](docs/threat-model.md). Words you do not know: [docs/glossary.md](docs/glossary.md). Every command and exit code: [docs/cli.md](docs/cli.md).
+New here? [First 5 minutes](docs/first-5-minutes.md). Five-minute walkthrough: [docs/secrets.md](docs/secrets.md). Limits: [docs/threat-model.md](docs/threat-model.md). Words you do not know: [docs/glossary.md](docs/glossary.md). Every command and exit code: [docs/cli.md](docs/cli.md). Removing zn-gate: [docs/uninstall.md](docs/uninstall.md).
 
 <details>
 <summary><strong>Other ways to install</strong>: one agent at a time, other editors, Python, MCP server only, wrapping the MCP servers you already use</summary>
@@ -419,9 +419,9 @@ Runnable examples are in [`examples/`](examples/). The code API checks text for 
 
 For Codex CLI, zn also reviews the model's final answer. By default it only warns you; with `"stopReview": "block"` under `hooks` in `~/.zn/config.json`, Codex asks the model to rewrite a final answer that contains a secret value. A second opt-in, `"replaceToolOutputOnSecret": true` under `hooks` in the same file, makes Codex replace a tool result that holds a real secret with zn's stop text and carry on, so the model gets that text instead of the output. See [docs/compat.md](docs/compat.md).
 
-**Which agents are supported?** Any MCP client. `init` can rewrite configs for the agents listed under [Install](#install).
+**Which agents are supported?** Claude Code, Codex CLI, Cursor and OpenCode, through hooks (what each one supports: [docs/compat.md](docs/compat.md)). Other editors (VS Code, Windsurf, Cline, Zed, JetBrains, Continue) work as an MCP server only: [setup for each one](https://usezn.com/docs/integrations/editors/). `init` can also wrap the MCP servers you already use.
 
-**How do I remove it?** Run `npx -y zn-gate uninstall` in your own terminal. It lists what it found (the Claude Code plugin, zn's hooks for each agent, wrapped MCP servers), asks before removing, and ends with `zn-gate check`. Your vault is only deleted if you confirm that separately. `npx -y zn-gate uninstall --dry-run` shows the list and changes nothing. `init --revert` is narrower: it only puts back the MCP configs that were saved before `init --wrap-mcp` wrapped them. For a standalone server, remove the `zn-gate` entry from your agent config.
+**How do I remove it?** Run `npx -y zn-gate uninstall` in your own terminal. It lists what it found (the Claude Code plugin, zn's hooks for each agent, wrapped MCP servers), asks before removing, and ends with `zn-gate check`. Your vault is only deleted if you confirm that separately. `npx -y zn-gate uninstall --dry-run` shows the list and changes nothing. To remove one part at a time, or for the steps by agent, see the [removal guide](docs/uninstall.md). `init --revert` is narrower: it only puts back the MCP configs that were saved before `init --wrap-mcp` wrapped them. For a standalone server, remove the `zn-gate` entry from your agent config.
 
 ## Security
 

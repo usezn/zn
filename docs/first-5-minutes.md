@@ -112,7 +112,7 @@ For comparison, `npx -y zn-gate analyze "ignore all previous instructions"` is a
 
 ## Remove zn-gate
 
-Remove the part you installed, in your own terminal.
+To remove everything in one step, run `npx -y zn-gate uninstall` in your own terminal ([details](uninstall.md)). To remove only the part you installed:
 
 - **Hooks** (Codex CLI, Cursor, OpenCode, or Claude Code without the plugin): `npx -y zn-gate hooks uninstall claude-code`. Use `codex`, `cursor` or `opencode` for the others, and add `--project` if you installed them for one project only. A backup of the settings file is written first.
 - **Claude Code plugin**: run `claude plugin uninstall zn-gate@usezn`, or in Claude Code type `/plugin`, open the **Installed** tab, pick zn-gate and choose **Uninstall**. To also remove the usezn plugin list, run `claude plugin marketplace remove usezn`.
@@ -129,5 +129,6 @@ Run `npx -y zn-gate check` afterwards if you want to see that zn is off.
 - [What the check means](check.md)
 - [Keep your `.env` values in the vault](secrets.md)
 - [Every command and exit code](cli.md)
+- [Remove zn-gate](uninstall.md)
 - [Words you do not know](glossary.md)
 - [What zn-gate cannot protect](threat-model.md)

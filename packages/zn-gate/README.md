@@ -313,7 +313,7 @@ To block those too, turn on strict mode: set `ZN_STRICT=1`, or add `"strict": tr
 
 **Will it block legitimate content?** Sometimes. Use `--shadow` with `init` or `shield` to log detections without blocking while you evaluate it.
 
-**How do I remove it?** Run `npx -y zn-gate uninstall` in your own terminal. It lists what it found (the Claude Code plugin, zn's hooks for each agent, wrapped MCP servers), asks before removing, and ends with `zn-gate check`. Your vault is only deleted if you confirm that separately. `npx -y zn-gate uninstall --dry-run` shows the list and changes nothing. `init --revert` is narrower: it only puts back the MCP configs that were saved before `init --wrap-mcp` wrapped them. For a standalone server, remove the `zn-gate` entry from your agent config.
+**How do I remove it?** Run `npx -y zn-gate uninstall` in your own terminal. It lists what it found (the Claude Code plugin, zn's hooks for each agent, wrapped MCP servers), asks before removing, and ends with `zn-gate check`. Your vault is only deleted if you confirm that separately. `npx -y zn-gate uninstall --dry-run` shows the list and changes nothing. To remove one part at a time, or for the steps by agent, see the [removal guide](https://github.com/usezn/zn/blob/main/docs/uninstall.md). `init --revert` is narrower: it only puts back the MCP configs that were saved before `init --wrap-mcp` wrapped them. For a standalone server, remove the `zn-gate` entry from your agent config.
 
 ## Security
 
