@@ -133,7 +133,7 @@ handler = ZnGuardCallbackHandler(on_block="raise")
 
 The handler stops the run. With `on_block="raise"` (default) a blocked prompt, tool call or tool output raises `GuardBlockError` out of the agent: the tool does not run and the output does not reach the model. `on_block="ignore"` turns that off. `"return"` is not accepted (it raises `ValueError`), because LangChain ignores what a callback returns; any other value raises `ValueError` too.
 
-A callback cannot change what a tool returns. So with `mask_secrets=True` (default) a tool output that contains a secret also stops the run. To hide the secret and keep going, or to give the model a block message instead of the output, wrap the tool (needs `langchain-core`):
+A callback cannot change what a tool returns. So with `mask_secrets=True` (default) a tool output that contains a secret also stops the run (it fails closed instead of letting the secret reach the model). The same happens when you use the handler together with the wrapper below: the handler sees the tool's raw output before the wrapper can hide the secret, so the run stops (it fails closed). The wrapper is the way to mask: when you wrap your tools, create the handler with `mask_secrets=False` so the wrapper does the masking. To hide the secret and keep going, or to give the model a block message instead of the output, wrap the tool (needs `langchain-core`):
 
 ```python
 from langchain_core.tools import tool

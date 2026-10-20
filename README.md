@@ -126,6 +126,8 @@ python3 -m venv .venv
 .venv/bin/pip install zn-gate      # Windows: .venv\Scripts\pip install zn-gate
 ```
 
+For LangChain and LangGraph, `ZnGuardCallbackHandler` stops the run when it blocks a prompt, a tool call or a tool output, and `guard_langchain_tool(tool)` wraps a tool so its arguments are checked before it runs and its output is checked and masked before the model reads it. A callback cannot change what a tool returns, so the handler with `mask_secrets=True` (default) also stops the run on a secret in a tool output (it fails closed); to hide secrets and keep going, wrap the tool and create the handler with `mask_secrets=False`. See the [Python package guide](packages/zn-gate-py/README.md#langchain--langgraph).
+
 **zn-gate as an MCP server only** (the agent calls it when it decides to; not automatic protection):
 
 ```bash
@@ -380,7 +382,7 @@ Permissions: the action itself needs only `contents: read`; add `security-events
 
 ### pre-commit
 
-Run both checks before each commit with the [pre-commit](https://pre-commit.com) framework (needs Node.js 18 or later; ids `zn-gate-scan` and `zn-audit`): add `repos: [{repo: https://github.com/usezn/zn, rev: v1.13.0, hooks: [{id: zn-gate-scan}, {id: zn-audit}]}]` to `.pre-commit-config.yaml`. Each tag's hooks run the exact zn-gate version of that tag (`npx --yes zn-gate@1.13.0 ...`), so the `rev` you pin decides which version runs on every commit.
+Run both checks before each commit with the [pre-commit](https://pre-commit.com) framework (needs Node.js 18 or later; ids `zn-gate-scan` and `zn-audit`): add `repos: [{repo: https://github.com/usezn/zn, rev: v1.13.1, hooks: [{id: zn-gate-scan}, {id: zn-audit}]}]` to `.pre-commit-config.yaml`. Each tag's hooks run the exact zn-gate version of that tag (`npx --yes zn-gate@1.13.1 ...`), so the `rev` you pin decides which version runs on every commit.
 
 ### Repository layout
 
