@@ -17,7 +17,7 @@ import secrets
 import sys
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, TextIO, Tuple
 
 
 def _redact(text: str) -> str:
@@ -36,7 +36,7 @@ def _ensure_dir(file_path: str) -> None:
         os.makedirs(dirname, mode=0o700, exist_ok=True)
 
 
-def _open_for_append(file_path: str):
+def _open_for_append(file_path: str) -> TextIO:
     """Opens the ledger for appending. New files are created 0600 and an existing
     file that is readable by others is restricted to 0600 (POSIX only)."""
     fd = os.open(file_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)

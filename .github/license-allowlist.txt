@@ -1,0 +1,10 @@
+# SPDX identifiers the project accepts for the dependencies it ships.
+# Derived from packages/zn-gate/THIRD_PARTY_NOTICES.md (today: MIT and
+# BSD-3-Clause) plus the other common permissive licenses.
+# Used by .github/scripts/license-check.mjs (npm) and license-check-py.py (PyPI).
+# deny.toml carries the same list for Rust, plus a few Rust-only entries.
+MIT
+BSD-3-Clause
+BSD-2-Clause
+Apache-2.0
+ISC

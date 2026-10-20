@@ -48,6 +48,14 @@ concurrency:
   group: plugins-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
 
+env:
+  # Retry npm and pip downloads instead of failing a run on one network error.
+  NPM_CONFIG_FETCH_RETRIES: "5"
+  NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: "20000"
+  NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: "120000"
+  PIP_RETRIES: "5"
+  PIP_TIMEOUT: "60"
+
 jobs:
   check:
     name: Plugin checks (${{ matrix.os }}, Node.js ${{ matrix.node-version }})
@@ -59,9 +67,9 @@ jobs:
       fail-fast: false
       matrix:
         os: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["ubuntu-latest", "windows-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
-        node-version: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["20.x", "22.x", "24.x"]' || '["22.x"]') }}
-        # Pushes to next run macOS with Node.js 22.x only; every other full run tests all three.
-        exclude: ${{ fromJSON((github.event_name == 'push' && github.ref == 'refs/heads/next') && '[{"os":"macos-latest","node-version":"20.x"},{"os":"macos-latest","node-version":"24.x"}]' || '[]') }}
+        node-version: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["20.x", "22.x", "24.x", "26.x"]' || '["22.x"]') }}
+        # Pushes to next run macOS with Node.js 22.x only; every other full run tests all four.
+        exclude: ${{ fromJSON((github.event_name == 'push' && github.ref == 'refs/heads/next') && '[{"os":"macos-latest","node-version":"20.x"},{"os":"macos-latest","node-version":"24.x"},{"os":"macos-latest","node-version":"26.x"}]' || '[]') }}
     steps:
       - name: Harden the runner (egress audit)
         if: runner.os == 'Linux'

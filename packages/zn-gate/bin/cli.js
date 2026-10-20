@@ -552,7 +552,7 @@ async function handleScan(targetPath, options) {
   }
   if (format === 'text') process.stdout.write(`
 ${sym(process.env, '🛡️', undefined, '  ')}zn-gate Static Security Audit
-Target  : ${resolved}
+Target  : ${safeText(resolved)}
 Scope   : ${options.includeCode ? 'All files (prompts + code)' : 'Prompt templates, docs, configs (use --code to scan source)'}
 Files   : ${files.length} file(s) queued for audit\n
 `);
@@ -723,12 +723,12 @@ Files   : ${files.length} file(s) queued for audit\n
     return;
   }
 
-  if (files.length - notRead === 0) process.stdout.write(`${sym(process.env, '!', col.yellow)}${col.yellow(nothingScanned)}\n\n`);
+  if (files.length - notRead === 0) process.stdout.write(`${sym(process.env, '!', col.yellow)}${col.yellow(safeText(nothingScanned))}\n\n`);
   if (findings.length > 0) {
     process.stdout.write(`Findings (${findings.length}):\n`);
     for (const f of findings) {
       const label = f.type === 'secret_leak' ? 'Secret found' : 'Threat';
-      process.stdout.write(`  ${sym(process.env, '✖', col.red)}${f.file}:${f.line} ${label}\n`);
+      process.stdout.write(`  ${sym(process.env, '✖', col.red)}${safeText(f.file)}:${f.line} ${label}\n`);
       process.stdout.write(`    ${col.gray('Rule:')} ${f.rule} (${f.reason || 'Security threat detected'})\n`);
       process.stdout.write(`    ${col.gray('Line:')} ${f.sample}\n`);
       if (f.next_step) process.stdout.write(`    ${f.next_step}\n`);
@@ -892,7 +892,7 @@ async function main() {
     process.exit(0);
   }
 
-  if (args.includes('-V') || args.includes('--version') || args[0] === 'version') {
+  if (args.includes('-V') || args.includes('--version') || args[0] === 'version' || args[0] === '-v') {
     process.stdout.write(`zn-gate ${VERSION} (rules engine: ${RULES_VERSION}; scrub rules: ${SCRUB_RULES_VERSION}; audit rules: ${AUDIT_RULES_VERSION})\n`);
     process.exit(0);
   }
@@ -989,7 +989,7 @@ ${ruleLine(process.env, 60)}\n`);
     });
 
     for (const act of actions) {
-      const mark = act.status === 'error' ? sym(process.env, '✖', col.red) : act.status === 'manual_required' ? sym(process.env, '!', col.yellow) : sym(process.env, '✔', col.green);
+      const mark = act.status === 'error' ? sym(process.env, '✖', col.red) : act.status === 'manual_required' || act.status === 'skipped_unsafe' ? sym(process.env, '!', col.yellow) : sym(process.env, '✔', col.green);
       process.stdout.write(`  ${mark}${act.env.padEnd(20)} [${act.status}] ${act.serversCount ? act.serversCount + ' servers' : ''}${act.shadow ? ' (shadow mode)' : ''}\n`);
       if (act.backup) {
         process.stdout.write(`    ${sym(process.env, '↳', col.gray)}${col.gray('backup: ' + act.backup)}\n`);
@@ -1185,6 +1185,24 @@ ${sym(process.env, '🛡️', undefined, '  ')}zn-gate Status:
           mcpCommand: mcp && mcp.command ? [mcp.command, ...(Array.isArray(mcp.args) ? mcp.args : [])] : null,
         });
         for (const n of notes) process.stdout.write('  Claude Code     : ' + n + '\n');
+        if (notes.length) process.stdout.write('\n');
+      }
+    } catch (_) { /* status never fails on this check */ }
+    // zn installed through the organization's managed configuration (read-only).
+    try {
+      const mp = require('../lib/agents/managed-policy');
+      for (const [id, label] of [['claude-code', 'Claude Code'], ['codex', 'Codex CLI'], ['cursor', 'Cursor']]) {
+        let there = false;
+        try { there = Boolean(require('../lib/agents').getAdapter(id).detect()); } catch (_) { there = false; }
+        const m = there ? mp.managedInstall(id) : null;
+        if (m) process.stdout.write('  ' + label.padEnd(16) + ': zn is installed (managed): ' + m.files.join(', ') + '\n\n');
+      }
+    } catch (_) { /* status never fails on this check */ }
+    // Cursor's enterprise hooks.json (read-only).
+    try {
+      if (require('../lib/agents/cursor').detect()) {
+        const notes = require('../lib/agents/managed-policy').cursorPolicyWarnings();
+        for (const n of notes) process.stdout.write('  Cursor          : ' + n + '\n');
         if (notes.length) process.stdout.write('\n');
       }
     } catch (_) { /* status never fails on this check */ }

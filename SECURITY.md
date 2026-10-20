@@ -7,8 +7,8 @@ Upgrade to it to receive them.
 
 | Version  | Supported          |
 | -------- | ------------------ |
-| 1.12.x   | :white_check_mark: |
-| < 1.12.0 | :x:                |
+| 1.13.x   | :white_check_mark: |
+| < 1.13.0 | :x:                |
 
 Prereleases (`-alpha`, `-beta`, `-rc`) are not supported once the final release is out.
 
@@ -54,8 +54,8 @@ These reports are not accepted as vulnerabilities:
 
 1. **Private triage.** We confirm the issue, assess its severity and affected versions, and open a draft GitHub Security Advisory (or use the one you opened through private vulnerability reporting). You are invited to it.
 2. **CVE.** For an issue in a released package, we request a CVE through GitHub from the advisory.
-3. **Fix.** For a reported issue, the fix is developed and reviewed privately (for example in the advisory's temporary private fork), with tests that reproduce the issue. For an issue we find ourselves and can fix right away, the fix may go through public pull requests and be released within hours. For a patch release we ship only the fixes it needs, from a `release/X.Y.Z` branch (see [GOVERNANCE.md](GOVERNANCE.md)).
-4. **Release.** The fixed version is published to npm and PyPI by the [`Release` workflow](.github/workflows/release.yml), with signatures and provenance.
+3. **Fix.** For a reported issue, the fix is developed and reviewed privately (for example in the advisory's temporary private fork), with tests that reproduce the issue. For an issue we find ourselves, the fix may go through public pull requests: a critical or high severity fix ships in a patch release as soon as it is ready, with only the fixes it needs, from a `release/X.Y.Z` branch; a medium or low severity fix ships in the next weekly release with its advisory (see the [release schedule](GOVERNANCE.md#release-schedule)).
+4. **Release.** The fixed version is published to npm and PyPI by the [`Release` workflow](.github/workflows/release.yml), with signatures and provenance. A fix for a critical or high severity issue ships in a patch release as soon as it is ready; a fix for a medium or low severity issue ships in the next weekly release ([release schedule](GOVERNANCE.md#release-schedule)).
 5. **Disclosure.** We publish the advisory, the release notes and the changelog entry together: affected versions, impact, what to do, and credit to the reporter (unless you prefer to stay anonymous). Advisories describe the class of problem, not step-by-step exploitation.
 
 We ask you to keep the details private until the advisory is published, and we aim to publish within 90 days of your report. If a fix needs longer, we agree a date with you; if the issue is being exploited, we may publish earlier with mitigations.
@@ -94,6 +94,8 @@ We gratefully acknowledge independent security researchers who have helped prote
 
 ## Security Advisories
 
+* [GHSA-q7p5-7x6r-fm4r](https://github.com/usezn/zn/security/advisories/GHSA-q7p5-7x6r-fm4r) — *zn-gate for Python 1.2.3 to 1.13.0: the LangChain callback handler did not stop blocked tool calls or hide secrets in tool output (fixed in 1.13.1)*
+* [GHSA-qwh8-5vj5-mvj8](https://github.com/usezn/zn/security/advisories/GHSA-qwh8-5vj5-mvj8) — *zn-gate for Node.js 1.2.3 to 1.12.0: shield, check_tool_result and optional cloud analysis did not redact some provider token formats (fixed in 1.13.0)*
 * [GHSA-rccq-h3xc-j9qj](https://github.com/usezn/zn/security/advisories/GHSA-rccq-h3xc-j9qj) — *zn-gate agent hooks for Node.js 1.5.0 to 1.11.0: a protected file reached indirectly, or a command too long or slow to check, could be read or run without being checked (fixed in 1.12.0)*
 * [GHSA-9v62-q43j-crjm](https://github.com/usezn/zn/security/advisories/GHSA-9v62-q43j-crjm) — *zn-gate agent hooks for Node.js 1.5.0-beta.1 to 1.8.0: a crafted `.env`, `.npmrc` or `.znrules` file could make the secret scrubber time out and let tool output through unscrubbed (fixed in 1.8.1)*
 * [GHSA-f927-55cp-x265](https://github.com/usezn/zn/security/advisories/GHSA-f927-55cp-x265) — *zn-gate agent hooks for Node.js 1.5.0-beta.1 to 1.8.0: a crafted Codex CLI patch could write to protected files without being checked (fixed in 1.8.1)*

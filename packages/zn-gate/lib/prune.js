@@ -40,6 +40,17 @@ const SCAN_DIRS = new Set([
   'dist', 'build', 'target', 'vendor',
 ]);
 
+// What a reported name is, for the reason shown to the user. A name that is not
+// listed is build output. The Python scan keeps the same words.
+const KINDS = {
+  vendor: 'dependencies',
+  '.idea': 'editor settings',
+  '.venv': 'virtual environment',
+  venv: 'virtual environment',
+  __pycache__: 'Python cache',
+  '.eggs': 'Python build files',
+};
+
 /**
  * Decide whether to skip the directory `name` found inside `parentDir`, given
  * that the caller's list names it. Returns null when it must be read, or
@@ -53,7 +64,7 @@ function pruneInfo(name, parentDir) {
     if (!marker) return null;
   }
   if (SILENT.has(name)) return { silent: true, reason: 'skipped by name' };
-  const kind = name === 'vendor' ? 'dependencies' : 'build output';
+  const kind = KINDS[name] || 'build output';
   if (marker) return { silent: false, reason: 'skipped by name: ' + kind + ' next to ' + marker };
   return { silent: false, reason: 'skipped by name: ' + kind };
 }

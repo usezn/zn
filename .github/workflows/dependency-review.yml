@@ -1,0 +1,182 @@
+name: Dependency and license review
+
+# Informational for now: every job only reports (job summary and warnings) and
+# none of them can fail the workflow. They are not meant to be required checks.
+# Known vulnerabilities in the Rust tree stay with `cargo audit` in rust.yml;
+# this workflow adds the review of new dependencies in a pull request and the
+# license checks.
+
+on:
+  push:
+    branches: [main, next]
+    # Same manifests as pull_request below.
+    paths:
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - "deny.toml"
+      - "**/package.json"
+      - "**/package-lock.json"
+      - "**/pyproject.toml"
+      - "**/*requirements*.txt"
+      - ".github/license-allowlist.txt"
+      - ".github/scripts/license-check*"
+      - ".github/workflows/dependency-review.yml"
+  pull_request:
+    types: [ opened, synchronize, reopened, ready_for_review ]
+    # Dependency and license checks only matter when a manifest, a lockfile or a license
+    # setting changes.
+    paths:
+      # Every dependency manifest anywhere in the repository (packages, plugins, examples,
+      # workflow tools, fuzz targets), so a new dependency never skips the review.
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - "deny.toml"
+      - "**/package.json"
+      - "**/package-lock.json"
+      - "**/pyproject.toml"
+      - "**/*requirements*.txt"
+      - ".github/license-allowlist.txt"
+      - ".github/scripts/license-check*"
+      - ".github/workflows/dependency-review.yml"
+  schedule:
+    - cron: "17 7 * * 1" # weekly license check
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-review-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Retry npm and pip downloads instead of failing a run on one network error.
+  NPM_CONFIG_FETCH_RETRIES: "5"
+  NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: "20000"
+  NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: "120000"
+  PIP_RETRIES: "5"
+  PIP_TIMEOUT: "60"
+
+jobs:
+  dependency-review:
+    name: dependency review (new dependencies, informational)
+    # Only pull requests have a base to compare with. Draft pull requests skip
+    # this job; marking the pull request ready for review runs it.
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          # Report only: findings become warnings, the check does not fail.
+          warn-only: true
+          fail-on-severity: high
+          license-check: true
+          allow-licenses: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, Unicode-3.0, Zlib
+          comment-summary-in-pr: never
+
+  cargo-deny:
+    name: cargo deny (licenses and bans, informational)
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: cargo-deny@0.20.2
+      - name: cargo deny
+        run: |
+          set +e
+          cargo deny --locked check --hide-inclusion-graph licenses bans sources > deny-report.txt 2>&1
+          status=$?
+          set -e
+          {
+            echo "### cargo deny (licenses, bans, sources)"
+            echo
+            echo "Exit status: $status. Rules and allowed licenses: \`deny.toml\`."
+            echo
+            echo "Findings by kind:"
+            echo '```text'
+            grep -E '^(error|warning)' deny-report.txt | sed -E "s/ '[^']*'$//; s/ [0-9]+ duplicate/ N duplicate/" | sort | uniq -c | sort -rn
+            echo '```'
+            echo
+            echo "Licenses outside the allowlist:"
+            echo '```text'
+            grep -E -A6 '^error\[rejected\]' deny-report.txt | grep -E 'Cargo.toml:|license =' | sed -E 's#.*/([^/]+)/Cargo.toml:.*#\1#; s#.*license = #  #' | paste -d' ' - -
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat deny-report.txt
+          if [ "$status" -ne 0 ]; then
+            echo "::warning title=cargo deny::licenses, bans or sources need a look; see the job summary"
+          fi
+
+  npm-licenses:
+    name: npm licenses (zn-gate, informational)
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Install the production dependencies
+        working-directory: packages/zn-gate
+        run: npm ci --omit=dev --ignore-scripts
+      - name: Check the licenses against the allowlist
+        run: node .github/scripts/license-check.mjs packages/zn-gate/node_modules .github/license-allowlist.txt
+
+  pip-licenses:
+    name: PyPI licenses (zn-gate-py, informational)
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Install the package and the license tool in separate environments
+        run: |
+          python -m venv "$RUNNER_TEMP/tool"
+          "$RUNNER_TEMP/tool/bin/pip" install pip-licenses==5.5.5
+          python -m venv "$RUNNER_TEMP/pkg"
+          "$RUNNER_TEMP/pkg/bin/pip" install packages/zn-gate-py
+      - name: Check the licenses against the allowlist
+        run: |
+          "$RUNNER_TEMP/tool/bin/pip-licenses" --python "$RUNNER_TEMP/pkg/bin/python" --from=mixed --format=json > "$RUNNER_TEMP/licenses.json"
+          python .github/scripts/license-check-py.py "$RUNNER_TEMP/licenses.json" .github/license-allowlist.txt
