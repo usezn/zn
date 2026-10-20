@@ -107,6 +107,12 @@ test('an empty event names the agent and how to set it up again', () => {
   assert.match(res.stderr, /run `(zn|npx -y zn-gate@[\d.]+) hooks install cursor` to set up zn for Cursor again/);
 });
 
+test('an empty event from Gemini CLI names the agent and how to set it up again', () => {
+  const res = spawnSync(process.execPath, [RUNNER, 'gemini'], { input: '', encoding: 'utf8', env: { ...process.env, HOME: tmpHome(), USERPROFILE: tmpHome(), ZN_HOOK_FAIL_MODE: '', CLAUDE_PLUGIN_ROOT: '' } });
+  assert.equal(res.status, 2);
+  assert.match(res.stderr, /hooks install gemini` to set up zn for Gemini CLI again/);
+});
+
 test('an empty event from the Claude Code plugin says to update the plugin, not to run hooks install', () => {
   const res = spawnSync(process.execPath, [RUNNER, 'claude-code'], { input: '', encoding: 'utf8', env: { ...process.env, HOME: tmpHome(), USERPROFILE: tmpHome(), ZN_HOOK_FAIL_MODE: '', CLAUDE_PLUGIN_ROOT: '/example/plugin' } });
   assert.equal(res.status, 2);
