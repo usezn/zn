@@ -58,10 +58,13 @@ test('tools/call with missing params or a non-string name is -32602, with the re
   assert.equal(b.error.code, -32602);
 });
 
-test('tools/call with an unknown tool is -32601 and names the tool', async () => {
-  const [r] = await ask({ id: 1, method: 'tools/call', params: { name: 'delete_everything', arguments: {} } });
-  assert.equal(r.error.code, -32601);
-  assert.match(r.error.message, /delete_everything/);
+test('tools/call with an unknown tool names the tool: -32601 up to 2025-03-26, -32602 from 2025-06-18', async () => {
+  for (const [version, code] of [['2025-03-26', -32601], ['2025-06-18', -32602], ['2025-11-25', -32602]]) {
+    await ask({ id: 0, method: 'initialize', params: { protocolVersion: version } });
+    const [r] = await ask({ id: 1, method: 'tools/call', params: { name: 'delete_everything', arguments: {} } });
+    assert.equal(r.error.code, code, version);
+    assert.match(r.error.message, /delete_everything/);
+  }
 });
 
 test('zn_status without the cloud check says nothing leaves the machine', async () => {
