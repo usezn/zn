@@ -105,7 +105,7 @@ Prints the version and the versions of the rules. Exit code `0`. `-V` and `--ver
 ### `scan`
 
 ```bash
-zn-gate scan [path] [--format text|json|github] [--all] [--include .rst,.xml] [--exclude fixtures,legacy] [--include-home]
+zn-gate scan [path] [--format text|json|github] [--all] [--include .rst,.xml] [--exclude fixtures,legacy] [--include-home] [--no-fail]
 ```
 
 Looks through prompt templates, markdown, skills and configs for injection traps and secrets. `path` defaults to the current folder. Matched values are never printed.
@@ -115,8 +115,9 @@ Looks through prompt templates, markdown, skills and configs for injection traps
 - `--include`: more file extensions to scan.
 - `--exclude`: more folders to skip.
 - `--include-home`: also check your own MCP configs for passwords and keys written in plain text.
+- `--no-fail`: exit `0` even when something is found, for reports that should not fail a job. The report is printed the same way.
 
-Exit codes: `0` nothing found, `1` something was found or the path does not exist, `2` an unknown `--format`.
+Exit codes: `0` nothing found, or found with `--no-fail`; `1` something was found or the path does not exist, `2` an unknown `--format`.
 
 ### `audit`
 

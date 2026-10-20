@@ -430,6 +430,18 @@ def _safe_text(value: Any) -> str:
     return _UNSAFE_CHARS.sub(esc, "" if value is None else str(value))
 
 
+def _cwd_display(file_path: Path) -> str:
+    """A file as shown in a report: relative to the current directory when it is
+    under it, otherwise as given (the same as the Node.js package shows it)."""
+    try:
+        rel = _relative_to_cwd(str(file_path))
+    except ValueError:  # another drive on Windows
+        return str(file_path)
+    if rel == os.pardir or rel.startswith(os.pardir + os.sep) or os.path.isabs(rel):
+        return str(file_path)
+    return rel
+
+
 def _home_display(file_path: Path) -> str:
     """A file of the user's home as ~/..., the way the Node.js package shows it."""
     try:
@@ -555,7 +567,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
     skipped: List[Dict[str, str]] = []
     scanned = 0
     for fp in files_to_scan:
-        shown = _home_display(fp) if str(fp) in home_files else str(fp)
+        shown = _home_display(fp) if str(fp) in home_files else _cwd_display(fp)
         reason = _skip_reason(fp, str(fp) in mcp_only_files, str(fp) in home_files or str(fp) == root_file)
         if reason:
             skipped.append({"file": shown, "reason": reason})

@@ -257,6 +257,7 @@ OPTIONS:
   --all, --code       Include source code files in security scan
   --include <exts>    Custom extensions to scan (e.g. .rst,.xml)
   --exclude <dirs>    Additional directories to exclude (e.g. fixtures,legacy)
+  --no-fail           With scan: exit 0 even when threats or secrets are found
   --include-home      Also check your own MCP configs (Claude Desktop, Claude Code, Cursor, Codex,
                       Gemini, Antigravity, OpenCode, Amazon Q) for passwords and keys written in plain text
   --verbose           Enable debug logging to stderr
@@ -699,7 +700,7 @@ Files   : ${files.length} file(s) queued for audit\n
     if (files.length - notRead === 0) process.stdout.write(`::warning title=Nothing scanned::${ghMessage(nothingScanned)}\n`);
     const dirNote = files.skippedDirs.length ? ` and ${files.skippedDirs.length} director${files.skippedDirs.length === 1 ? 'y' : 'ies'} skipped` : '';
     process.stdout.write(`\n[zn-gate] Scanned ${files.length - notRead} files (${files.skipped.length} not scanned${dirNote}). Found ${totalSecrets} secrets and ${totalThreats} security threats.\n`);
-    if (totalFindings > 0) process.exitCode = 1;
+    if (totalFindings > 0 && !options.noFail) process.exitCode = 1;
     return;
   }
   if (format === 'json') {
@@ -719,7 +720,7 @@ Files   : ${files.length} file(s) queued for audit\n
       skipped_dirs: files.skippedDirs.map((s) => ({ dir: displayPath(s.dir, homeFiles), reason: s.reason })),
       ...(files.length - notRead === 0 ? { warning: nothingScanned } : {}),
     }, null, 2) + '\n');
-    if (totalFindings > 0) process.exitCode = 1;
+    if (totalFindings > 0 && !options.noFail) process.exitCode = 1;
     return;
   }
 
@@ -765,7 +766,7 @@ ${ruleLine(process.env, 77)}\n
 
   // exitCode, not process.exit(): a large report written to a pipe must be
   // flushed completely before the process ends.
-  if (totalFindings > 0) process.exitCode = 1;
+  if (totalFindings > 0 && !options.noFail) process.exitCode = 1;
 }
 
 // Secrets broker and agent hooks. Dispatched before the global option parsing
@@ -915,6 +916,7 @@ async function main() {
     tail: 20,
     includeCode: args.includes('--code') || args.includes('--all'),
     includeHome: args.includes('--include-home'),
+    noFail: args.includes('--no-fail'),
     include: null,
     exclude: null,
   };
