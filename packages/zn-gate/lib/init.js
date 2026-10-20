@@ -381,8 +381,10 @@ function resolveConfig(filePath, scope) {
   const home = realOrNull(os.homedir());
   const cwd = realOrNull(process.cwd());
   if (!real || !home || !isRegularFile(real)) return { reason: 'config is a symlink to something other than a regular file' };
-  if (!isInside(real, home)) return { reason: 'config is a symlink that points outside your home folder' };
-  if (cwd && isInside(real, cwd)) return { reason: 'config is a symlink that points into the current project' };
+  if (!isInside(real, home)) {
+    return { reason: 'config is a symlink that points outside your home folder; move the real file into your home folder, or wrap this server by hand' };
+  }
+  if (cwd && cwd !== home && isInside(real, cwd)) return { reason: 'config is a symlink that points into the current project' };
   return { target: real };
 }
 
@@ -393,14 +395,38 @@ function atomicWrite(target, content) {
     mode = fs.statSync(target).mode & 0o777;
   } catch {}
   const tmpFile = path.join(path.dirname(target), `.${path.basename(target)}.zn-tmp.${process.pid}.${Date.now()}`);
+  let created = false;
   try {
     fs.writeFileSync(tmpFile, content, { flag: 'wx', mode });
-    fs.renameSync(tmpFile, target);
-  } catch (err) {
+    created = true;
     try {
-      fs.unlinkSync(tmpFile);
+      fs.chmodSync(tmpFile, mode);
     } catch {}
+    renameWithRetry(tmpFile, target);
+  } catch (err) {
+    if (created) {
+      try {
+        fs.unlinkSync(tmpFile);
+      } catch {}
+    }
     throw err;
+  }
+}
+
+/** Renames over target; on Windows-style sharing errors waits briefly and retries. */
+function renameWithRetry(from, to) {
+  const busy = new Set(['EPERM', 'EACCES', 'EBUSY']);
+  for (let attempt = 1; ; attempt++) {
+    try {
+      fs.renameSync(from, to);
+      return;
+    } catch (err) {
+      if (!busy.has(err.code)) throw err;
+      if (attempt >= 5) {
+        throw new Error(`could not replace ${to}: it is in use by another program; close it and run again`);
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 75);
+    }
   }
 }
 

@@ -317,3 +317,58 @@ test('the CLI marks skipped_unsafe with the warning symbol', opts, () => {
     assert.match(line, /!\s*Cursor/);
   } finally { clean(d); }
 });
+
+test('home scope with cwd equal to home still follows a dotfiles symlink', opts, () => {
+  const dotfiles = path.join(FAKE_HOME, 'dotfiles-cwd');
+  const link = path.join(FAKE_HOME, 'mcp-link-cwd.json');
+  try {
+    fs.mkdirSync(dotfiles, { recursive: true });
+    const real = path.join(dotfiles, 'mcp.json');
+    fs.writeFileSync(real, CFG);
+    fs.symlinkSync(real, link);
+    let r = inDir(FAKE_HOME, () => configureEnvironments({ envList: env(link) }));
+    assert.equal(r.actions[0].status, 'shielded');
+    assert.match(fs.readFileSync(real, 'utf8'), /zn-gate/);
+    r = inDir(FAKE_HOME, () => configureEnvironments({ envList: env(link), revert: true }));
+    assert.equal(r.actions[0].status, 'reverted');
+    assert.equal(fs.readFileSync(real, 'utf8'), CFG);
+  } finally {
+    clean(dotfiles, link);
+    for (const n of fs.readdirSync(FAKE_HOME)) if (n.startsWith('mcp-link-cwd.json.bak.')) clean(path.join(FAKE_HOME, n));
+  }
+});
+
+test('rename retries on a busy file and then succeeds; always busy gives a clear error', () => {
+  const d = tmp();
+  const realRename = fs.renameSync;
+  try {
+    const f = path.join(d, 'mcp.json');
+    fs.writeFileSync(f, CFG);
+    let calls = 0;
+    fs.renameSync = (a, b) => { if (++calls <= 2) { const e = new Error('busy'); e.code = 'EBUSY'; throw e; } return realRename(a, b); };
+    let r = configureEnvironments({ envList: env(f) });
+    assert.equal(r.actions[0].status, 'shielded');
+    assert.equal(calls, 3);
+    fs.writeFileSync(f, CFG);
+    calls = 0;
+    fs.renameSync = () => { calls++; const e = new Error('busy'); e.code = 'EPERM'; throw e; };
+    r = configureEnvironments({ envList: env(f) });
+    assert.equal(r.actions[0].status, 'error');
+    assert.match(r.actions[0].error, /could not replace .*in use by another program/);
+    assert.equal(calls, 5);
+    assert.equal(fs.readFileSync(f, 'utf8'), CFG);
+    assert.equal(fs.readdirSync(d).filter((n) => n.includes('zn-tmp')).length, 0);
+  } finally { fs.renameSync = realRename; clean(d); }
+});
+
+test('original file mode survives the umask', { skip: process.platform === 'win32' && 'POSIX modes only' }, () => {
+  const d = tmp();
+  try {
+    const f = path.join(d, 'mcp.json');
+    fs.writeFileSync(f, CFG);
+    fs.chmodSync(f, 0o664);
+    const old = process.umask(0o077);
+    try { configureEnvironments({ envList: env(f) }); } finally { process.umask(old); }
+    assert.equal(fs.statSync(f).mode & 0o777, 0o664);
+  } finally { clean(d); }
+});
