@@ -40,7 +40,9 @@ const O_NOFOLLOW = fs.constants.O_NOFOLLOW || 0;
 const SERVER_NAME = 'zn-secrets';
 let SERVER_VERSION = '0.0.0';
 try { SERVER_VERSION = require('../../package.json').version; } catch (_) { /* keep default */ }
-const PROTOCOL_VERSION = '2024-11-05';
+const proto = require('../mcp-protocol');
+
+const PROTOCOL_VERSION = proto.LATEST_PROTOCOL_VERSION;
 
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 30000;
@@ -520,6 +522,22 @@ function createSecretsServer(opts = {}) {
     }
   }
 
+  // Version agreed in initialize (one client per stdio process); until then the latest.
+  let negotiated = null;
+
+  /** Handles a JSON-RPC batch: an array of replies, or one error when batches are not allowed (only 2025-03-26 has them). */
+  async function handleBatch(messages) {
+    if (!proto.allowsBatching(negotiated) || messages.length === 0) {
+      return { jsonrpc: '2.0', id: null, error: { ...proto.BATCH_REJECTED } };
+    }
+    const replies = [];
+    for (const m of messages) {
+      const r = await handleMessage(m);
+      if (r) replies.push(r);
+    }
+    return replies.length ? replies : null;
+  }
+
   /** Returns the JSON-RPC response object, or null for notifications. */
   async function handleMessage(msg) {
     const { id, method, params } = msg || {};
@@ -527,17 +545,18 @@ function createSecretsServer(opts = {}) {
     const fail = (code, message) => ({ jsonrpc: '2.0', id, error: { code, message } });
     switch (method) {
       case 'initialize':
-        return ok({ protocolVersion: PROTOCOL_VERSION, capabilities: { tools: {} }, serverInfo: { name: SERVER_NAME, version: SERVER_VERSION } });
+        negotiated = proto.negotiateProtocolVersion(params);
+        return ok({ protocolVersion: negotiated, capabilities: { tools: {} }, serverInfo: { name: SERVER_NAME, version: SERVER_VERSION } });
       case 'notifications/initialized':
         return null;
       case 'ping':
         return ok({});
       case 'tools/list':
-        return ok({ tools: TOOLS });
+        return ok({ tools: proto.toolsForVersion(TOOLS, negotiated) });
       case 'tools/call': {
         if (!params || typeof params.name !== 'string') return fail(-32602, 'Invalid params: name is required');
         const result = await callTool(params.name, params.arguments || {});
-        if (!result) return fail(-32601, "Tool '" + params.name + "' not found. " + NO_GET);
+        if (!result) return fail(proto.unknownToolCode(negotiated), "Tool '" + params.name + "' not found. " + NO_GET);
         return ok(result);
       }
       default:
@@ -545,7 +564,7 @@ function createSecretsServer(opts = {}) {
     }
   }
 
-  return { handleMessage, callTool, TOOLS };
+  return { handleMessage, handleBatch, callTool, TOOLS };
 }
 
 function startSecretsMcp(opts = {}) {
@@ -561,10 +580,10 @@ function startSecretsMcp(opts = {}) {
       process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }) + '\n');
       return;
     }
-    const res = await server.handleMessage(msg);
+    const res = Array.isArray(msg) ? await server.handleBatch(msg) : await server.handleMessage(msg);
     if (res) process.stdout.write(JSON.stringify(res) + '\n');
   });
   rl.on('close', () => process.exit(0));
 }
 
-module.exports = { createSecretsServer, startSecretsMcp, TOOLS, SERVER_NAME };
+module.exports = { createSecretsServer, startSecretsMcp, TOOLS, SERVER_NAME, PROTOCOL_VERSION };
