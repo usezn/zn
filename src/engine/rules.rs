@@ -22,7 +22,10 @@ impl ManagedRuleset {
                 "rm", "format", "mkfs", "dd", "chmod", "chown", "shutdown", "reboot",
             ];
             let folded_tool = fold_system1(tool_name);
-            let folded_args = fold_system1(arguments);
+            // A JSON key named "format" is an ordinary parameter
+            // (`{"format":"csv"}`), not the format command, so that key alone
+            // is dropped. Its value and every other key are still checked.
+            let folded_args = strip_format_keys(&fold_system1(arguments));
             // Each part of the tool name is checked whole (lowercased, so
             // "ShutDown" and "chMod" count) and split on camelCase.
             let tool_hit = folded_tool
@@ -81,6 +84,30 @@ impl ManagedRuleset {
 
         Ok(())
     }
+}
+
+/// Remove the word `format` where it is a JSON key (`"format"` followed by a
+/// colon), e.g. `{"format":"csv"}`. Matching is on the raw text and
+/// case-insensitive; an escaped or oddly spaced key does not match and is still
+/// treated as the command word (fail closed).
+fn strip_format_keys(text: &str) -> String {
+    let lower = text.to_ascii_lowercase();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < text.len() {
+        if lower[i..].starts_with("\"format\"") {
+            let rest = &lower[i + 8..];
+            if rest.trim_start().starts_with(':') {
+                out.push(' ');
+                i += 8;
+                continue;
+            }
+        }
+        let ch = text[i..].chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
 }
 
 /// A word of a tool name that names a restricted command. Joined forms
@@ -253,6 +280,46 @@ mod tests {
             "formatted_output",
         ] {
             assert!(ManagedRuleset::evaluate(&cfg(), tool, "").is_ok(), "{tool}");
+        }
+    }
+
+    #[test]
+    fn test_format_parameter_key_does_not_block() {
+        for args in [
+            r#"{"format":"csv"}"#,
+            r#"{"path":"a.txt","format" : "json","pretty":true}"#,
+            r#"{"Format":"markdown"}"#,
+            r#"{"options":{"format":"yaml"}}"#,
+        ] {
+            assert!(
+                ManagedRuleset::evaluate(&cfg(), "export_data", args).is_ok(),
+                "{args}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_format_key_exemption_keeps_true_positives() {
+        for args in [
+            r#"{"format":"csv","command":"rm -rf /"}"#,
+            r#"{"command":"rm -rf /","format":"csv"}"#,
+            r#"{"format":"rm"}"#,
+            r#"{"format":"shutdown now"}"#,
+            r#"{"action":"format"}"#,
+            r#"{"cmd":"format c:"}"#,
+            r#"{"cmd":"mkfs.ext4 /dev/sda"}"#,
+            r#"{"cmd":"dd if=/dev/zero of=/dev/sda"}"#,
+            r#"{"cmd":"chmod 777 /etc"}"#,
+            r#"{"cmd":"chown root x"}"#,
+            r#"{"cmd":"reboot"}"#,
+            r#"{"cmd":"x","cmd":"rm -rf /"}"#,
+            r#"{"cmd":"\"format\" c:"}"#,
+            "format c:",
+        ] {
+            assert!(
+                ManagedRuleset::evaluate(&cfg(), "exec_command", args).is_err(),
+                "{args}"
+            );
         }
     }
 

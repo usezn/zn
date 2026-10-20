@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- The restricted-command rule no longer blocks a `format` parameter such as `{"format":"csv"}`. Commands named in the arguments, such as `format c:` or `rm -rf`, are still blocked.
+
+### Fixed
+- The restricted-command rule no longer blocks a `format` parameter such as `{"format":"csv"}`. Commands named in the arguments, such as `format c:` or `rm -rf`, are still blocked.
+
 ## [1.13.0] - 2026-10-19
 
 zn-gate 1.13.0 adds `zn-gate connect`, which turns on the optional cloud check for `analyze_prompt` with an analysis-only API key kept in your system keychain, and `zn-gate disconnect`, which can also revoke that key on usezn.com. It also adds `zn-gate report`, a local summary of what zn-gate did in the last days, and the agent hooks now check what a typed skill or command expands into and the code that shells and wrappers run from a string. zn-gate still needs no account and sends nothing by default. This release also fixes how a damaged audit log is handled (it is reported instead of crashing, and never used to start a new chain) and how several programs writing to it at once keep its hash chain intact and tightens when the saved cloud key can be used. Update with `npm install -g zn-gate@1.13.0` and `pip install -U zn-gate`.
