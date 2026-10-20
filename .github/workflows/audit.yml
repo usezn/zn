@@ -1,53 +1,27 @@
-name: Lint and audit
+name: Dependency audit
 
+# Reports known advisories for the dependencies of both packages. It runs on pushes to main and next and
+# every day, not on pull requests: an advisory depends on the day it is published more than on the
+# change, and these two jobs never fail the run. eslint runs in the Lint job of ci.yml.
 on:
   push:
     branches: [main, next]
-    paths: ["packages/**", ".github/eslint/**", ".github/audit-requirements.txt", ".github/workflows/audit.yml"]
-  pull_request:
-    types: [ opened, synchronize, reopened, ready_for_review ]
-    paths: ["packages/**", ".github/eslint/**", ".github/audit-requirements.txt", ".github/workflows/audit.yml"]
+    paths: ["packages/**", ".github/audit-requirements.txt", ".github/workflows/audit.yml"]
   schedule:
-    - cron: "41 6 * * 1" # weekly advisory check
+    - cron: "41 6 * * *" # daily advisory check
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: audit-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: audit-${{ github.run_id }}
+  cancel-in-progress: false
 
 jobs:
-  eslint:
-    name: eslint (zn-gate)
-    # Draft pull requests skip this job; marking the pull request ready for review runs it.
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Harden the runner (egress audit)
-        if: runner.os == 'Linux'
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
-        with:
-          egress-policy: audit
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 22
-      - name: Install the lint tooling
-        working-directory: .github/eslint
-        run: npm ci --ignore-scripts
-      - name: eslint
-        working-directory: packages/zn-gate
-        run: ../../.github/eslint/node_modules/.bin/eslint -c ../../.github/eslint/eslint.config.mjs --max-warnings 0 .
-
   # The two audits below only report for now: they never fail the workflow.
   npm-audit:
     name: npm audit (zn-gate, informational)
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 10
     continue-on-error: true
@@ -69,7 +43,6 @@ jobs:
 
   pip-audit:
     name: pip-audit (zn-gate-py, informational)
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 10
     continue-on-error: true

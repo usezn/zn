@@ -131,7 +131,7 @@ test('Codex: valid TOML in the documented layout, recognized by the policy check
   const data = parseToml(plain).data;
   assert.equal(data.allow_managed_hooks_only, undefined);
   assert.equal(data.features.hooks, true);
-  assert.deepEqual(Object.keys(data.hooks).sort(), ['PermissionRequest', 'PostToolUse', 'PreToolUse', 'Stop', 'UserPromptSubmit']);
+  assert.deepEqual(Object.keys(data.hooks).sort(), ['PermissionRequest', 'PostToolUse', 'PreToolUse', 'SessionStart', 'Stop', 'SubagentStart', 'UserPromptSubmit']);
   for (const groups of Object.values(data.hooks)) {
     assert.equal(groups.length, 1);
     assert.equal(groups[0].hooks.length, 1);

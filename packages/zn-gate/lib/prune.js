@@ -22,9 +22,12 @@ const MARKERS = {
 };
 
 // Pruned without a report: dependency stores, version control and tool caches.
+// Editor and virtual-environment folders (.idea, .venv, venv, __pycache__,
+// .eggs) are not here: a project can keep an agent file in them, so they are
+// skipped but reported.
 const SILENT = new Set([
-  'node_modules', '.git', '.hg', '.svn', '.next', '.nuxt', '.turbo', '.venv', 'venv', '__pycache__', '.eggs',
-  '.tox', '.mypy_cache', '.pytest_cache', '.ruff_cache', '.gradle', '.idea', 'Pods', 'bower_components',
+  'node_modules', '.git', '.hg', '.svn', '.next', '.nuxt', '.turbo',
+  '.tox', '.mypy_cache', '.pytest_cache', '.ruff_cache', '.gradle', 'Pods', 'bower_components',
   '.cache', 'site-packages', '.terraform', '.yarn', '.pnpm-store',
 ]);
 
