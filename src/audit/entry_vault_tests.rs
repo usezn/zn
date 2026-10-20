@@ -318,12 +318,10 @@ fn db_path_returns_the_configured_path() {
 #[test]
 fn new_fails_for_unopenable_path() {
     let dir = TempDir::new().unwrap();
-    let path = dir
-        .path()
-        .join("missing-subdir")
-        .join("audit.db")
-        .to_string_lossy()
-        .into_owned();
+    // The parent "directory" is a regular file, so it cannot be created or used.
+    let blocker = dir.path().join("not-a-dir");
+    std::fs::write(&blocker, b"x").unwrap();
+    let path = blocker.join("audit.db").to_string_lossy().into_owned();
     assert!(AuditVault::new(&path, None).is_err());
 }
 
