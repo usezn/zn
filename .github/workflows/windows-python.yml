@@ -21,6 +21,14 @@ concurrency:
   group: windows-python-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
+env:
+  # Retry npm and pip downloads instead of failing a run on one network error.
+  NPM_CONFIG_FETCH_RETRIES: "5"
+  NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: "20000"
+  NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: "120000"
+  PIP_RETRIES: "5"
+  PIP_TIMEOUT: "60"
+
 jobs:
   windows-python:
     name: Windows (Python 3.12)
@@ -38,10 +46,8 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: |
-            packages/zn-gate-py/pyproject.toml
-            .github/ci-test-requirements.txt
+          # No pip cache: the test tools are small and hash-pinned, and each cache key saved a
+          # new 200-350 MB copy that pushed the repository toward its 10 GB cache limit.
       - name: Install package and test dependencies
         # Test tools pinned with hashes; the package itself has no dependencies.
         run: |
