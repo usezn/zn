@@ -46,6 +46,7 @@ const os = require('os');
 const path = require('path');
 const cfg = require('./config-file');
 const launcher = require('./launcher');
+const runtime = require('./runtime');
 const { whichSync } = require('../broker/markers');
 
 const id = 'cursor';
@@ -190,7 +191,7 @@ function commandFor(opts = {}) {
     return platform === 'win32' && !opts.command ? cfg.hookCommandWindows(id, opts) : cfg.hookCommand(id, opts);
   }
   const node = opts.nodePath || process.execPath;
-  const runner = opts.runnerPath || cfg.runnerPath();
+  const runner = runtime.stableRunner(opts.runnerPath || cfg.runnerPath(), opts);
   if (platform === 'win32') {
     // Cursor wraps hook commands in PowerShell: the same three steps, inline.
     return (event) => {

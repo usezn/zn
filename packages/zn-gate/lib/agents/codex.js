@@ -76,6 +76,7 @@ const path = require('path');
 const cfg = require('./config-file');
 const { whichSync } = require('../broker/markers');
 const launcher = require('./launcher');
+const runtime = require('./runtime');
 
 const id = 'codex';
 // MCP calls are checked before they run: their arguments go through the same
@@ -367,7 +368,7 @@ function handlerFor(opts = {}) {
   if (opts.command || (opts.scope || 'user') === 'project') return plain;
   const platform = opts.platform || process.platform;
   const node = opts.nodePath || process.execPath;
-  const runner = opts.runnerPath || cfg.runnerPath();
+  const runner = runtime.stableRunner(opts.runnerPath || cfg.runnerPath(), opts);
   const file = platform === 'win32' ? null : launcher.writeLauncher(id, node, runner, opts);
   return (event) => {
     const h = plain();

@@ -71,6 +71,14 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
   install zn-gate again for the Node.js you use now: run `npm install -g zn-gate`, then `zn hooks install <agent>`, in your own terminal
   ```
 
+- **The hook runs from the npx cache (FRAGILE).**
+
+  ```text
+  FRAGILE: its hook runs zn-gate from the npx cache (<path>), which npm can delete at any time, and then the hook stops working. Fix: run `npm install -g zn-gate`, then `zn hooks install <agent>`, in your own terminal
+  ```
+
+  The hook works today, but an older zn-gate wrote the path of npm's temporary `npx` cache into your agent's settings. If that folder is cleaned, the hook can no longer start. Run the fix once. Current versions keep their own copy under `~/.zn/runtime` when you use `npx -y zn-gate hooks install`, so this does not come back.
+
 - **The launcher script of the hook is gone.**
 
   ```text

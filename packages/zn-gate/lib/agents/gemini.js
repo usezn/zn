@@ -47,6 +47,7 @@ const os = require('os');
 const path = require('path');
 const cfg = require('./config-file');
 const launcher = require('./launcher');
+const runtime = require('./runtime');
 const { whichSync } = require('../broker/markers');
 
 const id = 'gemini';
@@ -223,7 +224,7 @@ function commandFor(opts = {}) {
   const scope = opts.scope || 'user';
   if (opts.command || scope === 'project') return cfg.hookCommand(id, opts);
   const node = opts.nodePath || process.execPath;
-  const runner = opts.runnerPath || cfg.runnerPath();
+  const runner = runtime.stableRunner(opts.runnerPath || cfg.runnerPath(), opts);
   if (platform === 'win32') {
     const script = launcher.windowsScript(id, 'BeforeTool', node, runner);
     return script ? launcher.windowsScriptCommand(script) : cfg.hookCommandWindows(id, opts);

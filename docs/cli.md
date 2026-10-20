@@ -378,6 +378,8 @@ Adds or removes the zn hooks of a coding agent. `<agent>` is `claude-code`, `cod
 
 Adds the hooks, and the `secrets` MCP server unless `--no-mcp` is given. A backup of the settings is written first.
 
+It is safe to run it with `npx -y zn-gate hooks install <agent>`. `npx` keeps zn-gate in a temporary cache that npm can delete at any time, so zn copies what its hooks need to `~/.zn/runtime/<version>/zn-gate` and the hooks use that copy. For updates, install zn-gate with `npm install -g zn-gate` and run `zn hooks install <agent>` again.
+
 #### `hooks uninstall`
 
 Removes them again.

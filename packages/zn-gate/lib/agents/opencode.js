@@ -43,6 +43,7 @@ const path = require('path');
 const { whichSync } = require('../broker/markers');
 const { writeFileAtomic } = require('../broker/files');
 const cfg = require('./config-file');
+const runtime = require('./runtime');
 const { patchScan, PATCH_SCAN_CAP } = require('./codex');
 
 const id = 'opencode';
@@ -158,7 +159,7 @@ function pluginSource(opts = {}) {
   // instead of naming this user's node and runner.
   const project = (opts.scope || 'user') === 'project';
   const node = JSON.stringify((opts.nodePath || process.execPath).replace(/\\/g, '/'));
-  const runner = JSON.stringify((opts.runnerPath || cfg.runnerPath()).replace(/\\/g, '/'));
+  const runner = JSON.stringify((project ? (opts.runnerPath || cfg.runnerPath()) : runtime.stableRunner(opts.runnerPath || cfg.runnerPath(), opts)).replace(/\\/g, '/'));
   const launch = project ? 'const NODE = "zn";\nconst RUNNER = null;' : `const NODE = ${node};\nconst RUNNER = ${runner};`;
   const argv = project ? '["hook", "opencode"]' : '[RUNNER, "opencode"]';
   // On Windows `zn` is zn.cmd, which spawn runs only through a shell. The

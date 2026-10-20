@@ -70,6 +70,7 @@ const { shQuote, portablePath } = require('../shell-quote');
 const { claudeCodePolicyWarnings } = require('./managed-policy');
 const { hooksOf } = require('./config-file');
 const launcher = require('./launcher');
+const runtime = require('./runtime');
 
 const id = 'claude-code';
 
@@ -333,7 +334,7 @@ function ourHooks(command) {
 function commandFor(opts = {}) {
   if (opts.command || (opts.scope || 'user') === 'project') return hookCommand(opts);
   const node = opts.nodePath || process.execPath;
-  const runner = opts.runnerPath || runnerPath();
+  const runner = runtime.stableRunner(opts.runnerPath || runnerPath(), opts);
   const file = launcher.writeLauncher(id, node, runner, opts);
   return (event) => launcher.launcherCommand(file, event, opts.platform);
 }

@@ -481,7 +481,7 @@ async function hooks(args, io) {
   if (report.mcp) out(io, '  MCP server "secrets": ' + report.mcp);
   for (const w of report.warnings || []) out(io, '  note: ' + w);
   if (action === 'install' && /_npx[\\/]/.test(__dirname)) {
-    out(io, '  note: zn is running from the npx cache; install it (npm i -g zn-gate) so the hook path stays valid.');
+    out(io, '  note: zn is running from a temporary npx copy, so the hooks use a copy of zn-gate that zn keeps in ' + require('../agents/runtime').runtimeDir({ home: io.home, env: io.env }) + '. To get updates, install it (npm i -g zn-gate) and run this again.');
   }
   return 0;
 }

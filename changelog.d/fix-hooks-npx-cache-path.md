@@ -1,0 +1,2 @@
+### Security
+- `npx -y zn-gate hooks install <agent>` no longer writes the path of npm's temporary `npx` cache into your agent's settings. If npm cleaned that cache, the hook could no longer start (and some agents then let the call through unchecked). zn now keeps its own copy of what the hooks need in `~/.zn/runtime/<version>/zn-gate` and the hooks use it, for Claude Code, Codex CLI, Cursor, Gemini CLI, Antigravity and OpenCode. `zn-gate check` flags a hook installed by an older version that still points into the npx cache, with the fix.

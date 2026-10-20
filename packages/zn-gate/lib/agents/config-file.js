@@ -8,6 +8,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const runtime = require('./runtime');
 const { writeFileAtomic } = require('../broker/files');
 const { shQuote, portablePath, windowsCommand, windowsCommandScript } = require('../shell-quote');
 
@@ -79,7 +80,7 @@ function hookCommand(agentId, opts = {}) {
   if (opts.command) return opts.command;
   if ((opts.scope || 'user') === 'project') return 'zn hook ' + agentId;
   const platform = opts.platform || process.platform;
-  return quoteArg(opts.nodePath || process.execPath, platform) + ' ' + quoteArg(opts.runnerPath || runnerPath(), platform) + ' ' + agentId;
+  return quoteArg(opts.nodePath || process.execPath, platform) + ' ' + quoteArg(runtime.stableRunner(opts.runnerPath || runnerPath(), opts), platform) + ' ' + agentId;
 }
 
 /**
@@ -91,7 +92,7 @@ function hookCommand(agentId, opts = {}) {
  */
 function hookCommandWindows(agentId, opts = {}) {
   if ((opts.scope || 'user') === 'project') return 'zn hook ' + agentId;
-  return windowsCommand(opts.nodePath || process.execPath, [opts.runnerPath || runnerPath()], [agentId]);
+  return windowsCommand(opts.nodePath || process.execPath, [runtime.stableRunner(opts.runnerPath || runnerPath(), opts)], [agentId]);
 }
 
 /**

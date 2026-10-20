@@ -349,6 +349,11 @@ function cliHooks(spec, ctx, userFile, given) {
     return out;
   }
   const cmd = parseCommand(read.command, spec.id);
+  if (cmd.runner && !cmd.unreadable && require('./agents/runtime').inTemporaryCopy(cmd.runner)) {
+    // Works today, but npm can delete its npx cache at any time (npm cache clean, a cleanup tool, a new npm).
+    out.fragile = true;
+    out.notes.push('FRAGILE: its hook runs zn-gate from the npx cache (' + cmd.runner + '), which npm can delete at any time, and then the hook stops working. Fix: run `npm install -g zn-gate`, then `zn hooks install ' + spec.id + '`, in your own terminal');
+  }
   if (cmd.launcher) {
     // The launcher runs the Node.js it was installed with, else `zn` from the PATH, else it blocks (see launcher.js).
     const isFile = (f) => { try { return fs.statSync(f).isFile(); } catch (err) { return false; } };
