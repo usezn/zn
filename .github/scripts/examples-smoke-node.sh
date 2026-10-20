@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke test for the Node examples (examples/node-basic, examples/custom-rules).
+# Smoke test for the Node examples (examples/node-basic, examples/custom-rules, examples/openai-agents-js, examples/langchain-js).
 #
 # Packs packages/zn-gate with `npm pack`, installs the tarball into a copy of each example, and runs the
 # example with no network (an empty network namespace) and no API keys. Each example must print the text
@@ -20,6 +20,9 @@ EXAMPLES=(
   "node-basic|index.js|Verdict: block|Cannot find module"
   "node-basic|index.js|Safe to ingest: false|Cannot find module"
   "custom-rules|demo.js|Custom rule verdict: block|Cannot find module"
+  "openai-agents-js|index.mjs|[REDACTED_AWS_KEY]|Cannot find module"
+  "openai-agents-js|index.mjs|blocked the call to 'read_file'|Cannot find module"
+  "langchain-js|index.js|zn-gate demo OK|zn-gate demo FAILED"
 )
 
 echo "Packing packages/zn-gate"
@@ -27,13 +30,19 @@ echo "Packing packages/zn-gate"
 TARBALL="$(ls "$WORK"/zn-gate-*.tgz)"
 
 declare -A OUT
-for name in node-basic custom-rules; do
+for name in node-basic custom-rules openai-agents-js langchain-js; do
   entry="$(printf '%s\n' "${EXAMPLES[@]}" | awk -F'|' -v n="$name" '$1==n {print $2; exit}')"
   dir="$WORK/$name"
   mkdir "$dir"
   cp -a "$ROOT/examples/$name/." "$dir/"
   # The tarball bundles its one dependency, so the install needs no registry.
-  (cd "$dir" && npm init -y >/dev/null && npm install --offline --ignore-scripts --no-audit --no-fund "$TARBALL" >/dev/null)
+  if [ -f "$dir/package-lock.json" ]; then
+    # Examples with their own dependencies install them from the lockfile (the run itself stays offline),
+    # then swap in the packed zn-gate.
+    (cd "$dir" && npm ci --ignore-scripts --no-audit --no-fund >/dev/null && npm install --no-save --ignore-scripts --no-audit --no-fund "$TARBALL" >/dev/null)
+  else
+    (cd "$dir" && npm init -y >/dev/null && npm install --offline --ignore-scripts --no-audit --no-fund "$TARBALL" >/dev/null)
+  fi
   echo "Running examples/$name/$entry offline"
   run=(env -i PATH="$PATH" HOME="$WORK/home" node "$entry")
   mkdir -p "$WORK/home"
