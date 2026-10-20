@@ -12,11 +12,13 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 | [Troubleshooting](troubleshooting.md) | The messages people meet first, and what to do for each | Everyone |
 | [Glossary](glossary.md) | Short meanings of words used in these docs | Newcomers |
 | [Upgrading](upgrading.md) | What to do when you update zn-gate | Everyone |
+| [Command line reference](cli.md) | Every command, option and exit code | Everyone |
 
 ## Everyday use
 
 | Guide | What it covers | For whom |
 |---|---|---|
+| [Protect MCP servers](shield.md) | Wrap an MCP server with the shield, shadow mode and tool pins | Everyone who uses MCP servers |
 | [Reach](reach.md) | What the coding agents on your machine can reach (secrets by name, credential files, MCP servers) | Everyone |
 | [Report](report.md) | A weekly summary of what zn-gate blocked and hid | Everyone |
 | [Audit](audit.md) | Review a repository's agent configuration before you open it | Developers, reviewers |

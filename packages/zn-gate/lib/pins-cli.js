@@ -18,9 +18,12 @@ const messages = require('./messages');
 function ask(question) {
   return new Promise((resolve) => {
     const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+    // End of input before an answer counts as no answer, so the approval is refused.
+    rl.on('close', () => resolve(''));
     rl.question(question, (answer) => {
-      rl.close();
+      // Resolve before closing: close emits 'close', which would otherwise win with ''.
       resolve(String(answer || '').trim());
+      rl.close();
     });
   });
 }

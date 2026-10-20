@@ -84,6 +84,13 @@ placeholder (`changeme123`, `<key>`), a reference (`${API_KEY}`,
 `__ZN_STRIPE_KEY__`) or code. Store the value with `zn secret set NAME` and
 write `__ZN_NAME__` in the prompt instead.
 
+The block message names the credential when the text shows its name, for example
+`this prompt was not sent because it contains a secret (DB_PASSWORD)`. The value is never shown.
+
+A value that says it is fake is a placeholder and is not blocked, on purpose, so examples and test data still work.
+`STRIPE_KEY=FAKE_NOT_A_REAL_KEY_1234` passes silently. A value counts as fake when it contains a word such as
+FAKE, DUMMY, EXAMPLE, MOCK, SAMPLE, PLACEHOLDER or CHANGEME. Use a real value only through the vault.
+
 Codex runs new hooks only after you trust them: open Codex and use `/hooks`.
 
 On a computer managed by an organization, Claude Code can be set up to ignore
