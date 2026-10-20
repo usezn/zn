@@ -1,0 +1,2 @@
+### Security
+- `zn-gate init --revert` now restores only the newest `<config>.bak.<timestamp>` backup that zn-gate itself wrote, and `init` (wrap, dry run, shadow and revert) skips with a message any agent config or backup that is a symlink or sits in another directory, so a repository's project-level config can no longer redirect a restore onto your own MCP config or copy a private file into the project.

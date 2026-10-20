@@ -322,6 +322,68 @@ function scanEnvironments(customEnvList = null) {
 }
 
 /**
+ * Symlink-safe backup helpers. A config path can be controlled by a repository
+ * (the project-level agent config), so backups are never chosen by name order
+ * and nothing is read or written through a symlink.
+ */
+function isRegularFile(p) {
+  try {
+    return fs.lstatSync(p).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function sameRealDir(a, b) {
+  try {
+    return fs.realpathSync(path.dirname(a)) === fs.realpathSync(path.dirname(b));
+  } catch {
+    return false;
+  }
+}
+
+/** Newest "<file>.bak.<digits>" next to filePath (largest number), or null. */
+function latestBackup(filePath) {
+  const dir = path.dirname(filePath);
+  const prefix = path.basename(filePath) + '.bak.';
+  let best = null;
+  let bestN = -1;
+  let names;
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return null;
+  }
+  for (const f of names) {
+    if (!f.startsWith(prefix)) continue;
+    const tail = f.slice(prefix.length);
+    if (!/^\d+$/.test(tail)) continue;
+    const full = path.join(dir, f);
+    if (!isRegularFile(full)) continue;
+    const n = Number(tail);
+    if (n > bestN) {
+      bestN = n;
+      best = full;
+    }
+  }
+  return best;
+}
+
+/** Why filePath cannot be wrapped/restored safely, or null when it can. */
+function unsafeConfigReason(filePath) {
+  if (!isRegularFile(filePath)) return 'config is a symlink or not a regular file';
+  return null;
+}
+
+/** Copies backup over filePath only when both are regular files in the same real directory. */
+function safeRestore(backup, filePath) {
+  if (!isRegularFile(filePath)) throw new Error('config is a symlink or not a regular file');
+  if (!isRegularFile(backup)) throw new Error('backup is a symlink or not a regular file');
+  if (!sameRealDir(backup, filePath)) throw new Error('backup is not in the same directory as the config');
+  fs.copyFileSync(backup, filePath);
+}
+
+/**
  * Protects (or reverts) the detected environments.
  *
  * @param {object} options - { shadow: boolean, dryRun: boolean, revert: boolean, envList: array }
@@ -333,20 +395,26 @@ function configureEnvironments(options = {}) {
   for (const env of envs) {
     if (!env.exists) continue;
 
-    if (options.revert) {
-      const dir = path.dirname(env.filePath);
-      const base = path.basename(env.filePath);
-      const baks = fs.readdirSync(dir)
-        .filter((f) => f.startsWith(base + '.bak.'))
-        .sort()
-        .reverse();
+    const unsafe = unsafeConfigReason(env.filePath);
+    if (unsafe) {
+      actions.push({ env: env.name, status: 'skipped_unsafe', file: env.filePath, error: `${env.filePath}: ${unsafe}; skipped` });
+      continue;
+    }
 
-      if (baks.length > 0) {
-        const latestBak = path.join(dir, baks[0]);
-        if (!options.dryRun) {
-          fs.copyFileSync(latestBak, env.filePath);
+    if (options.revert) {
+      const latestBak = latestBackup(env.filePath);
+
+      if (latestBak) {
+        try {
+          if (options.dryRun) {
+            if (!sameRealDir(latestBak, env.filePath)) throw new Error('backup is not in the same directory as the config');
+          } else {
+            safeRestore(latestBak, env.filePath);
+          }
+          actions.push({ env: env.name, status: 'reverted', from: latestBak });
+        } catch (err) {
+          actions.push({ env: env.name, status: 'skipped_unsafe', file: env.filePath, error: `${latestBak}: ${err.message}; skipped` });
         }
-        actions.push({ env: env.name, status: 'reverted', from: latestBak });
       } else if (env.serverCount > 0) {
         actions.push({ env: env.name, status: 'no_backup_found' });
       }
@@ -366,7 +434,13 @@ function configureEnvironments(options = {}) {
       let backup;
       if (modified && !options.dryRun) {
         backup = `${env.filePath}.bak.${Date.now()}`;
-        fs.writeFileSync(backup, raw, 'utf8');
+        try {
+          fs.lstatSync(backup);
+          throw new Error(`${backup} already exists; refusing to overwrite it`);
+        } catch (e) {
+          if (e.code !== 'ENOENT') throw e;
+        }
+        fs.copyFileSync(env.filePath, backup, fs.constants.COPYFILE_EXCL);
         fs.writeFileSync(env.filePath, content, 'utf8');
       }
 
@@ -397,5 +471,7 @@ module.exports = {
   scanEnvironments,
   configureEnvironments,
   // exported for tests
+  latestBackup,
+  safeRestore,
   _internal: { scanCodexToml, parseTomlStringArray, parseTomlKeyPath },
 };
