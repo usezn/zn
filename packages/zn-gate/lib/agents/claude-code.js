@@ -353,8 +353,45 @@ function commandFor(opts = {}) {
   return (event) => launcher.launcherCommand(file, event, opts.platform);
 }
 
+// The cli.js the MCP server runs: the one of this package, or, when it sits in a temporary copy (npx cache), the
+// same file in the copy zn keeps under ~/.zn/runtime (see runtime.js), so the server never names the cache.
+function stableCli(opts = {}) {
+  if (opts.cliPath) return opts.cliPath;
+  const cli = cliPath();
+  if (!runtime.inTemporaryCopy(cli)) return cli;
+  const runner = runtime.stableRunner(path.resolve(path.dirname(cli), '..', 'lib', 'hooks', 'runner.js'), opts);
+  return path.resolve(path.dirname(runner), '..', '..', 'bin', 'cli.js');
+}
+
 function mcpServerConfig(opts = {}) {
-  return { command: opts.nodePath || process.execPath, args: [opts.cliPath || cliPath(), 'secrets-mcp', '--agent', 'claude-code'] };
+  return { command: opts.nodePath || process.execPath, args: [stableCli(opts), 'secrets-mcp', '--agent', 'claude-code'] };
+}
+
+// The one-line command for the user's own terminal. Double quotes and / in the paths: cmd.exe, PowerShell and
+// POSIX shells all read that the same way; no JSON, whose quotes cmd.exe and PowerShell would mangle.
+function manualAddCommand(conf, platform) {
+  return 'claude mcp add --scope user ' + MCP_SERVER_NAME + ' -- ' + [conf.command, ...conf.args].map((a) => '"' + portablePath(a, platform) + '"').join(' ');
+}
+
+const BATCH_FILE = /\.(?:cmd|bat)$/i;
+
+/**
+ * Runs `claude <args>`. A batch-file claude (an npm install on Windows is claude.cmd) cannot be started directly,
+ * so it goes through the system cmd.exe with every argument double-quoted (broker/run.js batchInvocation, which
+ * refuses cmd.exe metacharacters and expansion characters in the arguments). Returns the spawnSync result, or
+ * {refused: reason} when it was not started.
+ */
+function runClaude(claude, args, opts = {}) {
+  const spawn = opts.spawnSync || spawnSync;
+  if (!BATCH_FILE.test(claude)) return spawn(claude, args, { encoding: 'utf8', windowsHide: true });
+  const { batchInvocation } = require('../broker/run');
+  let inv;
+  try {
+    inv = batchInvocation(claude, args, args, opts.cmdExe);
+  } catch (err) {
+    return { refused: String(err.message || err).replace(/\s+/g, ' ') };
+  }
+  return spawn(inv.file, inv.args, { encoding: 'utf8', windowsHide: true, windowsVerbatimArguments: true });
 }
 
 function installMcp(opts, report) {
@@ -376,23 +413,25 @@ function installMcp(opts, report) {
     return;
   }
   const claude = opts.claudeBin !== undefined ? opts.claudeBin : whichSync('claude', process.env.PATH || '');
-  // No JSON: this form works the same in cmd.exe, PowerShell and POSIX shells.
-  const manual = 'claude mcp add --scope user ' + MCP_SERVER_NAME + ' -- ' + [conf.command, ...conf.args].map((a) => '"' + a + '"').join(' ');
+  const manual = manualAddCommand(conf, opts.platform);
   if (!claude) {
     report.warnings.push('`claude` CLI not found: register the MCP server yourself with: ' + manual);
     return;
   }
-  // A batch-file `claude` (an npm install on Windows) only runs through
-  // cmd.exe, which re-parses the command line: the JSON (quotes, paths with
-  // spaces or & ^ %) would not reach it intact. Never start it that way.
-  if (/\.(?:cmd|bat)$/i.test(claude)) {
-    report.warnings.push('`claude` is a batch file (' + path.basename(claude) + '), which zn does not run through cmd.exe: register the MCP server yourself with: ' + manual);
-    return;
+  const batch = BATCH_FILE.test(claude);
+  // A batch file takes the plain `mcp add` form (every argument is one quoted word); the JSON of `add-json`
+  // would not reach it intact through cmd.exe.
+  const args = batch
+    ? ['mcp', 'add', '--scope', 'user', MCP_SERVER_NAME, '--', conf.command, ...conf.args].map((a, i) => (i > 5 ? portablePath(a, opts.platform) : a))
+    : ['mcp', 'add-json', '--scope', 'user', MCP_SERVER_NAME, JSON.stringify({ type: 'stdio', ...conf })];
+  const r = runClaude(claude, args, opts);
+  if (r.refused) {
+    report.warnings.push('`claude` is a batch file (' + path.basename(claude) + ') and zn could not run it through the system cmd.exe (' + r.refused + '): register the MCP server yourself with: ' + manual);
+  } else if (r.status === 0) {
+    report.mcp = 'claude mcp (user scope)';
+  } else {
+    report.warnings.push('`claude mcp ' + (batch ? 'add' : 'add-json') + '` failed (' + String(r.stderr || r.stdout || r.error || '').trim().slice(0, 300) + '): register the MCP server yourself with: ' + manual);
   }
-  const r = spawnSync(claude, ['mcp', 'add-json', '--scope', 'user', MCP_SERVER_NAME, JSON.stringify({ type: 'stdio', ...conf })],
-    { encoding: 'utf8', windowsHide: true });
-  if (r.status === 0) report.mcp = 'claude mcp (user scope)';
-  else report.warnings.push('`claude mcp add-json` failed (' + String(r.stderr || r.stdout || r.error || '').trim().slice(0, 300) + '): register the MCP server yourself with: ' + manual);
 }
 
 /**
@@ -469,10 +508,9 @@ function uninstall(opts = {}) {
         report.warnings.push('left the MCP server named "' + MCP_SERVER_NAME + '" in place: it is not zn\'s');
       } else if (ours === null) {
         report.warnings.push('could not read your Claude Code MCP settings, so the MCP server named "' + MCP_SERVER_NAME + '" was left in place; if it is zn\'s, remove it with: claude mcp remove --scope user ' + MCP_SERVER_NAME);
-      } else if (claude && /\.(?:cmd|bat)$/i.test(claude)) {
-        report.warnings.push('`claude` is a batch file (' + path.basename(claude) + '), which zn does not run through cmd.exe: remove the MCP server yourself with: claude mcp remove --scope user ' + MCP_SERVER_NAME);
       } else if (claude) {
-        spawnSync(claude, ['mcp', 'remove', '--scope', 'user', MCP_SERVER_NAME], { encoding: 'utf8', windowsHide: true });
+        const r = runClaude(claude, ['mcp', 'remove', '--scope', 'user', MCP_SERVER_NAME], opts);
+        if (r.refused) report.warnings.push('`claude` is a batch file (' + path.basename(claude) + ') and zn could not run it through the system cmd.exe (' + r.refused + '): remove the MCP server yourself with: claude mcp remove --scope user ' + MCP_SERVER_NAME);
       } else if (ours === true) {
         report.warnings.push('`claude` is not on your PATH: remove zn\'s MCP server yourself with: claude mcp remove --scope user ' + MCP_SERVER_NAME);
       }

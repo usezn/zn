@@ -138,16 +138,17 @@ function cmdQuote(arg) {
  * its command line and expands %VAR% (and !VAR!) even inside quotes, so
  * arguments that zn changed (secret values) or that hold metacharacters are
  * refused, and so is a program path with expansion characters.
- * original: the arguments as the caller wrote them.
+ * original: the arguments as the caller wrote them. cmdExePath: only for tests,
+ * instead of the system cmd.exe.
  */
-function batchInvocation(resolved, args, original) {
+function batchInvocation(resolved, args, original, cmdExePath) {
   const touched = args.some((a, i) => a !== original[i]);
   if (touched || args.some((a) => /[&|<>^%!"\r\n]/.test(a)) || /[%!"\r\n]/.test(resolved)) {
     throw znError('ZN_POLICY_DENIED', path.basename(resolved) +
       ' is a batch file: zn run will not pass secret values or shell metacharacters through cmd.exe. ' +
       'Use --secrets NAME to pass the value as an environment variable instead.');
   }
-  const cmdExe = systemCmdExe();
+  const cmdExe = cmdExePath || systemCmdExe();
   if (!cmdExe) {
     throw znError('ZN_POLICY_DENIED', path.basename(resolved) +
       ' is a batch file and zn could not find the system cmd.exe; it was not started. Next step: run a program file (.exe) instead of the batch file.');
