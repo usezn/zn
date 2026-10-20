@@ -40,6 +40,10 @@ const LFI_PATTERNS: &[&str] = &[
     ".env",
     ".git/",
     "htaccess",
+    "/etc/sudoers",
+    "/etc/master.passwd",
+    ".bash_history",
+    ".zsh_history",
 ];
 
 /// Initialize the Aho-Corasick automaton
@@ -62,28 +66,119 @@ pub struct LfiDetectionResult {
     pub matched_pattern: Option<String>,
 }
 
-/// Unify path separators: every backslash becomes `/` and runs of `/` collapse,
-/// so `C:\\Windows\\x` (JSON-escaped) and `.aws\credentials` match the same
-/// patterns as their `/` forms. Returns None when nothing changes.
-fn normalize_separators(input: &str) -> Option<String> {
-    if !input.contains('\\') {
-        return None;
+fn hex_val(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
     }
-    let mut out = String::with_capacity(input.len());
-    let mut last_slash = false;
-    for ch in input.chars() {
-        let c = if ch == '\\' { '/' } else { ch };
-        if c == '/' {
-            if last_slash {
+}
+
+fn has_pct_escape(input: &str) -> bool {
+    input
+        .as_bytes()
+        .windows(3)
+        .any(|w| w[0] == b'%' && hex_val(w[1]).is_some() && hex_val(w[2]).is_some())
+}
+
+/// One round of percent-decoding (`%2e` -> `.`); invalid escapes stay as they are.
+fn percent_decode_once(input: &str) -> String {
+    let b = input.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let (Some(h), Some(l)) = (hex_val(b[i + 1]), hex_val(b[i + 2])) {
+                out.push(h * 16 + l);
+                i += 3;
                 continue;
             }
-            last_slash = true;
-        } else {
-            last_slash = false;
         }
-        out.push(c);
+        out.push(b[i]);
+        i += 1;
     }
-    Some(out)
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Path normalization run before matching, on any text (with or without a
+/// backslash): percent-decode (at most 2 rounds), backslash to `/`, collapse
+/// runs of `/`, drop `/./` segments, strip trailing dots and spaces from each
+/// segment (Windows ignores them). Case is handled by the case-insensitive
+/// matcher. Returns None when nothing changes.
+fn normalize_path_text(input: &str) -> Option<String> {
+    let mut text = input.to_string();
+    for _ in 0..2 {
+        if !has_pct_escape(&text) {
+            break;
+        }
+        text = percent_decode_once(&text);
+    }
+    let unified: String = text
+        .chars()
+        .map(|c| if c == '\\' { '/' } else { c })
+        .collect();
+    let mut kept: Vec<&str> = Vec::new();
+    for seg in unified.split('/') {
+        // `..` and `.` keep their dots so the traversal patterns still see them.
+        let seg = if seg.chars().all(|c| c == '.') {
+            seg
+        } else {
+            seg.trim_end_matches(['.', ' '])
+        };
+        if !seg.is_empty() && seg != "." {
+            kept.push(seg);
+        }
+    }
+    let mut out = kept.join("/");
+    if unified.starts_with('/') {
+        out.insert(0, '/');
+    }
+    if unified.ends_with('/') && !out.ends_with('/') {
+        out.push('/');
+    }
+    if out == input {
+        None
+    } else {
+        Some(out)
+    }
+}
+
+/// `/proc/<pid>/environ` (any pid or `self`).
+fn has_proc_environ(lower: &str) -> bool {
+    let mut rest = lower;
+    while let Some(i) = rest.find("/proc/") {
+        rest = &rest[i + 6..];
+        let seg: &str = rest.split('/').next().unwrap_or("");
+        let tail = &rest[seg.len()..];
+        if (seg == "self" || (!seg.is_empty() && seg.bytes().all(|b| b.is_ascii_digit())))
+            && tail.starts_with("/environ")
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// `/etc/ssh/ssh_host_<type>_key`: private host key (the `.pub` file is public).
+fn has_ssh_host_key(lower: &str) -> bool {
+    let mut rest = lower;
+    while let Some(i) = rest.find("/etc/ssh/ssh_host_") {
+        rest = &rest[i + 18..];
+        let seg: String = rest
+            .chars()
+            .take_while(|c| {
+                !matches!(
+                    c,
+                    '/' | '"' | '\'' | ' ' | '\t' | '\n' | '\r' | ';' | '|' | '&'
+                )
+            })
+            .collect();
+        if seg.ends_with("_key") {
+            return true;
+        }
+    }
+    false
 }
 
 /// `.ssh/<name>_key`: a private key named by suffix (the Node policy blocks it too).
@@ -114,19 +209,27 @@ fn first_match(input: &str) -> Option<String> {
         .map(|m| LFI_PATTERNS[m.pattern().as_usize()].to_string())
 }
 
-/// Check if input contains LFI patterns
+fn extra_checks(text: &str) -> Option<String> {
+    let lower = text.to_ascii_lowercase();
+    if has_proc_environ(&lower) {
+        return Some("/proc/<pid>/environ".to_string());
+    }
+    if has_ssh_host_key(&lower) {
+        return Some("/etc/ssh/ssh_host_*_key".to_string());
+    }
+    if has_ssh_key_suffix(&lower) {
+        return Some(".ssh/*_key".to_string());
+    }
+    None
+}
+
+/// Check if input contains LFI patterns. The original text is always checked,
+/// then its normalized form (see `normalize_path_text`).
 pub fn detect_lfi(input: &str) -> LfiDetectionResult {
-    let mut hit = first_match(input);
+    let mut hit = first_match(input).or_else(|| extra_checks(input));
     if hit.is_none() {
-        let norm = normalize_separators(input);
-        let text = norm.as_deref().unwrap_or(input);
-        hit = if norm.is_some() {
-            first_match(text)
-        } else {
-            None
-        };
-        if hit.is_none() && has_ssh_key_suffix(text) {
-            hit = Some(".ssh/*_key".to_string());
+        if let Some(norm) = normalize_path_text(input) {
+            hit = first_match(&norm).or_else(|| extra_checks(&norm));
         }
     }
     LfiDetectionResult {
@@ -201,6 +304,58 @@ mod tests {
         }
         assert!(!contains_lfi("src/main.rs"));
         assert!(!contains_lfi("/home/demo/.ssh/known_hosts"));
+    }
+
+    #[test]
+    fn test_normalization_bypasses() {
+        for p in [
+            "/home/demo/./.aws/./credentials",
+            "/home/demo//.aws//credentials",
+            "/etc//./passwd",
+            "/home/demo/.aws./credentials",
+            r"C:\Users\demo\.aws \credentials",
+            "/etc/pass%77d",
+            "%2e%2e%2f%2e%2e%2fsecret",
+            "%2fetc%2fpasswd",
+            "%252fetc%252fpasswd",
+            "/home/demo/.ssh%2fid_rsa",
+        ] {
+            assert!(contains_lfi(p), "{p}");
+        }
+    }
+
+    #[test]
+    fn test_missing_protected_files() {
+        for p in [
+            "/proc/1234/environ",
+            "/proc/self/environ",
+            "/etc/sudoers",
+            "/etc/sudoers.d/90-demo",
+            "/etc/ssh/ssh_host_ed25519_key",
+            "/etc/ssh/ssh_host_rsa_key",
+            "/home/demo/.bash_history",
+            "/home/demo/.zsh_history",
+            "/etc/master.passwd",
+            "/proc/42/./environ",
+        ] {
+            assert!(contains_lfi(p), "{p}");
+        }
+        assert!(!contains_lfi("/etc/ssh/ssh_host_ed25519_key.pub"));
+        assert!(!contains_lfi("/proc/cpuinfo"));
+    }
+
+    #[test]
+    fn test_benign_normalization() {
+        for p in [
+            "src/./main.rs",
+            "docs/100%25.md",
+            "docs/100%.md",
+            "https://example.com/a%20b?q=caf%C3%A9",
+            "src//lib.rs",
+            "notes/end.   ",
+        ] {
+            assert!(!contains_lfi(p), "{p}");
+        }
     }
 
     #[test]

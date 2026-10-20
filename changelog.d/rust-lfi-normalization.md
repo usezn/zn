@@ -1,0 +1,2 @@
+### Security
+- The gateway file guard now normalizes paths before matching: it decodes percent-encoding (up to two rounds), unifies separators, collapses repeated slashes, drops `/./` segments and ignores trailing dots and spaces in Windows path segments, so `%2e%2e%2f`, `%2fetc%2fpasswd`, `//` and `/./` no longer slip past it. It also protects `/proc/<pid>/environ`, `/etc/sudoers`, `/etc/sudoers.d/`, SSH host private keys, shell history files and `/etc/master.passwd`.
