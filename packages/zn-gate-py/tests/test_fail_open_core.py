@@ -109,6 +109,10 @@ class TestObjectArguments(unittest.TestCase):
     def test_pathlike(self):
         self._blocked({"p": Path("~/.ssh/id_rsa")})
 
+    def test_windows_pathlike(self):
+        from pathlib import PureWindowsPath
+        self._blocked({"p": PureWindowsPath("~/.ssh/id_rsa")})
+
     def test_reiterable_container(self):
         self._blocked(collections.deque([BAD]))
 

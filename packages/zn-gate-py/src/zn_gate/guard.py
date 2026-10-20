@@ -11,6 +11,7 @@ import inspect
 import io
 import itertools
 import os
+from pathlib import PurePath
 import types
 from collections.abc import AsyncIterator, ItemsView, Iterable, Iterator, KeysView, Mapping, ValuesView
 from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set, Tuple, TypeVar, cast
@@ -185,7 +186,11 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
         children = list(data)
     elif isinstance(data, os.PathLike):
         path_value = os.fspath(data)
-        return _extract_strings(path_value, max_depth, _path, budget)
+        found = _extract_strings(path_value, max_depth, _path, budget)
+        # On Windows str() gives backslashes; the path rules also see the form with forward slashes.
+        if isinstance(data, PurePath) and data.as_posix() != path_value:
+            found += _extract_strings(data.as_posix(), max_depth, _path, budget)
+        return found
     elif isinstance(data, io.IOBase):
         # An open file or stream: its contents are read by the tool, not passed
         # as text, and reading them here would move the file position. Check its name.
