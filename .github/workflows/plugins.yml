@@ -19,17 +19,24 @@ on:
   pull_request:
     branches: [ main, next, 'release/**' ]
     types: [ opened, synchronize, reopened, labeled, ready_for_review ]
-    # Documentation-only pull requests skip this workflow (it gives no required check), with the
-    # same split as the push filter above.
+    # Pull requests run this workflow (it gives no required check) only when they change what the
+    # plugin checks read: the plugins, the marketplace files, the zn-gate version the plugin pins and the
+    # hook runner and CLI the launcher benchmark compares against.
     paths:
-      - '**'
-      - '!docs/**'
-      - '!**/*.md'
-      - 'packages/**'
       - 'plugins/**'
       - 'skill/**'
-      - 'bench/**'
-      - '.github/**'
+      - '.claude-plugin/**'
+      - '.cursor-plugin/**'
+      - '.agents/**'
+      - 'packages/zn-gate/package.json'
+      - 'packages/zn-gate/package-lock.json'
+      - 'packages/zn-gate/lib/hooks/**'
+      - 'packages/zn-gate/bin/**'
+      - '.github/scripts/ci-scope.sh'
+      - '.github/workflows/plugins.yml'
+  # Daily full run on the default branch.
+  schedule:
+    - cron: '30 6 * * *'
   workflow_dispatch:
 
 permissions:
@@ -52,9 +59,9 @@ jobs:
       fail-fast: false
       matrix:
         os: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["ubuntu-latest", "windows-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
-        node-version: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["20.x", "22.x", "24.x"]' || '["22.x"]') }}
-        # Pushes to next run macOS with Node.js 22.x only; every other full run tests all three.
-        exclude: ${{ fromJSON((github.event_name == 'push' && github.ref == 'refs/heads/next') && '[{"os":"macos-latest","node-version":"20.x"},{"os":"macos-latest","node-version":"24.x"}]' || '[]') }}
+        node-version: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["20.x", "22.x", "24.x", "26.x"]' || '["22.x"]') }}
+        # Pushes to next run macOS with Node.js 22.x only; every other full run tests all four.
+        exclude: ${{ fromJSON((github.event_name == 'push' && github.ref == 'refs/heads/next') && '[{"os":"macos-latest","node-version":"20.x"},{"os":"macos-latest","node-version":"24.x"},{"os":"macos-latest","node-version":"26.x"}]' || '[]') }}
     steps:
       - name: Harden the runner (egress audit)
         if: runner.os == 'Linux'

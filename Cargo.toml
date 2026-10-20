@@ -1,6 +1,6 @@
 [package]
 name = "zn"
-version = "1.12.0"
+version = "1.13.0"
 edition = "2021"
 rust-version = "1.95"
 license = "MIT"
@@ -35,10 +35,7 @@ dashmap = "5.5"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
 async-stream = "0.3"
-hyper = { version = "1.1", features = ["full"] }
-tower = "0.4"
 tower_governor = "0.4"
-governor = "0.6"
 aho-corasick = "1.1"
 reqwest = { version = "0.12", features = ["json"] }
 prometheus = "0.14"
@@ -74,6 +71,11 @@ tokenizers = "0.22.2"
 # schemars needed directly: JsonSchema derive expands to `schemars::` paths.
 rmcp = { version = "=3.5.1", features = ["server", "macros", "schemars", "transport-io"] }
 schemars = "1"
+
+[package.metadata.cargo-machete]
+# schemars is used through the rmcp::schemars derive, which expands to schemars:: paths,
+# so the crate must be a direct dependency even though no source line names it.
+ignored = ["schemars"]
 
 [profile.release]
 strip = true

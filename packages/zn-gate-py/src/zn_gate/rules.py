@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-16.10
+RULES_VERSION: 2026-10-19.1
 Zero external dependencies. Pure Python stdlib.
 """
 
@@ -17,7 +17,7 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
-RULES_VERSION = "2026-10-19.5"
+RULES_VERSION = "2026-10-19.6"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
