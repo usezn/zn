@@ -59,7 +59,35 @@ def _decode_scan_text(raw: bytes) -> str:
         return raw[2:len(raw) - len(raw) % 2].decode("utf-16-le", errors="ignore")
     if raw[:2] == b"\xfe\xff":
         return raw[2:len(raw) - len(raw) % 2].decode("utf-16-be", errors="ignore")
+    guess = _utf16_without_bom(raw)
+    if guess == "unclear":
+        raise _UnclearEncoding()
+    if guess:
+        return raw[:len(raw) - len(raw) % 2].decode(guess, errors="ignore")
     return raw.decode("utf-8", errors="ignore")
+
+
+class _UnclearEncoding(ValueError):
+    """The bytes look like UTF-16 but the byte order cannot be told."""
+
+
+def _utf16_without_bom(raw: bytes) -> Optional[str]:
+    """UTF-16 without a byte order mark, told by its NUL bytes: text in Latin
+    scripts has a NUL in every second byte (the high byte of each character),
+    at odd positions for little-endian and even ones for big-endian. Returns
+    the codec name, None for anything else, or "unclear" when NULs sit at both
+    parities (so neither byte order can be trusted)."""
+    sample = raw[:_BINARY_SNIFF]
+    sample = sample[:len(sample) - len(sample) % 2]
+    pairs = len(sample) // 2
+    if pairs < 2:
+        return None
+    even = sample[0::2].count(0) / pairs
+    odd = sample[1::2].count(0) / pairs
+    for high, low, codec in ((odd, even, "utf-16-le"), (even, odd, "utf-16-be")):
+        if high >= 0.3:
+            return codec if low <= 0.05 else "unclear"
+    return None
 
 
 # A file name is put in a suggested command only when it is made of plain
@@ -267,7 +295,10 @@ def _mcp_violations(shown: str, found: List[_mcp.McpSpan]) -> List[Dict[str, Any
     return out
 
 
-def _scan_file(file_path: Path, shown: Optional[str] = None, mcp_only: bool = False) -> List[Dict[str, Any]]:
+def _scan_file(file_path: Path, shown: Optional[str] = None, mcp_only: bool = False,
+               not_scanned: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    """Findings for one file. When the file turns out not to be read after all,
+    the reason is appended to `not_scanned` (if given) and nothing is returned."""
     violations: List[Dict[str, Any]] = []
     shown = str(file_path) if shown is None else shown
     try:
@@ -275,10 +306,17 @@ def _scan_file(file_path: Path, shown: Optional[str] = None, mcp_only: bool = Fa
             return []
         raw = file_path.read_bytes()
     except Exception:
+        if not_scanned is not None:
+            not_scanned.append("cannot be read")
         return []
     if file_path.suffix.lower() == ".key" and raw[:2] not in _UTF16_BOMS and b"\0" in raw[:_BINARY_SNIFF]:
         return []
-    content = _decode_scan_text(raw)
+    try:
+        content = _decode_scan_text(raw)
+    except _UnclearEncoding:
+        if not_scanned is not None:
+            not_scanned.append("unclear text encoding")
+        return []
     mcp_found: List[_mcp.McpSpan] = []
     if _mcp.is_mcp_config_path(str(file_path)):
         # The MCP check runs first and its values are masked, so no other rule prints one.
@@ -560,8 +598,13 @@ def cmd_scan(args: argparse.Namespace) -> int:
         if reason:
             skipped.append({"file": shown, "reason": reason})
             continue
+        lost: List[str] = []
+        found = _scan_file(fp, shown, str(fp) in mcp_only_files, lost)
+        if lost:
+            skipped.append({"file": shown, "reason": lost[0]})
+            continue
         scanned += 1
-        all_violations.extend(_scan_file(fp, shown, str(fp) in mcp_only_files))
+        all_violations.extend(found)
 
     _print_report(getattr(args, "format", "text"), scanned, skipped, all_violations, skipped_dirs, str(args.path))
     if all_violations and not getattr(args, "no_fail", False):
