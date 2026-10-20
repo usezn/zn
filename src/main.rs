@@ -296,6 +296,19 @@ async fn start_proxy(args: Args) -> Result<()> {
             engine.policy_count()
         ))?;
     }
+    if engine.is_failing_closed() {
+        let faults = engine.policy_faults();
+        if zn_config.environment == "production" {
+            return Err(anyhow!(
+                "Refusing to start in production: policies failed to load: {:?}",
+                faults
+            ));
+        }
+        log::warning(format!(
+            "Policies failed to load, all tool calls will be denied: {:?}",
+            faults
+        ))?;
+    }
 
     // Initialize Policy Watcher for Hot-Reload
     let watcher = PolicyWatcher::new(Arc::clone(&engine), policy_dir)
@@ -1411,8 +1424,25 @@ async fn sse_handler(
 }
 
 /// Health check endpoint
-async fn health_handler() -> &'static str {
-    "OK"
+async fn health_handler(State(state): State<AppState>) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let faults = state.engine.policy_faults();
+    if faults.is_empty() {
+        "OK".into_response()
+    } else {
+        let list: Vec<String> = faults
+            .iter()
+            .map(|(name, reason)| format!("{}: {}", name, reason))
+            .collect();
+        (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            format!(
+                "DEGRADED: policy fault, denying all tool calls ({})",
+                list.join("; ")
+            ),
+        )
+            .into_response()
+    }
 }
 
 /// Stats endpoint - returns audit statistics

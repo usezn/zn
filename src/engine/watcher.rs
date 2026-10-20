@@ -71,7 +71,7 @@ impl PolicyWatcher {
                 } else if event.kind.is_remove() {
                     for path in event.paths {
                         if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
-                            engine.unregister_policy(name);
+                            engine.policy_file_removed(name);
                         }
                     }
                 }
@@ -196,7 +196,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn deleting_a_wasm_file_unregisters_the_policy() {
+    async fn deleting_a_wasm_file_fails_the_engine_closed() {
         let dir = tempfile::tempdir().expect("tempdir");
         let engine = test_engine();
         let _watcher = PolicyWatcher::new(Arc::clone(&engine), dir.path()).expect("watcher");
@@ -208,6 +208,9 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
         wait_until("gamma unregistered", || !engine._has_policy("gamma"));
         assert_eq!(engine.policy_count(), 0);
+        // The set is empty now, but not by configuration: calls are denied.
+        wait_until("engine failing closed", || engine.is_failing_closed());
+        assert!(!engine.check_tool_call_all("any", "{}", None).unwrap());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

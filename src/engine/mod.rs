@@ -171,6 +171,24 @@ pub struct ZnEngineConfig {
     pub signing_public_key: Option<String>,
 }
 
+/// Why a policy keeps the engine failing closed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PolicyFault {
+    /// The `.wasm` file exists but did not load (bad hash, signature or contents).
+    LoadFailed(String),
+    /// A registered policy's file was removed from the policy directory.
+    FileRemoved,
+}
+
+impl std::fmt::Display for PolicyFault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PolicyFault::LoadFailed(e) => write!(f, "failed to load: {}", e),
+            PolicyFault::FileRemoved => write!(f, "policy file removed"),
+        }
+    }
+}
+
 /// WASM Policy Execution Engine
 pub struct ZnEngine {
     engine: Engine,
@@ -178,6 +196,9 @@ pub struct ZnEngine {
     config: ZnEngineConfig,
     /// Registry of loaded policies (name -> Module)
     policies: DashMap<String, Arc<Module>>,
+    /// Policies that could not be loaded, or whose file was removed, by name.
+    /// While any entry exists the engine fails closed: every tool call is denied.
+    faults: DashMap<String, PolicyFault>,
     /// Policy signature verifier
     verifier: signing::PolicyVerifier,
     /// Shared state store for policies
@@ -326,6 +347,7 @@ impl ZnEngine {
             linker,
             config,
             policies: DashMap::new(),
+            faults: DashMap::new(),
             verifier,
             state_store,
         })
@@ -365,9 +387,28 @@ impl ZnEngine {
         }
     }
 
-    /// Load and register a WASM policy from file with integrity verification
+    /// Load and register a WASM policy from file with integrity verification.
+    ///
+    /// A failure is recorded: the engine denies every tool call until the
+    /// policy loads or its file is removed through `unregister_policy`.
     pub fn register_policy_from_file(&self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
+        let result = self.load_policy_file(path);
+        if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
+            match &result {
+                Ok(()) => {
+                    self.faults.remove(name);
+                }
+                Err(e) => {
+                    self.faults
+                        .insert(name.to_string(), PolicyFault::LoadFailed(e.to_string()));
+                }
+            }
+        }
+        result
+    }
+
+    fn load_policy_file(&self, path: &Path) -> Result<()> {
         let name = path
             .file_stem()
             .and_then(|s: &std::ffi::OsStr| s.to_str())
@@ -419,6 +460,7 @@ impl ZnEngine {
 
         if let Some(module) = module {
             self.policies.insert(name.clone(), Arc::new(module));
+            self.faults.remove(&name);
             info!("Registered policy: {}", name);
         }
         Ok(())
@@ -448,11 +490,49 @@ impl ZnEngine {
         Ok(())
     }
 
-    /// Unregister a policy by name
+    /// Unregister a policy by name. This is the deliberate path (the management
+    /// API's delete): it also clears any fault recorded for that name.
     pub fn unregister_policy(&self, name: &str) {
         if self.policies.remove(name).is_some() {
             info!("Unregistered policy: {}", name);
         }
+        self.faults.remove(name);
+    }
+
+    /// A policy file disappeared from the policy directory (seen by the
+    /// watcher). A registered policy that vanishes fails the engine closed
+    /// instead of silently shrinking the set; a file that never loaded just
+    /// stops being a problem.
+    pub fn policy_file_removed(&self, name: &str) {
+        if self.policies.contains_key(name) {
+            warn!("Policy file removed: {} - failing closed", name);
+            // Record the fault before dropping the policy, so no call can see
+            // an empty set that is not marked as failing.
+            self.faults
+                .insert(name.to_string(), PolicyFault::FileRemoved);
+            self.policies.remove(name);
+        } else if matches!(
+            self.faults.get(name).map(|f| f.clone()),
+            Some(PolicyFault::LoadFailed(_))
+        ) {
+            self.faults.remove(name);
+        }
+    }
+
+    /// Policies that keep the engine failing closed, as `(name, reason)`.
+    pub fn policy_faults(&self) -> Vec<(String, String)> {
+        let mut v: Vec<(String, String)> = self
+            .faults
+            .iter()
+            .map(|e| (e.key().clone(), e.value().to_string()))
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// True when a policy failed to load or was removed, so every call is denied.
+    pub fn is_failing_closed(&self) -> bool {
+        !self.faults.is_empty()
     }
 
     /// Get a policy by name
@@ -481,8 +561,17 @@ impl ZnEngine {
         arguments: &str,
         agent_id: Option<String>,
     ) -> Result<bool> {
+        if self.is_failing_closed() {
+            warn!(
+                "Denying tool call {}: policy fault(s): {:?}",
+                tool_name,
+                self.policy_faults()
+            );
+            return Ok(false);
+        }
+
         if self.policies.is_empty() {
-            // No policies = allow (default behavior)
+            // No policies configured = allow (default behavior)
             return Ok(true);
         }
 
@@ -777,5 +866,132 @@ mod tests {
         assert!(std::fs::symlink_metadata(dir.join("dangling.wasm")).is_ok());
         assert_eq!(std::fs::read(root.join("outside.wasm")).unwrap(), b"keep");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ----- fail closed on unusable policies ---------------------------------
+
+    /// A policy in WAT text form (wasmtime compiles it) that allows or denies
+    /// every call.
+    fn wat_policy(verdict: i32) -> Vec<u8> {
+        format!(
+            r#"(module
+                (memory (export "memory") 1)
+                (func (export "alloc") (param i32) (result i32) i32.const 16)
+                (func (export "dealloc") (param i32 i32))
+                (func (export "validate_tool_call") (param i32 i32 i32 i32) (result i32)
+                    i32.const {verdict}))"#
+        )
+        .into_bytes()
+    }
+
+    fn fail_closed_engine(allowed_hashes: Vec<String>) -> ZnEngine {
+        ZnEngine::new(ZnEngineConfig {
+            gas_limit: 10_000_000,
+            memory_limit: 10 * 1024 * 1024,
+            // Generous: a tight epoch deadline can interrupt even a trivial policy on a loaded host.
+            timeout_ms: 10_000,
+            allowed_hashes,
+            signing_public_key: None,
+        })
+        .expect("engine init")
+    }
+
+    #[test]
+    fn an_empty_policy_directory_allows_calls() {
+        let dir = temp_dir("fc-empty");
+        let engine = fail_closed_engine(vec![]);
+        engine.load_all_policies(&dir).unwrap();
+        assert!(!engine.is_failing_closed());
+        assert!(engine.policy_faults().is_empty());
+        assert!(engine.check_tool_call_all("any", "{}", None).unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_valid_policy_still_decides() {
+        let dir = temp_dir("fc-valid");
+        std::fs::write(dir.join("allow.wasm"), wat_policy(1)).unwrap();
+        let engine = fail_closed_engine(vec![]);
+        engine.load_all_policies(&dir).unwrap();
+        assert_eq!(engine.policy_count(), 1);
+        assert!(!engine.is_failing_closed());
+        assert!(engine.check_tool_call_all("any", "{}", None).unwrap());
+
+        std::fs::write(dir.join("deny.wasm"), wat_policy(0)).unwrap();
+        engine.load_all_policies(&dir).unwrap();
+        assert!(!engine.check_tool_call_all("any", "{}", None).unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_corrupt_policy_file_denies_calls_and_is_reported() {
+        let dir = temp_dir("fc-corrupt");
+        std::fs::write(dir.join("broken.wasm"), b"not wasm").unwrap();
+        let engine = fail_closed_engine(vec![]);
+        // Loading the directory still succeeds; the failure is recorded.
+        engine.load_all_policies(&dir).unwrap();
+        assert_eq!(engine.policy_count(), 0);
+        assert!(engine.is_failing_closed());
+        let faults = engine.policy_faults();
+        assert_eq!(faults.len(), 1);
+        assert_eq!(faults[0].0, "broken");
+        assert!(faults[0].1.contains("failed to load"), "{:?}", faults);
+        assert!(!engine.check_tool_call_all("any", "{}", None).unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_policy_with_a_disallowed_hash_denies_calls() {
+        let dir = temp_dir("fc-hash");
+        std::fs::write(dir.join("good.wasm"), wat_policy(1)).unwrap();
+        std::fs::write(dir.join("other.wasm"), wat_policy(0)).unwrap();
+        let engine = fail_closed_engine(vec![ZnEngine::compute_hash(&wat_policy(1))]);
+        engine.load_all_policies(&dir).unwrap();
+        assert_eq!(engine.policy_count(), 1);
+        assert!(engine.is_failing_closed());
+        assert!(!engine.check_tool_call_all("any", "{}", None).unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_policy_that_loads_later_clears_its_fault() {
+        let dir = temp_dir("fc-recover");
+        let path = dir.join("p.wasm");
+        std::fs::write(&path, b"not wasm").unwrap();
+        let engine = fail_closed_engine(vec![]);
+        engine.load_all_policies(&dir).unwrap();
+        assert!(engine.is_failing_closed());
+        std::fs::write(&path, wat_policy(1)).unwrap();
+        engine.register_policy_from_file(&path).unwrap();
+        assert!(!engine.is_failing_closed());
+        assert!(engine.check_tool_call_all("any", "{}", None).unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_removed_registered_policy_denies_calls_but_a_deliberate_unregister_does_not() {
+        let dir = temp_dir("fc-removed");
+        std::fs::write(dir.join("p.wasm"), wat_policy(1)).unwrap();
+        std::fs::write(dir.join("q.wasm"), wat_policy(1)).unwrap();
+        let engine = fail_closed_engine(vec![]);
+        engine.load_all_policies(&dir).unwrap();
+
+        engine.policy_file_removed("p");
+        assert!(engine.is_failing_closed());
+        assert_eq!(
+            engine.policy_faults(),
+            vec![("p".to_string(), "policy file removed".to_string())]
+        );
+        assert!(!engine.check_tool_call_all("any", "{}", None).unwrap());
+
+        // The management API's delete is deliberate and clears the fault.
+        engine.unregister_policy("p");
+        assert!(!engine.is_failing_closed());
+        assert!(engine.check_tool_call_all("any", "{}", None).unwrap());
+
+        // A file that never loaded disappearing is not a fault.
+        engine.policy_file_removed("never-loaded");
+        assert!(!engine.is_failing_closed());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
