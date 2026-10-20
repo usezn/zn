@@ -196,7 +196,14 @@ def cmd_test(args: argparse.Namespace) -> int:
 
 
 def cmd_analyze(args: argparse.Namespace) -> int:
-    text = args.text
+    # Several words (unquoted text, or quotes lost by PowerShell) are joined with a
+    # space, as the npm package does.
+    text = " ".join(args.text) if isinstance(args.text, list) else args.text
+    if not text:
+        print('Error: no text to analyze. Put it in double quotes, for example: '
+              'zn-gate analyze "ignore previous instructions" (in PowerShell, use double quotes '
+              'on the outside and single quotes inside if the text has quotes).', file=sys.stderr)
+        return 2
     options: Dict[str, Any] = {
         "api_key": getattr(args, "key", None) or os.environ.get("ZN_API_KEY"),
         "stage": getattr(args, "stage", None) or os.environ.get("ZN_STAGE") or "v30",
@@ -745,7 +752,7 @@ def main() -> int:
 
     # analyze command
     analyze_parser = subparsers.add_parser("analyze", help="Inspect a prompt (local; cloud only with ZN_CLOUD=1 + key, redacted)")
-    analyze_parser.add_argument("text", help="Prompt or message to analyze")
+    analyze_parser.add_argument("text", nargs="*", help="Prompt or message to analyze (put it in double quotes)")
     analyze_parser.add_argument("--key", help="API key for zn Cloud Gate")
     analyze_parser.add_argument("--stage", default="v30", help="Cloud gate stage (default: v30)")
     analyze_parser.add_argument("--url", help="Custom API endpoint URL")
