@@ -70,7 +70,7 @@ async function main(args, ioIn) {
     return 2;
   }
   if (opts.help) {
-    io.stdout.write(USAGE + '\n\nReviews the agent configuration in a repository (hooks, MCP servers, endpoints,\npermissions, instructions) without running anything. Docs: docs/audit.md\n');
+    io.stdout.write(USAGE + '\n\nReviews the agent configuration in a repository (hooks, MCP servers, endpoints,\npermissions, instructions) without running anything. Docs: https://github.com/usezn/zn/blob/main/docs/audit.md\n');
     return 0;
   }
   try {

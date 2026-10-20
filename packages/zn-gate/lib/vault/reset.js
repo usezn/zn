@@ -35,7 +35,7 @@ const TEAM_REFUSAL = 'This computer belongs to a zn Team organization, and its c
 const LOCK_FIRST = 'The vault is unlocked. Run `zn lock` first, then `zn vault reset`.';
 const NOTHING = 'There is no vault here to reset. Run `zn unlock` to create one.';
 const CANCELLED = 'Nothing was reset: the phrase did not match. Your vault is as it was.';
-const UNREADABLE_HINT = 'The vault could not be opened, and the passphrase is not the problem. Do not reset the vault yet. See docs/troubleshooting.md, section 5 ("Your secret vault is locked").';
+const UNREADABLE_HINT = 'The vault could not be opened, and the passphrase is not the problem. Do not reset the vault yet. See the "Your secret vault is locked" section: https://github.com/usezn/zn/blob/main/docs/troubleshooting.md#5-your-secret-vault-is-locked';
 const HINT = 'Forgot the passphrase? `zn vault reset` starts a new, empty vault (the old values are lost).';
 
 /** The files of this vault that exist now: [{ src, rel }] with rel relative to the backup folder. */

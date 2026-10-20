@@ -464,4 +464,4 @@ def mcp_next_step(kind: str, name: str) -> str:
     return (f"Next: run npx -y zn-gate secret set {use} to store the value in the local vault (it asks for the value, "
             f"so it is never typed on a command line), run zn secret allow {use} --command <the server's command> so zn run "
             f"may use it, put __ZN_{use}__ in this file instead, start the server "
-            "through zn run (see docs/secrets.md), and rotate the value if the file was ever committed or shared.")
+            "through zn run (see https://github.com/usezn/zn/blob/main/docs/secrets.md), and rotate the value if the file was ever committed or shared.")
