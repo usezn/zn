@@ -80,13 +80,14 @@ const UNSAFE_IN_DOUBLE_QUOTES = /[%!"$`“”„\u0000-\u001F\u007F]/;
  * same from cmd.exe, PowerShell and Git Bash. Plain paths stay readable
  * (-Command "..."); a path with a character one of those shells would act on
  * inside double quotes is passed as -EncodedCommand (base64 of UTF-16LE),
- * which no shell changes.
+ * which no shell changes. `opts.encoded` always uses -EncodedCommand, for an
+ * agent that splits the command on spaces and ignores quotes.
  */
-function windowsCommand(program, args, extra = []) {
+function windowsCommand(program, args, extra = [], opts = {}) {
   const inner = '& ' + [program, ...args].map((a) => powershellQuote(portablePath(a, 'win32'))).join(' ') +
     (extra.length ? ' ' + extra.join(' ') : '');
   const head = 'powershell.exe -NoProfile -NonInteractive ';
-  if (!UNSAFE_IN_DOUBLE_QUOTES.test(inner)) return head + '-Command "' + inner + '"';
+  if (!opts.encoded && !UNSAFE_IN_DOUBLE_QUOTES.test(inner)) return head + '-Command "' + inner + '"';
   return head + '-EncodedCommand ' + Buffer.from(inner, 'utf16le').toString('base64');
 }
 
