@@ -265,3 +265,22 @@ def test_wrapper_rejects_bad_input():
         guard_langchain_tool(lambda x: x)
     with pytest.raises(ValueError):
         guard_langchain_tool(make_tools([])[0], on_block="ignore")
+
+
+def test_wrapper_async_raise_mode_stops_a_blocked_call():
+    ran = []
+    tools = [guard_langchain_tool(t) for t in make_tools(ran)]
+    model = ScriptedChatModel(script=[call("run_command", command=SECRET_PATH_COMMAND), AIMessage("ok")])
+    with pytest.raises(GuardBlockError) as ctx:
+        asyncio.run(arun_agent(model, tools, "Show me my SSH setup"))
+    assert ran == []
+    assert ctx.value.target == "langchain:run_command"
+
+
+def test_wrapper_async_return_mode_gives_the_model_a_block_message():
+    ran = []
+    tools = [guard_langchain_tool(t, on_block="return") for t in make_tools(ran)]
+    model = ScriptedChatModel(script=[call("run_command", command=SECRET_PATH_COMMAND), AIMessage("ok")])
+    assert asyncio.run(arun_agent(model, tools, "Show me my SSH setup")) == "ok"
+    assert ran == []
+    assert model.seen[1][-1].content.startswith("zn-gate blocked 'langchain:run_command'")

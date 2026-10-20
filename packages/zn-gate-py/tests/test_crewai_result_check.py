@@ -188,3 +188,31 @@ class TestBlockTargetLabel(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCrewAIAsyncBlockedArguments(unittest.TestCase):
+    """An async tool whose arguments are blocked never runs, in both modes."""
+
+    def test_async_blocked_arguments_raise_and_the_tool_does_not_run(self):
+        ran = []
+
+        @guarded_tool()
+        async def run_command(command):
+            ran.append(command)
+            return "done"
+
+        with self.assertRaises(GuardBlockError) as ctx:
+            asyncio.run(run_command(command="cat ~/.ssh/id_rsa"))
+        self.assertEqual(ran, [])
+        self.assertEqual(ctx.exception.target, "tool:run_command")
+
+    def test_async_blocked_arguments_return_the_fallback(self):
+        ran = []
+
+        @guarded_tool(on_block="return", fallback="BLOCKED")
+        async def run_command(command):
+            ran.append(command)
+            return "done"
+
+        self.assertEqual(asyncio.run(run_command(command="cat ~/.ssh/id_rsa")), "BLOCKED")
+        self.assertEqual(ran, [])
