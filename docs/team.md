@@ -43,6 +43,17 @@ after joining. The same happens if the check fails.
 `--api <https URL>` points `zn team join` at another server. The dialog warns
 when it is not `api.usezn.com`.
 
+`--agent <name>` (for example `claude-code`) tells your organization which
+coding agent this machine uses, so admins see it next to the installation. It
+is optional and changes nothing on this machine.
+
+Exit codes: `zn team join` returns `0` once joined (also when the first policy
+download has to wait), `1` when it fails (vault locked, token rejected or
+expired, or Deny in the dialog) and `2` without a token. `zn team status` and
+`zn team leave` return `0`, also on a machine that is not in an organization,
+and `1` on an error. `zn team sync` returns `1` when the policy is rejected or
+the machine was removed from the organization.
+
 ## The organization policy
 
 The policy lists rules for secrets by **name** (for example `PROD_*`), never

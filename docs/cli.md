@@ -509,7 +509,7 @@ With no subcommand it is the same as `team status`. Exit codes: `0` done, `1` an
 zn-gate team join <token> [--api https://api.example.com] [--agent claude-code]
 ```
 
-Connects this machine to your organization with the join token your admin gave you.
+Connects this machine to your organization with the join token your admin gave you. `--agent` (optional) tells the organization which coding agent this machine uses; admins see it next to the installation. Exit `0` once joined, also when the first policy download has to wait; `1` when it fails (vault locked, token rejected, or Deny in the dialog); `2` without a token.
 
 #### `team status`
 
@@ -517,7 +517,7 @@ Connects this machine to your organization with the join token your admin gave y
 zn-gate team status [--json]
 ```
 
-Shows the organization, the policy version and the state of the audit upload.
+Shows the organization, the policy version and the state of the audit upload. Exit `0`, also when this machine is not in an organization.
 
 #### `team sync`
 
@@ -525,7 +525,7 @@ Downloads the policy and uploads the audit log now. Exit `1` when the policy is 
 
 #### `team leave`
 
-Disconnects this machine from the organization.
+Disconnects this machine from the organization. Exit `0`, also when it was not in one.
 
 #### `team managed-config`
 
