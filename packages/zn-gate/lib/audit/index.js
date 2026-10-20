@@ -751,7 +751,7 @@ function checkInstructions(ctx) {
   const claudeExt = /(^|\/)\.claude\/(commands|agents|skills)\//i.test(ctx.rec.rel);
   // Supporting notes of a skill (not SKILL.md itself): the only files here
   // that are not read as instructions.
-  const supporting = /(^|\/)skills?\/.+\//.test(ctx.rec.rel) && !/(^|\/)SKILL\.md$/i.test(ctx.rec.rel);
+  const supporting = /(^|\/)skills?\/.+\//i.test(ctx.rec.rel) && !/(^|\/)SKILL\.md$/i.test(ctx.rec.rel);
   let inFront = ctx.lines[0] && ctx.lines[0].trim() === '---';
   // Lines inside code fences that are closed again (an unclosed fence runs
   // to the end of the file and counts as plain text).
