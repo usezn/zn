@@ -32,5 +32,5 @@ test('hookHash ignores commandWindows when not on Windows', () => {
 
 test('pinned default PreToolUse hash', () => {
   const a = fixture.cases[0];
-  assert.equal(a.codex.native.pre_tool_use, 'sha256:fdc43aca5fa33c69a3137c72f8f1be15a376c4def00916868cde09b8a4bdc040');
+  assert.equal(a.codex.native.pre_tool_use, 'sha256:bb2904275a6d6d82c7edb153ca8a477d008151ee0f2f7c19c6ae6ee06d85583d');
 });
