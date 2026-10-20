@@ -166,6 +166,11 @@ jobs:
         run: |
           python -m pip install --require-hashes -r .github/ci-test-requirements.txt
           python -m pip install --no-deps --no-build-isolation -e packages/zn-gate-py
+      - name: Install LangChain and LlamaIndex for the integration tests
+        # One entry is enough: the tests that drive the integrations through the real frameworks run here
+        # and skip on the other entries.
+        if: steps.scope.outputs.run == 'true' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: python -m pip install --require-hashes -r .github/ci-framework-test-requirements.txt
       - name: Run pytest (unit + integration)
         if: steps.scope.outputs.run == 'true' && !(matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12')
         working-directory: packages/zn-gate-py
@@ -175,6 +180,9 @@ jobs:
         # One wall-clock test is left out here (tracing slows it past its limit) and runs untraced in the next step.
         if: steps.scope.outputs.run == 'true' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         working-directory: packages/zn-gate-py
+        env:
+          # The frameworks were installed above: their tests must run, not skip.
+          ZN_REQUIRE_FRAMEWORKS: "1"
         run: |
           python -m pytest tests/ -v --deselect tests/test_cli.py::TestCliScanCommand::test_many_key_blocks_scan_in_linear_time --cov=zn_gate --cov-report=term --cov-report=xml:"$RUNNER_TEMP/coverage-python.xml" 2>&1 | tee "$RUNNER_TEMP/coverage-python.log"
           {
