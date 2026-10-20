@@ -25,3 +25,16 @@ test('a ratio that is not a positive number fails', () => {
   const badBase = { results: [{ ...base.results[0], ratio: null }, base.results[1]] };
   assert.equal(compare(report(2, 3.0), badBase, 0.2), 1);
 });
+
+test('a slowdown every case shares fails even when no case crosses its own limit', () => {
+  const b = { results: Array.from({ length: 5 }, (_, i) => ({ agent: 'a', case: 'c' + i, ratio: 2 })) };
+  const run = (x) => ({ results: b.results.map((r) => ({ agent: r.agent, case: r.case, p95: 1, ratio: x })) });
+  assert.equal(compare(run(2.18), b, 0.2), 0, '9 % everywhere is run-to-run noise');
+  assert.equal(compare(run(2.3), b, 0.2), 1, '15 % everywhere is a regression (each case is under its 20 % limit)');
+});
+
+test('one noisy case does not move the median of the run', () => {
+  const b = { results: Array.from({ length: 5 }, (_, i) => ({ agent: 'a', case: 'c' + i, ratio: 2 })) };
+  const r = { results: b.results.map((x, i) => ({ agent: x.agent, case: x.case, p95: 1, ratio: i === 0 ? 2.39 : 2 })) };
+  assert.equal(compare(r, b, 0.2), 0);
+});

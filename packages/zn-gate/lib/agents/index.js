@@ -11,6 +11,7 @@ const ADAPTERS = {
   cursor: () => require('./cursor'),
   opencode: () => require('./opencode'),
   antigravity: () => require('./antigravity'),
+  copilot: () => require('./copilot'),
   gemini: () => require('./gemini'),
 };
 

@@ -414,7 +414,7 @@ Runs zn-gate as an MCP server (stdio) with the tools `analyze_prompt`, `check_to
 zn-gate shield -- <command> [args...]
 ```
 
-Wraps any external MCP server and checks its traffic. Example: `zn-gate shield -- uvx mcp-server-fetch`. Exit code `1` when no command is given. Otherwise it ends when the wrapped server ends.
+Wraps any external MCP server and checks its traffic. Example: `zn-gate shield -- uvx mcp-server-fetch`. Exit code `1` when no command is given, or when the program cannot be started (it is not installed, not on your `PATH`, or not executable); in that case it prints which program is missing and how to install it. Otherwise it ends when the wrapped server ends.
 
 Aliases: `mcp-shield`, `wrap`.
 
