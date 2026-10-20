@@ -436,6 +436,35 @@ Aliases: `logs`, `export`.
 
 `export` is the same as `evidence --export`.
 
+### `config`
+
+```bash
+zn-gate config list
+zn-gate config get KEY
+zn-gate config set KEY VALUE
+```
+
+Reads and changes a few settings in `~/.zn/config.json`. Only the keys below can be changed, each with the values shown; other keys in the file are kept, and the file is replaced in one step so it is never half written. Exit codes: `0` done, `1` could not read or write the file (a file that is not valid JSON is left as it is), `2` wrong usage, unknown key or a value that is not allowed.
+
+| Key | Values | Default | What it does |
+| --- | --- | --- | --- |
+| `hooks.stopReview` | `warn`, `block` | `warn` | Codex CLI: `block` asks the agent to rewrite a final answer that contains a secret value. `warn` only warns you. |
+| `hooks.replaceToolOutputOnSecret` | `true`, `false` | `false` | Codex CLI: `true` replaces a tool output that holds a real secret value. |
+
+Setting a value that makes zn less strict (for example `hooks.stopReview warn`) works only in your own terminal, so an agent or a script cannot loosen zn.
+
+#### `config list`
+
+Shows each key with its current value. A value that is not set shows as `(default)`.
+
+#### `config get`
+
+Prints the current value of one key.
+
+#### `config set`
+
+Checks the key and the value, then writes it.
+
 ### `stats`
 
 ```bash

@@ -132,7 +132,7 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
     made before this change get the new hook when you update them (see [upgrading.md](upgrading.md)).
   - Final answers (`Stop`): zn only warns, and the warning does not reach the model. To
     have Codex ask the model to rewrite an answer that contains a secret value, set
-    `"stopReview": "block"` under `hooks` in `~/.zn/config.json`. zn blocks at most once
+    `zn-gate config set hooks.stopReview block`. zn blocks at most once
     per answer and never when the answer is already a continuation. Installs made before
     this change get the new hook when you update them (see [upgrading.md](upgrading.md)).
     To tell whether a placeholder came from a tool, zn reads the session transcript in

@@ -210,6 +210,10 @@ COMMANDS:
   mcp                 Run as standalone bidirectional MCP server for AI agents
   analyze <text>      Inspect a prompt from the CLI (local; cloud only with ZN_CLOUD=1 + key)
   test                Run the local self-test (51 curated vectors: 26 attacks, 25 benign)
+  config list         Show the settings you can change (hooks.stopReview, hooks.replaceToolOutputOnSecret)
+  config get KEY      Show one setting
+  config set KEY VALUE
+                      Change one setting in ~/.zn/config.json (other keys are kept)
   stats               What zn-gate did on this machine (local counts; --days N, --json; "stats share" to opt in)
   report              Weekly report of what zn-gate did on this machine (--since Nd, --json, --no-team-line; nothing is sent)
   pins                Tool pins of the MCP servers that shield wraps ("pins approve <server>|--all" accepts changes)
@@ -1110,6 +1114,11 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
     process.env.ZN_STATS = 'off'; // the test read is not counted in zn-gate stats
     const zc = require('../lib/check');
     process.exitCode = zc.report(await zc.check({}));
+    return;
+  }
+
+  if (command === 'config') {
+    process.exitCode = require('../lib/config-cli').run(args.slice(1));
     return;
   }
 

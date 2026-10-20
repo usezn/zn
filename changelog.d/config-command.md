@@ -1,0 +1,2 @@
+### Added
+- `zn-gate config list|get|set`: change the Codex final-answer review (`hooks.stopReview`) and `hooks.replaceToolOutputOnSecret` from the command line instead of editing `~/.zn/config.json` by hand. Only these keys and their listed values are accepted, other keys in the file are kept, and the file is replaced atomically. Loosening a setting works only in your own terminal. The Codex warning now names the command.

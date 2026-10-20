@@ -858,7 +858,7 @@ async function decideStop(ev, d, agentId, opts) {
   const notice = stopHookActive
     ? 'zn: the last answer still contains ' + found + '. zn does not block a second time, so check it before you share it.'
     : 'zn: the last answer contains ' + found + '. zn did not stop it. To have zn ask the agent to rewrite such answers, ' +
-      'set "stopReview" to "block" under "hooks" in ~/.zn/config.json.';
+      'run `zn-gate config set hooks.stopReview block` in your terminal.';
   return { decision: 'ask', notice };
 }
 
