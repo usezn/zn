@@ -25,11 +25,24 @@ into the conversation, and never try to recover a value.
 
 ## When zn denies a call
 
-A denial message starting with `zn:` explains why and what to do instead,
-for example to use `zn run --` or the MCP server. Follow it. Do not try to
-work around it by reading the file another way, encoding it, or asking the
-user to switch zn off. If the message says the vault is locked, ask the user
-to run `zn unlock` in their terminal.
+A blocked command or file read comes back from the zn hook with a message
+that starts with `zn` and explains why and what to do instead, for example to
+use `zn run --` or the MCP server. Follow it.
+
+A refused `secrets_*` tool call returns JSON with an `error` code and a
+`message`:
+
+- `ZN_POLICY_DENIED`: not allowed for that secret (host, placement of the
+  marker, or command). The message says what is allowed.
+- `ZN_NOT_FOUND`: the vault has no such secret. Ask for it with
+  `secrets_request`.
+- `ZN_LOCKED`: the vault is locked. Ask the user to run `zn unlock` in their
+  terminal.
+- `ZN_HTTP_ERROR`: the request itself failed; the message has the reason, with
+  any secret replaced by its marker.
+
+In every case, do not try to work around a refusal by reading the file another
+way, encoding it, or asking the user to switch zn off.
 
 ## Untrusted text
 
