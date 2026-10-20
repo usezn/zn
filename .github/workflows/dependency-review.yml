@@ -19,6 +19,20 @@ on:
       - ".github/workflows/dependency-review.yml"
   pull_request:
     types: [ opened, synchronize, reopened, ready_for_review ]
+    # Dependency and license checks only matter when a manifest, a lockfile or a license
+    # setting changes.
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "deny.toml"
+      - "packages/**/package.json"
+      - "packages/**/package-lock.json"
+      - "packages/**/pyproject.toml"
+      - "examples/**/requirements*.txt"
+      - ".github/*requirements*.txt"
+      - ".github/license-allowlist.txt"
+      - ".github/scripts/license-check*"
+      - ".github/workflows/dependency-review.yml"
   schedule:
     - cron: "17 7 * * 1" # weekly license check
   workflow_dispatch:

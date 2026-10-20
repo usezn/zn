@@ -156,10 +156,9 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
-          cache-dependency-path: |
-            packages/zn-gate-py/pyproject.toml
-            .github/ci-test-requirements.txt
+          # No pip cache: the test tools are small and hash-pinned, and each cache key saved a
+          # new 200-350 MB copy that pushed the repository toward its 10 GB cache limit.
+          package-manager-cache: false
       - name: Install package and test dependencies
         if: steps.scope.outputs.run == 'true'
         # Test tools pinned with hashes; the package itself has no dependencies.
@@ -233,10 +232,9 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: |
-            packages/zn-gate-py/pyproject.toml
-            .github/ci-test-requirements.txt
+          # No pip cache: the test tools are small and hash-pinned, and each cache key saved a
+          # new 200-350 MB copy that pushed the repository toward its 10 GB cache limit.
+          package-manager-cache: false
       - name: Install ruff and mypy
         id: python-tools
         if: ${{ !cancelled() && steps.python.outcome == 'success' }}
@@ -357,10 +355,9 @@ jobs:
         if: steps.scope.outputs.run == 'true'
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: |
-            packages/zn-gate-py/pyproject.toml
-            .github/release-requirements.txt
+          # No pip cache: the test tools are small and hash-pinned, and each cache key saved a
+          # new 200-350 MB copy that pushed the repository toward its 10 GB cache limit.
+          package-manager-cache: false
       - name: Install build tools
         if: steps.scope.outputs.run == 'true'
         # The hash-pinned tools the release workflow uses.
