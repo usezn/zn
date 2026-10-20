@@ -38,7 +38,8 @@ Hooks are a guardrail, not a sandbox: a determined process can find another
 way to read a file. The point is that the agent's normal tools do not hand
 values to the model. The hooks also block the agent's file tools and shell
 commands from writing `~/.zn` and the agents' own hook and plugin settings:
-the files (`.claude/settings*.json`, `.codex/` files, `.cursor/hooks.json`, the
+the files (`.claude/settings*.json`, `.mcp.json`, `~/.claude.json`, Claude Code's
+managed settings, `.codex/` files, `.cursor/hooks.json`, `.cursor/mcp.json`, the
 OpenCode plugin and `opencode.json`, and Antigravity's hook and settings files,
 listed under "Experimental adapters" below) and the directories that hold them
 (`~/.claude`, `~/.codex`, `~/.cursor`, `~/.config/opencode`, the same in the

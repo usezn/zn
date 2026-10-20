@@ -146,6 +146,25 @@ test('the agents hook and plugin configuration cannot be written, but can be rea
   assert.equal(policy.writeDenial(path.join(proj, 'src', 'app.js'), opts), null);
 });
 
+test('MCP server lists and managed settings cannot be written, but can be read', (t) => {
+  const { home, proj } = tmpHome(t);
+  const opts = { home, cwd: proj, env: {} };
+  for (const f of [
+    path.join(proj, '.mcp.json'),
+    path.join(home, '.claude.json'),
+    path.join(proj, '.cursor', 'mcp.json'),
+    '/etc/claude-code/managed-settings.json',
+    '/etc/claude-code/managed-settings.d/10-example.json',
+    '/Library/Application Support/ClaudeCode/managed-mcp.json',
+    'C:/Program Files/ClaudeCode/managed-settings.json',
+  ]) {
+    assert.match(policy.writeDenial(f, opts), /protected/, f);
+    assert.equal(policy.readDenial(f, opts), null, f);
+  }
+  assert.match(policy.bashDenial('echo {} > .mcp.json', opts), /protected|configuration/);
+  assert.equal(policy.writeDenial(path.join(proj, 'mcp.json'), opts), null);
+});
+
 test('shell commands cannot write the agents hook configuration', (t) => {
   const { home, proj } = tmpHome(t);
   const opts = { home, cwd: proj, env: {} };

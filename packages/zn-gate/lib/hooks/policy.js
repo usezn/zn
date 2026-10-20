@@ -28,7 +28,7 @@ const { znHomeDir } = require('../zn-home');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-20.45';
+const POLICY_RULES_VERSION = '2026-10-20.46';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -120,6 +120,11 @@ const ENV_REF_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$env:([A-Za-z_][A-Za-z0-9_]*
 // could switch off the hooks that check it, so writes are refused like ~/.zn.
 const AGENT_CONFIG_RES = [
   [/(^|\/)\.claude\/settings[^/]*\.json$/, 'Claude Code settings'],
+  [/(^|\/)\.mcp\.json$/, 'Claude Code project MCP servers'],
+  [/(^|\/)\.claude\.json$/, 'Claude Code user settings and MCP servers'],
+  [/(^|\/)managed-(settings|mcp)\.json$/, 'Claude Code managed settings'],
+  [/(^|\/)managed-settings\.d\//, 'Claude Code managed settings'],
+  [/(^|\/)\.cursor\/(mcp|cli)\.json$/, 'Cursor MCP servers and permissions'],
   [/(^|\/)\.codex\/[^/]*$/, 'Codex hooks and configuration'],
   [/(^|\/)\.cursor\/hooks\.json$/, 'Cursor hooks'],
   [/(^|\/)\.agents\/hooks\.json$/, 'Antigravity hooks'],
