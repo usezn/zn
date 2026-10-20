@@ -276,3 +276,31 @@ test('a link already on disk: write_to_file through ag/../hooks.json is denied',
   const r = await run(pre('write_to_file', { TargetFile: dir + '/ag/../hooks.json', CodeContent: '{}' }, { workspacePaths: [dir] }));
   assert.equal(r.output.decision, 'deny');
 });
+
+test('real tool names: IDE read_file/write_file/edit_file and CLI read_file use the read and write checks', async () => {
+  const cred = path.join(HOME, '.ssh', 'id_rsa');
+  assert.equal(agy.normalize(pre('read_file', { Path: cred })).tool, 'read');
+  assert.equal(agy.normalize(pre('write_file', { Path: '/work/proj/a.txt', Content: 'x' })).tool, 'write');
+  assert.equal(agy.normalize(pre('edit_file', { Path: '/work/proj/a.txt', Target: 'old', Replacement: 'new' })).tool, 'write');
+  assert.equal((await run(pre('view_file', { AbsolutePath: cred }))).output.decision, 'deny');
+  assert.equal((await run(pre('read_file', { Path: cred }))).output.decision, 'deny');
+  assert.equal((await run(pre('read_file', { Path: '/work/proj/README.md' }))).output.decision, 'allow');
+  assert.equal(agy.normalize(pre('list_dir', { DirectoryPath: '/work/proj' })).tool, 'read');
+  assert.equal(agy.normalize(pre('find_by_name', { SearchDirectory: '/work/proj', Pattern: '*.js' })).tool, 'read');
+  assert.equal((await run(pre('write_file', { Path: path.join(HOME, '.zn', 'vault.json'), Content: 'x' }))).output.decision, 'deny');
+  assert.equal(agy.normalize(pre('run_command', { CommandLine: 'ls' })).tool, 'bash');
+});
+
+test('edit_file: the Target key is text, not a path', async () => {
+  const n = agy.normalize(pre('edit_file', { Path: '/work/proj/a.js', Target: path.join(HOME, '.aws', 'credentials') }));
+  assert.deepEqual(n.input.paths, ['/work/proj/a.js']);
+  assert.equal((await run(pre('edit_file', { Path: '/work/proj/a.js', Target: 'const a = 1;', Replacement: 'const a = 2;' }))).output.decision, 'allow');
+  // a call whose only candidate is Target has no readable path
+  assert.equal(agy.normalize(pre('edit_file', { Target: 'x' })).unreadable !== undefined, true);
+});
+
+test('search_web, invoke_subagent and other tools without a path keep the default (no opinion)', async () => {
+  for (const name of ['search_web', 'invoke_subagent', 'schedule', 'manage_task', 'ask_question', 'list_resources']) {
+    assert.equal((await run(pre(name, { Query: 'x' }))).output.decision, 'allow', name);
+  }
+});

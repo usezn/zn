@@ -44,11 +44,13 @@ const HOOK_TIMEOUT_S = 15;
 const MATCHER = '*';
 
 const SHELL_TOOLS = new Set(['run_command']);
-const READ_TOOLS = new Set(['view_file', 'list_dir', 'find_by_name']);
-const WRITE_TOOLS = new Set(['write_to_file', 'replace_file_content', 'multi_replace_file_content']);
+// Real names seen in the IDE (read_file, write_file, edit_file, run_command) and in the CLI (view_file, write_to_file, ...).
+const READ_TOOLS = new Set(['read_file', 'view_file', 'list_dir', 'find_by_name']);
+const NAMES_ONLY_TOOLS = new Set(['list_dir', 'find_by_name']);
+const WRITE_TOOLS = new Set(['write_file', 'edit_file', 'write_to_file', 'replace_file_content', 'multi_replace_file_content']);
 const COMMAND_KEYS = ['CommandLine', 'commandLine', 'command_line', 'command', 'Command'];
 const PATH_KEY_RE = /path|file|target|uri|dir|source|destination/i;
-const NOT_PATH_KEY_RE = /content|text|instruction|description|query|pattern|code|chunk|summary|title/i;
+const NOT_PATH_KEY_RE = /content|text|instruction|description|query|pattern|code|chunk|summary|title|^target$/i; // edit_file's "Target" holds text, not a path
 const MAX_PATH_LEN = 4096;
 
 const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -121,9 +123,9 @@ function normalize(raw) {
   const { paths, bad } = pathsOf(args);
   const input = { path: paths[0], paths, texts: [] };
   const searchDir = toolName === 'grep_search' ? (paths[0] ? path.resolve(cwd, paths[0]) : cwd) : null;
-  const kind = toolName === 'view_file' ? 'read' : toolName === 'grep_search' ? 'grep' : WRITE_TOOLS.has(toolName) ? 'write' : null;
+  const kind = (READ_TOOLS.has(toolName) && !NAMES_ONLY_TOOLS.has(toolName)) ? 'read' : NAMES_ONLY_TOOLS.has(toolName) ? 'read_names' : toolName === 'grep_search' ? 'grep' : WRITE_TOOLS.has(toolName) ? 'write' : null;
   if (kind) {
-    const e = { ...ev, tool: kind, input: searchDir ? { ...input, scanDir: searchDir } : input };
+    const e = { ...ev, tool: kind === 'read_names' ? 'read' : kind, input: searchDir ? { ...input, scanDir: searchDir } : input };
     if (bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
     else if ((kind === 'read' || kind === 'write') && !paths.length) e.unreadable = 'zn: could not read the file this call uses, so zn cannot check it. Name the file explicitly.';
     return e;
