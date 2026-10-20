@@ -167,7 +167,12 @@ test('install replaces, and uninstall removes, hooks written with double quotes 
   cursor.install({ ...opts, platform: 'win32' });
   const win = JSON.parse(fs.readFileSync(cuFile, 'utf8')).hooks.beforeReadFile;
   assert.equal(win.length, 1);
-  assert.match(win[0].command, /^powershell\.exe -NoProfile -NonInteractive -Command "& '\/usr\/bin\/node' '\/new\/lib\/hooks\/runner\.js' cursor"$/);
+  // Cursor on Windows now runs the fail-closed launcher as an encoded PowerShell command.
+  const m = /^powershell\.exe -NoProfile -NonInteractive -EncodedCommand ([A-Za-z0-9+/=]+)$/.exec(win[0].command);
+  assert.ok(m, 'an encoded PowerShell launcher');
+  const script = Buffer.from(m[1], 'base64').toString('utf16le');
+  assert.match(script, /'\/usr\/bin\/node' '\/new\/lib\/hooks\/runner\.js' cursor/);
+  assert.match(script, /exit 2/, 'blocks when Node.js or the runner is gone');
   cursor.uninstall(opts);
   assert.deepEqual(JSON.parse(fs.readFileSync(cuFile, 'utf8')).hooks, {});
 });
