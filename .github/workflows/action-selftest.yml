@@ -15,6 +15,9 @@ on:
       - 'action.yml'
       - '.github/workflows/action-selftest.yml'
       - '.github/action-selftest/**'
+  # Daily full run on the default branch.
+  schedule:
+    - cron: '30 6 * * *'
   workflow_dispatch:
 
 permissions:
@@ -228,7 +231,7 @@ jobs:
           print(f"SARIF OK: {len(results)} results")
           PY
 
-  # The audit runs the npm package, so it is tested on every operating system.
+  # The audit runs the npm package, so full runs test it on every operating system.
   audit:
     name: action audit (${{ matrix.os }})
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
@@ -238,7 +241,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, windows-latest, macos-latest ]
+        os: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["ubuntu-latest", "windows-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
     steps:
       - name: Harden the runner (egress audit)
         if: runner.os == 'Linux'

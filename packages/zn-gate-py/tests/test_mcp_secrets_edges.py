@@ -4,6 +4,8 @@ as the Node.js package on the same configs. Every value is invented and
 assembled at run time."""
 
 import json
+import ntpath
+import posixpath
 import shutil
 import subprocess
 import tempfile
@@ -15,6 +17,7 @@ from zn_gate import mcp_secrets as mcp
 
 NODE_PKG = Path(__file__).resolve().parents[2] / "zn-gate"
 NODE_LIB = NODE_PKG / "lib" / "mcp-secrets.js"
+SHARED_FIXTURE = NODE_PKG / "test" / "fixtures" / "mcp_config_secret_samples.json"
 FAKE = "ZNTESTFAKE" + "q8v3Lm9x2W"
 
 # Reads {"cases": [{"text", "file"}]} on stdin; prints one result per case.
@@ -294,6 +297,96 @@ class TestNodeParity(unittest.TestCase):
                 self.assertEqual(got, [norm, mcp.is_secret_name(norm), mcp.suggested_name(norm),
                                        mcp.mcp_next_step("environment variable", name), mcp.mcp_next_step("header", name),
                                        mcp.mcp_sample("argument", name), mcp.mcp_sample("URL", name), mcp.mcp_sample("header", name)])
+
+
+class TestSharedFixtureParity(unittest.TestCase):
+    """The shared fixture (lines, file, paths) gives the same results in Python and Node."""
+
+    def test_shared_fixture_cases_match_node_spans_findings_and_masking(self):
+        cases = json.loads(SHARED_FIXTURE.read_text(encoding="utf-8"))["cases"]
+        texts = [("\n".join(c["lines"]).replace("{V}", FAKE), c.get("file", "")) for c in cases]
+        node = _run_node([{"text": t, "file": f} for t, f in texts])
+        self.assertEqual(len(node), len(texts))
+        for (text, file), (c, n) in zip(texts, zip(cases, node, strict=True), strict=True):
+            with self.subTest(case=c["name"]):
+                spans = mcp.find_mcp_config_secret_spans(text, file)
+                self.assertEqual(spans, n["spans"])
+                self.assertEqual(mcp.find_mcp_config_secrets(text, file), n["findings"])
+                self.assertEqual(mcp.mask_mcp_values(text, spans), n["masked"])
+
+    def test_shared_fixture_paths_match_node(self):
+        paths = json.loads(SHARED_FIXTURE.read_text(encoding="utf-8"))["paths"]
+        node = _run_node([{"text": "", "file": p["path"]} for p in paths])
+        for p, n in zip(paths, node, strict=True):
+            with self.subTest(path=p["path"]):
+                self.assertEqual(mcp.is_mcp_config_path(p["path"]), p["mcp"])
+                self.assertEqual(n["isConfig"], p["mcp"])
+
+    def test_windows_and_posix_shapes_built_with_ntpath_and_posixpath(self):
+        home = ntpath.join("C:\\Users\\Ana María", ".claude.json")
+        text = '{"primaryApiKey": "%s", "BRAVE_API_KEY": "%s"}' % (FAKE, FAKE)
+        self.assertEqual([f["name"] for f in mcp.find_mcp_config_secrets(text, home)], ["BRAVE_API_KEY"])
+        self.assertTrue(mcp.is_mcp_config_path(ntpath.join("D:\\work", ".gemini", "settings.json")))
+        self.assertFalse(mcp.is_mcp_config_path(ntpath.join("C:\\Users\\u", "mcp.json.bak")))
+        self.assertTrue(mcp.is_mcp_config_path(posixpath.join("/home/u", "proyecto ñandú", ".mcp.json")))
+        self.assertFalse(mcp.is_mcp_config_path(posixpath.join("/home/u", "My Dir", "mcp.json.bak")))
+
+    def test_empty_and_broken_inputs_match_node(self):
+        texts = ["", "\n\n", "{", "}", '"', "=", "{ /* unterminated\n  \"BRAVE_API_KEY\": \"%s\"\n}" % FAKE,
+                 '{"s": {"env": {}, "headers": null, "args": []}}', '{"args": ["--api-key"]}']
+        node = _run_node([{"text": t, "file": ""} for t in texts])
+        for t, n in zip(texts, node, strict=True):
+            with self.subTest(text=t[:20]):
+                self.assertEqual(mcp.find_mcp_config_secrets(t), n["findings"])
+                self.assertEqual(mcp.mask_mcp_values(t, mcp.find_mcp_config_secret_spans(t)), n["masked"])
+
+    def test_offsets_after_an_astral_character_match_node(self):
+        # Both engines report offsets in UTF-16 code units: an emoji before a credential on the
+        # same line counts as two, in Python too, and masking gives the same text.
+        text = '{"\U0001F4C1": "x", "BRAVE_API_KEY": "%s"}' % FAKE
+        node = _run_node([{"text": text, "file": ""}])[0]
+        spans = mcp.find_mcp_config_secret_spans(text)
+        self.assertEqual(spans, node["spans"])
+        self.assertEqual(mcp.mask_mcp_values(text, spans), node["masked"])
+
+
+class TestNestedSecretValues(unittest.TestCase):
+    def test_credential_nested_under_a_secret_named_object_is_reported(self):
+        text = '{"API_TOKEN": {"value": "%s"}}' % FAKE
+        self.assertEqual(_kinds(text), [(1, "environment variable", "API_TOKEN")])
+        text = '{"env": {"DB_PASSWORD": {"default": "%s"}}}' % FAKE
+        self.assertEqual(_kinds(text), [(1, "environment variable", "DB_PASSWORD")])
+
+    def test_nested_value_is_found_across_lines_and_masked(self):
+        text = '{\n "apiKey": {\n  "type": "string",\n  "value": "%s"\n },\n "other": {"value": "%s"}\n}' % (FAKE, FAKE)
+        self.assertEqual(_kinds(text), [(4, "setting", "apiKey")])
+        out = mcp.mask_mcp_values(text, mcp.find_mcp_config_secret_spans(text))
+        self.assertEqual(out.count(FAKE), 1)
+
+    def test_array_items_under_a_secret_named_key_are_reported(self):
+        text = '{"A_TOKEN": ["%s"], "B_TOKEN": ["--x", "%s"]}' % (FAKE, FAKE)
+        self.assertEqual([g[2] for g in _kinds(text)], ["A_TOKEN", "B_TOKEN"])
+
+    def test_references_placeholders_and_empty_nested_values_are_not_reported(self):
+        for v in ("${API_TOKEN}", "<key>", "YOUR_KEY", "__ZN_API_TOKEN__", "$API_TOKEN", "", "true"):
+            with self.subTest(value=v):
+                self.assertEqual(_kinds('{"API_TOKEN": {"value": "%s", "default": "%s"}}' % (v, v)), [])
+
+    def test_other_keys_and_other_objects_are_not_reported(self):
+        self.assertEqual(_kinds('{"auth": {"client_id": "%s", "type": "oauth"}}' % FAKE), [])
+        self.assertEqual(_kinds('{"API_TOKEN": {"description": "%s"}}' % FAKE), [])
+        self.assertEqual(_kinds('{"API_TOKEN": {"a": {"b": ["%s"]}}, "LOG": {"value": "%s"}}' % (FAKE, FAKE)), [])
+
+    def test_nesting_is_bounded_and_broken_input_does_not_raise(self):
+        deep = '{"API_TOKEN": ' + '{"x": ' * 10 + '{"value": "%s"}' % FAKE + "}" * 11
+        self.assertEqual(_kinds(deep), [])
+        for text in ('{"API_TOKEN": {"value": ', '{"API_TOKEN": [[[[[[[[[[["%s"' % FAKE,
+                     '"API_TOKEN": {' + "\n" * 300 + '"value": "%s"' % FAKE):
+            mcp.find_mcp_config_secrets(text)
+
+    def test_toml_inline_table(self):
+        text = 'env = { API_TOKEN = { value = "%s" } }' % FAKE
+        self.assertEqual(_kinds(text), [(1, "environment variable", "API_TOKEN")])
 
 
 if __name__ == "__main__":

@@ -1,0 +1,2 @@
+### Fixed
+- The scrubber now redacts a secret in two shell forms it missed: a PowerShell assignment without quotes (`$env:OPENAI_API_KEY = value`) and an assignment before a command (`OPENAI_API_KEY=value node app.js`, also after other `NAME=value` words or `env`). Placeholders, `$VAR` and `${VAR}` references, empty values, paths, URLs and ordinary settings such as `NODE_ENV=production node app.js` are left as they are.

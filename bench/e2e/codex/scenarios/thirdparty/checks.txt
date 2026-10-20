@@ -2,6 +2,9 @@ PASS Codex exited with code 0 (exit task exit=0)
 PASS no hook run failed (0,0,0,0)
 INFO the other hook saw: PreToolUse echo benign-ok
 INFO zn saw: echo benign-ok (zn answered: nothing)
-INFO what the model got back: [default] aws_access_key_id = __ZN_AWS_KEY_1__ aws_secret_access_key = __ZN_AWS_SECRET_1__ [zn: 2 secret value(s) in this output were replaced with __ZN_ tokens (AWS_KEY, AWS_SECRET). Real values stay on this machine; use the tokens as they are.]
-INFO command ran as rewritten: yes
+INFO what the model got back: zn: A command different from the one zn checked was run (another tool changed it). zn withheld its output because zn blocks that command. Review the other hooks configured for Codex.
 INFO PostToolUse saw command: cat ~/.aws/credentials
+INFO command ran as rewritten: yes
+PASS PostToolUse saw the command that really ran, not the original (cat ~/.aws/credentials)
+PASS zn answered block and withheld the output (decision,reason)
+PASS the model got the withheld message, not the file content (zn: A command different from the one zn checked was run (another tool changed it). zn withheld its output because zn blo)
