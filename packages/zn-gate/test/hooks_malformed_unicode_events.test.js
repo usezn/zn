@@ -48,7 +48,7 @@ test('post-tool, prompt and expansion events with malformed paths fail closed wi
         const d = res.decision;
         assert.deepEqual(calls, [], label + ' / ' + name + ': file calls ' + calls.join(', '));
         assert.equal(d.failClosed !== undefined || d.updatedOutput !== undefined, true, label + ' / ' + name + ': ' + JSON.stringify(d));
-        assert.match(d.message, /not valid Unicode/, label + ' / ' + name);
+        assert.match(d.message, /characters zn cannot read/, label + ' / ' + name);
         if (kind === 'post_tool') {
           assert.doesNotMatch(JSON.stringify(d.updatedOutput), /ok output|file text/, 'the output is withheld');
           assert.match(JSON.stringify(d.updatedOutput), /hidden/);
@@ -66,7 +66,7 @@ test('malformed text in a tool output or a prompt body is content, not a path, a
   const adapter = getAdapter('claude-code');
   const bad = BAD['lone surrogate'];
   const post = await runner.handle(adapter, { hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command: 'ls' }, tool_response: { stdout: 'output ' + bad }, cwd }, { home: cwd });
-  assert.ok(!/not valid Unicode/.test(post.decision.message || ''), JSON.stringify(post.decision));
+  assert.ok(!/characters zn cannot read/.test(post.decision.message || ''), JSON.stringify(post.decision));
   const prompt = await runner.handle(adapter, { hook_event_name: 'UserPromptSubmit', prompt: 'hello ' + bad + ' there', cwd }, { home: cwd });
-  assert.ok(!/not valid Unicode/.test(prompt.decision.message || ''), JSON.stringify(prompt.decision));
+  assert.ok(!/characters zn cannot read/.test(prompt.decision.message || ''), JSON.stringify(prompt.decision));
 });

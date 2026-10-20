@@ -24,10 +24,11 @@ const markers = require('../broker/markers');
 const { realTargetOf } = require('../broker/files');
 const { powershellQuote, portablePath } = require('../shell-quote');
 const { znCommand } = require('../zn-command');
+const { SECRETS_HTTP_TOOL } = require('../messages');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-19.43';
+const POLICY_RULES_VERSION = '2026-10-20.6';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -668,7 +669,7 @@ function credentialDenial(p, c) {
 }
 
 function agentConfigDenial(p, c) {
-  return 'zn: ' + c.reason + ' (' + p + ') is protected: an agent may not change how zn and its hooks run. Ask the user to make this change.';
+  return 'zn: ' + c.reason + ' (' + p + ') is protected, because it controls the checks zn runs before your agent acts, so an agent may not change it. ' + agentsAdvice();
 }
 
 /** Writes are only blocked for zn's own state and the agents' hook and plugin configuration. */
@@ -803,7 +804,13 @@ const LINK_CMDS = new Set(['ln', 'mklink']);
 const AGENTS_SEG_RE = /(^|\/)\.agents(\/|$)/i;
 // A word like ag/../hooks.json: ".." after a name, which a link can turn into a path outside the folder it seems to be in.
 const MID_DOTDOT_RE = /[^\/\\\s]\/\.\.(?:[\/\\]|$)/;
-const AGENTS_PROTECTED = 'zn: this command would change agent hook or plugin settings, which is protected. Ask the user to make this change.';
+// What to do when a change to the agent's hook settings is blocked (shared by the file and the command messages).
+function agentsAdvice() {
+  return 'Next step: ask the user to make this change themselves, or to run `' + znCommand('hooks install <agent>') + '` if zn\'s setup needs repairing.';
+}
+function agentsProtected() {
+  return 'zn: this command would change the settings that make your agent run zn\'s checks, which are protected so an agent cannot switch them off. ' + agentsAdvice();
+}
 
 /** Whether a writing word touches the .agents hook folder (see the notes above); w.link comes from markLinkWords. */
 function agentsDirRisky(t, w) {
@@ -865,14 +872,14 @@ function wrapWithZnRun(cmd, znRunPrefix) {
   if (named.length === 0) return { ok: true, command: s, wrapped: false };
   const scan = scanFirstCommand(s);
   const tail = s.slice(scan.end);
-  const guidance = ' zn fills in secrets only in the first command of a Bash call: run that command on its own, ' +
-    'with __ZN_NAME__ where the value goes (for example: psql "postgres://app:__ZN_DB_PASSWORD__@db/app" -c "select 1").';
+  const guidance = ' zn fills in secrets only in the first command you run. Next step: run that command on its own, ' +
+    'with __ZN_NAME__ where the secret goes (for example: psql "postgres://app:__ZN_DB_PASSWORD__@db/app" -c "select 1").';
   if (scan.unterminated) return { ok: false, reason: 'zn: this command has a quote that is not closed, so zn cannot read it. Close the quote and try again.' };
   if (markers.findNamedMarkers(tail).length > 0) {
-    return { ok: false, reason: 'zn: this command uses a secret after its first command.' + guidance };
+    return { ok: false, reason: 'zn: this command uses a secret in a command that is not the first one.' + guidance };
   }
   if (scan.substitution) {
-    return { ok: false, reason: 'zn: a secret cannot be used in a command that also has $( ) or backticks.' + guidance };
+    return { ok: false, reason: 'zn: a secret cannot be used in a command that runs another command inside it (with $( ) or backticks), so zn blocked it.' + guidance };
   }
   let k = 0;
   while (k < scan.words.length && ASSIGNMENT_RE.test(scan.words[k].text)) k++;
@@ -888,7 +895,7 @@ function wrapWithZnRun(cmd, znRunPrefix) {
   }
   const first = scan.words[k];
   if (RESERVED_WORDS.has(first.text)) {
-    return { ok: false, reason: 'zn: a secret cannot be used with `' + first.text + '`, because it is a shell keyword, not a program zn can hand the value to.' + guidance };
+    return { ok: false, reason: 'zn: `' + first.text + '` is part of the shell language, not a program, so zn cannot hand it a secret.' + guidance };
   }
   // Already wrapped by the agent or a previous hook: leave it alone, zn run applies policy.
   if (/(^|[\\/])(zn|zn-gate)(\.js|\.cmd)?$/.test(first.text) && scan.words[k + 1] && scan.words[k + 1].text === 'run') {
@@ -975,20 +982,20 @@ function wrapPowerShell(cmd, opts) {
   const s = String(cmd);
   const named = markers.findNamedMarkers(s);
   if (named.length === 0) return { ok: true, command: s, wrapped: false };
-  const guidance = ' Next step: start the command with the program name and put the secret in its arguments, for example: ' +
-    "psql 'postgres://app:__ZN_DB_PASSWORD__@db/app' -c 'select 1'. For web requests, use the secrets_http_request tool of the zn \"secrets\" MCP server instead.";
+  const guidance = ' Next step: start the command with a plain program name and put the secret in its arguments, for example: ' +
+    "psql 'postgres://app:__ZN_DB_PASSWORD__@db/app' -c 'select 1'. For a web request, use " + SECRETS_HTTP_TOOL + '.';
   const scan = scanPowerShell(s);
   if (!scan.simple || scan.words.length === 0) {
-    return { ok: false, reason: 'zn: this PowerShell command uses a pipeline, a variable or a script block, so zn cannot safely put a secret into it.' + guidance };
+    return { ok: false, reason: 'zn: this PowerShell command uses a pipe, a variable or a script block, so zn cannot safely put a secret into it.' + guidance };
   }
   const first = scan.words[0].text;
   const base = path.basename(first.replace(/\\/g, '/')).toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/, '');
   // zn-gate has the Verb-Noun shape of a cmdlet but is the zn program itself.
   if ((/^[a-z]+-[a-z]+$/i.test(first) && base !== 'zn-gate') || PS_ALIASES.has(first.toLowerCase())) {
-    return { ok: false, reason: 'zn: "' + first + '" is a PowerShell command, not a program, so zn cannot pass a secret to it.' + guidance };
+    return { ok: false, reason: 'zn: "' + first + '" is a PowerShell command, not a program, so zn cannot give it a secret.' + guidance };
   }
   if (/\.ps1$/i.test(first)) {
-    return { ok: false, reason: 'zn: this runs a PowerShell script (.ps1), and zn cannot pass secrets into scripts.' + guidance };
+    return { ok: false, reason: 'zn: this runs a PowerShell script (.ps1), and zn cannot give secrets to scripts.' + guidance };
   }
   if (!/^[A-Za-z0-9_.\-\\/:]+$/.test(first)) {
     return { ok: false, reason: 'zn: this command does not start with a plain program name, so zn cannot tell which program to run.' + guidance };
@@ -1082,13 +1089,13 @@ function shellPatchMessage(cmd, deny, opts) {
       'Next step: ask the user to make this change in that file.';
   }
   // Its *** lines read as file patterns that can match secret files, so zn refuses any patch in this form.
-  return 'zn: this patch was blocked because it was sent as a shell command, which zn cannot check file by file ' +
-    '(its *** lines look like file patterns that can match secret files). Next step: use the apply_patch tool, or write the file another way.';
+  return 'zn: this patch was blocked because it was sent as a shell command, so zn cannot check which files it changes. ' +
+    'Next step: use the apply_patch tool, or write the file another way.';
 }
 
 // How deep sh -c "sh -c '...'" is followed; deeper is refused.
 const SHELL_CODE_DEPTH = 3;
-const TOO_NESTED_MESSAGE = 'zn: this command nests shell code (sh -c "sh -c ...") deeper than zn checks, so it was blocked. Next step: run the inner command directly, or tell the user.';
+const TOO_NESTED_MESSAGE = 'zn: this command runs a shell inside a shell inside a shell (sh -c "sh -c ..."), deeper than zn can check, so it was blocked. Next step: run the inner command directly, or tell the user.';
 const SHELL_NAMES = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'ash', 'mksh', 'fish', 'csh', 'tcsh', 'rbash']);
 const SHELL_C_FLAG_RE = /^-[A-Za-z]*c[A-Za-z]*$/;
 
@@ -1609,7 +1616,10 @@ function runsCodeAfter(text, targets) {
  * `find-internet-password`, Linux `secret-tool lookup` / `search`, Windows
  * `cmdkey /list:` and PowerShell `Get-StoredCredential` / CredRead.
  */
-const KEYCHAIN_MESSAGE = 'zn: this command would read a zn secret (the API key or the vault key) from the system keychain, which is protected. Ask the user to do it.';
+function keychainMessage() {
+  return 'zn: this command would read a zn secret (the API key or the vault key) from the system keychain, which is protected. ' +
+    'Next step: if the user needs to see what is stored, ask them to run `' + znCommand('secret list') + '` in their own terminal.';
+}
 // A command is refused when it holds BOTH a word that reads a keychain AND one of zn's own entry names (or loads
 // zn's key code). No wrapper, quoting, interpreter or heredoc has to be understood: the words are enough, and
 // searching for the names with rg, grep or git grep (no keychain word) stays allowed.
@@ -1719,7 +1729,7 @@ function bashDenialOf(cmd, opts = {}) {
   if (String(cmd || '').length > SHELL_SCAN_CAP) return TOO_LONG_MESSAGE;
   const admin = adminCommand(cmd);
   if (admin) return adminDenial(admin, opts, cmd);
-  if (keychainQuery(cmd, opts.env || process.env)) return KEYCHAIN_MESSAGE;
+  if (keychainQuery(cmd, opts.env || process.env)) return keychainMessage();
   // The context (home, project, agent directories) is built once per command.
   opts = { ...opts, ctx: contextOf(opts) };
   // The code of a shell inside the command (sh -c "...") is checked as a command of its own, with the same budget.
@@ -1796,7 +1806,7 @@ function bashDenialOf(cmd, opts = {}) {
     if (anyGit && text.charCodeAt(0) === 58) text = text.replace(PATHSPEC_MAGIC_RE, '') || text;
     const writing = !READ_ONLY_CMDS.has(w.head);
     // After a cd that leads, through a link, into .agents, a writing command works inside the hook folder.
-    if (writing && opts.cdBases.agentsDir && !CD_CMDS.has(bareHead(w.head).toLowerCase())) return AGENTS_PROTECTED;
+    if (writing && opts.cdBases.agentsDir && !CD_CMDS.has(bareHead(w.head).toLowerCase())) return agentsProtected();
     if (!classified.has(text)) {
       if (globDeny && ++afterGlob > GLOB_NAME_LOOKAHEAD) return globDeny;
       if (overBudget(opts.budget, 1)) return TOO_SLOW_MESSAGE;
@@ -1815,7 +1825,7 @@ function bashDenialOf(cmd, opts = {}) {
       const t = slash(text).replace(/(?:\/\.)+(?=\/|$)/g, '');
       if ((writing && (AGENT_CONFIG_MENTION_RE.test(t) || agentsDirRisky(t, w))) ||
           ((writing || w.redirectTarget) && (mentionsAgents || makesLink) && MID_DOTDOT_RE.test(t))) {
-        return AGENTS_PROTECTED;
+        return agentsProtected();
       }
       continue;
     }
@@ -1969,7 +1979,8 @@ function gitReadsContent(sub, args) {
 
 function gitHistoryDenial(text) {
   return 'zn: this git command reads the stored content or history of ' + path.basename(text) + ', which zn treats as holding secrets, ' +
-    'so it was not run. If the repository holds real values in it, tell the user: they should be rotated and removed from the history.';
+    'so it was not run. If the repository tracks real values in it, tell the user to run `git rm --cached ' + path.basename(text) + '` to stop tracking it, ' +
+    'and to replace those values with new ones, because they are already in the history.';
 }
 
 /* A git object word whose path is a .env or credential file. The stored copy cannot be checked for values without
@@ -1982,7 +1993,8 @@ function gitObjectDenial(text, opts) {
   const c = classifyPath(file, opts) || classifyPath(path.basename(file), opts);
   if (!c || c.kind === 'agent_config') return null;
   return 'zn: ' + text + ' reads ' + path.basename(file) + ' from the git repository, and zn treats that file as holding secrets, ' +
-    'so it was not read. If the repository holds real values in it, tell the user: they should be rotated and removed from the history.';
+    'so it was not read. If the repository tracks real values in it, tell the user to run `git rm --cached ' + path.basename(file) + '` to stop tracking it, ' +
+    'and to replace those values with new ones, because they are already in the history.';
 }
 
 // Commands that change the directory the rest of the command runs in.

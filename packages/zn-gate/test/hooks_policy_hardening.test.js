@@ -302,7 +302,7 @@ test('a patch sent as a shell command (Codex apply_patch) is refused with the fi
   // A patch to an ordinary file sent as a shell command is still refused (its *** lines read as file patterns),
   // with a message that says why and what to do instead.
   const m3 = policy.bashDenial("apply_patch <<'PATCH'\n*** Begin Patch\n*** Add File: notes.txt\n+hello\n*** End Patch\nPATCH", { cwd: dir, home: dir });
-  assert.match(m3, /sent as a shell command, which zn cannot check file by file/);
+  assert.match(m3, /sent as a shell command, so zn cannot check which files it changes/);
   assert.match(m3, /use the apply_patch tool/);
   // The file name is shown without control characters and cut short; a too-long command keeps its own message.
   const long = 'd'.repeat(300) + '/\u001b[2J/.env';
@@ -324,7 +324,7 @@ test('a long patch sent as a shell command is refused quickly, naming a secret f
   const t0 = process.hrtime.bigint();
   const m = policy.bashDenial(big, { cwd: dir, home: dir });
   assert.ok(Number(process.hrtime.bigint() - t0) / 1e6 < 1500, 'too slow');
-  assert.match(m, /sent as a shell command, which zn cannot check file by file/);
+  assert.match(m, /sent as a shell command, so zn cannot check which files it changes/);
   // A secret file among the first files is still named.
   const named = policy.bashDenial("apply_patch <<'PATCH'\n*** Begin Patch\n*** Update File: .env\n@@\n+X=1\n" + body + "*** End Patch\nPATCH", { cwd: dir, home: dir });
   assert.match(named, /writes to \.env/);

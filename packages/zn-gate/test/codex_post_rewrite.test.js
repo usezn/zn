@@ -38,9 +38,9 @@ function run(t, command, toolResponse) {
 test('codex PostToolUse: a command zn blocks, run after another hook changed it, has its output withheld', async (t) => {
   const r = await run(t, 'cat .env', 'EXAMPLE_TOKEN=not-a-real-value');
   assert.equal(r.output.decision, 'block');
-  assert.match(r.output.reason, /another tool changed it/i);
-  assert.match(r.output.reason, /withheld its output/);
-  assert.match(r.output.reason, /Review the other hooks/);
+  assert.match(r.output.reason, /another tool changed this command/i);
+  assert.match(r.output.reason, /hid its output/);
+  assert.match(r.output.reason, /other Codex hooks/);
   assert.ok(!/was not read/.test(r.output.reason));
   assert.ok(!r.output.reason.includes('not-a-real-value'));
 });

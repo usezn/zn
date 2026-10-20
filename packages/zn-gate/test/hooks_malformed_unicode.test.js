@@ -99,7 +99,7 @@ test('every agent adapter denies malformed text before any file call, in process
       for (const event of make(text, cwd)) {
         const res = await runner.handle(adapter, event, { home: cwd });
         assert.equal(res.decision.decision, 'deny', agent + ' / ' + name + ': ' + JSON.stringify(res.decision));
-        assert.match(res.decision.message, /not valid Unicode/, agent + ' / ' + name);
+        assert.match(res.decision.message, /characters zn cannot read/, agent + ' / ' + name);
       }
     }
   }
@@ -144,6 +144,6 @@ test('ordinary non-ASCII names are not refused', async (t) => {
     const ev = { hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: path.join(cwd, name) }, cwd };
     const res = await runner.handle(adapter, ev, { home: os.tmpdir() });
     assert.notEqual(res.decision.failClosed, true, name);
-    assert.doesNotMatch(String(res.decision.message || ''), /not valid Unicode/, name);
+    assert.doesNotMatch(String(res.decision.message || ''), /characters zn cannot read/, name);
   }
 });

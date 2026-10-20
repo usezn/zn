@@ -39,6 +39,11 @@ function clipboardUnreadable(tried) {
     'Copy the value again, or run the command without --clipboard to type it at the hidden prompt.';
 }
 
+/* ------------------------------ hook blocks ------------------------------ */
+
+/* The tool that lets an agent make a web request with a stored secret. Said once, the same way, in every hook block. */
+const SECRETS_HTTP_TOOL = 'the secrets_http_request tool of the zn "secrets" MCP server (zn\'s own tool: it sends the web request itself, with the stored value filled in)';
+
 /* ------------------------------ the vault ------------------------------ */
 
 function invalidDuration(value) {
@@ -119,6 +124,7 @@ function teamJoinFailed(why) {
 }
 
 module.exports = {
+  SECRETS_HTTP_TOOL,
   agentNote, agentRefusal, notInteractive, PROMPT_CANCELLED, CLIPBOARD_NO_POWERSHELL, clipboardUnreadable,
   invalidDuration, DURATION_RANGE, unknownBackend, UNLOCK_NEEDS_TERMINAL, FOREGROUND_NEEDS_TERMINAL,
   PASSPHRASE_NEEDS_TERMINAL, PASSPHRASE_CANCELLED, PASSPHRASE_MISMATCH, FORGET_LOCK_FIRST,

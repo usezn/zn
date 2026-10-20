@@ -51,6 +51,7 @@ const { gitStatusOf } = require('../broker/files');
 const deps = require('../deps');
 const { shQuote, SH_QUOTE_ESCAPE, portablePath } = require('../shell-quote');
 const { znCommand } = require('../zn-command');
+const { SECRETS_HTTP_TOOL } = require('../messages');
 const { hasUnsafeText } = require('../safe-text');
 
 const SECRET_SOURCES = new Set(['exact', 'pattern']);
@@ -243,7 +244,7 @@ async function decidePre(ev, d, agentId, opts) {
     try { names = fs.readdirSync(input.scanDir).slice(0, 5000); } catch (_) { names = []; }
     for (const n of names) {
       if (policy.readDenial(path.join(input.scanDir, n), pathOpts)) {
-        return { decision: 'ask', message: 'zn: this search covers a folder that holds ' + n + ', which has plain-text secrets, and matching lines are not hidden in this agent. Approve only if the search must include it, or name a narrower path.' };
+        return { decision: 'ask', message: 'zn: this search would show lines from ' + n + ' (a file with plain-text secrets) to the model, and this agent cannot hide them. Approve only if you need that, or search a narrower folder.' };
       }
     }
   }
@@ -260,7 +261,7 @@ async function decidePre(ev, d, agentId, opts) {
     if (input.tooLong) {
       return { decision: 'deny', message: 'zn: this patch is too long for zn to check (over 100 KB), so it was blocked. Next step: tell the user; do not resend it in parts.' };
     }
-    if (input.unparsed) return { decision: 'deny', message: 'zn: could not read the file names in this patch, so zn cannot check it.' };
+    if (input.unparsed) return { decision: 'deny', message: 'zn: could not read the file names in this patch, so zn cannot check it. Next step: send the patch again as one change per file, or tell the user.' };
     for (const p of Array.isArray(input.paths) ? input.paths : [input.path]) {
       const deny = policy.writeDenial(p, pathOpts);
       if (deny) return { decision: 'deny', message: deny };
@@ -271,8 +272,8 @@ async function decidePre(ev, d, agentId, opts) {
     if (markers.findMarkers(input.url || '').length) {
       return {
         decision: 'deny',
-        message: 'zn: WebFetch never receives secret values. For an authenticated HTTP call use the secrets_http_request tool ' +
-          'of the zn "secrets" MCP server: zn sends the request with the real value, only to the hosts allowed for that secret.',
+        message: 'zn: WebFetch never receives secret values. For a web request that needs one, use ' + SECRETS_HTTP_TOOL +
+          '; it sends the value only to the hosts allowed for that secret.',
       };
     }
     return { decision: 'allow' };
@@ -330,7 +331,7 @@ async function decidePre(ev, d, agentId, opts) {
         // A command that carries markers always asks, even when nothing was rewritten
         // (already wrapped in `zn run` by the agent, or tokens kept unresolved).
         // Never let it run on the user's allow rules alone.
-        return { decision: 'ask', message: 'zn: this command contains secret placeholders (such as __ZN_NAME__)' + (notes.length ? '; ' + notes.join('; ') : '') + ', so it needs your approval before it runs.', context };
+        return { decision: 'ask', message: 'zn: this command contains zn secret markers (like __ZN_NAME__)' + (notes.length ? '; ' + notes.join('; ') : '') + '. Approve it to run with the real values filled in on your computer.', context };
       }
       return notes.length ? { decision: 'allow', message: 'zn: ' + notes.join('; ') } : { decision: 'allow' };
     }
@@ -361,7 +362,7 @@ async function decidePre(ev, d, agentId, opts) {
     const blocked = [...new Set(withheld.filter((w) => w.reason === 'org_deny').map((w) => w.token.slice(5, -2)))];
     const why = (withheld.length
       ? ' Kept as tokens: ' + [...new Set(withheld.map((w) => w.token))].join(', ') + (destination === 'write_tracked'
-        ? ' (this file can be committed, so secrets stay as markers; put real values in a git-ignored file such as .env.local).'
+        ? ' (this file can be committed, so secrets stay as markers; put real values in a file git does not track, such as .env.local).'
         : '.')
       : '') +
       (blocked.length ? ' ' + blockedLine(blocked) : '') +
@@ -379,7 +380,7 @@ async function decidePre(ev, d, agentId, opts) {
       decision: 'ask',
       updatedInput: { texts: updates },
       kind: 'restore',
-      message: 'zn: restores ' + restored + ' secret value(s) in a git-ignored file.' + why,
+      message: 'zn: restores ' + restored + ' secret value(s) in a file git does not track.' + why,
       context,
     };
   }
@@ -435,7 +436,7 @@ function isMonitorWrapper(command, opts) {
 function decideMonitor(ev, pathOpts, opts) {
   const raw = (ev.raw && ev.raw.tool_input) || {};
   if (raw.ws !== undefined && raw.command === undefined) {
-    return { decision: 'deny', message: 'zn: a WebSocket monitor sends its data to the model without the secret check. Next step: use a monitor that runs a command instead, because zn checks the output of commands.' };
+    return { decision: 'deny', message: 'zn: a monitor that listens on a live connection (a WebSocket) sends its data to the model without the secret check, so zn blocked it. Next step: use a monitor that runs a command instead; zn checks what commands print.' };
   }
   const original = String(ev.input.command || '');
   if (original.length > policy.SHELL_SCAN_CAP) return { decision: 'deny', message: policy.bashDenial(original, pathOpts) };
@@ -443,11 +444,11 @@ function decideMonitor(ev, pathOpts, opts) {
   const deny = policy.bashDenial(original, pathOpts);
   if (deny) return { decision: 'deny', message: deny };
   if (markers.findMarkers(original).length) {
-    return { decision: 'deny', message: 'zn: a monitor cannot use secret placeholders (such as __ZN_NAME__). Next step: run the command with the Bash tool instead; zn fills in the placeholders there.' };
+    return { decision: 'deny', message: 'zn: a monitor cannot use secret markers (like __ZN_NAME__). Next step: run the command with the Bash tool instead; zn fills in the placeholders there.' };
   }
   if (isMonitorWrapper(original, opts)) return { decision: 'ask', message: 'zn: this monitor already checks its output for secrets.' };
   const command = wrapMonitor(original, opts);
-  return { decision: 'ask', updatedInput: { command }, kind: 'monitor', message: 'zn: this monitor\'s output is checked on this computer before the model sees it. Secret values are replaced with placeholders such as __ZN_AWS_KEY_1__.' };
+  return { decision: 'ask', updatedInput: { command }, kind: 'monitor', message: 'zn: this monitor\'s output is checked on this computer before the model sees it. Secret values are replaced with markers like __ZN_AWS_KEY_1__.' };
 }
 
 /*
@@ -515,7 +516,7 @@ async function decideMcp(ev, d, agentId) {
     return {
       decision: 'deny',
       message: 'zn: ' + mcpServerLabel(server) + ' never receives secret values, so zn blocked this call. ' +
-        'Next step: for an authenticated web request, use the secrets_http_request tool of the zn "secrets" MCP server; otherwise remove the placeholder from the call.',
+        'Next step: for a web request that needs a secret, use ' + SECRETS_HTTP_TOOL + '; otherwise remove the marker from the call.',
     };
   }
 
@@ -534,8 +535,7 @@ async function decideMcp(ev, d, agentId) {
     decision: 'deny',
     kinds: [...kinds],
     message: 'zn: this call would send a secret (' + [...kinds].join(', ') + ') to ' + mcpServerLabel(server) + ', so zn blocked it. ' +
-      'A stored secret cannot be passed to this server. ' +
-      'Next step: for a web request, use the secrets_http_request tool of the zn "secrets" MCP server, which sends the stored value itself; do not put the value in this call.',
+      'Next step: for a web request, use ' + SECRETS_HTTP_TOOL + '; do not put the value in this call.',
   };
 }
 
@@ -549,7 +549,7 @@ async function decidePost(ev, d, agentId, opts = {}) {
     // the output is withheld. The command has already run, so this limits what the model sees, not what happened.
     const denial = policy.bashDenial(String(ev.input.command || ''), { cwd: ev.cwd, home: opts.home });
     if (denial) {
-      return { decision: 'deny', message: 'zn: A command different from the one zn checked was run (another tool changed it). zn withheld its output because zn blocks that command. Review the other hooks configured for Codex.' };
+      return { decision: 'deny', message: 'zn: another tool changed this command after zn checked it, so zn hid its output. Next step: run `' + znCommand('check') + '` to see which other Codex hooks are set up, and remove any that change commands.' };
     }
   }
   if (ev.output === undefined || ev.output === null) return { decision: 'allow' };
@@ -864,13 +864,22 @@ async function decideStop(ev, d, agentId, opts) {
 
 /* ------------------------------ entry ----------------------------- */
 
+// A Stop check that could not run: the last answer was not checked. The raw error code is shown only with ZN_VERBOSE=1.
+function stopCheckFailed(err, agentId) {
+  const code = err && typeof err.code === 'string' ? err.code : '';
+  const known = Object.prototype.hasOwnProperty.call(AGENT_NAMES, agentId);
+  return 'zn: could not check the last answer for secrets, so it was not checked. Run `' + znCommand('status') +
+    '`; if it keeps happening, run `' + znCommand('hooks install' + (known ? ' ' + agentId : '')) + '`.' +
+    (code && process.env.ZN_VERBOSE === '1' ? ' (' + code + ')' : '');
+}
+
 function failDecision(ev, err, mode, agentId) {
   // A Stop check never blocks because zn failed: that could keep the agent going.
   if (ev && ev.event === 'stop') {
-    return { decision: 'ask', failOpen: true, notice: 'zn: could not check the last answer for secrets' + (err && err.code ? ' (' + err.code + ')' : '') + '.' };
+    return { decision: 'ask', failOpen: true, notice: stopCheckFailed(err, agentId) };
   }
   if (err.code === 'ZN_MALFORMED_TEXT') {
-    return failClosed(ev, err, 'zn: this action names a file or text that is not valid Unicode text, so it was blocked. ' +
+    return failClosed(ev, err, 'zn: this action contains characters zn cannot read (broken text encoding), so it was blocked. ' +
       'Ask the user to check the file names in the request.');
   }
   const missing = err.code === 'ZN_UNAVAILABLE';
@@ -1048,7 +1057,7 @@ async function main(args, readText = readStdin) {
   try {
     await handleEvent(args, state, readText);
   } catch (err) {
-    if (state.stopEvent) return stopFailSafe(err);
+    if (state.stopEvent) return stopFailSafe(err, args[0]);
     // Anything unexpected fails closed: the call is refused, not passed through.
     refuseInput(args[0], 'the hook failed (' + ((err && err.message) || String(err)) + ')');
   }
@@ -1061,10 +1070,10 @@ async function main(args, readText = readStdin) {
  * systemMessage (a warning only, which the Stop output schema allows). The
  * error text is not printed: it may carry content from the event.
  */
-function stopFailSafe(err) {
+function stopFailSafe(err, agentId) {
   const code = (err && err.code) || 'internal error';
   process.stderr.write('zn hook: could not check the last answer (' + code + ')\n');
-  process.stdout.write(JSON.stringify({ systemMessage: 'zn: could not check the last answer for secrets (' + code + ').' }));
+  process.stdout.write(JSON.stringify({ systemMessage: stopCheckFailed(err, agentId) }));
 }
 
 async function handleEvent(args, state, readText) {

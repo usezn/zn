@@ -191,7 +191,7 @@ test('PowerShell refusals: the reason in plain words and one next step', () => {
   const policy = require('../lib/hooks/policy');
   const opts = { nodePath: 'C:/n/node.exe', runJs: 'C:/z/run.js', agent: 'claude-code' };
   const cases = [
-    ['Get-Content a.txt | Out-File __ZN_GH__', /uses a pipeline, a variable or a script block/],
+    ['Get-Content a.txt | Out-File __ZN_GH__', /uses a pipe, a variable or a script block/],
     ['Get-Content __ZN_GH__', /"Get-Content" is a PowerShell command, not a program/],
     ['./deploy.ps1 __ZN_GH__', /runs a PowerShell script \(\.ps1\)/],
     ['tool+x __ZN_GH__', /does not start with a plain program name/],
@@ -200,7 +200,7 @@ test('PowerShell refusals: the reason in plain words and one next step', () => {
     const r = policy.wrapPowerShell(cmd, opts);
     assert.equal(r.ok, false, cmd);
     assert.match(r.reason, reason, cmd);
-    assert.match(r.reason, /Next step: start the command with the program name/, cmd);
+    assert.match(r.reason, /Next step: start the command with a plain program name/, cmd);
     assert.doesNotMatch(r.reason, /cannot be rewritten|cmdlet|could not identify|scrubber/, cmd);
   }
 });
@@ -230,7 +230,7 @@ test('MCP notice: a stored secret cannot go to this server; the next step is the
   const ev = { event: 'pre_tool', tool: 'mcp', mcp: { server: 'github' }, input: { args: { text: AWS_PROMPT } }, cwd: process.cwd() };
   const d = await decidePre(ev, deps([awsSpan()]), 'claude-code', { home: process.cwd() });
   assert.equal(d.decision, 'deny');
-  assert.match(d.message, /^zn: this call would send a secret \(an AWS key\) to the MCP server github, so zn blocked it\. A stored secret cannot be passed to this server\. Next step: for a web request, use the secrets_http_request tool of the zn "secrets" MCP server, which sends the stored value itself; do not put the value in this call\.$/);
+  assert.match(d.message, /^zn: this call would send a secret \(an AWS key\) to the MCP server github, so zn blocked it\. Next step: for a web request, use the secrets_http_request tool of the zn "secrets" MCP server \(zn's own tool: it sends the web request itself, with the stored value filled in\); do not put the value in this call\.$/);
 });
 
 test('Monitor notices: WebSocket, placeholders and the allowed monitor', async () => {
@@ -238,15 +238,15 @@ test('Monitor notices: WebSocket, placeholders and the allowed monitor', async (
   const cwd = process.cwd();
   const ws = await decidePre({ event: 'pre_tool', tool: 'monitor', input: {}, raw: { tool_input: { ws: { url: 'wss://x' } } }, cwd }, deps(), 'claude-code', opts);
   assert.equal(ws.decision, 'deny');
-  assert.match(ws.message, /^zn: a WebSocket monitor sends its data to the model without the secret check\. Next step: use a monitor that runs a command instead, because zn checks the output of commands\.$/);
+  assert.match(ws.message, /^zn: a monitor that listens on a live connection \(a WebSocket\) sends its data to the model without the secret check, so zn blocked it\. Next step: use a monitor that runs a command instead; zn checks what commands print\.$/);
 
   const marked = await decidePre({ event: 'pre_tool', tool: 'monitor', input: { command: 'curl __ZN_GH__' }, raw: { tool_input: { command: 'curl __ZN_GH__' } }, cwd }, deps(), 'claude-code', opts);
   assert.equal(marked.decision, 'deny');
-  assert.match(marked.message, /^zn: a monitor cannot use secret placeholders \(such as __ZN_NAME__\)\. Next step: run the command with the Bash tool instead; zn fills in the placeholders there\.$/);
+  assert.match(marked.message, /^zn: a monitor cannot use secret markers \(like __ZN_NAME__\)\. Next step: run the command with the Bash tool instead; zn fills in the placeholders there\.$/);
 
   const ok = await decidePre({ event: 'pre_tool', tool: 'monitor', input: { command: 'tail -f app.log' }, raw: { tool_input: { command: 'tail -f app.log' } }, cwd }, deps(), 'claude-code', opts);
   assert.equal(ok.decision, 'ask');
-  assert.match(ok.message, /^zn: this monitor's output is checked on this computer before the model sees it\. Secret values are replaced with placeholders such as __ZN_AWS_KEY_1__\.$/);
+  assert.match(ok.message, /^zn: this monitor's output is checked on this computer before the model sees it\. Secret values are replaced with markers like __ZN_AWS_KEY_1__\.$/);
 });
 
 /* Third batch: zn commands only the user may run, the vault folder, shell keywords. */
@@ -290,5 +290,5 @@ test('a secret after a shell keyword says why it cannot be filled in', () => {
   const policy = require('../lib/hooks/policy');
   const r = policy.wrapWithZnRun('if __ZN_DB_PASSWORD__; then echo; fi', 'zn run --');
   assert.equal(r.ok, false);
-  assert.match(r.reason, /shell keyword, not a program/);
+  assert.match(r.reason, /part of the shell language, not a program/);
 });

@@ -128,7 +128,27 @@ test('an engine failure never blocks the answer; it warns', async (t) => {
   const home = homeWith(t, { hooks: { stopReview: 'block' } });
   const r = await run(stop({ last_assistant_message: 'A long enough answer text.' }), home, { engine: broken });
   assert.equal(r.output.decision, undefined);
-  assert.match(r.output.systemMessage, /could not check the last answer for secrets \(ZN_ENGINE\)/);
+  assert.match(r.output.systemMessage, /could not check the last answer for secrets, so it was not checked/);
+});
+
+test('the error code of a failed Stop check is shown only with ZN_VERBOSE=1, and the next step is named', async (t) => {
+  const broken = {
+    scan() { throw Object.assign(new Error('engine down'), { code: 'ZN_ENGINE' }); },
+    prepare: async (ctx) => ctx,
+  };
+  const home = homeWith(t, { hooks: { stopReview: 'block' } });
+  const saved = process.env.ZN_VERBOSE;
+  try {
+    delete process.env.ZN_VERBOSE;
+    const quiet = await run(stop({ last_assistant_message: 'A long enough answer text.' }), home, { engine: broken });
+    assert.doesNotMatch(quiet.output.systemMessage, /ZN_ENGINE/);
+    assert.match(quiet.output.systemMessage, /Run `.*status`; if it keeps happening, run `.*hooks install codex`\./);
+    process.env.ZN_VERBOSE = '1';
+    const loud = await run(stop({ last_assistant_message: 'A long enough answer text.' }), home, { engine: broken });
+    assert.match(loud.output.systemMessage, /\(ZN_ENGINE\)$/);
+  } finally {
+    if (saved === undefined) delete process.env.ZN_VERBOSE; else process.env.ZN_VERBOSE = saved;
+  }
 });
 
 test('an unreadable Stop event on stdin is passed, not blocked (exit 0, no output)', () => {
@@ -181,7 +201,7 @@ test('an internal error on a Stop event exits 0 with a warning, never 2', async 
     await runner.main(['codex'], async () => JSON.stringify(stop({ last_assistant_message: 'ok' })));
     assert.notEqual(process.exitCode, 2, 'exit 2 would make Codex continue the answer');
     const warn = JSON.parse(outBuf.join(''));
-    assert.match(warn.systemMessage, /could not check the last answer for secrets \(EBOOM\)/);
+    assert.match(warn.systemMessage, /could not check the last answer for secrets, so it was not checked/);
     assert.equal(warn.decision, undefined, 'a warning only, never a block');
     assert.match(errBuf.join(''), /could not check the last answer \(EBOOM\)/);
   } finally {
