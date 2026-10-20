@@ -14,9 +14,11 @@
  *
  * `trusted_hash` must equal the hash of the hook as Codex reads it now: the SHA-256 of the JSON of
  * {event_name, matcher, hooks: [the one hook]} with the keys sorted and the timeout always present (600 when unset).
+ * `commandWindows` is not part of it: Codex drops it from the hashed hook, and on Windows it hashes it as the command.
  * A missing entry is "untrusted"; a different hash is "modified". Both are skipped until reviewed.
- * This was written from that source, not tried against a running Codex: a Codex that hashes differently makes
- * zn report "changed since you approved them", which is the safe side, and never a protection that is not there.
+ * Checked against Codex 0.163.0 (its own hashes for the hooks zn installs are pinned in test/codex_trust_hash.test.js):
+ * a Codex that hashes differently makes zn report "changed since you approved them", which is the safe side,
+ * and never a protection that is not there.
  */
 
 const fs = require('fs');
@@ -41,13 +43,13 @@ function sortKeys(v) {
 }
 
 /** The hash Codex records when the user trusts this hook ("sha256:<hex>"). */
-function hookHash(event, group, hook) {
-  const handler = { type: 'command', command: hook.command };
+function hookHash(event, group, hook, platform = process.platform) {
+  const command = platform === 'win32' && typeof hook.commandWindows === 'string' ? hook.commandWindows : hook.command;
+  const handler = { type: 'command', command };
   const t = Number(hook.timeout);
   handler.timeout = Number.isInteger(t) ? Math.max(1, t) : 600;
   handler.async = hook.async === true || hook.async === 'true';
   if (typeof hook.statusMessage === 'string') handler.statusMessage = hook.statusMessage;
-  if (typeof hook.commandWindows === 'string') handler.commandWindows = hook.commandWindows;
   if (Number.isInteger(hook.additionalContextLimit) && hook.additionalContextLimit !== DEFAULT_CONTEXT_LIMIT) handler.additionalContextLimit = hook.additionalContextLimit;
   const identity = { event_name: snake(event), hooks: [handler] };
   if (typeof group.matcher === 'string') identity.matcher = group.matcher;
