@@ -1,9 +1,26 @@
+use super::rules::fold_system1;
 use crate::config::ConsensusConfig;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
+
+/// Normalise a tool name for critical-tool matching: strip invisible and
+/// format characters, fold fullwidth and common homoglyphs, then lowercase.
+fn fold_tool_name(name: &str) -> String {
+    let visible: String = name
+        .chars()
+        .filter(|c| {
+            !matches!(
+                *c,
+                '\u{00AD}' | '\u{034F}' | '\u{061C}' | '\u{180E}' | '\u{2060}'..='\u{2064}'
+                | '\u{FE00}'..='\u{FE0F}'
+            ) && !c.is_control()
+        })
+        .collect();
+    fold_system1(&visible).to_lowercase()
+}
 
 type Clock = Arc<dyn Fn() -> DateTime<Utc> + Send + Sync>;
 
@@ -101,12 +118,14 @@ impl ConsensusManager {
         }
         self.purge_expired();
 
-        // Check if tool is critical (supports wildcards)
+        // Check if tool is critical (supports wildcards). Both sides go through
+        // the same fold, so case and unicode variants cannot skip consensus.
+        let folded_tool = fold_tool_name(tool_name);
         let is_critical = self.config.critical_tools.iter().any(|pattern| {
-            if pattern.ends_with('*') {
-                tool_name.starts_with(&pattern[..pattern.len() - 1])
-            } else {
-                tool_name == pattern
+            let pattern = fold_tool_name(pattern);
+            match pattern.strip_suffix('*') {
+                Some(prefix) => folded_tool.starts_with(prefix),
+                None => folded_tool == pattern,
             }
         });
 
@@ -664,5 +683,34 @@ mod tests {
                 .count()
         });
         assert_eq!(granted, 1);
+    }
+
+    #[test]
+    fn critical_tool_match_ignores_case_and_unicode_variants() {
+        let mgr = manager(true, &["delete_user", "Admin:*"], 2);
+        for name in [
+            "delete_user",
+            "DELETE_USER",
+            "Delete_User",
+            "ｄｅｌｅｔｅ_ｕｓｅｒ",
+            "delete\u{200D}_user",
+            "del\u{2060}ete_user",
+            "ADMIN:wipe",
+            "ａdmin:wipe",
+        ] {
+            assert!(
+                mgr.propose_action("agent-1", name, "{}").is_some(),
+                "{name:?} must need consensus"
+            );
+        }
+    }
+
+    #[test]
+    fn non_critical_tool_unchanged_by_fold() {
+        let mgr = manager(true, &["delete_user"], 2);
+        assert!(mgr.propose_action("agent-1", "Read_File", "{}").is_none());
+        assert!(mgr
+            .propose_action("agent-1", "delete_users", "{}")
+            .is_none());
     }
 }
