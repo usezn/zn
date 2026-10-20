@@ -632,15 +632,15 @@ test('Windows: an extensionless file next to its .cmd is not the program (npm la
   }
 });
 
-test('the prompt hook blocks the prompt when it cannot run; tool hooks do not', (t) => {
+test('the prompt and PreToolUse hooks block when they cannot run; PostToolUse does not', (t) => {
   const home = tempDir(t, 'zn-onf-');
   const env = { CLAUDE_CONFIG_DIR: path.join(home, '.claude') };
   const opts = { scope: 'user', home, env, mcp: false, nodePath: '/usr/bin/node', cliPath: '/opt/zn-gate/bin/cli.js', runnerPath: '/opt/zn/lib/hooks/runner.js' };
   const read = () => JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8')).hooks || {};
   adapter.install(opts);
   assert.equal(read().UserPromptSubmit[0].hooks[0].onFailure, 'block');
-  // A tool hook that cannot run lets the call through, as documented.
-  assert.equal(read().PreToolUse[0].hooks[0].onFailure, undefined);
+  // A PreToolUse hook that cannot run blocks the call; PostToolUse has nothing left to block.
+  assert.equal(read().PreToolUse[0].hooks[0].onFailure, 'block');
   assert.equal(read().PostToolUse[0].hooks[0].onFailure, undefined);
   // Reinstall and uninstall still recognise the prompt hook.
   adapter.install(opts);
