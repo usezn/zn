@@ -216,7 +216,7 @@ test('install (user) backs up, keeps every other setting and hook, and uninstall
   assert.deepEqual(data.hooksConfig, mine.hooksConfig);
   assert.deepEqual(data.hooks.SessionStart, mine.hooks.SessionStart);
   assert.deepEqual(data.hooks.BeforeTool[0], mine.hooks.BeforeTool[0]);
-  assert.match(data.hooks.BeforeTool[1].hooks[0].command, /runner\.js.* gemini/);
+  assert.match(data.hooks.BeforeTool[1].hooks[0].command, /\/\.zn\/hooks\/zn-hook-gemini\.sh' BeforeTool$/);
   gem.uninstall({ scope: 'user', home });
   data = readSettings(file);
   assert.deepEqual(data, mine);
@@ -250,7 +250,9 @@ test('install and uninstall refuse a settings file or a hooks field of the wrong
 test('install on Windows (user scope) writes the powershell form; project scope stays portable', (t) => {
   const home = tempDir(t, 'zn-gem-win-');
   gem.install({ scope: 'user', home, platform: 'win32', nodePath: 'C:/Program Files/nodejs/node.exe', runnerPath: 'C:/zn/zn-gate/lib/hooks/runner.js' });
-  assert.match(readSettings(settingsOf(home)).hooks.BeforeTool[0].hooks[0].command, /^powershell\.exe .*gemini/);
+  const winCommand = readSettings(settingsOf(home)).hooks.BeforeTool[0].hooks[0].command;
+  assert.match(winCommand, /^powershell\.exe /);
+  assert.match(require('../lib/shell-quote').windowsCommandScript(winCommand), /runner\.js.* gemini; exit/);
   const dir = tempDir(t, 'zn-gem-win-p-');
   gem.install({ scope: 'project', projectDir: dir, platform: 'win32' });
   assert.equal(readSettings(path.join(dir, '.gemini', 'settings.json')).hooks.BeforeTool[0].hooks[0].command, 'zn hook gemini');

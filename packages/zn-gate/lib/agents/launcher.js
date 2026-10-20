@@ -40,8 +40,16 @@ const BLOCK_EXIT = new Set(['PreToolUse', 'UserPromptSubmit']);
 const BLOCK_JSON = new Set(['PermissionRequest']);
 // Claude Code: exit 2 blocks PreToolUse, UserPromptSubmit and UserPromptExpansion; PermissionRequest is not hooked.
 // Every other event (PostToolUse) only warns: exit 2 there cannot undo the tool call.
-const BLOCK_EXIT_BY_AGENT = { 'claude-code': new Set(['PreToolUse', 'UserPromptSubmit', 'UserPromptExpansion']) };
-const BLOCK_JSON_BY_AGENT = { 'claude-code': new Set() };
+// Cursor: exit code 2 blocks, "equivalent to returning permission: deny"; the events that can deny are listed (postToolUse only observes).
+// Gemini CLI: exit 2 "aborts" the tool; zn registers BeforeTool only.
+const BLOCK_EXIT_BY_AGENT = {
+  'claude-code': new Set(['PreToolUse', 'UserPromptSubmit', 'UserPromptExpansion']),
+  cursor: new Set(['beforeMCPExecution', 'beforeReadFile', 'beforeShellExecution', 'beforeSubmitPrompt', 'preToolUse']),
+  gemini: new Set(['BeforeTool']),
+};
+const BLOCK_JSON_BY_AGENT = { 'claude-code': new Set(), cursor: new Set(), gemini: new Set() };
+// Agents whose non-blocking events get the warning on stderr (exit 0) instead of a systemMessage on stdout.
+const WARN_STDERR = new Set(['cursor']);
 const blockExit = (agentId) => BLOCK_EXIT_BY_AGENT[agentId] || BLOCK_EXIT;
 const blockJson = (agentId) => BLOCK_JSON_BY_AGENT[agentId] || BLOCK_JSON;
 
@@ -101,7 +109,9 @@ function unixScript(agentId, nodePath, runnerPath) {
       '    exit 0 ;;',
     ] : []),
     '  *)',
-    '    printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify({ systemMessage: warn })) + '',
+    WARN_STDERR.has(agentId)
+      ? '    printf ' + shQuote('%s\\n') + ' ' + shQuote(warn) + ' >&2'
+      : '    printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify({ systemMessage: warn })) + '',
     '    exit 0 ;;',
     'esac',
     '',
@@ -138,6 +148,7 @@ function windowsScript(agentId, event, nodePath, runnerPath) {
   let tail;
   if (blockExit(agentId).has(event)) tail = "[Console]::Error.WriteLine('" + reason + "'); exit 2";
   else if (blockJson(agentId).has(event)) tail = "[Console]::Out.WriteLine('" + JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: reason } } }) + "'); exit 0";
+  else if (WARN_STDERR.has(agentId)) tail = "[Console]::Error.WriteLine('" + warnText(agentId) + "'); exit 0";
   else tail = "[Console]::Out.WriteLine('" + JSON.stringify({ systemMessage: warnText(agentId) }) + "'); exit 0";
   return "if ((Test-Path -LiteralPath '" + n + "') -and (Test-Path -LiteralPath '" + r + "')) { & '" + n + "' '" + r + "' " + agentId + '; exit $LASTEXITCODE }; ' +
     "if ((Get-Command zn -ErrorAction SilentlyContinue) -and (Get-Command node -ErrorAction SilentlyContinue)) { & zn hook " + agentId + '; exit $LASTEXITCODE }; ' +

@@ -216,7 +216,7 @@ test('Cursor install: failClosed on beforeReadFile and beforeSubmitPrompt, and a
   assert.equal(data.hooks.beforeSubmitPrompt[0].failClosed, true);
   assert.equal(data.hooks.beforeShellExecution[0].failClosed, undefined);
   assert.equal(data.hooks.preToolUse[0].matcher, 'Grep|Write|Delete');
-  assert.ok(data.hooks.preToolUse[0].command.includes('/opt/zn/runner.js'));
+  assert.match(fs.readFileSync(path.join(home, '.zn', 'hooks', 'zn-hook-cursor.sh'), 'utf8'), /^ZN_RUNNER='\/opt\/zn\/runner\.js'$/m);
   void proj;
 });
 

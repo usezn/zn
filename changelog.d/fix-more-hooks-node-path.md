@@ -1,0 +1,5 @@
+### Security
+- Cursor and Gemini CLI: `zn hooks install cursor` and `zn hooks install gemini` no longer let the agent run tool calls unchecked when the Node.js they were installed with disappears (an `nvm` switch or uninstall, an upgrade). Both agents treat a hook that fails as non-blocking (only exit code 2 blocks, or `failClosed` on some Cursor events). The hook is now the same small launcher script under `~/.zn/hooks` that Codex and Claude Code use: it runs the Node.js it was installed with, else `zn` from your PATH, else blocks (exit code 2) without needing Node.js. Cursor events that cannot block, such as `postToolUse`, only warn. Run `zn hooks install cursor` or `zn hooks install gemini` again to switch an existing install over. Antigravity does not document what a failing hook does, so its hook is unchanged.
+
+### Fixed
+- `zn-gate check` now reports a Cursor or Gemini CLI hook whose Node.js, zn-gate files or launcher script are gone, and says to run `npm install -g zn-gate` and `zn hooks install <agent>`.
