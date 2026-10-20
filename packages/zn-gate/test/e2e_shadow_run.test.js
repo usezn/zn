@@ -216,3 +216,13 @@ test('policy agrees: a shadowed .env is readable, the original is not', (t) => {
   const dir = project(t);
   assert.ok(policy.readDenial(path.join(dir, '.env'), { cwd: dir, home: dir }));
 });
+
+test('env unshadow without a backup name shows a usable example', async (t) => {
+  const dir = project(t);
+  const o = io(dir, createFakeVault());
+  assert.notEqual(await cli.dispatch('env', ['unshadow', '.env'], o), 0);
+  const text = o.stderr.text();
+  assert.match(text, /--backup BACKUP_NAME/);
+  assert.match(text, /zn env unshadow \.env --backup ENVBAK_X1A2B3C4DD202601011200/);
+  assert.doesNotMatch(text, /\.{4}/);
+});

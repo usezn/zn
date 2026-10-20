@@ -405,7 +405,7 @@ async function envUnshadow(args, io) {
   const { flags, positional } = parseFlags(args, {});
   const file = path.resolve(io.cwd, positional[0] || '.env');
   if (!flags.backup || !/^ENVBAK_X[0-9A-F]{8}D\d{12}$/.test(flags.backup)) {
-    throw deps.znError('ZN_USAGE', 'usage: zn env unshadow FILE --backup ENVBAK_X........D............ (printed by zn env shadow)');
+    throw deps.znError('ZN_USAGE', 'usage: zn env unshadow FILE --backup BACKUP_NAME. The backup name starts with ENVBAK_ and is printed by zn env shadow, for example: zn env unshadow .env --backup ENVBAK_X1A2B3C4DD202601011200');
   }
   needHuman(io, 'zn env unshadow');
   const vault = await vaultOf(io);
