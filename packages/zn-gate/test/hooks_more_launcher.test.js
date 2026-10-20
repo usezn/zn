@@ -91,13 +91,13 @@ test('cursor: check reports the Node.js that is gone with the reinstall fix', { 
   assert.equal(r.fix, reinstall('cursor'));
 });
 
-test('cursor windows: each event is an inline PowerShell script that blocks with exit 2', (t) => {
+test('cursor windows: each event is an inline PowerShell script that blocks with the deny JSON and exit 0', (t) => {
   const home = tempDir(t, 'zn-b96-win-');
   const adapter = getAdapter('cursor');
   adapter.install({ home, env: { HOME: home, ZN_HOME: path.join(home, '.zn') }, platform: 'win32', nodePath: 'C:\\n\\node.exe', runnerPath: 'C:\\z\\runner.js' });
   const data = JSON.parse(fs.readFileSync(adapter.hooksFile({ home }), 'utf8'));
   const script = (ev) => require('../lib/shell-quote').windowsCommandScript(data.hooks[ev][0].command);
-  assert.match(script('beforeShellExecution'), /Error\.WriteLine\(.*\); exit 2 # zn hook cursor$/);
+  assert.match(script('beforeShellExecution'), /"permission":"deny".*Error\.WriteLine\(.*\); exit 0 # zn hook cursor$/);
   assert.match(script('postToolUse'), /exit 0 # zn hook cursor$/);
   assert.ok(cfg.isOurs(data.hooks.preToolUse[0].command, 'cursor'));
   assert.equal(fs.existsSync(launcher.launcherFile('cursor', { home, env: { ZN_HOME: path.join(home, '.zn') } })), false);
@@ -185,6 +185,27 @@ test('windows: cursor and gemini also print their deny JSON, call zn.cmd and lea
     assert.ok(s.includes(deny), id + ' deny JSON');
     assert.ok(s.includes('& zn.cmd hook ' + id) && !/& zn hook/.test(s), id + ' zn.cmd');
     assert.ok(!/exit \$LASTEXITCODE \}/.test(s.replace(/if \(\$LASTEXITCODE -eq 0 -or \$LASTEXITCODE -eq 2\) \{ exit \$LASTEXITCODE \}/g, '')), id + ' no unconditional exit');
-    assert.match(s, /exit 2 # zn hook /);
+    assert.match(s, /exit 0 # zn hook /, id + ': Cursor and Gemini read the deny JSON only with exit 0');
+    assert.ok(s.includes('-eq 2) { exit 0 }'), id + ': the runner refusal is passed on as exit 0');
+  }
+});
+
+test('windows (real PowerShell): a launcher whose Node.js is gone answers Cursor and Gemini with deny JSON and exit 0', { skip: process.platform !== 'win32' }, (t) => {
+  const { windowsCommandScript } = require('../lib/shell-quote');
+  for (const [id, ev, field] of [['cursor', 'beforeShellExecution', 'permission'], ['gemini', 'BeforeTool', 'decision']]) {
+    const home = tempDir(t, 'zn-b96-winps-');
+    const adapter = getAdapter(id);
+    adapter.install({ home, env: { HOME: home, ZN_HOME: path.join(home, '.zn') }, platform: 'win32', nodePath: 'C:\\no-such\\node.exe', runnerPath: 'C:\\no-such\\runner.js', mcp: false });
+    const data = JSON.parse(fs.readFileSync(adapter.hooksFile({ home, env: { HOME: home } }), 'utf8'));
+    const g = data.hooks[ev][0];
+    const cmd = (g.hooks ? g.hooks[0] : g).command;
+    // The agent runs the hook command inside its own PowerShell: the nesting that turned exit 2 into 1.
+    const ps = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    // PATH without Node.js or zn, so the launcher reaches its own block step.
+    const r = spawnSync(ps, ['-NoProfile', '-NonInteractive', '-Command', cmd], { input: '{}', encoding: 'utf8', env: { ...process.env, PATH: path.join(process.env.SystemRoot || 'C:\\Windows', 'System32') } });
+    assert.equal(r.status, 0, id + ': ' + r.stderr);
+    const out = JSON.parse(r.stdout.trim().split(/\r?\n/).pop());
+    assert.equal(out[field], 'deny', id);
+    assert.ok(windowsCommandScript(cmd).includes('exit 0 # zn hook ' + id));
   }
 });

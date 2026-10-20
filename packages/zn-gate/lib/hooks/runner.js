@@ -1057,8 +1057,9 @@ function refuseInput(agentId, why) {
   if (agentId === 'antigravity') process.stdout.write(JSON.stringify({ decision: 'deny', reason: msg }));
   // Copilot CLI: exit 2 denies preToolUse (other events only warn); the documented deny answer is printed as well.
   if (agentId === 'copilot') process.stdout.write(JSON.stringify({ permissionDecision: 'deny', permissionDecisionReason: msg }));
-  // Gemini CLI documents exit 2 as a block with stderr as the reason, so it needs no JSON on stdout (stdout that
-  // is not JSON counts as allow there); any other exit code only warns and lets the tool run.
+  // Gemini CLI documents exit 2 as a block with stderr as the reason. Its deny JSON is printed as well, because
+  // on Windows the launcher passes this refusal on as exit 0 (a nested PowerShell turns exit 2 into 1).
+  if (agentId === 'gemini') process.stdout.write(JSON.stringify({ decision: 'deny', reason: msg }));
   process.exitCode = 2;
 }
 

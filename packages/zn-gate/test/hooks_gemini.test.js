@@ -171,7 +171,8 @@ test('an unreadable hook input is refused with exit code 2 and the reason on std
     const r = spawnSync(process.execPath, [RUNNER, 'gemini'], { input, encoding: 'utf8', env: { ...process.env, HOME: home, USERPROFILE: home, ZN_STATS: 'off' } });
     assert.equal(r.status, 2, JSON.stringify(input));
     assert.match(r.stderr, /could not read this action/);
-    assert.equal(r.stdout, '', 'stdout must stay empty: anything that is not JSON would be read as allow');
+    // The deny JSON goes to stdout as well (the Windows launcher passes the refusal on as exit 0); never other text.
+    assert.deepEqual(JSON.parse(r.stdout).decision, 'deny');
   }
 });
 
