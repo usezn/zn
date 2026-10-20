@@ -31,7 +31,7 @@ const store = require('./store');
 const { createClient } = require('./client');
 const { agentDetected } = require('../broker/tty');
 const messages = require('../messages');
-const { CODES } = require('../errors');
+const { CODES, messageWithUnlockHint } = require('../errors');
 const vaultReset = require('./reset');
 
 function parseDuration(s, fallback) {
@@ -282,8 +282,7 @@ async function runVaultCommand(args) {
     process.stderr.write('usage: zn unlock | zn lock | zn vault status | zn vault verify | zn vault log [--since 1h] | zn vault forget [dir] | zn vault reset\n');
     return 2;
   } catch (err) {
-    const hint = err && err.code === CODES.LOCKED ? ' (vault locked: run `zn unlock`)' : '';
-    process.stderr.write('[zn] ' + (err && err.message ? err.message : err) + hint + '\n');
+    process.stderr.write('[zn] ' + messageWithUnlockHint(err) + '\n');
     // A wrong passphrase, again and again: point to the way out.
     if (args[0] === 'unlock' && err && err.code === CODES.LOCKED) {
       const tip = vaultReset.hintForUnlockError(err, {});
