@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 
 const EXPECTED_TOOLS = ['analyze_prompt', 'check_tool_call', 'check_tool_result', 'zn_status'];
 const TIMEOUT_MS = 30_000;
-// Protocol version sent in initialize. Set MCP_SMOKE_PROTOCOL to test another version (the workflow runs both).
+// Protocol version sent in initialize. Set MCP_SMOKE_PROTOCOL to test another version (the Docker smoke runs every supported version).
 const PROTOCOL = process.env.MCP_SMOKE_PROTOCOL || '2024-11-05';
 const [cmd, ...args] = process.argv.length > 2 ? process.argv.slice(2) : ['zn-gate', 'mcp'];
 
@@ -45,7 +45,7 @@ child.stdout.on('data', (chunk) => {
     if (msg.error) return finish(1, `FAIL: error response: ${JSON.stringify(msg.error)}`);
     if (msg.id === 1) {
       const info = msg.result && msg.result.serverInfo;
-      if (!info || info.name !== 'zn-gate' || !msg.result.protocolVersion) return finish(1, `FAIL: unexpected initialize result: ${line.slice(0, 300)}`);
+      if (!info || info.name !== 'zn-gate' || msg.result.protocolVersion !== PROTOCOL) return finish(1, `FAIL: unexpected initialize result: ${line.slice(0, 300)}`);
       console.log(`initialize ok: ${info.name} ${info.version}, protocol ${msg.result.protocolVersion}`);
       send({ method: 'notifications/initialized' });
       send({ id: 2, method: 'tools/list', params: {} });

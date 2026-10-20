@@ -1,0 +1,42 @@
+name: Spellcheck
+
+# Checks the spelling of the public prose (docs/, README files, changelog fragments) with crate-ci/typos.
+# Exceptions for legitimate words (product names, rule ids, fictitious values) go in .typos.toml, each with
+# the reason next to it. To run it locally: `typos docs README.md packages/*/README.md changelog.d`.
+on:
+  pull_request:
+    branches: [ next, main, 'release/**' ]
+    paths:
+      - 'docs/**'
+      - 'README*'
+      - 'changelog.d/**'
+      - 'packages/*/README.md'
+      - '.typos.toml'
+      - '.github/workflows/spellcheck.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spellcheck-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typos:
+    name: Typos
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check spelling
+        uses: crate-ci/typos@7f9d0819ca1c008ade73f4b41fa9d258d48f605b # v1.51.1
+        with:
+          files: docs README.md packages/zn-gate/README.md packages/zn-gate-py/README.md changelog.d
+          config: .typos.toml

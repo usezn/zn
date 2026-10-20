@@ -9,9 +9,18 @@ let SERVER_VERSION = '1.6.0';
 try {
   SERVER_VERSION = require('../package.json').version || '1.6.0';
 } catch (_) {}
-const PROTOCOL_VERSION = '2024-11-05';
+const { AsyncLocalStorage } = require('async_hooks');
+const proto = require('./mcp-protocol');
+
+const PROTOCOL_VERSION = proto.LATEST_PROTOCOL_VERSION;
+// Version agreed in initialize (one client per stdio process); until then the latest.
+let negotiated = null;
+// Replies of a JSON-RPC batch are collected here instead of being written one by one.
+const batchSink = new AsyncLocalStorage();
 
 function sendJsonRpc(response) {
+  const sink = batchSink.getStore();
+  if (sink) { sink.push(response); return; }
   process.stdout.write(JSON.stringify(response) + '\n');
 }
 
@@ -111,8 +120,9 @@ async function handleRequest(message, options) {
 
   switch (method) {
     case 'initialize': {
+      negotiated = proto.negotiateProtocolVersion(params);
       return sendResult(id, {
-        protocolVersion: PROTOCOL_VERSION,
+        protocolVersion: negotiated,
         capabilities: {
           tools: {},
         },
@@ -133,7 +143,7 @@ async function handleRequest(message, options) {
 
     case 'tools/list': {
       return sendResult(id, {
-        tools: toolsFor(options),
+        tools: proto.toolsForVersion(toolsFor(options), negotiated),
       });
     }
 
@@ -269,7 +279,7 @@ async function handleRequest(message, options) {
         });
       }
 
-      return sendError(id, -32601, `Method or tool '${toolName}' not found`);
+      return sendError(id, proto.unknownToolCode(negotiated), `Method or tool '${toolName}' not found`);
     }
 
     default: {
@@ -278,6 +288,24 @@ async function handleRequest(message, options) {
       }
     }
   }
+}
+
+/* Batches exist only in 2025-03-26 (added there, removed in 2025-06-18); other versions are rejected. The replies go back as one array. */
+async function handleBatch(messages, options) {
+  if (!proto.allowsBatching(negotiated) || messages.length === 0) {
+    return sendError(null, proto.BATCH_REJECTED.code, proto.BATCH_REJECTED.message);
+  }
+  const replies = [];
+  await batchSink.run(replies, async () => {
+    for (const m of messages) {
+      try {
+        await handleRequest(m || {}, options);
+      } catch (err) {
+        sendError(m && m.id !== undefined ? m.id : null, -32603, 'Internal error');
+      }
+    }
+  });
+  if (replies.length) process.stdout.write(JSON.stringify(replies) + '\n');
 }
 
 function startMcpServer(options = {}) {
@@ -297,6 +325,10 @@ function startMcpServer(options = {}) {
 
     try {
       const message = JSON.parse(trimmed);
+      if (Array.isArray(message)) {
+        await handleBatch(message, options);
+        return;
+      }
       await handleRequest(message, options);
     } catch (err) {
       if (process.env.DEBUG) {
@@ -324,6 +356,7 @@ module.exports = {
   toolsFor,
   startMcpServer,
   handleRequest,
+  handleBatch,
   SERVER_NAME,
   SERVER_VERSION,
   PROTOCOL_VERSION,

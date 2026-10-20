@@ -29,7 +29,7 @@ python3 -m venv .venv
 .venv/bin/pip install zn-gate      # Windows: .venv\Scripts\pip install zn-gate
 ```
 
-Inside an environment you already use (your project's virtualenv, Poetry, uv), `pip install zn-gate` is enough. Python 3.10 or later (CI tests 3.10 to 3.13). Zero runtime dependencies.
+Inside an environment you already use (your project's virtualenv, Poetry, uv), `pip install zn-gate` is enough. Python 3.10 or later (CI tests 3.10 to 3.14). Zero runtime dependencies.
 
 **If something fails:**
 
@@ -129,6 +129,8 @@ handler = ZnGuardCallbackHandler(raise_on_injection=True, mask_secrets=True)
 # pass callbacks=[handler] to your agent, chain or tool
 ```
 
+`on_block` accepts `"raise"` (default), `"return"` or `"ignore"`; any other value raises `ValueError` instead of silently turning blocking off.
+
 ### CrewAI
 
 <!-- snippet-test -->
@@ -155,6 +157,8 @@ guard = ZnLlamaGuard(raise_on_violation=True, mask_secrets=True)
 safe_query = guard.on_query_start(user_query)
 clean_response = guard.sanitize_response(query_engine.query(safe_query))
 ```
+
+`on_block` accepts `"raise"` (default), `"return"` or `"ignore"`; any other value raises `ValueError`.
 
 ### Promptfoo
 
@@ -184,6 +188,8 @@ zn-gate scan ./prompts          # audit prompts, skills and configs (exit 1 on f
 zn-gate analyze "some prompt"   # local check; cloud only with ZN_CLOUD=1 + key
 zn-gate status                  # engine and what leaves the machine
 ```
+
+More runnable examples are in [examples/](https://github.com/usezn/zn/tree/main/examples), including [a Haystack agent with a guarded tool](https://github.com/usezn/zn/tree/main/examples/haystack-agent).
 
 ---
 
