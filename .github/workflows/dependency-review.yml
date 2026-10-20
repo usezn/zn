@@ -9,11 +9,15 @@ name: Dependency and license review
 on:
   push:
     branches: [main, next]
+    # Same manifests as pull_request below.
     paths:
-      - "Cargo.toml"
-      - "Cargo.lock"
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
       - "deny.toml"
-      - "packages/**"
+      - "**/package.json"
+      - "**/package-lock.json"
+      - "**/pyproject.toml"
+      - "**/*requirements*.txt"
       - ".github/license-allowlist.txt"
       - ".github/scripts/license-check*"
       - ".github/workflows/dependency-review.yml"
