@@ -54,6 +54,18 @@
       {
         "file": "examples/haystack-agent/requirements.txt",
         "regex": "^zn-gate==(\\S+)$"
+      },
+      {
+        "file": "examples/smolagents-agent/requirements.txt",
+        "regex": "^zn-gate==(\\S+)$"
+      },
+      {
+        "file": "examples/openai-agents-js/package.json",
+        "json": "dependencies.zn-gate"
+      },
+      {
+        "file": "examples/langchain-js/package.json",
+        "json": "dependencies.zn-gate"
       }
     ],
     "pinsExclude": [

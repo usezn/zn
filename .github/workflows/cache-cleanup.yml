@@ -3,8 +3,11 @@ name: Cache cleanup
 # Deletes the Actions caches of pull requests that are closed (merged or not). A pull request run
 # saves its caches under refs/pull/<number>/merge, and only that pull request can use them, so once
 # it is closed they only take space from the repository's 10 GB cache limit. Caches of branches and
-# tags, and of open pull requests, are never touched.
+# tags, and of open pull requests, are never touched. It runs when a pull request is closed (only that
+# pull request's caches) and weekly for anything left behind.
 on:
+  pull_request:
+    types: [closed]
   schedule:
     - cron: "41 4 * * 0" # weekly, Sunday 04:41 UTC
   workflow_dispatch:
@@ -23,6 +26,8 @@ concurrency:
 jobs:
   closed-pull-requests:
     name: Delete caches of closed pull requests
+    # A pull request from a fork gets a read-only token, so its caches are left to the weekly run.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -40,6 +45,8 @@ jobs:
           REPO: ${{ github.repository }}
           # Scheduled runs have no inputs and delete; manual runs delete only when dry_run is unchecked.
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
+          # Set only when a pull request was just closed: then only its caches are looked at.
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           list="$RUNNER_TEMP/caches.tsv"
@@ -52,6 +59,10 @@ jobs:
 
           # Only refs of the exact form refs/pull/<number>/merge are considered.
           numbers=$(cut -f2 "$list" | grep -E '^refs/pull/[0-9]+/merge$' | cut -d/ -f3 | sort -un || true)
+          if [ -n "${PR_NUMBER:-}" ]; then
+            case "$PR_NUMBER" in *[!0-9]*) echo "::error::Unexpected pull request number."; exit 1 ;; esac
+            numbers=$(printf '%s\n' $numbers | grep -x "$PR_NUMBER" || true)
+          fi
           for number in $numbers; do
             if ! state=$(gh api "repos/$REPO/pulls/$number" --jq '.state'); then
               echo "::warning::Could not read the state of pull request #$number; its caches are kept."

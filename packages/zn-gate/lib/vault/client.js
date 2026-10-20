@@ -120,7 +120,7 @@ function approvalArgs(args) {
 // notRunning: the daemon is not running (no session key, or no socket to it),
 // the one case the plain "unlock it" message is for.
 function lockedError(detail, notRunning = false) {
-  const err = znError(CODES.LOCKED, 'vault is locked' + (detail ? ' (' + detail + ')' : '') + '; run `zn unlock`');
+  const err = znError(CODES.LOCKED, 'vault is locked' + (detail ? ' (' + detail + ')' : '') + '; run `' + require('../zn-command').znCommand('unlock') + '`');
   if (notRunning) err.vaultNotRunning = true;
   return err;
 }

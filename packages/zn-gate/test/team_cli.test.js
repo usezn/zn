@@ -110,7 +110,11 @@ test('a failed join exits 1 and names the reason; a locked vault adds the unlock
   fake.teamJoin = async () => { throw Object.assign(new Error('vault is locked'), { code: CODES.LOCKED }); };
   r = await capture(() => runTeamCommand(['team', 'join', 'znj_' + 'd'.repeat(32)]));
   assert.strictEqual(r.code, 1);
-  assert.match(r.stderr, /\[zn\] vault is locked \(vault locked: run `zn unlock`\)/);
+  assert.match(r.stderr, /^\[zn\] vault is locked; run `(zn|npx -y zn-gate@[\d.]+) unlock`\n$/);
+  // A message that already says how to unlock is not given the hint a second time.
+  fake.teamJoin = async () => { throw Object.assign(new Error('vault is locked; run `zn unlock`'), { code: CODES.LOCKED }); };
+  r = await capture(() => runTeamCommand(['team', 'join', 'znj_' + 'd'.repeat(32)]));
+  assert.strictEqual(r.stderr, '[zn] vault is locked; run `zn unlock`\n');
 });
 
 test('a thrown value that is not an Error is still reported', async () => {
@@ -231,7 +235,7 @@ test('sync with a locked vault exits 1 with the unlock hint', async () => {
   fake.teamSync = async () => { throw Object.assign(new Error('the vault is not running'), { code: CODES.LOCKED }); };
   const r = await capture(() => runTeamCommand(['team', 'sync']));
   assert.strictEqual(r.code, 1);
-  assert.match(r.stderr, /vault locked: run `zn unlock`/);
+  assert.match(r.stderr, /^\[zn\] the vault is not running; run `(zn|npx -y zn-gate@[\d.]+) unlock`\n$/);
 });
 
 test('leave says what happened', async () => {
