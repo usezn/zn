@@ -619,3 +619,74 @@ def test_lock_wait_that_is_not_a_usable_number_falls_back_to_the_default(tmp_pat
     assert log_evidence({"payload": "x"}, file_path=p, lock_wait=bad) is None
     waited = time.monotonic() - t0
     assert 1.5 <= waited < 6, waited
+
+
+def _stale_lock(p):
+    with open(p + ".lock", "w") as f:
+        f.write("1:crashed")
+    old = time.time() - 60
+    os.utime(p + ".lock", (old, old))
+    return old
+
+
+def test_breaker_never_deletes_a_break_mutex_another_breaker_recreated(tmp_path, monkeypatch):
+    p = _ledger(tmp_path, n=1)
+    _stale_lock(p)
+
+    def replace(mutex):
+        monkeypatch.delitem(evidence._test_hooks, "before_mutex_release")
+        os.unlink(mutex)
+        with open(mutex, "w") as f:
+            f.write("999:other-breaker")
+
+    monkeypatch.setitem(evidence._test_hooks, "before_mutex_release", replace)
+    assert log_evidence({"payload": "x"}, file_path=p, lock_wait=0.2) is not None
+    with open(p + ".lock.break") as f:
+        assert f.read() == "999:other-breaker"
+    assert verify_evidence_ledger(p)["total"] == 2
+
+
+def test_breaker_writes_its_token_into_the_break_mutex_and_deletes_it(tmp_path, monkeypatch):
+    import re
+    p = _ledger(tmp_path, n=1)
+    _stale_lock(p)
+    seen = []
+
+    def peek(mutex):
+        with open(mutex) as f:
+            seen.append(f.read())
+
+    monkeypatch.setitem(evidence._test_hooks, "after_mutex_create", peek)
+    assert log_evidence({"payload": "x"}, file_path=p) is not None
+    assert re.fullmatch(r"\d+:[0-9a-f]{16}", seen[0])
+    assert not os.path.exists(p + ".lock.break")
+
+
+def test_reclaiming_a_stale_break_mutex_keeps_one_created_meanwhile(tmp_path, monkeypatch):
+    p = _ledger(tmp_path, n=1)
+    old = _stale_lock(p)
+    with open(p + ".lock.break", "w") as f:
+        f.write("1:dead-breaker")
+    os.utime(p + ".lock.break", (old, old))
+
+    def replace(mutex):
+        monkeypatch.delitem(evidence._test_hooks, "before_mutex_reclaim")
+        os.unlink(mutex)
+        with open(mutex, "w") as f:
+            f.write("999:live-breaker")
+
+    monkeypatch.setitem(evidence._test_hooks, "before_mutex_reclaim", replace)
+    assert log_evidence({"payload": "x"}, file_path=p, lock_wait=0.1) is None
+    with open(p + ".lock.break") as f:
+        assert f.read() == "999:live-breaker"
+
+
+def test_stale_break_mutex_from_a_dead_breaker_is_reclaimed(tmp_path):
+    p = _ledger(tmp_path, n=1)
+    old = _stale_lock(p)
+    with open(p + ".lock.break", "w") as f:
+        f.write("1:dead-breaker")
+    os.utime(p + ".lock.break", (old, old))
+    assert log_evidence({"payload": "x"}, file_path=p, lock_wait=2.0) is not None
+    assert verify_evidence_ledger(p)["total"] == 2
+    assert [n for n in os.listdir(tmp_path) if ".lock" in n] == []

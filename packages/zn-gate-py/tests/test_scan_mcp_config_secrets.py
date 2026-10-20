@@ -70,13 +70,16 @@ class TestSharedSamples(unittest.TestCase):
     def test_each_credential_is_found_at_its_line_with_its_kind_and_name(self):
         if not SAMPLES_FILE.is_file():
             self.skipTest("packages/zn-gate is not next to this package: skipping the shared MCP samples")
-        cases = json.loads(SAMPLES_FILE.read_text(encoding="utf-8"))["cases"]
-        self.assertGreaterEqual(len(cases), 8)
-        for c in cases:
+        doc = json.loads(SAMPLES_FILE.read_text(encoding="utf-8"))
+        self.assertGreaterEqual(len(doc["cases"]), 8)
+        for c in doc["cases"]:
             got = [[f["line"], f["kind"], f["name"]] for f in
-                   mcp.find_mcp_config_secrets("\n".join(c["lines"]).replace("{V}", FAKE))]
+                   mcp.find_mcp_config_secrets("\n".join(c["lines"]).replace("{V}", FAKE), c.get("file", ""))]
             with self.subTest(case=c["name"]):
                 self.assertEqual(got, c["expect"])
+        for p in doc["paths"]:
+            with self.subTest(path=p["path"]):
+                self.assertEqual(mcp.is_mcp_config_path(p["path"]), p["mcp"])
 
 
 class TestMcpSecrets(_Base):
