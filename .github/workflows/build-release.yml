@@ -123,6 +123,7 @@ jobs:
         run: |
           set -euo pipefail
           npm ci --ignore-scripts
+          node "$GITHUB_WORKSPACE/.release-tools/.github/scripts/prune-bundled-sources.js" .
           mkdir -p "$RUNNER_TEMP/release"
           npm pack --ignore-scripts --json --pack-destination "$RUNNER_TEMP/release" > "$RUNNER_TEMP/pack.json"
       - name: Check tarball contents
