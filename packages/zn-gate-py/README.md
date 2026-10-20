@@ -133,7 +133,7 @@ handler = ZnGuardCallbackHandler(on_block="raise")
 
 The handler stops the run. With `on_block="raise"` (default) a blocked prompt, tool call or tool output raises `GuardBlockError` out of the agent: the tool does not run and the output does not reach the model. `on_block="ignore"` turns that off. `"return"` is not accepted (it raises `ValueError`), because LangChain ignores what a callback returns; any other value raises `ValueError` too.
 
-A callback cannot change what a tool returns. So with `mask_secrets=True` (default) a tool output that contains a secret also stops the run. To hide the secret and keep going, or to give the model a block message instead of the output, wrap the tool (needs `langchain-core`):
+A callback cannot change what a tool returns. So with `mask_secrets=True` (default) a tool output that contains a secret also stops the run. The same goes for a tool's error, whose text LangChain (`handle_tool_error`) and LangGraph (`ToolNode(handle_tool_errors=True)`) send to the model: when the message is blocked or contains a secret, the handler replaces the error with `GuardBlockError`, whose message holds no secret. To hide the secret and keep going, or to give the model a block message instead of the output, wrap the tool (needs `langchain-core`):
 
 ```python
 from langchain_core.tools import tool
@@ -150,6 +150,8 @@ print(safe_read_notes.invoke({"topic": "deploy"}))
 ```
 
 `guard_langchain_tool` returns a tool with the same name, description and arguments. It checks the arguments before the tool runs, checks the output for prompt injection (`check_result=True`) and hides secrets in it (`mask_secrets=True`) before the model reads it. With `on_block="return"` the model gets `fallback`, or a short block message, instead; with `"raise"` (default) it raises `GuardBlockError`. Pass the wrapped tools to your agent; use it on every tool that reads outside data or can reach files, shells or the network.
+
+The wrapper treats the message of an exception raised by the tool like its output. A blocked message is handled like a blocked output; a message with a secret is raised again as the same exception type carrying only the masked message, without the original exception attached, so `handle_tool_error` still turns a `ToolException` into a message for the model, now masked. Set `handle_tool_error` on the wrapped tool, not on the original.
 
 ### CrewAI
 

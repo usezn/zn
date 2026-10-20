@@ -51,6 +51,69 @@ def _output_content(output: Any) -> Any:
     return output if content is None else content
 
 
+_ERROR_CHAIN_LIMIT = 8
+
+
+def _safe_text(fn: Any, value: Any) -> str:
+    try:
+        return str(fn(value))
+    except Exception:
+        return ""
+
+
+def _mask_text(text: str) -> str:
+    masked, _ = sanitize_tool_result(text)
+    return masked if isinstance(masked, str) else text
+
+
+def _error_texts(error: BaseException) -> List[str]:
+    """str() and repr() of a tool's exception and of the exceptions chained to it.
+
+    LangChain (handle_tool_error) and LangGraph (ToolNode handle_tool_errors)
+    send one of these to the model.
+    """
+    texts: List[str] = []
+    seen: set = set()
+    cur: Optional[BaseException] = error
+    while cur is not None and id(cur) not in seen and len(seen) < _ERROR_CHAIN_LIMIT:
+        seen.add(id(cur))
+        texts.append(_safe_text(str, cur))
+        texts.append(_safe_text(repr, cur))
+        cur = cur.__cause__ or cur.__context__
+    return texts
+
+
+def _error_secrets(error: BaseException) -> List[Dict[str, Any]]:
+    found: List[Dict[str, Any]] = []
+    for text in _error_texts(error):
+        _, detections = sanitize_tool_result(text)
+        found.extend(detections)
+    return found
+
+
+def _rebuild_error(error: BaseException, message: str) -> BaseException:
+    """A new exception of the same type as `error` carrying only `message`
+    (no original arguments, attributes, notes or chained exceptions), or a
+    plain RuntimeError when the type cannot be rebuilt that way."""
+    cls = type(error)
+    candidates: List[BaseException] = []
+    try:
+        candidates.append(cls(message))
+    except Exception:
+        pass
+    try:
+        bare = cls.__new__(cls)
+        bare.args = (message,)
+        candidates.append(bare)
+    except Exception:
+        pass
+    for new in candidates:
+        text, rtext = _safe_text(str, new), _safe_text(repr, new)
+        if message in text and _mask_text(text) == text and _mask_text(rtext) == rtext:
+            return new
+    return RuntimeError(message)
+
+
 def _secret_assessment(found: List[Dict[str, Any]]) -> Assessment:
     rules = sorted({str(f.get("rule", "secret")) for f in found})
     return Assessment(
@@ -76,7 +139,10 @@ class ZnGuardCallbackHandler(BaseCallbackHandler):
     replace or redact a tool output. With mask_secrets=True (default) a tool
     output that contains a secret therefore stops the run as well. To hide the
     secret and keep the run going, or to hand the model a block message, wrap
-    the tool with `guard_langchain_tool`.
+    the tool with `guard_langchain_tool`. The same goes for a tool's error: when
+    its message is blocked or contains a secret, the error is replaced by
+    GuardBlockError, because error handlers such as LangGraph's ToolNode send
+    the error text to the model.
 
     Parameters:
     - on_block: "raise" (default) stops the run with GuardBlockError; "ignore"
@@ -169,6 +235,38 @@ class ZnGuardCallbackHandler(BaseCallbackHandler):
             raise GuardBlockError(_secret_assessment(found), target="langchain:tool_output", payload=masked)
         return masked if found else output
 
+    def on_tool_error(
+        self,
+        error: BaseException,
+        *,
+        run_id: Optional[UUID] = None,
+        parent_run_id: Optional[UUID] = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Replace a tool's error with GuardBlockError when its message is blocked
+        or, with mask_secrets, contains a secret.
+
+        Error handlers such as LangGraph's ToolNode(handle_tool_errors=True)
+        send the error text to the model, and a callback cannot rewrite it, so
+        the error is replaced by GuardBlockError (whose message holds no
+        secret) and the run stops, or the handler passes the block message on.
+        An error LangChain itself handles (ToolException with
+        handle_tool_error) becomes a tool output and goes through on_tool_end.
+        """
+        if self.on_block != "raise" or not isinstance(error, Exception) or isinstance(error, GuardBlockError):
+            return None
+        texts = _error_texts(error)
+        message = texts[0] if texts else ""
+        assessment = check_tool_result(texts[:2], block_truncated=self.block_truncated)
+        if not assessment.allowed:
+            raise GuardBlockError(assessment, target="langchain:tool_output", payload=_mask_text(message))
+        if self.mask_secrets:
+            found = _error_secrets(error)
+            if found:
+                raise GuardBlockError(_secret_assessment(found), target="langchain:tool_output",
+                                      payload=_mask_text(message))
+        return None
+
 
 def _guard_settings(on_block: str) -> str:
     return validate_on_block(on_block, TOOL_ON_BLOCK_MODES)
@@ -218,6 +316,28 @@ if _HAVE_LANGCHAIN:
                 result, _ = sanitize_tool_result(result)
             return result
 
+        def _error(self, error: Exception) -> Any:
+            """Check and mask a tool's exception like its output, because LangChain
+            (handle_tool_error) and LangGraph (ToolNode) send its text to the model.
+
+            Called outside the `except` block, so what is raised in its place has
+            no link back to the original. A blocked message is handled like a
+            blocked output; a message with a secret is raised again as the same
+            exception type carrying only the masked message (so handle_tool_error
+            still handles a ToolException); other errors are raised unchanged.
+            """
+            message = _safe_text(str, error)
+            if self.check_result:
+                assessment = check_tool_result([message, _safe_text(repr, error)],
+                                               block_truncated=self.block_truncated)
+                if not assessment.allowed:
+                    return self._blocked(assessment, f"langchain:{self.name}:result",
+                                         _mask_text(message) if self.mask_secrets else None)
+            if self.mask_secrets and _error_secrets(error):
+                masked = _rebuild_error(error, _mask_text(message))
+                raise masked.with_traceback(error.__traceback__) from None
+            raise error
+
         def _run(self, *args: Any, config: RunnableConfig,
                  run_manager: Optional[CallbackManagerForToolRun] = None, **kwargs: Any) -> Any:
             tool_input = self._input(args, kwargs)
@@ -225,7 +345,18 @@ if _HAVE_LANGCHAIN:
             if blocked is not None:
                 return self._blocked(blocked, f"langchain:{self.name}", tool_input)
             child = patch_config(config, callbacks=run_manager.get_child()) if run_manager else config
-            return self._after(self.tool.invoke(tool_input, config=child))
+            caught: Optional[Exception] = None
+            try:
+                result = self.tool.invoke(tool_input, config=child)
+            except GuardBlockError:
+                raise
+            except Exception as exc:
+                if not (self.check_result or self.mask_secrets):
+                    raise
+                caught = exc
+            if caught is not None:
+                return self._error(caught)
+            return self._after(result)
 
         async def _arun(self, *args: Any, config: RunnableConfig,
                         run_manager: Optional[AsyncCallbackManagerForToolRun] = None, **kwargs: Any) -> Any:
@@ -234,7 +365,18 @@ if _HAVE_LANGCHAIN:
             if blocked is not None:
                 return self._blocked(blocked, f"langchain:{self.name}", tool_input)
             child = patch_config(config, callbacks=run_manager.get_child()) if run_manager else config
-            return self._after(await self.tool.ainvoke(tool_input, config=child))
+            caught: Optional[Exception] = None
+            try:
+                result = await self.tool.ainvoke(tool_input, config=child)
+            except GuardBlockError:
+                raise
+            except Exception as exc:
+                if not (self.check_result or self.mask_secrets):
+                    raise
+                caught = exc
+            if caught is not None:
+                return self._error(caught)
+            return self._after(result)
 
 
 def guard_langchain_tool(
@@ -260,6 +402,14 @@ def guard_langchain_tool(
     - check_result: Scan the tool output for prompt injection (default True).
     - block_truncated: Block an output too large to scan in full (default False).
     - fallback: Text the model gets for a block when on_block="return".
+
+    The message of an exception raised by the tool is checked and masked like
+    its output, because handle_tool_error and LangGraph's ToolNode send it to
+    the model: a blocked message is handled like a blocked output, and a
+    message with a secret is raised again as the same exception type carrying
+    only the masked message (a plain RuntimeError when the type cannot be
+    rebuilt that way). Set handle_tool_error on the returned tool, not on the
+    original, if you want LangChain to turn a ToolException into a message.
 
     A tool with response_format="content_and_artifact" loses its artifact: the
     wrapper passes only the content on.

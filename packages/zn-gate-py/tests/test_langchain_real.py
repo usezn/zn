@@ -22,7 +22,7 @@ from langchain_core.language_models.chat_models import BaseChatModel  # noqa: E4
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage  # noqa: E402
 from langchain_core.outputs import ChatGeneration, ChatResult  # noqa: E402
 from langchain_core.runnables import RunnableLambda  # noqa: E402
-from langchain_core.tools import tool  # noqa: E402
+from langchain_core.tools import ToolException, tool  # noqa: E402
 from pydantic import Field  # noqa: E402
 
 from zn_gate import GuardBlockError  # noqa: E402
@@ -265,3 +265,162 @@ def test_wrapper_rejects_bad_input():
         guard_langchain_tool(lambda x: x)
     with pytest.raises(ValueError):
         guard_langchain_tool(make_tools([])[0], on_block="ignore")
+
+
+# --- tool errors ---------------------------------------------------------------------------
+# LangChain (handle_tool_error) and LangGraph (ToolNode(handle_tool_errors=True)) send the
+# text of a tool's exception to the model, so the error message is checked like the output.
+
+DB_ERROR = "connection to https://example.com/db failed, key=" + FAKE_KEY
+
+
+def make_failing_tools(error_factory):
+    @tool
+    def query_db(question: str) -> str:
+        """Query the team database."""
+        raise error_factory()
+
+    return [query_db]
+
+
+def run_agent_sending_errors(model, tools, question, callbacks=None):
+    """The agent loop above, but a tool error goes back to the model as a ToolMessage,
+    in the format LangGraph's ToolNode(handle_tool_errors=True) uses."""
+    by_name = {t.name: t for t in tools}
+
+    def loop(q, config):
+        messages = [HumanMessage(q)]
+        for _ in range(4):
+            reply = model.invoke(messages, config=config)
+            messages.append(reply)
+            if not reply.tool_calls:
+                return reply.content
+            for tc in reply.tool_calls:
+                try:
+                    messages.append(by_name[tc["name"]].invoke(tc, config=config))
+                except Exception as e:
+                    messages.append(ToolMessage(content=f"Error: {e!r}\n Please fix your mistakes.",
+                                                tool_call_id=tc["id"], status="error"))
+        return None
+
+    return RunnableLambda(loop).invoke(question, config={"callbacks": callbacks or []})
+
+
+def test_wrapper_masks_a_tool_error_handled_by_handle_tool_error():
+    wrapped = guard_langchain_tool(make_failing_tools(lambda: ToolException(DB_ERROR))[0])
+    wrapped.handle_tool_error = True
+    model = ScriptedChatModel(script=[call("query_db", question="sales"), AIMessage("ok")])
+    assert run_agent(model, [wrapped], "Sales numbers?") == "ok"
+    last = model.seen[1][-1]
+    assert isinstance(last, ToolMessage)
+    assert "connection to https://example.com/db failed" in last.content
+    assert "[REDACTED_AWS_KEY]" in last.content
+    assert FAKE_KEY not in model.seen_text()
+
+
+def test_wrapper_masks_the_inner_tools_own_handled_error():
+    inner = make_failing_tools(lambda: ToolException(DB_ERROR))[0]
+    inner.handle_tool_error = True
+    model = ScriptedChatModel(script=[call("query_db", question="sales"), AIMessage("ok")])
+    assert run_agent(model, [guard_langchain_tool(inner)], "Sales numbers?") == "ok"
+    assert FAKE_KEY not in model.seen_text()
+
+
+def test_wrapper_masks_an_error_sent_by_a_toolnode_style_handler():
+    tools = [guard_langchain_tool(t) for t in make_failing_tools(lambda: ValueError(DB_ERROR))]
+    model = ScriptedChatModel(script=[call("query_db", question="sales"), AIMessage("ok")])
+    assert run_agent_sending_errors(model, tools, "Sales numbers?") == "ok"
+    assert "ValueError(" in model.seen[1][-1].content
+    assert FAKE_KEY not in model.seen_text()
+
+
+def test_wrapper_masked_error_keeps_its_type_and_drops_the_original():
+    tools = [guard_langchain_tool(t) for t in make_failing_tools(lambda: ValueError("db failed", FAKE_KEY))]
+    model = ScriptedChatModel(script=[call("query_db", question="sales"), AIMessage("ok")])
+    with pytest.raises(ValueError) as ctx:
+        run_agent(model, tools, "Sales numbers?")
+    assert FAKE_KEY not in str(ctx.value) and FAKE_KEY not in repr(ctx.value)
+    assert ctx.value.__cause__ is None
+    assert ctx.value.__suppress_context__
+
+
+def test_wrapper_blocks_an_injected_error():
+    tools = [guard_langchain_tool(t) for t in make_failing_tools(lambda: ToolException(INJECTION))]
+    model = ScriptedChatModel(script=[call("query_db", question="sales"), AIMessage("ok")])
+    with pytest.raises(GuardBlockError) as ctx:
+        run_agent(model, tools, "Sales numbers?")
+    assert ctx.value.target == "langchain:query_db:result"
+
+    tools = [guard_langchain_tool(t, on_block="return") for t in make_failing_tools(lambda: ToolException(INJECTION))]
+    model = ScriptedChatModel(script=[call("query_db", question="sales"), AIMessage("ok")])
+    assert run_agent(model, tools, "Sales numbers?") == "ok"
+    assert model.seen[1][-1].content.startswith("zn-gate blocked 'langchain:query_db:result'")
+    assert INJECTION not in model.seen_text()
+
+
+def test_wrapper_leaves_a_clean_error_alone():
+    original = ValueError("no such table: sales")
+    tools = [guard_langchain_tool(t) for t in make_failing_tools(lambda: original)]
+    model = ScriptedChatModel(script=[call("query_db", question="sales"), AIMessage("ok")])
+    with pytest.raises(ValueError) as ctx:
+        run_agent(model, tools, "Sales numbers?")
+    assert ctx.value is original
+
+
+def test_wrapper_async_masks_a_tool_error():
+    wrapped = guard_langchain_tool(make_failing_tools(lambda: ToolException(DB_ERROR))[0])
+    wrapped.handle_tool_error = True
+    model = ScriptedChatModel(script=[call("query_db", question="sales"), AIMessage("ok")])
+    assert asyncio.run(arun_agent(model, [wrapped], "Sales numbers?")) == "ok"
+    assert FAKE_KEY not in model.seen_text()
+
+
+def test_handler_stops_a_tool_error_with_a_secret():
+    model = ScriptedChatModel(script=[call("query_db", question="sales"), AIMessage("ok")])
+    with pytest.raises(GuardBlockError) as ctx:
+        run_agent(model, make_failing_tools(lambda: ValueError(DB_ERROR)), "Sales numbers?",
+                  [ZnGuardCallbackHandler()])
+    assert ctx.value.target == "langchain:tool_output"
+    assert ctx.value.assessment.rule.startswith("secret:")
+    assert FAKE_KEY not in str(ctx.value) and FAKE_KEY not in str(ctx.value.payload)
+    assert len(model.seen) == 1
+
+
+def test_handler_keeps_the_secret_from_a_toolnode_style_handler():
+    model = ScriptedChatModel(script=[call("query_db", question="sales"), AIMessage("ok")])
+    out = run_agent_sending_errors(model, make_failing_tools(lambda: ValueError(DB_ERROR)), "Sales numbers?",
+                                   [ZnGuardCallbackHandler()])
+    assert out == "ok"
+    assert "zn-gate blocked" in model.seen[1][-1].content
+    assert FAKE_KEY not in model.seen_text()
+
+
+def test_handler_stops_a_handled_tool_exception_with_a_secret():
+    inner = make_failing_tools(lambda: ToolException(DB_ERROR))[0]
+    inner.handle_tool_error = True
+    model = ScriptedChatModel(script=[call("query_db", question="sales"), AIMessage("ok")])
+    with pytest.raises(GuardBlockError):
+        run_agent(model, [inner], "Sales numbers?", [ZnGuardCallbackHandler()])
+    assert FAKE_KEY not in model.seen_text()
+
+
+def test_handler_stops_an_injected_tool_error():
+    model = ScriptedChatModel(script=[call("query_db", question="sales"), AIMessage("ok")])
+    with pytest.raises(GuardBlockError) as ctx:
+        run_agent(model, make_failing_tools(lambda: ValueError(INJECTION)), "Sales numbers?",
+                  [ZnGuardCallbackHandler(mask_secrets=False)])
+    assert ctx.value.target == "langchain:tool_output"
+
+
+def test_handler_lets_a_clean_tool_error_through():
+    model = ScriptedChatModel(script=[call("query_db", question="sales"), AIMessage("ok")])
+    with pytest.raises(ValueError, match="no such table"):
+        run_agent(model, make_failing_tools(lambda: ValueError("no such table: sales")), "Sales numbers?",
+                  [ZnGuardCallbackHandler()])
+
+
+def test_handler_mask_secrets_off_or_ignore_keeps_the_original_error():
+    for handler in (ZnGuardCallbackHandler(mask_secrets=False), ZnGuardCallbackHandler(on_block="ignore")):
+        model = ScriptedChatModel(script=[call("query_db", question="sales"), AIMessage("ok")])
+        with pytest.raises(ValueError):
+            run_agent(model, make_failing_tools(lambda: ValueError(DB_ERROR)), "Sales numbers?", [handler])
