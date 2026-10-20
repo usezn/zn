@@ -82,6 +82,49 @@ function usesPowerShell(shell, platform) {
   return !BASH_LIKE.has(shellBase(shell));
 }
 
+// The tools of zn's own "secrets" MCP server (lib/broker/mcp.js) as OpenCode names them.
+const OWN_SECRETS_TOOL = /^secrets_(secrets_list|secrets_http_request|secrets_render_file|secrets_request)$/;
+
+function serverCommandLine(s) {
+  if (!s || !Array.isArray(s.command) || !s.command.length) return null;
+  return s.command.map(String).map((w) => (/^[\w./:\\-]+$/.test(w) ? w : '"' + w.replace(/["\\]/g, '') + '"')).join(' ');
+}
+
+/*
+ * The command that starts zn's own "secrets" MCP server, as the user's
+ * opencode.json has it. The hook input does not name an MCP server's command,
+ * so runner.js can only tell zn's server apart when this is passed as
+ * raw.command. A project opencode.json that defines "secrets" must name the
+ * same command, or there is no exception (fails closed, also for a file that
+ * is not plain JSON). Null when the exception is not granted.
+ */
+function secretsServerCommand(env, cwd) {
+  try {
+    const read = (file) => {
+      if (!fs.existsSync(file)) return undefined;
+      const data = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
+      return data && data.mcp ? data.mcp.secrets : undefined;
+    };
+    const userDir = configDir({ env });
+    const user = serverCommandLine(read(path.join(userDir, 'opencode.json')));
+    if (!user) return null;
+    let dir = path.resolve(cwd || process.cwd());
+    for (;;) {
+      for (const f of [path.join(dir, 'opencode.json'), path.join(dir, '.opencode', 'opencode.json')]) {
+        const p = read(f);
+        if (p !== undefined && serverCommandLine(p) !== user) return null;
+      }
+      if (fs.existsSync(path.join(dir, '.git'))) break;
+      const up = path.dirname(dir);
+      if (up === dir) break;
+      dir = up;
+    }
+    return user;
+  } catch (_) {
+    return null;
+  }
+}
+
 function normalize(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const args = raw.args && typeof raw.args === 'object' ? raw.args : {};
@@ -92,12 +135,13 @@ function normalize(raw) {
   if (raw.hook === 'chat.message') return { ...base, event: 'user_prompt', tool: null, input: { prompt: typeof raw.prompt === 'string' ? raw.prompt : '' } };
   const t = String(raw.tool || '');
   let tool;
+  let unknownTool = false;
   if (t === 'read_mcp_resource') tool = 'mcpresource';
   else if (t === 'apply_patch' || t === 'patch') tool = 'write';
   // These return text the model reads, so their output is tokenized like MCP output.
   else if (TOKENIZED_OUTPUT.has(t)) tool = 'mcp';
   else if (BUILTIN.has(t)) tool = t;
-  else tool = 'mcp';
+  else { tool = 'mcp'; unknownTool = true; }
   // OpenCode's bash tool runs in the user's shell. When the plugin saw that it is PowerShell,
   // the command is checked and wrapped as PowerShell, not as POSIX sh.
   if (tool === 'bash' && usesPowerShell(raw.shell, raw.platform)) tool = 'powershell';
@@ -107,6 +151,17 @@ function normalize(raw) {
     url: typeof args.url === 'string' ? args.url : undefined,
     texts: textsOf(t === 'patch' ? 'apply_patch' : t, args),
   };
+  let evExtra = {};
+  // An MCP tool (any name that is not a built-in): its arguments are checked before the call (runner.js).
+  if (unknownTool && raw.hook === 'tool.execute.before') {
+    input.args = raw.args === undefined || raw.args === null ? {} : raw.args;
+    // OpenCode names MCP tools <server>_<tool>; zn's own server is the only one that takes placeholders.
+    if (OWN_SECRETS_TOOL.test(t)) {
+      evExtra = { mcp: { server: 'secrets', tool: t.slice('secrets_'.length) } };
+      const command = secretsServerCommand(process.env, cwd);
+      if (command) evExtra.raw = { ...raw, command };
+    }
+  }
   if (t === 'apply_patch' || t === 'patch') {
     // Every file the patch touches is checked, as in the Codex adapter.
     const tooLong = String(args.patchText || '').length > PATCH_SCAN_CAP;
@@ -117,7 +172,7 @@ function normalize(raw) {
     input.tooLong = tooLong;
     input.unparsed = !tooLong && (files.length === 0 || scan.suspicious);
   }
-  if (raw.hook === 'tool.execute.before') return { ...base, event: 'pre_tool', tool, toolName: t, input };
+  if (raw.hook === 'tool.execute.before') return { ...base, ...evExtra, event: 'pre_tool', tool, toolName: t, input };
   if (raw.hook === 'tool.execute.after') {
     const output = {};
     if (typeof raw.output === 'string') output.output = raw.output;

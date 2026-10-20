@@ -59,15 +59,19 @@ const { hooksOf } = require('./config-file');
 
 const id = 'claude-code';
 
-// Exact names (a matcher of letters and | is an exact list). PowerShell and
+// A regex (it contains mcp__.*), anchored so it names exactly these tools plus
+// every MCP tool, whose arguments are checked before the call. PowerShell and
 // Monitor run commands like Bash; LSP reads files.
-const PRE_MATCHER = 'Bash|PowerShell|Monitor|Read|Grep|LSP|Edit|MultiEdit|Write|NotebookEdit|WebFetch';
+const PRE_MATCHER = '^(Bash|PowerShell|Monitor|Read|Grep|LSP|Edit|MultiEdit|Write|NotebookEdit|WebFetch)$|^mcp__.*';
 // A regex (it contains mcp__.*), anchored so it names exactly these tools.
 const POST_MATCHER = '^(Bash|PowerShell|Monitor|Read|Grep|LSP|WebFetch|ReadMcpResourceTool)$|^mcp__.*';
 const HOOK_TIMEOUT_S = 15;
 // Older versions wrote the paths in double quotes; both forms are ours.
 const OUR_COMMAND_RE = /(\bhook claude-code|hooks[\\/]runner\.js["']? claude-code)\s*$/;
 const MCP_SERVER_NAME = 'secrets';
+// The tools of zn's own "secrets" MCP server (lib/broker/mcp.js). Only these
+// names can get the placeholder exception.
+const OWN_SECRETS_TOOL = /^mcp__secrets__(secrets_list|secrets_http_request|secrets_render_file|secrets_request)$/;
 
 const TOOL_MAP = {
   Bash: 'bash',
@@ -117,20 +121,70 @@ function normalize(raw) {
   const mcp = /^mcp__(.+?)__(.+)$/.exec(toolName);
   const tool = mcp ? 'mcp' : (TOOL_MAP[toolName] || toolName.toLowerCase());
   const ti = raw.tool_input && typeof raw.tool_input === 'object' ? raw.tool_input : {};
+  let evRaw = raw;
   const input = {
     command: typeof ti.command === 'string' ? ti.command : undefined,
     path: ti.file_path || ti.notebook_path || ti.filePath || ti.path || undefined,
     url: typeof ti.url === 'string' ? ti.url : undefined,
     texts: textsOf(tool, ti),
   };
+  if (mcp) {
+    // For MCP, tool_input is the call's arguments; runner.js checks them before the call.
+    input.args = raw.tool_input === undefined || raw.tool_input === null ? {} : raw.tool_input;
+    const command = mcp[1] === 'secrets' && OWN_SECRETS_TOOL.test(toolName) ? secretsServerCommand(process.env, base.cwd) : null;
+    if (command) evRaw = { ...raw, command };
+  }
   return {
     ...base,
+    raw: evRaw,
     tool,
     toolName,
     mcp: mcp ? { server: mcp[1], tool: mcp[2] } : null,
     input,
     output: event === 'post_tool' ? raw.tool_response : undefined,
   };
+}
+
+function serverCommandLine(s) {
+  if (!s || typeof s.command !== 'string' || !Array.isArray(s.args)) return null;
+  return [s.command, ...s.args.map(String)].map((w) => (/^[\w./:\\-]+$/.test(w) ? w : '"' + w.replace(/["\\]/g, '') + '"')).join(' ');
+}
+
+/*
+ * The command that starts zn's own "secrets" MCP server, as the user's
+ * .claude.json has it (`zn hooks install` registers it there). Claude Code's
+ * hook input does not name an MCP server's command, so runner.js can only tell
+ * zn's server apart when this is passed as raw.command. A local-scope entry
+ * (projects[<dir>] in .claude.json) or a project .mcp.json that defines
+ * "secrets" must name the same command, or there is no exception (fails
+ * closed). Null when the exception is not granted. Servers added by a managed
+ * policy or a plugin are not visible to the hook.
+ */
+function secretsServerCommand(env, cwd, home) {
+  try {
+    const file = env.CLAUDE_CONFIG_DIR ? path.join(configDir({ env }), '.claude.json') : path.join(home || os.homedir(), '.claude.json');
+    const data = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
+    const user = serverCommandLine(data && data.mcpServers && data.mcpServers[MCP_SERVER_NAME]);
+    if (!user) return null;
+    let dir = path.resolve(cwd || process.cwd());
+    for (;;) {
+      const local = data.projects && data.projects[dir] && data.projects[dir].mcpServers && data.projects[dir].mcpServers[MCP_SERVER_NAME];
+      if (local !== undefined && serverCommandLine(local) !== user) return null;
+      const mcpFile = path.join(dir, '.mcp.json');
+      if (fs.existsSync(mcpFile)) {
+        const proj = JSON.parse(fs.readFileSync(mcpFile, 'utf8').replace(/^\uFEFF/, ''));
+        const p = proj && proj.mcpServers && proj.mcpServers[MCP_SERVER_NAME];
+        if (p !== undefined && serverCommandLine(p) !== user) return null;
+      }
+      if (fs.existsSync(path.join(dir, '.git'))) break;
+      const up = path.dirname(dir);
+      if (up === dir) break;
+      dir = up;
+    }
+    return user;
+  } catch (_) {
+    return null;
+  }
 }
 
 function setPath(obj, key, value) {

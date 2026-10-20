@@ -246,15 +246,20 @@ test('cursor: a "secrets" server is ours only when it is zn\'s own install', asy
   assert.equal(nameOnly.output.permission, 'deny');
 });
 
-test('cursor: MCP calls from Claude Code and OpenCode are allowed without the engine or the vault', async (t) => {
+test('claude code and opencode: an MCP call with no argument text is allowed without the engine or the vault; one with text is scanned', async (t) => {
   const dir = tmpProject(t);
   // An engine that throws: any scan or prepare would make the call fail closed (deny).
   const boom = { scan() { throw new Error('engine used'); }, async prepare() { throw new Error('engine used'); } };
   const claudeCode = getAdapter('claude-code');
-  const cc = await run(claudeCode, cx('PreToolUse', { cwd: dir, tool_name: 'mcp__github__get_issue', tool_input: { number: 1 } }), { engine: boom });
+  const cc = await run(claudeCode, cx('PreToolUse', { cwd: dir, tool_name: 'mcp__github__get_issue', tool_input: {} }), { engine: boom });
   assert.equal(cc.decision.decision, 'allow');
-  const oc = await run(opencode, { hook: 'tool.execute.before', tool: 'github_get_file', cwd: dir, args: { path: 'README.md' } }, { engine: boom });
+  const oc = await run(opencode, { hook: 'tool.execute.before', tool: 'github_get_issue', cwd: dir, args: {} }, { engine: boom });
   assert.equal(oc.decision.decision, 'allow');
+  // Argument text is scanned: with an engine that throws, the call fails closed.
+  const ccText = await run(claudeCode, cx('PreToolUse', { cwd: dir, tool_name: 'mcp__github__get_file', tool_input: { path: 'README.md' } }), { engine: boom });
+  assert.equal(ccText.decision.decision, 'deny');
+  const ocText = await run(opencode, { hook: 'tool.execute.before', tool: 'github_get_file', cwd: dir, args: { path: 'README.md' } }, { engine: boom });
+  assert.equal(ocText.decision.decision, 'deny');
 });
 
 test('cursor: benign MCP calls get no answer; large arguments are scanned in full, up to 1 MB', async (t) => {
