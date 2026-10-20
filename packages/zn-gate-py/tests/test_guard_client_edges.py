@@ -287,13 +287,13 @@ class TestBlockMessage(unittest.TestCase):
         a = Assessment(verdict="block", confidence=1.0, rule="demo:rule", reason=None)
         msg = block_message(a, "tool")
         self.assertIn("the input matched rule demo:rule", msg)
-        self.assertIn("do not retry with reworded text", msg)
+        self.assertIn("Next step: check the input", msg)
 
     def test_tool_output_target_gives_result_advice(self):
         a = Assessment(verdict="block", confidence=1.0, rule="demo:rule", reason="Bad data.")
         msg = block_message(a, "fetch:tool_output")
         self.assertIn("Reason: Bad data (rule: demo:rule).", msg)
-        self.assertIn("do not use this result", msg)
+        self.assertIn("output of this tool was withheld", msg)
 
 
 class TestChecks(_EnvCase):
@@ -405,7 +405,7 @@ class TestGuardModes(_EnvCase):
         with self.assertRaises(GuardBlockError) as cm:
             raiser()
         self.assertEqual(cm.exception.target, "raiser:result")
-        self.assertIn("do not use this result", str(cm.exception))
+        self.assertIn("output of this tool was withheld", str(cm.exception))
         self.assertEqual(calls, ["raiser"])
         self.assertEqual(returner(), "blocked")
         self.assertIsInstance(returner_assessment(), Assessment)

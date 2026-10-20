@@ -24,16 +24,30 @@ _F = TypeVar("_F", bound=Callable[..., Any])
 
 def block_message(assessment: Assessment, target: str) -> str:
     """Plain text for a blocked call or tool result: what was blocked, why, and the next step."""
+    is_result = target.endswith((":result", ":tool_output"))
+    too_large = assessment.rule == "size:truncated"
+    if is_result:
+        what = "The output of this tool was withheld, so the model did not receive it."
+    else:
+        what = "The call did not run, so nothing was sent or changed."
+    if too_large:
+        what = ("The output was too large to check in full, so it was withheld."
+                if is_result else "The input was too large to check in full, so the call did not run.")
+        why = f"Reason: too large to scan in full (rule: {assessment.rule})."
+        step = "Next step: shorten or split the input into smaller parts and try again."
+        return f"zn-gate blocked '{target}'. {what} {why} {step}"
     reason = (assessment.reason or "").rstrip(".")
     if reason:
         why = f"Reason: {reason} (rule: {assessment.rule})."
     else:
         why = f"Reason: the input matched rule {assessment.rule}."
-    if target.endswith((":result", ":tool_output")):
-        step = "Next step: do not use this result; ask the person who runs this agent where the data came from."
+    if is_result:
+        step = ("Next step: check where the data came from. If this is a false positive, "
+                "report it at https://github.com/usezn/zn/issues.")
     else:
-        step = "Next step: do not retry with reworded text; tell the person who runs this agent."
-    return f"zn-gate blocked '{target}'. {why} {step}"
+        step = ("Next step: check the input. If this is a false positive, "
+                "report it at https://github.com/usezn/zn/issues.")
+    return f"zn-gate blocked '{target}'. {what} {why} {step}"
 
 
 class GuardBlockError(PermissionError):
