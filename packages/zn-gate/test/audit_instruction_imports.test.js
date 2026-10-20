@@ -72,3 +72,28 @@ test('audit: opencode.json instructions paths and globs are read', (t) => {
   assert.deepEqual(ids(res, 'docs/guide.md'), want);
   assert.deepEqual(ids(res, 'rules/sub/deep.md'), [], 'a single * does not cross directories');
 });
+
+test('audit: a hostile opencode.json with many globs stays within budget and is reported', (t) => {
+  const files = { 'opencode.json': JSON.stringify({ instructions: Array.from({ length: 100000 }, (_, i) => '**/*.x' + i) }) };
+  for (let i = 0; i < 50; i++) files['d' + i + '/f.md'] = 'notes\n';
+  const dir = build(t, files);
+  const t0 = Date.now();
+  const res = run(dir);
+  assert.ok(Date.now() - t0 < 5000, 'took ' + (Date.now() - t0) + ' ms');
+  assert.ok(res.findings.some((f) => f.id === 'ZNA020' && f.file === 'opencode.json'), 'the cut-off is reported');
+});
+
+test('audit: opencode.json entries with backslashes or drive letters do not leave the directory', (t) => {
+  const dir = build(t, {
+    'repo/opencode.json': JSON.stringify({ instructions: ['..\outside.md', '..\*.md', 'C:/x/*.md'] }),
+    'outside.md': INJECTION,
+  });
+  const res = run(path.join(dir, 'repo'));
+  assert.deepEqual(res.findings.filter((f) => f.id !== 'ZNA020').map((f) => f.file), []);
+});
+
+test('audit: a file at the root whose name starts with two dots can be imported', (t) => {
+  const want = expected(t);
+  const res = run(build(t, { 'CLAUDE.md': 'See @..notes.md\n', '..notes.md': INJECTION }));
+  assert.deepEqual(ids(res, '..notes.md'), want);
+});

@@ -1138,13 +1138,15 @@ function redirectedConfigs(root, unchecked) {
 // Claude Code follows `@path` imports in CLAUDE.md up to this many hops.
 const MAX_IMPORT_HOPS = 5;
 const MAX_IMPORTED = 200;
+// One budget for every glob of one audit, and at most this many `instructions` entries.
 const MAX_GLOB_ENTRIES = 5000;
+const MAX_INSTRUCTION_ENTRIES = 64;
 
 function insideReal(realRoot, abs) {
   let real;
   try { real = fs.realpathSync(abs); } catch (_) { return null; }
   const r = path.relative(realRoot, real);
-  return r.startsWith('..') || path.isAbsolute(r) ? null : real;
+  return r === '..' || r.startsWith('..' + path.sep) || path.isAbsolute(r) ? null : real;
 }
 
 function toRel(root, abs) {
@@ -1181,19 +1183,24 @@ function globRegex(glob) {
   return new RegExp('^' + re + '$');
 }
 
-/** Files under `base` (relative to root) whose path matches an OpenCode `instructions` glob. */
-function globFiles(root, glob) {
+/**
+ * Files under the glob's fixed prefix (relative to root) whose path matches an
+ * OpenCode `instructions` glob. `budget` is shared by every glob of one audit:
+ * { entries, deadline, cut }; the walk stops when it runs out or time is up.
+ */
+function globFiles(root, glob, budget) {
   const star = glob.search(/[*?]/);
   if (star < 0) return [glob];
   const prefix = glob.slice(0, glob.lastIndexOf('/', star) + 1);
   const re = globRegex(glob);
   const found = [];
-  let entries = 0;
   (function visit(rel, depth) {
+    if (budget.cut) return;
     let list;
     try { list = fs.readdirSync(path.join(root, ...rel.split('/').filter(Boolean)), { withFileTypes: true }); } catch (_) { return; }
     for (const d of list) {
-      if (++entries > MAX_GLOB_ENTRIES || found.length >= MAX_IMPORTED) return;
+      if (found.length >= MAX_IMPORTED) return;
+      if (--budget.entries < 0 || Date.now() > budget.deadline) { budget.cut = true; return; }
       const r = rel + d.name;
       if (d.isDirectory()) {
         if (d.name === '.git' || SKIP_DIRS.has(d.name) || depth >= 16) continue;
@@ -1210,7 +1217,7 @@ function globFiles(root, glob) {
  * `instructions` list of opencode.json. Only files inside the audited
  * directory are returned; the rest is out of scope like any other path.
  */
-function importedInstructions(root, files) {
+function importedInstructions(root, files, deadline, unchecked) {
   let realRoot;
   try { realRoot = fs.realpathSync(root); } catch (_) { return []; }
   const known = new Set(files.map((f) => f.rel));
@@ -1223,7 +1230,7 @@ function importedInstructions(root, files) {
     try { st = fs.statSync(real); } catch (_) { return null; }
     if (!st.isFile()) return null;
     const rel = toRel(root, abs);
-    if (!rel || rel.startsWith('..') || known.has(rel)) return null;
+    if (!rel || rel === '..' || rel.startsWith('../') || known.has(rel)) return null;
     known.add(rel);
     const rec = { abs: real, rel, display: rel, scope: 'project', kind: 'instructions', agent, readers: [agent], importedBy: from };
     out.push(rec);
@@ -1242,19 +1249,28 @@ function importedInstructions(root, files) {
       if (added) queue.push({ rec: added, hops: hops + 1 });
     }
   }
+  const budget = { entries: MAX_GLOB_ENTRIES, deadline: deadline || Infinity, cut: false };
   for (const f of files) {
-    if (f.kind !== 'opencode-json') continue;
+    if (f.kind !== 'opencode-json' || out.length >= MAX_IMPORTED || budget.cut) continue;
     const r = readBounded(f.abs, MAX_FILE_BYTES, false);
     if (!r.text) continue;
     let data;
     try { data = parseJsonc(r.text); } catch (_) { continue; }
     const list = data && Array.isArray(data.instructions) ? data.instructions : [];
     const base = path.dirname(f.rel) === '.' ? '' : path.dirname(f.rel) + '/';
-    for (const item of list) {
-      if (typeof item !== 'string' || !item || /^[a-z]+:\/\//i.test(item) || item.startsWith('~/') || path.isAbsolute(item)) continue;
+    if (list.length > MAX_INSTRUCTION_ENTRIES) budget.cut = true;
+    for (const raw of list.slice(0, MAX_INSTRUCTION_ENTRIES)) {
+      if (out.length >= MAX_IMPORTED || budget.cut) break;
+      if (typeof raw !== 'string' || !raw) continue;
+      const item = raw.replace(/\\/g, '/');
+      if (/^[a-z]+:\/\//i.test(item) || item.startsWith('~/') || path.isAbsolute(item) || /^[A-Za-z]:/.test(item)) continue;
       const rel = path.posix.normalize(base + item.replace(/^\.\//, ''));
-      if (rel.startsWith('..')) continue;
-      for (const m of globFiles(root, rel)) add(path.join(root, ...m.split('/')), 'opencode', f.rel);
+      if (rel === '..' || rel.startsWith('../')) continue;
+      for (const m of globFiles(root, rel, budget)) add(path.join(root, ...m.split('/')), 'opencode', f.rel);
+    }
+    if (budget.cut && unchecked) {
+      unchecked.push({ file: f.rel, agent: 'opencode', readers: ['opencode'], severity: 'medium',
+        detail: f.rel + ' lists more instruction files than zn audit follows (' + MAX_INSTRUCTION_ENTRIES + ' entries, ' + MAX_GLOB_ENTRIES + ' directory entries, or the time budget); the rest were not checked.' });
     }
   }
   return out;
@@ -1534,7 +1550,7 @@ function audit(opts) {
   const { files, extDirs, unchecked, truncated, entries, skippedDirs } = walk(root, deadline, maxEntries);
   const known = new Set(files.map((f) => f.rel));
   for (const rec of redirectedConfigs(root, unchecked)) if (!known.has(rec.rel)) files.push(rec);
-  for (const rec of importedInstructions(root, files)) files.push(rec);
+  for (const rec of importedInstructions(root, files, deadline, unchecked)) files.push(rec);
   let scanned = 0;
   let timedOut = truncated && truncated.reason === 'time';
   const wanted = (readers, agent) => agent === 'any' || (readers || []).some((r) => selected.has(r)) || selected.has(agent);
