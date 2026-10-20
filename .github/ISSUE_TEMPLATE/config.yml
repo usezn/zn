@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/usezn/zn/security/advisories/new
+    about: Report it privately. Do not open a public issue. See the security policy for details.
+  - name: Ask a question or share an idea
+    url: https://github.com/usezn/zn/discussions
+    about: Questions, ideas and how-to help belong in GitHub Discussions.

@@ -1,0 +1,2 @@
+### Security
+- Hooks now also refuse malformed file names and text (such as unpaired surrogates or characters that Windows cannot convert) in the working directory, tool input and other path fields of tool results, prompts and skill or command expansions, not only before a tool runs. A tool result is withheld, a prompt or command is blocked with a clear reason, and nothing touches the file system first, so the hook can no longer stop on some Windows systems and let the action through.

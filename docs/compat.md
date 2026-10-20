@@ -17,7 +17,7 @@ documentation on 2026-10-11 (Cursor again on 2026-10-17). End-to-end evidence is
 | Commands with `__ZN_<NAME>__`: through `zn run` | Rewritten automatically, shown to you for confirmation | The agent is told the exact `zn run -- …` line to use | The agent is told the exact `zn run -- …` line to use; Cursor asks you once wrapped | Rewritten automatically; OpenCode's own permission rules apply |
 | Restore detected tokens into local commands and git-ignored files | Yes, shown in the confirmation dialog | No (tokens stay) | No (tokens stay) | No (tokens stay) |
 | `secrets` MCP server | Yes (registered on install) | Yes (snippet printed) | Yes (snippet printed) | Yes (snippet printed) |
-| Windows | Yes, including the PowerShell tool (Claude Code 2.1.299 or later: before it, without Git for Windows, `PreToolUse` let calls through when it could not run) | The hook command was run by hand from PowerShell and from cmd.exe (not in CI) | Not tested | Not tested (wrapping is written for bash) |
+| Windows | Yes, including the PowerShell tool (Claude Code 2.1.299 or later: before it, without Git for Windows, `PreToolUse` let calls through when it could not run) | The hook command was run by hand from PowerShell and from cmd.exe. The end-to-end run also passed on Windows Server 2022 with Codex 0.163.0 and PowerShell, 0 values sent to the provider ([evidence](../bench/e2e/windows/); one run, not in CI) | Not tested | End-to-end run on Windows Server 2022 with OpenCode 1.19.3 ([evidence](../bench/e2e/windows/); one run, not in CI), 0 values sent to the provider. With PowerShell, OpenCode's default shell there, a command with a marker failed instead of running in that run (the wrapping was then written for bash only; the PowerShell wrapping added since is covered by unit tests but not re-run end to end); with Git Bash (`SHELL` set) it runs |
 | End-to-end run, 0 values sent to the provider | **Yes** | **Yes** | Not run (no CLI with hooks to drive) | **Yes** |
 
 zn's two MCP servers (`zn mcp` and the `secrets` server) speak MCP protocol version `2024-11-05` and answer
@@ -69,9 +69,9 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
 | `PostToolUse` | Yes, matcher `.*` | Scrubs tool output. Its `decision: "block"` replaces the result with zn's scrubbed copy. Checked on 0.163.0. Opt-in `replaceToolOutputOnSecret` also sends `continue: false` with a `stopReason` for a real secret value. Checked on 0.163.0: the model still gets the scrubbed copy, not the stop text, and the turn goes on; see below. |
 | `PermissionRequest` | Yes, deny only | Runs the same check as `PreToolUse` when Codex is about to ask you to approve a call. zn answers `deny` with its reason and never `allow`. Checked on 0.163.0 in the terminal UI: `codex exec` never asks for approval, so the event does not run there. |
 | `UserPromptSubmit` | Yes | Blocks a secret pasted into the prompt. Checked on 0.163.0. |
-| `SessionStart` | No | zn installs no session-start hook for Codex. |
+| `SessionStart` | Yes, context only | Adds a short reminder for the model through `additionalContext`: zn protects `.env` files and the vault, and `zn run` runs a command that needs a secret. It checks nothing and never stops the session. Checked on 0.163.0: the reminder is in the first request the model gets. |
 | `Stop` | Yes, warn by default | Reviews the model's final answer for a secret value, or for a `__ZN_` placeholder that zn did not see earlier in the session. It warns with `systemMessage`, which you see and the model does not. It blocks, with a reason for the model to rewrite the answer, only with `"stopReview": "block"` under `hooks` in `~/.zn/config.json`; it never blocks when Codex is already continuing because of a Stop hook. Checked on 0.163.0: a secret value in the answer is warned about, or blocked once with `stopReview`. A placeholder zn did not see earlier is not caught on Codex, because Codex writes each answer to its session log more than once. |
-| `SubagentStart` | No | Not used. |
+| `SubagentStart` | Yes, context only | The same reminder, for a subagent the model starts with `spawn_agent`. Checked on 0.163.0 with the `multi_agent` feature on: the hook runs, the subagent's model gets the reminder, and the subagent's own tool calls go through zn's `PreToolUse` check (a read of `~/.aws/credentials` by the subagent was denied). Not checked: the `multi_agent_v2` tool. |
 | `SubagentStop` | No | Not used. |
 | `PreCompact` | No | Not used. |
 | `PostCompact` | No | Not used. |
@@ -106,6 +106,16 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
     the read ran, and zn's `PostToolUse` check still replaced the secret values in the output before the
     model saw them. Do not install another hook that rewrites commands next to zn's.
   - Hooks are a guardrail, not an enforcement boundary (Codex's own words).
+  - **Other tools' hooks (Codex).** Codex runs every matching `PreToolUse` hook at the same time, each with the
+    original call. A hook from another tool can answer "allow" with a changed command, and Codex then runs the
+    changed command, which zn did not check before it ran. A hook that answers a `PermissionRequest` with "allow"
+    can also remove an approval prompt. zn cannot see what another hook does. `zn-gate check` reports Codex as
+    not fully protected when your Codex folder (`hooks.json` or `config.toml`) or the project's `.codex` folder
+    holds another `PreToolUse` or `PermissionRequest` hook that is not zn's and does not run in the
+    background; review it and remove it if you do not need it. After the command has run, zn's
+    `PostToolUse` hook sees the command that really ran: it still hides secret values in the output, and
+    it withholds the output when that command is one zn blocks. It cannot undo what the command did, and
+    it does not read hooks that a plugin or your organization sets.
   - MCP tool calls reach `PreToolUse` (matcher `^(Bash|apply_patch|mcp__.+)$`), and zn checks
     their arguments for secret values and `__ZN_` markers, as it does for Cursor. Installs made
     before this change keep the old matcher until you update them
@@ -147,7 +157,7 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
 - **Background hooks (Codex).** A Codex hook with `async` set runs in the background and cannot block a call or change a result. If zn's hook is set that way in `hooks.json` or `config.toml` in your Codex folder, `zn-gate check` reports Codex as not protected; remove `async` from zn's hook.
 - **Trust and updates (Codex).** Installing zn-gate as a Codex plugin would not skip the `/hooks` review: Codex ignores a plugin's hooks until you review and trust them, and it asks again after every plugin update. zn installs its hooks with `zn hooks install codex` instead, and you trust them in `/hooks`.
 - **Ways Codex turns zn's hooks off.** `async`, a `[hooks.state]` entry with `enabled = false` for one of zn's hooks, `[features] hooks = false`, and `allow_managed_hooks_only = true` in your organization's requirements (when zn's hooks are not among the managed ones) each stop zn's hooks from protecting anything, and Codex says nothing. `zn-gate check` reports all four as not protected and says what to change. It reads `hooks.state` only in your own `config.toml`; a setting passed on the Codex command line with `-c` is not seen. The Python package has no `check` command.
-- **Settings that turn hooks off.** zn reads the settings files only: the managed settings of Claude Code (`managed-settings.json` and `managed-settings.d/` in `/etc/claude-code`, `/Library/Application Support/ClaudeCode` or `C:\Program Files\ClaudeCode`) and of Codex (`requirements.toml` and `managed_config.toml` in `/etc/codex`, or `requirements.toml` in `%ProgramData%\OpenAI\Codex` and `managed_config.toml` in your Codex folder on Windows), and your own settings. A policy sent through MDM or the agent's cloud is not seen. When such a setting stops every hook, zn's start-of-session hook does not run either (zn installs no session-start hook for Codex), so `zn-gate check` is where you see it.
+- **Settings that turn hooks off.** zn reads the settings files only: the managed settings of Claude Code (`managed-settings.json` and `managed-settings.d/` in `/etc/claude-code`, `/Library/Application Support/ClaudeCode` or `C:\Program Files\ClaudeCode`) and of Codex (`requirements.toml` and `managed_config.toml` in `/etc/codex`, or `requirements.toml` in `%ProgramData%\OpenAI\Codex` and `managed_config.toml` in your Codex folder on Windows), and your own settings. A policy sent through MDM or the agent's cloud is not seen. When such a setting stops every hook, the session-start reminder that zn adds for Codex does not appear either, so `zn-gate check` is where you see it.
 - **Copilot CLI** (experimental: `zn hooks install copilot [--project]`;
   `zn-gate check` and `zn-gate init` list it as "Copilot CLI (experimental)").
   Covered: `preToolUse` blocks reads and writes of secret files by path,
@@ -220,9 +230,18 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
     local paths of `node` and zn (no secret value).
   - Live output that OpenCode stores while a command runs stays in its local
     database.
-  - On Windows, the `zn run` wrapping is written for bash: with PowerShell as
-    OpenCode's shell, a command with a marker fails instead of running (no
-    value is exposed).
+  - On Windows, OpenCode's command tool runs in PowerShell unless the `SHELL`
+    environment variable names another shell (measured with OpenCode 1.19.3 on
+    Windows Server 2022: with `SHELL` unset it used PowerShell, and with `SHELL`
+    set to Git Bash it used Git Bash). zn follows the same rule. When `SHELL` is
+    unset, or names anything other than a bash-like shell (`bash`, `sh`, `zsh`),
+    zn checks and wraps the command as PowerShell, the way it does for Claude
+    Code's PowerShell tool: the command must be one program with plain arguments
+    (no pipeline, variable or script block), and zn says so when it is not. When
+    `SHELL` names a bash-like shell, such as Git Bash, commands are wrapped for
+    bash as before. On macOS and Linux only an explicit `powershell` or `pwsh`
+    in `SHELL` selects the PowerShell form. The plugin sends zn only the shell's
+    program name (never its path) and the platform.
 
 ## zn Team policy choices by zn-gate version
 

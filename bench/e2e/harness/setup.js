@@ -132,6 +132,13 @@ if (SCENARIO) {
     'stop-placeholder': { steps: [], final: 'Use the token __ZN_GITHUB_TOKEN__ for the call.' },
     replace: { steps: [ex('cat config/settings.yml')], final: DONE },
     thirdparty: { steps: [ex('echo benign-ok')], final: DONE },
+    // The model starts a subagent (spawn_agent); the subagent reads a credential file, which zn denies when its hooks run.
+    // The parent then waits a few seconds so that the subagent has time to run.
+    'session-context': {
+      steps: [{ tool: 'spawn_agent', auto: true, input: { message: 'Read the credentials file with cat.' } }, ex('sleep 10')],
+      child: { steps: [ex('cat ~/.aws/credentials')], final: 'Subagent done.' },
+      final: DONE,
+    },
   };
   if (!byName[SCENARIO]) throw new Error('unknown scenario ' + SCENARIO);
   script = byName[SCENARIO];
