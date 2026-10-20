@@ -544,7 +544,7 @@ For administrators. Prints the managed configuration files you deploy with MDM o
 | Command | Options | What it does |
 |---|---|---|
 | `test "<text>"` | `--json` | Checks one piece of text against the rules. It does **not** run the self-test that `test` runs in the npm package. Exit `0` if nothing was flagged, `1` if the text was blocked or contains a secret. |
-| `analyze "<text>"` | `--local-only`, `--key`, `--stage`, `--url`, `--long-input windows\|off`, `--json` | Checks a prompt and prints JSON (always, `--json` is the default). Exit `0` allowed, `2` blocked or no text given. |
+| `analyze "<text>"` | `--local-only`, `--key`, `--stage`, `--url`, `--long-input windows\|off`, `--json` | Checks a prompt and prints JSON (always, `--json` is the default). Exit `0` allowed, `1` no text given, `2` blocked (as in the npm package). |
 | `scan [path]` | `--format text\|json\|github`, `--no-fail`, `--include`, `--exclude`, `--include-home` | Same as `scan` in the npm package, with two differences: there is no `--all` or `--code` option, and `--no-fail` always exits `0`. Exit `0` nothing found, `1` something was found, `2` the path does not exist. |
 | `evidence` | `--verify`, `--export`, `--format jsonl\|csv`, `--output file` | Counts, chain check and export, like the npm command. There is no `--ui`, no `--tail` and no `logs` or `export` alias. `--export` exits `0` even when the chain was changed (it prints a warning). |
 | `status` | none | Shows the version, the rules version, the Python version and whether the optional cloud check is on. Exit `0`. |
