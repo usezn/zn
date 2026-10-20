@@ -147,26 +147,48 @@ def guard(
     check_args: bool = True,
     check_result: bool = False,
     mask_secrets: bool = False,
-    callback: Optional[Callable[[Assessment, str, Any], None]] = None,
+    callback: Optional[Callable[[Assessment, str, Any], Any]] = None,
     block_truncated: bool = False,
 ) -> Callable[[_F], _F]:
     """
     Decorator for Python functions and agent tools.
 
     Parameters:
-    - on_block: "raise" (default) raises GuardBlockError,
-                "return" returns `fallback` (or the Assessment if fallback is None),
-                "custom" calls `callback`.
+    - on_block: what happens when an argument or a result is blocked. In every
+                mode a blocked call does not run the function and a blocked
+                result never reaches the caller.
+                "raise" (default) raises GuardBlockError.
+                "return" returns `fallback` (or the Assessment if fallback is None).
+                "custom" calls `callback(assessment, func_name, payload)` and
+                returns what the callback returns; if the callback raises, the
+                exception propagates. `callback` is required in this mode.
     - fallback: Value to return if on_block="return".
     - check_args: Whether to inspect input arguments (default True).
     - check_result: Whether to inspect function return value (default False).
     - mask_secrets: Automatically redact leaked credentials in result (default False).
-    - callback: Optional hook called on block: callback(assessment, func_name, payload).
+    - callback: Hook called on block: callback(assessment, func_name, payload). With
+                "raise" and "return" it is called first and its return value is
+                ignored; with "custom" it decides the outcome.
     - block_truncated: With check_result, block a result too large to scan in full
                        (rule size:truncated). ZN_BLOCK_TRUNCATED=1 does the same
                        for every guard (default False).
     """
     validate_on_block(on_block, ("raise", "return", "custom"))
+    if on_block == "custom" and not callable(callback):
+        raise ValueError(
+            "on_block='custom' needs a callable `callback`: it decides what a blocked call returns. "
+            "Pass callback=..., or use on_block='raise' or 'return'."
+        )
+
+    def _blocked(assessment: Assessment, func_name: str, payload: Any, target: str) -> Any:
+        """Outcome of a block. Always returns or raises, so the caller never goes on."""
+        if on_block == "custom":
+            return cast(Callable[[Assessment, str, Any], Any], callback)(assessment, func_name, payload)
+        if callback:
+            callback(assessment, func_name, payload)
+        if on_block == "raise":
+            raise GuardBlockError(assessment, target=target, payload=payload)
+        return fallback if fallback is not None else assessment
 
     def decorator(func: _F) -> _F:
         func_name = getattr(func, "__name__", "anonymous")
@@ -178,24 +200,14 @@ def guard(
                     combined_args = {"args": args, "kwargs": kwargs}
                     assessment = check_tool_call(func_name, combined_args)
                     if not assessment.allowed:
-                        if callback:
-                            callback(assessment, func_name, combined_args)
-                        if on_block == "raise":
-                            raise GuardBlockError(assessment, target=func_name, payload=combined_args)
-                        elif on_block == "return":
-                            return fallback if fallback is not None else assessment
+                        return _blocked(assessment, func_name, combined_args, func_name)
 
                 res = await func(*args, **kwargs)
 
                 if check_result:
                     res_assessment = check_tool_result(res, block_truncated=block_truncated)
                     if not res_assessment.allowed:
-                        if callback:
-                            callback(res_assessment, func_name, res)
-                        if on_block == "raise":
-                            raise GuardBlockError(res_assessment, target=f"{func_name}:result", payload=res)
-                        elif on_block == "return":
-                            return fallback if fallback is not None else res_assessment
+                        return _blocked(res_assessment, func_name, res, f"{func_name}:result")
 
                 if mask_secrets:
                     from .rules import sanitize_tool_result
@@ -210,24 +222,14 @@ def guard(
                     combined_args = {"args": args, "kwargs": kwargs}
                     assessment = check_tool_call(func_name, combined_args)
                     if not assessment.allowed:
-                        if callback:
-                            callback(assessment, func_name, combined_args)
-                        if on_block == "raise":
-                            raise GuardBlockError(assessment, target=func_name, payload=combined_args)
-                        elif on_block == "return":
-                            return fallback if fallback is not None else assessment
+                        return _blocked(assessment, func_name, combined_args, func_name)
 
                 res = func(*args, **kwargs)
 
                 if check_result:
                     res_assessment = check_tool_result(res, block_truncated=block_truncated)
                     if not res_assessment.allowed:
-                        if callback:
-                            callback(res_assessment, func_name, res)
-                        if on_block == "raise":
-                            raise GuardBlockError(res_assessment, target=f"{func_name}:result", payload=res)
-                        elif on_block == "return":
-                            return fallback if fallback is not None else res_assessment
+                        return _blocked(res_assessment, func_name, res, f"{func_name}:result")
 
                 if mask_secrets:
                     from .rules import sanitize_tool_result
@@ -237,4 +239,3 @@ def guard(
             return cast(_F, sync_wrapper)
 
     return decorator
-

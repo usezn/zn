@@ -28,9 +28,14 @@ class TestGuardDecorator(unittest.TestCase):
                 guard(on_block=bad)
 
     def test_documented_values_work(self):
-        for ok in ("raise", "return", "custom"):
+        for ok in ("raise", "return"):
             with self.subTest(ok=ok):
                 guard(on_block=ok)(lambda: "x")()
+        guard(on_block="custom", callback=lambda a, n, p: None)(lambda: "x")()
+
+    def test_custom_without_callback_is_rejected(self):
+        with self.assertRaises(ValueError):
+            guard(on_block="custom")
 
 
 class TestGuardedTool(unittest.TestCase):
@@ -56,7 +61,7 @@ class TestLangChainHandler(unittest.TestCase):
             ZnGuardCallbackHandler(on_block="rasie", raise_on_injection=True)
 
     def test_documented_values_work(self):
-        for ok in ("raise", "return", "ignore"):
+        for ok in ("raise", "ignore"):
             self.assertEqual(ZnGuardCallbackHandler(on_block=ok).on_block, ok)
         self.assertEqual(ZnGuardCallbackHandler(raise_on_injection=False).on_block, "ignore")
         self.assertEqual(ZnGuardCallbackHandler(raise_on_injection=True).on_block, "raise")
@@ -64,6 +69,11 @@ class TestLangChainHandler(unittest.TestCase):
     def test_default_still_blocks(self):
         with self.assertRaises(GuardBlockError):
             ZnGuardCallbackHandler().on_llm_start({}, [INJECTION])
+
+    def test_return_mode_is_rejected(self):
+        with self.assertRaises(ValueError) as cm:
+            ZnGuardCallbackHandler(on_block="return")
+        self.assertIn("guarded_tool", str(cm.exception))
 
 
 class TestLlamaGuard(unittest.TestCase):
@@ -77,8 +87,12 @@ class TestLlamaGuard(unittest.TestCase):
             ZnLlamaGuard(on_block="rasie", raise_on_violation=False)
 
     def test_documented_values_work(self):
-        for ok in ("raise", "return", "ignore"):
+        for ok in ("raise", "ignore"):
             self.assertEqual(ZnLlamaGuard(on_block=ok).on_block, ok)
+
+    def test_return_mode_is_rejected(self):
+        with self.assertRaises(ValueError):
+            ZnLlamaGuard(on_block="return")
         self.assertEqual(ZnLlamaGuard(raise_on_violation=False).on_block, "ignore")
         self.assertEqual(ZnLlamaGuard(raise_on_violation=True).on_block, "raise")
 

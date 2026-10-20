@@ -301,18 +301,18 @@ class TestToolResultWindows(unittest.TestCase):
         async def read_async():
             return s
 
-        handler = ZnGuardCallbackHandler(on_block='raise', mask_secrets=False)
+        handler = ZnGuardCallbackHandler(on_block='raise')
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop('ZN_BLOCK_TRUNCATED', None)
             self.assertEqual(asyncio.run(read_async()), s)
-            self.assertEqual(handler.on_tool_end(s), s)
+            self.assertIsNone(handler.on_tool_end(s))
             os.environ['ZN_BLOCK_TRUNCATED'] = '1'
             with self.assertRaises(GuardBlockError):
                 asyncio.run(read_async())
             with self.assertRaises(GuardBlockError) as ctx:
                 handler.on_tool_end(s)
             self.assertEqual(ctx.exception.assessment.rule, 'size:truncated')
-            self.assertEqual(handler.on_tool_end('short output'), 'short output')
+            self.assertIsNone(handler.on_tool_end('short output'))
 
 
 class TestDetectionAfterRewrite(unittest.TestCase):

@@ -103,9 +103,23 @@ from zn_gate import analyze, log_evidence, verify_evidence_ledger
 
 ### `@guard(on_block='raise'|'return'|'custom', fallback=None, check_args=True, check_result=False, mask_secrets=False, callback=None, block_truncated=False)`
 - Python decorator protecting sync and async agent functions and tool handlers.
-- `on_block='raise'` raises `GuardBlockError`; `'return'` returns `fallback` (or the `Assessment` when `fallback` is `None`); `'custom'` calls `callback(assessment, function_name, payload)`.
-- `on_block` must be `'raise'`, `'return'` or `'custom'` (the last calls `callback`); any other value raises `ValueError` when the decorator is created.
+- What each mode does when an argument or a result is blocked. The blocked function never runs and a blocked result never reaches the caller, in every mode:
+  - `on_block='raise'` (default) raises `GuardBlockError`. A `callback`, if given, is called first and its return value is ignored.
+  - `on_block='return'` returns `fallback`, or the `Assessment` when `fallback` is `None`. A `callback`, if given, is called first.
+  - `on_block='custom'` calls `callback(assessment, function_name, payload)` and returns what it returns. If the callback raises, the exception propagates. `callback` is required: without one, creating the decorator raises `ValueError`.
+- `on_block` must be `'raise'`, `'return'` or `'custom'`; any other value raises `ValueError` when the decorator is created.
 - With `check_result=True`, `block_truncated=True` blocks a result too large to scan in full (rule `size:truncated`); `ZN_BLOCK_TRUNCATED=1` does the same for every guard.
+
+### `ZnGuardCallbackHandler(on_block='raise'|'ignore')` (LangChain / LangGraph)
+- A callback handler stops a run; it cannot rewrite anything, because LangChain ignores what callbacks return. It checks prompts (`on_llm_start`), tool inputs (`on_tool_start`) and tool outputs (`on_tool_end`).
+- `on_block='raise'` (default) raises `GuardBlockError` and the run stops (the handler sets `raise_error = True`, so langchain-core re-raises it instead of only logging it).
+- `on_block='ignore'` is log-only: the finding is logged as a warning on the `zn_gate` logger and the run goes on. Use it to measure before you enforce.
+- `on_block='return'` raises `ValueError`: a callback cannot hand a replacement value back, so a blocked input would go through.
+- It cannot redact secrets. To redact what a tool returns, wrap the tool with `guarded_tool` or call `sanitize_tool_result` inside it. The `mask_secrets` argument is deprecated and has no effect (it emits a `DeprecationWarning`).
+
+### `ZnLlamaGuard(on_block='raise'|'ignore', mask_secrets=True)` (LlamaIndex)
+- `check_query` / `on_query_start` raise `GuardBlockError` on a blocked query (`'raise'`, default) or only log it on the `zn_gate` logger and return the query unchanged (`'ignore'`). `'return'` raises `ValueError`.
+- `sanitize_response(response)` redacts secrets in the response you pass it; `mask_secrets=False` turns that off.
 
 ### `check_tool_call(tool_name: str, arguments: Any = None, strict: bool | None = None) -> Assessment`
 - Recursively extracts and inspects all strings in arguments for malicious commands or credentials.

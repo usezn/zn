@@ -359,15 +359,18 @@ class TestGuardModes(_EnvCase):
         self.assertFalse(res.allowed)
         self.assertEqual(tool2("fine"), "ran")
 
-    def test_sync_custom_calls_callback_and_runs_function(self):
+    def test_sync_custom_calls_callback_and_never_runs_function(self):
         calls = []
+        ran = []
 
-        @guard(on_block="custom", callback=lambda a, n, p: calls.append((a.allowed, n)))
+        @guard(on_block="custom", callback=lambda a, n, p: calls.append((a.allowed, n)) or "from-callback")
         def tool(x):
+            ran.append(x)
             return "ran"
 
-        self.assertEqual(tool(BAD), "ran")
+        self.assertEqual(tool(BAD), "from-callback")
         self.assertEqual(calls, [(False, "tool")])
+        self.assertEqual(ran, [])
 
     def test_sync_raise_runs_callback_first(self):
         calls = []
@@ -397,7 +400,7 @@ class TestGuardModes(_EnvCase):
         def returner_assessment():
             return BAD
 
-        @guard(check_result=True, on_block="custom")
+        @guard(check_result=True, on_block="custom", callback=lambda a, n, p: "replaced")
         def custom():
             return BAD
 
@@ -408,7 +411,7 @@ class TestGuardModes(_EnvCase):
         self.assertEqual(calls, ["raiser"])
         self.assertEqual(returner(), "blocked")
         self.assertIsInstance(returner_assessment(), Assessment)
-        self.assertEqual(custom(), BAD)
+        self.assertEqual(custom(), "replaced")
 
     def test_sync_check_args_off_and_clean_result(self):
         @guard(check_args=False, check_result=True)
@@ -481,7 +484,7 @@ class TestGuardAsync(_EnvCase):
         async def returner_assessment(x):
             return "ran"
 
-        @guard(on_block="custom", callback=lambda a, n, p: calls.append("custom:" + n))
+        @guard(on_block="custom", callback=lambda a, n, p: calls.append("custom:" + n) or "from-callback")
         async def custom(x):
             return "ran"
 
@@ -489,7 +492,7 @@ class TestGuardAsync(_EnvCase):
             self.run_async(raiser(BAD))
         self.assertEqual(self.run_async(returner(BAD)), "blocked")
         self.assertIsInstance(self.run_async(returner_assessment(BAD)), Assessment)
-        self.assertEqual(self.run_async(custom(BAD)), "ran")
+        self.assertEqual(self.run_async(custom(BAD)), "from-callback")
         self.assertEqual(calls, ["raiser", "custom:custom"])
         self.assertEqual(self.run_async(raiser("fine")), "ran")
 
@@ -508,7 +511,7 @@ class TestGuardAsync(_EnvCase):
         async def returner_assessment():
             return BAD
 
-        @guard(check_result=True, on_block="custom")
+        @guard(check_result=True, on_block="custom", callback=lambda a, n, p: "replaced")
         async def custom():
             return BAD
 
@@ -518,7 +521,7 @@ class TestGuardAsync(_EnvCase):
         self.assertEqual(calls, ["raiser"])
         self.assertEqual(self.run_async(returner()), "blocked")
         self.assertIsInstance(self.run_async(returner_assessment()), Assessment)
-        self.assertEqual(self.run_async(custom()), BAD)
+        self.assertEqual(self.run_async(custom()), "replaced")
 
     def test_async_clean_result_is_returned(self):
         @guard(check_result=True)

