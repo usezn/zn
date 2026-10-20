@@ -141,7 +141,7 @@ Looks through prompt templates, markdown, skills and configs for injection traps
 - `--exclude`: more folders to skip.
 - `--include-home`: also check your own MCP configs for passwords and keys written in plain text.
 
-Exit codes: `0` nothing found, `1` something was found or the path does not exist, `2` an unknown option or `--format`.
+Exit codes: `0` nothing found, `1` something was found, `2` the path does not exist, an unknown option or `--format`.
 
 ### `audit`
 
