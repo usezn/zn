@@ -16,6 +16,11 @@ const BAN_THRESHOLD: i32 = 0; // A score at or below 0 bans the agent
 const BAN_DURATION_MINUTES: i64 = 10;
 /// Default cap on distinct agent ids seen per namespace.
 pub const DEFAULT_MAX_AGENT_IDS: usize = 256;
+/// Default cap on per-connection score entries kept in memory.
+pub const DEFAULT_MAX_ENTRIES: usize = 10_000;
+/// Default idle time after which a score entry is dropped (three times the ban duration, so a
+/// ban always outlives its own cleanup; an active ban is never dropped whatever this says).
+pub const DEFAULT_IDLE_TTL_MINUTES: i64 = 3 * BAN_DURATION_MINUTES;
 /// Separator between the namespace and the rest of a reputation key.
 const KEY_SEP: char = '\u{1f}';
 
@@ -37,6 +42,9 @@ pub struct ReputationScore {
     pub last_violation: Option<DateTime<Utc>>,
     pub banned_until: Option<DateTime<Utc>>,
     pub violations: Vec<String>, // Log of last 5 violations
+    /// Last time this entry was updated; used only for cleanup, not part of the API output.
+    #[serde(skip)]
+    last_active: Option<DateTime<Utc>>,
 }
 
 impl Default for ReputationScore {
@@ -50,6 +58,7 @@ impl Default for ReputationScore {
             last_violation: None,
             banned_until: None,
             violations: Vec::new(),
+            last_active: None,
         }
     }
 }
@@ -64,6 +73,8 @@ pub struct ReputationSystem {
     // Namespace -> distinct agent ids seen (bounded by `max_ids`).
     ids: Arc<RwLock<HashMap<String, HashSet<String>>>>,
     max_ids: usize,
+    max_entries: usize,
+    idle_ttl: Duration,
 }
 
 impl ReputationSystem {
@@ -73,12 +84,78 @@ impl ReputationSystem {
 
     /// Reputation system that admits at most `max_ids` distinct agent ids per namespace.
     pub fn with_max_ids(max_ids: usize) -> Self {
+        Self::with_limits(
+            max_ids,
+            DEFAULT_MAX_ENTRIES,
+            Duration::minutes(DEFAULT_IDLE_TTL_MINUTES),
+        )
+    }
+
+    /// Reputation system with explicit memory bounds: at most `max_entries` score entries, and
+    /// entries idle longer than `idle_ttl` are dropped by `sweep_idle`.
+    pub fn with_limits(max_ids: usize, max_entries: usize, idle_ttl: Duration) -> Self {
         Self {
             scores: Arc::new(RwLock::new(HashMap::new())),
             ns_bans: Arc::new(RwLock::new(HashMap::new())),
             ids: Arc::new(RwLock::new(HashMap::new())),
             max_ids,
+            max_entries: max_entries.max(1),
+            idle_ttl,
         }
+    }
+
+    fn ban_is_active(entry: &ReputationScore, now: DateTime<Utc>) -> bool {
+        entry.status == AgentStatus::Banned && matches!(entry.banned_until, Some(end) if now < end)
+    }
+
+    /// Make room for one new key: when the map is full, evict the entry idle the longest.
+    /// An actively banned entry is never evicted; if only those remain, the map is allowed to
+    /// exceed the cap until their bans end (a ban lasts minutes).
+    fn make_room(&self, scores: &mut HashMap<String, ReputationScore>, key: &str) {
+        if scores.contains_key(key) || scores.len() < self.max_entries {
+            return;
+        }
+        let now = Utc::now();
+        let oldest = scores
+            .iter()
+            .filter(|(_, e)| !Self::ban_is_active(e, now))
+            .min_by_key(|(_, e)| e.last_active)
+            .map(|(k, _)| k.clone());
+        if let Some(k) = oldest {
+            scores.remove(&k);
+        }
+    }
+
+    /// Forget a connection that closed. A standing ban on the entry is kept (and the namespace
+    /// ban is untouched either way); it is dropped by `sweep_idle` once the ban has ended.
+    pub fn remove_connection(&self, key: &str) {
+        let mut scores = self.scores.write().unwrap();
+        if let Some(entry) = scores.get(key) {
+            if !Self::ban_is_active(entry, Utc::now()) {
+                scores.remove(key);
+            }
+        }
+    }
+
+    /// Drop entries idle longer than the TTL (never an active ban) and namespace bans that
+    /// have ended. Returns the number of score entries removed.
+    pub fn sweep_idle(&self) -> usize {
+        let now = Utc::now();
+        let mut scores = self.scores.write().unwrap();
+        let before = scores.len();
+        let ttl = self.idle_ttl;
+        scores.retain(|_, e| {
+            Self::ban_is_active(e, now) || matches!(e.last_active, Some(t) if now - t <= ttl)
+        });
+        let removed = before - scores.len();
+        drop(scores);
+        self.ns_bans.write().unwrap().retain(|_, end| now < *end);
+        removed
+    }
+
+    /// Number of score entries held (for tests and metrics).
+    pub fn entry_count(&self) -> usize {
+        self.scores.read().unwrap().len()
     }
 
     /// Namespace part of a key (`<namespace><US><connection>`), if the key has one.
@@ -143,6 +220,7 @@ impl ReputationSystem {
     /// Record a clean, allowed call
     pub fn record_success(&self, agent_id: &str) {
         let mut scores = self.scores.write().unwrap();
+        self.make_room(&mut scores, agent_id);
         let entry = scores
             .entry(agent_id.to_string())
             .or_insert(ReputationScore {
@@ -161,6 +239,7 @@ impl ReputationSystem {
             }
         }
 
+        entry.last_active = Some(Utc::now());
         entry.total_calls += 1;
         entry.score = (entry.score + 1).min(MAX_SCORE);
         entry.update_status();
@@ -169,6 +248,7 @@ impl ReputationSystem {
     /// Record a security violation (Block)
     pub fn record_violation(&self, agent_id: &str, reason: &str, severity: i32) {
         let mut scores = self.scores.write().unwrap();
+        self.make_room(&mut scores, agent_id);
         let entry = scores
             .entry(agent_id.to_string())
             .or_insert(ReputationScore {
@@ -176,6 +256,7 @@ impl ReputationSystem {
                 ..Default::default()
             });
 
+        entry.last_active = Some(Utc::now());
         entry.total_calls += 1;
         entry.blocked_calls += 1;
         entry.score -= severity;
@@ -260,6 +341,99 @@ mod tests {
 
     fn key(ns: &str, conn: &str) -> String {
         format!("{ns}{KEY_SEP}{conn}")
+    }
+
+    fn age(sys: &ReputationSystem, agent: &str, minutes: i64) {
+        let mut scores = sys.scores.write().unwrap();
+        scores
+            .get_mut(agent)
+            .expect("agent should exist")
+            .last_active = Some(Utc::now() - Duration::minutes(minutes));
+    }
+
+    #[test]
+    fn disconnect_removes_the_connections_entries_only() {
+        let sys = ReputationSystem::default();
+        let a = key("tenant-a", "ws-1");
+        let b = key("tenant-a", "ws-2");
+        sys.record_success(&a);
+        sys.record_violation(&b, "x", 5);
+        sys.remove_connection(&a);
+        assert!(!sys.all_scores().contains_key(&a));
+        assert!(sys.all_scores().contains_key(&b));
+        assert_eq!(sys.entry_count(), 1);
+    }
+
+    #[test]
+    fn disconnect_keeps_the_namespace_ban() {
+        let sys = ReputationSystem::default();
+        let a = key("tenant-a", "ws-1");
+        sys.record_violation(&a, "x", 60);
+        sys.remove_connection(&a);
+        assert!(sys.check_agent_status(&key("tenant-a", "ws-2")).is_err());
+        assert!(sys.check_agent_status(&a).is_err());
+    }
+
+    #[test]
+    fn ttl_sweep_removes_idle_entries_but_keeps_active_bans() {
+        let sys = ReputationSystem::default();
+        let idle = key("t", "idle");
+        let fresh = key("t", "fresh");
+        let banned = key("u", "banned");
+        sys.record_success(&idle);
+        sys.record_success(&fresh);
+        sys.record_violation(&banned, "x", 60);
+        // Idle far past the TTL, the banned one too: its ban is still running.
+        age(&sys, &idle, DEFAULT_IDLE_TTL_MINUTES + 5);
+        age(&sys, &banned, DEFAULT_IDLE_TTL_MINUTES + 5);
+        assert_eq!(sys.sweep_idle(), 1);
+        let scores = sys.all_scores();
+        assert!(!scores.contains_key(&idle));
+        assert!(scores.contains_key(&fresh));
+        assert!(scores.contains_key(&banned));
+        assert!(sys.check_agent_status(&key("u", "other")).is_err());
+        // Once the ban has ended, the entry and the namespace ban are swept too.
+        set_ban_expiry(&sys, &banned, Utc::now() - Duration::minutes(1));
+        sys.ns_bans
+            .write()
+            .unwrap()
+            .insert("u".into(), Utc::now() - Duration::minutes(1));
+        assert_eq!(sys.sweep_idle(), 1);
+        assert!(sys.ns_bans.read().unwrap().is_empty());
+        assert_eq!(sys.entry_count(), 1);
+    }
+
+    #[test]
+    fn cap_evicts_the_oldest_idle_entry_and_never_a_banned_one() {
+        let sys = ReputationSystem::with_limits(8, 3, Duration::minutes(30));
+        let banned = key("t", "banned");
+        let old = key("t", "old");
+        let newer = key("t", "newer");
+        sys.record_violation(&banned, "x", 60);
+        sys.record_success(&old);
+        sys.record_success(&newer);
+        age(&sys, &banned, 100); // the oldest of all, but banned
+        age(&sys, &old, 20);
+        age(&sys, &newer, 10);
+        sys.record_success(&key("t", "new"));
+        let scores = sys.all_scores();
+        assert_eq!(scores.len(), 3);
+        assert!(scores.contains_key(&banned));
+        assert!(!scores.contains_key(&old));
+        assert!(scores.contains_key(&newer));
+        // Existing keys are updated in place, without evicting anything.
+        sys.record_success(&newer);
+        assert_eq!(sys.entry_count(), 3);
+    }
+
+    #[test]
+    fn cap_with_only_banned_entries_keeps_them_all() {
+        let sys = ReputationSystem::with_limits(8, 1, Duration::minutes(30));
+        let first = key("t", "1");
+        sys.record_violation(&first, "x", 60);
+        sys.record_violation(&key("t", "2"), "x", 60);
+        assert_eq!(sys.entry_count(), 2);
+        assert!(sys.check_agent_status(&first).is_err());
     }
 
     #[test]

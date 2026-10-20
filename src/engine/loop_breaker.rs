@@ -3,6 +3,9 @@ use dashmap::DashMap;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
+/// Default cap on distinct keys (namespace + connection) whose history is kept.
+pub const DEFAULT_MAX_KEYS: usize = 10_000;
+
 /// Entry in the action history
 struct ActionEntry {
     tool_name: String,
@@ -15,13 +18,61 @@ pub struct LoopBreaker {
     /// History per agent: agent_id -> VecDeque of recent actions
     history: DashMap<String, VecDeque<ActionEntry>>,
     config: LoopBreakerConfig,
+    max_keys: usize,
 }
 
 impl LoopBreaker {
     pub fn new(config: LoopBreakerConfig) -> Self {
+        Self::with_max_keys(config, DEFAULT_MAX_KEYS)
+    }
+
+    /// Loop breaker that keeps the history of at most `max_keys` keys.
+    pub fn with_max_keys(config: LoopBreakerConfig, max_keys: usize) -> Self {
         Self {
             history: DashMap::new(),
             config,
+            max_keys: max_keys.max(1),
+        }
+    }
+
+    /// Forget a connection that closed.
+    pub fn remove_key(&self, key: &str) {
+        self.history.remove(key);
+    }
+
+    /// Drop keys whose newest action is older than the window: their history would be emptied
+    /// by the next check anyway, so no loop state is lost. Returns the number removed.
+    pub fn sweep_idle(&self) -> usize {
+        let window = Duration::from_secs(self.config.window_seconds);
+        let now = Instant::now();
+        let before = self.history.len();
+        self.history.retain(|_, h| {
+            h.back()
+                .is_some_and(|e| now.duration_since(e.timestamp) <= window)
+        });
+        before.saturating_sub(self.history.len())
+    }
+
+    /// Number of keys held (for tests and metrics).
+    pub fn key_count(&self) -> usize {
+        self.history.len()
+    }
+
+    /// Before adding a new key at the cap: drop expired keys, then the least recently used one.
+    fn make_room(&self, key: &str) {
+        if self.history.len() < self.max_keys || self.history.contains_key(key) {
+            return;
+        }
+        if self.sweep_idle() > 0 && self.history.len() < self.max_keys {
+            return;
+        }
+        let oldest = self
+            .history
+            .iter()
+            .min_by_key(|e| e.value().back().map(|a| a.timestamp))
+            .map(|e| e.key().clone());
+        if let Some(k) = oldest {
+            self.history.remove(&k);
         }
     }
 
@@ -41,6 +92,7 @@ impl LoopBreaker {
         let now = Instant::now();
         let window = Duration::from_secs(self.config.window_seconds);
 
+        self.make_room(agent_id);
         let mut agent_history = self.history.entry(agent_id.to_string()).or_default();
 
         // Cleanup old entries
@@ -112,6 +164,52 @@ mod tests {
         assert!(lb.check_and_record(a, "shell", "{}").is_ok());
         assert!(lb.check_and_record(a, "shell", "{}").is_err());
         assert!(lb.check_and_record(b, "shell", "{}").is_ok());
+    }
+
+    #[test]
+    fn remove_key_forgets_only_that_connection() {
+        let lb = breaker(true, 1);
+        assert!(lb.check_and_record("a", "shell", "{}").is_ok());
+        assert!(lb.check_and_record("b", "shell", "{}").is_ok());
+        lb.remove_key("a");
+        assert_eq!(lb.key_count(), 1);
+        assert!(lb.check_and_record("a", "shell", "{}").is_ok());
+        assert!(lb.check_and_record("b", "shell", "{}").is_err());
+    }
+
+    #[test]
+    fn sweep_drops_only_keys_idle_past_the_window() {
+        let lb = breaker(true, 5);
+        assert!(lb.check_and_record("old", "shell", "{}").is_ok());
+        assert!(lb.check_and_record("live", "shell", "{}").is_ok());
+        let old = Instant::now()
+            .checked_sub(Duration::from_secs(120))
+            .expect("instant should support a 120 s offset");
+        for entry in lb.history.get_mut("old").unwrap().iter_mut() {
+            entry.timestamp = old;
+        }
+        assert_eq!(lb.sweep_idle(), 1);
+        assert_eq!(lb.key_count(), 1);
+        assert!(lb.history.contains_key("live"));
+    }
+
+    #[test]
+    fn cap_evicts_the_least_recently_used_key() {
+        let lb = LoopBreaker::with_max_keys(
+            LoopBreakerConfig {
+                enabled: true,
+                max_repeats: 5,
+                window_seconds: 60,
+            },
+            2,
+        );
+        assert!(lb.check_and_record("first", "shell", "{}").is_ok());
+        std::thread::sleep(Duration::from_millis(5));
+        assert!(lb.check_and_record("second", "shell", "{}").is_ok());
+        std::thread::sleep(Duration::from_millis(5));
+        assert!(lb.check_and_record("third", "shell", "{}").is_ok());
+        assert_eq!(lb.key_count(), 2);
+        assert!(!lb.history.contains_key("first"));
     }
 
     #[test]

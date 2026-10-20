@@ -498,6 +498,20 @@ async fn start_proxy(args: Args) -> Result<()> {
         )),
     };
 
+    // Periodic cleanup of idle per-connection reputation and loop-breaker entries.
+    {
+        let reputation = Arc::clone(&state.reputation);
+        let loop_breaker = Arc::clone(&state.loop_breaker);
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                tick.tick().await;
+                reputation.sweep_idle();
+                loop_breaker.sweep_idle();
+            }
+        });
+    }
+
     // Spawn SIEM Exporter
     let siem_exporter = SiemExporter::new(state.config.siem.clone());
     let siem_rx = tx.subscribe();
@@ -1368,6 +1382,18 @@ async fn mcp_ws_handler(
         .on_upgrade(move |socket| handle_ws_socket(socket, state, namespace))
 }
 
+struct ConnectionCleanup {
+    state: AppState,
+    key: String,
+}
+
+impl Drop for ConnectionCleanup {
+    fn drop(&mut self) {
+        self.state.reputation.remove_connection(&self.key);
+        self.state.loop_breaker.remove_key(&self.key);
+    }
+}
+
 async fn handle_ws_socket(
     socket: axum::extract::ws::WebSocket,
     state: AppState,
@@ -1382,6 +1408,13 @@ async fn handle_ws_socket(
         "ws-{}",
         NEXT_CONNECTION.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     );
+
+    // Drops this connection's reputation and loop-breaker entries when the socket ends, however
+    // it ends (close, error, or the task being dropped).
+    let _cleanup = ConnectionCleanup {
+        state: state.clone(),
+        key: reputation_key(&namespace, &connection),
+    };
 
     while let Some(Ok(msg)) = receiver.next().await {
         if let Message::Text(text) = msg {
