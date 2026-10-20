@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-19.41';
+const POLICY_RULES_VERSION = '2026-10-20.5';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -88,6 +88,12 @@ const AGENT_CONFIG_RES = [
   [/(^|\/)\.agents\/hooks\.json$/, 'Antigravity hooks'],
   [/(^|\/)\.gemini\/config\/hooks\.json$/, 'Antigravity hooks'],
   [/(^|\/)\.gemini\/antigravity-cli\/settings\.json$/, 'Antigravity settings and permissions'],
+  [/(^|\/)\.github\/hooks\/[^/]*\.json$/, 'GitHub Copilot hooks'],
+  [/(^|\/)\.github\/copilot\/settings(\.local)?\.json$/, 'GitHub Copilot settings'],
+  [/(^|\/)\.copilot\/(hooks\/[^/]*|settings(\.local)?\.json|config\.json)$/, 'GitHub Copilot hooks and settings'],
+  [/(^|\/)github-copilot\/policy\.d\/[^/]*$/, 'GitHub Copilot policy hooks'],
+  [/(^|\/)\.gemini\/settings\.json$/, 'Gemini CLI settings and hooks'],
+  [/(^|\/)gemini-cli\/settings\.json$/, 'Gemini CLI system settings'],
   [/(^|\/)opencode\.jsonc?$/, 'OpenCode configuration'],
   [/(^|\/)\.(config\/)?opencode\/plugins?\//, 'OpenCode plugins'],
   [/(^|\/)\.opencode\/plugins?\//, 'OpenCode plugins'],
@@ -790,7 +796,7 @@ function commandName(words) {
 // (less and tree are not here: tree writes its output with -o, less can run commands.)
 const READ_ONLY_CMDS = new Set(['cat', 'head', 'tail', 'more', 'grep', 'egrep', 'fgrep', 'rg', 'ls', 'stat', 'wc', 'diff',
   'file', 'bat', 'jq', 'type', 'gc', 'get-content', 'select-string', 'findstr', 'dir', 'pwd', 'echo']);
-const AGENT_CONFIG_MENTION_RE = /\.claude\/settings|\.codex\/|\.cursor\/hooks|\.gemini\/config\/hooks|antigravity-cli\/settings|opencode\.jsonc?|\.opencode\/|\.config\/opencode\//i;
+const AGENT_CONFIG_MENTION_RE = /\.claude\/settings|\.codex\/|\.cursor\/hooks|\.gemini\/config\/hooks|\.copilot\/(?:hooks|settings|config)|\.github\/hooks|\.github\/copilot\/settings|github-copilot\/policy\.d|\.gemini\/settings|gemini-cli\/settings|antigravity-cli\/settings|opencode\.jsonc?|\.opencode\/|\.config\/opencode\//i;
 // .agents is shared with other tools (Codex reads .agents/skills; Antigravity keeps rules and workflows there), so
 // only the folder itself, its hooks file, globs or ".." inside it, and changing into it count as touching the hook.
 const AGENTS_DIR_RISKY_RE = /(?:^|[\/\s"'=:])\.agents(?:\/*(?=$|[\s"';&|)])|\/(?:[^\s"'\/]*\/)*(?:hooks\.json|\.\.(?=$|[\/\s"';&|)])|[^\s"'\/]*[*?[{$`]))/i;
@@ -2110,7 +2116,7 @@ function adminDenial(admin, opts = {}, cmd = '') {
   const next = words.find((w) => !w.startsWith('-')) || '';
   let arg = '';
   if (/^hooks/i.test(admin)) {
-    arg = /^(claude-code|codex|cursor|opencode)$/.test(next) ? next : '<agent>';
+    arg = /^(claude-code|codex|cursor|opencode|gemini)$/.test(next) ? next : '<agent>';
     // The fixed options of zn hooks install, so the user installs in the same place the agent asked for.
     for (const o of ['--project', '--no-mcp']) if (words.includes(o)) arg += ' ' + o;
   } else if (/^secret (set|get|rm|remove|reveal|allow|approve|link)$/i.test(admin)) {

@@ -21,7 +21,9 @@ A review of an older snapshot of this gateway found issues that only affect some
 - **Consensus actions expire.** A proposed action that is not approved within `consensus.pending_ttl_secs` seconds (default 900, 15 minutes; 0 means the default) can no longer be approved and is removed.
 - **Query-string credentials only for SSE and WebSocket.** The `api_key` and `token` query parameters are accepted only on `/api/v1/events` and `/mcp/ws`, where a browser client cannot send headers; on every other route a credential must come in a header.
 
-Known limits that remain, because the gateway is not distributed: the OCR check of images uses a fixed list of phrases and recognises only `data:image/...;base64,` images; the audit vault and the loop breaker have no size or age limit; a policy upload is written before it is verified; and the management API has no TLS of its own (it listens on `127.0.0.1`; outside loopback, put it behind a TLS proxy).
+A policy upload is verified before anything is written. The gateway checks the allowed-hash list and the Ed25519 signature (and the ML-DSA-65 signature when `ZN_PQ_PUBLIC_KEY` is set, which then makes it mandatory) on the uploaded bytes in memory, reading the signatures from the `.wasm.sig` and `.wasm.pqs` files next to the policy, and checks that the WASM compiles. Only then does it write the file, to a temporary file in the policy directory that is synced and renamed over the target. A policy that fails any check leaves no file behind, and a policy already installed under that name stays as it was.
+
+Known limits that remain, because the gateway is not distributed: the OCR check of images uses a fixed list of phrases and recognises only `data:image/...;base64,` images; the audit vault and the loop breaker have no size or age limit; and the management API has no TLS of its own (it listens on `127.0.0.1`; outside loopback, put it behind a TLS proxy).
 
 ## AWS KMS data key
 

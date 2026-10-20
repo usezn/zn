@@ -50,7 +50,7 @@ jobs:
       fail-fast: false
       matrix:
         # 18.x, 22.x and 24.x are required checks: they always run.
-        node-version: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["18.x", "20.x", "22.x", "24.x"]' || '["18.x", "22.x", "24.x"]') }}
+        node-version: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["18.x", "20.x", "22.x", "24.x", "26.x"]' || '["18.x", "22.x", "24.x"]') }}
     steps:
       - name: Harden the runner (egress audit)
         if: runner.os == 'Linux'
@@ -250,6 +250,17 @@ jobs:
         if: ${{ !cancelled() && steps.python-tools.outcome == 'success' }}
         working-directory: packages/zn-gate-py
         run: python -m mypy
+      - name: Run mypy --strict on the public API
+        if: ${{ !cancelled() && steps.python-tools.outcome == 'success' }}
+        # Blocking. The modules behind everything in zn_gate.__all__ are checked in
+        # strict mode, together with a file of type-level assertions that fails to
+        # type-check if a public signature changes shape.
+        working-directory: packages/zn-gate-py
+        run: >-
+          python -m mypy --strict
+          src/zn_gate/__init__.py src/zn_gate/rules.py src/zn_gate/guard.py
+          src/zn_gate/client.py src/zn_gate/evidence.py
+          typing_check/check_public_api.py
 
   pack-node:
     name: npm package (pack, inspect, install)

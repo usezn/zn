@@ -21,7 +21,7 @@ const { pendingCount } = require('./upload');
 const { exportAuditFile } = require('./otel');
 const store = require('../vault/store');
 const { createClient } = require('../vault/client');
-const { CODES } = require('../errors');
+const { messageWithUnlockHint } = require('../errors');
 
 const USAGE = 'usage: zn team join <token> [--api URL] [--agent ID] | zn team status [--json] | zn team sync | zn team leave | zn team managed-config [--agent ID|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--json]';
 const EXPORT_USAGE = 'usage: zn vault log export --otlp [--since 7d] [--out FILE]';
@@ -123,8 +123,7 @@ async function runTeamCommand(args) {
     err(USAGE);
     return 2;
   } catch (e) {
-    const hint = e && e.code === CODES.LOCKED ? ' (vault locked: run `zn unlock`)' : '';
-    err('[zn] ' + (e && e.message ? e.message : e) + hint);
+    err('[zn] ' + messageWithUnlockHint(e));
     return 1;
   }
 }

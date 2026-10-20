@@ -267,8 +267,20 @@ class TestValidatedSecretPatterns(unittest.TestCase):
                 self.assertIn("secret:db_url_password", [d["rule"] for d in found])
         for url in ("po\u017ftgres://app:hunter2pass@db/app", "my\u017fql://root:s3cretpw@127.0.0.1/shop",
                     "mongodb+\u017frv://svc:m0ngopw@cluster0.example.net/prod"):
+            # Not a known database scheme, but the generic URL password rule still hides the
+            # password (the part of the scheme after the long s is read as a scheme).
             with self.subTest(url=ascii(url)):
-                self.assertEqual(R.redact_secrets(url), (url, []))
+                redacted, found = R.redact_secrets(url)
+                self.assertIn("[REDACTED_URL_PASSWORD]", redacted)
+                self.assertNotIn("secret:db_url_password", [d["rule"] for d in found])
+        # A scheme after CJK or accented letters is still redacted, like Node.js.
+        for prefix in ("连接", "数据库", "é", "ſ"):
+            for scheme in ("https", "mssql"):
+                with self.subTest(prefix=ascii(prefix), scheme=scheme):
+                    pw = "FAKE-" + "pw" * 5
+                    redacted, found = R.redact_secrets(f"{prefix}{scheme}://u:{pw}@h.example.test/x")
+                    self.assertNotIn(pw, redacted)
+                    self.assertIn("secret:url_password", [d["rule"] for d in found])
 
     def test_aws_secret_keeps_quotes_in_both_engines(self):
         secret = "A" * 20 + "/" + "b" * 19

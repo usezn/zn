@@ -42,8 +42,8 @@ function run(adapter, raw, extra = {}) {
   return runner.handle(adapter, raw, { engine: fakeEngine, vault: createFakeVault(), failMode: 'open', znRunPrefix: 'ZN_AGENT=x "node" "run.js" --', ...extra });
 }
 
-test('registry lists the five adapters', () => {
-  assert.deepEqual(listAdapters().sort(), ['antigravity', 'claude-code', 'codex', 'cursor', 'opencode']);
+test('registry lists the seven adapters', () => {
+  assert.deepEqual(listAdapters().sort(), ['antigravity', 'claude-code', 'codex', 'copilot', 'cursor', 'gemini', 'opencode']);
 });
 
 /* ------------------------------- Codex ------------------------------- */

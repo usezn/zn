@@ -5,3 +5,5 @@
 extend-ignore-re = []
 
 [default.extend-words]
+# Intentional typo used as test data for the on_block validation (guard.py, its test and a changelog fragment).
+rasie = "rasie"
