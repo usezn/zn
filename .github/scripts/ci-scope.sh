@@ -29,9 +29,9 @@ if [ "${SCOPE:-}" = "core" ]; then
   while IFS= read -r f; do
     case "$f" in
       "${OWN:-.github/workflows/none}"|.github/scripts/ci-scope.sh|.github/actions/*) needed=true; echo "needs the checks: $f"; break ;;
+      packages/*/*.md|plugins/*.md) needed=true; echo "needs the checks: $f"; break ;;
       examples/*|.github/*|docs/*|*.md|LICENSE|NOTICE|assets/*) ;;
       src/*|Cargo.toml|Cargo.lock|.cargo/*|build.rs) ;;
-      packages/*/*.md|plugins/*.md|plugins/*/*.md) needed=true; echo "needs the checks: $f"; break ;;
       *) needed=true; echo "needs the checks: $f"; break ;;
     esac
   done <<< "$files"
