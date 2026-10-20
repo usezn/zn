@@ -129,7 +129,7 @@ npx -y zn-gate init --revert    # restore the latest backup
 | Codex CLI | `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`) | `[mcp_servers.<name>]` TOML |
 | OpenCode | `~/.config/opencode/opencode.json` | `mcp` JSON, `command` array |
 | Antigravity | `~/.gemini/antigravity/mcp_config.json` (Google's MCP guides) and `~/.gemini/config/mcp_config.json` (shared settings, used by some setups); each one only if it exists | `mcpServers` JSON |
-| Hermes / PiAgent | `~/.hermes/mcp.json` | `mcpServers` JSON (path not verified against official docs) |
+| Hermes / PiAgent | `~/.hermes/mcp.json` | `mcpServers` JSON. For these agents `init` only writes the MCP config (no hooks); see [compatibility](https://github.com/usezn/zn/blob/main/docs/compat.md). Path not verified against official docs |
 
 Remote (URL) servers are left as they are. `init` never rewrites a file it cannot round-trip safely: OpenCode JSONC files with comments and Codex entries with multi-line `args` are reported as "wrap manually".
 
