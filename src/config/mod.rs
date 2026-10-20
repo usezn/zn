@@ -660,6 +660,42 @@ fn default_fpr_margin() -> f64 {
     0.02
 }
 
+/// Parses the value of environment variable `name`. A value that does not
+/// parse is reported with a warning and ignored, so the setting it targets
+/// keeps its current value instead of silently taking a made-up one.
+fn parse_env_value<T: std::str::FromStr>(name: &str, raw: &str) -> Option<T> {
+    match raw.trim().parse::<T>() {
+        Ok(v) => Some(v),
+        Err(_) => {
+            tracing::warn!("{name}={raw:?} is not a valid value and is ignored");
+            None
+        }
+    }
+}
+
+/// Like [`parse_env_value`] for switches: `true`/`false`, `1`/`0`, `yes`/`no`
+/// and `on`/`off`, in any case.
+fn parse_env_bool(name: &str, raw: &str) -> Option<bool> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" | "yes" | "on" => Some(true),
+        "false" | "0" | "no" | "off" => Some(false),
+        _ => {
+            tracing::warn!(
+                "{name}={raw:?} is not a valid switch (use true or false) and is ignored"
+            );
+            None
+        }
+    }
+}
+
+fn env_num<T: std::str::FromStr>(get: &impl Fn(&str) -> Option<String>, name: &str) -> Option<T> {
+    get(name).and_then(|raw| parse_env_value(name, &raw))
+}
+
+fn env_flag(get: &impl Fn(&str) -> Option<String>, name: &str) -> Option<bool> {
+    get(name).and_then(|raw| parse_env_bool(name, &raw))
+}
+
 impl ZnConfig {
     /// Load configuration from file with environment variable overrides
     pub fn load(path: Option<&Path>) -> Result<Self> {
@@ -697,136 +733,128 @@ impl ZnConfig {
 
     /// Apply environment variable overrides
     fn apply_env_overrides(&mut self) {
-        if let Ok(env) = std::env::var("ZN_ENV") {
+        self.apply_env_overrides_from(|name| std::env::var(name).ok());
+    }
+
+    /// Applies the overrides read through `get`, so tests can pass a fixed set
+    /// of variables instead of touching the process environment. A value that
+    /// does not parse is reported with a warning and the current setting stays.
+    fn apply_env_overrides_from(&mut self, get: impl Fn(&str) -> Option<String>) {
+        if let Some(env) = get("ZN_ENV") {
             self.environment = env;
         }
 
-        if let Ok(port) = std::env::var("ZN_PORT") {
-            if let Ok(p) = port.parse() {
-                self.server.port = p;
-            }
+        if let Some(p) = env_num(&get, "ZN_PORT") {
+            self.server.port = p;
         }
 
         // A blank key (for example `ZN_API_KEY=` from an unset compose
         // variable) counts as not set: it must never match an empty token.
-        self.security.api_key = credential_override(
-            self.security.api_key.take(),
-            std::env::var("ZN_API_KEY").ok(),
-        );
+        self.security.api_key =
+            credential_override(self.security.api_key.take(), get("ZN_API_KEY"));
 
-        if let Ok(ns) = std::env::var("ZN_NAMESPACE") {
+        if let Some(ns) = get("ZN_NAMESPACE") {
             self.security.namespace = Some(ns);
         }
 
-        if let Ok(jwt) = std::env::var("ZN_JWT_SECRET") {
+        if let Some(jwt) = get("ZN_JWT_SECRET") {
             self.security.jwt_secret = Some(jwt);
         }
 
-        if let Ok(origins) = std::env::var("ZN_ALLOWED_ORIGINS") {
+        if let Some(origins) = get("ZN_ALLOWED_ORIGINS") {
             self.security.allowed_origins =
                 origins.split(',').map(|s| s.trim().to_string()).collect();
         }
 
         // A blank token counts as not set; the gateway then generates one.
-        self.security.mcp_ws_token = credential_override(
-            self.security.mcp_ws_token.take(),
-            std::env::var("ZN_MCP_WS_TOKEN").ok(),
-        );
+        self.security.mcp_ws_token =
+            credential_override(self.security.mcp_ws_token.take(), get("ZN_MCP_WS_TOKEN"));
 
-        if let Ok(gas) = std::env::var("ZN_GAS_LIMIT") {
-            if let Ok(g) = gas.parse() {
-                self.engine.gas_limit = g;
-            }
+        if let Some(g) = env_num(&get, "ZN_GAS_LIMIT") {
+            self.engine.gas_limit = g;
         }
 
-        if let Ok(mem) = std::env::var("ZN_MEMORY_LIMIT") {
-            if let Ok(m) = mem.parse() {
-                self.engine.memory_limit_mb = m;
-            }
+        if let Some(m) = env_num(&get, "ZN_MEMORY_LIMIT") {
+            self.engine.memory_limit_mb = m;
         }
 
-        if let Ok(to) = std::env::var("ZN_TIMEOUT") {
-            if let Ok(t) = to.parse() {
-                self.engine.timeout_ms = t;
-            }
+        if let Some(t) = env_num(&get, "ZN_TIMEOUT") {
+            self.engine.timeout_ms = t;
         }
 
-        if let Ok(hashes) = std::env::var("ZN_POLICY_HASHES") {
+        if let Some(hashes) = get("ZN_POLICY_HASHES") {
             self.engine.allowed_policy_hashes = hashes.split(',').map(|s| s.to_string()).collect();
         }
 
-        if let Ok(key) = std::env::var("ZN_SIGNING_PUBLIC_KEY") {
+        if let Some(key) = get("ZN_SIGNING_PUBLIC_KEY") {
             self.engine.signing_public_key = Some(key);
         }
 
-        if let Ok(db) = std::env::var("ZN_DB_PATH") {
+        if let Some(db) = get("ZN_DB_PATH") {
             self.audit.db_path = db;
         }
 
-        if let Ok(key) = std::env::var("ZN_DB_KEY") {
+        if let Some(key) = get("ZN_DB_KEY") {
             self.audit.encryption_key = Some(key);
             self.audit.encryption_enabled = true;
         }
 
-        if let Ok(endpoint) = std::env::var("ZN_SIEM_ENDPOINT") {
+        if let Some(endpoint) = get("ZN_SIEM_ENDPOINT") {
             self.siem.endpoint = Some(endpoint);
         }
 
-        if let Ok(token) = std::env::var("ZN_SIEM_TOKEN") {
+        if let Some(token) = get("ZN_SIEM_TOKEN") {
             self.siem.token = Some(token);
         }
 
-        if let Ok(kms_type) = std::env::var("ZN_KMS_TYPE") {
+        if let Some(kms_type) = get("ZN_KMS_TYPE") {
             self.kms.kms_type = kms_type;
         }
 
-        if let Ok(key_id) = std::env::var("ZN_KMS_KEY_ID") {
+        if let Some(key_id) = get("ZN_KMS_KEY_ID") {
             self.kms.key_id = Some(key_id);
         }
 
-        if let Ok(allow) = std::env::var("ZN_KMS_ALLOW_CONFIG_FALLBACK") {
-            self.kms.allow_config_fallback =
-                matches!(allow.as_str(), "1" | "true" | "TRUE" | "True");
+        // Applied here as well as in `KmsConfig::default`, so it also works
+        // when the config file has a `[kms]` section.
+        if let Some(region) = get("ZN_KMS_REGION") {
+            self.kms.region = Some(region);
         }
 
-        if let Ok(neural_enabled) = std::env::var("ZN_NEURAL_ENABLED") {
-            self.neural.enabled = neural_enabled.parse().unwrap_or(true);
+        if let Some(allow) = env_flag(&get, "ZN_KMS_ALLOW_CONFIG_FALLBACK") {
+            self.kms.allow_config_fallback = allow;
         }
 
-        if let Ok(neural_threshold) = std::env::var("ZN_NEURAL_THRESHOLD") {
-            if let Ok(t) = neural_threshold.parse() {
-                self.neural.threshold = t;
-            }
+        if let Some(v) = env_flag(&get, "ZN_NEURAL_ENABLED") {
+            self.neural.enabled = v;
         }
 
-        if let Ok(active_blocking) = std::env::var("ZN_NEURAL_BLOCKING") {
-            self.neural.active_blocking = active_blocking.parse().unwrap_or(false);
+        if let Some(t) = env_num(&get, "ZN_NEURAL_THRESHOLD") {
+            self.neural.threshold = t;
         }
 
-        if let Ok(alert_only) = std::env::var("ZN_GUARDRAILS_ALERT_ONLY") {
-            self.guardrails.alert_only = alert_only.parse().unwrap_or(true);
+        if let Some(v) = env_flag(&get, "ZN_NEURAL_BLOCKING") {
+            self.neural.active_blocking = v;
         }
 
-        if let Ok(paranoia) = std::env::var("ZN_PARANOIA_LEVEL") {
-            if let Ok(lvl) = paranoia.parse::<u8>() {
-                self.guardrails.paranoia_level = lvl.clamp(1, 5);
-            }
+        if let Some(v) = env_flag(&get, "ZN_GUARDRAILS_ALERT_ONLY") {
+            self.guardrails.alert_only = v;
         }
 
-        if let Ok(min_s) = std::env::var("ZN_MIN_SAMPLES") {
-            if let Ok(v) = min_s.parse::<u64>() {
-                self.guardrails.min_samples = v;
-            }
+        if let Some(lvl) = env_num::<u8>(&get, "ZN_PARANOIA_LEVEL") {
+            self.guardrails.paranoia_level = lvl.clamp(1, 5);
         }
 
-        if let Ok(margin) = std::env::var("ZN_FPR_MARGIN") {
-            if let Ok(m) = margin.parse::<f64>() {
-                self.guardrails.fpr_margin = m;
-            }
+        if let Some(v) = env_num(&get, "ZN_MIN_SAMPLES") {
+            self.guardrails.min_samples = v;
         }
 
-        if let Ok(nn_audit) = std::env::var("ZN_NEAREST_NEIGHBOR_AUDIT") {
-            self.guardrails.nearest_neighbor_audit = nn_audit.parse().unwrap_or(true);
+        if let Some(m) = env_num(&get, "ZN_FPR_MARGIN") {
+            self.guardrails.fpr_margin = m;
+        }
+
+        if let Some(v) = env_flag(&get, "ZN_NEAREST_NEIGHBOR_AUDIT") {
+            self.guardrails.nearest_neighbor_audit = v;
         }
     }
 
@@ -948,5 +976,95 @@ mod credential_tests {
         );
         assert_eq!(credential_override(some("  "), None), None);
         assert_eq!(credential_override(None, None), None);
+    }
+}
+
+#[cfg(test)]
+mod env_override_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn overrides(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+        let map: HashMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        move |name| map.get(name).cloned()
+    }
+
+    #[test]
+    fn kms_region_applies_with_a_kms_section_in_the_config_file() {
+        let mut config: ZnConfig =
+            serde_json::from_str(r#"{"kms":{"kms_type":"aws","region":"us-west-2"}}"#).unwrap();
+        config.apply_env_overrides_from(overrides(&[
+            ("ZN_KMS_REGION", "eu-west-1"),
+            ("ZN_KMS_KEY_ID", "key-1"),
+        ]));
+        assert_eq!(config.kms.region.as_deref(), Some("eu-west-1"));
+        assert_eq!(config.kms.key_id.as_deref(), Some("key-1"));
+        assert_eq!(config.kms.kms_type, "aws");
+    }
+
+    #[test]
+    fn kms_region_from_the_file_stays_without_the_variable() {
+        let mut config: ZnConfig =
+            serde_json::from_str(r#"{"kms":{"region":"us-west-2"}}"#).unwrap();
+        config.apply_env_overrides_from(overrides(&[]));
+        assert_eq!(config.kms.region.as_deref(), Some("us-west-2"));
+    }
+
+    #[test]
+    fn switches_accept_common_spellings() {
+        for raw in ["true", "TRUE", "True", "1", "yes", "on", " On "] {
+            assert_eq!(parse_env_bool("X", raw), Some(true), "{raw:?}");
+        }
+        for raw in ["false", "FALSE", "0", "no", "off", " Off "] {
+            assert_eq!(parse_env_bool("X", raw), Some(false), "{raw:?}");
+        }
+        for raw in ["maybe", "", "2", "tru"] {
+            assert_eq!(parse_env_bool("X", raw), None, "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn numbers_parse_or_are_ignored() {
+        assert_eq!(parse_env_value::<u16>("X", " 8080 "), Some(8080));
+        assert_eq!(parse_env_value::<f64>("X", "0.05"), Some(0.05));
+        assert_eq!(parse_env_value::<u16>("X", "70000"), None);
+        assert_eq!(parse_env_value::<u64>("X", "-1"), None);
+        assert_eq!(parse_env_value::<u64>("X", "ten"), None);
+    }
+
+    #[test]
+    fn invalid_values_keep_the_current_setting() {
+        let mut config = ZnConfig::default();
+        config.neural.enabled = false;
+        config.guardrails.alert_only = false;
+        config.server.port = 1234;
+        config.apply_env_overrides_from(overrides(&[
+            ("ZN_NEURAL_ENABLED", "maybe"),
+            ("ZN_GUARDRAILS_ALERT_ONLY", "x"),
+            ("ZN_PORT", "99999"),
+            ("ZN_TIMEOUT", "soon"),
+        ]));
+        assert!(!config.neural.enabled);
+        assert!(!config.guardrails.alert_only);
+        assert_eq!(config.server.port, 1234);
+        assert_eq!(config.engine.timeout_ms, default_timeout());
+    }
+
+    #[test]
+    fn valid_values_are_applied() {
+        let mut config = ZnConfig::default();
+        config.apply_env_overrides_from(overrides(&[
+            ("ZN_NEURAL_ENABLED", "false"),
+            ("ZN_KMS_ALLOW_CONFIG_FALLBACK", "yes"),
+            ("ZN_PARANOIA_LEVEL", "9"),
+            ("ZN_PORT", "8081"),
+        ]));
+        assert!(!config.neural.enabled);
+        assert!(config.kms.allow_config_fallback);
+        assert_eq!(config.guardrails.paranoia_level, 5);
+        assert_eq!(config.server.port, 8081);
     }
 }

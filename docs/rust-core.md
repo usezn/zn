@@ -117,6 +117,53 @@ The first time a new version opens a file written by an earlier one, it upgrades
 
 A search runs on the request path, so it is tried once and gives up after one second; the request then goes on without a nearest neighbour. Failures are logged as a warning at most once every ten minutes, and at debug level in between.
 
+## Environment variables
+
+The gateway reads its settings from `zn.json` (or `zn.config.json`, `.zn.json`, or the file given with `--config`) and then applies these environment variables on top, so a variable always wins over the file. Config keys are JSON paths: `kms.region` is `{"kms": {"region": "..."}}`.
+
+A value that does not parse is ignored with a warning in the log, and the setting keeps the value from the file or its default. This applies to numbers (`ZN_PORT=abc`) and to switches. A switch accepts `true`, `false`, `1`, `0`, `yes`, `no`, `on` and `off`, in any case.
+
+| Variable | Config key | Default | What it does |
+|---|---|---|---|
+| `ZN_ENV` | `environment` | `development` | `production` makes `ZN_DB_KEY` mandatory. |
+| `ZN_PORT` | `server.port` | `9090` | Port of the management API. |
+| `ZN_API_KEY` | `security.api_key` | none | Super-admin key of the management API. Blank counts as not set. |
+| `ZN_JWT_SECRET` | `security.jwt_secret` | none | HS256 secret for JWTs, at least 32 bytes. |
+| `ZN_MCP_WS_TOKEN` | `security.mcp_ws_token` | random | Extra token for MCP WebSocket connections. |
+| `ZN_NAMESPACE` | `security.namespace` | none (`global` for the local proxy) | Namespace for the local stdio proxy and `zn analyze`. |
+| `ZN_ALLOWED_ORIGINS` | `security.allowed_origins` | localhost on ports 5173 and 9090 | Comma-separated CORS origins. |
+| `ZN_GAS_LIMIT` | `engine.gas_limit` | `10000000` | Gas limit of a WASM policy run. |
+| `ZN_MEMORY_LIMIT` | `engine.memory_limit_mb` | `128` | Memory limit of a WASM policy, in MB. |
+| `ZN_TIMEOUT` | `engine.timeout_ms` | `1000` | Time limit of a WASM policy run, in milliseconds. |
+| `ZN_POLICY_HASHES` | `engine.allowed_policy_hashes` | empty | Comma-separated SHA-256 hashes of the policies you allow. |
+| `ZN_SIGNING_PUBLIC_KEY` | `engine.signing_public_key` | none | Ed25519 public key (hex) that policy signatures must match. |
+| `ZN_PQ_PUBLIC_KEY` | none | none | ML-DSA-65 public key (hex). When set, a post-quantum policy signature is required. |
+| `ZN_DB_PATH` | `audit.db_path` | `zn.db` | Path of the audit database. |
+| `ZN_DB_KEY` | `audit.encryption_key` | none | Key for the audit database. Setting it turns encryption on. |
+| `ZN_SIEM_ENDPOINT` | `siem.endpoint` | none | HTTP(S) endpoint that receives exported audit events. |
+| `ZN_SIEM_TOKEN` | `siem.token` | none | Token sent to the SIEM endpoint. |
+| `ZN_KMS_TYPE` | `kms.kms_type` | `local` | KMS to use. |
+| `ZN_KMS_KEY_ID` | `kms.key_id` | none | Key ID or ARN of the KMS key. |
+| `ZN_KMS_REGION` | `kms.region` | none | Region of the KMS key. It also applies when the config file has a `kms` section. |
+| `ZN_KMS_ALLOW_CONFIG_FALLBACK` | `kms.allow_config_fallback` | `false` | Start with the config key when the KMS cannot be reached. See [KMS key and the config fallback](#kms-key-and-the-config-fallback). |
+| `ZN_KMS_RECOVER_NEW_DATA_KEY` | none | off | Set to `true` or `1` for one start with a new data key. See [AWS KMS data key](#aws-kms-data-key). |
+| `ZN_NEURAL_ENABLED` | `neural.enabled` | `true` | Turns the neural analysis on or off. |
+| `ZN_NEURAL_THRESHOLD` | `neural.threshold` | `1.2` | Anomaly score above which a request counts as anomalous. |
+| `ZN_NEURAL_BLOCKING` | `neural.active_blocking` | `false` | Block on the neural score instead of only reporting it. Has no effect while `ZN_GUARDRAILS_ALERT_ONLY` is on. |
+| `ZN_NEURAL_MODEL_PATH` | `neural.model_path` | `~/.zn/models/all-MiniLM-L6-v2` | Directory of the model files. |
+| `ZN_FAST_BOOT` | none | off | Any value (even empty) skips the neural model entirely. For tests and smoke runs. |
+| `ZN_GUARDRAILS_ALERT_ONLY` | `guardrails.alert_only` | `true` | Report neural anomalies without blocking. |
+| `ZN_PARANOIA_LEVEL` | `guardrails.paranoia_level` | `1` | 1 to 5; values outside the range are clamped. Higher is stricter. |
+| `ZN_MIN_SAMPLES` | `guardrails.min_samples` | `50` | Samples needed before the false-positive guard can roll back. |
+| `ZN_FPR_MARGIN` | `guardrails.fpr_margin` | `0.02` | False-positive margin that triggers a rollback. |
+| `ZN_NEAREST_NEIGHBOR_AUDIT` | `guardrails.nearest_neighbor_audit` | `true` | Log the nearest known neighbours in the audit log. |
+| `ZN_MEMORY_MAX_AGENT_ROWS` | none | `10000` | Vector memory rows kept per agent. See [Vector memory limits](#vector-memory-limits). |
+| `ZN_MEMORY_MAX_NAMESPACE_ROWS` | none | `25000` | Vector memory rows kept per namespace. |
+| `ZN_MEMORY_MAX_TOTAL_ROWS` | none | `100000` | Vector memory rows kept per file. |
+| `ZN_OTLP_ENDPOINT` | none | `http://localhost:4318` | Base URL of the OTLP trace exporter; `/v1/traces` is added. Without it the standard `OTEL_EXPORTER_OTLP_*` variables apply. |
+
+The terminal UI (`zn tui`) also reads `ZN_API_KEY` when you give no key on the command line.
+
 ## Building from Source
 
 ### Prerequisites
