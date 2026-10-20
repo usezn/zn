@@ -96,9 +96,13 @@ function unixScript(agentId, nodePath, runnerPath) {
     'ZN_NODE=' + shQuote(nodePath),
     'ZN_RUNNER=' + shQuote(runnerPath),
     'if [ -x "$ZN_NODE" ] && [ -f "$ZN_RUNNER" ]; then exec "$ZN_NODE" "$ZN_RUNNER" ' + agentId + '; fi',
-    'ZN_CMD=$(command -v zn 2>/dev/null)',
+    '# Look up zn and node only in absolute PATH entries: a relative one depends on the folder the agent runs in.',
+    'ZN_OLDIFS=$IFS; IFS=:; ZN_SAFE=',
+    'for ZN_D in $PATH; do case "$ZN_D" in /*) ZN_SAFE="${ZN_SAFE:+$ZN_SAFE:}$ZN_D" ;; esac; done',
+    'IFS=$ZN_OLDIFS',
+    'ZN_CMD=$(PATH="$ZN_SAFE" command -v zn 2>/dev/null)',
     'case "$ZN_CMD" in /*) ;; *) ZN_CMD= ;; esac',
-    'if [ -n "$ZN_CMD" ] && command -v node >/dev/null 2>&1; then exec "$ZN_CMD" hook ' + agentId + '; fi',
+    'if [ -n "$ZN_CMD" ] && PATH="$ZN_SAFE" command -v node >/dev/null 2>&1; then exec "$ZN_CMD" hook ' + agentId + '; fi',
     'case "$ZN_EVENT" in',
     '  ' + exitEvents.join('|') + ')',
     '    printf ' + shQuote('%s\\n') + ' ' + shQuote(reason) + ' >&2',
@@ -123,7 +127,9 @@ function writeLauncher(agentId, nodePath, runnerPath, opts = {}) {
   const file = launcherFile(agentId, opts);
   const dir = path.dirname(file);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  writeFileAtomic(file, unixScript(agentId, nodePath, runnerPath), 0o755);
+  // On Windows the script runs in Git Bash: write the paths with / so that `zn-gate check` can read them back.
+  const platform = opts.platform || process.platform;
+  writeFileAtomic(file, unixScript(agentId, portablePath(nodePath, platform), portablePath(runnerPath, platform)), 0o755);
   try { fs.chmodSync(file, 0o755); } catch (_) { /* best effort */ }
   return file;
 }
