@@ -184,7 +184,7 @@ def test_text_prints_one_entry_per_finding(scanned, skipped, violations):
     output = _render("text", scanned, skipped, violations)
     for v in violations:
         label = "Secret found" if v["type"] == "secret_leak" else "Threat"
-        entry = f"  {v['file']}:{v['line']} {label} [{v['rule']}] {v['reason']}"
+        entry = f"  {cli._safe_text(v['file'])}:{v['line']} {label} [{v['rule']}] {v['reason']}"
         assert output.count(entry) >= 1
     # Entries are one per finding: the count of rule tags equals the count of findings.
     tags = re.findall(r"\[(?:%s)\]" % "|".join(re.escape(r) for r in RULE_IDS), output)
