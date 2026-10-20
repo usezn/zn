@@ -330,7 +330,17 @@ test('a command that does not exist ends the shield with exit 1 and a clear mess
   const s = startShield({ command: 'zn-no-such-command-xyz.invalid', args: [] });
   const exit = await s.exited;
   assert.strictEqual(exit.code, 1);
-  assert.ok(/Failed to start wrapped server 'zn-no-such-command-xyz\.invalid'/.test(s.stderr), s.stderr);
+  assert.ok(/could not start 'zn-no-such-command-xyz\.invalid': it is not installed or not on your PATH/.test(s.stderr), s.stderr);
+  assert.ok(!/spawn .* ENOENT/.test(s.stderr), s.stderr);
+});
+
+test('a missing uvx points to the uv install page', async () => {
+  const m = require('../lib/shield').startFailureMessage('uvx', { code: 'ENOENT' });
+  assert.match(m, /could not start 'uvx'/);
+  assert.match(m, /https:\/\/docs\.astral\.sh\/uv\//);
+  assert.match(require('../lib/shield').startFailureMessage('/x/docker', { code: 'ENOENT' }), /docker\.com/);
+  assert.match(require('../lib/shield').startFailureMessage('foo', { code: 'EACCES' }), /not allowed to run/);
+  assert.match(require('../lib/shield').startFailureMessage('foo', { code: 'EMFILE', message: 'boom' }), /Failed to start wrapped server 'foo': boom/);
 });
 
 test('SIGTERM to the shield stops the wrapped server too', { skip: process.platform === 'win32' }, async () => {
