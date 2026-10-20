@@ -60,18 +60,8 @@ const KEY_FILE_NAMES = new Set(['id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', 'i
 const BINARY_SNIFF = 8192;
 const SCAN_FORMATS = new Set(['text', 'json', 'github']);
 const cliOptions = require('../lib/cli-options');
-// The options each command knows (the program-wide ones, such as --verbose, are always accepted).
-const EVIDENCE_OPTIONS = { flags: ['--verify', '--ui', '--export'], values: ['--format', '--output', '--port', '--tail'] };
-const OPTION_SPECS = {
-  scan: { flags: ['--code', '--all', '--include-home', '--json'], values: ['--format', '--include', '--exclude'] },
-  check: {},
-  doctor: {},
-  status: {},
-  init: { flags: ['--wrap-mcp', '--dry-run', '--shadow', '--revert'] },
-  evidence: EVIDENCE_OPTIONS,
-  logs: EVIDENCE_OPTIONS,
-  export: EVIDENCE_OPTIONS,
-};
+const { OPTION_SPECS } = cliOptions;
+const cliHelp = require('../lib/cli-help');
 
 // Secrets in a line, as rule ids, in the order the Python package finds them:
 // the rules of lib/rules.js and the scrubber provider formats (both done by
@@ -832,7 +822,7 @@ async function runReachCommand(rest) {
   const usage = (msg) => { process.stderr.write('zn-gate reach: ' + msg + '\n' + REACH_USAGE + '\n'); return 2; };
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
-    if (a === '-h' || a === '--help') { process.stdout.write(REACH_USAGE + '\nShows what the coding agents on this machine can reach. Read only: nothing is changed or sent.\n'); return 0; }
+    if (a === '-h' || a === '--help') { process.stdout.write(cliHelp.helpFor('reach').join('\n') + '\n'); return 0; }
     // --remember keeps this run's counts in ~/.zn/reach-last.json for the next one; without it nothing is written.
     if (a === '--remember') { remember = true; continue; }
     if (a === '--json' || a === '--sarif') {
@@ -869,8 +859,40 @@ async function runReachCommand(rest) {
   return zr.failed(r, failOn) ? 1 : 0;
 }
 
+// Commands whose own help is printed by the code that runs them.
+const OWN_HELP = new Set(['audit', 'unlock', 'lock', 'vault', 'team', 'hooks']);
+
+// True when -h or --help comes before a bare `--` (after it the words belong to the wrapped command).
+function asksForHelp(rest) {
+  const end = rest.indexOf('--');
+  return (end === -1 ? rest : rest.slice(0, end)).some((a) => a === '-h' || a === '--help');
+}
+
 async function main() {
   let args = process.argv.slice(2);
+  // Nothing given: a five line start, not the whole help.
+  if (args.length === 0) {
+    process.stdout.write(cliHelp.startText(VERSION).join('\n') + '\n');
+    return;
+  }
+  // `zn-gate help` is the general help; `zn-gate help <command>` is `zn-gate <command> --help`.
+  if (args[0] === 'help') {
+    const words = args.slice(1).filter((a) => a !== '-h' && a !== '--help');
+    if (words.length === 0 && args.length > 1) {
+      process.stdout.write(cliHelp.helpFor('help').join('\n') + '\n');
+      return;
+    }
+    if (words.length === 0) {
+      printHelp();
+      process.exit(0);
+    }
+    if (!cliHelp.canonical(words[0]) && !OWN_HELP.has(words[0]) && !BROKER_COMMANDS.has(words[0])) {
+      process.stderr.write(`Unknown command: ${words[0]}\nRun 'zn-gate --help' for usage.\n`);
+      process.exitCode = 1;
+      return;
+    }
+    args = [...words, '--help'];
+  }
   if (args[0] === 'audit') {
     await runAuditCommand(args.slice(1));
     return;
@@ -883,6 +905,16 @@ async function main() {
   const subHelp = require('../lib/vault/help').helpFor(args);
   if (subHelp) {
     process.stdout.write(subHelp.join('\n') + '\n');
+    return;
+  }
+  // The short help of the other commands. A command that passes the rest of its line on (run, secret...)
+  // answers only `<command> --help`; the words after it have their own help.
+  if (cliHelp.canonical(args[0]) && asksForHelp(args.slice(1)) && (!BROKER_COMMANDS.has(args[0]) || args.length === 2)) {
+    process.stdout.write(cliHelp.helpFor(args[0]).join('\n') + '\n');
+    return;
+  }
+  if (args[0] === 'hooks' && args.length === 2 && asksForHelp(args.slice(1))) {
+    process.exitCode = await require('../lib/broker/cli').dispatch('hooks', ['install', '--help']);
     return;
   }
   // zn Team and the OpenTelemetry export of the audit log. exitCode (not
@@ -905,7 +937,7 @@ async function main() {
     await runBrokerCommand(args[0], args.slice(1));
     return;
   }
-  if (args.length === 0 || args.includes('-h') || args.includes('--help')) {
+  if (asksForHelp(args)) {
     printHelp();
     process.exit(0);
   }

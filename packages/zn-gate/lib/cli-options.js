@@ -44,6 +44,20 @@ function unknownOption(opt, known) {
   return 'unknown option ' + shown + (s ? '; did you mean ' + s + '?' : '');
 }
 
+// The options each command knows (the program-wide ones, such as --verbose, are always accepted).
+// The help of these commands (cli-help.js) lists exactly these options.
+const EVIDENCE_OPTIONS = { flags: ['--verify', '--ui', '--export'], values: ['--format', '--output', '--port', '--tail'] };
+const OPTION_SPECS = {
+  scan: { flags: ['--code', '--all', '--include-home', '--json'], values: ['--format', '--include', '--exclude'] },
+  check: {},
+  doctor: {},
+  status: {},
+  init: { flags: ['--wrap-mcp', '--dry-run', '--shadow', '--revert'] },
+  evidence: EVIDENCE_OPTIONS,
+  logs: EVIDENCE_OPTIONS,
+  export: EVIDENCE_OPTIONS,
+};
+
 const GLOBAL_FLAGS = ['--verbose', '--local-only'];
 const GLOBAL_VALUES = ['--key', '--stage', '--url', '--long-input'];
 
@@ -86,4 +100,4 @@ function check(args, spec) {
   return { args: out, positionals };
 }
 
-module.exports = { suggest, unknownOption, check };
+module.exports = { suggest, unknownOption, check, OPTION_SPECS };

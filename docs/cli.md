@@ -12,7 +12,19 @@ The package installs three names. They are the same program, so every command be
 
 Without installing, use `npx -y zn-gate <command>`. This page writes `zn-gate` in examples.
 
-`zn-gate --help` (or `-h`) prints the short help. `zn-gate version`, `zn-gate -V` and `zn-gate --version` print the version.
+## Help
+
+### `help`
+
+```bash
+zn-gate help [command]
+```
+
+- `zn-gate` with nothing after it prints a five line start: `init`, `check`, `reach` and where to find the rest.
+- `zn-gate --help` (or `-h`, or `zn-gate help`) lists every command.
+- `zn-gate <command> --help` (or `zn-gate help <command>`, the same text) prints the short help of one command: what it does, its options, an example and its exit codes. It works for every command on this page, for example `zn-gate scan --help` or `zn-gate help reach`. Words after a bare `--` belong to the wrapped command, not to the help.
+
+`zn-gate version`, `zn-gate -V` and `zn-gate --version` print the version.
 
 ## Exit codes
 
