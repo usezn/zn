@@ -520,6 +520,23 @@ async function checkAgent(spec, ctx) {
       res.fix = 'delete that [hooks.state] entry, or turn zn\'s hook back on in `/hooks` in Codex, then run `zn-gate check` again';
     }
   }
+  if (spec.id === 'codex' && installed && !res.problem && res.where === userFile && res.via === 'hooks') {
+    // Codex skips a hook until the user approves it in /hooks, and again after any change: the hook working is not enough.
+    const trust = require('./codex-trust').codexTrust({ codexHome: path.dirname(userFile), hooksFile: userFile });
+    if (trust.status === 'untrusted') {
+      res.problem = 'zn\'s hooks are installed, but Codex skips new hooks until you approve them in `/hooks`, so zn does not protect Codex yet';
+      res.fix = 'open Codex and approve zn\'s hooks with `/hooks`, then run `zn-gate check` again';
+      res.approval = true;
+    } else if (trust.status === 'modified') {
+      res.problem = 'zn\'s ' + trust.event + ' hook changed after you approved it in Codex, so Codex skips it until you approve it again and zn does not protect Codex';
+      res.fix = 'open Codex and approve zn\'s hooks with `/hooks`, then run `zn-gate check` again';
+      res.approval = true;
+    } else if (trust.status === 'unknown') {
+      res.awaiting = true;
+      res.approval = true;
+      res.fix = 'open Codex and approve zn\'s hooks with `/hooks`';
+    }
+  }
   if (spec.id === 'cursor' && installed) {
     // Cursor's enterprise hooks.json (read-only): zn's hook there without failClosed, or enterprise hooks without zn's.
     try { res.notes.push(...require('./agents/managed-policy').cursorPolicyWarnings({ ...(ctx.cursorPolicy || {}), env: ctx.env }).map((w) => oneLine(w, 400))); } catch (_) { /* never fails the check */ }
@@ -617,7 +634,7 @@ async function checkAgent(spec, ctx) {
       res.fix = 'remove the second set: run `zn hooks uninstall claude-code` in your own terminal';
     }
   }
-  res.state = res.problem ? 'not-protected' : 'protected';
+  res.state = res.problem ? 'not-protected' : res.awaiting ? 'awaiting-approval' : 'protected';
   return res;
 }
 
@@ -670,6 +687,7 @@ function report({ results, removed }, write) {
   w('each agent\'s zn hook whether the agent may read them. This is what happened:\n\n');
   let setUp = 0;
   let bad = 0;
+  let waiting = 0;
   const missing = [];
   for (const r of results) {
     if (r.state === 'not-set-up' && r.found === false) {
@@ -686,6 +704,12 @@ function report({ results, removed }, write) {
       continue;
     }
     setUp++;
+    if (r.state === 'awaiting-approval') {
+      waiting++;
+      w(`  ?  ${r.name.padEnd(12)} installed, waiting for your approval in Codex (/hooks). zn's hook works, but zn cannot tell whether Codex runs it yet.\n`);
+      w(`     To finish, ${r.fix}, then run \`zn-gate check\` again.\n`);
+      continue;
+    }
     if (r.state === 'not-protected') {
       bad++;
       w(`  X  ${r.name.padEnd(12)} NOT protected: ${r.problem}.\n`);
@@ -705,6 +729,8 @@ function report({ results, removed }, write) {
   } else if (!setUp) {
     w('zn is not set up for your agents yet, so nothing protects your secrets. To set it up, ' + init);
     w('More: https://usezn.com/docs/install\n\n');
+  } else if (!bad && waiting) {
+    w('Not confirmed yet: Codex runs zn\'s hooks only after you approve them in `/hooks` (see above). More: https://usezn.com/docs/check\n\n');
   } else if (!bad) {
     w('Your agent cannot read secret files such as .env through these tools. Nothing was sent anywhere.\n');
     if (missing.length) w('Not set up yet: ' + missing.join(', ') + '. To add ' + (missing.length > 1 ? 'them' : 'it') + ', ' + init);
@@ -714,7 +740,7 @@ function report({ results, removed }, write) {
     w('Some agents are not protected (see above). More: https://usezn.com/docs/check\n\n');
   }
   w(removed ? 'The test folder was deleted.\n' : 'The test folder could not be deleted; it holds only the fake key.\n');
-  return setUp && !bad ? 0 : 1;
+  return setUp && !bad && !waiting ? 0 : 1;
 }
 
 module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin } };

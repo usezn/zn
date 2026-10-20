@@ -26,10 +26,13 @@ const posix = process.platform !== 'win32';
 const GONE = '/nonexistent/node-gone/bin/node';
 const REINSTALL = 'install zn-gate again for the Node.js you use now: run `npm install -g zn-gate`, then `zn hooks install codex`, in your own terminal';
 
+const { trustCodexHooks } = require('./helpers/codex_trust');
+
 function setup(t, nodePath) {
   const home = tempDir(t, 'zn-b93-');
   const env = { HOME: home, CODEX_HOME: path.join(home, '.codex'), ZN_HOME: path.join(home, '.zn'), PATH: process.env.PATH };
   codex.install({ env, home, nodePath, runnerPath: RUNNER, mcp: false });
+  trustCodexHooks(codex.hooksFile({ env }));
   const data = JSON.parse(fs.readFileSync(codex.hooksFile({ env }), 'utf8'));
   return { home, env, data, file: launcher.launcherFile('codex', { env, home }) };
 }

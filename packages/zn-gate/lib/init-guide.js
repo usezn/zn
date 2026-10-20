@@ -102,7 +102,9 @@ async function plan(opts = {}) {
   for (const r of res.results) {
     const found = r.state !== 'not-set-up' || getAdapter(r.id).detect({ home, env });
     const item = { id: r.id, name: r.name, found, state: r.state, problem: r.problem || '', steps: [] };
-    if (found && r.state !== 'protected') {
+    // Codex hooks that wait for the user's approval are fixed in Codex (/hooks), not by installing again.
+    if (found && r.approval) { item.approval = true; item.note = 'Codex skips zn\'s hooks until you approve them: open Codex and run /hooks.'; }
+    else if (found && r.state !== 'protected') {
       // Claude Code set up with zn's own hooks is repaired with them, and with the plugin as well it drops them:
       // installing the plugin on top would run both sets.
       // A broken plugin next to zn's own hooks that do not work either: the hooks are repaired first (below).
@@ -213,9 +215,9 @@ async function guide(opts = {}) {
   for (const i of items) {
     if (!i.found) w(`  -  ${i.name.padEnd(12)} not found on this machine\n`);
     else if (i.state === 'protected') w(`  OK ${i.name.padEnd(12)} already protected by zn\n`);
-    else w(`  >  ${i.name.padEnd(12)} ${i.state === 'not-protected' ? 'not protected: ' + i.problem : 'not set up yet'}\n`);
+    else w(`  >  ${i.name.padEnd(12)} ${i.state === 'not-protected' ? 'not protected: ' + i.problem : i.state === 'awaiting-approval' ? 'installed, waiting for your approval in Codex (/hooks)' : 'not set up yet'}\n`);
   }
-  for (const i of items) if (i.note && i.steps.length) w(`${i.note}\n`);
+  for (const i of items) if (i.note && (i.steps.length || i.approval)) w(`${i.note}\n`);
   w('\n');
   const tail = () => w('(To wrap the MCP servers in your agent configs, which `zn-gate init` used to do: `zn-gate init --wrap-mcp`.)\n');
   if (!items.some((i) => i.found)) {

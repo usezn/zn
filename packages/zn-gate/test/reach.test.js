@@ -13,6 +13,7 @@ const { spawnSync } = require('child_process');
 const { getAdapter } = require('../lib/agents');
 const { reach, report, _internal } = require('../lib/reach');
 const { tempDir } = require('./helpers/tmp');
+const { trustCodexHooks } = require('./helpers/codex_trust');
 
 const CLI = path.join(__dirname, '..', 'bin', 'cli.js');
 const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
@@ -29,6 +30,7 @@ function machine(t, opts = {}) {
   for (const dir of opts.found || []) fs.mkdirSync(path.join(home, dir), { recursive: true });
   for (const id of opts.agents || []) {
     getAdapter(id).install({ scope: 'user', home, env, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
+    if (id === 'codex') trustCodexHooks(getAdapter('codex').hooksFile({ home, env }));
   }
   if (opts.secrets !== false) {
     fs.writeFileSync(path.join(root, '.env'), [

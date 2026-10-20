@@ -43,6 +43,8 @@ function capture() {
 const tty = { isTTY: true };
 const line = (s) => s.manual;
 
+const { trustCodexHooks } = require('./helpers/codex_trust');
+
 test('plan: one route per agent found; agents not found get no steps', async (t) => {
   const m = machine(t, ['claude-code', 'codex']);
   const { items, setup } = await plan({ ...m, claude: path.resolve('/opt/bin/claude'), temporary: false });
@@ -143,6 +145,7 @@ test('guide: in a terminal each step is confirmed, run, and the result is checke
   const run = (step) => {
     assert.deepEqual(step.run[1].slice(-3), ['hooks', 'install', 'codex']);
     getAdapter('codex').install({ scope: 'user', home: m.home, env: m.env, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
+    trustCodexHooks(getAdapter('codex').hooksFile({ home: m.home, env: m.env }));
     return true;
   };
   const code = await guide({ ...m, temporary: false, stdin: tty, write: out.write, run, confirm: async (q) => { asked.push(q); return true; } });
@@ -190,6 +193,7 @@ test('guide: nothing found, and everything already protected', async (t) => {
   assert.match(out.text(), /Nothing was changed/);
   const m = machine(t, ['codex']);
   getAdapter('codex').install({ scope: 'user', home: m.home, env: m.env, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
+  trustCodexHooks(getAdapter('codex').hooksFile({ home: m.home, env: m.env }));
   const out2 = capture();
   assert.equal(await guide({ ...m, stdin: tty, write: out2.write }), 0);
   assert.match(out2.text(), /already protected by zn/);

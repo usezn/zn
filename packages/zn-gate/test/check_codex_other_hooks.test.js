@@ -14,10 +14,13 @@ const { tempDir } = require('./helpers/tmp');
 
 const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
 
+const { trustCodexHooks } = require('./helpers/codex_trust');
+
 function codexHome(t) {
   const home = tempDir(t, 'zn-check-other-hooks-');
   const env = { HOME: home, PATH: process.env.PATH };
   getAdapter('codex').install({ scope: 'user', home, env, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
+  trustCodexHooks(getAdapter('codex').hooksFile({ home, env }));
   return { home, env, cwd: tempDir(t, 'zn-check-other-hooks-cwd-'), file: getAdapter('codex').hooksFile({ home, env }) };
 }
 
@@ -72,6 +75,7 @@ test('check: another hook declared in config.toml is not fully protected', async
   const ctx = codexHome(t);
   fs.writeFileSync(path.join(path.dirname(ctx.file), 'config.toml'),
     '[[hooks.PreToolUse]]\nmatcher = "^Bash$"\n\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = "node /opt/example/audit-hook.js"\n');
+  trustCodexHooks(ctx.file);
   const r = await codexResult(ctx);
   assert.equal(r.state, 'not-protected');
   assert.match(r.problem, /PreToolUse in .*config\.toml/);
@@ -89,5 +93,6 @@ test('check: another hook in the project .codex folder is reported', async (t) =
 test('check: unreadable or malformed hook files say nothing', async (t) => {
   const ctx = codexHome(t);
   fs.writeFileSync(path.join(path.dirname(ctx.file), 'config.toml'), 'this is = = not toml [[');
-  assert.equal((await codexResult(ctx)).state, 'protected');
+  // zn cannot read whether Codex approved the hooks: it says "waiting for approval", never protected.
+  assert.equal((await codexResult(ctx)).state, 'awaiting-approval');
 });

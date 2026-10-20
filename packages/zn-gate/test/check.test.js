@@ -18,11 +18,14 @@ const { tempDir } = require('./helpers/tmp');
 
 const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
 
+const { trustCodexHooks } = require('./helpers/codex_trust');
+
 function homeWithHooks(t, agents) {
   const home = tempDir(t, 'zn-check-home-');
   const env = { HOME: home, PATH: process.env.PATH };
   for (const id of agents) {
     getAdapter(id).install({ scope: 'user', home, env, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
+    if (id === 'codex') trustCodexHooks(getAdapter('codex').hooksFile({ home, env }));
   }
   return { home, env, cwd: tempDir(t, 'zn-check-cwd-') };
 }

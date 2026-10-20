@@ -35,6 +35,7 @@ Your agent cannot read secret files such as .env through these tools. Nothing wa
 ```
 
 - **OK**: zn is protecting that agent. The quoted text is what your agent is told when it tries to read the file.
+- **?**: zn's hook works, but zn cannot confirm that your agent runs it yet (for Codex CLI, until you approve zn's hooks in `/hooks`). It is not counted as protected.
 - **-**: zn is not set up for that agent (neither for your user nor in managed configuration), or only for one project. The line gives the command that sets it up for your user. If you only ran zn-gate with `npx`, that command starts with `npm install -g zn-gate`, because `zn hooks install` needs zn-gate installed for your user. An agent that is not on this machine is listed as *not found on this machine*.
 - When an agent is found but not set up, the summary points to `npx -y zn-gate init`, which shows each step and asks before it runs one.
 - **X ... NOT protected**: zn is set up but would not protect the agent. The line says why and what to run to fix it. Every reason is explained in [What each NOT protected line means](#what-each-not-protected-line-means). When a hook cannot start because the Node.js it was installed with is gone (for example after `nvm uninstall`), the fix is a fresh `npm install -g zn-gate` and then `zn hooks install <agent>`, since the old Node.js took its `zn` with it.
@@ -200,6 +201,32 @@ For these reasons, zn is installed correctly, but a setting stops your agent fro
   The first one only tells you what the file does: nothing to repair. For the second one, send the line to your administrator, who adds `"failClosed": true` to zn's hook for that event.
 
 ### The Codex hook is set up wrongly
+
+- **Codex has not approved zn's hooks yet.**
+
+  ```text
+  zn's hooks are installed, but Codex skips new hooks until you approve them in `/hooks`, so zn does not protect Codex yet
+  open Codex and approve zn's hooks with `/hooks`, then run `zn-gate check` again
+  ```
+
+  Codex does not run a new hook until you review it. Right after `zn hooks install codex` the hooks are written but skipped, so Codex can still read your secrets. Open Codex, type `/hooks`, review zn's hooks and trust them, then run `zn-gate check` again. zn-gate reads your approval from the `[hooks.state]` entries in `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`).
+
+- **zn's hooks changed after you approved them.**
+
+  ```text
+  zn's <event> hook changed after you approved it in Codex, so Codex skips it until you approve it again and zn does not protect Codex
+  open Codex and approve zn's hooks with `/hooks`, then run `zn-gate check` again
+  ```
+
+  Codex ties your approval to the exact hook. Running `zn hooks install codex` again, or updating zn-gate in a way that changes the hook, makes Codex ask again. Approve the hooks in `/hooks` once more.
+
+- **zn cannot read whether you approved them.** This is not a NOT protected line. zn-gate shows `?` instead of OK, because it cannot be sure that Codex runs the hooks:
+
+  ```text
+  ?  Codex CLI    installed, waiting for your approval in Codex (/hooks). zn's hook works, but zn cannot tell whether Codex runs it yet.
+  ```
+
+  It happens when `config.toml` or `hooks.json` cannot be read or parsed. Fix the file, or open Codex and approve zn's hooks with `/hooks`, then run `zn-gate check` again. `zn-gate check` exits with 1 until Codex is confirmed.
 
 - **The hook runs in the background.**
 

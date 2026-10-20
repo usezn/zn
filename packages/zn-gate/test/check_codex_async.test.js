@@ -14,10 +14,13 @@ const { tempDir } = require('./helpers/tmp');
 
 const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
 
+const { trustCodexHooks } = require('./helpers/codex_trust');
+
 function codexHome(t) {
   const home = tempDir(t, 'zn-check-async-');
   const env = { HOME: home, PATH: process.env.PATH };
   getAdapter('codex').install({ scope: 'user', home, env, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
+  trustCodexHooks(getAdapter('codex').hooksFile({ home, env }));
   return { home, env, cwd: tempDir(t, 'zn-check-async-cwd-'), file: getAdapter('codex').hooksFile({ home, env }) };
 }
 

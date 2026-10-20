@@ -92,6 +92,7 @@ test('zn-gate check notes a requirements file it cannot read, without calling Co
   const env = { HOME: home, PATH: path.dirname(process.execPath) };
   const p = setup(t, { requirements: '[features\nbroken = = 1\n' });
   getAdapter('codex').install({ scope: 'user', home, env, nodePath: process.execPath, runnerPath: RUNNER, mcp: false, codexRequirementsFile: p.requirementsFile, codexManagedConfigFile: p.managedConfigFile });
+  require('./helpers/codex_trust').trustCodexHooks(getAdapter('codex').hooksFile({ home, env }));
   const { check } = require('../lib/check');
   const r = (await check({ home, env, cwd: home, live: false, codexPolicy: { requirementsFile: p.requirementsFile, managedConfigFile: p.managedConfigFile } })).results.find((x) => x.id === 'codex');
   assert.equal(r.state, 'protected');

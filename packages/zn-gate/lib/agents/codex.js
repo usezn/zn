@@ -389,7 +389,7 @@ function install(opts = {}) {
     data.hooks[event].push(group);
   }
   cfg.writeJson(file, data);
-  report.warnings.push('Codex runs new or changed hooks only after you trust them: open Codex and review them with /hooks.');
+  report.warnings.push('zn does not protect Codex yet: Codex runs new or changed hooks only after you approve them. Open Codex and approve zn\'s hooks with /hooks (`zn-gate check` tells you when it worked).');
   if (opts.mcp !== false) {
     report.warnings.push('optional: to let Codex use the secrets kept in zn\'s vault, add the "secrets" MCP server by putting this in ' + path.join(codexHome(opts), 'config.toml') + ':\n' + mcpSnippet(opts));
   }
