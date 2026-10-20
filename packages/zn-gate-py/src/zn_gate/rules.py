@@ -1403,6 +1403,11 @@ def sanitize_tool_result(
     Sanitizes tool output to prevent prompt injection and credential leakage.
     Can be called as:
       1) sanitize_tool_result(data) -> returns (clean_data, detections)
+         Strings are redacted inside dicts (values and string keys), lists,
+         tuples, sets and frozensets. When two keys collide after redaction the
+         later one gets a numeric suffix (key, key_2, ...). Other objects
+         (dataclasses, models, plain classes) are returned unchanged: convert
+         them to dicts or strings first.
       2) sanitize_tool_result(tool_name, content, mask_secrets=True) -> returns dict with
          {tool_name, safe_to_ingest, truncated, assessment, secrets_redacted, sanitized_content}
     Tool output longer than MAX_TOOL_RESULT_SCAN_CHARS is not fully analysed:
@@ -1449,11 +1454,26 @@ def sanitize_tool_result(
                 detections.extend(det)
             return clean_str
         elif isinstance(val, dict):
-            return {k: _sanitize(v) for k, v in val.items()}
+            out: Dict[Any, Any] = {}
+            for k, v in val.items():
+                nk = _sanitize(k) if isinstance(k, str) else k
+                if nk in out:
+                    # Two keys became the same after redaction: keep both
+                    # values under a numbered key, in iteration order.
+                    n = 2
+                    while f"{nk}_{n}" in out or f"{nk}_{n}" in val:
+                        n += 1
+                    nk = f"{nk}_{n}"
+                out[nk] = _sanitize(v)
+            return out
         elif isinstance(val, list):
             return [_sanitize(v) for v in val]
         elif isinstance(val, tuple):
             return tuple(_sanitize(v) for v in val)
+        elif isinstance(val, frozenset):
+            return frozenset(_sanitize(v) for v in val)
+        elif isinstance(val, set):
+            return {_sanitize(v) for v in val}
         return val
 
     sanitized = _sanitize(tool_or_result)

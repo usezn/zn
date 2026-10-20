@@ -118,7 +118,7 @@ from zn_gate import analyze, log_evidence, verify_evidence_ledger
 - Returns a tuple `(clean_text, detections)`; each detection is `{'rule': str, 'start': int, 'end': int}` (the span of the match in the input). The Node function returns an object with `{ rule, index }` detections instead.
 
 ### `sanitize_tool_result(tool_or_result, content=None, mask_secrets=True, block_truncated=False, strict=None)`
-- Two call forms, as in Node. `sanitize_tool_result(data)` redacts secrets in strings, lists, dicts and tuples and returns a **tuple** `(clean_data, detections)`, with detections shaped as for `redact_secrets`. The Node version returns `{ sanitized, detections }`.
+- Two call forms, as in Node. `sanitize_tool_result(data)` redacts secrets in strings, lists, tuples, sets, frozensets and dicts (values and string keys; keys that collide after redaction get a numeric suffix such as `_2`) and returns a **tuple** `(clean_data, detections)`, with detections shaped as for `redact_secrets`. The Node version returns `{ sanitized, detections }`. Other objects (dataclasses, models, plain classes) are returned as they are, so convert them to dicts or strings first.
 - `sanitize_tool_result(tool_name, content)` scans the output and returns a dict `{ tool_name, safe_to_ingest, truncated, assessment, secrets_redacted, sanitized_content }`, where `assessment` is an `Assessment`.
 
 ### `analyze(input_text, api_key=None, endpoint=None, timeout=None, local_only=False, long_input=None, **kwargs) -> dict`

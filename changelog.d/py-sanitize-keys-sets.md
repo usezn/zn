@@ -1,0 +1,2 @@
+### Fixed
+- The Python `sanitize_tool_result(data)`, which also backs `@guard(mask_secrets=True)`, `guarded_tool` and the LangChain and LlamaIndex integrations, now redacts secrets held in dict keys and in set and frozenset items, not only in values, lists and tuples. Keys that collide after redaction are kept under a numbered key. Other objects are still returned unchanged, which the docs now say.
