@@ -59,12 +59,16 @@ OpenCode is not in the table: its zn plugin runs inside the OpenCode process, so
 
 ## The budget in CI
 
-The `Hook latency` workflow runs this benchmark on every pull request that changes the hook code. It fails
-when a case's p95, divided by Node's start-up in the same run, is more than 20 % above
-`bench/hook_latency_baseline.json`. A case over the limit is measured again with twice the samples first,
+The `Hook latency` workflow runs this benchmark on every pull request that changes the hook code. Each case
+is compared with `bench/hook_latency_baseline.json` (the median of many runs) as its p95 divided by Node's start-up
+in the same run. The run fails in two ways: one case more than 20 % above its baseline, or the whole run
+slower, with the median of all cases more than 10 % above the baseline. The second check catches a change that
+makes every case a little slower, which no single case would show. A case over the limit is measured again with twice the samples first,
 so one slow sample does not fail it. The run fails too when the baseline file is missing. A deliberate change of the baseline is a commit of its own:
 `node bench/hook_latency_gate.js report.json --update-baseline`.
 
 The same benchmark also runs on a Windows runner, where starting a process is slower. That job has its own
 baseline, `bench/hook_latency_baseline_windows.json`, and is not a required check: it reports but does not
-block a merge. The summary of each run has one table with the Linux and Windows numbers side by side.
+block a merge. Its per-case margin is 35 % instead of 20 %: Windows runners come with several CPU models and
+their timings vary about twice as much as on Linux, and with 20 % runs failed often with no code change.
+The whole-run check (10 %) is the same on both. The summary of each run has one table with the Linux and Windows numbers side by side.
