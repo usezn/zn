@@ -224,11 +224,12 @@ from zn_gate.integrations import ZnGuardCallbackHandler, guard_langchain_tool, g
 
 No framework is required to import them. Each one uses the same rules as `check_tool_call` and `check_tool_result`. `on_block` must be one of the values below; any other value raises `ValueError` when the object is created.
 
-### `ZnGuardCallbackHandler(on_block='raise', mask_secrets=True, raise_on_injection=None)`
+### `ZnGuardCallbackHandler(on_block='raise', mask_secrets=True, raise_on_injection=None, block_truncated=False)`
 - LangChain and LangGraph callback handler. It checks prompts (`on_llm_start`), tool inputs (`on_tool_start`) and tool outputs (`on_tool_end`). It sets `raise_error = True`, so LangChain does not swallow its errors.
 - `on_block`: `'raise'` (default) or `'ignore'`. With `'raise'` a blocked prompt, tool input or tool output raises `GuardBlockError` and stops the run (targets `langchain:llm_prompt`, `langchain:<tool>` and `langchain:tool_output`). A callback cannot replace a tool's output, so `'return'` raises `ValueError` when the handler is created: use `guard_langchain_tool(tool, on_block='return')` to give the model a block message instead. With `'ignore'` nothing is stopped.
 - `mask_secrets` (default `True`): a tool output that contains a secret stops the run with `GuardBlockError`, because the handler cannot rewrite it. If your tools are wrapped with `guard_langchain_tool`, create the handler with `mask_secrets=False`, so the wrapper hides the secret and the run goes on.
 - `raise_on_injection`: older switch. When it is not `None` it overrides `on_block`: `True` means `'raise'`, `False` means `'ignore'`.
+- `block_truncated`: treat a tool output too large to scan in full as a block (default `False`).
 
 ### `guard_langchain_tool(tool, on_block='raise', mask_secrets=True, check_result=True, block_truncated=False, fallback=None)`
 - Wraps a LangChain tool (`BaseTool`) and returns a new tool with the same name, description and arguments; pass it to your agent instead of the original. The arguments are checked before the tool runs (a blocked call never runs) and the output before the model reads it. Needs `langchain-core`.
@@ -243,8 +244,8 @@ No framework is required to import them. Each one uses the same rules as `check_
 - `check_result`: also scan the output for prompt injection before the agent sees it (default `False`); a blocked output raises or returns as above. `block_truncated` blocks an output too large to scan in full (rule `size:truncated`).
 - `framework`: prefix of the block target, `'<framework>:<tool>'` (default `'tool'`).
 
-### `ZnLlamaGuard(on_block='raise', mask_secrets=True, raise_on_violation=None)`
-- Query and response check for LlamaIndex. `check_query(query)` (also `on_query_start`) returns the query when it is allowed, and with `'raise'` raises `GuardBlockError` (target `llamaindex:query`) when it is blocked; the other `on_block` values let the query through. `sanitize_response(response)` redacts credentials when `mask_secrets` is `True` and returns the clean value; call it yourself, it is not run automatically.
+### `ZnLlamaGuard(on_block='raise', mask_secrets=True, raise_on_violation=None, fallback=None)`
+- Query and response check for LlamaIndex. `check_query(query)` (also `on_query_start`) returns the query when it is allowed. When it is blocked, `'raise'` raises `GuardBlockError` (target `llamaindex:query`), `'return'` returns `fallback` (or the plain block message when `fallback` is `None`) in place of the query, and `'ignore'` lets the query through. `sanitize_response(response)` redacts credentials when `mask_secrets` is `True` and returns the clean value; call it yourself, it is not run automatically.
 - `on_block` accepts `'raise'` (default), `'return'` or `'ignore'`. `raise_on_violation` overrides it as `raise_on_injection` does above.
 
 ### `call_api(prompt, options=None, context=None) -> dict`
