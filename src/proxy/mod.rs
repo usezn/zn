@@ -22,6 +22,10 @@ use tracing::{error, info, warn};
 /// Maximum time to wait for a pong when checking a WebSocket connection.
 const WS_HEALTH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 
+/// How long `health_check` waits for a server whose connection is held by an
+/// in-flight request before reporting it as down.
+const HEALTH_SLOT_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Configuration for an MCP server
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct McpServerConfig {
@@ -466,15 +470,25 @@ impl McpPool {
     /// Check the health of all MCP connections.
     ///
     /// Connections are checked in parallel, so the call takes about as long as
-    /// the slowest server rather than the sum of all pings.
+    /// the slowest server rather than the sum of all pings. A server whose
+    /// connection is held by a request that does not finish within
+    /// `HEALTH_SLOT_WAIT` is reported as down (`false`) instead of making the
+    /// whole check wait for it.
     pub async fn health_check(&self) -> HashMap<String, bool> {
+        self.health_check_with(HEALTH_SLOT_WAIT).await
+    }
+
+    async fn health_check_with(&self, slot_wait: std::time::Duration) -> HashMap<String, bool> {
         let slots = self.snapshot_slots().await;
 
         let checks = slots.into_iter().map(|(name, slot)| async move {
-            let mut guard = slot.lock().await;
-            let alive = match guard.as_mut() {
-                Some(conn) => conn.is_alive().await,
-                None => false,
+            let alive = match tokio::time::timeout(slot_wait, slot.lock()).await {
+                Ok(mut guard) => match guard.as_mut() {
+                    Some(conn) => conn.is_alive().await,
+                    None => false,
+                },
+                // Slot still held by an in-flight request: do not wait for it.
+                Err(_) => false,
             };
             (name, alive)
         });
@@ -721,5 +735,40 @@ Content-Length: 0
         let pool = ws_pool(&[("never", addr)]);
         let status = pool.health_check().await;
         assert_eq!(status.get("never"), Some(&false));
+    }
+
+    #[tokio::test]
+    async fn health_check_does_not_wait_for_server_with_request_in_flight() {
+        // The stuck server reads the request and never answers.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let stuck = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            while ws.next().await.is_some() {}
+        });
+        let ok = slow_echo_server(std::time::Duration::ZERO, std::time::Duration::ZERO).await;
+        let pool = ws_pool(&[("stuck", stuck), ("ok", ok)]);
+        pool.send("ok", "{}", None).await.unwrap();
+
+        let stuck_pool = pool.clone();
+        let stuck_task = tokio::spawn(async move { stuck_pool.send("stuck", "{}", None).await });
+        // Let the request take the slot of the stuck server.
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+        let start = std::time::Instant::now();
+        let status = pool
+            .health_check_with(std::time::Duration::from_millis(300))
+            .await;
+        let elapsed = start.elapsed();
+        stuck_task.abort();
+
+        assert_eq!(status.get("ok"), Some(&true), "{:?}", status);
+        assert_eq!(status.get("stuck"), Some(&false), "{:?}", status);
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "health_check waited for the busy server: {:?}",
+            elapsed
+        );
     }
 }

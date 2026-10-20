@@ -458,6 +458,18 @@ _SKIP_MARKERS = {
 }
 
 
+# What a reported name is, for the reason shown to the user. A name that is not
+# listed is build output. Same words as packages/zn-gate/lib/prune.js.
+_SKIP_KINDS = {
+    "vendor": "dependencies",
+    ".idea": "editor settings",
+    ".venv": "virtual environment",
+    "venv": "virtual environment",
+    "__pycache__": "Python cache",
+    ".eggs": "Python build files",
+}
+
+
 def _prune_info(name: str, parent: str) -> Optional[Dict[str, Any]]:
     """None when the directory must be read, else {"silent": bool, "reason": str}."""
     marker = None
@@ -468,7 +480,7 @@ def _prune_info(name: str, parent: str) -> Optional[Dict[str, Any]]:
             return None
     if name in _SILENT_SKIP_DIRS:
         return {"silent": True, "reason": "skipped by name"}
-    reason = "skipped by name: " + ("dependencies" if name == "vendor" else "build output")
+    reason = "skipped by name: " + _SKIP_KINDS.get(name, "build output")
     if marker:
         reason += " next to " + marker
     return {"silent": False, "reason": reason}
@@ -599,7 +611,7 @@ def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_vio
     else:
         print(f"\n{_lead(SHIELD)}zn-gate Security Scanner — Scanned {scanned} files")
         if nothing:
-            print(f"{_lead(ALERT)}{nothing}")
+            print(f"{_lead(ALERT)}{_safe_text(nothing)}")
         if skipped:
             print(f"Not scanned ({len(skipped)}):")
             for s in skipped[:20]:
@@ -621,7 +633,7 @@ def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_vio
         print(f"{_lead(ALERT)}Found {leak_count} secrets and {other_count} threat vectors:\n")
         for v in all_violations:
             label = "Secret found" if v.get("type") == "secret_leak" else "Threat"
-            print(f"  {v['file']}:{v['line']} {label} [{v['rule']}] {v['reason']}")
+            print(f"  {_safe_text(v['file'])}:{v['line']} {label} [{v['rule']}] {v['reason']}")
             print(f"    Snippet: {v['content']}")
             if v.get("next_step"):
                 print(f"    {v['next_step']}")

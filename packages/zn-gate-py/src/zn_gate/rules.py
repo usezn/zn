@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-16.10
+RULES_VERSION: 2026-10-19.1
 Zero external dependencies. Pure Python stdlib.
 """
 
