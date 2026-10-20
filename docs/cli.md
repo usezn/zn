@@ -33,8 +33,10 @@ An option a command does not know is never ignored. The command prints what it d
 
 | Command | Unknown option | Option without its value | Same result as `--format json` |
 |---|---|---|---|
-| `scan`, `check` (`doctor`), `init`, `evidence` (`logs`, `export`) | exit `2` | exit `2` | `scan --json` |
+| `scan`, `check` (`doctor`), `init`, `status`, `evidence` (`logs`, `export`) | exit `2` | exit `2` | `scan --json` |
 | `audit`, `reach`, `report`, `stats` | exit `2` | exit `2` | `audit --json`, `reach --json`, `report --json`, `stats --json` |
+
+A value an option cannot use is refused the same way: `evidence --format` must be `jsonl` or `csv`, `--tail` a whole number above 0 and `--port` a whole number from 1 to 65535 (exit `2`, for `logs` and `export` too). `status` takes no options.
 
 `--name=value` works for every option that takes a value, and `--` ends the options (`zn-gate scan -- ./--odd-folder`). The Python package (`python -m zn_gate.cli`) behaves the same for `scan`, `evidence`, `stats`, `test` and `analyze`.
 
@@ -93,7 +95,7 @@ Exit codes: `0` every agent that is set up is protected. `1` an agent is not pro
 zn-gate status
 ```
 
-Shows the version, the rules version, whether the optional cloud check is on and where the API key comes from. Always exits `0`.
+Shows the version, the rules version, whether the optional cloud check is on and where the API key comes from. Exits `0`; an option it does not know (`status --json`) exits `2`.
 
 ### `test`
 

@@ -138,3 +138,32 @@ test('check splits --name=value and treats what follows -- as folders', () => {
   assert.match(check(['--cod'], spec).error, /did you mean --code\?/);
   assert.match(check(['--code=1'], spec).error, /--code does not take a value/);
 });
+
+// Values the command cannot use are refused too, instead of falling back to a default.
+const BAD_VALUES = [
+  [['evidence', '--format', 'xml'], 'zn-gate evidence: --format must be jsonl or csv'],
+  [['evidence', '--export', '--format=xml'], 'zn-gate evidence: --format must be jsonl or csv'],
+  [['export', '--format', 'xml'], 'zn-gate export: --format must be jsonl or csv'],
+  [['evidence', '--tail', 'abc'], 'zn-gate evidence: --tail must be a whole number above 0'],
+  [['logs', '--tail', '0'], 'zn-gate logs: --tail must be a whole number above 0'],
+  [['evidence', '--tail=-3'], 'zn-gate evidence: --tail must be a whole number above 0'],
+  [['evidence', '--tail', '2.5'], 'zn-gate evidence: --tail must be a whole number above 0'],
+  [['evidence', '--ui', '--port', '99999'], 'zn-gate evidence: --port must be a whole number from 1 to 65535'],
+  [['evidence', '--ui', '--port', 'abc'], 'zn-gate evidence: --port must be a whole number from 1 to 65535'],
+  [['status', '--json'], 'zn-gate status: unknown option --json'],
+];
+
+for (const [args, msg] of BAD_VALUES) {
+  test(`${args.join(' ')}: exit 2`, () => withHome((home) => {
+    const r = run(home, args);
+    assert.strictEqual(r.status, 2, r.stdout + r.stderr);
+    assert.ok((r.stdout + r.stderr).includes(msg), r.stdout + r.stderr);
+  }));
+}
+
+test('valid evidence values and a plain status still work', () => withHome((home) => {
+  for (const args of [['evidence', '--tail', '5'], ['evidence', '--format', 'CSV', '--export'], ['export', '--format=jsonl'], ['status']]) {
+    const r = run(home, args);
+    assert.strictEqual(r.status, 0, args.join(' ') + ': ' + r.stdout + r.stderr);
+  }
+}));

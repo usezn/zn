@@ -1,6 +1,8 @@
 ### Changed
 - An option a command does not know now stops it with exit code 2 and the closest option it does know (`zn-gate scan --jsn` prints `unknown option --jsn; did you mean --json?`), in `scan`, `check`, `init`, `evidence`, `report` and `stats`, as `audit` and `reach` already did. Before, such a command ran as if the option had not been given: `zn-gate scan proj --json` printed the text report and exited 1. A value option without its value, such as `scan --format`, is refused too, and `--name=value` now works for them.
 
+- `zn-gate evidence --format xml`, `--tail abc` (or `0`) and `--port 99999` now exit with code 2 and say what is accepted (also in `logs` and `export`); before, the default was used without a word. `zn-gate status --json` is refused as an unknown option.
+
 ### Added
 - `--json` is accepted as the same as `--format json` in `zn-gate scan` and `zn-gate audit`, as in `reach`, `report` and `stats`, in the npm and the Python package.
 

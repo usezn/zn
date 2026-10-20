@@ -66,6 +66,7 @@ const OPTION_SPECS = {
   scan: { flags: ['--code', '--all', '--include-home', '--json'], values: ['--format', '--include', '--exclude'] },
   check: {},
   doctor: {},
+  status: {},
   init: { flags: ['--wrap-mcp', '--dry-run', '--shadow', '--revert'] },
   evidence: EVIDENCE_OPTIONS,
   logs: EVIDENCE_OPTIONS,
@@ -1052,6 +1053,24 @@ ${ruleLine(process.env, 60)}\n`);
   }
 
   if (command === 'evidence' || command === 'logs' || command === 'export') {
+    // Values the command cannot use are refused here (exit 2), not replaced by a default.
+    const evidenceValues = {};
+    for (let i = 1; i < args.length; i++) {
+      if (['--format', '--tail', '--port'].includes(args[i])) evidenceValues[args[i]] = args[i + 1];
+    }
+    let evidenceError = null;
+    if ('--format' in evidenceValues && !['jsonl', 'csv'].includes(String(evidenceValues['--format']).toLowerCase())) {
+      evidenceError = '--format must be jsonl or csv';
+    } else if ('--tail' in evidenceValues && !(/^[0-9]+$/.test(evidenceValues['--tail']) && Number(evidenceValues['--tail']) > 0)) {
+      evidenceError = '--tail must be a whole number above 0';
+    } else if ('--port' in evidenceValues && !(/^[0-9]+$/.test(evidenceValues['--port']) && Number(evidenceValues['--port']) >= 1 && Number(evidenceValues['--port']) <= 65535)) {
+      evidenceError = '--port must be a whole number from 1 to 65535';
+    }
+    if (evidenceError) {
+      process.stderr.write('zn-gate ' + command + ': ' + evidenceError + "\nRun 'zn-gate --help' for usage.\n");
+      process.exitCode = 2;
+      return;
+    }
     if (command === 'export' || options.export) {
       const format = (options.format || 'jsonl').toLowerCase();
       const res = exportEvidenceLedger(EVIDENCE_FILE, format);
