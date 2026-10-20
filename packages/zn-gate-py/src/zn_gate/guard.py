@@ -9,7 +9,7 @@ import functools
 import inspect
 import os
 from collections.abc import Mapping
-from typing import Any, Callable, List, Optional, TypeVar, cast
+from typing import Any, Callable, List, Optional, Set, TypeVar, cast
 
 from .rules import Assessment, evaluate, scan_windows
 
@@ -44,7 +44,7 @@ class _NestingTooDeep(Exception):
     """Raised when a payload is nested deeper than the scanner is willing to walk."""
 
 
-def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[set] = None) -> List[str]:
+def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] = None) -> List[str]:
     """Recursively extract all strings from nested structures.
 
     Walks every Mapping (keys and values), list, tuple, set and frozenset, and
