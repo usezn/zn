@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-20.5';
+const POLICY_RULES_VERSION = '2026-10-20.48';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -37,10 +37,17 @@ const POLICY_RULES_VERSION = '2026-10-20.5';
 const HOME_VAR_RE = /^(?:\$\{?HOME\}?|\$env:(?:HOME|USERPROFILE)|%USERPROFILE%|%HOMEDRIVE%%HOMEPATH%)(?=$|[\\/])/i;
 const ZN_HOME_VAR_RE = /^(?:\$\{?ZN_HOME\}?|\$env:ZN_HOME|%ZN_HOME%)(?=$|[\\/])/i;
 
-function expandHome(p, home) {
+// Where zn keeps its state: ZN_HOME when the environment sets one, else ~/.zn.
+function znHomeDir(home, env) {
+  const v = env && typeof env.ZN_HOME === 'string' ? env.ZN_HOME.trim() : '';
+  if (!v || ZN_HOME_VAR_RE.test(v)) return path.join(home, '.zn');
+  return path.resolve(home, expandHome(v, home));
+}
+
+function expandHome(p, home, env) {
   if (p === '~') return home;
   if (p.startsWith('~/') || p.startsWith('~\\')) return path.join(home, p.slice(2));
-  if (ZN_HOME_VAR_RE.test(p)) return path.join(home, '.zn', p.replace(ZN_HOME_VAR_RE, ''));
+  if (ZN_HOME_VAR_RE.test(p)) return path.join(znHomeDir(home, env), p.replace(ZN_HOME_VAR_RE, ''));
   if (HOME_VAR_RE.test(p)) return path.join(home, p.replace(HOME_VAR_RE, ''));
   return p;
 }
@@ -134,7 +141,7 @@ function credentialEnvPaths(env, home, cwd) {
     if (!env[name]) continue;
     for (const raw of String(env[name]).split(path.delimiter)) {
       if (!raw.trim()) continue;
-      const abs = path.resolve(cwd, expandHome(raw.trim(), home));
+      const abs = path.resolve(cwd, expandHome(raw.trim(), home, env));
       for (const p of new Set([abs, realTargetOf(abs)])) (CRED_ENV_DIRS.has(name) ? dirs : files).add(keyOf(slash(p)));
     }
   }
@@ -169,7 +176,7 @@ function agentContext(home, cwd, env) {
   for (const root of [home, projectRootOf(cwd)]) {
     for (const r of rel) for (const k of keysOf(path.join(root, r))) dirs.add(k);
   }
-  const at = (p) => path.resolve(cwd, expandHome(p, home));
+  const at = (p) => path.resolve(cwd, expandHome(p, home, env));
   if (env.CODEX_HOME) for (const k of keysOf(at(env.CODEX_HOME))) dirs.add(k);
   // Claude Code keeps its settings here when the variable is set, and zn installs its hooks there.
   if (env.CLAUDE_CONFIG_DIR) for (const k of keysOf(at(env.CLAUDE_CONFIG_DIR))) dirs.add(k);
@@ -190,7 +197,8 @@ function contextOf(opts = {}) {
   const home = opts.home || os.homedir();
   const cwd = opts.cwd || process.cwd();
   const env = opts.env || process.env;
-  return { home, cwd, env, creds: credentialEnvPaths(env, home, cwd), agent: agentContext(home, cwd, env) };
+  const znHome = env.ZN_HOME ? keysOf(path.resolve(cwd, znHomeDir(home, env))) : [];
+  return { home, cwd, env, creds: credentialEnvPaths(env, home, cwd), agent: agentContext(home, cwd, env), znHome };
 }
 
 /**
@@ -199,6 +207,8 @@ function contextOf(opts = {}) {
 function classifyResolved(abs, ctx) {
   const { home, creds, agent } = ctx;
   const s = keyOf(slash(abs));
+  // A custom ZN_HOME (resolved, symlinks followed) is zn's state directory just like ~/.zn.
+  for (const z of ctx.znHome || []) if (s === z || s.startsWith(z + '/')) return { kind: 'zn_state', reason: 'zn keeps its vault and audit log in ZN_HOME' };
   const h = keyOf(slash(path.resolve(home)));
   if (s === h + '/.zn' || s.startsWith(h + '/.zn/')) return { kind: 'zn_state', reason: 'zn keeps its vault and audit log in ~/.zn' };
   for (const [re, reason] of AGENT_CONFIG_RES) if (ci(re).test(s)) return { kind: 'agent_config', reason };
@@ -226,7 +236,7 @@ function classifyResolved(abs, ctx) {
 function resolvedOf(p, opts = {}) {
   const home = opts.home || os.homedir();
   const cwd = opts.cwd || process.cwd();
-  return path.resolve(cwd, expandEnv(expandHome(p, home), opts.env || process.env).text);
+  return path.resolve(cwd, expandEnv(expandHome(p, home, opts.env || process.env), opts.env || process.env).text);
 }
 
 /**
@@ -261,7 +271,7 @@ function physicalDotDot(text, cwd) {
 function classifyPath(p, opts = {}) {
   if (typeof p !== 'string' || !p) return null;
   const ctx = contextOf(opts);
-  const expanded = expandEnv(expandHome(p, ctx.home), ctx.env);
+  const expanded = expandEnv(expandHome(p, ctx.home, ctx.env), ctx.env);
   if (expanded.credentialVar) {
     return { kind: 'credential', reason: 'the path comes from $' + expanded.credentialVar + ', which names a credential file' };
   }
@@ -496,7 +506,7 @@ function globClass(word, opts = {}) {
   let keyHit = null;
   const examples = [...GLOB_EXAMPLES.map((e) => path.join(ctx.home, e)), ...PROJECT_EXAMPLES.map((e) => path.join(ctx.cwd, e))];
   for (const alt of alts) {
-    const e = expandEnv(expandHome(alt, ctx.home), ctx.env);
+    const e = expandEnv(expandHome(alt, ctx.home, ctx.env), ctx.env);
     if (e.credentialVar) return { kind: 'credential', reason: 'a pattern built from $' + e.credentialVar };
     if (e.agentVar) return { kind: 'agent_config', reason: 'a pattern built from $' + e.agentVar };
     const abs = slash(path.resolve(ctx.cwd, e.text));
@@ -650,7 +660,7 @@ function keyFileGlobDenial(p, c, opts) {
   if (alts.length * p.length > GLOB_WORK_MAX) return credentialDenial(p, broad);
   for (const alt of alts) {
     if (overBudget(opts.budget, 1)) return TOO_SLOW_MESSAGE;
-    const abs = slash(path.resolve(opts.cwd || ctx.cwd, expandEnv(expandHome(alt, ctx.home), opts.env || ctx.env).text));
+    const abs = slash(path.resolve(opts.cwd || ctx.cwd, expandEnv(expandHome(alt, ctx.home, opts.env || ctx.env), opts.env || ctx.env).text));
     const hits = globOnDisk(abs, opts.budget);
     if (hits === 'too-slow') return TOO_SLOW_MESSAGE;
     if (hits === 'too-broad') return credentialDenial(p, broad);
@@ -1669,6 +1679,24 @@ const keychainLibName = (t) => {
   out.push(...joins);
   return out.some((x) => KEYCHAIN_LIB_NAME_RE.test(x.replace(KEYCHAIN_DOT_RE, '')));
 };
+// The vault client and daemon modules answer for secrets: loading them from a command is refused whatever it then calls
+// (resolve, listSecrets, exactValues...), by package path, by file path inside the installed package, or as a vault/ path.
+// The public API (require('zn-gate')) and the zn-gate commands do not name these files, so they stay allowed.
+const VAULT_LIB_NAME_RE = /zn-gate(?:@[A-Za-z0-9._+-]*){0,6}(?:[\/]+[0-9][A-Za-z0-9._+-]*)?[\/]+lib[\/]+vault[\/]+(?:client|daemon|store)(?![A-Za-z0-9_-])/i;
+const vaultLibName = (t) => {
+  const sh = keychainUnescape(t, KEYCHAIN_SH_ESC_RE);
+  const outs = [];
+  for (const b of sh === t ? [t] : [t, sh]) {
+    const c = b.replace(KEYCHAIN_CONCAT_RE, '');
+    outs.push(b, c, c.replace(KEYCHAIN_LIST_RE, '/'), c.replace(KEYCHAIN_LIST_RE, ''));
+  }
+  const all = [];
+  for (const u of outs) {
+    const j = u.replace(KEYCHAIN_SHELL_JOIN_RE, '');
+    all.push(u, keychainUnescape(j), keychainUnescape(j, KEYCHAIN_SH_ESC_RE));
+  }
+  return all.some((x) => VAULT_LIB_NAME_RE.test(x.replace(KEYCHAIN_DOT_RE, '')));
+};
 const KEYCHAIN_LIB_USE_RE = /(?:loadStoredKey|resolveApiKey|\b_native\b|CLOUD_SLOT|loadIdentity|storeIdentity|\banalyze\b|\bisCloudEnabled\b)/;
 
 /*
@@ -1711,6 +1739,7 @@ function keychainQuery(cmd, env) {
     if (KEYCHAIN_DUMP_RE.test(t) && KEYCHAIN_SECURITY_RE.test(t)) return true;
     if (KEYCHAIN_WORD_RE.test(t) && named(t)) return true;
     if (keychainLibName(t) && KEYCHAIN_LIB_LOAD_RE.test(t) && KEYCHAIN_LIB_USE_RE.test(t)) return true;
+    if (KEYCHAIN_LIB_LOAD_RE.test(t) && vaultLibName(t)) return true;
   }
   return false;
 }
@@ -2027,7 +2056,7 @@ function cdBasesOf(readings, opts) {
         t = x;
         break;
       }
-      const target = t === '-' ? '-' : expandEnv(expandHome(t, home), env).text;
+      const target = t === '-' ? '-' : expandEnv(expandHome(t, home, env), env).text;
       if (target === '-' || /[$`*?[{]/.test(target)) { unknown = true; continue; }
       const next = new Set(bases);
       for (const b of bases) {
@@ -2066,7 +2095,7 @@ function dotenvElsewhereDenial(text, opts, kind = 'dotenv') {
 function dotenvElsewhereOf(text, opts, kind = 'dotenv') {
   const home = opts.home || os.homedir();
   const env = opts.env || process.env;
-  const expanded = expandEnv(expandHome(text, home), env).text;
+  const expanded = expandEnv(expandHome(text, home, env), env).text;
   const missing = !fs.existsSync(resolvedOf(text, opts));
   // $DIR/.env with a variable zn does not know, or a path whose start is the output of another command
   // (`cat $(echo app)/.env` leaves the word /.env right after the closing bracket).
