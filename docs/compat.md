@@ -70,7 +70,7 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
 | `PermissionRequest` | Yes, deny only | Runs the same check as `PreToolUse` when Codex is about to ask you to approve a call. zn answers `deny` with its reason and never `allow`. Checked on 0.163.0 in the terminal UI: `codex exec` never asks for approval, so the event does not run there. |
 | `UserPromptSubmit` | Yes | Blocks a secret pasted into the prompt. Checked on 0.163.0. |
 | `SessionStart` | Yes, context only | Adds a short reminder for the model through `additionalContext`: zn protects `.env` files and the vault, and `zn run` runs a command that needs a secret. It checks nothing and never stops the session. Checked on 0.163.0: the reminder is in the first request the model gets. |
-| `Stop` | Yes, warn by default | Reviews the model's final answer for a secret value, or for a `__ZN_` placeholder that zn did not see earlier in the session. It warns with `systemMessage`, which you see and the model does not. It blocks, with a reason for the model to rewrite the answer, only with `"stopReview": "block"` under `hooks` in `~/.zn/config.json`; it never blocks when Codex is already continuing because of a Stop hook. Checked on 0.163.0: a secret value in the answer is warned about, or blocked once with `stopReview`. A placeholder zn did not see earlier is not caught on Codex, because Codex writes each answer to its session log more than once. |
+| `Stop` | Yes, warn by default | Reviews the model's final answer for a secret value, or for a `__ZN_` placeholder that zn did not see earlier in the session. It warns with `systemMessage`, which you see and the model does not. It blocks, with a reason for the model to rewrite the answer, only with `"stopReview": "block"` under `hooks` in `~/.zn/config.json`; it never blocks when Codex is already continuing because of a Stop hook. Codex 0.163.0 writes each final answer to its session log three times, so zn counts every copy of the answer before it decides that a placeholder is unseen. |
 | `SubagentStart` | Yes, context only | The same reminder, for a subagent the model starts with `spawn_agent`. Checked on 0.163.0 with the `multi_agent` feature on: the hook runs, the subagent's model gets the reminder, and the subagent's own tool calls go through zn's `PreToolUse` check (a read of `~/.aws/credentials` by the subagent was denied). Not checked: the `multi_agent_v2` tool. |
 | `SubagentStop` | No | Not used. |
 | `PreCompact` | No | Not used. |
@@ -134,7 +134,8 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
     per answer and never when the answer is already a continuation. Installs made before
     this change get the new hook when you update them (see [upgrading.md](upgrading.md)).
     To tell whether a placeholder came from a tool, zn reads the session transcript in
-    pieces of 256 KB and stops as soon as it finds the placeholder earlier in the session. A transcript larger than 64 MB is not read, so
+    pieces of 256 KB, counts every copy of the final answer (Codex writes it to the log three times) and finds out whether the placeholder
+    appears anywhere else. A transcript larger than 64 MB is not read, so
     that check is skipped for it. A final answer with nothing to report prints nothing and
     exits with code 0, which Codex reads as success. A problem inside zn while it checks an
     answer also exits with code 0 and prints a warning, never code 2, because code 2 would

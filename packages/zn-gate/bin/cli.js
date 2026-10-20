@@ -558,7 +558,7 @@ async function handleScan(targetPath, options) {
   }
   if (format === 'text') process.stdout.write(`
 ${sym(process.env, '🛡️', undefined, '  ')}zn-gate Static Security Audit
-Target  : ${resolved}
+Target  : ${safeText(resolved)}
 Scope   : ${options.includeCode ? 'All files (prompts + code)' : 'Prompt templates, docs, configs (use --code to scan source)'}
 Files   : ${files.length} file(s) queued for audit\n
 `);
@@ -729,12 +729,12 @@ Files   : ${files.length} file(s) queued for audit\n
     return;
   }
 
-  if (files.length - notRead === 0) process.stdout.write(`${sym(process.env, '!', col.yellow)}${col.yellow(nothingScanned)}\n\n`);
+  if (files.length - notRead === 0) process.stdout.write(`${sym(process.env, '!', col.yellow)}${col.yellow(safeText(nothingScanned))}\n\n`);
   if (findings.length > 0) {
     process.stdout.write(`Findings (${findings.length}):\n`);
     for (const f of findings) {
       const label = f.type === 'secret_leak' ? 'Secret found' : 'Threat';
-      process.stdout.write(`  ${sym(process.env, '✖', col.red)}${f.file}:${f.line} ${label}\n`);
+      process.stdout.write(`  ${sym(process.env, '✖', col.red)}${safeText(f.file)}:${f.line} ${label}\n`);
       process.stdout.write(`    ${col.gray('Rule:')} ${f.rule} (${f.reason || 'Security threat detected'})\n`);
       process.stdout.write(`    ${col.gray('Line:')} ${f.sample}\n`);
       if (f.next_step) process.stdout.write(`    ${f.next_step}\n`);

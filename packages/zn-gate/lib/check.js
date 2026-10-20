@@ -115,6 +115,12 @@ const AGENTS = [
     file: (a, o) => a.hooksFile(o), project: (dir) => path.join(dir, '.agents', 'hooks.json'),
     request: (dir, file) => ({ conversationId: 'zn-check', workspacePaths: [dir], toolCall: { name: 'view_file', args: { AbsolutePath: file } }, stepIdx: 0 }),
   },
+  {
+    id: 'gemini', name: 'Gemini CLI', event: 'BeforeTool', tool: 'read_file',
+    fix: 'run `zn hooks install gemini` in your own terminal',
+    file: (a, o) => a.settingsFile(o), project: (dir) => path.join(dir, '.gemini', 'settings.json'),
+    request: (dir, file) => ({ hook_event_name: 'BeforeTool', session_id: 'zn-check', cwd: dir, tool_name: 'read_file', tool_input: { file_path: file } }),
+  },
 ];
 
 function readJson(file) {
@@ -448,6 +454,25 @@ async function checkAgent(spec, ctx) {
       res.fix = 'delete that [hooks.state] entry, or turn zn\'s hook back on in `/hooks` in Codex, then run `zn-gate check` again';
     }
   }
+  if (spec.id === 'gemini' && installed && !res.problem) {
+    // hooksConfig.enabled false, or zn's hook named in hooksConfig.disabled, in the user, project or system settings.
+    let p = [];
+    try {
+      p = require('./agents/managed-policy').geminiPolicyWarnings({
+        files: [
+          { file: userFile, label: 'your Gemini CLI settings' },
+          { file: spec.project(ctx.cwd), label: 'this folder\'s Gemini CLI settings' },
+          { file: ctx.geminiSystemFile || adapter.systemSettingsFile(), label: 'the system Gemini CLI settings' },
+        ],
+      });
+    } catch (_) { p = []; }
+    for (const w of p.filter((x) => /^could not read/.test(x))) res.notes.push(oneLine(w, 300));
+    p = p.filter((x) => !/^could not read/.test(x));
+    if (p.length) {
+      res.problem = bare(oneLine(p[0], 300));
+      res.fix = 'change that Gemini CLI setting as it says, then run `zn-gate check` again';
+    }
+  }
   if (spec.id === 'codex' && installed && !res.problem) {
     // Codex runs every PreToolUse hook at the same time, each with the original call: another tool's hook can
     // change a call after zn checked it, or answer an approval prompt. zn cannot see what that hook does.
@@ -536,7 +561,7 @@ async function check(opts = {}) {
   const env = opts.env || process.env;
   const cwd = opts.cwd || process.cwd();
   if (opts.live === false) {
-    const ctx = { home, env, cwd, live: false, dir: cwd, codexPolicy: opts.codexPolicy, nodeVersion: opts.nodeVersion, hookNode: opts.hookNode, pluginNode: opts.pluginNode };
+    const ctx = { home, env, cwd, live: false, dir: cwd, codexPolicy: opts.codexPolicy, geminiSystemFile: opts.geminiSystemFile, nodeVersion: opts.nodeVersion, hookNode: opts.hookNode, pluginNode: opts.pluginNode };
     const results = [];
     for (const spec of AGENTS) {
       try {
@@ -548,7 +573,7 @@ async function check(opts = {}) {
     return { results, removed: true };
   }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-check-'));
-  const ctx = { home, env, cwd, live: true, dir, envFile: path.join(dir, '.env'), readme: path.join(dir, 'README.txt'), codexPolicy: opts.codexPolicy, nodeVersion: opts.nodeVersion, hookNode: opts.hookNode, pluginNode: opts.pluginNode };
+  const ctx = { home, env, cwd, live: true, dir, envFile: path.join(dir, '.env'), readme: path.join(dir, 'README.txt'), codexPolicy: opts.codexPolicy, geminiSystemFile: opts.geminiSystemFile, nodeVersion: opts.nodeVersion, hookNode: opts.hookNode, pluginNode: opts.pluginNode };
   const results = [];
   try {
     fs.writeFileSync(path.join(dir, '.gitignore'), '.env\n');
