@@ -76,9 +76,38 @@ function scanSecretRules(line) {
 function hasUtf16Bom(raw) {
   return raw.length >= 2 && ((raw[0] === 0xff && raw[1] === 0xfe) || (raw[0] === 0xfe && raw[1] === 0xff));
 }
+// UTF-16 without a byte order mark, told by its NUL bytes: text in Latin
+// scripts has a NUL in every second byte (the high byte of each character), at
+// odd positions for little-endian and even ones for big-endian. Returns 'le',
+// 'be', null for anything else, or 'unclear' when NULs sit at both parities.
+function utf16WithoutBom(raw) {
+  let sample = raw.subarray(0, BINARY_SNIFF);
+  sample = sample.subarray(0, sample.length - (sample.length % 2));
+  const pairs = sample.length / 2;
+  if (pairs < 2) return null;
+  let even = 0;
+  let odd = 0;
+  for (let i = 0; i < sample.length; i += 2) {
+    if (sample[i] === 0) even++;
+    if (sample[i + 1] === 0) odd++;
+  }
+  even /= pairs;
+  odd /= pairs;
+  for (const [high, low, order] of [[odd, even, 'le'], [even, odd, 'be']]) {
+    if (high >= 0.3) return low <= 0.05 ? order : 'unclear';
+  }
+  return null;
+}
+class UnclearEncoding extends Error {}
 function decodeScanText(raw) {
   if (raw.length >= 2 && raw[0] === 0xff && raw[1] === 0xfe) return raw.subarray(2, raw.length - (raw.length % 2)).toString('utf16le');
   if (raw.length >= 2 && raw[0] === 0xfe && raw[1] === 0xff) return Buffer.from(raw.subarray(2, raw.length - (raw.length % 2))).swap16().toString('utf16le');
+  const guess = utf16WithoutBom(raw);
+  if (guess === 'unclear') throw new UnclearEncoding();
+  if (guess) {
+    const even = raw.subarray(0, raw.length - (raw.length % 2));
+    return guess === 'le' ? even.toString('utf16le') : Buffer.from(even).swap16().toString('utf16le');
+  }
   return raw.toString('utf8');
 }
 
@@ -575,7 +604,7 @@ Files   : ${files.length} file(s) queued for audit\n
       }
       content = decodeScanText(raw);
     } catch (e) {
-      files.skipped.push({ file: filePath, reason: 'cannot be read' });
+      files.skipped.push({ file: filePath, reason: e instanceof UnclearEncoding ? 'unclear text encoding' : 'cannot be read' });
       notRead++;
       continue;
     }
