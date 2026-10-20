@@ -371,7 +371,9 @@ function cliHooks(spec, ctx, userFile, given) {
     } else {
       if (viaPath) out.notes.push('the Node.js zn was installed with is gone; the hook now runs `zn` from your PATH. Run `zn hooks install ' + spec.id + '` to set it up again');
       // Run it with the PATH check was given, which is what decides whether `zn` and `node` are found.
-      out.live = { file: cmd.launcher, args: [cmd.event], env: ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {} };
+      // Windows cannot run a .sh file directly; Claude Code runs it with sh (Git Bash) there.
+      const run = process.platform === 'win32' ? { file: 'sh', args: [cmd.launcher, cmd.event] } : { file: cmd.launcher, args: [cmd.event] };
+      out.live = { ...run, env: ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {} };
     }
   } else if (cmd.missing) {
     out.problem = 'its hook cannot start: ' + (fs.existsSync(cmd.node) ? 'its zn-gate files (' + cmd.runner + ')' : 'its Node.js (' + cmd.node + ')') + ' is no longer there';

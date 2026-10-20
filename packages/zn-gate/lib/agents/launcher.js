@@ -100,7 +100,7 @@ function unixScript(agentId, nodePath, runnerPath) {
     'ZN_OLDIFS=$IFS; IFS=:; ZN_SAFE=',
     'for ZN_D in $PATH; do case "$ZN_D" in /*) ZN_SAFE="${ZN_SAFE:+$ZN_SAFE:}$ZN_D" ;; esac; done',
     'IFS=$ZN_OLDIFS',
-    'ZN_CMD=$(PATH="$ZN_SAFE" command -v zn 2>/dev/null)',
+    'ZN_CMD=; [ -z "$ZN_SAFE" ] || ZN_CMD=$(PATH="$ZN_SAFE" command -v zn 2>/dev/null)',
     'case "$ZN_CMD" in /*) ;; *) ZN_CMD= ;; esac',
     'if [ -n "$ZN_CMD" ] && PATH="$ZN_SAFE" command -v node >/dev/null 2>&1; then exec "$ZN_CMD" hook ' + agentId + '; fi',
     'case "$ZN_EVENT" in',
