@@ -144,6 +144,99 @@ fn derive_key(passphrase: &str, salt: &[u8]) -> Result<[u8; 32]> {
     Ok(key)
 }
 
+/// Make sure the audit database and its `-wal`/`-shm` side files are private to
+/// the current user (Unix only).
+///
+/// The database holds the audit log and the tenant key hashes, and outside
+/// production it is not encrypted, so another local user must not be able to
+/// read it. A new file is created with mode 0600 before SQLite opens it (SQLite
+/// gives the `-wal` and `-shm` files the mode of the main file), and a missing
+/// parent directory is created with mode 0700. An existing file that is
+/// readable or writable by its group or by others is refused instead of being
+/// changed silently: fix it with `chmod 600` (and check who could read it).
+/// On Windows the files inherit the permissions of their directory and nothing
+/// is checked here.
+pub fn secure_db_file(db_path: &str) -> Result<()> {
+    if db_path.is_empty() || db_path == ":memory:" || db_path.starts_with("file:") {
+        return Ok(());
+    }
+    secure_db_file_impl(std::path::Path::new(db_path))
+}
+
+#[cfg(not(unix))]
+fn secure_db_file_impl(_path: &std::path::Path) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn secure_db_file_impl(path: &std::path::Path) -> Result<()> {
+    use std::io::ErrorKind;
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            std::fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(parent)
+                .map_err(|e| {
+                    anyhow!(
+                        "Failed to create audit database directory '{}': {}",
+                        parent.display(),
+                        e
+                    )
+                })?;
+        }
+    }
+
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+    {
+        Ok(_) => {}
+        Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
+        Err(e) => {
+            return Err(anyhow!(
+                "Failed to create audit database '{}': {}",
+                path.display(),
+                e
+            ))
+        }
+    }
+
+    let mut candidates = vec![path.to_path_buf()];
+    for suffix in ["-wal", "-shm"] {
+        let mut name = path.as_os_str().to_owned();
+        name.push(suffix);
+        candidates.push(name.into());
+    }
+    for file in candidates {
+        let meta = match std::fs::metadata(&file) {
+            Ok(m) => m,
+            Err(e) if e.kind() == ErrorKind::NotFound => continue,
+            Err(e) => {
+                return Err(anyhow!(
+                    "Cannot check permissions of '{}': {}",
+                    file.display(),
+                    e
+                ))
+            }
+        };
+        let mode = meta.permissions().mode() & 0o777;
+        if mode & 0o077 != 0 {
+            return Err(anyhow!(
+                "Refusing to open '{}': its permissions ({:o}) let other local users read the audit log. Run `chmod 600 {}` and try again.",
+                file.display(),
+                mode,
+                file.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Persistent storage for audit logs with built-in encryption support
 pub struct AuditVault {
     conn: Arc<Mutex<Connection>>,
@@ -157,6 +250,8 @@ impl AuditVault {
     /// Create a new AuditVault, initializing the database schema if needed
     pub fn new(db_path: &str, encryption_key: Option<&str>) -> Result<Self> {
         info!("Initializing AuditVault at: {}", db_path);
+
+        secure_db_file(db_path)?;
 
         let mut conn = Connection::open(db_path)
             .map_err(|e| anyhow!("Failed to open audit database '{}': {}", db_path, e))?;
@@ -871,6 +966,44 @@ fn migrate_v1_records(conn: &mut Connection, key_bytes: &[u8; 32]) -> Result<Mig
 mod tests {
     use super::*;
     use std::fs;
+
+    #[cfg(unix)]
+    #[test]
+    fn new_database_files_are_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("nested").join("data");
+        let path = sub.join("zn.db");
+        let path_str = path.to_str().unwrap();
+        let vault = AuditVault::new(path_str, None).expect("vault");
+        vault.count().unwrap();
+        let mode = |p: &std::path::Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(mode(&sub), 0o700);
+        for suffix in ["-wal", "-shm"] {
+            let side = std::path::PathBuf::from(format!("{}{}", path_str, suffix));
+            if side.exists() {
+                assert_eq!(mode(&side), 0o600, "{}", side.display());
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn world_readable_database_is_refused() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("zn.db");
+        let path_str = path.to_str().unwrap();
+        drop(AuditVault::new(path_str, None).expect("vault"));
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        let err = AuditVault::new(path_str, None).err().expect("must refuse");
+        assert!(err.to_string().contains("chmod 600"), "{}", err);
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+        assert!(AuditVault::new(path_str, None).is_err());
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(AuditVault::new(path_str, None).is_ok());
+    }
 
     fn temp_db_path() -> String {
         format!("test_audit_{}.db", Uuid::new_v4())

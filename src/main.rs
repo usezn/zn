@@ -108,9 +108,18 @@ struct Args {
     #[arg(long, short)]
     config: Option<String>,
 
-    /// API key for Management API authentication
-    #[arg(long)]
+    /// DEPRECATED: API key on the command line (visible to other local users
+    /// in the process list). Use ZN_API_KEY, --api-key-file or --api-key-stdin.
+    #[arg(long, conflicts_with_all = ["api_key_file", "api_key_stdin"])]
     api_key: Option<String>,
+
+    /// Read the Management API key from a file (must not be readable by group or others)
+    #[arg(long, value_name = "PATH", conflicts_with = "api_key_stdin")]
+    api_key_file: Option<PathBuf>,
+
+    /// Read the Management API key from the first line of stdin
+    #[arg(long, default_value_t = false)]
+    api_key_stdin: bool,
 
     /// Database path for audit logs
     #[arg(long)]
@@ -184,7 +193,10 @@ async fn main() -> Result<()> {
 
     // 3. Handle Commands
     match &args.command {
-        Some(Commands::Dashboard) => return tui::TuiApp::run(args.api_key.clone()).await,
+        Some(Commands::Dashboard) => {
+            let key = cli_api_key(&args)?;
+            return tui::TuiApp::run(key).await;
+        }
         Some(Commands::Start) => return start_proxy(args).await,
         Some(Commands::Shield { action }) => match action {
             ShieldAction::Scan => {
@@ -224,7 +236,8 @@ async fn main() -> Result<()> {
         Some(Commands::Mcp) => return run_mcp().await,
         None => {
             if args.dashboard {
-                return tui::TuiApp::run(args.api_key.clone()).await;
+                let key = cli_api_key(&args)?;
+                return tui::TuiApp::run(key).await;
             }
             if args.start {
                 start_proxy(args).await?;
@@ -240,6 +253,72 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// Resolve the Management API key given on the command line: `--api-key-file`,
+/// then `--api-key-stdin`, then the deprecated `--api-key`. `ZN_API_KEY` is read
+/// by the configuration and the dashboard on their own.
+fn cli_api_key(args: &Args) -> Result<Option<String>> {
+    resolve_cli_api_key(
+        args.api_key.as_deref(),
+        args.api_key_file.as_deref(),
+        args.api_key_stdin,
+        &mut std::io::stdin().lock(),
+        &mut std::io::stderr(),
+    )
+}
+
+fn resolve_cli_api_key(
+    flag: Option<&str>,
+    file: Option<&std::path::Path>,
+    from_stdin: bool,
+    stdin: &mut dyn std::io::BufRead,
+    warn: &mut dyn std::io::Write,
+) -> Result<Option<String>> {
+    if let Some(path) = file {
+        check_key_file_private(path)?;
+        let text = std::fs::read_to_string(path)
+            .map_err(|e| anyhow!("Cannot read --api-key-file '{}': {}", path.display(), e))?;
+        return Ok(Some(text.trim().to_string()));
+    }
+    if from_stdin {
+        let mut line = String::new();
+        stdin
+            .read_line(&mut line)
+            .map_err(|e| anyhow!("Cannot read the API key from stdin: {}", e))?;
+        return Ok(Some(line.trim().to_string()));
+    }
+    if let Some(key) = flag {
+        let _ = writeln!(
+            warn,
+            "WARNING: --api-key is deprecated and will be removed in a future release: the key is visible to every local user in the process list (ps, /proc/<pid>/cmdline). Use ZN_API_KEY, --api-key-file <path> or --api-key-stdin instead."
+        );
+        return Ok(Some(key.to_string()));
+    }
+    Ok(None)
+}
+
+/// Refuse a key file that group or others can read (Unix). On Windows the file
+/// inherits the permissions of its directory and is not checked.
+fn check_key_file_private(path: &std::path::Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let meta = std::fs::metadata(path)
+            .map_err(|e| anyhow!("Cannot read --api-key-file '{}': {}", path.display(), e))?;
+        let mode = meta.permissions().mode() & 0o777;
+        if mode & 0o077 != 0 {
+            return Err(anyhow!(
+                "Refusing --api-key-file '{}': its permissions ({:o}) let other local users read the key. Run `chmod 600 {}`.",
+                path.display(),
+                mode,
+                path.display()
+            ));
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
+}
+
 async fn start_proxy(args: Args) -> Result<()> {
     log::info("Initializing High-Performance Security Engine...")?;
 
@@ -250,7 +329,7 @@ async fn start_proxy(args: Args) -> Result<()> {
     if let Some(port) = args.port {
         zn_config.server.port = port;
     }
-    if let Some(api_key) = args.api_key {
+    if let Some(api_key) = cli_api_key(&args)? {
         zn_config.security.api_key = zn::config::normalize_credential(Some(api_key));
     }
     if let Some(db_path) = args.db_path {
@@ -2154,5 +2233,68 @@ mod gateway_hardening_tests {
         // The place the arguments came from must still be there; no arguments: nothing to rebuild.
         assert!(with_arguments(frame, "{}", ArgSource::Key("input")).is_none());
         assert!(with_arguments(frame, "{}", ArgSource::Missing).is_none());
+    }
+}
+
+#[cfg(test)]
+mod api_key_source_tests {
+    use super::resolve_cli_api_key;
+    use std::io::Cursor;
+
+    fn resolve(
+        flag: Option<&str>,
+        file: Option<&std::path::Path>,
+        stdin: Option<&str>,
+    ) -> (anyhow::Result<Option<String>>, String) {
+        let mut input = Cursor::new(stdin.unwrap_or("").as_bytes().to_vec());
+        let mut warn = Vec::new();
+        let r = resolve_cli_api_key(flag, file, stdin.is_some(), &mut input, &mut warn);
+        (r, String::from_utf8(warn).unwrap())
+    }
+
+    #[test]
+    fn env_var_is_the_default_source() {
+        // No CLI source: nothing is returned and ZN_API_KEY is left to the configuration.
+        let (r, warn) = resolve(None, None, None);
+        assert_eq!(r.unwrap(), None);
+        assert!(warn.is_empty());
+        assert_eq!(
+            zn::config::normalize_credential(Some("  env-key \n".into())).as_deref(),
+            Some("env-key")
+        );
+    }
+
+    #[test]
+    fn stdin_key_is_read_and_trimmed() {
+        let (r, warn) = resolve(None, None, Some("  from-stdin  \nignored\n"));
+        assert_eq!(r.unwrap().as_deref(), Some("from-stdin"));
+        assert!(warn.is_empty());
+    }
+
+    #[test]
+    fn deprecated_flag_warns_loudly() {
+        let (r, warn) = resolve(Some("flag-key"), None, None);
+        assert_eq!(r.unwrap().as_deref(), Some("flag-key"));
+        assert!(
+            warn.contains("WARNING") && warn.contains("deprecated"),
+            "{warn}"
+        );
+        assert!(!warn.contains("flag-key"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn key_file_must_be_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("key");
+        std::fs::write(&path, "file-key\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let (r, _) = resolve(None, Some(&path), None);
+        assert!(r.unwrap_err().to_string().contains("chmod 600"));
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let (r, warn) = resolve(None, Some(&path), None);
+        assert_eq!(r.unwrap().as_deref(), Some("file-key"));
+        assert!(warn.is_empty());
     }
 }

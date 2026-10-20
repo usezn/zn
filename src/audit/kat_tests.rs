@@ -35,6 +35,12 @@ fn vault_uses_stored_salt_to_derive_the_pinned_key() {
         )
         .unwrap();
     }
+    // A database written by an older version has the default umask mode.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
     let vault = AuditVault::new(&path, Some(PASSPHRASE)).unwrap();
     let key = vault.encryption_key.expect("encryption key present");
     assert_eq!(hex::encode(key), EXPECTED_KEY_HEX);

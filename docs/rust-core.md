@@ -6,6 +6,10 @@ It is **experimental** and **not distributed**: nothing you install with `npx zn
 
 The Rust gateway reads `ZN_API_KEY` as the key for its own management API. It never contacts `api.usezn.com`.
 
+Give the key to the gateway (and to `zn dashboard`) with `ZN_API_KEY`, with `--api-key-file <path>` (the file must not be readable by group or others, or the gateway refuses to start; on Windows the file is not checked), or with `--api-key-stdin` (first line of stdin). The old `--api-key <key>` flag still works for now but is deprecated and prints a warning on stderr: a key on the command line is visible to every local user in the process list. It will be removed in a future release.
+
+The audit database (`zn.db` by default) holds the audit log and the tenant key hashes, so on Unix it is created with mode 0600, its `-wal` and `-shm` files get the same mode, and a missing parent directory is created with mode 0700. If the database or one of those files already exists and group or others can read or write it, the gateway refuses to open it; run `chmod 600` on it. On Windows the files inherit the permissions of their directory and are not checked.
+
 On first start, with an empty database, the gateway seeds a default organisation with a super-admin key: `ZN_API_KEY` if it is set, otherwise a random key. A random key is written to `zn-superadmin-key.txt` next to the audit database (`zn.db` by default), readable only by your user (mode 0600 on Unix; on Windows the file inherits the permissions of its directory). Copy it somewhere safe, then delete the file. The key is never printed, so it does not end up in terminal scrollback or container logs; earlier versions printed a generated key to stdout. If the file cannot be written, the gateway does not start and seeds nothing.
 
 > For agent protection (Claude Code, Codex CLI, Cursor, OpenCode, LangChain, CrewAI), use `zn-gate` (Node.js) or `zn-gate` on PyPI (Python). They need no compilation.
