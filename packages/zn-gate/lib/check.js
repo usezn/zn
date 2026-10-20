@@ -30,13 +30,14 @@ const FAKE_LINE = 'ZN_CHECK_EXAMPLE_KEY=zn-check-fake-value-not-a-real-key\n';
 const HOOK_TIMEOUT_MS = 15000;
 const PLUGIN_ID = 'zn-gate@usezn';
 
-/* The zn-gate Claude Code plugin needs Node.js 20.12 or later; zn-gate itself runs on 18 and later.
+/* The zn-gate Claude Code plugin needs Node.js 20.19 or later; zn-gate itself runs on 18 and later.
    This is the one place that says which version; the messages below and in init are built from it. */
-const PLUGIN_NODE_MIN = '20.12';
+const PLUGIN_NODE_MIN = '20.19';
 function pluginNodeOk(version) {
   const [major, minor] = String(version || process.versions.node).split('.').map((x) => parseInt(x, 10) || 0);
-  // The loader constant the plugin needs arrives in Node.js 20.12 and in 21.7.
-  return major > 21 || (major === 21 && minor >= 7) || (major === 20 && minor >= 12);
+  // The plugin loads zn-gate through a loader constant that arrives in Node.js 20.12 and 21.7, and its locked
+  // dependencies (@noble/*) declare Node.js 20.19 or later, so the floor on the 20 line is 20.19.
+  return major > 21 || (major === 21 && minor >= 7) || (major === 20 && minor >= 19);
 }
 function pluginNodeMessage(version) {
   return 'the zn-gate plugin needs Node.js ' + PLUGIN_NODE_MIN + ' or later (you have ' + String(version || process.versions.node) + ')';
