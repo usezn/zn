@@ -405,6 +405,7 @@ Runnable examples are in [`examples/`](examples/). The code API checks text for 
 | [`openai-agents-sdk`](examples/openai-agents-sdk) | Python | OpenAI Agents SDK | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
 | [`pydantic-ai-agent`](examples/pydantic-ai-agent) | Python | Pydantic AI | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
 | [`google-adk-agent`](examples/google-adk-agent) | Python | Google ADK | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`langchain-js`](examples/langchain-js) | JavaScript | LangChain.js / LangGraph.js | Block a dangerous tool call and scrub what a tool returns before the model reads it. |
 | [`promptfoo`](examples/promptfoo) | YAML | Promptfoo | Run a deterministic guardrail suite with Promptfoo. |
 | [`github-action`](examples/github-action) | YAML | GitHub Actions | Scan agent prompts and configs in pull requests with the GitHub Action. |
 

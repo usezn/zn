@@ -307,6 +307,10 @@ Some other patterns also appear in ordinary text, such as `system:` keys in YAML
 
 To block those too, turn on strict mode: set `ZN_STRICT=1`, or add `"strict": true` to `zn.config.json` in your project (or a line `strict` in `.znrules`).
 
+## Examples
+
+Runnable examples, including [LangChain.js and LangGraph.js](https://github.com/usezn/zn/tree/main/examples/langchain-js) (block a dangerous tool call, scrub the output), are in [`examples/`](https://github.com/usezn/zn/tree/main/examples).
+
 ## FAQ
 
 **Do I need an account or API key?** No. Everything local works without one.
