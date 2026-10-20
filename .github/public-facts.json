@@ -60,6 +60,14 @@
         "regex": "^zn-gate==(\\S+)$"
       },
       {
+        "file": "examples/openai-agents-js/package.json",
+        "json": "dependencies.zn-gate"
+      },
+      {
+        "file": "examples/langchain-js/package.json",
+        "json": "dependencies.zn-gate"
+      },
+      {
         "file": "examples/mastra-agent/package.json",
         "json": "dependencies.zn-gate"
       }
