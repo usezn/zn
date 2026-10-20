@@ -35,7 +35,7 @@ export interface GuardEngineOptions {
 export type GuardOnBlock = 'throw' | 'return';
 
 export interface GuardToolOptions<Fallback = never> extends GuardEngineOptions {
-  /** Tool name used in messages. Default: the function's name, or "anonymous". */
+  /** Tool name used in messages. Default: the function's name (an empty string for an anonymous function; messages then say "anonymous"). */
   name?: string;
   /** 'throw' (default) raises GuardBlockError; 'return' returns `fallback`, or the assessment when no fallback is given. */
   onBlock?: GuardOnBlock;

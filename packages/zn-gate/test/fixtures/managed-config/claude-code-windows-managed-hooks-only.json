@@ -7,7 +7,8 @@
           {
             "type": "command",
             "command": "zn hook claude-code",
-            "timeout": 15
+            "timeout": 15,
+            "onFailure": "block"
           }
         ]
       }

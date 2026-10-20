@@ -296,7 +296,8 @@ function stripOurs(groups) {
 function ourHooks(command) {
   const h = { type: 'command', command, timeout: HOOK_TIMEOUT_S };
   return {
-    PreToolUse: { matcher: PRE_MATCHER, hooks: [h] },
+    // Like the prompt hooks below: if the hook cannot start or times out, the call is blocked, not run unchecked.
+    PreToolUse: { matcher: PRE_MATCHER, hooks: [{ ...h, onFailure: 'block' }] },
     PostToolUse: { matcher: POST_MATCHER, hooks: [h] },
     // A prompt hook that cannot start or times out blocks the prompt
     // (Claude Code 2.1.295 and later; earlier versions ignore the field).
