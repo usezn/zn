@@ -106,11 +106,13 @@ test('tools/call with an unknown tool name is -32601', async (t) => {
   assert.match(r.error.message, /secrets_get/);
 });
 
-test('analyze_prompt with a missing or non-string text analyzes an empty string instead of failing', async (t) => {
+test('analyze_prompt without text is a tool error; a non-string text is analyzed as empty', async (t) => {
   const g = startGate(t);
   const a = await g.call({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'analyze_prompt' } });
   assert.ok(a.result, JSON.stringify(a));
-  assert.equal(a.result.isError, false);
+  assert.equal(a.result.isError, true);
+  assert.equal(textOf(a).error, 'ZN_BAD_ARGUMENTS');
+  assert.match(textOf(a).message, /text/);
   const b = await g.call(toolCall(2, 'analyze_prompt', { text: 12345 }));
   assert.equal(b.result.isError, false);
   assert.equal(typeof textOf(b).verdict, 'string');
@@ -131,23 +133,26 @@ test('check_tool_call walks nested objects and arrays and redacts a fake key ins
   assert.ok(!JSON.stringify(out.sanitized_arguments).includes(fakeKey));
 });
 
-test('check_tool_call without a tool name or arguments reports "unknown" and is safe', async (t) => {
+test('check_tool_call without a tool name or arguments is a tool error, never a safe verdict', async (t) => {
   const g = startGate(t);
   const r = await g.call(toolCall(1, 'check_tool_call', {}));
-  const out = textOf(r);
-  assert.equal(out.tool_name, 'unknown');
-  assert.equal(out.safe_to_execute, true);
-  assert.equal(r.result.isError, false);
-  assert.equal(out.secrets_redacted, 0);
+  assert.equal(r.result.isError, true);
+  assert.equal(textOf(r).error, 'ZN_BAD_ARGUMENTS');
+  assert.match(textOf(r).message, /tool_name, arguments/);
+  assert.equal(textOf(r).safe_to_execute, undefined);
+  const ok = await g.call(toolCall(2, 'check_tool_call', { tool_name: 'noop', arguments: {} }));
+  assert.equal(textOf(ok).safe_to_execute, true);
 });
 
-test('check_tool_result takes structured content, and missing content counts as empty', async (t) => {
+test('check_tool_result takes structured content; missing content is a tool error, empty content is checked', async (t) => {
   const g = startGate(t);
   const a = await g.call(toolCall(1, 'check_tool_result', { tool_name: 'read_file', content: { lines: ['hello', 'world'], n: 2 } }));
   assert.equal(textOf(a).safe_to_ingest, true);
   const b = await g.call(toolCall(2, 'check_tool_result', {}));
-  assert.equal(textOf(b).safe_to_ingest, true);
-  assert.equal(b.result.isError, false);
+  assert.equal(b.result.isError, true);
+  assert.equal(textOf(b).error, 'ZN_BAD_ARGUMENTS');
+  const c = await g.call(toolCall(3, 'check_tool_result', { tool_name: 'read_file', content: '' }));
+  assert.equal(textOf(c).safe_to_ingest, true, 'an empty output is a value');
 });
 
 test('zn_status says local-only with no cloud and no network endpoint', async (t) => {

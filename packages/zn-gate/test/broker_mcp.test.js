@@ -415,3 +415,18 @@ test('secrets_render_file: an organization deny blocks, a warn rule writes and s
   const uses = warnVault.auditLog.filter((e) => e.secret === 'NPM_TOKEN' && e.tool === 'mcp:secrets_render_file');
   assert.deepEqual(uses.map((e) => [e.decision, e.reason]), [['warn', 'policy:warn']]);
 });
+
+test('tools/call with a missing required argument is a tool error naming it; method defaults to GET', async () => {
+  const srv = createSecretsServer({ vault: await vaultWith(), engine: fakeEngine });
+  const req = await call(srv, 'secrets_request', { name: 'STRIPE_API_KEY' });
+  assert.equal(req.isError, true);
+  assert.equal(req.data.error, 'ZN_BAD_ARGUMENTS');
+  assert.match(req.data.message, /reason/);
+  const render = await call(srv, 'secrets_render_file', {});
+  assert.match(render.data.message, /template, out/);
+  const http = TOOLS.find((t) => t.name === 'secrets_http_request');
+  assert.deepEqual(http.inputSchema.required, ['url']);
+  assert.match(http.inputSchema.properties.method.description, /Default GET/);
+  const noUrl = await call(srv, 'secrets_http_request', { method: 'GET' });
+  assert.equal(noUrl.data.error, 'ZN_BAD_ARGUMENTS');
+});

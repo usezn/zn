@@ -64,12 +64,12 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        method: { type: 'string', description: 'HTTP method, e.g. GET, POST, PATCH, DELETE.' },
+        method: { type: 'string', description: 'HTTP method, e.g. GET, POST, PATCH, DELETE. Default GET.' },
         url: { type: 'string', description: 'Absolute https:// URL (http:// only for localhost).' },
         headers: { type: 'object', additionalProperties: { type: 'string' }, description: 'Request headers; values may contain __ZN_<NAME>__ markers.' },
         body: { type: 'string', description: 'Request body as text (JSON must be serialized); may contain markers.' },
       },
-      required: ['method', 'url'],
+      required: ['url'],
     },
   },
   {
@@ -555,6 +555,8 @@ function createSecretsServer(opts = {}) {
         return ok({ tools: proto.toolsForVersion(TOOLS, negotiated) });
       case 'tools/call': {
         if (!params || typeof params.name !== 'string') return fail(-32602, 'Invalid params: name is required');
+        const missing = proto.missingArguments(TOOLS, params.name, params.arguments);
+        if (missing.length) return ok(textResult({ error: 'ZN_BAD_ARGUMENTS', message: 'Missing required argument(s): ' + missing.join(', ') }, true));
         const result = await callTool(params.name, params.arguments || {});
         if (!result) return fail(proto.unknownToolCode(negotiated), "Tool '" + params.name + "' not found. " + NO_GET);
         return ok(result);

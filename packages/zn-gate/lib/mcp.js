@@ -166,6 +166,13 @@ async function handleRequest(message, options) {
 
       const toolName = params.name;
       const args = params.arguments || {};
+      const missing = proto.missingArguments(toolsFor(options), toolName, args);
+      if (missing.length) {
+        return sendResult(id, {
+          isError: true,
+          content: [{ type: 'text', text: JSON.stringify({ error: 'ZN_BAD_ARGUMENTS', message: 'Missing required argument(s): ' + missing.join(', ') }) }],
+        });
+      }
 
       if (toolName === 'analyze_prompt') {
         const text = typeof args.text === 'string' ? args.text : '';

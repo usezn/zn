@@ -40,9 +40,21 @@ function toolsForVersion(tools, version) {
   });
 }
 
+/**
+ * Names in the tool's inputSchema.required that the call leaves out (undefined or null; an empty string is a value), or [] when
+ * the tool is unknown. A call with missing arguments is answered with a tool error, so the model can correct it.
+ */
+function missingArguments(tools, name, args) {
+  const t = tools.find((x) => x.name === name);
+  const req = (t && t.inputSchema && t.inputSchema.required) || [];
+  const a = args && typeof args === 'object' ? args : {};
+  return req.filter((k) => a[k] === undefined || a[k] === null);
+}
+
 const BATCH_REJECTED = { code: -32600, message: 'Invalid Request: JSON-RPC batches are not supported from MCP 2025-06-18' };
 
 module.exports = {
+  missingArguments,
   SUPPORTED_PROTOCOL_VERSIONS,
   LATEST_PROTOCOL_VERSION,
   negotiateProtocolVersion,
