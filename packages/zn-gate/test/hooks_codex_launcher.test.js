@@ -131,7 +131,7 @@ test('codex uninstall removes the launcher; a project install writes none', { sk
 test('codex windows command: a path that needs escaping keeps the plain command', () => {
   assert.equal(launcher.windowsScript('codex', 'PreToolUse', "C:/it's/node.exe", 'C:/x/runner.js'), null);
   const s = launcher.windowsScript('codex', 'PreToolUse', 'C:/node/node.exe', 'C:/z/zn-gate/lib/hooks/runner.js');
-  assert.match(s, /^if \(\(Test-Path -LiteralPath 'C:\/node\/node\.exe'\)/);
+  assert.match(s, /^\$ProgressPreference='SilentlyContinue'; \$zt=0; if \(\(Test-Path -LiteralPath 'C:\/node\/node\.exe'\)/);
   assert.match(s, /exit 2 # zn hook codex$/);
   assert.match(launcher.windowsScript('codex', 'Stop', 'C:/node/node.exe', 'C:/r.js'), /systemMessage.*exit 0 # zn hook codex$/);
 });

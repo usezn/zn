@@ -57,7 +57,15 @@ const FIX = 'run `npm install -g zn-gate` and then `zn hooks install codex` in y
 
 function reasonText(agentId) {
   return 'zn: its hook cannot start because the Node.js or the zn-gate files it was installed with are gone, so this was blocked. Ask the user to ' +
-    FIX.replace('codex', agentId) + '.';
+    FIX.replace('codex', agentId).replace('in your own terminal', 'in their terminal') + '.';
+}
+
+function crashText(agentId) {
+  return 'zn: its hook failed, so this was blocked. Ask the user to run `zn-gate check` in their terminal to see why.';
+}
+
+function crashWarnText() {
+  return 'zn is NOT protecting this session: its hook failed. Please run `zn-gate check` in your own terminal to see why.';
 }
 
 function warnText(agentId) {
@@ -88,6 +96,10 @@ function unixScript(agentId, nodePath, runnerPath) {
   const warn = warnText(agentId);
   const exitEvents = [...blockExit(agentId)];
   const jsonEvents = [...blockJson(agentId)];
+  const crash = crashText(agentId);
+  const crashWarn = crashWarnText();
+  const pick = (ifRan, ifGone) => 'if [ -n "$ZN_RAN" ]; then ' + ifRan + '; else ' + ifGone + '; fi';
+  const deny = (r) => 'printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: r } } }));
   return [
     '#!/bin/sh',
     '# Written by `zn hooks install ' + agentId + '`; replaced on every install. Do not edit.',
@@ -95,27 +107,29 @@ function unixScript(agentId, nodePath, runnerPath) {
     'ZN_EVENT="${1:-}"',
     'ZN_NODE=' + shQuote(nodePath),
     'ZN_RUNNER=' + shQuote(runnerPath),
-    'if [ -x "$ZN_NODE" ] && [ -f "$ZN_RUNNER" ]; then exec "$ZN_NODE" "$ZN_RUNNER" ' + agentId + '; fi',
+    '# Exit codes other than 0 (done) and 2 (blocked) are failures: they fall through to the block below.',
+    'ZN_RAN=',
+    'if [ -x "$ZN_NODE" ] && [ -f "$ZN_RUNNER" ]; then ZN_RAN=1; "$ZN_NODE" "$ZN_RUNNER" ' + agentId + '; ZN_RC=$?; case $ZN_RC in 0|2) exit $ZN_RC ;; esac; fi',
     '# Look up zn and node only in absolute PATH entries: a relative one depends on the folder the agent runs in.',
     'ZN_OLDIFS=$IFS; IFS=:; ZN_SAFE=',
     'for ZN_D in $PATH; do case "$ZN_D" in /*) ZN_SAFE="${ZN_SAFE:+$ZN_SAFE:}$ZN_D" ;; esac; done',
     'IFS=$ZN_OLDIFS',
     'ZN_CMD=; [ -z "$ZN_SAFE" ] || ZN_CMD=$(PATH="$ZN_SAFE" command -v zn 2>/dev/null)',
     'case "$ZN_CMD" in /*) ;; *) ZN_CMD= ;; esac',
-    'if [ -n "$ZN_CMD" ] && PATH="$ZN_SAFE" command -v node >/dev/null 2>&1; then exec "$ZN_CMD" hook ' + agentId + '; fi',
+    'if [ -z "$ZN_RAN" ] && [ -n "$ZN_CMD" ] && PATH="$ZN_SAFE" command -v node >/dev/null 2>&1; then ZN_RAN=1; "$ZN_CMD" hook ' + agentId + '; ZN_RC=$?; case $ZN_RC in 0|2) exit $ZN_RC ;; esac; fi',
     'case "$ZN_EVENT" in',
     '  ' + exitEvents.join('|') + ')',
-    '    printf ' + shQuote('%s\\n') + ' ' + shQuote(reason) + ' >&2',
+    '    ' + pick('printf ' + shQuote('%s\\n') + ' ' + shQuote(crash) + ' >&2', 'printf ' + shQuote('%s\\n') + ' ' + shQuote(reason) + ' >&2'),
     '    exit 2 ;;',
     ...(jsonEvents.length ? [
       '  ' + jsonEvents.join('|') + ')',
-      '    printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: reason } } })) + '',
+      '    ' + pick(deny(crash), deny(reason)),
       '    exit 0 ;;',
     ] : []),
     '  *)',
     WARN_STDERR.has(agentId)
-      ? '    printf ' + shQuote('%s\\n') + ' ' + shQuote(warn) + ' >&2'
-      : '    printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify({ systemMessage: warn })) + '',
+      ? '    ' + pick('printf ' + shQuote('%s\\n') + ' ' + shQuote(crashWarn) + ' >&2', 'printf ' + shQuote('%s\\n') + ' ' + shQuote(warn) + ' >&2')
+      : '    ' + pick('printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify({ systemMessage: crashWarn })), 'printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify({ systemMessage: warn }))),
     '    exit 0 ;;',
     'esac',
     '',
@@ -151,13 +165,24 @@ function windowsScript(agentId, event, nodePath, runnerPath) {
   const r = portablePath(runnerPath, 'win32');
   if (/['‘’‚‛\u0000-\u001f]/.test(n + r)) return null;
   const reason = reasonText(agentId);
+  const DENY_JSON = {
+    cursor: (r) => ({ permission: 'deny', continue: false, user_message: r, agent_message: r }),
+    gemini: (r) => ({ decision: 'deny', reason: r }),
+  };
   let tail;
-  if (blockExit(agentId).has(event)) tail = "[Console]::Error.WriteLine('" + reason + "'); exit 2";
+  if (blockExit(agentId).has(event)) {
+    // PowerShell inside PowerShell (Cursor) turns a nested exit 2 into 1, so the deny is also printed on stdout.
+    const out = DENY_JSON[agentId] ? "[Console]::Out.WriteLine('" + JSON.stringify(DENY_JSON[agentId](reason)) + "'); " : '';
+    tail = out + "[Console]::Error.WriteLine('" + reason + "'); exit 2";
+  }
   else if (blockJson(agentId).has(event)) tail = "[Console]::Out.WriteLine('" + JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: reason } } }) + "'); exit 0";
   else if (WARN_STDERR.has(agentId)) tail = "[Console]::Error.WriteLine('" + warnText(agentId) + "'); exit 0";
   else tail = "[Console]::Out.WriteLine('" + JSON.stringify({ systemMessage: warnText(agentId) }) + "'); exit 0";
-  return "if ((Test-Path -LiteralPath '" + n + "') -and (Test-Path -LiteralPath '" + r + "')) { & '" + n + "' '" + r + "' " + agentId + '; exit $LASTEXITCODE }; ' +
-    "if ((Get-Command zn -ErrorAction SilentlyContinue) -and (Get-Command node -ErrorAction SilentlyContinue)) { & zn hook " + agentId + '; exit $LASTEXITCODE }; ' +
+  // Only 0 (done) and 2 (blocked) leave early: a crash, an empty $LASTEXITCODE (a script the execution policy
+  // refused) or any other code falls through to the block. zn.cmd, not zn.ps1, which Restricted refuses to run.
+  return "$ProgressPreference='SilentlyContinue'; $zt=0; " +
+    "if ((Test-Path -LiteralPath '" + n + "') -and (Test-Path -LiteralPath '" + r + "')) { $zt=1; & '" + n + "' '" + r + "' " + agentId + '; if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 2) { exit $LASTEXITCODE } }; ' +
+    "if (($zt -eq 0) -and (Get-Command zn.cmd -CommandType Application -ErrorAction SilentlyContinue) -and (Get-Command node -ErrorAction SilentlyContinue)) { & zn.cmd hook " + agentId + '; if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 2) { exit $LASTEXITCODE } }; ' +
     tail + ' # zn hook ' + agentId;
 }
 

@@ -3,3 +3,4 @@
 
 ### Fixed
 - `zn-gate check` now reports a Cursor or Gemini CLI hook whose Node.js, zn-gate files or launcher script are gone, and says to run `npm install -g zn-gate` and `zn hooks install <agent>`.
+- The hook launchers also block when the hook starts and then fails (a crash or a broken install): only exit codes 0 and 2 pass through. On Windows they call `zn.cmd` (the PowerShell `zn.ps1` shim can be refused by the execution policy), and the Cursor and Gemini CLI hooks print their documented deny answer as well as exiting with code 2, because a nested PowerShell turns exit code 2 into 1.

@@ -146,3 +146,45 @@ test('antigravity: no launcher (the docs say nothing about hook failures); check
   assert.match(r.problem, /its hook cannot start/);
   assert.equal(r.fix, reinstall('antigravity'));
 });
+
+test('a hook that starts and then fails is blocked, not passed through, and zn on PATH is not tried after it', { skip: !posix }, (t) => {
+  const broken = path.join(tempDir(t, 'zn-b96-broken-'), 'runner.js');
+  fs.writeFileSync(broken, "throw new Error('broken install');\n");
+  const bin = tempDir(t, 'zn-b96-bin2-');
+  const mark = path.join(bin, 'zn-ran');
+  fs.symlinkSync(process.execPath, path.join(bin, 'node'));
+  fs.writeFileSync(path.join(bin, 'zn'), '#!/bin/sh\ntouch ' + JSON.stringify(mark) + '\nexit 0\n', { mode: 0o755 });
+  for (const [id, block, warn] of [['gemini', 'BeforeTool', null], ['cursor', 'beforeShellExecution', 'postToolUse']]) {
+    const home = tempDir(t, 'zn-b96-crash-');
+    const env = { HOME: home, ZN_HOME: path.join(home, '.zn'), PATH: process.env.PATH };
+    getAdapter(id).install({ env, home, nodePath: process.execPath, runnerPath: broken, mcp: false });
+    const file = launcher.launcherFile(id, { env, home });
+    const r = run(file, block, bin);
+    assert.equal(r.status, 2, id + ' ' + block + ': ' + r.stderr);
+    assert.match(r.stderr, /its hook failed, so this was blocked.*zn-gate check/);
+    assert.equal(fs.existsSync(mark), false, 'zn on PATH must not run after the recorded hook failed');
+    if (warn) {
+      const w = run(file, warn, bin);
+      assert.equal(w.status, 0);
+      assert.match(w.stderr, /its hook failed/);
+    }
+  }
+});
+
+test('windows: cursor and gemini also print their deny JSON, call zn.cmd and leave early only on 0 or 2', (t) => {
+  const { windowsCommandScript } = require('../lib/shell-quote');
+  for (const [id, ev, deny] of [['cursor', 'beforeShellExecution', '"permission":"deny"'], ['gemini', 'BeforeTool', '"decision":"deny"']]) {
+    const home = tempDir(t, 'zn-b96-win2-');
+    const adapter = getAdapter(id);
+    adapter.install({ home, env: { HOME: home, ZN_HOME: path.join(home, '.zn') }, platform: 'win32', nodePath: 'C:\\n\\node.exe', runnerPath: 'C:\\z\\runner.js', mcp: false });
+    const data = JSON.parse(fs.readFileSync(adapter.hooksFile({ home, env: { HOME: home } }), 'utf8'));
+    const groups = data.hooks[ev];
+    const cmd = (groups[0].hooks ? groups[0].hooks[0] : groups[0]).command;
+    const s = windowsCommandScript(cmd);
+    assert.ok(s.startsWith("$ProgressPreference='SilentlyContinue';"), id);
+    assert.ok(s.includes(deny), id + ' deny JSON');
+    assert.ok(s.includes('& zn.cmd hook ' + id) && !/& zn hook/.test(s), id + ' zn.cmd');
+    assert.ok(!/exit \$LASTEXITCODE \}/.test(s.replace(/if \(\$LASTEXITCODE -eq 0 -or \$LASTEXITCODE -eq 2\) \{ exit \$LASTEXITCODE \}/g, '')), id + ' no unconditional exit');
+    assert.match(s, /exit 2 # zn hook /);
+  }
+});
