@@ -15,10 +15,18 @@ on:
       - 'action.yml'
       - '.github/workflows/action-selftest.yml'
       - '.github/action-selftest/**'
+  # Daily full run on the default branch.
+  schedule:
+    - cron: '30 6 * * *'
   workflow_dispatch:
 
 permissions:
   contents: read
+
+# Steps that do not test a specific version install this published release. action.yml's own default is the
+# version being released, which is not on PyPI or npm until after the tag, so the self-test must not rely on it.
+env:
+  ZN_SELFTEST_VERSION: '1.12.0'
 
 # A new push to a pull request, or to next, cancels the run still going for it, so a burst of
 # merges into next tests only the newest commit. Runs for main and manual runs always complete.
@@ -47,10 +55,20 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: The Action defaults to the version of this release
+        shell: bash
+        run: |
+          set -euo pipefail
+          want="$(node -p "require('./packages/zn-gate/package.json').version")"
+          got="$(sed -n "s/^    default: '\([0-9][0-9.]*\)'$/\1/p" action.yml | head -1)"
+          echo "action.yml version default: ${got:-none}; packages/zn-gate/package.json: $want"
+          [ "$got" = "$want" ] || { echo "::error::action.yml must default version to $want (the release it ships with), found ${got:-none}"; exit 1; }
+
       - name: Clean fixture passes
         id: clean
         uses: ./
         with:
+          version: ${{ env.ZN_SELFTEST_VERSION }}
           mode: scan
           path: .github/action-selftest/clean
 
@@ -59,6 +77,7 @@ jobs:
         continue-on-error: true
         uses: ./
         with:
+          version: ${{ env.ZN_SELFTEST_VERSION }}
           mode: scan
           path: packages/zn-gate/test/fixtures/rules_parity_samples.json
           format: text
@@ -67,6 +86,7 @@ jobs:
         id: nofail
         uses: ./
         with:
+          version: ${{ env.ZN_SELFTEST_VERSION }}
           mode: scan
           path: packages/zn-gate/test/fixtures/rules_parity_samples.json
           fail-on-threat: 'false'
@@ -137,6 +157,7 @@ jobs:
         id: sarif
         uses: ./
         with:
+          version: ${{ env.ZN_SELFTEST_VERSION }}
           mode: scan
           path: packages/zn-gate/test/fixtures/rules_parity_samples.json
           fail-on-threat: 'false'
@@ -164,6 +185,7 @@ jobs:
         continue-on-error: true
         uses: ./
         with:
+          version: ${{ env.ZN_SELFTEST_VERSION }}
           severity-threshold: 'urgent'
           path: .github/action-selftest/clean
 
@@ -172,6 +194,7 @@ jobs:
         continue-on-error: true
         uses: ./
         with:
+          version: ${{ env.ZN_SELFTEST_VERSION }}
           fail-on-threat: 'yes'
           path: .github/action-selftest/clean
 
@@ -228,7 +251,7 @@ jobs:
           print(f"SARIF OK: {len(results)} results")
           PY
 
-  # The audit runs the npm package, so it is tested on every operating system.
+  # The audit runs the npm package, so full runs test it on every operating system.
   audit:
     name: action audit (${{ matrix.os }})
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
@@ -238,7 +261,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, windows-latest, macos-latest ]
+        os: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["ubuntu-latest", "windows-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
     steps:
       - name: Harden the runner (egress audit)
         if: runner.os == 'Linux'

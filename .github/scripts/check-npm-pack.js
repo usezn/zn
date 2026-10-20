@@ -7,7 +7,7 @@
 //                  THIRD_PARTY_NOTICES.md (packages/zn-gate)
 //
 // Fails when:
-//   - a required file is missing (entry points, LICENSE, THIRD_PARTY_NOTICES.md);
+//   - a required file is missing (entry points, type definitions, LICENSE, THIRD_PARTY_NOTICES.md);
 //   - a bundled dependency from package-lock.json is missing from the tarball,
 //     or is not listed with its exact version in THIRD_PARTY_NOTICES.md;
 //   - the tarball contains the test suite, env files, keys or certificates.
@@ -39,6 +39,8 @@ const noticeRows = notices.split(/\r?\n/)
 const errors = [];
 
 const required = ['package.json', 'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', pkg.main];
+if (pkg.types) required.push(pkg.types);
+else errors.push('package.json has no "types" field');
 for (const target of new Set(Object.values(pkg.bin || {}))) required.push(target);
 for (const f of required) {
   const p = f.replace(/^\.\//, '');

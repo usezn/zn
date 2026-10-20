@@ -214,6 +214,27 @@ test('a damaged identity file never shows the reset hint, however many times', a
   }
 });
 
+test('the error text matches the hint: wrong passphrase keeps its wording, a damaged identity file says it is damaged', async (t) => {
+  const s = setup(t);
+  await s.makeVault(OLD);
+  const wrong = await unlockError('not the passphrase');
+  assert.equal(wrong.message, 'wrong passphrase, or vault file identity.age is corrupted');
+  assert.equal(wrong.reason, keychain.WRONG_PASSPHRASE);
+  const file = store.paths({}).identityFile;
+  fs.writeFileSync(file, fs.readFileSync(file).subarray(0, 20));
+  const damaged = await unlockError(OLD);
+  assert.equal(damaged.code, 'ZN_LOCKED');
+  assert.notEqual(damaged.reason, keychain.WRONG_PASSPHRASE);
+  assert.match(damaged.message, /identity\.age looks damaged/);
+  assert.match(damaged.message, /Restore it from a backup/);
+  assert.match(damaged.message, /Do not reset/);
+  assert.doesNotMatch(damaged.message, /wrong passphrase/i);
+  const tip = reset.hintForUnlockError(damaged, {});
+  assert.equal(tip, reset.UNREADABLE_HINT);
+  assert.match(tip, /Do not reset/);
+  assert.doesNotMatch(tip, /zn vault reset/);
+});
+
 test('keychain and other non-passphrase errors restart the count', (t) => {
   setup(t);
   fs.mkdirSync(process.env.ZN_HOME, { recursive: true });

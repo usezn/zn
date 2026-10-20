@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke test for the Node examples (examples/node-basic, examples/custom-rules, examples/vercel-ai-sdk).
+# Smoke test for the Node examples (examples/node-basic, examples/custom-rules, examples/openai-agents-js, examples/langchain-js, examples/vercel-ai-sdk).
 #
 # Packs packages/zn-gate with `npm pack`, installs the tarball into a copy of each example, and runs the
 # example with no network (an empty network namespace) and no API keys. Each example must print the text
@@ -20,6 +20,9 @@ EXAMPLES=(
   "node-basic|index.js|Verdict: block|Cannot find module"
   "node-basic|index.js|Safe to ingest: false|Cannot find module"
   "custom-rules|demo.js|Custom rule verdict: block|Cannot find module"
+  "openai-agents-js|index.mjs|[REDACTED_AWS_KEY]|Cannot find module"
+  "openai-agents-js|index.mjs|blocked the call to 'read_file'|Cannot find module"
+  "langchain-js|index.js|zn-gate demo OK|zn-gate demo FAILED"
   "vercel-ai-sdk|index.mjs|[REDACTED_AWS_KEY]|Cannot find module"
   "vercel-ai-sdk|index.mjs|blocked the call to 'read_file'|Cannot find module"
 )
@@ -29,7 +32,7 @@ echo "Packing packages/zn-gate"
 TARBALL="$(ls "$WORK"/zn-gate-*.tgz)"
 
 declare -A OUT
-for name in node-basic custom-rules vercel-ai-sdk; do
+for name in node-basic custom-rules openai-agents-js langchain-js vercel-ai-sdk; do
   entry="$(printf '%s\n' "${EXAMPLES[@]}" | awk -F'|' -v n="$name" '$1==n {print $2; exit}')"
   dir="$WORK/$name"
   mkdir "$dir"
@@ -49,6 +52,7 @@ for name in node-basic custom-rules vercel-ai-sdk; do
     run=(sudo -n unshare -n "${run[@]}")
   fi
   OUT[$name]="$(cd "$dir" && "${run[@]}" 2>&1)" || { echo "FAIL examples/$name exited with an error"; echo "${OUT[$name]}"; exit 1; }
+  # shellcheck disable=SC2001 # the output has several lines: the prefix goes on every line, which ${var//} would not do
   echo "${OUT[$name]}" | sed 's/^/    /'
 done
 

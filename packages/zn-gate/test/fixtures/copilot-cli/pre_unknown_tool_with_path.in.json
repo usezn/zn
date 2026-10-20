@@ -1,0 +1,9 @@
+{
+  "sessionId": "sess-1",
+  "timestamp": 1792400000000,
+  "cwd": "/work/proj",
+  "toolName": "mystery_server-read_file",
+  "toolArgs": {
+    "path": "${HOME}/.aws/credentials"
+  }
+}

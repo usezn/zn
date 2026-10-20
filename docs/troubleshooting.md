@@ -1,6 +1,6 @@
 # Troubleshooting
 
-The ten messages people most often meet when they first use zn-gate: what each one means and what to do. Each message is copied as zn-gate prints it. A part in angle brackets, such as `<agent>`, is a blank that zn fills in for you.
+The eleven messages people most often meet when they first use zn-gate: what each one means and what to do. Each message is copied as zn-gate prints it. A part in angle brackets, such as `<agent>`, is a blank that zn fills in for you.
 
 Run every command in your own terminal, not through your AI agent. New here? Start with [First 5 minutes](first-5-minutes.md). Words you do not know are in the [glossary](glossary.md).
 
@@ -165,8 +165,48 @@ zn-gate: the evidence log <path> is damaged (<reason>) Events are not being reco
 2. Keep the old file if you need it for review. Move it aside with the command in the message. On Windows the message shows a `move` command instead of `mv`.
 3. The next event starts a new log. Run `npx -y zn-gate evidence --verify` again to see that it is fine.
 
+## 11. The Claude Code plugin rejects every call, or its MCP servers show "Failed to connect"
+
+You may see one of these:
+
+```text
+Failed to connect: CONNECTION_CLOSED
+```
+
+```text
+X  Claude Code   NOT protected: the zn-gate plugin needs Node.js 20.12 or later (you have 18.19.1).
+   To fix it, update Node.js to 20.12 or later (the current LTS from nodejs.org), and make it the first `node` on your PATH, or use zn's hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, and after that turn the plugin off with `claude plugin disable zn-gate@usezn`, all in your own terminal.
+```
+
+The version number in the second message is yours and will differ.
+
+**What it means:** the zn-gate plugin for Claude Code needs Node.js 20.12 or later. With an older Node.js (for example Node.js 18, which `apt` installs on many Debian and Ubuntu systems), the plugin refuses to start on purpose: its checks block the calls they cannot make, and its MCP server does not start, so Claude Code lists it as failed to connect. zn-gate itself and zn's hooks still run on Node.js 18 and later. Nothing is wrong with your files.
+
+**How to check:**
+
+1. Run `node --version` in your own terminal. If it says a version lower than 20.12 (such as `v18.19.1`), this is the cause. Claude Code starts the plugin with the first `node` on its `PATH`, so use the terminal you start Claude Code from.
+2. Run `npx -y zn-gate check`. A line for Claude Code that says `NOT protected: the zn-gate plugin needs Node.js 20.12 or later` confirms it.
+
+**What to do, either one:**
+
+- **Update Node.js (recommended):** install the Node.js 22 LTS version from [nodejs.org](https://nodejs.org/), open a new terminal, check that `node --version` shows it, then start a new Claude Code session. On a computer with several Node.js installs, make sure the new one is the first on your `PATH`.
+- **Or use zn's hooks instead of the plugin:** run `npm install -g zn-gate`, then `zn hooks install claude-code`, then `claude plugin disable zn-gate@usezn`, all in your own terminal. Then run `npx -y zn-gate check` again.
+
+Running `npx -y zn-gate init` on a Node.js older than 20.12 does the second option for you: it skips the plugin and sets up zn's hooks for Claude Code instead, and if the plugin is already installed it offers to turn it off once the hooks work. Node.js 22 LTS is recommended; 18 or later is enough for the hooks and the CLI. See the [README](../README.md#install).
+
 ## Also useful
 
 - Your agent blocks every prompt after you upgraded or removed Node.js: see [If your agent blocks every prompt](compat.md#if-your-agent-blocks-every-prompt).
 - Not sure what is protected: `npx -y zn-gate check`, explained in [check](check.md).
 - Still stuck: ask in [Discussions](https://github.com/usezn/zn/discussions). Say your zn-gate version (`zn-gate --version`), your operating system and the message, and leave out any secret.
+
+### npm says EACCES when init installs zn-gate
+
+On macOS (Node.js from nodejs.org) and on Linux (Node.js from your distribution), npm often cannot write to its global folder, so `npm install -g zn-gate` fails with `EACCES`. `zn-gate init` says so and lists the agents left unprotected until zn-gate is installed. Do not use `sudo`. Give npm a folder in your home directory, in your own terminal:
+
+```sh
+mkdir -p ~/.npm-global && npm config set prefix ~/.npm-global
+echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.zshrc
+```
+
+Use `~/.bashrc` instead of `~/.zshrc` if you use bash. Then open a new terminal and run `npx -y zn-gate init` again. A Node.js version manager such as nvm also avoids the problem. This does not apply to Windows.

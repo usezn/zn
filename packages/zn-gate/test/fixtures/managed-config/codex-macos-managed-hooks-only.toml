@@ -43,6 +43,24 @@ command_windows = "zn hook codex"
 timeout = 30
 statusMessage = "zn: checking for secrets"
 
+[[hooks.SessionStart]]
+
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "zn hook codex"
+command_windows = "zn hook codex"
+timeout = 30
+statusMessage = "zn: checking for secrets"
+
+[[hooks.SubagentStart]]
+
+[[hooks.SubagentStart.hooks]]
+type = "command"
+command = "zn hook codex"
+command_windows = "zn hook codex"
+timeout = 30
+statusMessage = "zn: checking for secrets"
+
 [[hooks.Stop]]
 
 [[hooks.Stop.hooks]]
