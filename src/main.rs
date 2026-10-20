@@ -1546,19 +1546,13 @@ async fn policies_upload_handler(
                 }
             };
 
-            // Save to the policy directory: temporary file + rename, no symlinks.
-            if let Err(e) = zn::engine::write_policy_file(&path, &data) {
+            // Verify the signatures on the bytes in memory, then save them
+            // (temporary file + rename, no symlinks) and register the policy.
+            // A policy that fails a check is never written.
+            if let Err(e) = state.engine.install_policy(&path, &data) {
                 return axum::response::Json(serde_json::json!({
                     "status": "error",
-                    "error": format!("Failed to save file: {}", e)
-                }));
-            }
-
-            // Register policy
-            if let Err(e) = state.engine.register_policy_from_file(&path) {
-                return axum::response::Json(serde_json::json!({
-                    "status": "error",
-                    "error": format!("Failed to register policy: {}", e)
+                    "error": format!("Failed to install policy: {}", e)
                 }));
             }
 

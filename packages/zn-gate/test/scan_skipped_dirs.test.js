@@ -172,6 +172,37 @@ test('scan lists editor and virtual-environment directories it skips', () => {
     const data = scanJson(dir);
     assert.strictEqual(data.total_files, 1);
     assert.deepStrictEqual(data.skipped_dirs.map((s) => path.basename(s.dir)).sort(), ['.eggs', '.idea', '.venv', '__pycache__', 'venv']);
-    assert.ok(data.skipped_dirs.every((s) => s.reason === 'skipped by name: build output'));
+    const reasons = Object.fromEntries(data.skipped_dirs.map((s) => [path.basename(s.dir), s.reason]));
+    assert.deepStrictEqual(reasons, {
+      '.eggs': 'skipped by name: Python build files',
+      '.idea': 'skipped by name: editor settings',
+      '.venv': 'skipped by name: virtual environment',
+      __pycache__: 'skipped by name: Python cache',
+      venv: 'skipped by name: virtual environment',
+    });
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('scan text output escapes control characters in the path of a finding and in an empty target', (t) => {
+  const esc = String.fromCharCode(27);
+  const bs = String.fromCharCode(92);
+  const fakeKey = 'AKIA' + 'ZNTESTFAKE' + '000000';
+  const dir = tree({ ok: 'x' });
+  try {
+    const odd = 'f' + esc + '[2Jf.md';
+    const emptyDir = path.join(dir, 'e' + esc + '[2Je');
+    try {
+      fs.writeFileSync(path.join(dir, odd), 'key = ' + fakeKey + '\n');
+      fs.mkdirSync(emptyDir);
+    } catch (err) {
+      t.skip('filesystem refuses control characters in names: ' + err.code);
+      return;
+    }
+    const found = spawnSync(process.execPath, [CLI, 'scan', dir], { encoding: 'utf8', env: ENV }).stdout;
+    assert.ok(!found.includes(esc), 'no raw ESC in the findings output');
+    assert.ok(found.includes('f' + bs + 'x1b[2Jf.md:1'), found);
+    const empty = spawnSync(process.execPath, [CLI, 'scan', emptyDir], { encoding: 'utf8', env: ENV }).stdout;
+    assert.ok(!empty.includes(esc), 'no raw ESC in the empty-target output');
+    assert.ok(empty.includes('No files were scanned in ') && empty.includes('e' + bs + 'x1b[2Je'), empty);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
