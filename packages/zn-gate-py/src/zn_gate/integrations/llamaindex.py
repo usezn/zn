@@ -4,8 +4,11 @@ LlamaIndex query and tool protection for zn-gate.
 from __future__ import annotations
 from typing import Any, Optional
 
-from ..guard import GuardBlockError
+from ..guard import GuardBlockError, validate_on_block
 from ..rules import evaluate, sanitize_tool_result
+
+
+ON_BLOCK_MODES = ("raise", "return", "ignore")
 
 
 class ZnLlamaGuard:
@@ -13,6 +16,7 @@ class ZnLlamaGuard:
     Query and tool pre-check for LlamaIndex query engines and agents.
     """
     def __init__(self, on_block: str = "raise", mask_secrets: bool = True, raise_on_violation: Optional[bool] = None):
+        on_block = validate_on_block(on_block, ON_BLOCK_MODES)
         if raise_on_violation is not None:
             self.on_block = "raise" if raise_on_violation else "ignore"
         else:
