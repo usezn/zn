@@ -256,3 +256,15 @@ test('the hooks stop an agent from running zn vault reset', () => {
   }
   for (const cmd of ['zn vault status', 'zn vault forget', 'echo vault reset']) assert.equal(policy.adminCommand(cmd), null, cmd);
 });
+
+test('an agent may not run zn vault passphrase, in any spelling zn vault reset is refused in', () => {
+  const policy = require('../lib/hooks/policy');
+  const o = { cwd: process.cwd(), home: process.cwd(), env: {} };
+  for (const c of ['zn vault passphrase', 'npx -y zn-gate vault passphrase', 'echo x && zn-gate vault  passphrase']) {
+    const d = policy.bashDenial(c, o);
+    assert.ok(d, c);
+    assert.match(String(d), /vault passphrase/);
+    assert.match(String(d), /user's decision/);
+  }
+  assert.equal(policy.bashDenial('zn vault status', o), null);
+});
