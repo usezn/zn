@@ -27,8 +27,6 @@ function getAdapter(id) {
 
 // Agents zn has no hooks for yet (display name by the name people type).
 const NOT_COVERED = {
-  gemini: 'Gemini CLI',
-  'gemini-cli': 'Gemini CLI',
   copilot: 'GitHub Copilot CLI',
   'copilot-cli': 'GitHub Copilot CLI',
   'github-copilot': 'GitHub Copilot CLI',
