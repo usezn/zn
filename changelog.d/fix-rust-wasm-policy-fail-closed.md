@@ -1,0 +1,2 @@
+### Security
+- The gateway now fails closed when a WASM policy cannot be used. A `.wasm` file in the policy directory that fails to load (bad hash, bad signature or a corrupt file), or a loaded policy whose file is removed, makes the gateway deny every tool call, `/api/v1/health` answers 503 with the reason, and in production the gateway refuses to start. Before, the policy was dropped and, with none left, every call was allowed. A directory with no policies still works as before, and deleting a policy through the management API is not a fault.
