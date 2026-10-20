@@ -100,6 +100,17 @@ function scalingRatio(run, small, large) {
   return tLarge / Math.max(tSmall, 2);
 }
 
+// The floor above can hide a quadratic scan whose small input runs in under 2 ms, so the large size is also
+// compared with twice its size (both under the 100 KB cap): linear gives about 2x, quadratic about 4x.
+// Skipped when the base is under 1 ms, where timer noise dominates the ratio.
+function doublingRatio(run, n) {
+  run(n); // warm up
+  run(2 * n);
+  const tN = fastest(() => run(n), 5);
+  const t2N = fastest(() => run(2 * n), 5);
+  return tN < 1 ? null : t2N / tN;
+}
+
 test('a very long writing command naming .agents is refused in linear time', () => {
   const run = (n) => {
     const r = policy.bashDenial('cp x ' + '.agents/'.repeat(n), OPTS);
@@ -107,10 +118,14 @@ test('a very long writing command naming .agents is refused in linear time', () 
   };
   const ratio = scalingRatio(run, 3000, 12000);
   assert.ok(ratio < 10, 'time grew ' + ratio.toFixed(1) + 'x for 4x the input (quadratic would be about 16x)');
+  const doubled = doublingRatio(run, 6000);
+  if (doubled !== null) assert.ok(doubled < 3, 'time grew ' + doubled.toFixed(1) + 'x for 2x the input (quadratic would be about 4x)');
   // long but not naming .agents: still checked in linear time (both sizes stay under the 100 KB cap, above it the command is refused unscanned)
   const runPlain = (n) => policy.bashDenial('cp x ' + 'a/'.repeat(n), OPTS);
   const plainRatio = scalingRatio(runPlain, 12500, 50000);
   assert.ok(plainRatio < 10, 'time grew ' + plainRatio.toFixed(1) + 'x for 4x the input (quadratic would be about 16x)');
+  const plainDoubled = doublingRatio(runPlain, 25000);
+  if (plainDoubled !== null) assert.ok(plainDoubled < 3, 'time grew ' + plainDoubled.toFixed(1) + 'x for 2x the input (quadratic would be about 4x)');
 });
 
 test('denied: a glob that expands to the hooks file (the folder exists)', (t) => {
