@@ -4,7 +4,10 @@
  * with HMAC-SHA256 under a local key (kept inside the encrypted vault, so
  * only an unlocked daemon can append or verify).
  *
- * Record: {v, seq, ts, secret, mode, agent, tool, argv0, host, decision, reason, prev, mac}
+ * Record: {v, seq, ts, source, secret, mode, agent, tool, argv0, host, decision, reason, prev, mac}
+ *   source = client  for a record a client sent through the audit op (checked by checkClientEvent)
+ *   source = daemon  for a record the daemon wrote itself (unlock, lock, resolve, ...)
+ *   Records written before this field existed have no source.
  *   prev = mac of the previous record (64 zeros for the first one)
  *   mac  = HMAC(key, JSON of every other field, in this order)
  *
@@ -30,6 +33,43 @@ const FORMATS = {
   host: /^[a-z0-9.-]{1,253}(?::\d{1,5})?$/,
   reason: /^[A-Za-z0-9_:.-]{1,64}$/,
 };
+
+/*
+ * Client events: the only kinds a client may append. Each one is taken from a
+ * real caller: lib/broker/run.js and lib/broker/mcp.js (zn run and the MCP
+ * secret tools) and lib/scrub/engine.js (agent hooks: named and detected values).
+ */
+const MAX_CLIENT_FIELD = 256;
+const MCP_TOOLS = new Set(['mcp:secrets_http_request', 'mcp:secrets_render_file', 'mcp:secrets_request']);
+const CLIENT_KINDS = Object.freeze([
+  { match: (t) => t === 'zn run', decisions: ['allow', 'warn', 'deny'], modes: null },
+  { match: (t) => MCP_TOOLS.has(t), decisions: ['allow', 'warn', 'deny', 'ask'], modes: null },
+  // Agent hook tool names (Bash, Write, ...): the scrubber is the only caller.
+  { match: (t) => /^[A-Za-z0-9_.:-]{1,64}$/.test(t), decisions: ['restore', 'withhold', 'warn', 'ask'], modes: ['named', 'detected'] },
+]);
+
+/** null when a client event is an allowed kind, otherwise the reason it is refused. */
+function checkClientEvent(event) {
+  if (!event || typeof event !== 'object' || Array.isArray(event)) return 'audit event must be an object';
+  for (const k of Object.keys(event)) {
+    if (!FIELDS.includes(k)) return 'unknown audit field ' + JSON.stringify(String(k).slice(0, 32));
+  }
+  for (const f of FIELDS) {
+    const v = event[f];
+    if (v === undefined || v === null) continue;
+    if (typeof v !== 'string') return 'audit field ' + f + ' must be a string';
+    if (v.length > MAX_CLIENT_FIELD) return 'audit field ' + f + ' is longer than ' + MAX_CLIENT_FIELD + ' characters';
+  }
+  const kind = typeof event.tool === 'string' ? CLIENT_KINDS.find((k) => k.match(event.tool)) : null;
+  if (!kind) return 'unknown audit kind: tool ' + JSON.stringify(String(event.tool).slice(0, 64));
+  if (!kind.decisions.includes(event.decision)) {
+    return 'audit decision ' + JSON.stringify(String(event.decision).slice(0, 32)) + ' is not written for tool ' + JSON.stringify(event.tool);
+  }
+  if (kind.modes && !kind.modes.includes(event.mode)) {
+    return 'audit mode ' + JSON.stringify(String(event.mode).slice(0, 32)) + ' is not written for decision ' + JSON.stringify(event.decision);
+  }
+  return null;
+}
 
 function cleanField(name, value, knownValues) {
   if (value === undefined || value === null || value === '') return undefined;
@@ -97,7 +137,7 @@ function append(event, opts) {
   const file = o.file;
   const last = lastRecord(file);
   const record = Object.assign(
-    { v: 1, seq: last ? last.seq + 1 : 1, ts: new Date().toISOString() },
+    { v: 1, seq: last ? last.seq + 1 : 1, ts: new Date().toISOString(), source: o.source === 'client' ? 'client' : 'daemon' },
     sanitize(event, o.knownValues),
     { prev: last ? last.mac : GENESIS },
   );
@@ -174,6 +214,7 @@ function read(opts) {
     try { rec = JSON.parse(line); } catch (err) { continue; }
     if (from !== null && Date.parse(rec.ts) < from) continue;
     const ev = { seq: rec.seq, ts: rec.ts };
+    if (rec.source !== undefined) ev.source = rec.source;
     for (const f of FIELDS) if (rec[f] !== undefined) ev[f] = rec[f];
     out.push(ev);
   }
@@ -181,4 +222,4 @@ function read(opts) {
   return limit ? out.slice(-limit) : out;
 }
 
-module.exports = { append, verify, read, sanitize, FIELDS, GENESIS };
+module.exports = { append, verify, read, sanitize, checkClientEvent, CLIENT_KINDS, FIELDS, GENESIS };

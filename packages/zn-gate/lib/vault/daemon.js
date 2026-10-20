@@ -278,10 +278,10 @@ function makeOps(state, ctl) {
 
   /* Synchronous on purpose: audit.append is synchronous file I/O, so two
    * appends can never interleave and break the chain. */
-  function writeAudit(event) {
+  function writeAudit(event, source) {
     const secrets = state.secrets;
     if (!secrets) throw znError(CODES.LOCKED, 'vault locked');
-    const rec = audit.append(event, { file: auditFile, key: Buffer.from(secrets.auditKey, 'hex'), knownValues: state.knownValues() });
+    const rec = audit.append(event, { file: auditFile, key: Buffer.from(secrets.auditKey, 'hex'), knownValues: state.knownValues(), source });
     secrets.auditHead = { seq: rec.seq, mac: rec.mac };
     state.dirtySecrets = true;
     return rec;
@@ -569,7 +569,10 @@ function makeOps(state, ctl) {
     },
 
     async audit(event) {
-      writeAudit(event && typeof event === 'object' ? event : {});
+      // Clients may only add the event kinds the hooks write; anything else is refused.
+      const bad = audit.checkClientEvent(event);
+      if (bad) throw znError(CODES.POLICY_DENIED, bad + '. Next step: report only the kinds zn hooks write (a command or tool decision with its fields); the daemon records its own events.');
+      writeAudit(event, 'client');
       return true;
     },
 

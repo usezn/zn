@@ -1,0 +1,2 @@
+### Security
+- The vault daemon's audit entry point now accepts only the event kinds the zn hooks write, refuses unknown fields and values longer than 256 characters, and marks every client-written audit record with `source: client`. A local process can no longer add forged `allow` decisions or other records to the audit log, and daemon-written records stay distinct (`source: daemon`). Existing records remain readable and verifiable.

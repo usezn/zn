@@ -433,8 +433,8 @@ test('auth: the client never talks to an endpoint that cannot prove the key', as
 test('audit: metadata only, chain verifies, read() filters', async () => {
   const c = clientMod.createClient({});
   const value = (await c.exactValues('/work/app')).find((e) => e.name === 'GITHUB_TOKEN').values[0];
-  await c.audit({ secret: 'GITHUB_TOKEN', mode: 'env', agent: 'claude-code', tool: 'Bash', argv0: '/usr/bin/gh api user', host: 'https://u@api.github.com/x', decision: 'allow', reason: 'first-use', value });
-  await c.audit({ secret: 'GITHUB_TOKEN', reason: 'leak:' + value });
+  await c.audit({ secret: 'GITHUB_TOKEN', mode: 'named', agent: 'claude-code', tool: 'Bash', argv0: '/usr/bin/gh api user', host: 'https://u@api.github.com/x', decision: 'restore', reason: 'first-use' });
+  await c.audit({ secret: 'GITHUB_TOKEN', mode: 'named', tool: 'Bash', decision: 'restore', reason: 'leak:' + value });
   const log = fs.readFileSync(store.paths().auditFile, 'utf8');
   assert.ok(!log.includes(value), 'a value reached the audit log');
   assert.ok(!log.includes(crypto.createHash('sha256').update(value).digest('hex')), 'a hash of a value reached the audit log');
@@ -463,6 +463,31 @@ test('audit: edits and truncation are detected', async () => {
   assert.match(trunc.error, /truncated/);
   fs.writeFileSync(file, original);
   assert.strictEqual((await c.auditVerify()).ok, true);
+  c.close();
+});
+
+test('audit op: hook kinds are recorded as client records; other kinds and oversized fields are refused', async () => {
+  const c = clientMod.createClient({});
+  const file = store.paths().auditFile;
+  const countBefore = fs.readFileSync(file, 'utf8').trim().split('\n').length;
+  await c.audit({ secret: 'API_KEY', mode: 'detected', agent: 'claude-code', tool: 'Write', decision: 'withhold', reason: 'unknown_token' });
+  const lines = fs.readFileSync(file, 'utf8').trim().split('\n');
+  assert.strictEqual(lines.length, countBefore + 1);
+  const rec = JSON.parse(lines[lines.length - 1]);
+  assert.strictEqual(rec.source, 'client');
+  assert.strictEqual(rec.decision, 'withhold');
+  // Forged kinds: an allow decision from a scrubber tool, an unknown tool, a restore for zn run.
+  for (const ev of [
+    { secret: 'API_KEY', mode: 'named', tool: 'Bash', decision: 'allow', reason: 'forged' },
+    { secret: 'API_KEY', mode: 'named', tool: 'forged-tool', decision: 'restore', reason: 'forged' },
+    { secret: 'API_KEY', mode: 'env', tool: 'zn run', decision: 'restore', reason: 'forged' },
+    { secret: 'API_KEY', mode: 'named', tool: 'Bash', decision: 'restore', reason: 'forged', source: 'daemon' },
+    { secret: 'API_KEY', mode: 'named', tool: 'Bash', decision: 'restore', reason: 'x'.repeat(300) },
+  ]) {
+    await assert.rejects(c.audit(ev), (e) => e.code === 'ZN_POLICY_DENIED');
+  }
+  assert.strictEqual(fs.readFileSync(file, 'utf8').trim().split('\n').length, countBefore + 1);
+  assert.deepStrictEqual(await c.auditVerify(), { ok: true, records: countBefore + 1 });
   c.close();
 });
 
