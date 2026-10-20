@@ -266,6 +266,14 @@ async fn start_proxy(args: Args) -> Result<()> {
     // Validate configuration
     zn_config.validate()?;
 
+    // Visual PII redaction needs tesseract: without it every image is refused.
+    zn::engine::vision::check_ocr_startup(
+        &zn_config.managed_rules,
+        &zn_config.environment,
+        zn::engine::vision::tesseract_available(),
+    )
+    .map_err(|e| anyhow::anyhow!(e))?;
+
     // Initialize Prometheus metrics
     if let Err(e) = metrics::init() {
         log::warning(format!("Failed to initialize metrics: {}", e))?;

@@ -69,9 +69,9 @@ impl ManagedRuleset {
         // 5. Multimodal Vision Guard (Base64 Detection)
         if arguments.contains("data:image/") || arguments.contains("base64,") {
             if config.visual_pii_redaction {
-                // In a production scenario, we would trigger an OCR/Vision scan here.
-                tracing::warn!("📸 VISION SCAN TRIGGERED: Detecting PII in multimodal payload...");
-                // return Err("Visual PII detected and blocked".to_string());
+                // The OCR scan itself runs in the proxy. Here the call is refused
+                // when an image is present and OCR cannot run at all.
+                vision_ocr_gate(arguments, crate::engine::vision::tesseract_available())?;
             } else {
                 tracing::info!(
                     "📸 MULTIMODAL CONTENT DETECTED: Base64 found, vision scan skipped (disabled)."
@@ -81,6 +81,18 @@ impl ManagedRuleset {
 
         Ok(())
     }
+}
+
+/// With visual PII redaction on, an image that cannot be read by OCR is
+/// refused instead of counted as clean.
+fn vision_ocr_gate(arguments: &str, ocr_available: bool) -> std::result::Result<(), String> {
+    if !ocr_available && crate::engine::vision::VisionEngine::contains_image(arguments) {
+        return Err(crate::engine::vision::VisionError::OcrUnavailable
+            .as_str()
+            .to_string());
+    }
+    tracing::warn!("📸 VISION SCAN TRIGGERED: Detecting PII in multimodal payload...");
+    Ok(())
 }
 
 /// A word of a tool name that names a restricted command. Joined forms
@@ -176,6 +188,21 @@ mod tests {
 
     fn cfg() -> ManagedRulesConfig {
         ManagedRulesConfig::default()
+    }
+
+    #[test]
+    fn image_is_refused_without_ocr_when_visual_pii_redaction_is_on() {
+        let args = r#"{"image": "data:image/png;base64,iVBORw0KGgo="}"#;
+        assert!(vision_ocr_gate(args, false).is_err());
+        assert!(vision_ocr_gate(args, true).is_ok());
+        // No image: nothing to refuse.
+        assert!(vision_ocr_gate("plain text", false).is_ok());
+    }
+
+    #[test]
+    fn image_is_allowed_by_the_rules_when_the_feature_is_off() {
+        let args = r#"{"image": "data:image/png;base64,iVBORw0KGgo="}"#;
+        assert!(ManagedRuleset::evaluate(&cfg(), "read_file", args).is_ok());
     }
 
     #[test]
