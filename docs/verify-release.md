@@ -16,7 +16,9 @@ Each release has:
 | `zn_gate-<pyversion>.tar.gz` | Python source distribution |
 | `zn_gate-<pyversion>-py3-none-any.whl` | Python wheel |
 | `SHA256SUMS` | SHA-256 checksums of the three files above |
-| `<file>.sigstore.json` | Sigstore bundle (signature, certificate and transparency log proof) for each file, including `SHA256SUMS` |
+| `zn-gate-<version>.cdx.json` | CycloneDX software bill of materials (SBOM) of the npm package |
+| `zn_gate-<pyversion>.cdx.json` | CycloneDX SBOM of the Python package |
+| `<file>.sigstore.json` | Sigstore bundle (signature, certificate and transparency log proof) for each file, including `SHA256SUMS` and the two SBOMs |
 
 Every file also has a GitHub artifact attestation (SLSA build provenance),
 npm shows a provenance statement for the package, and PyPI stores an
@@ -171,6 +173,43 @@ gitsign verify-tag v1.12.0 \
 ```
 
 Tags up to 1.11.x are not signed.
+
+## 7. SBOM (software bill of materials)
+
+From the first release after 1.12.0, each release has a
+[CycloneDX](https://cyclonedx.org/) 1.6 SBOM for the npm package
+(`zn-gate-<version>.cdx.json`) and one for the Python package
+(`zn_gate-<pyversion>.cdx.json`; zn-gate has no Python dependencies, so it lists
+only the package itself). Both are attached to the GitHub Release. The release
+workflow attests each SBOM against the package it describes, so you can check
+that the list was produced by the release build and belongs to the file you
+downloaded.
+
+With the GitHub CLI 2.49 or later, for the npm package (use the `.whl` or
+`.tar.gz` file for the Python one):
+
+```sh
+gh attestation verify zn-gate-1.12.0.tgz \
+  --repo usezn/zn \
+  --signer-workflow usezn/zn/.github/workflows/build-release.yml \
+  --source-ref refs/tags/v1.12.0 \
+  --predicate-type https://cyclonedx.org/bom
+```
+
+To see that the attested SBOM is the file attached to the release, print the
+attested document and compare it with the downloaded one:
+
+```sh
+gh attestation verify zn-gate-1.12.0.tgz \
+  --repo usezn/zn \
+  --predicate-type https://cyclonedx.org/bom \
+  --format json --jq '.[].verificationResult.statement.predicate' > attested.cdx.json
+diff <(jq -S . attested.cdx.json) <(jq -S . zn-gate-1.12.0.cdx.json) && echo "same SBOM"
+```
+
+The SBOM files also have build provenance attestations and Sigstore bundles
+(steps 2 and 3), so `gh attestation verify zn-gate-1.12.0.cdx.json --repo usezn/zn`
+works on them too.
 
 ## If something does not match
 

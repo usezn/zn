@@ -331,6 +331,67 @@ function cursorPolicyWarnings(opts = {}) {
   return warnings;
 }
 
+// JSON with the line and block comments that Gemini CLI allows in settings.json (comments outside strings are dropped).
+function parseJsonc(text) {
+  try { return JSON.parse(text); } catch (_) { /* try without comments */ }
+  let out = '';
+  let i = 0;
+  let inStr = false;
+  while (i < text.length) {
+    const c = text[i];
+    if (inStr) {
+      out += c;
+      if (c === '\\') { out += text[i + 1] || ''; i += 2; continue; }
+      if (c === '"') inStr = false;
+      i++;
+    } else if (c === '"') { inStr = true; out += c; i++; }
+    else if (c === '/' && text[i + 1] === '/') { while (i < text.length && text[i] !== '\n') i++; }
+    else if (c === '/' && text[i + 1] === '*') { const j = text.indexOf('*/', i + 2); i = j < 0 ? text.length : j + 2; }
+    else { out += c; i++; }
+  }
+  return JSON.parse(out.replace(/,(\s*[}\]])/g, '$1'));
+}
+
+/**
+ * geminiPolicyWarnings({files: [{file, label}]}) -> [string]
+ * Read-only: Gemini CLI settings that stop hooks from running (read 2026-10-19):
+ *   hooksConfig.enabled false ("no hooks will be executed"), hooksConfig.disabled (hook names or commands that
+ *   do not run even when configured), and the older tools.enableHooks / hooks.enabled / hooks.disabled switches.
+ * The docs rank project over user over system settings; zn reports a switch in any of them, since a list is a
+ * union and a scalar from a higher file would only hide a lower one by turning hooks back on.
+ */
+function geminiPolicyWarnings(opts = {}) {
+  const { isOurs } = require('./config-file');
+  const warnings = [];
+  const named = (v) => typeof v === 'string' && (v === 'zn-gate' || isOurs(v, 'gemini'));
+  for (const { file, label } of opts.files || []) {
+    let text;
+    try { text = fs.readFileSync(file, 'utf8'); } catch (err) {
+      if (err.code === 'ENOENT' || err.code === 'ENOTDIR') continue;
+      warnings.push('could not read ' + file + ' (' + (err.code || 'error') + '), so zn cannot tell whether it turns off its hooks.');
+      continue;
+    }
+    let data;
+    try { data = parseJsonc(text.replace(/^﻿/, '')); } catch (_) {
+      warnings.push('could not read ' + file + ' (invalid JSON), so zn cannot tell whether it turns off its hooks.');
+      continue;
+    }
+    if (!data || typeof data !== 'object') continue;
+    const hc = data.hooksConfig && typeof data.hooksConfig === 'object' ? data.hooksConfig : {};
+    const hk = data.hooks && typeof data.hooks === 'object' && !Array.isArray(data.hooks) ? data.hooks : {};
+    const tl = data.tools && typeof data.tools === 'object' ? data.tools : {};
+    if (hc.enabled === false || tl.enableHooks === false || hk.enabled === false) {
+      warnings.push(label + ' (' + file + ') turn all hooks off (hooksConfig.enabled is false), so zn\'s hook does not run. Set it to true to turn hooks on.');
+      continue;
+    }
+    const lists = [hc.disabled, hk.disabled].filter(Array.isArray);
+    if (lists.some((l) => l.some(named))) {
+      warnings.push(label + ' (' + file + ') list zn\'s hook in hooksConfig.disabled (for example after `/hooks disable`), so it does not run. Remove it from that list, or run `/hooks enable zn-gate` in Gemini CLI.');
+    }
+  }
+  return warnings;
+}
+
 /* ------------------------- zn installed by the organization ------------------------- */
 
 /*
@@ -389,4 +450,4 @@ function managedInstall(agentId, opts = {}) {
   return { files: withZn.map((f) => f.file), entries: withZn.flatMap((f) => f.entries) };
 }
 
-module.exports = { claudeCodePolicyWarnings, managedDir, codexPolicyWarnings, cursorPolicyWarnings, managedInstall, _internal: { codexRequirementsFile, codexManagedConfigFile, cursorEnterpriseFile, ourHookEntries } };
+module.exports = { claudeCodePolicyWarnings, managedDir, codexPolicyWarnings, cursorPolicyWarnings, geminiPolicyWarnings, managedInstall, _internal: { codexRequirementsFile, codexManagedConfigFile, cursorEnterpriseFile, ourHookEntries } };
