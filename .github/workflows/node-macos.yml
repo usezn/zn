@@ -65,6 +65,9 @@ on:
       - 'packages/zn-gate/package.json'
       - 'packages/zn-gate/package-lock.json'
       - '.github/workflows/node-macos.yml'
+  # The merge queue always runs it (Node.js 22 on macOS is the macOS sample of the queue).
+  merge_group:
+    types: [ checks_requested ]
   # Daily full run on the default branch.
   schedule:
     - cron: '30 6 * * *'
