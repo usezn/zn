@@ -215,13 +215,15 @@ const COMMANDS = {
     exits: ['0 done', '64 wrong usage', '77 zn refused on purpose'],
   },
   run: {
-    usage: 'zn-gate run [--secrets A,B] -- <command> [arguments...]',
+    usage: 'zn-gate run [--secrets A,B] [--agent ID] -- <command> [arguments...]',
     about: ['Runs a command with the secret markers replaced by the real values, only for commands you allowed, and masks the values in its output.'],
     opts: {
       '--secrets': ['A,B', 'secrets to pass to the command as environment variables'],
+      '-s': ['A,B', 'short for --secrets'],
+      '--agent': ['ID', 'name of the agent that runs it, for the audit log (agent hooks set it; not a security control)'],
     },
     example: 'zn-gate run -- curl https://api.example.com/v1/status',
-    exits: ['0 the command succeeded (its own exit code is passed on)', '64 wrong usage', '77 the command is not allowed', '127 the program was not found'],
+    exits: ['0 the exit code of your command is passed on', '1 another error', '64 wrong usage', '77 the command is not allowed or not approved', '127 the program was not found'],
   },
   hook: {
     usage: 'zn-gate hook <agent>',

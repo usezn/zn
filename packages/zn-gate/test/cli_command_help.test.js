@@ -122,3 +122,53 @@ test('zn-gate with no arguments prints a five line start', () => {
   const text = r.stdout;
   for (const word of ['zn-gate init', 'zn-gate check', 'zn-gate reach', '--help']) assert.ok(text.includes(word), 'start mentions ' + word);
 });
+
+// Help must not swallow arguments that belong to someone else, and must find the right text.
+test('run -- echo --help: the words after -- belong to the command, not to zn', () => {
+  const r = run(['run', '--', 'echo', '--help']);
+  const text = r.stdout + r.stderr;
+  assert.ok(!/usage: zn(-gate)? run/.test(text), 'not the help of zn run: ' + text.slice(0, 120));
+  assert.ok(!/COMMANDS:/.test(text), 'not the general help');
+});
+
+test('shield -- node x --help: the words after -- belong to the wrapped program', () => {
+  const r = spawnSync(process.execPath, [CLI, 'shield', '--', 'node', 'x', '--help'], {
+    encoding: 'utf8', cwd: home, input: '', timeout: 30000,
+    env: { ...process.env, HOME: home, USERPROFILE: home, ZN_STATS: 'off', ZN_LOCAL_ONLY: 'true', NO_COLOR: '1' },
+  });
+  const text = r.stdout + r.stderr;
+  assert.ok(!/usage: zn(-gate)? shield/.test(text), 'not the help of zn shield: ' + text.slice(0, 120));
+  assert.ok(!/COMMANDS:/.test(text), 'not the general help');
+});
+
+test('secret set --help prints the secret help and stores nothing', () => {
+  const r = run(['secret', 'set', '--help']);
+  assert.strictEqual(r.status, 0);
+  assert.ok(/^usage: zn secret set\|list\|rm\|allow\|approve\|import\|adopt\|log/.test(r.stdout), r.stdout.slice(0, 100));
+  assert.ok(/hidden prompt/.test(r.stdout));
+  assert.ok(!/COMMANDS:/.test(r.stdout));
+  assert.ok(!fs.existsSync(path.join(home, '.zn', 'vault')), 'no vault was created');
+});
+
+test('hooks install codex --help prints the hooks help and changes nothing', () => {
+  const r = run(['hooks', 'install', 'codex', '--help']);
+  assert.strictEqual(r.status, 0);
+  assert.ok(/^usage: zn hooks install\|uninstall /.test(r.stdout), r.stdout.slice(0, 100));
+  assert.ok(!/COMMANDS:/.test(r.stdout));
+  assert.ok(!fs.existsSync(path.join(home, '.codex', 'hooks.json')), 'no hooks were installed');
+});
+
+test('hooks --help and help hooks list install, uninstall and the agents', () => {
+  const a = run(['hooks', '--help']);
+  const b = run(['help', 'hooks']);
+  assert.strictEqual(a.status, 0);
+  assert.strictEqual(a.stdout, b.stdout);
+  for (const word of ['install', 'uninstall', 'claude-code', 'codex', 'cursor', 'opencode', 'antigravity']) assert.ok(a.stdout.includes(word), 'hooks help names ' + word);
+});
+
+test('the help of run describes -s, --agent and the exit codes the command really returns', () => {
+  const text = cliHelp.helpFor('run').join('\n');
+  assert.ok(/^ {2}-s A,B/m.test(text));
+  assert.ok(/^ {2}--agent ID/m.test(text));
+  for (const line of ['0 the exit code of your command is passed on', '1 another error', '64 ', '77 ', '127 ']) assert.ok(text.includes('  ' + line), 'run help has: ' + line);
+});

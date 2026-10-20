@@ -99,7 +99,7 @@ Shows that zn stops your agent from reading a fake secret, in a temporary folder
 
 Aliases: `doctor`.
 
-Exit codes: `0` every agent that is set up is protected. `1` an agent is not protected, or none is set up.
+Exit codes: `0` every agent that is set up is protected. `1` an agent is not protected, or none is set up. `2` an option it does not know.
 
 ### `status`
 

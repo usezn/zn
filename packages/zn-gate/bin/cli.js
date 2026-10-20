@@ -914,7 +914,7 @@ async function main() {
     return;
   }
   if (args[0] === 'hooks' && args.length === 2 && asksForHelp(args.slice(1))) {
-    process.exitCode = await require('../lib/broker/cli').dispatch('hooks', ['install', '--help']);
+    process.exitCode = await require('../lib/broker/cli').dispatch('hooks', ['--help']);
     return;
   }
   // zn Team and the OpenTelemetry export of the audit log. exitCode (not
