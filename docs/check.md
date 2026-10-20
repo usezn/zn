@@ -179,6 +179,15 @@ For these reasons, zn is installed correctly, but a setting stops your agent fro
 
   Check that the file exists and that your user can read it, then run the check again.
 
+- **Cursor.** Cursor runs the hooks of every source (enterprise, team, project and user) and merges their replies, so an enterprise `hooks.json` never turns off the zn hooks you install. These lines are about that file (the notes under an **OK** line say the same):
+
+  ```text
+  The Cursor enterprise hooks <file> do not include zn's hook. They do not turn off the zn hooks you install: Cursor runs the hooks of every source and merges their replies, enterprise first. Run `zn team managed-config --agent cursor` to see what an administrator can add so zn fails closed.
+  The Cursor enterprise hooks <file> have no zn hook with "failClosed": true under hooks.<event>, so if zn's hook crashes or times out Cursor lets the file read or prompt through. Ask your administrator to add it.
+  ```
+
+  The first one only tells you what the file does: nothing to repair. For the second one, send the line to your administrator, who adds `"failClosed": true` to zn's hook for that event.
+
 ### The Codex hook is set up wrongly
 
 - **The hook runs in the background.**
