@@ -690,19 +690,35 @@ test('a here-document that runs its body as code, or a read on the command line,
   assert.ok(policy.bashDenial('cat *', o), 'glob on the command line');
 });
 
-test('a 100 KB here-document read as data is checked in milliseconds', (t) => {
+test('a 100 KB here-document read as data is checked in linear time', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-heredoc-big-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const o = { cwd: dir, home: dir, env: {} };
-  const line = 'export const value = a * b + 1; // 100 KB of code written to a file\n';
-  let body = '';
-  while (body.length + line.length < 100 * 1024 - 64) body += line;
-  const cmd = "cat > generated.js <<'EOF'\n" + body + 'EOF';
-  const t0 = process.hrtime.bigint();
-  const deny = policy.bashDenial(cmd, o);
-  const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-  assert.equal(deny, null, 'the body is data, so the command is allowed');
-  assert.ok(ms < 25, 'checked in ' + ms + ' ms');
+  const line = 'export const value = a * b + 1; // code written to a file\n';
+  const build = (kb) => {
+    let body = '';
+    while (body.length + line.length < kb * 1024 - 64) body += line;
+    return "cat > generated.js <<'EOF'\n" + body + 'EOF';
+  };
+  // The best of a few runs, so a stall on a shared runner does not count.
+  const best = (cmd) => {
+    let min = Infinity;
+    for (let i = 0; i < 5; i++) {
+      const t0 = process.hrtime.bigint();
+      const deny = policy.bashDenial(cmd, o);
+      min = Math.min(min, Number(process.hrtime.bigint() - t0) / 1e6);
+      assert.equal(deny, null, 'the body is data, so the command is allowed');
+    }
+    return min;
+  };
+  best(build(10)); // warm up
+  const small = best(build(10));
+  const big = best(build(100));
+  // 10x the input costs about 10x with a linear scan and about 100x with a
+  // quadratic one; 40x separates the two and does not depend on machine speed.
+  // The absolute bound is only a safety net against a gross slowdown.
+  assert.ok(big < 40 * Math.max(small, 0.5), '10 KB in ' + small + ' ms, 100 KB in ' + big + ' ms');
+  assert.ok(big < 1000, '100 KB checked in ' + big + ' ms');
 });
 
 test('10 000 here-document operators on one line are checked within the time budget', (t) => {

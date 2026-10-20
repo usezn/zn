@@ -56,19 +56,27 @@ const { generateAll, mulberry32, SEED_DEFAULT } = require(path.join(FIXTURES_DIR
  * - latency: in-process tokenize() on real code, calibrated on 2026-10-11
  *   (see bench/SCRUB_LATENCY.md). The slowest machine measured (a 2-vCPU
  *   Xeon 8259CL under load) ran 64 KB at p50 1.6 ms / p95 2.5 ms, GitHub
- *   runners at p50 0.9-1.5 ms. Limits leave ~3x headroom for noisy shared
- *   runners while still catching a pathological regex or a rebuilt
- *   automaton per call. */
+ *   runners at p50 0.9-1.5 ms. Shared runners can stall a single size for
+ *   several milliseconds, so the absolute limits are loose (they only catch
+ *   a gross slowdown) and the real guard is the scaling ratio: the best 64 KB
+ *   time against the best 4 KB time. A linear scan gives about 16x for 16x the input, a
+ *   quadratic one about 256x; the ratio limit sits between the two and does
+ *   not move with the speed of the machine. */
 const DEFAULT_THRESHOLDS = {
   max_leaks: 0,
   max_overredacted_file_rate: 0.001,
   max_exact_altered_files: 0,
   max_known_ok_redactions: 0,
   latency_ms: {
-    '256B': { p50: 0.5, p95: 2 },
-    '4KB': { p50: 1, p95: 3 },
-    '64KB': { p50: 5, p95: 10 },
+    '256B': { p50: 5, p95: 20 },
+    '4KB': { p50: 10, p95: 25 },
+    '64KB': { p50: 100, p95: 200 },
   },
+  // 64 KB best time divided by max(4 KB best time, scaling_floor_ms); linear
+  // is ~16. The best time is used because a stall on a shared runner moves
+  // the median and the p95, but not the fastest run.
+  max_scaling_ratio: 64,
+  scaling_floor_ms: 0.2,
 };
 
 const USAGE = [
@@ -109,6 +117,8 @@ function loadThresholds(file) {
   const overrides = JSON.parse(fs.readFileSync(file, 'utf8'));
   return Object.assign({}, DEFAULT_THRESHOLDS, overrides, {
     latency_ms: Object.assign({}, DEFAULT_THRESHOLDS.latency_ms, overrides.latency_ms || {}),
+    max_scaling_ratio: overrides.max_scaling_ratio != null ? overrides.max_scaling_ratio : DEFAULT_THRESHOLDS.max_scaling_ratio,
+    scaling_floor_ms: overrides.scaling_floor_ms != null ? overrides.scaling_floor_ms : DEFAULT_THRESHOLDS.scaling_floor_ms,
   });
 }
 
@@ -638,6 +648,7 @@ async function runLatency(engine, vault, corpusDir, quick) {
       samples[spec.label] = {
         bytes: spec.bytes,
         iterations,
+        min_ms: round3(times[0]),
         p50_ms: round3(percentile(times, 50)),
         p95_ms: round3(percentile(times, 95)),
       };
@@ -689,6 +700,14 @@ function evaluateGate(report, thresholds, args) {
     if (!limit) continue;
     if (sample.p50_ms > limit.p50) failures.push({ metric: 'latency:' + label + ':p50', actual: sample.p50_ms, limit: limit.p50 });
     if (sample.p95_ms > limit.p95) failures.push({ metric: 'latency:' + label + ':p95', actual: sample.p95_ms, limit: limit.p95 });
+  }
+  const small = report.latency.samples['4KB'];
+  const large = report.latency.samples['64KB'];
+  if (small && large && !small.error && !large.error) {
+    const ratio = large.min_ms / Math.max(small.min_ms, thresholds.scaling_floor_ms);
+    if (ratio > thresholds.max_scaling_ratio) {
+      failures.push({ metric: 'latency:scaling:64KB/4KB', actual: round3(ratio), limit: thresholds.max_scaling_ratio });
+    }
   }
   return { pass: failures.length === 0, failures };
 }
