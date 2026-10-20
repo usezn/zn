@@ -80,13 +80,14 @@ const UNSAFE_IN_DOUBLE_QUOTES = /[%!"$`“”„\u0000-\u001F\u007F]/;
  * same from cmd.exe, PowerShell and Git Bash. Plain paths stay readable
  * (-Command "..."); a path with a character one of those shells would act on
  * inside double quotes is passed as -EncodedCommand (base64 of UTF-16LE),
- * which no shell changes.
+ * which no shell changes. `opts.encoded` always uses -EncodedCommand, for an
+ * agent that splits the command on spaces and ignores quotes.
  */
-function windowsCommand(program, args, extra = []) {
+function windowsCommand(program, args, extra = [], opts = {}) {
   const inner = '& ' + [program, ...args].map((a) => powershellQuote(portablePath(a, 'win32'))).join(' ') +
     (extra.length ? ' ' + extra.join(' ') : '');
   const head = 'powershell.exe -NoProfile -NonInteractive ';
-  if (!UNSAFE_IN_DOUBLE_QUOTES.test(inner)) return head + '-Command "' + inner + '"';
+  if (!opts.encoded && !UNSAFE_IN_DOUBLE_QUOTES.test(inner)) return head + '-Command "' + inner + '"';
   return head + '-EncodedCommand ' + Buffer.from(inner, 'utf16le').toString('base64');
 }
 
@@ -100,4 +101,16 @@ function windowsCommandScript(command) {
   return null;
 }
 
-module.exports = { shQuote, SH_QUOTE_ESCAPE, powershellQuote, portablePath, windowsCommand, windowsCommandScript };
+/**
+ * A windowsCommand() result in its readable -Command form, so code that
+ * recognises zn's own hook commands sees one shape for both spellings. Any
+ * other command is returned as it is.
+ */
+function readableWindowsCommand(command) {
+  const s = String(command || '');
+  if (!/^powershell\.exe -NoProfile -NonInteractive -EncodedCommand /.test(s)) return s;
+  const script = windowsCommandScript(s);
+  return script === null ? s : 'powershell.exe -NoProfile -NonInteractive -Command "' + script + '"';
+}
+
+module.exports = { shQuote, SH_QUOTE_ESCAPE, powershellQuote, portablePath, windowsCommand, windowsCommandScript, readableWindowsCommand };
