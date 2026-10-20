@@ -165,16 +165,28 @@ async function removeVault(p, io) {
   const f = policy.paths(o);
   if ([f.teamFile, f.policyFile].some((x) => fs.existsSync(x))) {
     out(io, 'The vault was kept: this computer belongs to a zn Team organization and its controls are kept inside the vault. Ask your administrator.');
-    return false;
+    return 'failed';
   }
   if (await daemon.isRunning(o)) {
     out(io, 'The vault was kept: it is unlocked. Run `zn lock`, then `zn-gate uninstall` again.');
-    return false;
+    return 'failed';
   }
   let backend = null;
   try { const m = keychain.readMeta(o); backend = m && m.backend; } catch (_) { /* damaged */ }
-  if (backend) { try { await keychain.deleteIdentity(o); } catch (_) { /* the files go anyway */ } }
-  for (const v of require('./vault/reset').vaultFiles(o)) { try { fs.unlinkSync(v.src); } catch (_) { /* gone */ } }
+  // Files first, the key last: if a file cannot be removed, the key stays and what is left still opens.
+  const left = [];
+  for (const v of require('./vault/reset').vaultFiles(o)) {
+    try { fs.unlinkSync(v.src); } catch (err) { if (!err || err.code !== 'ENOENT') left.push(v.src); }
+  }
+  if (left.length) {
+    out(io, 'The vault was not fully deleted. These files could not be removed:');
+    for (const f of left) out(io, '  - ' + f);
+    out(io, 'The vault key in your system keychain was kept, so what is left of the vault can still be opened. Delete those files by hand (or fix their permissions) and run `zn-gate uninstall` again.');
+    return 'failed';
+  }
+  if (backend) {
+    try { await keychain.deleteIdentity(o); } catch (_) { out(io, 'The vault files are gone, but the vault key could not be removed from your system keychain. It is harmless without the files; remove the "zn" entry by hand if you want.'); }
+  }
   try { fs.rmdirSync(store.paths(o).vaultDir); } catch (_) { /* not empty or gone */ }
   out(io, 'Vault deleted.');
   return true;
@@ -200,6 +212,7 @@ async function run(args, io) {
   // Same rule as `zn hooks install`: a person at a terminal, never an agent or a script.
   const tty = require('./broker/tty');
   if (!io.human) tty.requireHuman('zn-gate uninstall', io);
+  let failed = 0;
   const ask = io.confirm || ((q) => tty.confirm(q, { stdin: io.stdin, stderr: io.stderr }));
   if (p.agents.length || p.wrapped.length) {
     if (!(await ask('Remove what is listed above?'))) { out(io, 'Nothing was changed.'); return 1; }
@@ -207,7 +220,10 @@ async function run(args, io) {
     const withBackup = p.wrapped.filter((w) => w.backup);
     if (withBackup.length) {
       const r = require('./init').configureEnvironments({ revert: true, envList: withBackup.map((w) => w.env) });
-      for (const act of r.actions) out(io, '  ' + act.env + ': ' + (act.status === 'reverted' ? 'put back from ' + act.from : act.status));
+      for (const act of r.actions) {
+        out(io, '  ' + act.env + ': ' + (act.status === 'reverted' ? 'put back from ' + act.from : act.status));
+        if (act.status !== 'reverted') failed++;
+      }
     }
     const { getAdapter } = require('./agents');
     for (const a of p.agents) {
@@ -219,28 +235,38 @@ async function run(args, io) {
           out(io, '  ' + a.name + ': removed zn\'s hooks (' + scope + ') in ' + rep.settings + (rep.backup ? ' (copy saved: ' + rep.backup + ')' : ''));
         } catch (err) {
           out(io, '  ' + a.name + ': could not remove the ' + scope + ' hooks: ' + (err && err.message ? err.message : err));
+          failed++;
         }
       }
       if (a.plugin) {
         const s = pluginStep(io);
-        if (!s.run) out(io, '  ' + a.name + ': do this yourself: ' + s.manual);
+        if (!s.run) { out(io, '  ' + a.name + ': do this yourself: ' + s.manual); failed++; }
         else if ((io.run || s.exec)(s, io.env)) out(io, '  ' + a.name + ': plugin removed');
-        else out(io, '  ' + a.name + ': the plugin was not removed. Run it yourself: ' + s.manual);
+        else { out(io, '  ' + a.name + ': the plugin was not removed. Run it yourself: ' + s.manual); failed++; }
       }
+    }
+    // Look again: a config wrapped twice, or one with no saved copy, is still wrapped.
+    const still = wrappedConfigs(io.envList);
+    if (still.length) {
+      out(io, '');
+      out(io, 'Still wrapped by zn-gate shield (do this yourself):');
+      for (const w of still) out(io, '  - ' + w.name + ' (' + w.servers + ' server' + (w.servers === 1 ? '' : 's') + ') in ' + w.file + ': open the file and put the original command of each server back in place of the zn-gate shield wrapper.');
+      failed++;
     }
   }
   if (p.vault.exists) {
     out(io, '');
     out(io, 'Your vault still holds your secrets (' + p.vault.home + ').' + (p.shadowed.length ? ' The .env files with markers need it.' : ''));
-    if (await ask('Delete the vault too? Every secret in it is lost for good.')) await removeVault(p, io);
+    if (await ask('Delete the vault too? Every secret in it is lost for good.')) { if ((await removeVault(p, io)) === 'failed') failed++; }
     else out(io, 'The vault was kept.');
   }
   out(io, '');
   const zc = require('./check');
   zc.report(await zc.check({ home: io.home, env: io.env, cwd: io.cwd }), (s) => io.stdout.write(s));
   out(io, '');
+  if (failed) out(io, 'Not everything was removed: ' + failed + (failed === 1 ? ' step' : ' steps') + ' did not finish (see above). Exit code 1.');
   out(io, 'Last step, to remove the program itself: npm uninstall -g zn-gate');
-  return 0;
+  return failed ? 1 : 0;
 }
 
 module.exports = { run, plan, printPlan, USAGE };

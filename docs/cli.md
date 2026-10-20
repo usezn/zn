@@ -74,13 +74,13 @@ Removes zn-gate from this computer in one step. It finds what is set up, prints 
 
 - the zn-gate plugin of Claude Code (with `claude plugin uninstall zn-gate@usezn`; without a `claude` command it prints the `/plugin` command to type);
 - zn's hooks of every agent, for your user and for the current project, and zn's own `secrets` MCP server (the same as `hooks uninstall`);
-- MCP servers wrapped by `init --wrap-mcp`: the saved copy of each config is put back (changes made to that file since are lost).
+- MCP servers wrapped by `init --wrap-mcp`: the saved copy of each config is put back (changes made to that file since are lost). Afterwards it looks again and lists any server that is still wrapped (for example a config wrapped twice) with what to do by hand.
 
 The vault is not touched unless you answer yes to a second, separate question (default no); deleting it cannot be undone. `.env` files that hold zn markers are left alone, because the values are in the vault: run `zn env unshadow` first if you want them back in the file. It ends by running `check` and showing its result, and tells you how to remove the program itself (`npm uninstall -g zn-gate`).
 
 - `--dry-run`: print the plan and change nothing.
 
-Exit codes: `0` done, or nothing to remove. `1` you answered no. `64` an option it does not know. `77` there is no interactive terminal, or an AI agent ran it: nothing was changed.
+Exit codes: `0` everything listed was removed, or there was nothing to remove. `1` you answered no, or a step failed (hooks, plugin, a wrapped MCP config, or the vault you asked to delete): what is left is printed with what to do by hand. `64` an option it does not know. `77` there is no interactive terminal, or an AI agent ran it: nothing was changed.
 
 ### `check`
 

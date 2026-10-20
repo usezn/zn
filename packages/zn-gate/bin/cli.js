@@ -889,7 +889,7 @@ async function main() {
     return;
   }
 
-  if (BROKER_COMMANDS.has(args[0]) && !(args.length === 2 && (args[1] === '-h' || args[1] === '--help'))) {
+  if (BROKER_COMMANDS.has(args[0]) && (args[0] === 'uninstall' || !(args.length === 2 && (args[1] === '-h' || args[1] === '--help')))) {
     await runBrokerCommand(args[0], args.slice(1));
     return;
   }

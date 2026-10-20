@@ -213,7 +213,7 @@ test('uninstall: a plugin without a claude command prints the command to type', 
   const m = machine(t);
   plugin(m);
   const c = io(m, { confirm: async () => true });
-  assert.equal(await dispatch('uninstall', [], c.o), 0);
+  assert.equal(await dispatch('uninstall', [], c.o), 1); // left for you to do by hand: not a clean run
   assert.match(c.out(), /\/plugin uninstall zn-gate@usezn/);
 });
 
@@ -242,4 +242,107 @@ test('help lists uninstall and hooks uninstall', () => {
   const r = spawnSync(process.execPath, [CLI, '--help'], { encoding: 'utf8' });
   assert.match(r.stdout, /^  uninstall {11}/m);
   assert.match(r.stdout, /^  hooks uninstall <agent>/m);
+});
+
+// --- exit codes, vault deletion order, re-scan, help ---
+
+test('uninstall: a vault file that cannot be removed keeps the key, is reported, and exits 1', async (t) => {
+  const m = machine(t);
+  const v = vault(m);
+  const keychain = require('../lib/vault/keychain');
+  const realUnlink = fs.unlinkSync;
+  const realMeta = keychain.readMeta;
+  const realDelete = keychain.deleteIdentity;
+  let keyDeleted = 0;
+  keychain.readMeta = () => ({ backend: 'test' });
+  keychain.deleteIdentity = async () => { keyDeleted++; };
+  fs.unlinkSync = (f) => { if (f === v) { const e = new Error('EACCES: permission denied'); e.code = 'EACCES'; throw e; } return realUnlink(f); };
+  t.after(() => { fs.unlinkSync = realUnlink; keychain.readMeta = realMeta; keychain.deleteIdentity = realDelete; });
+  const c = io(m, { confirm: async () => true });
+  assert.equal(await dispatch('uninstall', [], c.o), 1, c.err());
+  assert.ok(fs.existsSync(v), 'the file is still there');
+  assert.equal(keyDeleted, 0, 'the keychain key is kept');
+  assert.ok(c.out().includes(v), 'the file left is named');
+  assert.match(c.out(), /key in your system keychain was kept/);
+  assert.doesNotMatch(c.out(), /Vault deleted/);
+});
+
+test('uninstall: the vault key is removed only after the files are gone', async (t) => {
+  const m = machine(t);
+  const v = vault(m);
+  const keychain = require('../lib/vault/keychain');
+  const realMeta = keychain.readMeta;
+  const realDelete = keychain.deleteIdentity;
+  let fileThere = null;
+  keychain.readMeta = () => ({ backend: 'test' });
+  keychain.deleteIdentity = async () => { fileThere = fs.existsSync(v); };
+  t.after(() => { keychain.readMeta = realMeta; keychain.deleteIdentity = realDelete; });
+  const c = io(m, { confirm: async () => true });
+  assert.equal(await dispatch('uninstall', [], c.o), 0, c.err());
+  assert.equal(fileThere, false);
+  assert.match(c.out(), /Vault deleted/);
+});
+
+test('uninstall: a hook removal that fails exits 1 and says so', async (t) => {
+  const m = machine(t);
+  install(m, 'codex');
+  const adapter = getAdapter('codex');
+  const real = adapter.uninstall;
+  adapter.uninstall = () => { throw new Error('settings file is read-only'); };
+  t.after(() => { adapter.uninstall = real; });
+  const c = io(m, { confirm: async () => true });
+  assert.equal(await dispatch('uninstall', [], c.o), 1, c.err());
+  assert.match(c.out(), /could not remove the user hooks: settings file is read-only/);
+  assert.match(c.out(), /Not everything was removed: 1 step/);
+});
+
+test('uninstall: a plugin that is not removed exits 1', async (t) => {
+  const m = machine(t);
+  plugin(m);
+  const c = io(m, { claude: path.resolve('/opt/bin/claude'), run: () => false, confirm: async () => true });
+  assert.equal(await dispatch('uninstall', [], c.o), 1, c.err());
+  assert.match(c.out(), /the plugin was not removed/);
+  const d = io(m, { confirm: async () => true });
+  assert.equal(await dispatch('uninstall', [], d.o), 1, 'no claude command: the plugin is left for you to remove');
+});
+
+test('uninstall: a wrapped config with no saved copy is listed as still wrapped and exits 1', async (t) => {
+  const m = machine(t);
+  const w = wrapped(m);
+  for (const f of fs.readdirSync(m.home)) if (f.startsWith('mcp-config.json.bak.')) fs.unlinkSync(path.join(m.home, f));
+  const c = io(m, { envList: w.list, confirm: async () => true });
+  assert.equal(await dispatch('uninstall', [], c.o), 1, c.err());
+  assert.match(c.out(), /Still wrapped by zn-gate shield/);
+  assert.ok(c.out().includes('Example MCP (1 server) in ' + w.file));
+});
+
+test('uninstall: after putting back a saved copy that is itself wrapped, the server still wrapped is listed', async (t) => {
+  const m = machine(t);
+  const w = wrapped(m);
+  const wrappedText = fs.readFileSync(w.file, 'utf8');
+  const bak = fs.readdirSync(m.home).find((f) => f.startsWith('mcp-config.json.bak.'));
+  fs.writeFileSync(path.join(m.home, bak), wrappedText);
+  const c = io(m, { envList: w.list, confirm: async () => true });
+  assert.equal(await dispatch('uninstall', [], c.o), 1, c.err());
+  assert.match(c.out(), /put back from/);
+  assert.match(c.out(), /Still wrapped by zn-gate shield/);
+  assert.match(c.out(), /Example MCP \(1 server\)/);
+});
+
+test('uninstall: a clean run with everything removed exits 0 and prints no leftovers', async (t) => {
+  const m = machine(t);
+  install(m, 'codex');
+  const w = wrapped(m);
+  const c = io(m, { envList: w.list, confirm: async () => true });
+  assert.equal(await dispatch('uninstall', [], c.o), 0, c.err());
+  assert.doesNotMatch(c.out(), /Still wrapped|Not everything was removed/);
+});
+
+test('uninstall --help and -h print the uninstall help, not the general help', () => {
+  for (const flag of ['--help', '-h']) {
+    const r = spawnSync(process.execPath, [CLI, 'uninstall', flag], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /^usage: zn-gate uninstall \[--dry-run\]/m);
+    assert.doesNotMatch(r.stdout, /hooks install/);
+  }
 });
