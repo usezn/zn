@@ -1,2 +1,0 @@
-### Added
-- `zn-gate report` shows what zn-gate did on this computer in the last 7 days (`--since 1d-90d` for another period, `--json` for scripts): blocked actions by agent, secrets hidden by type, new protected MCP servers, tool changes waiting for your approval and the busiest day. It reads only local files, writes nothing and sends nothing. It ends with one line about zn Team, which `--no-team-line` hides and which does not appear once the computer has joined a Team. See [docs/report.md](docs/report.md).

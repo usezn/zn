@@ -1,0 +1,49 @@
+name: Pre-commit hooks
+
+# Runs .github/scripts/test-pre-commit-hooks.sh when the hooks file, that script or the CLI the hooks
+# run changes. The script checks the schema and the version pin, then runs both hooks with
+# `pre-commit try-repo` against a tarball packed from the commit under test.
+on:
+  pull_request:
+    branches: [ main, next, 'release/**' ]
+    paths:
+      - '.pre-commit-hooks.yaml'
+      - '.github/scripts/test-pre-commit-hooks.sh'
+      - '.github/workflows/pre-commit-hooks.yml'
+      - 'packages/zn-gate/package.json'
+  push:
+    branches: [ main, next ]
+    paths:
+      - '.pre-commit-hooks.yaml'
+      - '.github/scripts/test-pre-commit-hooks.sh'
+      - '.github/workflows/pre-commit-hooks.yml'
+      - 'packages/zn-gate/package.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pre-commit-hooks-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  hooks:
+    name: Pre-commit hooks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.x
+      - name: Install pre-commit and PyYAML
+        run: python3 -m pip install --user pre-commit==4.2.0 PyYAML
+      - name: Test the hooks
+        run: bash .github/scripts/test-pre-commit-hooks.sh

@@ -1,0 +1,89 @@
+name: Package lint
+
+# Lints what gets published: publint and Are the Types Wrong? (attw) on the npm tarball of
+# packages/zn-gate (the output of npm pack), and check-wheel-contents on the wheel built from
+# packages/zn-gate-py. The Node tools are pinned by exact version; check-wheel-contents is installed
+# from .github/package-lint-requirements.txt with hashes. attw reports only for now: the npm package
+# ships no TypeScript declarations yet, so it would fail. Once they land, drop continue-on-error.
+on:
+  pull_request:
+    branches: [ main, next, 'release/**' ]
+    paths:
+      - 'packages/zn-gate/**'
+      - 'packages/zn-gate-py/**'
+      - '.github/package-lint-requirements.txt'
+      - '.github/release-requirements.txt'
+      - '.github/workflows/package-lint.yml'
+  push:
+    branches: [ main, next ]
+    paths:
+      - 'packages/zn-gate/**'
+      - 'packages/zn-gate-py/**'
+      - '.github/package-lint-requirements.txt'
+      - '.github/release-requirements.txt'
+      - '.github/workflows/package-lint.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-lint-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package-lint:
+    name: Package lint (publint, attw, check-wheel-contents)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PUBLINT_VERSION: 0.3.25
+      ATTW_VERSION: 0.18.5
+    steps:
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.x
+          package-manager-cache: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          package-manager-cache: false
+      - name: Pack the npm tarball
+        working-directory: packages/zn-gate
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts
+          mkdir -p "$RUNNER_TEMP/pack"
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/pack"
+          ls -l "$RUNNER_TEMP/pack"
+      - name: publint
+        # --strict also fails on warnings, not only errors.
+        run: npx --yes "publint@${PUBLINT_VERSION}" --strict "$RUNNER_TEMP"/pack/zn-gate-*.tgz # zizmor: ignore[adhoc-packages] exact version, run on the tarball built above
+      - name: attw (report only)
+        # The package has no TypeScript declarations yet, so this reports "no types".
+        continue-on-error: true
+        run: npx --yes "@arethetypeswrong/cli@${ATTW_VERSION}" "$RUNNER_TEMP"/pack/zn-gate-*.tgz # zizmor: ignore[adhoc-packages] exact version, run on the tarball built above
+      - name: Install the Python tools (hash pinned)
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/lint-venv"
+          "$RUNNER_TEMP/lint-venv/bin/python" -m pip install --disable-pip-version-check --no-cache-dir \
+            --require-hashes -r .github/release-requirements.txt -r .github/package-lint-requirements.txt
+      - name: Build the wheel
+        run: |
+          set -euo pipefail
+          # --no-isolation: build with the hash-pinned setuptools from the venv.
+          "$RUNNER_TEMP/lint-venv/bin/python" -m build --no-isolation --wheel packages/zn-gate-py --outdir "$RUNNER_TEMP/dist"
+          ls -l "$RUNNER_TEMP/dist"
+      - name: check-wheel-contents
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/lint-venv/bin/check-wheel-contents" "$RUNNER_TEMP"/dist/*.whl

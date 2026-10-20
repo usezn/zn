@@ -9,6 +9,7 @@ pub mod cache;
 pub mod consensus;
 pub mod loop_breaker;
 pub mod neural;
+pub mod policy_file;
 pub mod reputation;
 pub mod rules;
 pub mod signing;
@@ -22,6 +23,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{error, info, warn};
 use wasmtime::*;
+
+pub use policy_file::write_policy_file;
 
 /// Longest policy name accepted by the management API.
 pub const MAX_POLICY_NAME_LEN: usize = 64;
@@ -125,55 +128,6 @@ pub fn remove_policy_file(dir: impl AsRef<Path>, name: &str) -> Result<bool> {
         return Ok(true);
     }
     Ok(false)
-}
-
-/// Writes a policy file without following symlinks and without exposing a
-/// half-written file. A symlink at `path` (even a dangling one) is refused.
-/// The bytes go to a new temporary file in the same directory, created
-/// exclusively so that nothing already there is followed, and that file is
-/// then renamed over `path`; a rename replaces a symlink instead of writing
-/// through it. The temporary name does not end in `.wasm`, so the policy
-/// watcher ignores it until the rename.
-pub fn write_policy_file(path: &Path, data: &[u8]) -> Result<()> {
-    use std::io::Write;
-
-    if let Ok(meta) = std::fs::symlink_metadata(path) {
-        if meta.file_type().is_symlink() {
-            return Err(anyhow!("Policy file {:?} is a symlink", path));
-        }
-    }
-    let dir = path
-        .parent()
-        .ok_or_else(|| anyhow!("Policy file {:?} has no directory", path))?;
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| anyhow!("Policy file {:?} has no name", path))?;
-    let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let tmp = dir.join(format!(
-        ".{}.{}.{}.tmp",
-        file_name.to_string_lossy(),
-        std::process::id(),
-        nonce
-    ));
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&tmp)
-        .map_err(|e| anyhow!("Failed to create a temporary policy file: {}", e))?;
-    if let Err(e) = file.write_all(data).and_then(|_| file.sync_all()) {
-        drop(file);
-        let _ = std::fs::remove_file(&tmp);
-        return Err(anyhow!("Failed to write policy file: {}", e));
-    }
-    drop(file);
-    if let Err(e) = std::fs::rename(&tmp, path) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(anyhow!("Failed to save policy file: {}", e));
-    }
-    Ok(())
 }
 
 struct ZnContext {
@@ -434,6 +388,39 @@ impl ZnEngine {
 
         self.policies.insert(name.clone(), Arc::new(module));
         info!("Registered policy: {}", name);
+        Ok(())
+    }
+
+    /// Verify an uploaded policy and only then save it and register it.
+    ///
+    /// The checks run on the bytes in memory: the allowed-hash list, the
+    /// Ed25519 signature and, when `ZN_PQ_PUBLIC_KEY` is set, the ML-DSA-65
+    /// signature (read from the `.wasm.sig` and `.wasm.pqs` files next to
+    /// `path`), then the WASM must compile. Nothing is written when a check
+    /// fails, and a policy that already exists at `path` stays as it was.
+    pub fn install_policy(&self, path: impl AsRef<Path>, bytes: &[u8]) -> Result<()> {
+        let path = path.as_ref();
+        let name = path
+            .file_stem()
+            .and_then(|s: &std::ffi::OsStr| s.to_str())
+            .ok_or_else(|| anyhow!("Invalid policy filename"))?
+            .to_string();
+
+        self.verify_policy_integrity(bytes, path)?;
+
+        let mut module = None;
+        self.verifier.verify_then_write(bytes, path, |b| {
+            module = Some(
+                Module::new(&self.engine, b)
+                    .map_err(|e| anyhow!("Failed to compile WASM policy {:?}: {}", path, e))?,
+            );
+            Ok(())
+        })?;
+
+        if let Some(module) = module {
+            self.policies.insert(name.clone(), Arc::new(module));
+            info!("Registered policy: {}", name);
+        }
         Ok(())
     }
 

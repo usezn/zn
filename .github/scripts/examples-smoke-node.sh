@@ -48,6 +48,7 @@ for name in node-basic custom-rules langchain-js; do
     run=(sudo -n unshare -n "${run[@]}")
   fi
   OUT[$name]="$(cd "$dir" && "${run[@]}" 2>&1)" || { echo "FAIL examples/$name exited with an error"; echo "${OUT[$name]}"; exit 1; }
+  # shellcheck disable=SC2001 # the output has several lines: the prefix goes on every line, which ${var//} would not do
   echo "${OUT[$name]}" | sed 's/^/    /'
 done
 
