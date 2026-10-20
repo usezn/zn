@@ -31,17 +31,7 @@ The commands that start a long-running server (`mcp`, `shield`, `secrets-mcp`) e
 
 ## Settings
 
-| Setting | Effect |
-|---|---|
-| `ZN_API_KEY` or `--key <api_key>` | API key for the optional cloud check. Used only by `analyze` and `analyze_prompt`, and only when the cloud check is on. |
-| `ZN_CLOUD=1` | Turns the optional cloud check on. Without it (or `zn-gate connect`) nothing leaves your machine. |
-| `ZN_LOCAL_ONLY=true` or `--local-only` | Never use the cloud, even when `ZN_CLOUD=1` is set. |
-| `ZN_STAGE` or `--stage <v30\|prod>` | Cloud stage. Default `v30`. |
-| `ZN_API_URL` or `--url <url>` | Use another cloud address. |
-| `--long-input <windows\|off>` | How long texts are sent to the cloud check: in overlapping windows (default, up to 20), or only the first 512 tokens. Any other value exits `2`. |
-| `ZN_STATS=off` | Turns off the local counts shown by `stats` and `report`. |
-| `ZN_VERBOSE=1` (or `true`, `yes`, `on`) or `--verbose` | Prints debug messages to the error output. `0`, `false`, `no`, `off` or empty leave it off. |
-| `NO_COLOR` | Turns off colors. |
+Settings come from environment variables and, for some, a command line option. They are all in the table under [Environment variables](#environment-variables).
 
 ## Set up and check
 
@@ -537,26 +527,27 @@ For administrators. Prints the managed configuration files you deploy with MDM o
 
 ## Environment variables
 
-Every environment variable you can set for the npm package (`zn-gate`) and the Python package (`zn-gate` on PyPI). Anything not listed here is internal.
+Every setting you can change with an environment variable, and the command line option that does the same, for the npm package (`zn-gate`) and the Python package (`zn-gate` on PyPI). Anything not listed here is internal.
 
-| Variable | What it does | Values (default) | Read by |
-|---|---|---|---|
-| `ZN_CLOUD` | Turns the optional cloud check on. Without it nothing leaves your machine. | `1` turns it on (off) | npm, Python |
-| `ZN_API_KEY` | API key for the optional cloud check. It does nothing unless `ZN_CLOUD=1`. | A zn API key (none) | npm, Python |
-| `ZN_LOCAL_ONLY` | Never uses the cloud, even when `ZN_CLOUD=1` is set. | `true` turns it on (off) | npm, Python |
-| `ZN_STAGE` | Which cloud stage the check uses. | `v30` or `prod` (`v30`) | npm, Python |
-| `ZN_API_URL` | Uses another cloud address. | A URL (set by `ZN_STAGE`) | npm, Python |
-| `ZN_LONG_INPUT` | How long texts are sent to the cloud check. | `windows` sends overlapping windows; `off` sends only the first 512 tokens (`windows`) | npm, Python |
-| `ZN_STRICT` | Also blocks the text-check rules that are only advisories by default. | `1` turns it on (off) | npm, Python |
-| `ZN_BLOCK_TRUNCATED` | Blocks tool output that is too large to scan in full. | `1` turns it on (off) | npm, Python |
-| `ZN_VERBOSE` | Prints debug messages to the error output. | `1`, `true`, `yes` or `on` (any case) turn it on; anything else, including `0`, leaves it off (off) | npm, Python |
-| `ZN_HOME` | The folder where zn keeps its state: the evidence log and the usage counts, and for npm also the vault, MCP pins and cloud key. | A folder path (`~/.zn`) | npm (all of it), Python (evidence log and counts) |
-| `ZN_STATS` | Turns off the local counts shown by `stats` and `report`. | `off` turns them off (on) | npm |
-| `ZN_MCP_PINNING` | Makes MCP tool pinning stricter for one run. It can raise the mode but never lower it. | `block` (the mode in `~/.zn/config.json`, else `warn`) | npm |
-| `ZN_HOOK_FAIL_MODE` | What the agent hooks do when they fail. It can only make them stricter. | `closed` blocks the action; any other value is ignored (`closed`) | npm |
-| `ZN_NO_COMPILE_CACHE` | Turns off the cache that makes the hooks start faster. | Any non-empty value turns the cache off (on) | npm |
-| `ZN_KEYCHAIN_SERVICE` | Name of the entry zn uses in your system keychain. | A simple name (`zn-vault`) | npm |
-| `ZN_KEYCHAIN_BACKEND` | Forces one keychain backend instead of the one zn detects. | A backend your system supports (detected) | npm |
-| `ZN_KEYCHAIN_PATH` | macOS only: the keychain file to use. The path must not contain spaces. | A file path (the default keychain) | npm |
+| Variable | Command line option | What it does | Values (default) | Read by |
+|---|---|---|---|---|
+| `ZN_CLOUD` |  | Turns the optional cloud check on. Without it (or `zn-gate connect`) nothing leaves your machine. | `1` turns it on (off) | npm, Python |
+| `ZN_API_KEY` | `--key <api_key>` | API key for the optional cloud check. It does nothing unless `ZN_CLOUD=1`. | A zn API key (none). Used only by `analyze` and `analyze_prompt`, and only when the cloud check is on | npm, Python |
+| `ZN_LOCAL_ONLY` | `--local-only` | Never uses the cloud, even when `ZN_CLOUD=1` is set. | `true` turns it on (off) | npm, Python |
+| `ZN_STAGE` | `--stage <v30\|prod>` | Which cloud stage the check uses. | `v30` or `prod` (`v30`) | npm, Python |
+| `ZN_API_URL` | `--url <url>` | Uses another cloud address. | A URL (set by `ZN_STAGE`) | npm, Python |
+| `ZN_LONG_INPUT` | `--long-input <windows\|off>` | How long texts are sent to the cloud check. | `windows` sends overlapping windows (up to 20); `off` sends only the first 512 tokens (`windows`). Any other value of the option exits `2` | npm, Python |
+| `ZN_STRICT` |  | Also blocks the text-check rules that are only advisories by default. | `1` turns it on (off) | npm, Python |
+| `ZN_BLOCK_TRUNCATED` |  | Blocks tool output that is too large to scan in full. | `1` turns it on (off) | npm, Python |
+| `ZN_VERBOSE` | `--verbose` | Prints debug messages to the error output. | `1`, `true`, `yes` or `on` (any case) turn it on; anything else, including `0`, leaves it off (off) | npm, Python |
+| `ZN_HOME` |  | The folder where zn keeps its state: the evidence log and the usage counts, and for npm also the vault, MCP pins and cloud key. | A folder path (`~/.zn`) | npm (all of it), Python (evidence log and counts) |
+| `ZN_STATS` |  | Turns off the local counts shown by `stats` and `report`. | `off` turns them off (on) | npm |
+| `ZN_MCP_PINNING` |  | Makes MCP tool pinning stricter for one run. It can raise the mode but never lower it. | `block` (the mode in `~/.zn/config.json`, else `warn`) | npm |
+| `ZN_HOOK_FAIL_MODE` |  | What the agent hooks do when they fail. It can only make them stricter. | `closed` blocks the action; any other value is ignored (`closed`) | npm |
+| `ZN_NO_COMPILE_CACHE` |  | Turns off the cache that makes the hooks start faster. | Any non-empty value turns the cache off (on) | npm |
+| `ZN_KEYCHAIN_SERVICE` |  | Name of the entry zn uses in your system keychain. | A simple name (`zn-vault`) | npm |
+| `ZN_KEYCHAIN_BACKEND` |  | Forces one keychain backend instead of the one zn detects. | A backend your system supports (detected) | npm |
+| `ZN_KEYCHAIN_PATH` |  | macOS only: the keychain file to use. The path must not contain spaces. | A file path (the default keychain) | npm |
+| `NO_COLOR` |  | Turns off colors. | Set it to turn colors off (colors on) | npm |
 
 `ZN_API_KEY` here is your zn cloud key. The Rust gateway in this repository reads a variable with the same name for a different key, its administrator key: see [the gateway guide](rust-core.md).
