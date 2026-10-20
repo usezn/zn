@@ -1,0 +1,2 @@
+### Changed
+- When an agent hook blocks something or hides a secret in a tool result, `zn-gate evidence` now shows it as an event in the hash-chained log (agent, kind of event, tool name, rule name and the kinds of secret, never a value, command, path or prompt text), so `Total Events` no longer stays at 0 after hook blocks. Allowed calls are not written. A problem with the log never turns a block into an allow.

@@ -44,8 +44,25 @@ function record(req, body) {
   fs.appendFileSync(LOG, JSON.stringify({ ts: new Date().toISOString(), method: req.method, url: req.url, body }) + '\n');
 }
 
-function stepFor(count) {
-  return count < SCRIPT.steps.length ? SCRIPT.steps[count] : null;
+function stepFor(count, steps = SCRIPT.steps) {
+  return count < steps.length ? steps[count] : null;
+}
+
+// A script may give "child": the turns of a subagent. A request is the parent's when it holds the
+// first user prompt ("parentMarker"); any other request is a subagent's and plays the child script.
+function isChildRequest(body) {
+  return !!SCRIPT.child && !JSON.stringify(body.input || []).includes(SCRIPT.parentMarker || 'Follow the setup task.');
+}
+
+// A "spawn_agent" step with "auto": the tool is a plain function (task_name + message) or lives in a
+// namespace (message only), depending on the Codex version; what the request offers decides.
+function spawnStep(step, body) {
+  for (const t of body.tools || []) {
+    if (t.type === 'function' && t.name === 'spawn_agent') return { ...step, input: { task_name: 'child_task', message: step.input.message } };
+    if (t.type === 'namespace' && (t.tools || []).some((x) => x.name === 'spawn_agent')) return { ...step, namespace: t.name, input: { message: step.input.message } };
+  }
+  process.stderr.write('mock: spawn_agent is not offered to the model\n');
+  return null;
 }
 
 /* ----------------------------- Anthropic ----------------------------- */
@@ -105,7 +122,10 @@ function finalText(body) {
 
 function responses(body, res) {
   const hasTools = Array.isArray(body.tools) && body.tools.length > 0;
-  const step = hasTools ? stepFor(responsesToolResults(body)) : null;
+  const child = isChildRequest(body);
+  let step = hasTools ? stepFor(responsesToolResults(body), child ? SCRIPT.child.steps : SCRIPT.steps) : null;
+  if (step && step.auto) step = spawnStep(step, body);
+  fs.appendFileSync(path.join(OUT, 'mock_notes.jsonl'), JSON.stringify({ ts: new Date().toISOString(), note: 'responses', child, offered: (body.tools || []).map((t) => t.name || t.type).slice(0, 60) }) + '\n');
   const respId = id('resp');
   let item;
   if (step) {

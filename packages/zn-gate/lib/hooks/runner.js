@@ -39,6 +39,9 @@
  * {"hooks": {"whenUnavailable": "allow"}} in ~/.zn/config.json.
  */
 
+// First, so the modules below are compiled through the cache too (a hook is a new process per call).
+if (require.main === module) require('../compile-cache').enable();
+
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -48,6 +51,7 @@ const { gitStatusOf } = require('../broker/files');
 const deps = require('../deps');
 const { shQuote, SH_QUOTE_ESCAPE, portablePath } = require('../shell-quote');
 const { znCommand } = require('../zn-command');
+const { hasUnsafeText } = require('../safe-text');
 
 const SECRET_SOURCES = new Set(['exact', 'pattern']);
 const POST_TOOLS = new Set(['read', 'bash', 'powershell', 'monitor', 'grep', 'lsp', 'webfetch', 'mcp', 'mcpresource']);
@@ -104,6 +108,32 @@ const REINSTALL_USER = 'part of zn-gate is missing from this installation, so zn
   'To let actions pass unchecked until then, set {"hooks": {"whenUnavailable": "allow"}} in ~/.zn/config.json.';
 const HOOK_FAILED = 'something went wrong inside the zn hook, so this action was blocked to keep the user\'s secrets safe. ' +
   'If it happens again, ask the user to run `' + znCommand('hooks install') + '`.';
+
+/**
+ * Refuse text that a native call could not survive (see safe-text.js) before any file, process or network call
+ * sees it. The working directory and transcript path of every event are checked; a tool call, whose command and
+ * paths the policy turns into file system calls, is checked whole.
+ */
+function guardNativeText(ev) {
+  if (!(ev.event === 'pre_tool' ? hasUnsafeText(ev) : hasUnsafeEventPaths(ev))) return;
+  const err = new Error('malformed text in the event');
+  err.code = 'ZN_MALFORMED_TEXT';
+  throw err;
+}
+
+// What the model wrote or read is content, never a path: a tool output, a prompt or an answer is checked by the
+// scanner and does not reach a file call, so malformed text there is not a reason to refuse the event.
+const CONTENT_KEYS = new Set(['prompt', 'tool_response', 'tool_output', 'output', 'result', 'response', 'last_assistant_message']);
+
+/** Every other field of a post-tool, prompt or stop event (working directory, transcript, workspace roots, tool input) is checked. */
+function hasUnsafeEventPaths(ev) {
+  const input = ev.input && typeof ev.input === 'object' ? { ...ev.input, prompt: undefined } : ev.input;
+  const raw = {};
+  if (ev.raw && typeof ev.raw === 'object') {
+    for (const [k, v] of Object.entries(ev.raw)) if (!CONTENT_KEYS.has(k) && v !== ev.output) raw[k] = v;
+  }
+  return hasUnsafeText([ev.cwd, ev.sessionId, ev.toolName, input, raw]);
+}
 
 /** Map every string leaf of a JSON value through an async function, keeping the shape. */
 async function mapStrings(value, fn) {
@@ -493,6 +523,7 @@ async function decideMcp(ev, d, agentId) {
   if (kinds.size === 0) return { decision: 'allow' };
   return {
     decision: 'deny',
+    kinds: [...kinds],
     message: 'zn: this call would send a secret (' + [...kinds].join(', ') + ') to ' + mcpServerLabel(server) + ', so zn blocked it. ' +
       'A stored secret cannot be passed to this server. ' +
       'Next step: for a web request, use the secrets_http_request tool of the zn "secrets" MCP server, which sends the stored value itself; do not put the value in this call.',
@@ -503,6 +534,15 @@ async function decideMcp(ev, d, agentId) {
 
 async function decidePost(ev, d, agentId, opts = {}) {
   if (!POST_TOOLS.has(ev.tool)) return { decision: 'allow' };
+  if (agentId === 'codex' && ev.tool === 'bash') {
+    // Codex runs every PreToolUse hook at once with the original call, so another tool's hook can change the
+    // command after zn checked it. PostToolUse carries the command that really ran: if zn blocks that one,
+    // the output is withheld. The command has already run, so this limits what the model sees, not what happened.
+    const denial = policy.bashDenial(String(ev.input.command || ''), { cwd: ev.cwd, home: opts.home });
+    if (denial) {
+      return { decision: 'deny', message: 'zn: A command different from the one zn checked was run (another tool changed it). zn withheld its output because zn blocks that command. Review the other hooks configured for Codex.' };
+    }
+  }
   if (ev.output === undefined || ev.output === null) return { decision: 'allow' };
   const engine = d.engine();
   const ctx = await ctxFor(ev, d, agentId, 'assistant');
@@ -603,7 +643,9 @@ async function decidePromptText(ev, d, agentId, expansion) {
     if (!secrets.some((s) => s.start < a.end && a.start < s.end)) secrets.push(a);
   }
   if (secrets.length === 0) return { decision: 'allow' };
-  const names = secrets.map(nameOf);
+  const others = [...spans, ...secrets];
+  const scanText = (t) => { try { return engine.scan(t, ctx) || []; } catch (_) { return []; } };
+  const names = secrets.map((s) => nameOf(s) || keyBefore(prompt, s, others, scanText));
   const shown = [...new Set(secrets.map((s, i) => names[i] || kindLabel(s.type)))];
   const suggestion = names[0] || suggestedName(secrets[0]);
   const stats = { detections: Object.fromEntries([...new Set(secrets.map((s) => s.type || 'SECRET'))].map((k) => [k, 1])) };
@@ -655,6 +697,31 @@ function kindLabel(type) {
   });
   const label = words.join(' ') || 'secret';
   return (/^([AEIOU]|AWS\b|API\b|SSH\b|SSN\b|IBAN\b|OAUTH\b)/i.test(label) ? 'an ' : 'a ') + label;
+}
+
+// A generic detection has no name of its own. The credential name written just
+// before the value ("db_password = ...", "-e API_KEY=...") is the kind a person
+// can recognise. Only the text before the value is read, never the value.
+const KEY_BEFORE_RE = /([A-Za-z_][A-Za-z0-9_.-]{0,127})["'`]?[ 	]*(?:=>|:=|=|:)[ 	]*["'`]?[ 	]*$/;
+const KEY_IDENT_RE = /^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/;
+// The text before a value can be another secret ("<id>:<secret>"). It is used
+// as a name only if it overlaps no other detection, looks like a key
+// identifier (not a random token) and is not itself detected as a secret.
+function keyBefore(text, span, others, scanText) {
+  if (span.name || !GENERIC_TYPES.has(String(span.type || '').toUpperCase())) return null;
+  const from = Math.max(0, span.start - 140);
+  const m = KEY_BEFORE_RE.exec(String(text).slice(from, span.start));
+  if (!m) return null;
+  const raw = m[1];
+  const start = from + m.index;
+  const end = start + raw.length;
+  if ((others || []).some((o) => o !== span && o.start < end && start < o.end)) return null;
+  if (!KEY_IDENT_RE.test(raw)) return null;
+  if (/\d/.test(raw) && /[a-z]/.test(raw) && /[A-Z]/.test(raw)) return null;
+  if ((raw.match(/\d/g) || []).length > 3) return null;
+  if (scanText && scanText(raw).length > 0) return null;
+  const n = raw.replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/[-.]/g, '_').toUpperCase();
+  return NAME_RE.test(n) ? n : null;
 }
 
 /* The name to suggest for `zn secret set` when the detection has no name. */
@@ -793,6 +860,10 @@ function failDecision(ev, err, mode) {
   if (ev && ev.event === 'stop') {
     return { decision: 'ask', failOpen: true, notice: 'zn: could not check the last answer for secrets' + (err && err.code ? ' (' + err.code + ')' : '') + '.' };
   }
+  if (err.code === 'ZN_MALFORMED_TEXT') {
+    return failClosed(ev, err, 'zn: this action names a file or text that is not valid Unicode text, so it was blocked. ' +
+      'Ask the user to check the file names in the request.');
+  }
   const missing = err.code === 'ZN_UNAVAILABLE';
   const detail = missing ? '' : ' (' + (err.code ? err.code + ': ' : '') + String(err.message || 'unknown error') + ')';
   const msg = 'zn: ' + (missing ? REINSTALL : HOOK_FAILED) + detail;
@@ -816,6 +887,15 @@ function failClosed(ev, err, msg) {
   return { decision: 'deny', failClosed: true, message: msg, userMessage: msg };
 }
 
+/*
+ * Context for the model when a session or a subagent starts (Codex SessionStart
+ * and SubagentStart). Short on purpose: it is added to every session.
+ */
+function SESSION_CONTEXT() {
+  return 'zn is on in this project: it blocks reads of .env files and of the secrets vault. ' +
+    'To run a command that needs a stored secret, write the placeholder __ZN_<NAME>__ and run the command with `' + znCommand('run -- <command>') + '`.';
+}
+
 /**
  * Handle one raw event. Returns {output, stderr} where output is the JSON
  * value to print (or null for "no opinion").
@@ -828,11 +908,13 @@ async function handle(adapter, rawEvent, opts = {}) {
   try {
     ev = adapter.normalize(rawEvent);
     const d = lazyDeps(opts);
+    if (ev && ev.event) guardNativeText(ev);
     if (!ev || !ev.event) decision = { decision: 'allow' };
     else if (ev.event === 'pre_tool') decision = await decidePre(ev, d, adapter.id, opts);
     else if (ev.event === 'post_tool') decision = await decidePost(ev, d, adapter.id, opts);
     else if (ev.event === 'user_prompt') decision = await decidePrompt(ev, d, adapter.id);
     else if (ev.event === 'stop') decision = await decideStop(ev, d, adapter.id, opts);
+    else if (ev.event === 'session_start') decision = { decision: 'allow', context: SESSION_CONTEXT() };
     else if (ev.event === 'prompt_expansion') decision = await decideExpansion(ev, d, adapter.id);
     else decision = { decision: 'allow' };
   } catch (err) {
@@ -840,6 +922,7 @@ async function handle(adapter, rawEvent, opts = {}) {
   }
   const output = adapter.respond({ ...decision, event: ev });
   countHook(adapter.id, ev, decision, opts);
+  recordEvidence(adapter.id, ev, decision, opts);
   return { output, stderr: decision.warning || null, decision };
 }
 
@@ -853,6 +936,8 @@ function countHook(agentId, ev, decision, opts = {}) {
     // Codex asks PreToolUse first, then PermissionRequest for the same call when it shows an approval prompt.
     // The check runs twice but the call is one call: count it at PreToolUse only.
     if (ev.permissionRequest) return;
+    // A reminder at the start of a session checks nothing: it is not counted.
+    if (ev.event === 'session_start') return;
     if (ev.event === 'stop') {
       // A check of the final answer is not a tool check: it has its own counters.
       const statsFile = opts.home ? path.join(opts.home, '.zn', 'stats.json') : undefined;
@@ -872,6 +957,43 @@ function countHook(agentId, ev, decision, opts = {}) {
     }, file ? { file } : {});
   } catch {
     /* counting must never affect a hook */
+  }
+}
+
+/**
+ * Puts a hook block (and a redaction of tool output) in the hash-chained evidence ledger, so
+ * `zn-gate evidence` shows it. It writes: the agent, the event, the tool name, a rule id and the
+ * kinds of secret found. It never writes a secret value, a path, a command or prompt text. Only
+ * blocks and redactions are written (an allow, the common case, costs nothing), and the ledger
+ * code is loaded only then. A problem with the ledger is reported on stderr by the ledger itself
+ * and never changes the decision: the answer is already built when this runs.
+ */
+function recordEvidence(agentId, ev, decision, opts = {}) {
+  try {
+    if (!ev || !ev.event || !decision || ev.permissionRequest) return;
+    const denied = decision.decision === 'deny' && !decision.failClosed;
+    const stats = decision.stats || {};
+    const redacted = ev.event === 'post_tool' && decision.decision === 'allow' && stats.redacted > 0;
+    if (!denied && !redacted) return;
+    const kinds = Object.keys(stats.detections || {}).concat(Array.isArray(decision.kinds) ? decision.kinds : [])
+      .filter((k, i, a) => typeof k === 'string' && /^[A-Za-z0-9_ .-]{1,64}$/.test(k) && a.indexOf(k) === i).sort();
+    const evidence = require('../evidence');
+    const file = opts.home ? path.join(opts.home, '.zn', 'evidence.jsonl') : undefined;
+    evidence.logEvidence({
+      agent: agentId,
+      phase: redacted ? 'tool-result' : 'hook-' + ev.event,
+      tool_name: ev.tool || ev.event,
+      // Only the shape of the event is hashed and previewed, never its content.
+      payload: JSON.stringify({ event: ev.event, tool: ev.tool || null, kinds }),
+      verdict: redacted ? 'allow' : 'block',
+      rule: redacted ? 'hook-redacted-output' : 'hook-' + ev.event + (kinds.length ? '-secret' : '-policy'),
+      reason: redacted
+        ? stats.redacted + ' secret value(s) in the tool output replaced with tokens' + (kinds.length ? ' (' + kinds.join(', ') + ')' : '')
+        : (kinds.length ? 'secret kinds: ' + kinds.join(', ') : 'blocked by the zn hook policy'),
+      engine: 'zn-hook',
+    }, file, { lockWaitMs: 500, noStats: true });
+  } catch (e) {
+    try { process.stderr.write('zn-gate: could not record the block in the evidence log (' + (e && e.code || 'error') + ').' + String.fromCharCode(10)); } catch (_) { /* nothing more to do */ }
   }
 }
 

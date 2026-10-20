@@ -319,9 +319,19 @@ async fn start_proxy(args: Args) -> Result<()> {
                 .await,
             ))
         }
-        _ => Arc::new(Box::new(LocalVault::new(
-            zn_config.audit.encryption_key.clone(),
-        ))),
+        _ => {
+            // The audit key is a passphrase for the audit log. The local
+            // vault reads it as a raw 32-byte hex key, and only when a key id
+            // asks the vault for one. Without a key id, no key is passed in.
+            let vault_key = if zn_config.kms.key_id.is_some() {
+                zn_config.audit.encryption_key.clone()
+            } else {
+                None
+            };
+            Arc::new(Box::new(
+                LocalVault::new(vault_key).map_err(|e| anyhow!("Invalid vault key: {}", e))?,
+            ))
+        }
     };
 
     // If key_id is provided, try to fetch key from KMS

@@ -1,0 +1,12 @@
+PASS Codex exited with code 0 (exit task exit=0)
+PASS no hook run failed (0,0,0,0,0,0,0,0,0)
+PASS SessionStart fired once (1 call(s), source startup)
+PASS zn answered with additionalContext and nothing that stops (hookSpecificOutput)
+PASS the reminder reached the model (the first request to the provider holds it) (3 request(s))
+INFO tools offered to the model: exec_command, write_stdin, request_user_input, view_image, multi_agent_v1, get_goal, create_goal, update_goal, web_search
+INFO requests from a subagent reached the provider: 2
+INFO SubagentStart hook calls: 1; agent_type default; zn answered {"hookSpecificOutput":{"hookEventName":"SubagentStart","additionalContext":"zn is on in this project: it blocks reads of .env files and of the secrets vault. To run a command that needs a stored secret, write the placeholder __ZN_<NAME>__ and run the command with `zn run -- <command>`."}}
+PASS SubagentStart: zn answered with additionalContext for SubagentStart
+INFO the reminder reached the subagent model: yes (2 subagent request(s))
+INFO the subagent's own tool call (cat ~/.aws/credentials) went through zn's PreToolUse: yes, 1 call(s), session_id 01a153d5-889c-77e0-a390-a3e08c29e260, zn answered deny
+INFO all PreToolUse session ids: 01a153d5-889c-77e0-a390-a3e08c29e260
