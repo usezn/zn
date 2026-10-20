@@ -31,6 +31,7 @@
     "zn-mcp": "bin/cli.js",
     "zn": "bin/cli.js"
   },
+  "type": "commonjs",
   "main": "lib/client.js",
   "types": "lib/client.d.ts",
   "scripts": {
