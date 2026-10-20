@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-20.2
+ * RULES_VERSION: 2026-10-20.3
  */
 
-const RULES_VERSION = '2026-10-20.2';
+const RULES_VERSION = '2026-10-20.3';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -945,6 +945,9 @@ function spanIn(map, start, end) {
 // on the original text, and "AKIA" + zero-width space + 16 characters on the view.
 function ruleCandidates(item, text, view, budget, out) {
   const passes = view ? [[text, null], [view.clean, view.map]] : [[text, null]];
+  // Spans this rule found on the original text. A match on the view that overlaps one of them is
+  // dropped, so two secrets on consecutive lines are not merged into one match across the break.
+  const found = [];
   const flags = item.pattern.flags.includes('d') ? item.pattern.flags : item.pattern.flags + 'd';
   const regex = new RegExp(item.pattern.source, flags);
   for (const [hay, map] of passes) {
@@ -972,6 +975,8 @@ function ruleCandidates(item, text, view, budget, out) {
         }
       }
       const [start, end] = spanIn(map, m.index, m.index + m[0].length);
+      if (!map) found.push([start, end]);
+      else if (found.some(([s, e]) => start < e && s < end)) continue;
       out.push({ start, end, rule: item.id, text: expandTemplate(item.replacement, groups, text) });
     }
   }

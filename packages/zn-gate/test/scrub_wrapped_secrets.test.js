@@ -33,6 +33,13 @@ test('a NAME= line after a long value is not joined to it', () => {
   assert.equal(rules.redactSecrets(text).sanitized, text);
 });
 
+test('two secrets on consecutive lines are both redacted, each on its own', () => {
+  const other = 'ghp_' + 'Z9y8X7w6V5u4T3s2R1q0P9o8N7m6L5k4J3i2';
+  const out = rules.redactSecrets(KEY + '\n' + other).sanitized;
+  assert.ok(!out.includes(KEY.slice(-12)) && !out.includes(other.slice(-12)), out);
+  assert.equal(rules.redactSecrets(KEY + '\n' + other).detections.length, 2);
+});
+
 test('ordinary text across lines is unchanged', () => {
   const text = 'The quick brown fox\njumps over the lazy dog\nand_snake_case_names\nkeep_their_lines';
   assert.equal(rules.redactSecrets(text).sanitized, text);

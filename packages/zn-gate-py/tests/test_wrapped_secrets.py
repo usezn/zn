@@ -1,7 +1,6 @@
 """Secrets printed across several lines (wrapped every 10 or 20 characters) are
 redacted whole, and short words or NAME= lines after them are left alone (see
 test/scrub_wrapped_secrets.test.js)."""
-import re
 import unittest
 
 from zn_gate import rules as R
@@ -36,6 +35,13 @@ class WrappedSecrets(unittest.TestCase):
     def test_name_line_not_joined(self):
         text = 'ALPHA_VALUE=abcdefghijklmnop\nNEXT_SETTING_NAME=abcdefghij'
         self.assertEqual(self.redact(text), text)
+
+    def test_consecutive_secrets_each_redacted(self):
+        other = 'ghp_' + 'Z9y8X7w6V5u4T3s2R1q0P9o8N7m6L5k4J3i2'
+        out, found = R.redact_secrets(KEY + '\n' + other)
+        self.assertNotIn(KEY[-12:], out)
+        self.assertNotIn(other[-12:], out)
+        self.assertEqual(len(found), 2)
 
     def test_ordinary_text_unchanged(self):
         text = 'The quick brown fox\njumps over the lazy dog\nand_snake_case_names\nkeep_their_lines'

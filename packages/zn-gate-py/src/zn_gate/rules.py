@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, overload
 
 
-RULES_VERSION = "2026-10-20.2"
+RULES_VERSION = "2026-10-20.3"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -1195,6 +1195,9 @@ def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, t
     without invisible characters (see ruleCandidates in rules.js). match_check,
     when given, receives the whole match and returns False to skip it."""
     passes: List[Tuple[str, Optional['array[int]']]] = [(text, None)]
+    # Spans this rule found on the original text; a view match overlapping one is dropped
+    # (see ruleCandidates in rules.js).
+    found: List[Tuple[int, int]] = []
     if view is not None:
         passes.append(view)
     for hay, mapping in passes:
@@ -1233,6 +1236,10 @@ def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, t
                     if value_filter(value, prefix):
                         continue
             start, end = _span_in(mapping, m.start(), m.end())
+            if mapping is None:
+                found.append((start, end))
+            elif any(start < e and s < end for s, e in found):
+                continue
             out.append((start, end, rule_id, _expand_template(replacement, groups, text)))
 
 
