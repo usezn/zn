@@ -892,7 +892,7 @@ async function main() {
     process.exit(0);
   }
 
-  if (args.includes('-V') || args.includes('--version') || args[0] === 'version') {
+  if (args.includes('-V') || args.includes('--version') || args[0] === 'version' || args[0] === '-v') {
     process.stdout.write(`zn-gate ${VERSION} (rules engine: ${RULES_VERSION}; scrub rules: ${SCRUB_RULES_VERSION}; audit rules: ${AUDIT_RULES_VERSION})\n`);
     process.exit(0);
   }
@@ -989,7 +989,7 @@ ${ruleLine(process.env, 60)}\n`);
     });
 
     for (const act of actions) {
-      const mark = act.status === 'error' ? sym(process.env, '✖', col.red) : act.status === 'manual_required' ? sym(process.env, '!', col.yellow) : sym(process.env, '✔', col.green);
+      const mark = act.status === 'error' ? sym(process.env, '✖', col.red) : act.status === 'manual_required' || act.status === 'skipped_unsafe' ? sym(process.env, '!', col.yellow) : sym(process.env, '✔', col.green);
       process.stdout.write(`  ${mark}${act.env.padEnd(20)} [${act.status}] ${act.serversCount ? act.serversCount + ' servers' : ''}${act.shadow ? ' (shadow mode)' : ''}\n`);
       if (act.backup) {
         process.stdout.write(`    ${sym(process.env, '↳', col.gray)}${col.gray('backup: ' + act.backup)}\n`);
