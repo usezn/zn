@@ -119,8 +119,16 @@ test('check: an agent found but not set up is named after the protected ones, wi
   assert.match(s, /Not set up yet: Claude Code\. To add it, run `npx -y zn-gate init`/);
 });
 
+// A hook written by an older zn-gate: the plain command with the absolute Node.js and runner paths, no launcher.
+function legacyCodexHome(t) {
+  const ctx = homeWithHooks(t, []);
+  const command = require('../lib/agents/config-file').hookCommand('codex', { nodePath: process.execPath, runnerPath: RUNNER });
+  getAdapter('codex').install({ scope: 'user', home: ctx.home, env: ctx.env, command, mcp: false });
+  return ctx;
+}
+
 test('check: a hook whose Node.js is gone is not protected', async (t) => {
-  const ctx = homeWithHooks(t, ['codex']);
+  const ctx = legacyCodexHome(t);
   const file = getAdapter('codex').hooksFile(ctx);
   fs.writeFileSync(file, fs.readFileSync(file, 'utf8').split(process.execPath.replace(/\\/g, '/')).join(path.join(ctx.home, 'gone', 'node').replace(/\\/g, '/')));
   const r = byId(await check(ctx), 'codex');
@@ -290,7 +298,7 @@ test('check: a `zn hook` command does not find zn through a relative PATH entry'
 });
 
 test('check: a hook whose zn-gate files are gone gets the same repair', async (t) => {
-  const ctx = homeWithHooks(t, ['codex']);
+  const ctx = legacyCodexHome(t);
   const file = getAdapter('codex').hooksFile(ctx);
   fs.writeFileSync(file, fs.readFileSync(file, 'utf8').split(RUNNER.replace(/\\/g, '/')).join(path.join(ctx.home, 'gone', 'zn-gate', 'lib', 'hooks', 'runner.js').replace(/\\/g, '/')));
   const r = byId(await check(ctx), 'codex');

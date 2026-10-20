@@ -60,13 +60,24 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
   ```text
   its hook cannot start: its Node.js (<path>) is no longer there
   its hook cannot start: its zn-gate files (<path>) is no longer there
+  its hook cannot start: its Node.js (<path>) is no longer there, so zn now blocks the tool calls and prompts instead of checking them
   ```
+
+  The last form is a Codex CLI hook that goes through zn's launcher script, which blocks Codex's tool calls and prompts (instead of letting them run unchecked) when the Node.js it was installed with is gone and no `zn` can be found on your PATH. Until you repair it, Codex cannot run commands. If `zn` and `node` are on your PATH the hook keeps working and `zn-gate check` only notes that the Node.js it was installed with is gone.
 
   This usually happens after you removed or upgraded Node.js with a version manager such as nvm: the old Node.js took its copy of zn-gate with it. The repair is:
 
   ```text
   install zn-gate again for the Node.js you use now: run `npm install -g zn-gate`, then `zn hooks install <agent>`, in your own terminal
   ```
+
+- **The launcher script of the hook is gone.**
+
+  ```text
+  its hook cannot start: its launcher script (<path>) is missing or was changed
+  ```
+
+  A Codex CLI hook calls a small script that `zn hooks install codex` writes under `~/.zn/hooks`. If the script was deleted or edited, run `zn hooks install codex` again.
 
 - **The hook calls `zn`, and `zn` is not installed.**
 

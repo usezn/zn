@@ -89,7 +89,7 @@ test('codex: output with secrets is replaced through block; prompts with secrets
 
 test('codex: install writes hooks.json (user and project) and uninstall removes only ours', (t) => {
   const home = tempDir(t, 'zn-cx-');
-  const env = { CODEX_HOME: path.join(home, '.codex') };
+  const env = { CODEX_HOME: path.join(home, '.codex'), ZN_HOME: path.join(home, '.zn') };
   const file = codex.hooksFile({ env });
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'mine.sh' }] }] } }));
@@ -98,7 +98,8 @@ test('codex: install writes hooks.json (user and project) and uninstall removes 
   assert.ok(rep.warnings.some((w) => /\/hooks/.test(w)), 'tells the user to trust the hooks');
   const data = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.equal(data.hooks.PreToolUse.length, 2);
-  assert.equal(data.hooks.PreToolUse[1].hooks[0].command, "'/usr/bin/node' '/x/lib/hooks/runner.js' codex");
+  assert.match(data.hooks.PreToolUse[1].hooks[0].command, /^'.*zn-hook-codex\.sh' PreToolUse$/);
+  assert.ok(fs.readFileSync(path.join(home, '.zn', 'hooks', 'zn-hook-codex.sh'), 'utf8').includes("ZN_NODE='/usr/bin/node'"));
   assert.equal(data.hooks.PostToolUse[0].matcher, codex.POST_MATCHER);
   codex.install({ env, nodePath: '/usr/bin/node', runnerPath: '/x/lib/hooks/runner.js' });
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).hooks.PreToolUse.length, 2, 'idempotent');
