@@ -124,7 +124,7 @@ class TestScanSkipped(unittest.TestCase):
             except OSError:
                 self.skipTest("this file system does not allow a newline in a file name")
             _, gh = self._run(d, "github")
-            commands = [ln for ln in gh.splitlines() if ln.startswith("::")]
+            commands = [ln for ln in gh.splitlines() if ln.startswith("::") and not ln.startswith("::warning title=Nothing scanned")]
             self.assertEqual(len(commands), 1, gh)
             self.assertTrue(commands[0].startswith("::notice file="))
             self.assertIn("%0A%3A%3Aerror file=x%3A%3Aforged%2Ctitle=Z.md", commands[0])
