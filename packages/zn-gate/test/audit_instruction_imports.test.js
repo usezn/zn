@@ -85,7 +85,7 @@ test('audit: a hostile opencode.json with many globs stays within budget and is 
 
 test('audit: opencode.json entries with backslashes or drive letters do not leave the directory', (t) => {
   const dir = build(t, {
-    'repo/opencode.json': JSON.stringify({ instructions: ['..\outside.md', '..\*.md', 'C:/x/*.md'] }),
+    'repo/opencode.json': JSON.stringify({ instructions: ['..\\outside.md', '..\\*.md', 'C:/x/*.md', 'C:\\x\\*.md'] }),
     'outside.md': INJECTION,
   });
   const res = run(path.join(dir, 'repo'));
