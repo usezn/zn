@@ -116,7 +116,8 @@ class TestPromptfooCallApi(unittest.TestCase):
     def test_injection_is_blocked(self):
         res = promptfoo.call_api(INJECTION)
         self.assertTrue(res["output"].startswith("[BLOCKED]"))
-        self.assertIn("rule=", res["output"])
+        self.assertIn("(rule: ", res["output"])
+        self.assertIn("Next step:", res["output"])
         self.assertFalse(res["metadata"]["allowed"])
         self.assertEqual(res["metadata"]["verdict"], "block")
         self.assertTrue(res["metadata"]["rule"])

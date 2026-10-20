@@ -17,7 +17,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
 from . import __version__
-from .rules import RULES_VERSION, evaluate, mask_token_runs
+from .guard import block_message
+from .rules import RULES_VERSION, Assessment, evaluate, mask_token_runs
 from .rules import SECRET_PATTERNS as _DLP_PATTERNS, redact_secrets as _dlp_redact, redact_scan_secrets as _scan_redact
 from . import mcp_secrets as _mcp
 from .client import analyze, is_cloud_enabled, resolve_endpoint
@@ -214,6 +215,9 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         print(json.dumps(res, indent=2))
     else:
         print(f"Verdict: {res.get('verdict')} | Engine: {res.get('engine')} | Latency: {elapsed_ms:.2f}ms")
+        if res.get("verdict") == "block":
+            print(block_message(Assessment(verdict="block", confidence=1.0, rule=str(res.get("rule") or "unknown"),
+                                           reason=res.get("reason")), "input"))
 
     return 2 if res.get("verdict") == "block" else 0
 

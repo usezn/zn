@@ -1383,7 +1383,8 @@ def sanitize_tool_result(
         truncated = assessment.truncated
         if truncated and assessment.allowed and (block_truncated or os.environ.get('ZN_BLOCK_TRUNCATED') == '1'):
             assessment = Assessment(verdict='block', confidence=1.0, rule='size:truncated',
-                                    reason='Output too large to scan in full', truncated=True)
+                                    reason='Output too large to check completely (blocked because block_truncated / ZN_BLOCK_TRUNCATED=1 is set)',
+                                    truncated=True)
         is_block = not assessment.allowed
 
         if is_block:

@@ -11,6 +11,7 @@ from __future__ import annotations
 import time
 from typing import Any, Dict, Optional
 
+from ..guard import block_message
 from ..rules import evaluate
 
 
@@ -25,7 +26,7 @@ def call_api(prompt: str, options: Optional[Dict[str, Any]] = None, context: Opt
     latency_ms = (time.perf_counter() - t0) * 1000
 
     if not assessment.allowed:
-        output_text = f"[BLOCKED] rule={assessment.rule} reason={assessment.reason} confidence={assessment.confidence}"
+        output_text = f"[BLOCKED] {block_message(assessment, 'prompt')}"
     else:
         output_text = f"[ALLOWED] clean (confidence={assessment.confidence})"
 

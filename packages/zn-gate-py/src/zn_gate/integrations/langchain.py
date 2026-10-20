@@ -83,7 +83,9 @@ class ZnGuardCallbackHandler(BaseCallbackHandler):
         if not assessment.allowed:
             if self.on_block == "raise":
                 raise GuardBlockError(assessment, target="langchain:tool_output", payload=output)
-            return f"[REDACTED BY ZN-GATE: Malicious prompt injection payload detected ({assessment.reason or assessment.rule})]"
+            tool = kwargs.get("name") or "this tool"
+            return (f"[REDACTED BY ZN-GATE: the output of {tool} was hidden because it tries to give your agent "
+                    f"new orders (a prompt injection). Reason: {assessment.reason or assessment.rule}]")
 
         if self.mask_secrets:
             sanitized, _ = sanitize_tool_result(output)
