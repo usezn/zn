@@ -2,11 +2,24 @@ name: Public facts
 
 # The version, agents with hooks, license and install command must read the same in every manifest and
 # doc of this repository (.github/public-facts.json). A release changes them in the same pull request.
+# Pushes always run it. Pull requests run it when they change a file it reads: every tracked Markdown
+# and JSON file (pinned versions), the files listed in .github/public-facts.json, and the checker.
 on:
   push:
     branches: [ main, next ]
   pull_request:
     branches: [ main, next, 'release/**' ]
+    paths:
+      - '**.md'
+      - '**.json'
+      - 'LICENSE'
+      - 'Cargo.toml'
+      - 'examples/*/requirements.txt'
+      - 'packages/zn-gate-py/pyproject.toml'
+      - 'packages/zn-gate-py/src/zn_gate/__init__.py'
+      - 'plugins/**'
+      - '.github/scripts/check-public-facts*'
+      - '.github/workflows/public-facts.yml'
 
 permissions:
   contents: read

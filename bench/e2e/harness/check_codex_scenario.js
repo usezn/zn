@@ -136,6 +136,33 @@ if (SCEN === 'replace') {
   info('result the model got: ' + (outs[0] ? redact(outs[0]).replace(/\s+/g, ' ').slice(0, 300) : 'none') + '; turns to the provider: ' + mainReqs.length);
 }
 
+if (SCEN === 'session-context') {
+  const CONTEXT = /zn is on in this project/;
+  const ss = ofEvent('SessionStart');
+  check('SessionStart fired once', ss.length === 1, ss.length + ' call(s), source ' + (ss[0] && ss[0].input.source));
+  const a = ss[0] && answer(ss[0]);
+  const o = a && a.hookSpecificOutput;
+  check('zn answered with additionalContext and nothing that stops', !!o && o.hookEventName === 'SessionStart' && CONTEXT.test(o.additionalContext || '') && a.continue === undefined && !a.decision, a ? Object.keys(a).join(',') : 'no answer');
+  const parentReqs = reqs.filter((r) => r.body && Array.isArray(r.body.input) && JSON.stringify(r.body.input).includes('Follow the setup task.') && Array.isArray(r.body.tools) && r.body.tools.length);
+  check('the reminder reached the model (the first request to the provider holds it)', parentReqs.length > 0 && CONTEXT.test(JSON.stringify(parentReqs[0].body.input)), parentReqs.length + ' request(s)');
+  const notes = lines(path.join(OUT, 'mock_notes.jsonl'));
+  const offered = notes.length ? notes[0].offered : [];
+  info('tools offered to the model: ' + offered.join(', '));
+  const childNotes = notes.filter((r) => r.child);
+  info('requests from a subagent reached the provider: ' + childNotes.length);
+  const sub = ofEvent('SubagentStart');
+  info('SubagentStart hook calls: ' + sub.length + (sub[0] ? '; agent_type ' + sub[0].input.agent_type + '; zn answered ' + JSON.stringify(answer(sub[0])).slice(0, 300) : ''));
+  if (sub.length) {
+    const sa = answer(sub[0]);
+    check('SubagentStart: zn answered with additionalContext for SubagentStart', !!sa && sa.hookSpecificOutput && sa.hookSpecificOutput.hookEventName === 'SubagentStart' && CONTEXT.test(sa.hookSpecificOutput.additionalContext || ''));
+    const childReqs = reqs.filter((r) => r.body && Array.isArray(r.body.input) && !JSON.stringify(r.body.input).includes('Follow the setup task.') && Array.isArray(r.body.tools) && r.body.tools.length);
+    info('the reminder reached the subagent model: ' + (childReqs.length && CONTEXT.test(JSON.stringify(childReqs[0].body.input)) ? 'yes' : 'no') + ' (' + childReqs.length + ' subagent request(s))');
+  }
+  const childPre = ofEvent('PreToolUse').filter((s) => /credentials/.test(String(s.input.tool_input && s.input.tool_input.command)));
+  info("the subagent's own tool call (cat ~/.aws/credentials) went through zn's PreToolUse: " + (childPre.length ? 'yes, ' + childPre.length + ' call(s), session_id ' + childPre.map((s) => s.input.session_id).join(',') + ', zn answered ' + (answer(childPre[0]) ? 'deny' : 'nothing') : 'no'));
+  info('all PreToolUse session ids: ' + [...new Set(ofEvent('PreToolUse').map((s) => s.input.session_id))].join(','));
+}
+
 if (SCEN === 'thirdparty') {
   const third = lines(path.join(OUT, 'third_party.jsonl'));
   const pre = ofEvent('PreToolUse');
@@ -143,9 +170,14 @@ if (SCEN === 'thirdparty') {
   info('zn saw: ' + pre.map((s) => s.input.tool_input && s.input.tool_input.command).join(' | ') + ' (zn answered: ' + pre.map((s) => (answer(s) ? 'deny' : 'nothing')).join(',') + ')');
   const outs = toolOutputs();
   info('what the model got back: ' + (outs[0] ? redact(outs[0]).replace(/\s+/g, ' ').slice(0, 300) : 'none'));
-  info('command ran as rewritten: ' + (outs[0] && /aws_access_key_id/.test(outs[0]) ? 'yes' : 'no'));
   const post = ofEvent('PostToolUse');
+  const ranCmd = post[0] && post[0].input.tool_input && post[0].input.tool_input.command;
   info('PostToolUse saw command: ' + post.map((s) => s.input.tool_input && s.input.tool_input.command).join(' | '));
+  info('command ran as rewritten: ' + (ranCmd && ranCmd !== 'echo benign-ok' ? 'yes' : 'no'));
+  check('PostToolUse saw the command that really ran, not the original', !!ranCmd && ranCmd !== 'echo benign-ok', String(ranCmd));
+  const pa = post[0] && answer(post[0]);
+  check('zn answered block and withheld the output', !!pa && pa.decision === 'block' && /withheld/.test(pa.reason || ''), pa ? Object.keys(pa).join(',') : 'no answer');
+  check('the model got the withheld message, not the file content', outs.length >= 1 && /withheld/.test(outs[0]) && !hasValue(outs[0]) && !/aws_access_key_id/.test(outs[0]), outs[0] ? redact(outs[0]).replace(/\s+/g, ' ').slice(0, 120) : 'no result');
 }
 
 fs.writeFileSync(path.join(OUT, 'checks.txt'), report.join('\n') + '\n');
