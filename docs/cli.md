@@ -534,3 +534,29 @@ zn-gate team managed-config [--agent claude-code|cursor|codex|all] [--os macos|l
 ```
 
 For administrators. Prints the managed configuration files you deploy with MDM or configuration management so that the zn hooks run for every developer. Nothing is written and nothing is read from the machine. `--agent` defaults to `all` and `--os` to this computer's system. `--managed-hooks-only` makes the agent run only managed hooks. `--exclusive-mcp` also prints the managed MCP file for Claude Code (it takes exclusive control of MCP servers). `--json` prints the files as JSON. zn-gate must be installed on each machine. Exit codes: `0` done, `2` wrong usage.
+
+## Environment variables
+
+Every environment variable you can set for the npm package (`zn-gate`) and the Python package (`zn-gate` on PyPI). Anything not listed here is internal.
+
+| Variable | What it does | Values (default) | Read by |
+|---|---|---|---|
+| `ZN_CLOUD` | Turns the optional cloud check on. Without it nothing leaves your machine. | `1` turns it on (off) | npm, Python |
+| `ZN_API_KEY` | API key for the optional cloud check. It does nothing unless `ZN_CLOUD=1`. | A zn API key (none) | npm, Python |
+| `ZN_LOCAL_ONLY` | Never uses the cloud, even when `ZN_CLOUD=1` is set. | `true` turns it on (off) | npm, Python |
+| `ZN_STAGE` | Which cloud stage the check uses. | `v30` or `prod` (`v30`) | npm, Python |
+| `ZN_API_URL` | Uses another cloud address. | A URL (set by `ZN_STAGE`) | npm, Python |
+| `ZN_LONG_INPUT` | How long texts are sent to the cloud check. | `windows` sends overlapping windows; `off` sends only the first 512 tokens (`windows`) | npm, Python |
+| `ZN_STRICT` | Also blocks the text-check rules that are only advisories by default. | `1` turns it on (off) | npm, Python |
+| `ZN_BLOCK_TRUNCATED` | Blocks tool output that is too large to scan in full. | `1` turns it on (off) | npm, Python |
+| `ZN_VERBOSE` | Prints debug messages to the error output. | `1`, `true`, `yes` or `on` (any case) turn it on; anything else, including `0`, leaves it off (off) | npm, Python |
+| `ZN_HOME` | The folder where zn keeps its state: the evidence log and the usage counts, and for npm also the vault, MCP pins and cloud key. | A folder path (`~/.zn`) | npm (all of it), Python (evidence log and counts) |
+| `ZN_STATS` | Turns off the local counts shown by `stats` and `report`. | `off` turns them off (on) | npm |
+| `ZN_MCP_PINNING` | Makes MCP tool pinning stricter for one run. It can raise the mode but never lower it. | `block` (the mode in `~/.zn/config.json`, else `warn`) | npm |
+| `ZN_HOOK_FAIL_MODE` | What the agent hooks do when they fail. It can only make them stricter. | `closed` blocks the action; any other value is ignored (`closed`) | npm |
+| `ZN_NO_COMPILE_CACHE` | Turns off the cache that makes the hooks start faster. | Any non-empty value turns the cache off (on) | npm |
+| `ZN_KEYCHAIN_SERVICE` | Name of the entry zn uses in your system keychain. | A simple name (`zn-vault`) | npm |
+| `ZN_KEYCHAIN_BACKEND` | Forces one keychain backend instead of the one zn detects. | A backend your system supports (detected) | npm |
+| `ZN_KEYCHAIN_PATH` | macOS only: the keychain file to use. The path must not contain spaces. | A file path (the default keychain) | npm |
+
+`ZN_API_KEY` here is your zn cloud key. The Rust gateway in this repository reads a variable with the same name for a different key, its administrator key: see [the gateway guide](rust-core.md).
