@@ -97,6 +97,17 @@ impl Default for ZnConfig {
     }
 }
 
+impl ZnConfig {
+    /// Whether an allowed tool call is denied when its audit record cannot
+    /// be written: the explicit `audit.fail_closed` value, otherwise on in
+    /// production and off elsewhere.
+    pub fn audit_fail_closed(&self) -> bool {
+        self.audit
+            .fail_closed
+            .unwrap_or(self.environment == "production")
+    }
+}
+
 fn default_environment() -> String {
     "development".to_string()
 }
@@ -296,6 +307,13 @@ pub struct AuditConfig {
 
     /// Database encryption key
     pub encryption_key: Option<String>,
+
+    /// Deny an allowed tool call when its audit record cannot be written.
+    /// Unset means: on when `environment` is `production`, off otherwise
+    /// (the call is forwarded, and the failure is logged and counted).
+    /// Environment variable: `ZN_AUDIT_FAIL_CLOSED`.
+    #[serde(default)]
+    pub fail_closed: Option<bool>,
 }
 
 impl Default for AuditConfig {
@@ -305,6 +323,7 @@ impl Default for AuditConfig {
             max_logs_in_memory: default_max_logs(),
             encryption_enabled: false,
             encryption_key: std::env::var("ZN_DB_KEY").ok(),
+            fail_closed: None,
         }
     }
 }
@@ -761,6 +780,14 @@ impl ZnConfig {
 
         if let Ok(db) = std::env::var("ZN_DB_PATH") {
             self.audit.db_path = db;
+        }
+
+        if let Ok(v) = std::env::var("ZN_AUDIT_FAIL_CLOSED") {
+            match v.trim().to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => self.audit.fail_closed = Some(true),
+                "0" | "false" | "no" | "off" => self.audit.fail_closed = Some(false),
+                _ => tracing::warn!("Ignoring ZN_AUDIT_FAIL_CLOSED: not a boolean"),
+            }
         }
 
         if let Ok(key) = std::env::var("ZN_DB_KEY") {

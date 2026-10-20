@@ -25,6 +25,10 @@ A policy upload is verified before anything is written. The gateway checks the a
 
 Known limits that remain, because the gateway is not distributed: the OCR check of images uses a fixed list of phrases and recognises only `data:image/...;base64,` images; the audit vault and the loop breaker have no size or age limit; and the management API has no TLS of its own (it listens on `127.0.0.1`; outside loopback, put it behind a TLS proxy).
 
+## Audit write failures
+
+If the gateway cannot write the audit record of an allowed tool call (read-only database, full disk, a failed schema migration), `audit.fail_closed` decides what happens. When it is on, the call is refused with JSON-RPC error `-32005` and is not forwarded. When it is off, the call is forwarded and the failure is logged at error level. Both cases increase the `zn_audit_write_failures_total` metric. Unset, it is on when `environment` is `production` and off otherwise. Set it in the config file (`audit.fail_closed`) or with `ZN_AUDIT_FAIL_CLOSED` (`true` or `false`). If an audit schema migration fails for a reason other than the column already existing, the gateway logs the error, and in production it refuses to start.
+
 ## AWS KMS data key
 
 With `kms.kms_type = "aws"` and `kms.key_id` set, the audit database key is a KMS data key. The gateway creates it once (`GenerateDataKey`, AES-256, encryption context `purpose=zn-gate-audit-db-key`) and saves only its encrypted copy in `zn-kms-data-key.json`, in the same directory as the audit database (`audit.db_path`). The file is written atomically with mode 0600 and holds the KMS key id and the encrypted key, never the plaintext key. On every later start the gateway sends the encrypted key to KMS `Decrypt` and gets the same key back, so audit records written before a restart stay readable. The key needs `kms:GenerateDataKey` and `kms:Decrypt` permissions.

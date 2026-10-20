@@ -365,6 +365,15 @@ async fn start_proxy(args: Args) -> Result<()> {
         db_key.as_deref(),
     )?);
 
+    if let Some(e) = vault.schema_error() {
+        if zn_config.environment == "production" {
+            return Err(anyhow!(
+                "The audit database schema could not be migrated ({e}); refusing to start in production"
+            ));
+        }
+        tracing::error!("Audit database schema is not usable: {e}; audit writes will fail");
+    }
+
     // Initialize Tenant Store
     // A generated SuperAdmin key is written next to the audit database,
     // never printed.
@@ -950,9 +959,21 @@ fn audit_block(
     entry.policy_match = Some(format!("{source}: {reason}"));
     entry.payload = payload.map(Scrubber::scrub);
     entry.namespace = state.config.security.namespace.clone();
-    let _ = state.vault.log(entry.clone());
+    if let Err(e) = state.vault.log(entry.clone()) {
+        // The call is denied either way; the missing record must not be silent.
+        audit_write_failed(&entry.tool_name, &e);
+    }
     let _ = state.tx.send(entry.clone());
     emit_denied(state, &entry);
+}
+
+/// JSON-RPC error code for a call refused because it could not be audited.
+const AUDIT_UNAVAILABLE: i32 = -32005;
+
+/// An audit write failed: log at error level and count it. Never silent.
+fn audit_write_failed(tool_name: &str, e: &anyhow::Error) {
+    metrics::record_audit_write_failure();
+    tracing::error!("Audit write failed for tool '{}': {}", tool_name, e);
 }
 
 async fn process_mcp_message(
@@ -1357,14 +1378,33 @@ async fn process_mcp_message(
                 // decision is wired in; schema field defaults to absent here.
                 fusion: None,
             };
-            let _ = state.vault.log(entry.clone());
+            let audit_failed = match state.vault.log(entry.clone()) {
+                Ok(()) => false,
+                Err(e) => {
+                    audit_write_failed(&tool_name, &e);
+                    true
+                }
+            };
 
             // Log nearest-neighbor separately if enabled
             if let Some(nn) = nearest_neighbor_entry {
                 let nn_entry = AuditEntry::new("NEAREST_NEIGHBOR", &tool_name, "AUDIT")
                     .with_payload(nn)
                     .with_agent_id(&agent_id_str);
-                let _ = state.vault.log(nn_entry);
+                if let Err(e) = state.vault.log(nn_entry) {
+                    audit_write_failed(&tool_name, &e);
+                }
+            }
+
+            // An allowed call with no audit record leaves no trace: refuse it
+            // when audit.fail_closed is on (the default in production).
+            if audit_failed && status == "ALLOWED" && state.config.audit_fail_closed() {
+                metrics::record_tool_call(&tool_name, "DENIED");
+                return Ok(Some(jsonrpc_error_response(
+                    id,
+                    AUDIT_UNAVAILABLE,
+                    "zn could not write the audit record, so the tool call was not forwarded",
+                )));
             }
 
             let _ = state.tx.send(entry.clone());
@@ -2413,6 +2453,56 @@ mod block_audit_tests {
         }
         assert!(blocked, "loop breaker never fired");
         assert_audited(&mut h, tool, "loop_breaker", before).await;
+    }
+
+    fn break_audit_table(h: &Harness) {
+        let conn = h.state.vault.get_connection();
+        let conn = conn.lock().expect("lock");
+        conn.execute("DROP TABLE audit_logs", []).expect("drop");
+    }
+
+    fn failures() -> u64 {
+        metrics::AUDIT_WRITE_FAILURES.get()
+    }
+
+    #[tokio::test]
+    async fn audit_failure_fails_closed_when_set() {
+        let h = harness(|c| c.audit.fail_closed = Some(true));
+        break_audit_table(&h);
+        let tool = "audit_test_fail_closed";
+        let before = failures();
+        let out = process_mcp_message(&call(tool, r#"{"x":1}"#, "f1"), &h.state, None)
+            .await
+            .expect("ok")
+            .expect("frame");
+        assert!(out.contains("-32005"), "{out}");
+        assert!(out.contains("\"id\":1"), "{out}");
+        assert!(!out.contains("tools/call"), "call was forwarded: {out}");
+        assert!(failures() > before, "failure not counted");
+    }
+
+    #[tokio::test]
+    async fn audit_failure_forwards_when_not_set() {
+        let h = harness(|c| c.audit.fail_closed = Some(false));
+        break_audit_table(&h);
+        let tool = "audit_test_fail_open";
+        let before = failures();
+        let out = process_mcp_message(&call(tool, r#"{"x":1}"#, "f2"), &h.state, None)
+            .await
+            .expect("ok")
+            .expect("frame");
+        assert!(out.contains("tools/call"), "call not forwarded: {out}");
+        assert!(failures() > before, "failure not counted");
+    }
+
+    #[test]
+    fn fail_closed_defaults_follow_environment() {
+        let mut c = ZnConfig::default();
+        assert!(!c.audit_fail_closed());
+        c.environment = "production".into();
+        assert!(c.audit_fail_closed());
+        c.audit.fail_closed = Some(false);
+        assert!(!c.audit_fail_closed());
     }
 
     #[tokio::test]

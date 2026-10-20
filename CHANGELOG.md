@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- The gateway no longer forwards an allowed tool call whose audit record could not be written when `audit.fail_closed` is on (the default when `environment` is `production`; set it with `audit.fail_closed` or `ZN_AUDIT_FAIL_CLOSED`). The call is refused with a JSON-RPC error. With it off, the failure is logged at error level and counted in `zn_audit_write_failures_total`, never ignored. A failed audit schema migration is now logged, and in production it stops the gateway at startup.
+
 ### Fixed
 - The gateway now writes every blocked call to the audit log, counts it in the metrics and sends the webhook alert. Before, only calls denied by the policy engine or the neural check were recorded; calls blocked by the built-in rules, a banned agent, the loop breaker, multi-signature consensus or the image checks were not. The audit entry names the source and the reason of the block.
 

@@ -151,9 +151,28 @@ pub struct AuditVault {
     db_path: String,
     /// Key for payload encryption (AES-256-GCM)
     encryption_key: Option<[u8; 32]>,
+    /// Set when a schema migration failed for a reason other than the
+    /// column already existing. Audit writes will fail until it is fixed.
+    schema_error: Option<String>,
+}
+
+/// Logs a failed `ALTER TABLE ... ADD COLUMN` and remembers it, unless the
+/// column already exists (another process added it first), which is fine.
+fn note_migration_error(slot: &mut Option<String>, column: &str, e: &rusqlite::Error) {
+    if e.to_string().contains("duplicate column name") {
+        return;
+    }
+    error!("Audit schema migration for column {} failed: {}", column, e);
+    slot.get_or_insert_with(|| format!("column {}: {}", column, e));
 }
 
 impl AuditVault {
+    /// The first schema migration error, if the audit table could not be
+    /// brought up to date. `None` means the schema is usable.
+    pub fn schema_error(&self) -> Option<&str> {
+        self.schema_error.as_deref()
+    }
+
     /// Create a new AuditVault, initializing the database schema if needed
     pub fn new(db_path: &str, encryption_key: Option<&str>) -> Result<Self> {
         info!("Initializing AuditVault at: {}", db_path);
@@ -219,6 +238,10 @@ impl AuditVault {
         )
         .map_err(|e| anyhow!("Failed to create audit_logs table: {}", e))?;
 
+        // A migration that fails for a real reason leaves the table without a
+        // column that every audit write names, so each later write would fail.
+        let mut schema_error: Option<String> = None;
+
         // Migration: add nearest_neighbor column if missing (E-2)
         // Check if column exists first
         let has_column: bool = conn
@@ -231,11 +254,12 @@ impl AuditVault {
             .unwrap_or(false);
         if !has_column {
             info!("Adding nearest_neighbor column via migration");
-            conn.execute(
+            if let Err(e) = conn.execute(
                 "ALTER TABLE audit_logs ADD COLUMN nearest_neighbor TEXT",
                 [],
-            )
-            .ok();
+            ) {
+                note_migration_error(&mut schema_error, "nearest_neighbor", &e);
+            }
         }
 
         // Migration: add fusion column if missing
@@ -249,8 +273,9 @@ impl AuditVault {
             .unwrap_or(false);
         if !has_fusion {
             info!("Adding fusion evidence column via migration");
-            conn.execute("ALTER TABLE audit_logs ADD COLUMN fusion TEXT", [])
-                .ok();
+            if let Err(e) = conn.execute("ALTER TABLE audit_logs ADD COLUMN fusion TEXT", []) {
+                note_migration_error(&mut schema_error, "fusion", &e);
+            }
         }
 
         // Upgrade records written in the old format the first time the vault
@@ -291,6 +316,7 @@ impl AuditVault {
             conn: Arc::new(Mutex::new(conn)),
             db_path: db_path.to_string(),
             encryption_key: derived_key,
+            schema_error,
         })
     }
 
