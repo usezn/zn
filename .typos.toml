@@ -1,0 +1,9 @@
+# Config for the Spellcheck workflow (crate-ci/typos). Add an exception only for a word that is spelled on
+# purpose, and say why on the line above it. typos already skips hashes, hex strings and URLs.
+
+[default]
+extend-ignore-re = []
+
+[default.extend-words]
+# Intentional typo used as test data for the on_block validation (guard.py, its test and a changelog fragment).
+rasie = "rasie"

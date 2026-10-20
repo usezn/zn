@@ -1,0 +1,2 @@
+### Fixed
+- `zn-gate check` and `zn-gate status` now recognise zn-gate deployed through managed settings: Claude Code's `managed-settings.json` and `managed-settings.d/`, Cursor's enterprise `hooks.json`, and Codex's `requirements.toml`. They report the agent as set up (managed) and name the file, instead of saying zn is not set up for it. If zn is also set up for your user, the check says both run. Nothing is written.

@@ -22,7 +22,7 @@ export APPROVER_LOG=$OUT/permission_prompts.jsonl
 node "$H/vault_daemon.js" --pkg "$PKG" --secrets "$RUN/secrets.json" --out "$OUT" & VPID=$!
 node "$H/mock_llm.js" --port "$PORT" --script "$RUN/scenario.json" --out "$OUT" > "$OUT/mock.log" & MPID=$!
 trap 'kill $VPID $MPID 2>/dev/null || true' EXIT
-for i in $(seq 50); do [ -f "$OUT/vault.ready" ] && break; sleep 0.2; done
+for _ in $(seq 50); do [ -f "$OUT/vault.ready" ] && break; sleep 0.2; done
 [ -f "$OUT/vault.ready" ] || { cat "$OUT/vault.error"; exit 1; }
 
 node -e "require('$PKG/lib/agents/claude-code').install({ scope: 'user', mcp: false })" >/dev/null
@@ -42,4 +42,4 @@ set -e
 cp -r "$CLAUDE_CONFIG_DIR/projects" "$OUT/transcripts" 2>/dev/null || true
 git -C "$RUN/proj" status --short > "$OUT/git_status.txt" || true
 cp "$RUN/proj/src/client.js" "$OUT/client.js" 2>/dev/null || true
-echo done
+echo "done"

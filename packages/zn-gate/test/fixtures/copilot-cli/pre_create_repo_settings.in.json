@@ -1,0 +1,10 @@
+{
+  "sessionId": "sess-1",
+  "timestamp": 1792400000000,
+  "cwd": "/work/proj",
+  "toolName": "create",
+  "toolArgs": {
+    "path": "/work/proj/.github/copilot/settings.json",
+    "file_text": "{}"
+  }
+}

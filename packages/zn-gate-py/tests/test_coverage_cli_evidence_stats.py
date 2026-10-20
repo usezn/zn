@@ -47,7 +47,7 @@ def test_scan_missing_path(tmp_path, capsys):
 def test_scan_empty_directory(tmp_path, capsys):
     assert _scan(tmp_path) == 0
     out = capsys.readouterr().out
-    assert "Scanned 0 files" in out and "clean" in out
+    assert "Scanned 0 files" in out and "No files were scanned in" in out and "clean" not in out
 
 
 def test_scan_empty_directory_json(tmp_path, capsys):

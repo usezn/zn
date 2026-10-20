@@ -12,8 +12,12 @@
 #   stop-placeholder  Stop with a placeholder no tool produced (observation)
 #   replace     PostToolUse with "replaceToolOutputOnSecret": continue false
 #               and a stop reason; the model never gets the value
+#   session-context  SessionStart and SubagentStart: the reminder reaches the model, and whether a
+#               subagent's own tool calls go through zn's hooks (observation)
 #   thirdparty  another tool's PreToolUse hook answers allow + updatedInput:
-#               what zn sees and what runs (observation, not a pass/fail)
+#               zn's PreToolUse sees the original command, the rewritten one
+#               runs, and PostToolUse withholds the output of the command
+#               that really ran
 #
 #   bash run_codex_scenarios.sh <work dir> [codex binary] [scenario ...]
 #
@@ -31,9 +35,9 @@ ROOT=$(cd "$H/../../.." && pwd)
 PKG=$ROOT/packages/zn-gate
 WORK=$(mkdir -p "$1" && cd "$1" && pwd)
 CODEX=${2:-codex}
-[ $# -ge 2 ] && shift 2 || shift $#
+if [ $# -ge 2 ]; then shift 2; else shift $#; fi
 SCENARIOS=("$@")
-[ ${#SCENARIOS[@]} -eq 0 ] && SCENARIOS=(permission mcp stop-warn stop-block stop-placeholder replace thirdparty)
+[ ${#SCENARIOS[@]} -eq 0 ] && SCENARIOS=(permission mcp stop-warn stop-block stop-placeholder replace thirdparty session-context)
 EVIDENCE=${EVIDENCE_DIR:-$ROOT/bench/e2e/codex/scenarios}
 NODE=$(command -v node)
 BASEPORT=${BASEPORT:-8800}
@@ -48,7 +52,8 @@ run_one() {
   ln -sf "$PKG/bin/cli.js" "$RUN/bin/zn"
   (
     export HOME=$RUN/home ZN_HOME=$RUN/zn CODEX_HOME=$RUN/home/.codex MOCK_API_KEY=mock-provider-key
-    export PATH=$RUN/bin:$(dirname "$NODE"):/usr/local/bin:/usr/bin:/bin
+    NODE_DIR=$(dirname "$NODE")
+    export PATH=$RUN/bin:$NODE_DIR:/usr/local/bin:/usr/bin:/bin
     {
       echo 'model = "mock-model"'
       echo 'model_provider = "mock"'
@@ -61,6 +66,11 @@ run_one() {
         echo 'check_for_update_on_startup = false'
         echo "[projects.\"$RUN/proj\"]"
         echo 'trust_level = "trusted"'
+      fi
+      if [ "$S" = session-context ]; then
+        # Codex versions differ in how the subagent tools are offered; CODEX_FEATURES_TOML adds lines such as: multi_agent = true
+        echo '[features]'
+        printf '%s\n' "${CODEX_FEATURES_TOML:-multi_agent = true}"
       fi
       if [ "$S" = mcp ]; then
         echo '[mcp_servers.echo]'
@@ -88,6 +98,7 @@ run_one() {
     else
       FLAGS=(--dangerously-bypass-approvals-and-sandbox)
     fi
+    # shellcheck disable=SC2164 # $RUN/proj is created by setup.js just above; this subshell deliberately has no errexit
     cd "$RUN/proj"
     if [ "$S" = permission ]; then
       # codex exec never asks for approval (its policy is fixed to "never"), so PermissionRequest

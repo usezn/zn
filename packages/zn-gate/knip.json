@@ -1,0 +1,5 @@
+{
+  "entry": ["scripts/*.js", "test/**/*.js"],
+  "project": ["bin/**/*.js", "lib/**/*.js", "scripts/**/*.js", "test/**/*.js"],
+  "ignoreDependencies": ["c8"]
+}

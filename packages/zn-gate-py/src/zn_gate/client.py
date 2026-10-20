@@ -15,7 +15,7 @@ import json
 import os
 import urllib.request
 import urllib.error
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 from .rules import evaluate, redact_secrets
 from . import __version__
@@ -26,7 +26,7 @@ DEFAULT_ENDPOINT = "https://api.usezn.com/v30/analyze"
 def resolve_endpoint(options: Optional[Dict[str, Any]] = None) -> str:
     options = options or {}
     if "api_url" in options and options["api_url"]:
-        return options["api_url"]
+        return cast(str, options["api_url"])
     if os.environ.get("ZN_API_URL"):
         return os.environ["ZN_API_URL"]
     stage = options.get("stage") or os.environ.get("ZN_STAGE") or "v30"
@@ -80,7 +80,7 @@ def analyze_cloud(
     req = urllib.request.Request(endpoint, data=payload, headers=headers, method="POST")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         raw = resp.read().decode("utf-8")
-        parsed = json.loads(raw)
+        parsed: Dict[str, Any] = json.loads(raw)
         parsed["engine"] = "cloud-v30" if "/v30" in endpoint else "cloud-prod"
         return parsed
 

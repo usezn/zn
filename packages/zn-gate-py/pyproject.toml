@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zn-gate"
-version = "1.12.0"
+version = "1.13.0"
 description = "The local security layer for Python AI agents (LangChain, CrewAI, LlamaIndex, plain tool calling): prompt-injection checks and secret redaction, zero dependencies."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -22,7 +22,9 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Security",
+    "Typing :: Typed",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
@@ -38,6 +40,10 @@ keywords = [
 ]
 dependencies = []
 
+[project.optional-dependencies]
+# Only for the tests that run the integrations through the real frameworks.
+test-frameworks = ["langchain-core>=1,<2", "llama-index-core>=0.14,<0.15"]
+
 [project.urls]
 Homepage = "https://usezn.com"
 Documentation = "https://usezn.com/docs"
@@ -49,6 +55,10 @@ zn-gate = "zn_gate.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+# PEP 561 marker: the public API is typed.
+zn_gate = ["py.typed"]
 
 [tool.ruff]
 target-version = "py310"

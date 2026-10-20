@@ -22,9 +22,12 @@ const MARKERS = {
 };
 
 // Pruned without a report: dependency stores, version control and tool caches.
+// Editor and virtual-environment folders (.idea, .venv, venv, __pycache__,
+// .eggs) are not here: a project can keep an agent file in them, so they are
+// skipped but reported.
 const SILENT = new Set([
-  'node_modules', '.git', '.hg', '.svn', '.next', '.nuxt', '.turbo', '.venv', 'venv', '__pycache__', '.eggs',
-  '.tox', '.mypy_cache', '.pytest_cache', '.ruff_cache', '.gradle', '.idea', 'Pods', 'bower_components',
+  'node_modules', '.git', '.hg', '.svn', '.next', '.nuxt', '.turbo',
+  '.tox', '.mypy_cache', '.pytest_cache', '.ruff_cache', '.gradle', 'Pods', 'bower_components',
   '.cache', 'site-packages', '.terraform', '.yarn', '.pnpm-store',
 ]);
 
@@ -36,6 +39,17 @@ const SCAN_DIRS = new Set([
   'node_modules', '.git', '.next', '.turbo', '.idea', '.venv', 'venv', '__pycache__', '.eggs',
   'dist', 'build', 'target', 'vendor',
 ]);
+
+// What a reported name is, for the reason shown to the user. A name that is not
+// listed is build output. The Python scan keeps the same words.
+const KINDS = {
+  vendor: 'dependencies',
+  '.idea': 'editor settings',
+  '.venv': 'virtual environment',
+  venv: 'virtual environment',
+  __pycache__: 'Python cache',
+  '.eggs': 'Python build files',
+};
 
 /**
  * Decide whether to skip the directory `name` found inside `parentDir`, given
@@ -50,7 +64,7 @@ function pruneInfo(name, parentDir) {
     if (!marker) return null;
   }
   if (SILENT.has(name)) return { silent: true, reason: 'skipped by name' };
-  const kind = name === 'vendor' ? 'dependencies' : 'build output';
+  const kind = KINDS[name] || 'build output';
   if (marker) return { silent: false, reason: 'skipped by name: ' + kind + ' next to ' + marker };
   return { silent: false, reason: 'skipped by name: ' + kind };
 }
