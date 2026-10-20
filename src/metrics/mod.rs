@@ -140,6 +140,15 @@ lazy_static! {
         "Total number of tool calls blocked by the neural layer"
     ).expect("Failed to create neural_blocks metric");
 
+    /// Neural-layer stage failures (embed, classify, search)
+    pub static ref NEURAL_ERRORS: IntCounterVec = IntCounterVec::new(
+        Opts::new(
+            "zn_neural_errors_total",
+            "Total number of neural-layer stage failures"
+        ),
+        &["stage"]
+    ).expect("Failed to create neural_errors metric");
+
     /// Live FPR of the serving neural model (0.0 - 1.0)
     pub static ref NEURAL_FPR: Gauge = Gauge::new(
         "zn_neural_fpr",
@@ -223,6 +232,7 @@ pub fn init() -> Result<(), prometheus::Error> {
     REGISTRY.register(Box::new(NEURAL_LATENCY_P95.clone()))?;
     REGISTRY.register(Box::new(NEURAL_LATENCY_P99.clone()))?;
     REGISTRY.register(Box::new(NEURAL_BLOCKS.clone()))?;
+    REGISTRY.register(Box::new(NEURAL_ERRORS.clone()))?;
     REGISTRY.register(Box::new(NEURAL_FPR.clone()))?;
     REGISTRY.register(Box::new(CACHE_HITS_TOTAL.clone()))?;
     REGISTRY.register(Box::new(CACHE_MISSES_TOTAL.clone()))?;
@@ -309,6 +319,11 @@ pub fn record_neural_block() {
     NEURAL_BLOCKS.inc();
 }
 
+/// Record a failed neural stage (`embed`, `classify` or `search`)
+pub fn record_neural_error(stage: &str) {
+    NEURAL_ERRORS.with_label_values(&[stage]).inc();
+}
+
 /// Update the live FPR gauge of the serving neural model
 pub fn set_neural_fpr(fpr: f64) {
     NEURAL_FPR.set(fpr);
@@ -391,6 +406,7 @@ mod tests {
         record_neural_embed_p95(0.005);
         record_neural_embed_p99(0.006);
         record_neural_block();
+        record_neural_error("embed");
         set_neural_fpr(0.014);
         record_cache_hit();
         record_cache_miss();
@@ -417,6 +433,10 @@ mod tests {
         assert!(
             out.contains("zn_neural_blocks_total"),
             "block counter missing"
+        );
+        assert!(
+            out.contains("zn_neural_errors_total"),
+            "neural error counter missing"
         );
         assert!(out.contains("zn_neural_fpr"), "FPR gauge missing");
         assert!(out.contains("0.014"), "FPR value not exported");

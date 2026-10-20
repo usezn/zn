@@ -2,6 +2,7 @@ pub mod backend;
 pub mod canary;
 pub mod embedder;
 pub mod memory;
+pub mod probe;
 pub mod registry;
 
 // Re-export key types
@@ -9,6 +10,7 @@ pub use backend::{CandleBert, FastBootBackend, Head, OnnxModel};
 pub use canary::{CanaryDeployer, CanaryStats};
 pub use embedder::{Embedder, Embedding};
 pub use memory::{MemoryError, VectorMemory};
+pub use probe::{pipeline_backend, probe, NeuralError, NeuralProbe};
 pub use registry::{ModelEntry, ModelRegistry};
 
 /// Pluggable inference backend for the neural core.

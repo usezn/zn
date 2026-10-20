@@ -417,8 +417,11 @@ async fn start_proxy(args: Args) -> Result<()> {
                 Arc::new(b)
             }
             Err(e) => {
-                log::warning(format!("⚠️ Neural Core Failed to Start: {}.", e))?;
-                panic!("Critical: Neural Core (Candle) failed to load: {}", e);
+                log::error(format!("Neural Core failed to start: {:#}", e))?;
+                return Err(anyhow!(
+                    "the neural model failed to load: {e:#}. Fix the model path (ZN_NEURAL_MODEL_PATH or neural.model_path) \
+                     or set ZN_FAST_BOOT=1 to run without the neural layer on purpose"
+                ));
             }
         }
     };
@@ -648,30 +651,11 @@ async fn build_pipeline() -> Result<AnalyzerPipeline> {
         .map(PathBuf::from)
         .unwrap_or_else(|_| zn::ai::embedder::expand_tilde(&config.neural.model_path));
 
-    let backend: Arc<dyn zn::ai::ModelBackend> = if fast_boot || !config.neural.enabled {
-        let dim = if config.neural.dim > 0 {
-            config.neural.dim
-        } else {
-            384
-        };
-        Arc::new(zn::ai::FastBootBackend::new(dim))
-    } else {
-        match zn::ai::CandleBert::new(&model_dir) {
-            Ok(b) => Arc::new(b),
-            Err(e) => {
-                eprintln!(
-                    "Warning: Neural model failed to load: {}. Running in fallback mode.",
-                    e
-                );
-                let dim = if config.neural.dim > 0 {
-                    config.neural.dim
-                } else {
-                    384
-                };
-                Arc::new(zn::ai::FastBootBackend::new(dim))
-            }
-        }
-    };
+    let backend =
+        zn::ai::pipeline_backend(fast_boot, config.neural.enabled, config.neural.dim, || {
+            let b = zn::ai::CandleBert::new(&model_dir)?;
+            Ok(Arc::new(b) as Arc<dyn zn::ai::ModelBackend>)
+        })?;
 
     // Initialize vector memory
     let vector_db_path = "data/vectors";
@@ -737,23 +721,22 @@ impl AnalyzerPipeline {
             let neural_input = format!("analyze: {}", analysis_input);
             let model = self.canary.backend_for("analyze");
 
-            if let Ok(vec) = model.embed(&neural_input) {
-                // Get classifier probability if available
-                let prob = model.classify(&vec).ok().flatten();
-
-                // Search nearest neighbor - use ambient tokio runtime
-                let namespace = self
-                    .config
-                    .security
-                    .namespace
-                    .as_deref()
-                    .unwrap_or(GLOBAL_NAMESPACE);
-                let nearest = self
-                    .memory
-                    .search(namespace, "analyze", &vec, 1)
-                    .await
-                    .ok()
-                    .and_then(|r| r.first().map(|(t, d)| (t.clone(), *d)));
+            let namespace = self
+                .config
+                .security
+                .namespace
+                .as_deref()
+                .unwrap_or(GLOBAL_NAMESPACE);
+            let probe =
+                zn::ai::probe(&*model, &self.memory, namespace, "analyze", &neural_input).await;
+            if probe.report_errors("analyze", self.config.is_neural_blocking()) {
+                // The neural layer could not judge this input: fail closed.
+                verdict = "block";
+                matched_rule = Some("neural_error".to_string());
+                risk_score = 1.0;
+            } else if probe.vec.is_some() {
+                let prob = probe.prob;
+                let nearest = probe.nearest;
 
                 let distance = nearest.as_ref().map(|(_, d)| *d).unwrap_or(0.0);
                 let adjusted_threshold =
@@ -1084,32 +1067,33 @@ async fn process_mcp_message(
             let (status, policy_match) = {
                 // 🧠 NEURAL ANALYSIS (Bicameral Architecture)
                 let mut neural_veto = false;
+                let mut neural_failed = false;
 
                 if state.config.neural.enabled {
                     let neural_input = format!("{}: {}", tool_name, arguments);
                     let start_neural = std::time::Instant::now();
                     let model = state.canary.backend_for(&agent_id_str);
 
-                    if let Ok(vec) = model.embed(&neural_input) {
+                    let probe = zn::ai::probe(
+                        &*model,
+                        &state.memory,
+                        &memory_namespace,
+                        &agent_id_str,
+                        &neural_input,
+                    )
+                    .await;
+                    // A failed stage is logged and counted; with active
+                    // blocking on it denies the call (fail closed).
+                    if probe.report_errors(&tool_name, state.config.is_neural_blocking()) {
+                        neural_failed = true;
+                    }
+                    if let Some(vec) = probe.vec.clone() {
                         let duration = start_neural.elapsed();
-                        metrics::record_neural_embed(duration.as_secs_f64());
-
-                        // The classifier probability is an independent
-                        // signal — it fires even when the anomaly is quiet or
-                        // the agent memory is empty. `None` in anomaly-only
-                        // mode (no head.json).
-                        let prob = model.classify(&vec).ok().flatten();
-
-                        // Search nearest synchronously for the decision logic
-                        if let Ok(results) = state
-                            .memory
-                            .search(&memory_namespace, &agent_id_str, &vec, 1)
-                            .await
-                        {
-                            if let Some((t, d)) = results.first() {
-                                nearest = Some((t.clone(), *d));
-                                anomaly_score = Some(*d);
-                            }
+                        metrics::record_neural_embed(probe.embed_elapsed.as_secs_f64());
+                        let prob = probe.prob;
+                        if let Some((t, d)) = probe.nearest.clone() {
+                            anomaly_score = Some(d);
+                            nearest = Some((t, d));
                         }
 
                         let distance = anomaly_score.unwrap_or(0.0);
@@ -1167,7 +1151,11 @@ async fn process_mcp_message(
                 // ⚖️ BICAMERAL DECISION ENGINE
                 // If Neural vetoed, it's a hard DENIED.
                 // Otherwise, we fallback to the deterministic WASM/Static Engine.
-                if neural_veto {
+                if neural_failed {
+                    // Fail closed: the neural layer could not judge this call.
+                    // Not a violation by the agent, so reputation is untouched.
+                    ("DENIED".to_string(), Some("neural_error".to_string()))
+                } else if neural_veto {
                     state
                         .reputation
                         .record_violation(&rep_key, "Neural Anomaly Detection", 10);
