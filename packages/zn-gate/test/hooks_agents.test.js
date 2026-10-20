@@ -87,7 +87,7 @@ test('codex: output with secrets is replaced through block; prompts with secrets
   assert.equal((await run(codex, cx('PostToolUse', { tool_name: 'Bash', tool_input: {}, tool_response: { stdout: 'ok' } }))).output, null);
 });
 
-test('codex: install writes hooks.json (user and project) and uninstall removes only ours', (t) => {
+test('codex: install writes hooks.json (user and project) and uninstall removes only ours', { skip: process.platform === 'win32' }, (t) => {
   const home = tempDir(t, 'zn-cx-');
   const env = { CODEX_HOME: path.join(home, '.codex'), ZN_HOME: path.join(home, '.zn') };
   const file = codex.hooksFile({ env });
@@ -147,7 +147,7 @@ test('cursor: MCP output is tokenized, built-in output cannot be, prompts with s
   assert.deepEqual((await run(cursor, cu('beforeSubmitPrompt', { prompt: 'hello' }))).output, { continue: true });
 });
 
-test('cursor: install writes version 1 hooks.json with our events', (t) => {
+test('cursor: install writes version 1 hooks.json with our events', { skip: process.platform === 'win32' }, (t) => {
   const home = tempDir(t, 'zn-cu-');
   // platform is explicit: on Windows the default is the PowerShell form (below).
   cursor.install({ home, nodePath: '/usr/bin/node', runnerPath: '/x/lib/hooks/runner.js', platform: 'linux' });

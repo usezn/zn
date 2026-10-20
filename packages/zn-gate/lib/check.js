@@ -190,6 +190,12 @@ function parseCommand(command, agentId) {
     if (!n || !r) return { launcher: lm[1], event: lm[2], unreadable: true };
     return { launcher: lm[1], event: lm[2], node: n[1], runner: r[1] };
   }
+  // On Windows, Cursor and Gemini CLI run the same three steps as an encoded PowerShell script (launcher.windowsScript).
+  const ws = require('./shell-quote').windowsCommandScript(c);
+  if (ws) {
+    const wm = /^if \(\(Test-Path -LiteralPath '([^']+)'\) -and \(Test-Path -LiteralPath '([^']+)'\)\) \{ & '[^']+' '[^']+' ([a-z-]+); exit \$LASTEXITCODE \}; .* # zn hook ([a-z-]+)$/s.exec(ws);
+    if (wm && wm[3] === agentId && wm[4] === agentId) return { winScript: c, node: wm[1], runner: wm[2] };
+  }
   if (!c.endsWith(' ' + agentId) && !c.endsWith(' ' + agentId + '"')) return null;
   if (audit.OUR_HOOKS[0].test(c)) return { onPath: true };
   const quoted = new RegExp("^'(" + audit.SAFE_ABS + ")' '(" + audit.SAFE_ABS + "/zn-gate/lib/hooks/runner\\.js)' " + agentId + '$');
@@ -357,7 +363,7 @@ function cliHooks(spec, ctx, userFile, given) {
     return out;
   }
   const cmd = parseCommand(read.command, spec.id);
-  if (cmd.launcher) {
+  if (cmd.launcher || cmd.winScript) {
     // The launcher runs the Node.js it was installed with, else `zn` from the PATH, else it blocks (see launcher.js).
     const isFile = (f) => { try { return fs.statSync(f).isFile(); } catch (err) { return false; } };
     const recorded = !cmd.unreadable && isFile(cmd.node) && isFile(cmd.runner);
@@ -372,7 +378,8 @@ function cliHooks(spec, ctx, userFile, given) {
       if (viaPath) out.notes.push('the Node.js zn was installed with is gone; the hook now runs `zn` from your PATH. Run `zn hooks install ' + spec.id + '` to set it up again');
       // Run it with the PATH check was given, which is what decides whether `zn` and `node` are found.
       // Windows cannot run a .sh file directly; Claude Code runs it with sh (Git Bash) there.
-      const run = process.platform === 'win32' ? { file: 'sh', args: [cmd.launcher, cmd.event] } : { file: cmd.launcher, args: [cmd.event] };
+      const run = cmd.winScript ? { file: 'powershell.exe', args: ['-NoProfile', '-NonInteractive', '-EncodedCommand', cmd.winScript.replace(/^.*-EncodedCommand /, '')] }
+        : process.platform === 'win32' ? { file: 'sh', args: [cmd.launcher, cmd.event] } : { file: cmd.launcher, args: [cmd.event] };
       out.live = { ...run, env: ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {} };
     }
   } else if (cmd.missing) {

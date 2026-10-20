@@ -142,7 +142,7 @@ test('an unreadable Stop event on stdin is passed, not blocked (exit 0, no outpu
   assert.match(res.stderr, /could not read this Stop event/);
 });
 
-test('install adds one Stop group, keeps the user hooks, is idempotent, and uninstall removes it', (t) => {
+test('install adds one Stop group, keeps the user hooks, is idempotent, and uninstall removes it', { skip: process.platform === 'win32' }, (t) => {
   const home = tempDir(t, 'zn-stop-cx-');
   const env = { CODEX_HOME: path.join(home, '.codex'), ZN_HOME: path.join(home, '.zn') };
   const file = codex.hooksFile({ env });

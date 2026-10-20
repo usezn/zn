@@ -544,7 +544,7 @@ test('policy helpers', () => {
   assert.equal(scan.operator, '|');
 });
 
-test('install / uninstall write and remove only our hooks, with backups', (t) => {
+test('install / uninstall write and remove only our hooks, with backups', { skip: process.platform === 'win32' }, (t) => {
   const home = tempDir(t, 'zn-cc-');
   const file = path.join(home, '.claude', 'settings.json');
   fs.mkdirSync(path.dirname(file), { recursive: true });

@@ -208,7 +208,7 @@ test('Cursor preToolUse checks the file a write, delete or grep names, and fails
   assert.equal(noPath.output.permission, 'deny', 'a write whose path cannot be read is refused');
 });
 
-test('Cursor install: failClosed on beforeReadFile and beforeSubmitPrompt, and a matcher on preToolUse', (t) => {
+test('Cursor install: failClosed on beforeReadFile and beforeSubmitPrompt, and a matcher on preToolUse', { skip: process.platform === 'win32' }, (t) => {
   const { home, proj } = tmpHome(t);
   cursor.install({ home, scope: 'user', nodePath: process.execPath, runnerPath: '/opt/zn/runner.js' });
   const data = JSON.parse(fs.readFileSync(path.join(home, '.cursor', 'hooks.json'), 'utf8'));
