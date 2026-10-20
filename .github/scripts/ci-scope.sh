@@ -4,7 +4,8 @@
 #
 # Always true outside pull requests (pushes, tags, manual runs) and when the full
 # matrix was asked for. For a pull request, false only when every changed file is
-# documentation or belongs to the Rust gateway (checked by its own workflow).
+# documentation or belongs to the Rust gateway (checked by its own workflow, whose required job always
+# reports). Documentation files that tests read (docs/cli.md, ...) count as code.
 # Anything under packages/, plugins/, skill/, bench/ or .github/ always needs the
 # checks, Markdown files included (some are checked by the package and plugin checks).
 # Any error while listing the files means true: when in doubt, run the checks.
@@ -25,6 +26,9 @@ needed=false
 while IFS= read -r f; do
   case "$f" in
     packages/*|plugins/*|skill/*|bench/*|action.yml|.github/*) needed=true; echo "needs the checks: $f"; break ;;
+    # Documentation files a test reads. Keep in step with the tests: test-ci-scope.sh fails when a
+    # test mentions a docs file that is not listed here.
+    docs/api-reference.md|docs/audit.md|docs/check.md|docs/cli.md) needed=true; echo "needs the checks (a test reads it): $f"; break ;;
     docs/*|*.md|LICENSE|NOTICE|assets/*) ;;   # documentation
     src/*|Cargo.toml|Cargo.lock|.cargo/*|build.rs) ;;   # Rust gateway
     *) needed=true; echo "needs the checks: $f"; break ;;
