@@ -522,6 +522,9 @@ function checkMcpServers(ctx, servers, keyPath, opts) {
 const HELPER_KEYS = ['apiKeyHelper', 'awsAuthRefresh', 'awsCredentialExport', 'otelHeadersHelper', 'gcpAuthRefresh'];
 
 function checkClaudeSettings(ctx, data) {
+  if (switchesHooksOff(data) && !ctx.home) {
+    ctx.add('ZNA021', 'medium', ctx.locate(['disableAllHooks']), 'disableAllHooks is true: Claude Code and Copilot CLI (which reads this file too) skip every hook in this repository, zn-gate\'s included.', { readers: ['claude', 'cursor', 'copilot'] });
+  }
   if (data.hooks && typeof data.hooks === 'object') checkHooks(ctx, data.hooks, ['hooks']);
   if (data.statusLine && typeof data.statusLine === 'object' && typeof data.statusLine.command === 'string') {
     checkAutoRun(ctx, data.statusLine.command, ctx.locate(['statusLine', 'command']), 'Status line command');
@@ -673,6 +676,25 @@ function checkGeminiSettings(ctx, data) {
   for (const t of allowed) {
     if (t === 'run_shell_command' || t === 'ShellTool' || t === '*') ctx.add('ZNA010', capHome(ctx, 'high'), ctx.locate(['allowed'], t), 'The shell tool is allowed without a prompt.');
   }
+}
+
+/**
+ * Whether a settings object turns every hook off the way Copilot CLI documents
+ * it ("disableAllHooks": true; any other value leaves hooks on). One reader
+ * for the audit and for anything else that has to answer the same question.
+ */
+function switchesHooksOff(data) {
+  return !!data && typeof data === 'object' && !Array.isArray(data) && data.disableAllHooks === true;
+}
+
+function checkCopilotSettings(ctx, data) {
+  if (!switchesHooksOff(data)) return;
+  ctx.add('ZNA021', 'medium', ctx.locate(['disableAllHooks']), 'disableAllHooks is true: Copilot CLI skips every hook in this repository, zn-gate\'s included (only machine policy hooks still run).');
+}
+
+function checkCopilotHooksFile(ctx, data) {
+  if (!switchesHooksOff(data)) return;
+  ctx.add('ZNA021', 'low', ctx.locate(['disableAllHooks']), 'disableAllHooks is true in this hooks file: Copilot skips the hooks declared here (the other hook files still run).', { title: 'Hooks file turns off its own hooks' });
 }
 
 function checkOpencodeJson(ctx, data) {
@@ -892,6 +914,8 @@ function classify(rel, isRootLevel) {
   if (has(/(^|\/)\.cursor\/hooks\.json$/)) return rule('hooks-json', 'cursor');
   if (has(/(^|\/)\.cursor\/cli\.json$/)) return rule('cursor-cli', 'cursor');
   if (has(/(^|\/)\.gemini\/settings\.json$/)) return rule('gemini-settings', 'gemini');
+  if (has(/(^|\/)\.github\/copilot\/settings(\.local)?\.json$/)) return rule('copilot-settings', 'copilot');
+  if (has(/(^|\/)\.github\/hooks\/[^/]+\.json$/)) return rule('copilot-hooks', 'copilot');
   if (/^opencode\.jsonc?$/.test(base) && (isRootLevel || has(/(^|\/)\.opencode\/opencode\.jsonc?$/) || !rel.includes('/'))) return rule('opencode-json', 'opencode');
   if (has(/(^|\/)\.opencode\/plugins?\/[^/]+\.(?:js|mjs|cjs|ts|mts)$/)) return rule('opencode-plugin', 'opencode');
   if (has(/(^|\/)\.claude-plugin\/plugin\.json$/)) return rule('claude-plugin', 'claude');
@@ -1206,6 +1230,8 @@ const CHECKS = {
   'plugin-hooks': checkHooksJson,
   'cursor-cli': checkCursorCli,
   'gemini-settings': checkGeminiSettings,
+  'copilot-settings': checkCopilotSettings,
+  'copilot-hooks': checkCopilotHooksFile,
   'opencode-json': checkOpencodeJson,
   'claude-plugin': checkClaudePlugin,
   'config-other': () => {},
@@ -1213,8 +1239,8 @@ const CHECKS = {
 
 // Config kinds that can start commands or redirect the agent: when one of
 // them cannot be parsed, the text is searched for the risky keys instead.
-const RISKY_KINDS = new Set(['claude-settings', 'claude-user-json', 'mcp-json', 'vscode-mcp', 'amazonq-agent', 'vscode-tasks', 'hooks-json', 'plugin-hooks', 'codex-toml', 'gemini-settings', 'opencode-json', 'claude-plugin', 'cursor-cli', 'vscode-settings']);
-const RISKY_JSON_KEY = /"(hooks|command|args|mcpServers|servers|mcp|env|apiKeyHelper|awsAuthRefresh|awsCredentialExport|otelHeadersHelper|statusLine|enableAllProjectMcpServers|enabledMcpjsonServers|enabledPlugins|extraKnownMarketplaces|permissions?|plugin|provider|runOn|allowedTools|chat\.tools\.(?:global\.)?autoApprove)"\s*:/;
+const RISKY_KINDS = new Set(['claude-settings', 'claude-user-json', 'mcp-json', 'vscode-mcp', 'amazonq-agent', 'vscode-tasks', 'hooks-json', 'plugin-hooks', 'codex-toml', 'gemini-settings', 'opencode-json', 'claude-plugin', 'cursor-cli', 'vscode-settings', 'copilot-settings', 'copilot-hooks']);
+const RISKY_JSON_KEY = /"(hooks|command|args|mcpServers|servers|mcp|env|apiKeyHelper|awsAuthRefresh|awsCredentialExport|otelHeadersHelper|statusLine|disableAllHooks|enableAllProjectMcpServers|enabledMcpjsonServers|enabledPlugins|extraKnownMarketplaces|permissions?|plugin|provider|runOn|allowedTools|chat\.tools\.(?:global\.)?autoApprove)"\s*:/;
 const RISKY_TOML_KEY = /^\s*(?:\[\s*(?:mcp_servers|model_providers|shell_environment_policy|profiles)\b|(?:notify|approval_policy|sandbox_mode|openai_base_url|chatgpt_base_url|command|args)\s*=)/;
 
 const WRITE_SCOPES = /contents|pull-requests|issues|actions|packages|id-token|deployments|statuses|checks/g;
@@ -1449,4 +1475,4 @@ function audit(opts) {
   return { root, files: scanned, findings, truncated: Boolean(truncated) || timedOut, entries, skippedDirs, agents: Array.from(selected) };
 }
 
-module.exports = { audit, classify, redact, AGENTS, _internal: { hookCommands, isOurHook, isOurMcp, gitIgnored, readBounded, grantsWrite, withoutTrailingEquals, OUR_HOOKS, SAFE_ABS, znGateFile } };
+module.exports = { audit, classify, redact, AGENTS, _internal: { switchesHooksOff, hookCommands, isOurHook, isOurMcp, gitIgnored, readBounded, grantsWrite, withoutTrailingEquals, OUR_HOOKS, SAFE_ABS, znGateFile } };

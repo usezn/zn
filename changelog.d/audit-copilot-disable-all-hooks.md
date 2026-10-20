@@ -1,0 +1,2 @@
+### Security
+- `zn audit` now reports a repository that turns agent hooks off with `"disableAllHooks": true` in `.github/copilot/settings.json`, `.github/copilot/settings.local.json` or `.claude/settings.json` (rule ZNA021, medium), and in a single `.github/hooks/*.json` file (low). GitHub Copilot CLI then skips every hook, zn-gate's included, without a warning. `AUDIT_RULES_VERSION` is `2026-10-20.1`.

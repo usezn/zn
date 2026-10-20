@@ -7,7 +7,7 @@
 
 // Version of the rule catalogue and of the command patterns in audit/patterns.js.
 // Bump it when a rule, a pattern or a rule id changes; see CONTRIBUTING.md.
-const AUDIT_RULES_VERSION = '2026-10-18.3';
+const AUDIT_RULES_VERSION = '2026-10-20.1';
 
 const SEVERITIES = ['low', 'medium', 'high', 'critical'];
 const RANK = { none: 99, low: 1, medium: 2, high: 3, critical: 4 };
@@ -160,6 +160,13 @@ const RULES = [
     title: 'Agent file could not be checked',
     help: 'zn audit could not review this file or directory: a syntax error, a size over the limit, a symbolic link leaving the repository, or a scan that stopped early. Agents may still read and act on it. High when the file can run commands or redirect the agent, or when the scan did not finish.',
     fix: 'Fix the syntax error, move the content into the repository, or review the file by hand.',
+    references: [],
+  },
+  {
+    id: 'ZNA021', severity: 'medium', name: 'hooks-switched-off',
+    title: 'Repository settings turn off the agent hooks',
+    help: 'GitHub Copilot CLI reads disableAllHooks from the repository settings (.github/copilot/settings.json, settings.local.json, and the shared .claude/settings.json) and then skips every hook from every source, zn-gate\'s included, with no warning when it runs. Machine policy hooks still run. In a single .github/hooks file the key only skips the hooks of that file (reported as low).',
+    fix: 'Remove disableAllHooks (or set it to false) in the repository, or open the project only in an agent where you have checked that zn-gate\'s hooks run (zn-gate check).',
     references: [],
   },
 ];

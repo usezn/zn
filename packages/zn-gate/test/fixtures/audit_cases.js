@@ -267,6 +267,40 @@ const RULE_CASES = [
     files: { '.cursor/mcp.json': '{ "mcpServers": { "a": { "command": "x" } \n', '.vscode/settings.json': '{ "editor.tabSize": 2 \n' },
     expect: [{ id: 'ZNA020', severity: 'high', file: '.cursor/mcp.json' }, { id: 'ZNA020', severity: 'low', file: '.vscode/settings.json' }],
   },
+  {
+    name: 'repository settings that turn off every Copilot hook, in each place the docs define',
+    files: {
+      '.github/copilot/settings.json': json({ disableAllHooks: true }),
+      '.github/copilot/settings.local.json': json({ disableAllHooks: true }),
+      '.claude/settings.json': json({ disableAllHooks: true }),
+      '.github/hooks/lint.json': json({ version: 1, disableAllHooks: true, hooks: {} }),
+    },
+    expect: [
+      { id: 'ZNA021', severity: 'medium', agent: 'copilot', file: '.github/copilot/settings.json' },
+      { id: 'ZNA021', severity: 'medium', agent: 'copilot', file: '.github/copilot/settings.local.json' },
+      { id: 'ZNA021', severity: 'medium', agent: 'claude', file: '.claude/settings.json' },
+      { id: 'ZNA021', severity: 'low', agent: 'copilot', file: '.github/hooks/lint.json' },
+    ],
+    count: { ZNA021: 4 },
+  },
+  {
+    name: 'disableAllHooks that is false, a string or nested does not count',
+    files: {
+      '.github/copilot/settings.json': json({ disableAllHooks: false }),
+      '.github/copilot/settings.local.json': json({ disableAllHooks: 'true' }),
+      '.github/hooks/a.json': json({ version: 1, hooks: { preToolUse: [] }, other: { disableAllHooks: true } }),
+    },
+    absent: ['ZNA021'],
+  },
+  {
+    name: 'malformed Copilot settings are reported as unchecked, not as a crash',
+    files: {
+      '.github/copilot/settings.json': '{ "disableAllHooks": true \n',
+      '.github/hooks/bad.json': '{ nope',
+    },
+    expect: [{ id: 'ZNA020', severity: 'high', file: '.github/copilot/settings.json' }, { id: 'ZNA020', severity: 'low', file: '.github/hooks/bad.json' }],
+    absent: ['ZNA021'],
+  },
 ];
 
 const BENIGN_CASES = [
