@@ -43,6 +43,17 @@ function gitStatusOf(file) {
 }
 
 /**
+ * fs.realpathSync, but on Windows the native call: the JavaScript one leaves 8.3
+ * short names (RUNNER~1) unexpanded, so a check against long names would miss them.
+ */
+function realpath(p) {
+  if (process.platform === 'win32' && typeof fs.realpathSync.native === 'function') {
+    try { return fs.realpathSync.native(p); } catch (_) { /* fall back below */ }
+  }
+  return fs.realpathSync(p);
+}
+
+/**
  * The path a file has, or would have once created: the nearest existing
  * ancestor with its symlinks resolved, then the rest of the path as typed.
  */
@@ -62,7 +73,7 @@ function realTargetOf(file) {
     i++;
   }
   try {
-    return path.join(fs.realpathSync(cur), ...parts.slice(i));
+    return path.join(realpath(cur), ...parts.slice(i));
   } catch (_) {
     return abs;
   }
@@ -75,4 +86,4 @@ function writeFileAtomic(file, data, mode = 0o600) {
   fs.renameSync(tmp, file);
 }
 
-module.exports = { gitStatusOf, realTargetOf, writeFileAtomic };
+module.exports = { gitStatusOf, realpath, realTargetOf, writeFileAtomic };

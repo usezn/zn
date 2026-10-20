@@ -21,7 +21,7 @@ const os = require('os');
 const path = require('path');
 const dotenv = require('../broker/dotenv');
 const markers = require('../broker/markers');
-const { realTargetOf } = require('../broker/files');
+const { realTargetOf, realpath } = require('../broker/files');
 const { powershellQuote, portablePath } = require('../shell-quote');
 const { znCommand } = require('../zn-command');
 
@@ -242,7 +242,7 @@ function physicalDotDot(text, cwd) {
     if (!seg || seg === '.') continue;
     if (seg === '..') {
       let real = cur;
-      try { real = fs.realpathSync(cur); } catch (_) { /* not there: followed as written */ }
+      try { real = realpath(cur); } catch (_) { /* not there: followed as written */ }
       cur = path.dirname(real);
     } else {
       cur = path.join(cur, seg);
@@ -2037,7 +2037,7 @@ function cdBasesOf(readings, opts) {
         const pd = physicalDotDot(target, b);
         const real = new Set();
         if (pd) real.add(pd);
-        for (const x of pd ? [lex, pd] : [lex]) { try { real.add(fs.realpathSync(x)); } catch (_) { /* not there */ } }
+        for (const x of pd ? [lex, pd] : [lex]) { try { real.add(realpath(x)); } catch (_) { /* not there */ } }
         for (const x of real) {
           if (x === lex) continue;
           next.add(x);
