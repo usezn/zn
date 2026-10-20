@@ -333,3 +333,70 @@ test('geminiPolicyWarnings: nothing for settings that leave hooks on', (t) => {
   fs.writeFileSync(f, JSON.stringify({ hooksConfig: { enabled: true, disabled: ['other'] }, tools: { enableHooks: true } }));
   assert.deepEqual(geminiPolicyWarnings({ files: [{ file: f, label: 'x' }, { file: path.join(dir, 'missing.json'), label: 'y' }] }), []);
 });
+
+/* ---- B-218 / B-219: include patterns and recursive search scan ---- */
+
+function projWith(t, files) {
+  const dir = tempDir(t, 'zn-gem-');
+  for (const [rel, text] of Object.entries(files)) {
+    const f = path.join(dir, rel);
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.writeFileSync(f, text);
+  }
+  return dir;
+}
+const bt2 = (cwd, name, input) => bt(name, input, { cwd });
+
+test('read_many_files: an include pattern that reaches a nested .env with values is denied', async (t) => {
+  const dir = projWith(t, { 'app/config/.env': 'API_KEY=sk-test-EXAMPLE\n', 'app/main.js': 'x' });
+  for (const pat of ['**/.env', 'app/*/.env', 'app/**/.env*', 'app/{config,x}/.env']) {
+    const r = await run(bt2(dir, 'read_many_files', { include: [pat] }));
+    assert.equal(r.output.decision, 'deny', pat);
+    assert.match(r.output.reason, /\.env/, pat);
+  }
+});
+
+test('read_many_files: a pattern that cannot reach secrets, and plain paths, still work', async (t) => {
+  const dir = projWith(t, { 'src/a.js': 'x', 'src/b.js': 'y' });
+  assert.equal((await run(bt2(dir, 'read_many_files', { include: ['src/**/*.js'] }))).output, null);
+  assert.equal((await run(bt2(dir, 'read_many_files', { include: [path.join(dir, 'src', 'a.js')] }))).output, null);
+});
+
+test('grep_search: a nested .env with values is found below the first level', async (t) => {
+  const dir = projWith(t, { 'a/b/c/.env': 'API_KEY=sk-test-EXAMPLE\n', 'a/x.js': 'x' });
+  const r = await run(bt2(dir, 'grep_search', { pattern: 'KEY' }));
+  assert.equal(r.output.decision, 'deny');
+  assert.match(r.output.reason, /\.env/);
+});
+
+test('grep_search: a clean tree is allowed; node_modules is not walked', async (t) => {
+  const dir = projWith(t, { 'a/b/x.js': 'x', 'node_modules/p/.env': 'API_KEY=sk-test-EXAMPLE\n' });
+  assert.equal((await run(bt2(dir, 'grep_search', { pattern: 'x' }))).output, null);
+});
+
+test('grep_search: more than 5000 entries is refused, not treated as clean', async (t) => {
+  const dir = projWith(t, {});
+  fs.mkdirSync(path.join(dir, 'big'));
+  for (let i = 0; i < 5001; i++) fs.writeFileSync(path.join(dir, 'big', 'f' + i), '');
+  const r = await run(bt2(dir, 'grep_search', { pattern: 'x' }));
+  assert.equal(r.output.decision, 'deny');
+  assert.match(r.output.reason, /more than 5000 entries/);
+});
+
+test('grep_search: a tree nested past the depth limit is refused', async (t) => {
+  const dir = projWith(t, {});
+  fs.mkdirSync(path.join(dir, ...Array(12).fill('d')), { recursive: true });
+  const r = await run(bt2(dir, 'grep_search', { pattern: 'x' }));
+  assert.equal(r.output.decision, 'deny');
+  assert.match(r.output.reason, /levels deep/);
+});
+
+test('grep_search: a folder zn cannot read is refused, not treated as clean', { skip: typeof process.getuid === 'function' && process.getuid() === 0 }, async (t) => {
+  const dir = projWith(t, { 'locked/.env': 'API_KEY=sk-test-EXAMPLE\n' });
+  const locked = path.join(dir, 'locked');
+  fs.chmodSync(locked, 0o000);
+  let r;
+  try { r = await run(bt2(dir, 'grep_search', { pattern: 'KEY' })); } finally { fs.chmodSync(locked, 0o755); }
+  assert.equal(r.output.decision, 'deny');
+  assert.match(r.output.reason, /could not be read/);
+});

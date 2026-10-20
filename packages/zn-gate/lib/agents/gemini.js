@@ -130,6 +130,8 @@ function normalize(raw) {
   }
   const { paths, bad } = pathsOf(args);
   const input = { path: paths[0], paths, texts: [] };
+  // read_many_files takes include patterns (globs), not only plain paths.
+  if (toolName === 'read_many_files') input.patterns = true;
   if (toolName === 'web_fetch') {
     // The prompt holds the addresses to fetch (and any text around them).
     return { ...ev, tool: 'webfetch', input: { url: typeof args.prompt === 'string' ? args.prompt : '', texts: [] } };

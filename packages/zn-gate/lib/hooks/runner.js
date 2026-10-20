@@ -224,6 +224,45 @@ async function ctxFor(ev, d, agentId, destination, needVault = true) {
 
 /* ---------------------------- pre_tool ---------------------------- */
 
+// Limits of the folder walk behind a search: depth below the folder, and entries looked at in all.
+const SCAN_MAX_DEPTH = 8;
+const SCAN_MAX_ENTRIES = 5000;
+// Folders no search is expected to need: skipped without a look.
+const SCAN_SKIP_DIRS = new Set(['.git', 'node_modules']);
+
+/**
+ * Walks the tree under `root` and returns { hit: <name> } for the first entry that policy.readDenial refuses,
+ * { stop: <reason> } when a limit is reached or a folder cannot be read, or {} when the tree is clean.
+ * A path that is missing or is not a folder holds nothing to scan.
+ */
+function scanTreeForSecrets(root, pathOpts) {
+  let seen = 0;
+  const walk = (dir, depth) => {
+    let ents;
+    try {
+      ents = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (e) {
+      if (e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) return null;
+      return { stop: 'a folder could not be read (' + dir + ')' };
+    }
+    for (const ent of ents) {
+      if (++seen > SCAN_MAX_ENTRIES) return { stop: 'the folder holds more than ' + SCAN_MAX_ENTRIES + ' entries' };
+      const full = path.join(dir, ent.name);
+      if (policy.readDenial(full, pathOpts)) return { hit: ent.name };
+      let isDir = ent.isDirectory();
+      if (ent.isSymbolicLink()) {
+        try { isDir = fs.statSync(full).isDirectory(); } catch (_) { isDir = false; }
+      }
+      if (!isDir || SCAN_SKIP_DIRS.has(ent.name)) continue;
+      if (depth >= SCAN_MAX_DEPTH) return { stop: 'the folder is nested more than ' + SCAN_MAX_DEPTH + ' levels deep' };
+      const r = walk(full, depth + 1);
+      if (r) return r;
+    }
+    return null;
+  };
+  return walk(root, 0) || {};
+}
+
 async function decidePre(ev, d, agentId, opts) {
   const pathOpts = { cwd: ev.cwd, home: opts.home };
   const input = ev.input || {};
@@ -232,19 +271,21 @@ async function decidePre(ev, d, agentId, opts) {
   if (tool === 'read' || tool === 'lsp' || (tool === 'grep' && input.path)) {
     // An adapter that finds several paths in one call lists them all in input.paths.
     for (const p of Array.isArray(input.paths) && input.paths.length ? input.paths : [input.path]) {
-      const deny = policy.readDenial(p, pathOpts);
+      const deny = input.patterns ? policy.readDenialOfPattern(p, pathOpts) : policy.readDenial(p, pathOpts);
       if (deny) return { decision: 'deny', message: deny };
     }
   }
   if (tool === 'grep' && input.scanDir) {
     // A search over a folder (or with no path) prints matching lines, and an agent that cannot redact that
     // output would show a plain-text secret to the model: ask when the folder holds a .env or a key file.
-    let names = [];
-    try { names = fs.readdirSync(input.scanDir).slice(0, 5000); } catch (_) { names = []; }
-    for (const n of names) {
-      if (policy.readDenial(path.join(input.scanDir, n), pathOpts)) {
-        return { decision: 'ask', message: 'zn: this search covers a folder that holds ' + n + ', which has plain-text secrets, and matching lines are not hidden in this agent. Approve only if the search must include it, or name a narrower path.' };
-      }
+    // The whole tree under the folder is checked, within limits; a folder zn cannot read, or a tree past the
+    // limits, is refused (never treated as clean).
+    const found = scanTreeForSecrets(input.scanDir, pathOpts);
+    if (found.hit) {
+      return { decision: 'ask', message: 'zn: this search covers a folder that holds ' + found.hit + ', which has plain-text secrets, and matching lines are not hidden in this agent. Approve only if the search must include it, or name a narrower path.' };
+    }
+    if (found.stop) {
+      return { decision: 'deny', message: 'zn: this search was blocked because ' + found.stop + ', so zn cannot check that it avoids plain-text secrets (.env values or key files). Name a narrower folder.' };
     }
   }
   if (tool === 'fileaccess') {

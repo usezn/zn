@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-19.43';
+const POLICY_RULES_VERSION = '2026-10-20.44';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -587,6 +587,21 @@ function readDenial(p, opts = {}) {
   if (c.kind === 'zn_state') return vaultMessage(opts);
   if (c.kind === 'keyfile') return keyFileDenial(p, c, opts);
   return credentialDenial(p, c);
+}
+
+/**
+ * Decide on a read whose address may be a glob pattern (an include pattern of a multi-file read). A pattern is
+ * classified like a glob word in a command: one that matches a .env file, a credential or a protected path is
+ * refused, because the values behind a pattern cannot be checked one by one. A plain path gets readDenial.
+ */
+function readDenialOfPattern(p, opts = {}) {
+  const text = String(p);
+  if (!GLOB_RE.test(text)) return readDenial(text, opts);
+  const c = classifyWord(text, opts);
+  if (!c || c.kind === 'agent_config') return readDenial(text, opts);
+  if (c.kind === 'zn_state') return vaultMessage(opts);
+  // A .env behind a pattern (or a key file): refused, never opened through the pattern.
+  return credentialDenial(text, c.kind === 'dotenv' ? { kind: 'credential', reason: 'a pattern that matches a .env file' } : c);
 }
 
 /* Spend `n` looks on disk from a command's budget; true once the time or the looks are used up. */
@@ -2166,6 +2181,7 @@ module.exports = {
   _globClassSource: globClassSource,
   expandBraces,
   readDenial,
+  readDenialOfPattern,
   writeDenial,
   scanFirstCommand,
   wrapWithZnRun,
