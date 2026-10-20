@@ -1,9 +1,11 @@
 name: Hook latency
 
 # How long an agent waits for zn's hook on each tool call, by agent, event and output size
-# (bench/hook_latency_matrix.js), with a budget: a case whose p95, relative to Node's own start-up in the
-# same run, is more than 20 % above bench/hook_latency_baseline.json fails. Runs when the hook code or the
-# benchmark changes. The report is kept as an artifact for 30 days.
+# (bench/hook_latency_matrix.js), with a budget against bench/hook_latency_baseline.json: a case whose p95,
+# relative to Node's own start-up in the same run, is more than 20 % above its baseline fails, and so does a
+# run whose median over all cases is more than 10 % above it. The Windows job has its own baseline and a 35 %
+# per-case margin, and does not block a merge. Runs when the hook code or the benchmark changes. The report
+# is kept as an artifact for 30 days.
 on:
   push:
     branches: [ main, next ]
