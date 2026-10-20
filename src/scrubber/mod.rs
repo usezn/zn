@@ -9,6 +9,11 @@
 //! - Credit card numbers (known network prefix and length, Luhn checksum) → `[CARD_REDACTED]`
 //! - Social Security Numbers (US, valid area/group/serial) → `[SSN_REDACTED]`
 //! - Phone numbers (E.164 `+<digits>`, or formatted NANP numbers) → `[PHONE_REDACTED]`
+//! - AWS access key ids (`AKIA`, `ASIA`, `ABIA`, `ACCA`) → `[AWS_KEY_REDACTED]`
+//! - AWS secret access keys, when named (`aws_secret_access_key = ...`) → `[AWS_SECRET_REDACTED]`
+//! - Google API keys (`AIza...`) → `[GOOGLE_API_KEY_REDACTED]`
+//! - PEM private keys (service-account `private_key` fields included) → `[PRIVATE_KEY_REDACTED]`
+//! - Azure storage `AccountKey=...==` → `[AZURE_STORAGE_KEY_REDACTED]`
 //!
 //! Card, SSN and phone candidates must stand on their own (not be part of a
 //! longer number or word) and pass the same checks as the Node.js scrubber,
@@ -31,6 +36,12 @@ static SSN_REGEX: OnceLock<Regex> = OnceLock::new();
 static E164_REGEX: OnceLock<Regex> = OnceLock::new();
 static NANP_REGEX: OnceLock<Regex> = OnceLock::new();
 static JWT_REGEX: OnceLock<Regex> = OnceLock::new();
+static AWS_KEY_REGEX: OnceLock<Regex> = OnceLock::new();
+static AWS_SECRET_REGEX: OnceLock<Regex> = OnceLock::new();
+static GOOGLE_KEY_REGEX: OnceLock<Regex> = OnceLock::new();
+static PEM_REGEX: OnceLock<Regex> = OnceLock::new();
+static PEM_TRUNCATED_REGEX: OnceLock<Regex> = OnceLock::new();
+static AZURE_KEY_REGEX: OnceLock<Regex> = OnceLock::new();
 
 fn email_re() -> &'static Regex {
     EMAIL_REGEX
@@ -76,6 +87,90 @@ fn jwt_re() -> &'static Regex {
     JWT_REGEX.get_or_init(|| {
         Regex::new(r"eyJ[a-zA-Z0-9_-]*\.eyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*").unwrap()
     })
+}
+
+// Cloud credentials. Same shapes and labels as the Node.js scrubber. The regex
+// crate has no lookaround, so the "not part of a longer token" checks are
+// captured boundary groups that are put back in the replacement.
+
+fn aws_key_re() -> &'static Regex {
+    AWS_KEY_REGEX.get_or_init(|| {
+        Regex::new(r"(^|[^A-Za-z0-9])((?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16})($|[^A-Za-z0-9])")
+            .unwrap()
+    })
+}
+
+fn aws_secret_re() -> &'static Regex {
+    AWS_SECRET_REGEX.get_or_init(|| {
+        // Only when the secret key is named: 40 base64 characters alone are too common.
+        Regex::new(
+            r#"(?i)((?:aws[_-]?)?secret[_ -]?access[_ -]?key["']?[ \t]*[:=][ \t]*["']?)([A-Za-z0-9+/]{40})($|[^A-Za-z0-9+/])"#,
+        )
+        .unwrap()
+    })
+}
+
+fn google_key_re() -> &'static Regex {
+    GOOGLE_KEY_REGEX.get_or_init(|| {
+        Regex::new(r"(^|[^A-Za-z0-9_-])(AIza[0-9A-Za-z_-]{35})($|[^A-Za-z0-9_-])").unwrap()
+    })
+}
+
+fn pem_re() -> &'static Regex {
+    // Whole block. The body may hold real or JSON-escaped line breaks.
+    PEM_REGEX.get_or_init(|| {
+        Regex::new(r"-----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----[A-Za-z0-9+/=\s\\]*?-----END (?:[A-Z]+ )*PRIVATE KEY-----")
+            .unwrap()
+    })
+}
+
+fn pem_truncated_re() -> &'static Regex {
+    // A block cut off before its END line (a truncated tool output).
+    PEM_TRUNCATED_REGEX.get_or_init(|| {
+        Regex::new(r"-----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----(?:\r?\n|\\n)[A-Za-z0-9+/=\s\\]{20,}")
+            .unwrap()
+    })
+}
+
+fn azure_key_re() -> &'static Regex {
+    AZURE_KEY_REGEX.get_or_init(|| Regex::new(r"AccountKey=[A-Za-z0-9+/]{86}==").unwrap())
+}
+
+/// An id made of one repeated character after its prefix is a placeholder.
+fn aws_key_is_real(key: &str) -> bool {
+    let b = key.as_bytes();
+    !b[4..].iter().all(|&c| c == b[4])
+}
+
+fn scrub_aws_keys(text: &str) -> String {
+    aws_key_re()
+        .replace_all(text, |c: &regex::Captures| {
+            if aws_key_is_real(&c[2]) {
+                format!("{}[AWS_KEY_REDACTED]{}", &c[1], &c[3])
+            } else {
+                c[0].to_string()
+            }
+        })
+        .into_owned()
+}
+
+fn scrub_cloud_keys(text: &str) -> String {
+    let mut out = pem_re()
+        .replace_all(text, "[PRIVATE_KEY_REDACTED]")
+        .into_owned();
+    out = pem_truncated_re()
+        .replace_all(&out, "[PRIVATE_KEY_REDACTED]")
+        .into_owned();
+    out = scrub_aws_keys(&out);
+    out = aws_secret_re()
+        .replace_all(&out, "${1}[AWS_SECRET_REDACTED]${3}")
+        .into_owned();
+    out = google_key_re()
+        .replace_all(&out, "${1}[GOOGLE_API_KEY_REDACTED]${3}")
+        .into_owned();
+    azure_key_re()
+        .replace_all(&out, "AccountKey=[AZURE_STORAGE_KEY_REDACTED]")
+        .into_owned()
 }
 
 /* ------------------------------------------------------------------ */
@@ -338,6 +433,15 @@ fn nanp_spans(text: &str) -> Vec<(usize, usize)> {
     checked_spans(nanp_re(), text, nanp_bounded, formatted_nanp_valid)
 }
 
+fn scrub_json_value(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::String(s) => *s = Scrubber::scrub(s),
+        serde_json::Value::Array(items) => items.iter_mut().for_each(scrub_json_value),
+        serde_json::Value::Object(map) => map.values_mut().for_each(scrub_json_value),
+        _ => {}
+    }
+}
+
 impl Scrubber {
     /// Scrub all PII and sensitive data from the input string
     ///
@@ -358,7 +462,8 @@ impl Scrubber {
     /// ```
     pub fn scrub(input: &str) -> String {
         // Apply scrubbing in order of specificity
-        let mut output = jwt_re().replace_all(input, "[JWT_REDACTED]").to_string();
+        let mut output = scrub_cloud_keys(input);
+        output = jwt_re().replace_all(&output, "[JWT_REDACTED]").to_string();
         output = email_re()
             .replace_all(&output, "[EMAIL_REDACTED]")
             .to_string();
@@ -371,6 +476,22 @@ impl Scrubber {
         output = replace_spans(&output, &nanp_spans(&output), "[PHONE_REDACTED]");
 
         output
+    }
+
+    /// Scrub one JSON-RPC line without breaking its structure.
+    ///
+    /// A line that parses as JSON is scrubbed value by value (every string,
+    /// at any depth; object keys are kept) and written back as JSON, so a
+    /// secret at the end of a string cannot swallow the closing quote. A line
+    /// that is not JSON is scrubbed as plain text, as before.
+    pub fn scrub_json_line(line: &str) -> String {
+        match serde_json::from_str::<serde_json::Value>(line) {
+            Ok(mut value) => {
+                scrub_json_value(&mut value);
+                serde_json::to_string(&value).unwrap_or_else(|_| Self::scrub(line))
+            }
+            Err(_) => Self::scrub(line),
+        }
     }
 
     /// Check if a string contains any detectable PII
@@ -409,6 +530,9 @@ impl Scrubber {
         }
         if jwt_re().is_match(input) {
             types.push("jwt");
+        }
+        if scrub_cloud_keys(input) != input {
+            types.push("cloud_key");
         }
 
         types
@@ -588,6 +712,133 @@ mod tests {
         let input = "This is a safe message with no PII";
         let scrubbed = Scrubber::scrub(input);
         assert_eq!(input, scrubbed);
+    }
+
+    // Fake keys are assembled at runtime so secret scanners do not flag them.
+    fn fake_google_key() -> String {
+        format!("AIza{}", "SyFAKE".repeat(5) + "FAKEF")
+    }
+
+    fn fake_azure_key() -> String {
+        format!("AccountKey={}==", "Ab1/".repeat(21) + "Ab")
+    }
+
+    #[test]
+    fn test_scrub_aws_access_key() {
+        let out = Scrubber::scrub("key AKIAIOSFODNN7EXAMPLE here");
+        assert_eq!(out, "key [AWS_KEY_REDACTED] here");
+        for prefix in ["ASIA", "ABIA", "ACCA"] {
+            let input = format!("id={prefix}IOSFODNN7EXAMPLE;");
+            assert_eq!(Scrubber::scrub(&input), "id=[AWS_KEY_REDACTED];", "{input}");
+        }
+        assert!(Scrubber::contains_pii("AKIAIOSFODNN7EXAMPLE"));
+        assert!(Scrubber::detect_pii_types("AKIAIOSFODNN7EXAMPLE").contains(&"cloud_key"));
+    }
+
+    #[test]
+    fn test_scrub_aws_secret_key_in_context() {
+        let secret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+        for input in [
+            format!("aws_secret_access_key = {secret}"),
+            format!("AWS_SECRET_ACCESS_KEY={secret}"),
+            format!("\"SecretAccessKey\": \"{secret}\""),
+        ] {
+            let out = Scrubber::scrub(&input);
+            assert!(out.contains("[AWS_SECRET_REDACTED]"), "{out}");
+            assert!(!out.contains(secret), "{out}");
+        }
+        // The same 40 characters without a name are not redacted.
+        let bare = format!("checksum {secret}");
+        assert_eq!(Scrubber::scrub(&bare), bare);
+    }
+
+    #[test]
+    fn test_scrub_google_and_azure_keys() {
+        let g = fake_google_key();
+        assert_eq!(g.len(), 39);
+        let out = Scrubber::scrub(&format!("key={g}&x=1"));
+        assert_eq!(out, "key=[GOOGLE_API_KEY_REDACTED]&x=1");
+        let a = fake_azure_key();
+        let out = Scrubber::scrub(&format!(
+            "DefaultEndpointsProtocol=https;AccountName=x;{a};EndpointSuffix=core.windows.net"
+        ));
+        assert!(
+            out.contains("AccountKey=[AZURE_STORAGE_KEY_REDACTED];"),
+            "{out}"
+        );
+        assert!(!out.contains("Ab1/Ab1/"), "{out}");
+    }
+
+    #[test]
+    fn test_scrub_private_key_block() {
+        let body = "QUJD".repeat(20);
+        // Markers split so secret scanners do not mistake the fake block for a key.
+        let (begin, end) = ("-----BEGIN PRIVATE", "KEY-----");
+        let pem = format!("{begin} {end}\n{body}\n-----END PRIVATE {end}\n");
+        let out = Scrubber::scrub(&format!("before {pem} after"));
+        assert_eq!(out, "before [PRIVATE_KEY_REDACTED]\n after");
+        // JSON-escaped line breaks, as in a service-account file.
+        let escaped =
+            format!("{{\"private_key\": \"{begin} {end}\\n{body}\\n-----END PRIVATE {end}\\n\"}}");
+        let out = Scrubber::scrub(&escaped);
+        assert!(
+            out.contains("[PRIVATE_KEY_REDACTED]") && !out.contains(&body),
+            "{out}"
+        );
+        // Cut off before the END line.
+        let cut = format!("-----BEGIN RSA PRIVATE KEY-----\n{body}");
+        assert_eq!(Scrubber::scrub(&cut), "[PRIVATE_KEY_REDACTED]");
+    }
+
+    #[test]
+    fn test_cloud_patterns_leave_normal_text_alone() {
+        for input in [
+            "AKIA is the prefix of an AWS access key id",
+            "AKIAIOSFODNN7EXAMPLEEXTRA",
+            "xAKIAIOSFODNN7EXAMPLE",
+            "AKIAAAAAAAAAAAAAAAAA",
+            "AIza is Google's key prefix",
+            "AIzaShort",
+            "the secret access key is stored in the vault",
+            "AccountKey=not-a-real-key",
+            "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----",
+            "-----BEGIN PRIVATE KEY----- is how a PEM block starts",
+        ] {
+            assert_eq!(Scrubber::scrub(input), input, "{input}");
+        }
+    }
+
+    #[test]
+    fn test_scrub_json_line_secret_at_end_of_string() {
+        let line = r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"run","arguments":{"cmd":"export api_key=fakekeyfakekeyfakekey","note":"AKIAIOSFODNN7EXAMPLE"}}}"#;
+        let out = Scrubber::scrub_json_line(line);
+        let v: serde_json::Value = serde_json::from_str(&out).expect("still valid JSON");
+        assert_eq!(v["id"], 7);
+        assert_eq!(v["params"]["arguments"]["note"], "[AWS_KEY_REDACTED]");
+        assert!(v["params"]["arguments"]["cmd"]
+            .as_str()
+            .unwrap()
+            .contains("[SECRET_REDACTED]"));
+        assert!(!out.contains("fakekeyfakekeyfakekey"));
+        // The old whole-line scrub ate the closing quote and broke the message.
+        assert!(serde_json::from_str::<serde_json::Value>(&Scrubber::scrub(line)).is_err());
+        // And the validator accepts the scrubbed line.
+        assert!(matches!(
+            crate::jsonrpc::validate_jsonrpc(&out),
+            crate::jsonrpc::JsonRpcValidation::ToolCall { .. }
+        ));
+    }
+
+    #[test]
+    fn test_scrub_json_line_keeps_keys_and_non_json() {
+        let out = Scrubber::scrub_json_line(r#"{"user@example.com":"hi user@example.com","n":1}"#);
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["user@example.com"], "hi [EMAIL_REDACTED]");
+        assert_eq!(v["n"], 1);
+        assert_eq!(
+            Scrubber::scrub_json_line("not json user@example.com"),
+            "not json [EMAIL_REDACTED]"
+        );
     }
 
     #[test]

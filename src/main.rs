@@ -913,7 +913,9 @@ async fn process_mcp_message(
     let memory_namespace = namespace
         .or_else(|| state.config.security.namespace.clone())
         .unwrap_or_else(|| GLOBAL_NAMESPACE.to_string());
-    let scrubbed_line = Scrubber::scrub(line);
+    // Parse first, then scrub the string values: scrubbing the raw line could
+    // swallow a closing quote and turn a valid message into a parse error.
+    let scrubbed_line = Scrubber::scrub_json_line(line);
 
     // Shodan Canary: Detect potential reconnaissance scans
     if shield::canary::is_shodan_probe(&scrubbed_line) {
