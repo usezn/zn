@@ -1,0 +1,24 @@
+# Text files are stored with LF in the repository and checked out with LF on every platform.
+* text=auto eol=lf
+
+# Binary files: never converted.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.onnx binary
+*.pt binary
+*.safetensors binary
+*.gz binary
+*.tgz binary
+*.zip binary
+*.pdf binary
+*.wasm binary
+*.node binary
+
+# Fuzz corpus entries are raw input bytes: keep them exactly as stored.
+fuzz/corpus/** -text
