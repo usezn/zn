@@ -40,6 +40,10 @@ keywords = [
 ]
 dependencies = []
 
+[project.optional-dependencies]
+# Only for the tests that run the integrations through the real frameworks.
+test-frameworks = ["langchain-core>=1,<2", "llama-index-core>=0.14,<0.15"]
+
 [project.urls]
 Homepage = "https://usezn.com"
 Documentation = "https://usezn.com/docs"
