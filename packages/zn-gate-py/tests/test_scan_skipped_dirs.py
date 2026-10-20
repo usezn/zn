@@ -33,7 +33,7 @@ def _run(path, fmt="json", exclude=None):
 class SkippedDirsTests(unittest.TestCase):
     def test_pruned_directories_are_listed_and_caches_are_not(self):
         d = _tree({"ok.md": "hello\n", "build/p.md": "hello\n", "dist/p.md": "hello\n",
-                   "node_modules/x/r.md": "hello\n", ".venv/r.md": "hello\n"})
+                   "node_modules/x/r.md": "hello\n", ".git/r.md": "hello\n"})
         try:
             data = json.loads(_run(d))
             self.assertEqual(data["total_files"], 1)
@@ -88,12 +88,42 @@ class PythonScanDirsTests(unittest.TestCase):
     def test_test_dirs_are_read_and_vendor_follows_the_manifest_rule(self):
         d = _tree({"tests/f.md": "hello\n", "__tests__/f.md": "hello\n", "test/f.md": "hello\n",
                    "plain/vendor/n.md": "hello\n", "go/go.mod": "module x\n", "go/vendor/dep.md": "hello\n",
-                   ".idea/x.md": "hello\n", ".turbo/x.md": "hello\n"})
+                   ".next/x.md": "hello\n", ".turbo/x.md": "hello\n"})
         try:
             data = json.loads(_run(d))
             self.assertEqual(data["total_files"], 4)  # three test files and plain/vendor/n.md
             self.assertEqual(len(data["skipped_dirs"]), 1)
             self.assertEqual(data["skipped_dirs"][0]["reason"], "skipped by name: dependencies next to go.mod")
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+class SanitiseAndEditorDirsTests(unittest.TestCase):
+    def test_text_output_escapes_control_characters(self):
+        esc = chr(27)
+        d = _tree({"ok.md": "hello\n"})
+        try:
+            sub = os.path.join(d, "x" + esc + "[2Jx", "dist")
+            os.makedirs(sub)
+            with open(os.path.join(sub, "a.md"), "w", encoding="utf-8") as f:
+                f.write("hello\n")
+            out = _run(d, "text")
+            self.assertNotIn(esc, out)
+            self.assertIn("x" + chr(92) + "x1b[2Jx", out)
+        except OSError:
+            self.skipTest("file system refuses control characters in names")
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_editor_and_venv_directories_are_listed(self):
+        d = _tree({"ok.md": "hello\n", ".idea/agent.md": "hello\n", ".venv/a.md": "hello\n", "venv/a.md": "hello\n",
+                   "__pycache__/a.md": "hello\n", ".eggs/a.md": "hello\n"})
+        try:
+            data = json.loads(_run(d))
+            self.assertEqual(data["total_files"], 1)
+            self.assertEqual(sorted(os.path.basename(s["dir"]) for s in data["skipped_dirs"]),
+                             [".eggs", ".idea", ".venv", "__pycache__", "venv"])
+            self.assertTrue(all(s["reason"] == "skipped by name: build output" for s in data["skipped_dirs"]))
         finally:
             shutil.rmtree(d, ignore_errors=True)
 
@@ -131,8 +161,15 @@ class NodePythonPruneParityTests(unittest.TestCase):
                                timeout=120, env={**os.environ, "ZN_LOCAL_ONLY": "true"})
             node = json.loads(r.stdout)
 
+            # The two engines print the same root in different forms: Python keeps the path
+            # it was given, Node prints it relative to the working directory with links
+            # resolved. On macOS the temp folder is /var/... -> /private/var/..., so both
+            # sides are resolved before they are compared.
+            real_d = os.path.realpath(d)
+
             def rel(report):
-                return sorted((os.path.relpath(s["dir"], d).replace("\\", "/"), s["reason"]) for s in report["skipped_dirs"])
+                return sorted((os.path.relpath(os.path.realpath(s["dir"]), real_d).replace("\\", "/"), s["reason"])
+                              for s in report["skipped_dirs"])
 
             self.assertEqual(rel(py), rel(node))
             self.assertEqual(py["total_files"], node["total_files"])
