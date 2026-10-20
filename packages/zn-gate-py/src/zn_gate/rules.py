@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, overload
 
 
-RULES_VERSION = "2026-10-19.7"
+RULES_VERSION = "2026-10-20.2"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -56,6 +56,8 @@ _HOMOGLYPH_TABLE = {ord(k): v for k, v in HOMOGLYPH_MAP.items()}
 # lazy wildcards, and repeated character classes are bounded.
 ZERO_WIDTH_RE = re.compile(r'[\u200B-\u200D\u2060\uFEFF\u00AD\uFE00-\uFE0F]')
 INVISIBLE_ASTRAL_RE = re.compile(r'[\U000E0000-\U000E007F\U000E0100-\U000E01EF]')
+# A line break inside a wrapped token (see WRAP_BREAK_RE in rules.js).
+WRAP_BREAK_RE = re.compile(r'(?<=[A-Za-z0-9_\-+/=]{10})[ \t]*\r?\n[ \t]*(?=[A-Za-z0-9_\-+/=]{10})(?![A-Za-z_][A-Za-z0-9_]*[ \t]*[=:])')
 NON_ASCII_RE = re.compile(r'[^\x00-\x7f]')
 ANSI_ESCAPE_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07\x1b]*\x07')
 B64_EXEC_RE = re.compile(r'(?:echo|printf)\s+([A-Za-z0-9+/=]{16,})\s*\|\s*(?:base64\s+-(?:d|-decode)|openssl)', re.IGNORECASE)
@@ -408,18 +410,31 @@ def invisible_view(text: str) -> Optional[Tuple[str, 'array[int]']]:
     """Text without invisible characters and the index map back to `text`
     (map[i] is the index of clean[i]; map[len(clean)] is len(text)). None when
     the text has no invisible character. See invisibleView in rules.js."""
-    runs = sorted([m.span() for m in ZERO_WIDTH_RE.finditer(text)]
-                  + [m.span() for m in INVISIBLE_ASTRAL_RE.finditer(text)])
+    runs = [m.span() for m in ZERO_WIDTH_RE.finditer(text)] + [m.span() for m in INVISIBLE_ASTRAL_RE.finditer(text)]
+    if '\n' in text:
+        runs += [m.span() for m in WRAP_BREAK_RE.finditer(text)]
     if not runs:
         return None
+    runs.sort(key=lambda r: (r[0], -r[1]))
     mapping = array('q')
+    parts: List[str] = []
     pos = 0
     for start, end in runs:
-        mapping.extend(range(pos, start))
-        pos = end
+        if end <= pos:
+            continue
+        mapping.extend(range(pos, max(pos, start)))
+        parts.append(text[pos:max(pos, start)])
+        pos = max(pos, end)
     mapping.extend(range(pos, len(text)))
+    parts.append(text[pos:])
     mapping.append(len(text))
-    return _strip_invisible(text), mapping
+    return ''.join(parts), mapping
+
+
+def _clean_value(text: str) -> str:
+    """A value as the secret rules see it: no invisible characters and no wrap breaks."""
+    s = _strip_invisible(text)
+    return WRAP_BREAK_RE.sub('', s) if '\n' in s else s
 
 
 def normalize_input(text: str) -> Tuple[str, str]:
@@ -1208,10 +1223,10 @@ def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, t
                 span = groups[2]
                 assert span is not None
                 vs, ve = span
-                value = _strip_invisible(text[vs:ve])
+                value = _clean_value(text[vs:ve])
                 prefix = ''
                 if groups[1] is not None:
-                    prefix = _strip_invisible(text[groups[1][0]:groups[1][1]])
+                    prefix = _clean_value(text[groups[1][0]:groups[1][1]])
                 n = _utf16_len(value)
                 if n <= MAX_FILTERED_VALUE and n <= budget[0]:
                     budget[0] -= n

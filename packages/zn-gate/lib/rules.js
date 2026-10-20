@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-19.7
+ * RULES_VERSION: 2026-10-20.2
  */
 
-const RULES_VERSION = '2026-10-19.7';
+const RULES_VERSION = '2026-10-20.2';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -375,6 +375,10 @@ const HOMOGLYPH_MAP = {
 // (U+E0100-E01EF) are astral and live in INVISIBLE_ASTRAL_RE.
 const ZERO_WIDTH_RE = /[\u200B-\u200D\u2060\uFEFF\u00AD\uFE00-\uFE0F]/g;
 const INVISIBLE_ASTRAL_RE = /[\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
+// A line break inside a wrapped token (a key or a base64 blob printed 20 or 40 characters per line):
+// at least 10 token characters before and after it, and the next line does not
+// start a new NAME= or NAME: assignment. The secret rules also run on the text without these breaks.
+const WRAP_BREAK_RE = /(?<=[A-Za-z0-9_\-+/=]{10})[ \t]*\r?\n[ \t]*(?=[A-Za-z0-9_\-+/=]{10})(?![A-Za-z_][A-Za-z0-9_]*[ \t]*[=:])/g;
 // ASCII-only text needs no compatibility folding.
 const NON_ASCII_RE = /[^\x00-\x7f]/;
 // Compatibility characters folded for matching, one character at a time: fullwidth
@@ -452,22 +456,32 @@ function invisibleView(text) {
   const runs = [];
   for (const m of text.matchAll(ZERO_WIDTH_RE)) runs.push(m.index, m.index + m[0].length);
   for (const m of text.matchAll(INVISIBLE_ASTRAL_RE)) runs.push(m.index, m.index + m[0].length);
+  if (text.includes('\n')) for (const m of text.matchAll(WRAP_BREAK_RE)) runs.push(m.index, m.index + m[0].length);
   if (runs.length === 0) return null;
-  // The runs of both patterns are merged in index order.
+  // The runs of all patterns are merged in index order (a break run can contain an invisible character).
   const sorted = [];
   for (let r = 0; r < runs.length; r += 2) sorted.push([runs[r], runs[r + 1]]);
-  sorted.sort((a, b) => a[0] - b[0]);
-  const clean = text.replace(ZERO_WIDTH_RE, '').replace(INVISIBLE_ASTRAL_RE, '');
-  const map = new Int32Array(clean.length + 1);
+  sorted.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+  const map = new Int32Array(text.length + 1);
+  let clean = '';
   let c = 0;
   let pos = 0;
   for (const [start, end] of sorted) {
+    if (end <= pos) continue;
     for (let i = pos; i < start; i++) map[c++] = i;
-    pos = end;
+    clean += text.slice(pos, Math.max(pos, start));
+    pos = Math.max(pos, end);
   }
   for (let i = pos; i < text.length; i++) map[c++] = i;
+  clean += text.slice(pos);
   map[c] = text.length;
-  return { clean, map };
+  return { clean, map: map.subarray(0, c + 1) };
+}
+
+// A value as the secret rules see it: no invisible characters and no wrap breaks.
+function cleanValue(str) {
+  const s = stripInvisible(str);
+  return s.includes('\n') ? s.replace(WRAP_BREAK_RE, '') : s;
 }
 
 function normalizeInput(str) {
@@ -949,8 +963,8 @@ function ruleCandidates(item, text, view, budget, out) {
       }
       if (item.valueFilter) {
         // The value (group 2) decides whether the match is redacted.
-        const value = stripInvisible(text.slice(groups[2][0], groups[2][1]));
-        const prefix = groups[1] ? stripInvisible(text.slice(groups[1][0], groups[1][1])) : '';
+        const value = cleanValue(text.slice(groups[2][0], groups[2][1]));
+        const prefix = groups[1] ? cleanValue(text.slice(groups[1][0], groups[1][1])) : '';
         const n = value.length;
         if (n <= MAX_FILTERED_VALUE && n <= budget.left) {
           budget.left -= n;
