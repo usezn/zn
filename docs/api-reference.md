@@ -5,7 +5,7 @@
 <!-- snippet-test -->
 ```javascript
 const { evaluate, redactSecrets, sanitizeToolResult } = require('zn-gate/lib/rules');
-const { analyze, checkToolResult } = require('zn-gate/lib/client');
+const { analyze, checkToolResult, checkToolCall, guardTool, GuardBlockError } = require('zn-gate/lib/client');
 const { logEvidence, verifyEvidenceLedger } = require('zn-gate/lib/evidence');
 ```
 
@@ -40,6 +40,37 @@ The package ships TypeScript type definitions (`lib/client.d.ts`, `lib/rules.d.t
 - Same scanning and `blockTruncated` option as `sanitizeToolResult`.
 - Returns: `Promise<{ tool_name, safe_to_ingest, truncated, secrets_redacted, sanitized_content, assessment }>`
 
+### `checkToolCall(toolName, args, options)`
+- Synchronous and local only. Decides whether an agent tool call is safe to run. Every string in `args` (nested values and object keys, up to 10 levels deep) goes through the same rules as `evaluate`; the first block wins. Same verdicts as `check_tool_call` in the Python package.
+- `options` is passed to `evaluate` (for example `{ strict: true }`).
+- Returns: `{ allowed: boolean, verdict: 'allow' | 'block', confidence: number, rule: string, reason: string | null, advisory?: object }`
+
+### `guardTool(fn, options)`
+- Wraps a sync or async function as a guarded tool. The call arguments are checked with `checkToolCall` before `fn` runs; a blocked call never runs. Returns a function with the same name, `this` and (async or sync) behavior.
+- `options`:
+  - `name`: tool name used in messages (default: `fn.name`).
+  - `onBlock`: `'throw'` (default, fail closed) throws a `GuardBlockError`; `'return'` returns `options.fallback`, or the assessment when no `fallback` is given. Any other value (a typo such as `'raise'` included) throws a `TypeError` when the function is wrapped, never later.
+  - `fallback`: value returned when `onBlock` is `'return'`.
+  - `checkArgs`: check the arguments (default `true`).
+  - `checkResult`: also check the returned value (or the resolved value of a promise) before it is returned, with the same scanning as `sanitizeToolResult` (default `false`).
+  - `maskSecrets`: redact credentials in the returned value (default `false`).
+  - `blockTruncated`: with `checkResult`, block output too large to scan in full (rule `size:truncated`). `ZN_BLOCK_TRUNCATED=1` does the same for every guard.
+  - `onBlockCallback(assessment, name, payload)`: called before a block is applied.
+  - `strict`: passed to the rules engine.
+
+### `GuardBlockError`
+
+- `GuardBlockError` extends `Error` and has `assessment`, `target` (`name`, or `name:result` for a blocked result), `payload` and `code` (`'ZN_GUARD_BLOCK'`).
+
+```javascript
+const { guardTool } = require('zn-gate/lib/client');
+
+const search = guardTool(async (query) => fetchResults(query), { name: 'search', checkResult: true });
+// await search('weather in Madrid') runs; a query or a result that matches a rule throws GuardBlockError.
+```
+
+### `sanitizeToolResult`, `redactSecrets`, `verifyEvidenceLedger` and `logEvidence`
+- Also exported from `zn-gate/lib/client`, so `require('zn-gate')` gives them too (the package `main` is `lib/client.js`). The `lib/rules` and `lib/evidence` paths keep working.
 ### `logEvidence(event, filePath, options)`
 - Appends one hash-chained record to the evidence log (`filePath` defaults to `~/.zn/evidence.jsonl`). `options.lockWaitMs` sets how long to wait for the write lock (default 2000).
 - Returns: the record that was written, or `null` when nothing was written (see the notes on damaged logs and the lock under `verifyEvidenceLedger`). It never throws for a log problem.
