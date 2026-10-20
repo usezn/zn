@@ -27,9 +27,9 @@ def test_quoted_text_is_the_same_as_unquoted(monkeypatch, capsys):
     assert ja == jb
 
 
-def test_no_text_gives_a_hint_and_exit_2(monkeypatch, capsys):
+def test_no_text_gives_a_hint_and_exit_1(monkeypatch, capsys):
     code, out = _run(monkeypatch, capsys)
-    assert code == 2
+    assert code == 1
     assert out.out == ""
     assert 'zn-gate analyze "' in out.err and "double quotes" in out.err
     assert "Traceback" not in out.err

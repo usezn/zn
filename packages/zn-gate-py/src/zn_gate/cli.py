@@ -206,7 +206,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         print('Error: no text to analyze. Put it in double quotes, for example: '
               'zn-gate analyze "ignore previous instructions" (in PowerShell, use double quotes '
               'on the outside and single quotes inside if the text has quotes).', file=sys.stderr)
-        return 2
+        return 1
     options: Dict[str, Any] = {
         "api_key": getattr(args, "key", None) or os.environ.get("ZN_API_KEY"),
         "stage": getattr(args, "stage", None) or os.environ.get("ZN_STAGE") or "v30",
