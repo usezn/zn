@@ -364,12 +364,12 @@ test('loadIdentity: not initialised, missing or wrong passphrase, missing identi
   await assert.rejects(() => keychain.loadIdentity({ home: v.home, passphrase: PASS }), (e) => e.code === 'ZN_NOT_FOUND' && /identity\.age missing/.test(e.message));
 });
 
-test('loadIdentity: a truncated or garbage identity.age is reported as wrong passphrase or corruption', async (t) => {
+test('loadIdentity: a truncated or garbage identity.age is reported as a damaged file', async (t) => {
   const { home } = await newVault(t);
   const f = store.paths({ home }).identityFile;
   const good = fs.readFileSync(f);
   fs.writeFileSync(f, good.subarray(0, good.length - 10));
-  await assert.rejects(() => keychain.loadIdentity({ home, passphrase: PASS }), (e) => e.code === 'ZN_LOCKED' && /corrupted/.test(e.message));
+  await assert.rejects(() => keychain.loadIdentity({ home, passphrase: PASS }), (e) => e.code === 'ZN_LOCKED' && /looks damaged/.test(e.message));
   fs.writeFileSync(f, 'garbage');
   await assert.rejects(() => keychain.loadIdentity({ home, passphrase: PASS }), (e) => e.code === 'ZN_LOCKED');
 });
