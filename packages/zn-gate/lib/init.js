@@ -49,7 +49,7 @@ function getKnownEnvironments() {
     { name: 'Claude Code', id: 'claude-code', filePath: path.join(home, '.claude.json'), key: 'mcpServers', format: 'mcpServers-json' },
     { name: 'Cursor', id: 'cursor', filePath: path.join(home, '.cursor', 'mcp.json'), key: 'mcpServers', format: 'mcpServers-json' },
     { name: 'Antigravity (AGY)', id: 'antigravity', filePath: path.join(home, '.gemini', 'antigravity', 'mcp_config.json'), key: 'mcpServers', format: 'mcpServers-json' },
-    { name: 'Antigravity (this project)', id: 'antigravity-project', filePath: path.join(process.cwd(), '.agents', 'mcp_config.json'), key: 'mcpServers', format: 'mcpServers-json' },
+    { name: 'Antigravity (this project)', id: 'antigravity-project', filePath: path.join(process.cwd(), '.agents', 'mcp_config.json'), key: 'mcpServers', format: 'mcpServers-json', scope: 'project' },
     { name: 'Antigravity (shared settings)', id: 'antigravity-shared', filePath: path.join(home, '.gemini', 'config', 'mcp_config.json'), key: 'mcpServers', format: 'mcpServers-json' },
     { name: 'Codex', id: 'codex', filePath: path.join(codexHome, 'config.toml'), key: 'mcp_servers', format: 'codex-toml' },
     { name: 'OpenCode', id: 'opencode', filePath: opencodePath, key: 'mcp', format: 'opencode-json' },
@@ -326,24 +326,86 @@ function scanEnvironments(customEnvList = null) {
  * (the project-level agent config), so backups are never chosen by name order
  * and nothing is read or written through a symlink.
  */
-function isRegularFile(p) {
+function isRegularFile(p, singleLink) {
   try {
-    return fs.lstatSync(p).isFile();
+    const st = fs.lstatSync(p);
+    return st.isFile() && (!singleLink || st.nlink === 1);
   } catch {
     return false;
   }
 }
 
-function sameRealDir(a, b) {
+function realOrNull(p) {
   try {
-    return fs.realpathSync(path.dirname(a)) === fs.realpathSync(path.dirname(b));
+    return fs.realpathSync(p);
   } catch {
-    return false;
+    return null;
+  }
+}
+
+function isInside(child, parent) {
+  const rel = path.relative(parent, child);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+function sameRealDir(a, b) {
+  const ra = realOrNull(path.dirname(a));
+  return ra !== null && ra === realOrNull(path.dirname(b));
+}
+
+/**
+ * Where a config really lives, or why it cannot be touched safely.
+ * Project scope (a repository controls it): a plain file with one link, whose
+ * real directory is inside the current directory. Home scope: a plain file, or
+ * a symlink (dotfiles managers) to a regular file inside the home folder and
+ * outside the current directory.
+ */
+function resolveConfig(filePath, scope) {
+  let st;
+  try {
+    st = fs.lstatSync(filePath);
+  } catch {
+    return { reason: 'config is not a regular file' };
+  }
+  if (scope === 'project') {
+    if (!st.isFile()) return { reason: 'config is a symlink or not a regular file' };
+    if (st.nlink !== 1) return { reason: 'config has more than one hard link' };
+    const dir = realOrNull(path.dirname(filePath));
+    const cwd = realOrNull(process.cwd());
+    if (!dir || !cwd || !isInside(dir, cwd)) return { reason: 'config directory is outside the project' };
+    return { target: filePath };
+  }
+  if (st.isFile()) return { target: filePath };
+  if (!st.isSymbolicLink()) return { reason: 'config is not a regular file' };
+  const real = realOrNull(filePath);
+  const home = realOrNull(os.homedir());
+  const cwd = realOrNull(process.cwd());
+  if (!real || !home || !isRegularFile(real)) return { reason: 'config is a symlink to something other than a regular file' };
+  if (!isInside(real, home)) return { reason: 'config is a symlink that points outside your home folder' };
+  if (cwd && isInside(real, cwd)) return { reason: 'config is a symlink that points into the current project' };
+  return { target: real };
+}
+
+/** Writes content to a temp file next to target, then renames it over target. */
+function atomicWrite(target, content) {
+  let mode = 0o600;
+  try {
+    mode = fs.statSync(target).mode & 0o777;
+  } catch {}
+  const tmpFile = path.join(path.dirname(target), `.${path.basename(target)}.zn-tmp.${process.pid}.${Date.now()}`);
+  try {
+    fs.writeFileSync(tmpFile, content, { flag: 'wx', mode });
+    fs.renameSync(tmpFile, target);
+  } catch (err) {
+    try {
+      fs.unlinkSync(tmpFile);
+    } catch {}
+    throw err;
   }
 }
 
 /** Newest "<file>.bak.<digits>" next to filePath (largest number), or null. */
-function latestBackup(filePath) {
+function latestBackup(filePath, scope) {
   const dir = path.dirname(filePath);
   const prefix = path.basename(filePath) + '.bak.';
   let best = null;
@@ -359,7 +421,7 @@ function latestBackup(filePath) {
     const tail = f.slice(prefix.length);
     if (!/^\d+$/.test(tail)) continue;
     const full = path.join(dir, f);
-    if (!isRegularFile(full)) continue;
+    if (!isRegularFile(full, scope === 'project')) continue;
     const n = Number(tail);
     if (n > bestN) {
       bestN = n;
@@ -369,18 +431,13 @@ function latestBackup(filePath) {
   return best;
 }
 
-/** Why filePath cannot be wrapped/restored safely, or null when it can. */
-function unsafeConfigReason(filePath) {
-  if (!isRegularFile(filePath)) return 'config is a symlink or not a regular file';
-  return null;
-}
-
-/** Copies backup over filePath only when both are regular files in the same real directory. */
-function safeRestore(backup, filePath) {
-  if (!isRegularFile(filePath)) throw new Error('config is a symlink or not a regular file');
-  if (!isRegularFile(backup)) throw new Error('backup is a symlink or not a regular file');
+/** Copies backup over the config (its real file for a home symlink) via a temp file and rename. */
+function safeRestore(backup, filePath, scope) {
+  const r = resolveConfig(filePath, scope);
+  if (r.reason) throw new Error(r.reason);
+  if (!isRegularFile(backup, scope === 'project')) throw new Error('backup is a symlink or not a regular file');
   if (!sameRealDir(backup, filePath)) throw new Error('backup is not in the same directory as the config');
-  fs.copyFileSync(backup, filePath);
+  atomicWrite(r.target, fs.readFileSync(backup));
 }
 
 /**
@@ -395,21 +452,23 @@ function configureEnvironments(options = {}) {
   for (const env of envs) {
     if (!env.exists) continue;
 
-    const unsafe = unsafeConfigReason(env.filePath);
-    if (unsafe) {
-      actions.push({ env: env.name, status: 'skipped_unsafe', file: env.filePath, error: `${env.filePath}: ${unsafe}; skipped` });
+    const resolved = resolveConfig(env.filePath, env.scope);
+    if (resolved.reason) {
+      if (options.revert || env.serverCount > 0) {
+        actions.push({ env: env.name, status: 'skipped_unsafe', file: env.filePath, error: `${env.filePath}: ${resolved.reason}; skipped` });
+      }
       continue;
     }
 
     if (options.revert) {
-      const latestBak = latestBackup(env.filePath);
+      const latestBak = latestBackup(env.filePath, env.scope);
 
       if (latestBak) {
         try {
           if (options.dryRun) {
             if (!sameRealDir(latestBak, env.filePath)) throw new Error('backup is not in the same directory as the config');
           } else {
-            safeRestore(latestBak, env.filePath);
+            safeRestore(latestBak, env.filePath, env.scope);
           }
           actions.push({ env: env.name, status: 'reverted', from: latestBak });
         } catch (err) {
@@ -435,13 +494,12 @@ function configureEnvironments(options = {}) {
       if (modified && !options.dryRun) {
         backup = `${env.filePath}.bak.${Date.now()}`;
         try {
-          fs.lstatSync(backup);
-          throw new Error(`${backup} already exists; refusing to overwrite it`);
+          fs.copyFileSync(env.filePath, backup, fs.constants.COPYFILE_EXCL);
         } catch (e) {
-          if (e.code !== 'ENOENT') throw e;
+          if (e.code === 'EEXIST') throw new Error(`${backup} already exists; refusing to overwrite it`);
+          throw e;
         }
-        fs.copyFileSync(env.filePath, backup, fs.constants.COPYFILE_EXCL);
-        fs.writeFileSync(env.filePath, content, 'utf8');
+        atomicWrite(resolved.target, content);
       }
 
       if (modified) {
