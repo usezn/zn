@@ -1,0 +1,2 @@
+### Added
+- Gemini CLI (experimental): `zn hooks install gemini` now also checks your prompt before it is sent (`BeforeAgent`: a prompt that contains a secret is blocked) and tool results before the model sees them (`AfterTool`: secrets in shell, file read, search, web fetch and MCP results are replaced with tokens). The replaced result is one text block, so its original layout is lost. Uninstall removes the new entries too.

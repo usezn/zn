@@ -34,8 +34,17 @@
  * grep_search {pattern, dir_path, include_pattern, no_ignore} (alias search_file_content), glob and list_directory
  * {dir_path}, web_fetch {prompt}.
  *
- * Not used: AfterTool (its decision can replace a tool result, but the shape of tool_response is not documented
- * well enough to rewrite it safely), SessionStart and the rest. zn registers BeforeTool only.
+ * BeforeAgent (reference, "Agent hooks"): stdin adds `prompt`. {decision: "deny", reason} blocks the turn and
+ *    discards the user's message (it does not enter the history); exit 2 does the same. zn uses deny only.
+ * AfterTool (reference, "Tool hooks"): stdin adds tool_response ({llmContent, returnDisplay, optional error}),
+ *    tool_input, mcp_context. {decision: "deny", reason} hides the real output from the agent and the reason
+ *    replaces the tool result. zn puts the scrubbed text in the reason, so the replacement is lossy (one text
+ *    block, the same as the Codex adapter). hookSpecificOutput.tailToolCallRequest and additionalContext are not used.
+ * The docs do not say in which Gemini CLI version these events appeared (unverified; hooks need
+ * hooksConfig.enabled, see /docs/cli/settings). The Antigravity CLI replaced Gemini CLI on 2026-06-18 per the docs.
+ *
+ * Not used: SessionStart, BeforeModel, AfterModel, AfterAgent and the rest. zn registers BeforeTool, BeforeAgent
+ * and AfterTool.
  */
 
 const fs = require('fs');
@@ -49,6 +58,10 @@ const id = 'gemini';
 const HOOK_NAME = 'zn-gate';
 const HOOK_TIMEOUT_MS = 15000;
 const MATCHER = '*';
+// Event -> whether the group carries a matcher (tool events only; BeforeAgent has no tool name to match).
+const EVENTS = { BeforeTool: true, BeforeAgent: false, AfterTool: true };
+// AfterTool tools whose result zn scrubs (same families as the Claude Code and Codex post-tool checks).
+const POST_KIND = { run_shell_command: 'bash', read_file: 'read', read_many_files: 'read', grep_search: 'grep', search_file_content: 'grep', web_fetch: 'webfetch' };
 
 const SHELL_TOOLS = new Set(['run_shell_command']);
 // Tools that only show names or ask the user something: no opinion.
@@ -103,6 +116,15 @@ function pathsOf(args) {
 function normalize(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const base = { cwd: typeof raw.cwd === 'string' && raw.cwd ? raw.cwd : process.cwd(), sessionId: raw.session_id || null, raw };
+  if (raw.hook_event_name === 'BeforeAgent') {
+    return { ...base, event: 'user_prompt', tool: null, input: { prompt: typeof raw.prompt === 'string' ? raw.prompt : '' } };
+  }
+  if (raw.hook_event_name === 'AfterTool') {
+    const name = typeof raw.tool_name === 'string' ? raw.tool_name : '';
+    const kind = /^mcp_.+_.+$/i.test(name) ? 'mcp' : POST_KIND[name] || name.toLowerCase();
+    const out = raw.tool_response;
+    return { ...base, event: 'post_tool', tool: kind, toolName: name, input: {}, output: typeof out === 'string' || isObj(out) || Array.isArray(out) ? out : undefined };
+  }
   if (raw.hook_event_name !== 'BeforeTool') return { ...base, event: null };
   const toolName = typeof raw.tool_name === 'string' ? raw.tool_name : '';
   const args = isObj(raw.tool_input) ? raw.tool_input : {};
@@ -167,8 +189,23 @@ function deny(reason) {
  * own approval applies, and a command already wrapped in zn run still needs the user's approval in the vault),
  * except a search that would print plain-text secrets: it cannot be redacted afterwards, so it is blocked.
  */
+/** The text that replaces a tool result: llmContent when it is text, else the whole (scrubbed) response as JSON. */
+function replacementText(v) {
+  if (typeof v === 'string') return v;
+  if (isObj(v) && typeof v.llmContent === 'string') {
+    return v.llmContent + (typeof v.error === 'string' && v.error ? '\n' + v.error : '');
+  }
+  return JSON.stringify(v, null, 2);
+}
+
 function respond(d) {
   const ev = d && d.event;
+  if (ev && ev.event === 'user_prompt') return d.decision === 'deny' ? deny(d.message) : null;
+  if (ev && ev.event === 'post_tool') {
+    if (d.updatedOutput !== undefined) return deny(replacementText(d.updatedOutput) + (d.message ? '\n\n[' + d.message + ']' : ''));
+    if (d.decision === 'deny') return deny(d.message || 'zn: output withheld');
+    return null;
+  }
   if (!ev || ev.event !== 'pre_tool') return null;
   if (d.decision === 'deny') return deny(d.message);
   if (ev.unreadable) return deny(ev.unreadable);
@@ -214,22 +251,27 @@ function install(opts = {}) {
   const file = settingsFile(opts);
   const data = cfg.readJson(file);
   const hooks = cfg.hooksOf(data, file);
-  if (hooks.BeforeTool !== undefined && !Array.isArray(hooks.BeforeTool)) {
-    throw new Error('"hooks.BeforeTool" in ' + file + ' must be a list (left unchanged)');
+  for (const event of Object.keys(EVENTS)) {
+    if (hooks[event] !== undefined && !Array.isArray(hooks[event])) {
+      throw new Error('"hooks.' + event + '" in ' + file + ' must be a list (left unchanged)');
+    }
   }
   const report = { settings: file, backup: cfg.backup(file), warnings: [] };
   if (report.backup && scope === 'project') report.warnings.push('The backup ' + report.backup + ' sits inside the project: do not commit it.');
   const command = !opts.command && (opts.platform || process.platform) === 'win32' && scope !== 'project'
     ? cfg.hookCommandWindows(id, opts)
     : cfg.hookCommand(id, opts);
-  const groups = stripOurs(hooks.BeforeTool || []);
-  groups.push({ matcher: MATCHER, hooks: [{ name: HOOK_NAME, type: 'command', command, timeout: HOOK_TIMEOUT_MS }] });
-  hooks.BeforeTool = groups;
+  for (const [event, withMatcher] of Object.entries(EVENTS)) {
+    const groups = stripOurs(hooks[event] || []);
+    const group = { hooks: [{ name: HOOK_NAME, type: 'command', command, timeout: HOOK_TIMEOUT_MS }] };
+    groups.push(withMatcher ? { matcher: MATCHER, ...group } : group);
+    hooks[event] = groups;
+  }
   data.hooks = hooks;
   cfg.writeJson(file, data);
-  report.warnings.push('Gemini CLI support is experimental. zn checks tool calls before they run (BeforeTool): it blocks reads and writes of secret files and shell commands that handle secrets.');
+  report.warnings.push('Gemini CLI support is experimental. zn checks tool calls before they run (BeforeTool): it blocks reads and writes of secret files and shell commands that handle secrets. It also checks your prompt (BeforeAgent: a prompt with a secret is not sent) and tool results (AfterTool: secrets in shell, read, search, fetch and MCP results are replaced with tokens).');
   report.warnings.push('Gemini CLI treats a hook that crashes, times out or cannot start as a warning and runs the tool anyway (only exit code 2 blocks). If zn cannot start, calls are not checked: run `zn-gate check` to see that the hook works.');
-  report.warnings.push('Gemini CLI hooks cannot ask the user and zn does not use AfterTool, so what a tool returns is not hidden: a value printed by a command or a file the agent may read reaches the model. Keep secrets in the vault.');
+  report.warnings.push('Gemini CLI hooks cannot ask the user. A tool result with a secret is replaced by one text block with the secret swapped for a token (the original layout is lost), and tools zn does not scrub (for example write_file) return their result unchanged. Keep secrets in the vault.');
   if (scope === 'project') {
     report.warnings.push('Gemini CLI treats a project hook as untrusted until the user approves it, and runs `zn` from your PATH (zn hook gemini): every teammate who opens this project needs zn-gate installed.');
   }
@@ -270,7 +312,7 @@ module.exports = {
   uninstall,
   normalize,
   respond,
-  capabilities: { ask: 'none', rewriteInput: false, rewriteOutput: false },
+  capabilities: { ask: 'none', rewriteInput: false, rewriteOutput: 'block' },
   HOOK_NAME,
   HOOK_TIMEOUT_MS,
   settingsFile,

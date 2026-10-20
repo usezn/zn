@@ -104,7 +104,9 @@ test('normalize: MCP names, other events and junk', () => {
   assert.deepEqual(m.mcp, { server: 'sql', tool: 'query' });
   const m2 = gem.normalize(bt('mcp_my_server_do_it', { q: 'x' }, { mcp_context: { server_name: 'my_server', tool_name: 'do_it' } }));
   assert.deepEqual(m2.mcp, { server: 'my_server', tool: 'do_it' });
-  assert.equal(gem.normalize({ ...bt('x', {}), hook_event_name: 'AfterTool' }).event, null);
+  assert.equal(gem.normalize({ ...bt('x', {}), hook_event_name: 'AfterTool' }).event, 'post_tool');
+  assert.equal(gem.normalize({ hook_event_name: 'BeforeAgent', prompt: 'hi' }).event, 'user_prompt');
+  assert.equal(gem.normalize({ hook_event_name: 'AfterAgent', prompt: 'hi', prompt_response: 'x' }).event, null);
   assert.equal(gem.normalize({ hook_event_name: 'SessionStart', source: 'startup' }).event, null);
   assert.equal(gem.normalize(null), null);
 });
@@ -177,19 +179,23 @@ test('an unreadable hook input is refused with exit code 2 and the reason on std
 
 /* --------------------------- install / uninstall -------------------------- */
 
-test('install (project): BeforeTool group with a named command hook in milliseconds; idempotent; uninstall removes the file content', (t) => {
+test('install (project): BeforeTool, BeforeAgent and AfterTool groups with a named command hook in milliseconds; idempotent; uninstall removes the file content', (t) => {
   const dir = tempDir(t, 'zn-gem-');
   const rep = gem.install({ scope: 'project', projectDir: dir });
   const file = path.join(dir, '.gemini', 'settings.json');
   assert.equal(rep.settings, file);
   const data = readSettings(file);
   assert.deepEqual(Object.keys(data), ['hooks']);
-  assert.deepEqual(Object.keys(data.hooks), ['BeforeTool']);
-  const [g] = data.hooks.BeforeTool;
-  assert.equal(g.matcher, '*');
-  assert.deepEqual(g.hooks, [{ name: 'zn-gate', type: 'command', command: 'zn hook gemini', timeout: 15000 }]);
+  assert.deepEqual(Object.keys(data.hooks).sort(), ['AfterTool', 'BeforeAgent', 'BeforeTool']);
+  const want = [{ name: 'zn-gate', type: 'command', command: 'zn hook gemini', timeout: 15000 }];
+  for (const ev of ['BeforeTool', 'AfterTool']) {
+    assert.equal(data.hooks[ev][0].matcher, '*', ev);
+    assert.deepEqual(data.hooks[ev][0].hooks, want, ev);
+  }
+  assert.equal(data.hooks.BeforeAgent[0].matcher, undefined, 'BeforeAgent has no tool to match');
+  assert.deepEqual(data.hooks.BeforeAgent[0].hooks, want);
   gem.install({ scope: 'project', projectDir: dir });
-  assert.equal(readSettings(file).hooks.BeforeTool.length, 1);
+  for (const ev of ['BeforeTool', 'BeforeAgent', 'AfterTool']) assert.equal(readSettings(file).hooks[ev].length, 1, ev);
   assert.equal(gem.uninstall({ scope: 'project', projectDir: dir }).removed, 1);
   assert.deepEqual(readSettings(file), {});
   assert.equal(gem.uninstall({ scope: 'project', projectDir: dir }).removed, 0);
@@ -256,14 +262,16 @@ test('install on Windows (user scope) writes the powershell form; project scope 
   assert.equal(readSettings(path.join(dir, '.gemini', 'settings.json')).hooks.BeforeTool[0].hooks[0].command, 'zn hook gemini');
 });
 
-test('install warnings: experimental, fail-open on crash, no asking and no scrubbing, project trust, how it is turned off', (t) => {
+test('install warnings: experimental, fail-open on crash, no asking, lossy result replacement, project trust, how it is turned off', (t) => {
   const dir = tempDir(t, 'zn-gem-warn-');
   const first = gem.install({ scope: 'project', projectDir: dir });
   const all = first.warnings.join('\n');
   assert.match(all, /experimental/);
   assert.match(all, /only exit code 2 blocks/);
   assert.match(all, /cannot ask the user/);
-  assert.match(all, /not hidden/);
+  assert.match(all, /BeforeAgent/);
+  assert.match(all, /AfterTool/);
+  assert.match(all, /original layout is lost/);
   assert.match(all, /untrusted until the user approves/);
   assert.match(all, /hooksConfig\.enabled/);
   assert.ok(gem.install({ scope: 'project', projectDir: dir }).warnings.some((w) => /do not commit it/.test(w)));
@@ -332,4 +340,71 @@ test('geminiPolicyWarnings: nothing for settings that leave hooks on', (t) => {
   const f = path.join(dir, 's.json');
   fs.writeFileSync(f, JSON.stringify({ hooksConfig: { enabled: true, disabled: ['other'] }, tools: { enableHooks: true } }));
   assert.deepEqual(geminiPolicyWarnings({ files: [{ file: f, label: 'x' }, { file: path.join(dir, 'missing.json'), label: 'y' }] }), []);
+});
+
+/* ------------------- BeforeAgent (prompt) and AfterTool (result) ------------------- */
+
+// Payloads follow https://geminicli.com/docs/hooks/reference/ ("Base input schema", "Agent hooks", "Tool hooks"), read 2026-10-20.
+const AWS_KEY = 'AKIA' + 'Z'.repeat(16); // built at runtime, never a literal
+const ba = (prompt) => ({ session_id: 's1', transcript_path: '/t.json', cwd: '/work/proj', hook_event_name: 'BeforeAgent', timestamp: '2026-10-20T10:00:00.000Z', prompt });
+const at = (tool_name, tool_input, tool_response) => ({ session_id: 's1', transcript_path: '/t.json', cwd: '/work/proj', hook_event_name: 'AfterTool', timestamp: '2026-10-20T10:00:00.000Z', tool_name, tool_input, tool_response });
+
+test('BeforeAgent: a prompt with a secret is denied (the documented block) and the secret is not echoed', async () => {
+  for (const prompt of ['please use sk-test-EXAMPLE and ' + AWS_KEY + ' for the deploy', 'DB_PASSWORD=sunshine2024 and sk-test-EXAMPLE, run the tests']) {
+    const r = await run(ba(prompt));
+    assert.equal(r.output.decision, 'deny', prompt);
+    assert.deepEqual(Object.keys(r.output).sort(), ['decision', 'reason']);
+    assert.ok(!r.output.reason.includes(AWS_KEY) && !r.output.reason.includes('sk-test-EXAMPLE'));
+  }
+});
+
+test('BeforeAgent: a clean prompt gets no opinion', async () => {
+  assert.equal((await run(ba('refactor the parser and add tests'))).output, null);
+  assert.equal((await run(ba(7))).output, null);
+});
+
+test('AfterTool: a shell result with a key is replaced (decision deny, reason = scrubbed text); a clean result is left alone', async () => {
+  const r = await run(at('run_shell_command', { command: 'cat notes.txt' }, { llmContent: 'token ' + AWS_KEY + ' end', returnDisplay: 'token ' + AWS_KEY + ' end' }));
+  assert.equal(r.output.decision, 'deny');
+  assert.deepEqual(Object.keys(r.output).sort(), ['decision', 'reason']);
+  assert.ok(!r.output.reason.includes(AWS_KEY), r.output.reason);
+  assert.match(r.output.reason, /__ZN_/);
+  assert.equal((await run(at('run_shell_command', { command: 'echo hi' }, { llmContent: 'hi', returnDisplay: 'hi' }))).output, null);
+});
+
+test('AfterTool: read_file, grep_search, web_fetch and MCP results are scrubbed; write_file and unknown tools are not looked at', async () => {
+  const resp = { llmContent: 'a ' + AWS_KEY, returnDisplay: 'x' };
+  for (const [name, input] of [['read_file', { file_path: '/work/proj/a.txt' }], ['read_many_files', { include: ['*.txt'] }], ['grep_search', { pattern: 'x' }], ['web_fetch', { prompt: 'https://example.com' }], ['mcp_sql_query', { q: 'x' }]]) {
+    const r = await run(at(name, input, resp));
+    assert.equal(r.output.decision, 'deny', name);
+    assert.ok(!r.output.reason.includes(AWS_KEY), name);
+  }
+  assert.equal((await run(at('write_file', { file_path: '/w/a', content: 'x' }, resp))).output, null);
+});
+
+test('AfterTool: a structured llmContent (parts) is scrubbed as JSON and a missing tool_response gets no opinion', async () => {
+  const r = await run(at('mcp_sql_query', {}, { llmContent: [{ text: 'row ' + AWS_KEY }], returnDisplay: 'rows' }));
+  assert.equal(r.output.decision, 'deny');
+  assert.ok(!r.output.reason.includes(AWS_KEY));
+  assert.equal((await run(at('run_shell_command', { command: 'ls' }, undefined))).output, null);
+});
+
+test('install and uninstall add and remove the new events and keep foreign groups', (t) => {
+  const home = tempDir(t, 'zn-gem-ev-');
+  const file = settingsOf(home);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const theirs = { matcher: '*', hooks: [{ name: 'theirs', type: 'command', command: './a.sh' }] };
+  fs.writeFileSync(file, JSON.stringify({ hooks: { AfterTool: [theirs], BeforeAgent: [theirs] } }));
+  gem.install({ scope: 'user', home, nodePath: '/usr/bin/node' });
+  let data = readSettings(file);
+  for (const ev of ['AfterTool', 'BeforeAgent']) {
+    assert.equal(data.hooks[ev].length, 2, ev);
+    assert.deepEqual(data.hooks[ev][0], theirs);
+  }
+  assert.equal(gem.uninstall({ scope: 'user', home }).removed, 1);
+  data = readSettings(file);
+  assert.deepEqual(data.hooks, { AfterTool: [theirs], BeforeAgent: [theirs] });
+  fs.writeFileSync(file, JSON.stringify({ hooks: { AfterTool: {} } }));
+  assert.throws(() => gem.install({ scope: 'user', home, nodePath: '/usr/bin/node' }), /AfterTool/);
+  assert.deepEqual(readSettings(file), { hooks: { AfterTool: {} } });
 });
