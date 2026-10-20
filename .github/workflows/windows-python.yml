@@ -40,7 +40,6 @@ jobs:
           python-version: "3.12"
           # No pip cache: the test tools are small and hash-pinned, and each cache key saved a
           # new 200-350 MB copy that pushed the repository toward its 10 GB cache limit.
-          package-manager-cache: false
       - name: Install package and test dependencies
         # Test tools pinned with hashes; the package itself has no dependencies.
         run: |

@@ -22,14 +22,15 @@ on:
     # Dependency and license checks only matter when a manifest, a lockfile or a license
     # setting changes.
     paths:
-      - "Cargo.toml"
-      - "Cargo.lock"
+      # Every dependency manifest anywhere in the repository (packages, plugins, examples,
+      # workflow tools, fuzz targets), so a new dependency never skips the review.
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
       - "deny.toml"
-      - "packages/**/package.json"
-      - "packages/**/package-lock.json"
-      - "packages/**/pyproject.toml"
-      - "examples/**/requirements*.txt"
-      - ".github/*requirements*.txt"
+      - "**/package.json"
+      - "**/package-lock.json"
+      - "**/pyproject.toml"
+      - "**/requirements*.txt"
       - ".github/license-allowlist.txt"
       - ".github/scripts/license-check*"
       - ".github/workflows/dependency-review.yml"
