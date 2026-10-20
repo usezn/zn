@@ -185,6 +185,8 @@ zn-gate analyze "some prompt"   # local check; cloud only with ZN_CLOUD=1 + key
 zn-gate status                  # engine and what leaves the machine
 ```
 
+More runnable examples are in [examples/](https://github.com/usezn/zn/tree/main/examples), including [a Haystack agent with a guarded tool](https://github.com/usezn/zn/tree/main/examples/haystack-agent).
+
 ---
 
 ## Performance and accuracy
