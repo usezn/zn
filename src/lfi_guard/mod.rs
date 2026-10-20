@@ -20,9 +20,21 @@ const LFI_PATTERNS: &[&str] = &[
     "/var/log/",
     "C:\\Windows\\",
     "C:/Windows/",
-    ".ssh/id_rsa",
-    ".ssh/id_dsa",
+    ".ssh/id_",
     ".ssh/authorized_keys",
+    ".aws/credentials",
+    ".netrc",
+    "_netrc",
+    ".docker/config.json",
+    ".kube/config",
+    ".git-credentials",
+    ".pgpass",
+    ".config/gh/hosts.y",
+    ".config/gcloud/credentials.db",
+    ".config/gcloud/access_tokens.db",
+    ".config/gcloud/application_default_credentials.json",
+    ".azure/accesstokens.json",
+    ".azure/msal_token_cache.json",
     "config.php",
     "wp-config.php",
     ".env",
@@ -50,26 +62,83 @@ pub struct LfiDetectionResult {
     pub matched_pattern: Option<String>,
 }
 
+/// Unify path separators: every backslash becomes `/` and runs of `/` collapse,
+/// so `C:\\Windows\\x` (JSON-escaped) and `.aws\credentials` match the same
+/// patterns as their `/` forms. Returns None when nothing changes.
+fn normalize_separators(input: &str) -> Option<String> {
+    if !input.contains('\\') {
+        return None;
+    }
+    let mut out = String::with_capacity(input.len());
+    let mut last_slash = false;
+    for ch in input.chars() {
+        let c = if ch == '\\' { '/' } else { ch };
+        if c == '/' {
+            if last_slash {
+                continue;
+            }
+            last_slash = true;
+        } else {
+            last_slash = false;
+        }
+        out.push(c);
+    }
+    Some(out)
+}
+
+/// `.ssh/<name>_key`: a private key named by suffix (the Node policy blocks it too).
+fn has_ssh_key_suffix(input: &str) -> bool {
+    let lower = input.to_ascii_lowercase();
+    let mut rest = lower.as_str();
+    while let Some(i) = rest.find(".ssh/") {
+        rest = &rest[i + 5..];
+        let seg: String = rest
+            .chars()
+            .take_while(|c| {
+                !matches!(
+                    c,
+                    '/' | '"' | '\'' | ' ' | '\t' | '\n' | '\r' | ';' | '|' | '&'
+                )
+            })
+            .collect();
+        if seg.len() > 4 && seg.ends_with("_key") {
+            return true;
+        }
+    }
+    false
+}
+
+fn first_match(input: &str) -> Option<String> {
+    get_automaton()
+        .find(input)
+        .map(|m| LFI_PATTERNS[m.pattern().as_usize()].to_string())
+}
+
 /// Check if input contains LFI patterns
 pub fn detect_lfi(input: &str) -> LfiDetectionResult {
-    let automaton = get_automaton();
-    if let Some(mat) = automaton.find(input) {
-        return LfiDetectionResult {
-            is_attack: true,
-            matched_pattern: Some(LFI_PATTERNS[mat.pattern().as_usize()].to_string()),
+    let mut hit = first_match(input);
+    if hit.is_none() {
+        let norm = normalize_separators(input);
+        let text = norm.as_deref().unwrap_or(input);
+        hit = if norm.is_some() {
+            first_match(text)
+        } else {
+            None
         };
+        if hit.is_none() && has_ssh_key_suffix(text) {
+            hit = Some(".ssh/*_key".to_string());
+        }
     }
-
     LfiDetectionResult {
-        is_attack: false,
-        matched_pattern: None,
+        is_attack: hit.is_some(),
+        matched_pattern: hit,
     }
 }
 
 /// Quick check if input contains LFI patterns
 #[inline]
 pub fn contains_lfi(input: &str) -> bool {
-    get_automaton().is_match(input)
+    detect_lfi(input).is_attack
 }
 
 #[cfg(test)]
@@ -109,6 +178,29 @@ mod tests {
     fn test_config_files() {
         assert!(contains_lfi("Include wp-config.php"));
         assert!(contains_lfi("Look at config.php"));
+    }
+
+    #[test]
+    fn test_credential_files_both_separators() {
+        for p in [
+            "/home/demo/.aws/credentials",
+            "/home/demo/.ssh/id_ed25519",
+            "/home/demo/.ssh/id_ecdsa",
+            "/home/demo/.ssh/deploy_key",
+            "/home/demo/.netrc",
+            "/home/demo/.docker/config.json",
+            "/home/demo/.kube/config",
+            "/home/demo/.git-credentials",
+            "/home/demo/.pgpass",
+            "/home/demo/.config/gcloud/credentials.db",
+            "/home/demo/.azure/accessTokens.json",
+        ] {
+            assert!(contains_lfi(p), "{p}");
+            assert!(contains_lfi(&p.replace('/', "\\")), "{p} backslash");
+            assert!(contains_lfi(&p.to_uppercase()), "{p} upper");
+        }
+        assert!(!contains_lfi("src/main.rs"));
+        assert!(!contains_lfi("/home/demo/.ssh/known_hosts"));
     }
 
     #[test]

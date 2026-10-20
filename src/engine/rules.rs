@@ -40,7 +40,10 @@ impl ManagedRuleset {
 
         // 2. LFI Protection
         let folded = fold_system1(arguments);
-        if config.lfi_protection && lfi_guard::contains_lfi(&folded) {
+        if config.lfi_protection
+            && (lfi_guard::contains_lfi(&folded)
+                || lfi_guard::contains_lfi(&fold_system1(&json_string_values(arguments))))
+        {
             return Err("Local File Inclusion (LFI) attempt detected".to_string());
         }
 
@@ -81,6 +84,32 @@ impl ManagedRuleset {
 
         Ok(())
     }
+}
+
+/// The decoded string values (and keys) of a JSON argument text, one per line,
+/// so escapes such as `\\` in a Windows path are matched as the real text.
+/// Empty when the arguments are not JSON.
+fn json_string_values(arguments: &str) -> String {
+    fn walk(v: &serde_json::Value, out: &mut String) {
+        match v {
+            serde_json::Value::String(s) => {
+                out.push_str(s);
+                out.push('\n');
+            }
+            serde_json::Value::Array(a) => a.iter().for_each(|x| walk(x, out)),
+            serde_json::Value::Object(m) => m.iter().for_each(|(k, x)| {
+                out.push_str(k);
+                out.push('\n');
+                walk(x, out);
+            }),
+            _ => {}
+        }
+    }
+    let mut out = String::new();
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(arguments) {
+        walk(&v, &mut out);
+    }
+    out
 }
 
 /// A word of a tool name that names a restricted command. Joined forms
@@ -176,6 +205,39 @@ mod tests {
 
     fn cfg() -> ManagedRulesConfig {
         ManagedRulesConfig::default()
+    }
+
+    #[test]
+    fn credential_files_blocked_in_tool_args() {
+        for p in [
+            ".aws/credentials",
+            ".ssh/id_ed25519",
+            ".ssh/id_ecdsa",
+            ".ssh/deploy_key",
+            ".netrc",
+            ".docker/config.json",
+            ".kube/config",
+            ".git-credentials",
+            ".pgpass",
+            ".config/gcloud/application_default_credentials.json",
+            ".azure/msal_token_cache.json",
+        ] {
+            for sep in ["/", "\\"] {
+                let path = format!("/home/demo/{p}").replace('/', sep);
+                let args = serde_json::json!({ "path": path }).to_string();
+                assert!(
+                    ManagedRuleset::evaluate(&cfg(), "read_file", &args).is_err(),
+                    "{args}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn windows_path_in_json_is_blocked() {
+        let args = r#"{"path":"C:\\Windows\\System32\\x"}"#;
+        assert!(ManagedRuleset::evaluate(&cfg(), "read_file", args).is_err());
+        assert!(ManagedRuleset::evaluate(&cfg(), "read_file", r#"{"path":"src/main.rs"}"#).is_ok());
     }
 
     #[test]
