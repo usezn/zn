@@ -16,6 +16,7 @@ const { LINE_BREAKS } = require('../linear-text');
 const os = require('os');
 const path = require('path');
 const { parseJsonc, parseToml } = require('./parse');
+const { readableWindowsCommand } = require('../shell-quote');
 const P = require('./patterns');
 const { BY_ID, RANK } = require('./rules');
 const mcpSecrets = require('../mcp-secrets');
@@ -351,7 +352,7 @@ function nodeOutside(ctx, p) {
  */
 function isOurHook(command, ctx) {
   if (typeof command !== 'string') return false;
-  const c = command.trim();
+  const c = readableWindowsCommand(command.trim());
   for (const re of OUR_HOOKS) {
     const m = re.exec(c);
     if (!m) continue;

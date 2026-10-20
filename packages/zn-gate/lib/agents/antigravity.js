@@ -206,8 +206,12 @@ function install(opts = {}) {
   const report = { settings: file, backup: cfg.backup(file), warnings: [] };
   if (report.backup && (opts.scope || 'user') === 'project') report.warnings.push('The backup ' + report.backup + ' sits inside the project: do not commit it.');
   stripOurs(data);
+  // Antigravity splits the hook command on spaces and ignores quotes, so on
+  // Windows a quoted path such as C:/Program Files/... breaks the -Command form
+  // and every tool call is blocked. -EncodedCommand has no space inside its
+  // argument.
   const command = !opts.command && (opts.platform || process.platform) === 'win32' && (opts.scope || 'user') !== 'project'
-    ? cfg.hookCommandWindows(id, opts)
+    ? cfg.hookCommandWindows(id, { ...opts, encodedCommand: true })
     : cfg.hookCommand(id, opts);
   // After the strip, a hook still called zn-gate is someone else's: zn never touches it (not even its enabled flag).
   let name = HOOK_NAME;
