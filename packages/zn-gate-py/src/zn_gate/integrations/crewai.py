@@ -17,6 +17,7 @@ def guarded_tool(
     check_result: bool = False,
     block_truncated: bool = False,
     framework: Optional[str] = None,
+    on_block_callback: Optional[Callable[[Any, str, Any], None]] = None,
 ) -> Callable:
     """
     Decorator for custom agent tools (CrewAI, Pydantic AI, Google ADK or plain
@@ -36,6 +37,14 @@ def guarded_tool(
                        full (rule size:truncated) (default False).
     - framework: Prefix of the block target, "<framework>:<tool>" (default
                  "tool"). Pass "crewai" to label blocks as CrewAI tools.
+    - on_block_callback: Called as (assessment, name, payload) before a block is
+                         applied (before raising or returning the fallback), for
+                         blocked arguments (payload: {"args": ..., "kwargs": ...})
+                         and, with check_result, blocked output (payload: the
+                         output). Same as onBlockCallback in the Node guardTool.
+                         It is not called when the call is allowed. If it raises,
+                         the exception propagates and the call or result is
+                         never allowed through (as in Node).
 
     Async tools (`async def`, or a callable object whose `__call__` is `async def`)
     get the same treatment: the call is awaited, then the output is checked and
@@ -44,6 +53,8 @@ def guarded_tool(
     `async def` instead.
     """
     validate_on_block(on_block, ("raise", "return"))
+    if on_block_callback is not None and not callable(on_block_callback):
+        raise TypeError("guarded_tool: on_block_callback must be callable")
     prefix = framework if framework else "tool"
 
     def _finish(tool_name: str, result: Any, check_result: bool, block_truncated: bool,
@@ -52,6 +63,8 @@ def guarded_tool(
             res_assessment = check_tool_result(result, block_truncated=block_truncated)
             if not res_assessment.allowed:
                 target = f"{prefix}:{tool_name}:result"
+                if on_block_callback is not None:
+                    on_block_callback(res_assessment, tool_name, result)
                 if on_block == "raise":
                     raise GuardBlockError(res_assessment, target=target, payload=result)
                 if fallback is not None:
@@ -62,7 +75,9 @@ def guarded_tool(
         return result
 
     def _blocked_input(tool_name: str, assessment: Any, kwargs: dict,
-                       on_block: str, fallback: Optional[str]) -> Any:
+                       on_block: str, fallback: Optional[str], payload: Any = None) -> Any:
+        if on_block_callback is not None:
+            on_block_callback(assessment, tool_name, payload if payload is not None else kwargs)
         if on_block == "raise":
             raise GuardBlockError(assessment, target=f"{prefix}:{tool_name}", payload=kwargs)
         if fallback is not None:
@@ -77,9 +92,10 @@ def guarded_tool(
             @functools.wraps(tool_func)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 tool_name = getattr(tool_func, "__name__", "tool")
-                assessment = check_tool_call(tool_name, {"args": args, "kwargs": kwargs})
+                payload = {"args": args, "kwargs": kwargs}
+                assessment = check_tool_call(tool_name, payload)
                 if not assessment.allowed:
-                    return _blocked_input(tool_name, assessment, kwargs, on_block, fallback)
+                    return _blocked_input(tool_name, assessment, kwargs, on_block, fallback, payload)
 
                 result = await tool_func(*args, **kwargs)
                 return _finish(tool_name, result, check_result, block_truncated,
@@ -89,9 +105,10 @@ def guarded_tool(
         @functools.wraps(tool_func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             tool_name = getattr(tool_func, "__name__", "tool")
-            assessment = check_tool_call(tool_name, {"args": args, "kwargs": kwargs})
+            payload = {"args": args, "kwargs": kwargs}
+            assessment = check_tool_call(tool_name, payload)
             if not assessment.allowed:
-                return _blocked_input(tool_name, assessment, kwargs, on_block, fallback)
+                return _blocked_input(tool_name, assessment, kwargs, on_block, fallback, payload)
 
             result = tool_func(*args, **kwargs)
             return _finish(tool_name, result, check_result, block_truncated,
