@@ -28,26 +28,27 @@ and each result is also given as its p95 divided by that start-up time.
 
 ## Results
 
-GitHub Actions `ubuntu-latest` runner (4 vCPU AMD EPYC 7763), Node.js 22.23, 2026-10-17. Times in
-milliseconds; a bare `node -e ""` takes 25 ms (p50).
+GitHub Actions `ubuntu-latest` runner (4 vCPU AMD EPYC 7763), Node.js 22.23, 2026-10-19, with the compile
+cache of the hook enabled. Times in milliseconds; a bare `node -e ""` takes 24 ms (p50). Runner speed varies
+from one run to the next by a few milliseconds; the budget below compares against Node's start-up in the same run.
 
 | Agent | Event | p50 | p95 |
 |---|---|---|---|
-| Claude Code | PreToolUse, shell command | 51 | 54.7 |
-| Codex CLI | PreToolUse, shell command | 52 | 53.8 |
-| Cursor | beforeShellExecution | 51.7 | 58.6 |
-| Claude Code | PostToolUse, 1 KB | 63 | 65 |
-| Codex CLI | PostToolUse, 1 KB | 62.2 | 65.3 |
-| Cursor | postToolUse (MCP), 1 KB | 62.2 | 64 |
-| Claude Code | PostToolUse, 100 KB | 67.5 | 70.4 |
-| Codex CLI | PostToolUse, 100 KB | 67 | 68.8 |
-| Cursor | postToolUse (MCP), 100 KB | 66.9 | 68.9 |
-| Claude Code | PostToolUse, 100 KB with 2 secrets | 73.8 | 76.3 |
-| Codex CLI | PostToolUse, 100 KB with 2 secrets | 74.7 | 77.5 |
-| Cursor | postToolUse (MCP), 100 KB with 2 secrets | 75.9 | 77.9 |
-| Claude Code | PostToolUse, 1000 KB | 85.8 | 89.4 |
-| Codex CLI | PostToolUse, 1000 KB | 86.4 | 88.5 |
-| Cursor | postToolUse (MCP), 1000 KB | 88.9 | 92.3 |
+| Claude Code | PreToolUse, shell command | 54 | 56.1 |
+| Codex CLI | PreToolUse, shell command | 53.1 | 55.6 |
+| Cursor | beforeShellExecution | 53.7 | 55.4 |
+| Claude Code | PostToolUse, 1 KB | 57.3 | 61.6 |
+| Codex CLI | PostToolUse, 1 KB | 57.2 | 60.7 |
+| Cursor | postToolUse (MCP), 1 KB | 57.1 | 58.8 |
+| Claude Code | PostToolUse, 100 KB | 61.9 | 65.4 |
+| Codex CLI | PostToolUse, 100 KB | 62 | 63.7 |
+| Cursor | postToolUse (MCP), 100 KB | 62.3 | 64.2 |
+| Claude Code | PostToolUse, 100 KB with 2 secrets | 69.5 | 72.3 |
+| Codex CLI | PostToolUse, 100 KB with 2 secrets | 68.8 | 72.3 |
+| Cursor | postToolUse (MCP), 100 KB with 2 secrets | 69.1 | 71.4 |
+| Claude Code | PostToolUse, 1000 KB | 79.7 | 81.4 |
+| Codex CLI | PostToolUse, 1000 KB | 79.2 | 82.6 |
+| Cursor | postToolUse (MCP), 1000 KB | 82.5 | 86.7 |
 
 On another machine the times change with it: dividing by Node's own start-up, as the budget does, removes
 most of that difference, not all of it.

@@ -1,10 +1,10 @@
 name: zn CI
 
-# Pull requests into next run the checks the rulesets require and Ubuntu with Node.js 22. The full matrix
-# (every Node.js and Python version, Windows and macOS) runs on pushes to main and next, on pull requests
-# into main and release branches, and on any pull request labelled full-ci. Its only macOS job is Python 3.12.
-# A pull request into next that changes the Python package, the Node package it shares fixtures with,
-# bench/ or this workflow also runs the whole Python matrix.
+# Pull requests into next run the checks the rulesets require (Node.js 18.x, 22.x and 24.x, Python 3.12, the
+# npm and Python package builds), all on Ubuntu, plus one lint job. The full matrix (every Node.js and
+# Python version, Windows and macOS) runs on pushes to main and next, on the daily schedule, on manual runs,
+# on pull requests into main and release branches, and on any pull request labelled full-ci. Its only macOS
+# job is Python 3.12.
 on:
   push:
     branches: [ main, next ]
@@ -25,6 +25,10 @@ on:
     types: [ opened, synchronize, reopened, labeled, ready_for_review ]
     # No paths filter here: these jobs give required checks, and a workflow skipped by a
     # paths filter leaves them pending. ci-scope.sh skips their steps for documentation instead.
+  # Daily full run on the default branch.
+  schedule:
+    - cron: '30 6 * * *'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -111,9 +115,8 @@ jobs:
         if: steps.scope.outputs.run == 'true'
         run: node bench/bench_node.js
 
-  # The Python tests also read files from packages/zn-gate (rule fixtures) and run bench/bench_python.py.
-  # A pull request into next that touches any of them runs the whole Python matrix, not only 3.12:
-  # a failure on an older Python version must show up before the merge, not on the push to next.
+  # Pull requests into next run Python 3.12 on Ubuntu only. Older and newer Python versions, Windows and
+  # macOS run on the push to next; label a pull request full-ci to run them before the merge.
   test-python:
     name: Python ${{ matrix.python-version }} tests & benchmarks (${{ matrix.os }})
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
@@ -123,18 +126,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The matrix is fixed so that every job name is known when the run starts (a matrix built from
-        # another job leaves a check with an unexpanded name when the run is cancelled early).
-        # "Python 3.12 tests & benchmarks (ubuntu-latest)" is a required check: it always runs. The
-        # other entries decide in their first step whether this change needs them and end quickly if not.
-        include:
-          - { os: ubuntu-latest, python-version: "3.10" }
-          - { os: ubuntu-latest, python-version: "3.11" }
-          - { os: ubuntu-latest, python-version: "3.12" }
-          - { os: ubuntu-latest, python-version: "3.13" }
-          - { os: ubuntu-latest, python-version: "3.14" }
-          - { os: windows-latest, python-version: "3.12" }
-          - { os: macos-latest, python-version: "3.12" }
+        # "Python 3.12 tests & benchmarks (ubuntu-latest)" is a required check: it is in both lists. The
+        # list depends only on the event (never on another job), so every job name is known when the
+        # run starts.
+        include: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[{"os":"ubuntu-latest","python-version":"3.10"},{"os":"ubuntu-latest","python-version":"3.11"},{"os":"ubuntu-latest","python-version":"3.12"},{"os":"ubuntu-latest","python-version":"3.13"},{"os":"ubuntu-latest","python-version":"3.14"},{"os":"windows-latest","python-version":"3.12"},{"os":"macos-latest","python-version":"3.12"}]' || '[{"os":"ubuntu-latest","python-version":"3.12"}]') }}
     defaults:
       run:
         shell: bash
@@ -147,40 +142,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Decide whether this matrix entry runs
-        id: entry
-        shell: bash
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          # Pushes, pull requests into main or a release branch and full-ci pull requests run every entry.
-          FULL: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
-          PRIMARY: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12' }}
-          PY_VERSION: ${{ matrix.python-version }}
-          RUNNER_OS_NAME: ${{ matrix.os }}
-        working-directory: .
-        run: |
-          # A pull request into next that touches the Python package, the Node package it shares fixtures
-          # with, bench/ or the CI setup runs the whole matrix; any other one runs Python 3.12 on Ubuntu only.
-          # Any error while listing the files means the full matrix: when in doubt, test more.
-          run=true
-          if [ "$PRIMARY" != "true" ] && [ "$FULL" != "true" ]; then
-            if [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] && git fetch --no-tags --depth=1 origin "$BASE_SHA" > /dev/null 2>&1 \
-               && files="$(git diff --no-renames --name-only "$BASE_SHA" HEAD)"; then
-              # An empty list (no net change) is a doubt too: keep the entry.
-              [ -n "$files" ] && run=false
-              while IFS= read -r f; do
-                case "$f" in
-                  packages/zn-gate-py/*|packages/zn-gate/*|bench/*|.github/workflows/ci.yml|.github/ci-test-requirements.txt|.github/scripts/ci-scope.sh)
-                    run=true; echo "runs the full Python matrix: $f"; break ;;
-                esac
-              done <<< "$files"
-            fi
-          fi
-          [ "$run" = "true" ] || echo "this change does not need Python $PY_VERSION on $RUNNER_OS_NAME"
-          echo "run=$run" | tee -a "$GITHUB_OUTPUT"
       - name: Decide what this change needs
         id: scope
-        if: steps.entry.outputs.run == 'true'
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -236,14 +199,15 @@ jobs:
         if: steps.scope.outputs.run == 'true'
         run: python bench/bench_python.py
 
-  # Lint and type-check the Python package. The ruff rules (a minimal set) live in
-  # packages/zn-gate-py/pyproject.toml and block the run, and so does mypy.
-  lint-python:
-    name: Python lint (ruff)
+  # One job for the linters: eslint on zn-gate (rules in .github/eslint), ruff and mypy on the Python
+  # package (rules in packages/zn-gate-py/pyproject.toml). Each one blocks the run, and each runs even
+  # when an earlier one failed, so one run reports all of them.
+  lint:
+    name: Lint (eslint, ruff, mypy)
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Harden the runner (egress audit)
         uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
@@ -252,7 +216,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Install the eslint tooling
+        id: eslint-tools
+        working-directory: .github/eslint
+        run: npm ci --ignore-scripts
+      - name: eslint
+        if: ${{ !cancelled() && steps.eslint-tools.outcome == 'success' }}
+        working-directory: packages/zn-gate
+        run: ../../.github/eslint/node_modules/.bin/eslint -c ../../.github/eslint/eslint.config.mjs --max-warnings 0 .
       - name: Set up Python
+        id: python
+        if: ${{ !cancelled() }}
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
@@ -260,37 +237,17 @@ jobs:
           cache-dependency-path: |
             packages/zn-gate-py/pyproject.toml
             .github/ci-test-requirements.txt
-      - name: Install lint tools
-        # Ruff and mypy are pinned with hashes in the same file as the test tools.
+      - name: Install ruff and mypy
+        id: python-tools
+        if: ${{ !cancelled() && steps.python.outcome == 'success' }}
+        # Pinned with hashes in the same file as the test tools.
         run: python -m pip install --require-hashes -r .github/ci-test-requirements.txt
       - name: Run ruff
+        if: ${{ !cancelled() && steps.python-tools.outcome == 'success' }}
         working-directory: packages/zn-gate-py
         run: python -m ruff check .
-
-  typecheck-python:
-    name: Python types (mypy)
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Harden the runner (egress audit)
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
-        with:
-          egress-policy: audit
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: |
-            packages/zn-gate-py/pyproject.toml
-            .github/ci-test-requirements.txt
-      - name: Install lint tools
-        run: python -m pip install --require-hashes -r .github/ci-test-requirements.txt
       - name: Run mypy
+        if: ${{ !cancelled() && steps.python-tools.outcome == 'success' }}
         working-directory: packages/zn-gate-py
         run: python -m mypy
 
