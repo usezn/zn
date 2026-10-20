@@ -902,6 +902,59 @@ async fn run_mcp() -> Result<()> {
     Ok(())
 }
 
+/// Longest block reason kept in an audit entry.
+const MAX_BLOCK_REASON_CHARS: usize = 200;
+
+/// Metrics and webhook alert for a denied call. Used by every deny path so
+/// that a denial is counted and alerted the same way whatever blocked it.
+fn emit_denied(state: &AppState, entry: &AuditEntry) {
+    metrics::record_tool_call(&entry.tool_name, "DENIED");
+    match entry.policy_match.as_deref() {
+        Some("sql_guard") => metrics::record_sql_injection_blocked(),
+        Some("prompt_guard") => metrics::record_prompt_injection_blocked(),
+        _ => {}
+    }
+    let alert_tx = state.webhook_tx.clone();
+    let alert_payload = webhooks::AlertPayload {
+        event: entry.event.clone(),
+        tool_name: entry.tool_name.clone(),
+        status: entry.status.clone(),
+        timestamp: entry.timestamp.clone(),
+        policy_match: entry.policy_match.clone(),
+        details: entry.payload.clone(),
+    };
+    tokio::spawn(async move {
+        webhooks::send_alert(&alert_tx, alert_payload).await;
+    });
+}
+
+/// Audits a call that was blocked before the policy engine ran (managed
+/// rules, bans, loop breaker, consensus, vision guard): audit log, live feed,
+/// metrics and webhook alert, like the WASM and neural denials.
+/// The block source and reason go in `policy_match` as `<source>: <reason>`,
+/// the format the WASM error path already uses. `payload` is `None` when the
+/// arguments must not be stored (raw images).
+fn audit_block(
+    state: &AppState,
+    tool_name: &str,
+    payload: Option<&str>,
+    agent_id: &str,
+    source: &str,
+    reason: &str,
+) {
+    let reason: String = Scrubber::scrub(reason)
+        .chars()
+        .take(MAX_BLOCK_REASON_CHARS)
+        .collect();
+    let mut entry = AuditEntry::new("TOOL_CALL", tool_name, "DENIED").with_agent_id(agent_id);
+    entry.policy_match = Some(format!("{source}: {reason}"));
+    entry.payload = payload.map(Scrubber::scrub);
+    entry.namespace = state.config.security.namespace.clone();
+    let _ = state.vault.log(entry.clone());
+    let _ = state.tx.send(entry.clone());
+    emit_denied(state, &entry);
+}
+
 async fn process_mcp_message(
     line: &str,
     state: &AppState,
@@ -961,6 +1014,14 @@ async fn process_mcp_message(
                         ocr_text.len()
                     ))
                     .ok();
+                    audit_block(
+                        state,
+                        &tool_name,
+                        None,
+                        &agent_id_str,
+                        "ocr_veto",
+                        &format!("image contains {rule} text"),
+                    );
                     return Ok(Some(jsonrpc_error_response(
                         id,
                         -32001,
@@ -974,6 +1035,14 @@ async fn process_mcp_message(
                         e.as_str()
                     ))
                     .ok();
+                    audit_block(
+                        state,
+                        &tool_name,
+                        None,
+                        &agent_id_str,
+                        "vision_budget",
+                        e.as_str(),
+                    );
                     return Ok(Some(jsonrpc_error_response(id, -32001, e.as_str())));
                 }
             }
@@ -991,6 +1060,14 @@ async fn process_mcp_message(
                         e.as_str()
                     ))
                     .ok();
+                    audit_block(
+                        state,
+                        &tool_name,
+                        None,
+                        &agent_id_str,
+                        "vision_sanitize",
+                        e.as_str(),
+                    );
                     return Ok(Some(jsonrpc_error_response(id, -32001, e.as_str())));
                 }
             };
@@ -1003,6 +1080,14 @@ async fn process_mcp_message(
                     agent_id_str, ban_msg
                 ))
                 .ok();
+                audit_block(
+                    state,
+                    &tool_name,
+                    Some(&arguments),
+                    &agent_id_str,
+                    "banned_agent",
+                    &ban_msg,
+                );
                 return Ok(Some(jsonrpc_error_response(
                     id, -32003, // Custom error code for BANNED
                     &ban_msg,
@@ -1035,6 +1120,14 @@ async fn process_mcp_message(
                 state
                     .reputation
                     .record_violation(&rep_key, "Managed Rules Violation", 10);
+                audit_block(
+                    state,
+                    &tool_name,
+                    Some(&arguments),
+                    &agent_id_str,
+                    "managed_rules",
+                    &msg,
+                );
                 return Ok(Some(jsonrpc_error_response(id, -32001, &msg)));
             }
 
@@ -1048,6 +1141,14 @@ async fn process_mcp_message(
                 state
                     .reputation
                     .record_violation(&rep_key, "Recursive Loop Detected", 15);
+                audit_block(
+                    state,
+                    &tool_name,
+                    Some(&arguments),
+                    &agent_id_str,
+                    "loop_breaker",
+                    &msg,
+                );
                 return Ok(Some(jsonrpc_error_response(id, -32002, &msg)));
             }
 
@@ -1066,6 +1167,14 @@ async fn process_mcp_message(
                         tool_name, action_id
                     ))
                     .ok();
+                    audit_block(
+                        state,
+                        &tool_name,
+                        Some(&arguments),
+                        &agent_id_str,
+                        "consensus",
+                        &format!("requires multi-sig consensus (ID: {action_id})"),
+                    );
                     return Ok(Some(jsonrpc_error_response(
                         id,
                         -32004,
@@ -1276,28 +1385,7 @@ async fn process_mcp_message(
                     ))),
                 }
             } else {
-                metrics::record_tool_call(&tool_name, "DENIED");
-                if status == "DENIED" {
-                    if entry.policy_match.as_deref() == Some("sql_guard") {
-                        metrics::record_sql_injection_blocked();
-                    } else if entry.policy_match.as_deref() == Some("prompt_guard") {
-                        metrics::record_prompt_injection_blocked();
-                    }
-                }
-
-                // Send webhook alert
-                let alert_tx = state.webhook_tx.clone();
-                let alert_payload = webhooks::AlertPayload {
-                    event: entry.event.clone(),
-                    tool_name: entry.tool_name.clone(),
-                    status: entry.status.clone(),
-                    timestamp: entry.timestamp.clone(),
-                    policy_match: entry.policy_match.clone(),
-                    details: entry.payload.clone(),
-                };
-                tokio::spawn(async move {
-                    let _ = webhooks::send_alert(&alert_tx, alert_payload).await;
-                });
+                emit_denied(state, &entry);
 
                 Ok(Some(jsonrpc_error_response(
                     id,
@@ -2154,5 +2242,192 @@ mod gateway_hardening_tests {
         // The place the arguments came from must still be there; no arguments: nothing to rebuild.
         assert!(with_arguments(frame, "{}", ArgSource::Key("input")).is_none());
         assert!(with_arguments(frame, "{}", ArgSource::Missing).is_none());
+    }
+}
+
+#[cfg(test)]
+mod block_audit_tests {
+    use super::*;
+
+    struct Harness {
+        state: AppState,
+        alerts: tokio::sync::mpsc::Receiver<webhooks::AlertPayload>,
+        _dir: tempfile::TempDir,
+    }
+
+    fn harness(tune: impl FnOnce(&mut ZnConfig)) -> Harness {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut config = ZnConfig::default();
+        config.neural.enabled = false;
+        config.consensus.enabled = false;
+        tune(&mut config);
+        let db = dir.path().join("audit.db");
+        let vault =
+            Arc::new(AuditVault::new(db.to_str().expect("utf8 path"), None).expect("vault"));
+        let tenants = Arc::new(TenantStore::open(vault.get_connection(), None).expect("tenants"));
+        let engine = Arc::new(
+            ZnEngine::new(ZnEngineConfig {
+                gas_limit: config.engine.gas_limit,
+                memory_limit: config.engine.memory_limit_mb * 1024 * 1024,
+                timeout_ms: config.engine.timeout_ms,
+                allowed_hashes: vec![],
+                signing_public_key: None,
+            })
+            .expect("engine"),
+        );
+        let (tx, _) = broadcast::channel(16);
+        let (webhook_tx, alerts) = tokio::sync::mpsc::channel(16);
+        let cache = Arc::new(zn::engine::cache::ResultCache::new(config.caching.clone()));
+        let memory_dir = dir.path().join("vectors");
+        let state = AppState {
+            tx,
+            vault,
+            reputation: Arc::new(ReputationSystem::new()),
+            engine,
+            pool: Arc::new(McpPool::new(std::collections::HashMap::new())),
+            webhook_tx,
+            tenants,
+            canary: Arc::new(zn::ai::CanaryDeployer::new(Arc::new(
+                zn::ai::FastBootBackend::new(8),
+            ))),
+            memory: Arc::new(zn::ai::VectorMemory::new(
+                memory_dir.to_str().expect("utf8 path"),
+                8,
+                "test",
+            )),
+            loop_breaker: Arc::new(zn::engine::loop_breaker::LoopBreaker::new(
+                config.loop_breaker.clone(),
+            )),
+            cache,
+            consensus: Arc::new(zn::engine::consensus::ConsensusManager::new(
+                config.consensus.clone(),
+            )),
+            config: Arc::new(config),
+        };
+        Harness {
+            state,
+            alerts,
+            _dir: dir,
+        }
+    }
+
+    fn call(tool: &str, args: &str, agent: &str) -> String {
+        format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","agent_id":"{agent}","params":{{"name":"{tool}","arguments":{args}}}}}"#
+        )
+    }
+
+    fn denied_metric(tool: &str) -> u64 {
+        metrics::TOOL_CALLS_TOTAL
+            .with_label_values(&[tool, "DENIED"])
+            .get()
+    }
+
+    /// The audit entry, the metric and the alert a blocked call must leave.
+    async fn assert_audited(h: &mut Harness, tool: &str, source: &str, metric_before: u64) {
+        let entries = h.state.vault.get_recent(50).expect("audit entries");
+        let entry = entries
+            .iter()
+            .find(|e| {
+                e.tool_name == tool
+                    && e.status == "DENIED"
+                    && e.policy_match
+                        .as_deref()
+                        .is_some_and(|m| m.starts_with(&format!("{source}: ")))
+            })
+            .unwrap_or_else(|| panic!("no DENIED audit entry from {source}: {entries:?}"));
+        assert_eq!(entry.event, "TOOL_CALL");
+        assert!(
+            denied_metric(tool) > metric_before,
+            "denied metric not counted"
+        );
+        let alert = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                match h.alerts.recv().await {
+                    Some(a) if a.tool_name == tool => break Some(a),
+                    Some(_) => continue,
+                    None => break None,
+                }
+            }
+        })
+        .await
+        .expect("alert timed out")
+        .expect("alert channel closed");
+        assert_eq!(alert.status, "DENIED");
+        assert!(alert
+            .policy_match
+            .as_deref()
+            .is_some_and(|m| m.starts_with(source)));
+    }
+
+    #[tokio::test]
+    async fn managed_rule_block_is_audited() {
+        let mut h = harness(|_| {});
+        let tool = "audit_test_managed";
+        let before = denied_metric(tool);
+        let out = process_mcp_message(
+            &call(tool, r#"{"cmd":"rm -rf data"}"#, "a1"),
+            &h.state,
+            None,
+        )
+        .await
+        .expect("ok")
+        .expect("frame");
+        assert!(out.contains("-32001"), "{out}");
+        assert_audited(&mut h, tool, "managed_rules", before).await;
+    }
+
+    #[tokio::test]
+    async fn banned_agent_block_is_audited() {
+        let mut h = harness(|_| {});
+        let tool = "audit_test_ban";
+        let key = reputation_key(GLOBAL_NAMESPACE, "banned1");
+        h.state.reputation.record_violation(&key, "test", 1000);
+        let before = denied_metric(tool);
+        let out = process_mcp_message(&call(tool, r#"{"x":1}"#, "banned1"), &h.state, None)
+            .await
+            .expect("ok")
+            .expect("frame");
+        assert!(out.contains("-32003"), "{out}");
+        assert_audited(&mut h, tool, "banned_agent", before).await;
+    }
+
+    #[tokio::test]
+    async fn loop_breaker_block_is_audited() {
+        let mut h = harness(|c| {
+            c.loop_breaker.enabled = true;
+            c.loop_breaker.max_repeats = 2;
+        });
+        let tool = "audit_test_loop";
+        let before = denied_metric(tool);
+        let mut blocked = false;
+        for _ in 0..6 {
+            let out = process_mcp_message(&call(tool, r#"{"x":1}"#, "loop1"), &h.state, None)
+                .await
+                .expect("ok")
+                .expect("frame");
+            if out.contains("-32002") {
+                blocked = true;
+                break;
+            }
+        }
+        assert!(blocked, "loop breaker never fired");
+        assert_audited(&mut h, tool, "loop_breaker", before).await;
+    }
+
+    #[tokio::test]
+    async fn consensus_block_is_audited() {
+        let mut h = harness(|c| {
+            c.consensus.enabled = true;
+            c.consensus.critical_tools = vec!["audit_test_consensus".to_string()];
+        });
+        let tool = "audit_test_consensus";
+        let before = denied_metric(tool);
+        let out = process_mcp_message(&call(tool, r#"{"x":1}"#, "c1"), &h.state, None)
+            .await
+            .expect("ok")
+            .expect("frame");
+        assert!(out.contains("-32004"), "{out}");
+        assert_audited(&mut h, tool, "consensus", before).await;
     }
 }
