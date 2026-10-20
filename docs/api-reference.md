@@ -219,16 +219,22 @@ except GuardBlockError as e:
 
 <!-- snippet-test -->
 ```python
-from zn_gate.integrations import ZnGuardCallbackHandler, guarded_tool, ZnLlamaGuard, call_api
+from zn_gate.integrations import ZnGuardCallbackHandler, guard_langchain_tool, guarded_tool, ZnLlamaGuard, call_api
 ```
 
 No framework is required to import them. Each one uses the same rules as `check_tool_call` and `check_tool_result`. `on_block` must be one of the values below; any other value raises `ValueError` when the object is created.
 
 ### `ZnGuardCallbackHandler(on_block='raise', mask_secrets=True, raise_on_injection=None)`
-- LangChain and LangGraph callback handler. It checks prompts (`on_llm_start`), tool inputs (`on_tool_start`) and tool outputs (`on_tool_end`).
-- `on_block`: `'raise'` (default), `'return'` or `'ignore'`. With `'raise'` a blocked prompt, tool input or tool output raises `GuardBlockError` (targets `langchain:llm_prompt`, `langchain:<tool>` and `langchain:tool_output`). With the other two values a blocked prompt or tool input is not stopped by the handler, and a blocked tool output is replaced by a notice.
-- `mask_secrets`: redact credentials in the tool output the handler returns (default `True`).
+- LangChain and LangGraph callback handler. It checks prompts (`on_llm_start`), tool inputs (`on_tool_start`) and tool outputs (`on_tool_end`). It sets `raise_error = True`, so LangChain does not swallow its errors.
+- `on_block`: `'raise'` (default) or `'ignore'`. With `'raise'` a blocked prompt, tool input or tool output raises `GuardBlockError` and stops the run (targets `langchain:llm_prompt`, `langchain:<tool>` and `langchain:tool_output`). A callback cannot replace a tool's output, so `'return'` raises `ValueError` when the handler is created: use `guard_langchain_tool(tool, on_block='return')` to give the model a block message instead. With `'ignore'` nothing is stopped.
+- `mask_secrets` (default `True`): a tool output that contains a secret stops the run with `GuardBlockError`, because the handler cannot rewrite it. If your tools are wrapped with `guard_langchain_tool`, create the handler with `mask_secrets=False`, so the wrapper hides the secret and the run goes on.
 - `raise_on_injection`: older switch. When it is not `None` it overrides `on_block`: `True` means `'raise'`, `False` means `'ignore'`.
+
+### `guard_langchain_tool(tool, on_block='raise', mask_secrets=True, check_result=True, block_truncated=False, fallback=None)`
+- Wraps a LangChain tool (`BaseTool`) and returns a new tool with the same name, description and arguments; pass it to your agent instead of the original. The arguments are checked before the tool runs (a blocked call never runs) and the output before the model reads it. Needs `langchain-core`.
+- `on_block`: `'raise'` (default) raises `GuardBlockError` (targets `langchain:<tool>` for the arguments and `langchain:<tool>:result` for the output); `'return'` gives the model `fallback`, or the plain block message when `fallback` is `None`.
+- `mask_secrets`: hide credentials in the tool output (default `True`). `check_result`: scan the output for prompt injection (default `True`). `block_truncated`: block an output too large to scan in full.
+- A tool with `response_format="content_and_artifact"` passes only its content on.
 
 ### `guarded_tool(on_block='raise', mask_secrets=True, fallback=None, check_result=False, block_truncated=False, framework=None)`
 - Decorator for custom agent tools (CrewAI, Pydantic AI, Google ADK or plain functions, sync or `async def`). The call arguments are checked before the tool runs; a blocked call never runs.
