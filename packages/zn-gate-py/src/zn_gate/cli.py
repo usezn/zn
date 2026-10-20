@@ -663,6 +663,9 @@ def cmd_evidence(args: argparse.Namespace) -> int:
             print(f"Exported {res.get('total')} records to {args.output} (Integrity: {'VALID' if res.get('valid') else 'TAMPERED'}).")
         else:
             print(out_content)
+        if not res.get("valid"):
+            print("The export was written, but the log was changed or damaged, so do not rely on it as proof. Run zn-gate evidence --verify for details.", file=sys.stderr)
+            return 1
         return 0
 
     stats = get_evidence_stats()

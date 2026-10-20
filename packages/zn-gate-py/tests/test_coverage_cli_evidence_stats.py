@@ -776,3 +776,27 @@ def test_render_full_report():
     assert text.index("weird") < text.index("codex")  # sorted by events checked
     assert "x (other)" in text
     assert text.endswith("\n")
+
+
+def test_cmd_evidence_export_exit_code_follows_chain(tmp_path, monkeypatch, capsys):
+    good = str(tmp_path / "good.jsonl")
+    log_evidence({"payload": "x", "verdict": "block"}, file_path=good)
+    log_evidence({"payload": "y", "verdict": "allow"}, file_path=good)
+    out = tmp_path / "out.jsonl"
+    args = argparse.Namespace(export=True, format="jsonl", output=str(out))
+    monkeypatch.setattr(cli, "export_evidence_ledger", lambda format="jsonl": export_evidence_ledger(good, format))
+    assert cli.cmd_evidence(args) == 0
+    capsys.readouterr()
+
+    bad = str(tmp_path / "bad.jsonl")
+    with open(good, encoding="utf-8") as f:
+        text = f.read()
+    with open(bad, "w", encoding="utf-8", newline="") as f:
+        f.write(text.replace("block", "allow", 1))
+    monkeypatch.setattr(cli, "export_evidence_ledger", lambda format="jsonl": export_evidence_ledger(bad, format))
+    assert cli.cmd_evidence(args) == 1
+    assert out.read_text(encoding="utf-8").strip()
+    err = capsys.readouterr().err
+    assert "export was written" in err and "changed or damaged" in err
+    args.output = None
+    assert cli.cmd_evidence(args) == 1
