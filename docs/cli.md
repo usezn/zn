@@ -430,7 +430,7 @@ Shows the local hash-chained log of what zn-gate decided. With no option it prin
 
 - `--verify`: check the SHA-256 chain. Exit `1` if it was changed.
 - `--ui`: open a local dashboard in your browser (default port 3100).
-- `--export`: write the records as `jsonl` (default) or `csv` to the screen or to `--output`.
+- `--export`: write the records as `jsonl` (default) or `csv` to the screen or to `--output`. The records are written either way; if the chain does not verify, the command also exits `1` with a note on stderr.
 
 Aliases: `logs`, `export`.
 
