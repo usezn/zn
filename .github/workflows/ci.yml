@@ -285,6 +285,9 @@ jobs:
         if: steps.scope.outputs.run == 'true'
         working-directory: packages/zn-gate
         run: npm ci --ignore-scripts
+      - name: Prune sources and maps from the bundled dependencies
+        if: steps.scope.outputs.run == 'true'
+        run: node .github/scripts/prune-bundled-sources.js packages/zn-gate
       - name: Pack
         if: steps.scope.outputs.run == 'true'
         working-directory: packages/zn-gate
