@@ -226,10 +226,10 @@ test('the error text matches the hint: wrong passphrase keeps its wording, a dam
   assert.match(damaged.message, /identity\.age looks damaged/);
   assert.match(damaged.message, /Restore it from a backup/);
   assert.match(damaged.message, /vault reset/);
-  assert.match(damaged.message, /https:\/\/usezn\.com\/docs\/troubleshooting/);
+  assert.match(damaged.message, /https:\/\/usezn\.com\/docs\/zn-gate\/troubleshooting\//);
   assert.doesNotMatch(damaged.message, /wrong passphrase/i);
   assert.equal(reset.hintForUnlockError(damaged, {}), null);
-  assert.match(reset.UNREADABLE_HINT, /https:\/\/usezn\.com\/docs\/troubleshooting/);
+  assert.match(reset.UNREADABLE_HINT, /https:\/\/usezn\.com\/docs\/zn-gate\/troubleshooting\//);
 });
 
 test('keychain and other non-passphrase errors restart the count', (t) => {

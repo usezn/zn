@@ -96,7 +96,7 @@ function assertPlainDamaged(msg, file) {
   assert.ok(msg.includes('Your vault file ' + file), msg);
   assert.ok(!msg.includes('.;'), 'no broken punctuation: ' + msg);
   assert.ok(!/docs\/troubleshooting\.md/.test(msg), 'a public link, not a repo path');
-  assert.match(msg, /https:\/\/usezn\.com\/docs\/troubleshooting/);
+  assert.match(msg, /https:\/\/usezn\.com\/docs\/zn-gate\/troubleshooting\//);
   assert.match(msg, /vault reset/);
   assert.match(msg, /starts empty/);
   assert.match(msg, /Restore it from a backup/);

@@ -188,7 +188,7 @@ test('vault process problems say lock, then unlock, without internals', () => {
 test('a failed audit check says not to delete the log and where to read more', () => {
   const text = m.auditFailed(7, 'mac mismatch', {});
   assert.match(text, /did not pass its check \(at record 7\)\. Do not delete or edit it/);
-  assert.match(text, /https:\/\/usezn\.com\/docs\/troubleshooting/);
+  assert.match(text, /https:\/\/usezn\.com\/docs\/zn-gate\/troubleshooting\//);
   assert.doesNotMatch(text, /FAILED|mac mismatch/);
   assert.match(m.auditFailed(7, 'mac mismatch', { ZN_VERBOSE: '1' }), /Detail: mac mismatch\.$/);
 });

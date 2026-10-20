@@ -244,7 +244,7 @@ function disconnectKeychainLeft(reason, dashboard, canRevoke) {
 
 /* ------------------------------ damaged vault files ------------------------------ */
 
-const TROUBLESHOOTING_URL = 'https://usezn.com/docs/troubleshooting';
+const TROUBLESHOOTING_URL = 'https://usezn.com/docs/zn-gate/troubleshooting/';
 
 /* One sentence for a vault file that cannot be read: what is damaged, what zn did, the real next step.
  * `detail` (a library message) is shown only with ZN_VERBOSE=1 or DEBUG. */
