@@ -97,3 +97,21 @@ test('audit: a file at the root whose name starts with two dots can be imported'
   const res = run(build(t, { 'CLAUDE.md': 'See @..notes.md\n', '..notes.md': INJECTION }));
   assert.deepEqual(ids(res, '..notes.md'), want);
 });
+
+test('audit: the instructions glob matcher is linear and keeps the glob meaning', () => {
+  const { globMatcher } = require('../lib/audit')._internal;
+  const m = (g, p) => globMatcher(g)(p);
+  assert.ok(m('rules/*.md', 'rules/a.md'));
+  assert.ok(!m('rules/*.md', 'rules/sub/a.md'), 'a single * does not cross directories');
+  assert.ok(m('rules/**/*.md', 'rules/a.md'), '**/ also matches no directory');
+  assert.ok(m('rules/**/*.md', 'rules/x/y/a.md'));
+  assert.ok(m('docs/**', 'docs/x/y.md'));
+  assert.ok(m('a?c.md', 'abc.md') && !m('a?c.md', 'a/c.md'));
+  assert.ok(!m('rules/*.md', 'rules/a.mdx'));
+  // A pattern made to backtrack: a regular expression took 21.7 s at 9 repeats and did not finish at 20.
+  const evil = '**x'.repeat(20) + '*.zz';
+  const path = 'x'.repeat(200) + '/' + 'y'.repeat(200) + '.md';
+  const t0 = Date.now();
+  assert.equal(m(evil, path), false);
+  assert.ok(Date.now() - t0 < 200, 'took ' + (Date.now() - t0) + ' ms');
+});

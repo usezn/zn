@@ -1179,16 +1179,47 @@ function claudeImports(text) {
   return out;
 }
 
-function globRegex(glob) {
-  let re = '';
+/**
+ * A matcher for an OpenCode `instructions` glob: `*` and `?` stay inside one path segment, `**` crosses
+ * segments, and a double star followed by a slash also matches no directory at all. It runs in time proportional to pattern length times
+ * path length (one pass per pattern token over the path), so a pattern full of wildcards cannot make it
+ * backtrack the way a regular expression would.
+ */
+function globMatcher(glob) {
+  const tokens = [];
   for (let i = 0; i < glob.length; i++) {
     const c = glob[i];
-    if (c === '*' && glob[i + 1] === '*') { re += glob[i + 2] === '/' ? '(?:.*/)?' : '.*'; i += glob[i + 2] === '/' ? 2 : 1; }
-    else if (c === '*') re += '[^/]*';
-    else if (c === '?') re += '[^/]';
-    else re += c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+    if (c === '*' && glob[i + 1] === '*') {
+      if (glob[i + 2] === '/') { tokens.push({ t: 'dirs' }); i += 2; } else { tokens.push({ t: 'all' }); i += 1; }
+    } else if (c === '*') tokens.push({ t: 'seg' });
+    else if (c === '?') tokens.push({ t: 'one' });
+    else tokens.push({ t: 'lit', c });
   }
-  return new RegExp('^' + re + '$');
+  return (s) => {
+    const n = s.length;
+    let cur = new Uint8Array(n + 1);
+    cur[0] = 1;
+    for (const tk of tokens) {
+      const next = new Uint8Array(n + 1);
+      if (tk.t === 'lit' || tk.t === 'one') {
+        for (let j = 0; j < n; j++) {
+          if (cur[j] && (tk.t === 'lit' ? s[j] === tk.c : s[j] !== '/')) next[j + 1] = 1;
+        }
+      } else if (tk.t === 'seg' || tk.t === 'all') {
+        for (let j = 0; j <= n; j++) {
+          next[j] = cur[j] || (j > 0 && next[j - 1] && (tk.t === 'all' || s[j - 1] !== '/')) ? 1 : 0;
+        }
+      } else { // dirs: nothing, or any text that ends with '/'
+        let seen = 0;
+        for (let j = 0; j <= n; j++) {
+          next[j] = cur[j] || (j > 0 && seen && s[j - 1] === '/') ? 1 : 0;
+          if (cur[j]) seen = 1;
+        }
+      }
+      cur = next;
+    }
+    return cur[n] === 1;
+  };
 }
 
 /**
@@ -1200,7 +1231,7 @@ function globFiles(root, glob, budget) {
   const star = glob.search(/[*?]/);
   if (star < 0) return [glob];
   const prefix = glob.slice(0, glob.lastIndexOf('/', star) + 1);
-  const re = globRegex(glob);
+  const matches = globMatcher(glob);
   const found = [];
   (function visit(rel, depth) {
     if (budget.cut) return;
@@ -1213,7 +1244,7 @@ function globFiles(root, glob, budget) {
       if (d.isDirectory()) {
         if (d.name === '.git' || SKIP_DIRS.has(d.name) || depth >= 16) continue;
         visit(r + '/', depth + 1);
-      } else if (d.isFile() && re.test(r)) found.push(r);
+      } else if (d.isFile() && matches(r)) found.push(r);
     }
   })(prefix, 0);
   return found;
@@ -1601,4 +1632,4 @@ function audit(opts) {
   return { root, files: scanned, findings, truncated: Boolean(truncated) || timedOut, entries, skippedDirs, agents: Array.from(selected) };
 }
 
-module.exports = { audit, classify, redact, AGENTS, _internal: { hookCommands, isOurHook, isOurMcp, gitIgnored, readBounded, grantsWrite, withoutTrailingEquals, OUR_HOOKS, SAFE_ABS, znGateFile } };
+module.exports = { audit, classify, redact, AGENTS, _internal: { globMatcher, hookCommands, isOurHook, isOurMcp, gitIgnored, readBounded, grantsWrite, withoutTrailingEquals, OUR_HOOKS, SAFE_ABS, znGateFile } };
