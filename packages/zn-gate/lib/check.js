@@ -121,6 +121,12 @@ const AGENTS = [
     file: (a, o) => a.hooksFile(o), project: (dir) => path.join(dir, '.github', 'hooks', 'zn-gate.json'),
     request: (dir, file) => ({ sessionId: 'zn-check', timestamp: 0, cwd: dir, toolName: 'view', toolArgs: { path: file } }),
   },
+  {
+    id: 'gemini', name: 'Gemini CLI', event: 'BeforeTool', tool: 'read_file',
+    fix: 'run `zn hooks install gemini` in your own terminal',
+    file: (a, o) => a.settingsFile(o), project: (dir) => path.join(dir, '.gemini', 'settings.json'),
+    request: (dir, file) => ({ hook_event_name: 'BeforeTool', session_id: 'zn-check', cwd: dir, tool_name: 'read_file', tool_input: { file_path: file } }),
+  },
 ];
 
 function readJson(file) {
@@ -222,11 +228,22 @@ function claudePlugin(home, env) {
   return { root: roots[0] || null, off };
 }
 
+/* zn's hooks in the agent's managed configuration: {files, entries} | null. Never throws. */
+function managedFor(agentId, ctx) {
+  try {
+    const opts = agentId === 'claude-code' ? ctx.claudePolicy : agentId === 'codex' ? ctx.codexPolicy : agentId === 'cursor' ? ctx.cursorPolicy : null;
+    if (opts === null) return null;
+    return require('./agents/managed-policy').managedInstall(agentId, { ...(opts || {}), env: ctx.env });
+  } catch (_) {
+    return null;
+  }
+}
+
 /* Hook policy warnings for Claude Code (managed settings, disableAllHooks), as `zn-gate status` shows. */
-function claudePolicy(home, env) {
+function claudePolicy(home, env, opts) {
   try {
     const cc = require('./agents').getAdapter('claude-code');
-    const w = require('./agents/managed-policy').claudeCodePolicyWarnings({ userSettings: [cc.settingsFile({ home, env })], mcp: false });
+    const w = require('./agents/managed-policy').claudeCodePolicyWarnings({ ...(opts || {}), userSettings: [cc.settingsFile({ home, env })], mcp: false });
     return w.filter((x) => /hooks/i.test(x));
   } catch (err) {
     return [];
@@ -308,9 +325,10 @@ function znOnPath(env) {
  * zn's own hooks in the user's hooks file (`zn hooks install <agent>`), not run yet:
  * {installed, problem, fix, live, notes}. `live` is {file, args, env} when the read hook can be run as the agent runs it.
  */
-function cliHooks(spec, ctx, userFile) {
+function cliHooks(spec, ctx, userFile, given) {
   const out = { installed: false, problem: '', fix: '', live: null, notes: [] };
-  const entries = hookEntries(readJson(userFile), spec.id).filter((e) => parseCommand(e.command, spec.id));
+  // `given`: hook entries already read from the managed configuration instead of the user's hooks file.
+  const entries = (given || hookEntries(readJson(userFile), spec.id)).filter((e) => parseCommand(e.command, spec.id));
   out.installed = entries.length > 0;
   if (!out.installed) return out;
   // Set up with `zn hooks install`, so that is also how to repair it (not the plugin: both would run).
@@ -434,6 +452,26 @@ async function checkAgent(spec, ctx) {
     res.where = userFile;
     if (installed) { res.fix = h.fix; res.via = 'hooks'; res.problem = h.problem; live = h.live; res.notes.push(...h.notes); }
   }
+  // zn installed by the organization (managed settings, enterprise hooks.json, requirements.toml). Read-only.
+  const managed = managedFor(spec.id, ctx);
+  if (managed) {
+    res.managed = managed.files[0];
+    const mgWhere = managed.files.join(', ');
+    if (!installed) {
+      const h = cliHooks(spec, ctx, null, managed.entries);
+      installed = true;
+      res.where = managed.files[0];
+      res.via = 'managed';
+      res.problem = h.problem;
+      live = h.live;
+      res.notes.push(...h.notes);
+      // Only an administrator can repair the managed files.
+      res.fix = 'ask your administrator to repair the managed configuration (' + mgWhere + ')';
+    } else {
+      res.notes.push('zn is also set up in ' + res.where + ', next to the managed configuration, so its hooks run twice; to keep only the managed one, ' + (res.via === 'plugin' || res.via === 'both' ? 'turn the plugin off: `claude plugin disable zn-gate@usezn`' : 'run `zn hooks uninstall ' + spec.id + '`') + ' in your own terminal');
+    }
+    res.notes.unshift('zn is installed through your organization\'s managed configuration (' + mgWhere + ')');
+  }
   if (spec.id === 'claude-code' && installed && res.where === userFile) {
     // Without onFailure "block", a prompt hook that cannot run lets every prompt through (Claude Code 2.1.295 and later read it).
     const prompt = hookEntries(readJson(userFile), spec.id).find((e) => e.event === 'UserPromptSubmit' && parseCommand(e.command, spec.id));
@@ -444,7 +482,7 @@ async function checkAgent(spec, ctx) {
     if (!hasExpansion) res.notes.push('its hooks lack the newer prompt-expansion check (for typed skills and commands); run `zn hooks install claude-code` again to add it');
   }
   if (spec.id === 'claude-code' && installed && (!res.problem || res.pluginFault)) {
-    const p = claudePolicy(ctx.home, ctx.env);
+    const p = claudePolicy(ctx.home, ctx.env, ctx.claudePolicy);
     // A Claude Code setting stops every hook, the plugin's and zn's own alike: that setting is the fix, not either set.
     if (p.length) {
       res.problem = bare(oneLine(p[0], 300));
@@ -480,6 +518,29 @@ async function checkAgent(spec, ctx) {
     if (off) {
       res.problem = 'zn\'s ' + off.event + ' hook is switched off in ' + off.file + ' ([hooks.state] enabled = false), so Codex skips it and zn does not protect Codex';
       res.fix = 'delete that [hooks.state] entry, or turn zn\'s hook back on in `/hooks` in Codex, then run `zn-gate check` again';
+    }
+  }
+  if (spec.id === 'cursor' && installed) {
+    // Cursor's enterprise hooks.json (read-only): zn's hook there without failClosed, or enterprise hooks without zn's.
+    try { res.notes.push(...require('./agents/managed-policy').cursorPolicyWarnings({ ...(ctx.cursorPolicy || {}), env: ctx.env }).map((w) => oneLine(w, 400))); } catch (_) { /* never fails the check */ }
+  }
+  if (spec.id === 'gemini' && installed && !res.problem) {
+    // hooksConfig.enabled false, or zn's hook named in hooksConfig.disabled, in the user, project or system settings.
+    let p = [];
+    try {
+      p = require('./agents/managed-policy').geminiPolicyWarnings({
+        files: [
+          { file: userFile, label: 'your Gemini CLI settings' },
+          { file: spec.project(ctx.cwd), label: 'this folder\'s Gemini CLI settings' },
+          { file: ctx.geminiSystemFile || adapter.systemSettingsFile(), label: 'the system Gemini CLI settings' },
+        ],
+      });
+    } catch (_) { p = []; }
+    for (const w of p.filter((x) => /^could not read/.test(x))) res.notes.push(oneLine(w, 300));
+    p = p.filter((x) => !/^could not read/.test(x));
+    if (p.length) {
+      res.problem = bare(oneLine(p[0], 300));
+      res.fix = 'change that Gemini CLI setting as it says, then run `zn-gate check` again';
     }
   }
   if (spec.id === 'codex' && installed && !res.problem) {
@@ -576,7 +637,7 @@ async function check(opts = {}) {
   const env = opts.env || process.env;
   const cwd = opts.cwd || process.cwd();
   if (opts.live === false) {
-    const ctx = { home, env, cwd, live: false, dir: cwd, codexPolicy: opts.codexPolicy, nodeVersion: opts.nodeVersion, hookNode: opts.hookNode, pluginNode: opts.pluginNode };
+    const ctx = { home, env, cwd, live: false, dir: cwd, codexPolicy: opts.codexPolicy, claudePolicy: opts.claudePolicy, cursorPolicy: opts.cursorPolicy, geminiSystemFile: opts.geminiSystemFile, nodeVersion: opts.nodeVersion, hookNode: opts.hookNode, pluginNode: opts.pluginNode };
     const results = [];
     for (const spec of AGENTS) {
       try {
@@ -588,7 +649,7 @@ async function check(opts = {}) {
     return { results, removed: true };
   }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-check-'));
-  const ctx = { home, env, cwd, live: true, dir, envFile: path.join(dir, '.env'), readme: path.join(dir, 'README.txt'), codexPolicy: opts.codexPolicy, nodeVersion: opts.nodeVersion, hookNode: opts.hookNode, pluginNode: opts.pluginNode };
+  const ctx = { home, env, cwd, live: true, dir, envFile: path.join(dir, '.env'), readme: path.join(dir, 'README.txt'), codexPolicy: opts.codexPolicy, claudePolicy: opts.claudePolicy, cursorPolicy: opts.cursorPolicy, geminiSystemFile: opts.geminiSystemFile, nodeVersion: opts.nodeVersion, hookNode: opts.hookNode, pluginNode: opts.pluginNode };
   const results = [];
   try {
     fs.writeFileSync(path.join(dir, '.gitignore'), '.env\n');

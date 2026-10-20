@@ -22,7 +22,8 @@ OUT=$RUN/out
 mkdir -p "$RUN/bin" "$RUN/home/.codex"
 ln -sf "$PKG/bin/cli.js" "$RUN/bin/zn"
 export HOME=$RUN/home ZN_HOME=$RUN/zn CODEX_HOME=$RUN/home/.codex MOCK_API_KEY=mock-provider-key
-export PATH=$RUN/bin:$(dirname "$NODE"):/usr/local/bin:/usr/bin:/bin
+NODE_DIR=$(dirname "$NODE")
+export PATH=$RUN/bin:$NODE_DIR:/usr/local/bin:/usr/bin:/bin
 cat > "$CODEX_HOME/config.toml" <<EOF
 model = "mock-model"
 model_provider = "mock"
@@ -36,7 +37,7 @@ EOF
 node "$H/vault_daemon.js" --pkg "$PKG" --secrets "$RUN/secrets.json" --out "$OUT" & VPID=$!
 node "$H/mock_llm.js" --port "$PORT" --script "$RUN/scenario.json" --out "$OUT" > "$OUT/mock.log" & MPID=$!
 trap 'kill $VPID $MPID 2>/dev/null || true' EXIT
-for i in $(seq 50); do [ -f "$OUT/vault.ready" ] && break; sleep 0.2; done
+for _ in $(seq 50); do [ -f "$OUT/vault.ready" ] && break; sleep 0.2; done
 [ -f "$OUT/vault.ready" ] || { cat "$OUT/vault.error"; exit 1; }
 
 node -e "require('$PKG/lib/agents/codex').install({ scope: 'user', mcp: false })" >/dev/null
@@ -50,4 +51,4 @@ echo "task exit=$?" > "$OUT/exit_codes.txt"
 echo "paste exit=$?" >> "$OUT/exit_codes.txt"
 set -e
 cp -r "$CODEX_HOME/sessions" "$OUT/transcripts" 2>/dev/null || true
-echo done
+echo "done"

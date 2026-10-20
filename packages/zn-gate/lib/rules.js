@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-19.3
+ * RULES_VERSION: 2026-10-19.7
  */
 
-const RULES_VERSION = '2026-10-19.6';
+const RULES_VERSION = '2026-10-19.7';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -1006,7 +1006,12 @@ const SCRUB_PROVIDER_RULES = new Map([
 ].map((t) => [t, 'secret:' + t.toLowerCase()]).concat([
   ['AWS_KEY', 'secret:aws_key_id'],
   ['URL_PASSWORD', 'secret:url_password'],
+  ['DB_PASSWORD', 'secret:url_password'],
 ]));
+
+// The scrubber types a URL password as DB_PASSWORD or URL_PASSWORD by scheme;
+// the Python package has one rule and one label for every scheme.
+const SCRUB_PROVIDER_LABELS = new Map([['DB_PASSWORD', 'URL_PASSWORD']]);
 
 // The provider token formats of the scrubber engine (GitLab, Slack, Stripe,
 // Google, npm, ...), run on text the SECRET_PATTERNS already redacted. The
@@ -1021,7 +1026,7 @@ function redactProviderFormats(text) {
   for (const s of spans) {
     if (s.start < last) continue;
     detections.push({ rule: SCRUB_PROVIDER_RULES.get(s.type), index: s.start });
-    out += text.slice(last, s.start) + `[REDACTED_${s.type}]`;
+    out += text.slice(last, s.start) + `[REDACTED_${SCRUB_PROVIDER_LABELS.get(s.type) || s.type}]`;
     last = s.end;
   }
   return { sanitized: out + text.slice(last), detections };

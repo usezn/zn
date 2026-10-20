@@ -1,0 +1,9 @@
+{
+  "name": "zn-release-sbom-tools",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Pinned tools that write the CycloneDX SBOM of the npm release",
+  "devDependencies": {
+    "@cyclonedx/cyclonedx-npm": "6.0.1"
+  }
+}

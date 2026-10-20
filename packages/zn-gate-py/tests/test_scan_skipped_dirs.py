@@ -115,6 +115,28 @@ class SanitiseAndEditorDirsTests(unittest.TestCase):
         finally:
             shutil.rmtree(d, ignore_errors=True)
 
+    def test_text_output_escapes_control_characters_in_finding_paths_and_empty_target(self):
+        esc = chr(27)
+        fake_key = "AKIA" + "ZNTESTFAKE" + "000000"
+        d = _tree({"ok.md": "hello\n"})
+        try:
+            try:
+                with open(os.path.join(d, "f" + esc + "[2Jf.md"), "w", encoding="utf-8") as f:
+                    f.write("key = " + fake_key + "\n")
+                empty = os.path.join(d, "e" + esc + "[2Je")
+                os.makedirs(empty)
+            except OSError:
+                self.skipTest("file system refuses control characters in names")
+            out = _run(d, "text")
+            self.assertNotIn(esc, out)
+            self.assertIn("f" + chr(92) + "x1b[2Jf.md:1", out)
+            out = _run(empty, "text")
+            self.assertNotIn(esc, out)
+            self.assertIn("No files were scanned in ", out)
+            self.assertIn("e" + chr(92) + "x1b[2Je", out)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
     def test_editor_and_venv_directories_are_listed(self):
         d = _tree({"ok.md": "hello\n", ".idea/agent.md": "hello\n", ".venv/a.md": "hello\n", "venv/a.md": "hello\n",
                    "__pycache__/a.md": "hello\n", ".eggs/a.md": "hello\n"})
@@ -123,7 +145,14 @@ class SanitiseAndEditorDirsTests(unittest.TestCase):
             self.assertEqual(data["total_files"], 1)
             self.assertEqual(sorted(os.path.basename(s["dir"]) for s in data["skipped_dirs"]),
                              [".eggs", ".idea", ".venv", "__pycache__", "venv"])
-            self.assertTrue(all(s["reason"] == "skipped by name: build output" for s in data["skipped_dirs"]))
+            reasons = {os.path.basename(s["dir"]): s["reason"] for s in data["skipped_dirs"]}
+            self.assertEqual(reasons, {
+                ".eggs": "skipped by name: Python build files",
+                ".idea": "skipped by name: editor settings",
+                ".venv": "skipped by name: virtual environment",
+                "__pycache__": "skipped by name: Python cache",
+                "venv": "skipped by name: virtual environment",
+            })
         finally:
             shutil.rmtree(d, ignore_errors=True)
 
