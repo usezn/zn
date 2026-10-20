@@ -185,6 +185,20 @@ function readPrivateFile(file) {
   if (process.platform !== 'win32' && typeof process.getuid === 'function' && st.uid !== process.getuid()) {
     throw znError(CODES.POLICY_DENIED, 'file is owned by another user: ' + file);
   }
+  if (process.platform !== 'win32') {
+    // Close the directory first, then the file itself (POSIX modes only).
+    ensurePrivateDir(path.dirname(file));
+    if ((st.mode & 0o077) !== 0) {
+      try {
+        fs.chmodSync(file, 0o600);
+        process.stderr.write('zn: warning: ' + file + ' was readable by other users (mode ' +
+          (st.mode & 0o777).toString(8) + '); changed it to 600' + String.fromCharCode(10));
+      } catch (err) {
+        throw znError(CODES.POLICY_DENIED, 'refusing to read ' + file + ': it is readable by group or others ' +
+          'and could not be tightened (' + String((err && err.message) || err).slice(0, 80) + '). Run: chmod 600 ' + file);
+      }
+    }
+  }
   return fs.readFileSync(file);
 }
 
