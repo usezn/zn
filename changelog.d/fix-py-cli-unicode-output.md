@@ -1,0 +1,2 @@
+### Fixed
+- The Python `zn-gate` command no longer stops in the middle of a report on Windows when its output is redirected to a file or a pipe and a finding quotes Chinese, Japanese, other non-Latin text or an emoji. Characters the console cannot show are printed as escapes such as `\u5ffd`, every output path (scan, test, analyze, evidence, status) is covered, and `--format json` output stays valid JSON.

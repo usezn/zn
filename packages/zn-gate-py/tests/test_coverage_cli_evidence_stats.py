@@ -324,7 +324,7 @@ def test_icon_falls_back_to_ascii(monkeypatch):
     assert cli._icon(cli.LOCK, SimpleNamespace(encoding=None)) == cli.LOCK
 
 
-def test_configure_output_streams_replaces_errors():
+def test_configure_output_streams_escapes_unencodable_text():
     raw = io.BytesIO()
     stream = io.TextIOWrapper(raw, encoding="ascii", errors="strict")
     with mock.patch.object(sys, "stdout", stream), mock.patch.object(sys, "stderr", stream):
@@ -332,7 +332,7 @@ def test_configure_output_streams_replaces_errors():
         print("café", file=stream)
         stream.flush()
     # TextIOWrapper writes os.linesep on Windows
-    assert raw.getvalue().replace(b"\r\n", b"\n") == b"caf?\n"
+    assert raw.getvalue().replace(b"\r\n", b"\n") == b"caf\\xe9\n"
 
 
 def test_configure_output_streams_survives_odd_streams():

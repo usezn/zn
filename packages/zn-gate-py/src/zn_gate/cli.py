@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import bisect
+import io
 import json
 import os
 import stat
@@ -114,21 +115,73 @@ LOCK = "\U0001f512"
 _ASCII_MARKERS = {SHIELD: "[+]", ALERT: "[!]", CHECK: "[ok]", LOCK: "[ok]"}
 
 
+_PROBE = "\u5ffd\U0001f6e1\ud800"
+_kept_streams: List[Any] = []  # keeps replaced stream wrappers alive so their buffers stay open
+
+
+def _cannot_encode(stream: Any) -> bool:
+    """True when printing non-ASCII text, an emoji or a lone surrogate to `stream` would raise."""
+    try:
+        _PROBE.encode(getattr(stream, "encoding", None) or "ascii", getattr(stream, "errors", None) or "strict")
+        return False
+    except (UnicodeError, LookupError):
+        return True
+
+
 def _configure_output_streams() -> None:
     """Never crash on output encoding.
 
     Characters the console cannot encode (emoji, or non-ASCII text quoted from
-    a scanned file) are replaced instead of raising UnicodeEncodeError. The
-    stream encoding is kept, so UTF-8 terminals print exactly the same output.
+    a scanned file) are written as backslash escapes instead of raising
+    UnicodeEncodeError, whatever the stream is (console, file, pipe). Streams
+    that already encode everything are left alone, so UTF-8 terminals print
+    exactly the same output.
     """
-    for stream in (sys.stdout, sys.stderr):
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name, None)
+        if stream is None or not _cannot_encode(stream):
+            continue
         reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure is None or getattr(stream, "errors", None) != "strict":
+        if reconfigure is not None:
+            try:
+                reconfigure(errors="backslashreplace")
+            except Exception:
+                pass
+        if not _cannot_encode(stream):
+            continue
+        # reconfigure is missing or did not take effect: wrap the raw buffer ourselves.
+        buffer = getattr(stream, "buffer", None)
+        if buffer is None:
             continue
         try:
-            reconfigure(errors="replace")
+            stream.flush()
+            wrapper = io.TextIOWrapper(
+                buffer, encoding=stream.encoding or "ascii", errors="backslashreplace",
+                newline=None, line_buffering=bool(getattr(stream, "line_buffering", False)),
+                write_through=bool(getattr(stream, "write_through", False)),
+            )
+            _kept_streams.append(stream)
+            setattr(sys, name, wrapper)
         except Exception:
             pass
+
+
+def _print(*args: Any, sep: str = " ", end: str = "\n", file: Any = None, flush: bool = False) -> None:
+    """print() that cannot fail on output encoding, used for every line the CLI prints.
+
+    The whole line is built first, so a failure never leaves half a line behind.
+    """
+    stream = file if file is not None else sys.stdout
+    if stream is None:
+        return
+    text = sep.join(str(a) for a in args) + end
+    try:
+        stream.write(text)
+    except UnicodeEncodeError:
+        encoding = getattr(stream, "encoding", None) or "ascii"
+        stream.write(text.encode(encoding, "backslashreplace").decode(encoding, "replace"))
+    if flush:
+        stream.flush()
 
 
 def _plain_text() -> bool:
@@ -171,24 +224,24 @@ def cmd_test(args: argparse.Namespace) -> int:
         out["secrets_detected"] = len(findings)
         if findings:
             out["redacted_preview"] = clean_text
-        print(json.dumps(out, indent=2))
+        _print(json.dumps(out, indent=2))
     else:
         # The icon follows the injection verdict only. A secret found by the
         # DLP filter is reported on its own line and does not turn an ALLOW
         # into a BLOCK.
         status_icon = f"{_lead(SHIELD)}ALLOW" if assessment.allowed else f"{_lead(ALERT)}BLOCK"
-        print(f"\n{status_icon} | Verdict: {assessment.verdict.upper()} (latency: {latency_us:.1f}µs)")
-        print(f"Rule:       {assessment.rule}")
+        _print(f"\n{status_icon} | Verdict: {assessment.verdict.upper()} (latency: {latency_us:.1f}µs)")
+        _print(f"Rule:       {assessment.rule}")
         if assessment.reason:
-            print(f"Reason:     {assessment.reason}")
+            _print(f"Reason:     {assessment.reason}")
         if assessment.advisory:
-            print(f"Note:       not blocked, but worth a look: {assessment.advisory['reason']} "
+            _print(f"Note:       not blocked, but worth a look: {assessment.advisory['reason']} "
                   f"({assessment.advisory['rule']}).")
         if findings:
             noun = "secret" if len(findings) == 1 else "secrets"
-            print(f"DLP Alert:  {len(findings)} {noun} detected (verdict unchanged). Redacted: {clean_text}")
-        print(f"Confidence: {assessment.confidence * 100:.1f}%")
-        print(f"Engine:     {assessment.engine} (rules: {assessment.rules_version})\n")
+            _print(f"DLP Alert:  {len(findings)} {noun} detected (verdict unchanged). Redacted: {clean_text}")
+        _print(f"Confidence: {assessment.confidence * 100:.1f}%")
+        _print(f"Engine:     {assessment.engine} (rules: {assessment.rules_version})\n")
 
     # Exit code: 0 only when nothing was flagged (no block and no secret), so
     # the command can be used as a check in scripts.
@@ -211,9 +264,9 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     res["latency_ms"] = round(elapsed_ms, 2)
 
     if getattr(args, "json", True):
-        print(json.dumps(res, indent=2))
+        _print(json.dumps(res, indent=2))
     else:
-        print(f"Verdict: {res.get('verdict')} | Engine: {res.get('engine')} | Latency: {elapsed_ms:.2f}ms")
+        _print(f"Verdict: {res.get('verdict')} | Engine: {res.get('engine')} | Latency: {elapsed_ms:.2f}ms")
 
     return 2 if res.get("verdict") == "block" else 0
 
@@ -489,7 +542,7 @@ def _prune_info(name: str, parent: str) -> Optional[Dict[str, Any]]:
 def cmd_scan(args: argparse.Namespace) -> int:
     target_path = Path(args.path)
     if not target_path.exists():
-        print(f"Error: target path not found: {target_path}", file=sys.stderr)
+        _print(f"Error: target path not found: {target_path}", file=sys.stderr)
         return 2
 
     files_to_scan: List[Path] = []
@@ -586,17 +639,17 @@ def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_vio
             else:
                 title = _gh_property("Security Threat (" + str(v["rule"]) + ")")
                 message = v["reason"]
-            print(f"::error file={_gh_property(v['file'])},line={int(v['line'])},title={title}::{_gh_message(message)}")
+            _print(f"::error file={_gh_property(v['file'])},line={int(v['line'])},title={title}::{_gh_message(message)}")
         for s in skipped:
-            print(f"::notice file={_gh_property(s['file'])},title=Not scanned::{_gh_message(s['reason'])}")
+            _print(f"::notice file={_gh_property(s['file'])},title=Not scanned::{_gh_message(s['reason'])}")
         for sd in skipped_dirs:
-            print(f"::notice file={_gh_property(sd['dir'])},title=Directory not scanned::{_gh_message(sd['reason'])}")
+            _print(f"::notice file={_gh_property(sd['dir'])},title=Directory not scanned::{_gh_message(sd['reason'])}")
         if nothing:
-            print(f"::warning title=Nothing scanned::{_gh_message(nothing)}")
+            _print(f"::warning title=Nothing scanned::{_gh_message(nothing)}")
         dir_note = f" and {len(skipped_dirs)} director{'y' if len(skipped_dirs) == 1 else 'ies'} skipped" if skipped_dirs else ""
-        print(f"\n[zn-gate] Scanned {scanned} files ({len(skipped)} not scanned{dir_note}). Found {leak_count} secrets and {other_count} security threats.")
+        _print(f"\n[zn-gate] Scanned {scanned} files ({len(skipped)} not scanned{dir_note}). Found {leak_count} secrets and {other_count} security threats.")
     elif fmt == "json":
-        print(json.dumps({
+        _print(json.dumps({
             "total_files": scanned,
             "total_skipped": len(skipped),
             "total_skipped_dirs": len(skipped_dirs),
@@ -609,46 +662,46 @@ def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_vio
             **({"warning": nothing} if nothing else {}),
         }, indent=2))
     else:
-        print(f"\n{_lead(SHIELD)}zn-gate Security Scanner — Scanned {scanned} files")
+        _print(f"\n{_lead(SHIELD)}zn-gate Security Scanner — Scanned {scanned} files")
         if nothing:
-            print(f"{_lead(ALERT)}{_safe_text(nothing)}")
+            _print(f"{_lead(ALERT)}{_safe_text(nothing)}")
         if skipped:
-            print(f"Not scanned ({len(skipped)}):")
+            _print(f"Not scanned ({len(skipped)}):")
             for s in skipped[:20]:
-                print(f"  {_safe_text(s['file'])} ({_safe_text(s['reason'])})")
+                _print(f"  {_safe_text(s['file'])} ({_safe_text(s['reason'])})")
             if len(skipped) > 20:
-                print(f"  ... and {len(skipped) - 20} more")
+                _print(f"  ... and {len(skipped) - 20} more")
         if skipped_dirs:
-            print(f"Directories not scanned ({len(skipped_dirs)}):")
+            _print(f"Directories not scanned ({len(skipped_dirs)}):")
             for sd in skipped_dirs[:20]:
-                print(f"  {_safe_text(sd['dir'])} ({_safe_text(sd['reason'])})")
+                _print(f"  {_safe_text(sd['dir'])} ({_safe_text(sd['reason'])})")
             if len(skipped_dirs) > 20:
-                print(f"  ... and {len(skipped_dirs) - 20} more")
+                _print(f"  ... and {len(skipped_dirs) - 20} more")
         if not all_violations and nothing:
-            print()
+            _print()
             return
         if not all_violations:
-            print(f"{_lead(CHECK)}All scanned prompts, tool definitions, and files are clean!\n")
+            _print(f"{_lead(CHECK)}All scanned prompts, tool definitions, and files are clean!\n")
             return
-        print(f"{_lead(ALERT)}Found {leak_count} secrets and {other_count} threat vectors:\n")
+        _print(f"{_lead(ALERT)}Found {leak_count} secrets and {other_count} threat vectors:\n")
         for v in all_violations:
             label = "Secret found" if v.get("type") == "secret_leak" else "Threat"
-            print(f"  {_safe_text(v['file'])}:{v['line']} {label} [{v['rule']}] {v['reason']}")
-            print(f"    Snippet: {v['content']}")
+            _print(f"  {_safe_text(v['file'])}:{v['line']} {label} [{v['rule']}] {v['reason']}")
+            _print(f"    Snippet: {v['content']}")
             if v.get("next_step"):
-                print(f"    {v['next_step']}")
-            print()
+                _print(f"    {v['next_step']}")
+            _print()
 
 
 def cmd_evidence(args: argparse.Namespace) -> int:
     if getattr(args, "verify", False):
         res = verify_evidence_ledger()
         if res.get("valid"):
-            print(f"\n{_lead(LOCK)}Cryptographic Evidence Ledger: ALL {res.get('total', 0)} RECORDS VERIFIED (IMMUTABLE)\n")
+            _print(f"\n{_lead(LOCK)}Cryptographic Evidence Ledger: ALL {res.get('total', 0)} RECORDS VERIFIED (IMMUTABLE)\n")
             return 0
         else:
-            print(f"\n{_lead(ALERT, sys.stderr)}Tamper detected: {res.get('error')}", file=sys.stderr)
-            print(f"{recovery_hint()}\n", file=sys.stderr)
+            _print(f"\n{_lead(ALERT, sys.stderr)}Tamper detected: {res.get('error')}", file=sys.stderr)
+            _print(f"{recovery_hint()}\n", file=sys.stderr)
             return 1
 
     if getattr(args, "export", False):
@@ -656,39 +709,39 @@ def cmd_evidence(args: argparse.Namespace) -> int:
         res = export_evidence_ledger(format=fmt)
         out_content = res.get("content", "")
         if not res.get("valid"):
-            print(f"{_lead(ALERT, sys.stderr)}Tamper detected: {res.get('error')}", file=sys.stderr)
-            print(recovery_hint(), file=sys.stderr)
+            _print(f"{_lead(ALERT, sys.stderr)}Tamper detected: {res.get('error')}", file=sys.stderr)
+            _print(recovery_hint(), file=sys.stderr)
         if getattr(args, "output", None):
             Path(args.output).write_text(out_content, encoding="utf-8")
-            print(f"Exported {res.get('total')} records to {args.output} (Integrity: {'VALID' if res.get('valid') else 'TAMPERED'}).")
+            _print(f"Exported {res.get('total')} records to {args.output} (Integrity: {'VALID' if res.get('valid') else 'TAMPERED'}).")
         else:
-            print(out_content)
+            _print(out_content)
         return 0
 
     stats = get_evidence_stats()
-    print(f"\n{_lead(SHIELD)}zn Evidence Ledger Stats ({EVIDENCE_FILE})")
-    print(f"  Total Events   : {stats.get('total', 0)}")
-    print(f"  Blocked Drops  : {stats.get('blocks', 0)}")
-    print(f"  Allowed Passes : {stats.get('allows', 0)}")
-    print(f"  Integrity      : {'VALID' if stats.get('valid') else 'CORRUPTED'}")
+    _print(f"\n{_lead(SHIELD)}zn Evidence Ledger Stats ({EVIDENCE_FILE})")
+    _print(f"  Total Events   : {stats.get('total', 0)}")
+    _print(f"  Blocked Drops  : {stats.get('blocks', 0)}")
+    _print(f"  Allowed Passes : {stats.get('allows', 0)}")
+    _print(f"  Integrity      : {'VALID' if stats.get('valid') else 'CORRUPTED'}")
     if not stats.get("valid") and stats.get("error"):
-        print(f"  Details        : {stats.get('error')}")
-        print(f"  Recovery       : {recovery_hint()}")
-    print()
+        _print(f"  Details        : {stats.get('error')}")
+        _print(f"  Recovery       : {recovery_hint()}")
+    _print()
     return 0
 
 
 def cmd_status(args: argparse.Namespace) -> int:
     has_key = bool(os.environ.get("ZN_API_KEY"))
     cloud = is_cloud_enabled()
-    print(f"\n{_lead(SHIELD)}zn-gate Status (Python):")
-    print(f"  Package Version : {__version__}")
-    print(f"  Rules Version   : {RULES_VERSION}")
-    print(f"  Python Runtime  : {sys.version.split()[0]}")
-    print(f"  Active Engine   : {'Local rules + cloud for analyze (ZN_CLOUD=1)' if cloud else 'Local rules only'}")
-    print(f"  Endpoint        : {resolve_endpoint() if cloud else 'None (nothing leaves this machine)'}")
-    print(f"  API key         : {('Set' + ('' if cloud else ' (unused: cloud requires ZN_CLOUD=1)')) if has_key else 'Not set'}")
-    print(f"  Leaves machine  : {'analyze() text only, secrets redacted locally first' if cloud else 'Nothing'}\n")
+    _print(f"\n{_lead(SHIELD)}zn-gate Status (Python):")
+    _print(f"  Package Version : {__version__}")
+    _print(f"  Rules Version   : {RULES_VERSION}")
+    _print(f"  Python Runtime  : {sys.version.split()[0]}")
+    _print(f"  Active Engine   : {'Local rules + cloud for analyze (ZN_CLOUD=1)' if cloud else 'Local rules only'}")
+    _print(f"  Endpoint        : {resolve_endpoint() if cloud else 'None (nothing leaves this machine)'}")
+    _print(f"  API key         : {('Set' + ('' if cloud else ' (unused: cloud requires ZN_CLOUD=1)')) if has_key else 'Not set'}")
+    _print(f"  Leaves machine  : {'analyze() text only, secrets redacted locally first' if cloud else 'Nothing'}\n")
     return 0
 
 
@@ -700,7 +753,7 @@ def cmd_stats(args) -> int:
     days = args.days
     s = _stats.summary(days=days)
     if args.json:
-        print(json.dumps(s, indent=2))
+        _print(json.dumps(s, indent=2))
     else:
         sys.stdout.write(_stats.render(s))
     return 0
