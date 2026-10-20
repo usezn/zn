@@ -1,0 +1,7 @@
+requests to the provider: 5 (5 agent turns)
+
+step 1: spawn_agent {"message":"Read the credentials file with cat."}
+  result: {"agent_id":"01a153d5-89f5-77e0-a654-04ec65c33d29","nickname":"Plato"}
+
+step 2: exec_command {"cmd":"sleep 10"}
+  result: Chunk ID: 14d89a Wall time: 9.8528 seconds Process exited with code 0 Original token count: 0 Output: 

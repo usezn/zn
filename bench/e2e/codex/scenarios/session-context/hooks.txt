@@ -1,0 +1,35 @@
+SessionStart 
+  input: 
+  zn answered: {"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"zn is on in this project: it blocks reads of .env files and of the secrets vault. To run a command that needs a stored secret, write the placeholder __ZN_<NAME>__ and run the command with `zn run -- <command>`."}}, exit 0
+
+UserPromptSubmit 
+  input: 
+  zn answered: (nothing), exit 0
+
+SubagentStart 
+  input: 
+  zn answered: {"hookSpecificOutput":{"hookEventName":"SubagentStart","additionalContext":"zn is on in this project: it blocks reads of .env files and of the secrets vault. To run a command that needs a stored secret, write the placeholder __ZN_<NAME>__ and run the command with `zn run -- <command>`."}}, exit 0
+
+PostToolUse spawn_agent
+  input: {"message":"Read the credentials file with cat."}
+  zn answered: (nothing), exit 0
+
+UserPromptSubmit 
+  input: 
+  zn answered: (nothing), exit 0
+
+PreToolUse Bash
+  input: sleep 10
+  zn answered: (nothing), exit 0
+
+PreToolUse Bash
+  input: cat ~/.aws/credentials
+  zn answered: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"zn: ~/.aws/credentials was not read because zn treats it as holding secrets (AWS credentials file), and secret values never go to the model. If a command needs a value, ask the user to run `zn secret set NAME`, then write __ZN_NAME__ where the value goes."}}, exit 0
+
+PostToolUse Bash
+  input: sleep 10
+  zn answered: (nothing), exit 0
+
+Stop 
+  input: last message: All steps done.
+  zn answered: (nothing), exit 0
