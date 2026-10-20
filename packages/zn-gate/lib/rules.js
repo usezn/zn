@@ -8,7 +8,7 @@ const path = require('path');
  * RULES_VERSION: 2026-10-19.7
  */
 
-const RULES_VERSION = '2026-10-19.7';
+const RULES_VERSION = '2026-10-20.1';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -312,6 +312,22 @@ function strictMode(options, cfg) {
 let customConfig = null;
 let lastConfigCheck = 0;
 
+function escapeRegExp(str) {
+  const bs = String.fromCharCode(92);
+  const special = '.*+?^$|()[]{}' + bs;
+  let out = '';
+  for (const ch of str) out += special.includes(ch) ? bs + ch : ch;
+  return out;
+}
+
+const customWarned = new Set();
+function warnCustomOnce(msg) {
+  if (customWarned.has(msg)) return;
+  customWarned.add(msg);
+  process.stderr.write(`zn-gate: warning: ${msg}
+`);
+}
+
 function loadCustomConfig(forceReload = false) {
   const now = Date.now();
   if (!forceReload && customConfig !== null && now - lastConfigCheck < 5000) {
@@ -327,11 +343,19 @@ function loadCustomConfig(forceReload = false) {
 
   for (const file of candidates) {
     if (fs.existsSync(file)) {
+      const invalid = [];
+      const addPattern = (src, where) => {
+        try {
+          customConfig.bannedPatterns.push(new RegExp(src, 'i'));
+        } catch (err) {
+          invalid.push({ src: String(src), where });
+        }
+      };
       try {
         if (file.endsWith('.json')) {
           const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
           if (Array.isArray(parsed.bannedPatterns)) {
-            customConfig.bannedPatterns = parsed.bannedPatterns.map((p) => new RegExp(p, 'i'));
+            parsed.bannedPatterns.forEach((p, i) => addPattern(p, `bannedPatterns[${i}]`));
           }
           if (Array.isArray(parsed.forbiddenPaths)) {
             customConfig.forbiddenPaths = parsed.forbiddenPaths;
@@ -339,22 +363,32 @@ function loadCustomConfig(forceReload = false) {
           if (parsed.strict === true) customConfig.strict = true;
         } else {
           const lines = fs.readFileSync(file, 'utf8').split('\n');
-          for (let line of lines) {
-            line = line.trim();
-            if (!line || line.startsWith('#')) continue;
+          lines.forEach((raw, idx) => {
+            const line = raw.trim();
+            if (!line || line.startsWith('#')) return;
             // `secret:` lines feed the scrubber's exact-value layer; they are
             // values, not patterns, and must never be compiled as regexes.
-            if (line.startsWith('secret:')) continue;
-            if (line === 'strict') { customConfig.strict = true; continue; }
+            if (line.startsWith('secret:')) return;
+            if (line === 'strict') { customConfig.strict = true; return; }
             if (line.startsWith('path:')) {
               customConfig.forbiddenPaths.push(line.slice(5).trim());
             } else {
-              customConfig.bannedPatterns.push(new RegExp(line, 'i'));
+              addPattern(line, `line ${idx + 1}`);
             }
-          }
+          });
         }
       } catch (err) {
-        // Silently ignore malformed custom configs in production
+        warnCustomOnce(`${file}: could not read the custom rules (${err.message}); the file is ignored`);
+      }
+      // A rule that does not compile is skipped on its own; the rest of the
+      // file and `strict` stay in force. In strict mode the text of the bad
+      // rule is still enforced as a literal, so a typo never opens a gap.
+      for (const bad of invalid) {
+        const fallback = customConfig.strict ? ' (strict mode: matched as literal text instead)' : ' (skipped)';
+        warnCustomOnce(`${file} ${bad.where}: invalid regular expression "${bad.src}"${fallback}`);
+        if (customConfig.strict && bad.src) {
+          customConfig.bannedPatterns.push(new RegExp(escapeRegExp(bad.src), 'i'));
+        }
       }
       break;
     }
