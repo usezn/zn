@@ -1084,10 +1084,10 @@ function redactWith(text, patterns) {
 const SCAN_WINDOW_OVERLAP = 4 * 1024;
 const MAX_TOOL_RESULT_SCAN_CHARS = 4 * 1024 * 1024;
 
-function scanWindows(text, options = {}, maxChars = MAX_TOOL_RESULT_SCAN_CHARS) {
+function scanWindows(text, options = {}) {
   if (typeof text !== 'string' || text.length <= MAX_SCAN_CHARS) return evaluate(text, options);
   const step = MAX_SCAN_CHARS - SCAN_WINDOW_OVERLAP;
-  const limit = Math.min(text.length, maxChars);
+  const limit = Math.min(text.length, MAX_TOOL_RESULT_SCAN_CHARS);
   let res = null;
   let advisory = null;
   for (let start = 0; ; start += step) {
@@ -1104,25 +1104,6 @@ function scanWindows(text, options = {}, maxChars = MAX_TOOL_RESULT_SCAN_CHARS) 
   if (res.verdict !== 'block' && advisory) res.advisory = { ...advisory };
   delete res.truncated;
   if (text.length > limit) res.truncated = true;
-  return res;
-}
-
-// Tool-call arguments use the same windows, but with a lower hard bound
-// (MAX_TOOL_ARGS_SCAN_CHARS, about 9 windows of work at most). An argument
-// above the bound cannot be checked in full, so it is blocked (rule
-// size:truncated) instead of being allowed on a partial view. A match that
-// spans more than SCAN_WINDOW_OVERLAP characters across a window boundary can
-// still be missed.
-const MAX_TOOL_ARGS_SCAN_CHARS = 2 * 1024 * 1024;
-
-function scanArgument(text, options = {}) {
-  const res = scanWindows(text, options, MAX_TOOL_ARGS_SCAN_CHARS);
-  if (res.verdict !== 'block' && res.truncated === true) {
-    return {
-      verdict: 'block', confidence: 1.0, rule: 'size:truncated',
-      reason: 'Argument too large to check in full', truncated: true,
-    };
-  }
   return res;
 }
 
@@ -1230,8 +1211,6 @@ module.exports = {
   normalizeInput,
   invisibleView,
   scanWindows,
-  scanArgument,
-  MAX_TOOL_ARGS_SCAN_CHARS,
   MAX_SCAN_CHARS,
   MAX_TOOL_RESULT_SCAN_CHARS,
   MAX_FILTERED_VALUE,

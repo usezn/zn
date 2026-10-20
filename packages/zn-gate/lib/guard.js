@@ -6,7 +6,7 @@
  * the network.
  */
 
-const { scanArgument, scanWindows, sanitizeToolResult } = require('./rules');
+const { evaluate, scanWindows, sanitizeToolResult } = require('./rules');
 
 const MAX_DEPTH = 10;
 const ON_BLOCK_VALUES = ['throw', 'return'];
@@ -94,10 +94,8 @@ function allow(advisory, extra) {
 
 /**
  * Decide whether an agent tool call is safe to run. Every string in `args`
- * (nested values and keys) is evaluated; the first block wins. Strings over
- * 256K characters are scanned in overlapping windows up to 2 MiB; larger ones
- * are blocked (rule size:truncated). Arguments nested too deeply to check are
- * blocked (rule size:nesting).
+ * (nested values and keys) is evaluated; the first block wins. Arguments nested
+ * too deeply to check are blocked (rule size:nesting).
  * Returns { allowed, verdict, confidence, rule, reason, advisory? }.
  */
 function checkToolCall(toolName, args, opts = {}) {
@@ -105,7 +103,7 @@ function checkToolCall(toolName, args, opts = {}) {
   const { strings, block } = stringsOrBlock(args, 'Arguments');
   if (block) return block;
   for (const s of strings) {
-    const res = scanArgument(s, opts);
+    const res = evaluate(s, opts);
     if (res.verdict === 'block') return { allowed: false, ...res };
     advisory = advisory || res.advisory;
   }

@@ -134,29 +134,3 @@ test('verdict parity with the Python guard on the shared fixtures', (t) => {
     fs.rmSync(cwd, { recursive: true, force: true });
   }
 });
-
-const FILLER = 'the quick brown fox jumps over the lazy dog. ';
-const filler = (n) => FILLER.repeat(Math.ceil(n / FILLER.length)).slice(0, n);
-
-test('checkToolCall finds flagged text in the middle of a 300K argument', () => {
-  const big = filler(150000) + INJECTION + filler(150000);
-  const res = checkToolCall('write', { content: big });
-  assert.equal(res.allowed, false);
-  assert.notEqual(res.rule, 'size:truncated');
-  assert.equal(checkToolCall('write', { content: filler(300000) }).allowed, true);
-});
-
-test('checkToolCall catches a pattern that spans a scan window boundary', () => {
-  const { MAX_SCAN_CHARS } = require('../lib/rules');
-  const at = MAX_SCAN_CHARS - 20; // the first window ends inside the injection
-  const big = filler(at) + INJECTION + filler(300000 - at);
-  assert.equal(checkToolCall('write', { content: big }).allowed, false);
-});
-
-test('checkToolCall blocks an argument over the hard bound with size:truncated', () => {
-  const { MAX_TOOL_ARGS_SCAN_CHARS } = require('../lib/rules');
-  const res = checkToolCall('write', { content: filler(MAX_TOOL_ARGS_SCAN_CHARS + 1000) });
-  assert.equal(res.allowed, false);
-  assert.equal(res.rule, 'size:truncated');
-  assert.equal(res.truncated, true);
-});

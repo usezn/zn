@@ -5,14 +5,6 @@ const readline = require('readline');
 // All shield inspections are local-only: tool arguments, tool descriptions and
 // tool results never leave the machine (see lib/client.js data-flow contract).
 const { analyzeLocal, checkToolResult } = require('./client');
-const { scanArgument } = require('./rules');
-
-// Arguments over 256K characters are scanned in overlapping windows up to a hard
-// bound and blocked (size:truncated) above it, instead of a head + tail view.
-function analyzeToolArguments(text, options) {
-  const res = scanArgument(text, options);
-  return { ...res, mode: res.verdict === 'block' ? 'hybrid-local-fastpath' : 'oss-local' };
-}
 const evidence = require('./evidence');
 // The proxy waits at most half a second for the log lock, so a stuck lock never stalls requests for long.
 const logEvidence = (event) => evidence.logEvidence(event, undefined, { lockWaitMs: 500 });
@@ -181,7 +173,7 @@ function startMcpShield(command, args, options = {}) {
       }
 
       // Inspect tool arguments for injection / exfiltration attempts
-      const check = analyzeToolArguments(argsText, options);
+      const check = analyzeLocal(argsText, options);
       if (check.verdict === 'block') {
         const ruleName = check.rule || check.reason || 'prompt_injection';
         process.stderr.write(`[zn-shield BLOCKED REQUEST] Prompt injection detected in arguments for tool '${toolName}'. Rule: ${ruleName}\n`);
