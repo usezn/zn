@@ -1029,6 +1029,8 @@ function readStdin() {
 function refuseInput(agentId, why) {
   if (failModeOf({}) === 'open') {
     process.stderr.write('zn hook: ' + why + '; passed through (hooks.whenUnavailable is "allow")\n');
+    // Antigravity denies the call when the hook prints nothing, so passing it through takes an explicit answer.
+    if (agentId === 'antigravity') process.stdout.write(JSON.stringify({ decision: 'allow' }));
     return;
   }
   // Claude Code and Codex show this stderr to the model, so it never says how to

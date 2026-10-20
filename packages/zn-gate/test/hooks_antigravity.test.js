@@ -88,9 +88,80 @@ test('a command with secret placeholders is wrapped in zn run and the user is as
   assert.equal(r.output.overwrite, undefined);
 });
 
-test('events other than PreToolUse answer {}', async () => {
+test('a named event other than PreToolUse answers {} (its documented answer)', async () => {
   const r = await run(pre('run_command', { CommandLine: 'ls' }, { hookEventName: 'PostToolUse' }));
   assert.deepEqual(r.output, {});
+});
+
+const VALID = new Set(['allow', 'auto_approve', 'deny', 'ask', 'force_ask', 'deny_unless_prior_grant']);
+
+test('every answer for a tool call is an explicit decision, never {} (Antigravity denies the call on {})', async () => {
+  const calls = [
+    pre('run_command', { CommandLine: 'ls' }),
+    pre('run_command', { Cwd: '/work' }),
+    pre('zn_unknown_tool', {}),
+    pre('view_file', {}),
+    { conversationId: 'c1' }, // not a tool call, no event name
+  ];
+  for (const raw of calls) {
+    const r = await run(raw);
+    assert.ok(r.output && VALID.has(r.output.decision), JSON.stringify(raw) + ' -> ' + JSON.stringify(r.output));
+    if (r.output.decision === 'deny') assert.ok(r.output.reason, 'a deny carries a reason');
+  }
+});
+
+test('an internal error answers deny with a plain reason (fail-closed), not nothing', async () => {
+  const broken = { id: 'antigravity', normalize: () => { throw new Error('boom'); }, respond: agy.respond };
+  const r = await runner.handle(broken, pre('run_command', { CommandLine: 'ls' }), { engine: fakeEngine, vault: createFakeVault(), failMode: 'closed' });
+  assert.equal(r.output.decision, 'deny');
+  assert.ok(typeof r.output.reason === 'string' && r.output.reason.length > 10);
+  // with hooks.whenUnavailable "allow" and a failure other than a missing engine, it is still a deny
+  const r2 = agy.respond({ decision: 'allow', event: null });
+  assert.equal(r2.decision, 'deny');
+  assert.ok(r2.reason);
+});
+
+test('main: input that cannot be read prints a deny decision as JSON on stdout', async () => {
+  const chunks = [];
+  const orig = process.stdout.write;
+  const code = process.exitCode;
+  process.stdout.write = (c) => { chunks.push(String(c)); return true; };
+  try {
+    await runner.main(['antigravity'], async () => 'this is not json');
+    await runner.main(['antigravity'], async () => '');
+  } finally { process.stdout.write = orig; process.exitCode = code; }
+  assert.equal(chunks.length, 2);
+  for (const c of chunks) {
+    const o = JSON.parse(c);
+    assert.equal(o.decision, 'deny');
+    assert.ok(o.reason);
+  }
+});
+
+test('selfCheck: passes for a hook that answers allow; fails for nothing, {}, text, deny and a missing command', () => {
+  const node = JSON.stringify(process.execPath);
+  const say = (js) => node + ' -e ' + JSON.stringify(js);
+  assert.equal(agy.selfCheck(say("process.stdin.resume();process.stdin.on('end',()=>console.log(JSON.stringify({decision:'allow'})))")).ok, true);
+  assert.equal(agy.selfCheck(say('0')).ok, false);
+  assert.equal(agy.selfCheck(say("console.log('{}')")).ok, false);
+  assert.equal(agy.selfCheck(say("console.log('hello')")).ok, false);
+  const denied = agy.selfCheck(say("console.log(JSON.stringify({decision:'deny',reason:'nope'}))"));
+  assert.equal(denied.ok, false);
+  assert.match(denied.detail, /deny/);
+  assert.equal(agy.selfCheck('zn-no-such-command-xyz').ok, false);
+});
+
+test('install with selfCheck runs the real hook once: ok, and a broken command is reported with a next step', (t) => {
+  const home = tempDir(t, 'zn-agy-sc-');
+  const good = agy.install({ scope: 'user', home, selfCheck: true, env: { ...process.env, HOME: home, USERPROFILE: home } });
+  assert.equal(good.selfCheck.ok, true, JSON.stringify(good.selfCheck));
+  assert.ok(good.warnings.some((w) => /Self-check passed/.test(w)));
+  const dir = tempDir(t, 'zn-agy-sc2-');
+  const bad = agy.install({ scope: 'project', projectDir: dir, command: 'zn-no-such-command-xyz', selfCheck: true });
+  assert.equal(bad.selfCheck.ok, false);
+  assert.ok(bad.warnings.some((w) => /SELF-CHECK FAILED/.test(w) && /Next step/.test(w)));
+  const plain = agy.install({ scope: 'project', projectDir: dir });
+  assert.equal(plain.selfCheck, undefined);
 });
 
 test('deny: the agent cannot edit the files that switch the hook off', async () => {

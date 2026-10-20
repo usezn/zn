@@ -288,6 +288,10 @@ This usually happens after Node.js is upgraded, moved or removed (for example wi
 (`npx -y zn-gate check`, then `npm install -g zn-gate` and `zn hooks install <agent>`, or turning zn off for that agent
 until it is fixed), is in [upgrading.md](upgrading.md#nodejs-was-upgraded-moved-or-removed-nvm-fnm-homebrew).
 
+## Antigravity: if the zn hook cannot run
+
+Antigravity (experimental) is not a column in the table above. What we observed in our own tests (Windows, Antigravity IDE and CLI, 2026-10-20): a PreToolUse hook that cannot start, prints nothing, prints text that is not JSON, or prints `{}` makes Antigravity deny every tool call, with an empty reason. So a broken zn hook stops the agent instead of letting calls run unchecked. Not tested: a hook that times out, and organization settings that turn hooks off. zn fails closed too: it prints an explicit allow or deny for every event, and an internal error becomes a deny with a plain reason. `zn hooks install antigravity` starts the hook once with a harmless test event and reports if it does not answer with a valid decision. Antigravity runs file searches through the shell, so zn checks them as commands (see [the Antigravity page](editors/antigravity.md)).
+
 ## Limits that apply to every agent
 
 - **An event zn cannot read is refused.** Empty stdin, or stdin that is not

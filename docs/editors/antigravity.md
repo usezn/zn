@@ -42,7 +42,7 @@ npx -y zn-gate init
 zn hooks install antigravity
 ```
 
-This writes the hook to `~/.gemini/config/hooks.json` for your user. Add `--project` to write `.agents/hooks.json` in the current project instead; a project hook runs `zn` from your `PATH`, so everyone who opens the project in Antigravity needs zn-gate installed. zn-gate keeps a backup of a file it changes, and `zn hooks uninstall antigravity` removes the hook. Then run `npx -y zn-gate check`, which reports whether the Antigravity hook works.
+This writes the hook to `~/.gemini/config/hooks.json` for your user. Add `--project` to write `.agents/hooks.json` in the current project instead; a project hook runs `zn` from your `PATH`, so everyone who opens the project in Antigravity needs zn-gate installed. zn-gate keeps a backup of a file it changes, and `zn hooks uninstall antigravity` removes the hook. `zn hooks install antigravity` also starts the hook once with a harmless test event and tells you if it does not answer with a valid decision. If it says `SELF-CHECK FAILED`, follow the next step it prints (usually `npm install -g zn-gate`, then install again) before you use Antigravity. Then run `npx -y zn-gate check`, which reports whether the Antigravity hook works.
 
 ## What zn-gate protects in Antigravity, and what it does not
 
@@ -60,7 +60,9 @@ This writes the hook to `~/.gemini/config/hooks.json` for your user. Add `--proj
 
 Things to know:
 
-- **It is experimental.** It is built from Antigravity's public documentation. Antigravity does not document what happens when a hook crashes or times out, so zn-gate cannot promise that such a call is blocked.
+- **It is experimental.** It is built from Antigravity's public documentation and from our own tests on Windows (Antigravity IDE and CLI, October 2026).
+- **If the zn hook cannot run, Antigravity blocks the tool call.** In our tests, a hook that failed to start, printed nothing, printed text that is not JSON, or printed `{}` made Antigravity deny every tool call, with an empty reason. That is the safe direction, but it stops the agent until the hook is repaired (`npx -y zn-gate check` shows how). zn-gate itself always answers with an explicit allow or deny, and if it fails inside, it denies with a plain reason. **Not tested:** a hook that runs past its time limit, and whether an organization can turn hooks off. We do not know what Antigravity does in those cases, so do not rely on a blocked call there.
+- **Search runs through the shell.** In our tests the agent's file search ran as a shell command (`run_command`), including over files that `.gitignore` excludes, such as a `.env`. zn-gate therefore checks it as a command, not as a file read, so a search is covered only as far as the command checks go.
 - **Values can still reach the model.** A value printed by a command, or found in a file the agent is allowed to read, is not removed. Keep secrets in the vault.
 - **A tool that names no command and no file path**, or that zn-gate does not recognise, is left to Antigravity's own rules. A shell or file tool whose command or file zn-gate cannot read is refused.
 - **Which files the agent cannot edit:** `.agents/hooks.json` in a project, `~/.gemini/config/hooks.json` and `~/.gemini/antigravity-cli/settings.json`.
