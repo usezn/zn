@@ -37,7 +37,7 @@ that service.
 
 | Branch | Purpose |
 | --- | --- |
-| `main` | What is published. Every release is cut from `main` or from a `release/X.Y.Z` branch made from it. |
+| `main` | What is published. A weekly release is cut on a `release/X.Y.0` branch made from `next` at the freeze; a patch release on a `release/X.Y.Z` branch made from `main`. |
 | `next` | Integration branch. Pull requests target `next`. |
 | `release/X.Y.Z` | A release being prepared: a version bump, release notes and, for a patch release, only the fixes it ships. |
 
@@ -103,7 +103,7 @@ severity security fixes, go into `next` and ship in the next weekly release with
 their advisory.
 
 1. A maintainer prepares the release on a `release/X.Y.Z` branch made from
-   `next`: version numbers in every package and the `## [X.Y.Z]` section of the
+   `next` (from `main` for a patch release outside the weekly schedule): version numbers in every package and the `## [X.Y.Z]` section of the
    changelog, with a pull request into `main` that must pass the required CI
    checks. In the same pull request, every public surface that describes
    zn-gate is brought in line: the npm, PyPI and MCP Registry descriptions, the

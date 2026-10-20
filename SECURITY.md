@@ -94,6 +94,7 @@ We gratefully acknowledge independent security researchers who have helped prote
 
 ## Security Advisories
 
+* [GHSA-qwh8-5vj5-mvj8](https://github.com/usezn/zn/security/advisories/GHSA-qwh8-5vj5-mvj8) — *zn-gate for Node.js 1.2.3 to 1.12.0: shield, check_tool_result and optional cloud analysis did not redact some provider token formats (fixed in 1.13.0)*
 * [GHSA-rccq-h3xc-j9qj](https://github.com/usezn/zn/security/advisories/GHSA-rccq-h3xc-j9qj) — *zn-gate agent hooks for Node.js 1.5.0 to 1.11.0: a protected file reached indirectly, or a command too long or slow to check, could be read or run without being checked (fixed in 1.12.0)*
 * [GHSA-9v62-q43j-crjm](https://github.com/usezn/zn/security/advisories/GHSA-9v62-q43j-crjm) — *zn-gate agent hooks for Node.js 1.5.0-beta.1 to 1.8.0: a crafted `.env`, `.npmrc` or `.znrules` file could make the secret scrubber time out and let tool output through unscrubbed (fixed in 1.8.1)*
 * [GHSA-f927-55cp-x265](https://github.com/usezn/zn/security/advisories/GHSA-f927-55cp-x265) — *zn-gate agent hooks for Node.js 1.5.0-beta.1 to 1.8.0: a crafted Codex CLI patch could write to protected files without being checked (fixed in 1.8.1)*

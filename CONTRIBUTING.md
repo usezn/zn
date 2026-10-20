@@ -9,7 +9,7 @@ How the project is maintained, how pull requests are reviewed and how releases a
 `zn` is designed as a local-first security gate with minimal dependencies:
 - `packages/zn-gate/`: Node.js SDK, CLI, MCP Server, and stdio Shield proxy. Its only runtime dependency is `age-encryption` (with its `@noble`/`@scure` dependencies) for the secret vault, bundled in the package.
 - `packages/zn-gate-py/`: Python SDK, CLI, and agent framework integrations (Python standard library only).
-- `src/`: legacy Rust gateway (see [docs/rust-core.md](docs/rust-core.md)); not released and not built in CI.
+- `src/`: legacy Rust gateway (see [docs/rust-core.md](docs/rust-core.md)); not released as a package. CI builds, tests and lints it ([rust.yml](.github/workflows/rust.yml)).
 
 ## Development Setup
 
