@@ -406,6 +406,7 @@
   "find . -name node_modules -type d -prune -exec rm -rf {} +",
   "find . -type f -empty -delete",
   "find / -name \"*.orig\" -type f 2>/dev/null",
+  "find /home/alice/project/../other -delete",
   "find /tmp -mtime +7 -delete",
   "find /var/log -name \"*.gz\" -mtime +14 -delete",
   "find ~ -name \"*.bak\" -mtime +30 -delete",
@@ -753,9 +754,13 @@
   "rm -rf \"${TMPDIR:-/tmp}/zn-test\"",
   "rm -rf $HOME/.cache/yarn",
   "rm -rf $HOME/.config/example-app",
+  "rm -rf $HOME/project/../work/tmp",
   "rm -rf $WORKDIR/out",
+  "rm -rf ../../build",
+  "rm -rf ../build",
   "rm -rf ../tmp",
   "rm -rf ./dist ./build",
+  "rm -rf ./project/../build",
   "rm -rf .cache node_modules",
   "rm -rf .git/hooks/pre-commit.sample",
   "rm -rf .next .gradle",
@@ -768,14 +773,21 @@
   "rm -rf /Library/Developer/CommandLineTools",
   "rm -rf /etc/apt/sources.list.d/example.list",
   "rm -rf /home/$USER/.cache/pip",
+  "rm -rf /home/alice/project/../other",
+  "rm -rf /home/alice/project/./build",
+  "rm -rf /home/alice/project/sub/../build",
   "rm -rf /home/runner/work/_temp",
   "rm -rf /home/runner/work/_temp/*",
   "rm -rf /srv/www/old-site",
   "rm -rf /tmp",
+  "rm -rf /tmp/../tmp/build",
   "rm -rf /usr/local/go && tar -C /usr/local -xzf go1.23.linux-amd64.tar.gz",
   "rm -rf /usr/share/doc/example",
+  "rm -rf /var/../var/tmp/build",
   "rm -rf /var/lib/apt/lists/*",
   "rm -rf /var/tmp/zn",
+  "rm -rf C:/Users/alice/project/../other",
+  "rm -rf C:\\Users\\alice\\project\\.\\build",
   "rm -rf __pycache__ obj",
   "rm -rf __pycache__ out",
   "rm -rf bin/Debug .next",
@@ -785,6 +797,7 @@
   "rm -rf bin/Debug tmp",
   "rm -rf build bin/Debug",
   "rm -rf build node_modules",
+  "rm -rf build/..",
   "rm -rf coverage .tox",
   "rm -rf coverage target",
   "rm -rf coverage vendor",
@@ -805,6 +818,7 @@
   "rm -rf tmp out",
   "rm -rf ~/.cache/pip",
   "rm -rf ~/Library/Caches/com.example.app",
+  "rm -rf ~/project/../project/build",
   "rm -rv .cache .tox",
   "rm -rv .cache __pycache__",
   "rm -rv .cache node_modules",
@@ -2722,6 +2736,10 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "Remove-Item -Recurse -Force $HOME\\project\\..",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "Remove-Item -Recurse -Force $env:USERPROFILE",
    "rule": "rm_root_home"
   },
@@ -2739,6 +2757,10 @@
   },
   {
    "cmd": "Remove-Item -Recurse -Force C:\\Users\\alice",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "Remove-Item -Recurse -Force C:\\Users\\alice\\project\\..",
    "rule": "rm_root_home"
   },
   {
@@ -2926,6 +2948,10 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "find /home/alice/project/.. -delete",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "find ~ -delete",
    "rule": "rm_root_home"
   },
@@ -3038,11 +3064,27 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "rm -rf \"$HOME/project/..\"",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "rm -rf $HOME 2>/dev/null",
    "rule": "rm_root_home"
   },
   {
    "cmd": "rm -rf $HOME/",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf $HOME/../alice",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf $HOME/project/..",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf ${HOME}/a/b/../..",
    "rule": "rm_root_home"
   },
   {
@@ -3074,6 +3116,18 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "rm -rf /..",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf /../..",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf //home//alice//project//..",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "rm -rf /Library",
    "rule": "rm_root_home"
   },
@@ -3082,7 +3136,19 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "rm -rf /Users/bob/project/..",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "rm -rf /etc 2>/dev/null",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf /etc/../etc/..",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf /home/../",
    "rule": "rm_root_home"
   },
   {
@@ -3090,7 +3156,51 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "rm -rf /home/alice/..",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf /home/alice/../..",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf /home/alice/./project/../",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf /home/alice/project/../..",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "rm -rf /root",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf /tmp/../",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf /usr/..",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf /usr/../*",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf C:/..",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf C:/Users/alice/..",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf C:/Users/alice/project/..",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf C:\\Users\\alice\\project\\..",
    "rule": "rm_root_home"
   },
   {
@@ -3111,6 +3221,18 @@
   },
   {
    "cmd": "rm -rf ~/* 2>/dev/null",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf ~/..",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf ~/./",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf ~/project/..",
    "rule": "rm_root_home"
   },
   {
@@ -3195,6 +3317,10 @@
   },
   {
    "cmd": "sudo rm -rf /etc",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo rm -rf /home/alice/project/../..",
    "rule": "rm_root_home"
   },
   {

@@ -265,11 +265,41 @@ def _unwrap(args: List[str]) -> List[str]:
     return args[i:]
 
 
+def _resolve_dots(t: str) -> str:
+    """Resolve "." and ".." lexically (no filesystem) for a path that starts at "/", a drive or a home word.
+    A ".." above "/" or a drive root stays there; a ".." out of the home folder names its parent. Relative paths are left alone."""
+    if not re.search(r"(?:^|/)\.\.?(?:/|\Z)", t):
+        return t
+    home = False
+    drive = re.match(r"^[A-Za-z]:(?:/|\Z)", t)
+    if t.startswith("/"):
+        anchor, rest = "/", t[1:]
+    elif drive:
+        anchor, rest = t[:2] + "/", t[drive.end():]
+    else:
+        first = t.split("/")[0]
+        if first.lower() not in _HOME_WORDS:
+            return t
+        anchor, rest, home = first + "/", t[len(first) + 1:], True
+    out = []
+    for seg in rest.split("/"):
+        if seg in ("", "."):
+            continue
+        if seg != "..":
+            out.append(seg)
+        elif out:
+            out.pop()
+        elif home:
+            return "/home"
+    return anchor + "/".join(out)
+
+
 def _dangerous_path(word: str) -> str:
     """'root', 'home' or 'system' for a path this policy protects, else ''."""
     t = re.sub(r"/{2,}", "/", str(word).replace("\\", "/"))
     if not t:
         return ""
+    t = _resolve_dots(t)
     for _ in range(4):
         s = re.sub(r"/(?:\*|\.\*|\.|\{\*,\.\*\})?\Z", "", t, count=1)
         if s == t and len(t) > 1 and t.endswith("*"):

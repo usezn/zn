@@ -138,10 +138,36 @@ function unwrap(args) {
   return args.slice(i);
 }
 
+/* Resolves "." and ".." segments lexically (no filesystem) for a path that starts at a known point: "/", a drive, or a home word.
+   A ".." above "/" or a drive root stays there; a ".." that steps out of the home folder names its parent. Relative paths are left alone. */
+function resolveDots(t) {
+  if (!/(?:^|\/)\.\.?(?:\/|$)/.test(t)) return t;
+  let anchor = '';
+  let rest = t;
+  let home = false;
+  const drive = /^[A-Za-z]:(?:\/|$)/.exec(t);
+  if (t.startsWith('/')) { anchor = '/'; rest = t.slice(1); }
+  else if (drive) { anchor = t.slice(0, 2) + '/'; rest = t.slice(drive[0].length); }
+  else {
+    const first = t.split('/')[0];
+    if (!HOME_WORDS.has(first.toLowerCase())) return t;
+    anchor = first + '/'; rest = t.slice(first.length + 1); home = true;
+  }
+  const out = [];
+  for (const seg of rest.split('/')) {
+    if (seg === '' || seg === '.') continue;
+    if (seg !== '..') { out.push(seg); continue; }
+    if (out.length) out.pop();
+    else if (home) return '/home';
+  }
+  return anchor + out.join('/');
+}
+
 /* The dangerous path a word names, as 'root', 'home' or 'system', or ''. */
 function dangerousPath(word) {
   let t = String(word).replace(/\\/g, '/').replace(/\/{2,}/g, '/');
   if (!t) return '';
+  t = resolveDots(t);
   // Trailing "/", "/*", "/.*", "/." and a bare "*" (a PowerShell "~\*" reaches the tokenizer as "~*") name the same folder.
   for (let n = 0; n < 4; n++) {
     let s = t.replace(/\/(?:\*|\.\*|\.|\{\*,\.\*\})?$/, '');

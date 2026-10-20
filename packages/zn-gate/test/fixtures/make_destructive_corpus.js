@@ -45,6 +45,8 @@ const BUILD_DIRS = ['node_modules', 'dist', 'build', 'target', '.venv', '.next',
 for (const [flag, a, b] of product(['-rf', '-fr', '-r', '-Rf', '-rv', '--recursive --force'], BUILD_DIRS, BUILD_DIRS).filter(() => rnd(7) === 0)) {
   add(pick(PREFIXES) + 'rm ' + flag + ' ' + a + ' ' + b);
 }
+add('rm -rf /home/alice/project/../other', 'rm -rf /home/alice/project/./build', 'rm -rf /home/alice/project/sub/../build', 'rm -rf ~/project/../project/build', 'rm -rf $HOME/project/../work/tmp', 'rm -rf /tmp/../tmp/build', 'rm -rf /var/../var/tmp/build',
+  'rm -rf ../build', 'rm -rf ../../build', 'rm -rf ./project/../build', 'rm -rf build/..', 'rm -rf C:/Users/alice/project/../other', 'rm -rf C:\\Users\\alice\\project\\.\\build', 'find /home/alice/project/../other -delete');
 add('rm -rf node_modules dist build target .venv', 'rm -rf node_modules package-lock.json && npm install', 'rm -rf ./dist ./build',
   'rm -rf dist && npm run build', 'rm -rf .git/hooks/pre-commit.sample', 'rm -f *.log', 'rm -f build.log', 'rm -r old_notes/', 'rm file.txt',
   'rm -i draft.md', 'rmdir empty_dir', 'rm -rf "$BUILD_DIR"', 'rm -rf $WORKDIR/out', 'rm -rf "${TMPDIR:-/tmp}/zn-test"');
@@ -164,6 +166,15 @@ for (const t of ['~', '/', '$HOME', '/etc', '~/*', '/home/alice']) {
   addRisk('rm_root_home', 'find ' + t + ' -exec rm -rf {} +');
 }
 addRisk('rm_root_home', 'rm -rf node_modules ~');
+// "." and ".." segments that resolve to the home folder or the root (lexically; example paths only).
+for (const t of ['/home/alice/..', '/home/alice/../..', '/home/alice/project/../..', '/home/alice/./project/../', '/Users/bob/project/..', '/usr/..', '/usr/../*', '/etc/../etc/..', '/..', '/../..', '/home/../', '/tmp/../',
+  '~/project/..', '~/./', '~/..', '$HOME/project/..', '"$HOME/project/.."', '${HOME}/a/b/../..', '$HOME/../alice', '//home//alice//project//..', 'C:/Users/alice/project/..', 'C:/Users/alice/..', 'C:/..', 'C:\\Users\\alice\\project\\..']) {
+  addRisk('rm_root_home', 'rm -rf ' + t);
+}
+addRisk('rm_root_home', 'sudo rm -rf /home/alice/project/../..');
+addRisk('rm_root_home', 'find /home/alice/project/.. -delete');
+addRisk('rm_root_home', 'Remove-Item -Recurse -Force $HOME\\project\\..');
+addRisk('rm_root_home', 'Remove-Item -Recurse -Force C:\\Users\\alice\\project\\..');
 addRisk('rm_root_home', 'rm -rf build /');
 addRisk('rm_root_home', 'rm -rf ./build ~/');
 for (const c of ['Remove-Item -Recurse -Force ~', 'Remove-Item -Recurse -Force C:\\ ','Remove-Item -Recurse -Force $HOME', 'Remove-Item -Recurse -Force $env:USERPROFILE', 'Remove-Item -Recurse -Force $env:USERPROFILE\\*', 'Remove-Item -Force -Recurse C:\\',
