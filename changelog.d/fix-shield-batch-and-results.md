@@ -1,0 +1,2 @@
+### Security
+- `zn-gate shield` now checks every message of a JSON-RPC batch the way it checks a single message, and no longer passes on lines that are not valid JSON (the shield drops them and says so on stderr). It also scans every text field of a tool result, not only text items: embedded resources, resource links, `structuredContent` and error responses are checked for injected instructions and redacted for secrets.
