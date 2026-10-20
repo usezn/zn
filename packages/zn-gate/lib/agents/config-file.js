@@ -91,7 +91,7 @@ function hookCommand(agentId, opts = {}) {
  */
 function hookCommandWindows(agentId, opts = {}) {
   if ((opts.scope || 'user') === 'project') return 'zn hook ' + agentId;
-  return windowsCommand(opts.nodePath || process.execPath, [opts.runnerPath || runnerPath()], [agentId]);
+  return windowsCommand(opts.nodePath || process.execPath, [opts.runnerPath || runnerPath()], [agentId], { encoded: opts.encodedCommand === true });
 }
 
 /**
