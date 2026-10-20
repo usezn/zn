@@ -1,0 +1,2 @@
+### Security
+- On Windows the vault folders (`~/.zn`, `vault/`, `run/`) and the files in them, including the daemon's `session.key`, now get an owner-only permission list that does not inherit from the parent folder. This closes a gap when `ZN_HOME` points outside your user profile (for example C:/zn), where other local users could read the session key and use the daemon. If the permissions cannot be set, zn warns inside your profile and refuses to store secrets outside it.

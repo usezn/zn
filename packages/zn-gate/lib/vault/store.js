@@ -15,7 +15,10 @@
  *
  * Files are written atomically (temporary file + rename) with mode 0600.
  * On POSIX the directories are checked to be owned by the current user and
- * closed to group and others; anything else is refused.
+ * closed to group and others; anything else is refused. On Windows each
+ * directory and file gets an owner-only ACL (icacls, inheritance removed);
+ * when that fails outside the user profile (a custom ZN_HOME such as C:/zn,
+ * where inherited ACLs can let other local users in) nothing is written.
  *
  * Encryption: age X25519 recipients (age-encryption, by Filippo Valsorda);
  * scrypt recipients for the passphrase fallback. No custom cryptography.
@@ -26,6 +29,7 @@ const { trimTrailing } = require('../linear-text');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
+const childProcess = require('child_process');
 const { CODES, znError } = require('../errors');
 
 const PROJECT_FILE_RE = /^[0-9a-f]{32}\.age$/;
@@ -79,9 +83,64 @@ function projectFile(project, opts) {
 /* Permissions                                                         */
 /* ------------------------------------------------------------------ */
 
+const aclDone = new Set();
+
+function winSystemExe(name) {
+  const root = process.env.SystemRoot || process.env.windir || 'C:/Windows';
+  return path.win32.join(root, 'System32', name);
+}
+
+/** SID of the current user, from `whoami /user` (no name quoting issues). */
+function currentUserSid() {
+  const out = childProcess.execFileSync(winSystemExe('whoami.exe'), ['/user', '/fo', 'csv', '/nh'], {
+    encoding: 'utf8', windowsHide: true, timeout: 15000, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const m = /S-1-\d+(?:-\d+)+/.exec(String(out));
+  if (!m) throw new Error('could not read the user SID');
+  return m[0];
+}
+
+function insideUserProfile(target) {
+  const norm = (p) => path.resolve(p).toLowerCase();
+  const rel = path.relative(norm(os.homedir()), norm(target));
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+/**
+ * Windows: make `target` owner-only. Inheritance is removed and only the
+ * current user's SID gets full control (SYSTEM is not granted: the daemon and
+ * Credential Manager both run as the user). Returns true on success; on
+ * failure it warns and returns false.
+ */
+function restrictToOwner(target, isDir) {
+  if (aclDone.has(target)) return true;
+  try {
+    const sid = currentUserSid();
+    const perm = '*' + sid + (isDir ? ':(OI)(CI)F' : ':F');
+    childProcess.execFileSync(winSystemExe('icacls.exe'), [target, '/inheritance:r', '/grant:r', perm], {
+      windowsHide: true, timeout: 30000, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    aclDone.add(target);
+    return true;
+  } catch (err) {
+    process.stderr.write('[zn] warning: could not restrict ' + target + ' to your user (icacls: ' +
+      String((err && err.message) || err).split('\n')[0].slice(0, 120) + ').\n');
+    return false;
+  }
+}
+
+/** Windows: owner-only ACL, or refuse when it failed outside the user profile. */
+function protectWindows(target, isDir) {
+  if (restrictToOwner(target, isDir)) return;
+  if (!insideUserProfile(target)) {
+    throw znError(CODES.POLICY_DENIED, 'could not restrict ' + target + ' to your user and it is outside your user ' +
+      'profile; refusing to store secrets there. Use a folder inside your profile (unset ZN_HOME) or fix the permissions.');
+  }
+}
+
 function ensurePrivateDir(dir) {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  if (process.platform === 'win32') return; // user profile ACLs apply
+  if (process.platform === 'win32') { protectWindows(dir, true); return; }
   const st = fs.lstatSync(dir);
   if (!st.isDirectory() || st.isSymbolicLink()) throw znError(CODES.POLICY_DENIED, 'not a directory: ' + dir);
   if (typeof process.getuid === 'function' && st.uid !== process.getuid()) {
@@ -170,6 +229,7 @@ function writePrivateFile(file, data) {
     fs.closeSync(fd);
   }
   try {
+    if (process.platform === 'win32') protectWindows(tmp, false);
     fs.renameSync(tmp, file);
   } catch (err) {
     try { fs.unlinkSync(tmp); } catch (e) { /* ignore */ }
