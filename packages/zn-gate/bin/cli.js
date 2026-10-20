@@ -898,7 +898,7 @@ async function main() {
     process.exit(0);
   }
 
-  if (args.includes('-V') || args.includes('--version') || args[0] === 'version') {
+  if (args.includes('-V') || args.includes('--version') || args[0] === 'version' || args[0] === '-v') {
     process.stdout.write(`zn-gate ${VERSION} (rules engine: ${RULES_VERSION}; scrub rules: ${SCRUB_RULES_VERSION}; audit rules: ${AUDIT_RULES_VERSION})\n`);
     process.exit(0);
   }
@@ -1191,6 +1191,24 @@ ${sym(process.env, '🛡️', undefined, '  ')}zn-gate Status:
           mcpCommand: mcp && mcp.command ? [mcp.command, ...(Array.isArray(mcp.args) ? mcp.args : [])] : null,
         });
         for (const n of notes) process.stdout.write('  Claude Code     : ' + n + '\n');
+        if (notes.length) process.stdout.write('\n');
+      }
+    } catch (_) { /* status never fails on this check */ }
+    // zn installed through the organization's managed configuration (read-only).
+    try {
+      const mp = require('../lib/agents/managed-policy');
+      for (const [id, label] of [['claude-code', 'Claude Code'], ['codex', 'Codex CLI'], ['cursor', 'Cursor']]) {
+        let there = false;
+        try { there = Boolean(require('../lib/agents').getAdapter(id).detect()); } catch (_) { there = false; }
+        const m = there ? mp.managedInstall(id) : null;
+        if (m) process.stdout.write('  ' + label.padEnd(16) + ': zn is installed (managed): ' + m.files.join(', ') + '\n\n');
+      }
+    } catch (_) { /* status never fails on this check */ }
+    // Cursor's enterprise hooks.json (read-only).
+    try {
+      if (require('../lib/agents/cursor').detect()) {
+        const notes = require('../lib/agents/managed-policy').cursorPolicyWarnings();
+        for (const n of notes) process.stdout.write('  Cursor          : ' + n + '\n');
         if (notes.length) process.stdout.write('\n');
       }
     } catch (_) { /* status never fails on this check */ }
