@@ -1,0 +1,350 @@
+[
+  {
+    "platforms": [
+      "linux",
+      "darwin"
+    ],
+    "test": "^a batch file runs through the system cmd\\.exe even when ComSpec points elsewhere$",
+    "reason": "Windows only (the test only runs on Windows)"
+  },
+  {
+    "platforms": [
+      "linux",
+      "darwin"
+    ],
+    "test": "^znCommand: Windows finds zn\\.cmd through PATHEXT and not an extensionless shim$",
+    "reason": "PATHEXT lookup only applies on Windows (the test only runs on Windows)"
+  },
+  {
+    "platforms": [
+      "linux",
+      "darwin"
+    ],
+    "test": "^a \\.env file is refused however a Windows shell spells and reads it$",
+    "reason": "Windows path spellings (the test only runs on Windows)"
+  },
+  {
+    "platforms": [
+      "linux",
+      "darwin"
+    ],
+    "test": "^an ordinary file spelled and read the Windows ways is allowed$",
+    "reason": "Windows path spellings (the test only runs on Windows)"
+  },
+  {
+    "platforms": [
+      "linux",
+      "darwin"
+    ],
+    "test": "^a \\.env named through a drive-relative or profile path is refused on Windows$",
+    "reason": "Windows path spellings (the test only runs on Windows)"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^--include-home does not follow a link on a parent folder out of home$",
+    "reason": "symbolic links need privileges on Windows"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^--include-home follows a symbolic link inside the home folder and not one that leaves it$",
+    "reason": "symbolic links need privileges on Windows"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^--remember never waits on a pipe or a device standing in for the memory file$",
+    "reason": "POSIX-only check (file modes, links, FIFOs or signals); the test skips itself on Windows"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^a \\.env that is a link is reported, not read$",
+    "reason": "POSIX-only check (file modes, links, FIFOs or signals); the test skips itself on Windows"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^a \\.gitignore that is /dev/zero or a FIFO does not stall the scan$",
+    "reason": "POSIX file types"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^a directory that cannot be written: warns, does not throw$",
+    "reason": "POSIX-only check (file modes, links, FIFOs or signals); the test skips itself on Windows"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^a link inside the project to a credential file is the credential file$",
+    "reason": "POSIX-only check (file modes, links, FIFOs or signals); the test skips itself on Windows"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^a link outside the repository that points back into it is not \"outside\"$",
+    "reason": "POSIX file types"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^a lock path that cannot be read does not spin the CPU while waiting$",
+    "reason": "POSIX-only check (file modes, links, FIFOs or signals); the test skips itself on Windows"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^a log that is readable but not writable: warns, writes nothing, does not throw$",
+    "reason": "POSIX-only check (file modes, links, FIFOs or signals); the test skips itself on Windows"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^a name with a newline or invisible characters cannot start a fake line in the report$",
+    "reason": "POSIX-only check (file modes, links, FIFOs or signals); the test skips itself on Windows"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^a program inside the project is refused, also when the project is reached through a symlink$",
+    "reason": "POSIX-only check (file modes, links, FIFOs or signals); the test skips itself on Windows"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^a rewritten Bash command \\(zn run prefix\\) runs with literal paths$",
+    "reason": "needs bash"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^agentAncestor: a real process started through a program called claude is found; one called code is not$",
+    "reason": "POSIX-only check (file modes, links, FIFOs or signals); the test skips itself on Windows"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^an approved overwrite of a file with other hard links is refused, and the other name is untouched$",
+    "reason": "POSIX-only check (file modes, links, FIFOs or signals); the test skips itself on Windows"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^audit: an unreadable config file is reported as skipped, not as an error$",
+    "reason": "POSIX-only check (file modes, links, FIFOs or signals); the test skips itself on Windows"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^check: a project file that is a FIFO or a symlink is not read, and relative PATH entries are ignored$",
+    "reason": "POSIX-only check (file modes, links, FIFOs or signals); the test skips itself on Windows"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^config files: a symlinked file is written through, its mode is kept, and bad content is refused$",
+    "reason": "POSIX-only check (file modes, links, FIFOs or signals); the test skips itself on Windows"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^CVE case: CVE-2026-63093 variant: executable script named node in the root$",
+    "reason": "not on win32"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^ensureLayout creates home, vault and run directories$",
+    "reason": "POSIX modes"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^ensurePrivateDir closes a directory that was open to group and others$",
+    "reason": "POSIX modes"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^ensurePrivateDir refuses a symbolic link in place of a directory$",
+    "reason": "symlinks need privileges on Windows"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^evidence ledger - directory is 0700 and file is 0600 on POSIX$",
+    "reason": "POSIX-only check (file modes, links, FIFOs or signals); the test skips itself on Windows"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^guide: any other npm failure keeps the plain message$",
+    "reason": "EACCES is a POSIX failure"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^guide: npm failing with EACCES gives a clear next step, never sudo$",
+    "reason": "EACCES is a POSIX failure"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^hook commands run in sh and bash with every argument literal$",
+    "reason": "needs sh"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^Monitor: no command can step out of the scrubber pipe$",
+    "reason": "needs bash"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^original file mode survives the umask$",
+    "reason": "POSIX modes only"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^permissionFailure: a global folder that is not writable counts, a missing one does not$",
+    "reason": "EACCES is a POSIX failure"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^PowerShell reading an sh-quoted command runs nothing from the paths$",
+    "reason": "pwsh not installed"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^PowerShell: quoted paths and the PowerShell wrapper run literally in pwsh$",
+    "reason": "pwsh not installed"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^readPrivateFile refuses a symbolic link$",
+    "reason": "symlinks need privileges on Windows"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^scan text output escapes control characters in directory and file names$",
+    "reason": "filesystem refuses control characters in names: ENOENT"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^scan text output escapes control characters in the path of a finding and in an empty target$",
+    "reason": "filesystem refuses control characters in names: ENOENT"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^secrets_render_file: a directory swapped for a link before the file is opened writes nothing outside$",
+    "reason": "POSIX-only check (file modes, links, FIFOs or signals); the test skips itself on Windows"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^secrets_render_file: an approved overwrite replaces the file in place with mode 0600$",
+    "reason": "POSIX-only check (file modes, links, FIFOs or signals); the test skips itself on Windows"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^secrets_render_file: the approved location is checked again after the user answers$",
+    "reason": "POSIX-only check (file modes, links, FIFOs or signals); the test skips itself on Windows"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^SIGTERM to the shield stops the wrapped server too$",
+    "reason": "POSIX-only check (file modes, links, FIFOs or signals); the test skips itself on Windows"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^symlinked agent configs: followed inside the repository, reported when they leave it$",
+    "reason": "POSIX file types"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^the compile cache is skipped when its directory is a link, or when turned off$",
+    "reason": "POSIX-only check (file modes, links, FIFOs or signals); the test skips itself on Windows"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^the compile cache is skipped when the directory is open to other users$",
+    "reason": "POSIX-only check (file modes, links, FIFOs or signals); the test skips itself on Windows"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^the compile cache lives under ZN_HOME, closed to other users$",
+    "reason": "POSIX-only check (file modes, links, FIFOs or signals); the test skips itself on Windows"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^the Monitor wrapper pipes into the scrubber with literal paths$",
+    "reason": "needs bash"
+  },
+  {
+    "platforms": [
+      "win32"
+    ],
+    "test": "^the Windows hook command reaches powershell\\.exe intact through sh and bash$",
+    "reason": "needs sh"
+  }
+]

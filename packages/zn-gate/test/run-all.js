@@ -12,10 +12,14 @@
 //
 //   node test/run-all.js          run everything
 //   node test/run-all.js --list   print the steps without running them
+//
+// A skipped test passes, so a test that quietly stops running looks green. The runner counts the skips
+// in every step and prints the total. When CI is set, a skip that test/expected-skips.json does not list
+// for the current platform fails the run (each entry carries the reason the skip is legitimate there).
 
 const fs = require('fs');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { spawn } = require('child_process');
 
 const root = path.resolve(__dirname, '..');
 const testDir = __dirname;
@@ -72,7 +76,52 @@ function load() {
   return steps;
 }
 
-function main() {
+
+// Skipped tests in the output of node:test, in the TAP form (`ok 3 - name # SKIP reason`) and in the
+// spec form (`﹣ name (0.1ms) # reason`). Both are read, as the default reporter depends on the Node.js version.
+const TAP_SKIP = /^\s*(?:not )?ok \d+ - (.+?)\s+# SKIP\b\s*(.*)$/i;
+const SPEC_SKIP = /^\s*\u{FE63} (.+?)(?: \(\d[\d.]*m?s\))?(?: # (.*))?$/u;
+
+function parseSkips(text) {
+  const out = [];
+  for (const line of text.split(/\r?\n/)) {
+    const m = TAP_SKIP.exec(line) || SPEC_SKIP.exec(line);
+    if (m) out.push({ name: m[1].trim(), reason: (m[2] || '').trim() });
+  }
+  return out;
+}
+
+function loadExpected(file) {
+  const list = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (!Array.isArray(list)) throw new Error('expected-skips.json must be an array');
+  for (const e of list) {
+    if (!e || typeof e.test !== 'string' || typeof e.reason !== 'string' || !e.reason.trim()) {
+      throw new Error('expected-skips.json: every entry needs "test" and a non-empty "reason"');
+    }
+    if (!Array.isArray(e.platforms) || !e.platforms.length || e.platforms.some((x) => typeof x !== 'string')) {
+      throw new Error('expected-skips.json: every entry needs "platforms" (process.platform values or "*")');
+    }
+    new RegExp(e.test); // fail early on a bad pattern
+  }
+  return list;
+}
+
+// The skips that no entry of the list covers on this platform.
+function unexpectedSkips(skips, expected, platform) {
+  return skips.filter((s) => !expected.some((e) => (e.platforms.includes('*') || e.platforms.includes(platform)) && new RegExp(e.test).test(s.name)));
+}
+
+function runStep(args) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, args, { cwd: root, stdio: ['inherit', 'pipe', 'inherit'], shell: false });
+    let text = '';
+    child.stdout.on('data', (d) => { text += d; process.stdout.write(d); });
+    child.on('error', (error) => resolve({ error, status: null, signal: null, text }));
+    child.on('close', (status, signal) => resolve({ status, signal, text }));
+  });
+}
+
+async function main() {
   const steps = load();
   if (process.argv.includes('--list')) {
     for (const s of steps) {
@@ -82,26 +131,37 @@ function main() {
     return 0;
   }
   let n = 0;
+  const skips = [];
   for (const s of steps) {
     console.log('\n=== ' + s.label + ' ===');
-    const r = spawnSync(process.execPath, s.args, { cwd: root, stdio: 'inherit', shell: false });
+    const r = await runStep(s.args);
+    for (const k of parseSkips(r.text)) skips.push({ ...k, step: s.label });
     if (r.error || r.status !== 0) {
       console.error('\nFAILED: ' + s.label + (r.error ? ' (' + r.error.message + ')' : ' (exit ' + (r.status === null ? 'signal ' + r.signal : r.status) + ')'));
       return r.status || 1;
     }
     n++;
   }
-  console.log('\nOK: ' + n + ' steps passed');
+  console.log('\nOK: ' + n + ' steps passed, ' + skips.length + ' tests skipped');
+  if (process.env.CI) {
+    const bad = unexpectedSkips(skips, loadExpected(path.join(testDir, 'expected-skips.json')), process.platform);
+    if (bad.length) {
+      console.error('\nFAILED: ' + bad.length + ' skipped test(s) are not in test/expected-skips.json for ' + process.platform + ':');
+      for (const k of bad) console.error('  - ' + k.name + (k.reason ? ' (' + k.reason + ')' : '') + '  [' + k.step + ']');
+      console.error('A skip passes silently. Fix what made the test skip, or add it to the list with the reason it is expected here.');
+      return 1;
+    }
+  } else if (skips.length) {
+    console.log('(set CI=1 to fail on skips that test/expected-skips.json does not list)');
+  }
   return 0;
 }
 
-module.exports = { uncovered };
+module.exports = { uncovered, parseSkips, unexpectedSkips, loadExpected };
 
 if (require.main === module) {
-  try {
-    process.exitCode = main();
-  } catch (e) {
+  main().then((code) => { process.exitCode = code; }, (e) => {
     console.error('run-all: ' + e.message);
     process.exitCode = 1;
-  }
+  });
 }
