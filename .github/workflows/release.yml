@@ -198,12 +198,27 @@ jobs:
       url: https://pypi.org/project/zn-gate/${{ needs.verify.outputs.py_version }}/
     permissions:
       id-token: write
+      attestations: read
     steps:
       - name: Download the signed release files
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: release
+      - name: Verify the build provenance attestation (SHA256SUMS and the Python distributions)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PY_VERSION: ${{ needs.verify.outputs.py_version }}
+          VERIFIED_SHA: ${{ needs.verify.outputs.sha }}
+        working-directory: release
+        run: |
+          set -euo pipefail
+          # SHA256SUMS travels in the same artifact as the files it lists, so it proves nothing alone.
+          # The attestation is signed by build-release.yml and stored by GitHub, outside this artifact.
+          for f in SHA256SUMS "zn_gate-${PY_VERSION}.tar.gz" "zn_gate-${PY_VERSION}-py3-none-any.whl"; do
+            [ -f "$f" ] || { echo "::error::missing $f"; exit 1; }
+            gh attestation verify "$f"               --repo "$GITHUB_REPOSITORY"               --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/build-release.yml"               --source-digest "$VERIFIED_SHA"               --deny-self-hosted-runners
+          done
       - name: Check SHA256SUMS and keep only the Python distributions
         env:
           PY_VERSION: ${{ needs.verify.outputs.py_version }}
@@ -230,12 +245,27 @@ jobs:
       url: https://www.npmjs.com/package/zn-gate/v/${{ needs.verify.outputs.npm_version }}
     permissions:
       id-token: write
+      attestations: read
     steps:
       - name: Download the signed release files
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: release
+      - name: Verify the build provenance attestation (SHA256SUMS and the npm tarball)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NPM_VERSION: ${{ needs.verify.outputs.npm_version }}
+          VERIFIED_SHA: ${{ needs.verify.outputs.sha }}
+        working-directory: release
+        run: |
+          set -euo pipefail
+          # SHA256SUMS travels in the same artifact as the files it lists, so it proves nothing alone.
+          # The attestation is signed by build-release.yml and stored by GitHub, outside this artifact.
+          for f in SHA256SUMS "zn-gate-${NPM_VERSION}.tgz"; do
+            [ -f "$f" ] || { echo "::error::missing $f"; exit 1; }
+            gh attestation verify "$f"               --repo "$GITHUB_REPOSITORY"               --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/build-release.yml"               --source-digest "$VERIFIED_SHA"               --deny-self-hosted-runners
+          done
       - name: Check SHA256SUMS
         working-directory: release
         run: sha256sum --strict -c SHA256SUMS
@@ -311,6 +341,7 @@ jobs:
       name: release
     permissions:
       contents: write
+      attestations: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -321,6 +352,19 @@ jobs:
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: release
+      - name: Verify the build provenance attestation (every file that is attached to the release)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFIED_SHA: ${{ needs.verify.outputs.sha }}
+        working-directory: release
+        run: |
+          set -euo pipefail
+          # SHA256SUMS travels in the same artifact as the files it lists, so it proves nothing alone.
+          # The attestation is signed by build-release.yml and stored by GitHub, outside this artifact.
+          for f in $(find . -maxdepth 1 -type f ! -name "*.sigstore.json" ! -name "*.sigstore" -printf "%f\n" | sort); do
+            [ -f "$f" ] || { echo "::error::missing $f"; exit 1; }
+            gh attestation verify "$f"               --repo "$GITHUB_REPOSITORY"               --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/build-release.yml"               --source-digest "$VERIFIED_SHA"               --deny-self-hosted-runners
+          done
       - name: Check SHA256SUMS
         working-directory: release
         run: sha256sum --strict -c SHA256SUMS
