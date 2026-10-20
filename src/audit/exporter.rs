@@ -4,7 +4,7 @@
 //! via HTTP/JSON.
 
 use crate::audit::AuditEntry;
-use crate::config::SiemConfig;
+use crate::config::{default_batch_size, SiemConfig};
 use reqwest::Client;
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
@@ -15,7 +15,11 @@ pub struct SiemExporter {
 }
 
 impl SiemExporter {
-    pub fn new(config: SiemConfig) -> Self {
+    pub fn new(mut config: SiemConfig) -> Self {
+        // A zero batch size would flush after every event; use the default.
+        if config.batch_size == 0 {
+            config.batch_size = default_batch_size();
+        }
         Self {
             config,
             client: Client::new(),
@@ -123,6 +127,12 @@ mod tests {
             token: None,
             batch_size,
         }
+    }
+
+    #[test]
+    fn zero_batch_size_falls_back_to_the_default() {
+        let exporter = SiemExporter::new(config(Some("https://siem.example.com"), 0));
+        assert_eq!(exporter.config.batch_size, default_batch_size());
     }
 
     #[tokio::test]

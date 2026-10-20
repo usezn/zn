@@ -4,7 +4,7 @@
 //! and CLI arguments with sensible defaults.
 
 use crate::webhooks::WebhookConfig;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -317,7 +317,7 @@ fn default_max_logs() -> usize {
 }
 
 /// SIEM (External Audit Export) configuration
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SiemConfig {
     /// External SIEM endpoint (HTTP/HTTPS)
     pub endpoint: Option<String>,
@@ -328,8 +328,20 @@ pub struct SiemConfig {
     pub batch_size: usize,
 }
 
-fn default_batch_size() -> usize {
+/// Batch size used when none is configured. `SiemConfig::default()` must
+/// agree with it: a derived zero would send every event on its own.
+pub fn default_batch_size() -> usize {
     10
+}
+
+impl Default for SiemConfig {
+    fn default() -> Self {
+        Self {
+            endpoint: None,
+            token: None,
+            batch_size: default_batch_size(),
+        }
+    }
 }
 
 /// KMS Configuration
@@ -663,26 +675,25 @@ fn default_fpr_margin() -> f64 {
 impl ZnConfig {
     /// Load configuration from file with environment variable overrides
     pub fn load(path: Option<&Path>) -> Result<Self> {
-        let mut config = if let Some(p) = path {
-            if p.exists() {
-                let content = std::fs::read_to_string(p)?;
-                if p.extension().map(|e| e == "json").unwrap_or(false) {
-                    serde_json::from_str(&content)?
-                } else {
-                    // Default to JSON if extension is unknown
-                    serde_json::from_str(&content).unwrap_or_default()
-                }
-            } else {
-                Self::default()
-            }
+        // An explicit path must exist and parse: a typo or a broken file
+        // must not silently start the gateway with defaults.
+        let mut config: Self = if let Some(p) = path {
+            let content = std::fs::read_to_string(p)
+                .with_context(|| format!("cannot read config file {}", p.display()))?;
+            serde_json::from_str(&content)
+                .with_context(|| format!("invalid config file {}", p.display()))?
         } else {
             // Try to load from default locations
             let config_options = ["zn.json", "zn.config.json", ".zn.json"];
             let mut found = None;
             for option in config_options {
                 if Path::new(option).exists() {
-                    let content = std::fs::read_to_string(option)?;
-                    found = Some(serde_json::from_str(&content)?);
+                    let content = std::fs::read_to_string(option)
+                        .with_context(|| format!("cannot read config file {option}"))?;
+                    found = Some(
+                        serde_json::from_str(&content)
+                            .with_context(|| format!("invalid config file {option}"))?,
+                    );
                     break;
                 }
             }
@@ -948,5 +959,48 @@ mod credential_tests {
         );
         assert_eq!(credential_override(some("  "), None), None);
         assert_eq!(credential_override(None, None), None);
+    }
+}
+
+#[cfg(test)]
+mod file_config_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn temp_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("zn-config-test-{}-{}", std::process::id(), name))
+    }
+
+    #[test]
+    fn missing_explicit_config_path_is_an_error_naming_it() {
+        let path = temp_path("does-not-exist.json");
+        let _ = std::fs::remove_file(&path);
+        let err = ZnConfig::load(Some(path.as_path())).unwrap_err();
+        assert!(
+            format!("{err:#}").contains(&path.display().to_string()),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn invalid_config_content_is_an_error_naming_the_path() {
+        for name in ["broken.json", "broken.conf"] {
+            let path = temp_path(name);
+            std::fs::write(&path, "{ not json").unwrap();
+            let result = ZnConfig::load(Some(path.as_path()));
+            let _ = std::fs::remove_file(&path);
+            let err = result.unwrap_err();
+            assert!(
+                format!("{err:#}").contains(&path.display().to_string()),
+                "{name}: {err:#}"
+            );
+        }
+    }
+
+    #[test]
+    fn missing_siem_section_uses_the_default_batch_size() {
+        let config: ZnConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(config.siem.batch_size, 10);
+        assert_eq!(ZnConfig::default().siem.batch_size, 10);
     }
 }
