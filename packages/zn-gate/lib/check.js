@@ -116,6 +116,12 @@ const AGENTS = [
     request: (dir, file) => ({ conversationId: 'zn-check', workspacePaths: [dir], toolCall: { name: 'view_file', args: { AbsolutePath: file } }, stepIdx: 0 }),
   },
   {
+    id: 'copilot', name: 'Copilot CLI (experimental)', event: 'preToolUse', tool: 'view',
+    fix: 'run `zn hooks install copilot` in your own terminal',
+    file: (a, o) => a.hooksFile(o), project: (dir) => path.join(dir, '.github', 'hooks', 'zn-gate.json'),
+    request: (dir, file) => ({ sessionId: 'zn-check', timestamp: 0, cwd: dir, toolName: 'view', toolArgs: { path: file } }),
+  },
+  {
     id: 'gemini', name: 'Gemini CLI', event: 'BeforeTool', tool: 'read_file',
     fix: 'run `zn hooks install gemini` in your own terminal',
     file: (a, o) => a.settingsFile(o), project: (dir) => path.join(dir, '.gemini', 'settings.json'),
@@ -149,6 +155,8 @@ function hookEntries(tree, agentId) {
       for (const g of Array.isArray(list) ? list : []) {
         if (!g || typeof g !== 'object') continue;
         if (typeof g.command === 'string') out.push({ event, matcher: g.matcher, command: g.command, onFailure: g.onFailure, async: g.async });
+        // GitHub Copilot CLI keeps the shell command in "bash" (and "powershell"), next to an optional matcher.
+        if (agentId === 'copilot' && typeof g.bash === 'string') out.push({ event, matcher: g.matcher, command: g.bash });
         for (const h of Array.isArray(g.hooks) ? g.hooks : []) {
           if (h && typeof h.command === 'string') out.push({ event, matcher: g.matcher, command: h.command, onFailure: h.onFailure, async: h.async });
         }
@@ -390,6 +398,32 @@ function runLive(spec, ctx, live) {
   return '';
 }
 
+/* Whether a documented Copilot CLI setting turns zn's hooks off: {problem, fix, notes}. */
+function copilotSwitchedOff(userFile, ctx, adapter) {
+  const out = { problem: '', fix: '', notes: [] };
+  const mine = readJson(userFile);
+  if (mine && mine.disableAllHooks === true) {
+    out.problem = 'zn\'s hooks file has "disableAllHooks" turned on, so Copilot skips it';
+    out.fix = 'run `zn hooks install copilot` in your own terminal (it turns the hooks back on)';
+    return out;
+  }
+  for (const name of ['settings.json', 'settings.local.json']) {
+    const f = path.join(ctx.cwd, '.github', 'copilot', name);
+    const s = require('./audit')._internal.readBounded(f, 256 * 1024, false).text;
+    let j = null;
+    try { j = s ? JSON.parse(s) : null; } catch (_) { j = null; }
+    if (j && j.disableAllHooks === true) {
+      out.problem = 'the Copilot settings of this folder (' + f + ') have "disableAllHooks" turned on, so Copilot runs no hook of yours here (only machine policy hooks)';
+      out.fix = 'remove "disableAllHooks" from that file, then run `zn-gate check` again';
+      return out;
+    }
+  }
+  const user = readJson(path.join(adapter.copilotHome({ home: ctx.home, env: ctx.env }), 'settings.json'));
+  if (user && user.disableAllHooks === true) out.notes.push('your Copilot user settings have "disableAllHooks" turned on; the docs do not say whether that skips hook files, so check that zn still runs');
+  out.notes.push('Copilot also loads machine policy hooks (/etc/github-copilot/policy.d) and skips a hook that takes longer than its timeout; zn cannot see either from here');
+  return out;
+}
+
 async function checkAgent(spec, ctx) {
   const { getAdapter } = require('./agents');
   const runner = require('./hooks/runner');
@@ -569,6 +603,12 @@ async function checkAgent(spec, ctx) {
       res.problem = 'another hook runs before Codex calls (' + other.event + ' in ' + other.file + '); it can change a call after zn has checked it, so zn cannot fully protect Codex';
       res.fix = 'review that hook and remove it if you do not need it, or have your administrator manage hooks with `allow_managed_hooks_only`, then run `zn-gate check` again';
     }
+  }
+  if (spec.id === 'copilot' && installed && !res.problem) {
+    // Copilot skips a hooks file with "disableAllHooks": true, and every non-policy hook when a repository's settings say so.
+    const off = copilotSwitchedOff(userFile, ctx, adapter);
+    if (off.problem) { res.problem = off.problem; res.fix = off.fix; }
+    res.notes.push(...off.notes);
   }
   if (spec.id === 'opencode' && installed) res.notes.push('zn\'s rules were checked; its plugin runs inside OpenCode, so it was not started here');
 

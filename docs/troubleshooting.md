@@ -199,3 +199,14 @@ Running `npx -y zn-gate init` on a Node.js older than 20.12 does the second opti
 - Your agent blocks every prompt after you upgraded or removed Node.js: see [If your agent blocks every prompt](compat.md#if-your-agent-blocks-every-prompt).
 - Not sure what is protected: `npx -y zn-gate check`, explained in [check](check.md).
 - Still stuck: ask in [Discussions](https://github.com/usezn/zn/discussions). Say your zn-gate version (`zn-gate --version`), your operating system and the message, and leave out any secret.
+
+### npm says EACCES when init installs zn-gate
+
+On macOS (Node.js from nodejs.org) and on Linux (Node.js from your distribution), npm often cannot write to its global folder, so `npm install -g zn-gate` fails with `EACCES`. `zn-gate init` says so and lists the agents left unprotected until zn-gate is installed. Do not use `sudo`. Give npm a folder in your home directory, in your own terminal:
+
+```sh
+mkdir -p ~/.npm-global && npm config set prefix ~/.npm-global
+echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.zshrc
+```
+
+Use `~/.bashrc` instead of `~/.zshrc` if you use bash. Then open a new terminal and run `npx -y zn-gate init` again. A Node.js version manager such as nvm also avoids the problem. This does not apply to Windows.

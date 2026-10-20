@@ -276,6 +276,26 @@ For these reasons, zn is installed correctly, but a setting stops your agent fro
 
   Fix the JSON or the file permissions, then run the check again.
 
+### Copilot CLI settings switch the hooks off
+
+- **zn's hooks file is switched off.**
+
+  ```text
+  zn's hooks file has "disableAllHooks" turned on, so Copilot skips it
+  run `zn hooks install copilot` in your own terminal (it turns the hooks back on)
+  ```
+
+  Copilot CLI skips a hooks file that sets `disableAllHooks` to `true`, and says nothing. Running the install command again turns the hooks back on.
+
+- **This folder's Copilot settings switch the hooks off.**
+
+  ```text
+  the Copilot settings of this folder (<file>) have "disableAllHooks" turned on, so Copilot runs no hook of yours here (only machine policy hooks)
+  remove "disableAllHooks" from that file, then run `zn-gate check` again
+  ```
+
+  `<file>` is `.github/copilot/settings.json` or `.github/copilot/settings.local.json` in the folder where you ran the check. Remove the setting, or ask whoever owns the repository.
+
 ### zn-gate could not finish the check
 
 ```text

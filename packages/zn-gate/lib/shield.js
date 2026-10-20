@@ -10,6 +10,37 @@ const evidence = require('./evidence');
 const logEvidence = (event) => evidence.logEvidence(event, undefined, { lockWaitMs: 500 });
 const pins = require('./mcp-pins');
 
+const INSTALL_HINTS = {
+  uvx: 'for uvx, install uv: https://docs.astral.sh/uv/',
+  uv: 'install uv: https://docs.astral.sh/uv/',
+  npx: 'install Node.js: https://nodejs.org/',
+  node: 'install Node.js: https://nodejs.org/',
+  npm: 'install Node.js: https://nodejs.org/',
+  docker: 'install Docker: https://www.docker.com/get-started/',
+  python: 'install Python: https://www.python.org/downloads/',
+  python3: 'install Python: https://www.python.org/downloads/',
+};
+
+/**
+ * Plain-language text for a wrapped command that could not be started.
+ * A missing program (ENOENT) and a file that is not executable (EACCES) get a
+ * message that names the program and the next step; anything else keeps the
+ * system text.
+ */
+function startFailureMessage(command, err) {
+  const name = String(command).replace(/[\u0000-\u001f\u007f]/g, '');
+  const base = require('path').basename(name).replace(/\.(exe|cmd|bat)$/i, '').toLowerCase();
+  const hint = Object.prototype.hasOwnProperty.call(INSTALL_HINTS, base) ? INSTALL_HINTS[base] : null;
+  if (err && err.code === 'ENOENT') {
+    const install = hint ? `Install it (${hint}) or use the full path to the program, then restart your editor.` : 'Install it or use the full path to the program, then restart your editor.';
+    return `zn-gate shield: could not start '${name}': it is not installed or not on your PATH. ${install}`;
+  }
+  if (err && err.code === 'EACCES') {
+    return `zn-gate shield: could not start '${name}': it was found but is not allowed to run. Check that the file is executable and that you can use it, then restart your editor.`;
+  }
+  return `[zn-shield ERROR] Failed to start wrapped server '${name}': ${err && err.message}`;
+}
+
 /**
  * Starts an MCP Security Shield proxy over stdio.
  * Intercepts JSON-RPC 2.0 messages between the client (stdin/stdout)
@@ -43,7 +74,7 @@ function startMcpShield(command, args, options = {}) {
   });
 
   child.on('error', (err) => {
-    process.stderr.write(`[zn-shield ERROR] Failed to start wrapped server '${command}': ${err.message}\n`);
+    process.stderr.write(startFailureMessage(command, err) + '\n');
     process.exit(1);
   });
 
@@ -444,4 +475,4 @@ function startMcpShield(command, args, options = {}) {
   process.on('SIGTERM', cleanExit);
 }
 
-module.exports = { startMcpShield };
+module.exports = { startMcpShield, startFailureMessage };

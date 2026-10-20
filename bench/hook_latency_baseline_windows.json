@@ -1,88 +1,89 @@
 {
-  "_comment": "Windows budget: p95 of each hook case divided by the p50 start-up of a bare node in the same run, from the first run on a GitHub windows-latest runner (single run, so noisy). Update with: node bench/hook_latency_gate.js report.json --baseline bench/hook_latency_baseline_windows.json --update-baseline",
+  "_comment": "Median over many CI runs of the p95 of each hook case divided by the p50 start-up of a bare node in the same run (bench/hook_latency_matrix.js). Update with: node bench/hook_latency_gate.js report1.json report2.json ... --update-baseline",
   "meta": {
     "date": "2026-10-19",
     "node": "v22.23.3",
     "platform": "win32 10.0.26100",
     "cpu": "AMD EPYC 9V74 80-Core Processor                 x4",
     "runs": 40,
-    "bareNodeP50": 45.7
+    "bareNodeP50": 45.7,
+    "reports": 33
   },
   "results": [
     {
       "agent": "claude-code",
       "case": "PreToolUse Bash",
-      "ratio": 3.481
+      "ratio": 2.986
     },
     {
       "agent": "codex",
       "case": "PreToolUse Bash",
-      "ratio": 2.573
+      "ratio": 2.77
     },
     {
       "agent": "cursor",
       "case": "beforeShellExecution",
-      "ratio": 3.199
+      "ratio": 2.724
     },
     {
       "agent": "claude-code",
       "case": "PostToolUse Bash 1 KB",
-      "ratio": 2.759
+      "ratio": 2.77
     },
     {
       "agent": "codex",
       "case": "PostToolUse Bash 1 KB",
-      "ratio": 2.726
+      "ratio": 2.971
     },
     {
       "agent": "cursor",
       "case": "postToolUse MCP 1 KB",
-      "ratio": 2.681
+      "ratio": 2.746
     },
     {
       "agent": "claude-code",
       "case": "PostToolUse Bash 100 KB",
-      "ratio": 2.908
+      "ratio": 2.891
     },
     {
       "agent": "codex",
       "case": "PostToolUse Bash 100 KB",
-      "ratio": 2.825
+      "ratio": 3.077
     },
     {
       "agent": "cursor",
       "case": "postToolUse MCP 100 KB",
-      "ratio": 2.832
+      "ratio": 2.866
     },
     {
       "agent": "claude-code",
       "case": "PostToolUse Bash 100 KB with 2 secrets",
-      "ratio": 3.042
+      "ratio": 3.165
     },
     {
       "agent": "codex",
       "case": "PostToolUse Bash 100 KB with 2 secrets",
-      "ratio": 3.09
+      "ratio": 3.372
     },
     {
       "agent": "cursor",
       "case": "postToolUse MCP 100 KB with 2 secrets",
-      "ratio": 2.976
+      "ratio": 3.206
     },
     {
       "agent": "claude-code",
       "case": "PostToolUse Bash 1000 KB",
-      "ratio": 3.269
+      "ratio": 3.262
     },
     {
       "agent": "codex",
       "case": "PostToolUse Bash 1000 KB",
-      "ratio": 4.7
+      "ratio": 3.558
     },
     {
       "agent": "cursor",
       "case": "postToolUse MCP 1000 KB",
-      "ratio": 4.398
+      "ratio": 3.294
     }
   ]
 }
