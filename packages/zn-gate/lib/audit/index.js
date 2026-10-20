@@ -749,7 +749,7 @@ function insideQuotedExample(text) {
 const STRONG_IN_DOCS =/^(?:pi:(?:ignore_previous|disregard|system_tag|system_bracket|template_boundary|multi_\w+)|indirect:|evasion:|exfil:markdown_image)/;
 
 function checkInstructions(ctx) {
-  const claudeExt = /(^|\/)\.claude\/(commands|agents|skills)\//.test(ctx.rec.rel);
+  const claudeExt = /(^|\/)\.claude\/(commands|agents|skills)\//i.test(ctx.rec.rel);
   // Supporting notes of a skill (not SKILL.md itself): the only files here
   // that are not read as instructions.
   const supporting = /(^|\/)skills?\/.+\//.test(ctx.rec.rel) && !/(^|\/)SKILL\.md$/i.test(ctx.rec.rel);
@@ -875,10 +875,18 @@ function rule(kind, agent, readers) {
   return { kind, agent, readers: readers || [agent] };
 }
 
-/** Classify a project file by its path relative to the root (forward slashes). */
+/**
+ * Classify a project file by its path relative to the root (forward slashes).
+ * Names are matched without regard to case: on Windows and macOS an agent that
+ * opens CLAUDE.md or .claude/settings.json also loads claude.md or
+ * .Claude/Settings.json, so a repository can ship either spelling. Workflows
+ * are the exception, since GitHub runs only .github/workflows exactly.
+ */
 function classify(rel, isRootLevel) {
+  const exact = rel;
+  rel = rel.toLowerCase();
   const base = rel.slice(rel.lastIndexOf('/') + 1);
-  const lower = base.toLowerCase();
+  const lower = base;
   const has = (re) => re.test(rel);
   if (has(/(^|\/)\.claude\/settings(\.local)?\.json$/)) return rule('claude-settings', 'claude', ['claude', 'cursor']);
   if (base === '.mcp.json') return rule('mcp-json', 'claude');
@@ -899,11 +907,11 @@ function classify(rel, isRootLevel) {
   if (has(/(^|\/)\.claude-plugin\/marketplace\.json$/)) return rule('config-other', 'claude');
   if (has(/(^|\/)hooks\/hooks\.json$/)) return rule('plugin-hooks', 'claude');
   if (base === '.env' && isRootLevel) return rule('dotenv', 'codex');
-  if (has(/(^|\/)\.github\/workflows\/[^/]+\.ya?ml$/)) return rule('workflow', 'any', AGENTS);
+  if (/(^|\/)\.github\/workflows\/[^/]+\.ya?ml$/.test(exact)) return rule('workflow', 'any', AGENTS);
   // Instruction files.
-  if (base === 'AGENTS.md' || base === 'AGENTS.override.md') return rule('instructions', 'any', INSTRUCTION_READERS);
-  if (base === 'CLAUDE.md' || base === 'CLAUDE.local.md') return rule('instructions', 'claude');
-  if (base === 'GEMINI.md') return rule('instructions', 'gemini');
+  if (base === 'agents.md' || base === 'agents.override.md') return rule('instructions', 'any', INSTRUCTION_READERS);
+  if (base === 'claude.md' || base === 'claude.local.md') return rule('instructions', 'claude');
+  if (base === 'gemini.md') return rule('instructions', 'gemini');
   if (base === '.cursorrules') return rule('instructions', 'cursor');
   if (base === '.windsurfrules') return rule('instructions', 'any', AGENTS);
   if (has(/(^|\/)\.clinerules(\/|$)/)) return rule('instructions', 'any', AGENTS);
@@ -938,7 +946,7 @@ const EXTENSION_DIRS = [
 const AGENT_DIRS = new Set(['.claude', '.codex', '.cursor', '.amazonq', '.vscode', '.opencode', '.gemini', '.github', '.claude-plugin', '.clinerules', 'skills']);
 
 function isAgentDirName(name) {
-  return AGENT_DIRS.has(name);
+  return AGENT_DIRS.has(name.toLowerCase());
 }
 
 /* -------------------------- bounded reads --------------------------- */
@@ -1040,7 +1048,7 @@ function walk(root, deadline, maxEntries) {
             continue;
           }
         }
-        const ext = EXTENSION_DIRS.find(([re]) => re.test(r));
+        const ext = EXTENSION_DIRS.find(([re]) => re.test(r.toLowerCase()));
         if (ext) extDirs.push({ rel: r, abs, agent: ext[1], what: ext[2] });
         if (depth < MAX_DEPTH) visit(abs, r, depth + 1, agentHere);
       } else if (d.isFile()) {
