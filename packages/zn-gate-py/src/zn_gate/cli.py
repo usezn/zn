@@ -39,7 +39,7 @@ _KEY_BEGIN = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
 _KEY_END = re.compile(r"-----END [A-Z ]*PRIVATE KEY-----")
 _KEY_BODY = re.compile(r"^(?:[A-Za-z0-9+/=]{16,}|[A-Za-z-]+: )")
 _KEY_HEADER = re.compile(r"^[A-Za-z-]+: ")
-_TRUNCATED_KEY_REASON = "Exposed credential detected by DLP filter (private key without an END marker)"
+_TRUNCATED_KEY_REASON = "A real-looking private key is stored in plain text here (its END marker is missing)"
 
 # Private key files that usually have no extension.
 _KEY_FILE_NAMES = {"id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "id_ecdsa_sk", "id_ed25519_sk", "id_xmss", "identity"}
@@ -174,7 +174,7 @@ def cmd_test(args: argparse.Namespace) -> int:
         print(json.dumps(out, indent=2))
     else:
         # The icon follows the injection verdict only. A secret found by the
-        # DLP filter is reported on its own line and does not turn an ALLOW
+        # secret scan is reported on its own line and does not turn an ALLOW
         # into a BLOCK.
         status_icon = f"{_lead(SHIELD)}ALLOW" if assessment.allowed else f"{_lead(ALERT)}BLOCK"
         print(f"\n{status_icon} | Verdict: {assessment.verdict.upper()} (latency: {latency_us:.1f}µs)")
@@ -186,7 +186,7 @@ def cmd_test(args: argparse.Namespace) -> int:
                   f"({assessment.advisory['rule']}).")
         if findings:
             noun = "secret" if len(findings) == 1 else "secrets"
-            print(f"DLP Alert:  {len(findings)} {noun} detected (verdict unchanged). Redacted: {clean_text}")
+            print(f"Secrets:    {len(findings)} {noun} found in the text (verdict unchanged). Redacted: {clean_text}")
         print(f"Confidence: {assessment.confidence * 100:.1f}%")
         print(f"Engine:     {assessment.engine} (rules: {assessment.rules_version})\n")
 
@@ -305,7 +305,7 @@ def _scan_file(file_path: Path, shown: Optional[str] = None, mcp_only: bool = Fa
             last = bisect.bisect_right(starts, m.end() - 1)
             h = header_rx.match(m.group(0))
             blocks.append((name, first, last, h.group(0)[:100] if h else "[REDACTED_PRIVATE_KEY]",
-                           "Exposed credential detected by DLP filter"))
+                           "A real-looking secret is stored in plain text here"))
             key_lines.update(range(first, last + 1))
 
     lines = content.splitlines()
@@ -351,7 +351,7 @@ def _scan_file(file_path: Path, shown: Optional[str] = None, mcp_only: bool = Fa
                 "file": shown,
                 "line": i,
                 "rule": finding["rule"],
-                "reason": "Exposed credential detected by DLP filter",
+                "reason": "A real-looking secret is stored in plain text here",
                 "type": "secret_leak",
                 "content": snippet,
                 "next_step": _leak_next_step(shown, finding["rule"]),
@@ -489,7 +489,7 @@ def _prune_info(name: str, parent: str) -> Optional[Dict[str, Any]]:
 def cmd_scan(args: argparse.Namespace) -> int:
     target_path = Path(args.path)
     if not target_path.exists():
-        print(f"Error: target path not found: {target_path}", file=sys.stderr)
+        print(f"Error: Target path does not exist: {target_path}\nExample: zn-gate scan .", file=sys.stderr)
         return 2
 
     files_to_scan: List[Path] = []
@@ -647,7 +647,7 @@ def cmd_evidence(args: argparse.Namespace) -> int:
             print(f"\n{_lead(LOCK)}Cryptographic Evidence Ledger: ALL {res.get('total', 0)} RECORDS VERIFIED (IMMUTABLE)\n")
             return 0
         else:
-            print(f"\n{_lead(ALERT, sys.stderr)}Tamper detected: {res.get('error')}", file=sys.stderr)
+            print(f"\n{_lead(ALERT, sys.stderr)}The evidence log was changed or damaged, so its checks no longer match: {res.get('error')}", file=sys.stderr)
             print(f"{recovery_hint()}\n", file=sys.stderr)
             return 1
 
@@ -656,7 +656,7 @@ def cmd_evidence(args: argparse.Namespace) -> int:
         res = export_evidence_ledger(format=fmt)
         out_content = res.get("content", "")
         if not res.get("valid"):
-            print(f"{_lead(ALERT, sys.stderr)}Tamper detected: {res.get('error')}", file=sys.stderr)
+            print(f"{_lead(ALERT, sys.stderr)}The evidence log was changed or damaged, so its checks no longer match: {res.get('error')}", file=sys.stderr)
             print(recovery_hint(), file=sys.stderr)
         if getattr(args, "output", None):
             Path(args.output).write_text(out_content, encoding="utf-8")

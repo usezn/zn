@@ -52,7 +52,7 @@ const KEY_BEGIN = /-----BEGIN [A-Z ]*PRIVATE KEY-----/;
 const KEY_END = /-----END [A-Z ]*PRIVATE KEY-----/;
 const KEY_BODY = /^(?:[A-Za-z0-9+/=]{16,}|[A-Za-z-]+: )/;
 const KEY_HEADER = /^[A-Za-z-]+: /;
-const TRUNCATED_KEY_REASON = 'Exposed credential detected by DLP filter (private key without an END marker)';
+const TRUNCATED_KEY_REASON = 'A real-looking private key is stored in plain text here (its END marker is missing)';
 // Private key files that usually have no extension.
 const KEY_FILE_NAMES = new Set(['id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', 'id_ecdsa_sk', 'id_ed25519_sk', 'id_xmss', 'identity']);
 // .key files with a NUL byte near the start (a Keynote document, not a key)
@@ -526,13 +526,13 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
 async function handleScan(targetPath, options) {
   const resolved = path.resolve(targetPath || '.');
   if (!fs.existsSync(resolved)) {
-    process.stderr.write(`Error: Target path does not exist: ${resolved}\n`);
+    process.stderr.write(`Error: Target path does not exist: ${resolved}\nExample: zn-gate scan .\n`);
     process.exit(1);
   }
 
   const format = options.formatGiven ? String(options.format).toLowerCase() : 'text';
   if (!SCAN_FORMATS.has(format)) {
-    process.stderr.write(`Error: --format for scan must be text, json or github\n`);
+    process.stderr.write(`Error: --format for scan must be text, json or github\nExample: zn-gate scan . --format json\n`);
     process.exit(2);
   }
 
@@ -653,7 +653,7 @@ Files   : ${files.length} file(s) queued for audit\n
       for (const rule of new Set(secretRules)) {
         totalFindings++;
         seen.add((lineIdx + 1) + '\0' + rule);
-        findings.push({ file: relPath, line: lineIdx + 1, rule, reason: 'Exposed credential detected by DLP filter', type: 'secret_leak', sample: sampleOf(), next_step: secretNextStep(relPath, rule) });
+        findings.push({ file: relPath, line: lineIdx + 1, rule, reason: 'A real-looking secret is stored in plain text here', type: 'secret_leak', sample: sampleOf(), next_step: secretNextStep(relPath, rule) });
       }
     }
 
@@ -663,7 +663,7 @@ Files   : ${files.length} file(s) queued for audit\n
       seen.add(key);
       totalFindings++;
       // Only the BEGIN marker, never the key material.
-      findings.push({ file: relPath, line: b.line, rule: b.rule, reason: b.reason || 'Exposed credential detected by DLP filter', type: 'secret_leak', sample: b.header, next_step: secretNextStep(relPath, b.rule) });
+      findings.push({ file: relPath, line: b.line, rule: b.rule, reason: b.reason || 'A real-looking secret is stored in plain text here', type: 'secret_leak', sample: b.header, next_step: secretNextStep(relPath, b.rule) });
     }
 
     // MCP servers: every credential the MCP check found is a finding of its own; the
@@ -944,7 +944,7 @@ async function main() {
     } else if (args[i] === '--long-input') {
       const v = String(args[i + 1] || '').toLowerCase();
       if (v !== 'windows' && v !== 'off') {
-        process.stderr.write('Error: --long-input needs windows or off\n');
+        process.stderr.write('Error: --long-input needs windows or off\nExample: zn-gate analyze --long-input windows "<text>"\n');
         process.exit(2);
       }
       options.longInput = v;
@@ -1022,7 +1022,7 @@ ${ruleLine(process.env, 60)}\n`);
     if (command === 'export' || options.export) {
       const format = (options.format || 'jsonl').toLowerCase();
       const res = exportEvidenceLedger(EVIDENCE_FILE, format);
-      if (!res.valid) process.stderr.write(`Tamper detected: ${res.error}\n${recoveryHint()}\n`);
+      if (!res.valid) process.stderr.write(`The evidence log was changed or damaged, so its checks no longer match: ${res.error}\n${recoveryHint()}\n`);
       if (options.output) {
         fs.writeFileSync(options.output, res.content, 'utf8');
         process.stdout.write(`Exported ${res.total} audit records to ${options.output} (Integrity: ${res.valid ? 'VALID' : 'TAMPERED'}).\n`);
@@ -1196,6 +1196,6 @@ ${sym(process.env, '🛡️', undefined, '  ')}zn-gate Status:
 }
 
 main().catch((err) => {
-  process.stderr.write(`[zn-gate] Fatal error: ${err.message}\n`);
+  process.stderr.write(`zn-gate stopped because of an unexpected problem: ${err.message}\nRun 'zn-gate status'. If it keeps happening, report it at https://github.com/usezn/zn/issues\n`);
   process.exit(1);
 });

@@ -22,7 +22,7 @@ FAKE_PW = "Tr0ub4" + "dor-xq9"
 
 def _known_reasons():
     """Every reason the scan can print: rule descriptions and the scan's own fixed texts."""
-    reasons = {"Exposed credential detected by DLP filter"}
+    reasons = {"A real-looking secret is stored in plain text here"}
     for name in dir(R):
         value = getattr(R, name)
         if isinstance(value, (list, tuple)):

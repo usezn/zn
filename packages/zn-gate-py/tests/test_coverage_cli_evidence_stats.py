@@ -41,7 +41,7 @@ def _scan(path, fmt="text", **kw):
 
 def test_scan_missing_path(tmp_path, capsys):
     assert _scan(tmp_path / "nope") == 2
-    assert "target path not found" in capsys.readouterr().err
+    assert "Target path does not exist" in capsys.readouterr().err
 
 
 def test_scan_empty_directory(tmp_path, capsys):
@@ -293,7 +293,7 @@ def test_scan_truncated_private_key_with_headers(tmp_path):
     p.write_text(_pem(body, end=False) + "\nplain text after\n")
     res = cli._scan_file(p)
     assert [v["rule"] for v in res] == ["secret:private_key"]
-    assert "without an END marker" in res[0]["reason"]
+    assert "END marker is missing" in res[0]["reason"]
     assert "QUJDREVG" not in json.dumps(res)
 
 
@@ -375,7 +375,7 @@ def test_cmd_test_json_with_secret(capsys):
 def test_cmd_test_plural_secrets(capsys):
     text = "A=" + FAKE_AWS + " B=" + FAKE_AWS.replace("000000", "111111")
     cli.cmd_test(argparse.Namespace(text=text, json=False))
-    assert "secrets detected" in capsys.readouterr().out
+    assert "secrets found" in capsys.readouterr().out
 
 
 def test_cmd_analyze_json_and_block(capsys, monkeypatch):
@@ -421,7 +421,7 @@ def test_cmd_evidence_verify(capsys):
     assert "ALL 3 RECORDS VERIFIED" in capsys.readouterr().out
     with mock.patch.object(cli, "verify_evidence_ledger", return_value={"valid": False, "error": "bad link"}):
         assert cli.cmd_evidence(argparse.Namespace(verify=True)) == 1
-    assert "Tamper detected: bad link" in capsys.readouterr().err
+    assert "checks no longer match: bad link" in capsys.readouterr().err
 
 
 def test_cmd_evidence_export_to_stdout_and_file(tmp_path, capsys):

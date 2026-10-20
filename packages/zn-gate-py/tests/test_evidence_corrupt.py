@@ -156,7 +156,7 @@ def test_cli_verify_reports_tamper_and_exits_nonzero(tmp_path, monkeypatch, caps
     monkeypatch.setattr(cli, "verify_evidence_ledger", lambda: verify_evidence_ledger(p))
     code = cli.cmd_evidence(type("A", (), {"verify": True})())
     assert code != 0
-    assert "Tamper detected" in capsys.readouterr().err
+    assert "no longer match" in capsys.readouterr().err
 
 
 def test_cli_stats_and_export_print_message_without_traceback(tmp_path, monkeypatch, capsys):
@@ -167,7 +167,7 @@ def test_cli_stats_and_export_print_message_without_traceback(tmp_path, monkeypa
     out = capsys.readouterr().out
     assert "CORRUPTED" in out and "Invalid UTF-8" in out
     cli.cmd_evidence(type("A", (), {"export": True, "format": "jsonl", "output": None})())
-    assert "Tamper detected" in capsys.readouterr().err
+    assert "no longer match" in capsys.readouterr().err
 
 
 def test_damage_in_the_middle_is_found_by_verify_and_not_hidden_by_appending(tmp_path):

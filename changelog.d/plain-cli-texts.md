@@ -1,0 +1,2 @@
+### Changed
+- Common command-line messages now use plain words. A secret found by `zn-gate scan` is reported as "A real-looking secret is stored in plain text here" instead of mentioning a DLP filter. The evidence log check explains that the log was changed or damaged. An unexpected crash says what stopped and points to `zn-gate status` and the issue tracker. Short `Error:` lines for `scan` and `--long-input` now include an example of correct usage. The Node and Python commands use the same text. Exit codes are unchanged.

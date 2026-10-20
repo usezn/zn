@@ -66,7 +66,7 @@ class TestTestCommandMasking(unittest.TestCase):
         with redirect_stdout(buf):
             cmd_test(argparse.Namespace(text=text, json=False))
         out = buf.getvalue()
-        self.assertIn("DLP Alert:", out)
+        self.assertIn("Secrets:    ", out)
         self.assertNotIn(FAKE_AWS, out)
         self.assertNotIn(UNKNOWN_TOKEN, out)
 
