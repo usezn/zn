@@ -22,13 +22,13 @@ const path = require('path');
 
 const key = (r) => r.agent + ' | ' + r.case;
 
-/** 0 when every case is within budget, 1 otherwise; prints one line per case. */
 function median(xs) {
   const v = xs.slice().sort((a, b) => a - b);
   const m = v.length >> 1;
   return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
 }
 
+/** 0 when every case is within budget, 1 otherwise; prints one line per case. */
 function compare(report, baseline, maxIncrease, log = () => {}, maxMedianIncrease = 0.1) {
   const base = new Map((baseline.results || []).map((r) => [key(r), r]));
   const seen = new Set();
