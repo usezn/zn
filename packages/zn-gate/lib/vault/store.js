@@ -103,8 +103,30 @@ function ensureLayout(opts) {
 /* ------------------------------------------------------------------ */
 
 let agePromise = null;
+let warningFilterInstalled = false;
+
+// Node 18 and 20 print an ExperimentalWarning the first time WebCrypto uses
+// X25519, which looks like an error to people running `zn unlock`. Drop only
+// that warning; every other warning still goes through unchanged.
+function isX25519Warning(warning, type) {
+  const t = typeof type === 'string' ? type : (type && type.type) || (warning && warning.name);
+  const msg = typeof warning === 'string' ? warning : (warning && warning.message) || '';
+  return t === 'ExperimentalWarning' && /X25519/.test(msg);
+}
+
+function silenceX25519Warning() {
+  if (warningFilterInstalled) return;
+  warningFilterInstalled = true;
+  const original = process.emitWarning;
+  process.emitWarning = function emitWarning(warning, type, ...rest) {
+    if (isX25519Warning(warning, type)) return undefined;
+    return original.call(this, warning, type, ...rest);
+  };
+}
+
 function loadAge() {
   if (!agePromise) {
+    silenceX25519Warning();
     // Node 18 has WebCrypto but not as a global; age-encryption expects one.
     if (!globalThis.crypto || !globalThis.crypto.getRandomValues) {
       globalThis.crypto = require('crypto').webcrypto;
@@ -256,6 +278,8 @@ module.exports = {
   ensureLayout,
   ensurePrivateDir,
   loadAge,
+  isX25519Warning,
+  silenceX25519Warning,
   generateIdentity,
   recipientOf,
   encryptTo,
