@@ -443,7 +443,7 @@ zn-gate stats [--days 30] [--json]
 zn-gate stats share on|off|status|show
 ```
 
-What zn-gate did on this machine: local counts for the last `--days` days (1 to 90, default 30). Exit codes: `0` done, `2` wrong usage.
+What zn-gate did on this machine: local counts for the last `--days` days (1 to 90, default 30). Exit codes: `0` done, `2` wrong usage. With `--json`, the npm package also reports `sharing`, `sent_days` and `send_failed`; the Python package reports the local counts only, because sharing is managed with the npm package.
 
 #### `stats share`
 

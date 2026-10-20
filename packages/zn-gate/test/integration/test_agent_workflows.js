@@ -18,7 +18,7 @@ async function runNodeIntegrationTests() {
   `;
   const res1 = await checkToolResult("web_fetcher", poisonedScrape);
   assert.strictEqual(res1.safe_to_ingest, false, "Should flag poisoned tool result as unsafe");
-  assert.ok(res1.sanitized_content.includes("[REDACTED BY ZN-GATE"), "Content should be sanitized");
+  assert.ok(res1.sanitized_content.includes("[BLOCKED BY ZN-GATE"), "Content should be sanitized");
   assert.ok(!res1.sanitized_content.includes("Ignore all prior instructions"), "Payload must be scrubbed");
   console.log("✔ Test 1: Tool result with indirect HTML comment injection intercepted");
 
