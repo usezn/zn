@@ -69,6 +69,83 @@ function readLockToken(lockPath) {
   try { return fs.readFileSync(lockPath, 'utf8'); } catch { return null; }
 }
 
+// Test seams: they let a test run code between two steps of the break protocol.
+const testHooks = { afterMutexCreate: null, beforeMutexRelease: null, beforeMutexReclaim: null };
+
+// The break mutex holds its owner's token, like the lock: a breaker only deletes the mutex while
+// it is still its own. If it took longer than the stale window, another breaker may have
+// reclaimed it and created a new one, and deleting by path would remove that one.
+function releaseMutex(mutex, token) {
+  if (readLockToken(mutex) === token) {
+    try { fs.unlinkSync(mutex); } catch { /* best effort */ }
+  }
+}
+
+// A mutex older than the stale window belongs to a breaker that died. Move it aside first (never
+// delete by the shared path: a new mutex may have been created since we looked), and put it back
+// with link() if what we moved turns out to be fresh.
+function reclaimStaleMutex(mutex, token) {
+  try {
+    if (Math.abs(Date.now() - fs.statSync(mutex).mtimeMs) <= LOCK_STALE_MS) return;
+    if (testHooks.beforeMutexReclaim) testHooks.beforeMutexReclaim(mutex);
+    const aside = `${mutex}-reclaim-${token.replace(':', '-')}`;
+    fs.renameSync(mutex, aside);
+    let fresh = false;
+    try { fresh = Math.abs(Date.now() - fs.statSync(aside).mtimeMs) <= LOCK_STALE_MS; } catch { /* gone */ }
+    if (fresh) {
+      try { fs.linkSync(aside, mutex); } catch { /* another mutex exists again: its owner checks its token */ }
+    }
+    try { fs.unlinkSync(aside); } catch { /* best effort */ }
+  } catch { /* gone or busy: wait and retry */ }
+}
+
+/**
+ * Breaks a stale lock. Breakers take a short-lived `<log>.lock.break` mutex first and judge the
+ * lock stale again inside it: without it, a breaker that judged the old lock stale could rename
+ * away a fresh lock another writer had just created, and that writer would then see its lock
+ * "taken over" and drop its record. Returns true when the caller should retry at once.
+ */
+function breakStaleLock(lockPath, token) {
+  const mutex = `${lockPath}.break`;
+  let fd;
+  try {
+    fd = fs.openSync(mutex, 'wx', LEDGER_FILE_MODE);
+    try { fs.writeSync(fd, token); } catch { /* best effort: without it the mutex is never released by us */ }
+  } catch {
+    // Another breaker is working. A mutex left by a dead process is removed after a while.
+    reclaimStaleMutex(mutex, token);
+    return false;
+  }
+  try {
+    try { fs.closeSync(fd); } catch { /* best effort */ }
+    if (testHooks.afterMutexCreate) testHooks.afterMutexCreate(mutex);
+    // Inside the mutex only breakers touch a stale lock, and a fresh one cannot appear while
+    // the stale file still exists, so what is judged stale here is still the stale file.
+    let stale = false;
+    try { stale = Math.abs(Date.now() - fs.statSync(lockPath).mtimeMs) > LOCK_STALE_MS; } catch { /* gone */ }
+    if (!stale) return true;
+    // Break it by renaming it away, then delete the renamed file. Never delete by the shared path.
+    const aside = `${lockPath}.stale-${token.replace(':', '-')}`;
+    let moved = false;
+    try { fs.renameSync(lockPath, aside); moved = true; } catch { /* already gone, or busy on Windows: retry */ }
+    if (moved) {
+      // Defense in depth: if what we moved is not stale after all, put it back with link()
+      // (atomic, fails if a lock exists again) before deleting our copy.
+      let fresh = false;
+      try { fresh = Math.abs(Date.now() - fs.statSync(aside).mtimeMs) <= LOCK_STALE_MS; } catch { /* gone */ }
+      if (fresh) {
+        try { fs.linkSync(aside, lockPath); } catch { /* a new lock exists: its owner checks its token */ }
+      }
+      try { fs.unlinkSync(aside); } catch { /* best effort */ }
+      sweepStaleLeftovers(lockPath);
+    }
+    return moved;
+  } finally {
+    if (testHooks.beforeMutexRelease) testHooks.beforeMutexRelease(mutex);
+    releaseMutex(mutex, token);
+  }
+}
+
 /**
  * Takes the lock and returns this writer's token (pid + random bytes), which is written into
  * the lock file. The token lets a writer tell its own lock from one taken over after it was
@@ -106,26 +183,7 @@ function acquireLock(lockPath, waitMs = LOCK_WAIT_MS) {
       // abs(): a lock dated in the future (clock moved back) is stale too.
       stale = Math.abs(Date.now() - fs.statSync(lockPath).mtimeMs) > LOCK_STALE_MS;
     } catch { /* gone or unreadable: wait a moment and try again */ }
-    if (stale) {
-      // Break it by renaming it away (atomic: when several writers try, only one rename wins),
-      // then delete the renamed file. Never delete by the shared path.
-      const aside = `${lockPath}.stale-${token.replace(':', '-')}`;
-      let moved = false;
-      try { fs.renameSync(lockPath, aside); moved = true; } catch { /* someone else broke it first */ }
-      if (moved) {
-        // Two breakers can both judge the same lock stale; the second rename then moves the
-        // first one's fresh lock aside. If what we moved is not stale, put it back with link()
-        // (atomic, fails if a lock exists again) before deleting our copy.
-        let fresh = false;
-        try { fresh = Math.abs(Date.now() - fs.statSync(aside).mtimeMs) <= LOCK_STALE_MS; } catch { /* gone */ }
-        if (fresh) {
-          try { fs.linkSync(aside, lockPath); } catch { /* a new lock exists: its owner checks its token */ }
-        }
-        try { fs.unlinkSync(aside); } catch { /* best effort */ }
-        sweepStaleLeftovers(lockPath);
-        continue;
-      }
-    }
+    if (stale && breakStaleLock(lockPath, token)) continue;
     sleepMs(delay + Math.floor(Math.random() * delay));
     delay = Math.min(delay * 2, 50);
   }
@@ -153,6 +211,19 @@ function ownsLock(lockPath, token) {
   return readLockToken(lockPath) === token;
 }
 
+// On Windows, deleting a file can fail for a moment while another process (a virus scanner, an
+// indexer) has it open. A lock that stays behind blocks every other writer until it goes stale,
+// so try again briefly before giving up. A missing file is fine.
+function unlinkLock(lockPath) {
+  for (let i = 0; i < 40; i++) {
+    try { fs.unlinkSync(lockPath); return; } catch (e) {
+      if (e.code === 'ENOENT') return;
+      if (!(process.platform === 'win32' && (e.code === 'EPERM' || e.code === 'EACCES' || e.code === 'EBUSY')) || i === 39) return;
+    }
+    sleepMs(5);
+  }
+}
+
 function releaseLock(lockPath, token) {
   // Only remove the lock if it is still ours; after a takeover it belongs to someone else.
   // If the file is missing it may be renamed aside by a breaker that is about to put it back
@@ -160,7 +231,7 @@ function releaseLock(lockPath, token) {
   for (let i = 0; i < 4; i++) {
     const current = readLockToken(lockPath);
     if (current === token) {
-      try { fs.unlinkSync(lockPath); } catch { /* already gone */ }
+      unlinkLock(lockPath);
       return;
     }
     if (current !== null) return;
@@ -319,7 +390,7 @@ function getLastHash(filePath = EVIDENCE_FILE) {
  *   write lock stays busy for 2 seconds; it never throws for a log problem.
  */
 function logEvidence(event, filePath = EVIDENCE_FILE, opts = {}) {
-  if (filePath === EVIDENCE_FILE) {
+  if (filePath === EVIDENCE_FILE && !opts.noStats) {
     require('./stats').record({
       layer: 'shield', agent: event.agent || event.agent_environment || 'other', checked: 1,
       blocked: String(event.verdict || '').toLowerCase() === 'block' ? 1 : 0,
@@ -886,4 +957,5 @@ module.exports = {
   renderAuditRow,
   EVIDENCE_FILE,
   GENESIS_HASH,
+  _testHooks: testHooks,
 };

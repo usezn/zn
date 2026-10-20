@@ -19,17 +19,24 @@ on:
   pull_request:
     branches: [ main, next, 'release/**' ]
     types: [ opened, synchronize, reopened, labeled, ready_for_review ]
-    # Documentation-only pull requests skip this workflow (it gives no required check), with the
-    # same split as the push filter above.
+    # Pull requests run this workflow (it gives no required check) only when they change what the
+    # plugin checks read: the plugins, the marketplace files, the zn-gate version the plugin pins and the
+    # hook runner and CLI the launcher benchmark compares against.
     paths:
-      - '**'
-      - '!docs/**'
-      - '!**/*.md'
-      - 'packages/**'
       - 'plugins/**'
       - 'skill/**'
-      - 'bench/**'
-      - '.github/**'
+      - '.claude-plugin/**'
+      - '.cursor-plugin/**'
+      - '.agents/**'
+      - 'packages/zn-gate/package.json'
+      - 'packages/zn-gate/package-lock.json'
+      - 'packages/zn-gate/lib/hooks/**'
+      - 'packages/zn-gate/bin/**'
+      - '.github/scripts/ci-scope.sh'
+      - '.github/workflows/plugins.yml'
+  # Daily full run on the default branch.
+  schedule:
+    - cron: '30 6 * * *'
   workflow_dispatch:
 
 permissions:
@@ -77,6 +84,7 @@ jobs:
         if: steps.scope.outputs.run == 'true'
         with:
           node-version: ${{ matrix.node-version }}
+          package-manager-cache: false
       - name: Pinning and consistency checks
         if: steps.scope.outputs.run == 'true'
         run: node plugins/tools/check-plugins.js
@@ -116,5 +124,6 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.x
+          package-manager-cache: false
       - name: Release checks
         run: node plugins/tools/check-plugins.js --release

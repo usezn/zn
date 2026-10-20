@@ -13,7 +13,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
-from zn_gate.cli import cmd_scan
+from zn_gate.cli import _relative_to_cwd, cmd_scan
 
 SAMPLES_FILE = Path(__file__).resolve().parents[2] / "zn-gate" / "test" / "fixtures" / "scan_secret_samples.json"
 FAKE = "ZNTESTFAKE" + "q8v3Lm9x2W"
@@ -212,3 +212,35 @@ def test_a_long_flag_value_is_redacted_to_its_end():
     text = out[0] if isinstance(out, tuple) else getattr(out, "sanitized", out)
     assert long[-40:] not in str(text)
     assert long[:40] not in str(text)
+
+
+class RelativePathThroughLink(unittest.TestCase):
+    """The path in a suggested command stays relative when the scanned folder is
+    reached through a link in one of its parents (macOS: /var/... links to /private/var/...)."""
+
+    def _check(self, cwd_is_real):
+        base = os.path.realpath(tempfile.mkdtemp())
+        old = os.getcwd()
+        try:
+            real = os.path.join(base, "real")
+            link = os.path.join(base, "link")
+            os.makedirs(real)
+            try:
+                os.symlink(real, link, target_is_directory=True)
+            except (OSError, NotImplementedError) as e:
+                self.skipTest(f"cannot create a symbolic link here ({e})")
+            os.chdir(real if cwd_is_real else link)
+            target = link if cwd_is_real else real
+            shown = os.path.join(target, "sub", ".env")
+            self.assertEqual(_relative_to_cwd(shown).replace(os.sep, "/"), "sub/.env")
+            # A name that does not exist yet still resolves through its folder.
+            self.assertEqual(_relative_to_cwd(os.path.join(target, "nope", ".env")).replace(os.sep, "/"), "nope/.env")
+        finally:
+            os.chdir(old)
+            shutil.rmtree(base, ignore_errors=True)
+
+    def test_cwd_real_target_link(self):
+        self._check(True)
+
+    def test_cwd_link_target_real(self):
+        self._check(False)

@@ -1,0 +1,2 @@
+### Added
+- `zn vault reset` is the way out when you forget the vault passphrase. It runs only in your own terminal (not from an AI agent or a script) and asks you to type a confirmation phrase. It saves the old vault in a timestamped backup folder, then lets `zn unlock` create a new empty one. It refuses on a computer that belongs to a zn Team organization. After three wrong passphrases, `zn unlock` now points to it.

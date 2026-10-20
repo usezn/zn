@@ -1,6 +1,6 @@
 # Troubleshooting
 
-The ten messages people most often meet when they first use zn-gate: what each one means and what to do. Each message is copied as zn-gate prints it. A part in angle brackets, such as `<agent>`, is a blank that zn fills in for you.
+The eleven messages people most often meet when they first use zn-gate: what each one means and what to do. Each message is copied as zn-gate prints it. A part in angle brackets, such as `<agent>`, is a blank that zn fills in for you.
 
 Run every command in your own terminal, not through your AI agent. New here? Start with [First 5 minutes](first-5-minutes.md). Words you do not know are in the [glossary](glossary.md).
 
@@ -68,6 +68,21 @@ Your secret vault is locked. Unlock it in this terminal with: zn unlock. Then ru
 3. Run the command that failed again.
 
 More in [secrets](secrets.md). If it asks for a terminal to enter the passphrase and you have none (for example over SSH), see "If something fails" there.
+
+**If the passphrase is right but the vault will not open:** `zn unlock` says so when the vault file is damaged or the system keychain refuses. It then tells you not to reset. Do not run `zn vault reset`: it would delete values that may still be fine. Run `zn vault verify` to see whether the vault files are intact, restore the vault folder from a backup if you have one, or sign in to the user account that created the vault. If a keychain is the cause, the message names it.
+
+**If you forgot the passphrase:** nobody can recover it, zn included. That is what keeps your secrets safe. After three wrong passphrases in a row (other errors do not count), `zn unlock` points you to the way out:
+
+```text
+Forgot the passphrase? `zn vault reset` starts a new, empty vault (the old values are lost).
+```
+
+1. Run `zn lock` if the vault is unlocked, then run `zn vault reset` in your own terminal. It does nothing in a script or when your AI agent runs it.
+2. Read what it says, then type `reset my vault` and press Enter. Anything else cancels and changes nothing.
+3. zn saves the old vault in a folder named `vault-backup-<date>-<time>` inside your zn folder (`~/.zn`), then removes it. The values stored in it are lost, because only the old passphrase opens them. If you find the passphrase later, the backup still opens with it.
+4. Run `zn unlock` to create the new vault, then store your values again, for example `zn env shadow .env` or `zn secret set NAME`. Rotate any secret you cannot re-enter from another source.
+
+If your computer is part of a zn Team organization, `zn vault reset` refuses, because a reset would remove the organization's controls. Ask your administrator.
 
 ## 6. Your agent was blocked: "`.env` holds plain-text secrets"
 
@@ -149,6 +164,35 @@ zn-gate: the evidence log <path> is damaged (<reason>) Events are not being reco
 1. Run `npx -y zn-gate evidence --verify`. It says where the break is.
 2. Keep the old file if you need it for review. Move it aside with the command in the message. On Windows the message shows a `move` command instead of `mv`.
 3. The next event starts a new log. Run `npx -y zn-gate evidence --verify` again to see that it is fine.
+
+## 11. The Claude Code plugin rejects every call, or its MCP servers show "Failed to connect"
+
+You may see one of these:
+
+```text
+Failed to connect: CONNECTION_CLOSED
+```
+
+```text
+X  Claude Code   NOT protected: the zn-gate plugin needs Node.js 20.12 or later (you have 18.19.1).
+   To fix it, update Node.js to 20.12 or later (the current LTS from nodejs.org), and make it the first `node` on your PATH, or use zn's hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, and after that turn the plugin off with `claude plugin disable zn-gate@usezn`, all in your own terminal.
+```
+
+The version number in the second message is yours and will differ.
+
+**What it means:** the zn-gate plugin for Claude Code needs Node.js 20.12 or later. With an older Node.js (for example Node.js 18, which `apt` installs on many Debian and Ubuntu systems), the plugin refuses to start on purpose: its checks block the calls they cannot make, and its MCP server does not start, so Claude Code lists it as failed to connect. zn-gate itself and zn's hooks still run on Node.js 18 and later. Nothing is wrong with your files.
+
+**How to check:**
+
+1. Run `node --version` in your own terminal. If it says a version lower than 20.12 (such as `v18.19.1`), this is the cause. Claude Code starts the plugin with the first `node` on its `PATH`, so use the terminal you start Claude Code from.
+2. Run `npx -y zn-gate check`. A line for Claude Code that says `NOT protected: the zn-gate plugin needs Node.js 20.12 or later` confirms it.
+
+**What to do, either one:**
+
+- **Update Node.js (recommended):** install the Node.js 22 LTS version from [nodejs.org](https://nodejs.org/), open a new terminal, check that `node --version` shows it, then start a new Claude Code session. On a computer with several Node.js installs, make sure the new one is the first on your `PATH`.
+- **Or use zn's hooks instead of the plugin:** run `npm install -g zn-gate`, then `zn hooks install claude-code`, then `claude plugin disable zn-gate@usezn`, all in your own terminal. Then run `npx -y zn-gate check` again.
+
+Running `npx -y zn-gate init` on a Node.js older than 20.12 does the second option for you: it skips the plugin and sets up zn's hooks for Claude Code instead, and if the plugin is already installed it offers to turn it off once the hooks work. Node.js 22 LTS is recommended; 18 or later is enough for the hooks and the CLI. See the [README](../README.md#install).
 
 ## Also useful
 

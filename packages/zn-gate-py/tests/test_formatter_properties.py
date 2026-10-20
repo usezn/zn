@@ -133,7 +133,7 @@ def test_github_one_command_line_per_finding(scanned, skipped, violations):
     notices = [ln for ln in lines if ln.startswith("::notice ")]
     assert len(errors) == len(violations)
     assert len(notices) == len(skipped)
-    for line, v in zip(errors, violations):
+    for line, v in zip(errors, violations, strict=False):
         name, props, message = _parse_command(line)
         assert name == "error"
         assert int(props["line"]) == v["line"]
@@ -142,7 +142,7 @@ def test_github_one_command_line_per_finding(scanned, skipped, violations):
         assert _unescape(props["title"]) == f"{kind} ({v['rule']})"
         expected = v["next_step"] if v["type"] == "secret_leak" else v["reason"]
         assert _unescape(message) == expected
-    for line, s in zip(notices, skipped):
+    for line, s in zip(notices, skipped, strict=False):
         name, props, message = _parse_command(line)
         assert _unescape(props["file"]) == s["file"]
         assert _unescape(message) == s["reason"]
@@ -165,7 +165,10 @@ def test_github_has_no_raw_line_breaks_inside_a_command(scanned, skipped, violat
 def test_text_mentions_each_finding_rule_once(scanned, skipped, violations):
     output = _render("text", scanned, skipped, violations)
     if not violations:
-        assert "All scanned prompts, tool definitions, and files are clean!" in output
+        if scanned:
+            assert "All scanned prompts, tool definitions, and files are clean!" in output
+        else:
+            assert "No files were scanned in" in output
         return
     for rule in set(v["rule"] for v in violations):
         expected = sum(1 for v in violations if v["rule"] == rule)

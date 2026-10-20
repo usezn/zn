@@ -1,0 +1,7 @@
+PASS Codex exited with code 0 (exit task exit=0)
+PASS no hook run failed (0,0,0)
+PASS Stop fired twice (answer, then the rewritten answer) (2 call(s))
+PASS first answer: zn blocked with a reason (block)
+PASS second call has stop_hook_active and zn did not block again
+PASS the model got the reason as a new prompt
+PASS two turns to the provider (2 turn(s))

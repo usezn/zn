@@ -126,7 +126,7 @@ class TestBehaviourParity(unittest.TestCase):
         js = _node_export()
         samples = json.loads(SAMPLES_FILE.read_text(encoding="utf-8"))["samples"]
         self.assertEqual(len(samples), len(js["results"]))
-        for i, (sample, expected) in enumerate(zip(samples, js["results"])):
+        for i, (sample, expected) in enumerate(zip(samples, js["results"], strict=False)):
             text = _expand(sample)
             res = R.evaluate(text)
             label = f"sample {i}: {text[:40]!r}"
@@ -147,7 +147,7 @@ class TestBehaviourParity(unittest.TestCase):
         js = _node_export()
         samples = json.loads(SAMPLES_FILE.read_text(encoding="utf-8"))["redact_samples"]
         self.assertEqual(len(samples), len(js["redactions"]))
-        for i, (sample, expected) in enumerate(zip(samples, js["redactions"])):
+        for i, (sample, expected) in enumerate(zip(samples, js["redactions"], strict=False)):
             text = _expand(sample)
             redacted, found = R.redact_secrets(text)
             with self.subTest(sample=i):

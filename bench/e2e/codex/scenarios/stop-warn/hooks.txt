@@ -1,0 +1,7 @@
+UserPromptSubmit 
+  input: 
+  zn answered: (nothing), exit 0
+
+Stop 
+  input: last message: Deploy with this key: <<VALUE:PASTED_KEY>>
+  zn answered: {"systemMessage":"zn: the last answer contains a secret value (an OpenAI key). zn did not stop it. To have zn ask the agent to rewrite such answers, set \"stopReview\" to \"block\" under \"hooks\" in ~/.zn/config.json."}, exit 0
