@@ -121,6 +121,8 @@ Arguments are checked before the function runs; with `on_block="raise"` a blocke
 
 ### LangChain / LangGraph
 
+The integration is tested against `langchain-core` 1.2.31 and the current 1.x release; 1.2.31 is the minimum supported version.
+
 <!-- snippet-test -->
 ```python
 from zn_gate.integrations import ZnGuardCallbackHandler

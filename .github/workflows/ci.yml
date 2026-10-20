@@ -195,6 +195,20 @@ jobs:
         if: steps.scope.outputs.run == 'true' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         working-directory: packages/zn-gate-py
         run: python -m pytest -v tests/test_cli.py::TestCliScanCommand::test_many_key_blocks_scan_in_linear_time
+      - name: Run the LangChain and LlamaIndex integration tests on the oldest supported langchain-core
+        # The same real-framework tests, in a separate virtual environment with langchain-core 1.2.31, the
+        # oldest version the integration supports. The frameworks are installed: the tests must run, not skip.
+        if: steps.scope.outputs.run == 'true' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        env:
+          ZN_REQUIRE_FRAMEWORKS: "1"
+        run: |
+          python -m venv "$RUNNER_TEMP/venv-oldest-langchain"
+          "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -m pip install --require-hashes -r .github/ci-test-requirements.txt
+          "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -m pip install --require-hashes -r .github/ci-framework-test-requirements-oldest.txt
+          "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -m pip install --no-deps --no-build-isolation -e packages/zn-gate-py
+          "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -c "import langchain_core; assert langchain_core.__version__ == '1.2.31', langchain_core.__version__"
+          cd packages/zn-gate-py
+          "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -m pytest tests/test_langchain_real.py tests/test_llamaindex_real.py -v
       - name: Upload Python coverage report
         if: always() && steps.scope.outputs.run == 'true' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
