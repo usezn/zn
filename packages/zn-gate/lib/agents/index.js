@@ -11,9 +11,10 @@ const ADAPTERS = {
   cursor: () => require('./cursor'),
   opencode: () => require('./opencode'),
   antigravity: () => require('./antigravity'),
+  gemini: () => require('./gemini'),
 };
 
-const ALIASES = { claude: 'claude-code', claudecode: 'claude-code' };
+const ALIASES = { claude: 'claude-code', claudecode: 'claude-code', 'gemini-cli': 'gemini', geminicli: 'gemini' };
 
 function getAdapter(id) {
   const key = ALIASES[String(id || '').toLowerCase()] || String(id || '').toLowerCase();

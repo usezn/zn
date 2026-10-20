@@ -56,7 +56,7 @@ function launcher({ broken = false, systemMessage = '' } = {}) {
 }
 
 test('check: every agent installed for the user blocks .env and allows an ordinary file, also through the installed hook', async (t) => {
-  const ctx = homeWithHooks(t, ['claude-code', 'codex', 'cursor', 'opencode', 'antigravity']);
+  const ctx = homeWithHooks(t, ['claude-code', 'codex', 'cursor', 'opencode', 'antigravity', 'gemini']);
   const res = await check(ctx);
   for (const r of res.results) {
     assert.equal(r.state, 'protected', `${r.id}: ${r.problem}`);
