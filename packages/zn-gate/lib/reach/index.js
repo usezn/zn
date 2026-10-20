@@ -18,6 +18,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { pasteablePath } = require('../paste-path');
 
 const VERSION = 1;
 const SEVERITIES = ['high', 'medium', 'low', 'info'];
@@ -196,7 +197,7 @@ async function reach(opts = {}) {
       section: 'reach', kind: 'dotenv', severity: level('high'), file: d.file,
       title: d.file + ' in this folder has ' + plural(d.secrets.length, 'secret') + ' (' + shown + ')',
       detail: reads,
-      fix: 'npx -y zn-gate env shadow ' + d.file,
+      fix: 'npx -y zn-gate env shadow ' + pasteablePath(d.file, root, home),
       names: d.secrets,
     });
   }

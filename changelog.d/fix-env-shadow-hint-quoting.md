@@ -1,0 +1,1 @@
+- `zn secret import`, `zn env shadow` and `zn reach` now print the file path in their `zn env shadow` / `zn env unshadow` hint as a path you can paste as is: relative to the current folder when it stays inside it or inside your home folder, absolute otherwise, and quoted when it has spaces or other special characters (single quotes on macOS and Linux, double quotes on Windows).

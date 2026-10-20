@@ -22,6 +22,7 @@ const deps = require('../deps');
 const exe = require('../exe');
 const { humanError } = require('../errors');
 const { znCommand } = require('../zn-command');
+const { pasteablePath } = require('../paste-path');
 
 const MODES = new Set(['proxy', 'env', 'file']);
 const PLACEMENTS = new Set(['header', 'query', 'body']);
@@ -351,7 +352,7 @@ async function secretImport(args, io) {
   out(io, 'Imported ' + stored.length + ' secret(s) from ' + path.basename(file) + ': ' + (stored.map((s) => s.name).join(', ') || '-'));
   for (const s of plan.skipped) out(io, '  skipped ' + s.key + ': ' + s.why);
   for (const s of plan.notes) out(io, '  note ' + s.key + ': ' + s.why);
-  out(io, 'The file is unchanged. To replace its values with markers run: zn env shadow ' + path.relative(io.cwd, file));
+  out(io, 'The file is unchanged. To replace its values with markers run: zn env shadow ' + pasteablePath(file, io.cwd, io.home || os.homedir()));
   return 0;
 }
 
@@ -390,7 +391,7 @@ async function envShadow(args, io) {
   try { mode = fs.statSync(file).mode & 0o777; } catch (_) { /* default */ }
   writeFileAtomic(file, shadowed, mode);
   out(io, 'Shadowed ' + edits.length + ' value(s) in ' + path.basename(file) + '. The file now holds only markers; the values are in the local vault.');
-  out(io, 'Encrypted copy of the original: ' + bak + ' (restore with: zn env unshadow ' + path.relative(io.cwd, file) + ' --backup ' + bak + ')');
+  out(io, 'Encrypted copy of the original: ' + bak + ' (restore with: zn env unshadow ' + pasteablePath(file, io.cwd, io.home || os.homedir()) + ' --backup ' + bak + ')');
   for (const s of plan.notes) out(io, '  note ' + s.key + ': ' + s.why);
   for (const s of plan.skipped) out(io, '  skipped ' + s.key + ': ' + s.why);
   const names = stored.map((s) => s.name).join(',');
