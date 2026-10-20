@@ -106,7 +106,10 @@ jobs:
         run: |
           set -euo pipefail
           if [ ! -f bench/hook_latency_baseline_windows.json ]; then echo "::error::bench/hook_latency_baseline_windows.json is missing"; exit 1; fi
-          node bench/hook_latency_matrix.js --runs 40 --json "$RUNNER_TEMP/hook_latency.json" --baseline bench/hook_latency_baseline_windows.json | tee "$RUNNER_TEMP/hook_latency.md"
+          # Windows runners vary more (five CPU models in 33 runs, per-case spread twice the Linux one), so a single
+          # case may move 35 % before it fails; the whole-run check (median of all cases +10 %) still catches a
+          # general slowdown. Measured on 33 runs (2026-10-16..20): 1 false failure instead of 5.
+          node bench/hook_latency_matrix.js --runs 40 --json "$RUNNER_TEMP/hook_latency.json" --baseline bench/hook_latency_baseline_windows.json --max-increase 0.35 | tee "$RUNNER_TEMP/hook_latency.md"
       - name: Summary
         if: always()
         run: 'if [ -f "$RUNNER_TEMP/hook_latency.md" ]; then { echo "### Windows"; cat "$RUNNER_TEMP/hook_latency.md"; } >> "$GITHUB_STEP_SUMMARY" || true; fi'
