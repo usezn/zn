@@ -18,6 +18,17 @@ NAMES = {
 }
 
 
+def escape_command_data(value):
+    """Escape a value for the message of a GitHub workflow command, so a package
+    name or license cannot end the line or start another command."""
+    return str(value).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def cell(value):
+    """One line for a table cell: a line break would let a value start a workflow command."""
+    return " ".join(str(value).split())
+
+
 def load_allowed(path):
     with open(path, encoding="utf-8") as fh:
         return {line.strip() for line in fh if line.strip() and not line.lstrip().startswith("#")}
@@ -41,7 +52,7 @@ def main():
     ]
     for r in rows:
         status = "ok" if is_allowed(r["License"], allowed) else "review"
-        lines.append(f"| {r['Name']} | {r['Version']} | {r['License']} | {status} |")
+        lines.append(f"| {cell(r['Name'])} | {cell(r['Version'])} | {cell(r['License'])} | {status} |")
     out = "\n".join(lines) + "\n"
     print(out)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
@@ -49,7 +60,8 @@ def main():
         with open(summary, "a", encoding="utf-8") as fh:
             fh.write(out)
     for r in findings:
-        print(f"::warning title=License outside the allowlist::{r['Name']}=={r['Version']} is {r['License']}")
+        message = f"{r['Name']}=={r['Version']} is {r['License']}"
+        print(f"::warning title=License outside the allowlist::{escape_command_data(message)}")
 
 
 main()

@@ -56,17 +56,24 @@ const rows = packageDirs(root)
   })
   .sort((a, b) => a.name.localeCompare(b.name) || a.version.localeCompare(b.version));
 
+// Escape a value for the message of a workflow command, so a package name or
+// license cannot end the line or start another command.
+const escapeCommandData = (value) => String(value).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+
+// One line for a table cell: a line break would let a value start a workflow command.
+const cell = (value) => String(value).replace(/\s+/g, ' ');
+
 const findings = rows.filter((r) => !isAllowed(r.license));
 const lines = [
   `### npm production dependencies: ${rows.length} package(s), ${findings.length} outside the allowlist`,
   '',
   '| Package | Version | License | Status |',
   '|---|---|---|---|',
-  ...rows.map((r) => `| ${r.name} | ${r.version} | ${r.license} | ${isAllowed(r.license) ? 'ok' : 'review'} |`),
+  ...rows.map((r) => `| ${cell(r.name)} | ${cell(r.version)} | ${cell(r.license)} | ${isAllowed(r.license) ? 'ok' : 'review'} |`),
   '',
 ];
 console.log(lines.join('\n'));
 if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join('\n') + '\n');
 for (const f of findings) {
-  console.log(`::warning title=License outside the allowlist::${f.name}@${f.version} is ${f.license}`);
+  console.log(`::warning title=License outside the allowlist::${escapeCommandData(`${f.name}@${f.version} is ${f.license}`)}`);
 }

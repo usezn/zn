@@ -197,7 +197,7 @@ jobs:
           # Python package: install the built wheel alone in an empty environment and list what is in it.
           python -m venv --without-pip "$RUNNER_TEMP/sbom-target"
           "$RUNNER_TEMP/build-venv/bin/python" -m pip --python "$RUNNER_TEMP/sbom-target/bin/python" \
-            install --disable-pip-version-check --no-cache-dir "$RUNNER_TEMP/release/zn_gate-${PY_VERSION}-py3-none-any.whl"
+            install --disable-pip-version-check --no-cache-dir --no-index --no-deps "$RUNNER_TEMP/release/zn_gate-${PY_VERSION}-py3-none-any.whl"
           "$RUNNER_TEMP/sbom-venv/bin/cyclonedx-py" environment "$RUNNER_TEMP/sbom-target" \
             --pyproject packages/zn-gate-py/pyproject.toml --mc-type library --sv 1.6 --of JSON \
             --output-reproducible -o "$sbom/zn_gate-${PY_VERSION}.cdx.json"
