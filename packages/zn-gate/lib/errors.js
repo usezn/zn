@@ -51,4 +51,13 @@ function humanError(err, env = process.env) {
   return code && (env.DEBUG || env.ZN_VERBOSE === '1') ? '[' + code + '] ' + text : text;
 }
 
-module.exports = { CODES, znError, notImplemented, humanError };
+/* The message of an error for a command line, with the unlock hint added once: a locked-vault
+ * message that already says how to unlock is returned as it is. */
+function messageWithUnlockHint(err) {
+  const msg = String((err && err.message) || err);
+  if (!(err && err.code === CODES.LOCKED) || /unlock/i.test(msg)) return msg;
+  const { znCommand } = require('./zn-command');
+  return msg + '; run `' + znCommand('unlock') + '`';
+}
+
+module.exports = { CODES, znError, notImplemented, humanError, messageWithUnlockHint };

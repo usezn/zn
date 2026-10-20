@@ -24,6 +24,14 @@
         "regex": "^__version__ = \"([^\"]+)\""
       },
       {
+        "file": ".pre-commit-hooks.yaml",
+        "regex": "^  entry: npx --yes zn-gate@(\\S+) scan$"
+      },
+      {
+        "file": ".pre-commit-hooks.yaml",
+        "regex": "^  entry: npx --yes zn-gate@(\\S+) audit$"
+      },
+      {
         "file": "examples/crewai-agent/requirements.txt",
         "regex": "^zn-gate==(\\S+)$"
       },
@@ -45,6 +53,10 @@
       },
       {
         "file": "examples/haystack-agent/requirements.txt",
+        "regex": "^zn-gate==(\\S+)$"
+      },
+      {
+        "file": "examples/smolagents-agent/requirements.txt",
         "regex": "^zn-gate==(\\S+)$"
       },
       {

@@ -127,8 +127,9 @@ class TestIntegrationAnnotations(unittest.TestCase):
     The modules use `from __future__ import annotations`, so a name that is
     used in an annotation but never imported does not fail at import time.
     typing.get_type_hints evaluates the annotations and raises NameError for
-    such a name. The integrations import no third-party framework, so there
-    is nothing to stub.
+    such a name. Only functions defined in the module are checked: methods a
+    framework adds to a subclass (pydantic, when langchain-core is installed)
+    are not ours.
     """
 
     MODULES = ("langchain", "crewai", "llamaindex", "promptfoo")
@@ -147,7 +148,8 @@ class TestIntegrationAnnotations(unittest.TestCase):
                 if inspect.isfunction(obj):
                     functions.append(obj)
                 elif inspect.isclass(obj):
-                    functions.extend(v for v in vars(obj).values() if inspect.isfunction(v))
+                    functions.extend(v for v in vars(obj).values()
+                                     if inspect.isfunction(v) and v.__module__ == module.__name__)
             self.assertTrue(functions, f"no functions found in {name}")
             for func in functions:
                 # Raises NameError if an annotation uses a name that is not imported.

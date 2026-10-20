@@ -1,0 +1,4 @@
+date: 2026-10-19
+host: ephemeral Ubuntu 24.04 VM, node v24.21.0
+agent version: GitHub Copilot CLI 1.0.98.
+provider: scripted OpenAI Chat Completions on 127.0.0.1 (COPILOT_PROVIDER_BASE_URL)
