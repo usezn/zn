@@ -76,9 +76,9 @@ function scrub(text, key) {
  * Resolves {status, body} or {error}. Redirects are not followed, the
  * certificate is always verified, and the host cannot be changed by the caller.
  */
-function request(h, method, path, key) {
+function request(h, method, path, key, saved) {
   return new Promise((resolve) => {
-    const why = cloudKey.tlsRefusal();
+    const why = cloudKey.tlsRefusal(process.env, { saved });
     if (why) { resolve({ error: why }); return; }
     let done = false;
     const finish = (v) => { if (!done) { done = true; resolve(v); } };
@@ -118,7 +118,7 @@ function version() {
  *   'failed'   anything else, or no answer: nothing is stored
  */
 async function verifyKey(h, key) {
-  const r = await request(h, 'GET', VERIFY_PATH, key);
+  const r = await request(h, 'GET', VERIFY_PATH, key, false);
   if (r.error) return { state: 'failed', detail: r.error };
   if (r.status === 200) return { state: 'full', detail: null };
   if (r.status === 401) return { state: 'rejected', detail: null };
@@ -128,18 +128,6 @@ async function verifyKey(h, key) {
     if (code === 'key_scope') return { state: 'analyze', detail: null };
   }
   return { state: 'failed', detail: 'HTTP ' + r.status };
-}
-
-function noStoreText() {
-  return [
-    'zn-gate will not keep the key in a plain file, and this computer has no system keychain',
-    '(and the zn vault is not unlocked), so nothing was saved.',
-    '',
-    'To use the cloud check anyway, set the key in your own shell before starting your agent:',
-    '  ZN_API_KEY=<your key> and ZN_CLOUD=1',
-    'A key in ZN_API_KEY alone does nothing. Or run `zn unlock` first and then `zn-gate connect` again.',
-    '',
-  ].join('\n') + '\n';
 }
 
 async function connect(args, io) {
@@ -163,7 +151,7 @@ async function connect(args, io) {
     return 0;
   }
   const store = await cloudKey.availableStore(c.deps);
-  if (!store) { c.out(noStoreText()); return 1; }
+  if (!store) { c.err(messages.connectNoStore(znCommand('unlock')) + '\n'); return 1; }
 
   c.out('zn-gate connect (optional)\n\n'
     + 'Right now zn-gate runs entirely on your computer and sends nothing.\n'
@@ -206,7 +194,7 @@ async function connect(args, io) {
 
   let where;
   try { where = await cloudKey.saveKey(key, c.deps); } catch (e) {
-    if (e instanceof cloudKey.NoSecureStore || (e && e.code === 'ZN_NO_SECURE_STORE')) { c.out(noStoreText()); return 1; }
+    if (e instanceof cloudKey.NoSecureStore || (e && e.code === 'ZN_NO_SECURE_STORE')) { c.err(messages.connectNoStore(znCommand('unlock')) + '\n'); return 1; }
     c.err(messages.connectSaveFailed(scrub(e && e.message, key)) + '\n');
     return 1;
   }
@@ -227,7 +215,7 @@ const DASHBOARD = 'https://usezn.com/api-keys';
  * 'failed' (no answer or anything else).
  */
 async function revokeKey(h, key) {
-  const r = await request(h, 'DELETE', REVOKE_PATH, key);
+  const r = await request(h, 'DELETE', REVOKE_PATH, key, true);
   if (r.error) return { state: 'failed', detail: r.error };
   if (r.status === 200) return { state: 'revoked', detail: null };
   if (r.status === 401) return { state: 'rejected', detail: null };
@@ -245,9 +233,9 @@ function revokeLine(res, key) {
   switch (res.state) {
     case 'revoked': return { ok: true, text: 'Revoked key ' + k + ' on usezn.com: it no longer works.\n' };
     case 'rejected': return { ok: false, text: 'usezn.com did not accept key ' + k + ' (already revoked, or not valid), so nothing was revoked from here.' + link + '\n' };
-    case 'unavailable': return { ok: false, text: 'usezn.com could not revoke key ' + k + ' from here (' + res.detail + '); it may still work.' + link + '\n' };
-    case 'maybe': return { ok: false, text: 'usezn.com had an error (' + res.detail + '), so key ' + k + ' may still work.' + link + '\n' };
-    default: return { ok: false, text: 'Could not reach usezn.com (' + scrub(res.detail, key) + '), so key ' + k + ' was not revoked.' + link + '\n' };
+    case 'unavailable': return { ok: false, text: 'usezn.com cannot revoke key ' + k + ' from here, so it may still work.' + link + messages.verboseDetail(res.detail) + '\n' };
+    case 'maybe': return { ok: false, text: messages.revokeNotReached(res.detail, k, DASHBOARD) + '\n' };
+    default: return { ok: false, text: messages.revokeNotReached(scrub(res.detail, key), k, DASHBOARD) + '\n' };
   }
 }
 

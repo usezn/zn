@@ -296,7 +296,7 @@ test('an invalid service name or keychain path is refused before any helper runs
 test('a native helper that cannot start is reported as locked, and the blocked launcher saw the call', (t) => {
   withEnv(t, { ZN_KEYCHAIN_SERVICE: 'zn-vault-test', ZN_KEYCHAIN_PATH: undefined });
   const before = helperCalls.length;
-  assert.throws(() => keychain._native.macos.load(), (e) => e.code === 'ZN_LOCKED' && /failed to start/.test(e.message));
+  assert.throws(() => keychain._native.macos.load(), (e) => e.code === 'ZN_LOCKED' && /could not start the system program/.test(e.message));
   assert.equal(helperCalls.length, before + 1);
 });
 
@@ -435,7 +435,7 @@ test('native backend (stub): a keychain that drops the item fails before the vau
   stubNative(t, 'macos', { store() { /* silently drops it */ }, load() { return null; }, remove() { return false; } });
   const home = tmpHome(t);
   await assert.rejects(() => keychain.initIdentity({ home, backend: 'macos' }),
-    (e) => e.code === 'ZN_LOCKED' && /did not return the stored identity/.test(e.message));
+    (e) => e.code === 'ZN_LOCKED' && /could not save the vault key in the macOS Keychain/.test(e.message));
   assert.equal(keychain.readMeta({ home }), null);
 });
 

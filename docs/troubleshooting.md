@@ -71,6 +71,12 @@ More in [secrets](secrets.md). If it asks for a terminal to enter the passphrase
 
 **If the passphrase is right but the vault will not open:** `zn unlock` says so when the vault file is damaged or the system keychain refuses. It then names the damaged file and tells you to restore it from a backup first. Do not run `zn vault reset` before you try that: it would delete values that may still be fine. Run `zn vault verify` to see whether the vault files are intact, restore the vault folder from a backup if you have one, or sign in to the user account that created the vault. With no backup, `zn vault reset` is the way out: it sets the old vault aside and starts empty, so the values saved in it are lost. If a keychain is the cause, the message names it.
 
+**If the keychain refuses:** `unlock` names the one your computer uses and one next step. On macOS, choose Allow in the Keychain window, or open Keychain Access and allow zn to use the item `zn-vault`. On Windows, check that Credential Manager works for your account (open it from the Start menu). On Linux, make sure your keyring is unlocked by logging in to your desktop session; if the `secret-tool` program is missing, install the `libsecret-tools` package (for example `sudo apt install libsecret-tools`). When the vault is being created, you can use a passphrase instead: `zn unlock --backend passphrase`. For the technical code that the keychain returned, run the command again with `ZN_VERBOSE=1`.
+
+**If the vault does not answer:** "The vault is not answering" means the vault is slow or was left over from a crash. Run `zn lock`, then `zn unlock`. If `unlock` says the vault did not start in time or stopped while starting, run it again; if it keeps happening, restart your computer and open an issue with the output of `ZN_VERBOSE=1 zn unlock`.
+
+**If `zn vault verify` says the audit log did not pass its check:** do not delete or edit the log. It is the record of what the vault did, and a change to it is what the check finds. Keep a copy of `~/.zn/audit.jsonl`, then open an issue; `zn vault verify` with `ZN_VERBOSE=1` prints the reason.
+
 **If you forgot the passphrase:** nobody can recover it, zn included. That is what keeps your secrets safe. After three wrong passphrases in a row (other errors do not count), `zn unlock` points you to the way out:
 
 ```text
@@ -102,6 +108,8 @@ More in [secrets](secrets.md) and [what the check means](check.md).
 
 ## 7. `zn-gate connect` does not accept your key
 
+`connect` prints its problems on the error output. If the message says "Could not reach usezn.com", check your internet connection and run `zn-gate connect` again. If it says usezn.com "is not answering properly right now", wait a few minutes and try again. In both cases nothing was saved. If it says the computer has no system keychain and the vault is locked, run `zn unlock` (it asks for a passphrase), then `zn-gate connect` again.
+
 ```text
 That does not look like a zn API key (they start with zn_). Nothing was saved. Run `zn-gate connect` and paste the key again.
 usezn.com did not accept this key (it may be revoked or mistyped). Nothing was saved. Run `zn-gate connect` and paste a valid key.
@@ -122,14 +130,14 @@ More in [connect](connect.md). You do not need `connect` to use zn-gate: without
 ## 8. "will not send the saved key" (TLS settings)
 
 ```text
-NODE_TLS_REJECT_UNAUTHORIZED=0 is set, so zn-gate will not send the saved key over a connection whose certificate is not checked
+NODE_TLS_REJECT_UNAUTHORIZED is set in this terminal, so zn-gate will not send the saved key: it switches off the check that the connection really goes to usezn.com. Remove it (macOS or Linux: `unset NODE_TLS_REJECT_UNAUTHORIZED`; Windows PowerShell: `Remove-Item Env:NODE_TLS_REJECT_UNAUTHORIZED`) and try again.
 ```
 
-**What it means:** your terminal has a setting that turns off the check of website certificates, changes how secure connections work, or could print or read your key. zn-gate refuses to send your saved key through such a connection. Similar messages name `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `OPENSSL_CONF`, `NODE_DEBUG` or `NODE_OPTIONS` instead. Your local checks keep working.
+**What it means:** your terminal has a setting that turns off the check of website certificates, changes how secure connections work, or could print or read your key. zn-gate refuses to send your saved key through such a connection. While you connect (nothing is saved yet) the message says "the key" instead of "the saved key". Similar messages name `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `OPENSSL_CONF`, `NODE_DEBUG` or `NODE_OPTIONS` instead. Your local checks keep working.
 
 **What to do:** zn-gate refuses on purpose: with that setting, someone between you and usezn.com could read your key. Nothing is broken, and the local checks keep working without the cloud check.
 
-- If you set it yourself, for example for a test, remove it, open a new terminal and try again. On macOS or Linux, `unset NODE_TLS_REJECT_UNAUTHORIZED` (or the name in the message) removes it for this terminal. If it comes back, look in your shell startup file (such as `~/.zshrc` or `~/.bashrc`).
+- If you set it yourself, for example for a test, remove it, open a new terminal and try again. On macOS or Linux, `unset NODE_TLS_REJECT_UNAUTHORIZED` (or the name in the message) removes it for this terminal; in Windows PowerShell, `Remove-Item Env:NODE_TLS_REJECT_UNAUTHORIZED`. If it comes back, look in your shell startup file (such as `~/.zshrc` or `~/.bashrc`).
 - If your company needs it, for example for a proxy with its own certificate, keep it and ask your administrator. Until then zn-gate uses only its local checks on this computer.
 - Never turn off certificate checks to make this message go away.
 

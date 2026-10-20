@@ -276,9 +276,29 @@ test('a 403 that is not key_scope does not count as an analysis-only key', async
       const h = harness({ key: freshKey(), https: fakeHttps({ status: 403, body }) });
       assert.equal(await connectCli.connect([], h.io), 1, body);
       assert.equal(h.kc.map.size, 0);
-      assert.match(h.err.join(''), /Could not verify the key.*HTTP 403.*nothing was saved/);
+      assert.match(h.err.join(''), /usezn\.com is not answering properly.*nothing was saved/);
     }
   } finally { cleanup(home); }
+});
+
+test('an environment refusal while connecting names the variable, says "the key" (nothing is saved yet) and exits 1', async () => {
+  const home = tmpHome();
+  const before = process.env.NODE_OPTIONS;
+  try {
+    process.env.NODE_OPTIONS = '--require ./x.js';
+    const h = harness({ key: freshKey() });
+    assert.equal(await connectCli.connect([], h.io), 1);
+    const text = h.err.join('');
+    assert.match(text, /^NODE_OPTIONS is set in this terminal, so zn-gate will not send the key: /);
+    assert.match(text, /unset NODE_OPTIONS/);
+    assert.match(text, /Nothing was saved\./);
+    assert.doesNotMatch(text, /saved key/);
+    assert.equal(h.h.calls.length, 0, 'no request was made');
+    assert.equal(h.kc.map.size, 0);
+  } finally {
+    if (before === undefined) delete process.env.NODE_OPTIONS; else process.env.NODE_OPTIONS = before;
+    cleanup(home);
+  }
 });
 
 test('a rejected key (HTTP 401) is not saved', async () => {
@@ -301,7 +321,7 @@ test('when the check cannot run (network error, HTTP 503) nothing is stored', as
       const key = freshKey();
       const h = harness({ key, https: fakeHttps(ans) });
       assert.equal(await connectCli.connect([], h.io), 1);
-      assert.match(h.err.join(''), /Could not verify the key with usezn\.com \(.+\), so nothing was saved/);
+      assert.match(h.err.join(''), /(Could not reach usezn\.com|usezn\.com is not answering properly).*nothing was saved/);
       assert.equal(h.kc.map.size, 0);
       assert.equal(cloudKey.readMarker(), null);
       assert.ok(!h.text().includes(key));
@@ -339,8 +359,11 @@ test('without a keychain or an unlocked vault nothing is stored, ZN_API_KEY is e
     const deps = { native: null, vault: fakeVault({ unlocked: false }) };
     const h = harness({ key, deps });
     assert.equal(await connectCli.connect([], h.io), 1);
-    assert.match(h.out.join(''), /will not keep the key in a plain file/);
-    assert.match(h.out.join(''), /ZN_API_KEY=<your key> and ZN_CLOUD=1/);
+    // Errors go to stderr, in plain words with one next step, and no setting names.
+    assert.equal(h.out.join('').includes('keeps the key only'), false);
+    assert.match(h.err.join(''), /keeps the key only in your system keychain or the zn vault, never in a plain file/);
+    assert.match(h.err.join(''), /run `(?:zn|npx -y zn-gate@[0-9.]+) unlock` \(it asks you for a passphrase\), then run `zn-gate connect` again/);
+    assert.doesNotMatch(h.err.join(''), /ZN_API_KEY|ZN_CLOUD/);
     assert.equal(h.t.calls.hidden.length, 0, 'asked for a key it cannot keep');
     assert.equal(h.h.calls.length, 0);
     assert.equal(h.opened.length, 0);

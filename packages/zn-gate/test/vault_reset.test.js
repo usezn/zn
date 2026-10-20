@@ -88,9 +88,9 @@ test('the prompt warns that values are lost and names the commands to store them
   await reset.resetVault({}, person({ ask: async (q) => { asked = q; return reset.PHRASE; }, out: (l) => said.push(l) }));
   const text = said.join('\n');
   assert.match(text, /Every secret stored in it is lost/);
-  assert.match(text, /zn env shadow/);
-  assert.match(text, /zn secret set NAME/);
-  assert.match(text, /zn unlock/);
+  assert.match(text, /(zn|npx -y zn-gate@[0-9.]+) env shadow/);
+  assert.match(text, /(zn|npx -y zn-gate@[0-9.]+) secret set NAME/);
+  assert.match(text, /(zn|npx -y zn-gate@[0-9.]+) unlock/);
   assert.match(asked, /type "reset my vault"/);
 });
 
@@ -174,7 +174,7 @@ test('after three failed unlocks the hint points to zn vault reset; a good unloc
   assert.equal(reset.recordUnlockFailure({}), null);
   assert.equal(reset.recordUnlockFailure({}), null);
   const tip = reset.recordUnlockFailure({});
-  assert.match(tip, /zn vault reset/);
+  assert.match(tip, /(zn|npx -y zn-gate@[0-9.]+) vault reset/);
   assert.equal(tip.split('\n').length, 1, 'one line');
   reset.clearUnlockFailures({});
   assert.equal(reset.recordUnlockFailure({}), null);
