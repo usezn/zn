@@ -413,6 +413,48 @@ function atomicWrite(target, content) {
   }
 }
 
+/**
+ * Copies src to a new backup file without ever overwriting or writing through
+ * an existing entry (including a dangling symlink) at the backup name.
+ * Content goes to a temp file opened with 'wx', then is renamed into place.
+ */
+function createBackup(src, backup) {
+  const exists = () => new Error(`${backup} already exists; refusing to overwrite it`);
+  const lstatMissing = () => {
+    try {
+      fs.lstatSync(backup);
+      return false;
+    } catch (e) {
+      if (e.code === 'ENOENT') return true;
+      throw e;
+    }
+  };
+  if (!lstatMissing()) throw exists();
+  let mode = 0o600;
+  try {
+    mode = fs.statSync(src).mode & 0o777;
+  } catch {}
+  const data = fs.readFileSync(src);
+  const tmpFile = path.join(path.dirname(backup), `.${path.basename(backup)}.zn-tmp.${process.pid}.${Date.now()}`);
+  let created = false;
+  try {
+    fs.writeFileSync(tmpFile, data, { flag: 'wx', mode });
+    created = true;
+    try {
+      fs.chmodSync(tmpFile, mode);
+    } catch {}
+    if (!lstatMissing()) throw exists();
+    renameWithRetry(tmpFile, backup);
+  } catch (err) {
+    if (created) {
+      try {
+        fs.unlinkSync(tmpFile);
+      } catch {}
+    }
+    throw err;
+  }
+}
+
 /** Renames over target; on Windows-style sharing errors waits briefly and retries. */
 function renameWithRetry(from, to) {
   const busy = new Set(['EPERM', 'EACCES', 'EBUSY']);
@@ -519,12 +561,7 @@ function configureEnvironments(options = {}) {
       let backup;
       if (modified && !options.dryRun) {
         backup = `${env.filePath}.bak.${Date.now()}`;
-        try {
-          fs.copyFileSync(env.filePath, backup, fs.constants.COPYFILE_EXCL);
-        } catch (e) {
-          if (e.code === 'EEXIST') throw new Error(`${backup} already exists; refusing to overwrite it`);
-          throw e;
-        }
+        createBackup(env.filePath, backup);
         atomicWrite(resolved.target, content);
       }
 
