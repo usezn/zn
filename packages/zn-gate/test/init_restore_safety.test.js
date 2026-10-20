@@ -345,13 +345,13 @@ test('rename retries on a busy file and then succeeds; always busy gives a clear
     const f = path.join(d, 'mcp.json');
     fs.writeFileSync(f, CFG);
     let calls = 0;
-    fs.renameSync = (a, b) => { if (++calls <= 2) { const e = new Error('busy'); e.code = 'EBUSY'; throw e; } return realRename(a, b); };
+    fs.renameSync = (a, b) => { if (b === f && ++calls <= 2) { const e = new Error('busy'); e.code = 'EBUSY'; throw e; } return realRename(a, b); };
     let r = configureEnvironments({ envList: env(f) });
     assert.equal(r.actions[0].status, 'shielded');
     assert.equal(calls, 3);
     fs.writeFileSync(f, CFG);
     calls = 0;
-    fs.renameSync = () => { calls++; const e = new Error('busy'); e.code = 'EPERM'; throw e; };
+    fs.renameSync = (a, b) => { if (b !== f) return realRename(a, b); calls++; const e = new Error('busy'); e.code = 'EPERM'; throw e; };
     r = configureEnvironments({ envList: env(f) });
     assert.equal(r.actions[0].status, 'error');
     assert.match(r.actions[0].error, /could not replace .*in use by another program/);
