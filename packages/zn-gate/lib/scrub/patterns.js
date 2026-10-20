@@ -27,7 +27,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-10-19.5';
+const SCRUB_RULES_VERSION = '2026-10-19.6';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -342,6 +342,11 @@ const S_LINES = [
   [new RegExp('^[ \\t]*-[ \\t]+(["\']?)([A-Za-z_][A-Za-z0-9_.-]{0,127})=([^\\s"\'`]{1,512})\\1' + S_TAIL, 'd'), 2, 3],
   /* KEY=value lines: dotenv, `export`, Dockerfile `ENV` / `ARG`, `set`. */
   [new RegExp('^[ \\t]*(?:(?:export|ENV|ARG|set)[ \\t]+)?([A-Za-z_][A-Za-z0-9_]{0,127})[ \\t]*=[ \\t]*(["\']?)([^\\s"\'`]{1,512})\\2' + S_TAIL, 'd'), 1, 3],
+  /* PowerShell `$env:KEY = value`, quoted or not. */
+  [new RegExp('^[ \\t]*\\$env:([A-Za-z_][A-Za-z0-9_]{0,127})[ \\t]*=[ \\t]*(["\']?)([^\\s"\'`;]{1,512})\\2' + S_TAIL, 'd'), 1, 3],
+  /* Inline assignment before a command: `KEY=value cmd args`, after up to
+   * four other `NAME=value` words and an optional `env`. */
+  [new RegExp('^[ \\t]*(?:env[ \\t]+)?(?:[A-Za-z_][A-Za-z0-9_]{0,127}=(?:"[^"\\n]{0,512}"|\'[^\'\\n]{0,512}\'|[^\\s"\']{0,512})[ \\t]+){0,4}?(?=[A-Za-z0-9_]{0,127}?(?:pass|pwd|secret|token|key|credential|auth|dsn))([A-Za-z_][A-Za-z0-9_]{0,127})=(["\']?)([^\\s"\'`;&|]{1,512})\\2(?=[ \\t]+[A-Za-z0-9_./~\\\\-])', 'di'), 1, 3],
   /* Dockerfile `ENV KEY value` (legacy form, one pair per line). */
   [new RegExp('^[ \\t]*ENV[ \\t]+([A-Za-z_][A-Za-z0-9_]{0,127})[ \\t]+(["\']?)([^\\s"\'`=]{1,512})\\2' + S_TAIL, 'd'), 1, 3],
 ];

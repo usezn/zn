@@ -21,7 +21,23 @@ A review of an older snapshot of this gateway found issues that only affect some
 - **Consensus actions expire.** A proposed action that is not approved within `consensus.pending_ttl_secs` seconds (default 900, 15 minutes; 0 means the default) can no longer be approved and is removed.
 - **Query-string credentials only for SSE and WebSocket.** The `api_key` and `token` query parameters are accepted only on `/api/v1/events` and `/mcp/ws`, where a browser client cannot send headers; on every other route a credential must come in a header.
 
-Known limits that remain, because the gateway is not distributed: the OCR check of images uses a fixed list of phrases and recognises only `data:image/...;base64,` images; the audit vault and the loop breaker have no size or age limit; a policy upload is written before it is verified; and the management API has no TLS of its own (it listens on `127.0.0.1`; outside loopback, put it behind a TLS proxy).
+A policy upload is verified before anything is written. The gateway checks the allowed-hash list and the Ed25519 signature (and the ML-DSA-65 signature when `ZN_PQ_PUBLIC_KEY` is set, which then makes it mandatory) on the uploaded bytes in memory, reading the signatures from the `.wasm.sig` and `.wasm.pqs` files next to the policy, and checks that the WASM compiles. Only then does it write the file, to a temporary file in the policy directory that is synced and renamed over the target. A policy that fails any check leaves no file behind, and a policy already installed under that name stays as it was.
+
+Known limits that remain, because the gateway is not distributed: the OCR check of images uses a fixed list of phrases and recognises only `data:image/...;base64,` images; the audit vault and the loop breaker have no size or age limit; and the management API has no TLS of its own (it listens on `127.0.0.1`; outside loopback, put it behind a TLS proxy).
+
+## AWS KMS data key
+
+With `kms.kms_type = "aws"` and `kms.key_id` set, the audit database key is a KMS data key. The gateway creates it once (`GenerateDataKey`, AES-256, encryption context `purpose=zn-gate-audit-db-key`) and saves only its encrypted copy in `zn-kms-data-key.json`, in the same directory as the audit database (`audit.db_path`). The file is written atomically with mode 0600 and holds the KMS key id and the encrypted key, never the plaintext key. On every later start the gateway sends the encrypted key to KMS `Decrypt` and gets the same key back, so audit records written before a restart stay readable. The key needs `kms:GenerateDataKey` and `kms:Decrypt` permissions.
+
+The gateway never replaces the key by itself. It refuses to start, with a message that names the file, when:
+
+- the file is damaged or has an unknown version;
+- KMS cannot decrypt the stored key (credentials, region, permissions or a deleted key);
+- `kms.key_id` is different from the key id stored in the file.
+
+If the old key is gone for good and you accept that earlier encrypted records are lost, start once with `ZN_KMS_RECOVER_NEW_DATA_KEY=true`: the gateway creates a new data key and overwrites the file (it logs a warning). Remove the variable afterwards. Back up `zn-kms-data-key.json` with the audit database: without it, and without KMS access to the same key, the records cannot be read.
+
+An audit database created by an earlier release used a data key that was never saved, so its encrypted records cannot be recovered. Start with a new audit database path or remove the old database.
 
 ## Post-quantum policy signatures
 

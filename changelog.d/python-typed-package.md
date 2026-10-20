@@ -1,0 +1,2 @@
+### Added
+- The Python package now ships type information (`py.typed`), so mypy and other type checkers use its annotations. The public API is checked with `mypy --strict` in CI. `sanitize_tool_result` has precise types for both call forms, and `@guard` keeps the signature of the function it wraps. The new `SanitizedToolResult` type describes the dictionary returned by `sanitize_tool_result(tool_name, content)`. No behavior changes.

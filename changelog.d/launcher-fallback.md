@@ -1,2 +1,0 @@
-### Security
-- The agent hooks: code run from a string is also checked behind more wrappers (`chrt`, `taskset`, `strace`, `ltrace`, `runuser`, `chroot`, `unbuffer`, `nsenter`, `script -c`) and when a wrapper is not one zn knows, after shell options such as `bash -O extglob -c` and `--rcfile`, for `fish -C`, for PowerShell parameters given as any prefix or with `/` (`-en`, `/Command`), for `powershell "<code>"`, and for `iex` and `Invoke-Expression` (also when a string is piped into them), and `sg -c`. `POLICY_RULES_VERSION` is `2026-10-17.15`.
