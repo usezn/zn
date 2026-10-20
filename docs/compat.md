@@ -12,6 +12,7 @@ documentation on 2026-10-11 (Cursor again on 2026-10-17). End-to-end evidence is
 | Block writes to `~/.zn` and to the agents' hook and plugin configuration | Yes (Write, Edit, shell) | Yes (`apply_patch`, checked file by file; shell) | **Best effort**: Write, Delete and Grep through `preToolUse`; shell through `beforeShellExecution` | Yes (write, edit, `apply_patch`, shell) |
 | Scrub tool output before the model sees it | **Yes, every tool** (Bash, PowerShell, Read, Grep, LSP, WebFetch, MCP, MCP resources; Monitor through a streaming filter) | **Yes, lossy**: the result is replaced by its scrubbed text (Codex has no field that rewrites a result: `updatedMCPToolOutput` is listed as not supported; checked 2026-10-17) | **MCP output only**; shell and file output cannot be rewritten | **Yes, every tool** (and the TUI preview) |
 | Block a pasted secret in the prompt | Yes | Yes | Yes | Yes (OpenCode shows it as an error) |
+| MCP tool arguments checked before the call (a secret value or a vault placeholder in them blocks the call) | Yes | Yes | Yes (`beforeMCPExecution`) | Yes |
 | Settings that turn zn's hooks off with no sign in the agent | `disableAllHooks` (yours or your organization's), and `allowManagedHooksOnly` in managed settings. `zn-gate check` and `zn hooks install` say so | `[features] hooks = false` (in your organization's `requirements.toml` or `managed_config.toml`, or in your `config.toml`), and `allow_managed_hooks_only` in `requirements.toml`. `zn-gate check` and `zn hooks install` say so | None in Cursor's documentation (checked 2026-10-17) | None in OpenCode's documentation (checked 2026-10-17) |
 | If the zn hook cannot run (missing `node`, crash, timeout) | Tool calls run unchecked; errors inside zn deny the call or withhold the output. Prompts are blocked (`onFailure`, Claude Code 2.1.295 and later) | Codex does not document blocking here: the hook is reported as failed and calls and prompts run | Reads and prompts are blocked (`failClosed`); other events run unchecked | Calls and messages are blocked |
 | Commands with `__ZN_<NAME>__`: through `zn run` | Rewritten automatically, shown to you for confirmation | The agent is told the exact `zn run -- …` line to use | The agent is told the exact `zn run -- …` line to use; Cursor asks you once wrapped | Rewritten automatically; OpenCode's own permission rules apply |
@@ -19,6 +20,21 @@ documentation on 2026-10-11 (Cursor again on 2026-10-17). End-to-end evidence is
 | `secrets` MCP server | Yes (registered on install) | Yes (snippet printed) | Yes (snippet printed) | Yes (snippet printed) |
 | Windows | Yes, including the PowerShell tool (Claude Code 2.1.299 or later: before it, without Git for Windows, `PreToolUse` let calls through when it could not run) | The hook command was run by hand from PowerShell and from cmd.exe. The end-to-end run also passed on Windows Server 2022 with Codex 0.163.0 and PowerShell, 0 values sent to the provider ([evidence](../bench/e2e/windows/); one run, not in CI) | Not tested | End-to-end run on Windows Server 2022 with OpenCode 1.19.3 ([evidence](../bench/e2e/windows/); one run, not in CI), 0 values sent to the provider. With PowerShell, OpenCode's default shell there, a command with a marker failed instead of running in that run (the wrapping was then written for bash only; the PowerShell wrapping added since is covered by unit tests but not re-run end to end); with Git Bash (`SHELL` set) it runs |
 | End-to-end run, 0 values sent to the provider | **Yes** | **Yes** | Not run (no CLI with hooks to drive) | **Yes** |
+
+### Experimental agents
+
+These three agents install with `zn hooks install <agent>` and show up in `zn-gate check`. Their hooks give zn less to work with than the four agents above, so each has gaps.
+
+| | Antigravity | Gemini CLI | Copilot CLI |
+|---|---|---|---|
+| Install | `zn hooks install antigravity` | `zn hooks install gemini` | `zn hooks install copilot` |
+| Mechanism | Hook (`PreToolUse` in `hooks.json`) | Hook (`BeforeTool` in `settings.json`) | Hooks (`preToolUse` and `postToolUse` in `zn-gate.json`) |
+| Block reads of `.env` with values, credential files, `~/.zn` | Yes (file reads, shell). Best effort: Antigravity does not document its tools' argument names | Yes (`read_file`, shell) | Yes (file reads, search, shell) |
+| Block writes to `~/.zn` and to the agents' hook and plugin configuration | Yes (file writes, shell) | Yes (`write_file`, `replace`, shell) | Yes (file edits, shell) |
+| Scrub tool output before the model sees it | No (Antigravity's hook cannot change a result) | No (zn does not use Gemini CLI's `AfterTool` hook) | **Partly**: read-type and shell tools, successful results only |
+| Block a pasted secret in the prompt | No | No | No (Copilot's prompt hook cannot block) |
+| MCP tool arguments checked before the call | Yes (secrets only) | Yes (secrets only) | **Not checked** (MCP tools Copilot does not name as read or shell tools are not looked at) |
+| MCP tool output scrubbed | No | No | No |
 
 zn's two MCP servers (`zn mcp` and the `secrets` server) support MCP protocol versions `2025-11-25`,
 `2025-06-18`, `2025-03-26` and `2024-11-05`. They answer initialize with the version the client asks for, or with
@@ -288,6 +304,11 @@ This usually happens after Node.js is upgraded, moved or removed (for example wi
 (`npx -y zn-gate check`, then `npm install -g zn-gate` and `zn hooks install <agent>`, or turning zn off for that agent
 until it is fixed), is in [upgrading.md](upgrading.md#nodejs-was-upgraded-moved-or-removed-nvm-fnm-homebrew).
 
+## Destructive commands
+
+zn-gate does not block destructive shell commands yet; use your agent's own permission prompts for them.
+This is true for every agent in this file: the hooks look for secrets and protected files, not for commands such as `rm -rf`.
+
 ## Limits that apply to every agent
 
 - **An event zn cannot read is refused.** Empty stdin, or stdin that is not
@@ -310,5 +331,5 @@ until it is fixed), is in [upgrading.md](upgrading.md#nodejs-was-upgraded-moved-
 
 ## Not covered yet
 
-Hermes Agent, Gemini CLI and the Cursor CLI. GitHub Copilot CLI has experimental hooks (see the Copilot CLI entry above). A proxy for outgoing
+Hermes Agent and the Cursor CLI. Antigravity, Gemini CLI and GitHub Copilot CLI have experimental hooks (see the table of experimental agents above). A proxy for outgoing
 HTTP from `zn run` (for `curl`, `gh` or SDKs) is planned for a later release.

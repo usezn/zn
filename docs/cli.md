@@ -372,7 +372,7 @@ zn-gate hooks install <agent> [--project] [--no-mcp]
 zn-gate hooks uninstall <agent> [--project] [--no-mcp]
 ```
 
-Adds or removes the zn hooks of a coding agent. `<agent>` is `claude-code`, `codex`, `cursor`, `opencode` or `antigravity` (`claude` is accepted for `claude-code`). `--project` changes the settings of the current project instead of your user settings. `--no-mcp` leaves the `secrets` MCP server out. It needs an interactive terminal.
+Adds or removes the zn hooks of a coding agent. `<agent>` is `claude-code`, `codex`, `cursor`, `opencode`, `antigravity`, `copilot` or `gemini` (`claude` is accepted for `claude-code`). `--project` changes the settings of the current project instead of your user settings. `--no-mcp` leaves the `secrets` MCP server out. It needs an interactive terminal.
 
 #### `hooks install`
 
