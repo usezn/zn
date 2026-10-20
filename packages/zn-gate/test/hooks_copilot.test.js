@@ -128,6 +128,24 @@ test('normalize: only a successful result is handed over for rewriting', () => {
   assert.equal(bad.output, undefined);
 });
 
+test('failed results: Copilot allows no replacement of a failure, so zn returns nothing (never a fake success)', async () => {
+  for (const raw of [
+    { ...pre('bash', { command: './build.sh' }), toolResult: { resultType: 'failure', textResultForLlm: 'K=' + FAKE_AWS } },
+    { hook_event_name: 'PostToolUseFailure', cwd: '/', tool_name: 'bash', tool_input: { command: './build.sh' }, error: 'K=' + FAKE_AWS },
+    { sessionId: 's', cwd: '/', toolName: 'bash', toolArgs: { command: './build.sh' }, error: 'K=' + FAKE_AWS },
+  ]) {
+    const r = await run(raw);
+    assert.equal(r.output, null);
+  }
+  const ok = await run({ ...pre('bash', { command: 'ls' }), toolResult: { resultType: 'success', textResultForLlm: 'clean output' } });
+  assert.equal(ok.output, null);
+});
+
+test('install warns that a failing command can still print a secret to the model', (t) => {
+  const rep = cop.install({ scope: 'project', projectDir: tempDir(t, 'zn-cop-') });
+  assert.ok(rep.warnings.some((w) => /fails/.test(w) && /secret/.test(w)));
+});
+
 /* ------------------------------- decisions ------------------------------- */
 
 test('deny: a read of a credential file, a write to the vault, a shell command that reads a credential', async () => {

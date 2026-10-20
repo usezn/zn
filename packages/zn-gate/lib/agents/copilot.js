@@ -39,6 +39,12 @@
  * create with the arguments command, path, file_text; a deny is shown to the model as "Denied by preToolUse hook: <reason>";
  * postToolUse modifiedResult reaches the model; no secret value reached the provider. Copilot's own events.jsonl keeps the original output.
  *
+ * Failed tool calls: Copilot sends them to postToolUseFailure ({toolName, toolArgs, error: string}), not to
+ *  postToolUse. That hook cannot replace or block the failure: its only documented output is extra guidance
+ *  (exit code 2, stdout appended to the failure shown to the agent), and modifiedResult must say "success", so it
+ *  cannot stand in for a failure. zn therefore cannot remove a secret printed by a command that then fails; the
+ *  protection for that case is preToolUse, which refuses commands that handle secrets. Install says so.
+ *
  * Switching hooks off: "disableAllHooks": true at the top of a hooks file skips that file; in a repository's
  * .github/copilot/settings(.local).json it skips every hook except the policy ones. `zn-gate check` reports both.
  */
@@ -260,6 +266,7 @@ function install(opts = {}) {
   cfg.writeJson(file, data);
   report.warnings.push('GitHub Copilot CLI support is experimental. zn checks tool calls before they run (preToolUse): it blocks reads and writes of secret files and shell commands that handle secrets, and it replaces secret values in the results of read-type and shell tools (postToolUse).');
   report.warnings.push('Copilot keeps its own session log (events.jsonl) with the original tool output on this machine: zn replaces secret values in what goes to the model, not in that local log.');
+  report.warnings.push('Copilot does not let a hook change or block the result of a tool call that fails, so a secret printed by a command that then fails reaches the model. zn blocks the commands that handle secrets before they run; it cannot clean what a failing script prints.');
   report.warnings.push('Copilot does not let a command hook block a typed prompt, so a secret pasted into a prompt is not stopped.');
   report.warnings.push('Copilot lets a call through when a hook times out (30 s by default; zn asks for ' + HOOK_TIMEOUT_S + ' s), and its machine policy files (/etc/github-copilot/policy.d, or the Windows policy folder) are loaded in addition to this one.');
   if (project && !opts.command) report.warnings.push('The project hook runs `zn` from your PATH (zn hook copilot): every teammate who opens this project in Copilot CLI needs zn-gate installed, otherwise the hook cannot start. Copilot also asks each person to trust the folder before it runs repository hooks.');

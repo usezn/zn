@@ -163,7 +163,7 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
   Covered: `preToolUse` blocks reads and writes of secret files by path,
   shell commands that handle secrets, and edits of Copilot's own hook and
   settings files; `postToolUse` replaces secret values in the results of
-  read-type and shell tools (successful results only). zn writes its own
+  read-type and shell tools (successful results only: Copilot gives a hook no way to change or block the result of a call that fails, so a secret printed by a command that then fails reaches the model; `preToolUse` is the protection for that case). zn writes its own
   `zn-gate.json` in `~/.copilot/hooks/` (or `$COPILOT_HOME/hooks/` when you set
   a custom Copilot folder) and, with `--project`, in `.github/hooks/`. Checked
   end to end with Copilot CLI 1.0.98 against a scripted model provider: 0 secret
