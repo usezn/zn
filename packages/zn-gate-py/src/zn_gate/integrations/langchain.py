@@ -16,6 +16,7 @@ Two pieces, because a LangChain callback can stop a run but cannot change it:
   mask_secrets is on, instead of being hidden.
 """
 from __future__ import annotations
+import contextvars
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
@@ -276,7 +277,21 @@ if _HAVE_LANGCHAIN:
     from langchain_core.callbacks import AsyncCallbackManagerForToolRun, CallbackManagerForToolRun
     from langchain_core.runnables import RunnableConfig
     from langchain_core.runnables.config import patch_config
+    from langchain_core.messages import ToolMessage
     from langchain_core.tools import BaseTool
+
+    # The id of the tool call being run. BaseTool passes it to run()/arun() but not to
+    # _run(), and a wrapped tool with an InjectedToolCallId argument or an artifact needs it.
+    _CALL_ID: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("zn_gate_tool_call_id", default=None)
+
+    def _injected_keys(tool: Any) -> frozenset:
+        """Names of the arguments LangChain fills in (InjectedToolCallId, InjectedState...), not the model."""
+        try:
+            full = getattr(tool.get_input_schema(), "model_fields", None) or {}
+            visible = getattr(tool.tool_call_schema, "model_fields", None) or {}
+            return frozenset(full) - frozenset(visible)
+        except Exception:
+            return frozenset()
 
     class ZnGuardedTool(BaseTool):  # type: ignore[misc]
         """A LangChain tool that runs another tool behind zn-gate. Build it with guard_langchain_tool."""
@@ -287,6 +302,41 @@ if _HAVE_LANGCHAIN:
         check_result: bool = True
         block_truncated: bool = False
         fallback: Optional[str] = None
+
+        def run(self, *args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
+            token = _CALL_ID.set(kwargs.get("tool_call_id"))
+            try:
+                return super().run(*args, **kwargs)
+            finally:
+                _CALL_ID.reset(token)
+
+        async def arun(self, *args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
+            token = _CALL_ID.set(kwargs.get("tool_call_id"))
+            try:
+                return await super().arun(*args, **kwargs)
+            finally:
+                _CALL_ID.reset(token)
+
+        @property
+        def _artifact(self) -> bool:
+            return self.response_format == "content_and_artifact"
+
+        def _pack(self, content: Any, artifact: Any = None) -> Any:
+            """Give BaseTool what it expects from _run: (content, artifact) for an artifact tool."""
+            return (content, artifact) if self._artifact else content
+
+        def _inner_call(self, tool_input: Any) -> Any:
+            """What the wrapped tool is invoked with: a full ToolCall when it needs the call id
+            (InjectedToolCallId) or returns an artifact (only a ToolMessage carries it), else the arguments."""
+            call_id = _CALL_ID.get()
+            if isinstance(tool_input, dict) and (self._artifact or (call_id and _injected_keys(self.tool))):
+                return {"name": self.tool.name, "args": tool_input, "id": call_id or "zn-gate", "type": "tool_call"}
+            return tool_input
+
+        def _unpack(self, result: Any) -> Tuple[Any, Any]:
+            if isinstance(result, ToolMessage):
+                return result.content, result.artifact
+            return result, None
 
         def _input(self, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Any:
             if kwargs:
@@ -303,6 +353,10 @@ if _HAVE_LANGCHAIN:
             return block_message(assessment, target)
 
         def _before(self, tool_input: Any) -> Optional[Assessment]:
+            injected = _injected_keys(self.tool)
+            if injected and isinstance(tool_input, dict):
+                # The arguments LangChain injects are not model input: only the rest is checked.
+                tool_input = {k: v for k, v in tool_input.items() if k not in injected}
             assessment = check_tool_call(self.name, tool_input)
             return None if assessment.allowed else assessment
 
@@ -343,11 +397,11 @@ if _HAVE_LANGCHAIN:
             tool_input = self._input(args, kwargs)
             blocked = self._before(tool_input)
             if blocked is not None:
-                return self._blocked(blocked, f"langchain:{self.name}", tool_input)
+                return self._pack(self._blocked(blocked, f"langchain:{self.name}", tool_input))
             child = patch_config(config, callbacks=run_manager.get_child()) if run_manager else config
             caught: Optional[Exception] = None
             try:
-                result = self.tool.invoke(tool_input, config=child)
+                result = self.tool.invoke(self._inner_call(tool_input), config=child)
             except GuardBlockError:
                 raise
             except Exception as exc:
@@ -355,19 +409,20 @@ if _HAVE_LANGCHAIN:
                     raise
                 caught = exc
             if caught is not None:
-                return self._error(caught)
-            return self._after(result)
+                return self._pack(self._error(caught))
+            content, artifact = self._unpack(result)
+            return self._pack(self._after(content), artifact)
 
         async def _arun(self, *args: Any, config: RunnableConfig,
                         run_manager: Optional[AsyncCallbackManagerForToolRun] = None, **kwargs: Any) -> Any:
             tool_input = self._input(args, kwargs)
             blocked = self._before(tool_input)
             if blocked is not None:
-                return self._blocked(blocked, f"langchain:{self.name}", tool_input)
+                return self._pack(self._blocked(blocked, f"langchain:{self.name}", tool_input))
             child = patch_config(config, callbacks=run_manager.get_child()) if run_manager else config
             caught: Optional[Exception] = None
             try:
-                result = await self.tool.ainvoke(tool_input, config=child)
+                result = await self.tool.ainvoke(self._inner_call(tool_input), config=child)
             except GuardBlockError:
                 raise
             except Exception as exc:
@@ -375,8 +430,9 @@ if _HAVE_LANGCHAIN:
                     raise
                 caught = exc
             if caught is not None:
-                return self._error(caught)
-            return self._after(result)
+                return self._pack(self._error(caught))
+            content, artifact = self._unpack(result)
+            return self._pack(self._after(content), artifact)
 
 
 def guard_langchain_tool(
@@ -408,11 +464,18 @@ def guard_langchain_tool(
     the model: a blocked message is handled like a blocked output, and a
     message with a secret is raised again as the same exception type carrying
     only the masked message (a plain RuntimeError when the type cannot be
-    rebuilt that way). Set handle_tool_error on the returned tool, not on the
-    original, if you want LangChain to turn a ToolException into a message.
+    rebuilt that way). The returned tool keeps the original's
+    handle_tool_error and handle_validation_error.
 
-    A tool with response_format="content_and_artifact" loses its artifact: the
-    wrapper passes only the content on.
+    A tool with response_format="content_and_artifact" keeps it: the content
+    is checked and masked, the artifact is passed through unchanged (it is not
+    scanned; LangChain does not send it to the model). Arguments LangChain
+    fills in (InjectedToolCallId, InjectedState, InjectedToolArg) are passed on
+    untouched and are not checked: only what the model chose is.
+
+    If you also use ZnGuardCallbackHandler, create it with mask_secrets=False:
+    the handler sees the wrapped tool's raw output and would stop the run on a
+    secret before the wrapper can mask it.
     """
     if not _HAVE_LANGCHAIN:
         raise ImportError("guard_langchain_tool needs langchain-core: pip install langchain-core")
@@ -426,6 +489,9 @@ def guard_langchain_tool(
         description=tool.description,
         args_schema=tool.args_schema,
         return_direct=tool.return_direct,
+        response_format=tool.response_format,
+        handle_tool_error=tool.handle_tool_error,
+        handle_validation_error=tool.handle_validation_error,
         on_block=on_block,
         mask_secrets=mask_secrets,
         check_result=check_result,

@@ -424,3 +424,142 @@ def test_handler_mask_secrets_off_or_ignore_keeps_the_original_error():
         model = ScriptedChatModel(script=[call("query_db", question="sales"), AIMessage("ok")])
         with pytest.raises(ValueError):
             run_agent(model, make_failing_tools(lambda: ValueError(DB_ERROR)), "Sales numbers?", [handler])
+
+
+# --- what the wrapper keeps from the wrapped tool --------------------------------------------
+# handle_tool_error, handle_validation_error, response_format="content_and_artifact" and the
+# arguments LangChain injects (InjectedToolCallId, InjectedToolArg) must work as on the original.
+
+ARTIFACT = {"rows": [FAKE_KEY, "kept as is"]}
+
+
+def make_artifact_tool(ran):
+    @tool(response_format="content_and_artifact")
+    def fetch_rows(topic: str) -> tuple:
+        """Fetch rows on a topic."""
+        ran.append(topic)
+        if topic == "news":
+            return "Meeting notes. " + INJECTION + ".", ARTIFACT
+        return "Rows: key=" + FAKE_KEY, ARTIFACT
+
+    return fetch_rows
+
+
+def test_wrapper_keeps_response_format_and_passes_the_artifact_through():
+    ran: list = []
+    wrapped = guard_langchain_tool(make_artifact_tool(ran))
+    assert wrapped.response_format == "content_and_artifact"
+    msg = wrapped.invoke({"name": "fetch_rows", "args": {"topic": "deploy"}, "id": "call-1", "type": "tool_call"})
+    assert isinstance(msg, ToolMessage)
+    assert FAKE_KEY not in msg.content and "[REDACTED_AWS_KEY]" in msg.content
+    assert msg.artifact == ARTIFACT  # untouched, not sent to the model
+    assert msg.tool_call_id == "call-1"
+    assert ran == ["deploy"]
+
+
+def test_wrapper_artifact_tool_returns_only_the_content_for_plain_arguments():
+    wrapped = guard_langchain_tool(make_artifact_tool([]))
+    out = wrapped.invoke({"topic": "deploy"})
+    assert isinstance(out, str) and FAKE_KEY not in out
+
+
+def test_wrapper_artifact_tool_blocks_an_injected_output_in_return_mode():
+    wrapped = guard_langchain_tool(make_artifact_tool([]), on_block="return")
+    msg = wrapped.invoke({"name": "fetch_rows", "args": {"topic": "news"}, "id": "c2", "type": "tool_call"})
+    assert INJECTION not in msg.content and "zn-gate blocked" in msg.content
+
+
+def test_wrapper_artifact_tool_blocks_a_bad_call_without_running_it():
+    ran: list = []
+    wrapped = guard_langchain_tool(make_artifact_tool(ran), on_block="return")
+    msg = wrapped.invoke({"name": "fetch_rows", "args": {"topic": SECRET_PATH_COMMAND}, "id": "c3", "type": "tool_call"})
+    assert ran == [] and "zn-gate blocked" in msg.content
+    with pytest.raises(GuardBlockError):
+        guard_langchain_tool(make_artifact_tool(ran)).invoke(
+            {"name": "fetch_rows", "args": {"topic": SECRET_PATH_COMMAND}, "id": "c4", "type": "tool_call"})
+    assert ran == []
+
+
+def test_wrapper_artifact_tool_works_in_the_agent_loop_and_async():
+    ran: list = []
+    wrapped = guard_langchain_tool(make_artifact_tool(ran))
+    model = ScriptedChatModel(script=[call("fetch_rows", topic="deploy"), AIMessage(content="ok")])
+    assert run_agent(model, [wrapped], "rows?") == "ok"
+    assert FAKE_KEY not in model.seen_text()
+    msg = asyncio.run(wrapped.ainvoke({"name": "fetch_rows", "args": {"topic": "deploy"}, "id": "c5", "type": "tool_call"}))
+    assert msg.artifact == ARTIFACT and FAKE_KEY not in msg.content
+
+
+def test_wrapper_keeps_handle_tool_error():
+    @tool
+    def flaky(topic: str) -> str:
+        """Fails."""
+        raise ToolException("service down, key=" + FAKE_KEY)
+
+    flaky.handle_tool_error = True
+    wrapped = guard_langchain_tool(flaky)
+    assert wrapped.handle_tool_error is True
+    out = wrapped.invoke({"topic": "x"})
+    assert "service down" in out and FAKE_KEY not in out
+
+    flaky.handle_tool_error = lambda e: "custom: " + str(e)
+    out = guard_langchain_tool(flaky).invoke({"topic": "x"})
+    assert out.startswith("custom: ") and FAKE_KEY not in out
+
+
+def test_wrapper_keeps_handle_validation_error():
+    @tool
+    def count(n: int) -> str:
+        """Count."""
+        return str(n)
+
+    count.handle_validation_error = "bad arguments, try again"
+    wrapped = guard_langchain_tool(count)
+    assert wrapped.handle_validation_error == "bad arguments, try again"
+    assert wrapped.invoke({"n": "not a number"}) == "bad arguments, try again"
+    assert wrapped.invoke({"n": 3}) == "3"
+
+
+def test_wrapper_forwards_an_injected_tool_call_id_untouched():
+    from langchain_core.tools import InjectedToolCallId
+    from typing_extensions import Annotated
+
+    seen: list = []
+
+    @tool
+    def stamp(topic: str, tool_call_id: Annotated[str, InjectedToolCallId]) -> str:
+        """Stamp a topic with the call id."""
+        seen.append(tool_call_id)
+        return f"{topic}:{tool_call_id}"
+
+    wrapped = guard_langchain_tool(stamp)
+    assert "tool_call_id" not in wrapped.tool_call_schema.model_fields  # the model never sees it
+    msg = wrapped.invoke({"name": "stamp", "args": {"topic": "t"}, "id": "call-77", "type": "tool_call"})
+    assert msg.content == "t:call-77" and seen == ["call-77"]
+    assert asyncio.run(wrapped.ainvoke({"name": "stamp", "args": {"topic": "u"}, "id": "call-78", "type": "tool_call"})
+                       ).content == "u:call-78"
+    with pytest.raises(ValueError):  # as on the original tool: it needs a full tool call
+        wrapped.invoke({"topic": "t"})
+
+
+def test_wrapper_forwards_an_injected_arg_and_checks_only_the_model_input():
+    from langchain_core.tools import InjectedToolArg
+    from typing_extensions import Annotated
+
+    seen: list = []
+
+    @tool
+    def lookup(topic: str, state: Annotated[dict, InjectedToolArg]) -> str:
+        """Look a topic up in the run state."""
+        seen.append(state)
+        return "found " + topic
+
+    # Runtime state is not model input: text in it is not a tool-call block...
+    state = {"messages": [INJECTION]}
+    wrapped = guard_langchain_tool(lookup)
+    msg = wrapped.invoke({"name": "lookup", "args": {"topic": "t", "state": state}, "id": "c9", "type": "tool_call"})
+    assert msg.content == "found t" and seen == [state]
+    # ...while what the model chose is still checked.
+    with pytest.raises(GuardBlockError):
+        wrapped.invoke({"name": "lookup", "args": {"topic": SECRET_PATH_COMMAND, "state": state}, "id": "c10",
+                        "type": "tool_call"})

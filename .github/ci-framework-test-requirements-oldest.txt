@@ -6,10 +6,13 @@
 # ubuntu-latest entry installs it, in a separate step with its own virtual environment.
 #
 # Not managed by Dependabot, like ci-test-requirements.txt. Regenerate with uv from
-# these inputs (saved as ci-framework-test-requirements-oldest.in):
+# these inputs, written to a scratch file (for example requirements.in) next to this one:
 #   langchain-core==1.2.31
 #   llama-index-core>=0.14,<0.15
-# uv pip compile ci-framework-test-requirements-oldest.in --python-version 3.12 #   --python-platform x86_64-manylinux_2_28 --generate-hashes --no-header --no-annotate #   --exclude-newer <date two weeks ago> -c ci-test-requirements.txt
+# then run, as one command:
+#   uv pip compile requirements.in --python-version 3.12 --python-platform x86_64-manylinux_2_28 \
+#     --generate-hashes --no-header --no-annotate --exclude-newer <date two weeks ago> \
+#     -c ci-test-requirements.txt -o ci-framework-test-requirements-oldest.txt
 # The -c keeps the shared packages at the versions ci-test-requirements.txt pins.
 aiohappyeyeballs==2.7.1 \
     --hash=sha256:065665c041c42a5938ed220bdcd7230f22527fbec085e1853d2402c8a3615d9d \

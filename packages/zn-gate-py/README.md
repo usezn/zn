@@ -149,7 +149,16 @@ print(safe_read_notes.invoke({"topic": "deploy"}))
 # Deploy key: [REDACTED_AWS_KEY]
 ```
 
-`guard_langchain_tool` returns a tool with the same name, description and arguments. It checks the arguments before the tool runs, checks the output for prompt injection (`check_result=True`) and hides secrets in it (`mask_secrets=True`) before the model reads it. With `on_block="return"` the model gets `fallback`, or a short block message, instead; with `"raise"` (default) it raises `GuardBlockError`. Pass the wrapped tools to your agent; use it on every tool that reads outside data or can reach files, shells or the network.
+`guard_langchain_tool` returns a tool with the same name, description and arguments. It checks the arguments before the tool runs, checks the output for prompt injection (`check_result=True`) and hides secrets in it (`mask_secrets=True`) before the model reads it. With `on_block="return"` the model gets `fallback`, or a short block message, instead; with `"raise"` (default) it raises `GuardBlockError`. Pass the wrapped tools to your agent; use it on every tool that reads outside data or can reach files, shells or the network. The wrapped tool keeps the original's `handle_tool_error`, `handle_validation_error` and `response_format="content_and_artifact"` (the content is checked and masked, the artifact is passed through unchanged and is not scanned). Arguments LangChain injects (`InjectedToolCallId`, `InjectedState`) are forwarded untouched and are not checked, only what the model chose is.
+
+If you use the wrapper and the handler together, create the handler with `mask_secrets=False`. The handler sees the raw output of the wrapped tool, so with the default `mask_secrets=True` it would stop the run on a secret before the wrapper can hide it:
+
+```python
+handler = ZnGuardCallbackHandler(mask_secrets=False)  # the wrapped tools mask secrets
+# agent.invoke(..., config={"callbacks": [handler]}) with tools=[safe_read_notes, ...]
+```
+
+The handler still stops the run on a blocked prompt, tool call or injected output.
 
 The wrapper treats the message of an exception raised by the tool like its output. A blocked message is handled like a blocked output; a message with a secret is raised again as the same exception type carrying only the masked message, without the original exception attached, so `handle_tool_error` still turns a `ToolException` into a message for the model, now masked. Set `handle_tool_error` on the wrapped tool, not on the original.
 
