@@ -9,9 +9,12 @@ import functools
 import inspect
 import os
 from collections.abc import Mapping
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, List, Optional, Set, Tuple, TypeVar, cast
 
 from .rules import Assessment, evaluate, scan_windows
+
+
+_F = TypeVar("_F", bound=Callable[..., Any])
 
 
 def block_message(assessment: Assessment, target: str) -> str:
@@ -41,7 +44,7 @@ class _NestingTooDeep(Exception):
     """Raised when a payload is nested deeper than the scanner is willing to walk."""
 
 
-def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[set] = None) -> List[str]:
+def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] = None) -> List[str]:
     """Recursively extract all strings from nested structures.
 
     Walks every Mapping (keys and values), list, tuple, set and frozenset, and
@@ -126,6 +129,18 @@ def check_tool_result(result: Any, block_truncated: bool = False, strict: Option
                       advisory=dict(advisory) if advisory else None)
 
 
+def validate_on_block(value: Any, allowed: Tuple[str, ...]) -> str:
+    """Return `value` if it is one of the `allowed` modes, else raise ValueError.
+
+    An unknown mode (for example a typo such as "rasie") would otherwise skip the
+    block silently, so every integration checks it when it is created.
+    """
+    if not isinstance(value, str) or value not in allowed:
+        valid = ", ".join(repr(v) for v in allowed)
+        raise ValueError(f"on_block must be one of {valid}; got {value!r}")
+    return value
+
+
 def guard(
     on_block: str = "raise",
     fallback: Any = None,
@@ -134,7 +149,7 @@ def guard(
     mask_secrets: bool = False,
     callback: Optional[Callable[[Assessment, str, Any], None]] = None,
     block_truncated: bool = False,
-) -> Callable:
+) -> Callable[[_F], _F]:
     """
     Decorator for Python functions and agent tools.
 
@@ -151,7 +166,9 @@ def guard(
                        (rule size:truncated). ZN_BLOCK_TRUNCATED=1 does the same
                        for every guard (default False).
     """
-    def decorator(func: Callable) -> Callable:
+    validate_on_block(on_block, ("raise", "return", "custom"))
+
+    def decorator(func: _F) -> _F:
         func_name = getattr(func, "__name__", "anonymous")
 
         if inspect.iscoroutinefunction(func):
@@ -185,7 +202,7 @@ def guard(
                     res, _ = sanitize_tool_result(res)
 
                 return res
-            return async_wrapper
+            return cast(_F, async_wrapper)
         else:
             @functools.wraps(func)
             def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -217,7 +234,7 @@ def guard(
                     res, _ = sanitize_tool_result(res)
 
                 return res
-            return sync_wrapper
+            return cast(_F, sync_wrapper)
 
     return decorator
 

@@ -1,0 +1,17 @@
+{
+  "name": "zn-gate-example-openai-agents-js",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "dependencies": {
+    "@openai/agents": "0.20.0",
+    "zn-gate": "1.13.0",
+    "zod": "4.6.7"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
