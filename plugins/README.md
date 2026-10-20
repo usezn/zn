@@ -73,6 +73,8 @@ claude plugin marketplace add usezn/zn@v1.12.0
 claude plugin install zn-gate@usezn
 ```
 
+On Windows PowerShell, type `claude.cmd` instead of `claude` (PowerShell blocks `claude.ps1` by default; `claude.cmd` runs the same command).
+
 Leave auto-update off for this marketplace (the default), and upgrade on
 purpose with `claude plugin update zn-gate@usezn`, which also installs the
 newly pinned zn-gate. If you installed hooks before with

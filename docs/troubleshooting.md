@@ -27,11 +27,11 @@ Install the LTS version from https://nodejs.org/ (or run: nvm install --lts), th
 
 ## 3. "running scripts is disabled on this system" (Windows)
 
-**What it means:** Windows PowerShell blocks the script that starts `npm` and `npx` by default. Nothing is wrong with zn-gate.
+**What it means:** Windows PowerShell blocks the script that starts `npm`, `npx` and `claude` by default. Nothing is wrong with zn-gate.
 
 **What to do, any one of these:**
 
-- Use the `.cmd` versions: `npx.cmd -y zn-gate init`, or `npm.cmd install -g zn-gate`.
+- Use the `.cmd` versions: `npx.cmd -y zn-gate init`, `npm.cmd install -g zn-gate`, or `claude.cmd plugin list` for Claude Code. PowerShell blocks `.ps1` scripts by default, and the `.cmd` file runs the same command.
 - Run the same commands in Command Prompt instead of PowerShell.
 - Allow local scripts for your account: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 

@@ -205,6 +205,8 @@ claude plugin marketplace add usezn/zn@v1.12.0
 claude plugin install zn-gate@usezn
 ```
 
+On Windows PowerShell, type `claude.cmd` instead of `claude` (PowerShell blocks `claude.ps1` by default; `claude.cmd` runs the same command).
+
 Codex, Cursor and OpenCode: see [plugins/README.md](https://github.com/usezn/zn/blob/v1.12.0/plugins/README.md).
 
 If you used `zn hooks install claude-code` before, remove those hooks so each

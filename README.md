@@ -63,7 +63,7 @@ npx -y zn-gate init
 
 Run it yourself, in your own terminal, with no arguments. When an AI agent or a script runs it, it only prints the steps.
 
-> **Windows PowerShell:** `npm` and `npx` can fail with "running scripts is disabled on this system", because the default execution policy blocks `npm.ps1`. Use `npm.cmd`, `npx.cmd` and `zn.cmd` instead (for example `npm.cmd install -g zn-gate`), run the commands from Command Prompt, or allow local scripts for your account with `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+> **Windows PowerShell:** `npm` and `npx` can fail with "running scripts is disabled on this system", because the default execution policy blocks `npm.ps1`. Use `npm.cmd`, `npx.cmd`, `claude.cmd` and `zn.cmd` instead (for example `npm.cmd install -g zn-gate` or `claude.cmd plugin list`): PowerShell blocks `.ps1` scripts by default, and the `.cmd` file runs the same command. Or run the commands from Command Prompt, or allow local scripts for your account with `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 
 **If something fails:**
 
@@ -95,6 +95,8 @@ New here? [First 5 minutes](docs/first-5-minutes.md). Five-minute walkthrough: [
 claude plugin marketplace add usezn/zn
 claude plugin install zn-gate@usezn
 ```
+
+On Windows PowerShell, type `claude.cmd` instead of `claude` (PowerShell blocks `claude.ps1` by default; `claude.cmd` runs the same command).
 
 Already ran `zn hooks install claude-code` before? Run `zn hooks uninstall claude-code` first, otherwise both sets of hooks run.
 
