@@ -66,9 +66,9 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const { writeFileAtomic } = require('../broker/files');
 const { whichSync } = require('../broker/markers');
-const { shQuote, portablePath } = require('../shell-quote');
+const { shQuote, portablePath, windowsCommand } = require('../shell-quote');
 const { claudeCodePolicyWarnings } = require('./managed-policy');
-const { hooksOf } = require('./config-file');
+const { hooksOf, isOurs } = require('./config-file');
 const launcher = require('./launcher');
 const runtime = require('./runtime');
 
@@ -237,10 +237,15 @@ function settingsFile(opts = {}) {
   return path.join(configDir(opts), 'settings.json');
 }
 
-// Claude Code runs a hook command with `sh -c` (macOS, Linux) or Git Bash
-// (Windows): each path is one single-quoted sh word.
+// Claude Code runs a hook command with `sh -c` (macOS, Linux). On Windows it uses Git Bash, or PowerShell when
+// Git Bash is not installed (or a hook sets "shell": "powershell"): each path is one single-quoted sh word,
+// which PowerShell cannot run, so Windows gets the powershell.exe form below instead.
 function quoteArg(s, platform) {
   return shQuote(portablePath(s, platform));
+}
+
+function isWindows(opts = {}) {
+  return (opts.platform || process.platform) === 'win32';
 }
 
 function cliPath() {
@@ -255,6 +260,7 @@ function runnerPath() {
 // so each tool call does not pay for loading the whole CLI.
 function hookCommand(opts = {}) {
   if (opts.command) return opts.command;
+  if (isWindows(opts)) return windowsCommand(opts.nodePath || process.execPath, [opts.runnerPath || runnerPath()], ['claude-code']);
   return quoteArg(opts.nodePath || process.execPath, opts.platform) + ' ' + quoteArg(opts.runnerPath || runnerPath(), opts.platform) + ' claude-code';
 }
 
@@ -303,7 +309,7 @@ function stripOurs(groups) {
   const out = [];
   for (const g of groups) {
     if (!g || !Array.isArray(g.hooks)) { out.push(g); continue; }
-    const hooks = g.hooks.filter((h) => !(h && typeof h.command === 'string' && OUR_COMMAND_RE.test(h.command)));
+    const hooks = g.hooks.filter((h) => !(h && typeof h.command === 'string' && (OUR_COMMAND_RE.test(h.command) || isOurs(h.command, id))));
     if (hooks.length) out.push({ ...g, hooks });
   }
   return out;
@@ -329,12 +335,20 @@ function ourHooks(command) {
  * The hook command for each event. A user install goes through zn's launcher so that a Node.js that has gone
  * away blocks instead of letting Claude Code run the call unchecked (exit 127 is a non-blocking error);
  * a project install (the file is shared, an absolute path is not) or a command given by the caller keeps
- * the plain command. Claude Code runs hooks with sh (Git Bash on Windows), so the same script serves Windows.
+ * the plain command. On Windows the shell is not known when zn installs (Git Bash, else PowerShell), so the
+ * command is a powershell.exe call (-EncodedCommand) that cmd.exe, PowerShell and Git Bash all run the same
+ * way, with the same three steps written inline: no launcher file there.
  */
 function commandFor(opts = {}) {
   if (opts.command || (opts.scope || 'user') === 'project') return hookCommand(opts);
   const node = opts.nodePath || process.execPath;
   const runner = runtime.stableRunner(opts.runnerPath || runnerPath(), opts);
+  if (isWindows(opts)) {
+    return (event) => {
+      const script = launcher.windowsScript(id, event, node, runner);
+      return script ? launcher.windowsScriptCommand(script) : windowsCommand(node, [runner], [id]);
+    };
+  }
   const file = launcher.writeLauncher(id, node, runner, opts);
   return (event) => launcher.launcherCommand(file, event, opts.platform);
 }

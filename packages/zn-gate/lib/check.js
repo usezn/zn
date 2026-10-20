@@ -182,24 +182,37 @@ function parseCommand(command, agentId) {
     if (!n || !r) return { launcher: lm[1], event: lm[2], unreadable: true };
     return { launcher: lm[1], event: lm[2], node: n[1], runner: r[1] };
   }
+  // The Windows form (lib/shell-quote.js windowsCommand, lib/agents/launcher.js windowsScript): a powershell.exe
+  // call whose script runs `& '<node>' '<runner>' <agent>`.
+  const ws = require('./shell-quote').windowsCommandScript(c);
+  if (ws !== null) {
+    const m = new RegExp("& '([^']+)' '([^']+[\\/]zn-gate[\\/]lib[\\/]hooks[\\/]runner\\.js)' " + agentId + '(?:;|\\s|$)').exec(ws);
+    if (!m) return null;
+    return resolveRunnerPair(audit, m[1], m[2]);
+  }
   if (!c.endsWith(' ' + agentId) && !c.endsWith(' ' + agentId + '"')) return null;
   if (audit.OUR_HOOKS[0].test(c)) return { onPath: true };
   const quoted = new RegExp("^'(" + audit.SAFE_ABS + ")' '(" + audit.SAFE_ABS + "/zn-gate/lib/hooks/runner\\.js)' " + agentId + '$');
   for (const re of [audit.OUR_HOOKS[1], audit.OUR_HOOKS[2], quoted]) {
     const m = re.exec(c);
     if (!m) continue;
-    let node = null;
-    let runner = null;
-    try {
-      node = fs.realpathSync(m[1]);
-      runner = fs.realpathSync(m[2]);
-    } catch (err) {
-      return { node: m[1], runner: m[2], missing: true };
-    }
-    if (!/^node(?:js)?(?:\.exe)?$/i.test(path.basename(node)) || !audit.znGateFile(runner, 'lib/hooks/runner.js')) return null;
-    return { node, runner };
+    return resolveRunnerPair(audit, m[1], m[2]);
   }
   return null;
+}
+
+/* {node, runner} (real paths), {missing} when one is gone, null when they are not node and zn-gate's runner. */
+function resolveRunnerPair(audit, nodePath, runnerPath) {
+  let node = null;
+  let runner = null;
+  try {
+    node = fs.realpathSync(nodePath);
+    runner = fs.realpathSync(runnerPath);
+  } catch (err) {
+    return { node: nodePath, runner: runnerPath, missing: true };
+  }
+  if (!/^node(?:js)?(?:\.exe)?$/i.test(path.basename(node)) || !audit.znGateFile(runner, 'lib/hooks/runner.js')) return null;
+  return { node, runner };
 }
 
 function decisionOf(stdout, status) {

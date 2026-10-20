@@ -213,7 +213,9 @@ test('claude-code: Windows install writes forward-slash commands, and uninstall 
   });
   claude.install(win);
   const cmd = json(file).hooks.PreToolUse[0].hooks[0].command;
-  assert.equal(cmd, "'C:/Program Files/nodejs/node.exe' 'C:/zn/lib/hooks/runner.js' claude-code");
+  // An encoded powershell.exe call (Git Bash, PowerShell and cmd.exe all run it) that names the node and runner with /.
+  assert.match(cmd, /^powershell.exe -NoProfile -NonInteractive -EncodedCommand [A-Za-z0-9+/=]+$/);
+  assert.ok(Buffer.from(cmd.split(' ').pop(), 'base64').toString('utf16le').includes("& 'C:/Program Files/nodejs/node.exe' 'C:/zn/lib/hooks/runner.js' claude-code"));
   assert.equal(claude.uninstall(win).removed, 1);
 });
 

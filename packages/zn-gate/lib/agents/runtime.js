@@ -25,7 +25,7 @@ const RUNNER_REL = path.join('lib', 'hooks', 'runner.js');
 
 /** Whether a path is inside a temporary copy of a package (npx cache, dlx, bunx). */
 function inTemporaryCopy(p) {
-  return TEMP_COPY.test(String(p));
+  return TEMP_COPY.test(String(p).replace(/\\/g, '/'));
 }
 
 function runtimeDir(opts = {}) {

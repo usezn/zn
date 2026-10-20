@@ -68,7 +68,7 @@ function hasOurHook(data) {
   for (const groups of Object.values(hooks)) {
     for (const g of Array.isArray(groups) ? groups : []) {
       for (const h of g && Array.isArray(g.hooks) ? g.hooks : []) {
-        if (h && typeof h.command === 'string' && OUR_COMMAND_RE.test(h.command)) return true;
+        if (h && typeof h.command === 'string' && (OUR_COMMAND_RE.test(h.command) || require('./config-file').isOurs(h.command, 'claude-code'))) return true;
       }
     }
   }
