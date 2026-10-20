@@ -329,6 +329,53 @@ test('uninstall: after putting back a saved copy that is itself wrapped, the ser
   assert.match(c.out(), /Example MCP \(1 server\)/);
 });
 
+test('uninstall: the plan names the same saved copy that is put back; .bak.9 and .bak.old decoys are ignored', async (t) => {
+  const m = machine(t);
+  const w = wrapped(m);
+  const real = fs.readdirSync(m.home).find((f) => /^mcp-config\.json\.bak\.\d+$/.test(f));
+  const n = Number(real.split('.bak.')[1]);
+  fs.writeFileSync(path.join(m.home, 'mcp-config.json.bak.old'), 'decoy old');
+  fs.writeFileSync(path.join(m.home, 'mcp-config.json.bak.9'), 'decoy 9');
+  const p = await require('../lib/uninstall').plan({ home: m.home, env: m.env, cwd: m.cwd, envList: w.list });
+  assert.equal(path.basename(p.wrapped[0].backup), real, 'plan picks the numeric backup with the largest number');
+  assert.ok(n > 9 || p.wrapped[0].backup.endsWith('.bak.' + n));
+  const c = io(m, { envList: w.list, confirm: async () => true });
+  await dispatch('uninstall', [], c.o);
+  assert.ok(c.out().includes('goes back to the copy saved before wrapping (' + p.wrapped[0].backup + ')'));
+  assert.ok(c.out().includes('put back from ' + p.wrapped[0].backup), 'restore names the same file');
+  assert.equal(fs.readFileSync(w.file, 'utf8'), w.original);
+});
+
+test('uninstall: a project config that is a symlink is not offered for restore and is skipped', async (t) => {
+  const m = machine(t);
+  const prev = process.cwd();
+  process.chdir(m.cwd);
+  try {
+    const dir = path.join(fs.realpathSync(m.cwd), '.agents');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, 'mcp_config.json');
+    const original = JSON.stringify({ mcpServers: { fetch: { command: 'uvx', args: ['mcp-server-fetch'] } } }, null, 2);
+    fs.writeFileSync(file, original);
+    const list = [{ name: 'Antigravity (this project)', id: 'antigravity-project', filePath: file, key: 'mcpServers', format: 'mcpServers-json', scope: 'project' }];
+    require('../lib/init').configureEnvironments({ envList: list });
+    const shielded = fs.readFileSync(file, 'utf8');
+    assert.ok(fs.readdirSync(dir).some((f) => /\.bak\.\d+$/.test(f)));
+    const elsewhere = path.join(m.home, 'real-config.json');
+    fs.writeFileSync(elsewhere, shielded);
+    fs.unlinkSync(file);
+    fs.symlinkSync(elsewhere, file);
+    const p = await require('../lib/uninstall').plan({ home: m.home, env: m.env, cwd: m.cwd, envList: list });
+    assert.equal(p.wrapped.length, 1);
+    assert.equal(p.wrapped[0].backup, null, 'not offered');
+    assert.ok(p.wrapped[0].unsafe);
+    const c = io(m, { envList: list, confirm: async () => true });
+    assert.equal(await dispatch('uninstall', [], c.o), 1);
+    assert.equal(fs.readFileSync(elsewhere, 'utf8'), shielded, 'the linked file is untouched');
+    assert.match(c.out(), /cannot be restored safely/);
+    assert.match(c.out(), /Still wrapped by zn-gate shield/);
+  } finally { process.chdir(prev); }
+});
+
 test('uninstall: a clean run with everything removed exits 0 and prints no leftovers', async (t) => {
   const m = machine(t);
   install(m, 'codex');

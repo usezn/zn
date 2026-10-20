@@ -63,13 +63,11 @@ function wrappedConfigs(envList) {
     // zn's own "secrets" server also names zn-gate; only a server wrapped with `shield` counts.
     const wrapped = e.servers.filter((s) => s.shielded && !s.error && /\bshield\b/.test([s.command || '', ...(s.args || [])].join(' ')));
     if (!wrapped.length) continue;
-    let backup = null;
-    try {
-      const base = path.basename(e.filePath);
-      const baks = fs.readdirSync(path.dirname(e.filePath)).filter((f) => f.startsWith(base + '.bak.')).sort().reverse();
-      if (baks.length) backup = path.join(path.dirname(e.filePath), baks[0]);
-    } catch (_) { /* none */ }
-    list.push({ env: e, name: e.name, file: e.filePath, servers: wrapped.length, backup });
+    // Same pick and same safety checks as the restore itself (init.latestBackup / resolveConfig):
+    // the file named in the plan is the file that is put back; an unsafe config is not offered.
+    const unsafe = init.resolveConfig(e.filePath, e.scope).reason || null;
+    const backup = unsafe ? null : init.latestBackup(e.filePath, e.scope);
+    list.push({ env: e, name: e.name, file: e.filePath, servers: wrapped.length, backup, unsafe });
   }
   return list;
 }
@@ -135,7 +133,7 @@ function printPlan(p, io) {
     for (const w of p.wrapped) {
       out(io, '    - ' + w.name + ' (' + w.servers + ' wrapped): ' + (w.backup
         ? w.file + ' goes back to the copy saved before wrapping (' + w.backup + '); changes made to that file since are lost'
-        : w.file + ' has no saved copy, so it is left as it is: remove the "zn-gate shield" wrapping by hand'));
+        : w.file + (w.unsafe ? ' cannot be restored safely (' + w.unsafe + '), so it is left as it is' : ' has no saved copy, so it is left as it is') + ': remove the "zn-gate shield" wrapping by hand'));
     }
   }
   if (p.vault.exists) {
