@@ -25,10 +25,17 @@
  *  PostToolUse: no field rewrites the output; {decision: "block", reason}
  *    replaces the tool result with the reason. With zn's opt-in
  *    replaceToolOutputOnSecret setting, a real secret also adds continue: false
- *    and stopReason. Codex's docs say this stops normal processing of the
- *    result and continues with the stop text in its place; it does not end the
- *    turn on its own, and it is not yet run on a live Codex.
+ *    and stopReason. Codex then replaces the result with the stop text and
+ *    continues the turn; it does not end it. Run on a live Codex CLI 0.163.0
+ *    (2026-10-19, bench/e2e/codex/scenarios/replace): the model received the
+ *    tokenized copy of the output, not the stop text, and the turn went on.
  *  UserPromptSubmit: {decision: "block", reason}.
+ *  SessionStart (matcher on source: startup, resume, clear, compact, fork) and
+ *    SubagentStart (stdin adds agent_id, agent_type, turn_id): both read
+ *    hookSpecificOutput.additionalContext, which Codex adds to the model's
+ *    context (github.com/openai/codex, codex-rs/hooks/schema/generated/
+ *    session-start.command.output.schema.json and subagent-start...). zn sends
+ *    a short reminder there; it never blocks (SubagentStart ignores continue).
  *  PermissionRequest (runs only when Codex is about to ask the user: Bash,
  *    apply_patch, MCP tools): hookSpecificOutput.decision {behavior: "deny",
  *    message}. zn answers only "deny", and only for a call its PreToolUse
@@ -41,6 +48,12 @@
  *    "hooks": {"stopReview": "block"} in ~/.zn/config.json, zn returns
  *    {decision: "block", reason}: Codex then continues with the reason as a
  *    new prompt. zn never blocks when stop_hook_active is true.
+ *    An unseen placeholder is looked for in the session log (transcript_path).
+ *    Codex 0.163.0 writes each final answer there three times (event message,
+ *    response item, task-complete record), so zn counts the copies of the
+ *    answer it finds and leaves them all out, not just one (runner.js,
+ *    unseenMarkers). If the log escapes the answer differently from JSON, one
+ *    copy is assumed and a placeholder only the answer contains can go unflagged.
  *  Exit 0 with no output: no opinion; Codex's own approval policy applies.
  *
  * What that means here (docs/compat.md):
@@ -190,9 +203,10 @@ function secretsServerCommand(env, cwd) {
 function normalize(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const name = raw.hook_event_name;
-  const event = name === 'PreToolUse' || name === 'PermissionRequest' ? 'pre_tool' : name === 'PostToolUse' ? 'post_tool' : name === 'UserPromptSubmit' ? 'user_prompt' : name === 'Stop' ? 'stop' : null;
+  const event = name === 'PreToolUse' || name === 'PermissionRequest' ? 'pre_tool' : name === 'PostToolUse' ? 'post_tool' : name === 'UserPromptSubmit' ? 'user_prompt' : name === 'Stop' ? 'stop' : name === 'SessionStart' || name === 'SubagentStart' ? 'session_start' : null;
   // PermissionRequest is checked by the same policy as PreToolUse; respond() answers it with deny only.
   const base = { event, permissionRequest: name === 'PermissionRequest', cwd: raw.cwd || process.cwd(), sessionId: raw.session_id || null, raw };
+  if (event === 'session_start') return { ...base, tool: null, hookEventName: name, input: {} };
   if (event === 'user_prompt') return { ...base, tool: null, input: { prompt: typeof raw.prompt === 'string' ? raw.prompt : '' } };
   if (event === 'stop') {
     return {
@@ -280,6 +294,10 @@ function respond(d) {
     if (d.decision === 'deny') return { decision: 'block', reason: d.message || 'zn: output withheld' };
     return null;
   }
+  if (ev.event === 'session_start') {
+    // Context only. Both events take the same field; the event name must match.
+    return d.context ? { hookSpecificOutput: { hookEventName: ev.hookEventName, additionalContext: d.context } } : null;
+  }
   if (ev.event === 'user_prompt' && d.decision === 'deny') return { decision: 'block', reason: d.message || 'Blocked by zn' };
   if (ev.event === 'stop') {
     // Only "block" is a decision; a warning is shown to the user as systemMessage.
@@ -326,6 +344,9 @@ function hookGroups(h) {
     PermissionRequest: { matcher: PRE_MATCHER, hooks: [h] },
     PostToolUse: { matcher: POST_MATCHER, hooks: [h] },
     UserPromptSubmit: { hooks: [h] },
+    // A short reminder for the model, at the start of a session and of a subagent. No matcher: every source.
+    SessionStart: { hooks: [h] },
+    SubagentStart: { hooks: [h] },
     // Stop ignores matchers in Codex; the group has none.
     Stop: { hooks: [h] },
   };

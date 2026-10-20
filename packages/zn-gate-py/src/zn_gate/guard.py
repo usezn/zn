@@ -8,9 +8,13 @@ from __future__ import annotations
 import functools
 import inspect
 import os
-from typing import Any, Callable, List, Optional
+from collections.abc import Mapping
+from typing import Any, Callable, List, Optional, Set, Tuple, TypeVar, cast
 
 from .rules import Assessment, evaluate, scan_windows
+
+
+_F = TypeVar("_F", bound=Callable[..., Any])
 
 
 def block_message(assessment: Assessment, target: str) -> str:
@@ -36,23 +40,44 @@ class GuardBlockError(PermissionError):
         self.payload = payload
 
 
-def _extract_strings(data: Any, max_depth: int = 10) -> List[str]:
-    """Recursively extract all strings from nested structures."""
-    if max_depth <= 0:
-        return []
+class _NestingTooDeep(Exception):
+    """Raised when a payload is nested deeper than the scanner is willing to walk."""
 
-    strings: List[str] = []
+
+def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] = None) -> List[str]:
+    """Recursively extract all strings from nested structures.
+
+    Walks every Mapping (keys and values), list, tuple, set and frozenset, and
+    decodes bytes. Raises _NestingTooDeep instead of silently skipping content
+    that sits below the depth limit, so callers can fail closed. A container
+    that contains itself is walked once.
+    """
     if isinstance(data, str):
-        strings.append(data)
-    elif isinstance(data, dict):
+        return [data]
+    if isinstance(data, (bytes, bytearray)):
+        return [bytes(data).decode("utf-8", errors="replace")]
+    if isinstance(data, Mapping):
+        children: List[Any] = []
         for k, v in data.items():
-            if isinstance(k, str):
-                strings.append(k)
-            strings.extend(_extract_strings(v, max_depth - 1))
-    elif isinstance(data, (list, tuple, set)):
-        for item in data:
-            strings.extend(_extract_strings(item, max_depth - 1))
-    return strings
+            children.append(k)
+            children.append(v)
+    elif isinstance(data, (list, tuple, set, frozenset)):
+        children = list(data)
+    else:
+        return []
+    if max_depth <= 0:
+        raise _NestingTooDeep()
+    path = _path if _path is not None else set()
+    if id(data) in path:
+        return []
+    path.add(id(data))
+    try:
+        strings: List[str] = []
+        for child in children:
+            strings.extend(_extract_strings(child, max_depth - 1, path))
+        return strings
+    finally:
+        path.discard(id(data))
 
 
 def check_tool_call(tool_name: str, arguments: Any = None, strict: Optional[bool] = None) -> Assessment:
@@ -60,7 +85,11 @@ def check_tool_call(tool_name: str, arguments: Any = None, strict: Optional[bool
     Evaluates whether an agent tool call is safe to execute.
     Inspects tool arguments recursively for injection, evasion, or exfiltration attacks.
     """
-    strings_to_check = _extract_strings(arguments)
+    try:
+        strings_to_check = _extract_strings(arguments)
+    except _NestingTooDeep:
+        return Assessment(verdict="block", confidence=1.0, rule="size:nesting",
+                          reason="Arguments nested too deeply to check")
     advisory = None
     for s in strings_to_check:
         res = evaluate(s, strict=strict)
@@ -80,7 +109,11 @@ def check_tool_result(result: Any, block_truncated: bool = False, strict: Option
     output is blocked (rule size:truncated) when block_truncated is set or the
     ZN_BLOCK_TRUNCATED environment variable is "1".
     """
-    strings_to_check = _extract_strings(result)
+    try:
+        strings_to_check = _extract_strings(result)
+    except _NestingTooDeep:
+        return Assessment(verdict="block", confidence=1.0, rule="size:nesting",
+                          reason="Result nested too deeply to check")
     truncated = False
     advisory = None
     for s in strings_to_check:
@@ -96,6 +129,18 @@ def check_tool_result(result: Any, block_truncated: bool = False, strict: Option
                       advisory=dict(advisory) if advisory else None)
 
 
+def validate_on_block(value: Any, allowed: Tuple[str, ...]) -> str:
+    """Return `value` if it is one of the `allowed` modes, else raise ValueError.
+
+    An unknown mode (for example a typo such as "rasie") would otherwise skip the
+    block silently, so every integration checks it when it is created.
+    """
+    if not isinstance(value, str) or value not in allowed:
+        valid = ", ".join(repr(v) for v in allowed)
+        raise ValueError(f"on_block must be one of {valid}; got {value!r}")
+    return value
+
+
 def guard(
     on_block: str = "raise",
     fallback: Any = None,
@@ -104,7 +149,7 @@ def guard(
     mask_secrets: bool = False,
     callback: Optional[Callable[[Assessment, str, Any], None]] = None,
     block_truncated: bool = False,
-) -> Callable:
+) -> Callable[[_F], _F]:
     """
     Decorator for Python functions and agent tools.
 
@@ -121,7 +166,9 @@ def guard(
                        (rule size:truncated). ZN_BLOCK_TRUNCATED=1 does the same
                        for every guard (default False).
     """
-    def decorator(func: Callable) -> Callable:
+    validate_on_block(on_block, ("raise", "return", "custom"))
+
+    def decorator(func: _F) -> _F:
         func_name = getattr(func, "__name__", "anonymous")
 
         if inspect.iscoroutinefunction(func):
@@ -155,7 +202,7 @@ def guard(
                     res, _ = sanitize_tool_result(res)
 
                 return res
-            return async_wrapper
+            return cast(_F, async_wrapper)
         else:
             @functools.wraps(func)
             def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -187,7 +234,7 @@ def guard(
                     res, _ = sanitize_tool_result(res)
 
                 return res
-            return sync_wrapper
+            return cast(_F, sync_wrapper)
 
     return decorator
 

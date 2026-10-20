@@ -33,7 +33,7 @@ def _run(path, fmt="json", exclude=None):
 class SkippedDirsTests(unittest.TestCase):
     def test_pruned_directories_are_listed_and_caches_are_not(self):
         d = _tree({"ok.md": "hello\n", "build/p.md": "hello\n", "dist/p.md": "hello\n",
-                   "node_modules/x/r.md": "hello\n", ".venv/r.md": "hello\n"})
+                   "node_modules/x/r.md": "hello\n", ".git/r.md": "hello\n"})
         try:
             data = json.loads(_run(d))
             self.assertEqual(data["total_files"], 1)
@@ -88,12 +88,71 @@ class PythonScanDirsTests(unittest.TestCase):
     def test_test_dirs_are_read_and_vendor_follows_the_manifest_rule(self):
         d = _tree({"tests/f.md": "hello\n", "__tests__/f.md": "hello\n", "test/f.md": "hello\n",
                    "plain/vendor/n.md": "hello\n", "go/go.mod": "module x\n", "go/vendor/dep.md": "hello\n",
-                   ".idea/x.md": "hello\n", ".turbo/x.md": "hello\n"})
+                   ".next/x.md": "hello\n", ".turbo/x.md": "hello\n"})
         try:
             data = json.loads(_run(d))
             self.assertEqual(data["total_files"], 4)  # three test files and plain/vendor/n.md
             self.assertEqual(len(data["skipped_dirs"]), 1)
             self.assertEqual(data["skipped_dirs"][0]["reason"], "skipped by name: dependencies next to go.mod")
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+class SanitiseAndEditorDirsTests(unittest.TestCase):
+    def test_text_output_escapes_control_characters(self):
+        esc = chr(27)
+        d = _tree({"ok.md": "hello\n"})
+        try:
+            sub = os.path.join(d, "x" + esc + "[2Jx", "dist")
+            os.makedirs(sub)
+            with open(os.path.join(sub, "a.md"), "w", encoding="utf-8") as f:
+                f.write("hello\n")
+            out = _run(d, "text")
+            self.assertNotIn(esc, out)
+            self.assertIn("x" + chr(92) + "x1b[2Jx", out)
+        except OSError:
+            self.skipTest("file system refuses control characters in names")
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_text_output_escapes_control_characters_in_finding_paths_and_empty_target(self):
+        esc = chr(27)
+        fake_key = "AKIA" + "ZNTESTFAKE" + "000000"
+        d = _tree({"ok.md": "hello\n"})
+        try:
+            try:
+                with open(os.path.join(d, "f" + esc + "[2Jf.md"), "w", encoding="utf-8") as f:
+                    f.write("key = " + fake_key + "\n")
+                empty = os.path.join(d, "e" + esc + "[2Je")
+                os.makedirs(empty)
+            except OSError:
+                self.skipTest("file system refuses control characters in names")
+            out = _run(d, "text")
+            self.assertNotIn(esc, out)
+            self.assertIn("f" + chr(92) + "x1b[2Jf.md:1", out)
+            out = _run(empty, "text")
+            self.assertNotIn(esc, out)
+            self.assertIn("No files were scanned in ", out)
+            self.assertIn("e" + chr(92) + "x1b[2Je", out)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_editor_and_venv_directories_are_listed(self):
+        d = _tree({"ok.md": "hello\n", ".idea/agent.md": "hello\n", ".venv/a.md": "hello\n", "venv/a.md": "hello\n",
+                   "__pycache__/a.md": "hello\n", ".eggs/a.md": "hello\n"})
+        try:
+            data = json.loads(_run(d))
+            self.assertEqual(data["total_files"], 1)
+            self.assertEqual(sorted(os.path.basename(s["dir"]) for s in data["skipped_dirs"]),
+                             [".eggs", ".idea", ".venv", "__pycache__", "venv"])
+            reasons = {os.path.basename(s["dir"]): s["reason"] for s in data["skipped_dirs"]}
+            self.assertEqual(reasons, {
+                ".eggs": "skipped by name: Python build files",
+                ".idea": "skipped by name: editor settings",
+                ".venv": "skipped by name: virtual environment",
+                "__pycache__": "skipped by name: Python cache",
+                "venv": "skipped by name: virtual environment",
+            })
         finally:
             shutil.rmtree(d, ignore_errors=True)
 

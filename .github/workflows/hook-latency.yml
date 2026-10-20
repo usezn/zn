@@ -78,3 +78,69 @@ jobs:
           path: ${{ runner.temp }}/hook_latency.json
           if-no-files-found: ignore
           retention-days: 30
+
+  # Windows starts processes more slowly than Linux, so it has its own baseline and is checked apart.
+  # Not a required check: the job is allowed to fail and only reports. The baseline is made of numbers
+  # measured on a Windows runner.
+  latency-windows:
+    name: Hook latency budget (Windows, not required)
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: windows-latest
+    continue-on-error: true
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.x
+          package-manager-cache: false
+      - name: Install
+        working-directory: packages/zn-gate
+        run: npm ci --ignore-scripts
+      - name: Measure and check the Windows budget
+        run: |
+          set -euo pipefail
+          if [ ! -f bench/hook_latency_baseline_windows.json ]; then echo "::error::bench/hook_latency_baseline_windows.json is missing"; exit 1; fi
+          # Windows runners vary more (five CPU models in 33 runs, per-case spread twice the Linux one), so a single
+          # case may move 35 % before it fails; the whole-run check (median of all cases +10 %) still catches a
+          # general slowdown. Measured on 33 runs (2026-10-16..20): 1 false failure instead of 5.
+          node bench/hook_latency_matrix.js --runs 40 --json "$RUNNER_TEMP/hook_latency.json" --baseline bench/hook_latency_baseline_windows.json --max-increase 0.35 | tee "$RUNNER_TEMP/hook_latency.md"
+      - name: Summary
+        if: always()
+        run: 'if [ -f "$RUNNER_TEMP/hook_latency.md" ]; then { echo "### Windows"; cat "$RUNNER_TEMP/hook_latency.md"; } >> "$GITHUB_STEP_SUMMARY" || true; fi'
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hook-latency-windows
+          path: ${{ runner.temp }}/hook_latency.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+  # One table with both systems side by side, in the summary of the run.
+  latency-compare:
+    name: Hook latency, Linux and Windows
+    needs: [ latency, latency-windows ]
+    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true
+        with:
+          pattern: hook-latency*
+          path: ${{ runner.temp }}/reports
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.x
+          package-manager-cache: false
+      - name: Table
+        run: node bench/hook_latency_summary.js "$RUNNER_TEMP/reports/hook-latency/hook_latency.json" "$RUNNER_TEMP/reports/hook-latency-windows/hook_latency.json" >> "$GITHUB_STEP_SUMMARY"

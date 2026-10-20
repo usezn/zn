@@ -324,9 +324,13 @@ async function loadIdentity(opts) {
     } catch (err) {
       // age reports a wrong passphrase as "no identity matched"; a damaged file fails earlier
       // (bad header, bad tag). Only the first is a passphrase failure, so only it sets `reason`.
-      const e = znError(CODES.LOCKED, 'wrong passphrase, or vault file identity.age is corrupted');
-      if (err && /no identity matched/i.test(String(err.message))) e.reason = WRONG_PASSPHRASE;
-      throw e;
+      if (err && /no identity matched/i.test(String(err.message))) {
+        const e = znError(CODES.LOCKED, 'wrong passphrase, or vault file identity.age is corrupted');
+        e.reason = WRONG_PASSPHRASE;
+        throw e;
+      }
+      throw znError(CODES.LOCKED, 'vault file identity.age looks damaged, so it cannot be opened with any passphrase. ' +
+        'Restore it from a backup. Do not reset the vault: a reset sets the old vault aside and starts empty.');
     }
   } else {
     identity = NATIVE[backend].load();
