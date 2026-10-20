@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-31.6
+RULES_VERSION: 2026-11-03.1
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-10-31.6"
+RULES_VERSION = "2026-11-03.1"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -579,6 +579,108 @@ def invisible_view(text: str) -> Optional[Tuple[str, 'array[int]']]:
     parts.append(text[pos:])
     mapping.append(len(text))
     return ''.join(parts), mapping
+
+
+# Views that decode what a shell or a JSON string would decode (see buildViews in
+# rules.js). Each maps a character of the decoded text to the span of the original
+# text it came from (mapping = start, ends = end).
+MAX_VIEW_EDITS = 256
+MAX_SHELL_REFS = 64
+_ESCAPED_ASCII_RE = _rc(r'\\u00([2-7][0-9a-fA-F])')
+_SHELL_ASSIGN_RE = _rc(
+    r'(?<![A-Za-z0-9_$])([A-Za-z_][A-Za-z0-9_]{0,31})=(?:"([^"\s$`\\]{1,128})"|\'([^\'\s]{1,128})\'|([^\s"\'$`\\;&|<>()=]{1,128}))')
+_SHELL_REF_RE = _rc(r'\$(?:\{([A-Za-z_][A-Za-z0-9_]{0,31})\}|([A-Za-z_][A-Za-z0-9_]{0,31}))')
+
+# (clean, mapping, ends, decoded); ends is None for the view without invisible characters.
+_View = Tuple[str, 'array[int]', Optional['array[int]'], bool]
+
+
+def _edit_view(text: str, edits: List[Tuple[int, int, str]]) -> _View:
+    mapping = array('q')
+    ends = array('q')
+    parts: List[str] = []
+    pos = 0
+    for start, end, rep_text in edits:
+        mapping.extend(range(pos, start))
+        ends.extend(range(pos + 1, start + 1))
+        parts.append(text[pos:start])
+        mapping.extend([start] * len(rep_text))
+        ends.extend([end] * len(rep_text))
+        parts.append(rep_text)
+        pos = end
+    mapping.extend(range(pos, len(text)))
+    ends.extend(range(pos + 1, len(text) + 1))
+    parts.append(text[pos:])
+    mapping.append(len(text))
+    ends.append(len(text))
+    return ''.join(parts), mapping, ends, True
+
+
+def _escape_edits(text: str) -> Optional[List[Tuple[int, int, str]]]:
+    """JSON \\u00XX escapes of printable ASCII (not the quote or the backslash)."""
+    if '\\u' not in text:
+        return None
+    edits: List[Tuple[int, int, str]] = []
+    for m in _ESCAPED_ASCII_RE.finditer(text):
+        code = int(m.group(1), 16)
+        if code in (0x22, 0x5c, 0x7f) or (m.start() > 0 and text[m.start() - 1] == '\\'):
+            continue
+        edits.append((m.start(), m.start() + 6, chr(code)))
+        if len(edits) >= MAX_VIEW_EDITS:
+            break
+    return edits or None
+
+
+def _shell_edits(text: str) -> Optional[List[Tuple[int, int, str]]]:
+    """$NAME and ${NAME} that follow a simple NAME=value assignment in the same
+    text, and the quotes that glue the expansion to the text around it."""
+    if '$' not in text:
+        return None
+    assigns: List[Tuple[str, str, int]] = []
+    for m in _SHELL_ASSIGN_RE.finditer(text):
+        value = m.group(2) if m.group(2) is not None else (m.group(3) if m.group(3) is not None else m.group(4))
+        assigns.append((m.group(1), value, m.end()))
+        if len(assigns) >= 16:
+            break
+    if not assigns:
+        return None
+    by_start: Dict[int, Tuple[int, int, str]] = {}
+    refs: List[Tuple[int, int]] = []
+    for m in _SHELL_REF_RE.finditer(text):
+        name = m.group(1) or m.group(2)
+        val = None
+        for a_name, a_val, a_end in assigns:
+            if a_name == name and a_end <= m.start():
+                val = a_val
+        if val is None:
+            continue
+        refs.append((m.start(), m.end()))
+        by_start[m.start()] = (m.start(), m.end(), val)
+        if len(refs) >= MAX_SHELL_REFS:
+            break
+    if not refs:
+        return None
+    for rs, re_ in refs:
+        nxt = text[re_ + 1:re_ + 2]
+        if text[re_:re_ + 1] in ('"', "'") and nxt and ((nxt.isascii() and nxt.isalnum()) or nxt in '_$"\''):
+            by_start[re_] = (re_, re_ + 1, '')
+        if rs > 1 and text[rs - 1] in ('"', "'") and re.match(r'[A-Za-z0-9_"\']', text[rs - 2]):
+            by_start[rs - 1] = (rs - 1, rs, '')
+    return sorted(by_start.values())
+
+
+def _build_views(text: str) -> List[_View]:
+    """The views of a text: without invisible characters, with JSON escapes
+    decoded, with simple shell expansions resolved (each only when it changes the text)."""
+    views: List[_View] = []
+    inv = invisible_view(text)
+    if inv is not None:
+        views.append((inv[0], inv[1], None, False))
+    for f in (_escape_edits, _shell_edits):
+        edits = f(text)
+        if edits:
+            views.append(_edit_view(text, edits))
+    return views
 
 
 def _clean_value(text: str) -> str:
@@ -1691,12 +1793,15 @@ def _apply_edits(text: str, edits: List[Tuple[int, int, str]]) -> str:
     return ''.join(parts)
 
 
-def _span_in(mapping: Optional['array[int]'], start: int, end: int) -> Tuple[int, int]:
-    """Span [start, end) of a text without invisible characters, as a span of the
-    original text. mapping is None for the original text itself."""
+def _span_in(mapping: Optional['array[int]'], start: int, end: int,
+             ends: Optional['array[int]'] = None) -> Tuple[int, int]:
+    """Span [start, end) of a view of the text, as a span of the original text.
+    mapping is None for the original text itself."""
     if mapping is None:
         return start, end
-    return mapping[start], (mapping[end - 1] + 1 if end > start else mapping[start])
+    if end <= start:
+        return mapping[start], mapping[start]
+    return mapping[start], (ends[end - 1] if ends is not None else mapping[end - 1] + 1)
 
 
 def _expand_template(template: str, groups: List[Optional[Tuple[int, int]]], text: str) -> str:
@@ -1721,7 +1826,7 @@ def _starts_secret_at(text: str, start: int, limit: int,
 
 
 def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, text: str,
-                     view: Optional[Tuple[str, 'array[int]']], budget: List[int],
+                     views: List[_View], budget: List[int],
                      value_filter: Optional[Callable[[str, str], bool]],
                      out: List[Tuple[int, int, str, str]],
                      match_check: Optional[Callable[[str], bool]] = None,
@@ -1730,19 +1835,22 @@ def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, t
     original coordinates. The rule runs on the original text and on the text
     without invisible characters (see ruleCandidates in rules.js). match_check,
     when given, receives the whole match and returns False to skip it."""
-    passes: List[Tuple[str, Optional['array[int]'], bool]] = [(text, None, False)]
-    # Spans this rule found on the original text; a view match overlapping two or more is dropped
-    # (see ruleCandidates in rules.js). They come in order and without overlaps, so the ones a
-    # view match overlaps are counted with two binary searches.
+    passes: List[Tuple[str, Optional['array[int]'], Optional['array[int]'], bool, bool]] = [
+        (text, None, None, False, False)]
+    # Spans this rule found on the original text. A match on a decoded view (JSON escapes, shell
+    # expansions) overlapping any of them is dropped; a match on the view without invisible characters
+    # and line breaks overlapping two or more is dropped (see ruleCandidates in rules.js). They come in
+    # order and without overlaps, so the ones a view match overlaps are counted with two binary searches.
     found_starts: List[int] = []
     found_ends: List[int] = []
-    if view is not None:
-        passes.append((view[0], view[1], False))
-        # A third pass reads each invisible character as a space; its indexes are the original ones.
+    for v in views:
+        passes.append((v[0], v[1], v[2], v[3], False))
+    if any(not v[3] for v in views):
+        # A last pass reads each invisible character as a space; its indexes are the original ones.
         spaced = _spaced_view(text)
         if spaced != text:
-            passes.append((spaced, None, True))
-    for hay, mapping, is_spaced in passes:
+            passes.append((spaced, None, None, False, True))
+    for hay, mapping, ends, decoded, is_spaced in passes:
         required = SECRET_PATTERN_REQUIRES.get(rule_id)
         if required and required not in hay:
             continue
@@ -1765,22 +1873,25 @@ def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, t
                 if m.start(k) == -1:
                     groups.append(None)
                 else:
-                    groups.append(_span_in(mapping, m.start(k), m.end(k)))
+                    groups.append(_span_in(mapping, m.start(k), m.end(k), ends))
             if value_filter is not None:
                 # The value (group 2) decides whether the match is redacted.
                 span = groups[2]
                 assert span is not None
-                vs, ve = span
-                value = _clean_value(text[vs:ve])
+                # A decoded view is judged on its decoded text.
+                src = hay if decoded else text
+                vs, ve = (m.start(2), m.end(2)) if decoded else span
+                value = _clean_value(src[vs:ve])
                 prefix = ''
                 if groups[1] is not None:
-                    prefix = _clean_value(text[groups[1][0]:groups[1][1]])
+                    ps, pe = (m.start(1), m.end(1)) if decoded else groups[1]
+                    prefix = _clean_value(src[ps:pe])
                 n = _utf16_len(value)
                 if n <= MAX_FILTERED_VALUE and n <= budget[0]:
                     budget[0] -= n
                     if value_filter(value, prefix):
                         continue
-            start, end = _span_in(mapping, m.start(), m.end())
+            start, end = _span_in(mapping, m.start(), m.end(), ends)
             if is_spaced:
                 pass  # same indexes as the original: it cannot join two matches, and it is not in order
             elif mapping is None:
@@ -1789,7 +1900,7 @@ def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, t
             else:
                 first = bisect.bisect_right(found_ends, start)
                 over = bisect.bisect_left(found_starts, end) - first
-                if over >= 2:
+                if (over >= 1) if decoded else (over >= 2):
                     continue
                 if over == 1 and patterns and _starts_secret_at(text, found_ends[first], end, patterns):
                     continue
@@ -1819,7 +1930,86 @@ def redact_secrets(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     characters; the redacted spans are the union of both (see redactSecrets in
     rules.js).
     """
-    return _redact_credentials(text)
+    redacted, detections = _redact_credentials(text)
+    if not isinstance(redacted, str) or not redacted:
+        return redacted, detections
+    redacted, more = _redact_base64(redacted)
+    return redacted, detections + more
+
+
+# Base64 runs (standard or URL-safe alphabet, padded or not, wrapped at a fixed
+# width) that decode to mostly printable text holding a secret are redacted
+# whole (see redactBase64 in rules.js). Bounded by run length, run count and
+# total characters; the decoded text is not decoded again.
+_B64_RUN_RE = _rc(r'[A-Za-z0-9+/_-]{16,}={0,2}')
+_B64_BREAK_RE = _rc(r'\r?\n')
+MAX_B64_RUN = 16 * 1024
+MAX_B64_RUNS = 64
+MAX_B64_CHARS = 64 * 1024
+_REDACTED_LABEL_RE = _rc(r'\[REDACTED_[A-Z0-9_]+\]')
+
+
+def _decode_base64_text(b64: str) -> Optional[str]:
+    s = b64.replace('-', '+').replace('_', '/').rstrip('=')
+    if len(s) % 4 == 1:
+        s = s[:-1]
+    try:
+        buf = base64.b64decode(s + '=' * (-len(s) % 4))
+    except (binascii.Error, ValueError):
+        return None
+    if len(buf) < 12:
+        return None
+    printable = sum(1 for b in buf if 0x20 <= b <= 0x7e or b in (9, 10, 13))
+    return buf.decode('latin-1') if printable >= len(buf) * 0.9 else None
+
+
+def _redact_base64(text: str) -> Tuple[str, List[Dict[str, Any]]]:
+    if len(text) < 16:
+        return text, []
+    runs: List[Tuple[int, int, str]] = []
+    for m in _B64_RUN_RE.finditer(text):
+        runs.append((m.start(), m.end(), m.group(0)))
+        if len(runs) >= MAX_B64_RUNS * 4:
+            break
+    # A run wrapped over several lines: full lines of the same width, then a last line.
+    groups: List[Tuple[int, int, str]] = []
+    i = 0
+    while i < len(runs):
+        width = len(runs[i][2].rstrip('='))
+        first = runs[i][0]
+        g_end, g_text = runs[i][1], runs[i][2]
+        while i + 1 < len(runs) and len(runs[i][2]) == width:
+            brk = _B64_BREAK_RE.match(text[runs[i][1]:runs[i][1] + 2])
+            if not brk or runs[i + 1][0] != runs[i][1] + brk.end():
+                break
+            i += 1
+            g_end = runs[i][1]
+            g_text += runs[i][2]
+        groups.append((first, g_end, g_text))
+        i += 1
+    budget = MAX_B64_CHARS
+    tried = 0
+    edits: List[Tuple[int, int, str]] = []
+    detections: List[Dict[str, Any]] = []
+    for start, end, b64 in groups:
+        if len(b64) > MAX_B64_RUN:
+            continue
+        if tried >= MAX_B64_RUNS or len(b64) > budget:
+            break
+        tried += 1
+        budget -= len(b64)
+        decoded = _decode_base64_text(b64)
+        if decoded is None:
+            continue
+        out, found = _redact_credentials(decoded)
+        if not found:
+            continue
+        label = _REDACTED_LABEL_RE.search(out)
+        edits.append((start, end, label.group(0) if label else '[REDACTED_SECRET]'))
+        detections.append({"rule": found[0]["rule"], "start": start, "end": end})
+    if not edits:
+        return text, detections
+    return _apply_edits(text, edits), detections
 
 
 def redact_scan_secrets(text: str) -> Tuple[str, List[Dict[str, Any]]]:
@@ -1838,17 +2028,17 @@ def _redact_with(text: str, patterns: List[Tuple[str, re.Pattern[str], str]]) ->
     redacted = text
     detections: List[Dict[str, Any]] = []
     budget = [MAX_FILTERED_CHARS]
-    view = None
+    views: List[_View] = []
     dirty = True
 
     for rule_id, pattern, replacement in patterns:
         if dirty:
-            view = invisible_view(redacted)
+            views = _build_views(redacted)
             dirty = False
         cands: List[Tuple[int, int, str, str]] = []
         value_filter = (SECRET_VALUE_FILTERS.get(rule_id) or PROVIDER_VALUE_FILTERS.get(rule_id)
                         or SCAN_SECRET_VALUE_FILTERS.get(rule_id))
-        _rule_candidates(rule_id, pattern, replacement, redacted, view, budget,
+        _rule_candidates(rule_id, pattern, replacement, redacted, views, budget,
                          value_filter, cands, PROVIDER_MATCH_CHECKS.get(rule_id), patterns)
         if not cands:
             continue

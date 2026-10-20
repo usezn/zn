@@ -8,10 +8,10 @@ const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-31.6
+ * RULES_VERSION: 2026-11-03.1
  */
 
-const RULES_VERSION = '2026-10-31.6';
+const RULES_VERSION = '2026-11-03.1';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -646,6 +646,94 @@ function invisibleView(text) {
   return { clean, map: map.subarray(0, c + 1) };
 }
 
+// Views that decode what a shell or a JSON string would decode, so the secret
+// rules see the plain text. Each view maps a character of the decoded text to the
+// span of the original text it came from (map = start, ends = end), so a match
+// redacts the whole escape or the whole $NAME reference. Bounded by MAX_VIEW_EDITS.
+const MAX_VIEW_EDITS = 256;
+const MAX_SHELL_REFS = 64;
+const ESCAPED_ASCII_RE = /\\u00([2-7][0-9a-fA-F])/g;
+const SHELL_ASSIGN_RE = /(?<![A-Za-z0-9_$])([A-Za-z_][A-Za-z0-9_]{0,31})=(?:"([^"\s$`\\]{1,128})"|'([^'\s]{1,128})'|([^\s"'$`\\;&|<>()=]{1,128}))/g;
+const SHELL_REF_RE = /\$(?:\{([A-Za-z_][A-Za-z0-9_]{0,31})\}|([A-Za-z_][A-Za-z0-9_]{0,31}))/g;
+
+function editView(text, edits) {
+  let cap = text.length + 1;
+  for (const e of edits) cap += e[2].length;
+  const map = new Int32Array(cap);
+  const ends = new Int32Array(cap);
+  let clean = '';
+  let c = 0;
+  let pos = 0;
+  for (const [s, e, rep] of edits) {
+    for (let i = pos; i < s; i++) { map[c] = i; ends[c] = i + 1; c++; }
+    clean += text.slice(pos, s);
+    for (let k = 0; k < rep.length; k++) { map[c] = s; ends[c] = e; c++; }
+    clean += rep;
+    pos = e;
+  }
+  for (let i = pos; i < text.length; i++) { map[c] = i; ends[c] = i + 1; c++; }
+  clean += text.slice(pos);
+  map[c] = text.length;
+  ends[c] = text.length;
+  return { clean, map: map.subarray(0, c + 1), ends: ends.subarray(0, c + 1), decoded: true };
+}
+
+// JSON \\u00XX escapes of printable ASCII (not the quote or the backslash).
+function escapeEdits(text) {
+  if (!text.includes('\\u')) return null;
+  const edits = [];
+  for (const m of text.matchAll(ESCAPED_ASCII_RE)) {
+    const code = parseInt(m[1], 16);
+    if (code === 0x22 || code === 0x5c || code === 0x7f || text[m.index - 1] === '\\') continue;
+    edits.push([m.index, m.index + 6, String.fromCharCode(code)]);
+    if (edits.length >= MAX_VIEW_EDITS) break;
+  }
+  return edits.length ? edits : null;
+}
+
+// $NAME and ${NAME} that follow a simple NAME=value assignment in the same text
+// (value without spaces, quotes or expansions), and the quotes that glue the
+// expansion to the text around it ("$A"rest). Nothing else is evaluated.
+function shellEdits(text) {
+  if (!text.includes('$')) return null;
+  const assigns = [];
+  for (const m of text.matchAll(SHELL_ASSIGN_RE)) {
+    assigns.push([m[1], m[2] ?? m[3] ?? m[4], m.index + m[0].length]);
+    if (assigns.length >= 16) break;
+  }
+  if (assigns.length === 0) return null;
+  const byStart = new Map();
+  const refs = [];
+  for (const m of text.matchAll(SHELL_REF_RE)) {
+    const name = m[1] ?? m[2];
+    let val = null;
+    for (const a of assigns) if (a[0] === name && a[2] <= m.index) val = a[1];
+    if (val === null) continue;
+    refs.push([m.index, m.index + m[0].length]);
+    byStart.set(m.index, [m.index, m.index + m[0].length, val]);
+    if (refs.length >= MAX_SHELL_REFS) break;
+  }
+  if (refs.length === 0) return null;
+  for (const [rs, re] of refs) {
+    if (/["']/.test(text[re] || '') && /[A-Za-z0-9_$"']/.test(text[re + 1] || '')) byStart.set(re, [re, re + 1, '']);
+    if (rs > 1 && /["']/.test(text[rs - 1]) && /[A-Za-z0-9_"']/.test(text[rs - 2])) byStart.set(rs - 1, [rs - 1, rs, '']);
+  }
+  return [...byStart.values()].sort((a, b) => a[0] - b[0]);
+}
+
+// The views of a text: without invisible characters, with JSON escapes decoded,
+// with simple shell expansions resolved (each only when it changes the text).
+function buildViews(text) {
+  const views = [];
+  const inv = invisibleView(text);
+  if (inv) views.push(inv);
+  for (const f of [escapeEdits, shellEdits]) {
+    const edits = f(text);
+    if (edits) views.push(editView(text, edits));
+  }
+  return views;
+}
+
 // A value as the secret rules see it: no invisible characters and no wrap breaks.
 function cleanValue(str) {
   const s = stripInvisible(str);
@@ -1178,9 +1266,10 @@ function expandTemplate(template, groups, text) {
 
 // Span [start, end) of a text without invisible characters, as a span of the
 // original text. `map` is null for the original text itself.
-function spanIn(map, start, end) {
-  if (!map) return [start, end];
-  return [map[start], end > start ? map[end - 1] + 1 : map[start]];
+function spanIn(view, start, end) {
+  if (!view) return [start, end];
+  const { map, ends } = view;
+  return [map[start], end > start ? (ends ? ends[end - 1] : map[end - 1] + 1) : map[start]];
 }
 
 // Candidate redactions of one rule, pushed to `out` as {start, end, rule, text}
@@ -1215,23 +1304,25 @@ function spacedView(text) {
   return spacedMemo.spaced;
 }
 
-function ruleCandidates(item, text, view, budget, out, patterns = null) {
-  const passes = view ? [[text, null], [view.clean, view.map]] : [[text, null]];
-  // A third pass reads each invisible character as a space; its indexes are the original ones.
-  if (view) {
+function ruleCandidates(item, text, views, budget, out, patterns = null) {
+  const passes = [[text, null]];
+  for (const v of views) passes.push([v.clean, v]);
+  // A last pass reads each invisible character as a space; its indexes are the original ones.
+  if (views.some((v) => !v.decoded)) {
     const spaced = spacedView(text);
     if (spaced !== text) passes.push([spaced, null, true]);
   }
-  // Spans this rule found on the original text. A match on the view that overlaps two or more of them is
-  // dropped, so two secrets on consecutive lines are not merged into one match across the break. A view
-  // match that extends a single original match (the first line of a wrapped key) is kept, unless the next
-  // line starts a secret of its own (startsSecretAt). They come in order and without overlaps, so the
-  // ones a view match overlaps are counted with two binary searches.
+  // Spans this rule found on the original text. A match on a decoded view (JSON escapes, shell expansions)
+  // that overlaps any of them is dropped. A match on the view without invisible characters and line breaks
+  // that overlaps two or more of them is dropped, so two secrets on consecutive lines are not merged into
+  // one match across the break; one that extends a single original match (the first line of a wrapped key)
+  // is kept, unless the next line starts a secret of its own (startsSecretAt). They come in order and
+  // without overlaps, so the ones a view match overlaps are counted with two binary searches.
   const foundStarts = [];
   const foundEnds = [];
   const flags = item.pattern.flags.includes('d') ? item.pattern.flags : item.pattern.flags + 'd';
   const regex = new RegExp(item.pattern.source, flags);
-  for (const [hay, map, spaced] of passes) {
+  for (const [hay, view, spaced] of passes) {
     if (item.requires && !hay.includes(item.requires)) continue;
     if (item.prefilter && !item.prefilter.test(hay)) continue;
     regex.lastIndex = 0;
@@ -1243,28 +1334,32 @@ function ruleCandidates(item, text, view, budget, out, patterns = null) {
       }
       const groups = [null];
       for (let k = 1; k < m.length; k++) {
-        groups.push(m.indices[k] ? spanIn(map, m.indices[k][0], m.indices[k][1]) : null);
+        groups.push(m.indices[k] ? spanIn(view, m.indices[k][0], m.indices[k][1]) : null);
       }
       if (item.valueFilter) {
         // The value (group 2) decides whether the match is redacted.
-        const value = cleanValue(text.slice(groups[2][0], groups[2][1]));
-        const prefix = groups[1] ? cleanValue(text.slice(groups[1][0], groups[1][1])) : '';
+        // A decoded view is judged on its decoded text.
+        const src = view && view.decoded ? hay : text;
+        const sp2 = view && view.decoded ? m.indices[2] : groups[2];
+        const sp1 = view && view.decoded ? m.indices[1] : groups[1];
+        const value = cleanValue(src.slice(sp2[0], sp2[1]));
+        const prefix = sp1 ? cleanValue(src.slice(sp1[0], sp1[1])) : '';
         const n = value.length;
         if (n <= MAX_FILTERED_VALUE && n <= budget.left) {
           budget.left -= n;
           if (item.valueFilter(value, prefix)) continue;
         }
       }
-      const [start, end] = spanIn(map, m.index, m.index + m[0].length);
+      const [start, end] = spanIn(view, m.index, m.index + m[0].length);
       if (spaced) {
         // Same indexes as the original: the span cannot join two matches, and it is not in order.
-      } else if (!map) {
+      } else if (!view) {
         foundStarts.push(start);
         foundEnds.push(end);
       } else {
         const first = upperBound(foundEnds, start);
         const over = lowerBound(foundStarts, end) - first;
-        if (over >= 2) continue;
+        if (view.decoded ? over >= 1 : over >= 2) continue;
         if (over === 1 && patterns && startsSecretAt(text, foundEnds[first], end, patterns)) continue;
       }
       out.push({ start, end, rule: item.id, text: expandTemplate(item.replacement, groups, text) });
@@ -1445,16 +1540,16 @@ function upperBound(a, x) {
 function redactQuotedCredentials(text) {
   if (typeof text !== 'string' || !text || !KV_PREFILTER_RE.test(text)) return { sanitized: text, detections: [] };
   const view = invisibleView(text);
-  const passes = view ? [[text, null], [view.clean, view.map]] : [[text, null]];
+  const passes = view ? [[text, null], [view.clean, view]] : [[text, null]];
   const cands = [];
   // The first pass gives its spans in order and without overlaps, so the spans of
   // that pass a later span overlaps are counted with two binary searches.
   const seenStarts = [];
   const seenEnds = [];
-  for (const [hay, map] of passes) {
+  for (const [hay, pv] of passes) {
     for (const f of findQuotedCredentials(hay)) {
-      const [start, end] = spanIn(map, f.start, f.end);
-      if (!map) {
+      const [start, end] = spanIn(pv, f.start, f.end);
+      if (!pv) {
         seenStarts.push(start);
         seenEnds.push(end);
       } else if (lowerBound(seenStarts, end) - upperBound(seenEnds, start) >= 2) continue;
@@ -1487,6 +1582,81 @@ function redactCredentials(text) {
 // of what both find, so a secret split by a zero-width or tag character is
 // redacted whole. Texts without invisible characters are handled as before.
 function redactSecrets(text) {
+  const plain = redactSecretsPlain(text);
+  if (typeof plain.sanitized !== 'string' || !plain.sanitized) return plain;
+  const b64 = redactBase64(plain.sanitized);
+  if (b64.detections.length === 0) return plain;
+  return { sanitized: b64.sanitized, detections: plain.detections.concat(b64.detections) };
+}
+
+// Base64 runs (standard or URL-safe alphabet, padded or not, wrapped at a fixed
+// width) that decode to mostly printable text holding a secret are redacted
+// whole. Bounded: runs of at most MAX_B64_RUN characters, MAX_B64_RUNS runs and
+// MAX_B64_CHARS characters per call; the decoded text is not decoded again.
+const B64_RUN_RE = /[A-Za-z0-9+\/_-]{16,}={0,2}/g;
+const MAX_B64_RUN = 16 * 1024;
+const MAX_B64_RUNS = 64;
+const MAX_B64_CHARS = 64 * 1024;
+
+function decodeBase64Text(b64) {
+  let s = b64.replace(/-/g, '+').replace(/_/g, '/').replace(/=+$/, '');
+  if (s.length % 4 === 1) s = s.slice(0, -1);
+  const buf = Buffer.from(s, 'base64');
+  if (buf.length < 12) return null;
+  let printable = 0;
+  for (const b of buf) if ((b >= 0x20 && b <= 0x7e) || b === 9 || b === 10 || b === 13) printable++;
+  return printable >= buf.length * 0.9 ? buf.toString('latin1') : null;
+}
+
+function redactBase64(text) {
+  if (text.length < 16) return { sanitized: text, detections: [] };
+  const runs = [];
+  for (const m of text.matchAll(B64_RUN_RE)) {
+    runs.push([m.index, m.index + m[0].length, m[0]]);
+    if (runs.length >= MAX_B64_RUNS * 4) break;
+  }
+  // A run wrapped over several lines: full lines of the same width, then a last line.
+  const groups = [];
+  for (let i = 0; i < runs.length; i++) {
+    const width = runs[i][2].replace(/=+$/, '').length;
+    const g = { start: runs[i][0], end: runs[i][1], b64: runs[i][2] };
+    while (i + 1 < runs.length && runs[i][2].length === width) {
+      const brk = /^\r?\n/.exec(text.slice(runs[i][1], runs[i][1] + 2));
+      if (!brk || runs[i + 1][0] !== runs[i][1] + brk[0].length) break;
+      i++;
+      g.end = runs[i][1];
+      g.b64 += runs[i][2];
+    }
+    groups.push(g);
+  }
+  let budget = MAX_B64_CHARS;
+  let tried = 0;
+  const edits = [];
+  const detections = [];
+  for (const g of groups) {
+    if (g.b64.length > MAX_B64_RUN) continue;
+    if (tried >= MAX_B64_RUNS || g.b64.length > budget) break;
+    tried++;
+    budget -= g.b64.length;
+    const decoded = decodeBase64Text(g.b64);
+    if (decoded === null) continue;
+    const res = redactSecretsPlain(decoded);
+    if (res.detections.length === 0) continue;
+    const label = /\[REDACTED_[A-Z0-9_]+\]/.exec(res.sanitized);
+    edits.push([g.start, g.end, label ? label[0] : '[REDACTED_SECRET]']);
+    detections.push({ rule: res.detections[0].rule, index: g.start });
+  }
+  if (edits.length === 0) return { sanitized: text, detections };
+  let out = '';
+  let last = 0;
+  for (const [s, e, t] of edits) {
+    out += text.slice(last, s) + t;
+    last = e;
+  }
+  return { sanitized: out + text.slice(last), detections };
+}
+
+function redactSecretsPlain(text) {
   const first = redactCredentials(text);
   if (typeof first.sanitized !== 'string' || !first.sanitized) return first;
   const second = redactProviderFormats(first.sanitized);
@@ -1556,15 +1726,15 @@ function redactWith(text, patterns) {
   let sanitized = text;
   const detections = [];
   const budget = { left: MAX_FILTERED_CHARS };
-  let view = null;
+  let views = [];
   let dirty = true;
   for (const item of patterns) {
     if (dirty) {
-      view = invisibleView(sanitized);
+      views = buildViews(sanitized);
       dirty = false;
     }
     const cands = [];
-    ruleCandidates(item, sanitized, view, budget, cands, patterns);
+    ruleCandidates(item, sanitized, views, budget, cands, patterns);
     if (cands.length === 0) continue;
     let out = '';
     let last = 0;
