@@ -56,10 +56,15 @@ class TestLangChainHandler(unittest.TestCase):
             ZnGuardCallbackHandler(on_block="rasie", raise_on_injection=True)
 
     def test_documented_values_work(self):
-        for ok in ("raise", "return", "ignore"):
+        for ok in ("raise", "ignore"):
             self.assertEqual(ZnGuardCallbackHandler(on_block=ok).on_block, ok)
         self.assertEqual(ZnGuardCallbackHandler(raise_on_injection=False).on_block, "ignore")
         self.assertEqual(ZnGuardCallbackHandler(raise_on_injection=True).on_block, "raise")
+
+    def test_return_is_rejected_with_a_pointer_to_the_wrapper(self):
+        # A callback cannot hand LangChain a replacement result, so "return" would act like "ignore".
+        with self.assertRaisesRegex(ValueError, "guard_langchain_tool"):
+            ZnGuardCallbackHandler(on_block="return")
 
     def test_default_still_blocks(self):
         with self.assertRaises(GuardBlockError):
