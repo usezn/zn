@@ -346,7 +346,7 @@ jobs:
           sarif_file: ${{ steps.zn.outputs.sarif-file }}
 ```
 
-The `mode`, `agents`, `fail-on`, `severity-threshold`, `sarif-file`, `npm-integrity` and `audit-exit-code` inputs need two things: an Action release of v1.10.0 or later (the ref in `uses:`) and a zn-gate package of 1.6.0 or later (the `version` input). The default `version` already meets the second. Pinning `uses:` to an older commit fails with "Unexpected input".
+The `mode`, `agents`, `fail-on`, `severity-threshold`, `sarif-file` and `npm-integrity` inputs and the `audit-exit-code` output need two things: an Action release of v1.10.0 or later (the ref in `uses:`) and a zn-gate package of 1.6.0 or later (the `version` input). The default `version` already meets the second. With `uses:` pinned to an older commit, the runner only warns about the unknown inputs ("Unexpected input") and the step runs a plain scan, which can pass: no audit runs.
 
 | Input | Default | Description |
 |---|---|---|
