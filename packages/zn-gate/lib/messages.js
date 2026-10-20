@@ -86,6 +86,37 @@ function connectSaveFailed(detail) {
   return 'Could not save the key: ' + detail + '. Nothing was kept. Run `zn-gate connect` to try again.';
 }
 
+const DISCONNECT_UNLOCK_FIRST = (cmd) => 'Could not read the saved key from the zn vault, so nothing was removed or revoked. Run `' + cmd + '` and try again.';
+
+/* The vault could not be removed from: say it once, with the unlock step only when the detail does not already give it. */
+function disconnectVaultNotRemoved(detail, unlockCmd, retryCmd) {
+  const d = String(detail || 'unknown error').replace(/[.\s]+$/, '');
+  return 'Could not remove the saved key from the zn vault: ' + d + '. ' +
+    (/unlock/i.test(d) ? '' : 'Unlock the vault with `' + unlockCmd + '`. ') + 'Then run `' + retryCmd + '` again.';
+}
+
+/* The system keychain could not be reached or cleaned, so only zn's own setting was removed. */
+function disconnectKeychainLeft(reason, dashboard, canRevoke) {
+  return 'Removed the connect setting from zn. The cloud check is off; zn-gate runs only on your computer.\n' +
+    'Could not clean your system keychain (' + reason + '), so a saved key may still be there. ' +
+    'To remove it, open your keychain app and delete the item named "zn-cloud".\n' +
+    (canRevoke ? '' : 'The key itself still works until you revoke it. Revoke it at ' + dashboard + '.');
+}
+
+/* ------------------------------ damaged vault files ------------------------------ */
+
+const TROUBLESHOOTING_URL = 'https://usezn.com/docs/troubleshooting';
+
+/* One sentence for a vault file that cannot be read: what is damaged, what zn did, the real next step.
+ * `detail` (a library message) is shown only with ZN_VERBOSE=1 or DEBUG. */
+function vaultDamaged(file, what, detail, env = process.env) {
+  const znCommand = require('./zn-command').znCommand;
+  const more = detail && (env.DEBUG || env.ZN_VERBOSE === '1') ? ' Detail: ' + String(detail).slice(0, 120) + '.' : '';
+  return 'Your vault file ' + file + ' ' + what + '. zn did not change it and will not start a new vault over it. ' +
+    'Restore it from a backup. With no backup, run `' + znCommand('vault reset') + '`: it sets the old vault aside and starts empty, ' +
+    'so the secrets saved in it are lost. More: ' + TROUBLESHOOTING_URL + more;
+}
+
 /* ------------------------------ MCP pins ------------------------------ */
 
 const PINS_USAGE_APPROVE = 'usage: zn-gate pins approve <server>|--all';
@@ -127,4 +158,5 @@ module.exports = {
   PINS_USAGE_APPROVE, pinsAgentRefusal, PINS_NEEDS_TERMINAL, PINS_NOT_APPROVED, pinsError,
   TEAM_INVALID_JOIN_TOKEN, TEAM_INVALID_REQUEST, TEAM_NOTHING_TO_APPROVE, TEAM_NOT_ASKED, TEAM_INVALID_ORG_KEY,
   teamJoinFailed,
+  DISCONNECT_UNLOCK_FIRST, disconnectVaultNotRemoved, disconnectKeychainLeft, TROUBLESHOOTING_URL, vaultDamaged,
 };

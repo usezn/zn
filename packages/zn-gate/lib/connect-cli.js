@@ -15,6 +15,7 @@
 
 const cloudKey = require('./cloud-key');
 const messages = require('./messages');
+const { znCommand } = require('./zn-command');
 
 const CONNECT_URL = 'https://usezn.com/connect?source=cli&utm_source=cli';
 // The only host this module talks to, and the routes on it.
@@ -269,10 +270,10 @@ async function disconnect(args, io) {
   let stored = null;
   if (!flags.includes('--no-revoke')) {
     stored = await cloudKey.loadStoredKey(c.deps);
-    if (!stored) {
+    // A keychain that cannot be read must not leave the person stuck: zn's own setting is removed below.
+    if (!stored && marker.store !== 'keychain') {
       // Removing the local copy now would lose the only way to name and revoke this key from here.
-      c.err('Could not read the saved key from ' + STORE_WORDS[marker.store] + ', so nothing was removed or revoked.'
-        + (marker.store === 'vault' ? ' Run `zn unlock` and try again.' : '') + '\n'
+      c.err(messages.DISCONNECT_UNLOCK_FIRST(znCommand('unlock')) + '\n'
         + 'Revoke the key at ' + DASHBOARD + ', or run `zn-gate disconnect --no-revoke` to only remove the local copy.\n');
       return 1;
     }
@@ -286,9 +287,20 @@ async function disconnect(args, io) {
   // The local copy goes first and in every case: a failed or interrupted call must not keep it.
   const del = await cloudKey.deleteKey(c.deps);
   let code = 0;
-  if (!del.removed) {
-    c.err('Could not remove the saved key from ' + STORE_WORDS[del.store] + ': ' + scrub(del.error && del.error.message, stored && stored.key)
-      + (del.store === 'vault' ? '. Run `zn unlock`, then `zn-gate disconnect` again.' : '.') + '\n');
+  let keychainLeft = false;
+  // --revoke was asked for but the key could not be read to revoke it: say so, and exit 1.
+  const unreadable = !stored && marker.store === 'keychain';
+  if (unreadable && flags.includes('--revoke')) {
+    c.err('Could not read the saved key from ' + STORE_WORDS[marker.store] + ', so it was not revoked. Revoke it at ' + DASHBOARD + '.\n');
+    code = 1;
+  }
+  if (!del.removed && del.store === 'keychain') {
+    // The keychain is out of reach (or refused): still forget zn's own setting, say what is left, exit 0.
+    cloudKey.forgetMarker();
+    keychainLeft = true;
+    c.out(messages.disconnectKeychainLeft(scrub(del.error && del.error.message, stored && stored.key) || 'unknown error', DASHBOARD, revoke || (unreadable && code === 1)) + '\n');
+  } else if (!del.removed) {
+    c.err(messages.disconnectVaultNotRemoved(scrub(del.error && del.error.message, stored && stored.key), znCommand('unlock'), znCommand('disconnect')) + '\n');
     code = 1;
   } else {
     c.out('Removed the saved key from ' + STORE_WORDS[del.store] + '. The cloud check is off; zn-gate runs only on your computer.\n');
@@ -298,7 +310,7 @@ async function disconnect(args, io) {
     const line = revokeLine(await revokeKey(c.https, stored.key), stored.key);
     (line.ok ? c.out : c.err)(line.text);
     if (!line.ok) code = 1;
-  } else if (del.removed) {
+  } else if (del.removed && !keychainLeft && !(unreadable && code === 1)) {
     c.out('The key itself still works until you revoke it. Revoke it at ' + DASHBOARD
       + (stored ? ' (it is listed as ' + shown(stored.key) + ').' : '.') + '\n');
   }

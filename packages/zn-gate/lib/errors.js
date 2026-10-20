@@ -55,9 +55,10 @@ function humanError(err, env = process.env) {
  * message that already says how to unlock is returned as it is. */
 function messageWithUnlockHint(err) {
   const msg = String((err && err.message) || err);
-  if (!(err && err.code === CODES.LOCKED) || /unlock/i.test(msg)) return msg;
+  // A message that already gives its next step (unlock, or a vault reset for a damaged file) is returned as it is.
+  if (!(err && err.code === CODES.LOCKED) || /unlock|vault reset/i.test(msg)) return msg;
   const { znCommand } = require('./zn-command');
-  return msg + '; run `' + znCommand('unlock') + '`';
+  return msg.replace(/[.\s]+$/, '') + '; run `' + znCommand('unlock') + '`';
 }
 
 module.exports = { CODES, znError, notImplemented, humanError, messageWithUnlockHint };

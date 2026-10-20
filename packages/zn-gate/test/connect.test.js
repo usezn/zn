@@ -461,7 +461,7 @@ test('vault locked at disconnect: the marker stays so a second try works', async
     const locked = { native: null, vault: fakeVault({ unlocked: false }) };
     const d = harness({ deps: locked, tty: fakeTty({ confirms: [] }) });
     assert.equal(await connectCli.disconnect([], d.io), 1);
-    assert.match(d.err.join(''), /Run `zn unlock` and try again/);
+    assert.match(d.err.join(''), /Run `(zn|npx -y zn-gate@[\d.]+) unlock` and try again/);
     assert.ok(cloudKey.readMarker());
     const again = harness({ deps: { native: null, vault }, tty: fakeTty({ confirms: [false] }) });
     assert.equal(await connectCli.disconnect([], again.io), 0);

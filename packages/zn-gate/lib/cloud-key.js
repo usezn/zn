@@ -156,6 +156,9 @@ function clearMarker() {
   writeConfig(cfg);
 }
 
+/** Remove only zn's own setting, whatever state the keychain or vault is in. */
+function forgetMarker() { clearMarker(); }
+
 /** True when `zn-gate connect` has stored a key (a cheap file read; no keychain access). */
 function isConnected() {
   return readMarker() !== null;
@@ -296,6 +299,7 @@ module.exports = {
   looksLikeZnKey,
   last4,
   readMarker,
+  forgetMarker,
   isConnected,
   availableStore,
   saveKey,

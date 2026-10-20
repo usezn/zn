@@ -265,8 +265,8 @@ function readMeta(opts) {
   let meta = null;
   try { meta = JSON.parse(buf.toString('utf8')); } catch (err) { meta = null; }
   if (!meta || !BACKENDS.includes(meta.backend) || !/^age1[0-9a-z]+$/.test(meta.recipient || '')) {
-    throw znError(CODES.LOCKED, 'vault file keychain.json is corrupted (it records the keychain backend and the public key). ' +
-      'Restore it from a backup; zn will not create a new vault over the existing one.');
+    throw znError(CODES.LOCKED, require('../messages').vaultDamaged('keychain.json',
+      'is corrupted (it records the keychain backend and the public key)'));
   }
   return meta;
 }
@@ -329,8 +329,8 @@ async function loadIdentity(opts) {
         e.reason = WRONG_PASSPHRASE;
         throw e;
       }
-      throw znError(CODES.LOCKED, 'vault file identity.age looks damaged, so it cannot be opened with any passphrase. ' +
-        'Restore it from a backup. Do not reset the vault: a reset sets the old vault aside and starts empty.');
+      throw znError(CODES.LOCKED, require('../messages').vaultDamaged('identity.age',
+        'looks damaged, so it cannot be opened with any passphrase', err && err.message));
     }
   } else {
     identity = NATIVE[backend].load();

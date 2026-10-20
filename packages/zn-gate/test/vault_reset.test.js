@@ -208,9 +208,7 @@ test('a damaged identity file never shows the reset hint, however many times', a
     assert.equal(err.code, 'ZN_LOCKED', 'public code is unchanged');
     assert.notEqual(err.reason, keychain.WRONG_PASSPHRASE);
     const tip = reset.hintForUnlockError(err, {});
-    assert.equal(tip, reset.UNREADABLE_HINT);
-    assert.doesNotMatch(tip, /zn vault reset/);
-    assert.match(tip, /troubleshooting\.md/);
+    assert.equal(tip, null, 'the error text already gives the next step and the link');
   }
 });
 
@@ -227,12 +225,11 @@ test('the error text matches the hint: wrong passphrase keeps its wording, a dam
   assert.notEqual(damaged.reason, keychain.WRONG_PASSPHRASE);
   assert.match(damaged.message, /identity\.age looks damaged/);
   assert.match(damaged.message, /Restore it from a backup/);
-  assert.match(damaged.message, /Do not reset/);
+  assert.match(damaged.message, /vault reset/);
+  assert.match(damaged.message, /https:\/\/usezn\.com\/docs\/troubleshooting/);
   assert.doesNotMatch(damaged.message, /wrong passphrase/i);
-  const tip = reset.hintForUnlockError(damaged, {});
-  assert.equal(tip, reset.UNREADABLE_HINT);
-  assert.match(tip, /Do not reset/);
-  assert.doesNotMatch(tip, /zn vault reset/);
+  assert.equal(reset.hintForUnlockError(damaged, {}), null);
+  assert.match(reset.UNREADABLE_HINT, /https:\/\/usezn\.com\/docs\/troubleshooting/);
 });
 
 test('keychain and other non-passphrase errors restart the count', (t) => {

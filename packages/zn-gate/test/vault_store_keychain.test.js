@@ -195,7 +195,7 @@ test('readEncrypted: wrong key, garbage, truncation and non-JSON content fail cl
     await assert.rejects(() => store.readEncrypted(file, a.identity), (e) => {
       assert.equal(e.code, 'ZN_LOCKED');
       assert.match(e.message, /two\.age/);
-      assert.match(e.message, /zn will not read or replace it/);
+      assert.match(e.message, /will not start a new vault over it/);
       assert.doesNotMatch(e.message, /fake-value-for-tests|AGE-SECRET-KEY/);
       return true;
     });

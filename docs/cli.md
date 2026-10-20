@@ -100,6 +100,30 @@ zn-gate version
 
 Prints the version and the versions of the rules. Exit code `0`. `-V` and `--version` do the same.
 
+### `connect`
+
+```bash
+zn-gate connect [--reconnect]
+```
+
+Turns on the optional cloud check. It opens usezn.com/connect in your browser, where you create an analysis-only API key, then asks you to paste the key at a hidden prompt. zn-gate checks the key once with usezn.com and keeps it in your system keychain, or in the zn vault when there is no keychain, never in a plain file. It needs a person at a terminal: it refuses when an AI agent runs it or when there is no terminal. Never pass the key on the command line.
+
+If you are already connected, it says so and changes nothing. `--reconnect` replaces the saved key.
+
+Exit codes: `0` connected (or already connected), `1` nothing was saved (you said no, cancelled, the key was not accepted, the key could not be checked or stored, or there is no terminal), `2` the command was used wrongly (an option it does not know, or the key on the command line).
+
+### `disconnect`
+
+```bash
+zn-gate disconnect [--revoke | --no-revoke]
+```
+
+Turns the cloud check off and removes the saved key from this computer. Unless you pass an option, it asks whether to revoke the key on usezn.com too, so it stops working everywhere. `--revoke` revokes without asking; `--no-revoke` only removes the local copy. It needs a person at a terminal and removes and revokes nothing without one.
+
+It always removes zn's own connect setting, so `connect` no longer says you are connected. If the system keychain cannot be reached, zn says so, and tells you to delete the item named `zn-cloud` in your keychain app and to revoke the key at usezn.com/api-keys. That case still exits `0`. If the key is kept in the zn vault and the vault is locked, nothing is removed: unlock the vault and run the command again.
+
+Exit codes: `0` the local setting was removed (or there was nothing to remove), `1` something was not done (no terminal, the vault is locked, a revoke you asked for did not happen), `2` the command was used wrongly.
+
 ## Scan and review
 
 ### `scan`
