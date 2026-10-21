@@ -48,7 +48,7 @@ when it is not `api.usezn.com`.
 The policy lists rules for secrets by **name** (for example `PROD_*`), never
 by value:
 
-```json
+```jsonl
 { "secret": "PROD_*", "agents": ["*"], "deny": true, "reason": "No production credentials in AI agents" }
 { "secret": "STRIPE_KEY", "agents": ["claude-code"], "allowHosts": ["api.stripe.com"] }
 { "secret": "STAGING_*", "agents": ["*"], "warn": true, "reason": "Staging credentials need review" }
