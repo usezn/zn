@@ -73,15 +73,18 @@ print(r.verdict)           # allow
 ## What each piece does
 
 **Scrubber: secrets stay out of the model's context**
+
 - Today: `redact_secrets`, `sanitize_tool_result`, `@guard(mask_secrets=True)` and the framework integrations redact AWS keys, OpenAI and Anthropic keys, GitHub tokens, JWTs, private keys and database URL passwords.
 - Roadmap: personal data (PII) detection; stable placeholders backed by a local encrypted vault.
 
 **Galvanize: prompt-injection detection**
+
 - Today, local: `evaluate`, `check_tool_call`, `check_tool_result` and `@guard` run a deterministic rules engine with normalization against homoglyphs, zero-width characters, BiDi overrides, comment splicing and Base64.
 - Today, optional cloud: `analyze()` can also query the Galvanize 2 classifier ([open weights](https://huggingface.co/usezn/Galvanize-2), Apache-2.0), only with `ZN_CLOUD=1` and `ZN_API_KEY`.
 - Roadmap: running Galvanize locally.
 
 **Scan: audit what your agent is about to trust**
+
 - Today: `zn-gate scan <path>` audits prompt templates, skill files and configs for injection traps and leaked secrets. It also checks the MCP server configs (`.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `.codex/config.toml`, `claude_desktop_config.json` and others) for keys and passwords written in plain text in `env`, `headers`, arguments or URLs; it never prints the value, and `--include-home` checks your own MCP configs too.
 - Roadmap: auditing MCP servers and skills before you add them.
 
@@ -91,7 +94,7 @@ print(r.verdict)           # allow
 
 **Nothing, by default.** `evaluate`, `guard`, `check_tool_call`, `check_tool_result`, `sanitize_tool_result`, `redact_secrets` and the LangChain / CrewAI / LlamaIndex / Promptfoo integrations are always local.
 
-The only function that can reach the network is `analyze()`, and only if you set **both** `ZN_CLOUD=1` and `ZN_API_KEY`. The text is secret-redacted locally before it is sent. `ZN_API_KEY` alone enables nothing, and `ZN_LOCAL_ONLY=true` overrides `ZN_CLOUD=1`. `zn-gate status` shows the active detection engine and whether the optional cloud check is on. Sharing of usage statistics is off by default and has its own status in the npm package: `npx -y zn-gate stats share status`. Data-flow diagrams: [repository README](https://github.com/usezn/zn#what-leaves-your-machine).
+The only function that can reach the network is `analyze()`, and only if you set **both** `ZN_CLOUD=1` and `ZN_API_KEY`. The text is secret-redacted locally before it is sent: personal data, and a secret zn-gate does not recognize, is sent as written. If the cloud call fails, `analyze()` returns the result of the local rules with `fallback: True`: it does not fail closed. `ZN_API_KEY` alone enables nothing, and `ZN_LOCAL_ONLY=true` overrides `ZN_CLOUD=1`. `zn-gate status` shows the active detection engine and whether the optional cloud check is on. Sharing of usage statistics is off by default and has its own status in the npm package: `npx -y zn-gate stats share status`. Data-flow diagrams: [repository README](https://github.com/usezn/zn#what-leaves-your-machine).
 
 A long text (over 1,000 characters) is checked by the cloud classifier in overlapping 512-token windows, up to 20, so an injection in the middle or at the end of a long document is not missed. Set `ZN_LONG_INPUT=off` (or `analyze(..., long_input="off")`, `zn-gate analyze --long-input off`) to check only the first 512 tokens, as before. Cloud checks are billed by text size, with or without windows (`off` does not lower the count): 1 call up to 2,000 characters, and 1 more for each further 1,000 characters or part of them (up to 19 calls for the 20,000-character limit); the gate reports the count in `billed_calls`.
 
@@ -196,7 +199,7 @@ def query_knowledge_base(query: str) -> str:
 
 ### Google ADK, OpenAI Agents SDK and Pydantic AI (native hooks)
 
-Tools that these frameworks supply themselves (MCP servers, for example) never pass through `@guard` or `guarded_tool`. Each framework has its own place to check a tool call and its result, and zn-gate plugs into it. The checks are the same ones `guarded_tool` runs: a blocked call does not run the tool, text that tries to give the model orders is blocked in the result, and secrets in the result are masked. Each helper loads its framework only when you call it.
+Tools that these frameworks supply themselves (MCP servers, for example) never pass through `@guard` or `guarded_tool`. Each framework has its own place to check a tool call and its result, and zn-gate plugs into it. The checks are the same ones `guarded_tool` runs: a blocked call does not run the tool, text that tries to give the model orders is blocked in the result, and secrets in the result are masked. Each helper loads its framework only when you call it, and the OpenAI Agents SDK and Pydantic AI helpers say which package to install if it is missing (`pip install openai-agents` or `pip install pydantic-ai`).
 
 ```python
 from zn_gate.integrations import adk_tool_callbacks, openai_agents_tool_guardrails, guard_pydantic_ai_toolset
@@ -272,7 +275,8 @@ More runnable examples are in [examples/](https://github.com/usezn/zn/tree/main/
 We only publish numbers we can reproduce, with the method next to them.
 
 - **Latency:** the measured table by input size is in the [npm package README](https://github.com/usezn/zn/blob/main/packages/zn-gate/README.md#performance-local-rules-engine-no-network) (Node engine, with hardware and script). For the Python engine, run `python3 bench/bench_python.py` from the [repository](https://github.com/usezn/zn).
-- **Accuracy:** the engine is a deterministic signature and normalization layer, not a semantic classifier. On whole source files it can flag ordinary code comments; 1.5.0 reduces these on code and documentation, at the cost of letting some loosely worded override attempts through the local rules. These rules have no published detection rate; held-out results for the optional cloud classifier, Galvanize 2, are on its [model card](https://huggingface.co/usezn/Galvanize-2).
+- **Accuracy:** the engine is a deterministic signature and normalization layer, not a semantic classifier. On whole source files it can flag ordinary code comments; 1.5.0 reduces these on code and documentation, at the cost of letting some loosely worded override attempts through the local rules. These rules have no published detection rate; held-out results for the optional cloud classifier, Galvanize 2, are on its [model card](https://huggingface.co/usezn/Galvanize-2); they do not measure these local rules.
+- **Not a sandbox:** zn-gate checks the text and calls that reach it. It does not restrict what a program does. What it covers in each coding agent depends on that agent's hooks: see the [agent compatibility table](https://github.com/usezn/zn/blob/main/docs/compat.md).
 
 ## Configuration
 

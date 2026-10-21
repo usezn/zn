@@ -1,0 +1,15 @@
+// Rules for markdownlint-cli2 (.github/workflows/markdownlint.yml). Structure rules only;
+// every rule switched off below says why. Findings are fixed in the files, not silenced.
+{
+  "default": true,
+  // Line length: the docs are written as one paragraph per line.
+  "MD013": false,
+  // Inline HTML: the READMEs use <picture>, <img>, <details> and badges, which Markdown cannot express.
+  "MD033": false,
+  // First line a top-level heading: changelog fragments start at "###" and some READMEs open with HTML.
+  "MD041": false,
+  // Table column alignment: a cosmetic spacing style that makes wide tables noisy to edit.
+  "MD060": false,
+  // Bold lines used as short labels (for example "Scrubber: ...") before a list are intentional.
+  "MD036": false
+}
