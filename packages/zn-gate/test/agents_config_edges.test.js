@@ -213,7 +213,8 @@ test('claude-code: Windows install writes forward-slash commands, and uninstall 
   });
   claude.install(win);
   const cmd = json(file).hooks.PreToolUse[0].hooks[0].command;
-  assert.equal(cmd, "'C:/Program Files/nodejs/node.exe' 'C:/zn/lib/hooks/runner.js' claude-code");
+  // The user install runs zn's launcher, which fails closed if this Node.js is removed later.
+  assert.match(cmd, /zn-hook-claude-code\.sh' PreToolUse$/);
   assert.equal(claude.uninstall(win).removed, 1);
 });
 
