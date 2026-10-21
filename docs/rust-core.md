@@ -120,6 +120,7 @@ A search runs on the request path, so it is tried once and gives up after one se
 ## Building from Source
 
 ### Prerequisites
+
 - Rust 1.95 or later (`cargo`); CI uses 1.99.0 and the Dockerfile builds with `rust:1-bookworm`
 - `protoc` 29 or later
 - OpenSSL / libssl-dev
