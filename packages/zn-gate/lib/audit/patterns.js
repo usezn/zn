@@ -265,13 +265,40 @@ const INTERPRETERS = new Set([
   'source', 'osascript', 'iex', 'invoke-expression',
 ]);
 
-const WRAPPERS = new Set(['eval', 'exec', 'sudo', 'env', 'xargs', 'source', 'iex', 'invoke-expression']);
-const PACKAGE_RUNNERS = new Set(['npm', 'pnpm', 'yarn']);
-const DOWNLOADERS = new Set(['curl', 'wget']);
-const CONTAINERS = new Set(['docker', 'podman']);
-const EXEC_SUB = new Set(['x', 'exec', 'dlx', 'eval']);
-const CODE_FLAG = /^-[a-z]*[ce]$|^-(?:p|s|print|eval|enc\w*|ec|file|command)$|^--(?:eval|print|command)$|^-$|^\/[ck]$/i;
-const CONTAINER_EXEC = new Set(['run', 'exec', 'x']);
+const PACKAGE_MANAGERS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
+const SAFE_WORD = /^[\w@%+=.,/~:-]+$/;
+const SCRIPT_NAME = /^[\w][\w:-]*$/;
+const PM_SUBS = new Set(['install', 'i', 'ci', 'add', 'remove', 'test', 'build', 'lint']);
+const PM_TOOLS = new Set(['eslint', 'oxlint', 'prettier', 'tsc', 'vitest', 'jest', 'biome', 'knip', 'ruff', 'mypy', 'black']);
+const PY_MODULES = new Set(['pytest', 'unittest', 'ruff', 'mypy', 'black', 'flake8', 'isort', 'pylint']);
+const DENO_SUBS = new Set(['test', 'lint', 'fmt', 'check']);
+const CONTAINER_READ = new Set(['ps', 'images', 'logs', 'inspect', 'version', 'info', 'stats', 'top']);
+
+/**
+ * True only for the exact, safe shapes of a scoped permission: a tool, a fixed
+ * subcommand or script from a short allowlist, then literal arguments. Every
+ * other shape (flags, groups such as "docker compose", run or exec, code
+ * subcommands, bare tools) stays flagged.
+ */
+function scopedShape(words) {
+  const first = words[0].toLowerCase();
+  const sub = (words[1] || '').toLowerCase();
+  if (!words.every((w) => SAFE_WORD.test(w))) return false;
+  if (PACKAGE_MANAGERS.has(first)) {
+    if (sub === 'run') return words.length > 2 && SCRIPT_NAME.test(words[2]);
+    return PM_SUBS.has(sub);
+  }
+  if (first === 'npx' || first === 'bunx' || first === 'uvx') return PM_TOOLS.has(sub);
+  if (first === 'python' || first === 'python3' || first === 'py') {
+    if (sub === '-m') return PY_MODULES.has((words[2] || '').toLowerCase());
+    return /^[\w./-]+\.py$/.test(words[1] || '');
+  }
+  if (first === 'node') return /^[\w./-]+\.[cm]?js$/.test(words[1] || '');
+  if (first === 'sh' || first === 'bash' || first === 'zsh' || first === 'dash') return /^[\w./-]+\.sh$/.test(words[1] || '');
+  if (first === 'deno') return DENO_SUBS.has(sub) || (sub === 'task' && words.length > 2 && SCRIPT_NAME.test(words[2]));
+  if (first === 'docker' || first === 'podman') return CONTAINER_READ.has(sub);
+  return false;
+}
 
 /** Severity of one Claude Code permission rule, or null when it is narrow. */
 function claudePermission(entry) {
@@ -282,33 +309,15 @@ function claudePermission(entry) {
   const inner = m[2].trim();
   if (inner === '' || /^[*:\s]+$/.test(inner)) return 'high';
   if (!/[*]/.test(inner)) return null;
-  const words = inner.split(/[\s:]+/).filter(Boolean);
-  const first = trimTrailing(words[0] || '', '*').toLowerCase();
-  if (!INTERPRETERS.has(first) && !PACKAGE_RUNNERS.has(first)) return null;
-  // A prefix with a concrete subcommand (bun run test:*, git status:*) is
-  // scoped. When in doubt it stays flagged: the bare interpreter, wrappers
-  // and downloaders, any code or exec flag (bash -lc, node -p, pwsh -enc),
-  // exec subcommands (bun run, docker run, npx -y) and a flag with no concrete
-  // argument after it (python -m).
-  const rest = words.slice(1).map((w) => trimTrailing(w, '*')).filter(Boolean);
-  if (rest.length === 0 || WRAPPERS.has(first) || DOWNLOADERS.has(first)) return 'high';
-  // A code flag anywhere counts: an option value can precede it (python -W ignore -c).
-  if (rest.some((w) => CODE_FLAG.test(w))) return 'high';
-  const lower = rest.map((w) => w.toLowerCase());
-  if (CONTAINERS.has(first) && lower.some((w) => CONTAINER_EXEC.has(w))) return 'high';
-  if (isOption(rest[0])) {
-    // Only python -m <module> is a concrete target (python -m pytest).
-    const mod = lower[1];
-    if (lower[0] === '-m' && /^py(?:thon[\d.]*)?$/.test(first) && mod && !isOption(mod) && mod !== 'pip') return null;
-    return 'high';
-  }
-  if (EXEC_SUB.has(lower[0])) return 'high';
-  if (lower[0] === 'run' && rest.slice(1).every(isOption)) return 'high';
-  return null;
-}
-
-function isOption(w) {
-  return w.startsWith('-') || /^\/[a-z]$/i.test(w);
+  const firstWord = inner.split(/[\s:]/)[0].toLowerCase();
+  if (firstWord.includes('*')) return 'high';
+  if (!INTERPRETERS.has(firstWord) && !PACKAGE_MANAGERS.has(firstWord)) return null;
+  // Only a final ":*" or " *" is a prefix wildcard; any other * can stand for a
+  // flag or a subcommand, so it is flagged.
+  const m2 = /^(.*?)(?::\*|\s\*)$/s.exec(inner);
+  if (!m2 || m2[1].includes('*')) return 'high';
+  const words = m2[1].split(/\s+/).filter(Boolean);
+  return words.length > 0 && scopedShape(words) ? null : 'high';
 }
 
 /* ------------------------ instruction text ------------------------- */

@@ -150,7 +150,7 @@
     },
     "audit": {
       "version_const": "AUDIT_RULES_VERSION",
-      "version": "2026-10-21.6",
+      "version": "2026-10-21.7",
       "ids": [
         "ZNA001",
         "ZNA002",
@@ -195,8 +195,8 @@
         "patterns.weakening"
       ],
       "sha256": {
-        "lib/audit/rules.js": "b330f516c42e1616e54ea89955a8fdc7ef8ba4406d5f8653517b60213438be31",
-        "lib/audit/patterns.js": "07071637ebb4b68b2af57df750db984516a2ce60dc793a5e6c4facbf38b3c588"
+        "lib/audit/rules.js": "af35441e00ae9b741e64ce32f482b737ef39335ce3b76db67352d3cdf5f74712",
+        "lib/audit/patterns.js": "ba791b05f8f8e7d190982defd87ebf1fa4423867138510c6c9c1b93e57655ea7"
       }
     },
     "policy": {
