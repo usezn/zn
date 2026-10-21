@@ -284,9 +284,6 @@ const EXFIL = [
   // send / upload ... secret material ... to a destination (the secret must be
   // the thing sent: "create an API key at https://console..." is not)
   /\b(?:send|upload|post|exfiltrate|forward|transmit|leak|e-?mail)\b[^\n]{0,120}?(?:\.env\b|~\/\.ssh|id_rsa|id_ed25519|\.aws\/credentials|\.npmrc|\.netrc|\.git-credentials|api[ _-]?keys?|access[ _-]?tokens?|secrets?|credentials?|passwords?|private[ _-]?keys?|environment variables)\b[^\n]{0,120}?(?:https?:\/\/|webhook|pastebin|discord(?:app)?\.com|gist\.github|ngrok|requestbin|attacker)/i,
-  // copy / share / paste are also ordinary setup words: the destination has to
-  // follow a preposition ("paste the key into https://...")
-  /\b(?:copy|share|paste)\b[^\n]{0,120}?(?:\.env\b|~\/\.ssh|id_rsa|id_ed25519|\.aws\/credentials|\.npmrc|\.netrc|\.git-credentials|api[ _-]?keys?|access[ _-]?tokens?|secrets?|credentials?|passwords?|private[ _-]?keys?|environment variables)\b[^\n]{0,120}?\b(?:to|into|onto|via|through)\s{1,3}(?:(?:the|an?|this|that|our|my)\s{1,3})?(?:https?:\/\/|webhook|pastebin|discord(?:app)?\.com|gist\.github|ngrok|requestbin|attacker)/i,
   // curl/wget posting a sensitive file
   /\b(?:curl|wget|http|iwr|invoke-webrequest|invoke-restmethod)\b[^\n|]{0,200}?(?:-d|--data(?:-binary|-raw|-urlencode)?|-F|--form|-T|--upload-file|--post-file|-InFile|-Body)[\s=]{1,3}["']?@?[^\s"']{0,40}?(?:\.env\b|\.ssh\/|id_rsa|id_ed25519|\.aws\/credentials|\.npmrc|\.netrc|\.git-credentials)/i,
   // dumping the environment or a key file into a network tool
@@ -329,13 +326,32 @@ function negated(text, index) {
 // .env" is a setup step.
 const ENV_TEMPLATE = /\.env(?:\.[\w-]+)*\.(?:example|sample|template|dist)\b|\.(?:example|sample|template)\.env\b/gi;
 
+// copy / share / paste are also ordinary setup words ("copy your key from
+// https://console... and paste it into config.json"). A known drop host always
+// counts; for any other URL the line is exempt only when the URL is introduced by
+// "from" or by create/generate/get/obtain/find (the console setup step).
+const WEAK_EXFIL = /\b(?:copy|share|paste)\b[^\n]{0,120}?(?:\.env\b|~\/\.ssh|id_rsa|id_ed25519|\.aws\/credentials|\.npmrc|\.netrc|\.git-credentials|api[ _-]?keys?|access[ _-]?tokens?|secrets?|credentials?|passwords?|private[ _-]?keys?|environment variables)\b[^\n]{0,120}?((?:https?:\/\/|webhook|pastebin|discord(?:app)?\.com|gist\.github|ngrok|requestbin|attacker))/gi;
+const DROP_HOST = /webhook|pastebin|discord(?:app)?\.com|gist\.github|ngrok|requestbin|attacker/i;
+const SETUP_SOURCE = /\bfrom\s+(?:the\s+)?$|\b(?:create|generate|get|obtain|find)\b/i;
+
+function weakExfiltration(t) {
+  WEAK_EXFIL.lastIndex = 0;
+  let m;
+  while ((m = WEAK_EXFIL.exec(t)) !== null) {
+    if (negated(t, m.index)) continue;
+    const pre = m[0].slice(0, m[0].length - m[1].length);
+    if (DROP_HOST.test(t.slice(m.index)) || !SETUP_SOURCE.test(pre)) return m[0];
+  }
+  return null;
+}
+
 function exfiltration(text) {
   const t = String(text || '').slice(0, MAX_LINE).replace(ENV_TEMPLATE, 'env-template');
   for (const re of EXFIL) {
     const m = re.exec(t);
     if (m && !negated(t, m.index)) return m[0];
   }
-  return null;
+  return weakExfiltration(t);
 }
 
 function weakening(text) {
