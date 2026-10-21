@@ -209,3 +209,20 @@ class NodePythonPruneParityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+                 "permissions do not stop Windows or root from listing a folder")
+class UnreadableDirTests(unittest.TestCase):
+    def test_a_folder_that_cannot_be_read_is_listed(self):
+        d = _tree({"ok.md": "hello\n", "locked/inside.md": "hello\n"})
+        locked = os.path.join(d, "locked")
+        os.chmod(locked, 0)
+        try:
+            data = json.loads(_run(d))
+            self.assertEqual(data["total_files"], 1)
+            reasons = {os.path.basename(s["dir"]): s["reason"] for s in data["skipped_dirs"]}
+            self.assertEqual(reasons.get("locked"), "cannot be read")
+        finally:
+            os.chmod(locked, 0o755)
+            shutil.rmtree(d, ignore_errors=True)

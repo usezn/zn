@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-21.1
+ * RULES_VERSION: 2026-10-21.9
  */
 
-const RULES_VERSION = '2026-10-21.1';
+const RULES_VERSION = '2026-10-22.1';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -1078,8 +1078,9 @@ const SCRUB_PROVIDER_LABELS = new Map([['DB_PASSWORD', 'URL_PASSWORD']]);
 // Google, npm, ...), run on text the SECRET_PATTERNS already redacted. The
 // engine is required here, not at the top, because it requires this file.
 function redactProviderFormats(text) {
-  const spans = require('./scrub/engine').scan(text, { exact: false, pii: false })
-    .filter((s) => SCRUB_PROVIDER_RULES.has(s.type))
+  // Only the provider types take part in the overlap resolution: a wider span of another type (such as
+  // a NAME=value assignment) would otherwise win it, be dropped here, and leave the key unredacted.
+  const spans = require('./scrub/engine').scan(text, { exact: false, pii: false, types: SCRUB_PROVIDER_RULES })
     .sort((a, b) => a.start - b.start || b.end - a.end);
   const detections = [];
   let out = '';
@@ -1140,15 +1141,17 @@ function redactWith(text, patterns) {
 // head + tail view used by evaluate(), it is scanned in windows of
 // MAX_SCAN_CHARS that overlap by SCAN_WINDOW_OVERLAP, so a payload in the
 // middle is not skipped. Past MAX_TOOL_RESULT_SCAN_CHARS only the last window
-// is added and the result is marked `truncated: true`. A match that spans more
-// than SCAN_WINDOW_OVERLAP characters across a window boundary can be missed.
+// is added and the result is marked `truncated: true`; options.maxScanChars
+// raises that limit (the MCP shield scans more). A match that spans more than
+// SCAN_WINDOW_OVERLAP characters across a window boundary can be missed.
 const SCAN_WINDOW_OVERLAP = 4 * 1024;
 const MAX_TOOL_RESULT_SCAN_CHARS = 4 * 1024 * 1024;
 
 function scanWindows(text, options = {}) {
   if (typeof text !== 'string' || text.length <= MAX_SCAN_CHARS) return evaluate(text, options);
   const step = MAX_SCAN_CHARS - SCAN_WINDOW_OVERLAP;
-  const limit = Math.min(text.length, MAX_TOOL_RESULT_SCAN_CHARS);
+  const cap = Number.isFinite(options.maxScanChars) && options.maxScanChars > 0 ? options.maxScanChars : MAX_TOOL_RESULT_SCAN_CHARS;
+  const limit = Math.min(text.length, cap);
   let res = null;
   let advisory = null;
   for (let start = 0; ; start += step) {
