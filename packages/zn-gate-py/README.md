@@ -14,7 +14,7 @@
 
 **For:** developers building their own agents with LangChain, CrewAI, LlamaIndex or plain Python tool calling.
 
-> **Using Claude Code, Codex CLI, Cursor or OpenCode?** This Python package does not protect them. Run `npx -y zn-gate init` in your own terminal instead (it needs Node.js 18 or later; 22 LTS is recommended, and the Claude Code plugin needs 20.12 or later): see [Install](https://github.com/usezn/zn#install).
+> **Using Claude Code, Codex CLI, Cursor or OpenCode?** This Python package does not protect them. Run `npx -y zn-gate init` in your own terminal instead (it needs Node.js 18 or later; 22 LTS is recommended, and the Claude Code plugin needs 20.19 or later): see [Install](https://github.com/usezn/zn#install).
 
 ---
 
@@ -134,7 +134,7 @@ With `check_result` or `mask_secrets` (on by default in `guarded_tool`), `@guard
 
 ### LangChain / LangGraph
 
-The integration is tested against `langchain-core` 1.2.31 and the current 1.x release; 1.2.31 is the minimum supported version.
+The integration is tested against `langchain-core` 1.3.3 and the current 1.x release; 1.3.3 is the minimum supported version, because earlier releases have a known high severity advisory.
 
 <!-- snippet-test -->
 ```python
