@@ -191,15 +191,9 @@ Example: [protect the tools of a Vercel AI SDK agent](https://github.com/usezn/z
 ## What each piece does
 
 **Scrubber: secrets stay out of the model's context**
-<<<<<<< HEAD
+
 - Today, through zn-gate: redacts AWS keys, OpenAI and Anthropic keys, GitHub tokens, JWTs, private keys and database URL passwords in everything that passes through zn-gate (`check_tool_result`, `check_tool_call`, and output of servers wrapped by `shield` / `init`).
 - Today, agent hooks and vault: hooks for Claude Code, Codex CLI and OpenCode scrub the output of the agents' built-in tools and block pasted secrets (in Cursor only MCP tool output is scrubbed); a local encrypted vault with stable markers (`__ZN_AWS_KEY_1__`); `zn run` fills values only into commands you approved; personal data (cards, IBAN, national IDs, e-mail, phone) is detected too. What each agent allows differs: see [compat.md](https://github.com/usezn/zn/blob/main/docs/compat.md).
-=======
-
-- Today: redacts AWS keys, OpenAI and Anthropic keys, GitHub tokens, JWTs, private keys and database URL passwords in everything that passes through zn-gate (`check_tool_result`, `check_tool_call`, and output of servers wrapped by `shield` / `init`).
-- Not covered today: your agent's built-in tools (for example a native file read in Claude Code) unless their output goes through zn-gate.
-- Roadmap: personal data (PII) detection; hooks for agents' built-in tools; stable placeholders backed by a local encrypted vault.
->>>>>>> origin/next
 
 **Galvanize: prompt-injection detection**
 
