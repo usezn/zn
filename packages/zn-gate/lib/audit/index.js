@@ -748,10 +748,31 @@ function insideQuotedExample(text) {
 }
 const STRONG_IN_DOCS =/^(?:pi:(?:ignore_previous|disregard|system_tag|system_bracket|template_boundary|multi_\w+)|indirect:|evasion:|exfil:markdown_image)/;
 
+/**
+ * Prompt-format text that documentation shows on purpose is not an attack: a
+ * placeholder such as <system-or-project>, a value such as system:anonymous,
+ * a lowercase [system] word, and chat-template tokens or system tags inside a
+ * code block or code span of a Markdown file. This returns the line without
+ * those shapes, so the rules engine only judges what is left.
+ */
+const SYSTEM_SHAPES = /^pi:(?:system_tag|system_bracket|template_boundary)$/;
+const CHAT_TOKENS = /\[\/?INST\]|<<<SYS>>>|<\/<<SYS>>>|<\|im_(?:start|end)\|>/gi;
+function dropPromptFormat(x) {
+  return x.replace(CHAT_TOKENS, ' ').replace(/<\s*\/?\s*system\b[^<>]*>/gi, ' ').replace(/\[system\]/gi, ' ').replace(/system\s*:/gi, ' ');
+}
+function withoutDocShapes(text, inFence, markdown) {
+  let out = text.replace(/<\s*\/?\s*system-[\w-]+\s*>/gi, ' ')
+    .replace(/\[system\]/g, ' ')
+    .replace(/system\s*:(?!\s+\S)/gi, ' ');
+  if (markdown) out = inFence ? dropPromptFormat(out) : out.replace(/`[^`\n]*`/g, dropPromptFormat);
+  return out;
+}
+
 function checkInstructions(ctx) {
   const claudeExt = /(^|\/)\.claude\/(commands|agents|skills)\//i.test(ctx.rec.rel);
   // Supporting notes of a skill (not SKILL.md itself): the only files here
   // that are not read as instructions.
+  const markdownDoc = /\.(?:md|mdx|mdc|markdown)$/i.test(ctx.rec.rel);
   const supporting = /(^|\/)skills?\/.+\//i.test(ctx.rec.rel) && !/(^|\/)SKILL\.md$/i.test(ctx.rec.rel);
   let inFront = ctx.lines[0] && ctx.lines[0].trim() === '---';
   // Lines inside code fences that are closed again (an unclosed fence runs
@@ -784,6 +805,10 @@ function checkInstructions(ctx) {
       let res = null;
       // Strict mode: audit grades each finding itself (high, medium, info).
       try { res = rules().evaluate(t, { strict: true }); } catch (_) { res = null; }
+      if (res && res.verdict === 'block' && SYSTEM_SHAPES.test(String(res.rule))) {
+        const rest = withoutDocShapes(t, fenced.has(i), markdownDoc);
+        if (rest !== t) { try { res = rules().evaluate(rest, { strict: true }); } catch (_) { res = null; } }
+      }
       if (res && res.verdict === 'block' && !NOISY_IN_DOCS.test(String(res.rule))) {
         // Strong patterns are high, weaker ones medium. In the files an agent
         // reads as its instructions a strong pattern is never lowered: the
