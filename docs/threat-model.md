@@ -92,6 +92,32 @@ project). It adds a hook that runs before each tool call.
   The directories `~/.gemini` and `~/.gemini/antigravity-cli` are not
   protected either, only the files named above.
 
+### GitHub Copilot CLI
+
+Install it with `zn hooks install copilot` (add `--project` for one project).
+It adds hooks that run before and after each tool call. zn writes its own
+`zn-gate.json` in `~/.copilot/hooks/` (or `$COPILOT_HOME/hooks/` when you set
+a custom Copilot folder) and, with `--project`, in `.github/hooks/`. It has
+been checked end to end with Copilot CLI 1.0.98 against a scripted model
+provider: 0 secret values sent.
+
+- **What it covers:** before a tool call runs, zn blocks reading or writing
+  secret files by path, shell commands that handle secrets, and edits of
+  Copilot's own hook and settings files. After a read-type or shell tool
+  returns, zn replaces secret values in the result (successful results only).
+- **What it does not cover:** Copilot's `userPromptSubmitted` hook cannot block
+  or rewrite a typed prompt, so a pasted secret is not blocked. MCP tools that
+  Copilot does not name as read or shell tools are not checked and their output
+  is not scrubbed. The docs do not list the argument names of each tool, so zn
+  refuses a known tool whose arguments it cannot read.
+- **When a hook fails:** a hook that takes longer than its timeout lets the
+  call through, because Copilot fails open there. Machine policy hooks in
+  `/etc/github-copilot/policy.d` run in addition and are not seen by zn.
+- **Other limits:** it has not been tested on Windows. Copilot's own session
+  log (`events.jsonl`) keeps the original tool output on your machine.
+  `disableAllHooks` in zn's file or in `.github/copilot/settings(.local).json`
+  turns the hooks off; `zn-gate check` reports it.
+
 More experimental adapters will be listed here when they ship, each with its
 own coverage and limits.
 
