@@ -466,11 +466,15 @@ async function auditChain() {
 
 /* ------------------------------ hooks ------------------------------ */
 
+function hooksUsage() {
+  return 'usage: zn hooks install|uninstall ' + require('../agents').listAdapters().join('|') + ' [--project] [--no-mcp]';
+}
+
 async function hooks(args, io) {
   const { flags, positional } = parseFlags(args, { bool: ['project', 'no-mcp'] });
   const [action, agentId] = positional;
   if (!['install', 'uninstall'].includes(action) || !agentId) {
-    throw deps.znError('ZN_USAGE', 'usage: zn hooks install|uninstall claude-code|codex|cursor|opencode|antigravity|copilot [--project] [--no-mcp]');
+    throw deps.znError('ZN_USAGE', hooksUsage());
   }
   // Check the agent name first, so a script or an agent is told the real reason.
   const unsupported = require('../agents').unsupportedAgentMessage(agentId);
@@ -493,7 +497,7 @@ async function hooks(args, io) {
 
 const HELP = {
   'hooks': [
-    'usage: zn hooks install|uninstall claude-code|codex|cursor|opencode|antigravity|copilot [--project] [--no-mcp]',
+    hooksUsage(),
     'Adds the zn hooks to a coding agent, or removes them again.',
     '  install     add the hooks (and the secrets MCP server unless --no-mcp)',
     '  uninstall   remove them',
