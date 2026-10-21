@@ -14,7 +14,7 @@ agent:
 | OpenCode | (no plugin manifest) | `zn hooks install opencode` |
 
 What zn-gate can and cannot do in each agent is listed in
-[docs/compat.md](https://github.com/usezn/zn/blob/v1.12.0/docs/compat.md). The Codex plugin declares zn-gate's hooks too, but we could not confirm that
+[docs/compat.md](https://github.com/usezn/zn/blob/v1.13.1/docs/compat.md). The Codex plugin declares zn-gate's hooks too, but we could not confirm that
 Codex loads them (see below). Cursor loading these hooks from a
 plugin has not been tested yet.
 
@@ -24,19 +24,19 @@ The plugin is part of zn-gate's attack surface, so it does as little as
 possible:
 
 - **One pinned download, at install.** In Claude Code, installing the plugin
-  installs zn-gate 1.12.0 into the plugin folder from the npm registry, as
+  installs zn-gate 1.13.1 into the plugin folder from the npm registry, as
   pinned by `package-lock.json` (registry integrity for every package,
   install scripts disabled). The plugin downloads nothing after that. In
   other agents you install zn-gate yourself, at an exact version, and check
   its signatures:
 
   ```bash
-  npm install -g zn-gate@1.12.0
+  npm install -g zn-gate@1.13.1
   npm audit signatures
   ```
 
 - **Exact pins.** The plugin manifests, the lock file, the MCP registry entry
-  and every install instruction name zn-gate 1.12.0. There is no `@latest` and
+  and every install instruction name zn-gate 1.13.1. There is no `@latest` and
   no version range, and the plugin itself runs no package launcher such as
   `npx`.
 - **Checked on every call.** Wherever it was installed, `scripts/zn-launch.js`
@@ -71,7 +71,7 @@ plugin; for the other agents, first install zn-gate as shown above. Then:
 ### Claude Code
 
 ```bash
-claude plugin marketplace add usezn/zn@v1.12.0
+claude plugin marketplace add usezn/zn@v1.13.1
 claude plugin install zn-gate@usezn
 ```
 
@@ -83,7 +83,7 @@ newly pinned zn-gate. If you installed hooks before with
 ### Codex
 
 ```bash
-codex plugin marketplace add usezn/zn --ref v1.12.0
+codex plugin marketplace add usezn/zn --ref v1.13.1
 ```
 
 Install `zn-gate` from the `usezn` marketplace with `/plugins`. That adds the
@@ -102,12 +102,12 @@ change). In our test with Codex 0.162.1 we could not confirm that they load. If
 `/hooks` does not list zn-gate's hooks, use `zn hooks install codex` instead.
 OpenAI's [hooks documentation](https://learn.chatgpt.com/docs/hooks) explains this.
 
-The plugin's hooks for Codex need zn-gate 1.12.0 installed on the machine, because
+The plugin's hooks for Codex need zn-gate 1.13.1 installed on the machine, because
 Codex does not install it with the plugin (Claude Code does, into the plugin folder).
 Without it, every tool call is refused. Install it and check the signatures:
 
 ```bash
-npm install -g zn-gate@1.12.0
+npm install -g zn-gate@1.13.1
 npm audit signatures
 ```
 
@@ -132,7 +132,7 @@ a crash or a timeout blocks the action (stricter than
 
 ### Other Agent Plugins clients
 
-Point the client at the `plugins/zn-gate` directory of the `v1.12.0` tag. These
+Point the client at the `plugins/zn-gate` directory of the `v1.13.1` tag. These
 clients load the `zn-gate` and `secrets` MCP servers and the skill; hooks are agent-specific
 and need one of the agents above.
 

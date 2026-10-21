@@ -7,6 +7,7 @@ For each wrapped server the shield:
 1. **Checks the tool list.** Tool and parameter descriptions that carry hidden instructions are neutralized before the agent reads them.
 2. **Checks tool-call arguments.** A call whose arguments carry an injection is refused and never reaches the server.
 3. **Checks tool output.** Secrets are redacted, and output that carries an injection is replaced by a short notice.
+   The same check covers the other text the server sends to the agent: notifications, requests such as sampling, resource and prompt contents (text blobs too), the descriptions in resource and prompt lists, the initialize instructions, completion values, error messages, and the structured content, embedded resources and resource links of tool results. A line from the server that is not valid JSON is dropped (shadow mode passes it on and reports it). JSON-RPC batches are checked message by message in both directions.
 4. **Pins the tools.** It remembers what each tool looked like the first time and flags any tool that changes later (see [Tool pinning](#tool-pinning)).
 5. **Records each decision** in the local audit log (`~/.zn/evidence.jsonl`; check it with `npx -y zn-gate evidence --verify`, and see [how the log works](architecture.md)).
 
@@ -14,7 +15,7 @@ For each wrapped server the shield:
 
 Put zn-gate in front of the command that starts the server, and separate the two with `--`:
 
-```
+```bash
 npx -y zn-gate shield -- uvx mcp-server-fetch
 npx -y zn-gate shield -- npx -y @modelcontextprotocol/server-postgres postgresql://localhost/db
 ```
@@ -40,7 +41,7 @@ In an agent's MCP configuration, set the command to `npx` and put `-y zn-gate sh
 
 `init --wrap-mcp` finds the MCP servers in the configuration files of the agents on your machine (Claude Desktop, Claude Code, Cursor, Codex CLI, OpenCode, Antigravity and Hermes), writes a backup of each file it changes, and rewrites each local (stdio) server as a `shield` command.
 
-```
+```bash
 # Preview what would change, and change nothing
 npx -y zn-gate init --dry-run
 
@@ -60,7 +61,7 @@ Servers that run at a URL (remote servers) are left as they are, because the shi
 
 `--shadow` makes the shield watch and record, but not change anything. Use it for the first days with a new server, to see what zn-gate would have done before you let it act.
 
-```
+```bash
 npx -y zn-gate shield --shadow -- uvx mcp-server-fetch
 npx -y zn-gate init --shadow
 ```
@@ -77,7 +78,7 @@ In shadow mode:
 
 Review what the shield found with:
 
-```
+```bash
 npx -y zn-gate evidence --tail 20
 ```
 
@@ -123,7 +124,7 @@ or for one run with the environment variable `ZN_MCP_PINNING=block`. The mode th
 
 ### See the pins
 
-```
+```bash
 npx -y zn-gate pins
 ```
 
@@ -133,7 +134,7 @@ lists each pinned server with its key, its command line, how many tools are pinn
 
 When the shield reports `[zn-shield TOOLS CHANGED]`, first look at the tool: open it in your agent, or read the server's source or changelog. `pins` shows tool names, not their text. If you accept the change, run in your own terminal:
 
-```
+```bash
 # One server: use the key that `pins` prints
 npx -y zn-gate pins approve <server-key>
 

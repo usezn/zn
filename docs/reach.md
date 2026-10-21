@@ -125,7 +125,7 @@ This is the real output of one run on a fake project. The `.env` holds two
 fake secrets, the home folder holds a fake AWS credentials file, and a Claude
 Code settings file exists but zn is not set up for it:
 
-```
+```text
 zn-gate reach: what can the coding agents on this machine reach?
 Read: agent settings in your home folder and this folder, .env files here, names of environment variables. Nothing was sent anywhere.
 
