@@ -17,7 +17,8 @@ impl CacheEntry {
         Self {
             value,
             created_at: now,
-            expires_at: now + ttl,
+            // A huge TTL must not overflow the clock; fall back to "expires now".
+            expires_at: now.checked_add(ttl).unwrap_or(now),
         }
     }
 
@@ -125,6 +126,15 @@ impl Default for EmbeddingCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn huge_ttl_does_not_panic() {
+        for ttl in [u64::MAX, i64::MAX as u64] {
+            let cache = EmbeddingCache::new(ttl, 4);
+            cache.insert("m", "k", vec![0.0; 4]);
+            let _ = CacheEntry::new(vec![0.0], Duration::from_secs(ttl));
+        }
+    }
     use std::thread;
     use std::time::Duration;
 

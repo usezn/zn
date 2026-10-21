@@ -4,8 +4,8 @@ The SVG diagrams in this directory embed material from the projects below.
 
 | Material | License | Source |
 |---|---|---|
-| Inter typeface (subset, embedded as WOFF2) | SIL Open Font License 1.1 | https://github.com/rsms/inter |
-| Tabler Icons (robot, shield-lock, plug-connected, cloud, device-laptop, world, message, terminal-2, file-text, list-search, eraser, lock, link) | MIT | https://github.com/tabler/tabler-icons |
+| Inter typeface (subset, embedded as WOFF2) | SIL Open Font License 1.1 | <https://github.com/rsms/inter> |
+| Tabler Icons (robot, shield-lock, plug-connected, cloud, device-laptop, world, message, terminal-2, file-text, list-search, eraser, lock, link) | MIT | <https://github.com/tabler/tabler-icons> |
 
 ## Tabler Icons
 
@@ -32,6 +32,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ## Inter
+
+<!-- The license text below is reproduced verbatim: its URLs and headings stay as published. -->
+<!-- markdownlint-disable MD003 MD012 MD022 MD034 -->
 
 Copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter).
 Licensed under the SIL Open Font License, Version 1.1 (https://openfontlicense.org).
