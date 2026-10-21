@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { cleanId, listAdapters } = require('../lib/agents');
+const { listAdapters } = require('../lib/agents');
 const policy = require('../lib/hooks/policy');
 
 test('every adapter id is kept in the zn hooks install hint', () => {
