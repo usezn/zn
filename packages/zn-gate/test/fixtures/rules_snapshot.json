@@ -45,7 +45,7 @@
         "secret:private_key"
       ],
       "sha256": {
-        "lib/rules.js": "cc0e3592854581ee4ccf2e14fb83a74ba41e58b36610d2aa88ac0163047d4453",
+        "lib/rules.js": "866758c26445852b52a55c478a92c36177eb09ce3df11e74676a0d967abfcd69",
         "lib/mcp-secrets.js": "6a59fc9809d6b1a3509ff285d21be57e2906449b1c78644e41fe142eccda69b9"
       }
     },
