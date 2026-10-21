@@ -130,6 +130,18 @@ python3 -m venv .venv
 .venv/bin/pip install zn-gate      # Windows: .venv\Scripts\pip install zn-gate
 ```
 
+**Only the command-line tools (`scan`, `test`, `status`)?** Install the Python CLI as a standalone tool, without a virtual environment:
+
+```bash
+pipx install zn-gate
+pipx ensurepath        # then close and reopen your terminal
+zn-gate scan .
+```
+
+`pipx ensurepath` puts `~/.local/bin` on your PATH. Until you reopen the terminal, `zn-gate` is reported as "command not found". With uv: `uv tool install zn-gate` (run `uv tool update-shell` if the command is not found). To run it once without installing: `uvx zn-gate scan .`
+
+The Python CLI does not install hooks. To protect Claude Code, Codex CLI, Cursor or OpenCode, run `npx -y zn-gate init` (Node 18 or later).
+
 For LangChain and LangGraph, `ZnGuardCallbackHandler` stops the run when it blocks a prompt, a tool call or a tool output, and `guard_langchain_tool(tool)` wraps a tool so its arguments are checked before it runs and its output is checked and masked before the model reads it. A callback cannot change what a tool returns, so the handler with `mask_secrets=True` (default) also stops the run on a secret in a tool output (it fails closed); to hide secrets and keep going, wrap the tool and create the handler with `mask_secrets=False`. See the [Python package guide](packages/zn-gate-py/README.md#langchain--langgraph).
 
 **zn-gate as an MCP server only** (the agent calls it when it decides to; not automatic protection):

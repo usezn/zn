@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Python: the READMEs now show how to install the CLI with `pipx`, `uv tool install` or `uvx`, including `pipx ensurepath` and reopening the terminal.
+
 ## [1.13.1] - 2026-10-20
 
 zn-gate 1.13.1 is a security patch for the Python package. The LangChain callback handler now stops a run when it blocks a tool call, and the new `guard_langchain_tool` wrapper checks tool arguments and masks secrets in tool output before the model reads them. Upgrade with `pip install -U zn-gate`. The npm package has no code changes in this release.
@@ -520,7 +523,7 @@ Limits: [docs/threat-model.md](docs/threat-model.md). Per-agent support:
   - **Claude Desktop on Linux:** `~/.config/Claude/` (1.4.0 used `~/config/Claude/`, missing the dot).
   - Files that cannot be rewritten safely (JSONC with comments, multi-line TOML arrays) are reported as "wrap manually" instead of being modified.
 
-### Documentation
+### Changed
 - Removed figures without a public method (fixed "< 0.1 ms" style latency claims, "99.4 % accuracy", the comparison table against other guardrails, "100 % defense rate"). Added a single latency table with hardware, date and `bench/bench_by_size.js` to reproduce it.
 - "Cryptographic / tamper-evident ledger" reworded: it is a hash-chained local log that detects accidental edits, not tamper-proof against someone with write access.
 - Added "What leaves your machine" to all READMEs.
