@@ -24,6 +24,32 @@ export const PIN_PATTERNS = [
   /`v(\d+\.\d+\.\d+)` tag/g,
 ];
 
+/** Semver order for X.Y.Z[-pre]: a prerelease sorts before its release. Returns null when either is malformed. */
+export function compareVersions(a, b) {
+  const parse = (v) => {
+    const m = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(String(v));
+    return m && { n: [+m[1], +m[2], +m[3]], pre: m[4] === undefined ? null : m[4].split('.') };
+  };
+  const x = parse(a);
+  const y = parse(b);
+  if (!x || !y) return null;
+  for (let i = 0; i < 3; i++) if (x.n[i] !== y.n[i]) return x.n[i] < y.n[i] ? -1 : 1;
+  if (!x.pre || !y.pre) return x.pre === y.pre ? 0 : x.pre ? -1 : 1;
+  for (let i = 0; i < Math.max(x.pre.length, y.pre.length); i++) {
+    const p = x.pre[i];
+    const q = y.pre[i];
+    if (p === undefined) return -1;
+    if (q === undefined) return 1;
+    if (p === q) continue;
+    const pn = /^\d+$/.test(p);
+    const qn = /^\d+$/.test(q);
+    if (pn && qn) return +p < +q ? -1 : 1;
+    if (pn !== qn) return pn ? -1 : 1;
+    return p < q ? -1 : 1;
+  }
+  return 0;
+}
+
 /** Value at a dotted path ("packages.0.version") of a parsed JSON document. */
 export function getPath(obj, path) {
   return path.split('.').reduce((o, k) => (o == null ? undefined : o[/^\d+$/.test(k) ? Number(k) : k]), obj);
@@ -75,6 +101,16 @@ export function check(facts, files, read, options = {}) {
       got = m ? m[1] : undefined;
     }
     if (got !== version) errors.push(`${v.file}${v.json ? ` (${v.json})` : ''}: version ${got ?? 'not found'}, public-facts.json says ${version}`);
+  }
+
+  // examplesVersion is the zn-gate version the examples pin. On a final release it may not be ahead of version
+  // (a warning when it is behind: the examples are moved after publish). On a pre-release nothing is checked.
+  const examples = facts.examplesVersion && facts.examplesVersion.value;
+  if (examples && /^\d+\.\d+\.\d+$/.test(version)) {
+    const cmp = compareVersions(examples, version);
+    if (cmp === null) errors.push(`public-facts.json: examplesVersion ${examples} is not a version (X.Y.Z)`);
+    else if (cmp > 0) errors.push(`public-facts.json: examplesVersion ${examples} is ahead of version ${version}`);
+    else if (cmp < 0 && Array.isArray(options.warnings)) options.warnings.push(`examplesVersion ${examples} is behind the final release ${version}: pin the examples to ${version} (zn-release-train-bump.py --examples)`);
   }
 
   const allowed = new Set((facts.version.allowPins || []).map((a) => `${a.file}\0${a.pin}`));
@@ -162,7 +198,9 @@ function main() {
   const files = execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' }).split('\0').filter(Boolean);
   // Set by the workflow on release pull requests only (see .github/workflows/public-facts.yml).
   const pluginWarnings = process.env.PLUGIN_PIN_PENDING === 'true' ? [] : undefined;
-  const errors = check(facts, files, read, { pluginWarnings });
+  const warnings = [];
+  const errors = check(facts, files, read, { pluginWarnings, warnings });
+  for (const w of warnings) console.log(process.env.GITHUB_ACTIONS ? `::warning::${w.replace(/[\r\n%]/g, ' ')}` : `warning: ${w}`);
   for (const w of pluginWarnings || []) console.log(process.env.GITHUB_ACTIONS ? `::warning::${w.replace(/[\r\n%]/g, ' ')}` : `warning: ${w}`);
   if (pluginWarnings && pluginWarnings.length) console.log(`\n${pluginWarnings.length} plugin pin difference(s), allowed on a release pull request: pin the plugin after npm publishes the release.`);
   if (errors.length) {
