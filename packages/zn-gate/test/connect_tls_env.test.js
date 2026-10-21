@@ -22,7 +22,7 @@ const ENV = ['NODE_TLS_REJECT_UNAUTHORIZED', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FI
 test('tlsRefusal names the reason, in one line, for each risky setting', () => {
   assert.equal(cloudKey.tlsRefusal({}), null);
   assert.equal(cloudKey.tlsRefusal({ NODE_OPTIONS: '--max-old-space-size=512' }), null);
-  assert.match(cloudKey.tlsRefusal({ NODE_TLS_REJECT_UNAUTHORIZED: '0' }), /NODE_TLS_REJECT_UNAUTHORIZED=0 is set/);
+  assert.match(cloudKey.tlsRefusal({ NODE_TLS_REJECT_UNAUTHORIZED: '0' }), /NODE_TLS_REJECT_UNAUTHORIZED is set/);
   assert.match(cloudKey.tlsRefusal({ NODE_EXTRA_CA_CERTS: '/tmp/ca.pem' }), /NODE_EXTRA_CA_CERTS is set/);
   assert.match(cloudKey.tlsRefusal({ SSL_CERT_FILE: '/tmp/ca.pem' }), /SSL_CERT_FILE is set/);
   for (const o of ['--require ./x.js', '-r ./x.js', '--import ./x.mjs', '--use-openssl-ca', '--max-old-space-size=512 --require=./x.js', '--import=./x.mjs']) {

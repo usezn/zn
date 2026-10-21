@@ -2,9 +2,11 @@ name: Cache cleanup
 
 # Deletes the Actions caches of pull requests that are closed (merged or not). A pull request run
 # saves its caches under refs/pull/<number>/merge, and only that pull request can use them, so once
-# it is closed they only take space from the repository's 10 GB cache limit. Caches of branches and
-# tags, and of open pull requests, are never touched. It runs when a pull request is closed (only that
-# pull request's caches) and weekly for anything left behind.
+# it is closed they only take space from the repository's 10 GB cache limit. Merge queue runs save
+# theirs under refs/heads/gh-readonly-queue/<base>/pr-<number>-<sha>, a branch GitHub deletes when the
+# run ends, so those caches are deleted once their branch is gone. Caches of other branches and of
+# tags, of open pull requests and of merge queue runs still going are never touched. It runs when a
+# pull request is closed (only that pull request's caches) and weekly for anything left behind.
 on:
   pull_request:
     types: [closed]
@@ -25,7 +27,7 @@ concurrency:
 
 jobs:
   closed-pull-requests:
-    name: Delete caches of closed pull requests
+    name: Delete caches of closed pull requests and finished merge queue runs
     # A pull request from a fork gets a read-only token, so its caches are left to the weekly run.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
@@ -55,7 +57,23 @@ jobs:
 
           rows="$RUNNER_TEMP/rows.md"
           deleted=0; deleted_bytes=0; kept_open=0; failed=0
+          queue_deleted=0; queue_deleted_bytes=0; queue_kept=0
           : > "$rows"
+
+          # Deletes one cache (or only reports it in a dry run) and adds its row to the summary.
+          delete_cache() { # <id> <size> <label>
+            local action
+            if [ "$DRY_RUN" = "true" ]; then
+              action="would delete"
+            elif gh api -X DELETE "repos/$REPO/actions/caches/$1" > /dev/null; then
+              action="deleted"
+            else
+              echo "::warning::Could not delete cache $1 of $3."
+              failed=$((failed + 1))
+              return 1
+            fi
+            printf '| %s | %s | %s MB | %s |\n' "$3" "$1" "$(($2 / 1048576))" "$action" >> "$rows"
+          }
 
           # Only refs of the exact form refs/pull/<number>/merge are considered.
           numbers=$(cut -f2 "$list" | grep -E '^refs/pull/[0-9]+/merge$' | cut -d/ -f3 | sort -un || true)
@@ -78,19 +96,39 @@ jobs:
               [ "$cache_ref" = "$ref" ] || continue
               case "$id" in ''|*[!0-9]*) continue ;; esac
               case "$size" in ''|*[!0-9]*) size=0 ;; esac
-              if [ "$DRY_RUN" = "true" ]; then
-                action="would delete"
-              elif gh api -X DELETE "repos/$REPO/actions/caches/$id" > /dev/null; then
-                action="deleted"
-              else
-                echo "::warning::Could not delete cache $id of pull request #$number."
-                failed=$((failed + 1))
-                continue
-              fi
+              delete_cache "$id" "$size" "pull request #$number" || continue
               deleted=$((deleted + 1)); deleted_bytes=$((deleted_bytes + size))
-              printf '| #%s | %s | %s MB | %s |\n' "$number" "$id" "$((size / 1048576))" "$action" >> "$rows"
             done < "$list"
           done
+
+          # Merge queue runs: refs/heads/gh-readonly-queue/<base>/pr-<number>-<sha>. Only that ref can use
+          # their caches. A branch that still exists is a run in progress and keeps its caches. If the
+          # branches cannot be listed, nothing of the queue is deleted.
+          queue_refs=$(cut -f2 "$list" | grep -E '^refs/heads/gh-readonly-queue/[A-Za-z0-9._/-]+$' | sort -u || true)
+          if [ -n "${PR_NUMBER:-}" ]; then
+            queue_refs=$(printf '%s\n' "$queue_refs" | grep -E "/pr-${PR_NUMBER}-[0-9a-f]+$" || true)
+          fi
+          if [ -n "$queue_refs" ]; then
+            live="$RUNNER_TEMP/queue-branches.txt"
+            if gh api --paginate "repos/$REPO/git/matching-refs/heads/gh-readonly-queue/" --jq '.[].ref' > "$live"; then
+              for ref in $queue_refs; do
+                if grep -qxF "$ref" "$live"; then
+                  queue_kept=$((queue_kept + 1))
+                  continue
+                fi
+                while IFS=$'\t' read -r id cache_ref size; do
+                  [ "$cache_ref" = "$ref" ] || continue
+                  case "$id" in ''|*[!0-9]*) continue ;; esac
+                  case "$size" in ''|*[!0-9]*) size=0 ;; esac
+                  delete_cache "$id" "$size" "merge queue ${ref#refs/heads/gh-readonly-queue/}" || continue
+                  queue_deleted=$((queue_deleted + 1)); queue_deleted_bytes=$((queue_deleted_bytes + size))
+                done < "$list"
+              done
+            else
+              echo "::warning::Could not list the merge queue branches; their caches are kept."
+              failed=$((failed + 1))
+            fi
+          fi
 
           {
             if [ "$DRY_RUN" = "true" ]; then
@@ -101,10 +139,12 @@ jobs:
             echo
             echo "Caches of closed pull requests: $deleted ($((deleted_bytes / 1048576)) MB)."
             echo "Pull requests still open, caches kept: $kept_open."
+            echo "Caches of finished merge queue runs: $queue_deleted ($((queue_deleted_bytes / 1048576)) MB)."
+            echo "Merge queue runs still going, caches kept: $queue_kept."
             echo "Errors: $failed."
             if [ -s "$rows" ]; then
               echo
-              echo "| Pull request | Cache id | Size | Action |"
+              echo "| Cache of | Cache id | Size | Action |"
               echo "| --- | --- | --- | --- |"
               cat "$rows"
             fi

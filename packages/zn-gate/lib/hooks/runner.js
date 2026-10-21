@@ -905,6 +905,22 @@ function SESSION_CONTEXT() {
     'To run a command that needs a stored secret, write the placeholder __ZN_<NAME>__ and run the command with `' + znCommand('run -- <command>') + '`.';
 }
 
+/*
+ * Test-only fault injection. Inert unless ZN_TEST_HOOK_FAULTS=1 is set, and it can only make
+ * the hook fail or wait, never allow anything.
+ */
+async function injectTestFault() {
+  if (process.env.ZN_TEST_HOOK_FAULTS !== '1') return;
+  const f = process.env.ZN_TEST_HOOK_FAULT;
+  if (f === 'hang') await new Promise((r) => setTimeout(r, Number(process.env.ZN_TEST_HOOK_HANG_MS) || 60000));
+  else if (f === 'throw') throw new Error('test fault');
+  else if (f === 'reject' || f === 'crash') {
+    if (f === 'reject') Promise.reject(new Error('test fault'));
+    else setTimeout(() => { throw new Error('test fault'); }, 0);
+    await new Promise((r) => setTimeout(r, Number(process.env.ZN_TEST_HOOK_HANG_MS) || 5000)); // stay armed until it fires
+  }
+}
+
 /**
  * Handle one raw event. Returns {output, stderr} where output is the JSON
  * value to print (or null for "no opinion").
@@ -918,6 +934,7 @@ async function handle(adapter, rawEvent, opts = {}) {
     ev = adapter.normalize(rawEvent);
     const d = lazyDeps(opts);
     if (ev && ev.event) guardNativeText(ev);
+    await injectTestFault();
     if (!ev || !ev.event) decision = { decision: 'allow' };
     else if (ev.event === 'pre_tool') decision = await decidePre(ev, d, adapter.id, opts);
     else if (ev.event === 'post_tool') decision = await decidePost(ev, d, adapter.id, opts);
@@ -1046,6 +1063,54 @@ function refuseInput(agentId, why) {
   process.exitCode = 2;
 }
 
+/*
+ * Codex has no fail-closed setting: when a PreToolUse, PermissionRequest or UserPromptSubmit hook times
+ * out, crashes or prints something it cannot read, Codex marks the hook failed and runs the call anyway.
+ * While node is running, zn answers for itself before that: a watchdog fires a few seconds before Codex's
+ * timeout, and an uncaught error or unhandled rejection does the same. Both print Codex's deny answer
+ * (JSON only on stdout) and exit 2, Codex's documented block code. Other agents and events are untouched.
+ */
+const CODEX_WATCHDOG_MARGIN_S = 5;
+const CODEX_FAIL_REASON = 'zn-gate could not finish checking this in time, so it was blocked. ' +
+  'Try again; if it keeps happening, run zn-gate doctor.';
+
+function codexDenyFor(eventName, reason) {
+  if (eventName === 'PreToolUse') return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } };
+  if (eventName === 'PermissionRequest') return { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: reason } } };
+  if (eventName === 'UserPromptSubmit') return { decision: 'block', reason };
+  return null;
+}
+
+function codexDeadlineMs() {
+  let ms = (require('../agents/codex').HOOK_TIMEOUT_S - CODEX_WATCHDOG_MARGIN_S) * 1000;
+  if (process.env.ZN_TEST_HOOK_FAULTS === '1') {
+    const t = Number(process.env.ZN_TEST_HOOK_DEADLINE_MS);
+    if (t > 0 && t < ms) ms = t; // tests may only shorten it
+  }
+  return ms;
+}
+
+// Returns a function that disarms the watchdog, or null when the event is not one it covers.
+function armCodexFailClosed(agentId, eventName) {
+  if (agentId !== 'codex' || !codexDenyFor(eventName, '')) return null;
+  let done = false;
+  const failNow = () => {
+    if (done) return;
+    done = true;
+    try { fs.writeSync(1, JSON.stringify(codexDenyFor(eventName, CODEX_FAIL_REASON))); } catch (_) { /* nothing more to do */ }
+    try { fs.writeSync(2, 'zn hook: ' + CODEX_FAIL_REASON + '\n'); } catch (_) { /* nothing more to do */ }
+    process.exit(2);
+  };
+  const timer = setTimeout(failNow, codexDeadlineMs());
+  process.on('uncaughtException', failNow);
+  process.on('unhandledRejection', failNow);
+  return () => {
+    clearTimeout(timer);
+    process.removeListener('uncaughtException', failNow);
+    process.removeListener('unhandledRejection', failNow);
+  };
+}
+
 async function main(args, readText = readStdin) {
   const state = { stopEvent: false };
   try {
@@ -1101,10 +1166,20 @@ async function handleEvent(args, state, readText) {
     return refuseInput(agentId, 'the event on stdin is not a JSON object');
   }
   state.stopEvent = raw.hook_event_name === 'Stop';
-  const res = await handle(adapter, raw);
-  if (res.stderr) process.stderr.write(res.stderr + ' (fail-open: event passed through)\n');
-  try { require('../vault/client').close(); } catch (_) { /* not loaded */ }
-  if (res.output !== null && res.output !== undefined) process.stdout.write(JSON.stringify(res.output));
+  const disarm = armCodexFailClosed(agentId, raw.hook_event_name);
+  try {
+    const res = await handle(adapter, raw);
+    if (res.stderr) process.stderr.write(res.stderr + ' (fail-open: event passed through)\n');
+    try { require('../vault/client').close(); } catch (_) { /* not loaded */ }
+    if (res.output !== null && res.output !== undefined) process.stdout.write(JSON.stringify(res.output));
+    // zn itself failed: Codex also gets its documented block code, with the reason on stderr.
+    if (disarm && res.decision && res.decision.failClosed) {
+      process.stderr.write('zn hook: ' + (res.decision.message || CODEX_FAIL_REASON) + '\n');
+      process.exitCode = 2;
+    }
+  } finally {
+    if (disarm) disarm();
+  }
 }
 
 module.exports = { handle, main, mapStrings, decidePre, decidePost, decidePrompt, decideExpansion, decideStop };

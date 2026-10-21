@@ -490,7 +490,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
     target_path = Path(args.path)
     if not target_path.exists():
         print(f"Error: target path not found: {target_path}", file=sys.stderr)
-        return 2
+        return 1
 
     files_to_scan: List[Path] = []
     skip_dirs = _SCAN_SKIP_DIRS
@@ -518,7 +518,11 @@ def cmd_scan(args: argparse.Namespace) -> int:
     if root_file:
         files_to_scan.append(target_path)
     else:
-        for root, dirs, files in os.walk(target_path):
+        # A folder that cannot be listed is reported, not skipped in silence: its files were not scanned.
+        def _unreadable(err: OSError) -> None:
+            skipped_dirs.append({"dir": str(err.filename), "reason": "cannot be read"})
+
+        for root, dirs, files in os.walk(target_path, onerror=_unreadable):
             kept = []
             for d in dirs:
                 if d in user_excluded:
@@ -726,17 +730,31 @@ def npm_only_message(command: str) -> str:
     )
 
 
-def main() -> int:
-    _configure_output_streams()
-    if len(sys.argv) > 1 and sys.argv[1] in NPM_ONLY_COMMANDS:
-        sys.stderr.write(npm_only_message(sys.argv[1]))
-        return 2
+# Commands that exist only in the npm package and take no explanation of the
+# Python/agents split: they just say where the command lives.
+NPM_ONLY_SIMPLE_COMMANDS = frozenset({"report", "reach", "connect", "disconnect"})
+
+
+def npm_only_simple_message(command: str) -> str:
+    return (
+        f"zn-gate {command} is a command of the npm package, not of this Python package.\n"
+        "Run it with Node.js 18 or later:\n"
+        f"  npx -y zn-gate {command}\n"
+        f"or, after npm install -g zn-gate:\n"
+        f"  zn-gate {command}\n"
+    )
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """The argument parser. Its sub-commands are the commands this package knows."""
     parser = argparse.ArgumentParser(
         prog="zn-gate",
         description="zn deterministic guardrail engine for AI agents and LLM tool calling."
     )
-    parser.add_argument("--version", action="version", version=f"zn-gate {__version__} (rules: {RULES_VERSION})")
+    # -v and -V print the version too, as in the npm package.
+    parser.add_argument("-v", "-V", "--version", action="version", version=f"zn-gate {__version__} (rules: {RULES_VERSION})")
     subparsers = parser.add_subparsers(dest="command", help="Sub-commands")
+    parser.set_defaults(_subparsers=subparsers)
 
     # test command
     test_parser = subparsers.add_parser("test", help="Test a single text payload against guardrail rules")
@@ -777,6 +795,30 @@ def main() -> int:
     st_parser.add_argument("--days", type=int, default=30, help="Days to count (1-90, default 30)")
     st_parser.add_argument("--json", action="store_true", help="Output as JSON")
 
+    return parser
+
+
+def known_commands(parser: argparse.ArgumentParser) -> frozenset[str]:
+    """Names of the sub-commands of `parser` (built by build_parser)."""
+    return frozenset(parser.get_default("_subparsers").choices)
+
+
+def main() -> int:
+    _configure_output_streams()
+    first = sys.argv[1] if len(sys.argv) > 1 else None
+    if first in NPM_ONLY_SIMPLE_COMMANDS:
+        sys.stderr.write(npm_only_simple_message(first))
+        return 2
+    if first == "version":
+        print(f"zn-gate {__version__} (rules: {RULES_VERSION})")
+        return 0
+    parser = build_parser()
+    if first is not None and not first.startswith("-") and first not in known_commands(parser) and first not in NPM_ONLY_COMMANDS:
+        sys.stderr.write(f"Unknown command: {first}\nRun 'zn-gate --help' for usage.\n")
+        return 1
+    if len(sys.argv) > 1 and sys.argv[1] in NPM_ONLY_COMMANDS:
+        sys.stderr.write(npm_only_message(sys.argv[1]))
+        return 2
     args = parser.parse_args()
     if args.command == "test":
         return cmd_test(args)
