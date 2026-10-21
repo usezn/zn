@@ -208,14 +208,6 @@
         "json": "version"
       },
       {
-        "file": "plugins/mcp-registry/server.json",
-        "json": "version"
-      },
-      {
-        "file": "plugins/mcp-registry/server.json",
-        "json": "packages.0.version"
-      },
-      {
         "file": "plugins/zn-gate/package.json",
         "json": "version"
       },

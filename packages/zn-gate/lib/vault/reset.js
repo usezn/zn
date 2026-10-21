@@ -30,13 +30,15 @@ const FAILS_BEFORE_HINT = 3;
 const PROJECT_FILE_RE = /^[0-9a-f]{32}\.age$/;
 const VAULT_FILES = ['secrets.age', 'identity.age', 'keychain.json'];
 
+const zn = (args) => require('../zn-command').znCommand(args);
+
 const TEAM_REFUSAL = 'This computer belongs to a zn Team organization, and its controls are kept inside the vault. ' +
   'A reset would remove them, so zn will not do it. Nothing was changed. Ask your organization administrator for help.';
-const LOCK_FIRST = 'The vault is unlocked. Run `zn lock` first, then `zn vault reset`.';
-const NOTHING = 'There is no vault here to reset. Run `zn unlock` to create one.';
+const LOCK_FIRST = () => 'The vault is unlocked. Run `' + zn('lock') + '` first, then `' + zn('vault reset') + '`.';
+const NOTHING = () => 'There is no vault here to reset. Run `' + zn('unlock') + '` to create one.';
 const CANCELLED = 'Nothing was reset: the phrase did not match. Your vault is as it was.';
-const UNREADABLE_HINT = 'The vault could not be opened, and the passphrase is not the problem. Do not reset the vault yet. See docs/troubleshooting.md, section 5 ("Your secret vault is locked").';
-const HINT = 'Forgot the passphrase? `zn vault reset` starts a new, empty vault (the old values are lost).';
+const UNREADABLE_HINT = 'The vault could not be opened, and the passphrase is not the problem. Do not reset the vault yet. More: https://usezn.com/docs/zn-gate/troubleshooting/';
+const HINT = () => 'Forgot the passphrase? `' + zn('vault reset') + '` starts a new, empty vault (the old values are lost).';
 
 /** The files of this vault that exist now: [{ src, rel }] with rel relative to the backup folder. */
 function vaultFiles(opts) {
@@ -99,9 +101,9 @@ async function resetVault(opts, io) {
   const out = i.out || ((s) => process.stdout.write(s + '\n'));
   requireHuman('zn vault reset', i);
   const files = vaultFiles(o);
-  if (!files.length) { out(NOTHING); return 0; }
+  if (!files.length) { out(NOTHING()); return 0; }
   if (teamPresent(o)) { process.stderr.write('[zn] ' + TEAM_REFUSAL + '\n'); return 1; }
-  if (await daemon.isRunning(o)) { process.stderr.write('[zn] ' + LOCK_FIRST + '\n'); return 1; }
+  if (await daemon.isRunning(o)) { process.stderr.write('[zn] ' + LOCK_FIRST() + '\n'); return 1; }
 
   let backend = null;
   try { const m = keychain.readMeta(o); backend = m && m.backend; } catch (err) { /* damaged: the reset is the way out */ }
@@ -117,9 +119,9 @@ async function resetVault(opts, io) {
   for (const f of files) fs.unlinkSync(f.src);
   clearUnlockFailures(o);
   out('Old vault saved in ' + dir + ' (it stays encrypted; delete the folder when you no longer need it).');
-  out('Done. Run `zn unlock` to create the new vault, then store your values again:');
-  out('  zn env shadow .env        move the values of a .env file into the vault');
-  out('  zn secret set NAME        store one value (typed at a hidden prompt)');
+  out('Done. Run `' + zn('unlock') + '` to create the new vault, then store your values again:');
+  out('  ' + zn('env shadow .env') + '        move the values of a .env file into the vault');
+  out('  ' + zn('secret set NAME') + '        store one value (typed at a hidden prompt)');
   return 0;
 }
 
@@ -134,7 +136,7 @@ function readFails(opts) {
 function recordUnlockFailure(opts) {
   const n = readFails(opts) + 1;
   try { store.writePrivateFile(failFile(opts), String(n)); } catch (err) { /* the hint is a courtesy */ }
-  return n >= FAILS_BEFORE_HINT ? HINT : null;
+  return n >= FAILS_BEFORE_HINT ? HINT() : null;
 }
 
 function clearUnlockFailures(opts) {
@@ -149,7 +151,15 @@ function clearUnlockFailures(opts) {
 function hintForUnlockError(err, opts) {
   if (err && err.reason === keychain.WRONG_PASSPHRASE) return recordUnlockFailure(opts);
   clearUnlockFailures(opts);
+  // A damaged-file message already says what to do and links the page: do not say it twice.
+  if (err && /vault reset/.test(String(err.message))) return null;
   return UNREADABLE_HINT;
 }
 
-module.exports = { hintForUnlockError, resetVault, recordUnlockFailure, clearUnlockFailures, vaultFiles, PHRASE, FAILS_BEFORE_HINT, HINT, UNREADABLE_HINT, TEAM_REFUSAL, LOCK_FIRST, NOTHING, CANCELLED };
+module.exports = { hintForUnlockError, resetVault, recordUnlockFailure, clearUnlockFailures, vaultFiles, PHRASE, FAILS_BEFORE_HINT, UNREADABLE_HINT, TEAM_REFUSAL, CANCELLED };
+// The sentences that name a command are built when read, so they show the form that works on this computer.
+Object.defineProperties(module.exports, {
+  HINT: { enumerable: true, get: HINT },
+  LOCK_FIRST: { enumerable: true, get: LOCK_FIRST },
+  NOTHING: { enumerable: true, get: NOTHING },
+});

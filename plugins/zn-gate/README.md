@@ -19,7 +19,7 @@ Hook scripts run on your machine: installing the plugin on the web does not inst
 
 ## Requirements
 
-- Node.js 20.12 or later, on your `PATH` (`node --version`). The native Claude
+- Node.js 20.19 or later, on your `PATH` (`node --version`). The native Claude
   Code installer does not include Node.js. Without it, Claude Code reports at
   session start that `node` was not found, prompts are blocked (Claude Code
   2.1.295 and later; earlier versions let them through unchecked), and tool

@@ -65,7 +65,7 @@ hook call.
 
 ## Install
 
-You need Node.js 20.12 or later. Claude Code installs zn-gate with the
+You need Node.js 20.19 or later. Claude Code installs zn-gate with the
 plugin; for the other agents, first install zn-gate as shown above. Then:
 
 ### Claude Code
@@ -150,14 +150,16 @@ That path does not go through the plugin launcher or its file check.
 
 ## MCP registry
 
-`plugins/mcp-registry/server.json` describes the `secrets` MCP server for the
-official MCP Registry. The npm package declares the matching `mcpName` in
-`packages/zn-gate/package.json`, which the registry uses to verify ownership.
+`packages/zn-gate/server.json` is the one entry for the official MCP Registry,
+and the only `server.json` in this repository. The release workflow
+`mcp-registry.yml` publishes it, and `check-plugins.js` fails if a second
+`server.json` appears. It describes the zn-gate MCP server (`zn-gate mcp`). The
+npm package declares the matching `mcpName` in `packages/zn-gate/package.json`,
+which the registry uses to verify ownership.
 
-Registry clients start the server as `npx zn-gate@1.13.1 secrets-mcp`
-(`runtimeHint`). That path does not go through the plugin launcher: it relies
-on the exact version and npm's own integrity check of the tarball, not on the
-plugin's file digests.
+Registry clients start the server with npm as `zn-gate@<version> mcp`. That path
+does not go through the plugin launcher: it relies on the exact version and
+npm's own integrity check of the tarball, not on the plugin's file digests.
 
 ## Releasing a new version
 
@@ -166,9 +168,9 @@ plugin's file digests.
    `plugins/zn-gate/scripts/zn-gate.lock.json` from the published tarball.
 3. Set `X.Y.Z` in `plugins/zn-gate/plugin.json`,
    `plugins/zn-gate/.claude-plugin/plugin.json`,
-   `plugins/zn-gate/.cursor-plugin/plugin.json`,
-   `plugins/mcp-registry/server.json`, the documentation links and the
-   install instructions.
+   `plugins/zn-gate/.cursor-plugin/plugin.json`, the documentation links and the
+   install instructions. `packages/zn-gate/server.json` changes with the npm
+   package version, not with the plugin pin.
 4. Run `node plugins/tools/check-plugins.js --release`; it must print OK. CI
    runs the same check on release tags and on `main`.
 5. Tag the release. Release tags must be protected by a repository ruleset
