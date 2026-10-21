@@ -1017,7 +1017,9 @@ function recordEvidence(agentId, ev, decision, opts = {}) {
         ? stats.redacted + ' secret value(s) in the tool output replaced with tokens' + (kinds.length ? ' (' + kinds.join(', ') + ')' : '')
         : (kinds.length ? 'secret kinds: ' + kinds.join(', ') : 'blocked by the zn hook policy'),
       engine: 'zn-hook',
-    }, file, { lockWaitMs: 500, noStats: true });
+    // plainPreview: the payload above is the event name, the tool name and the checked secret kinds,
+    // never text from the agent, so the ledger does not load the redaction engine for it (~17 ms).
+    }, file, { lockWaitMs: 500, noStats: true, plainPreview: true });
   } catch (e) {
     try { process.stderr.write('zn-gate: could not record the block in the evidence log (' + (e && e.code || 'error') + ').' + String.fromCharCode(10)); } catch (_) { /* nothing more to do */ }
   }
