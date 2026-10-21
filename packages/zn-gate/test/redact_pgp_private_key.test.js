@@ -39,6 +39,24 @@ test('the evidence ledger preview does not show a PGP private key', () => {
   }
 });
 
+for (const [name, payload] of [
+  ['cut short (no END line)', BEGIN + '\n\n' + LINE1 + '\n' + LINE2 + '\n'],
+  ['longer than the redacted part of the preview', BEGIN + '\n\n' + (LINE1 + '\n').repeat(2000) + LINE2 + '\n' + END],
+]) {
+  test('the evidence ledger preview does not show a PGP private key ' + name, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-ev-pgp-'));
+    try {
+      const file = path.join(dir, 'evidence.jsonl');
+      logEvidence({ payload: 'key: ' + payload, tool_name: 'bash' }, file);
+      const rec = JSON.parse(fs.readFileSync(file, 'utf8').trim().split('\n').pop());
+      assert.ok(rec.payload_preview.includes('[REDACTED_PRIVATE_KEY]'), rec.payload_preview);
+      for (const p of PIECES) assert.ok(!rec.payload_preview.includes(p), p);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
+
 test('zn-gate scan reports a PGP private key once and does not print it', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-scan-pgp-'));
   try {

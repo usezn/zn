@@ -144,6 +144,8 @@ Looks through prompt templates, markdown, skills and configs for injection traps
 
 Exit codes: `0` nothing found, `1` something was found or the path does not exist, `2` an unknown `--format`.
 
+A scan never reports a clean result for something it could not read. A folder it cannot open is listed under "Directories not scanned" (reason: cannot be read), in `skipped_dirs` for `--format json` and as a notice for `--format github`. If no file was read at all, the output says "No files were scanned" (a `warning` field in JSON) and the text report shows `NOTHING SCANNED` instead of `PASSED`. The exit code is still `0` in that case, because an empty folder is not an error in CI; a path that does not exist exits `1`. The Node (`npx zn-gate`) and Python (`pip install zn-gate`) versions give the same exit codes and the same JSON fields (`skipped_dirs`, `warning`) for these cases; the text report differs in its wording and in how it prints paths.
+
 ### `audit`
 
 ```bash

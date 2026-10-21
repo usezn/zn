@@ -44,6 +44,9 @@ function inspectSchemaText(root, tool, options, neutral, label0) {
   const seen = new WeakSet();
   let nodes = 0;
   let limitHit = false;
+  // A key inside a default or const object that carries an injection cannot be rewritten without changing the
+  // value, so the whole tool is neutralized instead.
+  let poisonedKey = false;
   const block = (text, label) => {
     const check = analyzeLocal(text, options);
     if (check.verdict !== 'block') return null;
@@ -70,6 +73,23 @@ function inspectSchemaText(root, tool, options, neutral, label0) {
     const blocked = block(marked, label);
     return blocked === null ? marked : blocked;
   };
+  // Strings nested anywhere inside a default, const, enum or examples value (arrays and objects at any depth), within the same depth and size bounds.
+  const visitValue = (container, where, depth) => {
+    if (seen.has(container)) return;
+    if (depth > SCHEMA_MAX_DEPTH || ++nodes > SCHEMA_MAX_NODES) { limitHit = true; return; }
+    seen.add(container);
+    if (!Array.isArray(container)) {
+      for (const k of Object.keys(container)) {
+        if (k.length > 0 && block(neutral ? neutral(k) : k, where + ' (key)') !== null) poisonedKey = true;
+      }
+    }
+    for (const k of Object.keys(container)) {
+      const item = container[k];
+      const at = Array.isArray(container) ? where + '[' + k + ']' : where + '.' + k;
+      if (typeof item === 'string') container[k] = checkString(item, at);
+      else if (item && typeof item === 'object') visitValue(item, at, depth + 1);
+    }
+  };
   const visit = (node, where, depth) => {
     if (!node || typeof node !== 'object' || seen.has(node)) return;
     if (depth > SCHEMA_MAX_DEPTH || ++nodes > SCHEMA_MAX_NODES) { limitHit = true; return; }
@@ -81,9 +101,7 @@ function inspectSchemaText(root, tool, options, neutral, label0) {
     for (const key of SCHEMA_VALUE_KEYS) {
       const v = node[key];
       if (typeof v === 'string') node[key] = checkString(v, label + '.' + key);
-      else if (Array.isArray(v) && (key === 'enum' || key === 'examples')) {
-        for (let i = 0; i < v.length; i++) if (typeof v[i] === 'string') v[i] = checkString(v[i], label + '.' + key + '[' + i + ']');
-      }
+      else if (v && typeof v === 'object') visitValue(v, label + '.' + key, depth + 1);
     }
     const at = (suffix) => (where ? where + '.' + suffix : suffix);
     for (const key of SCHEMA_MAP_KEYS) {
@@ -101,29 +119,38 @@ function inspectSchemaText(root, tool, options, neutral, label0) {
     }
   };
   visit(root, '', 0);
-  return limitHit;
+  // Why the tool must be neutralized: 'limit' (too deep or too large to check), 'key' (a poisoned key), or false.
+  return limitHit ? 'limit' : poisonedKey ? 'key' : false;
 }
 
 /**
  * A schema too deep or too large to check is not passed on unchecked: the tool
  * is neutralized (plain notice, empty schema) and the reason goes to stderr.
  */
-function neutralizeUncheckable(tool, which, options) {
-  process.stderr.write(`[zn-shield BLOCKED TOOL] Tool '${tool.name}' has a ${which} too deep or too large for zn-gate to check (limit: ${SCHEMA_MAX_DEPTH} levels or ${SCHEMA_MAX_NODES} entries), so it was not passed on unchecked.\n`);
-  logEvidence({
-    agent: options.agent || 'mcp-server',
-    phase: 'parameter-definition',
-    tool_name: tool.name,
-    payload: `${which} over the inspection limit`,
-    verdict: 'block',
-    rule: 'schema_too_large_to_inspect',
-    reason: 'schema exceeds inspection limits',
-    confidence: 0.9,
-    latency_us: 12,
-    engine: 'oss-deterministic',
-  });
+function neutralizeUncheckable(tool, which, options, why = 'limit') {
+  const key = why === 'key';
+  process.stderr.write(key
+    ? `[zn-shield BLOCKED TOOL] Tool '${tool.name}' has an ${which} with a key inside a default or const value that carries a prompt injection, so it was not passed on.\n`
+    : `[zn-shield BLOCKED TOOL] Tool '${tool.name}' has an ${which} too deep or too large for zn-gate to check (limit: ${SCHEMA_MAX_DEPTH} levels or ${SCHEMA_MAX_NODES} entries), so it was not passed on unchecked.\n`);
+  // A poisoned key is already in the evidence log (block); a schema over the limits is logged here.
+  if (!key) {
+    logEvidence({
+      agent: options.agent || 'mcp-server',
+      phase: 'parameter-definition',
+      tool_name: tool.name,
+      payload: `${which} over the inspection limit`,
+      verdict: 'block',
+      rule: 'schema_too_large_to_inspect',
+      reason: 'schema exceeds inspection limits',
+      confidence: 0.9,
+      latency_us: 12,
+      engine: 'oss-deterministic',
+    });
+  }
   if (options.shadow) return;
-  tool.description = `[zn-gate SECURITY BLOCKED] Tool neutralized: its ${which} is too deep or too large to check for prompt injection.`;
+  tool.description = key
+    ? `[zn-gate SECURITY BLOCKED] Tool neutralized: its ${which} has a key inside a default or const value that carries a prompt injection.`
+    : `[zn-gate SECURITY BLOCKED] Tool neutralized: its ${which} is too deep or too large to check for prompt injection.`;
   tool.inputSchema = { type: 'object', properties: {} };
   if (tool.outputSchema !== undefined) delete tool.outputSchema;
 }
@@ -476,12 +503,26 @@ function startMcpShield(command, args, options = {}) {
               }
             }
 
+            // The tool title and annotations.title are read by the model like a description.
+            if (typeof tool.title === 'string' && tool.title.length > 0) {
+              const holder = { title: tool.title };
+              inspectSchemaText(holder, tool, options, neutral, 'title');
+              tool.title = holder.title;
+            }
+            if (tool.annotations && typeof tool.annotations === 'object' && typeof tool.annotations.title === 'string' && tool.annotations.title.length > 0) {
+              const holder = { title: tool.annotations.title };
+              inspectSchemaText(holder, tool, options, neutral, 'annotations.title');
+              tool.annotations.title = holder.title;
+            }
+
             // 2. Inspect every description and title in the input schema, however deeply nested
             if (tool.inputSchema && typeof tool.inputSchema === 'object') {
-              if (inspectSchemaText(tool.inputSchema, tool, options, neutral, '')) neutralizeUncheckable(tool, 'input schema', options);
+              const inputWhy = inspectSchemaText(tool.inputSchema, tool, options, neutral, '');
+              if (inputWhy) neutralizeUncheckable(tool, 'input schema', options, inputWhy);
             }
             if (tool.outputSchema && typeof tool.outputSchema === 'object') {
-              if (inspectSchemaText(tool.outputSchema, tool, options, neutral, 'outputSchema')) neutralizeUncheckable(tool, 'output schema', options);
+              const outputWhy = inspectSchemaText(tool.outputSchema, tool, options, neutral, 'outputSchema');
+              if (outputWhy) neutralizeUncheckable(tool, 'output schema', options, outputWhy);
             }
           }
         }
