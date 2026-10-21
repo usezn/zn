@@ -184,6 +184,26 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
     on your machine.
   - `disableAllHooks` in zn's file or in `.github/copilot/settings(.local).json`
     turns the hooks off; `zn-gate check` reports it.
+- **Gemini CLI** (experimental: `zn hooks install gemini [--project]`;
+  `zn-gate check` lists it as "Gemini CLI (experimental)").
+  Covered: `BeforeTool` blocks reads and writes of secret files by path, shell
+  commands that handle secrets, and edits of Gemini CLI's own settings files.
+  zn adds its hook to `~/.gemini/settings.json` (or `.gemini/settings.json`
+  with `--project`). Checked end to end with Gemini CLI 0.64.0 against a
+  scripted model provider. Not covered, and limits:
+  - What a tool returns is not changed: zn does not use `AfterTool`, so a
+    value printed by a command or a file the agent may read reaches the model.
+    Keep secrets in the vault.
+  - Gemini CLI hooks cannot ask you for confirmation, so zn blocks only what
+    it would refuse and says nothing otherwise (Gemini CLI's own approval
+    applies). A pasted secret in a typed prompt is not checked.
+  - A hook that crashes or times out does not block the call: only an explicit
+    refusal (exit code 2) does. A user install goes through a small launcher
+    script that blocks the call if the Node.js zn was installed with is gone.
+  - A project hook stays untrusted until you approve it in Gemini CLI, and it
+    runs `zn` from your PATH, so every teammate needs zn-gate installed.
+  - `hooksConfig.enabled: false`, a name in `hooksConfig.disabled` or
+    `/hooks disable` turn the hook off; `zn-gate check` reports them.
 - **Cursor** (best effort: its hook documentation leaves the input of some
   tools open, and zn fails closed where it cannot read a path):
   - `beforeReadFile` can only allow or deny. zn sets `failClosed: true` on it
@@ -311,5 +331,5 @@ until it is fixed), is in [upgrading.md](upgrading.md#nodejs-was-upgraded-moved-
 
 ## Not covered yet
 
-Hermes Agent, Gemini CLI and the Cursor CLI. GitHub Copilot CLI has experimental hooks (see the Copilot CLI entry above). A proxy for outgoing
+Hermes Agent and the Cursor CLI. GitHub Copilot CLI and Gemini CLI have experimental hooks (see their entries above). A proxy for outgoing
 HTTP from `zn run` (for `curl`, `gh` or SDKs) is planned for a later release.

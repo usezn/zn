@@ -40,7 +40,7 @@ way to read a file. The point is that the agent's normal tools do not hand
 values to the model. The hooks also block the agent's file tools and shell
 commands from writing `~/.zn` and the agents' own hook and plugin settings:
 the files (`.claude/settings*.json`, `.codex/` files, `.cursor/hooks.json`, the
-OpenCode plugin and `opencode.json`, and Antigravity's hook and settings files,
+OpenCode plugin and `opencode.json`, Antigravity's hook and settings files, and Gemini CLI's settings files,
 listed under "Experimental adapters" below) and the directories that hold them
 (`~/.claude`, `~/.codex`, `~/.cursor`, `~/.config/opencode`, the same in the
 project, and the locations `CODEX_HOME`, `OPENCODE_CONFIG`,
@@ -117,6 +117,30 @@ provider: 0 secret values sent.
   log (`events.jsonl`) keeps the original tool output on your machine.
   `disableAllHooks` in zn's file or in `.github/copilot/settings(.local).json`
   turns the hooks off; `zn-gate check` reports it.
+
+### Gemini CLI
+
+Install it with `zn hooks install gemini` (add `--project` for one project).
+It adds a hook that runs before each tool call, in `~/.gemini/settings.json`
+(or `.gemini/settings.json` in the project). It has been checked end to end
+with Gemini CLI 0.64.0 against a scripted model provider.
+
+- **What it covers:** before a tool call runs, zn blocks reading or writing
+  secret files by path, shell commands that handle secrets, and edits of
+  Gemini CLI's own settings files.
+- **What it does not cover:** zn does not use `AfterTool`, so what a tool
+  returns is not hidden: a value printed by a command or a file the agent may
+  read reaches the model. Gemini CLI hooks cannot ask you for confirmation, so
+  zn blocks only what it would refuse and says nothing otherwise; Gemini CLI's
+  own approval applies. A pasted secret in a typed prompt is not checked.
+- **When a hook fails:** Gemini CLI runs the tool when a hook crashes or times
+  out; only an explicit refusal (exit code 2) blocks. A user install goes
+  through a launcher script that blocks the call if the Node.js zn was
+  installed with is gone.
+- **Other limits:** a project hook stays untrusted until you approve it in
+  Gemini CLI, and it runs `zn` from your PATH, so every teammate needs zn-gate
+  installed. `hooksConfig.enabled: false`, a name in `hooksConfig.disabled` or
+  `/hooks disable` turn the hook off; `zn-gate check` reports them.
 
 More experimental adapters will be listed here when they ship, each with its
 own coverage and limits.
