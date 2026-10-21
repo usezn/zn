@@ -289,6 +289,10 @@ This usually happens after Node.js is upgraded, moved or removed (for example wi
 (`npx -y zn-gate check`, then `npm install -g zn-gate` and `zn hooks install <agent>`, or turning zn off for that agent
 until it is fixed), is in [upgrading.md](upgrading.md#nodejs-was-upgraded-moved-or-removed-nvm-fnm-homebrew).
 
+## Antigravity when its hook cannot start
+
+Antigravity does not document what it does when a hook cannot run (for example, `node` is not on the PATH of the hook). Without help, that case would block the tool call with no message from zn, or let it run. So `zn hooks install antigravity` writes a small launcher script (`~/.zn/hooks/zn-hook-antigravity.sh`, run by `sh`) as the user hook command; on Windows the same steps are written inline as a PowerShell command. The launcher runs the Node.js zn-gate was installed with, else `zn` from your PATH, and if neither can start it needs no Node.js to answer Antigravity's deny format, `{"decision":"deny","reason":"..."}`, with the repair step: install zn-gate (`npm install -g zn-gate`) and run `zn hooks install antigravity` again. A hook that starts and then fails is answered with a deny too (run `zn-gate check` to see why). `zn-gate check` reports a launcher whose Node.js is gone. A project install (`--project`) keeps the plain `zn hook antigravity` command and has no launcher. Hooks installed by an older zn-gate keep the plain command until you run `zn hooks install antigravity` again.
+
 ## Limits that apply to every agent
 
 - **An event zn cannot read is refused.** Empty stdin, or stdin that is not

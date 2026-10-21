@@ -132,8 +132,11 @@ test('install (user) backs up, keeps foreign hooks and uninstall removes only zn
   let data = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.deepEqual(data.mine, mine);
   const written = data['zn-gate'].PreToolUse[0].hooks[0].command;
-  assert.match(require('../lib/shell-quote').readableWindowsCommand(written), /runner\.js'? antigravity/);
+  assert.match(written, /\/\.zn\/hooks\/zn-hook-antigravity\.sh' PreToolUse$/);
+  const launcherFile = require('../lib/agents/launcher').launcherFile('antigravity', { home });
+  assert.ok(fs.existsSync(launcherFile));
   agy.uninstall({ scope: 'user', home });
+  assert.equal(fs.existsSync(launcherFile), false);
   data = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.deepEqual(data, { mine, off });
 });
@@ -148,10 +151,11 @@ test('install (user, Windows) writes a command with no quotes or spaces inside a
   const command = JSON.parse(fs.readFileSync(file, 'utf8'))['zn-gate'].PreToolUse[0].hooks[0].command;
   assert.match(command, /^powershell\.exe -NoProfile -NonInteractive -EncodedCommand [A-Za-z0-9+/=]+$/);
   assert.ok(!/["']/.test(command));
-  assert.equal(windowsCommandScript(command), "& 'C:/Program Files/nodejs/node.exe' 'C:/Users/a b/zn/lib/hooks/runner.js' antigravity");
+  const script = windowsCommandScript(command);
+  assert.match(script, /^\$ProgressPreference='SilentlyContinue'; \$zt=0; if \(\(Test-Path -LiteralPath 'C:\/Program Files\/nodejs\/node\.exe'\) -and \(Test-Path -LiteralPath 'C:\/Users\/a b\/zn\/lib\/hooks\/runner\.js'\)\) \{ \$zt=1; & 'C:\/Program Files\/nodejs\/node\.exe' 'C:\/Users\/a b\/zn\/lib\/hooks\/runner\.js' antigravity; /);
+  assert.match(script, /"decision":"deny".*zn hooks install antigravity/);
   assert.ok(cfg.isOurs(command, 'antigravity'));
   // zn-gate check and zn audit read it in the same shape as the -Command form.
-  assert.equal(require('../lib/shell-quote').readableWindowsCommand(command), cfg.hookCommandWindows('antigravity', opts));
   // Other agents keep the readable -Command form for the same paths.
   assert.match(cfg.hookCommandWindows('cursor', opts), / -Command "/);
   // An older -Command entry is recognised and replaced, not duplicated.
