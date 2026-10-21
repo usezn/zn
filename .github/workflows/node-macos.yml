@@ -65,6 +65,9 @@ on:
       - 'packages/zn-gate/package.json'
       - 'packages/zn-gate/package-lock.json'
       - '.github/workflows/node-macos.yml'
+  # The merge queue always runs it (Node.js 22 on macOS is the macOS sample of the queue).
+  merge_group:
+    types: [ checks_requested ]
   # Daily full run on the default branch.
   schedule:
     - cron: '30 6 * * *'
@@ -77,6 +80,14 @@ permissions:
 concurrency:
   group: node-macos-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
+
+env:
+  # Retry npm and pip downloads instead of failing a run on one network error.
+  NPM_CONFIG_FETCH_RETRIES: "5"
+  NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: "20000"
+  NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: "120000"
+  PIP_RETRIES: "5"
+  PIP_TIMEOUT: "60"
 
 jobs:
   test-node-macos:
