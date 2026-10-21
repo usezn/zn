@@ -124,7 +124,7 @@ Arguments are checked before the function runs; with `on_block="raise"` a blocke
 
 ### LangChain / LangGraph
 
-The integration is tested against `langchain-core` 1.2.31 and the current 1.x release; 1.2.31 is the minimum supported version.
+The integration is tested against `langchain-core` 1.3.3 and the current 1.x release; 1.3.3 is the minimum supported version, because earlier releases have a known high severity advisory.
 
 <!-- snippet-test -->
 ```python

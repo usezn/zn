@@ -16,6 +16,7 @@ const { LINE_BREAKS } = require('../linear-text');
 const os = require('os');
 const path = require('path');
 const { parseJsonc, parseToml } = require('./parse');
+const { readableWindowsCommand } = require('../shell-quote');
 const P = require('./patterns');
 const { BY_ID, RANK } = require('./rules');
 const mcpSecrets = require('../mcp-secrets');
@@ -351,7 +352,7 @@ function nodeOutside(ctx, p) {
  */
 function isOurHook(command, ctx) {
   if (typeof command !== 'string') return false;
-  const c = command.trim();
+  const c = readableWindowsCommand(command.trim());
   for (const re of OUR_HOOKS) {
     const m = re.exec(c);
     if (!m) continue;
@@ -748,10 +749,10 @@ function insideQuotedExample(text) {
 const STRONG_IN_DOCS =/^(?:pi:(?:ignore_previous|disregard|system_tag|system_bracket|template_boundary|multi_\w+)|indirect:|evasion:|exfil:markdown_image)/;
 
 function checkInstructions(ctx) {
-  const claudeExt = /(^|\/)\.claude\/(commands|agents|skills)\//.test(ctx.rec.rel);
+  const claudeExt = /(^|\/)\.claude\/(commands|agents|skills)\//i.test(ctx.rec.rel);
   // Supporting notes of a skill (not SKILL.md itself): the only files here
   // that are not read as instructions.
-  const supporting = /(^|\/)skills?\/.+\//.test(ctx.rec.rel) && !/(^|\/)SKILL\.md$/i.test(ctx.rec.rel);
+  const supporting = /(^|\/)skills?\/.+\//i.test(ctx.rec.rel) && !/(^|\/)SKILL\.md$/i.test(ctx.rec.rel);
   let inFront = ctx.lines[0] && ctx.lines[0].trim() === '---';
   // Lines inside code fences that are closed again (an unclosed fence runs
   // to the end of the file and counts as plain text).
@@ -874,10 +875,18 @@ function rule(kind, agent, readers) {
   return { kind, agent, readers: readers || [agent] };
 }
 
-/** Classify a project file by its path relative to the root (forward slashes). */
+/**
+ * Classify a project file by its path relative to the root (forward slashes).
+ * Names are matched without regard to case: on Windows and macOS an agent that
+ * opens CLAUDE.md or .claude/settings.json also loads claude.md or
+ * .Claude/Settings.json, so a repository can ship either spelling. Workflows
+ * are the exception, since GitHub runs only .github/workflows exactly.
+ */
 function classify(rel, isRootLevel) {
+  const exact = rel;
+  rel = rel.toLowerCase();
   const base = rel.slice(rel.lastIndexOf('/') + 1);
-  const lower = base.toLowerCase();
+  const lower = base;
   const has = (re) => re.test(rel);
   if (has(/(^|\/)\.claude\/settings(\.local)?\.json$/)) return rule('claude-settings', 'claude', ['claude', 'cursor']);
   if (base === '.mcp.json') return rule('mcp-json', 'claude');
@@ -898,11 +907,11 @@ function classify(rel, isRootLevel) {
   if (has(/(^|\/)\.claude-plugin\/marketplace\.json$/)) return rule('config-other', 'claude');
   if (has(/(^|\/)hooks\/hooks\.json$/)) return rule('plugin-hooks', 'claude');
   if (base === '.env' && isRootLevel) return rule('dotenv', 'codex');
-  if (has(/(^|\/)\.github\/workflows\/[^/]+\.ya?ml$/)) return rule('workflow', 'any', AGENTS);
+  if (/(^|\/)\.github\/workflows\/[^/]+\.ya?ml$/.test(exact)) return rule('workflow', 'any', AGENTS);
   // Instruction files.
-  if (base === 'AGENTS.md' || base === 'AGENTS.override.md') return rule('instructions', 'any', INSTRUCTION_READERS);
-  if (base === 'CLAUDE.md' || base === 'CLAUDE.local.md') return rule('instructions', 'claude');
-  if (base === 'GEMINI.md') return rule('instructions', 'gemini');
+  if (base === 'agents.md' || base === 'agents.override.md') return rule('instructions', 'any', INSTRUCTION_READERS);
+  if (base === 'claude.md' || base === 'claude.local.md') return rule('instructions', 'claude');
+  if (base === 'gemini.md') return rule('instructions', 'gemini');
   if (base === '.cursorrules') return rule('instructions', 'cursor');
   if (base === '.windsurfrules') return rule('instructions', 'any', AGENTS);
   if (has(/(^|\/)\.clinerules(\/|$)/)) return rule('instructions', 'any', AGENTS);
@@ -937,7 +946,7 @@ const EXTENSION_DIRS = [
 const AGENT_DIRS = new Set(['.claude', '.codex', '.cursor', '.amazonq', '.vscode', '.opencode', '.gemini', '.github', '.claude-plugin', '.clinerules', 'skills']);
 
 function isAgentDirName(name) {
-  return AGENT_DIRS.has(name);
+  return AGENT_DIRS.has(name.toLowerCase());
 }
 
 /* -------------------------- bounded reads --------------------------- */
@@ -1039,7 +1048,7 @@ function walk(root, deadline, maxEntries) {
             continue;
           }
         }
-        const ext = EXTENSION_DIRS.find(([re]) => re.test(r));
+        const ext = EXTENSION_DIRS.find(([re]) => re.test(r.toLowerCase()));
         if (ext) extDirs.push({ rel: r, abs, agent: ext[1], what: ext[2] });
         if (depth < MAX_DEPTH) visit(abs, r, depth + 1, agentHere);
       } else if (d.isFile()) {
@@ -1129,6 +1138,180 @@ function redirectedConfigs(root, unchecked) {
     };
     if (m[1] === 'CODEX_HOME') { add('config.toml', 'codex-toml', 'codex'); add('hooks.json', 'hooks-json', 'codex'); }
     else { add('settings.json', 'claude-settings', 'claude', ['claude', 'cursor']); }
+  }
+  return out;
+}
+
+/* ----------------------- imported instructions ---------------------- */
+
+// Claude Code follows `@path` imports in CLAUDE.md up to this many hops.
+const MAX_IMPORT_HOPS = 5;
+const MAX_IMPORTED = 200;
+// One budget for every glob of one audit, and at most this many `instructions` entries.
+const MAX_GLOB_ENTRIES = 5000;
+const MAX_INSTRUCTION_ENTRIES = 64;
+
+function insideReal(realRoot, abs) {
+  let real;
+  try { real = fs.realpathSync(abs); } catch (_) { return null; }
+  const r = path.relative(realRoot, real);
+  return r === '..' || r.startsWith('..' + path.sep) || path.isAbsolute(r) ? null : real;
+}
+
+function toRel(root, abs) {
+  return path.relative(root, abs).split(path.sep).join('/');
+}
+
+/** `@path` imports of a CLAUDE.md, outside code blocks and code spans. */
+function claudeImports(text) {
+  const out = [];
+  let fence = false;
+  for (const line of text.split(/\r?\n/)) {
+    if (/^\s*(```|~~~)/.test(line)) { fence = !fence; continue; }
+    if (fence) continue;
+    const plain = line.replace(/`[^`]*`/g, ' ');
+    const re = /(?:^|\s)@((?:\.{0,2}\/|~\/|[A-Za-z0-9_.-])[^\s`'"<>()]*)/g;
+    let m;
+    while ((m = re.exec(plain))) {
+      const target = m[1].replace(/[.,;:!?]+$/, '');
+      if (target && !/^[^/]*@/.test(target) && /[./]/.test(target)) out.push(target);
+    }
+  }
+  return out;
+}
+
+/**
+ * A matcher for an OpenCode `instructions` glob: `*` and `?` stay inside one path segment, `**` crosses
+ * segments, and a double star followed by a slash also matches no directory at all. It runs in time proportional to pattern length times
+ * path length (one pass per pattern token over the path), so a pattern full of wildcards cannot make it
+ * backtrack the way a regular expression would.
+ */
+function globMatcher(glob) {
+  const tokens = [];
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    if (c === '*' && glob[i + 1] === '*') {
+      if (glob[i + 2] === '/') { tokens.push({ t: 'dirs' }); i += 2; } else { tokens.push({ t: 'all' }); i += 1; }
+    } else if (c === '*') tokens.push({ t: 'seg' });
+    else if (c === '?') tokens.push({ t: 'one' });
+    else tokens.push({ t: 'lit', c });
+  }
+  return (s) => {
+    const n = s.length;
+    let cur = new Uint8Array(n + 1);
+    cur[0] = 1;
+    for (const tk of tokens) {
+      const next = new Uint8Array(n + 1);
+      if (tk.t === 'lit' || tk.t === 'one') {
+        for (let j = 0; j < n; j++) {
+          if (cur[j] && (tk.t === 'lit' ? s[j] === tk.c : s[j] !== '/')) next[j + 1] = 1;
+        }
+      } else if (tk.t === 'seg' || tk.t === 'all') {
+        for (let j = 0; j <= n; j++) {
+          next[j] = cur[j] || (j > 0 && next[j - 1] && (tk.t === 'all' || s[j - 1] !== '/')) ? 1 : 0;
+        }
+      } else { // dirs: nothing, or any text that ends with '/'
+        let seen = 0;
+        for (let j = 0; j <= n; j++) {
+          next[j] = cur[j] || (j > 0 && seen && s[j - 1] === '/') ? 1 : 0;
+          if (cur[j]) seen = 1;
+        }
+      }
+      cur = next;
+    }
+    return cur[n] === 1;
+  };
+}
+
+/**
+ * Files under the glob's fixed prefix (relative to root) whose path matches an
+ * OpenCode `instructions` glob. `budget` is shared by every glob of one audit:
+ * { entries, deadline, cut }; the walk stops when it runs out or time is up.
+ */
+function globFiles(root, glob, budget) {
+  const star = glob.search(/[*?]/);
+  if (star < 0) return [glob];
+  const prefix = glob.slice(0, glob.lastIndexOf('/', star) + 1);
+  const matches = globMatcher(glob);
+  const found = [];
+  (function visit(rel, depth) {
+    if (budget.cut) return;
+    let list;
+    try { list = fs.readdirSync(path.join(root, ...rel.split('/').filter(Boolean)), { withFileTypes: true }); } catch (_) { return; }
+    for (const d of list) {
+      if (found.length >= MAX_IMPORTED) return;
+      if (--budget.entries < 0 || Date.now() > budget.deadline) { budget.cut = true; return; }
+      const r = rel + d.name;
+      if (d.isDirectory()) {
+        if (d.name === '.git' || SKIP_DIRS.has(d.name) || depth >= 16) continue;
+        visit(r + '/', depth + 1);
+      } else if (d.isFile() && matches(r)) found.push(r);
+    }
+  })(prefix, 0);
+  return found;
+}
+
+/**
+ * Instruction files an agent loads because another one points to them: `@path`
+ * imports in CLAUDE.md (followed recursively, as Claude Code does) and the
+ * `instructions` list of opencode.json. Only files inside the audited
+ * directory are returned; the rest is out of scope like any other path.
+ */
+function importedInstructions(root, files, deadline, unchecked) {
+  let realRoot;
+  try { realRoot = fs.realpathSync(root); } catch (_) { return []; }
+  const known = new Set(files.map((f) => f.rel));
+  const out = [];
+  const add = (abs, agent, from) => {
+    if (out.length >= MAX_IMPORTED) return null;
+    const real = insideReal(realRoot, abs);
+    if (!real) return null;
+    let st;
+    try { st = fs.statSync(real); } catch (_) { return null; }
+    if (!st.isFile()) return null;
+    const rel = toRel(root, abs);
+    if (!rel || rel === '..' || rel.startsWith('../') || known.has(rel)) return null;
+    known.add(rel);
+    const rec = { abs: real, rel, display: rel, scope: 'project', kind: 'instructions', agent, readers: [agent], importedBy: from };
+    out.push(rec);
+    return rec;
+  };
+  const queue = files.filter((f) => f.kind === 'instructions' && f.agent === 'claude' && /(^|\/)claude(\.local)?\.md$/i.test(f.rel))
+    .map((f) => ({ rec: f, hops: 0 }));
+  while (queue.length) {
+    const { rec, hops } = queue.shift();
+    if (hops >= MAX_IMPORT_HOPS) continue;
+    const r = readBounded(rec.abs, MAX_FILE_BYTES, false);
+    if (!r.text) continue;
+    for (const target of claudeImports(r.text)) {
+      if (target.startsWith('~/') || path.isAbsolute(target)) continue;
+      const added = add(path.resolve(path.dirname(path.join(root, rec.rel)), target), 'claude', rec.rel);
+      if (added) queue.push({ rec: added, hops: hops + 1 });
+    }
+  }
+  const budget = { entries: MAX_GLOB_ENTRIES, deadline: deadline || Infinity, cut: false };
+  for (const f of files) {
+    if (f.kind !== 'opencode-json' || out.length >= MAX_IMPORTED || budget.cut) continue;
+    const r = readBounded(f.abs, MAX_FILE_BYTES, false);
+    if (!r.text) continue;
+    let data;
+    try { data = parseJsonc(r.text); } catch (_) { continue; }
+    const list = data && Array.isArray(data.instructions) ? data.instructions : [];
+    const base = path.dirname(f.rel) === '.' ? '' : path.dirname(f.rel) + '/';
+    if (list.length > MAX_INSTRUCTION_ENTRIES) budget.cut = true;
+    for (const raw of list.slice(0, MAX_INSTRUCTION_ENTRIES)) {
+      if (out.length >= MAX_IMPORTED || budget.cut) break;
+      if (typeof raw !== 'string' || !raw) continue;
+      const item = raw.replace(/\\/g, '/');
+      if (/^[a-z]+:\/\//i.test(item) || item.startsWith('~/') || path.isAbsolute(item) || /^[A-Za-z]:/.test(item)) continue;
+      const rel = path.posix.normalize(base + item.replace(/^\.\//, ''));
+      if (rel === '..' || rel.startsWith('../')) continue;
+      for (const m of globFiles(root, rel, budget)) add(path.join(root, ...m.split('/')), 'opencode', f.rel);
+    }
+    if (budget.cut && unchecked) {
+      unchecked.push({ file: f.rel, agent: 'opencode', readers: ['opencode'], severity: 'medium',
+        detail: f.rel + ' lists more instruction files than zn audit follows (' + MAX_INSTRUCTION_ENTRIES + ' entries, ' + MAX_GLOB_ENTRIES + ' directory entries, or the time budget); the rest were not checked.' });
+    }
   }
   return out;
 }
@@ -1407,6 +1590,7 @@ function audit(opts) {
   const { files, extDirs, unchecked, truncated, entries, skippedDirs } = walk(root, deadline, maxEntries);
   const known = new Set(files.map((f) => f.rel));
   for (const rec of redirectedConfigs(root, unchecked)) if (!known.has(rec.rel)) files.push(rec);
+  for (const rec of importedInstructions(root, files, deadline, unchecked)) files.push(rec);
   let scanned = 0;
   let timedOut = truncated && truncated.reason === 'time';
   const wanted = (readers, agent) => agent === 'any' || (readers || []).some((r) => selected.has(r)) || selected.has(agent);
@@ -1449,4 +1633,4 @@ function audit(opts) {
   return { root, files: scanned, findings, truncated: Boolean(truncated) || timedOut, entries, skippedDirs, agents: Array.from(selected) };
 }
 
-module.exports = { audit, classify, redact, AGENTS, _internal: { hookCommands, isOurHook, isOurMcp, gitIgnored, readBounded, grantsWrite, withoutTrailingEquals, OUR_HOOKS, SAFE_ABS, znGateFile } };
+module.exports = { audit, classify, redact, AGENTS, _internal: { globMatcher, hookCommands, isOurHook, isOurMcp, gitIgnored, readBounded, grantsWrite, withoutTrailingEquals, OUR_HOOKS, SAFE_ABS, znGateFile } };

@@ -87,9 +87,9 @@ test('codex: output with secrets is replaced through block; prompts with secrets
   assert.equal((await run(codex, cx('PostToolUse', { tool_name: 'Bash', tool_input: {}, tool_response: { stdout: 'ok' } }))).output, null);
 });
 
-test('codex: install writes hooks.json (user and project) and uninstall removes only ours', (t) => {
+test('codex: install writes hooks.json (user and project) and uninstall removes only ours', { skip: process.platform === 'win32' }, (t) => {
   const home = tempDir(t, 'zn-cx-');
-  const env = { CODEX_HOME: path.join(home, '.codex') };
+  const env = { CODEX_HOME: path.join(home, '.codex'), ZN_HOME: path.join(home, '.zn') };
   const file = codex.hooksFile({ env });
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'mine.sh' }] }] } }));
@@ -98,7 +98,8 @@ test('codex: install writes hooks.json (user and project) and uninstall removes 
   assert.ok(rep.warnings.some((w) => /\/hooks/.test(w)), 'tells the user to trust the hooks');
   const data = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.equal(data.hooks.PreToolUse.length, 2);
-  assert.equal(data.hooks.PreToolUse[1].hooks[0].command, "'/usr/bin/node' '/x/lib/hooks/runner.js' codex");
+  assert.match(data.hooks.PreToolUse[1].hooks[0].command, /^'.*zn-hook-codex\.sh' PreToolUse$/);
+  assert.ok(fs.readFileSync(path.join(home, '.zn', 'hooks', 'zn-hook-codex.sh'), 'utf8').includes("ZN_NODE='/usr/bin/node'"));
   assert.equal(data.hooks.PostToolUse[0].matcher, codex.POST_MATCHER);
   codex.install({ env, nodePath: '/usr/bin/node', runnerPath: '/x/lib/hooks/runner.js' });
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).hooks.PreToolUse.length, 2, 'idempotent');
@@ -146,14 +147,16 @@ test('cursor: MCP output is tokenized, built-in output cannot be, prompts with s
   assert.deepEqual((await run(cursor, cu('beforeSubmitPrompt', { prompt: 'hello' }))).output, { continue: true });
 });
 
-test('cursor: install writes version 1 hooks.json with our events', (t) => {
+test('cursor: install writes version 1 hooks.json with our events', { skip: process.platform === 'win32' }, (t) => {
   const home = tempDir(t, 'zn-cu-');
   // platform is explicit: on Windows the default is the PowerShell form (below).
   cursor.install({ home, nodePath: '/usr/bin/node', runnerPath: '/x/lib/hooks/runner.js', platform: 'linux' });
   const data = JSON.parse(fs.readFileSync(cursor.hooksFile({ home }), 'utf8'));
   assert.equal(data.version, 1);
   assert.deepEqual(Object.keys(data.hooks).sort(), [...cursor.EVENTS].sort());
-  assert.equal(data.hooks.beforeReadFile[0].command, "'/usr/bin/node' '/x/lib/hooks/runner.js' cursor");
+  // A user install goes through the launcher (lib/agents/launcher.js; see hooks_more_launcher.test.js).
+  assert.match(data.hooks.beforeReadFile[0].command, /\/\.zn\/hooks\/zn-hook-cursor\.sh' beforeReadFile$/);
+  assert.match(fs.readFileSync(path.join(home, '.zn', 'hooks', 'zn-hook-cursor.sh'), 'utf8'), /^ZN_NODE='\/usr\/bin\/node'$/m);
   cursor.uninstall({ home });
   assert.deepEqual(JSON.parse(fs.readFileSync(cursor.hooksFile({ home }), 'utf8')).hooks, {});
 });
@@ -162,9 +165,12 @@ test('cursor: install on Windows wraps the hook command in powershell.exe', (t) 
   const home = tempDir(t, 'zn-cu-win-');
   cursor.install({ home, nodePath: '/usr/bin/node', runnerPath: '/x/lib/hooks/runner.js', platform: 'win32' });
   const data = JSON.parse(fs.readFileSync(cursor.hooksFile({ home }), 'utf8'));
-  const expected = 'powershell.exe -NoProfile -NonInteractive -Command "& \'/usr/bin/node\' \'/x/lib/hooks/runner.js\' cursor"';
-  assert.equal(data.hooks.beforeReadFile[0].command, expected);
-  assert.equal(data.hooks.beforeMCPExecution[0].command, expected);
+  for (const ev of ['beforeReadFile', 'beforeMCPExecution']) {
+    const command = data.hooks[ev][0].command;
+    assert.match(command, /^powershell\.exe -NoProfile -NonInteractive -EncodedCommand /);
+    const script = require('../lib/shell-quote').windowsCommandScript(command);
+    assert.ok(script.includes("& '/usr/bin/node' '/x/lib/hooks/runner.js' cursor"), script);
+  }
   cursor.uninstall({ home, platform: 'win32' });
   assert.deepEqual(JSON.parse(fs.readFileSync(cursor.hooksFile({ home }), 'utf8')).hooks, {});
 });
@@ -176,7 +182,7 @@ test('cursor: beforeMCPExecution is installed without failClosed', (t) => {
   cursor.install({ home, nodePath: '/usr/bin/node', runnerPath: '/x/lib/hooks/runner.js', platform: 'linux' });
   const data = JSON.parse(fs.readFileSync(cursor.hooksFile({ home }), 'utf8'));
   const entry = data.hooks.beforeMCPExecution[0];
-  assert.equal(entry.command, "'/usr/bin/node' '/x/lib/hooks/runner.js' cursor");
+  assert.match(entry.command, /zn-hook-cursor\.sh' beforeMCPExecution$/);
   assert.equal(entry.timeout, 30);
   assert.equal(entry.failClosed, undefined, 'no failClosed: an empty answer would block every MCP call');
   cursor.uninstall({ home });
