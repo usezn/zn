@@ -27,6 +27,8 @@ const INSTALL_HINTS = {
 
 const SCHEMA_MAX_DEPTH = 32;
 const SCHEMA_MAX_NODES = 5000;
+// Keys and strings of the second pass (one object with a huge number of keys is cheap in nodes, not in time).
+const SCHEMA_MAX_KEYS = 50000;
 const SCHEMA_TEXT_KEYS = ['description', 'title', '$comment'];
 const SCHEMA_VALUE_KEYS = ['default', 'const', 'enum', 'examples'];
 const SCHEMA_MAP_KEYS = ['properties', 'patternProperties', '$defs', 'definitions', 'dependentSchemas'];
@@ -124,14 +126,19 @@ function inspectSchemaText(root, tool, options, neutral, label0) {
   // cannot be rewritten: one that blocks neutralizes the tool. Text keys and values were checked above.
   const seenAll = new WeakSet();
   let allNodes = 0;
+  let allKeys = 0;
   const visitAll = (node, where, depth, isMap) => {
     if (!node || typeof node !== 'object' || seenAll.has(node)) return;
     if (depth > SCHEMA_MAX_DEPTH || ++allNodes > SCHEMA_MAX_NODES) { limitHit = true; return; }
     seenAll.add(node);
-    for (const k of Object.keys(node)) {
+    const keys = Object.keys(node);
+    allKeys += keys.length;
+    if (allKeys > SCHEMA_MAX_KEYS) { limitHit = true; return; }
+    for (const k of keys) {
       const v = node[k];
       const at = Array.isArray(node) ? where + '[' + k + ']' : (where ? where + '.' + k : k);
-      if (!isMap && !Array.isArray(node) && (SCHEMA_TEXT_KEYS.includes(k) || SCHEMA_VALUE_KEYS.includes(k))) continue;
+      // Skip only what the first pass really checked: a schema node it visited, and there a value key or a text key holding a string.
+      if (!isMap && !Array.isArray(node) && seen.has(node) && (SCHEMA_VALUE_KEYS.includes(k) || (SCHEMA_TEXT_KEYS.includes(k) && typeof v === 'string'))) continue;
       if (!Array.isArray(node) && k.length > 0 && block(neutral ? neutral(k) : k, at + ' (key)') !== null) poisonedKey = true;
       if (typeof v === 'string') {
         if (v.length > 0 && block(neutral ? neutral(v) : v, at) !== null) poisonedKey = true;

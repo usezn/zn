@@ -67,6 +67,30 @@ rl.on('line', (line) => {
     description: 'Plain tool.',
     inputSchema: { type: 'object', properties: { description: { type: 'string', pattern: MARK } } },
   }, {
+    name: 'xdoc_tool', description: 'Plain tool.',
+    inputSchema: { type: 'object', 'x-doc': { description: 'Note ' + MARK }, properties: { a: { type: 'string' } } },
+  }, {
+    name: 'xtitle_tool', description: 'Plain tool.',
+    inputSchema: { type: 'object', properties: { a: { type: 'string', 'x-ui': { title: MARK } } } },
+  }, {
+    name: 'xdefault_tool', description: 'Plain tool.',
+    inputSchema: { type: 'object', 'x-ui': { default: MARK }, properties: { a: { type: 'string' } } },
+  }, {
+    name: 'descobj_tool', description: 'Plain tool.',
+    inputSchema: { type: 'object', description: { text: MARK }, properties: { a: { type: 'string' } } },
+  }, {
+    name: 'titlearr_tool', description: 'Plain tool.',
+    inputSchema: { type: 'object', properties: { a: { type: 'string', title: [MARK] } } },
+  }, {
+    name: 'deps_tool', description: 'Plain tool.',
+    inputSchema: { type: 'object', properties: { a: { type: 'string' } }, dependencies: { a: { description: MARK } } },
+  }, {
+    name: 'contentschema_tool', description: 'Plain tool.',
+    inputSchema: { type: 'object', properties: { a: { type: 'string', contentSchema: { description: MARK } } } },
+  }, {
+    name: 'bigkeys_tool', description: 'Plain tool.',
+    inputSchema: (() => { const o = {}; for (let i = 0; i < 200000; i++) o['k' + i] = 'v' + i; return { type: 'object', 'x-big': o, properties: {} }; })(),
+  }, {
     name: 'structure_ok_tool',
     description: 'Plain tool.',
     inputSchema: {
@@ -136,7 +160,7 @@ test('tools/list: injection in the tool title and annotations.title is neutraliz
 
 test('tools/list: an injection in an x- key value, a property name, required or pattern neutralizes the tool', async () => {
   const tools = await listTools();
-  for (const name of ['ext_tool', 'propname_tool', 'required_tool', 'pattern_tool', 'named_like_keyword_tool']) {
+  for (const name of ['ext_tool', 'propname_tool', 'required_tool', 'pattern_tool', 'named_like_keyword_tool', 'xdoc_tool', 'xtitle_tool', 'xdefault_tool', 'descobj_tool', 'titlearr_tool', 'deps_tool', 'contentschema_tool']) {
     const t = tools.find((x) => x.name === name);
     assert.ok(t.description.startsWith(BLOCKED), name + ': ' + t.description);
     assert.deepEqual(t.inputSchema, { type: 'object', properties: {} }, name);
@@ -166,4 +190,12 @@ test('tools/list: benign nested values and titles pass unchanged', async () => {
   assert.equal(b.title, 'Weather');
   assert.equal(b.annotations.title, 'Weather lookup');
   assert.equal(b.inputSchema.properties.city.default, 'Madrid');
+});
+
+test('tools/list: an object with a huge number of keys hits the limit quickly and is neutralized', async () => {
+  const start = Date.now();
+  const t = (await listTools()).find((x) => x.name === 'bigkeys_tool');
+  assert.ok(t.description.startsWith(BLOCKED), t.description);
+  assert.deepEqual(t.inputSchema, { type: 'object', properties: {} });
+  assert.ok(Date.now() - start < 8000, 'took ' + (Date.now() - start) + ' ms');
 });
