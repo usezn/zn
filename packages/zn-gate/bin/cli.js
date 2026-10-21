@@ -42,14 +42,14 @@ const col = styles(process.stdout, process.env);
 // scan never sees BEGIN and END together, so these run on the whole file.
 const MULTILINE_SECRET_RULES = SECRET_PATTERNS
   .filter((p) => p.id === 'secret:private_key')
-  .map((p) => ({ id: p.id, pattern: p.pattern, header: /-----BEGIN [A-Z ]*PRIVATE KEY-----/ }));
+  .map((p) => ({ id: p.id, pattern: p.pattern, header: /-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----/ }));
 
 // A BEGIN marker with no END (a key cut short when pasted or truncated): the
 // lines after it that look like PEM headers or base64 are treated as key
 // material, up to the first empty or other line (an encrypted key has one
 // empty line after its Proc-Type / DEK-Info headers, which is kept).
-const KEY_BEGIN = /-----BEGIN [A-Z ]*PRIVATE KEY-----/;
-const KEY_END = /-----END [A-Z ]*PRIVATE KEY-----/;
+const KEY_BEGIN = /-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----/;
+const KEY_END = /-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----/;
 const KEY_BODY = /^(?:[A-Za-z0-9+/=]{16,}|[A-Za-z-]+: )/;
 const KEY_HEADER = /^[A-Za-z-]+: /;
 const TRUNCATED_KEY_REASON = 'Exposed credential detected by DLP filter (private key without an END marker)';
