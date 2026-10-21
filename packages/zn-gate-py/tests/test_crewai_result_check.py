@@ -31,7 +31,7 @@ class TestCrewAIResultCheck(unittest.TestCase):
         with self.assertRaises(GuardBlockError) as ctx:
             fetch()
         self.assertEqual(ctx.exception.target, "tool:fetch:result")
-        self.assertIn("do not use this result", str(ctx.exception))
+        self.assertIn("output of this tool was withheld", str(ctx.exception))
 
     def test_injection_in_output_returns_message_or_fallback(self):
         @guarded_tool(on_block="return", check_result=True)
@@ -39,7 +39,7 @@ class TestCrewAIResultCheck(unittest.TestCase):
             return INJECTION
 
         out = fetch()
-        self.assertTrue(out.startswith("zn-gate blocked 'tool:fetch:result'. Reason: "), out)
+        self.assertTrue(out.startswith("zn-gate blocked 'tool:fetch:result'."), out)
 
         @guarded_tool(on_block="return", fallback="BLOCKED", check_result=True)
         def fetch2():
@@ -121,7 +121,7 @@ class TestCrewAIAsyncTool(unittest.TestCase):
             return INJECTION
 
         out = asyncio.run(fetch())
-        self.assertTrue(out.startswith("zn-gate blocked 'tool:fetch:result'. Reason: "), out)
+        self.assertTrue(out.startswith("zn-gate blocked 'tool:fetch:result'."), out)
 
         @guarded_tool(on_block="return", fallback="BLOCKED", check_result=True)
         async def fetch2():
@@ -175,7 +175,7 @@ class TestBlockTargetLabel(unittest.TestCase):
             return "ok"
 
         out = search(INJECTION)
-        self.assertTrue(out.startswith("zn-gate blocked 'crewai:search'. Reason: "), out)
+        self.assertTrue(out.startswith("zn-gate blocked 'crewai:search'."), out)
 
         @guarded_tool(framework="crewai", check_result=True)
         async def fetch():
