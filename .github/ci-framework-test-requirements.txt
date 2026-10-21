@@ -7,13 +7,16 @@
 # ZN_REQUIRE_FRAMEWORKS=1, so a framework that is not installed fails the run instead of skipping.
 #
 # Not managed by Dependabot, like ci-test-requirements.txt. Regenerate with uv from
-# these inputs (saved as ci-framework-test-requirements.in):
+# these inputs, written to a scratch file (for example requirements.in) next to this one:
 #   langchain-core>=1.3.3,<2
 #   llama-index-core>=0.14,<0.15
 #   google-adk==2.12.0
 #   openai-agents==0.24.0
 #   pydantic-ai-slim==2.58.0
-# uv pip compile ci-framework-test-requirements.in --python-version 3.12 #   --python-platform x86_64-manylinux_2_28 --generate-hashes --no-header --no-annotate #   --exclude-newer <date> -c ci-test-requirements.txt
+# then run, as one command:
+#   uv pip compile requirements.in --python-version 3.12 --python-platform x86_64-manylinux_2_28 \
+#     --generate-hashes --no-header --no-annotate --exclude-newer <date> \
+#     -c ci-test-requirements.txt -o ci-framework-test-requirements.txt
 # The -c keeps the shared packages at the versions ci-test-requirements.txt pins.
 # <date> is two weeks ago for the LangChain and LlamaIndex pins; google-adk 2.12.0 is newer than that,
 # so the last compile used 2026-10-21. websockets is pinned by google-adk (below 16).
