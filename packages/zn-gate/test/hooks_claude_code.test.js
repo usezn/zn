@@ -544,7 +544,7 @@ test('policy helpers', () => {
   assert.equal(scan.operator, '|');
 });
 
-test('install / uninstall write and remove only our hooks, with backups', (t) => {
+test('install / uninstall write and remove only our hooks, with backups', { skip: process.platform === 'win32' }, (t) => {
   const home = tempDir(t, 'zn-cc-');
   const file = path.join(home, '.claude', 'settings.json');
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -559,7 +559,10 @@ test('install / uninstall write and remove only our hooks, with backups', (t) =>
   assert.equal(data.hooks.PreToolUse.length, 2);
   assert.deepEqual(data.hooks.PreToolUse[0], userHook);
   assert.equal(data.hooks.PreToolUse[1].matcher, adapter.PRE_MATCHER);
-  assert.equal(data.hooks.PreToolUse[1].hooks[0].command, "'/usr/bin/node' '/opt/zn/lib/hooks/runner.js' claude-code");
+  // A user install goes through zn's launcher script (lib/agents/launcher.js), which names the Node.js and runner.
+  const launcherFile = require('../lib/agents/launcher').launcherFile('claude-code', { env, home });
+  assert.equal(data.hooks.PreToolUse[1].hooks[0].command, "'" + launcherFile + "' PreToolUse");
+  assert.match(fs.readFileSync(launcherFile, 'utf8'), /^ZN_NODE='\/usr\/bin\/node'$/m);
   assert.equal(data.hooks.PostToolUse[0].matcher, adapter.POST_MATCHER);
   assert.ok(Array.isArray(data.hooks.UserPromptSubmit));
   adapter.install({ scope: 'user', home, env, mcp: false, nodePath: '/usr/bin/node', cliPath: '/opt/zn-gate/bin/cli.js', runnerPath: '/opt/zn/lib/hooks/runner.js' });
@@ -568,6 +571,7 @@ test('install / uninstall write and remove only our hooks, with backups', (t) =>
   adapter.uninstall({ scope: 'user', home, env, mcp: false });
   const after = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.deepEqual(after, { model: 'x', hooks: { PreToolUse: [userHook] } });
+  assert.ok(!fs.existsSync(launcherFile), 'uninstall removes the launcher');
 });
 
 test('project install writes .claude/settings.json and .mcp.json', (t) => {
@@ -632,15 +636,15 @@ test('Windows: an extensionless file next to its .cmd is not the program (npm la
   }
 });
 
-test('the prompt hook blocks the prompt when it cannot run; tool hooks do not', (t) => {
+test('the prompt and pre-tool hooks block when they cannot run; the post-tool hook does not', (t) => {
   const home = tempDir(t, 'zn-onf-');
   const env = { CLAUDE_CONFIG_DIR: path.join(home, '.claude') };
   const opts = { scope: 'user', home, env, mcp: false, nodePath: '/usr/bin/node', cliPath: '/opt/zn-gate/bin/cli.js', runnerPath: '/opt/zn/lib/hooks/runner.js' };
   const read = () => JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8')).hooks || {};
   adapter.install(opts);
   assert.equal(read().UserPromptSubmit[0].hooks[0].onFailure, 'block');
-  // A tool hook that cannot run lets the call through, as documented.
-  assert.equal(read().PreToolUse[0].hooks[0].onFailure, undefined);
+  // A tool call is blocked too when its pre hook cannot run; the post hook only warns (the tool already ran).
+  assert.equal(read().PreToolUse[0].hooks[0].onFailure, 'block');
   assert.equal(read().PostToolUse[0].hooks[0].onFailure, undefined);
   // Reinstall and uninstall still recognise the prompt hook.
   adapter.install(opts);

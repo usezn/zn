@@ -1,0 +1,2 @@
+### Added
+- A runnable example for people who build agents with AG2 (the framework that grew out of AutoGen). It guards a tool with zn-gate on both sides: a request that carries orders for the model is stopped before the tool runs, a tool result that tries to give the model orders is blocked, and secrets in the result are hidden. It runs locally with a scripted model and made-up pages, and needs no API key.
