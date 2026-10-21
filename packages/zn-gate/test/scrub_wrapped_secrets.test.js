@@ -36,6 +36,19 @@ test('a wrapped base64 value whose last line ends in == padding is redacted whol
   for (const part of wrap(value, 20).split('\n')) assert.ok(!out.includes(part), part);
 });
 
+test('a wrapped base64 value whose last line ends in a single = padding is redacted whole', () => {
+  // Fictitious value: the last line is letters plus one "=", which is padding, not an empty NAME= setting.
+  const value = 'QWxhZGRpbjpvcGVuIHNl' + 'c2FtZQxYzAbCdEfGhIjK' + 'lMnOpQrStUvWxYz=';
+  const out = rules.redactSecrets('DB_PASSWORD=' + wrap(value, 20) + '\n').sanitized;
+  assert.ok(out.includes('[REDACTED_SECRET]'), out);
+  for (const part of wrap(value, 20).split('\n')) assert.ok(!out.includes(part), part);
+});
+
+test('a YAML key with nothing after the colon keeps its own line after a long value', () => {
+  const text = 'API_TOKEN=' + 'Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXy4z' + '\nsettings_block:\n  a: 1\n';
+  assert.ok(rules.redactSecrets(text).sanitized.includes('\nsettings_block:\n'));
+});
+
 test('a NAME==value or NAME:=value line after a long value keeps its own line', () => {
   // A pin such as requests_oauthlib==1.3.1 is a setting, not the padding of the value before it.
   for (const next of ['requests_oauthlib==1.3.1', 'SETTING_NAME:=abcdefghij']) {

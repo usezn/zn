@@ -25,6 +25,18 @@ class WrappedSecrets(unittest.TestCase):
         for part in wrap(value, 20).split('\n'):
             self.assertNotIn(part, out)
 
+    def test_base64_single_padding_on_last_line(self):
+        # Fictitious value: the last line is letters plus one "=", which is padding, not an empty NAME= setting.
+        value = 'QWxhZGRpbjpvcGVuIHNl' + 'c2FtZQxYzAbCdEfGhIjK' + 'lMnOpQrStUvWxYz='
+        out = self.redact('DB_PASSWORD=' + wrap(value, 20) + '\n')
+        self.assertIn('[REDACTED_SECRET]', out)
+        for part in wrap(value, 20).split('\n'):
+            self.assertNotIn(part, out)
+
+    def test_yaml_key_with_empty_value_keeps_its_line(self):
+        text = 'API_TOKEN=' + 'Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXy4z' + '\nsettings_block:\n  a: 1\n'
+        self.assertIn('\nsettings_block:\n', self.redact(text))
+
     def test_name_double_equals_line_keeps_its_line(self):
         # A pin such as requests_oauthlib==1.3.1 is a setting, not the padding of the value before it.
         for nxt in ('requests_oauthlib==1.3.1', 'SETTING_NAME:=abcdefghij'):
