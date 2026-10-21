@@ -19,9 +19,9 @@ const ALIASES = { claude: 'claude-code', claudecode: 'claude-code', 'gemini-cli'
 
 const has = (obj, key) => Object.hasOwn(obj, key);
 
-/** The agent id as it is safe to echo: control and format characters (incl. bidi overrides) removed. */
+/** The agent id as it is safe to echo: control, format (incl. bidi overrides), line and paragraph separator and lone surrogate characters removed. */
 function cleanId(id) {
-  return String(id === undefined || id === null ? '' : id).replace(/[\p{Cc}\p{Cf}]/gu, '');
+  return String(id === undefined || id === null ? '' : id).replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Cs}]/gu, '');
 }
 
 function getAdapter(id) {

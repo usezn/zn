@@ -20,7 +20,7 @@ import contextvars
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
-from ..guard import GuardBlockError, block_message, check_tool_call, check_tool_result, validate_on_block
+from ..guard import GuardBlockError, block_message, check_tool_call, check_tool_result, validate_on_block, _rebuild_error
 from ..rules import Assessment, evaluate, sanitize_tool_result
 
 try:
@@ -90,29 +90,6 @@ def _error_secrets(error: BaseException) -> List[Dict[str, Any]]:
         _, detections = sanitize_tool_result(text)
         found.extend(detections)
     return found
-
-
-def _rebuild_error(error: BaseException, message: str) -> BaseException:
-    """A new exception of the same type as `error` carrying only `message`
-    (no original arguments, attributes, notes or chained exceptions), or a
-    plain RuntimeError when the type cannot be rebuilt that way."""
-    cls = type(error)
-    candidates: List[BaseException] = []
-    try:
-        candidates.append(cls(message))
-    except Exception:
-        pass
-    try:
-        bare = cls.__new__(cls)
-        bare.args = (message,)
-        candidates.append(bare)
-    except Exception:
-        pass
-    for new in candidates:
-        text, rtext = _safe_text(str, new), _safe_text(repr, new)
-        if message in text and _mask_text(text) == text and _mask_text(rtext) == rtext:
-            return new
-    return RuntimeError(message)
 
 
 def _secret_assessment(found: List[Dict[str, Any]]) -> Assessment:
@@ -481,8 +458,8 @@ def guard_langchain_tool(
     its output, because handle_tool_error and LangGraph's ToolNode send it to
     the model: a blocked message is handled like a blocked output, and a
     message with a secret is raised again as the same exception type carrying
-    only the masked message (a plain RuntimeError when the type cannot be
-    rebuilt that way). The returned tool keeps the original's
+    only the masked message (MaskedToolError, a RuntimeError, when the type
+    cannot be rebuilt that way). The returned tool keeps the original's
     handle_tool_error and handle_validation_error.
 
     A tool with response_format="content_and_artifact" keeps it: the content

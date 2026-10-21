@@ -544,6 +544,18 @@ try {
   test('unknown agent is a usage error', () => {
     assert.strictEqual(run(['hook', 'other']).status, 1);
   });
+  test('the launcher usage lists the agents it supports, and each one is an adapter of the package', () => {
+    const { listAdapters } = require('../../packages/zn-gate/lib/agents');
+    const src = fs.readFileSync(LAUNCHER, 'utf8');
+    const m = /const SUPPORTED_AGENTS = new Set\(\[([^\]]*)\]\)/.exec(src);
+    assert.ok(m, 'SUPPORTED_AGENTS not found');
+    const ids = m[1].split(',').map((x) => x.trim().replace(/^'|'$/g, '')).filter(Boolean);
+    assert.ok(ids.length > 0);
+    for (const id of ids) assert.ok(listAdapters().includes(id), id + ' is not an adapter of the package');
+    const r = run([]);
+    assert.strictEqual(r.status, 1);
+    assert.ok(r.stderr.includes('hook <' + ids.join('|') + '>'), r.stderr);
+  });
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
 }
