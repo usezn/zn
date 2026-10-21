@@ -29,6 +29,8 @@ const INSTALL_HINTS = {
 
 const SCHEMA_MAX_DEPTH = 32;
 const SCHEMA_MAX_NODES = 5000;
+// Keys and strings of the second pass (one object with a huge number of keys is cheap in nodes, not in time).
+const SCHEMA_MAX_KEYS = 50000;
 const SCHEMA_TEXT_KEYS = ['description', 'title', '$comment'];
 const SCHEMA_VALUE_KEYS = ['default', 'const', 'enum', 'examples'];
 const SCHEMA_MAP_KEYS = ['properties', 'patternProperties', '$defs', 'definitions', 'dependentSchemas'];
@@ -121,7 +123,36 @@ function inspectSchemaText(root, tool, options, neutral, label0) {
     }
   };
   visit(root, '', 0);
-  // Why the tool must be neutralized: 'limit' (too deep or too large to check), 'key' (a poisoned key), or false.
+  // Every other string of the schema the model may read: property names and other keys (x-* extensions too),
+  // required entries, pattern, format, $ref and the values of unknown keywords. They are structure, so they
+  // cannot be rewritten: one that blocks neutralizes the tool. Text keys and values were checked above.
+  const seenAll = new WeakSet();
+  let allNodes = 0;
+  let allKeys = 0;
+  const visitAll = (node, where, depth, isMap) => {
+    if (!node || typeof node !== 'object' || seenAll.has(node)) return;
+    if (depth > SCHEMA_MAX_DEPTH || ++allNodes > SCHEMA_MAX_NODES) { limitHit = true; return; }
+    seenAll.add(node);
+    const keys = Object.keys(node);
+    allKeys += keys.length;
+    if (allKeys > SCHEMA_MAX_KEYS) { limitHit = true; return; }
+    for (const k of keys) {
+      const v = node[k];
+      const at = Array.isArray(node) ? where + '[' + k + ']' : (where ? where + '.' + k : k);
+      // Skip only what the first pass really checked: a schema node it visited, and there a value key or a text key holding a string.
+      if (!isMap && !Array.isArray(node) && seen.has(node) && (SCHEMA_VALUE_KEYS.includes(k) || (SCHEMA_TEXT_KEYS.includes(k) && typeof v === 'string'))) continue;
+      if (!Array.isArray(node) && k.length > 0 && block(neutral ? neutral(k) : k, at + ' (key)') !== null) poisonedKey = true;
+      if (typeof v === 'string') {
+        if (v.length > 0 && block(neutral ? neutral(v) : v, at) !== null) poisonedKey = true;
+      } else if (v && typeof v === 'object') {
+        // Inside properties, patternProperties, $defs and the like the keys are names and the values schemas.
+        visitAll(v, at, depth + 1, !isMap && !Array.isArray(node) && SCHEMA_MAP_KEYS.includes(k));
+      }
+    }
+  };
+  visitAll(root, label0 || '', 0, false);
+  // Why the tool must be neutralized: 'limit' (too deep or too large to check), 'key' (a poisoned key or other
+  // structural string), or false.
   return limitHit ? 'limit' : poisonedKey ? 'key' : false;
 }
 
@@ -132,7 +163,7 @@ function inspectSchemaText(root, tool, options, neutral, label0) {
 function neutralizeUncheckable(tool, which, options, why = 'limit') {
   const key = why === 'key';
   process.stderr.write(key
-    ? `[zn-shield BLOCKED TOOL] Tool '${tool.name}' has an ${which} with a key inside a default or const value that carries a prompt injection, so it was not passed on.\n`
+    ? `[zn-shield BLOCKED TOOL] Tool '${tool.name}' has an ${which} with a name, key or other schema string that carries a prompt injection, so it was not passed on.\n`
     : `[zn-shield BLOCKED TOOL] Tool '${tool.name}' has an ${which} too deep or too large for zn-gate to check (limit: ${SCHEMA_MAX_DEPTH} levels or ${SCHEMA_MAX_NODES} entries), so it was not passed on unchecked.\n`);
   // A poisoned key is already in the evidence log (block); a schema over the limits is logged here.
   if (!key) {
@@ -151,7 +182,7 @@ function neutralizeUncheckable(tool, which, options, why = 'limit') {
   }
   if (options.shadow) return;
   tool.description = key
-    ? `[zn-gate SECURITY BLOCKED] Tool neutralized: its ${which} has a key inside a default or const value that carries a prompt injection.`
+    ? `[zn-gate SECURITY BLOCKED] Tool neutralized: its ${which} has a name, key or other schema string that carries a prompt injection.`
     : `[zn-gate SECURITY BLOCKED] Tool neutralized: its ${which} is too deep or too large to check for prompt injection.`;
   tool.inputSchema = { type: 'object', properties: {} };
   if (tool.outputSchema !== undefined) delete tool.outputSchema;

@@ -73,6 +73,9 @@ const [NODE_MAJOR, NODE_MINOR] = process.versions.node.split('.').map((x) => par
 const NODE_VERSION_OK = NODE_MAJOR > 21 || (NODE_MAJOR === 21 && NODE_MINOR >= 7) || (NODE_MAJOR === 20 && NODE_MINOR >= 19);
 const NODE_OK = NODE_VERSION_OK && !!(vm.constants && vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER);
 const NODE_HINT = 'the zn-gate plugin needs Node.js 20.19 or later with vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER (this is ' + process.version + ').';
+// Not derived from the package's adapter list on purpose: this launcher runs the pinned, verified zn-gate
+// build, which can be older than the adapters in the repo, and the plugin ships hook files only for these
+// agents. plugins/tools/test-launch.js fails when an id here is not an adapter of the package.
 const SUPPORTED_AGENTS = new Set(['claude-code', 'codex', 'cursor']);
 
 // zn-gate starts child processes with this process's environment; a preload
@@ -730,7 +733,7 @@ function main(argv) {
   if (mode === 'secrets-mcp') return runMcp();
   if (mode === 'zn-gate-mcp') return runZnGateMcp(agent);
   if (mode === 'check') return runCheck(agent || '');
-  process.stderr.write('usage: zn-launch.js hook <claude-code|codex|cursor> | secrets-mcp | zn-gate-mcp | check [agent]\n');
+  process.stderr.write('usage: zn-launch.js hook <' + [...SUPPORTED_AGENTS].join('|') + '> | secrets-mcp | zn-gate-mcp | check [agent]\n');
   process.exitCode = 1;
 }
 
