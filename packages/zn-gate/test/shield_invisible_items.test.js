@@ -28,6 +28,8 @@ rl.on('line', (line) => {
   let result = { content };
   if (name === 'sc_only') result = { structuredContent: { parts: Array.from({ length: 60 }, () => Z.repeat(65535)) } };
   if (name === 'sc_after_100k') result = { content: [{ type: 'text', text: 'ok' }], structuredContent: { a: Array.from({ length: 60 }, () => Z.repeat(65535)), b: Array.from({ length: 100001 }, () => 1) } };
+  if (name === 'sc_rows') result = { structuredContent: { rows: Array.from({ length: 11000 }, (_, i) => ({ a: i, b: i, c: i, d: i, e: i, f: i, g: i, h: i, i: i, j: i })) } };
+  if (name === 'sc_huge') result = { structuredContent: { s: 'a'.repeat(33 * 1024 * 1024) } };
   if (name === 'sc_benign') result = { structuredContent: { temp: 64, city: 'Example', list: [1, 2, 3] } };
   if (name === 'structured') result.structuredContent = { parts: Array.from({ length: 60 }, () => '\\u200b'.repeat(65535)) };
   process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }) + '\\n');
@@ -61,7 +63,7 @@ function run(toolName) {
   });
 }
 
-for (const name of ['split', 'split_mixed', 'resources', 'structured', 'sc_only', 'sc_after_100k']) {
+for (const name of ['split', 'split_mixed', 'resources', 'structured', 'sc_only', 'sc_after_100k', 'sc_huge']) {
   test(`many items under the cap but over it in total are blocked (${name})`, async () => {
     const { msg, ms } = await run(name);
     assert.equal(msg.result.isError, true);
@@ -84,4 +86,11 @@ test('a benign structuredContent-only result passes untouched', async () => {
   const { msg } = await run('sc_benign');
   assert.ok(!msg.result.isError);
   assert.deepEqual(msg.result.structuredContent, { temp: 64, city: 'Example', list: [1, 2, 3] });
+});
+
+test('a benign structuredContent with more than 110,000 nodes passes intact', async () => {
+  const { msg } = await run('sc_rows');
+  assert.ok(!msg.result.isError);
+  assert.equal(msg.result.structuredContent.rows.length, 11000);
+  assert.equal(msg.result.structuredContent.rows[10999].j, 10999);
 });
