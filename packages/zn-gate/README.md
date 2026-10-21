@@ -264,8 +264,8 @@ The local engine is a deterministic signature and normalization layer. It is fas
 
 ## What zn-gate is not
 
-- **Not a sandbox.** zn-gate checks what its hooks, MCP wrappers and library calls can see, and blocks or rewrites it. A program the agent starts can still do things the hooks cannot read. For that, use your agent's own sandbox or permission prompts (see the [threat model](docs/threat-model.md)).
-- **Coverage depends on the agent.** Each agent's hooks see and can change different things: for example, Cursor cannot rewrite shell or file output, and Codex replaces a result instead of editing it. [Agent compatibility](docs/compat.md) lists it per agent, and `npx -y zn-gate check` shows what your own agents are covered for.
+- **Not a sandbox.** zn-gate checks what its hooks, MCP wrappers and library calls can see, and blocks or rewrites it. A program the agent starts can still do things the hooks cannot read. For that, use your agent's own sandbox or permission prompts (see the [threat model](https://github.com/usezn/zn/blob/main/docs/threat-model.md)).
+- **Coverage depends on the agent.** Each agent's hooks see and can change different things: for example, Cursor cannot rewrite shell or file output, and Codex replaces a result instead of editing it. [Agent compatibility](https://github.com/usezn/zn/blob/main/docs/compat.md) lists it per agent, and `npx -y zn-gate check` shows what your own agents are covered for.
 
 ## Configuration
 
