@@ -218,3 +218,5 @@ echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.zshrc
 ```
 
 Use `~/.bashrc` instead of `~/.zshrc` if you use bash. Then open a new terminal and run `npx -y zn-gate init` again. A Node.js version manager such as nvm also avoids the problem. This does not apply to Windows.
+
+**To see the technical detail of an error:** run the command again with `ZN_VERBOSE=1`, or set `DEBUG=zn`. Other `DEBUG` values, such as `DEBUG=*`, do not change what zn prints.

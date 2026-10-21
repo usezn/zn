@@ -143,7 +143,7 @@ test('secrets.age that decrypts to text that is not JSON: the decrypted text is 
     const { identity, recipient } = await store.generateIdentity();
     const plain = 'ZN_FAKE_SECRET_EXAMPLE_value_not_json';
     fs.writeFileSync(f, Buffer.from(await store.encryptTo(recipient, plain)));
-    for (const env of [{}, { ZN_VERBOSE: '1' }, { DEBUG: '*' }]) {
+    for (const env of [{}, { ZN_VERBOSE: '1' }, { DEBUG: 'zn' }]) {
       Object.assign(process.env, env);
       try {
         let err = null;
