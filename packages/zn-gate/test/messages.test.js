@@ -30,13 +30,13 @@ test('vault messages', () => {
   assert.equal(m.unknownBackend('foo', ['keychain', 'passphrase']), 'Unknown vault backend "foo". Use one of: keychain, passphrase.');
   assert.equal(m.unknownBackend('foo', require('../lib/vault/keychain').BACKENDS),
     'Unknown vault backend "foo". Use one of: macos, windows, libsecret, passphrase.');
-  assert.equal(m.UNLOCK_NEEDS_TERMINAL, 'zn unlock needs an interactive terminal: run it in your own terminal window');
+  assert.match(m.unlockNeedsTerminal(), /^(zn|npx -y zn-gate@[0-9.]+) unlock needs an interactive terminal: run it in your own terminal window$/);
   assert.equal(m.FOREGROUND_NEEDS_TERMINAL, '--foreground needs an interactive terminal (it asks you there). Run it in your own terminal window.');
   assert.equal(m.PASSPHRASE_NEEDS_TERMINAL,
     'zn needs a terminal to ask for the passphrase. Run this command in your terminal, or pass it with --passphrase-stdin.');
-  assert.equal(m.PASSPHRASE_CANCELLED, 'Cancelled: no passphrase was entered. Run `zn unlock` again when you are ready.');
-  assert.equal(m.PASSPHRASE_MISMATCH, 'The two passphrases do not match. Nothing was created; run `zn unlock` again.');
-  assert.equal(m.FORGET_LOCK_FIRST, 'Lock the vault first (`zn lock`): the daemon may hold this project in memory.');
+  assert.match(m.passphraseCancelled(), /^Cancelled: no passphrase was entered\. Run `(zn|npx -y zn-gate@[0-9.]+) unlock` again when you are ready\.$/);
+  assert.match(m.passphraseMismatch(), /^The two passphrases do not match\. Nothing was created; run `(zn|npx -y zn-gate@[0-9.]+) unlock` again\.$/);
+  assert.match(m.forgetLockFirst(), /^Lock the vault first \(`(zn|npx -y zn-gate@[0-9.]+) lock`\): the daemon may hold this project in memory\.$/);
 });
 
 test('connect messages', () => {
@@ -48,7 +48,11 @@ test('connect messages', () => {
     'usezn.com did not accept this key (it may be revoked or mistyped). Nothing was saved. Run `zn-gate connect` and paste a valid key.');
   assert.equal(m.connectFullAccess('https://example.com/connect'),
     'This key can do more than analyze text, and zn-gate only accepts a key limited to analyzing. Create an analysis-only key on the connect page and paste that one: https://example.com/connect\nNothing was saved.');
-  assert.equal(m.connectUnverified('HTTP 500'), 'Could not verify the key with usezn.com (HTTP 500), so nothing was saved. Try again later.');
+  assert.equal(m.connectUnverified('HTTP 500', {}),
+    'usezn.com is not answering properly right now, so the key was not checked and nothing was saved. Try `zn-gate connect` again in a few minutes.');
+  assert.equal(m.connectUnverified('ENOTFOUND', {}),
+    'Could not reach usezn.com, so the key was not checked and nothing was saved. Check your internet connection, then run `zn-gate connect` again.');
+  assert.match(m.connectUnverified('ENOTFOUND', { ZN_VERBOSE: '1' }), / Detail: ENOTFOUND\.$/);
   assert.equal(m.connectSaveFailed('disk full'), 'Could not save the key: disk full. Nothing was kept. Run `zn-gate connect` to try again.');
 });
 
