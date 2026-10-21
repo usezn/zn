@@ -1,6 +1,6 @@
 'use strict';
-// A hook block appends one record with plainPreview: the ledger must not load the redaction engine
-// for it (that cost about 17 ms per block). Without plainPreview the preview is still redacted.
+// A hook block appends one record with _plainPreview: the ledger must not load the redaction engine
+// for it (that cost about 17 ms per block). Without _plainPreview the preview is still redacted.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { spawnSync } = require('child_process');
@@ -16,7 +16,7 @@ function run(script, dir) {
   return JSON.parse(r.stdout);
 }
 
-test('an append with plainPreview loads neither the rules nor the scrubber engine', () => {
+test('an append with _plainPreview loads neither the rules nor the scrubber engine', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-ev-plain-'));
   try {
     const out = run(`
@@ -24,7 +24,7 @@ test('an append with plainPreview loads neither the rules nor the scrubber engin
       const ev = require(path.join(process.env.ZN_LIB, 'evidence'));
       const payload = JSON.stringify({ event: 'pre_tool', tool: 'Bash', kinds: [] });
       const rec = ev.logEvidence({ agent: 'claude-code', phase: 'hook-pre_tool', tool_name: 'Bash', payload, verdict: 'block' },
-        path.join(process.env.ZN_DIR, 'evidence.jsonl'), { lockWaitMs: 500, noStats: true, plainPreview: true });
+        path.join(process.env.ZN_DIR, 'evidence.jsonl'), { lockWaitMs: 500, noStats: true, _plainPreview: true });
       const loaded = Object.keys(require.cache).map((k) => path.relative(process.env.ZN_LIB, k));
       process.stdout.write(JSON.stringify({ preview: rec.payload_preview, payload, loaded }));
     `, dir);
@@ -36,7 +36,7 @@ test('an append with plainPreview loads neither the rules nor the scrubber engin
   }
 });
 
-test('without plainPreview the preview is still redacted', () => {
+test('without _plainPreview the preview is still redacted', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-ev-plain-'));
   try {
     // Fake key, built in pieces.

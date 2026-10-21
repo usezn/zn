@@ -5,7 +5,7 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 // rules (with the scrubber engine behind it), term and http are loaded where they are used, so an
-// append that does not need them (a hook block, see plainPreview in logEvidence) stays cheap.
+// append that does not need them (a hook block, see _plainPreview in logEvidence) stays cheap.
 
 const ZN_DIR = path.join(os.homedir(), '.zn');
 const EVIDENCE_FILE = path.join(ZN_DIR, 'evidence.jsonl');
@@ -413,7 +413,7 @@ function logEvidence(event, filePath = EVIDENCE_FILE, opts = {}) {
       }
       return null;
     }
-    const finalRecord = buildRecord(event, prevHash, opts.plainPreview === true);
+    const finalRecord = buildRecord(event, prevHash, opts._plainPreview === true);
     // _beforeAppend is a test-only hook (internal, not part of the public options).
     if (typeof opts._beforeAppend === 'function') opts._beforeAppend();
     // Still our lock? If it was taken over (this process was stalled for over 10 s) the last
@@ -453,7 +453,7 @@ function buildRecord(event, prevHash, plainPreview = false) {
     tool_name: event.tool_name || event.tool || 'unknown',
     payload_sha256: payloadSha256,
     // Redact the full payload first, then cut, so a secret straddling the cut is not leaked. With
-    // plainPreview the caller built the payload from fixed fields only (no text the agent sent), so
+    // _plainPreview the caller built the payload from fixed fields only (no text the agent sent), so
     // it is cut as it is and the redaction engine is not loaded.
     payload_preview: plainPreview
       ? payloadStr.slice(0, 120)
