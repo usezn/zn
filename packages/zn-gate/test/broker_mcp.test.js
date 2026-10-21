@@ -94,6 +94,51 @@ test('secrets_http_request substitutes for an allowed host and scrubs the respon
   }
 });
 
+test('secrets_http_request scrubs a secret echoed in the status text', async () => {
+  const server = http.createServer((req, res) => {
+    // A server can put anything in the reason phrase.
+    res.statusMessage = 'OK ' + String(req.headers.authorization || '').replace('Bearer ', '') + ' ' + OTHER;
+    res.end('{}');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const srv = createSecretsServer({ vault: await vaultWith(), engine: fakeEngine });
+    const r = await call(srv, 'secrets_http_request', {
+      method: 'GET', url: 'http://127.0.0.1:' + server.address().port + '/user', headers: { Authorization: 'Bearer __ZN_GITHUB_TOKEN__' },
+    });
+    assert.equal(r.isError, false, JSON.stringify(r.data));
+    assert.match(r.data.statusText, /^OK /);
+    const out = JSON.stringify(r.data);
+    assert.ok(!out.includes(GHP), 'token in the status text scrubbed');
+    assert.ok(!out.includes(OTHER), 'unrelated secret in the status text scrubbed');
+  } finally {
+    server.close();
+  }
+});
+
+test('secrets_http_request scrubs a secret echoed as a response header name', async () => {
+  // Header names are lowercased by fetch, so the fake token is all lowercase.
+  const secret = 'zn' + 'fake' + 'headername' + '0123456789abcdef';
+  const server = http.createServer((req, res) => {
+    res.setHeader(String(req.headers.authorization || '').replace('Bearer ', ''), 'x');
+    res.end('{}');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const vault = createFakeVault();
+    await vault.setSecret('GITHUB_TOKEN', secret, { mode: 'proxy', allowHosts: ['127.0.0.1'] });
+    const srv = createSecretsServer({ vault, engine: fakeEngine });
+    const r = await call(srv, 'secrets_http_request', {
+      method: 'GET', url: 'http://127.0.0.1:' + server.address().port + '/user', headers: { Authorization: 'Bearer __ZN_GITHUB_TOKEN__' },
+    });
+    assert.equal(r.isError, false, JSON.stringify(r.data));
+    assert.ok(!JSON.stringify(r.data).includes(secret), 'token in a header name scrubbed');
+    assert.ok(Object.keys(r.data.headers).some((k) => k.includes('__ZN_GITHUB_TOKEN__')), 'name replaced by the marker');
+  } finally {
+    server.close();
+  }
+});
+
 test('secrets_http_request: markers only in headers unless the secret allows the URL or the body', async () => {
   const { server, seen, port } = await startServer();
   try {
