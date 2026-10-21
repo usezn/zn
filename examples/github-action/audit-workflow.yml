@@ -21,7 +21,7 @@ jobs:
         id: zn
         # Pin to the full commit SHA of an Action release v1.10.0 or later.
         # The zn-gate package version is set by version below.
-        uses: usezn/zn@1174db0f8d980fb5e61facc7b63344f8da95e5ff # v1.13.0
+        uses: usezn/zn@746be20f3276ab0d589f2d6df941b5d31a5396d8 # v1.13.1
         with:
           version: '1.13.1'
           mode: 'both'
