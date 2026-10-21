@@ -246,6 +246,18 @@ No framework is required to import them. Each one uses the same rules as `check_
 - `check_result`: also scan the output for prompt injection before the agent sees it (default `False`); a blocked output raises or returns as above. `block_truncated` blocks an output too large to scan in full (rule `size:truncated`).
 - `framework`: prefix of the block target, `'<framework>:<tool>'` (default `'tool'`).
 
+### `adk_tool_callbacks(on_block='return', mask_secrets=True, check_result=True, block_truncated=False, fallback=None)`
+- Returns `(before_tool_callback, after_tool_callback)` for a Google ADK `LlmAgent`. Needs `google-adk`. The before callback checks the arguments the model chose; a blocked call does not run, and the tool response is `{"error": <message>}`. The after callback checks the tool response for prompt injection and masks secrets, including secrets inside pydantic models, dataclasses and other objects.
+- `on_block`: `'return'` (default) or `'raise'` (raises `GuardBlockError`). `fallback` replaces the plain block message. A secret that cannot be masked blocks the result (rule `secret:unmaskable`).
+
+### `openai_agents_tool_guardrails(on_block='return', mask_secrets=True, check_result=True, block_truncated=False, fallback=None)`
+- Returns `(tool_input_guardrails, tool_output_guardrails)` for the OpenAI Agents SDK: pass them to `@function_tool(...)` or to an MCP server. Needs `openai-agents`. A blocked call does not run and the model gets the block message. A secret in the output is masked by replacing the output with the masked text (JSON text for a dict, list or object).
+- `on_block`: `'return'` (default) or `'raise'` (the SDK's own tripwire). Hosted tools of the SDK have no tool guardrails and are not covered.
+
+### `guard_pydantic_ai_toolset(toolset, on_block='return', mask_secrets=True, check_result=True, block_truncated=False, fallback=None)`
+- Wraps a Pydantic AI toolset (an MCP server, a `FunctionToolset`...) so every call through it is checked. Needs `pydantic-ai`. A blocked call does not run: the tool result is the block message (`'return'`, default) or `GuardBlockError` is raised (`'raise'`). Results are checked for prompt injection and secrets in them are masked, including secrets inside models, dataclasses and other objects.
+- Tools added with `@agent.tool` are not in a toolset you hold: put them in a `FunctionToolset` and wrap that, or use `guarded_tool`.
+
 ### `ZnLlamaGuard(on_block='raise', mask_secrets=True, raise_on_violation=None, fallback=None)`
 - Query and response check for LlamaIndex. `check_query(query)` (also `on_query_start`) returns the query when it is allowed. When it is blocked, `'raise'` raises `GuardBlockError` (target `llamaindex:query`), `'return'` returns `fallback` (or the plain block message when `fallback` is `None`) in place of the query, and `'ignore'` lets the query through. `sanitize_response(response)` redacts credentials when `mask_secrets` is `True` and returns the clean value; call it yourself, it is not run automatically.
 - `on_block` accepts `'raise'` (default), `'return'` or `'ignore'`. `raise_on_violation` overrides it as `raise_on_injection` does above.
