@@ -5,11 +5,12 @@ turn it on."""
 
 import os
 import re
+from typing import Mapping, Optional
 
 _ENTRY = re.compile(r"(zn|zn-gate)(\*|:.*)?")
 
 
-def is_verbose(env=None):
+def is_verbose(env: Optional[Mapping[str, str]] = None) -> bool:
     env = os.environ if env is None else env
     if env.get("ZN_VERBOSE") == "1":
         return True
