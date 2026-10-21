@@ -344,10 +344,10 @@ test('scan with types keeps only those span types, before overlaps are resolved'
   // A NAME=value assignment is a wider span of another type: without the option it would win the overlap.
   const key = 'sk_' + 'live_' + 'Ab3dEf6hIj9kLm2nOp5qRs8tUv1w';
   const text = 'token: ' + key + 'NAME=\n  next line';
-  const only = engine.scan(text, { exact: false, pii: false, types: new Set(['STRIPE_KEY']) });
+  const only = E.scan(text, { exact: false, pii: false, types: new Set(['STRIPE_KEY']) });
   assert.ok(only.length >= 1);
   assert.ok(only.every((s) => s.type === 'STRIPE_KEY'), JSON.stringify(only));
   assert.ok(only.some((s) => text.slice(s.start, s.end).includes(key.slice(8))), JSON.stringify(only));
-  const none = engine.scan(text, { exact: false, pii: false, types: new Set(['GITHUB_TOKEN']) });
+  const none = E.scan(text, { exact: false, pii: false, types: new Set(['GITHUB_TOKEN']) });
   assert.deepEqual(none, []);
 });
