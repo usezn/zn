@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-21.2
+ * RULES_VERSION: 2026-10-21.5
  */
 
-const RULES_VERSION = '2026-10-21.2';
+const RULES_VERSION = '2026-10-21.5';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -680,7 +680,7 @@ const SECRET_PATTERNS = [
   { id: 'secret:openai_key', pattern: /(?<![A-Za-z0-9_])(sk-(?:(?:proj|svcacct|admin|[Nn]one|or-v1|lf)-[A-Za-z0-9_-]{28,}(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))|helicone-(?:(?:eu|cp|gov|rl)-){0,4}[a-z0-9]{7}(?:-[a-z0-9]{7}){3}(?![a-z0-9])|(?=(?:eu|cp|gov|rl)-|[a-z0-9]{7}-)(?=[a-z-]{0,46}[0-9])(?:(?:eu|cp|gov|rl)-){0,4}[a-z0-9]{7}(?:-[a-z0-9]{7}){3}(?![a-z0-9])(?!-[a-z0-9])|sp-[A-Za-z0-9]{28,}(?![A-Za-z0-9])|[A-Za-z0-9]{28,}(?![A-Za-z0-9])|(?:(?!sk-)[A-Za-z0-9_-]){1,200}?T3BlbkFJ[A-Za-z0-9_-]{20,}(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))))/g, replacement: '[REDACTED_OPENAI_KEY]' },
   { id: 'secret:aws_access_key', pattern: /(?<![A-Za-z0-9_])(AKIA[0-9A-Z]{16})(?![A-Za-z0-9_])/g, replacement: '[REDACTED_AWS_KEY]' },
   { id: 'secret:aws_secret_key', pattern: /((?:[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]_[Aa][Cc][Cc][Ee][Ss][Ss]_[Kk][Ee][Yy]|[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]|[Aa][Ww][Ss]_[Kk][Ee][Yy])\s*[:=]\s*['"]?)([A-Za-z0-9/+=]{40})(['"]?)/g, replacement: '$1[REDACTED_AWS_SECRET]$3' },
-  { id: 'secret:github_token', pattern: /(?<![A-Za-z0-9_])((?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,40}|github_pat_[A-Za-z0-9_]{82})(?![A-Za-z0-9_])/g, replacement: '[REDACTED_GITHUB_TOKEN]' },
+  { id: 'secret:github_token', pattern: /(?<![A-Za-z0-9_])((?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,40}(?:_[A-Za-z0-9_]*)?|github_pat_[A-Za-z0-9_]{82}(?:_[A-Za-z0-9_]*)?)(?![A-Za-z0-9_])/g, replacement: '[REDACTED_GITHUB_TOKEN]' },
   { id: 'secret:db_url_password', pattern: /((?:[Pp][Oo][Ss][Tt][Gg][Rr][Ee][Ss](?:[Qq][Ll])?|[Mm][Yy][Ss][Qq][Ll]|[Mm][Oo][Nn][Gg][Oo][Dd][Bb](?:\+[Ss][Rr][Vv])?|[Rr][Ee][Dd][Ii][Ss]|[Aa][Mm][Qq][Pp]):\/\/[^:\s\/]+:)(?!(?:\$\{(?:[A-Z_][A-Z0-9_]*|[a-z_][a-z0-9_]*)\}|\$[A-Z_][A-Z0-9_]*|%[A-Z_][A-Z0-9_]*%|<[A-Za-z][A-Za-z_-]{0,63}>|\{\{\s*[A-Za-z_][A-Za-z_.]*\s*\}\})@)([^@\s\/]+)(@)/g, replacement: '$1[REDACTED_DB_PASSWORD]$3' },
   // The lookahead + backreference pairs act as atomic groups, so a long run of
   // "-eyJ" cannot make the engine retry every split point, and the lookbehind
@@ -1095,20 +1095,51 @@ const SCRUB_PROVIDER_LABELS = new Map([['DB_PASSWORD', 'URL_PASSWORD']]);
 // Google, npm, ...), run on text the SECRET_PATTERNS already redacted. The
 // engine is required here, not at the top, because it requires this file.
 function redactProviderFormats(text) {
-  // Only the provider types take part in the overlap resolution: a wider span of another type (such as
-  // a NAME=value assignment) would otherwise win it, be dropped here, and leave the key unredacted.
-  const spans = require('./scrub/engine').scan(text, { exact: false, pii: false, types: SCRUB_PROVIDER_RULES })
-    .sort((a, b) => a.start - b.start || b.end - a.end);
+  const engine = require('./scrub/engine');
+  const scanProviders = (t) => engine.scan(t, { exact: false, pii: false, types: SCRUB_PROVIDER_RULES });
+  let current = text;
+  let detections = [];
+  // A pass that cuts a span (see providerPass) leaves the next line for the next pass. Each cut removes
+  // a line break from a span, so a few passes are enough; the cap only guards against a loop.
+  for (let pass = 0; pass < 8; pass++) {
+    const r = providerPass(current, scanProviders);
+    detections = detections.concat(r.detections);
+    current = r.sanitized;
+    if (!r.cut) break;
+  }
+  return { sanitized: current, detections };
+}
+
+// One pass of the provider formats. Only the provider types take part in the overlap resolution: a
+// wider span of another type (such as a NAME=value assignment) would otherwise win it, be dropped here,
+// and leave the key unredacted. The engine also matches on the text without wrap breaks, so a span can
+// run across a line break. As in ruleCandidates (and the Python package), such a span stops at the
+// break when the line before it is a key on its own and the next line starts a secret of its own; that
+// next line is redacted by the next pass.
+function providerPass(text, scanProviders) {
+  const spans = scanProviders(text).sort((a, b) => a.start - b.start || b.end - a.end);
   const detections = [];
   let out = '';
   let last = 0;
+  let cut = false;
   for (const s of spans) {
     if (s.start < last) continue;
+    let end = s.end;
+    for (let i = text.indexOf('\n', s.start); i !== -1 && i < end; i = text.indexOf('\n', i + 1)) {
+      let lineEnd = i;
+      while (lineEnd > s.start && /[ \t\r]/.test(text[lineEnd - 1])) lineEnd--;
+      const own = scanProviders(text.slice(s.start, lineEnd)).some((t) => t.start === 0 && t.end === lineEnd - s.start);
+      if (own && startsSecretAt(text, i, end, SECRET_PATTERNS)) {
+        end = lineEnd;
+        cut = true;
+        break;
+      }
+    }
     detections.push({ rule: SCRUB_PROVIDER_RULES.get(s.type), index: s.start });
     out += text.slice(last, s.start) + `[REDACTED_${SCRUB_PROVIDER_LABELS.get(s.type) || s.type}]`;
-    last = s.end;
+    last = end;
   }
-  return { sanitized: out + text.slice(last), detections };
+  return { sanitized: out + text.slice(last), detections, cut };
 }
 
 // SCAN_SECRET_PATTERNS alone (`zn-gate scan` runs them last, on text that
