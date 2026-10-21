@@ -41,3 +41,17 @@ test('a long secret that starts in the preview is matched whole', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('a private key block longer than the redacted part is cut from the preview', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-ev-slice-'));
+  try {
+    // About 100 KB of fake base64 lines: the END line is past the part that is redacted.
+    const line = 'TUlJRXZRSUJBREFOQmdrcWhraUc5dzBCQVFFRkFBU0NCS2N3Z2dTakFnRUFBb0lCQVFDN';
+    const block = '-----BEGIN PRIVATE KEY-----\n' + Array.from({ length: 1500 }, () => line).join('\n') + '\n-----END PRIVATE KEY-----';
+    const rec = evidence.logEvidence({ agent: 'test', payload: 'k: ' + block, verdict: 'block' }, path.join(dir, 'evidence.jsonl'), { noStats: true });
+    assert.ok(!rec.payload_preview.includes(line.slice(0, 20)), rec.payload_preview);
+    assert.equal(rec.payload_preview, 'k: [REDACTED_PRIVATE_KEY]');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
