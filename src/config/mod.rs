@@ -552,12 +552,15 @@ fn default_window() -> u64 {
 }
 
 /// Caching Configuration
+/// Longest `caching.ttl_seconds` the configuration accepts: one year.
+pub const MAX_CACHE_TTL_SECONDS: u64 = 365 * 24 * 60 * 60;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CachingConfig {
     /// Enable tool result caching
     #[serde(default = "default_false")]
     pub enabled: bool,
-    /// Cache Time-To-Live (seconds)
+    /// Cache Time-To-Live (seconds), from 0 to `MAX_CACHE_TTL_SECONDS` (one year)
     #[serde(default = "default_ttl")]
     pub ttl_seconds: u64,
 }
@@ -849,6 +852,14 @@ impl ZnConfig {
             ));
         }
 
+        if self.caching.ttl_seconds > MAX_CACHE_TTL_SECONDS {
+            return Err(anyhow!(
+                "caching.ttl_seconds must be between 0 and {} (one year), but it is {}",
+                MAX_CACHE_TTL_SECONDS,
+                self.caching.ttl_seconds
+            ));
+        }
+
         if self.security.api_key.is_none() && self.environment == "production" {
             tracing::warn!("No API key configured in production - Management API is unprotected!");
         }
@@ -926,12 +937,36 @@ mod rate_limit_tests {
         let mut config = ZnConfig::default();
         config.security.jwt_secret = None;
         config.security.rate_limit_per_minute = 0;
-        let err = config.validate().expect_err("0 must be refused").to_string();
+        let err = config
+            .validate()
+            .expect_err("0 must be refused")
+            .to_string();
         assert!(err.contains("rate_limit_per_minute"), "{err}");
         assert!(err.contains("at least 1"), "{err}");
         for ok in [1, 60, u32::MAX] {
             config.security.rate_limit_per_minute = ok;
             assert!(config.validate().is_ok(), "{ok}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod cache_ttl_tests {
+    use super::*;
+
+    #[test]
+    fn cache_ttl_above_one_year_is_refused() {
+        let mut config = ZnConfig::default();
+        config.security.jwt_secret = None;
+        for ok in [0, 1, 300, MAX_CACHE_TTL_SECONDS] {
+            config.caching.ttl_seconds = ok;
+            assert!(config.validate().is_ok(), "{ok}");
+        }
+        for bad in [MAX_CACHE_TTL_SECONDS + 1, i64::MAX as u64, u64::MAX] {
+            config.caching.ttl_seconds = bad;
+            let err = config.validate().expect_err("too large").to_string();
+            assert!(err.contains("caching.ttl_seconds"), "{err}");
+            assert!(err.contains("one year"), "{err}");
         }
     }
 }

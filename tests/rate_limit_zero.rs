@@ -40,7 +40,11 @@ fn start_with_zero_rate_limit_exits_with_a_clear_error() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 
-    assert_eq!(out.status.code(), Some(1), "expected a normal error exit: {text}");
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "expected a normal error exit: {text}"
+    );
     assert!(text.contains("rate_limit_per_minute"), "{text}");
     assert!(text.contains("at least 1"), "{text}");
     assert!(!text.contains("panicked"), "{text}");
