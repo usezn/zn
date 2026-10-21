@@ -189,7 +189,7 @@ async function main(argv) {
 }
 
 /*
- * The pin, the plugin manifests, the MCP Registry entry and the version named
+ * The pin, the plugin manifests and the version named
  * in the plugin docs change in the same commit: the plugin repository is
  * generated from the commit that last changed the pin, and its checks expect
  * every one of them to name that version. Returns [file, new text] pairs.
@@ -198,7 +198,6 @@ const VERSIONED_JSON = [
   ['zn-gate/plugin.json', ['version']],
   ['zn-gate/.claude-plugin/plugin.json', ['version']],
   ['zn-gate/.cursor-plugin/plugin.json', ['version']],
-  ['mcp-registry/server.json', ['version', 'packages.0.version']],
 ];
 // Only docs that name the version the plugin installs: a sentence about an older
 // release written as "zn-gate X" in one of these files would be moved too.

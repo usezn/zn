@@ -39,6 +39,7 @@ const { variants } = require('../scrub/exact');
 const exe = require('../exe');
 const { makeTeamOps } = require('../team/daemon-ops');
 const { CODES, znError } = require('../errors');
+const messages = require('../messages');
 
 const PROTOCOL = 1;
 const DEFAULT_TTL_MS = 8 * 3600 * 1000;
@@ -608,7 +609,7 @@ async function serve(opts) {
   store.ensureLayout(o);
   const ep = endpoint(o);
 
-  if (await isRunning(o)) throw znError(CODES.POLICY_DENIED, 'vault already unlocked. Next step: nothing to do. To unlock again, run zn lock in your own terminal first, or, if you are an agent, ask the user to do it.');
+  if (await isRunning(o)) throw znError(CODES.POLICY_DENIED, messages.vaultAlreadyUnlocked());
   if (ep.unix) { try { fs.unlinkSync(ep.address); } catch (err) { /* stale socket */ } }
 
   const state = new VaultState(o.identity, recipient, o);
@@ -748,7 +749,7 @@ async function serve(opts) {
       resolve();
     });
   }).catch((err) => {
-    if (err && err.code === 'EADDRINUSE') throw znError(CODES.POLICY_DENIED, 'vault already unlocked. Next step: nothing to do. To unlock again, run zn lock in your own terminal first, or, if you are an agent, ask the user to do it.');
+    if (err && err.code === 'EADDRINUSE') throw znError(CODES.POLICY_DENIED, messages.vaultAlreadyUnlocked());
     throw err;
   });
   if (ep.unix) fs.chmodSync(ep.address, 0o600);
@@ -789,7 +790,7 @@ async function isRunning(opts) {
  */
 async function unlock(opts) {
   const o = opts || {};
-  if (await isRunning(o)) throw znError(CODES.POLICY_DENIED, 'vault already unlocked. Next step: nothing to do. To unlock again, run zn lock in your own terminal first, or, if you are an agent, ask the user to do it.');
+  if (await isRunning(o)) throw znError(CODES.POLICY_DENIED, messages.vaultAlreadyUnlocked());
   let created = false;
   let identity;
   if (!keychain.readMeta(o)) {
@@ -811,13 +812,13 @@ async function unlock(opts) {
     env,
   });
   const ready = new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(znError(CODES.LOCKED, 'daemon did not start in time')), 20000);
+    const timer = setTimeout(() => reject(znError(CODES.LOCKED, messages.vaultStartTimeout())), 20000);
     child.once('message', (m) => {
       clearTimeout(timer);
       if (m && m.ready) resolve(m);
       else reject(znError((m && m.code) || CODES.LOCKED, (m && m.message) || 'daemon failed to start'));
     });
-    child.once('exit', (code) => { clearTimeout(timer); reject(znError(CODES.LOCKED, 'daemon exited during start (' + code + ')')); });
+    child.once('exit', (code) => { clearTimeout(timer); reject(znError(CODES.LOCKED, messages.vaultStartExited(code))); });
   });
   child.stdin.end(JSON.stringify({ identity }) + '\n');
   identity = null;
@@ -836,7 +837,7 @@ async function unlock(opts) {
  */
 async function unlockForeground(opts) {
   const o = opts || {};
-  if (await isRunning(o)) throw znError(CODES.POLICY_DENIED, 'vault already unlocked. Next step: nothing to do. To unlock again, run zn lock in your own terminal first, or, if you are an agent, ask the user to do it.');
+  if (await isRunning(o)) throw znError(CODES.POLICY_DENIED, messages.vaultAlreadyUnlocked());
   let created = false;
   let identity;
   if (!keychain.readMeta(o)) {
