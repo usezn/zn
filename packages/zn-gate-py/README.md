@@ -148,7 +148,7 @@ handler = ZnGuardCallbackHandler(on_block="raise")
 
 The handler stops the run. With `on_block="raise"` (default) a blocked prompt, tool call or tool output raises `GuardBlockError` out of the agent: the tool does not run and the output does not reach the model. `on_block="ignore"` turns that off. `"return"` is not accepted (it raises `ValueError`), because LangChain ignores what a callback returns; any other value raises `ValueError` too.
 
-A callback cannot change what a tool returns. So with `mask_secrets=True` (default) a tool output that contains a secret also stops the run. To hide the secret and keep going, or to give the model a block message instead of the output, wrap the tool (needs `langchain-core`):
+A callback cannot change what a tool returns. So with `mask_secrets=True` (default) a tool output that contains a secret also stops the run. The same goes for a tool's error, whose text LangChain (`handle_tool_error`) and LangGraph (`ToolNode(handle_tool_errors=True)`) send to the model: when the message is blocked or contains a secret, the handler replaces the error with `GuardBlockError`, whose message holds no secret. To hide the secret and keep going, or to give the model a block message instead of the output, wrap the tool (needs `langchain-core`):
 
 ```python
 from langchain_core.tools import tool
@@ -164,7 +164,18 @@ print(safe_read_notes.invoke({"topic": "deploy"}))
 # Deploy key: [REDACTED_AWS_KEY]
 ```
 
-`guard_langchain_tool` returns a tool with the same name, description and arguments. It checks the arguments before the tool runs, checks the output for prompt injection (`check_result=True`) and hides secrets in it (`mask_secrets=True`) before the model reads it. With `on_block="return"` the model gets `fallback`, or a short block message, instead; with `"raise"` (default) it raises `GuardBlockError`. Pass the wrapped tools to your agent; use it on every tool that reads outside data or can reach files, shells or the network.
+`guard_langchain_tool` returns a tool with the same name, description and arguments. It checks the arguments before the tool runs, checks the output for prompt injection (`check_result=True`) and hides secrets in it (`mask_secrets=True`) before the model reads it. With `on_block="return"` the model gets `fallback`, or a short block message, instead; with `"raise"` (default) it raises `GuardBlockError`. Pass the wrapped tools to your agent; use it on every tool that reads outside data or can reach files, shells or the network. The wrapped tool keeps the original's `handle_tool_error`, `handle_validation_error` and `response_format="content_and_artifact"` (the content is checked and masked, the artifact is passed through unchanged and is not scanned). Arguments LangChain injects are forwarded untouched; `InjectedToolCallId` and LangGraph's `InjectedState` and `InjectedStore` are not checked (the model cannot set them), while a generic `InjectedToolArg` is checked like any other argument, because LangChain accepts a value the model sends for it.
+
+If you use the wrapper and the handler together, create the handler with `mask_secrets=False`. The handler sees the raw output of the wrapped tool, so with the default `mask_secrets=True` it would stop the run on a secret before the wrapper can hide it:
+
+```python
+handler = ZnGuardCallbackHandler(mask_secrets=False)  # the wrapped tools mask secrets
+# agent.invoke(..., config={"callbacks": [handler]}) with tools=[safe_read_notes, ...]
+```
+
+The handler still stops the run on a blocked prompt, tool call or injected output.
+
+The wrapper treats the message of an exception raised by the tool like its output. A blocked message is handled like a blocked output; a message with a secret is raised again as the same exception type carrying only the masked message, without the original exception attached, so `handle_tool_error` still turns a `ToolException` into a message for the model, now masked. Set `handle_tool_error` on the wrapped tool, not on the original.
 
 ### CrewAI
 
