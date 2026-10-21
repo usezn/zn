@@ -70,9 +70,9 @@ REGRESSIONS = [
 CONTEXTS = ["{k}", "key={k}", "x {k} y", '"{k}"', "X={k};", "{k}.", "key: {k}\n", "AWS_SECRET_ACCESS_KEY=" + VALUE[:20] + "\n{k}\n"]
 
 TOKEN = re.compile(r"[A-Za-z0-9_-]")
-# The provider formats are redacted together with a suffix that starts with _ or - (sk_live_<key>_old).
-# GitHub and AWS keys end where the token ends, so for them a suffix makes a different token.
-SUFFIX_KEYS = set()  # provider keys with a _ or - suffix: a later release
+# Keys followed by a suffix that starts with _ or - (sk_live_<key>_old) are not covered yet in either
+# package (a later release), so a suffix counts as part of a different token here.
+SUFFIX_KEYS = set()
 
 
 def random_texts(count, seed):
