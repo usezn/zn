@@ -79,6 +79,6 @@ files = ["src/zn_gate"]
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
-# Optional integration; its stubs are not installed in CI.
-module = ["langchain_core.*"]
+# Optional integrations; their packages are not installed in the lint job.
+module = ["langchain_core.*", "agents.*", "pydantic_ai.*", "google.adk.*"]
 ignore_missing_imports = true
