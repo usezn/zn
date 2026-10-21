@@ -13,6 +13,7 @@ const fs = require('fs');
 const os = require('os');
 
 const SERVER = `
+const Z = String.fromCharCode(0x200b);
 const readline = require('readline');
 const rl = readline.createInterface({ input: process.stdin });
 rl.on('line', (line) => {
@@ -24,7 +25,10 @@ rl.on('line', (line) => {
   else if (name === 'split_mixed') content = Array.from({ length: 60 }, () => ({ type: 'text', text: 'ok '.repeat(10) + '\\u200b'.repeat(65000) }));
   else if (name === 'resources') content = Array.from({ length: 60 }, () => ({ type: 'resource', resource: { uri: 'file:///x', text: '\\u200b'.repeat(65535) } }));
   else content = Array.from({ length: 60 }, (_, i) => ({ type: 'text', text: 'Line ' + i + ': weather is fine.' }));
-  const result = { content };
+  let result = { content };
+  if (name === 'sc_only') result = { structuredContent: { parts: Array.from({ length: 60 }, () => Z.repeat(65535)) } };
+  if (name === 'sc_after_100k') result = { content: [{ type: 'text', text: 'ok' }], structuredContent: { a: Array.from({ length: 60 }, () => Z.repeat(65535)), b: Array.from({ length: 100001 }, () => 1) } };
+  if (name === 'sc_benign') result = { structuredContent: { temp: 64, city: 'Example', list: [1, 2, 3] } };
   if (name === 'structured') result.structuredContent = { parts: Array.from({ length: 60 }, () => '\\u200b'.repeat(65535)) };
   process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }) + '\\n');
 });
@@ -57,7 +61,7 @@ function run(toolName) {
   });
 }
 
-for (const name of ['split', 'split_mixed', 'resources', 'structured']) {
+for (const name of ['split', 'split_mixed', 'resources', 'structured', 'sc_only', 'sc_after_100k']) {
   test(`many items under the cap but over it in total are blocked (${name})`, async () => {
     const { msg, ms } = await run(name);
     assert.equal(msg.result.isError, true);
@@ -74,4 +78,10 @@ test('a benign result with many items passes untouched', async () => {
   assert.ok(!msg.result.isError);
   assert.equal(msg.result.content.length, 60);
   assert.equal(msg.result.content[3].text, 'Line 3: weather is fine.');
+});
+
+test('a benign structuredContent-only result passes untouched', async () => {
+  const { msg } = await run('sc_benign');
+  assert.ok(!msg.result.isError);
+  assert.deepEqual(msg.result.structuredContent, { temp: 64, city: 'Example', list: [1, 2, 3] });
 });
