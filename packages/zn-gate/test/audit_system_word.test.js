@@ -30,7 +30,7 @@ const BENIGN = {
 
 for (const [name, text] of Object.entries(BENIGN)) {
   test('audit ZNA012: not flagged, ' + name, (t) => {
-    assert.deepEqual(zna012(t, 'docs/prompts.md', text), []);
+    assert.deepEqual(zna012(t, 'notes/prompts.md', text), []);
     assert.deepEqual(zna012(t, '.claude/skills/templates/SKILL.md', text), []);
   });
 }
