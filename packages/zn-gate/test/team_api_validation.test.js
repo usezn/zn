@@ -281,7 +281,8 @@ test('join response: policy public key must be exactly {alg, kid, key} in the ex
     { alg: 'ed25519', kid, key },
     { alg: 'RS256', kid, key },
     { alg: 'none', kid, key },
-    { alg: 'Ed25519', kid: kid.toUpperCase(), key },
+    // An upper-case hex letter makes the kid invalid; a random kid can be all digits, so one is put in.
+    { alg: 'Ed25519', kid: 'A' + kid.slice(1).toUpperCase(), key },
     { alg: 'Ed25519', kid: hex(7), key },
     { alg: 'Ed25519', kid: hex(9), key },
     { alg: 'Ed25519', kid: 5, key },
