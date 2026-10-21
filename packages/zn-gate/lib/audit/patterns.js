@@ -29,11 +29,41 @@ const KNOWN_INSTALLERS = [
   'claude.ai/install.sh', 'opencode.ai/install', 'get.volta.sh', 'fnm.vercel.app', 'mise.run', 'pyenv.run',
 ];
 
+// Text that talks about the pattern instead of asking for it: a checklist of
+// risky patterns, a rule that says what to flag, "`curl | sh` is unsafe".
+// Same clause, up to 120 characters before the match, or a short verdict right
+// after it. An install instruction ("Install with ...") has neither.
+const DISCUSS_BEFORE = /\b(?:patterns?|anti-?patterns?|red flags?|flag(?:s|ged|ging)?|detect(?:s|ed|ing|ion)?|warn(?:s|ing)?(?: about)?|look(?:ing)? for|watch(?:ing)? for|scan(?:s|ning)? for|forbidden|prohibited|banned|disallow(?:s|ed)?|reject(?:s|ed)?|refus(?:e|es|ed)|block(?:s|ed)?|unsafe|insecure|dangerous|risky|risks?|harmful|malicious|suspicious|vulnerab\w*)\b/i;
+const DISCUSS_AFTER = /^[`'"\s)\]]{0,5}(?:\b(?:is|are|was|were)\s+(?:a\s+|an\s+|considered\s+|very\s+)?(?:dangerous|unsafe|risky|insecure|bad|harmful|forbidden|blocked|not\s+allowed|an?\s+(?:anti-?pattern|risk)|a\s+red\s+flag)\b|\b(?:without\s+(?:a\s+)?(?:hash|checksum|verification|signature))\b)/i;
+
+function discussed(text, index, length) {
+  let seg = text.slice(Math.max(0, index - 120), index);
+  const cut = Math.max(seg.lastIndexOf('. '), seg.lastIndexOf('; '), seg.lastIndexOf('! '), seg.lastIndexOf('? '));
+  if (cut >= 0) seg = seg.slice(cut + 2);
+  if (DISCUSS_BEFORE.test(seg)) return true;
+  return DISCUSS_AFTER.test(text.slice(index + length, index + length + 80));
+}
+
+/** A heading that introduces risky or flagged patterns ("Dangerous patterns", "What to flag"). */
+const WARNING_HEADING = /^\s{0,3}#{1,6}\s.*\b(?:risks?|risky|dangerous|unsafe|insecure|anti-?patterns?|red flags?|avoid|never|don'?t|do not|bad practices?|what to (?:flag|detect|look for)|flagged|detections?|suspicious|vulnerabilit\w*)\b/i;
+/** A severity or verdict label at the start of a list item or line: "HIGH: curl | sh ...". */
+const WARNING_LABEL = /^\s*(?:[-*+]\s+|\d+[.)]\s+)?(?:\*\*|__)?(?:critical|high|medium|low|warning|danger|bad|avoid|never|don'?t|do not|unsafe|risky|insecure|wrong|incorrect|forbidden)\b\s*(?:\*\*|__)?\s*(?::|-|\u2014|\u2013|\))/i;
+/** A table row that reports or classifies the command in another cell. */
+const WARNING_ROW = /^\s*\|.*\b(?:errors?|fail(?:s|ed|ure)?|blocked?|refus\w*|reject\w*|denied|detected|flagged|warnings?|unsafe|dangerous|risks?|risky|severity|high|critical)\b/i;
+
+function warningText(line) {
+  const t = String(line || '').slice(0, MAX_LINE);
+  return WARNING_LABEL.test(t) || WARNING_ROW.test(t);
+}
+function warningHeading(line) {
+  return WARNING_HEADING.test(String(line || '').slice(0, 300));
+}
+
 function downloadAndRun(text, opts) {
   const t = String(text || '').slice(0, MAX_LINE);
   for (const re of DOWNLOAD_RUN) {
     const m = re.exec(t);
-    if (m && opts && opts.prose && negated(t, m.index)) continue;
+    if (m && opts && opts.prose && (negated(t, m.index) || discussed(t, m.index, m[0].length))) continue;
     if (m) return { match: m[0], knownInstaller: KNOWN_INSTALLERS.some((h) => t.toLowerCase().includes(h)) };
   }
   return null;
@@ -356,6 +386,8 @@ module.exports = {
   CRED_FLAG_NAME,
   isCredentialFlag,
   downloadAndRun,
+  warningText,
+  warningHeading,
   splitCommand,
   toolName,
   packagesOf,
