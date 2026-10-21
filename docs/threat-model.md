@@ -34,12 +34,13 @@ reads, command output, search results, MCP results and pasted prompts.
 | **Deliberate encodings** of a value printed by an allowed command (reversed, base32, mixed-case hex) | Masking covers raw, base64, hex and URL-encoded forms. It is a safety net, not a boundary. |
 | **Copies kept by the agent on your disk** | See below. |
 
-Hooks are a guardrail, not a sandbox: a determined process can find another
+zn-gate is not a sandbox, and how much it sees depends on the agent (see
+[compat.md](compat.md)). Hooks are a guardrail: a determined process can find another
 way to read a file. The point is that the agent's normal tools do not hand
 values to the model. The hooks also block the agent's file tools and shell
 commands from writing `~/.zn` and the agents' own hook and plugin settings:
 the files (`.claude/settings*.json`, `.codex/` files, `.cursor/hooks.json`, the
-OpenCode plugin and `opencode.json`, and Antigravity's hook and settings files,
+OpenCode plugin and `opencode.json`, Antigravity's hook and settings files, and Gemini CLI's settings files,
 listed under "Experimental adapters" below) and the directories that hold them
 (`~/.claude`, `~/.codex`, `~/.cursor`, `~/.config/opencode`, the same in the
 project, and the locations `CODEX_HOME`, `OPENCODE_CONFIG`,
@@ -92,6 +93,56 @@ project). It adds a hook that runs before each tool call.
   `hooks.json` and changes to the folder's path are treated as protected.
   The directories `~/.gemini` and `~/.gemini/antigravity-cli` are not
   protected either, only the files named above.
+
+### GitHub Copilot CLI
+
+Install it with `zn hooks install copilot` (add `--project` for one project).
+It adds hooks that run before and after each tool call. zn writes its own
+`zn-gate.json` in `~/.copilot/hooks/` (or `$COPILOT_HOME/hooks/` when you set
+a custom Copilot folder) and, with `--project`, in `.github/hooks/`. It has
+been checked end to end with Copilot CLI 1.0.98 against a scripted model
+provider: 0 secret values sent.
+
+- **What it covers:** before a tool call runs, zn blocks reading or writing
+  secret files by path, shell commands that handle secrets, and edits of
+  Copilot's own hook and settings files. After a read-type or shell tool
+  returns, zn replaces secret values in the result (successful results only).
+- **What it does not cover:** Copilot's `userPromptSubmitted` hook cannot block
+  or rewrite a typed prompt, so a pasted secret is not blocked. MCP tools that
+  Copilot does not name as read or shell tools are not checked and their output
+  is not scrubbed. The docs do not list the argument names of each tool, so zn
+  refuses a known tool whose arguments it cannot read.
+- **When a hook fails:** a hook that takes longer than its timeout lets the
+  call through, because Copilot fails open there. Machine policy hooks in
+  `/etc/github-copilot/policy.d` run in addition and are not seen by zn.
+- **Other limits:** it has not been tested on Windows. Copilot's own session
+  log (`events.jsonl`) keeps the original tool output on your machine.
+  `disableAllHooks` in zn's file or in `.github/copilot/settings(.local).json`
+  turns the hooks off; `zn-gate check` reports it.
+
+### Gemini CLI
+
+Install it with `zn hooks install gemini` (add `--project` for one project).
+It adds a hook that runs before each tool call, in `~/.gemini/settings.json`
+(or `.gemini/settings.json` in the project). It has been checked end to end
+with Gemini CLI 0.64.0 against a scripted model provider.
+
+- **What it covers:** before a tool call runs, zn blocks reading or writing
+  secret files by path, shell commands that handle secrets, and edits of
+  Gemini CLI's own settings files.
+- **What it does not cover:** zn does not use `AfterTool`, so what a tool
+  returns is not hidden: a value printed by a command or a file the agent may
+  read reaches the model. Gemini CLI hooks cannot ask you for confirmation, so
+  zn blocks only what it would refuse and says nothing otherwise; Gemini CLI's
+  own approval applies. A pasted secret in a typed prompt is not checked.
+- **When a hook fails:** Gemini CLI runs the tool when a hook crashes or times
+  out; only an explicit refusal (exit code 2) blocks. A user install goes
+  through a launcher script that blocks the call if the Node.js zn was
+  installed with is gone.
+- **Other limits:** a project hook stays untrusted until you approve it in
+  Gemini CLI, and it runs `zn` from your PATH, so every teammate needs zn-gate
+  installed. `hooksConfig.enabled: false`, a name in `hooksConfig.disabled` or
+  `/hooks disable` turn the hook off; `zn-gate check` reports them.
 
 More experimental adapters will be listed here when they ship, each with its
 own coverage and limits.
@@ -207,6 +258,9 @@ stop malware running as the same user (see above).
 
 ## Failure behaviour
 
+- **Optional cloud check unavailable** (no connection, timeout, a service error, or a
+  saved key that cannot be read): the prompt is checked by the local rules alone
+  and the result says `fallback: true`. This path does not fail closed.
 - **Vault locked:** the hooks still run the scrubber without it. They redact
   patterns, PII and values found in local files with irreversible markers. The
   broker refuses to fill any value.

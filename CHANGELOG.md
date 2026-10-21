@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.13.1] - 2026-10-20
+
+zn-gate 1.13.1 is a security patch for the Python package. The LangChain callback handler now stops a run when it blocks a tool call, and the new `guard_langchain_tool` wrapper checks tool arguments and masks secrets in tool output before the model reads them. Upgrade with `pip install -U zn-gate`. The npm package has no code changes in this release.
+
+### Changed
+- Upgrade note, Python, LangChain: `ZnGuardCallbackHandler(on_block="return")` now raises `ValueError`. It let blocked calls through, like `"ignore"`. Use `guard_langchain_tool(tool, on_block="return")` to give the model a block message instead.
+- Upgrade note, Python, LangChain: with `mask_secrets=True` (default) a secret in a tool output now stops the run with `GuardBlockError`. If you wrap your tools with `guard_langchain_tool`, create the handler with `mask_secrets=False` so the wrapper hides the secret and the run goes on.
+
+### Fixed
+- Python, LlamaIndex: `ZnLlamaGuard(on_block="return")` let a blocked query through, like `"ignore"`. `check_query` and `on_query_start` now return a short block message, or the new `fallback`, in place of the query. `sanitize_response` now also hides secrets in a LlamaIndex `Response` object, not only in text.
+
+### Security
+- Python, LangChain: `ZnGuardCallbackHandler` now stops the run when it blocks something ([GHSA-q7p5-7x6r-fm4r](https://github.com/usezn/zn/security/advisories/GHSA-q7p5-7x6r-fm4r)). Before, LangChain caught the `GuardBlockError` raised inside the callback and only logged a warning, so a blocked tool call still ran and a blocked prompt or tool output still reached the model. The handler now sets `raise_error = True`, which tells LangChain to let the error through.
+- Python, LangChain: the handler could not hide secrets or replace an injected tool output, because LangChain ignores what a callback returns, so the secret still reached the model. With `mask_secrets=True` (default) a tool output that contains a secret now stops the run. The new `guard_langchain_tool(tool)` wraps a LangChain tool: it checks the arguments before the tool runs and the output before the model reads it, and hides secrets in that output.
+
 ## [1.13.0] - 2026-10-19
 
 zn-gate 1.13.0 adds `zn-gate connect`, which turns on the optional cloud check for `analyze_prompt` with an analysis-only API key kept in your system keychain, and `zn-gate disconnect`, which can also revoke that key on usezn.com. It also adds `zn-gate report`, a local summary of what zn-gate did in the last days, and the agent hooks now check what a typed skill or command expands into and the code that shells and wrappers run from a string. zn-gate still needs no account and sends nothing by default. This release also fixes how a damaged audit log is handled (it is reported instead of crashing, and never used to start a new chain) and how several programs writing to it at once keep its hash chain intact and tightens when the saved cloud key can be used. Update with `npm install -g zn-gate@1.13.0` and `pip install -U zn-gate`.
@@ -50,7 +65,7 @@ zn-gate 1.13.0 adds `zn-gate connect`, which turns on the optional cloud check f
 - The rule that protects zn's key no longer mistakes a module named `cloud-keys` or `acme-cloud-key-manager` for zn's own `cloud-key` module.
 
 ### Security
-- Some provider token formats were not redacted by the library API, the MCP tool checks, the text sent to the cloud analysis and the local evidence preview. They are now redacted the same way as in the Python package. The agent hooks were not affected.
+- [GHSA-qwh8-5vj5-mvj8](https://github.com/usezn/zn/security/advisories/GHSA-qwh8-5vj5-mvj8): some provider token formats were not redacted by the library API, the MCP tool checks, the text sent to the cloud analysis and the local evidence preview. They are now redacted the same way as in the Python package. The agent hooks were not affected.
 - `zn audit` hides the value after a credential flag in an array of arguments in more cases, in its text, JSON and SARIF reports: single-quoted TOML items (`args = ['--token', 'VALUE']`), arrays written one item per line, quotes escaped once or twice, and a comment (also a multi-line block comment or one longer than 1024 characters), several blank lines, a very long line, a wide run of spaces or a literal `\n` between the flag and its value.
 - Claude Code: zn now also checks what a typed skill or command expands into. A new `UserPromptExpansion` hook blocks the expansion, with the reason and the next step, when it would show the model a secret value, a private key or the lines of a `.env` file. If the hook cannot run, the expansion is blocked. Run `zn-gate hooks install claude-code` again to add it; the plugin has it already. To turn off `!` shell commands in skills altogether, set `disableSkillShellExecution: true` in Claude Code.
 - The hooks refuse commands that ask the system keychain for zn's own entries (`security find-generic-password`, `secret-tool lookup`, `cmdkey /list`, `Get-StoredCredential` with zn's service or target name), and also `security dump-keychain` and code that loads the key through zn's own modules or a keyring library, so the direct ways for an agent to read the key saved by `zn-gate connect` or the vault key are closed. A program running as you can still ask the keychain, as for any entry. The same tools stay free for other entries. A saved key is only ever sent to `https://api.usezn.com`: `--url` and `ZN_API_URL` are ignored for it.
@@ -599,7 +614,8 @@ Limits: [docs/threat-model.md](docs/threat-model.md). Per-agent support:
 - MCP Server interface for Claude Code, Cursor, and custom agent loops.
 - Bidirectional inspection for prompt inputs and tool returns.
 
-[Unreleased]: https://github.com/usezn/zn/compare/v1.13.0...next
+[Unreleased]: https://github.com/usezn/zn/compare/v1.13.1...next
+[1.13.1]: https://github.com/usezn/zn/compare/v1.13.0...v1.13.1
 [1.13.0]: https://github.com/usezn/zn/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/usezn/zn/compare/v1.11.0...v1.12.0
 [1.11.0]: https://github.com/usezn/zn/compare/v1.10.0...v1.11.0

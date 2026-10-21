@@ -47,6 +47,7 @@ function resolveEndpoint(options = {}, { stored = false } = {}) {
 }
 
 const cloudKey = require('./cloud-key');
+const { isVerbose } = require('./verbose');
 const { usableApiKey } = cloudKey;
 
 /**
@@ -227,7 +228,7 @@ async function analyze(input, options = {}) {
     }
     return out;
   } catch (err) {
-    if (process.env.DEBUG || process.env.ZN_VERBOSE) {
+    if (isVerbose()) {
       process.stderr.write(`[zn-gate] Warning: Cloud gate error (${err.message}). Using local rules result.\n`);
     }
     return {
