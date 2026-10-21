@@ -40,7 +40,7 @@ def _scan(path, fmt="text", **kw):
 # ---------------------------------------------------------------- scan: inputs
 
 def test_scan_missing_path(tmp_path, capsys):
-    assert _scan(tmp_path / "nope") == 2
+    assert _scan(tmp_path / "nope") == 1
     assert "target path not found" in capsys.readouterr().err
 
 

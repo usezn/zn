@@ -107,7 +107,7 @@ test('codex PermissionRequest: an apply_patch into ~/.zn gets deny', async () =>
 
 test('codex hooks file: PermissionRequest is installed with the PreToolUse matcher, and re-install is idempotent', async (t) => {
   await withCodexHome(t, (home) => {
-    const env = { CODEX_HOME: home };
+    const env = { CODEX_HOME: home, ZN_HOME: path.join(home, 'zn') };
     const file = codex.hooksFile({ env });
     fs.mkdirSync(path.dirname(file), { recursive: true });
     // The user's own hooks, and an old zn entry, must both survive the install.
@@ -119,7 +119,7 @@ test('codex hooks file: PermissionRequest is installed with the PreToolUse match
     codex.install({ env, nodePath: '/usr/bin/node', runnerPath: RUNNER, mcp: false });
     codex.install({ env, nodePath: '/usr/bin/node', runnerPath: RUNNER, mcp: false });
     const data = JSON.parse(fs.readFileSync(file, 'utf8'));
-    const zn = (groups) => (groups || []).filter((g) => g.hooks.some((h) => h.command && h.command.includes('runner.js')));
+    const zn = (groups) => (groups || []).filter((g) => g.hooks.some((h) => h.command && /runner\.js|zn-hook-codex\.sh/.test(h.command)));
     const pr = zn(data.hooks.PermissionRequest);
     assert.equal(pr.length, 1, 'one zn group after two installs');
     assert.equal(pr[0].matcher, codex.PRE_MATCHER);
