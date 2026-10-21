@@ -518,7 +518,11 @@ def cmd_scan(args: argparse.Namespace) -> int:
     if root_file:
         files_to_scan.append(target_path)
     else:
-        for root, dirs, files in os.walk(target_path):
+        # A folder that cannot be listed is reported, not skipped in silence: its files were not scanned.
+        def _unreadable(err: OSError) -> None:
+            skipped_dirs.append({"dir": str(err.filename), "reason": "cannot be read"})
+
+        for root, dirs, files in os.walk(target_path, onerror=_unreadable):
             kept = []
             for d in dirs:
                 if d in user_excluded:
