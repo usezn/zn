@@ -64,6 +64,10 @@
         "regex": "^zn-gate==(\\S+)$"
       },
       {
+        "file": "examples/semantic-kernel-agent/requirements.txt",
+        "regex": "^zn-gate==(\\S+)$"
+      },
+      {
         "file": "examples/openai-agents-js/package.json",
         "json": "dependencies.zn-gate"
       },
