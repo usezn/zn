@@ -127,7 +127,7 @@ test('install (user) backs up, keeps foreign hooks and uninstall removes only zn
   const mine = { enabled: true, PreToolUse: [{ matcher: 'run_command', hooks: [{ type: 'command', command: './mine.sh' }] }], Stop: [{ hooks: [{ command: './bye.sh' }] }] };
   const off = { enabled: false };
   fs.writeFileSync(file, JSON.stringify({ mine, off }));
-  const rep = agy.install({ scope: 'user', home, nodePath: '/usr/bin/node' });
+  const rep = agy.install({ scope: 'user', home, platform: 'linux', nodePath: '/usr/bin/node' });
   assert.ok(rep.backup && fs.existsSync(rep.backup));
   let data = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.deepEqual(data.mine, mine);
