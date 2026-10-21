@@ -161,14 +161,14 @@ if (cursorManifest.hooks !== './cursor/hooks.json' || cursorManifest.mcpServers 
 for (const [event, entries] of Object.entries(json(PLUGIN + '/cursor/hooks.json').hooks || {})) {
   for (const e of entries) if (e.failClosed !== true) fail('cursor/hooks.json: ' + event + ' hook is not failClosed');
 }
-// A prompt hook that cannot run must block the prompt, not let it through.
+// A hook on a blocking event that cannot run must block, not let the call or prompt through.
 {
-  const prompt = ((json(PLUGIN + '/hooks/hooks.json').hooks || {}).UserPromptSubmit || []).flatMap((g) => (g && g.hooks) || []);
-  if (!prompt.length) fail('hooks/hooks.json: no UserPromptSubmit hook');
-  for (const h of prompt) if (h.onFailure !== 'block') fail('hooks/hooks.json: UserPromptSubmit hook is not onFailure "block"');
-  const expansion = ((json(PLUGIN + '/hooks/hooks.json').hooks || {}).UserPromptExpansion || []).flatMap((g) => (g && g.hooks) || []);
-  if (!expansion.length) fail('hooks/hooks.json: no UserPromptExpansion hook');
-  for (const h of expansion) if (h.onFailure !== 'block') fail('hooks/hooks.json: UserPromptExpansion hook is not onFailure "block"');
+  const events = (json(PLUGIN + '/hooks/hooks.json').hooks || {});
+  for (const event of ['PreToolUse', 'UserPromptSubmit', 'UserPromptExpansion']) {
+    const hooks = (events[event] || []).flatMap((g) => (g && g.hooks) || []);
+    if (!hooks.length) fail('hooks/hooks.json: no ' + event + ' hook');
+    for (const h of hooks) if (h.onFailure !== 'block') fail('hooks/hooks.json: ' + event + ' hook is not onFailure "block"');
+  }
 }
 
 /* ------------------------------- links ------------------------------- */

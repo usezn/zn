@@ -1,0 +1,11 @@
+{
+  "sessionId": "sess-1",
+  "timestamp": 1792400000000,
+  "cwd": "/work/proj",
+  "toolName": "edit",
+  "toolArgs": {
+    "path": "/work/proj/.github/hooks/zn-gate.json",
+    "old_str": "a",
+    "new_str": "b"
+  }
+}

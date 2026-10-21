@@ -15,9 +15,10 @@ import re
 import unicodedata
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, overload
 
-RULES_VERSION = "2026-10-19.6"
+
+RULES_VERSION = "2026-10-20.4"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -55,6 +56,10 @@ _HOMOGLYPH_TABLE = {ord(k): v for k, v in HOMOGLYPH_MAP.items()}
 # lazy wildcards, and repeated character classes are bounded.
 ZERO_WIDTH_RE = re.compile(r'[\u200B-\u200D\u2060\uFEFF\u00AD\uFE00-\uFE0F]')
 INVISIBLE_ASTRAL_RE = re.compile(r'[\U000E0000-\U000E007F\U000E0100-\U000E01EF]')
+# Line breaks are joined only in texts up to this size (see MAX_WRAP_VIEW_CHARS in rules.js).
+MAX_WRAP_VIEW_CHARS = 1 << 20
+# A line break inside a wrapped token (see WRAP_BREAK_RE in rules.js).
+WRAP_BREAK_RE = re.compile(r'(?<=[A-Za-z0-9_\-+/=]{10})[ \t]*\r?\n[ \t]*(?=[A-Za-z0-9_\-+/=]{10})(?![A-Za-z_][A-Za-z0-9_]*[ \t]*[=:])')
 NON_ASCII_RE = re.compile(r'[^\x00-\x7f]')
 ANSI_ESCAPE_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07\x1b]*\x07')
 B64_EXEC_RE = re.compile(r'(?:echo|printf)\s+([A-Za-z0-9+/=]{16,})\s*\|\s*(?:base64\s+-(?:d|-decode)|openssl)', re.IGNORECASE)
@@ -110,7 +115,7 @@ ZH_FORGET_OBJECT_RE = re.compile(r'指示|指令|一切')
 ZH_PHRASE_RE = re.compile(r'你现在是|初始提示词')
 
 
-def _near_match(text: str, verb_re: re.Pattern, object_re: re.Pattern) -> bool:
+def _near_match(text: str, verb_re: re.Pattern[str], object_re: re.Pattern[str]) -> bool:
     """True when an object match starts at most NEAR_MAX_GAP characters after
     the end of a verb match, with no line break in between. Linear: the object
     search only restarts past the last object found."""
@@ -136,7 +141,7 @@ def _test_multi_zh(text: str) -> bool:
         or _near_match(text, ZH_FORGET_RE, ZH_FORGET_OBJECT_RE)
 
 
-INJECTION_RULES: List[Tuple[str, re.Pattern, str]] = [
+INJECTION_RULES: List[Tuple[str, re.Pattern[str], str]] = [
     ('pi:ignore_previous', re.compile(_override_rule_source('ignore'), re.IGNORECASE), 'Override prior instructions'),
     ('pi:disregard', re.compile(_override_rule_source('disregard'), re.IGNORECASE), 'Disregard instructions'),
     ('pi:forget', re.compile(r"""(?<![A-Za-z0-9_])forget\s+(?:about\s+)?(?:everything|all|your)(?![A-Za-z0-9_])(?!\s+(?:of\s+)?(?:the\s+)?(?:cached?|caches|entries|changes|data|files?|records|sessions?|cookies|state|tabs|devices?|passwords?|history|items|keys|tokens|credentials|settings|preferences|accounts?|connections?|logins?|networks?)(?![A-Za-z0-9_]))""", re.IGNORECASE), 'Forget-context attack'),
@@ -159,7 +164,7 @@ INJECTION_RULES: List[Tuple[str, re.Pattern, str]] = [
     ('pi:multi_zh', re.compile(r'忽略[^\n]{0,80}?(指示|指令|提示)|忘记[^\n]{0,80}?(指示|指令|一切)|你现在是|初始提示词'), 'Multilingual prompt injection (Chinese)'),
 ]
 
-EVASION_RULES: List[Tuple[str, re.Pattern, str]] = [
+EVASION_RULES: List[Tuple[str, re.Pattern[str], str]] = [
     (
         'evasion:bidi_override',
         re.compile(r'[\u202A-\u202E\u2066-\u2069]'),
@@ -237,7 +242,7 @@ def _test_hidden_tag_anywhere(text: str) -> bool:
     return False
 
 
-INDIRECT_INJECTION_RULES: List[Tuple[str, re.Pattern, str]] = [
+INDIRECT_INJECTION_RULES: List[Tuple[str, re.Pattern[str], str]] = [
     (
         'indirect:html_comment',
         re.compile(r'<!--\s*(?:system|instruction|prompt|override|command)\s*:', re.IGNORECASE),
@@ -309,7 +314,7 @@ ADVISORY_RULES: List[Tuple[str, Any, str]] = [
     ('indirect:hidden_tag', _test_hidden_tag_anywhere, 'Hidden element in markup followed by instruction-like words'),
 ]
 
-SENSITIVE_PATH_RULES: List[Tuple[str, re.Pattern, str]] = [
+SENSITIVE_PATH_RULES: List[Tuple[str, re.Pattern[str], str]] = [
     (
         'path:sensitive_file',
         re.compile(r"""(?:^|[\s"'`(\[])(?:~|\/home\/[^\s/]+|\/root)?\/?\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE),
@@ -317,7 +322,7 @@ SENSITIVE_PATH_RULES: List[Tuple[str, re.Pattern, str]] = [
     ),
 ]
 
-MARKDOWN_EXFIL_RULES: List[Tuple[str, re.Pattern, str]] = [
+MARKDOWN_EXFIL_RULES: List[Tuple[str, re.Pattern[str], str]] = [
     (
         'exfil:markdown_image',
         # The pattern is the linear image scanner; the rule is _test_markdown_image().
@@ -385,7 +390,7 @@ def _strip_c_comments(text: str) -> str:
     return ''.join(parts)
 
 
-def _join_line_break(m: Any) -> str:
+def _join_line_break(m: 're.Match[str]') -> str:
     run = m.group(0)
     if '\n' not in run and '\r' not in run:
         return run
@@ -403,22 +408,35 @@ def _strip_invisible(text: str) -> str:
     return INVISIBLE_ASTRAL_RE.sub('', ZERO_WIDTH_RE.sub('', text))
 
 
-def invisible_view(text: str) -> Optional[Tuple[str, array]]:
+def invisible_view(text: str) -> Optional[Tuple[str, 'array[int]']]:
     """Text without invisible characters and the index map back to `text`
     (map[i] is the index of clean[i]; map[len(clean)] is len(text)). None when
     the text has no invisible character. See invisibleView in rules.js."""
-    runs = sorted([m.span() for m in ZERO_WIDTH_RE.finditer(text)]
-                  + [m.span() for m in INVISIBLE_ASTRAL_RE.finditer(text)])
+    runs = [m.span() for m in ZERO_WIDTH_RE.finditer(text)] + [m.span() for m in INVISIBLE_ASTRAL_RE.finditer(text)]
+    if len(text) <= MAX_WRAP_VIEW_CHARS and '\n' in text:
+        runs += [m.span() for m in WRAP_BREAK_RE.finditer(text)]
     if not runs:
         return None
+    runs.sort(key=lambda r: (r[0], -r[1]))
     mapping = array('q')
+    parts: List[str] = []
     pos = 0
     for start, end in runs:
-        mapping.extend(range(pos, start))
-        pos = end
+        if end <= pos:
+            continue
+        mapping.extend(range(pos, max(pos, start)))
+        parts.append(text[pos:max(pos, start)])
+        pos = max(pos, end)
     mapping.extend(range(pos, len(text)))
+    parts.append(text[pos:])
     mapping.append(len(text))
-    return _strip_invisible(text), mapping
+    return ''.join(parts), mapping
+
+
+def _clean_value(text: str) -> str:
+    """A value as the secret rules see it: no invisible characters and no wrap breaks."""
+    s = _strip_invisible(text)
+    return WRAP_BREAK_RE.sub('', s) if '\n' in s else s
 
 
 def normalize_input(text: str) -> Tuple[str, str]:
@@ -563,7 +581,7 @@ def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
 # -------------------------------------------------------------------------
 # DLP & Secret Masking Rules
 # -------------------------------------------------------------------------
-SECRET_PATTERNS: List[Tuple[str, re.Pattern, str]] = [
+SECRET_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
     # A body may not contain another BEGIN header: linear on repeated headers without END.
     ("secret:private_key", re.compile(r"""-----BEGIN [A-Z ]*PRIVATE KEY-----(?:(?!-----BEGIN )[\s\S])*?-----END [A-Z ]*PRIVATE KEY-----"""), "[REDACTED_PRIVATE_KEY]"),
     ("secret:anthropic_key", re.compile(r'(?<![A-Za-z0-9_])(sk-ant-[A-Za-z0-9_-]{30,})(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))'), "[REDACTED_ANTHROPIC_KEY]"),
@@ -599,7 +617,7 @@ SECRET_PATTERN_REQUIRES: Dict[str, str] = {
 
 # A text without a match for one of these cannot match the credential patterns,
 # which are then not run at all.
-SECRET_PATTERN_PREFILTERS: Dict[str, re.Pattern] = {
+SECRET_PATTERN_PREFILTERS: Dict[str, re.Pattern[str]] = {
     "secret:env_credential": re.compile(r"""_[Kk][Ee][Yy]|_[Tt][Oo][Kk][Ee][Nn]|_[Pp][Aa][Ss][Ss]"""),
     "secret:prefixed_credential": re.compile(r"""KEY|TOKEN|SECRET|PASS|PWD|CREDENTIALS"""),
 }
@@ -916,7 +934,7 @@ def _pv_bearer_not_secret(token: str, prefix: str) -> bool:
     return _pv_placeholder(token) or re.fullmatch(r'__ZN_[A-Z0-9_]+__', token) is not None
 
 
-PROVIDER_SECRET_PATTERNS: List[Tuple[str, re.Pattern, str]] = [
+PROVIDER_SECRET_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
     ("secret:aws_key_id", re.compile(_ALNUM_B + r'(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}' + _ALNUM_A), "[REDACTED_AWS_KEY]"),
     ("secret:gitlab_token", re.compile(_TB + r'gl(?:pat|dt|rt|ptt|cbt|ft|soat)-[A-Za-z0-9_-]{20,}' + _TA), "[REDACTED_GITLAB_TOKEN]"),
     ("secret:slack_token", re.compile(_TB + r'(?:xox[abeprs]-[0-9]{6,}-[A-Za-z0-9-]{8,}|xapp-[0-9]-[A-Z0-9]{6,}-[0-9]{6,}-[a-f0-9]{32,})' + _TA), "[REDACTED_SLACK_TOKEN]"),
@@ -980,8 +998,8 @@ PROVIDER_SECRET_PATTERNS: List[Tuple[str, re.Pattern, str]] = [
     ("secret:teams_webhook", re.compile(_TB + r'https://[a-z0-9]+\.webhook\.office\.com/webhookb2/[a-z0-9]{8}-(?:[a-z0-9]{4}-){3}[a-z0-9]{12}@[a-z0-9]{8}-(?:[a-z0-9]{4}-){3}[a-z0-9]{12}/IncomingWebhook/[a-z0-9]{32}/[a-z0-9]{8}-(?:[a-z0-9]{4}-){3}[a-z0-9]{12}' + _TA), "[REDACTED_TEAMS_WEBHOOK]"),
     ("secret:azure_ad_client_secret", re.compile(r'(?<![A-Za-z0-9_~.-])[A-Za-z0-9_~.]{3}[0-9]Q~[A-Za-z0-9_~.-]{30,33}[A-Za-z0-9_~-](?![A-Za-z0-9_~-])(?!\.[A-Za-z0-9_~-])'), "[REDACTED_AZURE_AD_CLIENT_SECRET]"),
     # Password segment of scheme://user:password@host (any scheme, as DB_PASSWORD in patterns.js).
-    # The scheme does not start inside a longer word, Unicode letters included (a long s is not an s).
-    ("secret:url_password", re.compile(r"((?<!\w)[a-zA-Z][a-zA-Z0-9+.-]{1,24}://[^\s:@/?#'\"`<>]{0,128}:)([^\s@/?#'\"`<>]{1,256})(@(?:[A-Za-z0-9.-]+|\[[0-9a-fA-F:]+\]))"), r'\1[REDACTED_URL_PASSWORD]\3'),
+    # ASCII word boundary like the scrubber: a scheme after CJK or accented letters is still a URL.
+    ("secret:url_password", re.compile(r"((?<![A-Za-z0-9_])[a-zA-Z][a-zA-Z0-9+.-]{1,24}://[^\s:@/?#'\"`<>]{0,128}:)([^\s@/?#'\"`<>]{1,256})(@(?:[A-Za-z0-9.-]+|\[[0-9a-fA-F:]+\]))"), r'\1[REDACTED_URL_PASSWORD]\3'),
     # Authorization header with a bearer token (BEARER_TOKEN in patterns.js). zn's
     # own __ZN_<NAME>__ markers are not secrets (_pv_bearer_not_secret).
     ("secret:bearer_token", re.compile(r'(Authorization[ \t]*:[ \t]*Bearer[ \t]+)([A-Za-z0-9._~+/=-]{20,})', re.IGNORECASE | re.ASCII), r'\1[REDACTED_BEARER_TOKEN]'),
@@ -1122,7 +1140,7 @@ PROVIDER_HINTS: Dict[str, Tuple[str, ...]] = {
 # comment there); they run after SECRET_PATTERNS and the provider formats, on
 # the text those already redacted.
 # ---------------------------------------------------------------------------
-SCAN_SECRET_PATTERNS: List[Tuple[str, re.Pattern, str]] = [
+SCAN_SECRET_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
     ("secret:cli_credential_flag", re.compile(r"""(?<![A-Za-z0-9_-])(--(?:api[-_]?key|password|passwd|token|secret|access[-_]token|auth[-_]token|client[-_]secret)=["']?)([^\s'"]{8,512})[^\s'"]*(["']?)"""), r'\1[REDACTED_SECRET]\3'),
     # The name is at most 40 characters before the keyword, so each start costs a bounded amount.
     ("secret:credential_assignment", re.compile(r"""(?<![A-Za-z0-9_$])(\$?[A-Za-z0-9_]{0,40}?(?:[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy])["']?[ \t]*(?::=|=>|=|:)[ \t]*["'])([^\s'"]{8,512})(["'])"""), r'\1[REDACTED_SECRET]\3'),
@@ -1134,7 +1152,7 @@ SCAN_SECRET_VALUE_FILTERS = {
     "secret:credential_assignment": _is_non_secret_default,
 }
 
-SCAN_SECRET_PREFILTERS: Dict[str, re.Pattern] = {
+SCAN_SECRET_PREFILTERS: Dict[str, re.Pattern[str]] = {
     "secret:cli_credential_flag": re.compile(r"""--(?:api|pass|token|secret|access|auth|client)"""),
     "secret:credential_assignment": re.compile(r"""[Pp][Aa][Ss][Ss][Ww]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Kk][Ee][Yy]"""),
 }
@@ -1152,7 +1170,7 @@ def _apply_edits(text: str, edits: List[Tuple[int, int, str]]) -> str:
     return ''.join(parts)
 
 
-def _span_in(mapping: Optional[array], start: int, end: int) -> Tuple[int, int]:
+def _span_in(mapping: Optional['array[int]'], start: int, end: int) -> Tuple[int, int]:
     """Span [start, end) of a text without invisible characters, as a span of the
     original text. mapping is None for the original text itself."""
     if mapping is None:
@@ -1169,14 +1187,32 @@ def _expand_template(template: str, groups: List[Optional[Tuple[int, int]]], tex
     return re.sub(r'\\(\d)', sub, template)
 
 
-def _rule_candidates(rule_id: str, pattern: re.Pattern, replacement: str, text: str,
-                     view: Optional[Tuple[str, array]], budget: List[int], value_filter,
-                     out: List[Tuple[int, int, str, str]], match_check=None) -> None:
+def _starts_secret_at(text: str, start: int, limit: int,
+                      patterns: List[Tuple[str, re.Pattern[str], str]]) -> bool:
+    """True when a rule of `patterns` matches at the first non-space character after `start` (before
+    `limit`): the next line starts a secret of its own (see startsSecretAt in rules.js)."""
+    pos = start
+    while pos < limit and text[pos].isspace():
+        pos += 1
+    if pos >= limit:
+        return False
+    return any(p.match(text, pos) for _, p, _ in patterns)
+
+
+def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, text: str,
+                     view: Optional[Tuple[str, 'array[int]']], budget: List[int],
+                     value_filter: Optional[Callable[[str, str], bool]],
+                     out: List[Tuple[int, int, str, str]],
+                     match_check: Optional[Callable[[str], bool]] = None,
+                     patterns: Optional[List[Tuple[str, re.Pattern[str], str]]] = None) -> None:
     """Candidate redactions of one rule as (start, end, rule_id, replacement) in
     original coordinates. The rule runs on the original text and on the text
     without invisible characters (see ruleCandidates in rules.js). match_check,
     when given, receives the whole match and returns False to skip it."""
-    passes: List[Tuple[str, Optional[array]]] = [(text, None)]
+    passes: List[Tuple[str, Optional['array[int]']]] = [(text, None)]
+    # Spans this rule found on the original text; a view match overlapping two or more is dropped
+    # (see ruleCandidates in rules.js).
+    found: List[Tuple[int, int]] = []
     if view is not None:
         passes.append(view)
     for hay, mapping in passes:
@@ -1205,16 +1241,24 @@ def _rule_candidates(rule_id: str, pattern: re.Pattern, replacement: str, text: 
                 span = groups[2]
                 assert span is not None
                 vs, ve = span
-                value = _strip_invisible(text[vs:ve])
+                value = _clean_value(text[vs:ve])
                 prefix = ''
                 if groups[1] is not None:
-                    prefix = _strip_invisible(text[groups[1][0]:groups[1][1]])
+                    prefix = _clean_value(text[groups[1][0]:groups[1][1]])
                 n = _utf16_len(value)
                 if n <= MAX_FILTERED_VALUE and n <= budget[0]:
                     budget[0] -= n
                     if value_filter(value, prefix):
                         continue
             start, end = _span_in(mapping, m.start(), m.end())
+            if mapping is None:
+                found.append((start, end))
+            else:
+                over = [(s, e) for s, e in found if start < e and s < end]
+                if len(over) >= 2:
+                    continue
+                if len(over) == 1 and patterns and _starts_secret_at(text, over[0][1], end, patterns):
+                    continue
             out.append((start, end, rule_id, _expand_template(replacement, groups, text)))
 
 
@@ -1253,7 +1297,7 @@ def redact_scan_secrets(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     return redacted, first + second
 
 
-def _redact_with(text: str, patterns: List[Tuple[str, re.Pattern, str]]) -> Tuple[str, List[Dict[str, Any]]]:
+def _redact_with(text: str, patterns: List[Tuple[str, re.Pattern[str], str]]) -> Tuple[str, List[Dict[str, Any]]]:
     if not isinstance(text, str) or not text:
         return text, []
 
@@ -1271,7 +1315,7 @@ def _redact_with(text: str, patterns: List[Tuple[str, re.Pattern, str]]) -> Tupl
         value_filter = (SECRET_VALUE_FILTERS.get(rule_id) or PROVIDER_VALUE_FILTERS.get(rule_id)
                         or SCAN_SECRET_VALUE_FILTERS.get(rule_id))
         _rule_candidates(rule_id, pattern, replacement, redacted, view, budget,
-                         value_filter, cands, PROVIDER_MATCH_CHECKS.get(rule_id))
+                         value_filter, cands, PROVIDER_MATCH_CHECKS.get(rule_id), patterns)
         if not cands:
             continue
         edits: List[Tuple[int, int, str]] = []
@@ -1357,6 +1401,36 @@ def scan_windows(text: str, strict: Optional[bool] = None) -> Assessment:
         res.advisory = dict(advisory)
     res.truncated = len(text) > limit
     return res
+
+
+class SanitizedToolResult(TypedDict):
+    """Result of sanitize_tool_result(tool_name, content)."""
+    tool_name: str
+    safe_to_ingest: bool
+    truncated: bool
+    assessment: Assessment
+    secrets_redacted: int
+    sanitized_content: str
+
+
+@overload
+def sanitize_tool_result(
+    tool_or_result: Any,
+    content: None = None,
+    mask_secrets: bool = True,
+    block_truncated: bool = False,
+    strict: Optional[bool] = None,
+) -> Tuple[Any, List[Dict[str, Any]]]: ...
+
+
+@overload
+def sanitize_tool_result(
+    tool_or_result: Any,
+    content: Any,
+    mask_secrets: bool = True,
+    block_truncated: bool = False,
+    strict: Optional[bool] = None,
+) -> SanitizedToolResult: ...
 
 
 def sanitize_tool_result(
