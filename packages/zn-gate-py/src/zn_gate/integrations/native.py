@@ -12,8 +12,8 @@ from __future__ import annotations
 import json
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from ..guard import (GuardBlockError, _is_framework_context, block_message, check_tool_call, check_tool_result,
-                     validate_on_block)
+from ..guard import (GuardBlockError, _is_framework_context, _mask_value, block_message, check_tool_call,
+                     check_tool_result, validate_on_block)
 
 
 class _Policy:
@@ -48,9 +48,10 @@ class _Policy:
             if not res.allowed:
                 return res, None, True
         if self.mask:
-            from .. import rules
-            clean, _ = rules.sanitize_tool_result(result)
-            return None, clean, clean != result
+            clean, unmaskable = _mask_value(result)
+            if unmaskable is not None:
+                return unmaskable, None, True
+            return None, clean, clean is not result and clean != result
         return None, result, False
 
     def raise_block(self, assessment: Any, tool_name: str, payload: Any, result: bool = False) -> None:

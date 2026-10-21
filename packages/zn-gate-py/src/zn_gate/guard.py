@@ -397,6 +397,65 @@ def _mask_text(text: str) -> str:
     return masked if isinstance(masked, str) else text
 
 
+def _jsonlike(data: Any, depth: int = 0) -> Any:
+    """Plain JSON-like data (str, number, bool, None, list, dict) holding the same values as `data`.
+
+    Pydantic models, dataclasses and other objects become dicts of their fields,
+    so a secret inside them can be masked.
+    """
+    if depth > 50:
+        raise _Unscannable("secret:unmaskable", "A result with a secret is nested too deeply to mask")
+    if data is None or isinstance(data, (str, bool, int, float)):
+        return data
+    if isinstance(data, (bytes, bytearray)):
+        return bytes(data).decode("utf-8", "replace")
+    if isinstance(data, Mapping):
+        return {(k if isinstance(k, str) else str(_jsonlike(k, depth + 1))): _jsonlike(v, depth + 1)
+                for k, v in data.items()}
+    if isinstance(data, (list, tuple, set, frozenset, _DICT_VIEWS)):
+        return [_jsonlike(v, depth + 1) for v in data]
+    dump = getattr(data, "model_dump", None)
+    if callable(dump) and not isinstance(data, type):
+        try:
+            return _jsonlike(dump(mode="json"), depth + 1)
+        except Exception:
+            pass
+    if dataclasses.is_dataclass(data) and not isinstance(data, type):
+        return {f.name: _jsonlike(getattr(data, f.name, None), depth + 1) for f in dataclasses.fields(data)}
+    fields = _object_fields(data)
+    if fields:
+        return {str(fields[i]): _jsonlike(fields[i + 1], depth + 1) for i in range(0, len(fields), 2)}
+    return str(data)
+
+
+def _has_secret(data: Any) -> bool:
+    return any(_mask_text(t) != t for t in _extract_strings(data, max_depth=50))
+
+
+def _mask_value(res: Any) -> Tuple[Any, Optional[Assessment]]:
+    """(value with secrets masked, None), or (res, a block Assessment) when a secret cannot be masked.
+
+    Strings, lists, dicts and tuples keep their type. A result that holds an
+    object (a pydantic model, a dataclass...) with a secret in it comes back as
+    the plain JSON-like value of that object, masked. A secret that still
+    shows after masking blocks the result (rule "secret:unmaskable").
+    """
+    from . import rules
+    clean, _ = rules.sanitize_tool_result(res)
+    if isinstance(res, str):
+        return clean, None
+    try:
+        if not _has_secret(clean):
+            return clean, None
+        masked, _ = rules.sanitize_tool_result(_jsonlike(res))
+        if not _has_secret(masked):
+            return masked, None
+    except Exception:
+        pass
+    return res, Assessment(verdict="block", confidence=1.0, rule="secret:unmaskable",
+                           reason="The result holds a secret that could not be masked")
+
+
 def _error_texts(exc: BaseException) -> List[str]:
     """str() and repr() of an exception and of the exceptions chained to it."""
     texts: List[str] = []
@@ -471,8 +530,9 @@ class _ResultPolicy:
             if not assessment.allowed:
                 return self.blocked(assessment, res)
         if self.mask:
-            from . import rules
-            res, _ = rules.sanitize_tool_result(res)
+            res, unmaskable = _mask_value(res)
+            if unmaskable is not None:
+                return self.blocked(unmaskable, None)
         return res
 
     def finish(self, res: Any) -> Any:
@@ -558,8 +618,9 @@ class _ResultPolicy:
                 return self.blocked(assessment, chunk), "", True
         new_tail = (tail + chunk)[-STREAM_OVERLAP:] if isinstance(chunk, str) else ""
         if self.mask:
-            from . import rules
-            chunk, _ = rules.sanitize_tool_result(chunk)
+            chunk, unmaskable = _mask_value(chunk)
+            if unmaskable is not None:
+                return self.blocked(unmaskable, None), "", True
         return chunk, new_tail, False
 
     def _stream(self, gen: Any) -> Any:
