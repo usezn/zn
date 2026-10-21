@@ -64,7 +64,10 @@ jobs:
           # The plugin repository is generated from the commit that last changed the pin,
           # which is the commit its checks compare it with. pin-release.js moves the
           # plugin manifests and docs to the pinned version in that same commit.
-          source="$(git -C zn log -1 --format=%H HEAD -- plugins/zn-gate/scripts/zn-gate.lock.json)"
+          # --first-parent: the commit on main that brought the pin (the merge of the pin's
+          # pull request). Without it Git follows the pull request's side and can return its
+          # own pin commit, made before the release reached main, which lacks the release tag.
+          source="$(git -C zn log -1 --first-parent --format=%H HEAD -- plugins/zn-gate/scripts/zn-gate.lock.json)"
           git -C zn worktree add --quiet --detach ../src "$source"
           v="$(node -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync('src/plugins/zn-gate/scripts/zn-gate.lock.json','utf8')).version))")"
           if [[ ! "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
