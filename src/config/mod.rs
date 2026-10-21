@@ -841,6 +841,14 @@ impl ZnConfig {
             }
         }
 
+        if self.security.rate_limit_per_minute < 1 {
+            return Err(anyhow!(
+                "security.rate_limit_per_minute must be at least 1 (allowed range: 1 to {}), but it is {}.",
+                u32::MAX,
+                self.security.rate_limit_per_minute
+            ));
+        }
+
         if self.security.api_key.is_none() && self.environment == "production" {
             tracing::warn!("No API key configured in production - Management API is unprotected!");
         }
@@ -906,6 +914,25 @@ mod jwt_secret_tests {
         }
         config.security.jwt_secret = Some("x".repeat(MIN_JWT_SECRET_BYTES));
         assert!(config.validate().is_ok());
+    }
+}
+
+#[cfg(test)]
+mod rate_limit_tests {
+    use super::*;
+
+    #[test]
+    fn zero_rate_limit_is_refused_with_the_allowed_range() {
+        let mut config = ZnConfig::default();
+        config.security.jwt_secret = None;
+        config.security.rate_limit_per_minute = 0;
+        let err = config.validate().expect_err("0 must be refused").to_string();
+        assert!(err.contains("rate_limit_per_minute"), "{err}");
+        assert!(err.contains("at least 1"), "{err}");
+        for ok in [1, 60, u32::MAX] {
+            config.security.rate_limit_per_minute = ok;
+            assert!(config.validate().is_ok(), "{ok}");
+        }
     }
 }
 
