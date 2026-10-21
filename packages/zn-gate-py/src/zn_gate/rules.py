@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import binascii
 from array import array
+import json
 import math
 import os
 import re
@@ -18,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, overload
 
 
-RULES_VERSION = "2026-10-21.1"
+RULES_VERSION = "2026-10-21.9"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -482,6 +483,19 @@ def _strict(strict: Optional[bool]) -> bool:
     return bool(strict) or os.environ.get('ZN_STRICT') == '1'
 
 
+def _b64_decode_lenient(data: str) -> bytes:
+    """Decode Base64 the way Node.js Buffer.from(data, 'base64') and `base64 -d` do.
+
+    Missing '=' padding is accepted, decoding stops at the first '=', and a
+    single dangling character at the end (too short for a byte) is dropped,
+    so unpadded Base64 cannot slip past the smuggling check.
+    """
+    body = data.split('=', 1)[0]
+    if len(body) % 4 == 1:
+        body = body[:-1]
+    return base64.b64decode(body + '=' * (-len(body) % 4))
+
+
 def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
     if not isinstance(input_text, str) or not input_text.strip():
         return Assessment(verdict='allow', confidence=1.0, rule='none', reason=None)
@@ -505,7 +519,7 @@ def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
         b64_match = B64_EXEC_RE.search(text_candidate)
         if b64_match:
             try:
-                decoded = base64.b64decode(b64_match.group(1)).decode('utf-8', errors='ignore')
+                decoded = _b64_decode_lenient(b64_match.group(1)).decode('utf-8', errors='ignore')
                 inner_res = evaluate(decoded, strict=strict)
                 if inner_res.advisory:
                     b64_advisory = dict(inner_res.advisory)
@@ -1446,14 +1460,34 @@ def sanitize_tool_result(
       1) sanitize_tool_result(data) -> returns (clean_data, detections)
       2) sanitize_tool_result(tool_name, content, mask_secrets=True) -> returns dict with
          {tool_name, safe_to_ingest, truncated, assessment, secrets_redacted, sanitized_content}
+    In form 2, content that is not a string (a dict, list or object) is checked
+    string by string, as check_tool_result does, and as JSON text;
+    sanitized_content is that JSON text (as in Node.js), with secrets masked.
     Tool output longer than MAX_TOOL_RESULT_SCAN_CHARS is not fully analysed:
     `truncated` is then True, and the output is blocked when block_truncated is
     set or the ZN_BLOCK_TRUNCATED environment variable is "1".
     """
     if content is not None:
         tool_name = str(tool_or_result)
-        text_content = content if isinstance(content, str) else str(content)
-        assessment = scan_windows(text_content, strict=strict)
+        if isinstance(content, str):
+            text_content = content
+            assessment = scan_windows(text_content, strict=strict)
+        else:
+            # Structured output: check every real string value (keys and object
+            # attributes included) as check_tool_result does, then the JSON text
+            # as Node.js does. str() would escape BiDi and zero-width characters.
+            from .guard import check_tool_result
+            try:
+                text_content = json.dumps(content, ensure_ascii=False, default=str)
+            except (TypeError, ValueError, RecursionError):
+                text_content = str(content)
+            assessment = check_tool_result(content, strict=strict)
+            if assessment.allowed:
+                text_assessment = scan_windows(text_content, strict=strict)
+                if not text_assessment.allowed:
+                    assessment = text_assessment
+                else:
+                    assessment.truncated = assessment.truncated or text_assessment.truncated
         truncated = assessment.truncated
         if truncated and assessment.allowed and (block_truncated or os.environ.get('ZN_BLOCK_TRUNCATED') == '1'):
             assessment = Assessment(verdict='block', confidence=1.0, rule='size:truncated',

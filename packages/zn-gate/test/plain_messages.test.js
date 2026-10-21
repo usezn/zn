@@ -129,10 +129,10 @@ test('client: a vault with no running daemon gives the plain unlock steps', asyn
   }
 });
 
-test('humanError: the code is shown only with ZN_VERBOSE=1 or DEBUG', () => {
+test('humanError: the code is shown only with ZN_VERBOSE=1 or DEBUG=zn', () => {
   const err = Object.assign(new Error('nope'), { code: CODES.POLICY_DENIED });
   assert.equal(humanError(err, { ZN_VERBOSE: '1' }), '[ZN_POLICY_DENIED] Not allowed: nope');
-  assert.equal(humanError(err, { DEBUG: '1' }), '[ZN_POLICY_DENIED] Not allowed: nope');
+  assert.equal(humanError(err, { DEBUG: 'zn' }), '[ZN_POLICY_DENIED] Not allowed: nope');
   assert.equal(humanError(err, { ZN_VERBOSE: '0' }), 'Not allowed: nope');
   assert.equal(humanError(Object.assign(new Error('secret X is missing'), { code: CODES.NOT_FOUND }), {}), 'Not found: secret X is missing');
   assert.equal(humanError(new Error('plain failure'), {}), 'plain failure');
