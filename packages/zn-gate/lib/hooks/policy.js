@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-20.56';
+const POLICY_RULES_VERSION = '2026-10-21.1';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2126,7 +2126,7 @@ function adminDenial(admin, opts = {}, cmd = '') {
   const next = words.find((w) => !w.startsWith('-')) || '';
   let arg = '';
   if (/^hooks/i.test(admin)) {
-    arg = /^(claude-code|codex|cursor|opencode|gemini)$/.test(next) ? next : '<agent>';
+    arg = require('../agents').listAdapters().includes(next) ? next : '<agent>';
     // The fixed options of zn hooks install, so the user installs in the same place the agent asked for.
     for (const o of ['--project', '--no-mcp']) if (words.includes(o)) arg += ' ' + o;
   } else if (/^secret (set|get|rm|remove|reveal|allow|approve|link)$/i.test(admin)) {

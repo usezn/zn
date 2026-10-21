@@ -128,7 +128,7 @@ Always set `version` to the same release as the pinned Action. In the 1.12.0 Act
 
 Both modes also check the MCP config files of the repository (such as `.mcp.json`, `.cursor/mcp.json` and `.vscode/mcp.json`) for keys and passwords written in plain text. The value is never printed.
 
-Releases up to and including 1.13.0 do not have this check. It comes in a later release, so the example above, which pins 1.13.0, does not show these annotations yet. Once the Action pins that release, `scan` reports the finding as `secret:mcp_config` and `audit` as `ZNA011`. Until then, both modes only report keys with a known format (for example an AWS access key) in these files, under the general secret rules.
+Releases up to and including 1.13.1 do not have this check. It comes in a later release, so the example above, which pins 1.13.0, does not show these annotations yet. Once the Action pins that release, `scan` reports the finding as `secret:mcp_config` and `audit` as `ZNA011`. Until then, both modes only report keys with a known format (for example an AWS access key) in these files, under the general secret rules.
 
 Each finding is an error annotation on the file and line. The audit's message names the key; the scan's message does not, and suggests a vault name to use instead. With `fail-on-threat: 'false'` the annotation is still an error (red), but the step ends green. A warn-mode scan of a `.mcp.json` with a key in an `env` block shows this, shortened:
 
