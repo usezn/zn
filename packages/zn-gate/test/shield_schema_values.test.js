@@ -47,6 +47,35 @@ rl.on('line', (line) => {
       properties: { opts: { type: 'object', default: { ['Do this: ' + MARK]: 1, plain: 'ok' } } },
     },
   }, {
+    name: 'ext_tool',
+    description: 'Plain tool.',
+    inputSchema: { type: 'object', 'x-hint': 'Note: ' + MARK, properties: { a: { type: 'string' } } },
+  }, {
+    name: 'propname_tool',
+    description: 'Plain tool.',
+    inputSchema: { type: 'object', properties: { ['Value ' + MARK]: { type: 'string' } } },
+  }, {
+    name: 'required_tool',
+    description: 'Plain tool.',
+    inputSchema: { type: 'object', properties: { a: { type: 'string' } }, required: ['a', MARK] },
+  }, {
+    name: 'pattern_tool',
+    description: 'Plain tool.',
+    inputSchema: { type: 'object', properties: { a: { type: 'string', pattern: MARK, format: 'date' } } },
+  }, {
+    name: 'named_like_keyword_tool',
+    description: 'Plain tool.',
+    inputSchema: { type: 'object', properties: { description: { type: 'string', pattern: MARK } } },
+  }, {
+    name: 'structure_ok_tool',
+    description: 'Plain tool.',
+    inputSchema: {
+      type: 'object',
+      'x-order': 1,
+      required: ['city'],
+      properties: { city: { type: 'string', pattern: '^[A-Za-z ]+$', format: 'hostname', 'x-ui': { widget: 'text' } } },
+    },
+  }, {
     name: 'benign_tool',
     title: 'Weather',
     description: 'Plain tool.',
@@ -105,11 +134,25 @@ test('tools/list: injection in the tool title and annotations.title is neutraliz
   assert.ok(t.annotations.title.startsWith(BLOCKED), 'annotations.title');
 });
 
+test('tools/list: an injection in an x- key value, a property name, required or pattern neutralizes the tool', async () => {
+  const tools = await listTools();
+  for (const name of ['ext_tool', 'propname_tool', 'required_tool', 'pattern_tool', 'named_like_keyword_tool']) {
+    const t = tools.find((x) => x.name === name);
+    assert.ok(t.description.startsWith(BLOCKED), name + ': ' + t.description);
+    assert.deepEqual(t.inputSchema, { type: 'object', properties: {} }, name);
+    assert.ok(!JSON.stringify(t).includes('ignore all previous instructions'), name);
+  }
+  const ok = tools.find((x) => x.name === 'structure_ok_tool');
+  assert.strictEqual(ok.description, 'Plain tool.');
+  assert.deepEqual(ok.inputSchema.required, ['city']);
+  assert.strictEqual(ok.inputSchema.properties.city.pattern, '^[A-Za-z ]+$');
+});
+
 test('tools/list: an injection in a key of a default object neutralizes the tool', async () => {
   const tools = await listTools();
   const t = tools.find((x) => x.name === 'key_tool');
   assert.ok(t.description.startsWith(BLOCKED), t.description);
-  assert.match(t.description, /key inside a default or const value/);
+  assert.match(t.description, /name, key or other schema string/);
   assert.deepEqual(t.inputSchema, { type: 'object', properties: {} });
   assert.ok(!JSON.stringify(t).includes('ignore all previous instructions'));
 });
