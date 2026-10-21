@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-21.5
+ * RULES_VERSION: 2026-10-21.7
  */
 
-const RULES_VERSION = '2026-10-21.5';
+const RULES_VERSION = '2026-10-21.7';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -1096,50 +1096,47 @@ const SCRUB_PROVIDER_LABELS = new Map([['DB_PASSWORD', 'URL_PASSWORD']]);
 // engine is required here, not at the top, because it requires this file.
 function redactProviderFormats(text) {
   const engine = require('./scrub/engine');
-  const scanProviders = (t) => engine.scan(t, { exact: false, pii: false, types: SCRUB_PROVIDER_RULES });
-  let current = text;
-  let detections = [];
-  // A pass that cuts a span (see providerPass) leaves the next line for the next pass. Each cut removes
-  // a line break from a span, so a few passes are enough; the cap only guards against a loop.
-  for (let pass = 0; pass < 8; pass++) {
-    const r = providerPass(current, scanProviders);
-    detections = detections.concat(r.detections);
-    current = r.sanitized;
-    if (!r.cut) break;
+  // Only the provider types take part in the overlap resolution: a wider span of another type (such as
+  // a NAME=value assignment) would otherwise win it, be dropped here, and leave the key unredacted.
+  const ctx = { exact: false, pii: false, types: SCRUB_PROVIDER_RULES, noView: true };
+  const direct = engine.scan(text, ctx);
+  const cands = direct.map((d) => ({ start: d.start, end: d.end, type: d.type }));
+  // As in ruleCandidates (and the Python package), the formats also run on the text without invisible
+  // characters and wrap breaks. A match there is dropped when it overlaps two or more matches of the same
+  // format on the original text, or one of them and the next line starts a secret of its own.
+  const view = invisibleView(text);
+  if (view) {
+    for (const v of engine.scan(view.clean, ctx)) {
+      const start = view.map[v.start];
+      const end = v.end > v.start ? view.map[v.end - 1] + 1 : view.map[v.start];
+      const over = direct.filter((d) => d.type === v.type && start < d.end && d.start < end);
+      if (over.length >= 2) continue;
+      if (over.length === 1 && startsSecretAt(text, over[0].end, end, SECRET_PATTERNS)) continue;
+      cands.push({ start, end, type: v.type });
+    }
   }
-  return { sanitized: current, detections };
-}
-
-// One pass of the provider formats. Only the provider types take part in the overlap resolution: a
-// wider span of another type (such as a NAME=value assignment) would otherwise win it, be dropped here,
-// and leave the key unredacted. The engine also matches on the text without wrap breaks, so a span can
-// run across a line break. As in ruleCandidates (and the Python package), such a span stops at the
-// break when the line before it is a key on its own and the next line starts a secret of its own; that
-// next line is redacted by the next pass.
-function providerPass(text, scanProviders) {
-  const spans = scanProviders(text).sort((a, b) => a.start - b.start || b.end - a.end);
+  // Overlapping candidates become one redaction covering their union (see mergeCandidates).
+  cands.sort((a, b) => a.start - b.start || b.end - a.end);
   const detections = [];
   let out = '';
   let last = 0;
-  let cut = false;
-  for (const s of spans) {
-    if (s.start < last) continue;
-    let end = s.end;
-    for (let i = text.indexOf('\n', s.start); i !== -1 && i < end; i = text.indexOf('\n', i + 1)) {
-      let lineEnd = i;
-      while (lineEnd > s.start && /[ \t\r]/.test(text[lineEnd - 1])) lineEnd--;
-      const own = scanProviders(text.slice(s.start, lineEnd)).some((t) => t.start === 0 && t.end === lineEnd - s.start);
-      if (own && startsSecretAt(text, i, end, SECRET_PATTERNS)) {
-        end = lineEnd;
-        cut = true;
-        break;
-      }
+  let cur = null;
+  const flush = () => {
+    if (!cur) return;
+    detections.push({ rule: SCRUB_PROVIDER_RULES.get(cur.type), index: cur.start });
+    out += text.slice(last, cur.start) + `[REDACTED_${SCRUB_PROVIDER_LABELS.get(cur.type) || cur.type}]`;
+    last = cur.end;
+  };
+  for (const c of cands) {
+    if (cur && c.start < cur.end) {
+      if (c.end > cur.end) cur.end = c.end;
+      continue;
     }
-    detections.push({ rule: SCRUB_PROVIDER_RULES.get(s.type), index: s.start });
-    out += text.slice(last, s.start) + `[REDACTED_${SCRUB_PROVIDER_LABELS.get(s.type) || s.type}]`;
-    last = end;
+    flush();
+    cur = { ...c };
   }
-  return { sanitized: out + text.slice(last), detections, cut };
+  flush();
+  return { sanitized: out + text.slice(last), detections };
 }
 
 // SCAN_SECRET_PATTERNS alone (`zn-gate scan` runs them last, on text that

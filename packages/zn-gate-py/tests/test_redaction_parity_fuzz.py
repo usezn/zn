@@ -57,6 +57,10 @@ REGRESSIONS = [
     STRIPE + "-old",
     "key=" + STRIPE + "_abc",
     "AWS_SECRET_ACCESS_KEY=" + VALUE[:20] + "\n" + STRIPE + "_abc",
+    # A key, a line that is half a token, then a key: the middle line must stay.
+    STRIPE + "\n" + GITHUB[:20] + "\n  " + STRIPE,
+    STRIPE + "\r\n" + STRIPE + "\r\nG/bPxRfiCYEXAMPLEKEY\tx",
+    STRIPE + "\n" + STRIPE + "\nResults/output",
 ]
 
 # A key with a separator (or nothing) on each side, or followed by a suffix that starts with _ or -.
@@ -70,6 +74,20 @@ TOKEN = re.compile(r"[A-Za-z0-9_-]")
 def random_texts(count, seed):
     rnd = random.Random(seed)
     return ["".join(rnd.choice(PIECES) for _ in range(rnd.randint(1, 30))) for _ in range(count)]
+
+
+SEPARATORS = [" ", "\n", "\r\n", "\n  ", "\t", ";", ", "]
+WORDS = ["Results/output", "G/bPxRfiCYEXAMPLEKEY", "key:", "NAME=", "ok", "x"]
+
+
+def separated_texts(count, seed):
+    """Texts closer to real output: pieces and words joined by spaces, line breaks, tabs and punctuation."""
+    rnd = random.Random(seed)
+    out = []
+    for _ in range(count):
+        parts = [rnd.choice(PIECES + WORDS) for _ in range(rnd.randint(1, 12))]
+        out.append("".join(p + rnd.choice(SEPARATORS) for p in parts))
+    return out
 
 
 def exposed_count(text, key):
@@ -115,7 +133,7 @@ def node_redact(texts):
 
 class RedactionParityFuzzTest(unittest.TestCase):
     def test_same_redaction_as_node(self):
-        texts = REGRESSIONS + random_texts(2000, seed=20261021)
+        texts = REGRESSIONS + random_texts(2000, seed=20261021) + separated_texts(4000, seed=20261023)
         js = node_redact(texts)
         py = [redact_secrets(t)[0] for t in texts]
         diff = [(t, j, p) for t, j, p in zip(texts, js, py, strict=True) if j != p]
@@ -124,7 +142,7 @@ class RedactionParityFuzzTest(unittest.TestCase):
 
     def test_no_key_left_visible(self):
         curated = [c.format(k=k) for k in KEYS for c in CONTEXTS]
-        texts = REGRESSIONS + curated + random_texts(2000, seed=20261022)
+        texts = REGRESSIONS + curated + random_texts(2000, seed=20261022) + separated_texts(4000, seed=20261024)
         js = node_redact(texts)
         leaks = []
         for t, j in zip(texts, js, strict=True):
