@@ -108,7 +108,7 @@ ahead, and:
 - shows this line to you and to the agent, with the rule's `reason` quoted
   as a policy note:
 
-  ```
+  ```text
   zn: your team policy would block STAGING_TOKEN here (policy note: "Staging credentials need review"). It was allowed and recorded for your organization.
   ```
 
@@ -183,7 +183,7 @@ An organization can push the agents' hooks to every developer machine with its d
 
 `zn team managed-config` prints the files to deploy. It does not write anything and does not read the machine you run it on: copy each printed file to the path shown with your own tooling.
 
-```
+```text
 zn team managed-config --agent claude-code --os macos
 zn team managed-config --agent all --os all --json
 ```

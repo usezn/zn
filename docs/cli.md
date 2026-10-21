@@ -506,21 +506,7 @@ A short summary of the last days (`--since 1d` to `90d`, default 7): blocked act
 
 ## Cloud check
 
-### `connect`
-
-```bash
-zn-gate connect [--reconnect]
-```
-
-Optional. Opens usezn.com so you can create an analysis-only API key, then asks you to paste it at a hidden prompt. The key is kept in your system keychain or the zn vault, never in a file, and never accepted as an argument. [How it works](connect.md). Exit codes: `0` connected, `1` it could not be done (for example no terminal), `2` wrong usage.
-
-### `disconnect`
-
-```bash
-zn-gate disconnect [--revoke | --no-revoke]
-```
-
-Removes the key from this computer and asks whether to revoke it on usezn.com too (default no). `--revoke` and `--no-revoke` answer for you. Exit codes: `0` done, `1` it could not be done, `2` wrong usage.
+`zn-gate connect` turns the optional cloud check on and `zn-gate disconnect` turns it off: see [`connect`](#connect) and [`disconnect`](#disconnect) above, and [How it works](connect.md).
 
 ## zn Team
 

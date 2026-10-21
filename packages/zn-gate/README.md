@@ -138,6 +138,7 @@ npx -y zn-gate init --revert    # restore the latest backup
 Remote (URL) servers are left as they are. `init` never rewrites a file it cannot round-trip safely: OpenCode JSONC files with comments and Codex entries with multi-line `args` are reported as "wrap manually".
 
 To wrap a single server by hand:
+
 ```bash
 npx -y zn-gate shield -- uvx mcp-server-fetch
 ```
@@ -190,15 +191,24 @@ Example: [protect the tools of a Vercel AI SDK agent](https://github.com/usezn/z
 ## What each piece does
 
 **Scrubber: secrets stay out of the model's context**
+<<<<<<< HEAD
 - Today, through zn-gate: redacts AWS keys, OpenAI and Anthropic keys, GitHub tokens, JWTs, private keys and database URL passwords in everything that passes through zn-gate (`check_tool_result`, `check_tool_call`, and output of servers wrapped by `shield` / `init`).
 - Today, agent hooks and vault: hooks for Claude Code, Codex CLI and OpenCode scrub the output of the agents' built-in tools and block pasted secrets (in Cursor only MCP tool output is scrubbed); a local encrypted vault with stable markers (`__ZN_AWS_KEY_1__`); `zn run` fills values only into commands you approved; personal data (cards, IBAN, national IDs, e-mail, phone) is detected too. What each agent allows differs: see [compat.md](https://github.com/usezn/zn/blob/main/docs/compat.md).
+=======
+
+- Today: redacts AWS keys, OpenAI and Anthropic keys, GitHub tokens, JWTs, private keys and database URL passwords in everything that passes through zn-gate (`check_tool_result`, `check_tool_call`, and output of servers wrapped by `shield` / `init`).
+- Not covered today: your agent's built-in tools (for example a native file read in Claude Code) unless their output goes through zn-gate.
+- Roadmap: personal data (PII) detection; hooks for agents' built-in tools; stable placeholders backed by a local encrypted vault.
+>>>>>>> origin/next
 
 **Galvanize: prompt-injection detection**
+
 - Today, local: a deterministic rules engine with normalization against homoglyphs, zero-width characters, BiDi overrides (CVE-2021-42574), comment splicing and Base64. It checks prompts, tool arguments, tool output and MCP tool descriptions.
 - Today, optional cloud: the Galvanize 2 classifier ([open weights](https://huggingface.co/usezn/Galvanize-2), Apache-2.0) can also check prompts sent to `analyze_prompt`, only with `ZN_CLOUD=1` and `ZN_API_KEY`. The secrets zn-gate detects are removed before sending; personal data and a secret it does not recognize are sent as written.
 - Roadmap: running Galvanize locally inside zn-gate.
 
 **Scan: audit what your agent is about to trust**
+
 - Today: `npx -y zn-gate scan <path>` audits prompt templates, `AGENTS.md` / `SKILL.md` files and configs for injection traps and leaked secrets. It exits with code 1 on findings, for CI. A link given as the folder to scan is followed. When no file is scanned, the report says "No files were scanned in <path>" and the exit code stays 0. It also checks the MCP server configs (`.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `.codex/config.toml`, `claude_desktop_config.json` and others) for keys and passwords written in plain text in `env`, `headers`, arguments or URLs; it never prints the value, and `--include-home` checks your own MCP configs too. MCP servers can be checked on the web at [usezn.com/scan](https://usezn.com/scan).
 - Roadmap: auditing MCP servers and skills from the CLI before you add them.
 

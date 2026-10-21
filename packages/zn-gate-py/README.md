@@ -73,15 +73,18 @@ print(r.verdict)           # allow
 ## What each piece does
 
 **Scrubber: secrets stay out of the model's context**
+
 - Today: `redact_secrets`, `sanitize_tool_result`, `@guard(mask_secrets=True)` and the framework integrations redact AWS keys, OpenAI and Anthropic keys, GitHub tokens, JWTs, private keys and database URL passwords.
 - Roadmap: personal data (PII) detection; stable placeholders backed by a local encrypted vault.
 
 **Galvanize: prompt-injection detection**
+
 - Today, local: `evaluate`, `check_tool_call`, `check_tool_result` and `@guard` run a deterministic rules engine with normalization against homoglyphs, zero-width characters, BiDi overrides, comment splicing and Base64.
 - Today, optional cloud: `analyze()` can also query the Galvanize 2 classifier ([open weights](https://huggingface.co/usezn/Galvanize-2), Apache-2.0), only with `ZN_CLOUD=1` and `ZN_API_KEY`.
 - Roadmap: running Galvanize locally.
 
 **Scan: audit what your agent is about to trust**
+
 - Today: `zn-gate scan <path>` audits prompt templates, skill files and configs for injection traps and leaked secrets. It also checks the MCP server configs (`.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `.codex/config.toml`, `claude_desktop_config.json` and others) for keys and passwords written in plain text in `env`, `headers`, arguments or URLs; it never prints the value, and `--include-home` checks your own MCP configs too.
 - Roadmap: auditing MCP servers and skills before you add them.
 
