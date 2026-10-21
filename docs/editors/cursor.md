@@ -69,7 +69,7 @@ Every result of a wrapped server is checked for prompt injection, and secrets zn
 `zn hooks install cursor` writes Cursor's `hooks.json` (zn-gate 1.5 and later, npm):
 
 - `beforeMCPExecution` denies an MCP call whose arguments carry a secret value or a `__ZN_` marker, unless it goes to zn's `secrets` server (from 1.7.0; run `zn hooks install cursor` again to add it).
-- `beforeReadFile` and `beforeSubmitPrompt` fail closed: if the hook crashes or times out, the read or the prompt is blocked.
+- `beforeReadFile` and `beforeSubmitPrompt` fail closed: if the hook crashes or times out, the read or the prompt is blocked. If the Node.js zn-gate was installed with is gone, a small launcher script (`~/.zn/hooks/zn-hook-cursor.sh`) blocks shell commands, MCP calls, file reads and prompts instead of letting them run; `zn-gate check` reports it, and `npm install -g zn-gate` then `zn hooks install cursor` fixes it.
 - `beforeShellExecution` blocks commands that read secret files and points the agent to `zn run` for commands that need a secret.
 - `postToolUse` removes secrets from MCP tool output (the only output Cursor lets a hook change).
 - `preToolUse` checks writes and deletes on a best-effort basis: Cursor does not document the input of every tool.

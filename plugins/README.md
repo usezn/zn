@@ -57,7 +57,9 @@ reads after the check, files you can write) are listed in
 [the plugin README](zn-gate/README.md#limits).
 
 `node plugins/tools/check-plugins.js` enforces the pinning rules in CI,
-`node plugins/tools/test-launch.js` tests the launcher, and
+`node plugins/tools/test-launch.js` tests the launcher,
+`node plugins/tools/test-pin-commit.js` tests how the plugin repository workflows find the
+commit that pinned the plugin, and
 `node plugins/tools/bench-launch.js packages/zn-gate` measures its cost per
 hook call.
 

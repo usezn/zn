@@ -37,8 +37,8 @@ test('zn vault status names the version and flags an outdated vault', () => {
   assert.equal(isOutdatedVault(null), false);
   assert.equal(unlockedLine(meta, { expiresAt: 'T', features: ['resolve-policy'], version: '1.8.0' }),
     'Vault: unlocked (backend passphrase, expires T, zn-gate 1.8.0)');
-  assert.equal(unlockedLine(meta, { expiresAt: 'T' }),
-    'Vault: unlocked (backend passphrase, expires T), outdated: restart with `zn lock`, then `zn unlock`');
+  assert.match(unlockedLine(meta, { expiresAt: 'T' }),
+    /^Vault: unlocked \(backend passphrase, expires T\), outdated: restart with `(zn|npx -y zn-gate@[0-9.]+) lock`, then `(zn|npx -y zn-gate@[0-9.]+) unlock`$/);
 });
 
 test('zn unlock does not go on while the old vault process is still alive', async () => {

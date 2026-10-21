@@ -38,6 +38,9 @@ concurrency:
 env:
   GITSIGN_VERSION: 0.17.1
   GITSIGN_SHA256: 69213a8a0813a151e5a47d0060862952ff833a845d57309dff76f7ba6600abae
+  # gh sends usage telemetry to cafe.github.com, which the egress block of these jobs does not allow;
+  # it is not needed, so it is turned off instead of being allowed.
+  GH_TELEMETRY: "false"
 
 jobs:
   check:
@@ -131,10 +134,25 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - name: Harden the runner (egress audit)
+      # Egress is blocked in this job (OIDC token, signing and the app key are in reach).
+      # The list comes from the audit-mode runs of this job (runs 39120137019 and 39266313699, 2026-10-18/19):
+      # git (github.com), gitsign download (github.com redirecting to release-assets.githubusercontent.com),
+      # Sigstore (fulcio, rekor, tuf-repo-cdn), the OIDC token host (run-actions-N-azure-<region>.actions.githubusercontent.com),
+      # and api.github.com for the app token. objects.githubusercontent.com is the other host GitHub uses for
+      # release-asset redirects. A new destination fails the run on purpose: add it here after reviewing it.
+      - name: Harden the runner (egress block)
         uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
-          egress-policy: audit
+          egress-policy: block
+          allowed-endpoints: >-
+            github.com:443
+            api.github.com:443
+            release-assets.githubusercontent.com:443
+            objects.githubusercontent.com:443
+            *.actions.githubusercontent.com:443
+            fulcio.sigstore.dev:443
+            rekor.sigstore.dev:443
+            tuf-repo-cdn.sigstore.dev:443
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.sha }}

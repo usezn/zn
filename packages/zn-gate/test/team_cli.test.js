@@ -186,7 +186,7 @@ test('status with a locked vault reads the copies on disk and says the vault is 
   assert.strictEqual(r.code, 0);
   assert.match(r.stdout, /Organization: Example Org \(org_Example12345678\)/);
   assert.match(r.stdout, /Policy:       none received yet/);
-  assert.match(r.stdout, /The vault is locked: policy downloads and uploads resume after `zn unlock`\./);
+  assert.match(r.stdout, /The vault is locked: policy downloads and uploads resume after `(zn|npx -y zn-gate@[0-9.]+) unlock`\./);
   r = await capture(() => runTeamCommand(['team', 'status', '--json']));
   const j = JSON.parse(r.stdout);
   assert.strictEqual(j.joined, true);
