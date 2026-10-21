@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, overload
 
 
-RULES_VERSION = "2026-10-21.1"
+RULES_VERSION = "2026-10-21.6"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
