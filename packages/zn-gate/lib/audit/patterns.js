@@ -265,6 +265,10 @@ const INTERPRETERS = new Set([
   'source', 'osascript', 'iex', 'invoke-expression',
 ]);
 
+const WRAPPERS = new Set(['eval', 'exec', 'sudo', 'env', 'xargs', 'source', 'iex', 'invoke-expression']);
+const PACKAGE_RUNNERS = new Set(['npm', 'pnpm', 'yarn']);
+const CODE_ARGS = new Set(['-c', '-e', '-r', '-command', '-encodedcommand', '/c', 'x', 'exec', 'dlx', 'eval']);
+
 /** Severity of one Claude Code permission rule, or null when it is narrow. */
 function claudePermission(entry) {
   const e = String(entry || '').trim();
@@ -273,8 +277,16 @@ function claudePermission(entry) {
   if (!m) return null;
   const inner = m[2].trim();
   if (inner === '' || /^[*:\s]+$/.test(inner)) return 'high';
-  const first = trimTrailing(inner.split(/[\s:]/)[0], '*');
-  if (INTERPRETERS.has(first.toLowerCase()) && /[*]/.test(inner)) return 'high';
+  if (!/[*]/.test(inner)) return null;
+  const words = inner.split(/[\s:]+/).filter(Boolean);
+  const first = trimTrailing(words[0] || '', '*').toLowerCase();
+  if (!INTERPRETERS.has(first) && !PACKAGE_RUNNERS.has(first)) return null;
+  // A prefix with a subcommand (bun run test:*, git status:*) is scoped. Only
+  // the bare interpreter, a wrapper that runs whatever follows, or a code flag
+  // or exec subcommand (bash -c, python -c, bun x, npm exec) allows any command.
+  const rest = words.slice(1).map((w) => trimTrailing(w, '*')).filter(Boolean);
+  if (rest.length === 0 || WRAPPERS.has(first)) return 'high';
+  if (CODE_ARGS.has(rest[0].toLowerCase())) return 'high';
   return null;
 }
 

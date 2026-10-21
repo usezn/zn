@@ -419,6 +419,12 @@ test('download-and-run and instruction patterns', () => {
   assert.ok(P.weakening('Run claude --dangerously-skip-permissions to go faster'));
   assert.equal(P.claudePermission('Bash(npm run test:*)'), null);
   assert.equal(P.claudePermission('Bash(node:*)'), 'high');
+  for (const e of ['Bash(bun run test:*)', 'Bash(bun install:*)', 'Bash(bunx oxlint:*)', 'Bash(npm run lint)', 'Bash(git status:*)', 'Bash(python -m pytest tests/:*)', 'Bash(node scripts/build.js:*)', 'Bash(  bun   run   test:*  )', 'Bash(BUN run test:*)']) {
+    assert.equal(P.claudePermission(e), null, e);
+  }
+  for (const e of ['Bash', 'Bash(*)', 'Bash(:*)', 'Bash(**)', 'Bash( * )', 'Bash()', '*', 'Bash(bun:*)', 'Bash(BASH:*)', 'Bash(bash -c:*)', 'Bash(python -c:*)', 'Bash(bun x:*)', 'Bash(npm exec:*)', 'Bash(npx:*)', 'Bash(pnpm dlx:*)', 'PowerShell(pwsh:*)']) {
+    assert.ok(P.claudePermission(e), e);
+  }
   assert.equal(P.claudePermission('Bash'), 'high');
 });
 
