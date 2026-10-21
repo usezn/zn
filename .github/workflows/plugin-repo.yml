@@ -25,6 +25,11 @@ on:
 
 permissions: {}
 
+env:
+  # gh sends usage telemetry to cafe.github.com, which the egress block of these jobs does not allow;
+  # it is not needed, so it is turned off instead of being allowed.
+  GH_TELEMETRY: "false"
+
 concurrency:
   group: plugin-repository
   cancel-in-progress: false
