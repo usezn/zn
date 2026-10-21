@@ -726,8 +726,16 @@ test('a nested batch from the client is refused as an invalid request and not se
   const s = startShield();
   try {
     s.send([[call(51, 'inject')]]);
-    const err = await until(s, (m) => m.error && m.error.code === -32600);
-    assert.strictEqual(err.id, null);
+    const line = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('no answer; stderr: ' + s.stderr)), 15000);
+      const check = () => {
+        const l = s.lines.find((x) => x.includes('-32600'));
+        if (l) { clearTimeout(timer); s.waiters = s.waiters.filter((w) => w !== check); resolve(l); }
+      };
+      s.waiters.push(check);
+      check();
+    });
+    assert.deepStrictEqual(JSON.parse(line).map((m) => m.id), [null]);
     s.send(call(52, 'echo_ok'));
     await s.reply(52);
     assert.ok(!s.lines.some((l) => l.includes('ignore all previous instructions')), 'nothing from the nested call reached the client');
@@ -743,6 +751,61 @@ test('an answer with the id as a string is still checked as the tool result it i
     const r = await until(s, (m) => m.id === '53');
     assert.ok(!JSON.stringify(r).includes('ignore all previous instructions'));
     await waitStderr(s, /BLOCKED RESPONSE/);
+  } finally {
+    await s.stop();
+  }
+});
+
+test('answers whose id differs only in form from the request id are still checked', async () => {
+  const s = startShield();
+  try {
+    const cases = [[61, '061'], [62, '62.0'], [63, ' 63'], [64, '0x40'], [65, '65e0'], [66, [66]]];
+    for (const [id, reply] of cases) s.send(call(id, 'odd_id', { reply }));
+    for (const [, reply] of cases) {
+      const m = await until(s, (x) => JSON.stringify(x.id) === JSON.stringify(reply));
+      assert.ok(!JSON.stringify(m).includes('ignore all previous instructions'), JSON.stringify(reply));
+    }
+  } finally {
+    await s.stop();
+  }
+});
+
+test('a second answer to the same request is checked too', async () => {
+  const s = startShield();
+  try {
+    s.send(call(67, 'twice'));
+    await s.reply(67);
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('no second answer; stderr: ' + s.stderr)), 15000);
+      const check = () => {
+        if (s.json().filter((m) => m.id === 67).length >= 2) { clearTimeout(timer); s.waiters = s.waiters.filter((w) => w !== check); resolve(); }
+      };
+      s.waiters.push(check);
+      check();
+    });
+    assert.ok(!s.lines.some((l) => l.includes('ignore all previous instructions')));
+  } finally {
+    await s.stop();
+  }
+});
+
+test('a client batch with a bare value answers each request in it and the bare value', async () => {
+  const s = startShield();
+  try {
+    s.send([call(68, 'echo_ok'), 5]);
+    const line = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('no answer; stderr: ' + s.stderr)), 15000);
+      const check = () => {
+        const l = s.lines.find((x) => x.startsWith('[') && x.includes('"id":68'));
+        if (l) { clearTimeout(timer); s.waiters = s.waiters.filter((w) => w !== check); resolve(l); }
+      };
+      s.waiters.push(check);
+      check();
+    });
+    const arr = JSON.parse(line);
+    assert.match(arr.find((m) => m.id === 68).error.message, /another request in the same batch/);
+    assert.strictEqual(arr.find((m) => m.id === null).error.code, -32600);
+    assert.ok(!s.lines.some((l) => l.includes('Hello from the fake server.')), 'nothing reached the server');
   } finally {
     await s.stop();
   }

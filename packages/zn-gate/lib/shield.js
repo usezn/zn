@@ -315,6 +315,12 @@ function startMcpShield(command, args, options = {}) {
           for (const f of ['description', 'title']) if (typeof item[f] === 'string') await scanServerValue(label, item, f, state, 0);
         }
       }
+      if (method !== 'tools/call' && method !== 'tools/list' && msg.id !== undefined && Array.isArray(result.content)) {
+        // An answer the shield did not match to a tools/call (an id it does not know, a second answer to the same
+        // request) but shaped like a tool result: its content is checked as server text all the same.
+        await scanServerValue('tools/call (unmatched answer)', result, 'content', { n: 0 }, 0);
+        if (result.structuredContent !== undefined) await scanServerValue('tools/call (unmatched answer)', result, 'structuredContent', { n: 0 }, 0);
+      }
       if (method === 'tools/call') {
         // The text items were checked as tool results; structured content and the other items are checked here.
         if (result.structuredContent !== undefined) await scanServerValue('tools/call structuredContent', result, 'structuredContent', { n: 0 }, 0);
@@ -347,8 +353,12 @@ function startMcpShield(command, args, options = {}) {
     error: { code: -32000, message: '[zn-gate] Not sent: another request in the same batch was blocked by zn-gate.' },
   });
 
-  // Request ids are matched by value: a server that answers request 7 with id "7" still gets its answer checked.
-  const idKey = (id) => (typeof id === 'string' || typeof id === 'number' ? 'v:' + String(id) : 'j:' + JSON.stringify(id));
+  // Request ids are matched by numeric value where they have one, as MCP clients do (the TypeScript SDK compares
+  // Number(id)): an answer to request 7 with id "7", "07", "7.0", " 7", "0x7", "7e0" or [7] still gets checked.
+  const idKey = (id) => {
+    const n = typeof id === 'boolean' || id === null || id === '' ? NaN : Number(id);
+    return Number.isFinite(n) ? 'n:' + n : 'j:' + JSON.stringify(id);
+  };
   // One JSON-RPC message: an object (not an array, not a bare value).
   const isMessage = (x) => !!x && typeof x === 'object' && !Array.isArray(x);
 
@@ -388,7 +398,10 @@ function startMcpShield(command, args, options = {}) {
           child.stdin.write(line + '\n');
         } else {
           process.stderr.write('[zn-shield BLOCKED REQUEST] A batch from the client holds something that is not a message (a nested batch or a bare value), so it was not sent.\n');
-          process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32600, message: '[zn-gate] Invalid request: a batch may only hold request objects.' } }) + '\n');
+          // Each request in it gets an answer, and each entry that is not a request gets Invalid Request.
+          const invalid = { jsonrpc: '2.0', id: null, error: { code: -32600, message: '[zn-gate] Invalid request: a batch may only hold request objects.' } };
+          const out = msg.map((one) => (isMessage(one) ? (one.id !== undefined ? batchNotice(one.id) : null) : invalid)).filter(Boolean);
+          process.stdout.write(JSON.stringify(out) + '\n');
         }
         return;
       }

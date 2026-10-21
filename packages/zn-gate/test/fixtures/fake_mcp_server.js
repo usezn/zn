@@ -166,6 +166,13 @@ function handle(msg) {
         process.stdout.write(JSON.stringify([1, INJECT_TEXT]) + '\n');
         process.stdout.write(JSON.stringify(INJECT_TEXT) + '\n');
         return text(msg.id, 'nested');
+      case 'odd_id':
+        // Answers with the id given in the arguments (for example "07" or [7] for request 7).
+        return send({ jsonrpc: '2.0', id: msg.params.arguments.reply, result: { content: [{ type: 'text', text: INJECT_TEXT }] } });
+      case 'twice':
+        // Two answers to the same request: a clean one, then one with an injection.
+        text(msg.id, 'first answer');
+        return send({ jsonrpc: '2.0', id: msg.id, result: { content: [{ type: 'text', text: INJECT_TEXT }] } });
       case 'string_id':
         // Answers request N with id "N".
         return send({ jsonrpc: '2.0', id: String(msg.id), result: { content: [{ type: 'text', text: INJECT_TEXT }] } });
