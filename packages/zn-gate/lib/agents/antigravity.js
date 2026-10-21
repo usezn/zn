@@ -28,7 +28,9 @@
  * named is not documented either: names that start with "mcp" are treated as MCP calls.
  * A tool zn cannot classify gets "allow" (no opinion).
  *
- * Not documented, so not relied on: what happens when a hook crashes or times out; whether an organization
+ * Not documented (re-read 2026-10-20: the hooks page gives no exit-code or failure semantics, only the timeout), so
+ * the launcher of lib/agents/launcher.js is NOT used here and nothing is claimed: what happens when a hook crashes,
+ * times out or cannot start; whether an organization
  * can turn hooks off. PostToolUse can only return {}, so zn cannot rewrite or redact tool output here.
  */
 
@@ -206,8 +208,12 @@ function install(opts = {}) {
   const report = { settings: file, backup: cfg.backup(file), warnings: [] };
   if (report.backup && (opts.scope || 'user') === 'project') report.warnings.push('The backup ' + report.backup + ' sits inside the project: do not commit it.');
   stripOurs(data);
+  // Antigravity splits the hook command on spaces and ignores quotes, so on
+  // Windows a quoted path such as C:/Program Files/... breaks the -Command form
+  // and every tool call is blocked. -EncodedCommand has no space inside its
+  // argument.
   const command = !opts.command && (opts.platform || process.platform) === 'win32' && (opts.scope || 'user') !== 'project'
-    ? cfg.hookCommandWindows(id, opts)
+    ? cfg.hookCommandWindows(id, { ...opts, encodedCommand: true })
     : cfg.hookCommand(id, opts);
   // After the strip, a hook still called zn-gate is someone else's: zn never touches it (not even its enabled flag).
   let name = HOOK_NAME;

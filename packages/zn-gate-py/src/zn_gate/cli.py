@@ -490,7 +490,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
     target_path = Path(args.path)
     if not target_path.exists():
         print(f"Error: target path not found: {target_path}", file=sys.stderr)
-        return 2
+        return 1
 
     files_to_scan: List[Path] = []
     skip_dirs = _SCAN_SKIP_DIRS
@@ -518,7 +518,11 @@ def cmd_scan(args: argparse.Namespace) -> int:
     if root_file:
         files_to_scan.append(target_path)
     else:
-        for root, dirs, files in os.walk(target_path):
+        # A folder that cannot be listed is reported, not skipped in silence: its files were not scanned.
+        def _unreadable(err: OSError) -> None:
+            skipped_dirs.append({"dir": str(err.filename), "reason": "cannot be read"})
+
+        for root, dirs, files in os.walk(target_path, onerror=_unreadable):
             kept = []
             for d in dirs:
                 if d in user_excluded:
@@ -726,8 +730,35 @@ def npm_only_message(command: str) -> str:
     )
 
 
+# Commands that exist only in the npm package and take no explanation of the
+# Python/agents split: they just say where the command lives.
+NPM_ONLY_SIMPLE_COMMANDS = frozenset({"report", "reach", "connect", "disconnect"})
+
+KNOWN_COMMANDS = frozenset({"test", "analyze", "scan", "evidence", "status", "stats"})
+
+
+def npm_only_simple_message(command: str) -> str:
+    return (
+        f"zn-gate {command} is a command of the npm package, not of this Python package.\n"
+        "Run it with Node.js 18 or later:\n"
+        f"  npx -y zn-gate {command}\n"
+        f"or, after npm install -g zn-gate:\n"
+        f"  zn-gate {command}\n"
+    )
+
+
 def main() -> int:
     _configure_output_streams()
+    first = sys.argv[1] if len(sys.argv) > 1 else None
+    if first in NPM_ONLY_SIMPLE_COMMANDS:
+        sys.stderr.write(npm_only_simple_message(first))
+        return 2
+    if first == "version":
+        print(f"zn-gate {__version__} (rules: {RULES_VERSION})")
+        return 0
+    if first is not None and not first.startswith("-") and first not in KNOWN_COMMANDS and first not in NPM_ONLY_COMMANDS:
+        sys.stderr.write(f"Unknown command: {first}\nRun 'zn-gate --help' for usage.\n")
+        return 1
     if len(sys.argv) > 1 and sys.argv[1] in NPM_ONLY_COMMANDS:
         sys.stderr.write(npm_only_message(sys.argv[1]))
         return 2

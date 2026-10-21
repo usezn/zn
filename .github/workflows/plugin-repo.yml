@@ -41,11 +41,25 @@ jobs:
       contents: read
       attestations: read
     steps:
-      - name: Harden the runner (egress audit)
+      # Egress is blocked in this job (it holds the plugin repository app key).
+      # The list comes from the audit-mode runs of this job (runs 39017124270, 39121981204 and 39289443428,
+      # 2026-10-17/19): git clone and push (github.com), api.github.com (app token, gh pr), registry.npmjs.org
+      # (npm pack), and gh attestation verify (tuf-repo.github.com, tuf-repo-cdn.sigstore.dev and the TUF mirror
+      # tmaproduction.blob.core.windows.net). results-receiver is the runner's own log endpoint. A new destination
+      # fails the run on purpose: add it here after reviewing it.
+      - name: Harden the runner (egress block)
         if: runner.os == 'Linux'
         uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
-          egress-policy: audit
+          egress-policy: block
+          allowed-endpoints: >-
+            github.com:443
+            api.github.com:443
+            registry.npmjs.org:443
+            tuf-repo.github.com:443
+            tuf-repo-cdn.sigstore.dev:443
+            tmaproduction.blob.core.windows.net:443
+            results-receiver.actions.githubusercontent.com:443
       - name: Check out this repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -56,6 +70,8 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.x
+          # Nothing this job builds may be read from or written to the Actions cache.
+          package-manager-cache: false
 
       - name: Find the commit that pinned the plugin
         id: version
@@ -64,7 +80,10 @@ jobs:
           # The plugin repository is generated from the commit that last changed the pin,
           # which is the commit its checks compare it with. pin-release.js moves the
           # plugin manifests and docs to the pinned version in that same commit.
-          source="$(git -C zn log -1 --format=%H HEAD -- plugins/zn-gate/scripts/zn-gate.lock.json)"
+          # --first-parent: the commit on main that brought the pin (the merge of the pin's
+          # pull request). Without it Git follows the pull request's side and can return its
+          # own pin commit, made before the release reached main, which lacks the release tag.
+          source="$(git -C zn log -1 --first-parent --format=%H HEAD -- plugins/zn-gate/scripts/zn-gate.lock.json)"
           git -C zn worktree add --quiet --detach ../src "$source"
           v="$(node -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync('src/plugins/zn-gate/scripts/zn-gate.lock.json','utf8')).version))")"
           if [[ ! "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
