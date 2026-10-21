@@ -78,3 +78,38 @@ test('invisibleView maps a wrap break back to the original text', () => {
   assert.equal(view.map[view.clean.length], text.length);
   assert.equal(rules.invisibleView('short\nlines'), null);
 });
+
+// The wrap breaks are found once per line break, not by matchAll over the whole text. Same result:
+// compared with matchAll of the pattern in lib/rules.js on random texts made of the pieces that matter
+// (runs of 10 token characters, spaces, tabs, CR, LF and NAME= or NAME: starts).
+test('wrap breaks found per line break match matchAll of the pattern', () => {
+  const src = require('fs').readFileSync(require.resolve('../lib/rules'), 'utf8');
+  const re = new Function('return ' + src.match(/^const WRAP_BREAK_RE = (\/.*\/g);$/m)[1])();
+  const parts = ['abcdefghij', 'KLMNOPQRST', '0123456789', 'ab_+/=-cd', 'ABCDE', '=', ' ', '\t', '\r', '\n', '\n', '\n', 'NAME=', 'key: ', 'x', '.'];
+  let seed = 42;
+  const rnd = (n) => {
+    seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
+    return (seed >>> 8) % n;
+  };
+  let joined = 0;
+  for (let k = 0; k < 10000; k++) {
+    let text = '';
+    const len = 1 + rnd(40);
+    for (let j = 0; j < len; j++) text += parts[rnd(parts.length)];
+    const runs = [...text.matchAll(re)].map((m) => [m.index, m.index + m[0].length]);
+    let clean = '';
+    let pos = 0;
+    for (const [s, e] of runs) {
+      clean += text.slice(pos, s);
+      pos = e;
+    }
+    clean += text.slice(pos);
+    const view = rules.invisibleView(text);
+    if (runs.length === 0) assert.equal(view, null, JSON.stringify(text));
+    else {
+      assert.equal(view.clean, clean, JSON.stringify(text));
+      joined++;
+    }
+  }
+  assert.ok(joined > 300, 'too few texts with a wrap break: ' + joined);
+});
