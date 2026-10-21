@@ -264,15 +264,17 @@ test('block pinning refuses a tool that was never listed, and allows it after th
   }
 });
 
-test('non-JSON lines from the server and from the client are forwarded as they are', async () => {
+test('a non-JSON line from the client is forwarded; one from the server is dropped and reported', async () => {
   const s = startShield();
   try {
     s.send('hello not json');
+    const echo = await until(s, (m) => m.method === 'notifications/echo');
+    assert.strictEqual(echo.params.line, 'hello not json');
     s.send(call(7, 'noise'));
     const r = await s.reply(7);
     assert.strictEqual(resultText(r), 'after noise');
-    assert.ok(s.lines.includes('this is not json'));
-    assert.ok(s.lines.includes('echo-non-json:hello not json'));
+    assert.ok(!s.lines.includes('this is not json'));
+    await waitStderr(s, /not valid JSON was dropped/);
   } finally {
     await s.stop();
   }
@@ -408,6 +410,16 @@ const until = (s, pred) => new Promise((resolve, reject) => {
   s.waiters.push(check);
   check();
 });
+// stderr can arrive after the message it belongs to: wait for the line instead of reading it at once.
+const waitStderr = (s, re) => new Promise((resolve, reject) => {
+  const started = Date.now();
+  const poll = () => {
+    if (re.test(s.stderr)) return resolve();
+    if (Date.now() - started > 15000) return reject(new Error('stderr never matched ' + re + ': ' + s.stderr));
+    setTimeout(poll, 20);
+  };
+  poll();
+});
 
 test('a server notification that carries an injection is neutralized', async () => {
   const s = startShield();
@@ -416,7 +428,7 @@ test('a server notification that carries an injection is neutralized', async () 
     const n = await until(s, (m) => m.method === 'notifications/message');
     assert.ok(!JSON.stringify(n).includes(INJECTION));
     assert.ok(/zn-gate/i.test(n.params.data));
-    assert.ok(/BLOCKED SERVER MESSAGE\] notifications\/message/.test(s.stderr), s.stderr);
+    await waitStderr(s, /BLOCKED SERVER MESSAGE\] notifications\/message/);
   } finally {
     await s.stop();
   }
@@ -431,7 +443,7 @@ test('a sampling request from the server is checked in its messages and its syst
     assert.ok(/zn-gate/i.test(q.params.messages[0].content.text));
     assert.ok(/zn-gate/i.test(q.params.systemPrompt));
     assert.strictEqual(q.params.maxTokens, 10, 'other fields are kept');
-    assert.ok(/BLOCKED SERVER MESSAGE\] sampling\/createMessage/.test(s.stderr), s.stderr);
+    await waitStderr(s, /BLOCKED SERVER MESSAGE\] sampling\/createMessage/);
   } finally {
     await s.stop();
   }
@@ -445,7 +457,7 @@ test('a resources/read result that carries an injection is neutralized', async (
     assert.ok(!JSON.stringify(r).includes(INJECTION));
     assert.ok(/zn-gate/i.test(r.result.contents[0].text));
     assert.strictEqual(r.result.contents[0].uri, 'file:///example/page.txt');
-    assert.ok(/BLOCKED SERVER MESSAGE\] resources\/read/.test(s.stderr), s.stderr);
+    await waitStderr(s, /BLOCKED SERVER MESSAGE\] resources\/read/);
   } finally {
     await s.stop();
   }
@@ -458,7 +470,7 @@ test('a prompts/get result that carries an injection is neutralized', async () =
     const r = await s.reply(23);
     assert.ok(!JSON.stringify(r).includes(INJECTION));
     assert.ok(/zn-gate/i.test(r.result.messages[0].content.text));
-    assert.ok(/BLOCKED SERVER MESSAGE\] prompts\/get/.test(s.stderr), s.stderr);
+    await waitStderr(s, /BLOCKED SERVER MESSAGE\] prompts\/get/);
   } finally {
     await s.stop();
   }
@@ -472,7 +484,7 @@ test('an error message that carries an injection is neutralized', async () => {
     assert.strictEqual(r.error.code, -32000);
     assert.ok(!r.error.message.includes(INJECTION));
     assert.ok(/zn-gate/i.test(r.error.message));
-    assert.ok(/BLOCKED SERVER MESSAGE\] error/.test(s.stderr), s.stderr);
+    await waitStderr(s, /BLOCKED SERVER MESSAGE\] error/);
   } finally {
     await s.stop();
   }
@@ -490,7 +502,108 @@ test('shadow mode leaves server messages untouched and only reports', async () =
     assert.ok(n.params.data.includes(INJECTION));
     const e = await s.reply(27);
     assert.ok(e.error.message.includes(INJECTION));
-    assert.ok(/BLOCKED SERVER MESSAGE/.test(s.stderr));
+    await waitStderr(s, /BLOCKED SERVER MESSAGE/);
+  } finally {
+    await s.stop();
+  }
+});
+
+test('the descriptions of resources, resource templates and prompts are checked', async () => {
+  const s = startShield();
+  try {
+    s.send(rpc(30, 'resources/list'));
+    s.send(rpc(31, 'resources/templates/list'));
+    s.send(rpc(32, 'prompts/list'));
+    const [a, b, c] = await Promise.all([s.reply(30), s.reply(31), s.reply(32)]);
+    for (const m of [a, b, c]) assert.ok(!JSON.stringify(m).includes(INJECTION), JSON.stringify(m));
+    assert.strictEqual(a.result.resources[0].uri, 'file:///example/page.txt', 'identifiers are kept');
+    assert.strictEqual(b.result.resourceTemplates[0].uriTemplate, 'file:///example/{name}');
+    assert.strictEqual(c.result.prompts[0].name, 'example');
+    await waitStderr(s, /BLOCKED SERVER MESSAGE\] prompts\/list/);
+  } finally {
+    await s.stop();
+  }
+});
+
+test('a tool result is checked in its structured content, embedded resources and resource links', async () => {
+  const s = startShield();
+  try {
+    s.send(call(33, 'structured'));
+    s.send(call(34, 'embedded'));
+    const [a, b] = await Promise.all([s.reply(33), s.reply(34)]);
+    assert.ok(!JSON.stringify(a).includes(INJECTION));
+    assert.strictEqual(a.result.structuredContent.count, 2, 'the shape is kept');
+    assert.ok(!JSON.stringify(b).includes(INJECTION));
+    assert.strictEqual(b.result.content[0].resource.uri, 'file:///example/page.txt');
+    await waitStderr(s, /tools\/call resource_link/);
+  } finally {
+    await s.stop();
+  }
+});
+
+test('a text blob is decoded and checked; a binary blob is left alone', async () => {
+  const s = startShield();
+  try {
+    s.send(rpc(35, 'resources/read', { uri: 'file:///example/blob.txt' }));
+    const r = await s.reply(35);
+    const text = Buffer.from(r.result.contents[0].blob, 'base64').toString('utf8');
+    assert.ok(!text.includes(INJECTION) && /zn-gate/i.test(text), text);
+    const png = Buffer.from(r.result.contents[1].blob, 'base64').toString('utf8');
+    assert.ok(png.includes(INJECTION), 'image/png is binary and is not rewritten');
+  } finally {
+    await s.stop();
+  }
+});
+
+test('a server line that JSON.parse rejects (NaN) is dropped, not forwarded unchecked', async () => {
+  const s = startShield();
+  try {
+    s.send(call(36, 'nan'));
+    s.send(call(37, 'echo_ok'));
+    await s.reply(37);
+    await waitStderr(s, /not valid JSON was dropped/);
+    assert.ok(!s.lines.some((l) => l.includes(INJECTION)));
+    assert.ok(!s.json().some((m) => m.id === 36));
+  } finally {
+    await s.stop();
+  }
+});
+
+test('the method name a server chooses is printed without control characters and cut to 64 characters', async () => {
+  const s = startShield();
+  try {
+    s.send(call(38, 'notify_label'));
+    await waitStderr(s, /BLOCKED SERVER MESSAGE\] notifications\//);
+    const line = s.stderr.split('\n').find((l) => l.includes('BLOCKED SERVER MESSAGE] notifications/'));
+    assert.ok(!line.includes('\u001b'), JSON.stringify(line));
+    const label = line.replace(/^.*BLOCKED SERVER MESSAGE\] /, '').replace(/ Rule: .*$/, '');
+    assert.ok(label.length <= 64, label);
+  } finally {
+    await s.stop();
+  }
+});
+
+test('a 12 MB server notification with an injection in the middle is checked in full', async () => {
+  const s = startShield();
+  try {
+    s.send(call(39, 'notify_big'));
+    const n = await until(s, (m) => m.method === 'notifications/message');
+    assert.ok(!JSON.stringify(n).includes(INJECTION));
+    await waitStderr(s, /BLOCKED SERVER MESSAGE\] notifications\/message/);
+  } finally {
+    await s.stop();
+  }
+});
+
+test('server messages reach the client in the order the server sent them', async () => {
+  const s = startShield();
+  try {
+    s.send(call(40, 'order'));
+    await s.reply(40);
+    const notes = s.json().filter((m) => m.method === 'notifications/message').map((m) => m.params.data.slice(0, 6));
+    assert.deepStrictEqual(notes, ['first ', 'second']);
+    const idx = (pred) => s.lines.findIndex((l) => { try { return pred(JSON.parse(l)); } catch { return false; } });
+    assert.ok(idx((m) => m.params && m.params.data === 'second') < idx((m) => m.id === 40));
   } finally {
     await s.stop();
   }

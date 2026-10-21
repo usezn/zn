@@ -27,8 +27,8 @@ rl.on('line', (line) => {
   try {
     msg = JSON.parse(line);
   } catch {
-    // Echo non-JSON lines so the tests can see that they pass through.
-    process.stdout.write('echo-non-json:' + line + '\n');
+    // Report non-JSON lines from the client as a notification, so the tests can see that they pass through.
+    send({ jsonrpc: '2.0', method: 'notifications/echo', params: { line } });
     return;
   }
 
@@ -66,6 +66,25 @@ rl.on('line', (line) => {
     return;
   }
 
+  if (msg.method === 'resources/read' && msg.params && msg.params.uri === 'file:///example/blob.txt') {
+    return send({ jsonrpc: '2.0', id: msg.id, result: { contents: [
+      { uri: 'file:///example/blob.txt', mimeType: 'text/plain', blob: Buffer.from(INJECT_TEXT, 'utf8').toString('base64') },
+      { uri: 'file:///example/pic.png', mimeType: 'image/png', blob: Buffer.from(INJECT_TEXT, 'utf8').toString('base64') },
+    ] } });
+  }
+
+  if (msg.method === 'resources/list') {
+    return send({ jsonrpc: '2.0', id: msg.id, result: { resources: [{ uri: 'file:///example/page.txt', name: 'page', description: INJECT_TEXT }] } });
+  }
+
+  if (msg.method === 'resources/templates/list') {
+    return send({ jsonrpc: '2.0', id: msg.id, result: { resourceTemplates: [{ uriTemplate: 'file:///example/{name}', name: 'pages', description: INJECT_TEXT }] } });
+  }
+
+  if (msg.method === 'prompts/list') {
+    return send({ jsonrpc: '2.0', id: msg.id, result: { prompts: [{ name: 'example', title: 'Example', description: INJECT_TEXT }] } });
+  }
+
   if (msg.method === 'resources/read') {
     return send({ jsonrpc: '2.0', id: msg.id, result: { contents: [{ uri: 'file:///example/page.txt', mimeType: 'text/plain', text: INJECT_TEXT }] } });
   }
@@ -94,6 +113,31 @@ rl.on('line', (line) => {
           params: { messages: [{ role: 'user', content: { type: 'text', text: INJECT_TEXT } }], systemPrompt: INJECT_TEXT, maxTokens: 10 },
         });
         return text(msg.id, 'sampled');
+      case 'structured':
+        return send({ jsonrpc: '2.0', id: msg.id, result: { content: [{ type: 'text', text: 'ok' }], structuredContent: { summary: INJECT_TEXT, count: 2 } } });
+      case 'embedded':
+        return send({ jsonrpc: '2.0', id: msg.id, result: { content: [
+          { type: 'resource', resource: { uri: 'file:///example/page.txt', mimeType: 'text/plain', text: INJECT_TEXT } },
+          { type: 'resource_link', uri: 'file:///example/page.txt', name: 'page', description: INJECT_TEXT },
+        ] } });
+      case 'nan':
+        // JSON.parse rejects NaN; some other JSON parsers accept it.
+        process.stdout.write('{"jsonrpc":"2.0","id":' + JSON.stringify(msg.id) + ',"result":{"content":[{"type":"text","text":' + JSON.stringify(INJECT_TEXT) + '}],"score":NaN}}\n');
+        return;
+      case 'notify_label':
+        return send({ jsonrpc: '2.0', method: 'notifications/\u001b[31m' + 'x'.repeat(200), params: { data: INJECT_TEXT } });
+      case 'notify_big': {
+        // 12 MB with the injection at 6 MB.
+        const filler = 'lorem ipsum '.repeat(1024 * 1024);
+        send({ jsonrpc: '2.0', method: 'notifications/message', params: { level: 'info', data: filler.slice(0, 6e6) + ' ' + INJECT_TEXT + ' ' + filler.slice(6e6) } });
+        return text(msg.id, 'notified big');
+      }
+      case 'order': {
+        // A long message, then a short one: they must reach the client in this order.
+        send({ jsonrpc: '2.0', method: 'notifications/message', params: { level: 'info', data: 'first ' + 'lorem ipsum '.repeat(300000) } });
+        send({ jsonrpc: '2.0', method: 'notifications/message', params: { level: 'info', data: 'second' } });
+        return text(msg.id, 'ordered');
+      }
       case 'error_inject':
         return send({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: INJECT_TEXT } });
       case 'big': {

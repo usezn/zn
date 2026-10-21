@@ -7,7 +7,7 @@ For each wrapped server the shield:
 1. **Checks the tool list.** Tool and parameter descriptions that carry hidden instructions are neutralized before the agent reads them.
 2. **Checks tool-call arguments.** A call whose arguments carry an injection is refused and never reaches the server.
 3. **Checks tool output.** Secrets are redacted, and output that carries an injection is replaced by a short notice.
-   The same check covers the other text the server sends to the agent: notifications, requests such as sampling, resource and prompt contents, and error messages.
+   The same check covers the other text the server sends to the agent: notifications, requests such as sampling, resource and prompt contents (text blobs too), the descriptions in resource and prompt lists, error messages, and the structured content, embedded resources and resource links of tool results. A line from the server that is not valid JSON is dropped (shadow mode passes it on and reports it).
 4. **Pins the tools.** It remembers what each tool looked like the first time and flags any tool that changes later (see [Tool pinning](#tool-pinning)).
 5. **Records each decision** in the local audit log (`~/.zn/evidence.jsonl`; check it with `npx -y zn-gate evidence --verify`, and see [how the log works](architecture.md)).
 
