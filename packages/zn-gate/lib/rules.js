@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-21.7
+ * RULES_VERSION: 2026-10-21.8
  */
 
-const RULES_VERSION = '2026-10-21.7';
+const RULES_VERSION = '2026-10-21.8';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -680,7 +680,7 @@ const SECRET_PATTERNS = [
   { id: 'secret:openai_key', pattern: /(?<![A-Za-z0-9_])(sk-(?:(?:proj|svcacct|admin|[Nn]one|or-v1|lf)-[A-Za-z0-9_-]{28,}(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))|helicone-(?:(?:eu|cp|gov|rl)-){0,4}[a-z0-9]{7}(?:-[a-z0-9]{7}){3}(?![a-z0-9])|(?=(?:eu|cp|gov|rl)-|[a-z0-9]{7}-)(?=[a-z-]{0,46}[0-9])(?:(?:eu|cp|gov|rl)-){0,4}[a-z0-9]{7}(?:-[a-z0-9]{7}){3}(?![a-z0-9])(?!-[a-z0-9])|sp-[A-Za-z0-9]{28,}(?![A-Za-z0-9])|[A-Za-z0-9]{28,}(?![A-Za-z0-9])|(?:(?!sk-)[A-Za-z0-9_-]){1,200}?T3BlbkFJ[A-Za-z0-9_-]{20,}(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))))/g, replacement: '[REDACTED_OPENAI_KEY]' },
   { id: 'secret:aws_access_key', pattern: /(?<![A-Za-z0-9_])(AKIA[0-9A-Z]{16})(?![A-Za-z0-9_])/g, replacement: '[REDACTED_AWS_KEY]' },
   { id: 'secret:aws_secret_key', pattern: /((?:[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]_[Aa][Cc][Cc][Ee][Ss][Ss]_[Kk][Ee][Yy]|[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]|[Aa][Ww][Ss]_[Kk][Ee][Yy])\s*[:=]\s*['"]?)([A-Za-z0-9/+=]{40})(['"]?)/g, replacement: '$1[REDACTED_AWS_SECRET]$3' },
-  { id: 'secret:github_token', pattern: /(?<![A-Za-z0-9_])((?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,40}(?:_[A-Za-z0-9_]*)?|github_pat_[A-Za-z0-9_]{82}(?:_[A-Za-z0-9_]*)?)(?![A-Za-z0-9_])/g, replacement: '[REDACTED_GITHUB_TOKEN]' },
+  { id: 'secret:github_token', pattern: /(?<![A-Za-z0-9_])((?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,40}|github_pat_[A-Za-z0-9_]{82})(?![A-Za-z0-9_])/g, replacement: '[REDACTED_GITHUB_TOKEN]' },
   { id: 'secret:db_url_password', pattern: /((?:[Pp][Oo][Ss][Tt][Gg][Rr][Ee][Ss](?:[Qq][Ll])?|[Mm][Yy][Ss][Qq][Ll]|[Mm][Oo][Nn][Gg][Oo][Dd][Bb](?:\+[Ss][Rr][Vv])?|[Rr][Ee][Dd][Ii][Ss]|[Aa][Mm][Qq][Pp]):\/\/[^:\s\/]+:)(?!(?:\$\{(?:[A-Z_][A-Z0-9_]*|[a-z_][a-z0-9_]*)\}|\$[A-Z_][A-Z0-9_]*|%[A-Z_][A-Z0-9_]*%|<[A-Za-z][A-Za-z_-]{0,63}>|\{\{\s*[A-Za-z_][A-Za-z_.]*\s*\}\})@)([^@\s\/]+)(@)/g, replacement: '$1[REDACTED_DB_PASSWORD]$3' },
   // The lookahead + backreference pairs act as atomic groups, so a long run of
   // "-eyJ" cannot make the engine retry every split point, and the lookbehind
@@ -976,24 +976,7 @@ function startsSecretAt(text, from, limit, patterns) {
     re.lastIndex = pos;
     if (re.test(text)) return true;
   }
-  // The provider formats count too, as in the Python package, where they are part of the same rule list.
-  for (const re of providerSticky()) {
-    re.lastIndex = pos;
-    if (re.test(text)) return true;
-  }
   return false;
-}
-
-// The scrubber's provider format patterns (SCRUB_PROVIDER_RULES), as sticky regexes. Required on first
-// use, like the engine in redactProviderFormats.
-let PROVIDER_STICKY = null;
-function providerSticky() {
-  if (!PROVIDER_STICKY) {
-    PROVIDER_STICKY = require('./scrub/patterns').PATTERNS
-      .filter((p) => SCRUB_PROVIDER_RULES.has(p.type))
-      .map((p) => new RegExp(p.re.source, p.re.flags.replace(/[gy]/g, '') + 'y'));
-  }
-  return PROVIDER_STICKY;
 }
 
 function ruleCandidates(item, text, view, budget, out, patterns = null) {
@@ -1095,47 +1078,19 @@ const SCRUB_PROVIDER_LABELS = new Map([['DB_PASSWORD', 'URL_PASSWORD']]);
 // Google, npm, ...), run on text the SECRET_PATTERNS already redacted. The
 // engine is required here, not at the top, because it requires this file.
 function redactProviderFormats(text) {
-  const engine = require('./scrub/engine');
   // Only the provider types take part in the overlap resolution: a wider span of another type (such as
   // a NAME=value assignment) would otherwise win it, be dropped here, and leave the key unredacted.
-  const ctx = { exact: false, pii: false, types: SCRUB_PROVIDER_RULES, noView: true };
-  const direct = engine.scan(text, ctx);
-  const cands = direct.map((d) => ({ start: d.start, end: d.end, type: d.type }));
-  // As in ruleCandidates (and the Python package), the formats also run on the text without invisible
-  // characters and wrap breaks. A match there is dropped when it overlaps two or more matches of the same
-  // format on the original text, or one of them and the next line starts a secret of its own.
-  const view = invisibleView(text);
-  if (view) {
-    for (const v of engine.scan(view.clean, ctx)) {
-      const start = view.map[v.start];
-      const end = v.end > v.start ? view.map[v.end - 1] + 1 : view.map[v.start];
-      const over = direct.filter((d) => d.type === v.type && start < d.end && d.start < end);
-      if (over.length >= 2) continue;
-      if (over.length === 1 && startsSecretAt(text, over[0].end, end, SECRET_PATTERNS)) continue;
-      cands.push({ start, end, type: v.type });
-    }
-  }
-  // Overlapping candidates become one redaction covering their union (see mergeCandidates).
-  cands.sort((a, b) => a.start - b.start || b.end - a.end);
+  const spans = require('./scrub/engine').scan(text, { exact: false, pii: false, types: SCRUB_PROVIDER_RULES })
+    .sort((a, b) => a.start - b.start || b.end - a.end);
   const detections = [];
   let out = '';
   let last = 0;
-  let cur = null;
-  const flush = () => {
-    if (!cur) return;
-    detections.push({ rule: SCRUB_PROVIDER_RULES.get(cur.type), index: cur.start });
-    out += text.slice(last, cur.start) + `[REDACTED_${SCRUB_PROVIDER_LABELS.get(cur.type) || cur.type}]`;
-    last = cur.end;
-  };
-  for (const c of cands) {
-    if (cur && c.start < cur.end) {
-      if (c.end > cur.end) cur.end = c.end;
-      continue;
-    }
-    flush();
-    cur = { ...c };
+  for (const s of spans) {
+    if (s.start < last) continue;
+    detections.push({ rule: SCRUB_PROVIDER_RULES.get(s.type), index: s.start });
+    out += text.slice(last, s.start) + `[REDACTED_${SCRUB_PROVIDER_LABELS.get(s.type) || s.type}]`;
+    last = s.end;
   }
-  flush();
   return { sanitized: out + text.slice(last), detections };
 }
 

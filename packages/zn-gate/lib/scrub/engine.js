@@ -17,8 +17,6 @@
  *     exactFiles   false to read the environment only (no credential files)
  *     exactValues  [{name, type, value|values}] extra exact values (scan uses these)
  *     pii          false to disable PII, or {email, phone, iban, card, dni, ssn, ipv4}
- *     noView       true to scan the text only as it is, without the view that drops invisible
- *                  characters and wrap breaks (the caller handles that view itself)
  *     types        a Set (or Map) of span types: only spans of these types are kept, before
  *                  overlaps are resolved, so a span of another type cannot hide one of them
  *     detectors    compiled custom formats (lib/team/detectors.js compile()), from
@@ -164,7 +162,6 @@ function scan(text, ctx) {
   // the spans of the second scan are mapped back to the original text, and the
   // union is resolved as one set of spans.
   const direct = scanText(text, c);
-  if (c.noView) return direct;
   const view = invisibleView(text);
   if (!view) return direct;
   const viaView = scanText(view.clean, c).map((s) => ({
