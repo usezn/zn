@@ -73,6 +73,9 @@ const forbidden = [
   [/(^|\/)id_(rsa|dsa|ecdsa|ed25519)(\.pub)?$/, 'SSH key'],
   [/(^|\/)\.npmrc$/, '.npmrc'],
   [/\.tgz$/, 'nested tarball'],
+  // Bundled dependencies ship compiled .js only (prune-bundled-sources.js runs before npm pack).
+  [/^node_modules\/.*\.map$/, 'source map of a bundled dependency'],
+  [/^node_modules\/.*(?<!\.d)\.(ts|mts|cts)$/, 'TypeScript source of a bundled dependency'],
 ];
 for (const f of files) {
   for (const [re, what] of forbidden) {

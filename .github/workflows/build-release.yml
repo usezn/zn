@@ -123,6 +123,7 @@ jobs:
         run: |
           set -euo pipefail
           npm ci --ignore-scripts
+          node "$GITHUB_WORKSPACE/.release-tools/.github/scripts/prune-bundled-sources.js" .
           mkdir -p "$RUNNER_TEMP/release"
           npm pack --ignore-scripts --json --pack-destination "$RUNNER_TEMP/release" > "$RUNNER_TEMP/pack.json"
       - name: Check tarball contents
@@ -149,6 +150,10 @@ jobs:
           diff "$RUNNER_TEMP/release.sum" "$RUNNER_TEMP/rebuild.sum" || { echo "::error::the Python sdist or wheel differs between two builds of the same commit"; exit 1; }
           rm -rf "$RUNNER_TEMP/rebuild"
           "$RUNNER_TEMP/build-venv/bin/python" -m twine check --strict "$RUNNER_TEMP"/release/*.whl "$RUNNER_TEMP"/release/*.tar.gz
+      - name: Check wheel and sdist contents
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/build-venv/bin/python" -I .release-tools/.github/scripts/check-python-pack.py "$RUNNER_TEMP"/release/*.whl "$RUNNER_TEMP"/release/*.tar.gz
       - name: Check file names and write SHA256SUMS
         working-directory: ${{ runner.temp }}/release
         env:
@@ -228,6 +233,13 @@ jobs:
       id-token: write
       attestations: write
     steps:
+      # No network evidence yet for this job (it had no harden-runner): audit first; once a release run shows
+      # its endpoints in the step-security insights, switch to egress-policy: block with allowed-endpoints.
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
       - name: Download the build
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:

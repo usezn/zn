@@ -108,7 +108,7 @@ async function plan(opts = {}) {
       // A broken plugin next to zn's own hooks that do not work either: the hooks are repaired first (below).
       let hooksVerb = r.id !== 'claude-code' ? 'install' : r.via === 'hooks' ? 'install'
         : r.via === 'both' && r.duplicate ? 'uninstall' : r.via === 'both' && r.pluginBroken && r.hooksBroken ? 'install' : null;
-      // The plugin needs Node.js 20.12 or later: with an older one it is not installed, and zn's own hooks are set up instead.
+      // The plugin needs Node.js 20.19 or later: with an older one it is not installed, and zn's own hooks are set up instead.
       // A plugin that is already installed does not work there either: once the hooks are seen to work, it is turned off.
       let dropPlugin = false;
       if (r.id === 'claude-code' && !nodeSt.ok && !hooksVerb && !r.rulesFault && (r.via === 'plugin' || r.state === 'not-set-up')) {
