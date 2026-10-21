@@ -14,7 +14,7 @@ For each wrapped server the shield:
 
 Put zn-gate in front of the command that starts the server, and separate the two with `--`:
 
-```
+```bash
 npx -y zn-gate shield -- uvx mcp-server-fetch
 npx -y zn-gate shield -- npx -y @modelcontextprotocol/server-postgres postgresql://localhost/db
 ```
@@ -40,7 +40,7 @@ In an agent's MCP configuration, set the command to `npx` and put `-y zn-gate sh
 
 `init --wrap-mcp` finds the MCP servers in the configuration files of the agents on your machine (Claude Desktop, Claude Code, Cursor, Codex CLI, OpenCode, Antigravity and Hermes), writes a backup of each file it changes, and rewrites each local (stdio) server as a `shield` command.
 
-```
+```bash
 # Preview what would change, and change nothing
 npx -y zn-gate init --dry-run
 
@@ -60,7 +60,7 @@ Servers that run at a URL (remote servers) are left as they are, because the shi
 
 `--shadow` makes the shield watch and record, but not change anything. Use it for the first days with a new server, to see what zn-gate would have done before you let it act.
 
-```
+```bash
 npx -y zn-gate shield --shadow -- uvx mcp-server-fetch
 npx -y zn-gate init --shadow
 ```
@@ -77,7 +77,7 @@ In shadow mode:
 
 Review what the shield found with:
 
-```
+```bash
 npx -y zn-gate evidence --tail 20
 ```
 
@@ -123,7 +123,7 @@ or for one run with the environment variable `ZN_MCP_PINNING=block`. The mode th
 
 ### See the pins
 
-```
+```bash
 npx -y zn-gate pins
 ```
 
@@ -133,7 +133,7 @@ lists each pinned server with its key, its command line, how many tools are pinn
 
 When the shield reports `[zn-shield TOOLS CHANGED]`, first look at the tool: open it in your agent, or read the server's source or changelog. `pins` shows tool names, not their text. If you accept the change, run in your own terminal:
 
-```
+```bash
 # One server: use the key that `pins` prints
 npx -y zn-gate pins approve <server-key>
 
