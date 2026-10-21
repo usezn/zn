@@ -89,7 +89,8 @@ test('an unexpected failure while handling the event is refused, not passed thro
   // that into a deny (fail-closed), so the call is refused.
   const ev = { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'cat README.md' }, cwd: 5 };
   const res = hook('codex', JSON.stringify(ev), tmpHome());
-  assert.equal(res.status, 0, res.stderr);
+  // Codex runs a call when a hook fails, so its deny answer comes with its block code (exit 2) too.
+  assert.equal(res.status, 2, res.stderr);
   assert.match(res.stdout, /"permissionDecision":"deny"/);
   assert.match(res.stdout, /something went wrong inside the zn hook/);
 });

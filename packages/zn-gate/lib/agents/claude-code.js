@@ -45,6 +45,19 @@
  *
  *  Exit code 0 with JSON on stdout; any other non-2 code is a non-blocking
  *  error (the action proceeds), which is our fail-open behaviour.
+ *
+ *  A hook that cannot start (read 2026-10-20): "Non-blocking error: your hook
+ *  exits with any other code, or fails in some other way, such as not
+ *  starting or printing invalid JSON. The action goes ahead, except for hooks
+ *  whose failure blocks the action, for example a hook with `onFailure` set
+ *  to "block"." and "In shell form, when the script path doesn't exist or
+ *  isn't executable, the shell exits with a code like 127 ... a hook that
+ *  can't start is a non-blocking error too." So a user install writes a
+ *  launcher script (lib/agents/launcher.js) as the hook command: if the
+ *  Node.js it was installed with is gone it exits 2 with the reason on stderr
+ *  (PreToolUse, UserPromptSubmit, UserPromptExpansion) or only warns
+ *  (PostToolUse). PreToolUse also carries onFailure "block" (Claude Code
+ *  2.1.295 and later; earlier versions ignore it).
  */
 
 const fs = require('fs');
@@ -56,6 +69,7 @@ const { whichSync } = require('../broker/markers');
 const { shQuote, portablePath } = require('../shell-quote');
 const { claudeCodePolicyWarnings } = require('./managed-policy');
 const { hooksOf } = require('./config-file');
+const launcher = require('./launcher');
 
 const id = 'claude-code';
 
@@ -66,7 +80,8 @@ const PRE_MATCHER = 'Bash|PowerShell|Monitor|Read|Grep|LSP|Edit|MultiEdit|Write|
 const POST_MATCHER = '^(Bash|PowerShell|Monitor|Read|Grep|LSP|WebFetch|ReadMcpResourceTool)$|^mcp__.*';
 const HOOK_TIMEOUT_S = 15;
 // Older versions wrote the paths in double quotes; both forms are ours.
-const OUR_COMMAND_RE = /(\bhook claude-code|hooks[\\/]runner\.js["']? claude-code)\s*$/;
+// zn's launcher script (lib/agents/launcher.js) is ours too: '<dir>/zn-hook-claude-code.sh' <Event>
+const OUR_COMMAND_RE = /(\bhook claude-code|hooks[\\/]runner\.js["']? claude-code|zn-hook-claude-code\.sh["']? [A-Za-z]+)\s*$/;
 const MCP_SERVER_NAME = 'secrets';
 
 const TOOL_MAP = {
@@ -293,17 +308,34 @@ function stripOurs(groups) {
   return out;
 }
 
+// command: one command for every event, or a function of the event name (the launcher needs it).
 function ourHooks(command) {
-  const h = { type: 'command', command, timeout: HOOK_TIMEOUT_S };
+  const h = (event) => ({ type: 'command', command: typeof command === 'function' ? command(event) : command, timeout: HOOK_TIMEOUT_S });
   return {
-    PreToolUse: { matcher: PRE_MATCHER, hooks: [h] },
-    PostToolUse: { matcher: POST_MATCHER, hooks: [h] },
+    // A hook that cannot start or times out blocks the call (Claude Code 2.1.295 and later; earlier
+    // versions ignore the field, and the launcher covers them).
+    PreToolUse: { matcher: PRE_MATCHER, hooks: [{ ...h('PreToolUse'), onFailure: 'block' }] },
+    PostToolUse: { matcher: POST_MATCHER, hooks: [h('PostToolUse')] },
     // A prompt hook that cannot start or times out blocks the prompt
     // (Claude Code 2.1.295 and later; earlier versions ignore the field).
-    UserPromptSubmit: { hooks: [{ ...h, onFailure: 'block' }] },
+    UserPromptSubmit: { hooks: [{ ...h('UserPromptSubmit'), onFailure: 'block' }] },
     // A typed skill or command expands after UserPromptSubmit; this checks the expanded text.
-    UserPromptExpansion: { hooks: [{ ...h, onFailure: 'block' }] },
+    UserPromptExpansion: { hooks: [{ ...h('UserPromptExpansion'), onFailure: 'block' }] },
   };
+}
+
+/**
+ * The hook command for each event. A user install goes through zn's launcher so that a Node.js that has gone
+ * away blocks instead of letting Claude Code run the call unchecked (exit 127 is a non-blocking error);
+ * a project install (the file is shared, an absolute path is not) or a command given by the caller keeps
+ * the plain command. Claude Code runs hooks with sh (Git Bash on Windows), so the same script serves Windows.
+ */
+function commandFor(opts = {}) {
+  if (opts.command || (opts.scope || 'user') === 'project') return hookCommand(opts);
+  const node = opts.nodePath || process.execPath;
+  const runner = opts.runnerPath || runnerPath();
+  const file = launcher.writeLauncher(id, node, runner, opts);
+  return (event) => launcher.launcherCommand(file, event, opts.platform);
 }
 
 function mcpServerConfig(opts = {}) {
@@ -358,7 +390,7 @@ function install(opts = {}) {
   const data = readJson(file);
   const report = { settings: file, backup: backup(file), warnings: [] };
   data.hooks = hooksOf(data, file);
-  const ours = ourHooks(hookCommand(opts));
+  const ours = ourHooks(commandFor(opts));
   for (const [event, group] of Object.entries(ours)) {
     data.hooks[event] = stripOurs(data.hooks[event]);
     data.hooks[event].push(group);
@@ -396,6 +428,10 @@ function uninstall(opts = {}) {
       report.backup = backup(file);
       report.removed = 1;
       writeFileAtomic(file, JSON.stringify(data, null, 2) + '\n', 0o644);
+      // The launcher of a user install (see commandFor) is no longer referenced.
+      if ((opts.scope || 'user') !== 'project') {
+        try { fs.unlinkSync(launcher.launcherFile(id, opts)); } catch (_) { /* none */ }
+      }
     }
   }
   if (opts.mcp !== false) {

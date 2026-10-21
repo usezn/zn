@@ -451,7 +451,7 @@ async function auditChain() {
   try {
     client = require('../vault/client').createClient({});
     if (!(await client.isUnlocked())) {
-      return { broken: false, line: 'chain: not checked: the vault is locked or unreachable (run `zn unlock`, then `zn vault verify`)' };
+      return { broken: false, line: 'chain: not checked: the vault is locked or unreachable (run `' + znCommand('unlock') + '`, then `' + znCommand('vault verify') + '`)' };
     }
     const v = await client.auditVerify();
     if (v && v.ok) return { broken: false, line: 'chain: valid, ' + v.records + ' records' };
