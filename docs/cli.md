@@ -187,7 +187,8 @@ Checks a piece of text for prompt injection and prints the answer as JSON. It is
 
 ```bash
 zn-gate pins
-zn-gate pins approve <server>
+SERVER='paste-the-server-name-here'
+zn-gate pins approve "$SERVER"
 zn-gate pins approve --all
 ```
 
@@ -207,7 +208,7 @@ The exit codes of `secret`, `env`, `hooks`, `vault log` and `run` are `0` done, 
 
 ### `secret`
 
-```bash
+```text
 zn-gate secret <set|list|rm|allow|approve|import|adopt|log> ...
 ```
 
@@ -291,7 +292,7 @@ Aliases: `secret reveal`.
 
 ### `env`
 
-```bash
+```text
 zn-gate env <shadow|unshadow> ...
 ```
 
@@ -315,7 +316,7 @@ Puts the original values back into the file from the encrypted copy that `env sh
 
 ### `run`
 
-```bash
+```text
 zn-gate run [--secrets NAME[,NAME...]] [--agent ID] -- <command> [args...]
 ```
 
@@ -345,7 +346,7 @@ Locks the vault now. Exit codes: `0` done (also when the vault was not unlocked)
 
 ### `vault`
 
-```bash
+```text
 zn-gate vault <status|log|verify|forget|team|reset>
 ```
 
@@ -397,7 +398,7 @@ Prints that a shared team vault is planned and not available, and counts the req
 
 ### `hooks`
 
-```bash
+```text
 zn-gate hooks install <agent> [--project] [--no-mcp]
 zn-gate hooks uninstall <agent> [--project] [--no-mcp]
 ```
@@ -414,7 +415,7 @@ Removes them again.
 
 ### `hook`
 
-```bash
+```text
 zn-gate hook <agent>
 ```
 
@@ -422,7 +423,7 @@ The entry point the agents call. It reads one event as JSON on standard input an
 
 ### `secrets-mcp`
 
-```bash
+```text
 zn-gate secrets-mcp [--agent <id>]
 ```
 
@@ -440,7 +441,7 @@ Runs zn-gate as an MCP server (stdio) with the tools `analyze_prompt`, `check_to
 
 ### `shield`
 
-```bash
+```text
 zn-gate shield -- <command> [args...]
 ```
 
@@ -513,7 +514,7 @@ Needs the vault unlocked. Joining and leaving are confirmed outside the agent. [
 
 ### `team`
 
-```bash
+```text
 zn-gate team <join|status|sync|leave|managed-config>
 ```
 
@@ -522,7 +523,9 @@ With no subcommand it is the same as `team status`. Exit codes: `0` done, `1` an
 #### `team join`
 
 ```bash
-zn-gate team join <token> [--api https://api.example.com] [--agent claude-code]
+JOIN_TOKEN='paste-your-join-token-here'
+zn-gate team join "$JOIN_TOKEN"
+# Optional: add --api https://api.example.com (another server) or --agent claude-code
 ```
 
 Connects this machine to your organization with the join token your admin gave you.

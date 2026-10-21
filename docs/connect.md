@@ -55,4 +55,4 @@ A saved key is only ever sent to <https://api.usezn.com>. `--url` and `ZN_API_UR
 
 ## What is sent
 
-Only the text of `analyze_prompt` and `zn-gate analyze` calls, after zn-gate removed the secrets it detects (personal data is not removed on this path), and the key as a request header. Tool output, tool-call arguments and tool descriptions are never sent. `zn-gate status` shows the state at any time. See also [What leaves your machine](../README.md#what-leaves-your-machine).
+Only the text of `analyze_prompt` and `zn-gate analyze` calls, after zn-gate removed the secrets it detects (personal data is not removed on this path, and a secret zn-gate does not recognize is sent with the text), and the key as a request header. Tool output, tool-call arguments and tool descriptions are never sent. If the cloud call fails, the prompt is checked by the local rules alone (`fallback: true`); it does not fail closed. `zn-gate status` shows the state at any time. See also [What leaves your machine](../README.md#what-leaves-your-machine).
