@@ -135,3 +135,25 @@ test('damaged secrets.age: no library detail unless ZN_VERBOSE=1', async () => {
     } finally { delete process.env.ZN_VERBOSE; }
   } finally { cleanup(home); }
 });
+
+test('secrets.age that decrypts to text that is not JSON: the decrypted text is never shown, even with ZN_VERBOSE or DEBUG', async () => {
+  const home = tmpHome();
+  try {
+    const f = path.join(home, 'secrets.age');
+    const { identity, recipient } = await store.generateIdentity();
+    const plain = 'ZN_FAKE_SECRET_EXAMPLE_value_not_json';
+    fs.writeFileSync(f, Buffer.from(await store.encryptTo(recipient, plain)));
+    for (const env of [{}, { ZN_VERBOSE: '1' }, { DEBUG: '*' }]) {
+      Object.assign(process.env, env);
+      try {
+        let err = null;
+        try { await store.readEncrypted(f, identity); } catch (e) { err = e; }
+        assert.ok(err, 'a non-JSON vault must not load');
+        assertPlainDamaged(err.message, 'secrets.age');
+        assert.ok(!err.message.includes('ZN_FAKE'), 'decrypted text leaked: ' + err.message);
+        assert.ok(!err.message.includes(plain.slice(0, 6)), err.message);
+        if (env.ZN_VERBOSE || env.DEBUG) assert.match(err.message, /not valid JSON/);
+      } finally { for (const k of Object.keys(env)) delete process.env[k]; }
+    }
+  } finally { cleanup(home); }
+});
