@@ -25,7 +25,7 @@ on:
         required: true
         type: string
       sha:
-        description: "Commit to tag: the head of release/<version>"
+        description: "Commit to tag: the head of release/X.Y.Z (a pre-release X.Y.Z-rc.N is tagged from release/X.Y.Z too)"
         required: true
         type: string
 
@@ -77,7 +77,8 @@ jobs:
           SHA: ${{ inputs.sha }}
         run: |
           set -euo pipefail
-          branch="release/$VERSION"
+          # A pre-release (X.Y.Z-rc.N) is cut from the same branch as its final release: release/X.Y.Z.
+          branch="release/${VERSION%%-*}"
           head="$(git ls-remote origin "refs/heads/$branch" | cut -f1)"
           [ "$head" = "$SHA" ] || { echo "::error::$SHA is not the head of $branch (head: ${head:-none})"; exit 1; }
           [ -z "$(git ls-remote origin "refs/tags/v$VERSION")" ] || { echo "::error::tag v$VERSION already exists"; exit 1; }
@@ -104,7 +105,7 @@ jobs:
           fi
           grep -q "^## \[$VERSION\]" CHANGELOG.md || { echo "::error::CHANGELOG.md has no section for $VERSION"; fail=1; }
           [ "$fail" -eq 0 ] || exit 1
-          echo "release/$VERSION is at $SHA; tag v$VERSION is free; npm, PyPI, MCP server and CHANGELOG versions match"
+          echo "$branch is at $SHA; tag v$VERSION is free; npm, PyPI, MCP server and CHANGELOG versions match"
       - name: Check that every check of the commit passed
         env:
           GH_TOKEN: ${{ github.token }}
@@ -165,8 +166,9 @@ jobs:
           SHA: ${{ inputs.sha }}
         run: |
           set -euo pipefail
-          head="$(git ls-remote origin "refs/heads/release/$VERSION" | cut -f1)"
-          [ "$head" = "$SHA" ] || { echo "::error::release/$VERSION moved to ${head:-nothing} since the check"; exit 1; }
+          branch="release/${VERSION%%-*}"
+          head="$(git ls-remote origin "refs/heads/$branch" | cut -f1)"
+          [ "$head" = "$SHA" ] || { echo "::error::$branch moved to ${head:-nothing} since the check"; exit 1; }
           [ -z "$(git ls-remote origin "refs/tags/v$VERSION")" ] || { echo "::error::tag v$VERSION exists now"; exit 1; }
       - name: Install gitsign (checked by SHA-256)
         run: |
