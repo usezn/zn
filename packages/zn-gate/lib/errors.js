@@ -28,7 +28,7 @@ function notImplemented(what) {
 }
 
 /* The text a person sees for an error: what happened, then the detail. The
- * code is printed only with ZN_VERBOSE=1 or DEBUG set. */
+ * code is printed only with ZN_VERBOSE=1 or DEBUG=zn. */
 function humanError(err, env = process.env) {
   const code = err && typeof err.code === 'string' && err.code.startsWith('ZN_') ? err.code : '';
   const detail = String((err && err.message) || '');
@@ -48,7 +48,7 @@ function humanError(err, env = process.env) {
   } else {
     text = detail;
   }
-  return code && (env.DEBUG || env.ZN_VERBOSE === '1') ? '[' + code + '] ' + text : text;
+  return code && require('./verbose').isVerbose(env) ? '[' + code + '] ' + text : text;
 }
 
 /* The message of an error for a command line, with the unlock hint added once: a locked-vault

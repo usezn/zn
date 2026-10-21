@@ -17,6 +17,8 @@
  *     exactFiles   false to read the environment only (no credential files)
  *     exactValues  [{name, type, value|values}] extra exact values (scan uses these)
  *     pii          false to disable PII, or {email, phone, iban, card, dni, ssn, ipv4}
+ *     types        a Set (or Map) of span types: only spans of these types are kept, before
+ *                  overlaps are resolved, so a span of another type cannot hide one of them
  *     detectors    compiled custom formats (lib/team/detectors.js compile()), from
  *                  a zn Team policy; they run with the secret patterns
  *
@@ -181,6 +183,7 @@ function scanText(text, c) {
   if (spans.length === 0) return spans;
   const ranges = tokenRanges(text, namesOf(c));
   if (ranges.length > 0) spans = spans.filter((s) => !insideRange(s, ranges));
+  if (c.types) spans = spans.filter((s) => c.types.has(normalizeType(s.type)));
   return resolveOverlaps(spans).map((s) => {
     const out = { start: s.start, end: s.end, type: normalizeType(s.type), source: s.source };
     if (s.name) out.name = s.name;

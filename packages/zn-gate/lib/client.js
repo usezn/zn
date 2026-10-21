@@ -4,6 +4,7 @@ const https = require('https');
 const http = require('http');
 const { URL } = require('url');
 const { evaluate, redactSecrets, sanitizeToolResult, RULES_VERSION } = require('./rules');
+const { checkCommand } = require('./destructive');
 const { checkToolCall, guardTool, GuardBlockError } = require('./guard');
 let PKG_VERSION = '1.6.0';
 try {
@@ -46,6 +47,7 @@ function resolveEndpoint(options = {}, { stored = false } = {}) {
 }
 
 const cloudKey = require('./cloud-key');
+const { isVerbose } = require('./verbose');
 const { usableApiKey } = cloudKey;
 
 /**
@@ -226,7 +228,7 @@ async function analyze(input, options = {}) {
     }
     return out;
   } catch (err) {
-    if (process.env.DEBUG || process.env.ZN_VERBOSE) {
+    if (isVerbose()) {
       process.stderr.write(`[zn-gate] Warning: Cloud gate error (${err.message}). Using local rules result.\n`);
     }
     return {
@@ -292,5 +294,6 @@ module.exports = {
   resolveEndpoint,
   usesStoredKey,
   evaluate,
+  checkCommand,
   RULES_VERSION,
 };
