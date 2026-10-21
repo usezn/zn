@@ -425,6 +425,9 @@ test('download-and-run and instruction patterns', () => {
   for (const e of ['Bash', 'Bash(*)', 'Bash(:*)', 'Bash(**)', 'Bash( * )', 'Bash()', '*', 'Bash(bun:*)', 'Bash(BASH:*)', 'Bash(bash -c:*)', 'Bash(python -c:*)', 'Bash(bun x:*)', 'Bash(npm exec:*)', 'Bash(npx:*)', 'Bash(pnpm dlx:*)', 'PowerShell(pwsh:*)']) {
     assert.ok(P.claudePermission(e), e);
   }
+  for (const e of ['Bash(bash -lc:*)', 'Bash(bash -ic:*)', 'Bash(sh -ec:*)', 'Bash(bash -s:*)', 'Bash(bash --login -c:*)', 'Bash(cmd /k:*)', 'Bash(cmd /C:*)', 'Bash(node -p:*)', 'Bash(node --eval:*)', 'Bash(node --print:*)', 'Bash(node -:*)', 'Bash(python3 -:*)', 'Bash(python -u -c:*)', 'Bash(python -I -c:*)', 'Bash(python -m:*)', 'PowerShell(powershell -enc:*)', 'PowerShell(pwsh -ec:*)', 'PowerShell(pwsh -File:*)', 'Bash(bun run:*)', 'Bash(deno run:*)', 'Bash(docker run:*)', 'Bash(podman run:*)', 'Bash(npx -y:*)', 'Bash(npx --yes:*)', 'Bash(npx -p:*)', 'Bash(curl -s:*)', 'Bash(curl https://example.com:*)', 'Bash(wget -O:*)']) {
+    assert.ok(P.claudePermission(e), e);
+  }
   assert.equal(P.claudePermission('Bash'), 'high');
 });
 

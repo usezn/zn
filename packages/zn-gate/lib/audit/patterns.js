@@ -267,7 +267,10 @@ const INTERPRETERS = new Set([
 
 const WRAPPERS = new Set(['eval', 'exec', 'sudo', 'env', 'xargs', 'source', 'iex', 'invoke-expression']);
 const PACKAGE_RUNNERS = new Set(['npm', 'pnpm', 'yarn']);
-const CODE_ARGS = new Set(['-c', '-e', '-r', '-command', '-encodedcommand', '/c', 'x', 'exec', 'dlx', 'eval']);
+const DOWNLOADERS = new Set(['curl', 'wget']);
+const CONTAINERS = new Set(['docker', 'podman']);
+const EXEC_SUB = new Set(['x', 'exec', 'dlx', 'eval']);
+const CODE_FLAG = /^-{1,2}[a-z]*[ce]$|^-(?:p|s|print|eval|enc\w*|ec|file|command)$|^--(?:eval|print)$|^-$|^\/[ck]$/i;
 
 /** Severity of one Claude Code permission rule, or null when it is narrow. */
 function claudePermission(entry) {
@@ -281,13 +284,28 @@ function claudePermission(entry) {
   const words = inner.split(/[\s:]+/).filter(Boolean);
   const first = trimTrailing(words[0] || '', '*').toLowerCase();
   if (!INTERPRETERS.has(first) && !PACKAGE_RUNNERS.has(first)) return null;
-  // A prefix with a subcommand (bun run test:*, git status:*) is scoped. Only
-  // the bare interpreter, a wrapper that runs whatever follows, or a code flag
-  // or exec subcommand (bash -c, python -c, bun x, npm exec) allows any command.
+  // A prefix with a concrete subcommand (bun run test:*, git status:*) is
+  // scoped. When in doubt it stays flagged: the bare interpreter, wrappers
+  // and downloaders, any code or exec flag (bash -lc, node -p, pwsh -enc),
+  // exec subcommands (bun run, docker run, npx -y) and a flag with no concrete
+  // argument after it (python -m).
   const rest = words.slice(1).map((w) => trimTrailing(w, '*')).filter(Boolean);
-  if (rest.length === 0 || WRAPPERS.has(first)) return 'high';
-  if (CODE_ARGS.has(rest[0].toLowerCase())) return 'high';
+  if (rest.length === 0 || WRAPPERS.has(first) || DOWNLOADERS.has(first)) return 'high';
+  let i = 0;
+  while (i < rest.length && isOption(rest[i])) {
+    if (CODE_FLAG.test(rest[i])) return 'high';
+    i++;
+  }
+  if (i === rest.length) return 'high';
+  if (i > 0) return null;
+  const sub = rest[0].toLowerCase();
+  if (EXEC_SUB.has(sub)) return 'high';
+  if (sub === 'run' && (rest.length === 1 || CONTAINERS.has(first))) return 'high';
   return null;
+}
+
+function isOption(w) {
+  return w.startsWith('-') || /^\/[a-z]$/i.test(w);
 }
 
 /* ------------------------ instruction text ------------------------- */
