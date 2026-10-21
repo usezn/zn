@@ -142,9 +142,9 @@ test('an unreadable Stop event on stdin is passed, not blocked (exit 0, no outpu
   assert.match(res.stderr, /could not read this Stop event/);
 });
 
-test('install adds one Stop group, keeps the user hooks, is idempotent, and uninstall removes it', (t) => {
+test('install adds one Stop group, keeps the user hooks, is idempotent, and uninstall removes it', { skip: process.platform === 'win32' }, (t) => {
   const home = tempDir(t, 'zn-stop-cx-');
-  const env = { CODEX_HOME: path.join(home, '.codex') };
+  const env = { CODEX_HOME: path.join(home, '.codex'), ZN_HOME: path.join(home, '.zn') };
   const file = codex.hooksFile({ env });
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'mine.sh' }] }] } }));
@@ -156,7 +156,7 @@ test('install adds one Stop group, keeps the user hooks, is idempotent, and unin
   assert.equal(data.hooks.Stop.length, 2, 'the user hook and one zn group');
   assert.equal(data.hooks.Stop[0].hooks[0].command, 'mine.sh', 'user hook kept');
   assert.equal(data.hooks.Stop[1].matcher, undefined, 'Stop has no matcher');
-  assert.equal(data.hooks.Stop[1].hooks[0].command, "'/usr/bin/node' '/x/lib/hooks/runner.js' codex");
+  assert.match(data.hooks.Stop[1].hooks[0].command, /^'.*zn-hook-codex\.sh' Stop$/);
 
   codex.uninstall({ env });
   assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).hooks, {

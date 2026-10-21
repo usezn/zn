@@ -14,6 +14,7 @@ Each example runs its agent_guard.py with the network blocked (sockets refuse in
 process runs in an empty network namespace), with no API keys in its environment, and with the framework
 installed from its requirements. Stdlib only.
 """
+import json
 import os
 import re
 import shutil
@@ -93,6 +94,33 @@ def smoke_env(home):
     }
 
 
+def audit_example(name, venv):
+    """Report-only advisory check of everything installed for one example (the frameworks pull in unpinned
+    transitive dependencies). Runs when ZN_EXAMPLES_AUDIT=1 and pip-audit is on PATH; never fails the smoke."""
+    tool = shutil.which("pip-audit")
+    if os.environ.get("ZN_EXAMPLES_AUDIT") != "1" or not tool:
+        return
+    site = sorted(venv.glob("lib/python*/site-packages"))
+    if not site:
+        print(f"::warning title=Example dependency audit::examples/{name}: site-packages not found, not audited")
+        return
+    try:
+        proc = subprocess.run([tool, "--path", str(site[0]), "--format", "json", "--progress-spinner", "off"],
+                              capture_output=True, text=True, timeout=STEP_TIMEOUT)
+        report = json.loads(proc.stdout or "{}")
+    except (subprocess.TimeoutExpired, ValueError) as exc:
+        print(f"::warning title=Example dependency audit::examples/{name}: audit did not finish ({exc.__class__.__name__})")
+        return
+    found = 0
+    for dep in report.get("dependencies", []):
+        for vuln in dep.get("vulns", []):
+            found += 1
+            fix = ", ".join(vuln.get("fix_versions") or []) or "no fixed version yet"
+            print(f"::warning title=Example dependency advisory::examples/{name}: {dep.get('name')} "
+                  f"{dep.get('version')} {vuln.get('id')} (fixed in: {fix})")
+    print(f"examples/{name}: dependency audit found {found} advisor{'y' if found == 1 else 'ies'}")
+
+
 def run_example(example, netns):
     name = example.name
     marker = marker_of(example)
@@ -116,6 +144,7 @@ def run_example(example, netns):
         else:
             subprocess.run([py, "-m", "pip", "install", "-q", "-r", str(example / "requirements.txt")],
                            check=True, timeout=STEP_TIMEOUT)
+        audit_example(name, venv)
         env = smoke_env(work)
         command = ["env", "-i", *[f"{k}={v}" for k, v in env.items()],
                    py, "-I", str(Path(__file__).resolve()), "_exec", str(example / "agent_guard.py")]

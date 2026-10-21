@@ -51,7 +51,7 @@
  * It reduces what a prompt-injected agent can do through its own tools; it
  * is not a sandbox.
  *
- * No dependencies; Node.js 20.12 or later.
+ * No dependencies; Node.js 20.19 or later.
  */
 
 const crypto = require('crypto');
@@ -66,9 +66,13 @@ const LOCK_FILE = path.join(__dirname, 'zn-gate.lock.json');
 // vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER: Node.js 20.12 / 21.7 and later,
 // marked experimental in Node's documentation. Without it the launcher
 // refuses to run (hooks exit 2, the MCP server does not start) rather than
-// load zn-gate another way. CI tests the versions in .github/workflows/plugins.yml.
-const NODE_OK = !!(vm.constants && vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER);
-const NODE_HINT = 'the zn-gate plugin needs Node.js 20.12 or later with vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER (this is ' + process.version + ').';
+// load zn-gate another way. The locked dependencies (@noble/*) declare Node.js
+// 20.19 or later, so that is the floor on the 20 line, and it is tested with
+// that exact version in .github/workflows/plugins.yml.
+const [NODE_MAJOR, NODE_MINOR] = process.versions.node.split('.').map((x) => parseInt(x, 10) || 0);
+const NODE_VERSION_OK = NODE_MAJOR > 21 || (NODE_MAJOR === 21 && NODE_MINOR >= 7) || (NODE_MAJOR === 20 && NODE_MINOR >= 19);
+const NODE_OK = NODE_VERSION_OK && !!(vm.constants && vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER);
+const NODE_HINT = 'the zn-gate plugin needs Node.js 20.19 or later with vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER (this is ' + process.version + ').';
 const SUPPORTED_AGENTS = new Set(['claude-code', 'codex', 'cursor']);
 
 // zn-gate starts child processes with this process's environment; a preload

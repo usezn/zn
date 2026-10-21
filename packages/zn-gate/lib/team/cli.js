@@ -22,6 +22,7 @@ const { exportAuditFile } = require('./otel');
 const store = require('../vault/store');
 const { createClient } = require('../vault/client');
 const { messageWithUnlockHint } = require('../errors');
+const { znCommand } = require('../zn-command');
 
 const USAGE = 'usage: zn team join <token> [--api URL] [--agent ID] | zn team status [--json] | zn team sync | zn team leave | zn team managed-config [--agent ID|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--json]';
 const EXPORT_USAGE = 'usage: zn vault log export --otlp [--since 7d] [--out FILE]';
@@ -92,7 +93,7 @@ async function statusCmd(args) {
   out('Policy:       ' + describePolicy(st));
   out('Audit upload: ' + (pending == null ? 'unknown' : pending + ' records pending') +
     (res.upload.last_upload ? ', last upload ' + res.upload.last_upload + ' (' + res.upload.last_status + ')' : ''));
-  if (!info) out('The vault is locked: policy downloads and uploads resume after `zn unlock`.');
+  if (!info) out('The vault is locked: policy downloads and uploads resume after `' + znCommand('unlock') + '`.');
   return 0;
 }
 
