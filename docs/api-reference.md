@@ -141,9 +141,9 @@ from zn_gate import get_evidence_stats, export_evidence_ledger
 
 ### `@guard(on_block='raise'|'return'|'custom', fallback=None, check_args=True, check_result=False, mask_secrets=False, callback=None, block_truncated=False)`
 - Python decorator protecting sync and async agent functions and tool handlers.
-- `on_block='raise'` raises `GuardBlockError`; `'return'` returns `fallback` (or the `Assessment` when `fallback` is `None`); `'custom'` calls `callback(assessment, function_name, payload)`.
-- `on_block` must be `'raise'`, `'return'` or `'custom'` (the last calls `callback`); any other value raises `ValueError` when the decorator is created.
-- With `check_result=True`, `block_truncated=True` blocks a result too large to scan in full (rule `size:truncated`); `ZN_BLOCK_TRUNCATED=1` does the same for every guard.
+- `on_block='raise'` raises `GuardBlockError`; `'return'` returns `fallback` (or the `Assessment` when `fallback` is `None`); `'custom'` calls `callback(assessment, function_name, payload)` and then raises `GuardBlockError`, unless the callback raises its own exception first. A blocked call never runs the function.
+- `on_block` must be `'raise'`, `'return'` or `'custom'`; any other value, or `'custom'` without a `callback`, raises `ValueError` when the decorator is created.
+- `block_truncated=True` blocks arguments, and with `check_result=True` a result, too large to scan in full (rule `size:truncated`); `ZN_BLOCK_TRUNCATED=1` does the same for every guard. The `self` or `cls` of a method is not checked.
 
 ### `GuardBlockError(assessment, target='', payload=None)`
 - Subclass of `PermissionError`, raised by `@guard`, `guarded_tool` and the framework integrations when a call or a result is blocked. The message says what was blocked, why and the next step.
@@ -162,8 +162,10 @@ except GuardBlockError as e:
     print(e.assessment.rule, e.target)
 ```
 
-### `check_tool_call(tool_name: str, arguments: Any = None, strict: bool | None = None) -> Assessment`
-- Recursively extracts and inspects all strings in arguments for malicious commands or credentials.
+### `check_tool_call(tool_name: str, arguments: Any = None, strict: bool | None = None, block_truncated: bool = False) -> Assessment`
+- Recursively extracts and inspects all strings in arguments for malicious commands or credentials: dict keys and values, lists, tuples, sets, dict views, dataclasses, pydantic models and the attributes of other objects.
+- A generator or other one-shot iterator is blocked (rule `type:unscannable`), because checking it would use it up; more than 100,000 values taken from objects and other iterables is blocked (rule `size:items`); nesting deeper than ten levels is blocked (rule `size:nesting`).
+- Long strings are scanned in overlapping windows up to 4 MB, as tool results are; `Assessment.truncated` is `True` when a string was not scanned in full, and `block_truncated=True` or `ZN_BLOCK_TRUNCATED=1` blocks it (rule `size:truncated`).
 
 ### `check_tool_result(result: Any, block_truncated: bool = False, strict: bool | None = None) -> Assessment`
 - Inspects external tool return values for indirect injection payloads. Long strings are scanned in overlapping windows up to 4 MB; `Assessment.truncated` is `True` when a string was not scanned in full. Pass `block_truncated=True` or set `ZN_BLOCK_TRUNCATED=1` to block such output (rule `size:truncated`); `@guard(check_result=True)` uses this check.
@@ -182,7 +184,7 @@ except GuardBlockError as e:
 
 ### `sanitize_tool_result(tool_or_result, content=None, mask_secrets=True, block_truncated=False, strict=None)`
 - Two call forms, as in Node. `sanitize_tool_result(data)` redacts secrets in strings, lists, dicts and tuples and returns a **tuple** `(clean_data, detections)`, with detections shaped as for `redact_secrets`. The Node version returns `{ sanitized, detections }`.
-- `sanitize_tool_result(tool_name, content)` scans the output and returns a dict `{ tool_name, safe_to_ingest, truncated, assessment, secrets_redacted, sanitized_content }` (typed as `SanitizedToolResult`), where `assessment` is an `Assessment`.
+- `sanitize_tool_result(tool_name, content)` scans the output and returns a dict `{ tool_name, safe_to_ingest, truncated, assessment, secrets_redacted, sanitized_content }` (typed as `SanitizedToolResult`), where `assessment` is an `Assessment`. Content that is not a string is checked string by string, as `check_tool_result` does, and as JSON text; `sanitized_content` is that JSON text, as in Node.
 
 ### `analyze(input_text, api_key=None, endpoint=None, timeout=None, local_only=False, long_input=None, **kwargs) -> dict`
 - Synchronous (the Node function returns a Promise). Same data flow as Node: local rules first, and the cloud only when the user opted in with `ZN_API_KEY` and `ZN_CLOUD=1`, with `ZN_LOCAL_ONLY` not `true`. Text is secret-redacted before it is sent.
@@ -252,6 +254,18 @@ No framework is required to import them. Each one uses the same rules as `check_
 - `mask_secrets`: redact credentials in the tool output (default `True`).
 - `check_result`: also scan the output for prompt injection before the agent sees it (default `False`); a blocked output raises or returns as above. `block_truncated` blocks an output too large to scan in full (rule `size:truncated`).
 - `framework`: prefix of the block target, `'<framework>:<tool>'` (default `'tool'`).
+
+### `adk_tool_callbacks(on_block='return', mask_secrets=True, check_result=True, block_truncated=False, fallback=None)`
+- Returns `(before_tool_callback, after_tool_callback)` for a Google ADK `LlmAgent`. Needs `google-adk`. The before callback checks the arguments the model chose; a blocked call does not run, and the tool response is `{"error": <message>}`. The after callback checks the tool response for prompt injection and masks secrets, including secrets inside pydantic models, dataclasses and other objects.
+- `on_block`: `'return'` (default) or `'raise'` (raises `GuardBlockError`). `fallback` replaces the plain block message. A secret that cannot be masked blocks the result (rule `secret:unmaskable`).
+
+### `openai_agents_tool_guardrails(on_block='return', mask_secrets=True, check_result=True, block_truncated=False, fallback=None)`
+- Returns `(tool_input_guardrails, tool_output_guardrails)` for the OpenAI Agents SDK: pass them to `@function_tool(...)` or to an MCP server. Needs `openai-agents`. A blocked call does not run and the model gets the block message. A secret in the output is masked by replacing the output with the masked text (JSON text for a dict, list or object).
+- `on_block`: `'return'` (default) or `'raise'` (the SDK's own tripwire). Hosted tools of the SDK have no tool guardrails and are not covered.
+
+### `guard_pydantic_ai_toolset(toolset, on_block='return', mask_secrets=True, check_result=True, block_truncated=False, fallback=None)`
+- Wraps a Pydantic AI toolset (an MCP server, a `FunctionToolset`...) so every call through it is checked. Needs `pydantic-ai`. A blocked call does not run: the tool result is the block message (`'return'`, default) or `GuardBlockError` is raised (`'raise'`). Results are checked for prompt injection and secrets in them are masked, including secrets inside models, dataclasses and other objects.
+- Tools added with `@agent.tool` are not in a toolset you hold: put them in a `FunctionToolset` and wrap that, or use `guarded_tool`.
 
 ### `ZnLlamaGuard(on_block='raise', mask_secrets=True, raise_on_violation=None, fallback=None)`
 - Query and response check for LlamaIndex. `check_query(query)` (also `on_query_start`) returns the query when it is allowed. When it is blocked, `'raise'` raises `GuardBlockError` (target `llamaindex:query`), `'return'` returns `fallback` (or the plain block message when `fallback` is `None`) in place of the query, and `'ignore'` lets the query through. `sanitize_response(response)` redacts credentials when `mask_secrets` is `True` and returns the clean value; call it yourself, it is not run automatically.
