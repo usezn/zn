@@ -281,8 +281,9 @@ function claudePermission(entry) {
 /* ------------------------ instruction text ------------------------- */
 
 const EXFIL = [
-  // send / upload ... secret material ... to a destination
-  /\b(?:send|upload|post|exfiltrate|forward|transmit|leak|e-?mail|copy|share|paste)\b[^\n]{0,120}?(?:\.env\b|~\/\.ssh|id_rsa|id_ed25519|\.aws\/credentials|\.npmrc|\.netrc|\.git-credentials|api[ _-]?keys?|access[ _-]?tokens?|secrets?|credentials?|passwords?|private[ _-]?keys?|environment variables)\b[^\n]{0,120}?(?:https?:\/\/|webhook|pastebin|discord(?:app)?\.com|gist\.github|ngrok|requestbin|attacker)/i,
+  // send / upload ... secret material ... to a destination (the secret must be
+  // the thing sent: "create an API key at https://console..." is not)
+  /\b(?:send|upload|post|exfiltrate|forward|transmit|leak|e-?mail|copy|share|paste)\b[^\n]{0,120}?(?:\.env\b|~\/\.ssh|id_rsa|id_ed25519|\.aws\/credentials|\.npmrc|\.netrc|\.git-credentials|api[ _-]?keys?|access[ _-]?tokens?|secrets?|credentials?|passwords?|private[ _-]?keys?|environment variables)\b[^\n]{0,120}?\b(?:to|into|onto|via|through)\s{1,3}(?:(?:the|an?|this|that|our|my)\s{1,3})?(?:https?:\/\/|webhook|pastebin|discord(?:app)?\.com|gist\.github|ngrok|requestbin|attacker)/i,
   // curl/wget posting a sensitive file
   /\b(?:curl|wget|http|iwr|invoke-webrequest|invoke-restmethod)\b[^\n|]{0,200}?(?:-d|--data(?:-binary|-raw|-urlencode)?|-F|--form|-T|--upload-file|--post-file|-InFile|-Body)[\s=]{1,3}["']?@?[^\s"']{0,40}?(?:\.env\b|\.ssh\/|id_rsa|id_ed25519|\.aws\/credentials|\.npmrc|\.netrc|\.git-credentials)/i,
   // dumping the environment or a key file into a network tool
@@ -321,8 +322,12 @@ function negated(text, index) {
   return NEGATION_NEAR.test(seg);
 }
 
+// Template env files hold placeholders, not secrets: "copy .env.example to
+// .env" is a setup step.
+const ENV_TEMPLATE = /\.env(?:\.[\w-]+)*\.(?:example|sample|template|dist)\b|\.(?:example|sample|template)\.env\b/gi;
+
 function exfiltration(text) {
-  const t = String(text || '').slice(0, MAX_LINE);
+  const t = String(text || '').slice(0, MAX_LINE).replace(ENV_TEMPLATE, 'env-template');
   for (const re of EXFIL) {
     const m = re.exec(t);
     if (m && !negated(t, m.index)) return m[0];
