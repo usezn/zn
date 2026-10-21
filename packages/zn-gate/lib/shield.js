@@ -566,5 +566,4 @@ function startMcpShield(command, args, options = {}) {
   process.on('SIGTERM', cleanExit);
 }
 
-module.exports = {
-  SHIELD_RESULT_SCAN_CHARS, startMcpShield, startFailureMessage };
+module.exports = { SHIELD_RESULT_SCAN_CHARS, startMcpShield, startFailureMessage };
