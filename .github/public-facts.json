@@ -112,6 +112,11 @@
         "python": true
       },
       {
+        "file": "examples/semantic-kernel-agent/requirements.txt",
+        "regex": "^zn-gate==(\\S+)$",
+        "python": true
+      },
+      {
         "file": "examples/openai-agents-js/package.json",
         "json": "dependencies.zn-gate"
       },
