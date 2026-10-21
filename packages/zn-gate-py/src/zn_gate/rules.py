@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import binascii
 from array import array
+import json
 import math
 import os
 import re
@@ -18,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, overload
 
 
-RULES_VERSION = "2026-10-19.7"
+RULES_VERSION = "2026-10-21.9"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -56,6 +57,10 @@ _HOMOGLYPH_TABLE = {ord(k): v for k, v in HOMOGLYPH_MAP.items()}
 # lazy wildcards, and repeated character classes are bounded.
 ZERO_WIDTH_RE = re.compile(r'[\u200B-\u200D\u2060\uFEFF\u00AD\uFE00-\uFE0F]')
 INVISIBLE_ASTRAL_RE = re.compile(r'[\U000E0000-\U000E007F\U000E0100-\U000E01EF]')
+# Line breaks are joined only in texts up to this size (see MAX_WRAP_VIEW_CHARS in rules.js).
+MAX_WRAP_VIEW_CHARS = 1 << 20
+# A line break inside a wrapped token (see WRAP_BREAK_RE in rules.js).
+WRAP_BREAK_RE = re.compile(r'(?<=[A-Za-z0-9_\-+/=]{10})[ \t]*\r?\n[ \t]*(?=[A-Za-z0-9_\-+/=]{10})(?![A-Za-z_][A-Za-z0-9_]*[ \t]*[=:])')
 NON_ASCII_RE = re.compile(r'[^\x00-\x7f]')
 ANSI_ESCAPE_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07\x1b]*\x07')
 B64_EXEC_RE = re.compile(r'(?:echo|printf)\s+([A-Za-z0-9+/=]{16,})\s*\|\s*(?:base64\s+-(?:d|-decode)|openssl)', re.IGNORECASE)
@@ -408,18 +413,31 @@ def invisible_view(text: str) -> Optional[Tuple[str, 'array[int]']]:
     """Text without invisible characters and the index map back to `text`
     (map[i] is the index of clean[i]; map[len(clean)] is len(text)). None when
     the text has no invisible character. See invisibleView in rules.js."""
-    runs = sorted([m.span() for m in ZERO_WIDTH_RE.finditer(text)]
-                  + [m.span() for m in INVISIBLE_ASTRAL_RE.finditer(text)])
+    runs = [m.span() for m in ZERO_WIDTH_RE.finditer(text)] + [m.span() for m in INVISIBLE_ASTRAL_RE.finditer(text)]
+    if len(text) <= MAX_WRAP_VIEW_CHARS and '\n' in text:
+        runs += [m.span() for m in WRAP_BREAK_RE.finditer(text)]
     if not runs:
         return None
+    runs.sort(key=lambda r: (r[0], -r[1]))
     mapping = array('q')
+    parts: List[str] = []
     pos = 0
     for start, end in runs:
-        mapping.extend(range(pos, start))
-        pos = end
+        if end <= pos:
+            continue
+        mapping.extend(range(pos, max(pos, start)))
+        parts.append(text[pos:max(pos, start)])
+        pos = max(pos, end)
     mapping.extend(range(pos, len(text)))
+    parts.append(text[pos:])
     mapping.append(len(text))
-    return _strip_invisible(text), mapping
+    return ''.join(parts), mapping
+
+
+def _clean_value(text: str) -> str:
+    """A value as the secret rules see it: no invisible characters and no wrap breaks."""
+    s = _strip_invisible(text)
+    return WRAP_BREAK_RE.sub('', s) if '\n' in s else s
 
 
 def normalize_input(text: str) -> Tuple[str, str]:
@@ -465,6 +483,19 @@ def _strict(strict: Optional[bool]) -> bool:
     return bool(strict) or os.environ.get('ZN_STRICT') == '1'
 
 
+def _b64_decode_lenient(data: str) -> bytes:
+    """Decode Base64 the way Node.js Buffer.from(data, 'base64') and `base64 -d` do.
+
+    Missing '=' padding is accepted, decoding stops at the first '=', and a
+    single dangling character at the end (too short for a byte) is dropped,
+    so unpadded Base64 cannot slip past the smuggling check.
+    """
+    body = data.split('=', 1)[0]
+    if len(body) % 4 == 1:
+        body = body[:-1]
+    return base64.b64decode(body + '=' * (-len(body) % 4))
+
+
 def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
     if not isinstance(input_text, str) or not input_text.strip():
         return Assessment(verdict='allow', confidence=1.0, rule='none', reason=None)
@@ -488,7 +519,7 @@ def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
         b64_match = B64_EXEC_RE.search(text_candidate)
         if b64_match:
             try:
-                decoded = base64.b64decode(b64_match.group(1)).decode('utf-8', errors='ignore')
+                decoded = _b64_decode_lenient(b64_match.group(1)).decode('utf-8', errors='ignore')
                 inner_res = evaluate(decoded, strict=strict)
                 if inner_res.advisory:
                     b64_advisory = dict(inner_res.advisory)
@@ -1170,16 +1201,32 @@ def _expand_template(template: str, groups: List[Optional[Tuple[int, int]]], tex
     return re.sub(r'\\(\d)', sub, template)
 
 
+def _starts_secret_at(text: str, start: int, limit: int,
+                      patterns: List[Tuple[str, re.Pattern[str], str]]) -> bool:
+    """True when a rule of `patterns` matches at the first non-space character after `start` (before
+    `limit`): the next line starts a secret of its own (see startsSecretAt in rules.js)."""
+    pos = start
+    while pos < limit and text[pos].isspace():
+        pos += 1
+    if pos >= limit:
+        return False
+    return any(p.match(text, pos) for _, p, _ in patterns)
+
+
 def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, text: str,
                      view: Optional[Tuple[str, 'array[int]']], budget: List[int],
                      value_filter: Optional[Callable[[str, str], bool]],
                      out: List[Tuple[int, int, str, str]],
-                     match_check: Optional[Callable[[str], bool]] = None) -> None:
+                     match_check: Optional[Callable[[str], bool]] = None,
+                     patterns: Optional[List[Tuple[str, re.Pattern[str], str]]] = None) -> None:
     """Candidate redactions of one rule as (start, end, rule_id, replacement) in
     original coordinates. The rule runs on the original text and on the text
     without invisible characters (see ruleCandidates in rules.js). match_check,
     when given, receives the whole match and returns False to skip it."""
     passes: List[Tuple[str, Optional['array[int]']]] = [(text, None)]
+    # Spans this rule found on the original text; a view match overlapping two or more is dropped
+    # (see ruleCandidates in rules.js).
+    found: List[Tuple[int, int]] = []
     if view is not None:
         passes.append(view)
     for hay, mapping in passes:
@@ -1208,16 +1255,24 @@ def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, t
                 span = groups[2]
                 assert span is not None
                 vs, ve = span
-                value = _strip_invisible(text[vs:ve])
+                value = _clean_value(text[vs:ve])
                 prefix = ''
                 if groups[1] is not None:
-                    prefix = _strip_invisible(text[groups[1][0]:groups[1][1]])
+                    prefix = _clean_value(text[groups[1][0]:groups[1][1]])
                 n = _utf16_len(value)
                 if n <= MAX_FILTERED_VALUE and n <= budget[0]:
                     budget[0] -= n
                     if value_filter(value, prefix):
                         continue
             start, end = _span_in(mapping, m.start(), m.end())
+            if mapping is None:
+                found.append((start, end))
+            else:
+                over = [(s, e) for s, e in found if start < e and s < end]
+                if len(over) >= 2:
+                    continue
+                if len(over) == 1 and patterns and _starts_secret_at(text, over[0][1], end, patterns):
+                    continue
             out.append((start, end, rule_id, _expand_template(replacement, groups, text)))
 
 
@@ -1274,7 +1329,7 @@ def _redact_with(text: str, patterns: List[Tuple[str, re.Pattern[str], str]]) ->
         value_filter = (SECRET_VALUE_FILTERS.get(rule_id) or PROVIDER_VALUE_FILTERS.get(rule_id)
                         or SCAN_SECRET_VALUE_FILTERS.get(rule_id))
         _rule_candidates(rule_id, pattern, replacement, redacted, view, budget,
-                         value_filter, cands, PROVIDER_MATCH_CHECKS.get(rule_id))
+                         value_filter, cands, PROVIDER_MATCH_CHECKS.get(rule_id), patterns)
         if not cands:
             continue
         edits: List[Tuple[int, int, str]] = []
@@ -1405,14 +1460,34 @@ def sanitize_tool_result(
       1) sanitize_tool_result(data) -> returns (clean_data, detections)
       2) sanitize_tool_result(tool_name, content, mask_secrets=True) -> returns dict with
          {tool_name, safe_to_ingest, truncated, assessment, secrets_redacted, sanitized_content}
+    In form 2, content that is not a string (a dict, list or object) is checked
+    string by string, as check_tool_result does, and as JSON text;
+    sanitized_content is that JSON text (as in Node.js), with secrets masked.
     Tool output longer than MAX_TOOL_RESULT_SCAN_CHARS is not fully analysed:
     `truncated` is then True, and the output is blocked when block_truncated is
     set or the ZN_BLOCK_TRUNCATED environment variable is "1".
     """
     if content is not None:
         tool_name = str(tool_or_result)
-        text_content = content if isinstance(content, str) else str(content)
-        assessment = scan_windows(text_content, strict=strict)
+        if isinstance(content, str):
+            text_content = content
+            assessment = scan_windows(text_content, strict=strict)
+        else:
+            # Structured output: check every real string value (keys and object
+            # attributes included) as check_tool_result does, then the JSON text
+            # as Node.js does. str() would escape BiDi and zero-width characters.
+            from .guard import check_tool_result
+            try:
+                text_content = json.dumps(content, ensure_ascii=False, default=str)
+            except (TypeError, ValueError, RecursionError):
+                text_content = str(content)
+            assessment = check_tool_result(content, strict=strict)
+            if assessment.allowed:
+                text_assessment = scan_windows(text_content, strict=strict)
+                if not text_assessment.allowed:
+                    assessment = text_assessment
+                else:
+                    assessment.truncated = assessment.truncated or text_assessment.truncated
         truncated = assessment.truncated
         if truncated and assessment.allowed and (block_truncated or os.environ.get('ZN_BLOCK_TRUNCATED') == '1'):
             assessment = Assessment(verdict='block', confidence=1.0, rule='size:truncated',

@@ -10,7 +10,7 @@ This repository is generated from [usezn/zn](https://github.com/usezn/zn) by its
 
 ## Requirements
 
-Node.js 20.12 or later. Nothing is downloaded or installed when the plugin is installed: zn-gate is included in this repository (see below).
+Node.js 20.19 or later. Nothing is downloaded or installed when the plugin is installed: zn-gate is included in this repository (see below).
 
 ## What leaves your machine
 

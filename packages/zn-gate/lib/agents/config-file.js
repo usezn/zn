@@ -91,7 +91,7 @@ function hookCommand(agentId, opts = {}) {
  */
 function hookCommandWindows(agentId, opts = {}) {
   if ((opts.scope || 'user') === 'project') return 'zn hook ' + agentId;
-  return windowsCommand(opts.nodePath || process.execPath, [opts.runnerPath || runnerPath()], [agentId]);
+  return windowsCommand(opts.nodePath || process.execPath, [opts.runnerPath || runnerPath()], [agentId], { encoded: opts.encodedCommand === true });
 }
 
 /**
@@ -101,6 +101,8 @@ function hookCommandWindows(agentId, opts = {}) {
  */
 function isOurs(command, agentId) {
   if (typeof command !== 'string') return false;
+  // zn's launcher script (lib/agents/launcher.js): '<dir>/zn-hook-<agent>.sh' <Event>
+  if (new RegExp("zn-hook-" + agentId + "\\.sh'? [A-Za-z]+\\s*$").test(command)) return true;
   const re = new RegExp('(\\bhook ' + agentId + '|hooks[\\\\/]runner\\.js["\']? ' + agentId + ')\\s*$');
   if (re.test(command)) return true;
   const script = windowsCommandScript(command);

@@ -60,14 +60,14 @@ function fakeZnSecretsArgs(t) {
 
 test('codex: the installed PreToolUse matcher covers MCP tools, and Bash and apply_patch keep their matcher', async (t) => {
   await withCodexHome(t, (home) => {
-    const env = { CODEX_HOME: home };
+    const env = { CODEX_HOME: home, ZN_HOME: path.join(home, 'zn') };
     const file = codex.hooksFile({ env });
     fs.mkdirSync(path.dirname(file), { recursive: true });
     // A hooks file from the previous install: the matcher must be replaced, not duplicated.
     fs.writeFileSync(file, JSON.stringify({ hooks: { PreToolUse: [{ matcher: '^(Bash|apply_patch)$', hooks: [{ type: 'command', command: 'node /old/zn-gate/lib/hooks/runner.js codex' }] }] } }));
     codex.install({ env, nodePath: '/usr/bin/node', runnerPath: RUNNER, mcp: false });
     const data = JSON.parse(fs.readFileSync(file, 'utf8'));
-    const pre = data.hooks.PreToolUse.filter((g) => g.hooks.some((h) => h.command && h.command.includes('runner.js')));
+    const pre = data.hooks.PreToolUse.filter((g) => g.hooks.some((h) => h.command && /runner\.js|zn-hook-codex\.sh/.test(h.command)));
     assert.equal(pre.length, 1);
     assert.equal(pre[0].matcher, '^(Bash|apply_patch|mcp__.+)$');
     assert.equal(pre[0].matcher, codex.PRE_MATCHER);

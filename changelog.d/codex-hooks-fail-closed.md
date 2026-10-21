@@ -1,0 +1,2 @@
+### Security
+- The Codex hooks now block on their own when zn cannot finish a check. Codex runs a tool call or prompt unchecked if a hook times out, crashes or prints something it cannot read, and it has no setting to change that. While Node is running, zn now answers with a deny and exit code 2 a few seconds before Codex's time limit, and on any unexpected error, for `PreToolUse`, `PermissionRequest` and `UserPromptSubmit`. Other agents are unchanged. If Node.js is missing, or is killed while it checks, the hook launcher blocks the call instead.

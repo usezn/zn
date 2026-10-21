@@ -97,6 +97,31 @@ function replaceOnSecretOf(opts) {
   return hooks.replaceToolOutputOnSecret === true;
 }
 
+/*
+ * Destructive shell commands (see lib/destructive.js). Two rules are on by default: a recursive delete of the home
+ * folder or the filesystem root (rm_root_home) and a write to a disk device (disk_overwrite). The other four
+ * (pipe_to_shell, rc_download, perm_root, fork_bomb) are opt-in. Returns the list of rules to apply; an empty list
+ * turns the check off.
+ *
+ * ~/.zn/config.json, {"hooks": {"blockDestructiveCommands": ...}}:
+ *   true = all six rules, false = off, an array of rule names = exactly those; absent = the default two.
+ * ZN_BLOCK_DESTRUCTIVE=1 turns on all six rules. The environment can only add protection, like ZN_HOOK_FAIL_MODE:
+ * 0 or any other value is ignored, because the environment of an agent can be influenced by the project it works in.
+ * Turning rules off is only possible from the config file.
+ */
+function destructiveRulesOf(opts) {
+  const { DEFAULT_RULES, RULES } = require('../destructive');
+  const all = RULES.map((r) => r.replace(/^destructive:/, ''));
+  if (opts.blockDestructive === true) return all;
+  const env = process.env.ZN_BLOCK_DESTRUCTIVE;
+  if (env === '1') return all;
+  const v = (readConfig(opts.home).hooks || {}).blockDestructiveCommands;
+  if (v === true) return all;
+  if (v === false) return [];
+  if (Array.isArray(v)) return v.filter((r) => all.includes(r));
+  return DEFAULT_RULES;
+}
+
 // Reinstall the running version: `npm install -g zn-gate` alone could install an
 // older release without hooks.
 const { version: ZN_VERSION } = require('../../package.json');
@@ -290,7 +315,7 @@ async function decidePre(ev, d, agentId, opts) {
 
   if (SHELL_TOOLS.has(tool)) {
     const original = String(input.command || '');
-    const deny = policy.bashDenial(original, pathOpts);
+    const deny = policy.bashDenial(original, { ...pathOpts, destructiveRules: destructiveRulesOf(opts) });
     if (deny) return { decision: 'deny', message: deny };
 
     let command = original;
@@ -440,7 +465,7 @@ function decideMonitor(ev, pathOpts, opts) {
   const original = String(ev.input.command || '');
   if (original.length > policy.SHELL_SCAN_CAP) return { decision: 'deny', message: policy.bashDenial(original, pathOpts) };
   if (!original.trim()) return { decision: 'allow' };
-  const deny = policy.bashDenial(original, pathOpts);
+  const deny = policy.bashDenial(original, { ...pathOpts, destructiveRules: destructiveRulesOf(opts) });
   if (deny) return { decision: 'deny', message: deny };
   if (markers.findMarkers(original).length) {
     return { decision: 'deny', message: 'zn: a monitor cannot use secret placeholders (such as __ZN_NAME__). Next step: run the command with the Bash tool instead; zn fills in the placeholders there.' };
@@ -547,7 +572,7 @@ async function decidePost(ev, d, agentId, opts = {}) {
     // Codex runs every PreToolUse hook at once with the original call, so another tool's hook can change the
     // command after zn checked it. PostToolUse carries the command that really ran: if zn blocks that one,
     // the output is withheld. The command has already run, so this limits what the model sees, not what happened.
-    const denial = policy.bashDenial(String(ev.input.command || ''), { cwd: ev.cwd, home: opts.home });
+    const denial = policy.bashDenial(String(ev.input.command || ''), { cwd: ev.cwd, home: opts.home, destructiveRules: destructiveRulesOf(opts) });
     if (denial) {
       return { decision: 'deny', message: 'zn: A command different from the one zn checked was run (another tool changed it). zn withheld its output because zn blocks that command. Review the other hooks configured for Codex.' };
     }
@@ -905,6 +930,22 @@ function SESSION_CONTEXT() {
     'To run a command that needs a stored secret, write the placeholder __ZN_<NAME>__ and run the command with `' + znCommand('run -- <command>') + '`.';
 }
 
+/*
+ * Test-only fault injection. Inert unless ZN_TEST_HOOK_FAULTS=1 is set, and it can only make
+ * the hook fail or wait, never allow anything.
+ */
+async function injectTestFault() {
+  if (process.env.ZN_TEST_HOOK_FAULTS !== '1') return;
+  const f = process.env.ZN_TEST_HOOK_FAULT;
+  if (f === 'hang') await new Promise((r) => setTimeout(r, Number(process.env.ZN_TEST_HOOK_HANG_MS) || 60000));
+  else if (f === 'throw') throw new Error('test fault');
+  else if (f === 'reject' || f === 'crash') {
+    if (f === 'reject') Promise.reject(new Error('test fault'));
+    else setTimeout(() => { throw new Error('test fault'); }, 0);
+    await new Promise((r) => setTimeout(r, Number(process.env.ZN_TEST_HOOK_HANG_MS) || 5000)); // stay armed until it fires
+  }
+}
+
 /**
  * Handle one raw event. Returns {output, stderr} where output is the JSON
  * value to print (or null for "no opinion").
@@ -918,6 +959,7 @@ async function handle(adapter, rawEvent, opts = {}) {
     ev = adapter.normalize(rawEvent);
     const d = lazyDeps(opts);
     if (ev && ev.event) guardNativeText(ev);
+    await injectTestFault();
     if (!ev || !ev.event) decision = { decision: 'allow' };
     else if (ev.event === 'pre_tool') decision = await decidePre(ev, d, adapter.id, opts);
     else if (ev.event === 'post_tool') decision = await decidePost(ev, d, adapter.id, opts);
@@ -1040,9 +1082,58 @@ function refuseInput(agentId, why) {
   if (agentId === 'antigravity') process.stdout.write(JSON.stringify({ decision: 'deny', reason: msg }));
   // Copilot CLI: exit 2 denies preToolUse (other events only warn); the documented deny answer is printed as well.
   if (agentId === 'copilot') process.stdout.write(JSON.stringify({ permissionDecision: 'deny', permissionDecisionReason: msg }));
-  // Gemini CLI documents exit 2 as a block with stderr as the reason, so it needs no JSON on stdout (stdout that
-  // is not JSON counts as allow there); any other exit code only warns and lets the tool run.
+  // Gemini CLI documents exit 2 as a block with stderr as the reason. Its deny JSON is printed as well, because
+  // on Windows the launcher passes this refusal on as exit 0 (a nested PowerShell turns exit 2 into 1).
+  if (agentId === 'gemini') process.stdout.write(JSON.stringify({ decision: 'deny', reason: msg }));
   process.exitCode = 2;
+}
+
+/*
+ * Codex has no fail-closed setting: when a PreToolUse, PermissionRequest or UserPromptSubmit hook times
+ * out, crashes or prints something it cannot read, Codex marks the hook failed and runs the call anyway.
+ * While node is running, zn answers for itself before that: a watchdog fires a few seconds before Codex's
+ * timeout, and an uncaught error or unhandled rejection does the same. Both print Codex's deny answer
+ * (JSON only on stdout) and exit 2, Codex's documented block code. Other agents and events are untouched.
+ */
+const CODEX_WATCHDOG_MARGIN_S = 5;
+const CODEX_FAIL_REASON = 'zn-gate could not finish checking this in time, so it was blocked. ' +
+  'Try again; if it keeps happening, run zn-gate doctor.';
+
+function codexDenyFor(eventName, reason) {
+  if (eventName === 'PreToolUse') return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } };
+  if (eventName === 'PermissionRequest') return { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: reason } } };
+  if (eventName === 'UserPromptSubmit') return { decision: 'block', reason };
+  return null;
+}
+
+function codexDeadlineMs() {
+  let ms = (require('../agents/codex').HOOK_TIMEOUT_S - CODEX_WATCHDOG_MARGIN_S) * 1000;
+  if (process.env.ZN_TEST_HOOK_FAULTS === '1') {
+    const t = Number(process.env.ZN_TEST_HOOK_DEADLINE_MS);
+    if (t > 0 && t < ms) ms = t; // tests may only shorten it
+  }
+  return ms;
+}
+
+// Returns a function that disarms the watchdog, or null when the event is not one it covers.
+function armCodexFailClosed(agentId, eventName) {
+  if (agentId !== 'codex' || !codexDenyFor(eventName, '')) return null;
+  let done = false;
+  const failNow = () => {
+    if (done) return;
+    done = true;
+    try { fs.writeSync(1, JSON.stringify(codexDenyFor(eventName, CODEX_FAIL_REASON))); } catch (_) { /* nothing more to do */ }
+    try { fs.writeSync(2, 'zn hook: ' + CODEX_FAIL_REASON + '\n'); } catch (_) { /* nothing more to do */ }
+    process.exit(2);
+  };
+  const timer = setTimeout(failNow, codexDeadlineMs());
+  process.on('uncaughtException', failNow);
+  process.on('unhandledRejection', failNow);
+  return () => {
+    clearTimeout(timer);
+    process.removeListener('uncaughtException', failNow);
+    process.removeListener('unhandledRejection', failNow);
+  };
 }
 
 async function main(args, readText = readStdin) {
@@ -1100,10 +1191,20 @@ async function handleEvent(args, state, readText) {
     return refuseInput(agentId, 'the event on stdin is not a JSON object');
   }
   state.stopEvent = raw.hook_event_name === 'Stop';
-  const res = await handle(adapter, raw);
-  if (res.stderr) process.stderr.write(res.stderr + ' (fail-open: event passed through)\n');
-  try { require('../vault/client').close(); } catch (_) { /* not loaded */ }
-  if (res.output !== null && res.output !== undefined) process.stdout.write(JSON.stringify(res.output));
+  const disarm = armCodexFailClosed(agentId, raw.hook_event_name);
+  try {
+    const res = await handle(adapter, raw);
+    if (res.stderr) process.stderr.write(res.stderr + ' (fail-open: event passed through)\n');
+    try { require('../vault/client').close(); } catch (_) { /* not loaded */ }
+    if (res.output !== null && res.output !== undefined) process.stdout.write(JSON.stringify(res.output));
+    // zn itself failed: Codex also gets its documented block code, with the reason on stderr.
+    if (disarm && res.decision && res.decision.failClosed) {
+      process.stderr.write('zn hook: ' + (res.decision.message || CODEX_FAIL_REASON) + '\n');
+      process.exitCode = 2;
+    }
+  } finally {
+    if (disarm) disarm();
+  }
 }
 
 module.exports = { handle, main, mapStrings, decidePre, decidePost, decidePrompt, decideExpansion, decideStop };

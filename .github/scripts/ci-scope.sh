@@ -8,6 +8,7 @@
 # reports). Documentation files that tests read (docs/cli.md, ...) count as code.
 # Anything under packages/, plugins/, skill/, bench/ or .github/ always needs the
 # checks, Markdown files included (some are checked by the package and plugin checks).
+# With SCOPE=core (scrubber, leak bench) examples/ and the other workflows' files do not count.
 # Any error while listing the files means true: when in doubt, run the checks.
 set -uo pipefail
 
@@ -23,6 +24,20 @@ files="$(git diff --no-renames --name-only "$BASE_SHA" HEAD 2>/dev/null)" || out
 [ -n "$files" ] || out true
 
 needed=false
+# SCOPE=core (scrubber and leak bench): examples and other workflows' files do not need these checks;
+# OWN names the calling workflow file, which always does.
+if [ "${SCOPE:-}" = "core" ]; then
+  while IFS= read -r f; do
+    case "$f" in
+      "${OWN:-.github/workflows/none}"|.github/scripts/ci-scope.sh|.github/actions/*) needed=true; echo "needs the checks: $f"; break ;;
+      packages/*/*.md|plugins/*.md) needed=true; echo "needs the checks: $f"; break ;;
+      examples/*|.github/*|docs/*|*.md|LICENSE|NOTICE|assets/*) ;;
+      src/*|Cargo.toml|Cargo.lock|.cargo/*|build.rs) ;;
+      *) needed=true; echo "needs the checks: $f"; break ;;
+    esac
+  done <<< "$files"
+  out "$needed"
+fi
 while IFS= read -r f; do
   case "$f" in
     packages/*|plugins/*|skill/*|bench/*|action.yml|.github/*) needed=true; echo "needs the checks: $f"; break ;;

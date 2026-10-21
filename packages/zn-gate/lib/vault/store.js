@@ -195,10 +195,16 @@ async function readEncrypted(file, identity) {
   let text;
   try {
     text = await decryptWith(identity, new Uint8Array(buf));
+  } catch (err) {
+    throw znError(CODES.LOCKED, require('../messages').vaultDamaged(path.basename(file),
+      'is corrupted or was encrypted to another key', (err && err.message) || err));
+  }
+  try {
     return JSON.parse(text);
   } catch (err) {
-    throw znError(CODES.LOCKED, 'vault file ' + path.basename(file) + ' is corrupted or was encrypted to another key (' +
-      String((err && err.message) || err).slice(0, 80) + '). Restore it from a backup; zn will not read or replace it.');
+    // The parser's message quotes the start of the decrypted text: never pass it on, not even with ZN_VERBOSE or DEBUG.
+    throw znError(CODES.LOCKED, require('../messages').vaultDamaged(path.basename(file),
+      'is corrupted or was encrypted to another key', 'not valid JSON'));
   }
 }
 

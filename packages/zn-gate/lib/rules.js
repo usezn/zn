@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-19.7
+ * RULES_VERSION: 2026-10-21.9
  */
 
-const RULES_VERSION = '2026-10-19.7';
+const RULES_VERSION = '2026-10-21.9';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -375,6 +375,18 @@ const HOMOGLYPH_MAP = {
 // (U+E0100-E01EF) are astral and live in INVISIBLE_ASTRAL_RE.
 const ZERO_WIDTH_RE = /[\u200B-\u200D\u2060\uFEFF\u00AD\uFE00-\uFE0F]/g;
 const INVISIBLE_ASTRAL_RE = /[\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
+// A line break inside a wrapped token (a key or a base64 blob printed 20 or 40 characters per line):
+// at least 10 token characters before and after it, and the next line does not
+// start a new NAME= or NAME: assignment. The secret rules also run on the text without these breaks.
+// Line breaks are joined only in texts up to this size: wrapped keys are short, and a view of a huge text
+// full of short lines would cost far more than it finds (a 32 MB file of 20-character lines).
+const MAX_WRAP_VIEW_CHARS = 1 << 20;
+const WRAP_BREAK_RE = /(?<=[A-Za-z0-9_\-+/=]{10})[ \t]*\r?\n[ \t]*(?=[A-Za-z0-9_\-+/=]{10})(?![A-Za-z_][A-Za-z0-9_]*[ \t]*[=:])/g;
+// WRAP_BREAK_RE tried at one index only. A match holds exactly one line break, and its lookbehind needs a
+// token character right before the match, so it can only start where the spaces, tabs and CR before that
+// break begin. Trying the pattern there, once per line break, finds the same matches as matchAll, which
+// tries it at every index of the text (about 5 ms more per MB of short lines, on every hook call).
+const WRAP_BREAK_AT_RE = new RegExp(WRAP_BREAK_RE.source, 'y');
 // ASCII-only text needs no compatibility folding.
 const NON_ASCII_RE = /[^\x00-\x7f]/;
 // Compatibility characters folded for matching, one character at a time: fullwidth
@@ -452,22 +464,41 @@ function invisibleView(text) {
   const runs = [];
   for (const m of text.matchAll(ZERO_WIDTH_RE)) runs.push(m.index, m.index + m[0].length);
   for (const m of text.matchAll(INVISIBLE_ASTRAL_RE)) runs.push(m.index, m.index + m[0].length);
+  if (text.length <= MAX_WRAP_VIEW_CHARS && text.includes('\n')) {
+    for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1)) {
+      let start = i;
+      if (start > 0 && text[start - 1] === '\r') start--;
+      while (start > 0 && (text[start - 1] === ' ' || text[start - 1] === '\t')) start--;
+      WRAP_BREAK_AT_RE.lastIndex = start;
+      const m = WRAP_BREAK_AT_RE.exec(text);
+      if (m) runs.push(start, start + m[0].length);
+    }
+  }
   if (runs.length === 0) return null;
-  // The runs of both patterns are merged in index order.
+  // The runs of all patterns are merged in index order (a break run can contain an invisible character).
   const sorted = [];
   for (let r = 0; r < runs.length; r += 2) sorted.push([runs[r], runs[r + 1]]);
-  sorted.sort((a, b) => a[0] - b[0]);
-  const clean = text.replace(ZERO_WIDTH_RE, '').replace(INVISIBLE_ASTRAL_RE, '');
-  const map = new Int32Array(clean.length + 1);
+  sorted.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+  const map = new Int32Array(text.length + 1);
+  let clean = '';
   let c = 0;
   let pos = 0;
   for (const [start, end] of sorted) {
+    if (end <= pos) continue;
     for (let i = pos; i < start; i++) map[c++] = i;
-    pos = end;
+    clean += text.slice(pos, Math.max(pos, start));
+    pos = Math.max(pos, end);
   }
   for (let i = pos; i < text.length; i++) map[c++] = i;
+  clean += text.slice(pos);
   map[c] = text.length;
-  return { clean, map };
+  return { clean, map: map.subarray(0, c + 1) };
+}
+
+// A value as the secret rules see it: no invisible characters and no wrap breaks.
+function cleanValue(str) {
+  const s = stripInvisible(str);
+  return s.includes('\n') ? s.replace(WRAP_BREAK_RE, '') : s;
 }
 
 function normalizeInput(str) {
@@ -929,8 +960,32 @@ function spanIn(map, start, end) {
 // has invisible characters, on the text without them, so a secret is found when
 // either run finds it: "AKIA" + 16 characters + zero-width space + "foo" is found
 // on the original text, and "AKIA" + zero-width space + 16 characters on the view.
-function ruleCandidates(item, text, view, budget, out) {
+// True when a rule of `patterns` matches starting at the first non-space character after `from`
+// (before `limit`): the next line starts a secret of its own, so it is not the tail of a wrapped one.
+const STICKY = new WeakMap();
+function startsSecretAt(text, from, limit, patterns) {
+  let pos = from;
+  while (pos < limit && /\s/.test(text[pos])) pos++;
+  if (pos >= limit) return false;
+  for (const p of patterns) {
+    let re = STICKY.get(p);
+    if (!re) {
+      re = new RegExp(p.pattern.source, p.pattern.flags.replace(/[gy]/g, '') + 'y');
+      STICKY.set(p, re);
+    }
+    re.lastIndex = pos;
+    if (re.test(text)) return true;
+  }
+  return false;
+}
+
+function ruleCandidates(item, text, view, budget, out, patterns = null) {
   const passes = view ? [[text, null], [view.clean, view.map]] : [[text, null]];
+  // Spans this rule found on the original text. A match on the view that overlaps two or more of them is
+  // dropped, so two secrets on consecutive lines are not merged into one match across the break. A view
+  // match that extends a single original match (the first line of a wrapped key) is kept, unless the next
+  // line starts a secret of its own (startsSecretAt).
+  const found = [];
   const flags = item.pattern.flags.includes('d') ? item.pattern.flags : item.pattern.flags + 'd';
   const regex = new RegExp(item.pattern.source, flags);
   for (const [hay, map] of passes) {
@@ -949,8 +1004,8 @@ function ruleCandidates(item, text, view, budget, out) {
       }
       if (item.valueFilter) {
         // The value (group 2) decides whether the match is redacted.
-        const value = stripInvisible(text.slice(groups[2][0], groups[2][1]));
-        const prefix = groups[1] ? stripInvisible(text.slice(groups[1][0], groups[1][1])) : '';
+        const value = cleanValue(text.slice(groups[2][0], groups[2][1]));
+        const prefix = groups[1] ? cleanValue(text.slice(groups[1][0], groups[1][1])) : '';
         const n = value.length;
         if (n <= MAX_FILTERED_VALUE && n <= budget.left) {
           budget.left -= n;
@@ -958,6 +1013,12 @@ function ruleCandidates(item, text, view, budget, out) {
         }
       }
       const [start, end] = spanIn(map, m.index, m.index + m[0].length);
+      if (!map) found.push([start, end]);
+      else {
+        const over = found.filter(([s, e]) => start < e && s < end);
+        if (over.length >= 2) continue;
+        if (over.length === 1 && patterns && startsSecretAt(text, over[0][1], end, patterns)) continue;
+      }
       out.push({ start, end, rule: item.id, text: expandTemplate(item.replacement, groups, text) });
     }
   }
@@ -1017,8 +1078,9 @@ const SCRUB_PROVIDER_LABELS = new Map([['DB_PASSWORD', 'URL_PASSWORD']]);
 // Google, npm, ...), run on text the SECRET_PATTERNS already redacted. The
 // engine is required here, not at the top, because it requires this file.
 function redactProviderFormats(text) {
-  const spans = require('./scrub/engine').scan(text, { exact: false, pii: false })
-    .filter((s) => SCRUB_PROVIDER_RULES.has(s.type))
+  // Only the provider types take part in the overlap resolution: a wider span of another type (such as
+  // a NAME=value assignment) would otherwise win it, be dropped here, and leave the key unredacted.
+  const spans = require('./scrub/engine').scan(text, { exact: false, pii: false, types: SCRUB_PROVIDER_RULES })
     .sort((a, b) => a.start - b.start || b.end - a.end);
   const detections = [];
   let out = '';
@@ -1060,7 +1122,7 @@ function redactWith(text, patterns) {
       dirty = false;
     }
     const cands = [];
-    ruleCandidates(item, sanitized, view, budget, cands);
+    ruleCandidates(item, sanitized, view, budget, cands, patterns);
     if (cands.length === 0) continue;
     let out = '';
     let last = 0;
@@ -1079,15 +1141,17 @@ function redactWith(text, patterns) {
 // head + tail view used by evaluate(), it is scanned in windows of
 // MAX_SCAN_CHARS that overlap by SCAN_WINDOW_OVERLAP, so a payload in the
 // middle is not skipped. Past MAX_TOOL_RESULT_SCAN_CHARS only the last window
-// is added and the result is marked `truncated: true`. A match that spans more
-// than SCAN_WINDOW_OVERLAP characters across a window boundary can be missed.
+// is added and the result is marked `truncated: true`; options.maxScanChars
+// raises that limit (the MCP shield scans more). A match that spans more than
+// SCAN_WINDOW_OVERLAP characters across a window boundary can be missed.
 const SCAN_WINDOW_OVERLAP = 4 * 1024;
 const MAX_TOOL_RESULT_SCAN_CHARS = 4 * 1024 * 1024;
 
 function scanWindows(text, options = {}) {
   if (typeof text !== 'string' || text.length <= MAX_SCAN_CHARS) return evaluate(text, options);
   const step = MAX_SCAN_CHARS - SCAN_WINDOW_OVERLAP;
-  const limit = Math.min(text.length, MAX_TOOL_RESULT_SCAN_CHARS);
+  const cap = Number.isFinite(options.maxScanChars) && options.maxScanChars > 0 ? options.maxScanChars : MAX_TOOL_RESULT_SCAN_CHARS;
+  const limit = Math.min(text.length, cap);
   let res = null;
   let advisory = null;
   for (let start = 0; ; start += step) {

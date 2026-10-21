@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { getAdapter } = require('../lib/agents');
 const { check: realCheck, report } = require('../lib/check');
-// These tests are about what they say whatever Node.js runs them: the plugin needs 20.12 or later, so one that
+// These tests are about what they say whatever Node.js runs them: the plugin needs 20.19 or later, so one that
 // supports it is injected (the check for older versions is in init_plugin_node.test.js).
 const check = (opts) => realCheck({ nodeVersion: '22.0.0', ...opts });
 const { tempDir } = require('./helpers/tmp');
@@ -119,8 +119,16 @@ test('check: an agent found but not set up is named after the protected ones, wi
   assert.match(s, /Not set up yet: Claude Code\. To add it, run `npx -y zn-gate init`/);
 });
 
+// A hook written by an older zn-gate: the plain command with the absolute Node.js and runner paths, no launcher.
+function legacyCodexHome(t) {
+  const ctx = homeWithHooks(t, []);
+  const command = require('../lib/agents/config-file').hookCommand('codex', { nodePath: process.execPath, runnerPath: RUNNER });
+  getAdapter('codex').install({ scope: 'user', home: ctx.home, env: ctx.env, command, mcp: false });
+  return ctx;
+}
+
 test('check: a hook whose Node.js is gone is not protected', async (t) => {
-  const ctx = homeWithHooks(t, ['codex']);
+  const ctx = legacyCodexHome(t);
   const file = getAdapter('codex').hooksFile(ctx);
   fs.writeFileSync(file, fs.readFileSync(file, 'utf8').split(process.execPath.replace(/\\/g, '/')).join(path.join(ctx.home, 'gone', 'node').replace(/\\/g, '/')));
   const r = byId(await check(ctx), 'codex');
@@ -131,7 +139,10 @@ test('check: a hook whose Node.js is gone is not protected', async (t) => {
 });
 
 test('check: Claude Code set up with zn hooks is repaired with zn hooks, not with the plugin', async (t) => {
-  const ctx = homeWithHooks(t, ['claude-code']);
+  // A hook written by an older zn-gate: the plain command with the absolute Node.js and runner paths, no launcher.
+  const ctx = homeWithHooks(t, []);
+  const command = require('../lib/agents/claude-code').hookCommand({ nodePath: process.execPath, runnerPath: RUNNER });
+  getAdapter('claude-code').install({ scope: 'user', home: ctx.home, env: ctx.env, command, mcp: false });
   const file = getAdapter('claude-code').settingsFile(ctx);
   fs.writeFileSync(file, fs.readFileSync(file, 'utf8').split(process.execPath.replace(/\\/g, '/')).join(path.join(ctx.home, 'gone', 'node').replace(/\\/g, '/')));
   const r = byId(await check(ctx), 'claude-code');
@@ -203,7 +214,7 @@ test('check: a command that is not zn\'s exact hook is never run', async (t) => 
   const file = getAdapter('cursor').hooksFile(ctx);
   const marker = path.join(ctx.home, 'ran');
   const tree = JSON.parse(fs.readFileSync(file, 'utf8'));
-  for (const list of Object.values(tree.hooks)) for (const h of list) h.command = h.command.replace("'" + RUNNER.replace(/\\/g, '/'), "'$(touch " + marker + ")" + RUNNER.replace(/\\/g, '/'));
+  for (const list of Object.values(tree.hooks)) for (const h of list) h.command = process.platform === 'win32' ? '$(touch ' + marker + ') ' + h.command : h.command.replace(/^'/, "'$(touch " + marker + ")");
   fs.writeFileSync(file, JSON.stringify(tree));
   const r = byId(await check(ctx), 'cursor');
   assert.equal(fs.existsSync(marker), false);
@@ -290,7 +301,7 @@ test('check: a `zn hook` command does not find zn through a relative PATH entry'
 });
 
 test('check: a hook whose zn-gate files are gone gets the same repair', async (t) => {
-  const ctx = homeWithHooks(t, ['codex']);
+  const ctx = legacyCodexHome(t);
   const file = getAdapter('codex').hooksFile(ctx);
   fs.writeFileSync(file, fs.readFileSync(file, 'utf8').split(RUNNER.replace(/\\/g, '/')).join(path.join(ctx.home, 'gone', 'zn-gate', 'lib', 'hooks', 'runner.js').replace(/\\/g, '/')));
   const r = byId(await check(ctx), 'codex');
@@ -412,7 +423,7 @@ test('check: a broken plugin next to zn hooks that do not work either: repair th
   assert.equal(r.hooksBroken, true);
   assert.equal(r.state, 'not-protected');
   // Nothing claims the hooks protect the agent: they were checked and they do not.
-  assert.match(r.problem, /do not work either \(its hook cannot start: its Node\.js .* is no longer there\)/);
+  assert.match(r.problem, /do not work either \(its hook cannot start: its Node\.js .* is no longer there/);
   assert.doesNotMatch(r.problem + r.fix, /keep protecting|keeps those hooks/);
   const npm = r.fix.indexOf('npm install -g zn-gate');
   const hooks = r.fix.indexOf('zn hooks install claude-code');
