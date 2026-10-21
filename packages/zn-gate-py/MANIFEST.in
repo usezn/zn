@@ -1,0 +1,5 @@
+# The sdist ships the package source only. The test suite stays in the repository (it holds fake
+# secrets on purpose, which secret scanners flag in a published archive); run it from the git tag.
+prune tests
+prune typing_check
+global-exclude *.py[cod] __pycache__
