@@ -131,10 +131,39 @@ test('install (user) backs up, keeps foreign hooks and uninstall removes only zn
   assert.ok(rep.backup && fs.existsSync(rep.backup));
   let data = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.deepEqual(data.mine, mine);
-  assert.match(data['zn-gate'].PreToolUse[0].hooks[0].command, /runner\.js'? antigravity/);
+  const written = data['zn-gate'].PreToolUse[0].hooks[0].command;
+  assert.match(require('../lib/shell-quote').readableWindowsCommand(written), /runner\.js'? antigravity/);
   agy.uninstall({ scope: 'user', home });
   data = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.deepEqual(data, { mine, off });
+});
+
+test('install (user, Windows) writes a command with no quotes or spaces inside an argument', (t) => {
+  const { windowsCommandScript } = require('../lib/shell-quote');
+  const cfg = require('../lib/agents/config-file');
+  const home = tempDir(t, 'zn-agy-win-');
+  const opts = { scope: 'user', home, platform: 'win32', nodePath: 'C:\\Program Files\\nodejs\\node.exe', runnerPath: 'C:\\Users\\a b\\zn\\lib\\hooks\\runner.js' };
+  agy.install(opts);
+  const file = path.join(home, '.gemini', 'config', 'hooks.json');
+  const command = JSON.parse(fs.readFileSync(file, 'utf8'))['zn-gate'].PreToolUse[0].hooks[0].command;
+  assert.match(command, /^powershell\.exe -NoProfile -NonInteractive -EncodedCommand [A-Za-z0-9+/=]+$/);
+  assert.ok(!/["']/.test(command));
+  assert.equal(windowsCommandScript(command), "& 'C:/Program Files/nodejs/node.exe' 'C:/Users/a b/zn/lib/hooks/runner.js' antigravity");
+  assert.ok(cfg.isOurs(command, 'antigravity'));
+  // zn-gate check and zn audit read it in the same shape as the -Command form.
+  assert.equal(require('../lib/shell-quote').readableWindowsCommand(command), cfg.hookCommandWindows('antigravity', opts));
+  // Other agents keep the readable -Command form for the same paths.
+  assert.match(cfg.hookCommandWindows('cursor', opts), / -Command "/);
+  // An older -Command entry is recognised and replaced, not duplicated.
+  const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+  data['zn-gate'].PreToolUse[0].hooks[0].command = cfg.hookCommandWindows('antigravity', opts);
+  fs.writeFileSync(file, JSON.stringify(data));
+  agy.install(opts);
+  const again = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.deepEqual(Object.keys(again), ['zn-gate']);
+  assert.equal(again['zn-gate'].PreToolUse[0].hooks[0].command, command);
+  agy.uninstall(opts);
+  assert.ok(!fs.existsSync(file) || !JSON.parse(fs.readFileSync(file, 'utf8'))['zn-gate']);
 });
 
 test('install never touches a foreign hook already named zn-gate, not even its enabled flag', (t) => {

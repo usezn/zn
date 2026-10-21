@@ -11,7 +11,7 @@ body:
     attributes:
       label: zn-gate version
       description: Run `npx -y zn-gate --version` (npm) or `zn-gate --version` if it is installed.
-      placeholder: "for example 1.12.0"
+      placeholder: "for example 1.13.0"
     validations:
       required: true
   - type: dropdown
