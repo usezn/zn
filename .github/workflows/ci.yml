@@ -357,6 +357,9 @@ jobs:
         if: steps.scope.outputs.run == 'true'
         working-directory: packages/zn-gate
         run: npm ci --ignore-scripts
+      - name: Prune sources and maps from the bundled dependencies
+        if: steps.scope.outputs.run == 'true'
+        run: node .github/scripts/prune-bundled-sources.js packages/zn-gate
       - name: Pack
         if: steps.scope.outputs.run == 'true'
         working-directory: packages/zn-gate
@@ -455,6 +458,11 @@ jobs:
       - name: twine check
         if: steps.scope.outputs.run == 'true'
         run: python -m twine check --strict "$RUNNER_TEMP"/dist/*
+      - name: Check wheel and sdist contents
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          python -I .github/scripts/test_check_python_pack.py
+          python -I .github/scripts/check-python-pack.py "$RUNNER_TEMP"/dist/*.whl "$RUNNER_TEMP"/dist/*.tar.gz
       - name: List sdist contents
         if: steps.scope.outputs.run == 'true'
         run: tar -tzf "$RUNNER_TEMP"/dist/*.tar.gz

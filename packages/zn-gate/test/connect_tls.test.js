@@ -66,7 +66,7 @@ test('a saved key is not sent while NODE_TLS_REJECT_UNAUTHORIZED=0, and the reas
     assert.equal(seen.length, 0);
     assert.equal(r.mode, 'oss-local');
     assert.equal(r.fallback, true);
-    assert.match(r.cloud_error, /NODE_TLS_REJECT_UNAUTHORIZED=0 is set, so zn-gate will not send the saved key/);
+    assert.match(r.cloud_error, /NODE_TLS_REJECT_UNAUTHORIZED is set in this terminal, so zn-gate will not send the saved key/);
     assert.ok(!r.cloud_error.includes('\n'));
   });
 });
@@ -80,7 +80,7 @@ test('connect and disconnect requests verify the certificate and are not made un
     const n = seen.length;
     process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
     const c = await connectCli.request(https, 'GET', connectCli.VERIFY_PATH, key);
-    assert.match(c.error, /NODE_TLS_REJECT_UNAUTHORIZED=0/);
+    assert.match(c.error, /NODE_TLS_REJECT_UNAUTHORIZED is set/);
     assert.equal(seen.length, n, 'no request was made');
   });
 });

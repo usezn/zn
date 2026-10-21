@@ -69,7 +69,13 @@ Your secret vault is locked. Unlock it in this terminal with: zn unlock. Then ru
 
 More in [secrets](secrets.md). If it asks for a terminal to enter the passphrase and you have none (for example over SSH), see "If something fails" there.
 
-**If the passphrase is right but the vault will not open:** `zn unlock` says so when the vault file is damaged or the system keychain refuses. It then tells you not to reset. Do not run `zn vault reset`: it would delete values that may still be fine. Run `zn vault verify` to see whether the vault files are intact, restore the vault folder from a backup if you have one, or sign in to the user account that created the vault. If a keychain is the cause, the message names it.
+**If the passphrase is right but the vault will not open:** `zn unlock` says so when the vault file is damaged or the system keychain refuses. It then names the damaged file and tells you to restore it from a backup first. Do not run `zn vault reset` before you try that: it would delete values that may still be fine. Run `zn vault verify` to see whether the vault files are intact, restore the vault folder from a backup if you have one, or sign in to the user account that created the vault. With no backup, `zn vault reset` is the way out: it sets the old vault aside and starts empty, so the values saved in it are lost. If a keychain is the cause, the message names it.
+
+**If the keychain refuses:** `unlock` names the one your computer uses and one next step. On macOS, choose Allow in the Keychain window, or open Keychain Access and allow zn to use the item `zn-vault`. On Windows, check that Credential Manager works for your account (open it from the Start menu). On Linux, make sure your keyring is unlocked by logging in to your desktop session; if the `secret-tool` program is missing, install the `libsecret-tools` package (for example `sudo apt install libsecret-tools`). When the vault is being created, you can use a passphrase instead: `zn unlock --backend passphrase`. For the technical code that the keychain returned, run the command again with `ZN_VERBOSE=1`.
+
+**If the vault does not answer:** "The vault is not answering" means the vault is slow or was left over from a crash. Run `zn lock`, then `zn unlock`. If `unlock` says the vault did not start in time or stopped while starting, run it again; if it keeps happening, restart your computer and open an issue with the output of `ZN_VERBOSE=1 zn unlock`.
+
+**If `zn vault verify` says the audit log did not pass its check:** do not delete or edit the log. It is the record of what the vault did, and a change to it is what the check finds. Keep a copy of `~/.zn/audit.jsonl`, then open an issue; `zn vault verify` with `ZN_VERBOSE=1` prints the reason.
 
 **If you forgot the passphrase:** nobody can recover it, zn included. That is what keeps your secrets safe. After three wrong passphrases in a row (other errors do not count), `zn unlock` points you to the way out:
 
@@ -102,6 +108,8 @@ More in [secrets](secrets.md) and [what the check means](check.md).
 
 ## 7. `zn-gate connect` does not accept your key
 
+`connect` prints its problems on the error output. If the message says "Could not reach usezn.com", check your internet connection and run `zn-gate connect` again. If it says usezn.com "is not answering properly right now", wait a few minutes and try again. In both cases nothing was saved. If it says the computer has no system keychain and the vault is locked, run `zn unlock` (it asks for a passphrase), then `zn-gate connect` again.
+
 ```text
 That does not look like a zn API key (they start with zn_). Nothing was saved. Run `zn-gate connect` and paste the key again.
 usezn.com did not accept this key (it may be revoked or mistyped). Nothing was saved. Run `zn-gate connect` and paste a valid key.
@@ -122,14 +130,14 @@ More in [connect](connect.md). You do not need `connect` to use zn-gate: without
 ## 8. "will not send the saved key" (TLS settings)
 
 ```text
-NODE_TLS_REJECT_UNAUTHORIZED=0 is set, so zn-gate will not send the saved key over a connection whose certificate is not checked
+NODE_TLS_REJECT_UNAUTHORIZED is set in this terminal, so zn-gate will not send the saved key: it switches off the check that the connection really goes to usezn.com. Remove it (macOS or Linux: `unset NODE_TLS_REJECT_UNAUTHORIZED`; Windows PowerShell: `Remove-Item Env:NODE_TLS_REJECT_UNAUTHORIZED`) and try again.
 ```
 
-**What it means:** your terminal has a setting that turns off the check of website certificates, changes how secure connections work, or could print or read your key. zn-gate refuses to send your saved key through such a connection. Similar messages name `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `OPENSSL_CONF`, `NODE_DEBUG` or `NODE_OPTIONS` instead. Your local checks keep working.
+**What it means:** your terminal has a setting that turns off the check of website certificates, changes how secure connections work, or could print or read your key. zn-gate refuses to send your saved key through such a connection. While you connect (nothing is saved yet) the message says "the key" instead of "the saved key". Similar messages name `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `OPENSSL_CONF`, `NODE_DEBUG` or `NODE_OPTIONS` instead. Your local checks keep working.
 
 **What to do:** zn-gate refuses on purpose: with that setting, someone between you and usezn.com could read your key. Nothing is broken, and the local checks keep working without the cloud check.
 
-- If you set it yourself, for example for a test, remove it, open a new terminal and try again. On macOS or Linux, `unset NODE_TLS_REJECT_UNAUTHORIZED` (or the name in the message) removes it for this terminal. If it comes back, look in your shell startup file (such as `~/.zshrc` or `~/.bashrc`).
+- If you set it yourself, for example for a test, remove it, open a new terminal and try again. On macOS or Linux, `unset NODE_TLS_REJECT_UNAUTHORIZED` (or the name in the message) removes it for this terminal; in Windows PowerShell, `Remove-Item Env:NODE_TLS_REJECT_UNAUTHORIZED`. If it comes back, look in your shell startup file (such as `~/.zshrc` or `~/.bashrc`).
 - If your company needs it, for example for a proxy with its own certificate, keep it and ask your administrator. Until then zn-gate uses only its local checks on this computer.
 - Never turn off certificate checks to make this message go away.
 
@@ -174,25 +182,25 @@ Failed to connect: CONNECTION_CLOSED
 ```
 
 ```text
-X  Claude Code   NOT protected: the zn-gate plugin needs Node.js 20.12 or later (you have 18.19.1).
-   To fix it, update Node.js to 20.12 or later (the current LTS from nodejs.org), and make it the first `node` on your PATH, or use zn's hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, and after that turn the plugin off with `claude plugin disable zn-gate@usezn`, all in your own terminal.
+X  Claude Code   NOT protected: the zn-gate plugin needs Node.js 20.19 or later (you have 18.19.1).
+   To fix it, update Node.js to 20.19 or later (the current LTS from nodejs.org), and make it the first `node` on your PATH, or use zn's hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, and after that turn the plugin off with `claude plugin disable zn-gate@usezn`, all in your own terminal.
 ```
 
 The version number in the second message is yours and will differ.
 
-**What it means:** the zn-gate plugin for Claude Code needs Node.js 20.12 or later. With an older Node.js (for example Node.js 18, which `apt` installs on many Debian and Ubuntu systems), the plugin refuses to start on purpose: its checks block the calls they cannot make, and its MCP server does not start, so Claude Code lists it as failed to connect. zn-gate itself and zn's hooks still run on Node.js 18 and later. Nothing is wrong with your files.
+**What it means:** the zn-gate plugin for Claude Code needs Node.js 20.19 or later. With an older Node.js (for example Node.js 18, which `apt` installs on many Debian and Ubuntu systems), the plugin refuses to start on purpose: its checks block the calls they cannot make, and its MCP server does not start, so Claude Code lists it as failed to connect. zn-gate itself and zn's hooks still run on Node.js 18 and later. Nothing is wrong with your files.
 
 **How to check:**
 
-1. Run `node --version` in your own terminal. If it says a version lower than 20.12 (such as `v18.19.1`), this is the cause. Claude Code starts the plugin with the first `node` on its `PATH`, so use the terminal you start Claude Code from.
-2. Run `npx -y zn-gate check`. A line for Claude Code that says `NOT protected: the zn-gate plugin needs Node.js 20.12 or later` confirms it.
+1. Run `node --version` in your own terminal. If it says a version lower than 20.19 (such as `v18.19.1`), this is the cause. Claude Code starts the plugin with the first `node` on its `PATH`, so use the terminal you start Claude Code from.
+2. Run `npx -y zn-gate check`. A line for Claude Code that says `NOT protected: the zn-gate plugin needs Node.js 20.19 or later` confirms it.
 
 **What to do, either one:**
 
 - **Update Node.js (recommended):** install the Node.js 22 LTS version from [nodejs.org](https://nodejs.org/), open a new terminal, check that `node --version` shows it, then start a new Claude Code session. On a computer with several Node.js installs, make sure the new one is the first on your `PATH`.
 - **Or use zn's hooks instead of the plugin:** run `npm install -g zn-gate`, then `zn hooks install claude-code`, then `claude plugin disable zn-gate@usezn`, all in your own terminal. Then run `npx -y zn-gate check` again.
 
-Running `npx -y zn-gate init` on a Node.js older than 20.12 does the second option for you: it skips the plugin and sets up zn's hooks for Claude Code instead, and if the plugin is already installed it offers to turn it off once the hooks work. Node.js 22 LTS is recommended; 18 or later is enough for the hooks and the CLI. See the [README](../README.md#install).
+Running `npx -y zn-gate init` on a Node.js older than 20.19 does the second option for you: it skips the plugin and sets up zn's hooks for Claude Code instead, and if the plugin is already installed it offers to turn it off once the hooks work. Node.js 22 LTS is recommended; 18 or later is enough for the hooks and the CLI. See the [README](../README.md#install).
 
 ## Also useful
 

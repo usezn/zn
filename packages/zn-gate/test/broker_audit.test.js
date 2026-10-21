@@ -78,7 +78,7 @@ test('zn vault with an unknown subcommand still prints the usage with zn vault l
   const home = tempDir(t, 'zn-audit-');
   const r = zn(home, ['vault', 'nope']);
   assert.strictEqual(r.status, 2);
-  assert.match(r.stderr, /zn vault log \[--since 1h\]/);
+  assert.match(r.stderr, /vault log \[--since 1h\]/);
 });
 
 test('the log lists records of a locked vault and says the chain was not checked', (t) => {

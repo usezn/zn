@@ -30,7 +30,7 @@ class TestGuardDecorator(unittest.TestCase):
     def test_documented_values_work(self):
         for ok in ("raise", "return", "custom"):
             with self.subTest(ok=ok):
-                guard(on_block=ok)(lambda: "x")()
+                guard(on_block=ok, callback=lambda a, n, p: None)(lambda: "x")()
 
 
 class TestGuardedTool(unittest.TestCase):
