@@ -151,7 +151,7 @@ handler = ZnGuardCallbackHandler(on_block="raise")
 
 The handler stops the run. With `on_block="raise"` (default) a blocked prompt, tool call or tool output raises `GuardBlockError` out of the agent: the tool does not run and the output does not reach the model. `on_block="ignore"` turns that off. `"return"` is not accepted (it raises `ValueError`), because LangChain ignores what a callback returns; any other value raises `ValueError` too.
 
-A callback cannot change what a tool returns. So with `mask_secrets=True` (default) a tool output that contains a secret also stops the run. The same goes for a tool's error, whose text LangChain (`handle_tool_error`) and LangGraph (`ToolNode(handle_tool_errors=True)`) send to the model: when the message is blocked or contains a secret, the handler replaces the error with `GuardBlockError`, whose message holds no secret. To hide the secret and keep going, or to give the model a block message instead of the output, wrap the tool (needs `langchain-core`):
+A callback cannot change what a tool returns. So with `mask_secrets=True` (default) a tool output that contains a secret also stops the run (it fails closed instead of letting the secret reach the model). The same goes for a tool's error, whose text LangChain (`handle_tool_error`) and LangGraph (`ToolNode(handle_tool_errors=True)`) send to the model: when the message is blocked or contains a secret, the handler replaces the error with `GuardBlockError`, whose message holds no secret. To hide the secret and keep going, or to give the model a block message instead of the output, wrap the tool (needs `langchain-core`):
 
 ```python
 from langchain_core.tools import tool
