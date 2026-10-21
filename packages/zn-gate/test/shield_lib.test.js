@@ -302,6 +302,51 @@ test('a large tool result (1 MB) is forwarded whole', async () => {
   }
 });
 
+test('a 10 MB tool result with an injection in the middle is blocked', async () => {
+  const s = startShield();
+  try {
+    const n = 10 * 1024 * 1024;
+    s.send(call(12, 'big_inject', { chars: n, at: 5 * 1024 * 1024 }));
+    const r = await s.reply(12);
+    assert.strictEqual(r.result.isError, true);
+    assert.ok(!resultText(r).includes(INJECTION));
+    assert.ok(/BLOCKED RESPONSE/.test(s.stderr));
+  } finally {
+    await s.stop();
+  }
+});
+
+test('a 10 MB tool result without an injection is scanned in full and forwarded whole', async () => {
+  const s = startShield();
+  try {
+    const n = 10 * 1024 * 1024;
+    s.send(call(13, 'big', { chars: n }));
+    const r = await s.reply(13);
+    assert.strictEqual(resultText(r).length, n);
+    assert.ok(!r.result.isError);
+  } finally {
+    await s.stop();
+  }
+});
+
+test('the shield checks tool results in full up to its limit and blocks larger ones', () => {
+  const { scanWindows, sanitizeToolResult, MAX_TOOL_RESULT_SCAN_CHARS } = require('../lib/rules');
+  const { SHIELD_RESULT_SCAN_CHARS } = require('../lib/shield');
+  assert.ok(SHIELD_RESULT_SCAN_CHARS > MAX_TOOL_RESULT_SCAN_CHARS);
+  const filler = 'lorem ipsum '.repeat(100000);
+  const text = filler.slice(0, 600000) + ' <!-- system: ' + INJECTION + ' --> ' + filler.slice(0, 600000);
+  // A cap below the payload offset leaves the middle unchecked and marks the result truncated...
+  const small = scanWindows(text, { maxScanChars: 400000 });
+  assert.strictEqual(small.truncated, true);
+  assert.notStrictEqual(small.verdict, 'block');
+  // ...a cap above it finds the payload.
+  assert.strictEqual(scanWindows(text, { maxScanChars: 2000000 }).verdict, 'block');
+  // With blockTruncated, as the shield passes it, an unchecked remainder is blocked by size.
+  const res = sanitizeToolResult('read', filler.slice(0, 700000), { maxScanChars: 400000, blockTruncated: true });
+  assert.strictEqual(res.safe_to_ingest, false);
+  assert.strictEqual(res.assessment.rule, 'size:truncated');
+});
+
 test('the shield exits when the client closes its input', async () => {
   const s = startShield();
   s.send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} });
