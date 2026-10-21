@@ -382,6 +382,11 @@ const INVISIBLE_ASTRAL_RE = /[\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
 // full of short lines would cost far more than it finds (a 32 MB file of 20-character lines).
 const MAX_WRAP_VIEW_CHARS = 1 << 20;
 const WRAP_BREAK_RE = /(?<=[A-Za-z0-9_\-+/=]{10})[ \t]*\r?\n[ \t]*(?=[A-Za-z0-9_\-+/=]{10})(?![A-Za-z_][A-Za-z0-9_]*[ \t]*[=:])/g;
+// WRAP_BREAK_RE tried at one index only. A match holds exactly one line break, and its lookbehind needs a
+// token character right before the match, so it can only start where the spaces, tabs and CR before that
+// break begin. Trying the pattern there, once per line break, finds the same matches as matchAll, which
+// tries it at every index of the text (about 5 ms more per MB of short lines, on every hook call).
+const WRAP_BREAK_AT_RE = new RegExp(WRAP_BREAK_RE.source, 'y');
 // ASCII-only text needs no compatibility folding.
 const NON_ASCII_RE = /[^\x00-\x7f]/;
 // Compatibility characters folded for matching, one character at a time: fullwidth
@@ -460,7 +465,14 @@ function invisibleView(text) {
   for (const m of text.matchAll(ZERO_WIDTH_RE)) runs.push(m.index, m.index + m[0].length);
   for (const m of text.matchAll(INVISIBLE_ASTRAL_RE)) runs.push(m.index, m.index + m[0].length);
   if (text.length <= MAX_WRAP_VIEW_CHARS && text.includes('\n')) {
-    for (const m of text.matchAll(WRAP_BREAK_RE)) runs.push(m.index, m.index + m[0].length);
+    for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1)) {
+      let start = i;
+      if (start > 0 && text[start - 1] === '\r') start--;
+      while (start > 0 && (text[start - 1] === ' ' || text[start - 1] === '\t')) start--;
+      WRAP_BREAK_AT_RE.lastIndex = start;
+      const m = WRAP_BREAK_AT_RE.exec(text);
+      if (m) runs.push(start, start + m[0].length);
+    }
   }
   if (runs.length === 0) return null;
   // The runs of all patterns are merged in index order (a break run can contain an invisible character).
