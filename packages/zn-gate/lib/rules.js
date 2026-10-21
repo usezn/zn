@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-21.9
+ * RULES_VERSION: 2026-10-22.7
  */
 
-const RULES_VERSION = '2026-10-21.9';
+const RULES_VERSION = '2026-10-22.7';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -527,24 +527,28 @@ function normalizeInput(str) {
   return { normalized, stripped };
 }
 
-// evaluate() analyses inputs longer than MAX_SCAN_CHARS as head + tail and
-// marks the result `truncated: true`. Tool results are scanned in overlapping
-// windows (up to MAX_TOOL_RESULT_SCAN_CHARS) by scanWindows() below.
+// evaluate() scans an input longer than MAX_SCAN_CHARS whole, in overlapping
+// windows (evaluateOversize() below), and blocks one longer than
+// MAX_TOOL_RESULT_SCAN_CHARS (rule size:oversize), so no part of an input is
+// left unscanned. Tool results go through scanWindows(), which allows output
+// past that limit and only marks it `truncated: true`.
 const MAX_SCAN_CHARS = 256 * 1024;
-const SCAN_HEAD_CHARS = 192 * 1024;
-// One character is reserved for the separator, so the window fits the limit.
-const SCAN_TAIL_CHARS = MAX_SCAN_CHARS - SCAN_HEAD_CHARS - 1;
+
+function evaluateOversize(input, options) {
+  if (input.length > MAX_TOOL_RESULT_SCAN_CHARS) {
+    return {
+      verdict: 'block', confidence: 1.0, rule: 'size:oversize', reason: 'Input too large to scan in full',
+      engine: 'oss-local', rules_version: RULES_VERSION, truncated: true,
+    };
+  }
+  return scanWindows(input, { ...options, maxScanChars: MAX_TOOL_RESULT_SCAN_CHARS });
+}
 
 function evaluateUncached(input, options = {}) {
   if (typeof input !== 'string') {
     return { verdict: 'allow', confidence: 1.0, rule: 'none', reason: null, engine: 'oss-local', rules_version: RULES_VERSION };
   }
-  if (input.length > MAX_SCAN_CHARS) {
-    // NUL is neither whitespace nor a word character, so normalization cannot
-    // join the end of the head and the start of the tail into a new token.
-    const window = input.slice(0, SCAN_HEAD_CHARS) + '\u0000' + input.slice(-SCAN_TAIL_CHARS);
-    return { ...evaluateUncached(window, options), truncated: true };
-  }
+  if (input.length > MAX_SCAN_CHARS) return evaluateOversize(input, options);
 
   // Pre-normalization passes: stripped (preserves non-Latin) and normalized (maps homoglyphs)
   const { normalized, stripped } = normalizeInput(input);
@@ -1280,8 +1284,6 @@ module.exports = {
   MAX_FILTERED_VALUE,
   MAX_FILTERED_CHARS,
   SCAN_WINDOW_OVERLAP,
-  SCAN_HEAD_CHARS,
-  SCAN_TAIL_CHARS,
   EVAL_CACHE_MAX_INPUT,
   // Helper patterns used by normalization and the hidden-element check,
   // exported so the Python port can be checked against them.

@@ -45,8 +45,6 @@ const out = {
   secret_prefilters: Object.fromEntries(rules.SECRET_PATTERNS.filter((p) => p.prefilter).map((p) => [p.id, regex(p.prefilter)])),
   limits: {
     MAX_SCAN_CHARS: rules.MAX_SCAN_CHARS,
-    SCAN_HEAD_CHARS: rules.SCAN_HEAD_CHARS,
-    SCAN_TAIL_CHARS: rules.SCAN_TAIL_CHARS,
     EVAL_CACHE_MAX_INPUT: rules.EVAL_CACHE_MAX_INPUT,
     MAX_TOOL_RESULT_SCAN_CHARS: rules.MAX_TOOL_RESULT_SCAN_CHARS,
     SCAN_WINDOW_OVERLAP: rules.SCAN_WINDOW_OVERLAP,

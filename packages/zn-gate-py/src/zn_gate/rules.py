@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, overload
 
 
-RULES_VERSION = "2026-10-21.9"
+RULES_VERSION = "2026-10-22.7"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -332,14 +332,13 @@ MARKDOWN_EXFIL_RULES: List[Tuple[str, re.Pattern[str], str]] = [
     ),
 ]
 
-# evaluate() analyses inputs longer than MAX_SCAN_CHARS as head + tail and
-# marks the result truncated=True. Tool results are scanned in overlapping
-# windows (up to MAX_TOOL_RESULT_SCAN_CHARS) by scan_windows() below. Lengths count code points here and UTF-16 code
-# units in Node.js; the two only differ for characters outside the BMP.
+# evaluate() scans an input longer than MAX_SCAN_CHARS whole, in overlapping
+# windows (_evaluate_oversize() below), and blocks one longer than
+# MAX_TOOL_RESULT_SCAN_CHARS (rule size:oversize), so no part of an input is left
+# unscanned. Tool results go through scan_windows(), which allows output past
+# that limit and only marks it truncated=True. Lengths count code points here and
+# UTF-16 code units in Node.js; the two only differ for characters outside the BMP.
 MAX_SCAN_CHARS = 256 * 1024
-SCAN_HEAD_CHARS = 192 * 1024
-# One character is reserved for the separator, so the window fits the limit.
-SCAN_TAIL_CHARS = MAX_SCAN_CHARS - SCAN_HEAD_CHARS - 1
 
 @dataclass
 class Assessment:
@@ -496,16 +495,20 @@ def _b64_decode_lenient(data: str) -> bytes:
     return base64.b64decode(body + '=' * (-len(body) % 4))
 
 
+def _evaluate_oversize(input_text: str, strict: bool) -> Assessment:
+    # Scanned whole, in overlapping windows; one past MAX_TOOL_RESULT_SCAN_CHARS is
+    # blocked, because the part beyond the limit would go unscanned.
+    if len(input_text) > MAX_TOOL_RESULT_SCAN_CHARS:
+        return Assessment(verdict='block', confidence=1.0, rule='size:oversize',
+                          reason='Input too large to scan in full', truncated=True)
+    return scan_windows(input_text, strict=strict)
+
+
 def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
     if not isinstance(input_text, str) or not input_text.strip():
         return Assessment(verdict='allow', confidence=1.0, rule='none', reason=None)
     if len(input_text) > MAX_SCAN_CHARS:
-        # NUL is neither whitespace nor a word character, so normalization
-        # cannot join the end of the head and the start of the tail.
-        window = input_text[:SCAN_HEAD_CHARS] + '\u0000' + input_text[-SCAN_TAIL_CHARS:]
-        res = _evaluate_uncached(window, strict)
-        res.truncated = True
-        return res
+        return _evaluate_oversize(input_text, strict)
 
     normalized, stripped = normalize_input(input_text)
     # The raw input is matched with the same characters as in Node.js (see _CASE_FOLD_GUARD).

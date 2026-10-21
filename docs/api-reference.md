@@ -16,8 +16,8 @@ The package ships TypeScript type definitions (`lib/client.d.ts`, `lib/rules.d.t
 
 - Synchronous in-memory deterministic rule evaluation. Never touches the network.
 - Options: `strict` (boolean; also blocks the heuristic rules that are advisories by default; `ZN_STRICT=1` does the same).
-- Inputs over 256 KB are analysed as their first 192 KB and last 64 KB, with `truncated: true`.
-- Returns: `{ verdict: 'allow' | 'block', confidence: number, rule: string, reason: string | null, engine: string, rules_version: string }`, plus `truncated: true` when the input was cut and `advisory: { rule, reason }` when an advisory rule matched on an allowed input.
+- Inputs over 256 KB are scanned whole, in overlapping windows. An input over 4 MB is blocked with rule `size:oversize` (and `truncated: true`).
+- Returns: `{ verdict: 'allow' | 'block', confidence: number, rule: string, reason: string | null, engine: string, rules_version: string }`, plus `truncated: true` when the input was blocked for its size and `advisory: { rule, reason }` when an advisory rule matched on an allowed input.
 - `evaluate` is also exported by `zn-gate/lib/client`.
 
 ### `analyze(text, options)`
@@ -156,7 +156,7 @@ from zn_gate import get_evidence_stats, export_evidence_ledger
 
 - Pure Python in-memory deterministic evaluation. Never touches the network.
 - `strict=None` follows `ZN_STRICT`; `True` also blocks the heuristic rules that are advisories by default.
-- Inputs over 256 KB are analysed as their first 192 KB and last 64 KB, with `truncated=True`.
+- Inputs over 256 KB are scanned whole, in overlapping windows. An input over 4 MB is blocked with rule `size:oversize` (and `truncated=True`).
 - Returns: `Assessment(verdict, confidence, rule, reason, engine, rules_version, truncated, advisory)`. `verdict` is `'allow'` or `'block'`; `advisory` is a dict or `None`. `assessment.allowed` is a boolean and `assessment.to_dict()` gives a plain dict.
 
 ### `@guard(on_block='raise'|'return'|'custom', fallback=None, check_args=True, check_result=False, mask_secrets=False, callback=None, block_truncated=False)`
