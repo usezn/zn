@@ -315,10 +315,11 @@ function startMcpShield(command, args, options = {}) {
           for (const f of ['description', 'title']) if (typeof item[f] === 'string') await scanServerValue(label, item, f, state, 0);
         }
       }
-      if (method !== 'tools/call' && method !== 'tools/list' && msg.id !== undefined && Array.isArray(result.content)) {
+      if (method !== 'tools/call' && method !== 'tools/list' && msg.id !== undefined
+          && (Array.isArray(result.content) || result.structuredContent !== undefined)) {
         // An answer the shield did not match to a tools/call (an id it does not know, a second answer to the same
         // request) but shaped like a tool result: its content is checked as server text all the same.
-        await scanServerValue('tools/call (unmatched answer)', result, 'content', { n: 0 }, 0);
+        if (Array.isArray(result.content)) await scanServerValue('tools/call (unmatched answer)', result, 'content', { n: 0 }, 0);
         if (result.structuredContent !== undefined) await scanServerValue('tools/call (unmatched answer)', result, 'structuredContent', { n: 0 }, 0);
       }
       if (method === 'tools/call') {
@@ -356,7 +357,8 @@ function startMcpShield(command, args, options = {}) {
   // Request ids are matched by numeric value where they have one, as MCP clients do (the TypeScript SDK compares
   // Number(id)): an answer to request 7 with id "7", "07", "7.0", " 7", "0x7", "7e0" or [7] still gets checked.
   const idKey = (id) => {
-    const n = typeof id === 'boolean' || id === null || id === '' ? NaN : Number(id);
+    // Number('') is 0, as the TypeScript SDK reads it.
+    const n = typeof id === 'boolean' || id === null ? NaN : Number(id);
     return Number.isFinite(n) ? 'n:' + n : 'j:' + JSON.stringify(id);
   };
   // One JSON-RPC message: an object (not an array, not a bare value).

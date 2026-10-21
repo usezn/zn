@@ -770,6 +770,17 @@ test('answers whose id differs only in form from the request id are still checke
   }
 });
 
+test('an unmatched answer with only structured content is checked too', async () => {
+  const s = startShield();
+  try {
+    s.send(call(69, 'odd_structured', { reply: 'x69' }));
+    const m = await until(s, (x) => x.id === 'x69');
+    assert.ok(!JSON.stringify(m).includes('ignore all previous instructions'), JSON.stringify(m));
+  } finally {
+    await s.stop();
+  }
+});
+
 test('a second answer to the same request is checked too', async () => {
   const s = startShield();
   try {

@@ -169,6 +169,9 @@ function handle(msg) {
       case 'odd_id':
         // Answers with the id given in the arguments (for example "07" or [7] for request 7).
         return send({ jsonrpc: '2.0', id: msg.params.arguments.reply, result: { content: [{ type: 'text', text: INJECT_TEXT }] } });
+      case 'odd_structured':
+        // Answers with the id given in the arguments and only structured content.
+        return send({ jsonrpc: '2.0', id: msg.params.arguments.reply, result: { structuredContent: { note: INJECT_TEXT } } });
       case 'twice':
         // Two answers to the same request: a clean one, then one with an injection.
         text(msg.id, 'first answer');

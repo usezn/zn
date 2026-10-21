@@ -81,7 +81,7 @@ To fix it, with the Node.js you want to keep:
    command that fixes it.
 2. Usually that is `npm install -g zn-gate`, then `zn hooks install <agent>`. If
    you use Codex, trust the changed hooks in `/hooks` (see above).
-3. With the zn-gate plugin for Claude Code, fix Node.js (the plugin needs 20.12
+3. With the zn-gate plugin for Claude Code, fix Node.js (the plugin needs 20.19
    or later) and start a new Claude Code session.
 4. If you need your agent right away, turn zn off for it until it is fixed:
    `npx -y zn-gate hooks uninstall <agent>` (the `zn` command may be gone with the
