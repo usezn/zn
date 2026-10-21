@@ -100,6 +100,32 @@ zn-gate version
 
 Prints the version and the versions of the rules. Exit code `0`. `-V` and `--version` do the same.
 
+### `connect`
+
+```bash
+zn-gate connect [--reconnect]
+```
+
+Turns on the optional cloud check. It opens usezn.com/connect in your browser, where you create an analysis-only API key, then asks you to paste the key at a hidden prompt. zn-gate checks the key once with usezn.com and keeps it in your system keychain, or in the zn vault when there is no keychain, never in a plain file. It needs a person at a terminal: it refuses when an AI agent runs it or when there is no terminal. Never pass the key on the command line.
+
+If you are already connected, it says so and changes nothing. `--reconnect` replaces the saved key.
+
+Problems are printed on the error output, in plain words with one next step. If usezn.com cannot be reached (no internet connection) or is not answering, nothing is saved and the message tells you to check your connection or try again in a few minutes. If a setting of your terminal could change how the key travels (for example `NODE_OPTIONS`), the message names it and says how to remove it. If the computer has no system keychain and the vault is locked, the message tells you to run `unlock` first and then `connect` again.
+
+Exit codes: `0` connected (or already connected), `1` nothing was saved (you said no, cancelled, the key was not accepted, the key could not be checked or stored, or there is no terminal), `2` the command was used wrongly (an option it does not know, or the key on the command line).
+
+### `disconnect`
+
+```bash
+zn-gate disconnect [--revoke | --no-revoke]
+```
+
+Turns the cloud check off and removes the saved key from this computer. Unless you pass an option, it asks whether to revoke the key on usezn.com too, so it stops working everywhere. `--revoke` revokes without asking; `--no-revoke` only removes the local copy. It needs a person at a terminal and removes and revokes nothing without one.
+
+It always removes zn's own connect setting, so `connect` no longer says you are connected. If the system keychain cannot be reached, zn says so, and tells you to delete the item named `zn-cloud` in your keychain app and to revoke the key at usezn.com/api-keys. That case still exits `0`. If the key is kept in the zn vault and the vault is locked, nothing is removed: unlock the vault and run the command again.
+
+Exit codes: `0` the local setting was removed (or there was nothing to remove), `1` something was not done (no terminal, the vault is locked, a revoke you asked for did not happen), `2` the command was used wrongly.
+
 ## Scan and review
 
 ### `scan`
@@ -117,6 +143,8 @@ Looks through prompt templates, markdown, skills and configs for injection traps
 - `--include-home`: also check your own MCP configs for passwords and keys written in plain text.
 
 Exit codes: `0` nothing found, `1` something was found or the path does not exist, `2` an unknown `--format`.
+
+A scan never reports a clean result for something it could not read. A folder it cannot open is listed under "Directories not scanned" (reason: cannot be read), in `skipped_dirs` for `--format json` and as a notice for `--format github`. If no file was read at all, the output says "No files were scanned" (a `warning` field in JSON) and the text report shows `NOTHING SCANNED` instead of `PASSED`. The exit code is still `0` in that case, because an empty folder is not an error in CI; a path that does not exist exits `1`. The Node (`npx zn-gate`) and Python (`pip install zn-gate`) versions give the same exit codes and the same JSON fields (`skipped_dirs`, `warning`) for these cases; the text report differs in its wording and in how it prints paths.
 
 ### `audit`
 
@@ -301,9 +329,11 @@ Exit codes: the exit code of your command; `64` wrong usage, `77` refused (not a
 zn-gate unlock [--ttl 8h] [--idle 30m] [--backend name] [--passphrase-stdin] [--foreground]
 ```
 
-Unlocks the vault for this session. The first run creates it. `--ttl` and `--idle` take a number with `s`, `m` or `h` (between 1 minute and 24 hours). `--passphrase-stdin` reads the passphrase from a pipe when there is no system keychain. `--foreground` keeps the vault in this terminal and asks for confirmations here. It refuses to run under an AI agent.
+Unlocks the vault for this session. The first run creates it. `--ttl` and `--idle` take a number with `s`, `m` or `h` (between 1 minute and 24 hours). `--passphrase-stdin` reads the passphrase from a pipe when there is no system keychain. `--foreground` keeps the vault in this terminal and asks for confirmations here. It refuses to run under an AI agent. The time the session ends is shown in your local time, with the hours left, for example `until 23:09 (in 8 h)`.
 
-Exit codes: `0` unlocked, `1` an error.
+If the system keychain refuses, zn says which one (macOS Keychain, Windows Credential Manager or the Linux keyring) and what to do: allow zn in the keychain window, check Credential Manager, unlock your keyring, or create the vault with a passphrase instead.
+
+Exit codes: `0` unlocked, `1` an error (for example the vault could not be opened), `2` the command was used wrongly: an option it does not know, an option without its value, an extra word, a `--ttl` or `--idle` that is not a duration between 1 minute and 24 hours, or a `--backend` it does not know. Nothing is done in that case.
 
 ### `lock`
 
@@ -311,7 +341,7 @@ Exit codes: `0` unlocked, `1` an error.
 zn-gate lock
 ```
 
-Locks the vault now. Exit code `0`.
+Locks the vault now. Exit codes: `0` done (also when the vault was not unlocked), `2` the command was used wrongly (it takes no options or words).
 
 ### `vault`
 
@@ -319,11 +349,11 @@ Locks the vault now. Exit code `0`.
 zn-gate vault <status|log|verify|forget|team|reset>
 ```
 
-With no subcommand it is the same as `vault status`. Usage errors exit `2`.
+With no subcommand it is the same as `vault status`. Usage errors exit `2`: an unknown subcommand, or an option or word the subcommand does not take.
 
 #### `vault status`
 
-Shows whether the vault exists and is unlocked.
+Shows whether the vault exists and is unlocked, and until when (in your local time). Exit codes: `0` done, `2` wrong usage.
 
 #### `vault log`
 
@@ -343,7 +373,7 @@ Writes the audit log as OpenTelemetry logs (OTLP, JSON Lines) to the file, or to
 
 #### `vault verify`
 
-Checks the chain and signatures of the audit log. Exit codes: `0` correct, `1` broken.
+Checks the chain and signatures of the audit log. If the check fails, it says at which record, tells you not to delete or edit the log, and links the troubleshooting page. Exit codes: `0` correct, `1` broken, `2` wrong usage.
 
 #### `vault forget`
 
@@ -351,7 +381,7 @@ Checks the chain and signatures of the audit log. Exit codes: `0` correct, `1` b
 zn-gate vault forget [dir]
 ```
 
-Forgets the token map of a project (default: the current folder). The vault must be locked: otherwise it exits `1`.
+Forgets the token map of a project (default: the current folder). The vault must be locked: otherwise it exits `1`. Wrong usage (an option, or more than one folder) exits `2`.
 
 #### `vault reset`
 
@@ -359,7 +389,7 @@ Forgets the token map of a project (default: the current folder). The vault must
 zn-gate vault reset
 ```
 
-The way out when you lost the vault passphrase. It sets the old vault aside in a backup folder (`~/.zn/vault-backup-<date>`, still encrypted) and starts again with a new, empty vault the next time you run `unlock`. The values stored in the old vault are lost: nobody can read them without the old passphrase. It needs a person at a terminal, the vault must be locked, and you confirm by typing a phrase. It refuses on a machine that belongs to a zn Team organization. Exit codes: `0` done (or there was no vault), `1` refused or cancelled.
+The way out when you lost the vault passphrase. It sets the old vault aside in a backup folder (`~/.zn/vault-backup-<date>`, still encrypted) and starts again with a new, empty vault the next time you run `unlock`. The values stored in the old vault are lost: nobody can read them without the old passphrase. It needs a person at a terminal, the vault must be locked, and you confirm by typing a phrase. It refuses on a machine that belongs to a zn Team organization. Exit codes: `0` done (or there was no vault), `1` refused or cancelled, `2` wrong usage.
 
 #### `vault team`
 
@@ -372,7 +402,7 @@ zn-gate hooks install <agent> [--project] [--no-mcp]
 zn-gate hooks uninstall <agent> [--project] [--no-mcp]
 ```
 
-Adds or removes the zn hooks of a coding agent. `<agent>` is `claude-code`, `codex`, `cursor`, `opencode` or `antigravity` (`claude` is accepted for `claude-code`). `--project` changes the settings of the current project instead of your user settings. `--no-mcp` leaves the `secrets` MCP server out. It needs an interactive terminal.
+Adds or removes the zn hooks of a coding agent. `<agent>` is `claude-code`, `codex`, `cursor`, `opencode`, `antigravity`, `gemini` or `copilot` (`claude` is accepted for `claude-code`, `gemini-cli` for `gemini`). `--project` changes the settings of the current project instead of your user settings. `--no-mcp` leaves the `secrets` MCP server out. It needs an interactive terminal. An agent that is not in that list or a misspelled name is refused first, with the supported names, and exit code 64.
 
 #### `hooks install`
 
@@ -475,21 +505,7 @@ A short summary of the last days (`--since 1d` to `90d`, default 7): blocked act
 
 ## Cloud check
 
-### `connect`
-
-```bash
-zn-gate connect [--reconnect]
-```
-
-Optional. Opens usezn.com so you can create an analysis-only API key, then asks you to paste it at a hidden prompt. The key is kept in your system keychain or the zn vault, never in a file, and never accepted as an argument. [How it works](connect.md). Exit codes: `0` connected, `1` it could not be done (for example no terminal), `2` wrong usage.
-
-### `disconnect`
-
-```bash
-zn-gate disconnect [--revoke | --no-revoke]
-```
-
-Removes the key from this computer and asks whether to revoke it on usezn.com too (default no). `--revoke` and `--no-revoke` answer for you. Exit codes: `0` done, `1` it could not be done, `2` wrong usage.
+`zn-gate connect` turns the optional cloud check on and `zn-gate disconnect` turns it off: see [`connect`](#connect) and [`disconnect`](#disconnect) above, and [How it works](connect.md).
 
 ## zn Team
 

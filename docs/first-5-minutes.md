@@ -4,7 +4,7 @@ You use an AI coding agent (Claude Code, Codex CLI, Cursor or OpenCode) and you 
 
 ## Before you start
 
-Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.12 or later. If `node --version` says "command not found", install the LTS version from [nodejs.org](https://nodejs.org/) and open a new terminal. Run every command below in your own terminal, not through your agent.
+Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.19 or later. If `node --version` says "command not found", install the LTS version from [nodejs.org](https://nodejs.org/) and open a new terminal. Run every command below in your own terminal, not through your agent.
 
 ## 1. Install
 
@@ -12,7 +12,7 @@ Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and 
 npx -y zn-gate init
 ```
 
-`init` finds the coding agents on your machine and shows each step before it runs it. It asks first, and you can say no. For Claude Code it sets up the zn-gate plugin (or zn's hooks when your Node.js is older than 20.12). For Codex CLI, Cursor and OpenCode it sets up zn's hooks. A hook is a small check that your agent runs before it uses a tool. Setup for one agent at a time is in the [README](../README.md#install).
+`init` finds the coding agents on your machine and shows each step before it runs it. It asks first, and you can say no. For Claude Code it sets up the zn-gate plugin (or zn's hooks when your Node.js is older than 20.19). For Codex CLI, Cursor and OpenCode it sets up zn's hooks. A hook is a small check that your agent runs before it uses a tool. Setup for one agent at a time is in the [README](../README.md#install).
 
 Want to look first? `npx -y zn-gate reach` lists what your agents can reach (secret names, credential files, MCP servers). It changes nothing and sends nothing. See [reach](reach.md).
 
