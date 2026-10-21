@@ -27,7 +27,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-10-21.1';
+const SCRUB_RULES_VERSION = '2026-10-19.6';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -236,10 +236,6 @@ function ipv4Public(raw) {
 /* Boundaries on the token alphabet. */
 const NB = '(?<![A-Za-z0-9_-])';        // not preceded by a token char
 const NA = '(?![A-Za-z0-9_-])';         // not followed by a token char
-// The end of a secret: NA, or a suffix that starts with _ or - and runs to the end of the token. A key
-// followed by such a suffix (sk_live_<key>_old, <key>-backup) is redacted with it instead of being
-// skipped. Letters or digits right after a fixed-length key still make it a different, longer token.
-const NA_TAIL = '(?:[_-][A-Za-z0-9_-]*)?' + NA;
 const NB64 = '(?<![A-Za-z0-9+/_-])';
 const NA64 = '(?![A-Za-z0-9+/=_-])';
 
@@ -382,14 +378,14 @@ function findStructured(text, out) {
 }
 
 const PATTERNS = [
-  { type: 'ANTHROPIC_KEY', hints: ['sk-ant-'], re: re(NB + 'sk-ant-[a-z]{3,8}\\d{2}-[A-Za-z0-9_-]{32,200}' + NA_TAIL),
+  { type: 'ANTHROPIC_KEY', hints: ['sk-ant-'], re: re(NB + 'sk-ant-[a-z]{3,8}\\d{2}-[A-Za-z0-9_-]{32,200}' + NA),
     check: (v) => !maskedBody(v.replace(/^sk-ant-[a-z]+\d{2}-/, '')) },
-  { type: 'OPENAI_KEY', hints: ['sk-'], re: re(NB + 'sk-(?!ant-)(?:proj-|svcacct-|admin-|or-v1-)?[A-Za-z0-9_-]{40,200}' + NA_TAIL),
+  { type: 'OPENAI_KEY', hints: ['sk-'], re: re(NB + 'sk-(?!ant-)(?:proj-|svcacct-|admin-|or-v1-)?[A-Za-z0-9_-]{40,200}' + NA),
     check: (v) => looksRandom(v.replace(/^sk-(?:proj-|svcacct-|admin-|or-v1-)?/, ''), 2, 3.5) },
   /* Legacy DeepSeek-style key: `sk-` + 32 hex digits. The length and charset
    * are not stated in the provider's docs (checked 2026-10-14); the shape
    * follows rules.js secret:openai_key, which already accepts it. */
-  { type: 'OPENAI_KEY', hints: ['sk-'], re: re(NB + 'sk-[0-9a-f]{32}' + NA_TAIL),
+  { type: 'OPENAI_KEY', hints: ['sk-'], re: re(NB + 'sk-[0-9a-f]{32}' + NA),
     check: (v) => hexSecret(v.slice(3)) },
   { type: 'AWS_KEY', hints: ['AKIA', 'ASIA', 'ABIA', 'ACCA'], re: re('(?<![A-Za-z0-9])(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}(?![A-Za-z0-9])'),
     check: (v) => !/^(.)\1+$/.test(v.slice(4)) },
@@ -397,65 +393,65 @@ const PATTERNS = [
     check: (v, text, index) => looksRandom(v, 3, 4.0) &&
       /(?:aws|secret[_ -]?access[_ -]?key|SecretAccessKey)/i.test(text.slice(Math.max(0, index - 160), index)) &&
       /secret/i.test(text.slice(Math.max(0, index - 160), index)) },
-  { type: 'GITHUB_TOKEN', hints: ['ghp_', 'gho_', 'ghu_', 'ghs_', 'ghr_'], re: re(NB + 'gh[pousr]_[A-Za-z0-9]{36,255}' + NA_TAIL),
+  { type: 'GITHUB_TOKEN', hints: ['ghp_', 'gho_', 'ghu_', 'ghs_', 'ghr_'], re: re(NB + 'gh[pousr]_[A-Za-z0-9]{36,255}' + NA),
     check: (v) => looksRandom(v.slice(4), 2, 3.5) },
-  { type: 'GITHUB_PAT', hints: ['github_pat_'], re: re(NB + 'github_pat_[A-Za-z0-9]{22}_[A-Za-z0-9]{59,}' + NA_TAIL) },
-  { type: 'GITLAB_TOKEN', hints: ['glpat-', 'gldt-', 'glrt-', 'glptt-', 'glcbt-', 'glft-', 'glsoat-'], re: re(NB + 'gl(?:pat|dt|rt|ptt|cbt|ft|soat)-[A-Za-z0-9_-]{20,}' + NA_TAIL),
+  { type: 'GITHUB_PAT', hints: ['github_pat_'], re: re(NB + 'github_pat_[A-Za-z0-9]{22}_[A-Za-z0-9]{59,}' + NA) },
+  { type: 'GITLAB_TOKEN', hints: ['glpat-', 'gldt-', 'glrt-', 'glptt-', 'glcbt-', 'glft-', 'glsoat-'], re: re(NB + 'gl(?:pat|dt|rt|ptt|cbt|ft|soat)-[A-Za-z0-9_-]{20,}' + NA),
     check: (v) => looksRandom(v.slice(v.indexOf('-') + 1), 2, 3.3) },
-  { type: 'SLACK_TOKEN', hints: ['xox', 'xapp-'], re: re(NB + '(?:xox[abeprs]-[0-9]{6,}-[A-Za-z0-9-]{8,}|xapp-\\d-[A-Z0-9]{6,}-\\d{6,}-[a-f0-9]{32,})' + NA_TAIL) },
+  { type: 'SLACK_TOKEN', hints: ['xox', 'xapp-'], re: re(NB + '(?:xox[abeprs]-[0-9]{6,}-[A-Za-z0-9-]{8,}|xapp-\\d-[A-Z0-9]{6,}-\\d{6,}-[a-f0-9]{32,})' + NA) },
   { type: 'SLACK_WEBHOOK', hints: ['hooks.slack.com'], re: re('https://hooks\\.slack\\.com/(?:services|workflows|triggers)/[A-Za-z0-9/_-]{20,}') },
   { type: 'DISCORD_WEBHOOK', hints: ['/api/webhooks/'], re: re('https://(?:ptb\\.|canary\\.)?discord(?:app)?\\.com/api/webhooks/\\d{15,20}/[A-Za-z0-9_-]{60,}') },
-  { type: 'STRIPE_KEY', hints: ['_live_', '_test_', '_prod_'], re: re(NB + '(?:sk|rk)_(?:live|test|prod)_[A-Za-z0-9]{20,247}' + NA_TAIL),
+  { type: 'STRIPE_KEY', hints: ['_live_', '_test_', '_prod_'], re: re(NB + '(?:sk|rk)_(?:live|test|prod)_[A-Za-z0-9]{20,247}' + NA),
     check: (v) => looksRandom(v.slice(8), 2, 3.5) },
-  { type: 'STRIPE_WEBHOOK_SECRET', hints: ['whsec_'], re: re(NB + 'whsec_[A-Za-z0-9+/]{32,}' + NA_TAIL) },
-  { type: 'GOOGLE_API_KEY', hints: ['AIza'], re: re(NB + 'AIza[0-9A-Za-z_-]{35}' + NA_TAIL) },
-  { type: 'GOOGLE_OAUTH_SECRET', hints: ['GOCSPX-'], re: re(NB + 'GOCSPX-[A-Za-z0-9_-]{28}' + NA_TAIL) },
+  { type: 'STRIPE_WEBHOOK_SECRET', hints: ['whsec_'], re: re(NB + 'whsec_[A-Za-z0-9+/]{32,}' + NA) },
+  { type: 'GOOGLE_API_KEY', hints: ['AIza'], re: re(NB + 'AIza[0-9A-Za-z_-]{35}' + NA) },
+  { type: 'GOOGLE_OAUTH_SECRET', hints: ['GOCSPX-'], re: re(NB + 'GOCSPX-[A-Za-z0-9_-]{28}' + NA) },
   /* Letters-only tokens are exactly 34 characters (gitleaks
    * huggingface-access-token rule). Identifier-like bodies (CamelCase words)
    * are rejected so that a 34-letter class or function name is not a token;
    * mixed tokens keep the random-body check. */
-  { type: 'HF_TOKEN', hints: ['hf_'], re: re(NB + 'hf_[A-Za-z0-9]{34,40}' + NA_TAIL),
+  { type: 'HF_TOKEN', hints: ['hf_'], re: re(NB + 'hf_[A-Za-z0-9]{34,40}' + NA),
     check: (v) => (/^[A-Za-z]{34}$/.test(v.slice(3)) && !/^[a-z]*(?:[A-Z][a-z]{2,})*[A-Z]{0,3}[a-z]{0,2}$/.test(v.slice(3))) ||
       looksRandom(v.slice(3), 3, 3.8) },
-  { type: 'NPM_TOKEN', hints: ['npm_'], re: re(NB + 'npm_[A-Za-z0-9]{36}' + NA_TAIL),
+  { type: 'NPM_TOKEN', hints: ['npm_'], re: re(NB + 'npm_[A-Za-z0-9]{36}' + NA),
     check: (v) => looksRandom(v.slice(4), 3, 3.8) },
-  { type: 'PYPI_TOKEN', hints: ['pypi-'], re: re(NB + 'pypi-AgE[A-Za-z0-9_-]{50,}' + NA_TAIL) },
-  { type: 'SENDGRID_KEY', hints: ['SG.'], re: re(NB + 'SG\\.[A-Za-z0-9_-]{22}\\.[A-Za-z0-9_-]{43}' + NA_TAIL) },
+  { type: 'PYPI_TOKEN', hints: ['pypi-'], re: re(NB + 'pypi-AgE[A-Za-z0-9_-]{50,}' + NA) },
+  { type: 'SENDGRID_KEY', hints: ['SG.'], re: re(NB + 'SG\\.[A-Za-z0-9_-]{22}\\.[A-Za-z0-9_-]{43}' + NA) },
   /* Twilio API key SID: `SK` + 32 hex digits in one case only (lower or
    * upper; mixed case is not a SID). Same shape as gitleaks twilio-api-key. */
   { type: 'TWILIO_KEY', hints: ['SK', 'AC'], re: re('(?<![A-Za-z0-9])SK(?:[0-9a-f]{32}|[0-9A-F]{32})(?![A-Za-z0-9])'),
     check: (v) => /\d/.test(v.slice(2)) && /[a-fA-F]/.test(v.slice(2)) },
-  { type: 'MAILGUN_KEY', hints: ['key-'], re: re(NB + 'key-[0-9a-f]{32}' + NA_TAIL),
+  { type: 'MAILGUN_KEY', hints: ['key-'], re: re(NB + 'key-[0-9a-f]{32}' + NA),
     check: (v) => /\d/.test(v.slice(4)) && /[a-f]/.test(v.slice(4)) },
-  { type: 'SHOPIFY_TOKEN', hints: ['shpat_', 'shpca_', 'shppa_', 'shpss_'], re: re(NB + 'shp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}' + NA_TAIL) },
-  { type: 'DIGITALOCEAN_TOKEN', hints: ['_v1_'], re: re(NB + 'do[opr]_v1_[a-f0-9]{64}' + NA_TAIL) },
-  { type: 'LINEAR_KEY', hints: ['lin_api_'], re: re(NB + 'lin_api_[A-Za-z0-9]{40}' + NA_TAIL) },
-  { type: 'TELEGRAM_BOT_TOKEN', hints: [':AA'], re: re('(?<![A-Za-z0-9])\\d{8,10}:AA[A-Za-z0-9_-]{33}' + NA_TAIL) },
+  { type: 'SHOPIFY_TOKEN', hints: ['shpat_', 'shpca_', 'shppa_', 'shpss_'], re: re(NB + 'shp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}' + NA) },
+  { type: 'DIGITALOCEAN_TOKEN', hints: ['_v1_'], re: re(NB + 'do[opr]_v1_[a-f0-9]{64}' + NA) },
+  { type: 'LINEAR_KEY', hints: ['lin_api_'], re: re(NB + 'lin_api_[A-Za-z0-9]{40}' + NA) },
+  { type: 'TELEGRAM_BOT_TOKEN', hints: [':AA'], re: re('(?<![A-Za-z0-9])\\d{8,10}:AA[A-Za-z0-9_-]{33}' + NA) },
   { type: 'AZURE_STORAGE_KEY', hints: ['AccountKey='], re: re('AccountKey=([A-Za-z0-9+/]{86}==)'), group: 1 },
-  { type: 'DATABRICKS_TOKEN', hints: ['dapi'], re: re(NB + 'dapi[a-f0-9]{32}(?:-\\d)?' + NA_TAIL),
+  { type: 'DATABRICKS_TOKEN', hints: ['dapi'], re: re(NB + 'dapi[a-f0-9]{32}(?:-\\d)?' + NA),
     check: (v) => /\d/.test(v.slice(4)) && /[a-f]/.test(v.slice(4)) },
-  { type: 'VAULT_TOKEN', hints: ['hvs.', 'hvb.'], re: re(NB + 'hv[sb]\\.[A-Za-z0-9_-]{24,}' + NA_TAIL) },
-  { type: 'DOPPLER_TOKEN', hints: ['dp.'], re: re(NB + 'dp\\.(?:st|pt|sa|scim|audit|ct)\\.[A-Za-z0-9_.-]{40,}' + NA_TAIL) },
-  { type: 'NEWRELIC_KEY', hints: ['NRAK-', 'NRII-'], re: re(NB + 'NR(?:AK|II)-[A-Z0-9]{27}' + NA_TAIL) },
-  { type: 'GROQ_KEY', hints: ['gsk_'], re: re(NB + 'gsk_[A-Za-z0-9]{52}' + NA_TAIL) },
-  { type: 'XAI_KEY', hints: ['xai-'], re: re(NB + 'xai-[A-Za-z0-9]{80}' + NA_TAIL) },
+  { type: 'VAULT_TOKEN', hints: ['hvs.', 'hvb.'], re: re(NB + 'hv[sb]\\.[A-Za-z0-9_-]{24,}' + NA) },
+  { type: 'DOPPLER_TOKEN', hints: ['dp.'], re: re(NB + 'dp\\.(?:st|pt|sa|scim|audit|ct)\\.[A-Za-z0-9_.-]{40,}' + NA) },
+  { type: 'NEWRELIC_KEY', hints: ['NRAK-', 'NRII-'], re: re(NB + 'NR(?:AK|II)-[A-Z0-9]{27}' + NA) },
+  { type: 'GROQ_KEY', hints: ['gsk_'], re: re(NB + 'gsk_[A-Za-z0-9]{52}' + NA) },
+  { type: 'XAI_KEY', hints: ['xai-'], re: re(NB + 'xai-[A-Za-z0-9]{80}' + NA) },
   /* Docker Hub personal (`dckr_pat_`) and organization (`dckr_oat_`) access
    * tokens: prefix + URL-safe characters. Docker's docs do not state the
    * length (checked 2026-10-14); the body minimum of 20 is assumed. */
-  { type: 'DOCKERHUB_PAT', hints: ['dckr_pat_', 'dckr_oat_'], re: re(NB + 'dckr_(?:pat|oat)_[A-Za-z0-9_-]{20,}' + NA_TAIL),
+  { type: 'DOCKERHUB_PAT', hints: ['dckr_pat_', 'dckr_oat_'], re: re(NB + 'dckr_(?:pat|oat)_[A-Za-z0-9_-]{20,}' + NA),
     check: (v) => looksRandom(v.replace(/^dckr_(?:pat|oat)_/, ''), 2, 3.3) },
   /* zn API key (the one `zn-gate connect` stores): `zn_` + 48 lowercase hex
    * characters, as the zn API issues them. */
-  { type: 'ZN_API_KEY', hints: ['zn_'], re: re(NB + 'zn_[0-9a-f]{48}' + NA_TAIL) },
+  { type: 'ZN_API_KEY', hints: ['zn_'], re: re(NB + 'zn_[0-9a-f]{48}' + NA) },
   /* Tavily API key: `tvly-` + alphanumeric body. No length or charset in the
    * official docs (checked 2026-10-14); the body minimum of 20 and the digit
    * requirement are assumed. */
-  { type: 'TAVILY_KEY', hints: ['tvly-'], re: re(NB + 'tvly-[A-Za-z0-9_-]{20,}' + NA_TAIL),
+  { type: 'TAVILY_KEY', hints: ['tvly-'], re: re(NB + 'tvly-[A-Za-z0-9_-]{20,}' + NA),
     check: (v) => /\d/.test(v.slice(5)) && looksRandom(v.slice(5), 2, 3.3) },
   /* Firecrawl API key: `fc-` + alphanumeric body. No length in the docs
    * (checked 2026-10-14); a body minimum of 20 with a digit is assumed. The
    * boundaries keep slugs and CSS classes such as `fc-icon-...` apart. */
-  { type: 'FIRECRAWL_KEY', hints: ['fc-'], re: re(NB + 'fc-[A-Za-z0-9]{20,}' + NA_TAIL),
+  { type: 'FIRECRAWL_KEY', hints: ['fc-'], re: re(NB + 'fc-[A-Za-z0-9]{20,}' + NA),
     check: (v) => /\d/.test(v.slice(3)) && looksRandom(v.slice(3), 2, 3.3) },
   /* Polar tokens: organization access tokens (`polar_oat_`), personal
    * tokens (`polar_pat_`), user and organization access tokens (`polar_at_u_`,
@@ -463,26 +459,26 @@ const PATTERNS = [
    * (`polar_ci_`) and client secrets (`polar_cs_`). The prefixes come from
    * Polar's docs (checked 2026-10-14); the body length is not stated, so a
    * minimum of 20 is assumed. */
-  { type: 'POLAR_TOKEN', hints: ['polar_'], re: re(NB + 'polar_(?:oat|pat|(?:at|rt)_[uo]|ci|cs)_[A-Za-z0-9_-]{20,}' + NA_TAIL),
+  { type: 'POLAR_TOKEN', hints: ['polar_'], re: re(NB + 'polar_(?:oat|pat|(?:at|rt)_[uo]|ci|cs)_[A-Za-z0-9_-]{20,}' + NA),
     check: (v) => looksRandom(v.replace(/^polar_(?:oat|pat|(?:at|rt)_[uo]|ci|cs)_/, ''), 2, 3.3) },
   /* Replicate API token: `r8_` + 37 characters, 40 in total (official API
    * token docs, checked 2026-10-14). */
-  { type: 'REPLICATE_TOKEN', hints: ['r8_'], re: re(NB + 'r8_[A-Za-z0-9]{37}' + NA_TAIL),
+  { type: 'REPLICATE_TOKEN', hints: ['r8_'], re: re(NB + 'r8_[A-Za-z0-9]{37}' + NA),
     check: (v) => looksRandom(v.slice(3), 2, 3.3) },
   /* Supabase personal access token: `sbp_`, scoped ones as `sbp_fc...`. No
    * length in the docs (checked 2026-10-14); a body minimum of 30 with a
    * digit is assumed. */
-  { type: 'SUPABASE_PAT', hints: ['sbp_'], re: re(NB + 'sbp_[A-Za-z0-9_-]{30,}' + NA_TAIL),
+  { type: 'SUPABASE_PAT', hints: ['sbp_'], re: re(NB + 'sbp_[A-Za-z0-9_-]{30,}' + NA),
     check: (v) => /\d/.test(v.slice(4)) && looksRandom(v.slice(4), 2, 3.3) },
   /* Square: production access tokens (`EAAA` + 60), and the legacy access token (`sq0atp-` + 22) and OAuth
    * application secret (`sq0csp-` + 43). Same shapes as gitleaks square-access-token / square-secret. */
   { type: 'SQUARE_TOKEN', hints: ['EAAA', 'sq0atp-', 'sq0csp-'],
-    re: re(NB + '(?:EAAA[A-Za-z0-9_-]{60}|sq0atp-[A-Za-z0-9_-]{22}|sq0csp-[A-Za-z0-9_-]{43})' + NA_TAIL),
+    re: re(NB + '(?:EAAA[A-Za-z0-9_-]{60}|sq0atp-[A-Za-z0-9_-]{22}|sq0csp-[A-Za-z0-9_-]{43})' + NA),
     check: (v) => looksRandom(v.replace(/^(?:EAAA|sq0atp-|sq0csp-)/, ''), 2, 3.3) },
   /* Discord bot token: base64url of the bot's numeric id, a 6-character timestamp and the HMAC. The first part
    * must decode to a 17-20 digit id, so a dotted random string is not a token. */
   { type: 'DISCORD_BOT_TOKEN', hints: ['.'],
-    re: re(NB + '[MNO][A-Za-z0-9_-]{22,26}\\.[A-Za-z0-9_-]{6}\\.[A-Za-z0-9_-]{27,38}' + NA_TAIL),
+    re: re(NB + '[MNO][A-Za-z0-9_-]{22,26}\\.[A-Za-z0-9_-]{6}\\.[A-Za-z0-9_-]{27,38}' + NA),
     check: (v) => {
       const [id, , mac] = v.split('.');
       // A length of 4n+1 is not base64; Buffer would drop the last character where Python refuses it.
@@ -498,57 +494,57 @@ const PATTERNS = [
   /* From here to the end of this group: provider token formats taken from gitleaks v8.30.1
    * (config/gitleaks.toml, MIT License, Copyright (c) 2019 Zachary Rice; full notice in THIRD_PARTY_NOTICES.md),
    * one per rule, rewritten for these engines with the same random-body check as the others. */
-  { type: 'ONEPASSWORD_SA_TOKEN', hints: ['ops_eyJ'], re: re(NB + 'ops_eyJ[A-Za-z0-9+/]{250,}={0,3}' + NA_TAIL),
+  { type: 'ONEPASSWORD_SA_TOKEN', hints: ['ops_eyJ'], re: re(NB + 'ops_eyJ[A-Za-z0-9+/]{250,}={0,3}' + NA),
     check: (v) => prefixedRandom(v, /^ops_eyJ/) },
-  { type: 'AGE_SECRET_KEY', hints: ['AGE-SECRET-KEY-1'], re: re(NB + 'AGE-SECRET-KEY-1[QPZRY9X8GF2TVDW0S3JN54KHCE6MUA7L]{58}' + NA_TAIL),
+  { type: 'AGE_SECRET_KEY', hints: ['AGE-SECRET-KEY-1'], re: re(NB + 'AGE-SECRET-KEY-1[QPZRY9X8GF2TVDW0S3JN54KHCE6MUA7L]{58}' + NA),
     check: (v) => prefixedRandom(v, /^AGE-SECRET-KEY-1/) },
-  { type: 'ALIBABA_KEY_ID', hints: ['LTAI'], re: re(NB + 'LTAI[A-Za-z0-9]{20}' + NA_TAIL),
+  { type: 'ALIBABA_KEY_ID', hints: ['LTAI'], re: re(NB + 'LTAI[A-Za-z0-9]{20}' + NA),
     check: (v) => prefixedRandom(v, /^LTAI/) },
-  { type: 'ARTIFACTORY_KEY', hints: ['AKCp'], re: re(NB + 'AKCp[A-Za-z0-9]{69}' + NA_TAIL),
+  { type: 'ARTIFACTORY_KEY', hints: ['AKCp'], re: re(NB + 'AKCp[A-Za-z0-9]{69}' + NA),
     check: (v) => prefixedRandom(v, /^AKCp/) },
-  { type: 'CLOUDFLARE_ORIGIN_CA_KEY', hints: ['v1.0-'], re: re(NB + 'v1\\.0-[a-f0-9]{24}-[a-f0-9]{146}' + NA_TAIL),
+  { type: 'CLOUDFLARE_ORIGIN_CA_KEY', hints: ['v1.0-'], re: re(NB + 'v1\\.0-[a-f0-9]{24}-[a-f0-9]{146}' + NA),
     check: (v) => prefixedRandom(v, /^v1\.0-/) },
-  { type: 'DYNATRACE_TOKEN', hints: ['dt0c01.'], re: re(NB + 'dt0c01\\.[A-Za-z0-9]{24}\\.[A-Za-z0-9]{64}' + NA_TAIL),
+  { type: 'DYNATRACE_TOKEN', hints: ['dt0c01.'], re: re(NB + 'dt0c01\\.[A-Za-z0-9]{24}\\.[A-Za-z0-9]{64}' + NA),
     check: (v) => prefixedRandom(v, /^dt0c01\./) },
-  { type: 'EASYPOST_KEY', hints: ['EZAK', 'EZTK'], re: re(NB + 'EZ(?:AK|TK)[A-Za-z0-9]{54}' + NA_TAIL),
+  { type: 'EASYPOST_KEY', hints: ['EZAK', 'EZTK'], re: re(NB + 'EZ(?:AK|TK)[A-Za-z0-9]{54}' + NA),
     check: (v) => prefixedRandom(v, /^EZ(?:AK|TK)/) },
-  { type: 'FLYIO_TOKEN', hints: ['fo1_', 'fm1a_', 'fm1r_', 'fm2_'], re: re(NB + '(?:fo1_[A-Za-z0-9_-]{43}|fm1[ar]_[A-Za-z0-9+/]{100,}={0,3}|fm2_[A-Za-z0-9+/]{100,}={0,3})' + NA_TAIL),
+  { type: 'FLYIO_TOKEN', hints: ['fo1_', 'fm1a_', 'fm1r_', 'fm2_'], re: re(NB + '(?:fo1_[A-Za-z0-9_-]{43}|fm1[ar]_[A-Za-z0-9+/]{100,}={0,3}|fm2_[A-Za-z0-9+/]{100,}={0,3})' + NA),
     check: (v) => prefixedRandom(v, /^(?:fo1|fm1[ar]|fm2)_/) },
-  { type: 'GRAFANA_TOKEN', hints: ['glc_', 'glsa_'], re: re(NB + '(?:glc_[A-Za-z0-9+/]{32,400}={0,3}|glsa_[A-Za-z0-9]{32}_[A-Fa-f0-9]{8})' + NA_TAIL),
+  { type: 'GRAFANA_TOKEN', hints: ['glc_', 'glsa_'], re: re(NB + '(?:glc_[A-Za-z0-9+/]{32,400}={0,3}|glsa_[A-Za-z0-9]{32}_[A-Fa-f0-9]{8})' + NA),
     check: (v) => prefixedRandom(v, /^gl(?:c|sa)_/) },
-  { type: 'TERRAFORM_CLOUD_TOKEN', hints: ['.atlasv1.'], re: re(NB + '[a-z0-9]{14}\\.atlasv1\\.[A-Za-z0-9_=-]{60,70}' + NA_TAIL),
+  { type: 'TERRAFORM_CLOUD_TOKEN', hints: ['.atlasv1.'], re: re(NB + '[a-z0-9]{14}\\.atlasv1\\.[A-Za-z0-9_=-]{60,70}' + NA),
     check: (v) => prefixedRandom(v, /^[a-z0-9]{14}\.atlasv1\./) },
-  { type: 'HEROKU_KEY_V2', hints: ['HRKU-AA'], re: re(NB + 'HRKU-AA[A-Za-z0-9_-]{58}' + NA_TAIL),
+  { type: 'HEROKU_KEY_V2', hints: ['HRKU-AA'], re: re(NB + 'HRKU-AA[A-Za-z0-9_-]{58}' + NA),
     check: (v) => prefixedRandom(v, /^HRKU-AA/) },
-  { type: 'NOTION_TOKEN', hints: ['ntn_'], re: re(NB + 'ntn_[0-9]{11}[A-Za-z0-9]{35}' + NA_TAIL),
+  { type: 'NOTION_TOKEN', hints: ['ntn_'], re: re(NB + 'ntn_[0-9]{11}[A-Za-z0-9]{35}' + NA),
     check: (v) => prefixedRandom(v, /^ntn_[0-9]{11}/) },
-  { type: 'PERPLEXITY_KEY', hints: ['pplx-'], re: re(NB + 'pplx-[A-Za-z0-9]{48}' + NA_TAIL),
+  { type: 'PERPLEXITY_KEY', hints: ['pplx-'], re: re(NB + 'pplx-[A-Za-z0-9]{48}' + NA),
     check: (v) => prefixedRandom(v, /^pplx-/) },
-  { type: 'PLANETSCALE_TOKEN', hints: ['pscale_'], re: re(NB + 'pscale_(?:tkn|oauth|pw)_[A-Za-z0-9_=.-]{32,64}' + NA_TAIL),
+  { type: 'PLANETSCALE_TOKEN', hints: ['pscale_'], re: re(NB + 'pscale_(?:tkn|oauth|pw)_[A-Za-z0-9_=.-]{32,64}' + NA),
     check: (v) => prefixedRandom(v, /^pscale_(?:tkn|oauth|pw)_/) },
-  { type: 'POSTMAN_KEY', hints: ['PMAK-'], re: re(NB + 'PMAK-[A-Fa-f0-9]{24}-[A-Fa-f0-9]{34}' + NA_TAIL),
+  { type: 'POSTMAN_KEY', hints: ['PMAK-'], re: re(NB + 'PMAK-[A-Fa-f0-9]{24}-[A-Fa-f0-9]{34}' + NA),
     check: (v) => prefixedRandom(v, /^PMAK-/) },
-  { type: 'PREFECT_KEY', hints: ['pnu_'], re: re(NB + 'pnu_[A-Za-z0-9]{36}' + NA_TAIL),
+  { type: 'PREFECT_KEY', hints: ['pnu_'], re: re(NB + 'pnu_[A-Za-z0-9]{36}' + NA),
     check: (v) => prefixedRandom(v, /^pnu_/) },
-  { type: 'PULUMI_TOKEN', hints: ['pul-'], re: re(NB + 'pul-[a-f0-9]{40}' + NA_TAIL),
+  { type: 'PULUMI_TOKEN', hints: ['pul-'], re: re(NB + 'pul-[a-f0-9]{40}' + NA),
     check: (v) => prefixedRandom(v, /^pul-/) },
-  { type: 'README_KEY', hints: ['rdme_'], re: re(NB + 'rdme_[a-z0-9]{70}' + NA_TAIL),
+  { type: 'README_KEY', hints: ['rdme_'], re: re(NB + 'rdme_[a-z0-9]{70}' + NA),
     check: (v) => prefixedRandom(v, /^rdme_/) },
-  { type: 'RUBYGEMS_KEY', hints: ['rubygems_'], re: re(NB + 'rubygems_[a-f0-9]{48}' + NA_TAIL),
+  { type: 'RUBYGEMS_KEY', hints: ['rubygems_'], re: re(NB + 'rubygems_[a-f0-9]{48}' + NA),
     check: (v) => prefixedRandom(v, /^rubygems_/) },
-  { type: 'BREVO_KEY', hints: ['xkeysib-'], re: re(NB + 'xkeysib-[a-f0-9]{64}-[A-Za-z0-9]{16}' + NA_TAIL),
+  { type: 'BREVO_KEY', hints: ['xkeysib-'], re: re(NB + 'xkeysib-[a-f0-9]{64}-[A-Za-z0-9]{16}' + NA),
     check: (v) => prefixedRandom(v, /^xkeysib-/) },
-  { type: 'SENTRY_USER_TOKEN', hints: ['sntryu_'], re: re(NB + 'sntryu_[a-f0-9]{64}' + NA_TAIL),
+  { type: 'SENTRY_USER_TOKEN', hints: ['sntryu_'], re: re(NB + 'sntryu_[a-f0-9]{64}' + NA),
     check: (v) => prefixedRandom(v, /^sntryu_/) },
-  { type: 'SHIPPO_KEY', hints: ['shippo_'], re: re(NB + 'shippo_(?:live|test)_[a-fA-F0-9]{40}' + NA_TAIL),
+  { type: 'SHIPPO_KEY', hints: ['shippo_'], re: re(NB + 'shippo_(?:live|test)_[a-fA-F0-9]{40}' + NA),
     check: (v) => prefixedRandom(v, /^shippo_(?:live|test)_/) },
-  { type: 'OPENSHIFT_TOKEN', hints: ['sha256~'], re: re(NB + 'sha256~[A-Za-z0-9_-]{43}' + NA_TAIL),
+  { type: 'OPENSHIFT_TOKEN', hints: ['sha256~'], re: re(NB + 'sha256~[A-Za-z0-9_-]{43}' + NA),
     check: (v) => prefixedRandom(v, /^sha256~/) },
-  { type: 'TEAMS_WEBHOOK', hints: ['webhook.office.com'], re: re(NB + 'https://[a-z0-9]+\\.webhook\\.office\\.com/webhookb2/[a-z0-9]{8}-(?:[a-z0-9]{4}-){3}[a-z0-9]{12}@[a-z0-9]{8}-(?:[a-z0-9]{4}-){3}[a-z0-9]{12}/IncomingWebhook/[a-z0-9]{32}/[a-z0-9]{8}-(?:[a-z0-9]{4}-){3}[a-z0-9]{12}' + NA_TAIL),
+  { type: 'TEAMS_WEBHOOK', hints: ['webhook.office.com'], re: re(NB + 'https://[a-z0-9]+\\.webhook\\.office\\.com/webhookb2/[a-z0-9]{8}-(?:[a-z0-9]{4}-){3}[a-z0-9]{12}@[a-z0-9]{8}-(?:[a-z0-9]{4}-){3}[a-z0-9]{12}/IncomingWebhook/[a-z0-9]{32}/[a-z0-9]{8}-(?:[a-z0-9]{4}-){3}[a-z0-9]{12}' + NA),
     check: (v) => prefixedRandom(v, /^https:\/\/[a-z0-9]+\.webhook\.office\.com\/webhookb2\//) },
   { type: 'AZURE_AD_CLIENT_SECRET', hints: ['Q~'], re: re('(?<![A-Za-z0-9_~.-])[A-Za-z0-9_~.]{3}[0-9]Q~[A-Za-z0-9_~.-]{30,33}[A-Za-z0-9_~-](?![A-Za-z0-9_~-])(?!\\.[A-Za-z0-9_~-])'),
     check: (v) => looksRandom(v, 3, 3.5) },
-  { type: 'JWT', hints: ['eyJ'], re: re(NB + 'eyJ[A-Za-z0-9_-]{8,}\\.eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{16,}' + NA_TAIL) },
+  { type: 'JWT', hints: ['eyJ'], re: re(NB + 'eyJ[A-Za-z0-9_-]{8,}\\.eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{16,}' + NA) },
   { type: 'PRIVATE_KEY', hints: [PEM_BEGIN],
     re: re(PEM_BEGIN + PEM_LABEL + '-----[\\s\\S]{16,16384}?-----END \\1-----') },
   /* A private-key header whose END line was cut off (truncated output):

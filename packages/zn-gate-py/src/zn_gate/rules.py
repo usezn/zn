@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, overload
 
 
-RULES_VERSION = "2026-10-21.8"
+RULES_VERSION = "2026-10-21.9"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -853,9 +853,6 @@ SECRET_VALUE_FILTERS = {
 # ---------------------------------------------------------------------------
 _TB = r'(?<![A-Za-z0-9_-])'    # start of a token
 _TA = r'(?![A-Za-z0-9_-])'     # end of a token
-# The end of a provider secret: _TA, or a suffix that starts with _ or - and runs to the end of the
-# token, so sk_live_<key>_old is redacted whole (see NA_TAIL in scrub/patterns.js).
-_TA_TAIL = r'(?:[_-][A-Za-z0-9_-]*)?' + _TA
 _ALNUM_B = r'(?<![A-Za-z0-9])'
 _ALNUM_A = r'(?![A-Za-z0-9])'
 _TOKEN_ALPHA_RE = re.compile(r'[A-Za-z]')
@@ -939,66 +936,66 @@ def _pv_bearer_not_secret(token: str, prefix: str) -> bool:
 
 PROVIDER_SECRET_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
     ("secret:aws_key_id", re.compile(_ALNUM_B + r'(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}' + _ALNUM_A), "[REDACTED_AWS_KEY]"),
-    ("secret:gitlab_token", re.compile(_TB + r'gl(?:pat|dt|rt|ptt|cbt|ft|soat)-[A-Za-z0-9_-]{20,}' + _TA_TAIL), "[REDACTED_GITLAB_TOKEN]"),
-    ("secret:slack_token", re.compile(_TB + r'(?:xox[abeprs]-[0-9]{6,}-[A-Za-z0-9-]{8,}|xapp-[0-9]-[A-Z0-9]{6,}-[0-9]{6,}-[a-f0-9]{32,})' + _TA_TAIL), "[REDACTED_SLACK_TOKEN]"),
+    ("secret:gitlab_token", re.compile(_TB + r'gl(?:pat|dt|rt|ptt|cbt|ft|soat)-[A-Za-z0-9_-]{20,}' + _TA), "[REDACTED_GITLAB_TOKEN]"),
+    ("secret:slack_token", re.compile(_TB + r'(?:xox[abeprs]-[0-9]{6,}-[A-Za-z0-9-]{8,}|xapp-[0-9]-[A-Z0-9]{6,}-[0-9]{6,}-[a-f0-9]{32,})' + _TA), "[REDACTED_SLACK_TOKEN]"),
     ("secret:slack_webhook", re.compile(r'https://hooks\.slack\.com/(?:services|workflows|triggers)/[A-Za-z0-9/_-]{20,}'), "[REDACTED_SLACK_WEBHOOK]"),
     ("secret:discord_webhook", re.compile(r'https://(?:ptb\.|canary\.)?discord(?:app)?\.com/api/webhooks/[0-9]{15,20}/[A-Za-z0-9_-]{60,}'), "[REDACTED_DISCORD_WEBHOOK]"),
-    ("secret:stripe_key", re.compile(_TB + r'(?:sk|rk)_(?:live|test|prod)_[A-Za-z0-9]{20,247}' + _TA_TAIL), "[REDACTED_STRIPE_KEY]"),
-    ("secret:stripe_webhook_secret", re.compile(_TB + r'whsec_[A-Za-z0-9+/]{32,}' + _TA_TAIL), "[REDACTED_STRIPE_WEBHOOK_SECRET]"),
-    ("secret:google_api_key", re.compile(_TB + r'AIza[0-9A-Za-z_-]{35}' + _TA_TAIL), "[REDACTED_GOOGLE_API_KEY]"),
-    ("secret:google_oauth_secret", re.compile(_TB + r'GOCSPX-[A-Za-z0-9_-]{28}' + _TA_TAIL), "[REDACTED_GOOGLE_OAUTH_SECRET]"),
-    ("secret:hf_token", re.compile(_TB + r'hf_[A-Za-z0-9]{34,40}' + _TA_TAIL), "[REDACTED_HF_TOKEN]"),
-    ("secret:npm_token", re.compile(_TB + r'npm_[A-Za-z0-9]{36}' + _TA_TAIL), "[REDACTED_NPM_TOKEN]"),
-    ("secret:pypi_token", re.compile(_TB + r'pypi-AgE[A-Za-z0-9_-]{50,}' + _TA_TAIL), "[REDACTED_PYPI_TOKEN]"),
-    ("secret:sendgrid_key", re.compile(_TB + r'SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}' + _TA_TAIL), "[REDACTED_SENDGRID_KEY]"),
+    ("secret:stripe_key", re.compile(_TB + r'(?:sk|rk)_(?:live|test|prod)_[A-Za-z0-9]{20,247}' + _TA), "[REDACTED_STRIPE_KEY]"),
+    ("secret:stripe_webhook_secret", re.compile(_TB + r'whsec_[A-Za-z0-9+/]{32,}' + _TA), "[REDACTED_STRIPE_WEBHOOK_SECRET]"),
+    ("secret:google_api_key", re.compile(_TB + r'AIza[0-9A-Za-z_-]{35}' + _TA), "[REDACTED_GOOGLE_API_KEY]"),
+    ("secret:google_oauth_secret", re.compile(_TB + r'GOCSPX-[A-Za-z0-9_-]{28}' + _TA), "[REDACTED_GOOGLE_OAUTH_SECRET]"),
+    ("secret:hf_token", re.compile(_TB + r'hf_[A-Za-z0-9]{34,40}' + _TA), "[REDACTED_HF_TOKEN]"),
+    ("secret:npm_token", re.compile(_TB + r'npm_[A-Za-z0-9]{36}' + _TA), "[REDACTED_NPM_TOKEN]"),
+    ("secret:pypi_token", re.compile(_TB + r'pypi-AgE[A-Za-z0-9_-]{50,}' + _TA), "[REDACTED_PYPI_TOKEN]"),
+    ("secret:sendgrid_key", re.compile(_TB + r'SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}' + _TA), "[REDACTED_SENDGRID_KEY]"),
     ("secret:twilio_key", re.compile(_ALNUM_B + r'SK(?:[0-9a-f]{32}|[0-9A-F]{32})' + _ALNUM_A), "[REDACTED_TWILIO_KEY]"),
-    ("secret:mailgun_key", re.compile(_TB + r'key-[0-9a-f]{32}' + _TA_TAIL), "[REDACTED_MAILGUN_KEY]"),
-    ("secret:shopify_token", re.compile(_TB + r'shp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}' + _TA_TAIL), "[REDACTED_SHOPIFY_TOKEN]"),
-    ("secret:digitalocean_token", re.compile(_TB + r'do[opr]_v1_[a-f0-9]{64}' + _TA_TAIL), "[REDACTED_DIGITALOCEAN_TOKEN]"),
-    ("secret:linear_key", re.compile(_TB + r'lin_api_[A-Za-z0-9]{40}' + _TA_TAIL), "[REDACTED_LINEAR_KEY]"),
-    ("secret:telegram_bot_token", re.compile(_ALNUM_B + r'[0-9]{8,10}:AA[A-Za-z0-9_-]{33}' + _TA_TAIL), "[REDACTED_TELEGRAM_BOT_TOKEN]"),
+    ("secret:mailgun_key", re.compile(_TB + r'key-[0-9a-f]{32}' + _TA), "[REDACTED_MAILGUN_KEY]"),
+    ("secret:shopify_token", re.compile(_TB + r'shp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}' + _TA), "[REDACTED_SHOPIFY_TOKEN]"),
+    ("secret:digitalocean_token", re.compile(_TB + r'do[opr]_v1_[a-f0-9]{64}' + _TA), "[REDACTED_DIGITALOCEAN_TOKEN]"),
+    ("secret:linear_key", re.compile(_TB + r'lin_api_[A-Za-z0-9]{40}' + _TA), "[REDACTED_LINEAR_KEY]"),
+    ("secret:telegram_bot_token", re.compile(_ALNUM_B + r'[0-9]{8,10}:AA[A-Za-z0-9_-]{33}' + _TA), "[REDACTED_TELEGRAM_BOT_TOKEN]"),
     ("secret:azure_storage_key", re.compile(r'(AccountKey=)([A-Za-z0-9+/]{86}==)'), r'\1[REDACTED_AZURE_STORAGE_KEY]'),
-    ("secret:databricks_token", re.compile(_TB + r'dapi[a-f0-9]{32}(?:-[0-9])?' + _TA_TAIL), "[REDACTED_DATABRICKS_TOKEN]"),
-    ("secret:vault_token", re.compile(_TB + r'hv[sb]\.[A-Za-z0-9_-]{24,}' + _TA_TAIL), "[REDACTED_VAULT_TOKEN]"),
-    ("secret:doppler_token", re.compile(_TB + r'dp\.(?:st|pt|sa|scim|audit|ct)\.[A-Za-z0-9_.-]{40,}' + _TA_TAIL), "[REDACTED_DOPPLER_TOKEN]"),
-    ("secret:newrelic_key", re.compile(_TB + r'NR(?:AK|II)-[A-Z0-9]{27}' + _TA_TAIL), "[REDACTED_NEWRELIC_KEY]"),
-    ("secret:groq_key", re.compile(_TB + r'gsk_[A-Za-z0-9]{52}' + _TA_TAIL), "[REDACTED_GROQ_KEY]"),
-    ("secret:xai_key", re.compile(_TB + r'xai-[A-Za-z0-9]{80}' + _TA_TAIL), "[REDACTED_XAI_KEY]"),
-    ("secret:dockerhub_pat", re.compile(_TB + r'dckr_(?:pat|oat)_[A-Za-z0-9_-]{20,}' + _TA_TAIL), "[REDACTED_DOCKERHUB_PAT]"),
-    ("secret:tavily_key", re.compile(_TB + r'tvly-[A-Za-z0-9_-]{20,}' + _TA_TAIL), "[REDACTED_TAVILY_KEY]"),
-    ("secret:firecrawl_key", re.compile(_TB + r'fc-[A-Za-z0-9]{20,}' + _TA_TAIL), "[REDACTED_FIRECRAWL_KEY]"),
-    ("secret:polar_token", re.compile(_TB + r'polar_(?:oat|pat|(?:at|rt)_[uo]|ci|cs)_[A-Za-z0-9_-]{20,}' + _TA_TAIL), "[REDACTED_POLAR_TOKEN]"),
-    ("secret:replicate_token", re.compile(_TB + r'r8_[A-Za-z0-9]{37}' + _TA_TAIL), "[REDACTED_REPLICATE_TOKEN]"),
-    ("secret:supabase_pat", re.compile(_TB + r'sbp_[A-Za-z0-9_-]{30,}' + _TA_TAIL), "[REDACTED_SUPABASE_PAT]"),
-    ("secret:square_token", re.compile(_TB + r'(?:EAAA[A-Za-z0-9_-]{60}|sq0atp-[A-Za-z0-9_-]{22}|sq0csp-[A-Za-z0-9_-]{43})' + _TA_TAIL),
+    ("secret:databricks_token", re.compile(_TB + r'dapi[a-f0-9]{32}(?:-[0-9])?' + _TA), "[REDACTED_DATABRICKS_TOKEN]"),
+    ("secret:vault_token", re.compile(_TB + r'hv[sb]\.[A-Za-z0-9_-]{24,}' + _TA), "[REDACTED_VAULT_TOKEN]"),
+    ("secret:doppler_token", re.compile(_TB + r'dp\.(?:st|pt|sa|scim|audit|ct)\.[A-Za-z0-9_.-]{40,}' + _TA), "[REDACTED_DOPPLER_TOKEN]"),
+    ("secret:newrelic_key", re.compile(_TB + r'NR(?:AK|II)-[A-Z0-9]{27}' + _TA), "[REDACTED_NEWRELIC_KEY]"),
+    ("secret:groq_key", re.compile(_TB + r'gsk_[A-Za-z0-9]{52}' + _TA), "[REDACTED_GROQ_KEY]"),
+    ("secret:xai_key", re.compile(_TB + r'xai-[A-Za-z0-9]{80}' + _TA), "[REDACTED_XAI_KEY]"),
+    ("secret:dockerhub_pat", re.compile(_TB + r'dckr_(?:pat|oat)_[A-Za-z0-9_-]{20,}' + _TA), "[REDACTED_DOCKERHUB_PAT]"),
+    ("secret:tavily_key", re.compile(_TB + r'tvly-[A-Za-z0-9_-]{20,}' + _TA), "[REDACTED_TAVILY_KEY]"),
+    ("secret:firecrawl_key", re.compile(_TB + r'fc-[A-Za-z0-9]{20,}' + _TA), "[REDACTED_FIRECRAWL_KEY]"),
+    ("secret:polar_token", re.compile(_TB + r'polar_(?:oat|pat|(?:at|rt)_[uo]|ci|cs)_[A-Za-z0-9_-]{20,}' + _TA), "[REDACTED_POLAR_TOKEN]"),
+    ("secret:replicate_token", re.compile(_TB + r'r8_[A-Za-z0-9]{37}' + _TA), "[REDACTED_REPLICATE_TOKEN]"),
+    ("secret:supabase_pat", re.compile(_TB + r'sbp_[A-Za-z0-9_-]{30,}' + _TA), "[REDACTED_SUPABASE_PAT]"),
+    ("secret:square_token", re.compile(_TB + r'(?:EAAA[A-Za-z0-9_-]{60}|sq0atp-[A-Za-z0-9_-]{22}|sq0csp-[A-Za-z0-9_-]{43})' + _TA),
      "[REDACTED_SQUARE_TOKEN]"),
-    ("secret:discord_bot_token", re.compile(_TB + r'[MNO][A-Za-z0-9_-]{22,26}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,38}' + _TA_TAIL),
+    ("secret:discord_bot_token", re.compile(_TB + r'[MNO][A-Za-z0-9_-]{22,26}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,38}' + _TA),
      "[REDACTED_DISCORD_BOT_TOKEN]"),
     # Provider formats from gitleaks v8.30.1 (MIT License, Copyright (c) 2019 Zachary Rice; notice at the end of this file).
-    ("secret:onepassword_sa_token", re.compile(_TB + r'ops_eyJ[A-Za-z0-9+/]{250,}={0,3}' + _TA_TAIL), "[REDACTED_ONEPASSWORD_SA_TOKEN]"),
-    ("secret:age_secret_key", re.compile(_TB + r'AGE-SECRET-KEY-1[QPZRY9X8GF2TVDW0S3JN54KHCE6MUA7L]{58}' + _TA_TAIL), "[REDACTED_AGE_SECRET_KEY]"),
-    ("secret:alibaba_key_id", re.compile(_TB + r'LTAI[A-Za-z0-9]{20}' + _TA_TAIL), "[REDACTED_ALIBABA_KEY_ID]"),
-    ("secret:artifactory_key", re.compile(_TB + r'AKCp[A-Za-z0-9]{69}' + _TA_TAIL), "[REDACTED_ARTIFACTORY_KEY]"),
-    ("secret:cloudflare_origin_ca_key", re.compile(_TB + r'v1\.0-[a-f0-9]{24}-[a-f0-9]{146}' + _TA_TAIL), "[REDACTED_CLOUDFLARE_ORIGIN_CA_KEY]"),
-    ("secret:dynatrace_token", re.compile(_TB + r'dt0c01\.[A-Za-z0-9]{24}\.[A-Za-z0-9]{64}' + _TA_TAIL), "[REDACTED_DYNATRACE_TOKEN]"),
-    ("secret:easypost_key", re.compile(_TB + r'EZ(?:AK|TK)[A-Za-z0-9]{54}' + _TA_TAIL), "[REDACTED_EASYPOST_KEY]"),
-    ("secret:flyio_token", re.compile(_TB + r'(?:fo1_[A-Za-z0-9_-]{43}|fm1[ar]_[A-Za-z0-9+/]{100,}={0,3}|fm2_[A-Za-z0-9+/]{100,}={0,3})' + _TA_TAIL), "[REDACTED_FLYIO_TOKEN]"),
-    ("secret:grafana_token", re.compile(_TB + r'(?:glc_[A-Za-z0-9+/]{32,400}={0,3}|glsa_[A-Za-z0-9]{32}_[A-Fa-f0-9]{8})' + _TA_TAIL), "[REDACTED_GRAFANA_TOKEN]"),
-    ("secret:terraform_cloud_token", re.compile(_TB + r'[a-z0-9]{14}\.atlasv1\.[A-Za-z0-9_=-]{60,70}' + _TA_TAIL), "[REDACTED_TERRAFORM_CLOUD_TOKEN]"),
-    ("secret:heroku_key_v2", re.compile(_TB + r'HRKU-AA[A-Za-z0-9_-]{58}' + _TA_TAIL), "[REDACTED_HEROKU_KEY_V2]"),
-    ("secret:notion_token", re.compile(_TB + r'ntn_[0-9]{11}[A-Za-z0-9]{35}' + _TA_TAIL), "[REDACTED_NOTION_TOKEN]"),
-    ("secret:perplexity_key", re.compile(_TB + r'pplx-[A-Za-z0-9]{48}' + _TA_TAIL), "[REDACTED_PERPLEXITY_KEY]"),
-    ("secret:planetscale_token", re.compile(_TB + r'pscale_(?:tkn|oauth|pw)_[A-Za-z0-9_=.-]{32,64}' + _TA_TAIL), "[REDACTED_PLANETSCALE_TOKEN]"),
-    ("secret:postman_key", re.compile(_TB + r'PMAK-[A-Fa-f0-9]{24}-[A-Fa-f0-9]{34}' + _TA_TAIL), "[REDACTED_POSTMAN_KEY]"),
-    ("secret:prefect_key", re.compile(_TB + r'pnu_[A-Za-z0-9]{36}' + _TA_TAIL), "[REDACTED_PREFECT_KEY]"),
-    ("secret:pulumi_token", re.compile(_TB + r'pul-[a-f0-9]{40}' + _TA_TAIL), "[REDACTED_PULUMI_TOKEN]"),
-    ("secret:readme_key", re.compile(_TB + r'rdme_[a-z0-9]{70}' + _TA_TAIL), "[REDACTED_README_KEY]"),
-    ("secret:rubygems_key", re.compile(_TB + r'rubygems_[a-f0-9]{48}' + _TA_TAIL), "[REDACTED_RUBYGEMS_KEY]"),
-    ("secret:brevo_key", re.compile(_TB + r'xkeysib-[a-f0-9]{64}-[A-Za-z0-9]{16}' + _TA_TAIL), "[REDACTED_BREVO_KEY]"),
-    ("secret:sentry_user_token", re.compile(_TB + r'sntryu_[a-f0-9]{64}' + _TA_TAIL), "[REDACTED_SENTRY_USER_TOKEN]"),
-    ("secret:shippo_key", re.compile(_TB + r'shippo_(?:live|test)_[a-fA-F0-9]{40}' + _TA_TAIL), "[REDACTED_SHIPPO_KEY]"),
-    ("secret:openshift_token", re.compile(_TB + r'sha256~[A-Za-z0-9_-]{43}' + _TA_TAIL), "[REDACTED_OPENSHIFT_TOKEN]"),
-    ("secret:teams_webhook", re.compile(_TB + r'https://[a-z0-9]+\.webhook\.office\.com/webhookb2/[a-z0-9]{8}-(?:[a-z0-9]{4}-){3}[a-z0-9]{12}@[a-z0-9]{8}-(?:[a-z0-9]{4}-){3}[a-z0-9]{12}/IncomingWebhook/[a-z0-9]{32}/[a-z0-9]{8}-(?:[a-z0-9]{4}-){3}[a-z0-9]{12}' + _TA_TAIL), "[REDACTED_TEAMS_WEBHOOK]"),
+    ("secret:onepassword_sa_token", re.compile(_TB + r'ops_eyJ[A-Za-z0-9+/]{250,}={0,3}' + _TA), "[REDACTED_ONEPASSWORD_SA_TOKEN]"),
+    ("secret:age_secret_key", re.compile(_TB + r'AGE-SECRET-KEY-1[QPZRY9X8GF2TVDW0S3JN54KHCE6MUA7L]{58}' + _TA), "[REDACTED_AGE_SECRET_KEY]"),
+    ("secret:alibaba_key_id", re.compile(_TB + r'LTAI[A-Za-z0-9]{20}' + _TA), "[REDACTED_ALIBABA_KEY_ID]"),
+    ("secret:artifactory_key", re.compile(_TB + r'AKCp[A-Za-z0-9]{69}' + _TA), "[REDACTED_ARTIFACTORY_KEY]"),
+    ("secret:cloudflare_origin_ca_key", re.compile(_TB + r'v1\.0-[a-f0-9]{24}-[a-f0-9]{146}' + _TA), "[REDACTED_CLOUDFLARE_ORIGIN_CA_KEY]"),
+    ("secret:dynatrace_token", re.compile(_TB + r'dt0c01\.[A-Za-z0-9]{24}\.[A-Za-z0-9]{64}' + _TA), "[REDACTED_DYNATRACE_TOKEN]"),
+    ("secret:easypost_key", re.compile(_TB + r'EZ(?:AK|TK)[A-Za-z0-9]{54}' + _TA), "[REDACTED_EASYPOST_KEY]"),
+    ("secret:flyio_token", re.compile(_TB + r'(?:fo1_[A-Za-z0-9_-]{43}|fm1[ar]_[A-Za-z0-9+/]{100,}={0,3}|fm2_[A-Za-z0-9+/]{100,}={0,3})' + _TA), "[REDACTED_FLYIO_TOKEN]"),
+    ("secret:grafana_token", re.compile(_TB + r'(?:glc_[A-Za-z0-9+/]{32,400}={0,3}|glsa_[A-Za-z0-9]{32}_[A-Fa-f0-9]{8})' + _TA), "[REDACTED_GRAFANA_TOKEN]"),
+    ("secret:terraform_cloud_token", re.compile(_TB + r'[a-z0-9]{14}\.atlasv1\.[A-Za-z0-9_=-]{60,70}' + _TA), "[REDACTED_TERRAFORM_CLOUD_TOKEN]"),
+    ("secret:heroku_key_v2", re.compile(_TB + r'HRKU-AA[A-Za-z0-9_-]{58}' + _TA), "[REDACTED_HEROKU_KEY_V2]"),
+    ("secret:notion_token", re.compile(_TB + r'ntn_[0-9]{11}[A-Za-z0-9]{35}' + _TA), "[REDACTED_NOTION_TOKEN]"),
+    ("secret:perplexity_key", re.compile(_TB + r'pplx-[A-Za-z0-9]{48}' + _TA), "[REDACTED_PERPLEXITY_KEY]"),
+    ("secret:planetscale_token", re.compile(_TB + r'pscale_(?:tkn|oauth|pw)_[A-Za-z0-9_=.-]{32,64}' + _TA), "[REDACTED_PLANETSCALE_TOKEN]"),
+    ("secret:postman_key", re.compile(_TB + r'PMAK-[A-Fa-f0-9]{24}-[A-Fa-f0-9]{34}' + _TA), "[REDACTED_POSTMAN_KEY]"),
+    ("secret:prefect_key", re.compile(_TB + r'pnu_[A-Za-z0-9]{36}' + _TA), "[REDACTED_PREFECT_KEY]"),
+    ("secret:pulumi_token", re.compile(_TB + r'pul-[a-f0-9]{40}' + _TA), "[REDACTED_PULUMI_TOKEN]"),
+    ("secret:readme_key", re.compile(_TB + r'rdme_[a-z0-9]{70}' + _TA), "[REDACTED_README_KEY]"),
+    ("secret:rubygems_key", re.compile(_TB + r'rubygems_[a-f0-9]{48}' + _TA), "[REDACTED_RUBYGEMS_KEY]"),
+    ("secret:brevo_key", re.compile(_TB + r'xkeysib-[a-f0-9]{64}-[A-Za-z0-9]{16}' + _TA), "[REDACTED_BREVO_KEY]"),
+    ("secret:sentry_user_token", re.compile(_TB + r'sntryu_[a-f0-9]{64}' + _TA), "[REDACTED_SENTRY_USER_TOKEN]"),
+    ("secret:shippo_key", re.compile(_TB + r'shippo_(?:live|test)_[a-fA-F0-9]{40}' + _TA), "[REDACTED_SHIPPO_KEY]"),
+    ("secret:openshift_token", re.compile(_TB + r'sha256~[A-Za-z0-9_-]{43}' + _TA), "[REDACTED_OPENSHIFT_TOKEN]"),
+    ("secret:teams_webhook", re.compile(_TB + r'https://[a-z0-9]+\.webhook\.office\.com/webhookb2/[a-z0-9]{8}-(?:[a-z0-9]{4}-){3}[a-z0-9]{12}@[a-z0-9]{8}-(?:[a-z0-9]{4}-){3}[a-z0-9]{12}/IncomingWebhook/[a-z0-9]{32}/[a-z0-9]{8}-(?:[a-z0-9]{4}-){3}[a-z0-9]{12}' + _TA), "[REDACTED_TEAMS_WEBHOOK]"),
     ("secret:azure_ad_client_secret", re.compile(r'(?<![A-Za-z0-9_~.-])[A-Za-z0-9_~.]{3}[0-9]Q~[A-Za-z0-9_~.-]{30,33}[A-Za-z0-9_~-](?![A-Za-z0-9_~-])(?!\.[A-Za-z0-9_~-])'), "[REDACTED_AZURE_AD_CLIENT_SECRET]"),
     # Password segment of scheme://user:password@host (any scheme, as DB_PASSWORD in patterns.js).
     # ASCII word boundary like the scrubber: a scheme after CJK or accented letters is still a URL.
@@ -1199,21 +1196,7 @@ def _starts_secret_at(text: str, start: int, limit: int,
         pos += 1
     if pos >= limit:
         return False
-    return any(_start_form(p).match(text, pos) for _, p, _ in patterns)
-
-
-_START_FORMS: Dict[int, re.Pattern[str]] = {}
-
-
-def _start_form(pattern: re.Pattern[str]) -> re.Pattern[str]:
-    """The pattern as _starts_secret_at checks it: a provider format must end at the token's end there
-    (_TA, without the _ or - suffix that _TA_TAIL accepts), so a suffix does not change which lines join."""
-    form = _START_FORMS.get(id(pattern))
-    if form is None:
-        src = pattern.pattern
-        form = re.compile(src[: -len(_TA_TAIL)] + _TA, pattern.flags) if src.endswith(_TA_TAIL) else pattern
-        _START_FORMS[id(pattern)] = form
-    return form
+    return any(p.match(text, pos) for _, p, _ in patterns)
 
 
 def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, text: str,
