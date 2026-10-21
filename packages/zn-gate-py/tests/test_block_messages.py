@@ -17,9 +17,9 @@ class TestBlockMessages(unittest.TestCase):
         with self.assertRaises(GuardBlockError) as ctx:
             run(INJECTION)
         msg = str(ctx.exception)
-        self.assertTrue(msg.startswith("zn-gate blocked 'run'. Reason: "), msg)
+        self.assertTrue(msg.startswith("zn-gate blocked 'run'."), msg)
         self.assertIn("(rule: ", msg)
-        self.assertIn("do not retry with reworded text", msg)
+        self.assertIn("Next step: check the input", msg)
         self.assertNotIn("Blocked execution", msg)
 
     def test_crewai_fallback_is_the_same_message(self):
@@ -28,7 +28,7 @@ class TestBlockMessages(unittest.TestCase):
             return "ok"
 
         out = search(INJECTION)
-        self.assertTrue(out.startswith("zn-gate blocked 'tool:search'. Reason: "), out)
+        self.assertTrue(out.startswith("zn-gate blocked 'tool:search'."), out)
         self.assertIn("Next step:", out)
         self.assertNotEqual(out, "Tool call blocked by security policy.")
 
@@ -49,7 +49,7 @@ class TestBlockMessages(unittest.TestCase):
             fetch()
         msg = str(ctx.exception)
         self.assertIn("blocked 'fetch:result'", msg)
-        self.assertIn("do not use this result", msg)
+        self.assertIn("output of this tool was withheld", msg)
         self.assertNotIn("try again", msg)
 
 

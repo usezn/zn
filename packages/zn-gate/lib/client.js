@@ -4,6 +4,7 @@ const https = require('https');
 const http = require('http');
 const { URL } = require('url');
 const { evaluate, redactSecrets, sanitizeToolResult, RULES_VERSION } = require('./rules');
+const { checkCommand } = require('./destructive');
 const { checkToolCall, guardTool, GuardBlockError } = require('./guard');
 let PKG_VERSION = '1.6.0';
 try {
@@ -292,5 +293,6 @@ module.exports = {
   resolveEndpoint,
   usesStoredKey,
   evaluate,
+  checkCommand,
   RULES_VERSION,
 };
