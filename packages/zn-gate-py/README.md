@@ -199,7 +199,7 @@ def query_knowledge_base(query: str) -> str:
 
 ### Google ADK, OpenAI Agents SDK and Pydantic AI (native hooks)
 
-Tools that these frameworks supply themselves (MCP servers, for example) never pass through `@guard` or `guarded_tool`. Each framework has its own place to check a tool call and its result, and zn-gate plugs into it. The checks are the same ones `guarded_tool` runs: a blocked call does not run the tool, text that tries to give the model orders is blocked in the result, and secrets in the result are masked. Each helper loads its framework only when you call it, and says which package to install if it is missing (`google-adk`, `openai-agents` or `pydantic-ai`).
+Tools that these frameworks supply themselves (MCP servers, for example) never pass through `@guard` or `guarded_tool`. Each framework has its own place to check a tool call and its result, and zn-gate plugs into it. The checks are the same ones `guarded_tool` runs: a blocked call does not run the tool, text that tries to give the model orders is blocked in the result, and secrets in the result are masked. Each helper loads its framework only when you call it, and the OpenAI Agents SDK and Pydantic AI helpers say which package to install if it is missing (`pip install -U openai-agents` or `pip install -U pydantic-ai`; `-U` also fixes an installed version too old to import).
 
 ```python
 from zn_gate.integrations import adk_tool_callbacks, openai_agents_tool_guardrails, guard_pydantic_ai_toolset
