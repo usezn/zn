@@ -34,6 +34,7 @@ on:
       - 'packages/zn-gate/bin/**'
       - '.github/scripts/ci-scope.sh'
       - '.github/workflows/plugins.yml'
+      - '.github/workflows/plugin-repo.yml'
   # Daily full run on the default branch.
   schedule:
     - cron: '30 6 * * *'
@@ -102,6 +103,9 @@ jobs:
       - name: Plugin repository generator tests
         if: steps.scope.outputs.run == 'true'
         run: node plugins/tools/test-build-plugin-repo.js
+      - name: Pin commit lookup tests
+        if: steps.scope.outputs.run == 'true'
+        run: node plugins/tools/test-pin-commit.js
       - name: Install zn-gate dependencies for the benchmark
         if: steps.scope.outputs.run == 'true' && (hashFiles('plugins/tools/bench-launch.js') != '')
         working-directory: packages/zn-gate
