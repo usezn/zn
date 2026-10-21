@@ -32,6 +32,10 @@
         "regex": "^  entry: npx --yes zn-gate@(\\S+) audit$"
       },
       {
+        "file": "examples/ag2-agent/requirements.txt",
+        "regex": "^zn-gate==(\\S+)$"
+      },
+      {
         "file": "examples/crewai-agent/requirements.txt",
         "regex": "^zn-gate==(\\S+)$"
       },
@@ -206,14 +210,6 @@
       {
         "file": "plugins/zn-gate/.cursor-plugin/plugin.json",
         "json": "version"
-      },
-      {
-        "file": "plugins/mcp-registry/server.json",
-        "json": "version"
-      },
-      {
-        "file": "plugins/mcp-registry/server.json",
-        "json": "packages.0.version"
       },
       {
         "file": "plugins/zn-gate/package.json",

@@ -22,7 +22,6 @@ const SHIPPED = [
   /^packages\/[^/]+\/(?:package\.json|pyproject\.toml|server\.json)$/,
   /^src\//,
   /^plugins\/zn-gate\//,
-  /^plugins\/mcp-registry\//,
   /^\.claude-plugin\//, /^\.cursor-plugin\//, /^\.agents\/plugins\//,
   /^skill\//,
   /^action\.ya?ml$/,

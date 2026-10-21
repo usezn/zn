@@ -5,7 +5,7 @@ The SVG diagrams in this directory embed material from the projects below.
 | Material | License | Source |
 |---|---|---|
 | Inter typeface (subset, embedded as WOFF2) | SIL Open Font License 1.1 | https://github.com/rsms/inter |
-| Tabler Icons (robot, shield-lock, plug-connected, cloud, device-laptop) | MIT | https://github.com/tabler/tabler-icons |
+| Tabler Icons (robot, shield-lock, plug-connected, cloud, device-laptop, world, message, terminal-2, file-text, list-search, eraser, lock, link) | MIT | https://github.com/tabler/tabler-icons |
 
 ## Tabler Icons
 
