@@ -68,7 +68,7 @@ test('the message extractor finds the reasons', () => {
   const pieces = messagePieces();
   assert.ok(pieces.length >= 20, 'found only ' + pieces.length + ' message pieces: has lib/check.js changed shape?');
   assert.ok(pieces.some((p) => p.includes('background')), 'the Codex async reason was not found');
-  assert.ok(pieces.some((p) => p.includes('20.12') || p.includes('plugin needs Node.js')), 'the plugin Node.js reason was not found');
+  assert.ok(pieces.some((p) => p.includes('20.19') || p.includes('plugin needs Node.js')), 'the plugin Node.js reason was not found');
 });
 
 test('docs/check.md explains every NOT protected reason', (t) => {
