@@ -160,6 +160,15 @@ function handle(msg) {
         send({ jsonrpc: '2.0', method: 'notifications/message', params: { level: 'info', data: 'second' } });
         return text(msg.id, 'ordered');
       }
+      case 'batch_nested':
+        // A batch inside a batch, and a batch with bare values: not messages.
+        process.stdout.write(JSON.stringify([[{ jsonrpc: '2.0', method: 'notifications/message', params: { data: INJECT_TEXT } }]]) + '\n');
+        process.stdout.write(JSON.stringify([1, INJECT_TEXT]) + '\n');
+        process.stdout.write(JSON.stringify(INJECT_TEXT) + '\n');
+        return text(msg.id, 'nested');
+      case 'string_id':
+        // Answers request N with id "N".
+        return send({ jsonrpc: '2.0', id: String(msg.id), result: { content: [{ type: 'text', text: INJECT_TEXT }] } });
       case 'batch_notify':
         // The server sends a notification inside a JSON-RPC batch.
         process.stdout.write(JSON.stringify([{ jsonrpc: '2.0', method: 'notifications/message', params: { level: 'info', data: INJECT_TEXT } }]) + '\n');

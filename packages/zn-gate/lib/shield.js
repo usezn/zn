@@ -347,12 +347,17 @@ function startMcpShield(command, args, options = {}) {
     error: { code: -32000, message: '[zn-gate] Not sent: another request in the same batch was blocked by zn-gate.' },
   });
 
+  // Request ids are matched by value: a server that answers request 7 with id "7" still gets its answer checked.
+  const idKey = (id) => (typeof id === 'string' || typeof id === 'number' ? 'v:' + String(id) : 'j:' + JSON.stringify(id));
+  // One JSON-RPC message: an object (not an array, not a bare value).
+  const isMessage = (x) => !!x && typeof x === 'object' && !Array.isArray(x);
+
   function trackPendingCall(id, meta) {
     if (pendingCalls.size >= MAX_PENDING_CALLS) {
       const oldestKey = pendingCalls.keys().next().value;
       pendingCalls.delete(oldestKey);
     }
-    pendingCalls.set(id, meta);
+    pendingCalls.set(idKey(id), meta);
   }
 
   // 1. Read from client (process.stdin) -> inspect requests -> send to child.stdin
@@ -375,6 +380,18 @@ function startMcpShield(command, args, options = {}) {
     }
 
     if (Array.isArray(msg)) {
+      // A batch may only hold message objects; anything else (a nested batch, a bare value) is not checked, so
+      // the batch is refused (Invalid Request) instead of being sent. Shadow mode passes it on and reports.
+      if (!msg.every(isMessage)) {
+        if (options.shadow) {
+          process.stderr.write('[zn-shield] A batch from the client holds something that is not a message; shadow mode passes it on unchecked.\n');
+          child.stdin.write(line + '\n');
+        } else {
+          process.stderr.write('[zn-shield BLOCKED REQUEST] A batch from the client holds something that is not a message (a nested batch or a bare value), so it was not sent.\n');
+          process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32600, message: '[zn-gate] Invalid request: a batch may only hold request objects.' } }) + '\n');
+        }
+        return;
+      }
       // A JSON-RPC batch: every request in it is checked and tracked as if it were sent alone. If one is refused
       // or blocked, nothing is sent, and each request with an id gets an answer so the client is not left waiting.
       const answers = msg.map((one) => inspectClientMessage(one));
@@ -382,7 +399,7 @@ function startMcpShield(command, args, options = {}) {
         const out = [];
         msg.forEach((one, i) => {
           if (!one || typeof one !== 'object' || one.id === undefined) return;
-          pendingCalls.delete(one.id);
+          pendingCalls.delete(idKey(one.id));
           out.push(answers[i].response || batchNotice(one.id));
         });
         if (out.length) process.stdout.write(JSON.stringify(out) + '\n');
@@ -535,6 +552,17 @@ function startMcpShield(command, args, options = {}) {
       return;
     }
 
+    // Only message objects (and batches of them) are checked; a nested batch or a bare value is not passed on.
+    if (Array.isArray(msg) ? !msg.every(isMessage) : !isMessage(msg)) {
+      if (options.shadow) {
+        process.stderr.write('[zn-shield] A line from the server is not a message or a batch of messages; shadow mode passes it on unchecked.\n');
+        process.stdout.write(line + '\n');
+      } else {
+        process.stderr.write('[zn-shield BLOCKED SERVER MESSAGE] A line from the server that is not a message or a batch of messages (a nested batch or a bare value) was dropped.\n');
+      }
+      return;
+    }
+
     // A JSON-RPC batch is checked element by element; if one element cannot be checked, the whole batch is dropped.
     if (Array.isArray(msg)) {
       for (const one of msg) await inspectServerMessage(one);
@@ -550,9 +578,9 @@ function startMcpShield(command, args, options = {}) {
     if (!msg || typeof msg !== 'object') return;
     let answered = null;
     // Check if this response corresponds to a tracked request
-    if (msg && msg.id !== undefined && pendingCalls.has(msg.id)) {
-      const pending = pendingCalls.get(msg.id);
-      pendingCalls.delete(msg.id);
+    if (msg && msg.id !== undefined && pendingCalls.has(idKey(msg.id))) {
+      const pending = pendingCalls.get(idKey(msg.id));
+      pendingCalls.delete(idKey(msg.id));
       answered = pending.method;
 
       // Handle tools/list response: sanitize tool descriptions and input schemas

@@ -709,3 +709,41 @@ test('the method label drops bidi and other format characters', async () => {
     await s.stop();
   }
 });
+
+test('a nested batch, a batch with bare values or a bare value from the server is dropped', async () => {
+  const s = startShield();
+  try {
+    s.send(call(50, 'batch_nested'));
+    await s.reply(50);
+    await waitStderr(s, /not a message or a batch of messages/);
+    assert.ok(!s.lines.some((l) => l.includes('ignore all previous instructions')), s.lines.join('\n'));
+  } finally {
+    await s.stop();
+  }
+});
+
+test('a nested batch from the client is refused as an invalid request and not sent', async () => {
+  const s = startShield();
+  try {
+    s.send([[call(51, 'inject')]]);
+    const err = await until(s, (m) => m.error && m.error.code === -32600);
+    assert.strictEqual(err.id, null);
+    s.send(call(52, 'echo_ok'));
+    await s.reply(52);
+    assert.ok(!s.lines.some((l) => l.includes('ignore all previous instructions')), 'nothing from the nested call reached the client');
+  } finally {
+    await s.stop();
+  }
+});
+
+test('an answer with the id as a string is still checked as the tool result it is', async () => {
+  const s = startShield();
+  try {
+    s.send(call(53, 'string_id'));
+    const r = await until(s, (m) => m.id === '53');
+    assert.ok(!JSON.stringify(r).includes('ignore all previous instructions'));
+    await waitStderr(s, /BLOCKED RESPONSE/);
+  } finally {
+    await s.stop();
+  }
+});
