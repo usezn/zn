@@ -68,7 +68,7 @@ class RedactionParityFuzzTest(unittest.TestCase):
         texts = REGRESSIONS + random_texts(2000, seed=20261021)
         js = node_redact(texts)
         py = [redact_secrets(t)[0] for t in texts]
-        diff = [(t, j, p) for t, j, p in zip(texts, js, py) if j != p]
+        diff = [(t, j, p) for t, j, p in zip(texts, js, py, strict=True) if j != p]
         detail = "\n".join("text %r\n  node   %r\n  python %r" % d for d in diff[:5])
         self.assertEqual(len(diff), 0, "%d of %d texts differ:\n%s" % (len(diff), len(texts), detail))
 
