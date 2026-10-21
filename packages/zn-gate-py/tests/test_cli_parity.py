@@ -40,3 +40,26 @@ def test_unknown_command_exits_1(monkeypatch, capsys):
 
 def test_scan_missing_path_exits_1(monkeypatch, tmp_path, capsys):
     assert _run(monkeypatch, "scan", str(tmp_path / "nope")) == 1
+
+
+@pytest.mark.parametrize("flag", ["-v", "-V"])
+def test_short_version_flags_match_npm(monkeypatch, capsys, flag):
+    with pytest.raises(SystemExit) as exc:
+        _run(monkeypatch, "--version")
+    assert exc.value.code == 0
+    expected = capsys.readouterr().out.strip()
+    with pytest.raises(SystemExit) as exc:
+        _run(monkeypatch, flag)
+    assert exc.value.code == 0
+    assert capsys.readouterr().out.strip() == expected
+
+
+def test_every_subcommand_is_a_known_command(monkeypatch, capsys):
+    known = cli.known_commands(cli.build_parser())
+    assert {"test", "analyze", "scan", "evidence", "status", "stats"} <= known
+    for cmd in sorted(known):
+        monkeypatch.setattr(sys, "argv", ["zn-gate", cmd, "--help"])
+        with pytest.raises(SystemExit) as exc:
+            cli.main()
+        assert exc.value.code == 0
+        assert "Unknown command" not in capsys.readouterr().err

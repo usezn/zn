@@ -36,6 +36,13 @@ jobs:
       contents: read
       id-token: write
     steps:
+      # No network evidence yet for this job (it had no harden-runner): audit first; once a release run shows
+      # its endpoints in the step-security insights, switch to egress-policy: block with allowed-endpoints.
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
       - name: Check the tag name
         env:
           TAG: ${{ inputs.tag }}

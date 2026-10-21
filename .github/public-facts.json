@@ -64,6 +64,10 @@
         "regex": "^zn-gate==(\\S+)$"
       },
       {
+        "file": "examples/semantic-kernel-agent/requirements.txt",
+        "regex": "^zn-gate==(\\S+)$"
+      },
+      {
         "file": "examples/openai-agents-js/package.json",
         "json": "dependencies.zn-gate"
       },
@@ -206,14 +210,6 @@
       {
         "file": "plugins/zn-gate/.cursor-plugin/plugin.json",
         "json": "version"
-      },
-      {
-        "file": "plugins/mcp-registry/server.json",
-        "json": "version"
-      },
-      {
-        "file": "plugins/mcp-registry/server.json",
-        "json": "packages.0.version"
       },
       {
         "file": "plugins/zn-gate/package.json",
