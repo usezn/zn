@@ -175,3 +175,18 @@ test('redactSecrets keeps the schemes it already redacted, and leaves references
     }
   }
 });
+
+// A provider key that a wider match of another kind (a NAME=value or key: assignment, or a GitHub token
+// running into the next line) covered was dropped with that match and left in the text.
+test('a provider key covered by a wider match of another kind is still redacted', () => {
+  const stripe = 'sk_' + 'live_' + r(28);
+  const github = 'gh' + 'p_' + r(36);
+  // Found by fuzzing: the key: assignment, joined with the next lines, was the wider match.
+  for (const text of [
+    'token: ' + stripe + '\n  Results/output\nResults/output\n  ',
+    'token: ' + stripe + '\n' + 'sk_' + 'live_' + r(13) + '\r\n' + github + '_v2\n  ',
+  ]) {
+    const out = redactSecrets(text).sanitized;
+    assert.ok(!out.includes(stripe.slice(8)), JSON.stringify(out));
+  }
+});
