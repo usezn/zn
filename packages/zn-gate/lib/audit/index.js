@@ -749,25 +749,52 @@ function insideQuotedExample(text) {
 const STRONG_IN_DOCS =/^(?:pi:(?:ignore_previous|disregard|system_tag|system_bracket|template_boundary|multi_\w+)|indirect:|evasion:|exfil:markdown_image)/;
 
 /**
- * Prompt-format text that documentation shows on purpose is not an attack: a
- * placeholder such as <system-or-project>, a value such as system:anonymous,
- * a lowercase [system] word, and chat-template tokens or system tags inside a
- * code block or code span of a supporting note of a skill. This returns the line without
- * those shapes, so the rules engine only judges what is left.
+ * Documentation that shows prompt formats on purpose is not an attack, but
+ * only in the supporting notes of a real skill folder; every other file is
+ * read by an agent as it stands and keeps all findings. In such a note only
+ * these shapes are skipped: a placeholder from a short list such as
+ * <system-or-project>, a known identity value such as system:anonymous, and
+ * "system:" at the end of a line. Chat-template tokens inside code are
+ * reported one level lower instead of being dropped.
  */
 const SYSTEM_SHAPES = /^pi:(?:system_tag|system_bracket|template_boundary)$/;
 const CHAT_TOKENS = /\[\/?INST\]|<<<SYS>>>|<\/<<SYS>>>|<\|im_(?:start|end)\|>/gi;
-function dropPromptFormat(x) {
-  return x.replace(CHAT_TOKENS, ' ').replace(/<\s*\/?\s*system\b[^<>]*>/gi, ' ').replace(/\[system\]/gi, ' ').replace(/system\s*:/gi, ' ');
+const SYSTEM_PLACEHOLDER = /<\s*\/?\s*system-(?:or-(?:project|user|global|local|workspace|repo)|(?:name|path|dir|directory|id|type|version|wide))\s*>/gi;
+const SYSTEM_IDENTITY = /\bsystem:(?:anonymous|authenticated|unauthenticated|masters|nodes?|serviceaccounts?(?::[\w-]+)*|kube-[\w-]+|node-[\w-]+|basic-user|discovery|public-info-viewer)(?![\w-])/g;
+function withoutDocShapes(text) {
+  return text.replace(SYSTEM_PLACEHOLDER, ' ').replace(SYSTEM_IDENTITY, ' ').replace(/\bsystem\s*:\s*$/i, ' ');
 }
-function withoutDocShapes(text, inFence, markdown) {
-  // Hyphenated placeholders only; tags that read like an injected message
-  // (system-reminder, system-prompt, ...) stay.
-  let out = text.replace(/<\s*\/?\s*system-(?!reminder|prompt|message|instruction|override|note|notice|warning|context)[\w-]+\s*>/gi, ' ')
-    .replace(/\[system\](?=[\s\"'`).,;:]*$)/g, ' ')
-    .replace(/system\s*:(?!\s+\S)/gi, ' ');
-  if (markdown) out = inFence ? dropPromptFormat(out) : out.replace(/`[^`\n]*`/g, dropPromptFormat);
-  return out;
+
+const INSTRUCTION_FILE_NAMES = /^(?:agents(?:\.override)?\.md|claude(?:\.local)?\.md|gemini\.md|skill\.md|\.cursorrules|\.windsurfrules|copilot-instructions\.md)$/i;
+const LOADED_DIRS = /(^|\/)(?:commands?|agents?|prompts|rules|chatmodes|instructions|output-styles)\//i;
+/** A note inside a real skill folder, not itself loaded as instructions. */
+function isSkillNote(rec) {
+  if (rec.importedBy) return false;
+  const rel = rec.rel;
+  if (!/\.(?:md|mdx|markdown)$/i.test(rel)) return false;
+  if (INSTRUCTION_FILE_NAMES.test(path.posix.basename(rel))) return false;
+  if (LOADED_DIRS.test(rel)) return false;
+  const m = /^(?:(?:.*\/)?\.claude\/skills\/[^/]+|(?:.*\/)?\.opencode\/skills?\/[^/]+|(?:.*\/)?skills\/[^/]+)\/.+/i.exec(rel);
+  if (!m) return false;
+  const skillDir = rel.slice(0, rel.length - rec.rel.slice(0).length + /^.*?(?=\/[^/]+$)/.exec(rel)[0].length);
+  void skillDir;
+  return skillHasManifest(rec);
+}
+function skillHasManifest(rec) {
+  // The first folder under .../skills/ that holds the file must hold SKILL.md.
+  const parts = rec.rel.split('/');
+  const idx = parts.map((p) => p.toLowerCase()).lastIndexOf('skills');
+  const idx2 = parts.map((p) => p.toLowerCase()).lastIndexOf('skill');
+  const at = idx >= 0 ? idx : idx2;
+  void at;
+  for (let k = 1; k < parts.length - 1; k++) {
+    if (!/^skills?$/i.test(parts[k - 1])) continue;
+    const dir = path.join(rec.root || '', ...parts.slice(0, k + 1));
+    try {
+      if (fs.readdirSync(dir).some((n) => n.toLowerCase() === 'skill.md')) return true;
+    } catch (_) { /* not a folder we can read */ }
+  }
+  return false;
 }
 
 function checkInstructions(ctx) {
@@ -775,10 +802,9 @@ function checkInstructions(ctx) {
   // Supporting notes of a skill (not SKILL.md itself): the only files here
   // that are not read as instructions.
   const supporting = /(^|\/)skills?\/.+\//i.test(ctx.rec.rel) && !/(^|\/)SKILL\.md$/i.test(ctx.rec.rel);
-  // Code blocks and code spans count as documentation only in the notes of a
-  // skill (not SKILL.md): every other instruction file is read by the agent as
-  // it stands, so a fenced tag or chat token there is read like any other text.
-  const markdownDoc = /\.(?:md|mdx|markdown)$/i.test(ctx.rec.rel) && !/(^|\/)\.cursor\//i.test(ctx.rec.rel);
+  // Only a note inside a real skill folder is documentation; every other
+  // instruction file is read by the agent as it stands.
+  const skillNote = isSkillNote(ctx.rec);
   let inFront = ctx.lines[0] && ctx.lines[0].trim() === '---';
   // Lines inside code fences that are closed again (an unclosed fence runs
   // to the end of the file and counts as plain text).
@@ -810,9 +836,22 @@ function checkInstructions(ctx) {
       let res = null;
       // Strict mode: audit grades each finding itself (high, medium, info).
       try { res = rules().evaluate(t, { strict: true }); } catch (_) { res = null; }
-      if (supporting && res && res.verdict === 'block' && SYSTEM_SHAPES.test(String(res.rule))) {
-        const rest = withoutDocShapes(t, fenced.has(i), markdownDoc);
+      let codeText = false;
+      if (skillNote && res && res.verdict === 'block' && SYSTEM_SHAPES.test(String(res.rule))) {
+        const rest = withoutDocShapes(t);
         if (rest !== t) { try { res = rules().evaluate(rest, { strict: true }); } catch (_) { res = null; } }
+        // Chat-template tokens inside code are reported one level lower; a
+        // system tag or role marker is never lowered.
+        if (res && res.verdict === 'block' && res.rule === 'pi:template_boundary') {
+          const noTokens = rest.replace(CHAT_TOKENS, ' ');
+          let other = null;
+          try { other = rules().evaluate(noTokens, { strict: true }); } catch (_) { other = null; }
+          const stillSystem = other && other.verdict === 'block' && SYSTEM_SHAPES.test(String(other.rule));
+          const outsideCode = fenced.has(i) ? '' : rest.replace(/`[^`\n]*`/g, ' ');
+          let tokensOutside = false;
+          try { const o = rules().evaluate(outsideCode, { strict: true }); tokensOutside = !!(o && o.verdict === 'block' && o.rule === 'pi:template_boundary'); } catch (_) { /* keep false */ }
+          codeText = !stillSystem && !tokensOutside;
+        }
       }
       if (res && res.verdict === 'block' && !NOISY_IN_DOCS.test(String(res.rule))) {
         // Strong patterns are high, weaker ones medium. In the files an agent
@@ -828,6 +867,7 @@ function checkInstructions(ctx) {
         let quoted;
         if (strong) quoted = supporting && insideQuotedExample(t);
         else quoted = EXAMPLE_QUOTE.test(t) || fenced.has(i);
+        if (codeText) quoted = true;
         if (quoted) sev = strong ? 'medium' : 'low';
         ctx.add('ZNA012', sev, ln, 'Rules engine: ' + (res.reason || res.rule) + (quoted ? ' (in quoted or code text)' : '') + '.');
       }
@@ -1300,7 +1340,13 @@ function importedInstructions(root, files, deadline, unchecked) {
     try { st = fs.statSync(real); } catch (_) { return null; }
     if (!st.isFile()) return null;
     const rel = toRel(root, abs);
-    if (!rel || rel === '..' || rel.startsWith('../') || known.has(rel)) return null;
+    if (!rel || rel === '..' || rel.startsWith('../')) return null;
+    if (known.has(rel)) {
+      // Already audited on its own: remember that an import also loads it.
+      const own = files.find((f) => f.rel === rel);
+      if (own && !own.importedBy) own.importedBy = from;
+      return null;
+    }
     known.add(rel);
     const rec = { abs: real, rel, display: rel, scope: 'project', kind: 'instructions', agent, readers: [agent], importedBy: from };
     out.push(rec);
