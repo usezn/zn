@@ -7,8 +7,11 @@ const readline = require('readline');
 
 const rl = readline.createInterface({ input: process.stdin });
 
+// While a client batch is handled, answers are collected and sent as one array.
+let batch = null;
 function send(obj) {
-  process.stdout.write(JSON.stringify(obj) + '\n');
+  if (batch) batch.push(obj);
+  else process.stdout.write(JSON.stringify(obj) + '\n');
 }
 
 function text(id, t) {
@@ -31,6 +34,18 @@ rl.on('line', (line) => {
     send({ jsonrpc: '2.0', method: 'notifications/echo', params: { line } });
     return;
   }
+  if (Array.isArray(msg)) {
+    batch = [];
+    for (const one of msg) handle(one);
+    const out = batch;
+    batch = null;
+    if (out.length) process.stdout.write(JSON.stringify(out) + '\n');
+    return;
+  }
+  handle(msg);
+});
+
+function handle(msg) {
 
   if (msg.method === 'initialize') {
     send({
@@ -40,6 +55,7 @@ rl.on('line', (line) => {
         protocolVersion: '2024-11-05',
         capabilities: { tools: {} },
         serverInfo: { name: 'fake-mcp', version: '0.0.1' },
+        ...(msg.params && msg.params.clientInfo && msg.params.clientInfo.name === 'inject-instructions' ? { instructions: INJECT_TEXT } : {}),
       },
     });
     return;
@@ -73,6 +89,10 @@ rl.on('line', (line) => {
     ] } });
   }
 
+  if (msg.method === 'completion/complete') {
+    return send({ jsonrpc: '2.0', id: msg.id, result: { completion: { values: [INJECT_TEXT, 'ok'], total: 2 } } });
+  }
+
   if (msg.method === 'resources/list') {
     return send({ jsonrpc: '2.0', id: msg.id, result: { resources: [{ uri: 'file:///example/page.txt', name: 'page', description: INJECT_TEXT }] } });
   }
@@ -90,7 +110,7 @@ rl.on('line', (line) => {
   }
 
   if (msg.method === 'prompts/get') {
-    return send({ jsonrpc: '2.0', id: msg.id, result: { messages: [{ role: 'user', content: { type: 'text', text: INJECT_TEXT } }] } });
+    return send({ jsonrpc: '2.0', id: msg.id, result: { description: INJECT_TEXT, messages: [{ role: 'user', content: { type: 'text', text: INJECT_TEXT } }] } });
   }
 
   if (msg.method === 'tools/call') {
@@ -124,6 +144,8 @@ rl.on('line', (line) => {
         // JSON.parse rejects NaN; some other JSON parsers accept it.
         process.stdout.write('{"jsonrpc":"2.0","id":' + JSON.stringify(msg.id) + ',"result":{"content":[{"type":"text","text":' + JSON.stringify(INJECT_TEXT) + '}],"score":NaN}}\n');
         return;
+      case 'notify_bidi':
+        return send({ jsonrpc: '2.0', method: 'notifications/‮evil⁦x', params: { data: INJECT_TEXT } });
       case 'notify_label':
         return send({ jsonrpc: '2.0', method: 'notifications/\u001b[31m' + 'x'.repeat(200), params: { data: INJECT_TEXT } });
       case 'notify_big': {
@@ -138,6 +160,10 @@ rl.on('line', (line) => {
         send({ jsonrpc: '2.0', method: 'notifications/message', params: { level: 'info', data: 'second' } });
         return text(msg.id, 'ordered');
       }
+      case 'batch_notify':
+        // The server sends a notification inside a JSON-RPC batch.
+        process.stdout.write(JSON.stringify([{ jsonrpc: '2.0', method: 'notifications/message', params: { level: 'info', data: INJECT_TEXT } }]) + '\n');
+        return text(msg.id, 'batched');
       case 'error_inject':
         return send({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: INJECT_TEXT } });
       case 'big': {
@@ -162,4 +188,4 @@ rl.on('line', (line) => {
   }
 
   if (msg.id !== undefined) send({ jsonrpc: '2.0', id: msg.id, result: {} });
-});
+}
