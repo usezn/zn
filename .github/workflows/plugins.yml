@@ -34,6 +34,7 @@ on:
       - 'packages/zn-gate/bin/**'
       - '.github/scripts/ci-scope.sh'
       - '.github/workflows/plugins.yml'
+      - '.github/workflows/plugin-repo.yml'
   # Daily full run on the default branch.
   schedule:
     - cron: '30 6 * * *'

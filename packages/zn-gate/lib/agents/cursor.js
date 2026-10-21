@@ -3,7 +3,7 @@
 /**
  * Cursor (IDE agent) adapter.
  *
- * Hook format (cursor.com/docs/agent/hooks, read 2026-10-11):
+ * Hook format (cursor.com/docs/agent/hooks, read 2026-10-11; failure rules re-read 2026-10-20):
  *
  *  hooks.json in ~/.cursor/ (user) or <project>/.cursor/ (project):
  *    { "version": 1, "hooks": { "<event>": [ { "command": "...", "timeout": <s>, "matcher": "<regex>" } ] } }
@@ -19,6 +19,11 @@
  *  No output (exit 0, empty stdout) counts as a hook failure that fails
  *  open: Cursor carries on with its own settings. That is how this adapter
  *  says "no opinion" for shell commands, so it never auto-approves.
+ *
+ * A hook that cannot start (read 2026-10-20): "Other exit codes - Hook failed, action proceeds (fail-open by
+ *  default)." `failClosed: true` blocks "the action when the hook fails (crash, timeout, non-zero exit, or no
+ *  output)"; exit code 2 blocks. zn sets failClosed on beforeReadFile and beforeSubmitPrompt, and its launcher
+ *  (lib/agents/launcher.js) also exits 2 on the other events that can deny when the Node.js is gone.
  *
  * What Cursor allows, and so what zn does there (docs/compat.md):
  *  - Reads of credential files, .env with values and ~/.zn are denied
@@ -40,6 +45,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const cfg = require('./config-file');
+const launcher = require('./launcher');
 const { whichSync } = require('../broker/markers');
 
 const id = 'cursor';
@@ -164,12 +170,36 @@ function strip(list) {
 function hookEntries(command) {
   const out = {};
   for (const event of EVENTS) {
-    const entry = { command, timeout: HOOK_TIMEOUT_S };
+    const entry = { command: typeof command === 'function' ? command(event) : command, timeout: HOOK_TIMEOUT_S };
     if (event === 'preToolUse') entry.matcher = PRE_TOOL_MATCHER;
     if (FAIL_CLOSED.has(event)) entry.failClosed = true;
     out[event] = entry;
   }
   return out;
+}
+
+/**
+ * The hook command for each event. Cursor fails open when a hook cannot start (only failClosed hooks, and exit
+ * code 2, block), so a user install goes through zn's launcher (lib/agents/launcher.js): a Node.js that has gone
+ * away blocks instead of letting the call run. A project install or a command given by the caller keeps the
+ * plain command.
+ */
+function commandFor(opts = {}) {
+  const platform = opts.platform || process.platform;
+  if (opts.command || (opts.scope || 'user') === 'project') {
+    return platform === 'win32' && !opts.command ? cfg.hookCommandWindows(id, opts) : cfg.hookCommand(id, opts);
+  }
+  const node = opts.nodePath || process.execPath;
+  const runner = opts.runnerPath || cfg.runnerPath();
+  if (platform === 'win32') {
+    // Cursor wraps hook commands in PowerShell: the same three steps, inline.
+    return (event) => {
+      const script = launcher.windowsScript(id, event, node, runner);
+      return script ? launcher.windowsScriptCommand(script) : cfg.hookCommandWindows(id, opts);
+    };
+  }
+  const file = launcher.writeLauncher(id, node, runner, opts);
+  return (event) => launcher.launcherCommand(file, event, platform);
 }
 
 function install(opts = {}) {
@@ -180,9 +210,7 @@ function install(opts = {}) {
   data.hooks = cfg.hooksOf(data, file);
   // On Windows Cursor wraps hook commands in PowerShell, which cannot run a
   // quoted path as a command: the powershell.exe form runs there.
-  const command = !opts.command && (opts.platform || process.platform) === 'win32'
-    ? cfg.hookCommandWindows(id, opts)
-    : cfg.hookCommand(id, opts);
+  const command = commandFor(opts);
   const entries = hookEntries(command);
   for (const event of EVENTS) {
     data.hooks[event] = strip(data.hooks[event]);
@@ -213,6 +241,10 @@ function uninstall(opts = {}) {
     report.backup = cfg.backup(file);
     report.removed = 1;
     cfg.writeJson(file, data);
+    // The launcher of a user install (see commandFor) is no longer referenced.
+    if ((opts.scope || 'user') !== 'project') {
+      try { fs.unlinkSync(launcher.launcherFile(id, opts)); } catch (_) { /* none */ }
+    }
   }
   return report;
 }

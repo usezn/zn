@@ -23,13 +23,16 @@ on:
       - 'packages/zn-gate/test/**'
       - 'plugins/tools/**'
       - '.github/workflows/windows-paths.yml'
+  # The merge queue always runs it: one Windows job on the LTS version is the Windows sample of the queue.
+  merge_group:
+    types: [ checks_requested ]
 
 permissions:
   contents: read
 
 concurrency:
-  group: windows-paths-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: windows-paths-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Retry npm and pip downloads instead of failing a run on one network error.

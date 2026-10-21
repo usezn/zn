@@ -25,6 +25,9 @@ on:
     types: [ opened, synchronize, reopened, labeled, ready_for_review ]
     # No paths filter here: these jobs give required checks, and a workflow skipped by a
     # paths filter leaves them pending. ci-scope.sh skips their steps for documentation instead.
+  # The merge queue: the same sample as a pull request into next, the full matrix for main and release/*.
+  merge_group:
+    types: [ checks_requested ]
   # Daily full run on the default branch.
   schedule:
     - cron: '30 6 * * *'
@@ -58,7 +61,7 @@ jobs:
       fail-fast: false
       matrix:
         # 18.x, 22.x and 24.x are required checks: they always run.
-        node-version: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["18.x", "20.x", "22.x", "24.x", "26.x"]' || '["18.x", "22.x", "24.x"]') }}
+        node-version: ${{ fromJSON(((github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["18.x", "20.x", "22.x", "24.x", "26.x"]' || '["18.x", "22.x", "24.x"]') }}
     steps:
       - name: Harden the runner (egress audit)
         if: runner.os == 'Linux'
@@ -74,7 +77,7 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          FULL: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+          FULL: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
         working-directory: .
         run: bash .github/scripts/ci-scope.sh
       - name: Use Node.js ${{ matrix.node-version }}
@@ -138,7 +141,7 @@ jobs:
         # report is the python-coverage job): it is in both lists. The
         # list depends only on the event (never on another job), so every job name is known when the
         # run starts.
-        include: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[{"os":"ubuntu-latest","python-version":"3.10"},{"os":"ubuntu-latest","python-version":"3.11"},{"os":"ubuntu-latest","python-version":"3.12"},{"os":"ubuntu-latest","python-version":"3.13"},{"os":"ubuntu-latest","python-version":"3.14"},{"os":"windows-latest","python-version":"3.12"},{"os":"macos-latest","python-version":"3.12"}]' || '[{"os":"ubuntu-latest","python-version":"3.12"}]') }}
+        include: ${{ fromJSON(((github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[{"os":"ubuntu-latest","python-version":"3.10"},{"os":"ubuntu-latest","python-version":"3.11"},{"os":"ubuntu-latest","python-version":"3.12"},{"os":"ubuntu-latest","python-version":"3.13"},{"os":"ubuntu-latest","python-version":"3.14"},{"os":"windows-latest","python-version":"3.12"},{"os":"macos-latest","python-version":"3.12"}]' || '[{"os":"ubuntu-latest","python-version":"3.12"}]') }}
     defaults:
       run:
         shell: bash
@@ -157,7 +160,7 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          FULL: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+          FULL: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
         working-directory: .
         run: bash .github/scripts/ci-scope.sh
       - name: Set up Python ${{ matrix.python-version }}
@@ -186,7 +189,7 @@ jobs:
           ZN_REQUIRE_FRAMEWORKS: ${{ (matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12') && '1' || '' }}
         run: python -m pytest tests/ -v
       - name: Run the LangChain and LlamaIndex integration tests on the oldest supported langchain-core
-        # The same real-framework tests, in a separate virtual environment with langchain-core 1.2.31, the
+        # The same real-framework tests, in a separate virtual environment with langchain-core 1.3.3, the
         # oldest version the integration supports. The frameworks are installed: the tests must run, not skip.
         if: steps.scope.outputs.run == 'true' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         env:
@@ -196,7 +199,7 @@ jobs:
           "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -m pip install --require-hashes -r .github/ci-test-requirements.txt
           "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -m pip install --require-hashes -r .github/ci-framework-test-requirements-oldest.txt
           "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -m pip install --no-deps --no-build-isolation -e packages/zn-gate-py
-          "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -c "import langchain_core; assert langchain_core.__version__ == '1.2.31', langchain_core.__version__"
+          "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -c "import langchain_core; assert langchain_core.__version__ == '1.3.3', langchain_core.__version__"
           cd packages/zn-gate-py
           "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -m pytest tests/test_langchain_real.py tests/test_llamaindex_real.py -v
       - name: Run benchmark verification
@@ -271,7 +274,7 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          FULL: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+          FULL: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
         run: bash .github/scripts/ci-scope.sh
       - if: steps.scope.outputs.run == 'true'
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -340,7 +343,7 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          FULL: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+          FULL: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
         working-directory: .
         run: bash .github/scripts/ci-scope.sh
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -418,7 +421,7 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          FULL: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+          FULL: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
         working-directory: .
         run: bash .github/scripts/ci-scope.sh
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0

@@ -56,7 +56,7 @@ test('codex SessionStart: unreadable events still never block', async () => {
 
 test('codex: install registers SessionStart and SubagentStart without a matcher; uninstall removes them', (t) => {
   const home = tempDir(t, 'zn-cx-ss-');
-  const env = { CODEX_HOME: path.join(home, '.codex') };
+  const env = { CODEX_HOME: path.join(home, '.codex'), ZN_HOME: path.join(home, '.zn') };
   const file = codex.hooksFile({ env });
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'mine.sh' }] }] } }));
@@ -65,7 +65,7 @@ test('codex: install registers SessionStart and SubagentStart without a matcher;
   codex.install(opts);
   const hooks = JSON.parse(fs.readFileSync(file, 'utf8')).hooks;
   for (const ev of ['SessionStart', 'SubagentStart']) {
-    const ours = hooks[ev].filter((g) => g.hooks.some((h) => /runner\.js/.test(h.command)));
+    const ours = hooks[ev].filter((g) => g.hooks.some((h) => /runner\.js|zn-hook-codex\.sh/.test(h.command)));
     assert.equal(ours.length, 1, ev + ' once, idempotent');
     assert.equal(ours[0].matcher, undefined);
   }

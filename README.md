@@ -82,7 +82,7 @@ npx -y zn-gate env shadow .env
 
 After this, your own app also reads the markers in `.env`: start it with zn-gate's `run` command once you allow it ([docs/secrets.md](docs/secrets.md)). `env shadow` tells you how to undo it.
 
-New here? [First 5 minutes](docs/first-5-minutes.md). Five-minute walkthrough: [docs/secrets.md](docs/secrets.md). Limits: [docs/threat-model.md](docs/threat-model.md). Words you do not know: [docs/glossary.md](docs/glossary.md). Every command and exit code: [docs/cli.md](docs/cli.md).
+New here? [First 5 minutes](docs/first-5-minutes.md). All the guides: [docs index](docs/README.md). Five-minute walkthrough: [docs/secrets.md](docs/secrets.md). Limits: [docs/threat-model.md](docs/threat-model.md). Words you do not know: [docs/glossary.md](docs/glossary.md). Every command and exit code: [docs/cli.md](docs/cli.md).
 
 <details>
 <summary><strong>Other ways to install</strong>: one agent at a time, other editors, Python, MCP server only, wrapping the MCP servers you already use</summary>
@@ -407,6 +407,7 @@ Runnable examples are in [`examples/`](examples/). The code API checks text for 
 | [`langchain-agent`](examples/langchain-agent) | Python | LangChain / LangGraph | Wrap tools so a blocked call does not run and secrets in tool output are hidden; a callback handler stops the run on a block. |
 | [`crewai-agent`](examples/crewai-agent) | Python | CrewAI | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
 | [`llamaindex-agent`](examples/llamaindex-agent) | Python | LlamaIndex | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`ag2-agent`](examples/ag2-agent) | Python | AG2 | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
 | [`openai-agents-sdk`](examples/openai-agents-sdk) | Python | OpenAI Agents SDK | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
 | [`pydantic-ai-agent`](examples/pydantic-ai-agent) | Python | Pydantic AI | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
 | [`google-adk-agent`](examples/google-adk-agent) | Python | Google ADK | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |

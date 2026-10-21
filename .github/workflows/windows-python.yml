@@ -13,13 +13,16 @@ on:
       - 'packages/zn-gate/test/fixtures/**'
       - '.github/ci-test-requirements.txt'
       - '.github/workflows/windows-python.yml'
+  # The merge queue always runs it: one Windows job on the LTS version is the Windows sample of the queue.
+  merge_group:
+    types: [ checks_requested ]
 
 permissions:
   contents: read
 
 concurrency:
-  group: windows-python-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: windows-python-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Retry npm and pip downloads instead of failing a run on one network error.
@@ -33,7 +36,7 @@ jobs:
   windows-python:
     name: Windows (Python 3.12)
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
-    if: github.event.pull_request.draft == false
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: windows-latest
     timeout-minutes: 20
     defaults:
