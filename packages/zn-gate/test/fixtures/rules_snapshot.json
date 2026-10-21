@@ -196,7 +196,7 @@
       ],
       "sha256": {
         "lib/audit/rules.js": "3500c8e47139693e4c989271d404e1f71b0e8e8c879d88b2a1bfdc4534b5d3f3",
-        "lib/audit/patterns.js": "a4dbb4df83a7bac1dacffddd04b68729ce5783889be7c1e74f0af6f80db53cb8"
+        "lib/audit/patterns.js": "07071637ebb4b68b2af57df750db984516a2ce60dc793a5e6c4facbf38b3c588"
       }
     },
     "policy": {

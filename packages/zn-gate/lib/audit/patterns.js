@@ -270,7 +270,8 @@ const PACKAGE_RUNNERS = new Set(['npm', 'pnpm', 'yarn']);
 const DOWNLOADERS = new Set(['curl', 'wget']);
 const CONTAINERS = new Set(['docker', 'podman']);
 const EXEC_SUB = new Set(['x', 'exec', 'dlx', 'eval']);
-const CODE_FLAG = /^-{1,2}[a-z]*[ce]$|^-(?:p|s|print|eval|enc\w*|ec|file|command)$|^--(?:eval|print)$|^-$|^\/[ck]$/i;
+const CODE_FLAG = /^-[a-z]*[ce]$|^-(?:p|s|print|eval|enc\w*|ec|file|command)$|^--(?:eval|print|command)$|^-$|^\/[ck]$/i;
+const CONTAINER_EXEC = new Set(['run', 'exec', 'x']);
 
 /** Severity of one Claude Code permission rule, or null when it is narrow. */
 function claudePermission(entry) {
@@ -291,16 +292,18 @@ function claudePermission(entry) {
   // argument after it (python -m).
   const rest = words.slice(1).map((w) => trimTrailing(w, '*')).filter(Boolean);
   if (rest.length === 0 || WRAPPERS.has(first) || DOWNLOADERS.has(first)) return 'high';
-  let i = 0;
-  while (i < rest.length && isOption(rest[i])) {
-    if (CODE_FLAG.test(rest[i])) return 'high';
-    i++;
+  // A code flag anywhere counts: an option value can precede it (python -W ignore -c).
+  if (rest.some((w) => CODE_FLAG.test(w))) return 'high';
+  const lower = rest.map((w) => w.toLowerCase());
+  if (CONTAINERS.has(first) && lower.some((w) => CONTAINER_EXEC.has(w))) return 'high';
+  if (isOption(rest[0])) {
+    // Only python -m <module> is a concrete target (python -m pytest).
+    const mod = lower[1];
+    if (lower[0] === '-m' && /^py(?:thon[\d.]*)?$/.test(first) && mod && !isOption(mod) && mod !== 'pip') return null;
+    return 'high';
   }
-  if (i === rest.length) return 'high';
-  if (i > 0) return null;
-  const sub = rest[0].toLowerCase();
-  if (EXEC_SUB.has(sub)) return 'high';
-  if (sub === 'run' && (rest.length === 1 || CONTAINERS.has(first))) return 'high';
+  if (EXEC_SUB.has(lower[0])) return 'high';
+  if (lower[0] === 'run' && rest.slice(1).every(isOption)) return 'high';
   return null;
 }
 
