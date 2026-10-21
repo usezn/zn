@@ -6,7 +6,6 @@
  */
 
 const path = require('path');
-const { trimTrailing } = require('../linear-text');
 
 const MAX_LINE = 4000;
 
