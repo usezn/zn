@@ -284,12 +284,30 @@ if _HAVE_LANGCHAIN:
     # _run(), and a wrapped tool with an InjectedToolCallId argument or an artifact needs it.
     _CALL_ID: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("zn_gate_tool_call_id", default=None)
 
+    # Injected arguments whose value the model cannot choose: LangChain always sets InjectedToolCallId from the
+    # tool call, and LangGraph's ToolNode always sets InjectedState and InjectedStore. A generic InjectedToolArg is
+    # filled in by the application, but LangChain still accepts a value the model sends for it, so it stays checked.
+    _OVERWRITTEN = frozenset({"InjectedToolCallId", "InjectedState", "InjectedStore"})
+
+    def _marks(meta: Any) -> frozenset:
+        cls = meta if isinstance(meta, type) else type(meta)
+        return frozenset(c.__name__ for c in getattr(cls, "__mro__", ()))
+
     def _injected_keys(tool: Any) -> frozenset:
-        """Names of the arguments LangChain fills in (InjectedToolCallId, InjectedState...), not the model."""
+        """Names of the injected arguments the model cannot set (see _OVERWRITTEN); they are not checked."""
         try:
             full = getattr(tool.get_input_schema(), "model_fields", None) or {}
             visible = getattr(tool.tool_call_schema, "model_fields", None) or {}
-            return frozenset(full) - frozenset(visible)
+            keys = set()
+            for name, field in full.items():
+                if name in visible:
+                    continue
+                metas = list(getattr(field, "metadata", None) or [])
+                for arg in getattr(getattr(field, "annotation", None), "__metadata__", ()) or ():
+                    metas.append(arg)
+                if any(_marks(m) & _OVERWRITTEN for m in metas):
+                    keys.add(name)
+            return frozenset(keys)
         except Exception:
             return frozenset()
 
@@ -355,7 +373,7 @@ if _HAVE_LANGCHAIN:
         def _before(self, tool_input: Any) -> Optional[Assessment]:
             injected = _injected_keys(self.tool)
             if injected and isinstance(tool_input, dict):
-                # The arguments LangChain injects are not model input: only the rest is checked.
+                # Arguments the model cannot set (call id, LangGraph state/store) are not checked; the rest is.
                 tool_input = {k: v for k, v in tool_input.items() if k not in injected}
             assessment = check_tool_call(self.name, tool_input)
             return None if assessment.allowed else assessment
@@ -470,8 +488,10 @@ def guard_langchain_tool(
     A tool with response_format="content_and_artifact" keeps it: the content
     is checked and masked, the artifact is passed through unchanged (it is not
     scanned; LangChain does not send it to the model). Arguments LangChain
-    fills in (InjectedToolCallId, InjectedState, InjectedToolArg) are passed on
-    untouched and are not checked: only what the model chose is.
+    fills in are passed on untouched. InjectedToolCallId and LangGraph's
+    InjectedState and InjectedStore are not checked (the model cannot set them);
+    a generic InjectedToolArg is checked like any other argument, because
+    LangChain accepts a value the model sends for it.
 
     If you also use ZnGuardCallbackHandler, create it with mask_secrets=False:
     the handler sees the wrapped tool's raw output and would stop the run on a

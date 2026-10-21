@@ -554,12 +554,33 @@ def test_wrapper_forwards_an_injected_arg_and_checks_only_the_model_input():
         seen.append(state)
         return "found " + topic
 
-    # Runtime state is not model input: text in it is not a tool-call block...
-    state = {"messages": [INJECTION]}
+    # A clean value is forwarded untouched...
+    state = {"messages": ["hello"]}
     wrapped = guard_langchain_tool(lookup)
     msg = wrapped.invoke({"name": "lookup", "args": {"topic": "t", "state": state}, "id": "c9", "type": "tool_call"})
     assert msg.content == "found t" and seen == [state]
-    # ...while what the model chose is still checked.
+    # ...and the other arguments are checked as usual.
     with pytest.raises(GuardBlockError):
         wrapped.invoke({"name": "lookup", "args": {"topic": SECRET_PATH_COMMAND, "state": state}, "id": "c10",
                         "type": "tool_call"})
+
+
+def test_wrapper_checks_a_value_the_model_sends_for_an_injected_tool_arg():
+    # LangChain accepts a value the model sends for a generic InjectedToolArg (no ToolNode overwrites it), so it
+    # must be checked: the model sending {"state": {"path": "cat ~/.ssh/id_rsa"}} is blocked and the tool never runs.
+    from langchain_core.tools import InjectedToolArg
+    from typing_extensions import Annotated
+
+    ran: list = []
+
+    @tool
+    def lookup(topic: str, state: Annotated[dict, InjectedToolArg]) -> str:
+        """Look a topic up in the run state."""
+        ran.append(state)
+        return "found " + topic
+
+    wrapped = guard_langchain_tool(lookup)
+    with pytest.raises(GuardBlockError):
+        wrapped.invoke({"name": "lookup", "args": {"topic": "t", "state": {"path": SECRET_PATH_COMMAND}}, "id": "c11",
+                        "type": "tool_call"})
+    assert ran == []
