@@ -10,9 +10,11 @@
  *
  * Checks:
  *  - every JSON file parses;
- *  - one zn-gate version everywhere: the plugin manifests, the lock file, the
- *    MCP registry server.json and its npm package entry;
- *  - packages/zn-gate/package.json "mcpName" equals the server.json name;
+ *  - one zn-gate version everywhere: the plugin manifests and the lock file;
+ *  - the MCP Registry entry is one file, packages/zn-gate/server.json (the one the
+ *    mcp-registry workflow publishes): no other server.json in the repository,
+ *    its version equals packages/zn-gate/package.json (and, with --release, the
+ *    lock file), and "mcpName" in package.json equals its name;
  *  - the Agent Plugins manifest and mcp.json use only the fields of
  *    Agent Plugins 1.0;
  *  - no unpinned installs: no "@latest", no npx/bunx/uvx/pnpm dlx in the
@@ -61,13 +63,13 @@ for (const f of files) {
 
 const lock = json(PLUGIN + '/scripts/zn-gate.lock.json');
 const v = lock.version;
-const server = json('plugins/mcp-registry/server.json');
+const SERVER_JSON = 'packages/zn-gate/server.json';
+const server = json(SERVER_JSON);
+const serverPkgs = (server.packages || []).filter((p) => p && p.identifier === 'zn-gate');
 const versions = {
   'plugin.json': json(PLUGIN + '/plugin.json').version,
   '.claude-plugin/plugin.json': json(PLUGIN + '/.claude-plugin/plugin.json').version,
   '.cursor-plugin/plugin.json': json(PLUGIN + '/.cursor-plugin/plugin.json').version,
-  'server.json version': server.version,
-  'server.json package version': ((server.packages || [])[0] || {}).version,
 };
 for (const [where, got] of Object.entries(versions)) {
   if (got !== v) fail(where + ': version ' + got + ' differs from the lock file version ' + v);
@@ -75,10 +77,36 @@ for (const [where, got] of Object.entries(versions)) {
 if (!/^\d+\.\d+\.\d+$/.test(v || '')) fail('lock file: version must be an exact release, got ' + v);
 
 const pkg = json('packages/zn-gate/package.json');
-if (pkg.mcpName !== server.name) fail('packages/zn-gate/package.json mcpName ' + pkg.mcpName + ' differs from server.json name ' + server.name);
-const npmPkg = (server.packages || [])[0] || {};
-if (npmPkg.registryType !== 'npm' || npmPkg.identifier !== 'zn-gate') fail('server.json: first package must be the npm package zn-gate');
-if (npmPkg.registryBaseUrl && npmPkg.registryBaseUrl !== 'https://registry.npmjs.org') fail('server.json: registryBaseUrl must be https://registry.npmjs.org');
+if (pkg.mcpName !== server.name) fail('packages/zn-gate/package.json mcpName ' + pkg.mcpName + ' differs from ' + SERVER_JSON + ' name ' + server.name);
+// The registry entry follows the published package, not the plugin pin: on next the pin can lag a release.
+const serverVersions = { [SERVER_JSON + ' version']: server.version };
+serverPkgs.forEach((p, i) => { serverVersions[SERVER_JSON + ' package version ' + (i + 1)] = p.version; });
+for (const [where, got] of Object.entries(serverVersions)) {
+  if (got !== pkg.version) fail(where + ': version ' + got + ' differs from packages/zn-gate/package.json version ' + pkg.version);
+  if (release && got !== v) fail(where + ': version ' + got + ' differs from the lock file version ' + v);
+}
+if (serverPkgs.length !== 1) fail(SERVER_JSON + ': expected exactly one npm package entry for zn-gate, found ' + serverPkgs.length);
+const npmPkg = serverPkgs[0] || {};
+if (npmPkg.registryType !== 'npm') fail(SERVER_JSON + ': the zn-gate package entry must have registryType npm');
+if (npmPkg.registryBaseUrl && npmPkg.registryBaseUrl !== 'https://registry.npmjs.org') fail(SERVER_JSON + ': registryBaseUrl must be https://registry.npmjs.org');
+
+// One registry entry: a second server.json with the same name but other content is what this guards against.
+const SKIP_DIRS = new Set(['node_modules', '.git', 'target', 'out', 'dist']);
+function serverJsonFiles(rel) {
+  const abs = path.join(ROOT, rel);
+  return fs.readdirSync(abs, { withFileTypes: true }).flatMap((e) => {
+    const r = path.posix.join(rel, e.name);
+    if (e.isDirectory()) return SKIP_DIRS.has(e.name) ? [] : serverJsonFiles(r);
+    return e.name === 'server.json' ? [r] : [];
+  });
+}
+for (const f of serverJsonFiles('.')) {
+  if (f !== SERVER_JSON) fail(f + ': the MCP Registry entry is ' + SERVER_JSON + ' only; remove this file or give it another name and purpose');
+}
+const registryWorkflow = '.github/workflows/mcp-registry.yml';
+if (fs.existsSync(path.join(ROOT, registryWorkflow)) && !read(registryWorkflow).includes(SERVER_JSON)) {
+  fail(registryWorkflow + ': it must publish ' + SERVER_JSON);
+}
 
 /* ------------------------- Agent Plugins 1.0 ------------------------- */
 
@@ -161,14 +189,14 @@ if (cursorManifest.hooks !== './cursor/hooks.json' || cursorManifest.mcpServers 
 for (const [event, entries] of Object.entries(json(PLUGIN + '/cursor/hooks.json').hooks || {})) {
   for (const e of entries) if (e.failClosed !== true) fail('cursor/hooks.json: ' + event + ' hook is not failClosed');
 }
-// A prompt hook that cannot run must block the prompt, not let it through.
+// A hook on a blocking event that cannot run must block, not let the call or prompt through.
 {
-  const prompt = ((json(PLUGIN + '/hooks/hooks.json').hooks || {}).UserPromptSubmit || []).flatMap((g) => (g && g.hooks) || []);
-  if (!prompt.length) fail('hooks/hooks.json: no UserPromptSubmit hook');
-  for (const h of prompt) if (h.onFailure !== 'block') fail('hooks/hooks.json: UserPromptSubmit hook is not onFailure "block"');
-  const expansion = ((json(PLUGIN + '/hooks/hooks.json').hooks || {}).UserPromptExpansion || []).flatMap((g) => (g && g.hooks) || []);
-  if (!expansion.length) fail('hooks/hooks.json: no UserPromptExpansion hook');
-  for (const h of expansion) if (h.onFailure !== 'block') fail('hooks/hooks.json: UserPromptExpansion hook is not onFailure "block"');
+  const events = (json(PLUGIN + '/hooks/hooks.json').hooks || {});
+  for (const event of ['PreToolUse', 'UserPromptSubmit', 'UserPromptExpansion']) {
+    const hooks = (events[event] || []).flatMap((g) => (g && g.hooks) || []);
+    if (!hooks.length) fail('hooks/hooks.json: no ' + event + ' hook');
+    for (const h of hooks) if (h.onFailure !== 'block') fail('hooks/hooks.json: ' + event + ' hook is not onFailure "block"');
+  }
 }
 
 /* ------------------------------- links ------------------------------- */

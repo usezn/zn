@@ -39,7 +39,7 @@
 
 ## Install
 
-Everything runs on your machine; no account or API key is needed. Node.js 22 LTS is recommended (from [nodejs.org](https://nodejs.org/)). Node.js 18 or later works for the hooks and the CLI; the Claude Code plugin needs 20.12 or later. With a Node.js older than 18, the `zn-gate` and `zn` commands stop and say how to install it.
+Everything runs on your machine; no account or API key is needed. Node.js 22 LTS is recommended (from [nodejs.org](https://nodejs.org/)). Node.js 18 or later works for the hooks and the CLI; the Claude Code plugin needs 20.19 or later. With a Node.js older than 18, the `zn-gate` and `zn` commands stop and say how to install it.
 
 **Getting started: four steps, one command each.** Run them in your own terminal.
 
@@ -57,7 +57,7 @@ npx -y zn-gate init
 `init` does this:
 
 - It finds Claude Code, Codex CLI, Cursor and OpenCode on your machine.
-- For each one that is not protected yet, it shows the setup: the zn-gate plugin for Claude Code (or zn's hooks when your Node.js is older than 20.12), and zn's hooks for the others.
+- For each one that is not protected yet, it shows the setup: the zn-gate plugin for Claude Code (or zn's hooks when your Node.js is older than 20.19), and zn's hooks for the others.
 - It runs each step only after you confirm it.
 - It ends with `zn-gate check`.
 
@@ -82,14 +82,14 @@ npx -y zn-gate env shadow .env
 
 After this, your own app also reads the markers in `.env`: start it with zn-gate's `run` command once you allow it ([docs/secrets.md](docs/secrets.md)). `env shadow` tells you how to undo it.
 
-New here? [First 5 minutes](docs/first-5-minutes.md). Five-minute walkthrough: [docs/secrets.md](docs/secrets.md). Limits: [docs/threat-model.md](docs/threat-model.md). Words you do not know: [docs/glossary.md](docs/glossary.md). Every command and exit code: [docs/cli.md](docs/cli.md).
+New here? [First 5 minutes](docs/first-5-minutes.md). All the guides: [docs index](docs/README.md). Five-minute walkthrough: [docs/secrets.md](docs/secrets.md). Limits: [docs/threat-model.md](docs/threat-model.md). Words you do not know: [docs/glossary.md](docs/glossary.md). Every command and exit code: [docs/cli.md](docs/cli.md).
 
 <details>
 <summary><strong>Other ways to install</strong>: one agent at a time, other editors, Python, MCP server only, wrapping the MCP servers you already use</summary>
 
 **One agent at a time** (the same steps `init` runs):
 
-**Claude Code: the plugin.** You also need Git and Claude Code 2.1.295 or later. The plugin needs Node.js 20.12 or later. With an older Node.js, `npx -y zn-gate init` skips the plugin and sets up zn's hooks for Claude Code instead (`zn-gate check` says so if the plugin is installed); update Node.js to use the plugin.
+**Claude Code: the plugin.** You also need Git and Claude Code 2.1.295 or later. The plugin needs Node.js 20.19 or later. With an older Node.js, `npx -y zn-gate init` skips the plugin and sets up zn's hooks for Claude Code instead (`zn-gate check` says so if the plugin is installed); update Node.js to use the plugin.
 
 ```bash
 claude plugin marketplace add usezn/zn
@@ -231,8 +231,11 @@ By default nothing is sent. If you set `ZN_CLOUD=1` and an API key, run `zn-gate
 | Tool output (`check_tool_result`, `shield`) | Locally | **Never**, in any configuration |
 | Tool-call arguments (`check_tool_call`, `shield`) | Locally | **Never**, in any configuration |
 | MCP tool and parameter descriptions (`shield`) | Locally | **Never**, in any configuration |
-| Counts of what zn-gate did (`zn-gate stats`: checks, blocks, secrets replaced, per secret type) | Written locally to `~/.zn/stats.json` | **Never**, unless you turn on `zn-gate stats share on`: then one report a day with a random installation id, the day, the zn-gate, OS and Node.js versions, the agent and part of zn-gate used most, and the number of secrets found per built-in type (never values, prompts, variable or secret names, paths, hosts or emails). `zn-gate stats share show` shows it first. |
+| Counts of what zn-gate did (`zn-gate stats`: checks, blocks, secrets replaced, per secret type) | Written locally to `~/.zn/stats.json` | **Never**, unless you turn on `zn-gate stats share on`: then, each time you run `zn-gate stats`, one report per complete day (at most the last 3 days) with a random installation id, the day, the zn-gate, OS and Node.js versions, the agent and part of zn-gate used most, and the number of secrets found per built-in type (never values, prompts, variable or secret names, paths, hosts or emails). `zn-gate stats share show` shows it first. |
 | Prompts (`analyze_prompt`, `zn-gate analyze`, Python `analyze()`) | Locally | Only if you set **both** `ZN_CLOUD=1` and `ZN_API_KEY`, run `zn-gate connect` yourself (Node package), or use the API key option of the Claude Code plugin (for `analyze_prompt` only). Detected secrets are removed locally before sending; personal data is not. |
+| Team audit trail (`~/.zn/audit.jsonl`) | Written locally | Only on a machine joined to a Team organization with `zn team join`: while the vault is unlocked, the vault daemon syncs a few seconds after `zn unlock` and then every 15 minutes, and uploads audit metadata only (time, secret name, how it was used, agent, tool, command name, host, decision and its reason, including records written before joining) to your organization. Never secret values, prompts, file contents or tool output. See [zn Team](docs/team.md). |
+| Secret values in the vault (`secrets_http_request`, `zn run`) | Encrypted locally | **Never to zn.** zn fills a value only into a program you allowed (`zn run`) or into a request the agent asks for, and only to hosts you allowed for that secret (headers only by default). What an allowed program does with it is up to that program ([limits](docs/threat-model.md)). |
+| `zn-gate connect` and `zn-gate disconnect` | Locally | Only when you run them yourself in your own terminal. They send only the API key, to `api.usezn.com`: to check it (`/prod/usage`) and, with `disconnect --revoke` or when you say yes, to revoke it (`/prod/keys/self`). |
 
 `ZN_API_KEY` alone enables nothing. `zn-gate connect` is the other way to opt in: you run it, in your own terminal, and it keeps the key in your system keychain or the zn vault, never in a file (`zn-gate disconnect` undoes it and can revoke the key on usezn.com when you say yes; [details](docs/connect.md)). `ZN_LOCAL_ONLY=true` overrides `ZN_CLOUD=1` and a connected key. `npx -y zn-gate status` shows the active detection engine and whether the optional cloud check is on. Sharing of usage statistics is off by default and has its own status: `npx -y zn-gate stats share status`.
 
@@ -399,9 +402,10 @@ Runnable examples are in [`examples/`](examples/). The code API checks text for 
 | [`python-basic`](examples/python-basic) | Python | None | Evaluate a prompt and guard a tool function. |
 | [`node-basic`](examples/node-basic) | JavaScript | None | Inspect a prompt and sanitize a tool result with the Node.js package. |
 | [`custom-rules`](examples/custom-rules) | JavaScript | None | Load project rules from `.znrules`. |
-| [`langchain-agent`](examples/langchain-agent) | Python | LangChain / LangGraph | Attach a callback handler that checks tool calls and results. |
+| [`langchain-agent`](examples/langchain-agent) | Python | LangChain / LangGraph | Wrap tools so a blocked call does not run and secrets in tool output are hidden; a callback handler stops the run on a block. |
 | [`crewai-agent`](examples/crewai-agent) | Python | CrewAI | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
 | [`llamaindex-agent`](examples/llamaindex-agent) | Python | LlamaIndex | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`ag2-agent`](examples/ag2-agent) | Python | AG2 | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
 | [`openai-agents-sdk`](examples/openai-agents-sdk) | Python | OpenAI Agents SDK | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
 | [`pydantic-ai-agent`](examples/pydantic-ai-agent) | Python | Pydantic AI | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
 | [`google-adk-agent`](examples/google-adk-agent) | Python | Google ADK | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
