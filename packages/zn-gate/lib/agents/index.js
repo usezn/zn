@@ -17,13 +17,20 @@ const ADAPTERS = {
 
 const ALIASES = { claude: 'claude-code', claudecode: 'claude-code', 'gemini-cli': 'gemini', geminicli: 'gemini' };
 
+const has = (obj, key) => Object.hasOwn(obj, key);
+
+/** The agent id as it is safe to echo: control and format characters (incl. bidi overrides) removed. */
+function cleanId(id) {
+  return String(id === undefined || id === null ? '' : id).replace(/[\p{Cc}\p{Cf}]/gu, '');
+}
+
 function getAdapter(id) {
-  const key = ALIASES[String(id || '').toLowerCase()] || String(id || '').toLowerCase();
-  const load = ADAPTERS[key];
-  if (!load) {
-    throw new Error('unknown agent "' + id + '" (supported: ' + Object.keys(ADAPTERS).join(', ') + ')');
+  const lower = String(id || '').toLowerCase();
+  const key = has(ALIASES, lower) ? ALIASES[lower] : lower;
+  if (!has(ADAPTERS, key)) {
+    throw new Error('unknown agent "' + cleanId(id) + '" (supported: ' + Object.keys(ADAPTERS).join(', ') + ')');
   }
-  return load();
+  return ADAPTERS[key]();
 }
 
 // Agents zn has no hooks for yet (display name by the name people type). None today:
@@ -45,16 +52,16 @@ function distance(a, b) {
 /** One plain sentence when `id` is not an agent zn can install hooks for, or null when it is. */
 function unsupportedAgentMessage(id) {
   const key = String(id || '').toLowerCase();
-  if (ALIASES[key] || ADAPTERS[key]) return null;
+  if (has(ALIASES, key) || has(ADAPTERS, key)) return null;
   const supported = 'Supported agents: ' + Object.keys(ADAPTERS).join(', ') + '.';
-  if (NOT_COVERED[key]) return 'zn hooks are not available for ' + NOT_COVERED[key] + ' yet. ' + supported;
+  if (has(NOT_COVERED, key)) return 'zn hooks are not available for ' + NOT_COVERED[key] + ' yet. ' + supported;
   let best = null;
   let bestD = 3;
   for (const name of [...Object.keys(ADAPTERS), ...Object.keys(ALIASES)]) {
     const d = distance(key, name);
     if (d < bestD) { best = name; bestD = d; }
   }
-  return 'unknown agent "' + id + '".' + (best ? ' Did you mean "' + best + '"?' : '') + ' ' + supported;
+  return 'unknown agent "' + cleanId(id) + '".' + (best ? ' Did you mean "' + best + '"?' : '') + ' ' + supported;
 }
 
 function listAdapters() {
