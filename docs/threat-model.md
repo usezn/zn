@@ -34,7 +34,8 @@ reads, command output, search results, MCP results and pasted prompts.
 | **Deliberate encodings** of a value printed by an allowed command (reversed, base32, mixed-case hex) | Masking covers raw, base64, hex and URL-encoded forms. It is a safety net, not a boundary. |
 | **Copies kept by the agent on your disk** | See below. |
 
-Hooks are a guardrail, not a sandbox: a determined process can find another
+zn-gate is not a sandbox, and how much it sees depends on the agent (see
+[compat.md](compat.md)). Hooks are a guardrail: a determined process can find another
 way to read a file. The point is that the agent's normal tools do not hand
 values to the model. The hooks also block the agent's file tools and shell
 commands from writing `~/.zn` and the agents' own hook and plugin settings:
@@ -205,6 +206,9 @@ stop malware running as the same user (see above).
 
 ## Failure behaviour
 
+- **Optional cloud check unavailable** (no connection, timeout, a service error, or a
+  saved key that cannot be read): the prompt is checked by the local rules alone
+  and the result says `fallback: true`. This path does not fail closed.
 - **Vault locked:** the hooks still run the scrubber without it. They redact
   patterns, PII and values found in local files with irreversible markers. The
   broker refuses to fill any value.
