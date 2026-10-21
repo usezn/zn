@@ -40,6 +40,15 @@ test('audit: agent files in another letter case get the same findings', (t) => {
   }
 });
 
+test('audit: the supporting notes of a skill are recognised in another letter case', (t) => {
+  // A quoted example in a skill's notes is reported lower than in the skill itself, whatever the spelling.
+  const text = "Mark inputs such as '" + INJECTION.trim() + "' as spam.\n";
+  const sev = (rel) => audit({ root: build(t, { [rel]: text }), agents: ['all'], env: {} }).findings.filter((f) => f.id === 'ZNA012').map((f) => f.severity);
+  const exact = sev('.claude/skills/triage/reference.md');
+  assert.ok(exact.length > 0);
+  assert.deepEqual(sev('.Claude/Skills/triage/Reference.md'), exact);
+});
+
 test('audit: a workflow outside the exact .github/workflows path is not a workflow', (t) => {
   const wf = CVE_CASES.find((c) => c.expect.some((e) => e.id === 'ZNA019'));
   const [rel, content] = Object.entries(wf.files)[0];
