@@ -79,7 +79,7 @@ test('tools/list: a schema over the limits is neutralized with an explanation, o
   for (const name of ['deep_tool', 'wide_tool']) {
     assert.ok(by[name].description.startsWith(BLOCKED), name + ' neutralized');
     assert.deepEqual(by[name].inputSchema, { type: 'object', properties: {} }, name + ' schema emptied');
-    assert.ok(stderr.includes("Tool '" + name + "' has a input schema too deep or too large"), name + ' explained on stderr');
+    assert.ok(stderr.includes("Tool '" + name + "' has an input schema too deep or too large"), name + ' explained on stderr');
   }
   assert.match(stderr, /limit: 32 levels or 5000 entries/);
   const v = by.values_tool;

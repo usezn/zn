@@ -230,7 +230,7 @@ SECRETS (values stay on this machine; agents only see __ZN_<NAME>__ markers):
                       and its output masked [--secrets A,B to set env vars]
   secret log          Show the local audit log of secret use [--since 1h] (same as vault log)
   hooks install <agent> [--project]
-                      Install zn's hooks for claude-code, codex, cursor or opencode
+                      Install zn's hooks for ${require('../lib/agents').listAdapters().join(', ')}
                       (zn-gate init picks the right setup for each agent)
   check               Show that zn blocks your agent from reading a fake secret
                       (also: doctor). Safe: a temporary folder, nothing is sent
