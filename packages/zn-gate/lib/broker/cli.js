@@ -472,6 +472,9 @@ async function hooks(args, io) {
   if (!['install', 'uninstall'].includes(action) || !agentId) {
     throw deps.znError('ZN_USAGE', 'usage: zn hooks install|uninstall claude-code|codex|cursor|opencode|antigravity|copilot [--project] [--no-mcp]');
   }
+  // Check the agent name first, so a script or an agent is told the real reason.
+  const unsupported = require('../agents').unsupportedAgentMessage(agentId);
+  if (unsupported) throw deps.znError('ZN_USAGE', unsupported);
   needHuman(io, 'zn hooks ' + action);
   const adapter = require('../agents').getAdapter(agentId);
   const opts = { scope: flags.project ? 'project' : 'user', projectDir: io.cwd, home: io.home, env: io.env, mcp: !flags['no-mcp'] };
