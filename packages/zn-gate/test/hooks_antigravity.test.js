@@ -120,14 +120,15 @@ test('install (project): named hook with a nested PreToolUse group; idempotent; 
   assert.equal(agy.uninstall({ scope: 'project', projectDir: dir }).removed, 0);
 });
 
-test('install (user) backs up, keeps foreign hooks and uninstall removes only zn', (t) => {
+// The Unix launcher is not used where the home path has backslashes: Windows has its own test below.
+test('install (user) backs up, keeps foreign hooks and uninstall removes only zn', { skip: process.platform === 'win32' }, (t) => {
   const home = tempDir(t, 'zn-agy-home-');
   const file = path.join(home, '.gemini', 'config', 'hooks.json');
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const mine = { enabled: true, PreToolUse: [{ matcher: 'run_command', hooks: [{ type: 'command', command: './mine.sh' }] }], Stop: [{ hooks: [{ command: './bye.sh' }] }] };
   const off = { enabled: false };
   fs.writeFileSync(file, JSON.stringify({ mine, off }));
-  const rep = agy.install({ scope: 'user', home, platform: 'linux', nodePath: '/usr/bin/node' });
+  const rep = agy.install({ scope: 'user', home, nodePath: '/usr/bin/node' });
   assert.ok(rep.backup && fs.existsSync(rep.backup));
   let data = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.deepEqual(data.mine, mine);
