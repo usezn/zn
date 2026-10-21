@@ -17,7 +17,7 @@ def test_npm_only_command_names_the_exact_command(monkeypatch, capsys, cmd):
     out = capsys.readouterr()
     assert out.out == ""
     assert f"npx -y zn-gate {cmd}" in out.err
-    assert f"npm install -g zn-gate" in out.err
+    assert "npm install -g zn-gate" in out.err
     assert "Traceback" not in out.err
 
 
