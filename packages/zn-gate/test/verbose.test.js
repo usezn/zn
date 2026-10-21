@@ -10,7 +10,7 @@ test('ZN_VERBOSE=1 turns the detail on', () => {
 });
 
 test('DEBUG entries that name zn turn the detail on', () => {
-  for (const v of ['zn', 'zn:*', 'zn-gate', 'zn-gate:*', 'express:*,zn', 'a zn:x', 'a, zn']) {
+  for (const v of ['zn', 'zn*', 'zn:*', 'zn-gate', 'zn-gate*', 'zn-gate:*', 'express:*,zn', 'a zn:x', 'a, zn']) {
     assert.strictEqual(isVerbose({ DEBUG: v }), true, v);
   }
 });
