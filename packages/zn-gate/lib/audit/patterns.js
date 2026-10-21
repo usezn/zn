@@ -267,7 +267,7 @@ const INTERPRETERS = new Set([
 const PACKAGE_MANAGERS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
 const SAFE_WORD = /^[\w@%+=.,/~:-]+$/;
 const SCRIPT_NAME = /^[\w][\w:-]*$/;
-const PM_SUBS = new Set(['install', 'i', 'ci', 'add', 'remove', 'test', 'build', 'lint']);
+const PM_SUBS = new Set(['ci', 'remove', 'test', 'build', 'lint']);
 const PM_TOOLS = new Set(['eslint', 'oxlint', 'prettier', 'tsc', 'vitest', 'jest', 'biome', 'knip', 'ruff', 'mypy', 'black']);
 const PY_MODULES = new Set(['pytest', 'unittest', 'ruff', 'mypy', 'black', 'flake8', 'isort', 'pylint']);
 const DENO_SUBS = new Set(['test', 'lint', 'fmt', 'check']);
