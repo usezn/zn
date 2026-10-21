@@ -212,7 +212,8 @@ jobs:
   # manual runs; it is not a required check. Report only, no threshold.
   python-coverage:
     name: Python 3.12 coverage report (ubuntu-latest)
-    if: github.event_name != 'pull_request'
+    # Not in pull requests or the merge queue: it is a report, not a required check.
+    if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
