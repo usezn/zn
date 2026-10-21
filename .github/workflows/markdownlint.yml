@@ -1,0 +1,57 @@
+name: Markdown lint
+
+# Lints the documentation (docs/, the READMEs and the changelog.d guide) with markdownlint-cli2 for
+# structure: heading levels, blank lines around lists and headings, fenced code languages, empty links.
+# Rules and the reason each disabled rule is off live in .markdownlint.jsonc. The tool and its
+# dependencies are pinned by .github/markdownlint/package-lock.json (installed with npm ci).
+on:
+  pull_request:
+    branches: [ main, next, 'release/**' ]
+    paths:
+      - 'docs/**'
+      - 'README*.md'
+      - 'packages/*/README.md'
+      - 'changelog.d/README.md'
+      - '.markdownlint-cli2.jsonc'
+      - '.github/markdownlint/**'
+      - '.github/workflows/markdownlint.yml'
+  push:
+    branches: [ main, next ]
+    paths:
+      - 'docs/**'
+      - 'README*.md'
+      - 'packages/*/README.md'
+      - 'changelog.d/README.md'
+      - '.markdownlint-cli2.jsonc'
+      - '.github/markdownlint/**'
+      - '.github/workflows/markdownlint.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: markdownlint-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  markdownlint:
+    name: Markdown lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.x
+      - name: Install markdownlint-cli2 (locked)
+        run: npm ci --ignore-scripts --no-audit --no-fund --prefix .github/markdownlint
+      - name: markdownlint
+        run: .github/markdownlint/node_modules/.bin/markdownlint-cli2

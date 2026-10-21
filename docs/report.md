@@ -16,7 +16,7 @@ A short summary of the last 7 days on this computer:
 - **Tools changed, waiting for your approval**: tools of a protected MCP server that changed since you last approved them. Review them with `zn-gate pins`.
 - **Busiest day**: the day with the most blocked actions.
 
-```
+```text
 zn-gate report: 2026-10-11 to 2026-10-17 (this computer only; nothing was sent)
 
   Blocked actions   : 12  (claude-code 9, cursor 3)
