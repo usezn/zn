@@ -762,37 +762,33 @@ const CHAT_TOKENS = /\[\/?INST\]|<<<SYS>>>|<\/<<SYS>>>|<\|im_(?:start|end)\|>/gi
 const SYSTEM_PLACEHOLDER = /<\s*\/?\s*system-(?:or-(?:project|user|global|local|workspace|repo)|(?:name|path|dir|directory|id|type|version|wide))\s*>/gi;
 const SYSTEM_IDENTITY = /\bsystem:(?:anonymous|authenticated|unauthenticated|masters|nodes?|serviceaccounts?(?::[\w-]+)*|kube-[\w-]+|node-[\w-]+|basic-user|discovery|public-info-viewer)(?![\w-])/g;
 function withoutDocShapes(text) {
-  return text.replace(SYSTEM_PLACEHOLDER, ' ').replace(SYSTEM_IDENTITY, ' ').replace(/\bsystem\s*:\s*$/i, ' ');
+  // A placeholder with both its opening and its closing tag on the line wraps
+  // text, which reads as an injected block: only an unpaired one is skipped.
+  const opens = /<\s*system-/i.test(text);
+  const closes = /<\s*\/\s*system-/i.test(text);
+  const paired = opens && closes;
+  return (paired ? text : text.replace(SYSTEM_PLACEHOLDER, ' ')).replace(SYSTEM_IDENTITY, ' ').replace(/\bsystem\s*:\s*$/i, ' ');
 }
 
 const INSTRUCTION_FILE_NAMES = /^(?:agents(?:\.override)?\.md|claude(?:\.local)?\.md|gemini\.md|skill\.md|\.cursorrules|\.windsurfrules|copilot-instructions\.md)$/i;
 const LOADED_DIRS = /(^|\/)(?:commands?|agents?|prompts|rules|chatmodes|instructions|output-styles)\//i;
-/** A note inside a real skill folder, not itself loaded as instructions. */
+/** A note inside a real skill folder (one that holds SKILL.md), not itself loaded as instructions. */
 function isSkillNote(rec) {
   if (rec.importedBy) return false;
   const rel = rec.rel;
   if (!/\.(?:md|mdx|markdown)$/i.test(rel)) return false;
   if (INSTRUCTION_FILE_NAMES.test(path.posix.basename(rel))) return false;
   if (LOADED_DIRS.test(rel)) return false;
-  const m = /^(?:(?:.*\/)?\.claude\/skills\/[^/]+|(?:.*\/)?\.opencode\/skills?\/[^/]+|(?:.*\/)?skills\/[^/]+)\/.+/i.exec(rel);
-  if (!m) return false;
-  const skillDir = rel.slice(0, rel.length - rec.rel.slice(0).length + /^.*?(?=\/[^/]+$)/.exec(rel)[0].length);
-  void skillDir;
-  return skillHasManifest(rec);
-}
-function skillHasManifest(rec) {
-  // The first folder under .../skills/ that holds the file must hold SKILL.md.
-  const parts = rec.rel.split('/');
-  const idx = parts.map((p) => p.toLowerCase()).lastIndexOf('skills');
-  const idx2 = parts.map((p) => p.toLowerCase()).lastIndexOf('skill');
-  const at = idx >= 0 ? idx : idx2;
-  void at;
+  const parts = rel.split('/');
   for (let k = 1; k < parts.length - 1; k++) {
-    if (!/^skills?$/i.test(parts[k - 1])) continue;
-    const dir = path.join(rec.root || '', ...parts.slice(0, k + 1));
+    const holder = parts[k - 1];
+    const ok = /^skills$/i.test(holder) || (/^skill$/i.test(holder) && /^\.opencode$/i.test(parts[k - 2] || ''));
+    if (!ok) continue;
+    let dir = rec.abs;
+    for (let up = parts.length - 1 - k; up > 0; up--) dir = path.dirname(dir);
     try {
       if (fs.readdirSync(dir).some((n) => n.toLowerCase() === 'skill.md')) return true;
-    } catch (_) { /* not a folder we can read */ }
+    } catch (_) { /* not readable: not a skill note */ }
   }
   return false;
 }
