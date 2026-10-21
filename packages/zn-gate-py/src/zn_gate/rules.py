@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, overload
 
 
-RULES_VERSION = "2026-10-21.9"
+RULES_VERSION = "2026-10-21.10"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -1391,8 +1391,30 @@ SCAN_WINDOW_OVERLAP = 4 * 1024
 MAX_TOOL_RESULT_SCAN_CHARS = 4 * 1024 * 1024
 
 
+# Tool output that is mostly invisible characters is blocked, not scanned: see
+# tooInvisible in rules.js.
+MIN_INVISIBLE_CHECK_CHARS = 64 * 1024
+MAX_INVISIBLE_CHARS = 1000000
+
+
+def _too_invisible(text: Any) -> bool:
+    if not isinstance(text, str) or len(text) < MIN_INVISIBLE_CHECK_CHARS:
+        return False
+    count = 0
+    step = 1 << 20
+    for i in range(0, len(text), step):
+        chunk = text[i:i + step]
+        count += len(chunk) - len(INVISIBLE_ASTRAL_RE.sub('', ZERO_WIDTH_RE.sub('', chunk)))
+        if count > MAX_INVISIBLE_CHARS:
+            return True
+    return count * 2 > len(text)
+
+
 def scan_windows(text: str, strict: Optional[bool] = None) -> Assessment:
     strict = _strict(strict)
+    if _too_invisible(text):
+        return Assessment(verdict='block', confidence=1.0, rule='size:invisible',
+                          reason='Output is mostly invisible characters')
     if not isinstance(text, str) or len(text) <= MAX_SCAN_CHARS:
         return evaluate(text, strict=strict)
     step = MAX_SCAN_CHARS - SCAN_WINDOW_OVERLAP

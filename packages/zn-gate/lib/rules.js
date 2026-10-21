@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-21.9
+ * RULES_VERSION: 2026-10-21.10
  */
 
-const RULES_VERSION = '2026-10-21.9';
+const RULES_VERSION = '2026-10-21.10';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -1147,7 +1147,39 @@ function redactWith(text, patterns) {
 const SCAN_WINDOW_OVERLAP = 4 * 1024;
 const MAX_TOOL_RESULT_SCAN_CHARS = 4 * 1024 * 1024;
 
+// Tool output that is mostly invisible characters is not scanned: building the
+// match view of millions of zero-width characters costs seconds, and a text
+// that is mostly invisible has no legitimate use. It is blocked instead, so
+// hidden text cannot pass because it was too costly to look at. Applies from
+// MIN_INVISIBLE_CHECK_CHARS; blocked when more than half of the text is
+// invisible or when it holds more than MAX_INVISIBLE_CHARS invisible
+// characters (a 32 MB result that is 40% invisible is still slow). The count
+// stops as soon as the limit is passed, so it costs one linear pass at most.
+const MIN_INVISIBLE_CHECK_CHARS = 64 * 1024;
+const MAX_INVISIBLE_CHARS = 1000000;
+function tooInvisible(text) {
+  if (typeof text !== 'string' || text.length < MIN_INVISIBLE_CHECK_CHARS) return false;
+  const n = text.length;
+  let count = 0;
+  let units = 0;
+  for (let i = 0; i < n; i++) {
+    const c = text.charCodeAt(i);
+    if ((c >= 0x200B && c <= 0x200D) || c === 0x2060 || c === 0xFEFF || c === 0xAD || (c >= 0xFE00 && c <= 0xFE0F)) {
+      count++;
+      units++;
+    } else if (c === 0xDB40 && i + 1 < n) {
+      const d = text.charCodeAt(i + 1);
+      if (d <= 0xDC7F || (d >= 0xDD00 && d <= 0xDDEF)) { count++; units += 2; i++; }
+    } else continue;
+    if (count > MAX_INVISIBLE_CHARS) return true;
+  }
+  return units * 2 > n;
+}
+
 function scanWindows(text, options = {}) {
+  if (tooInvisible(text)) {
+    return { verdict: 'block', confidence: 1.0, reason: 'Output is mostly invisible characters', rule: 'size:invisible', engine: 'oss-local', rules_version: RULES_VERSION };
+  }
   if (typeof text !== 'string' || text.length <= MAX_SCAN_CHARS) return evaluate(text, options);
   const step = MAX_SCAN_CHARS - SCAN_WINDOW_OVERLAP;
   const cap = Number.isFinite(options.maxScanChars) && options.maxScanChars > 0 ? options.maxScanChars : MAX_TOOL_RESULT_SCAN_CHARS;
