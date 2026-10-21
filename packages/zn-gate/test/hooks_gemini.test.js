@@ -171,7 +171,8 @@ test('an unreadable hook input is refused with exit code 2 and the reason on std
     const r = spawnSync(process.execPath, [RUNNER, 'gemini'], { input, encoding: 'utf8', env: { ...process.env, HOME: home, USERPROFILE: home, ZN_STATS: 'off' } });
     assert.equal(r.status, 2, JSON.stringify(input));
     assert.match(r.stderr, /could not read this action/);
-    assert.equal(r.stdout, '', 'stdout must stay empty: anything that is not JSON would be read as allow');
+    // The deny JSON goes to stdout as well (the Windows launcher passes the refusal on as exit 0); never other text.
+    assert.deepEqual(JSON.parse(r.stdout).decision, 'deny');
   }
 });
 
@@ -195,7 +196,7 @@ test('install (project): BeforeTool group with a named command hook in milliseco
   assert.equal(gem.uninstall({ scope: 'project', projectDir: dir }).removed, 0);
 });
 
-test('install (user) backs up, keeps every other setting and hook, and uninstall removes only zn', (t) => {
+test('install (user) backs up, keeps every other setting and hook, and uninstall removes only zn', { skip: process.platform === 'win32' }, (t) => {
   const home = tempDir(t, 'zn-gem-home-');
   const file = settingsOf(home);
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -216,7 +217,7 @@ test('install (user) backs up, keeps every other setting and hook, and uninstall
   assert.deepEqual(data.hooksConfig, mine.hooksConfig);
   assert.deepEqual(data.hooks.SessionStart, mine.hooks.SessionStart);
   assert.deepEqual(data.hooks.BeforeTool[0], mine.hooks.BeforeTool[0]);
-  assert.match(data.hooks.BeforeTool[1].hooks[0].command, /runner\.js.* gemini/);
+  assert.match(data.hooks.BeforeTool[1].hooks[0].command, /\/\.zn\/hooks\/zn-hook-gemini\.sh' BeforeTool$/);
   gem.uninstall({ scope: 'user', home });
   data = readSettings(file);
   assert.deepEqual(data, mine);
@@ -250,7 +251,9 @@ test('install and uninstall refuse a settings file or a hooks field of the wrong
 test('install on Windows (user scope) writes the powershell form; project scope stays portable', (t) => {
   const home = tempDir(t, 'zn-gem-win-');
   gem.install({ scope: 'user', home, platform: 'win32', nodePath: 'C:/Program Files/nodejs/node.exe', runnerPath: 'C:/zn/zn-gate/lib/hooks/runner.js' });
-  assert.match(readSettings(settingsOf(home)).hooks.BeforeTool[0].hooks[0].command, /^powershell\.exe .*gemini/);
+  const winCommand = readSettings(settingsOf(home)).hooks.BeforeTool[0].hooks[0].command;
+  assert.match(winCommand, /^powershell\.exe /);
+  assert.match(require('../lib/shell-quote').windowsCommandScript(winCommand), /runner\.js.* gemini; if \(\$LASTEXITCODE -eq 0 -or \$LASTEXITCODE -eq 2\) \{ exit/);
   const dir = tempDir(t, 'zn-gem-win-p-');
   gem.install({ scope: 'project', projectDir: dir, platform: 'win32' });
   assert.equal(readSettings(path.join(dir, '.gemini', 'settings.json')).hooks.BeforeTool[0].hooks[0].command, 'zn hook gemini');
