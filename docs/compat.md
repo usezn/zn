@@ -306,8 +306,15 @@ A user install writes the same files under your home directory and names the
 node and runner paths of that install.
 
 A teammate who clones the project without zn on PATH gets no checks from these
-files: the hook command fails, and in Claude Code and Codex the call goes ahead.
-Install zn on every machine that runs the agent.
+files, because the hooks cannot run. What happens then depends on the agent.
+Claude Code 2.1.295 or later blocks tool calls and prompts (the `PreToolUse`,
+`UserPromptSubmit` and `UserPromptExpansion` hooks set `onFailure: "block"`);
+earlier versions run the call. Tool output is not scrubbed in either case,
+because the `PostToolUse` hook has no block setting and the tool has already
+run. Codex CLI runs the call. Cursor blocks file reads and prompts (their hooks
+are set to `failClosed`) and lets shell commands and MCP calls run. OpenCode
+blocks tool calls and chat messages and withholds tool output. Install zn on
+every machine that runs the agent.
 
 ## If your agent blocks every prompt
 

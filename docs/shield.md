@@ -74,7 +74,9 @@ In shadow mode:
 - Tool descriptions and parameter descriptions that would be neutralized are left as the server sent them.
 - Tool output is forwarded untouched: no secret is redacted and no output is replaced. This is the one place where shadow mode lets a secret reach the agent, so use it to evaluate, not as a protection.
 - Tool pinning still detects changes and logs them, but it does not mark, remove or refuse any tool, whatever the pinning mode is.
-- Every detection is written to the audit log.
+- Every detection is written to the audit log, except that blocked text in a server message is logged one by one only up to 50 texts per message (see below).
+
+Blocked text from a server message is logged at most 50 times per message. The first 50 blocked texts in one server message each get their own stderr line and evidence event. Every further blocked text in that message is still checked and handled the same way, but it is only counted. When the message is done, the shield writes one stderr line and one `server-message:summary` evidence event that give the number of uncounted texts and a count per rule. Shadow mode forwards the text, so the log is the only record of what would have been blocked. Past the 50th block in a message, the log keeps only the per-rule count.
 
 Review what the shield found with:
 
