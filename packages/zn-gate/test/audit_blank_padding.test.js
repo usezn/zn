@@ -66,3 +66,12 @@ test('ZNA021: two runs give two findings', (t) => {
   const found = run(t, 'AGENTS.md', 'One.\n' + blank(45) + 'Two.\n' + blank(50) + 'Three.\n');
   assert.deepEqual(found.map((f) => f.line), [47, 98]);
 });
+
+test('ZNA021: the supporting files of a skill are flagged too (templates and references load into the context)', (t) => {
+  const text = '# Report\n' + blank(50) + 'Summary goes here.\n';
+  for (const rel of ['.claude/skills/example/templates/report.md', '.claude/skills/example/references/notes.md']) {
+    const found = run(t, rel, text);
+    assert.equal(found.length, 1, rel);
+    assert.equal(found[0].line, 52, rel);
+  }
+});

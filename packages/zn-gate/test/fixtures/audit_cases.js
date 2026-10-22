@@ -276,6 +276,15 @@ const RULE_CASES = [
     expect: [{ id: 'ZNA021', severity: 'medium', file: 'AGENTS.md', line: 62 }],
     count: { ZNA021: 1 },
   },
+  {
+    name: 'a skill template with long blank runs is flagged like the main file: the agent can load it into its context',
+    files: {
+      '.claude/skills/example/SKILL.md': '# Example skill\nFill in templates/report.md.\n',
+      '.claude/skills/example/templates/report.md': '# Report\n' + '\n'.repeat(50) + 'Summary goes here.\n',
+    },
+    expect: [{ id: 'ZNA021', severity: 'medium', file: '.claude/skills/example/templates/report.md', line: 52 }],
+    count: { ZNA021: 1 },
+  },
 ];
 
 const BENIGN_CASES = [
