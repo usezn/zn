@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-19.1
+RULES_VERSION: 2026-10-23.6
 Zero external dependencies. Pure Python stdlib.
 """
 
@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, overload
 
 
-RULES_VERSION = "2026-10-23.3"
+RULES_VERSION = "2026-10-23.6"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -1575,7 +1575,7 @@ def sanitize_tool_result(
     # Deep data structure sanitization
     detections: List[Dict[str, Any]] = []
 
-    def _unique_name(name: str, taken: set) -> str:
+    def _unique_name(name: str, taken: set[Any]) -> str:
         """Return `name`, or `name #N`, whichever is not taken yet, and take it."""
         base = name
         n = 2
@@ -1589,9 +1589,9 @@ def sanitize_tool_result(
         """Sanitize set members; masked members that become equal stay apart."""
         originals = list(members)
         cleaned = [_sanitize(m) for m in originals]
-        taken = {c for c, m in zip(cleaned, originals) if c == m}
+        taken = {c for c, m in zip(cleaned, originals, strict=True) if c == m}
         out: List[Any] = []
-        for c, m in zip(cleaned, originals):
+        for c, m in zip(cleaned, originals, strict=True):
             if isinstance(m, str) and c != m:
                 c = _unique_name(c, taken)
             out.append(c)
@@ -1606,9 +1606,9 @@ def sanitize_tool_result(
         elif isinstance(val, dict):
             items = list(val.items())
             names = [_sanitize(k) if isinstance(k, str) else k for k in [k for k, _ in items]]
-            taken = {n for n, (k, _) in zip(names, items) if n == k}
+            taken = {n for n, (k, _) in zip(names, items, strict=True) if n == k}
             out: Dict[Any, Any] = {}
-            for name, (key, v) in zip(names, items):
+            for name, (key, v) in zip(names, items, strict=True):
                 if name != key:
                     name = _unique_name(name, taken)
                 out[name] = _sanitize(v)
