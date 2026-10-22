@@ -135,7 +135,7 @@ test('CLI: exit codes 0, 1 and 2', (t) => {
   const clean = build(t, { 'README.md': '# hi\n' });
   const ok = cli([clean]);
   assert.equal(ok.status, 0, ok.stderr);
-  assert.match(ok.stdout, /No findings/);
+  assert.match(ok.stdout, /Nothing was checked/);
   const bad = vulnerableRepo(t);
   assert.equal(cli([bad]).status, 1);
   assert.equal(cli([bad, '--fail-on', 'none']).status, 0);
