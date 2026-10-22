@@ -222,8 +222,27 @@ function classifyResolved(abs, ctx) {
   return null;
 }
 
+/* A Windows drive-letter path (C:\Users\example\proj\.env, "C:/Users/example/proj/.env") read on a host that is not
+   Windows. Returns null when the path has no drive letter or the host is Windows (the path resolves natively), the
+   path under /mnt/<drive>/ when that mount exists (WSL), and { unmapped: true } when it does not, because zn cannot
+   follow the path there. opts.mntRoot (default /mnt) lets tests name another mount folder. */
+const DRIVE_PATH_RE = /^["']?([A-Za-z]):[\\/]+([^"']*)["']?$/;
+function driveMapOf(p, opts = {}) {
+  if (process.platform === 'win32' || typeof p !== 'string') return null;
+  const m = DRIVE_PATH_RE.exec(p);
+  if (!m) return null;
+  const root = opts.mntRoot || '/mnt';
+  const mount = root + '/' + m[1].toLowerCase();
+  let there = false;
+  try { there = fs.statSync(mount).isDirectory(); } catch (_) { /* no such mount */ }
+  if (!there) return { unmapped: true };
+  return { mapped: mount + '/' + m[2].split(/[\\/]+/).filter(Boolean).join('/') };
+}
+
 /** The absolute path a typed path names, after ~ and variables are expanded. */
 function resolvedOf(p, opts = {}) {
+  const drive = driveMapOf(p, opts);
+  if (drive && drive.mapped) return drive.mapped;
   const home = opts.home || os.homedir();
   const cwd = opts.cwd || process.cwd();
   return path.resolve(cwd, expandEnv(expandHome(p, home), opts.env || process.env).text);
@@ -2084,7 +2103,10 @@ function dotenvElsewhereOf(text, opts, kind = 'dotenv') {
   const afterSubstitution = /[()]/.test(text) || cmdText.includes(')' + text) || cmdText.includes('`' + text);
   // A path that starts at a Windows root or a network share (\\server\share\.env, \\?\C:\path\.env,
   // \folder\.env, //server/share/.env): zn cannot follow it, so a .env reached through it is refused.
-  if (kind === 'dotenv' && (String(text).startsWith('\\') || String(text).startsWith('//'))) {
+  // The same for a drive-letter path on a host that cannot resolve it (no /mnt/<drive> mount); with the mount, the
+  // path was mapped and checked like any other.
+  const drive = kind === 'dotenv' ? driveMapOf(text, opts) : null;
+  if (kind === 'dotenv' && (String(text).startsWith('\\') || String(text).startsWith('//') || (drive && drive.unmapped))) {
     return 'zn: this command reads ' + text + ' through a path zn cannot check (a Windows root or a network share), so it was blocked. ' +
       'Give the path from the current folder instead, for example `cat app/.env`.';
   }

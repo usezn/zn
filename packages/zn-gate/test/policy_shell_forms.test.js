@@ -213,6 +213,62 @@ test('a .env reached through a UNC share, an extended path or %CD% is refused', 
   assert.deepEqual(refused, [], 'an ordinary file is allowed');
 });
 
+// A drive-letter path (C:\Users\example\proj\.env, C:/Users/example/proj/.env) on a host that is not Windows does not
+// resolve as typed. With a /mnt/<drive> mount (WSL) it is mapped to /mnt/<drive>/... and checked like any other path;
+// without the mount zn cannot follow it, so a .env named that way is refused. The mount folder is injected (mntRoot),
+// so these tests do not depend on the host. Windows resolves drive letters natively and is left unchanged.
+const DRIVE_FORMS = [
+  (p) => p,
+  (p) => p.replace(/\\/g, '/'),
+  (p) => '"' + p + '"',
+  (p) => "'" + p.replace(/\\/g, '/') + "'",
+];
+const DRIVE_READS = [(w) => 'cat ' + w, (w) => 'type ' + w, (w) => 'cmd /c type ' + w, (w) => 'Get-Content -Path ' + w, (w) => 'grep KEY ' + w];
+
+test('a drive-letter .env is mapped to /mnt/<drive> and checked when the mount exists', { skip: WIN && 'Windows resolves drive letters itself' }, (t) => {
+  const o = project(t);
+  const mnt = tempDir(t, 'zn-mnt-');
+  const proj = path.join(mnt, 'c', 'Users', 'example', 'proj');
+  fs.mkdirSync(proj, { recursive: true });
+  fs.writeFileSync(path.join(proj, '.env'), 'EXAMPLE_API_KEY=zn-test-fake-value-0000\n');
+  fs.writeFileSync(path.join(proj, 'notes.txt'), 'hello\n');
+  fs.mkdirSync(path.join(mnt, 'c', 'Users', 'example', 'safe'), { recursive: true });
+  fs.writeFileSync(path.join(mnt, 'c', 'Users', 'example', 'safe', '.env'), 'EXAMPLE_API_KEY=__ZN_EXAMPLE_API_KEY__\n');
+  const opts = { ...o, mntRoot: mnt };
+  const missed = [];
+  const refused = [];
+  for (const form of DRIVE_FORMS) {
+    for (const read of DRIVE_READS) {
+      const bad = read(form('C:\\Users\\example\\proj\\.env'));
+      if (!policy.bashDenial(bad, opts)) missed.push(bad);
+      for (const ok of ['C:\\Users\\example\\proj\\notes.txt', 'C:\\Users\\example\\safe\\.env', 'C:\\Users\\example\\nothing\\.env']) {
+        const cmd = read(form(ok));
+        if (policy.bashDenial(cmd, opts)) refused.push(cmd);
+      }
+    }
+  }
+  assert.deepEqual(missed, [], 'a .env with values behind a drive letter is refused');
+  assert.deepEqual(refused, [], 'an ordinary, shadowed or missing file behind a drive letter is allowed');
+});
+
+test('a drive-letter .env is refused when there is no /mnt/<drive> mount to follow', { skip: WIN && 'Windows resolves drive letters itself' }, (t) => {
+  const o = project(t);
+  const opts = { ...o, mntRoot: tempDir(t, 'zn-nomnt-') };
+  const missed = [];
+  const refused = [];
+  for (const form of DRIVE_FORMS) {
+    for (const read of DRIVE_READS) {
+      const bad = read(form('D:\\Users\\example\\proj\\.env'));
+      const deny = policy.bashDenial(bad, opts);
+      if (!deny || !/cannot check/.test(deny)) missed.push(bad);
+      const cmd = read(form('D:\\Users\\example\\proj\\notes.txt'));
+      if (policy.bashDenial(cmd, opts)) refused.push(cmd);
+    }
+  }
+  assert.deepEqual(missed, [], 'a .env behind a drive letter zn cannot follow is refused');
+  assert.deepEqual(refused, [], 'an ordinary file behind a drive letter is allowed');
+});
+
 test('decoding $-quoting stays linear on long input', () => {
   for (const body of ['\\'.repeat(100000), '\\x'.repeat(50000), "\\'".repeat(50000)]) {
     const t0 = process.hrtime.bigint();
