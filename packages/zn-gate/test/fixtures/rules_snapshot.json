@@ -2,7 +2,7 @@
   "layers": {
     "rules": {
       "version_const": "RULES_VERSION",
-      "version": "2026-10-22.7",
+      "version": "2026-10-22.10",
       "ids": [
         "evasion:bidi_override",
         "exfil:credentials",
@@ -45,7 +45,7 @@
         "secret:private_key"
       ],
       "sha256": {
-        "lib/rules.js": "63711e2d0b9be7385dd4d8866d8ebc8b757e6b8789c803183be877aad021d5b5",
+        "lib/rules.js": "d52b9dd079c2a7c5294b977652a4d7510fa0f3158f13e3f5c9c808c8d99fc1f9",
         "lib/mcp-secrets.js": "6a59fc9809d6b1a3509ff285d21be57e2906449b1c78644e41fe142eccda69b9"
       }
     },

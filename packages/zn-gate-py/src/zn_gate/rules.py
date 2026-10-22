@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, overload
 
 
-RULES_VERSION = "2026-10-22.7"
+RULES_VERSION = "2026-10-22.10"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -60,9 +60,12 @@ INVISIBLE_ASTRAL_RE = re.compile(r'[\U000E0000-\U000E007F\U000E0100-\U000E01EF]'
 # Line breaks are joined only in texts up to this size (see MAX_WRAP_VIEW_CHARS in rules.js).
 MAX_WRAP_VIEW_CHARS = 1 << 20
 # A line break inside a wrapped token (see WRAP_BREAK_RE in rules.js).
-WRAP_BREAK_RE = re.compile(r'(?<=[A-Za-z0-9_\-+/=]{10})[ \t]*\r?\n[ \t]*(?=[A-Za-z0-9_\-+/=]{10})(?![A-Za-z_][A-Za-z0-9_]*[ \t]*[=:])')
+WRAP_BREAK_RE = re.compile(r'(?<=[A-Za-z0-9_\-+/=]{10})[ \t]*\r?\n[ \t]*(?=[A-Za-z0-9_\-+/=]{10})(?![A-Za-z_][A-Za-z0-9_]*[ \t]*[=:](?!=[ \t]*(?:\r?\n|$)))')
 NON_ASCII_RE = re.compile(r'[^\x00-\x7f]')
 ANSI_ESCAPE_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07\x1b]*\x07')
+# Hard caps for the Base64 smuggling check: above either one the command is blocked.
+MAX_B64_PAYLOADS = 16
+MAX_B64_DECODED_BYTES = 128 * 1024
 B64_EXEC_RE = re.compile(r'(?:echo|printf)\s+([A-Za-z0-9+/=]{16,})\s*\|\s*(?:base64\s+-(?:d|-decode)|openssl)', re.IGNORECASE)
 # Maximal whitespace runs; only runs that contain a line break are joined.
 # A pattern anchored on the line break (such as [^\S\r\n]*[\r\n]) would rescan
@@ -516,25 +519,45 @@ def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
 
     tier_advisory = None
 
-    # Check Base64 payload smuggling
+    # Check Base64 payload smuggling: every `echo|printf ... | base64 -d` is decoded
+    # and evaluated, not only the first, within hard caps that fail closed.
     b64_advisory = None
+    b64_payloads = []
     for text_candidate in (normalized, stripped):
-        b64_match = B64_EXEC_RE.search(text_candidate)
-        if b64_match:
-            try:
-                decoded = _b64_decode_lenient(b64_match.group(1)).decode('utf-8', errors='ignore')
-                inner_res = evaluate(decoded, strict=strict)
-                if inner_res.advisory:
-                    b64_advisory = dict(inner_res.advisory)
-                if not inner_res.allowed:
-                    return Assessment(
-                        verdict='block',
-                        confidence=inner_res.confidence,
-                        rule='evasion:base64_smuggling',
-                        reason=f'Smuggled Base64 execution: {inner_res.reason or inner_res.rule}'
-                    )
-            except Exception:
-                pass
+        for b64_match in B64_EXEC_RE.finditer(text_candidate):
+            if b64_match.group(1) not in b64_payloads:
+                b64_payloads.append(b64_match.group(1))
+    if len(b64_payloads) > MAX_B64_PAYLOADS:
+        return Assessment(
+            verdict='block',
+            confidence=0.99,
+            rule='evasion:base64_smuggling',
+            reason=f'Smuggled Base64 execution: more than {MAX_B64_PAYLOADS} Base64 decode pipes in one command'
+        )
+    b64_bytes = 0
+    for payload in b64_payloads:
+        b64_bytes += len(payload) * 3 // 4
+        if b64_bytes > MAX_B64_DECODED_BYTES:
+            return Assessment(
+                verdict='block',
+                confidence=0.99,
+                rule='evasion:base64_smuggling',
+                reason='Smuggled Base64 execution: too much Base64 data to inspect'
+            )
+        try:
+            decoded = _b64_decode_lenient(payload).decode('utf-8', errors='ignore')
+            inner_res = evaluate(decoded, strict=strict)
+            if inner_res.advisory and b64_advisory is None:
+                b64_advisory = dict(inner_res.advisory)
+            if not inner_res.allowed:
+                return Assessment(
+                    verdict='block',
+                    confidence=inner_res.confidence,
+                    rule='evasion:base64_smuggling',
+                    reason=f'Smuggled Base64 execution: {inner_res.reason or inner_res.rule}'
+                )
+        except Exception:
+            pass
 
     targets = list(dict.fromkeys([normalized, stripped, raw]))
 
@@ -600,7 +623,7 @@ def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
 # -------------------------------------------------------------------------
 SECRET_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
     # A body may not contain another BEGIN header: linear on repeated headers without END.
-    ("secret:private_key", re.compile(r"""-----BEGIN [A-Z ]*PRIVATE KEY-----(?:(?!-----BEGIN )[\s\S])*?-----END [A-Z ]*PRIVATE KEY-----"""), "[REDACTED_PRIVATE_KEY]"),
+    ("secret:private_key", re.compile(r"""-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----(?:(?!-----BEGIN )[\s\S])*?-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----"""), "[REDACTED_PRIVATE_KEY]"),
     ("secret:anthropic_key", re.compile(r'(?<![A-Za-z0-9_])(sk-ant-[A-Za-z0-9_-]{30,})(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))'), "[REDACTED_ANTHROPIC_KEY]"),
     # A key without a known prefix ends at the first character that is not a letter or digit.
     ("secret:openai_key", re.compile(r"""(?<![A-Za-z0-9_])(sk-(?:(?:proj|svcacct|admin|[Nn]one|or-v1|lf)-[A-Za-z0-9_-]{28,}(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))|helicone-(?:(?:eu|cp|gov|rl)-){0,4}[a-z0-9]{7}(?:-[a-z0-9]{7}){3}(?![a-z0-9])|(?=(?:eu|cp|gov|rl)-|[a-z0-9]{7}-)(?=[a-z-]{0,46}[0-9])(?:(?:eu|cp|gov|rl)-){0,4}[a-z0-9]{7}(?:-[a-z0-9]{7}){3}(?![a-z0-9])(?!-[a-z0-9])|sp-[A-Za-z0-9]{28,}(?![A-Za-z0-9])|[A-Za-z0-9]{28,}(?![A-Za-z0-9])|(?:(?!sk-)[A-Za-z0-9_-]){1,200}?T3BlbkFJ[A-Za-z0-9_-]{20,}(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))))"""), "[REDACTED_OPENAI_KEY]"),
@@ -1394,8 +1417,41 @@ SCAN_WINDOW_OVERLAP = 4 * 1024
 MAX_TOOL_RESULT_SCAN_CHARS = 4 * 1024 * 1024
 
 
+# Tool output that is mostly invisible characters is blocked, not scanned: see
+# tooInvisible in rules.js. Counted in code points over every string of a result.
+MIN_INVISIBLE_CHECK_CHARS = 64 * 1024
+MAX_INVISIBLE_CHARS = 200000
+INVISIBLE_BLOCK_REASON = 'Output is mostly invisible characters'
+_SUBDIVISION_FLAG_RE = re.compile('\U0001F3F4[\U000E0030-\U000E0039\U000E0061-\U000E007A]{2,7}\U000E007F')
+
+
+def too_invisible(strings: Any) -> bool:
+    count = 0
+    length = 0
+    step = 1 << 20
+    for text in strings:
+        if not isinstance(text, str):
+            continue
+        length += len(text)
+        for i in range(0, len(text), step):
+            chunk = text[i:i + step]
+            flags = len(_SUBDIVISION_FLAG_RE.findall(chunk))
+            if flags:
+                chunk = _SUBDIVISION_FLAG_RE.sub('\U0001F3F4', chunk)
+            count += flags + len(chunk) - len(INVISIBLE_ASTRAL_RE.sub('', ZERO_WIDTH_RE.sub('', chunk)))
+            if count > MAX_INVISIBLE_CHARS:
+                return True
+    return length >= MIN_INVISIBLE_CHECK_CHARS and count * 2 > length
+
+
+def invisible_block() -> Assessment:
+    return Assessment(verdict='block', confidence=1.0, rule='size:invisible', reason=INVISIBLE_BLOCK_REASON)
+
+
 def scan_windows(text: str, strict: Optional[bool] = None) -> Assessment:
     strict = _strict(strict)
+    if too_invisible([text]):
+        return invisible_block()
     if not isinstance(text, str) or len(text) <= MAX_SCAN_CHARS:
         return evaluate(text, strict=strict)
     step = MAX_SCAN_CHARS - SCAN_WINDOW_OVERLAP
@@ -1484,7 +1540,9 @@ def sanitize_tool_result(
                 text_content = json.dumps(content, ensure_ascii=False, default=str)
             except (TypeError, ValueError, RecursionError):
                 text_content = str(content)
-            assessment = check_tool_result(content, strict=strict)
+            # The JSON text holds every string of the output: count the invisible
+            # characters before the string-by-string check pays for them.
+            assessment = invisible_block() if too_invisible([text_content]) else check_tool_result(content, strict=strict)
             if assessment.allowed:
                 text_assessment = scan_windows(text_content, strict=strict)
                 if not text_assessment.allowed:
