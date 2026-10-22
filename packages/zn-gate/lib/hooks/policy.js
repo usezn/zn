@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-23.8';
+const POLICY_RULES_VERSION = '2026-10-24.2';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2389,8 +2389,7 @@ const EGRESS_BODY_KEY_RE = /^(?:body|data|json|payload|form|params|query|variabl
 const EGRESS_URL_KEY_RE = /^(?:url|uri|endpoint|href|webhook(?:_?url)?|base_?url)$/i;
 
 /** The same for the arguments of an MCP call: only a call that has a URL or headers is a request. */
-function egressMcpParts(args, opts = {}) {
-  if (!args || typeof args !== 'object') return [];
+function egressMcpCollect(args) {
   const urls = [];
   const parts = [];
   let request = false;
@@ -2415,6 +2414,18 @@ function egressMcpParts(args, opts = {}) {
     }
   };
   walk(args, '', null, 0);
+  return { request, urls, parts };
+}
+
+/* True when an MCP call's arguments make a network request (a URL or headers), whatever the host. */
+function egressMcpIsRequest(args) {
+  if (!args || typeof args !== 'object') return false;
+  return egressMcpCollect(args).request;
+}
+
+function egressMcpParts(args, opts = {}) {
+  if (!args || typeof args !== 'object') return [];
+  const { request, urls, parts } = egressMcpCollect(args);
   if (!request) return [];
   return egressResult([{ urls, parts }], opts.allow);
 }
@@ -2476,5 +2487,6 @@ module.exports = {
   egressParts,
   egressUrlParts,
   egressMcpParts,
+  egressMcpIsRequest,
   egressLabel,
 };

@@ -197,8 +197,8 @@ test('egress allows: MCP and WebFetch to local hosts, and calls that are not req
   assert.equal((await pre('WebFetch', { url: `http://localhost:3000/?m=${EMAIL}`, prompt: 'x' })).decision, 'none');
   assert.equal((await pre('WebFetch', { url: 'https://example.com/docs', prompt: 'x' })).decision, 'none');
   assert.equal((await mcp({ url: 'http://127.0.0.1:8080/api', headers: { 'X-Mail': EMAIL } })).decision, 'none');
-  // An MCP call with no URL and no headers is not a request: the egress check leaves it alone.
-  assert.equal((await mcp({ title: 'Call', note: 'Ask ' + EMAIL })).decision, 'none');
+  // An MCP call with no URL and no headers is not a request: the egress check leaves it alone, and the server
+  // receiving personal data is the MCP check's question (see the tests below).
   assert.equal((await mcp({ url: 'https://example.com/docs' })).decision, 'none');
 });
 
@@ -323,5 +323,32 @@ test('hook latency: the egress parse of a typical command stays under a millisec
 });
 
 test('the policy version moved with the egress rules', () => {
-  assert.equal(policy.POLICY_RULES_VERSION, '2026-10-23.8');
+  assert.equal(policy.POLICY_RULES_VERSION, '2026-10-24.2');
+});
+
+/* ----------------------- MCP personal data and egress -------------------- */
+
+test('MCP personal data: a call that is not a request asks once, about the server', async () => {
+  const res = await mcp({ title: 'Call', note: 'Ask ' + EMAIL });
+  assert.equal(res.decision, 'ask');
+  assert.match(res.reason, /personal data/);
+});
+
+test('MCP personal data: egressCheck off turns the question off', async (t) => {
+  const home = homeWith(t, { egressCheck: 'off' });
+  assert.equal((await mcp({ title: 'Call', note: 'Ask ' + EMAIL }, { home })).decision, 'none');
+  assert.equal((await mcp({ url: 'https://other.example.com', headers: { a: EMAIL } }, { home })).decision, 'none');
+});
+
+test('MCP personal data: a request is asked about once, by the egress check', async () => {
+  const res = await mcp({ url: 'https://other.example.com/v1', headers: { 'X-Mail': EMAIL } });
+  assert.equal(res.decision, 'ask');
+  assert.match(res.reason, /other\.example\.com/);
+  assert.equal((res.reason.match(/personal data|email/gi) || []).length >= 1, true);
+  assert.doesNotMatch(res.reason, /Also, /);
+});
+
+test('MCP personal data: a secret in a call that is not a request is still denied', async () => {
+  const res = await mcp({ note: 'key ' + AWS + ' and ' + EMAIL });
+  assert.equal(res.decision, 'deny');
 });

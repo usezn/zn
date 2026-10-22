@@ -401,9 +401,12 @@ async function decidePre(ev, d, agentId, opts) {
     }
   }
   if (tool === 'mcp' && ev.input && ev.input.args !== undefined) {
-    const res = await decideMcp(ev, d, agentId);
+    let res = await decideMcp(ev, d, agentId);
     if (res.decision === 'deny') return res;
     const mode = egressModeOf(opts);
+    // Personal data in the arguments follows the egress settings: with the check off nobody is asked, and when the
+    // call is a network request the egress check below decides (local and allow-listed hosts are not asked about).
+    if (res.pii && (mode === 'off' || policy.egressMcpIsRequest(ev.input.args))) res = { decision: 'allow' };
     if (mode === 'off') return res;
     return withEgress(res, await egressCheck(ev, d, agentId, mode, policy.egressMcpParts(ev.input.args, { allow: () => egressAllowOf(opts) }), 'MCP call'));
   }
@@ -661,6 +664,7 @@ async function decideMcp(ev, d, agentId) {
     // Personal data is not always wrong to send: the user decides (never a deny).
     return {
       decision: 'ask',
+      pii: true,
       kinds: [...piiKinds],
       message: 'zn: this call would send personal data (' + [...piiKinds].join(', ') + ') to ' + mcpServerLabel(server) + '. ' +
         'Approve only if this server should receive it.',
