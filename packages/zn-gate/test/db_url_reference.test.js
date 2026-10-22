@@ -17,3 +17,16 @@ test('db_url_password skips references and keeps literals', () => {
     assert.match(redactSecrets(t).sanitized, /\[REDACTED_DB_PASSWORD\]/, t);
   }
 });
+
+test('a scheme that combines a database and a driver name is redacted', () => {
+  const { findPatterns } = require('../lib/scrub/patterns');
+  const fake = 'ZnTestFakePw42x';
+  for (const t of ['oracle+cx_oracle://app:' + fake + '@db.example.invalid/x', 'postgresql+psycopg2://app:' + fake + '@db.example.invalid/x',
+    'mssql+pyodbc://app:' + fake + '@db.example.invalid/x', 'my_scheme://app:' + fake + '@db.example.invalid/x',
+    'x_oracle+cx_oracle://app:' + fake + '@db.example.invalid/x']) {
+    assert.ok(!redactSecrets(t).sanitized.includes(fake), t);
+    assert.ok(findPatterns(t).some((s) => t.slice(s.start, s.end) === fake), t);
+  }
+  const ref = 'oracle+cx_oracle://app:${DB_PASS}@db.example.invalid/x';
+  assert.equal(redactSecrets(ref).sanitized, ref);
+});
