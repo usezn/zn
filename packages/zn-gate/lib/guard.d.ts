@@ -23,6 +23,8 @@ export interface RuleAssessment {
 export interface ToolCallAssessment extends RuleAssessment {
   /** False when the call (or the result) must not run or enter the model context. */
   allowed: boolean;
+  /** Version of the built-in rule set that produced the result (always set by checkToolCall()). */
+  rules_version: string;
 }
 
 /** Options shared by checkToolCall() and guardTool(). */

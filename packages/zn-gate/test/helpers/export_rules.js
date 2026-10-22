@@ -61,6 +61,7 @@ const out = {
     return {
       verdict: res.verdict,
       rule: res.rule,
+      confidence: res.confidence,
       truncated: res.truncated === true,
       // The same input scanned as a tool result.
       scan: { verdict: scan.verdict, rule: scan.rule, truncated: scan.truncated === true },

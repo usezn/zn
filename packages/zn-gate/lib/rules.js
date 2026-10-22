@@ -539,8 +539,11 @@ const SCAN_HEAD_CHARS = 192 * 1024;
 // One character is reserved for the separator, so the window fits the limit.
 const SCAN_TAIL_CHARS = MAX_SCAN_CHARS - SCAN_HEAD_CHARS - 1;
 
+// Same set as Python's str.isspace(), so an empty or blank input is judged alike in both packages.
+const BLANK_INPUT = /^[\t-\r\x1c-\x1f \x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*$/;
+
 function evaluateUncached(input, options = {}) {
-  if (typeof input !== 'string') {
+  if (typeof input !== 'string' || BLANK_INPUT.test(input)) {
     return { verdict: 'allow', confidence: 1.0, rule: 'none', reason: null, engine: 'oss-local', rules_version: RULES_VERSION };
   }
   if (input.length > MAX_SCAN_CHARS) {

@@ -1,6 +1,6 @@
 'use strict';
 
-// Prints the verdict and rule id of every case in test/fixtures/tool_guard_parity.json
+// Prints the verdict, rule id and rules version of every case in test/fixtures/tool_guard_parity.json
 // as evaluated by lib/guard.js. The Python package prints the same shape from its
 // own guard (test/helpers/py_tool_guard.py) and the two must match.
 //
@@ -33,7 +33,7 @@ function build(v) {
   }
   throw new Error('unknown $build ' + v.$build);
 }
-const pick = (a) => ({ verdict: a.verdict, rule: a.rule });
+const pick = (a) => ({ verdict: a.verdict, rule: a.rule, rules_version: a.rules_version });
 
 process.stdout.write(JSON.stringify({
   calls: calls.map((c) => pick(checkToolCall(c.tool, build(c.args)))),

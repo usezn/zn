@@ -1,4 +1,4 @@
-"""Prints the verdict and rule id of every case in test/fixtures/tool_guard_parity.json
+"""Prints the verdict, rule id and rules version of every case in test/fixtures/tool_guard_parity.json
 as evaluated by the Python guard (zn_gate.guard). The Node.js side prints the same
 shape from test/helpers/export_tool_guard.js and the two must match.
 
@@ -40,7 +40,7 @@ def build(v):
 
 
 def pick(a):
-    return {"verdict": a.verdict, "rule": a.rule}
+    return {"verdict": a.verdict, "rule": a.rule, "rules_version": a.rules_version}
 
 
 if __name__ == "__main__":

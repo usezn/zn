@@ -92,7 +92,7 @@ The package ships TypeScript type definitions (`lib/client.d.ts`, `lib/rules.d.t
 
 - Synchronous and local only. Decides whether an agent tool call is safe to run. Every string in `args` (nested values and object keys, up to 10 levels deep) goes through the same rules as `evaluate`; the first block wins. Same verdicts as `check_tool_call` in the Python package.
 - `options` is passed to `evaluate` (for example `{ strict: true }`).
-- Returns: `{ allowed: boolean, verdict: 'allow' | 'block', confidence: number, rule: string, reason: string | null, advisory?: object }`
+- Returns: `{ allowed: boolean, verdict: 'allow' | 'block', confidence: number, rule: string, reason: string | null, rules_version: string, advisory?: object }`
 
 ### `guardTool(fn, options)`
 

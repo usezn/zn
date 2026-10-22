@@ -132,8 +132,8 @@ class TestBehaviourParity(unittest.TestCase):
             label = f"sample {i}: {text[:40]!r}"
             with self.subTest(sample=label):
                 self.assertEqual(
-                    (res.verdict, res.rule, res.truncated),
-                    (expected["verdict"], expected["rule"], expected["truncated"]),
+                    (res.verdict, res.rule, res.confidence, res.truncated),
+                    (expected["verdict"], expected["rule"], expected["confidence"], expected["truncated"]),
                 )
                 scan = R.scan_windows(text)
                 self.assertEqual(

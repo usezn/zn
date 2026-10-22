@@ -45,8 +45,8 @@ class ToolGuardParityTest(unittest.TestCase):
         js = _node_export()
         build = _build()
         cases = json.loads(CASES_FILE.read_text(encoding="utf8"))
-        py_calls = [{"verdict": a.verdict, "rule": a.rule} for a in (check_tool_call(c["tool"], build(c["args"])) for c in cases["calls"])]
-        py_results = [{"verdict": a.verdict, "rule": a.rule} for a in (check_tool_result(build(c["result"])) for c in cases["results"])]
+        py_calls = [{"verdict": a.verdict, "rule": a.rule, "rules_version": a.rules_version} for a in (check_tool_call(c["tool"], build(c["args"])) for c in cases["calls"])]
+        py_results = [{"verdict": a.verdict, "rule": a.rule, "rules_version": a.rules_version} for a in (check_tool_result(build(c["result"])) for c in cases["results"])]
         self.assertEqual(js["calls"], py_calls)
         self.assertEqual(js["results"], py_results)
 

@@ -6,7 +6,7 @@
  * the network.
  */
 
-const { evaluate, scanWindows, sanitizeToolResult, tooInvisible, invisibleBlock } = require('./rules');
+const { evaluate, scanWindows, sanitizeToolResult, tooInvisible, invisibleBlock, RULES_VERSION } = require('./rules');
 
 const MAX_DEPTH = 10;
 const ON_BLOCK_VALUES = ['throw', 'return'];
@@ -80,14 +80,14 @@ function stringsOrBlock(data, what) {
     return {
       block: {
         allowed: false, verdict: 'block', confidence: 1.0, rule: 'size:nesting',
-        reason: `${what} nested too deeply to check`,
+        reason: `${what} nested too deeply to check`, rules_version: RULES_VERSION,
       },
     };
   }
 }
 
 function allow(advisory, extra) {
-  const res = { allowed: true, verdict: 'allow', confidence: 1.0, rule: 'none', reason: null, ...extra };
+  const res = { allowed: true, verdict: 'allow', confidence: 1.0, rule: 'none', reason: null, rules_version: RULES_VERSION, ...extra };
   if (advisory) res.advisory = { ...advisory };
   return res;
 }
@@ -96,7 +96,7 @@ function allow(advisory, extra) {
  * Decide whether an agent tool call is safe to run. Every string in `args`
  * (nested values and keys) is evaluated; the first block wins. Arguments nested
  * too deeply to check are blocked (rule size:nesting).
- * Returns { allowed, verdict, confidence, rule, reason, advisory? }.
+ * Returns { allowed, verdict, confidence, rule, reason, rules_version, advisory? }.
  */
 function checkToolCall(toolName, args, opts = {}) {
   let advisory = null;
@@ -132,7 +132,7 @@ function scanToolResult(result, opts = {}) {
   if (truncated && (opts.blockTruncated === true || process.env.ZN_BLOCK_TRUNCATED === '1')) {
     return {
       allowed: false, verdict: 'block', confidence: 1.0, rule: 'size:truncated',
-      reason: 'Output too large to scan in full', truncated: true,
+      reason: 'Output too large to scan in full', rules_version: RULES_VERSION, truncated: true,
     };
   }
   return allow(advisory, { truncated });
