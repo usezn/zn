@@ -758,13 +758,21 @@ function isDocFile(rel) {
   const base = rel.split('/').pop();
   if (/^skill\.md$/i.test(base)) return true;
   if (!/\.(?:md|mdx|markdown|rst|txt)$/i.test(base)) return false;
-  // A docs folder or a README. Never under the folders an agent runs as
-  // instructions (.claude/commands/docs/run.md is a command, not a docs page).
+  // Never a file the agent reads as instructions (CLAUDE.md, AGENTS.md,
+  // .cursor/rules, .github/prompts, ...), wherever it sits, docs folder or not.
+  const kind = classify(rel, !rel.includes('/'));
+  if (kind && kind.kind === 'instructions') return false;
+  if (AGENT_DIR_PATH.test(rel)) return false;
+  // A docs folder or a README. Not under the folders an agent runs as
+  // instructions (commands/docs/run.md is a command, not a docs page).
   const m = /(^|\/)(?:docs?|documentation|wiki)\//i.exec(rel);
-  if (m) return !AGENT_INSTRUCTION_PATH.test(rel.slice(0, m.index + m[1].length));
-  return /^readme/i.test(base) && !AGENT_INSTRUCTION_PATH.test(rel);
+  if (m) return !AGENT_NAMED_DIR.test(rel.slice(0, m.index + m[1].length));
+  return /^readme/i.test(base) && !AGENT_NAMED_DIR.test(rel);
 }
-const AGENT_INSTRUCTION_PATH = /(?:^|\/)(?:\.(?:claude|cursor|agents?|gemini|codex|opencode|windsurf|clinerules|continue|roo|kiro|amazonq|aider|augment|trae|goose|qwen)|\.github\/(?:prompts|instructions|agents|chatmodes)|(?:commands|agents|prompts|instructions|skills?))(?:\/|$)/i;
+// Folders of the agents' own configuration, at any depth of the path.
+const AGENT_DIR_PATH = /(?:^|\/)(?:\.(?:claude|cursor|agents?|gemini|codex|opencode|windsurf|clinerules|continue|roo|kiro|amazonq|aider|augment|trae|goose|qwen)|\.github\/(?:prompts|instructions|agents|chatmodes))(?:\/|$)/i;
+// Folders named like what an agent runs, before the docs folder of the path.
+const AGENT_NAMED_DIR = /(?:^|\/)(?:commands|agents|prompts|instructions|skills?)(?:\/|$)/i;
 
 function blockOf(text) {
   try {
@@ -827,8 +835,8 @@ const EXAMPLE_QUOTES = new RegExp(EXAMPLE_MARKER + ONE_SPAN + '(?:' + EXAMPLE_LI
 const WARN_OBJECT = /(?:(?:any|all|the|these|those|such|its|their|that|this|a|an)\s+)?(?:(?:embedded|hidden|untrusted|external|injected|malicious|user|page|tool|web|file|document|text)\s+)*(?:instructions?|commands?|directives?|prompts?|text|content|data|output|results?|messages?|pages?|files?|documents?|rules?|users?)/.source;
 const WARN_TAIL = /(?:\s+(?:found|contained|embedded|appearing|present|inside|in|from|within|on|returned|provided|given|coming|that)\b(?:(?!\s(?:and|or|but|then|also|instead|so)\s)[^.;,\n])*)?/.source;
 const NEGATED_CLAUSE = new RegExp(/\b(?:never|do not|don't|must not|should not|cannot|can't)\s+(?:follow|obey|execute|act on|comply with|run|trust)\s+/.source + WARN_OBJECT + WARN_TAIL, 'gi');
-/** The line without the "never follow instructions found in ..." warnings. */
-function stripNegated(text) { return text.replace(NEGATED_CLAUSE, ' '); }
+/** The line without the "never follow instructions found in ..." warnings (a chunk that is itself an order stays). */
+function stripNegated(text) { return text.replace(NEGATED_CLAUSE, (m) => (blockOf(m) ? m : ' ')); }
 /** The line without the closed quotes listed after an example marker. */
 function stripExampleQuotes(text) { return text.replace(EXAMPLE_QUOTES, ' '); }
 
