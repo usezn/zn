@@ -498,7 +498,7 @@ def _b64_decode_lenient(data: str) -> bytes:
     return base64.b64decode(body + '=' * (-len(body) % 4))
 
 
-def _check_base64_pipes(candidates, strict: bool) -> Tuple[Optional[Assessment], Optional[Dict[str, Any]]]:
+def _check_base64_pipes(candidates: Tuple[str, ...], strict: bool) -> Tuple[Optional[Assessment], Optional[Dict[str, Any]]]:
     """Base64 payload smuggling: every `echo|printf ... | base64 -d` in `candidates` is
     decoded and evaluated, not only the first, within hard caps that fail closed.
     Returns (a block Assessment or None, advisory)."""
