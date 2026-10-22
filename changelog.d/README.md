@@ -2,6 +2,7 @@
 
 Each pull request that changes what users get adds one file here instead of editing `CHANGELOG.md`, so pull requests merged one after another never conflict on the same lines. The release collects every fragment into its section of `CHANGELOG.md` and deletes them.
 
+<!-- markdownlint-disable-next-line MD038 -->
 Name the file after your branch, for example `changelog.d/fix-init-guard.md`. It holds only `### <Section>` headings and `- ` bullets, in the same words the changelog uses:
 
 ```markdown

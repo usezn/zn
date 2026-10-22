@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import binascii
 from array import array
+import json
 import math
 import os
 import re
@@ -18,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, overload
 
 
-RULES_VERSION = "2026-10-21.1"
+RULES_VERSION = "2026-10-22.7"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -59,7 +60,7 @@ INVISIBLE_ASTRAL_RE = re.compile(r'[\U000E0000-\U000E007F\U000E0100-\U000E01EF]'
 # Line breaks are joined only in texts up to this size (see MAX_WRAP_VIEW_CHARS in rules.js).
 MAX_WRAP_VIEW_CHARS = 1 << 20
 # A line break inside a wrapped token (see WRAP_BREAK_RE in rules.js).
-WRAP_BREAK_RE = re.compile(r'(?<=[A-Za-z0-9_\-+/=]{10})[ \t]*\r?\n[ \t]*(?=[A-Za-z0-9_\-+/=]{10})(?![A-Za-z_][A-Za-z0-9_]*[ \t]*[=:])')
+WRAP_BREAK_RE = re.compile(r'(?<=[A-Za-z0-9_\-+/=]{10})[ \t]*\r?\n[ \t]*(?=[A-Za-z0-9_\-+/=]{10})(?![A-Za-z_][A-Za-z0-9_]*[ \t]*[=:](?!=[ \t]*(?:\r?\n|$)))')
 NON_ASCII_RE = re.compile(r'[^\x00-\x7f]')
 ANSI_ESCAPE_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07\x1b]*\x07')
 B64_EXEC_RE = re.compile(r'(?:echo|printf)\s+([A-Za-z0-9+/=]{16,})\s*\|\s*(?:base64\s+-(?:d|-decode)|openssl)', re.IGNORECASE)
@@ -482,6 +483,19 @@ def _strict(strict: Optional[bool]) -> bool:
     return bool(strict) or os.environ.get('ZN_STRICT') == '1'
 
 
+def _b64_decode_lenient(data: str) -> bytes:
+    """Decode Base64 the way Node.js Buffer.from(data, 'base64') and `base64 -d` do.
+
+    Missing '=' padding is accepted, decoding stops at the first '=', and a
+    single dangling character at the end (too short for a byte) is dropped,
+    so unpadded Base64 cannot slip past the smuggling check.
+    """
+    body = data.split('=', 1)[0]
+    if len(body) % 4 == 1:
+        body = body[:-1]
+    return base64.b64decode(body + '=' * (-len(body) % 4))
+
+
 def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
     if not isinstance(input_text, str) or not input_text.strip():
         return Assessment(verdict='allow', confidence=1.0, rule='none', reason=None)
@@ -505,7 +519,7 @@ def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
         b64_match = B64_EXEC_RE.search(text_candidate)
         if b64_match:
             try:
-                decoded = base64.b64decode(b64_match.group(1)).decode('utf-8', errors='ignore')
+                decoded = _b64_decode_lenient(b64_match.group(1)).decode('utf-8', errors='ignore')
                 inner_res = evaluate(decoded, strict=strict)
                 if inner_res.advisory:
                     b64_advisory = dict(inner_res.advisory)
@@ -583,7 +597,7 @@ def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
 # -------------------------------------------------------------------------
 SECRET_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
     # A body may not contain another BEGIN header: linear on repeated headers without END.
-    ("secret:private_key", re.compile(r"""-----BEGIN [A-Z ]*PRIVATE KEY-----(?:(?!-----BEGIN )[\s\S])*?-----END [A-Z ]*PRIVATE KEY-----"""), "[REDACTED_PRIVATE_KEY]"),
+    ("secret:private_key", re.compile(r"""-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----(?:(?!-----BEGIN )[\s\S])*?-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----"""), "[REDACTED_PRIVATE_KEY]"),
     ("secret:anthropic_key", re.compile(r'(?<![A-Za-z0-9_])(sk-ant-[A-Za-z0-9_-]{30,})(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))'), "[REDACTED_ANTHROPIC_KEY]"),
     # A key without a known prefix ends at the first character that is not a letter or digit.
     ("secret:openai_key", re.compile(r"""(?<![A-Za-z0-9_])(sk-(?:(?:proj|svcacct|admin|[Nn]one|or-v1|lf)-[A-Za-z0-9_-]{28,}(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))|helicone-(?:(?:eu|cp|gov|rl)-){0,4}[a-z0-9]{7}(?:-[a-z0-9]{7}){3}(?![a-z0-9])|(?=(?:eu|cp|gov|rl)-|[a-z0-9]{7}-)(?=[a-z-]{0,46}[0-9])(?:(?:eu|cp|gov|rl)-){0,4}[a-z0-9]{7}(?:-[a-z0-9]{7}){3}(?![a-z0-9])(?!-[a-z0-9])|sp-[A-Za-z0-9]{28,}(?![A-Za-z0-9])|[A-Za-z0-9]{28,}(?![A-Za-z0-9])|(?:(?!sk-)[A-Za-z0-9_-]){1,200}?T3BlbkFJ[A-Za-z0-9_-]{20,}(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))))"""), "[REDACTED_OPENAI_KEY]"),
@@ -1377,8 +1391,41 @@ SCAN_WINDOW_OVERLAP = 4 * 1024
 MAX_TOOL_RESULT_SCAN_CHARS = 4 * 1024 * 1024
 
 
+# Tool output that is mostly invisible characters is blocked, not scanned: see
+# tooInvisible in rules.js. Counted in code points over every string of a result.
+MIN_INVISIBLE_CHECK_CHARS = 64 * 1024
+MAX_INVISIBLE_CHARS = 200000
+INVISIBLE_BLOCK_REASON = 'Output is mostly invisible characters'
+_SUBDIVISION_FLAG_RE = re.compile('\U0001F3F4[\U000E0030-\U000E0039\U000E0061-\U000E007A]{2,7}\U000E007F')
+
+
+def too_invisible(strings: Any) -> bool:
+    count = 0
+    length = 0
+    step = 1 << 20
+    for text in strings:
+        if not isinstance(text, str):
+            continue
+        length += len(text)
+        for i in range(0, len(text), step):
+            chunk = text[i:i + step]
+            flags = len(_SUBDIVISION_FLAG_RE.findall(chunk))
+            if flags:
+                chunk = _SUBDIVISION_FLAG_RE.sub('\U0001F3F4', chunk)
+            count += flags + len(chunk) - len(INVISIBLE_ASTRAL_RE.sub('', ZERO_WIDTH_RE.sub('', chunk)))
+            if count > MAX_INVISIBLE_CHARS:
+                return True
+    return length >= MIN_INVISIBLE_CHECK_CHARS and count * 2 > length
+
+
+def invisible_block() -> Assessment:
+    return Assessment(verdict='block', confidence=1.0, rule='size:invisible', reason=INVISIBLE_BLOCK_REASON)
+
+
 def scan_windows(text: str, strict: Optional[bool] = None) -> Assessment:
     strict = _strict(strict)
+    if too_invisible([text]):
+        return invisible_block()
     if not isinstance(text, str) or len(text) <= MAX_SCAN_CHARS:
         return evaluate(text, strict=strict)
     step = MAX_SCAN_CHARS - SCAN_WINDOW_OVERLAP
@@ -1446,14 +1493,36 @@ def sanitize_tool_result(
       1) sanitize_tool_result(data) -> returns (clean_data, detections)
       2) sanitize_tool_result(tool_name, content, mask_secrets=True) -> returns dict with
          {tool_name, safe_to_ingest, truncated, assessment, secrets_redacted, sanitized_content}
+    In form 2, content that is not a string (a dict, list or object) is checked
+    string by string, as check_tool_result does, and as JSON text;
+    sanitized_content is that JSON text (as in Node.js), with secrets masked.
     Tool output longer than MAX_TOOL_RESULT_SCAN_CHARS is not fully analysed:
     `truncated` is then True, and the output is blocked when block_truncated is
     set or the ZN_BLOCK_TRUNCATED environment variable is "1".
     """
     if content is not None:
         tool_name = str(tool_or_result)
-        text_content = content if isinstance(content, str) else str(content)
-        assessment = scan_windows(text_content, strict=strict)
+        if isinstance(content, str):
+            text_content = content
+            assessment = scan_windows(text_content, strict=strict)
+        else:
+            # Structured output: check every real string value (keys and object
+            # attributes included) as check_tool_result does, then the JSON text
+            # as Node.js does. str() would escape BiDi and zero-width characters.
+            from .guard import check_tool_result
+            try:
+                text_content = json.dumps(content, ensure_ascii=False, default=str)
+            except (TypeError, ValueError, RecursionError):
+                text_content = str(content)
+            # The JSON text holds every string of the output: count the invisible
+            # characters before the string-by-string check pays for them.
+            assessment = invisible_block() if too_invisible([text_content]) else check_tool_result(content, strict=strict)
+            if assessment.allowed:
+                text_assessment = scan_windows(text_content, strict=strict)
+                if not text_assessment.allowed:
+                    assessment = text_assessment
+                else:
+                    assessment.truncated = assessment.truncated or text_assessment.truncated
         truncated = assessment.truncated
         if truncated and assessment.allowed and (block_truncated or os.environ.get('ZN_BLOCK_TRUNCATED') == '1'):
             assessment = Assessment(verdict='block', confidence=1.0, rule='size:truncated',
