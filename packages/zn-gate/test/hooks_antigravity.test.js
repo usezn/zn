@@ -324,6 +324,46 @@ test('a recursive shell search over a folder with a plain-text .env asks, like t
   assert.equal((await shell('grep -r API_KEY .env')).decision, 'deny'); // a named secret file stays a deny
 });
 
+test('a recursive shell search asks in every segment of the line, after a cd, behind wrappers, with quoted separators', async (t) => {
+  const dir = tempDir(t, 'zn-agy-shellgrep2-');
+  fs.mkdirSync(path.join(dir, 'config'));
+  fs.writeFileSync(path.join(dir, 'config', '.env'), 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n');
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'hello');
+  const ws = { workspacePaths: [dir] };
+  const shell = async (line) => (await run(pre('run_command', { CommandLine: line, Cwd: dir }, ws))).output;
+  const asks = [
+    'grep -rn AWS config',
+    'cd config && grep -rn AWS .',
+    'cd config; rg AWS',
+    '(cd config && grep -r AWS .)',
+    'true; grep -rn AWS config',
+    'echo hi && grep -rn AWS config',
+    'cat a.txt | grep -r AWS config',
+    'sudo grep -rn AWS config',
+    'sudo -u root grep -rn AWS config',
+    'env FOO=1 grep -r AWS config',
+    'command grep -r AWS config',
+    'nice -n 5 grep -r AWS config',
+    'timeout 5 grep -r AWS config',
+    'xargs grep -r AWS config',
+    'git grep AWS config',
+    'git -C config grep AWS',
+    'grep -rE "AWS|KEY" config',
+    "grep -rE 'a;b' config",
+    'grep -rn -e AWS config',
+    'grep -rn --include "*.js" AWS config',
+    'cd config && rg -g "*.js" AWS',
+  ];
+  for (const line of asks) assert.equal((await shell(line)).decision, 'force_ask', line);
+  for (const line of ['true; grep -rn AWS .', 'grep -rE "AWS|KEY" .', 'ls config', 'echo "grep -r AWS config"', 'cd config; ls', 'git grep AWS a.txt']) {
+    // the folder itself has no .env, and a search that never reads config/ stays allowed
+    const r = await shell(line);
+    assert.notEqual(r.decision, 'deny', line);
+  }
+  assert.equal((await shell('grep -rE "AWS|KEY" .')).decision, 'allow');
+  assert.equal((await shell('cd .. ; ls')).decision, 'allow');
+});
+
 test('install warns that a project hook needs zn on PATH, and that its backup must not be committed', (t) => {
   const dir = tempDir(t, 'zn-agy-warn-');
   const first = agy.install({ scope: 'project', projectDir: dir });
