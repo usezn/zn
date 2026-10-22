@@ -63,14 +63,15 @@ test('a prompts/get description is checked even when the result has no messages'
   } finally { s.stop(); }
 });
 
-test('shadow mode says when too many text fields stopped the check', async () => {
+test('shadow mode: a message with many text fields is checked in full, with no unchecked note', async () => {
   const many = Array.from({ length: 600 }, (_, i) => ({ uri: 'file:///example/' + i, text: 'plain text ' + i }));
   const s = start({ 'resources/read': { contents: many } }, { shadow: true });
   try {
     s.send({ jsonrpc: '2.0', id: 2, method: 'resources/read', params: { uri: 'file:///example/0' } });
     const r = await reply(s, 2);
     assert.strictEqual(r.result.contents.length, 600);
-    await s.until(() => /not checked: too many fields \/ too deep/.test(s.stderr));
+    assert.strictEqual(r.result.contents[599].text, 'plain text 599');
+    assert.ok(!/not checked/.test(s.stderr), s.stderr);
   } finally { s.stop(); }
 });
 
@@ -80,18 +81,21 @@ test('shadow mode says when nesting too deep stopped the check', async () => {
   const s = start({ 'resources/read': { contents: [deep] } }, { shadow: true });
   try {
     s.send({ jsonrpc: '2.0', id: 3, method: 'resources/read', params: { uri: 'file:///example/0' } });
-    await reply(s, 3);
-    await s.until(() => /not checked: too many fields \/ too deep/.test(s.stderr));
+    const r = await reply(s, 3);
+    assert.ok(JSON.stringify(r).includes('plain text'), 'shadow mode passes the value on');
+    await s.until(() => /not checked: nested too deeply/.test(s.stderr));
   } finally { s.stop(); }
 });
 
-test('outside shadow mode the same limits replace the value and add no shadow note', async () => {
-  const many = Array.from({ length: 600 }, (_, i) => ({ uri: 'file:///example/' + i, text: 'plain text ' + i }));
-  const s = start({ 'resources/read': { contents: many } });
+test('outside shadow mode the depth limit replaces the value and adds no shadow note', async () => {
+  let deep = { text: 'plain text' };
+  for (let i = 0; i < 12; i++) deep = { child: deep };
+  const s = start({ 'resources/read': { contents: [deep] } });
   try {
     s.send({ jsonrpc: '2.0', id: 4, method: 'resources/read', params: { uri: 'file:///example/0' } });
     const r = await reply(s, 4);
-    assert.ok(/too many text fields/.test(JSON.stringify(r)));
-    assert.ok(!/not checked: too many fields/.test(s.stderr));
+    assert.ok(/nested too deeply to check/.test(JSON.stringify(r)), JSON.stringify(r));
+    assert.ok(!JSON.stringify(r).includes('plain text'));
+    assert.ok(!/not checked: nested/.test(s.stderr));
   } finally { s.stop(); }
 });

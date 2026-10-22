@@ -6,7 +6,7 @@
  * the network.
  */
 
-const { evaluate, scanWindows, sanitizeToolResult } = require('./rules');
+const { evaluate, scanWindows, sanitizeToolResult, tooInvisible, invisibleBlock } = require('./rules');
 
 const MAX_DEPTH = 10;
 const ON_BLOCK_VALUES = ['throw', 'return'];
@@ -122,6 +122,7 @@ function scanToolResult(result, opts = {}) {
   let advisory = null;
   const { strings, block } = stringsOrBlock(result, 'Result');
   if (block) return block;
+  if (tooInvisible(strings)) return { allowed: false, ...invisibleBlock() };
   for (const s of strings) {
     const res = scanWindows(s, opts);
     if (res.verdict === 'block') return { allowed: false, ...res };
