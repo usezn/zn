@@ -62,3 +62,19 @@ test('hooks.checkToolOutputInstructions: false turns the check off', async (t) =
   const res = await run(postTool('WebFetch', { url: 'https://example.com/' }, { result: FLAGGED }, dir), { home });
   assert.equal(res.output, null);
 });
+
+test('text placed after 64 KiB of padding is still flagged, and small or huge outputs stay cheap', async (t) => {
+  const dir = tempDir(t, 'zn-outinst-');
+  const home = tempDir(t, 'zn-outinst-home-');
+  const pad = 'a'.repeat(100 * 1024);
+  const tailed = await run(postTool('Bash', { command: 'cat page.html' }, { stdout: pad + ' ' + FLAGGED, stderr: '' }, dir), { home });
+  assert.match(JSON.stringify(tailed.output), /reads like instructions to you/, 'tail is checked');
+  const second = await run(postTool('mcp__docs__fetch', {}, { content: [{ type: 'text', text: pad }, { type: 'text', text: FLAGGED }] }, dir), { home });
+  assert.match(JSON.stringify(second.output), /reads like instructions to you/, 'a later block is checked');
+  const small = await run(postTool('Bash', { command: 'ls' }, { stdout: 'a'.repeat(30 * 1024), stderr: '' }, dir), { home });
+  assert.equal(small.output, null, 'clean output under 64 KiB is unchanged');
+  const huge = 'a'.repeat(3 * 1024 * 1024);
+  const start = Date.now();
+  await run(postTool('Bash', { command: 'cat big' }, { stdout: huge + ' ' + FLAGGED, stderr: '' }, dir), { home });
+  assert.ok(Date.now() - start < 5000, 'a very large output stays within the time bound');
+});
