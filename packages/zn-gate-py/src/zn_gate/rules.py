@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, overload
 
 
-RULES_VERSION = "2026-10-23.4"
+RULES_VERSION = "2026-10-23.8"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -548,11 +548,7 @@ def _evaluate_oversize(input_text: str, strict: bool) -> Assessment:
     if len(input_text) > MAX_TOOL_RESULT_SCAN_CHARS:
         return Assessment(verdict='block', confidence=1.0, rule='size:oversize',
                           reason='Input too large to scan in full', truncated=True)
-    # A Base64 pipe longer than the window overlap can straddle two windows and be cut in
-    # both: the pipes are found in the whole input first. The windows still check normalized text.
-    b64_block, _ = _check_base64_pipes((input_text,), strict)
-    if b64_block is not None:
-        return b64_block
+    # scan_windows() finds Base64 pipes in the whole input before the windowed scan.
     return scan_windows(input_text, strict=strict)
 
 
@@ -1469,6 +1465,13 @@ def scan_windows(text: str, strict: Optional[bool] = None) -> Assessment:
         return evaluate(text, strict=strict)
     step = MAX_SCAN_CHARS - SCAN_WINDOW_OVERLAP
     limit = min(len(text), MAX_TOOL_RESULT_SCAN_CHARS)
+    # A Base64 pipe longer than the window overlap can straddle two windows and be cut in both:
+    # the pipes are found in the scanned text (the windows and the tail) first. The windows still check normalized text.
+    scanned = text[:limit] + '\u0000' + text[-MAX_SCAN_CHARS:] if len(text) > limit else text
+    b64_block, _ = _check_base64_pipes((scanned,), strict)
+    if b64_block is not None:
+        b64_block.truncated = len(text) > limit
+        return b64_block
     start = 0
     advisory = None
     while True:

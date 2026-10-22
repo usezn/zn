@@ -8,7 +8,7 @@ const path = require('path');
  * RULES_VERSION: 2026-10-23.4
  */
 
-const RULES_VERSION = '2026-10-23.4';
+const RULES_VERSION = '2026-10-23.8';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -582,10 +582,7 @@ function evaluateOversize(input, options) {
       engine: 'oss-local', rules_version: RULES_VERSION, truncated: true,
     };
   }
-  // A Base64 pipe longer than the window overlap can straddle two windows and be cut in both:
-  // the pipes are found in the whole input first. The windows still check normalized text.
-  const b64 = checkBase64Pipes([input], options);
-  if (b64.block) return b64.block;
+  // scanWindows() finds Base64 pipes in the whole input before the windowed scan.
   return scanWindows(input, { ...options, maxScanChars: MAX_TOOL_RESULT_SCAN_CHARS });
 }
 
@@ -1256,6 +1253,11 @@ function scanWindows(text, options = {}) {
   const step = MAX_SCAN_CHARS - SCAN_WINDOW_OVERLAP;
   const cap = Number.isFinite(options.maxScanChars) && options.maxScanChars > 0 ? options.maxScanChars : MAX_TOOL_RESULT_SCAN_CHARS;
   const limit = Math.min(text.length, cap);
+  // A Base64 pipe longer than the window overlap can straddle two windows and be cut in both:
+  // the pipes are found in the scanned text (the windows and the tail) first. The windows still check normalized text.
+  const scanned = text.length > limit ? text.slice(0, limit) + '\u0000' + text.slice(-MAX_SCAN_CHARS) : text;
+  const b64 = checkBase64Pipes([scanned], options);
+  if (b64.block) return text.length > limit ? { ...b64.block, truncated: true } : b64.block;
   let res = null;
   let advisory = null;
   for (let start = 0; ; start += step) {
