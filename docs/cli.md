@@ -12,7 +12,7 @@ The package installs three names. They are the same program, so every command be
 
 Without installing, use `npx -y zn-gate <command>`. This page writes `zn-gate` in examples.
 
-`zn-gate --help` (or `-h`) prints the short help. `zn-gate version`, `zn-gate -V` and `zn-gate --version` print the version.
+`zn-gate --help` (or `-h`) prints the short help. `zn-gate version`, `zn-gate -V` and `zn-gate --version` print the version. The flags count only before a command: `zn-gate scan . -V` hands `-V` to `scan`, which rejects it as an unknown option (the npm and Python packages behave the same).
 
 ## Exit codes
 
@@ -116,7 +116,7 @@ Runs the local self-test on built-in examples (attacks and ordinary developer te
 zn-gate version
 ```
 
-Prints the version and the versions of the rules. Exit code `0`. `-V` and `--version` do the same.
+Prints the version and the versions of the rules. Exit code `0`. `-V` and `--version` do the same when they come before a command.
 
 ### `connect`
 

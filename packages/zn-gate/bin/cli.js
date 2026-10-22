@@ -912,9 +912,17 @@ async function main() {
     process.exit(0);
   }
 
-  if (args.includes('-V') || args.includes('--version') || args[0] === 'version' || args[0] === '-v') {
+  // A version request only counts before the command, as in the Python package: `zn-gate scan . -V` is a scan.
+  if (args[0] === '-V' || args[0] === '--version' || args[0] === 'version' || args[0] === '-v') {
     process.stdout.write(`zn-gate ${VERSION} (rules engine: ${RULES_VERSION}; scrub rules: ${SCRUB_RULES_VERSION}; audit rules: ${AUDIT_RULES_VERSION})\n`);
     process.exit(0);
+  }
+
+  // After a command the flag is not a version request: reject it like any other option this command does not know.
+  const stray = args.slice(1).find((x) => x === '-V' || x === '--version');
+  if (stray) {
+    process.stderr.write('zn-gate: unknown option ' + stray + "\nRun 'zn-gate --help' for usage.\n");
+    process.exit(2);
   }
 
   // Parse options

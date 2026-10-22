@@ -4,7 +4,7 @@ You use an AI coding agent (Claude Code, Codex CLI, Cursor or OpenCode) and you 
 
 ## Before you start
 
-Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.19 or later. For security, use the latest patch of a supported Node.js line (22.23.4, 24.22.1, 26.12.1 or later): Node.js 18 and 20 are end-of-life and get no security fixes, even though zn-gate still runs on them. If `node --version` says "command not found", install the LTS version from [nodejs.org](https://nodejs.org/) and open a new terminal. Run every command below in your own terminal, not through your agent.
+Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.19 or later. For security, use the latest patch of a supported Node.js line (22.23.4, 24.22.1, 26.12.1 or later): Node.js 18 and 20, and the odd-numbered lines such as 23 and 25, are end-of-life and get no security fixes, even though zn-gate still runs on them. If `node --version` says "command not found", install the LTS version from [nodejs.org](https://nodejs.org/) and open a new terminal. Run every command below in your own terminal, not through your agent.
 
 ## 1. Install
 

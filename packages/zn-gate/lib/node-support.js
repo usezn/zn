@@ -6,8 +6,11 @@
 
 // The first patched release of each supported even-numbered line (Node.js security releases of 21 Oct 2026).
 const PATCHED_MINIMUM = { 22: '22.23.4', 24: '24.22.1', 26: '26.12.1' };
-// Even-numbered lines below this one are end-of-life (18 and 20 today). Odd-numbered lines are never judged.
+// Even-numbered lines below this one are end-of-life (18 and 20 today). An odd-numbered line (19, 21, 23, 25) is a
+// short-lived release line that never gets a long-term security fix, so it counts as end-of-life too once it is
+// below the newest line listed in PATCHED_MINIMUM; a line newer than that is not judged.
 const EOL_BELOW = 22;
+const NEWEST_LISTED = Math.max(...Object.keys(PATCHED_MINIMUM).map(Number));
 const ADVISORY_URL = 'https://nodejs.org/en/blog/vulnerability/october-2026-security-releases';
 
 // Nightly and canary builds are named after the next version and built from its branch: they get no advice.
@@ -27,7 +30,7 @@ function atLeast(have, want) {
   return have[3] <= want[3];
 }
 
-/* nodeAdvice('20.19.0') -> null when there is nothing to say (patched, odd-numbered line, newer line, or a
+/* nodeAdvice('20.19.0') -> null when there is nothing to say (patched, newer line, or a
    version it cannot read); otherwise {level: 'eol' | 'outdated', version, minimum, message}. Pure. */
 function nodeAdvice(version) {
   const v = parse(version);
@@ -35,7 +38,7 @@ function nodeAdvice(version) {
   const major = v[0];
   const shown = v.slice(0, 3).join('.') + (v[3] ? (/-[0-9A-Za-z.-]+/.exec(version) || [''])[0] : '');
   const patched = Object.values(PATCHED_MINIMUM).join(', ');
-  if (major % 2 === 0 && major < EOL_BELOW) {
+  if (major < EOL_BELOW || (major % 2 === 1 && major < NEWEST_LISTED)) {
     const minimum = PATCHED_MINIMUM[EOL_BELOW];
     return {
       level: 'eol', version: shown, minimum,
