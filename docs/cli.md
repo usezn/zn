@@ -407,7 +407,7 @@ Adds or removes the zn hooks of a coding agent. `<agent>` is `claude-code`, `cod
 
 #### `hooks install`
 
-Adds the hooks, and the `secrets` MCP server unless `--no-mcp` is given. A backup of the settings is written first.
+Adds the hooks, and the `secrets` MCP server unless `--no-mcp` is given. A backup of the settings is written first. With `--project`, the shared files run `zn` from the PATH rather than a path on your machine, so everyone who uses the project needs zn-gate installed globally; the install prints a note when `zn` is not on your PATH.
 
 #### `hooks uninstall`
 

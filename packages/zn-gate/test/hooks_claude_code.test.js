@@ -596,6 +596,22 @@ test('project install writes .claude/settings.json and .mcp.json', (t) => {
   assert.equal(mcp2.mcpServers.secrets, undefined);
 });
 
+test('project install warns when zn is not on the PATH, and only then', (t) => {
+  const base = { scope: 'project', nodePath: 'node', cliPath: '/opt/zn-gate/bin/cli.js', runnerPath: '/opt/zn/lib/hooks/runner.js' };
+  const missing = adapter.install({ ...base, projectDir: tempDir(t, 'zn-ccp-'), znBin: null });
+  const note = missing.warnings.find((w) => w.includes('`zn` is not on your PATH'));
+  assert.ok(note, 'a project install without zn on the PATH says so');
+  assert.match(note, /npm i -g zn-gate/);
+  assert.match(note, /MCP server/);
+  const noMcp = adapter.install({ ...base, projectDir: tempDir(t, 'zn-ccp-'), znBin: null, mcp: false });
+  assert.ok(!noMcp.warnings.find((w) => w.includes('`zn` is not on your PATH')).includes('MCP server'));
+  const found = adapter.install({ ...base, projectDir: tempDir(t, 'zn-ccp-'), znBin: '/usr/local/bin/zn' });
+  assert.ok(!found.warnings.some((w) => w.includes('`zn` is not on your PATH')));
+  // An empty PATH is looked up for real: zn cannot be found there.
+  const emptyPath = adapter.install({ ...base, projectDir: tempDir(t, 'zn-ccp-'), env: { PATH: '' } });
+  assert.ok(emptyPath.warnings.some((w) => w.includes('`zn` is not on your PATH')));
+});
+
 test('CLAUDE_CONFIG_DIR is honoured for user scope', (t) => {
   const cfg = tempDir(t, 'zn-cfg-');
   assert.equal(adapter.settingsFile({ scope: 'user', env: { CLAUDE_CONFIG_DIR: cfg } }), path.join(cfg, 'settings.json'));
