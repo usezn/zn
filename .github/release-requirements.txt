@@ -2,9 +2,9 @@
 # .github/workflows/build-release.yml with pip --require-hashes and
 # python -m build --no-isolation).
 #
-# Not managed by Dependabot (.github/dependabot.yml has no entry for this
-# directory): its pip updater cannot rewrite uv's universal, hash-pinned
-# output. When a security alert names this file, regenerate it with the
+# Dependabot opens security updates only for this directory (version updates are
+# off in .github/dependabot.yml): its pip updater cannot reliably rewrite uv's
+# universal, hash-pinned output. When a security alert names this file, regenerate it with the
 # command below, check every affected package is at or above the patched
 # version, and let CI install it with --require-hashes.
 #
