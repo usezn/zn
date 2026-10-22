@@ -28,7 +28,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-10-23.2';
+const SCRUB_RULES_VERSION = '2026-10-23.3';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -703,7 +703,7 @@ function findEmails(text, check, out) {
  * key is never matched. Code (keyword arguments, JSON schemas, package
  * manifests, ALL-CAPS environment variables) is not in scope on purpose. */
 const KEYED_PLACEHOLDER = /^(?:\{.*\}|\$.*|<.*>|\[.*\]|%[sd]|__ZN_.*|null|undefined|none|nil|true|false|n\/a|na|anonymous|unknown|-+|\*+|x+)$/i;
-const NOT_A_PERSON = new Set(['root', 'admin', 'administrator', 'system', 'guest', 'default', 'test', 'tester', 'user', 'username', 'name', 'bot', 'ci', 'runner', 'ubuntu', 'ec2-user', 'nobody', 'www-data', 'service', 'me', 'self', 'github-actions', 'dependabot', 'example']);
+const NOT_A_PERSON = new Set(['root', 'admin', 'administrator', 'system', 'guest', 'default', 'test', 'tester', 'user', 'username', 'name', 'bot', 'ci', 'runner', 'ubuntu', 'ec2-user', 'nobody', 'www-data', 'service', 'me', 'self', 'github-actions', 'dependabot', 'example', 'git', 'postgres', 'mysql', 'nginx', 'deploy']);
 const NAME_PARTICLES = new Set(['de', 'del', 'la', 'van', 'von', 'da', 'di', 'bin', 'al', 'el', 'y']);
 
 function decodeFormValue(v) {

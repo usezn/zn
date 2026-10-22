@@ -364,7 +364,7 @@ test('key-based PII false-positive guards', () => {
   for (const t of [
     'X-User-Name:', 'X-User-Name: ', 'X-User: ubuntu', 'X-User: ${USER}', 'X-User-Name: <name>', 'X-Username: null',
     '?name=build', '?name=my-package', '?name=Alice', '&user=123456', '&user=root', 'username=',
-    'USER=alice_ex', 'USERNAME=alice_ex', 'run(user=alice_ex)', '    user=alice_ex,', 'name=build\n', 'name = Alice Example',
+    'user=git', 'user=postgres', 'username=mysql', '&user=nginx', '&user=deploy', 'USER=alice_ex', 'USERNAME=alice_ex', 'run(user=alice_ex)', '    user=alice_ex,', 'name=build\n', 'name = Alice Example',
     '?address=0x00000000219ab540356cbb839cbe05303d7705fa', '?address=192.0.2.1', 'X-Address: https://example.com/a b',
     '--user=alice_ex', 'X-Full-Name: {{name}}',
   ]) {
