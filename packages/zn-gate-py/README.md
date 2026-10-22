@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://usezn.com"><img src="https://raw.githubusercontent.com/usezn/zn/main/assets/brand/zn-logo-lime-on-forest.png" alt="zn" width="200"></a>
+  <a href="https://usezn.com/?utm_source=github&utm_medium=readme&utm_campaign=zn-gate"><img src="https://raw.githubusercontent.com/usezn/zn/main/assets/brand/zn-logo-lime-on-forest.png" alt="zn" width="200"></a>
 </p>
 
 # zn-gate (Python)
@@ -295,7 +295,7 @@ We only publish numbers we can reproduce, with the method next to them.
 ## Configuration
 
 - `ZN_CLOUD`: `1` lets `analyze()` also query the cloud classifier. Requires `ZN_API_KEY`. Off by default.
-- `ZN_API_KEY`: API key from [usezn.com/dashboard](https://usezn.com/dashboard/). No effect without `ZN_CLOUD=1`.
+- `ZN_API_KEY`: API key from [usezn.com/dashboard](https://usezn.com/dashboard/?utm_source=github&utm_medium=readme&utm_campaign=zn-gate). No effect without `ZN_CLOUD=1`.
 - `ZN_LOCAL_ONLY`: `true` forces local-only.
 - `ZN_STRICT`: `1` also blocks the rules that only warn by default (same as `evaluate(text, strict=True)`; also `check_tool_call`, `check_tool_result` and `sanitize_tool_result` take `strict=True`).
 - `ZN_STAGE` / `ZN_API_URL`: cloud endpoint selection.
@@ -329,4 +329,4 @@ Report vulnerabilities to [security@usezn.com](mailto:security@usezn.com). Polic
 
 ## License
 
-MIT © [usezn](https://usezn.com)
+MIT © [usezn](https://usezn.com/?utm_source=github&utm_medium=readme&utm_campaign=zn-gate)

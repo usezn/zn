@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://usezn.com"><img src="https://raw.githubusercontent.com/usezn/zn/main/assets/brand/zn-logo-lime-on-forest.png" alt="zn" width="200"></a>
+  <a href="https://usezn.com/?utm_source=github&utm_medium=readme&utm_campaign=zn-gate"><img src="https://raw.githubusercontent.com/usezn/zn/main/assets/brand/zn-logo-lime-on-forest.png" alt="zn" width="200"></a>
 </p>
 
 # zn-gate
@@ -88,7 +88,7 @@ zn hooks install codex           # or: cursor, opencode
 
 In Codex, approve the new hooks with `/hooks`. In Cursor, shell output and file contents are not scrubbed. What each agent supports: [docs/compat.md](https://github.com/usezn/zn/blob/main/docs/compat.md).
 
-**Other editors** (VS Code, Windsurf, Cline, Zed, JetBrains, Continue): zn-gate works there as an MCP server only. Setup for each one: [usezn.com/docs/integrations/editors](https://usezn.com/docs/integrations/editors/).
+**Other editors** (VS Code, Windsurf, Cline, Zed, JetBrains, Continue): zn-gate works there as an MCP server only. Setup for each one: [usezn.com/docs/integrations/editors](https://usezn.com/docs/integrations/editors/?utm_source=github&utm_medium=readme&utm_campaign=zn-gate).
 
 **Antigravity (experimental).** `zn hooks install antigravity` (or `npx -y zn-gate init`) adds a hook that runs before each tool call. It blocks reads and writes of secret files and shell commands that handle secrets, and the agent cannot edit the hook files. It cannot remove secrets from what a tool returns, Antigravity's MCP configuration files are not protected, and Antigravity does not document what happens when a hook fails, so treat it as a first layer. The MCP server works there too. Details: [Antigravity page](https://github.com/usezn/zn/blob/main/docs/editors/antigravity.md).
 
@@ -203,7 +203,7 @@ Example: [protect the tools of a Vercel AI SDK agent](https://github.com/usezn/z
 
 **Scan: audit what your agent is about to trust**
 
-- Today: `npx -y zn-gate scan <path>` audits prompt templates, `AGENTS.md` / `SKILL.md` files and configs for injection traps and leaked secrets. It exits with code 1 on findings, for CI. A link given as the folder to scan is followed. When no file is scanned, the report says "No files were scanned in <path>" and the exit code stays 0. It also checks the MCP server configs (`.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `.codex/config.toml`, `claude_desktop_config.json` and others) for keys and passwords written in plain text in `env`, `headers`, arguments or URLs; it never prints the value, and `--include-home` checks your own MCP configs too. MCP servers can be checked on the web at [usezn.com/scan](https://usezn.com/scan).
+- Today: `npx -y zn-gate scan <path>` audits prompt templates, `AGENTS.md` / `SKILL.md` files and configs for injection traps and leaked secrets. It exits with code 1 on findings, for CI. A link given as the folder to scan is followed. When no file is scanned, the report says "No files were scanned in <path>" and the exit code stays 0. It also checks the MCP server configs (`.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `.codex/config.toml`, `claude_desktop_config.json` and others) for keys and passwords written in plain text in `env`, `headers`, arguments or URLs; it never prints the value, and `--include-home` checks your own MCP configs too. MCP servers can be checked on the web at [usezn.com/scan](https://usezn.com/scan?utm_source=github&utm_medium=readme&utm_campaign=zn-gate).
 - Roadmap: auditing MCP servers and skills from the CLI before you add them.
 
 ### MCP tools
@@ -258,7 +258,7 @@ The local engine is a deterministic signature and normalization layer. It is fas
 
 - **Self-test:** 51 curated vectors pass. That is a smoke test, not a detection or false-positive rate.
 - **Known limitation:** on whole source files, as seen by `check_tool_result`, the rules can flag ordinary code comments. 1.5.0 reduces these on code and documentation, at the cost of letting some loosely worded override attempts through the local rules. Prefer `check_tool_result` for web and third-party content rather than your own repository files.
-- **Detection rates:** on a private held-out set of 3,309 examples, Galvanize 2 has 83.4% recall at a 0.81% false positive rate (serving threshold 0.662); these numbers are for the cloud classifier only. They do not measure the local rules engine and are not protection that zn-gate gives you offline; the local engine has no detection rate, only the self-test above. Method, per-language results, known weak spots and a reproducible benchmark are in the [model card](https://huggingface.co/usezn/Galvanize-2) and the [announcement](https://usezn.com/blog/introducing-galvanize-2/). It is one layer of defense, not a guarantee.
+- **Detection rates:** on a private held-out set of 3,309 examples, Galvanize 2 has 83.4% recall at a 0.81% false positive rate (serving threshold 0.662); these numbers are for the cloud classifier only. They do not measure the local rules engine and are not protection that zn-gate gives you offline; the local engine has no detection rate, only the self-test above. Method, per-language results, known weak spots and a reproducible benchmark are in the [model card](https://huggingface.co/usezn/Galvanize-2) and the [announcement](https://usezn.com/blog/introducing-galvanize-2/?utm_source=github&utm_medium=readme&utm_campaign=zn-gate). It is one layer of defense, not a guarantee.
 
 ---
 
@@ -270,7 +270,7 @@ The local engine is a deterministic signature and normalization layer. It is fas
 ## Configuration
 
 - `ZN_CLOUD`: `1` lets `analyze_prompt` / `zn-gate analyze` also query the cloud classifier. Requires `ZN_API_KEY`. Off by default.
-- `ZN_API_KEY`: API key from [usezn.com/dashboard](https://usezn.com/dashboard/). No effect without `ZN_CLOUD=1`. (`zn-gate connect` keeps a key for you instead and turns the cloud check on.)
+- `ZN_API_KEY`: API key from [usezn.com/dashboard](https://usezn.com/dashboard/?utm_source=github&utm_medium=readme&utm_campaign=zn-gate). No effect without `ZN_CLOUD=1`. (`zn-gate connect` keeps a key for you instead and turns the cloud check on.)
 - `ZN_LOCAL_ONLY`: `true` forces local-only, even with `ZN_CLOUD=1`.
 - `ZN_STRICT`: `1` also blocks the rules that only warn by default (see below).
 - `ZN_LONG_INPUT`: how a long text (over 1,000 characters) is sent to the cloud classifier. `windows` (default) asks it to check overlapping 512-token windows, up to 20, so an injection in the middle or at the end of a long document is not missed; `off` checks only the first 512 tokens. Also `--long-input windows|off`. Windows are slower and slightly more likely to flag a long benign text, and cloud checks are billed by text size with or without windows, so `off` does not lower the count (1 call up to 2,000 characters, 1 more per further 1,000; `billed_calls` in the result); see the [changelog](https://github.com/usezn/zn/blob/main/CHANGELOG.md).
@@ -343,6 +343,6 @@ Report vulnerabilities to [security@usezn.com](mailto:security@usezn.com). Polic
 
 ## License
 
-MIT © [usezn](https://usezn.com)
+MIT © [usezn](https://usezn.com/?utm_source=github&utm_medium=readme&utm_campaign=zn-gate)
 
 The package bundles age-encryption (BSD-3-Clause) and its @noble / @scure dependencies (MIT); see [THIRD_PARTY_NOTICES.md](https://github.com/usezn/zn/blob/main/packages/zn-gate/THIRD_PARTY_NOTICES.md).
