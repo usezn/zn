@@ -1,0 +1,2 @@
+### Changed
+- The scrubber reads the generic `name=` key as a person's name only when the same block of lines holds another personal key (`email=`, `phone=`, `address=`, `first_name=` and similar), so `Name=Firefox Web Browser` in a `.desktop` file, `name=Release Notes` in an `.ini` file and `?name=New+York` in a URL are left alone. `first_name=`, `last_name=` and `surname=` are now detected on their own. `SCRUB_RULES_VERSION` is `2026-10-23.4`.

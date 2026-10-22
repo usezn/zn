@@ -28,7 +28,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-10-23.3';
+const SCRUB_RULES_VERSION = '2026-10-23.4';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -732,6 +732,20 @@ function validAddress(d) {
   return tokens.length >= 2 && /\d/.test(d) && /\p{L}{2}/u.test(d);
 }
 
+/* The generic key name= is also a file format key (Name=Firefox in a .desktop file, name=Release Notes in an
+ * .ini file, ?name=New+York in a search URL). It counts as a person's name only when the same block of lines
+ * (up to the next blank line) holds another personal key, as in a profile or sign-up form. */
+const PERSONAL_SIBLING = /(?<![A-Za-z0-9_.-])(?:e-?mail|phone|mobile|tel|address|street|city|zip|postcode|dob|birth_?date|ssn|full_?name|first_?name|last_?name|surname)=/i;
+function personalSibling(text, at) {
+  let a = at;
+  const lo = Math.max(0, at - 2000);
+  while (a > lo && !(text[a - 1] === '\n' && (text[a - 2] === '\n' || (text[a - 2] === '\r' && text[a - 3] === '\n')))) a--;
+  let b = at;
+  const hi = Math.min(text.length, at + 2000);
+  while (b < hi && !(text[b] === '\n' && (text[b + 1] === '\n' || (text[b + 1] === '\r' && text[b + 2] === '\n')))) b++;
+  return PERSONAL_SIBLING.test(text.slice(a, b));
+}
+
 function keyedFinder(spec) {
   const hdr = new RegExp('(?<![A-Za-z0-9_-])(' + spec.headers.join('|') + ')["\']?[ \\t]*:[ \\t]*(["\']?)', 'gi');
   const frm = new RegExp('(?<![A-Za-z0-9_.-])(' + spec.forms.join('|') + ')=', 'gi');
@@ -778,6 +792,7 @@ function keyedFinder(spec) {
       let end = i;
       while (end > start && /[\s,;]/.test(text[end - 1])) end--;
       const strong = !/^name$/i.test(key);
+      if (!strong && !personalSibling(text, kStart)) { frm.lastIndex = Math.max(frm.lastIndex, i); continue; }
       if (end > start && accept(text.slice(start, end), strong, true)) out.push({ start, end });
       frm.lastIndex = Math.max(frm.lastIndex, i);
     }
@@ -785,7 +800,7 @@ function keyedFinder(spec) {
 }
 
 const KEYED_PREFILTER = /X-[A-Za-z-]{4,16}\s*["']?\s*:|(?:name|user|login|address)=/i;
-const findPersonName = keyedFinder({ headers: ['X-User-?Name', 'X-Full-?Name'], forms: ['full_?name', 'name'], valid: validPersonName });
+const findPersonName = keyedFinder({ headers: ['X-User-?Name', 'X-Full-?Name'], forms: ['full_?name', 'first_?name', 'last_?name', 'surname', 'name'], valid: validPersonName });
 const findUsername = keyedFinder({ headers: ['X-Username', 'X-User', 'X-Forwarded-User', 'X-Remote-User'], forms: ['username', 'user', 'login'], valid: (d) => validUsername(d) });
 const findPostalAddress = keyedFinder({ headers: ['X-Address'], forms: ['address'], valid: (d) => validAddress(d) });
 

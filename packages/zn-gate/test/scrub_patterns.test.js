@@ -341,7 +341,7 @@ test('name, address and username are detected in query strings and form bodies',
   assert.deepStrictEqual(
     pii('GET /a?full_name=Alice+Example&user=alice_ex&address=1%20Example%20Street&x=1'),
     ['PERSON_NAME:Alice+Example', 'POSTAL_ADDRESS:1%20Example%20Street', 'USERNAME:alice_ex']);
-  assert.deepStrictEqual(pii('a=1&name=Alice%20Example&b=2'), ['PERSON_NAME:Alice%20Example']);
+  assert.deepStrictEqual(pii('a=1&name=Alice%20Example&phone=x&b=2'), ['PERSON_NAME:Alice%20Example']);
   assert.deepStrictEqual(pii('username=alice_ex&password_hint=x'), ['USERNAME:alice_ex']);
   assert.deepStrictEqual(pii('name=Alice Example\naddress=1 Example Street'), ['PERSON_NAME:Alice Example', 'POSTAL_ADDRESS:1 Example Street']);
 });
@@ -367,9 +367,21 @@ test('key-based PII false-positive guards', () => {
     'user=git', 'user=postgres', 'username=mysql', '&user=nginx', '&user=deploy', 'USER=alice_ex', 'USERNAME=alice_ex', 'run(user=alice_ex)', '    user=alice_ex,', 'name=build\n', 'name = Alice Example',
     '?address=0x00000000219ab540356cbb839cbe05303d7705fa', '?address=192.0.2.1', 'X-Address: https://example.com/a b',
     '--user=alice_ex', 'X-Full-Name: {{name}}',
+    // file formats and search URLs that use name= for something else
+    '[Desktop Entry]\nName=Firefox Web Browser\nComment=Browse the Web\nExec=firefox %u',
+    '[section]\nname=Release Notes\nversion=2',
+    'name=Release Notes\nauthor=Example Team',
+    'GET /search?name=New+York&page=2', 'https://example.com/city?name=New%20York', 'a=1&name=Alice%20Example&b=2',
+    'user=postgres\nname=Release Notes', 'user=git&name=Web Hooks', 'username=nginx\n\nname=Example Corp',
   ]) {
     assert.deepStrictEqual(pii(t), [], t);
   }
+  // name= is a person's name only next to another personal key in the same block
+  assert.deepStrictEqual(pii('?name=New+York&email=x'), ['PERSON_NAME:New+York']);
+  assert.deepStrictEqual(pii('[profile]\nName=Alice Example\nphone=x'), ['PERSON_NAME:Alice Example']);
+  assert.deepStrictEqual(pii('first_name=Alice&last_name=Doe'), ['PERSON_NAME:Alice', 'PERSON_NAME:Doe']);
+  assert.deepStrictEqual(pii('X-User-Name: Alice Example\n[a]\nName=Firefox Web Browser'), ['PERSON_NAME:Alice Example']);
+  assert.deepStrictEqual(pii('name=Alice Example\n\naddress=1 Example Street'), ['POSTAL_ADDRESS:1 Example Street']);
   // an e-mail value is left to the e-mail detector
   assert.deepStrictEqual(pii('?address=alice@example.com'), ['EMAIL:alice@example.com']);
   // a single given name is accepted only behind a name-specific key

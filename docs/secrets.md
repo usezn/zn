@@ -86,7 +86,7 @@ name in text is never touched. Only the value is replaced; the key stays.
 
 | Type | HTTP header keys | Query string and form keys |
 |---|---|---|
-| `PERSON_NAME` | `X-User-Name`, `X-Full-Name` | `full_name`, `fullname`, `name` |
+| `PERSON_NAME` | `X-User-Name`, `X-Full-Name` | `full_name`, `fullname`, `first_name`, `last_name`, `surname`, `name` (see below) |
 | `POSTAL_ADDRESS` | `X-Address` | `address` |
 | `USERNAME` | `X-Username`, `X-User`, `X-Forwarded-User`, `X-Remote-User` | `username`, `user`, `login` |
 
@@ -95,6 +95,7 @@ name in text is never touched. Only the value is replaced; the key stays.
   or form value runs to the next `&`; spaces must be encoded (`+` or `%20`)
   inside a query string. A `key=value` line is also read when the key starts in
   column 0.
+- The generic key `name=` is also how `.desktop`, `.ini` and `.properties` files and search URLs name things (`Name=Firefox Web Browser`, `?name=New+York`), so it counts as a person only when the same block of lines (up to the next blank line) holds another personal key such as `email=`, `phone=`, `address=`, `first_name=` or `last_name=`, as in a profile or sign-up form. The name-specific keys above do not need that.
 - Only headers, query strings and form bodies are in scope. Code (keyword
   arguments such as `f(user=x)`), JSON schemas, `package.json` and ALL-CAPS
   environment variables (`USER=...`) are not matched.

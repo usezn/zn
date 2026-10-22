@@ -51,7 +51,7 @@
     },
     "scrub": {
       "version_const": "SCRUB_RULES_VERSION",
-      "version": "2026-10-23.3",
+      "version": "2026-10-23.4",
       "ids": [
         "AGE_SECRET_KEY",
         "ALIBABA_KEY_ID",
@@ -147,7 +147,7 @@
         "exact.variants"
       ],
       "sha256": {
-        "lib/scrub/patterns.js": "a2df3a0450fa3ed58edcb72fa7abae454ba540ebd6809ada06501f553551f5a5",
+        "lib/scrub/patterns.js": "0506dcc576d30d8d9cbfacb47ac302415b6cb89bdd74d36fbc7c47215c1420b9",
         "lib/scrub/exact.js": "d104e85ec6a25e7d6d4b6c428bd0bf8b25d43c3ead313f6872f508b65793bf6b"
       }
     },
