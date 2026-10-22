@@ -74,6 +74,8 @@ Removes zn-gate from this computer in one step. It finds what is set up, prints 
 
 - the zn-gate plugin of Claude Code (with `claude plugin uninstall zn-gate@usezn`; without a `claude` command it prints the `/plugin` command to type);
 - zn's hooks of every agent, for your user and for the current project, and zn's own `secrets` MCP server (the same as `hooks uninstall`);
+- the OpenCode plugin that zn wrote, for your user and for the current project (any other plugin in the same folder stays);
+- zn's hook launcher scripts in `~/.zn/hooks` (only the files zn wrote), and that folder when it is empty;
 - MCP servers wrapped by `init --wrap-mcp`: the saved copy of each config is put back (changes made to that file since are lost). Afterwards it looks again and lists any server that is still wrapped (for example a config wrapped twice) with what to do by hand.
 
 The vault is not touched unless you answer yes to a second, separate question (default no); deleting it cannot be undone. `.env` files that hold zn markers are left alone, because the values are in the vault: run `zn env unshadow` first if you want them back in the file. It ends by running `check` and showing its result, and tells you how to remove the program itself (`npm uninstall -g zn-gate`).
@@ -429,7 +431,7 @@ Adds the hooks, and the `secrets` MCP server unless `--no-mcp` is given. A backu
 
 #### `hooks uninstall`
 
-Removes them again.
+Removes them again. For OpenCode it removes the plugin file that zn wrote and leaves other plugins alone. For the other agents it also removes that agent's launcher script in `~/.zn/hooks` (only a file zn wrote), and the folder when it is empty.
 
 ### `hook`
 

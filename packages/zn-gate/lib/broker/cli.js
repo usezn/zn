@@ -488,6 +488,11 @@ async function hooks(args, io) {
   if (report.backup) out(io, '  backup: ' + report.backup);
   if (report.mcp) out(io, '  MCP server "secrets": ' + report.mcp);
   for (const w of report.warnings || []) out(io, '  note: ' + w);
+  if (action === 'uninstall' && opts.scope === 'user') {
+    // The launcher script of that agent (written by hooks install) and the hooks folder, if empty.
+    const gone = require('../agents/launcher').removeLauncher(adapter.id, opts);
+    if (gone) out(io, '  launcher removed: ' + gone);
+  }
   if (action === 'install' && /_npx[\\/]/.test(__dirname)) {
     out(io, '  note: zn is running from the npx cache; install it (npm i -g zn-gate) so the hook path stays valid.');
   }

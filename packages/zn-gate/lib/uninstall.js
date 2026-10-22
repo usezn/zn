@@ -32,7 +32,7 @@ function projectHooks(spec, cwd, userFile) {
   if (path.resolve(file) === path.resolve(userFile)) return null;
   let text = '';
   try { if (fs.lstatSync(file).isFile()) text = fs.readFileSync(file, 'utf8'); } catch (_) { return null; }
-  if (spec.id === 'opencode') return /\/zn-gate\/lib\/hooks\/runner\.js"|"hook", "opencode"/.test(text) ? file : null;
+  if (spec.id === 'opencode') return require('./agents/opencode').isOurs(file) ? file : null;
   let tree = null;
   try { tree = JSON.parse(text); } catch (_) { return null; }
   return chk.hookEntries(tree, spec.id).some((e) => chk.parseCommand(e.command, spec.id)) ? file : null;
@@ -90,12 +90,28 @@ async function plan(opts = {}) {
     const userFile = spec.file(getAdapter(r.id), { home, env });
     const a = { id: r.id, name: r.name, userHooks: null, projectHooks: null, plugin: null };
     if (r.via === 'hooks' || r.via === 'both') a.userHooks = userFile;
+    // The OpenCode plugin is removed only when it is zn's own (the file starts with zn's mark).
+    if (r.id === 'opencode' && a.userHooks && !getAdapter('opencode').isOurs(userFile)) a.userHooks = null;
     if (r.id === 'claude-code') {
       const p = zc._internal.claudePlugin(home, env);
       if (p.root) a.plugin = p.root;
     }
     a.projectHooks = projectHooks(spec, cwd, userFile);
     if (a.userHooks || a.projectHooks || a.plugin) agents.push(a);
+  }
+  // Launcher scripts that zn wrote for hooks: listed for every agent, also when its hooks are already gone.
+  const launcher = require('./agents/launcher');
+  const launchers = [];
+  for (const id of launcher.LAUNCHER_AGENTS) {
+    const file = launcher.launcherFile(id, { home, env });
+    if (!launcher.isOurLauncher(file)) continue;
+    // A launcher that some hooks file of the user still names stays unless those hooks are removed in this run.
+    const listed = agents.some((x) => x.id === id && x.userHooks);
+    const spec = zc.AGENTS.find((x) => x.id === id);
+    let named = false;
+    try { named = fs.readFileSync(spec.file(getAdapter(id), { home, env }), 'utf8').includes(path.basename(file)); } catch (_) { /* no file */ }
+    if (named && !listed) continue;
+    launchers.push({ id, file });
   }
   const vaultOpts = env.ZN_HOME ? { home: env.ZN_HOME } : (opts.home ? { home: path.join(home, '.zn') } : {});
   const store = require('./vault/store');
@@ -106,11 +122,12 @@ async function plan(opts = {}) {
     shadowed: shadowedFiles(cwd),
     vault: { exists: files.length > 0, home: store.paths(vaultOpts).home },
     vaultOpts,
+    launchers,
   };
 }
 
 function isEmpty(p) {
-  return !p.agents.length && !p.wrapped.length && !p.vault.exists && !p.shadowed.length;
+  return !p.agents.length && !p.wrapped.length && !p.launchers.length && !p.vault.exists && !p.shadowed.length;
 }
 
 function printPlan(p, io) {
@@ -121,12 +138,21 @@ function printPlan(p, io) {
     out(io, 'Nothing from zn-gate was found for your user or this folder.');
     return;
   }
-  if (p.agents.length || p.wrapped.length) out(io, 'Will be removed:');
+  if (p.agents.length || p.wrapped.length || p.launchers.length) out(io, 'Will be removed:');
   for (const a of p.agents) {
     out(io, '  ' + a.name);
     if (a.plugin) out(io, '    - the zn-gate plugin (' + a.plugin + ')');
+    if (a.id === 'opencode') {
+      if (a.userHooks) out(io, '    - zn\'s plugin for your user: ' + a.userHooks);
+      if (a.projectHooks) out(io, '    - zn\'s plugin for this project: ' + a.projectHooks);
+      continue;
+    }
     if (a.userHooks) out(io, '    - zn\'s hooks for your user (and its "secrets" MCP server, if listed): ' + a.userHooks);
     if (a.projectHooks) out(io, '    - zn\'s hooks for this project: ' + a.projectHooks);
+  }
+  if (p.launchers.length) {
+    out(io, '  zn\'s hook launcher scripts (and their folder, if it ends up empty)');
+    for (const l of p.launchers) out(io, '    - ' + l.file);
   }
   if (p.wrapped.length) {
     out(io, '  MCP servers wrapped by zn-gate init --wrap-mcp');
@@ -212,7 +238,7 @@ async function run(args, io) {
   if (!io.human) tty.requireHuman('zn-gate uninstall', io);
   let failed = 0;
   const ask = io.confirm || ((q) => tty.confirm(q, { stdin: io.stdin, stderr: io.stderr }));
-  if (p.agents.length || p.wrapped.length) {
+  if (p.agents.length || p.wrapped.length || p.launchers.length) {
     if (!(await ask('Remove what is listed above?'))) { out(io, 'Nothing was changed.'); return 1; }
     // Wrapped MCP first: putting a saved copy back must not undo the hook removal that follows.
     const withBackup = p.wrapped.filter((w) => w.backup);
@@ -224,6 +250,7 @@ async function run(args, io) {
       }
     }
     const { getAdapter } = require('./agents');
+    const failedHooks = new Set();
     for (const a of p.agents) {
       const adapter = getAdapter(a.id);
       for (const scope of ['user', 'project']) {
@@ -234,6 +261,7 @@ async function run(args, io) {
         } catch (err) {
           out(io, '  ' + a.name + ': could not remove the ' + scope + ' hooks: ' + (err && err.message ? err.message : err));
           failed++;
+          if (scope === 'user') failedHooks.add(a.id);
         }
       }
       if (a.plugin) {
@@ -242,6 +270,14 @@ async function run(args, io) {
         else if ((io.run || s.exec)(s, io.env)) out(io, '  ' + a.name + ': plugin removed');
         else { out(io, '  ' + a.name + ': the plugin was not removed. Run it yourself: ' + s.manual); failed++; }
       }
+    }
+    // Launcher scripts last, once the hooks that call them are gone. One whose hooks could not be removed stays.
+    const launcher = require('./agents/launcher');
+    for (const l of p.launchers) {
+      if (failedHooks.has(l.id)) continue;
+      launcher.removeLauncher(l.id, { home: io.home, env: io.env });
+      if (fs.existsSync(l.file)) { out(io, '  launcher script not removed: ' + l.file); failed++; }
+      else out(io, '  launcher script removed: ' + l.file);
     }
     // Look again: a config wrapped twice, or one with no saved copy, is still wrapped.
     const still = wrappedConfigs(io.envList);

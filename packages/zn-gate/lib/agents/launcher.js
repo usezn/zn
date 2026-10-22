@@ -156,6 +156,33 @@ function writeLauncher(agentId, nodePath, runnerPath, opts = {}) {
   return file;
 }
 
+/** The agents whose user hooks go through a launcher script (Copilot and OpenCode have none). */
+const LAUNCHER_AGENTS = ['claude-code', 'codex', 'cursor', 'gemini', 'antigravity'];
+const LAUNCHER_MARK = '#!/bin/sh\n# Written by `zn hooks install ';
+
+/** True when the file is a launcher script that zn wrote (a regular file with zn's header). */
+function isOurLauncher(file) {
+  try {
+    if (!fs.lstatSync(file).isFile()) return false;
+    return fs.readFileSync(file, 'utf8').startsWith(LAUNCHER_MARK);
+  } catch (_) { return false; }
+}
+
+/**
+ * Removes the launcher of one agent (only the file with that exact name, and only if zn wrote it), then the
+ * hooks folder if nothing else is in it. Returns the removed file path or null. Never touches other files.
+ */
+function removeLauncher(agentId, opts = {}) {
+  if (!LAUNCHER_AGENTS.includes(agentId)) return null;
+  const file = launcherFile(agentId, opts);
+  let removed = null;
+  if (isOurLauncher(file)) {
+    try { fs.unlinkSync(file); removed = file; } catch (_) { /* in use or not allowed: left */ }
+  }
+  try { fs.rmdirSync(path.dirname(file)); } catch (_) { /* not empty, or not there */ }
+  return removed;
+}
+
 /** The hook command for one event: the launcher, then the event name. */
 function launcherCommand(file, event, platform = process.platform) {
   return shQuote(portablePath(file, platform)) + ' ' + event;
@@ -210,4 +237,4 @@ function windowsScriptCommand(script) {
   return 'powershell.exe -NoProfile -NonInteractive -EncodedCommand ' + Buffer.from(script, 'utf16le').toString('base64');
 }
 
-module.exports = { blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, windowsScript, BLOCK_EXIT, BLOCK_JSON };
+module.exports = { LAUNCHER_AGENTS, isOurLauncher, removeLauncher, blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, windowsScript, BLOCK_EXIT, BLOCK_JSON };

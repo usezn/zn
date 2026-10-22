@@ -493,6 +493,8 @@ async function checkAgent(spec, ctx) {
     try { src = fs.readFileSync(userFile, 'utf8'); } catch (err) { src = ''; }
     installed = /\/zn-gate\/lib\/hooks\/runner\.js"|"hook", "opencode"/.test(src);
     res.where = userFile;
+    // The plugin is zn's own hook for OpenCode: `uninstall` reads this to find and remove it.
+    if (installed) res.via = 'hooks';
   } else if (!installed) {
     const h = cliHooks(spec, ctx, userFile);
     installed = h.installed;

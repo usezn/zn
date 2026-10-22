@@ -273,6 +273,14 @@ function pluginPath(opts = {}) {
   return path.join(configDir(opts), 'plugins', PLUGIN_FILE);
 }
 
+/** True when the file is a plugin that zn wrote (a regular file that starts with zn's mark). */
+function isOurs(file) {
+  try {
+    if (!fs.lstatSync(file).isFile()) return false;
+    return fs.readFileSync(file, 'utf8').startsWith(PLUGIN_MARK);
+  } catch (_) { return false; }
+}
+
 function install(opts = {}) {
   const file = pluginPath(opts);
   const report = { settings: file, backup: null, warnings: [] };
@@ -323,4 +331,5 @@ module.exports = {
   capabilities: { ask: false, rewriteInput: true, rewriteOutput: 'all' },
   pluginSource,
   pluginPath,
+  isOurs,
 };
