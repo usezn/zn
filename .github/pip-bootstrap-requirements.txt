@@ -1,7 +1,7 @@
 # Hash-pinned pip for every workflow that installs Python packages.
 #
-# pip older than 26.2.2 always trusts its own vendored copy of the certifi CA bundle,
-# so a runner's bundled pip can keep trusting a CA that certifi has since removed.
+# pip 26.2.2 vendors certifi 2026.10.19. Older pip ships an older CA bundle, so a runner's
+# bundled pip can still trust a CA that certifi has since removed.
 # Each job runs this first (pip --require-hashes --no-deps), before any other install:
 #
 #    python -m pip install --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt

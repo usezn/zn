@@ -8,8 +8,9 @@
 #    echo "pip-audit==X.Y.Z" > in.txt
 #    pip-compile --generate-hashes --allow-unsafe --strip-extras -o .github/audit-requirements.txt in.txt
 #
-# The pip pin is deliberate: pip 26.2.2 is the first release that no longer always trusts its
-# vendored certifi bundle. Keep it in step with pip-bootstrap-requirements.txt.
+# The pip pin is deliberate: pip 26.2.2 vendors certifi 2026.10.19, and older pip ships an
+# older CA bundle that can still trust a CA certifi has since removed. Keep it in step with
+# pip-bootstrap-requirements.txt.
 #
 boolean-py==5.0 \
     --hash=sha256:60cbc4bad079753721d32649545505362c754e121570ada4658b852a3a318d95 \
