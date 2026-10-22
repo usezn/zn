@@ -103,6 +103,89 @@ ordinary file, asks each agent's installed hook to read both, and counts an agen
 as protected only when the `.env` file is blocked and the ordinary file is
 allowed. Nothing is sent and no setting changes. [What the output means](check.md).
 
+## Upgrading to 1.14.0
+
+<!-- draft: final wording follows the 1.14.0 CHANGELOG at freeze -->
+
+This is what changes for you when you update from 1.13.x. Nothing in it stops
+zn-gate from working after the update; the first two groups are things your
+agent may now be refused or asked about that it was allowed to do before.
+
+### Refused or asked by default
+
+- **Two kinds of destructive shell command are refused.** A recursive delete of
+  your home folder, the filesystem root or a system folder, and a write to a
+  disk device are now blocked. The agent is told to ask you to confirm first.
+  Four more rules (a download piped into a shell such as `curl ... | sh`,
+  `chmod -R` or `chown -R` on a system folder, a fork bomb, and a download
+  written into a shell startup file) are off by default. To change this, set
+  `{"hooks": {"blockDestructiveCommands": ...}}` in `~/.zn/config.json` (`true`
+  turns on all six rules, `false` turns them off, or give a list of rule names).
+  See [destructive-commands.md](destructive-commands.md).
+- **Claude Code asks before MCP tools receive personal data.** MCP tool calls
+  are now checked before they run, as in the other agents. A secret in the
+  arguments is blocked, and personal data such as an email address asks you to
+  approve the call.
+- **Very large or deeply nested input is no longer passed unchecked.** Text over
+  256 KB is scanned in full, and text over 4 MB is blocked as too large to scan.
+  Tool arguments or results nested very deeply are blocked with the reason
+  "nested too deeply to check". Output that is mostly invisible characters is
+  blocked quickly. If an agent starts reporting one of these, ask the tool for a
+  smaller or simpler result.
+- **`zn-gate uninstall` needs you.** An agent can no longer run it for you; run
+  it in your own terminal, like the other commands that change your setup.
+- **The audit log checks your passphrase.** It now refuses to open with the
+  wrong passphrase instead of quietly writing records the right one could not
+  read. Existing encrypted records are converted the first time the vault opens
+  with its key.
+
+### New experimental agents
+
+zn-gate now supports four agents fully (Claude Code, Codex CLI, Cursor and
+OpenCode) and three experimental ones. The experimental hooks are newer and
+cover less, because those agents cannot do everything the others can; each one
+is described in [compat.md](compat.md).
+
+| Agent | Install |
+|---|---|
+| Gemini CLI | `zn hooks install gemini` |
+| GitHub Copilot CLI | `zn hooks install copilot` |
+| Google Antigravity | `zn hooks install antigravity` |
+
+Add `--project` to install for one project only. Nothing changes for your
+current agents unless you install these.
+
+### New checks and warnings
+
+- **Node.js without security fixes.** `zn-gate check` and `zn-gate status` now
+  warn, without blocking, when your Node.js is end of life (18 and 20) or older
+  than the patched release of its line (22.23.4, 24.22.1 or 26.12.1). The warning
+  names the minimum to update to.
+- **Hooks that are out of date or broken.** `zn-gate check` tells you when a
+  Claude Code hook is missing, or points to a Node.js that is gone, and gives
+  the command that fixes it. It also reports Codex as not protected when a hook
+  is switched off or set to run in the background.
+- **Output of tools is checked in Claude Code.** The output of web fetches, MCP
+  tools and shell commands is checked with the local rules. When it reads like
+  instructions, the agent is told to treat it as data and to tell you. This
+  never blocks, and `hooks.checkToolOutputInstructions: false` turns it off.
+- **More MCP checks.** `zn-gate shield` checks the other text an MCP server
+  sends (not only tool results), and `zn-gate scan` and `zn audit` find keys
+  written in plain text in MCP configuration files. A scan in a CI job can start
+  reporting these: look at each finding and move the key into the vault or an
+  environment variable.
+
+### What to run after upgrading
+
+1. Update the package: `npm install -g zn-gate` (and `pip install -U zn-gate`
+   for the Python package).
+2. Run `zn hooks install <agent>` again for each agent you use, so it gets the
+   new hooks (`claude-code`, `codex`, `cursor`, `opencode`). For Codex, approve
+   the changed hooks in `/hooks`. On Windows with Antigravity, this also replaces
+   a hook command that could block every tool call.
+3. Run `zn-gate check`. Every agent that is set up should say **OK**, and any
+   warning tells you what to do.
+
 ## What each release asks you to do
 
 Versions from 1.8.0 on. "No action" means that updating the package is enough.
