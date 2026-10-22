@@ -298,7 +298,9 @@ A user install writes the same files under your home directory and names the
 node and runner paths of that install.
 
 A teammate who clones the project without zn on PATH gets no checks from these
-files: the hook command fails, and in Claude Code and Codex the call goes ahead.
+files, because the hook command runs zn from PATH. Claude Code 2.1.295 or later
+then blocks tool calls and prompts (the hooks are set to block when they cannot
+run); older Claude Code versions and Codex let the call go ahead.
 Install zn on every machine that runs the agent.
 
 ## If your agent blocks every prompt
