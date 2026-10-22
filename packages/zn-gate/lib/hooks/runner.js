@@ -827,7 +827,7 @@ function kindLabel(type) {
     return w.toLowerCase();
   });
   const label = words.join(' ') || 'secret';
-  return (/^([AEIOU]|AWS\b|API\b|SSH\b|SSN\b|IBAN\b|OAUTH\b)/i.test(label) ? 'an ' : 'a ') + label;
+  return (/^(?!user)([AEIOU]|AWS\b|API\b|SSH\b|SSN\b|IBAN\b|OAUTH\b)/i.test(label) ? 'an ' : 'a ') + label;
 }
 
 // A generic detection has no name of its own. The credential name written just
