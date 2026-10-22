@@ -903,20 +903,23 @@ function startMcpShield(command, args, options = {}) {
               const check = analyzeLocal(tool.description, options);
               if (check.verdict === 'block') {
                 const ruleName = check.rule || check.reason || 'tool_poisoning';
-                process.stderr.write(`[zn-shield BLOCKED TOOL DESCRIPTION] Poisoned tool description in '${tool.name}'. Rule: ${ruleName}\n`);
+                // Shares the per-message log budget; past it the description is only counted for the summary.
+                if (takeLogSlot(ruleName)) {
+                  process.stderr.write(`[zn-shield BLOCKED TOOL DESCRIPTION] Poisoned tool description in '${tool.name}'. Rule: ${ruleName}\n`);
 
-                logEvidence({
-                  agent: options.agent || 'mcp-server',
-                  phase: 'tool-definition',
-                  tool_name: tool.name,
-                  payload: tool.description,
-                  verdict: 'block',
-                  rule: ruleName,
-                  reason: check.reason,
-                  confidence: check.confidence || 0.99,
-                  latency_us: check.latency_us || 12,
-                  engine: check.engine || 'oss-deterministic',
-                });
+                  logEvidence({
+                    agent: options.agent || 'mcp-server',
+                    phase: 'tool-definition',
+                    tool_name: tool.name,
+                    payload: tool.description,
+                    verdict: 'block',
+                    rule: ruleName,
+                    reason: check.reason,
+                    confidence: check.confidence || 0.99,
+                    latency_us: check.latency_us || 12,
+                    engine: check.engine || 'oss-deterministic',
+                  });
+                }
 
                 if (!options.shadow) {
                   tool.description = `[zn-gate SECURITY BLOCKED] Tool description neutralized: unauthorized prompt injection detected (${ruleName}).`;
