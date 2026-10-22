@@ -77,7 +77,6 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
 |---|---|---|
 | `PreToolUse` | Yes, matcher `^(Bash\|apply_patch\|mcp__.+)$` | Checks shell commands, patches and MCP call arguments before they run, and denies with zn's reason. Exit code 2 also blocks (documented). zn never answers `allow`. Shell, `apply_patch` and MCP calls checked on 0.163.0: a placeholder or a secret value in the arguments is denied and never reaches the server. |
 | `PostToolUse` | Yes, matcher `.*` | Scrubs tool output. Its `decision: "block"` replaces the result with zn's scrubbed copy. Checked on 0.163.0. Opt-in `replaceToolOutputOnSecret` also sends `continue: false` with a `stopReason` for a real secret value. Checked on 0.163.0: the model still gets the scrubbed copy, not the stop text, and the turn goes on; see below. |
-| `checkToolOutputInstructions` | `true` | Checks the output of web fetches, MCP tools and shell commands with the local rules. When they flag text that reads like instructions to the agent, the agent is told to treat it as data and to tell you. The output is never blocked for this. Set `false` to turn it off. |
 | `PermissionRequest` | Yes, deny only | Runs the same check as `PreToolUse` when Codex is about to ask you to approve a call. zn answers `deny` with its reason and never `allow`. Checked on 0.163.0 in the terminal UI: `codex exec` never asks for approval, so the event does not run there. |
 | `UserPromptSubmit` | Yes | Blocks a secret pasted into the prompt. Checked on 0.163.0. |
 | `SessionStart` | Yes, context only | Adds a short reminder for the model through `additionalContext`: zn protects `.env` files and the vault, and `zn run` runs a command that needs a secret. It checks nothing and never stops the session. Checked on 0.163.0: the reminder is in the first request the model gets. |
@@ -95,6 +94,12 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
   (`updatedToolOutput`), and `PreToolUse` can rewrite the input and ask the user
   (`ask` + `updatedInput`). zn never returns `allow`, so your own permission
   rules always apply.
+  The output of web fetches, MCP tools and shell commands is also checked
+  with the local rules: when they flag text that reads like instructions to
+  the agent, zn adds a note (`additionalContext`) telling the agent to treat
+  it as data and to tell you. The output is not blocked for this. Turn it off
+  with `{"hooks": {"checkToolOutputInstructions": false}}` in
+  `~/.zn/config.json`.
 - **Codex CLI**:
   - Rewriting a call (`updatedInput`) is only accepted together with `allow`,
     which would skip your approval policy, and `ask` is not supported. So zn
