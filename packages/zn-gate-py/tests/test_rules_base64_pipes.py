@@ -35,6 +35,27 @@ class TestBase64Pipes(unittest.TestCase):
         res = R.evaluate(f'{pipe(HARMLESS)}; printf {BLOCKED} | base64 --decode')
         self.assertEqual(res.verdict, 'block')
 
+    def test_quoted_options_and_here_strings(self):
+        for cmd in (
+            f"echo '{BLOCKED}' | base64 -d | sh",
+            f'echo "{BLOCKED}" | base64 -d | sh',
+            f'echo -n {BLOCKED} | base64 -d | sh',
+            f"echo -n '{BLOCKED}' | base64 --decode | sh",
+            f"printf '{BLOCKED}' | base64 -d | sh",
+            f'base64 -d <<< {BLOCKED} | sh',
+            f'base64 --decode <<< "{BLOCKED}" | sh',
+        ):
+            res = R.evaluate(cmd)
+            self.assertEqual(res.verdict, 'block', cmd)
+            self.assertEqual(res.rule, 'evasion:base64_smuggling', cmd)
+
+    def test_same_forms_harmless_allowed(self):
+        for cmd in (f"echo '{HARMLESS}' | base64 -d", f'echo -n "{HARMLESS}" | base64 -d', f"base64 -d <<< '{HARMLESS}'"):
+            self.assertEqual(R.evaluate(cmd).verdict, 'allow', cmd)
+
+    def test_mismatched_quotes(self):
+        self.assertEqual(R.evaluate(f'echo \'{HARMLESS}" | base64 -d').verdict, 'allow')
+
     def test_count_cap_fails_closed(self):
         def many(n):
             return '; '.join(pipe(b64(f'echo harmless number {i}')) for i in range(n))

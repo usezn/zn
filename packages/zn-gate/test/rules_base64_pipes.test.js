@@ -33,6 +33,33 @@ test('printf pipes are decoded too', () => {
   assert.equal(res.verdict, 'block');
 });
 
+test('quoted payloads, echo options and here-strings are decoded too', () => {
+  for (const cmd of [
+    `echo '${BLOCKED}' | base64 -d | sh`,
+    `echo "${BLOCKED}" | base64 -d | sh`,
+    `echo -n ${BLOCKED} | base64 -d | sh`,
+    `echo -n '${BLOCKED}' | base64 --decode | sh`,
+    `printf '${BLOCKED}' | base64 -d | sh`,
+    `base64 -d <<< ${BLOCKED} | sh`,
+    `base64 --decode <<< "${BLOCKED}" | sh`,
+  ]) {
+    const res = rules.evaluate(cmd);
+    assert.equal(res.verdict, 'block', cmd);
+    assert.equal(res.rule, 'evasion:base64_smuggling', cmd);
+  }
+});
+
+test('the same forms with a harmless payload stay allowed', () => {
+  for (const cmd of [`echo '${HARMLESS}' | base64 -d`, `echo -n "${HARMLESS}" | base64 -d`, `base64 -d <<< '${HARMLESS}'`]) {
+    assert.equal(rules.evaluate(cmd).verdict, 'allow', cmd);
+  }
+});
+
+test('mismatched quotes are not read as a quoted payload', () => {
+  // The quote must close the payload: an opening quote with no matching one is not this form.
+  assert.equal(rules.evaluate(`echo '${HARMLESS}" | base64 -d`).verdict, 'allow');
+});
+
 // Mirrors MAX_B64_PAYLOADS in lib/rules.js (kept out of the public exports).
 const MAX_B64_PAYLOADS = 16;
 

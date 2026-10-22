@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, overload
 
 
-RULES_VERSION = "2026-10-22.9"
+RULES_VERSION = "2026-10-23.3"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -66,7 +66,8 @@ ANSI_ESCAPE_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07\x1b]*\x07')
 # Hard caps for the Base64 smuggling check: above either one the command is blocked.
 MAX_B64_PAYLOADS = 16
 MAX_B64_DECODED_BYTES = 128 * 1024
-B64_EXEC_RE = re.compile(r'(?:echo|printf)\s+([A-Za-z0-9+/=]{16,})\s*\|\s*(?:base64\s+-(?:d|-decode)|openssl)', re.IGNORECASE)
+# The payload is group 2 (echo/printf pipe, quoted or not, with options) or group 4 (here-string).
+B64_EXEC_RE = re.compile(r'''(?:echo|printf)(?:\s+-[A-Za-z]{1,3})*\s+(["']?)([A-Za-z0-9+/=]{16,})\1\s*\|\s*(?:base64\s+-(?:d|-decode)|openssl)|base64\s+-(?:d|-decode)\s*<<<\s*(["']?)([A-Za-z0-9+/=]{16,})\3''', re.IGNORECASE)
 # Maximal whitespace runs; only runs that contain a line break are joined.
 # A pattern anchored on the line break (such as [^\S\r\n]*[\r\n]) would rescan
 # a long run of spaces from every position.
@@ -522,8 +523,9 @@ def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
     b64_payloads = []
     for text_candidate in (normalized, stripped):
         for b64_match in B64_EXEC_RE.finditer(text_candidate):
-            if b64_match.group(1) not in b64_payloads:
-                b64_payloads.append(b64_match.group(1))
+            payload = b64_match.group(2) or b64_match.group(4)
+            if payload and payload not in b64_payloads:
+                b64_payloads.append(payload)
     if len(b64_payloads) > MAX_B64_PAYLOADS:
         return Assessment(
             verdict='block',
