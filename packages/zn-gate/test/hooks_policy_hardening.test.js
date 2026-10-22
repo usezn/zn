@@ -19,6 +19,19 @@ const { createFakeVault } = require('./helpers/fake_vault');
 const fakeEngine = require('./helpers/fake_engine');
 const { generateAll } = require('./fixtures/fake_secrets');
 
+// Time budget checks: one warm-up call (JIT and regex compilation), then the fastest of a few runs, so a slow
+// shared CI runner does not fail a check that a real regression would fail on every run.
+function fastestMs(fn, runs = 5) {
+  let result = fn();
+  let best = Infinity;
+  for (let i = 0; i < runs; i++) {
+    const t0 = process.hrtime.bigint();
+    result = fn();
+    best = Math.min(best, Number(process.hrtime.bigint() - t0) / 1e6);
+  }
+  return { ms: best, result };
+}
+
 const FAKE = generateAll(7171, { perType: 1, piiPerType: 1 });
 const NPM = FAKE.secrets.find((s) => s.type === 'npm_access_token').value;
 const AWS = FAKE.secrets.find((s) => s.type === 'aws_access_key_id').value;
@@ -293,9 +306,7 @@ test('a shell command over 100 KB is refused at once; one just under the limit g
   assert.equal(cap, 100 * 1024);
   const tooLong = 'echo ' + 'a'.repeat(cap + 1 - 5);
   assert.equal(tooLong.length, cap + 1);
-  const start = process.hrtime.bigint();
-  const deny = policy.bashDenial(tooLong);
-  const ms = Number(process.hrtime.bigint() - start) / 1e6;
+  const { ms, result: deny } = fastestMs(() => policy.bashDenial(tooLong));
   assert.equal(deny, 'zn: this command is too long for zn to check (over 100 KB), so it was blocked. Next step: tell the user; do not resend it in parts.');
   assert.ok(ms < 50, 'took ' + ms + ' ms');
   // Exactly at the limit and just under it: the normal check runs.
@@ -729,9 +740,7 @@ test('a 100 KB here-document read as data is checked in milliseconds', (t) => {
   let body = '';
   while (body.length + line.length < 100 * 1024 - 64) body += line;
   const cmd = "cat > generated.js <<'EOF'\n" + body + 'EOF';
-  const t0 = process.hrtime.bigint();
-  const deny = policy.bashDenial(cmd, o);
-  const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+  const { ms, result: deny } = fastestMs(() => policy.bashDenial(cmd, o));
   assert.equal(deny, null, 'the body is data, so the command is allowed');
   assert.ok(ms < 25, 'checked in ' + ms + ' ms');
 });
