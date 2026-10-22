@@ -79,9 +79,10 @@ function warnText(agentId) {
     FIX.replace('codex', agentId) + '.';
 }
 
-/** Where zn keeps its launchers: ~/.zn/hooks (or $ZN_HOME/hooks). */
+/** Where zn keeps its launchers: ~/.zn/hooks (or $ZN_HOME/hooks, or $ZN_HOOK_DIR itself). */
 function launcherDir(opts = {}) {
   const env = opts.env || process.env;
+  if (env.ZN_HOOK_DIR) return path.resolve(env.ZN_HOOK_DIR);
   const base = env.ZN_HOME ? path.resolve(env.ZN_HOME) : path.join(opts.home || os.homedir(), '.zn');
   return path.join(base, 'hooks');
 }
@@ -169,6 +170,14 @@ function plainPathOk(file) {
   return /^[A-Za-z0-9_\/.@+=,:~-]+$/.test(String(file));
 }
 
+/** Why zn will not install the Antigravity hook at this launcher path, and the way out. */
+function spaceMessage(file) {
+  return 'zn cannot install the Antigravity hook: the launcher would be at ' + file + ', and Antigravity starts a hook by splitting the command on spaces, ' +
+    'without a shell or quotes, so a path with a space or another special character never starts, so the hook would protect nothing. ' +
+    'Choose a folder whose path has only letters, digits and - _ . / (for example /opt/zn-hooks or /Users/Shared/zn-hooks), ' +
+    'run `ZN_HOOK_DIR=<that folder> zn hooks install antigravity`, and nothing else changes.';
+}
+
 /**
  * The PowerShell text (for windowsCommand-style quoting by the caller) of the
  * same three steps, ending with a comment that names the agent so that
@@ -218,4 +227,4 @@ function windowsScriptCommand(script) {
   return 'powershell.exe -NoProfile -NonInteractive -EncodedCommand ' + Buffer.from(script, 'utf16le').toString('base64');
 }
 
-module.exports = { blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, windowsScript, BLOCK_EXIT, BLOCK_JSON };
+module.exports = { blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, spaceMessage, windowsScript, BLOCK_EXIT, BLOCK_JSON };

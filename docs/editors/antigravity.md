@@ -60,6 +60,7 @@ This writes the hook to `~/.gemini/config/hooks.json` for your user. Add `--proj
 
 Things to know:
 
+- **A home folder with a space in its path needs one extra step.** Antigravity starts a hook by splitting the command on spaces, so zn-gate cannot use a launcher path with a space: `zn hooks install antigravity` stops with a message, and you run `ZN_HOOK_DIR=<a folder with no spaces> zn hooks install antigravity` instead.
 - **It is experimental.** It is built from Antigravity's public documentation. Antigravity does not document what happens when a hook crashes or times out, so zn-gate cannot promise that such a call is blocked. If Node.js goes missing, zn-gate's launcher script blocks the call with a message that tells you to reinstall zn-gate and run `zn hooks install antigravity` again.
 - **Values can still reach the model.** A value printed by a command, or found in a file the agent is allowed to read, is not removed. Keep secrets in the vault.
 - **A tool that names no command and no file path**, or that zn-gate does not recognise, is left to Antigravity's own rules. A shell or file tool whose command or file zn-gate cannot read is refused.
