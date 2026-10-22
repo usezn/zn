@@ -318,11 +318,7 @@ every machine that runs the agent.
 
 ## If your agent blocks every prompt
 
-When zn's hook cannot run, Claude Code 2.1.295 or later (with the zn-gate plugin or `zn hooks install`), Cursor and OpenCode block
-prompts instead of letting them through unchecked (see the table above). Codex CLI lets prompts through in that case.
-This usually happens after Node.js is upgraded, moved or removed (for example with nvm). The fix, step by step
-(`npx -y zn-gate check`, then `npm install -g zn-gate` and `zn hooks install <agent>`, or turning zn off for that agent
-until it is fixed), is in [upgrading.md](upgrading.md#nodejs-was-upgraded-moved-or-removed-nvm-fnm-homebrew).
+The same behavior applies whenever zn's hook cannot run, not only on a machine without zn. Claude Code 2.1.295 or later (with the zn-gate plugin or `zn hooks install`) blocks tool calls and prompts, Cursor blocks only file reads and prompts, and OpenCode blocks tool calls and chat messages. Codex CLI lets prompts through in that case, and Cursor lets shell commands and MCP calls through. This usually happens after Node.js is upgraded, moved or removed (for example with nvm). The fix, step by step (`npx -y zn-gate check`, then `npm install -g zn-gate` and `zn hooks install <agent>`, or turning zn off for that agent until it is fixed), is in [upgrading.md](upgrading.md#nodejs-was-upgraded-moved-or-removed-nvm-fnm-homebrew).
 
 ## Antigravity when its hook cannot start
 
