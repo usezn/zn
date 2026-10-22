@@ -51,7 +51,7 @@
     },
     "scrub": {
       "version_const": "SCRUB_RULES_VERSION",
-      "version": "2026-10-23.1",
+      "version": "2026-10-23.3",
       "ids": [
         "AGE_SECRET_KEY",
         "ALIBABA_KEY_ID",
@@ -100,9 +100,11 @@
         "OPENAI_KEY",
         "OPENSHIFT_TOKEN",
         "PERPLEXITY_KEY",
+        "PERSON_NAME",
         "PHONE",
         "PLANETSCALE_TOKEN",
         "POLAR_TOKEN",
+        "POSTAL_ADDRESS",
         "POSTMAN_KEY",
         "PREFECT_KEY",
         "PRIVATE_KEY",
@@ -129,6 +131,7 @@
         "TERRAFORM_CLOUD_TOKEN",
         "TWILIO_KEY",
         "URL_PASSWORD",
+        "USERNAME",
         "VAULT_TOKEN",
         "XAI_KEY",
         "ZN_API_KEY",
@@ -144,7 +147,7 @@
         "exact.variants"
       ],
       "sha256": {
-        "lib/scrub/patterns.js": "e6d0a2461f44d74ed3a02cd3e033cd384dfa47ea4c6921e9585db7f4bd520cb3",
+        "lib/scrub/patterns.js": "a2df3a0450fa3ed58edcb72fa7abae454ba540ebd6809ada06501f553551f5a5",
         "lib/scrub/exact.js": "d104e85ec6a25e7d6d4b6c428bd0bf8b25d43c3ead313f6872f508b65793bf6b"
       }
     },
