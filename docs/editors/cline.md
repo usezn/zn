@@ -74,6 +74,15 @@ To check the output of the other MCP servers you use in Cline, start each local 
 
 Every result of that server is then checked for prompt injection, and secrets zn-gate recognizes are removed, before the agent sees it. `zn-gate init --wrap-mcp`, which does this automatically for Claude Desktop, Claude Code, Cursor, Codex, OpenCode and Antigravity, does not edit Cline's settings.
 
+## Remove zn-gate
+
+Cline has no zn-gate hooks, so removing zn-gate here means taking it off your MCP servers. Run these steps in your own terminal, not through your agent. None of them changes your code.
+
+- Delete the `zn-gate` entry you added in the [quick start](#quick-start-no-coding-needed) from Cline's MCP settings. Only you can do this: no zn-gate command edits an entry you added by hand.
+- If you wrapped other MCP servers with `zn-gate shield --`, put back the command and arguments each one had before, in the same settings.
+- Run `npx -y zn-gate init --revert`. It takes zn-gate off the MCP servers that `init --wrap-mcp` wrapped for other agents on this computer. It does not change Cline's settings, so the two steps above are still needed here.
+- Run `npx -y zn-gate uninstall` to check what zn-gate still has set up on this computer and remove it after you confirm. For the vault, the program itself and the other agents, see [Remove zn-gate](../uninstall.md).
+
 ## Cline documentation
 
 - Adding MCP servers in Cline: <https://docs.cline.bot/mcp/adding-and-configuring-servers>

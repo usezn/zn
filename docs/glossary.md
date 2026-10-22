@@ -38,4 +38,14 @@ Short meanings of words used in the zn-gate docs.
 
 **Self-test**: `zn-gate test`. It runs zn-gate's built-in examples.
 
+**Broker**: the part of zn-gate that puts a real secret value back into a command you run through `zn run`, or into a git-ignored file on your computer. It needs the vault to be unlocked, and it does nothing while the vault is locked. See the [threat model](threat-model.md).
+
+**Evidence ledger**: the local log, `~/.zn/evidence.jsonl`, where zn-gate writes what it decided. Each record is chained to the one before it with a hash, so `zn-gate evidence --verify` shows accidental or partial edits. It is not proof against someone who can write to the file. See the [CLI reference](cli.md#evidence).
+
+**Fail-open**: a check that lets an action go ahead when the check itself breaks or times out. zn-gate's own scrubber fails closed, which means it blocks instead. Some agents run the action anyway when their hook fails, so the [compatibility table](compat.md) says what each agent does.
+
+**Reach**: what the coding agents on your computer could get to, shown by `zn-gate reach`. It lists the secrets in the `.env` files of a folder, the credential files in your home folder, and environment variables with secret-looking names. It also shows which MCP servers the agents run. See the [reach page](reach.md).
+
+**Tool pin**: the record of what each tool of an MCP server looked like the first time zn-gate saw it. If a tool later changes its name, description or inputs, zn-gate flags it until you approve the change with `zn-gate pins approve`. See [tool pinning](shield.md#tool-pinning).
+
 For setup steps, start with the [README](../README.md#install).
