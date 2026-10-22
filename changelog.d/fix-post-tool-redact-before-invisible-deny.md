@@ -1,0 +1,2 @@
+### Security
+- A tool output that is mostly invisible characters no longer lets a secret through in Claude Code, Copilot and OpenCode. zn used to answer with a block that only Codex turns into a withheld result, so a key printed next to a very long run of invisible characters stayed in what the agent saw. zn now removes the invisible characters, replaces any secret in the text that is left with a token, and sends that to every agent in place of the original; text too large to check for secrets is withheld instead of passed on.

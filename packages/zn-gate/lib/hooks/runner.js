@@ -566,6 +566,13 @@ async function decideMcp(ev, d, agentId) {
 
 /* ---------------------------- post_tool --------------------------- */
 
+// The characters lib/rules.js counts as invisible (ZERO_WIDTH_RE and INVISIBLE_ASTRAL_RE). A test keeps
+// this list equal to the rules' own. lib/rules.js is not edited for this: its files carry a rules version.
+const INVISIBLE_CHARS_RE = /[\u200B-\u200D\u2060\uFEFF\u00AD\uFE00-\uFE0F\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
+// Visible text kept from an output that is mostly invisible, all its strings together (characters).
+const INVISIBLE_REDACT_BUDGET = 8 * 1024 * 1024;
+const INVISIBLE_WITHHELD = '[zn: withheld because this output is too large to check for secrets]';
+
 async function decidePost(ev, d, agentId, opts = {}) {
   if (!POST_TOOLS.has(ev.tool)) return { decision: 'allow' };
   if (agentId === 'codex' && ev.tool === 'bash') {
@@ -579,18 +586,38 @@ async function decidePost(ev, d, agentId, opts = {}) {
   }
   if (ev.output === undefined || ev.output === null) return { decision: 'allow' };
   const engine = d.engine();
-  // Output that is mostly invisible characters is withheld before the engine
-  // pays for it (see tooInvisible in lib/rules.js).
+  // Output that is mostly invisible characters is not handed to the engine as it is: matching millions
+  // of invisible characters costs seconds (see tooInvisible in lib/rules.js). The verdict is still a
+  // deny, but a deny alone does not hide the output in every agent (Claude Code, Copilot and OpenCode
+  // keep what the tool returned unless the hook replaces it), so the hook always replaces it. The
+  // invisible characters are removed in one linear pass, and what is left goes through the same
+  // redaction as any other output. Past INVISIBLE_REDACT_BUDGET characters of visible text, the
+  // strings that do not fit are withheld whole, so nothing passes unchecked.
+  const rules = require('../rules');
   const outputStrings = [];
   await mapStrings(ev.output, async (s) => { outputStrings.push(s); return s; });
-  if (require('../rules').tooInvisible(outputStrings)) {
-    return { decision: 'deny', message: 'zn: this output is mostly invisible characters, so zn withheld it. Next step: tell the user; do not try to read it again.' };
+  const invisible = rules.tooInvisible(outputStrings);
+  let output = ev.output;
+  let withheld = 0;
+  if (invisible) {
+    let room = Number.isInteger(opts.invisibleRedactBudget) && opts.invisibleRedactBudget > 0 ? opts.invisibleRedactBudget : INVISIBLE_REDACT_BUDGET;
+    output = await mapStrings(ev.output, async (s) => {
+      const clean = s.replace(INVISIBLE_CHARS_RE, '');
+      if (clean.length < 8) return clean;
+      if (clean.length > room) {
+        withheld += clean.length;
+        return INVISIBLE_WITHHELD;
+      }
+      room -= clean.length;
+      return clean;
+    });
   }
   const ctx = await ctxFor(ev, d, agentId, 'assistant');
   const types = new Map();
   const secretKinds = new Set();
   let locked = false;
-  const updated = await mapStrings(ev.output, async (s) => {
+  const updated = await mapStrings(output, async (s) => {
+    if (s === INVISIBLE_WITHHELD) return s;
     if (s.length < 8) return s;
     const res = await engine.tokenize(s, ctx);
     if (!res || typeof res.text !== 'string') throw deps.znError('ZN_ENGINE', 'tokenize returned an unexpected shape');
@@ -601,17 +628,26 @@ async function decidePost(ev, d, agentId, opts = {}) {
     }
     return res.text;
   });
-  if (types.size === 0) return { decision: 'allow' };
+  if (types.size === 0 && !invisible) return { decision: 'allow' };
   const total = [...types.values()].reduce((a, b) => a + b, 0);
   const summary = [...types.entries()].map(([t, n]) => t + (n > 1 ? ' x' + n : '')).join(', ');
+  const redactedNote = 'zn: ' + total + ' secret value(s) in this output were replaced with __ZN_ tokens (' + summary + '). ' +
+    (locked ? '__ZN_REDACTED_ markers cannot be restored, so do not retry to get the values. ' : 'Real values stay on this machine; use the tokens as they are.');
   const out = {
     decision: 'allow',
     stats: { redacted: total, detections: Object.fromEntries(types) },
     updatedOutput: updated,
-    message: 'zn: ' + total + ' secret value(s) in this output were replaced with __ZN_ tokens (' + summary + '). ' +
-      (locked ? '__ZN_REDACTED_ markers cannot be restored, so do not retry to get the values. ' : 'Real values stay on this machine; use the tokens as they are.'),
+    message: redactedNote,
     userMessage: locked ? lockedNotice() : undefined,
   };
+  if (invisible) {
+    out.decision = 'deny';
+    out.message = 'zn: this output is mostly invisible characters, so zn removed them and did not pass the original on. ' +
+      (withheld > 0 ? 'Part of the text is too large to check for secrets, so zn withheld it. ' : '') +
+      (total > 0 ? redactedNote + ' ' : '') +
+      'Next step: tell the user; do not try to read it again.';
+    if (withheld > 0) out.stats.withheld = withheld;
+  }
   // Opt-in, Codex only (respond() in lib/agents/codex.js): a real secret value also gets a stop reason.
   if (agentId === 'codex' && secretKinds.size > 0 && replaceOnSecretOf(opts)) {
     out.stopReason = 'zn: this tool output contained ' + [...secretKinds].join(', ') +
@@ -1214,7 +1250,7 @@ async function handleEvent(args, state, readText) {
   }
 }
 
-module.exports = { handle, main, mapStrings, decidePre, decidePost, decidePrompt, decideExpansion, decideStop };
+module.exports = { handle, main, mapStrings, decidePre, decidePost, INVISIBLE_CHARS_RE, decidePrompt, decideExpansion, decideStop };
 
 // Direct entry (`node lib/hooks/runner.js <agent>`): what installed hooks call,
 // so a hook does not pay for loading the rest of the CLI.
