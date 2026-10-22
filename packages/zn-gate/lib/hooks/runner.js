@@ -1187,7 +1187,9 @@ function topLevelKeys(head) {
     if (c === '"') {
       let j = i + 1;
       while (j < head.length && head[j] !== '"') j += head[j] === '\\' ? 2 : 1;
-      const str = head.slice(i + 1, j);
+      let str = head.slice(i + 1, j);
+      // A key written with escapes ("a") is the same key as its plain spelling once parsed.
+      if (str.includes('\\')) { try { str = JSON.parse('"' + str + '"'); } catch (_) { /* not decodable: compared as written */ } }
       i = j + 1;
       if (depth === 1) {
         const rest = head.slice(i, i + 300);
@@ -1379,6 +1381,15 @@ async function handleEvent(args, state, readText) {
     return refuseInput(agentId, 'the event on stdin is not a JSON object');
   }
   state.stopEvent = raw.hook_event_name === 'Stop';
+  // A key repeated at the top level can be read two ways (JSON.parse keeps the last, a reader of the text the
+  // first), so the event is refused whatever its size. A Stop event is never blocked here (see above).
+  if (topLevelKeys(text).duplicate) {
+    if (state.stopEvent || /"hook_event_name"\s*:\s*"Stop"/.test(text)) {
+      process.stderr.write('zn hook: could not read this Stop event, so the last answer was not checked\n');
+      return;
+    }
+    return refuseInput(agentId, 'the event on stdin repeats a key');
+  }
   const disarm = armCodexFailClosed(agentId, raw.hook_event_name);
   try {
     const res = await handle(adapter, raw, { startedAt });
