@@ -37,11 +37,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
       - name: Test the checker
-        run: node --test .github/scripts/check-public-facts.test.mjs
+        run: node --test .github/scripts/check-public-facts.test.mjs .github/scripts/check-rule-versions.test.mjs
       - name: Check the public facts
         env:
           # A release pull request (from or into a release/* branch of this repository) is opened
@@ -52,3 +53,10 @@ jobs:
           # pin commit lands after npm publishes the release.
           PLUGIN_PIN_PENDING: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (startsWith(github.head_ref, 'release/') || startsWith(github.base_ref, 'release/')) }}
         run: node .github/scripts/check-public-facts.mjs
+      - name: Check the rule versions against the base branch
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git fetch --no-tags origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          node .github/scripts/check-rule-versions.mjs "origin/${BASE_REF}"

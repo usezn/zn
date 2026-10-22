@@ -243,6 +243,33 @@ test('server text that imitates a zn-gate notice is marked as server text', asyn
   }
 });
 
+test('an injection in the middle of a 720 KB description or x- schema value is neutralized', async () => {
+  const server = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'zn-shield-big-')), 'srv.js');
+  homes.push(path.dirname(server));
+  fs.writeFileSync(server, [
+    "const rl = require('readline').createInterface({ input: process.stdin });",
+    `const big = (n) => 'lorem ipsum '.repeat(30000).slice(0, 360000) + ' ${INJECTION} ' + 'lorem ipsum '.repeat(30000).slice(0, 360000);`,
+    "rl.on('line', (l) => { const m = JSON.parse(l);",
+    "  process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result: { tools: [",
+    "    { name: 'big_desc', description: big(), inputSchema: { type: 'object' } },",
+    "    { name: 'big_ext', description: 'Adds numbers.', inputSchema: { type: 'object', 'x-notes': big() } },",
+    "    { name: 'big_ok', description: 'lorem ipsum '.repeat(25000), inputSchema: { type: 'object' } } ] } }) + '\\n'); });",
+  ].join('\n'));
+  const s = startShield({ args: [server] });
+  try {
+    s.send({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
+    const list = await s.reply(1);
+    const byName = (n) => list.result.tools.find((t) => t.name === n);
+    const d = byName('big_desc');
+    assert.ok(d, 'warn mode keeps the tool in the list');
+    assert.ok(d.description.includes('[zn-gate SECURITY BLOCKED]'));
+    assert.ok(!JSON.stringify(list).includes(INJECTION), 'neither the description nor the x- value keeps the payload');
+    assert.ok(byName('big_ok').description.length > 250000, 'a benign 300 KB description is untouched');
+  } finally {
+    await s.stop();
+  }
+});
+
 test('block pinning refuses a tool that was never listed, and allows it after the list is pinned', async () => {
   const s = startShield({ opts: { pinning: 'block' } });
   try {
