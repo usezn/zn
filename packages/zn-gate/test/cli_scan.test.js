@@ -337,6 +337,73 @@ test('scan says so when no file was scanned, and still exits 0', () => {
   }
 });
 
+// An unreadable target is never reported as clean. Same behaviour as the Python
+// scanner: unreadable folders are listed, and a scan that read nothing says so.
+function cannotList() {
+  // Root, and Windows, ignore folder permissions: probe instead of guessing.
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-probe-'));
+  try {
+    fs.chmodSync(d, 0o000);
+    try { fs.readdirSync(d); return false; } catch (e) { return true; }
+  } finally {
+    try { fs.chmodSync(d, 0o755); } catch (e) { /* ignore */ }
+    fs.rmSync(d, { recursive: true, force: true });
+  }
+}
+
+test('scan lists a folder it cannot read and does not call an empty scan clean', (t) => {
+  if (process.platform === 'win32' || !cannotList()) return t.skip('folder permissions are not enforced here');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-scan-perm-'));
+  const locked = path.join(root, 'locked');
+  try {
+    fs.writeFileSync(path.join(root, 'ok.md'), 'hello\n');
+    fs.mkdirSync(locked);
+    fs.writeFileSync(path.join(locked, 'hidden.md'), 'hello\n');
+    fs.chmodSync(locked, 0o000);
+    const r = scanJson([root]);
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.match(r.stdout, /Directories not scanned \(1\)/);
+    assert.match(r.stdout, /locked \(cannot be read\)/);
+    const j = JSON.parse(scanJson([root, '--format', 'json']).stdout);
+    assert.strictEqual(j.skipped_dirs.length, 1);
+    assert.ok(j.skipped_dirs[0].dir.endsWith('locked'), JSON.stringify(j.skipped_dirs));
+    assert.strictEqual(j.skipped_dirs[0].reason, 'cannot be read');
+    // The whole target unreadable: nothing was read, so no PASSED.
+    fs.chmodSync(root, 0o000);
+    const all = scanJson([root]);
+    assert.strictEqual(all.status, 0, all.stderr);
+    assert.ok(!all.stdout.includes('PASSED'), all.stdout);
+    assert.ok(!all.stdout.includes('Clean workspace'), all.stdout);
+    assert.match(all.stdout, /NOTHING SCANNED/);
+    assert.ok(all.stdout.includes(`No files were scanned in ${root}`), all.stdout);
+    assert.match(all.stdout, /Directories not scanned \(1\):[\s\S]*\(cannot be read\)/);
+  } finally {
+    try { fs.chmodSync(root, 0o755); fs.chmodSync(locked, 0o755); } catch (e) { /* ignore */ }
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('scan of an empty folder or a missing path never says PASSED without reading a file', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-scan-nopass-'));
+  try {
+    const empty = scanJson([dir]);
+    assert.strictEqual(empty.status, 0, empty.stderr);
+    assert.ok(!empty.stdout.includes('PASSED'), empty.stdout);
+    assert.match(empty.stdout, /NOTHING SCANNED/);
+    const missing = scanJson([path.join(dir, 'does-not-exist')]);
+    assert.strictEqual(missing.status, 1);
+    assert.match(missing.stderr, /does not exist/);
+    assert.ok(!missing.stdout.includes('PASSED'));
+    // A file that cannot be listed as a folder (a path through a file): also an error, never clean.
+    fs.writeFileSync(path.join(dir, 'f.txt'), 'x');
+    const through = scanJson([path.join(dir, 'f.txt', 'child')]);
+    assert.strictEqual(through.status, 1);
+    assert.ok(!through.stdout.includes('PASSED'));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 for (const [label, cwdIsReal] of [['cwd is the real folder, target goes through a link', true], ['cwd goes through a link, target is the real folder', false]]) {
   test(`scan shows clean relative paths: ${label}`, (t) => {
     const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zn-scan-link-')));

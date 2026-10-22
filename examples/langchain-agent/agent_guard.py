@@ -14,8 +14,11 @@ The note below is made up; there is no network call and no model call.
 """
 from zn_gate.integrations import ZnGuardCallbackHandler, guard_langchain_tool
 
-# Pass callbacks=[handler] to your agent, chain or model run.
-handler = ZnGuardCallbackHandler(on_block="raise")
+# Pass callbacks=[handler] to your agent, chain or model run. The tools below are
+# wrapped and hide secrets themselves, so the handler is created with
+# mask_secrets=False: otherwise it sees the raw tool output and stops the run
+# on a secret before the wrapper can hide it.
+handler = ZnGuardCallbackHandler(on_block="raise", mask_secrets=False)
 
 try:
     from langchain_core.tools import tool

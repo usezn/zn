@@ -32,7 +32,7 @@ Short meanings of words used in the zn-gate docs.
 
 **Keychain**: the password store of your operating system.
 
-**Cloud check**: an optional second check, by the Galvanize 2 classifier at usezn.com, of the text sent to zn-gate's `analyze_prompt` tool. It is off until you turn it on.
+**Cloud check**: an optional second check, by the Galvanize 2 classifier at usezn.com, of the text sent to zn-gate's `analyze_prompt` tool. It is off until you turn it on. Its figures (recall, false positives) describe that classifier, not zn-gate's local rules.
 
 **Classifier**: a model that sorts text into groups, such as safe or an injection attempt.
 

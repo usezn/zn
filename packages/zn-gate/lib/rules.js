@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-22.3
+ * RULES_VERSION: 2026-10-22.8
  */
 
-const RULES_VERSION = '2026-10-22.3';
+const RULES_VERSION = '2026-10-22.8';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -674,7 +674,7 @@ const PREFIXED_CREDENTIAL_PREFILTER = /KEY|TOKEN|SECRET|PASS|PWD|CREDENTIALS/;
 
 const SECRET_PATTERNS = [
   // A body may not contain another BEGIN header: linear on repeated headers without END.
-  { id: 'secret:private_key', pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----(?:(?!-----BEGIN )[\s\S])*?-----END [A-Z ]*PRIVATE KEY-----/g, replacement: '[REDACTED_PRIVATE_KEY]' },
+  { id: 'secret:private_key', pattern: /-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----(?:(?!-----BEGIN )[\s\S])*?-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----/g, replacement: '[REDACTED_PRIVATE_KEY]' },
   { id: 'secret:anthropic_key', pattern: /(?<![A-Za-z0-9_])(sk-ant-[A-Za-z0-9_-]{30,})(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))/g, replacement: '[REDACTED_ANTHROPIC_KEY]' },
   // A key without a known prefix ends at the first character that is not a letter or digit.
   { id: 'secret:openai_key', pattern: /(?<![A-Za-z0-9_])(sk-(?:(?:proj|svcacct|admin|[Nn]one|or-v1|lf)-[A-Za-z0-9_-]{28,}(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))|helicone-(?:(?:eu|cp|gov|rl)-){0,4}[a-z0-9]{7}(?:-[a-z0-9]{7}){3}(?![a-z0-9])|(?=(?:eu|cp|gov|rl)-|[a-z0-9]{7}-)(?=[a-z-]{0,46}[0-9])(?:(?:eu|cp|gov|rl)-){0,4}[a-z0-9]{7}(?:-[a-z0-9]{7}){3}(?![a-z0-9])(?!-[a-z0-9])|sp-[A-Za-z0-9]{28,}(?![A-Za-z0-9])|[A-Za-z0-9]{28,}(?![A-Za-z0-9])|(?:(?!sk-)[A-Za-z0-9_-]){1,200}?T3BlbkFJ[A-Za-z0-9_-]{20,}(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))))/g, replacement: '[REDACTED_OPENAI_KEY]' },
@@ -1078,8 +1078,9 @@ const SCRUB_PROVIDER_LABELS = new Map([['DB_PASSWORD', 'URL_PASSWORD']]);
 // Google, npm, ...), run on text the SECRET_PATTERNS already redacted. The
 // engine is required here, not at the top, because it requires this file.
 function redactProviderFormats(text) {
-  const spans = require('./scrub/engine').scan(text, { exact: false, pii: false })
-    .filter((s) => SCRUB_PROVIDER_RULES.has(s.type))
+  // Only the provider types take part in the overlap resolution: a wider span of another type (such as
+  // a NAME=value assignment) would otherwise win it, be dropped here, and leave the key unredacted.
+  const spans = require('./scrub/engine').scan(text, { exact: false, pii: false, types: SCRUB_PROVIDER_RULES })
     .sort((a, b) => a.start - b.start || b.end - a.end);
   const detections = [];
   let out = '';
@@ -1140,15 +1141,88 @@ function redactWith(text, patterns) {
 // head + tail view used by evaluate(), it is scanned in windows of
 // MAX_SCAN_CHARS that overlap by SCAN_WINDOW_OVERLAP, so a payload in the
 // middle is not skipped. Past MAX_TOOL_RESULT_SCAN_CHARS only the last window
-// is added and the result is marked `truncated: true`. A match that spans more
-// than SCAN_WINDOW_OVERLAP characters across a window boundary can be missed.
+// is added and the result is marked `truncated: true`; options.maxScanChars
+// raises that limit (the MCP shield scans more). A match that spans more than
+// SCAN_WINDOW_OVERLAP characters across a window boundary can be missed.
 const SCAN_WINDOW_OVERLAP = 4 * 1024;
 const MAX_TOOL_RESULT_SCAN_CHARS = 4 * 1024 * 1024;
 
+// Tool output that is mostly invisible characters is not scanned: building the
+// match view of millions of zero-width characters costs seconds, and a text
+// that is mostly invisible has no legitimate use. It is blocked instead, so
+// hidden text cannot pass because it was too costly to look at.
+// The invisible characters are counted over every string of a result together
+// (splitting the text into small strings does not avoid the limit), in code
+// points (Python counts the same way). A result is blocked when it has at
+// least MIN_INVISIBLE_CHECK_CHARS code points and more than half are invisible,
+// or when it holds more than MAX_INVISIBLE_CHARS invisible characters. The
+// count stops as soon as that limit is passed. A valid subdivision flag
+// (U+1F3F4, 2 to 7 tag letters or digits, U+E007F) counts as one invisible
+// character, so long runs of such flags are not read as hidden text.
+const MIN_INVISIBLE_CHECK_CHARS = 64 * 1024;
+const MAX_INVISIBLE_CHARS = 200000;
+const INVISIBLE_BLOCK_REASON = 'Output is mostly invisible characters';
+
+function invisibleStats(text, budget) {
+  const n = text.length;
+  let count = 0;
+  let pairs = 0;
+  for (let i = 0; i < n; i++) {
+    const c = text.charCodeAt(i);
+    if (c < 0xAD) continue;
+    if ((c >= 0x200B && c <= 0x200D) || c === 0x2060 || c === 0xFEFF || c === 0xAD || (c >= 0xFE00 && c <= 0xFE0F)) {
+      count++;
+    } else if (c >= 0xD800 && c <= 0xDBFF && i + 1 < n) {
+      const d = text.charCodeAt(i + 1);
+      if (d < 0xDC00 || d > 0xDFFF) continue;
+      pairs++;
+      i++;
+      if (c === 0xDB40) {
+        if (d <= 0xDC7F || (d >= 0xDD00 && d <= 0xDDEF)) count++;
+      } else if (c === 0xD83C && d === 0xDFF4) {
+        let j = i + 1;
+        let k = 0;
+        while (k < 7 && text.charCodeAt(j) === 0xDB40) {
+          const e = text.charCodeAt(j + 1);
+          if (!((e >= 0xDC30 && e <= 0xDC39) || (e >= 0xDC61 && e <= 0xDC7A))) break;
+          j += 2;
+          k++;
+        }
+        if (k >= 2 && text.charCodeAt(j) === 0xDB40 && text.charCodeAt(j + 1) === 0xDC7F) {
+          count++;
+          pairs += k + 1;
+          i = j + 1;
+        }
+      }
+    }
+    if (count > budget) break;
+  }
+  return { count, length: n - pairs };
+}
+
+function tooInvisible(strings) {
+  let count = 0;
+  let length = 0;
+  for (const s of strings) {
+    if (typeof s !== 'string') continue;
+    const st = invisibleStats(s, MAX_INVISIBLE_CHARS - count);
+    count += st.count;
+    length += st.length;
+    if (count > MAX_INVISIBLE_CHARS) return true;
+  }
+  return length >= MIN_INVISIBLE_CHECK_CHARS && count * 2 > length;
+}
+
+function invisibleBlock() {
+  return { verdict: 'block', confidence: 1.0, reason: INVISIBLE_BLOCK_REASON, rule: 'size:invisible', engine: 'oss-local', rules_version: RULES_VERSION };
+}
+
 function scanWindows(text, options = {}) {
+  if (tooInvisible([text])) return invisibleBlock();
   if (typeof text !== 'string' || text.length <= MAX_SCAN_CHARS) return evaluate(text, options);
   const step = MAX_SCAN_CHARS - SCAN_WINDOW_OVERLAP;
-  const limit = Math.min(text.length, MAX_TOOL_RESULT_SCAN_CHARS);
+  const cap = Number.isFinite(options.maxScanChars) && options.maxScanChars > 0 ? options.maxScanChars : MAX_TOOL_RESULT_SCAN_CHARS;
+  const limit = Math.min(text.length, cap);
   let res = null;
   let advisory = null;
   for (let start = 0; ; start += step) {
@@ -1269,6 +1343,10 @@ module.exports = {
   redactScanRules,
   isNonSecretValue,
   sanitizeToolResult,
+  tooInvisible,
+  invisibleBlock,
+  MAX_INVISIBLE_CHARS,
+  MIN_INVISIBLE_CHECK_CHARS,
   normalizeInput,
   invisibleView,
   scanWindows,

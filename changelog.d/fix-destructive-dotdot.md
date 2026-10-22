@@ -1,0 +1,2 @@
+### Fixed
+- The optional destructive-command check now resolves `.` and `..` path segments before it looks at the target, so a recursive delete such as `rm -rf /home/alice/project/../..` is recognised as the home folder or the filesystem root. Paths that only contain `..` and stay below the home folder (a project subfolder, `/tmp/../tmp/build`) are still allowed. The Node.js and Python checks behave the same. `POLICY_RULES_VERSION` is `2026-10-20.3`.

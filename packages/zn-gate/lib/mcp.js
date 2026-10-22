@@ -11,6 +11,7 @@ try {
 } catch (_) {}
 const { AsyncLocalStorage } = require('async_hooks');
 const proto = require('./mcp-protocol');
+const { isVerbose } = require('./verbose');
 
 const PROTOCOL_VERSION = proto.LATEST_PROTOCOL_VERSION;
 // Version agreed in initialize (one client per stdio process); until then the latest.
@@ -315,7 +316,7 @@ function startMcpServer(options = {}) {
     terminal: false,
   });
 
-  if (process.env.DEBUG || process.env.ZN_VERBOSE) {
+  if (isVerbose()) {
     process.stderr.write(`[zn-gate] MCP server listening on stdio (engine: ${isCloudEnabled(options) ? 'local + cloud for analyze_prompt' : 'local only'})...\n`);
   }
 
@@ -331,7 +332,7 @@ function startMcpServer(options = {}) {
       }
       await handleRequest(message, options);
     } catch (err) {
-      if (process.env.DEBUG) {
+      if (isVerbose()) {
         process.stderr.write(`[zn-gate] JSON-RPC parse error: ${err.message}\n`);
       }
       sendJsonRpc({

@@ -507,16 +507,21 @@ async fn start_proxy(args: Args) -> Result<()> {
     let bind_address = state.config.server.bind_address.clone();
     let api_state = state.clone();
 
+    // Built before the task starts so a bad value is a normal startup error.
+    let rate_limit = api_state.config.security.rate_limit_per_minute;
+    let governor_conf = GovernorConfigBuilder::default()
+        .per_second(1)
+        .burst_size(rate_limit)
+        .finish()
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "security.rate_limit_per_minute is {rate_limit}, but the rate limiter needs a value of at least 1"
+            )
+        })?;
+
     tokio::spawn(async move {
         let allowed_origins = api_state.config.security.allowed_origins.clone();
         let cors = build_cors_layer(&allowed_origins);
-
-        let rate_limit = api_state.config.security.rate_limit_per_minute;
-        let governor_conf = GovernorConfigBuilder::default()
-            .per_second(1)
-            .burst_size(rate_limit as u32)
-            .finish()
-            .expect("Failed to create rate limiter config");
 
         let governor_layer = GovernorLayer {
             config: std::sync::Arc::new(governor_conf),
