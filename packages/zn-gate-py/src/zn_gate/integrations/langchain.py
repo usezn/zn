@@ -20,7 +20,8 @@ import contextvars
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
-from ..guard import GuardBlockError, block_message, check_tool_call, check_tool_result, validate_on_block, _rebuild_error, _error_texts, _mask_text, _safe_text
+from ..guard import (GuardBlockError, block_message, check_tool_call, check_tool_result, validate_on_block,
+                     _error_texts, _mask_text, _mask_value, _rebuild_error, _safe_text)
 from ..rules import Assessment, evaluate, sanitize_tool_result
 
 try:
@@ -176,10 +177,16 @@ class ZnGuardCallbackHandler(BaseCallbackHandler):
             return output
         if not self.mask_secrets:
             return output
-        masked, found = sanitize_tool_result(content)
-        if found and self.on_block == "raise":
+        masked, unmaskable = _mask_value(content)
+        if unmaskable is not None:
+            if self.on_block == "raise":
+                raise GuardBlockError(unmaskable, target="langchain:tool_output", payload=None)
+            return output
+        changed = masked is not content and masked != content
+        if changed and self.on_block == "raise":
+            _, found = sanitize_tool_result(content)
             raise GuardBlockError(_secret_assessment(found), target="langchain:tool_output", payload=masked)
-        return masked if found else output
+        return masked if changed else output
 
     def on_tool_error(
         self,
@@ -330,7 +337,9 @@ if _HAVE_LANGCHAIN:
                 if not assessment.allowed:
                     return self._blocked(assessment, target, result)
             if self.mask_secrets:
-                result, _ = sanitize_tool_result(result)
+                result, unmaskable = _mask_value(result)
+                if unmaskable is not None:
+                    return self._blocked(unmaskable, target, None)
             return result
 
         def _error(self, error: Exception) -> Any:

@@ -153,6 +153,9 @@ function respond(d) {
 
 /* ------------------------------ plugin ------------------------------ */
 
+// Seconds the plugin waits for the runner before it gives up (and the post-tool check stops before that).
+const HOOK_TIMEOUT_S = 20;
+
 function pluginSource(opts = {}) {
   // A project plugin is shared through the repository: it calls `zn` on PATH
   // instead of naming this user's node and runner.
@@ -174,7 +177,7 @@ function pluginSource(opts = {}) {
 import { spawn } from "node:child_process";
 
 ${launch}
-const TIMEOUT_MS = 20000;
+const TIMEOUT_MS = ${HOOK_TIMEOUT_S * 1000};
 // The only answers the plugin acts on. Any other answer is an error, which
 // blocks the call (before), withholds the output (after) or stops the message.
 const ACTIONS = ["none", "deny", "error", "args", "output"];
@@ -303,6 +306,7 @@ function detect(opts = {}) {
 
 module.exports = {
   id,
+  HOOK_TIMEOUT_S,
   detect,
   install,
   uninstall,
