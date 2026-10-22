@@ -68,12 +68,10 @@ def test_windows_userprofile_is_used_as_home(monkeypatch, tmp_path):
     assert _home_display(tmp_path / "AppData" / "x.json") == "~/AppData/x.json"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "_home_display(home) returns '~/.' because Path.relative_to gives '.'; "
-    "the home directory itself should display as '~' (or '~/')"))
 def test_home_directory_itself_is_shown_as_tilde(monkeypatch, tmp_path):
+    # Same as the Node.js package: the home folder itself is "~/".
     monkeypatch.setenv("HOME", str(tmp_path))
-    assert _home_display(tmp_path) in ("~", "~/")
+    assert _home_display(tmp_path) == "~/"
 
 
 # _plain_text: NO_COLOR and TERM=dumb

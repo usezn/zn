@@ -433,9 +433,11 @@ def _safe_text(value: Any) -> str:
 def _home_display(file_path: Path) -> str:
     """A file of the user's home as ~/..., the way the Node.js package shows it."""
     try:
-        return "~/" + file_path.relative_to(Path.home()).as_posix()
+        rel = file_path.relative_to(Path.home()).as_posix()
     except ValueError:
         return str(file_path)
+    # The home folder itself is "~/", as in the Node.js package (relative_to gives ".").
+    return "~/" + ("" if rel == "." else rel)
 
 
 # Directory names that scan does not enter. Caches and dependency stores are
