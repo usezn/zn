@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-22.7
+ * RULES_VERSION: 2026-10-22.9
  */
 
-const RULES_VERSION = '2026-10-22.7';
+const RULES_VERSION = '2026-10-22.9';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -422,7 +422,11 @@ function foldCompatMatch(run) {
   return COMPAT_FOLD.get(run);
 }
 const ANSI_ESCAPE_RE = /\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07\x1b]*\x07/g;
+// Hard caps for the Base64 smuggling check: above either one the command is blocked.
+const MAX_B64_PAYLOADS = 16;
+const MAX_B64_DECODED_BYTES = 128 * 1024;
 const B64_EXEC_RE = /(?:echo|printf)\s+([A-Za-z0-9+/=]{16,})\s*\|\s*(?:base64\s+-(?:d|-decode)|openssl)/i;
+const B64_EXEC_ALL_RE = new RegExp(B64_EXEC_RE.source, 'gi');
 
 // Maximal whitespace runs; only runs that contain a line break are joined.
 // A pattern anchored on the line break (such as /[^\S\r\n]*[\r\n]/) would
@@ -552,14 +556,28 @@ function evaluateUncached(input, options = {}) {
   const strict = strictMode(options, loadCustomConfig());
   let tierAdvisory = null;
 
-  // Check Base64 payload smuggling
+  // Check Base64 payload smuggling: every `echo|printf ... | base64 -d` is decoded
+  // and evaluated, not only the first, within hard caps that fail closed.
   let b64Advisory = null;
-  const b64Match = normalized.match(B64_EXEC_RE) || stripped.match(B64_EXEC_RE);
-  if (b64Match && b64Match[1]) {
+  const b64Payloads = new Set();
+  for (const candidate of [normalized, stripped]) {
+    for (const m of candidate.matchAll(B64_EXEC_ALL_RE)) {
+      if (m[1]) b64Payloads.add(m[1]);
+    }
+  }
+  if (b64Payloads.size > MAX_B64_PAYLOADS) {
+    return { verdict: 'block', confidence: 0.99, reason: `Smuggled Base64 execution: more than ${MAX_B64_PAYLOADS} Base64 decode pipes in one command`, rule: 'evasion:base64_smuggling', engine: 'oss-local', rules_version: RULES_VERSION };
+  }
+  let b64Bytes = 0;
+  for (const payload of b64Payloads) {
+    b64Bytes += Math.floor(payload.length * 3 / 4);
+    if (b64Bytes > MAX_B64_DECODED_BYTES) {
+      return { verdict: 'block', confidence: 0.99, reason: 'Smuggled Base64 execution: too much Base64 data to inspect', rule: 'evasion:base64_smuggling', engine: 'oss-local', rules_version: RULES_VERSION };
+    }
     try {
-      const decoded = Buffer.from(b64Match[1], 'base64').toString('utf8');
+      const decoded = Buffer.from(payload, 'base64').toString('utf8');
       const innerRes = evaluate(decoded, options);
-      if (innerRes.advisory) b64Advisory = innerRes.advisory;
+      if (innerRes.advisory && !b64Advisory) b64Advisory = innerRes.advisory;
       if (innerRes.verdict === 'block') {
         return {
           ...innerRes,
