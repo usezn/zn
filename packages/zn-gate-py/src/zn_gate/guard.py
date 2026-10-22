@@ -16,7 +16,7 @@ import types
 from collections.abc import AsyncIterator, ItemsView, Iterable, Iterator, KeysView, Mapping, ValuesView
 from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set, Tuple, TypeVar, cast
 
-from .rules import Assessment, scan_windows
+from .rules import Assessment, invisible_block, scan_windows, too_invisible
 
 
 _F = TypeVar("_F", bound=Callable[..., Any])
@@ -313,6 +313,8 @@ def _scan_strings(data: Any, what: str, block_truncated: bool, strict: Optional[
     strings_to_check, blocked = _strings_or_block(data, what)
     if blocked is not None:
         return blocked
+    if too_invisible(strings_to_check):
+        return invisible_block()
     truncated = False
     advisory = None
     for s in strings_to_check:

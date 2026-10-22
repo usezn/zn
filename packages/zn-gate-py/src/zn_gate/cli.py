@@ -27,7 +27,7 @@ from .evidence import verify_evidence_ledger, get_evidence_stats, export_evidenc
 # scan never sees BEGIN and END together, so these run on the whole file.
 # Each entry: (rule name, pattern, header pattern shown instead of the match).
 _MULTILINE_RULES = [
-    (name, rx, re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"))
+    (name, rx, re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----"))
     for name, rx, _ in _DLP_PATTERNS if name == "secret:private_key"
 ]
 
@@ -35,8 +35,8 @@ _MULTILINE_RULES = [
 # lines after it that look like PEM headers or base64 are treated as key
 # material, up to the first empty or other line (an encrypted key has one
 # empty line after its Proc-Type / DEK-Info headers, which is kept).
-_KEY_BEGIN = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
-_KEY_END = re.compile(r"-----END [A-Z ]*PRIVATE KEY-----")
+_KEY_BEGIN = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----")
+_KEY_END = re.compile(r"-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----")
 _KEY_BODY = re.compile(r"^(?:[A-Za-z0-9+/=]{16,}|[A-Za-z-]+: )")
 _KEY_HEADER = re.compile(r"^[A-Za-z-]+: ")
 _TRUNCATED_KEY_REASON = "Exposed credential detected by DLP filter (private key without an END marker)"
