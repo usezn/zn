@@ -171,12 +171,12 @@ def test_example_has_a_readme(name):
 
 
 def test_crewai_example_checks_the_page_text():
-    # The CrewAI example sets check_result=True itself: the same tool without it
-    # would hand the injected page to the model unchanged.
+    # The CrewAI example sets check_result=True itself (the default): the same tool
+    # with check_result=False would hand the injected page to the model unchanged.
     from zn_gate.integrations import guarded_tool
 
     example = load("crewai-agent")
-    without_result_check = guarded_tool(on_block="return", mask_secrets=True)(example.fetch_page)
+    without_result_check = guarded_tool(on_block="return", mask_secrets=True, check_result=False)(example.fetch_page)
     assert without_result_check(INJECTED_URL) == example.FAKE_PAGES[INJECTED_URL]
     assert example.safe_fetch_page(INJECTED_URL).startswith("zn-gate blocked")
 
