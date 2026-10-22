@@ -225,7 +225,7 @@ COMMANDS:
   stats               What zn-gate did on this machine (local counts; --days N, --json; "stats share" to opt in)
   report              Weekly report of what zn-gate did on this machine (--since Nd, --json, --no-team-line; nothing is sent)
   pins                Tool pins of the MCP servers that shield wraps ("pins approve <server>|--all" accepts changes)
-  status              Show engine configuration and gateway connectivity
+  status              Show engine configuration and whether the cloud check is on
   version, -V         Show package version
 
 SECRETS (values stay on this machine; agents only see __ZN_<NAME>__ markers):

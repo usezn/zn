@@ -6,3 +6,4 @@
 - `zn unlock` on a vault that is already unlocked says so and exits `0`, like `lock` does when the vault is not unlocked.
 - `zn secret set NAME` for a name that is already stored exits `1` instead of `64`, and the message still points to `--force`.
 - The command line reference now says how a hook answers: a blocked call exits `0` with the deny answer of its agent, and `2` only when the event cannot be read.
+- `zn-gate --help` now describes `status` as showing the engine configuration and whether the cloud check is on; it never opened a connection.
