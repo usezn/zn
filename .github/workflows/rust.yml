@@ -8,6 +8,10 @@ on:
     types: [ opened, synchronize, reopened, ready_for_review ]
     # No paths filter here: "build, test, clippy, fmt" is a required check, and a workflow skipped by a
     # paths filter leaves it pending. rust-scope.sh skips the steps when no Rust file changed instead.
+  # The merge queue on next runs the required checks again on the queued commit; rust-scope.sh runs
+  # everything for it (anything that is not a pull request).
+  merge_group:
+    types: [ checks_requested ]
   schedule:
     - cron: "17 6 * * 1" # weekly advisory check
   workflow_dispatch:
