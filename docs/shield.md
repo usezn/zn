@@ -76,6 +76,8 @@ In shadow mode:
 - Tool pinning still detects changes and logs them, but it does not mark, remove or refuse any tool, whatever the pinning mode is.
 - Every detection is written to the audit log.
 
+The log is capped per server message: the first 50 entries (blocked or allowed) get their own stderr line and audit event, and the rest are counted in one summary line and one event. Every text is still checked and replaced; only the logging is limited.
+
 Review what the shield found with:
 
 ```bash
