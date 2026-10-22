@@ -146,6 +146,51 @@ for (const [name, pre, nested] of [
   });
 }
 
+for (const [name, pre] of [
+  ['opencode', { hook: 'tool.execute.before', tool: 'bash', cwd: '/', args: { hook: 'tool.execute.after', data: '' } }],
+  ['copilot', { sessionId: 's', timestamp: 1792400000000, cwd: '/', toolName: 'bash', toolArgs: { toolResult: 1, data: '' } }],
+  ['copilot', { hook_event_name: 'PreToolUse', session_id: 's', cwd: '/', tool_name: 'bash', tool_input: { tool_result: 1, data: '' } }],
+]) {
+  test(name + ': an oversized pre-tool event with a post-tool marker inside its arguments is refused (' + Object.keys(pre)[0] + ')', async () => {
+    const arg = pre.args || pre.toolArgs || pre.tool_input;
+    arg.data = 'A'.repeat(runner.POST_STDIN_CAP + 10);
+    const err = [];
+    const out = [];
+    const write = process.stderr.write;
+    const wout = process.stdout.write;
+    const code = process.exitCode;
+    process.stderr.write = (chunk) => { err.push(String(chunk)); return true; };
+    process.stdout.write = (chunk) => { out.push(String(chunk)); return true; };
+    try {
+      await runner.main([name], async () => JSON.stringify(pre));
+      assert.equal(process.exitCode, 2);
+    } finally {
+      process.stderr.write = write;
+      process.stdout.write = wout;
+      process.exitCode = code;
+    }
+    assert.match(err.join(''), /too large/);
+    assert.ok(!out.join('').includes('withheld'));
+  });
+}
+
+for (const name of ['opencode', 'copilot']) {
+  test(name + ': an oversized post-tool event is still answered with the notice', async () => {
+    const big = AGENTS[name].event('A'.repeat(runner.POST_STDIN_CAP + 10));
+    const out = [];
+    const wout = process.stdout.write;
+    const code = process.exitCode;
+    process.stdout.write = (chunk) => { out.push(String(chunk)); return true; };
+    try {
+      await runner.main([name], async () => JSON.stringify(big));
+    } finally {
+      process.stdout.write = wout;
+      process.exitCode = code;
+    }
+    assert.match(out.join(''), NOTICE);
+  });
+}
+
 test('the deadline is the agent hook timeout minus five seconds, from each adapter', () => {
   const seconds = { 'claude-code': 15, codex: 30, copilot: 15, cursor: 30, opencode: 20, antigravity: 15 };
   for (const [name, s] of Object.entries(seconds)) {

@@ -1164,26 +1164,64 @@ function readStdin() {
   });
 }
 
+// The keys of the top-level object that can be read in the first characters of an event (the first
+// occurrence of each, with its value when that is a string, otherwise true). Keys inside the tool arguments
+// are deeper in the object and are not counted: an agent's event name must be a key of the event itself.
+function topLevelKeys(head) {
+  const keys = {};
+  let depth = 0;
+  let i = 0;
+  while (i < head.length) {
+    const c = head[i];
+    if (c === '"') {
+      let j = i + 1;
+      while (j < head.length && head[j] !== '"') j += head[j] === '\\' ? 2 : 1;
+      const str = head.slice(i + 1, j);
+      i = j + 1;
+      if (depth === 1) {
+        const rest = head.slice(i, i + 300);
+        const colon = /^\s*:\s*/.exec(rest);
+        if (colon && !(str in keys)) {
+          const value = /^"((?:[^"\\]|\\.)*)"/.exec(rest.slice(colon[0].length));
+          keys[str] = value ? value[1] : true;
+        }
+      }
+      continue;
+    }
+    if (c === '{' || c === '[') depth++;
+    else if (c === '}' || c === ']') depth--;
+    i++;
+  }
+  return keys;
+}
+
 // How each agent's post-tool event can be told from the first characters of an event that is too large to
-// read, and the replacement it takes (its adapter turns it into the agent's own answer).
+// read, and the replacement it takes (its adapter turns it into the agent's own answer). Each `isPost` looks
+// only at the keys of the event itself.
 const OVERSIZE_POST = {
-  'claude-code': { re: /"hook_event_name"\s*:\s*"PostToolUse"/, first: true, tool: 'bash', shape: (t) => t },
-  codex: { re: /"hook_event_name"\s*:\s*"PostToolUse"/, first: true, tool: 'bash', shape: (t) => t },
-  copilot: { re: /"(?:toolResult|tool_result)"\s*:/, tool: 'bash', shape: (t) => t },
-  opencode: { re: /"hook"\s*:\s*"tool\.execute\.after"/, tool: 'bash', shape: (t) => ({ output: t }) },
-  cursor: { re: /"hook_event_name"\s*:\s*"postToolUse"/, first: true, tool: 'mcp', shape: (t) => t },
+  'claude-code': { isPost: (k) => k.hook_event_name === 'PostToolUse', tool: 'bash', shape: (t) => t },
+  codex: { isPost: (k) => k.hook_event_name === 'PostToolUse', tool: 'bash', shape: (t) => t },
+  // Copilot has two shapes: with an event name, that decides; the Copilot CLI one has none, and then the
+  // result is a key of the event (it can come after the arguments, in which case it cannot be seen here and the
+  // event is refused).
+  copilot: {
+    isPost: (k) => {
+      const named = k.hook_event_name !== undefined ? k.hook_event_name : k.hookEventName;
+      if (named !== undefined) return named === 'PostToolUse';
+      return k.toolResult !== undefined || k.tool_result !== undefined;
+    },
+    tool: 'bash',
+    shape: (t) => t,
+  },
+  opencode: { isPost: (k) => k.hook === 'tool.execute.after', tool: 'bash', shape: (t) => ({ output: t }) },
+  cursor: { isPost: (k) => k.hook_event_name === 'postToolUse', tool: 'mcp', shape: (t) => t },
 };
 
 // An event over POST_STDIN_CAP characters cannot be parsed in time. A post-tool event is answered with the
 // fixed notice in place of the output; anything else is refused like any event zn cannot read.
 function oversizeEvent(agentId, adapter, text) {
   const spec = OVERSIZE_POST[agentId];
-  const head = text.slice(0, 65536);
-  // The event name is the first such key of the event; the same key can also appear inside the tool arguments of
-  // a pre-tool event, so only the first one counts.
-  const firstKey = spec && spec.first ? /"hook_event_name"\s*:\s*"[^"]*"/.exec(head) : null;
-  const isPost = spec && (spec.first ? firstKey !== null && spec.re.test(firstKey[0]) : spec.re.test(head));
-  if (!isPost) return refuseInput(agentId, 'the event on stdin is too large to check');
+  if (!spec || !spec.isPost(topLevelKeys(text.slice(0, 65536)))) return refuseInput(agentId, 'the event on stdin is too large to check');
   const event = { event: 'post_tool', hookEvent: 'postToolUse', tool: spec.tool, input: { texts: [] } };
   const output = adapter.respond({ decision: 'allow', updatedOutput: spec.shape(POST_WITHHELD), message: POST_CAP_NOTE, event });
   if (output !== null && output !== undefined) process.stdout.write(JSON.stringify(output));
