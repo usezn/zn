@@ -594,5 +594,6 @@ module.exports = {
   // exported for tests
   latestBackup,
   safeRestore,
+  resolveConfig,
   _internal: { scanCodexToml, parseTomlStringArray, parseTomlKeyPath },
 };

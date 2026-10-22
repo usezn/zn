@@ -1,0 +1,22 @@
+{
+  "name": "zn-gate-example-mastra-agent",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Protect the tools of a Mastra agent with zn-gate (offline, simulated model).",
+  "type": "module",
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "dependencies": {
+    "@mastra/core": "1.78.0",
+    "ai": "7.0.143",
+    "zn-gate": "1.13.1",
+    "zod": "4.1.13"
+  },
+  "overrides": {
+    "argparse": "^2.0.1"
+  }
+}
