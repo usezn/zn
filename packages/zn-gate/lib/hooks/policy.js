@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-23.4';
+const POLICY_RULES_VERSION = '2026-10-23.5';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -749,6 +749,94 @@ const INSTRUCTION_DEST_LAST = new Set(['cp', 'mv', 'install', 'rsync', 'ln', 'co
 const IN_PLACE_RE = /^(?:-[A-Za-z]*i|--in-place)/;
 const INSTRUCTION_CHECKS_MAX = 64;
 
+// Words that run the next command: the command word is the first one after them (and their options).
+// Each maps to the options that take a value.
+const INSTRUCTION_WRAPPERS = new Map([
+  ['sudo', new Set(['-u', '-g', '-h', '-p', '-C', '-U', '-D', '-R', '-T', '--user', '--group', '--host'])],
+  ['doas', new Set(['-u', '-C'])],
+  ['env', new Set(['-u', '-C', '-S'])],
+  ['xargs', new Set(['-n', '-I', '-L', '-P', '-d', '-E', '-s', '-a'])],
+  ['nice', new Set(['-n'])],
+  ['time', new Set(['-f', '-o'])],
+  ['command', new Set()], ['builtin', new Set()], ['exec', new Set()], ['nohup', new Set()],
+  ['then', new Set()], ['do', new Set()], ['else', new Set()], ['if', new Set()], ['while', new Set()], ['until', new Set()],
+  ['!', new Set()], ['{', new Set()],
+]);
+
+/** Index in `seg` of the command word of a simple command (after VAR=value, sudo, env, nohup, time, xargs...); -1 if none. */
+function commandWordAt(seg, progs) {
+  let i = 0;
+  while (i < progs.length) {
+    if (seg[i].redirectTarget || /^[A-Za-z_][A-Za-z0-9_]*=/.test(seg[i].text)) { i++; continue; }
+    const takesValue = INSTRUCTION_WRAPPERS.get(progs[i]);
+    if (!takesValue) return i;
+    i++;
+    while (i < progs.length && seg[i].text.length > 1 && seg[i].text.startsWith('-')) i += takesValue.has(seg[i].text) ? 2 : 1;
+  }
+  return -1;
+}
+
+// Downloaders that write the file named by an output option. The value-taking short options (other than the
+// output one) end a cluster such as `-sSo`: what follows them is their value.
+const INSTRUCTION_DOWNLOADERS = {
+  curl: { long: '--output', short: 'o', valued: 'AbcCdDeEFHKmPQrtTuUwxXyYz' },
+  wget: { long: '--output-document', short: 'O', valued: 'abBeFHiIlnoPQtTUwX' },
+};
+
+/** The files a `curl` or `wget` command writes with -o/--output or -O/--output-document. */
+function downloadTargets(name, rest) {
+  const spec = INSTRUCTION_DOWNLOADERS[name];
+  const out = [];
+  for (let i = 0; i < rest.length; i++) {
+    const x = rest[i];
+    if (x === spec.long) {
+      if (i + 1 < rest.length) out.push(rest[i + 1]);
+      i++;
+    } else if (x.startsWith(spec.long + '=')) {
+      out.push(x.slice(spec.long.length + 1));
+    } else if (/^-[A-Za-z]/.test(x)) {
+      for (let k = 1; k < x.length; k++) {
+        if (x[k] === spec.short) {
+          const attached = x.slice(k + 1);
+          if (attached) out.push(attached);
+          else if (i + 1 < rest.length) { out.push(rest[i + 1]); i++; }
+          break;
+        }
+        if (spec.valued.includes(x[k])) break;
+      }
+    }
+  }
+  return out;
+}
+
+/** The target directory named with -t DIR or --target-directory[=]DIR, or null. */
+function targetDirectoryOf(rest) {
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === '-t' || rest[i] === '--target-directory') return i + 1 < rest.length ? rest[i + 1] : null;
+    if (rest[i].startsWith('--target-directory=')) return rest[i].slice('--target-directory='.length);
+  }
+  return null;
+}
+
+/** When `dest` is a directory (named with a trailing separator, forced by -t, or existing now), where each source lands in it. */
+function intoDirectory(dest, sources, forced, opts) {
+  let isDir = forced || /[\\/]$/.test(dest);
+  if (!isDir) {
+    try {
+      const ctx = contextOf(opts);
+      isDir = fs.statSync(path.resolve(ctx.cwd, expandEnv(expandHome(dest, ctx.home), ctx.env).text)).isDirectory();
+    } catch (_) { isDir = false; }
+  }
+  if (!isDir) return [];
+  const base = dest.replace(/[\\/]+$/, '');
+  const landed = [];
+  for (const src of sources) {
+    const name = src.replace(/[\\/]+$/, '').split(/[\\/]/).pop();
+    if (name && name !== '.' && name !== '..') landed.push(base + '/' + name);
+  }
+  return landed;
+}
+
 /** The first notice for a word of a shell command that writes an instruction file; null when none does. */
 function instructionWriteInWords(readings, opts) {
   const seen = new Set();
@@ -760,10 +848,12 @@ function instructionWriteInWords(readings, opts) {
     }
     for (const seg of segments.values()) {
       const progs = seg.map((x) => x.text.split(/[\\/]/).pop().toLowerCase().replace(/\.exe$/, ''));
-      const at = progs.findIndex((n) => INSTRUCTION_WRITERS.has(n));
+      const at = commandWordAt(seg, progs);
       const candidates = [];
       for (const w of seg) if (w.redirectTarget) candidates.push(w.text);
-      if (at >= 0) {
+      if (at >= 0 && INSTRUCTION_DOWNLOADERS[progs[at]] && Object.prototype.hasOwnProperty.call(INSTRUCTION_DOWNLOADERS, progs[at])) {
+        candidates.push(...downloadTargets(progs[at], seg.slice(at + 1).map((x) => x.text)));
+      } else if (at >= 0 && INSTRUCTION_WRITERS.has(progs[at])) {
         const name = progs[at];
         const rest = seg.slice(at + 1).map((x) => x.text);
         const args = rest.filter((x) => x && !x.startsWith('-') && !/^[0-9]*[<>]/.test(x));
@@ -772,7 +862,16 @@ function instructionWriteInWords(readings, opts) {
         } else if ((name === 'sed' || name === 'perl') && !rest.some((x) => IN_PLACE_RE.test(x))) {
           // These only read their files without an in-place flag.
         } else if (INSTRUCTION_DEST_LAST.has(name)) {
-          if (args.length > 1) candidates.push(args[args.length - 1]);
+          const dir = targetDirectoryOf(rest);
+          if (dir !== null) {
+            // -t DIR: every other argument is a source, written into DIR.
+            const at = args.indexOf(dir);
+            const sources = args.filter((_, j) => j !== at);
+            candidates.push(...intoDirectory(dir, sources, true, opts));
+          } else if (args.length > 1) {
+            const dest = args[args.length - 1];
+            candidates.push(dest, ...intoDirectory(dest, args.slice(0, -1), false, opts));
+          }
         } else {
           candidates.push(...args);
         }

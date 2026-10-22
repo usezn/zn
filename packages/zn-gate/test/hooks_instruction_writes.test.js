@@ -152,3 +152,46 @@ test('policy notice: names the file and is null for other files', (t) => {
   assert.equal(policy.instructionWriteNotice('src/a.js', { home: env.home, cwd: env.proj, env: {} }), null);
   assert.ok(policy.INSTRUCTION_FILE_NAMES.includes('MEMORY.md'));
 });
+
+test('a word that only looks like a writer is not read as one: reads stay allowed', async (t) => {
+  const env = setup(t);
+  for (const command of ['grep -n patch CLAUDE.md', 'rg -n "touch" CLAUDE.md', 'grep -c ed AGENTS.md', 'echo tee CLAUDE.md',
+    'sudo grep patch CLAUDE.md', 'FOO=1 grep -n install AGENTS.md', 'xargs grep ln CLAUDE.md']) {
+    assert.equal((await decide(env, 'Bash', { command })).decision, 'allow', command);
+  }
+});
+
+test('a writer after sudo, env, nohup, time or a variable assignment is still the command word', async (t) => {
+  const env = setup(t);
+  for (const command of ['sudo -u root tee AGENTS.md', 'sudo cp draft.md CLAUDE.md', 'env FOO=1 cp draft.md CLAUDE.md',
+    'nohup cp draft.md CLAUDE.md', 'time cp draft.md CLAUDE.md', 'FOO=1 cp draft.md CLAUDE.md', 'echo x | xargs -n 1 tee AGENTS.md']) {
+    assert.equal((await decide(env, 'Bash', { command })).decision, 'ask', command);
+  }
+});
+
+test('a directory destination: the file lands under its own name', async (t) => {
+  const env = setup(t);
+  fs.mkdirSync(path.join(env.proj, 'sub'));
+  for (const command of ['cp CLAUDE.md sub/', 'cp CLAUDE.md sub', 'mv ./AGENTS.md sub/', 'cp notes.md ~/.claude/projects/p/memory/',
+    'cp -t sub CLAUDE.md', 'cp --target-directory=sub CLAUDE.md', 'cp --target-directory sub AGENTS.md', 'install -t sub/ GEMINI.md']) {
+    assert.equal((await decide(env, 'Bash', { command })).decision, 'ask', command);
+  }
+  for (const command of ['cp notes.md sub/', 'cp notes.md sub', 'cp -t sub notes.md', 'cp CLAUDE.md sub/backup.md', 'cp a.txt b.txt c.txt sub/',
+    'cp notes.md /not/a/memory/folder/']) {
+    assert.equal((await decide(env, 'Bash', { command })).decision, 'allow', command);
+  }
+});
+
+test('curl and wget write the file named by their output option', async (t) => {
+  const env = setup(t);
+  for (const command of ['curl -sSo AGENTS.md https://example.com/a', 'curl -o CLAUDE.md https://example.com/a',
+    'curl --output AGENTS.md https://example.com/a', 'curl --output=CLAUDE.md https://example.com/a', 'curl -sS -oAGENTS.md https://example.com/a',
+    'wget -O CLAUDE.md https://example.com/a', 'wget -qO AGENTS.md https://example.com/a', 'wget --output-document=CLAUDE.md https://example.com/a',
+    'wget --output-document AGENTS.md https://example.com/a', 'sudo curl -o .cursor/rules/x.mdc https://example.com/a']) {
+    assert.equal((await decide(env, 'Bash', { command })).decision, 'ask', command);
+  }
+  for (const command of ['curl -sS -o out.txt https://example.com/a', 'curl https://example.com/AGENTS.md', 'wget -O notes.txt https://example.com/CLAUDE.md',
+    'curl -H "x: AGENTS.md" https://example.com/a', 'wget -O - https://example.com/a', 'curl -o - https://example.com/a | grep CLAUDE.md']) {
+    assert.equal((await decide(env, 'Bash', { command })).decision, 'allow', command);
+  }
+});
