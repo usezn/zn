@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- Antigravity: the hook now blocks `write_to_file` and `multi_replace_file_content` on a `.env` file that holds plain-text secrets, as the docs say, and asks before a recursive shell search (`grep -r`, `rg`) over a folder that holds one, like it does for the search tool.
+
 ## [1.13.1] - 2026-10-20
 
 zn-gate 1.13.1 is a security patch for the Python package. The LangChain callback handler now stops a run when it blocks a tool call, and the new `guard_langchain_tool` wrapper checks tool arguments and masks secrets in tool output before the model reads them. Upgrade with `pip install -U zn-gate`. The npm package has no code changes in this release.
