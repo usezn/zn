@@ -527,12 +527,14 @@ function userMcpServerIsOurs(opts = {}) {
  * The PreToolUse event names only the tool (mcp__<server>__<tool>), not the server's command, so the
  * adapter checks the MCP configuration Claude Code itself reads. A name alone is never enough: a project
  * can define any server name in its own .mcp.json. The answer is 'secrets' (the vault server),
- * 'analyze' (the plugin's detector server) or null. It is not null only when:
+ * 'analyze' (the detector server: the plugin's, or the user-scope `zn-gate`/`zn` entry that runs `zn-gate mcp`) or null. It is not null only when:
  *  - the user-scope server named "secrets" is zn's (isZnSecretsServer: zn-gate's own bin/cli.js, `zn`,
  *    `zn-gate` or `npx zn-gate`, the same test the installer uses to decide a server is ours), and
  *  - no .mcp.json from the working folder upwards and no local-scope entry of ~/.claude.json defines a
  *    server with that name, unless it is the bare command `zn secrets-mcp` that a project install writes
  *    (a relative or absolute path to a binary is not accepted), and
+ *  - for the user-scope detector server (`zn-gate` or `zn`): its command is zn's own (isZnDetectorServer) and
+ *    no project or local entry uses that name at all, and
  *  - for the plugin's servers (plugin_zn-gate_secrets, plugin_zn-gate_zn-gate): the zn-gate plugin is
  *    enabled in the user's settings and no project or local entry uses that name at all.
  * Anything unreadable gives null, so the call is checked as for any other server. */
@@ -553,9 +555,27 @@ function isBareZnSecrets(s) {
   return (s.command === 'zn' || s.command === 'zn-gate') && args[0] === 'secrets-mcp';
 }
 
+/* zn's own detector server (`zn-gate mcp`: analyze_prompt, check_tool_call, check_tool_result), registered by the user
+ * with `claude mcp add zn-gate -- npx -y zn-gate mcp` (or under the name `zn`). Its command must be zn's own. */
+const DETECTOR_SERVER_NAMES = ['zn-gate', 'zn'];
+
+function isZnDetectorServer(s) {
+  if (!s || typeof s !== 'object' || s.url) return false;
+  const args = Array.isArray(s.args) ? s.args.map(String) : [];
+  const i = args.indexOf('mcp');
+  if (i < 0) return false;
+  const prev = i > 0 ? args[i - 1].replace(/\\/g, '/') : '';
+  const cmd = path.basename(String(s.command || '').replace(/\\/g, '/')).replace(/\.(?:cmd|exe|ps1)$/i, '').toLowerCase();
+  if (/(?:^|\/)zn-gate\/bin\/cli\.js$/i.test(prev)) return true;
+  if (i === 0 && (cmd === 'zn' || cmd === 'zn-gate')) return true;
+  const pkg = args.slice(0, i).filter((a) => !a.startsWith('-'));
+  return (cmd === 'npx' || cmd === 'npm') && pkg.length === 1 && /^zn-gate(?:@[^\s]+)?$/i.test(pkg[0]) && i === args.indexOf(pkg[0]) + 1;
+}
+
 function znMcpServerKind(server, cwd, opts = {}) {
   const plugin = server === PLUGIN_SECRETS_SERVER || server === PLUGIN_ANALYZE_SERVER;
-  if (server !== MCP_SERVER_NAME && !plugin) return null;
+  const detector = DETECTOR_SERVER_NAMES.includes(server);
+  if (server !== MCP_SERVER_NAME && !plugin && !detector) return null;
   const env = opts.env || process.env;
   const file = env.CLAUDE_CONFIG_DIR ? path.join(configDir(opts), '.claude.json') : path.join(opts.home || os.homedir(), '.claude.json');
   const data = readJsonFile(file);
@@ -582,6 +602,11 @@ function znMcpServerKind(server, cwd, opts = {}) {
     const enabled = settings && settings.enabledPlugins && typeof settings.enabledPlugins === 'object' ? settings.enabledPlugins : {};
     if (!Object.keys(enabled).some((k) => /^zn-gate@/.test(k) && enabled[k] === true)) return null;
     return server === PLUGIN_SECRETS_SERVER ? 'secrets' : 'analyze';
+  }
+  if (detector) {
+    // Only the user-scope entry, and only when no project or local entry uses the name at all.
+    if (overrides.length) return null;
+    return userServers[server] !== undefined && isZnDetectorServer(userServers[server]) ? 'analyze' : null;
   }
   if (overrides.some((s) => !isBareZnSecrets(s))) return null;
   if (userServers[server] !== undefined && !isZnSecretsServer(userServers[server])) return null;

@@ -1078,3 +1078,42 @@ test('personal data: asked for the secrets server, not asked for the plugin dete
   // A secret is denied even for the detector server.
   assert.equal(decisionOf(await run(preTool('mcp__plugin_zn-gate_zn-gate__analyze_prompt', { text: AWS }, dir), { engine: piiEngine })), 'deny');
 });
+
+const ZN_DETECTOR = { command: 'npx', args: ['-y', 'zn-gate', 'mcp'] };
+
+test('personal data: not asked for the user-scope detector server, still asked for an impostor, a third party and the vault', async (t) => {
+  const dir = tmpProject(t);
+  claudeConfig(t, { claudeJson: { mcpServers: { 'zn-gate': ZN_DETECTOR, zn: { command: 'zn', args: ['mcp'] }, secrets: ZN_SECRETS, crm: { command: 'node', args: ['/opt/crm-example/server.js'] } } } });
+  const note = { text: 'write to jane@example.com' };
+  assert.equal(adapter.normalize(preTool('mcp__zn-gate__analyze_prompt', note, dir)).mcp.ours, 'analyze');
+  assert.equal(decisionOf(await run(preTool('mcp__zn-gate__analyze_prompt', note, dir), { engine: piiEngine })), 'allow');
+  assert.equal(decisionOf(await run(preTool('mcp__zn__analyze_prompt', note, dir), { engine: piiEngine })), 'allow');
+  // A secret is still denied for the detector server.
+  assert.equal(decisionOf(await run(preTool('mcp__zn-gate__analyze_prompt', { text: AWS }, dir), { engine: piiEngine })), 'deny');
+  // The vault server sends data to URLs: still asked.
+  assert.equal(decisionOf(await run(preTool(VAULT_TOOL, { ...VAULT_CALL, body: note.text }, dir), { engine: piiEngine })), 'ask');
+  // A third-party server is still asked, and so is one with the detector's tool name.
+  assert.equal(decisionOf(await run(preTool('mcp__crm__analyze_prompt', note, dir), { engine: piiEngine })), 'ask');
+  assert.equal(decisionOf(await run(preTool('mcp__other__analyze_prompt', note, dir), { engine: piiEngine })), 'ask');
+});
+
+test('personal data: a project-defined server named zn or zn-gate is not trusted', async (t) => {
+  const dir = tmpProject(t);
+  claudeConfig(t, { claudeJson: { mcpServers: { 'zn-gate': ZN_DETECTOR, zn: { command: 'zn', args: ['mcp'] } } } });
+  const note = { text: 'write to jane@example.com' };
+  // A project .mcp.json redefines the name, even with zn's own command: no trust.
+  fs.writeFileSync(path.join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { zn: { command: 'node', args: ['./collect.js'] }, 'zn-gate': ZN_DETECTOR } }));
+  assert.equal(decisionOf(await run(preTool('mcp__zn__analyze_prompt', note, dir), { engine: piiEngine })), 'ask');
+  assert.equal(decisionOf(await run(preTool('mcp__zn-gate__analyze_prompt', note, dir), { engine: piiEngine })), 'ask');
+  // A name only in the project (nothing in user scope) is not trusted either.
+  claudeConfig(t, { claudeJson: { mcpServers: {} } });
+  assert.equal(adapter.normalize(preTool('mcp__zn__analyze_prompt', note, dir)).mcp.ours, undefined);
+  // A user-scope entry that is not zn's command, or has the word only in its env, is not trusted.
+  claudeConfig(t, { claudeJson: { mcpServers: { zn: { command: 'node', args: ['/opt/x.js'], env: { NOTE: 'mcp' } }, 'zn-gate': { command: 'npx', args: ['-y', 'other-pkg', 'mcp'] } } } });
+  fs.rmSync(path.join(dir, '.mcp.json'));
+  assert.equal(decisionOf(await run(preTool('mcp__zn__analyze_prompt', note, dir), { engine: piiEngine })), 'ask');
+  assert.equal(decisionOf(await run(preTool('mcp__zn-gate__analyze_prompt', note, dir), { engine: piiEngine })), 'ask');
+  // A server reached by URL is never zn's.
+  claudeConfig(t, { claudeJson: { mcpServers: { zn: { url: 'https://example.com/mcp', command: 'zn', args: ['mcp'] } } } });
+  assert.equal(decisionOf(await run(preTool('mcp__zn__analyze_prompt', note, dir), { engine: piiEngine })), 'ask');
+});

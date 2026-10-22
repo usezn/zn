@@ -1,0 +1,2 @@
+### Changed
+- Claude Code no longer asks about personal data in calls to zn's own detector server (the `zn-gate` or `zn` MCP server registered at user scope that runs `zn-gate mcp`, such as `analyze_prompt`). The server is recognised from your Claude Code MCP configuration, not from its name, so a project-defined server with the same name is still asked about. The vault server and every other server are asked as before.

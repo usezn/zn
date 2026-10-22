@@ -560,7 +560,7 @@ async function decideMcp(ev, d, agentId) {
     if (start + MCP_WINDOW >= text.length) break;
   }
   if (kinds.size === 0) {
-    // zn's own detector server (the plugin's) analyses the text the user asked about: no question for it.
+    // zn's own detector server (the plugin's, or the user's `zn-gate mcp` entry) analyses the text the user asked about: no question for it.
     if (piiKinds.size === 0 || (ev.mcp && ev.mcp.ours === 'analyze')) return { decision: 'allow' };
     // Personal data is not always wrong to send: the user decides (never a deny).
     return {

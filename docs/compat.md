@@ -70,7 +70,8 @@ limit applies to a patch (`apply_patch`) in Codex and OpenCode.
   to zn's own vault server (`secrets_http_request` with a `__ZN_` marker) are allowed: zn checks your
   Claude Code MCP configuration to see that the server is zn's own, and a server that only has the same name
   (for example one defined in a project's `.mcp.json`) is checked like any other. The zn-gate plugin's
-  detector server is not asked about personal data. Hooks installed by an earlier zn-gate keep the old
+  detector server, and the user-scope `zn-gate` (or `zn`) server that runs `zn-gate mcp`, are not asked about
+  personal data (the same configuration check applies, and `secrets_http_request` is still asked). Hooks installed by an earlier zn-gate keep the old
   matcher, which skips MCP tools, until you run `zn hooks install claude-code` again.
 - **`@file` mentions**: Claude Code does not run Read hooks for them, so zn
   cannot check the file when you mention it with `@`. A protected file
