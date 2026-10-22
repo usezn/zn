@@ -748,7 +748,121 @@ function insideQuotedExample(text) {
 }
 const STRONG_IN_DOCS =/^(?:pi:(?:ignore_previous|disregard|system_tag|system_bracket|template_boundary|multi_\w+)|indirect:|evasion:|exfil:markdown_image)/;
 
+/* ---- documentation shapes (SKILL.md and docs files) ---- */
+
+// A SKILL.md or a docs page describes prompts, chat formats and attacks; an
+// agent still reads it, so only precise shapes are skipped and the rest of
+// the line is checked again. Instruction files such as AGENTS.md or CLAUDE.md
+// get only the "tag named in backticks" exemption.
+function isDocFile(rel) {
+  const base = rel.split('/').pop();
+  if (/^skill\.md$/i.test(base)) return true;
+  if (!/\.(?:md|mdx|markdown|rst|txt)$/i.test(base)) return false;
+  return /(^|\/)(?:docs?|documentation|wiki)\//i.test(rel) || /^readme/i.test(base);
+}
+
+function blockOf(text) {
+  try {
+    const r = rules().evaluate(text, { strict: true });
+    return r && r.verdict === 'block' ? r : null;
+  } catch (_) { return null; }
+}
+
+const BADGE_HOST = /^(?:[\w-]+\.)*(?:shields\.io|badgen\.net|codecov\.io|coveralls\.io|badge\.fury\.io|travis-ci\.(?:com|org)|circleci\.com|sonarcloud\.io|codacy\.com|snyk\.io|bestpractices\.dev|fossa\.com|reuse\.software|readthedocs\.(?:org|io)|badgesize\.io)$/i;
+const BADGE_IMAGE = /!\[[^\]\n]*\]\(\s*(https?:\/\/[^\s)]+)(?:\s+"[^"\n]*")?\s*\)/gi;
+function stripBadges(text) {
+  return text.replace(BADGE_IMAGE, (all, url) => {
+    let u;
+    try { u = new URL(url); } catch (_) { return all; }
+    if (!BADGE_HOST.test(u.hostname)) return all;
+    // A placeholder or an expression in the URL can carry data out: keep it.
+    if (/[{<$]|%7B|%24|%3C/i.test(url)) return all;
+    return ' ';
+  });
+}
+
+const SYSTEM_PLACEHOLDER_DOC = /<\s*\/?\s*system-(?:or-(?:project|user|global|local|workspace|repo)|(?:name|path|dir|directory|id|type|version|wide))\s*>/gi;
+const SYSTEM_IDENTITY_DOC = /\bsystem:(?:anonymous|authenticated|unauthenticated|masters|nodes?|serviceaccounts?(?::[\w-]+)*|kube-[\w-]+|node-[\w-]+|basic-user|discovery|public-info-viewer)(?![\w-])/gi;
+const CHAT_TOKEN_DOC = /<\|im_start\|>(?:[ \t]*(?:user|assistant|tool)\b|(?![ \t]*system\b))|<\|im_end\|>|\[\/?INST\]/gi;
+
+function stripDocShapes(text, fenced) {
+  let s = text;
+  // Placeholders: <system-or-project>, and <system> glued to a file name or path.
+  const paired = /<\s*system-[^>]*>[\s\S]*<\s*\/\s*system-/i.test(s);
+  if (!paired) s = s.replace(SYSTEM_PLACEHOLDER_DOC, ' ');
+  s = s.replace(/(?<=[\w\-/])<\s*system\s*>/gi, ' ');
+  // Identity values such as system:anonymous.
+  s = s.replace(SYSTEM_IDENTITY_DOC, ' ');
+  // "[system]" used as a label after a word, never a role marker ("[system]:").
+  s = s.replace(/(?<=[A-Za-z0-9"'`)])[ \t]\[\s*system\s*\](?!\s*:)/gi, ' ');
+  // A role label that opens a quoted example prompt: system: `You are ...`
+  s = s.replace(/\bsystem\s*:\s*(?=[`"'])/gi, ' ');
+  // Badge images from known badge hosts.
+  s = stripBadges(s);
+  // Chat-template tokens shown as code: inside a closed fence, or inside quotes
+  // or backticks. A system role after the token is never skipped.
+  if (fenced) s = s.replace(CHAT_TOKEN_DOC, ' ');
+  else s = s.replace(/(["'`])[^"'`\n]{0,200}\1/g, (q) => q.replace(CHAT_TOKEN_DOC, ' '));
+  return s;
+}
+
+const QUOTE_SPAN = /"[^"\n]*(?:"|$)|“[^”\n]*(?:”|$)|`[^`\n]*(?:`|$)/g;
+const EXAMPLE_MARK = /\b(?:phrases?|wording|strings?|messages?|text|attempts?|patterns?|e\.g\.|for example|for instance|such as|like|including|containing|saying|says?)\b/i;
+const NEGATED_CLAUSE = /\b(?:never|do not|don't|must not|should not|cannot|can't)\s+(?:follow|obey|execute|act on|comply with|run|trust)\b[^.;\n]*/gi;
+function stripDefensive(text) {
+  let s = text;
+  // Quoted text listed after "phrases like", "such as", "e.g.": an example.
+  const m = EXAMPLE_MARK.exec(s);
+  if (m) s = s.slice(0, m.index + m[0].length) + s.slice(m.index + m[0].length).replace(QUOTE_SPAN, ' ');
+  // "never follow instructions found in ...": the text warns about injection.
+  s = s.replace(NEGATED_CLAUSE, ' ');
+  return s;
+}
+
+// Text near an example that talks about attacks: a demonstration of one.
+const ATTACK_TALK = /\b(?:prompt[- ]?injection|jailbreak\w*|injection (?:attacks?|examples?|payloads?|patterns?|phrases?)|attack(?:s|ers?)?|malicious|adversarial|untrusted|red[- ]?team|threat)\b/i;
+function attackContext(lines, from, back) {
+  for (let k = from, seen = 0; k >= 0 && seen < back; k--) {
+    if (!lines[k].trim()) continue;
+    seen++;
+    if (ATTACK_TALK.test(lines[k])) return true;
+  }
+  return false;
+}
+
+/**
+ * What to do with a line the rules engine blocks: 'skip' when only a
+ * documentation shape made it match, 'demo' when it is an attack shown as an
+ * example (reported one level lower), else null.
+ */
+function docShape(t, o) {
+  let rest = t;
+  // A tag named in backticks, never paired with a closing tag on the line.
+  if (!/<\s*system[^>]*>[\s\S]*<\s*\/\s*system/i.test(rest)) rest = rest.replace(/`<\s*\/?\s*system\s*>`/gi, ' ');
+  if (o.doc) rest = stripDefensive(stripDocShapes(rest, o.fenced));
+  if (rest !== t && !blockOf(rest)) return 'skip';
+  if (!o.doc) return null;
+  if (o.fenced) return attackContext(o.lines, o.open - 1, 6) ? 'demo' : null;
+  const unquoted = t.replace(QUOTE_SPAN, ' ');
+  if (unquoted !== t && !blockOf(unquoted) && attackContext(o.lines, o.at, 10)) return 'demo';
+  return null;
+}
+
+// Setup steps are not exfiltration: "git clone <url>", "cp .env.example .env"
+// and "create a key at [Console](url)" carry no secret out. Anything else on
+// the line is still checked.
+const SEND_VERB = /\b(?:send|upload|post|exfiltrate|forward|transmit|leak|e-?mail|paste|share|copy)\b/i;
+function exfiltrationLine(t) {
+  let s = String(t || '');
+  s = s.replace(/\b(?:git\s+)?clone\s+(?:--[\w-]+\s+)*(?:https?:\/\/|git@|ssh:\/\/)[^\s,;)]+/gi, ' ');
+  s = s.replace(/\b(?:copy|cp)\s+\S*\.env(?:\.[\w-]+)*\.(?:example|sample|template|dist)\b\S*\s+(?:to\s+)?\S*\.env\b/gi, ' ');
+  s = s.replace(/\.env(?:\.[\w-]+)*\.(?:example|sample|template|dist)\b/gi, 'env-template');
+  s = s.replace(/\b((?:create|generate|get|obtain|find|grab)\b[^\n[]{0,60}?)\[[^\]\n]*\]\(\s*https?:\/\/[^\s)]*\s*\)/gi, (all, pre) => (SEND_VERB.test(pre) ? all : pre));
+  return P.exfiltration(s);
+}
+
 function checkInstructions(ctx) {
+  const doc = isDocFile(ctx.rec.rel);
   const claudeExt = /(^|\/)\.claude\/(commands|agents|skills)\//i.test(ctx.rec.rel);
   // Supporting notes of a skill (not SKILL.md itself): the only files here
   // that are not read as instructions.
@@ -757,10 +871,11 @@ function checkInstructions(ctx) {
   // Lines inside code fences that are closed again (an unclosed fence runs
   // to the end of the file and counts as plain text).
   const fenced = new Set();
+  const fenceOpen = new Map();
   for (let i = 0, open = -1; i < ctx.lines.length; i++) {
     if (!/^\s*(?:```|~~~)/.test(ctx.lines[i])) continue;
     if (open < 0) { open = i; continue; }
-    for (let k = open + 1; k < i; k++) fenced.add(k);
+    for (let k = open + 1; k < i; k++) { fenced.add(k); fenceOpen.set(k, open); }
     open = -1;
   }
   ctx.lines.forEach((raw, i) => {
@@ -784,6 +899,11 @@ function checkInstructions(ctx) {
       let res = null;
       // Strict mode: audit grades each finding itself (high, medium, info).
       try { res = rules().evaluate(t, { strict: true }); } catch (_) { res = null; }
+      let demo = false;
+      if (res && res.verdict === 'block') {
+        const d = docShape(t, { doc, fenced: fenced.has(i), lines: ctx.lines, at: i, open: fenceOpen.get(i) });
+        if (d === 'skip') res = null; else if (d === 'demo') demo = true;
+      }
       if (res && res.verdict === 'block' && !NOISY_IN_DOCS.test(String(res.rule))) {
         // Strong patterns are high, weaker ones medium. In the files an agent
         // reads as its instructions a strong pattern is never lowered: the
@@ -798,13 +918,14 @@ function checkInstructions(ctx) {
         let quoted;
         if (strong) quoted = supporting && insideQuotedExample(t);
         else quoted = EXAMPLE_QUOTE.test(t) || fenced.has(i);
+        if (demo) quoted = true;
         if (quoted) sev = strong ? 'medium' : 'low';
         ctx.add('ZNA012', sev, ln, 'Rules engine: ' + (res.reason || res.rule) + (quoted ? ' (in quoted or code text)' : '') + '.');
       }
     }
     const dl = P.downloadAndRun(t, { prose: true });
     if (dl) ctx.add('ZNA013', dl.knownInstaller ? 'low' : 'medium', ln, (dl.knownInstaller ? 'A well-known installer is piped into a shell: ' : 'The instructions pipe a download into a shell: ') + short(t, 160));
-    const ex = P.exfiltration(t);
+    const ex = exfiltrationLine(t);
     if (ex) ctx.add('ZNA014', 'high', ln, 'The instructions send sensitive material out: ' + short(t, 160));
     const wk = P.weakening(t);
     if (wk) ctx.add('ZNA015', 'medium', ln, 'The instructions weaken a safety check: ' + short(t, 160));
