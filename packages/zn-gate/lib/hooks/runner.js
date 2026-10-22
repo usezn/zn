@@ -101,7 +101,11 @@ function replaceOnSecretOf(opts) {
 // local rules, the same ones analyze_prompt uses. It never blocks: when the rules flag it, the agent is told to
 // treat that text as data. On by default; hooks.checkToolOutputInstructions: false turns it off.
 const OUTPUT_CHECK_TOOLS = new Set(['webfetch', 'mcp', 'mcpresource', 'bash', 'powershell']);
-const OUTPUT_CHECK_CAP = 1024 * 1024; // characters checked per tool output
+// The first 64 KiB of each output are checked: enough for a page or a command's output, and it keeps the
+// hook within its latency budget (bench/hook_latency_baseline.json).
+const OUTPUT_CHECK_CAP = 64 * 1024;
+// Only agents whose hook can pass a note with an unchanged output get the check.
+const OUTPUT_CHECK_AGENTS = new Set(['claude-code']);
 
 function outputCheckOn(opts) {
   const hooks = readConfig(opts.home).hooks || {};
@@ -109,8 +113,8 @@ function outputCheckOn(opts) {
 }
 
 /* The note for the agent when the local rules flag a tool output, or null. */
-function outputInstructionNote(tool, strings, opts) {
-  if (!OUTPUT_CHECK_TOOLS.has(tool) || !outputCheckOn(opts)) return null;
+function outputInstructionNote(tool, strings, opts, agentId) {
+  if (!OUTPUT_CHECK_AGENTS.has(agentId) || !OUTPUT_CHECK_TOOLS.has(tool) || !outputCheckOn(opts)) return null;
   const rules = require('../rules');
   let room = OUTPUT_CHECK_CAP;
   for (const s of strings) {
@@ -669,7 +673,7 @@ async function decidePost(ev, d, agentId, opts = {}) {
   const invisible = rules.tooInvisible(outputStrings);
   let output = ev.output;
   if (invisible) output = await mapStrings(ev.output, async (s) => s.replace(INVISIBLE_CHARS_RE, ''));
-  const flagged = outputInstructionNote(ev.tool, outputStrings, opts);
+  const flagged = outputInstructionNote(ev.tool, outputStrings, opts, agentId);
 
   const ctx = await ctxFor(ev, d, agentId, 'assistant');
   const types = new Map();
