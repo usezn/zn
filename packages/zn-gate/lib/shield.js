@@ -328,6 +328,12 @@ function startMcpShield(command, args, options = {}) {
   // Walks every string value under holder[key] (bounded in depth) and replaces it by its checked form. Strings
   // past the count limit are checked in chunks when the walk ends (flushDeferred); what is nested too deeply is
   // replaced, because it was not checked.
+  // Shadow mode leaves what the depth limit stopped unchecked: say so once per message.
+  const noteUnchecked = (label, state) => {
+    if (!options.shadow || state.noted) return;
+    state.noted = true;
+    process.stderr.write(`[zn-shield] ${label}: not checked: nested too deeply (shadow mode passes it on).\n`);
+  };
   async function scanServerValue(label, holder, key, state, depth) {
     await walkServerValue(label, holder, key, state, depth);
     if (depth === 0) await flushDeferred(label, state);
@@ -412,6 +418,7 @@ function startMcpShield(command, args, options = {}) {
       holder[key] = await scanServerText(label, v);
     } else if (v && typeof v === 'object') {
       if (depth >= MAX_SERVER_DEPTH) {
+        noteUnchecked(label, state);
         if (!options.shadow) holder[key] = serverNotice('it was nested too deeply to check');
         return;
       }
@@ -446,7 +453,7 @@ function startMcpShield(command, args, options = {}) {
     if (result && typeof result === 'object' && !Array.isArray(result)) {
       if (result.contents !== undefined) await scanServerValue('resources/read', result, 'contents', { n: 0 }, 0);
       if (result.messages !== undefined) await scanServerValue('prompts/get', result, 'messages', { n: 0 }, 0);
-      if (result.messages !== undefined && typeof result.description === 'string') await scanServerValue('prompts/get', result, 'description', { n: 0 }, 0);
+      if (typeof result.description === 'string') await scanServerValue('prompts/get', result, 'description', { n: 0 }, 0);
       // The initialize instructions usually go into the agent's system prompt.
       if (typeof result.instructions === 'string') await scanServerValue('initialize', result, 'instructions', { n: 0 }, 0);
       if (result.completion && typeof result.completion === 'object' && Array.isArray(result.completion.values)) {
