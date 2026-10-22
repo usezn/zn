@@ -169,6 +169,7 @@ Pins live in `~/.zn/mcp-pins/`, one file per server, readable only by your accou
 
 - Pinning covers tool definitions (names, descriptions and parameters). It does not check the server's code.
 - Tool results are checked in full up to 32 MB. A larger result is removed and the agent is told to ask the tool for a smaller part (a page or a line range).
+- Text nested more than 8 levels deep in a server message or in a tool result's structured content is not checked. It is replaced by a notice, so the agent never gets it unchecked.
 - The first list a server returns is trusted. If that list was already harmful, pinning does not catch it.
 - A server started as `npx some-tool@latest` can change its code while its tool list stays the same. Pin the package version in your MCP configuration, for example `npx -y some-tool@1.4.2`, and review each new version.
 - An agent that can run commands on your machine could edit the pin files or start a server without the shield. The hooks stop the commands they recognize, not every possible one.
