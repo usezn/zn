@@ -321,6 +321,15 @@ until it is fixed), is in [upgrading.md](upgrading.md#nodejs-was-upgraded-moved-
 
 Antigravity does not document what it does when a hook cannot run (for example, `node` is not on the PATH of the hook). Without help, that case would block the tool call with no message from zn, or let it run. So `zn hooks install antigravity` writes a small launcher script (`~/.zn/hooks/zn-hook-antigravity.sh`, run by `sh`) as the user hook command; on Windows the same steps are written inline as a PowerShell command. The launcher runs the Node.js zn-gate was installed with, else `zn` from your PATH, and if neither can start it needs no Node.js to answer Antigravity's deny format, `{"decision":"deny","reason":"..."}`, with the repair step: install zn-gate (`npm install -g zn-gate`) and run `zn hooks install antigravity` again. A hook that starts and then fails is answered with a deny too (run `zn-gate check` to see why). `zn-gate check` reports a launcher whose Node.js is gone. A project install (`--project`) keeps the plain `zn hook antigravity` command and has no launcher. Hooks installed by an older zn-gate keep the plain command until you run `zn hooks install antigravity` again.
 
+## WSL2
+
+WSL2 runs a real Linux inside Windows. Inside it, follow the Linux steps, not the Windows ones.
+
+- Install Node.js inside WSL. Check with `which node`: if the path starts with `/mnt/c`, WSL is using the Windows Node.js, so install Node.js inside WSL.
+- zn's hooks and the plugin are installed in the WSL home (`~/.claude`, `~/.zn`). Claude Code, or another agent, installed on the Windows side is a separate install and needs its own setup there.
+- What we checked, on Linux: the plugin and hook routes, and that secret files under `/mnt/c` paths are blocked by name. Starting with the next release, a Windows drive-letter path (`C:\...` or `C:/...`) to a `.env` file is mapped to `/mnt/c/...` and checked; if that mount does not exist, zn refuses it.
+- Not yet tested on a real WSL2 machine.
+
 ## Limits that apply to every agent
 
 - **An event zn cannot read is refused.** Empty stdin, or stdin that is not
