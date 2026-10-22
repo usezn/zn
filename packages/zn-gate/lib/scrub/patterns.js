@@ -28,7 +28,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-10-23.2';
+const SCRUB_RULES_VERSION = '2026-10-23.3';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -789,6 +789,71 @@ const findPersonName = keyedFinder({ headers: ['X-User-?Name', 'X-Full-?Name'], 
 const findUsername = keyedFinder({ headers: ['X-Username', 'X-User', 'X-Forwarded-User', 'X-Remote-User'], forms: ['username', 'user', 'login'], valid: (d) => validUsername(d) });
 const findPostalAddress = keyedFinder({ headers: ['X-Address'], forms: ['address'], valid: (d) => validAddress(d) });
 
+/* Phone numbers. Three accepted shapes, all conservative (a missed number is
+ * better than a redacted version, date, IP address or id):
+ *   +<digits>                     E.164 as before (e164Valid)
+ *   +CC with single separators    +1-555-0100, +44 20 7946 0958, +1 (555) 010-0100
+ *   10-digit NANP, no plus        (555) 010-0100, 555 010 0100, 555-010-0100,
+ *                                 555.010.0100 (same separator throughout)
+ * A bare digit run without "+" is never a phone number. The candidate must
+ * stand alone: no letter, digit, "_", "." or "-" glued to either side, and not
+ * inside a URL, path or e-mail word. */
+const PHONE_CANDIDATE = /\+?(?:\(\d{1,4}\)|\d+)(?:[ .\-]?(?:\(\d{1,4}\)|\d+))*/gd;
+
+function phoneShapeOk(digits) {
+  if (/^(\d)\1+$/.test(digits)) return false;
+  if (/(?:0123456789|1234567890|9876543210|1234567|7654321)/.test(digits)) return false;
+  return true;
+}
+
+function phoneSeparatedValid(v) {
+  const digits = v.replace(/\D/g, '');
+  if (!phoneShapeOk(digits)) return false;
+  if ((v.match(/\(/g) || []).length > 1 || (v.match(/\)/g) || []).length !== (v.match(/\(/g) || []).length) return false;
+  if (v[0] === '+') {
+    if (digits.length < 7 || digits.length > 15 || digits[0] === '0') return false;
+    if (/^\+\d{4}-\d{2}-\d{2}$/.test(v) || /^\+\d{1,2}[.\-]\d{1,2}[.\-]\d{1,4}$/.test(v)) return false;   // date, version
+    if (digits[0] === '1') return digits.length === 8 || digits.length === 11;
+    for (const ccLen of [3, 2]) {
+      const cc = digits.slice(0, ccLen);
+      if (E164_LENGTHS[cc]) return E164_LENGTHS[cc].includes(digits.length - ccLen);
+    }
+    return digits.length >= 9;
+  }
+  if (digits.length !== 10 || !/[2-9]/.test(digits[0])) return false;
+  let m = /^\((\d{3})\)([ .\-]?)(\d{3})([ .\-])(\d{4})$/.exec(v);
+  if (m) return true;
+  m = /^(\d{3})([ .\-])(\d{3})([ .\-])(\d{4})$/.exec(v);
+  return !!m && m[2] === m[4];
+}
+
+function findPhones(text, _check, out) {
+  const rx = PHONE_CANDIDATE;
+  rx.lastIndex = 0;
+  let m;
+  while ((m = rx.exec(text)) !== null) {
+    const v = m[0];
+    const start = m.index;
+    const end = start + v.length;
+    if (!/[ .()\-]/.test(v)) {
+      if (v[0] === '+' && !(start > 0 && /[A-Za-z0-9+]/.test(text[start - 1])) && e164Valid(v)) out.push({ start, end });
+      continue;
+    }
+    const b = start > 0 ? text[start - 1] : '';
+    const a = end < text.length ? text[end] : '';
+    if (b && /[A-Za-z0-9_.+\-\/\x5c@#%~$]/.test(b)) continue;
+    if (a && /[A-Za-z0-9_\-\/\x5c@#%~$]/.test(a)) continue;
+    if (a === '.' && end + 1 < text.length && !/\s/.test(text[end + 1])) continue;
+    if (a === ':' && /\d/.test(text[end + 1] || '')) continue;
+    if (b === ':' && start > 1 && /\d/.test(text[start - 2])) continue;      // 10:20:30
+    let w = start;
+    while (w > 0 && !/\s/.test(text[w - 1])) w--;
+    if (/[\/\x5c]|:\/\//.test(text.slice(w, start))) continue;                   // URL or path word
+    if (!phoneSeparatedValid(v)) continue;
+    out.push({ start, end });
+  }
+}
+
 const PII = [
   { type: 'EMAIL', key: 'email', hints: ['@'], find: findEmails,
     check: (v, text, index) => {
@@ -803,7 +868,7 @@ const PII = [
       if (/\.\./.test(v)) return false;
       return true;
     } },
-  { type: 'PHONE', key: 'phone', hints: ['+'], re: re('(?<![A-Za-z0-9+])\\+[1-9]\\d{7,14}(?![0-9])'), check: (v) => e164Valid(v) },
+  { type: 'PHONE', key: 'phone', hints: null, prefilter: /\d{3}/, find: findPhones },
   { type: 'IBAN', key: 'iban', hints: null, prefilter: /[A-Z]{2}\d{2}/,
     re: re('(?<![A-Za-z0-9])[A-Z]{2}\\d{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,4})?(?![A-Za-z0-9])'),
     check: (v) => ibanValid(v) },

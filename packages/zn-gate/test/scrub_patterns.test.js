@@ -554,3 +554,41 @@ test('AWS key ids ending in EXAMPLE are redacted for every prefix', () => {
     assert.deepStrictEqual(types(t), ['AWS_KEY'], t);
   }
 });
+
+/* ---------------- phone numbers with separators ---------------- */
+
+const phones = (text) => pii(text).filter((s) => s.startsWith('PHONE:'));
+
+test('phone: separated international and NANP formats are detected (fictitious numbers)', () => {
+  for (const v of [
+    '+1-555-0100', '+1 555 0100', '+1 (555) 010-0100', '+1-555-010-0100',
+    '+44 20 7946 0958', '+44-20-7946-0958',
+    '(555) 010-0100', '(555)010-0100', '555 010 0100', '555-010-0100', '555.010.0100',
+    '+12025550142',
+  ]) {
+    assert.deepStrictEqual(phones('Call ' + v + ' today'), ['PHONE:' + v], v);
+    assert.deepStrictEqual(phones(v), ['PHONE:' + v], v);
+    assert.deepStrictEqual(phones('phone=' + v + '&x=1'), ['PHONE:' + v], 'form ' + v);
+  }
+  assert.deepStrictEqual(phones('Ring 555-010-0100.'), ['PHONE:555-010-0100'], 'trailing full stop');
+  assert.deepStrictEqual(phones('a: 555-010-0100, b: +44 20 7946 0958'), ['PHONE:555-010-0100', 'PHONE:+44 20 7946 0958']);
+});
+
+test('phone: versions, dates, times, IPs, ids, URLs, paths and bare digit runs are not phones', () => {
+  for (const t of [
+    'version 1.2.3', 'v10.20.30', 'released 2026-10-22', 'at 10:20:30 UTC', '22.10.2026',
+    'host 192.168.100.2000', 'ip 203.0.113.195', 'ip 198.51.100.17',
+    'card 4242 4242 4242 4242', 'card 4242-4242-4242-4242',
+    'id 5550100100', 'id 15550100100', 'order 20261022123456',
+    'https://example.com/555-010-0100', 'see /var/log/555-010-0100.log', 'C:\\data\\555-010-0100',
+    'user@555-010-0100.example.com',
+    '550e8400-e29b-41d4-a716-446655440000', 'sha a1b2c3d4-555-010-0100',
+    'abc555-010-0100', '555-010-0100abc', '555-010-0100-1234', 'x_555-010-0100', '1.555-010-0100',
+    '555-010.0100', '555 010-0100', '(555 010-0100', '555-0100', '010-0100', '123-456-7890', '000-000-0000',
+    'ports 8080 8081 8082', 'sizes 1024 2048 4096 8192', 'range 100-200-300',
+    '+1.2.3', '+2026-10-22', '+12-34', '+1234567',
+  ]) {
+    assert.deepStrictEqual(phones(t), [], t);
+  }
+});
+

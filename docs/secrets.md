@@ -76,6 +76,24 @@ replaced with tokens. Reads of `.env` files with real values, credential files
 (`~/.aws/credentials`, `~/.ssh/id_*`, `~/.npmrc`…) and zn's own `~/.zn` are
 blocked.
 
+### Phone numbers
+
+A phone number is detected in these shapes only:
+
+- international: `+` and a country code, with or without single spaces, dots,
+  dashes or one pair of parentheses (`+1-555-0100`, `+44 20 7946 0958`,
+  `+1 (555) 010-0100`), 7 to 15 digits in total, or `+` followed by 8 to 15
+  digits with no separator (E.164);
+- ten-digit North American numbers without `+`, in groups of 3-3-4 with the same
+  separator throughout (`555 010 0100`, `555-010-0100`, `555.010.0100`) or with
+  the area code in parentheses (`(555) 010-0100`).
+
+To avoid redacting other data, a number must stand alone: letters, digits, `_`,
+`.` or `-` next to it, or a URL, path or e-mail around it, rule it out. Dates,
+times, versions, IP addresses, UUIDs, card numbers and bare runs of digits
+without a leading `+` are never treated as phone numbers. When in doubt the
+scrubber leaves the text alone, so an unusual layout may go undetected.
+
 ### Name, address and username
 
 Besides checksummed personal data (cards, IBAN, national IDs, e-mail, phone), the
