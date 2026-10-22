@@ -332,12 +332,33 @@ function startMcpShield(command, args, options = {}) {
     await walkServerValue(label, holder, key, state, depth);
     if (depth === 0) await flushDeferred(label, state);
   }
-  const deferredText = (it) => (it.blob ? Buffer.from(it.holder[it.key], 'base64').toString('utf8') : it.holder[it.key]);
-  const setDeferred = (it, text) => { it.holder[it.key] = it.blob ? Buffer.from(text, 'utf8').toString('base64') : text; };
+  // An object key is text the agent reads too: a key whose check changes it is renamed to the checked text (the
+  // notice or the redacted key), keeping its value. defineProperty, so no key can reach the object's prototype.
+  // The next free suffix is remembered per object and text, so many keys that check to the same notice cost
+  // linear time, not quadratic.
+  const renameNext = new WeakMap();
+  function renameKey(obj, oldKey, text) {
+    let next = renameNext.get(obj);
+    if (!next) renameNext.set(obj, (next = new Map()));
+    let i = next.get(text) || 2;
+    let nk = text;
+    while (Object.prototype.hasOwnProperty.call(obj, nk)) { nk = `${text} (${i})`; i += 1; }
+    next.set(text, i);
+    Object.defineProperty(obj, nk, { value: obj[oldKey], enumerable: true, writable: true, configurable: true });
+    delete obj[oldKey];
+    return nk;
+  }
+  const deferredText = (it) => (it.isKey ? it.key : it.blob ? Buffer.from(it.holder[it.key], 'base64').toString('utf8') : it.holder[it.key]);
+  const setDeferred = (it, text) => {
+    if (it.isKey) renameKey(it.holder, it.key, text);
+    else it.holder[it.key] = it.blob ? Buffer.from(text, 'utf8').toString('base64') : text;
+  };
   async function flushDeferred(label, state) {
-    const items = state.deferred;
-    if (!items || items.length === 0) return;
+    const pending = state.deferred;
+    if (!pending || pending.length === 0) return;
     state.deferred = [];
+    // values before keys: a value is read through its key, so no key may be renamed before its value is checked
+    const items = pending.filter((it) => !it.isKey).concat(pending.filter((it) => it.isKey));
     let chunk = [];
     let size = 0;
     const run = async () => {
@@ -360,7 +381,7 @@ function startMcpShield(command, args, options = {}) {
       size = 0;
     };
     for (const it of items) {
-      const len = it.holder[it.key].length;
+      const len = deferredText(it).length;
       if (chunk.length > 0 && size + len > DEFERRED_CHUNK_CHARS) await run();
       chunk.push(it);
       size += len + DEFERRED_SEP.length;
@@ -394,8 +415,22 @@ function startMcpShield(command, args, options = {}) {
         if (!options.shadow) holder[key] = serverNotice('it was nested too deeply to check');
         return;
       }
-      for (const k of Object.keys(v)) await walkServerValue(label, v, k, state, depth + 1);
+      const isArray = Array.isArray(v);
+      for (const k of Object.keys(v)) {
+        const key = isArray ? k : await scanServerKey(label, v, k, state);
+        await walkServerValue(label, v, key, state, depth + 1);
+      }
     }
+  }
+  // An object key, checked like a string value (same per-message count; past it, checked with the deferred chunks).
+  async function scanServerKey(label, obj, k, state) {
+    if (state.n >= (state.max || MAX_SERVER_STRINGS)) {
+      (state.deferred = state.deferred || []).push({ holder: obj, key: k, isKey: true });
+      return k;
+    }
+    state.n += 1;
+    const checked = await scanServerText(label, k);
+    return checked === k || options.shadow ? k : renameKey(obj, k, checked);
   }
   // `method` is the request this message answers, when the shield tracked it (tools/list, tools/call).
   // resultReplaced: the tools/call result was already replaced by a block notice, so its content is not checked again.
