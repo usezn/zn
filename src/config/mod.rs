@@ -663,29 +663,73 @@ fn default_fpr_margin() -> f64 {
     0.02
 }
 
+fn read_error(name: &str, err: &std::io::Error) -> anyhow::Error {
+    if err.kind() == std::io::ErrorKind::NotFound {
+        anyhow!(
+            "Config file '{}' does not exist. Check the path given with --config (only the default zn.json in the current folder is optional).",
+            name
+        )
+    } else {
+        anyhow!("Cannot read config file '{}': {}.", name, err)
+    }
+}
+
+fn collect_unknown_keys(
+    input: &serde_json::Value,
+    known: &serde_json::Value,
+    prefix: &str,
+    out: &mut Vec<String>,
+) {
+    if let (Some(input), Some(known)) = (input.as_object(), known.as_object()) {
+        for (key, value) in input {
+            let dotted = if prefix.is_empty() {
+                key.clone()
+            } else {
+                format!("{prefix}.{key}")
+            };
+            match known.get(key) {
+                None => out.push(dotted),
+                Some(known_value) => collect_unknown_keys(value, known_value, &dotted, out),
+            }
+        }
+    }
+}
+
+fn warn_unknown_keys(name: &str, unknown: &[String]) {
+    for key in unknown {
+        eprintln!(
+            "Warning: config file '{}' has an unknown key '{}'; it is ignored. Check the spelling.",
+            name, key
+        );
+    }
+}
+
 impl ZnConfig {
-    /// Load configuration from file with environment variable overrides
+    /// Load configuration from file with environment variable overrides.
+    ///
+    /// An explicit `path` must exist and hold valid JSON: a typo in `--config` must not
+    /// start the gateway with defaults the user did not choose. Without a path, the first
+    /// of `zn.json`, `zn.config.json` and `.zn.json` in the current folder is used, and
+    /// none of them existing means defaults.
     pub fn load(path: Option<&Path>) -> Result<Self> {
         let mut config = if let Some(p) = path {
-            if p.exists() {
-                let content = std::fs::read_to_string(p)?;
-                if p.extension().map(|e| e == "json").unwrap_or(false) {
-                    serde_json::from_str(&content)?
-                } else {
-                    // Default to JSON if extension is unknown
-                    serde_json::from_str(&content).unwrap_or_default()
-                }
-            } else {
-                Self::default()
-            }
+            let name = p.display().to_string();
+            let content = std::fs::read_to_string(p).map_err(|e| read_error(&name, &e))?;
+            let json_ext = p.extension().map(|e| e == "json").unwrap_or(false);
+            let (config, unknown) = Self::parse_config(&content, &name, json_ext)?;
+            warn_unknown_keys(&name, &unknown);
+            config
         } else {
             // Try to load from default locations
             let config_options = ["zn.json", "zn.config.json", ".zn.json"];
             let mut found = None;
             for option in config_options {
                 if Path::new(option).exists() {
-                    let content = std::fs::read_to_string(option)?;
-                    found = Some(serde_json::from_str(&content)?);
+                    let content =
+                        std::fs::read_to_string(option).map_err(|e| read_error(option, &e))?;
+                    let (config, unknown) = Self::parse_config(&content, option, true)?;
+                    warn_unknown_keys(option, &unknown);
+                    found = Some(config);
                     break;
                 }
             }
@@ -696,6 +740,33 @@ impl ZnConfig {
         config.apply_env_overrides();
 
         Ok(config)
+    }
+
+    /// Parse the text of a config file. Returns the config and the dotted names of the
+    /// keys it does not know (a warning, not an error, so a config written for a newer
+    /// version still loads). `name` is only used in messages.
+    pub fn parse_config(content: &str, name: &str, json_ext: bool) -> Result<(Self, Vec<String>)> {
+        let value: serde_json::Value = serde_json::from_str(content).map_err(|e| {
+            if json_ext {
+                anyhow!(
+                    "Config file '{}' is not valid JSON: {}. Fix the syntax, or remove the file to use the defaults.",
+                    name,
+                    e
+                )
+            } else {
+                anyhow!(
+                    "Config file '{}' is not valid JSON: {}. zn reads JSON only (a TOML or YAML file is not supported); convert it and name it zn.json.",
+                    name,
+                    e
+                )
+            }
+        })?;
+        let config: ZnConfig = serde_json::from_value(value.clone())
+            .map_err(|e| anyhow!("Config file '{}' has a value zn cannot use: {}.", name, e))?;
+        let known = serde_json::to_value(&config)?;
+        let mut unknown = Vec::new();
+        collect_unknown_keys(&value, &known, "", &mut unknown);
+        Ok((config, unknown))
     }
 
     /// Apply environment variable overrides
@@ -835,6 +906,14 @@ impl ZnConfig {
 
     /// Validate configuration
     pub fn validate(&self) -> Result<()> {
+        let policy_dir = Path::new(&self.engine.policy_dir);
+        if policy_dir.exists() && !policy_dir.is_dir() {
+            return Err(anyhow!(
+                "engine.policy_dir '{}' is a file, not a folder. Point it at a folder (it is created when missing).",
+                self.engine.policy_dir
+            ));
+        }
+
         if let Some(secret) = &self.security.jwt_secret {
             if secret.len() < MIN_JWT_SECRET_BYTES {
                 return Err(anyhow!(
@@ -1010,5 +1089,99 @@ mod credential_tests {
         );
         assert_eq!(credential_override(some("  "), None), None);
         assert_eq!(credential_override(None, None), None);
+    }
+}
+
+#[cfg(test)]
+mod load_tests {
+    use super::*;
+
+    fn err_text(r: Result<ZnConfig>) -> String {
+        r.expect_err("must fail").to_string()
+    }
+
+    #[test]
+    fn missing_explicit_config_is_an_error_naming_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nope.json");
+        let msg = err_text(ZnConfig::load(Some(&path)));
+        assert!(msg.contains("nope.json"), "{msg}");
+        assert!(msg.contains("does not exist"), "{msg}");
+        assert!(msg.contains("--config"), "{msg}");
+    }
+
+    #[test]
+    fn toml_and_broken_json_in_other_extensions_are_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        for (file, text) in [
+            ("zn.toml", "[server]\nport = 9191\n"),
+            ("zn.conf", "{\"server\": {\"port\": 9191,"),
+        ] {
+            let path = dir.path().join(file);
+            std::fs::write(&path, text).unwrap();
+            let msg = err_text(ZnConfig::load(Some(&path)));
+            assert!(msg.contains(file), "{msg}");
+            assert!(msg.contains("not valid JSON"), "{msg}");
+            assert!(msg.contains("JSON only"), "{msg}");
+        }
+    }
+
+    #[test]
+    fn valid_json_in_another_extension_still_loads() {
+        let (config, unknown) =
+            ZnConfig::parse_config("{\"server\":{\"port\":9191}}", "zn.conf", false).unwrap();
+        assert_eq!(config.server.port, 9191);
+        assert!(unknown.is_empty());
+    }
+
+    #[test]
+    fn invalid_json_error_names_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad.json");
+        std::fs::write(&path, "{\"server\": {\"port\": 9191,\n").unwrap();
+        let msg = err_text(ZnConfig::load(Some(&path)));
+        assert!(msg.contains("bad.json"), "{msg}");
+        assert!(msg.contains("line 2"), "{msg}");
+    }
+
+    #[test]
+    fn a_directory_as_config_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let msg = err_text(ZnConfig::load(Some(dir.path())));
+        assert!(msg.contains("Cannot read config file"), "{msg}");
+    }
+
+    #[test]
+    fn unknown_keys_are_named_and_known_ones_are_not() {
+        let text = r#"{"server":{"port":9191,"bogus_key":true},"totally_unknown":1}"#;
+        let (config, mut unknown) = ZnConfig::parse_config(text, "zn.json", true).unwrap();
+        unknown.sort();
+        assert_eq!(config.server.port, 9191);
+        assert_eq!(unknown, vec!["server.bogus_key", "totally_unknown"]);
+        let (_, none) = ZnConfig::parse_config(
+            &serde_json::to_string(&ZnConfig::default()).unwrap(),
+            "zn.json",
+            true,
+        )
+        .unwrap();
+        assert!(none.is_empty(), "{none:?}");
+    }
+
+    #[test]
+    fn policy_dir_that_is_a_file_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("policies");
+        std::fs::write(&file, "x").unwrap();
+        let mut config = ZnConfig::default();
+        config.security.jwt_secret = None;
+        config.engine.policy_dir = file.display().to_string();
+        let msg = config.validate().expect_err("file").to_string();
+        assert!(msg.contains("policy_dir"), "{msg}");
+        assert!(msg.contains("is a file"), "{msg}");
+        // A folder, or a path that does not exist yet, is fine.
+        config.engine.policy_dir = dir.path().display().to_string();
+        assert!(config.validate().is_ok());
+        config.engine.policy_dir = dir.path().join("later").display().to_string();
+        assert!(config.validate().is_ok());
     }
 }

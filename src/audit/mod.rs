@@ -153,13 +153,48 @@ pub struct AuditVault {
     encryption_key: Option<[u8; 32]>,
 }
 
+/// Say why the audit database could not be opened and what to do, instead of SQLite's
+/// bare "unable to open database file".
+fn describe_open_failure(db_path: &str, cause: &str) -> String {
+    let path = std::path::Path::new(db_path);
+    let parent = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => std::path::Path::new("."),
+    };
+    let fix = "Choose another place with --db-path or audit.db_path in the config file";
+    let why = if path.is_dir() {
+        format!("the path is a folder, not a file. {fix}, for example '{db_path}/zn.db'.")
+    } else if !parent.exists() {
+        format!(
+            "the folder '{}' does not exist. Create it, or {}.",
+            parent.display(),
+            fix.to_lowercase()
+        )
+    } else if !parent.is_dir() {
+        format!("'{}' is not a folder. {fix}.", parent.display())
+    } else if parent
+        .metadata()
+        .map(|m| m.permissions().readonly())
+        .unwrap_or(false)
+    {
+        format!(
+            "the folder '{}' is read-only. Make it writable for your user, or {}.",
+            parent.display(),
+            fix.to_lowercase()
+        )
+    } else {
+        format!("check that your user can read and write '{db_path}'. {fix}.")
+    };
+    format!("Failed to open audit database '{db_path}': {why} ({cause})")
+}
+
 impl AuditVault {
     /// Create a new AuditVault, initializing the database schema if needed
     pub fn new(db_path: &str, encryption_key: Option<&str>) -> Result<Self> {
         info!("Initializing AuditVault at: {}", db_path);
 
         let mut conn = Connection::open(db_path)
-            .map_err(|e| anyhow!("Failed to open audit database '{}': {}", db_path, e))?;
+            .map_err(|e| anyhow!("{}", describe_open_failure(db_path, &e.to_string())))?;
 
         // Create metadata table for persistent configuration (like salt)
         conn.execute(
@@ -1813,5 +1848,54 @@ mod tests {
         assert!(text.starts_with("v2:"));
         assert!(!text.contains("tenant a secret"));
         fs::remove_file(&path).ok();
+    }
+}
+
+#[cfg(test)]
+mod open_failure_tests {
+    use super::describe_open_failure;
+
+    #[test]
+    fn missing_folder_is_named() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("nonexistent_dir").join("zn.db");
+        let msg = describe_open_failure(&db.display().to_string(), "unable to open database file");
+        assert!(msg.contains("does not exist"), "{msg}");
+        assert!(msg.contains("--db-path"), "{msg}");
+        assert!(msg.contains("unable to open database file"), "{msg}");
+    }
+
+    #[test]
+    fn a_folder_as_database_path_is_named() {
+        let dir = tempfile::tempdir().unwrap();
+        let msg = describe_open_failure(&dir.path().display().to_string(), "unable to open");
+        assert!(msg.contains("is a folder, not a file"), "{msg}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_only_folder_is_named() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let ro = dir.path().join("ro");
+        std::fs::create_dir(&ro).unwrap();
+        std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let db = ro.join("zn.db");
+        let msg = describe_open_failure(&db.display().to_string(), "unable to open");
+        std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(msg.contains("read-only"), "{msg}");
+        assert!(msg.contains("--db-path"), "{msg}");
+    }
+
+    #[test]
+    fn open_error_through_the_real_call_names_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("missing").join("zn.db");
+        let err = super::AuditVault::new(&db.display().to_string(), None)
+            .err()
+            .expect("must fail")
+            .to_string();
+        assert!(err.contains("zn.db"), "{err}");
+        assert!(err.contains("does not exist"), "{err}");
     }
 }

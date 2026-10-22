@@ -25,6 +25,16 @@ A policy upload is verified before anything is written. The gateway checks the a
 
 Known limits that remain, because the gateway is not distributed: the OCR check of images uses a fixed list of phrases and recognises only `data:image/...;base64,` images; the audit vault and the loop breaker have no size or age limit; and the management API has no TLS of its own (it listens on `127.0.0.1`; outside loopback, put it behind a TLS proxy).
 
+## Startup errors
+
+The gateway stops with a one-line message and a non-zero exit code instead of starting in a weaker state:
+
+- **Port in use.** If the management API port is taken, it says so and how to pick another one: `zn --port 9393 start`, `server.port` in the config file, or `ZN_PORT`. The flags `--port`, `--config`, `--api-key` and `--db-path` work before or after the subcommand.
+- **Config file.** A file given with `--config` must exist and hold valid JSON (TOML and YAML are not supported); otherwise the gateway names the file and the problem. Without `--config`, a missing `zn.json` in the current folder is fine and the defaults apply. A key it does not know is named on stderr as a warning and ignored. `engine.policy_dir` must be a folder, not a file; a folder that does not exist yet is created empty, with a note.
+- **Audit database.** If `zn.db` cannot be opened, the message says whether the folder is missing, read-only, or the path is a folder, and points at `--db-path`.
+- **Neural model.** While `neural.enabled` is true the model is required: if it cannot be loaded or downloaded, the gateway stops and names the folder. It never falls back to rules-only on its own; set `neural.enabled` to false to run without it on purpose.
+- **Version.** `zn --version` prints the version of the build.
+
 ## AWS KMS data key
 
 With `kms.kms_type = "aws"` and `kms.key_id` set, the audit database key is a KMS data key. The gateway creates it once (`GenerateDataKey`, AES-256, encryption context `purpose=zn-gate-audit-db-key`) and saves only its encrypted copy in `zn-kms-data-key.json`, in the same directory as the audit database (`audit.db_path`). The file is written atomically with mode 0600 and holds the KMS key id and the encrypted key, never the plaintext key. On every later start the gateway sends the encrypted key to KMS `Decrypt` and gets the same key back, so audit records written before a restart stay readable. The key needs `kms:GenerateDataKey` and `kms:Decrypt` permissions.

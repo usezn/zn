@@ -1,0 +1,3 @@
+### Fixed
+- The Rust gateway now stops with a clear message and a non-zero exit code when the management API port is already in use, when a config file given with `--config` is missing, is not valid JSON, or is not JSON at all, when `engine.policy_dir` is a file, and when the neural model cannot be loaded (it used to abort with a misleading "Permission denied").
+- The Rust gateway names unknown config keys as a warning, names the config file in JSON errors, says why the audit database cannot be opened, accepts `--port`, `--config`, `--api-key` and `--db-path` after the subcommand, and `zn --version` prints the real version.

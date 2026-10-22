@@ -83,11 +83,7 @@ fn jsonrpc_error_response(id: Option<serde_json::Value>, code: i32, message: &st
 }
 
 #[derive(Parser, Debug)]
-#[command(
-    name = "zn",
-    version = "1.0.0",
-    about = "🛡️ zn - Zero Trust Layer for AI Agents"
-)]
+#[command(name = "zn", version, about = "🛡️ zn - Zero Trust Layer for AI Agents")]
 struct Args {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -101,19 +97,19 @@ struct Args {
     dashboard: bool,
 
     /// Management API port
-    #[arg(long)]
+    #[arg(long, global = true)]
     port: Option<u16>,
 
     /// Path to zn configuration file
-    #[arg(long, short)]
+    #[arg(long, short, global = true)]
     config: Option<String>,
 
     /// API key for Management API authentication
-    #[arg(long)]
+    #[arg(long, global = true)]
     api_key: Option<String>,
 
     /// Database path for audit logs
-    #[arg(long)]
+    #[arg(long, global = true)]
     db_path: Option<String>,
 }
 
@@ -240,6 +236,35 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// One plain sentence for a Management API address that cannot be used.
+fn bind_error_message(addr: &str, port: u16, err: &std::io::Error) -> String {
+    if err.kind() == std::io::ErrorKind::AddrInUse {
+        format!(
+            "Port {port} is already in use ({addr}): another program, or another zn, is listening there. Pick another port with `zn --port 9393 start`, or set server.port in the config file (ZN_PORT also works)."
+        )
+    } else {
+        format!(
+            "Cannot listen on {addr}: {err}. Check server.bind_address and server.port in the config file, or pick a port with `zn --port 9393 start`."
+        )
+    }
+}
+
+/// The neural model is required whenever `neural.enabled` is true, so a model that cannot be
+/// loaded stops the gateway. It never falls back to rules-only on its own.
+fn neural_load_error(model_dir: &std::path::Path, err: &dyn std::fmt::Display) -> anyhow::Error {
+    let state = if model_dir.exists() {
+        "the files there are missing or do not match"
+    } else {
+        "the folder does not exist and could not be filled"
+    };
+    anyhow::anyhow!(
+        "The neural model could not be loaded from '{}' ({}): {}. On first start zn downloads the model into that folder, so the folder must be writable and the machine must reach the model host (HF_ENDPOINT). Set neural.model_path or ZN_NEURAL_MODEL_PATH to a folder you can write to. zn does not switch to rules-only by itself; to run without the neural check on purpose, set neural.enabled to false.",
+        model_dir.display(),
+        state,
+        err
+    )
+}
+
 async fn start_proxy(args: Args) -> Result<()> {
     log::info("Initializing High-Performance Security Engine...")?;
 
@@ -285,6 +310,12 @@ async fn start_proxy(args: Args) -> Result<()> {
 
     // Initial load of all policies from configured directory
     let policy_dir = &zn_config.engine.policy_dir;
+    if !std::path::Path::new(policy_dir).exists() {
+        log::info(format!(
+            "Policy folder '{}' does not exist yet; it is created empty and no policies are loaded. Set engine.policy_dir if you expected policies there.",
+            policy_dir
+        ))?;
+    }
     if let Err(e) = engine.load_all_policies(policy_dir) {
         log::warning(format!(
             "Failed to load initial policies from {}: {}",
@@ -416,10 +447,7 @@ async fn start_proxy(args: Args) -> Result<()> {
                 log::info(format!("✅ Neural Core Active: [{}]", b.name()))?;
                 Arc::new(b)
             }
-            Err(e) => {
-                log::warning(format!("⚠️ Neural Core Failed to Start: {}.", e))?;
-                panic!("Critical: Neural Core (Candle) failed to load: {}", e);
-            }
+            Err(e) => return Err(neural_load_error(&model_dir, &e)),
         }
     };
     if backend.dim() != zn_config.neural.dim {
@@ -519,6 +547,13 @@ async fn start_proxy(args: Args) -> Result<()> {
             )
         })?;
 
+    // Bound before the task starts: a port that is taken is a startup error, not a log line
+    // after the banner says the gateway is engaged.
+    let addr = format!("{}:{}", bind_address, port);
+    let listener = tokio::net::TcpListener::bind(&addr)
+        .await
+        .map_err(|e| anyhow::anyhow!(bind_error_message(&addr, port, &e)))?;
+
     tokio::spawn(async move {
         let allowed_origins = api_state.config.security.allowed_origins.clone();
         let cors = build_cors_layer(&allowed_origins);
@@ -571,22 +606,14 @@ async fn start_proxy(args: Args) -> Result<()> {
             .layer(cors)
             .with_state(api_state);
 
-        let addr = format!("{}:{}", bind_address, port);
-        match tokio::net::TcpListener::bind(&addr).await {
-            Ok(listener) => {
-                log::info(format!("🛰️ Management API listening on {}", addr)).ok();
-                if let Err(e) = axum::serve(
-                    listener,
-                    app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-                )
-                .await
-                {
-                    tracing::error!("Management API server error: {}", e);
-                }
-            }
-            Err(e) => {
-                tracing::error!("Failed to bind Management API to {}: {}", addr, e);
-            }
+        log::info(format!("🛰️ Management API listening on {}", addr)).ok();
+        if let Err(e) = axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        {
+            tracing::error!("Management API server error: {}", e);
         }
     });
 
@@ -2159,5 +2186,80 @@ mod gateway_hardening_tests {
         // The place the arguments came from must still be there; no arguments: nothing to rebuild.
         assert!(with_arguments(frame, "{}", ArgSource::Key("input")).is_none());
         assert!(with_arguments(frame, "{}", ArgSource::Missing).is_none());
+    }
+}
+
+#[cfg(test)]
+mod startup_error_tests {
+    use super::{bind_error_message, neural_load_error, Args};
+    use clap::{CommandFactory, Parser};
+
+    #[test]
+    fn busy_port_message_names_the_port_and_the_fix() {
+        let holder = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = holder.local_addr().unwrap();
+        let err = std::net::TcpListener::bind(addr).expect_err("port is taken");
+        let msg = bind_error_message(&addr.to_string(), addr.port(), &err);
+        assert!(
+            msg.contains(&format!("Port {} is already in use", addr.port())),
+            "{msg}"
+        );
+        assert!(msg.contains("zn --port 9393 start"), "{msg}");
+        assert!(msg.contains("server.port"), "{msg}");
+    }
+
+    #[test]
+    fn other_bind_errors_keep_the_cause() {
+        let err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
+        let msg = bind_error_message("127.0.0.1:80", 80, &err);
+        assert!(msg.contains("127.0.0.1:80"), "{msg}");
+        assert!(msg.contains("denied"), "{msg}");
+    }
+
+    #[test]
+    fn global_flags_work_before_and_after_the_subcommand() {
+        let before = Args::try_parse_from(["zn", "--port", "9393", "start"]).unwrap();
+        let after = Args::try_parse_from([
+            "zn",
+            "start",
+            "--port",
+            "9393",
+            "--config",
+            "x.json",
+            "--db-path",
+            "d.db",
+            "--api-key",
+            "k",
+        ])
+        .unwrap();
+        assert_eq!(before.port, Some(9393));
+        assert_eq!(after.port, Some(9393));
+        assert_eq!(after.config.as_deref(), Some("x.json"));
+        assert_eq!(after.db_path.as_deref(), Some("d.db"));
+        assert_eq!(after.api_key.as_deref(), Some("k"));
+        assert!(Args::try_parse_from(["zn", "start", "--bogus"]).is_err());
+    }
+
+    #[test]
+    fn version_comes_from_cargo() {
+        assert_eq!(
+            Args::command().get_version(),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+    }
+
+    #[test]
+    fn missing_neural_model_is_a_plain_error_naming_the_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("model");
+        let err = neural_load_error(&missing, &"Permission denied (os error 13)");
+        let msg = err.to_string();
+        assert!(msg.contains(&missing.display().to_string()), "{msg}");
+        assert!(msg.contains("does not exist"), "{msg}");
+        assert!(msg.contains("neural.enabled"), "{msg}");
+        assert!(
+            msg.contains("does not switch to rules-only by itself"),
+            "{msg}"
+        );
     }
 }
