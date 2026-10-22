@@ -1575,6 +1575,28 @@ def sanitize_tool_result(
     # Deep data structure sanitization
     detections: List[Dict[str, Any]] = []
 
+    def _unique_name(name: str, taken: set) -> str:
+        """Return `name`, or `name #N`, whichever is not taken yet, and take it."""
+        base = name
+        n = 2
+        while name in taken:
+            name = f"{base} #{n}"
+            n += 1
+        taken.add(name)
+        return name
+
+    def _sanitize_members(members: Any) -> List[Any]:
+        """Sanitize set members; masked members that become equal stay apart."""
+        originals = list(members)
+        cleaned = [_sanitize(m) for m in originals]
+        taken = {c for c, m in zip(cleaned, originals) if c == m}
+        out: List[Any] = []
+        for c, m in zip(cleaned, originals):
+            if isinstance(m, str) and c != m:
+                c = _unique_name(c, taken)
+            out.append(c)
+        return out
+
     def _sanitize(val: Any) -> Any:
         if isinstance(val, str):
             clean_str, det = redact_secrets(val)
@@ -1582,15 +1604,23 @@ def sanitize_tool_result(
                 detections.extend(det)
             return clean_str
         elif isinstance(val, dict):
-            return {(_sanitize(k) if isinstance(k, str) else k): _sanitize(v) for k, v in val.items()}
+            items = list(val.items())
+            names = [_sanitize(k) if isinstance(k, str) else k for k in [k for k, _ in items]]
+            taken = {n for n, (k, _) in zip(names, items) if n == k}
+            out: Dict[Any, Any] = {}
+            for name, (key, v) in zip(names, items):
+                if name != key:
+                    name = _unique_name(name, taken)
+                out[name] = _sanitize(v)
+            return out
         elif isinstance(val, list):
             return [_sanitize(v) for v in val]
         elif isinstance(val, tuple):
             return tuple(_sanitize(v) for v in val)
         elif isinstance(val, frozenset):
-            return frozenset(_sanitize(v) for v in val)
+            return frozenset(_sanitize_members(val))
         elif isinstance(val, set):
-            return {_sanitize(v) for v in val}
+            return set(_sanitize_members(val))
         return val
 
     sanitized = _sanitize(tool_or_result)
