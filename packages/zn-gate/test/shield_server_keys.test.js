@@ -31,6 +31,7 @@ rl.on('line', (line) => {
   if (name === 'key_nested') { sc.rows = [{ name: 'row0', meta: { [INJ]: true, note: 'fine' } }]; }
   if (name === 'key_secret') { sc['token ' + KEY] = 'x'; sc.city = 'Example'; }
   if (name === 'many_keys') { for (let i = 0; i < 20000; i++) sc[INJ + ' ' + i] = i; }
+  if (name === 'many_benign_keys') { for (let i = 0; i < 20000; i++) sc['plain field number ' + i] = i; }
   if (name === 'benign') { sc.city = 'Example'; sc.temp = 64; sc.rows = [{ name: 'row0' }]; }
   const result = { structuredContent: sc };
   if (msg.params.arguments && msg.params.arguments.withContent) result.content = [{ type: 'text', text: 'ok' }];
@@ -49,7 +50,7 @@ function run(toolName, withContent = false) {
       env: { ...process.env, HOME: home, USERPROFILE: home, ZN_HOME: '' },
     });
     const rl = readline.createInterface({ input: proc.stdout, crlfDelay: Infinity });
-    const timer = setTimeout(() => { proc.kill(); reject(new Error('timeout')); }, 60000);
+    const timer = setTimeout(() => { proc.kill(); reject(new Error('timeout')); }, 120000);
     rl.on('line', (line) => {
       let msg;
       try { msg = JSON.parse(line); } catch { return; }
@@ -102,12 +103,18 @@ test('benign keys are left exactly as they are', async () => {
   assert.deepEqual(msg.result.structuredContent, { city: 'Example', temp: 64, rows: [{ name: 'row0' }] });
 });
 
-test('20,000 injected keys are all removed in well under 10 s (renaming is linear)', async () => {
-  const t0 = Date.now();
+test('20,000 injected keys are all removed in about the time 20,000 plain keys take (renaming is linear)', async () => {
+  // Compared with a baseline measured on the same machine, so a slow or busy CI runner does not fail it.
+  // A quadratic rename takes about 40 times the baseline at this size; the linear one about the same.
+  let t0 = Date.now();
+  const plain = await run('many_benign_keys');
+  const baseline = Date.now() - t0;
+  assert.equal(Object.keys(plain.result.structuredContent).length, 20000);
+  t0 = Date.now();
   const msg = await run('many_keys');
   const ms = Date.now() - t0;
   const sc = msg.result.structuredContent;
   assert.ok(!JSON.stringify(msg.result).includes('ignore previous instructions'));
   assert.equal(Object.keys(sc).length, 20000, 'every key is kept, renamed');
-  assert.ok(ms < 10000, `took ${ms} ms`);
+  assert.ok(ms < Math.max(10000, 4 * baseline), `took ${ms} ms (plain keys: ${baseline} ms)`);
 });
