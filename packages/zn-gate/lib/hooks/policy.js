@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-23.3';
+const POLICY_RULES_VERSION = '2026-10-23.6';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -104,7 +104,12 @@ const AGENT_CONFIG_RES = [
 function caseInsensitive() {
   return process.platform === 'win32' || process.platform === 'darwin';
 }
-const keyOf = (s) => (caseInsensitive() ? s.toLowerCase() : s);
+// macOS reports names like "José" decomposed (NFD) while a typed path is usually composed (NFC),
+// and its file systems treat both as the same folder, so every comparison uses NFC.
+const keyOf = (s) => {
+  const n = s.normalize('NFC');
+  return caseInsensitive() ? n.toLowerCase() : n;
+};
 /** The pattern, ignoring case where the platform does. */
 const ci = (re) => (caseInsensitive() && !re.flags.includes('i') ? new RegExp(re.source, re.flags + 'i') : re);
 
