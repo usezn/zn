@@ -17,6 +17,7 @@ from collections.abc import AsyncIterator, ItemsView, Iterable, Iterator, KeysVi
 from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set, Tuple, TypeVar, cast
 
 from .rules import Assessment, invisible_block, scan_windows, too_invisible
+from .rules import MAX_TOOL_RESULT_SCAN_CHARS
 
 
 _F = TypeVar("_F", bound=Callable[..., Any])
@@ -318,6 +319,11 @@ def _scan_strings(data: Any, what: str, block_truncated: bool, strict: Optional[
     truncated = False
     advisory = None
     for s in strings_to_check:
+        # Arguments over the scan limit are blocked, as the npm package does (its checkToolCall runs evaluate(),
+        # which blocks them with size:oversize); a result keeps the truncated flag (block_truncated decides).
+        if what == "Arguments" and isinstance(s, str) and len(s) > MAX_TOOL_RESULT_SCAN_CHARS:
+            return Assessment(verdict="block", confidence=1.0, rule="size:oversize",
+                              reason="Input too large to scan in full", truncated=True)
         res = scan_windows(s, strict=strict)
         if not res.allowed:
             return res
