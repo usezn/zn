@@ -77,15 +77,15 @@ function render(req) {
 
 /* ------------------------------ none ------------------------------ */
 
-const NO_CHANNEL = 'zn could not ask you outside the agent: no confirmation channel. ' +
-  'Start the vault with `zn unlock --foreground` in a terminal of its own (it asks there), ' +
+const noChannelText = () => 'zn could not ask you outside the agent: no confirmation channel. ' +
+  'Start the vault with `' + require('../zn-command').znCommand('unlock --foreground') + '` in a terminal of its own (it asks there), ' +
   'or unlock it from a desktop session so zn can show a dialog.';
 
 function noneChannel() {
   return {
     kind: 'none',
     async confirm() {
-      const err = new Error(NO_CHANNEL);
+      const err = new Error(noChannelText());
       err.code = 'ZN_POLICY_DENIED';
       err.noChannel = true;
       throw err;
@@ -264,6 +264,5 @@ module.exports = {
   render,
   field,
   INVISIBLE,
-  NO_CHANNEL,
   DEFAULT_TIMEOUT_MS,
 };

@@ -1,7 +1,7 @@
 {
   "_comment": "Public facts of zn-gate, checked on every pull request by .github/scripts/check-public-facts.mjs. A release changes version.value in the same pull request as the manifests and the pinned docs.",
   "version": {
-    "value": "1.13.0",
+    "value": "1.13.1",
     "files": [
       {
         "file": "packages/zn-gate/package.json",
@@ -17,11 +17,13 @@
       },
       {
         "file": "packages/zn-gate-py/pyproject.toml",
-        "regex": "^version = \"([^\"]+)\""
+        "regex": "^version = \"([^\"]+)\"",
+        "python": true
       },
       {
         "file": "packages/zn-gate-py/src/zn_gate/__init__.py",
-        "regex": "^__version__ = \"([^\"]+)\""
+        "regex": "^__version__ = \"([^\"]+)\"",
+        "python": true
       },
       {
         "file": ".pre-commit-hooks.yaml",
@@ -30,46 +32,6 @@
       {
         "file": ".pre-commit-hooks.yaml",
         "regex": "^  entry: npx --yes zn-gate@(\\S+) audit$"
-      },
-      {
-        "file": "examples/crewai-agent/requirements.txt",
-        "regex": "^zn-gate==(\\S+)$"
-      },
-      {
-        "file": "examples/llamaindex-agent/requirements.txt",
-        "regex": "^zn-gate==(\\S+)$"
-      },
-      {
-        "file": "examples/openai-agents-sdk/requirements.txt",
-        "regex": "^zn-gate==(\\S+)$"
-      },
-      {
-        "file": "examples/pydantic-ai-agent/requirements.txt",
-        "regex": "^zn-gate==(\\S+)$"
-      },
-      {
-        "file": "examples/google-adk-agent/requirements.txt",
-        "regex": "^zn-gate==(\\S+)$"
-      },
-      {
-        "file": "examples/haystack-agent/requirements.txt",
-        "regex": "^zn-gate==(\\S+)$"
-      },
-      {
-        "file": "examples/smolagents-agent/requirements.txt",
-        "regex": "^zn-gate==(\\S+)$"
-      },
-      {
-        "file": "examples/dspy-agent/requirements.txt",
-        "regex": "^zn-gate==(\\S+)$"
-      },
-      {
-        "file": "examples/openai-agents-js/package.json",
-        "json": "dependencies.zn-gate"
-      },
-      {
-        "file": "examples/langchain-js/package.json",
-        "json": "dependencies.zn-gate"
       }
     ],
     "pinsExclude": [
@@ -98,6 +60,74 @@
         "file": "docs/team.md",
         "pin": "zn-gate 1.8.0",
         "why": "first zn-gate version with the Team Warn choice; matches the version once 1.8.0 is released"
+      }
+    ]
+  },
+  "docsVersion": {
+    "_comment": "The last final release. While version.value is a pre-release, the pins in the docs and the {minor} of the text facts are checked against this one. The final release step sets it to the new release.",
+    "value": "1.13.1"
+  },
+  "examplesVersion": {
+    "_comment": "The release the examples pin: always one that is published on npm and PyPI. It moves after a release is published (requirements in the PyPI form, 1.14.0rc1 for 1.14.0-rc.1).",
+    "value": "1.13.1",
+    "files": [
+      {
+        "file": "examples/ag2-agent/requirements.txt",
+        "regex": "^zn-gate==(\\S+)$",
+        "python": true
+      },
+      {
+        "file": "examples/crewai-agent/requirements.txt",
+        "regex": "^zn-gate==(\\S+)$",
+        "python": true
+      },
+      {
+        "file": "examples/llamaindex-agent/requirements.txt",
+        "regex": "^zn-gate==(\\S+)$",
+        "python": true
+      },
+      {
+        "file": "examples/openai-agents-sdk/requirements.txt",
+        "regex": "^zn-gate==(\\S+)$",
+        "python": true
+      },
+      {
+        "file": "examples/pydantic-ai-agent/requirements.txt",
+        "regex": "^zn-gate==(\\S+)$",
+        "python": true
+      },
+      {
+        "file": "examples/google-adk-agent/requirements.txt",
+        "regex": "^zn-gate==(\\S+)$",
+        "python": true
+      },
+      {
+        "file": "examples/haystack-agent/requirements.txt",
+        "regex": "^zn-gate==(\\S+)$",
+        "python": true
+      },
+      {
+        "file": "examples/smolagents-agent/requirements.txt",
+        "regex": "^zn-gate==(\\S+)$",
+        "python": true
+      },
+      {
+        "file": "examples/semantic-kernel-agent/requirements.txt",
+        "regex": "^zn-gate==(\\S+)$",
+        "python": true
+      },
+      {
+        "file": "examples/dspy-agent/requirements.txt",
+        "regex": "^zn-gate==(\\S+)$",
+        "python": true
+      },
+      {
+        "file": "examples/openai-agents-js/package.json",
+        "json": "dependencies.zn-gate"
+      },
+      {
+        "file": "examples/langchain-js/package.json",
+        "json": "dependencies.zn-gate"
       }
     ]
   },
@@ -193,7 +223,7 @@
   ],
   "pluginVersion": {
     "_comment": "The zn-gate version the agent plugin is pinned to. It follows the release one step later: plugins/tools/pin-release.js moves it, the plugin manifests and the plugin docs in one commit after npm publishes the release.",
-    "value": "1.12.0",
+    "value": "1.13.1",
     "files": [
       {
         "file": "plugins/zn-gate/plugin.json",
@@ -206,14 +236,6 @@
       {
         "file": "plugins/zn-gate/.cursor-plugin/plugin.json",
         "json": "version"
-      },
-      {
-        "file": "plugins/mcp-registry/server.json",
-        "json": "version"
-      },
-      {
-        "file": "plugins/mcp-registry/server.json",
-        "json": "packages.0.version"
       },
       {
         "file": "plugins/zn-gate/package.json",

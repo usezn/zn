@@ -110,7 +110,7 @@ test('yes + 200: one DELETE to the fixed host, the key is revoked, the local cop
   } finally { cleanup(home); }
 });
 
-for (const [status, re] of [[401, /did not accept/], [404, /could not revoke key .* \(HTTP 404\)/], [400, /could not revoke key .* \(HTTP 400\)/], [500, /may still work/], [302, /Could not reach/]]) {
+for (const [status, re] of [[401, /did not accept/], [404, /cannot revoke key .* from here, so it may still work/], [400, /cannot revoke key .* from here, so it may still work/], [500, /not answering properly.* may still work/], [302, /not answering properly/]]) {
   test('yes + ' + status + ': says so, links the dashboard, still deletes the local copy', async () => {
     const home = tmpHome();
     try {
@@ -130,7 +130,8 @@ test('yes + network error: the dashboard is linked and the local copy is gone', 
   try {
     const r = await run({ ans: { error: 'ECONNRESET' } });
     assert.equal(r.code, 1);
-    assert.match(r.err, /Could not reach usezn\.com \(ECONNRESET\)/);
+    assert.match(r.err, /Could not reach usezn\.com, so key .* was not revoked\. Check your internet connection/);
+    assert.doesNotMatch(r.err, /ECONNRESET/, 'the error code is for ZN_VERBOSE=1');
     assert.match(r.err, LINK);
     assert.equal(r.kc.get(), null);
     assert.equal(cloudKey.readMarker(), null);
@@ -211,7 +212,8 @@ test('TLS environment refusal: no request is sent, the local copy is still delet
     const r = await run();
     assert.equal(r.h.calls.length, 0);
     assert.equal(r.code, 1);
-    assert.match(r.err, /NODE_TLS_REJECT_UNAUTHORIZED=0/);
+    assert.match(r.err, /NODE_TLS_REJECT_UNAUTHORIZED is set in this terminal/);
+    assert.match(r.err, /unset NODE_TLS_REJECT_UNAUTHORIZED/);
     assert.match(r.err, LINK);
     assert.equal(r.kc.get(), null);
     assert.equal(cloudKey.readMarker(), null);
@@ -219,7 +221,7 @@ test('TLS environment refusal: no request is sent, the local copy is still delet
   } finally { cleanup(home); }
 });
 
-test('marker but the key cannot be read: nothing is removed, revoked or asked, the dashboard is linked', async () => {
+test('marker but the key cannot be read: nothing is revoked or asked, the dashboard is linked, the local setting is still removed', async () => {
   const home = tmpHome();
   try {
     const key = freshKey();
@@ -234,18 +236,14 @@ test('marker but the key cannot be read: nothing is removed, revoked or asked, t
     assert.equal(code, 1);
     assert.equal(h.calls.length, 0);
     assert.equal(t.calls.confirm.length, 0);
-    assert.match(err.join(''), /Could not read the saved key/);
+    assert.match(err.join(''), /Could not read the saved key.*not revoked/);
     assert.match(err.join(''), LINK);
-    assert.ok(cloudKey.readMarker(), 'the marker stays');
-    assert.equal(kc.get(), key, 'the stored key is untouched');
-    // --no-revoke is the explicit way to only remove the local copy
-    const code2 = await connectCli.disconnect(['--no-revoke'], { out: () => {}, err: () => {}, tty: fakeTty(), https: h, deps: kc.deps });
-    assert.equal(code2, 0);
-    assert.equal(cloudKey.readMarker(), null);
+    assert.equal(cloudKey.readMarker(), null, 'zn never keeps a setting it cannot act on');
+    assert.equal(kc.get(), null, 'the keychain copy was removed too');
   } finally { cleanup(home); }
 });
 
-test('--revoke when the local copy cannot be deleted: the key is still revoked, both outcomes are reported, exit 1', async () => {
+test('--revoke when the local copy cannot be deleted: the key is still revoked, both outcomes are reported, the setting is gone, exit 0', async () => {
   const home = tmpHome();
   try {
     const key = freshKey();
@@ -256,9 +254,10 @@ test('--revoke when the local copy cannot be deleted: the key is still revoked, 
     const out = []; const err = [];
     const h = fakeHttps({ status: 200 });
     const code = await connectCli.disconnect(['--revoke'], { out: (s) => out.push(s), err: (s) => err.push(s), tty: fakeTty(), https: h, deps: stuck });
-    assert.equal(code, 1);
+    assert.equal(code, 0);
     assert.equal(h.calls.length, 1);
-    assert.match(err.join(''), /Could not remove the saved key/);
+    assert.equal(cloudKey.readMarker(), null);
+    assert.match(out.join(''), /Could not clean your system keychain/);
     assert.match(out.join(''), /Revoked key zn_[0-9a-f]{9}\.\.\./);
     assert.ok(!(out.join('') + err.join('')).includes(key));
   } finally { cleanup(home); }
