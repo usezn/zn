@@ -648,13 +648,24 @@ async function decideMcp(ev, d, agentId) {
   let ctx = await ctxFor(ev, d, agentId, 'mcp_input');
   if (typeof engine.prepare === 'function') ctx = await engine.prepare(ctx);
   const kinds = new Set();
+  const piiKinds = new Set();
   for (let start = 0; ; start += MCP_WINDOW - MCP_OVERLAP) {
     for (const span of engine.scan(text.slice(start, start + MCP_WINDOW), ctx) || []) {
       if (SECRET_SOURCES.has(span.source)) kinds.add(kindLabel(span.type));
+      else if (span.source === 'pii') piiKinds.add(kindLabel(span.type));
     }
     if (start + MCP_WINDOW >= text.length) break;
   }
-  if (kinds.size === 0) return { decision: 'allow' };
+  if (kinds.size === 0) {
+    if (piiKinds.size === 0) return { decision: 'allow' };
+    // Personal data is not always wrong to send: the user decides (never a deny).
+    return {
+      decision: 'ask',
+      kinds: [...piiKinds],
+      message: 'zn: this call would send personal data (' + [...piiKinds].join(', ') + ') to ' + mcpServerLabel(server) + '. ' +
+        'Approve only if this server should receive it.',
+    };
+  }
   return {
     decision: 'deny',
     kinds: [...kinds],

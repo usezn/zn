@@ -73,9 +73,9 @@ const launcher = require('./launcher');
 
 const id = 'claude-code';
 
-// Exact names (a matcher of letters and | is an exact list). PowerShell and
-// Monitor run commands like Bash; LSP reads files.
-const PRE_MATCHER = 'Bash|PowerShell|Monitor|Read|Grep|LSP|Edit|MultiEdit|Write|NotebookEdit|WebFetch';
+// A regex (it contains mcp__.*), anchored so it names exactly these tools. PowerShell and Monitor run
+// commands like Bash; LSP reads files; the MCP tools are checked for secrets and personal data before they run.
+const PRE_MATCHER = '^(Bash|PowerShell|Monitor|Read|Grep|LSP|Edit|MultiEdit|Write|NotebookEdit|WebFetch)$|^mcp__.*';
 // A regex (it contains mcp__.*), anchored so it names exactly these tools.
 const POST_MATCHER = '^(Bash|PowerShell|Monitor|Read|Grep|LSP|WebFetch|ReadMcpResourceTool)$|^mcp__.*';
 const HOOK_TIMEOUT_S = 15;
@@ -138,6 +138,8 @@ function normalize(raw) {
     url: typeof ti.url === 'string' ? ti.url : undefined,
     texts: textsOf(tool, ti),
   };
+  // For an MCP tool, tool_input is the call's arguments; runner.js checks them (as for Codex).
+  if (mcp) input.args = ti;
   return {
     ...base,
     tool,
