@@ -14,44 +14,17 @@ const { getAdapter } = require('../lib/agents');
 const runner = require('../lib/hooks/runner');
 const fakeEngine = require('./helpers/fake_engine');
 const { createFakeVault } = require('./helpers/fake_vault');
+const { AGENTS } = require('./helpers/post_events');
 
 const ZW = String.fromCharCode(0x200b);
 const KEY = 'AKIAIOSFODNN7EXAMPLE'; // AWS documentation example, not a credential
 const HIDDEN = ZW.repeat(250000);
-const WITHHELD = /withheld because this output is too large/;
+const WITHHELD = /output withheld because it is too large/;
 
 function handle(adapter, raw, extra = {}) {
   return runner.handle(getAdapter(adapter), raw, { engine: fakeEngine, vault: createFakeVault(), failMode: 'open', ...extra });
 }
 
-// Each agent's own event for a tool result, and where the agent takes the replacement from.
-const AGENTS = {
-  'claude-code': {
-    event: (text) => ({ session_id: 's', cwd: '/', hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command: 'cat f' }, tool_response: { stdout: text, stderr: '', interrupted: false } }),
-    seen: (out) => out.hookSpecificOutput.updatedToolOutput.stdout,
-    shapeKept: (out) => out.hookSpecificOutput.updatedToolOutput.interrupted === false && out.hookSpecificOutput.updatedToolOutput.stderr === '',
-  },
-  codex: {
-    event: (text) => ({ session_id: 's', transcript_path: '/t', cwd: '/', hook_event_name: 'PostToolUse', model: 'm', turn_id: 't1', tool_name: 'Bash', tool_use_id: 'u1', tool_input: { command: 'cat f' }, tool_response: text }),
-    seen: (out) => out.reason,
-    shapeKept: (out) => out.decision === 'block',
-  },
-  copilot: {
-    event: (text) => ({ sessionId: 's', timestamp: 1792400000000, cwd: '/', toolName: 'bash', toolArgs: { command: 'cat f' }, toolResult: { resultType: 'success', textResultForLlm: text } }),
-    seen: (out) => out.modifiedResult.textResultForLlm,
-    shapeKept: (out) => out.modifiedResult.resultType === 'success',
-  },
-  opencode: {
-    event: (text) => ({ hook: 'tool.execute.after', tool: 'bash', cwd: '/', args: {}, output: text, metadata: { preview: text } }),
-    seen: (out) => out.output,
-    shapeKept: (out) => out.action === 'output' && typeof out.metadata.preview === 'string' && !out.metadata.preview.includes(KEY),
-  },
-  cursor: {
-    event: (text) => ({ hook_event_name: 'postToolUse', cwd: '/', tool_name: 'MCP:get_file', tool_input: {}, tool_output: JSON.stringify({ content: [{ type: 'text', text }] }) }),
-    seen: (out) => out.updated_mcp_tool_output.content[0].text,
-    shapeKept: (out) => out.updated_mcp_tool_output.content[0].type === 'text',
-  },
-};
 
 for (const [name, a] of Object.entries(AGENTS)) {
   test(name + ': 250,000 invisible characters and a key: the key never reaches the agent', async () => {
@@ -77,7 +50,7 @@ for (const [name, a] of Object.entries(AGENTS)) {
 
   test(name + ': an output too large to check is withheld whole, with the key absent', async () => {
     const big = HIDDEN + 'x'.repeat(5000) + ' ' + KEY;
-    const r = await handle(name, a.event(big), { invisibleRedactBudget: 1000 });
+    const r = await handle(name, a.event(big), { postScanCap: 1000 });
     assert.equal(r.decision.decision, 'deny');
     assert.match(r.decision.message, /too large to check for secrets/);
     const everything = JSON.stringify(r.output);

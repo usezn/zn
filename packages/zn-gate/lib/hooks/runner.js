@@ -569,9 +569,46 @@ async function decideMcp(ev, d, agentId) {
 // The characters lib/rules.js counts as invisible (ZERO_WIDTH_RE and INVISIBLE_ASTRAL_RE). A test keeps
 // this list equal to the rules' own. lib/rules.js is not edited for this: its files carry a rules version.
 const INVISIBLE_CHARS_RE = /[\u200B-\u200D\u2060\uFEFF\u00AD\uFE00-\uFE0F\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
-// Visible text kept from an output that is mostly invisible, all its strings together (characters).
-const INVISIBLE_REDACT_BUDGET = 8 * 1024 * 1024;
-const INVISIBLE_WITHHELD = '[zn: withheld because this output is too large to check for secrets]';
+
+// Limits on the check of one tool output. The tool has already run, so a hook that is killed by its
+// agent's timeout lets the whole output through unchecked (PostToolUse has no way to fail closed), and a
+// deny does not withhold it in Claude Code, Copilot or OpenCode. So the hook answers by itself, before the
+// timeout, and what it cannot check is replaced by a fixed notice instead of being passed on.
+//  - POST_SCAN_CAP: characters of text checked, all strings of one output together.
+//  - POST_TOKEN_CAP: different secret values in one output. Each new value is written to the vault.
+//  - the deadline: POST_MARGIN_S seconds before the agent's own hook timeout (HOOK_TIMEOUT_S of its adapter).
+//  - POST_STDIN_CAP: characters of the event read from stdin.
+const POST_SCAN_CAP = 8 * 1024 * 1024;
+const POST_TOKEN_CAP = 1000;
+const POST_MARGIN_S = 5;
+const POST_STDIN_CAP = 32 * 1024 * 1024;
+const POST_DEFAULT_TIMEOUT_S = 15;
+const POST_WITHHELD = '[zn: output withheld because it is too large to check for secrets in time]';
+const POST_CAP_NOTE = 'zn: part of this output was withheld because it is too large to check for secrets in time. ' +
+  'Next step: ask for a smaller output (a line range, grep, head or tail) instead of reading it all again.';
+
+/** Milliseconds the post-tool check may take for this agent: its hook timeout minus POST_MARGIN_S (at least one second). */
+function postDeadlineMs(agentId) {
+  let seconds = POST_DEFAULT_TIMEOUT_S;
+  try {
+    const a = require('../agents').getAdapter(agentId);
+    if (a.HOOK_TIMEOUT_S > 0) seconds = a.HOOK_TIMEOUT_S;
+    else if (a.HOOK_TIMEOUT_MS > 0) seconds = a.HOOK_TIMEOUT_MS / 1000;
+  } catch (_) { /* an unknown agent gets the default */ }
+  return Math.max(1000, (seconds - POST_MARGIN_S) * 1000);
+}
+
+const DEADLINE = Symbol('deadline');
+
+/** The result of a promise, or DEADLINE when `at` (a Date.now() value) comes first. The promise is left to finish on its own. */
+function raceDeadline(promise, at) {
+  const ms = at - Date.now();
+  promise.catch(() => {});
+  if (ms <= 0) return Promise.resolve(DEADLINE);
+  let timer;
+  const late = new Promise((resolve) => { timer = setTimeout(() => resolve(DEADLINE), ms); });
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
+}
 
 async function decidePost(ev, d, agentId, opts = {}) {
   if (!POST_TOOLS.has(ev.tool)) return { decision: 'allow' };
@@ -585,41 +622,54 @@ async function decidePost(ev, d, agentId, opts = {}) {
     }
   }
   if (ev.output === undefined || ev.output === null) return { decision: 'allow' };
+  const posInt = (v, dflt) => (Number.isInteger(v) && v > 0 ? v : dflt);
+  const deadlineAt = Date.now() + posInt(opts.postDeadlineMs, postDeadlineMs(agentId));
+  let room = posInt(opts.postScanCap, POST_SCAN_CAP);
+  const tokenCap = posInt(opts.postTokenCap, POST_TOKEN_CAP);
   const engine = d.engine();
   // Output that is mostly invisible characters is not handed to the engine as it is: matching millions
   // of invisible characters costs seconds (see tooInvisible in lib/rules.js). The verdict is still a
-  // deny, but a deny alone does not hide the output in every agent (Claude Code, Copilot and OpenCode
-  // keep what the tool returned unless the hook replaces it), so the hook always replaces it. The
+  // deny, but a deny alone does not hide the output in every agent, so the hook always replaces it. The
   // invisible characters are removed in one linear pass, and what is left goes through the same
-  // redaction as any other output. Past INVISIBLE_REDACT_BUDGET characters of visible text, the
-  // strings that do not fit are withheld whole, so nothing passes unchecked.
+  // redaction as any other output.
   const rules = require('../rules');
   const outputStrings = [];
   await mapStrings(ev.output, async (s) => { outputStrings.push(s); return s; });
   const invisible = rules.tooInvisible(outputStrings);
   let output = ev.output;
-  let withheld = 0;
-  if (invisible) {
-    let room = Number.isInteger(opts.invisibleRedactBudget) && opts.invisibleRedactBudget > 0 ? opts.invisibleRedactBudget : INVISIBLE_REDACT_BUDGET;
-    output = await mapStrings(ev.output, async (s) => {
-      const clean = s.replace(INVISIBLE_CHARS_RE, '');
-      if (clean.length < 8) return clean;
-      if (clean.length > room) {
-        withheld += clean.length;
-        return INVISIBLE_WITHHELD;
-      }
-      room -= clean.length;
-      return clean;
-    });
-  }
+  if (invisible) output = await mapStrings(ev.output, async (s) => s.replace(INVISIBLE_CHARS_RE, ''));
+
   const ctx = await ctxFor(ev, d, agentId, 'assistant');
   const types = new Map();
   const secretKinds = new Set();
+  const seen = new Set(); // the different secret values met so far
   let locked = false;
-  const updated = await mapStrings(output, async (s) => {
-    if (s === INVISIBLE_WITHHELD) return s;
-    if (s.length < 8) return s;
-    const res = await engine.tokenize(s, ctx);
+  let withheld = 0; // characters replaced by POST_WITHHELD
+  let stopped = false; // a limit was reached: the strings that follow are withheld too
+  let abandoned = false; // the deadline passed while the engine or the vault was still working
+  let scanCtx = null;
+  const withhold = (s, stop) => {
+    if (stop) stopped = true;
+    withheld += s.length;
+    return POST_WITHHELD;
+  };
+  const check = async (s) => {
+    if (s === POST_WITHHELD || s.length < 8) return s;
+    if (stopped || Date.now() >= deadlineAt) return withhold(s, true);
+    if (s.length > room) return withhold(s, false);
+    // The engine's own scan is pure and cheap: it counts the values this string would add to the vault.
+    if (scanCtx === null) {
+      scanCtx = typeof engine.prepare === 'function' ? await raceDeadline(engine.prepare(ctx), deadlineAt) : ctx;
+      if (scanCtx === DEADLINE) { abandoned = true; return withhold(s, true); }
+    }
+    if (scanCtx === DEADLINE) return withhold(s, true);
+    for (const span of engine.scan(s, scanCtx) || []) {
+      seen.add(s.slice(span.start, span.end));
+      if (seen.size > tokenCap) return withhold(s, true);
+    }
+    room -= s.length;
+    const res = await raceDeadline(engine.tokenize(s, ctx), deadlineAt);
+    if (res === DEADLINE) { abandoned = true; return withhold(s, true); }
     if (!res || typeof res.text !== 'string') throw deps.znError('ZN_ENGINE', 'tokenize returned an unexpected shape');
     if (res.locked) locked = true;
     for (const r of res.replaced || []) {
@@ -627,8 +677,9 @@ async function decidePost(ev, d, agentId, opts = {}) {
       if (SECRET_SOURCES.has(r.source)) secretKinds.add(kindLabel(r.type));
     }
     return res.text;
-  });
-  if (types.size === 0 && !invisible) return { decision: 'allow' };
+  };
+  const updated = await mapStrings(output, check);
+  if (types.size === 0 && !invisible && withheld === 0) return { decision: 'allow' };
   const total = [...types.values()].reduce((a, b) => a + b, 0);
   const summary = [...types.entries()].map(([t, n]) => t + (n > 1 ? ' x' + n : '')).join(', ');
   const redactedNote = 'zn: ' + total + ' secret value(s) in this output were replaced with __ZN_ tokens (' + summary + '). ' +
@@ -637,16 +688,18 @@ async function decidePost(ev, d, agentId, opts = {}) {
     decision: 'allow',
     stats: { redacted: total, detections: Object.fromEntries(types) },
     updatedOutput: updated,
-    message: redactedNote,
+    message: total > 0 ? redactedNote + (withheld > 0 ? ' ' + POST_CAP_NOTE : '') : POST_CAP_NOTE,
     userMessage: locked ? lockedNotice() : undefined,
   };
+  if (withheld > 0) out.stats.withheld = withheld;
+  if (abandoned) out.abandoned = true;
   if (invisible) {
+    // The verdict stays a deny for the record; the replacement above is what the agent receives.
     out.decision = 'deny';
     out.message = 'zn: this output is mostly invisible characters, so zn removed them and did not pass the original on. ' +
       (withheld > 0 ? 'Part of the text is too large to check for secrets, so zn withheld it. ' : '') +
       (total > 0 ? redactedNote + ' ' : '') +
       'Next step: tell the user; do not try to read it again.';
-    if (withheld > 0) out.stats.withheld = withheld;
   }
   // Opt-in, Codex only (respond() in lib/agents/codex.js): a real secret value also gets a stop reason.
   if (agentId === 'codex' && secretKinds.size > 0 && replaceOnSecretOf(opts)) {
@@ -1091,14 +1144,43 @@ function recordEvidence(agentId, ev, decision, opts = {}) {
   }
 }
 
+// Reads the event. It stops after POST_STDIN_CAP characters (the text returned is then longer than the cap),
+// so a huge tool output cannot keep the hook reading until its agent's timeout.
 function readStdin() {
   return new Promise((resolve, reject) => {
     let raw = '';
     process.stdin.setEncoding('utf8');
-    process.stdin.on('data', (c) => { raw += c; });
+    process.stdin.on('data', (c) => {
+      raw += c;
+      if (raw.length > POST_STDIN_CAP) {
+        process.stdin.removeAllListeners('data');
+        process.stdin.pause();
+        resolve(raw);
+      }
+    });
     process.stdin.on('end', () => resolve(raw));
     process.stdin.on('error', reject);
   });
+}
+
+// How each agent's post-tool event can be told from the first characters of an event that is too large to
+// read, and the replacement it takes (its adapter turns it into the agent's own answer).
+const OVERSIZE_POST = {
+  'claude-code': { re: /"hook_event_name"\s*:\s*"PostToolUse"/, tool: 'bash', shape: (t) => t },
+  codex: { re: /"hook_event_name"\s*:\s*"PostToolUse"/, tool: 'bash', shape: (t) => t },
+  copilot: { re: /"(?:toolResult|tool_result)"\s*:/, tool: 'bash', shape: (t) => t },
+  opencode: { re: /"hook"\s*:\s*"tool\.execute\.after"/, tool: 'bash', shape: (t) => ({ output: t }) },
+  cursor: { re: /"hook_event_name"\s*:\s*"postToolUse"/, tool: 'mcp', shape: (t) => t },
+};
+
+// An event over POST_STDIN_CAP characters cannot be parsed in time. A post-tool event is answered with the
+// fixed notice in place of the output; anything else is refused like any event zn cannot read.
+function oversizeEvent(agentId, adapter, text) {
+  const spec = OVERSIZE_POST[agentId];
+  if (!spec || !spec.re.test(text.slice(0, 65536))) return refuseInput(agentId, 'the event on stdin is too large to check');
+  const event = { event: 'post_tool', hookEvent: 'postToolUse', tool: spec.tool, input: { texts: [] } };
+  const output = adapter.respond({ decision: 'allow', updatedOutput: spec.shape(POST_WITHHELD), message: POST_CAP_NOTE, event });
+  if (output !== null && output !== undefined) process.stdout.write(JSON.stringify(output));
 }
 
 /*
@@ -1216,6 +1298,7 @@ async function handleEvent(args, state, readText) {
   // Windows PowerShell 5.1 writes a byte order mark when it pipes text to a
   // native command, which JSON.parse rejects.
   const text = (await readText()).replace(/^﻿/, '');
+  if (text.length > POST_STDIN_CAP) return oversizeEvent(agentId, adapter, text);
   if (!text.trim()) return refuseInput(agentId, 'stdin was empty');
   let raw;
   try {
@@ -1239,7 +1322,11 @@ async function handleEvent(args, state, readText) {
     const res = await handle(adapter, raw);
     if (res.stderr) process.stderr.write(res.stderr + ' (fail-open: event passed through)\n');
     try { require('../vault/client').close(); } catch (_) { /* not loaded */ }
-    if (res.output !== null && res.output !== undefined) process.stdout.write(JSON.stringify(res.output));
+    if (res.output !== null && res.output !== undefined) {
+      // After the deadline the engine or the vault may still be working: leave as soon as the answer is written.
+      if (res.decision && res.decision.abandoned) process.stdout.write(JSON.stringify(res.output), () => process.exit(process.exitCode || 0));
+      else process.stdout.write(JSON.stringify(res.output));
+    }
     // zn itself failed: Codex also gets its documented block code, with the reason on stderr.
     if (disarm && res.decision && res.decision.failClosed) {
       process.stderr.write('zn hook: ' + (res.decision.message || CODEX_FAIL_REASON) + '\n');
@@ -1250,7 +1337,7 @@ async function handleEvent(args, state, readText) {
   }
 }
 
-module.exports = { handle, main, mapStrings, decidePre, decidePost, INVISIBLE_CHARS_RE, decidePrompt, decideExpansion, decideStop };
+module.exports = { handle, main, mapStrings, decidePre, decidePost, INVISIBLE_CHARS_RE, postDeadlineMs, POST_STDIN_CAP, POST_TOKEN_CAP, POST_SCAN_CAP, decidePrompt, decideExpansion, decideStop };
 
 // Direct entry (`node lib/hooks/runner.js <agent>`): what installed hooks call,
 // so a hook does not pay for loading the rest of the CLI.

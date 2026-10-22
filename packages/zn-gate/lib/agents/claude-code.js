@@ -503,6 +503,7 @@ function detect(opts = {}) {
 
 module.exports = {
   id,
+  HOOK_TIMEOUT_S,
   isZnSecretsServer,
   detect,
   install,
