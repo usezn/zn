@@ -18,7 +18,7 @@
 
 ## Install
 
-Everything runs on your machine; no account or API key is needed. Node.js 22 LTS is recommended (from [nodejs.org](https://nodejs.org/)). Node.js 18 or later works for the hooks and the CLI; the Claude Code plugin needs 20.19 or later. With a Node.js older than 18, the `zn-gate` and `zn` commands stop and say how to install it.
+Everything runs on your machine; no account or API key is needed. Node.js 22 LTS is recommended (from [nodejs.org](https://nodejs.org/)). Node.js 18 or later works for the hooks and the CLI; the Claude Code plugin needs 20.19 or later. For security, use the latest patch of a supported Node.js line (22.23.4, 24.22.1, 26.12.1 or later): Node.js 18 and 20 are end-of-life and get no security fixes, even though zn-gate still runs on them. With a Node.js older than 18, the `zn-gate` and `zn` commands stop and say how to install it.
 
 **Getting started: four steps, one command each.** Run them in your own terminal.
 
