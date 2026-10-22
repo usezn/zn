@@ -600,12 +600,30 @@ async fn start_proxy(args: Args) -> Result<()> {
     let mut stdout = io::stdout();
     let mut reader = BufReader::new(stdin).lines();
 
-    while let Some(line) = reader.next_line().await? {
-        if let Ok(Some(response)) = process_mcp_message(&line, &state, None).await {
-            stdout.write_all(response.as_bytes()).await?;
-            stdout.write_all(b"\n").await?;
-            stdout.flush().await?;
+    // Ctrl+C and SIGTERM end the loop between two requests. The request being handled finishes
+    // first, and its audit entry is already committed when it is answered.
+    let mut stop_signals = zn::shutdown::StopSignals::install()?;
+    let stopped_by = loop {
+        tokio::select! {
+            signal = stop_signals.recv() => break Some(signal),
+            line = reader.next_line() => {
+                let Some(line) = line? else { break None };
+                if let Ok(Some(response)) = process_mcp_message(&line, &state, None).await {
+                    stdout.write_all(response.as_bytes()).await?;
+                    stdout.write_all(b"\n").await?;
+                    stdout.flush().await?;
+                }
+            }
         }
+    };
+
+    // Stop the MCP servers started over stdio so they are not left running without the gateway.
+    if !zn::shutdown::stop_children(&pool, zn::shutdown::CHILD_STOP_TIMEOUT).await {
+        tracing::warn!("Some MCP servers did not stop in time");
+    }
+    if let Some(signal) = stopped_by {
+        tracing::info!(signal = signal.name(), "Stopping on signal");
+        std::process::exit(signal.exit_code());
     }
 
     Ok(())

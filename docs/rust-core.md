@@ -117,6 +117,14 @@ The first time a new version opens a file written by an earlier one, it upgrades
 
 A search runs on the request path, so it is tried once and gives up after one second; the request then goes on without a nearest neighbour. Failures are logged as a warning at most once every ten minutes, and at debug level in between.
 
+## Stopping the gateway
+
+Press Ctrl+C, or send `SIGTERM` (for example `kill` or `docker stop`), to stop `zn start`. The gateway finishes the request it is handling, stops any MCP servers it started, and exits with `130` after Ctrl+C or `143` after `SIGTERM`. Every audit entry is written before its request is answered, so the audit log keeps the last line. On Windows, Ctrl+C and closing the console window do the same.
+
+## MCP servers on Windows
+
+A server started with `npx` or `uvx` runs through a `.cmd` file on Windows. The gateway finds it on your `PATH` (using `PATHEXT`), so a bare `npx` works. It does not look in the current folder. If the program is not found, the error names it. Because a `.cmd` file runs through `cmd.exe`, the gateway refuses to start it with an argument that has `&`, `|`, `<`, `>`, `^`, `%` or a quote, and says which one. Spaces are fine.
+
 ## Building from Source
 
 ### Prerequisites

@@ -18,6 +18,7 @@ pub mod prompt_guard;
 pub mod proxy;
 pub mod scrubber;
 pub mod shield;
+pub mod shutdown;
 pub mod sql_guard;
 pub mod tenants;
 pub mod tui;
