@@ -663,12 +663,13 @@ async function decidePost(ev, d, agentId, opts = {}) {
       if (scanCtx === DEADLINE) { abandoned = true; return withhold(s, true); }
     }
     if (scanCtx === DEADLINE) return withhold(s, true);
-    for (const span of engine.scan(s, scanCtx) || []) {
+    const spans = engine.scan(s, scanCtx) || [];
+    for (const span of spans) {
       seen.add(s.slice(span.start, span.end));
       if (seen.size > tokenCap) return withhold(s, true);
     }
     room -= s.length;
-    const res = await raceDeadline(engine.tokenize(s, ctx), deadlineAt);
+    const res = await raceDeadline(typeof engine.tokenizeWith === 'function' ? engine.tokenizeWith(s, ctx, spans) : engine.tokenize(s, ctx), deadlineAt);
     if (res === DEADLINE) { abandoned = true; return withhold(s, true); }
     if (!res || typeof res.text !== 'string') throw deps.znError('ZN_ENGINE', 'tokenize returned an unexpected shape');
     if (res.locked) locked = true;
