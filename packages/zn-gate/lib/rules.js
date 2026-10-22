@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-23.1
+ * RULES_VERSION: 2026-10-23.6
  */
 
-const RULES_VERSION = '2026-10-23.1';
+const RULES_VERSION = '2026-10-23.6';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -689,6 +689,7 @@ function evaluateUncached(input, options = {}) {
 // then not run at all.
 const ENV_CREDENTIAL_PREFILTER = /_[Kk][Ee][Yy]|_[Tt][Oo][Kk][Ee][Nn]|_[Pp][Aa][Ss][Ss]/;
 const PREFIXED_CREDENTIAL_PREFILTER = /KEY|TOKEN|SECRET|PASS|PWD|CREDENTIALS/;
+const INLINE_CREDENTIAL_PREFILTER = /[Pp][Aa][Ss][Ss]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]/;
 
 const SECRET_PATTERNS = [
   // A body may not contain another BEGIN header: linear on repeated headers without END.
@@ -714,6 +715,12 @@ const SECRET_PATTERNS = [
   // `ENV X_TOKEN value` in a Dockerfile, $X_SECRET = '...' in PHP. Upper case
   // only, so code such as `token = response.json()` is left alone.
   { id: 'secret:prefixed_credential', pattern: /(?=[A-Z0-9])(?<![A-Za-z0-9_])(?<!\$\{)(?:(?<!\$)|(?=[A-Za-z0-9_]+[ \t]*=))((?:ENV[ \t]+(?:[A-Z0-9]+_)+(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD)[ \t]+|(?:[A-Z0-9]+_)+(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD)["']?[ \t]*[:=][ \t]*)['"]?)([^\s'"]{12,})(['"]?)/gu, replacement: '$1[REDACTED_SECRET]$3', valueFilter: isNonSecretValue, prefilter: PREFIXED_CREDENTIAL_PREFILTER },
+  // Inline assignment before a command, `password=value ./run`: a bare credential name
+  // in any case (the prefixed forms above are upper case only), at the start of a line
+  // (after at most three other NAME=value words and an optional `env`), followed by a
+  // command word, relative paths (`./run`, `../bin/run`, `~/run`) included. `./run password=x`
+  // is an argument, not an assignment, and stays as it is.
+  { id: 'secret:inline_credential', pattern: /(?<![^\n])([ \t]*(?:env[ \t]+)?(?:[A-Za-z_][A-Za-z0-9_]{0,63}=[^\s'"]{0,200}[ \t]+){0,3}?(?:[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Pp][Aa][Ss][Ss][Pp][Hh][Rr][Aa][Ss][Ee]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn])=['"]?)([^\s'"]{12,})(['"]?)(?=[ \t]+[A-Za-z0-9_./~])/gu, replacement: '$1[REDACTED_SECRET]$3', valueFilter: isNonSecretValue, prefilter: INLINE_CREDENTIAL_PREFILTER },
   // The default of a shell or Compose reference, ${DB_PASSWORD:-<value>}: only
   // redacted when it looks machine-generated (most defaults are for development).
   { id: 'secret:credential_default', pattern: /(\$\{(?:[A-Z0-9]+_)*(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD):?[-=])([^\s'"{}$]{12,})(\})/gu, replacement: '$1[REDACTED_SECRET]$3', valueFilter: isNonSecretDefault, requires: '${' },

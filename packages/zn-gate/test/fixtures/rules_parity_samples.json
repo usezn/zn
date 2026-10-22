@@ -235,6 +235,12 @@
     "AKIAZZZZZZZZZZZZZZZZ​foo",
     "x​AKIAZZZZZZZZZZZZZZZZ",
     "ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa​abcdefgh",
-    "API​_KEY=d4d4d4d4d4d4d4d4"
+    "API​_KEY=d4d4d4d4d4d4d4d4",
+    "password=Zq8vK2mXp9Lw4Rt7 ./run",
+    "PASSWORD=Zq8vK2mXp9Lw4Rt7 ../bin/run",
+    "token=Zq8vK2mXp9Lw4Rt7 ./scripts/x.sh",
+    "env FOO=bar secret=Zq8vK2mXp9Lw4Rt7 ~/bin/run",
+    "a=Zq8vK2mXp9Lw4Rt7 ./run",
+    "./run password=Zq8vK2mXp9Lw4Rt7"
   ]
 }

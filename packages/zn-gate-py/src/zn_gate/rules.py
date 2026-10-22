@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, overload
 
 
-RULES_VERSION = "2026-10-23.1"
+RULES_VERSION = "2026-10-23.6"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -641,6 +641,12 @@ SECRET_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
     # `ENV X_TOKEN value` in a Dockerfile, $X_SECRET = '...' in PHP. Upper case
     # only, so code such as `token = response.json()` is left alone.
     ("secret:prefixed_credential", re.compile(r"""(?=[A-Z0-9])(?<![A-Za-z0-9_])(?<!\$\{)(?:(?<!\$)|(?=[A-Za-z0-9_]+[ \t]*=))((?:ENV[ \t]+(?:[A-Z0-9]+_)+(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD)[ \t]+|(?:[A-Z0-9]+_)+(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD)["']?[ \t]*[:=][ \t]*)['"]?)([^\s'"]{12,})(['"]?)"""), r'\1[REDACTED_SECRET]\3'),
+    # Inline assignment before a command, `password=value ./run`: a bare credential name
+    # in any case (the prefixed forms above are upper case only), at the start of a line
+    # (after at most three other NAME=value words and an optional `env`), followed by a
+    # command word, relative paths (`./run`, `../bin/run`, `~/run`) included. `./run password=x`
+    # is an argument, not an assignment, and stays as it is.
+    ("secret:inline_credential", re.compile(r"""(?<![^\n])([ \t]*(?:env[ \t]+)?(?:[A-Za-z_][A-Za-z0-9_]{0,63}=[^\s'"]{0,200}[ \t]+){0,3}?(?:[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Pp][Aa][Ss][Ss][Pp][Hh][Rr][Aa][Ss][Ee]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn])=['"]?)([^\s'"]{12,})(['"]?)(?=[ \t]+[A-Za-z0-9_./~])""", re.UNICODE), r'\1[REDACTED_SECRET]\3'),
     # The default of a shell or Compose reference, ${DB_PASSWORD:-<value>}: only
     # redacted when it looks machine-generated (most defaults are for development).
     ("secret:credential_default", re.compile(r"""(\$\{(?:[A-Z0-9]+_)*(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD):?[-=])([^\s'"{}$]{12,})(\})"""), r'\1[REDACTED_SECRET]\3'),
@@ -657,6 +663,7 @@ SECRET_PATTERN_REQUIRES: Dict[str, str] = {
 SECRET_PATTERN_PREFILTERS: Dict[str, re.Pattern[str]] = {
     "secret:env_credential": re.compile(r"""_[Kk][Ee][Yy]|_[Tt][Oo][Kk][Ee][Nn]|_[Pp][Aa][Ss][Ss]"""),
     "secret:prefixed_credential": re.compile(r"""KEY|TOKEN|SECRET|PASS|PWD|CREDENTIALS"""),
+    "secret:inline_credential": re.compile(r"""[Pp][Aa][Ss][Ss]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]"""),
 }
 
 # ---------------------------------------------------------------------------
@@ -874,6 +881,7 @@ def _is_non_secret_default(value: str, prefix: str = '') -> bool:
 SECRET_VALUE_FILTERS = {
     "secret:env_credential": _is_non_secret_value,
     "secret:prefixed_credential": _is_non_secret_value,
+    "secret:inline_credential": _is_non_secret_value,
     "secret:credential_default": _is_non_secret_default,
 }
 

@@ -1,0 +1,2 @@
+### Security
+- `redactSecrets` / `redact_secrets` and `sanitizeToolResult` now redact an inline credential assignment written before a command when the name is a bare `password`, `passwd`, `passphrase`, `secret` or `token` in any case, for example `password=<value> ./run`, `token=<value> ../bin/run` or `secret=<value> npm test`. Relative and absolute command paths are covered. An assignment with another name, and a `password=<value>` that comes after the command as an argument, behave as before.
