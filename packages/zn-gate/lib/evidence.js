@@ -445,7 +445,7 @@ const PREVIEW_REDACT_CHARS = 64 * 1024;
 // has no END line there, so it is not matched: the preview then stops before its BEGIN line.
 function previewOf(payloadStr) {
   const head = String(redactSecrets(payloadStr.slice(0, PREVIEW_REDACT_CHARS)).sanitized || '');
-  const begin = head.search(/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/);
+  const begin = head.search(/-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----/);
   const cut = begin === -1 ? head : head.slice(0, begin) + '[REDACTED_PRIVATE_KEY]';
   return cut.slice(0, 120);
 }
