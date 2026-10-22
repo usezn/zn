@@ -280,6 +280,8 @@ zn-gate status                  # engine and what leaves the machine
 
 More runnable examples are in [examples/](https://github.com/usezn/zn/tree/main/examples), including [a Haystack agent with a guarded tool](https://github.com/usezn/zn/tree/main/examples/haystack-agent) and [a smolagents agent with a guarded tool](https://github.com/usezn/zn/tree/main/examples/smolagents-agent).
 
+A DSPy ReAct agent whose tools are guarded by zn-gate is in [examples/dspy-agent](https://github.com/usezn/zn/tree/main/examples/dspy-agent).
+
 ---
 
 ## Performance and accuracy
