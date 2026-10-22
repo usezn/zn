@@ -4,6 +4,11 @@ name: zn-gate leak bench
 # run every Node.js version on Ubuntu and Windows, without macOS. The full matrix (Windows and macOS,
 # every Node.js version) runs on pushes to main, on the daily schedule, on pull requests into main and
 # release branches, on any pull request labelled full-ci, and on manual runs.
+#
+# A push to next that the merge queue already tested is not tested twice: the queue runs this workflow on
+# the commit and then moves next to that exact commit. The queue-gate job finds that earlier run through
+# the API, and the push then leaves out the one matrix entry the queue already ran. Any doubt runs it.
+# Of the labels, only full-ci starts a run (the full matrix); adding any other label runs nothing.
 on:
   push:
     branches: [ main, next ]
@@ -36,16 +41,58 @@ permissions:
   contents: read
 
 # A new push to a pull request, or to next, cancels the run still going for it, so a burst of
-# merges into next tests only the newest commit. Runs for main and manual runs always complete.
+# merges into next tests only the newest commit. Runs for main and manual runs always complete. A label other
+# than full-ci gets a group of its own, so it cannot cancel the run that tests the pull request.
 concurrency:
-  group: leak-bench-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
+  group: leak-bench-${{ github.workflow }}-${{ github.event_name == 'pull_request' && (github.event.action == 'labeled' && github.event.label.name != 'full-ci' && github.run_id || github.event.pull_request.number) || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
 
 jobs:
+  # Sets already_passed=true only for a push to next whose exact commit the merge queue already tested with
+  # this workflow (a gh-readonly-queue/next/ run of leak-bench.yml for the same SHA, concluded success, with the
+  # job below green). Any doubt (API error, run still going, direct push) leaves it false and the job runs
+  # in full. It never runs for pull requests, the merge queue, main or schedules, and its output only ever
+  # removes work from a push to next.
+  queue-gate:
+    name: Merge queue result (leak bench)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/next'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      already_passed: ${{ steps.gate.outputs.already_passed }}
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Look for a passed merge queue run on this commit
+        id: gate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+          WORKFLOW_PATH: .github/workflows/leak-bench.yml
+          REPEATED_JOBS: |
+            leak bench (node 22 / ubuntu-latest)
+        run: bash .github/scripts/queue-run-passed.sh || echo "already_passed=false" >> "$GITHUB_OUTPUT"
+
   leak-bench:
     name: leak bench (node ${{ matrix.node }} / ${{ matrix.os }})
-    # Draft pull requests skip this job; marking the pull request ready for review runs it.
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    # Draft pull requests skip this job; marking the pull request ready for review runs it. So does a label
+    # other than full-ci: it adds no commit to test, and the run for the commit already reports the checks.
+    needs: queue-gate
+    # !cancelled() keeps this job running when queue-gate is skipped or fails: a gate problem never skips a check.
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'full-ci'))) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -55,7 +102,9 @@ jobs:
         os: ${{ fromJSON(((github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["ubuntu-latest", "windows-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
         node: ${{ fromJSON(((github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[20, 22, 24]' || '[22]') }}
         # Pushes to next leave macOS out (3 jobs); every other full run keeps it.
-        exclude: ${{ fromJSON((github.event_name == 'push' && github.ref == 'refs/heads/next') && '[{"os":"macos-latest"}]' || '[]') }}
+        # When the merge queue already ran the required sample (Node.js 22 on Ubuntu) on this commit, the push
+        # to next leaves that entry out too (queue-gate).
+        exclude: ${{ fromJSON((github.event_name == 'push' && github.ref == 'refs/heads/next') && (needs.queue-gate.outputs.already_passed == 'true' && '[{"os":"macos-latest"},{"os":"ubuntu-latest","node":22}]' || '[{"os":"macos-latest"}]') || '[]') }}
     steps:
       - name: Harden the runner (egress audit)
         if: runner.os == 'Linux'

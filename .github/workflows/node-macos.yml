@@ -5,6 +5,11 @@ name: zn-gate Node.js on macOS
 # with macOS-specific behaviour (the paths below: Keychain, hooks, agent setup, launching programs, file
 # system scans and links, the CLI). It also runs every day and on manual runs. macOS runners are the
 # scarcest ones, so every other change leaves it out.
+#
+# A push to next that the merge queue already tested with this workflow does not run it again: the queue
+# runs it on the commit and then moves next to that exact commit. The queue-gate job finds that earlier run
+# through the API. Any doubt (API error, queue run still going or not green, direct push) runs the job.
+# Pushes to main always run it. It is not a required check, and a push to next is not a pull request check.
 on:
   push:
     branches: [ main, next ]
@@ -90,10 +95,50 @@ env:
   PIP_TIMEOUT: "60"
 
 jobs:
+  # Sets already_passed=true only for a push to next whose exact commit the merge queue already tested with
+  # this workflow (a gh-readonly-queue/next/ run of node-macos.yml for the same SHA, concluded success, with the
+  # job below green). Any doubt (API error, run still going, direct push) leaves it false and the job runs
+  # in full. It never runs for pull requests, the merge queue, main or schedules, and its output only ever
+  # removes work from a push to next.
+  queue-gate:
+    name: Merge queue result (macOS Node)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/next'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      already_passed: ${{ steps.gate.outputs.already_passed }}
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Look for a passed merge queue run on this commit
+        id: gate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+          WORKFLOW_PATH: .github/workflows/node-macos.yml
+          REPEATED_JOBS: |
+            Node.js 22 tests (macOS)
+        run: bash .github/scripts/queue-run-passed.sh || echo "already_passed=false" >> "$GITHUB_OUTPUT"
+
   test-node-macos:
     name: Node.js 22 tests (macOS)
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    needs: queue-gate
+    # !cancelled() keeps this job running when queue-gate is skipped or fails: a gate problem never skips the test.
+    if: ${{ !cancelled() && needs.queue-gate.outputs.already_passed != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
     runs-on: macos-latest
     timeout-minutes: 20
     steps:

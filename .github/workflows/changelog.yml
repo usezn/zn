@@ -1,6 +1,9 @@
 name: Changelog
 
 # Pull requests describe their change in a changelog.d/ fragment instead of editing CHANGELOG.md (see changelog.d/README.md).
+#
+# Only the no-changelog label changes the result of the check, so adding or removing any other label does not
+# run it (and does not cancel a run that is checking the pull request).
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review]
@@ -9,12 +12,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: changelog-${{ github.event.pull_request.number }}
+  group: changelog-${{ (contains(fromJSON('["labeled","unlabeled"]'), github.event.action) && github.event.label.name != 'no-changelog' && github.run_id) || github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
   changelog:
     name: Changelog
+    # A label other than no-changelog, added or removed, leaves the check as it was.
+    if: ${{ !contains(fromJSON('["labeled","unlabeled"]'), github.event.action) || github.event.label.name == 'no-changelog' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
