@@ -101,11 +101,11 @@ function replaceOnSecretOf(opts) {
 // local rules, the same ones analyze_prompt uses. It never blocks: when the rules flag it, the agent is told to
 // treat that text as data. On by default; hooks.checkToolOutputInstructions: false turns it off.
 const OUTPUT_CHECK_TOOLS = new Set(['webfetch', 'mcp', 'mcpresource', 'bash', 'powershell']);
-// The first 64 KiB of the output are checked, and so is its tail (up to another 64 KiB, taken from the end of
-// what the head did not cover), so text placed after a long stretch of padding is seen too. Together that is
-// at most 128 KiB per output, which keeps the hook within its latency budget (bench/hook_latency_baseline.json).
-const OUTPUT_CHECK_CAP = 64 * 1024;
-const OUTPUT_CHECK_TAIL = 64 * 1024;
+// At most 64 KiB of each output are checked: the first 48 KiB, and the last 16 KiB of what that did not cover,
+// so text placed after a long stretch of padding is seen too. The total is what keeps the hook within its
+// latency budget (bench/hook_latency_baseline.json).
+const OUTPUT_CHECK_CAP = 48 * 1024;
+const OUTPUT_CHECK_TAIL = 16 * 1024;
 // Only agents whose hook can pass a note with an unchanged output get the check.
 const OUTPUT_CHECK_AGENTS = new Set(['claude-code']);
 
