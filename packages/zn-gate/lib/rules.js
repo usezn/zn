@@ -538,6 +538,43 @@ function normalizeInput(str) {
 // past that limit and only marks it `truncated: true`.
 const MAX_SCAN_CHARS = 256 * 1024;
 
+/* Base64 payload smuggling: every `echo|printf ... | base64 -d` in `candidates` is decoded
+   and evaluated, not only the first, within hard caps that fail closed.
+   Returns {block: a block result or null, advisory}. */
+function checkBase64Pipes(candidates, options) {
+  let advisory = null;
+  const payloads = new Set();
+  for (const candidate of candidates) {
+    for (const m of candidate.matchAll(B64_EXEC_ALL_RE)) {
+      if (m[1]) payloads.add(m[1]);
+    }
+  }
+  if (payloads.size > MAX_B64_PAYLOADS) {
+    return { block: { verdict: 'block', confidence: 0.99, reason: `Smuggled Base64 execution: more than ${MAX_B64_PAYLOADS} Base64 decode pipes in one command`, rule: 'evasion:base64_smuggling', engine: 'oss-local', rules_version: RULES_VERSION }, advisory };
+  }
+  let bytes = 0;
+  for (const payload of payloads) {
+    bytes += Math.floor(payload.length * 3 / 4);
+    if (bytes > MAX_B64_DECODED_BYTES) {
+      return { block: { verdict: 'block', confidence: 0.99, reason: 'Smuggled Base64 execution: too much Base64 data to inspect', rule: 'evasion:base64_smuggling', engine: 'oss-local', rules_version: RULES_VERSION }, advisory };
+    }
+    try {
+      const decoded = Buffer.from(payload, 'base64').toString('utf8');
+      const innerRes = evaluate(decoded, options);
+      if (innerRes.advisory && !advisory) advisory = innerRes.advisory;
+      if (innerRes.verdict === 'block') {
+        return {
+          block: { ...innerRes, reason: `Smuggled Base64 execution: ${innerRes.reason || innerRes.rule}`, rule: 'evasion:base64_smuggling' },
+          advisory,
+        };
+      }
+    } catch (e) {
+      // ignore invalid base64
+    }
+  }
+  return { block: null, advisory };
+}
+
 function evaluateOversize(input, options) {
   if (input.length > MAX_TOOL_RESULT_SCAN_CHARS) {
     return {
@@ -545,6 +582,10 @@ function evaluateOversize(input, options) {
       engine: 'oss-local', rules_version: RULES_VERSION, truncated: true,
     };
   }
+  // A Base64 pipe longer than the window overlap can straddle two windows and be cut in both:
+  // the pipes are found in the whole input first. The windows still check normalized text.
+  const b64 = checkBase64Pipes([input], options);
+  if (b64.block) return b64.block;
   return scanWindows(input, { ...options, maxScanChars: MAX_TOOL_RESULT_SCAN_CHARS });
 }
 
@@ -560,39 +601,9 @@ function evaluateUncached(input, options = {}) {
   const strict = strictMode(options, loadCustomConfig());
   let tierAdvisory = null;
 
-  // Check Base64 payload smuggling: every `echo|printf ... | base64 -d` is decoded
-  // and evaluated, not only the first, within hard caps that fail closed.
-  let b64Advisory = null;
-  const b64Payloads = new Set();
-  for (const candidate of [normalized, stripped]) {
-    for (const m of candidate.matchAll(B64_EXEC_ALL_RE)) {
-      if (m[1]) b64Payloads.add(m[1]);
-    }
-  }
-  if (b64Payloads.size > MAX_B64_PAYLOADS) {
-    return { verdict: 'block', confidence: 0.99, reason: `Smuggled Base64 execution: more than ${MAX_B64_PAYLOADS} Base64 decode pipes in one command`, rule: 'evasion:base64_smuggling', engine: 'oss-local', rules_version: RULES_VERSION };
-  }
-  let b64Bytes = 0;
-  for (const payload of b64Payloads) {
-    b64Bytes += Math.floor(payload.length * 3 / 4);
-    if (b64Bytes > MAX_B64_DECODED_BYTES) {
-      return { verdict: 'block', confidence: 0.99, reason: 'Smuggled Base64 execution: too much Base64 data to inspect', rule: 'evasion:base64_smuggling', engine: 'oss-local', rules_version: RULES_VERSION };
-    }
-    try {
-      const decoded = Buffer.from(payload, 'base64').toString('utf8');
-      const innerRes = evaluate(decoded, options);
-      if (innerRes.advisory && !b64Advisory) b64Advisory = innerRes.advisory;
-      if (innerRes.verdict === 'block') {
-        return {
-          ...innerRes,
-          reason: `Smuggled Base64 execution: ${innerRes.reason || innerRes.rule}`,
-          rule: 'evasion:base64_smuggling',
-        };
-      }
-    } catch (e) {
-      // ignore invalid base64
-    }
-  }
+  const b64 = checkBase64Pipes([normalized, stripped], options);
+  if (b64.block) return b64.block;
+  const b64Advisory = b64.advisory;
 
   // Check against normalized, stripped, and raw input
   const targets = Array.from(new Set([normalized, stripped, input]));

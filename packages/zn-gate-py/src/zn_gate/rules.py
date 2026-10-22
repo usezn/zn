@@ -498,12 +498,61 @@ def _b64_decode_lenient(data: str) -> bytes:
     return base64.b64decode(body + '=' * (-len(body) % 4))
 
 
+def _check_base64_pipes(candidates, strict: bool) -> Tuple[Optional[Assessment], Optional[Dict[str, Any]]]:
+    """Base64 payload smuggling: every `echo|printf ... | base64 -d` in `candidates` is
+    decoded and evaluated, not only the first, within hard caps that fail closed.
+    Returns (a block Assessment or None, advisory)."""
+    advisory = None
+    payloads = []
+    for text_candidate in candidates:
+        for b64_match in B64_EXEC_RE.finditer(text_candidate):
+            if b64_match.group(1) not in payloads:
+                payloads.append(b64_match.group(1))
+    if len(payloads) > MAX_B64_PAYLOADS:
+        return Assessment(
+            verdict='block',
+            confidence=0.99,
+            rule='evasion:base64_smuggling',
+            reason=f'Smuggled Base64 execution: more than {MAX_B64_PAYLOADS} Base64 decode pipes in one command'
+        ), advisory
+    total = 0
+    for payload in payloads:
+        total += len(payload) * 3 // 4
+        if total > MAX_B64_DECODED_BYTES:
+            return Assessment(
+                verdict='block',
+                confidence=0.99,
+                rule='evasion:base64_smuggling',
+                reason='Smuggled Base64 execution: too much Base64 data to inspect'
+            ), advisory
+        try:
+            decoded = _b64_decode_lenient(payload).decode('utf-8', errors='ignore')
+            inner_res = evaluate(decoded, strict=strict)
+            if inner_res.advisory and advisory is None:
+                advisory = dict(inner_res.advisory)
+            if not inner_res.allowed:
+                return Assessment(
+                    verdict='block',
+                    confidence=inner_res.confidence,
+                    rule='evasion:base64_smuggling',
+                    reason=f'Smuggled Base64 execution: {inner_res.reason or inner_res.rule}'
+                ), advisory
+        except Exception:
+            pass
+    return None, advisory
+
+
 def _evaluate_oversize(input_text: str, strict: bool) -> Assessment:
     # Scanned whole, in overlapping windows; one past MAX_TOOL_RESULT_SCAN_CHARS is
     # blocked, because the part beyond the limit would go unscanned.
     if len(input_text) > MAX_TOOL_RESULT_SCAN_CHARS:
         return Assessment(verdict='block', confidence=1.0, rule='size:oversize',
                           reason='Input too large to scan in full', truncated=True)
+    # A Base64 pipe longer than the window overlap can straddle two windows and be cut in
+    # both: the pipes are found in the whole input first. The windows still check normalized text.
+    b64_block, _ = _check_base64_pipes((input_text,), strict)
+    if b64_block is not None:
+        return b64_block
     return scan_windows(input_text, strict=strict)
 
 
@@ -519,45 +568,9 @@ def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
 
     tier_advisory = None
 
-    # Check Base64 payload smuggling: every `echo|printf ... | base64 -d` is decoded
-    # and evaluated, not only the first, within hard caps that fail closed.
-    b64_advisory = None
-    b64_payloads = []
-    for text_candidate in (normalized, stripped):
-        for b64_match in B64_EXEC_RE.finditer(text_candidate):
-            if b64_match.group(1) not in b64_payloads:
-                b64_payloads.append(b64_match.group(1))
-    if len(b64_payloads) > MAX_B64_PAYLOADS:
-        return Assessment(
-            verdict='block',
-            confidence=0.99,
-            rule='evasion:base64_smuggling',
-            reason=f'Smuggled Base64 execution: more than {MAX_B64_PAYLOADS} Base64 decode pipes in one command'
-        )
-    b64_bytes = 0
-    for payload in b64_payloads:
-        b64_bytes += len(payload) * 3 // 4
-        if b64_bytes > MAX_B64_DECODED_BYTES:
-            return Assessment(
-                verdict='block',
-                confidence=0.99,
-                rule='evasion:base64_smuggling',
-                reason='Smuggled Base64 execution: too much Base64 data to inspect'
-            )
-        try:
-            decoded = _b64_decode_lenient(payload).decode('utf-8', errors='ignore')
-            inner_res = evaluate(decoded, strict=strict)
-            if inner_res.advisory and b64_advisory is None:
-                b64_advisory = dict(inner_res.advisory)
-            if not inner_res.allowed:
-                return Assessment(
-                    verdict='block',
-                    confidence=inner_res.confidence,
-                    rule='evasion:base64_smuggling',
-                    reason=f'Smuggled Base64 execution: {inner_res.reason or inner_res.rule}'
-                )
-        except Exception:
-            pass
+    b64_block, b64_advisory = _check_base64_pipes((normalized, stripped), strict)
+    if b64_block is not None:
+        return b64_block
 
     targets = list(dict.fromkeys([normalized, stripped, raw]))
 
