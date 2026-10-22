@@ -292,6 +292,35 @@ function startMcpShield(command, args, options = {}) {
   const safeLabel = (name) => String(name).replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, '').slice(0, 64) || 'unknown';
   // Text types whose base64 blob a client decodes and shows: they are checked like text.
   const textBlob = (mimeType) => typeof mimeType === 'string' && /^(?:text\/|application\/(?:json|xml|javascript|x-yaml|yaml)(?:;|$)|[a-z]+\/[a-z0-9.+-]*\+(?:json|xml)(?:;|$))/i.test(mimeType.trim());
+  // Per-message log budget for blocked server text: the first MAX_LOGGED_SERVER_BLOCKS blocks of one message get
+  // their own stderr line and evidence event; the rest are counted and summed up in one line and one event when the
+  // message is done, so a server that floods a message with blocked strings cannot stall the proxy on log writes.
+  // Every string is still checked and replaced; only the logging is capped.
+  const MAX_LOGGED_SERVER_BLOCKS = 50;
+  let serverLog = null;
+  function logServerBlock(label, text, rule, tooLarge, check) {
+    if (serverLog && serverLog.n >= MAX_LOGGED_SERVER_BLOCKS) {
+      serverLog.suppressed += 1;
+      serverLog.rules.set(rule, (serverLog.rules.get(rule) || 0) + 1);
+      return;
+    }
+    if (serverLog) serverLog.n += 1;
+    process.stderr.write(tooLarge
+      ? `[zn-shield BLOCKED SERVER MESSAGE] ${label} is too large to check in full (${Math.round(text.length / 1048576)} MB; the limit is ${SHIELD_RESULT_SCAN_CHARS / 1048576} MB).\n`
+      : `[zn-shield BLOCKED SERVER MESSAGE] ${label} Rule: ${rule}\n`);
+    logEvidence({
+      agent: options.agent || 'mcp-server',
+      phase: `server-message:${label}`,
+      tool_name: label,
+      payload: text,
+      verdict: 'block',
+      rule,
+      reason: check.assessment?.reason,
+      confidence: check.assessment?.confidence || 0.95,
+      latency_us: check.assessment?.latency_us || 15,
+      engine: check.assessment?.engine || 'oss-deterministic',
+    });
+  }
   async function scanServerText(label, text) {
     // Same limit as tool results: checked in full up to SHIELD_RESULT_SCAN_CHARS, blocked when larger.
     const check = await checkToolResult(label, text, { ...options, maxScanChars: SHIELD_RESULT_SCAN_CHARS, blockTruncated: true });
@@ -299,21 +328,7 @@ function startMcpShield(command, args, options = {}) {
     if (isBlock) {
       const rule = check.assessment?.rule || check.assessment?.reason || check.rule || check.reason || 'indirect prompt injection';
       const tooLarge = rule === 'size:truncated';
-      process.stderr.write(tooLarge
-        ? `[zn-shield BLOCKED SERVER MESSAGE] ${label} is too large to check in full (${Math.round(text.length / 1048576)} MB; the limit is ${SHIELD_RESULT_SCAN_CHARS / 1048576} MB).\n`
-        : `[zn-shield BLOCKED SERVER MESSAGE] ${label} Rule: ${rule}\n`);
-      logEvidence({
-        agent: options.agent || 'mcp-server',
-        phase: `server-message:${label}`,
-        tool_name: label,
-        payload: text,
-        verdict: 'block',
-        rule,
-        reason: check.assessment?.reason,
-        confidence: check.assessment?.confidence || 0.95,
-        latency_us: check.assessment?.latency_us || 15,
-        engine: check.assessment?.engine || 'oss-deterministic',
-      });
+      logServerBlock(label, text, rule, tooLarge, check);
       if (options.shadow) return text;
       if (tooLarge) return serverNotice(`it is too large for zn-gate to check in full (over ${SHIELD_RESULT_SCAN_CHARS / 1048576} MB)`);
       return check.sanitized_content || serverNotice(`it tries to give instructions to the AI agent (${rule})`);
@@ -442,11 +457,38 @@ function startMcpShield(command, args, options = {}) {
   // `method` is the request this message answers, when the shield tracked it (tools/list, tools/call).
   // resultReplaced: the tools/call result was already replaced by a block notice, so its content is not checked again.
   async function scanServerMessage(msg, method, resultReplaced = false) {
+    serverLog = { n: 0, suppressed: 0, rules: new Map() };
+    try {
+      await scanServerMessageInner(msg, method, resultReplaced);
+    } finally {
+      const { suppressed, rules } = serverLog;
+      serverLog = null;
+      if (suppressed > 0) {
+        const byRule = [...rules.entries()].sort((a, b) => b[1] - a[1]).map(([r, c]) => `${r} x${c}`).join(', ');
+        process.stderr.write(`[zn-shield BLOCKED SERVER MESSAGE] ${suppressed} more blocked text(s) in the same message were not logged one by one (${byRule})\n`);
+        logEvidence({
+          agent: options.agent || 'mcp-server',
+          phase: 'server-message:summary',
+          tool_name: 'server message',
+          payload: '',
+          verdict: 'block',
+          rule: [...rules.keys()][0] || 'indirect prompt injection',
+          reason: `${suppressed} more blocked text(s) in one server message, logged as one event (${byRule})`,
+          confidence: 1.0,
+          latency_us: 15,
+          engine: 'oss-deterministic',
+        });
+      }
+    }
+  }
+  async function scanServerMessageInner(msg, method, resultReplaced) {
     if (!msg || typeof msg !== 'object' || Array.isArray(msg)) return;
     if (typeof msg.method === 'string') {
       // Notification or request from the server (for example sampling/createMessage, elicitation/create).
       if (msg.params && typeof msg.params === 'object') await scanServerValue(safeLabel(msg.method), msg, 'params', { n: 0 }, 0);
-      return;
+      // A message that also carries a result or an error is checked as a response too: a `method` field must not
+      // let the result or error past the checks below.
+      if (msg.result === undefined && msg.error === undefined) return;
     }
     if (msg.error && typeof msg.error === 'object') await scanServerValue('error', msg, 'error', { n: 0 }, 0);
     const result = msg.result;

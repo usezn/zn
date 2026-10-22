@@ -54,7 +54,7 @@ safe_fetch_page = guarded_tool(
 )(fetch_page)
 ```
 
-- `check_result=True` makes zn-gate scan the page text for orders aimed at the model before the model reads it. This option is off by default in `guarded_tool`, so the example turns it on. Without it, the injected page in this example would reach the model unchanged.
+- `check_result=True` makes zn-gate scan the page text for orders aimed at the model before the model reads it. It is on by default in `guarded_tool`; the example passes it explicitly. With `check_result=False`, the injected page in this example would reach the model unchanged.
 - `on_block="return"` makes a blocked page come back as the notice above, so the agent can carry on and tell the person what happened. Use `on_block="raise"` if you prefer an error: it raises `GuardBlockError`.
 - `mask_secrets=True` hides keys and passwords in the output.
 

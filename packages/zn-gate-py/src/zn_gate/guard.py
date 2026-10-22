@@ -388,7 +388,7 @@ _ERROR_CHAIN_LIMIT = 8
 
 def _safe_text(fn: Callable[[Any], str], value: Any) -> str:
     try:
-        return fn(value)
+        return str(fn(value))
     except Exception:
         return ""
 

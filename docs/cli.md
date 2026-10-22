@@ -58,11 +58,29 @@ With `--wrap-mcp` it finds the MCP servers in known agent configs and wraps them
 
 - `--dry-run`: show what would change, change nothing.
 - `--shadow`: wrap in shadow mode: problems are logged but nothing is dropped.
-- `--revert`: restore the backups made before zn changed the configs.
+- `--revert`: put back the MCP configs saved before zn wrapped them. It does not remove the Claude Code plugin, hooks or markers in `.env` files: for those run [`uninstall`](#uninstall).
 
 `--dry-run`, `--shadow` and `--revert` each select `--wrap-mcp` too.
 
 Exit codes: `0` done, or every agent found is already protected. `1` no supported agent found, or the steps were only printed. `2` an argument it does not know.
+
+### `uninstall`
+
+```bash
+zn-gate uninstall [--dry-run]
+```
+
+Removes zn-gate from this computer in one step. It finds what is set up, prints the plan (each agent, with the file paths), and asks you to confirm in your own terminal, the same way `hooks install` does. Then it removes:
+
+- the zn-gate plugin of Claude Code (with `claude plugin uninstall zn-gate@usezn`; without a `claude` command it prints the `/plugin` command to type);
+- zn's hooks of every agent, for your user and for the current project, and zn's own `secrets` MCP server (the same as `hooks uninstall`);
+- MCP servers wrapped by `init --wrap-mcp`: the saved copy of each config is put back (changes made to that file since are lost). Afterwards it looks again and lists any server that is still wrapped (for example a config wrapped twice) with what to do by hand.
+
+The vault is not touched unless you answer yes to a second, separate question (default no); deleting it cannot be undone. `.env` files that hold zn markers are left alone, because the values are in the vault: run `zn env unshadow` first if you want them back in the file. It ends by running `check` and showing its result, and tells you how to remove the program itself (`npm uninstall -g zn-gate`).
+
+- `--dry-run`: print the plan and change nothing.
+
+Exit codes: `0` everything listed was removed, or there was nothing to remove. `1` you answered no, or a step failed (hooks, plugin, a wrapped MCP config, or the vault you asked to delete): what is left is printed with what to do by hand. `64` an option it does not know. `77` there is no interactive terminal, or an AI agent ran it: nothing was changed.
 
 ### `check`
 
@@ -403,7 +421,7 @@ zn-gate hooks install <agent> [--project] [--no-mcp]
 zn-gate hooks uninstall <agent> [--project] [--no-mcp]
 ```
 
-Adds or removes the zn hooks of a coding agent. `<agent>` is `claude-code`, `codex`, `cursor`, `opencode`, `antigravity`, `gemini` or `copilot` (`claude` is accepted for `claude-code`, `gemini-cli` for `gemini`). `--project` changes the settings of the current project instead of your user settings. `--no-mcp` leaves the `secrets` MCP server out. It needs an interactive terminal. An agent that is not in that list or a misspelled name is refused first, with the supported names, and exit code 64.
+Adds or removes the zn hooks of a coding agent (to remove zn-gate completely, use [`uninstall`](#uninstall)). `<agent>` is `claude-code`, `codex`, `cursor`, `opencode`, `antigravity`, `gemini` or `copilot` (`claude` is accepted for `claude-code`, `gemini-cli` for `gemini`). `--project` changes the settings of the current project instead of your user settings. `--no-mcp` leaves the `secrets` MCP server out. It needs an interactive terminal. An agent that is not in that list or a misspelled name is refused first, with the supported names, and exit code 64.
 
 #### `hooks install`
 
