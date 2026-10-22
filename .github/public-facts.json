@@ -216,7 +216,7 @@
         },
         {
           "file": "packages/zn-gate-py/pyproject.toml",
-          "regex": "^license = \\{ text = \"([^\"]+)\" \\}"
+          "regex": "^license = \"([^\"]+)\""
         },
         {
           "file": "Cargo.toml",

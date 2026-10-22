@@ -8,7 +8,8 @@
   "homepage": "https://usezn.com",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/usezn/zn.git"
+    "url": "git+https://github.com/usezn/zn.git",
+    "directory": "packages/zn-gate"
   },
   "bugs": {
     "url": "https://github.com/usezn/zn/issues"
