@@ -99,8 +99,10 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
   the agent, zn adds a note (`additionalContext`) telling the agent to treat
   it as data and to tell you. The output is not blocked for this. Turn it off
   with `{"hooks": {"checkToolOutputInstructions": false}}` in
-  `~/.zn/config.json`. At most 64 KiB of each output are checked: the first 48 KiB and
-  the last 16 KiB.
+  `~/.zn/config.json`. Output of up to 64 KiB is checked in full; in a longer output the
+  text between the first 48 KiB and the last 16 KiB is not checked. Codex CLI, Cursor,
+  GitHub Copilot CLI, Gemini CLI, OpenCode and Antigravity do not run this check yet.
+  See [Check that it works](check.md#tool-output-a-note-never-a-block).
 - **Codex CLI**:
   - Rewriting a call (`updatedInput`) is only accepted together with `allow`,
     which would skip your approval policy, and `ask` is not supported. So zn
