@@ -8,6 +8,7 @@ was given on its next turn. Skipped when langchain-core is not installed
 """
 import asyncio
 import os
+import uuid
 from typing import Any, List
 
 import pytest
@@ -23,7 +24,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMe
 from langchain_core.outputs import ChatGeneration, ChatResult  # noqa: E402
 from langchain_core.runnables import RunnableLambda  # noqa: E402
 from langchain_core.tools import ToolException, tool  # noqa: E402
-from pydantic import Field  # noqa: E402
+from pydantic import BaseModel, Field  # noqa: E402
 
 from zn_gate import GuardBlockError  # noqa: E402
 from zn_gate.integrations import ZnGuardCallbackHandler, guard_langchain_tool  # noqa: E402
@@ -584,3 +585,78 @@ def test_wrapper_checks_a_value_the_model_sends_for_an_injected_tool_arg():
         wrapped.invoke({"name": "lookup", "args": {"topic": "t", "state": {"path": SECRET_PATH_COMMAND}}, "id": "c11",
                         "type": "tool_call"})
     assert ran == []
+
+
+# --- secrets in dict keys, sets, frozensets and objects --------------------------------------
+
+
+class Holder(BaseModel):
+    note: str
+
+
+def _shapes():
+    return {
+        "dict_key": lambda: {FAKE_KEY: 1},
+        "nested_set": lambda: {"s": {FAKE_KEY}},
+        "frozenset": lambda: frozenset([FAKE_KEY]),
+        "model": lambda: Holder(note="key=" + FAKE_KEY),
+    }
+
+
+SHAPE_NAMES = ["dict_key", "nested_set", "frozenset", "model"]
+
+
+@pytest.mark.parametrize("shape", SHAPE_NAMES)
+def test_wrapper_masks_a_secret_in_nested_shapes(shape):
+    make = _shapes()[shape]
+
+    @tool
+    def lookup(topic: str) -> Any:
+        """Look something up."""
+        return make()
+
+    wrapped = guard_langchain_tool(lookup)
+    result = wrapped.invoke({"topic": "t"})
+    assert FAKE_KEY not in repr(result)
+
+
+@pytest.mark.parametrize("shape", SHAPE_NAMES)
+def test_handler_stops_a_secret_in_nested_shapes(shape):
+    handler = ZnGuardCallbackHandler()
+    with pytest.raises(GuardBlockError) as ctx:
+        handler.on_tool_end(_shapes()[shape](), run_id=uuid.uuid4())
+    assert ctx.value.assessment.rule.startswith("secret")
+    assert FAKE_KEY not in str(ctx.value)
+
+
+def test_wrapper_and_handler_leave_clean_nested_shapes_alone():
+    clean = {"a": [1, "two", {"b": {"c"}}], "t": (1, 2), "f": frozenset(["x"])}
+
+    @tool
+    def lookup(topic: str) -> Any:
+        """Look something up."""
+        return clean
+
+    assert guard_langchain_tool(lookup).invoke({"topic": "t"}) == clean
+    assert ZnGuardCallbackHandler().on_tool_end(clean, run_id=uuid.uuid4()) == clean
+
+
+def test_unmaskable_result_is_blocked_by_wrapper_and_handler(monkeypatch):
+    import zn_gate.integrations.langchain as lc
+    from zn_gate.rules import Assessment
+
+    block = Assessment(verdict="block", confidence=1.0, rule="secret:unmaskable", reason="x")
+    monkeypatch.setattr(lc, "_mask_value", lambda value: (value, block))
+
+    @tool
+    def lookup(topic: str) -> str:
+        """Look something up."""
+        return "plain"
+
+    with pytest.raises(GuardBlockError) as ctx:
+        guard_langchain_tool(lookup).invoke({"topic": "t"})
+    assert ctx.value.assessment.rule == "secret:unmaskable"
+    returned = guard_langchain_tool(lookup, on_block="return").invoke({"topic": "t"})
+    assert returned.startswith("zn-gate blocked")
+    with pytest.raises(GuardBlockError):
+        ZnGuardCallbackHandler().on_tool_end("plain", run_id=uuid.uuid4())

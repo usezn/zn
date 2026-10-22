@@ -1582,11 +1582,15 @@ def sanitize_tool_result(
                 detections.extend(det)
             return clean_str
         elif isinstance(val, dict):
-            return {k: _sanitize(v) for k, v in val.items()}
+            return {(_sanitize(k) if isinstance(k, str) else k): _sanitize(v) for k, v in val.items()}
         elif isinstance(val, list):
             return [_sanitize(v) for v in val]
         elif isinstance(val, tuple):
             return tuple(_sanitize(v) for v in val)
+        elif isinstance(val, frozenset):
+            return frozenset(_sanitize(v) for v in val)
+        elif isinstance(val, set):
+            return {_sanitize(v) for v in val}
         return val
 
     sanitized = _sanitize(tool_or_result)
