@@ -244,6 +244,11 @@ SECRETS (values stay on this machine; agents only see __ZN_<NAME>__ markers):
   hooks install <agent> [--project]
                       Install zn's hooks for ${require('../lib/agents').listAdapters().join(', ')}
                       (zn-gate init picks the right setup for each agent)
+  hooks uninstall <agent> [--project]
+                      Remove zn's hooks for that agent again
+  uninstall           Remove zn-gate from this computer in one step: the Claude Code plugin, zn's
+                      hooks, wrapped MCP servers. Shows the plan first; the vault is only deleted if
+                      you confirm it separately [--dry-run]. Your own terminal only
   check               Show that zn blocks your agent from reading a fake secret
                       (also: doctor). Safe: a temporary folder, nothing is sent
   connect             Optional: turn on the cloud check for analyze_prompt. Opens usezn.com,
@@ -298,7 +303,8 @@ TEAM (zn Team: organization policy and audit upload; needs the vault unlocked):
 INIT --wrap-mcp OPTIONS (each one also selects --wrap-mcp):
   --dry-run           Scan environments and preview changes without modifying configs
   --shadow            Wrap servers in non-blocking shadow mode (alerts logged without drops)
-  --revert            Restore pre-zn backups for all detected configurations
+  --revert            Put back the MCP configs saved before wrapping (does not remove hooks or the
+                      plugin: use zn-gate uninstall for that)
 
 EVIDENCE OPTIONS:
   --verify            Verify the SHA-256 hash chain across all records
@@ -784,7 +790,7 @@ ${ruleLine(process.env, 77)}\n
 
 // Secrets broker and agent hooks. Dispatched before the global option parsing
 // so flags after `zn run --` belong to the child command, untouched.
-const BROKER_COMMANDS = new Set(['run', 'hook', 'secrets-mcp', 'secret', 'secrets', 'env', 'hooks']);
+const BROKER_COMMANDS = new Set(['run', 'hook', 'secrets-mcp', 'secret', 'secrets', 'env', 'hooks', 'uninstall']);
 
 // `zn audit` reviews the agent configs of a directory. The secret-use log it
 // showed in 1.5 is `zn vault log` (alias `zn secret log`); lib/audit/cli.js
@@ -897,7 +903,7 @@ async function main() {
     return;
   }
 
-  if (BROKER_COMMANDS.has(args[0]) && !(args.length === 2 && (args[1] === '-h' || args[1] === '--help'))) {
+  if (BROKER_COMMANDS.has(args[0]) && (args[0] === 'uninstall' || !(args.length === 2 && (args[1] === '-h' || args[1] === '--help')))) {
     await runBrokerCommand(args[0], args.slice(1));
     return;
   }

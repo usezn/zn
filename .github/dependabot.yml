@@ -13,6 +13,17 @@ updates:
         patterns: ["*"]
         update-types: [minor, patch]
 
+  - package-ecosystem: cargo
+    directory: "/fuzz"
+    target-branch: next
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
+    groups:
+      cargo-fuzz:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
   - package-ecosystem: npm
     directory: "/.github/markdownlint"
     target-branch: next
@@ -36,6 +47,22 @@ updates:
         update-types: [minor, patch]
 
   - package-ecosystem: npm
+    directory: "/plugins/zn-gate"
+    target-branch: next
+    schedule:
+      interval: weekly
+    # Security updates only. The release pins zn-gate and writes
+    # scripts/zn-gate.lock.json (plugins/tools/pin-release.js); a version bump
+    # from Dependabot would leave that lock out of sync.
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "zn-gate"
+    groups:
+      npm:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
     directory: "/.github/sbom-tools"
     target-branch: next
     schedule:
@@ -53,6 +80,30 @@ updates:
         patterns: ["*"]
         update-types: [minor, patch]
 
+  - package-ecosystem: pip
+    directory: "/.github"
+    target-branch: next
+    schedule:
+      interval: weekly
+    # Security updates only. The requirement files here are generated with uv
+    # and some minimum versions are deliberate (ci-framework-test-requirements-oldest.txt).
+    open-pull-requests-limit: 0
+    groups:
+      pip:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  - package-ecosystem: pip
+    directory: "/.github/workflow-lint"
+    target-branch: next
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
+    groups:
+      pip:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
   - package-ecosystem: github-actions
     directory: "/"
     target-branch: next
@@ -61,6 +112,13 @@ updates:
     groups:
       github-actions:
         patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: "/"
+    target-branch: next
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
 
   - package-ecosystem: npm
     directory: "/.github/eslint"

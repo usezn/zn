@@ -256,6 +256,37 @@ test('agent guard: zn admin commands with a Windows path or .cmd are refused', (
   assert.equal(policy.adminCommand('C:\\tools\\myzn.cmd unlock'), null);
 });
 
+test('agent guard: the zn-gate uninstall command is an admin command, other uses of the word are not', () => {
+  const adminCommands = [
+    'zn uninstall',
+    'zn-gate uninstall',
+    'zn-gate uninstall --yes',
+    'npx zn-gate uninstall',
+    'npx -y zn-gate@1.14.0 uninstall --keep-vault',
+    'npm exec zn-gate -- uninstall',
+    'pnpm dlx zn-gate uninstall',
+    'zn.cmd uninstall',
+    'cd proj && zn uninstall',
+  ];
+  for (const cmd of adminCommands) {
+    assert.ok(policy.bashDenial(cmd), 'expected a denial for: ' + cmd);
+    assert.equal(policy.adminCommand(cmd), 'uninstall', cmd);
+  }
+  const fine = [
+    'npm uninstall foo',
+    'npm uninstall -g zn-gate',
+    'pip uninstall zn-gate',
+    'cat docs/uninstall.txt',
+    'cat uninstall.txt',
+    'grep uninstall README.md',
+    'ls zn/uninstall.txt',
+    'myzn uninstall',
+  ];
+  for (const cmd of fine) {
+    assert.equal(policy.adminCommand(cmd), null, 'did not expect an admin command for: ' + cmd);
+  }
+});
+
 /* 1.8.0 review: commands over 100 KB are refused before any parsing. */
 test('a shell command over 100 KB is refused at once; one just under the limit gets the normal check', () => {
   const cap = policy.SHELL_SCAN_CAP;
