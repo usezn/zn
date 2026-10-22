@@ -118,6 +118,34 @@ test('an event over the stdin limit that is not a post-tool event is refused', a
   assert.match(err.join(''), /too large/);
 });
 
+for (const [name, pre, nested] of [
+  ['claude-code', { session_id: 's', cwd: '/', hook_event_name: 'PreToolUse', tool_name: 'mcp__srv__tool', tool_input: { hook_event_name: 'PostToolUse', data: '' } }, 'PostToolUse'],
+  ['codex', { session_id: 's', cwd: '/', hook_event_name: 'PreToolUse', tool_name: 'mcp__srv__tool', tool_input: { hook_event_name: 'PostToolUse', data: '' } }, 'PostToolUse'],
+  ['cursor', { hook_event_name: 'preToolUse', cwd: '/', tool_name: 'MCP:tool', tool_input: { hook_event_name: 'postToolUse', data: '' } }, 'postToolUse'],
+]) {
+  test(name + ': an oversized pre-tool event with the post-tool event name inside its arguments is refused, not answered', async () => {
+    pre.tool_input.data = 'A'.repeat(runner.POST_STDIN_CAP + 10);
+    const err = [];
+    const out = [];
+    const write = process.stderr.write;
+    const wout = process.stdout.write;
+    const code = process.exitCode;
+    process.stderr.write = (chunk) => { err.push(String(chunk)); return true; };
+    process.stdout.write = (chunk) => { out.push(String(chunk)); return true; };
+    try {
+      await runner.main([name], async () => JSON.stringify(pre));
+      assert.equal(process.exitCode, 2);
+    } finally {
+      process.stderr.write = write;
+      process.stdout.write = wout;
+      process.exitCode = code;
+    }
+    assert.match(err.join(''), /too large/);
+    assert.ok(!out.join('').includes('withheld'));
+    assert.ok(!out.join('').includes(nested) || out.join('').includes('deny'));
+  });
+}
+
 test('the deadline is the agent hook timeout minus five seconds, from each adapter', () => {
   const seconds = { 'claude-code': 15, codex: 30, copilot: 15, cursor: 30, opencode: 20, antigravity: 15 };
   for (const [name, s] of Object.entries(seconds)) {

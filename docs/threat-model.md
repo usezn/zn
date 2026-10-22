@@ -276,7 +276,7 @@ stop malware running as the same user (see above).
   in time") through the agent's own way of replacing output, and the agent is
   told to ask for a smaller output. It is not passed on and it is not a plain
   deny, because after a tool has run a deny alone does not withhold the output
-  in Claude Code or Copilot. An output that is mostly invisible characters has
+  in Claude Code, Copilot or OpenCode. An output that is mostly invisible characters has
   the invisible characters removed and the rest redacted, and is reported as
   denied. Known limit: Claude Code ignores a replacement whose shape differs
   from the output of a built-in tool, so a built-in tool result over 32 MiB
