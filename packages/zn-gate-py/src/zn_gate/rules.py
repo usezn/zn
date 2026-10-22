@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-19.1
+RULES_VERSION: 2026-10-24.5
 Zero external dependencies. Pure Python stdlib.
 """
 
@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, overload
 
 
-RULES_VERSION = "2026-10-23.9"
+RULES_VERSION = "2026-10-24.5"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -70,7 +70,8 @@ B64_EXEC_RE = re.compile(r'(?:echo|printf)\s+([A-Za-z0-9+/=]{16,})\s*\|\s*(?:bas
 # Maximal whitespace runs; only runs that contain a line break are joined.
 # A pattern anchored on the line break (such as [^\S\r\n]*[\r\n]) would rescan
 # a long run of spaces from every position.
-WHITESPACE_RUN_RE = re.compile(r'\s+')
+# Whitespace is listed explicitly (not \s): JavaScript's \s lacks U+0085 and U+001C-U+001F, Python's lacks U+FEFF.
+WHITESPACE_RUN_RE = re.compile(r'[\t\n\v\f\r \u001c-\u001f\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+')
 _JOIN_EXTRA_LEFT = frozenset('_<|/.-')
 _JOIN_EXTRA_RIGHT = frozenset('_>|/.-')
 

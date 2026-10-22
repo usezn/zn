@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-23.9
+ * RULES_VERSION: 2026-10-24.5
  */
 
-const RULES_VERSION = '2026-10-23.9';
+const RULES_VERSION = '2026-10-24.5';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -431,7 +431,8 @@ const B64_EXEC_ALL_RE = new RegExp(B64_EXEC_RE.source, 'gi');
 // Maximal whitespace runs; only runs that contain a line break are joined.
 // A pattern anchored on the line break (such as /[^\S\r\n]*[\r\n]/) would
 // rescan a long run of spaces from every position.
-const WHITESPACE_RUN_RE = /\s+/g;
+// Whitespace is listed explicitly (not \s): JavaScript's \s lacks U+0085 and U+001C-U+001F, Python's lacks U+FEFF.
+const WHITESPACE_RUN_RE = /[\t\n\v\f\r \u001c-\u001f\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+/g;
 const LINE_BREAK_RE = /[\r\n]/;
 const JOIN_LEFT_RE = /[\p{L}\p{N}_<|/.-]/u;
 const JOIN_RIGHT_RE = /[\p{L}\p{N}_>|/.-]/u;
