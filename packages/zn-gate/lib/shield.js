@@ -334,9 +334,16 @@ function startMcpShield(command, args, options = {}) {
   }
   // An object key is text the agent reads too: a key whose check changes it is renamed to the checked text (the
   // notice or the redacted key), keeping its value. defineProperty, so no key can reach the object's prototype.
+  // The next free suffix is remembered per object and text, so many keys that check to the same notice cost
+  // linear time, not quadratic.
+  const renameNext = new WeakMap();
   function renameKey(obj, oldKey, text) {
+    let next = renameNext.get(obj);
+    if (!next) renameNext.set(obj, (next = new Map()));
+    let i = next.get(text) || 2;
     let nk = text;
-    for (let i = 2; Object.prototype.hasOwnProperty.call(obj, nk); i += 1) nk = `${text} (${i})`;
+    while (Object.prototype.hasOwnProperty.call(obj, nk)) { nk = `${text} (${i})`; i += 1; }
+    next.set(text, i);
     Object.defineProperty(obj, nk, { value: obj[oldKey], enumerable: true, writable: true, configurable: true });
     delete obj[oldKey];
     return nk;

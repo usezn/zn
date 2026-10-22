@@ -30,6 +30,7 @@ rl.on('line', (line) => {
   if (name === 'key_601') { for (let i = 0; i < 600; i++) sc['field' + i] = 'v' + i; sc[INJ] = 1; sc.last = 'ok'; }
   if (name === 'key_nested') { sc.rows = [{ name: 'row0', meta: { [INJ]: true, note: 'fine' } }]; }
   if (name === 'key_secret') { sc['token ' + KEY] = 'x'; sc.city = 'Example'; }
+  if (name === 'many_keys') { for (let i = 0; i < 20000; i++) sc[INJ + ' ' + i] = i; }
   if (name === 'benign') { sc.city = 'Example'; sc.temp = 64; sc.rows = [{ name: 'row0' }]; }
   const result = { structuredContent: sc };
   if (msg.params.arguments && msg.params.arguments.withContent) result.content = [{ type: 'text', text: 'ok' }];
@@ -48,7 +49,7 @@ function run(toolName, withContent = false) {
       env: { ...process.env, HOME: home, USERPROFILE: home, ZN_HOME: '' },
     });
     const rl = readline.createInterface({ input: proc.stdout, crlfDelay: Infinity });
-    const timer = setTimeout(() => { proc.kill(); reject(new Error('timeout')); }, 30000);
+    const timer = setTimeout(() => { proc.kill(); reject(new Error('timeout')); }, 60000);
     rl.on('line', (line) => {
       let msg;
       try { msg = JSON.parse(line); } catch { return; }
@@ -99,4 +100,14 @@ test('a secret in a key is masked', async () => {
 test('benign keys are left exactly as they are', async () => {
   const msg = await run('benign');
   assert.deepEqual(msg.result.structuredContent, { city: 'Example', temp: 64, rows: [{ name: 'row0' }] });
+});
+
+test('20,000 injected keys are all removed in well under 10 s (renaming is linear)', async () => {
+  const t0 = Date.now();
+  const msg = await run('many_keys');
+  const ms = Date.now() - t0;
+  const sc = msg.result.structuredContent;
+  assert.ok(!JSON.stringify(msg.result).includes('ignore previous instructions'));
+  assert.equal(Object.keys(sc).length, 20000, 'every key is kept, renamed');
+  assert.ok(ms < 10000, `took ${ms} ms`);
 });
