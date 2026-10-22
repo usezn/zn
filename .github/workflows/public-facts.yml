@@ -19,6 +19,10 @@ on:
       - 'packages/zn-gate-py/src/zn_gate/__init__.py'
       - 'plugins/**'
       - '.github/scripts/check-public-facts*'
+      - '.github/scripts/check-dependabot-examples*'
+      - '.github/dependabot.yml'
+      - 'examples/*/package.json'
+      - 'examples/*/Dockerfile'
       - '.github/workflows/public-facts.yml'
 
 permissions:
@@ -49,6 +53,10 @@ jobs:
           node-version: 22
       - name: Test the checker
         run: node --test .github/scripts/check-public-facts.test.mjs
+      - name: Test the Dependabot coverage check
+        run: node --test .github/scripts/check-dependabot-examples.test.mjs
+      - name: Check that every example is covered by Dependabot
+        run: node .github/scripts/check-dependabot-examples.mjs
       - name: Check the public facts
         env:
           # A release pull request (from or into a release/* branch of this repository) is opened

@@ -129,3 +129,47 @@ updates:
     groups:
       lint-tooling:
         patterns: ["*"]
+
+  - package-ecosystem: pip
+    directories:
+      - "/examples/ag2-agent"
+      - "/examples/crewai-agent"
+      - "/examples/dspy-agent"
+      - "/examples/google-adk-agent"
+      - "/examples/haystack-agent"
+      - "/examples/llamaindex-agent"
+      - "/examples/openai-agents-sdk"
+      - "/examples/pydantic-ai-agent"
+      - "/examples/semantic-kernel-agent"
+      - "/examples/smolagents-agent"
+    target-branch: next
+    schedule:
+      interval: weekly
+    # Security updates only. The examples pin zn-gate to the release (examplesVersion check)
+    # and the release bumps it; the framework pins are the ones that need security fixes.
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "zn-gate"
+    groups:
+      pip:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directories:
+      - "/examples/langchain-js"
+      - "/examples/mastra-agent"
+      - "/examples/openai-agents-js"
+      - "/examples/vercel-ai-sdk"
+    target-branch: next
+    schedule:
+      interval: weekly
+    # Security updates only. The examples pin zn-gate to the release (examplesVersion check)
+    # and the release bumps it; the framework pins are the ones that need security fixes.
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "zn-gate"
+    groups:
+      npm:
+        patterns: ["*"]
+        update-types: [minor, patch]
