@@ -9,7 +9,7 @@ from __future__ import annotations
 import copy
 from typing import Any, Optional
 
-from ..guard import GuardBlockError, block_message, validate_on_block
+from ..guard import GuardBlockError, _mask_value, block_message, validate_on_block
 from ..rules import evaluate, sanitize_tool_result
 
 
@@ -70,5 +70,11 @@ class ZnLlamaGuard:
             clean_obj = copy.copy(response)
             clean_obj.response = clean_text
             return clean_obj
-        clean, _ = sanitize_tool_result(response)
+        # _mask_value also walks objects (a pydantic model, a dataclass...), which
+        # sanitize_tool_result leaves as they are.
+        clean, unmaskable = _mask_value(response)
+        if unmaskable is not None:
+            if self.on_block == "raise":
+                raise GuardBlockError(unmaskable, target="llamaindex:response", payload=None)
+            return block_message(unmaskable, "llamaindex:response")
         return clean

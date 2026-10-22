@@ -1582,7 +1582,7 @@ def sanitize_tool_result(
                 detections.extend(det)
             return clean_str
         elif isinstance(val, dict):
-            return {(_sanitize(k) if isinstance(k, str) else k): _sanitize(v) for k, v in val.items()}
+            return _sanitize_dict(val)
         elif isinstance(val, list):
             return [_sanitize(v) for v in val]
         elif isinstance(val, tuple):
@@ -1592,6 +1592,22 @@ def sanitize_tool_result(
         elif isinstance(val, set):
             return {_sanitize(v) for v in val}
         return val
+
+    def _sanitize_dict(val: dict) -> dict:
+        # Two keys with different secrets mask to the same text, and a masked key can
+        # equal a key that had no secret: number the masked ones so no value is lost.
+        keys = [(k, _sanitize(k) if isinstance(k, str) else k) for k in val]
+        taken = {new for old, new in keys if new == old}
+        out = {}
+        for (old, new), v in zip(keys, val.values()):
+            if new != old:
+                base, n = new, 2
+                while new in taken:
+                    new = f"{base} #{n}"
+                    n += 1
+                taken.add(new)
+            out[new] = _sanitize(v)
+        return out
 
     sanitized = _sanitize(tool_or_result)
     return sanitized, detections
