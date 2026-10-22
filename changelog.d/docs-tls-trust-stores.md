@@ -1,0 +1,2 @@
+### Changed
+- Docs: the troubleshooting guide has a new section, "TLS certificates and trust stores", on which certificate authorities zn-gate trusts (the list built into Node.js for the npm package, the operating system list for the Python package), what to do when an authority is removed from trust lists (update Node.js and your system certificates), and why zn-gate does not accept custom authorities for the cloud check.
