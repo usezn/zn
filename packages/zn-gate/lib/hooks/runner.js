@@ -601,8 +601,8 @@ function postDeadlineMs(agentId) {
 const DEADLINE = Symbol('deadline');
 
 /** The result of a promise, or DEADLINE when `at` (a Date.now() value) comes first. The promise is left to finish on its own. */
-function raceDeadline(promise, at) {
-  const ms = at - Date.now();
+function raceDeadline(promise, at, now = Date.now) {
+  const ms = at - now();
   promise.catch(() => {});
   if (ms <= 0) return Promise.resolve(DEADLINE);
   let timer;
@@ -623,7 +623,11 @@ async function decidePost(ev, d, agentId, opts = {}) {
   }
   if (ev.output === undefined || ev.output === null) return { decision: 'allow' };
   const posInt = (v, dflt) => (Number.isInteger(v) && v > 0 ? v : dflt);
-  const deadlineAt = Date.now() + posInt(opts.postDeadlineMs, postDeadlineMs(agentId));
+  // The budget starts when the hook received the event (opts.startedAt), so what happens before this point
+  // (reading the event, normalizing it, the Codex command check) counts too. `now` is a clock; only tests set it.
+  const now = typeof opts.now === 'function' ? opts.now : Date.now;
+  const startedAt = Number.isFinite(opts.startedAt) ? opts.startedAt : now();
+  const deadlineAt = startedAt + posInt(opts.postDeadlineMs, postDeadlineMs(agentId));
   let room = posInt(opts.postScanCap, POST_SCAN_CAP);
   const tokenCap = posInt(opts.postTokenCap, POST_TOKEN_CAP);
   const engine = d.engine();
@@ -655,11 +659,11 @@ async function decidePost(ev, d, agentId, opts = {}) {
   };
   const check = async (s) => {
     if (s === POST_WITHHELD || s.length < 8) return s;
-    if (stopped || Date.now() >= deadlineAt) return withhold(s, true);
+    if (stopped || now() >= deadlineAt) return withhold(s, true);
     if (s.length > room) return withhold(s, false);
     // The engine's own scan is pure and cheap: it counts the values this string would add to the vault.
     if (scanCtx === null) {
-      scanCtx = typeof engine.prepare === 'function' ? await raceDeadline(engine.prepare(ctx), deadlineAt) : ctx;
+      scanCtx = typeof engine.prepare === 'function' ? await raceDeadline(engine.prepare(ctx), deadlineAt, now) : ctx;
       if (scanCtx === DEADLINE) { abandoned = true; return withhold(s, true); }
     }
     if (scanCtx === DEADLINE) return withhold(s, true);
@@ -669,7 +673,7 @@ async function decidePost(ev, d, agentId, opts = {}) {
       if (seen.size > tokenCap) return withhold(s, true);
     }
     room -= s.length;
-    const res = await raceDeadline(typeof engine.tokenizeWith === 'function' ? engine.tokenizeWith(s, ctx, spans) : engine.tokenize(s, ctx), deadlineAt);
+    const res = await raceDeadline(typeof engine.tokenizeWith === 'function' ? engine.tokenizeWith(s, ctx, spans) : engine.tokenize(s, ctx), deadlineAt, now);
     if (res === DEADLINE) { abandoned = true; return withhold(s, true); }
     if (!res || typeof res.text !== 'string') throw deps.znError('ZN_ENGINE', 'tokenize returned an unexpected shape');
     if (res.locked) locked = true;
@@ -1049,6 +1053,8 @@ async function injectTestFault() {
  * opts: {engine, vault, failMode, home, znRunPrefix}
  */
 async function handle(adapter, rawEvent, opts = {}) {
+  // The post-tool time budget runs from here (or from opts.startedAt when the caller took the instant earlier).
+  if (!Number.isFinite(opts.startedAt)) opts = { ...opts, startedAt: (typeof opts.now === 'function' ? opts.now : Date.now)() };
   const mode = failModeOf(opts);
   let ev = null;
   let decision;
@@ -1330,6 +1336,7 @@ function stopFailSafe(err) {
 }
 
 async function handleEvent(args, state, readText) {
+  const startedAt = Date.now(); // the instant the hook received the event: the post-tool time budget starts here
   const agentId = args[0];
   let adapter;
   try {
@@ -1363,7 +1370,7 @@ async function handleEvent(args, state, readText) {
   state.stopEvent = raw.hook_event_name === 'Stop';
   const disarm = armCodexFailClosed(agentId, raw.hook_event_name);
   try {
-    const res = await handle(adapter, raw);
+    const res = await handle(adapter, raw, { startedAt });
     if (res.stderr) process.stderr.write(res.stderr + ' (fail-open: event passed through)\n');
     try { require('../vault/client').close(); } catch (_) { /* not loaded */ }
     if (res.output !== null && res.output !== undefined) {
