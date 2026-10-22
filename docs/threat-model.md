@@ -77,7 +77,9 @@ project). It adds a hook that runs before each tool call.
   tool that names no command and no file path, or that zn does not
   recognise, is left to Antigravity's own rules (zn gives no opinion). A shell
   or file tool whose command or file zn cannot read is refused. Antigravity does not document how it treats a hook that crashes
-  or times out, so zn cannot promise that such a call is blocked.
+  or times out, so zn cannot promise that such a call is blocked. If the Node.js
+  zn was installed with is gone, zn's launcher script answers a deny with the
+  repair step instead (see [compat.md](compat.md)).
 - **Which configuration files the agent cannot edit:** the rule described
   under "What zn does not protect against" (the hooks refuse writes to the
   agents' hook and plugin settings) covers three Antigravity files:

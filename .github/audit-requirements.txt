@@ -1,8 +1,9 @@
 # Hash-pinned pip-audit for the dependency audit job of .github/workflows/audit.yml
 # (pip --require-hashes), so the tool is pinned like a lockfile.
 #
-# Not managed by Dependabot (no entry for this file). To update, set the
-# top-level pin below to the new pip-audit release and regenerate with:
+# Dependabot opens security updates only for this directory (version updates are
+# off). To update, set the top-level pin below to the new pip-audit release and
+# regenerate with:
 #
 #    echo "pip-audit==X.Y.Z" > in.txt
 #    pip-compile --generate-hashes --allow-unsafe --strip-extras -o .github/audit-requirements.txt in.txt
