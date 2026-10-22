@@ -11,10 +11,24 @@ const path = require('path');
 const { writeFileAtomic } = require('../broker/files');
 const { shQuote, portablePath, windowsCommand, windowsCommandScript } = require('../shell-quote');
 
+/**
+ * The text of a file that zn is about to rewrite. A byte that is not valid
+ * UTF-8 would be read as U+FFFD and written back as three other bytes, so
+ * such a file is refused and left as it is. A BOM is kept, as before.
+ */
+function readTextStrict(file) {
+  const buf = fs.readFileSync(file);
+  try {
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(buf);
+  } catch (_) {
+    throw new Error(file + ' is not valid UTF-8 (left unchanged). Save the file as UTF-8 and run the command again.');
+  }
+}
+
 function readJson(file) {
   let text;
   try {
-    text = fs.readFileSync(file, 'utf8');
+    text = readTextStrict(file);
   } catch (err) {
     if (err.code === 'ENOENT') return {};
     throw err;
@@ -109,4 +123,4 @@ function isOurs(command, agentId) {
   return script !== null && re.test(script);
 }
 
-module.exports = { readJson, hooksOf, backup, writeJson, quoteArg, runnerPath, hookCommand, hookCommandWindows, isOurs };
+module.exports = { readTextStrict, readJson, hooksOf, backup, writeJson, quoteArg, runnerPath, hookCommand, hookCommandWindows, isOurs };

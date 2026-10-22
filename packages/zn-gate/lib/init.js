@@ -555,7 +555,7 @@ function configureEnvironments(options = {}) {
     }
 
     try {
-      const raw = fs.readFileSync(env.filePath, 'utf8');
+      const raw = require('./agents/config-file').readTextStrict(env.filePath);
       const { modified, content, manual } = adapterFor(env).shield(raw, env, options);
 
       let backup;

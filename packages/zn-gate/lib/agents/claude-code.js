@@ -68,7 +68,7 @@ const { writeFileAtomic } = require('../broker/files');
 const { whichSync } = require('../broker/markers');
 const { shQuote, portablePath } = require('../shell-quote');
 const { claudeCodePolicyWarnings } = require('./managed-policy');
-const { hooksOf } = require('./config-file');
+const { hooksOf, readTextStrict } = require('./config-file');
 const launcher = require('./launcher');
 
 const id = 'claude-code';
@@ -261,11 +261,16 @@ function hookCommand(opts = {}) {
 
 function readJson(file) {
   let data;
+  let text;
   try {
-    const text = fs.readFileSync(file, 'utf8');
-    data = text.trim() ? JSON.parse(text) : {};
+    text = readTextStrict(file);
   } catch (err) {
     if (err.code === 'ENOENT') return {};
+    throw err;
+  }
+  try {
+    data = text.trim() ? JSON.parse(text) : {};
+  } catch (err) {
     throw new Error('cannot parse ' + file + ': ' + err.message);
   }
   if (data === null || typeof data !== 'object' || Array.isArray(data)) {

@@ -1,0 +1,2 @@
+### Fixed
+- `zn hooks install`, `zn hooks uninstall` and `zn-gate init --wrap-mcp` no longer rewrite an agent config file that holds a byte that is not valid UTF-8 (for example a Latin-1 accented letter in a JSON string). They used to replace that byte with the replacement character `U+FFFD` and exit 0 without a warning. They now stop with exit code 1, name the file, say it was left unchanged and ask you to save it as UTF-8. This covers the settings and hooks files of Claude Code, Codex, Cursor, Gemini CLI, Copilot CLI and Antigravity, and the shared `.mcp.json`.
