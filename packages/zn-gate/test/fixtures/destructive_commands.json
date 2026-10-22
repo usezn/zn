@@ -24,6 +24,7 @@
   "Remove-Item -Recurse -Force .\\dist, .\\build",
   "Remove-Item -Recurse -Force .\\node_modules",
   "Remove-Item C:\\Users\\alice\\AppData\\Local\\Temp\\zn -Recurse",
+  "Remove-Item C:\\Users\\me\\AppData\\Local\\Temp\\zn -Recurse",
   "Set-Location $HOME",
   "awk '{print $1}' access.log | sort | uniq",
   "aws s3 cp build/ s3://example-bucket/ --recursive",
@@ -304,6 +305,7 @@
   "dd if=disk.iso of=/dev/null bs=4M",
   "del /q *.tmp",
   "del /s /q .\\dist\\*.map",
+  "del /s /q C:\\tmp\\*",
   "df -h",
   "diff -u a.txt b.txt",
   "diff ~/.bashrc ~/dotfiles/bashrc",
@@ -615,6 +617,7 @@
   "python -m venv .venv",
   "python3 -c \"print('rm -rf /')\"",
   "rake test",
+  "rd /s /q C:\\work\\build",
   "rd /s /q build",
   "rd /s /q node_modules",
   "rg \"chmod -R 777\" .",
@@ -767,6 +770,7 @@
   "rm -rf ../tmp",
   "rm -rf ./dist ./build",
   "rm -rf ./project/../build",
+  "rm -rf .\\build",
   "rm -rf .cache node_modules",
   "rm -rf .git/hooks/pre-commit.sample",
   "rm -rf .next .gradle",
@@ -794,6 +798,7 @@
   "rm -rf /var/tmp/zn",
   "rm -rf C:/Users/alice/project/../other",
   "rm -rf C:\\Users\\alice\\project\\.\\build",
+  "rm -rf C:\\Users\\me\\tmp",
   "rm -rf __pycache__ obj",
   "rm -rf __pycache__ out",
   "rm -rf bin/Debug .next",
@@ -1148,6 +1153,10 @@
   },
   {
    "cmd": "cat /dev/zero > /dev/xvda",
+   "rule": "disk_overwrite"
+  },
+  {
+   "cmd": "d\\d if=/dev/zero of=/dev/sda",
    "rule": "disk_overwrite"
   },
   {
@@ -3023,6 +3032,10 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "r\\m -rf ~",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "rd /s /q %USERPROFILE%",
    "rule": "rm_root_home"
   },
@@ -3108,6 +3121,10 @@
   },
   {
    "cmd": "rm -r ~",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -r\\f /",
    "rule": "rm_root_home"
   },
   {

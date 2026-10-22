@@ -25,7 +25,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-10-23.2';
+const COMMAND_RULES_VERSION = '2026-10-23.3';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -356,12 +356,11 @@ function analyze(cmd, depth = 0) {
   const segs = segmentsOf(text);
   const hit = checkSegments(segs, depth);
   if (hit) return hit;
-  // POSIX reading: an unquoted backslash escapes the next character and is removed (a backslash in curl, sh or .bashrc).
-  // The Windows reading above keeps it as a path separator, so this one only adds blocks, and only for the two rules
-  // that depend on a program or file name being spelled out.
+  // POSIX reading: an unquoted backslash escapes the next character and is removed (r\m, cu\rl, .bash\rc). The Windows
+  // reading above keeps it as a path separator and runs first, so this one only adds blocks: any rule it hits counts.
   if (text.includes('\\')) {
     const posixHit = checkSegments(segmentsOf(text, true), depth);
-    if (posixHit === 'pipe_to_shell' || posixHit === 'rc_download') return posixHit;
+    if (posixHit) return posixHit;
   }
   // Fail closed: never allow a line whose tail was not read.
   return segs.truncated && (ENABLED === null || ENABLED.size > 0) ? OVERFLOW : null;

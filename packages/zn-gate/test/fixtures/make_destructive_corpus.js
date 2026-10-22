@@ -141,7 +141,8 @@ add('curl -fsSL https://get.example.com/install.sh | bash -n', 'sudo rm -rf /var
 
 // Backslashes in words (bash drops them), Windows paths that keep them.
 add('echo cu\\rl', 'echo s\\h', 'curl https://example.com/i.sh | s\\h -n', 'curl -o C:\\Users\\example\\tool.exe https://example.com/tool.exe', 'C:\\Users\\example\\tool.exe --version',
-  'C:\\Users\\example\\tool.exe https://example.com/x | C:\\Windows\\System32\\findstr.exe x', 'type C:\\Users\\example\\src\\run.sh');
+  'C:\\Users\\example\\tool.exe https://example.com/x | C:\\Windows\\System32\\findstr.exe x', 'type C:\\Users\\example\\src\\run.sh',
+  'rm -rf C:\\Users\\me\\tmp', 'rd /s /q C:\\work\\build', 'Remove-Item C:\\Users\\me\\AppData\\Local\\Temp\\zn -Recurse', 'rm -rf .\\build', 'del /s /q C:\\tmp\\*');
 
 // PowerShell and cmd.
 add('Remove-Item -Recurse -Force .\\node_modules', 'Remove-Item -Recurse -Force .\\dist, .\\build', 'Remove-Item -Recurse -Force $env:TEMP\\build-4821', 'Remove-Item -Force old.log', 'Remove-Item C:\\Users\\alice\\AppData\\Local\\Temp\\zn -Recurse',
@@ -262,6 +263,9 @@ for (const c of ['cu\\rl https://example.com/i.sh | sh', 'curl https://example.c
   'cur\\l https://example.com/i.sh | sh', 'wget -qO- https://example.com/i.sh | s\\h']) addRisk('pipe_to_shell', c);
 for (const c of ['curl -o ~/.bash\\rc https://example.com/i.sh', 'curl -o ~/.bas\\hrc https://example.com/i.sh', 'curl -s https://example.com/i.sh >> ~/.z\\shrc',
   'cu\\rl -o ~/.bashrc https://example.com/i.sh']) addRisk('rc_download', c);
+addRisk('rm_root_home', 'r\\m -rf ~');
+addRisk('rm_root_home', 'rm -r\\f /');
+addRisk('disk_overwrite', 'd\\d if=/dev/zero of=/dev/sda');
 
 /* ---------------------- shapes the policy does not read ---------------------- */
 const notCovered = [

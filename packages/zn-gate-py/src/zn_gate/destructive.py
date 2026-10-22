@@ -28,7 +28,7 @@ from typing import List, Optional, Tuple
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-23.2"
+COMMAND_RULES_VERSION = "2026-10-23.3"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -521,12 +521,11 @@ def _analyze(cmd: str, depth: int = 0) -> Optional[str]:
     hit = _check_segments(segs, depth)
     if hit:
         return hit
-    # POSIX reading: an unquoted backslash escapes the next character and is removed (a backslash in curl, sh or .bashrc).
-    # The Windows reading above keeps it as a path separator, so this one only adds blocks, and only for the two rules
-    # that depend on a program or file name being spelled out.
+    # POSIX reading: an unquoted backslash escapes the next character and is removed (r\m, cu\rl, .bash\rc). The Windows
+    # reading above keeps it as a path separator and runs first, so this one only adds blocks: any rule it hits counts.
     if "\\" in text:
         posix_hit = _check_segments(_segments_of(text, True)[0], depth)
-        if posix_hit in ("pipe_to_shell", "rc_download"):
+        if posix_hit:
             return posix_hit
     # Fail closed: never allow a line whose tail was not read.
     return _OVERFLOW if truncated else None
