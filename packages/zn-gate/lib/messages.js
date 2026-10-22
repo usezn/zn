@@ -290,6 +290,19 @@ function teamJoinFailed(why) {
   return 'join failed (' + why + '). This machine was not connected.';
 }
 
+/* Why a write under the state folder failed, in words a person can act on. */
+function writeFailureReason(code) {
+  if (code === 'EACCES' || code === 'EPERM') return 'permission denied';
+  if (code === 'EROFS') return 'the folder is read-only';
+  if (code === 'ENOTDIR' || code === 'EEXIST') return 'a file is in the way of the folder';
+  if (code === 'ENOSPC') return 'the disk is full';
+  return code ? 'error ' + code : 'write failed';
+}
+
+function teamWriteFailed(folder, code, outcome) {
+  return 'zn-gate could not write to ' + folder + ' (' + writeFailureReason(code) + '). Fix the folder permissions and run the command again. ' + outcome;
+}
+
 module.exports = {
   agentNote, agentRefusal, notInteractive, PROMPT_CANCELLED, CLIPBOARD_NO_POWERSHELL, clipboardUnreadable,
   invalidDuration, DURATION_RANGE, unknownBackend, unlockNeedsTerminal, FOREGROUND_NEEDS_TERMINAL,
@@ -300,6 +313,6 @@ module.exports = {
   connectFullAccess, connectUnverified, connectSaveFailed, revokeNotReached, connectNoStore, environmentRefusal, isNetworkFailure,
   PINS_USAGE_APPROVE, pinsAgentRefusal, PINS_NEEDS_TERMINAL, PINS_NOT_APPROVED, pinsError,
   TEAM_INVALID_JOIN_TOKEN, TEAM_INVALID_REQUEST, TEAM_NOTHING_TO_APPROVE, TEAM_NOT_ASKED, TEAM_INVALID_ORG_KEY,
-  teamJoinFailed,
+  teamJoinFailed, teamWriteFailed,
   DISCONNECT_UNLOCK_FIRST, disconnectVaultNotRemoved, disconnectKeychainLeft, TROUBLESHOOTING_URL, vaultDamaged,
 };

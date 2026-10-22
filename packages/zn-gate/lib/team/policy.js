@@ -207,6 +207,15 @@ function writeJson(file, data) {
   if (process.platform !== 'win32') { try { fs.chmodSync(file, 0o600); } catch (err) { /* ignore */ } }
 }
 
+/* Throws the file-system error when the state folder cannot take a new file. Leaves nothing behind. */
+function assertWritable(opts) {
+  const dir = paths(opts).home;
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const probe = path.join(dir, '.write-check.' + process.pid + '.' + crypto.randomBytes(4).toString('hex') + '.tmp');
+  fs.writeFileSync(probe, '', { mode: 0o600 });
+  try { fs.unlinkSync(probe); } catch (err) { /* the write worked; the leftover is empty */ }
+}
+
 function removeFile(file) {
   try { fs.unlinkSync(file); return true; } catch (err) { return false; }
 }
@@ -311,6 +320,7 @@ module.exports = {
   state,
   accept,
   writeCache,
+  assertWritable,
   touchCache,
   writeJson,
   removeFile,

@@ -43,6 +43,16 @@ after joining. The same happens if the check fails.
 `--api <https URL>` points `zn team join` at another server. The dialog warns
 when it is not `api.usezn.com`.
 
+### If zn-gate cannot write to its folder
+
+`zn team join` and `zn team sync` keep a readable copy of your organization and its policy in the zn-gate folder (`~/.zn`, or the folder named by `ZN_HOME`), so your agent's hooks can read it. If that folder is read-only or blocked, the command stops and says so:
+
+```
+zn-gate could not write to /home/you/.zn (permission denied). Fix the folder permissions and run the command again. Nothing was changed.
+```
+
+`zn team join` checks the folder before it uses your join token, so a failed join leaves the machine exactly as it was and the same token still works. `zn team sync` keeps the previous policy copy. Make the folder writable by your user (for example `chmod u+rwx ~/.zn`), then run the command again.
+
 ## The organization policy
 
 The policy lists rules for secrets by **name** (for example `PROD_*`), never

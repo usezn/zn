@@ -135,33 +135,64 @@ test('the state directory is a file: info and leave still answer, join fails', a
   assert.deepStrictEqual(await m.o.teamInfo(), { joined: false });
   assert.deepStrictEqual(await m.o.teamLeave(), { left: null });
   const e = await refusal(m.o.teamJoin({ join_token: cloud.createJoinToken(), api_base: cloud.base }));
-  // Current behaviour, pinned: the raw file-system error, not a zn message with a next step.
-  assert.match(String(e.code), /^(EEXIST|ENOTDIR|EPERM|EACCES)$/);
-  assert.ok(!/join failed/.test(e.message));
+  // A plain message that names the folder, with a next step; nothing was joined.
+  assert.strictEqual(e.code, CODES.WRITE_FAILED);
+  assert.ok(e.message.includes(process.env.ZN_HOME), e.message);
+  assert.match(e.message, /^zn-gate could not write to .* Fix the folder permissions and run the command again\. Nothing was changed\.$/);
+  assert.strictEqual(m.secrets.team, undefined);
 });
 
-test('the state directory cannot be written: join fails after the vault was saved', { skip: NO_CHMOD }, async (t) => {
+test('the state directory cannot be written: join stops before anything is saved or sent', { skip: NO_CHMOD }, async (t) => {
   const m = machine();
   fs.chmodSync(process.env.ZN_HOME, 0o500);
   t.after(() => { try { fs.chmodSync(process.env.ZN_HOME, 0o700); } catch (e) { /* already removed */ } });
+  const seen = cloud.requests.length;
   const e = await refusal(m.o.teamJoin({ join_token: cloud.createJoinToken(), api_base: cloud.base }));
-  assert.strictEqual(e.code, 'EACCES');
-  // Current behaviour, pinned: the vault holds the organization, the readable copy for the hooks is missing.
-  assert.ok(m.secrets.team);
+  assert.strictEqual(e.code, CODES.WRITE_FAILED);
+  assert.ok(e.message.includes(process.env.ZN_HOME), e.message);
+  assert.match(e.message, /permission denied/);
+  assert.match(e.message, /Fix the folder permissions and run the command again\. Nothing was changed\.$/);
+  // Either fully joined or nothing changed: no organization in the vault, no readable copy, token not used.
+  assert.strictEqual(m.secrets.team, undefined);
   assert.strictEqual(policy.readTeam(), null);
+  assert.strictEqual(cloud.requests.length, seen, 'the join token was not used');
+  assert.deepStrictEqual(m.audit, []);
 });
 
-test('a policy that cannot be copied to disk: sync throws the raw system error', { skip: NO_CHMOD }, async (t) => {
+test('a write that fails after the check passed rolls the vault back: not joined, not half joined', async (t) => {
+  const m = machine();
+  const realTeam = policy.writeTeam;
+  t.after(() => { policy.writeTeam = realTeam; });
+  // The folder looked writable, then the copy for the hooks failed (for example the disk filled up).
+  policy.writeTeam = () => { const err = new Error('no space'); err.code = 'ENOSPC'; throw err; };
+  const e = await refusal(m.o.teamJoin({ join_token: cloud.createJoinToken(), api_base: cloud.base }));
+  assert.strictEqual(e.code, CODES.WRITE_FAILED);
+  assert.match(e.message, /the disk is full/);
+  assert.match(e.message, /Nothing was changed\.$/);
+  assert.strictEqual(m.secrets.team, undefined, 'the vault change was undone');
+  assert.strictEqual(policy.readTeam(), null);
+  assert.ok(!m.audit.some((a) => a.reason === 'team_joined'), 'no join is recorded');
+  assert.deepStrictEqual(await m.o.teamInfo(), { joined: false });
+});
+
+test('a policy that cannot be copied to disk: sync says so plainly and keeps the previous copy', { skip: NO_CHMOD }, async (t) => {
   const m = machine();
   await m.o.teamJoin({ join_token: cloud.createJoinToken(), api_base: cloud.base });
   cloud.publishPolicy({ rules: [] });
+  await m.o.teamSync({ upload: false });
+  const kept = policy.readCache().envelope.policy.version;
+  cloud.publishPolicy({ rules: [] });
+  assert.ok(cloud.state.policyVersion > kept);
   fs.chmodSync(process.env.ZN_HOME, 0o500);
   t.after(() => { try { fs.chmodSync(process.env.ZN_HOME, 0o700); } catch (e) { /* already removed */ } });
-  // Current behaviour, pinned (board B-932): the disk error escapes sync as a raw EACCES, with no next step,
-  // although the policy was downloaded and kept in the vault.
   const e = await refusal(m.o.teamSync({ upload: false }));
-  assert.strictEqual(e.code, 'EACCES');
-  assert.ok(m.secrets.team.policy, 'the vault did keep the downloaded policy');
+  assert.strictEqual(e.code, CODES.WRITE_FAILED);
+  assert.ok(e.message.includes(process.env.ZN_HOME), e.message);
+  assert.match(e.message, /permission denied/);
+  assert.match(e.message, /The previous copy of the organization policy was kept\.$/);
+  assert.strictEqual(policy.readCache().envelope.policy.version, kept, 'the readable copy is the previous one');
+  assert.strictEqual(m.secrets.team.policy.version, kept, 'the vault keeps the previous policy too');
+  assert.ok(m.secrets.team, 'still joined');
 });
 
 test('stale or damaged copies under the state directory do not change what status reports', async () => {

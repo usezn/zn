@@ -5,6 +5,7 @@
  *   ZN_LOCKED            the vault daemon is not running (run `zn unlock`)
  *   ZN_POLICY_DENIED     the request was refused by policy
  *   ZN_NOT_FOUND         the secret or token does not exist
+ *   ZN_WRITE_FAILED      a file under the state folder could not be written
  *   ZN_NOT_IMPLEMENTED   placeholder for a module that is not built yet
  */
 
@@ -12,6 +13,7 @@ const CODES = Object.freeze({
   LOCKED: 'ZN_LOCKED',
   POLICY_DENIED: 'ZN_POLICY_DENIED',
   NOT_FOUND: 'ZN_NOT_FOUND',
+  WRITE_FAILED: 'ZN_WRITE_FAILED',
   NOT_IMPLEMENTED: 'ZN_NOT_IMPLEMENTED',
 });
 

@@ -1,0 +1,2 @@
+### Fixed
+- `zn team join` and `zn team sync` now say so in plain words when zn-gate cannot write to its folder (`~/.zn`), naming the folder and what to fix, instead of showing a raw `EACCES` error. `zn team join` checks the folder before it uses your join token, so a failed join leaves the machine unchanged, no longer joined without a readable copy for your agent's hooks. `zn team sync` keeps the previous policy copy.

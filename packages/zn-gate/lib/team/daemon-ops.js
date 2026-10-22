@@ -29,6 +29,7 @@ const VERSION = require('../../package.json').version;
 const DEFAULT_API = 'https://api.usezn.com';
 const JOIN_TOKEN_RE = /^znj_[A-Za-z0-9]{32,64}$/;
 const AGENT_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+const KEPT = 'The previous copy of the organization policy was kept.';
 const NAME_RE = /^[A-Z][A-Z0-9_]{0,63}$/;
 
 const osName = () => (['linux', 'darwin', 'win32'].includes(process.platform) ? process.platform : 'other');
@@ -73,6 +74,16 @@ function makeTeamOps(ctx) {
     if (t.policy && t.policy.envelope) policy.writeCache(t.policy.envelope, t.policy.etag || null, state.opts);
   }
 
+  /* A write under the state folder: a file-system failure becomes a plain message that names the folder. */
+  function diskWrite(fn, outcome) {
+    try { return fn(); } catch (err) {
+      if (err && typeof err.code === 'string' && !err.code.startsWith('ZN_')) {
+        throw znError(CODES.WRITE_FAILED, messages.teamWriteFailed(files().home, err.code, outcome));
+      }
+      throw err;
+    }
+  }
+
   async function updateTeam(fn) {
     return state.serial(async () => {
       const s = await state.loadSecrets();
@@ -97,6 +108,9 @@ function makeTeamOps(ctx) {
       const agent = a.agent && AGENT_RE.test(String(a.agent)) ? String(a.agent) : undefined;
       const current = await team();
       if (current && current.api_base !== base) throw znError(CODES.POLICY_DENIED, 'this machine is already in organization ' + current.org + '; run `zn team leave` first');
+      // The readable copy for the hooks lives in the state folder: if it cannot be written, stop before the token
+      // is used, the dialog is shown or the vault changes, so the machine is either fully joined or untouched.
+      diskWrite(() => policy.assertWritable(state.opts), 'Nothing was changed.');
       const host = new URL(base).host;
       const warnings = [];
       if (base !== DEFAULT_API) warnings.push('This is not the zn service (api.usezn.com). Only continue if your organization runs its own server at ' + host + '.');
@@ -157,15 +171,24 @@ function makeTeamOps(ctx) {
       }
       return state.serial(async () => {
         const s = await state.loadSecrets();
+        const before = s.team;
         s.team = {
           org: res.org, org_name: orgName, api_base: base, install_id: installId,
           install_token: res.install_token, pin: res.policy_public_key,
           joined_at: current ? current.joined_at : new Date().toISOString(), revoked_at: null,
           policy: current && current.policy ? current.policy : null,
         };
-        writeAudit({ mode: 'set', decision: 'allow', reason: current ? 'team_rejoined' : 'team_joined' });
         await state.saveSecrets();
-        mirror(s.team);
+        try {
+          diskWrite(() => mirror(s.team), 'Nothing was changed.');
+        } catch (err) {
+          // Undo the vault change: the machine stays as it was, not joined without a readable copy.
+          if (before === undefined) delete s.team; else s.team = before;
+          await state.saveSecrets();
+          if (before === undefined) policy.removeFile(files().teamFile);
+          throw err;
+        }
+        writeAudit({ mode: 'set', decision: 'allow', reason: current ? 'team_rejoined' : 'team_joined' });
         return { org: res.org, org_name: orgName, install_id: installId, api_base: base };
       });
     },
@@ -223,7 +246,7 @@ function makeTeamOps(ctx) {
         if (isClosed()) return { policy: { status: 'stopped' }, upload: null };
         if (r.status === 304) {
           await updateTeam((tt) => { if (tt.policy) tt.policy.fetched_at = new Date().toISOString(); });
-          policy.touchCache(state.opts);
+          diskWrite(() => policy.touchCache(state.opts), KEPT);
           out.policy = { status: 'current', version: held.version };
         } else if (r.status === 404) {
           out.policy = { status: 'none' };
@@ -232,8 +255,9 @@ function makeTeamOps(ctx) {
           const v = policy.verifyEnvelope(r.body, t.pin, { org: t.org, minVersion: (t.policy && t.policy.version) || 0 });
           if (v.ok) {
             const rec = { envelope: r.body, etag: typeof r.etag === 'string' && r.etag.length <= 200 ? r.etag : null, version: v.policy.version, fetched_at: new Date().toISOString() };
+            // Disk first: if it fails, the vault keeps the previous policy too and the two stay in line.
+            diskWrite(() => policy.writeCache(rec.envelope, rec.etag, state.opts), KEPT);
             await updateTeam((tt) => { tt.policy = rec; });
-            policy.writeCache(rec.envelope, rec.etag, state.opts);
             out.policy = { status: 'updated', version: v.policy.version };
             if (held.version !== v.policy.version) writeAudit({ mode: 'set', decision: 'allow', reason: 'org_policy_v' + v.policy.version });
           } else {
@@ -243,6 +267,7 @@ function makeTeamOps(ctx) {
         }
         if (t.revoked_at) await updateTeam((tt) => { tt.revoked_at = null; });
       } catch (err) {
+        if (err && err.code === CODES.WRITE_FAILED) throw err;
         if (err && err.status === 401) {
           out.policy = { status: 'revoked' };
           if (!t.revoked_at) await updateTeam((tt) => { tt.revoked_at = new Date().toISOString(); });
@@ -254,7 +279,7 @@ function makeTeamOps(ctx) {
       const now = await team();
       if (now && now.policy && now.policy.envelope) {
         const disk = policy.readCache(state.opts);
-        if (!disk || JSON.stringify(disk.envelope) !== JSON.stringify(now.policy.envelope)) policy.writeCache(now.policy.envelope, now.policy.etag, state.opts);
+        if (!disk || JSON.stringify(disk.envelope) !== JSON.stringify(now.policy.envelope)) diskWrite(() => policy.writeCache(now.policy.envelope, now.policy.etag, state.opts), KEPT);
       }
       if (a.upload !== false && out.policy.status !== 'revoked' && !isClosed()) {
         const f = files();
