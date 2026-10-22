@@ -23,9 +23,10 @@
 // Output piped into a reader that closes early (for example `zn-gate check | head -1`) fails with EPIPE.
 // Later writes are dropped quietly and the command finishes with the exit status it would have had.
 // Any other stdout error is still thrown, as before.
+const { isBrokenPipe } = require('../lib/broken-pipe');
 let stdoutClosed = false;
 process.stdout.on('error', (err) => {
-  if (err && (err.code === 'EPIPE' || (stdoutClosed && err.code === 'ERR_STREAM_DESTROYED'))) {
+  if (isBrokenPipe(err, process.platform) || (stdoutClosed && err && err.code === 'ERR_STREAM_DESTROYED')) {
     stdoutClosed = true;
     return;
   }
