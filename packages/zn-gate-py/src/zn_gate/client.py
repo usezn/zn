@@ -19,6 +19,7 @@ from typing import Any, Dict, Optional, cast
 
 from .rules import evaluate, redact_secrets
 from . import __version__
+from .verbose import is_verbose
 
 DEFAULT_ENDPOINT = "https://api.usezn.com/v30/analyze"
 
@@ -148,7 +149,7 @@ def analyze(
                                     % (li.get("reason") or "no windows"))
         return cloud_res
     except Exception as exc:
-        if os.environ.get("DEBUG") or os.environ.get("ZN_VERBOSE"):
+        if is_verbose():
             import sys
             sys.stderr.write(f"[zn-gate] Warning: Cloud gate error ({exc}). Using local OSS rules fallback.\n")
         return {

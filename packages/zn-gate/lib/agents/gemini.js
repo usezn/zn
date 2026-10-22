@@ -25,6 +25,9 @@
  *    agent as a tool error. hookSpecificOutput.tool_input is merged over the model's arguments (zn does not use it).
  *    The documented decisions are deny and block only: there is no "ask" and no "allow", so zn blocks or says
  *    nothing. No output at all (exit 0, empty stdout) means no opinion, and Gemini CLI's own approval applies.
+ *  Docs (read 2026-10-20): exit 2 is "Critical Block. The target action (tool, turn, or stop) is aborted"; "Other:
+ *    Non-fatal failure. A warning is shown, but the interaction proceeds"; the page does not say what a hook that
+ *    cannot start does, so it is treated as the other case. zn's launcher script (lib/agents/launcher.js) exits 2.
  *  Exit 2 blocks the tool and stderr is the reason. Any other exit code is a warning and the tool RUNS:
  *    a hook that crashes, times out or cannot start does not block anything. Output that is not JSON is read
  *    as a system message and counts as allow.
@@ -43,6 +46,7 @@ const { fileURLToPath } = require('url');
 const os = require('os');
 const path = require('path');
 const cfg = require('./config-file');
+const launcher = require('./launcher');
 const { whichSync } = require('../broker/markers');
 
 const id = 'gemini';
@@ -209,6 +213,24 @@ function stripOurs(groups) {
   return kept;
 }
 
+/**
+ * The hook command. Gemini CLI fails open when a hook cannot start (only exit code 2 blocks), so a user install
+ * goes through zn's launcher (lib/agents/launcher.js): a Node.js that has gone away blocks the tool (exit 2)
+ * instead of letting it run. A project install or a command given by the caller keeps the plain command.
+ */
+function commandFor(opts = {}) {
+  const platform = opts.platform || process.platform;
+  const scope = opts.scope || 'user';
+  if (opts.command || scope === 'project') return cfg.hookCommand(id, opts);
+  const node = opts.nodePath || process.execPath;
+  const runner = opts.runnerPath || cfg.runnerPath();
+  if (platform === 'win32') {
+    const script = launcher.windowsScript(id, 'BeforeTool', node, runner);
+    return script ? launcher.windowsScriptCommand(script) : cfg.hookCommandWindows(id, opts);
+  }
+  return launcher.launcherCommand(launcher.writeLauncher(id, node, runner, opts), 'BeforeTool', platform);
+}
+
 function install(opts = {}) {
   const scope = opts.scope || 'user';
   const file = settingsFile(opts);
@@ -219,16 +241,14 @@ function install(opts = {}) {
   }
   const report = { settings: file, backup: cfg.backup(file), warnings: [] };
   if (report.backup && scope === 'project') report.warnings.push('The backup ' + report.backup + ' sits inside the project: do not commit it.');
-  const command = !opts.command && (opts.platform || process.platform) === 'win32' && scope !== 'project'
-    ? cfg.hookCommandWindows(id, opts)
-    : cfg.hookCommand(id, opts);
+  const command = commandFor(opts);
   const groups = stripOurs(hooks.BeforeTool || []);
   groups.push({ matcher: MATCHER, hooks: [{ name: HOOK_NAME, type: 'command', command, timeout: HOOK_TIMEOUT_MS }] });
   hooks.BeforeTool = groups;
   data.hooks = hooks;
   cfg.writeJson(file, data);
   report.warnings.push('Gemini CLI support is experimental. zn checks tool calls before they run (BeforeTool): it blocks reads and writes of secret files and shell commands that handle secrets.');
-  report.warnings.push('Gemini CLI treats a hook that crashes, times out or cannot start as a warning and runs the tool anyway (only exit code 2 blocks). If zn cannot start, calls are not checked: run `zn-gate check` to see that the hook works.');
+  report.warnings.push('Gemini CLI treats a hook that crashes or times out as a warning and runs the tool anyway (only exit code 2 blocks). If the Node.js zn was installed with goes away, zn\'s launcher script blocks the tool instead; run `zn-gate check` to see that the hook works.');
   report.warnings.push('Gemini CLI hooks cannot ask the user and zn does not use AfterTool, so what a tool returns is not hidden: a value printed by a command or a file the agent may read reaches the model. Keep secrets in the vault.');
   if (scope === 'project') {
     report.warnings.push('Gemini CLI treats a project hook as untrusted until the user approves it, and runs `zn` from your PATH (zn hook gemini): every teammate who opens this project needs zn-gate installed.');
@@ -253,6 +273,10 @@ function uninstall(opts = {}) {
   report.backup = cfg.backup(file);
   report.removed = 1;
   cfg.writeJson(file, data);
+  // The launcher of a user install (see commandFor) is no longer referenced.
+  if ((opts.scope || 'user') !== 'project') {
+    try { fs.unlinkSync(launcher.launcherFile(id, opts)); } catch (_) { /* none */ }
+  }
   return report;
 }
 

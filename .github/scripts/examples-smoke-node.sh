@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke test for the Node examples (examples/node-basic, examples/custom-rules, examples/openai-agents-js, examples/langchain-js, examples/mastra-agent).
+# Smoke test for the Node examples (examples/node-basic, examples/custom-rules, examples/openai-agents-js, examples/langchain-js, examples/vercel-ai-sdk, examples/mastra-agent).
 #
 # Packs packages/zn-gate with `npm pack`, installs the tarball into a copy of each example, and runs the
 # example with no network (an empty network namespace) and no API keys. Each example must print the text
@@ -23,6 +23,8 @@ EXAMPLES=(
   "openai-agents-js|index.mjs|[REDACTED_AWS_KEY]|Cannot find module"
   "openai-agents-js|index.mjs|blocked the call to 'read_file'|Cannot find module"
   "langchain-js|index.js|zn-gate demo OK|zn-gate demo FAILED"
+  "vercel-ai-sdk|index.mjs|[REDACTED_AWS_KEY]|Cannot find module"
+  "vercel-ai-sdk|index.mjs|blocked the call to 'read_file'|Cannot find module"
   "mastra-agent|index.mjs|blocked the call to 'read_file'|Cannot find module"
 )
 
@@ -31,7 +33,7 @@ echo "Packing packages/zn-gate"
 TARBALL="$(ls "$WORK"/zn-gate-*.tgz)"
 
 declare -A OUT
-for name in node-basic custom-rules openai-agents-js langchain-js mastra-agent; do
+for name in node-basic custom-rules openai-agents-js langchain-js vercel-ai-sdk mastra-agent; do
   entry="$(printf '%s\n' "${EXAMPLES[@]}" | awk -F'|' -v n="$name" '$1==n {print $2; exit}')"
   dir="$WORK/$name"
   mkdir "$dir"

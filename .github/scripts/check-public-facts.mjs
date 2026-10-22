@@ -7,6 +7,11 @@
 //   node .github/scripts/check-public-facts.mjs [repo root]
 //
 // A release changes the version in public-facts.json in the same pull request as the manifests.
+//
+// While version.value is a pre-release (1.14.0-rc.1): the Python files ("python": true) carry the PyPI
+// form (1.14.0rc1), and the pins in the docs and the {minor} of the text facts follow docsVersion, the
+// last final release, because the docs keep telling people to install that one. The examples pin what
+// is already published (examplesVersion): they move only after a release is on npm and PyPI.
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
@@ -23,6 +28,17 @@ export const PIN_PATTERNS = [
   /exactly version (\d+\.\d+\.\d+)/g,
   /`v(\d+\.\d+\.\d+)` tag/g,
 ];
+
+/** A version in the form PyPI uses: 1.14.0-rc.1 -> 1.14.0rc1 (alpha -> a, beta -> b). Finals are unchanged. */
+export function pyVersion(v) {
+  const m = /^(\d+\.\d+\.\d+)-(alpha|beta|rc)\.(\d+)$/.exec(String(v));
+  return m ? m[1] + { alpha: 'a', beta: 'b', rc: 'rc' }[m[2]] + m[3] : v;
+}
+
+/** True for a pre-release such as 1.14.0-rc.1. */
+export function isPrerelease(v) {
+  return /^\d+\.\d+\.\d+-/.test(String(v));
+}
 
 /** Value at a dotted path ("packages.0.version") of a parsed JSON document. */
 export function getPath(obj, path) {
@@ -64,17 +80,44 @@ export function check(facts, files, read, options = {}) {
     }
   };
 
+  // The version a file entry states (null when its file is missing, already reported).
+  const stated = (v) => {
+    if (v.json) return getPath(json(v.file), v.json);
+    const s = text(v.file);
+    if (s === null) return null;
+    const m = s.match(new RegExp(v.regex, 'm'));
+    return m ? m[1] : undefined;
+  };
+
   const version = facts.version.value;
   for (const v of facts.version.files) {
-    let got;
-    if (v.json) got = getPath(json(v.file), v.json);
-    else {
-      const s = text(v.file);
-      if (s === null) continue;
-      const m = s.match(new RegExp(v.regex, 'm'));
-      got = m ? m[1] : undefined;
+    const got = stated(v);
+    if (got === null) continue;
+    const want = v.python ? pyVersion(version) : version;
+    if (got !== want) errors.push(`${v.file}${v.json ? ` (${v.json})` : ''}: version ${got ?? 'not found'}, public-facts.json says ${want}`);
+  }
+
+  // The examples pin a published release, checked against examplesVersion (requirements in the PyPI form).
+  const examples = facts.examplesVersion;
+  if (examples) {
+    for (const v of examples.files || []) {
+      const got = stated(v);
+      if (got === null) continue;
+      const want = v.python ? pyVersion(examples.value) : examples.value;
+      if (got !== want) errors.push(`${v.file}${v.json ? ` (${v.json})` : ''}: version ${got ?? 'not found'}, public-facts.json examplesVersion says ${want}`);
     }
-    if (got !== version) errors.push(`${v.file}${v.json ? ` (${v.json})` : ''}: version ${got ?? 'not found'}, public-facts.json says ${version}`);
+  }
+
+  // The docs follow the release, or the last final one while the release is a pre-release.
+  let docs = version;
+  let docsLabel = '';
+  if (isPrerelease(version)) {
+    if (facts.docsVersion && facts.docsVersion.value) {
+      docs = facts.docsVersion.value;
+      docsLabel = ' docsVersion';
+    } else {
+      errors.push(`public-facts.json: version ${version} is a pre-release, so docsVersion (the last final release, which the docs pin) is required`);
+    }
   }
 
   const allowed = new Set((facts.version.allowPins || []).map((a) => `${a.file}\0${a.pin}`));
@@ -83,9 +126,9 @@ export function check(facts, files, read, options = {}) {
     if (s === null) continue;
     for (const re of PIN_PATTERNS) {
       for (const m of s.matchAll(re)) {
-        if (m[1] === version || allowed.has(`${f}\0${m[0]}`)) continue;
+        if (m[1] === docs || allowed.has(`${f}\0${m[0]}`)) continue;
         const line = s.slice(0, m.index).split('\n').length;
-        errors.push(`${f}:${line}: pins ${m[0]}, public-facts.json says ${version}`);
+        errors.push(`${f}:${line}: pins ${m[0]}, public-facts.json${docsLabel} says ${docs}`);
       }
     }
   }
@@ -125,8 +168,9 @@ export function check(facts, files, read, options = {}) {
     }
   }
 
-  // {minor} in a text fact is the release line of version.value (1.10.0 -> 1.10), so SECURITY.md follows each release.
-  const minor = version.split('.').slice(0, 2).join('.');
+  // {minor} in a text fact is the release line of the docs version (1.10.0 -> 1.10), so SECURITY.md follows each
+  // final release and keeps the current line during a pre-release.
+  const minor = docs.split('.').slice(0, 2).join('.');
   const expand = (p) => p.replaceAll('{minor}', minor);
   // Runs of spaces and tabs compare as one space, so re-padding a Markdown table does not break a fact.
   const ws = (x) => x.replace(/[ \t]+/g, ' ');
@@ -170,7 +214,12 @@ function main() {
     console.log(`\n${errors.length} difference(s) with .github/public-facts.json. Update the file or the fact, in the same pull request.`);
     process.exit(1);
   }
-  console.log(`public facts OK: version ${facts.version.value}${facts.pluginVersion ? `, plugin ${facts.pluginVersion.value}` : ''}, ${(facts.text || []).length + (facts.fields || []).length} other facts`);
+  const extra = [
+    facts.pluginVersion ? `plugin ${facts.pluginVersion.value}` : '',
+    facts.examplesVersion ? `examples ${facts.examplesVersion.value}` : '',
+    isPrerelease(facts.version.value) && facts.docsVersion ? `docs ${facts.docsVersion.value}` : '',
+  ].filter(Boolean).map((x) => `, ${x}`).join('');
+  console.log(`public facts OK: version ${facts.version.value}${extra}, ${(facts.text || []).length + (facts.fields || []).length} other facts`);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
