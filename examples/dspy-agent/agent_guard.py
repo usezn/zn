@@ -98,6 +98,9 @@ def build_agent():
 
 
 def main() -> None:
+    # DSPy keeps model answers in an on-disk cache stored with pickle, which runs code from anyone
+    # who can write to that folder. Keep the cache in memory only.
+    dspy.configure_cache(enable_disk_cache=False)
     agent = build_agent()
     with dspy.context(lm=DummyLM(scripted_steps())):
         result = agent(question="What is the weather in Paris, and what region is the deploy set to?")

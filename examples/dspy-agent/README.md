@@ -48,6 +48,6 @@ read_file({'path': '~/.ssh/id_rsa'})
 
 `build_agent()` gives `dspy.ReAct` two tools: `safe_fetch_page` and `safe_read_file`. Each one is the plain function wrapped by `with_zn_gate` in `agent_guard.py`. That wrapper uses zn-gate's `guard` decorator with `check_args`, `check_result` and `mask_secrets` turned on. When a call or result is blocked, the wrapper returns the notice as the tool's result, so the agent can carry on and tell the person what happened. If you prefer an exception, use `guard` with `on_block="raise"` and catch `GuardBlockError` where you need it.
 
-To use a real model, replace the `DummyLM` in `main()` with the language model you use in DSPy (see the DSPy documentation for `dspy.LM`). Keep the tools as they are.
+To use a real model, replace the `DummyLM` in `main()` with the language model you use in DSPy (see the DSPy documentation for `dspy.LM`). Keep the tools as they are. `main()` also turns off DSPy's on-disk cache (`dspy.configure_cache(enable_disk_cache=False)`): that cache is stored with Python pickle, so anyone who can write to its folder could run code in your agent. Keep it off, or point `disk_cache_dir` at a folder only you can write to.
 
 zn-gate's rules are one layer of defense, not a guarantee. They catch known patterns.
