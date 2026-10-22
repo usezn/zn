@@ -1,0 +1,2 @@
+### Security
+- The question before an agent writes to its memory and instruction files now also covers `sponge`, `awk -i inplace` (gawk), `ln` onto such a file, and a path held in a variable the same command sets (`F=CLAUDE.md; echo x | tee -a "$F"`), in addition to the redirects, `tee`, `cp`, `mv`, `install` and `dd of=` forms checked before. A loop variable or a value built by another command is not followed; see `docs/compat.md`.

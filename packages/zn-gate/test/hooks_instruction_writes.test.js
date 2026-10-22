@@ -195,3 +195,48 @@ test('curl and wget write the file named by their output option', async (t) => {
     assert.equal((await decide(env, 'Bash', { command })).decision, 'allow', command);
   }
 });
+
+test('sponge, awk -i inplace, dd of=, install and ln -sf onto an instruction file ask like a redirect', async (t) => {
+  const env = setup(t);
+  for (const command of ['grep -v old CLAUDE.md | sponge CLAUDE.md', 'echo x | sponge -a AGENTS.md', 'sed s/a/b/ CLAUDE.md | sudo sponge CLAUDE.md',
+    "awk -i inplace '{print}' CLAUDE.md", "gawk -i inplace '/x/' AGENTS.md", "awk -iinplace '1' CLAUDE.md", "awk --include inplace '1' AGENTS.md",
+    "awk --include=inplace '1' CLAUDE.md", `awk '@include "inplace"; 1' CLAUDE.md`, "sudo awk -i inplace.awk '1' .cursorrules",
+    'dd of=CLAUDE.md', 'echo x | dd of=AGENTS.md conv=notrunc', 'dd if=notes.md of=./CLAUDE.md bs=1M', 'dd of="GEMINI.md"',
+    'install -m 644 draft.md CLAUDE.md', 'install -m 0644 -o root draft.md AGENTS.md', 'sudo install -m 600 draft.md .cursorrules',
+    'ln -sf draft.md CLAUDE.md', 'ln -sf /tmp/example/draft.md AGENTS.md', 'ln -s draft.md .cursor/rules/x.mdc', 'ln -sf ../CLAUDE.md .']) {
+    assert.equal((await decide(env, 'Bash', { command })).decision, 'ask', command);
+  }
+});
+
+test('lookalikes of those forms are allowed', async (t) => {
+  const env = setup(t);
+  for (const command of ['grep -v old notes.txt | sponge /tmp/example/out.txt', 'sponge /tmp/example/out.txt', 'grep a CLAUDE.md | sponge out.txt',
+    "awk '{print}' CLAUDE.md", "awk -F, '{print $1}' AGENTS.md", "awk -i inplace '1' notes.txt", "awk -v inplace=1 '1' CLAUDE.md",
+    "gawk -f prog.awk CLAUDE.md", 'cat CLAUDE.md | awk 1',
+    'dd of=/dev/null', 'dd if=CLAUDE.md of=/dev/null', 'dd if=CLAUDE.md of=backup.bin', 'dd if=/dev/zero of=out.img bs=1M count=1',
+    'install -m 644 CLAUDE.md /tmp/example/CLAUDE.copy', 'install -m 644 draft.md notes.txt',
+    'ln -sf draft.md notes.txt', 'ln -sf CLAUDE.md notes.txt', 'ln -s AGENTS.md AGENTS.link', 'ln -sf /tmp/example/a /tmp/example/b']) {
+    assert.equal((await decide(env, 'Bash', { command })).decision, 'allow', command);
+  }
+});
+
+test('tee and redirects through a variable set in the same command', async (t) => {
+  const env = setup(t);
+  for (const command of ['F=CLAUDE.md; echo x | tee -a "$F"', 'F=AGENTS.md && echo x | tee -a ${F}', 'F="CLAUDE.md"; echo x >> "$F"',
+    'export F=CLAUDE.md; echo x | tee -a $F', 'F=sub/AGENTS.md; D=.; echo x | tee "$F"', 'D=sub; F=$D/AGENTS.md; echo x | tee -a "$F"',
+    'F=notes.txt; F=CLAUDE.md; echo x | tee -a "$F"', 'F=CLAUDE.md; echo x | sponge "$F"', 'F=CLAUDE.md; dd of="$F"', 'F=CLAUDE.md; cp draft.md "$F"',
+    'F=CLAUDE.md; awk -i inplace 1 "$F"', 'F=CLAUDE.md; ln -sf draft.md "$F"', 'F=CLAUDE.md' + String.fromCharCode(10) + 'echo x | tee -a "$F"']) {
+    assert.equal((await decide(env, 'Bash', { command })).decision, 'ask', command);
+  }
+  for (const command of ['F=notes.txt; echo x | tee -a "$F"', 'F=CLAUDE.md; echo "$F" | tee out.txt', 'F=CLAUDE.md; cat "$F" | tee -a notes.txt',
+    'F=CLAUDE.md; grep x "$F"', 'echo x | tee -a "$UNSET"', 'F=notes.txt; G=CLAUDE.md; echo x | tee -a "$F"']) {
+    assert.equal((await decide(env, 'Bash', { command })).decision, 'allow', command);
+  }
+});
+
+test('the new forms are refused in strict mode', async (t) => {
+  const env = setup(t, { hooks: { strict: true } });
+  for (const command of ['echo x | sponge CLAUDE.md', "awk -i inplace 1 AGENTS.md", 'dd of=CLAUDE.md', 'F=CLAUDE.md; tee -a "$F"']) {
+    assert.equal((await decide(env, 'Bash', { command })).decision, 'deny', command);
+  }
+});

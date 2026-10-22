@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-23.5';
+const POLICY_RULES_VERSION = '2026-10-24.4';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -742,8 +742,8 @@ function instructionWriteNotice(p, opts = {}) {
 }
 
 // Programs that write the files they are given. cp, mv and the like write only their last argument; sed and perl
-// only with an in-place flag; the others any file argument. A redirect target counts for every command.
-const INSTRUCTION_WRITERS = new Set(['tee', 'cp', 'mv', 'install', 'rsync', 'ln', 'dd', 'truncate', 'touch', 'sed', 'perl', 'ex', 'ed', 'patch',
+// only with an in-place flag (awk and gawk likewise, with `-i inplace`); the others any file argument. A redirect target counts for every command.
+const INSTRUCTION_WRITERS = new Set(['tee', 'sponge', 'cp', 'mv', 'install', 'rsync', 'ln', 'dd', 'truncate', 'touch', 'sed', 'perl', 'ex', 'ed', 'patch',
   'set-content', 'add-content', 'out-file', 'sc', 'ac', 'ni', 'new-item', 'copy-item', 'move-item', 'copy', 'move', 'ren', 'rename-item']);
 const INSTRUCTION_DEST_LAST = new Set(['cp', 'mv', 'install', 'rsync', 'ln', 'copy', 'move', 'copy-item', 'move-item', 'ren', 'rename-item']);
 const IN_PLACE_RE = /^(?:-[A-Za-z]*i|--in-place)/;
@@ -837,10 +837,64 @@ function intoDirectory(dest, sources, forced, opts) {
   return landed;
 }
 
+// A gawk run with the inplace extension rewrites the files it is given: -i inplace, -iinplace, --include inplace,
+// --include=inplace or @include "inplace" in the program. Without it awk only reads its files.
+const AWK_INPLACE_RE = /^inplace(?:\.awk)?$/;
+function awkRewritesInPlace(rest) {
+  for (let i = 0; i < rest.length; i++) {
+    const x = rest[i];
+    if ((x === '-i' || x === '--include') && AWK_INPLACE_RE.test(rest[i + 1] || '')) return true;
+    if (x.startsWith('-i') && AWK_INPLACE_RE.test(x.slice(2))) return true;
+    if (x.startsWith('--include=') && AWK_INPLACE_RE.test(x.slice(10))) return true;
+    if (/@include\s+["']inplace/.test(x)) return true;
+  }
+  return false;
+}
+
+// Variables the command assigns (NAME=value, also after export, declare, local, readonly): `tee -a "$F"` writes
+// to what F holds. Every value a name is given counts (the order of the assignments is not tracked), so a
+// name that is set to an instruction file anywhere in the command is read as one. Not followed: loop variables
+// (`for f in ...`), values built by another command ($(...)), and variables set outside the command.
+const ASSIGN_RE = /^([A-Za-z_][A-Za-z0-9_]*)\+?=(.*)$/;
+const VAR_REF_RE = /\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/g;
+const VARS_MAX = 32;
+const VAR_VALUES_MAX = 8;
+const VAR_VARIANTS_MAX = 16;
+
+function assignmentsIn(reading) {
+  const vars = new Map();
+  for (const w of reading) {
+    if (w.redirectTarget) continue;
+    const m = ASSIGN_RE.exec(w.text);
+    if (!m || (!vars.has(m[1]) && vars.size >= VARS_MAX)) continue;
+    const values = vars.get(m[1]) || [];
+    if (values.length < VAR_VALUES_MAX && !values.includes(m[2])) values.push(m[2]);
+    vars.set(m[1], values);
+  }
+  return vars;
+}
+
+/** `text` with its $NAME / ${NAME} references replaced by the values assigned in the command; [text] when none is known. */
+function expandAssigned(text, vars, depth = 0) {
+  if (vars.size === 0 || depth > 3 || !text.includes('$')) return [text];
+  for (const m of text.matchAll(VAR_REF_RE)) {
+    const values = vars.get(m[1] || m[2]);
+    if (!values) continue;
+    const out = [];
+    for (const v of values) {
+      const next = text.slice(0, m.index) + v + text.slice(m.index + m[0].length);
+      for (const e of expandAssigned(next, vars, depth + 1)) if (!out.includes(e) && out.length < VAR_VARIANTS_MAX) out.push(e);
+    }
+    return out;
+  }
+  return [text];
+}
+
 /** The first notice for a word of a shell command that writes an instruction file; null when none does. */
 function instructionWriteInWords(readings, opts) {
   const seen = new Set();
   for (const reading of readings) {
+    const vars = assignmentsIn(reading);
     const segments = new Map();
     for (const w of reading) {
       if (!segments.has(w.seq)) segments.set(w.seq, []);
@@ -853,6 +907,9 @@ function instructionWriteInWords(readings, opts) {
       for (const w of seg) if (w.redirectTarget) candidates.push(w.text);
       if (at >= 0 && INSTRUCTION_DOWNLOADERS[progs[at]] && Object.prototype.hasOwnProperty.call(INSTRUCTION_DOWNLOADERS, progs[at])) {
         candidates.push(...downloadTargets(progs[at], seg.slice(at + 1).map((x) => x.text)));
+      } else if (at >= 0 && (progs[at] === 'awk' || progs[at] === 'gawk')) {
+        const rest = seg.slice(at + 1).map((x) => x.text);
+        if (awkRewritesInPlace(rest)) candidates.push(...rest.filter((x) => x && !x.startsWith('-')));
       } else if (at >= 0 && INSTRUCTION_WRITERS.has(progs[at])) {
         const name = progs[at];
         const rest = seg.slice(at + 1).map((x) => x.text);
@@ -876,12 +933,14 @@ function instructionWriteInWords(readings, opts) {
           candidates.push(...args);
         }
       }
-      for (const text of candidates) {
-        if (!text || seen.has(text)) continue;
-        seen.add(text);
-        if (seen.size > INSTRUCTION_CHECKS_MAX || overBudget(opts.budget, 1)) return null;
-        const n = instructionWriteNotice(text, opts);
-        if (n) return n;
+      for (const typed of candidates) {
+        for (const text of expandAssigned(typed || '', vars)) {
+          if (!text || seen.has(text)) continue;
+          seen.add(text);
+          if (seen.size > INSTRUCTION_CHECKS_MAX || overBudget(opts.budget, 1)) return null;
+          const n = instructionWriteNotice(text, opts);
+          if (n) return n;
+        }
       }
     }
   }
