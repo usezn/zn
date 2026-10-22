@@ -132,7 +132,8 @@
       {
         "file": "examples/mastra-agent/package.json",
         "json": "dependencies.zn-gate"
-      }
+      },
+      { "file": "examples/vercel-ai-sdk/package.json", "json": "dependencies.zn-gate" }
     ]
   },
   "text": [
