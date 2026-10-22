@@ -174,13 +174,16 @@ jobs:
         if: steps.scope.outputs.run == 'true'
         # Test tools pinned with hashes; the package itself has no dependencies.
         run: |
+          python -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
           python -m pip install --require-hashes -r .github/ci-test-requirements.txt
           python -m pip install --no-deps --no-build-isolation -e packages/zn-gate-py
       - name: Install LangChain and LlamaIndex for the integration tests
         # One entry is enough: the tests that drive the integrations through the real frameworks run here
         # and skip on the other entries.
         if: steps.scope.outputs.run == 'true' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
-        run: python -m pip install --require-hashes -r .github/ci-framework-test-requirements.txt
+        run: |
+          python -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
+          python -m pip install --require-hashes -r .github/ci-framework-test-requirements.txt
       - name: Run pytest (unit + integration)
         if: steps.scope.outputs.run == 'true'
         working-directory: packages/zn-gate-py
@@ -196,6 +199,7 @@ jobs:
           ZN_REQUIRE_FRAMEWORKS: "1"
         run: |
           python -m venv "$RUNNER_TEMP/venv-oldest-langchain"
+          "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
           "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -m pip install --require-hashes -r .github/ci-test-requirements.txt
           "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -m pip install --require-hashes -r .github/ci-framework-test-requirements-oldest.txt
           "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -m pip install --no-deps --no-build-isolation -e packages/zn-gate-py
@@ -230,6 +234,7 @@ jobs:
           python-version: "3.12"
       - name: Install package and test dependencies
         run: |
+          python -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
           python -m pip install --require-hashes -r .github/ci-test-requirements.txt
           python -m pip install --no-deps --no-build-isolation -e packages/zn-gate-py
       - name: Run pytest (unit + integration) with a coverage report
@@ -302,7 +307,9 @@ jobs:
         id: python-tools
         if: ${{ !cancelled() && steps.python.outcome == 'success' }}
         # Pinned with hashes in the same file as the test tools.
-        run: python -m pip install --require-hashes -r .github/ci-test-requirements.txt
+        run: |
+          python -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
+          python -m pip install --require-hashes -r .github/ci-test-requirements.txt
       - name: Run ruff
         if: ${{ !cancelled() && steps.python-tools.outcome == 'success' }}
         working-directory: packages/zn-gate-py
@@ -437,7 +444,9 @@ jobs:
       - name: Install build tools
         if: steps.scope.outputs.run == 'true'
         # The hash-pinned tools the release workflow uses.
-        run: python -m pip install --require-hashes -r .github/release-requirements.txt
+        run: |
+          python -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
+          python -m pip install --require-hashes -r .github/release-requirements.txt
       - name: Build sdist and wheel, twice, and require the same bytes
         if: steps.scope.outputs.run == 'true'
         # setuptools stamps the files it generates with the build time; normalize-sdist.py keeps every
@@ -470,6 +479,7 @@ jobs:
         if: steps.scope.outputs.run == 'true'
         run: |
           python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/python" -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
           "$RUNNER_TEMP/venv/bin/python" -m pip install "$RUNNER_TEMP"/dist/*.whl
       - name: Smoke test the installed CLI
         if: steps.scope.outputs.run == 'true'

@@ -132,6 +132,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m venv "$RUNNER_TEMP/build-venv"
+          "$RUNNER_TEMP/build-venv/bin/python" -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .release-tools/.github/pip-bootstrap-requirements.txt
           "$RUNNER_TEMP/build-venv/bin/python" -m pip install --disable-pip-version-check --no-cache-dir \
             --require-hashes -r .release-tools/.github/release-requirements.txt
       - name: Build the sdist and wheel
@@ -181,6 +182,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m venv "$RUNNER_TEMP/sbom-venv"
+          "$RUNNER_TEMP/sbom-venv/bin/python" -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .release-tools/.github/pip-bootstrap-requirements.txt
           "$RUNNER_TEMP/sbom-venv/bin/python" -m pip install --disable-pip-version-check --no-cache-dir \
             --require-hashes -r .release-tools/.github/sbom-requirements.txt
           # The npm tool comes from a committed lockfile with integrity hashes, and runs no install scripts.
