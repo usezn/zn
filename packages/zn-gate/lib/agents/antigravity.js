@@ -224,6 +224,7 @@ function commandFor(opts = {}) {
 
 function install(opts = {}) {
   const file = hooksFile(opts);
+  cfg.assertInsideProject(file, opts);
   const data = cfg.readJson(file);
   const report = { settings: file, backup: cfg.backup(file), warnings: [] };
   if (report.backup && (opts.scope || 'user') === 'project') report.warnings.push('The backup ' + report.backup + ' sits inside the project: do not commit it.');
@@ -247,6 +248,7 @@ function install(opts = {}) {
 
 function uninstall(opts = {}) {
   const file = hooksFile(opts);
+  cfg.assertInsideProject(file, opts);
   const report = { settings: file, backup: null, removed: 0, warnings: [] };
   if (!fs.existsSync(file)) return report;
   const data = cfg.readJson(file);

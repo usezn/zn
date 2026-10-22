@@ -6,6 +6,7 @@
  * by secrets_render_file (values only in ignored paths or outside a repo).
  */
 
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
@@ -68,11 +69,21 @@ function realTargetOf(file) {
   }
 }
 
-/** Write a file atomically with mode 0600 (best effort on Windows). */
+/**
+ * Write a file atomically with mode 0600 (best effort on Windows).
+ * The temporary file has a random name and is created exclusively ('wx'), so a
+ * file or symlink planted at that name makes the write fail instead of being
+ * followed. The temporary file is removed if anything fails.
+ */
 function writeFileAtomic(file, data, mode = 0o600) {
-  const tmp = path.join(path.dirname(file), '.' + path.basename(file) + '.' + process.pid + '.zn-tmp');
-  fs.writeFileSync(tmp, data, { mode });
-  fs.renameSync(tmp, file);
+  const tmp = path.join(path.dirname(file), '.' + path.basename(file) + '.' + crypto.randomBytes(8).toString('hex') + '.zn-tmp');
+  try {
+    fs.writeFileSync(tmp, data, { mode, flag: 'wx' });
+    fs.renameSync(tmp, file);
+  } catch (err) {
+    try { fs.unlinkSync(tmp); } catch (_) { /* never created, or already moved */ }
+    throw err;
+  }
 }
 
 module.exports = { gitStatusOf, realTargetOf, writeFileAtomic };

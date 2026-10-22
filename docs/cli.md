@@ -425,7 +425,7 @@ Adds or removes the zn hooks of a coding agent (to remove zn-gate completely, us
 
 #### `hooks install`
 
-Adds the hooks, and the `secrets` MCP server unless `--no-mcp` is given. A backup of the settings is written first. With `--project`, the shared files run `zn` from the PATH rather than a path on your machine, so everyone who uses the project needs zn-gate installed globally; the install prints a note when `zn` is not on your PATH.
+Adds the hooks, and the `secrets` MCP server unless `--no-mcp` is given. A backup of the settings is written first. With `--project`, the shared files run `zn` from the PATH rather than a path on your machine, so everyone who uses the project needs zn-gate installed globally; the install prints a note when `zn` is not on your PATH. With `--project`, zn refuses to write when a settings file is a symbolic link, or when it or its folder resolves outside the project, and exits with an error without changing anything.
 
 #### `hooks uninstall`
 

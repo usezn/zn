@@ -233,6 +233,7 @@ function stripOurs(data) {
 
 function install(opts = {}) {
   const file = hooksFile(opts);
+  cfg.assertInsideProject(file, opts);
   const project = (opts.scope || 'user') === 'project';
   const data = cfg.readJson(file);
   if (data.version !== undefined && data.version !== 1) throw new Error(file + ' has "version": ' + JSON.stringify(data.version) + ', not 1 (left unchanged)');
@@ -268,6 +269,7 @@ function install(opts = {}) {
 
 function uninstall(opts = {}) {
   const file = hooksFile(opts);
+  cfg.assertInsideProject(file, opts);
   const report = { settings: file, backup: null, removed: 0, warnings: [] };
   if (!fs.existsSync(file)) return report;
   const data = cfg.readJson(file);

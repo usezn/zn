@@ -275,6 +275,7 @@ function pluginPath(opts = {}) {
 
 function install(opts = {}) {
   const file = pluginPath(opts);
+  cfg.assertInsideProject(file, opts);
   const report = { settings: file, backup: null, warnings: [] };
   if (fs.existsSync(file) && !fs.readFileSync(file, 'utf8').startsWith(PLUGIN_MARK)) {
     throw new Error(file + ' exists and was not written by zn; left unchanged');
@@ -292,6 +293,7 @@ function install(opts = {}) {
 function uninstall(opts = {}) {
   const file = pluginPath(opts);
   const report = { settings: file, backup: null, removed: 0, warnings: [] };
+  cfg.assertInsideProject(file, opts);
   if (fs.existsSync(file) && fs.readFileSync(file, 'utf8').startsWith(PLUGIN_MARK)) {
     fs.unlinkSync(file);
     report.removed = 1;

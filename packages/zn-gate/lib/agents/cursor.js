@@ -204,6 +204,7 @@ function commandFor(opts = {}) {
 
 function install(opts = {}) {
   const file = hooksFile(opts);
+  cfg.assertInsideProject(file, opts);
   const data = cfg.readJson(file);
   const report = { settings: file, backup: cfg.backup(file), warnings: [] };
   data.version = data.version || 1;
@@ -228,6 +229,7 @@ function install(opts = {}) {
 
 function uninstall(opts = {}) {
   const file = hooksFile(opts);
+  cfg.assertInsideProject(file, opts);
   const report = { settings: file, backup: null, removed: 0, warnings: [] };
   if (!fs.existsSync(file)) return report;
   const data = cfg.readJson(file);

@@ -54,6 +54,48 @@ function realFile(file) {
   try { return fs.realpathSync(file); } catch (_) { return file; }
 }
 
+/**
+ * A project install writes into a folder a repository controls. Refuse a config
+ * file that is a symlink (dangling or not), and a file or folder whose real
+ * location is outside the project, so a repository cannot make zn write
+ * anywhere else. User scope is left as it is (dotfiles managers use symlinks).
+ */
+function assertInsideProject(file, opts = {}) {
+  if ((opts.scope || 'user') !== 'project') return;
+  const projectDir = path.resolve(opts.projectDir || process.cwd());
+  const refuse = (why) => new Error('Refusing to write ' + file + ': ' + why + '. Nothing was changed.');
+  let root;
+  try { root = fs.realpathSync(projectDir); } catch (_) { throw refuse('the project folder cannot be resolved'); }
+  const inside = (p) => {
+    const rel = path.relative(root, p);
+    return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+  };
+  try {
+    if (fs.lstatSync(file).isSymbolicLink()) throw refuse('it is a symbolic link');
+  } catch (err) {
+    if (err.code !== 'ENOENT') { if (/^Refusing/.test(err.message)) throw err; throw refuse('it cannot be inspected (' + err.code + ')'); }
+  }
+  // The nearest existing folder above the file (a missing one is created later, inside it).
+  let cur = path.dirname(file);
+  for (;;) {
+    let exists = true;
+    try { fs.lstatSync(cur); } catch (err) { if (err.code === 'ENOENT') exists = false; else throw refuse('its folder cannot be inspected (' + err.code + ')'); }
+    if (exists) break;
+    const parent = path.dirname(cur);
+    if (parent === cur) break;
+    cur = parent;
+  }
+  let real;
+  try { real = fs.realpathSync(cur); } catch (_) { throw refuse('its folder is a broken symbolic link'); }
+  if (!inside(real)) throw refuse('its folder resolves outside the project');
+  try {
+    if (!inside(fs.realpathSync(file))) throw refuse('it resolves outside the project');
+  } catch (err) {
+    if (/^Refusing/.test(err.message)) throw err;
+    /* missing file: nothing to resolve */
+  }
+}
+
 function writeJson(file, data) {
   const target = realFile(file);
   fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -109,4 +151,4 @@ function isOurs(command, agentId) {
   return script !== null && re.test(script);
 }
 
-module.exports = { readJson, hooksOf, backup, writeJson, quoteArg, runnerPath, hookCommand, hookCommandWindows, isOurs };
+module.exports = { assertInsideProject, readJson, hooksOf, backup, writeJson, quoteArg, runnerPath, hookCommand, hookCommandWindows, isOurs };
