@@ -8,7 +8,8 @@ const os = require('os');
  * Config formats (verified against each agent's official docs, 2026-10-11):
  *
  *  - 'mcpServers-json' : JSON object { mcpServers: { name: { command, args } } }
- *                        (Claude Desktop, Claude Code, Cursor, Antigravity, Hermes)
+ *                        (Claude Desktop, Claude Code, Cursor, Antigravity, Gemini CLI in ~/.gemini/settings.json,
+ *                        Copilot CLI in ~/.copilot/mcp-config.json, Hermes)
  *  - 'opencode-json'   : ~/.config/opencode/opencode.json
  *                        { mcp: { name: { type: "local", command: ["npx", ...] } } }
  *                        https://opencode.ai/docs/mcp-servers/ , https://opencode.ai/docs/config/
@@ -53,6 +54,8 @@ function getKnownEnvironments() {
     { name: 'Antigravity (shared settings)', id: 'antigravity-shared', filePath: path.join(home, '.gemini', 'config', 'mcp_config.json'), key: 'mcpServers', format: 'mcpServers-json' },
     { name: 'Codex', id: 'codex', filePath: path.join(codexHome, 'config.toml'), key: 'mcp_servers', format: 'codex-toml' },
     { name: 'OpenCode', id: 'opencode', filePath: opencodePath, key: 'mcp', format: 'opencode-json' },
+    { name: 'Gemini CLI', id: 'gemini', filePath: path.join(home, '.gemini', 'settings.json'), key: 'mcpServers', format: 'mcpServers-json' },
+    { name: 'Copilot CLI', id: 'copilot', filePath: path.join(process.env.COPILOT_HOME || path.join(home, '.copilot'), 'mcp-config.json'), key: 'mcpServers', format: 'mcpServers-json' },
     { name: 'Hermes / PiAgent', id: 'hermes-piagent', filePath: path.join(home, '.hermes', 'mcp.json'), key: 'mcpServers', format: 'mcpServers-json' },
   ];
 }

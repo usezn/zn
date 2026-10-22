@@ -11,6 +11,23 @@ const path = require('path');
 const { writeFileAtomic } = require('../broker/files');
 const { shQuote, portablePath, windowsCommand, windowsCommandScript } = require('../shell-quote');
 
+/** True when the text holds a // or /* comment outside of a string (JSON with comments). */
+function hasJsonComments(text) {
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      if (c === '\\') i++;
+      else if (c === '"') inString = false;
+    } else if (c === '"') {
+      inString = true;
+    } else if (c === '/' && (text[i + 1] === '/' || text[i + 1] === '*')) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function readJson(file) {
   let text;
   try {
@@ -24,7 +41,10 @@ function readJson(file) {
   try {
     data = JSON.parse(text);
   } catch (err) {
-    throw new Error('cannot parse ' + file + ': ' + err.message + ' (left unchanged)');
+    const next = hasJsonComments(text)
+      ? ' It contains comments, which zn cannot keep when it rewrites the file: remove the comments in ' + file + ', then run the same command again.'
+      : ' Fix the JSON syntax in ' + file + ', then run the same command again.';
+    throw new Error('cannot parse ' + file + ': ' + err.message + ' (left unchanged).' + next);
   }
   if (data === null || typeof data !== 'object' || Array.isArray(data)) {
     throw new Error(file + ' must hold a JSON object, not ' + (data === null ? 'null' : Array.isArray(data) ? 'an array' : typeof data) + ' (left unchanged)');
@@ -109,4 +129,4 @@ function isOurs(command, agentId) {
   return script !== null && re.test(script);
 }
 
-module.exports = { readJson, hooksOf, backup, writeJson, quoteArg, runnerPath, hookCommand, hookCommandWindows, isOurs };
+module.exports = { readJson, hasJsonComments, hooksOf, backup, writeJson, quoteArg, runnerPath, hookCommand, hookCommandWindows, isOurs };

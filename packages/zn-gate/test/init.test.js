@@ -234,3 +234,29 @@ test('zn-gate init - OpenCode JSONC with comments is not rewritten', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+test('zn-gate init - the environments of the dry run include Gemini CLI and Copilot CLI', () => {
+  const envs = getKnownEnvironments();
+  const gem = envs.find(e => e.id === 'gemini');
+  const cop = envs.find(e => e.id === 'copilot');
+  assert.ok(gem, 'Gemini CLI is listed');
+  assert.ok(cop, 'Copilot CLI is listed');
+  assert.equal(gem.filePath, path.join(os.homedir(), '.gemini', 'settings.json'));
+  assert.equal(gem.key, 'mcpServers');
+  assert.equal(cop.key, 'mcpServers');
+});
+
+test('zn-gate init --wrap-mcp --dry-run names Gemini CLI and Copilot CLI', () => {
+  const { spawnSync } = require('child_process');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-init-dry-'));
+  try {
+    const env = { ...process.env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: path.join(home, '.config') };
+    delete env.COPILOT_HOME; delete env.CODEX_HOME;
+    const r = spawnSync(process.execPath, [path.join(__dirname, '..', 'bin', 'cli.js'), 'init', '--dry-run'], { env, encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /Gemini CLI/);
+    assert.match(r.stdout, /Copilot CLI/);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});

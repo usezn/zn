@@ -463,3 +463,41 @@ test('opencode: a project plugin calls zn on PATH; a user plugin names this node
 test('opencode: an unknown event type is not a hook event', () => {
   assert.equal(opencode.normalize({ type: 'nope', args: {} }).event, null);
 });
+
+test('config-file: a settings file with comments says to remove them and run the command again', (t) => {
+  const h = fakeHome(t);
+  const file = path.join(h, 'settings.json');
+  fs.writeFileSync(file, '{\n  // my notes\n  "theme": "dark", "url": "http://example.com"\n}\n');
+  assert.throws(() => cfg.readJson(file), (err) => {
+    assert.match(err.message, /cannot parse .*\(left unchanged\)/);
+    assert.match(err.message, /remove the comments in .*settings\.json, then run the same command again/);
+    return true;
+  });
+  assert.equal(fs.readFileSync(file, 'utf8').includes('// my notes'), true);
+});
+
+test('config-file: "//" inside a string is not a comment, other syntax errors get a next step too', (t) => {
+  const h = fakeHome(t);
+  const file = path.join(h, 'settings.json');
+  fs.writeFileSync(file, '{"url": "http://example.com",}');
+  assert.equal(cfg.hasJsonComments('{"url": "http://example.com", "q": "a\\"//b"}'), false);
+  assert.throws(() => cfg.readJson(file), (err) => {
+    assert.doesNotMatch(err.message, /contains comments/);
+    assert.match(err.message, /Fix the JSON syntax in .*settings\.json, then run the same command again/);
+    return true;
+  });
+});
+
+test('gemini: installing into a settings.json with comments names the file and what to do, and changes nothing', (t) => {
+  const h = fakeHome(t);
+  const file = path.join(h, '.gemini', 'settings.json');
+  const original = '{\n  // keep my notes\n  "theme": "dark"\n}\n';
+  write(file, original);
+  const gemini = require('../lib/agents/gemini');
+  assert.throws(() => gemini.install({ home: h }), (err) => {
+    assert.ok(err.message.includes(file));
+    assert.match(err.message, /remove the comments in .*, then run the same command again/);
+    return true;
+  });
+  assert.equal(text(file), original);
+});
