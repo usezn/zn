@@ -260,7 +260,7 @@ function install(opts = {}) {
     }
   });
   report.backup = res.backup;
-  if (report.backup && project) report.warnings.push('The backup ' + report.backup + ' sits inside the project: do not commit it.');
+  cfg.noteWrite(report, res, project ? 'project' : 'user');
   if (disabledAll) report.warnings.push('"disableAllHooks" was true in this file and was removed: it switched every hook of the file off.');
   report.warnings.push('GitHub Copilot CLI support is experimental. zn checks tool calls before they run (preToolUse): it blocks reads and writes of secret files and shell commands that handle secrets, and it replaces secret values in the results of read-type and shell tools (postToolUse).');
   report.warnings.push('Copilot keeps its own session log (events.jsonl) with the original tool output on this machine: zn replaces secret values in what goes to the model, not in that local log.');
@@ -285,6 +285,8 @@ function uninstall(opts = {}) {
   if (res.changed) {
     report.backup = res.backup;
     report.removed = 1;
+    report.fileRemoved = res.removed;
+    cfg.noteWrite(report, res, opts.scope || 'user');
   }
   return report;
 }

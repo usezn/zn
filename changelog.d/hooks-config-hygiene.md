@@ -1,0 +1,6 @@
+### Fixed
+- `zn hooks uninstall` says "No zn hooks found" when it removed nothing, instead of implying it removed hooks, and `zn-gate uninstall` words that case the same way.
+- `zn hooks uninstall` deletes a settings file (or a `.mcp.json`) that zn created itself once it is empty again, instead of leaving `{}` behind, prints where the backup is and how to put it back, and project installs for Claude Code, Codex and Cursor now warn that the backup sits inside the project and must not be committed.
+- `zn hooks install opencode` writes through a symlinked plugin file inside your home folder (for example one managed by a dotfiles tool) and keeps the file's mode, instead of replacing the link with a regular file and forcing mode 0644.
+- `zn hooks install` refuses to put its launcher script in a `~/.zn/hooks` folder that is a symbolic link or belongs to another user, sets such a folder back to mode 0700 when it is yours and others could write to it, and warns when a hooks settings file can be written by other users.
+- On Windows, writing a hooks settings file, the OpenCode plugin or the launcher script retries for a moment when an antivirus or another program holds the file, and a blocked file is reported as in use by another program instead of as a permissions problem. The docs now say that file privacy on Windows relies on your user profile permissions.

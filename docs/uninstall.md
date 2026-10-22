@@ -47,7 +47,7 @@ Or, inside Claude Code, type `/plugin`, open the **Installed** tab, pick zn-gate
 npx -y zn-gate hooks uninstall claude-code
 ```
 
-Use `codex`, `cursor`, `opencode` or `antigravity` instead of `claude-code` for the others. Add `--project` if you installed the hooks for one project only; run it from that project's folder. A backup of the settings file is written first. For Claude Code it also removes zn's own `secrets` MCP server. Add `--no-mcp` to leave MCP servers alone.
+Use `codex`, `cursor`, `opencode` or `antigravity` instead of `claude-code` for the others. Add `--project` if you installed the hooks for one project only; run it from that project's folder. A backup of the settings file is written first (its path is printed; copy it back over the file to undo). A file that zn created and that is empty afterwards is deleted. For Claude Code it also removes zn's own `secrets` MCP server. Add `--no-mcp` to leave MCP servers alone.
 
 ### MCP servers wrapped by `init --wrap-mcp`
 

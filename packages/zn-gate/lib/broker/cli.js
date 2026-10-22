@@ -485,11 +485,12 @@ async function hooks(args, io) {
   const opts = { scope: flags.project ? 'project' : 'user', projectDir: io.cwd, home: io.home, env: io.env, mcp: !flags['no-mcp'] };
   const report = action === 'install' ? adapter.install(opts) : adapter.uninstall(opts);
   if (action === 'uninstall' && !report.removed) {
-    out(io, 'No zn hooks were installed for ' + adapter.id + ' in ' + report.settings + ', so nothing was removed.');
+    out(io, 'No zn hooks found for ' + adapter.id + ' in ' + report.settings + ', so nothing was removed.');
   } else {
     out(io, (action === 'install' ? 'Installed' : 'Removed') + ' zn hooks for ' + adapter.id + ' in ' + report.settings);
   }
-  if (report.backup) out(io, '  backup: ' + report.backup);
+  if (action === 'uninstall' && report.fileRemoved) out(io, '  ' + report.settings + ' held nothing else, so it was removed too.');
+  if (report.backup) out(io, '  backup: ' + report.backup + (action === 'uninstall' ? ' (copy it back over ' + report.settings + ' to undo this)' : ''));
   if (report.mcp) out(io, '  MCP server "secrets": ' + report.mcp);
   for (const w of report.warnings || []) out(io, '  note: ' + w);
   if (action === 'install' && /_npx[\\/]/.test(__dirname)) {

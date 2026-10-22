@@ -340,6 +340,7 @@ function installMcp(opts, report) {
     }
     report.mcpBackup = res.backup;
     report.mcp = file;
+    cfg.noteWrite(report, res, opts.scope || 'user');
     return;
   }
   const claude = opts.claudeBin !== undefined ? opts.claudeBin : whichSync('claude', process.env.PATH || '');
@@ -381,6 +382,7 @@ function install(opts = {}) {
     }
   }));
   report.backup = res.backup;
+  cfg.noteWrite(report, res, opts.scope || 'user');
   if (opts.mcp !== false) installMcp(opts, report);
   // Organization settings can turn these hooks or the MCP server off with no
   // sign in Claude Code; say it here.
@@ -409,11 +411,13 @@ function uninstall(opts = {}) {
     }
     if (JSON.stringify(hooks) === before) return false;
     if (Object.keys(hooks).length === 0) delete data.hooks;
-    return undefined;
+    return Object.keys(data).length === 0 ? cfg.REMOVE_IF_CREATED : undefined;
   }, { create: false });
   if (res.changed) {
     report.backup = res.backup;
     report.removed = 1;
+    report.fileRemoved = res.removed;
+    cfg.noteWrite(report, res, opts.scope || 'user');
     // The launcher of a user install (see commandFor) is no longer referenced.
     if ((opts.scope || 'user') !== 'project') {
       try { fs.unlinkSync(launcher.launcherFile(id, opts)); } catch (_) { /* none */ }
@@ -423,12 +427,17 @@ function uninstall(opts = {}) {
     if ((opts.scope || 'user') === 'project') {
       const mcpFile = path.join(path.resolve(opts.projectDir || process.cwd()), '.mcp.json');
       if (fs.existsSync(mcpFile)) {
-        cfg.updateJson(mcpFile, (data) => {
+        const mres = cfg.updateJson(mcpFile, (data) => {
           const s = objectField(data, 'mcpServers', mcpFile)[MCP_SERVER_NAME];
           if (!s || !isZnSecretsServer(s)) return false;
           delete data.mcpServers[MCP_SERVER_NAME];
-          return undefined;
+          const keys = Object.keys(data);
+          return keys.length === 0 || (keys.length === 1 && keys[0] === 'mcpServers' && Object.keys(data.mcpServers).length === 0) ? cfg.REMOVE_IF_CREATED : undefined;
         }, { create: false });
+        if (mres.changed) {
+          report.mcpBackup = mres.backup;
+          cfg.noteWrite(report, mres, 'project');
+        }
       }
     } else {
       // Only zn's own server: a user MCP server that happens to be called "secrets" is left alone.

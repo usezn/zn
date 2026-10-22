@@ -391,6 +391,7 @@ function install(opts = {}) {
     }
   }));
   report.backup = res.backup;
+  cfg.noteWrite(report, res, opts.scope || 'user');
   report.warnings.push('Codex runs new or changed hooks only after you trust them: open Codex and review them with /hooks.');
   if (opts.mcp !== false) {
     report.warnings.push('optional: to let Codex use the secrets kept in zn\'s vault, add the "secrets" MCP server by putting this in ' + path.join(codexHome(opts), 'config.toml') + ':\n' + mcpSnippet(opts));
@@ -418,11 +419,13 @@ function uninstall(opts = {}) {
     }
     if (JSON.stringify(data.hooks) === before) return false;
     if (Object.keys(data.hooks).length === 0) delete data.hooks;
-    return undefined;
+    return Object.keys(data).length === 0 ? cfg.REMOVE_IF_CREATED : undefined;
   }, { create: false });
   if (res.changed) {
     report.backup = res.backup;
     report.removed = 1;
+    report.fileRemoved = res.removed;
+    cfg.noteWrite(report, res, opts.scope || 'user');
     // The launcher of a user install (see handlerFor) is no longer referenced.
     if ((opts.scope || 'user') !== 'project') {
       try { fs.unlinkSync(launcher.launcherFile(id, opts)); } catch (_) { /* none */ }

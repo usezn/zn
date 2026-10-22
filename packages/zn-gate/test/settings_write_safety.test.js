@@ -274,7 +274,7 @@ test('uninstall says when nothing was installed', async (t) => {
   };
   let r = await run(['uninstall', 'claude-code', '--no-mcp']);
   assert.equal(r.code, 0);
-  assert.match(r.out, /No zn hooks were installed for claude-code/);
+  assert.match(r.out, /No zn hooks found for claude-code/);
   assert.doesNotMatch(r.out, /Removed zn hooks/);
   assert.equal(text(file), '{"theme":"dark"}\n');
   await run(['install', 'claude-code', '--no-mcp']);
@@ -322,4 +322,274 @@ test('a symlinked settings file is written through: the link stays, the backup s
   claude.uninstall(opts(h));
   assert.ok(fs.lstatSync(file).isSymbolicLink());
   assert.equal(json(real).hooks, undefined);
+});
+
+/* ------------------- uninstall removes what install created ------------------- */
+
+test('uninstall removes a settings file that zn created and that is empty again', (t) => {
+  const h = tempDir(t, 'zn-hy-');
+  const cases = [
+    [claude, settingsOf(h), opts(h)],
+    [codex, codex.hooksFile(opts(h)), opts(h)],
+    [cursor, cursor.hooksFile(opts(h)), opts(h)],
+    [gemini, gemini.settingsFile(opts(h)), opts(h)],
+  ];
+  for (const [adapter, file, o] of cases) {
+    adapter.install(o);
+    assert.equal(fs.existsSync(file), true, adapter.id + ' install wrote the file');
+    const r = adapter.uninstall(o);
+    assert.equal(r.removed, 1, adapter.id);
+    assert.equal(r.fileRemoved, true, adapter.id);
+    assert.equal(fs.existsSync(file), false, adapter.id + ': the empty file is gone');
+    assert.equal(r.backup, null, adapter.id + ': nothing of the user was changed, so no backup');
+  }
+});
+
+test('uninstall keeps a file that existed before zn, or that holds anything else', (t) => {
+  const h = tempDir(t, 'zn-hy-');
+  const file = settingsOf(h);
+  write(file, '{}\n');
+  claude.install(opts(h));
+  const r = claude.uninstall(opts(h));
+  assert.equal(r.removed, 1);
+  assert.equal(r.fileRemoved, false);
+  assert.equal(text(file), '{}\n', 'a file that was there before is put back as it was');
+  assert.ok(backups(file).length >= 1, 'the original is still backed up');
+
+  const cursorFile = cursor.hooksFile(opts(h));
+  write(cursorFile, '{"version":1,"hooks":{"stop":[{"command":"mine"}]}}\n');
+  cursor.install(opts(h));
+  cursor.uninstall(opts(h));
+  assert.equal(json(cursorFile).hooks.stop[0].command, 'mine');
+
+  const g = gemini.settingsFile(opts(h));
+  gemini.install(opts(h));
+  const data = json(g);
+  data.theme = 'dark';
+  fs.writeFileSync(g, JSON.stringify(data));
+  gemini.uninstall(opts(h));
+  assert.deepEqual(json(g), { theme: 'dark' });
+});
+
+test('uninstall of a project install removes the .mcp.json that zn created, and keeps one with other servers', (t) => {
+  const h = tempDir(t, 'zn-hy-');
+  const project = path.join(h, 'project');
+  const o = opts(h, { scope: 'project', projectDir: project, mcp: true });
+  claude.install(o);
+  assert.equal(fs.existsSync(path.join(project, '.mcp.json')), true);
+  claude.uninstall(o);
+  assert.equal(fs.existsSync(path.join(project, '.mcp.json')), false);
+  assert.equal(fs.existsSync(path.join(project, '.claude', 'settings.json')), false);
+
+  claude.install(o);
+  const mcpFile = path.join(project, '.mcp.json');
+  const m = json(mcpFile);
+  m.mcpServers.other = { command: 'other-tool' };
+  fs.writeFileSync(mcpFile, JSON.stringify(m));
+  claude.uninstall(o);
+  assert.deepEqual(json(mcpFile), { mcpServers: { other: { command: 'other-tool' } } });
+});
+
+test('project installs of claude-code, codex and cursor say the backup must not be committed', (t) => {
+  const h = tempDir(t, 'zn-hy-');
+  const project = path.join(h, 'project');
+  const o = opts(h, { scope: 'project', projectDir: project });
+  for (const [adapter, file] of [[claude, claude.settingsFile(o)], [codex, codex.hooksFile(o)], [cursor, cursor.hooksFile(o)]]) {
+    write(file, '{}\n');
+    const r = adapter.install(o);
+    assert.ok(r.warnings.some((w) => /sits inside the project: do not commit it/.test(w) && w.includes(r.backup)), adapter.id);
+    const u = adapter.uninstall(o);
+    assert.ok(u.warnings.some((w) => /do not commit it/.test(w)), adapter.id + ' uninstall');
+  }
+  // A user install has no such note.
+  const u = claude.install(opts(h));
+  assert.ok(!u.warnings.some((w) => /do not commit/.test(w)));
+});
+
+async function runHooks(h, args) {
+  let out = '';
+  const stdout = { write: (s) => { out += s; return true; } };
+  await dispatch('hooks', args, { human: true, home: h, env: {}, cwd: h, stdout, stderr: { write() { return true; } } });
+  return out;
+}
+
+test('zn hooks uninstall names the backup and how to put the file back', async (t) => {
+  const h = tempDir(t, 'zn-hy-');
+  write(settingsOf(h), '{"theme":"dark"}\n');
+  await runHooks(h, ['install', 'claude-code', '--no-mcp']);
+  const out = await runHooks(h, ['uninstall', 'claude-code', '--no-mcp']);
+  assert.match(out, /backup: .*\.bak-zn-.*copy it back over .* to undo this/);
+});
+
+test('zn hooks uninstall says when it removed a file that held nothing else', async (t) => {
+  const h = tempDir(t, 'zn-hy-');
+  await runHooks(h, ['install', 'claude-code', '--no-mcp']);
+  assert.match(await runHooks(h, ['uninstall', 'claude-code', '--no-mcp']), /held nothing else, so it was removed too/);
+});
+
+/* ------------------- the OpenCode plugin file ------------------- */
+
+const opencode = require('../lib/agents/opencode');
+const MARKED = '// zn-gate plugin for OpenCode\n// old version\n';
+
+test('opencode: a plugin file that is a link inside the home folder is written through, mode kept', { skip: !posix }, (t) => {
+  const h = tempDir(t, 'zn-oc-');
+  const dotfiles = path.join(h, 'dotfiles');
+  const real = path.join(dotfiles, 'zn-gate.js');
+  write(real, MARKED);
+  fs.chmodSync(real, 0o600);
+  const link = opencode.pluginPath(opts(h));
+  fs.mkdirSync(path.dirname(link), { recursive: true });
+  fs.symlinkSync(real, link);
+  opencode.install(opts(h));
+  assert.equal(fs.lstatSync(link).isSymbolicLink(), true, 'the link is still there');
+  assert.equal(fs.realpathSync(link), fs.realpathSync(real));
+  assert.notEqual(text(real), MARKED, 'the file it points at has the new plugin');
+  assert.equal(fs.statSync(real).mode & 0o777, 0o600, 'the mode stays');
+  assert.deepEqual(fs.readdirSync(dotfiles), ['zn-gate.js'], 'no temp file left');
+});
+
+test('opencode: a link that leaves the home folder, or a project link, is replaced by a regular file', { skip: !posix }, (t) => {
+  const h = tempDir(t, 'zn-oc-');
+  const elsewhere = tempDir(t, 'zn-oc-out-');
+  const real = path.join(elsewhere, 'zn-gate.js');
+  write(real, MARKED);
+  const link = opencode.pluginPath(opts(h));
+  fs.mkdirSync(path.dirname(link), { recursive: true });
+  fs.symlinkSync(real, link);
+  opencode.install(opts(h));
+  assert.equal(fs.lstatSync(link).isSymbolicLink(), false);
+  assert.equal(text(real), MARKED, 'the file outside the home folder is not touched');
+
+  const project = path.join(h, 'project');
+  const inside = path.join(h, 'dotfiles', 'p.js');
+  write(inside, MARKED);
+  const plink = opencode.pluginPath(opts(h, { scope: 'project', projectDir: project }));
+  fs.mkdirSync(path.dirname(plink), { recursive: true });
+  fs.symlinkSync(inside, plink);
+  opencode.install(opts(h, { scope: 'project', projectDir: project }));
+  assert.equal(fs.lstatSync(plink).isSymbolicLink(), false);
+  assert.equal(text(inside), MARKED);
+});
+
+test('opencode: the mode of an existing plugin file is kept, a new one is 0644', { skip: !posix }, (t) => {
+  const h = tempDir(t, 'zn-oc-');
+  const file = opencode.pluginPath(opts(h));
+  write(file, MARKED);
+  fs.chmodSync(file, 0o600);
+  opencode.install(opts(h));
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  const h2 = tempDir(t, 'zn-oc-');
+  const fresh = opencode.pluginPath(opts(h2));
+  opencode.install(opts(h2));
+  assert.equal(fs.statSync(fresh).mode & 0o777, 0o644);
+});
+
+/* ------------------- modes of the launcher folder and the config ------------------- */
+
+test('an existing launcher folder open to other users is set back to 0700', { skip: !notRoot }, (t) => {
+  const h = tempDir(t, 'zn-lm-');
+  const dir = path.dirname(launcherOf(h));
+  fs.mkdirSync(dir, { recursive: true });
+  fs.chmodSync(dir, 0o777);
+  claude.install(opts(h));
+  assert.equal(fs.statSync(dir).mode & 0o777, 0o700);
+  assert.equal(fs.existsSync(launcherOf(h)), true);
+});
+
+test('a launcher folder that is a link is refused, and nothing is written', { skip: !posix }, (t) => {
+  const h = tempDir(t, 'zn-lm-');
+  const elsewhere = tempDir(t, 'zn-lm-out-');
+  const dir = path.dirname(launcherOf(h));
+  fs.mkdirSync(path.dirname(dir), { recursive: true });
+  fs.symlinkSync(elsewhere, dir);
+  assert.throws(() => claude.install(opts(h)), /is a symbolic link.*left unchanged/);
+  assert.deepEqual(fs.readdirSync(elsewhere), []);
+  assert.equal(fs.existsSync(settingsOf(h)), false);
+});
+
+test('a launcher folder that belongs to another user is refused', { skip: !posix || typeof process.getuid !== 'function' }, (t) => {
+  const h = tempDir(t, 'zn-lm-');
+  const dir = path.dirname(launcherOf(h));
+  fs.mkdirSync(dir, { recursive: true });
+  const real = process.getuid;
+  process.getuid = () => real.call(process) + 1;
+  try {
+    assert.throws(() => claude.install(opts(h)), /belongs to another user/);
+  } finally {
+    process.getuid = real;
+  }
+  assert.equal(fs.existsSync(settingsOf(h)), false);
+});
+
+test('a hooks config that other users can write to is reported, not changed', { skip: !notRoot }, (t) => {
+  const h = tempDir(t, 'zn-lm-');
+  const file = settingsOf(h);
+  write(file, '{}\n');
+  fs.chmodSync(file, 0o666);
+  const r = claude.install(opts(h));
+  assert.ok(r.warnings.some((w) => /can be changed by other users.*666/.test(w)), r.warnings.join('\n'));
+  assert.equal(fs.statSync(file).mode & 0o777, 0o666, 'zn does not change the mode');
+  const fresh = tempDir(t, 'zn-lm-');
+  assert.ok(!claude.install(opts(fresh)).warnings.some((w) => /other users/.test(w)));
+});
+
+/* ------------------- Windows sharing errors ------------------- */
+
+function failRename(t, code, times) {
+  const real = fs.renameSync;
+  let left = times;
+  fs.renameSync = (a, b) => {
+    if (String(a).endsWith('.zn-tmp') && left > 0) {
+      left--;
+      throw Object.assign(new Error(code + ': busy'), { code });
+    }
+    return real(a, b);
+  };
+  t.after(() => { fs.renameSync = real; });
+  return () => times - left;
+}
+
+test('the settings writer retries a rename that another program blocks for a moment', (t) => {
+  const h = tempDir(t, 'zn-ret-');
+  const count = failRename(t, 'EPERM', 2);
+  claude.install(opts(h));
+  assert.equal(count(), 2);
+  assert.ok(json(settingsOf(h)).hooks.PreToolUse);
+  assert.deepEqual(fs.readdirSync(path.dirname(settingsOf(h))).filter((n) => n.endsWith('.zn-tmp')), []);
+});
+
+test('a rename that stays blocked says the file is in use, and leaves no temp file', (t) => {
+  const h = tempDir(t, 'zn-ret-');
+  failRename(t, 'EBUSY', 99);
+  assert.throws(() => claude.install(opts(h)), /in use by another program/);
+  const left = [];
+  const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { if (e.isDirectory()) walk(path.join(d, e.name)); else if (e.name.endsWith('.zn-tmp')) left.push(e.name); } };
+  walk(h);
+  assert.deepEqual(left, []);
+});
+
+test('the shared atomic writer (OpenCode plugin, launcher) retries too, and keeps the mode asked for', { skip: !posix }, (t) => {
+  const { writeFileAtomic } = require('../lib/broker/files');
+  const h = tempDir(t, 'zn-ret-');
+  const file = path.join(h, 'f.txt');
+  const count = failRename(t, 'EACCES', 1);
+  writeFileAtomic(file, 'x', 0o664);
+  assert.equal(count(), 1);
+  assert.equal(text(file), 'x');
+  assert.equal(fs.statSync(file).mode & 0o777, 0o664, 'the umask does not narrow the mode');
+});
+
+test('EPERM reads as "in use by another program", not as a permissions problem', (t) => {
+  const h = tempDir(t, 'zn-ret-');
+  const file = settingsOf(h);
+  write(file, '{}\n');
+  const real = fs.readFileSync;
+  const target = fs.realpathSync(file);
+  fs.readFileSync = (f, ...rest) => {
+    if (String(f) === target) throw Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' });
+    return real(f, ...rest);
+  };
+  t.after(() => { fs.readFileSync = real; });
+  assert.throws(() => claude.install(opts(h)), (err) => /in use by another program/.test(err.message) && !/permission denied/.test(err.message) && err.code === 'EPERM');
 });

@@ -238,7 +238,7 @@ function install(opts = {}) {
     data[name] = { enabled: true, PreToolUse: [{ matcher: MATCHER, hooks: [{ type: 'command', command, timeout: HOOK_TIMEOUT_S }] }] };
   }));
   report.backup = res.backup;
-  if (report.backup && (opts.scope || 'user') === 'project') report.warnings.push('The backup ' + report.backup + ' sits inside the project: do not commit it.');
+  cfg.noteWrite(report, res, opts.scope || 'user');
   report.warnings.push('Antigravity support is experimental. zn checks tool calls before they run (PreToolUse): it blocks reads and writes of secret files and shell commands that handle secrets.');
   if ((opts.scope || 'user') === 'project' && !opts.command) report.warnings.push('The project hook runs `zn` from your PATH (zn hook antigravity): every teammate who opens this project in Antigravity needs zn-gate installed, otherwise the hook cannot start and Antigravity may let the call through (a project install has no launcher).');
   report.warnings.push('Antigravity hooks cannot rewrite or redact what a tool returns, so a value printed by a command or a file the agent is allowed to read reaches the model. Keep secrets in the vault.');
@@ -257,6 +257,8 @@ function uninstall(opts = {}) {
   if (res.changed) {
     report.backup = res.backup;
     report.removed = 1;
+    report.fileRemoved = res.removed;
+    cfg.noteWrite(report, res, opts.scope || 'user');
     // The launcher of a user install (see commandFor) is no longer referenced.
     if ((opts.scope || 'user') !== 'project') {
       try { fs.unlinkSync(launcher.launcherFile(id, opts)); } catch (_) { /* none */ }

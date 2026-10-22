@@ -276,7 +276,7 @@ test('install registers UserPromptExpansion with onFailure block, and uninstall 
   const home = tempDir(t, 'zn-upe-');
   const env = { CLAUDE_CONFIG_DIR: path.join(home, '.claude') };
   const opts = { scope: 'user', home, env, mcp: false, nodePath: '/usr/bin/node', cliPath: '/opt/zn-gate/bin/cli.js', runnerPath: '/opt/zn/lib/hooks/runner.js' };
-  const read = () => JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8')).hooks || {};
+  const read = () => { try { return JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8')).hooks || {}; } catch (_) { return {}; } };
   adapter.install(opts);
   adapter.install(opts);
   assert.equal(read().UserPromptExpansion.length, 1);
@@ -581,8 +581,7 @@ test('project install writes .claude/settings.json and .mcp.json', (t) => {
   const mcp = JSON.parse(fs.readFileSync(path.join(dir, '.mcp.json'), 'utf8'));
   assert.deepEqual(mcp.mcpServers.secrets, { command: 'node', args: ['/opt/zn-gate/bin/cli.js', 'secrets-mcp', '--agent', 'claude-code'] });
   adapter.uninstall({ scope: 'project', projectDir: dir });
-  const mcp2 = JSON.parse(fs.readFileSync(path.join(dir, '.mcp.json'), 'utf8'));
-  assert.equal(mcp2.mcpServers.secrets, undefined);
+  assert.equal(fs.existsSync(path.join(dir, '.mcp.json')), false, 'a .mcp.json that zn created goes away with its server');
 });
 
 test('CLAUDE_CONFIG_DIR is honoured for user scope', (t) => {
@@ -640,7 +639,7 @@ test('the prompt and pre-tool hooks block when they cannot run; the post-tool ho
   const home = tempDir(t, 'zn-onf-');
   const env = { CLAUDE_CONFIG_DIR: path.join(home, '.claude') };
   const opts = { scope: 'user', home, env, mcp: false, nodePath: '/usr/bin/node', cliPath: '/opt/zn-gate/bin/cli.js', runnerPath: '/opt/zn/lib/hooks/runner.js' };
-  const read = () => JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8')).hooks || {};
+  const read = () => { try { return JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8')).hooks || {}; } catch (_) { return {}; } };
   adapter.install(opts);
   assert.equal(read().UserPromptSubmit[0].hooks[0].onFailure, 'block');
   // A tool call is blocked too when its pre hook cannot run; the post hook only warns (the tool already ran).

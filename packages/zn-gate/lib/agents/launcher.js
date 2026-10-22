@@ -144,10 +144,33 @@ function unixScript(agentId, nodePath, runnerPath) {
   ].join('\n');
 }
 
+/**
+ * The folder of the launcher scripts decides block or allow for every tool call, so nobody else may be able to
+ * put a file in it. A folder that already exists is looked at (mkdir only sets the mode of a new one): a link or a
+ * folder of another user is refused, and one of ours that others can write to is set back to 0700.
+ */
+function checkLauncherDir(dir, platform) {
+  let st;
+  try { st = fs.lstatSync(dir); } catch (err) {
+    if (err.code === 'ENOENT') return;
+    throw err;
+  }
+  if (st.isSymbolicLink()) throw new Error(dir + ' is a symbolic link, so zn did not put its hook launcher there. Remove the link (or run with ZN_HOME pointing at a folder of your own) and run this again (left unchanged)');
+  if (!st.isDirectory()) throw new Error(dir + ' is not a folder, so zn did not put its hook launcher there. Move it away and run this again (left unchanged)');
+  if (platform === 'win32' || typeof process.getuid !== 'function') return;
+  if (st.uid !== process.getuid()) throw new Error(dir + ' belongs to another user, so zn did not put its hook launcher there: that user could change what runs on every tool call. Use a folder of your own (set ZN_HOME) and run this again (left unchanged)');
+  if ((st.mode & 0o022) !== 0) {
+    try { fs.chmodSync(dir, 0o700); } catch (err) {
+      throw new Error(dir + ' can be written by other users and zn could not make it private (' + err.code + '). Run chmod 700 on it and run this again (left unchanged)');
+    }
+  }
+}
+
 /** Writes the launcher (directory 0700, file 0755) and returns its path. */
 function writeLauncher(agentId, nodePath, runnerPath, opts = {}) {
   const file = launcherFile(agentId, opts);
   const dir = path.dirname(file);
+  checkLauncherDir(dir, opts.platform || process.platform);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   // On Windows the script runs in Git Bash: write the paths with / so that `zn-gate check` can read them back.
   const platform = opts.platform || process.platform;

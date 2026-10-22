@@ -158,7 +158,7 @@ test('cursor: install writes version 1 hooks.json with our events', { skip: proc
   assert.match(data.hooks.beforeReadFile[0].command, /\/\.zn\/hooks\/zn-hook-cursor\.sh' beforeReadFile$/);
   assert.match(fs.readFileSync(path.join(home, '.zn', 'hooks', 'zn-hook-cursor.sh'), 'utf8'), /^ZN_NODE='\/usr\/bin\/node'$/m);
   cursor.uninstall({ home });
-  assert.deepEqual(JSON.parse(fs.readFileSync(cursor.hooksFile({ home }), 'utf8')).hooks, {});
+  assert.equal(fs.existsSync(cursor.hooksFile({ home })), false, 'a hooks.json that zn created goes away with the hooks');
 });
 
 test('cursor: install on Windows wraps the hook command in powershell.exe', (t) => {
@@ -172,7 +172,7 @@ test('cursor: install on Windows wraps the hook command in powershell.exe', (t) 
     assert.ok(script.includes("& '/usr/bin/node' '/x/lib/hooks/runner.js' cursor"), script);
   }
   cursor.uninstall({ home, platform: 'win32' });
-  assert.deepEqual(JSON.parse(fs.readFileSync(cursor.hooksFile({ home }), 'utf8')).hooks, {});
+  assert.equal(fs.existsSync(cursor.hooksFile({ home })), false, 'a hooks.json that zn created goes away with the hooks');
 });
 
 const FAKE_AWS_KEY = 'AKIA' + 'Z'.repeat(16); // built at runtime, never a literal

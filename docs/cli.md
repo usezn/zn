@@ -427,11 +427,13 @@ Adds or removes the zn hooks of a coding agent (to remove zn-gate completely, us
 
 Adds the hooks, and the `secrets` MCP server unless `--no-mcp` is given. Before it changes a settings file it saves a copy next to it (`<file>.bak-zn-<time>`), and it never overwrites an earlier copy. It keeps the oldest copy (the file as it was before zn) and the newest five, and deletes the others. If the file would not change, nothing is written and no copy is made, so running it again is harmless.
 
-zn keeps the file's permissions, indentation, line endings and UTF-8 byte order mark, and edits a symlinked file where the link points (the copy goes next to that file). If another program changes the file while zn is writing it, zn reads it again and retries a few times, then stops and leaves the file as the other program wrote it. A file that is not valid JSON, a `hooks` value or hook event of the wrong type (it must be an object, and each event a list), and a read-only file are refused with a message and left unchanged, with no copy made. A permission error names the file or folder and says to fix its permissions.
+zn keeps the file's permissions, indentation, line endings and UTF-8 byte order mark, and edits a symlinked file where the link points (the copy goes next to that file). If another program changes the file while zn is writing it, zn reads it again and retries a few times, then stops and leaves the file as the other program wrote it. A file that is not valid JSON, a `hooks` value or hook event of the wrong type (it must be an object, and each event a list), and a read-only file are refused with a message and left unchanged, with no copy made. A permission error names the file or folder and says to fix its permissions; on Windows, a file another program holds open is retried for a moment and then reported as in use. zn warns when the settings file can be written by other users of the computer (it does not change the mode), and refuses to put its launcher script in `~/.zn/hooks` when that folder is a symbolic link or belongs to another user; a folder of yours that others can write to is set back to mode 0700. A project install also prints a note that the copy sits inside the project and must not be committed. The OpenCode plugin file is written the same way: a link inside your home folder is followed and its mode is kept.
+
+On Windows the file modes (0600, 0700) have no effect: the privacy of these files relies on the permissions of your user profile folder.
 
 #### `hooks uninstall`
 
-Removes them again, keeping the rest of the file (and its indentation) as it was. If no zn hooks were installed, it says so and changes nothing.
+Removes them again, keeping the rest of the file (and its indentation) as it was. If no zn hooks were found, it says so and changes nothing. A settings file that zn created itself (it did not exist before the install) and that is empty again is removed too, and so is a `.mcp.json` that holds nothing else. It prints the path of the backup it made; to undo the uninstall, copy that file back over the settings file.
 
 ### `hook`
 

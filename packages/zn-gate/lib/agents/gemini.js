@@ -247,7 +247,7 @@ function install(opts = {}) {
     data.hooks = hooks;
   }));
   report.backup = res.backup;
-  if (report.backup && scope === 'project') report.warnings.push('The backup ' + report.backup + ' sits inside the project: do not commit it.');
+  cfg.noteWrite(report, res, scope);
   report.warnings.push('Gemini CLI support is experimental. zn checks tool calls before they run (BeforeTool): it blocks reads and writes of secret files and shell commands that handle secrets.');
   report.warnings.push('Gemini CLI treats a hook that crashes or times out as a warning and runs the tool anyway (only exit code 2 blocks). If the Node.js zn was installed with goes away, zn\'s launcher script blocks the tool instead; run `zn-gate check` to see that the hook works.');
   report.warnings.push('Gemini CLI hooks cannot ask the user and zn does not use AfterTool, so what a tool returns is not hidden: a value printed by a command or a file the agent may read reaches the model. Keep secrets in the vault.');
@@ -270,11 +270,13 @@ function uninstall(opts = {}) {
     }
     if (JSON.stringify(hooks) === before) return false;
     if (Object.keys(hooks).length === 0) delete data.hooks; else data.hooks = hooks;
-    return undefined;
+    return Object.keys(data).length === 0 ? cfg.REMOVE_IF_CREATED : undefined;
   }, { create: false });
   if (res.changed) {
     report.backup = res.backup;
     report.removed = 1;
+    report.fileRemoved = res.removed;
+    cfg.noteWrite(report, res, opts.scope || 'user');
     // The launcher of a user install (see commandFor) is no longer referenced.
     if ((opts.scope || 'user') !== 'project') {
       try { fs.unlinkSync(launcher.launcherFile(id, opts)); } catch (_) { /* none */ }

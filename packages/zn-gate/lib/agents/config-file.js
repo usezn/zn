@@ -10,6 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const launcher = require('./launcher');
+const { renameWithRetry } = require('../rename-retry');
 const { shQuote, portablePath, windowsCommand, windowsCommandScript } = require('../shell-quote');
 
 /** Parses the text of a JSON config file: blank is {}, anything but an object is refused. */
@@ -31,6 +32,12 @@ const DENIED = new Set(['EACCES', 'EPERM', 'EROFS']);
 
 /** A permission error as a sentence that says what to fix; any other error is passed on as it is. */
 function explain(err, what, file) {
+  if (err && err.code === 'EPERM') {
+    // On Windows a rename over a file that another program holds open fails with EPERM; elsewhere it is a refusal.
+    const e = new Error('cannot ' + what + ' ' + file + ': it is in use by another program, or not allowed (EPERM). Close the program that has it open or fix the permissions of that file or its folder, and run this again (left unchanged)');
+    e.code = err.code;
+    return e;
+  }
   if (err && DENIED.has(err.code)) {
     const e = new Error('cannot ' + what + ' ' + file + ': permission denied (' + err.code + '). Fix the permissions of that file or its folder and run this again (left unchanged)');
     e.code = err.code;
@@ -159,7 +166,7 @@ function writeAtomic(target, text, mode) {
   try {
     fs.writeFileSync(tmp, text, { mode });
     try { fs.chmodSync(tmp, mode); } catch (_) { /* best effort */ }
-    fs.renameSync(tmp, target);
+    renameWithRetry(tmp, target);
   } catch (err) {
     try { fs.unlinkSync(tmp); } catch (_) { /* none */ }
     throw explain(err, 'write', target);
@@ -185,6 +192,9 @@ function render(data, style, bom) {
 const ATTEMPTS = 5;
 // Returned by an edit to delete the file (e.g. nothing left in it) instead of writing it.
 const REMOVE_FILE = Symbol('remove-file');
+// Returned by an uninstall edit when nothing is left in the file: it is deleted only when zn created it
+// (no backup of it exists, because an install over an existing file always makes one); otherwise it is written as it is.
+const REMOVE_IF_CREATED = Symbol('remove-if-created');
 
 /**
  * Reads a JSON config file, lets edit(data) change it, and writes the result back safely:
@@ -197,11 +207,11 @@ const REMOVE_FILE = Symbol('remove-file');
  *  - indentation, line ending, final newline and a BOM are kept; a symlink is written through;
  *  - the previous content is saved by backup() first.
  * opts.create === false: a missing file is not created (returns {changed: false}).
- * Returns {changed, backup, removed}. `edit` can run more than once: keep it free of side effects that matter.
+ * Returns {changed, backup, removed, warning} (warning: the file can be written by other users). `edit` can run more than once: keep it free of side effects that matter.
  */
 function updateJson(file, edit, opts = {}) {
   const target = realFile(file);
-  const nothing = { changed: false, backup: null, removed: false };
+  const nothing = { changed: false, backup: null, removed: false, warning: null };
   for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
     const raw = readRaw(target);
     if (raw === null && opts.create === false) return nothing;
@@ -211,28 +221,46 @@ function updateJson(file, edit, opts = {}) {
     const before = JSON.stringify(data);
     const result = edit(data);
     const blank = text === null || !text.trim();
-    const remove = result === REMOVE_FILE;
+    let createdByZn = false;
+    if (result === REMOVE_IF_CREATED && raw !== null) {
+      try { createdByZn = !fs.lstatSync(file).isSymbolicLink() && backupsOf(target).length === 0; } catch (_) { /* keep it */ }
+    }
+    const remove = result === REMOVE_FILE || createdByZn;
     if (!remove && (result === false || (!blank && JSON.stringify(data) === before))) return nothing;
     if (remove && raw === null) return nothing;
     if (readRaw(target) !== raw) continue;
     let mode = 0o644;
+    let warning = null;
     if (raw !== null) {
       try { mode = fs.statSync(target).mode & 0o777; } catch (err) { throw explain(err, 'read', target); }
+      if (process.platform !== 'win32' && (mode & 0o022) !== 0) {
+        warning = target + ' can be changed by other users of this computer (mode ' + mode.toString(8).padStart(3, '0') + '): anyone who can write to it can turn the hooks off or replace them. Run chmod go-w on it.';
+      }
       if ((mode & 0o200) === 0) {
         throw new Error(target + ' is read-only, so zn did not change it. Make it writable (for example chmod u+w) and run this again (left unchanged)');
       }
     }
     try { fs.mkdirSync(path.dirname(target), { recursive: true }); } catch (err) { throw explain(err, 'create the folder of', target); }
-    const saved = raw === null ? null : backup(target);
+    const saved = raw === null || createdByZn ? null : backup(target);
     if (readRaw(target) !== raw) continue;
     if (remove) {
       try { fs.unlinkSync(file); } catch (err) { throw explain(err, 'remove', file); }
-      return { changed: true, backup: saved, removed: true };
+      return { changed: true, backup: saved, removed: true, warning };
     }
     writeAtomic(target, render(data, styleOf(text), bom), mode);
-    return { changed: true, backup: saved, removed: false };
+    return { changed: true, backup: saved, removed: false, warning };
   }
   throw new Error('cannot update ' + file + ': it kept changing while zn was writing it (another program is editing it). Run this again (left unchanged)');
+}
+
+/**
+ * Adds to report.warnings what a written config needs the user to know: a backup that sits inside the project
+ * (it must not be committed) and a file other users can write to. `res` is the result of updateJson.
+ */
+function noteWrite(report, res, scope) {
+  if (!res) return;
+  if (res.backup && scope === 'project') report.warnings.push('The backup ' + res.backup + ' sits inside the project: do not commit it.');
+  if (res.warning) report.warnings.push(res.warning);
 }
 
 /** Writes a JSON config file whole (keeps the mode of an existing one, follows a symlink). Prefer updateJson. */
@@ -306,4 +334,4 @@ function isOurs(command, agentId) {
   return script !== null && re.test(script);
 }
 
-module.exports = { readJson, hooksOf, assertEventLists, backup, writeJson, updateJson, withLauncherCleanup, REMOVE_FILE, KEEP_BACKUPS, quoteArg, runnerPath, hookCommand, hookCommandWindows, isOurs };
+module.exports = { readJson, hooksOf, assertEventLists, backup, realFile, noteWrite, writeJson, updateJson, withLauncherCleanup, REMOVE_FILE, REMOVE_IF_CREATED, KEEP_BACKUPS, quoteArg, runnerPath, hookCommand, hookCommandWindows, isOurs };

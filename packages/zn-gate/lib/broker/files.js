@@ -9,6 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { renameWithRetry } = require('../rename-retry');
 
 function existingDir(p) {
   let cur = path.resolve(p);
@@ -72,7 +73,14 @@ function realTargetOf(file) {
 function writeFileAtomic(file, data, mode = 0o600) {
   const tmp = path.join(path.dirname(file), '.' + path.basename(file) + '.' + process.pid + '.zn-tmp');
   fs.writeFileSync(tmp, data, { mode });
-  fs.renameSync(tmp, file);
+  // The umask can narrow the mode of a new file; the caller asked for exactly this one.
+  try { fs.chmodSync(tmp, mode); } catch (_) { /* best effort (Windows) */ }
+  try {
+    renameWithRetry(tmp, file);
+  } catch (err) {
+    try { fs.unlinkSync(tmp); } catch (_) { /* none */ }
+    throw err;
+  }
 }
 
 module.exports = { gitStatusOf, realTargetOf, writeFileAtomic };

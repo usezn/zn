@@ -276,8 +276,26 @@ function install(opts = {}) {
   if (fs.existsSync(file) && !fs.readFileSync(file, 'utf8').startsWith(PLUGIN_MARK)) {
     throw new Error(file + ' exists and was not written by zn; left unchanged');
   }
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  writeFileAtomic(file, pluginSource(opts), 0o644);
+  // A user plugin file that is a link (a dotfiles manager) is written through, so the link and its target stay;
+  // a link that leads outside the home folder, and any link in a project, is replaced by a regular file.
+  let target = file;
+  if ((opts.scope || 'user') !== 'project') {
+    const real = cfg.realFile(file);
+    const home = path.resolve(opts.home || os.homedir());
+    const homes = [home];
+    try { homes.push(fs.realpathSync(home)); } catch (_) { /* no such folder */ }
+    if (real !== file && homes.some((h) => (real + path.sep).startsWith(h + path.sep))) target = real;
+  }
+  // The mode of an existing file is kept; a new one is 0644.
+  let mode = 0o644;
+  try {
+    mode = fs.statSync(target).mode & 0o777;
+    if (process.platform !== 'win32' && (mode & 0o022) !== 0) {
+      report.warnings.push(target + ' can be changed by other users of this computer (mode ' + mode.toString(8).padStart(3, '0') + '): anyone who can write to it can change what runs in OpenCode. Run chmod go-w on it.');
+    }
+  } catch (_) { /* new file */ }
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  writeFileAtomic(target, pluginSource(opts), mode);
   if (opts.mcp !== false) {
     const cli = path.resolve(__dirname, '..', '..', 'bin', 'cli.js').replace(/\\/g, '/');
     report.warnings.push('optional: to let OpenCode use the secrets kept in zn\'s vault, add the "secrets" MCP server to opencode.json under "mcp": "secrets": ' +

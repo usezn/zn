@@ -219,6 +219,7 @@ function install(opts = {}) {
     }
   }));
   report.backup = res.backup;
+  cfg.noteWrite(report, res, opts.scope || 'user');
   report.warnings.push('Cursor cannot rewrite the output of shell commands or file reads: zn blocks reads of secret files and redacts MCP output only (see docs/compat.md).');
   if (opts.mcp !== false) {
     const cli = path.resolve(__dirname, '..', '..', 'bin', 'cli.js').replace(/\\/g, '/');
@@ -239,11 +240,16 @@ function uninstall(opts = {}) {
       const kept = strip(data.hooks[event]);
       if (kept.length) data.hooks[event] = kept; else delete data.hooks[event];
     }
-    return JSON.stringify(data.hooks) === before ? false : undefined;
+    if (JSON.stringify(data.hooks) === before) return false;
+    // Nothing but the version (and an empty hooks list) left: the file holds nothing of the user's.
+    if (Object.keys(data.hooks).length === 0 && Object.keys(data).every((k) => k === 'version' || k === 'hooks')) return cfg.REMOVE_IF_CREATED;
+    return undefined;
   }, { create: false });
   if (res.changed) {
     report.backup = res.backup;
     report.removed = 1;
+    report.fileRemoved = res.removed;
+    cfg.noteWrite(report, res, opts.scope || 'user');
     // The launcher of a user install (see commandFor) is no longer referenced.
     if ((opts.scope || 'user') !== 'project') {
       try { fs.unlinkSync(launcher.launcherFile(id, opts)); } catch (_) { /* none */ }

@@ -135,8 +135,8 @@ test('claude-code: a fresh home gets the hooks; uninstall removes them and the h
   assert.deepEqual(Object.keys(json(file).hooks).sort(), ['PostToolUse', 'PreToolUse', 'UserPromptExpansion', 'UserPromptSubmit']);
   const u = claude.uninstall(opts(h));
   assert.equal(u.removed, 1);
-  assert.equal(u.backup !== null, true);
-  assert.equal('hooks' in json(file), false);
+  assert.equal(u.backup, null, 'zn made the file itself, so there is nothing to keep');
+  assert.equal(fs.existsSync(file), false, 'a settings.json that zn created goes away with the hooks');
 });
 
 test('claude-code: install keeps the user\'s other hooks and drops only the old zn entry', (t) => {
@@ -250,9 +250,8 @@ test('claude-code: project scope keeps a foreign "secrets" MCP server and remove
 
   write(mcpFile, JSON.stringify({ mcpServers: { secrets: ZN_SERVER } }));
   claude.uninstall(opts(h, { mcp: true, scope: 'project', projectDir: project }));
-  assert.equal('secrets' in json(mcpFile).mcpServers, false);
-  // No .mcp.json at all: nothing to remove.
-  fs.rmSync(mcpFile);
+  assert.equal(fs.existsSync(mcpFile), false);
+  // No .mcp.json at all (zn's own was removed above): nothing to remove.
   const none = claude.uninstall(opts(h, { mcp: true, scope: 'project', projectDir: project }));
   assert.deepEqual(none.warnings, []);
   assert.equal(fs.existsSync(mcpFile), false);
@@ -409,7 +408,7 @@ test('cursor: on win32 each hook runs through powershell.exe, and uninstall find
     for (const e of entries) assert.match(e.command, /^powershell\.exe /);
   }
   assert.equal(cursor.uninstall(win).removed, 1);
-  assert.deepEqual(json(file).hooks, {});
+  assert.equal(fs.existsSync(file), false);
 });
 
 test('cursor: an event name it does not know is not a hook event', () => {

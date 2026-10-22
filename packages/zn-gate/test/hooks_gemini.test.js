@@ -192,7 +192,7 @@ test('install (project): BeforeTool group with a named command hook in milliseco
   gem.install({ scope: 'project', projectDir: dir });
   assert.equal(readSettings(file).hooks.BeforeTool.length, 1);
   assert.equal(gem.uninstall({ scope: 'project', projectDir: dir }).removed, 1);
-  assert.deepEqual(readSettings(file), {});
+  assert.equal(fs.existsSync(file), false, 'a settings file that zn created goes away with the hook');
   assert.equal(gem.uninstall({ scope: 'project', projectDir: dir }).removed, 0);
 });
 
