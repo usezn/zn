@@ -2,8 +2,8 @@
 
 // zn hooks install cursor | gemini: the hook command goes through the launcher, so a Node.js that is gone
 // blocks (exit 2, documented by both agents) instead of letting the call run (both fail open when a hook
-// fails). Antigravity documents nothing about hook failures: it keeps the plain command, and `check`
-// reports the missing Node.js. Values are fake. Everything runs in a temporary home.
+// fails). Antigravity documents nothing about hook failures, so its launcher answers the deny JSON it does
+// document ({decision, reason}, exit 0); `check` reports the missing Node.js. Values are fake. Everything runs in a temporary home.
 
 process.env.ZN_STATS = 'off';
 
@@ -136,15 +136,75 @@ test('gemini: uninstall removes the launcher; check reports the Node.js that is 
   assert.equal(fs.existsSync(ctx.file), false);
 });
 
-test('antigravity: no launcher (the docs say nothing about hook failures); check reports a missing Node.js', { skip: !posix }, async (t) => {
+test('antigravity: user install writes the launcher; without Node.js it answers a deny JSON with the repair step', { skip: !posix }, async (t) => {
   const ctx = setup(t, 'antigravity', GONE);
-  assert.equal(fs.existsSync(ctx.file), false);
+  assert.ok(fs.existsSync(ctx.file));
   const data = JSON.parse(fs.readFileSync(ctx.adapter.hooksFile({ env: ctx.env, home: ctx.home }), 'utf8'));
-  assert.match(data['zn-gate'].PreToolUse[0].hooks[0].command, /node-gone\/bin\/node.* antigravity$/);
-  const r = await stateOf(t, ctx, 'antigravity', tempDir(t, 'zn-b96-bin-'));
-  assert.equal(r.state, 'not-protected');
-  assert.match(r.problem, /its hook cannot start/);
-  assert.equal(r.fix, reinstall('antigravity'));
+  const command = data['zn-gate'].PreToolUse[0].hooks[0].command;
+  assert.equal(command, "'" + ctx.file + "' PreToolUse");
+  assert.ok(cfg.isOurs(command, 'antigravity'));
+  const bin = tempDir(t, 'zn-b96-bin-');
+  const r = run(ctx.file, 'PreToolUse', bin);
+  assert.equal(r.status, 0);
+  const out = JSON.parse(r.stdout);
+  assert.deepEqual(Object.keys(out).sort(), ['decision', 'reason']);
+  assert.equal(out.decision, 'deny');
+  assert.match(out.reason, /npm install -g zn-gate/);
+  assert.match(out.reason, /zn hooks install antigravity/);
+  const state = await stateOf(t, ctx, 'antigravity', bin);
+  assert.equal(state.state, 'not-protected');
+  assert.match(state.problem, /its hook cannot start/);
+  assert.equal(state.fix, reinstall('antigravity'));
+});
+
+test('antigravity: a hook that starts and then fails is also a deny JSON; the recorded Node.js runs the real hook', { skip: !posix }, (t) => {
+  const broken = path.join(tempDir(t, 'zn-b96-broken-'), 'runner.js');
+  fs.writeFileSync(broken, "throw new Error('broken install');\n");
+  const home = tempDir(t, 'zn-b96-crash-');
+  const env = { HOME: home, ZN_HOME: path.join(home, '.zn'), PATH: process.env.PATH };
+  getAdapter('antigravity').install({ env, home, nodePath: process.execPath, runnerPath: broken, mcp: false });
+  const file = launcher.launcherFile('antigravity', { env, home });
+  const r = run(file, 'PreToolUse', tempDir(t, 'zn-b96-bin-'));
+  assert.equal(r.status, 0);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.decision, 'deny');
+  assert.match(out.reason, /zn-gate check/);
+  const ok = setup(t, 'antigravity', process.execPath);
+  const call = { toolCall: { name: 'run_command', args: { CommandLine: 'echo hello' } }, workspacePaths: [home] };
+  const live = spawnSync('/bin/sh', [ok.file, 'PreToolUse'], { input: JSON.stringify(call), encoding: 'utf8', env: { PATH: process.env.PATH, HOME: '/nonexistent' } });
+  assert.equal(live.status, 0, live.stderr);
+  assert.deepEqual(JSON.parse(live.stdout), { decision: 'allow' });
+});
+
+test('antigravity: the Windows launcher is an encoded PowerShell script that prints the deny JSON and exits 0', (t) => {
+  const { windowsCommandScript } = require('../lib/shell-quote');
+  const script = launcher.windowsScript('antigravity', 'PreToolUse', 'C:\\Program Files\\nodejs\\node.exe', 'C:\\zn\\lib\\hooks\\runner.js');
+  assert.ok(script.endsWith(' # zn hook antigravity'));
+  const m = /WriteLine\('(\{"decision":"deny".*?\})'\); \[Console\]::Error/.exec(script);
+  assert.ok(m, script);
+  const out = JSON.parse(m[1]);
+  assert.equal(out.decision, 'deny');
+  assert.match(out.reason, /zn hooks install antigravity/);
+  assert.match(out.reason, /npm install -g zn-gate/);
+  assert.match(script, /exit 0 # zn hook antigravity$/);
+  const home = tempDir(t, 'zn-b96-win-');
+  getAdapter('antigravity').install({ home, platform: 'win32', nodePath: 'C:\\Program Files\\nodejs\\node.exe', runnerPath: 'C:\\zn\\lib\\hooks\\runner.js', env: { ZN_HOME: path.join(home, '.zn') } });
+  const written = JSON.parse(fs.readFileSync(path.join(home, '.gemini', 'config', 'hooks.json'), 'utf8'))['zn-gate'].PreToolUse[0].hooks[0].command;
+  assert.match(written, /^powershell\.exe -NoProfile -NonInteractive -EncodedCommand [A-Za-z0-9+/=]+$/);
+  assert.equal(windowsCommandScript(written), script);
+  assert.ok(cfg.isOurs(written, 'antigravity'));
+});
+
+test('antigravity: uninstall removes the launcher; a project install writes none and keeps the plain command', { skip: !posix }, (t) => {
+  const { env, home, adapter, file } = setup(t, 'antigravity', process.execPath);
+  assert.ok(fs.existsSync(file));
+  adapter.uninstall({ env, home });
+  assert.equal(fs.existsSync(file), false);
+  const proj = tempDir(t, 'zn-b96-proj-');
+  adapter.install({ scope: 'project', projectDir: proj, env, home, nodePath: process.execPath, runnerPath: RUNNER });
+  assert.equal(fs.existsSync(file), false);
+  const data = JSON.parse(fs.readFileSync(path.join(proj, '.agents', 'hooks.json'), 'utf8'));
+  assert.equal(data['zn-gate'].PreToolUse[0].hooks[0].command, 'zn hook antigravity');
 });
 
 test('a hook that starts and then fails is blocked, not passed through, and zn on PATH is not tried after it', { skip: !posix }, (t) => {

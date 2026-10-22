@@ -20,7 +20,7 @@ import contextvars
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
-from ..guard import GuardBlockError, block_message, check_tool_call, check_tool_result, validate_on_block, _rebuild_error
+from ..guard import GuardBlockError, block_message, check_tool_call, check_tool_result, validate_on_block, _rebuild_error, _error_texts, _mask_text, _safe_text
 from ..rules import Assessment, evaluate, sanitize_tool_result
 
 try:
@@ -50,38 +50,6 @@ def _output_content(output: Any) -> Any:
         return output
     content = getattr(output, "content", None)
     return output if content is None else content
-
-
-_ERROR_CHAIN_LIMIT = 8
-
-
-def _safe_text(fn: Any, value: Any) -> str:
-    try:
-        return str(fn(value))
-    except Exception:
-        return ""
-
-
-def _mask_text(text: str) -> str:
-    masked, _ = sanitize_tool_result(text)
-    return masked if isinstance(masked, str) else text
-
-
-def _error_texts(error: BaseException) -> List[str]:
-    """str() and repr() of a tool's exception and of the exceptions chained to it.
-
-    LangChain (handle_tool_error) and LangGraph (ToolNode handle_tool_errors)
-    send one of these to the model.
-    """
-    texts: List[str] = []
-    seen: set = set()
-    cur: Optional[BaseException] = error
-    while cur is not None and id(cur) not in seen and len(seen) < _ERROR_CHAIN_LIMIT:
-        seen.add(id(cur))
-        texts.append(_safe_text(str, cur))
-        texts.append(_safe_text(repr, cur))
-        cur = cur.__cause__ or cur.__context__
-    return texts
 
 
 def _error_secrets(error: BaseException) -> List[Dict[str, Any]]:

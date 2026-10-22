@@ -254,6 +254,8 @@ function runnerPath() {
 // so each tool call does not pay for loading the whole CLI.
 function hookCommand(opts = {}) {
   if (opts.command) return opts.command;
+  // A project install is a shared file: it names zn on the PATH, never the paths of the machine that installed it.
+  if ((opts.scope || 'user') === 'project') return 'zn hook claude-code';
   return quoteArg(opts.nodePath || process.execPath, opts.platform) + ' ' + quoteArg(opts.runnerPath || runnerPath(), opts.platform) + ' claude-code';
 }
 
@@ -339,6 +341,8 @@ function commandFor(opts = {}) {
 }
 
 function mcpServerConfig(opts = {}) {
+  // Same rule for the shared .mcp.json of a project install: zn from the PATH.
+  if ((opts.scope || 'user') === 'project') return { command: 'zn', args: ['secrets-mcp', '--agent', 'claude-code'] };
   return { command: opts.nodePath || process.execPath, args: [opts.cliPath || cliPath(), 'secrets-mcp', '--agent', 'claude-code'] };
 }
 
@@ -380,9 +384,17 @@ function installMcp(opts, report) {
   else report.warnings.push('`claude mcp add-json` failed (' + String(r.stderr || r.stdout || r.error || '').trim().slice(0, 300) + '): register the MCP server yourself with: ' + manual);
 }
 
+/* A project install names `zn`, so it only works where zn is on the PATH. opts.znBin overrides the lookup (tests). */
+function znOnPath(opts = {}) {
+  if (opts.znBin !== undefined) return !!opts.znBin;
+  const envPath = (opts.env || process.env).PATH || '';
+  if (whichSync('zn', envPath)) return true;
+  return process.platform === 'win32' && !!(whichSync('zn.cmd', envPath) || whichSync('zn.exe', envPath));
+}
+
 /**
  * Write the hook configuration (and register the "secrets" MCP server).
- * opts: {scope: 'user'|'project', projectDir, home, env, nodePath, cliPath, command, mcp: false, claudeBin}
+ * opts: {scope: 'user'|'project', projectDir, home, env, nodePath, cliPath, command, mcp: false, claudeBin, znBin}
  */
 function install(opts = {}) {
   const file = settingsFile(opts);
@@ -398,6 +410,11 @@ function install(opts = {}) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   writeFileAtomic(file, JSON.stringify(data, null, 2) + '\n', 0o644);
   if (opts.mcp !== false) installMcp(opts, report);
+  if (!opts.command && (opts.scope || 'user') === 'project' && !znOnPath(opts)) {
+    report.warnings.push('`zn` is not on your PATH, and this project install runs `zn hook claude-code`' +
+      (opts.mcp !== false ? ' and starts the MCP server with `zn`' : '') +
+      ': until zn-gate is installed globally (npm i -g zn-gate, or pip install zn-gate), the hooks fail here and Claude Code may block every tool call or skip the secret checks. Everyone who uses this project needs zn on their PATH.');
+  }
   // Organization settings can turn these hooks or the MCP server off with no
   // sign in Claude Code; say it here.
   // Advisory only: a failure here never fails an install already written.
