@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from ..guard import (GuardBlockError, _is_framework_context, _mask_value, block_message, check_tool_call,
+from ..guard import (GuardBlockError, _is_framework_context, _mask_value, _secret_masked, block_message, check_tool_call,
                      check_tool_result, validate_on_block)
 
 
@@ -51,7 +51,7 @@ class _Policy:
             clean, unmaskable = _mask_value(result)
             if unmaskable is not None:
                 return unmaskable, None, True
-            return None, clean, clean is not result and clean != result
+            return None, clean, _secret_masked(result, clean)
         return None, result, False
 
     def raise_block(self, assessment: Any, tool_name: str, payload: Any, result: bool = False) -> None:

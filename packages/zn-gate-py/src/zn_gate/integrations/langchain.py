@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
 from ..guard import (GuardBlockError, block_message, check_tool_call, check_tool_result, validate_on_block,
-                     _mask_value, _rebuild_error)
+                     _mask_value, _rebuild_error, _secret_masked)
 from ..rules import Assessment, evaluate, sanitize_tool_result
 
 try:
@@ -214,7 +214,7 @@ class ZnGuardCallbackHandler(BaseCallbackHandler):
             if self.on_block == "raise":
                 raise GuardBlockError(unmaskable, target="langchain:tool_output", payload=None)
             return output
-        changed = masked is not content and masked != content
+        changed = _secret_masked(content, masked)
         if changed and self.on_block == "raise":
             _, found = sanitize_tool_result(content)
             raise GuardBlockError(_secret_assessment(found), target="langchain:tool_output", payload=masked)
