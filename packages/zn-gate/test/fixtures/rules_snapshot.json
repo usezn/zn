@@ -2,7 +2,7 @@
   "layers": {
     "rules": {
       "version_const": "RULES_VERSION",
-      "version": "2026-10-23.5",
+      "version": "2026-10-23.10",
       "ids": [
         "evasion:bidi_override",
         "exfil:credentials",

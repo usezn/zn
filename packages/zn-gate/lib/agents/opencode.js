@@ -153,6 +153,9 @@ function respond(d) {
 
 /* ------------------------------ plugin ------------------------------ */
 
+// Seconds the plugin waits for the runner before it gives up (and the post-tool check stops before that).
+const HOOK_TIMEOUT_S = 20;
+
 function pluginSource(opts = {}) {
   // A project plugin is shared through the repository: it calls `zn` on PATH
   // instead of naming this user's node and runner.
@@ -174,7 +177,7 @@ function pluginSource(opts = {}) {
 import { spawn } from "node:child_process";
 
 ${launch}
-const TIMEOUT_MS = 20000;
+const TIMEOUT_MS = ${HOOK_TIMEOUT_S * 1000};
 // The only answers the plugin acts on. Any other answer is an error, which
 // blocks the call (before), withholds the output (after) or stops the message.
 const ACTIONS = ["none", "deny", "error", "args", "output"];
@@ -279,9 +282,15 @@ function install(opts = {}) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   writeFileAtomic(file, pluginSource(opts), 0o644);
   if (opts.mcp !== false) {
+    // A project's opencode.json is shared: the hint names zn on the PATH, never the paths of this machine.
+    const project = (opts.scope || 'user') === 'project';
     const cli = path.resolve(__dirname, '..', '..', 'bin', 'cli.js').replace(/\\/g, '/');
-    report.warnings.push('optional: to let OpenCode use the secrets kept in zn\'s vault, add the "secrets" MCP server to opencode.json under "mcp": "secrets": ' +
-      JSON.stringify({ type: 'local', command: [(opts.nodePath || process.execPath).replace(/\\/g, '/'), cli, 'secrets-mcp', '--agent', 'opencode'] }));
+    const command = project
+      ? ['zn', 'secrets-mcp', '--agent', 'opencode']
+      : [(opts.nodePath || process.execPath).replace(/\\/g, '/'), cli, 'secrets-mcp', '--agent', 'opencode'];
+    report.warnings.push('optional: to let OpenCode use the secrets kept in zn\'s vault, add the "secrets" MCP server to ' +
+      (project ? 'opencode.json in this project' : 'opencode.json') + ' under "mcp": "secrets": ' + JSON.stringify({ type: 'local', command }) +
+      (project ? ' (everyone who uses the project needs zn on their PATH)' : ''));
   }
   return report;
 }
@@ -303,6 +312,7 @@ function detect(opts = {}) {
 
 module.exports = {
   id,
+  HOOK_TIMEOUT_S,
   detect,
   install,
   uninstall,
