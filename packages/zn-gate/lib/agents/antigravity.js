@@ -95,6 +95,35 @@ function pathsOf(args) {
   return { paths: out, bad };
 }
 
+const SEARCH_CMDS = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ag', 'ack']);
+const RECURSIVE_BY_DEFAULT = new Set(['rg', 'ag', 'ack']);
+
+/**
+ * Folders a shell search covers, for the same "ask before a search over a folder with a plain-text .env" check a
+ * search tool gets. Only the first simple command is read: grep, egrep, fgrep, rg, ag or ack, recursive (-r, -R,
+ * --recursive or an option cluster with r or R; rg, ag and ack always are). Its first non-option word is the
+ * pattern and the rest are paths; with no path the working folder is searched. Files named directly are
+ * checked by the shell command check, not here. Returns [] when the command is not such a search.
+ */
+function searchDirsOf(command, cwd) {
+  const first = String(command).split(/[;&|\n\r]/)[0].trim();
+  const words = (first.match(/"[^"]*"|'[^']*'|\S+/g) || []).map((w) => w.replace(/^(["'])(.*)\1$/, '$2'));
+  while (words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0])) words.shift();
+  const tool = path.basename(words.shift() || '');
+  if (!SEARCH_CMDS.has(tool)) return [];
+  let recursive = RECURSIVE_BY_DEFAULT.has(tool);
+  const operands = [];
+  for (const w of words) {
+    if (w === '--') continue;
+    if (/^--/.test(w)) { if (/^--(recursive|dereference-recursive)$/.test(w)) recursive = true; continue; }
+    if (/^-[A-Za-z0-9]+$/.test(w)) { if (/[rR]/.test(w)) recursive = true; continue; }
+    operands.push(w);
+  }
+  if (!recursive) return [];
+  const targets = operands.slice(1);
+  return targets.length ? targets.map((t) => path.resolve(cwd, t)) : [path.resolve(cwd)];
+}
+
 function normalize(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const wp = Array.isArray(raw.workspacePaths) && typeof raw.workspacePaths[0] === 'string' ? raw.workspacePaths[0] : null;
@@ -117,12 +146,13 @@ function normalize(raw) {
   }
   const cmd = firstString(args, COMMAND_KEYS);
   if (SHELL_TOOLS.has(toolName) || (!READ_TOOLS.has(toolName) && !WRITE_TOOLS.has(toolName) && cmd !== undefined)) {
-    const e = { ...ev, tool: 'bash', input: { command: cmd || '', texts: [] } };
+    const dirs = cmd ? searchDirsOf(cmd, cwd) : [];
+    const e = { ...ev, tool: 'bash', input: { command: cmd || '', texts: [], ...(dirs.length ? { scanDirs: dirs } : {}) } };
     if (cmd === undefined) e.unreadable = 'zn: could not read the command of this call, so zn cannot check it.';
     return e;
   }
   const { paths, bad } = pathsOf(args);
-  const input = { path: paths[0], paths, texts: [] };
+  const input = { path: paths[0], paths, texts: [], ...(WRITE_TOOLS.has(toolName) ? { alsoReadCheck: true } : {}) };
   const searchDir = toolName === 'grep_search' ? (paths[0] ? path.resolve(cwd, paths[0]) : cwd) : null;
   const kind = toolName === 'view_file' ? 'read' : toolName === 'grep_search' ? 'grep' : WRITE_TOOLS.has(toolName) ? 'write' : null;
   if (kind) {

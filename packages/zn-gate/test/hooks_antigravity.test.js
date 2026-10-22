@@ -289,6 +289,41 @@ test('a search over a folder that holds a plain-text .env asks; a clean folder o
   assert.equal(r2.output.decision, 'force_ask');
 });
 
+test('write_to_file and multi_replace_file_content on a plain-text .env are denied; other files are not', async (t) => {
+  const dir = tempDir(t, 'zn-agy-envwrite-');
+  fs.writeFileSync(path.join(dir, '.env'), 'API_KEY=example-not-a-real-key\n');
+  fs.writeFileSync(path.join(dir, 'README.md'), 'hello\n');
+  const ws = { workspacePaths: [dir] };
+  const envFile = path.join(dir, '.env');
+  assert.equal((await run(pre('write_to_file', { TargetFile: envFile, CodeContent: 'x' }, ws))).output.decision, 'deny');
+  assert.equal((await run(pre('multi_replace_file_content', { TargetFile: envFile, ReplacementChunks: [{ TargetContent: 'a', ReplacementContent: 'b' }] }, ws))).output.decision, 'deny');
+  assert.equal((await run(pre('replace_file_content', { TargetFile: envFile, TargetContent: 'a', ReplacementContent: 'b' }, ws))).output.decision, 'deny');
+  const readme = path.join(dir, 'README.md');
+  assert.equal((await run(pre('write_to_file', { TargetFile: readme, CodeContent: 'x' }, ws))).output.decision, 'allow');
+  assert.equal((await run(pre('multi_replace_file_content', { TargetFile: readme, ReplacementChunks: [] }, ws))).output.decision, 'allow');
+  // a known file tool with no readable path is refused
+  assert.equal((await run(pre('multi_replace_file_content', { ReplacementChunks: [] }, ws))).output.decision, 'deny');
+});
+
+test('a recursive shell search over a folder with a plain-text .env asks, like the search tool does', async (t) => {
+  const dir = tempDir(t, 'zn-agy-shellgrep-');
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'hello');
+  const ws = { workspacePaths: [dir] };
+  const shell = async (line, args = {}) => (await run(pre('run_command', { CommandLine: line, Cwd: dir, ...args }, ws))).output;
+  assert.equal((await shell('grep -r API_KEY .')).decision, 'allow'); // clean folder
+  fs.writeFileSync(path.join(dir, '.env'), 'API_KEY=example-not-a-real-key\n');
+  const viaTool = (await run(pre('grep_search', { Query: 'API_KEY', SearchPath: dir }, ws))).output;
+  assert.equal(viaTool.decision, 'force_ask');
+  for (const line of ['grep -r API_KEY .', 'grep -rn API_KEY', 'grep --recursive API_KEY ' + dir, 'rg API_KEY', 'egrep -R "API_KEY" .']) {
+    const r = await shell(line);
+    assert.equal(r.decision, viaTool.decision, line);
+    assert.equal(r.reason, viaTool.reason, line);
+  }
+  assert.equal((await shell('grep API_KEY a.txt')).decision, 'allow'); // not recursive, no secret file named
+  assert.equal((await shell('ls -la')).decision, 'allow');
+  assert.equal((await shell('grep -r API_KEY .env')).decision, 'deny'); // a named secret file stays a deny
+});
+
 test('install warns that a project hook needs zn on PATH, and that its backup must not be committed', (t) => {
   const dir = tempDir(t, 'zn-agy-warn-');
   const first = agy.install({ scope: 'project', projectDir: dir });

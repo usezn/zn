@@ -249,6 +249,24 @@ async function ctxFor(ev, d, agentId, destination, needVault = true) {
 
 /* ---------------------------- pre_tool ---------------------------- */
 
+/**
+ * A search over a folder (or with no path) prints matching lines, and an agent that cannot redact that
+ * output would show a plain-text secret to the model: ask when the folder holds a .env or a key file.
+ * Used for a search tool and, when an adapter lists the folders a shell search covers, for that command.
+ */
+function searchFolderAsk(dirs, pathOpts) {
+  for (const dir of Array.isArray(dirs) ? dirs : [dirs]) {
+    let names = [];
+    try { names = fs.readdirSync(dir).slice(0, 5000); } catch (_) { names = []; }
+    for (const n of names) {
+      if (policy.readDenial(path.join(dir, n), pathOpts)) {
+        return { decision: 'ask', message: 'zn: this search covers a folder that holds ' + n + ', which has plain-text secrets, and matching lines are not hidden in this agent. Approve only if the search must include it, or name a narrower path.' };
+      }
+    }
+  }
+  return null;
+}
+
 async function decidePre(ev, d, agentId, opts) {
   const pathOpts = { cwd: ev.cwd, home: opts.home };
   const input = ev.input || {};
@@ -262,15 +280,8 @@ async function decidePre(ev, d, agentId, opts) {
     }
   }
   if (tool === 'grep' && input.scanDir) {
-    // A search over a folder (or with no path) prints matching lines, and an agent that cannot redact that
-    // output would show a plain-text secret to the model: ask when the folder holds a .env or a key file.
-    let names = [];
-    try { names = fs.readdirSync(input.scanDir).slice(0, 5000); } catch (_) { names = []; }
-    for (const n of names) {
-      if (policy.readDenial(path.join(input.scanDir, n), pathOpts)) {
-        return { decision: 'ask', message: 'zn: this search covers a folder that holds ' + n + ', which has plain-text secrets, and matching lines are not hidden in this agent. Approve only if the search must include it, or name a narrower path.' };
-      }
-    }
+    const ask = searchFolderAsk(input.scanDir, pathOpts);
+    if (ask) return ask;
   }
   if (tool === 'fileaccess') {
     // A tool zn does not know that names files: every path gets the read and the write checks.
@@ -287,7 +298,8 @@ async function decidePre(ev, d, agentId, opts) {
     }
     if (input.unparsed) return { decision: 'deny', message: 'zn: could not read the file names in this patch, so zn cannot check it.' };
     for (const p of Array.isArray(input.paths) ? input.paths : [input.path]) {
-      const deny = policy.writeDenial(p, pathOpts);
+      // An adapter that promises "no reads or writes of secret files" asks for the read check on a write too.
+      const deny = (input.alsoReadCheck && policy.readDenial(p, pathOpts)) || policy.writeDenial(p, pathOpts);
       if (deny) return { decision: 'deny', message: deny };
     }
   }
@@ -317,6 +329,10 @@ async function decidePre(ev, d, agentId, opts) {
     const original = String(input.command || '');
     const deny = policy.bashDenial(original, { ...pathOpts, destructiveRules: destructiveRulesOf(opts) });
     if (deny) return { decision: 'deny', message: deny };
+    if (Array.isArray(input.scanDirs) && input.scanDirs.length) {
+      const ask = searchFolderAsk(input.scanDirs, pathOpts);
+      if (ask) return ask;
+    }
 
     let command = original;
     const notes = [];
