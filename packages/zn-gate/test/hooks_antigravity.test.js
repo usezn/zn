@@ -133,7 +133,7 @@ test('install (user) backs up, keeps foreign hooks and uninstall removes only zn
   let data = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.deepEqual(data.mine, mine);
   const written = data['zn-gate'].PreToolUse[0].hooks[0].command;
-  assert.match(written, /\/\.zn\/hooks\/zn-hook-antigravity\.sh' PreToolUse$/);
+  assert.match(written, /\/\.zn\/hooks\/zn-hook-antigravity\.sh PreToolUse$/);
   const launcherFile = require('../lib/agents/launcher').launcherFile('antigravity', { home });
   assert.ok(fs.existsSync(launcherFile));
   agy.uninstall({ scope: 'user', home });

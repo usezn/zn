@@ -217,9 +217,10 @@ function commandFor(opts = {}) {
     const script = launcher.windowsScript(id, 'PreToolUse', node, runner);
     return script ? launcher.windowsScriptCommand(script) : cfg.hookCommandWindows(id, { ...opts, encodedCommand: true });
   }
-  // Antigravity splits the command on spaces and ignores quotes: a launcher path with a space or a quote cannot be used.
-  if (/[\s'"\\]/.test(launcher.launcherFile(id, opts))) return cfg.hookCommand(id, opts);
-  return launcher.launcherCommand(launcher.writeLauncher(id, node, runner, opts), 'PreToolUse', platform);
+  // Antigravity splits the command on spaces and runs it with no shell, so a quote becomes part of the file name
+  // and the hook never starts: the launcher path goes in unquoted. A path that would need quotes cannot be used.
+  if (!launcher.plainPathOk(launcher.launcherFile(id, opts))) return cfg.hookCommand(id, opts);
+  return launcher.launcherCommand(launcher.writeLauncher(id, node, runner, opts), 'PreToolUse', platform, { plain: true });
 }
 
 function install(opts = {}) {
