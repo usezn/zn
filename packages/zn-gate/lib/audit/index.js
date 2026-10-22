@@ -758,8 +758,13 @@ function isDocFile(rel) {
   const base = rel.split('/').pop();
   if (/^skill\.md$/i.test(base)) return true;
   if (!/\.(?:md|mdx|markdown|rst|txt)$/i.test(base)) return false;
-  return /(^|\/)(?:docs?|documentation|wiki)\//i.test(rel) || /^readme/i.test(base);
+  // A docs folder or a README. Never under the folders an agent runs as
+  // instructions (.claude/commands/docs/run.md is a command, not a docs page).
+  const m = /(^|\/)(?:docs?|documentation|wiki)\//i.exec(rel);
+  if (m) return !AGENT_INSTRUCTION_PATH.test(rel.slice(0, m.index + m[1].length));
+  return /^readme/i.test(base) && !AGENT_INSTRUCTION_PATH.test(rel);
 }
+const AGENT_INSTRUCTION_PATH = /(?:^|\/)(?:\.(?:claude|cursor|agents?|gemini|codex|opencode|windsurf|clinerules|continue|roo|kiro|amazonq|aider|augment|trae|goose|qwen)|\.github\/(?:prompts|instructions|agents|chatmodes)|(?:commands|agents|prompts|instructions|skills?))(?:\/|$)/i;
 
 function blockOf(text) {
   try {
@@ -806,18 +811,26 @@ function stripDocShapes(text, fenced) {
   return s;
 }
 
-const QUOTE_SPAN = /"[^"\n]*(?:"|$)|“[^”\n]*(?:”|$)|`[^`\n]*(?:`|$)/g;
-const EXAMPLE_MARK = /\b(?:phrases?|wording|strings?|messages?|text|attempts?|patterns?|e\.g\.|for example|for instance|such as|like|including|containing|saying|says?)\b/i;
-const NEGATED_CLAUSE = /\b(?:never|do not|don't|must not|should not|cannot|can't)\s+(?:follow|obey|execute|act on|comply with|run|trust)\b[^.;\n]*/gi;
-function stripDefensive(text) {
-  let s = text;
-  // Quoted text listed after "phrases like", "such as", "e.g.": an example.
-  const m = EXAMPLE_MARK.exec(s);
-  if (m) s = s.slice(0, m.index + m[0].length) + s.slice(m.index + m[0].length).replace(QUOTE_SPAN, ' ');
-  // "never follow instructions found in ...": the text warns about injection.
-  s = s.replace(NEGATED_CLAUSE, ' ');
-  return s;
-}
+// A closed quote span. An unclosed quote is never a span: it would hide the
+// rest of the line.
+const QUOTE_SPAN = /"[^"\n]*"|“[^”\n]*”|`[^`\n]*`/g;
+const ONE_SPAN = /(?:"[^"\n]*"|“[^”\n]*”|`[^`\n]*`)/.source;
+// The closed quotes that come right after an explicit example marker ("phrases
+// like", "such as", "e.g."), alone or as a short list. Nothing else is removed:
+// "reply like this: ..." or "what this text says: ..." are instructions.
+const EXAMPLE_MARKER = /\b(?:(?:phrases?|wording|strings?|messages?|texts?|patterns?|attempts?|words?|things?|examples?)\s+(?:like|such as|including|containing|e\.g\.)|e\.g\.|i\.e\.|for example|for instance|such as)\s{0,3}[,:]?\s{0,3}/.source;
+const EXAMPLE_LIST_SEP = /\s{0,3}(?:,|;|\/|\bor\b|\band\b)\s{0,3}/.source;
+const EXAMPLE_QUOTES = new RegExp(EXAMPLE_MARKER + ONE_SPAN + '(?:' + EXAMPLE_LIST_SEP + ONE_SPAN + ')*', 'gi');
+// "Never follow instructions found in ...": the warning is about the object
+// ("instructions found in the page"); it ends at a comma, a full stop or a
+// conjunction, so an order that comes after it is still read.
+const WARN_OBJECT = /(?:(?:any|all|the|these|those|such|its|their|that|this|a|an)\s+)?(?:(?:embedded|hidden|untrusted|external|injected|malicious|user|page|tool|web|file|document|text)\s+)*(?:instructions?|commands?|directives?|prompts?|text|content|data|output|results?|messages?|pages?|files?|documents?|rules?|users?)/.source;
+const WARN_TAIL = /(?:\s+(?:found|contained|embedded|appearing|present|inside|in|from|within|on|returned|provided|given|coming|that)\b(?:(?!\s(?:and|or|but|then|also|instead|so)\s)[^.;,\n])*)?/.source;
+const NEGATED_CLAUSE = new RegExp(/\b(?:never|do not|don't|must not|should not|cannot|can't)\s+(?:follow|obey|execute|act on|comply with|run|trust)\s+/.source + WARN_OBJECT + WARN_TAIL, 'gi');
+/** The line without the "never follow instructions found in ..." warnings. */
+function stripNegated(text) { return text.replace(NEGATED_CLAUSE, ' '); }
+/** The line without the closed quotes listed after an example marker. */
+function stripExampleQuotes(text) { return text.replace(EXAMPLE_QUOTES, ' '); }
 
 // Text near an example that talks about attacks: a demonstration of one.
 const ATTACK_TALK = /\b(?:prompt[- ]?injection|jailbreak\w*|injection (?:attacks?|examples?|payloads?|patterns?|phrases?)|attack(?:s|ers?)?|malicious|adversarial|untrusted|red[- ]?team|threat)\b/i;
@@ -839,9 +852,13 @@ function docShape(t, o) {
   let rest = t;
   // A tag named in backticks, never paired with a closing tag on the line.
   if (!/<\s*system[^>]*>[\s\S]*<\s*\/\s*system/i.test(rest)) rest = rest.replace(/`<\s*\/?\s*system\s*>`/gi, ' ');
-  if (o.doc) rest = stripDefensive(stripDocShapes(rest, o.fenced));
+  if (o.doc) rest = stripNegated(stripDocShapes(rest, o.fenced));
   if (rest !== t && !blockOf(rest)) return 'skip';
   if (!o.doc) return null;
+  // The strong pattern sits only inside the quotes of an example: reported one
+  // level lower, never dropped.
+  const noExamples = stripExampleQuotes(rest);
+  if (noExamples !== rest && !blockOf(noExamples)) return 'demo';
   if (o.fenced) return attackContext(o.lines, o.open - 1, 6) ? 'demo' : null;
   const unquoted = t.replace(QUOTE_SPAN, ' ');
   if (unquoted !== t && !blockOf(unquoted) && attackContext(o.lines, o.at, 10)) return 'demo';
