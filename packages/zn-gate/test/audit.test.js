@@ -431,6 +431,29 @@ test('download-and-run and instruction patterns', () => {
   assert.equal(P.claudePermission('Bash'), 'high');
 });
 
+test('ZNA010: Python installers and runners with a wildcard are broad, read-only forms are not', () => {
+  const broad = [
+    'Bash(pip install:*)', 'Bash(pip3 install:*)', 'Bash(pip3.12 install:*)', 'Bash(pip install -r requirements.txt:*)',
+    'Bash(python -m pip install:*)', 'Bash(python3 -m pip install:*)', 'Bash(pip download:*)', 'Bash(pip config:*)',
+    'Bash(pip:*)', 'Bash(uv pip install:*)', 'Bash(uv add:*)', 'Bash(uv run:*)', 'Bash(uv tool run:*)',
+    'Bash(uv tool install:*)', 'Bash(uv:*)', 'Bash(uvx:*)', 'Bash(uvx --from x y:*)', 'Bash(uvx some-tool:*)',
+    'Bash(pipx run:*)', 'Bash(pipx install:*)', 'Bash(pipx:*)', 'Bash(PIP install:*)', 'Bash(pip install *)',
+    'Bash(uv --directory x run:*)', 'Bash(pip install:* --user)',
+  ];
+  for (const e of broad) assert.equal(P.claudePermission(e), 'high', e);
+  const narrow = [
+    'Bash(pip list:*)', 'Bash(pip show:*)', 'Bash(pip freeze:*)', 'Bash(pip3 list:*)', 'Bash(pip check:*)',
+    'Bash(uv pip list:*)', 'Bash(uv pip freeze:*)', 'Bash(uv sync:*)', 'Bash(uv lock:*)', 'Bash(uv tree:*)',
+    'Bash(pipx list:*)', 'Bash(python -m pytest:*)', 'Bash(uvx ruff:*)',
+    // Exact entries (no wildcard) allow one literal command only.
+    'Bash(pip list)', 'Bash(pip install -r requirements.txt)', 'Bash(uv sync)', 'Bash(pipx run black)',
+    'Bash(pipenv run test:*)',
+  ];
+  for (const e of narrow) {
+    assert.equal(P.claudePermission(e), null, e);
+  }
+});
+
 test('patterns stay linear on long adversarial lines', () => {
   const inputs = [
     'send '.repeat(800) + 'secrets ',

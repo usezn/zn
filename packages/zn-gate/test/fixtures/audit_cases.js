@@ -164,6 +164,12 @@ const RULE_CASES = [
     count: { ZNA010: 3 },
   },
   {
+    name: 'Python installers and runners with a wildcard in Claude settings',
+    files: { '.claude/settings.json': json({ permissions: { allow: ['Bash(python -m pip install:*)', 'Bash(pip install:*)', 'Bash(uv pip install:*)', 'Bash(pipx run:*)', 'Bash(pip list:*)', 'Bash(uv sync:*)', 'Bash(python -m pytest:*)', 'Bash(pip install -r requirements.txt)'] } }) },
+    expect: [{ id: 'ZNA010', severity: 'high' }],
+    count: { ZNA010: 4 },
+  },
+  {
     name: 'Codex without approvals and without sandbox, endpoint override in a provider',
     files: {
       '.codex/config.toml': [

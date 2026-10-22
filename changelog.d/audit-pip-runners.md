@@ -1,0 +1,2 @@
+### Security
+- `zn audit` now reports wildcard permissions on Python installers and runners (`Bash(pip install:*)`, `Bash(uv pip install:*)`, `Bash(uv run:*)`, `Bash(pipx run:*)`) as allowing any command, like the equivalent `npm install` and `npx` permissions. Installing from a URL or a VCS link runs code, so the permission is broad. Read-only forms such as `Bash(pip list:*)` and exact entries without a wildcard are not reported. `AUDIT_RULES_VERSION` is now `2026-10-22.6`.

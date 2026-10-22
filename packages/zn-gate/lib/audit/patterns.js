@@ -265,6 +265,12 @@ const INTERPRETERS = new Set([
 ]);
 
 const PACKAGE_MANAGERS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
+// Python installers and runners. "pip install", "uv add", "uv run", "uv tool
+// run" and "pipx run" take a package name, a URL or a VCS link and run its build
+// or install code, so a wildcard on them is as broad as "npx" or "npm exec".
+const PY_TOOLS = new Set(['pip', 'uv', 'pipx']);
+const PIP_READ = new Set(['list', 'show', 'freeze', 'check']);
+const UV_READ = new Set(['sync', 'lock', 'tree']);
 const SAFE_WORD = /^[\w@%+=.,/~:-]+$/;
 const SCRIPT_NAME = /^[\w][\w:-]*$/;
 const PM_SUBS = new Set(['ci', 'remove', 'test', 'build', 'lint']);
@@ -288,6 +294,9 @@ function scopedShape(words) {
     return PM_SUBS.has(sub);
   }
   if (first === 'npx' || first === 'bunx' || first === 'uvx') return PM_TOOLS.has(sub);
+  if (first === 'pip') return PIP_READ.has(sub);
+  if (first === 'pipx') return sub === 'list';
+  if (first === 'uv') return UV_READ.has(sub) || (sub === 'pip' && PIP_READ.has((words[2] || '').toLowerCase()));
   if (first === 'python' || first === 'python3' || first === 'py') {
     if (sub === '-m') return PY_MODULES.has((words[2] || '').toLowerCase());
     return /^[\w./-]+\.py$/.test(words[1] || '');
@@ -308,14 +317,16 @@ function claudePermission(entry) {
   const inner = m[2].trim();
   if (inner === '' || /^[*:\s]+$/.test(inner)) return 'high';
   if (!/[*]/.test(inner)) return null;
-  const firstWord = inner.split(/[\s:]/)[0].toLowerCase();
+  let firstWord = inner.split(/[\s:]/)[0].toLowerCase();
   if (firstWord.includes('*')) return 'high';
-  if (!INTERPRETERS.has(firstWord) && !PACKAGE_MANAGERS.has(firstWord)) return null;
+  if (/^pip\d+(?:\.\d+)?$/.test(firstWord)) firstWord = 'pip';
+  if (!INTERPRETERS.has(firstWord) && !PACKAGE_MANAGERS.has(firstWord) && !PY_TOOLS.has(firstWord)) return null;
   // Only a final ":*" or " *" is a prefix wildcard; any other * can stand for a
   // flag or a subcommand, so it is flagged.
   const m2 = /^(.*?)(?::\*|\s\*)$/s.exec(inner);
   if (!m2 || m2[1].includes('*')) return 'high';
   const words = m2[1].split(/\s+/).filter(Boolean);
+  if (words.length > 0 && /^pip\d+(?:\.\d+)?$/i.test(words[0])) words[0] = 'pip';
   return words.length > 0 && scopedShape(words) ? null : 'high';
 }
 
