@@ -829,10 +829,6 @@ function startMcpShield(command, args, options = {}) {
                 engine: 'oss-local',
               });
             }
-            if (!options.shadow) {
-              if (isText) item.text = notice;
-              if (item.resource && typeof item.resource.text === 'string') item.resource.text = notice;
-            }
           }
           if (!logged) {
             logEvidence({
@@ -849,8 +845,10 @@ function startMcpShield(command, args, options = {}) {
             });
           }
           if (!options.shadow) {
+            // The whole result is replaced, not just its text items: resource links, blobs and resource
+            // fields are not scanned again once the result is marked replaced, so none of them may stay.
             if (msg.result.structuredContent !== undefined) delete msg.result.structuredContent;
-            if (!Array.isArray(contentList)) msg.result.content = [{ type: 'text', text: notice }];
+            msg.result.content = [{ type: 'text', text: notice }];
             msg.result.isError = true;
           }
         }
