@@ -1,0 +1,2 @@
+### Fixed
+- `zn-gate hooks install` and `uninstall` keep the line endings (CRLF or LF), the indentation (spaces or tabs) and the byte order mark of your agent config files, such as Claude Code's `settings.json`, `.mcp.json` and each agent's `hooks.json`, instead of rewriting them with LF and two spaces. A config file that starts with a byte order mark is now accepted and kept as it is, instead of refused.

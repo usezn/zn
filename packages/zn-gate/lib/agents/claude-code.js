@@ -68,7 +68,8 @@ const { writeFileAtomic } = require('../broker/files');
 const { whichSync } = require('../broker/markers');
 const { shQuote, portablePath } = require('../shell-quote');
 const { claudeCodePolicyWarnings } = require('./managed-policy');
-const { hooksOf } = require('./config-file');
+const cfg = require('./config-file');
+const { hooksOf } = cfg;
 const launcher = require('./launcher');
 
 const id = 'claude-code';
@@ -263,7 +264,7 @@ function readJson(file) {
   let data;
   try {
     const text = fs.readFileSync(file, 'utf8');
-    data = text.trim() ? JSON.parse(text) : {};
+    data = text.replace(/^\uFEFF/, '').trim() ? cfg.parseJson(text) : {};
   } catch (err) {
     if (err.code === 'ENOENT') return {};
     throw new Error('cannot parse ' + file + ': ' + err.message);
@@ -360,7 +361,7 @@ function installMcp(opts, report) {
     report.mcpBackup = backup(file);
     data.mcpServers[MCP_SERVER_NAME] = conf;
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    writeFileAtomic(file, JSON.stringify(data, null, 2) + '\n', 0o644);
+    writeFileAtomic(file, cfg.stringifyJson(data), 0o644);
     report.mcp = file;
     return;
   }
@@ -408,7 +409,7 @@ function install(opts = {}) {
     data.hooks[event].push(group);
   }
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  writeFileAtomic(file, JSON.stringify(data, null, 2) + '\n', 0o644);
+  writeFileAtomic(file, cfg.stringifyJson(data), 0o644);
   if (opts.mcp !== false) installMcp(opts, report);
   if (!opts.command && (opts.scope || 'user') === 'project' && !znOnPath(opts)) {
     report.warnings.push('`zn` is not on your PATH, and this project install runs `zn hook claude-code`' +
@@ -444,7 +445,7 @@ function uninstall(opts = {}) {
     if (JSON.stringify(hooks) !== before) {
       report.backup = backup(file);
       report.removed = 1;
-      writeFileAtomic(file, JSON.stringify(data, null, 2) + '\n', 0o644);
+      writeFileAtomic(file, cfg.stringifyJson(data), 0o644);
       // The launcher of a user install (see commandFor) is no longer referenced.
       if ((opts.scope || 'user') !== 'project') {
         try { fs.unlinkSync(launcher.launcherFile(id, opts)); } catch (_) { /* none */ }
@@ -460,7 +461,7 @@ function uninstall(opts = {}) {
         if (s && isZnSecretsServer(s)) {
           backup(mcpFile);
           delete data.mcpServers[MCP_SERVER_NAME];
-          writeFileAtomic(mcpFile, JSON.stringify(data, null, 2) + '\n', 0o644);
+          writeFileAtomic(mcpFile, cfg.stringifyJson(data), 0o644);
         }
       }
     } else {
