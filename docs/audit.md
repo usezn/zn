@@ -27,7 +27,7 @@ It runs locally and sends nothing anywhere.
 ```text
 zn audit [path] [--format text|json|sarif] [--output <file>]
          [--fail-on low|medium|high|critical|none]
-         [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home]
+         [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,antigravity,all] [--include-home]
 ```
 
 `zn-gate audit` is the same command.
@@ -46,7 +46,7 @@ there is no directory named `log`) and `zn audit --since DATE` exit with code
 | `--format` | `text` | `text` for people, `json` for scripts, `sarif` for GitHub code scanning |
 | `--output` | standard output | Write the report to a file |
 | `--fail-on` | `high` | Exit with 1 if any finding has this severity or a higher one; `none` never fails |
-| `--agents` | `all` | Only check the files these agents read: `claude`, `codex`, `cursor`, `opencode`, `amazonq`, `copilot`, `gemini` or `all`. Findings that concern every agent (`AGENTS.md`, planted executables, CI workflows) are always shown |
+| `--agents` | `all` | Only check the files these agents read: `claude`, `codex`, `cursor`, `opencode`, `amazonq`, `copilot`, `gemini`, `antigravity` or `all`. Findings that concern every agent (`AGENTS.md`, planted executables, CI workflows) are always shown |
 | `--include-home` | off | Also check your own user-level configs (`~/.claude/settings.json`, `~/.codex/config.toml`, ...) |
 
 Exit codes: `0` no finding at or above `--fail-on`, `1` at least one, `2`
@@ -103,14 +103,16 @@ silently:
 | Cursor | `.cursor/mcp.json`, `.cursor/hooks.json`, `.cursor/cli.json`, `.cursor/rules/`, `.cursor/commands/`, `.cursorrules`, `.claude/settings*.json` hooks (Cursor runs them), `.vscode/tasks.json`, `AGENTS.md` |
 | OpenCode | `opencode.json`, `opencode.jsonc`, `.opencode/opencode.json[c]`, `.opencode/plugin[s]/`, `.opencode/command[s]/`, `.opencode/agent[s]/`, `AGENTS.md` |
 | Amazon Q | `.amazonq/mcp.json`, `.amazonq/cli-agents/*.json`, `.amazonq/agents/*.json`, `.amazonq/rules/`, `AGENTS.md` |
-| Copilot / VS Code | `.vscode/mcp.json`, `.vscode/settings.json`, `.vscode/tasks.json`, `.github/copilot-instructions.md`, `.github/instructions/`, `.github/prompts/`, `AGENTS.md` |
+| Copilot / VS Code | `.vscode/mcp.json`, `.vscode/settings.json`, `.vscode/tasks.json`, `.github/hooks/*.json` (Copilot CLI hooks), `.github/copilot-instructions.md`, `.github/instructions/`, `.github/prompts/`, `AGENTS.md` |
 | Gemini CLI | `.gemini/settings.json`, `.gemini/commands/`, `GEMINI.md` |
+| Antigravity | `.agents/hooks.json` |
 | Any | executables in the audited root, `.github/workflows/*.yml`, `.windsurfrules`, `.clinerules` |
 
 With `--include-home` it also reads `~/.claude/settings.json`, `~/.claude.json`,
 `~/.codex/config.toml`, `~/.cursor/mcp.json`, `~/.cursor/hooks.json`,
 `~/.aws/amazonq/mcp.json`, `~/.config/opencode/opencode.json[c]` and
-`~/.gemini/settings.json`, plus `hooks.json` next to the Codex config. It
+`~/.gemini/settings.json`, `~/.gemini/config/hooks.json` (Antigravity hooks) and
+`~/.copilot/hooks/*.json` (Copilot CLI hooks; `$COPILOT_HOME` moves the folder), plus `hooks.json` next to the Codex config. It
 honours `CODEX_HOME` and `XDG_CONFIG_HOME` the way the agents do. Commands you
 configured yourself are expected
 there, so in home configs only the riskier variants are reported (code
@@ -193,7 +195,7 @@ file names) are printed as `\x1b`, never sent to the terminal.
     "bySeverity": { "critical": 1, "high": 0, "medium": 0, "low": 0 },
     "failOn": "high",
     "failed": true,
-    "agents": ["claude", "codex", "cursor", "opencode", "amazonq", "copilot", "gemini"]
+    "agents": ["claude", "codex", "cursor", "opencode", "amazonq", "copilot", "gemini", "antigravity"]
   }
 }
 ```

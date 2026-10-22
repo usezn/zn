@@ -22,7 +22,7 @@ const { BY_ID, RANK } = require('./rules');
 const mcpSecrets = require('../mcp-secrets');
 const { pruneInfo } = require('../prune');
 
-const AGENTS = ['claude', 'codex', 'cursor', 'opencode', 'amazonq', 'copilot', 'gemini'];
+const AGENTS = ['claude', 'codex', 'cursor', 'opencode', 'amazonq', 'copilot', 'gemini', 'antigravity'];
 const MAX_FILE_BYTES = 1024 * 1024;
 const MAX_DEPTH = 64;
 const TIME_BUDGET_MS = 120000;
@@ -631,6 +631,14 @@ function checkHooksJson(ctx, data) {
   if (data.hooks && typeof data.hooks === 'object') checkHooks(ctx, data.hooks, ['hooks']);
 }
 
+// Antigravity hooks file: every top-level key is one named hook,
+// { "<name>": { "enabled": true, "PreToolUse": [ { "matcher": "...", "hooks": [ { "type": "command", "command": "..." } ] } ] } }.
+function checkAntigravityHooks(ctx, data) {
+  for (const [name, entry] of Object.entries(data)) {
+    if (entry && typeof entry === 'object' && !Array.isArray(entry)) checkHooks(ctx, entry, [name]);
+  }
+}
+
 function checkAmazonqAgent(ctx, data) {
   checkMcpServers(ctx, data.mcpServers, ['mcpServers'], { severity: 'high', note: '(Amazon Q versions affected by CVE-2026-12957 start it without asking.)' });
   if (data.hooks && typeof data.hooks === 'object') checkHooks(ctx, data.hooks, ['hooks']);
@@ -901,6 +909,8 @@ function classify(rel, isRootLevel) {
   if (has(/(^|\/)\.cursor\/hooks\.json$/)) return rule('hooks-json', 'cursor');
   if (has(/(^|\/)\.cursor\/cli\.json$/)) return rule('cursor-cli', 'cursor');
   if (has(/(^|\/)\.gemini\/settings\.json$/)) return rule('gemini-settings', 'gemini');
+  if (has(/(^|\/)\.github\/hooks\/[^/]+\.json$/)) return rule('copilot-hooks', 'copilot');
+  if (has(/(^|\/)\.agents\/hooks\.json$/)) return rule('antigravity-hooks', 'antigravity');
   if (/^opencode\.jsonc?$/.test(base) && (isRootLevel || has(/(^|\/)\.opencode\/opencode\.jsonc?$/) || !rel.includes('/'))) return rule('opencode-json', 'opencode');
   if (has(/(^|\/)\.opencode\/plugins?\/[^/]+\.(?:js|mjs|cjs|ts|mts)$/)) return rule('opencode-plugin', 'opencode');
   if (has(/(^|\/)\.claude-plugin\/plugin\.json$/)) return rule('claude-plugin', 'claude');
@@ -943,7 +953,7 @@ const EXTENSION_DIRS = [
 
 // Directories agents read from. They are visited first, and inside them the
 // SKIP_DIRS list does not apply (a skill may be called "build" or "dist").
-const AGENT_DIRS = new Set(['.claude', '.codex', '.cursor', '.amazonq', '.vscode', '.opencode', '.gemini', '.github', '.claude-plugin', '.clinerules', 'skills']);
+const AGENT_DIRS = new Set(['.claude', '.codex', '.cursor', '.amazonq', '.vscode', '.opencode', '.gemini', '.agents', '.github', '.claude-plugin', '.clinerules', 'skills']);
 
 function isAgentDirName(name) {
   return AGENT_DIRS.has(name.toLowerCase());
@@ -1074,7 +1084,14 @@ function homeFiles(home, env) {
     [path.join(xdg, 'opencode', 'opencode.json'), 'opencode-json', 'opencode'],
     [path.join(xdg, 'opencode', 'opencode.jsonc'), 'opencode-json', 'opencode'],
     [path.join(home, '.gemini', 'settings.json'), 'gemini-settings', 'gemini'],
+    [path.join(home, '.gemini', 'config', 'hooks.json'), 'antigravity-hooks', 'antigravity'],
   ];
+  // Copilot CLI reads every *.json file in its hooks folder ($COPILOT_HOME, else ~/.copilot).
+  const copilotHooks = path.join(env.COPILOT_HOME ? path.resolve(env.COPILOT_HOME) : path.join(home, '.copilot'), 'hooks');
+  try {
+    const names = fs.readdirSync(copilotHooks).filter((n) => /\.json$/i.test(n)).sort().slice(0, 200);
+    for (const n of names) list.push([path.join(copilotHooks, n), 'copilot-hooks', 'copilot']);
+  } catch (_) { /* no hooks folder */ }
   return list.map(([abs, kind, agent]) => {
     const rel = path.relative(home, abs).split(path.sep).join('/');
     const display = rel.startsWith('..') || path.isAbsolute(rel) ? abs.split(path.sep).join('/') : '~/' + rel;
@@ -1389,6 +1406,8 @@ const CHECKS = {
   'plugin-hooks': checkHooksJson,
   'cursor-cli': checkCursorCli,
   'gemini-settings': checkGeminiSettings,
+  'copilot-hooks': checkHooksJson,
+  'antigravity-hooks': checkAntigravityHooks,
   'opencode-json': checkOpencodeJson,
   'claude-plugin': checkClaudePlugin,
   'config-other': () => {},
@@ -1396,7 +1415,7 @@ const CHECKS = {
 
 // Config kinds that can start commands or redirect the agent: when one of
 // them cannot be parsed, the text is searched for the risky keys instead.
-const RISKY_KINDS = new Set(['claude-settings', 'claude-user-json', 'mcp-json', 'vscode-mcp', 'amazonq-agent', 'vscode-tasks', 'hooks-json', 'plugin-hooks', 'codex-toml', 'gemini-settings', 'opencode-json', 'claude-plugin', 'cursor-cli', 'vscode-settings']);
+const RISKY_KINDS = new Set(['claude-settings', 'claude-user-json', 'mcp-json', 'vscode-mcp', 'amazonq-agent', 'vscode-tasks', 'hooks-json', 'plugin-hooks', 'codex-toml', 'gemini-settings', 'opencode-json', 'claude-plugin', 'cursor-cli', 'vscode-settings', 'copilot-hooks', 'antigravity-hooks']);
 const RISKY_JSON_KEY = /"(hooks|command|args|mcpServers|servers|mcp|env|apiKeyHelper|awsAuthRefresh|awsCredentialExport|otelHeadersHelper|statusLine|enableAllProjectMcpServers|enabledMcpjsonServers|enabledPlugins|extraKnownMarketplaces|permissions?|plugin|provider|runOn|allowedTools|chat\.tools\.(?:global\.)?autoApprove)"\s*:/;
 const RISKY_TOML_KEY = /^\s*(?:\[\s*(?:mcp_servers|model_providers|shell_environment_policy|profiles)\b|(?:notify|approval_policy|sandbox_mode|openai_base_url|chatgpt_base_url|command|args)\s*=)/;
 
