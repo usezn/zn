@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, overload
 
 
-RULES_VERSION = "2026-10-23.7"
+RULES_VERSION = "2026-10-23.9"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -502,8 +502,8 @@ def _b64_decode_lenient(data: str) -> bytes:
 # A run of two or more empty or whitespace-only lines becomes one empty line before any rule runs, so text
 # that follows a long padding run is read in the same scan window as the text before it (same class as
 # collapseBlankRuns in rules.js; whitespace listed explicitly, not \s, so both packages agree).
-_BLANK_RUN_TEST = re.compile(r'\n[ \t\r\f\v\u00a0\u200b-\u200d\u2060\ufeff]*\n[ \t\r\f\v\u00a0\u200b-\u200d\u2060\ufeff]*\n')
-_BLANK_SPACE = re.compile(r'[ \t\r\f\v\u00a0\u200b-\u200d\u2060\ufeff]*')
+_BLANK_RUN_TEST = re.compile(r'\n[ \t\r\f\v\u0085\u00a0\u00ad\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]*\n[ \t\r\f\v\u0085\u00a0\u00ad\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]*\n')
+_BLANK_SPACE = re.compile(r'[ \t\r\f\v\u0085\u00a0\u00ad\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]*')
 
 
 def _collapse_blank_runs(text: str) -> str:

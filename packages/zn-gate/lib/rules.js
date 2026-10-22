@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-23.7
+ * RULES_VERSION: 2026-10-23.9
  */
 
-const RULES_VERSION = '2026-10-23.7';
+const RULES_VERSION = '2026-10-23.9';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -543,8 +543,8 @@ const SCAN_TAIL_CHARS = MAX_SCAN_CHARS - SCAN_HEAD_CHARS - 1;
 // that follows a long padding run is read in the same scan window as the text before it. Whitespace here is
 // listed explicitly (not \s) so Node.js and Python agree. Done by scanning, not with one repeated regex group,
 // which overflows the regex stack on millions of lines; every line is looked at once.
-const BLANK_RUN_TEST = /\n[ \t\r\f\v\u00a0\u200b-\u200d\u2060\ufeff]*\n[ \t\r\f\v\u00a0\u200b-\u200d\u2060\ufeff]*\n/;
-const BLANK_SPACE = /[ \t\r\f\v\u00a0\u200b-\u200d\u2060\ufeff]*/y;
+const BLANK_RUN_TEST = /\n[ \t\r\f\v\u0085\u00a0\u00ad\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]*\n[ \t\r\f\v\u0085\u00a0\u00ad\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]*\n/;
+const BLANK_SPACE = /[ \t\r\f\v\u0085\u00a0\u00ad\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]*/y;
 function collapseBlankRuns(text) {
   if (typeof text !== 'string' || !BLANK_RUN_TEST.test(text)) return text;
   const out = [];

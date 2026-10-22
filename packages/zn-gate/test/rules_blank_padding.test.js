@@ -28,3 +28,17 @@ test('rules: benign padding and short runs stay allowed', () => {
   assert.equal(rules.evaluate('# Example skill\n' + '\n'.repeat(100) + 'Run the tests with npm test.\n').verdict, 'allow');
   assert.equal(rules.evaluate('Run the tests.\n\n\nThen build.\n').verdict, 'allow');
 });
+
+// Lines made only of Unicode spaces (no-break, em, ideographic, line/paragraph separators, NEL, soft hyphen)
+// count as blank in Node.js and Python alike.
+for (const [name, ch] of [['U+00A0', '\u00a0'], ['U+2003', '\u2003'], ['U+3000', '\u3000'], ['U+2028', '\u2028'], ['U+2029', '\u2029'], ['U+0085', '\u0085'], ['U+00AD', '\u00ad'], ['U+1680', '\u1680'], ['U+202F', '\u202f'], ['U+205F', '\u205f']]) {
+  test(`rules: padding lines made of ${name} are collapsed`, () => {
+    const pad = ch + '\n';
+    const text = 'Notes\n' + pad.repeat(300000) + PAYLOAD + '\n' + pad.repeat(300000);
+    assert.equal(rules.evaluate(text).verdict, 'block');
+  });
+}
+
+test('rules: a few lines of Unicode spaces between benign text stay allowed', () => {
+  assert.equal(rules.evaluate('Run the tests.\n\u3000\n\u00a0\n\u2003\nThen build.\n').verdict, 'allow');
+});

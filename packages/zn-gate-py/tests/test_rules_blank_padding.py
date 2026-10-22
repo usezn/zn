@@ -23,6 +23,16 @@ class TestBlankPadding(unittest.TestCase):
         self.assertEqual(R.evaluate("# Example skill\n" + "\n" * 100 + "Run the tests with npm test.\n").verdict, "allow")
         self.assertEqual(R.evaluate("Run the tests.\n\n\nThen build.\n").verdict, "allow")
 
+    def test_unicode_space_padding_lines_are_collapsed(self):
+        for ch in ("\u00a0", "\u2003", "\u3000", "\u2028", "\u2029", "\u0085", "\u00ad", "\u1680", "\u202f", "\u205f"):
+            with self.subTest(ch=hex(ord(ch))):
+                pad = ch + "\n"
+                text = "Notes\n" + pad * 300000 + PAYLOAD + "\n" + pad * 300000
+                self.assertEqual(R.evaluate(text).verdict, "block")
+
+    def test_few_unicode_space_lines_stay_allowed(self):
+        self.assertEqual(R.evaluate("Run the tests.\n\u3000\n\u00a0\n\u2003\nThen build.\n").verdict, "allow")
+
 
 if __name__ == "__main__":
     unittest.main()
