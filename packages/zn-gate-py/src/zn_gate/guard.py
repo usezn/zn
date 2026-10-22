@@ -17,7 +17,7 @@ from collections.abc import AsyncIterator, ItemsView, Iterable, Iterator, KeysVi
 from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set, Tuple, TypeVar, cast
 
 from .rules import Assessment, invisible_block, scan_windows, too_invisible
-from .rules import MAX_TOOL_RESULT_SCAN_CHARS
+from .rules import MAX_SCAN_CHARS, MAX_TOOL_RESULT_SCAN_CHARS, _check_base64_pipes
 
 
 _F = TypeVar("_F", bound=Callable[..., Any])
@@ -324,6 +324,12 @@ def _scan_strings(data: Any, what: str, block_truncated: bool, strict: Optional[
         if what == "Arguments" and isinstance(s, str) and len(s) > MAX_TOOL_RESULT_SCAN_CHARS:
             return Assessment(verdict="block", confidence=1.0, rule="size:oversize",
                               reason="Input too large to scan in full", truncated=True)
+        if what == "Arguments" and isinstance(s, str) and len(s) > MAX_SCAN_CHARS:
+            # The npm package checks arguments with evaluate(), which finds Base64 decode pipes in the whole
+            # input before the windowed scan (a long pipe can straddle two windows): do the same here.
+            b64_block, _ = _check_base64_pipes((s,), strict)
+            if b64_block is not None:
+                return b64_block
         res = scan_windows(s, strict=strict)
         if not res.allowed:
             return res
