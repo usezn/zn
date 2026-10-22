@@ -157,7 +157,7 @@ test('a policy that cannot be copied to disk: sync throws the raw system error',
   cloud.publishPolicy({ rules: [] });
   fs.chmodSync(process.env.ZN_HOME, 0o500);
   t.after(() => { try { fs.chmodSync(process.env.ZN_HOME, 0o700); } catch (e) { /* already removed */ } });
-  // Current behaviour, pinned (board B-922): the disk error escapes sync as a raw EACCES, with no next step,
+  // Current behaviour, pinned (board B-932): the disk error escapes sync as a raw EACCES, with no next step,
   // although the policy was downloaded and kept in the vault.
   const e = await refusal(m.o.teamSync({ upload: false }));
   assert.strictEqual(e.code, 'EACCES');
