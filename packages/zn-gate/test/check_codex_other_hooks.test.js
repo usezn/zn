@@ -86,6 +86,14 @@ test('check: another hook in the project .codex folder is reported', async (t) =
   assert.match(r.problem, /\.codex.hooks\.json/);
 });
 
+test('check: a config.toml over 256 KB is reported as too large to check', async (t) => {
+  const ctx = codexHome(t);
+  fs.writeFileSync(path.join(path.dirname(ctx.file), 'config.toml'), '# ' + 'x'.repeat(300 * 1024) + '\n');
+  const r = await codexResult(ctx);
+  assert.equal(r.state, 'not-protected');
+  assert.match(r.problem, /could not check .*config\.toml.*larger than 256 KB/);
+});
+
 test('check: unreadable or malformed hook files say nothing', async (t) => {
   const ctx = codexHome(t);
   fs.writeFileSync(path.join(path.dirname(ctx.file), 'config.toml'), 'this is = = not toml [[');

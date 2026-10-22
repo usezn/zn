@@ -71,8 +71,15 @@ test('a 1 MB version string is read within the time bound', () => {
   assert.ok(Date.now() - t0 < 2000, 'took too long');
 });
 
-test('a prerelease of the patched version is treated as patched (known bug B-921)', () => {
-  // Current behaviour, not the wanted one: only major.minor.patch is compared, so 22.23.4-rc.1 gives no advice.
-  // A prerelease sorts below its release and should be outdated. Fix tracked as board task B-921.
-  assert.equal(ns.nodeAdvice('22.23.4-rc.1'), null);
+test('a prerelease of the patched version is not the patched release', () => {
+  // A prerelease sorts below its release (semver), so 22.23.4-rc.1 is outdated, while 22.23.5-rc.1 is past 22.23.4.
+  const a = ns.nodeAdvice('22.23.4-rc.1');
+  assert.equal(a.level, 'outdated');
+  assert.equal(a.minimum, '22.23.4');
+  assert.match(a.message, /22\.23\.4-rc\.1/);
+  assert.equal(ns.nodeAdvice('v22.23.4-rc.1').level, 'outdated');
+  assert.equal(ns.nodeAdvice('22.23.4'), null);
+  assert.equal(ns.nodeAdvice('22.23.5-rc.1'), null);
+  assert.equal(ns.nodeAdvice('24.22.1-nightly20261020abc'), null);
+  assert.equal(ns.nodeAdvice('24.22.1-beta.0').level, 'outdated');
 });

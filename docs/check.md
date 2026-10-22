@@ -228,6 +228,15 @@ For these reasons, zn is installed correctly, but a setting stops your agent fro
 
   Codex runs every hook for an event at the same time, each with the original call. Another tool's hook can change the call after zn has checked it, or answer an approval prompt, and zn cannot see what it does. See [compat](compat.md) for the details.
 
+- **A Codex hooks file is too large to check.**
+
+  ```text
+  zn could not check <file> for another hook that runs before Codex calls: the file is larger than 256 KB, so zn did not read it
+  make that file smaller, or move its hooks out of it, then run `zn-gate check` again
+  ```
+
+  zn reads at most 256 KB of `hooks.json` or `config.toml`. A larger file is reported instead of skipped, so that it cannot hide another tool's hook.
+
 ### Gemini CLI settings switch the hook off
 
 - **Hooks are turned off, or zn's hook is on the disabled list.**

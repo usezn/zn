@@ -595,7 +595,10 @@ async function checkAgent(spec, ctx) {
     // change a call after zn checked it, or answer an approval prompt. zn cannot see what that hook does.
     let other = null;
     try { other = require('./codex-other-hooks').findOtherHooks(path.dirname(userFile), ctx.cwd); } catch (_) { other = null; }
-    if (other) {
+    if (other && other.tooLarge) {
+      res.problem = 'zn could not check ' + other.file + ' for another hook that runs before Codex calls: the file is larger than 256 KB, so zn did not read it';
+      res.fix = 'make that file smaller, or move its hooks out of it, then run `zn-gate check` again';
+    } else if (other) {
       res.problem = 'another hook runs before Codex calls (' + other.event + ' in ' + other.file + '); it can change a call after zn has checked it, so zn cannot fully protect Codex';
       res.fix = 'review that hook and remove it if you do not need it, or have your administrator manage hooks with `allow_managed_hooks_only`, then run `zn-gate check` again';
     }

@@ -176,13 +176,24 @@ test('a 200 KB command is read within the time bound', (t) => {
   assert.ok(Date.now() - t0 < 2000, 'took too long');
 });
 
-test('a hooks file over the 256 KB cap is ignored (known bug B-920)', (t) => {
-  // Current behaviour, not the wanted one: a file above the cap is treated as holding no hooks, so
-  // `zn-gate check` would not report another tool's hook in it. Fix tracked as board task B-920.
+test('a hooks file over the 256 KB cap is reported as too large to check', (t) => {
+  // A file above the cap is not read, so it is reported rather than taken for "no hooks".
   const dir = codexHome(t);
   const big = JSON.stringify(under('PreToolUse', group('Bash', 'other-tool big'))) + ' '.repeat(300 * 1024);
   writeHooks(dir, big);
-  assert.equal(findOtherHooks(dir, null), null);
+  const r = findOtherHooks(dir, null);
+  assert.equal(r.tooLarge, true);
+  assert.match(r.file, /hooks\.json$/);
+  assert.equal(r.event, undefined);
+});
+
+test('a hook found in a readable file wins over a too-large file; a too-large file alone is reported', (t) => {
+  const dir = codexHome(t);
+  writeHooks(dir, JSON.stringify(under('PreToolUse', group('Bash', 'x'))) + ' '.repeat(300 * 1024));
+  fs.writeFileSync(path.join(dir, 'config.toml'), '[[hooks.PreToolUse]]\nmatcher = "Bash"\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = "other-tool toml"\n');
+  assert.equal(findOtherHooks(dir, null).event, 'PreToolUse');
+  fs.writeFileSync(path.join(dir, 'config.toml'), '# nothing\n');
+  assert.equal(findOtherHooks(dir, null).tooLarge, true);
 });
 
 test('the same hook under the cap is reported', (t) => {
