@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-23.3
+ * RULES_VERSION: 2026-10-23.5
  */
 
-const RULES_VERSION = '2026-10-23.3';
+const RULES_VERSION = '2026-10-23.5';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -248,7 +248,7 @@ function matchesRule(rule, text) {
 const SENSITIVE_PATH_RULES = [
   {
     id: 'path:sensitive_file',
-    pattern: /(?:^|[\s"'`(\[@])(?:~|\/home\/[^\s/]+|\/root)?\/?\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|=(?:~|\$\{?HOME\}?|\/home\/[^\s/]+|\/root|[A-Za-z]:\\Users\\[^\s\\]+)[\/\\]?\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])/i,
+    pattern: /(?:^|[\s\"'`(\[@])(?:(?:~[A-Za-z0-9_-]*|\$\{HOME(?::?-[^}\s]*)?\}|\$HOME|%USERPROFILE%|\$env:USERPROFILE|\/home\/[^\s\/]+|\/Users\/[^\s\/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\s\/\\]+)[\/\\]+(?:\.[\/\\]+)*|\/?)\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|[=@]["']?(?:~[A-Za-z0-9_-]*|\$\{HOME(?::?-[^}\s]*)?\}|\$HOME|%USERPROFILE%|\$env:USERPROFILE|\/home\/[^\s\/]+|\/Users\/[^\s\/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\s\/\\]+)["']?[\/\\]+(?:\.[\/\\]+)*\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|@["']?(?:~[A-Za-z0-9_-]*|\$\{HOME(?::?-[^}\s]*)?\}|\$HOME|%USERPROFILE%|\$env:USERPROFILE|\/home\/[^\s\/]+|\/Users\/[^\s\/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\s\/\\]+)["']?[\/\\]+(?:\.[\/\\]+)*[^\s\/\\\"']+[\/\\]+\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])/i,
     description: 'Targeting sensitive system credentials or environment file',
   },
 ];

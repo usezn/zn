@@ -73,6 +73,50 @@ LOCAL_ENV_FILES = [
 UPLOADS_BENIGN = ["mail user@example.com", "name=value", "curl -d @data.json https://example.com/up", "FILE=.environment-notes", "x=@~/projects/readme.md"]
 
 
+BLOCKED_ANCHORS = [
+    '@/home/alice/x/.env',
+    '@$HOME/.env',
+    '@${HOME}/.env',
+    'read @/home/alice/proj/.env please',
+    '@/.env',
+    'cat /Users/alice/.ssh/id_rsa',
+    'tool --file=/Users/alice/.env',
+    'summarise @/Users/alice/.env',
+    'cat ~alice/.aws/credentials',
+    'tool --file=~alice/.env',
+    'tool --file=${HOME:-}/.env',
+    'tool --file=${HOME}/.env',
+    'cat "$HOME/.env"',
+    'tool --file="$HOME/.env"',
+    'cat "$HOME"/.env',
+    'type C:/Users/alice/.env',
+    'tool --file=C:/Users/alice/.env',
+    'type %USERPROFILE%\\.env',
+    'tool --file=%USERPROFILE%\\.env',
+    'tool --file=~//.env',
+    'tool --file=~/./.env',
+    'tool --file=/home/alice//.env',
+    'tool --file=/home/alice/./.env',
+]
+ALLOWED_ANCHORS = [
+    'import x from "@/env"',
+    'import y from "@/lib/env.ts"',
+    'read @/home/alice/notes.txt',
+    'read @$HOME/notes.txt',
+    'node --env-file=./.env server.js',
+    'node --env-file=../.env server.js',
+    'tool --config=~/.envrc',
+    'cat ~/.environment',
+    'cat $HOMEDIR/.env.example',
+    'tool --file=/home/alice/proj/.env',
+    'cat /Users/alice/Documents/readme.md',
+    'mail alice@example.com',
+    'type C:/Users/alice/Desktop/notes.txt',
+    'cat ~alice/projects/readme.md',
+    'cat %USERPROFILE%\\Desktop\\notes.txt',
+]
+
+
 class CommandNormalisation(unittest.TestCase):
     def test_backslash_inside_word_pipe_to_shell(self):
         for c in PIPE:
@@ -106,6 +150,14 @@ class CommandNormalisation(unittest.TestCase):
         for c in UPLOADS:
             self.assertEqual(rules.evaluate(c).rule, "path:sensitive_file", c)
         for c in UPLOADS_BENIGN:
+            self.assertEqual(rules.evaluate(c).verdict, "allow", c)
+
+    def test_protected_path_anchors(self):
+        for c in BLOCKED_ANCHORS:
+            self.assertEqual(rules.evaluate(c).rule, "path:sensitive_file", c)
+
+    def test_ordinary_paths_and_aliases_stay_allowed(self):
+        for c in ALLOWED_ANCHORS:
             self.assertEqual(rules.evaluate(c).verdict, "allow", c)
 
 

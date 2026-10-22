@@ -99,3 +99,53 @@ test('a local env file after = is not treated as a protected path', () => {
     assert.equal(evaluate(c).verdict, 'allow', c);
   }
 });
+
+test('a protected path after @ or = is found for home, macOS, tilde-user, Windows and spelled-out variants', () => {
+  const blocked = [
+    '@/home/alice/x/.env',
+    '@$HOME/.env',
+    '@${HOME}/.env',
+    'read @/home/alice/proj/.env please',
+    '@/.env',
+    'cat /Users/alice/.ssh/id_rsa',
+    'tool --file=/Users/alice/.env',
+    'summarise @/Users/alice/.env',
+    'cat ~alice/.aws/credentials',
+    'tool --file=~alice/.env',
+    'tool --file=${HOME:-}/.env',
+    'tool --file=${HOME}/.env',
+    'cat "$HOME/.env"',
+    'tool --file="$HOME/.env"',
+    'cat "$HOME"/.env',
+    'type C:/Users/alice/.env',
+    'tool --file=C:/Users/alice/.env',
+    'type %USERPROFILE%\\.env',
+    'tool --file=%USERPROFILE%\\.env',
+    'tool --file=~//.env',
+    'tool --file=~/./.env',
+    'tool --file=/home/alice//.env',
+    'tool --file=/home/alice/./.env',
+  ];
+  for (const c of blocked) assert.equal(evaluate(c).rule, 'path:sensitive_file', c);
+});
+
+test('ordinary paths, bundler aliases and look-alike names stay allowed', () => {
+  const allowed = [
+    'import x from "@/env"',
+    'import y from "@/lib/env.ts"',
+    'read @/home/alice/notes.txt',
+    'read @$HOME/notes.txt',
+    'node --env-file=./.env server.js',
+    'node --env-file=../.env server.js',
+    'tool --config=~/.envrc',
+    'cat ~/.environment',
+    'cat $HOMEDIR/.env.example',
+    'tool --file=/home/alice/proj/.env',
+    'cat /Users/alice/Documents/readme.md',
+    'mail alice@example.com',
+    'type C:/Users/alice/Desktop/notes.txt',
+    'cat ~alice/projects/readme.md',
+    'cat %USERPROFILE%\\Desktop\\notes.txt',
+  ];
+  for (const c of allowed) assert.equal(evaluate(c).verdict, 'allow', c);
+});

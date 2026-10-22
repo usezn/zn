@@ -1,0 +1,2 @@
+### Security
+- The rule for protected files now also finds credential and environment files after `@` or `=` when the path is spelled with a macOS home (`/Users/alice/.env`), `~alice`, `${HOME}` or `${HOME:-}`, a quoted `"$HOME"`, a Windows `C:/Users/alice` or `%USERPROFILE%` prefix, or doubled slashes and `./` segments, and a mention such as `@/home/alice/project/.env` or `@$HOME/.env`. Ordinary paths, `--env-file=.env` style options and bundler aliases such as `@/env` are still allowed. The Node.js and Python packages give the same verdicts.
