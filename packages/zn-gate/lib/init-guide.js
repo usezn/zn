@@ -38,7 +38,7 @@ function fromTemporaryCopy(dir = __dirname) {
 /* Absolute path of a program, searched only in absolute PATH entries; null when not found. */
 function findProgram(name, env) {
   const exe = require('./exe');
-  const absPath = String((env || process.env).PATH || '').split(path.delimiter).filter((d) => d && path.isAbsolute(d)).join(path.delimiter);
+  const absPath = exe.envPath(env || process.env).split(path.delimiter).filter((d) => d && path.isAbsolute(d)).join(path.delimiter);
   const found = exe.whichSync(isWin ? name + '.cmd' : name, absPath) || (isWin ? exe.whichSync(name + '.exe', absPath) : null);
   return found ? path.resolve(found) : null;
 }

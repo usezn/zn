@@ -18,7 +18,7 @@ function absoluteDirs(pathValue) {
 }
 
 function onPath(env) {
-  const dirs = absoluteDirs(env.PATH || env.Path || '');
+  const dirs = absoluteDirs(exe.envPath(env));
   return exe.resolveExecutable('zn', { PATH: dirs, PATHEXT: env.PATHEXT }) !== null;
 }
 

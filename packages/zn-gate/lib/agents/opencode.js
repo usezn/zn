@@ -41,6 +41,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { whichSync } = require('../broker/markers');
+const { envPath } = require('../exe');
 const { writeFileAtomic } = require('../broker/files');
 const cfg = require('./config-file');
 const { patchScan, PATCH_SCAN_CAP } = require('./codex');
@@ -306,7 +307,7 @@ function uninstall(opts = {}) {
 }
 
 function detect(opts = {}) {
-  if (whichSync('opencode', (opts.env || process.env).PATH || '')) return true;
+  if (whichSync('opencode', envPath(opts.env || process.env))) return true;
   return fs.existsSync(configDir(opts));
 }
 

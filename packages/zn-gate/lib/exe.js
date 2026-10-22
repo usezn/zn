@@ -55,9 +55,21 @@ function pathExts(env) {
   return ['', ...(list.length ? list : ['.com', '.exe', '.bat', '.cmd'])];
 }
 
+/* PATH of an env object. Windows keeps the key as the caller wrote it ("Path" in a copied
+ * environment), so any key whose lowercase is "path" counts. */
 function envPath(env) {
   const e = env || process.env;
-  return String(e.PATH || e.Path || '');
+  if (e.PATH !== undefined) return String(e.PATH);
+  const key = Object.keys(e).find((k) => k.toLowerCase() === 'path');
+  return key === undefined ? '' : String(e[key]);
+}
+
+/* The key under which a PATH value is written into an env object: the key it already has, so a
+ * child never gets both PATH and Path. */
+function envPathKey(env) {
+  const e = env || process.env;
+  if (e.PATH !== undefined) return 'PATH';
+  return Object.keys(e).find((k) => k.toLowerCase() === 'path') || 'PATH';
 }
 
 function candidates(name, env) {
@@ -280,6 +292,8 @@ function systemPowerShell() {
 }
 
 module.exports = {
+  envPath,
+  envPathKey,
   systemPowerShell,
   commandWord,
   hasPathSeparator,

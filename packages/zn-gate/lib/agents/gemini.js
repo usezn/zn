@@ -48,6 +48,7 @@ const path = require('path');
 const cfg = require('./config-file');
 const launcher = require('./launcher');
 const { whichSync } = require('../broker/markers');
+const { envPath } = require('../exe');
 
 const id = 'gemini';
 const HOOK_NAME = 'zn-gate';
@@ -283,7 +284,7 @@ function uninstall(opts = {}) {
 function detect(opts = {}) {
   const home = opts.home || os.homedir();
   const env = opts.env || process.env;
-  if (whichSync('gemini', env.PATH || '')) return true;
+  if (whichSync('gemini', envPath(env))) return true;
   return ['settings.json', 'oauth_creds.json', 'GEMINI.md', 'tmp'].some((f) => fs.existsSync(path.join(home, '.gemini', f)));
 }
 

@@ -75,6 +75,7 @@ const os = require('os');
 const path = require('path');
 const cfg = require('./config-file');
 const { whichSync } = require('../broker/markers');
+const { envPath } = require('../exe');
 const launcher = require('./launcher');
 
 const id = 'codex';
@@ -428,7 +429,7 @@ function uninstall(opts = {}) {
 }
 
 function detect(opts = {}) {
-  if (whichSync('codex', (opts.env || process.env).PATH || '')) return true;
+  if (whichSync('codex', envPath(opts.env || process.env))) return true;
   return fs.existsSync(codexHome(opts));
 }
 

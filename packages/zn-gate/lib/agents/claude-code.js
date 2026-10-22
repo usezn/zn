@@ -66,6 +66,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const { writeFileAtomic } = require('../broker/files');
 const { whichSync } = require('../broker/markers');
+const { envPath } = require('../exe');
 const { shQuote, portablePath } = require('../shell-quote');
 const { claudeCodePolicyWarnings } = require('./managed-policy');
 const { hooksOf } = require('./config-file');
@@ -364,7 +365,7 @@ function installMcp(opts, report) {
     report.mcp = file;
     return;
   }
-  const claude = opts.claudeBin !== undefined ? opts.claudeBin : whichSync('claude', process.env.PATH || '');
+  const claude = opts.claudeBin !== undefined ? opts.claudeBin : whichSync('claude', envPath(process.env));
   // No JSON: this form works the same in cmd.exe, PowerShell and POSIX shells.
   const manual = 'claude mcp add --scope user ' + MCP_SERVER_NAME + ' -- ' + [conf.command, ...conf.args].map((a) => '"' + a + '"').join(' ');
   if (!claude) {
@@ -387,9 +388,9 @@ function installMcp(opts, report) {
 /* A project install names `zn`, so it only works where zn is on the PATH. opts.znBin overrides the lookup (tests). */
 function znOnPath(opts = {}) {
   if (opts.znBin !== undefined) return !!opts.znBin;
-  const envPath = (opts.env || process.env).PATH || '';
-  if (whichSync('zn', envPath)) return true;
-  return process.platform === 'win32' && !!(whichSync('zn.cmd', envPath) || whichSync('zn.exe', envPath));
+  const pathEnv = envPath(opts.env || process.env);
+  if (whichSync('zn', pathEnv)) return true;
+  return process.platform === 'win32' && !!(whichSync('zn.cmd', pathEnv) || whichSync('zn.exe', pathEnv));
 }
 
 /**
@@ -466,7 +467,7 @@ function uninstall(opts = {}) {
     } else {
       // Only zn's own server: a user MCP server that happens to be called "secrets" is left alone.
       const ours = userMcpServerIsOurs(opts);
-      const claude = ours !== true ? null : opts.claudeBin !== undefined ? opts.claudeBin : whichSync('claude', process.env.PATH || '');
+      const claude = ours !== true ? null : opts.claudeBin !== undefined ? opts.claudeBin : whichSync('claude', envPath(process.env));
       if (ours === false) {
         report.warnings.push('left the MCP server named "' + MCP_SERVER_NAME + '" in place: it is not zn\'s');
       } else if (ours === null) {
@@ -514,7 +515,7 @@ function userMcpServerIsOurs(opts = {}) {
 }
 
 function detect(opts = {}) {
-  if (whichSync('claude', (opts.env || process.env).PATH || '')) return true;
+  if (whichSync('claude', envPath(opts.env || process.env))) return true;
   return fs.existsSync(configDir(opts));
 }
 

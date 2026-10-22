@@ -51,7 +51,7 @@ function resolveHookNode(env) {
   try {
     const exe = require('./exe');
     const isWin = process.platform === 'win32';
-    const absPath = String((env || process.env).PATH || '').split(path.delimiter).filter((d) => d && path.isAbsolute(d)).join(path.delimiter);
+    const absPath = require('./exe').envPath(env || process.env).split(path.delimiter).filter((d) => d && path.isAbsolute(d)).join(path.delimiter);
     const found = exe.whichSync(isWin ? 'node.exe' : 'node', absPath);
     if (!found) return null;
     const file = path.resolve(found);
@@ -334,9 +334,15 @@ function bare(s) {
 const RULES_FIX = 'install zn-gate again: run `npm install -g zn-gate` in your own terminal, then run `zn-gate check` again';
 const REINSTALL = (id) => 'install zn-gate again for the Node.js you use now: run `npm install -g zn-gate`, then `zn hooks install ' + id + '`, in your own terminal';
 
+/* The PATH entry for a child process, under the key the env object already uses. */
+function pathEntry(env) {
+  const exe = require('./exe');
+  return { [exe.envPathKey(env)]: exe.envPath(env) };
+}
+
 /* Absolute path of `name`, searched only in absolute PATH entries; null when there is none. */
 function onAbsPath(name, env) {
-  const absPath = String((env || process.env).PATH || '').split(path.delimiter).filter((d) => d && path.isAbsolute(d)).join(path.delimiter);
+  const absPath = require('./exe').envPath(env || process.env).split(path.delimiter).filter((d) => d && path.isAbsolute(d)).join(path.delimiter);
   const found = require('./exe').whichSync(process.platform === 'win32' ? name + (name === 'zn' ? '.cmd' : '.exe') : name, absPath);
   return found ? path.resolve(found) : null;
 }
@@ -344,7 +350,7 @@ function onAbsPath(name, env) {
 /* Absolute path of the `zn` command, searched only in absolute PATH entries; null when there is none. */
 function znOnPath(env) {
   // Only absolute PATH entries: a relative one (node_modules/.bin, .) depends on the folder check runs from.
-  const absPath = String((env || process.env).PATH || '').split(path.delimiter).filter((d) => d && path.isAbsolute(d)).join(path.delimiter);
+  const absPath = require('./exe').envPath(env || process.env).split(path.delimiter).filter((d) => d && path.isAbsolute(d)).join(path.delimiter);
   const found = require('./exe').whichSync(process.platform === 'win32' ? 'zn.cmd' : 'zn', absPath);
   return found ? path.resolve(found) : null;
 }
@@ -384,7 +390,7 @@ function cliHooks(spec, ctx, userFile, given) {
       // Windows cannot run a .sh file directly; Claude Code runs it with sh (Git Bash) there.
       const run = cmd.winScript ? { file: 'powershell.exe', args: ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(cmd.winScript, 'utf16le').toString('base64')] }
         : process.platform === 'win32' ? { file: 'sh', args: [cmd.launcher, cmd.event] } : { file: cmd.launcher, args: [cmd.event] };
-      out.live = { ...run, env: ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {} };
+      out.live = { ...run, env: ctx.env && require('./exe').envPath(ctx.env) ? pathEntry(ctx.env) : {} };
     }
   } else if (cmd.missing) {
     out.problem = 'its hook cannot start: ' + (fs.existsSync(cmd.node) ? 'its zn-gate files (' + cmd.runner + ')' : 'its Node.js (' + cmd.node + ')') + ' is no longer there';

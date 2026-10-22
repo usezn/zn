@@ -47,6 +47,7 @@ const path = require('path');
 const cfg = require('./config-file');
 const launcher = require('./launcher');
 const { whichSync } = require('../broker/markers');
+const { envPath } = require('../exe');
 
 const id = 'cursor';
 const HOOK_TIMEOUT_S = 30;
@@ -256,7 +257,7 @@ function uninstall(opts = {}) {
 }
 
 function detect(opts = {}) {
-  if (whichSync('cursor', (opts.env || process.env).PATH || '')) return true;
+  if (whichSync('cursor', envPath(opts.env || process.env))) return true;
   return fs.existsSync(path.join(opts.home || os.homedir(), '.cursor'));
 }
 
