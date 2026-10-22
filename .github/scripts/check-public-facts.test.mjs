@@ -166,7 +166,7 @@ test('with plugin warnings, a half-done pin or an unrelated plugin version still
 
 // examplesVersion against version: final releases only.
 const withExamples = (version, examples) => {
-  const facts = { ...FACTS, version: { ...FACTS.version, value: version }, examplesVersion: { value: examples } };
+  const facts = { ...FACTS, version: { ...FACTS.version, value: version }, examplesVersion: { value: examples }, docsVersion: { value: '1.0.0' } };
   const tree = {
     'pkg/package.json': JSON.stringify({ version, license: 'MIT' }),
     'pkg/server.json': JSON.stringify({ packages: [{ version }] }),
