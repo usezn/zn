@@ -321,6 +321,30 @@ until it is fixed), is in [upgrading.md](upgrading.md#nodejs-was-upgraded-moved-
 
 Antigravity does not document what it does when a hook cannot run (for example, `node` is not on the PATH of the hook). Without help, that case would block the tool call with no message from zn, or let it run. So `zn hooks install antigravity` writes a small launcher script (`~/.zn/hooks/zn-hook-antigravity.sh`, run by `sh`) as the user hook command; on Windows the same steps are written inline as a PowerShell command. The launcher runs the Node.js zn-gate was installed with, else `zn` from your PATH, and if neither can start it needs no Node.js to answer Antigravity's deny format, `{"decision":"deny","reason":"..."}`, with the repair step: install zn-gate (`npm install -g zn-gate`) and run `zn hooks install antigravity` again. A hook that starts and then fails is answered with a deny too (run `zn-gate check` to see why). `zn-gate check` reports a launcher whose Node.js is gone. A project install (`--project`) keeps the plain `zn hook antigravity` command and has no launcher. Hooks installed by an older zn-gate keep the plain command until you run `zn hooks install antigravity` again.
 
+## Agent memory and instruction files
+
+Agents read some files at the start of every session as standing instructions or memory. Text written there outlives the session, so zn asks before the agent writes to them: `MEMORY.md`, `SOUL.md`, `AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md`, `GEMINI.md`, `.cursorrules`, `.windsurfrules`, `.cursor/rules/*`, `.github/copilot-instructions.md` and Claude Code's memory folders (`~/.claude/projects/*/memory/*`). Reading them is always allowed. The message names the file and says to approve only if you asked for the change.
+
+What counts as a write: the file tools (Write, Edit, MultiEdit, NotebookEdit and their equivalents), a shell redirection (`>`, `>>`), `tee`, `cp`, `mv`, `install`, `rsync`, `dd of=`, `touch`, `truncate`, an in-place `sed -i` or `perl -i`, and the PowerShell writers (`Set-Content`, `Add-Content`, `Out-File`, `Copy-Item`, `Move-Item`). Links are followed. Code run by an interpreter (`python -c "open(...)"`) is not read. A file directly in an agent's own configuration folder, such as `~/.claude/CLAUDE.md`, was already refused outright and stays refused.
+
+Settings in `~/.zn/config.json`:
+
+| Setting | Effect |
+| --- | --- |
+| not set | ask (the default) |
+| `{"hooks": {"agentInstructionWrites": "deny"}}` or `{"hooks": {"strict": true}}` | refuse the write |
+| `{"hooks": {"agentInstructionWrites": "off"}}` (also `false` or `"allow"`) | no check |
+
+`ZN_STRICT=1` in the environment also refuses these writes. The environment can only add protection: turning the check off is only possible from the config file, which the agent's file tools cannot write.
+
+Agents that cannot ask the user show no question, so zn keeps quiet and the agent's own approval rules apply (strict mode still refuses, because a refusal works in every agent):
+
+| Agent | Asks about these writes |
+| --- | --- |
+| Claude Code, GitHub Copilot CLI, Antigravity | Yes, file tools and shell commands |
+| Cursor | Shell commands only; its file tools have no question zn can use |
+| Codex CLI, Gemini CLI, OpenCode | No (own approval rules apply) |
+
 ## Limits that apply to every agent
 
 - **An event zn cannot read is refused.** Empty stdin, or stdin that is not

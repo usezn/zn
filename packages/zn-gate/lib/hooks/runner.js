@@ -122,6 +122,25 @@ function destructiveRulesOf(opts) {
   return DEFAULT_RULES;
 }
 
+/*
+ * Writes to the files where an agent keeps memory and standing instructions (MEMORY.md, AGENTS.md, CLAUDE.md,
+ * .cursor/rules and the others in lib/hooks/policy.js) ask the user. Returns "ask" (the default), "deny" or "off".
+ *
+ * ~/.zn/config.json, {"hooks": {"agentInstructionWrites": ...}}: "ask", "deny", or "off" (also false or "allow").
+ * Strict mode, {"hooks": {"strict": true}} or ZN_STRICT=1 in the environment, refuses these writes. The environment
+ * can only add protection, like ZN_HOOK_FAIL_MODE: only ZN_STRICT=1 counts, and turning the check off is only
+ * possible from the config file, which the agent's file tools cannot write.
+ */
+function instructionWritesOf(opts) {
+  if (opts.instructionWrites) return ['ask', 'deny', 'off'].includes(opts.instructionWrites) ? opts.instructionWrites : 'ask';
+  if (process.env.ZN_STRICT === '1') return 'deny';
+  const hooks = readConfig(opts.home).hooks || {};
+  const v = hooks.agentInstructionWrites;
+  if (v === false || ['off', 'allow'].includes(String(v).toLowerCase())) return 'off';
+  if (String(v).toLowerCase() === 'deny' || hooks.strict === true) return 'deny';
+  return 'ask';
+}
+
 // Reinstall the running version: `npm install -g zn-gate` alone could install an
 // older release without hooks.
 const { version: ZN_VERSION } = require('../../package.json');
@@ -286,10 +305,15 @@ async function decidePre(ev, d, agentId, opts) {
       return { decision: 'deny', message: 'zn: this patch is too long for zn to check (over 100 KB), so it was blocked. Next step: tell the user; do not resend it in parts.' };
     }
     if (input.unparsed) return { decision: 'deny', message: 'zn: could not read the file names in this patch, so zn cannot check it.' };
+    const instructionMode = instructionWritesOf(opts);
+    let instruction = null;
     for (const p of Array.isArray(input.paths) ? input.paths : [input.path]) {
       const deny = policy.writeDenial(p, pathOpts);
       if (deny) return { decision: 'deny', message: deny };
+      if (!instruction && instructionMode !== 'off') instruction = policy.instructionWriteNotice(p, pathOpts);
     }
+    // A file the agent reads as standing instructions: ask (a deny in strict mode). Reading it is not checked.
+    if (instruction) return instructionMode === 'deny' ? { decision: 'deny', message: instruction.deny } : { decision: 'ask', message: instruction.ask };
   }
 
   if (tool === 'webfetch') {
@@ -315,8 +339,17 @@ async function decidePre(ev, d, agentId, opts) {
 
   if (SHELL_TOOLS.has(tool)) {
     const original = String(input.command || '');
-    const deny = policy.bashDenial(original, { ...pathOpts, destructiveRules: destructiveRulesOf(opts) });
+    const instructionMode = instructionWritesOf(opts);
+    const instructionNotice = instructionMode === 'off' ? undefined : {};
+    const deny = policy.bashDenial(original, { ...pathOpts, destructiveRules: destructiveRulesOf(opts), instructionNotice });
     if (deny) return { decision: 'deny', message: deny };
+    // The command writes a file the agent reads as standing instructions: ask (a deny in strict mode).
+    const instruction = instructionNotice && instructionNotice.hit;
+    if (instruction && instructionMode === 'deny') return { decision: 'deny', message: instruction.deny };
+    const withInstruction = (r) => {
+      if (!instruction) return r;
+      return r.decision === 'ask' ? { ...r, message: (r.message ? r.message + ' ' : '') + instruction.ask } : { decision: 'ask', message: instruction.ask };
+    };
 
     let command = original;
     const notes = [];
@@ -355,12 +388,12 @@ async function decidePre(ev, d, agentId, opts) {
         // A command that carries markers always asks, even when nothing was rewritten
         // (already wrapped in `zn run` by the agent, or tokens kept unresolved).
         // Never let it run on the user's allow rules alone.
-        return { decision: 'ask', message: 'zn: this command contains secret placeholders (such as __ZN_NAME__)' + (notes.length ? '; ' + notes.join('; ') : '') + ', so it needs your approval before it runs.', context };
+        return withInstruction({ decision: 'ask', message: 'zn: this command contains secret placeholders (such as __ZN_NAME__)' + (notes.length ? '; ' + notes.join('; ') : '') + ', so it needs your approval before it runs.', context });
       }
-      return notes.length ? { decision: 'allow', message: 'zn: ' + notes.join('; ') } : { decision: 'allow' };
+      return withInstruction(notes.length ? { decision: 'allow', message: 'zn: ' + notes.join('; ') } : { decision: 'allow' });
     }
     // kind tells adapters that cannot rewrite input what the rewrite was for.
-    return { decision: 'ask', updatedInput: { command }, kind: wrap.wrapped ? 'wrap' : 'restore', message: 'zn: this command ' + notes.join('; ') + '.', context };
+    return withInstruction({ decision: 'ask', updatedInput: { command }, kind: wrap.wrapped ? 'wrap' : 'restore', message: 'zn: this command ' + notes.join('; ') + '.', context });
   }
 
   if ((tool === 'write' || tool === 'edit' || tool === 'multiedit' || tool === 'notebookedit') && Array.isArray(input.texts)) {

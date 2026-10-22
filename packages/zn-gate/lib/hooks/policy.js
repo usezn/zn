@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-23.3';
+const POLICY_RULES_VERSION = '2026-10-23.4';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -680,6 +680,125 @@ function writeDenial(p, opts = {}) {
   const c = classifyPath(p, opts);
   if (c && c.kind === 'zn_state') return vaultMessage(opts);
   if (c && c.kind === 'agent_config') return agentConfigDenial(p, c);
+  return null;
+}
+
+/* ------------------- agent memory and instruction files ------------------- */
+
+/*
+ * The files where a coding agent keeps persistent memory and standing instructions. The agent reads them at the
+ * start of later sessions, so text written there keeps working after the session, the skill or the tool that wrote it
+ * is gone. This is the one list: change it here only. Reads are always allowed; writes ask the user (or are refused
+ * in strict mode, see instructionWritesOf in runner.js).
+ *
+ *   by file name, in any folder: MEMORY.md, SOUL.md, AGENTS.md, CLAUDE.md (also ~/.claude/CLAUDE.md),
+ *     CLAUDE.local.md, GEMINI.md, .cursorrules, .windsurfrules
+ *   by place: .cursor/rules/* (any depth), .github/copilot-instructions.md,
+ *     and the Claude Code memory folders <claude dir>/projects/<project>/memory/*
+ */
+const INSTRUCTION_FILE_NAMES = ['MEMORY.md', 'SOUL.md', 'AGENTS.md', 'CLAUDE.md', 'CLAUDE.local.md', 'GEMINI.md', '.cursorrules', '.windsurfrules'];
+const INSTRUCTION_FILE_RES = [
+  /(^|\/)\.cursor\/rules\/[^/]/,
+  /(^|\/)\.github\/copilot-instructions\.md$/,
+];
+
+/** Whether a resolved absolute path is one of the instruction files above. `ctx` comes from contextOf. */
+function isInstructionFile(abs, ctx) {
+  const s = keyOf(slash(abs));
+  const base = path.basename(s);
+  if (INSTRUCTION_FILE_NAMES.some((n) => keyOf(n) === base)) return true;
+  if (INSTRUCTION_FILE_RES.some((re) => ci(re).test(s))) return true;
+  // <claude dir>/projects/<project>/memory/<file>, for ~/.claude, the project's .claude and CLAUDE_CONFIG_DIR.
+  return ctx.agent.dirs.some((d) => s.startsWith(d + '/projects/') && /^[^/]+\/memory\/[^/]/.test(s.slice(d.length + 10)));
+}
+
+/** Whether a typed path names an instruction file, as typed or where it really leads (links followed). */
+function isInstructionPath(p, opts = {}) {
+  if (typeof p !== 'string' || !p) return false;
+  const ctx = contextOf(opts);
+  const expanded = expandEnv(expandHome(p, ctx.home), ctx.env);
+  const abs = path.resolve(ctx.cwd, expanded.text);
+  const candidates = new Set([abs, realTargetOf(abs)]);
+  const physical = physicalDotDot(expanded.text, ctx.cwd);
+  if (physical) { candidates.add(physical); candidates.add(realTargetOf(physical)); }
+  for (const candidate of candidates) if (isInstructionFile(candidate, ctx)) return true;
+  return false;
+}
+
+/**
+ * null when `p` is not an instruction file, else {file, ask, deny}: the messages for a write to it
+ * (ask: the user decides; deny: strict mode).
+ */
+function instructionWriteNotice(p, opts = {}) {
+  if (!isInstructionPath(p, opts)) return null;
+  // The name comes from the agent: no control characters, and short, in a message the user reads.
+  const shown = String(p).replace(/[\u0000-\u001f\u007f-\u009f]/g, '?');
+  const file = shown.length > 80 ? shown.slice(0, 79) + '…' : shown;
+  return {
+    file,
+    ask: 'zn: this writes to ' + file + ', which your agent reads as standing instructions in later sessions. Approve only if you asked for this change.',
+    deny: 'zn: this writes to ' + file + ', which your agent reads as standing instructions in later sessions, and zn is set to block that. Ask the user to make this change.',
+  };
+}
+
+// Programs that write the files they are given. cp, mv and the like write only their last argument; sed and perl
+// only with an in-place flag; the others any file argument. A redirect target counts for every command.
+const INSTRUCTION_WRITERS = new Set(['tee', 'cp', 'mv', 'install', 'rsync', 'ln', 'dd', 'truncate', 'touch', 'sed', 'perl', 'ex', 'ed', 'patch',
+  'set-content', 'add-content', 'out-file', 'sc', 'ac', 'ni', 'new-item', 'copy-item', 'move-item', 'copy', 'move', 'ren', 'rename-item']);
+const INSTRUCTION_DEST_LAST = new Set(['cp', 'mv', 'install', 'rsync', 'ln', 'copy', 'move', 'copy-item', 'move-item', 'ren', 'rename-item']);
+const IN_PLACE_RE = /^(?:-[A-Za-z]*i|--in-place)/;
+const INSTRUCTION_CHECKS_MAX = 64;
+
+/** The first notice for a word of a shell command that writes an instruction file; null when none does. */
+function instructionWriteInWords(readings, opts) {
+  const seen = new Set();
+  for (const reading of readings) {
+    const segments = new Map();
+    for (const w of reading) {
+      if (!segments.has(w.seq)) segments.set(w.seq, []);
+      segments.get(w.seq).push(w);
+    }
+    for (const seg of segments.values()) {
+      const progs = seg.map((x) => x.text.split(/[\\/]/).pop().toLowerCase().replace(/\.exe$/, ''));
+      const at = progs.findIndex((n) => INSTRUCTION_WRITERS.has(n));
+      const candidates = [];
+      for (const w of seg) if (w.redirectTarget) candidates.push(w.text);
+      if (at >= 0) {
+        const name = progs[at];
+        const rest = seg.slice(at + 1).map((x) => x.text);
+        const args = rest.filter((x) => x && !x.startsWith('-') && !/^[0-9]*[<>]/.test(x));
+        if (name === 'dd') {
+          for (const x of rest) if (x.startsWith('of=')) candidates.push(x.slice(3));
+        } else if ((name === 'sed' || name === 'perl') && !rest.some((x) => IN_PLACE_RE.test(x))) {
+          // These only read their files without an in-place flag.
+        } else if (INSTRUCTION_DEST_LAST.has(name)) {
+          if (args.length > 1) candidates.push(args[args.length - 1]);
+        } else {
+          candidates.push(...args);
+        }
+      }
+      for (const text of candidates) {
+        if (!text || seen.has(text)) continue;
+        seen.add(text);
+        if (seen.size > INSTRUCTION_CHECKS_MAX || overBudget(opts.budget, 1)) return null;
+        const n = instructionWriteNotice(text, opts);
+        if (n) return n;
+      }
+    }
+  }
+  return null;
+}
+
+// The files an `apply_patch` sent as a shell command adds or updates (or moves to).
+const SHELL_PATCH_WRITES_RE = /^\*\*\* (?:(?:Add|Update) File|Move to): (.+)$/gm;
+function instructionWriteInPatch(cmd, opts) {
+  if (!/^\s*apply_patch\b/.test(String(cmd))) return null;
+  let seen = 0;
+  for (const m of String(cmd).matchAll(SHELL_PATCH_WRITES_RE)) {
+    if (++seen > SHELL_PATCH_FILES_NAMED) break;
+    const n = instructionWriteNotice(m[1].trim(), opts);
+    if (n) return n;
+  }
   return null;
 }
 
@@ -1715,8 +1834,15 @@ function keychainQuery(cmd, env) {
   return false;
 }
 
+/**
+ * A deny message, or null. With `opts.instructionNotice` (an object the caller owns), a command that is allowed but writes
+ * an agent memory or instruction file leaves the notice from instructionWriteNotice in `opts.instructionNotice.hit`.
+ */
 function bashDenial(cmd, opts = {}) {
-  return shellPatchMessage(cmd, bashDenialOf(cmd, opts), opts);
+  const deny = shellPatchMessage(cmd, bashDenialOf(cmd, opts), opts);
+  const note = opts.instructionNotice;
+  if (!deny && note && !note.hit) note.hit = instructionWriteInPatch(cmd, opts);
+  return deny;
 }
 
 function bashDenialOf(cmd, opts = {}) {
@@ -1846,6 +1972,7 @@ function bashDenialOf(cmd, opts = {}) {
     if (deny && /[*?[]/.test(text)) { globDeny = globDeny || deny; continue; }
     if (deny) return deny;
   }
+  if (!globDeny && opts.instructionNotice && !opts.instructionNotice.hit) opts.instructionNotice.hit = instructionWriteInWords(readings, opts);
   return globDeny;
 }
 
@@ -2181,6 +2308,8 @@ module.exports = {
   expandBraces,
   readDenial,
   writeDenial,
+  instructionWriteNotice,
+  INSTRUCTION_FILE_NAMES,
   scanFirstCommand,
   wrapWithZnRun,
   scanPowerShell,
