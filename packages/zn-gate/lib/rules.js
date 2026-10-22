@@ -1364,7 +1364,6 @@ module.exports = {
   tooInvisible,
   invisibleBlock,
   MAX_INVISIBLE_CHARS,
-  MAX_B64_PAYLOADS,
   MIN_INVISIBLE_CHECK_CHARS,
   normalizeInput,
   invisibleView,
