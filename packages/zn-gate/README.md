@@ -18,7 +18,7 @@
 
 ## Install
 
-Everything runs on your machine; no account or API key is needed. Node.js 22 LTS is recommended (from [nodejs.org](https://nodejs.org/)). Node.js 18 or later works for the hooks and the CLI; the Claude Code plugin needs 20.19 or later. With a Node.js older than 18, the `zn-gate` and `zn` commands stop and say how to install it.
+Everything runs on your machine; no account or API key is needed. Node.js 22 LTS is recommended (from [nodejs.org](https://nodejs.org/)). Node.js 18 or later works for the hooks and the CLI; the Claude Code plugin needs 20.19 or later. For security, use the latest patch of a supported Node.js line (22.23.4, 24.22.1, 26.12.1 or later): Node.js 18 and 20 are end-of-life and get no security fixes, even though zn-gate still runs on them. With a Node.js older than 18, the `zn-gate` and `zn` commands stop and say how to install it.
 
 **Getting started: four steps, one command each.** Run them in your own terminal.
 
@@ -50,7 +50,7 @@ Run it yourself, in your own terminal. When an AI agent or a script runs it, it 
 - "running scripts is disabled on this system" on Windows: see the PowerShell note above.
 - `init` only prints steps and changes nothing: an AI agent or a script ran it. Run it yourself in your own terminal.
 - `check` shows **NOT protected**: that line says why and what to run. [What the output means](https://github.com/usezn/zn/blob/main/docs/check.md).
-- You want to undo what `init` changed: `npx -y zn-gate init --revert`.
+- You want to remove zn-gate: `npx -y zn-gate uninstall` shows what it will remove (the Claude Code plugin, zn's hooks, wrapped MCP servers) and asks first. `init --revert` only puts back MCP configs saved before wrapping.
 
 **Then keep your `.env` values in the vault.** With the plugin or the hooks, the agent cannot read `.env` files with real values; move them into zn-gate's encrypted vault, and the file keeps markers such as `__ZN_STRIPE_KEY__`:
 
@@ -122,7 +122,7 @@ Cursor (`~/.cursor/mcp.json`) and other editors: `{ "mcpServers": { "zn-gate": {
 npx -y zn-gate init --dry-run   # preview, changes nothing
 npx -y zn-gate init --wrap-mcp  # wrap (a .bak.<timestamp> copy is written first)
 npx -y zn-gate init --shadow    # log detections without blocking
-npx -y zn-gate init --revert    # restore the latest backup
+npx -y zn-gate init --revert    # put back the MCP configs saved before wrapping (not hooks or the plugin)
 ```
 
 | Agent | File | Format |
@@ -327,7 +327,7 @@ To block those too, turn on strict mode: set `ZN_STRICT=1`, or add `"strict": tr
 
 ## Examples
 
-Runnable examples, including [LangChain.js and LangGraph.js](https://github.com/usezn/zn/tree/main/examples/langchain-js) (block a dangerous tool call, scrub the output) and [the OpenAI Agents SDK for JavaScript](https://github.com/usezn/zn/tree/main/examples/openai-agents-js) (block a dangerous tool call, scrub the output, all offline), are in [`examples/`](https://github.com/usezn/zn/tree/main/examples).
+Runnable examples, including [LangChain.js and LangGraph.js](https://github.com/usezn/zn/tree/main/examples/langchain-js) (block a dangerous tool call, scrub the output) and [the OpenAI Agents SDK for JavaScript](https://github.com/usezn/zn/tree/main/examples/openai-agents-js) (block a dangerous tool call, scrub the output, all offline) and [a Mastra agent](https://github.com/usezn/zn/tree/main/examples/mastra-agent), are in [`examples/`](https://github.com/usezn/zn/tree/main/examples).
 
 ## FAQ
 
@@ -335,7 +335,7 @@ Runnable examples, including [LangChain.js and LangGraph.js](https://github.com/
 
 **Will it block legitimate content?** Sometimes. Use `--shadow` with `init` or `shield` to log detections without blocking while you evaluate it.
 
-**How do I remove it?** `npx -y zn-gate init --revert` restores your configs from the backup. For a standalone server, remove the `zn-gate` entry from your agent config.
+**How do I remove it?** Run `npx -y zn-gate uninstall` in your own terminal. It lists what it found (the Claude Code plugin, zn's hooks for each agent, wrapped MCP servers), asks before removing, and ends with `zn-gate check`. Your vault is only deleted if you confirm that separately. `npx -y zn-gate uninstall --dry-run` shows the list and changes nothing. To remove one part at a time, or for the steps by agent, see the [removal guide](https://github.com/usezn/zn/blob/main/docs/uninstall.md). `init --revert` is narrower: it only puts back the MCP configs that were saved before `init --wrap-mcp` wrapped them. For a standalone server, remove the `zn-gate` entry from your agent config.
 
 ## Security
 

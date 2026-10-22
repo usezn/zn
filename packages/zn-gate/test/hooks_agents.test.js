@@ -252,13 +252,14 @@ test('cursor: a "secrets" server is ours only when it is zn\'s own install', asy
   assert.equal(nameOnly.output.permission, 'deny');
 });
 
-test('cursor: MCP calls from Claude Code and OpenCode are allowed without the engine or the vault', async (t) => {
+test('cursor: MCP calls from OpenCode are allowed without the engine or the vault; Claude Code checks them', async (t) => {
   const dir = tmpProject(t);
   // An engine that throws: any scan or prepare would make the call fail closed (deny).
   const boom = { scan() { throw new Error('engine used'); }, async prepare() { throw new Error('engine used'); } };
   const claudeCode = getAdapter('claude-code');
+  // Claude Code's PreToolUse hook checks MCP arguments (it did not before), so the engine is used.
   const cc = await run(claudeCode, cx('PreToolUse', { cwd: dir, tool_name: 'mcp__github__get_issue', tool_input: { number: 1 } }), { engine: boom });
-  assert.equal(cc.decision.decision, 'allow');
+  assert.equal(cc.decision.decision, 'deny');
   const oc = await run(opencode, { hook: 'tool.execute.before', tool: 'github_get_file', cwd: dir, args: { path: 'README.md' } }, { engine: boom });
   assert.equal(oc.decision.decision, 'allow');
 });

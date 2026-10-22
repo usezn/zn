@@ -16,8 +16,8 @@ The package ships TypeScript type definitions (`lib/client.d.ts`, `lib/rules.d.t
 
 - Synchronous in-memory deterministic rule evaluation. Never touches the network.
 - Options: `strict` (boolean; also blocks the heuristic rules that are advisories by default; `ZN_STRICT=1` does the same).
-- Inputs over 256 KB are analysed as their first 192 KB and last 64 KB, with `truncated: true`.
-- Returns: `{ verdict: 'allow' | 'block', confidence: number, rule: string, reason: string | null, engine: string, rules_version: string }`, plus `truncated: true` when the input was cut and `advisory: { rule, reason }` when an advisory rule matched on an allowed input.
+- Inputs over 256 KB are scanned whole, in overlapping windows. An input over 4 MB is blocked with rule `size:oversize` (and `truncated: true`).
+- Returns: `{ verdict: 'allow' | 'block', confidence: number, rule: string, reason: string | null, engine: string, rules_version: string }`, plus `truncated: true` when the input was blocked for its size and `advisory: { rule, reason }` when an advisory rule matched on an allowed input.
 - `evaluate` is also exported by `zn-gate/lib/client`.
 
 ### `analyze(text, options)`
@@ -156,7 +156,7 @@ from zn_gate import get_evidence_stats, export_evidence_ledger
 
 - Pure Python in-memory deterministic evaluation. Never touches the network.
 - `strict=None` follows `ZN_STRICT`; `True` also blocks the heuristic rules that are advisories by default.
-- Inputs over 256 KB are analysed as their first 192 KB and last 64 KB, with `truncated=True`.
+- Inputs over 256 KB are scanned whole, in overlapping windows. An input over 4 MB is blocked with rule `size:oversize` (and `truncated=True`).
 - Returns: `Assessment(verdict, confidence, rule, reason, engine, rules_version, truncated, advisory)`. `verdict` is `'allow'` or `'block'`; `advisory` is a dict or `None`. `assessment.allowed` is a boolean and `assessment.to_dict()` gives a plain dict.
 
 ### `@guard(on_block='raise'|'return'|'custom', fallback=None, check_args=True, check_result=False, mask_secrets=False, callback=None, block_truncated=False)`
@@ -286,12 +286,12 @@ No framework is required to import them. Each one uses the same rules as `check_
 - `mask_secrets`: hide credentials in the tool output (default `True`). `check_result`: scan the output for prompt injection (default `True`). `block_truncated`: block an output too large to scan in full.
 - A tool with `response_format="content_and_artifact"` passes only its content on.
 
-### `guarded_tool(on_block='raise', mask_secrets=True, fallback=None, check_result=False, block_truncated=False, framework=None)`
+### `guarded_tool(on_block='raise', mask_secrets=True, fallback=None, check_result=True, block_truncated=False, framework=None)`
 
 - Decorator for custom agent tools (CrewAI, Pydantic AI, Google ADK or plain functions, sync or `async def`). The call arguments are checked before the tool runs; a blocked call never runs.
 - `on_block`: `'raise'` (default) raises `GuardBlockError`; `'return'` returns `fallback`, or the plain block message when `fallback` is `None`. Any other value raises `ValueError` when the decorator is created.
 - `mask_secrets`: redact credentials in the tool output (default `True`).
-- `check_result`: also scan the output for prompt injection before the agent sees it (default `False`); a blocked output raises or returns as above. `block_truncated` blocks an output too large to scan in full (rule `size:truncated`).
+- `check_result`: also scan the output for prompt injection before the agent sees it (default `True`, as in `guard_langchain_tool`; pass `check_result=False` to turn it off); a blocked output raises or returns as above. `block_truncated` blocks an output too large to scan in full (rule `size:truncated`).
 - `framework`: prefix of the block target, `'<framework>:<tool>'` (default `'tool'`).
 
 ### `adk_tool_callbacks(on_block='return', mask_secrets=True, check_result=True, block_truncated=False, fallback=None)`

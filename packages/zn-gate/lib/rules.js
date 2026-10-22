@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-21.9
+ * RULES_VERSION: 2026-10-23.4
  */
 
-const RULES_VERSION = '2026-10-22.1';
+const RULES_VERSION = '2026-10-23.4';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -248,7 +248,7 @@ function matchesRule(rule, text) {
 const SENSITIVE_PATH_RULES = [
   {
     id: 'path:sensitive_file',
-    pattern: /(?:^|[\s"'`(\[])(?:~|\/home\/[^\s/]+|\/root)?\/?\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])/i,
+    pattern: /(?:^|[\s"'`(\[@])(?:~|\/home\/[^\s/]+|\/root)?\/?\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|=(?:~|\$\{?HOME\}?|\/home\/[^\s/]+|\/root|[A-Za-z]:\\Users\\[^\s\\]+)[\/\\]?\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])/i,
     description: 'Targeting sensitive system credentials or environment file',
   },
 ];
@@ -381,7 +381,7 @@ const INVISIBLE_ASTRAL_RE = /[\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
 // Line breaks are joined only in texts up to this size: wrapped keys are short, and a view of a huge text
 // full of short lines would cost far more than it finds (a 32 MB file of 20-character lines).
 const MAX_WRAP_VIEW_CHARS = 1 << 20;
-const WRAP_BREAK_RE = /(?<=[A-Za-z0-9_\-+/=]{10})[ \t]*\r?\n[ \t]*(?=[A-Za-z0-9_\-+/=]{10})(?![A-Za-z_][A-Za-z0-9_]*[ \t]*[=:])/g;
+const WRAP_BREAK_RE = /(?<=[A-Za-z0-9_\-+/=]{10})[ \t]*\r?\n[ \t]*(?=[A-Za-z0-9_\-+/=]{10})(?![A-Za-z_][A-Za-z0-9_]*[ \t]*[=:](?!=[ \t]*(?:\r?\n|$)))/g;
 // WRAP_BREAK_RE tried at one index only. A match holds exactly one line break, and its lookbehind needs a
 // token character right before the match, so it can only start where the spaces, tabs and CR before that
 // break begin. Trying the pattern there, once per line break, finds the same matches as matchAll, which
@@ -422,7 +422,11 @@ function foldCompatMatch(run) {
   return COMPAT_FOLD.get(run);
 }
 const ANSI_ESCAPE_RE = /\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07\x1b]*\x07/g;
+// Hard caps for the Base64 smuggling check: above either one the command is blocked.
+const MAX_B64_PAYLOADS = 16;
+const MAX_B64_DECODED_BYTES = 128 * 1024;
 const B64_EXEC_RE = /(?:echo|printf)\s+([A-Za-z0-9+/=]{16,})\s*\|\s*(?:base64\s+-(?:d|-decode)|openssl)/i;
+const B64_EXEC_ALL_RE = new RegExp(B64_EXEC_RE.source, 'gi');
 
 // Maximal whitespace runs; only runs that contain a line break are joined.
 // A pattern anchored on the line break (such as /[^\S\r\n]*[\r\n]/) would
@@ -527,24 +531,69 @@ function normalizeInput(str) {
   return { normalized, stripped };
 }
 
-// evaluate() analyses inputs longer than MAX_SCAN_CHARS as head + tail and
-// marks the result `truncated: true`. Tool results are scanned in overlapping
-// windows (up to MAX_TOOL_RESULT_SCAN_CHARS) by scanWindows() below.
+// evaluate() scans an input longer than MAX_SCAN_CHARS whole, in overlapping
+// windows (evaluateOversize() below), and blocks one longer than
+// MAX_TOOL_RESULT_SCAN_CHARS (rule size:oversize), so no part of an input is
+// left unscanned. Tool results go through scanWindows(), which allows output
+// past that limit and only marks it `truncated: true`.
 const MAX_SCAN_CHARS = 256 * 1024;
-const SCAN_HEAD_CHARS = 192 * 1024;
-// One character is reserved for the separator, so the window fits the limit.
-const SCAN_TAIL_CHARS = MAX_SCAN_CHARS - SCAN_HEAD_CHARS - 1;
+
+/* Base64 payload smuggling: every `echo|printf ... | base64 -d` in `candidates` is decoded
+   and evaluated, not only the first, within hard caps that fail closed.
+   Returns {block: a block result or null, advisory}. */
+function checkBase64Pipes(candidates, options) {
+  let advisory = null;
+  const payloads = new Set();
+  for (const candidate of candidates) {
+    for (const m of candidate.matchAll(B64_EXEC_ALL_RE)) {
+      if (m[1]) payloads.add(m[1]);
+    }
+  }
+  if (payloads.size > MAX_B64_PAYLOADS) {
+    return { block: { verdict: 'block', confidence: 0.99, reason: `Smuggled Base64 execution: more than ${MAX_B64_PAYLOADS} Base64 decode pipes in one command`, rule: 'evasion:base64_smuggling', engine: 'oss-local', rules_version: RULES_VERSION }, advisory };
+  }
+  let bytes = 0;
+  for (const payload of payloads) {
+    bytes += Math.floor(payload.length * 3 / 4);
+    if (bytes > MAX_B64_DECODED_BYTES) {
+      return { block: { verdict: 'block', confidence: 0.99, reason: 'Smuggled Base64 execution: too much Base64 data to inspect', rule: 'evasion:base64_smuggling', engine: 'oss-local', rules_version: RULES_VERSION }, advisory };
+    }
+    try {
+      const decoded = Buffer.from(payload, 'base64').toString('utf8');
+      const innerRes = evaluate(decoded, options);
+      if (innerRes.advisory && !advisory) advisory = innerRes.advisory;
+      if (innerRes.verdict === 'block') {
+        return {
+          block: { ...innerRes, reason: `Smuggled Base64 execution: ${innerRes.reason || innerRes.rule}`, rule: 'evasion:base64_smuggling' },
+          advisory,
+        };
+      }
+    } catch (e) {
+      // ignore invalid base64
+    }
+  }
+  return { block: null, advisory };
+}
+
+function evaluateOversize(input, options) {
+  if (input.length > MAX_TOOL_RESULT_SCAN_CHARS) {
+    return {
+      verdict: 'block', confidence: 1.0, rule: 'size:oversize', reason: 'Input too large to scan in full',
+      engine: 'oss-local', rules_version: RULES_VERSION, truncated: true,
+    };
+  }
+  // A Base64 pipe longer than the window overlap can straddle two windows and be cut in both:
+  // the pipes are found in the whole input first. The windows still check normalized text.
+  const b64 = checkBase64Pipes([input], options);
+  if (b64.block) return b64.block;
+  return scanWindows(input, { ...options, maxScanChars: MAX_TOOL_RESULT_SCAN_CHARS });
+}
 
 function evaluateUncached(input, options = {}) {
   if (typeof input !== 'string') {
     return { verdict: 'allow', confidence: 1.0, rule: 'none', reason: null, engine: 'oss-local', rules_version: RULES_VERSION };
   }
-  if (input.length > MAX_SCAN_CHARS) {
-    // NUL is neither whitespace nor a word character, so normalization cannot
-    // join the end of the head and the start of the tail into a new token.
-    const window = input.slice(0, SCAN_HEAD_CHARS) + '\u0000' + input.slice(-SCAN_TAIL_CHARS);
-    return { ...evaluateUncached(window, options), truncated: true };
-  }
+  if (input.length > MAX_SCAN_CHARS) return evaluateOversize(input, options);
 
   // Pre-normalization passes: stripped (preserves non-Latin) and normalized (maps homoglyphs)
   const { normalized, stripped } = normalizeInput(input);
@@ -552,25 +601,9 @@ function evaluateUncached(input, options = {}) {
   const strict = strictMode(options, loadCustomConfig());
   let tierAdvisory = null;
 
-  // Check Base64 payload smuggling
-  let b64Advisory = null;
-  const b64Match = normalized.match(B64_EXEC_RE) || stripped.match(B64_EXEC_RE);
-  if (b64Match && b64Match[1]) {
-    try {
-      const decoded = Buffer.from(b64Match[1], 'base64').toString('utf8');
-      const innerRes = evaluate(decoded, options);
-      if (innerRes.advisory) b64Advisory = innerRes.advisory;
-      if (innerRes.verdict === 'block') {
-        return {
-          ...innerRes,
-          reason: `Smuggled Base64 execution: ${innerRes.reason || innerRes.rule}`,
-          rule: 'evasion:base64_smuggling',
-        };
-      }
-    } catch (e) {
-      // ignore invalid base64
-    }
-  }
+  const b64 = checkBase64Pipes([normalized, stripped], options);
+  if (b64.block) return b64.block;
+  const b64Advisory = b64.advisory;
 
   // Check against normalized, stripped, and raw input
   const targets = Array.from(new Set([normalized, stripped, input]));
@@ -674,14 +707,14 @@ const PREFIXED_CREDENTIAL_PREFILTER = /KEY|TOKEN|SECRET|PASS|PWD|CREDENTIALS/;
 
 const SECRET_PATTERNS = [
   // A body may not contain another BEGIN header: linear on repeated headers without END.
-  { id: 'secret:private_key', pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----(?:(?!-----BEGIN )[\s\S])*?-----END [A-Z ]*PRIVATE KEY-----/g, replacement: '[REDACTED_PRIVATE_KEY]' },
+  { id: 'secret:private_key', pattern: /-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----(?:(?!-----BEGIN )[\s\S])*?-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----/g, replacement: '[REDACTED_PRIVATE_KEY]' },
   { id: 'secret:anthropic_key', pattern: /(?<![A-Za-z0-9_])(sk-ant-[A-Za-z0-9_-]{30,})(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))/g, replacement: '[REDACTED_ANTHROPIC_KEY]' },
   // A key without a known prefix ends at the first character that is not a letter or digit.
   { id: 'secret:openai_key', pattern: /(?<![A-Za-z0-9_])(sk-(?:(?:proj|svcacct|admin|[Nn]one|or-v1|lf)-[A-Za-z0-9_-]{28,}(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))|helicone-(?:(?:eu|cp|gov|rl)-){0,4}[a-z0-9]{7}(?:-[a-z0-9]{7}){3}(?![a-z0-9])|(?=(?:eu|cp|gov|rl)-|[a-z0-9]{7}-)(?=[a-z-]{0,46}[0-9])(?:(?:eu|cp|gov|rl)-){0,4}[a-z0-9]{7}(?:-[a-z0-9]{7}){3}(?![a-z0-9])(?!-[a-z0-9])|sp-[A-Za-z0-9]{28,}(?![A-Za-z0-9])|[A-Za-z0-9]{28,}(?![A-Za-z0-9])|(?:(?!sk-)[A-Za-z0-9_-]){1,200}?T3BlbkFJ[A-Za-z0-9_-]{20,}(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))))/g, replacement: '[REDACTED_OPENAI_KEY]' },
   { id: 'secret:aws_access_key', pattern: /(?<![A-Za-z0-9_])(AKIA[0-9A-Z]{16})(?![A-Za-z0-9_])/g, replacement: '[REDACTED_AWS_KEY]' },
   { id: 'secret:aws_secret_key', pattern: /((?:[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]_[Aa][Cc][Cc][Ee][Ss][Ss]_[Kk][Ee][Yy]|[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]|[Aa][Ww][Ss]_[Kk][Ee][Yy])\s*[:=]\s*['"]?)([A-Za-z0-9/+=]{40})(['"]?)/g, replacement: '$1[REDACTED_AWS_SECRET]$3' },
   { id: 'secret:github_token', pattern: /(?<![A-Za-z0-9_])((?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,40}|github_pat_[A-Za-z0-9_]{82})(?![A-Za-z0-9_])/g, replacement: '[REDACTED_GITHUB_TOKEN]' },
-  { id: 'secret:db_url_password', pattern: /((?:[Pp][Oo][Ss][Tt][Gg][Rr][Ee][Ss](?:[Qq][Ll])?|[Mm][Yy][Ss][Qq][Ll]|[Mm][Oo][Nn][Gg][Oo][Dd][Bb](?:\+[Ss][Rr][Vv])?|[Rr][Ee][Dd][Ii][Ss]|[Aa][Mm][Qq][Pp]):\/\/[^:\s\/]+:)(?!(?:\$\{(?:[A-Z_][A-Z0-9_]*|[a-z_][a-z0-9_]*)\}|\$[A-Z_][A-Z0-9_]*|%[A-Z_][A-Z0-9_]*%|<[A-Za-z][A-Za-z_-]{0,63}>|\{\{\s*[A-Za-z_][A-Za-z_.]*\s*\}\})@)([^@\s\/]+)(@)/g, replacement: '$1[REDACTED_DB_PASSWORD]$3' },
+  { id: 'secret:db_url_password', pattern: /((?:[Pp][Oo][Ss][Tt][Gg][Rr][Ee][Ss](?:[Qq][Ll])?|[Mm][Yy][Ss][Qq][Ll]|[Mm][Oo][Nn][Gg][Oo][Dd][Bb](?:\+[Ss][Rr][Vv])?|[Rr][Ee][Dd][Ii][Ss]|[Aa][Mm][Qq][Pp])(?:\+[A-Za-z0-9_]+)?:\/\/[^:\s\/]+:)(?!(?:\$\{(?:[A-Z_][A-Z0-9_]*|[a-z_][a-z0-9_]*)\}|\$[A-Z_][A-Z0-9_]*|%[A-Z_][A-Z0-9_]*%|<[A-Za-z][A-Za-z_-]{0,63}>|\{\{\s*[A-Za-z_][A-Za-z_.]*\s*\}\})@)([^@\s\/]+)(@)/g, replacement: '$1[REDACTED_DB_PASSWORD]$3' },
   // The lookahead + backreference pairs act as atomic groups, so a long run of
   // "-eyJ" cannot make the engine retry every split point, and the lookbehind
   // allows a single start per token. Only used when the
@@ -1147,7 +1180,78 @@ function redactWith(text, patterns) {
 const SCAN_WINDOW_OVERLAP = 4 * 1024;
 const MAX_TOOL_RESULT_SCAN_CHARS = 4 * 1024 * 1024;
 
+// Tool output that is mostly invisible characters is not scanned: building the
+// match view of millions of zero-width characters costs seconds, and a text
+// that is mostly invisible has no legitimate use. It is blocked instead, so
+// hidden text cannot pass because it was too costly to look at.
+// The invisible characters are counted over every string of a result together
+// (splitting the text into small strings does not avoid the limit), in code
+// points (Python counts the same way). A result is blocked when it has at
+// least MIN_INVISIBLE_CHECK_CHARS code points and more than half are invisible,
+// or when it holds more than MAX_INVISIBLE_CHARS invisible characters. The
+// count stops as soon as that limit is passed. A valid subdivision flag
+// (U+1F3F4, 2 to 7 tag letters or digits, U+E007F) counts as one invisible
+// character, so long runs of such flags are not read as hidden text.
+const MIN_INVISIBLE_CHECK_CHARS = 64 * 1024;
+const MAX_INVISIBLE_CHARS = 200000;
+const INVISIBLE_BLOCK_REASON = 'Output is mostly invisible characters';
+
+function invisibleStats(text, budget) {
+  const n = text.length;
+  let count = 0;
+  let pairs = 0;
+  for (let i = 0; i < n; i++) {
+    const c = text.charCodeAt(i);
+    if (c < 0xAD) continue;
+    if ((c >= 0x200B && c <= 0x200D) || c === 0x2060 || c === 0xFEFF || c === 0xAD || (c >= 0xFE00 && c <= 0xFE0F)) {
+      count++;
+    } else if (c >= 0xD800 && c <= 0xDBFF && i + 1 < n) {
+      const d = text.charCodeAt(i + 1);
+      if (d < 0xDC00 || d > 0xDFFF) continue;
+      pairs++;
+      i++;
+      if (c === 0xDB40) {
+        if (d <= 0xDC7F || (d >= 0xDD00 && d <= 0xDDEF)) count++;
+      } else if (c === 0xD83C && d === 0xDFF4) {
+        let j = i + 1;
+        let k = 0;
+        while (k < 7 && text.charCodeAt(j) === 0xDB40) {
+          const e = text.charCodeAt(j + 1);
+          if (!((e >= 0xDC30 && e <= 0xDC39) || (e >= 0xDC61 && e <= 0xDC7A))) break;
+          j += 2;
+          k++;
+        }
+        if (k >= 2 && text.charCodeAt(j) === 0xDB40 && text.charCodeAt(j + 1) === 0xDC7F) {
+          count++;
+          pairs += k + 1;
+          i = j + 1;
+        }
+      }
+    }
+    if (count > budget) break;
+  }
+  return { count, length: n - pairs };
+}
+
+function tooInvisible(strings) {
+  let count = 0;
+  let length = 0;
+  for (const s of strings) {
+    if (typeof s !== 'string') continue;
+    const st = invisibleStats(s, MAX_INVISIBLE_CHARS - count);
+    count += st.count;
+    length += st.length;
+    if (count > MAX_INVISIBLE_CHARS) return true;
+  }
+  return length >= MIN_INVISIBLE_CHECK_CHARS && count * 2 > length;
+}
+
+function invisibleBlock() {
+  return { verdict: 'block', confidence: 1.0, reason: INVISIBLE_BLOCK_REASON, rule: 'size:invisible', engine: 'oss-local', rules_version: RULES_VERSION };
+}
+
 function scanWindows(text, options = {}) {
+  if (tooInvisible([text])) return invisibleBlock();
   if (typeof text !== 'string' || text.length <= MAX_SCAN_CHARS) return evaluate(text, options);
   const step = MAX_SCAN_CHARS - SCAN_WINDOW_OVERLAP;
   const cap = Number.isFinite(options.maxScanChars) && options.maxScanChars > 0 ? options.maxScanChars : MAX_TOOL_RESULT_SCAN_CHARS;
@@ -1272,6 +1376,10 @@ module.exports = {
   redactScanRules,
   isNonSecretValue,
   sanitizeToolResult,
+  tooInvisible,
+  invisibleBlock,
+  MAX_INVISIBLE_CHARS,
+  MIN_INVISIBLE_CHECK_CHARS,
   normalizeInput,
   invisibleView,
   scanWindows,
@@ -1280,8 +1388,6 @@ module.exports = {
   MAX_FILTERED_VALUE,
   MAX_FILTERED_CHARS,
   SCAN_WINDOW_OVERLAP,
-  SCAN_HEAD_CHARS,
-  SCAN_TAIL_CHARS,
   EVAL_CACHE_MAX_INPUT,
   // Helper patterns used by normalization and the hidden-element check,
   // exported so the Python port can be checked against them.

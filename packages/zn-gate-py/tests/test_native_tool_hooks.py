@@ -107,18 +107,34 @@ class TestSettings(unittest.TestCase):
 
         self.assertNotIn(KEY, str(after(Tool(), {}, None, {"result": Plain()})))
 
-    def test_secret_in_an_object_key_cannot_be_masked_and_is_blocked(self):
+    def test_secret_too_deep_to_mask_is_blocked(self):
         _, after = adk_tool_callbacks()
 
         class Tool:
             name = "fetch"
 
-        out = after(Tool(), {}, None, {"result": {Row(text=KEY).text: 1}})
+        out = after(Tool(), {}, None, {"result": {Row(text=KEY).text: _deep(KEY)}})
         self.assertNotIn(KEY, str(out))
-        self.assertIn("secret:unmaskable", str(out))
+        self.assertIn("zn-gate blocked", str(out))
         _, raising_after = adk_tool_callbacks(on_block="raise")
         with self.assertRaises(GuardBlockError):
-            raising_after(Tool(), {}, None, {"result": {KEY: 1}})
+            raising_after(Tool(), {}, None, {"result": {"k": _deep(KEY)}})
+
+    def test_secret_in_an_object_key_is_masked(self):
+        _, after = adk_tool_callbacks()
+
+        class Tool:
+            name = "fetch"
+
+        out = after(Tool(), {}, None, {"result": {KEY: 1}})
+        self.assertNotIn(KEY, str(out))
+
+
+def _deep(value, depth=80):
+    """`value` wrapped in `depth` nested lists: too deep to mask, so a secret in it blocks."""
+    for _ in range(depth):
+        value = [value]
+    return value
 
 
 class TestGuardMasksObjects(unittest.TestCase):
@@ -169,7 +185,7 @@ class TestGuardMasksObjects(unittest.TestCase):
     def test_a_secret_that_cannot_be_masked_blocks_the_result(self):
         @guard(mask_secrets=True)
         def fetch():
-            return {KEY: 1}
+            return {"k": _deep(KEY)}
 
         out = fetch
         with self.assertRaises(GuardBlockError) as ctx:

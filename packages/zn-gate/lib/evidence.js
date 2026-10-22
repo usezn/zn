@@ -4,9 +4,8 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
-const http = require('http');
-const { redactSecrets } = require('./rules');
-const { sym } = require('./term');
+// rules (with the scrubber engine behind it), term and http are loaded where they are used, so an
+// append that does not need them (a hook block, see _plainPreview in logEvidence) stays cheap.
 
 const ZN_DIR = path.join(os.homedir(), '.zn');
 const EVIDENCE_FILE = path.join(ZN_DIR, 'evidence.jsonl');
@@ -414,7 +413,7 @@ function logEvidence(event, filePath = EVIDENCE_FILE, opts = {}) {
       }
       return null;
     }
-    const finalRecord = buildRecord(event, prevHash);
+    const finalRecord = buildRecord(event, prevHash, opts._plainPreview === true);
     // _beforeAppend is a test-only hook (internal, not part of the public options).
     if (typeof opts._beforeAppend === 'function') opts._beforeAppend();
     // Still our lock? If it was taken over (this process was stalled for over 10 s) the last
@@ -444,13 +443,13 @@ const PREVIEW_REDACT_CHARS = 64 * 1024;
 // The redacted start of a payload, cut to 120 characters. A private key block that runs past the redacted part
 // has no END line there, so it is not matched: the preview then stops before its BEGIN line.
 function previewOf(payloadStr) {
-  const head = String(redactSecrets(payloadStr.slice(0, PREVIEW_REDACT_CHARS)).sanitized || '');
-  const begin = head.search(/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/);
+  const head = String(require('./rules').redactSecrets(payloadStr.slice(0, PREVIEW_REDACT_CHARS)).sanitized || '');
+  const begin = head.search(/-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----/);
   const cut = begin === -1 ? head : head.slice(0, begin) + '[REDACTED_PRIVATE_KEY]';
   return cut.slice(0, 120);
 }
 
-function buildRecord(event, prevHash) {
+function buildRecord(event, prevHash, plainPreview = false) {
   const timestamp = new Date().toISOString();
   const id = 'ev_' + Date.now().toString(36) + '_' + crypto.randomBytes(4).toString('hex');
 
@@ -467,8 +466,12 @@ function buildRecord(event, prevHash) {
     phase: event.phase || 'tool-call',
     tool_name: event.tool_name || event.tool || 'unknown',
     payload_sha256: payloadSha256,
-    // Redact the full payload first, then cut, so a secret straddling the cut is not leaked.
-    payload_preview: previewOf(payloadStr),
+    // Redact the full payload first, then cut, so a secret straddling the cut is not leaked. With
+    // _plainPreview the caller built the payload from fixed fields only (no text the agent sent), so
+    // it is cut as it is and the redaction engine is not loaded.
+    payload_preview: plainPreview
+      ? payloadStr.slice(0, 120)
+      : previewOf(payloadStr),
     verdict: event.verdict || 'allow',
     rule: event.rule || null,
     reason: event.reason || null,
@@ -739,7 +742,7 @@ function renderAuditRow(r) {
  * Starts a zero-dependency local dashboard at 127.0.0.1:<port> (loopback only)
  */
 function startEvidenceUi(port = 3100, filePath = EVIDENCE_FILE) {
-  const server = http.createServer((req, res) => {
+  const server = require('http').createServer((req, res) => {
     // Only answer requests addressed to the loopback name and port, so a web
     // page cannot reach the dashboard through DNS rebinding.
     const addr = server.address();
@@ -947,7 +950,7 @@ function startEvidenceUi(port = 3100, filePath = EVIDENCE_FILE) {
   });
 
   // Loopback only: the ledger must not be reachable from the network.
-  const banner = sym(process.env, '🛡️', null, '  ');
+  const banner = require('./term').sym(process.env, '🛡️', null, '  ');
   server.listen(port, '127.0.0.1', () => {
     process.stdout.write(`
 ${banner}zn Evidence Engine Dashboard running at http://127.0.0.1:${server.address().port}

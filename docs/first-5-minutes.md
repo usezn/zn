@@ -4,7 +4,7 @@ You use an AI coding agent (Claude Code, Codex CLI, Cursor or OpenCode) and you 
 
 ## Before you start
 
-Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.19 or later. If `node --version` says "command not found", install the LTS version from [nodejs.org](https://nodejs.org/) and open a new terminal. Run every command below in your own terminal, not through your agent.
+Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.19 or later. For security, use the latest patch of a supported Node.js line (22.23.4, 24.22.1, 26.12.1 or later): Node.js 18 and 20 are end-of-life and get no security fixes, even though zn-gate still runs on them. If `node --version` says "command not found", install the LTS version from [nodejs.org](https://nodejs.org/) and open a new terminal. Run every command below in your own terminal, not through your agent.
 
 ## 1. Install
 
@@ -112,7 +112,7 @@ For comparison, `npx -y zn-gate analyze "ignore all previous instructions"` is a
 
 ## Remove zn-gate
 
-Remove the part you installed, in your own terminal.
+To remove everything in one step, run `npx -y zn-gate uninstall` in your own terminal ([details](uninstall.md)). To remove only the part you installed:
 
 - **Hooks** (Codex CLI, Cursor, OpenCode, or Claude Code without the plugin): `npx -y zn-gate hooks uninstall claude-code`. Use `codex`, `cursor` or `opencode` for the others, and add `--project` if you installed them for one project only. A backup of the settings file is written first.
 - **Claude Code plugin**: run `claude plugin uninstall zn-gate@usezn`, or in Claude Code type `/plugin`, open the **Installed** tab, pick zn-gate and choose **Uninstall**. To also remove the usezn plugin list, run `claude plugin marketplace remove usezn`.
@@ -129,5 +129,6 @@ Run `npx -y zn-gate check` afterwards if you want to see that zn is off.
 - [What the check means](check.md)
 - [Keep your `.env` values in the vault](secrets.md)
 - [Every command and exit code](cli.md)
+- [Remove zn-gate](uninstall.md)
 - [Words you do not know](glossary.md)
 - [What zn-gate cannot protect](threat-model.md)
