@@ -25,7 +25,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-10-19.1';
+const COMMAND_RULES_VERSION = '2026-10-23.2';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -75,7 +75,7 @@ function programName(text) {
 }
 
 /* Simple commands of a command line, with the operator that follows each: [{ words: string[], sep }]. */
-function segmentsOf(cmd) {
+function segmentsOf(cmd, posix = false) {
   const { scanFirstCommand } = require('./hooks/policy');
   // 2>&1 and &> are redirections, not the control operator &.
   // A drive root C:\ before a space is a path, not an escaped space.
@@ -83,7 +83,7 @@ function segmentsOf(cmd) {
   const out = [];
   let guard = 0;
   for (; rest.length && guard < MAX_SEGMENTS; guard++) {
-    const scan = scanFirstCommand(rest, false);
+    const scan = scanFirstCommand(rest, posix);
     let sep = scan.operator;
     let adv = scan.end + 1;
     if (sep === '|' || sep === '&') {
@@ -328,17 +328,7 @@ function checkPipeline(pipe) {
 let ENABLED = null;
 function on(rule) { return ENABLED === null || ENABLED.has(rule); }
 
-function analyze(cmd, depth = 0) {
-  const text = String(cmd);
-  if (text.length > MAX_CHARS) return ENABLED === null || ENABLED.size > 0 ? OVERFLOW : null;
-  // Text inside quotes is data (echo "a fork bomb is :(){ :|:& };:"); the code a shell runs from a string is checked
-  // again on its own below, so the patterns that do not need the quotes read the text without them.
-  // (Past QUOTE_SCAN_MAX the quotes are left in: finding every pair is the one step that is not linear.)
-  const bare = text.length > QUOTE_SCAN_MAX ? text : text.replace(QUOTED_RE, "''");
-  if ((FORK_BOMB_RE.test(bare)) && on('fork_bomb')) return 'fork_bomb';
-  if ((SHELL_RUNS_DOWNLOAD_RE.test(text) || SOURCE_DOWNLOAD_RE.test(bare) || PS_PIPE_RE.test(bare) || PS_CALL_RE.test(bare)) && on('pipe_to_shell')) return 'pipe_to_shell';
-  if ((PS_DISK_RE.test(bare)) && on('disk_overwrite')) return 'disk_overwrite';
-  const segs = segmentsOf(text);
+function checkSegments(segs, depth) {
   let pipe = [];
   for (const seg of segs) {
     const hit = checkSimple(seg.words, depth);
@@ -350,8 +340,29 @@ function analyze(cmd, depth = 0) {
       pipe = [];
     }
   }
-  const last = pipe.length ? checkPipeline(pipe) : null;
-  if (last) return last;
+  return pipe.length ? checkPipeline(pipe) : null;
+}
+
+function analyze(cmd, depth = 0) {
+  const text = String(cmd);
+  if (text.length > MAX_CHARS) return ENABLED === null || ENABLED.size > 0 ? OVERFLOW : null;
+  // Text inside quotes is data (echo "a fork bomb is :(){ :|:& };:"); the code a shell runs from a string is checked
+  // again on its own below, so the patterns that do not need the quotes read the text without them.
+  // (Past QUOTE_SCAN_MAX the quotes are left in: finding every pair is the one step that is not linear.)
+  const bare = text.length > QUOTE_SCAN_MAX ? text : text.replace(QUOTED_RE, "''");
+  if ((FORK_BOMB_RE.test(bare)) && on('fork_bomb')) return 'fork_bomb';
+  if ((SHELL_RUNS_DOWNLOAD_RE.test(text) || SOURCE_DOWNLOAD_RE.test(bare) || PS_PIPE_RE.test(bare) || PS_CALL_RE.test(bare)) && on('pipe_to_shell')) return 'pipe_to_shell';
+  if ((PS_DISK_RE.test(bare)) && on('disk_overwrite')) return 'disk_overwrite';
+  const segs = segmentsOf(text);
+  const hit = checkSegments(segs, depth);
+  if (hit) return hit;
+  // POSIX reading: an unquoted backslash escapes the next character and is removed (a backslash in curl, sh or .bashrc).
+  // The Windows reading above keeps it as a path separator, so this one only adds blocks, and only for the two rules
+  // that depend on a program or file name being spelled out.
+  if (text.includes('\\')) {
+    const posixHit = checkSegments(segmentsOf(text, true), depth);
+    if (posixHit === 'pipe_to_shell' || posixHit === 'rc_download') return posixHit;
+  }
   // Fail closed: never allow a line whose tail was not read.
   return segs.truncated && (ENABLED === null || ENABLED.size > 0) ? OVERFLOW : null;
 }

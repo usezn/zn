@@ -28,7 +28,7 @@ from typing import List, Optional, Tuple
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-19.1"
+COMMAND_RULES_VERSION = "2026-10-23.2"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -109,7 +109,7 @@ def _program_name(text: str) -> str:
     return re.sub(r"\.exe\Z", "", name)
 
 
-def _scan_first(s: str) -> Tuple[int, List[str], Optional[str]]:
+def _scan_first(s: str, posix: bool = False) -> Tuple[int, List[str], Optional[str]]:
     """The first simple command of s, like scanFirstCommand in lib/hooks/policy.js (backslash read as a Windows path separator)."""
     words: List[str] = []
     cur: Optional[List[str]] = None
@@ -145,7 +145,7 @@ def _scan_first(s: str) -> Tuple[int, List[str], Optional[str]]:
             if s[i + 1] == "\n":
                 i += 2
                 continue
-            if s[i + 1] not in _ESCAPABLE:
+            if not posix and s[i + 1] not in _ESCAPABLE:
                 if cur is None:
                     cur = []
                 cur.append(ch)
@@ -187,7 +187,7 @@ def _scan_first(s: str) -> Tuple[int, List[str], Optional[str]]:
     return n, words, None
 
 
-def _segments_of(cmd: str) -> Tuple[List[Tuple[List[str], Optional[str]]], bool]:
+def _segments_of(cmd: str, posix: bool = False) -> Tuple[List[Tuple[List[str], Optional[str]]], bool]:
     rest = re.sub(r"(\d*[<>]+)&(\d+|-)", r"\1_\2", str(cmd), flags=_A)
     rest = re.sub(r"&>>?", ">", rest)
     # A drive root C:\ before a space is a path, not an escaped space.
@@ -196,7 +196,7 @@ def _segments_of(cmd: str) -> Tuple[List[Tuple[List[str], Optional[str]]], bool]
     guard = 0
     while rest and guard < _MAX_SEGMENTS:
         guard += 1
-        end, words, sep = _scan_first(rest)
+        end, words, sep = _scan_first(rest, posix)
         adv = end + 1
         if sep in ("|", "&"):
             nxt = rest[end + 1] if end + 1 < len(rest) else ""
@@ -486,6 +486,21 @@ def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]]) -> Optional[str
     return None
 
 
+def _check_segments(segs: List[Tuple[List[str], Optional[str]]], depth: int) -> Optional[str]:
+    pipe: List[Tuple[List[str], Optional[str]]] = []
+    for words, sep in segs:
+        hit = _check_simple(words, depth)
+        if hit:
+            return hit
+        pipe.append((words, sep))
+        if not _is_pipe(sep):
+            hit2 = _check_pipeline(pipe)
+            if hit2:
+                return hit2
+            pipe = []
+    return _check_pipeline(pipe) if pipe else None
+
+
 def _analyze(cmd: str, depth: int = 0) -> Optional[str]:
     text = str(cmd)
     if len(text) > _MAX_CHARS:
@@ -502,21 +517,17 @@ def _analyze(cmd: str, depth: int = 0) -> Optional[str]:
         return "pipe_to_shell"
     if _PS_DISK_RE.search(bare):
         return "disk_overwrite"
-    pipe: List[Tuple[List[str], Optional[str]]] = []
     segs, truncated = _segments_of(text)
-    for words, sep in segs:
-        hit = _check_simple(words, depth)
-        if hit:
-            return hit
-        pipe.append((words, sep))
-        if not _is_pipe(sep):
-            hit2 = _check_pipeline(pipe)
-            if hit2:
-                return hit2
-            pipe = []
-    last = _check_pipeline(pipe) if pipe else None
-    if last:
-        return last
+    hit = _check_segments(segs, depth)
+    if hit:
+        return hit
+    # POSIX reading: an unquoted backslash escapes the next character and is removed (a backslash in curl, sh or .bashrc).
+    # The Windows reading above keeps it as a path separator, so this one only adds blocks, and only for the two rules
+    # that depend on a program or file name being spelled out.
+    if "\\" in text:
+        posix_hit = _check_segments(_segments_of(text, True)[0], depth)
+        if posix_hit in ("pipe_to_shell", "rc_download"):
+            return posix_hit
     # Fail closed: never allow a line whose tail was not read.
     return _OVERFLOW if truncated else None
 
