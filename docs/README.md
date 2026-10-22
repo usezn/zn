@@ -19,7 +19,7 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 
 | Guide | What it covers | For whom |
 |---|---|---|
-| [Destructive commands](destructive-commands.md) | The optional check that refuses commands that wipe a machine or run a download unread | Everyone |
+| [Destructive commands](destructive-commands.md) | Refuses commands that wipe a machine (on by default), and more, such as a download run unread, if you turn them on | Everyone |
 | [Protect MCP servers](shield.md) | Wrap an MCP server with the shield, shadow mode and tool pins | Everyone who uses MCP servers |
 | [Reach](reach.md) | What the coding agents on your machine can reach (secrets by name, credential files, MCP servers) | Everyone |
 | [Report](report.md) | A weekly summary of what zn-gate blocked and hid | Everyone |
