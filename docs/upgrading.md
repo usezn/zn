@@ -92,6 +92,24 @@ To fix it, with the Node.js you want to keep:
 Details on what each agent does when the hook cannot run:
 [compat.md](compat.md#if-your-agent-blocks-every-prompt).
 
+## Going back to an earlier version
+
+Hooks written by a newer zn-gate can look unfamiliar to an older one. If you
+install an older zn-gate with the new hooks still in place, its `zn-gate check`
+may say the agent is not set up, and running its `zn hooks install` can add a
+second set of hooks, so every event runs twice.
+
+To go back cleanly:
+
+1. With the newer version still installed, remove its hooks:
+   `zn hooks uninstall <agent>` (add `--project` for a project install).
+2. Install the older version: `npm install -g zn-gate@<version>`.
+3. Set the hooks up again with the older version: `zn hooks install <agent>`.
+4. Run `zn-gate check`.
+
+If you already have two sets, run `zn hooks uninstall <agent>` with the newer
+version, then install again with the older one.
+
 ## Check that it works
 
 ```bash

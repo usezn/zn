@@ -400,6 +400,38 @@ function cliHooks(spec, ctx, userFile, given) {
   return out;
 }
 
+/* Agents whose user install goes through zn's launcher script (lib/agents/launcher.js). */
+const LAUNCHER_AGENTS = ['claude-code', 'codex', 'cursor', 'gemini', 'antigravity'];
+
+/* The events the current adapter installs, read from the adapter itself; null when it does not say. */
+function expectedEvents(agentId) {
+  try {
+    const a = require('./agents').getAdapter(agentId);
+    if (typeof a.hookGroups === 'function') return Object.keys(a.hookGroups('x'));
+    if (typeof a.ourHooks === 'function') return Object.keys(a.ourHooks('x'));
+    if (Array.isArray(a.EVENTS)) return a.EVENTS.slice();
+  } catch (_) { /* no list: nothing to compare */ }
+  return null;
+}
+
+/* A note when zn's hooks in the user's file still work but were written by an older zn-gate: they run the
+   Node.js and runner directly (the current install writes the launcher script) or lack events the current
+   install adds. Hooks of a project install (`zn hook <agent>`), the current Windows script and custom commands
+   are not zn's direct form and are never flagged. '' when there is nothing to say. */
+function staleHooksNote(spec, userFile) {
+  const entries = hookEntries(readJson(userFile), spec.id).map((e) => ({ ...e, cmd: parseCommand(e.command, spec.id) })).filter((e) => e.cmd);
+  if (!entries.length) return '';
+  const direct = LAUNCHER_AGENTS.includes(spec.id) && (process.platform !== 'win32' || spec.id === 'claude-code')
+    && entries.some((e) => e.cmd.node && e.cmd.runner && !e.cmd.launcher && !e.cmd.winScript && !e.cmd.onPath);
+  const present = new Set(entries.map((e) => e.event));
+  // Claude Code's missing prompt-expansion hook has its own note.
+  const missing = (expectedEvents(spec.id) || []).filter((ev) => !present.has(ev) && !(spec.id === 'claude-code' && ev === 'UserPromptExpansion'));
+  if (!direct && !missing.length) return '';
+  return 'its hooks were installed by an older zn-gate' + (direct ? ' and run Node.js directly instead of through zn\'s launcher script, which blocks when that Node.js is gone' : '')
+    + (missing.length ? (direct ? ', and they' : ' and') + ' lack ' + (missing.length > 1 ? 'these events' : 'this event') + ' the current install adds: ' + missing.join(', ') : '')
+    + '; run `zn hooks install ' + spec.id + '` again to update them';
+}
+
 /* Runs an installed hook with the two requests: '' when it blocks .env and allows the ordinary file, else the problem. */
 function runLive(spec, ctx, live) {
   const a = spawnHook(live.file, live.args, spec.request(ctx.dir, ctx.envFile), live.env, ctx.dir);
@@ -526,6 +558,10 @@ async function checkAgent(spec, ctx) {
     // known here, so the note is harmless on a version without that event.
     const hasExpansion = hookEntries(readJson(userFile), spec.id).some((e) => e.event === 'UserPromptExpansion' && parseCommand(e.command, spec.id));
     if (!hasExpansion) res.notes.push('its hooks lack the newer prompt-expansion check (for typed skills and commands); run `zn hooks install claude-code` again to add it');
+  }
+  if (installed && res.via === 'hooks' && !res.problem) {
+    const stale = staleHooksNote(spec, userFile);
+    if (stale) res.notes.push(stale);
   }
   if (spec.id === 'claude-code' && installed && (!res.problem || res.pluginFault)) {
     const p = claudePolicy(ctx.home, ctx.env, ctx.claudePolicy);
