@@ -265,6 +265,22 @@ stop malware running as the same user (see above).
 - **Very large outputs:** a key printed across several lines is joined and
   redacted whole only in texts up to 1 MiB. In a larger tool output each line is
   checked on its own, so part of a key wrapped there can stay visible.
+- **Output the hook cannot check in time:** after a tool has run, a hook that
+  is stopped by its agent's timeout lets the whole output through, so the
+  post-tool check answers before that. It has its own deadline for each agent
+  (the hook timeout zn installs minus 5 seconds: 10 s for Claude Code and
+  Copilot, 15 s for OpenCode, 25 s for Codex and Cursor) and these limits per
+  output: 8 MiB of text, 1,000 different secret values, and 32 MiB read from
+  stdin. When a limit is reached, the part zn did not check is replaced by a
+  fixed notice ("output withheld because it is too large to check for secrets
+  in time") through the agent's own way of replacing output, and the agent is
+  told to ask for a smaller output. It is not passed on and it is not a plain
+  deny, because after a tool has run a deny alone does not withhold the output
+  in Claude Code or Copilot. An output that is mostly invisible characters has
+  the invisible characters removed and the rest redacted, and is reported as
+  denied. Known limit: Claude Code ignores a replacement whose shape differs
+  from the output of a built-in tool, so a built-in tool result over 32 MiB
+  cannot be withheld (MCP output is not validated, so it is).
 - **Scrubber error:** fails closed. The tool call is denied, the output
   withheld or the prompt blocked. A missing engine also fails closed, and the
   message explains how to reinstall. To let events pass while it is missing,
