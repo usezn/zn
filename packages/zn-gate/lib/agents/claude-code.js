@@ -64,11 +64,11 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { writeFileAtomic } = require('../broker/files');
 const { whichSync } = require('../broker/markers');
 const { shQuote, portablePath } = require('../shell-quote');
 const { claudeCodePolicyWarnings } = require('./managed-policy');
-const { hooksOf } = require('./config-file');
+const cfg = require('./config-file');
+const { hooksOf } = cfg;
 const launcher = require('./launcher');
 
 const id = 'claude-code';
@@ -257,20 +257,7 @@ function hookCommand(opts = {}) {
   return quoteArg(opts.nodePath || process.execPath, opts.platform) + ' ' + quoteArg(opts.runnerPath || runnerPath(), opts.platform) + ' claude-code';
 }
 
-function readJson(file) {
-  let data;
-  try {
-    const text = fs.readFileSync(file, 'utf8');
-    data = text.trim() ? JSON.parse(text) : {};
-  } catch (err) {
-    if (err.code === 'ENOENT') return {};
-    throw new Error('cannot parse ' + file + ': ' + err.message);
-  }
-  if (data === null || typeof data !== 'object' || Array.isArray(data)) {
-    throw new Error(file + ' must hold a JSON object, not ' + (data === null ? 'null' : Array.isArray(data) ? 'an array' : typeof data) + ' (left unchanged)');
-  }
-  return data;
-}
+const readJson = cfg.readJson;
 
 /* A field that must hold a JSON object: missing or null is empty; an array or a scalar is refused, never overwritten. */
 function objectField(data, key, file) {
@@ -287,14 +274,6 @@ function assertMcpFile(opts = {}) {
   if (opts.mcp === false || (opts.scope || 'user') !== 'project') return;
   const file = path.join(path.resolve(opts.projectDir || process.cwd()), '.mcp.json');
   if (fs.existsSync(file)) objectField(readJson(file), 'mcpServers', file);
-}
-
-function backup(file) {
-  if (!fs.existsSync(file)) return null;
-  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, '');
-  const dest = file + '.bak-zn-' + stamp;
-  fs.copyFileSync(file, dest);
-  return dest;
 }
 
 function stripOurs(groups) {
@@ -346,17 +325,20 @@ function installMcp(opts, report) {
   const conf = mcpServerConfig(opts);
   if ((opts.scope || 'user') === 'project') {
     const file = path.join(path.resolve(opts.projectDir || process.cwd()), '.mcp.json');
-    const data = readJson(file);
-    data.mcpServers = objectField(data, 'mcpServers', file);
-    const existing = data.mcpServers[MCP_SERVER_NAME];
-    if (existing && !isZnSecretsServer(existing)) {
+    let foreign = false;
+    const res = cfg.updateJson(file, (data) => {
+      foreign = false;
+      data.mcpServers = objectField(data, 'mcpServers', file);
+      const existing = data.mcpServers[MCP_SERVER_NAME];
+      if (existing && !isZnSecretsServer(existing)) { foreign = true; return false; }
+      data.mcpServers[MCP_SERVER_NAME] = conf;
+      return undefined;
+    });
+    if (foreign) {
       report.warnings.push('an MCP server named "' + MCP_SERVER_NAME + '" already exists in ' + file + '; left unchanged');
       return;
     }
-    report.mcpBackup = backup(file);
-    data.mcpServers[MCP_SERVER_NAME] = conf;
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    writeFileAtomic(file, JSON.stringify(data, null, 2) + '\n', 0o644);
+    report.mcpBackup = res.backup;
     report.mcp = file;
     return;
   }
@@ -387,16 +369,18 @@ function installMcp(opts, report) {
 function install(opts = {}) {
   const file = settingsFile(opts);
   assertMcpFile(opts);
-  const data = readJson(file);
-  const report = { settings: file, backup: backup(file), warnings: [] };
-  data.hooks = hooksOf(data, file);
-  const ours = ourHooks(commandFor(opts));
-  for (const [event, group] of Object.entries(ours)) {
-    data.hooks[event] = stripOurs(data.hooks[event]);
-    data.hooks[event].push(group);
-  }
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  writeFileAtomic(file, JSON.stringify(data, null, 2) + '\n', 0o644);
+  const report = { settings: file, backup: null, warnings: [] };
+  const res = cfg.withLauncherCleanup(id, opts, () => cfg.updateJson(file, (data) => {
+    data.hooks = hooksOf(data, file);
+    // A value that is not a list is the user's: refuse before anything is backed up or written.
+    cfg.assertEventLists(data.hooks, Object.keys(ourHooks('')), file);
+    const ours = ourHooks(commandFor(opts));
+    for (const [event, group] of Object.entries(ours)) {
+      data.hooks[event] = stripOurs(data.hooks[event]);
+      data.hooks[event].push(group);
+    }
+  }));
+  report.backup = res.backup;
   if (opts.mcp !== false) installMcp(opts, report);
   // Organization settings can turn these hooks or the MCP server off with no
   // sign in Claude Code; say it here.
@@ -415,36 +399,36 @@ function uninstall(opts = {}) {
   const file = settingsFile(opts);
   const report = { settings: file, backup: null, removed: 0, warnings: [] };
   assertMcpFile(opts);
-  if (fs.existsSync(file)) {
-    const data = readJson(file);
+  const res = cfg.updateJson(file, (data) => {
     const hooks = hooksOf(data, file);
     const before = JSON.stringify(hooks);
     for (const event of Object.keys(hooks)) {
+      if (!Array.isArray(hooks[event])) continue; // not a list: it holds nothing of ours
       const kept = stripOurs(hooks[event]);
       if (kept.length) hooks[event] = kept; else delete hooks[event];
     }
+    if (JSON.stringify(hooks) === before) return false;
     if (Object.keys(hooks).length === 0) delete data.hooks;
-    if (JSON.stringify(hooks) !== before) {
-      report.backup = backup(file);
-      report.removed = 1;
-      writeFileAtomic(file, JSON.stringify(data, null, 2) + '\n', 0o644);
-      // The launcher of a user install (see commandFor) is no longer referenced.
-      if ((opts.scope || 'user') !== 'project') {
-        try { fs.unlinkSync(launcher.launcherFile(id, opts)); } catch (_) { /* none */ }
-      }
+    return undefined;
+  }, { create: false });
+  if (res.changed) {
+    report.backup = res.backup;
+    report.removed = 1;
+    // The launcher of a user install (see commandFor) is no longer referenced.
+    if ((opts.scope || 'user') !== 'project') {
+      try { fs.unlinkSync(launcher.launcherFile(id, opts)); } catch (_) { /* none */ }
     }
   }
   if (opts.mcp !== false) {
     if ((opts.scope || 'user') === 'project') {
       const mcpFile = path.join(path.resolve(opts.projectDir || process.cwd()), '.mcp.json');
       if (fs.existsSync(mcpFile)) {
-        const data = readJson(mcpFile);
-        const s = objectField(data, 'mcpServers', mcpFile)[MCP_SERVER_NAME];
-        if (s && isZnSecretsServer(s)) {
-          backup(mcpFile);
+        cfg.updateJson(mcpFile, (data) => {
+          const s = objectField(data, 'mcpServers', mcpFile)[MCP_SERVER_NAME];
+          if (!s || !isZnSecretsServer(s)) return false;
           delete data.mcpServers[MCP_SERVER_NAME];
-          writeFileAtomic(mcpFile, JSON.stringify(data, null, 2) + '\n', 0o644);
-        }
+          return undefined;
+        }, { create: false });
       }
     } else {
       // Only zn's own server: a user MCP server that happens to be called "secrets" is left alone.

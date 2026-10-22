@@ -425,11 +425,13 @@ Adds or removes the zn hooks of a coding agent (to remove zn-gate completely, us
 
 #### `hooks install`
 
-Adds the hooks, and the `secrets` MCP server unless `--no-mcp` is given. A backup of the settings is written first.
+Adds the hooks, and the `secrets` MCP server unless `--no-mcp` is given. Before it changes a settings file it saves a copy next to it (`<file>.bak-zn-<time>`), and it never overwrites an earlier copy. It keeps the oldest copy (the file as it was before zn) and the newest five, and deletes the others. If the file would not change, nothing is written and no copy is made, so running it again is harmless.
+
+zn keeps the file's permissions, indentation, line endings and UTF-8 byte order mark, and edits a symlinked file where the link points (the copy goes next to that file). If another program changes the file while zn is writing it, zn reads it again and retries a few times, then stops and leaves the file as the other program wrote it. A file that is not valid JSON, a `hooks` value or hook event of the wrong type (it must be an object, and each event a list), and a read-only file are refused with a message and left unchanged, with no copy made. A permission error names the file or folder and says to fix its permissions.
 
 #### `hooks uninstall`
 
-Removes them again.
+Removes them again, keeping the rest of the file (and its indentation) as it was. If no zn hooks were installed, it says so and changes nothing.
 
 ### `hook`
 

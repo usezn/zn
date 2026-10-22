@@ -234,19 +234,20 @@ function commandFor(opts = {}) {
 function install(opts = {}) {
   const scope = opts.scope || 'user';
   const file = settingsFile(opts);
-  const data = cfg.readJson(file);
-  const hooks = cfg.hooksOf(data, file);
-  if (hooks.BeforeTool !== undefined && !Array.isArray(hooks.BeforeTool)) {
-    throw new Error('"hooks.BeforeTool" in ' + file + ' must be a list (left unchanged)');
-  }
-  const report = { settings: file, backup: cfg.backup(file), warnings: [] };
+  const report = { settings: file, backup: null, warnings: [] };
+  const res = cfg.withLauncherCleanup(id, opts, () => cfg.updateJson(file, (data) => {
+    const hooks = cfg.hooksOf(data, file);
+    if (hooks.BeforeTool !== undefined && !Array.isArray(hooks.BeforeTool)) {
+      throw new Error('"hooks.BeforeTool" in ' + file + ' must be a list (left unchanged)');
+    }
+    const command = commandFor(opts);
+    const groups = stripOurs(hooks.BeforeTool || []);
+    groups.push({ matcher: MATCHER, hooks: [{ name: HOOK_NAME, type: 'command', command, timeout: HOOK_TIMEOUT_MS }] });
+    hooks.BeforeTool = groups;
+    data.hooks = hooks;
+  }));
+  report.backup = res.backup;
   if (report.backup && scope === 'project') report.warnings.push('The backup ' + report.backup + ' sits inside the project: do not commit it.');
-  const command = commandFor(opts);
-  const groups = stripOurs(hooks.BeforeTool || []);
-  groups.push({ matcher: MATCHER, hooks: [{ name: HOOK_NAME, type: 'command', command, timeout: HOOK_TIMEOUT_MS }] });
-  hooks.BeforeTool = groups;
-  data.hooks = hooks;
-  cfg.writeJson(file, data);
   report.warnings.push('Gemini CLI support is experimental. zn checks tool calls before they run (BeforeTool): it blocks reads and writes of secret files and shell commands that handle secrets.');
   report.warnings.push('Gemini CLI treats a hook that crashes or times out as a warning and runs the tool anyway (only exit code 2 blocks). If the Node.js zn was installed with goes away, zn\'s launcher script blocks the tool instead; run `zn-gate check` to see that the hook works.');
   report.warnings.push('Gemini CLI hooks cannot ask the user and zn does not use AfterTool, so what a tool returns is not hidden: a value printed by a command or a file the agent may read reaches the model. Keep secrets in the vault.');
@@ -260,22 +261,24 @@ function install(opts = {}) {
 function uninstall(opts = {}) {
   const file = settingsFile(opts);
   const report = { settings: file, backup: null, removed: 0, warnings: [] };
-  if (!fs.existsSync(file)) return report;
-  const data = cfg.readJson(file);
-  const hooks = cfg.hooksOf(data, file);
-  const before = JSON.stringify(hooks);
-  for (const event of Object.keys(hooks)) {
-    const kept = stripOurs(hooks[event]);
-    if (Array.isArray(kept) && kept.length === 0) delete hooks[event]; else hooks[event] = kept;
-  }
-  if (JSON.stringify(hooks) === before) return report;
-  if (Object.keys(hooks).length === 0) delete data.hooks; else data.hooks = hooks;
-  report.backup = cfg.backup(file);
-  report.removed = 1;
-  cfg.writeJson(file, data);
-  // The launcher of a user install (see commandFor) is no longer referenced.
-  if ((opts.scope || 'user') !== 'project') {
-    try { fs.unlinkSync(launcher.launcherFile(id, opts)); } catch (_) { /* none */ }
+  const res = cfg.updateJson(file, (data) => {
+    const hooks = cfg.hooksOf(data, file);
+    const before = JSON.stringify(hooks);
+    for (const event of Object.keys(hooks)) {
+      const kept = stripOurs(hooks[event]);
+      if (Array.isArray(kept) && kept.length === 0) delete hooks[event]; else hooks[event] = kept;
+    }
+    if (JSON.stringify(hooks) === before) return false;
+    if (Object.keys(hooks).length === 0) delete data.hooks; else data.hooks = hooks;
+    return undefined;
+  }, { create: false });
+  if (res.changed) {
+    report.backup = res.backup;
+    report.removed = 1;
+    // The launcher of a user install (see commandFor) is no longer referenced.
+    if ((opts.scope || 'user') !== 'project') {
+      try { fs.unlinkSync(launcher.launcherFile(id, opts)); } catch (_) { /* none */ }
+    }
   }
   return report;
 }

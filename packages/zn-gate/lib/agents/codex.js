@@ -380,15 +380,17 @@ function handlerFor(opts = {}) {
 
 function install(opts = {}) {
   const file = hooksFile(opts);
-  const data = cfg.readJson(file);
-  const report = { settings: file, backup: cfg.backup(file), warnings: [] };
-  data.hooks = cfg.hooksOf(data, file);
-  const ours = hookGroups(handlerFor(opts));
-  for (const [event, group] of Object.entries(ours)) {
-    data.hooks[event] = strip(data.hooks[event]);
-    data.hooks[event].push(group);
-  }
-  cfg.writeJson(file, data);
+  const report = { settings: file, backup: null, warnings: [] };
+  const res = cfg.withLauncherCleanup(id, opts, () => cfg.updateJson(file, (data) => {
+    data.hooks = cfg.hooksOf(data, file);
+    cfg.assertEventLists(data.hooks, Object.keys(hookGroups(() => null)), file);
+    const ours = hookGroups(handlerFor(opts));
+    for (const [event, group] of Object.entries(ours)) {
+      data.hooks[event] = strip(data.hooks[event]);
+      data.hooks[event].push(group);
+    }
+  }));
+  report.backup = res.backup;
   report.warnings.push('Codex runs new or changed hooks only after you trust them: open Codex and review them with /hooks.');
   if (opts.mcp !== false) {
     report.warnings.push('optional: to let Codex use the secrets kept in zn\'s vault, add the "secrets" MCP server by putting this in ' + path.join(codexHome(opts), 'config.toml') + ':\n' + mcpSnippet(opts));
@@ -406,19 +408,21 @@ function install(opts = {}) {
 function uninstall(opts = {}) {
   const file = hooksFile(opts);
   const report = { settings: file, backup: null, removed: 0, warnings: [] };
-  if (!fs.existsSync(file)) return report;
-  const data = cfg.readJson(file);
-  if (!data.hooks || typeof data.hooks !== 'object') return report;
-  const before = JSON.stringify(data.hooks);
-  for (const event of Object.keys(data.hooks)) {
-    const kept = strip(data.hooks[event]);
-    if (kept.length) data.hooks[event] = kept; else delete data.hooks[event];
-  }
-  if (JSON.stringify(data.hooks) !== before) {
-    report.backup = cfg.backup(file);
-    report.removed = 1;
+  const res = cfg.updateJson(file, (data) => {
+    if (!data.hooks || typeof data.hooks !== 'object') return false;
+    const before = JSON.stringify(data.hooks);
+    for (const event of Object.keys(data.hooks)) {
+      if (!Array.isArray(data.hooks[event])) continue;
+      const kept = strip(data.hooks[event]);
+      if (kept.length) data.hooks[event] = kept; else delete data.hooks[event];
+    }
+    if (JSON.stringify(data.hooks) === before) return false;
     if (Object.keys(data.hooks).length === 0) delete data.hooks;
-    cfg.writeJson(file, data);
+    return undefined;
+  }, { create: false });
+  if (res.changed) {
+    report.backup = res.backup;
+    report.removed = 1;
     // The launcher of a user install (see handlerFor) is no longer referenced.
     if ((opts.scope || 'user') !== 'project') {
       try { fs.unlinkSync(launcher.launcherFile(id, opts)); } catch (_) { /* none */ }

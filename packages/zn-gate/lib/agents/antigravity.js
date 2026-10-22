@@ -224,20 +224,21 @@ function commandFor(opts = {}) {
 
 function install(opts = {}) {
   const file = hooksFile(opts);
-  const data = cfg.readJson(file);
-  const report = { settings: file, backup: cfg.backup(file), warnings: [] };
+  const report = { settings: file, backup: null, warnings: [] };
+  const res = cfg.withLauncherCleanup(id, opts, () => cfg.updateJson(file, (data) => {
+    stripOurs(data);
+    // Antigravity splits the hook command on spaces and ignores quotes, so on
+    // Windows a quoted path such as C:/Program Files/... breaks the -Command form
+    // and every tool call is blocked. -EncodedCommand has no space inside its
+    // argument.
+    const command = commandFor(opts);
+    // After the strip, a hook still called zn-gate is someone else's: zn never touches it (not even its enabled flag).
+    let name = HOOK_NAME;
+    while (data[name] !== undefined) name += '-zn';
+    data[name] = { enabled: true, PreToolUse: [{ matcher: MATCHER, hooks: [{ type: 'command', command, timeout: HOOK_TIMEOUT_S }] }] };
+  }));
+  report.backup = res.backup;
   if (report.backup && (opts.scope || 'user') === 'project') report.warnings.push('The backup ' + report.backup + ' sits inside the project: do not commit it.');
-  stripOurs(data);
-  // Antigravity splits the hook command on spaces and ignores quotes, so on
-  // Windows a quoted path such as C:/Program Files/... breaks the -Command form
-  // and every tool call is blocked. -EncodedCommand has no space inside its
-  // argument.
-  const command = commandFor(opts);
-  // After the strip, a hook still called zn-gate is someone else's: zn never touches it (not even its enabled flag).
-  let name = HOOK_NAME;
-  while (data[name] !== undefined) name += '-zn';
-  data[name] = { enabled: true, PreToolUse: [{ matcher: MATCHER, hooks: [{ type: 'command', command, timeout: HOOK_TIMEOUT_S }] }] };
-  cfg.writeJson(file, data);
   report.warnings.push('Antigravity support is experimental. zn checks tool calls before they run (PreToolUse): it blocks reads and writes of secret files and shell commands that handle secrets.');
   if ((opts.scope || 'user') === 'project' && !opts.command) report.warnings.push('The project hook runs `zn` from your PATH (zn hook antigravity): every teammate who opens this project in Antigravity needs zn-gate installed, otherwise the hook cannot start and Antigravity may let the call through (a project install has no launcher).');
   report.warnings.push('Antigravity hooks cannot rewrite or redact what a tool returns, so a value printed by a command or a file the agent is allowed to read reaches the model. Keep secrets in the vault.');
@@ -248,17 +249,18 @@ function install(opts = {}) {
 function uninstall(opts = {}) {
   const file = hooksFile(opts);
   const report = { settings: file, backup: null, removed: 0, warnings: [] };
-  if (!fs.existsSync(file)) return report;
-  const data = cfg.readJson(file);
-  const before = JSON.stringify(data);
-  if (!stripOurs(data) || JSON.stringify(data) === before) return report;
-  report.backup = cfg.backup(file);
-  report.removed = 1;
-  if (Object.keys(data).length === 0) fs.unlinkSync(file);
-  else cfg.writeJson(file, data);
-  // The launcher of a user install (see commandFor) is no longer referenced.
-  if ((opts.scope || 'user') !== 'project') {
-    try { fs.unlinkSync(launcher.launcherFile(id, opts)); } catch (_) { /* none */ }
+  const res = cfg.updateJson(file, (data) => {
+    const before = JSON.stringify(data);
+    if (!stripOurs(data) || JSON.stringify(data) === before) return false;
+    return Object.keys(data).length === 0 ? cfg.REMOVE_FILE : undefined;
+  }, { create: false });
+  if (res.changed) {
+    report.backup = res.backup;
+    report.removed = 1;
+    // The launcher of a user install (see commandFor) is no longer referenced.
+    if ((opts.scope || 'user') !== 'project') {
+      try { fs.unlinkSync(launcher.launcherFile(id, opts)); } catch (_) { /* none */ }
+    }
   }
   return report;
 }

@@ -293,7 +293,8 @@ test('install warns that a project hook needs zn on PATH, and that its backup mu
   const dir = tempDir(t, 'zn-agy-warn-');
   const first = agy.install({ scope: 'project', projectDir: dir });
   assert.ok(first.warnings.some((w) => /needs zn-gate installed/.test(w)));
-  const second = agy.install({ scope: 'project', projectDir: dir });
+  // A second install with the same content writes nothing and makes no backup; one that changes the file does.
+  const second = agy.install({ scope: 'project', projectDir: dir, command: '/other/zn hook antigravity' });
   assert.ok(second.warnings.some((w) => /do not commit it/.test(w)));
   assert.equal(agy.install({ scope: 'user', home: dir, nodePath: '/usr/bin/node' }).warnings.some((w) => /needs zn-gate installed/.test(w)), false);
 });

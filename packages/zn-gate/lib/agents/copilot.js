@@ -234,30 +234,34 @@ function stripOurs(data) {
 function install(opts = {}) {
   const file = hooksFile(opts);
   const project = (opts.scope || 'user') === 'project';
-  const data = cfg.readJson(file);
-  if (data.version !== undefined && data.version !== 1) throw new Error(file + ' has "version": ' + JSON.stringify(data.version) + ', not 1 (left unchanged)');
-  cfg.hooksOf(data, file);
-  const report = { settings: file, backup: cfg.backup(file), warnings: [] };
+  const report = { settings: file, backup: null, warnings: [] };
+  let disabledAll = false;
+  const res = cfg.updateJson(file, (data) => {
+    if (data.version !== undefined && data.version !== 1) throw new Error(file + ' has "version": ' + JSON.stringify(data.version) + ', not 1 (left unchanged)');
+    cfg.assertEventLists(cfg.hooksOf(data, file), INSTALL_EVENTS, file);
+    stripOurs(data);
+    const platform = opts.platform || process.platform;
+    const bash = cfg.hookCommand(id, opts);
+    const handler = { type: 'command', bash, timeoutSec: HOOK_TIMEOUT_S };
+    if (opts.command) handler.powershell = opts.command;
+    else if (project) handler.powershell = bash;
+    else if (platform === 'win32') handler.powershell = cfg.hookCommandWindows(id, opts);
+    data.version = 1;
+    if (!isObj(data.hooks)) data.hooks = {};
+    // "disableAllHooks" in a file zn wrote would switch its own hook off: an install turns it back on.
+    disabledAll = false;
+    if (data.disableAllHooks === true) {
+      delete data.disableAllHooks;
+      disabledAll = true;
+    }
+    for (const event of INSTALL_EVENTS) {
+      const list = Array.isArray(data.hooks[event]) ? data.hooks[event] : [];
+      data.hooks[event] = [...list, { ...handler }];
+    }
+  });
+  report.backup = res.backup;
   if (report.backup && project) report.warnings.push('The backup ' + report.backup + ' sits inside the project: do not commit it.');
-  stripOurs(data);
-  const platform = opts.platform || process.platform;
-  const bash = cfg.hookCommand(id, opts);
-  const handler = { type: 'command', bash, timeoutSec: HOOK_TIMEOUT_S };
-  if (opts.command) handler.powershell = opts.command;
-  else if (project) handler.powershell = bash;
-  else if (platform === 'win32') handler.powershell = cfg.hookCommandWindows(id, opts);
-  data.version = 1;
-  if (!isObj(data.hooks)) data.hooks = {};
-  // "disableAllHooks" in a file zn wrote would switch its own hook off: an install turns it back on.
-  if (data.disableAllHooks === true) {
-    delete data.disableAllHooks;
-    report.warnings.push('"disableAllHooks" was true in this file and was removed: it switched every hook of the file off.');
-  }
-  for (const event of INSTALL_EVENTS) {
-    const list = Array.isArray(data.hooks[event]) ? data.hooks[event] : [];
-    data.hooks[event] = [...list, { ...handler }];
-  }
-  cfg.writeJson(file, data);
+  if (disabledAll) report.warnings.push('"disableAllHooks" was true in this file and was removed: it switched every hook of the file off.');
   report.warnings.push('GitHub Copilot CLI support is experimental. zn checks tool calls before they run (preToolUse): it blocks reads and writes of secret files and shell commands that handle secrets, and it replaces secret values in the results of read-type and shell tools (postToolUse).');
   report.warnings.push('Copilot keeps its own session log (events.jsonl) with the original tool output on this machine: zn replaces secret values in what goes to the model, not in that local log.');
   report.warnings.push('Copilot does not let a command hook block a typed prompt, so a secret pasted into a prompt is not stopped.');
@@ -269,19 +273,18 @@ function install(opts = {}) {
 function uninstall(opts = {}) {
   const file = hooksFile(opts);
   const report = { settings: file, backup: null, removed: 0, warnings: [] };
-  if (!fs.existsSync(file)) return report;
-  const data = cfg.readJson(file);
-  const before = JSON.stringify(data);
-  if (!stripOurs(data) || JSON.stringify(data) === before) return report;
-  report.backup = cfg.backup(file);
-  report.removed = 1;
-  const hooksLeft = isObj(data.hooks) ? Object.keys(data.hooks).length : 0;
-  const others = Object.keys(data).filter((k) => k !== 'version' && k !== 'hooks' && k !== 'disableAllHooks');
-  if (!hooksLeft && !others.length) {
-    fs.unlinkSync(file);
-  } else {
+  const res = cfg.updateJson(file, (data) => {
+    const before = JSON.stringify(data);
+    if (!stripOurs(data) || JSON.stringify(data) === before) return false;
+    const hooksLeft = isObj(data.hooks) ? Object.keys(data.hooks).length : 0;
+    const others = Object.keys(data).filter((k) => k !== 'version' && k !== 'hooks' && k !== 'disableAllHooks');
+    if (!hooksLeft && !others.length) return cfg.REMOVE_FILE;
     if (!hooksLeft) delete data.hooks;
-    cfg.writeJson(file, data);
+    return undefined;
+  }, { create: false });
+  if (res.changed) {
+    report.backup = res.backup;
+    report.removed = 1;
   }
   return report;
 }

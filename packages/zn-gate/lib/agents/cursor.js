@@ -204,19 +204,21 @@ function commandFor(opts = {}) {
 
 function install(opts = {}) {
   const file = hooksFile(opts);
-  const data = cfg.readJson(file);
-  const report = { settings: file, backup: cfg.backup(file), warnings: [] };
-  data.version = data.version || 1;
-  data.hooks = cfg.hooksOf(data, file);
-  // On Windows Cursor wraps hook commands in PowerShell, which cannot run a
-  // quoted path as a command: the powershell.exe form runs there.
-  const command = commandFor(opts);
-  const entries = hookEntries(command);
-  for (const event of EVENTS) {
-    data.hooks[event] = strip(data.hooks[event]);
-    data.hooks[event].push(entries[event]);
-  }
-  cfg.writeJson(file, data);
+  const report = { settings: file, backup: null, warnings: [] };
+  const res = cfg.withLauncherCleanup(id, opts, () => cfg.updateJson(file, (data) => {
+    data.version = data.version || 1;
+    data.hooks = cfg.hooksOf(data, file);
+    cfg.assertEventLists(data.hooks, EVENTS, file);
+    // On Windows Cursor wraps hook commands in PowerShell, which cannot run a
+    // quoted path as a command: the powershell.exe form runs there.
+    const command = commandFor(opts);
+    const entries = hookEntries(command);
+    for (const event of EVENTS) {
+      data.hooks[event] = strip(data.hooks[event]);
+      data.hooks[event].push(entries[event]);
+    }
+  }));
+  report.backup = res.backup;
   report.warnings.push('Cursor cannot rewrite the output of shell commands or file reads: zn blocks reads of secret files and redacts MCP output only (see docs/compat.md).');
   if (opts.mcp !== false) {
     const cli = path.resolve(__dirname, '..', '..', 'bin', 'cli.js').replace(/\\/g, '/');
@@ -229,18 +231,19 @@ function install(opts = {}) {
 function uninstall(opts = {}) {
   const file = hooksFile(opts);
   const report = { settings: file, backup: null, removed: 0, warnings: [] };
-  if (!fs.existsSync(file)) return report;
-  const data = cfg.readJson(file);
-  if (!data.hooks || typeof data.hooks !== 'object') return report;
-  const before = JSON.stringify(data.hooks);
-  for (const event of Object.keys(data.hooks)) {
-    const kept = strip(data.hooks[event]);
-    if (kept.length) data.hooks[event] = kept; else delete data.hooks[event];
-  }
-  if (JSON.stringify(data.hooks) !== before) {
-    report.backup = cfg.backup(file);
+  const res = cfg.updateJson(file, (data) => {
+    if (!data.hooks || typeof data.hooks !== 'object') return false;
+    const before = JSON.stringify(data.hooks);
+    for (const event of Object.keys(data.hooks)) {
+      if (!Array.isArray(data.hooks[event])) continue;
+      const kept = strip(data.hooks[event]);
+      if (kept.length) data.hooks[event] = kept; else delete data.hooks[event];
+    }
+    return JSON.stringify(data.hooks) === before ? false : undefined;
+  }, { create: false });
+  if (res.changed) {
+    report.backup = res.backup;
     report.removed = 1;
-    cfg.writeJson(file, data);
     // The launcher of a user install (see commandFor) is no longer referenced.
     if ((opts.scope || 'user') !== 'project') {
       try { fs.unlinkSync(launcher.launcherFile(id, opts)); } catch (_) { /* none */ }

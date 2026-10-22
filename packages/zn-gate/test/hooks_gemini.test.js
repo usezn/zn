@@ -269,7 +269,7 @@ test('install warnings: experimental, fail-open on crash, no asking and no scrub
   assert.match(all, /not hidden/);
   assert.match(all, /untrusted until the user approves/);
   assert.match(all, /hooksConfig\.enabled/);
-  assert.ok(gem.install({ scope: 'project', projectDir: dir }).warnings.some((w) => /do not commit it/.test(w)));
+  assert.ok(gem.install({ scope: 'project', projectDir: dir, command: '/other/zn hook gemini' }).warnings.some((w) => /do not commit it/.test(w)));
   assert.equal(gem.install({ scope: 'user', home: dir, nodePath: '/usr/bin/node' }).warnings.some((w) => /untrusted until/.test(w)), false);
 });
 

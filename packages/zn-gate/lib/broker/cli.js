@@ -484,7 +484,11 @@ async function hooks(args, io) {
   const adapter = require('../agents').getAdapter(agentId);
   const opts = { scope: flags.project ? 'project' : 'user', projectDir: io.cwd, home: io.home, env: io.env, mcp: !flags['no-mcp'] };
   const report = action === 'install' ? adapter.install(opts) : adapter.uninstall(opts);
-  out(io, (action === 'install' ? 'Installed' : 'Removed') + ' zn hooks for ' + adapter.id + ' in ' + report.settings);
+  if (action === 'uninstall' && !report.removed) {
+    out(io, 'No zn hooks were installed for ' + adapter.id + ' in ' + report.settings + ', so nothing was removed.');
+  } else {
+    out(io, (action === 'install' ? 'Installed' : 'Removed') + ' zn hooks for ' + adapter.id + ' in ' + report.settings);
+  }
   if (report.backup) out(io, '  backup: ' + report.backup);
   if (report.mcp) out(io, '  MCP server "secrets": ' + report.mcp);
   for (const w of report.warnings || []) out(io, '  note: ' + w);

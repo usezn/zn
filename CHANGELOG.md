@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `zn-gate hooks install` and `uninstall` now write agent settings files more safely. A backup is never overwritten, an install that changes nothing writes nothing and makes no backup, and old backups are pruned (the original and the newest five stay). A key written by another program at the same moment is no longer lost, and the file's permissions, indentation and byte order mark are kept (a read-only file is refused, not replaced).
+- Malformed settings (a `hooks` value or hook event of the wrong type) are refused before any backup or launcher is written. Permission errors say what to fix, `uninstall` says when nothing was installed, and a symlinked settings file is edited through the link.
+
 ## [1.13.1] - 2026-10-20
 
 zn-gate 1.13.1 is a security patch for the Python package. The LangChain callback handler now stops a run when it blocks a tool call, and the new `guard_langchain_tool` wrapper checks tool arguments and masks secrets in tool output before the model reads them. Upgrade with `pip install -U zn-gate`. The npm package has no code changes in this release.
