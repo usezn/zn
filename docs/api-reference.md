@@ -162,7 +162,7 @@ from zn_gate import get_evidence_stats, export_evidence_ledger
 ### `@guard(on_block='raise'|'return'|'custom', fallback=None, check_args=True, check_result=False, mask_secrets=False, callback=None, block_truncated=False)`
 
 - Python decorator protecting sync and async agent functions and tool handlers.
-- `on_block='raise'` raises `GuardBlockError`; `'return'` returns `fallback` (or the `Assessment` when `fallback` is `None`); `'custom'` calls `callback(assessment, function_name, payload)` and then raises `GuardBlockError`, unless the callback raises its own exception first. A blocked call never runs the function.
+- `on_block='raise'` raises `GuardBlockError`; `'return'` returns `fallback` (or the plain block message, a string, when `fallback` is `None`); `'custom'` calls `callback(assessment, function_name, payload)` and then raises `GuardBlockError`, unless the callback raises its own exception first. A blocked call never runs the function.
 - `on_block` must be `'raise'`, `'return'` or `'custom'`; any other value, or `'custom'` without a `callback`, raises `ValueError` when the decorator is created.
 - `block_truncated=True` blocks arguments, and with `check_result=True` a result, too large to scan in full (rule `size:truncated`); `ZN_BLOCK_TRUNCATED=1` does the same for every guard. The `self` or `cls` of a method is not checked.
 
@@ -219,7 +219,7 @@ except GuardBlockError as e:
 - Synchronous (the Node function returns a Promise). Same data flow as Node: local rules first, and the cloud only when the user opted in with `ZN_API_KEY` and `ZN_CLOUD=1`, with `ZN_LOCAL_ONLY` not `true`. Text is secret-redacted before it is sent.
 - `timeout` is in **seconds** (default 4.0, or 12.0 for text over 1,000 characters); the Node option is in milliseconds.
 - Returns a dict with `verdict`, `confidence`, `rule`, `reason`, `engine`, `rules_version` and `mode`: `'hybrid-local-fastpath'`, `'oss-local'` or `'hybrid-cloud'`, as in Node.
-- If the cloud call fails it returns the local result with `mode: 'oss-local-fallback'`, `fallback: True` and `cloud_error`. Node reports the same case as `mode: 'oss-local'` with `fallback: true`.
+- If the cloud call fails it returns the local result with `mode: 'oss-local-fallback'`, `fallback: True` and `cloud_error` (a plain sentence). It also prints one short note to stderr per process, naming the cause (key rejected, limit reached, no answer in time); with `DEBUG=zn` it adds the raw error. When a key is set without `ZN_CLOUD=1`, or `ZN_CLOUD=1` without a key, it prints one note saying the cloud check is off. Node reports the same case as `mode: 'oss-local'` with `fallback: true`.
 - `api_url` and `stage` (`'v30'` or `'prod'`) can be passed as keyword arguments, like `apiUrl` and `stage` in Node; they pick the endpoint as `resolve_endpoint` does. The `endpoint` argument wins over both.
 - Unlike Node, it does not use a key saved by `zn-gate connect`: pass `api_key` or set `ZN_API_KEY` together with `ZN_CLOUD=1`.
 

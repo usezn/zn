@@ -22,8 +22,27 @@ from .rules import Assessment, invisible_block, scan_windows, too_invisible
 _F = TypeVar("_F", bound=Callable[..., Any])
 
 
-def block_message(assessment: Assessment, target: str) -> str:
-    """Plain text for a blocked call or tool result: what was blocked, why, and the next step."""
+_ISSUES_URL = "https://github.com/usezn/zn/issues"
+
+# A next step for the rules that are not a suspected injection: the generic
+# "check the input / report a false positive" advice is wrong for them.
+_RULE_NEXT_STEPS = {
+    "secret:unmaskable": (
+        "Next step: this is a real secret, not a false alarm. Make the tool return plain text "
+        "or a simple dict without the secret, or stop the tool from reading it."),
+    "type:unscannable": (
+        "Next step: pass plain text, a dict or a list instead of this value "
+        "(zn-gate cannot check a generator or an unreadable object)."),
+    "size:items": "Next step: send fewer values at once, or split them over several calls.",
+    "size:nesting": "Next step: send a flatter structure, or split it into smaller parts.",
+}
+
+
+def block_message(assessment: Assessment, target: str, next_step: Optional[str] = None) -> str:
+    """Plain text for a blocked call or tool result: what was blocked, why, and the next step.
+
+    `next_step` replaces the default next step (a full sentence starting with "Next step:").
+    """
     is_result = target.endswith((":result", ":tool_output"))
     too_large = assessment.rule == "size:truncated"
     if is_result:
@@ -41,19 +60,24 @@ def block_message(assessment: Assessment, target: str) -> str:
         why = f"Reason: {reason} (rule: {assessment.rule})."
     else:
         why = f"Reason: the input matched rule {assessment.rule}."
-    if is_result:
+    if next_step is not None:
+        step = next_step
+    elif assessment.rule in _RULE_NEXT_STEPS:
+        step = _RULE_NEXT_STEPS[assessment.rule]
+    elif is_result:
         step = ("Next step: check where the data came from. If this is a false positive, "
-                "report it at https://github.com/usezn/zn/issues.")
+                f"report it at {_ISSUES_URL}.")
     else:
         step = ("Next step: check the input. If this is a false positive, "
-                "report it at https://github.com/usezn/zn/issues.")
+                f"report it at {_ISSUES_URL}.")
     return f"zn-gate blocked '{target}'. {what} {why} {step}"
 
 
 class GuardBlockError(PermissionError):
     """Raised when an LLM tool call or input is blocked by zn-gate."""
-    def __init__(self, assessment: Assessment, target: str = "", payload: Any = None):
-        super().__init__(block_message(assessment, target))
+    def __init__(self, assessment: Assessment, target: str = "", payload: Any = None,
+                 next_step: Optional[str] = None):
+        super().__init__(block_message(assessment, target, next_step))
         self.assessment = assessment
         self.target = target
         self.payload = payload
@@ -706,7 +730,8 @@ def guard(
 
     Parameters:
     - on_block: "raise" (default) raises GuardBlockError,
-                "return" returns `fallback` (or the Assessment if fallback is None),
+                "return" returns `fallback` (or the plain block message, a str,
+                if fallback is None),
                 "custom" calls `callback` and then raises GuardBlockError, unless
                 the callback raises its own exception first. "custom" needs a
                 callback (ValueError otherwise). A blocked call never runs the
@@ -758,12 +783,12 @@ def guard(
             if callback:
                 callback(assessment, func_name, combined_args)
             if on_block == "return":
-                return True, fallback if fallback is not None else assessment
+                return True, fallback if fallback is not None else block_message(assessment, func_name)
             raise GuardBlockError(assessment, target=func_name, payload=combined_args)
 
         policy = _ResultPolicy(func_name, f"{func_name}:result", check_result, mask_secrets,
                                block_truncated, on_block, fallback, callback,
-                               default=lambda assessment, _target: assessment)
+                               default=block_message)
 
         if _is_async_callable(func):
             @functools.wraps(func)

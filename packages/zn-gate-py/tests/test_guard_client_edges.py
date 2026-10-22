@@ -183,13 +183,15 @@ class TestAnalyzeFallbacks(_EnvCase):
         written = "".join(c.args[0] for c in err.write.call_args_list)
         self.assertIn("Cloud gate error", written)
 
-    def test_silent_without_verbose(self):
+    def test_plain_warning_without_verbose_hides_raw_detail(self):
         def opener(req, timeout=None):
             raise urllib.error.URLError("unreachable")
 
         with mock.patch("sys.stderr") as err:
             self._assert_fallback(self._run(opener))
-        err.write.assert_not_called()
+        written = "".join(c.args[0] for c in err.write.call_args_list)
+        self.assertIn("Could not reach the zn cloud check", written)
+        self.assertNotIn("unreachable", written)
 
     def test_default_timeouts(self):
         seen = []
@@ -220,7 +222,7 @@ class TestAnalyzeFallbacks(_EnvCase):
         res = self._run(lambda r, timeout=None: _json_resp(
             {"verdict": "allow", "long_input": {"capped": True, "windows": 20}}), "x " * 800)
         self.assertEqual(res["mode"], "hybrid-cloud")
-        self.assertIn("20 windows", res["warning"])
+        self.assertIn("20 chunks", res["warning"])
 
     def test_truncate_warning_with_and_without_reason(self):
         res = self._run(lambda r, timeout=None: _json_resp(
@@ -355,8 +357,8 @@ class TestGuardModes(_EnvCase):
 
         self.assertEqual(tool(BAD), "blocked")
         res = tool2(BAD)
-        self.assertIsInstance(res, Assessment)
-        self.assertFalse(res.allowed)
+        self.assertIsInstance(res, str)
+        self.assertTrue(res.startswith("zn-gate blocked 'tool2'."), res)
         self.assertEqual(tool2("fine"), "ran")
 
     def test_sync_custom_calls_callback_and_stops_the_call(self):
@@ -408,7 +410,7 @@ class TestGuardModes(_EnvCase):
         self.assertIn("output of this tool was withheld", str(cm.exception))
         self.assertEqual(calls, ["raiser"])
         self.assertEqual(returner(), "blocked")
-        self.assertIsInstance(returner_assessment(), Assessment)
+        self.assertIsInstance(returner_assessment(), str)
         with self.assertRaises(GuardBlockError):
             custom()
 
@@ -490,7 +492,7 @@ class TestGuardAsync(_EnvCase):
         with self.assertRaises(GuardBlockError):
             self.run_async(raiser(BAD))
         self.assertEqual(self.run_async(returner(BAD)), "blocked")
-        self.assertIsInstance(self.run_async(returner_assessment(BAD)), Assessment)
+        self.assertIsInstance(self.run_async(returner_assessment(BAD)), str)
         with self.assertRaises(GuardBlockError):
             self.run_async(custom(BAD))
         self.assertEqual(calls, ["raiser", "custom:custom"])
@@ -520,7 +522,7 @@ class TestGuardAsync(_EnvCase):
         self.assertEqual(cm.exception.target, "raiser:result")
         self.assertEqual(calls, ["raiser"])
         self.assertEqual(self.run_async(returner()), "blocked")
-        self.assertIsInstance(self.run_async(returner_assessment()), Assessment)
+        self.assertIsInstance(self.run_async(returner_assessment()), str)
         with self.assertRaises(GuardBlockError):
             self.run_async(custom())
 

@@ -143,7 +143,8 @@ def openai_agents_tool_guardrails(
     try:
         from agents.tool_guardrails import ToolGuardrailFunctionOutput, ToolInputGuardrail, ToolOutputGuardrail
     except ImportError as exc:
-        raise ImportError("openai_agents_tool_guardrails needs the OpenAI Agents SDK: pip install openai-agents") from exc
+        raise ImportError(("openai_agents_tool_guardrails needs the OpenAI Agents SDK, which is not installed. "
+                           "Install it with: pip install openai-agents")) from exc
 
     def _arguments(raw: Any) -> Any:
         if isinstance(raw, str):
@@ -207,7 +208,8 @@ def guard_pydantic_ai_toolset(
     try:
         from pydantic_ai.toolsets import WrapperToolset
     except ImportError as exc:
-        raise ImportError("guard_pydantic_ai_toolset needs Pydantic AI: pip install pydantic-ai") from exc
+        raise ImportError(("guard_pydantic_ai_toolset needs Pydantic AI, which is not installed. "
+                           "Install it with: pip install pydantic-ai")) from exc
 
     policy = _Policy("pydantic-ai", on_block, mask_secrets, check_result, block_truncated, fallback)
 

@@ -42,8 +42,10 @@ class TestCloudErrorDetail(unittest.TestCase):
         self.assertEqual(res["verdict"], "allow")
         return err.getvalue()
 
-    def test_debug_star_prints_nothing(self):
-        self.assertEqual(self._stderr_with("*"), "")
+    def test_debug_star_prints_only_the_plain_warning(self):
+        out = self._stderr_with("*")
+        self.assertIn("The zn cloud check failed", out)
+        self.assertNotIn("cloud down", out)
 
     def test_debug_zn_prints_the_notice(self):
         self.assertIn("Cloud gate error", self._stderr_with("zn"))

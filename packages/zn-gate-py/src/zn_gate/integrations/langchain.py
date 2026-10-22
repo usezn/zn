@@ -38,10 +38,15 @@ ON_BLOCK_MODES = ("raise", "ignore")
 TOOL_ON_BLOCK_MODES = ("raise", "return")
 
 _RETURN_NOT_SUPPORTED = (
-    "ZnGuardCallbackHandler does not support on_block='return': LangChain ignores what a "
-    "callback returns, so a blocked call would run anyway. Use on_block='raise' to stop the "
-    "run, or wrap the tool with guard_langchain_tool(tool, on_block='return') so the model "
-    "gets a block message instead of the tool output."
+    "on_block='return' does not work with ZnGuardCallbackHandler: LangChain would still run "
+    "the blocked call. Use on_block='raise' to stop the run, or wrap the tool: "
+    "guard_langchain_tool(tool, on_block='return')."
+)
+
+_SECRET_NEXT_STEP = (
+    "Next step: wrap the tool with guard_langchain_tool(tool) to hide secrets and keep going, "
+    "or stop the tool from returning the secret. This handler can only stop the run, "
+    "not hide the secret."
 )
 
 
@@ -67,8 +72,7 @@ def _secret_assessment(found: List[Dict[str, Any]]) -> Assessment:
         verdict="block",
         confidence=1.0,
         rule=rules[0] if rules else "secret",
-        reason=("Tool output contains a secret, and a callback cannot hide it before the model "
-                "reads it; wrap the tool with guard_langchain_tool to hide secrets instead"),
+        reason="A tool returned a secret, so the run was stopped before the model could read it",
     )
 
 
@@ -185,7 +189,8 @@ class ZnGuardCallbackHandler(BaseCallbackHandler):
         changed = masked is not content and masked != content
         if changed and self.on_block == "raise":
             _, found = sanitize_tool_result(content)
-            raise GuardBlockError(_secret_assessment(found), target="langchain:tool_output", payload=masked)
+            raise GuardBlockError(_secret_assessment(found), target="langchain:tool_output", payload=masked,
+                                  next_step=_SECRET_NEXT_STEP)
         return masked if changed else output
 
     def on_tool_error(
@@ -217,7 +222,7 @@ class ZnGuardCallbackHandler(BaseCallbackHandler):
             found = _error_secrets(error)
             if found:
                 raise GuardBlockError(_secret_assessment(found), target="langchain:tool_output",
-                                      payload=_mask_text(message))
+                                      payload=_mask_text(message), next_step=_SECRET_NEXT_STEP)
         return None
 
 
@@ -452,7 +457,8 @@ def guard_langchain_tool(
     secret before the wrapper can mask it.
     """
     if not _HAVE_LANGCHAIN:
-        raise ImportError("guard_langchain_tool needs langchain-core: pip install langchain-core")
+        raise ImportError(("guard_langchain_tool needs langchain-core, which is not installed. "
+                          "Install it with: pip install langchain-core"))
     if not isinstance(tool, BaseTool):
         raise TypeError("guard_langchain_tool expects a LangChain tool (BaseTool); "
                         "decorate a plain function with @tool from langchain_core.tools first")

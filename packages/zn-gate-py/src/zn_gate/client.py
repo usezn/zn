@@ -13,15 +13,67 @@ from __future__ import annotations
 
 import json
 import os
+import socket
+import sys
 import urllib.request
 import urllib.error
-from typing import Any, Dict, Optional, cast
+from typing import Any, Dict, Optional, Set, Tuple, cast
 
 from .rules import evaluate, redact_secrets
 from . import __version__
 from .verbose import is_verbose
 
 DEFAULT_ENDPOINT = "https://api.usezn.com/v30/analyze"
+
+
+_WARNED: Set[str] = set()
+
+
+def _warn_once(key: str, text: str) -> None:
+    """One plain stderr line per process for each cause (not one per call)."""
+    if key in _WARNED:
+        return
+    _WARNED.add(key)
+    try:
+        sys.stderr.write(f"[zn-gate] {text}\n")
+    except Exception:
+        pass
+
+
+def _cloud_off_warning(key: Optional[str], local_only: bool) -> None:
+    """Say once why the optional cloud check is off when the user seems to expect it on."""
+    if local_only or os.environ.get("ZN_LOCAL_ONLY") == "true":
+        return
+    opted_in = os.environ.get("ZN_CLOUD") == "1"
+    if key and not opted_in:
+        _warn_once("cloud-off-no-opt-in",
+                   "The cloud check is off: ZN_API_KEY is set but ZN_CLOUD=1 is not, so only local rules run. "
+                   "To turn it on, set ZN_CLOUD=1.")
+    elif opted_in and not key:
+        _warn_once("cloud-off-no-key",
+                   "The cloud check is off: ZN_CLOUD=1 is set but there is no ZN_API_KEY, so only local rules run. "
+                   "Set ZN_API_KEY (get a key at https://usezn.com/dashboard), or remove ZN_CLOUD.")
+
+
+def _cloud_failure(exc: BaseException) -> Tuple[str, str]:
+    """(cause, plain text) for a failed cloud call. Local rules still gave the verdict."""
+    if isinstance(exc, urllib.error.HTTPError):
+        if exc.code in (401, 403):
+            return ("key", f"The zn cloud check rejected your API key (HTTP {exc.code}), so only local rules ran. "
+                           "Check ZN_API_KEY at https://usezn.com/dashboard.")
+        if exc.code == 429:
+            return ("limit", "Your plan's cloud checks are used up for now, so only local rules ran. "
+                             "Try again later, or check your plan at https://usezn.com/dashboard.")
+        return ("http", f"The zn cloud check had a problem (HTTP {exc.code}), so only local rules ran. "
+                        "Try again later.")
+    reason = getattr(exc, "reason", None)
+    if isinstance(exc, (socket.timeout, TimeoutError)) or isinstance(reason, (socket.timeout, TimeoutError)):
+        return ("timeout", "The zn cloud check did not answer in time, so only local rules ran. "
+                           "Try again, or check your network.")
+    if isinstance(exc, urllib.error.URLError):
+        return ("network", "Could not reach the zn cloud check (no network?), so only local rules ran. "
+                           "Check your network.")
+    return ("error", "The zn cloud check failed, so only local rules ran. Try again later.")
 
 
 def resolve_endpoint(options: Optional[Dict[str, Any]] = None) -> str:
@@ -118,6 +170,7 @@ def analyze(
 
     # Cloud is opt-in: without ZN_CLOUD=1 (or with ZN_LOCAL_ONLY) everything stays local
     if not is_cloud_enabled(key, local_only):
+        _cloud_off_warning(key, local_only)
         return {
             "verdict": "allow",
             "confidence": local_eval.confidence,
@@ -142,15 +195,16 @@ def analyze(
         cloud_res["secrets_redacted_before_upload"] = len(detections)
         li = cloud_res.get("long_input")
         if isinstance(li, dict) and li.get("capped"):
-            cloud_res["warning"] = ("The text is longer than the cloud gate checks (%s windows of 512 tokens): "
-                                    "the end was not analyzed." % li.get("windows"))
+            cloud_res["warning"] = ("This text is very long: the cloud check read only the first part "
+                                    "(%s chunks) and did not check the rest." % li.get("windows"))
         elif windows and isinstance(li, dict) and li.get("mode") == "truncate":
-            cloud_res["warning"] = ("The cloud gate checked only the first 512 tokens of this text (%s)."
-                                    % (li.get("reason") or "no windows"))
+            cloud_res["warning"] = ("The cloud check read only the beginning of this text (%s); "
+                                    "the rest was not checked." % (li.get("reason") or "no windows"))
         return cloud_res
     except Exception as exc:
+        cause, plain = _cloud_failure(exc)
+        _warn_once(f"cloud-fail-{cause}", plain)
         if is_verbose():
-            import sys
             sys.stderr.write(f"[zn-gate] Warning: Cloud gate error ({exc}). Using local OSS rules fallback.\n")
         return {
             "verdict": "allow",
@@ -160,6 +214,6 @@ def analyze(
             "mode": "oss-local-fallback",
             "engine": "oss-local",
             "fallback": True,
-            "cloud_error": str(exc),
+            "cloud_error": plain,
             **({"advisory": dict(local_eval.advisory)} if local_eval.advisory else {}),
         }
