@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, overload
 
 
-RULES_VERSION = "2026-10-23.2"
+RULES_VERSION = "2026-10-23.4"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -573,6 +573,10 @@ def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
         return b64_block
 
     targets = list(dict.fromkeys([normalized, stripped, raw]))
+    # Whether a target holds an exfiltration verb and a credential word. Step 5
+    # computes it and the advisory pass below reuses it, so each large target is
+    # searched once for them (same results as running the advisory test again).
+    exfil_terms: Dict[str, bool] = {}
 
     for text in targets:
         # 0. Evasion Rules (BiDi Trojan Source)
@@ -608,7 +612,9 @@ def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
                 return Assessment(verdict='block', confidence=0.95, rule=rule_id, reason=desc)
 
         # 5. Exfiltration Compound (verb + credentials)
-        if EXFIL_VERBS.search(text) and CRED_OBJECTS.search(text) and EXFIL_CLAUSE_RE.search(text):
+        has_terms = EXFIL_VERBS.search(text) is not None and CRED_OBJECTS.search(text) is not None
+        exfil_terms[text] = has_terms
+        if has_terms and EXFIL_CLAUSE_RE.search(text):
             return Assessment(
                 verdict='block',
                 confidence=0.90,
@@ -621,7 +627,8 @@ def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
 
     for text in targets:
         for rule_id, test, desc in ADVISORY_RULES:
-            if test(text):
+            hit = exfil_terms[text] if rule_id == 'exfil:credentials' else test(text)
+            if hit:
                 return Assessment(verdict='allow', confidence=0.99, rule='none', reason=None,
                                   advisory={'rule': rule_id, 'reason': desc})
 
