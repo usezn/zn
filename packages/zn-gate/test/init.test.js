@@ -234,3 +234,157 @@ test('zn-gate init - OpenCode JSONC with comments is not rewritten', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// Rewrites must not change what the user wrote
+// ---------------------------------------------------------------------------
+function withTmp(prefix, fn) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  try {
+    return fn(dir);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const jsonEnv = (file) => [{ name: 'Claude Code', id: 'claude-code', filePath: file, key: 'mcpServers', format: 'mcpServers-json' }];
+
+test('zn-gate init - a number that would change on rewrite (above 2^53) is not rewritten', () => {
+  withTmp('zn-init-bigint-', (dir) => {
+    const file = path.join(dir, '.claude.json');
+    const original = '{\n  "numStartups": 12345678901234567890,\n  "mcpServers": { "fetch": { "command": "uvx", "args": ["mcp-server-fetch"] } }\n}\n';
+    fs.writeFileSync(file, original);
+    const { actions } = configureEnvironments({ envList: jsonEnv(file) });
+    assert.equal(actions[0].status, 'manual_required');
+    assert.match(actions[0].error, /12345678901234567890/);
+    assert.match(actions[0].error, /by hand/);
+    assert.equal(fs.readFileSync(file, 'utf8'), original);
+    assert.deepEqual(fs.readdirSync(dir), ['.claude.json']);
+  });
+});
+
+test('zn-gate init - number literals that print differently (1.0, 1e3) are not rewritten', () => {
+  for (const lit of ['1.0', '2.50', '1e3', '-0']) {
+    withTmp('zn-init-numtext-', (dir) => {
+      const file = path.join(dir, 'mcp.json');
+      const original = `{ "timeout": ${lit}, "mcpServers": { "fetch": { "command": "uvx", "args": ["x"] } } }`;
+      fs.writeFileSync(file, original);
+      const { actions } = configureEnvironments({ envList: jsonEnv(file) });
+      assert.equal(actions[0].status, 'manual_required', lit);
+      assert.equal(fs.readFileSync(file, 'utf8'), original, lit);
+    });
+  }
+});
+
+test('zn-gate init - numbers that survive a rewrite, and number-like text inside strings, do not block it', () => {
+  withTmp('zn-init-numok-', (dir) => {
+    const file = path.join(dir, 'mcp.json');
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ count: 12, ratio: 0.5, neg: -3, big: 9007199254740991, note: 'v1.0 and 12345678901234567890 \\" 1.0', mcpServers: { fetch: { command: 'uvx', args: ['x'] } } }, null, 2)
+    );
+    const { actions } = configureEnvironments({ envList: jsonEnv(file) });
+    assert.equal(actions[0].status, 'shielded');
+    const out = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert.equal(out.ratio, 0.5);
+    assert.equal(out.big, 9007199254740991);
+    assert.equal(out.mcpServers.fetch.command, 'npx');
+  });
+});
+
+test('zn-gate init - OpenCode config with a number that would change is not rewritten', () => {
+  withTmp('zn-init-ocbig-', (dir) => {
+    const file = path.join(dir, 'opencode.json');
+    const original = '{ "id": 12345678901234567890, "mcp": { "x": { "type": "local", "command": ["npx", "y"] } } }';
+    fs.writeFileSync(file, original);
+    const env = [{ name: 'OpenCode', id: 'opencode', filePath: file, key: 'mcp', format: 'opencode-json' }];
+    const { actions } = configureEnvironments({ envList: env });
+    assert.equal(actions[0].status, 'manual_required');
+    assert.equal(fs.readFileSync(file, 'utf8'), original);
+  });
+});
+
+test('zn-gate init - a JSON config with CRLF line endings keeps CRLF', () => {
+  withTmp('zn-init-crlf-', (dir) => {
+    const file = path.join(dir, 'mcp.json');
+    fs.writeFileSync(file, '{\r\n  "mcpServers": {\r\n    "fetch": { "command": "uvx", "args": ["x"] }\r\n  }\r\n}\r\n');
+    const { actions } = configureEnvironments({ envList: jsonEnv(file) });
+    assert.equal(actions[0].status, 'shielded');
+    const out = fs.readFileSync(file, 'utf8');
+    assert.ok(out.includes('\r\n'));
+    assert.equal(out.replace(/\r\n/g, '').includes('\n'), false, 'no bare LF');
+    assert.equal(out.endsWith('}\r\n'), true);
+  });
+});
+
+test('zn-gate init - a JSON config with LF line endings stays LF', () => {
+  withTmp('zn-init-lf-', (dir) => {
+    const file = path.join(dir, 'mcp.json');
+    fs.writeFileSync(file, '{\n  "mcpServers": { "fetch": { "command": "uvx", "args": ["x"] } }\n}\n');
+    configureEnvironments({ envList: jsonEnv(file) });
+    assert.equal(fs.readFileSync(file, 'utf8').includes('\r'), false);
+  });
+});
+
+test('zn-gate init - Codex config.toml keeps CRLF and the comments after command and args', () => {
+  withTmp('zn-init-tomlcrlf-', (dir) => {
+    const file = path.join(dir, 'config.toml');
+    fs.writeFileSync(
+      file,
+      ['model = "o4-mini"', '[mcp_servers.a]', 'command = "npx"  # runner', 'args = ["-y", "pkg"] # keep', '', '[mcp_servers.b]', "command = 'uvx' # only a command", ''].join('\r\n')
+    );
+    const env = [{ name: 'Codex', id: 'codex', filePath: file, key: 'mcp_servers', format: 'codex-toml' }];
+    const { actions } = configureEnvironments({ envList: env });
+    assert.equal(actions[0].status, 'shielded');
+    const out = fs.readFileSync(file, 'utf8');
+    assert.equal(out.replace(/\r\n/g, '').includes('\n'), false, 'no bare LF');
+    assert.equal(out.split('\r\n').length, 9, 'one new args line, all endings CRLF');
+    assert.match(out, /command = "npx"  # runner\r\n/);
+    assert.match(out, /args = \["-y", "zn-gate", "shield", "--", "npx", "-y", "pkg"\] # keep\r\n/);
+    assert.match(out, /command = "npx" # only a command\r\nargs = \["-y", "zn-gate", "shield", "--", "uvx"\]\r\n/);
+  });
+});
+
+test('zn-gate init - Codex config.toml with mixed line endings keeps each line ending', () => {
+  withTmp('zn-init-tomlmixed-', (dir) => {
+    const file = path.join(dir, 'config.toml');
+    fs.writeFileSync(file, '[mcp_servers.a]\r\ncommand = "uvx"\n\n# end\r\n');
+    const env = [{ name: 'Codex', id: 'codex', filePath: file, key: 'mcp_servers', format: 'codex-toml' }];
+    configureEnvironments({ envList: env });
+    assert.equal(
+      fs.readFileSync(file, 'utf8'),
+      '[mcp_servers.a]\r\ncommand = "npx"\nargs = ["-y", "zn-gate", "shield", "--", "uvx"]\n\n# end\r\n'
+    );
+  });
+});
+
+test('zn-gate init - a config saved by another program meanwhile is not overwritten', () => {
+  withTmp('zn-init-race-', (dir) => {
+    const file = path.join(dir, '.claude.json');
+    fs.writeFileSync(file, '{\n  "mcpServers": { "fetch": { "command": "uvx", "args": ["x"] } }\n}\n');
+    const theirs = '{\n  "mcpServers": { "fetch": { "command": "uvx", "args": ["x"] } },\n  "newSetting": true\n}\n';
+    const realWrite = fs.writeFileSync;
+    let swapped = false;
+    // The other program saves its version while the backup is being written.
+    fs.writeFileSync = function (p, ...rest) {
+      const r = realWrite.call(fs, p, ...rest);
+      if (!swapped && String(p).includes('.bak.')) {
+        swapped = true;
+        realWrite.call(fs, file, theirs);
+      }
+      return r;
+    };
+    let actions;
+    try {
+      ({ actions } = configureEnvironments({ envList: jsonEnv(file) }));
+    } finally {
+      fs.writeFileSync = realWrite;
+    }
+    assert.equal(swapped, true);
+    assert.equal(actions[0].status, 'error');
+    assert.match(actions[0].error, /changed while zn-gate was working/);
+    assert.match(actions[0].error, /run the command again/);
+    assert.equal(fs.readFileSync(file, 'utf8'), theirs);
+    assert.deepEqual(fs.readdirSync(dir), ['.claude.json'], 'the unused backup is removed');
+  });
+});

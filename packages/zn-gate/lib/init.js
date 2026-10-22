@@ -69,6 +69,65 @@ function shieldArgv(originalArgv, options) {
   return argv;
 }
 
+/**
+ * JSON.parse + JSON.stringify changes number literals it cannot represent
+ * exactly (12345678901234567890 becomes 12345678901234567000, 1.0 becomes 1).
+ * Returns the first literal in the source text whose rewritten form differs,
+ * or null when every number survives a rewrite unchanged.
+ */
+function firstLossyNumber(raw) {
+  const num = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
+  let i = 0;
+  while (i < raw.length) {
+    const c = raw[i];
+    if (c === '"') {
+      i++;
+      while (i < raw.length && raw[i] !== '"') i += raw[i] === '\\' ? 2 : 1;
+      i++;
+    } else if (c === '-' || (c >= '0' && c <= '9')) {
+      num.lastIndex = i;
+      const m = num.exec(raw);
+      if (!m) {
+        i++;
+        continue;
+      }
+      if (JSON.stringify(Number(m[0])) !== m[0]) return m[0];
+      i = num.lastIndex;
+    } else {
+      i++;
+    }
+  }
+  return null;
+}
+
+function refuseLossyNumbers(raw, env, handHint) {
+  const bad = firstLossyNumber(raw);
+  if (bad === null) return;
+  const err = new Error(
+    `${path.basename(env.filePath)} has a number (${bad.length > 24 ? bad.slice(0, 24) + '...' : bad}) that would change when zn-gate rewrites the file. ` +
+      `Not rewriting it; add zn-gate by hand: ${handHint}`
+  );
+  err.manual = true;
+  throw err;
+}
+
+const HAND_HINT_JSON =
+  'for each server, set "command" to "npx" and "args" to ["-y", "zn-gate", "shield", "--", <the old command>, <the old args>].';
+const HAND_HINT_OPENCODE =
+  'for each local server, put "npx", "-y", "zn-gate", "shield", "--" in front of the old "command" array.';
+
+/** Line ending a text file mostly uses (CRLF only when it has more CRLF than bare LF). */
+function dominantEol(raw) {
+  const crlf = (raw.match(/\r\n/g) || []).length;
+  const lf = (raw.match(/\n/g) || []).length - crlf;
+  return crlf > lf ? '\r\n' : '\n';
+}
+
+function jsonText(json, raw) {
+  const text = JSON.stringify(json, null, 2) + '\n';
+  return dominantEol(raw) === '\r\n' ? text.replace(/\n/g, '\r\n') : text;
+}
+
 // ---------------------------------------------------------------------------
 // Adapter: { mcpServers: { name: { command, args } } }  (and custom `key`)
 // ---------------------------------------------------------------------------
@@ -94,7 +153,8 @@ const mcpServersJson = {
       cfg.command = 'npx';
       modified = true;
     }
-    return { modified, content: JSON.stringify(json, null, 2) + '\n', manual: [] };
+    if (modified) refuseLossyNumbers(raw, env, HAND_HINT_JSON);
+    return { modified, content: jsonText(json, raw), manual: [] };
   },
 };
 
@@ -131,7 +191,8 @@ const opencodeJson = {
       cfg.command = ['npx', ...shieldArgv(cfg.command, options)];
       modified = true;
     }
-    return { modified, content: JSON.stringify(json, null, 2) + '\n', manual: [] };
+    if (modified) refuseLossyNumbers(raw, env, HAND_HINT_OPENCODE);
+    return { modified, content: jsonText(json, raw), manual: [] };
   },
 };
 
@@ -179,7 +240,13 @@ function parseTomlString(src) {
 }
 
 function parseTomlStringArray(src) {
-  // Parses a single-line ["a", 'b'] array of strings. Returns array or null.
+  const r = parseTomlStringArrayWithComment(src);
+  return r ? r.items : null;
+}
+
+function parseTomlStringArrayWithComment(src) {
+  // Parses a single-line ["a", 'b'] array of strings. Returns { items, comment } or null.
+  // comment is the trailing "  # ..." text after the closing bracket (with its leading spaces), or ''.
   let s = src.trim();
   if (!s.startsWith('[')) return null;
   s = s.slice(1);
@@ -187,8 +254,9 @@ function parseTomlStringArray(src) {
   for (;;) {
     s = s.trimStart();
     if (s.startsWith(']')) {
-      const tail = s.slice(1).trim();
-      return tail === '' || tail.startsWith('#') ? out : null;
+      const rest = s.slice(1);
+      const tail = rest.trim();
+      return tail === '' || tail.startsWith('#') ? { items: out, comment: tail === '' ? '' : rest.trimEnd() } : null;
     }
     const r = parseTomlString(s);
     if (!r) return null;
@@ -212,7 +280,7 @@ function scanCodexToml(raw) {
     if (h && !lines[i].trim().startsWith('[[')) {
       const parts = parseTomlKeyPath(h[1]);
       if (parts.length === 2 && parts[0] === 'mcp_servers') {
-        current = { name: parts[1], headerLine: i, commandLine: -1, argsLine: -1, command: null, args: null, unsupported: null, url: false };
+        current = { name: parts[1], headerLine: i, commandLine: -1, argsLine: -1, command: null, args: null, commandComment: '', argsComment: '', unsupported: null, url: false };
         servers.push(current);
       } else {
         current = null; // any other table (including mcp_servers.x.env) ends the section
@@ -229,11 +297,13 @@ function scanCodexToml(raw) {
       if (r && (rest === '' || rest.startsWith('#'))) {
         current.command = r[0];
         current.commandLine = i;
+        current.commandComment = rest === '' ? '' : r[1].trimEnd();
       } else current.unsupported = 'command is not a single-line string';
     } else if (key === 'args') {
-      const arr = parseTomlStringArray(value);
+      const arr = parseTomlStringArrayWithComment(value);
       if (arr) {
-        current.args = arr;
+        current.args = arr.items;
+        current.argsComment = arr.comment;
         current.argsLine = i;
       } else current.unsupported = 'args is not a single-line array of strings';
     } else if (key === 'url') {
@@ -254,7 +324,9 @@ const codexToml = {
     }));
   },
   shield(raw, env, options) {
-    const eol = raw.includes('\r\n') ? '\r\n' : '\n';
+    // Each line keeps its own ending; an inserted line takes the ending of the line before it.
+    const eols = (raw.match(/\r?\n/g) || []).concat('');
+    const fallbackEol = dominantEol(raw);
     const { lines, servers } = scanCodexToml(raw);
     const manual = [];
     let modified = false;
@@ -268,13 +340,20 @@ const codexToml = {
       const args = s.args || [];
       if (isShieldedCommand(s.command, args)) continue;
       const newArgs = shieldArgv([s.command, ...args], options);
-      lines[s.commandLine] = `command = ${tomlStr('npx')}`;
-      const argsLine = `args = [${newArgs.map(tomlStr).join(', ')}]`;
+      lines[s.commandLine] = `command = ${tomlStr('npx')}${s.commandComment}`;
+      const argsLine = `args = [${newArgs.map(tomlStr).join(', ')}]${s.argsComment}`;
       if (s.argsLine >= 0) lines[s.argsLine] = argsLine;
-      else lines.splice(s.commandLine + 1, 0, argsLine);
+      else {
+        // Insert after the command line. If that was the last line (no ending), give it one.
+        const own = eols[s.commandLine] || fallbackEol;
+        const last = eols[s.commandLine] === '';
+        lines.splice(s.commandLine + 1, 0, argsLine);
+        eols[s.commandLine] = own;
+        eols.splice(s.commandLine + 1, 0, last ? '' : own);
+      }
       modified = true;
     }
-    return { modified, content: lines.join(eol), manual };
+    return { modified, content: lines.map((l, i) => l + (eols[i] || '')).join(''), manual };
   },
 };
 
@@ -562,6 +641,17 @@ function configureEnvironments(options = {}) {
       if (modified && !options.dryRun) {
         backup = `${env.filePath}.bak.${Date.now()}`;
         createBackup(env.filePath, backup);
+        // Another program (an agent rewriting its own settings) may have saved the file since we read it.
+        let now = null;
+        try {
+          now = fs.readFileSync(env.filePath, 'utf8');
+        } catch {}
+        if (now !== raw) {
+          try {
+            fs.unlinkSync(backup);
+          } catch {}
+          throw new Error(`${path.basename(env.filePath)} changed while zn-gate was working on it (another program saved it). Nothing was changed; run the command again.`);
+        }
         atomicWrite(resolved.target, content);
       }
 
