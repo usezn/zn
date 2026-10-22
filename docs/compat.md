@@ -20,6 +20,14 @@ documentation on 2026-10-11 (Cursor again on 2026-10-17). End-to-end evidence is
 | Windows | Yes, including the PowerShell tool (Claude Code 2.1.299 or later: before it, without Git for Windows, `PreToolUse` let calls through when it could not run) | The hook command was run by hand from PowerShell and from cmd.exe. The end-to-end run also passed on Windows Server 2022 with Codex 0.163.0 and PowerShell, 0 values sent to the provider ([evidence](../bench/e2e/windows/); one run, not in CI) | Not tested | End-to-end run on Windows Server 2022 with OpenCode 1.19.3 ([evidence](../bench/e2e/windows/); one run, not in CI), 0 values sent to the provider. With PowerShell, OpenCode's default shell there, a command with a marker failed instead of running in that run (the wrapping was then written for bash only; the PowerShell wrapping added since is covered by unit tests but not re-run end to end); with Git Bash (`SHELL` set) it runs | Not verified by us in Antigravity |
 | End-to-end run, 0 values sent to the provider | **Yes** | **Yes** | Not run (no CLI with hooks to drive) | **Yes** | Not run |
 
+Tool output is checked within fixed limits so that the check always finishes before the agent's own hook
+timeout: 8 MiB of text and 1,000 different secret values per output, and 32 MiB of the event read from
+stdin, with a deadline of the agent's hook timeout minus 5 seconds. What zn cannot check in time is replaced
+by a short notice ("output withheld because it is too large to check for secrets in time") and the agent is
+told to ask for a smaller output (a line range, grep, head or tail). Output that is mostly invisible characters
+is shown without them, with its secrets redacted. See
+[Failure behaviour](threat-model.md#failure-behaviour) for the details and the one known limit.
+
 zn's two MCP servers (`zn mcp` and the `secrets` server) support MCP protocol versions `2025-11-25`,
 `2025-06-18`, `2025-03-26` and `2024-11-05`. They answer initialize with the version the client asks for, or with
 `2025-11-25` if the client asks for one they do not know (the client then decides). Tool annotations are sent from

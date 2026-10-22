@@ -297,9 +297,16 @@ function lockedToken(type) {
 }
 
 async function tokenize(text, ctx) {
+  return tokenizeWith(text, ctx);
+}
+
+// tokenize, for a caller that has already scanned this text with the same context (it passes the spans, so the
+// text is not scanned twice). Not part of the public contract.
+async function tokenizeWith(text, ctx, spansOfText) {
   if (typeof text !== 'string') throw new TypeError('tokenize(text, ctx): text must be a string');
   const c = await prepare(ctx);
-  const spans = scan(text, c);
+  // A caller that has already scanned this text with the same context can pass the spans, so the text is not scanned twice.
+  const spans = Array.isArray(spansOfText) ? spansOfText : scan(text, c);
   if (spans.length === 0) return { text, replaced: [] };
 
   const vault = c.vault;
@@ -535,6 +542,7 @@ async function detokenize(text, ctx) {
 }
 
 module.exports = {
+  tokenizeWith,
   scan,
   tokenize,
   detokenize,
