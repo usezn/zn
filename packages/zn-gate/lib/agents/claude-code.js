@@ -74,7 +74,7 @@ const { whichSync } = require('../broker/markers');
 const { shQuote, portablePath } = require('../shell-quote');
 const { claudeCodePolicyWarnings } = require('./managed-policy');
 const cfg = require('./config-file');
-const { hooksOf } = cfg;
+const { hooksOf, assertInsideProject } = cfg;
 const launcher = require('./launcher');
 const { isSecretsToolName } = require('../broker/secrets-tools');
 
@@ -333,6 +333,7 @@ function objectField(data, key, file) {
 function assertMcpFile(opts = {}) {
   if (opts.mcp === false || (opts.scope || 'user') !== 'project') return;
   const file = path.join(path.resolve(opts.projectDir || process.cwd()), '.mcp.json');
+  assertInsideProject(file, opts);
   if (fs.existsSync(file)) objectField(readJson(file), 'mcpServers', file);
 }
 
@@ -467,6 +468,8 @@ function znOnPath(opts = {}) {
  */
 function install(opts = {}) {
   const file = settingsFile(opts);
+  assertInsideProject(file, opts);
+  if ((opts.scope || 'user') === 'project') assertInsideProject(path.join(path.resolve(opts.projectDir || process.cwd()), '.mcp.json'), opts);
   const data = readJson(file);
   const report = { settings: file, backup: backup(file), warnings: [] };
   data.hooks = hooksOf(data, file);
@@ -498,6 +501,7 @@ function install(opts = {}) {
 function uninstall(opts = {}) {
   const file = settingsFile(opts);
   const report = { settings: file, backup: null, removed: 0, warnings: [] };
+  assertInsideProject(file, opts);
   assertMcpFile(opts);
   if (fs.existsSync(file)) {
     const data = readJson(file);
