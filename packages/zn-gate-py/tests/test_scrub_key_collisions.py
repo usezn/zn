@@ -39,3 +39,11 @@ def test_no_secret_unchanged():
     d = {"a": 1, "b": [1, 2], 3: "x"}
     assert sanitize_tool_result(d)[0] == d
     assert sanitize_tool_result({"x", "y"})[0] == {"x", "y"}
+
+
+def test_masked_tuple_members_that_collide_stay_distinct():
+    out, _ = sanitize_tool_result({(A, 1), (B, 1), ("plain", 1)})
+    assert isinstance(out, set) and len(out) == 3 and ("plain", 1) in out
+    assert all(A not in str(e) and B not in str(e) for e in out)
+    out, _ = sanitize_tool_result(frozenset({(A,), (B,), (C,)}))
+    assert isinstance(out, frozenset) and len(out) == 3

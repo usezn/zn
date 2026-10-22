@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-23.6
+RULES_VERSION: 2026-10-23.8
 Zero external dependencies. Pure Python stdlib.
 """
 
@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, overload
 
 
-RULES_VERSION = "2026-10-23.6"
+RULES_VERSION = "2026-10-23.8"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -1601,6 +1601,23 @@ def sanitize_tool_result(
         taken.add(name)
         return name
 
+    def _unique_member(member: Any, taken: set[Any]) -> Any:
+        """Like _unique_name for a set member: a masked tuple that collides gets its first text part numbered."""
+        if isinstance(member, str):
+            return _unique_name(member, taken)
+        if isinstance(member, tuple) and member in taken:
+            idx = next((i for i, p in enumerate(member) if isinstance(p, str)), None)
+            if idx is not None:
+                base = member[idx]
+                n = 2
+                cand = member
+                while cand in taken:
+                    cand = member[:idx] + (f"{base} #{n}",) + member[idx + 1:]
+                    n += 1
+                member = cand
+        taken.add(member)
+        return member
+
     def _sanitize_members(members: Any) -> List[Any]:
         """Sanitize set members; masked members that become equal stay apart."""
         originals = list(members)
@@ -1608,8 +1625,8 @@ def sanitize_tool_result(
         taken = {c for c, m in zip(cleaned, originals, strict=True) if c == m}
         out: List[Any] = []
         for c, m in zip(cleaned, originals, strict=True):
-            if isinstance(m, str) and c != m:
-                c = _unique_name(c, taken)
+            if c != m:
+                c = _unique_member(c, taken)
             out.append(c)
         return out
 
