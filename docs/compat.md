@@ -1,7 +1,7 @@
 # Agent compatibility
 
-What the secrets scrubber and broker can do in each agent. It depends on what
-each agent's hooks allow; formats were checked against each agent's official
+What the secrets scrubber and broker can do in each agent. zn-gate is not a sandbox: what it covers
+depends on what each agent's hooks can see and block; formats were checked against each agent's official
 documentation on 2026-10-11 (Cursor again on 2026-10-17). End-to-end evidence is in [`bench/e2e/`](../bench/e2e/).
 
 | | Claude Code | Codex CLI | Cursor (IDE) | OpenCode |
@@ -13,7 +13,7 @@ documentation on 2026-10-11 (Cursor again on 2026-10-17). End-to-end evidence is
 | Scrub tool output before the model sees it | **Yes, every tool** (Bash, PowerShell, Read, Grep, LSP, WebFetch, MCP, MCP resources; Monitor through a streaming filter) | **Yes, lossy**: the result is replaced by its scrubbed text (Codex has no field that rewrites a result: `updatedMCPToolOutput` is listed as not supported; checked 2026-10-17) | **MCP output only**; shell and file output cannot be rewritten | **Yes, every tool** (and the TUI preview) |
 | Block a pasted secret in the prompt | Yes | Yes | Yes | Yes (OpenCode shows it as an error) |
 | Settings that turn zn's hooks off with no sign in the agent | `disableAllHooks` (yours or your organization's), and `allowManagedHooksOnly` in managed settings. `zn-gate check` and `zn hooks install` say so | `[features] hooks = false` (in your organization's `requirements.toml` or `managed_config.toml`, or in your `config.toml`), and `allow_managed_hooks_only` in `requirements.toml`. `zn-gate check` and `zn hooks install` say so | None in Cursor's documentation (checked 2026-10-17) | None in OpenCode's documentation (checked 2026-10-17) |
-| If the zn hook cannot run (missing `node`, crash, timeout) | Tool calls and prompts are blocked (`onFailure`, Claude Code 2.1.295 and later; earlier versions ignore it and run calls unchecked); errors inside zn deny the call or withhold the output | Codex does not document blocking here: the hook is reported as failed and calls and prompts run | Reads and prompts are blocked (`failClosed`); other events run unchecked | Calls and messages are blocked |
+| If the zn hook cannot run (missing `node`, crash, timeout) | Errors inside zn deny the call or withhold the output. If the hook cannot start (for example the Node.js it was installed with is gone, exit 127), Claude Code treats it as a non-blocking error and runs the call, so `zn hooks install claude-code` writes a small launcher script (`~/.zn/hooks/zn-hook-claude-code.sh`, run by `sh`, or Git Bash on Windows) as the hook command. It runs the Node.js it was installed with, else `zn` from your PATH, else it needs no Node.js to block: it exits 2 with the reason on `PreToolUse`, `UserPromptSubmit` and `UserPromptExpansion`, and on `PostToolUse` (the tool already ran) only warns you in the session. If the hook after a tool fails, that output reaches the model unscrubbed (Claude Code cannot hold back the output of a tool that already ran). The hooks also carry `onFailure: "block"` (Claude Code 2.1.295 and later). A hook that starts and then fails (any exit code other than 0 or 2) is blocked the same way. `zn-gate check` reports a launcher whose Node.js is gone. Hooks installed by an older zn-gate keep the plain command until you run `zn hooks install claude-code` again. The zn-gate plugin starts its hooks with the first `node` on the PATH of Claude Code; its `PreToolUse`, `UserPromptSubmit` and `UserPromptExpansion` hooks carry `onFailure: "block"`, so without `node` they block too (Claude Code 2.1.295 and later, which the plugin needs anyway) | Codex blocks only on a deny or on exit code 2; any other failure is reported as a hook failure and the call runs. While Node.js runs, zn blocks for itself on `PreToolUse`, `PermissionRequest` and `UserPromptSubmit`: if a check takes too long (it answers 5 seconds before Codex's 30-second limit) or fails, zn denies the call or prompt and exits with code 2. When the hook cannot start, `zn hooks install codex` writes a small launcher script (`~/.zn/hooks/zn-hook-codex.sh`) as the hook command. It runs the Node.js it was installed with, else `zn` from your PATH, else it needs no Node.js to block: it exits 2 with the reason on `PreToolUse` and `UserPromptSubmit`, denies on `PermissionRequest`, and on the other events only warns you in the session. On Windows the same steps are written inline in `commandWindows` (run by hand only, not on a live Windows Codex). A hook that starts and then fails (any exit code other than 0 or 2) is blocked the same way. `zn-gate check` reports a launcher whose Node.js is gone. Hooks installed by an older zn-gate keep the plain command until you run `zn hooks install codex` again | Cursor treats a failing hook as fail-open ("Other exit codes - Hook failed, action proceeds"); `failClosed` blocks, and so does exit code 2. Reads and prompts are blocked (`failClosed`). `zn hooks install cursor` also writes a small launcher script (`~/.zn/hooks/zn-hook-cursor.sh`) as the hook command: it runs the Node.js it was installed with, else `zn` from your PATH, else it needs no Node.js to block: it exits 2 on shell commands, MCP calls, file reads, prompts and `preToolUse`, and after a tool has run only warns you. On Windows the same steps are written inline in each hook command, and there a block is the deny answer with exit code 0 (a nested PowerShell turns exit code 2 into 1). A hook that starts and then fails (any exit code other than 0 or 2) is blocked the same way. `zn-gate check` reports a launcher whose Node.js is gone. Hooks installed by an older zn-gate keep the plain command until you run `zn hooks install cursor` again | Calls and messages are blocked |
 | Commands with `__ZN_<NAME>__`: through `zn run` | Rewritten automatically, shown to you for confirmation | The agent is told the exact `zn run -- …` line to use | The agent is told the exact `zn run -- …` line to use; Cursor asks you once wrapped | Rewritten automatically; OpenCode's own permission rules apply |
 | Restore detected tokens into local commands and git-ignored files | Yes, shown in the confirmation dialog | No (tokens stay) | No (tokens stay) | No (tokens stay) |
 | `secrets` MCP server | Yes (registered on install) | Yes (snippet printed) | Yes (snippet printed) | Yes (snippet printed) |
@@ -184,6 +184,26 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
     on your machine.
   - `disableAllHooks` in zn's file or in `.github/copilot/settings(.local).json`
     turns the hooks off; `zn-gate check` reports it.
+- **Gemini CLI** (experimental: `zn hooks install gemini [--project]`;
+  `zn-gate check` lists it as "Gemini CLI").
+  Covered: `BeforeTool` blocks reads and writes of secret files by path, shell
+  commands that handle secrets, and edits of Gemini CLI's own settings files.
+  zn adds its hook to `~/.gemini/settings.json` (or `.gemini/settings.json`
+  with `--project`). Checked end to end with Gemini CLI 0.64.0 against a
+  scripted model provider. Not covered, and limits:
+  - What a tool returns is not changed: zn does not use `AfterTool`, so a
+    value printed by a command or a file the agent may read reaches the model.
+    Keep secrets in the vault.
+  - Gemini CLI hooks cannot ask you for confirmation, so zn blocks only what
+    it would refuse and says nothing otherwise (Gemini CLI's own approval
+    applies). A pasted secret in a typed prompt is not checked.
+  - A hook that crashes or times out does not block the call: only an explicit
+    refusal (exit code 2) does. A user install goes through a small launcher
+    script that blocks the call if the Node.js zn was installed with is gone.
+  - A project hook stays untrusted until you approve it in Gemini CLI, and it
+    runs `zn` from your PATH, so every teammate needs zn-gate installed.
+  - `hooksConfig.enabled: false`, a name in `hooksConfig.disabled` or
+    `/hooks disable` turn the hook off; `zn-gate check` reports them.
 - **Cursor** (best effort: its hook documentation leaves the input of some
   tools open, and zn fails closed where it cannot read a path):
   - `beforeReadFile` can only allow or deny. zn sets `failClosed: true` on it
@@ -200,7 +220,8 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
     `beforeShellExecution` and `preToolUse`, has no `failClosed`: zn gives no
     answer when it has no objection, and Cursor treats an empty answer as a
     block when `failClosed` is set, which would block every such call. The
-    trade-off: if this hook crashes or times out, the call runs unchecked.
+    trade-off: if this hook crashes or times out, the call runs unchecked. (If it cannot start
+    because its Node.js is gone, the launcher script described above blocks the call.)
   - `preToolUse` (Write, Delete, Grep) checks the file a call names with the
     same rules as the other tools. Cursor does not document the input keys of
     these tools, so zn looks for the usual names (`file_path`, `path`,
@@ -310,5 +331,5 @@ until it is fixed), is in [upgrading.md](upgrading.md#nodejs-was-upgraded-moved-
 
 ## Not covered yet
 
-Hermes Agent, Gemini CLI and the Cursor CLI. GitHub Copilot CLI has experimental hooks (see the Copilot CLI entry above). A proxy for outgoing
+Hermes Agent and the Cursor CLI. GitHub Copilot CLI and Gemini CLI have experimental hooks (see their entries above). A proxy for outgoing
 HTTP from `zn run` (for `curl`, `gh` or SDKs) is planned for a later release.

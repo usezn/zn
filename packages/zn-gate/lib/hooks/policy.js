@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-20.53';
+const POLICY_RULES_VERSION = '2026-10-21.2';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1731,6 +1731,16 @@ function bashDenialOf(cmd, opts = {}) {
   if (!depth || !opts.budget) opts.budget = { until: Date.now() + CHECK_BUDGET_MS, disk: CHECK_BUDGET_DISK };
   // The bodies of the here-documents read as data are data, not command-line words, and are dropped first.
   const text = stripHeredocs(cmd, opts.budget);
+  // Destructive shell commands (see lib/destructive.js). The runner passes the rules from the user's settings; with no
+  // list, the two default rules apply. The bodies of data here-documents are not shell code and are not read.
+  {
+    const rules = Array.isArray(opts.destructiveRules) ? opts.destructiveRules : require('./../destructive').DEFAULT_RULES;
+    if (rules.length) {
+      // Loaded only now, so a hook with the check off does not pay for it.
+      const destructiveDeny = require('../destructive').denial(text, rules);
+      if (destructiveDeny) return destructiveDeny;
+    }
+  }
   // The command is read three times: a backslash before a letter is a Windows
   // path separator or a bash escape, and a PowerShell backtick is an escape too.
   // A word protected in any reading is refused.
@@ -2116,7 +2126,7 @@ function adminDenial(admin, opts = {}, cmd = '') {
   const next = words.find((w) => !w.startsWith('-')) || '';
   let arg = '';
   if (/^hooks/i.test(admin)) {
-    arg = /^(claude-code|codex|cursor|opencode|gemini)$/.test(next) ? next : '<agent>';
+    arg = require('../agents').listAdapters().includes(next) ? next : '<agent>';
     // The fixed options of zn hooks install, so the user installs in the same place the agent asked for.
     for (const o of ['--project', '--no-mcp']) if (words.includes(o)) arg += ' ' + o;
   } else if (/^secret (set|get|rm|remove|reveal|allow|approve|link)$/i.test(admin)) {
