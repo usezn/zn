@@ -579,8 +579,19 @@ test('project install writes .claude/settings.json and .mcp.json', (t) => {
   const rep = adapter.install({ scope: 'project', projectDir: dir, nodePath: 'node', cliPath: '/opt/zn-gate/bin/cli.js', runnerPath: '/opt/zn/lib/hooks/runner.js' });
   assert.equal(rep.settings, path.join(dir, '.claude', 'settings.json'));
   const mcp = JSON.parse(fs.readFileSync(path.join(dir, '.mcp.json'), 'utf8'));
-  assert.deepEqual(mcp.mcpServers.secrets, { command: 'node', args: ['/opt/zn-gate/bin/cli.js', 'secrets-mcp', '--agent', 'claude-code'] });
+  assert.deepEqual(mcp.mcpServers.secrets, { command: 'zn', args: ['secrets-mcp', '--agent', 'claude-code'] });
+  // The shared files name zn on the PATH: no path of the machine that ran the install.
+  const settingsText = fs.readFileSync(rep.settings, 'utf8');
+  const settings = JSON.parse(settingsText);
+  const commands = Object.values(settings.hooks).flat().flatMap((m) => m.hooks.map((h) => h.command));
+  assert.ok(commands.length > 0);
+  for (const c of commands) assert.equal(c, 'zn hook claude-code');
+  for (const text of [settingsText, fs.readFileSync(path.join(dir, '.mcp.json'), 'utf8')]) {
+    assert.ok(!text.includes('/opt/'), 'no absolute path in a shared file');
+    assert.ok(!text.includes(process.execPath), 'no Node.js path in a shared file');
+  }
   adapter.uninstall({ scope: 'project', projectDir: dir });
+  assert.equal(Object.values(JSON.parse(fs.readFileSync(rep.settings, 'utf8')).hooks || {}).flat().length, 0, 'uninstall finds and removes the zn hook commands');
   const mcp2 = JSON.parse(fs.readFileSync(path.join(dir, '.mcp.json'), 'utf8'));
   assert.equal(mcp2.mcpServers.secrets, undefined);
 });

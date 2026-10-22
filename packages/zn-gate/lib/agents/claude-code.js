@@ -254,6 +254,8 @@ function runnerPath() {
 // so each tool call does not pay for loading the whole CLI.
 function hookCommand(opts = {}) {
   if (opts.command) return opts.command;
+  // A project install is a shared file: it names zn on the PATH, never the paths of the machine that installed it.
+  if ((opts.scope || 'user') === 'project') return 'zn hook claude-code';
   return quoteArg(opts.nodePath || process.execPath, opts.platform) + ' ' + quoteArg(opts.runnerPath || runnerPath(), opts.platform) + ' claude-code';
 }
 
@@ -339,6 +341,8 @@ function commandFor(opts = {}) {
 }
 
 function mcpServerConfig(opts = {}) {
+  // Same rule for the shared .mcp.json of a project install: zn from the PATH.
+  if ((opts.scope || 'user') === 'project') return { command: 'zn', args: ['secrets-mcp', '--agent', 'claude-code'] };
   return { command: opts.nodePath || process.execPath, args: [opts.cliPath || cliPath(), 'secrets-mcp', '--agent', 'claude-code'] };
 }
 
