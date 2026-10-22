@@ -34,6 +34,14 @@ function run(raw) {
 const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
 const E = {}; // an environment without COPILOT_HOME
 
+/* `zn-gate check` only accepts a runner that sits under a folder called zn-gate. A checkout or copy of the package
+   can have any name, so the tests point the hook at the real runner through a link with that name. */
+function znGateRunner(t) {
+  const link = path.join(tempDir(t, 'zn-cop-pkg-'), 'zn-gate');
+  fs.symlinkSync(path.join(__dirname, '..'), link, process.platform === 'win32' ? 'junction' : 'dir');
+  return path.join(link, 'lib', 'hooks', 'runner.js');
+}
+
 test('registry lists copilot', () => {
   assert.ok(listAdapters().includes('copilot'));
 });
@@ -277,7 +285,7 @@ test('zn-gate check reads the Copilot hook state (absent, set up, switched off b
   const env = { PATH: process.env.PATH, HOME: home };
   const find = async () => (await check.check({ home, cwd, env, live: false })).results.find((r) => r.id === 'copilot');
   assert.equal((await find()).state, 'not-set-up');
-  cop.install({ scope: 'user', home, env, nodePath: process.execPath });
+  cop.install({ scope: 'user', home, env, nodePath: process.execPath, runnerPath: znGateRunner(t) });
   const ok = await find();
   assert.equal(ok.state, 'protected', JSON.stringify(ok));
   // project settings with disableAllHooks
@@ -303,7 +311,7 @@ test('zn-gate check runs the installed hook live against a fake secret', async (
   const home = tempDir(t, 'zn-cop-live-');
   const cwd = tempDir(t, 'zn-cop-live-cwd-');
   const env = { PATH: process.env.PATH, HOME: home };
-  cop.install({ scope: 'user', home, env, nodePath: process.execPath });
+  cop.install({ scope: 'user', home, env, nodePath: process.execPath, runnerPath: znGateRunner(t) });
   const r = (await check.check({ home, cwd, env, live: true })).results.find((x) => x.id === 'copilot');
   assert.equal(r.state, 'protected', JSON.stringify(r));
   assert.equal(r.verified, true);
