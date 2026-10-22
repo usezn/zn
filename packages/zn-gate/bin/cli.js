@@ -1220,6 +1220,11 @@ ${sym(process.env, '🛡️', undefined, '  ')}zn-gate Status:
         if (notes.length) process.stdout.write('\n');
       }
     } catch (_) { /* status never fails on this check */ }
+    // An end-of-life or unpatched Node.js (a warning only: it never changes the exit status).
+    try {
+      const adv = require('../lib/node-support').nodeAdvice(process.versions.node);
+      if (adv) process.stdout.write('  Node.js         : ' + adv.message + '\n\n');
+    } catch (_) { /* status never fails on this check */ }
     process.exit(0);
   }
 

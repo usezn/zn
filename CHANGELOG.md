@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `zn-gate check` and `zn-gate status` now warn, without blocking, when your Node.js is end-of-life (18 and 20) or older than the patched release of its line (22.23.4, 24.22.1, 26.12.1), with the minimum to update to.
+
 ## [1.13.1] - 2026-10-20
 
 zn-gate 1.13.1 is a security patch for the Python package. The LangChain callback handler now stops a run when it blocks a tool call, and the new `guard_langchain_tool` wrapper checks tool arguments and masks secrets in tool output before the model reads them. Upgrade with `pip install -U zn-gate`. The npm package has no code changes in this release.
