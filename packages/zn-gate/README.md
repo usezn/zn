@@ -327,7 +327,7 @@ To block those too, turn on strict mode: set `ZN_STRICT=1`, or add `"strict": tr
 
 ## Examples
 
-Runnable examples, including [LangChain.js and LangGraph.js](https://github.com/usezn/zn/tree/main/examples/langchain-js) (block a dangerous tool call, scrub the output) and [the OpenAI Agents SDK for JavaScript](https://github.com/usezn/zn/tree/main/examples/openai-agents-js) (block a dangerous tool call, scrub the output, all offline), are in [`examples/`](https://github.com/usezn/zn/tree/main/examples).
+Runnable examples, including [LangChain.js and LangGraph.js](https://github.com/usezn/zn/tree/main/examples/langchain-js) (block a dangerous tool call, scrub the output) and [the OpenAI Agents SDK for JavaScript](https://github.com/usezn/zn/tree/main/examples/openai-agents-js) (block a dangerous tool call, scrub the output, all offline) and [a Mastra agent](https://github.com/usezn/zn/tree/main/examples/mastra-agent), are in [`examples/`](https://github.com/usezn/zn/tree/main/examples).
 
 ## FAQ
 
@@ -336,10 +336,6 @@ Runnable examples, including [LangChain.js and LangGraph.js](https://github.com/
 **Will it block legitimate content?** Sometimes. Use `--shadow` with `init` or `shield` to log detections without blocking while you evaluate it.
 
 **How do I remove it?** `npx -y zn-gate init --revert` restores your configs from the backup. For a standalone server, remove the `zn-gate` entry from your agent config.
-
-## Examples
-
-Runnable examples are in [`examples/`](https://github.com/usezn/zn/tree/main/examples), including [protect the tools of a Mastra agent](https://github.com/usezn/zn/tree/main/examples/mastra-agent).
 
 ## Security
 
