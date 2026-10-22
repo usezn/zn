@@ -23,6 +23,7 @@ rl.on('line', (line) => {
   let content;
   if (name === 'split') content = Array.from({ length: 60 }, () => ({ type: 'text', text: '\\u200b'.repeat(65535) }));
   else if (name === 'split_mixed') content = Array.from({ length: 60 }, () => ({ type: 'text', text: 'ok '.repeat(10) + '\\u200b'.repeat(65000) }));
+  else if (name === 'few') content = Array.from({ length: 4 }, () => ({ type: 'text', text: '\u200b'.repeat(65535) }));
   else if (name === 'resources') content = Array.from({ length: 60 }, () => ({ type: 'resource', resource: { uri: 'file:///x', text: '\\u200b'.repeat(65535) } }));
   else content = Array.from({ length: 60 }, (_, i) => ({ type: 'text', text: 'Line ' + i + ': weather is fine.' }));
   let result = { content };
@@ -69,6 +70,14 @@ function run(toolName) {
   });
 }
 
+// Time is judged against the same blocked path with only 4 items (same process start and parsing),
+// so a slow runner scales both sides and only work that grows with the item count fails.
+let baselineMs;
+async function baseline() {
+  if (baselineMs === undefined) baselineMs = Math.min((await run('few')).ms, (await run('few')).ms);
+  return baselineMs;
+}
+
 for (const name of ['split', 'split_mixed', 'resources', 'structured', 'sc_only', 'sc_after_100k', 'sc_huge']) {
   test(`many items under the cap but over it in total are blocked (${name})`, async () => {
     const { msg, ms } = await run(name);
@@ -77,7 +86,8 @@ for (const name of ['split', 'split_mixed', 'resources', 'structured', 'sc_only'
     assert.ok(text.includes('[zn-gate SECURITY BLOCKED]'));
     assert.ok(!text.includes('\u200b'), 'invisible characters must be removed');
     assert.ok(text.length < 100000);
-    assert.ok(ms < 1200, `took ${ms} ms`);
+    const base = await baseline();
+    assert.ok(ms < 5 * base + 300, `took ${ms} ms (4-item baseline: ${base} ms)`);
   });
 }
 
