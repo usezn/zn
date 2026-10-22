@@ -20,6 +20,18 @@
   process.exit(1);
 })();
 
+// Output piped into a reader that closes early (for example `zn-gate check | head -1`) fails with EPIPE.
+// Later writes are dropped quietly and the command finishes with the exit status it would have had.
+// Any other stdout error is still thrown, as before.
+let stdoutClosed = false;
+process.stdout.on('error', (err) => {
+  if (err && (err.code === 'EPIPE' || (stdoutClosed && err.code === 'ERR_STREAM_DESTROYED'))) {
+    stdoutClosed = true;
+    return;
+  }
+  throw err;
+});
+
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -500,6 +512,8 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
       try {
         entries = fs.readdirSync(current);
       } catch (e) {
+        // A folder that cannot be listed is reported, not skipped in silence: its files were not scanned.
+        skippedDirs.push({ dir: current, reason: 'cannot be read' });
         return;
       }
       // Editor settings are not scanned; the MCP servers of VS Code are.
@@ -739,12 +753,12 @@ Files   : ${files.length} file(s) queued for audit\n
   const resultParts = [];
   if (totalSecrets) resultParts.push(`${totalSecrets} SECRET(S) FOUND`);
   if (totalThreats) resultParts.push(`${totalThreats} THREAT(S) FOUND`);
-  let status = 'Clean workspace';
+  let status = files.length - notRead === 0 ? 'No files were read: this is not a clean result' : 'Clean workspace';
   if (totalThreats) status = 'Review and neutralize detected vectors';
   else if (totalSecrets) status = 'Move the secrets out of these files (see "Next" for each one)';
   process.stdout.write(`
 ${ruleLine(process.env, 77)}
-Audit Result : ${totalFindings === 0 ? col.green('PASSED - NO THREATS DETECTED') : col.red(`FAILED - ${resultParts.join(', ')}`)}
+Audit Result : ${totalFindings === 0 ? (files.length - notRead === 0 ? col.yellow('NOTHING SCANNED') : col.green('PASSED - NO THREATS DETECTED')) : col.red(`FAILED - ${resultParts.join(', ')}`)}
 Files Scanned: ${files.length - notRead}
 Files Skipped: ${files.skipped.length}${files.skipped.length ? ' (not read: see below)' : ''}
 Status       : ${status}

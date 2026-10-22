@@ -56,9 +56,11 @@ function zn(args) {
   return require('./zn-command').znCommand(args);
 }
 
-/* The technical detail is for ZN_VERBOSE=1 (or DEBUG): a person gets the plain sentence and one next step. */
+/* The technical detail is for ZN_VERBOSE=1 (or DEBUG=zn): a person gets the plain sentence and one next step. */
+const { isVerbose } = require('./verbose');
+
 function verboseDetail(detail, env = process.env) {
-  return detail && (env.DEBUG || env.ZN_VERBOSE === '1') ? ' Detail: ' + String(detail).slice(0, 120) + '.' : '';
+  return detail && isVerbose(env) ? ' Detail: ' + String(detail).slice(0, 120) + '.' : '';
 }
 
 function unlockNeedsTerminal() {
@@ -247,10 +249,10 @@ function disconnectKeychainLeft(reason, dashboard, canRevoke) {
 const TROUBLESHOOTING_URL = 'https://usezn.com/docs/zn-gate/troubleshooting/';
 
 /* One sentence for a vault file that cannot be read: what is damaged, what zn did, the real next step.
- * `detail` (a library message) is shown only with ZN_VERBOSE=1 or DEBUG. */
+ * `detail` (a library message) is shown only with ZN_VERBOSE=1 or DEBUG=zn. */
 function vaultDamaged(file, what, detail, env = process.env) {
   const znCommand = require('./zn-command').znCommand;
-  const more = detail && (env.DEBUG || env.ZN_VERBOSE === '1') ? ' Detail: ' + String(detail).slice(0, 120) + '.' : '';
+  const more = detail && isVerbose(env) ? ' Detail: ' + String(detail).slice(0, 120) + '.' : '';
   return 'Your vault file ' + file + ' ' + what + '. zn did not change it and will not start a new vault over it. ' +
     'Restore it from a backup. With no backup, run `' + znCommand('vault reset') + '`: it sets the old vault aside and starts empty, ' +
     'so the secrets saved in it are lost. More: ' + TROUBLESHOOTING_URL + more;
