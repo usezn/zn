@@ -89,6 +89,7 @@ test('uninstall: the plan lists the plugin, hooks per agent, project hooks and w
   assert.ok(text.includes(path.join(m.home, '.codex', 'hooks.json')));
   assert.ok(text.includes('zn\'s hooks for this project: ' + path.join(m.cwd, '.claude', 'settings.json')));
   assert.ok(text.includes('Example MCP (1 wrapped)'));
+  assert.match(text, /each wrapped server gets its original command back/);
   assert.match(text, /Asked separately at the end \(default no\)/);
   assert.ok(text.includes(path.dirname(path.dirname(v))));
   assert.match(text, /dry run: nothing was changed/);
@@ -155,7 +156,7 @@ test('uninstall: removes hooks, the plugin and the wrapped MCP; the vault stays 
   assert.deepEqual(ran, ['claude plugin uninstall ' + PLUGIN]);
   assert.equal(znHooksIn(path.join(m.home, '.codex', 'hooks.json')), false);
   assert.equal(znHooksIn(settings(m)), false);
-  assert.equal(fs.readFileSync(w.file, 'utf8'), w.original, 'wrapped MCP config is put back');
+  assert.deepEqual(JSON.parse(fs.readFileSync(w.file, 'utf8')), JSON.parse(w.original), 'wrapped MCP config is put back');
   assert.ok(fs.existsSync(v), 'vault kept when the second question is answered no');
   assert.equal(asked.length, 2);
   assert.match(asked[1], /Delete the vault/);
@@ -306,44 +307,29 @@ test('uninstall: a plugin that is not removed exits 1', async (t) => {
   assert.equal(await dispatch('uninstall', [], d.o), 1, 'no claude command: the plugin is left for you to remove');
 });
 
-test('uninstall: a wrapped config with no saved copy is listed as still wrapped and exits 1', async (t) => {
+test('uninstall: a server wrapped in a form zn-gate did not write is listed as still wrapped and exits 1', async (t) => {
   const m = machine(t);
   const w = wrapped(m);
-  for (const f of fs.readdirSync(m.home)) if (f.startsWith('mcp-config.json.bak.')) fs.unlinkSync(path.join(m.home, f));
+  const cfg = JSON.parse(fs.readFileSync(w.file, 'utf8'));
+  cfg.mcpServers.odd = { command: 'npx', args: ['-y', 'zn-gate@1.0.0', 'shield', '--', 'uvx', 'x'] };
+  fs.writeFileSync(w.file, JSON.stringify(cfg, null, 2));
   const c = io(m, { envList: w.list, confirm: async () => true });
   assert.equal(await dispatch('uninstall', [], c.o), 1, c.err());
+  assert.match(c.out(), /original command put back for 1 server/);
   assert.match(c.out(), /Still wrapped by zn-gate shield/);
   assert.ok(c.out().includes('Example MCP (1 server) in ' + w.file));
+  assert.equal(JSON.parse(fs.readFileSync(w.file, 'utf8')).mcpServers.fetch.command, 'uvx');
 });
 
-test('uninstall: after putting back a saved copy that is itself wrapped, the server still wrapped is listed', async (t) => {
+test('uninstall: servers added after wrapping stay, and the wrapped ones get their original command back', async (t) => {
   const m = machine(t);
   const w = wrapped(m);
-  const wrappedText = fs.readFileSync(w.file, 'utf8');
-  const bak = fs.readdirSync(m.home).find((f) => f.startsWith('mcp-config.json.bak.'));
-  fs.writeFileSync(path.join(m.home, bak), wrappedText);
+  const cfg = JSON.parse(fs.readFileSync(w.file, 'utf8'));
+  cfg.mcpServers.added = { command: 'node', args: ['added.js'] };
+  fs.writeFileSync(w.file, JSON.stringify(cfg, null, 2));
   const c = io(m, { envList: w.list, confirm: async () => true });
-  assert.equal(await dispatch('uninstall', [], c.o), 1, c.err());
-  assert.match(c.out(), /put back from/);
-  assert.match(c.out(), /Still wrapped by zn-gate shield/);
-  assert.match(c.out(), /Example MCP \(1 server\)/);
-});
-
-test('uninstall: the plan names the same saved copy that is put back; .bak.9 and .bak.old decoys are ignored', async (t) => {
-  const m = machine(t);
-  const w = wrapped(m);
-  const real = fs.readdirSync(m.home).find((f) => /^mcp-config\.json\.bak\.\d+$/.test(f));
-  const n = Number(real.split('.bak.')[1]);
-  fs.writeFileSync(path.join(m.home, 'mcp-config.json.bak.old'), 'decoy old');
-  fs.writeFileSync(path.join(m.home, 'mcp-config.json.bak.9'), 'decoy 9');
-  const p = await require('../lib/uninstall').plan({ home: m.home, env: m.env, cwd: m.cwd, envList: w.list });
-  assert.equal(path.basename(p.wrapped[0].backup), real, 'plan picks the numeric backup with the largest number');
-  assert.ok(n > 9 || p.wrapped[0].backup.endsWith('.bak.' + n));
-  const c = io(m, { envList: w.list, confirm: async () => true });
-  await dispatch('uninstall', [], c.o);
-  assert.ok(c.out().includes('goes back to the copy saved before wrapping (' + p.wrapped[0].backup + ')'));
-  assert.ok(c.out().includes('put back from ' + p.wrapped[0].backup), 'restore names the same file');
-  assert.equal(fs.readFileSync(w.file, 'utf8'), w.original);
+  assert.equal(await dispatch('uninstall', [], c.o), 0, c.err());
+  assert.deepEqual(JSON.parse(fs.readFileSync(w.file, 'utf8')), { mcpServers: { fetch: { command: 'uvx', args: ['mcp-server-fetch'] }, added: { command: 'node', args: ['added.js'] } } });
 });
 
 test('uninstall: a project config that is a symlink is not offered for restore and is skipped', async (t) => {
@@ -366,12 +352,11 @@ test('uninstall: a project config that is a symlink is not offered for restore a
     fs.symlinkSync(elsewhere, file);
     const p = await require('../lib/uninstall').plan({ home: m.home, env: m.env, cwd: m.cwd, envList: list });
     assert.equal(p.wrapped.length, 1);
-    assert.equal(p.wrapped[0].backup, null, 'not offered');
     assert.ok(p.wrapped[0].unsafe);
     const c = io(m, { envList: list, confirm: async () => true });
     assert.equal(await dispatch('uninstall', [], c.o), 1);
     assert.equal(fs.readFileSync(elsewhere, 'utf8'), shielded, 'the linked file is untouched');
-    assert.match(c.out(), /cannot be restored safely/);
+    assert.match(c.out(), /cannot be changed safely/);
     assert.match(c.out(), /Still wrapped by zn-gate shield/);
   } finally { process.chdir(prev); }
 });

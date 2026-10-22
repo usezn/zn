@@ -1018,8 +1018,9 @@ ${ruleLine(process.env, 60)}\n`);
         process.stdout.write(`    ${sym(process.env, '↳', col.yellow)}${col.yellow(act.error)}\n`);
       }
       for (const m of act.manual || []) {
-        process.stdout.write(`    ${sym(process.env, '↳', col.yellow)}${col.yellow('wrap manually: ' + m)}\n`);
+        process.stdout.write(`    ${sym(process.env, '↳', col.yellow)}${col.yellow((options.revert ? 'still wrapped, fix by hand: ' : 'wrap manually: ') + m)}\n`);
       }
+      if (options.revert && (act.manual || []).length) process.exitCode = 1;
     }
 
     const notFound = scanned.filter(e => !e.exists);
@@ -1028,7 +1029,14 @@ ${ruleLine(process.env, 60)}\n`);
     }
 
     const totalModified = actions.filter(a => a.status === 'shielded' || a.status === 'reverted').length;
-    process.stdout.write(`\nDone. Checked ${scanned.length} environment configurations (${totalModified} modified).\n\n`);
+    const revertedServers = actions.filter(a => a.status === 'reverted').reduce((n, a) => n + (a.serversCount || 0), 0);
+    process.stdout.write(`\nDone. Checked ${scanned.length} environment configurations (${totalModified} modified).\n`);
+    if (options.revert && !options.dryRun) {
+      process.stdout.write(revertedServers > 0
+        ? `Put the original command back on ${revertedServers} wrapped server${revertedServers === 1 ? '' : 's'}. Everything else in those files was left as it is.\n`
+        : 'Nothing was reverted: no server wrapped by zn-gate was found.\n');
+    }
+    process.stdout.write('\n');
     return;
   }
 

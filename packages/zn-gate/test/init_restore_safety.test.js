@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { configureEnvironments, latestBackup, safeRestore } = require('../lib/init');
+const { configureEnvironments } = require('../lib/init');
 
 const CFG = JSON.stringify({ mcpServers: { fetch: { command: 'uvx', args: ['mcp-server-fetch'] } } }, null, 2);
 const EVIL = '{"mcpServers":{"evil":{"command":"evil"}}}';
@@ -21,19 +21,18 @@ const canLink = (() => {
 })();
 const opts = { skip: !canLink && 'symlinks unavailable' };
 
-test('revert picks the numerically newest timestamp backup, not .bak.9 or .bak.old', () => {
+test('revert un-wraps in place and never reads a backup file, whatever their names', () => {
   const d = tmp();
   try {
     const f = path.join(d, 'mcp.json');
-    fs.writeFileSync(f, '{"mcpServers":{"x":{"command":"npx","args":["-y","zn-gate","wrap","--","a"]}}}');
-    fs.writeFileSync(f + '.bak.9', 'bad9');
-    fs.writeFileSync(f + '.bak.old', 'badold');
-    fs.writeFileSync(f + '.bak.1700000000001', CFG);
-    fs.writeFileSync(f + '.bak.1700000000000', 'older');
-    assert.equal(latestBackup(f), f + '.bak.1700000000001');
+    fs.writeFileSync(f, WRAPPED);
+    fs.writeFileSync(f + '.bak.9', EVIL);
+    fs.writeFileSync(f + '.bak.old', EVIL);
+    fs.writeFileSync(f + '.bak.1700000000001', EVIL);
     const r = configureEnvironments({ envList: env(f), revert: true });
     assert.equal(r.actions[0].status, 'reverted');
-    assert.equal(fs.readFileSync(f, 'utf8'), CFG);
+    assert.deepEqual(JSON.parse(fs.readFileSync(f, 'utf8')), { mcpServers: { x: { command: 'a' } } });
+    for (const n of ['.bak.9', '.bak.old', '.bak.1700000000001']) assert.equal(fs.readFileSync(f + n, 'utf8'), EVIL, 'old backups are kept as they were');
   } finally { fs.rmSync(d, { recursive: true, force: true }); }
 });
 
@@ -49,36 +48,6 @@ test('revert refuses a symlinked config and leaves the target alone', opts, () =
     assert.equal(r.actions[0].status, 'skipped_unsafe');
     assert.match(r.actions[0].error, /proj\.json/);
     assert.equal(fs.readFileSync(home, 'utf8'), CFG);
-  } finally { fs.rmSync(d, { recursive: true, force: true }); }
-});
-
-test('revert refuses a symlinked backup', opts, () => {
-  const d = tmp();
-  try {
-    const secret = path.join(d, 'secret');
-    fs.writeFileSync(secret, 'PRIVATE');
-    const f = path.join(d, 'mcp.json');
-    fs.writeFileSync(f, CFG);
-    fs.symlinkSync(secret, f + '.bak.1700000000000');
-    assert.equal(latestBackup(f), null);
-    const r = configureEnvironments({ envList: env(f), revert: true });
-    assert.notEqual(r.actions[0].status, 'reverted');
-    assert.equal(fs.readFileSync(f, 'utf8'), CFG);
-    assert.throws(() => safeRestore(f + '.bak.1700000000000', f), /backup is a symlink/);
-  } finally { fs.rmSync(d, { recursive: true, force: true }); }
-});
-
-test('safeRestore refuses a backup that lives in another real directory', () => {
-  const d = tmp();
-  try {
-    const other = path.join(d, 'other');
-    fs.mkdirSync(other);
-    const f = path.join(d, 'mcp.json');
-    fs.writeFileSync(f, CFG);
-    const b = path.join(other, 'mcp.json.bak.1');
-    fs.writeFileSync(b, 'x');
-    assert.throws(() => safeRestore(b, f), /same directory/);
-    assert.equal(fs.readFileSync(f, 'utf8'), CFG);
   } finally { fs.rmSync(d, { recursive: true, force: true }); }
 });
 
@@ -130,7 +99,7 @@ test('wrap still writes a regular backup and wraps a regular config', () => {
 // ---------------------------------------------------------------------------
 // Scope rules: project configs strict, home symlinks (dotfiles managers) allowed
 // ---------------------------------------------------------------------------
-const WRAPPED = '{"mcpServers":{"x":{"command":"npx","args":["-y","zn-gate","wrap","--","a"]}}}';
+const WRAPPED = '{"mcpServers":{"x":{"command":"npx","args":["-y","zn-gate","shield","--","a"]}}}';
 const projEnv = (p) => [{ name: 'P', id: 'antigravity-project', filePath: p, key: 'mcpServers', format: 'mcpServers-json', scope: 'project' }];
 function inDir(dir, fn) {
   const prev = process.cwd();
@@ -165,7 +134,7 @@ test('project config in a symlinked .agents directory pointing into home is refu
   } finally { clean(d, realDir); }
 });
 
-test('project config or backup with a second hard link is refused', () => {
+test('project config with a second hard link is refused', () => {
   const { d, proj, cfg } = mkProject();
   try {
     fs.writeFileSync(cfg, CFG);
@@ -175,13 +144,9 @@ test('project config or backup with a second hard link is refused', () => {
     assert.equal(r.actions[0].status, 'skipped_unsafe');
     fs.unlinkSync(other);
     fs.writeFileSync(cfg, WRAPPED);
-    const bak = cfg + '.bak.1700000000000';
-    fs.writeFileSync(bak, CFG);
-    fs.linkSync(bak, other);
-    assert.equal(latestBackup(cfg, 'project'), null);
-    assert.equal(latestBackup(cfg), bak);
+    fs.linkSync(cfg, other);
     r = inDir(proj, () => configureEnvironments({ envList: projEnv(cfg), revert: true }));
-    assert.notEqual(r.actions[0].status, 'reverted');
+    assert.equal(r.actions[0].status, 'skipped_unsafe');
     assert.equal(fs.readFileSync(cfg, 'utf8'), WRAPPED);
   } finally { clean(d); }
 });
@@ -204,7 +169,7 @@ test('home symlink to a file inside home: wrap and revert write through to the r
     r = inDir(d, () => configureEnvironments({ envList: env(link), revert: true }));
     assert.equal(r.actions[0].status, 'reverted');
     assert.ok(fs.lstatSync(link).isSymbolicLink());
-    assert.equal(fs.readFileSync(real, 'utf8'), CFG);
+    assert.deepEqual(JSON.parse(fs.readFileSync(real, 'utf8')), JSON.parse(CFG));
     assert.equal(fs.readdirSync(dotfiles).filter((n) => n.includes('zn-tmp')).length, 0);
   } finally {
     clean(d, dotfiles, link);
@@ -267,7 +232,7 @@ test('wrap does not write through a dangling symlink at the backup name', opts, 
   } finally { clean(d); }
 });
 
-test('revert --dry-run with a symlinked backup pointing elsewhere changes nothing', opts, () => {
+test('revert --dry-run changes nothing and creates no file, with a symlinked decoy backup around', opts, () => {
   const d = tmp();
   try {
     const f = path.join(d, 'mcp.json');
@@ -278,7 +243,7 @@ test('revert --dry-run with a symlinked backup pointing elsewhere changes nothin
     fs.symlinkSync(path.join(elsewhere, 'b'), f + '.bak.1700000000000');
     const before = fs.readdirSync(d).sort();
     const r = configureEnvironments({ envList: env(f), revert: true, dryRun: true });
-    assert.notEqual(r.actions[0] && r.actions[0].status, 'reverted');
+    assert.equal(r.actions[0].status, 'would_revert');
     assert.equal(fs.readFileSync(f, 'utf8'), WRAPPED);
     assert.deepEqual(fs.readdirSync(d).sort(), before);
   } finally { clean(d); }
@@ -331,7 +296,7 @@ test('home scope with cwd equal to home still follows a dotfiles symlink', opts,
     assert.match(fs.readFileSync(real, 'utf8'), /zn-gate/);
     r = inDir(FAKE_HOME, () => configureEnvironments({ envList: env(link), revert: true }));
     assert.equal(r.actions[0].status, 'reverted');
-    assert.equal(fs.readFileSync(real, 'utf8'), CFG);
+    assert.deepEqual(JSON.parse(fs.readFileSync(real, 'utf8')), JSON.parse(CFG));
   } finally {
     clean(dotfiles, link);
     for (const n of fs.readdirSync(FAKE_HOME)) if (n.startsWith('mcp-link-cwd.json.bak.')) clean(path.join(FAKE_HOME, n));

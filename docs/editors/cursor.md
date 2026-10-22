@@ -63,7 +63,7 @@ npx -y zn-gate init --dry-run    # shows what would change
 npx -y zn-gate init --wrap-mcp  # wraps each local server with zn-gate shield (a backup is written first)
 ```
 
-Every result of a wrapped server is checked for prompt injection, and secrets zn-gate recognizes are removed, before the agent sees it. `npx -y zn-gate init --revert` restores the backup.
+Every result of a wrapped server is checked for prompt injection, and secrets zn-gate recognizes are removed, before the agent sees it. `npx -y zn-gate init --revert` puts the original commands back.
 
 ### The hooks
 

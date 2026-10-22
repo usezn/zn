@@ -116,7 +116,7 @@ To remove everything in one step, run `npx -y zn-gate uninstall` in your own ter
 
 - **Hooks** (Codex CLI, Cursor, OpenCode, or Claude Code without the plugin): `npx -y zn-gate hooks uninstall claude-code`. Use `codex`, `cursor` or `opencode` for the others, and add `--project` if you installed them for one project only. A backup of the settings file is written first.
 - **Claude Code plugin**: run `claude plugin uninstall zn-gate@usezn`, or in Claude Code type `/plugin`, open the **Installed** tab, pick zn-gate and choose **Uninstall**. To also remove the usezn plugin list, run `claude plugin marketplace remove usezn`.
-- **Wrapped MCP servers** (from `init --wrap-mcp`): `npx -y zn-gate init --revert` puts back each MCP settings file as it was saved just before zn wrapped it. Changes you made to those files later, such as MCP servers you added, are lost, so add them again afterwards. It only undoes MCP wrapping, not hooks.
+- **Wrapped MCP servers** (from `init --wrap-mcp`): `npx -y zn-gate init --revert` puts the original command back on each wrapped server, in the same file. Other changes you made to those files, such as MCP servers you added, stay. It only undoes MCP wrapping, not hooks.
 - **The program itself**, if you installed it with `npm install -g zn-gate`: `npm uninstall -g zn-gate`.
 - **The Python package**, if you installed it with `pip install zn-gate`: `pip uninstall zn-gate`.
 - **`.env` files you moved into the vault** keep markers such as `__ZN_API_KEY__`. `env shadow` tells you how to put the real values back. Do that before you remove zn-gate.

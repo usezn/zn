@@ -69,6 +69,29 @@ function shieldArgv(originalArgv, options) {
   return argv;
 }
 
+/**
+ * Inverse of shieldArgv: the original [command, ...args] of a server that
+ * `init --wrap-mcp` wrapped, read from the argument list that follows `npx`
+ * (-y zn-gate shield [--shadow] -- <original>). Returns null for anything else,
+ * so only entries written by init are ever rewritten.
+ */
+function unshieldArgv(argv) {
+  if (!Array.isArray(argv) || !argv.every((a) => typeof a === 'string')) return null;
+  if (argv[0] !== '-y' || argv[1] !== 'zn-gate' || argv[2] !== 'shield') return null;
+  let i = 3;
+  if (argv[i] === '--shadow') i++;
+  if (argv[i] !== '--') return null;
+  const original = argv.slice(i + 1);
+  return original.length > 0 && original[0] !== '' ? original : null;
+}
+
+/** True when an entry names the shield wrapper in some form that unshieldArgv does not understand. */
+function looksWrapped(command, args) {
+  return isShieldedCommand(command, args) && /\bshield\b/.test([command || '', ...(args || [])].join(' '));
+}
+
+const LEFT_WRAPPED = 'wrapped in a form zn-gate did not write; put the original command back by hand';
+
 // ---------------------------------------------------------------------------
 // Adapter: { mcpServers: { name: { command, args } } }  (and custom `key`)
 // ---------------------------------------------------------------------------
@@ -95,6 +118,26 @@ const mcpServersJson = {
       modified = true;
     }
     return { modified, content: JSON.stringify(json, null, 2) + '\n', manual: [] };
+  },
+  /** Puts each wrapped server's original command back; every other entry and key stays as it is now. */
+  unshield(raw, env) {
+    const json = JSON.parse(raw);
+    const srvs = json[env.key || 'mcpServers'] || {};
+    const manual = [];
+    let count = 0;
+    for (const [name, cfg] of Object.entries(srvs)) {
+      if (!cfg || typeof cfg.command !== 'string') continue;
+      const original = cfg.command === 'npx' ? unshieldArgv(cfg.args) : null;
+      if (original) {
+        cfg.command = original[0];
+        if (original.length > 1) cfg.args = original.slice(1);
+        else delete cfg.args;
+        count++;
+      } else if (looksWrapped(cfg.command, cfg.args)) {
+        manual.push(`${name}: ${LEFT_WRAPPED}`);
+      }
+    }
+    return { modified: count > 0, count, content: JSON.stringify(json, null, 2) + '\n', manual };
   },
 };
 
@@ -132,6 +175,23 @@ const opencodeJson = {
       modified = true;
     }
     return { modified, content: JSON.stringify(json, null, 2) + '\n', manual: [] };
+  },
+  unshield(raw, env) {
+    const json = parseStrictJson(raw, env.filePath);
+    const srvs = json.mcp || {};
+    const manual = [];
+    let count = 0;
+    for (const [name, cfg] of Object.entries(srvs)) {
+      if (!cfg || cfg.type !== 'local' || !Array.isArray(cfg.command) || cfg.command.length === 0) continue;
+      const original = cfg.command[0] === 'npx' ? unshieldArgv(cfg.command.slice(1)) : null;
+      if (original) {
+        cfg.command = original;
+        count++;
+      } else if (looksWrapped(cfg.command[0], cfg.command.slice(1))) {
+        manual.push(`${name}: ${LEFT_WRAPPED}`);
+      }
+    }
+    return { modified: count > 0, count, content: JSON.stringify(json, null, 2) + '\n', manual };
   },
 };
 
@@ -243,6 +303,31 @@ function scanCodexToml(raw) {
   return { lines, servers };
 }
 
+/** Text after the closing bracket of a single-line string array when it is a "# comment" (with its spaces), else ''. */
+function tomlArrayComment(src) {
+  let s = src.trim();
+  if (!s.startsWith('[')) return '';
+  s = s.slice(1);
+  for (;;) {
+    s = s.trimStart();
+    if (s.startsWith(']')) {
+      const rest = s.slice(1);
+      return rest.trim().startsWith('#') ? rest.trimEnd() : '';
+    }
+    const r = parseTomlString(s);
+    if (!r) return '';
+    s = r[1].trimStart();
+    if (s.startsWith(',')) s = s.slice(1);
+    else if (!s.startsWith(']')) return '';
+  }
+}
+
+function tomlStringComment(src) {
+  const r = parseTomlString(src);
+  if (!r) return '';
+  return r[1].trim().startsWith('#') ? r[1].trimEnd() : '';
+}
+
 const codexToml = {
   list(raw) {
     return scanCodexToml(raw).servers.map((s) => ({
@@ -275,6 +360,41 @@ const codexToml = {
       modified = true;
     }
     return { modified, content: lines.join(eol), manual };
+  },
+  /** Puts each wrapped server's original command back, line by line; comments, line endings and other tables stay. */
+  unshield(raw) {
+    const eols = (raw.match(/\r?\n/g) || []).concat('');
+    const { lines, servers } = scanCodexToml(raw);
+    const manual = [];
+    let count = 0;
+    // Bottom-up so a removed line does not shift later indices.
+    for (const s of [...servers].sort((a, b) => b.headerLine - a.headerLine)) {
+      if (!s.command) continue;
+      if (s.unsupported) {
+        let end = s.headerLine + 1;
+        while (end < lines.length && !TOML_HEADER.test(lines[end])) end++;
+        const section = lines.slice(s.headerLine + 1, end).join('\n');
+        if (/\bzn-gate\b/.test(section) && /\bshield\b/.test(section)) manual.push(`${s.name}: ${LEFT_WRAPPED}`);
+        continue;
+      }
+      const original = s.command === 'npx' ? unshieldArgv(s.args) : null;
+      if (!original) {
+        if (looksWrapped(s.command, s.args || [])) manual.push(`${s.name}: ${LEFT_WRAPPED}`);
+        continue;
+      }
+      const cmdValue = /^\s*[A-Za-z0-9_-]+\s*=\s*(.*)$/.exec(lines[s.commandLine])[1];
+      const argsValue = /^\s*[A-Za-z0-9_-]+\s*=\s*(.*)$/.exec(lines[s.argsLine])[1];
+      const argsComment = tomlArrayComment(argsValue);
+      lines[s.commandLine] = `command = ${tomlStr(original[0])}${tomlStringComment(cmdValue)}`;
+      if (original.length > 1 || argsComment) {
+        lines[s.argsLine] = `args = [${original.slice(1).map(tomlStr).join(', ')}]${argsComment}`;
+      } else {
+        lines.splice(s.argsLine, 1);
+        eols.splice(s.argsLine, 1);
+      }
+      count++;
+    }
+    return { modified: count > 0, count, content: lines.map((l, i) => l + (eols[i] || '')).join(''), manual };
   },
 };
 
@@ -346,11 +466,6 @@ function realOrNull(p) {
 function isInside(child, parent) {
   const rel = path.relative(parent, child);
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
-}
-
-function sameRealDir(a, b) {
-  const ra = realOrNull(path.dirname(a));
-  return ra !== null && ra === realOrNull(path.dirname(b));
 }
 
 /**
@@ -472,40 +587,19 @@ function renameWithRetry(from, to) {
   }
 }
 
-/** Newest "<file>.bak.<digits>" next to filePath (largest number), or null. */
-function latestBackup(filePath, scope) {
-  const dir = path.dirname(filePath);
-  const prefix = path.basename(filePath) + '.bak.';
-  let best = null;
-  let bestN = -1;
-  let names;
-  try {
-    names = fs.readdirSync(dir);
-  } catch {
-    return null;
-  }
-  for (const f of names) {
-    if (!f.startsWith(prefix)) continue;
-    const tail = f.slice(prefix.length);
-    if (!/^\d+$/.test(tail)) continue;
-    const full = path.join(dir, f);
-    if (!isRegularFile(full, scope === 'project')) continue;
-    const n = Number(tail);
-    if (n > bestN) {
-      bestN = n;
-      best = full;
+/** "<file>.bak.<ms>" that does not exist yet (a revert right after a wrap can land in the same millisecond). */
+function freeBackupName(filePath) {
+  let n = Date.now();
+  for (let i = 0; i < 100; i++, n++) {
+    const candidate = `${filePath}.bak.${n}`;
+    try {
+      fs.lstatSync(candidate);
+    } catch (e) {
+      if (e.code === 'ENOENT') return candidate;
+      throw e;
     }
   }
-  return best;
-}
-
-/** Copies backup over the config (its real file for a home symlink) via a temp file and rename. */
-function safeRestore(backup, filePath, scope) {
-  const r = resolveConfig(filePath, scope);
-  if (r.reason) throw new Error(r.reason);
-  if (!isRegularFile(backup, scope === 'project')) throw new Error('backup is a symlink or not a regular file');
-  if (!sameRealDir(backup, filePath)) throw new Error('backup is not in the same directory as the config');
-  atomicWrite(r.target, fs.readFileSync(backup));
+  return `${filePath}.bak.${n}`;
 }
 
 /**
@@ -529,21 +623,37 @@ function configureEnvironments(options = {}) {
     }
 
     if (options.revert) {
-      const latestBak = latestBackup(env.filePath, env.scope);
-
-      if (latestBak) {
-        try {
-          if (options.dryRun) {
-            if (!sameRealDir(latestBak, env.filePath)) throw new Error('backup is not in the same directory as the config');
-          } else {
-            safeRestore(latestBak, env.filePath, env.scope);
-          }
-          actions.push({ env: env.name, status: 'reverted', from: latestBak });
-        } catch (err) {
-          actions.push({ env: env.name, status: 'skipped_unsafe', file: env.filePath, error: `${latestBak}: ${err.message}; skipped` });
+      if (env.serverCount === 0) {
+        const err = env.servers.find((s) => s.error);
+        if (err) actions.push({ env: env.name, status: 'manual_required', error: err.error, file: env.filePath });
+        continue;
+      }
+      try {
+        const raw = fs.readFileSync(env.filePath, 'utf8');
+        const { modified, content, count, manual } = adapterFor(env).unshield(raw, env);
+        let backup;
+        if (modified && !options.dryRun) {
+          // The file is un-wrapped in place, so edits made after wrapping stay. A copy of the
+          // file as it is now is saved first; earlier copies are never touched.
+          backup = freeBackupName(env.filePath);
+          createBackup(env.filePath, backup);
+          atomicWrite(resolved.target, content);
         }
-      } else if (env.serverCount > 0) {
-        actions.push({ env: env.name, status: 'no_backup_found' });
+        if (modified) {
+          actions.push({
+            env: env.name,
+            status: options.dryRun ? 'would_revert' : 'reverted',
+            serversCount: count,
+            ...(backup ? { backup } : {}),
+            ...(manual.length ? { manual } : {}),
+          });
+        } else if (manual.length) {
+          actions.push({ env: env.name, status: 'manual_required', manual, file: env.filePath });
+        } else {
+          actions.push({ env: env.name, status: 'nothing_to_revert' });
+        }
+      } catch (err) {
+        actions.push({ env: env.name, status: err.manual ? 'manual_required' : 'error', error: err.message, file: env.filePath });
       }
       continue;
     }
@@ -592,8 +702,6 @@ module.exports = {
   scanEnvironments,
   configureEnvironments,
   // exported for tests
-  latestBackup,
-  safeRestore,
   resolveConfig,
   _internal: { scanCodexToml, parseTomlStringArray, parseTomlKeyPath },
 };

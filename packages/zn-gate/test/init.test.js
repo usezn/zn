@@ -169,7 +169,15 @@ test('zn-gate init - Codex config.toml: wraps stdio servers, keeps env tables an
 
     const rev = configureEnvironments({ envList: mockList, revert: true });
     assert.equal(rev.actions[0].status, 'reverted');
-    assert.equal(fs.readFileSync(file, 'utf8'), original);
+    assert.equal(rev.actions[0].serversCount, 2);
+    const back = fs.readFileSync(file, 'utf8');
+    // The wrapper is taken off in place: the commands are the original ones, and nothing else moved.
+    assert.ok(back.includes('command = "npx"\nargs = ["-y", "@upstash/context7-mcp"]'));
+    assert.ok(/\[mcp_servers\."fetch-srv"\]\ncommand = "uvx"/.test(back), back);
+    assert.equal(/zn-gate|shield/.test(back), false);
+    assert.ok(back.includes('[mcp_servers.context7.env]\nMY_ENV_VAR = "MY_ENV_VALUE"'));
+    assert.ok(back.includes('url = "https://mcp.example.com/mcp"'));
+    assert.ok(back.startsWith('model = "o4-mini"'));
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
@@ -214,7 +222,7 @@ test('zn-gate init - OpenCode opencode.json: wraps local servers (command array)
 
     const rev = configureEnvironments({ envList: mockList, revert: true });
     assert.equal(rev.actions[0].status, 'reverted');
-    assert.equal(fs.readFileSync(file, 'utf8'), original);
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), JSON.parse(original));
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
