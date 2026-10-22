@@ -210,3 +210,56 @@ test('the real engine: 5,000 different keys and one more at the end: the last ke
   assert.ok(!JSON.stringify(r.output).includes(LAST_KEY));
   assert.match(r.output.hookSpecificOutput.updatedToolOutput.stdout, NOTICE);
 });
+
+async function runOversize(name, text) {
+  const err = [];
+  const out = [];
+  const write = process.stderr.write;
+  const wout = process.stdout.write;
+  const code = process.exitCode;
+  let exit;
+  process.stderr.write = (chunk) => { err.push(String(chunk)); return true; };
+  process.stdout.write = (chunk) => { out.push(String(chunk)); return true; };
+  try {
+    await runner.main([name], async () => text);
+    exit = process.exitCode;
+  } finally {
+    process.stderr.write = write;
+    process.stdout.write = wout;
+    process.exitCode = code;
+  }
+  return { err: err.join(''), out: out.join(''), exit };
+}
+
+for (const name of ['claude-code', 'codex', 'cursor', 'opencode', 'copilot']) {
+  test(name + ': an oversized post-tool event whose top-level object repeats a key is refused, not answered', async () => {
+    const filler = 'A'.repeat(runner.POST_STDIN_CAP + 10);
+    const text = JSON.stringify(AGENTS[name].event('FILLER')).replace('FILLER', () => filler);
+    const dup = text.replace(/^\{/, (m) => m + '"tool_name":"harmless_one","tool_name":"harmless_two",');
+    const r = await runOversize(name, dup);
+    assert.equal(r.exit, 2);
+    assert.match(r.err, /too large to check and repeats a key/);
+    assert.ok(!r.out.includes('withheld'));
+    const ok = await runOversize(name, text);
+    assert.match(ok.out, NOTICE);
+  });
+}
+
+for (const [label, ev] of [
+  ['an event name with a lower-case first letter', (text) => ({ sessionId: 's', cwd: '/', hookEventName: 'postToolUse', toolName: 'bash', toolArgs: {}, toolResult: { resultType: 'success', textResultForLlm: text } })],
+  ['a null result is not a post-tool event', null],
+]) {
+  test('copilot: oversized event with ' + label + ' is read as the adapter reads it', async () => {
+    const filler = 'A'.repeat(runner.POST_STDIN_CAP + 10);
+    if (ev) {
+      const r = await runOversize('copilot', JSON.stringify(ev('FILLER')).replace('FILLER', () => filler));
+      assert.match(r.out, NOTICE);
+    } else {
+      const pre = { sessionId: 's', cwd: '/', toolName: 'bash', toolResult: null, toolArgs: { data: filler } };
+      const r = await runOversize('copilot', JSON.stringify(pre));
+      assert.equal(r.exit, 2);
+      assert.match(r.err, /too large/);
+      assert.ok(!r.out.includes('withheld'));
+    }
+  });
+}

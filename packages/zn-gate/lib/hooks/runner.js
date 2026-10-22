@@ -1167,10 +1167,13 @@ function readStdin() {
 }
 
 // The keys of the top-level object that can be read in the first characters of an event (the first
-// occurrence of each, with its value when that is a string, otherwise true). Keys inside the tool arguments
-// are deeper in the object and are not counted: an agent's event name must be a key of the event itself.
+// occurrence of each, with its value when that is a string, null when that is null, otherwise true).
+// Keys inside the tool arguments are deeper in the object and are not counted: an agent's event name must
+// be a key of the event itself. `duplicate` is true when a key appears twice at the top level: JSON.parse
+// keeps the last one and this reads the first, so such an event can be read two ways and is refused.
 function topLevelKeys(head) {
-  const keys = {};
+  const keys = Object.create(null);
+  let duplicate = false;
   let depth = 0;
   let i = 0;
   while (i < head.length) {
@@ -1183,9 +1186,11 @@ function topLevelKeys(head) {
       if (depth === 1) {
         const rest = head.slice(i, i + 300);
         const colon = /^\s*:\s*/.exec(rest);
-        if (colon && !(str in keys)) {
-          const value = /^"((?:[^"\\]|\\.)*)"/.exec(rest.slice(colon[0].length));
-          keys[str] = value ? value[1] : true;
+        if (colon && str in keys) duplicate = true;
+        else if (colon) {
+          const after = rest.slice(colon[0].length);
+          const value = /^"((?:[^"\\]|\\.)*)"/.exec(after);
+          keys[str] = value ? value[1] : /^null\b/.test(after) ? null : true;
         }
       }
       continue;
@@ -1194,7 +1199,7 @@ function topLevelKeys(head) {
     else if (c === '}' || c === ']') depth--;
     i++;
   }
-  return keys;
+  return { keys, duplicate };
 }
 
 // How each agent's post-tool event can be told from the first characters of an event that is too large to
@@ -1203,14 +1208,16 @@ function topLevelKeys(head) {
 const OVERSIZE_POST = {
   'claude-code': { isPost: (k) => k.hook_event_name === 'PostToolUse', tool: 'bash', shape: (t) => t },
   codex: { isPost: (k) => k.hook_event_name === 'PostToolUse', tool: 'bash', shape: (t) => t },
-  // Copilot has two shapes: with an event name, that decides; the Copilot CLI one has none, and then the
-  // result is a key of the event (it can come after the arguments, in which case it cannot be seen here and the
-  // event is refused).
+  // Copilot has two shapes, read as its adapter reads them (lib/agents/copilot.js, eventName): with an event
+  // name, that decides, in either spelling of the first letter; the Copilot CLI one has none, and then the
+  // result is a key of the event whose value is not null (it can come after the arguments, in which case it
+  // cannot be seen here and the event is refused).
   copilot: {
     isPost: (k) => {
-      const named = k.hook_event_name !== undefined ? k.hook_event_name : k.hookEventName;
-      if (named !== undefined) return named === 'PostToolUse';
-      return k.toolResult !== undefined || k.tool_result !== undefined;
+      const named = k.hook_event_name || k.hookEventName;
+      if (typeof named === 'string' && named) return named.charAt(0).toLowerCase() + named.slice(1) === 'postToolUse';
+      const has = (key) => k[key] !== undefined && k[key] !== null;
+      return has('toolResult') || has('tool_result');
     },
     tool: 'bash',
     shape: (t) => t,
@@ -1223,7 +1230,9 @@ const OVERSIZE_POST = {
 // fixed notice in place of the output; anything else is refused like any event zn cannot read.
 function oversizeEvent(agentId, adapter, text) {
   const spec = OVERSIZE_POST[agentId];
-  if (!spec || !spec.isPost(topLevelKeys(text.slice(0, 65536)))) return refuseInput(agentId, 'the event on stdin is too large to check');
+  const top = spec ? topLevelKeys(text.slice(0, 65536)) : null;
+  if (top && top.duplicate) return refuseInput(agentId, 'the event on stdin is too large to check and repeats a key');
+  if (!spec || !spec.isPost(top.keys)) return refuseInput(agentId, 'the event on stdin is too large to check');
   const event = { event: 'post_tool', hookEvent: 'postToolUse', tool: spec.tool, input: { texts: [] } };
   const output = adapter.respond({ decision: 'allow', updatedOutput: spec.shape(POST_WITHHELD), message: POST_CAP_NOTE, event });
   if (output !== null && output !== undefined) process.stdout.write(JSON.stringify(output));
