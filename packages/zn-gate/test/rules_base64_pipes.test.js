@@ -42,6 +42,9 @@ test('quoted payloads, echo options and here-strings are decoded too', () => {
     `printf '${BLOCKED}' | base64 -d | sh`,
     `base64 -d <<< ${BLOCKED} | sh`,
     `base64 --decode <<< "${BLOCKED}" | sh`,
+    `printf '%s' '${BLOCKED}' | base64 -d | sh`,
+    `printf %s ${BLOCKED} | base64 -d | sh`,
+    `base64 -di <<< ${BLOCKED} | sh`,
   ]) {
     const res = rules.evaluate(cmd);
     assert.equal(res.verdict, 'block', cmd);
@@ -77,4 +80,17 @@ test('too much Base64 data over the byte cap is blocked', () => {
   const res = rules.evaluate(`${pipe(big('a'))}; ${pipe(big('b'))}`);
   assert.equal(res.verdict, 'block');
   assert.equal(res.rule, 'evasion:base64_smuggling');
+});
+
+// The whole-input pass for inputs over the scan limit reads the same payload groups:
+// a payload in a quoted or here-string form must still be found inside a 300 KB input.
+test('quoted and here-string payloads are found inside an input over 256 KB', () => {
+  const filler = 'lorem ipsum dolor sit amet. '.repeat(11000);
+  assert.ok(filler.length > 256 * 1024);
+  for (const cmd of [`echo '${BLOCKED}' | base64 -d | sh`, `base64 -d <<< "${BLOCKED}" | sh`, `echo ${BLOCKED} | base64 -d | sh`]) {
+    const res = rules.evaluate(`${filler}${cmd} ${filler}`);
+    assert.equal(res.verdict, 'block', cmd);
+    assert.equal(res.rule, 'evasion:base64_smuggling', cmd);
+  }
+  assert.equal(rules.evaluate(`${filler}echo '${HARMLESS}' | base64 -d ${filler}`).verdict, 'allow');
 });

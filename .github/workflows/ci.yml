@@ -85,6 +85,7 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node-version }}
+          check-latest: true
           cache: npm
           cache-dependency-path: packages/zn-gate/package-lock.json
       - name: Install zn-gate dependencies

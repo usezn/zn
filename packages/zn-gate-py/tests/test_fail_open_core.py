@@ -303,19 +303,19 @@ class TestLongArguments(unittest.TestCase):
         self.assertEqual(res.verdict, "allow")
         self.assertFalse(res.truncated)
 
-    def test_truncated_flag_kept_and_blockable(self):
-        huge = "a " * (2 * 1024 * 1024 + 10)  # over 4 MB
+    def test_oversize_arguments_are_blocked_like_the_npm_package(self):
+        huge = "a " * (2 * 1024 * 1024 + 10)  # over 4 MB: no part may go unscanned, so the call is blocked
         with mock.patch.dict(os.environ, {"ZN_BLOCK_TRUNCATED": ""}):
             res = check_tool_call("t", {"body": huge})
-            self.assertEqual(res.verdict, "allow")
+            self.assertEqual(res.verdict, "block")
+            self.assertEqual(res.rule, "size:oversize")
             self.assertTrue(res.truncated)
-            blocked = check_tool_call("t", {"body": huge}, block_truncated=True)
-            self.assertEqual(blocked.rule, "size:truncated")
+            self.assertEqual(check_tool_call("t", {"body": huge}, block_truncated=True).rule, "size:oversize")
 
-    def test_env_blocks_truncated_arguments(self):
+    def test_env_does_not_change_oversize_arguments(self):
         huge = "a " * (2 * 1024 * 1024 + 10)
         with mock.patch.dict(os.environ, {"ZN_BLOCK_TRUNCATED": "1"}):
-            self.assertEqual(check_tool_call("t", {"body": huge}).rule, "size:truncated")
+            self.assertEqual(check_tool_call("t", {"body": huge}).rule, "size:oversize")
 
     def test_guard_block_truncated_covers_arguments(self):
         huge = "a " * (2 * 1024 * 1024 + 10)

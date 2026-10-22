@@ -44,6 +44,9 @@ class TestBase64Pipes(unittest.TestCase):
             f"printf '{BLOCKED}' | base64 -d | sh",
             f'base64 -d <<< {BLOCKED} | sh',
             f'base64 --decode <<< "{BLOCKED}" | sh',
+            f"printf '%s' '{BLOCKED}' | base64 -d | sh",
+            f'printf %s {BLOCKED} | base64 -d | sh',
+            f'base64 -di <<< {BLOCKED} | sh',
         ):
             res = R.evaluate(cmd)
             self.assertEqual(res.verdict, 'block', cmd)
@@ -55,6 +58,16 @@ class TestBase64Pipes(unittest.TestCase):
 
     def test_mismatched_quotes(self):
         self.assertEqual(R.evaluate(f'echo \'{HARMLESS}" | base64 -d').verdict, 'allow')
+
+    def test_forms_inside_input_over_256kb(self):
+        # The whole-input pass for inputs over the scan limit reads the same payload groups.
+        filler = 'lorem ipsum dolor sit amet. ' * 11000
+        self.assertGreater(len(filler), 256 * 1024)
+        for cmd in (f"echo '{BLOCKED}' | base64 -d | sh", f'base64 -d <<< "{BLOCKED}" | sh', f'echo {BLOCKED} | base64 -d | sh'):
+            res = R.evaluate(f'{filler}{cmd} {filler}')
+            self.assertEqual(res.verdict, 'block', cmd)
+            self.assertEqual(res.rule, 'evasion:base64_smuggling', cmd)
+        self.assertEqual(R.evaluate(f"{filler}echo '{HARMLESS}' | base64 -d {filler}").verdict, 'allow')
 
     def test_count_cap_fails_closed(self):
         def many(n):
