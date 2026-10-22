@@ -893,3 +893,80 @@ test('an empty settings.json, {} and a file with other user hooks all install; t
   assert.equal(left.theme, 'dark');
   assert.deepEqual(left.hooks, user.hooks);
 });
+
+/* ------------------- MCP tools are checked before they run ------------------- */
+
+// The fake engine finds secrets only; this one also reports personal data, as the real engine does by default.
+const { findPii } = require('../lib/scrub/patterns');
+const piiEngine = Object.assign(Object.create(fakeEngine), {
+  scan: (text, ctx) => [...fakeEngine.scan(text, ctx), ...findPii(String(text), {})],
+});
+const OLD_PRE_MATCHER = 'Bash|PowerShell|Monitor|Read|Grep|LSP|Edit|MultiEdit|Write|NotebookEdit|WebFetch';
+
+test('the PreToolUse matcher covers MCP tools and keeps the built-in tool list', () => {
+  const re = new RegExp(adapter.PRE_MATCHER);
+  for (const name of ['Bash', 'PowerShell', 'Monitor', 'Read', 'Grep', 'LSP', 'Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'WebFetch', 'mcp__github__create_issue', 'mcp__secrets__secrets_http_request']) assert.ok(re.test(name), name);
+  for (const name of ['WebSearch', 'Task', 'BashOutput', 'xmcp__github__get', 'ReadMcpResourceTool']) assert.ok(!re.test(name), name);
+});
+
+test('normalize gives an MCP call its arguments', () => {
+  const args = { title: 'hello', labels: ['a'] };
+  const ev = adapter.normalize(preTool('mcp__github__create_issue', args, '/p'));
+  assert.equal(ev.tool, 'mcp');
+  assert.deepEqual(ev.mcp, { server: 'github', tool: 'create_issue' });
+  assert.deepEqual(ev.input.args, args);
+  assert.equal(adapter.normalize(preBash('npm test', '/p')).input.args, undefined);
+});
+
+test('MCP PreToolUse: a secret in the arguments is denied', async (t) => {
+  const dir = tmpProject(t);
+  const res = await run(preTool('mcp__github__create_issue', { title: 'x', body: 'key ' + AWS }, dir), { engine: piiEngine });
+  assert.equal(res.output.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(res.output.hookSpecificOutput.permissionDecisionReason, /never receives secret values|would send a secret/);
+  assert.ok(!JSON.stringify(res.output).includes(AWS));
+});
+
+test('MCP PreToolUse: a secret wins over personal data (deny, not ask)', async (t) => {
+  const dir = tmpProject(t);
+  const res = await run(preTool('mcp__github__create_issue', { body: 'alice@example.com ' + AWS }, dir), { engine: piiEngine });
+  assert.equal(res.output.hookSpecificOutput.permissionDecision, 'deny');
+});
+
+test('MCP PreToolUse: personal data alone asks, naming the kind and the server', async (t) => {
+  const dir = tmpProject(t);
+  const res = await run(preTool('mcp__crm__add_contact', { note: 'write to alice@example.com' }, dir), { engine: piiEngine });
+  const out = res.output.hookSpecificOutput;
+  assert.equal(out.permissionDecision, 'ask');
+  assert.match(out.permissionDecisionReason, /personal data \(an email\)/);
+  assert.match(out.permissionDecisionReason, /the MCP server crm/);
+  assert.match(out.permissionDecisionReason, /Approve only if/);
+  assert.ok(!out.permissionDecisionReason.includes('alice@example.com'));
+});
+
+test('MCP PreToolUse: a clean call is allowed (no opinion), and PII checks can be turned off by the engine', async (t) => {
+  const dir = tmpProject(t);
+  const clean = await run(preTool('mcp__github__list_issues', { state: 'open' }, dir), { engine: piiEngine });
+  assert.equal(clean.output, null);
+  const noPii = await run(preTool('mcp__crm__add_contact', { note: 'alice@example.com' }, dir), { engine: fakeEngine });
+  assert.equal(noPii.output, null);
+});
+
+test('install writes the new PreToolUse matcher, replaces an old exact-list one, and uninstall removes it', { skip: process.platform === 'win32' }, (t) => {
+  const home = tempDir(t, 'zn-cc-mcp-');
+  const file = path.join(home, '.claude', 'settings.json');
+  const env = {};
+  const opts = { scope: 'user', home, env, mcp: false, nodePath: '/usr/bin/node', cliPath: '/opt/zn-gate/bin/cli.js', runnerPath: '/opt/zn/lib/hooks/runner.js' };
+  adapter.install(opts);
+  const pre = () => JSON.parse(fs.readFileSync(file, 'utf8')).hooks.PreToolUse;
+  assert.equal(pre().length, 1);
+  assert.equal(pre()[0].matcher, '^(Bash|PowerShell|Monitor|Read|Grep|LSP|Edit|MultiEdit|Write|NotebookEdit|WebFetch)$|^mcp__.*');
+  // A settings file from an earlier zn-gate: the exact-list matcher is replaced, not duplicated.
+  const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+  data.hooks.PreToolUse[0].matcher = OLD_PRE_MATCHER;
+  fs.writeFileSync(file, JSON.stringify(data, null, 2));
+  adapter.install(opts);
+  assert.equal(pre().length, 1);
+  assert.equal(pre()[0].matcher, adapter.PRE_MATCHER);
+  adapter.uninstall({ scope: 'user', home, env, mcp: false });
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).hooks, undefined);
+});
