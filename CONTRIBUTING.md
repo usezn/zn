@@ -58,9 +58,11 @@ The Python `rules.py` and `mcp_secrets.py` are not in the snapshot. The parity t
 
 When you change a layer:
 
-1. Bump its version in the format `YYYY-MM-DD.N`. The version must increase. Dates compare as text and `N` compares as a number, so `2026-10-14.10` is newer than `2026-10-14.9`. Adding or removing a file in a layer counts as a change.
+1. Bump its version in the format `YYYY-MM-DD.N`. The version must increase. Dates compare as text and `N` compares as a number, so `2026-10-14.10` is newer than `2026-10-14.9`; the suffix is a plain integer and is never compared as text. Adding or removing a file in a layer counts as a change.
 2. Run `node packages/zn-gate/scripts/update-rules-snapshot.js`. It rewrites `packages/zn-gate/test/fixtures/rules_snapshot.json` and refuses to record a change whose version did not increase.
 3. Commit the updated snapshot with the change. `npm test` in `packages/zn-gate` runs `test/rules_snapshot.test.js`. It fails on a changed file with the same or an older version, on a version that moved without a file change, and on rule ids that were added or removed.
+
+On pull requests, CI also runs `node .github/scripts/check-rule-versions.mjs origin/<base>`. It compares every version constant with the one at the merge base and fails when a version is lower, when a layer's files changed with the same version, or when the Node and Python packages disagree on `RULES_VERSION` or `COMMAND_RULES_VERSION`.
 
 `--force` writes the snapshot anyway and prints a loud warning. Reviewers must justify, in the pull request, any hash change made without a version increase; do not approve one without that justification.
 

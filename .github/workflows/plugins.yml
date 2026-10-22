@@ -94,6 +94,7 @@ jobs:
         if: steps.scope.outputs.run == 'true'
         with:
           node-version: ${{ matrix.node-version }}
+          check-latest: true
           package-manager-cache: false
       - name: Pinning and consistency checks
         if: steps.scope.outputs.run == 'true'
@@ -137,6 +138,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.x
+          check-latest: true
           package-manager-cache: false
       - name: Release checks
         run: node plugins/tools/check-plugins.js --release

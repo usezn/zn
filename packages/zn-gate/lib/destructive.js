@@ -25,7 +25,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-10-23.1';
+const COMMAND_RULES_VERSION = '2026-10-23.4';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -75,7 +75,7 @@ function programName(text) {
 }
 
 /* Simple commands of a command line, with the operator that follows each: [{ words: string[], sep }]. */
-function segmentsOf(cmd) {
+function segmentsOf(cmd, posix = false) {
   const { scanFirstCommand } = require('./hooks/policy');
   // 2>&1 and &> are redirections, not the control operator &.
   // A drive root C:\ before a space is a path, not an escaped space.
@@ -83,7 +83,7 @@ function segmentsOf(cmd) {
   const out = [];
   let guard = 0;
   for (; rest.length && guard < MAX_SEGMENTS; guard++) {
-    const scan = scanFirstCommand(rest, false);
+    const scan = scanFirstCommand(rest, posix);
     let sep = scan.operator;
     let adv = scan.end + 1;
     if (sep === '|' || sep === '&') {
@@ -287,27 +287,48 @@ function outFlag(w) {
   return /^-[A-Za-z]*[oO]$/.test(w) || /^--output(?:-document)?$/.test(w) || /^-out(?:f(?:i(?:l(?:e)?)?)?)?$/i.test(w);
 }
 
-/* The words a brace list in `w` expands to (c{u,}rl -> curl, cl); just `w` when there is none or too many. */
+/* {x..y} with one-character ends or one- and two-digit numbers, as the comma list bash expands it to ({u..u} -> u). */
+function expandSequences(w) {
+  return w.replace(/\{(?:([A-Za-z])\.\.([A-Za-z])|(\d{1,2})\.\.(\d{1,2}))\}/g, (all, a, b, n, m) => {
+    const chr = a !== undefined;
+    // mixed case: bash also walks the characters between the two, not worth following
+    if (chr && (a < 'a') !== (b < 'a')) return all;
+    const from = chr ? a.charCodeAt(0) : Number(n);
+    const to = chr ? b.charCodeAt(0) : Number(m);
+    const step = from <= to ? 1 : -1;
+    const list = [];
+    for (let c = from; ; c += step) {
+      list.push(chr ? String.fromCharCode(c) : String(c));
+      if (c === to) break;
+    }
+    return list.length === 1 ? list[0] : '{' + list.join(',') + '}';
+  });
+}
+
+/* The words a brace list in `w` expands to (c{u,}rl -> curl, cl); just `w` when there is none, and null when there
+   are too many: the caller reads that as a match, since the shell runs the first alternative and any of them may be it. */
 function braceAlts(w) {
-  return require('./hooks/policy').expandBraces(String(w)) || [String(w)];
+  return require('./hooks/policy').expandBraces(expandSequences(String(w)));
 }
 
 function isRcTarget(w) {
-  return braceAlts(w).some(isRcPath);
+  const alts = braceAlts(w);
+  return alts === null || alts.some(isRcPath);
 }
 
 function checkPipeline(pipe) {
   const heads = pipe.map((s) => {
     const a = unwrap(s.words);
-    const names = a.length ? braceAlts(a[0]).map(programName) : [''];
-    return { args: a, head: names[0], names };
+    const alts = a.length ? braceAlts(a[0]) : [''];
+    const names = (alts || [String(a[0])]).map(programName);
+    return { args: a, head: names[0], names, overflow: alts === null };
   });
-  const firstDl = heads.findIndex((h) => h.names.some((n) => DOWNLOADERS.has(n)));
+  const firstDl = heads.findIndex((h) => h.overflow || h.names.some((n) => DOWNLOADERS.has(n)));
   if (firstDl >= 0) {
     // a download whose output reaches a shell
     for (let j = firstDl + 1; j < pipe.length; j++) {
       const h = heads[j];
-      if (!h.names.some((n) => SHELLS.has(n))) continue;
+      if (!h.overflow && !h.names.some((n) => SHELLS.has(n))) continue;
       const rest = h.args.slice(1);
       // -c runs the code of its argument (checked on its own); -n only reads the script to check its syntax.
       if (rest.some((w) => /^-[A-Za-z]*[cn][A-Za-z]*$/.test(w))) continue;
@@ -341,17 +362,7 @@ function checkPipeline(pipe) {
 let ENABLED = null;
 function on(rule) { return ENABLED === null || ENABLED.has(rule); }
 
-function analyze(cmd, depth = 0) {
-  const text = String(cmd);
-  if (text.length > MAX_CHARS) return ENABLED === null || ENABLED.size > 0 ? OVERFLOW : null;
-  // Text inside quotes is data (echo "a fork bomb is :(){ :|:& };:"); the code a shell runs from a string is checked
-  // again on its own below, so the patterns that do not need the quotes read the text without them.
-  // (Past QUOTE_SCAN_MAX the quotes are left in: finding every pair is the one step that is not linear.)
-  const bare = text.length > QUOTE_SCAN_MAX ? text : text.replace(QUOTED_RE, "''");
-  if ((FORK_BOMB_RE.test(bare)) && on('fork_bomb')) return 'fork_bomb';
-  if ((SHELL_RUNS_DOWNLOAD_RE.test(text) || SOURCE_DOWNLOAD_RE.test(bare) || PS_PIPE_RE.test(bare) || PS_CALL_RE.test(bare)) && on('pipe_to_shell')) return 'pipe_to_shell';
-  if ((PS_DISK_RE.test(bare)) && on('disk_overwrite')) return 'disk_overwrite';
-  const segs = segmentsOf(text);
+function checkSegments(segs, depth) {
   let pipe = [];
   for (const seg of segs) {
     const hit = checkSimple(seg.words, depth);
@@ -363,8 +374,28 @@ function analyze(cmd, depth = 0) {
       pipe = [];
     }
   }
-  const last = pipe.length ? checkPipeline(pipe) : null;
-  if (last) return last;
+  return pipe.length ? checkPipeline(pipe) : null;
+}
+
+function analyze(cmd, depth = 0) {
+  const text = String(cmd);
+  if (text.length > MAX_CHARS) return ENABLED === null || ENABLED.size > 0 ? OVERFLOW : null;
+  // Text inside quotes is data (echo "a fork bomb is :(){ :|:& };:"); the code a shell runs from a string is checked
+  // again on its own below, so the patterns that do not need the quotes read the text without them.
+  // (Past QUOTE_SCAN_MAX the quotes are left in: finding every pair is the one step that is not linear.)
+  const bare = text.length > QUOTE_SCAN_MAX ? text : text.replace(QUOTED_RE, "''");
+  if ((FORK_BOMB_RE.test(bare)) && on('fork_bomb')) return 'fork_bomb';
+  if ((SHELL_RUNS_DOWNLOAD_RE.test(text) || SOURCE_DOWNLOAD_RE.test(bare) || PS_PIPE_RE.test(bare) || PS_CALL_RE.test(bare)) && on('pipe_to_shell')) return 'pipe_to_shell';
+  if ((PS_DISK_RE.test(bare)) && on('disk_overwrite')) return 'disk_overwrite';
+  const segs = segmentsOf(text);
+  const hit = checkSegments(segs, depth);
+  if (hit) return hit;
+  // POSIX reading: an unquoted backslash escapes the next character and is removed (r\m, cu\rl, .bash\rc). The Windows
+  // reading above keeps it as a path separator and runs first, so this one only adds blocks: any rule it hits counts.
+  if (text.includes('\\')) {
+    const posixHit = checkSegments(segmentsOf(text, true), depth);
+    if (posixHit) return posixHit;
+  }
   // Fail closed: never allow a line whose tail was not read.
   return segs.truncated && (ENABLED === null || ENABLED.size > 0) ? OVERFLOW : null;
 }
