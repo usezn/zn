@@ -275,6 +275,10 @@ test('agent guard: the zn-gate uninstall command is an admin command, other uses
   const fine = [
     'npm uninstall foo',
     'npm uninstall -g zn-gate',
+    'npm remove -g zn-gate',
+    'pnpm remove -g zn-gate',
+    'yarn global remove zn-gate',
+    'bun remove -g zn-gate',
     'pip uninstall zn-gate',
     'cat docs/uninstall.txt',
     'cat uninstall.txt',

@@ -378,3 +378,32 @@ test('uninstall --help and -h print the uninstall help, not the general help', (
     assert.doesNotMatch(r.stdout, /hooks install/);
   }
 });
+
+test('uninstall: plan looks at the project folder it is given, not the process working folder', async (t) => {
+  const m = machine(t);
+  const other = tempDir(t, 'zn-uninst-other-');
+  assert.notEqual(fs.realpathSync(other), fs.realpathSync(process.cwd()));
+  const keep = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, XDG: process.env.XDG_CONFIG_HOME, CODEX: process.env.CODEX_HOME };
+  process.env.HOME = m.home; process.env.USERPROFILE = m.home; delete process.env.XDG_CONFIG_HOME; delete process.env.CODEX_HOME;
+  try {
+    const init = require('../lib/init');
+    const dir = path.join(fs.realpathSync(m.cwd), '.agents');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, 'mcp_config.json');
+    fs.writeFileSync(file, JSON.stringify({ mcpServers: { fetch: { command: 'uvx', args: ['mcp-server-fetch'] } } }, null, 2));
+    const envList = init.getKnownEnvironments(fs.realpathSync(m.cwd)).filter((e) => e.id === 'antigravity-project');
+    assert.equal(envList[0].filePath, file);
+    init.configureEnvironments({ envList, projectDir: fs.realpathSync(m.cwd) });
+    const u = require('../lib/uninstall');
+    const p = await u.plan({ home: m.home, env: m.env, cwd: fs.realpathSync(m.cwd) });
+    const hit = p.wrapped.filter((w) => w.file === file);
+    assert.equal(hit.length, 1, 'the project config of the given folder is listed');
+    assert.equal(hit[0].unsafe, null, 'and it is safe to restore');
+    const elsewhere = await u.plan({ home: m.home, env: m.env, cwd: other });
+    assert.equal(elsewhere.wrapped.filter((w) => w.file === file).length, 0, 'another folder does not see it');
+  } finally {
+    for (const [k, v] of [['HOME', keep.HOME], ['USERPROFILE', keep.USERPROFILE], ['XDG_CONFIG_HOME', keep.XDG], ['CODEX_HOME', keep.CODEX]]) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  }
+});

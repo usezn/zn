@@ -55,16 +55,16 @@ function shadowedFiles(cwd) {
 }
 
 /* MCP configs with servers wrapped by `zn-gate init --wrap-mcp`, to be un-wrapped in place. */
-function wrappedConfigs(envList) {
+function wrappedConfigs(envList, cwd) {
   const init = require('./init');
   const list = [];
-  for (const e of init.scanEnvironments(envList || null)) {
+  for (const e of init.scanEnvironments(envList || null, cwd)) {
     if (!e.exists) continue;
     // zn's own "secrets" server also names zn-gate; only a server wrapped with `shield` counts.
     const wrapped = e.servers.filter((s) => s.shielded && !s.error && /\bshield\b/.test([s.command || '', ...(s.args || [])].join(' ')));
     if (!wrapped.length) continue;
     // Same safety checks as the revert itself (init.resolveConfig): an unsafe config is not offered.
-    const unsafe = init.resolveConfig(e.filePath, e.scope).reason || null;
+    const unsafe = init.resolveConfig(e.filePath, e.scope, cwd).reason || null;
     list.push({ env: e, name: e.name, file: e.filePath, servers: wrapped.length, unsafe });
   }
   return list;
@@ -100,7 +100,7 @@ async function plan(opts = {}) {
   const files = require('./vault/reset').vaultFiles(vaultOpts);
   return {
     agents,
-    wrapped: wrappedConfigs(opts.envList),
+    wrapped: wrappedConfigs(opts.envList, cwd),
     shadowed: shadowedFiles(cwd),
     vault: { exists: files.length > 0, home: store.paths(vaultOpts).home },
     vaultOpts,
@@ -164,7 +164,7 @@ async function removeVault(p, io) {
     return 'failed';
   }
   if (await daemon.isRunning(o)) {
-    out(io, 'The vault was kept: it is unlocked. Run `zn lock`, then `zn-gate uninstall` again.');
+    out(io, 'The vault was kept: it is unlocked. Run `zn-gate lock`, then `zn-gate uninstall` again.');
     return 'failed';
   }
   let backend = null;
@@ -215,7 +215,7 @@ async function run(args, io) {
     // Wrapped MCP first, so the hook removal that follows is not mixed up with it.
     const safe = p.wrapped.filter((w) => !w.unsafe);
     if (safe.length) {
-      const r = require('./init').configureEnvironments({ revert: true, envList: safe.map((w) => w.env) });
+      const r = require('./init').configureEnvironments({ revert: true, projectDir: io.cwd, envList: safe.map((w) => w.env) });
       for (const act of r.actions) {
         out(io, '  ' + act.env + ': ' + (act.status === 'reverted' ? 'original command put back for ' + act.serversCount + ' server' + (act.serversCount === 1 ? '' : 's') : act.status));
         if (act.status !== 'reverted') failed++;
@@ -242,7 +242,7 @@ async function run(args, io) {
       }
     }
     // Look again: a server wrapped in a form zn-gate did not write is still wrapped.
-    const still = wrappedConfigs(io.envList);
+    const still = wrappedConfigs(io.envList, io.cwd);
     if (still.length) {
       out(io, '');
       out(io, 'Still wrapped by zn-gate shield (do this yourself):');

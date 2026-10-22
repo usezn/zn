@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-23.3';
+const POLICY_RULES_VERSION = '2026-10-23.4';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1014,6 +1014,16 @@ function hasNetworkSignals(cmd) {
   try { return require('../scrub/engine').isNetworkCommand(s); } catch (_) { return false; }
 }
 
+// Decision: `npm/pnpm/yarn/bun remove -g zn-gate` is NOT an admin command. This list guards zn's own
+// state and settings (vault, hooks, connect), which only `zn` itself can change. Removing the package
+// goes through the package manager, which cannot be told apart reliably (npm, pnpm, yarn, bun, nvm
+// switches, deleting the folder), so a rule would give a false sense of protection and block normal
+// upgrades such as `npm uninstall -g zn-gate && npm i -g zn-gate`. Pinned in hooks_policy_hardening.test.js.
+// Decision: `npm/pnpm/yarn/bun remove -g zn-gate` is NOT an admin command. This list guards zn's own
+// state and settings (vault, hooks, connect), which only `zn` itself can change. Removing the package
+// goes through the package manager, which cannot be told apart reliably (npm, pnpm, yarn, bun, nvm
+// switches, deleting the folder), so a rule would give a false sense of protection and block normal
+// upgrades such as `npm uninstall -g zn-gate && npm i -g zn-gate`. Pinned in hooks_policy_hardening.test.js.
 // The program is zn, zn-gate (also with a version: npx -y zn-gate@1.6.0, pnpm dlx zn-gate@latest) or the bin file.
 const ZN_ADMIN_RE = /(^|[\s;&|(`$'"\\\/])((?:zn|zn-gate(?:@[^\s"'`;&|]+)?|cli\.js))(\.cmd|\.js|\.ps1)?["']?\s+(?:--\s+)?(secret\s+(set|get|rm|remove|import|adopt|approve|allow|reveal|link)|env\s+(shadow|unshadow)|unlock|lock|uninstall|vault\s+reset|connect|disconnect|hooks\s+(install|uninstall)|init(?![^\n;&|#`$()'"<>\\]{0,512}[ \t]--(?:wrap-mcp|dry-run|revert|shadow)(?=[ \t\n]|$))|stats(?:\s+(?:-{1,2}[^\s-]\S*|\d+))*\s+share\s+on|["']?pins["']?\s+["']?approve)\b/i;
 

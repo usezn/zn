@@ -20,7 +20,7 @@ const os = require('os');
  * TOML entries with multi-line arrays are reported as 'manual_required'.
  */
 
-function getKnownEnvironments() {
+function getKnownEnvironments(projectDir) {
   const home = os.homedir();
   const isWin = process.platform === 'win32';
   const isMac = process.platform === 'darwin';
@@ -49,7 +49,7 @@ function getKnownEnvironments() {
     { name: 'Claude Code', id: 'claude-code', filePath: path.join(home, '.claude.json'), key: 'mcpServers', format: 'mcpServers-json' },
     { name: 'Cursor', id: 'cursor', filePath: path.join(home, '.cursor', 'mcp.json'), key: 'mcpServers', format: 'mcpServers-json' },
     { name: 'Antigravity (AGY)', id: 'antigravity', filePath: path.join(home, '.gemini', 'antigravity', 'mcp_config.json'), key: 'mcpServers', format: 'mcpServers-json' },
-    { name: 'Antigravity (this project)', id: 'antigravity-project', filePath: path.join(process.cwd(), '.agents', 'mcp_config.json'), key: 'mcpServers', format: 'mcpServers-json', scope: 'project' },
+    { name: 'Antigravity (this project)', id: 'antigravity-project', filePath: path.join(projectDir || process.cwd(), '.agents', 'mcp_config.json'), key: 'mcpServers', format: 'mcpServers-json', scope: 'project' },
     { name: 'Antigravity (shared settings)', id: 'antigravity-shared', filePath: path.join(home, '.gemini', 'config', 'mcp_config.json'), key: 'mcpServers', format: 'mcpServers-json' },
     { name: 'Codex', id: 'codex', filePath: path.join(codexHome, 'config.toml'), key: 'mcp_servers', format: 'codex-toml' },
     { name: 'OpenCode', id: 'opencode', filePath: opencodePath, key: 'mcp', format: 'opencode-json' },
@@ -411,8 +411,8 @@ function adapterFor(env) {
 /**
  * Scans the filesystem for the supported agent environments.
  */
-function scanEnvironments(customEnvList = null) {
-  const envs = customEnvList || getKnownEnvironments();
+function scanEnvironments(customEnvList = null, projectDir) {
+  const envs = customEnvList || getKnownEnvironments(projectDir);
   const results = [];
 
   for (const env of envs) {
@@ -475,7 +475,7 @@ function isInside(child, parent) {
  * a symlink (dotfiles managers) to a regular file inside the home folder and
  * outside the current directory.
  */
-function resolveConfig(filePath, scope) {
+function resolveConfig(filePath, scope, projectDir) {
   let st;
   try {
     st = fs.lstatSync(filePath);
@@ -486,7 +486,7 @@ function resolveConfig(filePath, scope) {
     if (!st.isFile()) return { reason: 'config is a symlink or not a regular file' };
     if (st.nlink !== 1) return { reason: 'config has more than one hard link' };
     const dir = realOrNull(path.dirname(filePath));
-    const cwd = realOrNull(process.cwd());
+    const cwd = realOrNull(projectDir || process.cwd());
     if (!dir || !cwd || !isInside(dir, cwd)) return { reason: 'config directory is outside the project' };
     return { target: filePath };
   }
@@ -494,7 +494,7 @@ function resolveConfig(filePath, scope) {
   if (!st.isSymbolicLink()) return { reason: 'config is not a regular file' };
   const real = realOrNull(filePath);
   const home = realOrNull(os.homedir());
-  const cwd = realOrNull(process.cwd());
+  const cwd = realOrNull(projectDir || process.cwd());
   if (!real || !home || !isRegularFile(real)) return { reason: 'config is a symlink to something other than a regular file' };
   if (!isInside(real, home)) {
     return { reason: 'config is a symlink that points outside your home folder; move the real file into your home folder, or wrap this server by hand' };
@@ -608,13 +608,13 @@ function freeBackupName(filePath) {
  * @param {object} options - { shadow: boolean, dryRun: boolean, revert: boolean, envList: array }
  */
 function configureEnvironments(options = {}) {
-  const envs = scanEnvironments(options.envList);
+  const envs = scanEnvironments(options.envList, options.projectDir);
   const actions = [];
 
   for (const env of envs) {
     if (!env.exists) continue;
 
-    const resolved = resolveConfig(env.filePath, env.scope);
+    const resolved = resolveConfig(env.filePath, env.scope, options.projectDir);
     if (resolved.reason) {
       if (options.revert || env.serverCount > 0) {
         actions.push({ env: env.name, status: 'skipped_unsafe', file: env.filePath, error: `${env.filePath}: ${resolved.reason}; skipped` });
