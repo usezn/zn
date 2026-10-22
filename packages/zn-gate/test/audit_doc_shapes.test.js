@@ -49,7 +49,7 @@ for (const [name, text] of Object.entries(NOT_FLAGGED)) {
 
 test('audit ZNA012: a docs page gets the same documentation shapes', (t) => {
   const fenced = 'Chat format:\n\n```text\n<|im_start|>user\nHello<|im_end|>\n```\n';
-  assert.deepEqual(high(run(t, { 'docs/format.md': fenced }, 'ZNA012')), []);
+  assert.deepEqual(high(run(t, { [['docs', 'format.md'].join('/')]: fenced }, 'ZNA012')), []);
   assert.deepEqual(high(run(t, { 'README.md': NOT_FLAGGED['placeholder'] }, 'ZNA012')), []);
 });
 
