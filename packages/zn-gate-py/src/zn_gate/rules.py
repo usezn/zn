@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, overload
 
 
-RULES_VERSION = "2026-10-23.3"
+RULES_VERSION = "2026-10-23.7"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -499,9 +499,41 @@ def _b64_decode_lenient(data: str) -> bytes:
     return base64.b64decode(body + '=' * (-len(body) % 4))
 
 
+# A run of two or more empty or whitespace-only lines becomes one empty line before any rule runs, so text
+# that follows a long padding run is read in the same scan window as the text before it (same class as
+# collapseBlankRuns in rules.js; whitespace listed explicitly, not \s, so both packages agree).
+_BLANK_RUN_TEST = re.compile(r'\n[ \t\r\f\v\u00a0\u200b-\u200d\u2060\ufeff]*\n[ \t\r\f\v\u00a0\u200b-\u200d\u2060\ufeff]*\n')
+_BLANK_SPACE = re.compile(r'[ \t\r\f\v\u00a0\u200b-\u200d\u2060\ufeff]*')
+
+
+def _collapse_blank_runs(text: str) -> str:
+    if not isinstance(text, str) or not _BLANK_RUN_TEST.search(text):
+        return text
+    out: List[str] = []
+    copied = 0
+    i = text.find('\n')
+    while i != -1:
+        j = i
+        blanks = 0
+        while True:
+            k = text.find('\n', j + 1)
+            if k == -1 or _BLANK_SPACE.match(text, j + 1, k).end() != k:
+                break
+            blanks += 1
+            j = k
+        if blanks >= 2:
+            out.append(text[copied:i])
+            out.append('\n\n')
+            copied = j + 1
+        i = text.find('\n', j + 1)
+    out.append(text[copied:])
+    return ''.join(out)
+
+
 def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
     if not isinstance(input_text, str) or not input_text.strip():
         return Assessment(verdict='allow', confidence=1.0, rule='none', reason=None)
+    input_text = _collapse_blank_runs(input_text)
     if len(input_text) > MAX_SCAN_CHARS:
         # NUL is neither whitespace nor a word character, so normalization
         # cannot join the end of the head and the start of the tail.
@@ -1449,6 +1481,7 @@ def scan_windows(text: str, strict: Optional[bool] = None) -> Assessment:
     strict = _strict(strict)
     if too_invisible([text]):
         return invisible_block()
+    text = _collapse_blank_runs(text)
     if not isinstance(text, str) or len(text) <= MAX_SCAN_CHARS:
         return evaluate(text, strict=strict)
     step = MAX_SCAN_CHARS - SCAN_WINDOW_OVERLAP

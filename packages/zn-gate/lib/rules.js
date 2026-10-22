@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-23.3
+ * RULES_VERSION: 2026-10-23.7
  */
 
-const RULES_VERSION = '2026-10-23.3';
+const RULES_VERSION = '2026-10-23.7';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -539,10 +539,45 @@ const SCAN_HEAD_CHARS = 192 * 1024;
 // One character is reserved for the separator, so the window fits the limit.
 const SCAN_TAIL_CHARS = MAX_SCAN_CHARS - SCAN_HEAD_CHARS - 1;
 
+// A run of two or more empty or whitespace-only lines becomes one empty line before any rule runs, so text
+// that follows a long padding run is read in the same scan window as the text before it. Whitespace here is
+// listed explicitly (not \s) so Node.js and Python agree. Done by scanning, not with one repeated regex group,
+// which overflows the regex stack on millions of lines; every line is looked at once.
+const BLANK_RUN_TEST = /\n[ \t\r\f\v\u00a0\u200b-\u200d\u2060\ufeff]*\n[ \t\r\f\v\u00a0\u200b-\u200d\u2060\ufeff]*\n/;
+const BLANK_SPACE = /[ \t\r\f\v\u00a0\u200b-\u200d\u2060\ufeff]*/y;
+function collapseBlankRuns(text) {
+  if (typeof text !== 'string' || !BLANK_RUN_TEST.test(text)) return text;
+  const out = [];
+  let copied = 0;
+  let i = text.indexOf('\n');
+  while (i !== -1) {
+    // `i` is a line break; count the blank lines that follow it, each ended by a line break (up to `j`).
+    let j = i;
+    let blanks = 0;
+    for (;;) {
+      const k = text.indexOf('\n', j + 1);
+      if (k === -1) break;
+      BLANK_SPACE.lastIndex = j + 1;
+      BLANK_SPACE.exec(text);
+      if (BLANK_SPACE.lastIndex !== k) break;
+      blanks++;
+      j = k;
+    }
+    if (blanks >= 2) {
+      out.push(text.slice(copied, i), '\n\n');
+      copied = j + 1;
+    }
+    i = text.indexOf('\n', j + 1);
+  }
+  out.push(text.slice(copied));
+  return out.join('');
+}
+
 function evaluateUncached(input, options = {}) {
   if (typeof input !== 'string') {
     return { verdict: 'allow', confidence: 1.0, rule: 'none', reason: null, engine: 'oss-local', rules_version: RULES_VERSION };
   }
+  input = collapseBlankRuns(input);
   if (input.length > MAX_SCAN_CHARS) {
     // NUL is neither whitespace nor a word character, so normalization cannot
     // join the end of the head and the start of the tail into a new token.
@@ -1237,6 +1272,7 @@ function invisibleBlock() {
 
 function scanWindows(text, options = {}) {
   if (tooInvisible([text])) return invisibleBlock();
+  text = collapseBlankRuns(text);
   if (typeof text !== 'string' || text.length <= MAX_SCAN_CHARS) return evaluate(text, options);
   const step = MAX_SCAN_CHARS - SCAN_WINDOW_OVERLAP;
   const cap = Number.isFinite(options.maxScanChars) && options.maxScanChars > 0 ? options.maxScanChars : MAX_TOOL_RESULT_SCAN_CHARS;

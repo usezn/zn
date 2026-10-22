@@ -748,7 +748,35 @@ function insideQuotedExample(text) {
 }
 const STRONG_IN_DOCS =/^(?:pi:(?:ignore_previous|disregard|system_tag|system_bracket|template_boundary|multi_\w+)|indirect:|evasion:|exfil:markdown_image)/;
 
+// A line the reader sees as empty: whitespace, or only zero-width characters.
+const BLANK_LINE_RE = /^[\s\u200b-\u200d\u2060\ufeff]*$/;
+const BLANK_PADDING_MIN = 40;
+const BLANK_PADDING_MAX_REPORTS = 10;
+
+/**
+ * ZNA021: a run of BLANK_PADDING_MIN or more empty lines with text after it. Blank lines at the end of the
+ * file hide nothing. Reports the line where the text after the run starts; the text itself is never shown.
+ */
+function checkBlankPadding(ctx) {
+  const lines = ctx.lines;
+  let reports = 0;
+  for (let i = 0; i < lines.length && reports < BLANK_PADDING_MAX_REPORTS;) {
+    if (!BLANK_LINE_RE.test(lines[i])) { i++; continue; }
+    let j = i;
+    while (j < lines.length && BLANK_LINE_RE.test(lines[j])) j++;
+    const run = j - i;
+    if (run >= BLANK_PADDING_MIN && j < lines.length) {
+      reports++;
+      ctx.add('ZNA021', 'medium', j + 1,
+        'Text starts here after ' + run + ' empty or whitespace-only lines (lines ' + (i + 1) + ' to ' + j + '), out of view for a reviewer.',
+        { evidence: 'Lines ' + (i + 1) + ' to ' + j + ' are empty or whitespace-only' });
+    }
+    i = j;
+  }
+}
+
 function checkInstructions(ctx) {
+  checkBlankPadding(ctx);
   const claudeExt = /(^|\/)\.claude\/(commands|agents|skills)\//i.test(ctx.rec.rel);
   // Supporting notes of a skill (not SKILL.md itself): the only files here
   // that are not read as instructions.
