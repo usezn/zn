@@ -28,7 +28,7 @@ from typing import List, Optional, Tuple
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-23.3"
+COMMAND_RULES_VERSION = "2026-10-23.5"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -98,6 +98,13 @@ _PS_CALL_RE = re.compile(
     _AI,
 )
 _PS_DISK_RE = re.compile(r"(?:^|[\s;&|(])(?:format-volume|clear-disk)\b", _AI)
+
+_ANSI_C_RE = re.compile(r"\$'((?:[^'\\]|\\[\s\S])*)'")
+_ANSI_C_ESC_RE = re.compile(r"\\(x[0-9A-Fa-f]{1,2}|u[0-9A-Fa-f]{1,4}|U[0-9A-Fa-f]{1,8}|[0-7]{1,3}|c[\s\S]|[\s\S])")
+_ANSI_C_SIMPLE = {
+    "a": "\x07", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v",
+    "\\": "\\", "'": "'", '"': '"', "?": "?",
+}
 
 _ESCAPABLE = set("\\\"'`$ \t;&|()<>\n#*?[]{}~")
 _DQ_ESCAPABLE = set('"\\$`\n')
@@ -185,6 +192,28 @@ def _scan_first(s: str, posix: bool = False) -> Tuple[int, List[str], Optional[s
     if cur is not None:
         words.append("".join(cur))
     return n, words, None
+
+
+def _decode_ansi_c(cmd: str) -> str:
+    """The command with each bash $'...' word decoded and quoted again as a plain '...' word, and $"..." read as "..."."""
+
+    def esc(m: "re.Match[str]") -> str:
+        x = m.group(1)
+        if x[0] in "xuU":
+            n = int(x[1:], 16)
+            return chr(n) if n <= 0x10FFFF else ""
+        if x[0] in "01234567":
+            return chr(int(x, 8) & 0xFF)
+        if x[0] == "c" and len(x) == 2:
+            return chr(ord(x[1]) & 0x1F)
+        return _ANSI_C_SIMPLE.get(x, "\\" + x)
+
+    def word(m: "re.Match[str]") -> str:
+        # Bash ends the string at the first NUL character.
+        text = _ANSI_C_ESC_RE.sub(esc, m.group(1)).split("\0")[0]
+        return "'" + text.replace("'", "'\\''") + "'"
+
+    return _ANSI_C_RE.sub(word, cmd).replace('$"', '"')
 
 
 def _segments_of(cmd: str, posix: bool = False) -> Tuple[List[Tuple[List[str], Optional[str]]], bool]:
@@ -527,6 +556,12 @@ def _analyze(cmd: str, depth: int = 0) -> Optional[str]:
         posix_hit = _check_segments(_segments_of(text, True)[0], depth)
         if posix_hit:
             return posix_hit
+    # ANSI-C quoting: bash reads $'\x63url' as curl. The words are decoded the way bash does, then read again; as above,
+    # this reading only adds a block, and only for the two rules that name a program or a file ($'\x73h', $'.bash\x72c').
+    if "$'" in text:
+        ansi_hit = _check_segments(_segments_of(_decode_ansi_c(text), True)[0], depth)
+        if ansi_hit in ("pipe_to_shell", "rc_download"):
+            return ansi_hit
     # Fail closed: never allow a line whose tail was not read.
     return _OVERFLOW if truncated else None
 

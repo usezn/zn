@@ -25,7 +25,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-10-23.3';
+const COMMAND_RULES_VERSION = '2026-10-23.5';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -361,6 +361,12 @@ function analyze(cmd, depth = 0) {
   if (text.includes('\\')) {
     const posixHit = checkSegments(segmentsOf(text, true), depth);
     if (posixHit) return posixHit;
+  }
+  // ANSI-C quoting: bash reads $'\x63url' as curl. The words are decoded the way bash does, then read again; as above,
+  // this reading only adds a block, and only for the two rules that name a program or a file ($'\x73h', $'.bash\x72c').
+  if (text.includes("$'")) {
+    const ansiHit = checkSegments(segmentsOf(require('./hooks/policy')._decodeAnsiC(text), true), depth);
+    if (ansiHit === 'pipe_to_shell' || ansiHit === 'rc_download') return ansiHit;
   }
   // Fail closed: never allow a line whose tail was not read.
   return segs.truncated && (ENABLED === null || ENABLED.size > 0) ? OVERFLOW : null;
