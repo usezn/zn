@@ -446,7 +446,9 @@ function startMcpShield(command, args, options = {}) {
     if (typeof msg.method === 'string') {
       // Notification or request from the server (for example sampling/createMessage, elicitation/create).
       if (msg.params && typeof msg.params === 'object') await scanServerValue(safeLabel(msg.method), msg, 'params', { n: 0 }, 0);
-      return;
+      // A message that also carries a result or an error is checked as a response too: a `method` field must not
+      // let the result or error past the checks below.
+      if (msg.result === undefined && msg.error === undefined) return;
     }
     if (msg.error && typeof msg.error === 'object') await scanServerValue('error', msg, 'error', { n: 0 }, 0);
     const result = msg.result;
