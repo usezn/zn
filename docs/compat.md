@@ -4,6 +4,8 @@ What the secrets scrubber and broker can do in each agent. zn-gate is not a sand
 depends on what each agent's hooks can see and block; formats were checked against each agent's official
 documentation on 2026-10-11 (Cursor again on 2026-10-17). End-to-end evidence is in [`bench/e2e/`](../bench/e2e/).
 
+The table covers Claude Code, Codex CLI, Cursor and OpenCode. Gemini CLI, Copilot CLI and Antigravity have experimental hooks, described in the sections below.
+
 | | Claude Code | Codex CLI | Cursor (IDE) | OpenCode |
 |---|---|---|---|---|
 | Install | `zn hooks install claude-code` | `zn hooks install codex`, then trust in `/hooks` | `zn hooks install cursor` | `zn hooks install opencode` |
@@ -335,5 +337,5 @@ Antigravity does not document what it does when a hook cannot run (for example, 
 
 ## Not covered yet
 
-Hermes Agent and the Cursor CLI. GitHub Copilot CLI and Gemini CLI have experimental hooks (see their entries above). A proxy for outgoing
+Hermes Agent and the Cursor CLI. Gemini CLI, Copilot CLI and Antigravity have experimental hooks (see their entries above and below). A proxy for outgoing
 HTTP from `zn run` (for `curl`, `gh` or SDKs) is planned for a later release.

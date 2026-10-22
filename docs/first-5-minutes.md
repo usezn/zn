@@ -1,6 +1,6 @@
 # First 5 minutes with zn-gate
 
-You use an AI coding agent (Claude Code, Codex CLI, Cursor or OpenCode) and you do not write code yourself, or not much. This page takes you from nothing to "zn-gate is on and I saw it work", then tells you what its messages mean and how to remove it. No account and no API key are needed. Everything runs on your machine.
+You use an AI coding agent (Claude Code, Codex CLI, Cursor or OpenCode) and you do not write code yourself, or not much. This page takes you from nothing to "zn-gate is on and I saw it work", then tells you what its messages mean and how to remove it. No account and no API key are needed. Everything runs on your machine. Gemini CLI, Copilot CLI and Antigravity have experimental hooks; see [Agent compatibility](compat.md).
 
 ## Before you start
 
