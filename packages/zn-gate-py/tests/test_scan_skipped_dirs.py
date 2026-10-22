@@ -207,6 +207,25 @@ class NodePythonPruneParityTests(unittest.TestCase):
             shutil.rmtree(d, ignore_errors=True)
 
 
+class IncompleteResultTests(unittest.TestCase):
+    def _text(self, skipped_dirs):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            cli._print_report("text", 1, [], [], skipped_dirs, ".")
+        return buf.getvalue()
+
+    def test_an_unreadable_folder_is_never_reported_as_clean(self):
+        out = self._text([{"dir": "locked", "reason": "cannot be read"}])
+        self.assertNotIn("clean", out.lower())
+        self.assertIn("Audit Result : INCOMPLETE - some folders could not be read", out)
+        self.assertIn("Directories not scanned (1):", out)
+
+    def test_a_folder_skipped_by_name_still_gives_the_clean_line(self):
+        out = self._text([{"dir": "dist", "reason": "skipped by name: build output"}])
+        self.assertIn("are clean!", out)
+        self.assertNotIn("INCOMPLETE", out)
+
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -133,7 +133,8 @@ async function secretSet(args, io) {
   needHuman(io, 'zn secret set');
   const vault = await vaultOf(io);
   if (!flags.force && await existingMeta(vault, name)) {
-    throw deps.znError('ZN_USAGE', name + ' already exists; use --force to replace it');
+    // Not a wrong usage (64): the command is right, the name is taken and --force resolves it.
+    throw deps.znError('ZN_EXISTS', name + ' already exists; use --force to replace it');
   }
   const value = flags.clipboard ? tty.readClipboard()
     : await (io.readSecret ? io.readSecret(name) : tty.readHidden('Value for ' + name + ' (hidden): ', io));
@@ -530,6 +531,11 @@ function wantsHelp(args) {
   return (end === -1 ? args : args.slice(0, end)).some((a) => a === '-h' || a === '--help');
 }
 
+/* True when the group has its own usage text (`secret`, `env`, `hooks`, `uninstall`). */
+function hasHelp(group) {
+  return Object.prototype.hasOwnProperty.call(HELP, group === 'secrets' ? 'secret' : group);
+}
+
 const SECRET_USAGE = 'usage: zn secret set|list|rm|allow|approve|import|adopt|log ...';
 
 async function dispatch(group, args, ioIn) {
@@ -575,4 +581,4 @@ async function dispatch(group, args, ioIn) {
   }
 }
 
-module.exports = { dispatch, parseFlags, planImport, secretNameForKey, backupName };
+module.exports = { dispatch, hasHelp, parseFlags, planImport, secretNameForKey, backupName };

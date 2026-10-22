@@ -759,12 +759,16 @@ Files   : ${files.length} file(s) queued for audit\n
   const resultParts = [];
   if (totalSecrets) resultParts.push(`${totalSecrets} SECRET(S) FOUND`);
   if (totalThreats) resultParts.push(`${totalThreats} THREAT(S) FOUND`);
-  let status = files.length - notRead === 0 ? 'No files were read: this is not a clean result' : 'Clean workspace';
+  // A folder that could not be opened was not scanned: with no findings the result is not "passed" (the exit code stays 0).
+  const unreadableDirs = files.skippedDirs.filter((s) => s.reason === 'cannot be read').length;
+  const incomplete = totalFindings === 0 && files.length - notRead > 0 && unreadableDirs > 0;
+  let status = files.length - notRead === 0 ? 'No files were read: this is not a clean result'
+    : incomplete ? 'Some folders could not be read: this is not a clean result' : 'Clean workspace';
   if (totalThreats) status = 'Review and neutralize detected vectors';
   else if (totalSecrets) status = 'Move the secrets out of these files (see "Next" for each one)';
   process.stdout.write(`
 ${ruleLine(process.env, 77)}
-Audit Result : ${totalFindings === 0 ? (files.length - notRead === 0 ? col.yellow('NOTHING SCANNED') : col.green('PASSED - NO THREATS DETECTED')) : col.red(`FAILED - ${resultParts.join(', ')}`)}
+Audit Result : ${totalFindings === 0 ? (files.length - notRead === 0 ? col.yellow('NOTHING SCANNED') : incomplete ? col.yellow('INCOMPLETE - some folders could not be read') : col.green('PASSED - NO THREATS DETECTED')) : col.red(`FAILED - ${resultParts.join(', ')}`)}
 Files Scanned: ${files.length - notRead}
 Files Skipped: ${files.skipped.length}${files.skipped.length ? ' (not read: see below)' : ''}
 Status       : ${status}
@@ -903,7 +907,10 @@ async function main() {
     return;
   }
 
-  if (BROKER_COMMANDS.has(args[0]) && (args[0] === 'uninstall' || !(args.length === 2 && (args[1] === '-h' || args[1] === '--help')))) {
+  // `secret --help`, `env --help` and `hooks --help` print their own usage (the broker has it); `run`, `hook` and
+  // `secrets-mcp` have none, so their `--help` shows the general help.
+  const groupHelp = args.length === 2 && (args[1] === '-h' || args[1] === '--help') && require('../lib/broker/cli').hasHelp(args[0]);
+  if (BROKER_COMMANDS.has(args[0]) && (args[0] === 'uninstall' || !(args.length === 2 && (args[1] === '-h' || args[1] === '--help')) || groupHelp)) {
     await runBrokerCommand(args[0], args.slice(1));
     return;
   }
@@ -978,6 +985,14 @@ async function main() {
 
   const command = args[0];
 
+  // scan, check, status and evidence: an unknown option, an option without its value or a stray word is a usage error.
+  const argCheck = require('../lib/cli-args').validate(command, args.slice(1));
+  if (argCheck.problem) {
+    process.stderr.write('zn-gate ' + command + ': ' + argCheck.problem + '\n' + argCheck.usage + '\n');
+    process.exitCode = 2;
+    return;
+  }
+
   if (command === 'unlock' || command === 'lock' || command === 'vault') {
     const { runVaultCommand } = require('../lib/vault/cli');
     process.exit(await runVaultCommand(args));
@@ -1033,7 +1048,7 @@ ${ruleLine(process.env, 60)}\n`);
   }
 
   if (command === 'scan') {
-    const targetPath = args[1] && !args[1].startsWith('--') ? args[1] : '.';
+    const targetPath = argCheck.words[0] || '.';
     await handleScan(targetPath, options);
     return;
   }

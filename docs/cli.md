@@ -27,7 +27,7 @@ A command that succeeds exits with `0`. The other codes depend on the command an
 | `77` | zn refused on purpose, for example to print a secret value, or to run a command you have not allowed. |
 | `127` | `run` could not find the program you asked it to start. |
 
-The commands that start a long-running server (`mcp`, `shield`, `secrets-mcp`) exit when the server stops. A hook (`hook`) exits `2` to block an action, as the agent expects.
+The commands that start a long-running server (`mcp`, `shield`, `secrets-mcp`) exit when the server stops. A hook (`hook`) blocks an action with the answer its agent reads on standard output and exits `0`; see [`hook`](#hook).
 
 ## Settings
 
@@ -92,7 +92,7 @@ Shows that zn stops your agent from reading a fake secret, in a temporary folder
 
 Aliases: `doctor`.
 
-Exit codes: `0` every agent that is set up is protected. `1` an agent is not protected, or none is set up.
+Exit codes: `0` every agent that is set up is protected. `1` an agent is not protected, or none is set up. `2` an option or word it does not know.
 
 ### `status`
 
@@ -100,7 +100,7 @@ Exit codes: `0` every agent that is set up is protected. `1` an agent is not pro
 zn-gate status
 ```
 
-Shows the version, the rules version, whether the optional cloud check is on and where the API key comes from. Always exits `0`.
+Shows the version, the rules version, whether the optional cloud check is on and where the API key comes from. Exits `0`, or `2` for an option or word it does not know.
 
 ### `test`
 
@@ -160,9 +160,9 @@ Looks through prompt templates, markdown, skills and configs for injection traps
 - `--exclude`: more folders to skip.
 - `--include-home`: also check your own MCP configs for passwords and keys written in plain text.
 
-Exit codes: `0` nothing found, `1` something was found or the path does not exist, `2` an unknown `--format`.
+Exit codes: `0` nothing found, `1` something was found or the path does not exist, `2` the command was used wrongly: an unknown `--format`, an option it does not know, an option without its value or an extra word. `zn-gate scan --help` prints the short usage.
 
-A scan never reports a clean result for something it could not read. A folder it cannot open is listed under "Directories not scanned" (reason: cannot be read), in `skipped_dirs` for `--format json` and as a notice for `--format github`. If no file was read at all, the output says "No files were scanned" (a `warning` field in JSON) and the text report shows `NOTHING SCANNED` instead of `PASSED`. The exit code is still `0` in that case, because an empty folder is not an error in CI; a path that does not exist exits `1`. The Node (`npx zn-gate`) and Python (`pip install zn-gate`) versions give the same exit codes and the same JSON fields (`skipped_dirs`, `warning`) for these cases; the text report differs in its wording and in how it prints paths.
+A scan never reports a clean result for something it could not read. A folder it cannot open is listed under "Directories not scanned" (reason: cannot be read), in `skipped_dirs` for `--format json` and as a notice for `--format github`. If no file was read at all, the output says "No files were scanned" (a `warning` field in JSON) and the text report shows `NOTHING SCANNED` instead of `PASSED`. If some files were read but a folder could not be opened, and nothing was found, the text report shows `Audit Result : INCOMPLETE - some folders could not be read` instead of `PASSED` or "clean". The exit code is still `0` in both cases, because an empty folder is not an error in CI; a path that does not exist exits `1`. The Node (`npx zn-gate`) and Python (`pip install zn-gate`) versions give the same exit codes and the same JSON fields (`skipped_dirs`, `warning`) for these cases; the text report differs in its wording and in how it prints paths.
 
 ### `audit`
 
@@ -240,7 +240,7 @@ Aliases: `secrets`.
 zn-gate secret set NAME [--clipboard] [--force] [--mode proxy|env|file] [--host api.example.com] [--command psql] [--in header|query|body]
 ```
 
-Stores a secret. You type the value at a hidden prompt, or use `--clipboard`. `--force` replaces an existing secret. `--host`, `--command` and `--in` set where it may be used; `--mode` sets how it is filled in.
+Stores a secret. You type the value at a hidden prompt, or use `--clipboard`. `--force` replaces an existing secret; without it, a name that is already stored exits `1` and the message names `--force`. `--host`, `--command` and `--in` set where it may be used; `--mode` sets how it is filled in.
 
 #### `secret list`
 
@@ -352,7 +352,7 @@ Unlocks the vault for this session. The first run creates it. `--ttl` and `--idl
 
 If the system keychain refuses, zn says which one (macOS Keychain, Windows Credential Manager or the Linux keyring) and what to do: allow zn in the keychain window, check Credential Manager, unlock your keyring, or create the vault with a passphrase instead.
 
-Exit codes: `0` unlocked, `1` an error (for example the vault could not be opened), `2` the command was used wrongly: an option it does not know, an option without its value, an extra word, a `--ttl` or `--idle` that is not a duration between 1 minute and 24 hours, or a `--backend` it does not know. Nothing is done in that case.
+Exit codes: `0` unlocked, or already unlocked (it says so and changes nothing, like `lock` on a vault that is not unlocked), `1` an error (for example the vault could not be opened), `2` the command was used wrongly: an option it does not know, an option without its value, an extra word, a `--ttl` or `--idle` that is not a duration between 1 minute and 24 hours, or a `--backend` it does not know. Nothing is done in that case.
 
 ### `lock`
 
@@ -437,7 +437,11 @@ Removes them again.
 zn-gate hook <agent>
 ```
 
-The entry point the agents call. It reads one event as JSON on standard input and answers on standard output. You do not run it yourself. Exit codes: `0` allowed, `2` blocked (or an event it cannot read), `1` unknown agent.
+The entry point the agents call. It reads one event as JSON on standard input and answers on standard output. You do not run it yourself.
+
+When it blocks an action, it prints the deny answer its agent understands and exits `0`: for Claude Code and Codex CLI a JSON `permissionDecision` of `deny`, for Cursor `permission: deny`, for GitHub Copilot CLI `permissionDecision: deny`, for Gemini CLI and Antigravity `decision: deny`, and for OpenCode `{"action":"deny"}` (read by zn's plugin). When it allows an action it prints nothing or a changed copy of the call, also with exit `0`.
+
+Exit codes: `0` allowed, or blocked with the deny answer above. `2` zn could not read the event (empty or invalid input) or could not finish checking it, so it blocked the action: Claude Code, Codex CLI, Cursor, Gemini CLI and Copilot CLI read exit `2` as a block, and Cursor, Gemini CLI, Copilot CLI and Antigravity also get their deny answer on standard output. `1` unknown agent.
 
 ### `secrets-mcp`
 
@@ -479,7 +483,9 @@ Shows the local hash-chained log of what zn-gate decided. With no option it prin
 
 - `--verify`: check the SHA-256 chain. Exit `1` if it was changed.
 - `--ui`: open a local dashboard in your browser (default port 3100).
-- `--export`: write the records as `jsonl` (default) or `csv` to the screen or to `--output`.
+- `--export`: write the records as `jsonl` (default) or `csv` to the screen or to `--output`. Any other `--format` exits `2`.
+
+Exit codes: `0` done, `1` the chain is broken (`--verify`), `2` the command was used wrongly: an option it does not know, an option without its value, an extra word, or a `--format` other than `jsonl` or `csv`.
 
 Aliases: `logs`, `export`.
 

@@ -250,7 +250,8 @@ async function unlockCmd(args, deps) {
   if (agent) throw new Error(messages.agentRefusal(znCommand('unlock'), agent));
   // Already unlocked: say so before anything is asked. An outdated vault still goes on to the restart below.
   const running = await runningStatus(d.clientFactory);
-  if (running && !isOutdatedVault(running)) throw new Error(messages.vaultAlreadyUnlocked());
+  // Nothing to do is not a failure: like `lock` on a vault that is not unlocked, it says so and exits 0.
+  if (running && !isOutdatedVault(running)) { out(messages.vaultAlreadyUnlocked()); return 0; }
   const meta = keychain.readMeta({});
   const backend = asked || (meta && meta.backend) || keychain.detectBackend();
   opts.backend = backend;

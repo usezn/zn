@@ -1,6 +1,6 @@
 'use strict';
 /**
- * Help text of the vault commands, printed by `zn <command> --help`.
+ * Help text of the vault commands and of scan, printed by `zn <command> --help`.
  * Each entry is the list of lines for one command; the first line is the usage.
  */
 
@@ -27,6 +27,17 @@ const HELP = {
     '  forget [dir]         forget the token map of a project (the vault must be locked)',
     '  log export --otlp    export the audit log as OpenTelemetry logs [--since 7d] [--out FILE]',
   ],
+  scan: [
+    'usage: zn-gate scan [path] [--format text|json|github] [--all] [--include .rst,.xml] [--exclude fixtures,legacy] [--include-home]',
+    'Looks through prompt templates, markdown, skills and configs for injection traps and secrets. Matched values are never printed.',
+    '  path               the folder or file to scan (default: the current folder)',
+    '  --format           text (default), json, or github (workflow annotations for CI)',
+    '  --all, --code      include source code files',
+    '  --include EXTS     more file extensions to scan',
+    '  --exclude DIRS     more folders to skip',
+    '  --include-home     also check your own MCP configs for passwords and keys written in plain text',
+    'Exit codes: 0 nothing found, 1 something was found or the path does not exist, 2 wrong usage.',
+  ],
   'env shadow': [
     'usage: zn env shadow [FILE] [--all] [--keys A,B] [--dry-run] [--force] [--mode proxy|env|file] [--host H] [--command C]',
     'Moves the sensitive values of a .env file (default: .env) into the vault and leaves markers in the file.',
@@ -41,13 +52,13 @@ const HELP = {
 };
 
 /**
- * The help lines for `zn unlock|lock|vault|env shadow --help`, or null when the
+ * The help lines for `zn unlock|lock|vault|scan|env shadow --help`, or null when the
  * arguments are not one of those (the general help or the command's own help answers).
  */
 function helpFor(args) {
   if (!args.includes('-h') && !args.includes('--help')) return null;
   const [cmd, sub] = args;
-  if (cmd === 'unlock' || cmd === 'lock') return HELP[cmd];
+  if (cmd === 'unlock' || cmd === 'lock' || cmd === 'scan') return HELP[cmd];
   if (cmd === 'vault') return sub === 'log' ? null : HELP.vault; // `vault log --help` has its own text
   if (cmd === 'env' && sub === 'shadow') return HELP['env shadow'];
   return null;

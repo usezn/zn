@@ -631,6 +631,10 @@ def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_vio
         if not all_violations and nothing:
             print()
             return
+        if not all_violations and any(sd.get("reason") == "cannot be read" for sd in skipped_dirs):
+            # A folder that could not be opened was not scanned: not a clean result (the exit code stays 0).
+            print(f"{_lead(ALERT)}Audit Result : INCOMPLETE - some folders could not be read\n")
+            return
         if not all_violations:
             print(f"{_lead(CHECK)}All scanned prompts, tool definitions, and files are clean!\n")
             return

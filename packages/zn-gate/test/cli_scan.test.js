@@ -364,6 +364,10 @@ test('scan lists a folder it cannot read and does not call an empty scan clean',
     assert.strictEqual(r.status, 0, r.stderr);
     assert.match(r.stdout, /Directories not scanned \(1\)/);
     assert.match(r.stdout, /locked \(cannot be read\)/);
+    // Some files were read, but one folder was not: no "passed", no "clean", a neutral line, exit code unchanged.
+    assert.ok(!r.stdout.includes('PASSED'), r.stdout);
+    assert.ok(!r.stdout.includes('Clean workspace'), r.stdout);
+    assert.match(r.stdout, /Audit Result : INCOMPLETE - some folders could not be read/);
     const j = JSON.parse(scanJson([root, '--format', 'json']).stdout);
     assert.strictEqual(j.skipped_dirs.length, 1);
     assert.ok(j.skipped_dirs[0].dir.endsWith('locked'), JSON.stringify(j.skipped_dirs));
