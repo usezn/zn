@@ -27,7 +27,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-10-19.6';
+const SCRUB_RULES_VERSION = '2026-10-23.1';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -553,7 +553,7 @@ const PATTERNS = [
     re: re(PEM_BEGIN + PEM_LABEL + '-----(?:[ \\t]*\\r?\\n[ \\t>#*/"\'-]*(?:[A-Za-z0-9+/=:,-]+[ \\t]*))*') },
   /* Password segment of scheme://user:password@host (any scheme). */
   { type: 'DB_PASSWORD', hints: ['://'],
-    re: re('\\b([a-zA-Z][a-zA-Z0-9+.-]{1,24}):\\/\\/([^\\s:@\\/?#\'"`<>]{0,128}):([^\\s@\\/?#\'"`<>]{1,256})@([A-Za-z0-9.-]+|\\[[0-9a-fA-F:]+\\])'),
+    re: re('(?<![A-Za-z0-9_])([a-zA-Z][a-zA-Z0-9+._-]{1,40}):\\/\\/([^\\s:@\\/?#\'"`<>]{0,128}):([^\\s@\\/?#\'"`<>]{1,256})@([A-Za-z0-9.-]+|\\[[0-9a-fA-F:]+\\])'),
     group: 3,
     check: (pw, text, index, m) => {
       const user = m[2];

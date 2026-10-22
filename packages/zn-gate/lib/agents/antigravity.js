@@ -28,10 +28,10 @@
  * named is not documented either: names that start with "mcp" are treated as MCP calls.
  * A tool zn cannot classify gets "allow" (no opinion).
  *
- * Not documented (re-read 2026-10-20: the hooks page gives no exit-code or failure semantics, only the timeout), so
- * the launcher of lib/agents/launcher.js is NOT used here and nothing is claimed: what happens when a hook crashes,
- * times out or cannot start; whether an organization
- * can turn hooks off. PostToolUse can only return {}, so zn cannot rewrite or redact tool output here.
+ * Not documented (re-read 2026-10-20: the hooks page gives no exit-code or failure semantics, only the timeout):
+ * what happens when a hook crashes, times out or cannot start; whether an organization can turn hooks off. So a
+ * user install goes through the launcher of lib/agents/launcher.js, which answers a deny JSON itself when the
+ * Node.js is gone (the one block Antigravity documents), and nothing is claimed for a timeout. PostToolUse can only return {}, so zn cannot rewrite or redact tool output here.
  */
 
 const fs = require('fs');
@@ -39,6 +39,7 @@ const { fileURLToPath } = require('url');
 const os = require('os');
 const path = require('path');
 const cfg = require('./config-file');
+const launcher = require('./launcher');
 
 const id = 'antigravity';
 const HOOK_NAME = 'zn-gate';
@@ -202,6 +203,25 @@ function stripOurs(data) {
   return changed;
 }
 
+/**
+ * The hook command. A user install goes through zn's launcher (lib/agents/launcher.js): a Node.js that has gone
+ * away makes the launcher answer a deny with the repair step, where a command that cannot start would block with
+ * no text from zn (or not at all). A project install or a command given by the caller keeps the plain command.
+ */
+function commandFor(opts = {}) {
+  const platform = opts.platform || process.platform;
+  if (opts.command || (opts.scope || 'user') === 'project') return cfg.hookCommand(id, opts);
+  const node = opts.nodePath || process.execPath;
+  const runner = opts.runnerPath || cfg.runnerPath();
+  if (platform === 'win32') {
+    const script = launcher.windowsScript(id, 'PreToolUse', node, runner);
+    return script ? launcher.windowsScriptCommand(script) : cfg.hookCommandWindows(id, { ...opts, encodedCommand: true });
+  }
+  // Antigravity splits the command on spaces and ignores quotes: a launcher path with a space or a quote cannot be used.
+  if (/[\s'"\\]/.test(launcher.launcherFile(id, opts))) return cfg.hookCommand(id, opts);
+  return launcher.launcherCommand(launcher.writeLauncher(id, node, runner, opts), 'PreToolUse', platform);
+}
+
 function install(opts = {}) {
   const file = hooksFile(opts);
   const data = cfg.readJson(file);
@@ -212,18 +232,16 @@ function install(opts = {}) {
   // Windows a quoted path such as C:/Program Files/... breaks the -Command form
   // and every tool call is blocked. -EncodedCommand has no space inside its
   // argument.
-  const command = !opts.command && (opts.platform || process.platform) === 'win32' && (opts.scope || 'user') !== 'project'
-    ? cfg.hookCommandWindows(id, { ...opts, encodedCommand: true })
-    : cfg.hookCommand(id, opts);
+  const command = commandFor(opts);
   // After the strip, a hook still called zn-gate is someone else's: zn never touches it (not even its enabled flag).
   let name = HOOK_NAME;
   while (data[name] !== undefined) name += '-zn';
   data[name] = { enabled: true, PreToolUse: [{ matcher: MATCHER, hooks: [{ type: 'command', command, timeout: HOOK_TIMEOUT_S }] }] };
   cfg.writeJson(file, data);
   report.warnings.push('Antigravity support is experimental. zn checks tool calls before they run (PreToolUse): it blocks reads and writes of secret files and shell commands that handle secrets.');
-  if ((opts.scope || 'user') === 'project' && !opts.command) report.warnings.push('The project hook runs `zn` from your PATH (zn hook antigravity): every teammate who opens this project in Antigravity needs zn-gate installed, otherwise the hook cannot start and Antigravity may let the call through.');
+  if ((opts.scope || 'user') === 'project' && !opts.command) report.warnings.push('The project hook runs `zn` from your PATH (zn hook antigravity): every teammate who opens this project in Antigravity needs zn-gate installed, otherwise the hook cannot start and Antigravity may let the call through (a project install has no launcher).');
   report.warnings.push('Antigravity hooks cannot rewrite or redact what a tool returns, so a value printed by a command or a file the agent is allowed to read reaches the model. Keep secrets in the vault.');
-  report.warnings.push('Antigravity does not document what happens when a hook fails or times out, so zn cannot promise that such a call is blocked.');
+  report.warnings.push('Antigravity does not document what happens when a hook fails or times out, so zn cannot promise that such a call is blocked. If the Node.js zn was installed with goes away, the launcher script answers a deny that says how to repair it; run `zn-gate check` to see that the hook works.');
   return report;
 }
 
@@ -238,6 +256,10 @@ function uninstall(opts = {}) {
   report.removed = 1;
   if (Object.keys(data).length === 0) fs.unlinkSync(file);
   else cfg.writeJson(file, data);
+  // The launcher of a user install (see commandFor) is no longer referenced.
+  if ((opts.scope || 'user') !== 'project') {
+    try { fs.unlinkSync(launcher.launcherFile(id, opts)); } catch (_) { /* none */ }
+  }
   return report;
 }
 

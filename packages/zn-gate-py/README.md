@@ -138,7 +138,7 @@ The checks read every string inside the arguments: dict keys and values, lists, 
 
 #### Async tools, streamed output and errors
 
-With `check_result` or `mask_secrets` (on by default in `guarded_tool`), `@guard` and `guarded_tool` handle every form of tool output the same way:
+With `check_result` or `mask_secrets` (both on by default in `guarded_tool`), `@guard` and `guarded_tool` handle every form of tool output the same way:
 
 - **Async**: `async def` functions, callable objects whose `__call__` is `async def`, and sync functions that return a coroutine are awaited, then checked and masked.
 - **Streamed output**: a generator or async generator is passed on chunk by chunk. Each chunk is checked (together with the end of the previous chunk, so a phrase split in two is still found) and masked. A blocked chunk ends the stream: `GuardBlockError`, or the `fallback` as the last chunk with `on_block="return"`. A secret split across two chunks is not masked, so do not stream secrets in small pieces.
@@ -205,7 +205,7 @@ def query_knowledge_base(query: str) -> str:
 
 `@guarded_tool` also works on plain Python tool functions (Pydantic AI, Google ADK). Block messages name the target as `tool:<name>`; `framework="crewai"` makes it `crewai:<name>`.
 
-`check_result=True` also scans what the tool returns for prompt injection before the agent sees it (off by default, so existing tools behave as before).
+`guarded_tool` also scans what the tool returns for prompt injection before the agent sees it (`check_result=True`, the default, as in `guard_langchain_tool`). Pass `check_result=False` to turn the scan off for a tool.
 
 `guarded_tool` also works on `async def` tools, on callable objects whose `__call__` is `async def` and on sync functions that return a coroutine: the call is awaited, then the output is checked and masked exactly as for a sync tool.
 
@@ -279,6 +279,8 @@ zn-gate status                  # engine and what leaves the machine
 ```
 
 More runnable examples are in [examples/](https://github.com/usezn/zn/tree/main/examples), including [a Haystack agent with a guarded tool](https://github.com/usezn/zn/tree/main/examples/haystack-agent) and [a smolagents agent with a guarded tool](https://github.com/usezn/zn/tree/main/examples/smolagents-agent).
+
+A DSPy ReAct agent whose tools are guarded by zn-gate is in [examples/dspy-agent](https://github.com/usezn/zn/tree/main/examples/dspy-agent).
 
 ---
 

@@ -286,12 +286,12 @@ No framework is required to import them. Each one uses the same rules as `check_
 - `mask_secrets`: hide credentials in the tool output (default `True`). `check_result`: scan the output for prompt injection (default `True`). `block_truncated`: block an output too large to scan in full.
 - A tool with `response_format="content_and_artifact"` passes only its content on.
 
-### `guarded_tool(on_block='raise', mask_secrets=True, fallback=None, check_result=False, block_truncated=False, framework=None)`
+### `guarded_tool(on_block='raise', mask_secrets=True, fallback=None, check_result=True, block_truncated=False, framework=None)`
 
 - Decorator for custom agent tools (CrewAI, Pydantic AI, Google ADK or plain functions, sync or `async def`). The call arguments are checked before the tool runs; a blocked call never runs.
 - `on_block`: `'raise'` (default) raises `GuardBlockError`; `'return'` returns `fallback`, or the plain block message when `fallback` is `None`. Any other value raises `ValueError` when the decorator is created.
 - `mask_secrets`: redact credentials in the tool output (default `True`).
-- `check_result`: also scan the output for prompt injection before the agent sees it (default `False`); a blocked output raises or returns as above. `block_truncated` blocks an output too large to scan in full (rule `size:truncated`).
+- `check_result`: also scan the output for prompt injection before the agent sees it (default `True`, as in `guard_langchain_tool`; pass `check_result=False` to turn it off); a blocked output raises or returns as above. `block_truncated` blocks an output too large to scan in full (rule `size:truncated`).
 - `framework`: prefix of the block target, `'<framework>:<tool>'` (default `'tool'`).
 
 ### `adk_tool_callbacks(on_block='return', mask_secrets=True, check_result=True, block_truncated=False, fallback=None)`

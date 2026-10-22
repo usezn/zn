@@ -36,7 +36,7 @@ def fetch_page(url: str) -> str:
 
 
 # check_result=True makes the tool scan the page text for orders aimed at the
-# model. It is off by default in guarded_tool, so it is set here on purpose.
+# model. It is on by default in guarded_tool; it is set here explicitly.
 # on_block="return" makes a blocked page come back as a notice the agent can
 # read, instead of an exception. mask_secrets=True hides keys in the page.
 # The wrapper keeps the name, signature and docstring of fetch_page, which is
