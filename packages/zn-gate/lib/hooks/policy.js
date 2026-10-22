@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-23.6';
+const POLICY_RULES_VERSION = '2026-10-24.3';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -110,6 +110,23 @@ const keyOf = (s) => {
   const n = s.normalize('NFC');
   return caseInsensitive() ? n.toLowerCase() : n;
 };
+// NTFS alternate data streams: `.env::$DATA`, `credentials:stream` and `dir::$INDEX_ALLOCATION` all name the file
+// or folder itself. A colon cannot be part of a Windows name, so on win32 everything after the first colon of a
+// path segment is a stream (a drive letter stays). Elsewhere a colon is a valid name character, so only the
+// explicit `::$DATA` style suffix is dropped.
+const ADS_TYPE_RE = /(?::[^\\/:*?"<>|]*)?:\$(?:DATA|INDEX_ALLOCATION|BITMAP)$/i;
+function stripStreams(text) {
+  if (typeof text !== 'string' || text.indexOf(':') < 0) return text;
+  const win = process.platform === 'win32';
+  return text.split(/([\\/]+)/).map((seg, i) => {
+    if (win) {
+      if (/^[A-Za-z]:$/.test(seg)) return seg;
+      if (i === 0 && /^[A-Za-z]:/.test(seg)) return seg.slice(0, 2) + seg.slice(2).replace(/:.*$/, '');
+      return seg.replace(/:.*$/, '');
+    }
+    return seg.replace(ADS_TYPE_RE, '');
+  }).join('');
+}
 /** The pattern, ignoring case where the platform does. */
 const ci = (re) => (caseInsensitive() && !re.flags.includes('i') ? new RegExp(re.source, re.flags + 'i') : re);
 
@@ -231,7 +248,7 @@ function classifyResolved(abs, ctx) {
 function resolvedOf(p, opts = {}) {
   const home = opts.home || os.homedir();
   const cwd = opts.cwd || process.cwd();
-  return path.resolve(cwd, expandEnv(expandHome(p, home), opts.env || process.env).text);
+  return path.resolve(cwd, stripStreams(expandEnv(expandHome(p, home), opts.env || process.env).text));
 }
 
 /**
@@ -273,6 +290,7 @@ function classifyPath(p, opts = {}) {
   if (expanded.agentVar) {
     return { kind: 'agent_config', reason: 'the path comes from $' + expanded.agentVar + ', the agent configuration location' };
   }
+  expanded.text = stripStreams(expanded.text);
   const abs = path.resolve(ctx.cwd, expanded.text);
   const candidates = new Set([abs, realTargetOf(abs)]);
   // ag/../hooks.json, with ag a link to .agents/skills, names .agents/hooks.json: ".." is applied to where the link leads.
@@ -763,6 +781,13 @@ function scanFirstCommand(cmd, posix = false) {
   return { end: s.length, words, substitution, operator: null, unterminated: quote !== null };
 }
 
+// `>` or `>>` as a word of its own, with an optional fd or `*` (PowerShell: all streams) in front.
+const REDIRECT_OP_WORD_RE = /^(?:[0-9]*|\*)>>?$/;
+// The same operator glued to the end of a word (`x>` in `echo x> file`), read on the raw source so a quoted ">" is not one.
+const GLUED_END_RE = /(?<![\\<>&])>>?$/;
+// `x>file` and `x>>file`: [1] is the part before the operator.
+const GLUED_REDIRECT_RE = /^([^<>'"]*?[^<>'"\\])(>>?)(?=[^>&])/;
+
 /** Every word of the whole command (rough), with a flag for > / >> targets and the command name of its segment. */
 // Enough simple commands for any command under SHELL_SCAN_CAP (each takes at least two characters).
 const SIMPLE_COMMANDS_MAX = 50000;
@@ -780,9 +805,25 @@ function allWords(cmd, posix = false) {
     for (let k = 0; k < scan.words.length; k++) {
       const w = scan.words[k];
       const prev = k > 0 ? scan.words[k - 1].text : '';
-      const isRedirTarget = /^[0-9]*>>?$/.test(prev) || /^[0-9]*>>?./.test(w.text);
+      const prevRaw = k > 0 ? rest.slice(scan.words[k - 1].start, scan.words[k - 1].end) : '';
+      const raw = rest.slice(w.start, w.end);
+      // The operator can sit at the end of the word before (`echo x> file`, `echo x>> file`) or inside the word
+      // (`echo x>file`): a redirect whatever the program, bash, cmd.exe or PowerShell.
+      const glued = GLUED_REDIRECT_RE.exec(raw);
+      const gluedOp = glued !== null && !/^[0-9*]*$/.test(glued[1]);
+      const isRedirTarget = REDIRECT_OP_WORD_RE.test(prev) || GLUED_END_RE.test(prevRaw) || /^(?:[0-9]*|\*)>>?./.test(w.text) || gluedOp;
+      let t = w.text;
+      let targetRaw = raw;
+      if (gluedOp) { t = t.replace(/^[^>]*>>?/, ''); targetRaw = raw.slice(glued[0].length); }
       // Input redirections: <file, 0<file, <>file (read and write), {fd}<file.
-      out.push({ text: w.text.replace(/^[0-9]*>>?/, '').replace(/^(?:[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})?<>?/, ''), redirectTarget: isRedirTarget, head, seq: guard, sub, gitArgs, git: gi >= 0 });
+      t = t.replace(/^(?:[0-9]*|\*)>>?/, '').replace(/^(?:[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})?<>?/, '');
+      // A drive path after a redirect (cmd.exe and PowerShell write them with "\"): the backslashes are separators,
+      // not shell escapes, so the target is read as typed (C:\Users\me\.claude\*.json keeps its "\*").
+      if (isRedirTarget) {
+        const typed = targetRaw.replace(/^(?:[0-9]*|\*)>>?/, '');
+        if (/^[A-Za-z]:\\/.test(typed) && !/['"]/.test(typed)) t = typed;
+      }
+      out.push({ text: t, redirectTarget: isRedirTarget, head, seq: guard, sub, gitArgs, git: gi >= 0 });
     }
     rest = rest.slice(scan.end + 1);
   }
