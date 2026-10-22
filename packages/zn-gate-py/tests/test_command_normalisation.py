@@ -160,6 +160,28 @@ class CommandNormalisation(unittest.TestCase):
         for c in ALLOWED_ANCHORS:
             self.assertEqual(rules.evaluate(c).verdict, "allow", c)
 
+    def test_userprofile_variable_forms(self):
+        blocked = [
+            'tool --file=$USERPROFILE/.env',
+            'tool --file=$USERPROFILE\\.env',
+            'tool --file=${USERPROFILE}/.env',
+            'tool --file=${env:USERPROFILE}\\.env',
+            'tool --file="$USERPROFILE\\.env"',
+            'tool --file=$USERPROFILE/.aws/credentials',
+            '@$USERPROFILE/.env',
+            'cat "${USERPROFILE}"/.env',
+        ]
+        for c in blocked:
+            self.assertEqual(rules.evaluate(c).rule, "path:sensitive_file", c)
+        allowed = [
+            'tool --file=$USERPROFILE/notes.txt',
+            'tool --file=${USERPROFILE}\\Desktop\\notes.txt',
+            'tool --file=$USERPROFILEX/.env',
+            'read @$USERPROFILE/notes.txt',
+        ]
+        for c in allowed:
+            self.assertEqual(rules.evaluate(c).verdict, "allow", c)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,18 @@
 {
   "description": "Inputs evaluated by both the Node.js and the Python rules engines; the verdict, rule id and truncated flag must match. Each sample is either a string or {\"repeat\", \"times\", \"prefix\", \"suffix\"}. \"redact_samples\" are passed to redactSecrets / redact_secrets; the redacted text and the detected rule ids must match.",
   "samples": [
+    "tool --file=$USERPROFILE/.env",
+    "tool --file=$USERPROFILE\\.env",
+    "tool --file=${USERPROFILE}/.env",
+    "tool --file=${env:USERPROFILE}\\.env",
+    "tool --file=\"$USERPROFILE\\.env\"",
+    "tool --file=$USERPROFILE/.aws/credentials",
+    "@$USERPROFILE/.env",
+    "cat \"${USERPROFILE}\"/.env",
+    "tool --file=$USERPROFILE/notes.txt",
+    "tool --file=${USERPROFILE}\\Desktop\\notes.txt",
+    "tool --file=$USERPROFILEX/.env",
+    "read @$USERPROFILE/notes.txt",
     "@/home/alice/x/.env",
     "@$HOME/.env",
     "@${HOME}/.env",

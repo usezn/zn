@@ -149,3 +149,24 @@ test('ordinary paths, bundler aliases and look-alike names stay allowed', () => 
   ];
   for (const c of allowed) assert.equal(evaluate(c).verdict, 'allow', c);
 });
+
+test('a protected path after = is found when the home is a USERPROFILE variable', () => {
+  const blocked = [
+    'tool --file=$USERPROFILE/.env',
+    'tool --file=$USERPROFILE\\.env',
+    'tool --file=${USERPROFILE}/.env',
+    'tool --file=${env:USERPROFILE}\\.env',
+    'tool --file="$USERPROFILE\\.env"',
+    'tool --file=$USERPROFILE/.aws/credentials',
+    '@$USERPROFILE/.env',
+    'cat "${USERPROFILE}"/.env',
+  ];
+  for (const c of blocked) assert.equal(evaluate(c).rule, 'path:sensitive_file', c);
+  const allowed = [
+    'tool --file=$USERPROFILE/notes.txt',
+    'tool --file=${USERPROFILE}\\Desktop\\notes.txt',
+    'tool --file=$USERPROFILEX/.env',
+    'read @$USERPROFILE/notes.txt',
+  ];
+  for (const c of allowed) assert.equal(evaluate(c).verdict, 'allow', c);
+});
