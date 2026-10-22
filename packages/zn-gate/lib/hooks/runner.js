@@ -579,6 +579,13 @@ async function decidePost(ev, d, agentId, opts = {}) {
   }
   if (ev.output === undefined || ev.output === null) return { decision: 'allow' };
   const engine = d.engine();
+  // Output that is mostly invisible characters is withheld before the engine
+  // pays for it (see tooInvisible in lib/rules.js).
+  const outputStrings = [];
+  await mapStrings(ev.output, async (s) => { outputStrings.push(s); return s; });
+  if (require('../rules').tooInvisible(outputStrings)) {
+    return { decision: 'deny', message: 'zn: this output is mostly invisible characters, so zn withheld it. Next step: tell the user; do not try to read it again.' };
+  }
   const ctx = await ctxFor(ev, d, agentId, 'assistant');
   const types = new Map();
   const secretKinds = new Set();
