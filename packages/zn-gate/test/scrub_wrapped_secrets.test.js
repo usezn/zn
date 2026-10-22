@@ -28,6 +28,23 @@ test('a short word on the next line is kept', () => {
   assert.ok(out.endsWith('\nend'), out);
 });
 
+test('a wrapped base64 value whose last line ends in == padding is redacted whole', () => {
+  // Fictitious value: the last line is letters plus "==", which is padding, not a NAME= setting.
+  const value = 'QWxhZGRpbjpvcGVuIHNlc2FtZQ' + 'xYzAbCdEfGh' + 'IjKlMnOpQrStUv' + '==';
+  const out = rules.redactSecrets('DB_PASSWORD=' + wrap(value, 20) + '\n').sanitized;
+  assert.ok(out.includes('[REDACTED_SECRET]'), out);
+  for (const part of wrap(value, 20).split('\n')) assert.ok(!out.includes(part), part);
+});
+
+test('a NAME==value or NAME:=value line after a long value keeps its own line', () => {
+  // A pin such as requests_oauthlib==1.3.1 is a setting, not the padding of the value before it.
+  for (const next of ['requests_oauthlib==1.3.1', 'SETTING_NAME:=abcdefghij']) {
+    const text = 'API_TOKEN=' + 'Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXy4z' + '\n' + next + '\n';
+    const out = rules.redactSecrets(text).sanitized;
+    assert.ok(out.includes('\n' + next + '\n'), out);
+  }
+});
+
 test('a NAME= line after a long value is not joined to it', () => {
   const text = 'ALPHA_VALUE=abcdefghijklmnop\nNEXT_SETTING_NAME=abcdefghij';
   assert.equal(rules.redactSecrets(text).sanitized, text);
