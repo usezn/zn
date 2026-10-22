@@ -6,7 +6,8 @@
 # through Google ADK, the OpenAI Agents SDK and Pydantic AI; the CI step that runs it sets
 # ZN_REQUIRE_FRAMEWORKS=1, so a framework that is not installed fails the run instead of skipping.
 #
-# Not managed by Dependabot, like ci-test-requirements.txt. Regenerate with uv from
+# Dependabot opens security updates only for this directory (version updates are off).
+# Regenerate with uv from
 # these inputs, written to a scratch file (for example requirements.in) next to this one:
 #   langchain-core>=1.3.3,<2
 #   llama-index-core>=0.14,<0.15
