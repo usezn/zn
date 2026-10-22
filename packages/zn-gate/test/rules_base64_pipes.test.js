@@ -35,7 +35,7 @@ test('printf pipes are decoded too', () => {
 
 test('many harmless pipes over the cap are blocked, at the cap they are allowed', () => {
   const many = (n) => Array.from({ length: n }, (_, i) => pipe(b64(`echo harmless number ${i}`))).join('; ');
-  assert.equal(rules.evaluate(many(rules.MAX_B64_PAYLOADS || 16)).verdict, 'allow');
+  assert.equal(rules.evaluate(many(rules.MAX_B64_PAYLOADS)).verdict, 'allow');
   const res = rules.evaluate(many(17));
   assert.equal(res.verdict, 'block');
   assert.equal(res.rule, 'evasion:base64_smuggling');
