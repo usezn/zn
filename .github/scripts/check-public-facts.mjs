@@ -146,17 +146,23 @@ export function check(facts, files, read, options = {}) {
     }
   }
 
-  // examplesVersion is the zn-gate version the examples pin. On a final release it may not be ahead of version
-  // (a warning when it is behind: the examples are moved after the release is published). Only the base X.Y.Z
-  // is compared, so a published pre-release of X.Y.Z and the final X.Y.Z are equivalent here. On a pre-release
-  // nothing is checked.
+  // examplesVersion is the zn-gate version the examples pin, checked when version is a final X.Y.Z (on a
+  // pre-release nothing is checked):
+  // - an older X.Y (minor line) is an error: a final X.Y.0 needs examples on X.Y.0-rc.N or X.Y.0, which are moved
+  //   once the release candidate is on npm and PyPI;
+  // - the same X.Y with a lower patch is a warning (an out-of-cycle patch has no release candidate to pin);
+  // - a final examplesVersion ahead of version is an error. A pre-release examplesVersion is never "ahead": the
+  //   development branch keeps version on the last final while its examples may pin the published candidate.
   const exampleVersion = facts.examplesVersion && facts.examplesVersion.value;
   if (exampleVersion && /^\d+\.\d+\.\d+$/.test(version)) {
     const base = (v) => String(v).replace(/-.*$/, '');
+    const minor = (v) => base(v).split('.').slice(0, 2).join('.') + '.0';
     const cmp = compareVersions(base(exampleVersion), base(version));
+    const cmpMinor = cmp === null ? null : compareVersions(minor(exampleVersion), minor(version));
     if (cmp === null) errors.push(`public-facts.json: examplesVersion ${exampleVersion} is not a version (X.Y.Z)`);
-    else if (cmp > 0) errors.push(`public-facts.json: examplesVersion ${exampleVersion} is ahead of version ${version}`);
-    else if (cmp < 0 && Array.isArray(options.warnings)) options.warnings.push(`examplesVersion ${exampleVersion} is behind the final release ${version}: pin the examples to ${version} once it is published on npm and PyPI`);
+    else if (cmpMinor < 0) errors.push(`public-facts.json: examplesVersion ${exampleVersion} is on an older release line than version ${version}: pin the examples to ${version} (or its published release candidate)`);
+    else if (cmp > 0 && !isPrerelease(exampleVersion)) errors.push(`public-facts.json: examplesVersion ${exampleVersion} is ahead of version ${version}`);
+    else if (cmp < 0 && cmpMinor === 0 && Array.isArray(options.warnings)) options.warnings.push(`examplesVersion ${exampleVersion} is behind the final release ${version}: pin the examples to ${version} once it is published on npm and PyPI`);
   }
 
   const allowed = new Set((facts.version.allowPins || []).map((a) => `${a.file}\0${a.pin}`));
