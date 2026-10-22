@@ -1,2 +1,3 @@
 ### Fixed
 - Antigravity: `zn hooks install antigravity` wrote the launcher path in quotes, but Antigravity runs hook commands without a shell, so the quotes became part of the file name and the hook never started. The path is now written without quotes, and `zn-gate check` runs the hook the same way and asks for a reinstall when it finds the old quoted form.
+- Antigravity: the question zn asks before a recursive shell search over a folder with a plain-text `.env` now reads every command of the line, not only the first. It follows `cd`, sees through `sudo`, `env`, `command`, `nice`, `timeout` and `xargs`, covers `git grep`, and no longer loses the folder when the pattern is quoted with `|` or `;`.

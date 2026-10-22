@@ -40,6 +40,7 @@ const os = require('os');
 const path = require('path');
 const cfg = require('./config-file');
 const launcher = require('./launcher');
+const policy = require('../hooks/policy');
 
 const id = 'antigravity';
 const HOOK_NAME = 'zn-gate';
@@ -97,31 +98,124 @@ function pathsOf(args) {
 
 const SEARCH_CMDS = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ag', 'ack']);
 const RECURSIVE_BY_DEFAULT = new Set(['rg', 'ag', 'ack']);
+// Programs that run another program given after their own options; options that take a value are listed so the
+// value is not mistaken for the program.
+const SEARCH_WRAPPERS = {
+  sudo: 'ughCUpr', doas: 'u', env: 'uCS', command: '', exec: 'a', nohup: '', nice: 'n', time: 'fo', timeout: 'sk',
+  xargs: 'nIiLPsdEa', builtin: '', stdbuf: 'ioe', '!': '', '{': '', then: '', do: '', else: '',
+};
+const CD_WORDS = new Set(['cd', 'pushd', 'chdir', 'set-location', 'sl']);
+const SEGMENTS_MAX = 500;
+// Search options whose value is the next word, so it is not taken for the pattern or a path.
+const LONG_VALUE_OPTS = /^--(?:include|exclude|exclude-dir|glob|iglob|type|type-not|max-count|after-context|before-context|context|threads|max-columns|max-depth|label|binary-files|devices|directories)$/;
+
+/** The words of a simple command after env assignments and wrappers (sudo, env, command, nice, timeout, xargs...). */
+function searchHead(words) {
+  let k = 0;
+  for (let guard = 0; k < words.length && guard < 20; guard++) {
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[k])) { k++; continue; }
+    const name = path.basename(words[k]).toLowerCase();
+    if (!Object.prototype.hasOwnProperty.call(SEARCH_WRAPPERS, name)) break;
+    const valueOpts = SEARCH_WRAPPERS[name];
+    k++;
+    while (k < words.length) {
+      const t = words[k];
+      if (t === '--') { k++; break; }
+      if (/^--./.test(t)) { k += /^--(?:user|group|signal|kill-after|max-args|max-procs|replace|delimiter)$/.test(t) ? 2 : 1; continue; }
+      if (/^-./.test(t)) { k += /^-[A-Za-z]+$/.test(t) && valueOpts.includes(t[t.length - 1]) ? 2 : 1; continue; }
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t) || (name === 'timeout' && /^[0-9.]+[smhd]?$/.test(t))) { k++; continue; }
+      break;
+    }
+  }
+  return words.slice(k);
+}
+
+/** [tool, operands, recursive, cwdOverride] of a search command, or null when it is not one. */
+function searchOf(words) {
+  const w = searchHead(words);
+  let tool = path.basename(w[0] || '').toLowerCase();
+  let rest = w.slice(1);
+  let dir = null;
+  let always = false;
+  if (tool === 'git') {
+    // git [-C dir] [-c k=v] [--no-pager ...] grep: it always walks the tree, with or without -r.
+    let k = 0;
+    while (k < rest.length && /^-/.test(rest[k])) {
+      if (rest[k] === '-C' && k + 1 < rest.length) { dir = rest[k + 1]; k += 2; continue; }
+      k += rest[k] === '-c' || rest[k] === '--git-dir' || rest[k] === '--work-tree' || rest[k] === '--namespace' ? 2 : 1;
+    }
+    if (rest[k] !== 'grep') return null;
+    tool = 'grep';
+    always = true;
+    rest = rest.slice(k + 1);
+  }
+  if (!SEARCH_CMDS.has(tool)) return null;
+  let recursive = always || RECURSIVE_BY_DEFAULT.has(tool);
+  let hasPattern = false;
+  const shortValue = tool === 'grep' || tool === 'egrep' || tool === 'fgrep' ? 'ABCmdD' : 'ABCmdgtTjME';
+  const operands = [];
+  for (let k = 0; k < rest.length; k++) {
+    const t = rest[k];
+    if (t === '--') { operands.push(...rest.slice(k + 1)); break; }
+    if (/^--/.test(t)) {
+      if (/^--(recursive|dereference-recursive)$/.test(t)) recursive = true;
+      if (/^--(regexp|file)$/.test(t)) { hasPattern = true; k++; } else if (/^--(regexp|file)=/.test(t)) hasPattern = true;
+      else if (LONG_VALUE_OPTS.test(t)) k++;
+      continue;
+    }
+    if (/^-[A-Za-z0-9]+$/.test(t)) {
+      if (/[rR]/.test(t)) recursive = true;
+      if (/[ef]$/.test(t)) { hasPattern = true; k++; } else if (/[ef]/.test(t.slice(1)) && !/[0-9]/.test(t)) hasPattern = true;
+      else if (/^-[A-Za-z]+$/.test(t) && shortValue.includes(t[t.length - 1])) k++;
+      continue;
+    }
+    operands.push(t);
+  }
+  if (!recursive) return null;
+  return { targets: hasPattern ? operands : operands.slice(1), dir };
+}
 
 /**
  * Folders a shell search covers, for the same "ask before a search over a folder with a plain-text .env" check a
- * search tool gets. Only the first simple command is read: grep, egrep, fgrep, rg, ag or ack, recursive (-r, -R,
- * --recursive or an option cluster with r or R; rg, ag and ack always are). Its first non-option word is the
- * pattern and the rest are paths; with no path the working folder is searched. Files named directly are
- * checked by the shell command check, not here. Returns [] when the command is not such a search.
+ * search tool gets. Antigravity does not let zn rewrite the output, so this question is the only barrier in front
+ * of a recursive search that would print a .env. Every simple command of the line is read (split by the shell
+ * parser of lib/hooks/policy.js, which keeps quoted separators such as "A|B" inside their word): grep, egrep, fgrep,
+ * rg, ag, ack or git grep, also behind sudo, env, command, nice, timeout or xargs; recursive (-r, -R, --recursive
+ * or an option cluster with r or R; rg, ag, ack and git grep always are). A cd (or pushd) earlier in the line
+ * moves the folder later commands run in; since a cd may fail or sit in a subshell, the folders from before it
+ * are searched too. Its first non-option word is the pattern (unless -e or -f gives it) and the rest are paths;
+ * with no path the working folder is searched. Files named directly are checked by the shell command check, not
+ * here. Returns [] when the line holds no such search.
  */
 function searchDirsOf(command, cwd) {
-  const first = String(command).split(/[;&|\n\r]/)[0].trim();
-  const words = (first.match(/"[^"]*"|'[^']*'|\S+/g) || []).map((w) => w.replace(/^(["'])(.*)\1$/, '$2'));
-  while (words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0])) words.shift();
-  const tool = path.basename(words.shift() || '');
-  if (!SEARCH_CMDS.has(tool)) return [];
-  let recursive = RECURSIVE_BY_DEFAULT.has(tool);
-  const operands = [];
-  for (const w of words) {
-    if (w === '--') continue;
-    if (/^--/.test(w)) { if (/^--(recursive|dereference-recursive)$/.test(w)) recursive = true; continue; }
-    if (/^-[A-Za-z0-9]+$/.test(w)) { if (/[rR]/.test(w)) recursive = true; continue; }
-    operands.push(w);
+  let rest = String(command);
+  let bases = [path.resolve(cwd)];
+  const found = new Set();
+  for (let n = 0; rest.length && n < SEGMENTS_MAX; n++) {
+    const scan = policy.scanFirstCommand(rest);
+    rest = rest.slice(scan.end + 1);
+    const words = scan.words.map((x) => x.text).filter((x) => !/^[0-9]*[<>]/.test(x));
+    if (!words.length) continue;
+    const head = searchHead(words);
+    if (head.length && CD_WORDS.has(path.basename(head[0]).toLowerCase())) {
+      const target = head.slice(1).find((x) => x === '-' || !/^-/.test(x));
+      const next = new Set(bases);
+      for (const b of bases) {
+        // Home, a variable or a substitution cannot be followed: the places so far stay, and so does the folder itself.
+        if (target && target !== '-' && !/[$`*?[{~]/.test(target)) next.add(path.resolve(b, target));
+      }
+      bases = [...next];
+      continue;
+    }
+    const s = searchOf(words);
+    if (!s) continue;
+    for (const b of bases) {
+      const base = s.dir ? path.resolve(b, s.dir) : b;
+      if (s.targets.length) for (const t of s.targets) found.add(path.resolve(base, t));
+      else found.add(base);
+    }
   }
-  if (!recursive) return [];
-  const targets = operands.slice(1);
-  return targets.length ? targets.map((t) => path.resolve(cwd, t)) : [path.resolve(cwd)];
+  return [...found];
 }
 
 function normalize(raw) {
