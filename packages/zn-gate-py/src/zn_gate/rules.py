@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, overload
 
 
-RULES_VERSION = "2026-10-22.2"
+RULES_VERSION = "2026-10-22.6"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -1391,8 +1391,41 @@ SCAN_WINDOW_OVERLAP = 4 * 1024
 MAX_TOOL_RESULT_SCAN_CHARS = 4 * 1024 * 1024
 
 
+# Tool output that is mostly invisible characters is blocked, not scanned: see
+# tooInvisible in rules.js. Counted in code points over every string of a result.
+MIN_INVISIBLE_CHECK_CHARS = 64 * 1024
+MAX_INVISIBLE_CHARS = 200000
+INVISIBLE_BLOCK_REASON = 'Output is mostly invisible characters'
+_SUBDIVISION_FLAG_RE = re.compile('\U0001F3F4[\U000E0030-\U000E0039\U000E0061-\U000E007A]{2,7}\U000E007F')
+
+
+def too_invisible(strings: Any) -> bool:
+    count = 0
+    length = 0
+    step = 1 << 20
+    for text in strings:
+        if not isinstance(text, str):
+            continue
+        length += len(text)
+        for i in range(0, len(text), step):
+            chunk = text[i:i + step]
+            flags = len(_SUBDIVISION_FLAG_RE.findall(chunk))
+            if flags:
+                chunk = _SUBDIVISION_FLAG_RE.sub('\U0001F3F4', chunk)
+            count += flags + len(chunk) - len(INVISIBLE_ASTRAL_RE.sub('', ZERO_WIDTH_RE.sub('', chunk)))
+            if count > MAX_INVISIBLE_CHARS:
+                return True
+    return length >= MIN_INVISIBLE_CHECK_CHARS and count * 2 > length
+
+
+def invisible_block() -> Assessment:
+    return Assessment(verdict='block', confidence=1.0, rule='size:invisible', reason=INVISIBLE_BLOCK_REASON)
+
+
 def scan_windows(text: str, strict: Optional[bool] = None) -> Assessment:
     strict = _strict(strict)
+    if too_invisible([text]):
+        return invisible_block()
     if not isinstance(text, str) or len(text) <= MAX_SCAN_CHARS:
         return evaluate(text, strict=strict)
     step = MAX_SCAN_CHARS - SCAN_WINDOW_OVERLAP
@@ -1481,7 +1514,9 @@ def sanitize_tool_result(
                 text_content = json.dumps(content, ensure_ascii=False, default=str)
             except (TypeError, ValueError, RecursionError):
                 text_content = str(content)
-            assessment = check_tool_result(content, strict=strict)
+            # The JSON text holds every string of the output: count the invisible
+            # characters before the string-by-string check pays for them.
+            assessment = invisible_block() if too_invisible([text_content]) else check_tool_result(content, strict=strict)
             if assessment.allowed:
                 text_assessment = scan_windows(text_content, strict=strict)
                 if not text_assessment.allowed:
