@@ -125,6 +125,12 @@ pub struct ServerConfig {
     /// A larger frame closes the connection.
     #[serde(default = "default_ws_max_frame_bytes")]
     pub ws_max_frame_bytes: usize,
+
+    /// Largest JSON-RPC message the stdio proxy (`zn start`) reads from stdin, in bytes
+    /// (default 1 MiB). A larger message is refused with a JSON-RPC error and is not
+    /// checked or forwarded.
+    #[serde(default = "default_stdio_max_message_bytes")]
+    pub stdio_max_message_bytes: usize,
 }
 
 impl Default for ServerConfig {
@@ -135,6 +141,7 @@ impl Default for ServerConfig {
             channel_capacity: default_channel_capacity(),
             ws_max_message_bytes: default_ws_max_message_bytes(),
             ws_max_frame_bytes: default_ws_max_frame_bytes(),
+            stdio_max_message_bytes: default_stdio_max_message_bytes(),
         }
     }
 }
@@ -144,6 +151,9 @@ fn default_port() -> u16 {
 }
 fn default_ws_max_message_bytes() -> usize {
     1024 * 1024
+}
+fn default_stdio_max_message_bytes() -> usize {
+    crate::limits::DEFAULT_STDIO_MAX_MESSAGE_BYTES
 }
 fn default_ws_max_frame_bytes() -> usize {
     1024 * 1024

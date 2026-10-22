@@ -391,6 +391,37 @@ fn raw_payload(vault: &AuditVault, id: &str) -> String {
 }
 
 #[test]
+fn a_one_mib_payload_is_stored_as_a_bounded_prefix_with_length_and_hash() {
+    a_one_mib_payload_is_bounded(Some(KEY));
+}
+
+#[test]
+fn a_one_mib_payload_is_bounded_without_an_encryption_key_too() {
+    a_one_mib_payload_is_bounded(None);
+}
+
+fn a_one_mib_payload_is_bounded(key: Option<&str>) {
+    use sha2::{Digest, Sha256};
+    let dir = TempDir::new().unwrap();
+    let vault = AuditVault::new(&db_in(&dir), key).unwrap();
+    let big = "a".repeat(1024 * 1024);
+    let e = AuditEntry::new("TOOL_CALL", "read_note", "ALLOWED").with_payload(big.clone());
+    vault.log(e).unwrap();
+    let got = vault.get_recent(1).unwrap().remove(0);
+    let stored = got.payload.unwrap();
+    assert!(stored.len() < 20_000, "stored {} bytes", stored.len());
+    assert!(stored.starts_with("aaaa"));
+    assert!(
+        stored.contains("1048576 bytes"),
+        "{}",
+        &stored[stored.len() - 120..]
+    );
+    assert!(stored.contains(&hex::encode(Sha256::digest(big.as_bytes()))));
+    let on_disk = std::fs::metadata(db_in(&dir)).unwrap().len();
+    assert!(on_disk < 200_000, "database is {on_disk} bytes");
+}
+
+#[test]
 fn encrypted_payload_is_not_stored_in_clear_and_reads_back_after_reopen() {
     let dir = TempDir::new().unwrap();
     let path = db_in(&dir);

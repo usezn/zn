@@ -74,6 +74,13 @@ fn defaults_are_one_mib_message_and_frame() {
     let cfg = ServerConfig::default();
     assert_eq!(cfg.ws_max_message_bytes, 1024 * 1024);
     assert_eq!(cfg.ws_max_frame_bytes, 1024 * 1024);
+    assert_eq!(cfg.stdio_max_message_bytes, 1024 * 1024);
+}
+
+#[test]
+fn stdio_limit_can_be_set_in_the_config_file() {
+    let cfg: ServerConfig = serde_json::from_str(r#"{"stdio_max_message_bytes": 4096}"#).unwrap();
+    assert_eq!(cfg.stdio_max_message_bytes, 4096);
 }
 
 #[test]

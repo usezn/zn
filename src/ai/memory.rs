@@ -424,7 +424,8 @@ impl VectorMemory {
         let busy_timeout = self.busy_timeout;
         let ns = namespace.to_string();
         let agent = agent_id.to_string();
-        let text = text.to_string();
+        let text = crate::limits::bounded_stored_text(text, crate::limits::MEMORY_TEXT_MAX_BYTES)
+            .into_owned();
         let blob: Vec<u8> = vector.iter().flat_map(|v| v.to_le_bytes()).collect();
         let result = tokio::task::spawn_blocking(move || -> Result<()> {
             Self::with_conn(&slot, &path, true, BUSY_ATTEMPTS, busy_timeout, |conn| {
@@ -696,6 +697,23 @@ mod tests {
         let counted = read("SELECT namespace, row_count FROM memory_counts ORDER BY namespace");
         assert_eq!(actual, counted, "memory_counts out of step with the rows");
         actual
+    }
+
+    #[tokio::test]
+    async fn a_long_text_is_stored_as_a_bounded_prefix_with_length_and_hash() {
+        let dir = temp_dir("bounded-text");
+        let m = VectorMemory::new(dir.to_str().unwrap(), 2, "m");
+        let long = "b".repeat(1024 * 1024);
+        m.store(NS, "a", &long, &[1.0, 0.0]).await.unwrap();
+        let r = m.search(NS, "a", &[1.0, 0.0], 1).await.unwrap();
+        let text = &r[0].0;
+        assert!(text.len() < 2048, "stored {} bytes", text.len());
+        assert!(text.starts_with("bbbb"));
+        assert!(
+            text.contains("1048576 bytes") && text.contains("sha256"),
+            "{text}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

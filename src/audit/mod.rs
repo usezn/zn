@@ -336,13 +336,17 @@ impl AuditVault {
             .lock()
             .map_err(|e| anyhow!("Lock poisoned: {}", e))?;
 
+        // A very large call is stored as a prefix plus its length and SHA-256.
+        let bounded = entry.payload.as_deref().map(|p| {
+            crate::limits::bounded_stored_text(p, crate::limits::AUDIT_PAYLOAD_MAX_BYTES)
+                .into_owned()
+        });
         // Encrypt payload if key is available
-        let payload = if let (Some(key_bytes), Some(p_raw)) = (&self.encryption_key, &entry.payload)
-        {
+        let payload = if let (Some(key_bytes), Some(p_raw)) = (&self.encryption_key, &bounded) {
             let encoded = encrypt_payload(key_bytes, &entry.id, entry.namespace.as_deref(), p_raw)?;
             Some(encoded)
         } else {
-            entry.payload.clone()
+            bounded.clone()
         };
 
         let nearest_neighbor = entry.nearest_neighbor.clone();

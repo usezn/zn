@@ -13,6 +13,7 @@ pub mod engine;
 pub mod handlers;
 pub mod jsonrpc;
 pub mod lfi_guard;
+pub mod limits;
 pub mod metrics;
 pub mod prompt_guard;
 pub mod proxy;
