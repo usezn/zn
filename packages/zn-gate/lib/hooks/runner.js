@@ -510,13 +510,16 @@ function mcpArgumentText(args) {
   return out.join('\n');
 }
 
-/* zn's own "secrets" server: the exact command `zn hooks install` writes (the
- * matcher of `zn audit`, with the "--agent <id>" suffix it adds), outside the
- * project. A server reached by URL is never ours, and a name alone is not enough. */
+/* zn's own "secrets" server. Codex sends the server's command, which must be the exact command `zn hooks
+ * install` writes (the matcher of `zn audit`, with the "--agent <id>" suffix it adds), outside the project.
+ * Claude Code sends only the tool name, so its adapter sets ev.mcp.ours after checking the MCP
+ * configuration (znMcpServerKind in lib/agents/claude-code.js). A server reached by URL is never ours,
+ * and a name alone is not enough. */
 function isOurSecretsServer(ev, root) {
   const raw = ev.raw || {};
-  if (!ev.mcp || ev.mcp.server !== 'secrets') return false;
+  if (!ev.mcp || (ev.mcp.server !== 'secrets' && ev.mcp.ours !== 'secrets')) return false;
   if (raw.url || raw.mcp_server_url) return false;
+  if (ev.mcp.ours === 'secrets') return true;
   if (typeof raw.command !== 'string' || !raw.command.trim()) return false;
   const argv = require('../audit/patterns').splitCommand(raw.command);
   return Boolean(require('../audit')._internal.isOurMcp(argv, { rec: { root } }));
@@ -557,7 +560,8 @@ async function decideMcp(ev, d, agentId) {
     if (start + MCP_WINDOW >= text.length) break;
   }
   if (kinds.size === 0) {
-    if (piiKinds.size === 0) return { decision: 'allow' };
+    // zn's own detector server (the plugin's) analyses the text the user asked about: no question for it.
+    if (piiKinds.size === 0 || (ev.mcp && ev.mcp.ours === 'analyze')) return { decision: 'allow' };
     // Personal data is not always wrong to send: the user decides (never a deny).
     return {
       decision: 'ask',
