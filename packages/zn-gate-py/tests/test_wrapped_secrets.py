@@ -17,6 +17,20 @@ class WrappedSecrets(unittest.TestCase):
     def redact(self, text: str) -> str:
         return R.redact_secrets(text)[0]
 
+    def test_base64_padding_on_last_line(self):
+        # Fictitious value: the last line is letters plus "==", which is padding, not a NAME= setting.
+        value = 'QWxhZGRpbjpvcGVuIHNlc2FtZQ' + 'xYzAbCdEfGh' + 'IjKlMnOpQrStUv' + '=='
+        out = self.redact('DB_PASSWORD=' + wrap(value, 20) + '\n')
+        self.assertIn('[REDACTED_SECRET]', out)
+        for part in wrap(value, 20).split('\n'):
+            self.assertNotIn(part, out)
+
+    def test_name_double_equals_line_keeps_its_line(self):
+        # A pin such as requests_oauthlib==1.3.1 is a setting, not the padding of the value before it.
+        for nxt in ('requests_oauthlib==1.3.1', 'SETTING_NAME:=abcdefghij'):
+            text = 'API_TOKEN=' + 'Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXy4z' + '\n' + nxt + '\n'
+            self.assertIn('\n' + nxt + '\n', self.redact(text))
+
     def test_wrapped_every_20_and_10(self):
         for n in (20, 10):
             out = self.redact('token:\n' + wrap(KEY, n) + '\n')
