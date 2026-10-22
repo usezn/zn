@@ -12,12 +12,14 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 | [Troubleshooting](troubleshooting.md) | The messages people meet first, and what to do for each | Everyone |
 | [Glossary](glossary.md) | Short meanings of words used in these docs | Newcomers |
 | [Upgrading](upgrading.md) | What to do when you update zn-gate | Everyone |
+| [Remove zn-gate](uninstall.md) | Uninstall in one step or piece by piece, run from your own terminal | Everyone |
 | [Command line reference](cli.md) | Every command, option and exit code | Everyone |
 
 ## Everyday use
 
 | Guide | What it covers | For whom |
 |---|---|---|
+| [Destructive commands](destructive-commands.md) | The optional check that refuses commands that wipe a machine or run a download unread | Everyone |
 | [Protect MCP servers](shield.md) | Wrap an MCP server with the shield, shadow mode and tool pins | Everyone who uses MCP servers |
 | [Reach](reach.md) | What the coding agents on your machine can reach (secrets by name, credential files, MCP servers) | Everyone |
 | [Report](report.md) | A weekly summary of what zn-gate blocked and hid | Everyone |
