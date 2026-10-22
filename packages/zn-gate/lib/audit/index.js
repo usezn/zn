@@ -998,6 +998,7 @@ function walk(root, deadline, maxEntries) {
   const skippedDirs = [];
   let entries = 0;
   let truncated = null;
+  let deepAt = null;
   let realRoot = root;
   try { realRoot = fs.realpathSync(root); } catch (_) { /* keep */ }
   const visitedReal = new Set([realRoot]);
@@ -1051,13 +1052,15 @@ function walk(root, deadline, maxEntries) {
         const ext = EXTENSION_DIRS.find(([re]) => re.test(r.toLowerCase()));
         if (ext) extDirs.push({ rel: r, abs, agent: ext[1], what: ext[2] });
         if (depth < MAX_DEPTH) visit(abs, r, depth + 1, agentHere);
+        else if (!deepAt) deepAt = r;
       } else if (d.isFile()) {
         addFile(abs, r, !rel);
       }
     }
   }
   visit(root, '', 0, false);
-  return { files, extDirs, unchecked, truncated, entries, skippedDirs };
+  if (deepAt) unchecked.push({ file: deepAt, agent: 'any', severity: 'high', detail: deepAt + ' is nested more than ' + MAX_DEPTH + ' directory levels deep; zn audit does not go that far, so files below it were not checked.' });
+  return { files, extDirs, unchecked, truncated, entries, skippedDirs, deepAt };
 }
 
 function homeFiles(home, env) {
@@ -1587,7 +1590,7 @@ function audit(opts) {
   const deadline = Date.now() + (o.timeBudgetMs || TIME_BUDGET_MS);
   const out = [];
   const maxEntries = o.maxEntries || MAX_ENTRIES;
-  const { files, extDirs, unchecked, truncated, entries, skippedDirs } = walk(root, deadline, maxEntries);
+  const { files, extDirs, unchecked, truncated, entries, skippedDirs, deepAt } = walk(root, deadline, maxEntries);
   const known = new Set(files.map((f) => f.rel));
   for (const rec of redirectedConfigs(root, unchecked)) if (!known.has(rec.rel)) files.push(rec);
   for (const rec of importedInstructions(root, files, deadline, unchecked)) files.push(rec);
@@ -1630,7 +1633,7 @@ function audit(opts) {
     findings.push(f);
   }
   findings.sort((a, b) => (RANK[b.severity] - RANK[a.severity]) || (a.file < b.file ? -1 : a.file > b.file ? 1 : 0) || (a.line - b.line) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  return { root, files: scanned, findings, truncated: Boolean(truncated) || timedOut, entries, skippedDirs, agents: Array.from(selected) };
+  return { root, files: scanned, findings, truncated: Boolean(truncated) || Boolean(deepAt) || timedOut, entries, skippedDirs, agents: Array.from(selected) };
 }
 
 module.exports = { audit, classify, redact, AGENTS, _internal: { globMatcher, hookCommands, isOurHook, isOurMcp, gitIgnored, readBounded, grantsWrite, withoutTrailingEquals, OUR_HOOKS, SAFE_ABS, znGateFile } };

@@ -86,7 +86,14 @@ silently:
   followed; one that leaves the repository is reported (ZNA020, high);
 - an agent file over 1 MB is reported (ZNA020, high) instead of skipped;
 - the scan stops after 50,000 directory entries or 120 seconds, and says so
-  with a ZNA020 high finding (so the run fails at the default threshold);
+  with a ZNA020 high finding (so the run fails at the default threshold). The
+  50,000 counts every file and folder it walks, not only agent files, so a
+  repository with more than 50,000 files outside the skipped folders stops
+  early and fails by default; agent directories are read first. Use
+  `--fail-on none` if you accept that;
+- the scan goes at most 64 directory levels deep. A folder below that is not
+  entered, and the run says so with a ZNA020 high finding naming the folder
+  (`truncated` is true in the JSON report);
 - FIFOs, devices and sockets are never opened;
 - a committed root `.env` that sets `CODEX_HOME` or `CLAUDE_CONFIG_DIR` to a
   directory inside the repository makes zn audit read the configs there too;

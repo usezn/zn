@@ -490,6 +490,12 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
   const skippedDirs = [];
   filesToScan.skippedDirs = skippedDirs;
 
+  function isScanCandidate(file) {
+    const ext = path.extname(file).toLowerCase();
+    const base = path.basename(file).toLowerCase();
+    return SCANNABLE_EXTS.has(ext) || base.startsWith('.env') || KEY_FILE_NAMES.has(path.basename(file));
+  }
+
   function walk(current, isRoot = false) {
     let stat;
     try {
@@ -499,7 +505,13 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
     } catch (e) {
       return;
     }
-    if (stat.isSymbolicLink()) return;
+    if (stat.isSymbolicLink()) {
+      // Reported like any other file that is not read, unless it points at a folder.
+      let target = null;
+      try { target = fs.statSync(current); } catch (e) { /* broken link: reported */ }
+      if (!(target && target.isDirectory()) && isScanCandidate(current)) skipped.push({ file: current, reason: 'not a regular file' });
+      return;
+    }
 
     if (stat.isDirectory()) {
       const base = path.basename(current);
@@ -528,9 +540,7 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
         walk(path.join(current, entry));
       }
     } else if (stat.isFile()) {
-      const ext = path.extname(current).toLowerCase();
-      const base = path.basename(current).toLowerCase();
-      let isCandidate = SCANNABLE_EXTS.has(ext) || base.startsWith('.env') || KEY_FILE_NAMES.has(path.basename(current));
+      const isCandidate = isScanCandidate(current);
       if (isCandidate && stat.size < 2 * 1024 * 1024) {
         filesToScan.push(current);
       } else if (isCandidate) {
