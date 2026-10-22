@@ -95,6 +95,14 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
 
   Antigravity documents `"enabled": false` as a way to disable a hook without removing it, and then runs nothing for it. Fix: run `zn hooks install antigravity` in your own terminal (it turns the hook back on), or set "enabled" to true on that hook, then run `zn-gate check` again. If another enabled Antigravity hook also runs before tool calls, `zn-gate check` adds a note: Antigravity does not document the order of hooks or which answer wins, so zn cannot tell whether its deny holds against that hook.
 
+- **Antigravity cannot start the hook command, for example because the home folder has a space.**
+
+  ```text
+  its hook cannot start: Antigravity runs the command without a shell, split on spaces, so this one (<command>) is cut in the wrong place and never runs
+  ```
+
+  Antigravity starts a hook by splitting the command on spaces, with no shell and no quotes, so a launcher path with a space in it (for example under `/Users/Jose Perez`) never starts. `zn hooks install antigravity` now refuses to write such a command. Choose a folder whose path has no spaces and run `ZN_HOOK_DIR=<that folder> zn hooks install antigravity` in your own terminal; the fix line says the same: if the path of your home folder has a space, choose a folder with no spaces and run `ZN_HOOK_DIR=<that folder> zn hooks install antigravity` in your own terminal; otherwise install zn-gate again and run `zn hooks install antigravity`.
+
 - **The hook calls `zn`, and `zn` is not installed.**
 
   ```text

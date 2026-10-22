@@ -79,9 +79,10 @@ function warnText(agentId) {
     FIX.replace('codex', agentId) + '.';
 }
 
-/** Where zn keeps its launchers: ~/.zn/hooks (or $ZN_HOME/hooks). */
+/** Where zn keeps its launchers: ~/.zn/hooks (or $ZN_HOME/hooks, or $ZN_HOOK_DIR itself). */
 function launcherDir(opts = {}) {
   const env = opts.env || process.env;
+  if (env.ZN_HOOK_DIR) return path.resolve(env.ZN_HOOK_DIR);
   const base = env.ZN_HOME ? path.resolve(env.ZN_HOME) : path.join(opts.home || os.homedir(), '.zn');
   return path.join(base, 'hooks');
 }
@@ -148,7 +149,9 @@ function unixScript(agentId, nodePath, runnerPath) {
 function writeLauncher(agentId, nodePath, runnerPath, opts = {}) {
   const file = launcherFile(agentId, opts);
   const dir = path.dirname(file);
-  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  // ZN_HOOK_DIR names any folder: the launcher in it runs on every tool call, so the folder must be ours and private.
+  if ((opts.env || process.env).ZN_HOOK_DIR) ensureSafeHookDir(dir, opts.platform || process.platform);
+  else fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   // On Windows the script runs in Git Bash: write the paths with / so that `zn-gate check` can read them back.
   const platform = opts.platform || process.platform;
   writeFileAtomic(file, unixScript(agentId, portablePath(nodePath, platform), portablePath(runnerPath, platform)), 0o755);
@@ -248,6 +251,36 @@ function plainPathOk(file) {
   return /^[A-Za-z0-9_\/.@+=,:~-]+$/.test(String(file));
 }
 
+/** Why zn will not use a folder for the launchers (ZN_HOOK_DIR), and the way out. */
+function unsafeDirMessage(dir, why) {
+  return 'zn will not keep its hook launcher in ' + dir + ': ' + why + '. The launcher runs on every tool call, so anyone who can replace it could run commands as you. ' +
+    'Use a folder that you own, that is not a link and that only you can write to (for example `mkdir -m 700 <folder>`), or unset ZN_HOOK_DIR to use ~/.zn/hooks.';
+}
+
+/**
+ * Makes sure the folder that holds the launchers can be trusted: a real folder (lstat, links are not followed), owned
+ * by the current user, with no write for group or others. Creates it (0700) when it is missing. Throws a plain error
+ * otherwise. On Windows there is no uid or mode to check (the same rule as the vault and the compile cache): it only
+ * has to be a real folder, and the user profile's ACLs apply.
+ */
+function ensureSafeHookDir(dir, platform = process.platform) {
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const st = fs.lstatSync(dir);
+  if (st.isSymbolicLink()) throw new Error(unsafeDirMessage(dir, 'it is a link'));
+  if (!st.isDirectory()) throw new Error(unsafeDirMessage(dir, 'it is not a folder'));
+  if (platform === 'win32') return;
+  if (typeof process.getuid === 'function' && st.uid !== process.getuid()) throw new Error(unsafeDirMessage(dir, 'it belongs to another user'));
+  if ((st.mode & 0o022) !== 0) throw new Error(unsafeDirMessage(dir, 'other users can write to it (mode ' + (st.mode & 0o777).toString(8) + ')'));
+}
+
+/** Why zn will not install the Antigravity hook at this launcher path, and the way out. */
+function spaceMessage(file) {
+  return 'zn cannot install the Antigravity hook: the launcher would be at ' + file + ', and Antigravity starts a hook by splitting the command on spaces, ' +
+    'without a shell or quotes, so a path with a space or another special character never starts, so the hook would protect nothing. ' +
+    'Choose a folder whose path has only letters, digits and - _ . / (for example a new folder inside a home folder that has no spaces), ' +
+    'run `ZN_HOOK_DIR=<that folder> zn hooks install antigravity`, and nothing else changes. The folder must be one you own: zn-gate refuses a folder that is a link, belongs to another user or can be written by others.';
+}
+
 /**
  * The PowerShell text (for windowsCommand-style quoting by the caller) of the
  * same three steps, ending with a comment that names the agent so that
@@ -297,4 +330,4 @@ function windowsScriptCommand(script) {
   return 'powershell.exe -NoProfile -NonInteractive -EncodedCommand ' + Buffer.from(script, 'utf16le').toString('base64');
 }
 
-module.exports = { projectShCommand, projectWindowsScript, isProjectGuard, isProjectWindowsScript, blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, windowsScript, BLOCK_EXIT, BLOCK_JSON };
+module.exports = { projectShCommand, projectWindowsScript, isProjectGuard, isProjectWindowsScript, blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, spaceMessage, unsafeDirMessage, ensureSafeHookDir, windowsScript, BLOCK_EXIT, BLOCK_JSON };
