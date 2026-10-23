@@ -144,13 +144,15 @@ const SHORT_NAME_RE = /^([^~\s.:*?"<>|\\/]{1,6})~[0-9]{1,6}(?:\.([^.\s:*?"<>|\\/
 function shortNameGlob(text) {
   if (process.platform !== 'win32' || typeof text !== 'string' || text.indexOf('~') < 0) return null;
   let found = false;
+  let lastShort = false;
   const out = text.split(/([\\/]+)/).map((seg) => {
     const m = SHORT_NAME_RE.exec(seg);
+    if (!/^[\\/]*$/.test(seg)) lastShort = !!m;
     if (!m) return seg;
     found = true;
     return '{,.}' + m[1] + '*' + (m[2] ? '.' + m[2] + '*' : '');
   }).join('');
-  return found ? out : null;
+  return found ? { glob: out, lastShort } : null;
 }
 /** The pattern, ignoring case where the platform does. */
 const ci = (re) => (caseInsensitive() && !re.flags.includes('i') ? new RegExp(re.source, re.flags + 'i') : re);
@@ -327,7 +329,8 @@ function classifyPath(p, opts = {}) {
   }
   // A short name hides the long one: it counts as protected when it could stand for a protected file or folder.
   const short = shortNameGlob(expanded.text);
-  if (short) return globClass(short, opts);
+  // When the last name is written out, a .env there is judged by its own content (readDenial), not by the pattern.
+  if (short) return globClass(short.glob, short.lastShort ? opts : { ...opts, skipDotenv: true });
   return null;
 }
 
@@ -557,12 +560,12 @@ function globClass(word, opts = {}) {
     if (e.agentVar) return { kind: 'agent_config', reason: 'a pattern built from $' + e.agentVar };
     const abs = slash(path.resolve(ctx.cwd, e.text));
     // Any pattern whose last name starts with .env names a .env file.
-    if (keyOf(path.posix.basename(abs)).startsWith('.env')) return { kind: 'credential', reason: 'a pattern that matches a .env file' };
+    if (!opts.skipDotenv && keyOf(path.posix.basename(abs)).startsWith('.env')) return { kind: 'credential', reason: 'a pattern that matches a .env file' };
     const re = globRegExp(keyOf(abs));
     if (re.impossible) continue;
     for (const ex of examples) {
       const c = classifyResolved(ex, ctx);
-      if (c && re.test(keyOf(slash(ex)))) {
+      if (c && !(opts.skipDotenv && c.kind === 'dotenv') && re.test(keyOf(slash(ex)))) {
         return c.kind === 'dotenv' ? { kind: 'credential', reason: 'a pattern that matches a .env file' } : c;
       }
     }
@@ -574,6 +577,7 @@ function globClass(word, opts = {}) {
         const c = classifyResolved(cand, ctx);
         // A key file match is judged by its content (keyFileGlobDenial); a protected file found later still wins.
         if (c && c.kind === 'keyfile') { keyHit = keyHit || c; continue; }
+        if (c && opts.skipDotenv && c.kind === 'dotenv') continue;
         if (c) return c.kind === 'dotenv' ? { kind: 'credential', reason: 'a pattern that matches a .env file' } : c;
       }
     }

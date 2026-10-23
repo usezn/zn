@@ -7,7 +7,10 @@ process.env.ZN_STATS = 'off';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const policy = require('../lib/hooks/policy');
+const { tempDir } = require('./helpers/tmp');
 
 function asWindows(fn) {
   const real = Object.getOwnPropertyDescriptor(process, 'platform');
@@ -20,15 +23,18 @@ const O = { cwd: 'C:\\Users\\alice\\proj', home: HOME, env: {} };
 
 // The Node test host is not Windows, so a short name (which needs the home folder to resolve) is tested with a
 // posix-style layout while the platform flag still says win32. On a real Windows host the drive paths work the same.
-const P = { cwd: '/Users/alice/proj', home: '/Users/alice', env: {} };
+// On a real Windows host path.resolve adds a drive, so there the same layout is written with one.
+const REAL_WIN = process.platform === 'win32';
+const L = (p) => (REAL_WIN ? 'C:' + p.split('/').join(String.fromCharCode(92)) : p);
+const P = { cwd: L('/Users/alice/proj'), home: L('/Users/alice'), env: {} };
 const SHORT_WRITE = [
   '/Users/alice/.claude/SETTIN~1.JSO',
   '/Users/alice/.claude/settin~1.jso',
   '/Users/alice/CLAUDE~1/settings.json',
   '/Users/alice/CLAUDE~1/SETTIN~1.JSO',
   '/Users/alice/.claude/SETTIN~2.JSO',
-];
-const SHORT_READ = ['/Users/alice/.aws/CREDEN~1', '/Users/alice/AWS~1/credentials', '/Users/alice/proj/ENV~1'];
+].map(L);
+const SHORT_READ = ['/Users/alice/.aws/CREDEN~1', '/Users/alice/AWS~1/credentials', '/Users/alice/proj/ENV~1'].map(L);
 
 const WRITE_TARGETS = [
   'C:\\Users\\alice\\.claude\\settings.json.',
@@ -105,7 +111,7 @@ test('an 8.3 short name of a protected file is protected (win32)', () => {
 test('a short name that cannot stand for a protected name stays allowed (win32)', () => {
   asWindows(() => {
     for (const p of ['/Users/alice/proj/PROGRA~1/app.exe', '/Users/alice/proj/README~1.TXT', '/Users/alice/notes~old.txt',
-      '/Users/alice/proj/REPORT~1.DOC', '/Users/alice/.cache/BUILD~1']) {
+      '/Users/alice/proj/REPORT~1.DOC', '/Users/alice/.cache/BUILD~1'].map(L)) {
       assert.equal(policy.classifyPath(p, P), null, p);
     }
   });
@@ -130,7 +136,7 @@ test('ordinary names stay allowed (win32)', () => {
   });
 });
 
-test('posix keeps a trailing dot as a different file, and ~1 is a plain name', () => {
+test('posix keeps a trailing dot as a different file, and ~1 is a plain name', { skip: REAL_WIN && 'posix paths only' }, () => {
   const o = { cwd: '/work/proj', home: '/home/alice', env: {} };
   assert.equal(policy.classifyPath('/home/alice/.aws/credentials.', o), null);
   assert.equal(policy.classifyPath('/home/alice/.aws/CREDEN~1', o), null);
@@ -152,5 +158,25 @@ test('very long segments stay linear (win32)', () => {
       policy.classifyPath(p, p.startsWith('/') ? P : O);
       assert.ok(Date.now() - t < 2000, 'slow: ' + p.length + ' chars took ' + (Date.now() - t) + ' ms');
     }
+  });
+});
+
+// A home folder or a temp folder with an 8.3 short name (C:\Users\RUNNER~1\...) is on every path under it: it must not
+// make a plain file there look protected, so a shadowed .env stays readable and a plain one stays refused.
+test('a short name in a parent folder behaves like the long name for a .env (win32)', (t) => {
+  const base = tempDir(t, 'zn-short-');
+  const home = path.join(base, 'ZNTST~1');
+  const dir = path.join(home, 'AppData', 'Temp', 'x');
+  fs.mkdirSync(dir, { recursive: true });
+  const env = path.join(dir, '.env');
+  const o = { cwd: dir, home, env: {} };
+  asWindows(() => {
+    fs.writeFileSync(env, 'AWS_ACCESS_KEY_ID=plain-text-example\nDEBUG=true\n');
+    assert.ok(policy.readDenial(env, o), 'plain .env refused');
+    fs.writeFileSync(env, 'AWS_ACCESS_KEY_ID=__ZN_AWS_ACCESS_KEY_ID__\nDEBUG=true\n');
+    assert.equal(policy.readDenial(env, o), null, 'shadowed .env allowed');
+    assert.equal(policy.readDenial(path.join(dir, '.env.example'), o), null);
+    assert.equal(policy.classifyPath(path.join(dir, 'notes.txt'), o), null);
+    assert.equal(policy.classifyPath(path.join(home, 'AppData', 'Temp', 'x', 'src.js'), o), null);
   });
 });
