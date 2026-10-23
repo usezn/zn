@@ -98,11 +98,13 @@ zn: .env holds plain-text secrets. Ask the user to run `zn env shadow .env` in t
 
 **What it means:** your agent tried to read a file with secrets in plain text. zn stopped it, so the secrets did not reach the agent. This is zn working, not an error.
 
+If `zn` is not installed on your computer, the message gives the `npx -y zn-gate@<version> env shadow .env` form instead, as in section 5.
+
 **What to do:**
 
 1. If the agent needs a value from that file, run `zn env shadow .env` yourself in your own terminal. The values move to the vault and the file keeps markers such as `__ZN_API_KEY__` that the agent can use.
 2. If you did not expect the read, ask your agent why it wanted that file, and do not look for a way around the block.
-3. To put your old `.env` back, run the restore command that `zn env shadow` printed, for example `zn env unshadow .env --backup <name>`.
+3. To put your old `.env` back, run the restore command that `zn env shadow` printed, for example `zn env unshadow .env --backup <name>`. It first asks `Write plain-text values back to .env? [y/N]`; answer `y` only if you want the secrets in the file again.
 
 More in [secrets](secrets.md) and [what the check means](check.md).
 
