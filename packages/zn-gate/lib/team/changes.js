@@ -219,7 +219,7 @@ function takeNotices(o) {
     dirty = true;
   }
   if (o.detectorsMissing && !(Number.isFinite(seen.detectors_at) && now - seen.detectors_at < DETECTORS_NOTICE_EVERY_MS)) {
-    lines.push('zn: Team detectors not applied. Your organization\'s custom secret formats are not active here because its policy does not verify on this machine. Run: ' + o.syncCommand + '.');
+    lines.push('zn: Team detectors not applied. Your organization\'s custom secret formats are not active here because its policy is missing or does not verify on this machine. Run: ' + o.syncCommand + '.');
     next.detectors_at = now;
     dirty = true;
   }

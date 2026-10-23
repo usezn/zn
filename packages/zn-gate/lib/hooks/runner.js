@@ -348,8 +348,10 @@ function znRunPrefix(opts, agentId) {
  * process. They only add redactions. They come from the verified readable
  * copy (~/.zn/org-policy.json); when that copy is missing or does not verify
  * and the vault is unlocked, from the policy held in the vault (the daemon
- * also puts the copies back). A vault that is joined but whose policy cannot
- * be applied leaves a line for the person (see takeTeamNotes). */
+ * also puts the copies back). A machine that is joined but whose policy cannot
+ * be applied (the copy does not verify, or it was deleted and the vault is
+ * locked or does not answer in time) leaves a line for the person (see
+ * takeTeamNotes). */
 let orgDetectors = null;
 let teamNotes = [];
 const takeTeamNotes = () => { const n = teamNotes; teamNotes = []; return n; };
@@ -374,6 +376,9 @@ async function orgDetectorsFor(opts, vault) {
     let change = null;
     let org = st.org || null;
     let missing = false;
+    // The organization is known on this machine (team.json, or only a policy copy is left) but its policy
+    // is not readable here: the state is 'none'. That is the file-deleted case and must not be silent.
+    const copyLost = st.state === 'none' && (Boolean(st.org) || Boolean(team.readCache(popts)));
     if (st.state === 'active' || st.state === 'expired') {
       orgDetectors = compile(detectorsOf(st));
       change = st.change;
@@ -383,8 +388,8 @@ async function orgDetectorsFor(opts, vault) {
         org = r.org || org;
         if (r.state === 'active' || r.state === 'expired') { orgDetectors = compile(Array.isArray(r.detectors) ? r.detectors : []); change = r.change; }
         else if (r.state === 'invalid') missing = true;
-      } else if (r === null && st.state === 'invalid') missing = true;
-    } else if (st.state === 'invalid') {
+      } else if (r === null && (st.state === 'invalid' || copyLost)) missing = true;
+    } else if (st.state === 'invalid' || copyLost) {
       missing = true;
     }
     if (change || missing) {

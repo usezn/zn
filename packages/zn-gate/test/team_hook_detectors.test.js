@@ -119,6 +119,39 @@ test('a joined vault whose policy does not verify says that Team detectors are n
   assert.ok(!second.message);
 });
 
+test('the policy copy was deleted and the vault does not deliver the detectors: the hook says they are not applied', async () => {
+  const lockedVault = Object.assign(createFakeVault(), { teamHookInfo: async () => { throw new Error('vault is locked'); } });
+  const slowVault = Object.assign(createFakeVault(), { teamHookInfo: () => new Promise(() => {}) });
+  // team.json present, org-policy.json deleted: the state is "none" with an organization.
+  for (const [name, vault] of [['vault locked', lockedVault], ['daemon slower than 1.5 s', slowVault], ['no vault operation (old daemon)', createFakeVault()]]) {
+    fs.rmSync(process.env.ZN_HOME, { recursive: true, force: true });
+    fs.mkdirSync(process.env.ZN_HOME, { recursive: true });
+    writeTeam();
+    const first = await run(vault);
+    assert.ok(!redacted(first), name + ': no detector could be applied');
+    assert.match(first.message || '', /^zn: Team detectors not applied\./, name);
+    assert.match(first.message, /team sync/);
+    assert.ok(!(await run(vault)).message, name + ': at most once an hour');
+  }
+  // Only the policy copy is left (team.json deleted): also reported.
+  fs.rmSync(process.env.ZN_HOME, { recursive: true, force: true });
+  fs.mkdirSync(process.env.ZN_HOME, { recursive: true });
+  policy.writeCache(envelope(1));
+  assert.match((await run(lockedVault)).message || '', /^zn: Team detectors not applied\./);
+});
+
+test('no policy copy and a vault that answers is not a warning: it delivers the detectors, or says there is nothing', async () => {
+  writeTeam();
+  const joinedNoPolicy = Object.assign(createFakeVault(), { teamHookInfo: async () => ({ joined: true, org: ORG, state: 'none', version: null, detectors: [], change: null }) });
+  assert.ok(!(await run(joinedNoPolicy)).message, 'joined, no policy published yet');
+  const notJoined = Object.assign(createFakeVault(), { teamHookInfo: async () => ({ joined: false }) });
+  assert.ok(!(await run(notJoined)).message, 'a stale team.json while the vault says not joined');
+  const answers = Object.assign(createFakeVault(), { teamHookInfo: async () => ({ joined: true, org: ORG, state: 'active', version: 1, detectors: [DETECTOR], change: null }) });
+  const r = await run(answers);
+  assert.ok(redacted(r));
+  assert.ok(!r.message);
+});
+
 test('a vault that is not in an organization, or an old daemon, adds nothing', async () => {
   for (const vault of [
     Object.assign(createFakeVault(), { teamHookInfo: async () => ({ joined: false }) }),
