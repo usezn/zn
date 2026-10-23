@@ -6,7 +6,6 @@
  */
 
 const path = require('path');
-const { trimTrailing } = require('../linear-text');
 
 const MAX_LINE = 4000;
 
@@ -314,6 +313,41 @@ const INTERPRETERS = new Set([
   'source', 'osascript', 'iex', 'invoke-expression',
 ]);
 
+const PACKAGE_MANAGERS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
+const SAFE_WORD = /^[\w@%+=.,/~:-]+$/;
+const SCRIPT_NAME = /^[\w][\w:-]*$/;
+const PM_SUBS = new Set(['ci', 'remove', 'test', 'build', 'lint']);
+const PM_TOOLS = new Set(['eslint', 'oxlint', 'prettier', 'tsc', 'vitest', 'jest', 'biome', 'knip', 'ruff', 'mypy', 'black']);
+const PY_MODULES = new Set(['pytest', 'unittest', 'ruff', 'mypy', 'black', 'flake8', 'isort', 'pylint']);
+const DENO_SUBS = new Set(['test', 'lint', 'fmt', 'check']);
+const CONTAINER_READ = new Set(['ps', 'images', 'logs', 'inspect', 'version', 'info', 'stats', 'top']);
+
+/**
+ * True only for the exact, safe shapes of a scoped permission: a tool, a fixed
+ * subcommand or script from a short allowlist, then literal arguments. Every
+ * other shape (flags, groups such as "docker compose", run or exec, code
+ * subcommands, bare tools) stays flagged.
+ */
+function scopedShape(words) {
+  const first = words[0].toLowerCase();
+  const sub = (words[1] || '').toLowerCase();
+  if (!words.every((w) => SAFE_WORD.test(w))) return false;
+  if (PACKAGE_MANAGERS.has(first)) {
+    if (sub === 'run') return words.length > 2 && SCRIPT_NAME.test(words[2]);
+    return PM_SUBS.has(sub);
+  }
+  if (first === 'npx' || first === 'bunx' || first === 'uvx') return PM_TOOLS.has(sub);
+  if (first === 'python' || first === 'python3' || first === 'py') {
+    if (sub === '-m') return PY_MODULES.has((words[2] || '').toLowerCase());
+    return /^[\w./-]+\.py$/.test(words[1] || '');
+  }
+  if (first === 'node') return /^[\w./-]+\.[cm]?js$/.test(words[1] || '');
+  if (first === 'sh' || first === 'bash' || first === 'zsh' || first === 'dash') return /^[\w./-]+\.sh$/.test(words[1] || '');
+  if (first === 'deno') return DENO_SUBS.has(sub) || (sub === 'task' && words.length > 2 && SCRIPT_NAME.test(words[2]));
+  if (first === 'docker' || first === 'podman') return CONTAINER_READ.has(sub);
+  return false;
+}
+
 /** Severity of one Claude Code permission rule, or null when it is narrow. */
 function claudePermission(entry) {
   const e = String(entry || '').trim();
@@ -322,9 +356,16 @@ function claudePermission(entry) {
   if (!m) return null;
   const inner = m[2].trim();
   if (inner === '' || /^[*:\s]+$/.test(inner)) return 'high';
-  const first = trimTrailing(inner.split(/[\s:]/)[0], '*');
-  if (INTERPRETERS.has(first.toLowerCase()) && /[*]/.test(inner)) return 'high';
-  return null;
+  if (!/[*]/.test(inner)) return null;
+  const firstWord = inner.split(/[\s:]/)[0].toLowerCase();
+  if (firstWord.includes('*')) return 'high';
+  if (!INTERPRETERS.has(firstWord) && !PACKAGE_MANAGERS.has(firstWord)) return null;
+  // Only a final ":*" or " *" is a prefix wildcard; any other * can stand for a
+  // flag or a subcommand, so it is flagged.
+  const m2 = /^(.*?)(?::\*|\s\*)$/s.exec(inner);
+  if (!m2 || m2[1].includes('*')) return 'high';
+  const words = m2[1].split(/\s+/).filter(Boolean);
+  return words.length > 0 && scopedShape(words) ? null : 'high';
 }
 
 /* ------------------------ instruction text ------------------------- */

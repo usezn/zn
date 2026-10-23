@@ -45,7 +45,7 @@ zn env shadow .env
 
 Every sensitive value moves into the vault and `.env` keeps only markers:
 
-```
+```text
 DATABASE_URL=postgres://app:__ZN_DATABASE_URL_PASSWORD__@db:5432/app
 STRIPE_KEY=__ZN_STRIPE_KEY__
 PORT=3000
@@ -75,6 +75,40 @@ scrubber before it reaches the model. Known values, more than 60 secret formats
 replaced with tokens. Reads of `.env` files with real values, credential files
 (`~/.aws/credentials`, `~/.ssh/id_*`, `~/.npmrc`…) and zn's own `~/.zn` are
 blocked.
+
+### Name, address and username
+
+Besides checksummed personal data (cards, IBAN, national IDs, e-mail, phone), the
+scrubber detects three personal fields that have no checksum: a person's name
+(`PERSON_NAME`), a postal address (`POSTAL_ADDRESS`) and a username (`USERNAME`).
+They are matched only when an explicit key sits next to the value, so a bare
+name in text is never touched. Only the value is replaced; the key stays.
+
+| Type | HTTP header keys | Query string and form keys |
+|---|---|---|
+| `PERSON_NAME` | `X-User-Name`, `X-Full-Name` | `full_name`, `fullname`, `name` |
+| `POSTAL_ADDRESS` | `X-Address` | `address` |
+| `USERNAME` | `X-Username`, `X-User`, `X-Forwarded-User`, `X-Remote-User` | `username`, `user`, `login` |
+
+- Keys are case-insensitive. A header value runs to the end of the line (or to
+  the closing quote when the header sits in JSON or in `curl -H '...'`). A query
+  or form value runs to the next `&`; spaces must be encoded (`+` or `%20`)
+  inside a query string. A `key=value` line is also read when the key starts in
+  column 0.
+- Only headers, query strings and form bodies are in scope. Code (keyword
+  arguments such as `f(user=x)`), JSON schemas, `package.json` and ALL-CAPS
+  environment variables (`USER=...`) are not matched.
+- Empty values, placeholders (`${USER}`, `<name>`, `null`, `anonymous`) and
+  values that cannot be what the key says are skipped: `name=build` is not a
+  person, and a generic `name=` needs two capitalised words. A username must
+  be a plain token (letters, digits, `.`, `_`, `-`) and not `root`, `admin`,
+  `ubuntu` or similar. An address needs a number and at least two words, so
+  URLs, e-mails, IPs and wallet addresses are skipped.
+
+They are personal data, not secrets: they follow the scrubber's `pii` setting
+(`pii: false` turns all personal data off) and can be switched off one by one
+with `pii: { name: false, address: false, username: false }`. They are on by
+default.
 
 A prompt that contains a secret is not sent. In prompts, zn also blocks a
 value of 8 characters or more given to a credential name, in the middle of a

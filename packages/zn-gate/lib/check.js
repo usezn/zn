@@ -25,6 +25,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { nodeAdvice } = require('./node-support');
 
 const FAKE_LINE = 'ZN_CHECK_EXAMPLE_KEY=zn-check-fake-value-not-a-real-key\n';
 const HOOK_TIMEOUT_MS = 15000;
@@ -673,8 +674,27 @@ async function checkAgent(spec, ctx) {
   return res;
 }
 
+/* Warnings about the Node.js that runs zn-gate and the one the plugin's hooks will run on (end-of-life, or below the
+   patched release of its line). They never change what is protected or the exit code. */
+function nodeWarnings(opts, env) {
+  const out = [];
+  try {
+    const zn = opts.nodeVersion || process.versions.node;
+    const a = nodeAdvice(zn);
+    if (a) out.push(a.message);
+    let hook = opts.hookNode;
+    if (typeof hook === 'function') hook = hook(env);
+    else if (hook === undefined) hook = opts.nodeVersion ? null : resolveHookNode(env);
+    if (hook && hook.version && hook.version !== zn) {
+      const h = nodeAdvice(hook.version);
+      if (h) out.push('The hooks will run on Node.js ' + hook.version + (hook.path ? ' (from ' + hook.path + ')' : '') + '. ' + h.message);
+    }
+  } catch (err) { /* a warning never fails the check */ }
+  return out;
+}
+
 /**
- * check({home, env, cwd, live}) -> {results, removed}. Never throws for one agent.
+ * check({home, env, cwd, live}) -> {results, removed, warnings}. Never throws for one agent.
  * With live: false only the setup is read: no test folder, no rules run, no hook started
  * (each result then has checked: false, and "protected" means set up with no problem found).
  */
@@ -692,7 +712,7 @@ async function check(opts = {}) {
         results.push({ id: spec.id, name: spec.name, fix: spec.fix, state: 'not-protected', problem: 'zn could not read its setup: ' + oneLine(err && err.message, 200), notes: [], checked: false });
       }
     }
-    return { results, removed: true };
+    return { results, removed: true, warnings: nodeWarnings(opts, env) };
   }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-check-'));
   const ctx = { home, env, cwd, live: true, dir, envFile: path.join(dir, '.env'), readme: path.join(dir, 'README.txt'), codexPolicy: opts.codexPolicy, claudePolicy: opts.claudePolicy, cursorPolicy: opts.cursorPolicy, geminiSystemFile: opts.geminiSystemFile, nodeVersion: opts.nodeVersion, hookNode: opts.hookNode, pluginNode: opts.pluginNode };
@@ -711,11 +731,11 @@ async function check(opts = {}) {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
-  return { results, removed: !fs.existsSync(dir) };
+  return { results, removed: !fs.existsSync(dir), warnings: nodeWarnings(opts, env) };
 }
 
 /** Plain-language report; returns the exit code (0 when every agent set up is protected). */
-function report({ results, removed }, write) {
+function report({ results, removed, warnings }, write) {
   const w = write || ((s) => process.stdout.write(s));
   w('\nzn-gate check: does zn stop your coding agent from reading a secret?\n\n');
   w('zn made a test folder with a fake key in a .env file and an ordinary file next to it, then asked\n');
@@ -765,6 +785,8 @@ function report({ results, removed }, write) {
   } else {
     w('Some agents are not protected (see above). More: https://usezn.com/docs/check\n\n');
   }
+  for (const n of warnings || []) w('Warning: ' + n + '\n');
+  if (warnings && warnings.length) w('\n');
   w(removed ? 'The test folder was deleted.\n' : 'The test folder could not be deleted; it holds only the fake key.\n');
   return setUp && !bad ? 0 : 1;
 }
