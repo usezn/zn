@@ -896,14 +896,20 @@ async function decidePrompt(ev, d, agentId) {
 // plus private keys, and a size cap so the check fits in the hook's time.
 const EXPANSION_CAP = 1000000;
 const PRIVATE_KEY_HEADER_RE = /-----BEGIN (?:[A-Z0-9]+ ){0,4}PRIVATE KEY(?: BLOCK)?-----/g;
-const PRIVATE_KEY_BODY_RE = /^\s*(?:[ \t]*[A-Za-z0-9+\/=]{8,}[ \t]*\r?\n){2}|^\s*[A-Za-z0-9+\/=]{64,}/;
+// The leading space of the first line is the `\s*`; the second line has its own `[ \t]*` after the
+// newline. No class can split a run of spaces two ways, so the test is linear in the window.
+const PRIVATE_KEY_BODY_RE = /^\s*[A-Za-z0-9+\/=]{8,}[ \t]*\r?\n[ \t]*[A-Za-z0-9+\/=]{8,}[ \t]*\r?\n|^\s*[A-Za-z0-9+\/=]{64,}/;
+// A text with this many key headers is treated as carrying a key: bounded work, fail closed.
+const PRIVATE_KEY_MAX_HEADERS = 256;
 
 // A key, not a line that names one: the header must be followed by a base64 body.
 function hasPrivateKey(text) {
   if (/PuTTY-User-Key-File-/.test(text)) return true;
   PRIVATE_KEY_HEADER_RE.lastIndex = 0;
   let m;
+  let seen = 0;
   while ((m = PRIVATE_KEY_HEADER_RE.exec(text)) !== null) {
+    if (++seen > PRIVATE_KEY_MAX_HEADERS) return true;
     if (PRIVATE_KEY_BODY_RE.test(text.slice(m.index + m[0].length, m.index + m[0].length + 4096))) return true;
   }
   return false;
@@ -1553,7 +1559,7 @@ async function handleEvent(args, state, readText) {
   }
 }
 
-module.exports = { handle, main, mapStrings, decidePre, decidePost, INVISIBLE_CHARS_RE, postDeadlineMs, POST_STDIN_CAP, POST_TOKEN_CAP, POST_SCAN_CAP, decidePrompt, decideExpansion, decideStop };
+module.exports = { handle, main, mapStrings, decidePre, decidePost, INVISIBLE_CHARS_RE, postDeadlineMs, POST_STDIN_CAP, POST_TOKEN_CAP, POST_SCAN_CAP, decidePrompt, decideExpansion, decideStop, hasPrivateKey };
 
 // Direct entry (`node lib/hooks/runner.js <agent>`): what installed hooks call,
 // so a hook does not pay for loading the rest of the CLI.
