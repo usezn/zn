@@ -2,6 +2,8 @@
 
 The eleven messages people most often meet when they first use zn-gate: what each one means and what to do. Each message is copied as zn-gate prints it. A part in angle brackets, such as `<agent>`, is a blank that zn fills in for you.
 
+Some of these messages are printed only by releases after 1.13.1: the ones about `zn vault reset` and a damaged vault file, a damaged evidence log, and the closing "Open a terminal window yourself and run it there." of section 4. In 1.13.1 itself they are shorter or missing, and the Node.js version in section 11 is 20.12 instead of 20.19. Run `zn-gate --version` to see which one you have.
+
 Run every command in your own terminal, not through your AI agent. New here? Start with [First 5 minutes](first-5-minutes.md). Words you do not know are in the [glossary](glossary.md).
 
 ## 1. Node.js is too old
