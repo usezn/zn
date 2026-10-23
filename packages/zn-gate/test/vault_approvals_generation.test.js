@@ -26,9 +26,10 @@ const fake = () => 'fake-' + crypto.randomBytes(12).toString('hex');
 const asked = [];
 let srv = null;
 let identity = null;
+let duringConfirm = null;
 
 async function start() {
-  srv = await daemon.serve({ identity, ttlMs: 60000, idleMs: 60000, confirm: async (req) => { asked.push(req); return true; } });
+  srv = await daemon.serve({ identity, ttlMs: 60000, idleMs: 60000, confirm: async (req) => { asked.push(req); if (duringConfirm) await duringConfirm(req); return true; } });
 }
 async function stop() {
   if (srv) { await srv.close(); srv = null; }
@@ -126,4 +127,30 @@ test('an approval recorded without a generation id is not approved, and approvin
   assert.match(now.secrets.DEMO_KEEP_KEY.generation, /^[0-9a-f]{32}$/);
   assert.equal(now.approvals[legacyKey].gen, now.secrets.DEMO_KEEP_KEY.generation);
   c.close();
+});
+
+test('replacing a secret while its first-use confirmation is pending refuses the approval and records nothing', async () => {
+  const c = clientMod.createClient({});
+  const other = clientMod.createClient({});
+  await c.setSecret('DEMO_PENDING_KEY', fake(), meta);
+  let replaced = false;
+  duringConfirm = async (req) => {
+    if (req.kind !== 'approval' || replaced) return;
+    replaced = true;
+    await other.setSecret('DEMO_PENDING_KEY', fake(), meta);
+  };
+  try {
+    await assert.rejects(c.recordApproval(PROJECT, 'DEMO_PENDING_KEY', 'node'), (e) => e.code === 'ZN_POLICY_DENIED' && /changed while waiting for confirmation/.test(e.message));
+  } finally {
+    duringConfirm = null;
+  }
+  assert.ok(replaced, 'the value was replaced while the dialog was open');
+  assert.equal(await c.isApproved(PROJECT, 'DEMO_PENDING_KEY', 'node'), false);
+  const data = await secretsFile();
+  assert.ok(!Object.keys(data.approvals || {}).some((k) => k.split(':')[1] === 'DEMO_PENDING_KEY'), 'nothing was recorded');
+  // Asking again, with no change during the prompt, works.
+  await c.recordApproval(PROJECT, 'DEMO_PENDING_KEY', 'node');
+  assert.equal(await c.isApproved(PROJECT, 'DEMO_PENDING_KEY', 'node'), true);
+  c.close();
+  other.close();
 });
