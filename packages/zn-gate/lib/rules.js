@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-25.2
+ * RULES_VERSION: 2026-10-25.5
  */
 
-const RULES_VERSION = '2026-10-25.2';
+const RULES_VERSION = '2026-10-25.5';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -113,6 +113,31 @@ const INJECTION_RULES = [
   { id: 'pi:identity_request', pattern: new RegExp(String.raw`(?<![A-Za-z0-9_])(?<!never\s)(?<!not\s)(?<!n't\s)(?<!n\u2019t\s)(?<!avoid\s)(?:include|add|put|attach|append|insert|embed|set|send|pass|forward|submit|post|write|specify|provide|supply|encode|inject|place|share|transmit|reveal|disclose|expose)(?![A-Za-z0-9_])[^\n]{0,60}?(?:(?:(?:(?:your|the)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)|your\s{1,4}(?:end\s{1,4})?(?:customer|account\s{1,4}holder))[\x27’]s\s{1,4}(?:(?:full|real|first|last|login|primary|account|email|e-mail)\s{1,4}){0,2}(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|usernames?|user\s{0,2}ids?|accounts?|api[\s-]{0,2}keys?|access\s{1,4}tokens?|tokens?|credentials?|passwords?|logins?|identity|identifier|phone(?:\s{1,4}number)?|address|keys?|secrets?)|(?:(?:full|real|first|last|login|primary|account|email|e-mail)\s{1,4}){0,2}(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|usernames?|user\s{0,2}ids?|accounts?|api[\s-]{0,2}keys?|access\s{1,4}tokens?|tokens?|credentials?|passwords?|logins?|identity|identifier|phone(?:\s{1,4}number)?|address|keys?|secrets?)\s{1,4}(?:of|for)\s{1,4}(?:(?:your|the)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)|your\s{1,4}(?:end\s{1,4})?(?:customer|account\s{1,4}holder)))(?![A-Za-z0-9_])[^\n]{0,80}?(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|(?:request\s{1,4})?(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:subsequent|following|every|each|outgoing)\s{1,4}(?:http\s{1,4})?(?:requests?|calls?|fetch(?:es)?))|(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|(?:request\s{1,4})?(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:subsequent|following|every|each|outgoing)\s{1,4}(?:http\s{1,4})?(?:requests?|calls?|fetch(?:es)?))[^\n]{0,80}?(?:(?:(?:your|the)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)|your\s{1,4}(?:end\s{1,4})?(?:customer|account\s{1,4}holder))[\x27’]s\s{1,4}(?:(?:full|real|first|last|login|primary|account|email|e-mail)\s{1,4}){0,2}(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|usernames?|user\s{0,2}ids?|accounts?|api[\s-]{0,2}keys?|access\s{1,4}tokens?|tokens?|credentials?|passwords?|logins?|identity|identifier|phone(?:\s{1,4}number)?|address|keys?|secrets?)|(?:(?:full|real|first|last|login|primary|account|email|e-mail)\s{1,4}){0,2}(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|usernames?|user\s{0,2}ids?|accounts?|api[\s-]{0,2}keys?|access\s{1,4}tokens?|tokens?|credentials?|passwords?|logins?|identity|identifier|phone(?:\s{1,4}number)?|address|keys?|secrets?)\s{1,4}(?:of|for)\s{1,4}(?:(?:your|the)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)|your\s{1,4}(?:end\s{1,4})?(?:customer|account\s{1,4}holder)))(?![A-Za-z0-9_]))|(?<![A-Za-z0-9_])(?:(?:identify|reveal|disclose|state|report|announce)\s{1,4}(?:to\s{1,4}(?:me|us|this\s{1,4}[a-z]{3,10})\s{1,4})?(?:who\s{1,4})?your\s{1,4}(?:user|operator|owner|human|principal)(?:\s{1,4}is)?(?![A-Za-z0-9_])|(?:tell|inform)\s{1,4}(?:me|us)\s{1,4}who\s{1,4}(?:your|the)\s{1,4}(?:user|operator|owner|human|principal)\s{1,4}is(?![A-Za-z0-9_])|(?:tell|state|say|reveal|report)[^\n]{0,20}?who\s{1,4}you\s{1,4}(?:are|[\x27’]re)\s{1,4}(?:working|acting)\s{1,4}for(?![A-Za-z0-9_]))`, 'i'), description: 'Tool result asks the agent to identify its user or put the user identity in a request' },
   { id: 'pi:identity_request_multi', pattern: new RegExp(String.raw`(?<![A-Za-z0-9_])(?:incluye|incluya|incluyas|añade|añada|agrega|agregue|pon|ponga|envía|envia|envíe|adjunta|adjunte|inserta|pasa|indica|comparte|revela)(?![A-Za-z0-9_])[^\n]{0,60}?(?:(?:(?:usuario|operador|due[ñn]o|propietario)[^\n]{0,30}?(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)|(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)[^\n]{0,30}?(?:usuario|operador|due[ñn]o|propietario))[^\n]{0,80}?(?:cabecera|encabezado|header|par[aá]metro|cookie|formulario|campo|(?:siguiente|pr[oó]xima)\s{1,4}(?:petici[oó]n|solicitud)|url)|(?:cabecera|encabezado|header|par[aá]metro|cookie|formulario|campo|(?:siguiente|pr[oó]xima)\s{1,4}(?:petici[oó]n|solicitud)|url)[^\n]{0,80}?(?:(?:usuario|operador|due[ñn]o|propietario)[^\n]{0,30}?(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)|(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)[^\n]{0,30}?(?:usuario|operador|due[ñn]o|propietario)))|(?:cabecera|encabezado|header|par[aá]metro|cookie|formulario|campo|(?:siguiente|pr[oó]xima)\s{1,4}(?:petici[oó]n|solicitud)|url)[^\n]{0,60}?(?<![A-Za-z0-9_])(?:incluye|incluya|incluyas|añade|añada|agrega|agregue|pon|ponga|envía|envia|envíe|adjunta|adjunte|inserta|pasa|indica|comparte|revela)(?![A-Za-z0-9_])[^\n]{0,60}?(?:(?:usuario|operador|due[ñn]o|propietario)[^\n]{0,30}?(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)|(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)[^\n]{0,30}?(?:usuario|operador|due[ñn]o|propietario))|(?<![A-Za-z0-9_])(?:inclua|inclui|adicione|adiciona|coloque|coloca|envie|envia|anexe|insira|passe|compartilhe|revele)(?![A-Za-z0-9_])[^\n]{0,60}?(?:(?:(?:usu[aá]rio|operador|dono|propriet[aá]rio)[^\n]{0,30}?(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)|(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)[^\n]{0,30}?(?:usu[aá]rio|operador|dono|propriet[aá]rio))[^\n]{0,80}?(?:cabe[cç]alho|header|par[aâ]metro|cookie|formul[aá]rio|campo|pr[oó]xima\s{1,4}requisi[cç][aã]o|url)|(?:cabe[cç]alho|header|par[aâ]metro|cookie|formul[aá]rio|campo|pr[oó]xima\s{1,4}requisi[cç][aã]o|url)[^\n]{0,80}?(?:(?:usu[aá]rio|operador|dono|propriet[aá]rio)[^\n]{0,30}?(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)|(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)[^\n]{0,30}?(?:usu[aá]rio|operador|dono|propriet[aá]rio)))|(?:cabe[cç]alho|header|par[aâ]metro|cookie|formul[aá]rio|campo|pr[oó]xima\s{1,4}requisi[cç][aã]o|url)[^\n]{0,60}?(?<![A-Za-z0-9_])(?:inclua|inclui|adicione|adiciona|coloque|coloca|envie|envia|anexe|insira|passe|compartilhe|revele)(?![A-Za-z0-9_])[^\n]{0,60}?(?:(?:usu[aá]rio|operador|dono|propriet[aá]rio)[^\n]{0,30}?(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)|(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)[^\n]{0,30}?(?:usu[aá]rio|operador|dono|propriet[aá]rio))|(?<![A-Za-z0-9_])(?:inclus|incluez|ajoute|ajoutez|mets|mettez|envoie|envoyez|joins|joignez|insère|insérez|transmets|transmettez|partage|partagez|révèle|révélez)(?![A-Za-z0-9_])[^\n]{0,60}?(?:(?:(?:utilisateur|opérateur|propriétaire)[^\n]{0,30}?(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)|(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)[^\n]{0,30}?(?:utilisateur|opérateur|propriétaire))[^\n]{0,80}?(?:en-t[eê]te|header|param[eè]tre|cookie|formulaire|champ|prochaine\s{1,4}requ[eê]te|url)|(?:en-t[eê]te|header|param[eè]tre|cookie|formulaire|champ|prochaine\s{1,4}requ[eê]te|url)[^\n]{0,80}?(?:(?:utilisateur|opérateur|propriétaire)[^\n]{0,30}?(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)|(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)[^\n]{0,30}?(?:utilisateur|opérateur|propriétaire)))|(?:en-t[eê]te|header|param[eè]tre|cookie|formulaire|champ|prochaine\s{1,4}requ[eê]te|url)[^\n]{0,60}?(?<![A-Za-z0-9_])(?:inclus|incluez|ajoute|ajoutez|mets|mettez|envoie|envoyez|joins|joignez|insère|insérez|transmets|transmettez|partage|partagez|révèle|révélez)(?![A-Za-z0-9_])[^\n]{0,60}?(?:(?:utilisateur|opérateur|propriétaire)[^\n]{0,30}?(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)|(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)[^\n]{0,30}?(?:utilisateur|opérateur|propriétaire))|(?<![A-Za-z0-9_])(?:füge|fuege|sende|schicke|übergib|uebergib|setze|gib|teile|nenne|hänge|binde)(?![A-Za-z0-9_])[^\n]{0,60}?(?:(?:(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)[^\n]{0,30}?(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)|(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)[^\n]{0,30}?(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators))[^\n]{0,80}?(?:header|kopfzeile|parameter|cookie|formular|feld|nächste\s{1,4}anfrage|url)|(?:header|kopfzeile|parameter|cookie|formular|feld|nächste\s{1,4}anfrage|url)[^\n]{0,80}?(?:(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)[^\n]{0,30}?(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)|(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)[^\n]{0,30}?(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)))|(?:header|kopfzeile|parameter|cookie|formular|feld|nächste\s{1,4}anfrage|url)[^\n]{0,60}?(?<![A-Za-z0-9_])(?:füge|fuege|sende|schicke|übergib|uebergib|setze|gib|teile|nenne|hänge|binde)(?![A-Za-z0-9_])[^\n]{0,60}?(?:(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)[^\n]{0,30}?(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)|(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)[^\n]{0,30}?(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators))|(?:добавь|добавьте|включи|включите|отправь|отправьте|передай|передайте|укажи|укажите|вставь|вставьте)[^\n]{0,60}?(?:(?:(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)[^\n]{0,30}?(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)|(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)[^\n]{0,30}?(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*))[^\n]{0,80}?(?:заголов[а-яё]+|header|параметр[а-яё]*|cookie|куки|форм[а-яё]+|поле|следующ[а-яё]+\s{1,4}запрос[а-яё]*|url)|(?:заголов[а-яё]+|header|параметр[а-яё]*|cookie|куки|форм[а-яё]+|поле|следующ[а-яё]+\s{1,4}запрос[а-яё]*|url)[^\n]{0,80}?(?:(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)[^\n]{0,30}?(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)|(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)[^\n]{0,30}?(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)))|(?:заголов[а-яё]+|header|параметр[а-яё]*|cookie|куки|форм[а-яё]+|поле|следующ[а-яё]+\s{1,4}запрос[а-яё]*|url)[^\n]{0,60}?(?:добавь|добавьте|включи|включите|отправь|отправьте|передай|передайте|укажи|укажите|вставь|вставьте)[^\n]{0,60}?(?:(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)[^\n]{0,30}?(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)|(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)[^\n]{0,30}?(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*))|(?:添加|加入|包含|附上|发送|传递|提供|填写|放入|带上|附加)[^\n]{0,60}?(?:(?:(?:用户|使用者|操作者|主人|所有者)[^\n]{0,30}?(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)|(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)[^\n]{0,30}?(?:用户|使用者|操作者|主人|所有者))[^\n]{0,80}?(?:请求头|头部|标头|header|参数|cookie|表单|字段|下一个请求|下一次请求|下个请求|url|查询字符串)|(?:请求头|头部|标头|header|参数|cookie|表单|字段|下一个请求|下一次请求|下个请求|url|查询字符串)[^\n]{0,80}?(?:(?:用户|使用者|操作者|主人|所有者)[^\n]{0,30}?(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)|(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)[^\n]{0,30}?(?:用户|使用者|操作者|主人|所有者)))|(?:请求头|头部|标头|header|参数|cookie|表单|字段|下一个请求|下一次请求|下个请求|url|查询字符串)[^\n]{0,60}?(?:添加|加入|包含|附上|发送|传递|提供|填写|放入|带上|附加)[^\n]{0,60}?(?:(?:用户|使用者|操作者|主人|所有者)[^\n]{0,30}?(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)|(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)[^\n]{0,30}?(?:用户|使用者|操作者|主人|所有者))`, 'iu'), description: 'Tool result asks the agent to identify its user or put the user identity in a request (non-English)' },
 ];
+
+// Cheap necessary conditions for the identity-request rules, checked in front
+// of the two (much more expensive) patterns. Every match of
+// pi:identity_request has a word for the user (user, operator, owner...) or
+// "who", and a place word (header, cookie, URL parameter, form field, next
+// request...) or one of its "who is your user" phrasings; every match of
+// pi:identity_request_multi has a word for the user and a place word of its
+// language. The groups below are copied from the patterns (a test checks
+// that), so a text the pattern would match is never skipped.
+const IDENTITY_REQUEST_PREFILTERS = [
+  new RegExp(String.raw`(?:user|operator|owner|human|principal)|customer|account\s{1,4}holder|who`, 'i'),
+  new RegExp(String.raw`(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|(?:request\s{1,4})?(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:subsequent|following|every|each|outgoing)\s{1,4}(?:http\s{1,4})?(?:requests?|calls?|fetch(?:es)?))|who|your\s{1,4}(?:user|operator|owner|human|principal)`, 'i'),
+];
+const IDENTITY_REQUEST_MULTI_PREFILTERS = [
+  new RegExp(String.raw`(?:usuario|operador|due[ñn]o|propietario)|(?:usu[aá]rio|operador|dono|propriet[aá]rio)|(?:utilisateur|opérateur|propriétaire)|(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)|(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)|(?:用户|使用者|操作者|主人|所有者)`, 'iu'),
+  new RegExp(String.raw`(?:cabecera|encabezado|header|par[aá]metro|cookie|formulario|campo|(?:siguiente|pr[oó]xima)\s{1,4}(?:petici[oó]n|solicitud)|url)|(?:cabe[cç]alho|header|par[aâ]metro|cookie|formul[aá]rio|campo|pr[oó]xima\s{1,4}requisi[cç][aã]o|url)|(?:en-t[eê]te|header|param[eè]tre|cookie|formulaire|champ|prochaine\s{1,4}requ[eê]te|url)|(?:header|kopfzeile|parameter|cookie|formular|feld|nächste\s{1,4}anfrage|url)|(?:заголов[а-яё]+|header|параметр[а-яё]*|cookie|куки|форм[а-яё]+|поле|следующ[а-яё]+\s{1,4}запрос[а-яё]*|url)|(?:请求头|头部|标头|header|参数|cookie|表单|字段|下一个请求|下一次请求|下个请求|url|查询字符串)`, 'iu'),
+];
+for (const rule of INJECTION_RULES) {
+  const prefilters = rule.id === 'pi:identity_request' ? IDENTITY_REQUEST_PREFILTERS
+    : rule.id === 'pi:identity_request_multi' ? IDENTITY_REQUEST_MULTI_PREFILTERS : null;
+  if (!prefilters) continue;
+  const pattern = rule.pattern;
+  rule.prefilters = prefilters;
+  rule.test = (text) => prefilters.every((re) => re.test(text)) && pattern.test(text);
+}
 
 // Hidden-element detection in two linear passes: find the first opening tag
 // whose attributes hide it, then search once for a payload keyword after it.
@@ -595,10 +620,48 @@ function evaluateOversize(input, options) {
   return scanWindows(input, { ...options, maxScanChars: MAX_TOOL_RESULT_SCAN_CHARS });
 }
 
+// A run of two or more empty or whitespace-only lines becomes one empty line before any rule runs, so text
+// that follows a long padding run is read in the same scan window as the text before it. Whitespace here is
+// listed explicitly (not \s) so Node.js and Python agree. Done by scanning, not with one repeated regex group,
+// which overflows the regex stack on millions of lines; every line is looked at once.
+const BLANK_RUN_TEST = /\n[ \t\r\f\v\u0085\u00a0\u00ad\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]*\n[ \t\r\f\v\u0085\u00a0\u00ad\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]*\n/;
+const BLANK_SPACE = /[ \t\r\f\v\u0085\u00a0\u00ad\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]*/y;
+function collapseBlankRuns(text) {
+  if (typeof text !== 'string' || !BLANK_RUN_TEST.test(text)) return text;
+  const out = [];
+  let copied = 0;
+  let i = text.indexOf('\n');
+  while (i !== -1) {
+    // `i` is a line break; count the blank lines that follow it, each ended by a line break (up to `j`).
+    let j = i;
+    let blanks = 0;
+    for (;;) {
+      const k = text.indexOf('\n', j + 1);
+      if (k === -1) break;
+      BLANK_SPACE.lastIndex = j + 1;
+      BLANK_SPACE.exec(text);
+      if (BLANK_SPACE.lastIndex !== k) break;
+      blanks++;
+      j = k;
+    }
+    if (blanks >= 2) {
+      out.push(text.slice(copied, i), '\n\n');
+      copied = j + 1;
+    }
+    i = text.indexOf('\n', j + 1);
+  }
+  out.push(text.slice(copied));
+  return out.join('');
+}
+
 function evaluateUncached(input, options = {}) {
   if (typeof input !== 'string') {
     return { verdict: 'allow', confidence: 1.0, rule: 'none', reason: null, engine: 'oss-local', rules_version: RULES_VERSION };
   }
+  // Invisible padding is judged on the input as received: collapsing first would turn lines made only of
+  // zero-width characters into one empty line and hide a size:invisible block.
+  if (input.length > MAX_SCAN_CHARS && tooInvisible([input])) return invisibleBlock();
+  input = collapseBlankRuns(input);
   if (input.length > MAX_SCAN_CHARS) return evaluateOversize(input, options);
 
   // Pre-normalization passes: stripped (preserves non-Latin) and normalized (maps homoglyphs)
@@ -1267,6 +1330,7 @@ function truncatedBlocks(options) {
 
 function scanWindows(text, options = {}) {
   if (tooInvisible([text])) return invisibleBlock();
+  text = collapseBlankRuns(text);
   if (typeof text !== 'string' || text.length <= MAX_SCAN_CHARS) return evaluate(text, options);
   const step = MAX_SCAN_CHARS - SCAN_WINDOW_OVERLAP;
   const cap = Number.isFinite(options.maxScanChars) && options.maxScanChars > 0 ? options.maxScanChars : MAX_TOOL_RESULT_SCAN_CHARS;
