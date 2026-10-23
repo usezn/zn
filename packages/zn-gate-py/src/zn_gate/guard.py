@@ -362,7 +362,7 @@ def check_tool_call(tool_name: str, arguments: Any = None, strict: Optional[bool
     and such arguments are blocked (rule size:truncated) when block_truncated
     is set or the ZN_BLOCK_TRUNCATED environment variable is "1".
     """
-    return _scan_strings(arguments, "Arguments", block_truncated, strict)
+    return _scan_strings(arguments, "Arguments", block_truncated=block_truncated, strict=strict)
 
 
 def check_tool_result(result: Any, block_truncated: bool = False, strict: Optional[bool] = None,
@@ -377,7 +377,8 @@ def check_tool_result(result: Any, block_truncated: bool = False, strict: Option
     forces the block. A result that cannot be
     checked in full is blocked as for check_tool_call (for example a generator).
     """
-    res = _scan_strings(result, "Result", block_truncated, strict, allow_truncated=allow_truncated)
+    res = _scan_strings(result, "Result", block_truncated=block_truncated, strict=strict,
+                        allow_truncated=allow_truncated)
     if res.rule == "size:truncated":
         res.reason = "Output too large to scan in full"
     return res
