@@ -4,3 +4,4 @@
 - The Rust gateway in `src/` (experimental, not distributed) now redacts the token in `Authorization: Bearer <token>` (also Basic and Token, quoted or in a JSON member), where the header has no `=` after the name. Placeholders and short plain words are left alone.
 - The Rust gateway in `src/` (experimental, not distributed) now redacts a secret value that the shell splits with quotes (`'abc''def'`) as one word, instead of leaving the second half readable.
 - The Rust gateway in `src/` (experimental, not distributed) redacts two phone numbers written back to back in one pass, so scrubbing its own output changes nothing.
+- The Rust gateway in `src/` (experimental, not distributed) leaves placeholders and references such as `${API_TOKEN}`, `<your-api-key>` or `********` alone in a JSON member, and only redacts a quoted value that has its closing quote, so a scrubbed JSON line stays valid JSON.

@@ -43,13 +43,18 @@ fn api_re() -> &'static Regex {
     API_KEY_REGEX.get_or_init(|| {
         // Matches: api_key=xxx, secret: xxx, password=xxx, token: xxx, and the same as a JSON
         // member ("api_key": "xxx"), also inside a JSON string (\"api_key\":\"xxx\").
-        // Group 1 is the name, group 2 the optional quote that closes it, group 3 the quote
-        // that opens a quoted value (both may be backslash-escaped). A quoted value (group 4) runs
-        // to its closing quote, whatever characters it has (`/`, `+`, `=`, `@`...), like the
-        // Node scrubber; an unquoted value (group 5) is a run of token characters.
+        // Group 1 is the name, group 2 the optional quote that closes it. A quoted value needs
+        // its closing quote, of the same kind as the one that opens it (both may be
+        // backslash-escaped), like the Node scrubber: double-quoted is group 3 (quote) and 4
+        // (value), single-quoted is group 5 and 6, and the value may have any character but
+        // that quote, a backslash or a space (`/`, `+`, `=`, `@`, the other quote...). Without
+        // a closing quote nothing is redacted, so a JSON string is never left half closed. An
+        // unquoted value (group 7) is a run of token characters.
         // Requires at least 8 characters for the value (reduced from 16 for better detection).
-        // A value split by shell quotes ('ab''cd', ab""cd) is one word: redact all of it.
-        Regex::new(r#"(?i)(api[_-]?key|secret[_-]?key|password|token|auth[_-]?token|access[_-]?token|bearer)(\\{0,2}['"])?[ \t]*[:=][ \t]*(?:(\\{0,2}['"])([^"'\\\s]{8,})(?:\\{0,2}['"])?|([a-zA-Z0-9_\-./+=]{8,}))(?:['"]+[a-zA-Z0-9_\-.]*)*"#).unwrap()
+        // A value split by shell quotes ('ab''cd', ab""cd) is one word: redact all of it. Each
+        // extra piece needs a character after its quote, so the quote that closes a JSON string
+        // (`?token=abc"}`, `["token=abc","x"]`) is never taken.
+        Regex::new(r#"(?i)(api[_-]?key|secret[_-]?key|password|token|auth[_-]?token|access[_-]?token|bearer)(\\{0,2}['"])?[ \t]*[:=][ \t]*(?:(\\{0,2}")([^"\\\s]{8,})\\{0,2}"|(\\{0,2}')([^'\\\s]{8,})\\{0,2}'|([a-zA-Z0-9_\-./+=]{8,}))(?:['"]+[a-zA-Z0-9_\-.]+)*"#).unwrap()
     })
 }
 
@@ -94,14 +99,75 @@ fn redact_auth(caps: &regex::Captures) -> String {
     }
 }
 
+/// The value of one api_re() match, without its quotes.
+fn secret_value<'a>(caps: &regex::Captures<'a>) -> &'a str {
+    caps.get(4)
+        .or_else(|| caps.get(6))
+        .or_else(|| caps.get(7))
+        .map_or("", |m| m.as_str())
+}
+
+/// A placeholder or a reference, not a credential: `${API_TOKEN}`, `$API_TOKEN`,
+/// `<your-api-key>`, `********`, `xxxxxxxx`, `process.env.TOKEN`, `your_token_here`.
+fn secret_placeholder(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    value.starts_with("${")
+        || (value.starts_with('$')
+            && value.len() > 1
+            && value[1..]
+                .bytes()
+                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_'))
+        || (value.starts_with('<') && value.ends_with('>'))
+        || value
+            .bytes()
+            .all(|b| matches!(b, b'*' | b'x' | b'X' | b'.' | b'-' | b'_' | b'='))
+        || [
+            "process.env",
+            "os.environ",
+            "os.getenv",
+            "env.",
+            "secrets.",
+            "vars.",
+            "config.",
+            "settings.",
+            "self.",
+            "this.",
+            "arn:",
+        ]
+        .iter()
+        .any(|p| lower.starts_with(p))
+        || [
+            "your",
+            "insert",
+            "paste",
+            "redacted",
+            "changeme",
+            "placeholder",
+        ]
+        .iter()
+        .any(|p| {
+            lower.starts_with(p)
+                && lower
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || matches!(b, b'-' | b'_'))
+        })
+}
+
 /// Replacement for one api_re() match. A plain `name=value` becomes `name: [SECRET_REDACTED]`.
 /// A quoted name (a JSON member) keeps its quotes, so the output is still valid JSON.
+/// A placeholder or reference is left as it is.
 fn redact_secret(caps: &regex::Captures) -> String {
+    if secret_placeholder(secret_value(caps)) {
+        return caps[0].to_string();
+    }
     let name = &caps[1];
     match caps.get(2) {
         None => format!("{name}: [SECRET_REDACTED]"),
         Some(key_quote) => {
-            let value_quote = caps.get(3).map_or("", |m| m.as_str());
+            let value_quote = caps
+                .get(3)
+                .or_else(|| caps.get(5))
+                .map_or("", |m| m.as_str());
             format!(
                 "{name}{}: {value_quote}[SECRET_REDACTED]{value_quote}",
                 key_quote.as_str()
@@ -513,7 +579,10 @@ impl Scrubber {
         if email_re().is_match(input) {
             types.push("email");
         }
-        if api_re().is_match(input) {
+        if api_re()
+            .captures_iter(input)
+            .any(|c| !secret_placeholder(secret_value(&c)))
+        {
             types.push("api_key_or_secret");
         }
         if !card_spans(input).is_empty() {
@@ -753,6 +822,84 @@ mod tests {
         assert!(!out.contains("fakeValue1234"), "{out}");
         let v: serde_json::Value = serde_json::from_str(&out).expect("valid JSON");
         assert_eq!(v["method"], "tools/call");
+    }
+
+    #[test]
+    fn test_secret_at_end_of_json_string_keeps_json_valid() {
+        // The quote that closes the JSON string must stay, even when the value has `/`, `+`, `=`.
+        let v = "Zk8Qw3Lm9Xv2/Rt7Yp4Nb+==";
+        let w = "fakeSecret+Value+1234+abcdef";
+        for (input, secret) in [
+            (
+                format!(r#"{{"command":"curl https://example.com?token={v}"}}"#),
+                v,
+            ),
+            (format!(r#"["token={w}","x"]"#), w),
+            (format!(r#"{{"a":"x token={w}","b":"y"}}"#), w),
+            (format!(r#"{{"cmd":"run api_key={v}","n":1}}"#), v),
+            (format!(r#"{{"cmd":"run password={v}\n"}}"#), v),
+        ] {
+            let out = Scrubber::scrub(&input);
+            assert!(!out.contains(secret), "{input} -> {out}");
+            assert!(out.contains("[SECRET_REDACTED]"), "{input} -> {out}");
+            serde_json::from_str::<serde_json::Value>(&out)
+                .unwrap_or_else(|e| panic!("{input} -> {out}: {e}"));
+            assert_eq!(Scrubber::scrub(&out), out);
+        }
+        // A benign JSON string with `token=` in it stays valid JSON too.
+        let out = Scrubber::scrub(r#"{"path":"/v1/token=refresh/endpoint"}"#);
+        serde_json::from_str::<serde_json::Value>(&out).expect("valid JSON");
+        // Shell-split pieces still go.
+        let out = Scrubber::scrub(r#"{"cmd":"export api_key='fakeSecret''Value1234' && run"}"#);
+        assert!(
+            !out.contains("Value1234") && !out.contains("fakeSecret"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn test_quoted_value_needs_its_closing_quote() {
+        // An apostrophe inside a double-quoted value is part of the value.
+        let input = r#"{"password":"abcdefgh'xyz123","n":1}"#;
+        let out = Scrubber::scrub(input);
+        assert_eq!(out, r#"{"password": "[SECRET_REDACTED]","n":1}"#);
+        serde_json::from_str::<serde_json::Value>(&out).expect("valid JSON");
+        let out = Scrubber::scrub(r#"{'password': 'abcdefg"hij123'}"#);
+        assert_eq!(out, r#"{'password': '[SECRET_REDACTED]'}"#);
+        // A value with a space has no closing quote after its first word: like the Node
+        // scrubber, nothing is changed, and the JSON is not left half closed.
+        let input = r#"{"password":"abcdefgh ijk lmn","n":1}"#;
+        let out = Scrubber::scrub(input);
+        assert_eq!(out, input);
+        serde_json::from_str::<serde_json::Value>(&out).expect("valid JSON");
+    }
+
+    #[test]
+    fn test_placeholders_in_json_member_are_left_alone() {
+        for input in [
+            r#"{"token": "${API_TOKEN}"}"#,
+            r#"{"token": "$API_TOKEN"}"#,
+            r#"{"api_key": "<your-api-key>"}"#,
+            r#"{"password": "********"}"#,
+            r#"{"password": "xxxxxxxxxx"}"#,
+            r#"{"token":"<|endoftext|>"}"#,
+            r#"{"token": "process.env.API_TOKEN"}"#,
+            r#"{"api_key": "your_api_key_here"}"#,
+            "token=process.env.API_TOKEN",
+        ] {
+            assert_eq!(Scrubber::scrub(input), input);
+            assert!(!Scrubber::contains_pii(input), "{input}");
+            assert!(
+                !Scrubber::detect_pii_types(input).contains(&"api_key_or_secret"),
+                "{input}"
+            );
+        }
+        // A real-looking value next to a placeholder is still redacted.
+        let out = Scrubber::scrub(r#"{"token":"${API_TOKEN}","password":"zn_FAKEabcdef0123"}"#);
+        assert_eq!(
+            out,
+            r#"{"token":"${API_TOKEN}","password": "[SECRET_REDACTED]"}"#
+        );
     }
 
     #[test]
