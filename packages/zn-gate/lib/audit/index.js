@@ -761,13 +761,26 @@ const SYSTEM_SHAPES = /^pi:(?:system_tag|system_bracket|template_boundary)$/;
 const CHAT_TOKENS = /\[\/?INST\]|<<<SYS>>>|<\/<<SYS>>>|<\|im_(?:start|end)\|>/gi;
 const SYSTEM_PLACEHOLDER = /<\s*\/?\s*system-(?:or-(?:project|user|global|local|workspace|repo)|(?:name|path|dir|directory|id|type|version|wide))\s*>/gi;
 const SYSTEM_IDENTITY = /\bsystem:(?:anonymous|authenticated|unauthenticated|masters|nodes?|serviceaccounts?(?::[\w-]+)*|kube-[\w-]+|node-[\w-]+|basic-user|discovery|public-info-viewer)(?![\w-])/g;
-function withoutDocShapes(text) {
-  // A placeholder with both its opening and its closing tag on the line wraps
-  // text, which reads as an injected block: only an unpaired one is skipped.
-  const opens = /<\s*system-/i.test(text);
-  const closes = /<\s*\/\s*system-/i.test(text);
-  const paired = opens && closes;
-  return (paired ? text : text.replace(SYSTEM_PLACEHOLDER, ' ')).replace(SYSTEM_IDENTITY, ' ').replace(/\bsystem\s*:\s*$/i, ' ');
+function withoutDocShapes(text, fileText) {
+  // A placeholder is skipped only when it does not wrap text: not when its
+  // closing (or opening) tag appears anywhere in the file, and not when an
+  // opening tag is followed by text on the line, which reads as an injected
+  // message. What may follow is nothing, punctuation, or a file name or path
+  // glued to the tag.
+  // TODO: after #617 (documentation shapes for docs) merges, fold this into
+  // that implementation so there is one placeholder and one identity pattern.
+  const stripped = text.replace(SYSTEM_PLACEHOLDER, (m, off) => {
+    const name = (/system-([\w-]+)/i.exec(m) || [])[1] || '';
+    const closing = /^<\s*\//.test(m);
+    const other = new RegExp('<\\s*' + (closing ? '' : '\\/\\s*') + 'system-' + name + '\\s*>', 'i');
+    if (other.test(fileText)) return m;
+    if (!closing) {
+      const rest = text.slice(off + m.length);
+      if (!/^(?:[\s\p{P}\p{S}]*$|\.[a-z0-9]{1,6}(?![\w])|[\/\\][\w.\/\\-]*)/iu.test(rest)) return m;
+    }
+    return ' ';
+  });
+  return stripped.replace(SYSTEM_IDENTITY, ' ').replace(/\bsystem\s*:\s*$/i, ' ');
 }
 
 const INSTRUCTION_FILE_NAMES = /^(?:agents(?:\.override)?\.md|claude(?:\.local)?\.md|gemini\.md|skill\.md|\.cursorrules|\.windsurfrules|copilot-instructions\.md)$/i;
@@ -801,6 +814,7 @@ function checkInstructions(ctx) {
   // Only a note inside a real skill folder is documentation; every other
   // instruction file is read by the agent as it stands.
   const skillNote = isSkillNote(ctx.rec);
+  const fileText = ctx.lines.join(String.fromCharCode(10));
   let inFront = ctx.lines[0] && ctx.lines[0].trim() === '---';
   // Lines inside code fences that are closed again (an unclosed fence runs
   // to the end of the file and counts as plain text).
@@ -834,7 +848,7 @@ function checkInstructions(ctx) {
       try { res = rules().evaluate(t, { strict: true }); } catch (_) { res = null; }
       let codeText = false;
       if (skillNote && res && res.verdict === 'block' && SYSTEM_SHAPES.test(String(res.rule))) {
-        const rest = withoutDocShapes(t);
+        const rest = withoutDocShapes(t, fileText);
         if (rest !== t) { try { res = rules().evaluate(rest, { strict: true }); } catch (_) { res = null; } }
         // Chat-template tokens inside code are reported one level lower; a
         // system tag or role marker is never lowered.
