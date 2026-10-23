@@ -105,6 +105,14 @@ impl AuditEntry {
         self
     }
 
+    /// Tag the entry with the namespace of the authenticated caller. The
+    /// value must come from the authentication layer (or the configured
+    /// namespace of a local session), never from request content.
+    pub fn with_namespace(mut self, namespace: impl Into<String>) -> Self {
+        self.namespace = Some(namespace.into());
+        self
+    }
+
     pub fn with_nearest_neighbor(mut self, nn: impl Into<String>) -> Self {
         self.nearest_neighbor = Some(nn.into());
         self
