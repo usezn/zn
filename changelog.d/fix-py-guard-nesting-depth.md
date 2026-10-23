@@ -1,0 +1,2 @@
+### Security
+- Python: a tool result, or a `@guard` argument, that held text more than ten levels deep inside `SimpleNamespace` or `argparse.Namespace` objects (for example JSON read with `json.loads(..., object_hook=...)`) was allowed without that text being checked. These objects now count as data, like dicts and dataclasses, and are blocked past ten levels (rule `size:nesting`), as in Node.js. In tool results, other objects are now read up to 32 levels deep, so text 12 or 30 levels down is checked, and blocked past that instead of being skipped.
