@@ -113,6 +113,7 @@ function run(args, input, opts = {}) {
   return spawnSync(process.execPath, [path.join(opts.real ? pluginReal : pluginTest, 'zn-launch.js'), ...args], {
     input: input === undefined ? '{"hook_event_name":"PreToolUse"}' : input,
     encoding: 'utf8',
+    maxBuffer: opts.maxBuffer || 1024 * 1024,
     env: { PATH: opts.path || binDir, HOME: opts.home || home, USERPROFILE: opts.home || home, SystemRoot: process.env.SystemRoot || '', ...(opts.env || {}) },
   });
 }
@@ -319,6 +320,94 @@ try {
     const r = run(['hook', 'claude-code'], postEvents['claude-code'](''));
     assert.strictEqual(r.status, 0, r.stderr);
     assert.match(r.stdout, /^ran claude-code policy dep data esm /);
+  });
+
+  // An event over 32 MiB characters (the runner's POST_STDIN_CAP) is not read to the end, not parsed and not held:
+  // the launcher answers it itself, as the runner does, without loading zn-gate (which may be an older version).
+  // The big inputs are built here.
+  const CAP = 32 * 1024 * 1024;
+  const MID = 'B'.repeat(200 * 1024);
+  const WITHHELD = '[zn plugin: output withheld because zn could not check it]';
+  const BIG = () => 'A'.repeat(CAP + 1024 * 1024);
+  const evText = (pairs) => '{' + pairs.map(([k, v]) => JSON.stringify(k) + ':' + JSON.stringify(v)).join(',') + '}';
+  function checkOversizeWithheld(agent, r) {
+    assert.strictEqual(r.status, 0, agent + ': ' + r.stderr);
+    assert.ok(!r.stdout.includes('ran '), agent + ': zn-gate was not run');
+    assert.ok(!r.stdout.includes('AAAA') && !r.stdout.includes('BBBB'), agent + ': none of the output is passed on');
+    assert.ok(r.stdout.length < 3000, agent + ': a small answer');
+    const out = JSON.parse(r.stdout);
+    if (agent === 'claude-code') {
+      assert.strictEqual(out.hookSpecificOutput.hookEventName, 'PostToolUse');
+      assert.strictEqual(out.hookSpecificOutput.updatedToolOutput, WITHHELD);
+    } else if (agent === 'codex') {
+      assert.strictEqual(out.decision, 'block');
+      assert.match(out.reason, /output withheld/);
+    } else {
+      assert.strictEqual(out.updated_mcp_tool_output.text, WITHHELD);
+    }
+  }
+  const oversizePosts = {
+    'claude-code': () => [['session_id', 's'], ['tool_response', MID], ['hook_event_name', 'PostToolUse'], ['tool_name', 'Bash'], ['tool_input', { command: BIG() }]],
+    codex: () => [['session_id', 's'], ['tool_response', MID], ['hook_event_name', 'PostToolUse'], ['tool_name', 'Bash'], ['tool_input', { command: BIG() }]],
+    cursor: () => [['tool_output', MID], ['hook_event_name', 'postToolUse'], ['tool_name', 'MCP:fetch'], ['cwd', BIG()]],
+  };
+  test('an oversized post-tool event is withheld by the launcher, with the event name after 200 KiB', () => {
+    for (const [agent, make] of Object.entries(oversizePosts)) checkOversizeWithheld(agent, run(['hook', agent], evText(make())));
+  });
+  test('an oversized post-tool event whose name comes after the limit is withheld too', () => {
+    for (const [agent, name] of [['claude-code', 'PostToolUse'], ['codex', 'PostToolUse'], ['cursor', 'postToolUse']]) {
+      const text = evText([['tool_name', 'MCP:fetch'], ['tool_response', BIG()], ['hook_event_name', name]]);
+      assert.ok(text.indexOf('"hook_event_name"') > CAP);
+      checkOversizeWithheld(agent, run(['hook', agent], text));
+    }
+  });
+  test('a hook_event_name inside the tool arguments or the tool output does not fool the launcher', () => {
+    const decoy = { hook_event_name: 'PreToolUse', note: '"hook_event_name":"PreToolUse"', data: MID };
+    checkOversizeWithheld('claude-code', run(['hook', 'claude-code'], evText([['tool_response', decoy], ['hook_event_name', 'PostToolUse'], ['cwd', BIG()]])));
+    const pre = run(['hook', 'claude-code'], evText([['tool_input', { hook_event_name: 'PostToolUse', data: MID }], ['hook_event_name', 'PreToolUse'], ['cwd', BIG()]]));
+    refused(pre, /too large/);
+    assert.strictEqual(pre.stdout, '');
+  });
+  test('an oversized pre-tool event or prompt is blocked with a reason, and a Stop event passes with a warning', () => {
+    for (const [agent, name] of [['claude-code', 'PreToolUse'], ['codex', 'UserPromptSubmit']]) {
+      refused(run(['hook', agent], evText([['hook_event_name', name], ['cwd', BIG()]])), /too large/);
+    }
+    const c = run(['hook', 'cursor'], evText([['hook_event_name', 'beforeShellExecution'], ['command', BIG()]]));
+    refused(c, /too large/);
+    assert.strictEqual(JSON.parse(c.stdout).permission, 'deny');
+    for (const agent of ['claude-code', 'codex']) {
+      const s = run(['hook', agent], evText([['hook_event_name', 'Stop'], ['last_assistant_message', BIG()]]));
+      assert.strictEqual(s.status, 0, s.stderr);
+      assert.match(s.stderr, /Stop event/);
+      assert.strictEqual(s.stdout, '');
+    }
+  });
+  test('whenUnavailable allow lets an oversized pre-tool event pass but never an oversized tool output', () => {
+    setConfig({ hooks: { whenUnavailable: 'allow' } });
+    try {
+      const pre = run(['hook', 'claude-code'], evText([['hook_event_name', 'PreToolUse'], ['cwd', BIG()]]));
+      assert.strictEqual(pre.status, 0, pre.stderr);
+      assert.match(pre.stderr, /passed through/);
+      checkOversizeWithheld('claude-code', run(['hook', 'claude-code'], evText(oversizePosts['claude-code']())));
+    } finally {
+      setConfig({});
+    }
+  });
+  test('an event just under the limit still goes to zn-gate', () => {
+    // (the fake runner echoes the event, so the output buffer has to take it)
+    const r = run(['hook', 'claude-code'], evText([['hook_event_name', 'PostToolUse'], ['tool_response', 'A'.repeat(CAP - 1024)]]), { maxBuffer: 2 * CAP });
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.match(r.stdout.slice(0, 60), /^ran claude-code /);
+  });
+  test('the top-level scan of the launcher is the same text as the runner has', () => {
+    const region = (file) => {
+      const t = fs.readFileSync(file, 'utf8');
+      const a = t.indexOf('// BEGIN top-level scan');
+      const b = t.indexOf('// END top-level scan');
+      assert.ok(a >= 0 && b > a, file + ': markers not found');
+      return t.slice(a, b);
+    };
+    assert.strictEqual(region(LAUNCHER), region(path.resolve(__dirname, '..', '..', 'packages', 'zn-gate', 'lib', 'hooks', 'runner.js')));
   });
 
   test('NODE_OPTIONS and NODE_PATH are not passed on to what zn-gate starts', () => {
