@@ -67,7 +67,7 @@ const { spawnSync } = require('child_process');
 const { writeFileAtomic } = require('../broker/files');
 const { whichSync } = require('../broker/markers');
 const { shQuote, portablePath } = require('../shell-quote');
-const { claudeCodePolicyWarnings } = require('./managed-policy');
+const { claudeCodePolicyWarnings, managedDir } = require('./managed-policy');
 const { hooksOf } = require('./config-file');
 const launcher = require('./launcher');
 
@@ -572,6 +572,64 @@ function isZnDetectorServer(s) {
   return (cmd === 'npx' || cmd === 'npm') && pkg.length === 1 && /^zn-gate(?:@[^\s]+)?$/i.test(pkg[0]) && i === args.indexOf(pkg[0]) + 1;
 }
 
+/* The marketplace zn-gate's plugin comes from (.claude-plugin/marketplace.json). A plugin of the same name from any
+ * other marketplace is not ours. */
+const PLUGIN_ENABLED_KEY = 'zn-gate@usezn';
+
+/* Windows paths are not case sensitive and take either slash; elsewhere the key must resolve to the directory. */
+function projectKeyMatches(key, dir, platform) {
+  if (platform === 'win32') {
+    const norm = (p) => String(p).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+    return norm(key) === norm(dir);
+  }
+  return path.resolve(key) === dir;
+}
+
+/* The --mcp-config values (JSON text or file paths) of the claude process, read from the hook's ancestors. Linux only:
+ * other systems give no reliable argument list, so a server added only that way is not seen there.
+ * opts.argv (a list of argument lists) replaces the process lookup, for tests. */
+function ancestorArgv(opts) {
+  if (opts.argv) return opts.argv;
+  const out = [];
+  if (process.platform !== 'linux') return out;
+  let pid = process.ppid;
+  for (let i = 0; i < 8 && pid > 1; i += 1) {
+    try {
+      out.push(fs.readFileSync('/proc/' + pid + '/cmdline', 'utf8').split('\0').filter((x) => x !== ''));
+      const m = /^PPid:\s*(\d+)/m.exec(fs.readFileSync('/proc/' + pid + '/status', 'utf8'));
+      pid = m ? Number(m[1]) : 0;
+    } catch (_) { break; }
+  }
+  return out;
+}
+
+/* Servers defined by --mcp-config, or null when a value cannot be read (the caller then trusts nothing). */
+function cliMcpServers(server, cwd, opts) {
+  const found = [];
+  for (const argv of ancestorArgv(opts)) {
+    for (let i = 0; i < argv.length; i += 1) {
+      let values = null;
+      if (argv[i].startsWith('--mcp-config=')) values = [argv[i].slice('--mcp-config='.length)];
+      else if (argv[i] === '--mcp-config') {
+        values = [];
+        for (let j = i + 1; j < argv.length && !argv[j].startsWith('--'); j += 1) values.push(argv[j]);
+      }
+      if (!values) continue;
+      for (const v of values) {
+        let data;
+        if (/^\s*[{[]/.test(v)) {
+          try { data = JSON.parse(v); } catch (_) { return null; }
+        } else {
+          data = readJsonFile(path.resolve(cwd || process.cwd(), v));
+          if (data === undefined || data === null) return null;
+        }
+        if (data && data.mcpServers && data.mcpServers[server]) found.push(data.mcpServers[server]);
+      }
+    }
+  }
+  return found;
+}
+
 function znMcpServerKind(server, cwd, opts = {}) {
   const plugin = server === PLUGIN_SECRETS_SERVER || server === PLUGIN_ANALYZE_SERVER;
   const detector = DETECTOR_SERVER_NAMES.includes(server);
@@ -582,7 +640,15 @@ function znMcpServerKind(server, cwd, opts = {}) {
   if (data === null) return null;
   const userServers = data && typeof data.mcpServers === 'object' && data.mcpServers ? data.mcpServers : {};
   const localProjects = data && typeof data.projects === 'object' && data.projects ? data.projects : {};
+  const platform = opts.platform || process.platform;
   const overrides = [];
+  // Servers from the organization's managed-mcp.json and from --mcp-config count like a project entry.
+  const managed = readJsonFile(path.join(opts.managedDir || managedDir(platform), 'managed-mcp.json'));
+  if (managed === null) return null;
+  if (managed && managed.mcpServers && managed.mcpServers[server]) overrides.push(managed.mcpServers[server]);
+  const cli = cliMcpServers(server, cwd, opts);
+  if (cli === null) return null;
+  overrides.push(...cli);
   let dir = path.resolve(cwd || process.cwd());
   for (;;) {
     const proj = readJsonFile(path.join(dir, '.mcp.json'));
@@ -590,7 +656,7 @@ function znMcpServerKind(server, cwd, opts = {}) {
     if (proj && proj.mcpServers && proj.mcpServers[server]) overrides.push(proj.mcpServers[server]);
     for (const k of Object.keys(localProjects)) {
       const p = localProjects[k];
-      if (path.resolve(k) === dir && p && p.mcpServers && p.mcpServers[server]) overrides.push(p.mcpServers[server]);
+      if (projectKeyMatches(k, dir, platform) && p && p.mcpServers && p.mcpServers[server]) overrides.push(p.mcpServers[server]);
     }
     const parent = path.dirname(dir);
     if (parent === dir) break;
@@ -600,7 +666,7 @@ function znMcpServerKind(server, cwd, opts = {}) {
     if (overrides.length) return null;
     const settings = readJsonFile(path.join(configDir(opts), 'settings.json'));
     const enabled = settings && settings.enabledPlugins && typeof settings.enabledPlugins === 'object' ? settings.enabledPlugins : {};
-    if (!Object.keys(enabled).some((k) => /^zn-gate@/.test(k) && enabled[k] === true)) return null;
+    if (!Object.keys(enabled).some((k) => k === PLUGIN_ENABLED_KEY && enabled[k] === true)) return null;
     return server === PLUGIN_SECRETS_SERVER ? 'secrets' : 'analyze';
   }
   if (detector) {

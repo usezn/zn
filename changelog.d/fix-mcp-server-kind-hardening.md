@@ -1,0 +1,2 @@
+### Security
+- In Claude Code, zn-gate now trusts its own MCP servers only when nothing else redefines them. The plugin is recognised only when it was installed from the `usezn` marketplace, project entries in `~/.claude.json` match on Windows whatever the letter case or slash direction, and a server with the same name in the organization's `managed-mcp.json` or passed with `--mcp-config` (Linux) counts like a project entry. Anything else is checked like any other server, so personal data sent to it is still asked about.

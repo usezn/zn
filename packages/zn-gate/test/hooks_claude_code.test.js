@@ -1053,7 +1053,7 @@ test('vault call: an unreadable config is checked (fails closed)', async (t) => 
 
 test('vault call: through the plugin server it is allowed when the plugin is enabled, and not otherwise', async (t) => {
   const dir = tmpProject(t);
-  const cfg = claudeConfig(t, { settings: { enabledPlugins: { 'zn-gate@zn': true } } });
+  const cfg = claudeConfig(t, { settings: { enabledPlugins: { 'zn-gate@usezn': true } } });
   const name = 'mcp__plugin_zn-gate_secrets__secrets_http_request';
   assert.equal(adapter.normalize(preTool(name, {}, dir)).mcp.ours, 'secrets');
   assert.equal(decisionOf(await run(preTool(name, VAULT_CALL, dir), { engine: piiEngine })), 'allow');
@@ -1064,13 +1064,13 @@ test('vault call: through the plugin server it is allowed when the plugin is ena
   assert.equal(decisionOf(await run(preTool(name, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
   // Plugin disabled: no trust.
   fs.rmSync(path.join(dir, '.mcp.json'));
-  fs.writeFileSync(path.join(cfg, 'settings.json'), JSON.stringify({ enabledPlugins: { 'zn-gate@zn': false } }));
+  fs.writeFileSync(path.join(cfg, 'settings.json'), JSON.stringify({ enabledPlugins: { 'zn-gate@usezn': false } }));
   assert.equal(decisionOf(await run(preTool(name, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
 });
 
 test('personal data: asked for the secrets server, not asked for the plugin detector server, asked for any other', async (t) => {
   const dir = tmpProject(t);
-  claudeConfig(t, { claudeJson: { mcpServers: { secrets: ZN_SECRETS } }, settings: { enabledPlugins: { 'zn-gate@zn': true } } });
+  claudeConfig(t, { claudeJson: { mcpServers: { secrets: ZN_SECRETS } }, settings: { enabledPlugins: { 'zn-gate@usezn': true } } });
   const note = { text: 'write to alice@example.com' };
   assert.equal(decisionOf(await run(preTool('mcp__plugin_zn-gate_zn-gate__analyze_prompt', note, dir), { engine: piiEngine })), 'allow');
   assert.equal(decisionOf(await run(preTool(VAULT_TOOL, { ...VAULT_CALL, body: note.text }, dir), { engine: piiEngine })), 'ask');
@@ -1116,4 +1116,81 @@ test('personal data: a project-defined server named zn or zn-gate is not trusted
   // A server reached by URL is never zn's.
   claudeConfig(t, { claudeJson: { mcpServers: { zn: { url: 'https://example.com/mcp', command: 'zn', args: ['mcp'] } } } });
   assert.equal(decisionOf(await run(preTool('mcp__zn__analyze_prompt', note, dir), { engine: piiEngine })), 'ask');
+});
+
+/* ---- znMcpServerKind hardening: marketplace pin, Windows paths, managed and --mcp-config servers ---- */
+
+test('mcp server kind: the plugin is trusted only from the usezn marketplace', (t) => {
+  const dir = tmpProject(t);
+  claudeConfig(t, { settings: { enabledPlugins: { 'zn-gate@evil-market': true } } });
+  assert.equal(adapter.znMcpServerKind('plugin_zn-gate_secrets', dir, { argv: [] }), null);
+  claudeConfig(t, { settings: { enabledPlugins: { 'zn-gate@usezn-extra': true, 'zn-gate@': true, 'zn-gate': true } } });
+  assert.equal(adapter.znMcpServerKind('plugin_zn-gate_secrets', dir, { argv: [] }), null);
+  claudeConfig(t, { settings: { enabledPlugins: { 'zn-gate@evil-market': true, 'zn-gate@usezn': true } } });
+  assert.equal(adapter.znMcpServerKind('plugin_zn-gate_secrets', dir, { argv: [] }), 'secrets');
+});
+
+test('mcp server kind: Windows project keys match without regard to case or slash direction', (t) => {
+  const dir = tmpProject(t);
+  const key = dir.toUpperCase().replace(/\//g, '\\') + '\\';
+  const entry = { mcpServers: { secrets: { command: 'node', args: ['/opt/x.js'] } } };
+  claudeConfig(t, { claudeJson: { mcpServers: { secrets: ZN_SECRETS }, projects: { [key]: entry } } });
+  assert.equal(adapter.znMcpServerKind('secrets', dir, { argv: [], platform: 'win32' }), null);
+  // Elsewhere paths are case sensitive: the key is another directory.
+  assert.equal(adapter.znMcpServerKind('secrets', dir, { argv: [], platform: 'linux' }), 'secrets');
+});
+
+test('mcp server kind: a server of the same name in managed-mcp.json revokes trust', (t) => {
+  const dir = tmpProject(t);
+  const managed = tempDir(t, 'zn-managed-');
+  claudeConfig(t, { claudeJson: { mcpServers: { secrets: ZN_SECRETS, 'zn-gate': ZN_DETECTOR } }, settings: { enabledPlugins: { 'zn-gate@usezn': true } } });
+  const o = { argv: [], managedDir: managed };
+  assert.equal(adapter.znMcpServerKind('secrets', dir, o), 'secrets');
+  fs.writeFileSync(path.join(managed, 'managed-mcp.json'), JSON.stringify({ mcpServers: { crm: { command: 'node', args: ['/opt/crm.js'] } } }));
+  assert.equal(adapter.znMcpServerKind('secrets', dir, o), 'secrets');
+  fs.writeFileSync(path.join(managed, 'managed-mcp.json'), JSON.stringify({ mcpServers: { secrets: { command: 'node', args: ['/opt/x.js'] }, 'zn-gate': { command: 'node', args: ['/opt/y.js'] }, 'plugin_zn-gate_secrets': { command: 'node', args: ['/opt/z.js'] } } }));
+  assert.equal(adapter.znMcpServerKind('secrets', dir, o), null);
+  assert.equal(adapter.znMcpServerKind('zn-gate', dir, o), null);
+  assert.equal(adapter.znMcpServerKind('plugin_zn-gate_secrets', dir, o), null);
+  // An unreadable managed file is not trusted past.
+  fs.writeFileSync(path.join(managed, 'managed-mcp.json'), '{ not json');
+  assert.equal(adapter.znMcpServerKind('secrets', dir, o), null);
+});
+
+test('mcp server kind: a server given with --mcp-config (file or JSON) revokes trust', (t) => {
+  const dir = tmpProject(t);
+  claudeConfig(t, { claudeJson: { mcpServers: { secrets: ZN_SECRETS, 'zn-gate': ZN_DETECTOR } } });
+  const base = { managedDir: tempDir(t, 'zn-managed-') };
+  const bad = { mcpServers: { secrets: { command: 'node', args: ['/opt/x.js'] } } };
+  const file = path.join(dir, 'extra.json');
+  fs.writeFileSync(file, JSON.stringify(bad));
+  assert.equal(adapter.znMcpServerKind('secrets', dir, { ...base, argv: [['claude', '-p', 'hi']] }), 'secrets');
+  assert.equal(adapter.znMcpServerKind('secrets', dir, { ...base, argv: [['claude', '--mcp-config', 'extra.json']] }), null);
+  assert.equal(adapter.znMcpServerKind('secrets', dir, { ...base, argv: [['sh', '-c', 'x'], ['claude', '--mcp-config=' + file]] }), null);
+  assert.equal(adapter.znMcpServerKind('secrets', dir, { ...base, argv: [['claude', '--mcp-config', JSON.stringify(bad), '--verbose']] }), null);
+  // Several values after one flag; the name in the last one counts.
+  assert.equal(adapter.znMcpServerKind('zn-gate', dir, { ...base, argv: [['claude', '--mcp-config', 'extra.json', JSON.stringify({ mcpServers: { 'zn-gate': { command: 'node' } } })]] }), null);
+  // A server of another name there changes nothing; an unreadable value is not trusted past.
+  fs.writeFileSync(file, JSON.stringify({ mcpServers: { crm: { command: 'node' } } }));
+  assert.equal(adapter.znMcpServerKind('secrets', dir, { ...base, argv: [['claude', '--mcp-config', 'extra.json']] }), 'secrets');
+  assert.equal(adapter.znMcpServerKind('secrets', dir, { ...base, argv: [['claude', '--mcp-config', 'missing.json']] }), null);
+  assert.equal(adapter.znMcpServerKind('secrets', dir, { ...base, argv: [['claude', '--mcp-config', '{ not json']] }), null);
+});
+
+test('mcp server kind: the real process lookup finds --mcp-config of an ancestor (Linux)', { skip: process.platform !== 'linux' }, (t) => {
+  const dir = tmpProject(t);
+  const cfg = claudeConfig(t, { claudeJson: { mcpServers: { secrets: ZN_SECRETS } } });
+  const file = path.join(dir, 'extra.json');
+  fs.writeFileSync(file, JSON.stringify({ mcpServers: { secrets: { command: 'node', args: ['/opt/x.js'] } } }));
+  const probe = 'const a=require(' + JSON.stringify(path.resolve(__dirname, '../lib/agents/claude-code')) + ');' +
+    'process.stdout.write(String(a.znMcpServerKind("secrets",' + JSON.stringify(dir) + ',{managedDir:' + JSON.stringify(dir) + '})));';
+  const home = tempDir(t, 'zn-home-');
+  const env = { ...process.env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home, CLAUDE_CONFIG_DIR: cfg };
+  // No flag anywhere above the probe: trusted.
+  const r = spawnSync('node', ['-e', probe], { env, encoding: 'utf8' });
+  assert.equal(r.stdout, 'secrets');
+  // A parent process that carries the flag in its command line, with the probe as its child: not trusted.
+  const parent = 'process.stdout.write(require("child_process").spawnSync("node",["-e",' + JSON.stringify(probe) + '],{encoding:"utf8"}).stdout)';
+  const r2 = spawnSync('node', ['-e', parent, '--', '--mcp-config', file], { env, encoding: 'utf8' });
+  assert.equal(r2.stdout, 'null');
 });
