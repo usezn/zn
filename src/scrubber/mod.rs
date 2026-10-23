@@ -478,6 +478,21 @@ fn checked_spans(
     trail: Trail,
     valid: Check,
 ) -> Vec<(usize, usize)> {
+    checked_spans_counted(re, text, lead, trail, valid, &mut 0)
+}
+
+/// `checked_spans`, adding the work it does to `steps`: the bytes of every
+/// regex match and of every candidate handed to `valid`, plus one for each
+/// boundary check. Tests use it to hold the scan to linear work without
+/// depending on how fast the machine is.
+fn checked_spans_counted(
+    re: &Regex,
+    text: &str,
+    lead: Lead,
+    trail: Trail,
+    valid: Check,
+    steps: &mut usize,
+) -> Vec<(usize, usize)> {
     let mut spans = Vec::new();
     let mut pos = 0;
     let mut last_end = None;
@@ -486,16 +501,25 @@ fn checked_spans(
             break;
         };
         let (s, e) = (m.start(), m.end());
+        *steps += e - s + 1;
         // A `+` that starts right where a redacted number ended starts a new number
         // ("+14155552671+14155552671"): judge its leading boundary as if nothing came before
         // it, so one pass redacts both and a second pass finds nothing.
         let adjacent = last_end == Some(s) && text.as_bytes()[s] == b'+';
+        *steps += 1;
         let lead_ok = adjacent || lead(text, s);
         let found = if lead_ok {
             (s + 1..=e)
                 .rev()
                 .filter(|&end| text.as_bytes()[end - 1].is_ascii_digit())
-                .find(|&end| trail(text, end) && valid(&text[s..end]))
+                .find(|&end| {
+                    *steps += 1;
+                    let trailing_ok = trail(text, end);
+                    if trailing_ok {
+                        *steps += end - s;
+                    }
+                    trailing_ok && valid(&text[s..end])
+                })
         } else {
             None
         };
@@ -508,7 +532,11 @@ fn checked_spans(
             None => {
                 // Matches are ASCII, so every offset up to `e` is a char boundary.
                 pos = s + 1;
-                while pos < e && !lead(text, pos) {
+                while pos < e {
+                    *steps += 1;
+                    if lead(text, pos) {
+                        break;
+                    }
                     pos += 1;
                 }
             }
@@ -1037,24 +1065,50 @@ mod tests {
         assert!(!Scrubber::scrub("A123-45-6789").contains("[SSN_REDACTED]"));
     }
 
+    /// A span scan that reports its steps (see `checked_spans_counted`).
+    type Scan = fn(&Regex, &str, &mut usize) -> Vec<(usize, usize)>;
+
     #[test]
     fn test_failed_boundary_retry_stays_fast() {
-        // Long runs where every candidate fails: time must stay linear.
+        // Long runs where every candidate fails: the work must stay linear.
+        // It is counted in steps, not in seconds, so a slow or busy machine
+        // (or an instrumented build) cannot fail the test; a quadratic retry
+        // multiplies the count by the length of the run and does.
         let digits = "1234567890".repeat(104_858);
         let mixed = "ab12 ".repeat(209_716);
         let dashed = "x1-1-1-".repeat(150_000);
         let spaced = "1111 ".repeat(209_716);
         let hyphens = "1111-111-".repeat(116_508);
         let plus = "+1234567".repeat(131_072);
-        let start = std::time::Instant::now();
+        // Each match is at most 23 bytes, so a linear scan costs a small
+        // constant per input byte; 60 leaves room for the different shapes.
+        const MAX_STEPS_PER_BYTE: usize = 60;
         for input in [&digits, &mixed, &dashed, &spaced, &hyphens, &plus] {
             let _ = Scrubber::scrub(input);
+            let scans: [(&str, &Regex, Scan); 4] = [
+                ("card", card_re(), |re, t, n| {
+                    checked_spans_counted(re, t, card_lead, card_trail, card_valid, n)
+                }),
+                ("ssn", ssn_re(), |re, t, n| {
+                    checked_spans_counted(re, t, ssn_lead, ssn_trail, ssn_valid, n)
+                }),
+                ("e164", e164_re(), |re, t, n| {
+                    checked_spans_counted(re, t, e164_lead, e164_trail, e164_valid, n)
+                }),
+                ("nanp", nanp_re(), |re, t, n| {
+                    checked_spans_counted(re, t, nanp_lead, nanp_trail, formatted_nanp_valid, n)
+                }),
+            ];
+            for (name, re, scan) in scans {
+                let mut steps = 0;
+                let _ = scan(re, input, &mut steps);
+                assert!(
+                    steps <= MAX_STEPS_PER_BYTE * input.len(),
+                    "{name}: {steps} steps for {} bytes",
+                    input.len()
+                );
+            }
         }
-        assert!(
-            start.elapsed() < std::time::Duration::from_secs(5),
-            "{:?}",
-            start.elapsed()
-        );
     }
 
     #[test]

@@ -113,6 +113,7 @@ pub struct VectorMemory {
     max_namespace_rows: usize,
     max_total_rows: usize,
     busy_timeout: Duration,
+    search_deadline: Duration,
     conn: Arc<Mutex<Option<Connection>>>,
     failures: FailureLog,
 }
@@ -127,6 +128,7 @@ impl VectorMemory {
             max_namespace_rows: DEFAULT_MAX_ROWS_PER_NAMESPACE,
             max_total_rows: DEFAULT_MAX_TOTAL_ROWS,
             busy_timeout: DEFAULT_BUSY_TIMEOUT,
+            search_deadline: SEARCH_DEADLINE,
             conn: Arc::new(Mutex::new(None)),
             failures: FailureLog::new(),
         }
@@ -193,6 +195,12 @@ impl VectorMemory {
     /// SQLite busy timeout for each store attempt (default 5 s).
     pub fn with_busy_timeout(mut self, busy_timeout: Duration) -> Self {
         self.busy_timeout = busy_timeout;
+        self
+    }
+
+    /// Total time a search may take before it gives up (default 1 s).
+    pub fn with_search_deadline(mut self, search_deadline: Duration) -> Self {
+        self.search_deadline = search_deadline;
         self
     }
 
@@ -500,7 +508,8 @@ impl VectorMemory {
     /// (text, squared L2 distance).
     ///
     /// Searches run on the request path: a search is tried once, with a
-    /// short busy timeout, and gives up after `SEARCH_DEADLINE` in total.
+    /// short busy timeout, and gives up after the search deadline (1 s unless
+    /// `with_search_deadline` says otherwise) in total.
     pub async fn search(
         &self,
         namespace: &str,
@@ -514,6 +523,7 @@ impl VectorMemory {
         }
         let path = self.db_path();
         let slot = Arc::clone(&self.conn);
+        let deadline = self.search_deadline;
         let ns = namespace.to_string();
         let agent = agent_id.to_string();
         let query = vector.to_vec();
@@ -557,9 +567,9 @@ impl VectorMemory {
         });
         // The blocking task cannot be cancelled; past the deadline the request
         // goes on without it and the task finishes on its own.
-        let result = match tokio::time::timeout(SEARCH_DEADLINE, job).await {
+        let result = match tokio::time::timeout(deadline, job).await {
             Ok(joined) => joined.map_err(anyhow::Error::from).and_then(|r| r),
-            Err(_) => Err(MemoryError::SearchDeadline(SEARCH_DEADLINE.as_millis()).into()),
+            Err(_) => Err(MemoryError::SearchDeadline(deadline.as_millis()).into()),
         };
         if let Err(e) = &result {
             self.failures.report("search", e);
@@ -993,7 +1003,12 @@ mod tests {
     async fn older_files_are_upgraded_in_place() {
         for version in [0, 1] {
             let dir = temp_dir(&format!("migrate{version}"));
-            let m = VectorMemory::new(dir.to_str().unwrap(), 1, "m");
+            // The first search opens and upgrades the file. The test checks
+            // the result of the upgrade, not how fast it is: an instrumented
+            // build on a busy runner can need far more than the default 1 s,
+            // so the deadline is long enough never to be what fails here.
+            let m = VectorMemory::new(dir.to_str().unwrap(), 1, "m")
+                .with_search_deadline(Duration::from_secs(60));
             let raw = write_old_file(&m, &dir, version);
 
             // Old rows go to the global namespace, not to any tenant.
