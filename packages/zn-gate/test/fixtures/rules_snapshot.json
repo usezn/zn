@@ -149,7 +149,7 @@
         "exact.variants"
       ],
       "sha256": {
-        "lib/scrub/patterns.js": "170e1557d56e8aef89ccb3f07ee8f4ba74d492f0278bbea48b845c6251fd3723",
+        "lib/scrub/patterns.js": "4ad4930200a82c02c00064904f3472d856b01e38b3bc45364250f17918481df2",
         "lib/scrub/exact.js": "d104e85ec6a25e7d6d4b6c428bd0bf8b25d43c3ead313f6872f508b65793bf6b"
       }
     },

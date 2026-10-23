@@ -441,9 +441,10 @@ function findQuotedKv(text, out) {
     while (i < limit) {
       const c = text.charCodeAt(i);
       if (c === 92) {
-        let k = 0;
-        while (text.charCodeAt(i + k) === 92) k++;
         if (level > 0) {
+          // Count the run of backslashes only inside the window, so a long run stays linear.
+          let k = 0;
+          while (i + k < limit && text.charCodeAt(i + k) === 92) k++;
           if (k === level && text[i + k] === quote) { end = i; break; }
           i += k + 1;
         } else if (quote !== "'") {

@@ -156,3 +156,29 @@ test('a value past the length cap is left to the other rules and the work stays 
   const text = '{"password":"' + 'ab cd '.repeat(2000) + '"}';
   assert.equal(await redact(text), text);
 });
+
+test('one opener followed by a very long run of backslashes is scanned in linear time', () => {
+  const MIB = 1024 * 1024;
+  const inputs = [
+    'token="' + '\\'.repeat(MIB),
+    "token='" + '\\'.repeat(MIB),
+    'token=\\"' + '\\'.repeat(MIB),
+    'token=\\\\"' + '\\'.repeat(MIB),
+    '{"password":"' + '\\'.repeat(MIB),
+    'token="' + '\\'.repeat(MIB) + '"',
+    'token=\\"' + ('\\'.repeat(100) + 'x').repeat(10000),
+  ];
+  for (const text of inputs) {
+    const t = ms(() => findPatterns(text, {}));
+    assert.ok(t < 500, 'took ' + t + ' ms on a ' + text.length + '-character input');
+    const t2 = ms(() => E.scan(text, { exact: false, pii: false }));
+    assert.ok(t2 < 500, 'scan took ' + t2 + ' ms on a ' + text.length + '-character input');
+  }
+});
+
+test('a backslash run still ends an escaped value only at its own level', async () => {
+  // Level 1: the value ends at exactly one backslash and the quote.
+  const out = await redact('{"command":"echo {\\"password\\":\\"fake pass\\\\\\\\ phrase here\\",\\"n\\":1}"}');
+  assert.ok(!out.includes('phrase'), out);
+  JSON.parse(out);
+});
