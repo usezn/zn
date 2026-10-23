@@ -156,10 +156,21 @@ def _is_framework_context(value: Any) -> bool:
     return False
 
 
-# Logging objects carry the process's logging setup (every logger, handler and
-# formatter of the process through logger.manager), never the output of a tool.
-_LOGGING_TYPES = (logging.Filterer, logging.Manager, logging.PlaceHolder, logging.LoggerAdapter,
-                  logging.Formatter)
+# Loggers reach every logger of the process (logger.manager.loggerDict and the
+# parent chain) and carry no tool output, so they are not read. Handlers,
+# adapters and formatters are read: a capturing handler holds log records.
+_LOGGING_TYPES = (logging.Logger, logging.Manager, logging.PlaceHolder)
+
+
+class _Walk:
+    """State shared by one walk: containers read in full (kept so their ids are not
+    reused during the walk) and a count of parts left out."""
+
+    __slots__ = ("done", "skipped")
+
+    def __init__(self) -> None:
+        self.done: Dict[int, Any] = {}
+        self.skipped = 0
 
 
 def _is_data_object(value: Any) -> bool:
@@ -182,7 +193,7 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
                      _budget: Optional[List[int]] = None, _lenient: bool = False,
                      lenient_objects: bool = True,
                      lenient_depth: Optional[int] = None,
-                     _seen: Optional[Dict[str, Any]] = None) -> List[str]:
+                     _seen: Optional[_Walk] = None) -> List[str]:
     """Recursively extract all strings from nested structures.
 
     Walks every Mapping (keys and values), list, tuple, set, frozenset and dict
@@ -199,8 +210,8 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
     MAX_OBJECT_VALUES values, so callers can fail closed. A container that
     contains itself is walked once, and a container reached through several
     references is walked and counted once, unless part of it was left out
-    the first time. Logging objects (loggers, handlers, formatters) are
-    skipped: they hold the process's logging setup, not tool output.
+    the first time. Loggers are skipped: they reach every logger of the
+    process and hold no tool output (handlers and adapters are read).
 
     Inside an object that is not a data model (a plain class instance such as
     a client, a session or an agent's dependencies), the walk is best effort:
@@ -226,10 +237,8 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
         return []
     if _is_framework_context(data) or isinstance(data, _LOGGING_TYPES):
         return []
-    # ids of containers already walked in full (the object is kept so its id
-    # cannot be reused during the walk) and a count of parts left out.
-    seen = _seen if _seen is not None else {"done": {}, "skipped": 0}
-    if id(data) in seen["done"]:
+    seen = _seen if _seen is not None else _Walk()
+    if id(data) in seen.done:
         return []
     budget = _budget if _budget is not None else [MAX_OBJECT_VALUES]
     lenient = _lenient
@@ -283,34 +292,40 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
                     children.append(item)
         except Exception:
             if lenient or (not is_model and lenient_objects):
-                seen["skipped"] += 1
+                seen.skipped += 1
                 return []
             raise _Unscannable("type:unscannable", "An object could not be read to check it") from None
         if children is None:
             return []
         if lenient and lenient_depth is None and budget[0] - len(children) < 0:
-            seen["skipped"] += 1
+            seen.skipped += 1
             return []
         budget[0] -= len(children)
         if budget[0] < 0:
             raise _Unscannable("size:items", "Too many values to check")
     if max_depth <= 0:
         if lenient and lenient_depth is None:
-            seen["skipped"] += 1
+            seen.skipped += 1
             return []
         raise _NestingTooDeep()
     path = _path if _path is not None else set()
     if id(data) in path:
         return []
     path.add(id(data))
-    skipped_before = seen["skipped"]
+    skipped_before = seen.skipped
+    done_before = len(seen.done)
     try:
         strings: List[str] = []
         for child in children:
             strings.extend(_extract_strings(child, max_depth - 1, path, budget, lenient, lenient_objects,
                                             lenient_depth, seen))
-        if seen["skipped"] == skipped_before:
-            seen["done"][id(data)] = data
+        if seen.skipped == skipped_before:
+            seen.done[id(data)] = data
+        else:
+            # Something below was left out: what was marked done meanwhile may have
+            # stopped at a cycle back into this partly read part, so read it again.
+            for key in list(seen.done)[done_before:]:
+                del seen.done[key]
         return strings
     finally:
         path.discard(id(data))

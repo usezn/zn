@@ -10,6 +10,7 @@ import argparse
 import dataclasses
 import json
 import logging
+import logging.handlers
 import types
 import unittest
 
@@ -186,6 +187,54 @@ class TestSharedAndLoggingObjects(unittest.TestCase):
             bag.__dict__.update({f"k{i}": "v" for i in range(10_000)})
             objs.append(bag)
         self.assertEqual(check_tool_result(objs).rule, "size:items")
+
+    def test_handlers_and_adapters_are_read(self):
+        handler = logging.handlers.MemoryHandler(capacity=10)
+        handler.buffer.append(logging.LogRecord("zn.example", logging.INFO, __file__, 1, BAD, None, None))
+        for value in (handler, {"logs": handler},
+                      logging.LoggerAdapter(self.loggers[3], {"note": BAD})):
+            with self.subTest(value=type(value).__name__):
+                res = check_tool_result(value)
+                self.assertFalse(res.allowed)
+                self.assertNotEqual(res.rule, "size:items")
+        self.assertFalse(check_tool_call("t", logging.LoggerAdapter(self.loggers[3], {"note": BAD})).allowed)
+
+        class Captured(logging.Filterer):
+            def __init__(self):
+                super().__init__()
+                self.text = BAD
+
+        self.assertFalse(check_tool_result(Captured()).allowed)
+        self.assertTrue(check_tool_result(logging.getLogger().handlers).allowed)
+
+    def test_object_cut_at_a_cycle_is_read_again(self):
+        # A holds x=X and a deep chain to the injection; X points back to A. Reached
+        # through a chain, A's deep part is left out, and X stopped at the cycle to A;
+        # when X appears again higher up, A must be read again.
+        @guard(on_block="return", fallback="blocked")
+        def tool(client, q):
+            return "ran"
+
+        def build(k):
+            a, x = Plain(None), Plain(None)
+            a.x = x
+            a.deep = chain(Plain, k, BAD)
+            x.back = a
+            return a, x
+
+        blocked = 0
+        for d in range(0, 12):
+            for k in range(0, 12):
+                with self.subTest(d=d, k=k):
+                    # X alone, at the same depth, is the reference: reaching it again after a
+                    # partial read must not do worse.
+                    alone = tool([None, build(k)[1]], "weather")
+                    a, x = build(k)
+                    together = tool([chain(Plain, d, a), x], "weather")
+                    if alone == "blocked":
+                        blocked += 1
+                        self.assertEqual(together, "blocked")
+        self.assertGreater(blocked, 0)
 
     def test_shared_object_left_out_once_is_read_again(self):
         # In @guard arguments a part past the depth limit is left out; the same
