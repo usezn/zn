@@ -14,7 +14,7 @@ inputs:
   version:
     description: 'zn-gate version to install, as an exact version number (for example 1.6.0). Ranges and "latest" are not accepted. `audit` needs 1.6.0 or later.'
     required: false
-    default: '1.13.0'
+    default: '1.13.1'
   mode:
     description: 'scan (prompt-injection and secret scan of files, the behaviour of earlier releases), audit (audit of agent configs, hooks, MCP servers, plugins and skills), or both. Default scan.'
     required: false

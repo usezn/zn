@@ -13,7 +13,7 @@ def guarded_tool(
     on_block: str = "raise",
     mask_secrets: bool = True,
     fallback: Optional[str] = None,
-    check_result: bool = False,
+    check_result: bool = True,
     block_truncated: bool = False,
     framework: Optional[str] = None,
 ) -> Callable:
@@ -27,8 +27,9 @@ def guarded_tool(
     - mask_secrets: Redact leaked credentials in the tool output (default True).
     - fallback: Value to return when on_block="return".
     - check_result: Also scan the tool output for prompt injection before the
-                    agent sees it, like guard(check_result=True) (default False,
-                    so existing tools behave as before). A blocked output raises
+                    agent sees it, like guard(check_result=True) and the
+                    LangChain integration (default True; pass False to turn
+                    the scan off for a tool). A blocked output raises
                     GuardBlockError (target "<framework>:<tool>:result") or returns
                     `fallback` / the block message.
     - block_truncated: With check_result, block an output too large to scan in

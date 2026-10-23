@@ -173,8 +173,10 @@ jobs:
       - name: Install the package and the license tool in separate environments
         run: |
           python -m venv "$RUNNER_TEMP/tool"
+          "$RUNNER_TEMP/tool/bin/python" -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
           "$RUNNER_TEMP/tool/bin/pip" install pip-licenses==5.5.5
           python -m venv "$RUNNER_TEMP/pkg"
+          "$RUNNER_TEMP/pkg/bin/python" -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
           "$RUNNER_TEMP/pkg/bin/pip" install packages/zn-gate-py
       - name: Check the licenses against the allowlist
         run: |
