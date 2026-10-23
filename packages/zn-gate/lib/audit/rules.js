@@ -162,6 +162,13 @@ const RULES = [
     fix: 'Fix the syntax error, move the content into the repository, or review the file by hand.',
     references: [],
   },
+  {
+    id: 'ZNA021', severity: 'medium', name: 'blank-line-padding',
+    title: 'Instruction file hides text behind a long run of blank lines',
+    help: 'A run of 40 or more empty or whitespace-only lines, followed by more text, pushes that text out of view for a person who opens the file and past the part of it a classifier reads. The report gives the line where the hidden text starts and the length of the run; the text is never printed.',
+    fix: 'Open the file at the reported line and read what follows. Remove the blank lines, and the text too unless you wrote it.',
+    references: [],
+  },
 ];
 
 const BY_ID = Object.fromEntries(RULES.map((r) => [r.id, r]));

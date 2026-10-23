@@ -119,7 +119,7 @@ test('codex launcher: a zn found through a relative PATH entry is not run (it bl
 test('codex uninstall removes the launcher; a project install writes none', { skip: !posix }, (t) => {
   const { env, home, file } = setup(t, process.execPath);
   assert.ok(fs.existsSync(file));
-  codex.uninstall({ env, home });
+  codex.uninstall({ env, home, removeLauncher: true });
   assert.equal(fs.existsSync(file), false);
   const proj = tempDir(t, 'zn-b93-proj-');
   codex.install({ scope: 'project', projectDir: proj, env, home, mcp: false });
