@@ -24,6 +24,20 @@ from .verbose import is_verbose
 DEFAULT_ENDPOINT = "https://api.usezn.com/v30/analyze"
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuses every redirect, as the Node.js client does: urllib would otherwise
+    follow a 301/302/303/307/308 and keep the Authorization header, sending the
+    API key to whatever host the response names. A 3xx surfaces as an HTTPError,
+    which analyze() treats like any other cloud failure (local fallback)."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        return None
+
+
+# Used for every request that carries the API key.
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def resolve_endpoint(options: Optional[Dict[str, Any]] = None) -> str:
     options = options or {}
     if "api_url" in options and options["api_url"]:
@@ -79,7 +93,7 @@ def analyze_cloud(
         "User-Agent": f"zn-gate/{__version__} (python-stdlib-client)",
     }
     req = urllib.request.Request(endpoint, data=payload, headers=headers, method="POST")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with _OPENER.open(req, timeout=timeout) as resp:
         raw = resp.read().decode("utf-8")
         parsed: Dict[str, Any] = json.loads(raw)
         parsed["engine"] = "cloud-v30" if "/v30" in endpoint else "cloud-prod"

@@ -103,7 +103,7 @@ class TestAnalyzeCloud(_EnvCase):
             seen["req"], seen["timeout"] = req, timeout
             return _json_resp({"verdict": "allow"})
 
-        with mock.patch.object(client.urllib.request, "urlopen", fake_open):
+        with mock.patch.object(client._OPENER, "open", fake_open):
             res = client.analyze_cloud("hello", " " + FAKE_KEY + " ", ENDPOINT, timeout=1.5, long_input="windows")
             body = json.loads(seen["req"].data.decode("utf-8"))
             timeout = seen["timeout"]
@@ -124,18 +124,18 @@ class TestAnalyzeCloud(_EnvCase):
             seen["data"] = json.loads(req.data.decode("utf-8"))
             return _json_resp({})
 
-        with mock.patch.object(client.urllib.request, "urlopen", fake_open):
+        with mock.patch.object(client._OPENER, "open", fake_open):
             client.analyze_cloud("hello", FAKE_KEY, ENDPOINT)
         self.assertEqual(seen["data"], {"input": "hello"})
 
     def test_malformed_and_empty_bodies_raise(self):
         for raw in (b"", b"not json", b"\xff\xfe"):
-            with mock.patch.object(client.urllib.request, "urlopen", lambda r, timeout=None, raw=raw: _Resp(raw)):
+            with mock.patch.object(client._OPENER, "open", lambda r, timeout=None, raw=raw: _Resp(raw)):
                 with self.assertRaises(ValueError):
                     client.analyze_cloud("hello", FAKE_KEY, ENDPOINT)
 
     def test_non_object_json_raises(self):
-        with mock.patch.object(client.urllib.request, "urlopen", lambda r, timeout=None: _json_resp([1, 2])):
+        with mock.patch.object(client._OPENER, "open", lambda r, timeout=None: _json_resp([1, 2])):
             with self.assertRaises(TypeError):
                 client.analyze_cloud("hello", FAKE_KEY, ENDPOINT)
 
@@ -147,7 +147,7 @@ class TestAnalyzeFallbacks(_EnvCase):
         os.environ["ZN_CLOUD"] = "1"
 
     def _run(self, opener, text="hello there", **kw):
-        with mock.patch.object(client.urllib.request, "urlopen", opener):
+        with mock.patch.object(client._OPENER, "open", opener):
             return client.analyze(text, endpoint=ENDPOINT, **kw)
 
     def _assert_fallback(self, res):

@@ -45,7 +45,7 @@ class TestLocalOnly(unittest.TestCase):
 
     def test_key_without_zn_cloud_sends_nothing(self):
         os.environ["ZN_API_KEY"] = FAKE_KEY
-        with mock.patch("urllib.request.urlopen") as up:
+        with mock.patch("zn_gate.client._OPENER.open") as up:
             self.assertFalse(is_cloud_enabled())
             res = analyze("Please summarize this README for me.")
             self.assertEqual(res["mode"], "oss-local")
@@ -56,13 +56,13 @@ class TestLocalOnly(unittest.TestCase):
 
     def test_local_only_wins_over_zn_cloud(self):
         os.environ.update(ZN_API_KEY=FAKE_KEY, ZN_CLOUD="1", ZN_LOCAL_ONLY="true")
-        with mock.patch("urllib.request.urlopen") as up:
+        with mock.patch("zn_gate.client._OPENER.open") as up:
             analyze("Please summarize this README for me.")
             up.assert_not_called()
 
     def test_zn_cloud_upload_is_redacted(self):
         os.environ.update(ZN_API_KEY=FAKE_KEY, ZN_CLOUD="1")
-        with mock.patch("urllib.request.urlopen", return_value=_FakeResp()) as up:
+        with mock.patch("zn_gate.client._OPENER.open", return_value=_FakeResp()) as up:
             res = analyze(f"Please review these settings. {BLOB}")
             self.assertEqual(res["mode"], "hybrid-cloud")
             self.assertGreaterEqual(res["secrets_redacted_before_upload"], 2)
@@ -74,7 +74,7 @@ class TestLocalOnly(unittest.TestCase):
 
     def test_tool_results_never_sent_and_redacted(self):
         os.environ.update(ZN_API_KEY=FAKE_KEY, ZN_CLOUD="1")
-        with mock.patch("urllib.request.urlopen") as up:
+        with mock.patch("zn_gate.client._OPENER.open") as up:
             out = sanitize_tool_result("read_file", BLOB)
             self.assertNotIn(FAKE_AWS, out["sanitized_content"])
             self.assertNotIn(FAKE_GH, out["sanitized_content"])
