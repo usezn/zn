@@ -76,3 +76,28 @@ test('on posix a trailing dot is a different name', () => {
   assert.equal(policy.instructionWriteNotice('AGENTS.md.', O), null);
   assert.ok(policy.instructionWriteNotice('AGENTS.md', O));
 });
+
+// A new file written under its 8.3 short name cannot be resolved (it does not exist yet): the name's start is checked.
+test('8.3 short names of a new instruction file are reviewed (win32)', () => {
+  asWindows(() => {
+    const names = ['AGENTS~1.MD', 'agents~1.md', 'CLAUDE~1.MD', 'GEMINI~1.MD', 'COPILO~1.MD', 'CURSOR~1', 'WINDSU~1', 'CLAUDE~2.MD',
+      'sub/dir/AGENTS~1.MD', '/Users/alice/proj/.github/COP3F1~1.MD', '/Users/alice/proj/.cursor/rules/AB12CD~1.MDC'];
+    assert.deepEqual(names.filter((p) => !policy.instructionWriteNotice(p, O)), []);
+    const note = {};
+    policy.bashDenial('echo x>AGENTS~1.MD', { ...O, instructionNotice: note });
+    assert.ok(note.hit);
+  });
+});
+
+test('other short names stay allowed (win32 control)', () => {
+  asWindows(() => {
+    const benign = ['NOTES~1.MD', 'ABCDEF~1.TXT', 'AGENTS~1.TXT', 'AGENTS~1.MDX', 'proj~1/NOTES~1.MD', '/Users/alice/proj/docs/COP3F1~1.MD',
+      '/Users/alice/proj/.github/COP3F1~1.TXT'];
+    assert.deepEqual(benign.filter((p) => policy.instructionWriteNotice(p, O)), []);
+  });
+});
+
+test('on posix a tilde name is just a name', () => {
+  if (REAL_WIN) return;
+  assert.equal(policy.instructionWriteNotice('AGENTS~1.MD', O), null);
+});
