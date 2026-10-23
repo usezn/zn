@@ -11,6 +11,7 @@ import functools
 import inspect
 import io
 import itertools
+import logging
 import os
 from pathlib import PurePath
 import types
@@ -155,6 +156,14 @@ def _is_framework_context(value: Any) -> bool:
     return False
 
 
+# Logging objects (a logger, a handler, a LoggerAdapter, the logging manager) are
+# application plumbing that tools often receive next to the model's arguments.
+# They hold no text the model chose and reach the whole logger registry, so they
+# are not checked, like the run-context objects above.
+_LOGGING_TYPES = (logging.Logger, logging.LoggerAdapter, logging.Handler, logging.Manager,
+                  logging.Formatter, logging.Filter)
+
+
 def _is_data_object(value: Any) -> bool:
     """True for objects that carry plain data: dataclasses, pydantic, attrs and msgspec
     models, and SimpleNamespace / argparse.Namespace.
@@ -213,7 +222,7 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
     if data is None or isinstance(data, (bool, int, float, complex, type, types.ModuleType)) \
             or inspect.isroutine(data):
         return []
-    if _is_framework_context(data):
+    if _is_framework_context(data) or isinstance(data, _LOGGING_TYPES):
         return []
     budget = _budget if _budget is not None else [MAX_OBJECT_VALUES]
     lenient = _lenient
@@ -782,8 +791,13 @@ def guard(
                 callback (ValueError otherwise). A blocked call never runs the
                 function, and a blocked result is never returned.
     - fallback: Value to return if on_block="return".
-    - check_args: Whether to inspect input arguments (default True). The instance
-                  of a method (`self` or `cls`) is not inspected.
+    - check_args: Whether to inspect input arguments (default True), as strictly
+                  as check_tool_call does: an application object in them (a plain
+                  class instance) that is nested deeper than ten levels, cannot
+                  be read or holds too many values blocks the call (rules
+                  size:nesting, type:unscannable, size:items). The instance of a
+                  method (`self` or `cls`), framework run contexts and logging
+                  objects are not inspected.
     - check_result: Whether to inspect function return value (default False).
     - mask_secrets: Automatically redact leaked credentials in result (default False).
     - callback: Optional hook called on block: callback(assessment, func_name, payload).
@@ -833,9 +847,10 @@ def guard(
                 args = bound_args + args
                 kwargs = {**bound_kwargs, **kwargs}
             combined_args = {"args": args, "kwargs": kwargs}
+            # Plain objects in the arguments are walked as strictly as check_tool_call does:
+            # deeper than ten levels, unreadable or too large they block.
             assessment = check_tool_call(func_name, _call_payload(target, args, kwargs),
-                                         block_truncated=block_truncated,
-                                         _lenient_objects=True)
+                                         block_truncated=block_truncated)
             if assessment.allowed:
                 return False, None
             if callback:

@@ -1,7 +1,7 @@
 """Framework run-context arguments (pydantic-ai RunContext, Google ADK ToolContext,
 OpenAI Agents SDK ToolContext / RunContextWrapper, LangChain callback managers and
-RunnableConfig) are not checked, and application objects are walked best effort,
-while the model's own arguments are still checked in full.
+RunnableConfig) are not checked, while the model's own arguments and application
+objects are still checked in full.
 
 Fictitious values only. The pydantic-ai case is skipped when it is not installed.
 """
@@ -93,14 +93,16 @@ class TestFrameworkContextArguments(unittest.TestCase):
         self.assertEqual(tool("weather", config), "ran")
         self.assertEqual(tool(BAD, config=config), "blocked")
 
-    def test_deep_application_object_does_not_block(self):
-        # An HTTP client, a session or agent dependencies: built by the
-        # application, not by the model, and often deeply nested.
+    def test_deep_application_object_blocks(self):
+        # The decorator reads application objects as strictly as check_tool_call
+        # does, so an object nested deeper than ten levels blocks the call. A
+        # framework context (see the tests above) is the way to pass run state.
         @guard(on_block="return", fallback="blocked")
         def tool(client, q):
             return "ran"
 
-        self.assertEqual(tool(_deep(40, "x"), "weather"), "ran")
+        self.assertEqual(tool(_deep(40, "x"), "weather"), "blocked")
+        self.assertEqual(tool(_deep(3, "x"), "weather"), "ran")
 
     def test_shallow_strings_in_plain_objects_are_still_checked(self):
         @guard(on_block="return", fallback="blocked")
@@ -127,10 +129,10 @@ class TestFrameworkContextArguments(unittest.TestCase):
             def __dict__(self):
                 raise RuntimeError("no attributes here")
 
-        # check_tool_call fails closed on an object it cannot read; the guard decorator stays lenient.
+        # Both check_tool_call and the guard decorator fail closed on an object they cannot read.
         res = check_tool_call("t", {"args": (Weird(), "weather"), "kwargs": {}})
         self.assertEqual((res.verdict, res.rule), ("block", "type:unscannable"))
-        self.assertEqual(guard(on_block="return", fallback="blocked")(lambda c, q: "ran")(Weird(), "weather"), "ran")
+        self.assertEqual(guard(on_block="return", fallback="blocked")(lambda c, q: "ran")(Weird(), "weather"), "blocked")
 
     def test_pydantic_ai_tool_with_run_context_runs(self):
         try:
