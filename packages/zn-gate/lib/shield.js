@@ -472,9 +472,41 @@ function startMcpShield(command, args, options = {}) {
       if (text.length === 0) continue;
       const checked = await scanServerText(`${label} ${field}`, text);
       if (checked !== text) return field;
+      // A percent-encoded identifier (%20 for a space) is read decoded by some clients: check that form too.
+      let decoded = null;
+      try { const d = decodeURIComponent(text); if (d !== text) decoded = d; } catch { /* not percent-encoded text */ }
+      if (decoded !== null && (await scanServerText(`${label} ${field}`, decoded)) !== decoded) return field;
     }
     return null;
   }
+  // Every other field of a listed resource, resource template or prompt (descriptions, titles, _meta, annotations,
+  // icons, any extra field, argument fields) is rewritable text: the whole item is walked, identifiers apart.
+  const LIST_IDENTIFIERS = new Set(['name', 'uri', 'uriTemplate', 'mimeType']);
+  const LIST_PLAIN_KEYS = new Set(['description', 'title', 'annotations', 'icons', '_meta', 'arguments']);
+  async function scanListItem(label, item, state) {
+    for (const k of Object.keys(item)) {
+      if (LIST_IDENTIFIERS.has(k) && typeof item[k] === 'string') continue;
+      if (k === 'arguments' && Array.isArray(item.arguments)) {
+        for (const arg of item.arguments) {
+          if (!arg || typeof arg !== 'object' || Array.isArray(arg)) continue;
+          for (const ak of Object.keys(arg)) {
+            if (ak === 'name' && typeof arg.name === 'string') continue;
+            const key = LIST_PLAIN_KEYS.has(ak) ? ak : await scanServerKey(label + ' argument', arg, ak, state);
+            await walkServerValue(label + ' argument', arg, key, state, 1);
+          }
+        }
+        continue;
+      }
+      const key = LIST_PLAIN_KEYS.has(k) ? k : await scanServerKey(label, item, k, state);
+      await walkServerValue(label, item, key, state, 0);
+    }
+    await flushDeferred(label, state);
+  }
+  const LIST_IDENTIFIER_WORDS = {
+    resources: 'resource name, URI or MIME type',
+    resourceTemplates: 'resource template name, URI template or MIME type',
+    prompts: 'prompt name or argument name',
+  };
   // `method` is the request this message answers, when the shield tracked it (tools/list, tools/call).
   // resultReplaced: the tools/call result was already replaced by a block notice, so its content is not checked again.
   async function scanServerMessage(msg, method, resultReplaced = false) {
@@ -530,24 +562,22 @@ function startMcpShield(command, args, options = {}) {
         const state = { n: 0, max: MAX_LIST_STRINGS };
         const kept = [];
         let dropped = 0;
+        let over = 0;
         for (const item of result[key]) {
           if (!item || typeof item !== 'object' || Array.isArray(item)) { kept.push(item); continue; }
           // Past the count limit an item is not checked, so it cannot be passed on.
-          const bad = kept.length + dropped >= MAX_LIST_STRINGS ? 'beyond the number of items zn-gate checks'
-            : await blockedIdentifier(label, listIdentifiers(item));
+          if (!options.shadow && kept.length + dropped + over >= MAX_LIST_STRINGS) { over += 1; continue; }
+          const bad = await blockedIdentifier(label, listIdentifiers(item));
           if (bad !== null && !options.shadow) { dropped += 1; continue; }
           kept.push(item);
-          for (const f of ['description', 'title']) if (typeof item[f] === 'string') await scanServerValue(label, item, f, state, 0);
-          if (Array.isArray(item.arguments)) {
-            for (const arg of item.arguments) {
-              if (!arg || typeof arg !== 'object') continue;
-              for (const f of ['description', 'title']) if (typeof arg[f] === 'string') await scanServerValue(label + ' argument', arg, f, state, 0);
-            }
-          }
+          await scanListItem(label, item, state);
         }
+        if (dropped > 0 || over > 0) result[key] = kept;
         if (dropped > 0) {
-          result[key] = kept;
-          process.stderr.write(`[zn-shield BLOCKED SERVER MESSAGE] ${label}: ${dropped} item(s) removed because a name, URI or argument name could not be passed on safely.\n`);
+          process.stderr.write(`[zn-shield BLOCKED SERVER MESSAGE] ${label}: ${dropped} item(s) removed because the ${LIST_IDENTIFIER_WORDS[key]} could not be passed on safely.\n`);
+        }
+        if (over > 0) {
+          process.stderr.write(`[zn-shield BLOCKED SERVER MESSAGE] ${label}: ${over} item(s) removed because the list is over the ${MAX_LIST_STRINGS}-item limit zn-gate checks.\n`);
         }
       }
       if (method !== 'tools/call' && method !== 'tools/list' && msg.id !== undefined
@@ -839,21 +869,25 @@ function startMcpShield(command, args, options = {}) {
       // Handle tools/list response: sanitize tool descriptions and input schemas
       if (pending.method === 'tools/list') {
         let tools = msg.result?.tools;
-        if (Array.isArray(tools) && !options.shadow) {
+        if (Array.isArray(tools)) {
           // A tool name cannot be rewritten without breaking calls to it: a tool whose name carries an injection
           // (or that is past the number of tools zn-gate checks) is removed from the list, with a notice.
+          // In shadow mode the name is checked and reported (stderr and evidence) but the tool stays.
           const kept = [];
           let dropped = 0;
+          let over = 0;
           for (const t of tools) {
             if (!t || typeof t !== 'object' || typeof t.name !== 'string') { kept.push(t); continue; }
-            if (kept.length + dropped >= MAX_LIST_STRINGS || await blockedIdentifier('tools/list', [['name', t.name]]) !== null) { dropped += 1; continue; }
+            if (!options.shadow && kept.length + dropped + over >= MAX_LIST_STRINGS) { over += 1; continue; }
+            if (await blockedIdentifier('tools/list', [['name', t.name]]) !== null && !options.shadow) { dropped += 1; continue; }
             kept.push(t);
           }
-          if (dropped > 0) {
+          if (dropped > 0 || over > 0) {
             msg.result.tools = kept;
             tools = kept;
-            process.stderr.write(`[zn-shield BLOCKED TOOL NAME] tools/list: ${dropped} tool(s) removed because the name could not be passed on safely.\n`);
           }
+          if (dropped > 0) process.stderr.write(`[zn-shield BLOCKED TOOL NAME] tools/list: ${dropped} tool(s) removed because the tool name could not be passed on safely.\n`);
+          if (over > 0) process.stderr.write(`[zn-shield BLOCKED TOOL NAME] tools/list: ${over} tool(s) removed because the list is over the ${MAX_LIST_STRINGS}-tool limit zn-gate checks.\n`);
         }
         if (Array.isArray(tools)) {
           // Text from the server cannot pass for a zn-gate notice.
@@ -931,7 +965,23 @@ function startMcpShield(command, args, options = {}) {
           }
         }
         if (Array.isArray(tools)) {
+          const extraState = { n: 0, max: MAX_LIST_STRINGS };
           for (const tool of tools) {
+            // _meta, annotations and icons: text the agent can read, checked like any server text.
+            if (tool && typeof tool === 'object' && !Array.isArray(tool)) {
+              for (const f of ['_meta', 'annotations', 'icons']) {
+                if (!tool[f] || typeof tool[f] !== 'object') continue;
+                if (f === 'annotations' && !Array.isArray(tool[f])) {
+                  // annotations.title is checked with the tool title below; every other key and value here
+                  for (const ak of Object.keys(tool[f])) {
+                    if (ak === 'title') continue;
+                    const akey = await scanServerKey('tools/list annotations', tool[f], ak, extraState);
+                    await walkServerValue('tools/list annotations', tool[f], akey, extraState, 1);
+                  }
+                  await flushDeferred('tools/list annotations', extraState);
+                } else await scanServerValue('tools/list ' + f, tool, f, extraState, 0);
+              }
+            }
             // 1. Inspect tool description
             if (typeof tool.description === 'string' && tool.description.length > 0) {
               const check = analyzeLocal(tool.description, options);
