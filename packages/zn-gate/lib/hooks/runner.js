@@ -127,7 +127,8 @@ function outputInstructionNote(tool, strings, opts, agentId) {
       // Plain text that no blocking rule can match is allowed without starting the rules on it.
       if (!mayMatchRules(text, customConfig)) return null;
       const res = rules.scanWindows(text);
-      return res && res.verdict === 'block' ? noteOf(res.rule) : null;
+      // A broken project rules file blocks the commands; it is not text that reads like instructions.
+      return res && res.verdict === 'block' && res.rule !== 'custom:invalid_rules' ? noteOf(res.rule) : null;
     } catch (_) { return null; }
   };
   // Head: the start of each string, up to the shared budget. What it leaves out is the rest of that string.
