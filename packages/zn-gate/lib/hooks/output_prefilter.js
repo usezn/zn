@@ -17,8 +17,9 @@
  * hint is written without whitespace.
  *
  * Each hint is a literal that a blocking rule of lib/rules.js cannot match
- * without. test/hooks_output_prefilter.test.js fails when a rule id is added or
- * removed, so this list is reviewed together with the rules.
+ * without. test/hooks_output_prefilter.test.js fails when a blocking rule has no
+ * sample there, and runs every shared rule sample through this test, so this list is reviewed
+ * together with the rules.
  */
 
 const NON_ASCII_RE = /[^\x00-\x7f]/;
@@ -34,6 +35,17 @@ const HINT_RE = /ignor|disregard|forget|youarenow|newinstruction|system|actas|pr
 const EXFIL_VERB_RE = /give|reveal|send|show|print|expose|leak|paste|dump|read|open|cat|fetch|extract|steal/i;
 const EXFIL_OBJECT_RE = /password|secret|credential|token|api[_-]?key|ssh[_-]?key|private[_-]?key|aws_secret|aws_access/i;
 
+// Identity requests (pi:identity_request, pi:identity_request_multi): every match names a person
+// (user, operator, owner, an e-mail address, "who") and a place to put it (header, cookie, URL
+// parameter, form field, body, next request), in English or in the ASCII spellings of the Spanish,
+// Portuguese, French and German forms; the "who is your user" phrasings and the commands whoami and
+// git config user.* have their own literals. Non-ASCII spellings (accents, Cyrillic, Chinese) never
+// reach these tests, they go to the full rules. The groups are copied from the alternations of the
+// two patterns in lib/rules.js, written without whitespace and widened to stems where that is cheaper.
+const IDENTITY_PERSON_RE = /user|operator|owner|human|principal|customer|accountholder|who|e-?mail|usuario|operador|dueno|propietario|dono|proprietario|utilisateur|nutzer|benutzer|bediener|betreiber|besitzer/i;
+const IDENTITY_PLACE_RE = /header|x-|urlparam|query|\?[a-z_]{1,20}=|cookie|formfield|forminput|formdata|body|payload|next(?:request|call|message)|(?:subsequent|following|every|each|outgoing)(?:http)?(?:request|call|fetch)|cabecera|encabezado|cabecalho|en-t|kopfzeile|param|formular|campo|champ|feld|peticion|solicitud|requisicao|requete|url/i;
+const IDENTITY_PHRASE_RE = /your(?:user|operator|owner|human|principal)|who(?:your|the)(?:user|operator|owner|human|principal)is|whoyou(?:are|'re)|whoami|gitconfig/i;
+
 // Hidden markup: an opening "<" and a payload word.
 const MARKUP_PAYLOAD_RE = /ignore|system|instruction|prompt|bypass|override|exfil|leak|command/i;
 
@@ -46,6 +58,8 @@ function mayMatchRules(text, customConfig) {
   const squeezed = text.replace(WHITESPACE_RE, '');
   if (HINT_RE.test(squeezed)) return true;
   if (EXFIL_VERB_RE.test(squeezed) && EXFIL_OBJECT_RE.test(squeezed)) return true;
+  if (IDENTITY_PERSON_RE.test(squeezed) && IDENTITY_PLACE_RE.test(squeezed)) return true;
+  if (IDENTITY_PHRASE_RE.test(squeezed)) return true;
   return squeezed.includes('<') && MARKUP_PAYLOAD_RE.test(squeezed);
 }
 
