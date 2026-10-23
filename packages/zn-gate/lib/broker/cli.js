@@ -390,15 +390,22 @@ async function envShadow(args, io) {
   let mode = 0o600;
   try { mode = fs.statSync(file).mode & 0o777; } catch (_) { /* default */ }
   writeFileAtomic(file, shadowed, mode);
-  out(io, 'Shadowed ' + edits.length + ' value(s) in ' + path.basename(file) + '. The file now holds only markers; the values are in the local vault.');
+  // Values that stayed in the file: the ones zn skipped and the ones it could not store.
+  const left = [...plan.skipped.map((s) => s.key), ...plan.items.filter((it) => !storedNames.has(it.name)).map((it) => it.entry.key)];
+  if (left.length === 0) {
+    out(io, 'Shadowed ' + edits.length + ' value(s) in ' + path.basename(file) + '. The file now holds only markers; the values are in the local vault.');
+  } else {
+    out(io, 'Shadowed ' + edits.length + ' value(s) in ' + path.basename(file) + '; the values are in the local vault.');
+    out(io, 'Still in ' + path.basename(file) + ' in plain text: ' + [...new Set(left)].join(', ') + '. See below for why.');
+  }
   out(io, 'Encrypted copy of the original: ' + bak + ' (restore with: zn env unshadow ' + path.relative(io.cwd, file) + ' --backup ' + bak + ')');
   for (const s of plan.notes) out(io, '  note ' + s.key + ': ' + s.why);
   for (const s of plan.skipped) out(io, '  skipped ' + s.key + ': ' + s.why);
   const names = stored.map((s) => s.name).join(',');
-  if (!flags.command) {
+  if (!flags.command && stored.length) {
     out(io, 'Next: allow the commands that need them, e.g. zn secret allow ' + stored[0].name + ' --command "npm run dev"');
   }
-  out(io, 'Run your app with the real values: zn run --secrets ' + names + ' -- <command>');
+  if (stored.length) out(io, 'Run your app with the real values: zn run --secrets ' + names + ' -- <command>');
   return 0;
 }
 
