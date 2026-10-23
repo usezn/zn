@@ -41,7 +41,7 @@ function readSource(file) {
     return { file, error: err.code || err.message };
   }
   try {
-    const data = text.trim() ? JSON.parse(text) : {};
+    const data = text.trim() ? JSON.parse(text.replace(/^﻿/, '')) : {};
     return data && typeof data === 'object' && !Array.isArray(data) ? { file, data } : { file, error: 'not a JSON object' };
   } catch (err) {
     return { file, error: 'invalid JSON' };
@@ -333,6 +333,7 @@ function cursorPolicyWarnings(opts = {}) {
 
 // JSON with the line and block comments that Gemini CLI allows in settings.json (comments outside strings are dropped).
 function parseJsonc(text) {
+  text = text.replace(/^﻿/, '');
   try { return JSON.parse(text); } catch (_) { /* try without comments */ }
   let out = '';
   let i = 0;

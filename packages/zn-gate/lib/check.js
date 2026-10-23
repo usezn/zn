@@ -133,7 +133,7 @@ const AGENTS = [
 
 function readJson(file) {
   try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
+    return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, ''));
   } catch (err) {
     return null;
   }
@@ -424,7 +424,7 @@ function copilotSwitchedOff(userFile, ctx, adapter) {
     const f = path.join(ctx.cwd, '.github', 'copilot', name);
     const s = require('./audit')._internal.readBounded(f, 256 * 1024, false).text;
     let j = null;
-    try { j = s ? JSON.parse(s) : null; } catch (_) { j = null; }
+    try { j = s ? JSON.parse(s.replace(/^﻿/, '')) : null; } catch (_) { j = null; }
     if (j && j.disableAllHooks === true) {
       out.problem = 'the Copilot settings of this folder (' + f + ') have "disableAllHooks" turned on, so Copilot runs no hook of yours here (only machine policy hooks)';
       out.fix = 'remove "disableAllHooks" from that file, then run `zn-gate check` again';

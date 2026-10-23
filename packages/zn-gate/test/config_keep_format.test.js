@@ -13,6 +13,10 @@ const { tempDir } = require('./helpers/tmp');
 const cfg = require('../lib/agents/config-file');
 const claude = require('../lib/agents/claude-code');
 const cursor = require('../lib/agents/cursor');
+const { dispatch } = require('../lib/broker/cli');
+const { check } = require('../lib/check');
+
+const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
 
 function opts(home, extra = {}) {
   return { home, env: {}, mcp: false, managedDir: path.join(home, 'no-managed-policy'), ...extra };
@@ -88,7 +92,9 @@ test('cursor: hooks.json keeps CRLF, tabs and a BOM, and uninstall restores the 
   const installed = fs.readFileSync(file, 'utf8');
   assert.ok(installed.startsWith('\uFEFF{\r\n\t"'));
   assert.ok(!/(?<!\r)\n/.test(installed));
-  assert.ok(installed.includes('zn'));
+  // The hook command differs per platform (an encoded PowerShell command on Windows), so check the parsed entries.
+  const entries = JSON.parse(installed.slice(1)).hooks.preToolUse;
+  assert.ok(entries.some((e) => cfg.isOurs(e.command, 'cursor')));
   cursor.uninstall(opts(home));
   assert.equal(fs.readFileSync(file, 'utf8'), original);
 });
@@ -120,4 +126,33 @@ test('config-file: writeJson keeps the style of what readJson read, through a sy
   cfg.writeJson(link, data);
   assert.ok(fs.lstatSync(link).isSymbolicLink());
   assert.equal(fs.readFileSync(real, 'utf8'), '\uFEFF{\r\n    "a": 1,\r\n    "b": 2\r\n}\r\n');
+});
+
+test('check: a settings.json with a BOM that install kept is still read, so zn check reports the hook', async (t) => {
+  const home = tempDir(t, 'zn-keepfmt-');
+  const file = path.join(home, '.claude', 'settings.json');
+  put(file, render(OTHER, { eol: '\r\n', bom: true }));
+  claude.install(opts(home, { env: { HOME: home }, nodePath: process.execPath, runnerPath: RUNNER }));
+  assert.ok(fs.readFileSync(file, 'utf8').startsWith('\uFEFF'));
+  const res = await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-keepfmt-cwd-'), nodeVersion: '22.0.0' });
+  const r = res.results.find((x) => x.id === 'claude-code');
+  assert.equal(r.state, 'protected', r.problem);
+});
+
+test('uninstall: zn hooks in a project settings.json with a BOM are found and removed', async (t) => {
+  const home = tempDir(t, 'zn-keepfmt-');
+  const proj = tempDir(t, 'zn-keepfmt-proj-');
+  const file = path.join(proj, '.claude', 'settings.json');
+  const original = render(OTHER, { eol: '\r\n', bom: true });
+  put(file, original);
+  const env = { HOME: home, USERPROFILE: home, PATH: '' };
+  claude.install({ scope: 'project', projectDir: proj, home, env, command: 'zn hook claude-code', mcp: false, managedDir: path.join(home, 'no-managed-policy') });
+  assert.ok(/zn hook claude-code/.test(fs.readFileSync(file, 'utf8')));
+  let out = '';
+  const o = {
+    stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { out += s; } }, stdin: { isTTY: true },
+    env, home, cwd: proj, human: true, claude: null, ancestry: () => null, envList: [], confirm: async () => true,
+  };
+  assert.equal(await dispatch('uninstall', [], o), 0, out);
+  assert.equal(fs.readFileSync(file, 'utf8'), original);
 });
