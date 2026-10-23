@@ -2,7 +2,7 @@
   "layers": {
     "rules": {
       "version_const": "RULES_VERSION",
-      "version": "2026-10-25.4",
+      "version": "2026-10-25.5",
       "ids": [
         "evasion:bidi_override",
         "exfil:credentials",
@@ -47,7 +47,7 @@
         "secret:private_key"
       ],
       "sha256": {
-        "lib/rules.js": "ebf87f256fce578bd2887049bb3a37c4d06ee7e6b96a4f6e631ec91ff48a4176",
+        "lib/rules.js": "9ac7828ae3addb80adc21300e1c0beae953f7af30f4706a470c5ad78078283eb",
         "lib/mcp-secrets.js": "6a59fc9809d6b1a3509ff285d21be57e2906449b1c78644e41fe142eccda69b9"
       }
     },
@@ -155,7 +155,7 @@
     },
     "audit": {
       "version_const": "AUDIT_RULES_VERSION",
-      "version": "2026-10-23.3",
+      "version": "2026-10-23.6",
       "ids": [
         "ZNA001",
         "ZNA002",
@@ -177,6 +177,7 @@
         "ZNA018",
         "ZNA019",
         "ZNA020",
+        "ZNA021",
         "patterns.CRED_FLAG_NAME",
         "patterns.CRED_FLAG_ONLY",
         "patterns.INTERPRETERS",
@@ -200,7 +201,7 @@
         "patterns.weakening"
       ],
       "sha256": {
-        "lib/audit/rules.js": "fa4ddcd2b0ef1f08ce272d8728a7427ce40f2f96f2e743896f2a7b19e6cffbf7",
+        "lib/audit/rules.js": "bdf7ff68206061bb3d51a739176f0eb323f53b3bbeda982a89260e94acbfd5ae",
         "lib/audit/patterns.js": "c3a0492c39598e1c698d741f39a40dbbf36e579334de0748bb8736dd9548627f"
       }
     },

@@ -7,7 +7,7 @@
 
 // Version of the rule catalogue and of the command patterns in audit/patterns.js.
 // Bump it when a rule, a pattern or a rule id changes; see CONTRIBUTING.md.
-const AUDIT_RULES_VERSION = '2026-10-23.3';
+const AUDIT_RULES_VERSION = '2026-10-23.6';
 
 const SEVERITIES = ['low', 'medium', 'high', 'critical'];
 const RANK = { none: 99, low: 1, medium: 2, high: 3, critical: 4 };
@@ -160,6 +160,13 @@ const RULES = [
     title: 'Agent file could not be checked',
     help: 'zn audit could not review this file or directory: a syntax error, a size over the limit, a symbolic link leaving the repository, or a scan that stopped early. Agents may still read and act on it. High when the file can run commands or redirect the agent, or when the scan did not finish.',
     fix: 'Fix the syntax error, move the content into the repository, or review the file by hand.',
+    references: [],
+  },
+  {
+    id: 'ZNA021', severity: 'medium', name: 'blank-line-padding',
+    title: 'Instruction file hides text behind a long run of blank lines',
+    help: 'A run of 40 or more empty or whitespace-only lines, followed by more text, pushes that text out of view for a person who opens the file and past the part of it a classifier reads. The report gives the line where the hidden text starts and the length of the run; the text is never printed.',
+    fix: 'Open the file at the reported line and read what follows. Remove the blank lines, and the text too unless you wrote it.',
     references: [],
   },
 ];

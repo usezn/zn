@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-25.4
+ * RULES_VERSION: 2026-10-25.5
  */
 
-const RULES_VERSION = '2026-10-25.4';
+const RULES_VERSION = '2026-10-25.5';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -620,10 +620,48 @@ function evaluateOversize(input, options) {
   return scanWindows(input, { ...options, maxScanChars: MAX_TOOL_RESULT_SCAN_CHARS });
 }
 
+// A run of two or more empty or whitespace-only lines becomes one empty line before any rule runs, so text
+// that follows a long padding run is read in the same scan window as the text before it. Whitespace here is
+// listed explicitly (not \s) so Node.js and Python agree. Done by scanning, not with one repeated regex group,
+// which overflows the regex stack on millions of lines; every line is looked at once.
+const BLANK_RUN_TEST = /\n[ \t\r\f\v\u0085\u00a0\u00ad\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]*\n[ \t\r\f\v\u0085\u00a0\u00ad\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]*\n/;
+const BLANK_SPACE = /[ \t\r\f\v\u0085\u00a0\u00ad\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]*/y;
+function collapseBlankRuns(text) {
+  if (typeof text !== 'string' || !BLANK_RUN_TEST.test(text)) return text;
+  const out = [];
+  let copied = 0;
+  let i = text.indexOf('\n');
+  while (i !== -1) {
+    // `i` is a line break; count the blank lines that follow it, each ended by a line break (up to `j`).
+    let j = i;
+    let blanks = 0;
+    for (;;) {
+      const k = text.indexOf('\n', j + 1);
+      if (k === -1) break;
+      BLANK_SPACE.lastIndex = j + 1;
+      BLANK_SPACE.exec(text);
+      if (BLANK_SPACE.lastIndex !== k) break;
+      blanks++;
+      j = k;
+    }
+    if (blanks >= 2) {
+      out.push(text.slice(copied, i), '\n\n');
+      copied = j + 1;
+    }
+    i = text.indexOf('\n', j + 1);
+  }
+  out.push(text.slice(copied));
+  return out.join('');
+}
+
 function evaluateUncached(input, options = {}) {
   if (typeof input !== 'string') {
     return { verdict: 'allow', confidence: 1.0, rule: 'none', reason: null, engine: 'oss-local', rules_version: RULES_VERSION };
   }
+  // Invisible padding is judged on the input as received: collapsing first would turn lines made only of
+  // zero-width characters into one empty line and hide a size:invisible block.
+  if (input.length > MAX_SCAN_CHARS && tooInvisible([input])) return invisibleBlock();
+  input = collapseBlankRuns(input);
   if (input.length > MAX_SCAN_CHARS) return evaluateOversize(input, options);
 
   // Pre-normalization passes: stripped (preserves non-Latin) and normalized (maps homoglyphs)
@@ -1292,6 +1330,7 @@ function truncatedBlocks(options) {
 
 function scanWindows(text, options = {}) {
   if (tooInvisible([text])) return invisibleBlock();
+  text = collapseBlankRuns(text);
   if (typeof text !== 'string' || text.length <= MAX_SCAN_CHARS) return evaluate(text, options);
   const step = MAX_SCAN_CHARS - SCAN_WINDOW_OVERLAP;
   const cap = Number.isFinite(options.maxScanChars) && options.maxScanChars > 0 ? options.maxScanChars : MAX_TOOL_RESULT_SCAN_CHARS;
