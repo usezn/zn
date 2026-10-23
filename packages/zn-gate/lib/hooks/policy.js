@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-23.5';
+const POLICY_RULES_VERSION = '2026-10-24.10';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -286,13 +286,18 @@ const GLOB_RE = /[*?[\]{}]/;
 // The first comma is matched by [^{},]*, so the pattern has one way to match and cannot backtrack.
 const BRACE_RE = /\{([^{},]*,[^{}]*)\}/;
 
+// A brace list has at least two alternatives, so more than 6 lists in one word always pass the default limit of 64.
+// The recursion stops there instead of following one level per list (a word with 20000 lists overflowed the stack).
+const BRACE_MAX_DEPTH = 8;
+
 /** Alternatives of a word with brace lists (`a{b,c}` -> ab, ac); null when there are too many. */
-function expandBraces(s, limit = 64) {
+function expandBraces(s, limit = 64, depth = 0) {
   const m = BRACE_RE.exec(s);
   if (!m) return [s];
+  if (depth >= BRACE_MAX_DEPTH) return null;
   const out = [];
   for (const alt of m[1].split(',')) {
-    const rest = expandBraces(s.slice(0, m.index) + alt + s.slice(m.index + m[0].length), limit);
+    const rest = expandBraces(s.slice(0, m.index) + alt + s.slice(m.index + m[0].length), limit, depth + 1);
     if (rest === null) return null;
     for (const x of rest) {
       out.push(x);
@@ -2395,6 +2400,343 @@ function denialOf(c, text, opts) {
   return credentialDenial(text, c);
 }
 
+/* ------------------------------ egress ------------------------------ */
+
+/*
+ * Network requests written in a command (curl, wget, Invoke-WebRequest and its aliases, inline python or node code that
+ * opens a URL), in a WebFetch URL or in the arguments of an MCP call. egressParts() returns the places where data leaves
+ * the computer (headers, credentials, query string, body, inline code) as plain text; the hook runner scans that text with
+ * the scrubber engine for personal data and literal secrets. Values read from the environment ($TOKEN, ${API_KEY},
+ * $env:TOKEN, %TOKEN%) and command substitutions are removed first: that is the safe way to pass a secret, and only
+ * literal values are reported. A request whose hosts are all local (localhost, 127.0.0.1, ::1) or on the user's
+ * allow-list (hooks.egressAllowHosts) is not checked.
+ */
+const EGRESS_URL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
+const EGRESS_URL_LIKE_RE = /^(?:localhost|\$|\[|[\w${}-]+(?:\.[\w${}-]+)+|[\w.${}-]+:\d+)(?:[:/?#]|$)/i;
+const EGRESS_URLS_IN_TEXT_RE = /\b[a-z][a-z0-9+.-]*:\/\/[^\s'"`)}\]>]+/gi;
+const EGRESS_PROGRAMS = new Set(['curl', 'wget']);
+const EGRESS_WRAPPERS = new Set(['sudo', 'doas', 'env', 'command', 'exec', 'nohup', 'time', 'nice', 'timeout', 'stdbuf', 'xargs', 'builtin',
+  'ionice', 'setsid', 'then', 'do', 'else', '!', '{']);
+const EGRESS_INTERPRETER_RE = /^(?:python[0-9.]*|py|node|nodejs|deno|bun)$/;
+const EGRESS_CODE_NET_RE = /\b(?:requests|httpx|urllib[0-9]?|urlopen|aiohttp|pycurl|http\.client|https?\.(?:get|request)|axios|undici|node-fetch|XMLHttpRequest|WebClient|socket)\b|\bfetch\s*\(|\bhttps?:\/\//i;
+// Options that take a value, by tool. The kind says where the value goes; skip lists the others, so their value is not read as a URL.
+const CURL_OPTIONS = {
+  long: { header: 'header', user: 'credentials', cookie: 'header', 'proxy-header': 'header', 'proxy-user': 'credentials', 'oauth2-bearer': 'credentials', 'user-agent': 'header',
+    referer: 'header', pass: 'credentials', data: 'body', 'data-raw': 'body', 'data-binary': 'body', 'data-ascii': 'body', 'data-urlencode': 'body', json: 'body',
+    form: 'body', 'form-string': 'body', 'url-query': 'query', url: 'host', proxy: 'url', preproxy: 'url' },
+  short: { H: 'header', u: 'credentials', b: 'header', A: 'header', e: 'header', d: 'body', F: 'body', x: 'url' },
+  skip: new Set(['output', 'request', 'max-time', 'connect-timeout', 'retry', 'retry-delay', 'retry-max-time', 'write-out', 'cacert', 'cert', 'key', 'resolve', 'limit-rate',
+    'max-redirs', 'range', 'time-cond', 'upload-file', 'config', 'dump-header', 'trace', 'trace-ascii', 'output-dir', 'connect-to', 'interface', 'local-port',
+    'dns-servers', 'pinnedpubkey', 'capath', 'cert-type', 'key-type', 'unix-socket', 'cookie-jar', 'continue-at', 'max-filesize', 'speed-limit', 'speed-time',
+    'stderr', 'variable', 'ciphers', 'curves', 'doh-url', 'hsts', 'alt-svc', 'noproxy', 'proxy-cacert', 'proxy-cert', 'proxy-key']),
+  shortSkip: new Set('cCDEKmoPQrTwXyYzt'.split('')),
+};
+const WGET_OPTIONS = {
+  long: { header: 'header', user: 'credentials', password: 'credentials', 'http-user': 'credentials', 'http-password': 'credentials', 'ftp-user': 'credentials', 'ftp-password': 'credentials',
+    'proxy-user': 'credentials', 'proxy-password': 'credentials', 'user-agent': 'header', referer: 'header', 'post-data': 'body', 'body-data': 'body' },
+  short: { U: 'header' },
+  skip: new Set(['output-document', 'output-file', 'append-output', 'directory-prefix', 'tries', 'timeout', 'wait', 'waitretry', 'read-timeout', 'dns-timeout',
+    'connect-timeout', 'limit-rate', 'quota', 'post-file', 'body-file', 'load-cookies', 'save-cookies', 'input-file', 'base', 'execute', 'bind-address',
+    'ca-certificate', 'certificate', 'private-key', 'level', 'accept', 'reject', 'domains', 'exclude-domains', 'include-directories', 'exclude-directories',
+    'default-page', 'method', 'config']),
+  shortSkip: new Set('OPoaiBtTwQlARDIXe'.split('')),
+};
+
+/** Text with the values read from the environment, and command substitutions, removed. */
+function egressStripEnv(text) {
+  return String(text).replace(ENV_REF_RE, '').replace(/\$\([^()]*\)/g, '');
+}
+
+/** Lower-case host of a URL (scheme, user information, port and path removed); '' when there is none. */
+function egressHostOf(raw) {
+  let s = String(raw).trim().replace(EGRESS_URL_SCHEME_RE, '');
+  s = s.split(/[/?#\\]/, 1)[0];
+  s = s.slice(s.lastIndexOf('@') + 1);
+  if (s[0] === '[') {
+    const end = s.indexOf(']');
+    return (end > 0 ? s.slice(1, end) : s).toLowerCase();
+  }
+  if (s.split(':').length === 2) s = s.slice(0, s.indexOf(':'));
+  return s.toLowerCase();
+}
+
+/** True for a host that stays on this computer, or one the user listed ("example.com" or "*.example.com"). */
+function egressHostAllowed(host, allow) {
+  if (!host) return false;
+  if (host === 'localhost' || host === '127.0.0.1' || host === '::1' || host.endsWith('.localhost')) return true;
+  for (const a of Array.isArray(allow) ? allow : []) {
+    const h = String(a).toLowerCase();
+    if (h === host || (h.startsWith('*.') && host.endsWith(h.slice(1)))) return true;
+  }
+  return false;
+}
+
+/** Splits the options of curl or wget. Returns {parts, urls}: the places data goes, and the URLs named. */
+function egressOptions(words, spec) {
+  const parts = [];
+  const urls = [];
+  const put = (kind, value) => {
+    if (typeof value !== 'string' || value === '') return;
+    if (kind === 'host') { urls.push(value); parts.push({ where: 'url', text: value }); }
+    else if (kind === 'url') parts.push({ where: 'url', text: value });
+    else if (value.startsWith('@')) return; // @file is a file read, not a literal value
+    else {
+      parts.push({ where: kind, text: value });
+      // user:password is read like the credentials of a URL, so the detector of passwords in URLs applies to it.
+      if (kind === 'credentials' && value.includes(':')) parts.push({ where: 'url', text: 'https://' + value + '@host.invalid/' });
+    }
+  };
+  let restUrls = false;
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    if (restUrls || w === '-' || w[0] !== '-') {
+      if (restUrls || EGRESS_URL_SCHEME_RE.test(w) || EGRESS_URL_LIKE_RE.test(w)) put('host', w);
+      continue;
+    }
+    if (w === '--') { restUrls = true; continue; }
+    if (w.startsWith('--')) {
+      const eq = w.indexOf('=');
+      const name = (eq > 0 ? w.slice(2, eq) : w.slice(2)).toLowerCase();
+      const known = Object.prototype.hasOwnProperty.call(spec.long, name);
+      if (!known && !spec.skip.has(name)) continue;
+      const value = eq > 0 ? w.slice(eq + 1) : words[++i];
+      if (known) put(spec.long[name], value);
+      continue;
+    }
+    for (let j = 1; j < w.length; j++) {
+      const c = w[j];
+      const known = Object.prototype.hasOwnProperty.call(spec.short, c);
+      if (!known && !spec.shortSkip.has(c)) continue;
+      let value = w.slice(j + 1);
+      if (!value) value = words[++i];
+      if (known) put(spec.short[c], value);
+      break;
+    }
+  }
+  return { parts, urls };
+}
+
+// PowerShell: the cmdlet's arguments are read as one text, up to the end of its line or pipeline.
+function egressPowerShell(text, powershell, found) {
+  const re = powershell
+    ? /(?:^|[\s;|&(])(invoke-webrequest|invoke-restmethod|iwr|irm|curl|wget)(?=\s)/gi
+    : /(?:^|[\s;|&(])(invoke-webrequest|invoke-restmethod|iwr|irm)(?=\s)/gi;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    // A backtick at the end of a line continues the command on the next one: join those lines before the cut.
+    let rest = text.slice(m.index + m[0].length).replace(/`[ \t]*\r?\n/g, ' ');
+    const cut = rest.search(/\r?\n|\s\|\s|&&/);
+    if (cut >= 0) rest = rest.slice(0, cut);
+    found.push({ urls: rest.match(EGRESS_URLS_IN_TEXT_RE) || [], parts: [{ where: 'ps', text: rest }] });
+  }
+}
+
+// python -c, node -e, deno eval and python - <<EOF: the code is read as one text when it opens a URL.
+function egressInterpreter(words, k, text, found) {
+  const rest = words.slice(k + 1);
+  let code = null;
+  for (let i = 0; i < rest.length; i++) {
+    const t = rest[i].text;
+    if (/^-[A-Za-z]*[cep]$/.test(t) || t === '--eval' || t === '--print' || (i === 0 && t === 'eval')) { code = rest[i + 1] ? rest[i + 1].text : null; break; }
+  }
+  if (code === null) {
+    const h = /<<-?\s*['"]?[A-Za-z_]\w*/.exec(text);
+    if (h && !rest.some((r) => /\.(?:py|js|mjs|cjs|ts)$/i.test(r.text))) code = text.slice(h.index);
+  }
+  if (!code || !EGRESS_CODE_NET_RE.test(code)) return;
+  found.push({ urls: code.match(EGRESS_URLS_IN_TEXT_RE) || [], parts: [{ where: 'code', text: code }] });
+}
+
+function egressCollect(raw, opts, depth) {
+  const found = [];
+  const text = stripHeredocs(raw, { until: Date.now() + CHECK_BUDGET_MS, disk: 0 });
+  egressPowerShell(text, opts.powershell === true, found);
+  let rest = text;
+  let guard = 0;
+  while (rest.length && guard++ < SIMPLE_COMMANDS_MAX) {
+    const scan = scanFirstCommand(rest, false);
+    const words = scan.words;
+    let k = -1;
+    for (let i = 0; i < words.length; i++) {
+      const t = words[i].text;
+      const name = programName(t);
+      if (EGRESS_PROGRAMS.has(name) || EGRESS_INTERPRETER_RE.test(name)) { k = i; break; }
+      if (ASSIGNMENT_RE.test(t) || EGRESS_WRAPPERS.has(name) || t.startsWith('-') || /^\d+[smhd]?$/.test(t)) continue;
+      break;
+    }
+    if (k >= 0) {
+      const name = programName(words[k].text);
+      if (EGRESS_INTERPRETER_RE.test(name)) egressInterpreter(words, k, raw, found);
+      // In the PowerShell tool, curl and wget are Invoke-WebRequest, read above; curl.exe is the real program.
+      else if (!(opts.powershell === true && !/\.exe$/i.test(words[k].text))) {
+        const r = egressOptions(words.slice(k + 1).map((w) => w.text), name === 'curl' ? CURL_OPTIONS : WGET_OPTIONS);
+        if (r.parts.length) found.push(r);
+      }
+    }
+    rest = rest.slice(scan.end + 1);
+  }
+  // sh -c "curl ...": the code of a shell inside the command is a command of its own.
+  if (depth < SHELL_CODE_DEPTH && /\b(?:sh|bash|zsh|dash|ksh|ash|eval|su|pwsh|powershell|cmd|watch|flock|xargs|busybox)\b/.test(text)) {
+    for (const code of shellCodesOf(allWords(text, false))) found.push(...egressCollect(code, opts, depth + 1));
+  }
+  return found;
+}
+
+function egressResult(found, allowOrFn) {
+  const out = [];
+  if (!found.length) return out;
+  // The allow-list may be a function, read from the settings only when a request was found.
+  const allow = typeof allowOrFn === 'function' ? allowOrFn() : allowOrFn;
+  for (const r of found) {
+    const hosts = r.urls.map(egressHostOf);
+    if (hosts.length && hosts.every((h) => egressHostAllowed(h, allow))) continue;
+    out.push({ hosts: [...new Set(hosts.filter(Boolean))], parts: r.parts.map((p) => ({ where: p.where, text: egressStripEnv(p.text) })) });
+  }
+  return out;
+}
+
+/*
+ * The places in a shell command where data leaves the computer through a network request that is not local or
+ * allow-listed. Returns [{hosts: [string], parts: [{where, text}]}], one entry per request. where: 'header',
+ * 'body', 'query', 'url' (a URL as written), 'ps' (PowerShell arguments) or 'code' (inline code);
+ * egressLabel() turns a detection inside a part into what a person reads.
+ * opts: powershell (the PowerShell tool), allow (host allow-list, or a function that returns it).
+ */
+function egressParts(cmd, opts = {}) {
+  const raw = String(cmd || '');
+  if (!raw || raw.length > SHELL_SCAN_CAP) return [];
+  if (!/curl|wget|invoke-|iwr|irm|python|py\b|node|deno|bun|https?:\/\//i.test(raw)) return [];
+  return egressResult(egressCollect(raw, opts, 0), opts.allow);
+}
+
+/*
+ * Percent-decoded copies of a text, for the scan: "%40" is how an email address is written in a URL or a form body, and
+ * "+" is a space in a query or form. Returns [] when the text has no "%", else up to three distinct copies (decoded,
+ * decoded with "+" as a space, and the first decoded once more for double encoding). Invalid sequences are left as
+ * they are, nothing throws, and the work is linear in the text.
+ */
+function egressDecode(text) {
+  return text.replace(/(?:%[0-9a-f]{2})+/gi, (seq) => {
+    try { return decodeURIComponent(seq); } catch (e) { return seq; }
+  });
+}
+function egressDecodedCopies(text) {
+  if (typeof text !== 'string' || text.indexOf('%') < 0) return [];
+  const out = new Set();
+  const once = egressDecode(text);
+  out.add(once);
+  if (text.indexOf('+') >= 0) out.add(egressDecode(text.replace(/\+/g, ' ')));
+  if (once.indexOf('%') >= 0) out.add(egressDecode(once));
+  out.delete(text);
+  return [...out];
+}
+
+/** The URL of a WebFetch call, in the shape egressParts returns ([] when its host is local or allow-listed). */
+function egressUrlParts(url, opts = {}) {
+  const u = String(url || '');
+  if (!u) return [];
+  return egressResult([{ urls: [u], parts: [{ where: 'url', text: u }] }], opts.allow);
+}
+
+const EGRESS_HEADER_KEY_RE = /(?:^|[_.-])(?:headers?|cookies?|authorization|auth|credentials?|bearer|token)(?:$|[_.-])/i;
+const EGRESS_BODY_KEY_RE = /^(?:body|data|json|payload|form|params|query|variables)$/i;
+const EGRESS_URL_KEY_RE = /^(?:url|uri|endpoint|href|webhook(?:_?url)?|base_?url)$/i;
+
+/** The same for the arguments of an MCP call: only a call that has a URL or headers is a request. */
+function egressMcpCollect(args) {
+  const urls = [];
+  const parts = [];
+  let request = false;
+  let leaves = 0;
+  // complete: the walk reached every text in the arguments (depth and leaf limits not hit), so the parts cover all of it.
+  let complete = true;
+  const walk = (value, key, where, depth) => {
+    if (depth > 6 || leaves > 2000) { complete = false; return; }
+    if (typeof value === 'string') {
+      leaves++;
+      if (/^https?:\/\//i.test(value.trim()) || EGRESS_URL_KEY_RE.test(key)) { request = true; urls.push(value); parts.push({ where: 'url', text: value }); }
+      else parts.push({ where: where || 'arguments', text: value });
+      return;
+    }
+    if (Array.isArray(value)) { for (const v of value) walk(v, key, where, depth + 1); return; }
+    if (value && typeof value === 'object') {
+      for (const [k, v] of Object.entries(value)) {
+        leaves++;
+        parts.push({ where: 'arguments', text: k });
+        let w = where;
+        if (!w && EGRESS_HEADER_KEY_RE.test(k)) w = 'header';
+        else if (!w && EGRESS_BODY_KEY_RE.test(k)) w = 'body';
+        if (/^headers?$/i.test(k)) request = true;
+        walk(v, k, w, depth + 1);
+      }
+    }
+  };
+  walk(args, '', null, 0);
+  return { request, urls, parts, complete };
+}
+
+/*
+ * True when the egress check of an MCP call covers every text in its arguments: the call is a network request (a URL or
+ * headers) and the walk was not cut short by the depth or leaf limits. Only then may the egress check answer the
+ * personal-data question of the MCP check on its own; otherwise that question stays.
+ */
+function egressMcpCovers(args) {
+  if (!args || typeof args !== 'object') return false;
+  const c = egressMcpCollect(args);
+  return c.request && c.complete;
+}
+
+/*
+ * The places of an MCP call that the egress check scans. Only a call with a URL or headers is a request.
+ * Host rule: the host allow-list (and the local hosts) governs only what goes to the network host, that is the URL,
+ * headers and body parts. The MCP server receives all the arguments, whatever the host, so personal data in the other
+ * texts of the call (where 'arguments') is still scanned for a local or allow-listed host: it is the question the MCP
+ * check asks for a call that is not a request.
+ */
+function egressMcpParts(args, opts = {}) {
+  if (!args || typeof args !== 'object') return [];
+  const { request, urls, parts } = egressMcpCollect(args);
+  if (!request) return [];
+  const out = egressResult([{ urls, parts }], opts.allow);
+  if (out.length) return out;
+  const rest = parts.filter((p) => p.where === 'arguments');
+  return rest.length ? [{ hosts: [], parts: rest.map((p) => ({ where: p.where, text: egressStripEnv(p.text) })) }] : [];
+}
+
+const EGRESS_PS_PARAMS = { headers: 'header', body: 'body', uri: 'URL', credential: 'credentials', authentication: 'credentials', token: 'credentials', useragent: 'header' };
+const EGRESS_CODE_KEYS = { header: 'header', headers: 'header', cookie: 'header', cookies: 'header', auth: 'credentials', params: 'query string', data: 'body',
+  json: 'body', body: 'body', payload: 'body', url: 'URL' };
+
+/** What a person reads for a detection at index `start` of a part: 'header', 'body', 'query string', 'URL', 'credentials', 'code' or 'arguments'. */
+function egressLabel(part, start) {
+  const text = part.text;
+  const before = text.slice(Math.max(0, start - 300), start);
+  if (part.where === 'ps' || part.where === 'code') {
+    // A detection inside a URL written in the text is named by its place in that URL.
+    for (const m of text.matchAll(EGRESS_URLS_IN_TEXT_RE)) {
+      if (start >= m.index && start < m.index + m[0].length) return egressLabel({ where: 'url', text: m[0] }, start - m.index);
+    }
+  }
+  if (part.where === 'url') {
+    const schemeEnd = (EGRESS_URL_SCHEME_RE.exec(text) || [''])[0].length;
+    const slash = text.indexOf('/', schemeEnd);
+    const q = text.indexOf('?');
+    if (q >= 0 && start > q) return 'query string';
+    return start >= schemeEnd && (slash < 0 || start < slash) && text.slice(0, start).length >= schemeEnd && /@/.test(text.slice(schemeEnd, slash < 0 ? undefined : slash)) ? 'credentials' : 'URL';
+  }
+  if (part.where === 'ps') {
+    let last = null;
+    for (const m of before.matchAll(/(?:^|\s)-(headers|body|uri|credential|authentication|token|useragent)\b/gi)) last = m[1].toLowerCase();
+    return last ? EGRESS_PS_PARAMS[last] : 'arguments';
+  }
+  if (part.where === 'code') {
+    let last = null;
+    for (const m of before.matchAll(/\b(headers?|cookies?|auth|params|data|json|body|payload|url)\b['"]?\s*(?:=|:|\()/gi)) last = m[1].toLowerCase();
+    return (last && EGRESS_CODE_KEYS[last]) || 'code';
+  }
+  return part.where === 'query' ? 'query string' : part.where;
+}
+
 module.exports = {
   POLICY_RULES_VERSION,
   classifyPath,
@@ -2417,4 +2759,10 @@ module.exports = {
   adminCommand,
   bashDenial,
   SHELL_SCAN_CAP,
+  egressParts,
+  egressUrlParts,
+  egressMcpParts,
+  egressMcpCovers,
+  egressDecodedCopies,
+  egressLabel,
 };

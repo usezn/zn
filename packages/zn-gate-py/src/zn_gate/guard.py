@@ -17,7 +17,7 @@ from collections.abc import AsyncIterator, ItemsView, Iterable, Iterator, KeysVi
 from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set, Tuple, TypeVar, cast
 
 from .rules import Assessment, invisible_block, scan_windows, too_invisible
-from .rules import MAX_SCAN_CHARS, MAX_TOOL_RESULT_SCAN_CHARS, _check_base64_pipes
+from .rules import MAX_SCAN_CHARS, MAX_TOOL_RESULT_SCAN_CHARS, _check_base64_pipes, truncated_blocks
 
 
 _F = TypeVar("_F", bound=Callable[..., Any])
@@ -35,7 +35,11 @@ def block_message(assessment: Assessment, target: str) -> str:
         what = ("The output was too large to check in full, so it was withheld."
                 if is_result else "The input was too large to check in full, so the call did not run.")
         why = f"Reason: too large to scan in full (rule: {assessment.rule})."
-        step = "Next step: shorten or split the input into smaller parts and try again."
+        if is_result:
+            step = ("Next step: if you trust this tool, set ZN_ALLOW_TRUNCATED=1 to let large outputs "
+                    "through without a full check (or pass allow_truncated=True to check_tool_result).")
+        else:
+            step = "Next step: shorten or split the input into smaller parts and try again."
         return f"zn-gate blocked '{target}'. {what} {why} {step}"
     reason = (assessment.reason or "").rstrip(".")
     if reason:
@@ -156,7 +160,8 @@ def _is_data_object(value: Any) -> bool:
 
 
 def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] = None,
-                     _budget: Optional[List[int]] = None, _lenient: bool = False) -> List[str]:
+                     _budget: Optional[List[int]] = None, _lenient: bool = False,
+                     lenient_objects: bool = True) -> List[str]:
     """Recursively extract all strings from nested structures.
 
     Walks every Mapping (keys and values), list, tuple, set, frozenset and dict
@@ -178,7 +183,10 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
     what sits below the depth limit or past the value budget, or cannot be
     read, is left out instead of blocking. Such objects are built by the
     application, not from the model's arguments, and walking them in full
-    blocked every call that passed one.
+    blocked every call that passed one. Pass lenient_objects=False (as
+    check_tool_call does) to walk plain objects as strictly as data models: a
+    payload hidden below the depth limit, in an unreadable object or past the
+    value budget then raises like it does for dicts and lists.
     """
     if isinstance(data, str):
         return [data]
@@ -201,16 +209,16 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
         children = list(data)
     elif isinstance(data, os.PathLike):
         path_value = os.fspath(data)
-        found = _extract_strings(path_value, max_depth, _path, budget)
+        found = _extract_strings(path_value, max_depth, _path, budget, lenient_objects=lenient_objects)
         # On Windows str() gives backslashes; the path rules also see the form with forward slashes.
         if isinstance(data, PurePath) and data.as_posix() != path_value:
-            found += _extract_strings(data.as_posix(), max_depth, _path, budget)
+            found += _extract_strings(data.as_posix(), max_depth, _path, budget, lenient_objects=lenient_objects)
         return found
     elif isinstance(data, io.IOBase):
         # An open file or stream: its contents are read by the tool, not passed
         # as text, and reading them here would move the file position. Check its name.
         name = getattr(data, "name", None)
-        return _extract_strings(name, max_depth, _path, budget) if isinstance(name, (str, bytes)) else []
+        return _extract_strings(name, max_depth, _path, budget, lenient_objects=lenient_objects) if isinstance(name, (str, bytes)) else []
     elif isinstance(data, Iterator) or isinstance(data, AsyncIterator):
         raise _Unscannable("type:unscannable",
                            "A one-shot iterator (such as a generator) cannot be checked "
@@ -225,13 +233,13 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
         try:
             children = _object_fields(data)
             if children is not None:
-                lenient = lenient or not is_model
+                lenient = lenient or (not is_model and lenient_objects)
             elif isinstance(data, Iterable):
                 children = []
                 for item in itertools.islice(data, max(budget[0], 0) + 1):
                     children.append(item)
         except Exception:
-            if lenient or not is_model:
+            if lenient or (not is_model and lenient_objects):
                 return []
             raise _Unscannable("type:unscannable", "An object could not be read to check it") from None
         if children is None:
@@ -252,16 +260,17 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
     try:
         strings: List[str] = []
         for child in children:
-            strings.extend(_extract_strings(child, max_depth - 1, path, budget, lenient))
+            strings.extend(_extract_strings(child, max_depth - 1, path, budget, lenient, lenient_objects))
         return strings
     finally:
         path.discard(id(data))
 
 
-def _strings_or_block(data: Any, what: str) -> Tuple[List[str], Optional[Assessment]]:
+def _strings_or_block(data: Any, what: str,
+                      lenient_objects: bool = True) -> Tuple[List[str], Optional[Assessment]]:
     """_extract_strings, or a block Assessment when the payload cannot be checked in full."""
     try:
-        return _extract_strings(data), None
+        return _extract_strings(data, lenient_objects=lenient_objects), None
     except _NestingTooDeep:
         return [], Assessment(verdict="block", confidence=1.0, rule="size:nesting",
                               reason=f"{what} nested too deeply to check")
@@ -310,8 +319,9 @@ def _call_payload(func: Any, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> D
     return {"args": args, "kwargs": kwargs}
 
 
-def _scan_strings(data: Any, what: str, block_truncated: bool, strict: Optional[bool]) -> Assessment:
-    strings_to_check, blocked = _strings_or_block(data, what)
+def _scan_strings(data: Any, what: str, block_truncated: bool, strict: Optional[bool],
+                  lenient_objects: bool = True, allow_truncated: bool = False) -> Assessment:
+    strings_to_check, blocked = _strings_or_block(data, what, lenient_objects=lenient_objects)
     if blocked is not None:
         return blocked
     if too_invisible(strings_to_check):
@@ -320,7 +330,7 @@ def _scan_strings(data: Any, what: str, block_truncated: bool, strict: Optional[
     advisory = None
     for s in strings_to_check:
         # Arguments over the scan limit are blocked, as the npm package does (its checkToolCall runs evaluate(),
-        # which blocks them with size:oversize); a result keeps the truncated flag (block_truncated decides).
+        # which blocks them with size:oversize); a result keeps the truncated flag and is blocked unless allow_truncated).
         if what == "Arguments" and isinstance(s, str) and len(s) > MAX_TOOL_RESULT_SCAN_CHARS:
             return Assessment(verdict="block", confidence=1.0, rule="size:oversize",
                               reason="Input too large to scan in full", truncated=True)
@@ -335,7 +345,8 @@ def _scan_strings(data: Any, what: str, block_truncated: bool, strict: Optional[
             return res
         truncated = truncated or res.truncated
         advisory = advisory or res.advisory
-    if truncated and (block_truncated or os.environ.get("ZN_BLOCK_TRUNCATED") == "1"):
+    if truncated and ((what == "Arguments" and (block_truncated or os.environ.get("ZN_BLOCK_TRUNCATED") == "1"))
+                      or (what != "Arguments" and truncated_blocks(block_truncated, allow_truncated))):
         return Assessment(verdict="block", confidence=1.0, rule="size:truncated",
                           reason=f"{what} too large to scan in full", truncated=True)
     return Assessment(verdict="allow", confidence=1.0, rule="none", reason=None, truncated=truncated,
@@ -343,33 +354,38 @@ def _scan_strings(data: Any, what: str, block_truncated: bool, strict: Optional[
 
 
 def check_tool_call(tool_name: str, arguments: Any = None, strict: Optional[bool] = None,
-                    block_truncated: bool = False) -> Assessment:
+                    block_truncated: bool = False, _lenient_objects: bool = False) -> Assessment:
     """
     Evaluates whether an agent tool call is safe to execute.
     Inspects tool arguments recursively for injection, evasion, or exfiltration attacks:
     every string, mapping key and object attribute (see _extract_strings).
     Arguments that cannot be checked in full are blocked: nested too deeply
-    (rule size:nesting), a one-shot iterator such as a generator (rule
+    (rule size:nesting, also for plain objects, as in the npm package), an
+    object that cannot be read (rule type:unscannable), a one-shot iterator such as a generator (rule
     type:unscannable) or too many values (rule size:items).
     Long strings are scanned in overlapping windows up to 4 MB, as tool results
     are; the result has truncated=True when some string was not fully analysed,
     and such arguments are blocked (rule size:truncated) when block_truncated
     is set or the ZN_BLOCK_TRUNCATED environment variable is "1".
     """
-    return _scan_strings(arguments, "Arguments", block_truncated, strict)
+    return _scan_strings(arguments, "Arguments", block_truncated=block_truncated, strict=strict,
+                         lenient_objects=_lenient_objects)
 
 
-def check_tool_result(result: Any, block_truncated: bool = False, strict: Optional[bool] = None) -> Assessment:
+def check_tool_result(result: Any, block_truncated: bool = False, strict: Optional[bool] = None,
+                      allow_truncated: bool = False) -> Assessment:
     """
     Evaluates data returned by external tools (e.g. web search, file content, DB queries)
     for indirect prompt injections or leaked credentials.
     Large strings are scanned in overlapping windows (see rules.scan_windows);
     the result has truncated=True when some string was not fully analysed. Such
-    output is blocked (rule size:truncated) when block_truncated is set or the
-    ZN_BLOCK_TRUNCATED environment variable is "1". A result that cannot be
+    output (over 4 MB) is blocked by default (rule size:truncated); allow_truncated=True
+    or ZN_ALLOW_TRUNCATED=1 allows it, and block_truncated=True or ZN_BLOCK_TRUNCATED=1
+    forces the block. A result that cannot be
     checked in full is blocked as for check_tool_call (for example a generator).
     """
-    res = _scan_strings(result, "Result", block_truncated, strict)
+    res = _scan_strings(result, "Result", block_truncated=block_truncated, strict=strict,
+                        allow_truncated=allow_truncated)
     if res.rule == "size:truncated":
         res.reason = "Output too large to scan in full"
     return res
@@ -729,9 +745,12 @@ def guard(
     - check_result: Whether to inspect function return value (default False).
     - mask_secrets: Automatically redact leaked credentials in result (default False).
     - callback: Optional hook called on block: callback(assessment, func_name, payload).
-    - block_truncated: Block arguments, and with check_result a result, too large
-                       to scan in full (rule size:truncated). ZN_BLOCK_TRUNCATED=1
-                       does the same for every guard (default False).
+    - block_truncated: Force a block for arguments too large to scan in full
+                       (rule size:truncated); ZN_BLOCK_TRUNCATED=1 does the same
+                       for every guard (default False). With check_result, a
+                       result over 4 MB is blocked by default; ZN_ALLOW_TRUNCATED=1
+                       lets it through marked truncated (there is no per-guard
+                       opt-out), and block_truncated=True keeps it blocked even then.
 
     With check_result or mask_secrets, what the function gives back is handled
     the same way whatever its form:
@@ -764,7 +783,8 @@ def guard(
             """(True, value to return) when the call is blocked; raises in the raise and custom modes."""
             combined_args = {"args": args, "kwargs": kwargs}
             assessment = check_tool_call(func_name, _call_payload(func, args, kwargs),
-                                         block_truncated=block_truncated)
+                                         block_truncated=block_truncated,
+                                         _lenient_objects=True)
             if assessment.allowed:
                 return False, None
             if callback:

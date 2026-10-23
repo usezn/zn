@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-23.4
+ * RULES_VERSION: 2026-10-25.1
  */
 
-const RULES_VERSION = '2026-10-23.4';
+const RULES_VERSION = '2026-10-25.1';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -425,7 +425,8 @@ const ANSI_ESCAPE_RE = /\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07\x1b]*\x07/g;
 // Hard caps for the Base64 smuggling check: above either one the command is blocked.
 const MAX_B64_PAYLOADS = 16;
 const MAX_B64_DECODED_BYTES = 128 * 1024;
-const B64_EXEC_RE = /(?:echo|printf)\s+([A-Za-z0-9+/=]{16,})\s*\|\s*(?:base64\s+-(?:d|-decode)|openssl)/i;
+// The payload is group 2 (echo/printf pipe, quoted or not, with options) or group 4 (here-string).
+const B64_EXEC_RE = /(?:echo|printf(?:\s+(?:'%s'|"%s"|%s))?)(?:\s+-[A-Za-z]{1,3})*\s+(["']?)([A-Za-z0-9+/=]{16,})\1\s*\|\s*(?:base64\s+-(?:di?|id|-decode)|openssl)|base64\s+-(?:di?|id|-decode)\s*<<<\s*(["']?)([A-Za-z0-9+/=]{16,})\3/i;
 const B64_EXEC_ALL_RE = new RegExp(B64_EXEC_RE.source, 'gi');
 
 // Maximal whitespace runs; only runs that contain a line break are joined.
@@ -546,7 +547,8 @@ function checkBase64Pipes(candidates, options) {
   const payloads = new Set();
   for (const candidate of candidates) {
     for (const m of candidate.matchAll(B64_EXEC_ALL_RE)) {
-      if (m[1]) payloads.add(m[1]);
+      const payload = m[2] || m[4];
+      if (payload) payloads.add(payload);
     }
   }
   if (payloads.size > MAX_B64_PAYLOADS) {
@@ -1250,6 +1252,15 @@ function invisibleBlock() {
   return { verdict: 'block', confidence: 1.0, reason: INVISIBLE_BLOCK_REASON, rule: 'size:invisible', engine: 'oss-local', rules_version: RULES_VERSION };
 }
 
+// A result whose middle was not scanned (over MAX_TOOL_RESULT_SCAN_CHARS) is
+// blocked by default. options.allowTruncated or ZN_ALLOW_TRUNCATED=1 opts out;
+// options.blockTruncated or ZN_BLOCK_TRUNCATED=1 (the former opt-in) still
+// forces the block and wins over the opt-out.
+function truncatedBlocks(options) {
+  if (options.blockTruncated === true || process.env.ZN_BLOCK_TRUNCATED === '1') return true;
+  return !(options.allowTruncated === true || process.env.ZN_ALLOW_TRUNCATED === '1');
+}
+
 function scanWindows(text, options = {}) {
   if (tooInvisible([text])) return invisibleBlock();
   if (typeof text !== 'string' || text.length <= MAX_SCAN_CHARS) return evaluate(text, options);
@@ -1281,10 +1292,10 @@ function sanitizeToolResult(toolOrResult, content, options = {}) {
     const textContent = typeof content === 'string' ? content : JSON.stringify(content);
     const assessment = scanWindows(textContent, options);
     const truncated = assessment.truncated === true;
-    // Output too large to scan in full is allowed (with `truncated: true`)
-    // unless the caller opts into blocking it.
-    const blockTruncated = options.blockTruncated === true || process.env.ZN_BLOCK_TRUNCATED === '1';
-    if (truncated && blockTruncated && assessment.verdict !== 'block') {
+    // Output too large to scan in full is blocked unless the caller opts out
+    // with allowTruncated or ZN_ALLOW_TRUNCATED=1 (then it is allowed with
+    // `truncated: true`).
+    if (truncated && truncatedBlocks(options) && assessment.verdict !== 'block') {
       assessment.verdict = 'block';
       assessment.confidence = 1.0;
       assessment.rule = 'size:truncated';
@@ -1325,9 +1336,22 @@ function sanitizeToolResult(toolOrResult, content, options = {}) {
     } else if (Array.isArray(val)) {
       return val.map(_sanitize);
     } else if (val !== null && typeof val === 'object') {
+      // Keys are text the model reads too, so they are redacted like values. A redacted key that equals another
+      // key, clean or redacted, is numbered ("<text> #2") so that no value is lost.
+      const entries = Object.entries(val);
+      const names = entries.map(([k]) => _sanitize(k));
+      const taken = new Set();
+      names.forEach((n, i) => { if (n === entries[i][0]) taken.add(n); });
       const out = {};
-      for (const [k, v] of Object.entries(val)) {
-        out[k] = _sanitize(v);
+      for (let i = 0; i < entries.length; i += 1) {
+        let name = names[i];
+        if (name !== entries[i][0]) {
+          const base = name;
+          for (let n = 2; taken.has(name); n += 1) name = `${base} #${n}`;
+          taken.add(name);
+        }
+        // defineProperty, so a key such as __proto__ stays an ordinary property
+        Object.defineProperty(out, name, { value: _sanitize(entries[i][1]), enumerable: true, writable: true, configurable: true });
       }
       return out;
     }
@@ -1383,6 +1407,7 @@ module.exports = {
   normalizeInput,
   invisibleView,
   scanWindows,
+  truncatedBlocks,
   MAX_SCAN_CHARS,
   MAX_TOOL_RESULT_SCAN_CHARS,
   MAX_FILTERED_VALUE,
