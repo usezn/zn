@@ -82,6 +82,21 @@ pub fn ws_token_file_for(db_path: impl AsRef<Path>) -> PathBuf {
     db_path.as_ref().with_file_name("zn-mcp-ws-token.txt")
 }
 
+/// Generates the MCP WebSocket token and saves it to the private token file
+/// next to `db_path`. Fails when the file cannot be written, because a token
+/// that is neither shown nor saved would leave the WebSocket unusable.
+pub fn generate_ws_token_file(db_path: impl AsRef<Path>, token: &str) -> Result<PathBuf> {
+    let file = ws_token_file_for(db_path);
+    write_seed_key_file(&file, token).map_err(|e| {
+        anyhow!(
+            "Could not save the MCP WebSocket token to {}: {}. Set ZN_MCP_WS_TOKEN to use your own token.",
+            file.display(),
+            e
+        )
+    })?;
+    Ok(file)
+}
+
 /// Writes `key` to a new file at `path` that only the current user can read
 /// and write (mode 0600 on Unix; on Windows the file inherits the ACL of its
 /// directory). A file or symlink already at `path` is removed first, never
@@ -400,6 +415,33 @@ impl TenantStore {
 mod tests {
     use super::*;
     use rusqlite::Connection;
+
+    #[test]
+    fn ws_token_file_is_saved_next_to_the_database() {
+        let dir = std::env::temp_dir().join(format!("zn-ws-token-{}", Uuid::new_v4()));
+        let db = dir.join("audit.db");
+        let file = generate_ws_token_file(&db, "fake-token-1").expect("token file");
+        assert_eq!(file, dir.join("zn-mcp-ws-token.txt"));
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap().trim(),
+            "fake-token-1"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ws_token_file_failure_names_the_path_and_the_env_var() {
+        // The parent of the token file is a regular file, so it cannot be created.
+        let blocker = std::env::temp_dir().join(format!("zn-ws-blocker-{}", Uuid::new_v4()));
+        std::fs::write(&blocker, "x").unwrap();
+        let err = generate_ws_token_file(blocker.join("audit.db"), "fake-token-2")
+            .expect_err("must fail")
+            .to_string();
+        assert!(err.contains("zn-mcp-ws-token.txt"), "{}", err);
+        assert!(err.contains("ZN_MCP_WS_TOKEN"), "{}", err);
+        assert!(!err.contains("fake-token-2"), "{}", err);
+        let _ = std::fs::remove_file(&blocker);
+    }
 
     fn setup_test_store() -> TenantStore {
         // Use in-memory database for tests

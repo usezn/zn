@@ -324,9 +324,41 @@ pub fn record_policy_eval_time(duration_secs: f64) {
     POLICY_EVAL_DURATION.observe(duration_secs);
 }
 
-/// Record JSON-RPC request
+/// JSON-RPC method names kept as the `method` label; any other method is
+/// counted as [`OTHER_TOOL_LABEL`].
+pub const KNOWN_JSONRPC_METHODS: &[&str] = &[
+    "initialize",
+    "notifications/initialized",
+    "ping",
+    "prompts/get",
+    "prompts/list",
+    "resources/list",
+    "resources/read",
+    "tools/call",
+    "tools/list",
+];
+
+/// Result values kept as the `result` label; any other value is counted as
+/// [`OTHER_TOOL_LABEL`].
+pub const KNOWN_JSONRPC_RESULTS: &[&str] = &["ALLOWED", "DENIED", "ERROR", "OK"];
+
+fn bounded_label(value: &str, known: &'static [&'static str]) -> &'static str {
+    known
+        .iter()
+        .copied()
+        .find(|k| *k == value)
+        .unwrap_or(OTHER_TOOL_LABEL)
+}
+
+/// Record JSON-RPC request. Both labels are bounded, so a client cannot
+/// create unbounded series by sending arbitrary method names.
 pub fn record_jsonrpc_request(method: &str, result: &str) {
-    JSONRPC_REQUESTS.with_label_values(&[method, result]).inc();
+    JSONRPC_REQUESTS
+        .with_label_values(&[
+            bounded_label(method, KNOWN_JSONRPC_METHODS),
+            bounded_label(result, KNOWN_JSONRPC_RESULTS),
+        ])
+        .inc();
 }
 
 /// Record PII detection
@@ -529,5 +561,25 @@ mod tests {
         assert_eq!(tool_label("Bash"), "Bash");
         assert_eq!(tool_label("not-a-known-tool"), OTHER_TOOL_LABEL);
         assert_eq!(tool_label(""), OTHER_TOOL_LABEL);
+    }
+
+    #[test]
+    fn jsonrpc_request_labels_are_bounded() {
+        use prometheus::core::Collector;
+        for i in 0..1000 {
+            record_jsonrpc_request(&format!("evil/method-{}", i), &format!("r{}", i));
+        }
+        record_jsonrpc_request("tools/call", "OK");
+        let series = JSONRPC_REQUESTS
+            .collect()
+            .iter()
+            .map(|f| f.get_metric().len())
+            .sum::<usize>();
+        assert!(series <= 12, "unbounded series: {}", series);
+        assert_eq!(
+            bounded_label("tools/call", KNOWN_JSONRPC_METHODS),
+            "tools/call"
+        );
+        assert_eq!(bounded_label("x", KNOWN_JSONRPC_METHODS), OTHER_TOOL_LABEL);
     }
 }
