@@ -585,3 +585,80 @@ test('search_web, invoke_subagent and other tools without a path keep the defaul
     assert.equal((await run(pre(name, { Query: 'x' }))).output.decision, 'allow', name);
   }
 });
+
+test('every real tool name, with its real argument shape, answers an explicit decision (never {} or nothing)', async () => {
+  const cred = path.join(HOME, '.ssh', 'id_rsa');
+  const shapes = [
+    ['read_file', { Path: '/work/proj/a.txt' }], ['read_file', { Path: cred }], ['read_file', {}],
+    ['write_file', { Path: '/work/proj/a.txt', Content: 'x' }], ['write_file', { Path: cred, Content: 'x' }], ['write_file', {}],
+    ['edit_file', { Path: '/work/proj/a.txt', Target: 'old', Replacement: 'new' }], ['edit_file', { Target: 'old' }], ['edit_file', {}],
+    ['run_command', { CommandLine: 'ls' }], ['run_command', { CommandLine: 'cat ' + cred }], ['run_command', {}],
+    ['view_file', { AbsolutePath: '/work/proj/a.txt' }], ['write_to_file', { TargetFile: '/work/proj/a.txt', CodeContent: 'x' }],
+    ['find_by_name', { SearchDirectory: '/work/proj', Pattern: '*.js' }], ['list_dir', { DirectoryPath: '/work/proj' }],
+    ['invoke_subagent', { Task: 'x' }], ['search_web', { query: 'x' }], ['schedule', {}], ['manage_task', {}], ['ask_question', {}], ['list_resources', {}],
+  ];
+  for (const [name, args] of shapes) {
+    const r = await run(pre(name, args));
+    assert.ok(r.output && VALID.has(r.output.decision), name + ' ' + JSON.stringify(args) + ' -> ' + JSON.stringify(r.output));
+    if (r.output.decision === 'deny') assert.ok(r.output.reason, name + ': a deny carries a reason');
+    assert.notDeepEqual(r.output, {}, name);
+  }
+});
+
+test('edit_file: Target is never taken for the file, also nested; write_to_file TargetFile still is', () => {
+  const n = agy.normalize(pre('edit_file', { Path: '/work/proj/a.js', Target: path.join(HOME, '.aws', 'credentials'), Edit: { Target: '/etc/passwd', Path: '/work/proj/b.js' } }));
+  assert.deepEqual(n.input.paths, ['/work/proj/a.js', '/work/proj/b.js']);
+  assert.deepEqual(agy.normalize(pre('write_to_file', { TargetFile: '/work/proj/a.txt', CodeContent: 'x' })).input.paths, ['/work/proj/a.txt']);
+});
+
+// The real hook process: a hung check, an escaped error and unreadable input all end in a deny on stdout.
+const { spawnSync } = require('child_process');
+const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
+
+function spawnHook(t, input, fault) {
+  const home = tempDir(t, 'zn-agy-hook-');
+  const env = { ...process.env, HOME: home, USERPROFILE: home, ZN_STATS: 'off' };
+  delete env.ZN_TEST_HOOK_FAULTS;
+  if (fault) { env.ZN_TEST_HOOK_FAULTS = '1'; Object.assign(env, fault); }
+  const started = Date.now();
+  const r = spawnSync(process.execPath, [RUNNER, 'antigravity'], { input, encoding: 'utf8', env, timeout: 20000 });
+  return { ...r, ms: Date.now() - started };
+}
+
+function assertDeny(r) {
+  const o = JSON.parse(r.stdout); // stdout is nothing but this JSON
+  assert.equal(o.decision, 'deny', r.stdout + r.stderr);
+  assert.ok(o.reason && o.reason.length > 10);
+  assert.ok(!/\bat .*\.js:\d+/.test(r.stdout), 'no stack trace on stdout');
+}
+
+test('the real hook: a hung check is answered with a deny before Antigravity gives up', (t) => {
+  const r = spawnHook(t, JSON.stringify(pre('run_command', { CommandLine: 'ls' })), { ZN_TEST_HOOK_FAULT: 'hang', ZN_TEST_HOOK_HANG_MS: '30000', ZN_TEST_HOOK_DEADLINE_MS: '800' });
+  assertDeny(r);
+  assert.equal(r.status, 2);
+  assert.ok(r.ms < 8000, 'answered in ' + r.ms + ' ms');
+  assert.ok(agy.HOOK_TIMEOUT_S >= 10, 'the watchdog (timeout minus 5 s) is not zero');
+});
+
+test('the real hook: an error that escapes, or a rejected promise, is answered with a deny', (t) => {
+  for (const f of ['crash', 'reject']) {
+    const r = spawnHook(t, JSON.stringify(pre('run_command', { CommandLine: 'ls' })), { ZN_TEST_HOOK_FAULT: f, ZN_TEST_HOOK_HANG_MS: '5000' });
+    assertDeny(r);
+  }
+  // a throw inside the check is caught by the runner itself: a deny too
+  assertDeny(spawnHook(t, JSON.stringify(pre('run_command', { CommandLine: 'ls' })), { ZN_TEST_HOOK_FAULT: 'throw' }));
+});
+
+test('the real hook: unreadable input (empty, not JSON, not an object) is a deny; a normal call is an allow', (t) => {
+  for (const input of ['', 'not json', '[1]', '42']) assertDeny(spawnHook(t, input));
+  const ok = spawnHook(t, JSON.stringify(pre('search_web', { query: 'x' })));
+  assert.equal(JSON.parse(ok.stdout).decision, 'allow');
+  assert.equal(ok.status, 0);
+});
+
+test('the real hook: the test variables do nothing without ZN_TEST_HOOK_FAULTS=1', (t) => {
+  const r = spawnHook(t, JSON.stringify(pre('search_web', { query: 'x' })), null);
+  assert.equal(JSON.parse(r.stdout).decision, 'allow');
+  const env2 = spawnSync(process.execPath, [RUNNER, 'antigravity'], { input: JSON.stringify(pre('search_web', { query: 'x' })), encoding: 'utf8', env: { ...process.env, ZN_STATS: 'off', ZN_TEST_HOOK_FAULT: 'hang', ZN_TEST_HOOK_HANG_MS: '30000', ZN_TEST_HOOK_DEADLINE_MS: '100', ZN_TEST_HOOK_FAULTS: '' }, timeout: 20000 });
+  assert.equal(JSON.parse(env2.stdout).decision, 'allow');
+});
