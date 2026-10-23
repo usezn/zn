@@ -47,6 +47,9 @@ const CONTRAST_WORD = /\b(?:but|so|however|though|although|yet|still|instead|any
 /** Warning words that describe a thing ("the old one was unsafe"); a colon after them introduces the command. */
 const ADJECTIVE_WARNING = /^(?:unsafe|insecure|dangerous|risky|harmful|malicious|suspicious)$/i;
 
+/** A separator after the warning word that introduces the command, like a colon does. */
+const INTRODUCER = /(?::|—|–|\s-+\s|-+>|=>|\))/;
+
 function discussed(text, index, length) {
   let seg = text.slice(Math.max(0, index - 120), index);
   const cut = Math.max(seg.lastIndexOf('. '), seg.lastIndexOf('; '), seg.lastIndexOf('! '), seg.lastIndexOf('? '));
@@ -56,7 +59,7 @@ function discussed(text, index, length) {
   for (let m = re.exec(seg); m; m = re.exec(seg)) last = m;
   if (last) {
     const rest = seg.slice(last.index + last[0].length);
-    const introduces = rest.indexOf(':') > 0 && ADJECTIVE_WARNING.test(last[0]);
+    const introduces = INTRODUCER.test(rest) && ADJECTIVE_WARNING.test(last[0]);
     if (!IMPERATIVE_WORD.test(rest) && !CONTRAST_WORD.test(rest) && !introduces) return true;
   }
   if (IMPERATIVE_START.test(seg)) return false;
@@ -75,7 +78,10 @@ const DOWNLOAD_WORD = /\b(?:curl|wget|iwr|irm|invoke-webrequest|invoke-restmetho
 function warningCell(cell) {
   const re = new RegExp(WARNING_CELL.source, 'gi');
   for (let m = re.exec(cell); m; m = re.exec(cell)) {
-    if (!/\b(?:no|not|zero|low|without|never|non)[\s-]+(?:\w+\s+)?$/i.test(cell.slice(Math.max(0, m.index - 20), m.index))) return true;
+    const before = cell.slice(Math.max(0, m.index - 20), m.index);
+    const negated = /\b(?:no|not|zero|low|without|never|non)[\s-]+(?:\w+\s+)?$/i.test(before) || /n['’]t\s+(?:\w+\s+)?$/i.test(before);
+    const free = /^[\s-]*free\b/i.test(cell.slice(m.index + m[0].length));
+    if (!negated && !free) return true;
   }
   return false;
 }
