@@ -57,6 +57,9 @@ function handle(m) {
     ]);
     return out({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'ok_tool', description: 'Returns a greeting.', inputSchema: { type: 'object' } }] } });
   }
+  if (m.method === 'resources/read' && m.params && m.params.batch) {
+    return out([{ jsonrpc: '2.0', id: m.id, result: { contents: [] } }].concat(Array.from({ length: 8 }, (_, i) => ({ jsonrpc: '2.0', id: 3000 + i, result: {} }))));
+  }
   if (m.method !== 'tools/call') return out({ jsonrpc: '2.0', id: m.id, result: {} });
   const name = m.params.name;
   if (name === 'hold') { held.push(m); return; }
@@ -351,6 +354,23 @@ test('a server batch that is dropped gives each request it answered its own erro
     assert.ok(!s.json().some((m) => Array.isArray(m)));
     s.send(call(51, 'ok'));
     assert.equal((await s.reply(51)).result.content[0].text, 'fine');
+  } finally { await s.stop(); }
+});
+
+test('a dropped server batch also answers the other requests of the client, and only those', async () => {
+  const s = startShield({ batch: 5 });
+  try {
+    s.send({ jsonrpc: '2.0', id: 60, method: 'resources/read', params: { uri: 'file:///example.txt', batch: true } });
+    const r = await s.reply(60);
+    assert.equal(r.error.code, -32603);
+    // ids the client never sent get nothing
+    assert.ok(!s.json().some((m) => !Array.isArray(m) && m.id >= 3000));
+    // a request already answered is not answered again by a later dropped batch
+    s.send({ jsonrpc: '2.0', id: 61, method: 'resources/read', params: { uri: 'file:///example.txt' } });
+    assert.deepEqual((await s.reply(61)).result, {});
+    s.send(call(62, 'ok'));
+    assert.equal((await s.reply(62)).result.content[0].text, 'fine');
+    assert.equal(s.json().filter((m) => !Array.isArray(m) && m.id === 61).length, 1);
   } finally { await s.stop(); }
 });
 

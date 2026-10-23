@@ -256,6 +256,16 @@ function startMcpShield(command, args, options = {}) {
   const limits = framing.resolveLimits();
   const MAX_PENDING_CALLS = limits.pending;
   const pendingCalls = new Map();
+  // Ids of the other requests of the client (resources/read, prompts/get...). They are only remembered so that a
+  // server batch dropped unread still answers each of them with an error; the oldest goes first when full.
+  const otherRequests = new Map();
+  function rememberRequest(id) {
+    if (id === undefined || id === null) return;
+    const key = idKey(id);
+    otherRequests.delete(key);
+    otherRequests.set(key, true);
+    if (otherRequests.size > MAX_PENDING_CALLS) otherRequests.delete(otherRequests.keys().next().value);
+  }
   // Tools removed from the list because they changed since they were approved (block mode).
   const unpinnedTools = new Set();
   const pinMode = pins.mode(options);
@@ -683,6 +693,10 @@ function startMcpShield(command, args, options = {}) {
     // not lost to the checks: a list with no request is not passed on and a late result is checked as an unmatched one.
     if (msg.method === 'notifications/cancelled' && msg.id === undefined && isMessage(msg.params) && msg.params.requestId !== undefined) {
       pendingCalls.delete(idKey(msg.params.requestId));
+      otherRequests.delete(idKey(msg.params.requestId));
+    }
+    if (typeof msg.method === 'string' && msg.id !== undefined && msg.method !== 'tools/list' && msg.method !== 'tools/call') {
+      rememberRequest(msg.id);
     }
     // Intercept tools/list requests: track ID to scan responses for tool poisoning
     if (msg && msg.method === 'tools/list') {
@@ -796,6 +810,7 @@ function startMcpShield(command, args, options = {}) {
   // for ever. Only answers (an id, no method) get one. The pending entry is cleared.
   function answerError(id, why) {
     pendingCalls.delete(idKey(id));
+    otherRequests.delete(idKey(id));
     return rpcError(id, -32603, `[zn-gate] The server's answer could not be checked and was not passed on: ${why}.`);
   }
   async function dropServerLine(fields, why, shadowLine) {
@@ -808,7 +823,8 @@ function startMcpShield(command, args, options = {}) {
     if (Array.isArray(fields)) {
       // A batch that is dropped: each request of the client it answers gets its own error (ids nobody waits for are skipped).
       for (const f of fields) {
-        if (f.hasId && !f.hasMethod && pendingCalls.has(idKey(f.id))) await toClient(JSON.stringify(answerError(f.id, why)) + '\n');
+        const key = f.hasId && !f.hasMethod ? idKey(f.id) : null;
+        if (key && (pendingCalls.has(key) || otherRequests.has(key))) await toClient(JSON.stringify(answerError(f.id, why)) + '\n');
       }
     } else if (fields && fields.hasId && !fields.hasMethod) {
       await toClient(JSON.stringify(answerError(fields.id, why)) + '\n');
@@ -920,6 +936,7 @@ function startMcpShield(command, args, options = {}) {
   // lineChars: length of the JSON line the message came in, measured before parsing.
   async function inspectServerMessage(msg, lineChars) {
     if (!msg || typeof msg !== 'object') return;
+    if (msg.id !== undefined && msg.method === undefined) otherRequests.delete(idKey(msg.id));
     let answered = null;
     let resultReplaced = false;
     // Check if this response corresponds to a tracked request
