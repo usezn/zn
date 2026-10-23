@@ -153,7 +153,7 @@
     },
     "audit": {
       "version_const": "AUDIT_RULES_VERSION",
-      "version": "2026-10-23.4",
+      "version": "2026-10-23.1",
       "ids": [
         "ZNA001",
         "ZNA002",
@@ -186,7 +186,6 @@
         "patterns.downloadAndRun",
         "patterns.exfiltration",
         "patterns.hostOf",
-        "patterns.imperativeStart",
         "patterns.isCredentialFlag",
         "patterns.isLoopback",
         "patterns.isPlaceholder",
@@ -196,18 +195,16 @@
         "patterns.safeUrl",
         "patterns.splitCommand",
         "patterns.toolName",
-        "patterns.warningHeading",
-        "patterns.warningText",
         "patterns.weakening"
       ],
       "sha256": {
-        "lib/audit/rules.js": "48aebd0b2c2e5cf7cf8cde6aa3edf861cbaa9e3ec63eab402f28fb24fa15018f",
-        "lib/audit/patterns.js": "a2f2daf1838b75483fcb211d39c09c7b2314320858afa09aeee6a6a890e5d2a7"
+        "lib/audit/rules.js": "5ee505067391d86febcc979eb4e24702b1bf73d8cec2b1c8bef9d718452e156d",
+        "lib/audit/patterns.js": "40a35719bcc9ccea1a3033d743c813d7612f417515e965ccef513f0ccfbfcfb7"
       }
     },
     "policy": {
       "version_const": "POLICY_RULES_VERSION",
-      "version": "2026-10-23.4",
+      "version": "2026-10-24.3",
       "ids": [
         "SHELL_SCAN_CAP",
         "_decodeAnsiC",
@@ -217,6 +214,12 @@
         "bashDenial",
         "classifyPath",
         "classifyWord",
+        "egressDecodedCopies",
+        "egressLabel",
+        "egressMcpCovers",
+        "egressMcpParts",
+        "egressParts",
+        "egressUrlParts",
         "expandBraces",
         "globClass",
         "globRegExp",
@@ -229,7 +232,7 @@
         "writeDenial"
       ],
       "sha256": {
-        "lib/hooks/policy.js": "b95a9109056d5fd6ba24f32afc876e84bd8281bb2a72d12993f6f5c2299f5445",
+        "lib/hooks/policy.js": "383fb7723f02356cb4df2fd43a9817d5bf23b6597c918bf1c4df2009fa402050",
         "lib/broker/files.js": "45dd8927cc626ac35e8c036e5118ec3c584a3f3a396640c09cee8b545e67c097",
         "lib/broker/markers.js": "301eb1d763e8e88c32e32a02c344be8f44b342b06b61897f3a2d478dbe55d6b4",
         "lib/broker/dotenv.js": "d12a12bd12108a38f84e9f4772ed50f0b015962a1e68f75362142b9b3449e8fe",

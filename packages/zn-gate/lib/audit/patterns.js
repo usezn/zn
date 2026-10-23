@@ -371,8 +371,9 @@ function claudePermission(entry) {
 /* ------------------------ instruction text ------------------------- */
 
 const EXFIL = [
-  // send / upload ... secret material ... to a destination
-  /\b(?:send|upload|post|exfiltrate|forward|transmit|leak|e-?mail|copy|share|paste)\b[^\n]{0,120}?(?:\.env\b|~\/\.ssh|id_rsa|id_ed25519|\.aws\/credentials|\.npmrc|\.netrc|\.git-credentials|api[ _-]?keys?|access[ _-]?tokens?|secrets?|credentials?|passwords?|private[ _-]?keys?|environment variables)\b[^\n]{0,120}?(?:https?:\/\/|webhook|pastebin|discord(?:app)?\.com|gist\.github|ngrok|requestbin|attacker)/i,
+  // send / upload ... secret material ... to a destination (the secret must be
+  // the thing sent: "create an API key at https://console..." is not)
+  /\b(?:send|upload|post|exfiltrate|forward|transmit|leak|e-?mail)\b[^\n]{0,120}?(?:\.env\b|~\/\.ssh|id_rsa|id_ed25519|\.aws\/credentials|\.npmrc|\.netrc|\.git-credentials|api[ _-]?keys?|access[ _-]?tokens?|secrets?|credentials?|passwords?|private[ _-]?keys?|environment variables)\b[^\n]{0,120}?(?:https?:\/\/|webhook|pastebin|discord(?:app)?\.com|gist\.github|ngrok|requestbin|attacker)/i,
   // curl/wget posting a sensitive file
   /\b(?:curl|wget|http|iwr|invoke-webrequest|invoke-restmethod)\b[^\n|]{0,200}?(?:-d|--data(?:-binary|-raw|-urlencode)?|-F|--form|-T|--upload-file|--post-file|-InFile|-Body)[\s=]{1,3}["']?@?[^\s"']{0,40}?(?:\.env\b|\.ssh\/|id_rsa|id_ed25519|\.aws\/credentials|\.npmrc|\.netrc|\.git-credentials)/i,
   // dumping the environment or a key file into a network tool
@@ -411,13 +412,60 @@ function negated(text, index) {
   return NEGATION_NEAR.test(seg);
 }
 
+// Template env files hold placeholders, not secrets: "copy .env.example to
+// .env" is a setup step.
+const ENV_TEMPLATE = /\.env(?:\.[\w-]+)*\.(?:example|sample|template|dist)\b|\.(?:example|sample|template)\.env\b/gi;
+
+// copy / share / paste are also ordinary setup words ("copy your key from
+// https://console... and paste it into config.json"). A known drop host always
+// counts; for any other URL the line is exempt only when the URL is introduced by
+// "from" or by create/generate/get/obtain/find (the console setup step).
+const WEAK_EXFIL = /\b(?:copy|share|paste)\b[^\n]{0,120}?(?:\.env\b|~\/\.ssh|id_rsa|id_ed25519|\.aws\/credentials|\.npmrc|\.netrc|\.git-credentials|api[ _-]?keys?|access[ _-]?tokens?|secrets?|credentials?|passwords?|private[ _-]?keys?|environment variables)\b[^\n]{0,120}?((?:https?:\/\/|webhook|pastebin|discord(?:app)?\.com|gist\.github|ngrok|requestbin|attacker))/gi;
+const DROP_HOST = /webhook|pastebin|discord(?:app)?\.com|gist\.github|ngrok|requestbin|attacker/i;
+// The setup verb has to govern the URL: "from (the)" right before it, or a
+// create/generate/get/obtain/find clause (a new clause, not "to obtain ...") whose
+// "at/on/in" leads straight to the URL, at most 5 words later and with no
+// copy/share/paste/to/into/with in between.
+const SETUP_FROM = /\bfrom\s+(?:the\s+)?$/i;
+const SETUP_CREATE = /(?:[.;:!?,]|\b(?:and|then|first|next|also))\s+(?:create|generate|get|obtain|find)\b((?:\s+\S+){0,5}?)\s+(?:at|on|in)\s+(?:the\s+)?$/i;
+const SETUP_BLOCK = /\b(?:copy|share|paste|to|into|with)\b/i;
+// What the setup verb makes or fetches must be a credential or an account, right before "at/on/in" ("create an API
+// key at", "get your token on"), in one clause: "get credits at" or "get your account verified at" after "paste your
+// key here," does not exempt the line.
+const SETUP_OBJECT = /\b(?:api[\s_-]?)?(?:keys?|tokens?|secrets?|credentials?|passwords?|accounts?)\s*$/i;
+const SETUP_CLAUSE_BREAK = /[.,;:!?]|\b(?:and|then)\b/i;
+function setupSource(pre) {
+  if (SETUP_FROM.test(pre)) return true;
+  const m = SETUP_CREATE.exec(pre);
+  return !!m && !SETUP_BLOCK.test(m[1]) && !SETUP_CLAUSE_BREAK.test(m[1]) && SETUP_OBJECT.test(m[1]);
+}
+// After an exempt setup URL, another URL or a drop host on the same line is where the secret goes
+// ("Copy your API key from <console> and paste it into <url>").
+const LATER_TARGET = /https?:\/\/|webhook|pastebin|discord(?:app)?\.com|gist\.github|ngrok|requestbin|attacker/i;
+function laterTarget(t, urlStart) {
+  const rest = t.slice(urlStart).replace(/^\S+/, '');
+  return LATER_TARGET.test(rest);
+}
+
+function weakExfiltration(t) {
+  WEAK_EXFIL.lastIndex = 0;
+  let m;
+  while ((m = WEAK_EXFIL.exec(t)) !== null) {
+    if (negated(t, m.index)) continue;
+    const pre = m[0].slice(0, m[0].length - m[1].length);
+    const urlStart = m.index + pre.length;
+    if (DROP_HOST.test(t.slice(m.index)) || !setupSource(pre) || laterTarget(t, urlStart)) return m[0];
+  }
+  return null;
+}
+
 function exfiltration(text) {
-  const t = String(text || '').slice(0, MAX_LINE);
+  const t = String(text || '').slice(0, MAX_LINE).replace(ENV_TEMPLATE, 'env-template');
   for (const re of EXFIL) {
     const m = re.exec(t);
     if (m && !negated(t, m.index)) return m[0];
   }
-  return null;
+  return weakExfiltration(t);
 }
 
 function weakening(text) {

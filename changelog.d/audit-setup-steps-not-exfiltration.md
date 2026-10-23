@@ -1,0 +1,2 @@
+### Fixed
+- `zn audit` no longer reports ordinary setup steps as secrets being sent out (ZNA014): copying `.env.example` to `.env`, taking an API key "from" a console URL, or a step that creates or gets a key, token or account "at", "on" or "in" a URL ("Create an API key at <console URL>"). Copying, sharing or pasting a secret toward any other URL is still reported, and so is a line that names a second URL after the setup one ("Copy your API key from <console URL> and paste it into <other URL>").
