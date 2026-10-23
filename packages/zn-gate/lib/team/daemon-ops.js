@@ -73,13 +73,24 @@ function makeTeamOps(ctx) {
     if (t.policy && t.policy.envelope) policy.writeCache(t.policy.envelope, t.policy.etag || null, state.opts);
   }
 
-  async function updateTeam(fn) {
+  /*
+   * Membership generation. s.teamGen lives in the vault next to s.team but
+   * outlives it: joining and leaving each add one, so a sync that started
+   * under an earlier membership can never be mistaken for the current one.
+   */
+  const membership = (t) => ({ org: t.org, install_id: t.install_id, token: t.install_token, gen: Number.isInteger(t.gen) ? t.gen : 0 });
+  const sameMembership = (t, m) => !!t && t.org === m.org && t.install_id === m.install_id && t.install_token === m.token &&
+    (Number.isInteger(t.gen) ? t.gen : 0) === m.gen;
+
+  /* Runs fn on the team record inside the serialised section; with `snap`, only if the membership is still the one that was snapshotted. Returns false when nothing was applied. */
+  async function updateTeam(fn, snap, after) {
     return state.serial(async () => {
       const s = await state.loadSecrets();
-      if (!s.team) return null;
-      const r = fn(s.team);
+      if (!s.team || (snap && !sameMembership(s.team, snap))) return false;
+      fn(s.team);
       await state.saveSecrets();
-      return r;
+      if (after) after(s.team);
+      return true;
     });
   }
 
@@ -157,7 +168,9 @@ function makeTeamOps(ctx) {
       }
       return state.serial(async () => {
         const s = await state.loadSecrets();
+        s.teamGen = (Number.isInteger(s.teamGen) ? s.teamGen : 0) + 1;
         s.team = {
+          gen: s.teamGen,
           org: res.org, org_name: orgName, api_base: base, install_id: installId,
           install_token: res.install_token, pin: res.policy_public_key,
           joined_at: current ? current.joined_at : new Date().toISOString(), revoked_at: null,
@@ -187,6 +200,7 @@ function makeTeamOps(ctx) {
       return state.serial(async () => {
         const s = await state.loadSecrets();
         delete s.team;
+        s.teamGen = (Number.isInteger(s.teamGen) ? s.teamGen : 0) + 1;
         delete s.orgApprovals;
         writeAudit({ mode: 'remove', decision: 'allow', reason: 'team_left' });
         await state.saveSecrets();
@@ -216,14 +230,18 @@ function makeTeamOps(ctx) {
       const t = await team();
       if (!t) throw znError(CODES.NOT_FOUND, 'this machine is not in an organization (zn team join <token>)');
       const api = apiFor(t);
+      const snap = membership(t);
+      const isCurrent = async () => sameMembership(await team(), snap);
+      const stale = () => ({ policy: { status: 'stale' }, upload: null });
       const out = { policy: null, upload: null };
       const held = await policyState();
       try {
         const r = await api.getPolicy({ etag: held.state === 'active' ? held.etag : undefined });
         if (isClosed()) return { policy: { status: 'stopped' }, upload: null };
+        // The answer belongs to the membership that asked; if this machine left, rejoined or changed token meanwhile, drop it.
+        if (!(await isCurrent())) return stale();
         if (r.status === 304) {
-          await updateTeam((tt) => { if (tt.policy) tt.policy.fetched_at = new Date().toISOString(); });
-          policy.touchCache(state.opts);
+          if (!(await updateTeam((tt) => { if (tt.policy) tt.policy.fetched_at = new Date().toISOString(); }, snap, () => policy.touchCache(state.opts)))) return stale();
           out.policy = { status: 'current', version: held.version };
         } else if (r.status === 404) {
           out.policy = { status: 'none' };
@@ -232,8 +250,7 @@ function makeTeamOps(ctx) {
           const v = policy.verifyEnvelope(r.body, t.pin, { org: t.org, minVersion: (t.policy && t.policy.version) || 0 });
           if (v.ok) {
             const rec = { envelope: r.body, etag: typeof r.etag === 'string' && r.etag.length <= 200 ? r.etag : null, version: v.policy.version, fetched_at: new Date().toISOString() };
-            await updateTeam((tt) => { tt.policy = rec; });
-            policy.writeCache(rec.envelope, rec.etag, state.opts);
+            if (!(await updateTeam((tt) => { tt.policy = rec; }, snap, () => policy.writeCache(rec.envelope, rec.etag, state.opts)))) return stale();
             out.policy = { status: 'updated', version: v.policy.version };
             if (held.version !== v.policy.version) writeAudit({ mode: 'set', decision: 'allow', reason: 'org_policy_v' + v.policy.version });
           } else {
@@ -241,26 +258,33 @@ function makeTeamOps(ctx) {
             writeAudit({ mode: 'set', decision: 'deny', reason: 'policy:rejected' });
           }
         }
-        if (t.revoked_at) await updateTeam((tt) => { tt.revoked_at = null; });
+        if (t.revoked_at) await updateTeam((tt) => { tt.revoked_at = null; }, snap);
       } catch (err) {
         if (err && err.status === 401) {
+          if (!(await isCurrent())) return stale();
           out.policy = { status: 'revoked' };
-          if (!t.revoked_at) await updateTeam((tt) => { tt.revoked_at = new Date().toISOString(); });
+          if (!t.revoked_at) await updateTeam((tt) => { tt.revoked_at = new Date().toISOString(); }, snap);
         } else {
           out.policy = { status: 'offline', error: (err && err.code) || 'error' };
         }
       }
       // Keep the readable copy in line with the vault (it may have been edited or deleted).
-      const now = await team();
-      if (now && now.policy && now.policy.envelope) {
-        const disk = policy.readCache(state.opts);
-        if (!disk || JSON.stringify(disk.envelope) !== JSON.stringify(now.policy.envelope)) policy.writeCache(now.policy.envelope, now.policy.etag, state.opts);
-      }
+      const synced = await state.serial(async () => {
+        const now = await team();
+        if (!sameMembership(now, snap)) return false;
+        if (now.policy && now.policy.envelope) {
+          const disk = policy.readCache(state.opts);
+          if (!disk || JSON.stringify(disk.envelope) !== JSON.stringify(now.policy.envelope)) policy.writeCache(now.policy.envelope, now.policy.etag, state.opts);
+        }
+        return true;
+      });
+      if (!synced) return stale();
       if (a.upload !== false && out.policy.status !== 'revoked' && !isClosed()) {
         const f = files();
         out.upload = await uploadPending({
           auditFile: state.paths.auditFile, stateFile: f.uploadState, lockFile: f.uploadLock,
-          api, installId: t.install_id, version: VERSION, shouldStop: isClosed,
+          api, installId: t.install_id, version: VERSION,
+          shouldStop: async () => isClosed() || !(await isCurrent()), isCurrent,
         });
       }
       return out;

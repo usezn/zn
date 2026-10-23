@@ -17,7 +17,7 @@ machine that stops reporting is visible.
 |---|---|
 | `zn team join <token>` | Connects this machine to your organization. The token (`znj_...`) comes from an organization admin. Needs the vault unlocked (`zn unlock`). |
 | `zn team status` | Organization, installation id, policy version and expiry, upload state. `--json` for scripts. Never shows the install token. |
-| `zn team sync` | Downloads the policy and uploads pending audit records now. This also happens on its own while the vault is unlocked: a few seconds after `zn unlock`, then every 15 minutes. |
+| `zn team sync` | Downloads the policy and uploads pending audit records now. This also happens on its own while the vault is unlocked: a few seconds after `zn unlock`, then every 15 minutes. If you leave the organization or join another one while a sync is running, that sync is dropped and writes nothing. |
 | `zn team leave` | Disconnects this machine. The organization's policy stops applying here. |
 | `zn team managed-config` | Prints the files an admin deploys with device management so zn-gate's hooks run on every machine. Writes nothing; see [Deploy zn-gate's hooks to every machine](#deploy-zn-gates-hooks-to-every-machine-managed-settings). |
 | `zn vault log export --otlp` | Writes the local audit log as OpenTelemetry logs (works without zn Team; see below). |
