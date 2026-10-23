@@ -833,7 +833,7 @@ function stripBadges(text) {
 
 const SYSTEM_PLACEHOLDER_DOC = /<(?:\s*\/)?\s*system-(?:or-(?:project|user|global|local|workspace|repo)|(?:name|path|dir|directory|id|type|version|wide))\s*>/gi;
 const SYSTEM_IDENTITY_DOC = /\bsystem:(?:anonymous|authenticated|unauthenticated|masters|nodes?|serviceaccounts?(?::[\w-]+)*|kube-[\w-]+|node-[\w-]+|basic-user|discovery|public-info-viewer)(?![\w-])/gi;
-const CHAT_TOKEN_DOC = /<\|im_start\|>(?:[ \t]*(?:user|assistant|tool)\b|(?![ \t]*system\b))|<\|im_end\|>|\[\/?INST\]/gi;
+const CHAT_TOKEN_DOC = /<\|im_start\|>(?:[ \t]*(?:user|assistant|tool)\b|(?![\s\u200b-\u200d\u2060\ufeff\u00ad]*(?:system\b|$)))|<\|im_end\|>|\[\/?INST\]/gim;
 
 // What may follow an opening placeholder for it to count as a name: nothing,
 // punctuation, or a file name or path glued to the tag. Checked in two steps
@@ -939,9 +939,16 @@ function docShape(t, o) {
   if (!/<\s*system[^>]*>[\s\S]*<\s*\/\s*system/i.test(rest)) rest = rest.replace(/`<(?:\s*\/)?\s*system\s*>`/gi, ' ');
   if (o.doc) rest = stripNegated(stripDocShapes(rest, o.fenced, o.closedTags));
   // A note inside a skill folder that is not a docs file: only the
-  // placeholder and identity shapes, and "system:" ending the line.
+  // placeholder and identity shapes, and "system:" ending the line (chat
+  // tokens shown as code are lowered below).
   else if (o.skillNote) rest = stripSystemShapes(rest, o.closedTags).replace(/\bsystem\s*:\s*$/i, ' ');
   if (rest !== t && !blockOf(rest)) return 'skip';
+  // A skill note that shows a chat-template token as code (in backticks or a
+  // closed fence): reported one level lower, never dropped.
+  if (!o.doc && o.skillNote) {
+    const noTokens = o.fenced ? rest.replace(CHAT_TOKEN_DOC, ' ') : rest.replace(/`[^`\n]{0,200}`/g, (q) => q.replace(CHAT_TOKEN_DOC, ' '));
+    return noTokens !== rest && !blockOf(noTokens) ? 'demo' : null;
+  }
   if (!o.doc) return null;
   // The strong pattern sits only inside the quotes of an example: reported one
   // level lower, never dropped.
