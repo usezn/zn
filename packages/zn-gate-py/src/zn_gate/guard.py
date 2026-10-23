@@ -317,7 +317,7 @@ def _call_payload(func: Any, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> D
 
 def _scan_strings(data: Any, what: str, block_truncated: bool, strict: Optional[bool],
                   lenient_objects: bool = True) -> Assessment:
-    strings_to_check, blocked = _strings_or_block(data, what, lenient_objects)
+    strings_to_check, blocked = _strings_or_block(data, what, lenient_objects=lenient_objects)
     if blocked is not None:
         return blocked
     if too_invisible(strings_to_check):
@@ -363,7 +363,8 @@ def check_tool_call(tool_name: str, arguments: Any = None, strict: Optional[bool
     and such arguments are blocked (rule size:truncated) when block_truncated
     is set or the ZN_BLOCK_TRUNCATED environment variable is "1".
     """
-    return _scan_strings(arguments, "Arguments", block_truncated, strict, _lenient_objects)
+    return _scan_strings(arguments, "Arguments", block_truncated=block_truncated, strict=strict,
+                         lenient_objects=_lenient_objects)
 
 
 def check_tool_result(result: Any, block_truncated: bool = False, strict: Optional[bool] = None) -> Assessment:
@@ -376,7 +377,7 @@ def check_tool_result(result: Any, block_truncated: bool = False, strict: Option
     ZN_BLOCK_TRUNCATED environment variable is "1". A result that cannot be
     checked in full is blocked as for check_tool_call (for example a generator).
     """
-    res = _scan_strings(result, "Result", block_truncated, strict)
+    res = _scan_strings(result, "Result", block_truncated=block_truncated, strict=strict)
     if res.rule == "size:truncated":
         res.reason = "Output too large to scan in full"
     return res
