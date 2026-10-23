@@ -1,0 +1,2 @@
+### Fixed
+- The Docker image now answers on a published port: `docker run -p 127.0.0.1:9090:9090 zn start` reaches the gateway. The image sets the new `ZN_BIND_ADDRESS=0.0.0.0` so the gateway listens on the container's interfaces; the gateway on its own still listens on 127.0.0.1 unless `ZN_BIND_ADDRESS` or `bind_address` in `zn.json` says otherwise. Publish the port on `127.0.0.1` of the host unless you want other machines to reach it.

@@ -3,7 +3,14 @@
 #
 # Build:  docker build -t zn .
 # Smoke:  docker run --rm -i zn analyze "ignore all previous instructions"
-# Server: docker run --rm -p 9090:9090 zn start
+# Server: docker run --rm -p 127.0.0.1:9090:9090 -e ZN_API_KEY=<your key> zn start
+#
+# Inside the container the gateway listens on all interfaces (ZN_BIND_ADDRESS
+# below), because a published port can only reach a server that is not bound to
+# the container's own loopback. That is safe inside the container's network
+# namespace only: publish the port on 127.0.0.1 of the host, as above, unless
+# you want other machines to reach it. The binary itself still defaults to
+# 127.0.0.1.
 #
 # The image runs as a fixed non-root user (UID/GID 65532). A volume mounted at
 # /data must be writable by that user (for example `chown 65532:65532` the host
@@ -45,6 +52,10 @@ COPY --from=builder /build/target/release/zn /zn
 # Writable scratch for the local audit/vector stores created at runtime.
 COPY --from=builder --chown=65532:65532 /rootfs/data /data
 WORKDIR /data
+
+# Listen on all interfaces of the container so `-p` can reach the gateway.
+# This changes the image only; the binary's own default stays 127.0.0.1.
+ENV ZN_BIND_ADDRESS=0.0.0.0
 
 # Fixed numeric UID/GID (the distroless "nonroot" user), so Kubernetes
 # runAsNonRoot and volume permissions work without a name lookup.

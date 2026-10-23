@@ -219,6 +219,16 @@ fn credential_override(current: Option<String>, env_value: Option<String>) -> Op
     normalize_credential(env_value.or(current))
 }
 
+/// The management API bind address after the `ZN_BIND_ADDRESS` override: the
+/// variable when it holds a value, otherwise the current one (127.0.0.1 unless
+/// the config file says otherwise).
+fn bind_address_override(current: &str, env_value: Option<String>) -> String {
+    match env_value.map(|v| v.trim().to_string()) {
+        Some(v) if !v.is_empty() => v,
+        _ => current.to_string(),
+    }
+}
+
 fn default_true() -> bool {
     true
 }
@@ -710,6 +720,11 @@ impl ZnConfig {
             }
         }
 
+        self.server.bind_address = bind_address_override(
+            &self.server.bind_address,
+            std::env::var("ZN_BIND_ADDRESS").ok(),
+        );
+
         // A blank key (for example `ZN_API_KEY=` from an unset compose
         // variable) counts as not set: it must never match an empty token.
         self.security.api_key = credential_override(
@@ -977,6 +992,21 @@ mod credential_tests {
 
     fn some(v: &str) -> Option<String> {
         Some(v.to_string())
+    }
+
+    #[test]
+    fn bind_address_defaults_to_loopback_and_takes_the_override() {
+        assert_eq!(ServerConfig::default().bind_address, "127.0.0.1");
+        assert_eq!(bind_address_override("127.0.0.1", None), "127.0.0.1");
+        assert_eq!(
+            bind_address_override("127.0.0.1", Some("".to_string())),
+            "127.0.0.1"
+        );
+        assert_eq!(
+            bind_address_override("127.0.0.1", Some(" 0.0.0.0 ".to_string())),
+            "0.0.0.0"
+        );
+        assert_eq!(bind_address_override("10.0.0.5", None), "10.0.0.5");
     }
 
     #[test]

@@ -29,11 +29,11 @@ grep -q '^zn ' "$fifo_dir/version.txt"
 echo "== analyze exits 0"
 docker run --rm -i "$image" analyze "hello, what is the weather today" >/dev/null
 
-echo "== start: health check and effective user"
+echo "== start: health check through a published port, and effective user"
 mkfifo "$fifo_dir/stdin"
 # Hold the container's stdin open; closing it later is the clean shutdown.
 exec 3<>"$fifo_dir/stdin"
-docker run --name "$name" -i --network host -e ZN_API_KEY="$api_key" "$image" start <"$fifo_dir/stdin" >"$fifo_dir/out.log" 2>&1 3>&- &
+docker run --name "$name" -i -p 127.0.0.1:9090:9090 -e ZN_API_KEY="$api_key" "$image" start <"$fifo_dir/stdin" >"$fifo_dir/out.log" 2>&1 3>&- &
 run_pid=$!
 
 ok=0
