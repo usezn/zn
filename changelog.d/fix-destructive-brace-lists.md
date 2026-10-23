@@ -1,0 +1,3 @@
+### Security
+- Destructive-command rules, Node.js and Python: a brace list in the downloader, the shell or the startup file (`c{u,}rl ... | sh`, `curl ... | s{h,}`, `curl ... >> ~/.{bashrc,zshrc}`) is now expanded before the download rules are checked; before, these forms were allowed.
+- Destructive-command rules, Node.js and Python: a brace list with more than 64 alternatives in the downloader, the shell or the startup file is now treated as a match instead of being read as a literal word, a word with thousands of brace lists no longer overflows the stack, and one-character or short numeric sequences (`c{u..u}rl`, `s{h..h}`) are expanded.

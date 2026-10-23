@@ -66,7 +66,11 @@ limit applies to a patch (`apply_patch`) in Codex and OpenCode.
   marker is blocked with a reason that names the kind. Personal data (email address, phone number,
   IBAN, card, national ID, and an IP address if you turned it on) is not blocked: Claude Code asks you to
   approve the call, and the message names the kind and the server, so you can allow a CRM or a mail
-  server to receive it. A secret in the same call wins over personal data (blocked, not asked). Hooks installed by an earlier zn-gate keep the old
+  server to receive it. A secret in the same call wins over personal data (blocked, not asked). Calls
+  to zn's own vault server (`secrets_http_request` with a `__ZN_` marker) are allowed: zn checks your
+  Claude Code MCP configuration to see that the server is zn's own, and a server that only has the same name
+  (for example one defined in a project's `.mcp.json`) is checked like any other. The zn-gate plugin's
+  detector server is not asked about personal data. Hooks installed by an earlier zn-gate keep the old
   matcher, which skips MCP tools, until you run `zn hooks install claude-code` again.
 - **`@file` mentions**: Claude Code does not run Read hooks for them, so zn
   cannot check the file when you mention it with `@`. A protected file

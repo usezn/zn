@@ -286,13 +286,18 @@ const GLOB_RE = /[*?[\]{}]/;
 // The first comma is matched by [^{},]*, so the pattern has one way to match and cannot backtrack.
 const BRACE_RE = /\{([^{},]*,[^{}]*)\}/;
 
+// A brace list has at least two alternatives, so more than 6 lists in one word always pass the default limit of 64.
+// The recursion stops there instead of following one level per list (a word with 20000 lists overflowed the stack).
+const BRACE_MAX_DEPTH = 8;
+
 /** Alternatives of a word with brace lists (`a{b,c}` -> ab, ac); null when there are too many. */
-function expandBraces(s, limit = 64) {
+function expandBraces(s, limit = 64, depth = 0) {
   const m = BRACE_RE.exec(s);
   if (!m) return [s];
+  if (depth >= BRACE_MAX_DEPTH) return null;
   const out = [];
   for (const alt of m[1].split(',')) {
-    const rest = expandBraces(s.slice(0, m.index) + alt + s.slice(m.index + m[0].length), limit);
+    const rest = expandBraces(s.slice(0, m.index) + alt + s.slice(m.index + m[0].length), limit, depth + 1);
     if (rest === null) return null;
     for (const x of rest) {
       out.push(x);

@@ -970,3 +970,111 @@ test('install writes the new PreToolUse matcher, replaces an old exact-list one,
   adapter.uninstall({ scope: 'user', home, env, mcp: false });
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).hooks, undefined);
 });
+
+/* ---------- zn's own servers are recognised from the MCP configuration, not from a name ---------- */
+
+const ZN_SECRETS = { command: process.execPath, args: ['/opt/zn-gate/bin/cli.js', 'secrets-mcp', '--agent', 'claude-code'] };
+const VAULT_CALL = { url: 'https://api.example.com/user', method: 'GET', headers: { Authorization: 'Bearer __ZN_GITHUB_TOKEN__' } };
+
+// A Claude Code config dir (CLAUDE_CONFIG_DIR) with the given .claude.json and settings.json, restored after the test.
+function claudeConfig(t, { claudeJson, settings } = {}) {
+  const dir = tempDir(t, 'zn-ccfg-');
+  if (claudeJson) fs.writeFileSync(path.join(dir, '.claude.json'), JSON.stringify(claudeJson));
+  if (settings) fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify(settings));
+  const before = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = dir;
+  t.after(() => { if (before === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = before; });
+  return dir;
+}
+const decisionOf = (res) => (res.output ? res.output.hookSpecificOutput.permissionDecision : 'allow');
+const VAULT_TOOL = 'mcp__secrets__secrets_http_request';
+
+test('vault call: through the user-scope secrets server it is allowed, with the placeholder', async (t) => {
+  claudeConfig(t, { claudeJson: { mcpServers: { secrets: ZN_SECRETS } } });
+  const dir = tmpProject(t);
+  const ev = adapter.normalize(preTool(VAULT_TOOL, VAULT_CALL, dir));
+  assert.equal(ev.mcp.ours, 'secrets');
+  assert.equal(decisionOf(await run(preTool(VAULT_TOOL, VAULT_CALL, dir), { engine: piiEngine })), 'allow');
+  // The same placeholder sent to any other server is still blocked.
+  assert.equal(decisionOf(await run(preTool('mcp__github__create_issue', VAULT_CALL, dir), { engine: piiEngine })), 'deny');
+  // A real secret is still blocked on the way to zn's own server.
+  const withSecret = { ...VAULT_CALL, headers: { Authorization: 'Bearer ' + GHP } };
+  assert.equal(decisionOf(await run(preTool(VAULT_TOOL, withSecret, dir), { engine: piiEngine })), 'deny');
+});
+
+test('vault call: a secrets server that is not zn (user scope) is checked', async (t) => {
+  claudeConfig(t, { claudeJson: { mcpServers: { secrets: { command: 'node', args: ['/opt/vault-example/server.js'] } } } });
+  const dir = tmpProject(t);
+  assert.equal(adapter.normalize(preTool('mcp__secrets__x', {}, dir)).mcp.ours, undefined);
+  assert.equal(decisionOf(await run(preTool(VAULT_TOOL, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
+});
+
+test('vault call: no secrets server in the config at all is checked', async (t) => {
+  claudeConfig(t, { claudeJson: { mcpServers: {} } });
+  const dir = tmpProject(t);
+  assert.equal(decisionOf(await run(preTool(VAULT_TOOL, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
+});
+
+test('vault call: a project .mcp.json that redefines "secrets" elsewhere is checked, even when the user-scope one is zn', async (t) => {
+  claudeConfig(t, { claudeJson: { mcpServers: { secrets: ZN_SECRETS } } });
+  const dir = tmpProject(t);
+  fs.writeFileSync(path.join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { secrets: { command: 'node', args: ['./collect.js'] } } }));
+  assert.equal(decisionOf(await run(preTool(VAULT_TOOL, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
+  // Also from a sub-folder of the project, and when the project one only looks like zn (a path to a binary).
+  const sub = path.join(dir, 'a', 'b');
+  fs.mkdirSync(sub, { recursive: true });
+  assert.equal(decisionOf(await run(preTool(VAULT_TOOL, VAULT_CALL, sub), { engine: piiEngine })), 'deny');
+  fs.writeFileSync(path.join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { secrets: { command: './zn', args: ['secrets-mcp'] } } }));
+  assert.equal(decisionOf(await run(preTool(VAULT_TOOL, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
+  // A server reached by URL is never zn.
+  fs.writeFileSync(path.join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { secrets: { type: 'http', url: 'https://collect.example.com/mcp', command: 'zn', args: ['secrets-mcp'] } } }));
+  assert.equal(decisionOf(await run(preTool(VAULT_TOOL, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
+});
+
+test('vault call: the project install (.mcp.json with the bare `zn secrets-mcp`) is allowed', async (t) => {
+  claudeConfig(t, { claudeJson: {} });
+  const dir = tmpProject(t);
+  fs.writeFileSync(path.join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { secrets: { command: 'zn', args: ['secrets-mcp', '--agent', 'claude-code'] } } }));
+  assert.equal(decisionOf(await run(preTool(VAULT_TOOL, VAULT_CALL, dir), { engine: piiEngine })), 'allow');
+});
+
+test('vault call: a local-scope entry of .claude.json that redefines "secrets" is checked', async (t) => {
+  const dir = tmpProject(t);
+  claudeConfig(t, { claudeJson: { mcpServers: { secrets: ZN_SECRETS }, projects: { [dir]: { mcpServers: { secrets: { command: 'node', args: ['/opt/x.js'] } } } } } });
+  assert.equal(decisionOf(await run(preTool(VAULT_TOOL, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
+});
+
+test('vault call: an unreadable config is checked (fails closed)', async (t) => {
+  const cfg = claudeConfig(t);
+  fs.writeFileSync(path.join(cfg, '.claude.json'), '{ not json');
+  const dir = tmpProject(t);
+  assert.equal(decisionOf(await run(preTool(VAULT_TOOL, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
+});
+
+test('vault call: through the plugin server it is allowed when the plugin is enabled, and not otherwise', async (t) => {
+  const dir = tmpProject(t);
+  const cfg = claudeConfig(t, { settings: { enabledPlugins: { 'zn-gate@zn': true } } });
+  const name = 'mcp__plugin_zn-gate_secrets__secrets_http_request';
+  assert.equal(adapter.normalize(preTool(name, {}, dir)).mcp.ours, 'secrets');
+  assert.equal(decisionOf(await run(preTool(name, VAULT_CALL, dir), { engine: piiEngine })), 'allow');
+  // A server of another plugin with a similar name is not zn.
+  assert.equal(decisionOf(await run(preTool('mcp__plugin_other_secrets__secrets_http_request', VAULT_CALL, dir), { engine: piiEngine })), 'deny');
+  // A project that defines a server with the plugin's name is not the plugin.
+  fs.writeFileSync(path.join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { 'plugin_zn-gate_secrets': { command: 'node', args: ['./collect.js'] } } }));
+  assert.equal(decisionOf(await run(preTool(name, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
+  // Plugin disabled: no trust.
+  fs.rmSync(path.join(dir, '.mcp.json'));
+  fs.writeFileSync(path.join(cfg, 'settings.json'), JSON.stringify({ enabledPlugins: { 'zn-gate@zn': false } }));
+  assert.equal(decisionOf(await run(preTool(name, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
+});
+
+test('personal data: asked for the secrets server, not asked for the plugin detector server, asked for any other', async (t) => {
+  const dir = tmpProject(t);
+  claudeConfig(t, { claudeJson: { mcpServers: { secrets: ZN_SECRETS } }, settings: { enabledPlugins: { 'zn-gate@zn': true } } });
+  const note = { text: 'write to alice@example.com' };
+  assert.equal(decisionOf(await run(preTool('mcp__plugin_zn-gate_zn-gate__analyze_prompt', note, dir), { engine: piiEngine })), 'allow');
+  assert.equal(decisionOf(await run(preTool(VAULT_TOOL, { ...VAULT_CALL, body: note.text }, dir), { engine: piiEngine })), 'ask');
+  assert.equal(decisionOf(await run(preTool('mcp__crm__add_contact', note, dir), { engine: piiEngine })), 'ask');
+  // A secret is denied even for the detector server.
+  assert.equal(decisionOf(await run(preTool('mcp__plugin_zn-gate_zn-gate__analyze_prompt', { text: AWS }, dir), { engine: piiEngine })), 'deny');
+});
