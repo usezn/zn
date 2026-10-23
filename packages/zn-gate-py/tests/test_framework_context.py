@@ -127,7 +127,10 @@ class TestFrameworkContextArguments(unittest.TestCase):
             def __dict__(self):
                 raise RuntimeError("no attributes here")
 
-        self.assertEqual(check_tool_call("t", {"args": (Weird(), "weather"), "kwargs": {}}).verdict, "allow")
+        # check_tool_call fails closed on an object it cannot read; the guard decorator stays lenient.
+        res = check_tool_call("t", {"args": (Weird(), "weather"), "kwargs": {}})
+        self.assertEqual((res.verdict, res.rule), ("block", "type:unscannable"))
+        self.assertEqual(guard(on_block="return", fallback="blocked")(lambda c, q: "ran")(Weird(), "weather"), "ran")
 
     def test_pydantic_ai_tool_with_run_context_runs(self):
         try:
