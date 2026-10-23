@@ -290,14 +290,48 @@ function outFlag(w) {
   return /^-[A-Za-z]*[oO]$/.test(w) || /^--output(?:-document)?$/.test(w) || /^-out(?:f(?:i(?:l(?:e)?)?)?)?$/i.test(w);
 }
 
+/* {x..y} with one-character ends or one- and two-digit numbers, as the comma list bash expands it to ({u..u} -> u). */
+function expandSequences(w) {
+  return w.replace(/\{(?:([A-Za-z])\.\.([A-Za-z])|(\d{1,2})\.\.(\d{1,2}))\}/g, (all, a, b, n, m) => {
+    const chr = a !== undefined;
+    // mixed case: bash also walks the characters between the two, not worth following
+    if (chr && (a < 'a') !== (b < 'a')) return all;
+    const from = chr ? a.charCodeAt(0) : Number(n);
+    const to = chr ? b.charCodeAt(0) : Number(m);
+    const step = from <= to ? 1 : -1;
+    const list = [];
+    for (let c = from; ; c += step) {
+      list.push(chr ? String.fromCharCode(c) : String(c));
+      if (c === to) break;
+    }
+    return list.length === 1 ? list[0] : '{' + list.join(',') + '}';
+  });
+}
+
+/* The words a brace list in `w` expands to (c{u,}rl -> curl, cl); just `w` when there is none, and null when there
+   are too many: the caller reads that as a match, since the shell runs the first alternative and any of them may be it. */
+function braceAlts(w) {
+  return require('./hooks/policy').expandBraces(expandSequences(String(w)));
+}
+
+function isRcTarget(w) {
+  const alts = braceAlts(w);
+  return alts === null || alts.some(isRcPath);
+}
+
 function checkPipeline(pipe) {
-  const heads = pipe.map((s) => { const a = unwrap(s.words); return { args: a, head: a.length ? programName(a[0]) : '' }; });
-  const firstDl = heads.findIndex((h) => DOWNLOADERS.has(h.head));
+  const heads = pipe.map((s) => {
+    const a = unwrap(s.words);
+    const alts = a.length ? braceAlts(a[0]) : [''];
+    const names = (alts || [String(a[0])]).map(programName);
+    return { args: a, head: names[0], names, overflow: alts === null };
+  });
+  const firstDl = heads.findIndex((h) => h.overflow || h.names.some((n) => DOWNLOADERS.has(n)));
   if (firstDl >= 0) {
     // a download whose output reaches a shell
     for (let j = firstDl + 1; j < pipe.length; j++) {
       const h = heads[j];
-      if (!SHELLS.has(h.head)) continue;
+      if (!h.overflow && !h.names.some((n) => SHELLS.has(n))) continue;
       const rest = h.args.slice(1);
       // -c runs the code of its argument (checked on its own); -n only reads the script to check its syntax.
       if (rest.some((w) => /^-[A-Za-z]*[cn][A-Za-z]*$/.test(w))) continue;
@@ -316,7 +350,7 @@ function checkPipeline(pipe) {
         else if (outFlag(prev)) target = w;
         else if (/^(?:--output|--output-document|-OutFile)[=:]/i.test(w)) target = w.replace(/^[^=:]*[=:]/, '');
         else if (heads[j].head === 'tee' && !w.startsWith('-') && i > 0) target = w;
-        if ((target !== null && isRcPath(target)) && on('rc_download')) return 'rc_download';
+        if ((target !== null && isRcTarget(target)) && on('rc_download')) return 'rc_download';
       }
     }
   }

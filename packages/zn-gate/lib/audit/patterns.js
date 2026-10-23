@@ -6,7 +6,6 @@
  */
 
 const path = require('path');
-const { trimTrailing } = require('../linear-text');
 
 const MAX_LINE = 4000;
 
@@ -265,6 +264,41 @@ const INTERPRETERS = new Set([
   'source', 'osascript', 'iex', 'invoke-expression',
 ]);
 
+const PACKAGE_MANAGERS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
+const SAFE_WORD = /^[\w@%+=.,/~:-]+$/;
+const SCRIPT_NAME = /^[\w][\w:-]*$/;
+const PM_SUBS = new Set(['ci', 'remove', 'test', 'build', 'lint']);
+const PM_TOOLS = new Set(['eslint', 'oxlint', 'prettier', 'tsc', 'vitest', 'jest', 'biome', 'knip', 'ruff', 'mypy', 'black']);
+const PY_MODULES = new Set(['pytest', 'unittest', 'ruff', 'mypy', 'black', 'flake8', 'isort', 'pylint']);
+const DENO_SUBS = new Set(['test', 'lint', 'fmt', 'check']);
+const CONTAINER_READ = new Set(['ps', 'images', 'logs', 'inspect', 'version', 'info', 'stats', 'top']);
+
+/**
+ * True only for the exact, safe shapes of a scoped permission: a tool, a fixed
+ * subcommand or script from a short allowlist, then literal arguments. Every
+ * other shape (flags, groups such as "docker compose", run or exec, code
+ * subcommands, bare tools) stays flagged.
+ */
+function scopedShape(words) {
+  const first = words[0].toLowerCase();
+  const sub = (words[1] || '').toLowerCase();
+  if (!words.every((w) => SAFE_WORD.test(w))) return false;
+  if (PACKAGE_MANAGERS.has(first)) {
+    if (sub === 'run') return words.length > 2 && SCRIPT_NAME.test(words[2]);
+    return PM_SUBS.has(sub);
+  }
+  if (first === 'npx' || first === 'bunx' || first === 'uvx') return PM_TOOLS.has(sub);
+  if (first === 'python' || first === 'python3' || first === 'py') {
+    if (sub === '-m') return PY_MODULES.has((words[2] || '').toLowerCase());
+    return /^[\w./-]+\.py$/.test(words[1] || '');
+  }
+  if (first === 'node') return /^[\w./-]+\.[cm]?js$/.test(words[1] || '');
+  if (first === 'sh' || first === 'bash' || first === 'zsh' || first === 'dash') return /^[\w./-]+\.sh$/.test(words[1] || '');
+  if (first === 'deno') return DENO_SUBS.has(sub) || (sub === 'task' && words.length > 2 && SCRIPT_NAME.test(words[2]));
+  if (first === 'docker' || first === 'podman') return CONTAINER_READ.has(sub);
+  return false;
+}
+
 /** Severity of one Claude Code permission rule, or null when it is narrow. */
 function claudePermission(entry) {
   const e = String(entry || '').trim();
@@ -273,16 +307,24 @@ function claudePermission(entry) {
   if (!m) return null;
   const inner = m[2].trim();
   if (inner === '' || /^[*:\s]+$/.test(inner)) return 'high';
-  const first = trimTrailing(inner.split(/[\s:]/)[0], '*');
-  if (INTERPRETERS.has(first.toLowerCase()) && /[*]/.test(inner)) return 'high';
-  return null;
+  if (!/[*]/.test(inner)) return null;
+  const firstWord = inner.split(/[\s:]/)[0].toLowerCase();
+  if (firstWord.includes('*')) return 'high';
+  if (!INTERPRETERS.has(firstWord) && !PACKAGE_MANAGERS.has(firstWord)) return null;
+  // Only a final ":*" or " *" is a prefix wildcard; any other * can stand for a
+  // flag or a subcommand, so it is flagged.
+  const m2 = /^(.*?)(?::\*|\s\*)$/s.exec(inner);
+  if (!m2 || m2[1].includes('*')) return 'high';
+  const words = m2[1].split(/\s+/).filter(Boolean);
+  return words.length > 0 && scopedShape(words) ? null : 'high';
 }
 
 /* ------------------------ instruction text ------------------------- */
 
 const EXFIL = [
-  // send / upload ... secret material ... to a destination
-  /\b(?:send|upload|post|exfiltrate|forward|transmit|leak|e-?mail|copy|share|paste)\b[^\n]{0,120}?(?:\.env\b|~\/\.ssh|id_rsa|id_ed25519|\.aws\/credentials|\.npmrc|\.netrc|\.git-credentials|api[ _-]?keys?|access[ _-]?tokens?|secrets?|credentials?|passwords?|private[ _-]?keys?|environment variables)\b[^\n]{0,120}?(?:https?:\/\/|webhook|pastebin|discord(?:app)?\.com|gist\.github|ngrok|requestbin|attacker)/i,
+  // send / upload ... secret material ... to a destination (the secret must be
+  // the thing sent: "create an API key at https://console..." is not)
+  /\b(?:send|upload|post|exfiltrate|forward|transmit|leak|e-?mail)\b[^\n]{0,120}?(?:\.env\b|~\/\.ssh|id_rsa|id_ed25519|\.aws\/credentials|\.npmrc|\.netrc|\.git-credentials|api[ _-]?keys?|access[ _-]?tokens?|secrets?|credentials?|passwords?|private[ _-]?keys?|environment variables)\b[^\n]{0,120}?(?:https?:\/\/|webhook|pastebin|discord(?:app)?\.com|gist\.github|ngrok|requestbin|attacker)/i,
   // curl/wget posting a sensitive file
   /\b(?:curl|wget|http|iwr|invoke-webrequest|invoke-restmethod)\b[^\n|]{0,200}?(?:-d|--data(?:-binary|-raw|-urlencode)?|-F|--form|-T|--upload-file|--post-file|-InFile|-Body)[\s=]{1,3}["']?@?[^\s"']{0,40}?(?:\.env\b|\.ssh\/|id_rsa|id_ed25519|\.aws\/credentials|\.npmrc|\.netrc|\.git-credentials)/i,
   // dumping the environment or a key file into a network tool
@@ -321,13 +363,60 @@ function negated(text, index) {
   return NEGATION_NEAR.test(seg);
 }
 
+// Template env files hold placeholders, not secrets: "copy .env.example to
+// .env" is a setup step.
+const ENV_TEMPLATE = /\.env(?:\.[\w-]+)*\.(?:example|sample|template|dist)\b|\.(?:example|sample|template)\.env\b/gi;
+
+// copy / share / paste are also ordinary setup words ("copy your key from
+// https://console... and paste it into config.json"). A known drop host always
+// counts; for any other URL the line is exempt only when the URL is introduced by
+// "from" or by create/generate/get/obtain/find (the console setup step).
+const WEAK_EXFIL = /\b(?:copy|share|paste)\b[^\n]{0,120}?(?:\.env\b|~\/\.ssh|id_rsa|id_ed25519|\.aws\/credentials|\.npmrc|\.netrc|\.git-credentials|api[ _-]?keys?|access[ _-]?tokens?|secrets?|credentials?|passwords?|private[ _-]?keys?|environment variables)\b[^\n]{0,120}?((?:https?:\/\/|webhook|pastebin|discord(?:app)?\.com|gist\.github|ngrok|requestbin|attacker))/gi;
+const DROP_HOST = /webhook|pastebin|discord(?:app)?\.com|gist\.github|ngrok|requestbin|attacker/i;
+// The setup verb has to govern the URL: "from (the)" right before it, or a
+// create/generate/get/obtain/find clause (a new clause, not "to obtain ...") whose
+// "at/on/in" leads straight to the URL, at most 5 words later and with no
+// copy/share/paste/to/into/with in between.
+const SETUP_FROM = /\bfrom\s+(?:the\s+)?$/i;
+const SETUP_CREATE = /(?:[.;:!?,]|\b(?:and|then|first|next|also))\s+(?:create|generate|get|obtain|find)\b((?:\s+\S+){0,5}?)\s+(?:at|on|in)\s+(?:the\s+)?$/i;
+const SETUP_BLOCK = /\b(?:copy|share|paste|to|into|with)\b/i;
+// What the setup verb makes or fetches must be a credential or an account, right before "at/on/in" ("create an API
+// key at", "get your token on"), in one clause: "get credits at" or "get your account verified at" after "paste your
+// key here," does not exempt the line.
+const SETUP_OBJECT = /\b(?:api[\s_-]?)?(?:keys?|tokens?|secrets?|credentials?|passwords?|accounts?)\s*$/i;
+const SETUP_CLAUSE_BREAK = /[.,;:!?]|\b(?:and|then)\b/i;
+function setupSource(pre) {
+  if (SETUP_FROM.test(pre)) return true;
+  const m = SETUP_CREATE.exec(pre);
+  return !!m && !SETUP_BLOCK.test(m[1]) && !SETUP_CLAUSE_BREAK.test(m[1]) && SETUP_OBJECT.test(m[1]);
+}
+// After an exempt setup URL, another URL or a drop host on the same line is where the secret goes
+// ("Copy your API key from <console> and paste it into <url>").
+const LATER_TARGET = /https?:\/\/|webhook|pastebin|discord(?:app)?\.com|gist\.github|ngrok|requestbin|attacker/i;
+function laterTarget(t, urlStart) {
+  const rest = t.slice(urlStart).replace(/^\S+/, '');
+  return LATER_TARGET.test(rest);
+}
+
+function weakExfiltration(t) {
+  WEAK_EXFIL.lastIndex = 0;
+  let m;
+  while ((m = WEAK_EXFIL.exec(t)) !== null) {
+    if (negated(t, m.index)) continue;
+    const pre = m[0].slice(0, m[0].length - m[1].length);
+    const urlStart = m.index + pre.length;
+    if (DROP_HOST.test(t.slice(m.index)) || !setupSource(pre) || laterTarget(t, urlStart)) return m[0];
+  }
+  return null;
+}
+
 function exfiltration(text) {
-  const t = String(text || '').slice(0, MAX_LINE);
+  const t = String(text || '').slice(0, MAX_LINE).replace(ENV_TEMPLATE, 'env-template');
   for (const re of EXFIL) {
     const m = re.exec(t);
     if (m && !negated(t, m.index)) return m[0];
   }
-  return null;
+  return weakExfiltration(t);
 }
 
 function weakening(text) {
