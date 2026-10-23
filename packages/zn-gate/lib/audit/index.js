@@ -883,19 +883,6 @@ function docShape(t, o) {
   return null;
 }
 
-// Setup steps are not exfiltration: "git clone <url>", "cp .env.example .env"
-// and "create a key at [Console](url)" carry no secret out. Anything else on
-// the line is still checked.
-const SEND_VERB = /\b(?:send|upload|post|exfiltrate|forward|transmit|leak|e-?mail|paste|share|copy)\b/i;
-function exfiltrationLine(t) {
-  let s = String(t || '');
-  s = s.replace(/\b(?:git\s+)?clone\s+(?:--[\w-]+\s+)*(?:https?:\/\/|git@|ssh:\/\/)[^\s,;)]+/gi, ' ');
-  s = s.replace(/\b(?:copy|cp)\s+\S*\.env(?:\.[\w-]+)*\.(?:example|sample|template|dist)\b\S*\s+(?:to\s+)?\S*\.env\b/gi, ' ');
-  s = s.replace(/\.env(?:\.[\w-]+)*\.(?:example|sample|template|dist)\b/gi, 'env-template');
-  s = s.replace(/\b((?:create|generate|get|obtain|find|grab)\b[^\n[]{0,60}?)\[[^\]\n]*\]\(\s*https?:\/\/[^\s)]*\s*\)/gi, (all, pre) => (SEND_VERB.test(pre) ? all : pre));
-  return P.exfiltration(s);
-}
-
 function checkInstructions(ctx) {
   // A file CLAUDE.md imports with @ is loaded as instructions, wherever it sits.
   const doc = !ctx.rec.importedBy && isDocFile(ctx.rec.rel);
@@ -961,7 +948,7 @@ function checkInstructions(ctx) {
     }
     const dl = P.downloadAndRun(t, { prose: true });
     if (dl) ctx.add('ZNA013', dl.knownInstaller ? 'low' : 'medium', ln, (dl.knownInstaller ? 'A well-known installer is piped into a shell: ' : 'The instructions pipe a download into a shell: ') + short(t, 160));
-    const ex = exfiltrationLine(t);
+    const ex = P.exfiltration(t);
     if (ex) ctx.add('ZNA014', 'high', ln, 'The instructions send sensitive material out: ' + short(t, 160));
     const wk = P.weakening(t);
     if (wk) ctx.add('ZNA015', 'medium', ln, 'The instructions weaken a safety check: ' + short(t, 160));
