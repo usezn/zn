@@ -123,7 +123,7 @@ Wrap any MCP server with the `shield` proxy, try it in shadow mode first, and re
 
 **Python: for agents you build yourself** (rules engine and secret redaction for LangChain, CrewAI, LlamaIndex or plain tool calling). It does not protect Claude Code, Codex, Cursor or other coding agents. Install it in a virtual environment; many recent Linux systems, and Homebrew's Python on macOS, refuse `pip install` outside one ("externally-managed-environment"):
 
-On Debian and Ubuntu, `python3 -m venv` needs the `python3-venv` package first: `sudo apt install python3-venv`.
+On Debian and Ubuntu, `python3 -m venv` needs the `python3-venv` package first: `sudo apt update && sudo apt install python3-venv`.
 
 ```bash
 python3 -m venv .venv
@@ -133,7 +133,7 @@ python3 -m venv .venv
 
 `zn-gate` is installed inside the environment, so run it as shown, or run `source .venv/bin/activate` once in each terminal and then `zn-gate scan .` (Windows: `.venv\Scripts\activate`).
 
-**Only the command-line tools (`scan`, `test`, `status`)?** Install the Python CLI as a standalone tool, without a virtual environment. On Ubuntu and Debian, first run `sudo apt install pipx`. Bare `pip` is often missing there too (`pip: command not found`), and `pip install` into the system Python is refused, so use pipx, uv or a virtual environment. To get uv, follow the [official uv installation guide](https://docs.astral.sh/uv/getting-started/installation/):
+**Only the command-line tools (`scan`, `test`, `status`)?** Install the Python CLI as a standalone tool, without a virtual environment. On Ubuntu and Debian, first run `sudo apt update && sudo apt install pipx`. Bare `pip` is often missing there too (`pip: command not found`), and `pip install` into the system Python is refused, so use pipx, uv or a virtual environment. To get uv, follow the [official uv installation guide](https://docs.astral.sh/uv/getting-started/installation/):
 
 ```bash
 pipx install zn-gate
