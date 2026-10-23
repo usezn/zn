@@ -195,7 +195,7 @@ test('antigravity: the Windows launcher is an encoded PowerShell script that pri
   assert.ok(cfg.isOurs(written, 'antigravity'));
 });
 
-test('antigravity: uninstall removes the launcher; a project install writes none and keeps the plain command', { skip: !posix }, (t) => {
+test('antigravity: uninstall removes the launcher; a project install writes none and wraps `zn hook antigravity` in its own guard', { skip: !posix }, (t) => {
   const { env, home, adapter, file } = setup(t, 'antigravity', process.execPath);
   assert.ok(fs.existsSync(file));
   adapter.uninstall({ env, home, removeLauncher: true });
@@ -204,7 +204,7 @@ test('antigravity: uninstall removes the launcher; a project install writes none
   adapter.install({ scope: 'project', projectDir: proj, env, home, nodePath: process.execPath, runnerPath: RUNNER });
   assert.equal(fs.existsSync(file), false);
   const data = JSON.parse(fs.readFileSync(path.join(proj, '.agents', 'hooks.json'), 'utf8'));
-  assert.equal(data['zn-gate'].PreToolUse[0].hooks[0].command, 'zn hook antigravity');
+  assert.equal(data['zn-gate'].PreToolUse[0].hooks[0].command, require('../lib/agents/launcher').projectShCommand('antigravity'));
 });
 
 test('a hook that starts and then fails is blocked, not passed through, and zn on PATH is not tried after it', { skip: !posix }, (t) => {

@@ -283,7 +283,8 @@ test('zn-gate check reads the Antigravity hook state (set up, off, absent)', asy
   const data = JSON.parse(fs.readFileSync(file, 'utf8'));
   data['zn-gate'].enabled = false;
   fs.writeFileSync(file, JSON.stringify(data));
-  assert.equal((await find()).state, 'not-set-up');
+  // zn's hook is there but turned off: Antigravity skips it, so it is reported as not protected (check_antigravity_hooks.test.js)
+  assert.equal((await find()).state, 'not-protected');
 });
 
 test('project MCP path is looked for next to the two global ones', () => {

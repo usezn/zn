@@ -140,27 +140,32 @@ function readJson(file) {
 }
 
 /* [{event, matcher, command}] from a hooks file: Claude Code and Codex use groups with a matcher, Cursor plain entries. */
-function hookEntries(tree, agentId) {
+function hookEntries(tree, agentId, opts = {}) {
   const out = [];
   // Claude Code, Codex and Cursor keep events under "hooks". Antigravity keeps named hooks at the top level
-  // (and only there), each with its own "enabled" flag.
+  // (and only there), each with its own "enabled" flag ("Set to false to disable the hook without removing it").
+  // A hook that is turned off runs nothing: its entries are left out, or with `withDisabled` kept and flagged.
   const sets = [];
   if (agentId === 'antigravity') {
-    for (const v of Object.values(tree && typeof tree === 'object' ? tree : {})) {
-      if (v && typeof v === 'object' && !Array.isArray(v) && v.enabled !== false) sets.push(v);
+    for (const [name, v] of Object.entries(tree && typeof tree === 'object' ? tree : {})) {
+      if (!v || typeof v !== 'object' || Array.isArray(v)) continue;
+      if (v.enabled !== false) sets.push({ hooks: v, name, disabled: false });
+      else if (opts.withDisabled) sets.push({ hooks: v, name, disabled: true });
     }
   } else {
-    sets.push(tree && typeof tree.hooks === 'object' ? tree.hooks : {});
+    sets.push({ hooks: tree && typeof tree.hooks === 'object' ? tree.hooks : {}, disabled: false });
   }
-  for (const hooks of sets) {
+  for (const { hooks, name, disabled } of sets) {
     for (const [event, list] of Object.entries(hooks || {})) {
+      if (event === 'enabled') continue;
       for (const g of Array.isArray(list) ? list : []) {
         if (!g || typeof g !== 'object') continue;
-        if (typeof g.command === 'string') out.push({ event, matcher: g.matcher, command: g.command, onFailure: g.onFailure, async: g.async });
+        const extra = agentId === 'antigravity' ? { name, disabled } : {};
+        if (typeof g.command === 'string') out.push({ event, matcher: g.matcher, command: g.command, onFailure: g.onFailure, async: g.async, ...extra });
         // GitHub Copilot CLI keeps the shell command in "bash" (and "powershell"), next to an optional matcher.
         if (agentId === 'copilot' && typeof g.bash === 'string') out.push({ event, matcher: g.matcher, command: g.bash });
         for (const h of Array.isArray(g.hooks) ? g.hooks : []) {
-          if (h && typeof h.command === 'string') out.push({ event, matcher: g.matcher, command: h.command, onFailure: h.onFailure, async: h.async });
+          if (h && typeof h.command === 'string') out.push({ event, matcher: g.matcher, command: h.command, onFailure: h.onFailure, async: h.async, ...extra });
         }
       }
     }
@@ -175,6 +180,28 @@ function matcherCovers(matcher, tool) {
   } catch (err) {
     return String(matcher).split('|').includes(tool);
   }
+}
+
+/* Enabled Antigravity hooks other than zn's that handle PreToolUse, in the given hooks files: [{name, file}]. Never throws. */
+function antigravityOtherHooks(files) {
+  const out = [];
+  const seen = new Set();
+  for (const file of files) {
+    const key = path.resolve(file);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    // A project folder can be anyone's repository: read only a regular file, and only so much of it.
+    const text = require('./audit')._internal.readBounded(file, 256 * 1024, file === files[0]).text;
+    let tree = null;
+    try { tree = text ? JSON.parse(text.replace(/^\uFEFF/, '')) : null; } catch (_) { tree = null; }
+    const byName = new Map();
+    for (const e of hookEntries(tree, 'antigravity')) {
+      if (e.event !== 'PreToolUse' || parseCommand(e.command, 'antigravity')) continue;
+      if (!byName.has(e.name)) byName.set(e.name, { name: e.name, file });
+    }
+    out.push(...byName.values());
+  }
+  return out;
 }
 
 /* A zn hook command: {node, runner} (run directly), {onPath} (`zn hook <agent>`) or null. */
@@ -366,9 +393,16 @@ function znOnPath(env) {
 function cliHooks(spec, ctx, userFile, given) {
   const out = { installed: false, problem: '', fix: '', live: null, notes: [] };
   // `given`: hook entries already read from the managed configuration instead of the user's hooks file.
-  const entries = (given || hookEntries(readJson(userFile), spec.id)).filter((e) => parseCommand(e.command, spec.id));
-  out.installed = entries.length > 0;
+  const all = (given || hookEntries(readJson(userFile), spec.id, { withDisabled: true })).filter((e) => parseCommand(e.command, spec.id));
+  const entries = all.filter((e) => !e.disabled);
+  out.installed = all.length > 0;
   if (!out.installed) return out;
+  if (!entries.length) {
+    // Antigravity skips a named hook with "enabled": false and says nothing, so zn's hook protects nothing.
+    out.problem = 'zn\'s hook is turned off in ' + userFile + ' ("enabled": false on the hook ' + JSON.stringify(all[0].name) + '), so Antigravity skips it and zn does not protect Antigravity';
+    out.fix = 'run `zn hooks install antigravity` in your own terminal (it turns the hook back on), or set "enabled" to true on that hook, then run `zn-gate check` again';
+    return out;
+  }
   // Set up with `zn hooks install`, so that is also how to repair it (not the plugin: both would run).
   out.fix = 'run `zn hooks install ' + spec.id + '` in your own terminal';
   const read = entries.find((e) => e.event === spec.event && matcherCovers(e.matcher, spec.tool));
@@ -620,6 +654,15 @@ async function checkAgent(spec, ctx) {
     const off = copilotSwitchedOff(userFile, ctx, adapter);
     if (off.problem) { res.problem = off.problem; res.fix = off.fix; }
     res.notes.push(...off.notes);
+  }
+  if (spec.id === 'antigravity' && installed && res.where === userFile) {
+    // Antigravity says what "allow" means ("delegating to the next hook or default policy") but not in which order hooks
+    // run or which answer wins, so another enabled PreToolUse hook is something zn cannot see through.
+    const others = antigravityOtherHooks([userFile, spec.project(ctx.cwd)]);
+    if (others.length) {
+      const first = others[0];
+      res.notes.push('another Antigravity hook also runs before tool calls (' + JSON.stringify(first.name) + ' in ' + first.file + (others.length > 1 ? ', and ' + (others.length - 1) + ' more' : '') + '). Antigravity does not document in which order hooks run or which answer wins, so zn cannot tell whether its deny holds against it; review that hook, or turn it off with "enabled": false');
+    }
   }
   if (spec.id === 'opencode' && installed) res.notes.push('zn\'s rules were checked; its plugin runs inside OpenCode, so it was not started here');
 
