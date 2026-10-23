@@ -121,9 +121,13 @@ def _configure_output_streams() -> None:
     a scanned file) are replaced instead of raising UnicodeEncodeError. The
     stream encoding is kept, so UTF-8 terminals print exactly the same output.
     """
+    # A redirected stream on Windows, or a C locale, has errors="surrogateescape",
+    # which still raises for characters outside the code page. Only handlers that
+    # already substitute a replacement are left alone.
+    safe = ("replace", "backslashreplace", "namereplace", "xmlcharrefreplace")
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure is None or getattr(stream, "errors", None) != "strict":
+        if reconfigure is None or getattr(stream, "errors", None) in safe:
             continue
         try:
             reconfigure(errors="replace")
