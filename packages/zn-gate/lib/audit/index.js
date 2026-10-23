@@ -810,7 +810,7 @@ function checkInstructions(ctx) {
         ctx.add('ZNA012', sev, ln, 'Rules engine: ' + (res.reason || res.rule) + (quoted ? ' (in quoted or code text)' : '') + '.');
       }
     }
-    const dl = !warnSection.has(i) && !P.warningText(t) && P.downloadAndRun(t, { prose: true });
+    const dl = !(warnSection.has(i) && !fenced.has(i) && !P.imperativeStart(t)) && !P.warningText(t) && P.downloadAndRun(t, { prose: true });
     if (dl) ctx.add('ZNA013', dl.knownInstaller ? 'low' : 'medium', ln, (dl.knownInstaller ? 'A well-known installer is piped into a shell: ' : 'The instructions pipe a download into a shell: ') + short(t, 160));
     const ex = P.exfiltration(t);
     if (ex) ctx.add('ZNA014', 'high', ln, 'The instructions send sensitive material out: ' + short(t, 160));

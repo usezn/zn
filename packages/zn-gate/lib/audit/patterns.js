@@ -32,31 +32,50 @@ const KNOWN_INSTALLERS = [
 // Text that talks about the pattern instead of asking for it: a checklist of
 // risky patterns, a rule that says what to flag, "`curl | sh` is unsafe".
 // Same clause, up to 120 characters before the match, or a short verdict right
-// after it. An install instruction ("Install with ...") has neither.
-const DISCUSS_BEFORE = /\b(?:patterns?|anti-?patterns?|red flags?|flag(?:s|ged|ging)?|detect(?:s|ed|ing|ion)?|warn(?:s|ing)?(?: about)?|look(?:ing)? for|watch(?:ing)? for|scan(?:s|ning)? for|forbidden|prohibited|banned|disallow(?:s|ed)?|reject(?:s|ed)?|refus(?:e|es|ed)|block(?:s|ed)?|unsafe|insecure|dangerous|risky|risks?|harmful|malicious|suspicious|vulnerab\w*)\b/i;
+// after it. The warning word has to be about the pattern itself: words that
+// also describe a tool or a goal in an install instruction ("detect", "scan
+// for", "look for", "block", "risks", "vulnerabilities") are not used, and an
+// imperative verb (run, install, use, pipe) between the warning word and the
+// match, or at the start of the clause for the short verdict, makes it an
+// instruction again ("Install the scanner: curl ... | sh").
+const DISCUSS_BEFORE_SRC = '\\b(?:patterns?|anti-?patterns?|red flags?|flag(?:s|ged|ging)?|warn(?:s|ing)? about|forbidden|prohibited|banned|disallow(?:s|ed)?|reject(?:s|ed)?|refus(?:e|es|ed)|unsafe|insecure|dangerous|risky|harmful|malicious|suspicious)\\b';
 const DISCUSS_AFTER = /^[`'"\s)\]]{0,5}(?:\b(?:is|are|was|were)\s+(?:a\s+|an\s+|considered\s+|very\s+)?(?:dangerous|unsafe|risky|insecure|bad|harmful|forbidden|blocked|not\s+allowed|an?\s+(?:anti-?pattern|risk)|a\s+red\s+flag)\b|\b(?:without\s+(?:a\s+)?(?:hash|checksum|verification|signature))\b)/i;
+/** The clause (or list item) starts with a verb that gives an order. */
+const IMPERATIVE_START = /^[\s>*_`\-+\d.)]*(?:(?:then|and|now|first|next|also|please|finally)[\s,]+)*(?:run|execute|install|pipe|use|type|paste|call|invoke|download|fetch)\b/i;
+const IMPERATIVE_WORD = /\b(?:run|runs|execute|install|pipe|use|type|paste|call|invoke|download|fetch)\b/i;
 
 function discussed(text, index, length) {
   let seg = text.slice(Math.max(0, index - 120), index);
   const cut = Math.max(seg.lastIndexOf('. '), seg.lastIndexOf('; '), seg.lastIndexOf('! '), seg.lastIndexOf('? '));
   if (cut >= 0) seg = seg.slice(cut + 2);
-  if (DISCUSS_BEFORE.test(seg)) return true;
+  const re = new RegExp(DISCUSS_BEFORE_SRC, 'gi');
+  let last = null;
+  for (let m = re.exec(seg); m; m = re.exec(seg)) last = m;
+  if (last && !IMPERATIVE_WORD.test(seg.slice(last.index + last[0].length))) return true;
+  if (IMPERATIVE_START.test(seg)) return false;
   return DISCUSS_AFTER.test(text.slice(index + length, index + length + 80));
 }
 
-/** A heading that introduces risky or flagged patterns ("Dangerous patterns", "What to flag"). */
-const WARNING_HEADING = /^\s{0,3}#{1,6}\s.*\b(?:risks?|risky|dangerous|unsafe|insecure|anti-?patterns?|red flags?|avoid|never|don'?t|do not|bad practices?|what to (?:flag|detect|look for)|flagged|detections?|suspicious|vulnerabilit\w*)\b/i;
-/** A severity or verdict label at the start of a list item or line: "HIGH: curl | sh ...". */
-const WARNING_LABEL = /^\s*(?:[-*+]\s+|\d+[.)]\s+)?(?:\*\*|__)?(?:critical|high|medium|low|warning|danger|bad|avoid|never|don'?t|do not|unsafe|risky|insecure|wrong|incorrect|forbidden)\b\s*(?:\*\*|__)?\s*(?::|-|\u2014|\u2013|\))/i;
-/** A table row that reports or classifies the command in another cell. */
-const WARNING_ROW = /^\s*\|.*\b(?:errors?|fail(?:s|ed|ure)?|blocked?|refus\w*|reject\w*|denied|detected|flagged|warnings?|unsafe|dangerous|risks?|risky|severity|high|critical)\b/i;
+/** A heading that introduces a list of risky patterns ("Dangerous patterns", "What to flag"). */
+const WARNING_HEADING = /^\s{0,3}#{1,6}\s.*\b(?:(?:dangerous|risky|unsafe|insecure|suspicious|bad)\s+(?:patterns?|commands?|practices?|snippets?|installers?)|anti-?patterns?|red flags?|risks? to (?:flag|detect|watch)|what to (?:flag|detect|look for))\b/i;
+/** A verdict label at the start of a list item or line: "BAD: curl | sh ...". Severity labels are not verdicts. */
+const WARNING_LABEL = /^\s*(?:[-*+]\s+|\d+[.)]\s+)?(?:\*\*|__)?(?:danger|bad|avoid|never|don'?t|do not|unsafe|risky|insecure|wrong|incorrect|forbidden)\b\s*(?:\*\*|__)?\s*(?::|-|—|–|\))/i;
+/** A table cell that says the command was refused or is unsafe. */
+const WARNING_CELL = /\b(?:blocked?|refus\w*|reject\w*|denied|flagged|unsafe|dangerous|risks?|risky)\b/i;
+const DOWNLOAD_WORD = /\b(?:curl|wget|iwr|irm|invoke-webrequest|invoke-restmethod)\b/i;
 
 function warningText(line) {
   const t = String(line || '').slice(0, MAX_LINE);
-  return WARNING_LABEL.test(t) || WARNING_ROW.test(t);
+  const label = WARNING_LABEL.exec(t);
+  if (label) return !IMPERATIVE_START.test(t.slice(label[0].length));
+  if (/^\s*\|/.test(t)) return t.split('|').some((cell) => WARNING_CELL.test(cell) && !DOWNLOAD_WORD.test(cell));
+  return false;
 }
 function warningHeading(line) {
   return WARNING_HEADING.test(String(line || '').slice(0, 300));
+}
+function imperativeStart(line) {
+  return IMPERATIVE_START.test(String(line || '').slice(0, 300));
 }
 
 function downloadAndRun(text, opts) {
@@ -388,6 +407,7 @@ module.exports = {
   downloadAndRun,
   warningText,
   warningHeading,
+  imperativeStart,
   splitCommand,
   toolName,
   packagesOf,
