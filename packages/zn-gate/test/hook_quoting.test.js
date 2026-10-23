@@ -142,7 +142,7 @@ test('install replaces, and uninstall removes, hooks written with double quotes 
   const cc = JSON.parse(fs.readFileSync(ccFile, 'utf8'));
   assert.equal(cc.hooks.PreToolUse.length, 1, 'the old hook was replaced');
   // A user install now runs zn's launcher (the hook keeps working and fails closed if this Node.js is removed later).
-  assert.match(cc.hooks.PreToolUse[0].hooks[0].command, /^'.*zn-hook-claude-code\.sh' PreToolUse$/);
+  assert.match(cc.hooks.PreToolUse[0].hooks[0].command, /^sh -c '.*' zn-gate '.*zn-hook-claude-code\.sh' PreToolUse$/);
   fs.writeFileSync(ccFile, JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: old('claude-code') }] }] } }));
   claude.uninstall(opts);
   assert.deepEqual(JSON.parse(fs.readFileSync(ccFile, 'utf8')), {});

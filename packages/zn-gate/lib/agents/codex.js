@@ -371,7 +371,7 @@ function handlerFor(opts = {}) {
   const file = platform === 'win32' ? null : launcher.writeLauncher(id, node, runner, opts);
   return (event) => {
     const h = plain();
-    if (file) h.command = launcher.launcherCommand(file, event, platform);
+    if (file) h.command = launcher.launcherCommand(file, event, platform, { agentId: id });
     const script = launcher.windowsScript(id, event, node, runner);
     if (script) h.commandWindows = launcher.windowsScriptCommand(script);
     return h;

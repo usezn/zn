@@ -180,7 +180,7 @@ function matcherCovers(matcher, tool) {
 /* A zn hook command: {node, runner} (run directly), {onPath} (`zn hook <agent>`) or null. */
 function parseCommand(command, agentId) {
   const { _internal: audit } = require('./audit');
-  const c = require('./shell-quote').readableWindowsCommand(String(command).trim());
+  const c = require('./agents/launcher').unguarded(require('./shell-quote').readableWindowsCommand(String(command).trim()));
   // zn's launcher script (lib/agents/launcher.js): '<dir>/zn-hook-<agent>.sh' <Event>. It names the Node.js and
   // runner it was installed with in ZN_NODE=... and ZN_RUNNER=... lines.
   // Antigravity runs the command split on spaces with no shell, so zn writes the path unquoted there (an older

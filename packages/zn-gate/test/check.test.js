@@ -214,7 +214,7 @@ test('check: a command that is not zn\'s exact hook is never run', async (t) => 
   const file = getAdapter('cursor').hooksFile(ctx);
   const marker = path.join(ctx.home, 'ran');
   const tree = JSON.parse(fs.readFileSync(file, 'utf8'));
-  for (const list of Object.values(tree.hooks)) for (const h of list) h.command = process.platform === 'win32' ? '$(touch ' + marker + ') ' + h.command : h.command.replace(/^'/, "'$(touch " + marker + ")");
+  for (const list of Object.values(tree.hooks)) for (const h of list) h.command = process.platform === 'win32' ? '$(touch ' + marker + ') ' + h.command : h.command.replace(/(^|zn-gate )'/, (m) => m + '$(touch ' + marker + ')');
   fs.writeFileSync(file, JSON.stringify(tree));
   const r = byId(await check(ctx), 'cursor');
   assert.equal(fs.existsSync(marker), false);

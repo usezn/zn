@@ -561,7 +561,8 @@ test('install / uninstall write and remove only our hooks, with backups', { skip
   assert.equal(data.hooks.PreToolUse[1].matcher, adapter.PRE_MATCHER);
   // A user install goes through zn's launcher script (lib/agents/launcher.js), which names the Node.js and runner.
   const launcherFile = require('../lib/agents/launcher').launcherFile('claude-code', { env, home });
-  assert.equal(data.hooks.PreToolUse[1].hooks[0].command, "'" + launcherFile + "' PreToolUse");
+  // The blocking events are wrapped in the start guard (a missing launcher blocks); unguarded() removes it.
+  assert.equal(require('../lib/agents/launcher').unguarded(data.hooks.PreToolUse[1].hooks[0].command), "'" + launcherFile + "' PreToolUse");
   assert.match(fs.readFileSync(launcherFile, 'utf8'), /^ZN_NODE='\/usr\/bin\/node'$/m);
   assert.equal(data.hooks.PostToolUse[0].matcher, adapter.POST_MATCHER);
   assert.ok(Array.isArray(data.hooks.UserPromptSubmit));

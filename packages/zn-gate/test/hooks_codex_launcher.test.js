@@ -52,7 +52,7 @@ test('codex install: a user install writes the launcher and one command per even
   assert.equal(fs.statSync(path.dirname(file)).mode & 0o777, 0o700);
   for (const ev of ['PreToolUse', 'PermissionRequest', 'PostToolUse', 'UserPromptSubmit', 'SessionStart', 'SubagentStart', 'Stop']) {
     const h = data.hooks[ev][0].hooks[0];
-    assert.equal(h.command, "'" + file + "' " + ev);
+    assert.equal(require('../lib/agents/launcher').unguarded(h.command), "'" + file + "' " + ev);
     assert.ok(cfg.isOurs(h.command, 'codex'), ev + ' is recognized as zn\'s');
     assert.match(windowsCommandScript(h.commandWindows), / # zn hook codex$/);
     assert.ok(cfg.isOurs(h.commandWindows, 'codex'));

@@ -156,12 +156,38 @@ function writeLauncher(agentId, nodePath, runnerPath, opts = {}) {
   return file;
 }
 
+/**
+ * The start guard: `sh -c` around a hook command, for the events where exit 2 blocks. An agent runs a hook that
+ * cannot start (the launcher file is gone, `node` is not on the PATH: the shell answers 127, or 126 when the file
+ * cannot be run) as a non-blocking error and lets the call go ahead with no message. The guard turns exactly
+ * those two codes into exit 2 with a short reason on stderr. Every other code, 0 (allow) and 2 (block) included,
+ * passes through unchanged, and stdin goes to the command as it is ("$@" is the command and its arguments).
+ * The text has no quote, backslash or backtick of its own besides the single quotes around the script, so a
+ * POSIX shell, fish and Git Bash all read it the same way. The plugin's hooks.json carries the same prefix
+ * (a test keeps the two equal).
+ */
+const START_GUARD = "sh -c '\"$@\"; rc=$?; case $rc in 127) r=\"launcher or node not found\";; 126) r=\"launcher cannot be run\";; *) exit $rc;; esac; " +
+  "echo \"zn-gate could not start: $r; run zn-gate check\" >&2; exit 2' zn-gate ";
+
+/** Whether the start guard fits this agent and event: exit 2 with a reason on stderr is how that event blocks. */
+function guardFits(agentId, event) {
+  return Boolean(agentId) && !DENY_STDOUT[agentId] && blockExit(agentId).has(event);
+}
+
 /** The hook command for one event: the launcher, then the event name. */
 function launcherCommand(file, event, platform = process.platform, opts = {}) {
   // `plain`: no quotes, for an agent that splits the command on spaces and runs it with no shell (Antigravity).
   // The caller has checked that the path needs no quoting (see plainPathOk).
   if (opts.plain) return portablePath(file, platform) + ' ' + event;
-  return shQuote(portablePath(file, platform)) + ' ' + event;
+  const command = shQuote(portablePath(file, platform)) + ' ' + event;
+  // `agentId`: the caller wants a start failure of the launcher itself to block (see START_GUARD).
+  return guardFits(opts.agentId, event) ? START_GUARD + command : command;
+}
+
+/** A command with the start guard removed (zn-gate check reads the launcher path out of the command). */
+function unguarded(command) {
+  const c = String(command);
+  return c.startsWith(START_GUARD) ? c.slice(START_GUARD.length) : c;
 }
 
 /** Whether a path can be written into a command with no quotes: only letters, digits and a few punctuation marks. */
@@ -218,4 +244,4 @@ function windowsScriptCommand(script) {
   return 'powershell.exe -NoProfile -NonInteractive -EncodedCommand ' + Buffer.from(script, 'utf16le').toString('base64');
 }
 
-module.exports = { blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, windowsScript, BLOCK_EXIT, BLOCK_JSON };
+module.exports = { START_GUARD, guardFits, unguarded, blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, windowsScript, BLOCK_EXIT, BLOCK_JSON };

@@ -45,7 +45,7 @@ test('cursor: user install writes the launcher; the events that can deny block, 
   const data = JSON.parse(fs.readFileSync(adapter.hooksFile({ env, home }), 'utf8'));
   for (const ev of adapter.EVENTS) {
     const h = data.hooks[ev][0];
-    assert.equal(h.command, "'" + file + "' " + ev);
+    assert.equal(require('../lib/agents/launcher').unguarded(h.command), "'" + file + "' " + ev);
     assert.ok(cfg.isOurs(h.command, 'cursor'));
   }
   assert.equal(data.hooks.beforeReadFile[0].failClosed, true, 'failClosed stays');
@@ -107,7 +107,7 @@ test('gemini: user install writes the launcher; BeforeTool blocks with exit 2 wh
   const { home, env, adapter, file } = setup(t, 'gemini', GONE);
   const data = JSON.parse(fs.readFileSync(adapter.settingsFile({ env, home }), 'utf8'));
   const h = data.hooks.BeforeTool[0].hooks[0];
-  assert.equal(h.command, "'" + file + "' BeforeTool");
+  assert.equal(require('../lib/agents/launcher').unguarded(h.command), "'" + file + "' BeforeTool");
   assert.ok(cfg.isOurs(h.command, 'gemini'));
   const r = run(file, 'BeforeTool', tempDir(t, 'zn-b96-bin-'));
   assert.equal(r.status, 2);

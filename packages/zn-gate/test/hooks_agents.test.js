@@ -98,7 +98,7 @@ test('codex: install writes hooks.json (user and project) and uninstall removes 
   assert.ok(rep.warnings.some((w) => /\/hooks/.test(w)), 'tells the user to trust the hooks');
   const data = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.equal(data.hooks.PreToolUse.length, 2);
-  assert.match(data.hooks.PreToolUse[1].hooks[0].command, /^'.*zn-hook-codex\.sh' PreToolUse$/);
+  assert.match(data.hooks.PreToolUse[1].hooks[0].command, /^sh -c '.*' zn-gate '.*zn-hook-codex\.sh' PreToolUse$/);
   assert.ok(fs.readFileSync(path.join(home, '.zn', 'hooks', 'zn-hook-codex.sh'), 'utf8').includes("ZN_NODE='/usr/bin/node'"));
   assert.equal(data.hooks.PostToolUse[0].matcher, codex.POST_MATCHER);
   codex.install({ env, nodePath: '/usr/bin/node', runnerPath: '/x/lib/hooks/runner.js' });

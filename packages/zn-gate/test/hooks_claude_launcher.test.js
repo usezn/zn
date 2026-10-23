@@ -51,7 +51,7 @@ test('claude-code install: a user install writes the launcher and one command pe
   assert.equal(fs.statSync(file).mode & 0o777, 0o755);
   for (const ev of EVENTS) {
     const h = data.hooks[ev][0].hooks[0];
-    assert.equal(h.command, "'" + file + "' " + ev);
+    assert.equal(require('../lib/agents/launcher').unguarded(h.command), "'" + file + "' " + ev);
     assert.ok(cfg.isOurs(h.command, 'claude-code'), ev + ' is recognized as zn\'s');
   }
   // A call or a prompt is blocked when the hook cannot start (Claude Code 2.1.295 and later); the post hook only warns.

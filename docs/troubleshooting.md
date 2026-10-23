@@ -202,6 +202,28 @@ The version number in the second message is yours and will differ.
 
 Running `npx -y zn-gate init` on a Node.js older than 20.19 does the second option for you: it skips the plugin and sets up zn's hooks for Claude Code instead, and if the plugin is already installed it offers to turn it off once the hooks work. Node.js 22 LTS is recommended; 18 or later is enough for the hooks and the CLI. See the [README](../README.md#install).
 
+## 12. "zn-gate could not start"
+
+You may see this when your agent stops a tool call or a prompt:
+
+```text
+zn-gate could not start: launcher or node not found; run zn-gate check
+```
+
+or `zn-gate could not start: launcher cannot be run; run zn-gate check`.
+
+**What it means:** your agent started zn's hook, and the hook never ran. Either the small launcher file that `zn hooks install` writes (`~/.zn/hooks/zn-hook-<agent>.sh`) is gone or cannot be run, or `node` is not on the `PATH` of the agent. Nothing is wrong with your files or your secrets. Without this message, Claude Code, Codex, Cursor and Gemini CLI would run the tool call unchecked and say nothing, because to them a command that cannot start is only a warning. zn turns it into a block so that a broken install is never a silent one. This covers the calls and prompts zn checks before they run. After a tool has run, zn can only warn you.
+
+**How to check:** run `npx -y zn-gate check` in your own terminal. It tells you which agent is affected and why.
+
+**What to do:**
+
+- If the launcher is gone (another profile or a cleanup removed it), run `npm install -g zn-gate`, then `zn hooks install claude-code` (or the name of your agent), in your own terminal.
+- If `node` is not found (for example you removed a Node.js version or started the agent from a terminal that does not have it), install Node.js 20.19 or later from [nodejs.org](https://nodejs.org/), open a new terminal and start the agent again.
+- For the Claude Code plugin, the same message means `node` is not on the `PATH` of Claude Code. Fix `node` as above and restart Claude Code.
+
+Then run `npx -y zn-gate check` again.
+
 ## Also useful
 
 - Your agent blocks every prompt after you upgraded or removed Node.js: see [If your agent blocks every prompt](compat.md#if-your-agent-blocks-every-prompt).

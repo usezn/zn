@@ -228,7 +228,7 @@ function commandFor(opts = {}) {
     const script = launcher.windowsScript(id, 'BeforeTool', node, runner);
     return script ? launcher.windowsScriptCommand(script) : cfg.hookCommandWindows(id, opts);
   }
-  return launcher.launcherCommand(launcher.writeLauncher(id, node, runner, opts), 'BeforeTool', platform);
+  return launcher.launcherCommand(launcher.writeLauncher(id, node, runner, opts), 'BeforeTool', platform, { agentId: id });
 }
 
 function install(opts = {}) {

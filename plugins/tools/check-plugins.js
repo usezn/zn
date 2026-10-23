@@ -135,7 +135,9 @@ function hookCommands(data) {
 for (const f of ['hooks/hooks.json', 'com.openai/hooks.json', 'cursor/hooks.json']) {
   const cmds = hookCommands(json(PLUGIN + '/' + f));
   if (cmds.length === 0) fail(f + ': no hooks');
-  for (const c of cmds) if (!LAUNCHER.test(String(c))) fail(f + ': hook command does not run the launcher: ' + c);
+  // Claude Code's hooks.json may start the launcher through the start guard (exit 127 or 126 becomes exit 2).
+  const GUARD = require('../../packages/zn-gate/lib/agents/launcher').START_GUARD;
+  for (const c of cmds) if (!LAUNCHER.test(String(c).startsWith(GUARD) ? String(c).slice(GUARD.length) : String(c))) fail(f + ': hook command does not run the launcher: ' + c);
 }
 // Each MCP server and the launcher mode that starts it (zn-gate-mcp uses local
 // rules unless the Claude Code plugin's optional api_key option is set).

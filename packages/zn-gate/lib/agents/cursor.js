@@ -199,7 +199,7 @@ function commandFor(opts = {}) {
     };
   }
   const file = launcher.writeLauncher(id, node, runner, opts);
-  return (event) => launcher.launcherCommand(file, event, platform);
+  return (event) => launcher.launcherCommand(file, event, platform, { agentId: id });
 }
 
 function install(opts = {}) {

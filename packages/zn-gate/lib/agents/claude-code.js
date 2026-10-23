@@ -350,7 +350,7 @@ function commandFor(opts = {}) {
   const node = opts.nodePath || process.execPath;
   const runner = opts.runnerPath || runnerPath();
   const file = launcher.writeLauncher(id, node, runner, opts);
-  return (event) => launcher.launcherCommand(file, event, opts.platform);
+  return (event) => launcher.launcherCommand(file, event, opts.platform, { agentId: id });
 }
 
 function mcpServerConfig(opts = {}) {
