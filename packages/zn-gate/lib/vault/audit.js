@@ -181,4 +181,4 @@ function read(opts) {
   return limit ? out.slice(-limit) : out;
 }
 
-module.exports = { append, verify, read, sanitize, FIELDS, GENESIS };
+module.exports = { append, verify, read, sanitize, lastRecord, FIELDS, GENESIS };

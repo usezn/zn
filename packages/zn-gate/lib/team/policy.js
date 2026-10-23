@@ -219,8 +219,9 @@ function writeJson(file, data) {
   if (process.platform !== 'win32') { try { fs.chmodSync(file, 0o600); } catch (err) { /* ignore */ } }
 }
 
+/** true when the file is gone (deleted, or it was not there); false when it could not be deleted. */
 function removeFile(file) {
-  try { fs.unlinkSync(file); return true; } catch (err) { return false; }
+  try { fs.unlinkSync(file); return true; } catch (err) { return Boolean(err) && err.code === 'ENOENT'; }
 }
 
 /**

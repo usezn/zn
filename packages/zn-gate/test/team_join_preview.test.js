@@ -28,6 +28,7 @@ function ops({ answer = true } = {}) {
   };
   const state = {
     opts: { home: process.env.ZN_HOME },
+    paths: { auditFile: path.join(process.env.ZN_HOME, 'audit.jsonl') },
     loadSecrets: async () => secrets, saveSecrets: async () => {}, serial: (fn) => fn(),
   };
   const o = makeTeamOps({

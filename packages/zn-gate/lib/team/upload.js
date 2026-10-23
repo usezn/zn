@@ -83,8 +83,10 @@ function isRecord(r) {
  * Returns the parsed records in file order. Unparseable lines are skipped.
  * gapAt is the index of the first record whose seq is not previous + 1
  * (-1 when there is none); records from that index on are never sent.
+ * Records up to `after` (a sequence number) are left out: they came before
+ * the machine joined and were not consented to be shared.
  */
-function readRecords(auditFile) {
+function readRecords(auditFile, after) {
   let text;
   try {
     text = fs.readFileSync(auditFile, 'utf8');
@@ -97,7 +99,7 @@ function readRecords(auditFile) {
     if (!line.trim()) continue;
     let rec;
     try { rec = JSON.parse(line); } catch (err) { continue; }
-    if (isRecord(rec)) records.push(rec);
+    if (isRecord(rec) && rec.seq > (after || 0)) records.push(rec);
   }
   let gapAt = -1;
   for (let i = 1; i < records.length; i++) {
@@ -174,7 +176,10 @@ function checkOptions(opts) {
   if (!Number.isInteger(maxBatches) || maxBatches < 1) throw new TypeError('uploadPending: maxBatches must be a positive integer');
   const now = opts.now === undefined ? Date.now : opts.now;
   if (typeof now !== 'function') throw new TypeError('uploadPending: now must be a function');
+  const startAfterSeq = opts.startAfterSeq === undefined ? 0 : opts.startAfterSeq;
+  if (!Number.isInteger(startAfterSeq) || startAfterSeq < 0) throw new TypeError('uploadPending: startAfterSeq must be a non-negative integer');
   return {
+    startAfterSeq,
     auditFile: opts.auditFile,
     stateFile: opts.stateFile,
     lockFile: opts.lockFile,
@@ -238,7 +243,7 @@ function confirmedUpTo(batch, body) {
 
 function pendingOf(o, head) {
   try {
-    return countPending(readRecords(o.auditFile).records, head);
+    return countPending(readRecords(o.auditFile, head ? 0 : o.startAfterSeq).records, head);
   } catch (err) {
     return -1;
   }
@@ -254,7 +259,8 @@ function fail(o, ctx, status, text) {
 }
 
 async function sync(o, ctx) {
-  const { records, gapAt } = readRecords(o.auditFile);
+  // Without a confirmed head, the upload starts after the join (o.startAfterSeq), not at the first record.
+  const { records, gapAt } = readRecords(o.auditFile, ctx.head ? 0 : o.startAfterSeq);
   const bySeq = new Map();
   let lastSeq = 0;
   for (const r of records) {
@@ -372,11 +378,12 @@ async function uploadPending(opts) {
   }
 }
 
-/* Cheap count for `zn team status`: records after the stored head. */
+/* Cheap count for `zn team status`: records after the stored head (or after opts.startAfterSeq when there is none). */
 function pendingCount(opts) {
   const o = opts || {};
   const head = readState(o.stateFile).head;
-  return countPending(readRecords(o.auditFile).records, head);
+  const after = Number.isInteger(o.startAfterSeq) && o.startAfterSeq > 0 ? o.startAfterSeq : 0;
+  return countPending(readRecords(o.auditFile, head ? 0 : after).records, head);
 }
 
 module.exports = { uploadPending, pendingCount };

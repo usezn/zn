@@ -543,10 +543,11 @@ With no subcommand it is the same as `team status`. Exit codes: `0` done, `1` an
 ```bash
 JOIN_TOKEN='paste-your-join-token-here'
 zn-gate team join "$JOIN_TOKEN"
-# Optional: add --api https://api.example.com (another server) or --agent claude-code
+# Optional: add --api https://api.example.com (another server), --agent claude-code,
+# or --include-history to also send the audit records written before you joined
 ```
 
-Connects this machine to your organization with the join token your admin gave you. It exits `0` only after the organization's first valid policy has been downloaded and applied. If that fails (offline, or no policy published yet) it exits `1`; the machine stays registered, `team status` shows the join as pending, and `team sync` finishes it.
+Connects this machine to your organization with the join token your admin gave you. It exits `0` only after the organization's first valid policy has been downloaded and applied. If that fails (offline, or no policy published yet) it exits `1`; the machine stays registered, `team status` shows the join as pending, and `team sync` finishes it. Only the audit records written from the join on are uploaded; `--include-history` adds the earlier ones, and only at the first join of an installation.
 
 #### `team status`
 
@@ -562,7 +563,7 @@ Downloads the policy and uploads the audit log now. Exit `0` only when a valid p
 
 #### `team leave`
 
-Disconnects this machine from the organization.
+Disconnects this machine from the organization and deletes the local copies of its policy and upload state. Exit `1` when one of those files cannot be deleted; the message names it. The server is not told that you left: an admin removes the installation from the organization's list.
 
 #### `team managed-config`
 

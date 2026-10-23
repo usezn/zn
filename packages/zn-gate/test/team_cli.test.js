@@ -296,6 +296,54 @@ test('sync with a locked vault exits 1 with the unlock hint', async () => {
   assert.match(r.stderr, /^\[zn\] the vault is not running; run `(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock`\n$/);
 });
 
+test('join asks to send the earlier audit log only with --include-history', async () => {
+  let joinArgs = null;
+  fake.teamJoin = async (a) => { joinArgs = a; return { org: 'org_Example12345678', install_id: 'inst-0009' }; };
+  fake.teamSync = async () => ({ policy: { status: 'updated', version: 1 } });
+  let r = await capture(() => runTeamCommand(['team', 'join', 'znj_' + 'e'.repeat(32), '--include-history']));
+  assert.strictEqual(r.code, 0);
+  assert.strictEqual(joinArgs.include_history, true);
+  assert.strictEqual(joinArgs.join_token, 'znj_' + 'e'.repeat(32));
+  r = await capture(() => runTeamCommand(['team', 'join', 'znj_' + 'e'.repeat(32), '--agent', 'codex']));
+  assert.ok(!('include_history' in joinArgs), 'no flag, no consent');
+  r = await capture(() => runTeamCommand(['team', '--help']));
+  assert.match(r.stdout, /zn team join <token> \[--api URL\] \[--agent ID\] \[--include-history\]/);
+});
+
+test('status counts only the records after the join as pending', async () => {
+  fake.teamInfo = async () => ({ ...JOINED, policy: { state: 'active', version: 1, expires_at: '2099-01-01T00:00:00.000Z' }, upload_after_seq: 3 });
+  writeAudit([rec(1, '2026-10-01T00:00:00.000Z'), rec(2, '2026-10-01T00:00:01.000Z'), rec(3, '2026-10-01T00:00:02.000Z'), rec(4, '2026-10-01T00:00:03.000Z'), rec(5, '2026-10-01T00:00:04.000Z')]);
+  let r = await capture(() => runTeamCommand(['team', 'status']));
+  assert.match(r.stdout, /Audit upload: 2 records pending/);
+  fake.teamInfo = async () => ({ ...JOINED, policy: { state: 'active', version: 1, expires_at: '2099-01-01T00:00:00.000Z' }, upload_after_seq: 0 });
+  r = await capture(() => runTeamCommand(['team', 'status']));
+  assert.match(r.stdout, /Audit upload: 5 records pending/);
+  // The vault is locked: the readable copy carries the same floor.
+  fake.teamInfo = async () => { throw Object.assign(new Error('locked'), { code: CODES.LOCKED }); };
+  policy.writeTeam({ org: 'org_Example12345678', api_base: 'https://team.example.com', install_id: 'inst-0005', policy_public_key: PIN, upload_after_seq: 4 });
+  r = await capture(() => runTeamCommand(['team', 'status']));
+  assert.match(r.stdout, /Audit upload: 1 records pending/);
+});
+
+test('leave exits 1 and names every file it could not delete; success says the server is not told', async () => {
+  fake.teamLeave = async () => ({ left: 'org_Example12345678', install_id: 'inst-0001', pending_files: ['/home/dev/.zn/org-policy.json', '/home/dev/.zn/team-upload.lock'] });
+  let r = await capture(() => runTeamCommand(['team', 'leave']));
+  assert.strictEqual(r.code, 1);
+  assert.strictEqual(r.stdout, 'Left org_Example12345678 in the vault.\n');
+  assert.strictEqual(r.stderr, '[zn] Some local files could not be deleted. Delete them yourself, because the hooks still read them: /home/dev/.zn/org-policy.json, /home/dev/.zn/team-upload.lock\n');
+  fake.teamLeave = async () => ({ left: null, pending_files: ['/home/dev/.zn/team.json'] });
+  r = await capture(() => runTeamCommand(['team', 'leave']));
+  assert.strictEqual(r.code, 1);
+  assert.match(r.stdout, /^Not in an organization\./);
+  assert.match(r.stderr, /team\.json/);
+  fake.teamLeave = async () => ({ left: 'org_Example12345678', install_id: 'inst-0001', pending_files: [] });
+  r = await capture(() => runTeamCommand(['team', 'leave']));
+  assert.strictEqual(r.code, 0);
+  assert.match(r.stdout, /^Left org_Example12345678\. The organization policy no longer applies on this machine\.\n/);
+  assert.match(r.stdout, /server is not told: installation inst-0001 stays on the organization's list of connected installations, with a token that still works, until an admin removes it there\./);
+  assert.strictEqual(r.stderr, '');
+});
+
 test('leave says what happened', async () => {
   fake.teamLeave = async () => ({ left: 'org_Example12345678' });
   let r = await capture(() => runTeamCommand(['team', 'leave']));

@@ -18,7 +18,7 @@ machine that stops reporting is visible.
 | `zn team join <token>` | Connects this machine to your organization. The token (`znj_...`) comes from an organization admin. Needs the vault unlocked (`zn unlock`). The join counts as done only once the organization's first valid policy has been downloaded and applied. If the policy cannot be downloaded, or the organization has not published one yet, the command exits `1`: this machine is registered but `zn team status` shows the join as **pending** until `zn team sync` succeeds. |
 | `zn team status` | Organization, installation id, policy version and expiry, upload state, and the result of the last sync (what failed, and when it last worked). `--json` for scripts (`join_pending`, `last_sync`). Never shows the install token. |
 | `zn team sync` | Downloads the policy and uploads pending audit records now. Exits `0` only when a valid policy is applied and no upload failed; offline, no policy, a refused policy, a removed machine or a failed upload exit `1` and say why. This also happens on its own while the vault is unlocked: a few seconds after `zn unlock`, then every 15 minutes. |
-| `zn team leave` | Disconnects this machine. The organization's policy stops applying here. |
+| `zn team leave` | Disconnects this machine. The organization's policy stops applying here. It deletes the local copies of the policy and the upload state one by one; if one cannot be deleted (for example a locked file), the command exits `1` and names the file to delete by hand, because the hooks still read it. The install token is deleted from this machine, but the server is not told: the installation stays on the organization's list of connected installations until an admin removes it there. |
 | `zn team managed-config` | Prints the files an admin deploys with device management so zn-gate's hooks run on every machine. Writes nothing; see [Deploy zn-gate's hooks to every machine](#deploy-zn-gates-hooks-to-every-machine-managed-settings). |
 | `zn vault log export --otlp` | Writes the local audit log as OpenTelemetry logs (works without zn Team; see below). |
 
@@ -42,6 +42,15 @@ after joining. The same happens if the check fails.
 
 `--api <https URL>` points `zn team join` at another server. The dialog warns
 when it is not `api.usezn.com`.
+
+`zn team join` sends only the audit records written **from the moment you join**.
+The records already in `~/.zn/audit.jsonl` (secret names, hosts, agents, tools
+and decisions from before) stay on your machine. To send them as well, run
+`zn team join <token> --include-history`: the dialog then says so in its own
+warning, and you can still choose Deny. History can only be added at the first
+join of an installation; to add it later, run `zn team leave` and join again
+with the flag. A machine that joined with an earlier zn-gate keeps sending
+everything, as it was agreed then.
 
 ## The organization policy
 
@@ -170,8 +179,8 @@ patterns are skipped on the machine, and all custom detectors together get
 - **Policy download:** the install token, the policy version already held
   and the policy features this zn-gate understands (header
   `X-ZN-Policy-Features: warn`).
-- **Audit upload:** the records of `~/.zn/audit.jsonl`, including the ones
-  written before joining: time, secret name, mode, agent, tool, command name,
+- **Audit upload:** the records of `~/.zn/audit.jsonl` written since you
+  joined (the earlier ones only if you joined with `--include-history`): time, secret name, mode, agent, tool, command name,
   host, decision and reason, with their sequence number and HMAC chain. Never
   secret values, hashes of values, full command lines, file paths, prompts
   or tool output. Batches of up to 500 records resume from the last record

@@ -163,7 +163,7 @@ test('leave without an organization removes stale copies; leave in an organizati
   policy.writeTeam({ org: 'org_Stale123456789', api_base: cloud.base, install_id: 'x', policy_public_key: { alg: 'Ed25519', kid: '0'.repeat(16), key: 'A'.repeat(43) } });
   fs.writeFileSync(policy.paths().uploadState, '{}');
   fs.writeFileSync(policy.paths().policyFile, '{}');
-  assert.deepStrictEqual(await stale.o.teamLeave(), { left: null });
+  assert.deepStrictEqual(await stale.o.teamLeave(), { left: null, pending_files: [] });
   for (const f of ['teamFile', 'policyFile', 'uploadState']) assert.ok(!fs.existsSync(policy.paths()[f]), f);
   assert.strictEqual(stale.dialogs.length, 0);
 
@@ -182,6 +182,124 @@ test('leave without an organization removes stale copies; leave in an organizati
   assert.strictEqual(declined.secrets.orgApprovals, undefined);
   assert.deepStrictEqual(declined.audit.at(-1), { mode: 'remove', decision: 'allow', reason: 'team_left' });
   assert.strictEqual(policy.readTeam(), null);
+});
+
+/** Appends `count` correctly chained records (MACs under AUDIT_KEY) to the machine's audit log; returns them. */
+function addRecords(m, count) {
+  const old = fs.existsSync(m.auditFile) ? fs.readFileSync(m.auditFile, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
+  const last = old.at(-1);
+  const recs = makeAuditChain({ key: AUDIT_KEY, count, startSeq: last ? last.seq + 1 : 1, prev: last ? last.mac : undefined });
+  fs.appendFileSync(m.auditFile, recs.map((r) => JSON.stringify(r)).join('\n') + '\n');
+  return recs;
+}
+const uploadedSeqs = (r) => [...cloud.state.installs.get(r.install_id).events.map((e) => e.seq)];
+
+test('join sends only the records written since joining; the earlier audit log stays on the machine', async () => {
+  const m = machine();
+  addRecords(m, 5); // history: written before joining
+  const r = await m.o.teamJoin({ join_token: cloud.createJoinToken(), api_base: cloud.base, agent: 'claude-code' });
+  const shares = m.dialogs[0].fields.find(([k]) => k === 'Shares')[1];
+  assert.match(shares, /written from now on/);
+  assert.match(shares, /already on this machine stay here/);
+  assert.ok(!m.dialogs[0].warnings.some((w) => /already on this machine too/.test(w)));
+  assert.strictEqual(m.secrets.team.upload_after_seq, 5);
+  assert.strictEqual(m.secrets.team.upload_history, 'since_join');
+  assert.strictEqual(policy.readTeam().upload_after_seq, 5, 'the readable copy carries the floor for `zn team status`');
+  cloud.publishPolicy({ rules: [] });
+  let s = await m.o.teamSync({});
+  assert.strictEqual(s.upload.status, 'nothing', 'the five older records are not sent');
+  assert.deepStrictEqual(uploadedSeqs(r), []);
+  assert.strictEqual(s.upload.pending, 0);
+  addRecords(m, 3); // written after joining
+  s = await m.o.teamSync({});
+  assert.strictEqual(s.upload.status, 'ok');
+  assert.deepStrictEqual(uploadedSeqs(r), [6, 7, 8]);
+  assert.strictEqual((await m.o.teamInfo()).upload_after_seq, 5);
+});
+
+test('join with the history flag asks for it in the dialog and sends the whole audit log', async () => {
+  const m = machine();
+  addRecords(m, 4);
+  const r = await m.o.teamJoin({ join_token: cloud.createJoinToken(), api_base: cloud.base, include_history: true });
+  assert.ok(m.dialogs[0].warnings.some((w) => /send the audit records already on this machine too/.test(w)));
+  assert.match(m.dialogs[0].fields.find(([k]) => k === 'Shares')[1], /including the ones already on this machine/);
+  assert.strictEqual(m.secrets.team.upload_after_seq, 0);
+  assert.strictEqual(m.secrets.team.upload_history, 'included');
+  cloud.publishPolicy({ rules: [] });
+  await m.o.teamSync({});
+  assert.deepStrictEqual(uploadedSeqs(r), [1, 2, 3, 4]);
+  // Anything other than a true boolean is not consent.
+  const other = machine();
+  fs.rmSync(other.auditFile, { force: true }); // a different machine: its own log
+  addRecords(other, 2);
+  const r2 = await other.o.teamJoin({ join_token: cloud.createJoinToken(), api_base: cloud.base, include_history: 'yes' });
+  assert.strictEqual(other.secrets.team.upload_after_seq, 2);
+  assert.ok(r2.install_id);
+});
+
+test('rejoining keeps the choice made at the first join; history cannot be added later; a machine that joined before the choice existed keeps sending everything', async () => {
+  const m = machine();
+  addRecords(m, 3);
+  const first = await m.o.teamJoin({ join_token: cloud.createJoinToken(), api_base: cloud.base });
+  addRecords(m, 2);
+  await m.o.teamJoin({ join_token: cloud.createJoinToken(), api_base: cloud.base });
+  assert.strictEqual(m.secrets.team.upload_after_seq, 3, 'the floor does not move on a rejoin');
+  assert.match(m.dialogs.at(-1).fields.find(([k]) => k === 'Shares')[1], /already on this machine stay here/);
+  await assert.rejects(m.o.teamJoin({ join_token: cloud.createJoinToken(), api_base: cloud.base, include_history: true }), /cannot be added now.*Run `zn team leave` and join again with --include-history/);
+  assert.strictEqual(m.secrets.team.upload_after_seq, 3);
+  // A machine joined by an older zn-gate has neither field: everything stays uploadable, as it was agreed then.
+  delete m.secrets.team.upload_after_seq;
+  delete m.secrets.team.upload_history;
+  await m.o.teamJoin({ join_token: cloud.createJoinToken(), api_base: cloud.base });
+  assert.strictEqual(m.secrets.team.upload_after_seq, 0);
+  assert.match(m.dialogs.at(-1).fields.find(([k]) => k === 'Shares')[1], /including the ones already on this machine/);
+  cloud.publishPolicy({ rules: [] });
+  await m.o.teamSync({});
+  assert.deepStrictEqual(uploadedSeqs(first), [1, 2, 3, 4, 5]);
+});
+
+test('an unreadable audit log stops the join before anything is sent', async () => {
+  const m = machine();
+  fs.mkdirSync(m.auditFile, { recursive: true }); // a directory where the log should be
+  const seen = cloud.requests.length;
+  await assert.rejects(m.o.teamJoin({ join_token: cloud.createJoinToken(), api_base: cloud.base }), /could not read the local audit log.*not connected/);
+  assert.strictEqual(m.secrets.team, undefined);
+  assert.ok(!cloud.requests.slice(seen).some((q) => q.path === '/v1/org/join'), 'no join request');
+});
+
+test('leave deletes every local copy and the upload lock; one that cannot be deleted is reported by name', async () => {
+  const m = await joined();
+  cloud.publishPolicy({ rules: [] });
+  await m.o.teamSync({ upload: false });
+  const f = policy.paths();
+  fs.writeFileSync(f.uploadState, '{}');
+  fs.writeFileSync(f.uploadLock, '1 now\n');
+  for (const k of ['teamFile', 'policyFile', 'uploadState', 'uploadLock']) assert.ok(fs.existsSync(f[k]), k);
+  let out = await m.o.teamLeave();
+  assert.deepStrictEqual(out.pending_files, []);
+  assert.strictEqual(out.install_id, m.r.install_id);
+  for (const k of ['teamFile', 'policyFile', 'uploadState', 'uploadLock']) assert.ok(!fs.existsSync(f[k]), k + ' is gone');
+  assert.strictEqual(m.secrets.team, undefined, 'the vault no longer holds the organization');
+
+  // A copy that cannot be deleted (a directory stands in its place): leave still ends the membership, and names the file.
+  const m2 = await joined();
+  cloud.publishPolicy({ rules: [] });
+  await m2.o.teamSync({ upload: false });
+  fs.rmSync(f.policyFile);
+  fs.mkdirSync(path.join(f.policyFile, 'keep'), { recursive: true });
+  fs.mkdirSync(path.join(f.uploadLock, 'keep'), { recursive: true });
+  out = await m2.o.teamLeave();
+  assert.match(out.left, /^org_/);
+  assert.deepStrictEqual([...out.pending_files].sort(), [f.policyFile, f.uploadLock].sort());
+  assert.ok(!fs.existsSync(f.teamFile), 'the copies that could be deleted are gone');
+  assert.strictEqual(m2.secrets.team, undefined);
+
+  // Same check on a machine that is not in an organization any more but still has a stale copy.
+  const stale = machine();
+  fs.rmSync(f.policyFile, { recursive: true, force: true });
+  fs.rmSync(f.uploadLock, { recursive: true, force: true });
+  fs.mkdirSync(path.join(f.uploadState, 'keep'), { recursive: true });
+  assert.deepStrictEqual(await stale.o.teamLeave(), { left: null, pending_files: [f.uploadState] });
 });
 
 test('teamInfo says not joined, then describes the organization without the token', async () => {

@@ -18,6 +18,7 @@
 
 const crypto = require('crypto');
 const policy = require('./policy');
+const audit = require('../vault/audit');
 const { effective, approvalKey } = require('./effective');
 const { createApi, checkBase } = require('./api');
 const { uploadPending } = require('./upload');
@@ -70,9 +71,15 @@ function makeTeamOps(ctx) {
   function mirror(t) {
     policy.writeTeam({
       org: t.org, org_name: t.org_name || null, api_base: t.api_base, install_id: t.install_id,
-      policy_public_key: t.pin, joined_at: t.joined_at,
+      policy_public_key: t.pin, joined_at: t.joined_at, upload_after_seq: Number.isInteger(t.upload_after_seq) ? t.upload_after_seq : 0,
     }, state.opts);
     if (t.policy && t.policy.envelope) policy.writeCache(t.policy.envelope, t.policy.etag || null, state.opts);
+  }
+
+  /* Deletes the readable copies, the upload state and the upload lock; returns the paths that are still there. */
+  function removeLocalCopies() {
+    const f = files();
+    return ['teamFile', 'policyFile', 'uploadState', 'uploadLock'].map((k) => f[k]).filter((file) => !policy.removeFile(file));
   }
 
   /* The last sync result as `zn team status` shows it: printable text only. */
@@ -142,6 +149,15 @@ function makeTeamOps(ctx) {
       const orgFields = previewOrg
         ? [['Organization', previewOrg + ' (as reported by ' + host + ')'], ['Invited by', previewBy ? previewBy + ' (their display name)' : 'not shown (no display name set)']]
         : [];
+      // Audit records written before joining stay on this machine unless the user asks, in this dialog, to send them too.
+      if (current && a.include_history === true && current.upload_history === 'since_join') {
+        throw znError(CODES.POLICY_DENIED, 'this machine joined without its earlier audit records, and the audit chain on the server has moved on, so they cannot be added now. Run `zn team leave` and join again with --include-history.');
+      }
+      const history = a.include_history === true ? 'included' : current ? (current.upload_history || 'all') : 'since_join';
+      if (history === 'included') warnings.push('You asked to send the audit records already on this machine too (written before you joined). Choose Deny if you did not ask for that.');
+      const shares = history === 'since_join'
+        ? 'audit records written from now on: secret names, agents, tools, commands, hosts and decisions. Never secret values. The records already on this machine stay here.'
+        : 'audit records, including the ones already on this machine: secret names, agents, tools, commands, hosts and decisions. Never secret values.';
       await confirmOutOfBand({
         kind: 'team',
         title: current
@@ -152,11 +168,26 @@ function makeTeamOps(ctx) {
           ...orgFields,
           ['Server', host],
           ['Join token', 'ends in ' + joinToken.slice(-6) + ' (check it against the one your administrator sent you)'],
-          ['Shares', 'audit records, including the ones already on this machine: secret names, agents, tools, commands, hosts and decisions. Never secret values.'],
+          ['Shares', shares],
           ['Applies', "the organization's signed policy for secrets (it can restrict; a new host for a secret asks you first)"],
         ],
         footer: 'If you did not just run `zn team join` yourself with a token from your administrator, choose Deny.',
       }, { mode: 'set', reason: 'team_join' });
+
+      // "Since joining": the records up to here never leave this machine. Read before anything is sent, so an unreadable log stops the join cleanly.
+      let afterSeq = 0;
+      if (history === 'since_join') {
+        if (current) {
+          afterSeq = Number.isInteger(current.upload_after_seq) ? current.upload_after_seq : 0;
+        } else {
+          try {
+            const last = audit.lastRecord(state.paths.auditFile);
+            afterSeq = last ? last.seq : 0;
+          } catch (err) {
+            throw znError(CODES.POLICY_DENIED, 'join refused: zn could not read the local audit log, so it cannot tell which records came before you joined. This machine was not connected.');
+          }
+        }
+      }
 
       const secrets = await state.loadSecrets();
       const installId = current ? current.install_id : crypto.randomUUID();
@@ -184,6 +215,9 @@ function makeTeamOps(ctx) {
           install_token: res.install_token, pin: res.policy_public_key,
           joined_at: current ? current.joined_at : new Date().toISOString(), revoked_at: null,
           policy: current && current.policy ? current.policy : null,
+          // Records up to this sequence number are never uploaded (0: everything may be).
+          upload_after_seq: afterSeq,
+          upload_history: history,
         };
         writeAudit({ mode: 'set', decision: 'allow', reason: current ? 'team_rejoined' : 'team_joined' });
         await state.saveSecrets();
@@ -192,12 +226,14 @@ function makeTeamOps(ctx) {
       });
     },
 
-    /** teamLeave() -> {left: org | null}. Confirmed: it removes the organization's restrictions. */
+    /**
+     * teamLeave() -> {left: org | null, pending_files: [paths still on disk]}. Confirmed: it removes the organization's restrictions.
+     * The vault entry is deleted first; every local copy is then deleted and checked one by one.
+     */
     async teamLeave() {
       const t = await team();
       if (!t) {
-        for (const f of ['teamFile', 'policyFile', 'uploadState']) policy.removeFile(files()[f]);
-        return { left: null };
+        return { left: null, pending_files: removeLocalCopies() };
       }
       await confirmOutOfBand({
         kind: 'team',
@@ -212,8 +248,7 @@ function makeTeamOps(ctx) {
         delete s.orgApprovals;
         writeAudit({ mode: 'remove', decision: 'allow', reason: 'team_left' });
         await state.saveSecrets();
-        for (const f of ['teamFile', 'policyFile', 'uploadState']) policy.removeFile(files()[f]);
-        return { left: t.org };
+        return { left: t.org, install_id: t.install_id, pending_files: removeLocalCopies() };
       });
     },
 
@@ -228,6 +263,7 @@ function makeTeamOps(ctx) {
         policy: { state: st.state, version: st.version || null, expires_at: st.expires_at || null, fetched_at: st.fetched_at || null, error: st.error || null },
         // The join is pending until a valid policy has been applied.
         join_pending: st.state === 'none' || st.state === 'invalid',
+        upload_after_seq: Number.isInteger(t.upload_after_seq) ? t.upload_after_seq : 0,
         last_sync: lastSyncOf(t),
       };
     },
@@ -298,6 +334,7 @@ function makeTeamOps(ctx) {
         out.upload = await uploadPending({
           auditFile: state.paths.auditFile, stateFile: f.uploadState, lockFile: f.uploadLock,
           api, installId: t.install_id, version: VERSION, shouldStop: isClosed,
+          startAfterSeq: Number.isInteger(t.upload_after_seq) ? t.upload_after_seq : 0,
         });
       }
       return out;

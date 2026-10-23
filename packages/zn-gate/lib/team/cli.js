@@ -2,7 +2,7 @@
 /**
  * zn Team on this machine:
  *
- *   zn team join <znj_token> [--api https://...] [--agent claude-code|codex|...]
+ *   zn team join <znj_token> [--api https://...] [--agent claude-code|codex|...] [--include-history]
  *   zn team status [--json]
  *   zn team sync                      download the policy now and upload the audit log
  *   zn team leave
@@ -25,7 +25,7 @@ const { createClient } = require('../vault/client');
 const { messageWithUnlockHint } = require('../errors');
 const { znCommand } = require('../zn-command');
 
-const USAGE = 'usage: zn team join <token> [--api URL] [--agent ID] | zn team status [--json] | zn team sync | zn team leave | zn team managed-config [--agent ID|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--json]';
+const USAGE = 'usage: zn team join <token> [--api URL] [--agent ID] [--include-history] | zn team status [--json] | zn team sync | zn team leave | zn team managed-config [--agent ID|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--json]';
 const EXPORT_USAGE = 'usage: zn vault log export --otlp [--since 7d] [--out FILE]';
 
 const out = (s) => process.stdout.write(s + '\n');
@@ -52,7 +52,10 @@ function describePolicy(p) {
 async function joinCmd(args) {
   const token = args[2];
   if (!token || token.startsWith('--')) { err(USAGE); return 2; }
-  const r = await withClient((c) => c.teamJoin({ join_token: token, api_base: flag(args, '--api'), agent: flag(args, '--agent') }));
+  // Audit records written before joining stay on this machine unless this flag asks to send them too.
+  const joinArgs = { join_token: token, api_base: flag(args, '--api'), agent: flag(args, '--agent') };
+  if (args.includes('--include-history')) joinArgs.include_history = true;
+  const r = await withClient((c) => c.teamJoin(joinArgs));
   out('Joined ' + (r.org_name ? r.org_name + ' (' + r.org + ')' : r.org) + '. Installation ' + r.install_id + '.');
   // The join is complete only when the organization's first valid policy is applied.
   let why;
@@ -79,7 +82,8 @@ async function statusCmd(args) {
   try { info = await withClient((c) => c.teamInfo()); } catch (e) { info = null; }
   const st = info && info.joined ? info.policy : (team ? policy.state({ team }) : null);
   let pending = null;
-  try { pending = pendingCount({ auditFile: store.paths().auditFile, stateFile: p.uploadState }); } catch (e) { pending = null; }
+  const afterSeq = info && Number.isInteger(info.upload_after_seq) ? info.upload_after_seq : (team && Number.isInteger(team.upload_after_seq) ? team.upload_after_seq : 0);
+  try { pending = pendingCount({ auditFile: store.paths().auditFile, stateFile: p.uploadState, startAfterSeq: afterSeq }); } catch (e) { pending = null; }
   let upload = null;
   try { upload = JSON.parse(fs.readFileSync(p.uploadState, 'utf8')); } catch (e) { upload = null; }
   const joined = info ? info.joined : Boolean(team);
@@ -127,7 +131,16 @@ async function syncCmd() {
 
 async function leaveCmd() {
   const r = await withClient((c) => c.teamLeave());
+  const stuck = Array.isArray(r.pending_files) ? r.pending_files : [];
+  if (stuck.length) {
+    // The vault no longer holds the organization, but a copy is still on disk: say which, so it can be removed by hand.
+    out(r.left ? 'Left ' + r.left + ' in the vault.' : 'Not in an organization.');
+    err('[zn] Some local files could not be deleted. Delete them yourself, because the hooks still read them: ' + stuck.join(', '));
+    return 1;
+  }
   out(r.left ? 'Left ' + r.left + '. The organization policy no longer applies on this machine.' : 'Not in an organization.');
+  // The token is deleted here, but leaving does not tell the server: the installation stays valid there until an admin removes it.
+  if (r.left && r.install_id) out('The installation token is deleted from this machine, but the server is not told: installation ' + r.install_id + ' stays on the organization\'s list of connected installations, with a token that still works, until an admin removes it there.');
   return 0;
 }
 

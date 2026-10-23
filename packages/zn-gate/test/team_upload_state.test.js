@@ -325,6 +325,51 @@ for (const [name, body] of INCOHERENT) {
   });
 }
 
+/* ---------------- "since joining": records before startAfterSeq never leave ---------------- */
+
+test('startAfterSeq: the first upload starts after the join, earlier records are not sent or counted as pending', async (t) => {
+  const f = setup(t);
+  fillLog(f.auditFile, 8);
+  assert.strictEqual(pendingCount({ auditFile: f.auditFile, stateFile: f.stateFile }), 8);
+  assert.strictEqual(pendingCount({ auditFile: f.auditFile, stateFile: f.stateFile, startAfterSeq: 5 }), 3);
+  const api = fakeApi();
+  const r = await uploadPending(opts(f, api, { startAfterSeq: 5 }));
+  assert.strictEqual(r.status, 'ok');
+  assert.deepStrictEqual(api.calls[0].events.map((e) => e.seq), [6, 7, 8]);
+  assert.strictEqual(r.uploaded, 3);
+  assert.strictEqual(r.head.seq, 8);
+  assert.strictEqual(r.pending, 0);
+  // Later records follow from the head; the floor no longer matters.
+  fillLog(f.auditFile, 2);
+  const again = fakeApi();
+  await uploadPending(opts(f, again, { startAfterSeq: 5 }));
+  assert.deepStrictEqual(again.calls[0].events.map((e) => e.seq), [9, 10]);
+});
+
+test('startAfterSeq: nothing is sent while there are no records after the join, and a gap in the older history is not reported', async (t) => {
+  const f = setup(t);
+  fillLog(f.auditFile, 6);
+  const ls = lines(f.auditFile);
+  ls.splice(1, 1); // a gap at seq 2, in the part that never leaves this machine
+  fs.writeFileSync(f.auditFile, ls.join('\n') + '\n');
+  const none = fakeApi();
+  const r = await uploadPending(opts(f, none, { startAfterSeq: 6 }));
+  assert.strictEqual(r.status, 'nothing');
+  assert.strictEqual(none.calls.length, 0);
+  const some = fakeApi();
+  fillLog(f.auditFile, 1);
+  const r2 = await uploadPending(opts(f, some, { startAfterSeq: 6 }));
+  assert.strictEqual(r2.status, 'ok');
+  assert.deepStrictEqual(some.calls[0].events.map((e) => e.seq), [7]);
+});
+
+test('startAfterSeq must be a non-negative integer', async (t) => {
+  const f = setup(t);
+  for (const bad of [-1, 1.5, '3', null]) {
+    await assert.rejects(uploadPending(opts(f, fakeApi(), { startAfterSeq: bad })), /startAfterSeq must be a non-negative integer/);
+  }
+});
+
 test('a head whose MAC does not match the local record is reported as diverged and advances nothing', async (t) => {
   const f = setup(t);
   fillLog(f.auditFile, 3);
