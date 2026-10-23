@@ -24,6 +24,11 @@ class TestEvaluateText(unittest.TestCase):
     def test_strict_still_works_with_the_keyword(self):
         self.assertEqual(evaluate(text=BAD, strict=True).verdict, evaluate(BAD, True).verdict)
 
+    def test_none_keeps_its_old_answer(self):
+        # evaluate(None) and evaluate(input_text=None) answered before this change; they still do.
+        for result in (evaluate(None), evaluate(input_text=None), evaluate(text=None)):
+            self.assertEqual(result.verdict, evaluate(None).verdict)
+
     def test_text_given_twice_or_missing_is_an_error(self):
         with self.assertRaises(TypeError):
             evaluate(BENIGN, input_text=BENIGN)
