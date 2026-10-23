@@ -49,6 +49,24 @@ pub fn fused_risk(distance: f32, threshold: f32, prob: Option<f32>) -> f32 {
     prob.map_or(anomaly, |p| anomaly.max(p))
 }
 
+/// Content-free reference to a piece of text: `h:` plus the first 16 hex
+/// characters of its SHA-256. The vector memory keeps this instead of the
+/// text of a call (the vector alone gives the distance), and the audit log
+/// and the logs name a nearest neighbour only by this reference. A value that
+/// already is a reference is returned unchanged, so rows written by earlier
+/// versions (which hold raw text) are turned into a reference on the way out.
+pub fn content_ref(text: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let is_ref = text.len() == 18
+        && text.starts_with("h:")
+        && text[2..].bytes().all(|b| b.is_ascii_hexdigit());
+    if is_ref {
+        return text.to_string();
+    }
+    let digest = Sha256::digest(text.as_bytes());
+    format!("h:{}", hex::encode(&digest[..8]))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,5 +144,21 @@ mod tests {
             0.7,
             "zero threshold: prob only"
         );
+    }
+}
+
+#[cfg(test)]
+mod content_ref_tests {
+    use super::content_ref;
+
+    #[test]
+    fn reference_hides_the_text_and_is_stable() {
+        let r = content_ref("secret call text");
+        assert_eq!(r.len(), 18);
+        assert!(r.starts_with("h:"));
+        assert!(!r.contains("secret"));
+        assert_eq!(r, content_ref("secret call text"));
+        assert_ne!(r, content_ref("other text"));
+        assert_eq!(content_ref(&r), r);
     }
 }
