@@ -423,8 +423,9 @@ function uninstall(opts = {}) {
   report.removed = 1;
   if (Object.keys(data).length === 0) fs.unlinkSync(file);
   else cfg.writeJson(file, data);
-  // The launcher of a user install (see commandFor) is no longer referenced.
-  if ((opts.scope || 'user') !== 'project') {
+  // The launcher (see commandFor) is shared by every config of this machine: one uninstall leaves it in place,
+  // only the machine-wide uninstall (opts.removeLauncher) deletes it.
+  if ((opts.scope || 'user') !== 'project' && opts.removeLauncher === true) {
     try { fs.unlinkSync(launcher.launcherFile(id, opts)); } catch (_) { /* none */ }
   }
   return report;

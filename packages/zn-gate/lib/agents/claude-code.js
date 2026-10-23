@@ -458,8 +458,10 @@ function uninstall(opts = {}) {
       report.backup = backup(file);
       report.removed = 1;
       writeFileAtomic(file, cfg.stringifyJson(data), 0o644);
-      // The launcher of a user install (see commandFor) is no longer referenced.
-      if ((opts.scope || 'user') !== 'project') {
+      // The launcher (see commandFor) is shared by every Claude Code profile of this machine (every CLAUDE_CONFIG_DIR),
+      // so uninstalling one profile leaves it in place: deleting it would make the other profiles' hooks exit 127,
+      // which Claude Code runs through as a non-blocking error. Only the machine-wide uninstall removes it.
+      if ((opts.scope || 'user') !== 'project' && opts.removeLauncher === true) {
         try { fs.unlinkSync(launcher.launcherFile(id, opts)); } catch (_) { /* none */ }
       }
     }
