@@ -96,14 +96,14 @@ test('codex launcher: Node.js gone and no zn on PATH: it still blocks, with the 
   }
 });
 
-test('codex launcher: recorded Node.js gone but zn and node on an absolute PATH: runs zn hook', { skip: !posix }, (t) => {
+test('codex launcher: recorded Node.js gone but zn and node on an absolute PATH: blocks, the unverified zn is not run', { skip: !posix }, (t) => {
   const { file } = setup(t, GONE);
   const bin = tempDir(t, 'zn-b93-bin-');
   fs.writeFileSync(path.join(bin, 'node'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'zn'), '#!/bin/sh\necho "VIA_ZN $*"\n', { mode: 0o755 });
   const r = runLauncher(file, 'PreToolUse', '{}', bin);
-  assert.equal(r.status, 0);
-  assert.equal(r.stdout.trim(), 'VIA_ZN hook codex');
+  assert.equal(r.status, 2);
+  assert.doesNotMatch(r.stdout, /VIA_ZN/, 'a zn found on the PATH is never run');
 });
 
 test('codex launcher: a zn found through a relative PATH entry is not run (it blocks)', { skip: !posix }, (t) => {
@@ -145,7 +145,7 @@ test('check: the Node.js recorded in the launcher is gone and nothing else can r
   assert.equal(r.fix, REINSTALL);
 });
 
-test('check: the recorded Node.js is gone but zn and node are on the PATH: protected, with a note to reinstall', { skip: !posix }, async (t) => {
+test('check: the recorded Node.js is gone and only a zn on the PATH is left: not protected (the launcher does not run it)', { skip: !posix }, async (t) => {
   const { home, env, file } = setup(t, process.execPath);
   breakNode(file);
   const bin = tempDir(t, 'zn-b93-bin-');
@@ -153,8 +153,8 @@ test('check: the recorded Node.js is gone but zn and node are on the PATH: prote
   // A stand-in `zn` that runs the real hook runner, as `zn hook codex` does.
   fs.writeFileSync(path.join(bin, 'zn'), '#!/bin/sh\nexec "' + process.execPath + '" "' + RUNNER + '" "$2"\n', { mode: 0o755 });
   const r = (await check({ home, env: { ...env, PATH: bin }, cwd: tempDir(t, 'zn-b93-cwd-') })).results.find((x) => x.id === 'codex');
-  assert.equal(r.state, 'protected', r.problem);
-  assert.ok(r.notes.some((n) => /now runs `zn` from your PATH.*zn hooks install codex/.test(n)));
+  assert.equal(r.state, 'not-protected');
+  assert.match(r.problem, /Node\.js .* is no longer there, so zn now blocks/);
 });
 
 test('check: a launcher script that was deleted is reported', { skip: !posix }, async (t) => {

@@ -63,9 +63,17 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
   its hook cannot start: its Node.js (<path>) is no longer there, so zn now blocks the tool calls and prompts instead of checking them
   ```
 
-  The last form is a Codex CLI or Claude Code hook that goes through zn's launcher script, which blocks the agent's tool calls and prompts (instead of letting them run unchecked) when the Node.js it was installed with is gone and no `zn` can be found on your PATH. Until you repair it, the agent cannot run commands. If `zn` and `node` are on your PATH the hook keeps working and `zn-gate check` only notes that the Node.js it was installed with is gone.
+  The last form is a Codex CLI or Claude Code hook that goes through zn's launcher script, which blocks the agent's tool calls and prompts (instead of letting them run unchecked) when the Node.js it was installed with is gone. The launcher never runs a `zn` it finds on your PATH instead. Until you repair it, the agent cannot run commands.
 
-  This usually happens after you removed or upgraded Node.js with a version manager such as nvm: the old Node.js took its copy of zn-gate with it. The repair is:
+  A second form appears when the zn-gate files changed after the hooks were installed (the launcher keeps the SHA-256 of the runner file and runs it only if it still matches):
+
+  ```text
+  its hook is blocking tool calls and prompts: zn-gate changed since the hooks were installed (<path> no longer matches the launcher), so zn will not run it
+  ```
+
+  This is what you see right after `npm update -g zn-gate`, or if the file was edited. Run `zn hooks install <agent>` again in your own terminal to record the new files.
+
+  The first form usually happens after you removed or upgraded Node.js with a version manager such as nvm: the old Node.js took its copy of zn-gate with it. The repair is:
 
   ```text
   install zn-gate again for the Node.js you use now: run `npm install -g zn-gate`, then `zn hooks install <agent>`, in your own terminal
