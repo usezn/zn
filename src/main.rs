@@ -571,14 +571,13 @@ async fn start_proxy(args: Args) -> Result<()> {
         match tokio::net::TcpListener::bind(&addr).await {
             Ok(listener) => {
                 log::info(format!("🛰️ Management API listening on {}", addr)).ok();
-                if let Err(e) = axum::serve(
+                // Header and body read timeouts and a connection cap (axum::serve has none).
+                zn::http_limits::serve_limited(
                     listener,
-                    app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+                    app,
+                    zn::http_limits::ServeLimits::default(),
                 )
-                .await
-                {
-                    tracing::error!("Management API server error: {}", e);
-                }
+                .await;
             }
             Err(e) => {
                 tracing::error!("Failed to bind Management API to {}: {}", addr, e);
