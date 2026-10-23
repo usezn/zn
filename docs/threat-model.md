@@ -453,9 +453,13 @@ stop malware running as the same user (see above).
   deny, because after a tool has run a deny alone does not withhold the output
   in Claude Code, Copilot or OpenCode. An output that is mostly invisible characters has
   the invisible characters removed and the rest redacted, and is reported as
-  denied. Known limit: Claude Code ignores a replacement whose shape differs
-  from the output of a built-in tool, so a built-in tool result over 32 MiB
-  cannot be withheld (MCP output is not validated, so it is).
+  denied. Claude Code ignores a replacement whose shape differs from the
+  output of a built-in tool, so for a Bash result over 32 MiB (and any tool
+  that is not an MCP one) the notice is sent in the shape of a Bash result
+  (`stdout`, `stderr`, `interrupted`), the one the post-tool check already
+  uses for ordinary Bash output; MCP output is not validated. Known limit:
+  a result over 32 MiB from another built-in tool with its own result shape
+  (for example a file read) is not withheld.
 - **Text hidden behind blank lines:** a skill, rules file or tool output can put a long run of empty or whitespace-only lines before its real text, which pushes that text out of a reviewer's view and out of the window a classifier reads. The local rules read every run of blank lines as one blank line, and `zn audit` reports a run of 40 or more blank lines with text after it (ZNA021), giving the line where the text starts.
 - **Scrubber error:** fails closed. The tool call is denied, the output
   withheld or the prompt blocked. A missing engine also fails closed, and the
