@@ -49,22 +49,127 @@ pub fn fused_risk(distance: f32, threshold: f32, prob: Option<f32>) -> f32 {
     prob.map_or(anomaly, |p| anomaly.max(p))
 }
 
-/// Content-free reference to a piece of text: `h:` plus the first 16 hex
-/// characters of its SHA-256. The vector memory keeps this instead of the
-/// text of a call (the vector alone gives the distance), and the audit log
-/// and the logs name a nearest neighbour only by this reference. A value that
-/// already is a reference is returned unchanged, so rows written by earlier
-/// versions (which hold raw text) are turned into a reference on the way out.
-pub fn content_ref(text: &str) -> String {
+/// HMAC-SHA256 (RFC 2104), written out so that no extra crate is needed.
+fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
     use sha2::{Digest, Sha256};
-    let is_ref = text.len() == 18
-        && text.starts_with("h:")
-        && text[2..].bytes().all(|b| b.is_ascii_hexdigit());
-    if is_ref {
+    const BLOCK: usize = 64;
+    let mut k = [0u8; BLOCK];
+    if key.len() > BLOCK {
+        let d = Sha256::digest(key);
+        k[..32].copy_from_slice(&d[..]);
+    } else {
+        k[..key.len()].copy_from_slice(key);
+    }
+    let mut inner = Sha256::new();
+    inner.update(k.map(|b| b ^ 0x36));
+    inner.update(msg);
+    let inner = inner.finalize();
+    let mut outer = Sha256::new();
+    outer.update(k.map(|b| b ^ 0x5c));
+    outer.update(&inner[..]);
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&outer.finalize()[..]);
+    out
+}
+
+static REF_KEY: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
+
+/// Read the 32-byte reference key stored as `ref.key` in `dir`, creating it
+/// (random, mode 0600, written to a temporary file and linked into place so a
+/// concurrent start cannot see a partial key) when it does not exist yet.
+pub fn load_or_create_ref_key(dir: &std::path::Path) -> std::io::Result<[u8; 32]> {
+    use std::io::{Error, ErrorKind, Write};
+    let path = dir.join("ref.key");
+    let read = |p: &std::path::Path| -> std::io::Result<[u8; 32]> {
+        let bytes = std::fs::read(p)?;
+        <[u8; 32]>::try_from(bytes.as_slice())
+            .map_err(|_| Error::new(ErrorKind::InvalidData, "ref.key must hold exactly 32 bytes"))
+    };
+    match read(&path) {
+        Ok(k) => return Ok(k),
+        Err(e) if e.kind() == ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
+    }
+    std::fs::create_dir_all(dir)?;
+    let mut key = [0u8; 32];
+    {
+        use rand::Rng;
+        rand::rng().fill_bytes(&mut key);
+    }
+    let tmp = dir.join(format!("ref.key.tmp-{}", std::process::id()));
+    let _ = std::fs::remove_file(&tmp);
+    {
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let mut f = opts.open(&tmp)?;
+        f.write_all(&key)?;
+        f.sync_all()?;
+    }
+    let linked = std::fs::hard_link(&tmp, &path);
+    let _ = std::fs::remove_file(&tmp);
+    match linked {
+        Ok(()) => Ok(key),
+        Err(e) if e.kind() == ErrorKind::AlreadyExists => read(&path),
+        Err(e) => Err(e),
+    }
+}
+
+/// Load (or create) the local reference key in `dir` and use it for every
+/// `content_ref` of this process. Call it once at start, before anything is
+/// written to the audit log or the vector memory.
+pub fn init_ref_key(dir: &std::path::Path) -> std::io::Result<()> {
+    let key = load_or_create_ref_key(dir)?;
+    match REF_KEY.set(key) {
+        Ok(()) => Ok(()),
+        Err(_) if REF_KEY.get() == Some(&key) => Ok(()),
+        Err(_) => Err(std::io::Error::other(
+            "the reference key was already set to a different value",
+        )),
+    }
+}
+
+fn ref_key() -> &'static [u8; 32] {
+    // Without `init_ref_key` the key is random for this process only: refs
+    // stay unlinkable to the text, they just do not match across restarts.
+    REF_KEY.get_or_init(|| {
+        use rand::Rng;
+        let mut k = [0u8; 32];
+        rand::rng().fill_bytes(&mut k);
+        k
+    })
+}
+
+/// True when `text` already has the shape of a reference (`h:` and 16 hex
+/// characters).
+pub fn is_content_ref(text: &str) -> bool {
+    text.len() == 18 && text.starts_with("h:") && text[2..].bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Reference to a piece of text under an explicit key.
+pub fn content_ref_with_key(key: &[u8; 32], text: &str) -> String {
+    if is_content_ref(text) {
         return text.to_string();
     }
-    let digest = Sha256::digest(text.as_bytes());
-    format!("h:{}", hex::encode(&digest[..8]))
+    let mac = hmac_sha256(key, text.as_bytes());
+    format!("h:{}", hex::encode(&mac[..8]))
+}
+
+/// Content-free reference to a piece of text: `h:` plus the first 16 hex
+/// characters of its HMAC-SHA256 under a random key kept on this machine
+/// (`ref.key`, see `init_ref_key`). The key keeps short or guessable values
+/// (PINs, codes, IDs) from being recovered by hashing candidates. The vector
+/// memory keeps this instead of the text of a call (the vector alone gives the
+/// distance), and the audit log and the logs name a nearest neighbour only by
+/// this reference. A value that already is a reference is returned unchanged,
+/// so rows written by earlier versions (which hold raw text) are turned into a
+/// reference on the way out.
+pub fn content_ref(text: &str) -> String {
+    content_ref_with_key(ref_key(), text)
 }
 
 #[cfg(test)]
@@ -149,7 +254,7 @@ mod tests {
 
 #[cfg(test)]
 mod content_ref_tests {
-    use super::content_ref;
+    use super::*;
 
     #[test]
     fn reference_hides_the_text_and_is_stable() {
@@ -160,5 +265,45 @@ mod content_ref_tests {
         assert_eq!(r, content_ref("secret call text"));
         assert_ne!(r, content_ref("other text"));
         assert_eq!(content_ref(&r), r);
+    }
+
+    #[test]
+    fn hmac_matches_rfc_4231_case_2() {
+        let mac = hmac_sha256(b"Jefe", b"what do ya want for nothing?");
+        assert_eq!(
+            hex::encode(mac),
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
+    }
+
+    #[test]
+    fn reference_is_keyed_and_stable_across_openings() {
+        use sha2::{Digest, Sha256};
+        let dir = tempfile::tempdir().unwrap();
+        let k1 = load_or_create_ref_key(dir.path()).unwrap();
+        let k2 = load_or_create_ref_key(dir.path()).unwrap();
+        assert_eq!(k1, k2, "the same key file must give the same key");
+        let text = "login: {\"pin\":\"4821\"}";
+        let r1 = content_ref_with_key(&k1, text);
+        assert_eq!(r1, content_ref_with_key(&k2, text));
+        let unkeyed = format!("h:{}", hex::encode(&Sha256::digest(text.as_bytes())[..8]));
+        assert_ne!(r1, unkeyed, "the reference must not be a plain SHA-256");
+        let other = dir.path().join("other");
+        let k3 = load_or_create_ref_key(&other).unwrap();
+        assert_ne!(k1, k3);
+        assert_ne!(r1, content_ref_with_key(&k3, text));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn key_file_is_private_and_a_bad_key_is_refused() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        load_or_create_ref_key(dir.path()).unwrap();
+        let meta = std::fs::metadata(dir.path().join("ref.key")).unwrap();
+        assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+        assert_eq!(meta.len(), 32);
+        std::fs::write(dir.path().join("ref.key"), b"short").unwrap();
+        assert!(load_or_create_ref_key(dir.path()).is_err());
     }
 }
