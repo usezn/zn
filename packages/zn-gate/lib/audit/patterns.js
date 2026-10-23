@@ -40,8 +40,12 @@ const KNOWN_INSTALLERS = [
 const DISCUSS_BEFORE_SRC = '\\b(?:patterns?|anti-?patterns?|red flags?|flag(?:s|ged|ging)?|warn(?:s|ing)? about|forbidden|prohibited|banned|disallow(?:s|ed)?|reject(?:s|ed)?|refus(?:e|es|ed)|unsafe|insecure|dangerous|risky|harmful|malicious|suspicious)\\b';
 const DISCUSS_AFTER = /^[`'"\s)\]]{0,5}(?:\b(?:is|are|was|were)\s+(?:a\s+|an\s+|considered\s+|very\s+)?(?:dangerous|unsafe|risky|insecure|bad|harmful|forbidden|blocked|not\s+allowed|an?\s+(?:anti-?pattern|risk)|a\s+red\s+flag)\b|\b(?:without\s+(?:a\s+)?(?:hash|checksum|verification|signature))\b)/i;
 /** The clause (or list item) starts with a verb that gives an order. */
-const IMPERATIVE_START = /^[\s>*_`\-+\d.)]*(?:(?:then|and|now|first|next|also|please|finally)[\s,]+)*(?:run|execute|install|pipe|use|type|paste|call|invoke|download|fetch)\b/i;
-const IMPERATIVE_WORD = /\b(?:run|runs|execute|install|pipe|use|type|paste|call|invoke|download|fetch)\b/i;
+const IMPERATIVE_START = /^[\s>*_`\-+\d.)]*(?:(?:then|and|now|first|next|also|please|finally)[\s,]+)*(?:run|execute|install|pipe|use|type|paste|call|invoke|download|fetch|get|grab|set\s+up|bootstrap|add)\b/i;
+const IMPERATIVE_WORD = /\b(?:run|runs|execute|install|pipe|use|type|paste|call|invoke|download|fetch|get|grab|set\s+up|bootstrap|add)\b/i;
+/** A contrast or consequence word after the warning: "... is unsafe, so get it with curl ..." turns the warning into a reassurance. */
+const CONTRAST_WORD = /\b(?:but|so|however|though|although|yet|still|instead|anyway|then|whereas)\b/i;
+/** Warning words that describe a thing ("the old one was unsafe"); a colon after them introduces the command. */
+const ADJECTIVE_WARNING = /^(?:unsafe|insecure|dangerous|risky|harmful|malicious|suspicious)$/i;
 
 function discussed(text, index, length) {
   let seg = text.slice(Math.max(0, index - 120), index);
@@ -50,7 +54,11 @@ function discussed(text, index, length) {
   const re = new RegExp(DISCUSS_BEFORE_SRC, 'gi');
   let last = null;
   for (let m = re.exec(seg); m; m = re.exec(seg)) last = m;
-  if (last && !IMPERATIVE_WORD.test(seg.slice(last.index + last[0].length))) return true;
+  if (last) {
+    const rest = seg.slice(last.index + last[0].length);
+    const introduces = rest.indexOf(':') > 0 && ADJECTIVE_WARNING.test(last[0]);
+    if (!IMPERATIVE_WORD.test(rest) && !CONTRAST_WORD.test(rest) && !introduces) return true;
+  }
   if (IMPERATIVE_START.test(seg)) return false;
   return DISCUSS_AFTER.test(text.slice(index + length, index + length + 80));
 }
@@ -63,11 +71,20 @@ const WARNING_LABEL = /^\s*(?:[-*+]\s+|\d+[.)]\s+)?(?:\*\*|__)?(?:danger|bad|avo
 const WARNING_CELL = /\b(?:blocked?|refus\w*|reject\w*|denied|flagged|unsafe|dangerous|risks?|risky)\b/i;
 const DOWNLOAD_WORD = /\b(?:curl|wget|iwr|irm|invoke-webrequest|invoke-restmethod)\b/i;
 
+/** The cell has a warning word that is not negated ("no risk", "not blocked", "low risk"). */
+function warningCell(cell) {
+  const re = new RegExp(WARNING_CELL.source, 'gi');
+  for (let m = re.exec(cell); m; m = re.exec(cell)) {
+    if (!/\b(?:no|not|zero|low|without|never|non)[\s-]+(?:\w+\s+)?$/i.test(cell.slice(Math.max(0, m.index - 20), m.index))) return true;
+  }
+  return false;
+}
+
 function warningText(line) {
   const t = String(line || '').slice(0, MAX_LINE);
   const label = WARNING_LABEL.exec(t);
-  if (label) return !IMPERATIVE_START.test(t.slice(label[0].length));
-  if (/^\s*\|/.test(t)) return t.split('|').some((cell) => WARNING_CELL.test(cell) && !DOWNLOAD_WORD.test(cell));
+  if (label) return !IMPERATIVE_WORD.test(t.slice(label[0].length));
+  if (/^\s*\|/.test(t)) return t.split('|').some((cell) => warningCell(cell) && !DOWNLOAD_WORD.test(cell));
   return false;
 }
 function warningHeading(line) {
