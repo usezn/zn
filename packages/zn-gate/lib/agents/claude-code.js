@@ -63,7 +63,12 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
+// Loaded on first use: the hook does not run `claude` and child_process costs a few milliseconds to load.
+let spawnSyncLazy = null;
+function spawnSync(...args) {
+  if (!spawnSyncLazy) spawnSyncLazy = require('child_process').spawnSync;
+  return spawnSyncLazy(...args);
+}
 const { writeFileAtomic } = require('../broker/files');
 const { whichSync } = require('../broker/markers');
 const { shQuote, portablePath } = require('../shell-quote');
