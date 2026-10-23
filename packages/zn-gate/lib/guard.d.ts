@@ -49,6 +49,8 @@ export interface GuardToolOptions<Fallback = never> extends GuardEngineOptions {
   maskSecrets?: boolean;
   /** With checkResult, block a result too large to scan in full. */
   blockTruncated?: boolean;
+  /** With checkResult, allow a result too large to scan in full (blocked by default). Also ZN_ALLOW_TRUNCATED=1. */
+  allowTruncated?: boolean;
   /** Called as (assessment, toolName, payload) before the block is applied. */
   onBlockCallback?: (assessment: ToolCallAssessment, name: string, payload: unknown) => void;
 }

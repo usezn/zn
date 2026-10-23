@@ -28,7 +28,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-10-23.3';
+const SCRUB_RULES_VERSION = '2026-10-23.7';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -784,7 +784,10 @@ function keyedFinder(spec) {
   };
 }
 
-const KEYED_PREFILTER = /X-[A-Za-z-]{4,16}\s*["']?\s*:|(?:name|user|login|address)=/i;
+/* Same language as /X-[A-Za-z-]{4,16}\s*["']?\s*:/, written so that a run of whitespace after
+ * the name is scanned once: with the quote optional between two \s*, a long run could be split
+ * between them in every possible way (quadratic). Here the second \s* only follows a quote. */
+const KEYED_PREFILTER = /X-[A-Za-z-]{4,16}\s*(?:["']\s*)?:|(?:name|user|login|address)=/i;
 const findPersonName = keyedFinder({ headers: ['X-User-?Name', 'X-Full-?Name'], forms: ['full_?name', 'name'], valid: validPersonName });
 const findUsername = keyedFinder({ headers: ['X-Username', 'X-User', 'X-Forwarded-User', 'X-Remote-User'], forms: ['username', 'user', 'login'], valid: (d) => validUsername(d) });
 const findPostalAddress = keyedFinder({ headers: ['X-Address'], forms: ['address'], valid: (d) => validAddress(d) });
