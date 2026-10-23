@@ -276,11 +276,35 @@ test('uninstall: the vault key is removed only after the files are gone', async 
   let fileThere = null;
   keychain.readMeta = () => ({ backend: 'test' });
   keychain.deleteIdentity = async () => { fileThere = fs.existsSync(v); };
-  t.after(() => { keychain.readMeta = realMeta; keychain.deleteIdentity = realDelete; });
+  keychain._native.test = { load: () => null };
+  t.after(() => { keychain.readMeta = realMeta; keychain.deleteIdentity = realDelete; delete keychain._native.test; });
   const c = io(m, { confirm: async () => true });
   assert.equal(await dispatch('uninstall', [], c.o), 0, c.err());
   assert.equal(fileThere, false);
   assert.match(c.out(), /Vault deleted/);
+});
+
+test('uninstall: the backups and token maps go too, and a keychain that keeps the key is not reported as deleted', async (t) => {
+  const m = machine(t);
+  const v = vault(m);
+  const dir = path.dirname(v);
+  const backup = path.join(path.dirname(dir), 'vault-backup-20260101-100000', 'vault');
+  fs.mkdirSync(backup, { recursive: true });
+  fs.writeFileSync(path.join(backup, 'secrets.age'), 'old encrypted copy');
+  fs.writeFileSync(path.join(dir, 'c'.repeat(32) + '.age'), 'token map');
+  const keychain = require('../lib/vault/keychain');
+  const realMeta = keychain.readMeta;
+  const realDelete = keychain.deleteIdentity;
+  keychain.readMeta = () => ({ backend: 'test' });
+  keychain.deleteIdentity = async () => ({ deleted: true });
+  keychain._native.test = { load: () => 'AGE-SECRET-KEY-1' + 'Q'.repeat(10) };
+  t.after(() => { keychain.readMeta = realMeta; keychain.deleteIdentity = realDelete; delete keychain._native.test; });
+  const c = io(m, { confirm: async () => true });
+  assert.equal(await dispatch('uninstall', [], c.o), 1, c.err());
+  assert.equal(fs.existsSync(path.dirname(backup)), false, 'the backup folder is gone');
+  assert.equal(fs.existsSync(path.join(dir, 'c'.repeat(32) + '.age')), false, 'the token map is gone');
+  assert.match(c.out(), /could not be removed from your test keychain/);
+  assert.doesNotMatch(c.out(), /Vault deleted/);
 });
 
 test('uninstall: a hook removal that fails exits 1 and says so', async (t) => {

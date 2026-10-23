@@ -155,8 +155,6 @@ function pluginStep(io) {
 }
 
 async function removeVault(p, io) {
-  const store = require('./vault/store');
-  const keychain = require('./vault/keychain');
   const daemon = require('./vault/daemon');
   const policy = require('./team/policy');
   const o = p.vaultOpts;
@@ -169,23 +167,21 @@ async function removeVault(p, io) {
     out(io, 'The vault was kept: it is unlocked. Run `zn lock`, then `zn-gate uninstall` again.');
     return 'failed';
   }
-  let backend = null;
-  try { const m = keychain.readMeta(o); backend = m && m.backend; } catch (_) { /* damaged */ }
   // Files first, the key last: if a file cannot be removed, the key stays and what is left still opens.
-  const left = [];
-  for (const v of require('./vault/reset').vaultFiles(o)) {
-    try { fs.unlinkSync(v.src); } catch (err) { if (!err || err.code !== 'ENOENT') left.push(v.src); }
-  }
-  if (left.length) {
+  // Every backup, token map and session file goes too, and a second look checks that none is left.
+  const purge = require('./vault/purge');
+  const r = await purge.removeAll(o);
+  if (r.left.length) {
     out(io, 'The vault was not fully deleted. These files could not be removed:');
-    for (const f of left) out(io, '  - ' + f);
+    for (const f of r.left) out(io, '  - ' + f);
     out(io, 'The vault key in your system keychain was kept, so what is left of the vault can still be opened. Delete those files by hand (or fix their permissions) and run `zn-gate uninstall` again.');
     return 'failed';
   }
-  if (backend) {
-    try { await keychain.deleteIdentity(o); } catch (_) { out(io, 'The vault files are gone, but the vault key could not be removed from your system keychain. It is harmless without the files; remove the "zn" entry by hand if you want.'); }
+  const problem = purge.keyProblem(r);
+  if (problem) {
+    out(io, 'The vault files are gone, but ' + problem.charAt(0).toLowerCase() + problem.slice(1));
+    return 'failed';
   }
-  try { fs.rmdirSync(store.paths(o).vaultDir); } catch (_) { /* not empty or gone */ }
   out(io, 'Vault deleted.');
   return true;
 }
