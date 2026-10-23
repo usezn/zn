@@ -218,6 +218,12 @@ const PLACEHOLDER_ORDERS = {
   'wrapped on one line': '<system-or-project>' + ORDER + '</system-or-project>\n',
   'list item with the tag': '- <system-wide>\n' + ORDER + '\n',
   'tags with spaces, closed further down': 'See < system-name >.\n' + ORDER + '\n</ system-name >\n',
+  'heading with the tag': '# <system-wide>\n' + ORDER + '\n',
+  'quote before the tag': '"<system-wide>\n' + ORDER + '\n',
+  'backtick before the tag': '`<system-wide>\n' + ORDER + '\n',
+  'table cell with the tag': '| <system-wide> |\n' + ORDER + '\n',
+  'closing tag after the order': ORDER + '</system-wide>\n',
+  'closing tag on the next line': ORDER + '\n</system-wide>\n',
 };
 for (const [name, text] of Object.entries(PLACEHOLDER_ORDERS)) {
   test('audit ZNA012: placeholder that wraps an order stays high in a SKILL.md, ' + name, (t) => {
@@ -236,3 +242,14 @@ for (const [name, text] of Object.entries({
     assert.deepEqual(high(run(t, NOTE_FILES(text), 'ZNA012')), []);
   });
 }
+
+test('audit ZNA012: 1 MB of placeholder lines is checked in linear time', (t) => {
+  const N = 1024 * 1024;
+  const rep = (x) => x.repeat(Math.ceil(N / x.length)).slice(0, N);
+  const t0 = Date.now();
+  run(t, NOTE_FILES(rep('<system-wide>.\n')), 'ZNA012');
+  skill(t, rep('<system-wide>.\n'));
+  const ms = Date.now() - t0;
+  // About 5 s on a loaded CI runner; a lookup per line over the whole file took minutes.
+  assert.ok(ms < 20000, 'took ' + ms + ' ms');
+});

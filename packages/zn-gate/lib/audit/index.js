@@ -811,28 +811,35 @@ const CHAT_TOKEN_DOC = /<\|im_start\|>(?:[ \t]*(?:user|assistant|tool)\b|(?![ \t
 // What may follow an opening placeholder for it to count as a name: nothing,
 // punctuation, or a file name or path glued to the tag. Anchored as a whole.
 const PLACEHOLDER_TAIL = /^(?:\.[a-z0-9]{1,6})?(?:[\/\\][\w.\/\\-]*)?[\s\p{P}\p{S}]*$/iu;
-// An opening tag that starts the line (after list or quote markers) reads as
-// a message to the agent, never as a name.
-const LINE_START = /^[\s>*+\-]*(?:\d+[.)][\s>*+\-]*)?$/;
+// An opening tag with no word before it on the line (only marks such as #,
+// -, >, quotes or a table bar) reads as a message to the agent, never as a name.
+const LINE_START = /^[^\p{L}\p{N}]*$/u;
+// Any system tag; used once per file to list the tags that close somewhere.
+const SYSTEM_TAG_ANY = /<\s*(\/)?\s*(system(?:-[\w-]+)?)\s*>/gi;
+
+/** The system tag names that are closed somewhere in `fileText`, in one pass. */
+function closedSystemTags(fileText) {
+  const closed = new Set();
+  for (const m of String(fileText).matchAll(SYSTEM_TAG_ANY)) if (m[1]) closed.add(m[2].toLowerCase());
+  return closed;
+}
 
 /**
  * Placeholders such as <system-or-project> and identity values such as
  * system:anonymous, which name something instead of wrapping text. A
- * placeholder is skipped only when it wraps no text: not when its matching
- * tag appears anywhere in the file, not when it starts the line, and not
- * when anything but punctuation or a file name follows it on the line.
- * `fileText` is the whole file.
+ * placeholder is skipped only when it wraps no text: never a closing tag,
+ * and an opening tag only when it is not closed anywhere in the file, has a
+ * word before it on the line, and only punctuation or a file name follows it.
+ * `closed` is closedSystemTags() of the whole file.
  */
-function stripSystemShapes(text, fileText) {
-  const file = fileText == null ? text : fileText;
+function stripSystemShapes(text, closed) {
+  const closedTags = closed || closedSystemTags(text);
   const keep = (m, off, glued) => {
-    const name = glued ? '' : ((/system-([\w-]+)/i.exec(m) || [])[1] || '');
-    const closing = /^<\s*\//.test(m);
-    const tag = 'system' + (glued ? '' : '-' + name);
-    const other = new RegExp('<\\s*' + (closing ? '' : '\\/\\s*') + tag + '\\s*>', 'i');
-    if (other.test(file)) return true;
-    if (closing) return false;
-    if (!glued && LINE_START.test(text.slice(0, off))) return true;
+    // A closing tag is never a name: the text before it reads as a message.
+    if (/^<\s*\//.test(m)) return true;
+    const tag = glued ? 'system' : 'system-' + ((/system-([\w-]+)/i.exec(m) || [])[1] || '').toLowerCase();
+    if (closedTags.has(tag)) return true;
+    if (LINE_START.test(text.slice(0, off))) return true;
     let after = text.slice(off + m.length);
     // A name inside a code span: only the rest of the span counts.
     if (glued && (text.slice(0, off).split('`').length - 1) % 2 === 1 && after.includes('`')) after = after.slice(0, after.indexOf('`'));
@@ -844,8 +851,8 @@ function stripSystemShapes(text, fileText) {
   return s.replace(SYSTEM_IDENTITY_DOC, ' ');
 }
 
-function stripDocShapes(text, fenced, fileText) {
-  let s = stripSystemShapes(text, fileText);
+function stripDocShapes(text, fenced, closed) {
+  let s = stripSystemShapes(text, closed);
   // "[system]" used as a label after a word, never a role marker ("[system]:").
   s = s.replace(/(?<=[A-Za-z0-9"'`)])[ \t]\[\s*system\s*\](?!\s*:)/gi, ' ');
   // A role label that opens a quoted example prompt: system: `You are ...`
@@ -900,10 +907,10 @@ function docShape(t, o) {
   let rest = t;
   // A tag named in backticks, never paired with a closing tag on the line.
   if (!/<\s*system[^>]*>[\s\S]*<\s*\/\s*system/i.test(rest)) rest = rest.replace(/`<\s*\/?\s*system\s*>`/gi, ' ');
-  if (o.doc) rest = stripNegated(stripDocShapes(rest, o.fenced, o.fileText));
+  if (o.doc) rest = stripNegated(stripDocShapes(rest, o.fenced, o.closedTags));
   // A note inside a skill folder that is not a docs file: only the
   // placeholder and identity shapes, and "system:" ending the line.
-  else if (o.skillNote) rest = stripSystemShapes(rest, o.fileText).replace(/\bsystem\s*:\s*$/i, ' ');
+  else if (o.skillNote) rest = stripSystemShapes(rest, o.closedTags).replace(/\bsystem\s*:\s*$/i, ' ');
   if (rest !== t && !blockOf(rest)) return 'skip';
   if (!o.doc) return null;
   // The strong pattern sits only inside the quotes of an example: reported one
@@ -943,7 +950,8 @@ function checkInstructions(ctx) {
   // A file CLAUDE.md imports with @ is loaded as instructions, wherever it sits.
   const doc = !ctx.rec.importedBy && isDocFile(ctx.rec.rel);
   const skillNote = isSkillNote(ctx.rec);
-  const fileText = ctx.lines.join('\n');
+  // The system tags closed somewhere in the file, listed once per file.
+  const closedTags = closedSystemTags(ctx.lines.join('\n'));
   const claudeExt = /(^|\/)\.claude\/(commands|agents|skills)\//i.test(ctx.rec.rel);
   // Supporting notes of a skill (not SKILL.md itself): the only files here
   // that are not read as instructions.
@@ -982,7 +990,7 @@ function checkInstructions(ctx) {
       try { res = rules().evaluate(t, { strict: true }); } catch (_) { res = null; }
       let demo = false;
       if (res && res.verdict === 'block') {
-        const d = docShape(t, { doc, skillNote, fileText, fenced: fenced.has(i), lines: ctx.lines, at: i, open: fenceOpen.get(i) });
+        const d = docShape(t, { doc, skillNote, closedTags, fenced: fenced.has(i), lines: ctx.lines, at: i, open: fenceOpen.get(i) });
         if (d === 'skip') res = null; else if (d === 'demo') demo = true;
       }
       if (res && res.verdict === 'block' && !NOISY_IN_DOCS.test(String(res.rule))) {
