@@ -199,7 +199,8 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
     passed one. Below the depth limit they are left out too, unless
     lenient_depth is set (as check_tool_result does, since a result carries
     outside data): the limit then rises to lenient_depth levels from the top
-    and content deeper than that still raises _NestingTooDeep. Pass
+    and content deeper than that still raises _NestingTooDeep, and values past
+    the budget raise _Unscannable as they do for data models. Pass
     lenient_objects=False (as check_tool_call does) to walk plain objects as
     strictly as data models: a payload hidden below the depth limit, in an
     unreadable object or past the value budget then raises like it does for
@@ -270,7 +271,7 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
             raise _Unscannable("type:unscannable", "An object could not be read to check it") from None
         if children is None:
             return []
-        if lenient and budget[0] - len(children) < 0:
+        if lenient and lenient_depth is None and budget[0] - len(children) < 0:
             return []
         budget[0] -= len(children)
         if budget[0] < 0:
