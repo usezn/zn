@@ -72,9 +72,17 @@ zn hooks install claude-code     # or: codex, cursor, opencode
 From now on, every file read, command output and pasted prompt goes through the
 scrubber before it reaches the model. Known values, more than 60 secret formats
 (cloud keys, tokens, private keys, connection strings) and checksummed PII are
-replaced with tokens. Reads of `.env` files with real values, credential files
-(`~/.aws/credentials`, `~/.ssh/id_*`, `~/.npmrc`…) and zn's own `~/.zn` are
-blocked.
+replaced with tokens. Reads of credential files (`~/.aws/credentials`,
+`~/.ssh/id_*`, `~/.npmrc`…) and zn's own `~/.zn` are blocked.
+
+A read of a `.env` file is blocked when a variable with a sensitive name holds a
+real value. The name decides, not the format of the value: a name that contains
+`KEY`, `SECRET`, `TOKEN`, `PASS`, `PWD`, `CREDENTIAL`, `AUTH`, `DSN` or `CONN`, or
+that ends in `_URL` or `_URI`, with a value of 8 or more characters that is not a
+marker (a URL with no password in it does not count). `STRIPE_KEY=sk_live_...` is
+blocked, but `K=sk_live_...` is not, because `K` says nothing; the scrubber still
+hides a value in a known secret format in what the agent reads. Use names such as
+`STRIPE_KEY` in `.env` files.
 
 ### Name, address and username
 

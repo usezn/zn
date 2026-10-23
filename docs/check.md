@@ -287,7 +287,7 @@ Something unexpected stopped the check for that agent, and the line gives the er
 
 ## If your agent needs a value from `.env`
 
-zn blocks the file because it holds secret values. To let your agent use them without seeing them, move the values into zn's vault:
+zn blocks the file because a variable with a sensitive name (such as `API_KEY`, `TOKEN`, `PASSWORD` or `DATABASE_URL`) holds a real value; the name decides, not the format of the value. To let your agent use them without seeing them, move the values into zn's vault:
 
 ```bash
 zn env shadow .env
