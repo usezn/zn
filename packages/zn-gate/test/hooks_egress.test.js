@@ -324,7 +324,7 @@ test('hook latency: the egress parse of a typical command stays under a millisec
 });
 
 test('the policy version moved with the egress rules', () => {
-  assert.equal(policy.POLICY_RULES_VERSION, '2026-10-24.8');
+  assert.equal(policy.POLICY_RULES_VERSION, '2026-10-24.9');
 });
 
 /* ----------------------- MCP personal data and egress -------------------- */
