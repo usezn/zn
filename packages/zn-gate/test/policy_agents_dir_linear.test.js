@@ -17,6 +17,11 @@ function ms(fn) {
   return Number(process.hrtime.bigint() - t0) / 1e6;
 }
 
+// Best of three, so a busy shared runner does not decide the result.
+function best(fn) {
+  return Math.min(ms(fn), ms(fn), ms(fn));
+}
+
 // Under the 100 KiB scan cap, with words just below the 4096-character limit of the per-word check.
 const SHAPES = {
   repeated: () => ('.agents/' + 'a/').repeat(400),
@@ -25,12 +30,16 @@ const SHAPES = {
 };
 
 test('many long words with many .agents starts stay fast', () => {
+  // Compared with a command of the same size without .agents: the old pattern took 10 to 27 times as long, the
+  // linear check takes about the same. A ratio, not a fixed number of milliseconds, so a slow runner does not fail it.
+  const plain = 'cp x ' + Array(24).fill('a/'.repeat(2000)).join(' ');
+  const base = Math.max(best(() => policy.bashDenial(plain, O)), 1);
   for (const [name, mk] of Object.entries(SHAPES)) {
     const cmd = 'cp x ' + Array(24).fill(mk()).join(' ');
     assert.ok(cmd.length < 100 * 1024, name);
     let r;
-    const t = ms(() => { r = policy.bashDenial(cmd, O); });
-    assert.ok(t < 300, name + ' took ' + t + ' ms');
+    const t = best(() => { r = policy.bashDenial(cmd, O); });
+    assert.ok(t < base * 5 + 50, name + ' took ' + t + ' ms, a plain command of the same size ' + base + ' ms');
     assert.equal(r, null, name);
   }
 });
