@@ -682,6 +682,8 @@ function nodeWarnings(opts, env) {
     const zn = opts.nodeVersion || process.versions.node;
     const a = nodeAdvice(zn);
     if (a) out.push(a.message);
+    const dirAdvice = znDirAdvice(opts, env);
+    if (dirAdvice) out.push(dirAdvice);
     let hook = opts.hookNode;
     if (typeof hook === 'function') hook = hook(env);
     else if (hook === undefined) hook = opts.nodeVersion ? null : resolveHookNode(env);
@@ -691,6 +693,22 @@ function nodeWarnings(opts, env) {
     }
   } catch (err) { /* a warning never fails the check */ }
   return out;
+}
+
+/* The hooks keep their compiled JavaScript in ~/.zn/cache only while ~/.zn is mode 0700 (lib/compile-cache.js);
+   otherwise they compile it again on every call. Advice only, on Linux and macOS (Windows has no modes to read). */
+function znDirAdvice(opts, env) {
+  if ((opts.platform || process.platform) === 'win32') return null;
+  try {
+    const dir = env.ZN_HOME ? path.resolve(env.ZN_HOME) : path.join(opts.home || os.homedir(), '.zn');
+    const st = fs.lstatSync(dir);
+    if (!st.isDirectory() || st.isSymbolicLink()) return null;
+    const mode = st.mode & 0o777;
+    if (mode === 0o700) return null;
+    return 'Your ~/.zn folder has mode ' + mode.toString(8).padStart(4, '0') + ', not 0700. zn then skips the Node.js compile cache, so each hook starts a few ms slower. To fix it, run: chmod 700 ~/.zn';
+  } catch (_) {
+    return null;
+  }
 }
 
 /**

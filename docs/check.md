@@ -38,6 +38,7 @@ Your agent cannot read secret files such as .env through these tools. Nothing wa
 - **-**: zn is not set up for that agent (neither for your user nor in managed configuration), or only for one project. The line gives the command that sets it up for your user. If you only ran zn-gate with `npx`, that command starts with `npm install -g zn-gate`, because `zn hooks install` needs zn-gate installed for your user. An agent that is not on this machine is listed as *not found on this machine*.
 - When an agent is found but not set up, the summary points to `npx -y zn-gate init`, which shows each step and asks before it runs one.
 - **X ... NOT protected**: zn is set up but would not protect the agent. The line says why and what to run to fix it. Every reason is explained in [What each NOT protected line means](#what-each-not-protected-line-means). When a hook cannot start because the Node.js it was installed with is gone (for example after `nvm uninstall`), the fix is a fresh `npm install -g zn-gate` and then `zn hooks install <agent>`, since the old Node.js took its `zn` with it.
+- **Warning: Your ~/.zn folder has mode 0755, not 0700.** This line does not mean an agent is unprotected. zn skips the Node.js compile cache while `~/.zn` is open to other users, so each hook starts a few milliseconds slower. The fix is `chmod 700 ~/.zn`. Windows is not checked.
 
 `zn-gate check` exits with 0 only when every agent that is set up for your user is protected.
 
