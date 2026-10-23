@@ -364,6 +364,55 @@ test('a recursive shell search asks in every segment of the line, after a cd, be
   assert.equal((await shell('cd .. ; ls')).decision, 'allow');
 });
 
+test('a long chain of cd stays linear: it finishes fast and asks past the cap, never allows', async (t) => {
+  const dir = tempDir(t, 'zn-agy-cdchain-');
+  fs.mkdirSync(path.join(dir, 'd0'));
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'hello');
+  const ws = { workspacePaths: [dir] };
+  const chain = (n, tail) => Array.from({ length: n }, (_, i) => 'cd d' + i).join(' && ') + ' && ' + tail;
+  const shell = async (line) => (await run(pre('run_command', { CommandLine: line, Cwd: dir }, ws))).output;
+  // 40 cd segments: past the cap, so zn asks, and it does so quickly
+  const t0 = Date.now();
+  const many = await shell(chain(40, 'grep -r AWS .'));
+  const ms = Date.now() - t0;
+  assert.equal(many.decision, 'force_ask');
+  assert.match(many.reason, /changes folders too many times/);
+  assert.ok(ms < 1000, 'took ' + ms + ' ms');
+  // a chain with a search path that is not a recursive search is not blocked by the cap
+  assert.equal((await shell(chain(40, 'ls'))).decision, 'allow');
+  // exactly at the cap (32 cd = 64 candidate folders) the search is still followed: clean folder allows
+  assert.equal((await shell(chain(32, 'grep -r AWS .'))).decision, 'allow');
+  // one more cd goes over the cap and asks
+  const over = await shell(chain(33, 'grep -r AWS .'));
+  assert.equal(over.decision, 'force_ask');
+  assert.match(over.reason, /too many times/);
+  // at the cap, a .env in a candidate folder still asks for that reason
+  fs.writeFileSync(path.join(dir, 'd0', '.env'), 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n');
+  const atCap = await shell(chain(32, 'grep -r AWS .'));
+  assert.equal(atCap.decision, 'force_ask');
+  assert.match(atCap.reason, /holds \.env/);
+});
+
+test('a recursive search reads one level of bash -c and asks on a path held in a variable', async (t) => {
+  const dir = tempDir(t, 'zn-agy-shellc-');
+  fs.mkdirSync(path.join(dir, 'config'));
+  fs.writeFileSync(path.join(dir, 'config', '.env'), 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n');
+  const ws = { workspacePaths: [dir] };
+  const shell = async (line) => (await run(pre('run_command', { CommandLine: line, Cwd: dir }, ws))).output;
+  for (const line of [
+    'bash -c "grep -r AWS config"',
+    "sh -c 'cd config && grep -r AWS .'",
+    'sudo bash -lc "grep -rn AWS config"',
+    'D=config; grep -r AWS $D',
+    'grep -r AWS "$(echo config)"',
+  ]) assert.equal((await shell(line)).decision, 'force_ask', line);
+  for (const line of ['bash -c "ls config"', "sh -c 'echo hi'", 'bash -c "grep AWS a.txt"', 'D=config; ls $D']) {
+    assert.equal((await shell(line)).decision, 'allow', line);
+  }
+  // a cd inside bash -c does not move the outer shell
+  assert.equal((await shell('bash -c "cd config" && grep -r AWS .')).decision, 'allow');
+});
+
 test('install warns that a project hook needs zn on PATH, and that its backup must not be committed', (t) => {
   const dir = tempDir(t, 'zn-agy-warn-');
   const first = agy.install({ scope: 'project', projectDir: dir });
