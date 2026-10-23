@@ -362,7 +362,7 @@ test('without a keychain or an unlocked vault nothing is stored, ZN_API_KEY is e
     // Errors go to stderr, in plain words with one next step, and no setting names.
     assert.equal(h.out.join('').includes('keeps the key only'), false);
     assert.match(h.err.join(''), /keeps the key only in your system keychain or the zn vault, never in a plain file/);
-    assert.match(h.err.join(''), /run `(?:zn|npx -y zn-gate@[0-9.]+) unlock` \(it asks you for a passphrase\), then run `zn-gate connect` again/);
+    assert.match(h.err.join(''), /run `(?:zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock` \(it asks you for a passphrase\), then run `zn-gate connect` again/);
     assert.doesNotMatch(h.err.join(''), /ZN_API_KEY|ZN_CLOUD/);
     assert.equal(h.t.calls.hidden.length, 0, 'asked for a key it cannot keep');
     assert.equal(h.h.calls.length, 0);
@@ -484,7 +484,7 @@ test('vault locked at disconnect: the marker stays so a second try works', async
     const locked = { native: null, vault: fakeVault({ unlocked: false }) };
     const d = harness({ deps: locked, tty: fakeTty({ confirms: [] }) });
     assert.equal(await connectCli.disconnect([], d.io), 1);
-    assert.match(d.err.join(''), /Run `(zn|npx -y zn-gate@[\d.]+) unlock` and try again/);
+    assert.match(d.err.join(''), /Run `(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock` and try again/);
     assert.ok(cloudKey.readMarker());
     const again = harness({ deps: { native: null, vault }, tty: fakeTty({ confirms: [false] }) });
     assert.equal(await connectCli.disconnect([], again.io), 0);
