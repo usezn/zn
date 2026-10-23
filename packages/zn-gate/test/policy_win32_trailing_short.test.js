@@ -180,3 +180,24 @@ test('a short name in a parent folder behaves like the long name for a .env (win
     assert.equal(policy.classifyPath(path.join(home, 'AppData', 'Temp', 'x', 'src.js'), o), null);
   });
 });
+
+// A glob as the last name under a short folder reads a plain .env too (cmd and PowerShell `*` match dot files).
+test('a glob under a short-named folder keeps matching a plain .env (win32)', (t) => {
+  const base = tempDir(t, 'zn-short-glob-');
+  const home = path.join(base, 'ZNTST~1');
+  const dir = path.join(home, 'proj');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'notes.txt'), 'hello\n');
+  const env = path.join(dir, '.env');
+  const o = { cwd: dir, home, env: {} };
+  asWindows(() => {
+    fs.writeFileSync(env, 'AWS_ACCESS_KEY_ID=plain-text-example\nDEBUG=true\n');
+    for (const g of ['*', '.e*', '.env*', '?env']) {
+      assert.ok(policy.bashDenial('type ' + dir + path.sep + g, o), 'type ' + g);
+      assert.ok(policy.bashDenial('cat ' + dir + path.sep + g, o), 'cat ' + g);
+    }
+    assert.ok(policy.bashDenial('type ' + dir + path.sep + '*.txt', o) === null, '*.txt cannot match .env');
+    fs.writeFileSync(env, 'AWS_ACCESS_KEY_ID=__ZN_AWS_ACCESS_KEY_ID__\nDEBUG=true\n');
+    assert.equal(policy.bashDenial('type ' + dir + path.sep + '*.txt', o), null, 'shadowed .env, *.txt');
+  });
+});

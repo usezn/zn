@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-24.16';
+const POLICY_RULES_VERSION = '2026-10-24.17';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -330,7 +330,8 @@ function classifyPath(p, opts = {}) {
   // A short name hides the long one: it counts as protected when it could stand for a protected file or folder.
   const short = shortNameGlob(expanded.text);
   // When the last name is written out, a .env there is judged by its own content (readDenial), not by the pattern.
-  if (short) return globClass(short.glob, short.lastShort ? opts : { ...opts, skipDotenv: true });
+  // A last name that is itself a glob (`*`, `.e*`) names whatever it matches, a plain .env included: no skipping then.
+  if (short) return globClass(short.glob, short.lastShort || GLOB_RE.test(expanded.text) ? opts : { ...opts, skipDotenv: true });
   return null;
 }
 
