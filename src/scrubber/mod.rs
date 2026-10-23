@@ -43,19 +43,23 @@ fn api_re() -> &'static Regex {
     API_KEY_REGEX.get_or_init(|| {
         // Matches: api_key=xxx, secret: xxx, password=xxx, token: xxx, and the same as a JSON
         // member ("api_key": "xxx"), also inside a JSON string (\"api_key\":\"xxx\").
-        // Group 1 is the name, group 2 the optional quote that closes it, group 3 the optional
-        // quote that opens the value (both may be backslash-escaped), group 4 the value.
+        // Group 1 is the name, group 2 the optional quote that closes it, group 3 the quote
+        // that opens a quoted value (both may be backslash-escaped). A quoted value (group 4) runs
+        // to its closing quote, whatever characters it has (`/`, `+`, `=`, `@`...), like the
+        // Node scrubber; an unquoted value (group 5) is a run of token characters.
         // Requires at least 8 characters for the value (reduced from 16 for better detection).
         // A value split by shell quotes ('ab''cd', ab""cd) is one word: redact all of it.
-        Regex::new(r#"(?i)(api[_-]?key|secret[_-]?key|password|token|auth[_-]?token|access[_-]?token|bearer)(\\{0,2}['"])?[ \t]*[:=][ \t]*(\\{0,2}['"])?([a-zA-Z0-9_\-.]{8,})(?:\\{0,2}['"])?(?:['"]+[a-zA-Z0-9_\-.]*)*"#).unwrap()
+        Regex::new(r#"(?i)(api[_-]?key|secret[_-]?key|password|token|auth[_-]?token|access[_-]?token|bearer)(\\{0,2}['"])?[ \t]*[:=][ \t]*(?:(\\{0,2}['"])([^"'\\\s]{8,})(?:\\{0,2}['"])?|([a-zA-Z0-9_\-./+=]{8,}))(?:['"]+[a-zA-Z0-9_\-.]*)*"#).unwrap()
     })
 }
 
 /// `Authorization: Bearer <token>` (also Basic and Token, quoted, escaped or in a JSON member).
-/// Group 1 is the header up to the token, group 2 the token. The Node scrubber has the same rule.
+/// Group 1 is the header up to the token, group 2 the token (8 characters or more, no upper
+/// bound). It is not the same rule as the Node scrubber's: Rust also takes Basic, Token and
+/// Proxy-Authorization, and a token of 8 to 19 characters if it has a digit.
 fn auth_re() -> &'static Regex {
     AUTH_HEADER_REGEX.get_or_init(|| {
-        Regex::new(r#"(?i)((?:proxy-)?authorization(?:\\{0,2}['"])?[ \t]*[:=][ \t]*(?:\\{0,2}['"])?(?:bearer|basic|token)[ \t]+)([A-Za-z0-9._~+/=-]{8,512})"#).unwrap()
+        Regex::new(r#"(?i)((?:proxy-)?authorization(?:\\{0,2}['"])?[ \t]*[:=][ \t]*(?:\\{0,2}['"])?(?:bearer|basic|token)[ \t]+)([A-Za-z0-9._~+/=-]{8,})"#).unwrap()
     })
 }
 
@@ -656,7 +660,7 @@ mod tests {
 
     #[test]
     fn test_adjacent_phone_numbers_are_redacted_in_one_pass() {
-        // Same case as the idempotence test of the scrubber fuzz target (B-1013).
+        // Same case as the idempotence test of the scrubber fuzz target.
         let once = Scrubber::scrub("+14155552671+14155552671");
         assert_eq!(once, "[PHONE_REDACTED][PHONE_REDACTED]");
         assert_eq!(Scrubber::scrub(&once), once);
@@ -671,6 +675,57 @@ mod tests {
             assert_eq!(Scrubber::scrub(&once), once);
         }
         assert_eq!(Scrubber::scrub("a+14155552671"), "a+14155552671");
+    }
+
+    #[test]
+    fn test_quoted_value_is_redacted_whole_and_json_stays_valid() {
+        // Fake values with characters outside a plain token class: the whole value goes and the
+        // output still parses as JSON.
+        for value in [
+            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            "fakeSecret+Value+1234+abcdef",
+            "fakeSecretValue1234abcdefgh==",
+            "fake.Secret@example.invalid!Value1234",
+        ] {
+            for key in ["api_key", "password", "token", "secret_key"] {
+                let input = format!(r#"{{"{key}":"{value}","n":"v"}}"#);
+                let out = Scrubber::scrub(&input);
+                assert!(!out.contains(&value[4..]), "{input} -> {out}");
+                assert_eq!(
+                    out,
+                    format!(r#"{{"{key}": "[SECRET_REDACTED]","n":"v"}}"#),
+                    "{input}"
+                );
+                serde_json::from_str::<serde_json::Value>(&out).expect("valid JSON");
+                assert_eq!(Scrubber::scrub(&out), out);
+            }
+            // Single quotes and an escaped JSON string.
+            let out = Scrubber::scrub(&format!("{{'password': '{value}'}}"));
+            assert_eq!(out, "{'password': '[SECRET_REDACTED]'}");
+            let out = Scrubber::scrub(&format!(r#"{{"cmd":"x \"api_key\":\"{value}\" y"}}"#));
+            assert!(!out.contains(&value[4..]), "{out}");
+            serde_json::from_str::<serde_json::Value>(&out).expect("valid JSON");
+        }
+        // A JSON-RPC line with such a password stays a valid request after scrubbing.
+        let line = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"arguments":{"password":"a/b+c=d@fakeValue1234"}}}"#;
+        let out = Scrubber::scrub(line);
+        assert!(!out.contains("fakeValue1234"), "{out}");
+        let v: serde_json::Value = serde_json::from_str(&out).expect("valid JSON");
+        assert_eq!(v["method"], "tools/call");
+    }
+
+    #[test]
+    fn test_long_authorization_token_is_redacted_whole() {
+        let token: String = (0..600)
+            .map(|i| {
+                char::from(
+                    b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"[i % 62],
+                )
+            })
+            .collect();
+        let out = Scrubber::scrub(&format!("Authorization: Bearer {token}"));
+        assert_eq!(out, "Authorization: Bearer [SECRET_REDACTED]");
+        assert_eq!(Scrubber::scrub(&out), out);
     }
 
     #[test]
