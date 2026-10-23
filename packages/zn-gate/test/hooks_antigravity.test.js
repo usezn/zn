@@ -438,15 +438,16 @@ test('a very long line is not allowed unread, and an unknown cd folder or a ~ pa
   assert.equal((await shell('cd $D && ls')).decision, 'allow');
   assert.equal((await shell('cd $D; grep AWS a.txt')).decision, 'allow'); // not recursive
   // ~ means the home folder the hook sees
-  const saved = process.env.HOME;
+  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
   process.env.HOME = home;
+  process.env.USERPROFILE = home;
   try {
     assert.equal((await shell('grep -r AWS ~/proj/config')).decision, 'force_ask');
     assert.equal((await shell('cd ~/proj/config && grep -rn AWS .')).decision, 'force_ask');
     assert.equal((await shell('cd ~/proj && grep -rn AWS config')).decision, 'force_ask');
     assert.equal((await shell('grep -r AWS ~/nowhere')).decision, 'allow');
   } finally {
-    if (saved === undefined) delete process.env.HOME; else process.env.HOME = saved;
+    for (const k of Object.keys(saved)) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
   }
 });
 
