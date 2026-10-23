@@ -958,7 +958,14 @@ async function decidePost(ev, d, agentId, opts = {}) {
       }
     }
     if (scanCtx === DEADLINE) return withhold(s, true);
-    const found = await raceDeadline(scanOf(engine, s, scanCtx), deadlineAt);
+    // The vault did not answer: this string was not checked against its values, so it is not passed (like a deadline).
+    let found;
+    try {
+      found = await raceDeadline(scanOf(engine, s, scanCtx), deadlineAt);
+    } catch (err) {
+      if (err && err.vaultFailed) return withhold(s, true);
+      throw err;
+    }
     if (found === DEADLINE) { abandoned = true; return withhold(s, true); }
     const spans = found;
     for (const span of spans) {

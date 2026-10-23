@@ -191,13 +191,13 @@ test('a vault started by an older zn-gate (no maskInfo) still gets its values ma
   assert.strictEqual(readValues, false);
 });
 
-test('a vault that stops answering in the middle of a scan is reported as locked, never as clean', async () => {
+test('a vault that stops answering a scan makes scanAsync and tokenize fail, never return clean text', async () => {
   const value = 'ghp_' + pick(36);
   const vault = memoryVault({ named: { GITHUB_TOKEN: value } });
   vault.maskSpans = async () => { throw Object.assign(new Error('closed'), { code: 'ZN_LOCKED' }); };
-  const r = await E.tokenize('a=' + value + ' tail', ctx(vault));
-  assert.strictEqual(r.locked, true);
-  assert.ok(r.warning);
+  const bad = (e) => e.vaultFailed === true && e.code === 'ZN_LOCKED';
+  await assert.rejects(E.scanAsync('a=' + value + ' tail', ctx(vault)), bad);
+  await assert.rejects(E.tokenize('a=' + value + ' tail', ctx(vault)), bad);
 });
 
 test('vault locked or missing: irreversible __ZN_REDACTED_<TYPE>__ and a warning, never the value', async () => {

@@ -369,6 +369,70 @@ test('POSIX: the daemon refuses to serve from files that are not private to its 
   }
 });
 
+test('a backup of a .env file is read only through readBackup, whatever destination or purpose a request names', async () => {
+  const token = '__ZN_' + BACKUP + '__';
+  await vault.setSecret('ENV_BACKUP_ABCDEF', V.backup, { mode: 'backup' });
+  const detected = await vault.mapToken(PROJECT, 'ENVTEXT', V.backup);
+  const contexts = [
+    { destination: 'write_ignored' }, { destination: 'write_ignored', withPolicy: true, agent: 'claude-code', tool: 'Write' },
+    { destination: 'bash_local' }, { destination: 'assistant' }, { destination: 'mcp_input' }, { destination: 'bash_network' }, { destination: 'write_tracked' },
+    { purpose: 'run', argv: [NODE_NAME, 'x.js'], exe: { real: REAL_NODE, fp: exe.fingerprint(REAL_NODE) } },
+    { purpose: 'http', host: 'api.example.com', placements: ['header'] }, { purpose: 'render' }, { purpose: 'zn-cloud-key' },
+  ];
+  for (const ctx of contexts) {
+    // the backup shown by listSecrets under its own name, the same text under a name of the user's choosing, and the detected value
+    for (const t of [token, '__ZN_ENV_BACKUP_ABCDEF__', detected]) {
+      await assert.rejects(vault.resolve(PROJECT, t, ctx), denied, t + ' ' + JSON.stringify(ctx));
+    }
+  }
+  const records = auditRecords();
+  assert.ok(records.some((r) => r.secret === BACKUP && r.decision === 'deny' && r.reason === 'policy:backup'));
+  assert.ok(records.some((r) => r.secret === 'ENV_BACKUP_ABCDEF' && r.decision === 'deny' && r.reason === 'policy:backup'));
+  assert.ok(!JSON.stringify(records).includes(V.backup));
+  // the one way out still works, with the user's confirmation
+  answer = true;
+  assert.strictEqual(await vault.readBackup(PROJECT, BACKUP, path.join(PROJECT, '.env')), V.backup);
+  await vault.removeSecret('ENV_BACKUP_ABCDEF');
+});
+
+test('a restore into a git-ignored file writes env and file mode secrets, never proxy ones', async () => {
+  const ignored = { destination: 'write_ignored', agent: 'claude-code', tool: 'Write' };
+  assert.strictEqual(await vault.resolve(PROJECT, '__ZN_DB_PASS__', ignored), V.env);
+  assert.strictEqual(await vault.resolve(PROJECT, '__ZN_CERT_PEM__', ignored), V.file);
+  for (const opts of [ignored, { ...ignored, withPolicy: true }]) {
+    await assert.rejects(vault.resolve(PROJECT, '__ZN_API_TOKEN__', opts), (e) => denied(e) && /proxy mode/.test(e.message));
+  }
+  // the scrubber's token for the value of a proxy secret is no way round it, for a file or a local command
+  const detected = await vault.mapToken(PROJECT, 'PASSWORD', V.proxy);
+  for (const destination of ['write_ignored', 'bash_local']) await assert.rejects(vault.resolve(PROJECT, detected, { destination }), (e) => denied(e) && /proxy mode/.test(e.message));
+  assert.ok(auditRecords().some((r) => r.secret === 'API_TOKEN' && r.decision === 'deny' && r.reason === 'policy:proxy_mode'));
+  // the same secret moved to env mode by its owner (confirmed on the vault's channel) can be restored
+  answer = true;
+  await vault.updateSecretMeta('API_TOKEN', { mode: 'env' });
+  assert.strictEqual(await vault.resolve(PROJECT, '__ZN_API_TOKEN__', ignored), V.proxy);
+  await vault.updateSecretMeta('API_TOKEN', { mode: 'proxy' });
+  await assert.rejects(vault.resolve(PROJECT, '__ZN_API_TOKEN__', ignored), denied);
+});
+
+test('a vault that stops answering a scan holds the output back instead of passing it as clean', async () => {
+  const runner = require('../lib/hooks/runner');
+  const adapter = require('../lib/agents/claude-code');
+  const flaky = new Proxy(vault, {
+    get(target, prop) {
+      if (prop === 'maskSpans') return async () => { throw Object.assign(new Error('closed'), { code: 'ZN_LOCKED' }); };
+      const v = target[prop];
+      return typeof v === 'function' ? v.bind(target) : v;
+    },
+  });
+  await assert.rejects(engine.scanAsync('x ' + V.env + ' y', { project: PROJECT, agent: 'test', tool: 'Read', destination: 'assistant', vault: flaky, env: {}, exactFiles: false }), (e) => e.vaultFailed === true && e.code === 'ZN_LOCKED');
+  for (const failMode of ['closed', 'open']) {
+    const res = await runner.handle(adapter, { hook_event_name: 'PostToolUse', cwd: PROJECT, tool_name: 'Bash', tool_input: { command: 'make' }, tool_response: { stdout: 'ok\nkey=' + V.env + '\nmore ' + V.file + '\n', stderr: '', interrupted: false, isImage: false } }, { vault: flaky, failMode });
+    const text = JSON.stringify(res.output);
+    assert.ok(!text.includes(V.env) && !text.includes(V.file), failMode + ': a value reached the model');
+    assert.ok(res.output && text.length > 2, failMode + ': the output was replaced, not passed through');
+  }
+});
+
 test('sameSecretValue is recorded and rate limited', async () => {
   const before = auditRecords().filter((r) => r.reason === 'compare').length;
   assert.strictEqual(await vault.sameSecretValue('DB_PASS', V.env), true);

@@ -186,8 +186,14 @@ prove it can read `~/.zn/run/session.key`.
   - A restore by the hooks names a destination. The daemon applies the
     restoration table itself: a stored secret is never put into a local shell
     command, a network command, a versioned file or MCP input, and the daemon
-    never hands a value out for the assistant's own text. The organization
-    policy applies to every named secret.
+    never hands a value out for the assistant's own text. A restore into a
+    git-ignored file writes only `env` and `file` mode secrets, never a
+    `proxy` one (nor a scrubber token that holds the value of a proxy secret,
+    for a file or a local command). The organization policy applies to every
+    named secret.
+  - A backup of a `.env` file (the copy `zn env shadow` makes) is never given
+    out by any destination or purpose, whatever its name: `zn env unshadow` is
+    the only way to read it, after you confirm.
   - `zn run`, `secrets_http_request` and `secrets_render_file` each name a
     purpose. The daemon checks the secret's mode (`env` for `zn run`, `file`
     for a rendered file), the command in its allow-list, the executable you
@@ -200,28 +206,38 @@ prove it can read `~/.zn/run/session.key`.
   a value by getting yes or no (recorded, and limited to 120 a minute).
   `zn env unshadow` waits for your confirmation on the vault's own channel
   before the plain text leaves it.
+- **When the vault does not answer a scan, the text is held back.** If the
+  daemon answers `maskInfo` and then stops answering `maskSpans` (a timeout, a
+  lock or an expiry between the two), the scrubber does not treat the text as
+  clean: the post-hook withholds the output, the other hooks follow their fail
+  mode and the streaming scrubber writes a notice instead of the line.
 
 **What the daemon does not check**
 
 - **It does not authenticate the caller.** The destination, the purpose, the
   host, the command and the agent or tool name are all declared by whoever
   sends the request. Any process running as you that can read
-  `~/.zn/run/session.key` can send any of them. A request that names a
-  destination you allow for restoring (a git-ignored file) gets the value of a
-  stored secret by name, whatever its mode; a request that names a host and a
-  place the secret allows gets the value, and the daemon cannot see where it
-  goes next. The changes in this release add checks of the secret's settings
-  and a record of every request. They do not prove who is asking. This is the
+  `~/.zn/run/session.key` can send any of them. A request that names a host
+  and a place the secret allows gets the value, and the daemon cannot see where
+  it goes next; a request that names a restore into a git-ignored file gets
+  the value of an `env` or `file` mode secret by name, and what happens to that
+  file afterwards is outside the daemon's reach. The changes in this release add
+  checks of the secret's settings and a record of every request. They do not
+  prove who is asking. This is the same boundary as `ssh-agent`.
   same boundary as `ssh-agent`.
 - **An agent or tool name grants nothing by itself.** It is written to the
   audit log as the caller said it. The one thing a registered agent id changes
   is which hosts an organization policy may offer for your approval, and those
   apply only after you approve them.
-- **A caller can still test guesses.** The masking call and the comparison call
-  answer yes or no for text you send, so a process holding the session key can
-  check whether a guess is one of the vault's values. It cannot read a value
-  out, and the comparison is limited and recorded. Use values with enough
-  randomness that guessing is not an option.
+- **A caller can test guesses without limit.** The masking call answers, for
+  any text you send, where the vault's values occur in it. It takes megabytes
+  per call and has no rate limit, so a process holding the session key can test
+  hundreds of thousands of candidates a second and learn which of them are one
+  of the vault's values (and the name of the secret). It cannot read a value
+  out, but a value that can be guessed (a short or common password) can be
+  found this way. The comparison call used by `zn secret import` is limited to
+  120 a minute and recorded, which does not limit the masking call. Use values
+  with enough randomness that guessing is not an option.
 - **No check of the calling process.** Node cannot read the peer credentials
   of a Unix socket (`SO_PEERCRED`), and it has no other way to learn which
   process is on the other end. The daemon relies on the file permissions above.

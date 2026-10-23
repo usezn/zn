@@ -204,7 +204,7 @@ test('daemon: the zn cloud key is refused to hooks, the broker and zn run', asyn
 test('daemon: named secrets, reserved names, metadata updates, backups', async () => {
   const c = clientMod.createClient({});
   const value = 'ghp_' + fake(36);
-  await c.setSecret('GITHUB_TOKEN', value, { mode: 'proxy', allowHosts: ['api.github.com', 'not a host!'], injectAt: 'header', bogus: 1 });
+  await c.setSecret('GITHUB_TOKEN', value, { mode: 'env', allowHosts: ['api.github.com', 'not a host!'], injectAt: 'header', bogus: 1 });
   GH_VALUE = value;
   for (const bad of ['AWS_KEY_1', 'REDACTED_EMAIL', 'lowercase', 'X'.repeat(80)]) {
     await assert.rejects(c.setSecret(bad, 'x'.repeat(12)), (e) => e.code === 'ZN_POLICY_DENIED', bad);

@@ -86,6 +86,8 @@ const MASK_MAX_TEXTS = 4096;
 const MASK_MAX_CHARS = 16 * 1024 * 1024;
 const MASK_AUDIT_EVERY_MS = 60 * 1000;
 const SAME_VALUE_PER_MINUTE = 120;
+const BACKUP_REFUSED = 'this is a backup of a .env file: only zn env unshadow can read it, after you confirm. Next step: run zn env unshadow in your own terminal.';
+const PROXY_NOT_RESTORED = 'this secret is in proxy mode, so it is never written into a file or a command. Next step: use the secrets_http_request tool, or ask the user to change its mode in their own terminal (zn secret allow).';
 const BACKUP_NAME_RE = /^ENVBAK_X[0-9A-F]{8}D\d{12}$/;
 /* What this vault does beyond the protocol. resolve-policy: resolve() with
  * {withPolicy: true} applies the organization policy and answers
@@ -381,6 +383,8 @@ function makeOps(state, ctl) {
       await writeAudit({ secret: inner, mode: 'resolve', agent: o.agent, tool: o.tool, decision: 'deny', reason });
       throw znError(CODES.POLICY_DENIED, message);
     };
+    // A backup is the whole .env that zn env shadow set aside: only readBackup, which the user confirms, gives it out.
+    if (BACKUP_NAME_RE.test(inner)) return refuse('policy:backup', BACKUP_REFUSED);
     if (/_\d+$/.test(inner)) {
       return refuse('policy:' + purpose + ':detected', 'this request is for a stored secret, not for a value the scrubber found. Next step: store the value with zn secret adopt first.');
     }
@@ -390,6 +394,7 @@ function makeOps(state, ctl) {
       await writeAudit({ secret: inner, mode: 'resolve', agent: o.agent, tool: o.tool, decision: 'deny', reason: 'not_found' });
       return null;
     }
+    if (s.mode === 'backup') return refuse('policy:backup', BACKUP_REFUSED);
     // An agent id the client names decides nothing about a secret. The one thing it can change is which hosts the
     // organization policy offers to an agent zn can identify, and those only apply once the user approved them here.
     const agentId = typeof o.agent === 'string' && AGENT_IDS.includes(o.agent) ? o.agent : null;
@@ -467,6 +472,13 @@ function makeOps(state, ctl) {
       // why each one is checked here against what the vault itself holds.
       const purpose = typeof o.purpose === 'string' ? o.purpose : null;
       const dest = !purpose && typeof o.destination === 'string' && Object.prototype.hasOwnProperty.call(DESTINATION_POLICY, o.destination) ? o.destination : null;
+      const refuse = async (reason, message) => {
+        await writeAudit({ secret: inner, mode: 'resolve', agent: o.agent, tool: o.tool, decision: 'deny', reason });
+        throw znError(CODES.POLICY_DENIED, message);
+      };
+      // A backup is the whole .env that zn env shadow set aside: for every destination and purpose, only readBackup
+      // (which the user confirms on the vault's own channel) gives it out.
+      if (BACKUP_NAME_RE.test(inner)) return refuse('policy:backup', BACKUP_REFUSED);
       if (dest && DESTINATION_POLICY[dest][ordinal ? 'detected' : 'named'] !== 'restore') {
         await writeAudit({ secret: inner, mode: 'resolve', agent: o.agent, tool: o.tool, decision: 'deny', reason: 'policy:' + dest });
         throw znError(CODES.POLICY_DENIED, 'destination ' + dest + ' does not receive real values. Next step: send the request to a host this secret is allowed for, or use a placeholder instead.');
@@ -511,6 +523,8 @@ function makeOps(state, ctl) {
             const effs = await team.effectiveList(same, agentId, false);
             const blocked = effs.filter((e) => e && e.deny).map((e) => e.name);
             if (blocked.length) return orgDenied(blocked);
+            const odd = effs.find((e) => e && (e.mode === 'backup' || (e.mode === 'proxy' && (dest === 'write_ignored' || dest === 'bash_local'))));
+            if (odd) return odd.mode === 'backup' ? refuse('policy:backup', BACKUP_REFUSED) : refuse('policy:proxy_mode', PROXY_NOT_RESTORED);
             // A warn rule for that secret: restored with the notice, as for a named marker.
             const warned = effs.find((e) => e && e.warn === true);
             if (warned) org = { warn: true, warnReason: warned.warnReason, warnName: warned.name };
@@ -519,11 +533,14 @@ function makeOps(state, ctl) {
       } else {
         const secrets = await state.loadSecrets();
         const s = secrets.secrets[inner];
+        if (s && s.mode === 'backup') return refuse('policy:backup', BACKUP_REFUSED);
         // A marker the agent hooks put back (they always give a destination):
         // the organization policy applies, as in zn run and the secrets MCP tools.
         if (s && dest) {
           const [eff] = await team.effectiveList([asLocal(inner, s)], agentId, false);
           if (eff && eff.deny) return orgDenied([inner]);
+          // A proxy-mode secret is only ever used by the broker's HTTP tool: it is never written into a file by a restore.
+          if (eff && eff.mode === 'proxy' && dest === 'write_ignored') return refuse('policy:proxy_mode', PROXY_NOT_RESTORED);
           if (eff && eff.warn === true) org = { warn: true, warnReason: eff.warnReason };
         }
         if (s) { value = s.value; s.lastUsed = new Date().toISOString(); state.dirtySecrets = true; }
@@ -708,8 +725,9 @@ function makeOps(state, ctl) {
      * where the vault's values occur in a text and gets positions, types and
      * secret names back: never a value, an encoding of one or a hash. The
      * calls are recorded (at most one record a minute for each agent and
-     * tool). Anyone who can call them can still test guesses against the
-     * vault, one text at a time; they cannot read a value out. */
+     * tool). The calls are not rate limited and take megabytes of text, so
+     * anyone who can call them can test guesses against the vault (hundreds of
+     * thousands a second); they cannot read a value out. */
     async maskInfo(project, claim) {
       noteMask(claim);
       const m = await maskStateOf(project);
@@ -750,8 +768,8 @@ function makeOps(state, ctl) {
     },
 
     /* Is this the value stored under that name? Answers yes or no, never the value (zn secret import and
-     * zn env shadow). Each answer is recorded, and the daemon answers at most SAME_VALUE_PER_MINUTE of them a minute, so the
-     * call cannot be used to test guesses at any speed. */
+     * zn env shadow). Each answer is recorded and the daemon answers at most SAME_VALUE_PER_MINUTE a minute. That limit
+     * only covers this call: maskSpans answers the same question for any text, without a limit (see the threat model). */
     async sameSecretValue(name, value) {
       const n = str(name, 'name', 64);
       str(value, 'value');

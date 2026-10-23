@@ -281,7 +281,7 @@ const SPAN_REQUEST_TEXTS = 1024;
 
 /* Where the vault's values occur in each of `texts`, from the daemon: Map text -> Span[] (a text too short to hold a
  * value maps to none). A text over SPAN_CHUNK goes in overlapping pieces, so a value on a cut is still found. When the
- * vault does not answer, the texts map to no spans and `failed` is true: the caller treats the vault as locked. */
+ * vault does not answer, `failed` is true and scanChecked throws, so no text is passed as clean. */
 async function fetchVaultSpans(c, texts) {
   const r = c.vaultRemote;
   const map = new Map();
@@ -360,18 +360,20 @@ async function prepare(ctx) {
 }
 
 /* scan() for a prepared context, with the vault's matches: the daemon says where its values occur in the text (and in
- * the text without invisible characters, which scan() also reads). -> {spans, failed}; failed means the vault did not
- * answer, so the text was scanned without its values (the caller reports the vault as locked). */
+ * the text without invisible characters, which scan() also reads). -> {spans}. When the vault does not answer it throws
+ * (ZN_LOCKED, vaultFailed): a text scanned without the vault's values would look clean, so the caller must hold the
+ * text back (the post-hook withholds it, the other hooks follow their fail mode, the stream writes a notice). */
 async function scanChecked(text, c) {
-  if (!c.vaultRemote || text.length === 0) return { spans: scan(text, c), failed: false };
+  if (!c.vaultRemote || text.length === 0) return { spans: scan(text, c) };
   const view = invisibleView(text);
   const want = view ? [text, view.clean] : [text];
   const memo = c.vaultMemo;
   const missing = memo ? want.filter((t) => !memo.has(t)) : want;
   const got = missing.length ? await fetchVaultSpans(c, missing) : { map: new Map(), failed: false };
+  if (got.failed) throw Object.assign(new Error('the vault did not answer, so this text was not checked against its values'), { code: CODES.LOCKED, vaultFailed: true });
   const map = new Map();
   for (const t of want) map.set(t, memo && memo.has(t) ? memo.get(t) : got.map.get(t));
-  return { spans: scan(text, Object.assign({}, c, { vaultSpans: map })), failed: got.failed };
+  return { spans: scan(text, Object.assign({}, c, { vaultSpans: map })) };
 }
 
 /**
@@ -448,12 +450,8 @@ async function tokenizeWith(text, ctx, spansOfText) {
   // A caller that has already scanned this text with the same context can pass the spans, so the text is not scanned twice.
   let locked = false;
   let spans = spansOfText;
-  if (!Array.isArray(spans)) {
-    const got = await scanChecked(text, c);
-    spans = got.spans;
-    if (got.failed) locked = true;
-  }
-  if (spans.length === 0) return locked ? { text, replaced: [], locked: true, warning: LOCKED_WARNING } : { text, replaced: [] };
+  if (!Array.isArray(spans)) spans = (await scanChecked(text, c)).spans;
+  if (spans.length === 0) return { text, replaced: [] };
 
   const vault = c.vault;
   const project = String(c.project || '');
