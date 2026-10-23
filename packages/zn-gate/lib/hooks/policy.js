@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-24.23';
+const POLICY_RULES_VERSION = '2026-10-24.24';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -813,14 +813,17 @@ function isInstructionUnderShortFolder(abs, ctx) {
     const longs = SHORT_INSTRUCTION_FOLDERS.filter((f) => f.replace(/^\.+/, '').slice(0, 6).toUpperCase() === pre);
     return longs.length ? [seg].concat(longs) : [seg];
   });
-  if (choices.every((c) => c.length === 1)) return false;
-  let combos = [[]];
-  for (const c of choices) {
+  const branching = choices.filter((c) => c.length > 1).length;
+  if (branching === 0) return false;
+  // More short folders than we expand (2^6 = 64 paths at most): ask rather than drop some of them unread.
+  if (branching > 6) return true;
+  let combos = [''];
+  choices.forEach((c, i) => {
     const next = [];
-    for (const base of combos) for (const alt of c) next.push(base.concat(alt));
-    combos = next.slice(0, 64);
-  }
-  return combos.some((c) => isInstructionFile(c.join('/'), ctx));
+    for (const base of combos) for (const alt of c) next.push(i ? base + '/' + alt : alt);
+    combos = next;
+  });
+  return combos.some((c) => isInstructionFile(c, ctx));
 }
 
 /** Whether a typed path names an instruction file, as typed or where it really leads (links followed). */
