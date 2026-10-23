@@ -237,9 +237,9 @@ test('Windows: another principal that can write the file or a folder above it is
   assert.match(winacl.scriptEntriesRisk([E(evil, false)], ME).deny, /can write it/);
   assert.match(winacl.scriptEntriesRisk([E(base, false), E(evil, true, 'C:\\zn')], ME).deny, /C:\\zn/);
   const users = 'O:' + ME + 'G:DUD:PAI(A;;FA;;;' + ME + ')(A;;FRFXFW;;;BU)';
-  assert.match(winacl.scriptEntriesRisk([E(users, false)], ME).deny, /BU can write/);
+  assert.match(winacl.scriptEntriesRisk([E(users, false)], ME).deny, /the Users group can write/);
   const everyone = 'O:' + ME + 'G:DUD:PAI(A;;FA;;;WD)';
-  assert.match(winacl.scriptEntriesRisk([E(everyone, true)], ME).deny, /can write/);
+  assert.match(winacl.scriptEntriesRisk([E(everyone, true)], ME).deny, /Everyone can write/);
 });
 
 test('Windows: a folder where users may add subfolders (C:\\) or an inherit-only entry is not a finding', () => {

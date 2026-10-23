@@ -236,6 +236,9 @@ const RIGHT_PAIRS = {
 const FILE_WRITE_MASK = 0x2 | 0x4 | 0x10000 | 0x40000 | 0x80000 | 0x40000000 | 0x10000000;
 const DIR_WRITE_MASK = 0x40 | 0x10000 | 0x40000 | 0x80000 | 0x40000000 | 0x10000000;
 
+const GROUP_NAMES = { BU: 'the Users group', WD: 'Everyone', AU: 'Authenticated Users', IU: 'interactive users', NU: 'network users', LG: 'Guests', AN: 'anonymous users' };
+const who = (sid) => GROUP_NAMES[String(sid).toUpperCase()] || sid || 'an unknown account';
+
 function rightsMask(r) {
   const t = String(r || '').trim();
   if (/^0x[0-9a-f]+$/i.test(t)) return Number(t) >>> 0;
@@ -264,7 +267,7 @@ function scriptEntriesRisk(entries, userSid) {
       if (!/^(A|XA)$/.test(a.type)) continue;
       if ((a.flags.match(/../g) || []).includes('IO')) continue; // applies to children only
       if ((rightsMask(a.rights) & mask) === 0) continue;
-      if (!a.sid || !trusted(a.sid)) return { deny: e.path + ' (' + (a.sid || 'an unknown account') + ' can write it)', warn };
+      if (!a.sid || !trusted(a.sid)) return { deny: e.path + ' (' + who(a.sid) + ' can write it)', warn };
       if (!warn && fix(a.sid) === me) warn = e.path;
     }
   }
@@ -287,7 +290,7 @@ function scriptWriteRisk(target, opts) {
     '$p = $env:ZN_ACL_PATH; $k = "F"',
     'while ($p) {',
     "  [Console]::Out.WriteLine($k + '|' + $p + '|' + (Get-Acl -LiteralPath $p).Sddl)",
-    '  $n = Split-Path -LiteralPath $p -Parent',
+    '  $n = [System.IO.Path]::GetDirectoryName($p)',
     '  if (-not $n -or $n -eq $p) { break }',
     '  $p = $n; $k = "D"',
     '}',
