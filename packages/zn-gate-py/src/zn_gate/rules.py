@@ -1592,6 +1592,7 @@ def sanitize_tool_result(
 
     # Deep data structure sanitization
     detections: List[Dict[str, Any]] = []
+    active: set = set()
 
     def _sanitize(val: Any) -> Any:
         if isinstance(val, str):
@@ -1609,7 +1610,103 @@ def sanitize_tool_result(
             return frozenset(_sanitize(v) for v in val)
         elif isinstance(val, set):
             return {_sanitize(v) for v in val}
+        elif isinstance(val, (bytes, bytearray)):
+            return _sanitize_bytes(val)
+        return _sanitize_object(val)
+
+    def _sanitize_bytes(val: Any) -> Any:
+        # Secrets are ASCII: decode so every other byte survives the round trip.
+        text = bytes(val).decode("utf-8", "surrogateescape")
+        clean_str, det = redact_secrets(text)
+        if not det:
+            return val
+        detections.extend(det)
+        out = clean_str.encode("utf-8", "surrogateescape")
+        return bytearray(out) if isinstance(val, bytearray) else out
+
+    def _sanitize_object(val: Any) -> Any:
+        # Objects keep their type: a masked copy comes back and the caller's
+        # object is never changed. Handled through public field APIs only:
+        # pydantic models (model_fields / model_copy), dataclasses (fields) and
+        # plain objects (__dict__ and __slots__). An object with no fields whose
+        # str() text holds a secret comes back as that text, masked; one without
+        # a secret is left as it is.
+        if val is None or isinstance(val, (int, float, bool, type)):
+            return val
+        key = id(val)
+        if key in active:
+            return val
+        if len(active) >= 50:
+            return _sanitize_text_form(val)
+        active.add(key)
+        try:
+            return _sanitize_fields(val)
+        finally:
+            active.discard(key)
+
+    def _sanitize_text_form(val: Any) -> Any:
+        try:
+            text = str(val)
+        except Exception:
+            return val
+        clean_str, det = redact_secrets(text)
+        if det:
+            detections.extend(det)
+            return clean_str
         return val
+
+    def _set_fields(val: Any, changed: Dict[str, Any]) -> Any:
+        if hasattr(val, "model_dump") and hasattr(val, "model_copy"):
+            try:
+                return val.model_copy(update=changed)
+            except Exception:
+                pass
+        import copy
+        new = copy.copy(val)
+        for name, value in changed.items():
+            try:
+                object.__setattr__(new, name, value)
+            except Exception:
+                return None
+        return new
+
+    def _sanitize_fields(val: Any) -> Any:
+        import dataclasses
+        names: List[str] = []
+        values: List[Any] = []
+        if hasattr(val, "model_dump") and hasattr(val, "model_copy"):
+            fields = getattr(type(val), "model_fields", None)
+            if isinstance(fields, dict):
+                names = [n for n in fields if hasattr(val, n)]
+                values = [getattr(val, n) for n in names]
+                extra = getattr(val, "model_extra", None)
+                if isinstance(extra, dict):
+                    names += list(extra)
+                    values += list(extra.values())
+        if not names and dataclasses.is_dataclass(val):
+            names = [f.name for f in dataclasses.fields(val)]
+            values = [getattr(val, n, None) for n in names]
+        if not names:
+            from .guard import _object_fields
+            flat = _object_fields(val)
+            if flat:
+                names = [str(flat[i]) for i in range(0, len(flat), 2)]
+                values = [flat[i + 1] for i in range(0, len(flat), 2)]
+        if not names:
+            return _sanitize_text_form(val)
+        found_before = len(detections)
+        changed: Dict[str, Any] = {}
+        for n, v in zip(names, values, strict=True):
+            c = _sanitize(v)
+            if c is not v:
+                changed[n] = c
+        if len(detections) == found_before:
+            return val
+        new = _set_fields(val, changed)
+        if new is not None:
+            return new
+        # Cannot copy this type: hand back the masked fields as a plain dict.
+        return {n: changed.get(n, v) for n, v in zip(names, values, strict=True)}
 
     def _sanitize_dict(val: dict) -> dict:
         # Two keys with different secrets mask to the same text, and a masked key can
@@ -1617,7 +1714,7 @@ def sanitize_tool_result(
         keys = [(k, _sanitize(k) if isinstance(k, str) else k) for k in val]
         taken = {new for old, new in keys if new == old}
         out = {}
-        for (old, new), v in zip(keys, val.values()):
+        for (old, new), v in zip(keys, val.values(), strict=True):
             if new != old:
                 base, n = new, 2
                 while new in taken:
