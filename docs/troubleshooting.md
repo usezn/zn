@@ -210,18 +210,18 @@ Running `npx -y zn-gate init` on a Node.js older than 20.19 does the second opti
 
 ### TLS certificates and trust stores
 
-When zn-gate talks to usezn.com (only if you turned on the cloud check with `zn-gate connect`), it checks that the website's certificate was issued by a certificate authority your computer trusts. zn-gate does not carry a list of authorities of its own. It uses the list that comes with your tools:
+When zn-gate talks to usezn.com (only if you turned on the cloud check: `zn-gate connect` for the Node.js package, `ZN_API_KEY` with `ZN_CLOUD=1` for the Python package), it checks that the website's certificate was issued by a certificate authority your computer trusts. zn-gate does not carry a list of authorities of its own. It uses the list that comes with your tools:
 
 - **The Node.js package** uses the list built into your copy of Node.js.
-- **The Python package** uses the list of your operating system, through Python's standard library. It needs no extra packages.
+- **The Python package** uses the list of your operating system (on macOS, the list of your Python installation), through Python's standard library. It needs no extra packages.
 
-From time to time browsers and runtimes stop trusting a certificate authority. If that authority issued the certificate of a site you use, the connection fails with a message such as "unable to verify the first certificate" or "certificate verify failed" until your list is updated. Your local checks keep working while this is open. Nothing about this is specific to zn-gate, and the fix is to update the tools that hold the list:
+From time to time browsers and runtimes stop trusting a certificate authority. If that authority issued the certificate of a site you use, the connection fails with a message such as "unable to verify the first certificate" or "certificate verify failed" until your list is updated. Your local checks keep working in the meantime. Nothing about this is specific to zn-gate, and the fix is to update the tools that hold the list:
 
-1. **Update Node.js** to the latest release of the line you use (see `node --version`), from [nodejs.org](https://nodejs.org/) or with your version manager (for example `nvm install --lts`). Each Node.js release includes the current authority list, and a release you installed long ago does not get it. Open a new terminal afterwards.
-2. **Update your operating system's list.** On Debian or Ubuntu: `sudo apt-get update && sudo apt-get install --only-upgrade ca-certificates`. On macOS and Windows, install the pending system updates; the list is part of them.
+1. **Update Node.js** to the latest release of the line you use (see `node --version`), from [nodejs.org](https://nodejs.org/) or with your version manager (for example `nvm install 22`). Recent Node.js releases carry an up-to-date list, and a release you installed long ago does not. Open a new terminal afterwards.
+2. **Update your operating system's list.** On Debian or Ubuntu: `sudo apt-get update && sudo apt-get install --only-upgrade ca-certificates`. On macOS and Windows, install the pending system updates; the list is part of them. With Python from python.org on macOS, run Install Certificates.command again from the Python folder in Applications; with Homebrew, `brew upgrade ca-certificates`.
 3. Run your command again.
 
-zn-gate does not let you add your own certificate authorities for the cloud check. If `NODE_EXTRA_CA_CERTS` or `SSL_CERT_FILE` is set in your terminal, zn-gate will not send your key (see [8. "will not send the saved key"](#8-will-not-send-the-saved-key-tls-settings)), and it always refuses a connection whose certificate does not check out, even when `NODE_TLS_REJECT_UNAUTHORIZED=0` is set. Update the list as above instead of working around it.
+The Node.js package always refuses a connection whose certificate does not check out, even when `NODE_TLS_REJECT_UNAUTHORIZED=0` is set. If `NODE_EXTRA_CA_CERTS` or `SSL_CERT_FILE` is set in your terminal, it will not send the key saved by `zn-gate connect` (see [8. "will not send the saved key"](#8-will-not-send-the-saved-key-tls-settings)). A key you pass in `ZN_API_KEY` (or with `--key`) is sent anyway, and Node.js then trusts `NODE_EXTRA_CA_CERTS`. The Python package follows your system's TLS settings, `SSL_CERT_FILE` and `SSL_CERT_DIR` included. In every case, updating the list as above is the better fix.
 
 ### npm says EACCES when init installs zn-gate
 
