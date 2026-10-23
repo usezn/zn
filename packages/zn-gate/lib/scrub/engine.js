@@ -16,7 +16,7 @@
  *     exact        false to disable the exact-value layer
  *     exactFiles   false to read the environment only (no credential files)
  *     exactValues  [{name, type, value|values}] extra exact values (scan uses these)
- *     pii          false to disable PII, or {email, phone, iban, card, dni, ssn, ipv4}
+ *     pii          false to disable PII, or {email, phone, iban, card, dni, ssn, ipv4, name, address, username}
  *     types        a Set (or Map) of span types: only spans of these types are kept, before
  *                  overlaps are resolved, so a span of another type cannot hide one of them
  *     detectors    compiled custom formats (lib/team/detectors.js compile()), from

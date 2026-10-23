@@ -11,7 +11,8 @@ fails=0
 n=0
 
 # scope <script> <expected> <label> <file>...
-# Commits the files, then a change to each, and runs the script as a pull request would.
+# Commits the files, then a change to each, and runs the script as a pull request would
+# (or as SCOPE_EVENT, for example merge_group).
 scope() {
   local script="$1" expected="$2" label="$3"; shift 3
   n=$((n + 1))
@@ -27,7 +28,7 @@ scope() {
     for f in "$@"; do echo changed >> "$f"; done
     git add -A; git commit -q -m change
     local got
-    got="$(EVENT_NAME=pull_request BASE_SHA="$base" FULL=false bash "$scripts/$script" | grep -E '^(run|rust)=')"
+    got="$(EVENT_NAME="${SCOPE_EVENT:-pull_request}" BASE_SHA="$base" FULL=false bash "$scripts/$script" | grep -E '^(run|rust)=')"
     if [ "${got#*=}" = "$expected" ]; then echo "ok   $label"; else echo "FAIL $label: expected $expected, got $got"; exit 1; fi
   ) || fails=$((fails + 1))
 }
@@ -54,6 +55,8 @@ scope rust-scope.sh true  "rust-toolchain change runs the Rust job" rust-toolcha
 scope rust-scope.sh true  "rust.yml change runs the Rust job" .github/workflows/rust.yml
 scope rust-scope.sh false "docs-only change skips the Rust job" docs/cli.md
 scope rust-scope.sh false "package-only change skips the Rust job" packages/zn-gate/lib/x.js
+SCOPE_EVENT=merge_group scope rust-scope.sh true  "merge queue group with a Rust change runs the Rust job" src/main.rs
+SCOPE_EVENT=merge_group scope rust-scope.sh false "merge queue group without a Rust change skips the Rust job" docs/cli.md
 
 # Outside pull requests both scripts always run.
 n=$((n + 1))
