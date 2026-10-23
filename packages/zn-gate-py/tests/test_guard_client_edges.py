@@ -316,7 +316,7 @@ class TestChecks(_EnvCase):
 
     def test_truncated_result_is_allowed_by_default(self):
         with mock.patch.object(guard_module, "scan_windows", return_value=self._truncated()):
-            res = check_tool_result("whatever")
+            res = check_tool_result("whatever", allow_truncated=True)
         self.assertTrue(res.allowed)
         self.assertTrue(res.truncated)
 
@@ -328,7 +328,12 @@ class TestChecks(_EnvCase):
             os.environ["ZN_BLOCK_TRUNCATED"] = "1"
             self.assertEqual(check_tool_result("whatever").rule, "size:truncated")
             os.environ["ZN_BLOCK_TRUNCATED"] = "0"
+            self.assertEqual(check_tool_result("whatever").rule, "size:truncated")
+            self.assertTrue(check_tool_result("whatever", allow_truncated=True).allowed)
+            os.environ["ZN_ALLOW_TRUNCATED"] = "1"
             self.assertTrue(check_tool_result("whatever").allowed)
+            os.environ["ZN_BLOCK_TRUNCATED"] = "1"
+            self.assertFalse(check_tool_result("whatever", allow_truncated=True).allowed)
 
     def test_advisory_is_copied(self):
         adv = {"note": "x"}

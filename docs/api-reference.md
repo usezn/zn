@@ -67,8 +67,8 @@ The package ships TypeScript type definitions (`lib/client.d.ts`, `lib/rules.d.t
 
 - Deep sanitization of external tool outputs. Blocks indirect prompt injections and redacts sensitive credentials (AWS keys, OpenAI tokens, DB passwords).
 - Two call forms. With a tool name and content (`sanitizeToolResult('web_search', output, options)`), it scans the output and returns the object below. With one value and no content (`sanitizeToolResult(data)`), it only redacts secrets, walking strings, arrays and objects, and returns `{ sanitized, detections }`; each detection is `{ rule, index }` (`index` is the offset of the match).
-- Options: `maskSecrets` (default `true`), `blockTruncated`, `strict`.
-- Output is scanned in overlapping 256 KB windows up to 4 MB (plus the last 256 KB). `truncated` is `true` when the output was not scanned in full; pass `blockTruncated: true` or set `ZN_BLOCK_TRUNCATED=1` to block such output.
+- Options: `maskSecrets` (default `true`), `allowTruncated`, `blockTruncated`, `strict`.
+- Output is scanned in overlapping 256 KB windows up to 4 MB (plus the last 256 KB). `truncated` is `true` when the output was not scanned in full. Such output (over 4 MB) is blocked by default (rule `size:truncated`), because its middle was never checked; pass `allowTruncated: true` or set `ZN_ALLOW_TRUNCATED=1` to let it through marked `truncated`. `blockTruncated: true` and `ZN_BLOCK_TRUNCATED=1` still force the block.
 - Returns (tool name and content form): `{ tool_name, safe_to_ingest, truncated, assessment, secrets_redacted, sanitized_content }`
 
 ### `redactSecrets(text)`
@@ -104,7 +104,7 @@ The package ships TypeScript type definitions (`lib/client.d.ts`, `lib/rules.d.t
   - `checkArgs`: check the arguments (default `true`).
   - `checkResult`: also check the returned value (or the resolved value of a promise) before it is returned, with the same scanning as `sanitizeToolResult` (default `false`).
   - `maskSecrets`: redact credentials in the returned value (default `false`).
-  - `blockTruncated`: with `checkResult`, block output too large to scan in full (rule `size:truncated`). `ZN_BLOCK_TRUNCATED=1` does the same for every guard.
+  - `allowTruncated`: with `checkResult`, allow output too large to scan in full; it is blocked by default (rule `size:truncated`). `ZN_ALLOW_TRUNCATED=1` allows it for every guard. `blockTruncated` and `ZN_BLOCK_TRUNCATED=1` force the block.
   - `onBlockCallback(assessment, name, payload)`: called before a block is applied.
   - `strict`: passed to the rules engine.
 
@@ -164,7 +164,7 @@ from zn_gate import get_evidence_stats, export_evidence_ledger
 - Python decorator protecting sync and async agent functions and tool handlers.
 - `on_block='raise'` raises `GuardBlockError`; `'return'` returns `fallback` (or the `Assessment` when `fallback` is `None`); `'custom'` calls `callback(assessment, function_name, payload)` and then raises `GuardBlockError`, unless the callback raises its own exception first. A blocked call never runs the function.
 - `on_block` must be `'raise'`, `'return'` or `'custom'`; any other value, or `'custom'` without a `callback`, raises `ValueError` when the decorator is created.
-- `block_truncated=True` blocks arguments, and with `check_result=True` a result, too large to scan in full (rule `size:truncated`); `ZN_BLOCK_TRUNCATED=1` does the same for every guard. The `self` or `cls` of a method is not checked.
+- With `check_result=True`, a result too large to scan in full (over 4 MB) is blocked by default (rule `size:truncated`); set `ZN_ALLOW_TRUNCATED=1` to allow it. `block_truncated=True` or `ZN_BLOCK_TRUNCATED=1` forces the block and also covers arguments. The `self` or `cls` of a method is not checked.
 - Application objects passed to the function (a client, a session, a dependency container) are read as far as possible: unlike `check_tool_call`, the decorator does not block an argument because a plain object in it is nested too deep or cannot be read.
 
 ### `GuardBlockError(assessment, target='', payload=None)`
@@ -191,9 +191,9 @@ except GuardBlockError as e:
 - A generator or other one-shot iterator is blocked (rule `type:unscannable`), because checking it would use it up; more than 100,000 values taken from objects and other iterables is blocked (rule `size:items`); nesting deeper than ten levels is blocked (rule `size:nesting`).
 - Long strings are scanned in overlapping windows up to 4 MB, as tool results are; `Assessment.truncated` is `True` when a string was not scanned in full, and `block_truncated=True` or `ZN_BLOCK_TRUNCATED=1` blocks it (rule `size:truncated`).
 
-### `check_tool_result(result: Any, block_truncated: bool = False, strict: bool | None = None) -> Assessment`
+### `check_tool_result(result: Any, block_truncated: bool = False, strict: bool | None = None, allow_truncated: bool = False) -> Assessment`
 
-- Inspects external tool return values for indirect injection payloads. Long strings are scanned in overlapping windows up to 4 MB; `Assessment.truncated` is `True` when a string was not scanned in full. Pass `block_truncated=True` or set `ZN_BLOCK_TRUNCATED=1` to block such output (rule `size:truncated`); `@guard(check_result=True)` uses this check.
+- Inspects external tool return values for indirect injection payloads. Long strings are scanned in overlapping windows up to 4 MB; `Assessment.truncated` is `True` when a string was not scanned in full. Such output (over 4 MB) is blocked by default (rule `size:truncated`) because its middle was never checked; pass `allow_truncated=True` or set `ZN_ALLOW_TRUNCATED=1` to allow it marked `truncated`. `block_truncated=True` and `ZN_BLOCK_TRUNCATED=1` force the block. `@guard(check_result=True)` uses this check.
 
 ### `check_command(command: str) -> Assessment`
 
@@ -210,7 +210,7 @@ except GuardBlockError as e:
 - Replaces credentials in a string with placeholders such as `[REDACTED_AWS_KEY]`. Local only.
 - Returns a tuple `(clean_text, detections)`; each detection is `{'rule': str, 'start': int, 'end': int}` (the span of the match in the input). The Node function returns an object with `{ rule, index }` detections instead.
 
-### `sanitize_tool_result(tool_or_result, content=None, mask_secrets=True, block_truncated=False, strict=None)`
+### `sanitize_tool_result(tool_or_result, content=None, mask_secrets=True, block_truncated=False, strict=None, allow_truncated=False)`
 
 - Two call forms, as in Node. `sanitize_tool_result(data)` redacts secrets in strings, lists, dicts and tuples and returns a **tuple** `(clean_data, detections)`, with detections shaped as for `redact_secrets`. The Node version returns `{ sanitized, detections }`.
 - `sanitize_tool_result(tool_name, content)` scans the output and returns a dict `{ tool_name, safe_to_ingest, truncated, assessment, secrets_redacted, sanitized_content }` (typed as `SanitizedToolResult`), where `assessment` is an `Assessment`. Content that is not a string is checked string by string, as `check_tool_result` does, and as JSON text; `sanitized_content` is that JSON text, as in Node.
@@ -278,13 +278,13 @@ No framework is required to import them. Each one uses the same rules as `check_
 - `on_block`: `'raise'` (default) or `'ignore'`. With `'raise'` a blocked prompt, tool input or tool output raises `GuardBlockError` and stops the run (targets `langchain:llm_prompt`, `langchain:<tool>` and `langchain:tool_output`). A callback cannot replace a tool's output, so `'return'` raises `ValueError` when the handler is created: use `guard_langchain_tool(tool, on_block='return')` to give the model a block message instead. With `'ignore'` nothing is stopped.
 - `mask_secrets` (default `True`): a tool output that contains a secret stops the run with `GuardBlockError`, because the handler cannot rewrite it. If your tools are wrapped with `guard_langchain_tool`, create the handler with `mask_secrets=False`, so the wrapper hides the secret and the run goes on.
 - `raise_on_injection`: older switch. When it is not `None` it overrides `on_block`: `True` means `'raise'`, `False` means `'ignore'`.
-- `block_truncated`: treat a tool output too large to scan in full as a block (default `False`).
+- `block_truncated`: force a block for a tool output too large to scan in full. Such output is blocked by default; set `ZN_ALLOW_TRUNCATED=1` to allow it.
 
 ### `guard_langchain_tool(tool, on_block='raise', mask_secrets=True, check_result=True, block_truncated=False, fallback=None)`
 
 - Wraps a LangChain tool (`BaseTool`) and returns a new tool with the same name, description and arguments; pass it to your agent instead of the original. The arguments are checked before the tool runs (a blocked call never runs) and the output before the model reads it. Needs `langchain-core`.
 - `on_block`: `'raise'` (default) raises `GuardBlockError` (targets `langchain:<tool>` for the arguments and `langchain:<tool>:result` for the output); `'return'` gives the model `fallback`, or the plain block message when `fallback` is `None`.
-- `mask_secrets`: hide credentials in the tool output (default `True`). `check_result`: scan the output for prompt injection (default `True`). `block_truncated`: block an output too large to scan in full.
+- `mask_secrets`: hide credentials in the tool output (default `True`). `check_result`: scan the output for prompt injection (default `True`). `block_truncated`: force a block for an output too large to scan in full (blocked by default; `ZN_ALLOW_TRUNCATED=1` allows it).
 - A tool with `response_format="content_and_artifact"` passes only its content on.
 
 ### `guarded_tool(on_block='raise', mask_secrets=True, fallback=None, check_result=True, block_truncated=False, framework=None)`

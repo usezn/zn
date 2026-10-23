@@ -46,8 +46,10 @@ export interface RedactResult {
 }
 
 export interface SanitizeToolResultOptions extends EvaluateOptions {
-  /** Block output that was too large to scan in full (rule "size:truncated"). Also ZN_BLOCK_TRUNCATED=1. */
+  /** Output too large to scan in full is blocked by default (rule "size:truncated"); true here forces that block even with ZN_ALLOW_TRUNCATED=1. Also ZN_BLOCK_TRUNCATED=1. */
   blockTruncated?: boolean;
+  /** Allow output too large to scan in full (it is marked truncated). Also ZN_ALLOW_TRUNCATED=1. */
+  allowTruncated?: boolean;
   /** Redact credentials from the returned content (default true). */
   maskSecrets?: boolean;
 }
