@@ -6,21 +6,30 @@
 // command, so it is not compiled with the JavaScript RegExp engine, whose
 // backtracking can take exponential time. This file accepts a safe subset of the
 // syntax and runs it as an NFA simulation: the time is proportional to the input
-// length times the pattern size, whatever the pattern is.
+// length times the pattern size, whatever the pattern is. The size is bounded too:
+// a pattern may have at most MAX_PROGRAM instructions once its counted repeats are
+// expanded and all the patterns of one file together at most MAX_TOTAL_PROGRAM, so the
+// cost of one scan has a fixed ceiling (about MAX_TOTAL_PROGRAM steps per character).
 //
 // Accepted: literals, `.`, classes `[a-z]` `[^x]`, `\d \w \s` (and the negations),
 // `\b \B`, `^`, `$`, groups `( )` and `(?: )`, alternation `|`, and the quantifiers
 // `? * + {n} {n,} {n,m}` (a trailing `?` for a lazy match is accepted and has no
-// effect on whether a text matches). Matching is always case-insensitive, as before.
-// Rejected, with a message that says why: backreferences, lookahead and lookbehind,
-// named groups, `\p{..}`, flags, a quantifier on a group that already holds a
-// quantifier (`(a+)+`), repeat counts above MAX_REPEAT, and patterns that are too
-// long or too large once the counted repeats are expanded.
+// effect on whether a text matches). Matching is always case-insensitive for ASCII
+// letters; letters of other scripts are matched as written (plus their simple
+// upper/lower case pair, as in a class). Rejected, with a message that says why:
+// backreferences, lookahead and lookbehind, named groups, `\p{..}`, flags, a
+// quantifier on a group that already holds a quantifier (`(a+)+`), repeat counts above
+// MAX_REPEAT, two quantifiers in a row, and patterns that are too long or too large
+// once the counted repeats are expanded.
 
 const MAX_PATTERN_LENGTH = 500;
 const MAX_PATTERNS = 100;
 const MAX_REPEAT = 100;
-const MAX_PROGRAM = 4000;
+const MAX_PROGRAM = 500;
+const MAX_TOTAL_PROGRAM = 600;
+const MAX_COMPILED_CACHE = 400;
+const MAX_TABLES = 2500;
+const LITERAL_COST = 3; // what a plain-text pattern takes off the file's budget
 
 class UnsupportedPattern extends Error {}
 
@@ -29,6 +38,44 @@ const isWs = (c) => WS.has(c) || (c >= 0x2000 && c <= 0x200a);
 const isDigit = (c) => c >= 48 && c <= 57;
 const isWord = (c) => (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95;
 const isLineEnd = (c) => c === 10 || c === 13 || c === 0x2028 || c === 0x2029;
+const QUANT_BRACES = /^\{\d+(?:,\d*)?\}/;
+
+// ---- character tables ------------------------------------------------------
+// Every character set becomes a bit table over the 65536 UTF-16 code units, built
+// once, so a step is one array read (no closures, no toLowerCase per character).
+
+let lowerTab = null;
+let upperTab = null;
+function foldTables() {
+  if (lowerTab) return;
+  lowerTab = new Uint16Array(65536);
+  upperTab = new Uint16Array(65536);
+  for (let c = 0; c < 65536; c++) {
+    const ch = String.fromCharCode(c);
+    const lo = ch.toLowerCase();
+    const up = ch.toUpperCase();
+    lowerTab[c] = lo.length === 1 ? lo.charCodeAt(0) : c;
+    upperTab[c] = up.length === 1 ? up.charCodeAt(0) : c;
+  }
+}
+
+const TABLES = new Map();
+function packedTable(key, make) {
+  let t = TABLES.get(key);
+  if (!t) {
+    if (TABLES.size >= MAX_TABLES) TABLES.clear();
+    foldTables();
+    const m = make();
+    t = new Uint8Array(8192);
+    for (let c = 0; c < 65536; c++) if (m[c]) t[c >> 3] |= 1 << (c & 7);
+    TABLES.set(key, t);
+  }
+  return t;
+}
+
+function byTest(test) {
+  return () => { const m = new Uint8Array(65536); for (let c = 0; c < 65536; c++) m[c] = test(c) ? 1 : 0; return m; };
+}
 
 // ---- parser ---------------------------------------------------------------
 
@@ -73,8 +120,10 @@ function parse(src) {
     else if (c === '+') { i++; q = { min: 1, max: Infinity }; }
     else if (c === '?') { i++; q = { min: 0, max: 1 }; }
     else if (c === '{') {
-      const m = /^\{(\d{1,6})(?:(,)(\d{0,6}))?\}/.exec(src.slice(i));
+      // Any digit count is a quantifier in JavaScript, so a huge one is an error here, not a literal.
+      const m = /^\{(\d+)(?:(,)(\d*))?\}/.exec(src.slice(i, i + 40));
       if (m) {
+        if (m[1].length > 6 || (m[3] && m[3].length > 6)) fail('a repeat count above ' + MAX_REPEAT + ' is not allowed');
         const min = Number(m[1]);
         const max = m[2] ? (m[3] === '' ? Infinity : Number(m[3])) : min;
         if (min > MAX_REPEAT || (max !== Infinity && max > MAX_REPEAT)) fail('a repeat count above ' + MAX_REPEAT + ' is not allowed');
@@ -84,7 +133,7 @@ function parse(src) {
       }
     }
     if (q && peek() === '?') i++; // lazy: same set of matching texts
-    if (q && (peek() === '*' || peek() === '+' || peek() === '?')) fail('two quantifiers in a row');
+    if (q && (peek() === '*' || peek() === '+' || peek() === '?' || (peek() === '{' && QUANT_BRACES.test(src.slice(i, i + 40))))) fail('two quantifiers in a row');
     return q;
   }
 
@@ -106,23 +155,21 @@ function parse(src) {
     }
     if (c === ')') fail('an unmatched )');
     if (c === '*' || c === '+' || c === '?') fail('a quantifier has nothing to repeat');
+    if (c === '{' && QUANT_BRACES.test(src.slice(i, i + 40))) fail('a quantifier has nothing to repeat');
     if (c === '[') return parseClass();
-    if (c === '.') { i++; return { t: 'set', test: (x) => !isLineEnd(x) }; }
-    if (c === '^') { i++; return { t: 'assert', kind: 'bol' }; }
-    if (c === '$') { i++; return { t: 'assert', kind: 'eol' }; }
+    if (c === '.') { i++; return { t: 'set', key: '.', make: byTest((x) => !isLineEnd(x)) }; }
+    if (c === '^') { i++; return { t: 'assert', kind: 0 }; }
+    if (c === '$') { i++; return { t: 'assert', kind: 1 }; }
     if (c === '\\') return parseEscape(false);
     i++;
     return literal(c.charCodeAt(0));
   }
 
   function literal(code) {
-    const ch = String.fromCharCode(code);
-    const lo = ch.toLowerCase();
-    const up = ch.toUpperCase();
-    const set = new Set([code]);
-    if (lo.length === 1) set.add(lo.charCodeAt(0));
-    if (up.length === 1) set.add(up.charCodeAt(0));
-    return { t: 'set', test: (x) => set.has(x) };
+    return {
+      t: 'set', key: 'L' + code,
+      make: () => { const m = new Uint8Array(65536); m[code] = 1; m[lowerTab[code]] = 1; m[upperTab[code]] = 1; return m; },
+    };
   }
 
   // Returns a node (outside a class) or a {code}|{test} item (inside one).
@@ -131,7 +178,7 @@ function parse(src) {
     const c = src[i];
     if (c === undefined) fail('a pattern cannot end with a backslash');
     i++;
-    const wrap = (test) => (inClass ? { test } : { t: 'set', test });
+    const wrap = (test) => (inClass ? { test } : { t: 'set', key: 'E' + c, make: byTest(test) });
     switch (c) {
       case 'd': return wrap(isDigit);
       case 'D': return wrap((x) => !isDigit(x));
@@ -141,10 +188,10 @@ function parse(src) {
       case 'S': return wrap((x) => !isWs(x));
       case 'b':
         if (inClass) return { code: 8 };
-        return { t: 'assert', kind: 'wb' };
+        return { t: 'assert', kind: 2 };
       case 'B':
         if (inClass) fail('\\B is not allowed inside a class');
-        return { t: 'assert', kind: 'nwb' };
+        return { t: 'assert', kind: 3 };
       case 't': return code(9);
       case 'n': return code(10);
       case 'r': return code(13);
@@ -154,13 +201,13 @@ function parse(src) {
         if (isDigit((src.charCodeAt(i)))) fail('octal escapes are not supported');
         return code(0);
       case 'x': {
-        const m = /^[0-9a-fA-F]{2}/.exec(src.slice(i));
+        const m = /^[0-9a-fA-F]{2}/.exec(src.slice(i, i + 2));
         if (!m) fail('a bad \\x escape');
         i += 2;
         return code(parseInt(m[0], 16));
       }
       case 'u': {
-        const m = /^[0-9a-fA-F]{4}/.exec(src.slice(i));
+        const m = /^[0-9a-fA-F]{4}/.exec(src.slice(i, i + 4));
         if (!m) fail('a bad \\u escape');
         i += 4;
         return code(parseInt(m[0], 16));
@@ -180,6 +227,7 @@ function parse(src) {
   }
 
   function parseClass() {
+    const start = i;
     i++; // [
     let negate = false;
     if (src[i] === '^') { negate = true; i++; }
@@ -198,15 +246,30 @@ function parse(src) {
       else items.push(a);
     }
     if (!closed) fail('a class is not closed');
-    const hit = (x) => items.some((it) => (it.test ? it.test(x) : x >= it.lo && x <= it.hi));
-    const test = (x) => {
-      if (hit(x)) return true;
-      const ch = String.fromCharCode(x);
-      const lo = ch.toLowerCase();
-      const up = ch.toUpperCase();
-      return (lo.length === 1 && hit(lo.charCodeAt(0))) || (up.length === 1 && hit(up.charCodeAt(0)));
+    const make = () => {
+      // Ranges are painted with a difference array, tests are applied once per character.
+      const diff = new Int32Array(65537);
+      const tests = [];
+      for (const it of items) {
+        if (it.test) tests.push(it.test);
+        else { diff[it.lo]++; diff[it.hi + 1]--; }
+      }
+      const base = new Uint8Array(65536);
+      let run = 0;
+      for (let c = 0; c < 65536; c++) {
+        run += diff[c];
+        let hit = run > 0;
+        for (let k = 0; !hit && k < tests.length; k++) hit = tests[k](c);
+        base[c] = hit ? 1 : 0;
+      }
+      const out = new Uint8Array(65536);
+      for (let c = 0; c < 65536; c++) {
+        const folded = base[c] || base[lowerTab[c]] || base[upperTab[c]];
+        out[c] = (negate ? !folded : folded) ? 1 : 0;
+      }
+      return out;
     };
-    return { t: 'set', test: negate ? (x) => !test(x) : test };
+    return { t: 'set', key: 'C' + src.slice(start, i), make };
   }
 
   function classAtom() {
@@ -224,17 +287,25 @@ function parse(src) {
 // ---- compiler (Thompson NFA) ---------------------------------------------
 
 const CHAR = 0; const SPLIT = 1; const JMP = 2; const ASSERT = 3; const MATCH = 4;
+const A_BOL = 0; const A_EOL = 1; const A_WB = 2;
 
 function compileProgram(ast) {
   const op = []; const x = []; const y = [];
+  const tabs = []; const tabIndex = new Map();
   const push = (o, a, b) => {
-    if (op.length >= MAX_PROGRAM) fail('the pattern is too large once its repeat counts are expanded');
+    if (op.length >= MAX_PROGRAM) fail('the pattern is too large once its repeat counts are expanded (more than ' + MAX_PROGRAM + ' steps)');
     op.push(o); x.push(a); y.push(b);
     return op.length - 1;
   };
   function emit(n) {
     switch (n.t) {
-      case 'set': push(CHAR, n.test, 0); break;
+      case 'set': {
+        const pc = push(CHAR, 0, 0);
+        let idx = tabIndex.get(n.key);
+        if (idx === undefined) { idx = tabs.length; tabs.push(packedTable(n.key, n.make)); tabIndex.set(n.key, idx); }
+        x[pc] = idx;
+        break;
+      }
       case 'assert': push(ASSERT, n.kind, 0); break;
       case 'seq': n.items.forEach(emit); break;
       case 'alt': {
@@ -276,70 +347,80 @@ function compileProgram(ast) {
   }
   emit(ast);
   push(MATCH, 0, 0);
-  return { op, x, y };
+  return { op: Int32Array.from(op), x: Int32Array.from(x), y: Int32Array.from(y), tabs };
 }
 
 function makeMatcher(prog) {
-  const { op, x, y } = prog;
+  const { op, x, y, tabs } = prog;
   const size = op.length;
   const mark = new Int32Array(size);
   const stack = new Int32Array(size * 2 + 2);
   let clist = new Int32Array(size);
   let nlist = new Int32Array(size);
+  // The table of each CHAR instruction, looked up by program counter.
+  const ctab = new Array(size).fill(null);
+  for (let pc = 0; pc < size; pc++) if (op[pc] === CHAR) ctab[pc] = tabs[x[pc]];
+  let s = '';
+  let n = 0;
 
-  return function test(s) {
-    const n = s.length;
+  // Adds the closure of `pc0` at position `pos`; returns the new count, or -1 when MATCH is reached.
+  // Each instruction is visited at most once per position (the mark), so one call costs O(size) in all.
+  function add(list, count, pc0, pos) {
+    const tag = pos + 1;
+    let sp = 0;
+    let pc = pc0;
+    for (;;) {
+      if (mark[pc] !== tag) {
+        mark[pc] = tag;
+        const o = op[pc];
+        if (o === CHAR) list[count++] = pc;
+        else if (o === JMP) { pc = x[pc]; continue; }
+        else if (o === SPLIT) { stack[sp++] = y[pc]; pc = x[pc]; continue; } else if (o === MATCH) return -1;
+        else {
+          const kind = x[pc];
+          let ok;
+          if (kind === A_BOL) ok = pos === 0;
+          else if (kind === A_EOL) ok = pos === n;
+          else {
+            const a = pos > 0 && isWord(s.charCodeAt(pos - 1));
+            const b = pos < n && isWord(s.charCodeAt(pos));
+            ok = kind === A_WB ? a !== b : a === b;
+          }
+          if (ok) { pc++; continue; }
+        }
+      }
+      if (sp === 0) return count;
+      pc = stack[--sp];
+    }
+  }
+
+  return function test(text) {
+    s = text;
+    n = text.length;
     mark.fill(0);
     let cn = 0;
     let nn = 0;
-    // Adds the closure of `pc0` at position `pos`; returns true when MATCH is reached.
-    function add(list, count, pc0, pos) {
-      const tag = pos + 1;
-      const prev = pos > 0 ? s.charCodeAt(pos - 1) : -1;
-      const next = pos < n ? s.charCodeAt(pos) : -1;
-      let sp = 0;
-      stack[sp++] = pc0;
-      while (sp > 0) {
-        const pc = stack[--sp];
-        if (mark[pc] === tag) continue;
-        mark[pc] = tag;
-        switch (op[pc]) {
-          case JMP: stack[sp++] = x[pc]; break;
-          case SPLIT: stack[sp++] = y[pc]; stack[sp++] = x[pc]; break;
-          case ASSERT: {
-            const k = x[pc];
-            let ok;
-            if (k === 'bol') ok = pos === 0;
-            else if (k === 'eol') ok = pos === n;
-            else {
-              const a = prev >= 0 && isWord(prev);
-              const b = next >= 0 && isWord(next);
-              ok = k === 'wb' ? a !== b : a === b;
-            }
-            if (ok) stack[sp++] = pc + 1;
-            break;
-          }
-          case MATCH: return -1;
-          default: list[count++] = pc;
-        }
-      }
-      return count;
-    }
     for (let pos = 0; pos <= n; pos++) {
       cn = add(clist, cn, 0, pos);
       if (cn === -1) return true;
       if (pos === n) break;
       const c = s.charCodeAt(pos);
+      const byte = c >> 3;
+      const bit = c & 7;
       nn = 0;
       // Threads that read char `pos` move to the closure at pos + 1.
-      const stepped = [];
       for (let k = 0; k < cn; k++) {
         const pc = clist[k];
-        if (x[pc](c)) stepped.push(pc + 1);
-      }
-      for (const pc of stepped) {
-        nn = add(nlist, nn, pc, pos + 1);
-        if (nn === -1) return true;
+        if ((ctab[pc][byte] >> bit) & 1) {
+          const q = pc + 1;
+          if (op[q] === CHAR) {
+            // The common case, a character followed by a character: no jumps to follow.
+            if (mark[q] !== pos + 2) { mark[q] = pos + 2; nlist[nn++] = q; }
+          } else {
+            nn = add(nlist, nn, q, pos + 1);
+            if (nn === -1) return true;
+          }
+        }
       }
       const t = clist; clist = nlist; nlist = t;
       cn = nn;
@@ -350,21 +431,70 @@ function makeMatcher(prog) {
 
 // ---- public API -----------------------------------------------------------
 
+const compiled = new Map();
+
+// A pattern with no special character (the usual rule: a name, a path, a phrase) is plain
+// text. It is searched with the KMP algorithm, one array read per character of the text, so
+// a file of many such rules stays cheap whatever the text. Letters match without regard to
+// case (ASCII only, as in the general matcher); the other characters match as written.
+const PLAIN_RE = /^[\x20-\x7e]+$/;
+const SPECIAL_RE = /[\\^$.|?*+()[\]{}]/;
+function makePlainMatcher(source) {
+  const pat = Array.from(source, (ch) => { const c = ch.charCodeAt(0); return c >= 65 && c <= 90 ? c | 32 : c; });
+  const m = pat.length;
+  const fall = new Int32Array(m);
+  for (let i = 1, k = 0; i < m; i++) {
+    while (k > 0 && pat[i] !== pat[k]) k = fall[k - 1];
+    if (pat[i] === pat[k]) k++;
+    fall[i] = k;
+  }
+  return function test(text) {
+    const n = text.length;
+    let k = 0;
+    for (let i = 0; i < n; i++) {
+      let c = text.charCodeAt(i);
+      if (c >= 65 && c <= 90) c |= 32;
+      while (k > 0 && pat[k] !== c) k = fall[k - 1];
+      if (pat[k] === c) { k++; if (k === m) return true; }
+    }
+    return false;
+  };
+}
+
 /**
  * Compiles one custom pattern. Returns { ok: true, rule } where rule has `source`
  * and `test(text)`, or { ok: false, error } with a message for the user.
+ * `budget` ({ left }) is the instruction budget of the whole file: the size of the
+ * pattern is taken off it, and the pattern is rejected when it does not fit.
  */
-function compileCustomPattern(source) {
+function compileCustomPattern(source, budget) {
   if (typeof source !== 'string') return { ok: false, error: 'a pattern must be a string' };
   if (source.length === 0) return { ok: false, error: 'a pattern cannot be empty' };
   if (source.length > MAX_PATTERN_LENGTH) return { ok: false, error: 'the pattern is longer than ' + MAX_PATTERN_LENGTH + ' characters' };
-  try {
-    const matcher = makeMatcher(compileProgram(parse(source)));
-    return { ok: true, rule: { source, test: matcher } };
-  } catch (err) {
-    if (err instanceof UnsupportedPattern) return { ok: false, error: err.message };
-    throw err;
+  let entry = compiled.get(source);
+  if (!entry) {
+    try {
+      if (PLAIN_RE.test(source) && !SPECIAL_RE.test(source)) {
+        entry = { ok: true, size: LITERAL_COST, rule: { source, test: makePlainMatcher(source) } };
+      } else {
+        const prog = compileProgram(parse(source));
+        entry = { ok: true, size: prog.op.length, rule: { source, test: makeMatcher(prog) } };
+      }
+    } catch (err) {
+      if (!(err instanceof UnsupportedPattern)) throw err;
+      entry = { ok: false, error: err.message };
+    }
+    if (compiled.size >= MAX_COMPILED_CACHE) compiled.clear();
+    compiled.set(source, entry);
   }
+  if (!entry.ok) return { ok: false, error: entry.error };
+  if (budget) {
+    if (entry.size > budget.left) {
+      return { ok: false, error: 'the patterns of this file are too large together (the limit is ' + MAX_TOTAL_PROGRAM + ' steps in all, so that scanning stays fast): shorten or remove some' };
+    }
+    budget.left -= entry.size;
+  }
+  return { ok: true, rule: entry.rule };
 }
 
-module.exports = { compileCustomPattern, MAX_PATTERN_LENGTH, MAX_PATTERNS };
+module.exports = { compileCustomPattern, MAX_PATTERN_LENGTH, MAX_PATTERNS, MAX_PROGRAM, MAX_TOTAL_PROGRAM };

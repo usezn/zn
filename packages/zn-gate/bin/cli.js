@@ -1130,6 +1130,15 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
     process.env.ZN_STATS = 'off'; // the test read is not counted in zn-gate stats
     const zc = require('../lib/check');
     process.exitCode = zc.report(await zc.check({}));
+    try {
+      const cfg = require('../lib/rules').loadCustomConfig(true);
+      if (cfg.errors.length > 0) {
+        process.stdout.write('Project rules: ' + cfg.file + ' has ' + cfg.errors.length + ' error' + (cfg.errors.length > 1 ? 's' : '') + ', so zn-gate blocks until it is fixed:\n');
+        for (const e of cfg.errors.slice(0, 20)) process.stdout.write('  - ' + e + '\n');
+        process.stdout.write('Edit ' + cfg.file + ' or delete it.\n\n');
+        process.exitCode = 1;
+      }
+    } catch (_) { /* the check never fails on the rules file */ }
     return;
   }
 
