@@ -117,6 +117,29 @@ test('the cache accepts newer versions, refuses rollbacks and keeps the last goo
   assert.strictEqual(policy.state({ home, now: NOW }).version, 4);
 });
 
+test('a second signed policy with the same version and other content is refused; the same content is fine', (t) => {
+  const { home, k } = setup(t);
+  const widened = { rules: [{ secret: 'PROD_*', agents: ['claude-code', 'codex'], mode: 'proxy', allowHosts: ['api.stripe.com', 'api.example.net'] }] };
+  assert.strictEqual(policy.accept(sign(body({ version: 3 }), k), 'W/"e3"', { home, now: NOW }).ok, true);
+  const again = policy.accept(sign(body({ version: 3 }), k), 'W/"e3b"', { home, now: NOW });
+  assert.strictEqual(again.ok, true, 'a repeat of the same policy (new ETag) is accepted');
+  const swapped = policy.accept(sign(body({ version: 3, ...widened }), k), 'W/"e3c"', { home, now: NOW });
+  assert.strictEqual(swapped.ok, false);
+  assert.match(swapped.error, /already used with different content/);
+  assert.deepStrictEqual(policy.state({ home, now: NOW }).policy.rules, body().rules, 'the policy held is unchanged');
+  assert.strictEqual(policy.accept(sign(body({ version: 4, ...widened }), k), null, { home, now: NOW }).ok, true, 'a new version may change the content');
+});
+
+test('verifyEnvelope compares the digest only for the version held', () => {
+  const k = orgKey();
+  const held = policy.digestOf(body({ version: 5 }));
+  assert.match(held, /^[0-9a-f]{64}$/);
+  const other = sign(body({ version: 5, rules: [] }), k);
+  assert.match(policy.verifyEnvelope(other, k.pin, { now: NOW, minVersion: 5, heldDigest: held }).error, /different content/);
+  assert.strictEqual(policy.verifyEnvelope(other, k.pin, { now: NOW, minVersion: 4, heldDigest: held }).ok, true);
+  assert.strictEqual(policy.verifyEnvelope(sign(body({ version: 5 }), k), k.pin, { now: NOW, minVersion: 5, heldDigest: held }).ok, true);
+});
+
 test('the cache goes to strict mode when it expires and is ignored if edited', (t) => {
   const { home, k } = setup(t);
   policy.accept(sign(body(), k), null, { home, now: NOW });

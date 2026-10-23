@@ -205,6 +205,37 @@ function apiFailure(status) {
   return { status: 'error', text: `unexpected HTTP ${status}` };
 }
 
+/*
+ * What a 200 answer confirms. The server says where its chain ends (head.seq,
+ * and optionally head.mac) and how many records of the batch it stored
+ * (accepted; fewer than the batch when the start overlapped what it held).
+ * Without a head, `accepted` counts from the start of the batch. An answer
+ * that says nothing, or contradicts itself or the batch, confirms nothing.
+ */
+function confirmedUpTo(batch, body) {
+  const bad = (text) => ({ outcome: { status: 'error', text } });
+  if (!body || typeof body !== 'object') return bad('unexpected response from server');
+  const accepted = body.accepted;
+  if (accepted !== undefined && (!Number.isInteger(accepted) || accepted < 0 || accepted > batch.length)) {
+    return bad('server answer is inconsistent (records accepted)');
+  }
+  let index;
+  if (body.head !== undefined) {
+    const h = body.head;
+    if (!h || typeof h !== 'object' || !Number.isInteger(h.seq)) return bad('server answer is inconsistent (chain head)');
+    index = batch.findIndex((r) => r.seq === h.seq);
+    if (index < 0) return bad('server confirmed a position outside the uploaded batch');
+    if (h.mac !== undefined && h.mac !== batch[index].mac) return { outcome: { status: 'diverged', text: TEXT_DIVERGED } };
+    if (accepted !== undefined && accepted > index + 1) return bad('server answer is inconsistent (records accepted)');
+  } else if (accepted !== undefined) {
+    if (accepted < 1) return bad('server stored none of the records');
+    index = accepted - 1;
+  } else {
+    return bad('server answer does not say what it stored');
+  }
+  return { record: batch[index], accepted: accepted === undefined ? index + 1 : accepted };
+}
+
 function pendingOf(o, head) {
   try {
     return countPending(readRecords(o.auditFile).records, head);
@@ -287,10 +318,11 @@ async function sync(o, ctx) {
       outcome = { status: 'error', text: 'unexpected response from server' };
       break;
     }
-    const accepted = res.body && Number.isInteger(res.body.accepted) ? res.body.accepted : batch.length;
-    const last = batch[batch.length - 1];
-    ctx.head = { seq: last.seq, mac: last.mac };
-    ctx.uploaded += accepted;
+    const done = confirmedUpTo(batch, res.body);
+    if (done.outcome) { outcome = done.outcome; break; }
+    // The head moves only to the record the server confirmed, never past it.
+    ctx.head = { seq: done.record.seq, mac: done.record.mac };
+    ctx.uploaded += done.accepted;
     ctx.lastUpload = new Date(o.now()).toISOString();
     batches += 1;
     writeState(o.stateFile, { head: ctx.head, last_upload: ctx.lastUpload, last_status: 'in_progress' });

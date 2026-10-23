@@ -61,6 +61,11 @@ function canonicalJson(value) {
   return '{' + keys.map((k) => JSON.stringify(k) + ':' + canonicalJson(value[k])).join(',') + '}';
 }
 
+/** SHA-256 (hex) of the canonical JSON of a policy: what "the same policy" means for one version. */
+function digestOf(p) {
+  return crypto.createHash('sha256').update(canonicalJson(p), 'utf8').digest('hex');
+}
+
 /** kid = first 16 hex characters of SHA-256 of the raw 32-byte public key. */
 function kidOf(rawB64u) {
   return crypto.createHash('sha256').update(Buffer.from(rawB64u, 'base64url')).digest('hex').slice(0, 16);
@@ -150,6 +155,8 @@ function checkShape(p) {
  *   -> {ok: true, policy, expired} | {ok: false, error}
  * envelope: {policy, signature: {alg, kid, sig}} as GET /v1/org/policy returns it.
  * pin: the organization's public key from `zn team join`.
+ * minVersion + heldDigest: the version and canonical digest (digestOf) of the
+ * policy already held; the same version with another digest is refused.
  * allowExpired: used when reading the cache, so an expired policy can still
  * restrict (strict mode); a downloaded policy must never be expired.
  */
@@ -176,6 +183,11 @@ function verifyEnvelope(envelope, pin, opts) {
   const expired = Date.parse(p.expires_at) + SKEW_MS <= now;
   if (expired && !o.allowExpired) return { ok: false, error: 'policy expired' };
   if (o.minVersion && p.version < o.minVersion) return { ok: false, error: 'policy version rollback' };
+  // The same version must be the same policy: a second signed policy with the
+  // version already held but other content is refused.
+  if (o.minVersion && o.heldDigest && p.version === o.minVersion && digestOf(p) !== o.heldDigest) {
+    return { ok: false, error: 'policy version already used with different content' };
+  }
   return { ok: true, policy: p, expired };
 }
 
@@ -266,11 +278,12 @@ function accept(envelope, etag, opts) {
   const pin = o.pin || team.policy_public_key;
   const prev = readCache(o);
   let minVersion = Number(team.min_policy_version) || 0;
+  let heldDigest = null;
   if (prev) {
     const pv = verifyEnvelope(prev.envelope, pin, { now: o.now, org: team.org, allowExpired: true });
-    if (pv.ok) minVersion = Math.max(minVersion, pv.policy.version);
+    if (pv.ok && pv.policy.version >= minVersion) { minVersion = pv.policy.version; heldDigest = digestOf(pv.policy); }
   }
-  const v = verifyEnvelope(envelope, pin, { now: o.now, org: team.org, minVersion });
+  const v = verifyEnvelope(envelope, pin, { now: o.now, org: team.org, minVersion, heldDigest });
   if (!v.ok) return { ok: false, error: v.error };
   writeJson(paths(o).policyFile, {
     v: 1, envelope, etag: typeof etag === 'string' && etag.length <= 200 ? etag : null,
@@ -300,6 +313,7 @@ function touchCache(opts) {
 
 module.exports = {
   canonicalJson,
+  digestOf,
   kidOf,
   checkPin,
   checkShape,

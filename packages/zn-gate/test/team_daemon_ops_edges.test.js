@@ -29,7 +29,7 @@ let net;
 test.before(async () => { cloud = await startFakeTeamServer(); });
 test.after(async () => { await cloud.close(); fs.rmSync(HOME, { recursive: true, force: true }); });
 test.beforeEach(() => {
-  net = { throwError: false, status: 0, rewriteJoin: null };
+  net = { throwError: false, status: 0, rewriteJoin: null, afterPolicy: null };
   cloud.setOrgActive(true);
   fs.rmSync(process.env.ZN_HOME, { recursive: true, force: true });
   fs.mkdirSync(process.env.ZN_HOME, { recursive: true });
@@ -39,6 +39,7 @@ async function fetchImpl(url, init) {
   if (net.throwError) throw new TypeError('fetch failed');
   if (net.status) return new Response('{"error":"simulated failure"}', { status: net.status, headers: { 'content-type': 'application/json' } });
   const res = await fetch(url, init);
+  if (net.afterPolicy && String(url).endsWith('/v1/org/policy')) net.afterPolicy();
   if (net.rewriteJoin && String(url).endsWith('/v1/org/join')) {
     const body = JSON.parse(await res.text());
     net.rewriteJoin(body);
@@ -286,6 +287,54 @@ test('a policy signed by another key, or one that rolls back, is rejected and th
   assert.deepStrictEqual(s2.policy, { status: 'rejected', error: 'unknown key id' });
   assert.deepStrictEqual(m.audit.at(-1), { mode: 'set', decision: 'deny', reason: 'policy:rejected' });
   assert.strictEqual(m.secrets.team.policy.version, held);
+});
+
+test('another signed policy with the version already held but other content is rejected; the same content is not', async () => {
+  const m = await joined();
+  cloud.publishPolicy({ rules: [{ secret: 'A_B', agents: ['*'], deny: true }] });
+  const first = await m.o.teamSync({ upload: false });
+  assert.strictEqual(first.policy.status, 'updated');
+  const version = m.secrets.team.policy.version;
+  assert.match(m.secrets.team.policy.digest, /^[0-9a-f]{64}$/);
+  const held = JSON.stringify(m.secrets.team.policy.envelope);
+  // The server (or whoever holds the signing key) signs a different policy under the same version.
+  cloud.state.policyContent = { rules: [] };
+  m.secrets.team.policy.etag = null; // force a full download instead of a 304
+  const s = await m.o.teamSync({ upload: false });
+  assert.strictEqual(s.policy.status, 'rejected');
+  assert.match(s.policy.error, /same version|already used with different content/);
+  assert.strictEqual(m.secrets.team.policy.version, version);
+  assert.strictEqual(JSON.stringify(m.secrets.team.policy.envelope), held, 'the policy held did not change');
+  assert.deepStrictEqual(m.audit.at(-1), { mode: 'set', decision: 'deny', reason: 'policy:rejected' });
+  assert.strictEqual(policy.readCache().envelope.policy.rules.length, 1, 'the readable copy did not change either');
+  // The same content again (only a new ETag) is a normal update.
+  cloud.state.policyContent = { rules: [{ secret: 'A_B', agents: ['*'], deny: true }] };
+  m.secrets.team.policy.etag = null;
+  assert.strictEqual((await m.o.teamSync({ upload: false })).policy.status, 'updated');
+  // A real new version may change the content.
+  cloud.state.policyContent = { rules: [] };
+  cloud.state.policyVersion += 1;
+  m.secrets.team.policy.etag = null;
+  assert.strictEqual((await m.o.teamSync({ upload: false })).policy.status, 'updated');
+});
+
+test('the version and digest are checked again inside the serialized write', async () => {
+  const m = await joined();
+  cloud.publishPolicy({ rules: [{ secret: 'A_B', agents: ['*'], deny: true }] });
+  // While the download is in flight, another sync stored a newer policy.
+  // (The vault object is replaced, as a leave and join would, so the sync still holds the old one.)
+  net.afterPolicy = () => { m.secrets.team = { ...m.secrets.team, policy: { envelope: null, version: 99, digest: 'f'.repeat(64), etag: null, fetched_at: new Date().toISOString() } }; };
+  const s = await m.o.teamSync({ upload: false });
+  assert.strictEqual(s.policy.status, 'rejected');
+  assert.match(s.policy.error, /rollback/);
+  assert.strictEqual(m.secrets.team.policy.version, 99, 'the newer policy was not overwritten');
+  // Leaving and joining another organization during the download: nothing is written for the old one.
+  net.afterPolicy = () => { m.secrets.team = { ...m.secrets.team, install_id: '00000000-0000-4000-8000-000000000000' }; };
+  m.secrets.team.policy = null;
+  const s2 = await m.o.teamSync({ upload: false });
+  assert.strictEqual(s2.policy.status, 'rejected');
+  assert.match(s2.policy.error, /left the organization/);
+  assert.strictEqual(m.secrets.team.policy, null);
 });
 
 test('a policy for another organization is rejected', async () => {

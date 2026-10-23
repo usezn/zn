@@ -73,6 +73,15 @@ function makeTeamOps(ctx) {
     if (t.policy && t.policy.envelope) policy.writeCache(t.policy.envelope, t.policy.etag || null, state.opts);
   }
 
+  /* What a new policy has to beat: the version held and its canonical digest (same version, other content = refused). */
+  function heldFloor(p) {
+    if (!p) return { minVersion: 0, heldDigest: null };
+    const pol = p.envelope && p.envelope.policy;
+    let heldDigest = typeof p.digest === 'string' ? p.digest : null;
+    try { if (pol && pol.version === p.version) heldDigest = policy.digestOf(pol); } catch (err) { /* keep the stored digest */ }
+    return { minVersion: Number(p.version) || 0, heldDigest };
+  }
+
   async function updateTeam(fn) {
     return state.serial(async () => {
       const s = await state.loadSecrets();
@@ -229,11 +238,23 @@ function makeTeamOps(ctx) {
           out.policy = { status: 'none' };
         } else {
           // The rollback floor is the version held in the vault, not a file.
-          const v = policy.verifyEnvelope(r.body, t.pin, { org: t.org, minVersion: (t.policy && t.policy.version) || 0 });
+          let v = policy.verifyEnvelope(r.body, t.pin, { org: t.org, ...heldFloor(t.policy) });
+          let applied = false;
           if (v.ok) {
-            const rec = { envelope: r.body, etag: typeof r.etag === 'string' && r.etag.length <= 200 ? r.etag : null, version: v.policy.version, fetched_at: new Date().toISOString() };
-            await updateTeam((tt) => { tt.policy = rec; });
-            policy.writeCache(rec.envelope, rec.etag, state.opts);
+            const rec = { envelope: r.body, etag: typeof r.etag === 'string' && r.etag.length <= 200 ? r.etag : null, version: v.policy.version, digest: policy.digestOf(v.policy), fetched_at: new Date().toISOString() };
+            // The check is repeated inside the serialized write: the policy held may have changed since the download began.
+            const w = await updateTeam((tt) => {
+              if (tt.org !== t.org || tt.install_id !== t.install_id) return { error: 'this machine left the organization during the download' };
+              const again = policy.verifyEnvelope(r.body, tt.pin, { org: tt.org, ...heldFloor(tt.policy) });
+              if (!again.ok) return { error: again.error };
+              tt.policy = rec;
+              return { ok: true };
+            });
+            if (w && w.ok) applied = true;
+            else v = { ok: false, error: (w && w.error) || 'this machine left the organization during the download' };
+          }
+          if (applied) {
+            policy.writeCache(r.body, typeof r.etag === 'string' && r.etag.length <= 200 ? r.etag : null, state.opts);
             out.policy = { status: 'updated', version: v.policy.version };
             if (held.version !== v.policy.version) writeAudit({ mode: 'set', decision: 'allow', reason: 'org_policy_v' + v.policy.version });
           } else {
