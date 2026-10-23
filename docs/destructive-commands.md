@@ -61,9 +61,9 @@ For those, use a sandbox, a container or your agent's own permission prompts. Th
 
 ## How well it works
 
-The test corpus has about 1,000 ordinary developer commands (builds, git, package managers, containers, `rm -rf node_modules dist build target .venv`, `curl -o`, `curl | jq`, edits to `.bashrc`, and many that sit close to the blocked shapes) and about 550 commands with the blocked shapes, written from templates with varied flags, targets and fictitious hosts. On that corpus there are no false positives and no misses; the corpus is written by the same people who wrote the rules, so read it as a regression test, not as an error rate on all real commands. Run `node bench/destructive_policy.js` in the repository to see the numbers, and `--docs` to also check the shell lines of the repository's documentation.
+The test corpus has 1,092 ordinary developer commands (builds, git, package managers, containers, `rm -rf node_modules dist build target .venv`, `curl -o`, `curl | jq`, edits to `.bashrc`, and many that sit close to the blocked shapes) and 586 commands with the blocked shapes, written from templates with varied flags, targets and fictitious hosts. On that corpus there are no false positives and no misses; the corpus is written by the same people who wrote the rules, so read it as a regression test, not as an error rate on all real commands. Run `node bench/destructive_policy.js` in the repository to see the numbers, and `--docs` to also check the shell lines of the repository's documentation.
 
-Cost: about 5 microseconds per command for the check itself, and a few microseconds more for a hook decision, which takes about 160 microseconds without it. The check code is loaded the first time a shell command is checked, and not at all when you turn the check off.
+Cost, measured on a Google Cloud e2-standard-4 virtual machine (4 vCPUs): 23 to 24 microseconds per command for the check itself, and a whole hook decision takes 358 to 384 microseconds with the check off and 440 to 448 with it on. Your computer will give other numbers; `node bench/destructive_policy.js` measures them. The check code is loaded the first time a shell command is checked, and not at all when you turn the check off.
 
 ## If it blocks a command you want
 
