@@ -356,10 +356,13 @@ async fn start_proxy(args: Args) -> Result<()> {
     }
 
     // Initialize Audit Vault
-    let vault = Arc::new(AuditVault::new(
-        &zn_config.audit.db_path,
-        db_key.as_deref(),
-    )?);
+    if zn_config.audit.store_payloads && db_key.is_none() {
+        anyhow::bail!("audit.store_payloads needs an encryption key; none is available");
+    }
+    let vault = Arc::new(
+        AuditVault::new(&zn_config.audit.db_path, db_key.as_deref())?
+            .with_payload_storage(zn_config.audit.store_payloads),
+    );
 
     // Initialize Tenant Store
     // A generated SuperAdmin key is written next to the audit database,
@@ -1239,7 +1242,10 @@ async fn process_mcp_message(
                 tool_name: tool_name.clone(),
                 status: status.clone(),
                 policy_match: policy_match.clone(),
-                payload: Some(Scrubber::scrub(&arguments)),
+                payload: zn::audit::payload_if_enabled(
+                    state.config.audit.store_payloads,
+                    Scrubber::scrub(&arguments),
+                ),
                 agent_id: Some(agent_id_str.clone()),
                 namespace: state.config.security.namespace.clone(),
                 anomaly_score,
@@ -1252,9 +1258,11 @@ async fn process_mcp_message(
 
             // Log nearest-neighbor separately if enabled
             if let Some(nn) = nearest_neighbor_entry {
-                let nn_entry = AuditEntry::new("NEAREST_NEIGHBOR", &tool_name, "AUDIT")
-                    .with_payload(nn)
+                let mut nn_entry = AuditEntry::new("NEAREST_NEIGHBOR", &tool_name, "AUDIT")
+                    .with_nearest_neighbor(nn.clone())
                     .with_agent_id(&agent_id_str);
+                nn_entry.payload =
+                    zn::audit::payload_if_enabled(state.config.audit.store_payloads, nn);
                 let _ = state.vault.log(nn_entry);
             }
 

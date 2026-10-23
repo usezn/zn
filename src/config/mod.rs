@@ -296,6 +296,13 @@ pub struct AuditConfig {
 
     /// Database encryption key
     pub encryption_key: Option<String>,
+
+    /// Persist the (scrubbed) request payload of each audited call.
+    /// Off by default: the audit log keeps only metadata (event, time, tool,
+    /// status, policy, agent, namespace). Turning it on requires an
+    /// encryption key (`ZN_DB_KEY`), in every environment.
+    #[serde(default)]
+    pub store_payloads: bool,
 }
 
 impl Default for AuditConfig {
@@ -305,6 +312,7 @@ impl Default for AuditConfig {
             max_logs_in_memory: default_max_logs(),
             encryption_enabled: false,
             encryption_key: std::env::var("ZN_DB_KEY").ok(),
+            store_payloads: false,
         }
     }
 }
@@ -771,6 +779,10 @@ impl ZnConfig {
             self.audit.encryption_enabled = true;
         }
 
+        if let Ok(v) = std::env::var("ZN_AUDIT_STORE_PAYLOADS") {
+            self.audit.store_payloads = matches!(v.trim(), "1" | "true" | "TRUE" | "True");
+        }
+
         if let Ok(endpoint) = std::env::var("ZN_SIEM_ENDPOINT") {
             self.siem.endpoint = Some(endpoint);
         }
@@ -873,6 +885,15 @@ impl ZnConfig {
         {
             return Err(anyhow!(
                 "Audit log encryption is MANDATORY in production. Please set ZN_DB_KEY."
+            ));
+        }
+
+        if self.audit.store_payloads
+            && self.kms.key_id.is_none()
+            && (!self.audit.encryption_enabled || self.audit.encryption_key.is_none())
+        {
+            return Err(anyhow!(
+                "audit.store_payloads needs an encryption key: set ZN_DB_KEY, or leave payloads off (the default)."
             ));
         }
 
@@ -1010,5 +1031,39 @@ mod credential_tests {
         );
         assert_eq!(credential_override(some("  "), None), None);
         assert_eq!(credential_override(None, None), None);
+    }
+}
+
+#[cfg(test)]
+mod audit_payload_tests {
+    use super::*;
+
+    #[test]
+    fn payload_storage_is_off_by_default() {
+        assert!(!AuditConfig::default().store_payloads);
+        let parsed: AuditConfig = serde_json::from_str("{}").unwrap();
+        assert!(!parsed.store_payloads);
+    }
+
+    #[test]
+    fn payload_storage_without_a_key_is_refused() {
+        let mut cfg = ZnConfig::default();
+        cfg.audit.store_payloads = true;
+        cfg.audit.encryption_enabled = false;
+        cfg.audit.encryption_key = None;
+        cfg.kms.key_id = None;
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("store_payloads"), "{err}");
+    }
+
+    #[test]
+    fn payload_storage_with_a_key_passes_that_check() {
+        let mut cfg = ZnConfig::default();
+        cfg.audit.store_payloads = true;
+        cfg.audit.encryption_enabled = true;
+        cfg.audit.encryption_key = Some("example-passphrase-not-secret".into());
+        if let Err(e) = cfg.validate() {
+            assert!(!e.to_string().contains("store_payloads"), "{e}");
+        }
     }
 }
