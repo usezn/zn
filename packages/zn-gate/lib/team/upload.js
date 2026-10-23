@@ -154,8 +154,16 @@ function acquireLock(lockFile, nowMs) {
 }
 
 function releaseLock(lockFile, fd) {
+  // The lock may have been deleted meanwhile (`zn team leave`) and another one created by a new membership:
+  // delete the file only if it is still the one this upload created.
+  let ours = false;
+  try {
+    const mine = fs.fstatSync(fd, { bigint: true });
+    const there = fs.statSync(lockFile, { bigint: true });
+    ours = mine.ino === there.ino && mine.dev === there.dev;
+  } catch (err) { ours = false; }
   try { fs.closeSync(fd); } catch (err) { /* already closed */ }
-  try { fs.unlinkSync(lockFile); } catch (err) { /* already removed */ }
+  if (ours) { try { fs.unlinkSync(lockFile); } catch (err) { /* already removed */ } }
 }
 
 /* ------------------------------------------------------------------ */
@@ -193,7 +201,15 @@ function checkOptions(opts) {
     shouldStop: typeof opts.shouldStop === 'function' ? opts.shouldStop : () => false,
     // Async; false after a response means the membership changed during the request: nothing is written.
     isCurrent: typeof opts.isCurrent === 'function' ? opts.isCurrent : null,
+    // Async; runs a write (the lock, the state file) in the caller's serialised section, only while the
+    // membership that started the upload is current. Resolves {stale: true} (nothing run) or {value}.
+    guard: typeof opts.guard === 'function' ? opts.guard : null,
   };
+}
+
+/* A write of this upload: through the caller's guard when there is one. */
+function guarded(o, fn) {
+  return o.guard ? o.guard(fn) : Promise.resolve({ value: fn() });
 }
 
 function isExpected(body) {
@@ -252,10 +268,10 @@ function pendingOf(o, head) {
 }
 
 /* Records the failure in the state file. The head kept in memory is the one that was confirmed. */
-function fail(o, ctx, status, text) {
+async function fail(o, ctx, status, text) {
   const pending = pendingOf(o, ctx.head);
   try {
-    writeState(o.stateFile, { head: ctx.head, last_upload: ctx.lastUpload, last_status: status, last_error: text });
+    await guarded(o, () => writeState(o.stateFile, { head: ctx.head, last_upload: ctx.lastUpload, last_status: status, last_error: text }));
   } catch (err) { /* the state file could not be written; the result still reports the status */ }
   return { status, uploaded: ctx.uploaded, head: ctx.head, pending };
 }
@@ -338,7 +354,12 @@ async function sync(o, ctx) {
     ctx.uploaded += done.accepted;
     ctx.lastUpload = new Date(o.now()).toISOString();
     batches += 1;
-    writeState(o.stateFile, { head: ctx.head, last_upload: ctx.lastUpload, last_status: 'in_progress' });
+    const wrote = await guarded(o, () => writeState(o.stateFile, { head: ctx.head, last_upload: ctx.lastUpload, last_status: 'in_progress' }));
+    if (wrote.stale) {
+      ctx.stale = true;
+      outcome = { status: 'stale', text: 'the organization membership changed during the upload' };
+      break;
+    }
   }
 
   let status;
@@ -355,8 +376,11 @@ async function sync(o, ctx) {
 
   const pending = countPending(records, ctx.head);
   if (o.isCurrent && !(await o.isCurrent())) ctx.stale = true;
-  if (ctx.stale) return { status, uploaded: ctx.uploaded, head: ctx.head, pending };
-  writeState(o.stateFile, { head: ctx.head, last_upload: ctx.lastUpload, last_status: status, last_error: text });
+  if (!ctx.stale) {
+    const wrote = await guarded(o, () => writeState(o.stateFile, { head: ctx.head, last_upload: ctx.lastUpload, last_status: status, last_error: text }));
+    if (wrote.stale) ctx.stale = true;
+  }
+  if (ctx.stale) return { status: 'stale', uploaded: ctx.uploaded, head: ctx.head, pending };
   return { status, uploaded: ctx.uploaded, head: ctx.head, pending };
 }
 
@@ -375,13 +399,16 @@ async function uploadPending(opts) {
   const ctx = { head: state.head, lastUpload: state.last_upload, uploaded: 0 };
   let fd = null;
   try {
-    fd = acquireLock(o.lockFile, o.now());
+    // The lock is a file in ~/.zn: it is created only while the membership that started the upload is current.
+    const locked = await guarded(o, () => acquireLock(o.lockFile, o.now()));
+    if (locked.stale) return { status: 'stale', uploaded: 0, head: ctx.head, pending: pendingOf(o, ctx.head) };
+    fd = locked.value;
     if (fd === null) {
       return { status: 'busy', uploaded: 0, head: ctx.head, pending: pendingOf(o, ctx.head) };
     }
     return await sync(o, ctx);
   } catch (err) {
-    return fail(o, ctx, 'error', 'local audit files could not be read or written');
+    return await fail(o, ctx, 'error', 'local audit files could not be read or written');
   } finally {
     if (fd !== null) releaseLock(o.lockFile, fd);
   }

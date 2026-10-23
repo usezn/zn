@@ -352,7 +352,11 @@ stop malware running as the same user (see above).
 - **zn Team readable copies:** `~/.zn/team.json` and `~/.zn/org-policy.json` are
   for the hooks and `zn team status`. If one is deleted or edited, the vault
   puts it back and the hook takes the custom detectors from the vault in the
-  meantime. With the vault locked, the hooks have only those copies.
+  meantime. With the vault locked, the hooks have only those copies; if the
+  policy copy is gone as well, Claude Code says `Team detectors not applied`
+  (at most once an hour) instead of staying silent. A sync, `zn team status`
+  or a hook never restores the copies of an organization this machine has
+  already left.
 - **Rollback of the vault file:** restoring an older, genuine copy of
   `secrets.age` is accepted, and brings back the approvals and policy it had.
   Keep backups of `~/.zn` private.

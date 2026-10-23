@@ -548,9 +548,9 @@ test('the version and digest are checked again inside the serialized write', asy
   net.afterPolicy = () => { m.secrets.team = { ...m.secrets.team, install_id: '00000000-0000-4000-8000-000000000000' }; };
   m.secrets.team.policy = null;
   const s2 = await m.o.teamSync({ upload: false });
-  assert.strictEqual(s2.policy.status, 'rejected');
-  assert.match(s2.policy.error, /left the organization/);
+  assert.strictEqual(s2.policy.status, 'stale', 'the membership generation check drops the answer');
   assert.strictEqual(m.secrets.team.policy, null);
+  assert.strictEqual(policy.readCache(), null, 'no readable copy for the organization that was left');
 });
 
 test('a policy for another organization is rejected', async () => {
