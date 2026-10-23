@@ -54,6 +54,24 @@ not seen. Paths are checked after `~`, variables and symlinks are resolved,
 and globs and brace lists are checked against the files that exist now and
 against the names they could match.
 
+The same protection covers zn's own install, so an agent cannot switch the hooks off by
+replacing the code that runs them. Writes, moves and removals are refused for the files of the
+Claude Code plugin (everything under `~/.claude/plugins`, such as `installed_plugins.json`, the
+marketplace clone and the plugin's `scripts/zn-launch.js`, `hooks/hooks.json` and lock file, plus
+the folders `CLAUDE_PLUGIN_ROOT`, `CLAUDE_CODE_PLUGIN_CACHE_DIR` and `CLAUDE_CONFIG_DIR/plugins`
+name), for the whole folder of the zn-gate package that is running (found from the running code,
+not from the PATH) and for any `node_modules/zn-gate` folder, which covers the npm, nvm, Volta,
+Homebrew, `/usr/lib` and `/usr/local/lib` global prefixes and `npx` caches. They are also refused for
+a file named `zn`, `zn-gate`, `zn-mcp` (also `.cmd`, `.ps1`) in a folder on the PATH
+(for example `~/.local/bin` or `~/bin`) and for any file named `zn-hook-*`, because such a file
+would run in place of zn. A source checkout of zn-gate is not protected, so an agent can still
+work on zn-gate itself. Reading these files is allowed. The hooks also refuse the commands
+that remove zn or switch its plugin off: `npm`, `pnpm`, `yarn`, `bun` or `volta` uninstall or remove
+of `zn-gate`, `pip`, `pipx` or `uv` uninstall of `zn-gate`, `claude plugin disable` or
+`uninstall zn-gate`, and `claude plugin marketplace remove usezn`. Like `zn hooks uninstall`, they are
+for you to run in your own terminal; installing other packages and listing plugins still work.
+As above, a write the hooks cannot read as a word of the command is not seen.
+
 The hooks also ask before the agent writes to the files where it keeps memory and
 standing instructions: `MEMORY.md`, `SOUL.md`, `AGENTS.md`, `CLAUDE.md`,
 `CLAUDE.local.md`, `GEMINI.md`, `.cursorrules`, `.windsurfrules`,

@@ -1,0 +1,2 @@
+### Security
+- Agents can no longer switch zn off by changing its own files or removing it. The hooks now refuse writes to the Claude Code plugin files, to the installed zn-gate package (a single write over `runner.js` used to turn every hook into a no-op) and to a fake `zn` or `zn-gate` in a folder on your PATH. They also refuse `npm uninstall -g zn-gate`, `pip uninstall zn-gate`, `claude plugin disable zn-gate` and `claude plugin marketplace remove usezn`: run those yourself in your own terminal. Reading these files and installing or removing other packages is unchanged.

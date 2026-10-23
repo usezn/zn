@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-24.11';
+const POLICY_RULES_VERSION = '2026-10-24.15';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -97,6 +97,32 @@ const AGENT_CONFIG_RES = [
   [/(^|\/)opencode\.jsonc?$/, 'OpenCode configuration'],
   [/(^|\/)\.(config\/)?opencode\/plugins?\//, 'OpenCode plugins'],
   [/(^|\/)\.opencode\/plugins?\//, 'OpenCode plugins'],
+];
+
+// zn's own code and the Claude Code plugin that runs it. An agent that could overwrite them could turn every hook
+// into a no-op (one write of `process.exit(0)` over runner.js), so writes are refused like the agent configuration.
+// Reads stay allowed. The package that is running is added at run time (see installContext).
+const ZN_INSTALL_RES = [
+  [/(^|\/)\.claude\/plugins(\/|$)/, 'the Claude Code plugin files'],
+  // Any global prefix (npm-global, nvm, /usr/lib, /usr/local/lib, Homebrew, %APPDATA%\npm) and any project install.
+  [/(^|\/)node_modules\/zn-gate(\/|$)/, 'the installed zn-gate package'],
+  [/(^|\/)node_modules\/\.bin\/zn(?:-gate|-mcp)?(?:\.(?:cmd|ps1))?$/, 'the zn command of a package install'],
+  [/(^|\/)zn-hook-[^/]*$/, 'a zn hook launcher'],
+];
+// A file with the name of the zn command, in a folder that is on the PATH, would run in place of zn.
+const ZN_BIN_NAME_RE = /^(?:zn|zn-gate|zn-mcp)(?:\.(?:cmd|ps1|exe|bat|js|sh))?$/;
+const BIN_DIR_RES = [
+  /^\/(?:usr(?:\/local)?|opt(?:\/homebrew|\/local)?)\/bin$/,
+  /(?:^|\/)\.local\/bin$/,
+  /(?:^|\/)\.local\/share\/pnpm$/,
+  /(?:^|\/)library\/pnpm$/i,
+  /(?:^|\/)\.(?:npm-global|npm-packages|npm|volta|bun|yarn|cargo|deno|asdf)\/(?:bin|shims)$/,
+  /(?:^|\/)go\/bin$/,
+  /(?:^|\/)\.nvm\/versions\/node\/[^/]+\/bin$/,
+  /(?:^|\/)\.fnm\/node-versions\/[^/]+\/installation\/bin$/,
+  /(?:^|\/)\.asdf\/installs\/nodejs\/[^/]+\/bin$/,
+  /(?:^|\/)appdata\/(?:roaming\/npm|local\/pnpm)$/i,
+  /(?:^|\/)lib\/node_modules\/\.bin$/,
 ];
 
 // Windows and macOS file systems are case-insensitive by default. Read on each
@@ -205,6 +231,55 @@ function agentContext(home, cwd, env) {
   return { dirs: [...dirs], files, roots: [...roots] };
 }
 
+let packageKeysCache = null;
+/**
+ * Where the zn-gate package that is running lives, found from this module (not from the PATH or the settings, which an
+ * agent may change): the whole folder is protected. A source checkout is left out (an agent may work on zn-gate itself
+ * there); an install, in node_modules or anywhere outside a git checkout, is in.
+ */
+function packageRootKeys(override) {
+  const root = override || path.resolve(__dirname, '..', '..');
+  const mode = caseInsensitive() ? 'i' : 'c';
+  if (!override && packageKeysCache && packageKeysCache.mode === mode) return packageKeysCache.keys;
+  let keys = [];
+  const real = realTargetOf(root);
+  const installed = !!override || /(^|\/)node_modules\//.test(slash(real)) || /(^|\/)node_modules\//.test(slash(root)) ||
+    !fs.existsSync(path.join(projectRootOf(root), '.git'));
+  if (installed) keys = keysOf(root);
+  if (!override) packageKeysCache = { mode, keys };
+  return override ? keysOf(root) : keys;
+}
+
+/** The plugin and package folders and the PATH folders that must not be written (keys, not spelled as typed). */
+function installContext(home, cwd, env, opts) {
+  const dirs = [];
+  const add = (p, reason) => { if (p) for (const k of keysOf(path.resolve(cwd, expandHome(String(p), home)))) dirs.push({ key: k, reason }); };
+  for (const k of packageRootKeys(opts.packageRoot)) dirs.push({ key: k, reason: 'the installed zn-gate package' });
+  if (env.CLAUDE_CONFIG_DIR) add(path.join(String(env.CLAUDE_CONFIG_DIR), 'plugins'), 'the Claude Code plugin files');
+  if (env.CLAUDE_PLUGIN_ROOT) add(env.CLAUDE_PLUGIN_ROOT, 'the Claude Code plugin files');
+  if (env.CLAUDE_CODE_PLUGIN_CACHE_DIR) add(env.CLAUDE_CODE_PLUGIN_CACHE_DIR, 'the Claude Code plugin files');
+  const binDirs = new Set();
+  for (const k of [path.join(home, '.local', 'bin'), path.join(home, 'bin')]) for (const x of keysOf(k)) binDirs.add(x);
+  for (const raw of String(env.PATH || env.Path || '').split(path.delimiter)) {
+    if (!raw || !path.isAbsolute(raw.trim())) continue;
+    for (const x of keysOf(raw.trim())) binDirs.add(x);
+  }
+  return { dirs, binDirs };
+}
+
+/** zn's installed code, the plugin files, or a file that would stand in for the zn command. */
+function installClassOf(s, ctx) {
+  const inst = ctx.install;
+  for (const d of inst.dirs) if (s === d.key || s.startsWith(d.key + '/')) return { kind: 'agent_config', reason: d.reason };
+  for (const [re, reason] of ZN_INSTALL_RES) if (ci(re).test(s)) return { kind: 'agent_config', reason };
+  const base = path.basename(s);
+  if (ci(ZN_BIN_NAME_RE).test(base)) {
+    const dir = s.slice(0, s.length - base.length - 1);
+    if (inst.binDirs.has(dir) || BIN_DIR_RES.some((re) => ci(re).test(dir))) return { kind: 'agent_config', reason: 'a file named like the zn command, in a folder on the PATH' };
+  }
+  return null;
+}
+
 /** Everything a classification needs, from the options of one call. */
 function contextOf(opts = {}) {
   // A caller that classifies many words passes the context it already built.
@@ -212,7 +287,7 @@ function contextOf(opts = {}) {
   const home = opts.home || os.homedir();
   const cwd = opts.cwd || process.cwd();
   const env = opts.env || process.env;
-  return { home, cwd, env, creds: credentialEnvPaths(env, home, cwd), agent: agentContext(home, cwd, env) };
+  return { home, cwd, env, creds: credentialEnvPaths(env, home, cwd), agent: agentContext(home, cwd, env), install: installContext(home, cwd, env, opts) };
 }
 
 /**
@@ -224,6 +299,8 @@ function classifyResolved(abs, ctx) {
   const h = keyOf(slash(path.resolve(home)));
   if (s === h + '/.zn' || s.startsWith(h + '/.zn/')) return { kind: 'zn_state', reason: 'zn keeps its vault and audit log in ~/.zn' };
   for (const [re, reason] of AGENT_CONFIG_RES) if (ci(re).test(s)) return { kind: 'agent_config', reason };
+  const installed = installClassOf(s, ctx);
+  if (installed) return installed;
   // The directory itself (`cd ~/.claude`, `mv ~/.codex`, `rm -r ~/.cursor`) and the files directly in it.
   if (agent.dirs.includes(s) || agent.roots.includes(s)) return { kind: 'agent_config', reason: 'an agent configuration directory' };
   if (agent.dirs.some((d) => s.startsWith(d + '/') && !s.slice(d.length + 1).includes('/'))) {
@@ -1360,6 +1437,78 @@ function npmExecInit(text) {
   return false;
 }
 
+/*
+ * Commands that remove or switch off zn: uninstalling the package (npm, pnpm, yarn, bun, volta, pip, pipx, uv, ...), and
+ * `claude plugin disable|uninstall zn-gate` or removing the usezn marketplace. They are the user's decision, like
+ * `zn-gate uninstall`. Read per simple command, token by token (linear), so they are found inside `sh -c "..."`, after
+ * sudo or env prefixes, with the options anywhere. Returns the command to name in the message, or null.
+ */
+const PKG_HEADS = new Set(['npm', 'pnpm', 'yarn', 'yarnpkg', 'bun', 'cnpm', 'volta', 'pip', 'pip3', 'pipx', 'uv', 'pipenv', 'poetry', 'conda', 'mamba', 'micromamba', 'python', 'python3', 'py']);
+const PKG_REMOVE_WORDS = new Set(['uninstall', 'remove', 'rm', 'un', 'unlink', 'r', 'delete']);
+const PLUGIN_REMOVE_WORDS = new Set(['disable', 'uninstall', 'remove', 'rm', 'delete']);
+const ZN_PKG_TOKEN_RE = /^zn[-_.]gate(?:[@=<>!~[].*)?$/i;
+const SEGMENT_SPLIT_RE = /[;&|\n`()]+/;
+const MAX_SEGMENT_TOKENS = 200;
+
+function bareProgram(tok) {
+  return path.basename(String(tok).replace(/\\/g, '/')).replace(/\.(?:exe|cmd|ps1|bat|js|cjs|mjs)$/i, '').toLowerCase();
+}
+function cleanToken(t) {
+  return t.replace(/^["'\\]+|["'\\]+$/g, '');
+}
+
+function installRemoval(cmd) {
+  const text = String(cmd || '');
+  if (!/zn[-_.]gate|usezn/i.test(text)) return null;
+  for (const seg of text.split(SEGMENT_SPLIT_RE)) {
+    if (!/zn[-_.]gate|usezn/i.test(seg)) continue;
+    const toks = seg.split(/\s+/).map(cleanToken).filter(Boolean).slice(0, MAX_SEGMENT_TOKENS);
+    for (let i = 0; i < toks.length; i++) {
+      const head = bareProgram(toks[i]);
+      if (head === 'claude' || head === 'claude-code') {
+        const rest = toks.slice(i + 1);
+        const at = rest.findIndex((t) => /^plugins?$/i.test(t));
+        if (at < 0) continue;
+        const sub = rest.slice(at + 1);
+        const mk = sub.findIndex((t) => /^marketplaces?$/i.test(t));
+        if (mk >= 0) {
+          const mrm = sub.findIndex((t, j) => j > mk && PLUGIN_REMOVE_WORDS.has(t.toLowerCase()));
+          if (mrm >= 0 && sub.slice(mrm + 1).some((t) => /^usezn(?:$|[@/])/i.test(t))) return 'claude plugin marketplace remove usezn';
+        }
+        const rm = sub.findIndex((t) => PLUGIN_REMOVE_WORDS.has(t.toLowerCase()));
+        if (rm >= 0 && sub.slice(rm + 1).some((t) => /^zn-gate(?:@.*)?$/i.test(t))) return 'claude plugin ' + (sub[rm].toLowerCase() === 'disable' ? 'disable' : 'uninstall') + ' zn-gate';
+      } else if (PKG_HEADS.has(head) || /^(?:pip|python)[0-9.]+$/.test(head)) {
+        const rest = toks.slice(i + 1);
+        const rm = rest.findIndex((t) => PKG_REMOVE_WORDS.has(t.toLowerCase()));
+        if (rm >= 0 && rest.slice(rm + 1).some((t) => ZN_PKG_TOKEN_RE.test(path.basename(t.replace(/\\/g, '/'))))) {
+          return head + ' ' + (rest[rm].toLowerCase() === 'remove' ? 'remove' : 'uninstall') + ' zn-gate';
+        }
+      }
+    }
+  }
+  return null;
+}
+
+// A path to the installed package built while the command runs, such as "$(npm root -g)/zn-gate/lib/hooks/runner.js":
+// it cannot be resolved here, so a command that writes or removes something with such a path is refused.
+const VAR_BASE_ZN_RE = /(?:\$\(|\$\{|\$[A-Za-z_]|`|%[A-Za-z_]+%|\$env:)[^;&|\n]*[\\/](?:node_modules[\\/])?zn-gate(?:[\\/@]|["'\s)`]|$)/i;
+const WRITE_VERB_RE = /(?:^|[\s;&|(`])(?:sudo\s+)?(?:rm|mv|unlink|rmdir|ln|cp|install|rsync|truncate|shred|chmod|chown|tee|sed|dd|touch|mkdir|del|erase|rd|ri|remove-item|move-item|copy-item|set-content|out-file)(?:\s|$)|>/i;
+function installPathViaVariable(cmd) {
+  const text = String(cmd || '');
+  if (!/zn-gate/i.test(text)) return false;
+  for (const seg of text.split(/[;&|\n]+/)) {
+    if (VAR_BASE_ZN_RE.test(seg) && WRITE_VERB_RE.test(seg)) return true;
+  }
+  return false;
+}
+
+function installRemovalMessage(what) {
+  return 'zn blocked this: `' + what + '` removes or switches off zn\'s protection for your coding agent, which is the user\'s decision. ' +
+    'Next step: ask the user to run it themselves in their own terminal.';
+}
+const INSTALL_PATH_MESSAGE = 'zn blocked this: the command writes or removes something inside the installed zn-gate package through a path built while it runs, ' +
+  'and an agent may not change zn\'s own code. Next step: ask the user to make this change in their own terminal.';
+
 function adminCommand(cmd) {
   const text = String(cmd || '');
   const m = ZN_ADMIN_RE.exec(text);
@@ -2057,6 +2206,9 @@ function bashDenialOf(cmd, opts = {}) {
   if (String(cmd || '').length > SHELL_SCAN_CAP) return TOO_LONG_MESSAGE;
   const admin = adminCommand(cmd);
   if (admin) return adminDenial(admin, opts, cmd);
+  const removal = installRemoval(cmd);
+  if (removal) return installRemovalMessage(removal);
+  if (installPathViaVariable(cmd)) return INSTALL_PATH_MESSAGE;
   if (keychainQuery(cmd, opts.env || process.env)) return KEYCHAIN_MESSAGE;
   // The context (home, project, agent directories) is built once per command.
   opts = { ...opts, ctx: contextOf(opts) };
@@ -2159,6 +2311,18 @@ function bashDenialOf(cmd, opts = {}) {
       if (deny) return deny;
     }
     if (!c) {
+      // A name like the zn command written after a cd (cd ~/.local/bin && echo x > zn) is looked up where the cd leads.
+      // (A cd into the plugin or package folders is refused on its own.) Only the last few folders are followed.
+      if ((writing || w.redirectTarget) && opts.cdBases.moved && !path.isAbsolute(text) && !/^[~$%]/.test(text) &&
+          (ci(ZN_BIN_NAME_RE).test(path.basename(slash(text))) || /^zn-hook-/i.test(path.basename(slash(text))))) {
+        const cwdNow = path.resolve(opts.cwd || process.cwd());
+        for (const dir of opts.cdBases.dirs.slice(-4)) {
+          if (dir === cwdNow) continue;
+          if (overBudget(opts.budget, 1)) return TOO_SLOW_MESSAGE;
+          const there = classifyPath(path.join(dir, stripStreams(text)), { ...opts, cwd: dir });
+          if (there && there.kind === 'agent_config') return agentConfigDenial(text, there);
+        }
+      }
       // Segments that are just "." name the same place (.agents/. is the folder itself).
       const t = slash(text).replace(/(?:\/\.)+(?=\/|$)/g, '');
       if ((writing && (AGENT_CONFIG_MENTION_RE.test(t) || agentsDirRisky(t, w))) ||
