@@ -31,6 +31,8 @@ static SSN_REGEX: OnceLock<Regex> = OnceLock::new();
 static E164_REGEX: OnceLock<Regex> = OnceLock::new();
 static NANP_REGEX: OnceLock<Regex> = OnceLock::new();
 static JWT_REGEX: OnceLock<Regex> = OnceLock::new();
+static AUTH_HEADER_REGEX: OnceLock<Regex> = OnceLock::new();
+static AUTH_PLACEHOLDER_REGEX: OnceLock<Regex> = OnceLock::new();
 
 fn email_re() -> &'static Regex {
     EMAIL_REGEX
@@ -46,6 +48,45 @@ fn api_re() -> &'static Regex {
         // Requires at least 8 characters for the value (reduced from 16 for better detection)
         Regex::new(r#"(?i)(api[_-]?key|secret[_-]?key|password|token|auth[_-]?token|access[_-]?token|bearer)(\\{0,2}['"])?[ \t]*[:=][ \t]*(\\{0,2}['"])?([a-zA-Z0-9_\-.]{8,})(?:\\{0,2}['"])?"#).unwrap()
     })
+}
+
+/// `Authorization: Bearer <token>` (also Basic and Token, quoted, escaped or in a JSON member).
+/// Group 1 is the header up to the token, group 2 the token. The Node scrubber has the same rule.
+fn auth_re() -> &'static Regex {
+    AUTH_HEADER_REGEX.get_or_init(|| {
+        Regex::new(r#"(?i)((?:proxy-)?authorization(?:\\{0,2}['"])?[ \t]*[:=][ \t]*(?:\\{0,2}['"])?(?:bearer|basic|token)[ \t]+)([A-Za-z0-9._~+/=-]{8,512})"#).unwrap()
+    })
+}
+
+/// Words that start a template or a prose example ("your_token_here", "token", "xxx").
+fn auth_placeholder_re() -> &'static Regex {
+    AUTH_PLACEHOLDER_REGEX.get_or_init(|| {
+        Regex::new(r"(?i)^(?:your|my|an?|the|insert|put|paste|token|api|key|secret|access|auth|bearer|xxx|redacted)[-_a-z]*$|^[-_.=*x]+$|^(?:process\.env|os\.environ|os\.getenv|env\.|secrets\.|vars\.|config\.|settings\.|self\.|this\.|arn:)").unwrap()
+    })
+}
+
+/// A credential in an Authorization header looks random: it is not a placeholder or a
+/// reference and has a digit, or is long, or mixes cases (the Node scrubber's rule).
+fn auth_token_ok(token: &str) -> bool {
+    token.len() >= 8
+        && !token.contains("__ZN_")
+        && !auth_placeholder_re().is_match(token)
+        && (token.bytes().any(|b| b.is_ascii_digit())
+            || token.len() >= 20
+            || (token.len() >= 16
+                && token.bytes().any(|b| b.is_ascii_lowercase())
+                && token.bytes().any(|b| b.is_ascii_uppercase())))
+}
+
+/// Replacement for one auth_re() match: keep the header, redact the token (not a final `.`).
+fn redact_auth(caps: &regex::Captures) -> String {
+    let token = &caps[2];
+    let core = token.trim_end_matches('.');
+    if auth_token_ok(core) {
+        format!("{}[SECRET_REDACTED]{}", &caps[1], &token[core.len()..])
+    } else {
+        caps[0].to_string()
+    }
 }
 
 /// Replacement for one api_re() match. A plain `name=value` becomes `name: [SECRET_REDACTED]`.
@@ -381,6 +422,7 @@ impl Scrubber {
         output = email_re()
             .replace_all(&output, "[EMAIL_REDACTED]")
             .to_string();
+        output = auth_re().replace_all(&output, redact_auth).to_string();
         output = api_re().replace_all(&output, redact_secret).to_string();
         output = replace_spans(&output, &card_spans(&output), "[CARD_REDACTED]");
         output = replace_spans(&output, &ssn_spans(&output), "[SSN_REDACTED]");
@@ -515,6 +557,53 @@ mod tests {
         );
         let input = format!(r#"{{"command":"curl -d password=\"{v}\""}}"#);
         assert!(!Scrubber::scrub(&input).contains(v));
+    }
+
+    #[test]
+    fn test_scrub_authorization_header() {
+        // Fake, random-looking tokens only.
+        let t = "Zk8Qw3Lm9Xv2Rt7Yp4Nb";
+        for input in [
+            format!("Authorization: Bearer {t}"),
+            format!("curl -H \"Authorization: Bearer {t}\" https://example.com/"),
+            format!("authorization:bearer {t}"),
+            format!(r#"{{"Authorization":"Bearer {t}"}}"#),
+            format!(r#"{{"cmd":"curl -H \"Authorization: Bearer {t}\""}}"#),
+            "Authorization: Basic dXNlcjpwYXNzd29yZDEyMw==".to_string(),
+            format!("Proxy-Authorization: Bearer {t}"),
+        ] {
+            let out = Scrubber::scrub(&input);
+            assert!(out.contains("[SECRET_REDACTED]"), "{input} -> {out}");
+            assert!(
+                !out.contains(t) && !out.contains("dXNlcjpwYXNzd29yZDEyMw"),
+                "{input} -> {out}"
+            );
+        }
+        assert_eq!(
+            Scrubber::scrub(&format!("Authorization: Bearer {t}.")),
+            "Authorization: Bearer [SECRET_REDACTED]."
+        );
+        // Stable on a second pass.
+        let once = Scrubber::scrub(&format!("Authorization: Bearer {t}"));
+        assert_eq!(Scrubber::scrub(&once), once);
+    }
+
+    #[test]
+    fn test_authorization_header_negatives() {
+        // Placeholders, references, short values and words are not credentials.
+        for input in [
+            "Authorization: Bearer token",
+            "Authorization: Bearer your_token_here",
+            "Authorization: Bearer ${API_TOKEN}",
+            "Authorization: Bearer $TOKEN_VALUE",
+            "Authorization: Bearer <token>",
+            "Authorization: Bearer abcdefghijkl",
+            "Authorization: Bearer xxxxxxxxxxxx",
+            "Authorization: Bearer process.env.AUTH_TOKEN_X",
+            "Bearer tokens expire after an hour",
+        ] {
+            assert_eq!(Scrubber::scrub(input), input);
+        }
     }
 
     #[test]
