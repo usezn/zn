@@ -183,7 +183,10 @@ test('install (project): named hook with a nested PreToolUse group; idempotent; 
   assert.equal(data['zn-gate'].enabled, true);
   const [g] = data['zn-gate'].PreToolUse;
   assert.equal(g.matcher, '*');
-  assert.deepEqual(g.hooks, [{ type: 'command', command: 'zn hook antigravity', timeout: 15 }]);
+  // The shared project file names `zn` on the PATH inside zn's own guard (see hooks_antigravity_project.test.js).
+  const launcher = require('../lib/agents/launcher');
+  const guarded = process.platform === 'win32' ? launcher.windowsScriptCommand(launcher.projectWindowsScript('antigravity')) : launcher.projectShCommand('antigravity');
+  assert.deepEqual(g.hooks, [{ type: 'command', command: guarded, timeout: 15 }]);
   agy.install({ scope: 'project', projectDir: dir });
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf8'))['zn-gate'].PreToolUse.length, 1);
   assert.equal(agy.uninstall({ scope: 'project', projectDir: dir }).removed, 1);

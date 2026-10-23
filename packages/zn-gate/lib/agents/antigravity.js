@@ -392,7 +392,10 @@ const SELF_CHECK_EVENT = { conversationId: 'zn-self-check', workspacePaths: [os.
  */
 function selfCheck(command, opts = {}) {
   const env = { ...(opts.env || process.env), ZN_STATS: 'off' };
-  const r = spawnSync(command, { shell: true, input: JSON.stringify(SELF_CHECK_EVENT), encoding: 'utf8', timeout: opts.timeoutMs || 20000, env, windowsHide: true });
+  const spawnOpts = { input: JSON.stringify(SELF_CHECK_EVENT), encoding: 'utf8', timeout: opts.timeoutMs || 20000, env, windowsHide: true };
+  // A command zn wrote is run the way Antigravity runs it: split on spaces, no shell (not where cmd.exe is needed).
+  const parts = opts.splitOnSpaces && process.platform !== 'win32' ? String(command).split(' ') : null;
+  const r = parts ? spawnSync(parts[0], parts.slice(1), spawnOpts) : spawnSync(command, { shell: true, ...spawnOpts });
   if (r.error) return { ok: false, detail: r.error.code === 'ETIMEDOUT' ? 'it did not answer within 20 seconds' : 'it could not be started (' + (r.error.code || 'error') + ')' };
   const text = String(r.stdout || '').trim();
   let parsed;
@@ -407,11 +410,17 @@ function selfCheck(command, opts = {}) {
 /**
  * The hook command. A user install goes through zn's launcher (lib/agents/launcher.js): a Node.js that has gone
  * away makes the launcher answer a deny with the repair step, where a command that cannot start would block with
- * no text from zn (or not at all). A project install or a command given by the caller keeps the plain command.
+ * no text from zn (or not at all). A project install writes `sh -c` (PowerShell on Windows) around `zn hook
+ * antigravity` with the same deny answer when zn or node is missing. A command given by the caller stays as it is.
  */
 function commandFor(opts = {}) {
   const platform = opts.platform || process.platform;
-  if (opts.command || (opts.scope || 'user') === 'project') return cfg.hookCommand(id, opts);
+  if (opts.command) return cfg.hookCommand(id, opts);
+  // A project install is shared through the repository, so it names `zn` on the PATH instead of this machine's
+  // launcher, with its own guard: a missing zn or node ends in a deny that says how to repair it.
+  if ((opts.scope || 'user') === 'project') {
+    return platform === 'win32' ? launcher.windowsScriptCommand(launcher.projectWindowsScript(id)) : launcher.projectShCommand(id);
+  }
   const node = opts.nodePath || process.execPath;
   const runner = opts.runnerPath || cfg.runnerPath();
   if (platform === 'win32') {
@@ -441,11 +450,11 @@ function install(opts = {}) {
   data[name] = { enabled: true, PreToolUse: [{ matcher: MATCHER, hooks: [{ type: 'command', command, timeout: HOOK_TIMEOUT_S }] }] };
   cfg.writeJson(file, data);
   report.warnings.push('Antigravity support is experimental. zn checks tool calls before they run (PreToolUse): it blocks reads and writes of secret files and shell commands that handle secrets.');
-  if ((opts.scope || 'user') === 'project' && !opts.command) report.warnings.push('The project hook runs `zn` from your PATH (zn hook antigravity): every teammate who opens this project in Antigravity needs zn-gate installed, otherwise the hook cannot start and Antigravity may let the call through (a project install has no launcher).');
+  if ((opts.scope || 'user') === 'project' && !opts.command) report.warnings.push('The project hook runs `zn` from your PATH (zn hook antigravity): every teammate who opens this project in Antigravity needs zn-gate installed. Without it the hook answers a deny that says how to install it, so Antigravity blocks the call instead of running it unchecked. The command is written for this kind of machine (' + ((opts.platform || process.platform) === 'win32' ? 'Windows' : 'macOS and Linux') + '): a teammate on the other kind runs `zn hooks install antigravity --project` in their own copy of the project.');
   report.warnings.push('Antigravity hooks cannot rewrite or redact what a tool returns, so a value printed by a command or a file the agent is allowed to read reaches the model. Keep secrets in the vault.');
   report.warnings.push('Antigravity does not document what happens when a hook fails or times out. In our tests (Windows, October 2026) a hook that failed to start or answered with something that is not a decision made Antigravity deny every tool call; a timeout was not tested. If the Node.js zn was installed with goes away, the launcher script answers a deny that says how to repair it, and zn itself answers every event with an explicit decision. Run `zn-gate check` to see that the hook works.');
   if (opts.selfCheck) {
-    report.selfCheck = selfCheck(command, opts);
+    report.selfCheck = selfCheck(command, { ...opts, splitOnSpaces: !opts.command });
     if (!report.selfCheck.ok) {
       const fix = (opts.scope || 'user') === 'project' && !opts.command
         ? 'install zn-gate for your user (npm install -g zn-gate) so that `zn` is on your PATH, then run this command again'
