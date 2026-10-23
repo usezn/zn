@@ -70,6 +70,7 @@ Run it yourself, in your own terminal, with no arguments. When an AI agent or a 
 - `npx: command not found`, or a message about the Node.js version: install the LTS version of [Node.js](https://nodejs.org/), open a new terminal and run the command again.
 - "running scripts is disabled on this system" on Windows: see the PowerShell note above.
 - `init` only prints steps and changes nothing: an AI agent or a script ran it. Run it yourself in your own terminal.
+- `zn-gate check` tells you to install the Claude Code plugin, but your Node.js is older than 20.19: the plugin needs 20.19 or later, and `init` sets up hooks instead. Run `npm install -g zn-gate` and then `zn hooks install claude-code`, or update Node.js.
 - `check` shows **NOT protected**: that line says why and what to run. [What the output means](docs/check.md).
 - You want to remove zn-gate: `npx -y zn-gate uninstall` shows what it will remove (the Claude Code plugin, zn's hooks, wrapped MCP servers) and asks first. `init --revert` only puts back MCP configs saved before wrapping.
 
