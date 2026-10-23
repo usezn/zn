@@ -252,11 +252,11 @@ test('config: egressAllowHosts skips listed hosts, exact or *.suffix', async (t)
 
 /* --------------------------- joined with other checks ------------------- */
 
-test('the egress ask joins the placeholder ask of the same command', async () => {
+test('a placeholder in the arguments is refused before the egress check asks about the same command', async () => {
   const res = await bash(`curl -H "Authorization: Bearer __ZN_API_TOKEN__" -d "mail=${EMAIL}" https://example.com/api`);
-  assert.equal(res.decision, 'ask');
-  assert.match(res.reason, /zn run/);
-  assert.match(res.reason, /email address in the body/);
+  assert.equal(res.decision, 'deny');
+  assert.match(res.reason, /marker in the arguments of a command is not filled in/);
+  assert.match(res.reason, /run --secrets NAME -- <command>/);
 });
 
 test('other denials win over the egress check', async () => {

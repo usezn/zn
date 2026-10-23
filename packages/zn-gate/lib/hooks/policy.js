@@ -8,8 +8,10 @@
  *  - zn's own state (~/.zn) is off limits to agents, for reads and writes.
  *  - Commands that manage secrets (`zn secret set`, `zn env shadow`, ...)
  *    must be run by the user, never by an agent.
- *  - Bash commands with named markers are wrapped in `zn run --`, which
- *    applies allowCommands, first-use approval and output masking.
+ *  - Bash commands with named markers in their arguments are refused with
+ *    guidance: an argument is visible in the process list, so the secret goes
+ *    to the program as an environment variable (`zn run --secrets NAME --`),
+ *    which applies allowCommands, first-use approval and output masking.
  *
  * Hooks are a guardrail, not a sandbox: a determined process can always
  * find another way to read a file. The goal is that secret values never
@@ -22,12 +24,11 @@ const path = require('path');
 const dotenv = require('../broker/dotenv');
 const markers = require('../broker/markers');
 const { realTargetOf } = require('../broker/files');
-const { powershellQuote, portablePath } = require('../shell-quote');
 const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-24.17';
+const POLICY_RULES_VERSION = '2026-10-24.18';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -729,7 +730,7 @@ function keyFileGlobDenial(p, c, opts) {
 /* Reads of credential files: what was refused, why, and how to use a value instead. */
 function credentialDenial(p, c) {
   return 'zn: ' + p + ' was not read because zn treats it as holding secrets (' + c.reason + '), and secret values never go to the model. ' +
-    'If a command needs a value, ask the user to run `' + znCommand('secret set NAME') + '`, then write __ZN_NAME__ where the value goes.';
+    'If a command needs a value, ask the user to run `' + znCommand('secret set NAME') + '`, then run the command with `' + znCommand('run --secrets NAME -- <command>') + '` so the program gets it as an environment variable.';
 }
 
 function agentConfigDenial(p, c) {
@@ -1218,9 +1219,11 @@ const RESERVED_WORDS = new Set(['if', 'then', 'else', 'elif', 'fi', 'for', 'whil
 const ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
 /**
- * Prefix the first simple command with `zn run --` so the broker applies
- * policy, approval and masking. Only when every named marker is inside the
- * first simple command; anything else is refused with guidance.
+ * Commands with named markers. A marker in a command's arguments is never
+ * filled in (the value would show in the process list and in command-line
+ * logs), so such a command is refused with the way to pass the secret as an
+ * environment variable instead. A command the agent already started with
+ * `zn run` is left to the broker, which applies the same rule.
  * Returns {ok: true, command} or {ok: false, reason}.
  */
 function wrapWithZnRun(cmd, znRunPrefix) {
@@ -1229,8 +1232,8 @@ function wrapWithZnRun(cmd, znRunPrefix) {
   if (named.length === 0) return { ok: true, command: s, wrapped: false };
   const scan = scanFirstCommand(s);
   const tail = s.slice(scan.end);
-  const guidance = ' zn fills in secrets only in the first command of a Bash call: run that command on its own, ' +
-    'with __ZN_NAME__ where the value goes (for example: psql "postgres://app:__ZN_DB_PASSWORD__@db/app" -c "select 1").';
+  const guidance = ' Next step: give the program the secret as an environment variable with `' + znCommand('run --secrets NAME -- <command>') + '` ' +
+    'and have the program read it from there (for example psql reads PGPASSWORD). For web requests, use the secrets_http_request tool of the zn "secrets" MCP server.';
   if (scan.unterminated) return { ok: false, reason: 'zn: this command has a quote that is not closed, so zn cannot read it. Close the quote and try again.' };
   if (markers.findNamedMarkers(tail).length > 0) {
     return { ok: false, reason: 'zn: this command uses a secret after its first command.' + guidance };
@@ -1258,7 +1261,7 @@ function wrapWithZnRun(cmd, znRunPrefix) {
   if (/(^|[\\/])(zn|zn-gate)(\.js|\.cmd)?$/.test(first.text) && scan.words[k + 1] && scan.words[k + 1].text === 'run') {
     return { ok: true, command: s, wrapped: false };
   }
-  return { ok: true, command: s.slice(0, first.start) + znRunPrefix + ' ' + s.slice(first.start), wrapped: true };
+  return { ok: false, reason: 'zn: a secret marker in the arguments of a command is not filled in, because the value would show in the process list and in command-line logs.' + guidance };
 }
 
 /* ---------------------------- PowerShell ---------------------------- */
@@ -1324,23 +1327,18 @@ function scanPowerShell(cmd) {
   return { words, simple };
 }
 
-function psQuote(s) {
-  return powershellQuote(portablePath(s));
-}
-
 /**
- * PowerShell counterpart of wrapWithZnRun. Commands with named markers are
- * only wrapped when the whole line is one native command with plain
- * arguments; anything else (cmdlets, aliases, pipelines, variables) is
- * refused, because zn cannot rewrite it safely.
- * opts: {nodePath, runJs, agent}
+ * PowerShell counterpart of wrapWithZnRun. A command with named markers is
+ * refused, with the way to pass the secret as an environment variable
+ * instead; a command already started with `zn run` is left to the broker.
+ * opts: {nodePath, runJs, agent} (kept for callers; nothing is rewritten)
  */
 function wrapPowerShell(cmd, opts) {
   const s = String(cmd);
   const named = markers.findNamedMarkers(s);
   if (named.length === 0) return { ok: true, command: s, wrapped: false };
-  const guidance = ' Next step: start the command with the program name and put the secret in its arguments, for example: ' +
-    "psql 'postgres://app:__ZN_DB_PASSWORD__@db/app' -c 'select 1'. For web requests, use the secrets_http_request tool of the zn \"secrets\" MCP server instead.";
+  const guidance = ' Next step: give the program the secret as an environment variable with `' + znCommand('run --secrets NAME -- <command>') + '` ' +
+    'and have the program read it from there (for example psql reads PGPASSWORD). For web requests, use the secrets_http_request tool of the zn "secrets" MCP server instead.';
   const scan = scanPowerShell(s);
   if (!scan.simple || scan.words.length === 0) {
     return { ok: false, reason: 'zn: this PowerShell command uses a pipeline, a variable or a script block, so zn cannot safely put a secret into it.' + guidance };
@@ -1360,8 +1358,7 @@ function wrapPowerShell(cmd, opts) {
   if ((base === 'zn' || base === 'zn-gate') && scan.words[1] && scan.words[1].text === 'run') {
     return { ok: true, command: s, wrapped: false };
   }
-  const prefix = '& ' + psQuote(opts.nodePath) + ' ' + psQuote(opts.runJs) + ' --agent ' + String(opts.agent).replace(/[^a-z0-9-]/g, '') + ' --';
-  return { ok: true, command: prefix + ' ' + s.slice(scan.words[0].start), wrapped: true };
+  return { ok: false, reason: 'zn: a secret marker in the arguments of a command is not filled in, because the value would show in the process list and in command-line logs.' + guidance };
 }
 
 const NETWORK_RE = /(^|[\s;&|(`$'"])(curl|wget|nc|ncat|netcat|socat|telnet|ssh|scp|sftp|rsync|ftp|tftp|http|https|httpie|xh|Invoke-WebRequest|Invoke-RestMethod|iwr|irm)(?=$|[\s;&|)'"])|\bgit\s+(push|fetch|pull|clone|remote|ls-remote)\b|\b(npm|pnpm|yarn)\s+publish\b|\b(docker|podman)\s+(push|login)\b|\bhttps?:\/\/|\/dev\/(tcp|udp)\//i;
@@ -1407,7 +1404,8 @@ function adminCommand(cmd) {
 const SHELL_SCAN_CAP = 100 * 1024; // characters
 function vaultMessage(opts = {}) {
   return 'zn blocked this: ~/.zn is where zn keeps your secrets, so agents may not read or change it. ' +
-    'Next step: to use a secret in a command, write __ZN_NAME__ where the value goes (zn fills it in); to add one, ask the user to run `' +
+    'Next step: to use a secret in a command, run it with `' + znCommand('run --secrets NAME -- <command>', opts) + '` so the program gets the value as an environment variable; ' +
+    'for a web request, use the secrets_http_request tool with __ZN_NAME__ where the value goes; to add a secret, ask the user to run `' +
     znCommand('secret set NAME', opts) + '` in their own terminal.';
 }
 const TOO_LONG_MESSAGE = 'zn: this command is too long for zn to check (over 100 KB), so it was blocked. Next step: tell the user; do not resend it in parts.';

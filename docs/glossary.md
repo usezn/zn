@@ -14,7 +14,7 @@ Short meanings of words used in the zn-gate docs.
 
 **Vault**: an encrypted store on your machine where zn-gate keeps the real values of your secrets.
 
-**Marker**: a stand-in for a secret, such as `__ZN_STRIPE_KEY__`. Your agent sees the marker. The real value stays in the vault.
+**Marker**: a stand-in for a secret, such as `__ZN_STRIPE_KEY__`. Your agent sees the marker. The real value stays in the vault. A marker is filled in for web requests and files, never in a command's arguments.
 
 **Redact**: replace a secret in some text with a marker or a label, so nobody who reads the text sees the value.
 

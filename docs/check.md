@@ -301,7 +301,7 @@ zn blocks the file because it holds secret values. To let your agent use them wi
 zn env shadow .env
 ```
 
-The file keeps markers such as `__ZN_API_KEY__` instead of the values, and zn puts the real values back only in the commands you allow. See [Secrets](secrets.md).
+The file keeps markers such as `__ZN_API_KEY__` instead of the values, and zn gives the real values, as environment variables, only to the commands you allow. See [Secrets](secrets.md).
 
 ## Related
 
