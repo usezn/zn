@@ -134,3 +134,74 @@ test('benign redirects stay allowed', () => {
     assert.equal(policy.bashDenial(cmd, o), null, cmd);
   }
 });
+
+// A redirect glued to the word before it: the word before it may be quoted, and may itself be a file that is read.
+const POSIX_O = { cwd: '/work/proj', home: '/home/alice', env: { HOME: '/home/alice' } };
+const GLUED_CONFIG = '~/.claude/settings.json';
+const GLUED_DENIED = [
+  "echo '{}'>" + GLUED_CONFIG,
+  'echo "x">' + GLUED_CONFIG,
+  'echo "x">>' + GLUED_CONFIG,
+  'echo x"y">' + GLUED_CONFIG,
+  'echo "a b">/home/alice/.claude/settings.json',
+  "echo 'a>b'>" + GLUED_CONFIG,
+  'echo x>"' + GLUED_CONFIG.replace('~', '$HOME') + '"',
+  'cat /home/alice/.ssh/id_rsa>x',
+  'cat /home/alice/.ssh/id_rsa>>x',
+  'cat ~/.zn/run/session.key>x',
+  'cat ~/.zn/run/session.key>>x',
+  'cat ~/.aws/credentials>out.txt',
+  'cp ~/.aws/credentials>x .',
+  'cat "/home/alice/.ssh/id_rsa">x',
+];
+
+test('a quoted word or a secret file glued to a redirect is still checked (bash)', () => {
+  const missed = GLUED_DENIED.filter((cmd) => !policy.bashDenial(cmd, POSIX_O));
+  assert.deepEqual(missed, []);
+});
+
+test('the same quoted glued redirects on win32', () => {
+  asWindows(() => {
+    const o = { cwd: 'C:\\Users\\alice\\proj', home: HOME, env: { USERPROFILE: HOME } };
+    const cmds = [
+      'echo "x">' + CONFIG,
+      "echo '{}'>$env:USERPROFILE\\.claude\\settings.json",
+      'echo "x">>' + CONFIG,
+      'echo x"y">' + CONFIG,
+    ];
+    const missed = cmds.filter((cmd) => !policy.bashDenial(cmd, o));
+    assert.deepEqual(missed, []);
+  });
+});
+
+test('only an unquoted > is the redirect', () => {
+  assert.equal(policy.bashDenial("echo 'a>b'>out.txt", POSIX_O), null);
+  assert.equal(policy.bashDenial('echo "a>b">out.txt', POSIX_O), null);
+  assert.ok(policy.bashDenial("echo 'a>b'>" + GLUED_CONFIG, POSIX_O));
+});
+
+test('benign glued and quoted operators stay allowed (bash)', () => {
+  for (const cmd of [
+    'echo hi>out.txt',
+    "node -e '(x)=>x'",
+    'echo x>&2',
+    "awk '$1>5' data.txt",
+    'git log --format=%h->%s',
+    '[[ a>b ]] && echo ok',
+    "echo '>'",
+    'echo "x">out.txt',
+    "echo '{}'>out.json",
+    'cat /home/alice/proj/a.txt>b.txt',
+    'exec 3>fd.txt',
+    'echo "a b">notes.txt',
+  ]) assert.equal(policy.bashDenial(cmd, POSIX_O), null, cmd);
+});
+
+test('benign PowerShell and cmd operators stay allowed (win32)', () => {
+  asWindows(() => {
+    const o = { cwd: 'C:\\Users\\alice\\proj', home: HOME, env: { USERPROFILE: HOME } };
+    for (const cmd of ['cmd 2>$null', 'echo x>NUL', 'echo "x">C:\\temp\\x.txt', 'echo x 2>&1']) {
+      assert.equal(policy.bashDenial(cmd, o), null, cmd);
+    }
+  });
+});
