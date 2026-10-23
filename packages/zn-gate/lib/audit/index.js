@@ -998,6 +998,14 @@ function checkInstructions(ctx) {
     for (let k = open + 1; k < i; k++) { fenced.add(k); fenceOpen.set(k, open); }
     open = -1;
   }
+  // Lines under a heading about risky patterns ("Dangerous patterns", "What to flag")
+  // describe them; the section ends at the next heading of the same or a higher level.
+  const warnSection = new Set();
+  for (let i = 0, level = 0; i < ctx.lines.length; i++) {
+    const h = !fenced.has(i) && /^\s{0,3}(#{1,6})\s/.exec(ctx.lines[i]);
+    if (h) { if (level && h[1].length <= level) level = 0; if (!level && P.warningHeading(ctx.lines[i])) level = h[1].length; }
+    if (level) warnSection.add(i);
+  }
   ctx.lines.forEach((raw, i) => {
     const ln = i + 1;
     const line = raw.length > P.MAX_LINE ? raw.slice(0, P.MAX_LINE) : raw;
@@ -1043,7 +1051,7 @@ function checkInstructions(ctx) {
         ctx.add('ZNA012', sev, ln, 'Rules engine: ' + (res.reason || res.rule) + (quoted ? ' (in quoted or code text)' : '') + '.');
       }
     }
-    const dl = P.downloadAndRun(t, { prose: true });
+    const dl = !(warnSection.has(i) && !fenced.has(i) && !P.imperativeStart(t)) && !P.warningText(t) && P.downloadAndRun(t, { prose: true });
     if (dl) ctx.add('ZNA013', dl.knownInstaller ? 'low' : 'medium', ln, (dl.knownInstaller ? 'A well-known installer is piped into a shell: ' : 'The instructions pipe a download into a shell: ') + short(t, 160));
     const ex = P.exfiltration(t);
     if (ex) ctx.add('ZNA014', 'high', ln, 'The instructions send sensitive material out: ' + short(t, 160));
