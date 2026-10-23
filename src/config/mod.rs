@@ -664,41 +664,91 @@ fn default_fpr_margin() -> f64 {
 }
 
 impl ZnConfig {
-    /// The configuration `zn init` writes: the defaults, without any secret
-    /// that `ZnConfig::default()` read from the environment
-    /// (`ZN_API_KEY`, `ZN_JWT_SECRET`, `ZN_MCP_WS_TOKEN`, `ZN_DB_KEY`).
-    /// Those stay in the environment and are read again at start.
-    pub fn init_template() -> Self {
-        let mut config = Self::default();
+    /// A copy without the values `ZnConfig::default()` takes from the
+    /// environment, so they are not written to a file. Keys and tokens
+    /// (`ZN_API_KEY`, `ZN_JWT_SECRET`, `ZN_MCP_WS_TOKEN`, `ZN_DB_KEY`) are
+    /// always cleared. The namespace and the KMS key id and region are cleared
+    /// when they equal the current environment value (a value set in the
+    /// config itself is kept). Cleared values are read from the environment
+    /// again at start.
+    pub fn without_env_values(&self) -> Self {
+        fn same_as_env(value: &mut Option<String>, var: &str) {
+            if let (Some(v), Ok(env)) = (value.as_ref(), std::env::var(var)) {
+                if *v == env {
+                    *value = None;
+                }
+            }
+        }
+        let mut config = self.clone();
         config.security.api_key = None;
         config.security.jwt_secret = None;
         config.security.mcp_ws_token = None;
         config.audit.encryption_key = None;
+        same_as_env(&mut config.security.namespace, "ZN_NAMESPACE");
+        same_as_env(&mut config.kms.key_id, "ZN_KMS_KEY_ID");
+        same_as_env(&mut config.kms.region, "ZN_KMS_REGION");
         config
     }
 
-    /// Write `init_template()` to `path` as JSON. On Unix the file is created
-    /// with mode 0600 (and tightened if it already existed), so other local
-    /// users cannot read it.
+    /// The configuration `zn init` writes: the defaults, without any value
+    /// read from the environment.
+    pub fn init_template() -> Self {
+        Self::default().without_env_values()
+    }
+
+    /// Write `init_template()` to `path` as JSON, owner-only on Unix.
     pub fn write_init_file(path: &Path) -> Result<()> {
+        Self::write_private_json(path, &Self::init_template())
+    }
+
+    /// Write `config` to `path` as pretty JSON, atomically and owner-only. The
+    /// JSON goes to a new temporary file in the same directory (created with
+    /// mode 0600 on Unix, never following a symlink) that is then renamed over
+    /// `path`, so a reader never sees a partial file and an existing file ends
+    /// up owner-only too. A `path` that is a symlink is refused.
+    pub fn write_private_json(path: &Path, config: &Self) -> Result<()> {
         use std::io::Write;
-        let json = serde_json::to_string_pretty(&Self::init_template())?;
+        if let Ok(meta) = std::fs::symlink_metadata(path) {
+            if meta.file_type().is_symlink() {
+                return Err(anyhow!(
+                    "refusing to write {}: it is a symbolic link",
+                    path.display()
+                ));
+            }
+        }
+        let json = serde_json::to_string_pretty(config)?;
+        let dir = match path.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p,
+            _ => Path::new("."),
+        };
+        let name = path
+            .file_name()
+            .ok_or_else(|| anyhow!("{} has no file name", path.display()))?
+            .to_string_lossy();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let tmp = dir.join(format!(".{}.{}-{}.tmp", name, std::process::id(), nanos));
         let mut options = std::fs::OpenOptions::new();
-        options.write(true).create(true).truncate(true);
+        options.write(true).create_new(true);
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
             options.mode(0o600);
         }
-        let mut file = options.open(path)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            // `mode` only applies when the file is created.
-            file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        let result = (|| -> Result<()> {
+            let mut file = options.open(&tmp)?;
+            file.write_all(json.as_bytes())?;
+            file.sync_all()?;
+            drop(file);
+            std::fs::rename(&tmp, path)?;
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(&tmp);
         }
-        file.write_all(json.as_bytes())?;
-        Ok(())
+        result
     }
 
     /// Load configuration from file with environment variable overrides

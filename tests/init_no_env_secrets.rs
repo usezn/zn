@@ -11,11 +11,14 @@ fn workdir(name: &str) -> PathBuf {
     dir
 }
 
-const FAKE: [(&str, &str); 4] = [
+const FAKE: [(&str, &str); 7] = [
     ("ZN_MCP_WS_TOKEN", "fake-ws-token-0000-not-real"),
     ("ZN_API_KEY", "fake-api-key-0000-not-real"),
     ("ZN_DB_KEY", "fake-db-key-0000-not-real"),
     ("ZN_JWT_SECRET", "fake-jwt-secret-0000-not-real-pad"),
+    ("ZN_NAMESPACE", "fake-namespace-0000-example"),
+    ("ZN_KMS_KEY_ID", "fake-kms-key-id-0000-example"),
+    ("ZN_KMS_REGION", "fake-region-0000-example"),
 ];
 
 fn run_init(dir: &PathBuf) {
@@ -40,7 +43,9 @@ fn init_writes_no_environment_secrets() {
     for (name, value) in FAKE {
         assert!(!text.contains(value), "{name} value leaked into zn.json");
     }
-    serde_json::from_str::<serde_json::Value>(&text).expect("zn.json is valid JSON");
+    let config: zn::config::ZnConfig =
+        serde_json::from_str(&text).expect("zn.json loads as a ZnConfig");
+    config.validate().expect("zn.json passes validate()");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -57,5 +62,25 @@ fn init_creates_zn_json_owner_only_and_tightens_an_existing_file() {
     std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
     run_init(&dir);
     assert_eq!(mode(&file), 0o600);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn init_refuses_a_symlinked_zn_json() {
+    let dir = workdir("init-symlink");
+    let real = dir.join("real.json");
+    std::fs::write(&real, "{}").unwrap();
+    std::os::unix::fs::symlink(&real, dir.join("zn.json")).unwrap();
+    let status = Command::new(env!("CARGO_BIN_EXE_zn"))
+        .arg("init")
+        .current_dir(&dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("run zn init");
+    assert!(!status.success());
+    assert_eq!(std::fs::read_to_string(&real).unwrap(), "{}");
     let _ = std::fs::remove_dir_all(&dir);
 }
