@@ -27,6 +27,7 @@ zn-gate report: 2026-10-11 to 2026-10-17 (this computer only; nothing was sent)
   Busiest day: 2026-10-14 (9 blocked)
 
 This report was built from files on your computer. Nothing left it.
+Teams can see this for everyone in one place: usezn.com/team  (hide this line: zn-gate report --no-team-line)
 ```
 
 If zn-gate has not checked anything yet, it says so and shows no numbers. Counts start once zn-gate checks something (agent hooks, MCP tools or protected MCP servers). If counting is turned off with `ZN_STATS=off`, the report says that too.
