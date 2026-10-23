@@ -243,13 +243,35 @@ for (const [name, text] of Object.entries({
   });
 }
 
-test('audit ZNA012: 1 MB of placeholder lines is checked in linear time', (t) => {
-  const N = 1024 * 1024;
-  const rep = (x) => x.repeat(Math.ceil(N / x.length)).slice(0, N);
-  const t0 = Date.now();
-  run(t, NOTE_FILES(rep('<system-wide>.\n')), 'ZNA012');
-  skill(t, rep('<system-wide>.\n'));
-  const ms = Date.now() - t0;
-  // About 5 s on a loaded CI runner; a lookup per line over the whole file took minutes.
-  assert.ok(ms < 20000, 'took ' + ms + ' ms');
+const msOf = (fn) => {
+  const t0 = process.hrtime.bigint();
+  fn();
+  return Number(process.hrtime.bigint() - t0) / 1e6;
+};
+// Four times the text takes about four times as long when the check is
+// linear, and sixteen times when it is quadratic. Compared on the same
+// runner, so a slow runner does not fail the test.
+const LINEAR = (small, big) => big < 8 * small + 1000;
+
+test('audit ZNA012: placeholder lines are checked in linear time', (t) => {
+  const lines = (n) => '<system-wide>.\n'.repeat(Math.ceil(n / 15)).slice(0, n);
+  const both = (n) => () => { run(t, NOTE_FILES(lines(n)), 'ZNA012'); skill(t, lines(n)); };
+  const small = msOf(both(256 * 1024));
+  const big = msOf(both(1024 * 1024));
+  assert.ok(LINEAR(small, big), '256 KB took ' + small + ' ms, 1 MB took ' + big + ' ms');
+});
+
+test('audit ZNA012: a tag opener followed by many spaces is checked in linear time', (t) => {
+  const text = (n) => '<' + ' '.repeat(n) + '\n';
+  const both = (n) => () => { run(t, NOTE_FILES(text(n)), 'ZNA012'); skill(t, text(n)); };
+  const small = msOf(both(100000));
+  const big = msOf(both(400000));
+  assert.ok(LINEAR(small, big), '100k spaces took ' + small + ' ms, 400k took ' + big + ' ms');
+});
+
+test('audit ZNA012: a placeholder followed by a long run of dots is checked quickly', (t) => {
+  const text = (n) => ('<system-wide>/' + '.'.repeat(n) + 'a\n').repeat(200);
+  const small = msOf(() => skill(t, text(950)));
+  const big = msOf(() => skill(t, text(3800)));
+  assert.ok(LINEAR(small, big), '950 dots took ' + small + ' ms, 3800 took ' + big + ' ms');
 });

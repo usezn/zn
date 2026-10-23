@@ -804,18 +804,21 @@ function stripBadges(text) {
   });
 }
 
-const SYSTEM_PLACEHOLDER_DOC = /<\s*\/?\s*system-(?:or-(?:project|user|global|local|workspace|repo)|(?:name|path|dir|directory|id|type|version|wide))\s*>/gi;
+const SYSTEM_PLACEHOLDER_DOC = /<(?:\s*\/)?\s*system-(?:or-(?:project|user|global|local|workspace|repo)|(?:name|path|dir|directory|id|type|version|wide))\s*>/gi;
 const SYSTEM_IDENTITY_DOC = /\bsystem:(?:anonymous|authenticated|unauthenticated|masters|nodes?|serviceaccounts?(?::[\w-]+)*|kube-[\w-]+|node-[\w-]+|basic-user|discovery|public-info-viewer)(?![\w-])/gi;
 const CHAT_TOKEN_DOC = /<\|im_start\|>(?:[ \t]*(?:user|assistant|tool)\b|(?![ \t]*system\b))|<\|im_end\|>|\[\/?INST\]/gi;
 
 // What may follow an opening placeholder for it to count as a name: nothing,
-// punctuation, or a file name or path glued to the tag. Anchored as a whole.
-const PLACEHOLDER_TAIL = /^(?:\.[a-z0-9]{1,6})?(?:[\/\\][\w.\/\\-]*)?[\s\p{P}\p{S}]*$/iu;
+// punctuation, or a file name or path glued to the tag. Checked in two steps
+// (the name, then the rest of the line) so a long run of dots cannot backtrack.
+const PLACEHOLDER_NAME = /^(?:\.[a-z0-9]{1,6})?(?:[\/\\][\w.\/\\-]*)?/i;
+const PLACEHOLDER_REST = /^[\s\p{P}\p{S}]*$/u;
+const placeholderTail = (after) => PLACEHOLDER_REST.test(after.slice(PLACEHOLDER_NAME.exec(after)[0].length));
 // An opening tag with no word before it on the line (only marks such as #,
 // -, >, quotes or a table bar) reads as a message to the agent, never as a name.
 const LINE_START = /^[^\p{L}\p{N}]*$/u;
 // Any system tag; used once per file to list the tags that close somewhere.
-const SYSTEM_TAG_ANY = /<\s*(\/)?\s*(system(?:-[\w-]+)?)\s*>/gi;
+const SYSTEM_TAG_ANY = /<(?:\s*(\/))?\s*(system(?:-[\w-]+)?)\s*>/gi;
 
 /** The system tag names that are closed somewhere in `fileText`, in one pass. */
 function closedSystemTags(fileText) {
@@ -843,7 +846,7 @@ function stripSystemShapes(text, closed) {
     let after = text.slice(off + m.length);
     // A name inside a code span: only the rest of the span counts.
     if (glued && (text.slice(0, off).split('`').length - 1) % 2 === 1 && after.includes('`')) after = after.slice(0, after.indexOf('`'));
-    return !PLACEHOLDER_TAIL.test(after);
+    return !placeholderTail(after);
   };
   let s = text.replace(SYSTEM_PLACEHOLDER_DOC, (m, off) => (keep(m, off, false) ? m : ' '));
   // <system> glued to a file name or path.
@@ -906,7 +909,7 @@ function attackContext(lines, from, back) {
 function docShape(t, o) {
   let rest = t;
   // A tag named in backticks, never paired with a closing tag on the line.
-  if (!/<\s*system[^>]*>[\s\S]*<\s*\/\s*system/i.test(rest)) rest = rest.replace(/`<\s*\/?\s*system\s*>`/gi, ' ');
+  if (!/<\s*system[^>]*>[\s\S]*<\s*\/\s*system/i.test(rest)) rest = rest.replace(/`<(?:\s*\/)?\s*system\s*>`/gi, ' ');
   if (o.doc) rest = stripNegated(stripDocShapes(rest, o.fenced, o.closedTags));
   // A note inside a skill folder that is not a docs file: only the
   // placeholder and identity shapes, and "system:" ending the line.
