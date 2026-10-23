@@ -118,7 +118,7 @@ async function resetVault(opts, io) {
   const dir = backup(files, o, i.now);
   for (const f of files) fs.unlinkSync(f.src);
   clearUnlockFailures(o);
-  out('Old vault saved in ' + dir + ' (it stays encrypted; delete the folder when you no longer need it).');
+  out('Old vault saved in ' + dir + ' (it stays encrypted). `' + zn('vault purge') + '` deletes it, with every other backup, when you no longer need it.');
   out('Done. Run `' + zn('unlock') + '` to create the new vault, then store your values again:');
   out('  ' + zn('env shadow .env') + '        move the values of a .env file into the vault');
   out('  ' + zn('secret set NAME') + '        store one value (typed at a hidden prompt)');
@@ -156,7 +156,7 @@ function hintForUnlockError(err, opts) {
   return UNREADABLE_HINT;
 }
 
-module.exports = { hintForUnlockError, resetVault, recordUnlockFailure, clearUnlockFailures, vaultFiles, PHRASE, FAILS_BEFORE_HINT, UNREADABLE_HINT, TEAM_REFUSAL, CANCELLED };
+module.exports = { askLine, hintForUnlockError, resetVault, recordUnlockFailure, clearUnlockFailures, vaultFiles, PHRASE, FAILS_BEFORE_HINT, UNREADABLE_HINT, TEAM_REFUSAL, CANCELLED };
 // The sentences that name a command are built when read, so they show the form that works on this computer.
 Object.defineProperties(module.exports, {
   HINT: { enumerable: true, get: HINT },
