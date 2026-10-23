@@ -332,19 +332,6 @@ function lazyDeps(opts) {
   };
 }
 
-/**
- * The `zn run` prefix put in front of a Bash command that uses a secret. The
- * agent runs the rewritten command in bash (Claude Code's Bash tool, Git Bash
- * on Windows) or in the user's shell (OpenCode), so each path is one
- * single-quoted sh word and nothing in it is expanded.
- */
-function znRunPrefix(opts, agentId) {
-  if (opts.znRunPrefix) return opts.znRunPrefix;
-  const q = (s) => shQuote(portablePath(s));
-  const runJs = opts.runJs || path.resolve(__dirname, '..', 'broker', 'run.js');
-  return 'ZN_AGENT=' + String(agentId).replace(/[^a-z0-9-]/g, '') + ' ' + q(opts.nodePath || process.execPath) + ' ' + q(runJs) + ' --';
-}
-
 /* Custom secret formats from the zn Team policy (verified cache), compiled
  * once per hook process. They only add redactions. */
 let orgDetectors = null;
@@ -582,13 +569,9 @@ async function decidePre(ev, d, agentId, opts) {
     const notes = [];
     const wrap = tool === 'powershell'
       ? policy.wrapPowerShell(command, { nodePath: opts.nodePath || process.execPath, runJs: opts.runJs || path.resolve(__dirname, '..', 'broker', 'run.js'), agent: agentId })
-      : policy.wrapWithZnRun(command, znRunPrefix(opts, agentId));
+      : policy.wrapWithZnRun(command);
+    // Neither wrapper rewrites a command any more: a marker in the arguments is refused with guidance.
     if (!wrap.ok) return { decision: 'deny', message: wrap.reason };
-    if (wrap.wrapped) {
-      command = wrap.command;
-      notes.push('runs through zn run (zn\'s secret wrapper) for ' + markers.findNamedMarkers(original).map((m) => m.name).join(', ') +
-        '; the first time, you approve the command, and secret values in its output stay hidden');
-    }
 
     const detected = markers.findMarkers(command).filter((m) => m.detected);
     let context;
@@ -620,7 +603,7 @@ async function decidePre(ev, d, agentId, opts) {
       return withEgress(withInstruction(notes.length ? { decision: 'allow', message: 'zn: ' + notes.join('; ') } : { decision: 'allow' }), egress);
     }
     // kind tells adapters that cannot rewrite input what the rewrite was for.
-    return withEgress(withInstruction({ decision: 'ask', updatedInput: { command }, kind: wrap.wrapped ? 'wrap' : 'restore', message: 'zn: this command ' + notes.join('; ') + '.', context }), egress);
+    return withEgress(withInstruction({ decision: 'ask', updatedInput: { command }, kind: 'restore', message: 'zn: this command ' + notes.join('; ') + '.', context }), egress);
   }
 
   if ((tool === 'write' || tool === 'edit' || tool === 'multiedit' || tool === 'notebookedit') && Array.isArray(input.texts)) {
@@ -1359,7 +1342,7 @@ async function injectTestFault() {
 /**
  * Handle one raw event. Returns {output, stderr} where output is the JSON
  * value to print (or null for "no opinion").
- * opts: {engine, vault, failMode, home, znRunPrefix}
+ * opts: {engine, vault, failMode, home}
  */
 async function handle(adapter, rawEvent, opts = {}) {
   const mode = failModeOf(opts);
