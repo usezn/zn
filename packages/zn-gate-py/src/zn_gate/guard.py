@@ -13,6 +13,7 @@ import io
 import itertools
 import logging
 import os
+import re
 from pathlib import PurePath
 import types
 from collections.abc import AsyncIterator, ItemsView, Iterable, Iterator, KeysView, Mapping, ValuesView
@@ -537,6 +538,22 @@ def _mask_text_spans(text: str) -> Tuple[str, List[Tuple[int, int]]]:
     return masked, spans
 
 
+_OPEN_KEY = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----")
+
+
+def _open_private_key(text: str) -> Optional[int]:
+    """Start of the last private key header with no END line after it (None when none).
+
+    The private key rule only matches a whole key, so until its END line arrives the
+    masker sees no secret there: the text from the header on is held back."""
+    last = None
+    for m in _OPEN_KEY.finditer(text):
+        last = m
+    if last is None or "-----END " in text[last.end():]:
+        return None
+    return last.start()
+
+
 def _before_spans(spans: List[Tuple[int, int]], cut: int) -> int:
     """cut moved back to the start of every span that lies across it."""
     moved = True
@@ -627,6 +644,17 @@ class _StreamMasker:
         """The masked text that can be passed on now (and drop it from the buffer), or "" when no cut is safe."""
         text = self.pending
         limit = len(text) - STREAM_MASK_HOLD
+        open_at = _open_private_key(text)
+        if open_at is not None and open_at < limit:
+            if open_at == 0:
+                # A private key still open at the start of the buffer: keep it whole, or block
+                # once it is longer than the stream can hold.
+                if len(text) > STREAM_MASK_FORCE:
+                    self.unmaskable = True
+                else:
+                    self._next_try = min(2 * len(text), STREAM_MASK_FORCE + 1)
+                return ""
+            limit = open_at
         whole, spans = _mask_text_spans(text)
         if whole == text:
             # No secret in the buffer: any cut is safe.

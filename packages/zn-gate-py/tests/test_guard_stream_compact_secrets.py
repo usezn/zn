@@ -105,6 +105,28 @@ class TestLongSecretsStream(unittest.TestCase):
         self.assertTrue(out == whole, "differs from the whole text masked")
         self.assertNotIn("BEGIN RSA PRIVATE KEY", out)
 
+    def test_long_private_keys_in_small_chunks(self):
+        # The key rule only matches once the END line arrives: the open key is held until then.
+        for n in (24000, 60000):
+            key = fake_pem(n, n)
+            for name, text in (("text", "log line\n" * 100 + key + "\nafter\n"),
+                               ("json", json.dumps({"out": "log\n" * 100 + key + "\nafter"}))):
+                with self.subTest(n=n, form=name):
+                    whole = _mask_text(text)
+                    self.assertNotIn("BEGIN RSA PRIVATE KEY", whole)
+                    out, rule = run_until_block(chunked(text, 4096))
+                    self.assertIsNone(rule)
+                    self.assertTrue(out == whole, "differs from the whole text masked")
+
+    def test_private_key_longer_than_the_buffer_blocks(self):
+        key = fake_pem(5, 300000)
+        text = "start\n" + key + "\nend\n"
+        out, rule = run_until_block(chunked(text, 4096))
+        self.assertEqual(rule, "secret:unmaskable")
+        self.assertNotIn("BEGIN RSA PRIVATE KEY", out)
+        body = key.split("\n")[5]
+        self.assertNotIn(body, out)
+
     def test_private_key_across_the_hold_in_one_chunk(self):
         pre = '{"k":"v"},' * 40000
         key = fake_pem(9, 6400)
