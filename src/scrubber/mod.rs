@@ -41,7 +41,7 @@ fn email_re() -> &'static Regex {
 
 fn api_re() -> &'static Regex {
     API_KEY_REGEX.get_or_init(|| {
-        // Matches: api_key=xxx, secret: xxx, password=xxx, token: xxx, and the same as a JSON
+        // Matches: api_key=xxx, secret: xxx, client_secret=xxx, private_key=xxx, password=xxx, token: xxx, and the same as a JSON
         // member ("api_key": "xxx"), also inside a JSON string (\"api_key\":\"xxx\").
         // Group 1 is the name, group 2 the optional quote that closes it. A quoted value needs
         // its closing quote, of the same kind AND at the same escape level as the one that
@@ -59,7 +59,7 @@ fn api_re() -> &'static Regex {
         // A value split by shell quotes ('ab''cd', ab""cd) is one word: redact all of it. Each
         // extra piece needs a character after its quote, so the quote that closes a JSON string
         // (`?token=abc"}`, `["token=abc","x"]`) is never taken.
-        Regex::new(r#"(?i)(api[_-]?key|secret[_-]?key|password|token|auth[_-]?token|access[_-]?token|bearer)(\\{0,2}['"])?[ \t]*[:=][ \t]*(?:(")((?:[^"\\\s]|\\["\\]){8,})"|(\\")([^"\\\s]{8,})\\"|(\\\\")([^"\\\s]{8,})\\\\"|(')([^'\\\s]{8,})'|(\\')([^'\\\s]{8,})\\'|(\\\\')([^'\\\s]{8,})\\\\'|(\\")([^"\\\s]{8,})|(\\\\")([^"\\\s]{8,})|([a-zA-Z0-9_\-./+=]{8,}))(?:['"]+[a-zA-Z0-9_\-.]+)*"#).unwrap()
+        Regex::new(r#"(?i)(api[_-]?key|secret[_-]?access[_-]?key|secret[_-]?key|secret|private[_-]?key|passwd|password|token|auth[_-]?token|access[_-]?token|bearer)(\\{0,2}['"])?[ \t]*[:=][ \t]*(?:(")((?:[^"\\\s]|\\["\\]){8,})"|(\\")([^"\\\s]{8,})\\"|(\\\\")([^"\\\s]{8,})\\\\"|(')([^'\\\s]{8,})'|(\\')([^'\\\s]{8,})\\'|(\\\\')([^'\\\s]{8,})\\\\'|(\\")([^"\\\s]{8,})|(\\\\")([^"\\\s]{8,})|([a-zA-Z0-9_\-./+=]{8,}))(?:['"]+[a-zA-Z0-9_\-.]+)*"#).unwrap()
     })
 }
 
@@ -1191,5 +1191,26 @@ mod tests {
         assert!(!e164_valid("+0123456789"));
         assert!(ssn_valid("123-45-6789"));
         assert!(!ssn_valid("900-45-6789"));
+    }
+
+    #[test]
+    fn rs5_credential_names_in_any_case_and_prefix() {
+        // Fake values with low character variety.
+        let v = "fakevaluefakevalue01";
+        for name in [
+            "aws_secret_access_key",
+            "AWS_SECRET_ACCESS_KEY",
+            "client_secret",
+            "CLIENT_SECRET",
+            "stripe_secret",
+            "private_key",
+            "db_passwd",
+            "my_service_token",
+            "MY_SERVICE_TOKEN",
+        ] {
+            let input = format!("{name}={v}");
+            let scrubbed = Scrubber::scrub(&input);
+            assert!(!scrubbed.contains(v), "{name}: {scrubbed}");
+        }
     }
 }
