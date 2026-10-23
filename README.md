@@ -382,6 +382,7 @@ The `mode`, `agents`, `fail-on`, `severity-threshold`, `sarif-file` and `npm-int
 | `version` | `1.13.1` | Exact `zn-gate` version to install. Ranges and `latest` are refused. `audit` needs 1.6.0 or later. |
 | `mode` | `scan` | `scan`, `audit` or `both`. |
 | `path` | `.` | File or directory to scan. `audit` needs a directory: with `both` a file skips the audit with a warning; with `audit` the step fails. |
+| `allow-partial` | `false` | Scan only: `true` keeps the step green when some files or folders were not read (2 MiB or larger, cannot be read, not a regular file, binary `.key` file); they are still listed. A scan that read no file at all still fails. Needs zn-gate 1.14.0 or later (an older `version` stops with an error). |
 | `fail-on-threat` | `true` | Fail the step on findings. For `scan`, anything found (an injection trap or a secret); for `audit`, findings at or above `severity-threshold`. Set `false` to report only. `true` or `false`, in any case; other values fail the step. |
 | `severity-threshold` | `high` | Audit only: lowest severity that fails the step when `fail-on-threat` is `true`: `critical`, `high` (high and critical), `medium` or `low`. The scan has no severities, so any scan finding fails. |
 | `fail-on` | empty | Audit only: lowest severity that fails the step (`low`, `medium`, `high`, `critical`, `none`), passed as is to `zn audit --fail-on`. When set, it overrides `fail-on-threat` and `severity-threshold` for the audit. |
@@ -394,7 +395,7 @@ The `mode`, `agents`, `fail-on`, `severity-threshold`, `sarif-file` and `npm-int
 | Output | Description |
 |---|---|
 | `sarif-file` | Path of the SARIF file (`format: sarif` only). Empty if no check produced a report (for example, the scan ended in an error) or the file could not be written. |
-| `scan-exit-code` | Exit code of the scan: 0 clean (or `fail-on-threat: 'false'`), 1 something found (an injection trap or a secret), 2 error, 3 (zn-gate 1.14.0 and later) no file was read or a file or folder was not read. Empty if the scan did not run. |
+| `scan-exit-code` | Exit code of the scan: 0 clean (or `fail-on-threat: 'false'`), 1 something found (an injection trap or a secret), 2 error, 3 (zn-gate 1.14.0 and later) no file was read, or a file or folder was not read and `allow-partial` is not `true`. The step then fails with its own message; with `format: sarif` the report is still written. Empty if the scan did not run. |
 | `audit-exit-code` | Exit code of the audit: 0 clean, 1 findings at or above `fail-on`, 2 error. Empty if it did not run. |
 
 The scan finds more secret types with each release (1.9.1 added secrets passed as command-line flags and assigned to names such as `password` or `api_key`), so a job that fails on findings can start failing on files that passed before: pin `version` and read the findings before you update it.
@@ -409,7 +410,7 @@ Permissions: the action itself needs only `contents: read`; add `security-events
 
 ### pre-commit
 
-Run both checks before each commit with the [pre-commit](https://pre-commit.com) framework (needs Node.js 18 or later; ids `zn-gate-scan` and `zn-audit`). The hooks file ships from release 1.14.0, so `rev` must be a release tag of 1.14.0 or later: earlier tags have no `.pre-commit-hooks.yaml` and pre-commit fails with `InvalidManifestError`. Add `repos: [{repo: https://github.com/usezn/zn, rev: v1.13.1, hooks: [{id: zn-gate-scan}, {id: zn-audit}]}]` to `.pre-commit-config.yaml`. Each tag's hooks run the exact zn-gate version of that tag (`npx --yes zn-gate@1.13.1 ...`), so the `rev` you pin decides which version runs on every commit.
+Run both checks before each commit with the [pre-commit](https://pre-commit.com) framework (needs Node.js 18 or later; ids `zn-gate-scan` and `zn-audit`). The hooks file ships from release 1.14.0, so `rev` must be a release tag of 1.14.0 or later: earlier tags have no `.pre-commit-hooks.yaml` and pre-commit fails with `InvalidManifestError`. Add `repos: [{repo: https://github.com/usezn/zn, rev: v1.13.1, hooks: [{id: zn-gate-scan}, {id: zn-audit}]}]` to `.pre-commit-config.yaml`. Each tag's hooks run the exact zn-gate version of that tag (`npx --yes zn-gate@1.13.1 ...`), so the `rev` you pin decides which version runs on every commit. The scan hook reads the whole repository, so a file of 2 MiB or more makes it exit 3; to accept skipped files, add `args: [--allow-partial]` to the `zn-gate-scan` hook.
 
 ### Repository layout
 

@@ -529,13 +529,17 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
       for (const entry of entries) {
         walk(path.join(current, entry));
       }
-    } else if (stat.isFile()) {
+    } else {
       const ext = path.extname(current).toLowerCase();
       const base = path.basename(current).toLowerCase();
-      let isCandidate = SCANNABLE_EXTS.has(ext) || base.startsWith('.env') || KEY_FILE_NAMES.has(path.basename(current));
-      if (isCandidate && stat.size < 2 * 1024 * 1024) {
+      // The file you name is read whatever its extension.
+      const isCandidate = isRoot || SCANNABLE_EXTS.has(ext) || base.startsWith('.env') || KEY_FILE_NAMES.has(path.basename(current));
+      if (!isCandidate) return;
+      if (!stat.isFile()) {
+        skipped.push({ file: current, reason: 'not a regular file' });
+      } else if (stat.size < 2 * 1024 * 1024) {
         filesToScan.push(current);
-      } else if (isCandidate) {
+      } else {
         skipped.push({ file: current, reason: '2 MiB or larger' });
       }
     }

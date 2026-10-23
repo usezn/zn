@@ -537,6 +537,9 @@ def cmd_scan(args: argparse.Namespace) -> int:
             dirs[:] = kept
             for f in files:
                 p = Path(root) / f
+                # A link found inside the folder is not followed and not a skipped file.
+                if p.is_symlink():
+                    continue
                 if p.suffix.lower() in valid_exts or p.name.startswith(".env") or p.name in _KEY_FILE_NAMES:
                     files_to_scan.append(p)
 

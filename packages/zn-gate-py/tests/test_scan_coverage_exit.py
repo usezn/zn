@@ -130,3 +130,40 @@ def test_cli_accepts_allow_partial(tmp_path):
         assert cli.main() == 0
     with mock.patch.object(sys, "argv", ["zn-gate", "scan", str(tmp_path)]), redirect_stdout(io.StringIO()):
         assert cli.main() == 3
+
+
+# Parity with the Node scan (packages/zn-gate/test/scan_coverage_exit.test.js, same fixture
+# and same expected values): links inside the folder are neither followed nor listed; a
+# named pipe is listed as not a regular file.
+def _link_fixture(tmp_path, with_fifo):
+    (tmp_path / "AGENTS.md").write_text(OK)
+    os.symlink("AGENTS.md", tmp_path / "CLAUDE.md")
+    os.symlink("missing-target.md", tmp_path / "broken.md")
+    if with_fifo:
+        os.mkfifo(tmp_path / "p.md")
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="needs symbolic links")
+def test_links_inside_the_folder_are_not_followed_and_not_listed(tmp_path):
+    _link_fixture(tmp_path, False)
+    code, out = _scan(tmp_path, "json")
+    data = json.loads(out)
+    assert code == 0
+    assert data["total_files"] == 1 and data["skipped"] == [] and data["incomplete"] is False
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo") or not hasattr(os, "symlink"), reason="needs named pipes and links")
+def test_named_pipe_is_listed_as_not_a_regular_file(tmp_path):
+    _link_fixture(tmp_path, True)
+    code, out = _scan(tmp_path, "json")
+    data = json.loads(out)
+    assert code == 3
+    assert [(os.path.basename(s["file"]), s["reason"]) for s in data["skipped"]] == [("p.md", "not a regular file")]
+    assert _scan(tmp_path, allow_partial=True)[0] == 0
+
+
+def test_single_file_named_on_the_command_line_is_read_whatever_its_extension(tmp_path):
+    p = tmp_path / "a.bin"
+    p.write_text(OK)
+    code, out = _scan(p, "json")
+    assert code == 0 and json.loads(out)["total_files"] == 1

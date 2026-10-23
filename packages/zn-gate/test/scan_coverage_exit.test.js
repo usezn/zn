@@ -136,3 +136,49 @@ test('a folder skipped by name is not a coverage problem', () => {
     assert.strictEqual(scan([dir]).status, 0);
   });
 });
+
+// Parity with the Python scan (packages/zn-gate-py/tests/test_scan_coverage_exit.py, same
+// fixture and same expected values): links inside the folder are neither followed nor
+// listed; a named pipe is listed as not a regular file.
+function linkFixture(dir, withFifo) {
+  fs.writeFileSync(path.join(dir, 'AGENTS.md'), 'hello there, nothing to see\n');
+  fs.symlinkSync('AGENTS.md', path.join(dir, 'CLAUDE.md'));
+  fs.symlinkSync('missing-target.md', path.join(dir, 'broken.md'));
+  if (!withFifo) return true;
+  return spawnSync('mkfifo', [path.join(dir, 'p.md')]).status === 0;
+}
+
+test('links inside the folder are not followed and not listed: exit 0, nothing skipped', (t) => {
+  if (process.platform === 'win32') return t.skip('needs symbolic links');
+  withDir((dir) => {
+    linkFixture(dir, false);
+    const r = scan([dir, '--format', 'json']);
+    assert.strictEqual(r.status, 0, r.stdout + r.stderr);
+    const data = JSON.parse(r.stdout);
+    assert.strictEqual(data.total_files, 1);
+    assert.deepStrictEqual(data.skipped, []);
+    assert.strictEqual(data.incomplete, false);
+  });
+});
+
+test('a named pipe is listed as not a regular file: exit 3, same list as the Python scan', (t) => {
+  if (process.platform === 'win32') return t.skip('needs symbolic links and named pipes');
+  withDir((dir) => {
+    if (!linkFixture(dir, true)) return t.skip('mkfifo is not available');
+    const r = scan([dir, '--format', 'json']);
+    assert.strictEqual(r.status, 3, r.stdout + r.stderr);
+    const data = JSON.parse(r.stdout);
+    assert.deepStrictEqual(data.skipped.map((s) => [path.basename(s.file), s.reason]), [['p.md', 'not a regular file']]);
+    assert.strictEqual(scan([dir, '--allow-partial']).status, 0);
+  });
+});
+
+test('a single file named on the command line is read whatever its extension', () => {
+  withDir((dir) => {
+    const file = path.join(dir, 'a.bin');
+    fs.writeFileSync(file, 'hello there, nothing to see\n');
+    const r = scan([file, '--format', 'json']);
+    assert.strictEqual(r.status, 0, r.stdout + r.stderr);
+    assert.strictEqual(JSON.parse(r.stdout).total_files, 1);
+  });
+});
