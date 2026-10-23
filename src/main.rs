@@ -388,11 +388,10 @@ async fn start_proxy(args: Args) -> Result<()> {
     let mut ws_token_file: Option<PathBuf> = None;
     if zn_config.security.mcp_ws_token.is_none() {
         let token = shield::McpShield::generate_ws_token();
-        let file = zn::tenants::ws_token_file_for(&zn_config.audit.db_path);
-        match zn::tenants::write_seed_key_file(&file, &token) {
-            Ok(()) => ws_token_file = Some(file),
-            Err(e) => tracing::error!("Could not save the MCP WebSocket token: {}", e),
-        }
+        ws_token_file = Some(zn::tenants::generate_ws_token_file(
+            &zn_config.audit.db_path,
+            &token,
+        )?);
         zn_config.security.mcp_ws_token = Some(token);
     }
 
