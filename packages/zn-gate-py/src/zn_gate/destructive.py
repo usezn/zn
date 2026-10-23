@@ -28,7 +28,7 @@ from typing import List, Optional, Tuple
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-23.3"
+COMMAND_RULES_VERSION = "2026-10-23.4"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -446,16 +446,70 @@ def _out_flag(w: str) -> bool:
     )
 
 
+# The first comma is matched by [^{},]*, so the pattern has one way to match and cannot backtrack.
+_BRACE_RE = re.compile(r"\{([^{},]*,[^{}]*)\}")
+
+
+# A brace list has at least two alternatives, so more than 6 lists in one word always pass the default limit of 64.
+# The recursion stops there instead of following one level per list (2000 lists overflowed the stack).
+_BRACE_MAX_DEPTH = 8
+
+
+def _expand_braces(s: str, limit: int = 64, depth: int = 0) -> Optional[List[str]]:
+    """Alternatives of a word with brace lists (a{b,c} -> ab, ac); None when there are too many."""
+    m = _BRACE_RE.search(s)
+    if not m:
+        return [s]
+    if depth >= _BRACE_MAX_DEPTH:
+        return None
+    out: List[str] = []
+    for alt in m.group(1).split(","):
+        rest = _expand_braces(s[:m.start()] + alt + s[m.end():], limit, depth + 1)
+        if rest is None:
+            return None
+        for x in rest:
+            out.append(x)
+            if len(out) > limit:
+                return None
+    return out
+
+
+_SEQ_RE = re.compile(r"\{(?:([A-Za-z])\.\.([A-Za-z])|(\d{1,2})\.\.(\d{1,2}))\}")
+
+
+def _expand_seq(m: "re.Match[str]") -> str:
+    a, b, n, k = m.groups()
+    is_chr = a is not None
+    if is_chr:
+        if (a < "a") != (b < "a"):
+            return m.group(0)  # mixed case: bash also walks the characters between, not worth following
+        start, end = ord(a), ord(b)
+    else:
+        start, end = int(n), int(k)
+    step = 1 if start <= end else -1
+    items = [chr(c) if is_chr else str(c) for c in range(start, end + step, step)]
+    return items[0] if len(items) == 1 else "{" + ",".join(items) + "}"
+
+
+def _brace_alts(w: str) -> Optional[List[str]]:
+    """The words a brace list in `w` expands to (c{u,}rl -> curl, cl), `{x..y}` with one-character or short
+    numeric ends included; just `w` when there is none, and None when there are too many: the caller reads that
+    as a match, since the shell runs the first alternative and any of them may be it."""
+    return _expand_braces(_SEQ_RE.sub(_expand_seq, str(w)))
+
+
 def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]]) -> Optional[str]:
     heads = []
     for words, _sep in pipe:
         a = _unwrap(words)
-        heads.append((a, _program_name(a[0]) if a else ""))
-    first_dl = next((j for j, h in enumerate(heads) if h[1] in _DOWNLOADERS), -1)
+        alts = _brace_alts(a[0]) if a else [""]
+        names = [_program_name(x) for x in (alts if alts is not None else [str(a[0])])]
+        heads.append((a, names[0], names, alts is None))
+    first_dl = next((j for j, h in enumerate(heads) if h[3] or any(n in _DOWNLOADERS for n in h[2])), -1)
     if first_dl >= 0:
         for j in range(first_dl + 1, len(pipe)):
-            args, head = heads[j]
-            if head not in _SHELLS:
+            args, head, names, overflow = heads[j]
+            if not overflow and not any(n in _SHELLS for n in names):
                 continue
             rest = args[1:]
             if any(re.match(r"^-[A-Za-z]*[cn][A-Za-z]*\Z", w) for w in rest):
@@ -477,8 +531,10 @@ def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]]) -> Optional[str
                     target = re.sub(r"^[^=:]*[=:]", "", w, count=1)
                 elif heads[j][1] == "tee" and not w.startswith("-") and i > 0:
                     target = w
-                if target is not None and _is_rc_path(target):
-                    return "rc_download"
+                if target is not None:
+                    alts = _brace_alts(target)
+                    if alts is None or any(_is_rc_path(t) for t in alts):
+                        return "rc_download"
     for words, _sep in pipe:
         for t in _redirect_targets(words):
             if _BLOCK_DEVICE_RE.match(t):
