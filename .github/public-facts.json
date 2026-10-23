@@ -32,10 +32,6 @@
       {
         "file": ".pre-commit-hooks.yaml",
         "regex": "^  entry: npx --yes zn-gate@(\\S+) audit$"
-      },
-      {
-        "file": "README.md",
-        "regex": "rev: v([0-9][^,\\s]*), hooks: \\[\\{id: zn-gate-scan"
       }
     ],
     "pinsExclude": [
@@ -68,8 +64,14 @@
     ]
   },
   "docsVersion": {
-    "_comment": "The last final release. While version.value is a pre-release, the pins in the docs and the {minor} of the text facts are checked against this one. The final release step sets it to the new release.",
-    "value": "1.13.1"
+    "_comment": "The last final release. While version.value is a pre-release, the pins in the docs, the files below and the {minor} of the text facts are checked against this one. The final release step sets it to the new release.",
+    "value": "1.13.1",
+    "files": [
+      {
+        "file": "README.md",
+        "regex": "rev: v([0-9][^,\\s]*), hooks: \\[\\{id: zn-gate-scan"
+      }
+    ]
   },
   "examplesVersion": {
     "_comment": "The release the examples pin: always one that is published on npm and PyPI. It moves after a release is published (requirements in the PyPI form, 1.14.0rc1 for 1.14.0-rc.1).",
