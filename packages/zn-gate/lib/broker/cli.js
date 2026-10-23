@@ -21,6 +21,7 @@ const { writeFileAtomic } = require('./files');
 const deps = require('../deps');
 const exe = require('../exe');
 const { humanError } = require('../errors');
+const { validateSecretValue } = require('../scrub/exact');
 const { znCommand } = require('../zn-command');
 
 const MODES = new Set(['proxy', 'env', 'file']);
@@ -138,6 +139,8 @@ async function secretSet(args, io) {
   const value = flags.clipboard ? tty.readClipboard()
     : await (io.readSecret ? io.readSecret(name) : tty.readHidden('Value for ' + name + ' (hidden): ', io));
   if (!value) throw deps.znError('ZN_USAGE', 'empty value, nothing stored');
+  const tooShort = validateSecretValue(value);
+  if (tooShort) throw deps.znError('ZN_USAGE', tooShort + ' Nothing stored.');
   const meta = metaFromFlags(flags);
   await vault.setSecret(name, value, meta);
   out(io, 'Stored ' + name + ' (' + meta.mode + ' mode). Agents use it as ' + markers.markerFor(name) + '.');
@@ -277,7 +280,7 @@ function secretNameForKey(key) {
  */
 function shortWhy(n) {
   return 'the value is only ' + n + ' character(s); values under ' + dotenv.MIN_SECRET_LEN
-    + ' are not moved because they cannot be told apart from ordinary text. It stays in the file in plain text. Use a longer value, or store it anyway with: zn env shadow --keys NAME';
+    + ' are not moved because they cannot be told apart from ordinary text. It stays in the file in plain text. Use a longer value.';
 }
 
 function planImport(text, flags) {
@@ -298,7 +301,7 @@ function planImport(text, flags) {
     let end = e.end;
     if (pw) {
       const pass = e.value.slice(pw.start, pw.end);
-      if (pass.length >= dotenv.MIN_SECRET_LEN || only) {
+      if (pass.length >= dotenv.MIN_SECRET_LEN) {
         name = name + '_PASSWORD';
         value = pass;
         start = e.start + pw.start;
@@ -314,7 +317,7 @@ function planImport(text, flags) {
     } else if (/^[a-z][a-z0-9+.-]*:\/\//i.test(e.value)) {
       continue; // URL without credentials: nothing secret
     }
-    if (value.length < dotenv.MIN_SECRET_LEN && !only) { skipped.push({ key: e.key, why: shortWhy(value.length) }); continue; }
+    if (value.length < dotenv.MIN_SECRET_LEN) { skipped.push({ key: e.key, why: shortWhy(value.length) }); continue; }
     const bad = markers.validateSecretName(name);
     if (bad) { skipped.push({ key: e.key, why: bad + ' (store it with zn secret set OTHER_NAME)' }); continue; }
     items.push({ entry: e, name, value, start, end });
