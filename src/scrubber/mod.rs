@@ -503,6 +503,21 @@ mod tests {
     }
 
     #[test]
+    fn test_scrub_escaped_quotes_in_json_string() {
+        // A shell command inside a JSON string: the quotes around the value are escaped.
+        let v = "zn_FAKEabcdef0123456789abcdef";
+        let input = format!(r#"{{"command":"export api_key=\"{v}\" && run"}}"#);
+        let out = Scrubber::scrub(&input);
+        assert!(!out.contains(v), "{out}");
+        assert_eq!(
+            out,
+            r#"{"command":"export api_key: [SECRET_REDACTED] && run"}"#
+        );
+        let input = format!(r#"{{"command":"curl -d password=\"{v}\""}}"#);
+        assert!(!Scrubber::scrub(&input).contains(v));
+    }
+
+    #[test]
     fn test_scrub_credit_card() {
         for input in [
             "Card: 4111-1111-1111-1111",
