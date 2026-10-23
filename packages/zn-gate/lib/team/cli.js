@@ -18,6 +18,7 @@
 const fs = require('fs');
 const policy = require('./policy');
 const { pendingCount } = require('./upload');
+const { syncOutcome } = require('./sync-outcome');
 const { exportAuditFile } = require('./otel');
 const store = require('../vault/store');
 const { createClient } = require('../vault/client');
@@ -41,7 +42,7 @@ function withClient(fn) {
 }
 
 function describePolicy(p) {
-  if (!p || p.state === 'none') return 'none received yet';
+  if (!p || p.state === 'none') return 'none received yet (PENDING: the organization policy is not applied; run `zn team sync`)';
   if (p.state === 'invalid') return 'cached copy does not verify (' + (p.error || 'invalid') + '); run `zn team sync`';
   const base = 'version ' + p.version + ', valid until ' + p.expires_at;
   if (p.state === 'expired') return base + ' -- EXPIRED: strict mode (only restrictions apply) until zn can reach the server';
@@ -53,13 +54,21 @@ async function joinCmd(args) {
   if (!token || token.startsWith('--')) { err(USAGE); return 2; }
   const r = await withClient((c) => c.teamJoin({ join_token: token, api_base: flag(args, '--api'), agent: flag(args, '--agent') }));
   out('Joined ' + (r.org_name ? r.org_name + ' (' + r.org + ')' : r.org) + '. Installation ' + r.install_id + '.');
+  // The join is complete only when the organization's first valid policy is applied.
+  let why;
   try {
     const s = await withClient((c) => c.teamSync({}));
-    out('Policy: ' + (s.policy.status === 'updated' ? 'version ' + s.policy.version : s.policy.status) + '.');
+    const pol = s.policy || {};
+    out('Policy: ' + (pol.status === 'updated' ? 'version ' + pol.version : pol.status) + '.');
+    if (syncOutcome(s).policyOk) return 0;
+    why = syncOutcome({ policy: pol }).problems[0];
   } catch (e) {
-    out('Policy: not downloaded yet (' + (e.message || e) + '); zn retries while the vault is unlocked.');
+    why = 'not downloaded yet (' + (e.message || e) + ')';
+    out('Policy: ' + why + '.');
   }
-  return 0;
+  err('[zn] The join is not finished: this machine is registered, but no valid policy is applied yet (' + why + '). ' +
+    "The organization's restrictions do not apply until one is. `zn team status` shows it as pending; run `zn team sync` to retry (zn also retries while the vault is unlocked).");
+  return 1;
 }
 
 async function statusCmd(args) {
@@ -84,6 +93,9 @@ async function statusCmd(args) {
     revoked_at: info ? info.revoked_at : null,
     policy: st ? { state: st.state, version: st.version || null, expires_at: st.expires_at || null } : null,
     upload: { pending, last_upload: upload && upload.last_upload, last_status: upload && upload.last_status },
+    // true until a valid organization policy has been applied on this machine
+    join_pending: joined && (!st || st.state === 'none' || st.state === 'invalid'),
+    last_sync: (info && info.last_sync) || null,
   };
   if (json) { out(JSON.stringify(res, null, 2)); return 0; }
   if (!joined) { out('Not in a zn organization. Join with: zn team join <token> (from your organization admin).'); return 0; }
@@ -93,6 +105,11 @@ async function statusCmd(args) {
   out('Policy:       ' + describePolicy(st));
   out('Audit upload: ' + (pending == null ? 'unknown' : pending + ' records pending') +
     (res.upload.last_upload ? ', last upload ' + res.upload.last_upload + ' (' + res.upload.last_status + ')' : ''));
+  const ls = res.last_sync;
+  if (ls) {
+    out('Last sync:    ' + (ls.ok ? 'ok, ' + ls.at : 'FAILED ' + ls.at + ': ' + (ls.problems.join('; ') || 'unknown') +
+      (ls.last_ok_at ? ' (last success ' + ls.last_ok_at + ')' : ' (never succeeded)') + '; run `zn team sync` to retry'));
+  }
   if (!info) out('The vault is locked: policy downloads and uploads resume after `' + znCommand('unlock') + '`.');
   return 0;
 }
@@ -102,7 +119,10 @@ async function syncCmd() {
   const pol = r.policy || {};
   out('Policy: ' + (pol.status === 'updated' || pol.status === 'current' ? pol.status + ' (version ' + pol.version + ')' : pol.status + (pol.error ? ': ' + pol.error : '')));
   if (r.upload) out('Audit upload: ' + r.upload.status + ', ' + (r.upload.uploaded || 0) + ' sent, ' + (r.upload.pending > 0 ? r.upload.pending : 0) + ' pending');
-  return pol.status === 'rejected' || pol.status === 'revoked' ? 1 : 0;
+  // Exit 0 only with a valid policy applied and no failed upload.
+  const o = syncOutcome(r);
+  if (!o.ok) err('[zn] sync incomplete: ' + o.problems.join('; '));
+  return o.ok ? 0 : 1;
 }
 
 async function leaveCmd() {

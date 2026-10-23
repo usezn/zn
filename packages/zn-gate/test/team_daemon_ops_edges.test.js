@@ -244,6 +244,64 @@ test('sync with the server unreachable or failing is offline, not an error, and 
   assert.deepStrictEqual(s.policy, { status: 'offline', error: 'ZN_TEAM_BAD_RESPONSE' });
 });
 
+test('the last sync result is kept and shown by teamInfo; a failure leaves one bounded local alert', async () => {
+  const m = await joined();
+  const alerts = () => m.audit.filter((a) => a.reason === 'team_sync_failed');
+  cloud.publishPolicy({ rules: [] });
+  assert.strictEqual((await m.o.teamInfo()).last_sync, null, 'nothing synced yet');
+  assert.strictEqual((await m.o.teamInfo()).join_pending, true);
+  await m.o.teamSync({ upload: false });
+  let ls = (await m.o.teamInfo()).last_sync;
+  assert.strictEqual(ls.ok, true);
+  assert.deepStrictEqual(ls.problems, []);
+  assert.strictEqual((await m.o.teamInfo()).join_pending, false);
+  assert.strictEqual(alerts().length, 0);
+  // Offline: the cause is queryable and one alert is written...
+  net.throwError = true;
+  await m.o.teamSync({ upload: false });
+  ls = (await m.o.teamInfo()).last_sync;
+  assert.strictEqual(ls.ok, false);
+  assert.match(ls.problems[0], /could not reach the server \(ZN_TEAM_NETWORK\)/);
+  assert.ok(ls.last_ok_at, 'the last success is kept');
+  assert.deepStrictEqual(alerts(), [{ mode: 'set', decision: 'error', reason: 'team_sync_failed' }]);
+  // ...and the job failing again every 15 minutes does not flood the audit log.
+  for (let i = 0; i < 5; i++) await m.o.teamSync({ upload: false });
+  assert.strictEqual(alerts().length, 1);
+  // After 6 hours of failures, one more.
+  m.secrets.team.last_sync.alerted_at = new Date(Date.now() - 7 * 3600 * 1000).toISOString();
+  await m.o.teamSync({ upload: false });
+  assert.strictEqual(alerts().length, 2);
+  // Recovery clears the failure; the next failure alerts again.
+  net.throwError = false;
+  await m.o.teamSync({ upload: false });
+  assert.strictEqual((await m.o.teamInfo()).last_sync.ok, true);
+  net.throwError = true;
+  await m.o.teamSync({ upload: false });
+  assert.strictEqual(alerts().length, 3);
+  assert.ok(!JSON.stringify(await m.o.teamInfo()).includes('zni_'), 'no token in the status');
+});
+
+test('an exception inside a sync is recorded as the last error and still thrown; a failed upload counts as a failed sync', async () => {
+  const m = await joined();
+  cloud.publishPolicy({ rules: [] });
+  // The readable copy cannot be written (a directory is in its place): the sync throws.
+  fs.mkdirSync(path.join(policy.paths().policyFile, 'keep'), { recursive: true });
+  await assert.rejects(m.o.teamSync({ upload: false }));
+  const ls = (await m.o.teamInfo()).last_sync;
+  assert.strictEqual(ls.ok, false);
+  assert.match(ls.problems[0], /^sync failed: /);
+  assert.ok(m.audit.some((a) => a.reason === 'team_sync_failed'));
+  fs.rmSync(policy.paths().policyFile, { recursive: true, force: true });
+  // A good policy but an upload that fails.
+  fs.writeFileSync(m.auditFile, makeAuditChain({ key: AUDIT_KEY, count: 2 }).map((r) => JSON.stringify(r)).join('\n') + '\n');
+  const real = global.fetch;
+  global.fetch = async (url, init) => (String(url).endsWith('/v1/audit/ingest') ? new Response('{"error":"busy"}', { status: 503, headers: { 'content-type': 'application/json' } }) : real(url, init));
+  try { await m.o.teamSync({}); } finally { global.fetch = real; }
+  const after = (await m.o.teamInfo()).last_sync;
+  assert.strictEqual(after.ok, false);
+  assert.match(after.problems[0], /audit upload failed \(offline, 2 records pending\)/);
+});
+
 test('a revoked installation is marked, stops uploading, and recovers when the server accepts it again', async () => {
   const m = await joined();
   cloud.publishPolicy({ rules: [] });
@@ -305,7 +363,7 @@ test('another signed policy with the version already held but other content is r
   assert.match(s.policy.error, /same version|already used with different content/);
   assert.strictEqual(m.secrets.team.policy.version, version);
   assert.strictEqual(JSON.stringify(m.secrets.team.policy.envelope), held, 'the policy held did not change');
-  assert.deepStrictEqual(m.audit.at(-1), { mode: 'set', decision: 'deny', reason: 'policy:rejected' });
+  assert.ok(m.audit.some((a) => a.reason === 'policy:rejected' && a.decision === 'deny'));
   assert.strictEqual(policy.readCache().envelope.policy.rules.length, 1, 'the readable copy did not change either');
   // The same content again (only a new ETag) is a normal update.
   cloud.state.policyContent = { rules: [{ secret: 'A_B', agents: ['*'], deny: true }] };

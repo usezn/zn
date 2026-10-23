@@ -643,6 +643,7 @@ async function serve(opts) {
   // zn Team: refresh the organization policy and upload the audit log while
   // unlocked (soon after unlock, then every teamSyncMs). No-op outside a team.
   const teamSyncMs = o.teamSyncMs === 0 ? 0 : (o.teamSyncMs || DEFAULT_TEAM_SYNC_MS);
+  // Nobody is waiting for this one: teamSync records its own failures (last_sync, one local alert) before they reach this catch.
   const teamSync = () => { if (!closed && state.secrets && state.secrets.team) ops.teamSync({}).catch(() => {}); };
   const teamTimer = teamSyncMs ? setInterval(teamSync, teamSyncMs) : null;
   const teamFirst = teamSyncMs ? setTimeout(teamSync, 5000) : null;

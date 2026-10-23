@@ -546,7 +546,7 @@ zn-gate team join "$JOIN_TOKEN"
 # Optional: add --api https://api.example.com (another server) or --agent claude-code
 ```
 
-Connects this machine to your organization with the join token your admin gave you.
+Connects this machine to your organization with the join token your admin gave you. It exits `0` only after the organization's first valid policy has been downloaded and applied. If that fails (offline, or no policy published yet) it exits `1`; the machine stays registered, `team status` shows the join as pending, and `team sync` finishes it.
 
 #### `team status`
 
@@ -558,7 +558,7 @@ Shows the organization, the policy version and the state of the audit upload.
 
 #### `team sync`
 
-Downloads the policy and uploads the audit log now. Exit `1` when the policy is rejected or the machine was removed.
+Downloads the policy and uploads the audit log now. Exit `0` only when a valid policy is applied and no upload failed. Exit `1` when the machine is offline, the organization has no policy, the policy is refused, the machine was removed, or an upload failed; `team status` keeps the last reason.
 
 #### `team leave`
 

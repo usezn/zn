@@ -15,9 +15,9 @@ machine that stops reporting is visible.
 
 | Command | What it does |
 |---|---|
-| `zn team join <token>` | Connects this machine to your organization. The token (`znj_...`) comes from an organization admin. Needs the vault unlocked (`zn unlock`). |
-| `zn team status` | Organization, installation id, policy version and expiry, upload state. `--json` for scripts. Never shows the install token. |
-| `zn team sync` | Downloads the policy and uploads pending audit records now. This also happens on its own while the vault is unlocked: a few seconds after `zn unlock`, then every 15 minutes. |
+| `zn team join <token>` | Connects this machine to your organization. The token (`znj_...`) comes from an organization admin. Needs the vault unlocked (`zn unlock`). The join counts as done only once the organization's first valid policy has been downloaded and applied. If the policy cannot be downloaded, or the organization has not published one yet, the command exits `1`: this machine is registered but `zn team status` shows the join as **pending** until `zn team sync` succeeds. |
+| `zn team status` | Organization, installation id, policy version and expiry, upload state, and the result of the last sync (what failed, and when it last worked). `--json` for scripts (`join_pending`, `last_sync`). Never shows the install token. |
+| `zn team sync` | Downloads the policy and uploads pending audit records now. Exits `0` only when a valid policy is applied and no upload failed; offline, no policy, a refused policy, a removed machine or a failed upload exit `1` and say why. This also happens on its own while the vault is unlocked: a few seconds after `zn unlock`, then every 15 minutes. |
 | `zn team leave` | Disconnects this machine. The organization's policy stops applying here. |
 | `zn team managed-config` | Prints the files an admin deploys with device management so zn-gate's hooks run on every machine. Writes nothing; see [Deploy zn-gate's hooks to every machine](#deploy-zn-gates-hooks-to-every-machine-managed-settings). |
 | `zn vault log export --otlp` | Writes the local audit log as OpenTelemetry logs (works without zn Team; see below). |
@@ -156,7 +156,7 @@ patterns are skipped on the machine, and all custom detectors together get
 
 | Situation | What happens |
 |---|---|
-| No network, policy still valid (policies are valid for 7 days) | The policy keeps applying. Audit records wait in `~/.zn/audit.jsonl` and are uploaded later. |
+| No network, policy still valid (policies are valid for 7 days) | The policy keeps applying. Audit records wait in `~/.zn/audit.jsonl` and are uploaded later. The automatic sync keeps the reason it failed (`zn team status` shows it under "Last sync") and writes one audit record, then at most one more every 6 hours while it keeps failing. |
 | No network for longer than the policy's validity | Strict mode: the restrictions keep applying; anything the organization had opened is withdrawn until a fresh policy arrives. `zn team status` says so. |
 | A downloaded policy fails a check (signature, key, organization, expiry, older version, same version with other content) | It is refused and the last accepted policy stays. The refusal is recorded in the audit log. |
 | An admin removes this machine | Uploads stop. `zn team status` shows "removed from org". The last policy applies until it expires, then strict mode. |

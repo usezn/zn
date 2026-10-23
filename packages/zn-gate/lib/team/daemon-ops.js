@@ -21,6 +21,7 @@ const policy = require('./policy');
 const { effective, approvalKey } = require('./effective');
 const { createApi, checkBase } = require('./api');
 const { uploadPending } = require('./upload');
+const { syncOutcome } = require('./sync-outcome');
 const { CODES, znError } = require('../errors');
 const messages = require('../messages');
 const { INVISIBLE } = require('../vault/confirm');
@@ -30,6 +31,7 @@ const DEFAULT_API = 'https://api.usezn.com';
 const JOIN_TOKEN_RE = /^znj_[A-Za-z0-9]{32,64}$/;
 const AGENT_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const NAME_RE = /^[A-Z][A-Z0-9_]{0,63}$/;
+const ALERT_EVERY_MS = 6 * 3600 * 1000; // a sync that keeps failing leaves one local alert every 6 hours
 
 const osName = () => (['linux', 'darwin', 'win32'].includes(process.platform) ? process.platform : 'other');
 /* Text from the server shown in dialogs and in `zn team status`: printable only (same invisible set as the dialogs). */
@@ -73,6 +75,17 @@ function makeTeamOps(ctx) {
     if (t.policy && t.policy.envelope) policy.writeCache(t.policy.envelope, t.policy.etag || null, state.opts);
   }
 
+  /* The last sync result as `zn team status` shows it: printable text only. */
+  function lastSyncOf(t) {
+    const l = t.last_sync;
+    if (!l || typeof l !== 'object') return null;
+    return {
+      at: typeof l.at === 'string' ? l.at : null, ok: l.ok === true,
+      last_ok_at: typeof l.last_ok_at === 'string' ? l.last_ok_at : null,
+      problems: Array.isArray(l.problems) ? l.problems.map((p) => printable(String(p), 200)).filter(Boolean) : [],
+    };
+  }
+
   /* What a new policy has to beat: the version held and its canonical digest (same version, other content = refused). */
   function heldFloor(p) {
     if (!p) return { minVersion: 0, heldDigest: null };
@@ -92,7 +105,7 @@ function makeTeamOps(ctx) {
     });
   }
 
-  return {
+  const ops = {
     /**
      * teamJoin({join_token, api_base, agent}) -> {org, org_name, install_id, api_base}
      * Registers this installation with the organization of the join token.
@@ -213,6 +226,9 @@ function makeTeamOps(ctx) {
         joined: true, org: t.org, org_name: t.org_name, install_id: t.install_id, api_base: t.api_base,
         joined_at: t.joined_at, revoked_at: t.revoked_at || null, kid: t.pin.kid,
         policy: { state: st.state, version: st.version || null, expires_at: st.expires_at || null, fetched_at: st.fetched_at || null, error: st.error || null },
+        // The join is pending until a valid policy has been applied.
+        join_pending: st.state === 'none' || st.state === 'invalid',
+        last_sync: lastSyncOf(t),
       };
     },
 
@@ -220,7 +236,7 @@ function makeTeamOps(ctx) {
      * teamSync({upload}) -> {policy: {status, version?, error?}, upload: {...}}
      * Downloads the policy (ETag) and uploads pending audit records.
      */
-    async teamSync(args) {
+    async teamSyncNow(args) {
       const a = args && typeof args === 'object' ? args : {};
       const t = await team();
       if (!t) throw znError(CODES.NOT_FOUND, 'this machine is not in an organization (zn team join <token>)');
@@ -349,6 +365,46 @@ function makeTeamOps(ctx) {
       });
     },
   };
+
+  /**
+   * teamSync({upload}) -> {policy: {status, version?, error?}, upload: {...}}
+   * Runs the sync and keeps its outcome in the vault (`last_sync`, shown by
+   * `zn team status`). An exception is recorded too, then thrown again, so
+   * the periodic job (which has nobody to tell) leaves a trace of every failure.
+   */
+  ops.teamSync = async function teamSync(args) {
+    let out;
+    try {
+      out = await ops.teamSyncNow(args);
+    } catch (err) {
+      await noteSync(['sync failed: ' + printable(String((err && err.message) || (err && err.code) || err), 160)]).catch(() => {});
+      throw err;
+    }
+    if (!(out.policy && out.policy.status === 'stopped')) await noteSync(syncOutcome(out).problems).catch(() => {});
+    return out;
+  };
+
+  /* Record how the last sync went. A failure leaves one local alert (an audit record), then at most one more every ALERT_EVERY_MS. */
+  async function noteSync(problems) {
+    const ok = problems.length === 0;
+    const at = new Date().toISOString();
+    await updateTeam((tt) => {
+      const prev = tt.last_sync && typeof tt.last_sync === 'object' ? tt.last_sync : null;
+      const next = { at, ok, problems: problems.slice(0, 5), last_ok_at: ok ? at : (prev && prev.last_ok_at) || null };
+      if (!ok) {
+        const lastAlert = prev && prev.alerted_at ? Date.parse(prev.alerted_at) : 0;
+        if (!prev || prev.ok || !(Date.now() - lastAlert < ALERT_EVERY_MS)) {
+          next.alerted_at = at;
+          writeAudit({ mode: 'set', decision: 'error', reason: 'team_sync_failed' });
+        } else {
+          next.alerted_at = prev.alerted_at;
+        }
+      }
+      tt.last_sync = next;
+    });
+  }
+
+  return ops;
 }
 
 module.exports = { makeTeamOps, DEFAULT_API };
