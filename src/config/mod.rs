@@ -156,7 +156,7 @@ fn default_channel_capacity() -> usize {
 }
 
 /// Security-related configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SecurityConfig {
     /// API key for authentication (if None, auth is disabled - NOT recommended for production)
     pub api_key: Option<String>,
@@ -181,6 +181,23 @@ pub struct SecurityConfig {
 
     /// Token for MCP WebSocket authentication
     pub mcp_ws_token: Option<String>,
+}
+
+/// Debug output hides the API key, the JWT secret and the MCP WebSocket
+/// token, so a `{:?}` of the configuration never leaks them.
+impl std::fmt::Debug for SecurityConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let hide = |v: &Option<String>| v.as_ref().map(|_| "<redacted>");
+        f.debug_struct("SecurityConfig")
+            .field("api_key", &hide(&self.api_key))
+            .field("allowed_origins", &self.allowed_origins)
+            .field("rate_limit_enabled", &self.rate_limit_enabled)
+            .field("rate_limit_per_minute", &self.rate_limit_per_minute)
+            .field("namespace", &self.namespace)
+            .field("jwt_secret", &hide(&self.jwt_secret))
+            .field("mcp_ws_token", &hide(&self.mcp_ws_token))
+            .finish()
+    }
 }
 
 impl Default for SecurityConfig {
@@ -1010,5 +1027,24 @@ mod credential_tests {
         );
         assert_eq!(credential_override(some("  "), None), None);
         assert_eq!(credential_override(None, None), None);
+    }
+
+    #[test]
+    fn security_config_debug_hides_secrets() {
+        let c = SecurityConfig {
+            api_key: Some("fake-api-key-0000".to_string()),
+            jwt_secret: Some("fake-jwt-secret-0000".to_string()),
+            mcp_ws_token: Some("fake-ws-token-0000".to_string()),
+            ..SecurityConfig::default()
+        };
+        let out = format!("{:?} {:#?}", c, c);
+        for secret in [
+            "fake-api-key-0000",
+            "fake-jwt-secret-0000",
+            "fake-ws-token-0000",
+        ] {
+            assert!(!out.contains(secret), "{secret} leaked");
+        }
+        assert!(out.contains("<redacted>"));
     }
 }

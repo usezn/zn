@@ -76,11 +76,17 @@ pub fn seed_key_file_for(db_path: impl AsRef<Path>) -> PathBuf {
     db_path.as_ref().with_file_name("zn-superadmin-key.txt")
 }
 
+/// File that receives a generated MCP WebSocket token: `zn-mcp-ws-token.txt`
+/// next to the database at `db_path`.
+pub fn ws_token_file_for(db_path: impl AsRef<Path>) -> PathBuf {
+    db_path.as_ref().with_file_name("zn-mcp-ws-token.txt")
+}
+
 /// Writes `key` to a new file at `path` that only the current user can read
 /// and write (mode 0600 on Unix; on Windows the file inherits the ACL of its
 /// directory). A file or symlink already at `path` is removed first, never
 /// followed.
-fn write_seed_key_file(path: &Path, key: &str) -> Result<()> {
+pub fn write_seed_key_file(path: &Path, key: &str) -> Result<()> {
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir)
             .map_err(|e| anyhow!("Failed to create directory {:?}: {}", dir, e))?;
