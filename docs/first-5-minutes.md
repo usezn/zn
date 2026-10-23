@@ -37,6 +37,9 @@ each agent's zn hook whether the agent may read them. This is what happened:
   -  Codex CLI    not found on this machine
   -  Cursor       not found on this machine
   -  OpenCode     not found on this machine
+  -  Antigravity  not found on this machine
+  -  Copilot CLI (experimental) not found on this machine
+  -  Gemini CLI   not found on this machine
 
 Your agent cannot read secret files such as .env through these tools. Nothing was sent anywhere.
 If your agent needs a value from .env, keep it in zn's vault instead: `zn env shadow .env`.
@@ -44,6 +47,8 @@ More: https://usezn.com/docs/check
 
 The test folder was deleted.
 ```
+
+Your list shows the agents that are on your machine: besides the four above, zn-gate looks for Antigravity, GitHub Copilot CLI and Gemini CLI (the last two are experimental).
 
 `OK` means that agent is protected. A line that starts with `-` means zn is not set up for that agent, or the agent is not on your machine. A line with `NOT protected` says why and what to run. More in [check.md](check.md).
 
@@ -88,7 +93,7 @@ zn also has a text check that your agent can call through zn's own tools. Some p
   "rule": "none",
   "reason": null,
   "engine": "oss-local",
-  "rules_version": "2026-10-16.10",
+  "rules_version": "2026-10-23.7",
   "advisory": {
     "rule": "pi:bypass",
     "reason": "Guardrail bypass attempt"
@@ -97,7 +102,7 @@ zn also has a text check that your agent can call through zn's own tools. Some p
 }
 ```
 
-`"verdict": "allow"` means nothing was stopped. The `advisory` says why it is worth a look. What to do: read the text it points at. If it is harmless, carry on. If you did not expect it (for example inside a file you downloaded), do not let your agent follow it. To make the text check block these too, turn on strict mode: set `ZN_STRICT=1`, or add `"strict": true` to `zn.config.json` in your project.
+`rules_version` is the date of the rules in your zn-gate, so yours will differ from this sample after an update. `"verdict": "allow"` means nothing was stopped. The `advisory` says why it is worth a look. What to do: read the text it points at. If it is harmless, carry on. If you did not expect it (for example inside a file you downloaded), do not let your agent follow it. To make the text check block these too, turn on strict mode: set `ZN_STRICT=1`, or add `"strict": true` to `zn.config.json` in your project.
 
 For comparison, `npx -y zn-gate analyze "ignore all previous instructions"` is a block: `"verdict": "block"` with the reason "Override prior instructions".
 
