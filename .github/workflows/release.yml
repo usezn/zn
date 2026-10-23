@@ -236,6 +236,7 @@ jobs:
       name: release
       url: https://www.npmjs.com/package/zn-gate/v/${{ needs.verify.outputs.npm_version }}
     permissions:
+      contents: read
       id-token: write
     steps:
       # No network evidence yet for this job (it had no harden-runner): audit first; once a release run shows
@@ -258,9 +259,39 @@ jobs:
           node-version: 24.x
           check-latest: true
           package-manager-cache: false
-      - name: Install an npm CLI with trusted publishing support
-        run: | # zizmor: ignore[adhoc-packages] npm is pinned to one exact version
-          npm install -g npm@11.21.0
+      # Only the lockfile of the npm CLI is taken from the verified commit (no other file, no credentials).
+      - name: Fetch the lockfile of the pinned npm CLI
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          sparse-checkout: .github/npm-cli
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      # npm trusted publishing needs npm >= 11.5.1; the runner's bundled npm floats with the Node.js release,
+      # so the release uses one exact CLI. It comes from a committed lockfile (sha512 integrity of the
+      # tarball), is installed with --ignore-scripts, and the integrity is compared again with the value
+      # pinned here before the CLI is put on PATH.
+      - name: Install the pinned npm CLI (integrity checked, no install scripts)
+        env:
+          NPM_CLI_VERSION: 11.21.0
+          NPM_CLI_INTEGRITY: sha512-Zov8KhamNneiLdELtj5YALtNmJW4L4fCLTzjfpzXG2w6MSHcf0UxgdlK5uloCuksWT+7mGUU7wi79cO6RqivPg==
+        run: |
+          set -euo pipefail
+          cd .github/npm-cli
+          locked="$(node -p "const e=require('./package-lock.json').packages['node_modules/npm']; e.version+' '+e.integrity")"
+          if [ "$locked" != "${NPM_CLI_VERSION} ${NPM_CLI_INTEGRITY}" ]; then
+            echo "::error::package-lock.json pins '$locked', the workflow expects '${NPM_CLI_VERSION} ${NPM_CLI_INTEGRITY}'"
+            exit 1
+          fi
+          npm ci --ignore-scripts --no-audit --no-fund
+          installed="$(node -p "require('./node_modules/npm/package.json').version")"
+          [ "$installed" = "$NPM_CLI_VERSION" ] || { echo "::error::installed npm $installed, expected $NPM_CLI_VERSION"; exit 1; }
+          echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"
+          echo "NPM_CLI_MODULES=$PWD/node_modules" >> "$GITHUB_ENV"
+      - name: Show the npm CLI in use
+        run: |
+          set -euo pipefail
+          [ "$(npm --version)" = 11.21.0 ] || { echo "::error::npm on PATH is not the pinned 11.21.0"; exit 1; }
           npm --version
       - name: Choose the dist-tag
         id: disttag
@@ -306,7 +337,7 @@ jobs:
           }
           process.stdout.write(tag);
           JS
-          tag="$(NPM_ROOT="$(npm root -g)" DIST_TAGS="$dist_tags" node "$RUNNER_TEMP/dist-tag.js")"
+          tag="$(NPM_ROOT="$NPM_CLI_MODULES" DIST_TAGS="$dist_tags" node "$RUNNER_TEMP/dist-tag.js")"
           echo "dist-tag: $tag"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
       - name: Publish the tarball with npm trusted publishing
@@ -314,7 +345,19 @@ jobs:
         env:
           NPM_VERSION: ${{ needs.verify.outputs.npm_version }}
           DIST_TAG: ${{ steps.disttag.outputs.tag }}
-        run: npm publish "./zn-gate-${NPM_VERSION}.tgz" --tag "$DIST_TAG" --access public --provenance --ignore-scripts
+        run: |
+          set -euo pipefail
+          # Right before publishing: the tarball must still be the file SHA256SUMS lists.
+          tarball="zn-gate-${NPM_VERSION}.tgz"
+          expected="$(awk -v f="$tarball" '$2 == f || $2 == "*" f { print $1 }' SHA256SUMS)"
+          if [ -z "$expected" ] || [ "$(printf '%s\n' "$expected" | wc -l)" -ne 1 ]; then
+            echo "::error::SHA256SUMS has no single entry for $tarball"; exit 1
+          fi
+          actual="$(sha256sum "$tarball" | cut -d' ' -f1)"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::$tarball sha256 is $actual, SHA256SUMS lists $expected"; exit 1
+          fi
+          npm publish "./$tarball" --tag "$DIST_TAG" --access public --provenance --ignore-scripts
 
   github-release:
     name: Create the GitHub Release
