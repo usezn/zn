@@ -33,7 +33,9 @@ zn hooks install claude-code   # or codex, cursor, opencode
 
 Running it again is safe: it updates zn's own entries and leaves the rest of
 your settings alone. From 1.13.0, `zn-gate check` also tells you when the Claude Code hooks it
-finds lack a hook that your zn-gate has.
+finds lack a hook that your zn-gate has. It does not do that for Codex or Cursor hooks, so for those the
+rows below are the only warning: `check` can say OK for hooks that an older
+zn-gate wrote.
 
 Other cases:
 
@@ -112,6 +114,7 @@ For the full list of changes, see the [changelog](../CHANGELOG.md).
 
 | Version | Date | What to do |
 |---|---|---|
+| 1.14.0 | not released yet | Run `zn hooks install` again for every agent you set up with it (`claude-code`, `codex`, `cursor`, `opencode`). Hooks written by 1.13.1 keep their older command, and the Codex hooks lack the events `PermissionRequest`, `SessionStart`, `Stop` and `SubagentStart`. `zn-gate check` only notices old Claude Code hooks, so it can report OK for old Codex or Cursor hooks: run the install anyway, then approve the changed Codex hooks in `/hooks`. The Claude Code plugin now needs Node.js 20.19 or later (the 1.13.0 row says 20.12, the limit of that release). |
 | 1.13.1 | 2026-10-20 | Python package only (the npm package has no code changes): `pip install -U zn-gate`. If you use LangChain, two things change. `ZnGuardCallbackHandler(on_block="return")` now raises `ValueError`: use `guard_langchain_tool(tool, on_block="return")` to give the model a block message instead. With `mask_secrets=True` (the default), a secret in a tool output now stops the run with `GuardBlockError`: if you wrap your tools with `guard_langchain_tool`, create the handler with `mask_secrets=False` so the wrapper hides the secret and the run goes on. |
 | 1.13.0 | 2026-10-19 | If you installed Claude Code hooks with `zn hooks install claude-code`, run it again to add the hook that checks what a typed skill or command expands into (`zn-gate check` tells you; the plugin has it already). On a Node.js older than 20.12, `zn-gate init` sets up hooks instead of the plugin; if you have the plugin there, `check` gives the way out. In a GitHub workflow that uses the Action without `version`, set `version` to choose what runs: the 1.12.0 Action defaulted to 1.10.0. |
 | 1.12.0 | 2026-10-18 | No action. If you verify release signatures, the signer workflow is now `build-release.yml` (see [verify-release.md](verify-release.md)). |
