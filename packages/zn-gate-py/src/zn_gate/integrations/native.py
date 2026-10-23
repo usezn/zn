@@ -79,6 +79,9 @@ def adk_tool_callbacks(
     after callback checks the tool response for prompt injection and masks
     secrets; it returns the replacement dict only when it changes something.
     ADK skips the after callback when the before callback answered the call.
+    A tool output over 4 MB cannot be checked in full and is blocked by default
+    (rule size:truncated); ZN_ALLOW_TRUNCATED=1 lets it through, and
+    block_truncated=True keeps it blocked even then.
 
     on_block="raise" raises GuardBlockError instead of returning a response.
     The ADK `ToolContext` is not checked. Tool exceptions are not covered
@@ -138,6 +141,10 @@ def openai_agents_tool_guardrails(
     (`ToolInputGuardrailTripwireTriggered` / `ToolOutputGuardrailTripwireTriggered`).
     Hosted tools (web search, code interpreter, ...) have no tool guardrails in
     the SDK and are not covered.
+
+    A tool output over 4 MB cannot be checked in full and is blocked by default
+    (rule size:truncated); ZN_ALLOW_TRUNCATED=1 lets it through, and
+    block_truncated=True keeps it blocked even then.
     """
     policy = _Policy("openai-agents", on_block, mask_secrets, check_result, block_truncated, fallback)
     try:
@@ -203,6 +210,10 @@ def guard_pydantic_ai_toolset(
     `RunContext` is not checked. Tools added with `@agent.tool` are not in a
     toolset you hold: put them in a `FunctionToolset` and wrap that, or use
     `guarded_tool`.
+
+    A tool output over 4 MB cannot be checked in full and is blocked by default
+    (rule size:truncated); ZN_ALLOW_TRUNCATED=1 lets it through, and
+    block_truncated=True keeps it blocked even then.
     """
     try:
         from pydantic_ai.toolsets import WrapperToolset

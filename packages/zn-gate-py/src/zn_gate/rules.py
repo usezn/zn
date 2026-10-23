@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-19.1
+RULES_VERSION: 2026-10-25.1
 Zero external dependencies. Pure Python stdlib.
 """
 
@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, overload
 
 
-RULES_VERSION = "2026-10-23.7"
+RULES_VERSION = "2026-10-25.1"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -1463,6 +1463,18 @@ def invisible_block() -> Assessment:
     return Assessment(verdict='block', confidence=1.0, rule='size:invisible', reason=INVISIBLE_BLOCK_REASON)
 
 
+def truncated_blocks(block_truncated: bool = False, allow_truncated: bool = False) -> bool:
+    """True when a result whose middle was not scanned must be blocked.
+
+    Blocked by default. allow_truncated=True or ZN_ALLOW_TRUNCATED=1 opts out;
+    block_truncated=True or ZN_BLOCK_TRUNCATED=1 (the former opt-in) still
+    forces the block and wins over the opt-out.
+    """
+    if block_truncated or os.environ.get('ZN_BLOCK_TRUNCATED') == '1':
+        return True
+    return not (allow_truncated or os.environ.get('ZN_ALLOW_TRUNCATED') == '1')
+
+
 def scan_windows(text: str, strict: Optional[bool] = None) -> Assessment:
     strict = _strict(strict)
     if too_invisible([text]):
@@ -1508,6 +1520,7 @@ def sanitize_tool_result(
     mask_secrets: bool = True,
     block_truncated: bool = False,
     strict: Optional[bool] = None,
+    allow_truncated: bool = False,
 ) -> Tuple[Any, List[Dict[str, Any]]]: ...
 
 
@@ -1518,6 +1531,7 @@ def sanitize_tool_result(
     mask_secrets: bool = True,
     block_truncated: bool = False,
     strict: Optional[bool] = None,
+    allow_truncated: bool = False,
 ) -> SanitizedToolResult: ...
 
 
@@ -1527,6 +1541,7 @@ def sanitize_tool_result(
     mask_secrets: bool = True,
     block_truncated: bool = False,
     strict: Optional[bool] = None,
+    allow_truncated: bool = False,
 ) -> Any:
     """
     Sanitizes tool output to prevent prompt injection and credential leakage.
@@ -1538,8 +1553,9 @@ def sanitize_tool_result(
     string by string, as check_tool_result does, and as JSON text;
     sanitized_content is that JSON text (as in Node.js), with secrets masked.
     Tool output longer than MAX_TOOL_RESULT_SCAN_CHARS is not fully analysed:
-    `truncated` is then True, and the output is blocked when block_truncated is
-    set or the ZN_BLOCK_TRUNCATED environment variable is "1".
+    `truncated` is then True, and the output is blocked (rule size:truncated)
+    unless allow_truncated is set or the ZN_ALLOW_TRUNCATED environment variable
+    is "1". block_truncated and ZN_BLOCK_TRUNCATED=1 force the block.
     """
     if content is not None:
         tool_name = str(tool_or_result)
@@ -1557,7 +1573,7 @@ def sanitize_tool_result(
                 text_content = str(content)
             # The JSON text holds every string of the output: count the invisible
             # characters before the string-by-string check pays for them.
-            assessment = invisible_block() if too_invisible([text_content]) else check_tool_result(content, strict=strict)
+            assessment = invisible_block() if too_invisible([text_content]) else check_tool_result(content, strict=strict, allow_truncated=True)
             if assessment.allowed:
                 text_assessment = scan_windows(text_content, strict=strict)
                 if not text_assessment.allowed:
@@ -1565,7 +1581,7 @@ def sanitize_tool_result(
                 else:
                     assessment.truncated = assessment.truncated or text_assessment.truncated
         truncated = assessment.truncated
-        if truncated and assessment.allowed and (block_truncated or os.environ.get('ZN_BLOCK_TRUNCATED') == '1'):
+        if truncated and assessment.allowed and truncated_blocks(block_truncated, allow_truncated):
             assessment = Assessment(verdict='block', confidence=1.0, rule='size:truncated',
                                     reason='Output too large to scan in full', truncated=True)
         is_block = not assessment.allowed
@@ -1593,6 +1609,45 @@ def sanitize_tool_result(
     # Deep data structure sanitization
     detections: List[Dict[str, Any]] = []
 
+    def _unique_name(name: str, taken: set[Any]) -> str:
+        """Return `name`, or `name #N`, whichever is not taken yet, and take it."""
+        base = name
+        n = 2
+        while name in taken:
+            name = f"{base} #{n}"
+            n += 1
+        taken.add(name)
+        return name
+
+    def _unique_member(member: Any, taken: set[Any]) -> Any:
+        """Like _unique_name for a set member: a masked tuple that collides gets its first text part numbered."""
+        if isinstance(member, str):
+            return _unique_name(member, taken)
+        if isinstance(member, tuple) and member in taken:
+            idx = next((i for i, p in enumerate(member) if isinstance(p, str)), None)
+            if idx is not None:
+                base = member[idx]
+                n = 2
+                cand = member
+                while cand in taken:
+                    cand = member[:idx] + (f"{base} #{n}",) + member[idx + 1:]
+                    n += 1
+                member = cand
+        taken.add(member)
+        return member
+
+    def _sanitize_members(members: Any) -> List[Any]:
+        """Sanitize set members; masked members that become equal stay apart."""
+        originals = list(members)
+        cleaned = [_sanitize(m) for m in originals]
+        taken = {c for c, m in zip(cleaned, originals, strict=True) if c == m}
+        out: List[Any] = []
+        for c, m in zip(cleaned, originals, strict=True):
+            if c != m:
+                c = _unique_member(c, taken)
+            out.append(c)
+        return out
+
     def _sanitize(val: Any) -> Any:
         if isinstance(val, str):
             clean_str, det = redact_secrets(val)
@@ -1600,15 +1655,23 @@ def sanitize_tool_result(
                 detections.extend(det)
             return clean_str
         elif isinstance(val, dict):
-            return {(_sanitize(k) if isinstance(k, str) else k): _sanitize(v) for k, v in val.items()}
+            items = list(val.items())
+            names = [_sanitize(k) if isinstance(k, str) else k for k in [k for k, _ in items]]
+            taken = {n for n, (k, _) in zip(names, items, strict=True) if n == k}
+            out: Dict[Any, Any] = {}
+            for name, (key, v) in zip(names, items, strict=True):
+                if name != key:
+                    name = _unique_name(name, taken)
+                out[name] = _sanitize(v)
+            return out
         elif isinstance(val, list):
             return [_sanitize(v) for v in val]
         elif isinstance(val, tuple):
             return tuple(_sanitize(v) for v in val)
         elif isinstance(val, frozenset):
-            return frozenset(_sanitize(v) for v in val)
+            return frozenset(_sanitize_members(val))
         elif isinstance(val, set):
-            return {_sanitize(v) for v in val}
+            return set(_sanitize_members(val))
         return val
 
     sanitized = _sanitize(tool_or_result)
