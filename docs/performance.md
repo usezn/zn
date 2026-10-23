@@ -55,7 +55,7 @@ most of that difference, not all of it.
 [`bench/HOOK_LATENCY.md`](../bench/HOOK_LATENCY.md) has earlier measurements with the vault unlocked and a
 breakdown of where the time goes.
 
-OpenCode is not in the table: its zn plugin runs inside the OpenCode process, so no hook process is started.
+OpenCode is not in the table because the benchmark does not measure it. Its zn plugin also starts the hook runner (`node lib/hooks/runner.js opencode`) as a separate process for each event, so each event costs at least one Node.js start-up there too.
 
 ## The budget in CI
 
