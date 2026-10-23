@@ -1,0 +1,3 @@
+### Security
+- Custom patterns in `.znrules` and `zn.config.json` now run in time proportional to the text, so a project file can no longer hang the hooks with a pattern that backtracks. Backreferences, lookaround, named groups and a quantifier on a group that already has one (such as `(a+)+`) are rejected, as are patterns over 500 characters and files with more than 100 patterns.
+- A project rules file that cannot be read, is not valid JSON or holds a rejected pattern is no longer partly applied or silently ignored: zn-gate blocks with a message that names the file, the entry and the reason until it is fixed.
