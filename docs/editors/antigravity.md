@@ -54,6 +54,7 @@ This writes the hook to `~/.gemini/config/hooks.json` for your user. Add `--proj
 | Stops the agent from editing the hook files and Antigravity's CLI settings file | Yes, those three files (listed below) |
 | Removes secrets from shell output and file contents | **No**: Antigravity hooks cannot rewrite what a tool returns |
 | Blocks a secret pasted into the chat | **No** |
+| Checks the arguments of MCP tool calls before they run (hooks) | Yes: a secret value or `__ZN_` marker is blocked, personal data asks you first, and file paths get the read and write checks. MCP calls are recognized by a tool name that starts with `mcp` |
 | Stops the agent from editing Antigravity's MCP configuration | **No**, not yet |
 | zn-gate's checks available to the agent (MCP) | Yes, if you add the MCP server (below) |
 | Your other MCP servers checked for prompt injection and secrets | Yes, if you wrap them (below) |

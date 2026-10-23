@@ -187,12 +187,17 @@ function searchOf(words) {
  * moves the folder later commands run in; since a cd may fail or sit in a subshell, the folders from before it
  * are searched too. The set of candidate folders grows by at most two per cd (the folder reached by following
  * every cd, and the cd target from the starting folder), never by multiplication; past SEARCH_BASES_MAX folders,
- * or when a search path holds an unexpanded variable or substitution, the line is not followed any further and
+ * or when a cd target or search path holds an unexpanded variable or substitution, or when more segments remain than SEGMENTS_MAX, the line is not followed any further and
  * the search is marked to ask. One level of bash -c, sh -c, zsh -c or dash -c is read the same way. A search's
  * first non-option word is the pattern (unless -e or -f gives it) and the rest are paths; with no path the working
  * folder is searched. Files named directly are checked by the shell command check, not here.
  * Returns { dirs, ask }: the folders found, and a reason when the line must be confirmed (or null).
  */
+function homeOf(t) {
+  // A leading ~ is the home folder the hook sees, not a folder named "~".
+  return t === '~' || t.startsWith('~/') ? path.join(os.homedir(), t.slice(1)) : t;
+}
+
 function searchScan(command, cwd) {
   const origin = path.resolve(cwd);
   const found = new Set();
@@ -201,7 +206,7 @@ function searchScan(command, cwd) {
   const walk = (text, state, depth) => {
     let rest = String(text);
     for (let n = 0; rest.length && n < SEGMENTS_MAX; n++) {
-      if (result.ask) return;
+      if (result.ask) return '';
       const scan = policy.scanFirstCommand(rest);
       rest = rest.slice(scan.end + 1);
       const words = scan.words.map((x) => x.text).filter((x) => !/^[0-9]*[<>]/.test(x));
@@ -209,11 +214,14 @@ function searchScan(command, cwd) {
       const head = searchHead(words);
       if (head.length && CD_WORDS.has(path.basename(head[0]).toLowerCase())) {
         const target = head.slice(1).find((x) => x === '-' || !/^-/.test(x));
-        // Home, a variable or a substitution cannot be followed: the places so far stay, and so does the folder itself.
-        if (target && target !== '-' && !/[$`*?[{~]/.test(target)) {
-          state.bases.add(path.resolve(state.main, target));
-          state.bases.add(path.resolve(origin, target));
-          state.main = path.resolve(state.main, target);
+        // A variable or a substitution cannot be followed: the folder is unknown, so the next recursive search asks.
+        // Other patterns (globs, braces) are not followed: the places so far stay, and so does the folder itself.
+        if (target && /[$`]/.test(target)) state.unknown = true;
+        else if (target && target !== '-' && !/[*?[{~]/.test(homeOf(target))) {
+          const t = homeOf(target);
+          state.bases.add(path.resolve(state.main, t));
+          state.bases.add(path.resolve(origin, t));
+          state.main = path.resolve(state.main, t);
         }
         continue;
       }
@@ -221,22 +229,26 @@ function searchScan(command, cwd) {
         const k = head.findIndex((x, i) => i > 0 && /^-[A-Za-z]*c[A-Za-z]*$/.test(x));
         if (k > 0 && typeof head[k + 1] === 'string') {
           // The inner command runs in its own shell: a cd inside it does not move this one.
-          walk(head[k + 1], { main: state.main, bases: new Set(state.bases) }, depth + 1);
+          if (walk(head[k + 1], { main: state.main, bases: new Set(state.bases), unknown: state.unknown }, depth + 1).trim().length) result.ask = 'long';
         }
         continue;
       }
       const s = searchOf(words);
       if (!s) continue;
-      if (state.bases.size > SEARCH_BASES_MAX) { result.ask = 'long'; return; }
-      if (s.targets.some((t) => /[$`]/.test(t))) { result.ask = 'unknown'; return; }
+      if (state.bases.size > SEARCH_BASES_MAX) { result.ask = 'long'; return ''; }
+      if (state.unknown || s.targets.some((t) => /[$`]/.test(t))) { result.ask = 'unknown'; return ''; }
       for (const b of state.bases) {
         const base = s.dir ? path.resolve(b, s.dir) : b;
-        if (s.targets.length) for (const t of s.targets) found.add(path.resolve(base, t));
+        if (s.targets.length) for (const t of s.targets) found.add(path.resolve(base, homeOf(t)));
         else found.add(base);
       }
     }
+    return rest;
   };
-  walk(command, { main: origin, bases: new Set([origin]) }, 0);
+  const state = { main: origin, bases: new Set([origin]), unknown: false };
+  const rest = walk(command, state, 0);
+  // Segments left unread (a very long line) cannot be checked: ask rather than allow.
+  if (rest.trim().length && !result.ask) result.ask = 'long';
   return { dirs: [...found], ask: result.ask };
 }
 

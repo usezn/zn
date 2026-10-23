@@ -413,6 +413,43 @@ test('a recursive search reads one level of bash -c and asks on a path held in a
   assert.equal((await shell('bash -c "cd config" && grep -r AWS .')).decision, 'allow');
 });
 
+test('a very long line is not allowed unread, and an unknown cd folder or a ~ path is followed', async (t) => {
+  const dir = tempDir(t, 'zn-agy-long-');
+  const home = tempDir(t, 'zn-agy-home-');
+  fs.mkdirSync(path.join(dir, 'config'));
+  fs.writeFileSync(path.join(dir, 'config', '.env'), 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n');
+  fs.mkdirSync(path.join(home, 'proj', 'config'), { recursive: true });
+  fs.writeFileSync(path.join(home, 'proj', 'config', '.env'), 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n');
+  const ws = { workspacePaths: [dir] };
+  const shell = async (line) => (await run(pre('run_command', { CommandLine: line, Cwd: dir }, ws))).output;
+  // 600 segments before the search: the rest cannot be read in time, so it asks
+  const t0 = Date.now();
+  const longLine = ':;'.repeat(600) + ' grep -rn AWS config';
+  assert.equal((await shell(longLine)).decision, 'force_ask');
+  assert.equal((await shell('cd d0 && '.repeat(260) + 'cd config && grep -rn AWS .')).decision, 'force_ask');
+  assert.equal((await shell(':;'.repeat(600))).decision, 'force_ask');
+  assert.ok(Date.now() - t0 < 1000, 'took ' + (Date.now() - t0) + ' ms');
+  assert.equal((await shell(':;'.repeat(100) + ' grep -rn AWS config')).decision, 'force_ask'); // still read, and config holds .env
+  assert.equal((await shell(':;'.repeat(100) + ' ls')).decision, 'allow');
+  // a cd to a variable or a substitution leaves the folder unknown: the next recursive search asks
+  for (const line of ['cd $D && grep -r AWS .', 'cd "$(echo config)" && grep -rn AWS .', 'cd `echo config` && grep -rn AWS .']) {
+    assert.equal((await shell(line)).decision, 'force_ask', line);
+  }
+  assert.equal((await shell('cd $D && ls')).decision, 'allow');
+  assert.equal((await shell('cd $D; grep AWS a.txt')).decision, 'allow'); // not recursive
+  // ~ means the home folder the hook sees
+  const saved = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    assert.equal((await shell('grep -r AWS ~/proj/config')).decision, 'force_ask');
+    assert.equal((await shell('cd ~/proj/config && grep -rn AWS .')).decision, 'force_ask');
+    assert.equal((await shell('cd ~/proj && grep -rn AWS config')).decision, 'force_ask');
+    assert.equal((await shell('grep -r AWS ~/nowhere')).decision, 'allow');
+  } finally {
+    if (saved === undefined) delete process.env.HOME; else process.env.HOME = saved;
+  }
+});
+
 test('install warns that a project hook needs zn on PATH, and that its backup must not be committed', (t) => {
   const dir = tempDir(t, 'zn-agy-warn-');
   const first = agy.install({ scope: 'project', projectDir: dir });
