@@ -143,7 +143,7 @@ function describeFingerprint(fp) {
  * closes fd. elf is true for native Linux/ELF programs, which can be started
  * through the open descriptor itself (see execPath). script is true for a
  * file that starts with `#!` (POSIX): the kernel hands its path to the
- * interpreter, which opens it again (see rewritableScript).
+ * interpreter, which opens it again (see scriptRisk).
  */
 function openExecutable(real) {
   const fd = fs.openSync(real, 'r');
@@ -151,7 +151,7 @@ function openExecutable(real) {
     const st = fs.fstatSync(fd);
     if (!st.isFile()) throw Object.assign(new Error('not a regular file: ' + real), { code: 'ZN_NOT_FOUND' });
     let elf = false;
-    let script = false;
+    let script = isWin && /\.(cmd|bat)$/i.test(real);
     if (!isWin) {
       const head = Buffer.alloc(4);
       const n = fs.readSync(fd, head, 0, 4, 0);
@@ -180,28 +180,56 @@ function verifyOpen(opened, real, expectedFp) {
 }
 
 /**
- * A `#!` script is started by path: the kernel passes that path to the
- * interpreter, which opens the file again after verifyOpen(), so the check
- * covers a moment that is already over. A script that can still be rewritten
- * by the current user, or by group or others, may be swapped in that window,
- * so it must not receive secret values. Returns the first path (the script or
- * a directory above it) that can be rewritten, or null when the opened file is
- * not a script or nothing that matters can be changed.
+ * A `#!` script (on Windows, a .cmd or .bat file) is started by path: the
+ * kernel passes that path to the interpreter, which opens the file again after
+ * verifyOpen(), so the check covers a moment that is already over. Whoever can
+ * rewrite the script, or a folder above it, in that window could swap it. Two
+ * cases are told apart:
+ *
+ *   - Unsafe: group or others can write the script or a folder above it (a
+ *     sticky folder such as /tmp does not count), or the script or a folder
+ *     above it belongs to another account (neither root nor the current user).
+ *     On Windows: the file or a folder above it lets another principal write,
+ *     or is owned by one. The script must not receive secret values.
+ *   - Own: only the current user (or an administrator) can write it, as with
+ *     scripts installed by nvm, Homebrew, pnpm, pipx or a virtual environment.
+ *     It is allowed with a warning: another program running as the same user
+ *     can still swap it in that window, which is the same trust zn already
+ *     places in everything that runs as you.
+ *
+ * Returns {deny, warn} or null. deny is the first unsafe path with the reason
+ * (or null), warn is the first path only the current user can write (or null).
+ * null means nothing to say: not a script, or nobody but root can change it.
+ * On Windows the answer is read once per descriptor (it needs PowerShell).
  */
-function rewritableScript(opened, real) {
-  if (!opened || !opened.script || isWin || !real) return null;
-  const mine = writableBy(real);
-  if (mine) return mine;
+function scriptRisk(opened, real, o) {
+  const opt = o || {};
+  if (!opened || !opened.script || !real) return null;
+  const win = opt.platform ? opt.platform === 'win32' : isWin;
+  if (win) {
+    if (opened.risk !== undefined && !opt.tools) return opened.risk;
+    const r = require('./vault/winacl').scriptWriteRisk(real, { tools: opt.tools });
+    const out = r.deny || r.warn ? { deny: r.deny, warn: r.warn } : null;
+    if (!opt.tools) opened.risk = out;
+    return out;
+  }
+  const me = typeof process.getuid === 'function' ? process.getuid() : -1;
   let cur = path.resolve(real);
+  let warn = null;
   for (;;) {
     let st;
-    try { st = fs.statSync(cur); } catch (_) { return null; }
+    try { st = fs.statSync(cur); } catch (_) { return { deny: cur + ' (it could not be checked)', warn }; }
     const sticky = st.isDirectory() && (st.mode & 0o1000) !== 0;
-    if ((st.mode & 0o022) !== 0 && !sticky) return cur;
+    if (st.uid !== 0 && st.uid !== me) return { deny: cur + ' (it belongs to another account)', warn };
+    if ((st.mode & 0o022) !== 0 && !sticky) return { deny: cur + ' (group or others can write it)', warn };
+    if (!warn && me !== 0 && st.uid === me && !sticky) {
+      try { fs.accessSync(cur, fs.constants.W_OK); warn = cur; } catch (_) { /* not writable by us */ }
+    }
     const parent = path.dirname(cur);
-    if (parent === cur) return null;
+    if (parent === cur) break;
     cur = parent;
   }
+  return warn ? { deny: null, warn } : null;
 }
 
 /**
@@ -321,7 +349,7 @@ module.exports = {
   openExecutable,
   verifyOpen,
   execPath,
-  rewritableScript,
+  scriptRisk,
   isInside,
   writableBy,
   interpreterBase,

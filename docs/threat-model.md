@@ -227,16 +227,28 @@ right before starting it, and starts that path; it never looks the name up on
 - **Native programs on Linux** are started through the file zn opened and
   checked, so what runs is exactly what was checked, whatever happens to the
   path in between.
-- **Scripts (`#!`) on Linux and macOS** are run by their interpreter, which
-  opens the script again by its path after zn's last check. A process that can
-  write the script, or its directory, could replace it in that short window.
-  So `zn run` does not give secret values to a script that can still be
-  rewritten (by your user, or by group or others): it refuses and says so, and
-  nothing is started. A script that only an administrator can change, such as
-  one under `/usr/bin`, is still accepted. To use a script of your own, run it
-  through its interpreter (`zn run -- bash ./script.sh`, with that command
-  allowed): you then approve the interpreter, as described above, and what the
-  interpreter reads is yours to trust. A line `#!/usr/bin/env X` looks X up on
+- **Scripts (`#!`) on Linux and macOS, and `.cmd`/`.bat` files on Windows**
+  are run by an interpreter that opens the script again by its path after zn's
+  last check. A process that can write the script, or its folder, could replace
+  it in that short window. `zn run` treats two cases differently:
+  - **Unsafe: refused, nothing is started.** Group or others can write the
+    script or a folder above it (a sticky folder such as `/tmp` does not
+    count), or the script or a folder above it belongs to another account
+    (neither root nor you). On Windows: the file or a folder above it lets any
+    principal other than you, SYSTEM, administrators or the installer service
+    write, or is owned by one. zn reads the permissions of the file and every
+    folder above it, and refuses if it cannot read them.
+  - **Your own script: allowed, with a warning.** Only you (and root or an
+    administrator) can write it, as with scripts installed by nvm, Homebrew,
+    pnpm, yarn, pipx or a virtual environment. `zn run` prints a one-line
+    warning on stderr and notes it in the audit log. The remaining risk: any
+    other program running as your user could still swap the script in that
+    window. That is the same trust zn already places in everything that runs
+    as you. To avoid it, run the script through its interpreter
+    (`zn run -- bash ./script.sh`, with that command allowed), or keep the
+    script where only an administrator can write.
+  A script that only root or an administrator can change, such as one under
+  `/usr/bin`, passes without a warning. A line `#!/usr/bin/env X` looks X up on
   the `PATH` of the caller, and the check covers the script, not the
   interpreter it finds there.
 - **Every program on macOS and Windows** is started by path right after the

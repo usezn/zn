@@ -220,4 +220,89 @@ function verifyPrivate(target, opts) {
   return problems(readSddl(target, tools), o.userSid || currentUserSid(tools), o);
 }
 
-module.exports = { ensurePrivate, ensurePipe, verifyPrivate, parseSddl, problems, currentUserSid, systemTool, realTools, _forget: () => { ok.clear(); sidMemo = null; } };
+/* ------------------------ scripts (.cmd, .bat) ------------------------ */
+
+const TRUSTED_EXTRA = new Set(['S-1-3-0', 'S-1-3-4', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464']);
+const RIGHT_PAIRS = {
+  FA: 0x1f01ff, FR: 0x120089, FW: 0x120116, FX: 0x1200a0,
+  GA: 0x10000000, GR: 0x80000000, GW: 0x40000000, GX: 0x20000000,
+  WD: 0x40000, WO: 0x80000, SD: 0x10000, RC: 0x20000,
+};
+// Rights that let a principal replace a file: write data or append, delete,
+// change the permissions or the owner. For a folder: delete a child (replacing
+// a file needs it), change permissions or owner. Adding files or subfolders to
+// a folder cannot replace an existing file, so C:\ (where every user may add
+// folders) is not a finding.
+const FILE_WRITE_MASK = 0x2 | 0x4 | 0x10000 | 0x40000 | 0x80000 | 0x40000000 | 0x10000000;
+const DIR_WRITE_MASK = 0x40 | 0x10000 | 0x40000 | 0x80000 | 0x40000000 | 0x10000000;
+
+const GROUP_NAMES = { BU: 'the Users group', WD: 'Everyone', AU: 'Authenticated Users', IU: 'interactive users', NU: 'network users', LG: 'Guests', AN: 'anonymous users' };
+const who = (sid) => GROUP_NAMES[String(sid).toUpperCase()] || sid || 'an unknown account';
+
+function rightsMask(r) {
+  const t = String(r || '').trim();
+  if (/^0x[0-9a-f]+$/i.test(t)) return Number(t) >>> 0;
+  let m = 0;
+  for (let i = 0; i + 1 < t.length; i += 2) m |= RIGHT_PAIRS[t.slice(i, i + 2).toUpperCase()] || 0;
+  return m >>> 0;
+}
+
+/**
+ * entries: [{path, dir, sddl}] for the script and each folder above it.
+ * Returns {deny, warn}: deny = first path that another principal can rewrite
+ * or that another principal owns; warn = first path where the current user can
+ * (and nobody else outside SYSTEM, administrators and the installer service).
+ */
+function scriptEntriesRisk(entries, userSid) {
+  const me = norm(userSid);
+  const fix = (id) => { const n = norm(id); return n === 'CO' ? 'S-1-3-0' : n === 'OW' ? 'S-1-3-4' : n; };
+  const trusted = (id) => { const n = fix(id); return n === me || n === SYSTEM_SID || n === ADMINS_SID || TRUSTED_EXTRA.has(n); };
+  let warn = null;
+  for (const e of entries) {
+    const acl = parseSddl(e.sddl);
+    if (!acl.hasDacl) return { deny: e.path + ' (no access list: open to everyone)', warn };
+    if (!acl.owner || !trusted(acl.owner)) return { deny: e.path + ' (owned by ' + (acl.owner || 'an unknown account') + ')', warn };
+    const mask = e.dir ? DIR_WRITE_MASK : FILE_WRITE_MASK;
+    for (const a of acl.aces) {
+      if (!/^(A|XA)$/.test(a.type)) continue;
+      if ((a.flags.match(/../g) || []).includes('IO')) continue; // applies to children only
+      if ((rightsMask(a.rights) & mask) === 0) continue;
+      if (!a.sid || !trusted(a.sid)) return { deny: e.path + ' (' + who(a.sid) + ' can write it)', warn };
+      if (!warn && fix(a.sid) === me) warn = e.path;
+    }
+  }
+  return { deny: null, warn };
+}
+
+/**
+ * Can another account rewrite this script? Reads the permissions of the file
+ * and every folder above it in one PowerShell call. {deny, warn} as above; if
+ * the permissions cannot be read, the script is denied (fail closed).
+ */
+function scriptWriteRisk(target, opts) {
+  const o = opts || {};
+  const tools = o.tools || realTools();
+  let sid;
+  try { sid = o.userSid || currentUserSid(tools); } catch (e) { return { deny: target + ' (the account could not be identified)', warn: null }; }
+  if (!tools.powershell) return { deny: target + ' (the system PowerShell was not found)', warn: null };
+  const script = [
+    "$ErrorActionPreference='Stop'",
+    '$p = $env:ZN_ACL_PATH; $k = "F"',
+    'while ($p) {',
+    "  [Console]::Out.WriteLine($k + '|' + $p + '|' + (Get-Acl -LiteralPath $p).Sddl)",
+    '  $n = [System.IO.Path]::GetDirectoryName($p)',
+    '  if (-not $n -or $n -eq $p) { break }',
+    '  $p = $n; $k = "D"',
+    '}',
+  ].join('\n');
+  const r = tools.run(tools.powershell, ['-NoProfile', '-NonInteractive', '-Command', script], { ZN_ACL_PATH: target });
+  const entries = [];
+  for (const line of String(r.stdout || '').split(/\r?\n/)) {
+    const m = /^([FD])\|([^|]+)\|(.*D:.*)$/.exec(line);
+    if (m) entries.push({ dir: m[1] === 'D', path: m[2], sddl: m[3] });
+  }
+  if (r.status !== 0 || entries.length === 0 || entries[0].dir) return { deny: target + ' (its permissions could not be read' + why(r) + ')', warn: null };
+  return scriptEntriesRisk(entries, sid);
+}
+
+module.exports = { scriptWriteRisk, scriptEntriesRisk, rightsMask, ensurePrivate, ensurePipe, verifyPrivate, parseSddl, problems, currentUserSid, systemTool, realTools, _forget: () => { ok.clear(); sidMemo = null; } };
