@@ -91,7 +91,8 @@ test('backreferences, lookaround, named groups and unicode classes are rejected'
 });
 
 test('too long and too large patterns are rejected', () => {
-  assert.equal(compileCustomPattern('a'.repeat(MAX_PATTERN_LENGTH)).ok, true);
+  assert.equal(compileCustomPattern('a'.repeat(MAX_PATTERN_LENGTH)).ok, true); // plain text
+  assert.match(compileCustomPattern('a?'.repeat(MAX_PATTERN_LENGTH / 2)).error, /too large/);
   assert.match(compileCustomPattern('a'.repeat(MAX_PATTERN_LENGTH + 1)).error, /longer than/);
   assert.match(compileCustomPattern('').error, /empty/);
   // Small source, huge after expanding the repeat counts.
@@ -175,4 +176,173 @@ test('the output prefilter does not skip the rules while the project rules have 
   const { mayMatchRules } = require('../lib/hooks/output_prefilter');
   assert.equal(mayMatchRules('plain text', { bannedPatterns: [], forbiddenPaths: [], errors: ['x'] }), true);
   assert.equal(mayMatchRules('plain text', { bannedPatterns: [], forbiddenPaths: [], errors: [] }), false);
+});
+
+// ---- review fixes: cost bound, one configuration finding, syntax edges ---------------------
+
+test('the worst accepted file (the whole budget in patterns that keep every state alive) scans 256K characters in about two seconds at most', () => {
+  const { MAX_TOTAL_PROGRAM, MAX_PROGRAM } = require('../lib/linear-regex');
+  assert.ok(MAX_TOTAL_PROGRAM <= 2000 && MAX_PROGRAM <= 500);
+  // Chains of optional characters: all of their states stay alive on a text of 'a'.
+  const lines = [];
+  const budget = { left: MAX_TOTAL_PROGRAM };
+  for (let k = 0; k < MAX_PATTERNS; k++) {
+    const src = `[a-z]{0,99}Z${k}`;
+    const r = compileCustomPattern(src, budget);
+    if (!r.ok) break;
+    lines.push(src);
+  }
+  // Fill what is left of the budget with one smaller chain of the same kind.
+  const rest = Math.floor((budget.left - 3) / 2);
+  if (rest > 0) {
+    const src = `[a-z]{0,${rest}}Zr`;
+    if (compileCustomPattern(src, budget).ok) lines.push(src);
+  }
+  assert.ok(lines.length >= 3 && budget.left < 4);
+  const text = 'a'.repeat(256 * 1024);
+  inProject({ '.znrules': lines.join('\n') }, () => {
+    const cfg = rules.loadCustomConfig();
+    assert.deepEqual(cfg.errors, []);
+    assert.equal(cfg.bannedPatterns.length, lines.length);
+    const { ms } = timed(() => { for (const p of cfg.bannedPatterns) assert.equal(p.test(text), false); });
+    console.log(`# worst accepted file: ${lines.length} patterns, 256K characters, ${ms.toFixed(0)} ms`);
+    assert.ok(ms < 6000, `the worst accepted file took ${ms} ms`);
+  });
+});
+
+test('patterns that are too large together are an error with a visible reason, each one alone is fine', () => {
+  const { MAX_TOTAL_PROGRAM } = require('../lib/linear-regex');
+  const one = '[a-z]{0,99}Z'; // 200 steps
+  const n = Math.floor(MAX_TOTAL_PROGRAM / 200) + 2;
+  assert.equal(compileCustomPattern(one).ok, true);
+  const text = Array.from({ length: n }, (_, k) => one + k).join('\n');
+  inProject({ '.znrules': text }, () => {
+    const cfg = rules.loadCustomConfig();
+    assert.ok(cfg.errors.length >= 1);
+    assert.match(cfg.errors[0], /too large together/);
+    assert.match(cfg.errors[0], /line [345]:/);
+    const res = rules.evaluate('hello there');
+    assert.equal(res.rule, 'custom:invalid_rules');
+    assert.match(res.reason, /too large together/);
+  });
+  assert.match(compileCustomPattern('a{100}'.repeat(6)).error, /too large/);
+});
+
+test('a repeat count with many digits and two counted quantifiers in a row are rejected, not read as literal text', () => {
+  for (const [src, word] of [['a{1234567}', 'above'], ['a{2}{3}', 'two quantifiers'], ['a{2,3}{4}', 'two quantifiers'], ['a+{2}', 'two quantifiers'], ['{2}', 'nothing to repeat']]) {
+    const r = compileCustomPattern(src);
+    assert.equal(r.ok, false, src);
+    assert.match(r.error, new RegExp(word), src);
+  }
+  // Not quantifiers in JavaScript either: still literal text.
+  for (const src of ['a{', 'a{x}', 'a{,3}', 'a{1']) assert.equal(compileCustomPattern(src).ok, true, src);
+});
+
+test('the JSON error shows the position only, never the text of the file', () => {
+  const secret = 'SECRETVALUE_9f3a';
+  inProject({ 'zn.config.json': `{\n  "bannedPatterns": ["x"],\n  "note": "${secret}" oops\n}` }, () => {
+    const cfg = rules.loadCustomConfig();
+    assert.equal(cfg.errors.length, 1);
+    assert.ok(!cfg.errors[0].includes(secret), cfg.errors[0]);
+    assert.match(cfg.errors[0], /not valid JSON/);
+    const res = rules.evaluate('hello there');
+    assert.ok(!res.reason.includes(secret));
+    if (/line/.test(cfg.errors[0])) assert.match(cfg.errors[0], /line 3, column \d+/);
+  });
+});
+
+test('an invalid rules file tells the user what to do, and the doctor command lists the errors', () => {
+  inProject({ '.znrules': 'FOO_[0-9]+\n' + NESTED + '\n' }, () => {
+    const res = rules.evaluate('hello there');
+    assert.match(res.reason, /edit \.znrules at line 2 or delete that line/);
+    assert.match(res.reason, /zn-gate check/);
+  });
+  inProject({ 'zn.config.json': JSON.stringify({ bannedPatterns: ['ok', NESTED] }) }, () => {
+    assert.match(rules.evaluate('hello there').reason, /edit zn\.config\.json at bannedPatterns\[1\] or delete that entry/);
+  });
+  inProject({ '.znrules': NESTED + '\n' }, () => {
+    const cli = require('node:child_process').spawnSync(process.execPath, [path.join(__dirname, '..', 'bin', 'cli.js'), 'doctor'], {
+      cwd: process.cwd(), encoding: 'utf8', env: { ...process.env, ZN_STATS: 'off', HOME: process.cwd(), USERPROFILE: process.cwd() }, timeout: 60000,
+    });
+    assert.match(cli.stdout, /Project rules: \.znrules has 1 error/);
+    assert.match(cli.stdout, /line 1:/);
+  });
+});
+
+test('audit with an invalid rules file reports one configuration finding, not one per line', () => {
+  const { audit } = require('../lib/audit');
+  const cwd = process.cwd();
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zn-rules-audit-')));
+  try {
+    fs.writeFileSync(path.join(dir, 'AGENTS.md'), '# Notes\nRun the tests with npm test before you push.\nKeep functions short and well named.\n');
+    fs.writeFileSync(path.join(dir, '.znrules'), '# mine\n' + NESTED + '\n');
+    process.chdir(dir);
+    rules.loadCustomConfig(true);
+    const res = audit({ root: dir, agents: ['all'], env: {} });
+    assert.equal(res.findings.filter((f) => f.id === 'ZNA012').length, 0);
+    const cfgFindings = res.findings.filter((f) => f.file === '.znrules');
+    assert.equal(cfgFindings.length, 1);
+    assert.equal(cfgFindings[0].line, 2);
+    assert.match(cfgFindings[0].detail, /not valid/);
+    assert.match(cfgFindings[0].detail, /exponential/);
+    assert.match(cfgFindings[0].detail, /edit \.znrules line 2 or delete it/);
+  } finally {
+    process.chdir(cwd);
+    fs.rmSync(dir, { recursive: true, force: true });
+    rules.loadCustomConfig(true);
+  }
+});
+
+test('the tool-output note does not call a broken rules file "instructions to you"', async () => {
+  const adapter = require('../lib/agents/claude-code');
+  const runner = require('../lib/hooks/runner');
+  const { createFakeVault } = require('./helpers/fake_vault');
+  const fakeEngine = require('./helpers/fake_engine');
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zn-rules-home-')));
+  const cwd = process.cwd();
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zn-rules-out-')));
+  try {
+    fs.writeFileSync(path.join(dir, '.znrules'), NESTED + '\n');
+    process.chdir(dir);
+    rules.loadCustomConfig(true);
+    const ev = { session_id: 'abc123', cwd: dir, permission_mode: 'default', hook_event_name: 'PostToolUse', tool_name: 'WebFetch', tool_input: { url: 'https://example.com/' }, tool_response: { result: 'Welcome to Example.com. Real content here, nothing special.' }, tool_use_id: 'toolu_09' };
+    const res = await runner.handle(adapter, ev, { engine: fakeEngine, vault: createFakeVault(), failMode: 'open', home });
+    assert.ok(!/reads like instructions|invalid_rules/.test(JSON.stringify(res.output || {})));
+  } finally {
+    process.chdir(cwd);
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(home, { recursive: true, force: true });
+    rules.loadCustomConfig(true);
+  }
+});
+
+test('plain-text patterns match like the JavaScript engine with the i flag, on ASCII letters', () => {
+  const srcs = ['abc', 'aab', 'ABAB', 'rule_7', 'a b', 'x-y/z', 'aaaaab', 'token=xyz', 'Hello, World!'];
+  const texts = ['abc', 'xxABCxx', 'aaab', 'aaaab', 'abababab', 'ABAB', 'RULE_7 here', 'a  b', 'a b', 'X-Y/Z', 'aaaaaab', 'TOKEN=XYZ',
+    'hello, world!', '', 'a', '\u212ABC', 'k\u212A', '\u017Fabc', 'ab\u0131c', 'ab'.repeat(50) + 'c'];
+  for (const src of srcs) {
+    const re = new RegExp(src, 'i');
+    const mine = compileCustomPattern(src);
+    assert.equal(mine.ok, true, src);
+    for (const t of texts) {
+      // Outside ASCII the JavaScript engine folds a few more letters; only the ASCII results must agree.
+      if (/[^\x00-\x7f]/.test(t)) continue;
+      assert.equal(mine.rule.test(t), re.test(t), `${src} on ${JSON.stringify(t)}`);
+    }
+  }
+  // Characters outside ASCII never match an ASCII pattern by folding (Kelvin sign, long s, dotless i).
+  assert.equal(compileCustomPattern('k').rule.test('\u212A'), false);
+  assert.equal(compileCustomPattern('s').rule.test('\u017F'), false);
+});
+
+test('a file of the most plain-text rules stays within the budget and scans fast', () => {
+  const lines = Array.from({ length: MAX_PATTERNS }, (_, k) => `SECRET_PROJECT_NAME_NUMBER_${k}`);
+  inProject({ '.znrules': lines.join('\n') }, () => {
+    const cfg = rules.loadCustomConfig();
+    assert.deepEqual(cfg.errors, []);
+    const text = 'secret_project_name_number_'.repeat(9000) + 'x';
+    const { ms } = timed(() => { for (const p of cfg.bannedPatterns) p.test(text); });
+    assert.ok(ms < 2000, `${ms} ms`);
+    assert.equal(cfg.bannedPatterns[7].test('see secret_project_name_number_7 now'), true);
+  });
 });
