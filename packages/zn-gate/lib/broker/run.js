@@ -231,13 +231,15 @@ async function prepare(parsed, opts) {
     }
     if (planted) await deny(name, m.mode, '`' + argv0 + '` ' + planted + '; zn run will not give it ' + name);
     if (!opened) await deny(name, m.mode, '`' + argv0 + '` could not be opened for checking; zn run will not give it ' + name);
+    const loose = scriptDenial(opened, found, argv0, name);
+    if (loose) await deny(name, m.mode, loose);
     chosen.push({ name, mode: m.mode, command: entry });
   }
 
   const skipped = [];
   for (const name of optional) {
     const m = meta.get(name);
-    const entry = m && !m.deny && m.mode === 'env' && !planted && opened ? markers.matchAllowCommands(m.allowCommands, parsed.command) : null;
+    const entry = m && !m.deny && m.mode === 'env' && !planted && opened && !scriptDenial(opened, found, argv0, name) ? markers.matchAllowCommands(m.allowCommands, parsed.command) : null;
     if (entry && await approvals.isApproved(name, entry, ctx)) chosen.push({ name, mode: m.mode, command: entry });
     else skipped.push(name);
   }
@@ -304,6 +306,19 @@ async function prepare(parsed, opts) {
   }
 }
 
+/*
+ * A `#!` script is opened again by its interpreter after the last check, so a
+ * script that can still be rewritten could be swapped in that window and would
+ * receive the secret. Returns the reason to refuse, or null.
+ */
+function scriptDenial(opened, found, argv0, name) {
+  const loose = found ? exe.rewritableScript(opened, found.real) : null;
+  if (!loose) return null;
+  return '`' + argv0 + '` is a script that can still be rewritten (' + loose + '), and its interpreter opens it again after zn has checked it, ' +
+    'so zn run will not give it ' + name + '. Next step: put the script where only you can write (and not group or others), ' +
+    'or run it through its interpreter, for example: zn run -- bash ./script.sh, after allowing that command.';
+}
+
 function closeExe(prep) {
   if (prep && prep.exe && prep.exe.opened) {
     try { fs.closeSync(prep.exe.opened.fd); } catch (_) { /* closed */ }
@@ -337,6 +352,11 @@ function spawnChecked(prep, opts) {
     if (why) {
       return Promise.reject(znError('ZN_POLICY_DENIED', '`' + prep.argv[0] + '`: ' + why + ' (' + prep.exe.real + '); it was not started. ' +
         'Run the command again; if this keeps happening, something is replacing the program.'));
+    }
+    const loose = exe.rewritableScript(prep.exe.opened, prep.exe.real);
+    if (loose) {
+      return Promise.reject(znError('ZN_POLICY_DENIED', '`' + prep.argv[0] + '` is a script that can still be rewritten (' + loose + '); it was not started. ' +
+        'Put the script where only you can write, or run it through its interpreter.'));
     }
     file = exe.execPath(prep.exe.opened, prep.exe.real);
     // The program still sees the name it was called by (multi-call binaries need it).

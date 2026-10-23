@@ -141,7 +141,9 @@ function describeFingerprint(fp) {
 /**
  * Open an executable for the final check before it is started. The caller
  * closes fd. elf is true for native Linux/ELF programs, which can be started
- * through the open descriptor itself (see execPath).
+ * through the open descriptor itself (see execPath). script is true for a
+ * file that starts with `#!` (POSIX): the kernel hands its path to the
+ * interpreter, which opens it again (see rewritableScript).
  */
 function openExecutable(real) {
   const fd = fs.openSync(real, 'r');
@@ -149,12 +151,14 @@ function openExecutable(real) {
     const st = fs.fstatSync(fd);
     if (!st.isFile()) throw Object.assign(new Error('not a regular file: ' + real), { code: 'ZN_NOT_FOUND' });
     let elf = false;
-    if (process.platform === 'linux') {
+    let script = false;
+    if (!isWin) {
       const head = Buffer.alloc(4);
       const n = fs.readSync(fd, head, 0, 4, 0);
-      elf = n === 4 && head[0] === 0x7f && head[1] === 0x45 && head[2] === 0x4c && head[3] === 0x46;
+      elf = process.platform === 'linux' && n === 4 && head[0] === 0x7f && head[1] === 0x45 && head[2] === 0x4c && head[3] === 0x46;
+      script = n >= 2 && head[0] === 0x23 && head[1] === 0x21;
     }
-    return { fd, fp: fingerprintOf(st), elf };
+    return { fd, fp: fingerprintOf(st), elf, script };
   } catch (err) {
     try { fs.closeSync(fd); } catch (_) { /* ignore */ }
     throw err;
@@ -173,6 +177,31 @@ function verifyOpen(opened, real, expectedFp) {
   if (now !== expectedFp) return 'the program changed after it was checked';
   if (fingerprint(real) !== now) return 'the path now leads to a different file';
   return null;
+}
+
+/**
+ * A `#!` script is started by path: the kernel passes that path to the
+ * interpreter, which opens the file again after verifyOpen(), so the check
+ * covers a moment that is already over. A script that can still be rewritten
+ * by the current user, or by group or others, may be swapped in that window,
+ * so it must not receive secret values. Returns the first path (the script or
+ * a directory above it) that can be rewritten, or null when the opened file is
+ * not a script or nothing that matters can be changed.
+ */
+function rewritableScript(opened, real) {
+  if (!opened || !opened.script || isWin || !real) return null;
+  const mine = writableBy(real);
+  if (mine) return mine;
+  let cur = path.resolve(real);
+  for (;;) {
+    let st;
+    try { st = fs.statSync(cur); } catch (_) { return null; }
+    const sticky = st.isDirectory() && (st.mode & 0o1000) !== 0;
+    if ((st.mode & 0o022) !== 0 && !sticky) return cur;
+    const parent = path.dirname(cur);
+    if (parent === cur) return null;
+    cur = parent;
+  }
 }
 
 /**
@@ -292,6 +321,7 @@ module.exports = {
   openExecutable,
   verifyOpen,
   execPath,
+  rewritableScript,
   isInside,
   writableBy,
   interpreterBase,
