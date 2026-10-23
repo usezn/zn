@@ -500,11 +500,15 @@ STREAM_MASK_HOLD = 16384
 STREAM_MASK_BATCH = 4096
 # Text is passed on up to a point (a cut) where no secret of the buffer starts before
 # the cut and ends after it: the cut is at least STREAM_MASK_HOLD from the end, and when
-# a secret lies across it, the cut moves back to an earlier break (after a white space),
-# at most STREAM_MASK_CUT_TRIES breaks. Without a usable cut nothing is passed on until
-# the buffer holds STREAM_MASK_FORCE characters (a secret longer than that is not kept whole).
+# a secret lies across it, the cut moves back to an earlier break (next to a character
+# other than a letter, digit, "_" or "-", so compact JSON has breaks too), at most
+# STREAM_MASK_CUT_TRIES breaks. Without a usable cut nothing is passed on until the
+# buffer holds STREAM_MASK_FORCE characters; then the text is cut at the last break
+# before the usual point, never inside a run of letters and digits (a secret longer
+# than that, or text with no clean break among those tries, is not kept whole).
 STREAM_MASK_CUT_TRIES = 128
 STREAM_MASK_FORCE = 262144
+_TOKEN_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")
 _ERROR_CHAIN_LIMIT = 8
 
 
@@ -519,6 +523,14 @@ def _mask_text(text: str) -> str:
     from . import rules
     masked, _ = rules.sanitize_tool_result(text)
     return masked if isinstance(masked, str) else text
+
+
+def _previous_break(text: str, cut: int) -> int:
+    """The nearest place before cut that is not inside a run of letters, digits, "_" and "-" (0 when none)."""
+    cut -= 1
+    while cut > 0 and text[cut - 1] in _TOKEN_CHARS and text[cut] in _TOKEN_CHARS:
+        cut -= 1
+    return max(cut, 0)
 
 
 class _StreamMasker:
@@ -580,16 +592,18 @@ class _StreamMasker:
                 self._next_try = 0
                 return head
             tries += 1
-            cut -= 1
-            while cut > 0 and not text[cut - 1].isspace():
-                cut -= 1
+            cut = _previous_break(text, cut)
         if len(text) <= STREAM_MASK_FORCE:
             # A secret lies across every cut tried: keep the text, look again after more of it.
             self._next_try = len(text) + 4 * STREAM_MASK_BATCH
             return ""
-        self.pending = text[limit:]
+        # Too much held: cut at the last break before limit, not inside a word or a key.
+        cut = limit
+        if 0 < cut < len(text) and text[cut - 1] in _TOKEN_CHARS and text[cut] in _TOKEN_CHARS:
+            cut = _previous_break(text, cut) or limit
+        self.pending = text[cut:]
         self._next_try = 0
-        return _mask_text(text[:limit])
+        return _mask_text(text[:cut])
 
     def _decode(self, data: bytes) -> Optional[str]:
         """The text of data after the bytes held from the last chunk, or None when it is not UTF-8."""
