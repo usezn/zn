@@ -8,6 +8,12 @@ npx -y zn-gate connect
 
 zn-gate works fully on your computer, needs no account and sends nothing. This command is optional. It adds one thing: when you or your agent use the `analyze_prompt` tool (or `zn-gate analyze`), the text, with detected secrets hidden first, is also checked by the Galvanize 2 classifier at usezn.com. Hooks, file and secret protection, the shield and every other command stay local and never use it.
 
+## Before you start
+
+`connect` needs a place to keep the key: your system keychain, or, on a computer with no keychain, the zn vault unlocked with `zn unlock` (see [Where the key is kept](#where-the-key-is-kept)). It checks this first. With neither, it stops before it asks you to confirm, opens the browser or asks for the key, says that nothing was saved and exits with code 1. Unlock the vault, then run it again.
+
+`zn-gate connect --help` prints the general zn-gate help, not a list of options for `connect`. The only option is `--reconnect` (see below).
+
 ## What `zn-gate connect` does
 
 1. It only runs in a terminal you are typing in. If an AI agent started it, it refuses.
