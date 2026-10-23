@@ -29,7 +29,7 @@ It looks for the same things the zn-gate scrubber already finds:
 
 ## What it does not flag
 
-- **A value read from an environment variable.** `curl -H "Authorization: Bearer $TOKEN" ...`, `${API_KEY}`, `$env:TOKEN` and `%TOKEN%` are the safe way to pass a secret, so they are not reported. Only a value written out in the command counts. If you want an agent to use a secret, put it in an environment variable (or in the zn vault and run the command with `zn run --secrets NAME -- <command>`) and refer to it by name.
+- **A value read from an environment variable.** `$TOKEN`, `${API_KEY}`, `$env:TOKEN` and `%TOKEN%` are not literal values, so they are not reported. Only a value written out in the command counts. This is not a way to give an agent a secret: the shell expands the variable into the program's arguments, where the value shows in the process list and in command-line logs. To let an agent use a secret, put it in the zn vault and run the command with `zn run --secrets NAME -- <command>` (the program reads the variable itself), or use the `secrets_http_request` tool for web requests.
 - **Requests to your own machine.** `localhost`, `127.0.0.1` and `::1` are never checked.
 - **Hosts you list** in `hooks.egressAllowHosts` (below).
 - **An MCP call to such a host is still read for its other arguments.** For a local or listed host, the URL, headers and body of an MCP call are not checked, because they go to that host. The MCP server itself receives all the arguments, so personal data in any other text of the call (a note, a message) still asks, as it does for an MCP call that is not a web request.
@@ -40,7 +40,7 @@ It looks for the same things the zn-gate scrubber already finds:
 
 When a request is flagged, your agent asks you to approve or refuse it. The message says what was found and where, and the host it goes to, never the value itself. For example:
 
-> zn: this command would send an email address in a header to example.com. Approve it only if that data should leave this computer. To send a secret, read it from an environment variable (such as $API_TOKEN) instead of writing the value in the command.
+> zn: this command would send an email address in a header to example.com. Approve it only if that data should leave this computer. To use a secret, do not write its value in the command and do not expand a shell variable into its arguments: use the secrets_http_request tool for a web request (the secret in proxy mode), or `zn run --secrets NAME -- <program that reads the variable>` so the program reads the secret from its own environment variable.
 
 Approve it only if you want that data to reach that server.
 
@@ -70,13 +70,18 @@ The environment variable `ZN_EGRESS_CHECK=deny` makes the check stricter (`ask` 
 
 ## Passing a secret the safe way
 
-Write the name of an environment variable, not the value:
+Do not write the value in the request, and do not expand a variable into the command line either:
 
 ```sh
+# Do not: the shell puts the value in the arguments of curl,
+# where the process list and command-line logs show it
 curl -H "Authorization: Bearer $API_TOKEN" https://api.example.com/items
 ```
 
-The shell fills in the value when the command runs, so the agent, the transcript and zn-gate never see it written in the command. For secrets the agent should never see, use the [vault](secrets.md) and `zn run --secrets NAME -- <command>`.
+Instead, store the secret in the [vault](secrets.md) and let zn hand it over without it ever being written in a command:
+
+- **A web request:** the agent calls the `secrets_http_request` tool with the marker in a header (`Bearer __ZN_API_TOKEN__`). zn makes the request and masks the response.
+- **A program:** `zn run --secrets API_TOKEN -- <command>` gives the program the value as an environment variable, and the program reads that variable itself. Where the program can take the secret from standard input or a file, prefer that to an argument. Do not copy the variable into the arguments of another program, for example with `sh -c`.
 
 ## Limits
 

@@ -416,14 +416,15 @@ async function egressCheck(ev, d, agentId, mode, requests, what) {
   if (mode === 'deny') {
     return {
       decision: 'deny',
-      message: 'zn blocked this ' + what + ': it ' + sentence + '. Next step: send the request without the personal data, and pass any secret through an environment variable ' +
-        '(such as $API_TOKEN) instead of writing the value in it; if the data must be sent, tell the user.',
+      message: 'zn blocked this ' + what + ': it ' + sentence + '. Next step: send the request without the personal data. Do not write the value of a secret in it, and do not expand a shell variable into its arguments (the value would show in the process list and in command-line logs). ' +
+        'For a web request use the secrets_http_request tool of the zn "secrets" MCP server (the secret in proxy mode); for a program, run it with ' + '`' + znCommand('run --secrets NAME -- <program that reads the variable>') + '`' + ', which gives it the secret as an environment variable that the program reads itself (or from standard input or a file, where it supports that). If the data must be sent, tell the user.',
     };
   }
   return {
     decision: 'ask',
     message: 'zn: this ' + what + ' ' + sentence + '. Approve it only if that data should leave this computer. ' +
-      'To send a secret, read it from an environment variable (such as $API_TOKEN) instead of writing the value in the ' + what + '.',
+      'To use a secret, do not write its value in the ' + what + ' and do not expand a shell variable into its arguments: use the secrets_http_request tool for a web request (the secret in proxy mode), or ' +
+      '`' + znCommand('run --secrets NAME -- <program that reads the variable>') + '` so the program reads the secret from its own environment variable.',
   };
 }
 

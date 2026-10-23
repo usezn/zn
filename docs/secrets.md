@@ -184,7 +184,8 @@ What an environment variable does and does not hide:
   `/proc/<pid>/environ`), and the program can pass it on. If the program
   copies the value into the arguments of another program (for example
   `sh -c 'psql "$PGPASSWORD"'` expands it into the arguments of `psql`), that
-  copy is visible again. Let the program read the variable itself.
+  copy is visible again. Let the program read the variable itself, or take
+  the secret from standard input or a file where it supports that.
 - The loader and interpreter start-up variables are removed from the
   environment while values are injected; see
   [threat-model.md](threat-model.md#starting-the-approved-program).
