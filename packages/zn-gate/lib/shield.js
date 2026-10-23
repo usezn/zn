@@ -565,7 +565,14 @@ function startMcpShield(command, args, options = {}) {
   function trackPendingCall(id, meta) {
     if (id === undefined) return true;
     const key = idKey(id);
-    if (!pendingCalls.has(key) && pendingCalls.size >= MAX_PENDING_CALLS) return false;
+    if (!pendingCalls.has(key) && pendingCalls.size >= MAX_PENDING_CALLS) {
+      // Shadow mode never changes traffic: the request goes through and its answer is not tracked.
+      if (options.shadow) {
+        process.stderr.write(`[zn-shield] ${MAX_PENDING_CALLS} requests are waiting for an answer; shadow mode sends this one on without tracking it.\n`);
+        return true;
+      }
+      return false;
+    }
     pendingCalls.set(key, meta);
     return true;
   }
@@ -672,6 +679,11 @@ function startMcpShield(command, args, options = {}) {
   // the shield answers it itself (a refused or blocked tool call), or {} when it may go to the server.
   function inspectClientMessage(msg) {
     if (!msg || typeof msg !== 'object') return {};
+    // The client gave up on a request: the server need not answer it, so its entry is released. A late answer is
+    // not lost to the checks: a list with no request is not passed on and a late result is checked as an unmatched one.
+    if (msg.method === 'notifications/cancelled' && msg.id === undefined && isMessage(msg.params) && msg.params.requestId !== undefined) {
+      pendingCalls.delete(idKey(msg.params.requestId));
+    }
     // Intercept tools/list requests: track ID to scan responses for tool poisoning
     if (msg && msg.method === 'tools/list') {
       const callId = msg.id;
@@ -793,8 +805,16 @@ function startMcpShield(command, args, options = {}) {
       return;
     }
     process.stderr.write(`[zn-shield BLOCKED SERVER MESSAGE] A line from the server was dropped: ${why}.\n`);
-    if (fields && fields.hasId && !fields.hasMethod) await toClient(JSON.stringify(answerError(fields.id, why)) + '\n');
+    if (Array.isArray(fields)) {
+      // A batch that is dropped: each request of the client it answers gets its own error (ids nobody waits for are skipped).
+      for (const f of fields) {
+        if (f.hasId && !f.hasMethod && pendingCalls.has(idKey(f.id))) await toClient(JSON.stringify(answerError(f.id, why)) + '\n');
+      }
+    } else if (fields && fields.hasId && !fields.hasMethod) {
+      await toClient(JSON.stringify(answerError(fields.id, why)) + '\n');
+    }
   }
+  const fieldsOf = (buf) => framing.batchFields(buf) || framing.topLevelFields(buf);
 
   // Server lines are handled one at a time, in the order the server sent them: checking a message awaits, so
   // without the queue a short message could overtake a long one that came before it. A line that fails is dropped.
@@ -816,7 +836,7 @@ function startMcpShield(command, args, options = {}) {
     maxBytes: limits.serverLineBytes,
     onLine: (raw) => enqueueServer(raw.length, () => onServerLine(raw)),
     onOversize: ({ bytes, head }) => enqueueServer(head.length, () => dropServerLine(
-      framing.topLevelFields(head), `its line is longer than ${humanBytes(limits.serverLineBytes)} (${humanBytes(bytes)})`)),
+      fieldsOf(head), `its line is longer than ${humanBytes(limits.serverLineBytes)} (${humanBytes(bytes)})`)),
   });
 
   // An answer that lists tools for a request that was never made (or was already answered) cannot be matched
@@ -828,7 +848,7 @@ function startMcpShield(command, args, options = {}) {
     if (!raw.length) return;
     const problem = framing.shapeProblem(raw, limits);
     if (problem) {
-      await dropServerLine(framing.topLevelFields(raw.subarray(0, 4096)), limitText(problem), raw.toString('utf8').trim());
+      await dropServerLine(fieldsOf(raw.subarray(0, 4096)), limitText(problem), raw.toString('utf8').trim());
       return;
     }
     let line = raw.toString('utf8');
@@ -867,10 +887,10 @@ function startMcpShield(command, args, options = {}) {
     // A JSON-RPC batch is checked element by element; if one element cannot be checked, the whole batch is dropped
     // and each answer in it gets an error with its own id.
     const items = Array.isArray(msg) ? msg : [msg];
-    const unmatched = items.map(isUnmatchedList);
     try {
       for (let i = 0; i < items.length; i++) {
-        if (unmatched[i]) {
+        // Evaluated here, after the elements before this one were handled: a second list for the same id is unmatched.
+        if (isUnmatchedList(items[i])) {
           process.stderr.write('[zn-shield BLOCKED SERVER MESSAGE] The server sent a tool list that answers no request of the client, so it was not passed on.\n');
           if (options.shadow) continue;
           items[i] = answerError(items[i].id, 'it lists tools for a request that was not made');
