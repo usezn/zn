@@ -160,7 +160,7 @@
         "docs/compat.md"
       ],
       "must": [
-        "| | Claude Code | Codex CLI | Cursor (IDE) | OpenCode |"
+        "| | Claude Code | Codex CLI | Cursor (IDE) | OpenCode | Antigravity (experimental) |"
       ]
     },
     {

@@ -157,8 +157,16 @@ function writeLauncher(agentId, nodePath, runnerPath, opts = {}) {
 }
 
 /** The hook command for one event: the launcher, then the event name. */
-function launcherCommand(file, event, platform = process.platform) {
+function launcherCommand(file, event, platform = process.platform, opts = {}) {
+  // `plain`: no quotes, for an agent that splits the command on spaces and runs it with no shell (Antigravity).
+  // The caller has checked that the path needs no quoting (see plainPathOk).
+  if (opts.plain) return portablePath(file, platform) + ' ' + event;
   return shQuote(portablePath(file, platform)) + ' ' + event;
+}
+
+/** Whether a path can be written into a command with no quotes: only letters, digits and a few punctuation marks. */
+function plainPathOk(file) {
+  return /^[A-Za-z0-9_\/.@+=,:~-]+$/.test(String(file));
 }
 
 /**
@@ -210,4 +218,4 @@ function windowsScriptCommand(script) {
   return 'powershell.exe -NoProfile -NonInteractive -EncodedCommand ' + Buffer.from(script, 'utf16le').toString('base64');
 }
 
-module.exports = { blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, windowsScript, BLOCK_EXIT, BLOCK_JSON };
+module.exports = { blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, windowsScript, BLOCK_EXIT, BLOCK_JSON };
