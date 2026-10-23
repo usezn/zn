@@ -55,6 +55,7 @@ The check reads command text only. These are **not** covered, and the check lets
 - A script saved first and run later (`curl -o x.sh ... && sh x.sh`), or a download piped into an interpreter that is not a shell (`curl ... | python3`).
 - Other tools and languages (`rsync --delete`, `git clean`, `python -c "shutil.rmtree(...)"`), and paths below the top level (`rm -rf /usr/local`).
 - Commands that run inside a container (`docker run ... rm -rf /`) or on another machine (`ssh host "rm -rf /"`).
+- Folders inside the home folder, such as `rm -rf ~/.ssh` or `rm -rf ~/.aws`: the rule covers the home folder itself and not the folders in it, and the separate check that stops an agent from reading secret files does not stop deleting them.
 - Anything an agent does by writing a file and then running it.
 
 For those, use a sandbox, a container or your agent's own permission prompts. This check adds a cheap last barrier for the most common catastrophic mistakes.
