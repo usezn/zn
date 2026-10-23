@@ -1,14 +1,15 @@
 'use strict';
 
 const fs = require('fs');
+const linearRegex = require('./linear-regex');
 const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-25.5
+ * RULES_VERSION: 2026-10-25.10
  */
 
-const RULES_VERSION = '2026-10-25.5';
+const RULES_VERSION = '2026-10-25.10';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -341,13 +342,26 @@ function strictMode(options, cfg) {
 let customConfig = null;
 let lastConfigCheck = 0;
 
+// Reads the project's rules into a new object. Nothing is applied until the whole
+// file has been read and every pattern has been checked: a file that cannot be read,
+// is not valid JSON, or holds a pattern that is not accepted (see lib/linear-regex.js)
+// gives a config with `errors`, and the rules then block until the file is fixed.
 function loadCustomConfig(forceReload = false) {
   const now = Date.now();
   if (!forceReload && customConfig !== null && now - lastConfigCheck < 5000) {
     return customConfig;
   }
   lastConfigCheck = now;
-  customConfig = { bannedPatterns: [], forbiddenPaths: [], strict: false };
+  const next = { bannedPatterns: [], forbiddenPaths: [], strict: false, errors: [], file: null };
+  const addPattern = (src, where) => {
+    if (next.bannedPatterns.length >= linearRegex.MAX_PATTERNS) {
+      next.errors.push(`${where}: more than ${linearRegex.MAX_PATTERNS} custom patterns`);
+      return;
+    }
+    const res = linearRegex.compileCustomPattern(src);
+    if (res.ok) next.bannedPatterns.push(res.rule);
+    else next.errors.push(`${where}: ${res.error}`);
+  };
 
   const candidates = [
     path.join(process.cwd(), '.znrules'),
@@ -355,40 +369,55 @@ function loadCustomConfig(forceReload = false) {
   ];
 
   for (const file of candidates) {
-    if (fs.existsSync(file)) {
-      try {
-        if (file.endsWith('.json')) {
-          const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
-          if (Array.isArray(parsed.bannedPatterns)) {
-            customConfig.bannedPatterns = parsed.bannedPatterns.map((p) => new RegExp(p, 'i'));
-          }
-          if (Array.isArray(parsed.forbiddenPaths)) {
-            customConfig.forbiddenPaths = parsed.forbiddenPaths;
-          }
-          if (parsed.strict === true) customConfig.strict = true;
-        } else {
-          const lines = fs.readFileSync(file, 'utf8').split('\n');
-          for (let line of lines) {
-            line = line.trim();
-            if (!line || line.startsWith('#')) continue;
-            // `secret:` lines feed the scrubber's exact-value layer; they are
-            // values, not patterns, and must never be compiled as regexes.
-            if (line.startsWith('secret:')) continue;
-            if (line === 'strict') { customConfig.strict = true; continue; }
-            if (line.startsWith('path:')) {
-              customConfig.forbiddenPaths.push(line.slice(5).trim());
-            } else {
-              customConfig.bannedPatterns.push(new RegExp(line, 'i'));
-            }
-          }
+    if (!fs.existsSync(file)) continue;
+    next.file = path.basename(file);
+    try {
+      if (file.endsWith('.json')) {
+        const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          throw new Error('the top level must be an object');
         }
-      } catch (err) {
-        // Silently ignore malformed custom configs in production
+        if (parsed.bannedPatterns !== undefined) {
+          if (!Array.isArray(parsed.bannedPatterns)) throw new Error('bannedPatterns must be a list');
+          parsed.bannedPatterns.forEach((p, k) => addPattern(p, `bannedPatterns[${k}]`));
+        }
+        if (parsed.forbiddenPaths !== undefined) {
+          if (!Array.isArray(parsed.forbiddenPaths) || !parsed.forbiddenPaths.every((p) => typeof p === 'string')) {
+            throw new Error('forbiddenPaths must be a list of strings');
+          }
+          next.forbiddenPaths = parsed.forbiddenPaths;
+        }
+        if (parsed.strict === true) next.strict = true;
+      } else {
+        const lines = fs.readFileSync(file, 'utf8').split('\n');
+        lines.forEach((raw, k) => {
+          const line = raw.trim();
+          if (!line || line.startsWith('#')) return;
+          // `secret:` lines feed the scrubber's exact-value layer; they are
+          // values, not patterns, and must never be compiled as regexes.
+          if (line.startsWith('secret:')) return;
+          if (line === 'strict') { next.strict = true; return; }
+          if (line.startsWith('path:')) next.forbiddenPaths.push(line.slice(5).trim());
+          else addPattern(line, `line ${k + 1}`);
+        });
       }
-      break;
+    } catch (err) {
+      next.errors.push(`the file cannot be read: ${err && err.message ? err.message : err}`);
     }
+    break;
   }
+  customConfig = next;
   return customConfig;
+}
+
+// The block that holds while the project's rules file has errors.
+function invalidRulesResult(cfg) {
+  const shown = cfg.errors.slice(0, 3).join('; ') + (cfg.errors.length > 3 ? `; and ${cfg.errors.length - 3} more` : '');
+  return {
+    verdict: 'block', confidence: 1.0,
+    reason: `The project rules in ${cfg.file} are not valid, so zn-gate blocks until they are fixed (${shown}). Custom patterns support literals, classes, groups, alternation and the quantifiers ? * + {n,m} only; see the custom rules section of the README.`,
+    rule: 'custom:invalid_rules', engine: 'oss-local', rules_version: RULES_VERSION,
+  };
 }
 
 const HOMOGLYPH_MAP = {
@@ -727,6 +756,7 @@ function evaluateUncached(input, options = {}) {
 
   // 6. Project-specific Custom Rules (.znrules / zn.config.json)
   const cfg = loadCustomConfig();
+  if (cfg.errors.length > 0) return invalidRulesResult(cfg);
   for (const pat of cfg.bannedPatterns) {
     if (pat.test(input)) {
       return { verdict: 'block', confidence: 1.0, reason: `Matches custom repository rule: ${pat.source}`, rule: 'custom:banned_pattern', engine: 'oss-local', rules_version: RULES_VERSION };

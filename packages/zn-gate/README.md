@@ -291,6 +291,12 @@ path:/etc/secrets
 CONFIDENTIAL_INTERNAL_PROJECT_[A-Z0-9]+
 ```
 
+Each non-comment line is a pattern (matched without regard to case) unless it starts with `path:`, `secret:` or is the word `strict`. In `zn.config.json` the same patterns go in `bannedPatterns` and the paths in `forbiddenPaths`.
+
+Patterns run in time proportional to the text, so a project file cannot make the hooks hang. That is why only this syntax is accepted: literal characters, `.`, classes such as `[a-z]` or `[^x]`, `\d \w \s`, `\b`, `^`, `$`, groups `( )` and `(?: )`, alternation `|`, and the quantifiers `?`, `*`, `+` and `{n}`, `{n,}`, `{n,m}` (counts up to 100). A pattern can be at most 500 characters and a file can hold at most 100 patterns. Backreferences, lookahead, lookbehind, named groups, `\p{...}` and a quantifier on a group that already contains one (such as `(a+)+`) are rejected.
+
+If a rules file cannot be read, is not valid JSON, or holds a pattern that is not accepted, zn-gate does not apply half of it. It blocks with a message that names the file, the line or entry and the reason, until you fix the file.
+
 ### Local audit log
 
 `zn-gate shield` appends every decision to `~/.zn/evidence.jsonl` as a hash-chained (SHA-256) record with a secret-redacted preview. It detects accidental or partial edits. It is not tamper-proof against someone with write access to the file, who can recompute the whole chain.
