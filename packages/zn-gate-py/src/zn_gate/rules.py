@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-25.5
+RULES_VERSION: 2026-10-25.8
 Zero external dependencies. Pure Python stdlib.
 """
 
@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, overload
 
 
-RULES_VERSION = "2026-10-25.5"
+RULES_VERSION = "2026-10-25.8"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -285,12 +285,44 @@ def _test_markdown_image(text: str) -> bool:
     return False
 
 
+# Cheap necessary conditions for the identity-request rules (same as in
+# rules.js), checked in front of the two (much more expensive) patterns.
+# Every match of pi:identity_request has a word for the user (user, operator,
+# owner...) or "who", and a place word (header, cookie, URL parameter, form
+# field, next request...) or one of its "who is your user" phrasings; every
+# match of pi:identity_request_multi has a word for the user and a place word
+# of its language. The groups are copied from the patterns (a test checks
+# that), so a text the pattern would match is never skipped.
+IDENTITY_PREFILTERS: Dict[str, Tuple[re.Pattern[str], ...]] = {
+    'pi:identity_request': (
+        re.compile(r"""(?:user|operator|owner|human|principal)|customer|account\s{1,4}holder|who|(?:whoami|git\s{1,4}config\s{1,4}(?:--[a-z-]{1,12}\s{1,4}){0,2}user\.(?:email|name))|(?:your|their)\s{1,4}(?:(?:primary|login|account|real)\s{1,4})?e-?mail(?:\s{1,4}address(?:es)?)?""", re.IGNORECASE),
+        re.compile(r"""(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|(?:request\s{1,4})?(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:subsequent|following|every|each|outgoing)\s{1,4}(?:http\s{1,4})?(?:requests?|calls?|fetch(?:es)?))|who|your\s{1,4}(?:user|operator|owner|human|principal)|(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|(?<![A-Za-z0-9_])x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|request\s{1,4}(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:in|into|inside|within|with|to|on)\s{1,4}(?:an?|the|your|every|each|any|all|subsequent|following|outgoing|next)\s{1,4}(?:(?:http|outgoing|network|api|subsequent|following)\s{1,4}){0,2}(?:requests?|calls?))""", re.IGNORECASE),
+    ),
+    'pi:identity_request_multi': (
+        re.compile(r"""(?:usuario|operador|due[ñn]o|propietario)|(?:usu[aá]rio|operador|dono|propriet[aá]rio)|(?:utilisateur|opérateur|propriétaire)|(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)|(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)|(?:用户|使用者|操作者|主人|所有者)|(?:whoami|git\s{1,4}config\s{1,4}(?:--[a-z-]{1,12}\s{1,4}){0,2}user\.(?:email|name))""", re.IGNORECASE),
+        re.compile(r"""(?:cabecera|encabezado|header|par[aá]metro|cookie|formulario|campo|(?:siguiente|pr[oó]xima)\s{1,4}(?:petici[oó]n|solicitud)|url)|(?:cabe[cç]alho|header|par[aâ]metro|cookie|formul[aá]rio|campo|pr[oó]xima\s{1,4}requisi[cç][aã]o|url)|(?:en-t[eê]te|header|param[eè]tre|cookie|formulaire|champ|prochaine\s{1,4}requ[eê]te|url)|(?:header|kopfzeile|parameter|cookie|formular|feld|nächste\s{1,4}anfrage|url)|(?:заголов[а-яё]+|header|параметр[а-яё]*|cookie|куки|форм[а-яё]+|поле|следующ[а-яё]+\s{1,4}запрос[а-яё]*|url)|(?:请求头|头部|标头|header|参数|cookie|表单|字段|下一个请求|下一次请求|下个请求|url|查询字符串)""", re.IGNORECASE),
+    ),
+}
+_IDENTITY_PATTERNS: Dict[str, re.Pattern[str]] = {
+    rule_id: pat for rule_id, pat, _ in INJECTION_RULES if rule_id in IDENTITY_PREFILTERS
+}
+
+
+def _identity_test(rule_id: str, text: str) -> bool:
+    for prefilter in IDENTITY_PREFILTERS[rule_id]:
+        if prefilter.search(text) is None:
+            return False
+    return _IDENTITY_PATTERNS[rule_id].search(text) is not None
+
+
 # Rules whose match is computed by a function instead of pattern.search().
 RULE_TESTERS: Dict[str, Any] = {
     'indirect:hidden_tag': _test_hidden_tag,
     'exfil:markdown_image': _test_markdown_image,
     'pi:multi_ru': _test_multi_ru,
     'pi:multi_zh': _test_multi_zh,
+    'pi:identity_request': lambda t: _identity_test('pi:identity_request', t),
+    'pi:identity_request_multi': lambda t: _identity_test('pi:identity_request_multi', t),
 }
 
 EXFIL_VERB_SOURCE = r'(?<![A-Za-z0-9_])(give|reveal|send|show|print|expose|leak|paste|dump|read|open|cat|fetch|extract|steal)(?![A-Za-z0-9_])'
