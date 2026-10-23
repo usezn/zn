@@ -294,7 +294,6 @@ fn websocket_token_is_not_logged() {
 }
 
 #[test]
-#[ignore = "B-1255"]
 fn websocket_frames_are_not_logged() {
     let gateway = Gateway::start("ws-frames", &[("ZN_MCP_WS_TOKEN", "plain-ws-token-0000")]);
     let mut stream = gateway.ws_connect(
@@ -448,7 +447,6 @@ fn tool_call_with_unknown_key_format_is_not_logged() {
 }
 
 #[test]
-#[ignore = "B-1248"]
 fn siem_endpoint_token_is_not_logged() {
     let mut gateway = Gateway::start(
         "siem",

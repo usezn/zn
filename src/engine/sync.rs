@@ -8,7 +8,10 @@ pub struct ConfigSync;
 impl ConfigSync {
     /// Fetch configuration from a remote URL (placeholder for real SaaS sync)
     pub async fn fetch_remote_config(url: &str, api_key: &str) -> Result<ZnConfig> {
-        info!("Fetching remote security configuration from: {}", url);
+        info!(
+            "Fetching remote security configuration from: {}",
+            crate::audit::exporter::endpoint_origin(url)
+        );
 
         let client = reqwest::Client::new();
         let response = client

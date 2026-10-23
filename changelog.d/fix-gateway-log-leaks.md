@@ -1,0 +1,2 @@
+### Security
+- The experimental Rust gateway no longer writes the SIEM endpoint token to its logs: log lines show only the scheme, host and port of the endpoint (also for the webhook, remote config and MCP WebSocket URLs), and send errors no longer include the URL. Whatever `RUST_LOG` says, the WebSocket, HTTP and TLS libraries (`tungstenite`, `tokio_tungstenite`, `hyper`, `h2`, `reqwest`) are capped at `info`, so `RUST_LOG=trace` no longer records raw MCP WebSocket frames before they are scrubbed.

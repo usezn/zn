@@ -85,6 +85,12 @@ sqlite3 zn.db "UPDATE tenants SET api_key_hash = '$HASH' WHERE id = '<tenant id 
 
 `ZN_MCP_WS_TOKEN` is an extra check for MCP WebSocket connections, on top of the management API authentication, sent in the `token` query parameter or the `X-MCP-Token` header. Surrounding whitespace is ignored, a blank value counts as not set (the gateway then generates a random token), and the comparison takes constant time. The `token` query parameter is also read as a management API credential, which takes the first `api_key` or `token` parameter: a client that sends both should put `api_key` first, or send the MCP token in the `X-MCP-Token` header.
 
+## Logging
+
+The gateway logs with `tracing` and reads the level from `RUST_LOG` (default `info`). Whatever `RUST_LOG` says, the WebSocket, HTTP and TLS libraries `tungstenite`, `tokio_tungstenite`, `hyper`, `h2` and `reqwest` (and every module below them) are capped at `info`: with `RUST_LOG=trace` or `RUST_LOG=tungstenite=trace` they still log warnings and errors, but not the per-frame and per-request debug and trace lines. Those lines hold the full text of every MCP message, so prompts and secrets would be logged before the scrubber has seen them. The gateway's own modules follow `RUST_LOG` as before.
+
+The SIEM exporter logs only the scheme, host and port of its endpoint, and send errors without the URL, so a token in the endpoint URL does not reach the logs.
+
 ## Policy endpoints
 
 `POST /api/v1/policies/upload` and `POST /api/v1/policies/delete` (super-admin only) work on `engine.policy_dir` (default `./policies_bin`), the directory the gateway loads and watches. A policy name, and an uploaded file name without its `.wasm` extension, must be 1-64 ASCII letters, digits, `.`, `-` or `_`, starting with a letter or digit. Other names are refused, and so is a policy file that resolves outside the directory through a symlink. Earlier versions wrote uploads to `./policies` and joined the name from the request to that path as given, so a name such as `../x` could write or delete a `.wasm` file outside it.

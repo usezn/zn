@@ -1740,6 +1740,26 @@ impl Drop for TracingGuard {
     }
 }
 
+/// Crates whose trace and debug logs can hold message content (every MCP frame, request and
+/// response), which would reach the logs before the scrubber has seen it.
+const CAPPED_LOG_TARGETS: &[&str] = &["tungstenite", "tokio_tungstenite", "hyper", "h2", "reqwest"];
+
+/// True for the crate itself and for any module path below it (`tungstenite::protocol`).
+fn is_capped_log_target(target: &str) -> bool {
+    CAPPED_LOG_TARGETS.iter().any(|c| {
+        target
+            .strip_prefix(c)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with("::"))
+    })
+}
+
+/// Allows info, warn and error everywhere and nothing below info from the capped crates, whatever
+/// `RUST_LOG` says. A plain `tungstenite=info` directive would not do: `tungstenite::protocol=trace`
+/// in `RUST_LOG` is more specific and would win.
+fn log_cap_enabled(meta: &tracing::Metadata<'_>) -> bool {
+    *meta.level() <= tracing::Level::INFO || !is_capped_log_target(meta.target())
+}
+
 /// Initialize OTLP Tracing and Registry
 fn init_tracing() -> Result<TracingGuard> {
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
@@ -1775,6 +1795,7 @@ fn init_tracing() -> Result<TracingGuard> {
 
     Registry::default()
         .with(env_filter)
+        .with(tracing_subscriber::filter::filter_fn(log_cap_enabled))
         .with(stdout_layer)
         .with(otlp_layer)
         .init();
@@ -2154,5 +2175,108 @@ mod gateway_hardening_tests {
         // The place the arguments came from must still be there; no arguments: nothing to rebuild.
         assert!(with_arguments(frame, "{}", ArgSource::Key("input")).is_none());
         assert!(with_arguments(frame, "{}", ArgSource::Missing).is_none());
+    }
+}
+
+#[cfg(test)]
+mod log_cap_tests {
+    use super::{is_capped_log_target, log_cap_enabled};
+    use std::sync::{Arc, Mutex};
+    use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Registry};
+
+    #[derive(Clone, Default)]
+    struct Buf(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Buf {
+        fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(data);
+            Ok(data.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Runs `emit` under a subscriber built like `init_tracing`'s (the env filter for `spec`, then
+    /// the cap when `capped`) and returns what the fmt layer wrote.
+    fn capture(spec: &str, capped: bool, emit: impl FnOnce()) -> String {
+        let buf = Buf::default();
+        let writer = buf.clone();
+        let fmt = tracing_subscriber::fmt::layer()
+            .with_ansi(false)
+            .with_target(true)
+            .with_writer(move || writer.clone());
+        let sub = Registry::default()
+            .with(EnvFilter::new(spec))
+            .with(capped.then(|| tracing_subscriber::filter::filter_fn(log_cap_enabled)))
+            .with(fmt);
+        tracing::subscriber::with_default(sub, emit);
+        let out = buf.0.lock().unwrap().clone();
+        String::from_utf8(out).unwrap()
+    }
+
+    #[test]
+    fn target_matching_is_exact_or_a_module_path() {
+        for t in [
+            "tungstenite",
+            "tungstenite::protocol",
+            "tokio_tungstenite::compat",
+            "hyper::proto::h1",
+            "h2::codec",
+            "reqwest::connect",
+        ] {
+            assert!(is_capped_log_target(t), "{t}");
+        }
+        for t in [
+            "zn",
+            "zn::proxy",
+            "tungstenite_other",
+            "hyperfine",
+            "h2o",
+            "myapp::reqwest",
+        ] {
+            assert!(!is_capped_log_target(t), "{t}");
+        }
+    }
+
+    #[test]
+    fn the_cap_beats_a_global_trace_filter() {
+        // Without the cap, RUST_LOG=trace logs the frame: this is the leak.
+        let open = capture("trace", false, || {
+            tracing::trace!(target: "tungstenite::protocol", "FRAME_SECRET");
+        });
+        assert!(open.contains("FRAME_SECRET"), "{open}");
+
+        let out = capture("trace", true, || {
+            tracing::trace!(target: "tungstenite::protocol", "FRAME_SECRET");
+            tracing::debug!(target: "tokio_tungstenite", "FRAME_SECRET_2");
+            tracing::trace!(target: "hyper::proto::h1::io", "FRAME_SECRET_3");
+            tracing::debug!(target: "h2::codec::framed_read", "FRAME_SECRET_4");
+            tracing::trace!(target: "reqwest::connect", "FRAME_SECRET_5");
+            tracing::info!(target: "tungstenite", "KEEP_INFO");
+            tracing::warn!(target: "hyper::client", "KEEP_WARN");
+            tracing::error!(target: "reqwest", "KEEP_ERROR");
+            tracing::trace!(target: "zn::proxy", "KEEP_OTHER_TRACE");
+        });
+        assert!(!out.contains("FRAME_SECRET"), "{out}");
+        for kept in ["KEEP_INFO", "KEEP_WARN", "KEEP_ERROR", "KEEP_OTHER_TRACE"] {
+            assert!(out.contains(kept), "{kept} missing in {out}");
+        }
+    }
+
+    #[test]
+    fn the_cap_beats_a_more_specific_directive() {
+        let spec = "tungstenite::protocol=trace,tokio_tungstenite=trace,hyper::proto=trace";
+        let open = capture(spec, false, || {
+            tracing::trace!(target: "tungstenite::protocol", "SPECIFIC_SECRET");
+        });
+        assert!(open.contains("SPECIFIC_SECRET"), "{open}");
+
+        let out = capture(spec, true, || {
+            tracing::trace!(target: "tungstenite::protocol", "SPECIFIC_SECRET");
+            tracing::trace!(target: "tokio_tungstenite", "SPECIFIC_SECRET_2");
+            tracing::trace!(target: "hyper::proto::h1", "SPECIFIC_SECRET_3");
+        });
+        assert!(!out.contains("SPECIFIC_SECRET"), "{out}");
     }
 }

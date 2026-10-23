@@ -99,7 +99,7 @@ impl McpConnection {
 
             loop {
                 attempts += 1;
-                info!(mcp = %name, url = %url, attempt = attempts, "Connecting to MCP via WebSocket");
+                info!(mcp = %name, url = %crate::audit::exporter::endpoint_origin(url), attempt = attempts, "Connecting to MCP via WebSocket");
 
                 match connect_async(url).await {
                     Ok((ws_stream, _)) => {

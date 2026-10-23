@@ -11,7 +11,7 @@ use tracing::{error, info, warn};
 
 /// The scheme, host and port of `endpoint`, for log lines. The path, the query string and any
 /// user info are left out, because a SIEM URL often carries a token there.
-fn endpoint_origin(endpoint: &str) -> String {
+pub fn endpoint_origin(endpoint: &str) -> String {
     match reqwest::Url::parse(endpoint) {
         Ok(url) => match (url.host_str(), url.port()) {
             (Some(host), Some(port)) => format!("{}://{}:{}", url.scheme(), host, port),

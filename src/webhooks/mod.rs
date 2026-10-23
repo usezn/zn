@@ -113,7 +113,11 @@ impl WebhookManager {
 
                 // Send webhook
                 if let Err(e) = self.send_webhook(config, &alert).await {
-                    error!("Failed to send webhook to {}: {}", config.url, e);
+                    error!(
+                        "Failed to send webhook to {}: {}",
+                        crate::audit::exporter::endpoint_origin(&config.url),
+                        e
+                    );
                 }
             }
         }
@@ -131,10 +135,19 @@ impl WebhookManager {
             WebhookType::Generic => serde_json::to_value(alert)?,
         };
 
-        let response = self.client.post(&config.url).json(&body).send().await?;
+        let response = self
+            .client
+            .post(&config.url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(reqwest::Error::without_url)?;
 
         if response.status().is_success() {
-            info!("Webhook sent successfully to {}", config.url);
+            info!(
+                "Webhook sent successfully to {}",
+                crate::audit::exporter::endpoint_origin(&config.url)
+            );
         } else {
             warn!(
                 "Webhook to {} returned status {}: {}",
