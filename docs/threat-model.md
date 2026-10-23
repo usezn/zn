@@ -32,7 +32,7 @@ reads, command output, search results, MCP results and pasted prompts.
 | **A malicious command in env mode** (a script the model wrote reads `DB_PASSWORD` and sends it out) | The value is inside the process you allowed. Mitigations: allow specific programs, not interpreters; first-use confirmation; output masking; and your agent's sandbox, which can cut network access. zn does not block raw sockets on its own. |
 | **Malware running as your OS user** | It can read the vault's session key, talk to the daemon like `ssh-agent` allows any process of the user, or click a dialog. The OS user is the boundary, as for any local secret manager. Lock the vault (`zn lock`) when you do not need it. |
 | **Any program of your user asking the unlocked vault for a secret by name** | See "What the vault daemon protects" below: this includes commands the agent starts. |
-| **Deliberate encodings** of a value printed by an allowed command (reversed, base32, mixed-case hex) | Masking covers raw, base64, hex and URL-encoded forms. It is a safety net, not a boundary. |
+| **Deliberate encodings** of a value printed by an allowed command (reversed, base32, mixed-case hex) | Masking covers raw, base64, hex and URL-encoded forms. Standard output and standard error are masked separately, so a value split between them is not caught. It is a safety net, not a boundary. |
 | **Copies kept by the agent on your disk** | See below. |
 
 zn-gate is not a sandbox, and how much it sees depends on the agent (see

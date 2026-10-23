@@ -109,15 +109,22 @@ function append(event, opts) {
 }
 
 /**
- * verify({file, key}) -> {ok, records, error?, line?}
+ * verify({file, key, checkpoint}) -> {ok, records, error?, line?}
  * Checks every MAC, the prev links and the sequence numbers.
+ * checkpoint: {seq, mac}, the last record the vault remembers. The log must
+ * reach that sequence number and the record there must carry that MAC, so a
+ * tail lost after a crash (or swapped for another valid-looking one) is
+ * reported. Records written after the checkpoint are fine.
  */
 function verify(opts) {
   const o = opts || {};
   const key = Buffer.isBuffer(o.key) ? o.key : Buffer.from(String(o.key || ''), 'hex');
+  const cp = o.checkpoint && Number.isInteger(o.checkpoint.seq) && o.checkpoint.seq > 0 ? o.checkpoint : null;
   let text;
   try { text = fs.readFileSync(o.file, 'utf8'); } catch (err) {
-    if (err.code === 'ENOENT') return { ok: true, records: 0 };
+    if (err.code === 'ENOENT') {
+      return cp ? { ok: false, records: 0, error: 'log truncated (vault expects ' + cp.seq + ' records)' } : { ok: true, records: 0 };
+    }
     throw err;
   }
   const lines = text.split('\n').filter((l) => l.length > 0);
@@ -137,6 +144,12 @@ function verify(opts) {
     if (rec.seq !== seq + 1) return { ok: false, records: i, line: i + 1, error: 'bad sequence' };
     prev = mac;
     seq = rec.seq;
+    if (cp && seq === cp.seq && mac !== cp.mac) {
+      return { ok: false, records: i, line: i + 1, error: 'log differs from the vault checkpoint (record ' + seq + ' has a different MAC)' };
+    }
+  }
+  if (cp && seq < cp.seq) {
+    return { ok: false, records: lines.length, error: 'log truncated (vault expects ' + cp.seq + ' records)' };
   }
   return { ok: true, records: lines.length };
 }
