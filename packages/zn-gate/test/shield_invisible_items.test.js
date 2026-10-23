@@ -71,13 +71,18 @@ function run(toolName) {
 
 for (const name of ['split', 'split_mixed', 'resources', 'structured', 'sc_only', 'sc_after_100k', 'sc_huge']) {
   test(`many items under the cap but over it in total are blocked (${name})`, async () => {
+    // Time: a blocked result must be answered without scanning its text in full. A regression there takes tens of
+    // seconds up to minutes; a normal run takes well under a second. A fixed 1.2 s ceiling failed on busy machines
+    // (several test files in parallel), so the ceiling is relative to a harmless call measured right before, under
+    // the same load, with a floor of 15 s that no loaded runner reaches.
+    const baseline = (await run('benign')).ms;
     const { msg, ms } = await run(name);
     assert.equal(msg.result.isError, true);
     const text = JSON.stringify(msg.result);
     assert.ok(text.includes('[zn-gate SECURITY BLOCKED]'));
     assert.ok(!text.includes('\u200b'), 'invisible characters must be removed');
     assert.ok(text.length < 100000);
-    assert.ok(ms < 1200, `took ${ms} ms`);
+    assert.ok(ms < Math.max(15000, 20 * baseline), `took ${ms} ms (a harmless call: ${baseline} ms)`);
   });
 }
 

@@ -349,13 +349,22 @@ function startMcpShield(command, args, options = {}) {
     state.noted = true;
     process.stderr.write(`[zn-shield] ${label}: not checked: nested too deeply (shadow mode passes it on).\n`);
   };
-  async function scanServerValue(label, holder, key, state, depth) {
+  // `paired`: the caller reads this field together with another one (the content and the structuredContent of a
+  // tool result) and runs one canonicalGuard over both, so the field is not also read alone.
+  async function scanServerValue(label, holder, key, state, depth, paired = false) {
     await walkServerValue(label, holder, key, state, depth);
     if (depth === 0) {
       await flushDeferred(label, state);
-      await canonicalGuard(label, holder[key], (notice) => placeNotice(holder, key, notice));
+      if (!paired) await canonicalGuard(label, holder[key], (notice) => placeNotice(holder, key, notice));
     }
   }
+  // The text of a tool result as the model reads it: the content items and the structuredContent together. A
+  // phrase split between the two is one phrase for the model, and one view for the shield.
+  const guardResultPair = (label, result) => canonicalGuard(label, { content: result.content, structuredContent: result.structuredContent }, (notice) => {
+    delete result.structuredContent;
+    result.content = [{ type: 'text', text: notice }];
+    result.isError = true;
+  });
   // A notice put where a whole message part was, with the shape that part has in JSON-RPC (a string in place of an
   // object would make a client reject the message, and leave its request waiting). A notification or a request
   // of the server cannot carry one: it is not forwarded (serverDrops, read when the line is written).
@@ -430,6 +439,38 @@ function startMcpShield(command, args, options = {}) {
     visit(root, 0);
     return { values, all, over };
   }
+  // Halves of an injection do not have to be neighbours: harmless fields can stand between them. Besides the two
+  // joined views, the text parts are read again "with gaps": for every stride 2..SKIP_MAX_STRIDE, the parts at
+  // distance `stride` from each other are joined in order (offsets 0..stride-1), so the halves are neighbours in one
+  // of the views when at most SKIP_MAX_STRIDE - 1 parts stand between them (also a text of three pieces with equal
+  // gaps). Each part contributes only its edges: all of it when it is short, else its first and last
+  // SKIP_EDGE_CHARS characters, because a half that reads on into a neighbour is at the end of a part and the
+  // other half at the start of the next one. The edges of one long part, and the chains of one stride, are
+  // separated by DEFERRED_SEP, which the normalizer keeps and which no rule matches across, so the separator cannot
+  // complete a phrase and a long part cannot read against itself. The bound: one scan per stride (SKIP_MAX_STRIDE - 1
+  // scans) over at most min(characters of the text, parts x 2 x edge) characters, so a large text costs nothing
+  // extra and no pair of parts is ever compared one by one. The edge is SKIP_EDGE_CHARS, and shrinks (down to
+  // SKIP_EDGE_MIN) when the parts are so many that their edges would pass SKIP_VIEW_BUDGET characters in one scan.
+  // What is not covered: more than SKIP_MAX_STRIDE - 1 parts between the halves, and three or more pieces with
+  // unequal gaps.
+  const SKIP_MAX_STRIDE = 5;
+  const SKIP_EDGE_CHARS = 256;
+  const SKIP_EDGE_MIN = 64;
+  const SKIP_VIEW_BUDGET = 4 * 1024 * 1024;
+  function* skipViews(values) {
+    const parts = values.filter((t) => t.length > 0);
+    const edge = Math.max(SKIP_EDGE_MIN, Math.min(SKIP_EDGE_CHARS, Math.floor(SKIP_VIEW_BUDGET / (2 * Math.max(parts.length, 1)))));
+    const edges = parts.map((t) => (t.length <= 2 * edge ? t : t.slice(0, edge) + DEFERRED_SEP + t.slice(-edge)));
+    for (let stride = 2; stride <= SKIP_MAX_STRIDE && stride < edges.length; stride += 1) {
+      const chains = [];
+      for (let o = 0; o < stride; o += 1) {
+        const chain = [];
+        for (let i = o; i < edges.length; i += stride) chain.push(edges[i]);
+        if (chain.length > 1) chains.push(chain.join('\n'));
+      }
+      yield chains.join(DEFERRED_SEP);
+    }
+  }
   async function canonicalGuard(label, root, replace) {
     const { values, all, over } = canonicalStrings(root);
     if (!over && all.length < 2) return false;
@@ -441,6 +482,14 @@ function startMcpShield(command, args, options = {}) {
         text = view.join('\n');
         const c = await checkToolResult(label, text, { ...options, maxScanChars: SHIELD_RESULT_SCAN_CHARS, blockTruncated: true });
         if (c.safe_to_ingest === false || c.assessment?.verdict === 'block' || c.verdict === 'block') { check = c; break; }
+      }
+      if (!check && values.length > 2) {
+        for (const view of skipViews(values)) {
+          text = view;
+          // Built from edges of parts that were within the budget: never truncated, never blocked for its size.
+          const c = await checkToolResult(label, text, { ...options, maxScanChars: text.length + 1, blockTruncated: true });
+          if (c.safe_to_ingest === false || c.assessment?.verdict === 'block' || c.verdict === 'block') { check = c; break; }
+        }
       }
       if (!check) return false;
       rule = check.assessment?.rule || check.assessment?.reason || check.rule || check.reason || 'indirect prompt injection';
@@ -615,12 +664,15 @@ function startMcpShield(command, args, options = {}) {
           && (Array.isArray(result.content) || result.structuredContent !== undefined)) {
         // An answer the shield did not match to a tools/call (an id it does not know, a second answer to the same
         // request) but shaped like a tool result: its content is checked as server text all the same.
-        if (Array.isArray(result.content)) await scanServerValue('tools/call (unmatched answer)', result, 'content', { n: 0 }, 0);
-        if (result.structuredContent !== undefined) await scanServerValue('tools/call (unmatched answer)', result, 'structuredContent', { n: 0 }, 0);
+        // Both are read as one text afterwards (guardResultPair), so a phrase split between them is caught.
+        if (Array.isArray(result.content)) await scanServerValue('tools/call (unmatched answer)', result, 'content', { n: 0 }, 0, true);
+        if (result.structuredContent !== undefined) await scanServerValue('tools/call (unmatched answer)', result, 'structuredContent', { n: 0 }, 0, true);
+        await guardResultPair('tools/call (unmatched answer)', result);
       }
       if (method === 'tools/call' && !resultReplaced) {
         // The text items were checked as tool results; structured content and the other items are checked here.
-        if (result.structuredContent !== undefined) await scanServerValue('tools/call structuredContent', result, 'structuredContent', { n: 0 }, 0);
+        // Read together with the content once the message is done (guardResultPair), not alone as well.
+        if (result.structuredContent !== undefined) await scanServerValue('tools/call structuredContent', result, 'structuredContent', { n: 0 }, 0, true);
         if (Array.isArray(result.content)) {
           const state = { n: 0 };
           for (const item of result.content) {
@@ -1172,11 +1224,7 @@ function startMcpShield(command, args, options = {}) {
     if (answered === 'tools/call' && !resultReplaced && msg.result && typeof msg.result === 'object' && !Array.isArray(msg.result)) {
       serverLog = { n: 0, suppressed: 0, rules: new Map() };
       try {
-        await canonicalGuard('tools/call', { content: msg.result.content, structuredContent: msg.result.structuredContent }, (notice) => {
-          delete msg.result.structuredContent;
-          msg.result.content = [{ type: 'text', text: notice }];
-          msg.result.isError = true;
-        });
+        await guardResultPair('tools/call', msg.result);
       } finally {
         serverLog = null;
       }
