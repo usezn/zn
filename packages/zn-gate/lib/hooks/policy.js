@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-24.22';
+const POLICY_RULES_VERSION = '2026-10-24.23';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -798,6 +798,31 @@ function isShortInstructionName(abs) {
   return inFolder && (ext === 'MD' || ext === '');
 }
 
+// Folders whose long name an 8.3 short name in the MIDDLE of a path can stand for (`CURSOR~1/rules/x.mdc` is
+// .cursor/rules/x.mdc). A short name is its first six letters (a leading dot dropped), `~` and a number, so a folder
+// segment that starts like one of these is read as that folder and the path is judged again with the long name, the
+// way classifyPath reads a short segment as a pattern for the protected names.
+const SHORT_INSTRUCTION_FOLDERS = ['.cursor', '.github', '.claude'];
+function isInstructionUnderShortFolder(abs, ctx) {
+  if (process.platform !== 'win32') return false;
+  const parts = slash(abs).split('/');
+  const choices = parts.map((seg, i) => {
+    const m = i < parts.length - 1 ? SHORT_NAME_RE.exec(seg) : null;
+    if (!m || m[2]) return [seg];
+    const pre = m[1].toUpperCase();
+    const longs = SHORT_INSTRUCTION_FOLDERS.filter((f) => f.replace(/^\.+/, '').slice(0, 6).toUpperCase() === pre);
+    return longs.length ? [seg].concat(longs) : [seg];
+  });
+  if (choices.every((c) => c.length === 1)) return false;
+  let combos = [[]];
+  for (const c of choices) {
+    const next = [];
+    for (const base of combos) for (const alt of c) next.push(base.concat(alt));
+    combos = next.slice(0, 64);
+  }
+  return combos.some((c) => isInstructionFile(c.join('/'), ctx));
+}
+
 /** Whether a typed path names an instruction file, as typed or where it really leads (links followed). */
 function isInstructionPath(p, opts = {}) {
   if (typeof p !== 'string' || !p) return false;
@@ -810,7 +835,9 @@ function isInstructionPath(p, opts = {}) {
   const candidates = new Set([abs, realTargetOf(abs)]);
   const physical = physicalDotDot(expanded.text, ctx.cwd);
   if (physical) { candidates.add(physical); candidates.add(realTargetOf(physical)); }
-  for (const candidate of candidates) if (isInstructionFile(candidate, ctx) || isShortInstructionName(candidate)) return true;
+  for (const candidate of candidates) {
+    if (isInstructionFile(candidate, ctx) || isShortInstructionName(candidate) || isInstructionUnderShortFolder(candidate, ctx)) return true;
+  }
   return false;
 }
 
