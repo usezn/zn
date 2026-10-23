@@ -1,0 +1,2 @@
+### Security
+- Agent hook launchers (Claude Code, Codex CLI, Cursor, Gemini CLI, Antigravity) now check that the zn-gate runner file is unchanged before running it, and no longer fall back to a `zn` found on the PATH. A runner that was edited or swapped for a stub is blocked instead of silently doing nothing, and `zn-gate check` reports it. Updating zn-gate (`npm update -g zn-gate`) refreshes the launchers it wrote automatically. If you install with `--ignore-scripts`, run `zn hooks install <agent>` again; until then the hooks block tool calls and tell you to do so.
