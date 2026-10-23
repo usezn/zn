@@ -3,18 +3,17 @@ CrewAI tool protection for zn-gate.
 """
 from __future__ import annotations
 import functools
-import inspect
 from typing import Any, Callable, Optional
 
-from ..guard import GuardBlockError, block_message, check_tool_call, check_tool_result, validate_on_block
-from ..rules import sanitize_tool_result
+from ..guard import (GuardBlockError, _call_payload, _is_async_callable, _ResultPolicy, block_message,
+                     check_tool_call, validate_on_block)
 
 
 def guarded_tool(
     on_block: str = "raise",
     mask_secrets: bool = True,
     fallback: Optional[str] = None,
-    check_result: bool = False,
+    check_result: bool = True,
     block_truncated: bool = False,
     framework: Optional[str] = None,
 ) -> Callable:
@@ -28,41 +27,36 @@ def guarded_tool(
     - mask_secrets: Redact leaked credentials in the tool output (default True).
     - fallback: Value to return when on_block="return".
     - check_result: Also scan the tool output for prompt injection before the
-                    agent sees it, like guard(check_result=True) (default False,
-                    so existing tools behave as before). A blocked output raises
+                    agent sees it, like guard(check_result=True) and the
+                    LangChain integration (default True; pass False to turn
+                    the scan off for a tool). A blocked output raises
                     GuardBlockError (target "<framework>:<tool>:result") or returns
                     `fallback` / the block message.
-    - block_truncated: With check_result, block an output too large to scan in
-                       full (rule size:truncated) (default False).
+    - block_truncated: Force a block for an output too large to scan in full
+                       (rule size:truncated). With check_result, an output over
+                       4 MB is blocked by default; ZN_ALLOW_TRUNCATED=1 lets it
+                       through, and block_truncated=True keeps it blocked
+                       even then (default False).
     - framework: Prefix of the block target, "<framework>:<tool>" (default
                  "tool"). Pass "crewai" to label blocks as CrewAI tools.
 
-    Async tools (`async def`, or a callable object whose `__call__` is `async def`)
-    get the same treatment: the call is awaited, then the output is checked and
-    masked exactly as for a sync tool. A sync function that returns a coroutine,
-    and an async generator, are not checked or masked: declare the tool with
-    `async def` instead.
+    Async tools (`async def`, a callable object whose `__call__` is `async def`,
+    or a sync function that returns a coroutine) get the same treatment: the
+    call is awaited, then the output is checked and masked exactly as for a
+    sync tool. A generator or async generator result is passed on chunk by
+    chunk, each chunk checked and masked (a secret split across two chunks is
+    not masked). The message of an exception raised by the tool is checked and
+    masked like its output, because frameworks pass it to the model: a blocked
+    message raises GuardBlockError (or returns the fallback), and a message
+    with a secret is raised again as an exception of the same type carrying
+    only the masked message. Framework run-context arguments (pydantic-ai
+    RunContext, Google ADK ToolContext, OpenAI Agents SDK ToolContext) are not
+    checked.
     """
     validate_on_block(on_block, ("raise", "return"))
     prefix = framework if framework else "tool"
 
-    def _finish(tool_name: str, result: Any, check_result: bool, block_truncated: bool,
-                mask_secrets: bool, on_block: str, fallback: Optional[str]) -> Any:
-        if check_result:
-            res_assessment = check_tool_result(result, block_truncated=block_truncated)
-            if not res_assessment.allowed:
-                target = f"{prefix}:{tool_name}:result"
-                if on_block == "raise":
-                    raise GuardBlockError(res_assessment, target=target, payload=result)
-                if fallback is not None:
-                    return fallback
-                return block_message(res_assessment, target)
-        if mask_secrets:
-            result, _ = sanitize_tool_result(result)
-        return result
-
-    def _blocked_input(tool_name: str, assessment: Any, kwargs: dict,
-                       on_block: str, fallback: Optional[str]) -> Any:
+    def _blocked_input(tool_name: str, assessment: Any, kwargs: dict) -> Any:
         if on_block == "raise":
             raise GuardBlockError(assessment, target=f"{prefix}:{tool_name}", payload=kwargs)
         if fallback is not None:
@@ -70,31 +64,24 @@ def guarded_tool(
         return block_message(assessment, f"{prefix}:{tool_name}")
 
     def decorator(tool_func: Callable) -> Callable:
-        # getattr with a default, not hasattr: an object without __call__ takes the sync path.
-        if inspect.iscoroutinefunction(tool_func) or inspect.iscoroutinefunction(
-            getattr(tool_func, "__call__", None)  # noqa: B004
-        ):
+        tool_name = getattr(tool_func, "__name__", "tool")
+        policy = _ResultPolicy(tool_name, f"{prefix}:{tool_name}:result", check_result, mask_secrets,
+                               block_truncated, on_block, fallback, None, default=block_message)
+
+        if _is_async_callable(tool_func):
             @functools.wraps(tool_func)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-                tool_name = getattr(tool_func, "__name__", "tool")
-                assessment = check_tool_call(tool_name, {"args": args, "kwargs": kwargs})
+                assessment = check_tool_call(tool_name, _call_payload(tool_func, args, kwargs))
                 if not assessment.allowed:
-                    return _blocked_input(tool_name, assessment, kwargs, on_block, fallback)
-
-                result = await tool_func(*args, **kwargs)
-                return _finish(tool_name, result, check_result, block_truncated,
-                               mask_secrets, on_block, fallback)
+                    return _blocked_input(tool_name, assessment, kwargs)
+                return await policy.acall(tool_func, args, kwargs)
             return async_wrapper
 
         @functools.wraps(tool_func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            tool_name = getattr(tool_func, "__name__", "tool")
-            assessment = check_tool_call(tool_name, {"args": args, "kwargs": kwargs})
+            assessment = check_tool_call(tool_name, _call_payload(tool_func, args, kwargs))
             if not assessment.allowed:
-                return _blocked_input(tool_name, assessment, kwargs, on_block, fallback)
-
-            result = tool_func(*args, **kwargs)
-            return _finish(tool_name, result, check_result, block_truncated,
-                           mask_secrets, on_block, fallback)
+                return _blocked_input(tool_name, assessment, kwargs)
+            return policy.call(tool_func, args, kwargs)
         return wrapper
     return decorator

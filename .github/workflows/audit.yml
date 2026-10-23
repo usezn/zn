@@ -18,6 +18,14 @@ concurrency:
   group: audit-${{ github.run_id }}
   cancel-in-progress: false
 
+env:
+  # Retry npm and pip downloads instead of failing a run on one network error.
+  NPM_CONFIG_FETCH_RETRIES: "5"
+  NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: "20000"
+  NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: "120000"
+  PIP_RETRIES: "5"
+  PIP_TIMEOUT: "60"
+
 jobs:
   # The two audits below only report for now: they never fail the workflow.
   npm-audit:
@@ -59,6 +67,8 @@ jobs:
         with:
           python-version: "3.14"
       - name: Install pip-audit
-        run: python -m pip install --require-hashes -r .github/audit-requirements.txt
+        run: |
+          python -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
+          python -m pip install --require-hashes -r .github/audit-requirements.txt
       - name: pip-audit
         run: pip-audit packages/zn-gate-py

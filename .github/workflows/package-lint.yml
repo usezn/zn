@@ -31,6 +31,14 @@ concurrency:
   group: package-lint-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  # Retry npm and pip downloads instead of failing a run on one network error.
+  NPM_CONFIG_FETCH_RETRIES: "5"
+  NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: "20000"
+  NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: "120000"
+  PIP_RETRIES: "5"
+  PIP_TIMEOUT: "60"
+
 jobs:
   package-lint:
     name: Package lint (publint, attw, check-wheel-contents)
@@ -75,6 +83,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m venv "$RUNNER_TEMP/lint-venv"
+          "$RUNNER_TEMP/lint-venv/bin/python" -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
           "$RUNNER_TEMP/lint-venv/bin/python" -m pip install --disable-pip-version-check --no-cache-dir \
             --require-hashes -r .github/release-requirements.txt -r .github/package-lint-requirements.txt
       - name: Build the wheel

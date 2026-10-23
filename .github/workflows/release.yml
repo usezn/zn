@@ -199,6 +199,13 @@ jobs:
     permissions:
       id-token: write
     steps:
+      # No network evidence yet for this job (it had no harden-runner): audit first; once a release run shows
+      # its endpoints in the step-security insights, switch to egress-policy: block with allowed-endpoints.
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
       - name: Download the signed release files
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -231,6 +238,13 @@ jobs:
     permissions:
       id-token: write
     steps:
+      # No network evidence yet for this job (it had no harden-runner): audit first; once a release run shows
+      # its endpoints in the step-security insights, switch to egress-policy: block with allowed-endpoints.
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
       - name: Download the signed release files
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -242,6 +256,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.x
+          check-latest: true
           package-manager-cache: false
       - name: Install an npm CLI with trusted publishing support
         run: | # zizmor: ignore[adhoc-packages] npm is pinned to one exact version
@@ -312,6 +327,13 @@ jobs:
     permissions:
       contents: write
     steps:
+      # No network evidence yet for this job (it had no harden-runner): audit first; once a release run shows
+      # its endpoints in the step-security insights, switch to egress-policy: block with allowed-endpoints.
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.verify.outputs.sha }}

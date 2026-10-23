@@ -2,7 +2,7 @@
   "layers": {
     "rules": {
       "version_const": "RULES_VERSION",
-      "version": "2026-10-19.7",
+      "version": "2026-10-25.5",
       "ids": [
         "evasion:bidi_override",
         "exfil:credentials",
@@ -15,6 +15,8 @@
         "pi:disregard",
         "pi:forget",
         "pi:identity_override",
+        "pi:identity_request",
+        "pi:identity_request_multi",
         "pi:ignore_previous",
         "pi:jailbreak",
         "pi:multi_de",
@@ -45,13 +47,13 @@
         "secret:private_key"
       ],
       "sha256": {
-        "lib/rules.js": "4d06888c2d022eb49988e25fcb514a256add69421388ef8aa3d41993cc5a70d3",
+        "lib/rules.js": "9ac7828ae3addb80adc21300e1c0beae953f7af30f4706a470c5ad78078283eb",
         "lib/mcp-secrets.js": "6a59fc9809d6b1a3509ff285d21be57e2906449b1c78644e41fe142eccda69b9"
       }
     },
     "scrub": {
       "version_const": "SCRUB_RULES_VERSION",
-      "version": "2026-10-19.6",
+      "version": "2026-10-23.7",
       "ids": [
         "AGE_SECRET_KEY",
         "ALIBABA_KEY_ID",
@@ -100,9 +102,11 @@
         "OPENAI_KEY",
         "OPENSHIFT_TOKEN",
         "PERPLEXITY_KEY",
+        "PERSON_NAME",
         "PHONE",
         "PLANETSCALE_TOKEN",
         "POLAR_TOKEN",
+        "POSTAL_ADDRESS",
         "POSTMAN_KEY",
         "PREFECT_KEY",
         "PRIVATE_KEY",
@@ -129,6 +133,7 @@
         "TERRAFORM_CLOUD_TOKEN",
         "TWILIO_KEY",
         "URL_PASSWORD",
+        "USERNAME",
         "VAULT_TOKEN",
         "XAI_KEY",
         "ZN_API_KEY",
@@ -144,13 +149,13 @@
         "exact.variants"
       ],
       "sha256": {
-        "lib/scrub/patterns.js": "b2b8995498764150a13ee89ba7a57fa9abf71200f49e5bdebe3ee9c0ac8534d3",
+        "lib/scrub/patterns.js": "f6ccca7fe227413f9dba4128ac821fdbbce1dbb07158377e10168f2ba6bb8790",
         "lib/scrub/exact.js": "d104e85ec6a25e7d6d4b6c428bd0bf8b25d43c3ead313f6872f508b65793bf6b"
       }
     },
     "audit": {
       "version_const": "AUDIT_RULES_VERSION",
-      "version": "2026-10-18.3",
+      "version": "2026-10-23.8",
       "ids": [
         "ZNA001",
         "ZNA002",
@@ -172,6 +177,7 @@
         "ZNA018",
         "ZNA019",
         "ZNA020",
+        "ZNA021",
         "patterns.CRED_FLAG_NAME",
         "patterns.CRED_FLAG_ONLY",
         "patterns.INTERPRETERS",
@@ -183,6 +189,7 @@
         "patterns.downloadAndRun",
         "patterns.exfiltration",
         "patterns.hostOf",
+        "patterns.imperativeStart",
         "patterns.isCredentialFlag",
         "patterns.isLoopback",
         "patterns.isPlaceholder",
@@ -192,17 +199,20 @@
         "patterns.safeUrl",
         "patterns.splitCommand",
         "patterns.toolName",
+        "patterns.warningHeading",
+        "patterns.warningText",
         "patterns.weakening"
       ],
       "sha256": {
-        "lib/audit/rules.js": "93aff025d41bf9798cd2479560059f91244e90358ef35a5b6cdd2e7ab909d5de",
-        "lib/audit/patterns.js": "35080806c575285578977a1601c8550077161b3d79373ae388bff801fa9f1007"
+        "lib/audit/rules.js": "ee8511cce1dd36c7e80a00d640764c96aafb97a77fb530c3c18a15549c137145",
+        "lib/audit/patterns.js": "e758c777211da759a6973260363f3ddac41a37156171886bed624d97f18cdf46"
       }
     },
     "policy": {
       "version_const": "POLICY_RULES_VERSION",
-      "version": "2026-10-20.5",
+      "version": "2026-10-24.17",
       "ids": [
+        "INSTRUCTION_FILE_NAMES",
         "SHELL_SCAN_CAP",
         "_decodeAnsiC",
         "_globClassEnd",
@@ -211,10 +221,17 @@
         "bashDenial",
         "classifyPath",
         "classifyWord",
+        "egressDecodedCopies",
+        "egressLabel",
+        "egressMcpCovers",
+        "egressMcpParts",
+        "egressParts",
+        "egressUrlParts",
         "expandBraces",
         "globClass",
         "globRegExp",
         "hasNetworkSignals",
+        "instructionWriteNotice",
         "readDenial",
         "scanFirstCommand",
         "scanPowerShell",
@@ -223,11 +240,12 @@
         "writeDenial"
       ],
       "sha256": {
-        "lib/hooks/policy.js": "7dad17a563fb825ccff6937cae3310c191547d6f7bc76c8685324b5cf8d90b75",
+        "lib/hooks/policy.js": "f6bad96f33ea5c01df927cdff751b0c3840a1cc529562fa1aa656ee02527ff67",
         "lib/broker/files.js": "45dd8927cc626ac35e8c036e5118ec3c584a3f3a396640c09cee8b545e67c097",
         "lib/broker/markers.js": "301eb1d763e8e88c32e32a02c344be8f44b342b06b61897f3a2d478dbe55d6b4",
         "lib/broker/dotenv.js": "d12a12bd12108a38f84e9f4772ed50f0b015962a1e68f75362142b9b3449e8fe",
-        "lib/shell-quote.js": "7892cbb5237f533bb33d9660642e4c20837bca502f588b2db45a47ca6b6adff1"
+        "lib/shell-quote.js": "7624e8bfde93f671d0ef9ae8dd0fcc1002344d1556c30ceb0e14daa41fd5a122",
+        "lib/destructive.js": "6a469b3003140e52faa40d42f8a2ee53c9ba9bfd146bde4d576a0d77b13350b5"
       }
     }
   }

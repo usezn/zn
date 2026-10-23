@@ -60,13 +60,32 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
   ```text
   its hook cannot start: its Node.js (<path>) is no longer there
   its hook cannot start: its zn-gate files (<path>) is no longer there
+  its hook cannot start: its Node.js (<path>) is no longer there, so zn now blocks the tool calls and prompts instead of checking them
   ```
+
+  The last form is a Codex CLI or Claude Code hook that goes through zn's launcher script, which blocks the agent's tool calls and prompts (instead of letting them run unchecked) when the Node.js it was installed with is gone and no `zn` can be found on your PATH. Until you repair it, the agent cannot run commands. If `zn` and `node` are on your PATH the hook keeps working and `zn-gate check` only notes that the Node.js it was installed with is gone.
 
   This usually happens after you removed or upgraded Node.js with a version manager such as nvm: the old Node.js took its copy of zn-gate with it. The repair is:
 
   ```text
   install zn-gate again for the Node.js you use now: run `npm install -g zn-gate`, then `zn hooks install <agent>`, in your own terminal
   ```
+
+- **The launcher script of the hook is gone.**
+
+  ```text
+  its hook cannot start: its launcher script (<path>) is missing or was changed
+  ```
+
+  A Codex CLI or Claude Code hook calls a small script that `zn hooks install <agent>` writes under `~/.zn/hooks`. If the script was deleted or edited, run `zn hooks install <agent>` again.
+
+- **Antigravity runs the hook command without a shell, and the launcher path is in quotes.**
+
+  ```text
+  its hook cannot start: Antigravity runs the command without a shell, so the quotes around the launcher path (<path>) become part of the file name and the hook never runs
+  ```
+
+  An older zn-gate wrote the Antigravity launcher path in quotes. Antigravity does not read quotes, so the hook never starts. Run `zn hooks install antigravity` again: it writes the path without quotes.
 
 - **The hook calls `zn`, and `zn` is not installed.**
 
@@ -107,16 +126,16 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
 - **The plugin needs a newer Node.js.**
 
   ```text
-  the zn-gate plugin needs Node.js 20.12 or later (you have <version>)
-  the zn-gate plugin needs Node.js 20.12 or later (Claude Code will run the hooks of the plugin with Node.js <version> (from <path>); zn-gate itself runs on Node.js <version>)
+  the zn-gate plugin needs Node.js 20.19 or later (you have <version>)
+  the zn-gate plugin needs Node.js 20.19 or later (Claude Code will run the hooks of the plugin with Node.js <version> (from <path>); zn-gate itself runs on Node.js <version>)
   the zn-gate plugin could not be checked: zn-gate could not find or run the `node` that Claude Code will start the hooks of the plugin with (the first one on your PATH)
   ```
 
-  Node.js 18 and 19, 20 before 20.12 and 21 before 21.7 are too old for the plugin, which then refuses to start. Claude Code starts the plugin's hooks with the first `node` on its `PATH`, which can be a different Node.js from the one that runs zn-gate. The repair is one of two things:
+  Node.js 18 and 19, 20 before 20.19 and 21 before 21.7 are too old for the plugin, which then refuses to start. Claude Code starts the plugin's hooks with the first `node` on its `PATH`, which can be a different Node.js from the one that runs zn-gate. The repair is one of two things:
 
   ```text
-  update Node.js to 20.12 or later (the current LTS from nodejs.org), and make it the first `node` on your PATH, or use zn's hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, and after that turn the plugin off with `claude plugin disable zn-gate@usezn`, all in your own terminal
-  make sure `node --version` works in a new terminal and shows 20.12 or later, or use zn's hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, and after that turn the plugin off with `claude plugin disable zn-gate@usezn`, all in your own terminal
+  update Node.js to 20.19 or later (the current LTS from nodejs.org), and make it the first `node` on your PATH, or use zn's hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, and after that turn the plugin off with `claude plugin disable zn-gate@usezn`, all in your own terminal
+  make sure `node --version` works in a new terminal and shows 20.19 or later, or use zn's hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, and after that turn the plugin off with `claude plugin disable zn-gate@usezn`, all in your own terminal
   ```
 
   The second form is for a `node` that zn-gate could not run at all. More in [Troubleshooting](troubleshooting.md#11-the-claude-code-plugin-rejects-every-call-or-its-mcp-servers-show-failed-to-connect).

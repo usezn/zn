@@ -25,18 +25,20 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { nodeAdvice } = require('./node-support');
 
 const FAKE_LINE = 'ZN_CHECK_EXAMPLE_KEY=zn-check-fake-value-not-a-real-key\n';
 const HOOK_TIMEOUT_MS = 15000;
 const PLUGIN_ID = 'zn-gate@usezn';
 
-/* The zn-gate Claude Code plugin needs Node.js 20.12 or later; zn-gate itself runs on 18 and later.
+/* The zn-gate Claude Code plugin needs Node.js 20.19 or later; zn-gate itself runs on 18 and later.
    This is the one place that says which version; the messages below and in init are built from it. */
-const PLUGIN_NODE_MIN = '20.12';
+const PLUGIN_NODE_MIN = '20.19';
 function pluginNodeOk(version) {
   const [major, minor] = String(version || process.versions.node).split('.').map((x) => parseInt(x, 10) || 0);
-  // The loader constant the plugin needs arrives in Node.js 20.12 and in 21.7.
-  return major > 21 || (major === 21 && minor >= 7) || (major === 20 && minor >= 12);
+  // The plugin loads zn-gate through a loader constant that arrives in Node.js 20.12 and 21.7, and its locked
+  // dependencies (@noble/*) declare Node.js 20.19 or later, so the floor on the 20 line is 20.19.
+  return major > 21 || (major === 21 && minor >= 7) || (major === 20 && minor >= 19);
 }
 function pluginNodeMessage(version) {
   return 'the zn-gate plugin needs Node.js ' + PLUGIN_NODE_MIN + ' or later (you have ' + String(version || process.versions.node) + ')';
@@ -131,7 +133,7 @@ const AGENTS = [
 
 function readJson(file) {
   try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
+    return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
   } catch (err) {
     return null;
   }
@@ -178,7 +180,33 @@ function matcherCovers(matcher, tool) {
 /* A zn hook command: {node, runner} (run directly), {onPath} (`zn hook <agent>`) or null. */
 function parseCommand(command, agentId) {
   const { _internal: audit } = require('./audit');
-  const c = String(command).trim();
+  const c = require('./shell-quote').readableWindowsCommand(String(command).trim());
+  // zn's launcher script (lib/agents/launcher.js): '<dir>/zn-hook-<agent>.sh' <Event>. It names the Node.js and
+  // runner it was installed with in ZN_NODE=... and ZN_RUNNER=... lines.
+  // Antigravity runs the command split on spaces with no shell, so zn writes the path unquoted there (an older
+  // zn-gate wrote it quoted, which that agent cannot start: `quoted` makes check ask for a reinstall).
+  const lm = new RegExp(agentId === 'antigravity' ? "^('?)(" + audit.SAFE_ABS + '/zn-hook-' + agentId + "\\.sh)\\1 ([A-Za-z]+)$" : "^()'(" + audit.SAFE_ABS + '/zn-hook-' + agentId + "\\.sh)' ([A-Za-z]+)$").exec(c);
+  if (lm) {
+    const quoted = lm[1] === "'" || agentId !== 'antigravity';
+    lm.splice(1, 1);
+    lm.quoted = quoted;
+    lm.raw = c;
+    let text = '';
+    const extra = agentId === 'antigravity' ? { quoted: lm.quoted, raw: lm.raw } : {};
+    try { text = fs.readFileSync(lm[1], 'utf8'); } catch (err) { return { launcher: lm[1], event: lm[2], unreadable: true, ...extra }; }
+    const n = new RegExp("^ZN_NODE='(" + audit.SAFE_ABS + ")'$", 'm').exec(text);
+    const r = new RegExp("^ZN_RUNNER='(" + audit.SAFE_ABS + ")'$", 'm').exec(text);
+    if (!n || !r) return { launcher: lm[1], event: lm[2], unreadable: true, ...extra };
+    return { launcher: lm[1], event: lm[2], node: n[1], runner: r[1], ...extra };
+  }
+  // On Windows, Cursor and Gemini CLI run the same three steps as an encoded PowerShell script (launcher.windowsScript).
+  const ws = require('./shell-quote').windowsCommandScript(c);
+  if (ws) {
+    // Both the current script and the one written by earlier versions (no progress line, unconditional exit).
+    const wm = /^(?:\$ProgressPreference='SilentlyContinue'; \$zt=0; )?if \(\(Test-Path -LiteralPath '([^']+)'\) -and \(Test-Path -LiteralPath '([^']+)'\)\) \{ (?:\$zt=1; )?& '[^']+' '[^']+' ([a-z-]+); (?:if \(\$LASTEXITCODE -eq 0 -or \$LASTEXITCODE -eq 2\) \{ exit (?:\$LASTEXITCODE|0) \}|exit \$LASTEXITCODE) \}; .* # zn hook ([a-z-]+)$/s.exec(ws);
+    // winScript is the PowerShell text itself: c may be its readable -Command form, which is not base64.
+    if (wm && wm[3] === agentId && wm[4] === agentId) return { winScript: ws, node: wm[1], runner: wm[2] };
+  }
   if (!c.endsWith(' ' + agentId) && !c.endsWith(' ' + agentId + '"')) return null;
   if (audit.OUR_HOOKS[0].test(c)) return { onPath: true };
   const quoted = new RegExp("^'(" + audit.SAFE_ABS + ")' '(" + audit.SAFE_ABS + "/zn-gate/lib/hooks/runner\\.js)' " + agentId + '$');
@@ -313,6 +341,13 @@ function bare(s) {
 const RULES_FIX = 'install zn-gate again: run `npm install -g zn-gate` in your own terminal, then run `zn-gate check` again';
 const REINSTALL = (id) => 'install zn-gate again for the Node.js you use now: run `npm install -g zn-gate`, then `zn hooks install ' + id + '`, in your own terminal';
 
+/* Absolute path of `name`, searched only in absolute PATH entries; null when there is none. */
+function onAbsPath(name, env) {
+  const absPath = String((env || process.env).PATH || '').split(path.delimiter).filter((d) => d && path.isAbsolute(d)).join(path.delimiter);
+  const found = require('./exe').whichSync(process.platform === 'win32' ? name + (name === 'zn' ? '.cmd' : '.exe') : name, absPath);
+  return found ? path.resolve(found) : null;
+}
+
 /* Absolute path of the `zn` command, searched only in absolute PATH entries; null when there is none. */
 function znOnPath(env) {
   // Only absolute PATH entries: a relative one (node_modules/.bin, .) depends on the folder check runs from.
@@ -339,7 +374,31 @@ function cliHooks(spec, ctx, userFile, given) {
     return out;
   }
   const cmd = parseCommand(read.command, spec.id);
-  if (cmd.missing) {
+  if (cmd.launcher || cmd.winScript) {
+    // The launcher runs the Node.js it was installed with, else `zn` from the PATH, else it blocks (see launcher.js).
+    const isFile = (f) => { try { return fs.statSync(f).isFile(); } catch (err) { return false; } };
+    const recorded = !cmd.unreadable && isFile(cmd.node) && isFile(cmd.runner);
+    const viaPath = !recorded && !cmd.unreadable && Boolean(znOnPath(ctx.env) && onAbsPath('node', ctx.env));
+    if (spec.id === 'antigravity' && cmd.quoted && !cmd.winScript) {
+      // Antigravity splits the command on spaces and runs it with no shell: the quotes stay in the file name (ENOENT).
+      out.problem = 'its hook cannot start: Antigravity runs the command without a shell, so the quotes around the launcher path (' + cmd.launcher + ') become part of the file name and the hook never runs';
+      out.fix = REINSTALL(spec.id);
+    } else if (cmd.unreadable) {
+      out.problem = 'its hook cannot start: its launcher script (' + cmd.launcher + ') is missing or was changed';
+      out.fix = REINSTALL(spec.id);
+    } else if (!recorded && !viaPath) {
+      out.problem = 'its hook cannot start: its ' + (isFile(cmd.node) ? 'zn-gate files (' + cmd.runner + ')' : 'Node.js (' + cmd.node + ')') + ' is no longer there, so zn now blocks the tool calls and prompts instead of checking them';
+      out.fix = REINSTALL(spec.id);
+    } else {
+      if (viaPath) out.notes.push('the Node.js zn was installed with is gone; the hook now runs `zn` from your PATH. Run `zn hooks install ' + spec.id + '` to set it up again');
+      // Run it with the PATH check was given, which is what decides whether `zn` and `node` are found.
+      // Windows cannot run a .sh file directly; Claude Code runs it with sh (Git Bash) there.
+      const run = cmd.winScript ? { file: 'powershell.exe', args: ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(cmd.winScript, 'utf16le').toString('base64')] }
+        : spec.id === 'antigravity' && process.platform !== 'win32' ? { file: cmd.raw.split(' ')[0], args: cmd.raw.split(' ').slice(1) } // as Antigravity runs it: split on spaces, no shell
+          : process.platform === 'win32' ? { file: 'sh', args: [cmd.launcher, cmd.event] } : { file: cmd.launcher, args: [cmd.event] };
+      out.live = { ...run, env: ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {} };
+    }
+  } else if (cmd.missing) {
     out.problem = 'its hook cannot start: ' + (fs.existsSync(cmd.node) ? 'its zn-gate files (' + cmd.runner + ')' : 'its Node.js (' + cmd.node + ')') + ' is no longer there';
     // Usually a Node.js version removed with nvm (or similar), which takes its global zn-gate with it.
     out.fix = REINSTALL(spec.id);
@@ -377,7 +436,7 @@ function copilotSwitchedOff(userFile, ctx, adapter) {
     const f = path.join(ctx.cwd, '.github', 'copilot', name);
     const s = require('./audit')._internal.readBounded(f, 256 * 1024, false).text;
     let j = null;
-    try { j = s ? JSON.parse(s) : null; } catch (_) { j = null; }
+    try { j = s ? JSON.parse(s.replace(/^\uFEFF/, '')) : null; } catch (_) { j = null; }
     if (j && j.disableAllHooks === true) {
       out.problem = 'the Copilot settings of this folder (' + f + ') have "disableAllHooks" turned on, so Copilot runs no hook of yours here (only machine policy hooks)';
       out.fix = 'remove "disableAllHooks" from that file, then run `zn-gate check` again';
@@ -627,8 +686,27 @@ async function checkAgent(spec, ctx) {
   return res;
 }
 
+/* Warnings about the Node.js that runs zn-gate and the one the plugin's hooks will run on (end-of-life, or below the
+   patched release of its line). They never change what is protected or the exit code. */
+function nodeWarnings(opts, env) {
+  const out = [];
+  try {
+    const zn = opts.nodeVersion || process.versions.node;
+    const a = nodeAdvice(zn);
+    if (a) out.push(a.message);
+    let hook = opts.hookNode;
+    if (typeof hook === 'function') hook = hook(env);
+    else if (hook === undefined) hook = opts.nodeVersion ? null : resolveHookNode(env);
+    if (hook && hook.version && hook.version !== zn) {
+      const h = nodeAdvice(hook.version);
+      if (h) out.push('The hooks will run on Node.js ' + hook.version + (hook.path ? ' (from ' + hook.path + ')' : '') + '. ' + h.message);
+    }
+  } catch (err) { /* a warning never fails the check */ }
+  return out;
+}
+
 /**
- * check({home, env, cwd, live}) -> {results, removed}. Never throws for one agent.
+ * check({home, env, cwd, live}) -> {results, removed, warnings}. Never throws for one agent.
  * With live: false only the setup is read: no test folder, no rules run, no hook started
  * (each result then has checked: false, and "protected" means set up with no problem found).
  */
@@ -646,7 +724,7 @@ async function check(opts = {}) {
         results.push({ id: spec.id, name: spec.name, fix: spec.fix, state: 'not-protected', problem: 'zn could not read its setup: ' + oneLine(err && err.message, 200), notes: [], checked: false });
       }
     }
-    return { results, removed: true };
+    return { results, removed: true, warnings: nodeWarnings(opts, env) };
   }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-check-'));
   const ctx = { home, env, cwd, live: true, dir, envFile: path.join(dir, '.env'), readme: path.join(dir, 'README.txt'), codexPolicy: opts.codexPolicy, claudePolicy: opts.claudePolicy, cursorPolicy: opts.cursorPolicy, geminiSystemFile: opts.geminiSystemFile, nodeVersion: opts.nodeVersion, hookNode: opts.hookNode, pluginNode: opts.pluginNode };
@@ -665,11 +743,11 @@ async function check(opts = {}) {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
-  return { results, removed: !fs.existsSync(dir) };
+  return { results, removed: !fs.existsSync(dir), warnings: nodeWarnings(opts, env) };
 }
 
 /** Plain-language report; returns the exit code (0 when every agent set up is protected). */
-function report({ results, removed }, write) {
+function report({ results, removed, warnings }, write) {
   const w = write || ((s) => process.stdout.write(s));
   w('\nzn-gate check: does zn stop your coding agent from reading a secret?\n\n');
   w('zn made a test folder with a fake key in a .env file and an ordinary file next to it, then asked\n');
@@ -719,6 +797,8 @@ function report({ results, removed }, write) {
   } else {
     w('Some agents are not protected (see above). More: https://usezn.com/docs/check\n\n');
   }
+  for (const n of warnings || []) w('Warning: ' + n + '\n');
+  if (warnings && warnings.length) w('\n');
   w(removed ? 'The test folder was deleted.\n' : 'The test folder could not be deleted; it holds only the fake key.\n');
   return setUp && !bad ? 0 : 1;
 }

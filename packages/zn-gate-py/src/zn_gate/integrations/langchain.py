@@ -16,10 +16,12 @@ Two pieces, because a LangChain callback can stop a run but cannot change it:
   mask_secrets is on, instead of being hidden.
 """
 from __future__ import annotations
+import contextvars
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
-from ..guard import GuardBlockError, block_message, check_tool_call, check_tool_result, validate_on_block
+from ..guard import (GuardBlockError, block_message, check_tool_call, check_tool_result, validate_on_block,
+                     _error_texts, _mask_text, _mask_value, _rebuild_error, _safe_text)
 from ..rules import Assessment, evaluate, sanitize_tool_result
 
 try:
@@ -51,6 +53,14 @@ def _output_content(output: Any) -> Any:
     return output if content is None else content
 
 
+def _error_secrets(error: BaseException) -> List[Dict[str, Any]]:
+    found: List[Dict[str, Any]] = []
+    for text in _error_texts(error):
+        _, detections = sanitize_tool_result(text)
+        found.extend(detections)
+    return found
+
+
 def _secret_assessment(found: List[Dict[str, Any]]) -> Assessment:
     rules = sorted({str(f.get("rule", "secret")) for f in found})
     return Assessment(
@@ -76,15 +86,19 @@ class ZnGuardCallbackHandler(BaseCallbackHandler):
     replace or redact a tool output. With mask_secrets=True (default) a tool
     output that contains a secret therefore stops the run as well. To hide the
     secret and keep the run going, or to hand the model a block message, wrap
-    the tool with `guard_langchain_tool`.
+    the tool with `guard_langchain_tool`. The same goes for a tool's error: when
+    its message is blocked or contains a secret, the error is replaced by
+    GuardBlockError, because error handlers such as LangGraph's ToolNode send
+    the error text to the model.
 
     Parameters:
     - on_block: "raise" (default) stops the run with GuardBlockError; "ignore"
                 checks nothing that stops the run. "return" is not supported
                 here (it raises ValueError): use guard_langchain_tool.
     - mask_secrets: Treat a secret in a tool output as a block (default True).
-    - block_truncated: Block a tool output too large to scan in full
-                       (rule size:truncated) (default False).
+    - block_truncated: Keep a tool output too large to scan in full blocked
+                       (rule size:truncated), even when ZN_ALLOW_TRUNCATED=1 is set.
+                       An output over 4 MB is blocked by default without it (default False).
     """
 
     # LangChain logs and swallows exceptions from a callback unless the handler
@@ -164,10 +178,48 @@ class ZnGuardCallbackHandler(BaseCallbackHandler):
             return output
         if not self.mask_secrets:
             return output
-        masked, found = sanitize_tool_result(content)
-        if found and self.on_block == "raise":
+        masked, unmaskable = _mask_value(content)
+        if unmaskable is not None:
+            if self.on_block == "raise":
+                raise GuardBlockError(unmaskable, target="langchain:tool_output", payload=None)
+            return output
+        changed = masked is not content and masked != content
+        if changed and self.on_block == "raise":
+            _, found = sanitize_tool_result(content)
             raise GuardBlockError(_secret_assessment(found), target="langchain:tool_output", payload=masked)
-        return masked if found else output
+        return masked if changed else output
+
+    def on_tool_error(
+        self,
+        error: BaseException,
+        *,
+        run_id: Optional[UUID] = None,
+        parent_run_id: Optional[UUID] = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Replace a tool's error with GuardBlockError when its message is blocked
+        or, with mask_secrets, contains a secret.
+
+        Error handlers such as LangGraph's ToolNode(handle_tool_errors=True)
+        send the error text to the model, and a callback cannot rewrite it, so
+        the error is replaced by GuardBlockError (whose message holds no
+        secret) and the run stops, or the handler passes the block message on.
+        An error LangChain itself handles (ToolException with
+        handle_tool_error) becomes a tool output and goes through on_tool_end.
+        """
+        if self.on_block != "raise" or not isinstance(error, Exception) or isinstance(error, GuardBlockError):
+            return None
+        texts = _error_texts(error)
+        message = texts[0] if texts else ""
+        assessment = check_tool_result(texts[:2], block_truncated=self.block_truncated)
+        if not assessment.allowed:
+            raise GuardBlockError(assessment, target="langchain:tool_output", payload=_mask_text(message))
+        if self.mask_secrets:
+            found = _error_secrets(error)
+            if found:
+                raise GuardBlockError(_secret_assessment(found), target="langchain:tool_output",
+                                      payload=_mask_text(message))
+        return None
 
 
 def _guard_settings(on_block: str) -> str:
@@ -178,7 +230,39 @@ if _HAVE_LANGCHAIN:
     from langchain_core.callbacks import AsyncCallbackManagerForToolRun, CallbackManagerForToolRun
     from langchain_core.runnables import RunnableConfig
     from langchain_core.runnables.config import patch_config
+    from langchain_core.messages import ToolMessage
     from langchain_core.tools import BaseTool
+
+    # The id of the tool call being run. BaseTool passes it to run()/arun() but not to
+    # _run(), and a wrapped tool with an InjectedToolCallId argument or an artifact needs it.
+    _CALL_ID: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("zn_gate_tool_call_id", default=None)
+
+    # Injected arguments whose value the model cannot choose: LangChain always sets InjectedToolCallId from the
+    # tool call, and LangGraph's ToolNode always sets InjectedState and InjectedStore. A generic InjectedToolArg is
+    # filled in by the application, but LangChain still accepts a value the model sends for it, so it stays checked.
+    _OVERWRITTEN = frozenset({"InjectedToolCallId", "InjectedState", "InjectedStore"})
+
+    def _marks(meta: Any) -> frozenset:
+        cls = meta if isinstance(meta, type) else type(meta)
+        return frozenset(c.__name__ for c in getattr(cls, "__mro__", ()))
+
+    def _injected_keys(tool: Any) -> frozenset:
+        """Names of the injected arguments the model cannot set (see _OVERWRITTEN); they are not checked."""
+        try:
+            full = getattr(tool.get_input_schema(), "model_fields", None) or {}
+            visible = getattr(tool.tool_call_schema, "model_fields", None) or {}
+            keys = set()
+            for name, field in full.items():
+                if name in visible:
+                    continue
+                metas = list(getattr(field, "metadata", None) or [])
+                for arg in getattr(getattr(field, "annotation", None), "__metadata__", ()) or ():
+                    metas.append(arg)
+                if any(_marks(m) & _OVERWRITTEN for m in metas):
+                    keys.add(name)
+            return frozenset(keys)
+        except Exception:
+            return frozenset()
 
     class ZnGuardedTool(BaseTool):  # type: ignore[misc]
         """A LangChain tool that runs another tool behind zn-gate. Build it with guard_langchain_tool."""
@@ -189,6 +273,41 @@ if _HAVE_LANGCHAIN:
         check_result: bool = True
         block_truncated: bool = False
         fallback: Optional[str] = None
+
+        def run(self, *args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
+            token = _CALL_ID.set(kwargs.get("tool_call_id"))
+            try:
+                return super().run(*args, **kwargs)
+            finally:
+                _CALL_ID.reset(token)
+
+        async def arun(self, *args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
+            token = _CALL_ID.set(kwargs.get("tool_call_id"))
+            try:
+                return await super().arun(*args, **kwargs)
+            finally:
+                _CALL_ID.reset(token)
+
+        @property
+        def _artifact(self) -> bool:
+            return self.response_format == "content_and_artifact"
+
+        def _pack(self, content: Any, artifact: Any = None) -> Any:
+            """Give BaseTool what it expects from _run: (content, artifact) for an artifact tool."""
+            return (content, artifact) if self._artifact else content
+
+        def _inner_call(self, tool_input: Any) -> Any:
+            """What the wrapped tool is invoked with: a full ToolCall when it needs the call id
+            (InjectedToolCallId) or returns an artifact (only a ToolMessage carries it), else the arguments."""
+            call_id = _CALL_ID.get()
+            if isinstance(tool_input, dict) and (self._artifact or (call_id and _injected_keys(self.tool))):
+                return {"name": self.tool.name, "args": tool_input, "id": call_id or "zn-gate", "type": "tool_call"}
+            return tool_input
+
+        def _unpack(self, result: Any) -> Tuple[Any, Any]:
+            if isinstance(result, ToolMessage):
+                return result.content, result.artifact
+            return result, None
 
         def _input(self, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Any:
             if kwargs:
@@ -205,6 +324,10 @@ if _HAVE_LANGCHAIN:
             return block_message(assessment, target)
 
         def _before(self, tool_input: Any) -> Optional[Assessment]:
+            injected = _injected_keys(self.tool)
+            if injected and isinstance(tool_input, dict):
+                # Arguments the model cannot set (call id, LangGraph state/store) are not checked; the rest is.
+                tool_input = {k: v for k, v in tool_input.items() if k not in injected}
             assessment = check_tool_call(self.name, tool_input)
             return None if assessment.allowed else assessment
 
@@ -215,26 +338,74 @@ if _HAVE_LANGCHAIN:
                 if not assessment.allowed:
                     return self._blocked(assessment, target, result)
             if self.mask_secrets:
-                result, _ = sanitize_tool_result(result)
+                result, unmaskable = _mask_value(result)
+                if unmaskable is not None:
+                    return self._blocked(unmaskable, target, None)
             return result
+
+        def _error(self, error: Exception) -> Any:
+            """Check and mask a tool's exception like its output, because LangChain
+            (handle_tool_error) and LangGraph (ToolNode) send its text to the model.
+
+            Called outside the `except` block, so what is raised in its place has
+            no link back to the original. A blocked message is handled like a
+            blocked output; a message with a secret is raised again as the same
+            exception type carrying only the masked message (so handle_tool_error
+            still handles a ToolException); other errors are raised unchanged.
+            """
+            message = _safe_text(str, error)
+            if self.check_result:
+                assessment = check_tool_result([message, _safe_text(repr, error)],
+                                               block_truncated=self.block_truncated)
+                if not assessment.allowed:
+                    return self._blocked(assessment, f"langchain:{self.name}:result",
+                                         _mask_text(message) if self.mask_secrets else None)
+            if self.mask_secrets and _error_secrets(error):
+                masked = _rebuild_error(error, _mask_text(message))
+                raise masked.with_traceback(error.__traceback__) from None
+            raise error
 
         def _run(self, *args: Any, config: RunnableConfig,
                  run_manager: Optional[CallbackManagerForToolRun] = None, **kwargs: Any) -> Any:
             tool_input = self._input(args, kwargs)
             blocked = self._before(tool_input)
             if blocked is not None:
-                return self._blocked(blocked, f"langchain:{self.name}", tool_input)
+                return self._pack(self._blocked(blocked, f"langchain:{self.name}", tool_input))
             child = patch_config(config, callbacks=run_manager.get_child()) if run_manager else config
-            return self._after(self.tool.invoke(tool_input, config=child))
+            caught: Optional[Exception] = None
+            try:
+                result = self.tool.invoke(self._inner_call(tool_input), config=child)
+            except GuardBlockError:
+                raise
+            except Exception as exc:
+                if not (self.check_result or self.mask_secrets):
+                    raise
+                caught = exc
+            if caught is not None:
+                return self._pack(self._error(caught))
+            content, artifact = self._unpack(result)
+            return self._pack(self._after(content), artifact)
 
         async def _arun(self, *args: Any, config: RunnableConfig,
                         run_manager: Optional[AsyncCallbackManagerForToolRun] = None, **kwargs: Any) -> Any:
             tool_input = self._input(args, kwargs)
             blocked = self._before(tool_input)
             if blocked is not None:
-                return self._blocked(blocked, f"langchain:{self.name}", tool_input)
+                return self._pack(self._blocked(blocked, f"langchain:{self.name}", tool_input))
             child = patch_config(config, callbacks=run_manager.get_child()) if run_manager else config
-            return self._after(await self.tool.ainvoke(tool_input, config=child))
+            caught: Optional[Exception] = None
+            try:
+                result = await self.tool.ainvoke(self._inner_call(tool_input), config=child)
+            except GuardBlockError:
+                raise
+            except Exception as exc:
+                if not (self.check_result or self.mask_secrets):
+                    raise
+                caught = exc
+            if caught is not None:
+                return self._pack(self._error(caught))
+            content, artifact = self._unpack(result)
+            return self._pack(self._after(content), artifact)
 
 
 def guard_langchain_tool(
@@ -258,11 +429,29 @@ def guard_langchain_tool(
                 (for a blocked output: its output is dropped).
     - mask_secrets: Hide credentials in the tool output (default True).
     - check_result: Scan the tool output for prompt injection (default True).
-    - block_truncated: Block an output too large to scan in full (default False).
+    - block_truncated: Keep an output too large to scan in full blocked (rule size:truncated), even
+                       when ZN_ALLOW_TRUNCATED=1 is set. Over 4 MB it is blocked by default without it.
     - fallback: Text the model gets for a block when on_block="return".
 
-    A tool with response_format="content_and_artifact" loses its artifact: the
-    wrapper passes only the content on.
+    The message of an exception raised by the tool is checked and masked like
+    its output, because handle_tool_error and LangGraph's ToolNode send it to
+    the model: a blocked message is handled like a blocked output, and a
+    message with a secret is raised again as the same exception type carrying
+    only the masked message (MaskedToolError, a RuntimeError, when the type
+    cannot be rebuilt that way). The returned tool keeps the original's
+    handle_tool_error and handle_validation_error.
+
+    A tool with response_format="content_and_artifact" keeps it: the content
+    is checked and masked, the artifact is passed through unchanged (it is not
+    scanned; LangChain does not send it to the model). Arguments LangChain
+    fills in are passed on untouched. InjectedToolCallId and LangGraph's
+    InjectedState and InjectedStore are not checked (the model cannot set them);
+    a generic InjectedToolArg is checked like any other argument, because
+    LangChain accepts a value the model sends for it.
+
+    If you also use ZnGuardCallbackHandler, create it with mask_secrets=False:
+    the handler sees the wrapped tool's raw output and would stop the run on a
+    secret before the wrapper can mask it.
     """
     if not _HAVE_LANGCHAIN:
         raise ImportError("guard_langchain_tool needs langchain-core: pip install langchain-core")
@@ -276,6 +465,9 @@ def guard_langchain_tool(
         description=tool.description,
         args_schema=tool.args_schema,
         return_direct=tool.return_direct,
+        response_format=tool.response_format,
+        handle_tool_error=tool.handle_tool_error,
+        handle_validation_error=tool.handle_validation_error,
         on_block=on_block,
         mask_secrets=mask_secrets,
         check_result=check_result,

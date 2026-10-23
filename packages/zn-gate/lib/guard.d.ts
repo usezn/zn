@@ -35,7 +35,7 @@ export interface GuardEngineOptions {
 export type GuardOnBlock = 'throw' | 'return';
 
 export interface GuardToolOptions<Fallback = never> extends GuardEngineOptions {
-  /** Tool name used in messages. Default: the function's name, or "anonymous". */
+  /** Tool name used in messages. Default: the function's name (an empty string for an anonymous function; messages then say "anonymous"). */
   name?: string;
   /** 'throw' (default) raises GuardBlockError; 'return' returns `fallback`, or the assessment when no fallback is given. */
   onBlock?: GuardOnBlock;
@@ -49,6 +49,8 @@ export interface GuardToolOptions<Fallback = never> extends GuardEngineOptions {
   maskSecrets?: boolean;
   /** With checkResult, block a result too large to scan in full. */
   blockTruncated?: boolean;
+  /** With checkResult, allow a result too large to scan in full (blocked by default). Also ZN_ALLOW_TRUNCATED=1. */
+  allowTruncated?: boolean;
   /** Called as (assessment, toolName, payload) before the block is applied. */
   onBlockCallback?: (assessment: ToolCallAssessment, name: string, payload: unknown) => void;
 }

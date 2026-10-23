@@ -20,6 +20,18 @@
   process.exit(1);
 })();
 
+// Output piped into a reader that closes early (for example `zn-gate check | head -1`) fails with EPIPE.
+// Later writes are dropped quietly and the command finishes with the exit status it would have had.
+// Any other stdout error is still thrown, as before.
+let stdoutClosed = false;
+process.stdout.on('error', (err) => {
+  if (err && (err.code === 'EPIPE' || (stdoutClosed && err.code === 'ERR_STREAM_DESTROYED'))) {
+    stdoutClosed = true;
+    return;
+  }
+  throw err;
+});
+
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -42,14 +54,14 @@ const col = styles(process.stdout, process.env);
 // scan never sees BEGIN and END together, so these run on the whole file.
 const MULTILINE_SECRET_RULES = SECRET_PATTERNS
   .filter((p) => p.id === 'secret:private_key')
-  .map((p) => ({ id: p.id, pattern: p.pattern, header: /-----BEGIN [A-Z ]*PRIVATE KEY-----/ }));
+  .map((p) => ({ id: p.id, pattern: p.pattern, header: /-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----/ }));
 
 // A BEGIN marker with no END (a key cut short when pasted or truncated): the
 // lines after it that look like PEM headers or base64 are treated as key
 // material, up to the first empty or other line (an encrypted key has one
 // empty line after its Proc-Type / DEK-Info headers, which is kept).
-const KEY_BEGIN = /-----BEGIN [A-Z ]*PRIVATE KEY-----/;
-const KEY_END = /-----END [A-Z ]*PRIVATE KEY-----/;
+const KEY_BEGIN = /-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----/;
+const KEY_END = /-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----/;
 const KEY_BODY = /^(?:[A-Za-z0-9+/=]{16,}|[A-Za-z-]+: )/;
 const KEY_HEADER = /^[A-Za-z-]+: /;
 const TRUNCATED_KEY_REASON = 'Exposed credential detected by DLP filter (private key without an END marker)';
@@ -230,8 +242,13 @@ SECRETS (values stay on this machine; agents only see __ZN_<NAME>__ markers):
                       and its output masked [--secrets A,B to set env vars]
   secret log          Show the local audit log of secret use [--since 1h] (same as vault log)
   hooks install <agent> [--project]
-                      Install zn's hooks for claude-code, codex, cursor or opencode
+                      Install zn's hooks for ${require('../lib/agents').listAdapters().join(', ')}
                       (zn-gate init picks the right setup for each agent)
+  hooks uninstall <agent> [--project]
+                      Remove zn's hooks for that agent again
+  uninstall           Remove zn-gate from this computer in one step: the Claude Code plugin, zn's
+                      hooks, wrapped MCP servers. Shows the plan first; the vault is only deleted if
+                      you confirm it separately [--dry-run]. Your own terminal only
   check               Show that zn blocks your agent from reading a fake secret
                       (also: doctor). Safe: a temporary folder, nothing is sent
   connect             Optional: turn on the cloud check for analyze_prompt. Opens usezn.com,
@@ -286,7 +303,8 @@ TEAM (zn Team: organization policy and audit upload; needs the vault unlocked):
 INIT --wrap-mcp OPTIONS (each one also selects --wrap-mcp):
   --dry-run           Scan environments and preview changes without modifying configs
   --shadow            Wrap servers in non-blocking shadow mode (alerts logged without drops)
-  --revert            Restore pre-zn backups for all detected configurations
+  --revert            Put back the MCP configs saved before wrapping (does not remove hooks or the
+                      plugin: use zn-gate uninstall for that)
 
 EVIDENCE OPTIONS:
   --verify            Verify the SHA-256 hash chain across all records
@@ -500,6 +518,8 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
       try {
         entries = fs.readdirSync(current);
       } catch (e) {
+        // A folder that cannot be listed is reported, not skipped in silence: its files were not scanned.
+        skippedDirs.push({ dir: current, reason: 'cannot be read' });
         return;
       }
       // Editor settings are not scanned; the MCP servers of VS Code are.
@@ -739,12 +759,12 @@ Files   : ${files.length} file(s) queued for audit\n
   const resultParts = [];
   if (totalSecrets) resultParts.push(`${totalSecrets} SECRET(S) FOUND`);
   if (totalThreats) resultParts.push(`${totalThreats} THREAT(S) FOUND`);
-  let status = 'Clean workspace';
+  let status = files.length - notRead === 0 ? 'No files were read: this is not a clean result' : 'Clean workspace';
   if (totalThreats) status = 'Review and neutralize detected vectors';
   else if (totalSecrets) status = 'Move the secrets out of these files (see "Next" for each one)';
   process.stdout.write(`
 ${ruleLine(process.env, 77)}
-Audit Result : ${totalFindings === 0 ? col.green('PASSED - NO THREATS DETECTED') : col.red(`FAILED - ${resultParts.join(', ')}`)}
+Audit Result : ${totalFindings === 0 ? (files.length - notRead === 0 ? col.yellow('NOTHING SCANNED') : col.green('PASSED - NO THREATS DETECTED')) : col.red(`FAILED - ${resultParts.join(', ')}`)}
 Files Scanned: ${files.length - notRead}
 Files Skipped: ${files.skipped.length}${files.skipped.length ? ' (not read: see below)' : ''}
 Status       : ${status}
@@ -770,7 +790,7 @@ ${ruleLine(process.env, 77)}\n
 
 // Secrets broker and agent hooks. Dispatched before the global option parsing
 // so flags after `zn run --` belong to the child command, untouched.
-const BROKER_COMMANDS = new Set(['run', 'hook', 'secrets-mcp', 'secret', 'secrets', 'env', 'hooks']);
+const BROKER_COMMANDS = new Set(['run', 'hook', 'secrets-mcp', 'secret', 'secrets', 'env', 'hooks', 'uninstall']);
 
 // `zn audit` reviews the agent configs of a directory. The secret-use log it
 // showed in 1.5 is `zn vault log` (alias `zn secret log`); lib/audit/cli.js
@@ -883,7 +903,7 @@ async function main() {
     return;
   }
 
-  if (BROKER_COMMANDS.has(args[0]) && !(args.length === 2 && (args[1] === '-h' || args[1] === '--help'))) {
+  if (BROKER_COMMANDS.has(args[0]) && (args[0] === 'uninstall' || !(args.length === 2 && (args[1] === '-h' || args[1] === '--help')))) {
     await runBrokerCommand(args[0], args.slice(1));
     return;
   }
@@ -1205,6 +1225,11 @@ ${sym(process.env, '🛡️', undefined, '  ')}zn-gate Status:
         for (const n of notes) process.stdout.write('  Cursor          : ' + n + '\n');
         if (notes.length) process.stdout.write('\n');
       }
+    } catch (_) { /* status never fails on this check */ }
+    // An end-of-life or unpatched Node.js (a warning only: it never changes the exit status).
+    try {
+      const adv = require('../lib/node-support').nodeAdvice(process.versions.node);
+      if (adv) process.stdout.write('  Node.js         : ' + adv.message + '\n\n');
     } catch (_) { /* status never fails on this check */ }
     process.exit(0);
   }

@@ -66,6 +66,7 @@ function makeIo(io = {}) {
     readSecret: io.readSecret,
     confirm: io.confirm,
     human: io.human, // tests: skip the terminal check
+    ancestry: io.ancestry, claude: io.claude, run: io.run, envList: io.envList, // tests (zn-gate uninstall)
   };
 }
 
@@ -451,7 +452,7 @@ async function auditChain() {
   try {
     client = require('../vault/client').createClient({});
     if (!(await client.isUnlocked())) {
-      return { broken: false, line: 'chain: not checked: the vault is locked or unreachable (run `zn unlock`, then `zn vault verify`)' };
+      return { broken: false, line: 'chain: not checked: the vault is locked or unreachable (run `' + znCommand('unlock') + '`, then `' + znCommand('vault verify') + '`)' };
     }
     const v = await client.auditVerify();
     if (v && v.ok) return { broken: false, line: 'chain: valid, ' + v.records + ' records' };
@@ -466,12 +467,19 @@ async function auditChain() {
 
 /* ------------------------------ hooks ------------------------------ */
 
+function hooksUsage() {
+  return 'usage: zn hooks install|uninstall ' + require('../agents').listAdapters().join('|') + ' [--project] [--no-mcp]';
+}
+
 async function hooks(args, io) {
   const { flags, positional } = parseFlags(args, { bool: ['project', 'no-mcp'] });
   const [action, agentId] = positional;
   if (!['install', 'uninstall'].includes(action) || !agentId) {
-    throw deps.znError('ZN_USAGE', 'usage: zn hooks install|uninstall claude-code|codex|cursor|opencode|antigravity|copilot [--project] [--no-mcp]');
+    throw deps.znError('ZN_USAGE', hooksUsage());
   }
+  // Check the agent name first, so a script or an agent is told the real reason.
+  const unsupported = require('../agents').unsupportedAgentMessage(agentId);
+  if (unsupported) throw deps.znError('ZN_USAGE', unsupported);
   needHuman(io, 'zn hooks ' + action);
   const adapter = require('../agents').getAdapter(agentId);
   const opts = { scope: flags.project ? 'project' : 'user', projectDir: io.cwd, home: io.home, env: io.env, mcp: !flags['no-mcp'], selfCheck: true };
@@ -490,7 +498,7 @@ async function hooks(args, io) {
 
 const HELP = {
   'hooks': [
-    'usage: zn hooks install|uninstall claude-code|codex|cursor|opencode|antigravity|copilot [--project] [--no-mcp]',
+    hooksUsage(),
     'Adds the zn hooks to a coding agent, or removes them again.',
     '  install     add the hooks (and the secrets MCP server unless --no-mcp)',
     '  uninstall   remove them',
@@ -501,6 +509,13 @@ const HELP = {
     'usage: zn secret set|list|rm|allow|approve|import|adopt|log ...',
     'Stores secrets in the zn vault so your agent can use them without seeing them.',
     'Run zn secret set NAME and type the value at the hidden prompt (or use --clipboard); values are never passed as arguments.',
+  ],
+  'uninstall': [
+    'usage: zn-gate uninstall [--dry-run]',
+    'Removes zn-gate from this computer: the zn-gate plugin of Claude Code, zn\'s hooks (your user and this project),',
+    'and MCP servers wrapped by zn-gate init --wrap-mcp. It shows the plan and asks first; run it in your own terminal.',
+    'The vault is only deleted if you confirm it separately (default no). .env files with markers are left alone.',
+    '  --dry-run   show the plan and change nothing',
   ],
   'env': [
     'usage: zn env shadow [FILE] | zn env unshadow FILE --backup NAME',
@@ -552,6 +567,7 @@ async function dispatch(group, args, ioIn) {
       throw deps.znError('ZN_USAGE', 'usage: zn vault log [--since 1h]');
     }
     if (group === 'hooks') return await hooks(args, io);
+    if (group === 'uninstall') return await require('../uninstall').run(args, io);
     throw deps.znError('ZN_USAGE', 'unknown command ' + group);
   } catch (err) {
     io.stderr.write('zn ' + group + ': ' + humanError(err) + '\n');

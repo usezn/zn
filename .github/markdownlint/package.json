@@ -1,0 +1,8 @@
+{
+  "name": "zn-markdownlint",
+  "private": true,
+  "description": "Pinned markdownlint-cli2 for the Markdown lint workflow",
+  "devDependencies": {
+    "markdownlint-cli2": "0.24.0"
+  }
+}

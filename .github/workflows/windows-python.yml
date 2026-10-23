@@ -13,19 +13,30 @@ on:
       - 'packages/zn-gate/test/fixtures/**'
       - '.github/ci-test-requirements.txt'
       - '.github/workflows/windows-python.yml'
+  # The merge queue always runs it: one Windows job on the LTS version is the Windows sample of the queue.
+  merge_group:
+    types: [ checks_requested ]
 
 permissions:
   contents: read
 
 concurrency:
-  group: windows-python-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: windows-python-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Retry npm and pip downloads instead of failing a run on one network error.
+  NPM_CONFIG_FETCH_RETRIES: "5"
+  NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: "20000"
+  NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: "120000"
+  PIP_RETRIES: "5"
+  PIP_TIMEOUT: "60"
 
 jobs:
   windows-python:
     name: Windows (Python 3.12)
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
-    if: github.event.pull_request.draft == false
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: windows-latest
     timeout-minutes: 20
     defaults:
@@ -38,13 +49,12 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: |
-            packages/zn-gate-py/pyproject.toml
-            .github/ci-test-requirements.txt
+          # No pip cache: the test tools are small and hash-pinned, and each cache key saved a
+          # new 200-350 MB copy that pushed the repository toward its 10 GB cache limit.
       - name: Install package and test dependencies
         # Test tools pinned with hashes; the package itself has no dependencies.
         run: |
+          python -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
           python -m pip install --require-hashes -r .github/ci-test-requirements.txt
           python -m pip install --no-deps --no-build-isolation -e packages/zn-gate-py
       - name: Run pytest (unit + integration)

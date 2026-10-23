@@ -75,6 +75,7 @@ const os = require('os');
 const path = require('path');
 const cfg = require('./config-file');
 const { whichSync } = require('../broker/markers');
+const launcher = require('./launcher');
 
 const id = 'codex';
 // MCP calls are checked before they run: their arguments go through the same
@@ -337,18 +338,43 @@ function mcpSnippet(opts = {}) {
 }
 
 /* The hook groups zn writes, by event, for one handler (also used to print a managed requirements.toml). */
-function hookGroups(h) {
+function hookGroups(handler) {
+  // One handler for every event, or a function of the event name (the launcher needs to know it).
+  const h = (event) => (typeof handler === 'function' ? handler(event) : handler);
   return {
-    PreToolUse: { matcher: PRE_MATCHER, hooks: [h] },
+    PreToolUse: { matcher: PRE_MATCHER, hooks: [h('PreToolUse')] },
     // Same matcher as PreToolUse: the approval prompt is asked only for calls zn's PreToolUse check let through.
-    PermissionRequest: { matcher: PRE_MATCHER, hooks: [h] },
-    PostToolUse: { matcher: POST_MATCHER, hooks: [h] },
-    UserPromptSubmit: { hooks: [h] },
+    PermissionRequest: { matcher: PRE_MATCHER, hooks: [h('PermissionRequest')] },
+    PostToolUse: { matcher: POST_MATCHER, hooks: [h('PostToolUse')] },
+    UserPromptSubmit: { hooks: [h('UserPromptSubmit')] },
     // A short reminder for the model, at the start of a session and of a subagent. No matcher: every source.
-    SessionStart: { hooks: [h] },
-    SubagentStart: { hooks: [h] },
+    SessionStart: { hooks: [h('SessionStart')] },
+    SubagentStart: { hooks: [h('SubagentStart')] },
     // Stop ignores matchers in Codex; the group has none.
-    Stop: { hooks: [h] },
+    Stop: { hooks: [h('Stop')] },
+  };
+}
+
+/**
+ * The hook handler for each event. A user install goes through zn's launcher
+ * (lib/agents/launcher.js) so that a Node.js that has gone away blocks instead
+ * of letting Codex run the call unchecked; a project install, or a command
+ * given by the caller, keeps the plain command.
+ */
+function handlerFor(opts = {}) {
+  const base = { type: 'command', timeout: HOOK_TIMEOUT_S, statusMessage: HOOK_STATUS };
+  const plain = () => ({ ...base, command: cfg.hookCommand(id, opts), commandWindows: cfg.hookCommandWindows(id, opts) });
+  if (opts.command || (opts.scope || 'user') === 'project') return plain;
+  const platform = opts.platform || process.platform;
+  const node = opts.nodePath || process.execPath;
+  const runner = opts.runnerPath || cfg.runnerPath();
+  const file = platform === 'win32' ? null : launcher.writeLauncher(id, node, runner, opts);
+  return (event) => {
+    const h = plain();
+    if (file) h.command = launcher.launcherCommand(file, event, platform);
+    const script = launcher.windowsScript(id, event, node, runner);
+    if (script) h.commandWindows = launcher.windowsScriptCommand(script);
+    return h;
   };
 }
 
@@ -357,14 +383,7 @@ function install(opts = {}) {
   const data = cfg.readJson(file);
   const report = { settings: file, backup: cfg.backup(file), warnings: [] };
   data.hooks = cfg.hooksOf(data, file);
-  const h = {
-    type: 'command',
-    command: cfg.hookCommand(id, opts),
-    commandWindows: cfg.hookCommandWindows(id, opts),
-    timeout: HOOK_TIMEOUT_S,
-    statusMessage: HOOK_STATUS,
-  };
-  const ours = hookGroups(h);
+  const ours = hookGroups(handlerFor(opts));
   for (const [event, group] of Object.entries(ours)) {
     data.hooks[event] = strip(data.hooks[event]);
     data.hooks[event].push(group);
@@ -400,6 +419,11 @@ function uninstall(opts = {}) {
     report.removed = 1;
     if (Object.keys(data.hooks).length === 0) delete data.hooks;
     cfg.writeJson(file, data);
+    // The launcher (see handlerFor) is shared by every config of this machine: one uninstall leaves it in place,
+    // only the machine-wide uninstall (opts.removeLauncher) deletes it.
+    if ((opts.scope || 'user') !== 'project' && opts.removeLauncher === true) {
+      try { fs.unlinkSync(launcher.launcherFile(id, opts)); } catch (_) { /* none */ }
+    }
   }
   return report;
 }

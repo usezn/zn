@@ -1,0 +1,2 @@
+### Changed
+- The Python package's block message now starts by saying plainly what happened: the call did not run, or the tool output was withheld so the model did not receive it. The rule id follows, and the next step is addressed to the developer (check the input, or report a false positive). When the input is too large to check, the message now says to shorten or split it instead of "do not retry". What `guard()` returns is unchanged.

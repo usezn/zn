@@ -33,19 +33,88 @@ const { agentDetected } = require('../broker/tty');
 const messages = require('../messages');
 const { CODES, messageWithUnlockHint } = require('../errors');
 const vaultReset = require('./reset');
+const { znCommand } = require('../zn-command');
+
+/* A usage mistake (an unknown option, a bad duration or backend): the command exits 2, as the docs say. */
+function usageError(message) {
+  const err = new Error(message);
+  err.exitCode = 2;
+  return err;
+}
+
+/* The time a session ends, the way a person says it: "23:09 (in 8 h)", with "tomorrow" when it is past midnight.
+ * A value that is not a date is returned as it is. */
+function untilText(iso, now) {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return String(iso);
+  const nowMs = now === undefined ? Date.now() : now;
+  const pad = (n) => String(n).padStart(2, '0');
+  const today = new Date(nowMs);
+  const sameDay = at.getFullYear() === today.getFullYear() && at.getMonth() === today.getMonth() && at.getDate() === today.getDate();
+  const clock = pad(at.getHours()) + ':' + pad(at.getMinutes());
+  const minutes = Math.max(0, Math.round((at.getTime() - nowMs) / 60000));
+  const left = minutes < 90 ? 'in ' + Math.max(1, minutes) + ' min' : 'in ' + Math.round(minutes / 60) + ' h';
+  return (sameDay ? '' : 'tomorrow ') + clock + ' (' + left + ')';
+}
 
 function parseDuration(s, fallback) {
   if (s === undefined) return fallback;
   const m = /^(\d+)(s|m|h)$/.exec(String(s));
-  if (!m) throw new Error(messages.invalidDuration(s));
+  if (!m) throw usageError(messages.invalidDuration(s));
   const n = Number(m[1]) * { s: 1000, m: 60000, h: 3600000 }[m[2]];
-  if (n < 60000 || n > 24 * 3600000) throw new Error(messages.DURATION_RANGE);
+  if (n < 60000 || n > 24 * 3600000) throw usageError(messages.DURATION_RANGE);
   return n;
 }
 
 function flag(args, name) {
   const i = args.indexOf(name);
   return i >= 0 ? args[i + 1] : undefined;
+}
+
+/* The options each command takes: true when the option needs a value after it. */
+const OPTIONS = {
+  unlock: { '--ttl': true, '--idle': true, '--backend': true, '--passphrase-stdin': false, '--foreground': false },
+  lock: {},
+  status: {},
+  verify: {},
+  reset: {},
+  forget: {},
+};
+
+/* Checks the arguments after the command name. Returns the first problem as a sentence, or null.
+ * Unknown options, options without their value and stray words are usage errors (exit 2), not ignored. */
+function argumentProblem(name, rest, maxWords) {
+  const allowed = OPTIONS[name];
+  let words = 0;
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    if (a.startsWith('-')) {
+      if (!Object.prototype.hasOwnProperty.call(allowed, a)) return 'Unknown option "' + a.slice(0, 40) + '".';
+      if (allowed[a]) {
+        const v = rest[i + 1];
+        if (v === undefined || v.startsWith('--')) return 'The option ' + a + ' needs a value.';
+        i++;
+      }
+    } else if (++words > (maxWords || 0)) {
+      return 'Unexpected argument "' + a.slice(0, 40) + '".';
+    }
+  }
+  return null;
+}
+
+const USAGE = {
+  unlock: () => 'usage: ' + znCommand('unlock') + ' [--ttl 8h] [--idle 30m] [--backend NAME] [--passphrase-stdin] [--foreground]',
+  lock: () => 'usage: ' + znCommand('lock'),
+  status: () => 'usage: ' + znCommand('vault status'),
+  verify: () => 'usage: ' + znCommand('vault verify'),
+  reset: () => 'usage: ' + znCommand('vault reset'),
+  forget: () => 'usage: ' + znCommand('vault forget') + ' [dir]',
+};
+
+/* Prints the problem and the usage line to stderr and returns the exit code 2. */
+function usageFail(name, problem) {
+  process.stderr.write('[zn] ' + problem + '\n' + USAGE[name]() + '\n');
+  return 2;
 }
 
 // One line reader for all the passphrase prompts of a command. A reader per
@@ -67,7 +136,7 @@ function createHiddenPrompter(opts) {
     if (w) w.resolve(line);
     else lines.push(line);
   });
-  const cancelled = () => new Error(messages.PASSPHRASE_CANCELLED);
+  const cancelled = () => new Error(messages.passphraseCancelled());
   rl.on('close', () => {
     closed = true;
     if (waiters.length) output.write('\n');
@@ -101,7 +170,7 @@ async function getPassphrase(args, creating, prompterOpts) {
     const p1 = await prompter.ask(creating ? 'New vault passphrase (min ' + keychain.MIN_PASSPHRASE + ' chars): ' : 'Vault passphrase: ');
     if (creating) {
       const p2 = await prompter.ask('Repeat passphrase: ');
-      if (p1 !== p2) throw new Error(messages.PASSPHRASE_MISMATCH);
+      if (p1 !== p2) throw new Error(messages.passphraseMismatch());
     }
     return p1;
   } finally {
@@ -129,7 +198,7 @@ function pidAlive(pid) {
   try { process.kill(pid, 0); return true; } catch (err) { return Boolean(err && err.code === 'EPERM'); }
 }
 
-const OLD_VAULT_STUCK = 'The old vault did not stop; run `zn lock`, wait a moment, then `zn unlock`.';
+const oldVaultStuck = () => 'The old vault did not stop; run `' + znCommand('lock') + '`, wait a moment, then `' + znCommand('unlock') + '`.';
 
 /**
  * zn unlock with an older vault still running: lock it so this version can
@@ -152,40 +221,53 @@ async function restartIfOutdated(deps) {
   const alive = d.isAlive || pidAlive;
   const sleep = d.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
   const deadline = (d.timeoutMs == null ? 5000 : d.timeoutMs);
-  if (pid === null) throw new Error(OLD_VAULT_STUCK);
+  if (pid === null) throw new Error(oldVaultStuck());
   for (let waited = 0; alive(pid); waited += 100) {
-    if (waited >= deadline) throw new Error(OLD_VAULT_STUCK);
+    if (waited >= deadline) throw new Error(oldVaultStuck());
     await sleep(100);
   }
   return true;
 }
 
-/** The `zn vault status` line for an unlocked vault. */
-function unlockedLine(meta, s) {
-  const line = 'Vault: unlocked (backend ' + meta.backend + ', expires ' + s.expiresAt + (s.version ? ', zn-gate ' + s.version : '') + ')';
-  return isOutdatedVault(s) ? line + ', outdated: restart with `zn lock`, then `zn unlock`' : line;
+/**
+ * When the vault locks, in words: after a quiet spell, or at the latest at the
+ * end of the session. Both limits are real (idle timer and session TTL), so the
+ * unlock and status messages share this one sentence.
+ */
+function lockWhenText(idleMs, expiresAt, now) {
+  const until = untilText(expiresAt, now);
+  if (!Number.isFinite(idleMs) || idleMs <= 0) return 'expires ' + until;
+  return 'locks after ' + Math.max(1, Math.round(idleMs / 60000)) + ' min idle, or at ' + until + ' at the latest';
 }
 
-const ALREADY_UNLOCKED = 'vault already unlocked. Next step: nothing to do. To unlock again, run zn lock in your own terminal first, or, if you are an agent, ask the user to do it.';
+/** The `zn vault status` line for an unlocked vault. */
+function unlockedLine(meta, s) {
+  const line = 'Vault: unlocked (backend ' + meta.backend + ', ' + lockWhenText(s.idleMs, s.expiresAt) + (s.version ? ', zn-gate ' + s.version : '') + ')';
+  return isOutdatedVault(s) ? line + ', outdated: restart with `' + znCommand('lock') + '`, then `' + znCommand('unlock') + '`' : line;
+}
 
 async function unlockCmd(args, deps) {
   const d = deps || {};
-  const agent = d.agent !== undefined ? d.agent : agentDetected(process.env);
-  if (agent) throw new Error(messages.agentRefusal('zn unlock', agent));
-  // Already unlocked: say so before anything is asked. An outdated vault still goes on to the restart below.
-  const running = await runningStatus(d.clientFactory);
-  if (running && !isOutdatedVault(running)) throw new Error(ALREADY_UNLOCKED);
+  // The arguments are checked first, before anything is asked or looked up, so a typo never waits behind a prompt.
+  const problem = argumentProblem('unlock', args[0] === 'unlock' ? args.slice(1) : args);
+  if (problem) { const err = usageError(problem); err.usage = 'unlock'; throw err; }
   const opts = {
     ttlMs: parseDuration(flag(args, '--ttl'), daemon.DEFAULT_TTL_MS),
     idleMs: parseDuration(flag(args, '--idle'), daemon.DEFAULT_IDLE_MS),
   };
+  const asked = flag(args, '--backend');
+  if (asked !== undefined && !keychain.BACKENDS.includes(asked)) throw usageError(messages.unknownBackend(asked, keychain.BACKENDS));
+  const agent = d.agent !== undefined ? d.agent : agentDetected(process.env);
+  if (agent) throw new Error(messages.agentRefusal(znCommand('unlock'), agent));
+  // Already unlocked: say so before anything is asked. An outdated vault still goes on to the restart below.
+  const running = await runningStatus(d.clientFactory);
+  if (running && !isOutdatedVault(running)) throw new Error(messages.vaultAlreadyUnlocked());
   const meta = keychain.readMeta({});
-  const backend = flag(args, '--backend') || (meta && meta.backend) || keychain.detectBackend();
-  if (!keychain.BACKENDS.includes(backend)) throw new Error(messages.unknownBackend(backend, keychain.BACKENDS));
+  const backend = asked || (meta && meta.backend) || keychain.detectBackend();
   opts.backend = backend;
   // The keychain unlocks without asking anything, so only a terminal tells a person from a detached process.
   // (The passphrase backend needs the passphrase, which `--passphrase-stdin` reads from a pipe on purpose.)
-  if (backend !== 'passphrase' && !process.stdin.isTTY) throw new Error(messages.UNLOCK_NEEDS_TERMINAL);
+  if (backend !== 'passphrase' && !process.stdin.isTTY) throw new Error(messages.unlockNeedsTerminal());
   if (backend === 'passphrase') opts.passphrase = await (d.getPassphrase || getPassphrase)(args, !meta);
   // An older vault still running: check the identity (passphrase or keychain)
   // before stopping it, then wait for it to exit.
@@ -194,11 +276,11 @@ async function unlockCmd(args, deps) {
   const res = await daemon.unlock(opts);
   if (res.created) out('Created a new vault (' + backend + ') in ' + store.paths().vaultDir);
   vaultReset.clearUnlockFailures({});
-  out('Vault unlocked until ' + res.expiresAt + ' (locks after ' + Math.round(opts.idleMs / 60000) + ' min idle). Run `zn lock` to lock now.');
+  out('Vault unlocked: ' + lockWhenText(opts.idleMs, res.expiresAt) + '. Run `' + znCommand('lock') + '` to lock now.');
   if (res.confirm === 'gui') out('Confirmations (first use of a secret by a command, policy changes) appear as a system dialog.');
   else {
     out('Note: no system dialog is available here, so first-use approvals and policy changes will be refused.');
-    out('      To approve them, run the vault in a terminal of its own instead: zn lock && zn unlock --foreground');
+    out('      To approve them, run the vault in a terminal of its own instead: ' + znCommand('lock') + ' && ' + znCommand('unlock --foreground'));
   }
   return 0;
 }
@@ -207,14 +289,14 @@ async function unlockForegroundCmd(opts, backend) {
   if (!process.stdin.isTTY) throw new Error(messages.FOREGROUND_NEEDS_TERMINAL);
   const res = await daemon.unlockForeground(opts);
   if (res.created) out('Created a new vault (' + backend + ') in ' + store.paths().vaultDir);
-  out('Vault unlocked until ' + res.expiresAt + ' (locks after ' + Math.round(opts.idleMs / 60000) + ' min idle).');
+  out('Vault unlocked: ' + lockWhenText(opts.idleMs, res.expiresAt) + '.');
   out('Keep this terminal open: zn asks here before a secret is used by a command for the first time or a policy changes.');
-  out('Press Ctrl+C or run `zn lock` to lock.');
+  out('Press Ctrl+C or run `' + znCommand('lock') + '` to lock.');
   const onSig = () => { res.close(); };
   process.on('SIGINT', onSig);
   process.on('SIGTERM', onSig);
   const reason = await res.done;
-  out('Vault locked (' + reason + ').');
+  out(messages.vaultLockedBecause(reason, Math.round(opts.idleMs / 60000)));
   return 0;
 }
 
@@ -226,7 +308,7 @@ async function lockCmd() {
 
 async function statusCmd() {
   const meta = keychain.readMeta({});
-  if (!meta) { out('Vault: not created yet (run `zn unlock`).'); return 0; }
+  if (!meta) { out('Vault: not created yet (run `' + znCommand('unlock') + '`).'); return 0; }
   const c = createClient({});
   try {
     const s = await c.status();
@@ -245,7 +327,7 @@ async function forgetCmd(args) {
   const c = createClient({});
   const unlocked = await c.isUnlocked();
   c.close();
-  if (unlocked) { process.stderr.write(messages.FORGET_LOCK_FIRST + '\n'); return 1; }
+  if (unlocked) { process.stderr.write(messages.forgetLockFirst() + '\n'); return 1; }
   const real = fs.existsSync(dir) ? fs.realpathSync(dir) : dir;
   out(store.forgetProject(real) ? 'Forgot the token map of ' + real : 'No token map stored for ' + real);
   return 0;
@@ -255,8 +337,9 @@ async function auditVerifyCmd() {
   const c = createClient({});
   try {
     const r = await c.auditVerify();
-    out(r.ok ? 'Audit log OK: ' + r.records + ' records, chain and MACs verified.' : 'Audit log FAILED at record ' + (r.line || r.records) + ': ' + r.error);
-    return r.ok ? 0 : 1;
+    if (r.ok) { out('Audit log OK: ' + r.records + ' records, chain and MACs verified.'); return 0; }
+    process.stderr.write(messages.auditFailed(r.line || r.records, r.error) + '\n');
+    return 1;
   } finally {
     c.close();
   }
@@ -266,12 +349,14 @@ async function auditVerifyCmd() {
 async function runVaultCommand(args) {
   try {
     const [cmd, sub] = args;
+    // Options and words the command does not take are a usage error (exit 2), never silently ignored.
+    const check = (name, rest, maxWords) => { const p = argumentProblem(name, rest, maxWords); return p ? usageFail(name, p) : null; };
     if (cmd === 'unlock') return await unlockCmd(args);
-    if (cmd === 'lock') return await lockCmd();
-    if (cmd === 'vault' && (sub === 'status' || sub === undefined)) return await statusCmd();
-    if (cmd === 'vault' && sub === 'forget') return await forgetCmd(args);
-    if (cmd === 'vault' && sub === 'verify') return await auditVerifyCmd();
-    if (cmd === 'vault' && sub === 'reset') return await vaultReset.resetVault({});
+    if (cmd === 'lock') return check('lock', args.slice(1)) || await lockCmd();
+    if (cmd === 'vault' && (sub === 'status' || sub === undefined)) return check('status', args.slice(2)) || await statusCmd();
+    if (cmd === 'vault' && sub === 'forget') return check('forget', args.slice(2), 1) || await forgetCmd(args);
+    if (cmd === 'vault' && sub === 'verify') return check('verify', args.slice(2)) || await auditVerifyCmd();
+    if (cmd === 'vault' && sub === 'reset') return check('reset', args.slice(2)) || await vaultReset.resetVault({});
     if (cmd === 'vault' && sub === 'log') return await require('../broker/cli').dispatch('vault', args.slice(1));
     if (cmd === 'vault' && sub === 'team') {
       require('../stats').recordEvent('team-vault-request');
@@ -279,17 +364,24 @@ async function runVaultCommand(args) {
         'Your request was counted on this machine only (see `zn-gate stats`). Nothing was sent.\n');
       return 0;
     }
-    process.stderr.write('usage: zn unlock | zn lock | zn vault status | zn vault verify | zn vault log [--since 1h] | zn vault forget [dir] | zn vault reset\n');
+    const z = znCommand;
+    process.stderr.write('usage: ' + z('unlock') + ' | ' + z('lock') + ' | ' + z('vault status') + ' | ' + z('vault verify') + ' | ' + z('vault log [--since 1h]') + ' | ' + z('vault forget [dir]') + ' | ' + z('vault reset') + '\n');
     return 2;
   } catch (err) {
     process.stderr.write('[zn] ' + messageWithUnlockHint(err) + '\n');
+    if (err && err.usage) process.stderr.write(USAGE[err.usage]() + '\n');
     // A wrong passphrase, again and again: point to the way out.
     if (args[0] === 'unlock' && err && err.code === CODES.LOCKED) {
       const tip = vaultReset.hintForUnlockError(err, {});
       if (tip) process.stderr.write('[zn] ' + tip + '\n');
     }
-    return 1;
+    return err && err.exitCode === 2 ? 2 : 1;
   }
 }
 
-module.exports = { runVaultCommand, unlockCmd, ALREADY_UNLOCKED, parseDuration, getPassphrase, createHiddenPrompter, restartIfOutdated, isOutdatedVault, unlockedLine, OLD_VAULT_STUCK };
+module.exports = { runVaultCommand, unlockCmd, parseDuration, getPassphrase, createHiddenPrompter, restartIfOutdated, isOutdatedVault, unlockedLine, untilText, lockWhenText };
+// The sentences that name a command are built when read, so they show the form that works on this computer.
+Object.defineProperties(module.exports, {
+  ALREADY_UNLOCKED: { enumerable: true, get: () => messages.vaultAlreadyUnlocked() },
+  OLD_VAULT_STUCK: { enumerable: true, get: oldVaultStuck },
+});

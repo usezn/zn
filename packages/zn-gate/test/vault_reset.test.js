@@ -88,9 +88,9 @@ test('the prompt warns that values are lost and names the commands to store them
   await reset.resetVault({}, person({ ask: async (q) => { asked = q; return reset.PHRASE; }, out: (l) => said.push(l) }));
   const text = said.join('\n');
   assert.match(text, /Every secret stored in it is lost/);
-  assert.match(text, /zn env shadow/);
-  assert.match(text, /zn secret set NAME/);
-  assert.match(text, /zn unlock/);
+  assert.match(text, /(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) env shadow/);
+  assert.match(text, /(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) secret set NAME/);
+  assert.match(text, /(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock/);
   assert.match(asked, /type "reset my vault"/);
 });
 
@@ -174,7 +174,7 @@ test('after three failed unlocks the hint points to zn vault reset; a good unloc
   assert.equal(reset.recordUnlockFailure({}), null);
   assert.equal(reset.recordUnlockFailure({}), null);
   const tip = reset.recordUnlockFailure({});
-  assert.match(tip, /zn vault reset/);
+  assert.match(tip, /(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) vault reset/);
   assert.equal(tip.split('\n').length, 1, 'one line');
   reset.clearUnlockFailures({});
   assert.equal(reset.recordUnlockFailure({}), null);
@@ -208,9 +208,7 @@ test('a damaged identity file never shows the reset hint, however many times', a
     assert.equal(err.code, 'ZN_LOCKED', 'public code is unchanged');
     assert.notEqual(err.reason, keychain.WRONG_PASSPHRASE);
     const tip = reset.hintForUnlockError(err, {});
-    assert.equal(tip, reset.UNREADABLE_HINT);
-    assert.doesNotMatch(tip, /zn vault reset/);
-    assert.match(tip, /troubleshooting\.md/);
+    assert.equal(tip, null, 'the error text already gives the next step and the link');
   }
 });
 
@@ -227,12 +225,11 @@ test('the error text matches the hint: wrong passphrase keeps its wording, a dam
   assert.notEqual(damaged.reason, keychain.WRONG_PASSPHRASE);
   assert.match(damaged.message, /identity\.age looks damaged/);
   assert.match(damaged.message, /Restore it from a backup/);
-  assert.match(damaged.message, /Do not reset/);
+  assert.match(damaged.message, /vault reset/);
+  assert.match(damaged.message, /https:\/\/usezn\.com\/docs\/zn-gate\/troubleshooting\//);
   assert.doesNotMatch(damaged.message, /wrong passphrase/i);
-  const tip = reset.hintForUnlockError(damaged, {});
-  assert.equal(tip, reset.UNREADABLE_HINT);
-  assert.match(tip, /Do not reset/);
-  assert.doesNotMatch(tip, /zn vault reset/);
+  assert.equal(reset.hintForUnlockError(damaged, {}), null);
+  assert.match(reset.UNREADABLE_HINT, /https:\/\/usezn\.com\/docs\/zn-gate\/troubleshooting\//);
 });
 
 test('keychain and other non-passphrase errors restart the count', (t) => {

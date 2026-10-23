@@ -27,6 +27,14 @@ concurrency:
   group: pre-commit-hooks-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  # Retry npm and pip downloads instead of failing a run on one network error.
+  NPM_CONFIG_FETCH_RETRIES: "5"
+  NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: "20000"
+  NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: "120000"
+  PIP_RETRIES: "5"
+  PIP_TIMEOUT: "60"
+
 jobs:
   hooks:
     name: Pre-commit hooks
@@ -44,6 +52,8 @@ jobs:
         with:
           node-version: 22.x
       - name: Install pre-commit and PyYAML
-        run: python3 -m pip install --user pre-commit==4.2.0 PyYAML
+        run: |
+          python3 -m pip install --disable-pip-version-check --no-cache-dir --user --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
+          python3 -m pip install --user pre-commit==4.2.0 PyYAML
       - name: Test the hooks
         run: bash .github/scripts/test-pre-commit-hooks.sh

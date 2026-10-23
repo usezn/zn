@@ -1,0 +1,2 @@
+### Security
+- Secret redaction (npm and Python packages): a key or token printed across several lines, wrapped every 10 or more characters (for example a GitHub token split at 20 characters), is now redacted whole. Before, each line was checked on its own and the token was left in the text. A line break is only joined when both sides are long unbroken runs and the next line does not start a NAME= or NAME: setting, so ordinary text and short words keep their lines.
