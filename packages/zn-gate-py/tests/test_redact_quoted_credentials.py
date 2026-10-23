@@ -157,6 +157,16 @@ class QuotedCredentialLinearTimeTests(unittest.TestCase):
             took = _elapsed(redact_secrets, text)
             self.assertLess(took, 3.0, "took %.2f s on a %d-character input" % (took, len(text)))
 
+    def test_many_values_after_an_invisible_character(self) -> None:
+        # One invisible character makes a second pass, whose spans are compared with
+        # those of the first: 1 MiB of redactable members and of numbers.
+        for member in ('"api_key":"q7a1b2c3d4e5f6a7b8",', '"token":12345678901,'):
+            text = "\u200b" + member * (1024 * 1024 // len(member))
+            took = _elapsed(redact_secrets, text)
+            self.assertLess(took, 6.0, "took %.2f s on a %d-character input" % (took, len(text)))
+            self.assertNotIn("q7a1b2c3", redact(text))
+            self.assertNotIn("12345678901", redact(text))
+
 
 if __name__ == "__main__":
     unittest.main()

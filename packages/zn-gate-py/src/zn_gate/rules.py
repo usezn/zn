@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import bisect
 from array import array
 import json
 import math
@@ -1438,13 +1439,17 @@ def _redact_quoted_credentials(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     if view is not None:
         passes.append(view)
     cands: List[Tuple[int, int, str, str]] = []
-    seen: List[Tuple[int, int]] = []
+    # The first pass gives its spans in order and without overlaps, so the spans of
+    # that pass a later span overlaps are counted with two binary searches.
+    seen_starts: List[int] = []
+    seen_ends: List[int] = []
     for hay, mapping in passes:
         for start, end, quote in _find_quoted_credentials(hay):
             s, e = _span_in(mapping, start, end)
             if mapping is None:
-                seen.append((s, e))
-            elif len([1 for a, b in seen if s < b and a < e]) >= 2:
+                seen_starts.append(s)
+                seen_ends.append(e)
+            elif bisect.bisect_left(seen_starts, e) - bisect.bisect_right(seen_ends, s) >= 2:
                 continue
             cands.append((s, e, QUOTED_CREDENTIAL_RULE, quote + _KV_REPLACEMENT + quote))
     if not cands:
@@ -1521,8 +1526,10 @@ def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, t
     when given, receives the whole match and returns False to skip it."""
     passes: List[Tuple[str, Optional['array[int]']]] = [(text, None)]
     # Spans this rule found on the original text; a view match overlapping two or more is dropped
-    # (see ruleCandidates in rules.js).
-    found: List[Tuple[int, int]] = []
+    # (see ruleCandidates in rules.js). They come in order and without overlaps, so the ones a
+    # view match overlaps are counted with two binary searches.
+    found_starts: List[int] = []
+    found_ends: List[int] = []
     if view is not None:
         passes.append(view)
     for hay, mapping in passes:
@@ -1562,12 +1569,14 @@ def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, t
                         continue
             start, end = _span_in(mapping, m.start(), m.end())
             if mapping is None:
-                found.append((start, end))
+                found_starts.append(start)
+                found_ends.append(end)
             else:
-                over = [(s, e) for s, e in found if start < e and s < end]
-                if len(over) >= 2:
+                first = bisect.bisect_right(found_ends, start)
+                over = bisect.bisect_left(found_starts, end) - first
+                if over >= 2:
                     continue
-                if len(over) == 1 and patterns and _starts_secret_at(text, over[0][1], end, patterns):
+                if over == 1 and patterns and _starts_secret_at(text, found_ends[first], end, patterns):
                     continue
             out.append((start, end, rule_id, _expand_template(replacement, groups, text)))
 
