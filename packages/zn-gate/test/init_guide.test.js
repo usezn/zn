@@ -71,7 +71,7 @@ test('plan: from a temporary copy, one global install comes before the hooks, by
   const m = machine(t, ['codex', 'cursor']);
   const { items, setup } = await plan({ ...m, temporary: true, global: { npm: NPM } });
   assert.equal(setup.length, 1, 'a single npm step for every agent');
-  assert.deepEqual(setup[0].run, [NPM, ['install', '-g', 'zn-gate@' + VERSION]]);
+  assert.deepEqual(setup[0].run, [NPM, ['install', '-g', ..._internal.NPM_NETWORK_FLAGS, 'zn-gate@' + VERSION]]);
   const cx = items.find((i) => i.id === 'codex');
   assert.equal(cx.steps[0].needsGlobal, true);
 });
@@ -158,7 +158,7 @@ test('guide: from a temporary copy the global install runs first, then the hooks
   const ran = [];
   const run = (step) => { ran.push(step.run); return true; };
   await guide({ ...m, temporary: true, global: { npm: NPM, version: null, zn: ZN }, stdin: tty, write: out.write, run, confirm: async () => true });
-  assert.deepEqual(ran[0], [NPM, ['install', '-g', 'zn-gate@' + VERSION]]);
+  assert.deepEqual(ran[0], [NPM, ['install', '-g', ..._internal.NPM_NETWORK_FLAGS, 'zn-gate@' + VERSION]]);
   assert.deepEqual(ran[1], [ZN, ['hooks', 'install', 'codex']]);
 });
 
@@ -503,7 +503,7 @@ test('guide: npm failing with EACCES gives a clear next step, never sudo', posix
 test('guide: any other npm failure keeps the plain message', posixOnly, async (t) => {
   const m = machine(t, ['codex']);
   const out = capture();
-  const run = () => ({ ok: false, stderr: 'npm error code ENOTFOUND\n' });
+  const run = () => ({ ok: false, stderr: 'npm error code E404\n' });
   await guide({ ...m, temporary: true, global: { npm: NPM, version: null, zn: ZN }, stdin: tty, write: out.write, run, confirm: async () => true });
   assert.match(out.text(), /that did not finish\. Run it yourself: npm install -g zn-gate@/);
   assert.doesNotMatch(out.text(), /global folder/);
@@ -519,4 +519,61 @@ test('permissionFailure: a global folder that is not writable counts, a missing 
   assert.equal(permissionFailure('npm ERR! EPERM: operation not permitted', ''), true);
   assert.equal(permissionFailure('', path.join(tempDir(t, 'zn-prefix-'), 'does-not-exist')), false);
   assert.equal(permissionFailure('', tempDir(t, 'zn-prefix-')), false);
+});
+
+const NET_CODES = ['EAI_AGAIN', 'ENOTFOUND', 'ETIMEDOUT', 'ECONNREFUSED', 'ENETUNREACH'];
+
+test('guide: npm failing to reach the registry says there is no internet, not a permission problem', posixOnly, async (t) => {
+  for (const code of NET_CODES) {
+    const m = machine(t, ['codex']);
+    const out = capture();
+    const run = () => ({ ok: false, stderr: 'npm error code ' + code + '\n' });
+    // An unwritable global folder (a system npm) must not hide the real cause.
+    await guide({ ...m, temporary: true, global: { npm: NPM, version: null, zn: ZN, prefix: '/' }, stdin: tty, write: out.write, run, confirm: async () => true });
+    assert.match(out.text(), /no internet connection: npm could not reach the registry/, code);
+    assert.match(out.text(), /npm install -g zn-gate@/, code);
+    assert.doesNotMatch(out.text(), /global folder/, code);
+  }
+  const m = machine(t, ['codex']);
+  const out = capture();
+  await guide({ ...m, temporary: true, global: { npm: NPM, version: null, zn: ZN }, stdin: tty, write: out.write, run: () => ({ ok: false, stderr: '', timedOut: true }), confirm: async () => true });
+  assert.match(out.text(), /no internet connection/);
+});
+
+function stubNpm(t, stderr, exit) {
+  const dir = tempDir(t, 'zn-stub-npm-');
+  const file = path.join(dir, 'npm');
+  fs.writeFileSync(file, '#!/bin/sh\necho "$@" > "' + path.join(dir, 'args') + '"\necho "' + stderr + '" >&2\nexit ' + exit + '\n', { mode: 0o755 });
+  return { dir, file };
+}
+
+test('guide: a stub npm printing EAI_AGAIN gives the no-internet message, one printing EACCES the permission message', posixOnly, async (t) => {
+  const origWrite = process.stderr.write;
+  process.stderr.write = () => true; // the stub output is copied to stderr by runStep
+  t.after(() => { process.stderr.write = origWrite; });
+  const net = stubNpm(t, 'npm error code EAI_AGAIN', 1);
+  const m = machine(t, ['codex']);
+  const out = capture();
+  await guide({ ...m, temporary: true, global: { npm: net.file, version: null, zn: ZN, prefix: '/' }, stdin: tty, write: out.write, confirm: async () => true });
+  assert.match(out.text(), /no internet connection: npm could not reach the registry/);
+  assert.doesNotMatch(out.text(), /global folder/);
+  const args = fs.readFileSync(path.join(net.dir, 'args'), 'utf8');
+  assert.match(args, /install -g .*--fetch-retries=1/);
+  assert.match(args, /--fetch-timeout=15000 zn-gate@/);
+
+  const perm = stubNpm(t, 'npm error code EACCES', 243);
+  const out2 = capture();
+  await guide({ ...m, temporary: true, global: { npm: perm.file, version: null, zn: ZN, prefix: '/usr/local' }, stdin: tty, write: out2.write, confirm: async () => true });
+  assert.match(out2.text(), /npm is not allowed to write to its global folder/);
+  assert.doesNotMatch(out2.text(), /no internet connection/);
+});
+
+test('guide: the npm install step is bounded: flags on the command and a timeout on the child', async (t) => {
+  const m = machine(t, ['codex']);
+  const { setup } = await plan({ ...m, temporary: true, global: { npm: NPM, version: null, zn: ZN } });
+  assert.deepEqual(setup[0].run[1].slice(0, 2), ['install', '-g']);
+  for (const f of _internal.NPM_NETWORK_FLAGS) assert.ok(setup[0].run[1].includes(f), f);
+  assert.equal(setup[0].run[1].at(-1), 'zn-gate@' + VERSION);
+  assert.ok(setup[0].timeout > 0 && setup[0].timeout <= 300000);
+  assert.equal(setup[0].manual, 'npm install -g zn-gate@' + VERSION);
 });
