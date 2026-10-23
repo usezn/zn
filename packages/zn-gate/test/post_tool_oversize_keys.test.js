@@ -194,3 +194,66 @@ test('topLevelKeys: 33 MiB with many keys and strings is scanned in one linear p
   assert.equal(keys.hook_event_name, 'Real');
   assert.ok(ms < 3000, 'scanned in ' + ms + ' ms');
 });
+
+// Copilot CLI: its events have no event name (the result is a key of the event, after the arguments), and a
+// second shape names the event. The arguments can be over 64 KiB and the result over 32 MiB (Codex finding 1).
+function assertCopilotWithheld(r) {
+  assert.notEqual(r.exit, 2, 'exit 2 would let the original output through');
+  assert.ok(r.out.length > 0 && r.out.length < 3000, 'a small answer: ' + r.out.length);
+  assert.ok(!r.out.includes('AAAA') && !r.out.includes('BBBB'));
+  const a = JSON.parse(r.out);
+  assert.equal(a.modifiedResult.resultType, 'success');
+  assert.match(a.modifiedResult.textResultForLlm, NOTICE);
+}
+const argsOver64k = () => ({ command: 'echo ' + 'a'.repeat(70000) });
+const jsonOf = (pairs) => '{' + pairs.map(([k, x]) => q(k) + ':' + q(x)).join(',') + '}';
+const copilotPosts = {
+  'CLI shape, arguments over 64 KiB then a result over 32 MiB': () => [['timestamp', 1], ['cwd', '/w'], ['toolName', 'bash'], ['toolArgs', argsOver64k()], ['toolResult', { resultType: 'success', textResultForLlm: big() }]],
+  'CLI shape, the result before the arguments': () => [['timestamp', 1], ['toolResult', { resultType: 'success', textResultForLlm: mid }], ['toolName', 'bash'], ['toolArgs', argsOver64k()], ['cwd', big()]],
+  'CLI shape, with a result key like the event name inside the arguments': () => [['toolName', 'bash'], ['toolArgs', { hook_event_name: 'PreToolUse', note: '"toolResult":1', command: mid }], ['toolResult', { resultType: 'success', textResultForLlm: big() }]],
+  'named shape (tool_result), name after 200 KiB': () => [['session_id', 's'], ['tool_input', argsOver64k()], ['hook_event_name', 'PostToolUse'], ['tool_name', 'bash'], ['tool_result', { resultType: 'success', textResultForLlm: big() }]],
+  'named shape (hookEventName), the big output first': () => [['tool_result', mid], ['hookEventName', 'PostToolUse'], ['cwd', big()]],
+};
+for (const [label, make] of Object.entries(copilotPosts)) {
+  test('copilot: an oversized post-tool event is withheld, ' + label, async () => {
+    const text = jsonOf(make());
+    assert.ok(text.length > CAP);
+    assertCopilotWithheld(await runMain('copilot', text));
+  });
+}
+for (const [label, make] of Object.entries({
+  'CLI shape, a toolResult key only inside the arguments': () => [['toolName', 'bash'], ['toolArgs', { toolResult: 1, data: mid, command: argsOver64k().command }], ['cwd', big()]],
+  'named shape, a post-tool name only inside the arguments': () => [['tool_input', { hook_event_name: 'PostToolUse', data: mid }], ['hook_event_name', 'PreToolUse'], ['cwd', big()]],
+})) {
+  test('copilot: an oversized pre-tool event is refused, ' + label, async () => {
+    assertRefused(await runMain('copilot', jsonOf(make())));
+  });
+}
+
+// The real process, reading the event from its stdin as an agent does (the repro of Codex finding 1).
+test('the runner process answers an oversized Copilot CLI and Claude Code post-tool event with the notice, exit 0', () => {
+  const { spawnSync } = require('node:child_process');
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-oversize-'));
+  const token = 'ghp_' + 'Ab1Cd2Ef3Gh4Ij5Kl6Mn7Op8Qr9St0Uv1Wx2'; // fictitious
+  const out = 'x'.repeat(CAP + 1024) + ' ' + token;
+  const events = {
+    copilot: { timestamp: 1, cwd: '/w', toolName: 'bash', toolArgs: argsOver64k(), toolResult: { resultType: 'success', textResultForLlm: out } },
+    'claude-code': { session_id: 's', cwd: '/w', tool_name: 'Bash', tool_input: argsOver64k(), tool_response: { stdout: out }, hook_event_name: 'PostToolUse' },
+  };
+  try {
+    for (const [agent, ev] of Object.entries(events)) {
+      const r = spawnSync(process.execPath, [require.resolve('../lib/hooks/runner'), agent], {
+        input: JSON.stringify(ev), maxBuffer: 1 << 24, timeout: 60000,
+        env: { PATH: process.env.PATH, HOME: home, USERPROFILE: home, ZN_STATS: 'off' },
+      });
+      assert.equal(r.status, 0, agent + ': ' + String(r.stderr).slice(0, 200));
+      assert.ok(!String(r.stdout).includes('ghp_Ab1Cd2'), agent + ': the token reached stdout');
+      assert.match(String(r.stdout), NOTICE);
+    }
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
