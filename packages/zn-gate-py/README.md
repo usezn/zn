@@ -87,7 +87,8 @@ print(r.verdict)           # allow
 **Scrubber: secrets stay out of the model's context**
 
 - Today: `redact_secrets`, `sanitize_tool_result`, `@guard(mask_secrets=True)` and the framework integrations redact AWS keys, OpenAI and Anthropic keys, GitHub tokens, JWTs, private keys and database URL passwords.
-- Roadmap: personal data (PII) detection; stable placeholders backed by a local encrypted vault.
+- Today: `find_pii` and `redact_pii` find personal data with the same types, checks and defaults as the Node package: e-mail, phone numbers in E.164 form, IBAN (checksum), payment cards (Luhn and card network), Spanish DNI and NIE, US SSN, IPv4 addresses (off by default) and, only when an explicit key sits next to the value, a person's name, postal address and username (`X-User-Name: ...`, `?name=...`). `redact_pii` replaces each value with `__ZN_REDACTED_<TYPE>__`. Turn all of it off with `pii=False` or single types with `pii={"card": False}`. `redact_secrets`, `sanitize_tool_result` and the integrations still mask secrets only; call `redact_pii` on the text where you also want personal data removed.
+- Roadmap: stable placeholders backed by a local encrypted vault.
 
 **Galvanize: prompt-injection detection**
 
@@ -104,7 +105,7 @@ print(r.verdict)           # allow
 
 ## What leaves your machine
 
-**Nothing, by default.** `evaluate`, `guard`, `check_tool_call`, `check_tool_result`, `sanitize_tool_result`, `redact_secrets` and the LangChain / CrewAI / LlamaIndex / Promptfoo integrations are always local.
+**Nothing, by default.** `evaluate`, `guard`, `check_tool_call`, `check_tool_result`, `sanitize_tool_result`, `redact_secrets`, `find_pii`, `redact_pii` and the LangChain / CrewAI / LlamaIndex / Promptfoo integrations are always local.
 
 The only function that can reach the network is `analyze()`, and only if you set **both** `ZN_CLOUD=1` and `ZN_API_KEY`. The text is secret-redacted locally before it is sent: personal data, and a secret zn-gate does not recognize, is sent as written. If the cloud call fails, `analyze()` returns the result of the local rules with `fallback: True`: it does not fail closed. `ZN_API_KEY` alone enables nothing, and `ZN_LOCAL_ONLY=true` overrides `ZN_CLOUD=1`. `zn-gate status` shows the active detection engine and whether the optional cloud check is on. Sharing of usage statistics is off by default and has its own status in the npm package: `npx -y zn-gate stats share status`. Data-flow diagrams: [repository README](https://github.com/usezn/zn#what-leaves-your-machine).
 

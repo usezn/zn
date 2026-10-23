@@ -1,0 +1,2 @@
+### Added
+- Python: `find_pii` and `redact_pii` detect personal data with the same types, checks and defaults as the Node package: e-mail, E.164 phone numbers, IBAN, payment cards, DNI and NIE, SSN, IPv4 (off by default) and, only with an explicit key next to the value, a person's name, postal address and username. Values are replaced with `__ZN_REDACTED_<TYPE>__`. A test compares the Node and Python results on the same inputs.

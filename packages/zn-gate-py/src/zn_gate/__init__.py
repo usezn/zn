@@ -4,6 +4,7 @@ zn-gate: Deterministic, ultra-fast, zero-dependency guardrail engine for AI agen
 
 __version__ = "1.13.1"
 
+from .pii import find_pii, redact_pii, PII_TYPES
 from .rules import Assessment, RULES_VERSION, evaluate, normalize_input, redact_secrets, sanitize_tool_result, SanitizedToolResult
 from .guard import guard, check_tool_call, check_tool_result, GuardBlockError
 from .destructive import check_command
@@ -14,6 +15,9 @@ __all__ = [
     "evaluate",
     "normalize_input",
     "redact_secrets",
+    "find_pii",
+    "redact_pii",
+    "PII_TYPES",
     "sanitize_tool_result",
     "Assessment",
     "SanitizedToolResult",

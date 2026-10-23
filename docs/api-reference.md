@@ -147,8 +147,8 @@ const search = guardTool(async (query) => fetchResults(query), { name: 'search',
 from zn_gate import evaluate, guard, check_tool_call, check_tool_result, redact_secrets, sanitize_tool_result
 from zn_gate import analyze, log_evidence, verify_evidence_ledger, check_command
 from zn_gate import GuardBlockError, normalize_input, analyze_cloud, is_cloud_enabled, resolve_endpoint
-from zn_gate import get_evidence_stats, export_evidence_ledger
-# The submodules work too: zn_gate.rules, zn_gate.client, zn_gate.evidence
+from zn_gate import get_evidence_stats, export_evidence_ledger, find_pii, redact_pii
+# The submodules work too: zn_gate.rules, zn_gate.client, zn_gate.evidence, zn_gate.pii
 # Framework integrations live in zn_gate.integrations (see below)
 ```
 
@@ -208,6 +208,17 @@ except GuardBlockError as e:
 
 - Replaces credentials in a string with placeholders such as `[REDACTED_AWS_KEY]`. Local only.
 - Returns a tuple `(clean_text, detections)`; each detection is `{'rule': str, 'start': int, 'end': int}` (the span of the match in the input). The Node function returns an object with `{ rule, index }` detections instead.
+
+### `find_pii(text: str, pii: bool | dict | None = None) -> list[dict]`
+
+- Finds personal data in a string, locally, with the same types, checks and defaults as the Node scrubber: `EMAIL`, `PHONE` (E.164), `IBAN` (checksum), `CARD` (Luhn and card network), `DNI`, `NIE`, `SSN`, `IPV4` (off by default) and, only when an explicit key sits next to the value, `PERSON_NAME`, `POSTAL_ADDRESS` and `USERNAME`. The list of types is `PII_TYPES`.
+- Returns spans `{'start': int, 'end': int, 'type': str, 'source': 'pii'}`, sorted by position; `start` and `end` index the Python string.
+- `pii=None` uses the defaults, `False` detects nothing, and a dict of booleans such as `{'card': False, 'ipv4': True}` changes single types (`email`, `phone`, `iban`, `card`, `dni`, `ssn`, `ipv4`, `name`, `address`, `username`), like the `pii` option in Node.
+
+### `redact_pii(text: str, pii: bool | dict | None = None) -> tuple[str, list[dict]]`
+
+- Replaces each personal value found by `find_pii` with `__ZN_REDACTED_<TYPE>__` (for example `__ZN_REDACTED_EMAIL__`), the marker Node uses when no vault is available. There is no vault in Python, so no reversible tokens.
+- Returns `(clean_text, spans)`. `redact_secrets` and `sanitize_tool_result` mask secrets only; call this on the same text to remove personal data too.
 
 ### `sanitize_tool_result(tool_or_result, content=None, mask_secrets=True, block_truncated=False, strict=None)`
 

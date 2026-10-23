@@ -110,6 +110,15 @@ They are personal data, not secrets: they follow the scrubber's `pii` setting
 with `pii: { name: false, address: false, username: false }`. They are on by
 default.
 
+The Python package (`zn-gate` on PyPI) finds the same personal data with the
+same types, checks and defaults: `find_pii(text, pii=None)` returns the spans and
+`redact_pii(text, pii=None)` replaces each value with `__ZN_REDACTED_<TYPE>__`.
+The `pii` argument works like the Node option: `False` turns all personal data
+off, and a dict such as `{"name": False, "ipv4": True}` changes single types.
+In Python the secret functions (`redact_secrets`, `sanitize_tool_result`, the
+framework integrations) still mask secrets only, and there is no vault, so there
+are no reversible tokens.
+
 A prompt that contains a secret is not sent. In prompts, zn also blocks a
 value of 8 characters or more given to a credential name, in the middle of a
 sentence too
