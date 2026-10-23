@@ -324,7 +324,10 @@ test('hook latency: the egress parse of a typical command stays under a millisec
 });
 
 test('the policy version moved with the egress rules', () => {
-  assert.equal(policy.POLICY_RULES_VERSION, '2026-10-24.8');
+  // At least the version that added the egress rules; later rule changes move it
+  // further. The date compares as text and the counter as a number (.10 > .9).
+  const [day, n] = policy.POLICY_RULES_VERSION.split('.');
+  assert.ok(day > '2026-10-24' || (day === '2026-10-24' && Number(n) >= 3), policy.POLICY_RULES_VERSION);
 });
 
 /* ----------------------- MCP personal data and egress -------------------- */
