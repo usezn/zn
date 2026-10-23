@@ -339,10 +339,13 @@ const DROP_HOST = /webhook|pastebin|discord(?:app)?\.com|gist\.github|ngrok|requ
 const SETUP_FROM = /\bfrom\s+(?:the\s+)?$/i;
 const SETUP_CREATE = /(?:[.;:!?,]|\b(?:and|then|first|next|also))\s+(?:create|generate|get|obtain|find)\b((?:\s+\S+){0,5}?)\s+(?:at|on|in)\s+(?:the\s+)?$/i;
 const SETUP_BLOCK = /\b(?:copy|share|paste|to|into|with)\b/i;
+// What the setup verb makes or fetches must be a credential or an account ("create an API key at", "get your token
+// on"), so a separate clause such as "get credits at" after "paste your key here," does not exempt the line.
+const SETUP_OBJECT = /\b(?:api[\s_-]?)?(?:keys?|tokens?|secrets?|credentials?|passwords?|accounts?)\b/i;
 function setupSource(pre) {
   if (SETUP_FROM.test(pre)) return true;
   const m = SETUP_CREATE.exec(pre);
-  return !!m && !SETUP_BLOCK.test(m[1]);
+  return !!m && !SETUP_BLOCK.test(m[1]) && SETUP_OBJECT.test(m[1]);
 }
 
 function weakExfiltration(t) {
