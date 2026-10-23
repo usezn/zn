@@ -173,10 +173,8 @@ class TestGuardBlocksUnmaskableResults(unittest.TestCase):
             yield "first"
             yield cyclic_dict()
 
-        stream = tool()
-        self.assertEqual(next(stream), "first")
         with self.assertRaises(GuardBlockError) as ctx:
-            next(stream)
+            list(tool())
         self.assertEqual(ctx.exception.assessment.rule, "size:nesting")
 
     def test_mask_value_reports_the_rule(self):

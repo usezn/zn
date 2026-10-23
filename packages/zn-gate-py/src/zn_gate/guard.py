@@ -462,6 +462,20 @@ class MaskedToolError(RuntimeError):
 # Characters of the previous streamed chunk that are checked again with the
 # next one, so a blocked phrase split between two chunks is still found.
 STREAM_OVERLAP = 256
+
+# With mask_secrets, a streamed result keeps this many characters of text back, so a
+# secret that is split between two chunks is masked whole. The longest secret the
+# masker matches in a bounded span is a JWT (8192 + 512 + 4096 characters plus the
+# separators, about 12.8 thousand); a private key block is about 3.3 thousand
+# characters for RSA 4096 and 6.4 thousand for RSA 8192. A secret with an open
+# length (a credential value after a name such as api_key=) shrinks to one short
+# placeholder as soon as it is masked, so it stays inside the held text however
+# long it grows. 16 KiB covers all of them.
+STREAM_MASK_HOLD = 16384
+# New text is masked in batches: nothing is masked or passed on until the held
+# text and the new chunks together exceed STREAM_MASK_HOLD by this much, so a
+# stream of many small chunks does not mask the held text again for each chunk.
+STREAM_MASK_BATCH = 4096
 _ERROR_CHAIN_LIMIT = 8
 
 
@@ -476,6 +490,87 @@ def _mask_text(text: str) -> str:
     from . import rules
     masked, _ = rules.sanitize_tool_result(text)
     return masked if isinstance(masked, str) else text
+
+
+class _StreamMasker:
+    """Masks the chunks of a streamed result without letting a secret through where two
+    chunks meet.
+
+    Text (str, and bytes that are valid UTF-8) is appended to a buffer. When the
+    buffer is longer than STREAM_MASK_HOLD + STREAM_MASK_BATCH it is masked as a
+    whole, everything but its last STREAM_MASK_HOLD characters is passed on, and
+    the masked tail stays in the buffer to be masked again with the next chunk.
+    flush() masks and passes on what is left. Chunks of other types and bytes that
+    are not UTF-8 text are masked one by one, after the buffer is flushed, so the
+    order of the stream is kept.
+    """
+
+    def __init__(self) -> None:
+        self.pending = ""
+        self.kind: Optional[type] = None  # str or bytes: the type the held text is passed on as
+        self._partial = b""  # the first bytes of a multi-byte character cut by a chunk end
+
+    def _out(self, text: str) -> Any:
+        return text.encode("utf-8") if self.kind is bytes else text
+
+    def empty(self) -> Any:
+        """An empty chunk of the type of the held text."""
+        return b"" if self.kind is bytes else ""
+
+    def flush(self) -> List[Any]:
+        """Everything still held, masked, and empty the masker."""
+        pieces: List[Any] = []
+        if self.pending:
+            pieces.append(self._out(_mask_text(self.pending)))
+        if self._partial:
+            pieces.append(self._partial)
+        self.pending = ""
+        self.kind = None
+        self._partial = b""
+        return pieces
+
+    def _decode(self, data: bytes) -> Optional[str]:
+        """The text of data after the bytes held from the last chunk, or None when it is not UTF-8."""
+        data = self._partial + data
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            if exc.reason != "unexpected end of data" or exc.end != len(data):
+                return None
+            self._partial = data[exc.start:]
+            return data[:exc.start].decode("utf-8")
+        self._partial = b""
+        return text
+
+    def feed(self, chunk: Any) -> Tuple[List[Any], bool]:
+        """(pieces to pass on now, True), or (what was flushed, False) when the chunk is not text:
+        the caller then masks the chunk by itself and passes it on after those pieces."""
+        pieces: List[Any] = []
+        if isinstance(chunk, str):
+            kind: type = str
+            if self.kind is bytes:
+                pieces = self.flush()
+            text = chunk
+        elif isinstance(chunk, (bytes, bytearray)):
+            kind = bytes
+            if self.kind is str:
+                pieces = self.flush()
+            decoded = self._decode(bytes(chunk))
+            if decoded is None:
+                return pieces + self.flush(), False
+            text = decoded
+        else:
+            return self.flush(), False
+        self.kind = kind
+        self.pending += text
+        if len(self.pending) > STREAM_MASK_HOLD + STREAM_MASK_BATCH:
+            masked = _mask_text(self.pending)
+            if len(masked) > STREAM_MASK_HOLD:
+                ready, self.pending = masked[:-STREAM_MASK_HOLD], masked[-STREAM_MASK_HOLD:]
+                pieces.append(self._out(ready))
+            else:
+                self.pending = masked
+        return pieces, True
 
 
 def _jsonlike(data: Any, depth: int = 0) -> Any:
@@ -693,8 +788,11 @@ class _ResultPolicy:
             return self.handle_error(caught)
         return self.finish(res)
 
-    def _chunk(self, chunk: Any, tail: str) -> Tuple[Any, str, bool]:
-        """(chunk to pass on, new overlap tail, stop after this chunk)."""
+    def _chunk(self, chunk: Any, tail: str, masker: Optional[_StreamMasker] = None) -> Tuple[List[Any], str, bool]:
+        """(pieces to pass on, new overlap tail, stop after this chunk).
+
+        A blocked chunk ends the stream, and the text the masker still holds is withheld with it.
+        """
         if self.check:
             assessment = check_tool_result(chunk, block_truncated=self.block_truncated)
             if assessment.allowed and tail and isinstance(chunk, str):
@@ -702,13 +800,17 @@ class _ResultPolicy:
                 if not joined.allowed:
                     assessment = joined
             if not assessment.allowed:
-                return self.blocked(assessment, chunk), "", True
+                return [self.blocked(assessment, chunk)], "", True
         new_tail = (tail + chunk)[-STREAM_OVERLAP:] if isinstance(chunk, str) else ""
-        if self.mask:
-            chunk, unmaskable = _mask_value(chunk)
-            if unmaskable is not None:
-                return self.blocked(unmaskable, None), "", True
-        return chunk, new_tail, False
+        if masker is None:
+            return [chunk], new_tail, False
+        pieces, handled = masker.feed(chunk)
+        if handled:
+            return pieces, new_tail, False
+        masked, unmaskable = _mask_value(chunk)
+        if unmaskable is not None:
+            return pieces + [self.blocked(unmaskable, None)], "", True
+        return pieces + [masked], new_tail, False
 
     def _stream(self, gen: Any) -> Any:
         policy = self
@@ -716,22 +818,38 @@ class _ResultPolicy:
         def guarded_stream() -> Any:
             tail = ""
             sent = None
+            masker = _StreamMasker() if policy.mask else None
             try:
                 while True:
                     caught: Optional[Exception] = None
+                    ended = False
+                    result: Any = None
+                    chunk: Any = None
                     try:
                         chunk = gen.send(sent)
                     except StopIteration as stop:
-                        return stop.value
+                        ended, result = True, stop.value
                     except GuardBlockError:
                         raise
                     except Exception as exc:
                         caught = exc
-                    if caught is not None:
-                        yield policy.handle_error(caught)
-                        return None
-                    out, tail, done = policy._chunk(chunk, tail)
-                    sent = yield out
+                    if ended or caught is not None:
+                        # The end of the stream, or its failure: pass on the text still held first.
+                        if masker is not None:
+                            for piece in masker.flush():
+                                yield piece
+                        if caught is not None:
+                            yield policy.handle_error(caught)
+                            return None
+                        return result
+                    pieces, tail, done = policy._chunk(chunk, tail, masker)
+                    if not pieces:
+                        # Nothing to pass on yet: an empty chunk keeps one output per input chunk,
+                        # so a value sent into the stream reaches the function at the right time.
+                        pieces = [masker.empty() if masker is not None else chunk]
+                    sent = None
+                    for piece in pieces:
+                        sent = yield piece
                     if done:
                         return None
             finally:
@@ -745,22 +863,36 @@ class _ResultPolicy:
         async def guarded_astream() -> Any:
             tail = ""
             sent = None
+            masker = _StreamMasker() if policy.mask else None
             try:
                 while True:
                     caught: Optional[Exception] = None
+                    ended = False
+                    chunk: Any = None
                     try:
                         chunk = await agen.asend(sent)
                     except StopAsyncIteration:
-                        return
+                        ended = True
                     except GuardBlockError:
                         raise
                     except Exception as exc:
                         caught = exc
-                    if caught is not None:
-                        yield policy.handle_error(caught)
+                    if ended or caught is not None:
+                        # The end of the stream, or its failure: pass on the text still held first.
+                        if masker is not None:
+                            for piece in masker.flush():
+                                yield piece
+                        if caught is not None:
+                            yield policy.handle_error(caught)
                         return
-                    out, tail, done = policy._chunk(chunk, tail)
-                    sent = yield out
+                    pieces, tail, done = policy._chunk(chunk, tail, masker)
+                    if not pieces:
+                        # Nothing to pass on yet: an empty chunk keeps one output per input chunk,
+                        # so a value sent into the stream reaches the function at the right time.
+                        pieces = [masker.empty() if masker is not None else chunk]
+                    sent = None
+                    for piece in pieces:
+                        sent = yield piece
                     if done:
                         return
             finally:
@@ -820,10 +952,15 @@ def guard(
       `async def`, and sync functions that return a coroutine or other
       awaitable are awaited first, then checked and masked;
     - streamed: a generator or async generator result is passed on chunk by
-      chunk, each chunk checked (together with the end of the previous one)
-      and masked. A blocked chunk ends the stream: GuardBlockError, or the
-      fallback as the last chunk with on_block="return". A secret split
-      across two chunks is not masked;
+      chunk, each chunk checked (together with the end of the previous one).
+      A blocked chunk ends the stream: GuardBlockError, or the fallback as the
+      last chunk with on_block="return". With mask_secrets the text is masked as
+      one stream, so a secret split across chunks is masked whole: the last
+      16 KiB of text are held back until more text or the end of the stream
+      (also when the function fails) arrives. Each chunk the function yields
+      still gives one chunk out, empty while its text is held, so the text
+      comes out later and in larger pieces, in order and without gaps. The
+      held text is withheld when a chunk blocks;
     - exceptions: the message of an exception raised by the function is
       checked and masked like a result, because agent frameworks pass it to
       the model. A blocked message raises GuardBlockError (or returns the
