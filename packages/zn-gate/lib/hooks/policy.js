@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-23.4';
+const POLICY_RULES_VERSION = '2026-10-24.6';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -590,8 +590,10 @@ function readDenial(p, opts = {}) {
     let text = head === NOT_A_FILE ? null : Buffer.from(head, 'latin1').toString('utf8');
     if (text !== null && Buffer.byteLength(head, 'latin1') >= DOTENV_SCAN_BYTES) text = null;
     if (text !== null && dotenv.isShadowed(text)) return null;
-    return 'zn: ' + path.basename(abs) + ' holds plain-text secrets. Ask the user to run `' +
-      znCommand('env shadow ' + path.basename(abs)) + '` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.';
+    // Worded as a plain tool result, with no order to the model: a model that reads "ask the user to run ..."
+    // can take it for an instruction hidden in a file and refuse to pass it on (seen with OpenCode's free model).
+    return 'zn: ' + path.basename(abs) + ' was not read. It holds plain-text secrets, and zn (the security tool the user installed) keeps those away from agents. ' +
+      'The user can move them to a local vault by running `' + znCommand('env shadow ' + path.basename(abs)) + '` in their own terminal; the file then holds __ZN_<NAME>__ markers that can be read and used.';
   }
   if (c.kind === 'zn_state') return vaultMessage(opts);
   if (c.kind === 'keyfile') return keyFileDenial(p, c, opts);
@@ -673,7 +675,7 @@ function keyFileGlobDenial(p, c, opts) {
 /* Reads of credential files: what was refused, why, and how to use a value instead. */
 function credentialDenial(p, c) {
   return 'zn: ' + p + ' was not read because zn treats it as holding secrets (' + c.reason + '), and secret values never go to the model. ' +
-    'If a command needs a value, ask the user to run `' + znCommand('secret set NAME') + '`, then write __ZN_NAME__ where the value goes.';
+    'A command that needs a value can use __ZN_NAME__ in its place once the user has stored it by running `' + znCommand('secret set NAME') + '` in their own terminal.';
 }
 
 function agentConfigDenial(p, c) {

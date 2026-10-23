@@ -33,7 +33,7 @@ zn made a test folder with a fake key in a .env file and an ordinary file next t
 each agent's zn hook whether the agent may read them. This is what happened:
 
   OK Claude Code  blocked the .env file and allowed the ordinary file. Your agent would be told:
-     "zn: .env holds plain-text secrets. Ask the user to run `zn env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use."
+     "zn: .env was not read. It holds plain-text secrets, and zn (the security tool the user installed) keeps those away from agents. The user can move them to a local vault by running `zn env shadow .env` in their own terminal; the file then holds __ZN_<NAME>__ markers that can be read and used."
   -  Codex CLI    not found on this machine
   -  Cursor       not found on this machine
   -  OpenCode     not found on this machine
@@ -56,7 +56,7 @@ zn-gate speaks up in three ways. Blocks and approval questions come from zn's ho
 zn stopped something that could leak a secret or looked like an attack, and it did not run. Here, an agent in `~/my-project` tried to run `cat .env`. This is what zn answered, word for word:
 
 ```json
-{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"zn: .env holds plain-text secrets. Ask the user to run `zn env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use."}}
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"zn: .env was not read. It holds plain-text secrets, and zn (the security tool the user installed) keeps those away from agents. The user can move them to a local vault by running `zn env shadow .env` in their own terminal; the file then holds __ZN_<NAME>__ markers that can be read and used."}}
 ```
 
 `deny` is the block. The sentence after it is the next step. What to do:

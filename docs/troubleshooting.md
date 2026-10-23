@@ -93,7 +93,7 @@ If your computer is part of a zn Team organization, `zn vault reset` refuses, be
 ## 6. Your agent was blocked: "`.env` holds plain-text secrets"
 
 ```text
-zn: .env holds plain-text secrets. Ask the user to run `zn env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.
+zn: .env was not read. It holds plain-text secrets, and zn (the security tool the user installed) keeps those away from agents. The user can move them to a local vault by running `zn env shadow .env` in their own terminal; the file then holds __ZN_<NAME>__ markers that can be read and used.
 ```
 
 **What it means:** your agent tried to read a file with secrets in plain text. zn stopped it, so the secrets did not reach the agent. This is zn working, not an error.
