@@ -664,6 +664,43 @@ fn default_fpr_margin() -> f64 {
 }
 
 impl ZnConfig {
+    /// The configuration `zn init` writes: the defaults, without any secret
+    /// that `ZnConfig::default()` read from the environment
+    /// (`ZN_API_KEY`, `ZN_JWT_SECRET`, `ZN_MCP_WS_TOKEN`, `ZN_DB_KEY`).
+    /// Those stay in the environment and are read again at start.
+    pub fn init_template() -> Self {
+        let mut config = Self::default();
+        config.security.api_key = None;
+        config.security.jwt_secret = None;
+        config.security.mcp_ws_token = None;
+        config.audit.encryption_key = None;
+        config
+    }
+
+    /// Write `init_template()` to `path` as JSON. On Unix the file is created
+    /// with mode 0600 (and tightened if it already existed), so other local
+    /// users cannot read it.
+    pub fn write_init_file(path: &Path) -> Result<()> {
+        use std::io::Write;
+        let json = serde_json::to_string_pretty(&Self::init_template())?;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            // `mode` only applies when the file is created.
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        }
+        file.write_all(json.as_bytes())?;
+        Ok(())
+    }
+
     /// Load configuration from file with environment variable overrides
     pub fn load(path: Option<&Path>) -> Result<Self> {
         let mut config = if let Some(p) = path {
