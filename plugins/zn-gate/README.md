@@ -117,8 +117,10 @@ It is not a sandbox:
   marks as experimental. If a Node.js version lacks it or changes it, the
   launcher refuses to run (hooks exit 2, the MCP servers do not start).
 - **Timeouts pass in Claude Code.** A hook that does not answer in 15 s is
-  treated as a non-blocking error, and the call goes ahead. The Cursor hooks
-  are marked `failClosed`, so Cursor blocks the call instead.
+  treated as a non-blocking error, and the call goes ahead. In Cursor, only the
+  file-read and prompt hooks are marked `failClosed`, so only those are blocked
+  on a timeout; a shell command or tool call goes ahead, as zn gives no answer
+  there when it has no objection and Cursor would block every call otherwise.
 - **Refused output.** When the launcher refuses a tool-output event (the
   package was changed, zn-gate failed), it replaces the output with
   `[zn plugin: output withheld because zn could not check it]` in Claude Code,

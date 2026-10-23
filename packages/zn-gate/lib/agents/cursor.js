@@ -24,6 +24,10 @@
  *  default)." `failClosed: true` blocks "the action when the hook fails (crash, timeout, non-zero exit, or no
  *  output)"; exit code 2 blocks. zn sets failClosed on beforeReadFile and beforeSubmitPrompt, and its launcher
  *  (lib/agents/launcher.js) also exits 2 on the other events that can deny when the Node.js is gone.
+ *  Only an event where this adapter always answers may be failClosed: on shell, MCP and tool-use events it
+ *  writes nothing when it has no objection, Cursor documents no neutral answer ("allow" could skip its own
+ *  approval; an empty object is not documented as a valid permission answer), and failClosed would block every call. The
+ *  Cursor plugin's hooks.json follows the same set (plugins/tools/check-plugins.js and test/plugin_cursor_hooks.test.js).
  *
  * What Cursor allows, and so what zn does there (docs/compat.md):
  *  - Reads of credential files, .env with values and ~/.zn are denied

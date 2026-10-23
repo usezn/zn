@@ -126,9 +126,12 @@ so zn-gate's Codex plugin is distributed through the repository marketplace
 
 Add the plugin from this repository (`plugins/zn-gate`) in Cursor's plugin
 settings. Cursor reads `.cursor-plugin/plugin.json`, which points to its own
-hook and MCP files in `cursor/`. Every Cursor hook is marked `failClosed`, so
-a crash or a timeout blocks the action (stricter than
-`zn hooks install cursor`, which marks only file reads and prompts).
+hook and MCP files in `cursor/`. The file-read and prompt hooks are marked
+`failClosed`, so a crash or a timeout blocks the read or the prompt (the same
+as `zn hooks install cursor`). The shell-command and tool-use hooks are not:
+zn gives no answer there when it has no objection, so that Cursor's own
+approval still applies, and Cursor treats a missing answer as a failure when
+`failClosed` is set, which would block every command.
 
 ### Other Agent Plugins clients
 

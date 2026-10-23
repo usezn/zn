@@ -1,0 +1,2 @@
+### Fixed
+- The zn-gate plugin for Cursor no longer marks the shell-command, tool-use and after-tool hooks as fail-closed. zn gives no answer on those events when it has no objection, and Cursor blocks a fail-closed hook that gives no answer, so the plugin could block every ordinary shell command. The plugin now sets fail-closed on file reads and prompts only, the same as the zn-gate install. See docs/compat.md.

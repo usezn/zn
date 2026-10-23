@@ -197,8 +197,15 @@ const cursorManifest = json(PLUGIN + '/.cursor-plugin/plugin.json');
 if (cursorManifest.hooks !== './cursor/hooks.json' || cursorManifest.mcpServers !== './cursor/mcp.json') {
   fail('.cursor-plugin/plugin.json: hooks and mcpServers must point to the Cursor files in cursor/');
 }
+// Cursor blocks a failClosed hook that writes no output, and zn writes no output on shell, MCP and tool-use
+// events when it has no objection (an "allow" there could skip Cursor's own approval). So only the events
+// where zn always answers may fail closed: the same two as `zn hooks install cursor`.
 for (const [event, entries] of Object.entries(json(PLUGIN + '/cursor/hooks.json').hooks || {})) {
-  for (const e of entries) if (e.failClosed !== true) fail('cursor/hooks.json: ' + event + ' hook is not failClosed');
+  const mustClose = event === 'beforeReadFile' || event === 'beforeSubmitPrompt';
+  for (const e of entries) {
+    if (mustClose && e.failClosed !== true) fail('cursor/hooks.json: ' + event + ' hook is not failClosed');
+    if (!mustClose && e.failClosed === true) fail('cursor/hooks.json: ' + event + ' hook is failClosed, but zn answers nothing there when it has no objection (Cursor would block every call)');
+  }
 }
 // A hook on a blocking event that cannot run must block, not let the call or prompt through.
 {
