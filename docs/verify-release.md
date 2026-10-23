@@ -61,17 +61,42 @@ A prerelease never moves `latest`. `npm install zn-gate` installs the latest
 final release; use `npm install zn-gate@beta` (or `@next`, `@alpha`) to opt in
 to a prerelease.
 
-In the examples below, replace `v1.12.0` / `1.12.0` with the version you are
+In the examples below, replace `v1.13.1` / `1.13.1` with the version you are
 checking, and `build-release.yml` with `release.yml` for a version up to 1.11.x.
+Each step says what a good result looks like, and a failed check prints an
+error and ends with a non-zero exit status (`echo $?` shows it).
 
 ## 1. Checksums
 
-Download the files and `SHA256SUMS` from the
-[GitHub Release](https://github.com/usezn/zn/releases), then:
+Download the files, `SHA256SUMS` and the `.sigstore.json` files from the
+[GitHub Release](https://github.com/usezn/zn/releases) of the version you are
+checking (in the browser, or with this command, which needs no GitHub
+account):
+
+```sh
+VERSION=1.13.1
+for f in SHA256SUMS SHA256SUMS.sigstore.json \
+  zn-gate-$VERSION.tgz zn-gate-$VERSION.tgz.sigstore.json \
+  zn_gate-$VERSION-py3-none-any.whl zn_gate-$VERSION-py3-none-any.whl.sigstore.json \
+  zn_gate-$VERSION.tar.gz zn_gate-$VERSION.tar.gz.sigstore.json; do
+  curl -fsSLO "https://github.com/usezn/zn/releases/download/v$VERSION/$f"
+done
+```
+
+Then, in the same folder (Windows has no `sha256sum`; use WSL or compare
+the hashes by hand):
 
 ```sh
 sha256sum --ignore-missing -c SHA256SUMS      # Linux
 shasum -a 256 --ignore-missing -c SHA256SUMS  # macOS
+```
+
+Good result: one `OK` line for each of the three files.
+
+```text
+zn-gate-1.13.1.tgz: OK
+zn_gate-1.13.1.tar.gz: OK
+zn_gate-1.13.1-py3-none-any.whl: OK
 ```
 
 Checksums only prove the files match `SHA256SUMS`. Check the signature on
@@ -82,20 +107,21 @@ Checksums only prove the files match `SHA256SUMS`. Check the signature on
 With the [GitHub CLI](https://cli.github.com/) 2.49 or later:
 
 ```sh
-gh attestation verify zn-gate-1.12.0.tgz \
+gh attestation verify zn-gate-1.13.1.tgz \
   --repo usezn/zn \
   --signer-workflow usezn/zn/.github/workflows/build-release.yml \
-  --source-ref refs/tags/v1.12.0
+  --source-ref refs/tags/v1.13.1
 ```
 
 Run it for each file. It checks that the file was built by the release
-workflows of `usezn/zn` from that tag.
+workflows of `usezn/zn` from that tag. Good result: exit status 0 (in a
+terminal it also prints a check mark; with no terminal it prints nothing).
 
 ## 3. Sigstore signatures
 
 The signing identity is the signer workflow at the tag:
 
-- identity: `https://github.com/usezn/zn/.github/workflows/build-release.yml@refs/tags/v1.12.0`
+- identity: `https://github.com/usezn/zn/.github/workflows/build-release.yml@refs/tags/v1.13.1`
   (up to 1.11.x: `https://github.com/usezn/zn/.github/workflows/release.yml@refs/tags/v1.11.0`)
 - issuer: `https://token.actions.githubusercontent.com`
 
@@ -111,7 +137,7 @@ python3 -m venv zn-verify
 zn-verify/bin/pip install sigstore
 zn-verify/bin/python -m sigstore verify identity \
   --bundle SHA256SUMS.sigstore.json \
-  --cert-identity https://github.com/usezn/zn/.github/workflows/build-release.yml@refs/tags/v1.12.0 \
+  --cert-identity https://github.com/usezn/zn/.github/workflows/build-release.yml@refs/tags/v1.13.1 \
   --cert-oidc-issuer https://token.actions.githubusercontent.com \
   SHA256SUMS
 ```
@@ -125,9 +151,13 @@ list: download the program for your system from its
 cosign verify-blob SHA256SUMS \
   --bundle SHA256SUMS.sigstore.json \
   --new-bundle-format \
-  --certificate-identity https://github.com/usezn/zn/.github/workflows/build-release.yml@refs/tags/v1.12.0 \
+  --certificate-identity https://github.com/usezn/zn/.github/workflows/build-release.yml@refs/tags/v1.13.1 \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
+
+Good result: sigstore prints `OK: SHA256SUMS` and cosign prints `Verified OK`.
+If the identity you give is wrong, the check fails and the error shows the
+identity that is really in the certificate.
 
 A valid signature on `SHA256SUMS` plus a passing checksum check (step 1)
 covers all three files. You can also verify each file against its own bundle
@@ -144,11 +174,18 @@ npm audit signatures
 ```
 
 It checks the registry signatures and the provenance attestations of the
-installed packages. You can also look at the attestations directly:
+installed packages (zn-gate and what it ships with). Good result: lines such
+as `9 packages have verified registry signatures` and `9 packages have
+verified attestations`; the number depends on your project. In a folder where
+nothing is installed it says `found no installed dependencies to audit`. You
+can also look at the attestations directly:
 
 ```sh
-npm view zn-gate@1.5.0 dist.attestations
+npm view zn-gate@1.13.1 dist.attestations
 ```
+
+Good result: an object with a `url` for the attestations and a `provenance`
+entry whose `predicateType` is `https://slsa.dev/provenance/v1`.
 
 ## 5. PyPI
 
@@ -164,8 +201,12 @@ python3 -m venv zn-verify-pypi
 zn-verify-pypi/bin/pip install pypi-attestations
 zn-verify-pypi/bin/pypi-attestations verify pypi \
   --repository https://github.com/usezn/zn \
-  pypi:zn_gate-1.5.0-py3-none-any.whl
+  pypi:zn_gate-1.13.1-py3-none-any.whl
 ```
+
+Good result: `OK: zn_gate-1.13.1-py3-none-any.whl`. This check downloads the
+file from PyPI itself, so it needs an internet connection and does not use
+the file you downloaded in step 1.
 
 ## 6. The release tag
 
@@ -179,11 +220,25 @@ the Ubuntu package list: download the program for your system from its
 0.17 or later, in a clone of this repository:
 
 ```sh
-git fetch origin tag v1.12.0
-gitsign verify-tag v1.12.0 \
+git fetch origin tag v1.13.1
+gitsign verify-tag v1.13.1 \
   --certificate-identity https://github.com/usezn/zn/.github/workflows/tag-release.yml@refs/heads/main \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
+
+Good result: the output ends with these lines (the `tlog index` number
+differs):
+
+```text
+Good signature from [https://github.com/usezn/zn/.github/workflows/tag-release.yml@refs/heads/main]
+Validated Git signature: true
+Validated Rekor entry: true
+Validated Certificate claims: true
+```
+
+Use `gitsign verify-tag`, not `git verify-tag`: plain git looks for a GPG
+key, cannot read this kind of signature and prints a confusing
+`ksba_cms_parse failed: Invalid CMS object` error.
 
 Tags up to 1.11.x are not signed.
 
