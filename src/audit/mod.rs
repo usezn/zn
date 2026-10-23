@@ -282,15 +282,6 @@ impl AuditVault {
                 .ok();
         }
 
-        // Records written by 1.13.x kept the text of the nearest neighbour.
-        let scrubbed = scrub_legacy_neighbours(&mut conn)?;
-        if scrubbed > 0 {
-            info!(
-                "Audit records with neighbour text replaced by a keyed reference: {}",
-                scrubbed
-            );
-        }
-
         // Upgrade records written in the old format the first time the vault
         // opens with its key. A key that fails the stored key check is refused
         // before anything is written.
@@ -323,6 +314,15 @@ impl AuditVault {
                     report.not_encrypted
                 );
             }
+        }
+
+        // Records written by 1.13.x kept the text of the nearest neighbour.
+        let scrubbed = scrub_legacy_neighbours(&mut conn)?;
+        if scrubbed > 0 {
+            info!(
+                "Audit records with neighbour text replaced by a keyed reference: {}",
+                scrubbed
+            );
         }
 
         Ok(Self {
@@ -914,11 +914,19 @@ fn migrate_v1_records(conn: &mut Connection, key_bytes: &[u8; 32]) -> Result<Mig
 /// row, which held the same text, is cleared. Rows that already hold a
 /// reference are left alone, so running it again changes nothing.
 fn scrub_legacy_neighbours(conn: &mut Connection) -> Result<usize> {
+    // Rows that already hold a reference (`h:` + 16 hex, optionally followed by
+    // `:<distance>`) are filtered out in SQL, so a start does not read them.
+    let hex16 = "[0-9a-f]".repeat(16);
+    let bare = format!("h:{hex16}");
+    let with_dist = format!("h:{hex16}:*");
     let rows: Vec<(String, String, String)> = {
         let mut stmt = conn.prepare(
-            "SELECT id, event, nearest_neighbor FROM audit_logs WHERE nearest_neighbor IS NOT NULL",
+            "SELECT id, event, nearest_neighbor FROM audit_logs WHERE nearest_neighbor IS NOT NULL \
+             AND NOT (nearest_neighbor GLOB ?1 OR nearest_neighbor GLOB ?2)",
         )?;
-        let mapped = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        let mapped = stmt.query_map(params![bare, with_dist], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })?;
         let mut out = Vec::new();
         for row in mapped {
             let (id, event, nn): (String, String, String) = row?;
@@ -2013,6 +2021,60 @@ mod tests {
         // A second opening changes nothing.
         let vault = AuditVault::new(&path, None).expect("third open");
         assert_eq!(get_nn(&vault, "a"), want);
+        drop(vault);
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_second_opening_touches_no_rows() {
+        let path = temp_db_path();
+        let vault = AuditVault::new(&path, None).expect("vault");
+        {
+            let conn = vault.get_connection();
+            let conn = conn.lock().unwrap();
+            let ins = "INSERT INTO audit_logs (id, timestamp, event, tool_name, status, payload, nearest_neighbor) VALUES (?1, 't', ?2, 'tool', 'AUDIT', ?3, ?4)";
+            conn.execute(
+                ins,
+                params!["a", "TOOL_CALL", None::<String>, "old text:0.1000"],
+            )
+            .unwrap();
+            conn.execute(
+                ins,
+                params![
+                    "b",
+                    "NEAREST_NEIGHBOR",
+                    "keep",
+                    "h:0123456789abcdef:0.5000"
+                ],
+            )
+            .unwrap();
+            conn.execute(
+                ins,
+                params!["c", "TOOL_CALL", None::<String>, "h:0123456789abcdef"],
+            )
+            .unwrap();
+            // Looks like a reference prefix but is not one: must still be scrubbed.
+            conn.execute(
+                ins,
+                params!["d", "TOOL_CALL", None::<String>, "h:not a reference:0.2"],
+            )
+            .unwrap();
+        }
+        drop(vault);
+
+        let vault = AuditVault::new(&path, None).expect("second open");
+        {
+            let conn = vault.get_connection();
+            let mut conn = conn.lock().unwrap();
+            let before = conn.total_changes();
+            assert_eq!(scrub_legacy_neighbours(&mut conn).unwrap(), 0);
+            assert_eq!(conn.total_changes(), before, "no row may be written");
+        }
+        assert!(crate::ai::is_content_ref(
+            get_nn(&vault, "d").rsplit_once(':').unwrap().0
+        ));
+        assert_eq!(get_nn(&vault, "b"), "h:0123456789abcdef:0.5000");
+        assert_eq!(get_nn(&vault, "c"), "h:0123456789abcdef");
         drop(vault);
         fs::remove_file(&path).ok();
     }
