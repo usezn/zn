@@ -49,7 +49,7 @@ This writes the hook to `~/.gemini/config/hooks.json` for your user. Add `--proj
 | | In Antigravity |
 | - | - |
 | Blocks the agent from reading or writing `.env` and credential files by path (hooks) | Yes, once the hooks are installed |
-| Blocks shell commands that handle secrets, and tells the agent to run them through `zn run` (hooks) | Yes, once the hooks are installed |
+| Blocks shell commands that carry a secret marker in their arguments, and tells the agent to run them through `zn run --secrets` (hooks) | Yes, once the hooks are installed |
 | Asks you first when a search covers a folder that holds a plain-text `.env` or key file (hooks) | Yes, once the hooks are installed |
 | Stops the agent from editing the hook files and Antigravity's CLI settings file | Yes, those three files (listed below) |
 | Removes secrets from shell output and file contents | **No**: Antigravity hooks cannot rewrite what a tool returns |

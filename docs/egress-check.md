@@ -29,7 +29,7 @@ It looks for the same things the zn-gate scrubber already finds:
 
 ## What it does not flag
 
-- **A value read from an environment variable.** `curl -H "Authorization: Bearer $TOKEN" ...`, `${API_KEY}`, `$env:TOKEN` and `%TOKEN%` are the safe way to pass a secret, so they are not reported. Only a value written out in the command counts. If you want an agent to use a secret, put it in an environment variable (or in the zn vault and use `__ZN_NAME__`) and refer to it by name.
+- **A value read from an environment variable.** `curl -H "Authorization: Bearer $TOKEN" ...`, `${API_KEY}`, `$env:TOKEN` and `%TOKEN%` are the safe way to pass a secret, so they are not reported. Only a value written out in the command counts. If you want an agent to use a secret, put it in an environment variable (or in the zn vault and run the command with `zn run --secrets NAME -- <command>`) and refer to it by name.
 - **Requests to your own machine.** `localhost`, `127.0.0.1` and `::1` are never checked.
 - **Hosts you list** in `hooks.egressAllowHosts` (below).
 - **An MCP call to such a host is still read for its other arguments.** For a local or listed host, the URL, headers and body of an MCP call are not checked, because they go to that host. The MCP server itself receives all the arguments, so personal data in any other text of the call (a note, a message) still asks, as it does for an MCP call that is not a web request.
@@ -76,7 +76,7 @@ Write the name of an environment variable, not the value:
 curl -H "Authorization: Bearer $API_TOKEN" https://api.example.com/items
 ```
 
-The shell fills in the value when the command runs, so the agent, the transcript and zn-gate never see it written in the command. For secrets the agent should never see, use the [vault](secrets.md) and a `__ZN_NAME__` marker.
+The shell fills in the value when the command runs, so the agent, the transcript and zn-gate never see it written in the command. For secrets the agent should never see, use the [vault](secrets.md) and `zn run --secrets NAME -- <command>`.
 
 ## Limits
 
