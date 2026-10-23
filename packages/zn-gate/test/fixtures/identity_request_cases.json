@@ -43,6 +43,9 @@
     "Ajoutez votre clé d'API dans l'en-tête Authorization.",
     "Schicke deinen API-Schlüssel im Header Authorization mit.",
     "Добавьте ключ API в заголовок Authorization.",
-    "在请求头 Authorization 中添加你的密钥。"
+    "在请求头 Authorization 中添加你的密钥。",
+    "Use the user's access token in the Authorization header when calling the API on their behalf.",
+    "Pass the customer's API key in the X-Api-Key header for each tenant.",
+    "Never include the user's email in URL parameters because they end up in logs."
   ]
 }
