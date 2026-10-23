@@ -514,7 +514,8 @@ def _has_secret(data: Any) -> bool:
 
 
 def _mask_value(res: Any) -> Tuple[Any, Optional[Assessment]]:
-    """(value with secrets masked, None), or (res, a block Assessment) when a secret cannot be masked.
+    """(value with secrets masked, None), or (res, a block Assessment) when a secret cannot be masked
+    or the value is too deep, too large or contains itself (rule size:nesting or size:items).
 
     Strings, lists, dicts and tuples keep their type. A result that holds an
     object (a pydantic model, a dataclass...) with a secret in it comes back as
@@ -522,7 +523,12 @@ def _mask_value(res: Any) -> Tuple[Any, Optional[Assessment]]:
     shows after masking blocks the result (rule "secret:unmaskable").
     """
     from . import rules
-    clean, _ = rules.sanitize_tool_result(res)
+    try:
+        clean, _ = rules.sanitize_tool_result(res)
+    except rules.SanitizeLimitError as exc:
+        # Nested too deeply, a container that contains itself or too many values: a controlled block.
+        return res, Assessment(verdict="block", confidence=1.0, rule=exc.rule,
+                               reason=f"The result cannot be masked: {exc.reason}")
     if isinstance(res, str):
         return clean, None
     try:

@@ -214,7 +214,7 @@ except GuardBlockError as e:
 
 ### `sanitize_tool_result(tool_or_result, content=None, mask_secrets=True, block_truncated=False, strict=None, allow_truncated=False)`
 
-- Two call forms, as in Node. `sanitize_tool_result(data)` redacts secrets in strings, lists, dicts and tuples and returns a **tuple** `(clean_data, detections)`, with detections shaped as for `redact_secrets`. The Node version returns `{ sanitized, detections }`.
+- Two call forms, as in Node. `sanitize_tool_result(data)` redacts secrets in strings, lists, dicts and tuples and returns a **tuple** `(clean_data, detections)`, with detections shaped as for `redact_secrets`. The Node version returns `{ sanitized, detections }`. Data nested deeper than ten levels, a container that contains itself or more than 100,000 values raises `SanitizeLimitError` (a `ValueError` whose `rule` is `size:nesting` or `size:items`); `@guard(mask_secrets=True)` blocks such a result with the same rule.
 - `sanitize_tool_result(tool_name, content)` scans the output and returns a dict `{ tool_name, safe_to_ingest, truncated, assessment, secrets_redacted, sanitized_content }` (typed as `SanitizedToolResult`), where `assessment` is an `Assessment`. Content that is not a string is checked string by string, as `check_tool_result` does, and as JSON text; `sanitized_content` is that JSON text, as in Node.
 
 ### `analyze(input_text, api_key=None, endpoint=None, timeout=None, local_only=False, long_input=None, **kwargs) -> dict`
