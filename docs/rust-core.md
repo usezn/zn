@@ -25,6 +25,36 @@ A policy upload is verified before anything is written. The gateway checks the a
 
 Known limits that remain, because the gateway is not distributed: the OCR check of images uses a fixed list of phrases and recognises only `data:image/...;base64,` images; the audit vault and the loop breaker have no size or age limit; and the management API has no TLS of its own (it listens on `127.0.0.1`; outside loopback, put it behind a TLS proxy).
 
+## Operating limits (experimental)
+
+The gateway is experimental and not distributed. A load and shutdown test of a build from `src/` (synthetic calls to localhost, one machine) found these limits. Read them before you run it for anything more than testing.
+
+**Starting it**
+
+- Global flags go before the subcommand: `zn --port 9090 --db-path zn.db start`. `zn start --port 9090` fails with "unexpected argument".
+- `zn start` needs an open standard input. If standard input is closed (`< /dev/null`, a systemd service, `docker run` without `-i`, `nohup`), it prints "Management API listening" and exits with code 0 right away.
+- Defaults: management API on port 9090, audit database `zn.db`, no WASM policies loaded. With no policy loaded, only the managed rules block a call.
+
+**Stopping it**
+
+- There is no graceful shutdown. SIGTERM, SIGINT and SIGKILL all stop the process in about 0.1 seconds, and the calls in flight at that moment get no answer (the client sees the connection close). The audit database stays consistent and the gateway starts again after the cut. The ban list, reputation, loop breaker and consensus state live in memory and are lost.
+
+**Audit gaps**
+
+- If writing to the audit database fails (for example, the disk is full), the gateway still decides the same way and keeps answering. Calls that are allowed pass without an audit row, and each one logs an error line. Blocking does not depend on the audit. Auditing resumes by itself when the failure goes away.
+- A call blocked by the managed rules (or refused for a ban, a loop or a pending consensus) is not written to the audit database, so `/api/v1/stats` and the audit log count only the calls that were allowed.
+
+**Growth (nothing is trimmed)**
+
+- The audit database grows by about 340 bytes per audited call (about 34 MB per 100,000 calls) and has no size or age limit.
+- The log written to standard output grows by about 95 KB per 1,000 calls (about 9.5 MB per 100,000) and is not rotated.
+- Memory grows with the number of different agent ids, about 540 bytes each (the caller chooses the id). Reputation and loop-breaker data are never dropped.
+
+**Speed**
+
+- One disk sync per audited call limits the gateway to about 140 to 150 audited calls per second on the test machine (an ordinary cloud disk). At 80 calls per second the median answer took about 8 ms.
+- WebSocket connections are limited to a burst of 60 per client address, then one per second.
+
 ## AWS KMS data key
 
 With `kms.kms_type = "aws"` and `kms.key_id` set, the audit database key is a KMS data key. The gateway creates it once (`GenerateDataKey`, AES-256, encryption context `purpose=zn-gate-audit-db-key`) and saves only its encrypted copy in `zn-kms-data-key.json`, in the same directory as the audit database (`audit.db_path`). The file is written atomically with mode 0600 and holds the KMS key id and the encrypted key, never the plaintext key. On every later start the gateway sends the encrypted key to KMS `Decrypt` and gets the same key back, so audit records written before a restart stay readable. The key needs `kms:GenerateDataKey` and `kms:Decrypt` permissions.
