@@ -68,24 +68,40 @@ pub struct TuiApp {
     connection_color: Color,
 }
 
+/// Build the `X-API-Key` header value, refusing a key with a control character
+/// (a newline or tab pasted along with it, for example) that cannot be sent.
+fn api_key_header(key: &str) -> Result<reqwest::header::HeaderValue> {
+    if key.chars().any(char::is_control) {
+        anyhow::bail!("the API key contains a control character; check ZN_API_KEY");
+    }
+    let mut value = reqwest::header::HeaderValue::from_str(key).map_err(|_| {
+        anyhow::anyhow!("the API key cannot be sent as an HTTP header; check ZN_API_KEY")
+    })?;
+    value.set_sensitive(true);
+    Ok(value)
+}
+
 impl TuiApp {
     pub async fn run(api_key: Option<String>) -> Result<()> {
-        enable_raw_mode()?;
-        let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen)?;
-        let backend = CrosstermBackend::new(stdout);
-        let mut terminal = Terminal::new(backend)?;
-
-        // Resolve API Key (CLI > Env > Error)
+        // Resolve and check the API key before touching the terminal, so a bad
+        // key prints a plain error instead of leaving the screen in raw mode.
+        // CLI > Env > Error.
         let resolved_key = match api_key {
             Some(key) => key,
             None => std::env::var("ZN_API_KEY").map_err(|_| {
                 anyhow::anyhow!("No API key provided via CLI and ZN_API_KEY is not set.")
             })?,
         };
+        let key_header = api_key_header(&resolved_key)?;
+
+        enable_raw_mode()?;
+        let mut stdout = io::stdout();
+        execute!(stdout, EnterAlternateScreen)?;
+        let backend = CrosstermBackend::new(stdout);
+        let mut terminal = Terminal::new(backend)?;
 
         let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert("X-API-Key", resolved_key.parse().unwrap());
+        headers.insert("X-API-Key", key_header);
 
         let mut app = TuiApp {
             client: Client::builder()
@@ -395,6 +411,28 @@ fn ui(f: &mut ratatui::Frame, app: &TuiApp) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn api_key_header_accepts_a_plain_key() {
+        let v = api_key_header("zn_test_0000000000000000").unwrap();
+        assert_eq!(v.to_str().unwrap(), "zn_test_0000000000000000");
+    }
+
+    #[test]
+    fn api_key_header_rejects_control_characters() {
+        for bad in [
+            "key\n",
+            "ke\ty",
+            "\r\nkey",
+            "k\u{0}ey",
+            "ke\u{7f}y",
+            "key\u{85}",
+        ] {
+            let err = api_key_header(bad).unwrap_err().to_string();
+            assert!(err.contains("control character"), "{bad:?}: {err}");
+            assert!(err.contains("ZN_API_KEY"));
+        }
+    }
 
     fn log(status: &str, ts: &str, score: Option<f32>) -> ApiLogEntry {
         ApiLogEntry {
