@@ -52,11 +52,22 @@ const PROTOCOL = 1;
 const TIMEOUT_MS = 15000;
 // Operations the daemon confirms with the user wait for the answer.
 const CONFIRM_TIMEOUT_MS = 150000;
+// zn team join asks two questions in a row (the organization lookup, then the join), each with
+// up to 120 s to answer, so the join waits longer than the other confirmed operations.
+const JOIN_CONFIRM_TIMEOUT_MS = 300000;
 const CONFIRMED_OPS = new Set(['recordApproval', 'updateSecretMeta', 'confirmFileWrite', 'teamJoin', 'teamLeave', 'confirmOrgOpening']);
 // Network calls to the zn cloud (policy download and audit upload).
 const NETWORK_OPS = new Set(['teamSync']);
 const NETWORK_TIMEOUT_MS = 120000;
 const MAX_LINE = 64 * 1024 * 1024;
+
+// How long a call waits for its answer before it fails with a timeout.
+function callTimeoutMs(op) {
+  if (op === 'teamJoin') return JOIN_CONFIRM_TIMEOUT_MS;
+  if (CONFIRMED_OPS.has(op)) return CONFIRM_TIMEOUT_MS;
+  if (NETWORK_OPS.has(op)) return NETWORK_TIMEOUT_MS;
+  return TIMEOUT_MS;
+}
 
 function endpoint(opts) {
   const p = store.paths(opts);
@@ -222,7 +233,7 @@ class VaultClient {
       const timer = setTimeout(() => {
         state.pending.delete(id);
         reject(lockedError('timeout'));
-      }, CONFIRMED_OPS.has(op) ? CONFIRM_TIMEOUT_MS : NETWORK_OPS.has(op) ? NETWORK_TIMEOUT_MS : TIMEOUT_MS);
+      }, callTimeoutMs(op));
       state.pending.set(id, {
         resolve: (v) => { clearTimeout(timer); resolve(v); },
         reject: (e) => { clearTimeout(timer); reject(e); },
@@ -288,6 +299,7 @@ async function recordApproval(project, secret, argv0) { return client().recordAp
 async function confirmFileWrite(project, file, names, reason) { return client().confirmFileWrite(project, file, names, reason); }
 
 module.exports = {
+  callTimeoutMs,
   mapToken,
   resolve,
   setSecret,
