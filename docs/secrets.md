@@ -209,8 +209,13 @@ What the check calls a credential: a value under a name that ends in a secret
 word (`BRAVE_API_KEY`, `token`, `password`, `Authorization`, `X-Api-Key`), the
 value after a credential flag in `args` (`--api-key`, `--token`), and a key in a
 URL (`?api_key=...`). It does not report a reference (`${NAME}`, `$NAME`,
-`__ZN_NAME__`), a placeholder, a file path or a value that reads as ordinary
-text.
+`__ZN_NAME__`), a placeholder, a file path or a value under 6 characters. It also
+skips many values that read as ordinary text, but this is a judgement, not a
+guarantee: under a name that clearly means a secret, such as `PASSWORD` or
+`API_KEY`, even the sentence `read from the vault` is reported, while
+`TOKEN` set to `see 1password` or `SECRET` set to `my-secret` is not. If a
+finding is not a secret, write a reference such as `${NAME}` where the text
+was.
 
 To fix one:
 
