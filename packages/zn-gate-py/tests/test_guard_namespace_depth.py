@@ -134,13 +134,12 @@ class TestResultBudget(unittest.TestCase):
         res = check_tool_result(json.loads(body, object_hook=hook))
         self.assertEqual(res.rule, "size:items")
 
-    def test_guard_arguments_block_large_application_objects(self):
-        # The decorator reads arguments as strictly as check_tool_call does.
+    def test_guard_arguments_keep_large_application_objects_best_effort(self):
         @guard(on_block="return", fallback="blocked")
         def tool(client, q):
             return "ran"
 
-        self.assertEqual(tool(self._big("x"), "weather"), "blocked")
+        self.assertEqual(tool(self._big("x"), "weather"), "ran")
 
 
 class TestGuardDecoratorDepth(unittest.TestCase):

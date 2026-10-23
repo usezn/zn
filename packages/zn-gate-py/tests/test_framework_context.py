@@ -93,16 +93,15 @@ class TestFrameworkContextArguments(unittest.TestCase):
         self.assertEqual(tool("weather", config), "ran")
         self.assertEqual(tool(BAD, config=config), "blocked")
 
-    def test_deep_application_object_blocks(self):
-        # The decorator reads application objects as strictly as check_tool_call
-        # does, so an object nested deeper than ten levels blocks the call. A
-        # framework context (see the tests above) is the way to pass run state.
+    def test_deep_application_object_is_read_to_32_levels(self):
+        # An HTTP client, a session or agent dependencies: built by the application, not by
+        # the model, and often deeply nested. They are read down to 32 levels, as a result is.
         @guard(on_block="return", fallback="blocked")
         def tool(client, q):
             return "ran"
 
+        self.assertEqual(tool(_deep(20, "x"), "weather"), "ran")
         self.assertEqual(tool(_deep(40, "x"), "weather"), "blocked")
-        self.assertEqual(tool(_deep(3, "x"), "weather"), "ran")
 
     def test_shallow_strings_in_plain_objects_are_still_checked(self):
         @guard(on_block="return", fallback="blocked")
@@ -129,10 +128,10 @@ class TestFrameworkContextArguments(unittest.TestCase):
             def __dict__(self):
                 raise RuntimeError("no attributes here")
 
-        # Both check_tool_call and the guard decorator fail closed on an object they cannot read.
+        # check_tool_call fails closed on an object it cannot read; the guard decorator stays lenient.
         res = check_tool_call("t", {"args": (Weird(), "weather"), "kwargs": {}})
         self.assertEqual((res.verdict, res.rule), ("block", "type:unscannable"))
-        self.assertEqual(guard(on_block="return", fallback="blocked")(lambda c, q: "ran")(Weird(), "weather"), "blocked")
+        self.assertEqual(guard(on_block="return", fallback="blocked")(lambda c, q: "ran")(Weird(), "weather"), "ran")
 
     def test_pydantic_ai_tool_with_run_context_runs(self):
         try:

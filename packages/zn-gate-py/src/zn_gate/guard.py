@@ -183,7 +183,8 @@ def _is_data_object(value: Any) -> bool:
 def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] = None,
                      _budget: Optional[List[int]] = None, _lenient: bool = False,
                      lenient_objects: bool = True,
-                     lenient_depth: Optional[int] = None) -> List[str]:
+                     lenient_depth: Optional[int] = None,
+                     best_effort_budget: bool = False) -> List[str]:
     """Recursively extract all strings from nested structures.
 
     Walks every Mapping (keys and values), list, tuple, set, frozenset and dict
@@ -213,7 +214,15 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
     lenient_objects=False (as check_tool_call does) to walk plain objects as
     strictly as data models: a payload hidden below the depth limit, in an
     unreadable object or past the value budget then raises like it does for
-    dicts and lists.
+    dicts and lists. With best_effort_budget (as the guard decorator does for
+    its arguments, together with lenient_depth) values past the budget inside a
+    plain object are left out instead of raising, so only the depth limit is
+    raised for a client, a session or a dependency container.
+
+    A container or object that raises while it is read (a Mapping whose items()
+    is not implemented, as the connection pool of a requests.Session) is left
+    out inside a plain object, and raises _Unscannable (rule type:unscannable)
+    anywhere else.
     """
     if isinstance(data, str):
         return [data]
@@ -227,34 +236,39 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
     budget = _budget if _budget is not None else [MAX_OBJECT_VALUES]
     lenient = _lenient
     children: Optional[List[Any]]
-    if isinstance(data, Mapping):
-        children = []
-        for k, v in data.items():
-            children.append(k)
-            children.append(v)
-    elif isinstance(data, (list, tuple, set, frozenset)):
-        children = list(data)
+    if isinstance(data, (Mapping, list, tuple, set, frozenset, _DICT_VIEWS)):
+        try:
+            if isinstance(data, Mapping):
+                children = []
+                for k, v in data.items():
+                    children.append(k)
+                    children.append(v)
+            else:
+                children = list(data)
+        except Exception:
+            if lenient:
+                return []
+            raise _Unscannable("type:unscannable", "An object could not be read to check it") from None
     elif isinstance(data, os.PathLike):
         path_value = os.fspath(data)
         found = _extract_strings(path_value, max_depth, _path, budget, lenient_objects=lenient_objects,
-                                lenient_depth=lenient_depth)
+                                lenient_depth=lenient_depth, best_effort_budget=best_effort_budget)
         # On Windows str() gives backslashes; the path rules also see the form with forward slashes.
         if isinstance(data, PurePath) and data.as_posix() != path_value:
             found += _extract_strings(data.as_posix(), max_depth, _path, budget, lenient_objects=lenient_objects,
-                                lenient_depth=lenient_depth)
+                                lenient_depth=lenient_depth, best_effort_budget=best_effort_budget)
         return found
     elif isinstance(data, io.IOBase):
         # An open file or stream: its contents are read by the tool, not passed
         # as text, and reading them here would move the file position. Check its name.
         name = getattr(data, "name", None)
         return _extract_strings(name, max_depth, _path, budget, lenient_objects=lenient_objects,
-                                lenient_depth=lenient_depth) if isinstance(name, (str, bytes)) else []
+                                lenient_depth=lenient_depth,
+                                best_effort_budget=best_effort_budget) if isinstance(name, (str, bytes)) else []
     elif isinstance(data, Iterator) or isinstance(data, AsyncIterator):
         raise _Unscannable("type:unscannable",
                            "A one-shot iterator (such as a generator) cannot be checked "
                            "without consuming it; pass a list instead")
-    elif isinstance(data, _DICT_VIEWS):
-        children = list(data)
     else:
         # An object with attributes that is not a data model is walked best
         # effort; containers without attributes (deque, array, custom
@@ -280,7 +294,7 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
             raise _Unscannable("type:unscannable", "An object could not be read to check it") from None
         if children is None:
             return []
-        if lenient and lenient_depth is None and budget[0] - len(children) < 0:
+        if lenient and (lenient_depth is None or best_effort_budget) and budget[0] - len(children) < 0:
             return []
         budget[0] -= len(children)
         if budget[0] < 0:
@@ -297,17 +311,19 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
         strings: List[str] = []
         for child in children:
             strings.extend(_extract_strings(child, max_depth - 1, path, budget, lenient, lenient_objects,
-                                            lenient_depth))
+                                            lenient_depth, best_effort_budget))
         return strings
     finally:
         path.discard(id(data))
 
 
 def _strings_or_block(data: Any, what: str, lenient_objects: bool = True,
-                      lenient_depth: Optional[int] = None) -> Tuple[List[str], Optional[Assessment]]:
+                      lenient_depth: Optional[int] = None,
+                      best_effort_budget: bool = False) -> Tuple[List[str], Optional[Assessment]]:
     """_extract_strings, or a block Assessment when the payload cannot be checked in full."""
     try:
-        return _extract_strings(data, lenient_objects=lenient_objects, lenient_depth=lenient_depth), None
+        return _extract_strings(data, lenient_objects=lenient_objects, lenient_depth=lenient_depth,
+                                best_effort_budget=best_effort_budget), None
     except _NestingTooDeep:
         return [], Assessment(verdict="block", confidence=1.0, rule="size:nesting",
                               reason=f"{what} nested too deeply to check")
@@ -370,9 +386,10 @@ def _unwrap_partial(func: Any) -> Tuple[Any, Tuple[Any, ...], Dict[str, Any]]:
 
 def _scan_strings(data: Any, what: str, block_truncated: bool, strict: Optional[bool],
                   lenient_objects: bool = True, allow_truncated: bool = False,
-                  lenient_depth: Optional[int] = None) -> Assessment:
+                  lenient_depth: Optional[int] = None, best_effort_budget: bool = False) -> Assessment:
     strings_to_check, blocked = _strings_or_block(data, what, lenient_objects=lenient_objects,
-                                                  lenient_depth=lenient_depth)
+                                                  lenient_depth=lenient_depth,
+                                                  best_effort_budget=best_effort_budget)
     if blocked is not None:
         return blocked
     if too_invisible(strings_to_check):
@@ -419,8 +436,13 @@ def check_tool_call(tool_name: str, arguments: Any = None, strict: Optional[bool
     and such arguments are blocked (rule size:truncated) when block_truncated
     is set or the ZN_BLOCK_TRUNCATED environment variable is "1".
     """
+    # The guard decorator passes _lenient_objects=True: a plain application object (a client, a
+    # session, a dependency container) in the arguments is read down to the same depth as in a
+    # result, and text found there is checked; dicts, lists, namespaces and data models stay strict.
     return _scan_strings(arguments, "Arguments", block_truncated=block_truncated, strict=strict,
-                         lenient_objects=_lenient_objects)
+                         lenient_objects=_lenient_objects,
+                         lenient_depth=LENIENT_MAX_DEPTH if _lenient_objects else None,
+                         best_effort_budget=_lenient_objects)
 
 
 def check_tool_result(result: Any, block_truncated: bool = False, strict: Optional[bool] = None,
@@ -929,13 +951,15 @@ def guard(
                 callback (ValueError otherwise). A blocked call never runs the
                 function, and a blocked result is never returned.
     - fallback: Value to return if on_block="return".
-    - check_args: Whether to inspect input arguments (default True), as strictly
-                  as check_tool_call does: an application object in them (a plain
-                  class instance) that is nested deeper than ten levels, cannot
-                  be read or holds too many values blocks the call (rules
-                  size:nesting, type:unscannable, size:items). The instance of a
-                  method (`self` or `cls`), framework run contexts and logging
-                  objects are not inspected.
+    - check_args: Whether to inspect input arguments (default True). Data
+                  (dicts, lists, namespaces, data models) nested deeper than
+                  ten levels blocks the call (rule size:nesting). A plain
+                  application object (a client, a session, a dependency
+                  container) is read down to 32 levels and text found in it is
+                  checked; what is deeper than that blocks, and what cannot be
+                  read or is past the value budget is left out. The instance
+                  of a method (`self` or `cls`), framework run contexts and
+                  logging objects are not inspected.
     - check_result: Whether to inspect function return value (default False).
     - mask_secrets: Automatically redact leaked credentials in result (default False).
     - callback: Optional hook called on block: callback(assessment, func_name, payload).
@@ -990,10 +1014,11 @@ def guard(
                 args = bound_args + args
                 kwargs = {**bound_kwargs, **kwargs}
             combined_args = {"args": args, "kwargs": kwargs}
-            # Plain objects in the arguments are walked as strictly as check_tool_call does:
-            # deeper than ten levels, unreadable or too large they block.
+            # Plain application objects are read down to LENIENT_MAX_DEPTH levels, as in a result;
+            # data (dicts, lists, namespaces, models) deeper than ten levels blocks.
             assessment = check_tool_call(func_name, _call_payload(target, args, kwargs),
-                                         block_truncated=block_truncated)
+                                         block_truncated=block_truncated,
+                                         _lenient_objects=True)
             if assessment.allowed:
                 return False, None
             if callback:

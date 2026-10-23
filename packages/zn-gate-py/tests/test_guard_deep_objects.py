@@ -85,26 +85,30 @@ class TestDeepPlainObjects(unittest.TestCase):
         self.assertFalse(res.allowed)
         self.assertEqual(res.rule, "size:items")
 
-    def test_decorator_blocks_unreadable_application_objects(self):
-        # The decorator reads arguments as strictly as check_tool_call does.
+    def test_decorator_keeps_unreadable_application_objects_lenient(self):
+        @guard(on_block="return", fallback="blocked")
+        def tool(client, q):
+            return "ran"
+
+        self.assertEqual(tool(Unreadable(), "weather"), "ran")
+
+    def test_decorator_reads_application_objects_down_to_32_levels(self):
+        # A client or dependencies object passed to a guarded function is built by the
+        # application: it is read as far as a result is (32 levels), and what is deeper blocks.
         seen = []
 
         @guard(on_block="custom", callback=lambda a, name, payload: seen.append(a.rule))
         def tool(client, q):
             return "ran"
 
-        with self.assertRaises(GuardBlockError):
-            tool(Unreadable(), "weather")
-        self.assertEqual(seen, ["type:unscannable"])
-
-    def test_decorator_blocks_deep_application_objects(self):
-        @guard(on_block="return", fallback="blocked")
-        def tool(client, q):
-            return "ran"
-
-        self.assertEqual(tool(chain(Plain, 40, "x"), "weather"), "blocked")
-        self.assertEqual(tool(chain(Plain, 3, BAD), "weather"), "blocked")
+        self.assertEqual(tool(chain(Plain, 20, "x"), "weather"), "ran")
         self.assertEqual(tool(chain(Plain, 3, "weather in Example City"), "weather"), "ran")
+        for levels in (3, 20, 30):
+            with self.assertRaises(GuardBlockError):
+                tool(chain(Plain, levels, BAD), "weather")
+        with self.assertRaises(GuardBlockError):
+            tool(chain(Plain, 40, "x"), "weather")
+        self.assertEqual(seen, ["pi:ignore_previous"] * 3 + ["size:nesting"])
 
 
 if __name__ == "__main__":
