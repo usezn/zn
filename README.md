@@ -222,7 +222,7 @@ Where zn-gate sits in a tool call, as an MCP server or as the `shield` proxy aro
 
 ### Galvanize: prompt-injection detection
 
-- **Today, local:** a deterministic rules engine (signatures plus normalization against homoglyphs, zero-width characters, BiDi overrides, comment splicing and Base64) checks prompts, tool arguments, tool output and MCP tool descriptions.
+- **Today, local:** a deterministic rules engine (signatures plus normalization against homoglyphs, zero-width characters, BiDi overrides, comment splicing; it also decodes Base64 in shell commands that pipe it to `base64 -d`, but not Base64 text pasted in a prompt or tool output) checks prompts, tool arguments, tool output and MCP tool descriptions.
 - **Today, optional cloud check:** the Galvanize 2 classifier ([open weights on Hugging Face](https://huggingface.co/usezn/Galvanize-2), Apache-2.0) can also check prompts sent to `analyze_prompt`, only if you set `ZN_CLOUD=1` and `ZN_API_KEY`. The secrets zn-gate detects are removed from the prompt on your machine before it is sent; personal data is not removed on this path, and a secret zn-gate does not recognize is sent with the text.
 - **Roadmap:** running Galvanize locally inside zn-gate.
 

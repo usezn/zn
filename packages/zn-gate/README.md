@@ -197,7 +197,7 @@ Example: [protect the tools of a Vercel AI SDK agent](https://github.com/usezn/z
 
 **Galvanize: prompt-injection detection**
 
-- Today, local: a deterministic rules engine with normalization against homoglyphs, zero-width characters, BiDi overrides (CVE-2021-42574), comment splicing and Base64. It checks prompts, tool arguments, tool output and MCP tool descriptions.
+- Today, local: a deterministic rules engine with normalization against homoglyphs, zero-width characters, BiDi overrides (CVE-2021-42574), comment splicing, and it decodes Base64 in shell commands that pipe it to `base64 -d` (Base64 text pasted in a prompt or tool output is not decoded). It checks prompts, tool arguments, tool output and MCP tool descriptions.
 - Today, optional cloud: the Galvanize 2 classifier ([open weights](https://huggingface.co/usezn/Galvanize-2), Apache-2.0) can also check prompts sent to `analyze_prompt`, only with `ZN_CLOUD=1` and `ZN_API_KEY`. The secrets zn-gate detects are removed before sending; personal data and a secret it does not recognize are sent as written.
 - Roadmap: running Galvanize locally inside zn-gate.
 
@@ -320,7 +320,7 @@ So `evaluate` is not a command or tool-call firewall: deleting files or piping a
 
 ## What is blocked and what only warns
 
-zn-gate blocks what is almost certainly an attack or a leak: reading credential files (`.env`, `~/.aws/credentials`, SSH keys), asking for API keys or passwords, sending data out through hidden image links, hidden instructions in Base64 or invisible characters, "ignore all previous instructions" and other injection wording. It does not judge whether a shell command is destructive: `rm -rf ~/` or `curl ... | sh` are not blocked on their own.
+zn-gate blocks what is almost certainly an attack or a leak: reading credential files (`.env`, `~/.aws/credentials`, SSH keys), asking for API keys or passwords, sending data out through a markdown image whose link has a parameter named `key`, `token`, `pass`, `secret`, `cred`, `data`, `val`, `leak` or `exfil`, a shell command that decodes Base64 (`echo ... | base64 -d`), hidden instructions in invisible characters, "ignore all previous instructions" and other injection wording. It does not judge whether a shell command is destructive: `rm -rf ~/` or `curl ... | sh` are not blocked on their own.
 
 Some other patterns also appear in ordinary text, such as `system:` keys in YAML, "bypass the cache" or an article that explains what a jailbreak is. For those, zn-gate lets the text through and adds a short warning (`advisory` in the result) so you or your agent can take a look.
 
