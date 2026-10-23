@@ -15,7 +15,7 @@ machine that stops reporting is visible.
 
 | Command | What it does |
 |---|---|
-| `zn team join <token>` | Connects this machine to your organization. The token (`znj_...`) comes from an organization admin. Needs the vault unlocked (`zn unlock`). |
+| `zn team join <token> [--agent <id>]` | Connects this machine to your organization. The token (`znj_...`) comes from an organization admin. Needs the vault unlocked (`zn unlock`). `--agent <id>` names the coding agent this installation is for (for example `claude-code`: lowercase letters, digits and hyphens, up to 32 characters); it is sent with the join request. |
 | `zn team status` | Organization, installation id, policy version and expiry, upload state. `--json` for scripts. Never shows the install token. |
 | `zn team sync` | Downloads the policy and uploads pending audit records now. This also happens on its own while the vault is unlocked: a few seconds after `zn unlock`, then every 15 minutes. |
 | `zn team leave` | Disconnects this machine. The organization's policy stops applying here. |
@@ -146,8 +146,9 @@ or `{m,n}` (n up to 256). At most one repetition may vary in length (by at
 most 64), and (that variation + 1) times the longest possible match must be
 at most 4096. No groups, alternatives, `?`, `*` or `+`. For example
 `ACME-[A-Z0-9]{24}` or `xox[bp]-[0-9]{10,13}-[A-Za-z0-9]{24}`. Other
-patterns are skipped on the machine, and all custom detectors together get
-200 ms per scan.
+patterns are skipped on the machine. A policy holds at most 50 custom
+detectors, and all of them together get 200 ms per scan and 1 second per
+process.
 
 ### Offline, expiry and removal
 
