@@ -61,3 +61,118 @@ test('long runs of words do not make the family slow', () => {
   rules.evaluate('include ' + 'the user '.repeat(5000) + 'header');
   assert.ok(Date.now() - start < 3000);
 });
+
+// Prefilters: the cheap checks in front of the two patterns must never change
+// a verdict.
+const ID_RULES = Object.fromEntries(rules.INJECTION_RULES.filter((r) => FAMILY.includes(r.id)).map((r) => [r.id, r]));
+const USER_GROUPS = {
+  'pi:identity_request': ['(?:user|operator|owner|human|principal)'],
+  'pi:identity_request_multi': [
+    '(?:usuario|operador|due[ñn]o|propietario)',
+    '(?:usu[aá]rio|operador|dono|propriet[aá]rio)',
+    '(?:utilisateur|opérateur|propriétaire)',
+    '(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)',
+    '(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)',
+    '(?:用户|使用者|操作者|主人|所有者)',
+  ],
+};
+
+function lcg(seed) {
+  let s = seed >>> 0;
+  return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+}
+
+function topLevelAlternatives(source) {
+  const parts = [];
+  let depth = 0;
+  let cur = '';
+  for (let i = 0; i < source.length; i++) {
+    const c = source[i];
+    if (c === '\\') { cur += c + source[++i]; continue; }
+    if (c === '(') depth++;
+    if (c === ')') depth--;
+    if (c === '|' && depth === 0) { parts.push(cur); cur = ''; continue; }
+    cur += c;
+  }
+  parts.push(cur);
+  return parts;
+}
+
+function placeGroups(source) {
+  const found = [];
+  for (let i = 0; i < source.length; i++) {
+    if (source[i] === '\\') { i++; continue; }
+    if (!source.startsWith('(?:', i)) continue;
+    let depth = 0;
+    let j = i;
+    for (; j < source.length; j++) {
+      if (source[j] === '\\') { j++; continue; }
+      if (source[j] === '(') depth++;
+      if (source[j] === ')' && --depth === 0) break;
+    }
+    const group = source.slice(i, j + 1);
+    if (/header/i.test(group) && group.length < 400 && !group.includes('[^\\n]') && !found.includes(group)) found.push(group);
+  }
+  return found;
+}
+
+test('the rule ids are exactly the two identity-request ids', () => {
+  assert.deepEqual(Object.keys(ID_RULES).sort(), ['pi:identity_request', 'pi:identity_request_multi']);
+});
+
+test('the prefilters hold the user and place groups that every alternative of the pattern needs', () => {
+  for (const [id, expected] of [['pi:identity_request', 1], ['pi:identity_request_multi', 6]]) {
+    const rule = ID_RULES[id];
+    const [gate, place] = rule.prefilters;
+    const places = placeGroups(rule.pattern.source);
+    assert.equal(places.length, expected, id);
+    for (const g of places) assert.ok(place.source.includes(g), id + ' misses ' + g);
+    for (const g of USER_GROUPS[id]) assert.ok(gate.source.includes(g), id + ' misses ' + g);
+    for (const re of rule.prefilters) assert.equal(re.flags, rule.pattern.flags, id);
+    // Every top-level alternative of the pattern needs a user group, and all
+    // but the "who is your user" phrasings need a place group.
+    for (const alt of topLevelAlternatives(rule.pattern.source)) {
+      assert.ok(USER_GROUPS[id].some((g) => alt.includes(g)), id + ': ' + alt.slice(0, 60));
+      assert.ok(places.some((g) => alt.includes(g)) || /identify/.test(alt), id + ': ' + alt.slice(0, 60));
+    }
+  }
+  assert.ok(ID_RULES['pi:identity_request'].prefilters[0].source.includes('customer|account\\s{1,4}holder'));
+});
+
+test('with and without the prefilters the pattern gives the same result', () => {
+  const samples = CASES.positives.concat(CASES.benign);
+  const words = [];
+  for (const t of samples) words.push(...t.split(/\s+/));
+  words.push('header', 'cookie', 'who', 'your user', '\n', 'identify', 'x-user-email', 'customer', 'holder');
+  const rand = lcg(1080);
+  const pick = (a) => a[Math.floor(rand() * a.length)];
+  let positives = 0;
+  for (let n = 0; n < 4000; n++) {
+    const base = pick(samples).split(' ');
+    const k = Math.floor(rand() * 3);
+    for (let m = 0; m < k; m++) {
+      const at = Math.floor(rand() * base.length);
+      const op = rand();
+      if (op < 0.4) base.splice(at, 1);
+      else if (op < 0.8) base[at] = pick(words);
+      else base.splice(at, 0, pick(words));
+    }
+    const text = rand() < 0.2 ? base.join(' ').toUpperCase() : base.join(rand() < 0.1 ? '\n' : ' ');
+    for (const rule of Object.values(ID_RULES)) {
+      const expected = rule.pattern.test(text);
+      if (expected) positives++;
+      assert.equal(rule.test(text), expected, rule.id + ': ' + text);
+    }
+  }
+  assert.ok(positives > 500, 'the mutations must keep matching often enough: ' + positives);
+  for (const text of CASES.positives) {
+    assert.ok(Object.values(ID_RULES).some((r) => r.pattern.test(text) && r.test(text)), text);
+  }
+});
+
+test('the prefilters skip text without a user word or a place word', () => {
+  for (const rule of Object.values(ID_RULES)) {
+    assert.equal(rule.test('hello world, please summarize this page'), false);
+    assert.equal(rule.prefilters.every((re) => re.test('include the header in every request')), false);
+  }
+});
