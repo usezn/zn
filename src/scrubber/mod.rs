@@ -41,7 +41,7 @@ fn api_re() -> &'static Regex {
     API_KEY_REGEX.get_or_init(|| {
         // Matches: api_key=xxx, secret: xxx, password=xxx, token: xxx
         // Requires at least 8 characters for the value (reduced from 16 for better detection)
-        Regex::new(r#"(?i)(api[_-]?key|secret[_-]?key|password|token|auth[_-]?token|access[_-]?token|bearer)[ ]*[:=][ ]*['"]?([a-zA-Z0-9_\-.]{8,})['"]?"#).unwrap()
+        Regex::new(r#"(?i)(api[_-]?key|secret[_-]?access[_-]?key|secret[_-]?key|secret|private[_-]?key|passwd|passphrase|password|credentials?|token|auth[_-]?token|access[_-]?token|bearer)[ ]*[:=][ ]*['"]?([a-zA-Z0-9_\-.]{8,})['"]?"#).unwrap()
     })
 }
 

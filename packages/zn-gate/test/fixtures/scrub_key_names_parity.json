@@ -1,0 +1,31 @@
+{
+  "_comment": "Key names that both scrubbers (Node lib/scrub and Rust src/scrubber) must redact in `name=value` and `name: value`. Read by test/scrub_key_names_parity.test.js and tests/scrubber_key_names.rs. Add a name here only when both redact it.",
+  "value": "Zk9fQ2xT7vLm4RwPa83dNb",
+  "redacted_names": [
+    "api_key",
+    "apikey",
+    "secret_key",
+    "secret",
+    "client_secret",
+    "clientSecret",
+    "password",
+    "passwd",
+    "passphrase",
+    "token",
+    "auth_token",
+    "access_token",
+    "refresh_token",
+    "id_token",
+    "session_token",
+    "private_key",
+    "credential",
+    "credentials",
+    "db_password",
+    "webhook_secret",
+    "app_secret",
+    "consumer_secret",
+    "api_secret",
+    "secret_access_key",
+    "aws_secret_access_key"
+  ]
+}
