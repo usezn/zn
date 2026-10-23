@@ -417,3 +417,49 @@ test('uninstall --help and -h print the uninstall help, not the general help', (
     assert.doesNotMatch(r.stdout, /hooks install/);
   }
 });
+
+test('uninstall: before the second question it lists the backups, token maps, session key and audit log it will delete', async (t) => {
+  const m = machine(t);
+  const v = vault(m);
+  const znHome = path.join(m.home, '.zn');
+  const put = (rel, body) => { const f = path.join(znHome, rel); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, body || 'x'); };
+  put(path.join('vault', 'a'.repeat(32) + '.age'));
+  put(path.join('vault', 'b'.repeat(32) + '.age'));
+  put(path.join('run', 'session.key'));
+  put('audit.jsonl');
+  put(path.join('vault-backup-20260101-100000', 'vault', 'secrets.age'));
+  put(path.join('vault-backup-20260101-100000', 'audit.jsonl'));
+  let atQuestion = null;
+  const c = io(m, { confirm: async (q) => { if (/Delete the vault/.test(q)) atQuestion = c.out(); return false; } });
+  assert.equal(await dispatch('uninstall', [], c.o), 0, c.err());
+  assert.ok(atQuestion, 'the second question was asked');
+  const tail = atQuestion.slice(atQuestion.lastIndexOf('Your vault still holds'));
+  assert.ok(tail.includes(v), 'the vault file is named');
+  assert.match(tail, /vault-backup-20260101-100000 {2}\(backup made by `zn vault reset`, 2 files\)/);
+  assert.match(tail, /2 token maps of projects/);
+  assert.match(tail, /session\.key {2}\(session key\)/);
+  assert.match(tail, /audit\.jsonl {2}\(audit log\)/);
+  assert.ok(fs.existsSync(v), 'answering no deletes nothing');
+  // The same list is in the plan, so --dry-run shows it too.
+  const d = io(m);
+  assert.equal(await dispatch('uninstall', ['--dry-run'], d.o), 0);
+  assert.match(d.out(), /vault-backup-20260101-100000 {2}\(backup made by/);
+  assert.match(d.out(), /2 token maps of projects/);
+});
+
+test('uninstall: a run or vault folder that is a link is removed as a link and never followed', { skip: process.platform === 'win32' }, async (t) => {
+  const m = machine(t);
+  const znHome = path.join(m.home, '.zn');
+  fs.mkdirSync(znHome, { recursive: true });
+  const victim = path.join(m.home, 'victim');
+  fs.mkdirSync(path.join(victim, 'sub'), { recursive: true });
+  const files = ['important.txt', 'secrets.age', 'session.key', path.join('sub', 'deep.txt')].map((r) => path.join(victim, r));
+  for (const f of files) fs.writeFileSync(f, 'keep');
+  fs.symlinkSync(victim, path.join(znHome, 'run'));
+  fs.symlinkSync(victim, path.join(znHome, 'vault'));
+  const c = io(m, { confirm: async () => true });
+  assert.equal(await dispatch('uninstall', [], c.o), 0, c.err());
+  for (const f of files) assert.equal(fs.readFileSync(f, 'utf8'), 'keep', f + ' is untouched');
+  for (const l of ['run', 'vault']) assert.throws(() => fs.lstatSync(path.join(znHome, l)), { code: 'ENOENT' });
+  assert.match(c.out(), /only the link is deleted/);
+});

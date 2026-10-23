@@ -99,12 +99,13 @@ async function plan(opts = {}) {
   }
   const vaultOpts = env.ZN_HOME ? { home: env.ZN_HOME } : (opts.home ? { home: path.join(home, '.zn') } : {});
   const store = require('./vault/store');
-  const files = require('./vault/reset').vaultFiles(vaultOpts);
+  const purge = require('./vault/purge');
+  const found = purge.targets(vaultOpts);
   return {
     agents,
     wrapped: wrappedConfigs(opts.envList),
     shadowed: shadowedFiles(cwd),
-    vault: { exists: files.length > 0, home: store.paths(vaultOpts).home },
+    vault: { exists: found.files.length > 0, home: store.paths(vaultOpts).home, lines: purge.describe(found, vaultOpts) },
     vaultOpts,
   };
 }
@@ -139,6 +140,8 @@ function printPlan(p, io) {
   if (p.vault.exists) {
     out(io, 'Asked separately at the end (default no):');
     out(io, '  The vault in ' + p.vault.home + ': your stored secrets. Deleting it cannot be undone.');
+    out(io, '  If you say yes, all of this is deleted:');
+    for (const l of p.vault.lines) out(io, '    - ' + l);
   }
   if (p.shadowed.length) {
     out(io, 'Left alone:');
@@ -251,6 +254,8 @@ async function run(args, io) {
   if (p.vault.exists) {
     out(io, '');
     out(io, 'Your vault still holds your secrets (' + p.vault.home + ').' + (p.shadowed.length ? ' The .env files with markers need it.' : ''));
+    out(io, 'If you answer yes, all of this is deleted for good:');
+    for (const l of p.vault.lines) out(io, '  - ' + l);
     if (await ask('Delete the vault too? Every secret in it is lost for good.')) { if ((await removeVault(p, io)) === 'failed') failed++; }
     else out(io, 'The vault was kept.');
   }

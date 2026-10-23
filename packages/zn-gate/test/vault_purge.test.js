@@ -191,3 +191,77 @@ test('the vault CLI knows purge and rejects stray words', () => {
   assert.match(fs.readFileSync(path.join(__dirname, '..', 'bin', 'cli.js'), 'utf8'), /vault purge /);
   assert.equal(typeof store.paths, 'function');
 });
+
+/* ------------------------- links are never followed ------------------------- */
+
+const LINKS = process.platform !== 'win32';
+
+/** A folder outside ~/.zn with files, a subfolder and files named like zn's own, to be left alone. */
+function victimFolder(s) {
+  const target = path.join(path.dirname(s.znHome), 'victim');
+  fs.mkdirSync(path.join(target, 'sub', 'deeper'), { recursive: true });
+  for (const rel of ['important.txt', 'secrets.age', 'session.key', path.join('sub', 'deep.txt'), path.join('sub', 'deeper', 'deepest.txt'), 'c'.repeat(32) + '.age']) {
+    fs.writeFileSync(path.join(target, rel), 'not zn files: ' + rel);
+  }
+  return target;
+}
+const gone = (f) => { try { fs.lstatSync(f); return false; } catch (err) { return err.code === 'ENOENT'; } };
+
+test('a run folder that is a link is deleted as a link; the folder it points to is left alone', { skip: !LINKS }, async (t) => {
+  const s = setup(t);
+  s.fill();
+  fs.rmSync(path.join(s.znHome, 'run'), { recursive: true });
+  const target = victimFolder(s);
+  const link = path.join(s.znHome, 'run');
+  fs.symlinkSync(target, link);
+  const before = tree(target);
+  const listed = purge.targets({}).files;
+  assert.ok(listed.some((f) => f.path === link), 'the link itself is listed');
+  assert.ok(!listed.some((f) => f.path.startsWith(target)), 'nothing inside the folder it points to is listed');
+  const r = await purge.removeAll({});
+  assert.deepEqual(r.left, []);
+  assert.ok(gone(link), 'the link is removed');
+  assert.deepEqual(tree(target), before, 'the target keeps every file and subfolder');
+});
+
+test('a vault folder that is a link is deleted as a link; the folder it points to is left alone, even with files named like the vault ones', { skip: !LINKS }, async (t) => {
+  const s = setup(t);
+  s.fill();
+  fs.rmSync(path.join(s.znHome, 'vault'), { recursive: true });
+  const target = victimFolder(s);
+  const link = path.join(s.znHome, 'vault');
+  fs.symlinkSync(target, link);
+  const before = tree(target);
+  const listed = purge.targets({}).files;
+  assert.ok(listed.some((f) => f.path === link));
+  assert.ok(!listed.some((f) => f.path.startsWith(target + path.sep)));
+  const said = [];
+  assert.equal(await purge.purgeVault({ yes: true }, person({ stdin: { isTTY: false }, out: (l) => said.push(l) })), 0);
+  assert.match(said.join('\n'), /only the link is deleted/);
+  assert.ok(gone(link));
+  assert.deepEqual(tree(target), before);
+  assert.ok(!fs.existsSync(path.join(s.znHome, 'audit.jsonl')), 'the real files next to the link are still deleted');
+});
+
+test('the run folder is read one level deep: a subfolder in it is not walked', async (t) => {
+  const s = setup(t);
+  s.fill();
+  s.put(path.join('run', 'sub', 'keep.txt'), 'not a zn file');
+  const listed = purge.targets({}).files.map((f) => f.path);
+  assert.ok(listed.includes(path.join(s.znHome, 'run', 'session.key')));
+  assert.ok(!listed.some((f) => f.includes(path.join('run', 'sub'))));
+  const r = await purge.removeAll({});
+  assert.deepEqual(r.left, []);
+  assert.ok(fs.existsSync(path.join(s.znHome, 'run', 'sub', 'keep.txt')));
+});
+
+test('a file that still exists after its removal call is reported by the second look', async (t) => {
+  const s = setup(t);
+  s.fill();
+  const stuck = path.join(s.znHome, 'vault', 'secrets.age');
+  const orig = fs.unlinkSync;
+  t.mock.method(fs, 'unlinkSync', (f, ...rest) => { if (f === stuck) return undefined; return orig(f, ...rest); });
+  const r = await purge.removeAll({});
+  assert.ok(r.left.includes(stuck), 'the file the call did not remove is in left');
+  assert.ok(!r.removed.includes(stuck));
+});

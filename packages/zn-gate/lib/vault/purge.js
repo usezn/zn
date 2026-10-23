@@ -56,13 +56,25 @@ function walk(dir, acc, dirs) {
   return acc;
 }
 
+const LINK_KIND = 'link to another folder (only the link is deleted, never what it points to)';
+
+function lstatOf(f) {
+  try { return fs.lstatSync(f); } catch (err) { return null; }
+}
+
 /**
  * Everything purge would delete: { files: [{ path, kind }], dirs: [backup folders, deepest first],
- * backend }. A symbolic link is listed as the link itself and never followed.
+ * backend }. A symbolic link is listed as the link itself and never followed: a `vault` or `run`
+ * folder that is a link is deleted as a link, and the folder it points to is not read or touched.
  */
 function targets(opts) {
   const p = store.paths(opts);
-  const files = reset.vaultFiles(opts).map((f) => ({ path: f.src, kind: kindOf(f.rel) }));
+  const vaultSt = lstatOf(p.vaultDir);
+  const vaultLink = !!(vaultSt && vaultSt.isSymbolicLink());
+  const files = reset.vaultFiles(opts)
+    .filter((f) => !vaultLink || path.dirname(f.src) !== p.vaultDir)
+    .map((f) => ({ path: f.src, kind: kindOf(f.rel) }));
+  if (vaultLink) files.push({ path: p.vaultDir, kind: LINK_KIND });
   const dirs = [];
   let names = [];
   try { names = fs.readdirSync(p.home); } catch (err) { /* no zn folder */ }
@@ -74,7 +86,20 @@ function targets(opts) {
     for (const f of walk(d, [], dirs)) files.push({ path: f, kind: 'backup (' + n + ')' });
     dirs.push(d);
   }
-  for (const f of walk(p.runDir, [])) files.push({ path: f, kind: path.basename(f) === 'session.key' ? 'session key' : 'daemon runtime file' });
+  // The run folder holds a few plain files (the session key and the daemon's socket or pipe name): its first level only.
+  const runSt = lstatOf(p.runDir);
+  if (runSt && !runSt.isDirectory()) {
+    files.push({ path: p.runDir, kind: runSt.isSymbolicLink() ? LINK_KIND : 'file' });
+  } else if (runSt) {
+    let runNames = [];
+    try { runNames = fs.readdirSync(p.runDir).sort(); } catch (err) { /* unreadable: the second look reports it */ }
+    for (const n of runNames) {
+      const f = path.join(p.runDir, n);
+      const st = lstatOf(f);
+      if (!st || st.isDirectory()) continue;
+      files.push({ path: f, kind: n === 'session.key' ? 'session key' : 'daemon runtime file' });
+    }
+  }
   const fails = path.join(p.home, 'unlock-failures');
   try { if (fs.lstatSync(fails).isFile()) files.push({ path: fails, kind: 'failed-unlock counter' }); } catch (err) { /* none */ }
   let backend = null;
@@ -82,9 +107,25 @@ function targets(opts) {
   return { files, dirs: dirs.sort((a, b) => b.length - a.length), backend };
 }
 
-/** Delete one file or link; returns true when it is gone. */
-function unlinkGone(f) {
-  try { fs.unlinkSync(f); } catch (err) { if (!err || err.code !== 'ENOENT') return false; }
+/** Is the folder holding this file inside the zn folder, once links are resolved? */
+function insideHome(f, home) {
+  try {
+    const real = fs.realpathSync(path.dirname(f));
+    const root = fs.realpathSync(home);
+    return real === root || real.startsWith(root.endsWith(path.sep) ? root : root + path.sep);
+  } catch (err) { return false; }
+}
+
+/** Delete one file or link (a link is removed itself, never what it points to); returns true when it is gone. */
+function unlinkGone(f, home) {
+  if (home && !insideHome(f, home)) return false;
+  try { fs.unlinkSync(f); } catch (err) {
+    if (!err || err.code === 'ENOENT') return true;
+    // Windows: a link to a folder is removed like a folder.
+    const st = lstatOf(f);
+    if (!(st && st.isSymbolicLink() && (err.code === 'EPERM' || err.code === 'EISDIR'))) return false;
+    try { fs.rmdirSync(f); } catch (err2) { return !lstatOf(f); }
+  }
   return true;
 }
 
@@ -97,7 +138,8 @@ async function removeAll(opts) {
   const t = targets(opts);
   const removed = [];
   const left = [];
-  for (const f of t.files) (unlinkGone(f.path) ? removed : left).push(f.path);
+  const home = store.paths(opts).home;
+  for (const f of t.files) (unlinkGone(f.path, home) ? removed : left).push(f.path);
   let key = 'none';
   if (left.length) {
     key = t.backend && t.backend !== 'passphrase' ? 'kept' : 'none';
@@ -171,4 +213,28 @@ async function purgeVault(opts, io) {
   return 0;
 }
 
-module.exports = { purgeVault, targets, removeAll, keyProblem, PHRASE };
+/**
+ * The list of what purge deletes, for a person to read before they answer: backups by folder, token
+ * maps counted, every other file by name. Returns lines.
+ */
+function describe(t, opts) {
+  const home = store.paths(opts).home;
+  const lines = [];
+  const backups = new Map();
+  let maps = 0;
+  let mapsDir = null;
+  for (const f of t.files) {
+    const m = /^backup \((.+)\)$/.exec(f.kind);
+    if (m) { const k = backups.get(m[1]) || { n: 0 }; k.n += 1; backups.set(m[1], k); continue; }
+    if (f.kind === 'token map of a project') { maps += 1; mapsDir = path.dirname(f.path); continue; }
+    lines.push(f.path + '  (' + f.kind + ')');
+  }
+  if (maps) lines.push(mapsDir + '  (' + maps + ' token map' + (maps === 1 ? '' : 's') + ' of projects)');
+  for (const [name, k] of [...backups].sort((a, b) => a[0].localeCompare(b[0]))) {
+    lines.push(path.join(home, name) +'  (backup made by `zn vault reset`, ' + k.n + ' file' + (k.n === 1 ? '' : 's') + ')');
+  }
+  if (t.backend && t.backend !== 'passphrase') lines.push('the vault key in your ' + t.backend + ' keychain');
+  return lines;
+}
+
+module.exports = { purgeVault, targets, removeAll, keyProblem, describe, PHRASE };

@@ -562,7 +562,7 @@ function makeOps(state, ctl) {
           const [eff] = await team.effectiveList([asLocal(inner, s)], agentId, false);
           if (eff && eff.deny) return orgDenied([inner]);
           // A proxy-mode secret is only ever used by the broker's HTTP tool: it is never written into a file by a restore.
-          if (eff && eff.mode === 'proxy' && dest === 'write_ignored') return refuse('policy:proxy_mode', PROXY_NOT_RESTORED);
+          if (eff && !['env', 'file'].includes(eff.mode) && dest === 'write_ignored') return refuse('policy:proxy_mode', PROXY_NOT_RESTORED);
           if (eff && eff.warn === true) org = { warn: true, warnReason: eff.warnReason };
         }
         if (s) { value = s.value; s.lastUsed = new Date().toISOString(); state.dirtySecrets = true; }

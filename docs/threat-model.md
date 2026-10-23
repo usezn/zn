@@ -227,7 +227,6 @@ prove it can read `~/.zn/run/session.key`.
   file afterwards is outside the daemon's reach. The changes in this release add
   checks of the secret's settings and a record of every request. They do not
   prove who is asking. This is the same boundary as `ssh-agent`.
-  same boundary as `ssh-agent`.
 - **An agent or tool name grants nothing by itself.** It is written to the
   audit log as the caller said it. The one thing a registered agent id changes
   is which hosts an organization policy may offer for your approval, and those
@@ -247,10 +246,9 @@ prove it can read `~/.zn/run/session.key`.
   A separate operating-system identity for the broker, which would let the
   daemon tell zn-gate's own processes from the rest of your session, is not part
   of this release.
-- **Windows relies on the user profile's ACL.** The named pipe has no explicit
-  DACL and the daemon does not check the permissions of the folder. With
-  `ZN_HOME` set to a folder other accounts can read, they could read the
-  session key and connect. Leave `ZN_HOME` unset on a shared machine.
+- **Windows permissions are explicit.** The folders, the session key and the
+  pipe get an owner-only access list that the daemon reads back; see
+  "Windows permissions are explicit" under "Design decisions and known limits".
 - **A vault started by an older zn-gate does not enforce any of this.**
   `zn unlock` restarts it, and `zn vault status` says when it is outdated. A
   newer daemon in turn refuses an older zn-gate's requests that name no context
