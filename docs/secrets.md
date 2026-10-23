@@ -113,10 +113,12 @@ name in text is never touched. Only the value is replaced; the key stays.
   `ubuntu` or similar. An address needs a number and at least two words, so
   URLs, e-mails, IPs and wallet addresses are skipped.
 
-They are personal data, not secrets: they follow the scrubber's `pii` setting
-(`pii: false` turns all personal data off) and can be switched off one by one
-with `pii: { name: false, address: false, username: false }`. They are on by
-default.
+They are personal data, not secrets, and they are on by default. The agent hooks
+have no setting that turns them off, alone or with the other personal data: they
+are always redacted. The only switch is an option for a program that calls
+zn-gate's scrubber directly (`pii: false`, or `pii: { name: false, address:
+false, username: false }`); there is none in `~/.zn/config.json` or
+`zn.config.json`.
 
 A prompt that contains a secret is not sent. In prompts, zn also blocks a
 value of 8 characters or more given to a credential name, in the middle of a
