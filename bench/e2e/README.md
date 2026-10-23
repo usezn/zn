@@ -96,3 +96,10 @@ bash bench/e2e/harness/run_all.sh /tmp/zn-e2e /tmp/agents/bin
 
 OpenCode downloads its `@ai-sdk/openai-compatible` provider package on first
 use.
+
+## Antigravity CLI
+
+`antigravity/README.md` describes a separate kit for the Antigravity CLI (`agy`). It has no scripted provider: it
+runs the real `agy` headless against hook scenarios (harmless command, `.env` read, protected write, dangerous
+command, a failing hook, `enabled: false`, the project hook form, tool names and argument keys, an MCP tool, a
+plugin hook) and needs an authenticated `agy`. Run it with `bash bench/e2e/harness/run_antigravity.sh`.

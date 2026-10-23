@@ -1,0 +1,6 @@
+date: 2026-10-23T17:18Z
+host: Linux 7.0.0-1014-gcp, node v24.21.0
+os: Ubuntu 24.04.5 LTS
+agy version: 1.4.6
+zn-gate: zn-gate 1.13.1 (rules engine: 2026-10-25.5; scrub rules: 2026-10-23.7; audit rules: 2026-10-23.8)
+install: curl -fsSL https://antigravity.google/cli/install.sh | bash (no options besides -d/--dir; binary placed in ~/.local/bin/agy, 224 MB)
