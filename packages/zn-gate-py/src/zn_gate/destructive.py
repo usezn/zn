@@ -28,7 +28,7 @@ from typing import List, Optional, Tuple
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-23.7"
+COMMAND_RULES_VERSION = "2026-10-23.8"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -101,6 +101,7 @@ _PS_CALL_RE = re.compile(
 # POSIX shells a backtick starts a command substitution, so the text is never stripped for the other patterns.
 _PS_TICK_RE = re.compile(r"(?:(?<=[\s|;&(A-Za-z0-9_.-])|^)`(?=[A-Za-z-])", _A)
 _PS_LINE_TICK_RE = re.compile(r"`\r?\n")
+_PS_NEXT_PIPE_RE = re.compile(r"\r?\n[ \t]*\|")
 _PS_DISK_RE = re.compile(r"(?:^|[\s;&|(])(?:format-volume|clear-disk)\b", _AI)
 
 _ANSI_C_RE = re.compile(r"\$'((?:[^'\\]|\\[\s\S])*)'")
@@ -597,7 +598,12 @@ def _analyze(cmd: str, depth: int = 0) -> Optional[str]:
     bare = text if len(text) > _QUOTE_SCAN_MAX else _QUOTED_RE.sub("''", text)
     if _FORK_BOMB_RE.search(bare):
         return "fork_bomb"
-    ps_bare = _PS_TICK_RE.sub("", _PS_LINE_TICK_RE.sub(" ", bare)) if "`" in bare else bare
+    # PowerShell reading: a backtick and a line break continue the line, and so does a next line that starts with a pipe
+    # (PowerShell 7), so `iwr URL` + newline + `| iex` is `iwr URL | iex`.
+    if "`" in bare or "\n" in bare:
+        ps_bare = _PS_NEXT_PIPE_RE.sub(" |", _PS_TICK_RE.sub("", _PS_LINE_TICK_RE.sub(" ", bare)))
+    else:
+        ps_bare = bare
     if (
         _SHELL_RUNS_DOWNLOAD_RE.search(text)
         or _SOURCE_DOWNLOAD_RE.search(bare)
@@ -618,10 +624,11 @@ def _analyze(cmd: str, depth: int = 0) -> Optional[str]:
         if posix_hit:
             return posix_hit
     # ANSI-C quoting: bash reads $'\x63url' as curl. The words are decoded the way bash does, then read again; as above,
-    # this reading only adds a block, and only for the two rules that name a program or a file ($'\x73h', $'.bash\x72c').
+    # this reading only adds a block, and only for the rules that name a program, a file or a path ($'\x73h',
+    # $'.bash\x72c', $'\x72m' -rf $'\x7e').
     if "$'" in text:
         ansi_hit = _check_segments(_segments_of(_decode_ansi_c(text), True)[0], depth)
-        if ansi_hit in ("pipe_to_shell", "rc_download"):
+        if ansi_hit in ("pipe_to_shell", "rc_download", "rm_root_home"):
             return ansi_hit
     # Fail closed: never allow a line whose tail was not read.
     return _OVERFLOW if truncated else None
