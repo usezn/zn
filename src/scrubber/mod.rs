@@ -45,8 +45,9 @@ fn api_re() -> &'static Regex {
         // member ("api_key": "xxx"), also inside a JSON string (\"api_key\":\"xxx\").
         // Group 1 is the name, group 2 the optional quote that closes it, group 3 the optional
         // quote that opens the value (both may be backslash-escaped), group 4 the value.
-        // Requires at least 8 characters for the value (reduced from 16 for better detection)
-        Regex::new(r#"(?i)(api[_-]?key|secret[_-]?key|password|token|auth[_-]?token|access[_-]?token|bearer)(\\{0,2}['"])?[ \t]*[:=][ \t]*(\\{0,2}['"])?([a-zA-Z0-9_\-.]{8,})(?:\\{0,2}['"])?"#).unwrap()
+        // Requires at least 8 characters for the value (reduced from 16 for better detection).
+        // A value split by shell quotes ('ab''cd', ab""cd) is one word: redact all of it.
+        Regex::new(r#"(?i)(api[_-]?key|secret[_-]?key|password|token|auth[_-]?token|access[_-]?token|bearer)(\\{0,2}['"])?[ \t]*[:=][ \t]*(\\{0,2}['"])?([a-zA-Z0-9_\-.]{8,})(?:\\{0,2}['"])?(?:['"]+[a-zA-Z0-9_\-.]*)*"#).unwrap()
     })
 }
 
@@ -604,6 +605,40 @@ mod tests {
         ] {
             assert_eq!(Scrubber::scrub(input), input);
         }
+    }
+
+    #[test]
+    fn test_scrub_shell_split_value() {
+        // The shell joins 'a''b' and a""b into one word, so no half may stay readable.
+        for input in [
+            "api_key='fakeSecret''Value1234'",
+            "api_key=fakeSecret\"\"Value1234",
+            "api_key=\"fakeSecret\"\"Value1234\"",
+            "api_key='fakeSecret'\"Value1234\"'Tail5678'",
+            "export api_key=fakeSecret''Value1234 && run",
+        ] {
+            let out = Scrubber::scrub(input);
+            assert!(
+                !out.contains("Value1234") && !out.contains("fakeSecret"),
+                "{input} -> {out}"
+            );
+            assert!(!out.contains("Tail5678"), "{input} -> {out}");
+            assert!(out.contains("[SECRET_REDACTED]"), "{input} -> {out}");
+            assert_eq!(Scrubber::scrub(&out), out);
+        }
+        assert_eq!(
+            Scrubber::scrub("export api_key=fakeSecret''Value1234 && run"),
+            "export api_key: [SECRET_REDACTED] && run"
+        );
+        // A quoted value followed by other words or members is untouched.
+        assert_eq!(
+            Scrubber::scrub(r#"api_key="fakeSecret1" "other""#),
+            r#"api_key: [SECRET_REDACTED] "other""#
+        );
+        assert_eq!(
+            Scrubber::scrub(r#"{"api_key":"fakeSecret1","n":"v"}"#),
+            r#"{"api_key": "[SECRET_REDACTED]","n":"v"}"#
+        );
     }
 
     #[test]
