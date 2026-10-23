@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-25.8
+ * RULES_VERSION: 2026-10-25.9
  */
 
-const RULES_VERSION = '2026-10-25.8';
+const RULES_VERSION = '2026-10-25.9';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -1142,12 +1142,178 @@ function mergeCandidates(cands) {
   return merged;
 }
 
+// ---------------------------------------------------------------------------
+// Quoted credentials. The assignment rules read one word, so the rest of
+// `"api_key":"abcdefghijkl mno pqr"` would stay in the clear. Two kinds of
+// value are read here, before the other rules (the Python package does the
+// same in _find_quoted_credentials):
+//   - a quoted value of a secret key that has whitespace in it, up to its
+//     closing quote. A double-quoted value ends at the first quote that is not
+//     escaped, a single-quoted one at the next ', and a value inside an escaped
+//     JSON string at its own escaped quote;
+//   - a bare number of 8 or more characters under a QUOTED key. The
+//     replacement is written as a string, so the JSON stays valid. A number
+//     under an unquoted key (YAML, shell) is left alone.
+// Values shorter than 8 characters, placeholders and values with no closing
+// quote inside KV_MAX_VALUE characters are left alone. One pass over the text,
+// and each opener reads at most KV_MAX_VALUE characters.
+// ---------------------------------------------------------------------------
+// Groups: 1 = name, 2 = the quote that closes a quoted key (with the backslashes
+// of a JSON string inside a string), 3 = the opening quote of the value (same
+// escapes). The name takes no suffix, so password_hint and token_count are other keys.
+const KV_OPEN_RE = new RegExp('(password|passwd|secret|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key|client[_-]?secret|auth[_-]?token)(\\\\{0,2}["\'])?[ \\t]{0,16}(?:=>|:=|=|:)[ \\t]{0,16}(\\\\{0,2}["\'])?', 'gi');
+const KV_PREFILTER_RE = /pass|secret|token|api[_-]?key|access[_-]?key|private[_-]?key/i;
+const KV_MAX_VALUE = 4096;
+const KV_MIN_VALUE = 8;
+const KV_NUMBER_RE = /-?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/y;
+const KV_MASK_RE = /^-?([0-9])\1+$/;
+const KV_WORD_CHAR_RE = /[A-Za-z0-9_.-]/;
+const KV_WORD_RUN_RE = /[A-Za-z0-9_.-]*/y;
+const KV_AUTH_WORD_RE = /^(?:bearer|basic|token)\s+/i;
+// A placeholder, or a reference after an auth scheme word ("Bearer ${TOKEN}").
+const KV_PLACEHOLDER_RE = /^(?:x{3,}|\*{3,}|\.{3,}|-+|_+|<[^>]*>|\$\{?[^}]*\}?|\{\{?[^}]*\}?\}|%\(?[a-z_]*\)?s|:[a-z_]+|\[[^\]]*\])$/i;
+const KV_PLACEHOLDER_WORDS_RE = /(?:^|[^a-z])(?:password|passwd|passw0rd|secret|changeme|change_me|example|placeholder|your[_-]?|redacted|dummy|sample|foobar|hunter2|xxxx|todo|insert|replace|mypass|pass(?:word)?123)(?:[^a-z]|$)/i;
+const KV_REPEAT_RE = /^([^\n\r\u2028\u2029])\1+$/u;
+const QUOTED_CREDENTIAL_RULE = 'secret:quoted_credential';
+const KV_REPLACEMENT = '[REDACTED_SECRET]';
+
+function kvBarePlaceholder(value) {
+  return KV_PLACEHOLDER_RE.test(value) || KV_PLACEHOLDER_WORDS_RE.test(value) || KV_REPEAT_RE.test(value);
+}
+
+function kvPlaceholder(value) {
+  if (kvBarePlaceholder(value)) return true;
+  const m = KV_AUTH_WORD_RE.exec(value);
+  return m !== null && kvBarePlaceholder(value.slice(m[0].length));
+}
+
+// Index of the closing quote of a value that starts at `start`, or -1. The
+// window is KV_MAX_VALUE characters; a backslash run is counted once (the scan
+// jumps past it), so the work stays linear.
+function kvClosingQuote(text, start, quote, level) {
+  const n = text.length;
+  const limit = Math.min(n, start + KV_MAX_VALUE);
+  let i = start;
+  if (level === 0) {
+    const q = quote.charCodeAt(0);
+    while (i < limit) {
+      const c = text.charCodeAt(i);
+      if (c === q) return i;
+      // In a double-quoted value a backslash escapes the next character; in a single-quoted one it is just a character.
+      i += c === 92 && q === 34 ? 2 : 1;
+    }
+    return -1;
+  }
+  while (i < limit) {
+    if (text.charCodeAt(i) !== 92) {
+      i++;
+      continue;
+    }
+    let k = i;
+    while (k < n && text.charCodeAt(k) === 92) k++;
+    if (k - i === level && text[k] === quote) return i;
+    i = k + 1;
+  }
+  return -1;
+}
+
+// Spans {start, end, quote} of the values described above. `quote` is the quote
+// that the replacement of a bare number is wrapped in (empty for a quoted value,
+// whose own quotes stay).
+function findQuotedCredentials(text) {
+  const found = [];
+  const n = text.length;
+  const re = new RegExp(KV_OPEN_RE.source, KV_OPEN_RE.flags);
+  let pos = 0;
+  for (;;) {
+    re.lastIndex = pos;
+    const m = re.exec(text);
+    if (m === null) break;
+    const after = re.lastIndex;
+    pos = after;
+    const opener = m[3];
+    const keyQuote = m[2];
+    if (opener === undefined) {
+      KV_NUMBER_RE.lastIndex = after;
+      const num = KV_NUMBER_RE.exec(text);
+      // Only a quoted key (a JSON member or a dict entry) counts.
+      if (!keyQuote || num === null || num[0].length < KV_MIN_VALUE) continue;
+      const end = after + num[0].length;
+      if (end < n && KV_WORD_CHAR_RE.test(text[end])) continue; // part of a longer word, not a number
+      if (KV_MASK_RE.test(num[0])) continue;                    // 00000000: a mask
+      found.push({ start: after, end, quote: keyQuote });
+      pos = end;
+      continue;
+    }
+    const quote = opener[opener.length - 1];
+    const level = opener.length - 1;                          // backslashes before the opening quote
+    const start = after;
+    const end = kvClosingQuote(text, start, quote, level);
+    if (end < 0) continue;
+    const value = text.slice(start, end);
+    if (value.length < KV_MIN_VALUE || !/\s/.test(value) || kvPlaceholder(value)) continue;
+    let spanEnd = end;
+    if (level === 0 && !keyQuote) {
+      // A shell word glued to more quoted pieces ('a b''c') is one value: take them too.
+      let p = end + 1;
+      for (let k = 0; k < 8; k++) {
+        if (p >= n || (text[p] !== '"' && text[p] !== "'")) break;
+        KV_WORD_RUN_RE.lastIndex = p + 1;
+        const q = p + 1 + KV_WORD_RUN_RE.exec(text)[0].length;
+        if (q === p + 1) break;
+        spanEnd = q;
+        p = q + 1;
+      }
+    }
+    found.push({ start, end: spanEnd, quote: '' });
+    pos = spanEnd;
+  }
+  return found;
+}
+
+// Redacts the values found by findQuotedCredentials, on the text and on the text
+// without invisible characters (as every other rule).
+function redactQuotedCredentials(text) {
+  if (typeof text !== 'string' || !text || !KV_PREFILTER_RE.test(text)) return { sanitized: text, detections: [] };
+  const view = invisibleView(text);
+  const passes = view ? [[text, null], [view.clean, view.map]] : [[text, null]];
+  const cands = [];
+  const seen = [];
+  for (const [hay, map] of passes) {
+    for (const f of findQuotedCredentials(hay)) {
+      const [start, end] = spanIn(map, f.start, f.end);
+      if (!map) seen.push([start, end]);
+      else if (seen.filter(([s, e]) => start < e && s < end).length >= 2) continue;
+      cands.push({ start, end, rule: QUOTED_CREDENTIAL_RULE, text: f.quote + KV_REPLACEMENT + f.quote });
+    }
+  }
+  if (cands.length === 0) return { sanitized: text, detections: [] };
+  const detections = [];
+  let out = '';
+  let last = 0;
+  for (const e of mergeCandidates(cands)) {
+    out += text.slice(last, e.start) + e.text;
+    last = e.end;
+    detections.push({ rule: e.rule, index: e.start });
+  }
+  return { sanitized: out + text.slice(last), detections };
+}
+
+// The quoted values first (the other rules read one word and would leave the
+// rest of a value behind), then SECRET_PATTERNS.
+function redactCredentials(text) {
+  const quoted = redactQuotedCredentials(text);
+  const rest = redactWith(quoted.sanitized, SECRET_PATTERNS);
+  if (quoted.detections.length === 0) return rest;
+  return { sanitized: rest.sanitized, detections: quoted.detections.concat(rest.detections) };
+}
+
 // Redacts secrets. Every rule runs on the original text and on the text without
 // invisible characters (see ruleCandidates), and the redacted spans are the union
 // of what both find, so a secret split by a zero-width or tag character is
 // redacted whole. Texts without invisible characters are handled as before.
 function redactSecrets(text) {
-  const first = redactWith(text, SECRET_PATTERNS);
+  const first = redactCredentials(text);
   if (typeof first.sanitized !== 'string' || !first.sanitized) return first;
   const second = redactProviderFormats(first.sanitized);
   if (second.detections.length === 0) return first;
@@ -1204,7 +1370,7 @@ function redactScanRules(text) {
 
 // redactSecrets plus SCAN_SECRET_PATTERNS, for the lines `zn-gate scan` prints.
 function redactScanSecrets(text) {
-  const first = redactWith(text, SECRET_PATTERNS);
+  const first = redactCredentials(text);
   const second = redactWith(first.sanitized, SCAN_SECRET_PATTERNS);
   return { sanitized: second.sanitized, detections: first.detections.concat(second.detections) };
 }
@@ -1464,6 +1630,7 @@ module.exports = {
   analyzePrompt: evaluate,
   loadCustomConfig,
   redactSecrets,
+  QUOTED_CREDENTIAL_RULE,
   redactScanSecrets,
   redactScanRules,
   isNonSecretValue,
