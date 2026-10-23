@@ -32,6 +32,10 @@
       {
         "file": ".pre-commit-hooks.yaml",
         "regex": "^  entry: npx --yes zn-gate@(\\S+) audit$"
+      },
+      {
+        "file": "README.md",
+        "regex": "rev: v([0-9][^,\\s]*), hooks: \\[\\{id: zn-gate-scan"
       }
     ],
     "pinsExclude": [
