@@ -44,17 +44,22 @@ fn api_re() -> &'static Regex {
         // Matches: api_key=xxx, secret: xxx, password=xxx, token: xxx, and the same as a JSON
         // member ("api_key": "xxx"), also inside a JSON string (\"api_key\":\"xxx\").
         // Group 1 is the name, group 2 the optional quote that closes it. A quoted value needs
-        // its closing quote, of the same kind as the one that opens it (both may be
-        // backslash-escaped), like the Node scrubber: double-quoted is group 3 (quote) and 4
-        // (value), single-quoted is group 5 and 6, and the value may have any character but
-        // that quote, a backslash or a space (`/`, `+`, `=`, `@`, the other quote...). Without
-        // a closing quote nothing is redacted, so a JSON string is never left half closed. An
-        // unquoted value (group 7) is a run of token characters.
+        // its closing quote, of the same kind AND at the same escape level as the one that
+        // opens it, like the Node scrubber (the regex crate has no backreferences, so there is
+        // one alternative per level: `"v"`, `\"v\"`, `\\"v\\"`, and the same with `'`).
+        // The value may have any character but that quote, a backslash or a space (`/`, `+`,
+        // `=`, `@`, the other quote...); an unescaped double-quoted value may also have an
+        // escaped quote or backslash (`"ab\"cd"`). Groups (quote, value): 3-4 `"`, 5-6 `\"`,
+        // 7-8 `\\"`, 9-10 `'`, 11-12 `\'`, 13-14 `\\'`. A value that opens with an escaped
+        // quote and has no closing quote of its own is inside a JSON string that ends right
+        // after it: it is redacted up to there and what follows is kept (groups 15-16 and
+        // 17-18). Without a closing quote an unescaped value is not redacted, so a JSON string
+        // is never left half closed. An unquoted value (group 19) is a run of token characters.
         // Requires at least 8 characters for the value (reduced from 16 for better detection).
         // A value split by shell quotes ('ab''cd', ab""cd) is one word: redact all of it. Each
         // extra piece needs a character after its quote, so the quote that closes a JSON string
         // (`?token=abc"}`, `["token=abc","x"]`) is never taken.
-        Regex::new(r#"(?i)(api[_-]?key|secret[_-]?key|password|token|auth[_-]?token|access[_-]?token|bearer)(\\{0,2}['"])?[ \t]*[:=][ \t]*(?:(\\{0,2}")([^"\\\s]{8,})\\{0,2}"|(\\{0,2}')([^'\\\s]{8,})\\{0,2}'|([a-zA-Z0-9_\-./+=]{8,}))(?:['"]+[a-zA-Z0-9_\-.]+)*"#).unwrap()
+        Regex::new(r#"(?i)(api[_-]?key|secret[_-]?key|password|token|auth[_-]?token|access[_-]?token|bearer)(\\{0,2}['"])?[ \t]*[:=][ \t]*(?:(")((?:[^"\\\s]|\\["\\]){8,})"|(\\")([^"\\\s]{8,})\\"|(\\\\")([^"\\\s]{8,})\\\\"|(')([^'\\\s]{8,})'|(\\')([^'\\\s]{8,})\\'|(\\\\')([^'\\\s]{8,})\\\\'|(\\")([^"\\\s]{8,})|(\\\\")([^"\\\s]{8,})|([a-zA-Z0-9_\-./+=]{8,}))(?:['"]+[a-zA-Z0-9_\-.]+)*"#).unwrap()
     })
 }
 
@@ -99,11 +104,25 @@ fn redact_auth(caps: &regex::Captures) -> String {
     }
 }
 
+/// The (quote, value) capture groups of the quoted alternatives of api_re(), and whether the
+/// alternative has a closing quote of its own.
+const QUOTED_VALUE_GROUPS: [(usize, usize, bool); 8] = [
+    (3, 4, true),
+    (5, 6, true),
+    (7, 8, true),
+    (9, 10, true),
+    (11, 12, true),
+    (13, 14, true),
+    (15, 16, false),
+    (17, 18, false),
+];
+
 /// The value of one api_re() match, without its quotes.
 fn secret_value<'a>(caps: &regex::Captures<'a>) -> &'a str {
-    caps.get(4)
-        .or_else(|| caps.get(6))
-        .or_else(|| caps.get(7))
+    QUOTED_VALUE_GROUPS
+        .iter()
+        .find_map(|&(_, v, _)| caps.get(v))
+        .or_else(|| caps.get(19))
         .map_or("", |m| m.as_str())
 }
 
@@ -164,12 +183,15 @@ fn redact_secret(caps: &regex::Captures) -> String {
     match caps.get(2) {
         None => format!("{name}: [SECRET_REDACTED]"),
         Some(key_quote) => {
-            let value_quote = caps
-                .get(3)
-                .or_else(|| caps.get(5))
-                .map_or("", |m| m.as_str());
+            let (open, close) = QUOTED_VALUE_GROUPS
+                .iter()
+                .find_map(|&(q, _, closed)| {
+                    caps.get(q)
+                        .map(|m| (m.as_str(), if closed { m.as_str() } else { "" }))
+                })
+                .unwrap_or(("", ""));
             format!(
-                "{name}{}: {value_quote}[SECRET_REDACTED]{value_quote}",
+                "{name}{}: {open}[SECRET_REDACTED]{close}",
                 key_quote.as_str()
             )
         }
@@ -872,6 +894,40 @@ mod tests {
         let out = Scrubber::scrub(input);
         assert_eq!(out, input);
         serde_json::from_str::<serde_json::Value>(&out).expect("valid JSON");
+    }
+
+    #[test]
+    fn test_closing_quote_has_the_opening_escape_level() {
+        // Each input is valid JSON. The quote that closes the value must be at the level of the
+        // one that opens it, so the output parses, the whole secret is gone, and a second pass
+        // changes nothing.
+        let cases: [(&str, &[&str]); 4] = [
+            (r#"{"password":"Abc12345!\"x"}"#, &["Abc12345", "x\""]),
+            (r#"{"token":"abcdefghijk\"lmn"}"#, &["abcdefghijk", "lmn"]),
+            (r#"{"a":"x \"token\":\"abcdefghijk"}"#, &["abcdefghijk"]),
+            (r#"{"args":["--token=\"abcdefghijkl"]}"#, &["abcdefghijkl"]),
+        ];
+        for (input, secrets) in cases {
+            serde_json::from_str::<serde_json::Value>(input).expect("valid input");
+            let out = Scrubber::scrub(input);
+            serde_json::from_str::<serde_json::Value>(&out)
+                .unwrap_or_else(|e| panic!("{input} -> {out}: {e}"));
+            assert!(out.contains("[SECRET_REDACTED]"), "{input} -> {out}");
+            for secret in secrets {
+                assert!(!out.contains(secret), "{input} -> {out}");
+            }
+            assert_eq!(Scrubber::scrub(&out), out, "not idempotent: {input}");
+        }
+        // The same members inside a JSON string, at the matching level, keep their close.
+        let input = r#"{"a":"x \"token\":\"abcdefghijk\" y"}"#;
+        let out = Scrubber::scrub(input);
+        serde_json::from_str::<serde_json::Value>(&out).expect("valid JSON");
+        assert!(!out.contains("abcdefghijk"), "{out}");
+        // Two levels of escape (a JSON string inside a JSON string): not JSON itself, but the
+        // quotes still match.
+        let input = r#"{\\"token\\":\\"abcdefghijk\\"}"#;
+        let out = Scrubber::scrub(input);
+        assert_eq!(out, r#"{\\"token\\": \\"[SECRET_REDACTED]\\"}"#);
     }
 
     #[test]
