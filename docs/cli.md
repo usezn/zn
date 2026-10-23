@@ -429,7 +429,7 @@ Adds the hooks, and the `secrets` MCP server unless `--no-mcp` is given. A backu
 
 #### `hooks uninstall`
 
-Removes them again.
+Removes them again. The small launcher script under `~/.zn/hooks` is shared by every profile of the same agent on your machine (for example two Claude Code profiles with different `CLAUDE_CONFIG_DIR` folders), so `hooks uninstall` leaves it in place: deleting it would stop the hooks of the other profiles. [`uninstall`](#uninstall) removes it, and `zn-gate check` reports a hook whose launcher is missing.
 
 ### `hook`
 

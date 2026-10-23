@@ -419,8 +419,9 @@ function uninstall(opts = {}) {
     report.removed = 1;
     if (Object.keys(data.hooks).length === 0) delete data.hooks;
     cfg.writeJson(file, data);
-    // The launcher of a user install (see handlerFor) is no longer referenced.
-    if ((opts.scope || 'user') !== 'project') {
+    // The launcher (see handlerFor) is shared by every config of this machine: one uninstall leaves it in place,
+    // only the machine-wide uninstall (opts.removeLauncher) deletes it.
+    if ((opts.scope || 'user') !== 'project' && opts.removeLauncher === true) {
       try { fs.unlinkSync(launcher.launcherFile(id, opts)); } catch (_) { /* none */ }
     }
   }
