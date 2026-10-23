@@ -29,6 +29,32 @@ export const PIN_PATTERNS = [
   /`v(\d+\.\d+\.\d+)` tag/g,
 ];
 
+/** Semver order for X.Y.Z[-pre]: a prerelease sorts before its release. Returns null when either is malformed. */
+export function compareVersions(a, b) {
+  const parse = (v) => {
+    const m = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(String(v));
+    return m && { n: [+m[1], +m[2], +m[3]], pre: m[4] === undefined ? null : m[4].split('.') };
+  };
+  const x = parse(a);
+  const y = parse(b);
+  if (!x || !y) return null;
+  for (let i = 0; i < 3; i++) if (x.n[i] !== y.n[i]) return x.n[i] < y.n[i] ? -1 : 1;
+  if (!x.pre || !y.pre) return x.pre === y.pre ? 0 : x.pre ? -1 : 1;
+  for (let i = 0; i < Math.max(x.pre.length, y.pre.length); i++) {
+    const p = x.pre[i];
+    const q = y.pre[i];
+    if (p === undefined) return -1;
+    if (q === undefined) return 1;
+    if (p === q) continue;
+    const pn = /^\d+$/.test(p);
+    const qn = /^\d+$/.test(q);
+    if (pn && qn) return +p < +q ? -1 : 1;
+    if (pn !== qn) return pn ? -1 : 1;
+    return p < q ? -1 : 1;
+  }
+  return 0;
+}
+
 /** A version in the form PyPI uses: 1.14.0-rc.1 -> 1.14.0rc1 (alpha -> a, beta -> b). Finals are unchanged. */
 export function pyVersion(v) {
   const m = /^(\d+\.\d+\.\d+)-(alpha|beta|rc)\.(\d+)$/.exec(String(v));
@@ -120,6 +146,25 @@ export function check(facts, files, read, options = {}) {
     }
   }
 
+  // examplesVersion is the zn-gate version the examples pin, checked when version is a final X.Y.Z (on a
+  // pre-release nothing is checked):
+  // - an older X.Y (minor line) is an error: a final X.Y.0 needs examples on X.Y.0-rc.N or X.Y.0, which are moved
+  //   once the release candidate is on npm and PyPI;
+  // - the same X.Y with a lower patch is a warning (an out-of-cycle patch has no release candidate to pin);
+  // - a final examplesVersion ahead of version is an error. A pre-release examplesVersion is never "ahead": the
+  //   development branch keeps version on the last final while its examples may pin the published candidate.
+  const exampleVersion = facts.examplesVersion && facts.examplesVersion.value;
+  if (exampleVersion && /^\d+\.\d+\.\d+$/.test(version)) {
+    const base = (v) => String(v).replace(/-.*$/, '');
+    const minor = (v) => base(v).split('.').slice(0, 2).join('.') + '.0';
+    const cmp = compareVersions(base(exampleVersion), base(version));
+    const cmpMinor = cmp === null ? null : compareVersions(minor(exampleVersion), minor(version));
+    if (cmp === null) errors.push(`public-facts.json: examplesVersion ${exampleVersion} is not a version (X.Y.Z)`);
+    else if (cmpMinor < 0) errors.push(`public-facts.json: examplesVersion ${exampleVersion} is on an older release line than version ${version}: pin the examples to ${version} (or its published release candidate)`);
+    else if (cmp > 0 && !isPrerelease(exampleVersion)) errors.push(`public-facts.json: examplesVersion ${exampleVersion} is ahead of version ${version}`);
+    else if (cmp < 0 && cmpMinor === 0 && Array.isArray(options.warnings)) options.warnings.push(`examplesVersion ${exampleVersion} is behind the final release ${version}: pin the examples to ${version} once it is published on npm and PyPI`);
+  }
+
   const allowed = new Set((facts.version.allowPins || []).map((a) => `${a.file}\0${a.pin}`));
   for (const f of pinnedFiles(files, facts.version.pinsExclude || [])) {
     const s = text(f);
@@ -206,7 +251,9 @@ function main() {
   const files = execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' }).split('\0').filter(Boolean);
   // Set by the workflow on release pull requests only (see .github/workflows/public-facts.yml).
   const pluginWarnings = process.env.PLUGIN_PIN_PENDING === 'true' ? [] : undefined;
-  const errors = check(facts, files, read, { pluginWarnings });
+  const warnings = [];
+  const errors = check(facts, files, read, { pluginWarnings, warnings });
+  for (const w of warnings) console.log(process.env.GITHUB_ACTIONS ? `::warning::${w.replace(/[\r\n%]/g, ' ')}` : `warning: ${w}`);
   for (const w of pluginWarnings || []) console.log(process.env.GITHUB_ACTIONS ? `::warning::${w.replace(/[\r\n%]/g, ' ')}` : `warning: ${w}`);
   if (pluginWarnings && pluginWarnings.length) console.log(`\n${pluginWarnings.length} plugin pin difference(s), allowed on a release pull request: pin the plugin after npm publishes the release.`);
   if (errors.length) {
