@@ -7573,7 +7573,7 @@ dependencies = [
  "aws-config",
  "aws-sdk-kms",
  "axum",
- "base64 0.22.1",
+ "base64 0.23.1",
  "candle-core",
  "candle-nn",
  "candle-onnx",
