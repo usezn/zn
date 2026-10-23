@@ -1,2 +1,4 @@
 ### Security
 - The audit log of the Rust gateway stores only metadata by default (event, time, tool, status, policy, agent, namespace). The scrubbed request payload is no longer written unless `audit.store_payloads` (or `ZN_AUDIT_STORE_PAYLOADS=1`) is set, and that option needs an encryption key (`ZN_DB_KEY` or a KMS key) in every environment. Existing records stay readable.
+- With the neural layer on, the gateway no longer keeps the arguments of calls: the vector memory stores a hash next to each vector, and `nearest_neighbor` in the audit log, the event stream and the neural veto log shows only the distance and a short hash reference to the closest earlier call. Delete `data/vectors` to drop the text that earlier versions stored.
+- A failed audit write is now logged and counted in `zn_audit_write_failures_total`. The new option `audit.require_write` (`ZN_AUDIT_REQUIRE_WRITE=1`) denies a call whose audit record cannot be written.
