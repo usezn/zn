@@ -12,13 +12,13 @@
  *   daemon, and a client never sends anything to a squatted pipe.
  * - Newline-delimited JSON. Requests on one connection run in order; vault
  *   writes are serialised.
- * - Policy is enforced here as well as in the engine. There is no general
- *   "give me the value" call: `resolve` needs a context the daemon checks
- *   itself (a restoration destination from the hooks, or a purpose of the
- *   broker: zn run, an HTTP request, a rendered file), `exactValues` is only
- *   served to the masking path, and the other readers are concrete
- *   operations (adoptToken, sameSecretValue, readBackup). Every resolve is
- *   audited.
+ * - Policy is enforced here as well as in the engine. `resolve` needs a
+ *   context (a restoration destination from the hooks, or a purpose of the
+ *   broker: zn run, an HTTP request, a rendered file) that the caller names
+ *   and the daemon checks against what it holds. Masking runs inside the
+ *   daemon (maskInfo, maskSpans): the scrubber gets positions and secret
+ *   names, never values. The other readers are concrete operations
+ *   (adoptToken, sameSecretValue, readBackup). Every resolve is audited.
  *
  * Limits (documented in the threat model): any process of the same OS user
  * that can read ~/.zn/run/session.key can talk to the daemon, exactly like
@@ -41,7 +41,7 @@ const store = require('./store');
 const keychain = require('./keychain');
 const audit = require('./audit');
 const confirmMod = require('./confirm');
-const { variants } = require('../scrub/exact');
+const { variants, buildMatcher, MIN_LENGTH: MIN_NEEDLE } = require('../scrub/exact');
 const exe = require('../exe');
 const { makeTeamOps } = require('../team/daemon-ops');
 const { CODES, znError } = require('../errors');
@@ -51,7 +51,7 @@ const PROTOCOL = 1;
 const DEFAULT_TTL_MS = 8 * 3600 * 1000;
 const DEFAULT_IDLE_MS = 30 * 60 * 1000;
 const DEFAULT_TEAM_SYNC_MS = 15 * 60 * 1000;
-const MAX_LINE = 4 * 1024 * 1024;
+const MAX_LINE = 64 * 1024 * 1024;
 const MAX_VALUE = 1024 * 1024;
 const MAX_DETECTED_EXACT = 256;
 const TYPE_RE = /^[A-Z0-9](?:[A-Z0-9_]{0,62}[A-Z0-9])?$/;
@@ -61,12 +61,15 @@ const HOST_RE = /^(?:\*\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*(?::\d{1,5})?$/;
 const COMMAND_RE = /^[A-Za-z0-9_.+\-/ *]{1,128}$/;
 const CLOUD_KEY_SECRET = 'ZN_CLOUD_API_KEY';
 const CLOUD_KEY_PURPOSE = 'zn-cloud-key';
-/* Restoration policy by destination (the hooks' contexts), the same table as
- * the engine's POLICY (a test keeps them equal). `detected` is a scrubber
- * token (__ZN_EMAIL_1__), `named` a stored secret (__ZN_NAME__); only
- * 'restore' hands a value out. */
+/* Restoration policy by destination (the hooks' contexts). It is the engine's
+ * POLICY table with one difference (a test checks both): the engine lets an
+ * in-process caller restore into the assistant's own text, but no hook does,
+ * and a value put in front of the model defeats the vault, so the daemon,
+ * which holds the real values, never hands one out for `assistant`.
+ * `detected` is a scrubber token (__ZN_EMAIL_1__), `named` a stored secret
+ * (__ZN_NAME__); only 'restore' hands a value out. */
 const DESTINATION_POLICY = Object.freeze({
-  assistant:     Object.freeze({ detected: 'restore', named: 'restore' }),
+  assistant:     Object.freeze({ detected: 'not_restored', named: 'not_restored' }),
   write_ignored: Object.freeze({ detected: 'restore', named: 'restore' }),
   write_tracked: Object.freeze({ detected: 'tracked_file', named: 'tracked_file' }),
   bash_local:    Object.freeze({ detected: 'restore', named: 'use_broker' }),
@@ -79,13 +82,15 @@ const DESTINATION_POLICY = Object.freeze({
  *   render  secrets_render_file: a file-mode secret
  * and the key of `zn-gate connect`, which only zn-gate's own cloud calls read. */
 const BROKER_PURPOSES = Object.freeze(['run', 'http', 'render']);
-const MASK_PURPOSE = 'mask';
+const MASK_MAX_TEXTS = 4096;
+const MASK_MAX_CHARS = 16 * 1024 * 1024;
 const MASK_AUDIT_EVERY_MS = 60 * 1000;
+const SAME_VALUE_PER_MINUTE = 120;
 const BACKUP_NAME_RE = /^ENVBAK_X[0-9A-F]{8}D\d{12}$/;
 /* What this vault does beyond the protocol. resolve-policy: resolve() with
  * {withPolicy: true} applies the organization policy and answers
  * {value, policy: RESOLVE_POLICY_VERSION, deny?, warn?, warnReason?}.
- * capabilities: resolve needs a context, exactValues needs purpose 'mask',
+ * capabilities: resolve needs a context, masking runs in the daemon (maskInfo and maskSpans),
  * and adoptToken, sameSecretValue and readBackup exist. */
 const RESOLVE_POLICY_VERSION = 1;
 const PACKAGE_VERSION = require('../../package.json').version;
@@ -321,8 +326,51 @@ function makeOps(state, ctl) {
   const team = makeTeamOps({ state, writeAudit, confirmOutOfBand, fetchImpl: ctl.fetchImpl, isClosed: () => Boolean(ctl.closed) });
 
   const localOf = (name, s) => ({ name, mode: s.mode, allowHosts: s.allowHosts || [], allowCommands: s.allowCommands || [], allowIn: s.allowIn || ['header'] });
-  // When the masking path last asked for the values of each (agent, tool): one audit record a minute, not one per hook.
+  // When the masking path last called the vault, for each (agent, tool): one audit record a minute, not one per hook.
   const maskAudited = new Map();
+  const sameWindow = { start: 0, count: 0 };
+  function noteMask(claim) {
+    const o = claim && typeof claim === 'object' ? claim : {};
+    const who = String(o.agent) + '\0' + String(o.tool);
+    const now = Date.now();
+    if (maskAudited.has(who) && now - maskAudited.get(who) < MASK_AUDIT_EVERY_MS) return;
+    if (maskAudited.size > 256) maskAudited.clear();
+    maskAudited.set(who, now);
+    writeAudit({ mode: 'resolve', agent: o.agent, tool: o.tool, decision: 'allow', reason: 'mask_text' });
+  }
+
+  /* The matcher over every value the masker looks for in one project: the stored secrets (backups are whole files, not
+   * values) and the values the scrubber already detected here (most recent first, so a value found once is caught
+   * again where no pattern matches). Rebuilt when a secret or a detected value changes. */
+  const maskCache = new Map();
+  async function maskStateOf(project) {
+    const secrets = await state.loadSecrets();
+    const p = await state.loadProject(String(project == null ? '' : project));
+    const h = crypto.createHash('sha256');
+    const live = [];
+    for (const [name, s] of Object.entries(secrets.secrets)) {
+      if (s && s.mode !== 'backup' && typeof s.value === 'string' && s.value.length >= MIN_NEEDLE) {
+        live.push([name, s]);
+        h.update(name + '\0' + s.value + '\0');
+      }
+    }
+    h.update('tokens:' + p.byValue.size);
+    const sig = h.digest('hex');
+    const hit = maskCache.get(p.key);
+    if (hit && hit.sig === sig) return hit;
+    const entries = live.map(([name, s]) => ({ name, type: s.type || 'SECRET', values: variants(s.value), vault: true }));
+    for (const [token, value] of Object.entries(p.data.tokens).slice(-MAX_DETECTED_EXACT).reverse()) {
+      if (typeof value !== 'string' || value.length < MIN_NEEDLE) continue;
+      const m = TOKEN_RE.exec(token);
+      entries.push({ type: m[1].replace(/_\d+$/, ''), values: variants(value), vault: true });
+    }
+    let longest = 0;
+    for (const e of entries) for (const v of e.values) if (v.length > longest) longest = v.length;
+    const built = { sig, matcher: buildMatcher(entries), names: entries.filter((e) => e.name).map((e) => e.name), longest, minNeedle: MIN_NEEDLE };
+    if (maskCache.size > 64) maskCache.clear();
+    maskCache.set(p.key, built);
+    return built;
+  }
 
   /* resolve for a purpose of the broker. The checks the broker makes before it asks are made again here, on what the
    * vault itself holds, so a request that skips the broker meets the same limits: the secret's mode, the organization
@@ -655,41 +703,32 @@ function makeOps(state, ctl) {
       });
     },
 
-    /* The masking path (hooks, the streaming scrubber, the broker's output
-     * masking) matches output against the real values, so it is the one reader
-     * of them. The request has to say so (purpose 'mask'); anything else is
-     * refused and recorded. Grants are recorded too, at most one a minute for
-     * each agent and tool, so a program reading them shows in `zn vault log`. */
-    async exactValues(project, opts) {
-      const o = opts && typeof opts === 'object' ? opts : {};
-      if (o.purpose !== MASK_PURPOSE) {
-        writeAudit({ mode: 'resolve', agent: o.agent, tool: o.tool, decision: 'deny', reason: 'policy:no_context' });
-        throw znError(CODES.POLICY_DENIED, 'exact values are only given to the masking path. Next step: scan text with the zn scrubber instead of reading values.');
-      }
-      const who = String(o.agent) + '\0' + String(o.tool);
-      const now = Date.now();
-      if (!maskAudited.has(who) || now - maskAudited.get(who) >= MASK_AUDIT_EVERY_MS) {
-        if (maskAudited.size > 256) maskAudited.clear();
-        maskAudited.set(who, now);
-        writeAudit({ mode: 'resolve', agent: o.agent, tool: o.tool, decision: 'allow', reason: 'mask_values' });
-      }
-      const secrets = await state.loadSecrets();
-      const out = [];
-      for (const [name, s] of Object.entries(secrets.secrets)) {
-        // Backups (whole files kept by `zn env shadow`) are not values to search for.
-        if (s && s.mode !== 'backup' && typeof s.value === 'string' && s.value.length >= 8) out.push({ name, type: s.type || 'SECRET', values: variants(s.value) });
-      }
-      // Values already detected in this project (most recent first): once a
-      // value was found, it is caught again even where no pattern matches.
-      const p = await state.loadProject(String(project == null ? '' : project));
-      const entries = Object.entries(p.data.tokens).slice(-MAX_DETECTED_EXACT).reverse();
-      for (const [token, value] of entries) {
-        if (typeof value !== 'string' || value.length < 8) continue;
-        const m = TOKEN_RE.exec(token);
-        out.push({ type: m[1].replace(/_\d+$/, ''), values: variants(value) });
-      }
-      return out;
+    /* Masking happens here, so the real values never leave the daemon. The
+     * scrubber (hooks, prompts, MCP results, the streaming scrubber) asks
+     * where the vault's values occur in a text and gets positions, types and
+     * secret names back: never a value, an encoding of one or a hash. The
+     * calls are recorded (at most one record a minute for each agent and
+     * tool). Anyone who can call them can still test guesses against the
+     * vault, one text at a time; they cannot read a value out. */
+    async maskInfo(project, claim) {
+      noteMask(claim);
+      const m = await maskStateOf(project);
+      return { names: m.names, longest: m.longest, count: m.matcher.size };
     },
+
+    async maskSpans(project, texts, claim) {
+      if (!Array.isArray(texts) || texts.length > MASK_MAX_TEXTS) throw znError(CODES.POLICY_DENIED, 'too many texts. Next step: send fewer texts in one request.');
+      let total = 0;
+      for (const t of texts) {
+        if (typeof t !== 'string') throw znError(CODES.POLICY_DENIED, 'invalid text. Next step: send strings.');
+        total += t.length;
+      }
+      if (total > MASK_MAX_CHARS) throw znError(CODES.POLICY_DENIED, 'text too long. Next step: send it in smaller pieces.');
+      noteMask(claim);
+      const m = await maskStateOf(project);
+      return { spans: texts.map((t) => (t.length < m.minNeedle ? [] : m.matcher.find(t))) };
+    },
+
 
     /* zn secret adopt: store a value the scrubber found as a named secret.
      * The value goes from one table of the vault to another and never to the caller. */
@@ -710,15 +749,27 @@ function makeOps(state, ctl) {
       });
     },
 
-    /* Is this the value stored under that name? Answers yes or no, never the value (zn secret import). */
+    /* Is this the value stored under that name? Answers yes or no, never the value (zn secret import and
+     * zn env shadow). Each answer is recorded, and the daemon answers at most SAME_VALUE_PER_MINUTE of them a minute, so the
+     * call cannot be used to test guesses at any speed. */
     async sameSecretValue(name, value) {
       const n = str(name, 'name', 64);
       str(value, 'value');
+      const now = Date.now();
+      if (now - sameWindow.start >= 60 * 1000) { sameWindow.start = now; sameWindow.count = 0; }
+      if (++sameWindow.count > SAME_VALUE_PER_MINUTE) {
+        writeAudit({ secret: NAME_RE.test(n) ? n : undefined, mode: 'resolve', decision: 'deny', reason: 'policy:compare_rate' });
+        throw znError(CODES.POLICY_DENIED, 'too many comparisons in a minute. Next step: wait a minute and try again.');
+      }
       const stored = (await state.loadSecrets()).secrets[n];
-      if (!stored || typeof stored.value !== 'string') return false;
-      const a = crypto.createHash('sha256').update(stored.value).digest();
-      const b = crypto.createHash('sha256').update(value).digest();
-      return crypto.timingSafeEqual(a, b);
+      let same = false;
+      if (stored && typeof stored.value === 'string') {
+        const a = crypto.createHash('sha256').update(stored.value).digest();
+        const b = crypto.createHash('sha256').update(value).digest();
+        same = crypto.timingSafeEqual(a, b);
+      }
+      writeAudit({ secret: NAME_RE.test(n) ? n : undefined, mode: 'resolve', decision: 'allow', reason: 'compare' });
+      return same;
     },
 
     /* zn env unshadow: the user gets the original .env text back. Plain values go out of the vault,
@@ -763,14 +814,19 @@ function makeOps(state, ctl) {
 }
 
 /* POSIX: the socket, the session key and the directory that holds them must be owned by the daemon's user and closed to
- * group and others. Windows relies on the ACL the user profile gives ~/.zn (see the threat model). */
-function assertPrivateEndpoint(ep) {
+ * group and others. The directory is always checked; a file is checked when it exists (a stale one before the daemon
+ * starts), and must exist when `strict`. Windows relies on the ACL the user profile gives ~/.zn (see the threat model). */
+function assertPrivateEndpoint(ep, strict) {
   if (!ep.unix || typeof process.getuid !== 'function') return;
   const me = process.getuid();
   const dir = path.dirname(ep.address);
-  for (const [file, closed] of [[dir, 0o077], [ep.address, 0o077], [ep.keyFile, 0o077]]) {
-    const st = fs.lstatSync(file);
-    if (st.isSymbolicLink() || st.uid !== me || (st.mode & closed) !== 0) {
+  for (const file of [dir, ep.address, ep.keyFile]) {
+    let st;
+    try { st = fs.lstatSync(file); } catch (err) {
+      if (err.code === 'ENOENT' && file !== dir && !strict) continue;
+      throw znError(CODES.POLICY_DENIED, 'the vault will not start: cannot check ' + path.basename(file) + ' (' + (err.code || 'error') + '). Next step: check the permissions of ' + dir + ' (it must be yours, mode 0700).');
+    }
+    if (st.isSymbolicLink() || st.uid !== me || (st.mode & 0o077) !== 0) {
       throw znError(CODES.POLICY_DENIED, 'the vault will not start: ' + path.basename(file) + ' is not private to your user. Next step: check the permissions of ' + dir + ' (it must be yours, mode 0700).');
     }
   }
@@ -795,6 +851,8 @@ async function serve(opts) {
   const ep = endpoint(o);
 
   if (await isRunning(o)) throw znError(CODES.POLICY_DENIED, messages.vaultAlreadyUnlocked());
+  // Before anything is bound or written: the folder (and any stale socket or key in it) must be private to this user.
+  assertPrivateEndpoint(ep);
   if (ep.unix) { try { fs.unlinkSync(ep.address); } catch (err) { /* stale socket */ } }
 
   const state = new VaultState(o.identity, recipient, o);
@@ -938,11 +996,13 @@ async function serve(opts) {
     throw err;
   });
   if (ep.unix) fs.chmodSync(ep.address, 0o600);
-  store.writePrivateFile(ep.keyFile, sessionKey.toString('hex'));
   // Node cannot read the peer's credentials (SO_PEERCRED) from a Unix socket, so the kernel's file permissions are
-  // the peer check: refuse to serve unless the socket, the session key and their directory belong to this user and
-  // are closed to everyone else.
-  try { assertPrivateEndpoint(ep); } catch (err) { await shutdown('lock'); throw err; }
+  // the peer check: the socket is checked before the session key is written, and all three again after.
+  try {
+    if (ep.unix) assertPrivateEndpoint(ep);
+    store.writePrivateFile(ep.keyFile, sessionKey.toString('hex'));
+    assertPrivateEndpoint(ep, true);
+  } catch (err) { await shutdown('lock'); throw err; }
   await state.serial(async () => {
     const rec = audit.append({ mode: 'unlock', decision: 'allow', reason: 'ttl:' + Math.round(ttlMs / 60000) + 'm' },
       { file: state.paths.auditFile, key: Buffer.from(state.secrets.auditKey, 'hex') });

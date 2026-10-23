@@ -31,7 +31,7 @@ reads, command output, search results, MCP results and pasted prompts.
 | **Abuse of an authorised use** (with a GitHub token allowed for api.github.com, create a public gist with private data) | zn controls where a credential goes, not what is done with it. Use tokens with the narrowest scope. |
 | **A malicious command in env mode** (a script the model wrote reads `DB_PASSWORD` and sends it out) | The value is inside the process you allowed. Mitigations: allow specific programs, not interpreters; first-use confirmation; output masking; and your agent's sandbox, which can cut network access. zn does not block raw sockets on its own. |
 | **Malware running as your OS user** | It can read the vault's session key, talk to the daemon like `ssh-agent` allows any process of the user, or click a dialog. The OS user is the boundary, as for any local secret manager. Lock the vault (`zn lock`) when you do not need it. |
-| **Any program of your user asking the unlocked vault for a secret** | The daemon answers only a request that names a destination or a purpose and fits the secret's settings (host, place, command, approved executable, mode), but it cannot tell which program is asking. See "What the vault daemon protects" below: this includes commands the agent starts. |
+| **Any program of your user asking the unlocked vault for a secret** | The daemon checks a request against the secret's settings (mode, host, place, command, approved executable) and records it, but the destination or purpose it names is the caller's own claim, so it cannot tell which program is asking. See "What the vault daemon protects" below: this includes commands the agent starts. |
 | **Deliberate encodings** of a value printed by an allowed command (reversed, base32, mixed-case hex) | Masking covers raw, base64, hex and URL-encoded forms. It is a safety net, not a boundary. |
 | **Copies kept by the agent on your disk** | See below. |
 
@@ -169,66 +169,76 @@ The daemon (`zn unlock`) holds the decrypted vault for the session and answers
 requests on a private socket (a named pipe on Windows). Every connection must
 prove it can read `~/.zn/run/session.key`.
 
-**What the daemon enforces itself**
+**What the daemon checks**
 
 - **Other OS users cannot connect.** They cannot read the session key. On
   Linux and macOS the daemon also refuses to start unless its socket, the
-  session key and their directory belong to your user and are closed to group
-  and others.
-- **There is no "give me the value of X" request.** Every request that returns
-  a value says what it is for, and the daemon checks that against what the
-  vault holds:
+  session key and their folder belong to your user and are closed to group and
+  others (checked before it binds and again after it writes the key).
+- **Masking happens inside the daemon.** To hide the vault's values in output,
+  prompts, MCP results and streams, zn-gate asks the daemon where its values
+  occur in a text and gets back positions, types and secret names. It does not
+  get a value, an encoding of one or a hash. There is no request that lists the
+  values. The calls are recorded (one record a minute for each agent and tool).
+- **A request for a value has to say what it is for, and the daemon checks that
+  against what it holds.** The names it gives are the caller's own claim (see
+  below), and the checks are:
   - A restore by the hooks names a destination. The daemon applies the
     restoration table itself: a stored secret is never put into a local shell
-    command, a network command, a versioned file or MCP input, and the
-    organization policy applies to every named secret.
+    command, a network command, a versioned file or MCP input, and the daemon
+    never hands a value out for the assistant's own text. The organization
+    policy applies to every named secret.
   - `zn run`, `secrets_http_request` and `secrets_render_file` each name a
     purpose. The daemon checks the secret's mode (`env` for `zn run`, `file`
     for a rendered file), the command in its allow-list, the executable you
     approved (the same file identity as the approval), the hosts and places
     (header, URL, body) the secret allows, and the organization policy.
-  - A request with no destination and no purpose, or with one the daemon does
+  - A request that names no destination and no purpose, or one the daemon does
     not know, gets nothing and is written to the audit log.
-- **Plain values reach one reader, the output masker.** Hiding values in
-  output means comparing it with the real values, so the masking path asks for
-  them with its own call. The daemon refuses and records any other request for
-  them, and records each grant (one record a minute for each agent and tool),
-  so a program reading them shows in `zn vault log`.
 - **The other commands that touch values are concrete.** `zn secret adopt`
-  moves a value inside the vault, `zn secret import` and `zn env shadow` compare
-  by answering yes or no, and `zn env unshadow` waits for your confirmation on the vault's own
-  channel before the plain text leaves it. None of them hands a value to a
-  general request.
-- **An agent or tool name in a request grants nothing.** It is written to the
-  audit log as the client said it. The one thing a trusted agent id changes is
-  which hosts an organization policy may offer for your approval, and those
+  moves a value inside the vault. `zn secret import` and `zn env shadow` compare
+  a value by getting yes or no (recorded, and limited to 120 a minute).
+  `zn env unshadow` waits for your confirmation on the vault's own channel
+  before the plain text leaves it.
+
+**What the daemon does not check**
+
+- **It does not authenticate the caller.** The destination, the purpose, the
+  host, the command and the agent or tool name are all declared by whoever
+  sends the request. Any process running as you that can read
+  `~/.zn/run/session.key` can send any of them. A request that names a
+  destination you allow for restoring (a git-ignored file) gets the value of a
+  stored secret by name, whatever its mode; a request that names a host and a
+  place the secret allows gets the value, and the daemon cannot see where it
+  goes next. The changes in this release add checks of the secret's settings
+  and a record of every request. They do not prove who is asking. This is the
+  same boundary as `ssh-agent`.
+- **An agent or tool name grants nothing by itself.** It is written to the
+  audit log as the caller said it. The one thing a registered agent id changes
+  is which hosts an organization policy may offer for your approval, and those
   apply only after you approve them.
-
-**What it does not do**
-
-- **It does not authenticate which program of your user is asking.** Any
-  process running as you that can read `~/.zn/run/session.key` can talk to the
-  daemon, and it can name any destination or purpose. The checks above bind what
-  the request has to say: a host the secret allows, a command and an executable
-  you approved, a mode, a place in the request. They do not know where the value
-  goes once the daemon hands it over, so a program that names a fitting host
-  and place gets the value. This is the same boundary as `ssh-agent`.
-- **No check of the calling process.** Node cannot read the peer credentials of
-  a Unix socket (`SO_PEERCRED`), and the kernel does not name the peer's
-  process to the daemon in any other way Node can use, so the daemon relies on
-  the file permissions above. A separate operating-system identity for the
-  broker, which would let the daemon tell zn's own processes from the rest of
-  your session, is not part of this release.
+- **A caller can still test guesses.** The masking call and the comparison call
+  answer yes or no for text you send, so a process holding the session key can
+  check whether a guess is one of the vault's values. It cannot read a value
+  out, and the comparison is limited and recorded. Use values with enough
+  randomness that guessing is not an option.
+- **No check of the calling process.** Node cannot read the peer credentials
+  of a Unix socket (`SO_PEERCRED`), and it has no other way to learn which
+  process is on the other end. The daemon relies on the file permissions above.
+  A separate operating-system identity for the broker, which would let the
+  daemon tell zn-gate's own processes from the rest of your session, is not part
+  of this release.
 - **Windows relies on the user profile's ACL.** The named pipe has no explicit
-  DACL and the daemon does not check the folder's permissions. With `ZN_HOME`
-  set to a folder other accounts can read, they could read the session key and
-  connect. Leave `ZN_HOME` unset on a shared machine.
+  DACL and the daemon does not check the permissions of the folder. With
+  `ZN_HOME` set to a folder other accounts can read, they could read the
+  session key and connect. Leave `ZN_HOME` unset on a shared machine.
 - **A vault started by an older zn-gate does not enforce any of this.**
-  `zn unlock` restarts it; `zn vault status` says when it is outdated. A newer
-  daemon in turn refuses the requests of an older zn-gate that name no context
-  (`zn run`, and the masking call, after which the older hooks stop matching
-  the vault's own values in output until they are updated). Keep one version of
-  zn-gate on the machine.
+  `zn unlock` restarts it, and `zn vault status` says when it is outdated. A
+  newer daemon in turn refuses an older zn-gate's requests that name no context
+  (`zn run`) and has no call that lists values: older hooks cannot mask the
+  vault's own values in output until they are updated (they fall back to the
+  patterns and report the vault as locked). Keep one version of zn-gate on the
+  machine.
 - **What to do:** keep the vault locked (`zn lock`) when you are not using
   secrets, let the vault lock itself when idle (30 minutes by default), and use
   your agent's sandbox or permission rules so that it cannot run arbitrary

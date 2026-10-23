@@ -15,8 +15,11 @@
  *                                  agent and tool are recorded in the audit log and grant nothing;
  *                                  withPolicy returns {value, policy: 1, deny?, warn?, warnReason?}
  *   setSecret(name, value, meta) / listSecrets() / removeSecret(name)
- *   exactValues(project[, {agent, tool}]) -> [{name, type, values: [raw, b64, hex, url]}]   in memory only;
- *                                  the masking path's call (the client sends purpose 'mask'), recorded in the audit log
+ *   maskInfo(project[, {agent, tool}]) -> {names, longest, count}   what the masker looks for: secret names, the longest
+ *                                  needle, how many; no value
+ *   maskSpans(project, texts[, {agent, tool}]) -> [Span[]]   where the vault's values occur in each text (start, end,
+ *                                  type, name, variant): the daemon does the matching, no value comes back
+ *   exactValues(project)           legacy: only a vault started by an older zn-gate answers it; the current one does not
  *   adoptToken(project, token, name, meta)   store a scrubber token's value as a named secret; the value stays in the vault
  *   sameSecretValue(name, value)   -> bool   is this the stored value; never returns it
  *   readBackup(project, name, file) -> text  the .env copy `zn env shadow` made; the user confirms on the daemon's channel
@@ -78,6 +81,10 @@ function endpoint(opts) {
     throw znError(CODES.POLICY_DENIED, 'socket path too long (' + address + '); set ZN_HOME to a shorter directory');
   }
   return { address, keyFile, unix: true };
+}
+
+function claimOf(c) {
+  return { agent: c && c.agent, tool: c && c.tool };
 }
 
 function hmac(key, ...parts) {
@@ -252,8 +259,12 @@ class VaultClient {
   // opts {effective, agent}: the organization policy applied for that agent.
   listSecrets(opts) { return this.call('listSecrets', opts ? [opts] : []); }
   removeSecret(name) { return this.call('removeSecret', [name]); }
-  // The masking path is the one reader of the real values (it matches output against them).
-  exactValues(project, claim) { return this.call('exactValues', [project, { purpose: 'mask', agent: claim && claim.agent, tool: claim && claim.tool }]); }
+  // Masking runs in the daemon: these return where values occur, never the values.
+  maskInfo(project, claim) { return this.call('maskInfo', [project, claimOf(claim)]); }
+  async maskSpans(project, texts, claim) { return (await this.call('maskSpans', [project, texts, claimOf(claim)])).spans; }
+  // Legacy: a vault started by an older zn-gate hands out every value here. The current daemon has no such operation
+  // ("unknown operation"); the engine only tries it after maskInfo was refused that way.
+  exactValues(project) { return this.call('exactValues', [project, { purpose: 'mask' }]); }
   adoptToken(project, token, name, meta) { return this.call('adoptToken', [project, token, name, meta || {}]); }
   sameSecretValue(name, value) { return this.call('sameSecretValue', [name, value]); }
   readBackup(project, name, file) { return this.call('readBackup', [project, name, file]); }
@@ -292,7 +303,9 @@ async function setSecret(name, value, meta) { return client().setSecret(name, va
 // organization policy for that agent (zn Team).
 async function listSecrets() { return client().listSecrets(arguments[0]); }
 async function removeSecret(name) { return client().removeSecret(name); }
-async function exactValues(project) { return client().exactValues(project, arguments[1]); }
+async function maskInfo(project) { return client().maskInfo(project, arguments[1]); }
+async function maskSpans(project, texts) { return client().maskSpans(project, texts, arguments[2]); }
+async function exactValues(project) { return client().exactValues(project); }
 async function audit(event) { return client().audit(event); }
 async function updateSecretMeta(name, meta) { return client().updateSecretMeta(name, meta); }
 async function isApproved(project, secret, argv0) { return client().isApproved(...arguments); }
@@ -308,6 +321,8 @@ module.exports = {
   setSecret,
   listSecrets,
   removeSecret,
+  maskInfo,
+  maskSpans,
   exactValues,
   audit,
   updateSecretMeta,

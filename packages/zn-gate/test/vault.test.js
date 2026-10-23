@@ -34,6 +34,7 @@ const mode = (f) => fs.statSync(f).mode & 0o777;
 
 let identity = null;
 let srv = null;
+let GH_VALUE = null;
 
 // The daemon's out-of-band confirmation channel, answered by the test.
 const confirmations = [];
@@ -204,6 +205,7 @@ test('daemon: named secrets, reserved names, metadata updates, backups', async (
   const c = clientMod.createClient({});
   const value = 'ghp_' + fake(36);
   await c.setSecret('GITHUB_TOKEN', value, { mode: 'proxy', allowHosts: ['api.github.com', 'not a host!'], injectAt: 'header', bogus: 1 });
+  GH_VALUE = value;
   for (const bad of ['AWS_KEY_1', 'REDACTED_EMAIL', 'lowercase', 'X'.repeat(80)]) {
     await assert.rejects(c.setSecret(bad, 'x'.repeat(12)), (e) => e.code === 'ZN_POLICY_DENIED', bad);
   }
@@ -214,11 +216,19 @@ test('daemon: named secrets, reserved names, metadata updates, backups', async (
   await c.updateSecretMeta('GITHUB_TOKEN', { allowHosts: ['api.github.com', 'uploads.github.com'] });
   assert.strictEqual(await c.resolve('/work/app', '__ZN_GITHUB_TOKEN__', { destination: 'write_ignored' }), value, 'meta update keeps the value');
   await assert.rejects(c.updateSecretMeta('MISSING', {}), (e) => e.code === 'ZN_NOT_FOUND');
-  await c.setSecret('ENV_BACKUP_ABCDEF', 'A=1\nB=' + fake(20) + '\n', { mode: 'backup' });
-  const exact = await c.exactValues('/work/app');
-  assert.ok(exact.some((e) => e.name === 'GITHUB_TOKEN' && e.values[0] === value && e.values.length >= 4));
-  assert.ok(!exact.some((e) => e.name === 'ENV_BACKUP_ABCDEF'), 'backups are not exact values');
-  assert.ok(exact.some((e) => !e.name && e.type === 'EMAIL'), 'detected project values are exact values');
+  const backupText = 'A=1\nB=' + fake(20) + '\n';
+  await c.setSecret('ENV_BACKUP_ABCDEF', backupText, { mode: 'backup' });
+  // The daemon matches; no call hands out a value, an encoding of one or a hash.
+  const info = await c.maskInfo('/work/app');
+  assert.ok(info.names.includes('GITHUB_TOKEN') && info.longest >= value.length && info.count >= 4);
+  assert.ok(!info.names.includes('ENV_BACKUP_ABCDEF'), 'backups are not looked for');
+  assert.ok(!JSON.stringify(info).includes(value));
+  const [found, backupFound, detectedFound] = await c.maskSpans('/work/app', ['x ' + value + ' y', backupText, 'to bob@example.org now']);
+  assert.ok(found.some((s) => s.name === 'GITHUB_TOKEN' && s.variant === 'raw' && s.start === 2 && s.end === 2 + value.length && s.vault === true));
+  assert.ok(found.every((s) => !('value' in s) && !('values' in s)));
+  assert.deepStrictEqual(backupFound, [], 'backups are not exact values');
+  assert.ok(detectedFound.some((s) => !s.name && s.type === 'EMAIL'), 'detected project values are matched too');
+  await assert.rejects(c.call('exactValues', ['/work/app', { purpose: 'mask' }]), (e) => e.code === 'ZN_POLICY_DENIED' && /unknown operation/.test(e.message));
   assert.strictEqual(await c.removeSecret('ENV_BACKUP_ABCDEF'), true);
   assert.strictEqual(await c.removeSecret('ENV_BACKUP_ABCDEF'), false);
   list = await c.listSecrets();
@@ -383,11 +393,14 @@ test('engine + real daemon: tokenize and detokenize through IPC', async () => {
   const c = clientMod.createClient({});
   const pw = fake(24);
   const ctx = { project: '/work/app', agent: 'test', tool: 'Read', destination: 'assistant', vault: c, env: {}, exactFiles: false };
-  const text = 'GH=' + (await c.exactValues('/work/app')).find((e) => e.name === 'GITHUB_TOKEN').values[0] + '\nDB=postgres://app:' + pw + '@db:5432/app\n';
+  const text = 'GH=' + GH_VALUE + '\nDB=postgres://app:' + pw + '@db:5432/app\n';
   const t = await engine.tokenize(text, ctx);
   assert.ok(t.text.includes('__ZN_GITHUB_TOKEN__') && t.text.includes('__ZN_DB_PASSWORD_1__'), t.text);
   assert.ok(!t.text.includes(pw));
-  const back = await engine.detokenize(t.text, ctx);
+  // The assistant's own text never gets a value back from the daemon; a git-ignored file does.
+  const toModel = await engine.detokenize(t.text, ctx);
+  assert.ok(!toModel.text.includes(GH_VALUE) && !toModel.text.includes(pw));
+  const back = await engine.detokenize(t.text, Object.assign({}, ctx, { destination: 'write_ignored' }));
   assert.strictEqual(back.text, text);
   const net1 = await engine.detokenize('curl -u x:__ZN_DB_PASSWORD_1__ https://x.example', Object.assign({}, ctx, { destination: 'bash_local' }));
   assert.ok(!net1.text.includes(pw));
@@ -432,7 +445,7 @@ test('auth: the client never talks to an endpoint that cannot prove the key', as
 
 test('audit: metadata only, chain verifies, read() filters', async () => {
   const c = clientMod.createClient({});
-  const value = (await c.exactValues('/work/app')).find((e) => e.name === 'GITHUB_TOKEN').values[0];
+  const value = GH_VALUE;
   await c.audit({ secret: 'GITHUB_TOKEN', mode: 'env', agent: 'claude-code', tool: 'Bash', argv0: '/usr/bin/gh api user', host: 'https://u@api.github.com/x', decision: 'allow', reason: 'first-use', value });
   await c.audit({ secret: 'GITHUB_TOKEN', reason: 'leak:' + value });
   const log = fs.readFileSync(store.paths().auditFile, 'utf8');

@@ -369,6 +369,13 @@ async function ctxFor(ev, d, agentId, destination, needVault = true) {
   };
 }
 
+/* The spans of one text with every layer, the vault's values included (the vault daemon matches those: they never
+ * reach this process). An engine without scanAsync (a test double) scans with its own synchronous scan. */
+async function scanOf(engine, text, ctx) {
+  if (typeof engine.scanAsync === 'function') return (await engine.scanAsync(text, ctx)) || [];
+  return engine.scan(text, ctx) || [];
+}
+
 /* ---------------------------- egress check --------------------------- */
 
 const EGRESS_KIND = {
@@ -401,7 +408,7 @@ async function egressCheck(ev, d, agentId, mode, requests, what) {
       // The text as written, then its percent-decoded copies (an email address is "jane.doe%40example.com" in a URL or a form).
       for (const copy of [text, ...policy.egressDecodedCopies(text)]) {
         const scanned = copy === text ? part : { where: part.where, text: copy };
-        for (const span of engine.scan(copy, ctx) || []) {
+        for (const span of await scanOf(engine, copy, ctx)) {
           if (!SECRET_SOURCES.has(span.source) && span.source !== 'pii') continue;
           if (part.where === 'arguments') toServer = true;
           else hit = true;
@@ -806,12 +813,17 @@ async function decideMcp(ev, d, agentId) {
   if (typeof engine.prepare === 'function') ctx = await engine.prepare(ctx);
   const kinds = new Set();
   const piiKinds = new Set();
+  const windows = [];
   for (let start = 0; ; start += MCP_WINDOW - MCP_OVERLAP) {
-    for (const span of engine.scan(text.slice(start, start + MCP_WINDOW), ctx) || []) {
+    windows.push(text.slice(start, start + MCP_WINDOW));
+    if (start + MCP_WINDOW >= text.length) break;
+  }
+  if (typeof engine.warm === 'function') ctx = await engine.warm(ctx, windows);
+  for (const window of windows) {
+    for (const span of await scanOf(engine, window, ctx)) {
       if (SECRET_SOURCES.has(span.source)) kinds.add(kindLabel(span.type));
       else if (span.source === 'pii') piiKinds.add(kindLabel(span.type));
     }
-    if (start + MCP_WINDOW >= text.length) break;
   }
   if (kinds.size === 0) {
     // zn's own detector server (the plugin's) analyses the text the user asked about: no question for it.
@@ -928,13 +940,27 @@ async function decidePost(ev, d, agentId, opts = {}) {
     if (s === POST_WITHHELD || s.length < 8) return s;
     if (stopped || Date.now() >= deadlineAt) return withhold(s, true);
     if (s.length > room) return withhold(s, false);
-    // The engine's own scan is pure and cheap: it counts the values this string would add to the vault.
+    // Scanning counts the values this string would add to the vault.
     if (scanCtx === null) {
       scanCtx = typeof engine.prepare === 'function' ? await raceDeadline(engine.prepare(ctx), deadlineAt) : ctx;
       if (scanCtx === DEADLINE) { abandoned = true; return withhold(s, true); }
+      // One request to the vault for every string that will be scanned, not one for each.
+      if (typeof engine.warm === 'function') {
+        let budget = room;
+        const todo = [];
+        for (const t of outputStrings) {
+          if (typeof t !== 'string' || t.length < 8 || t.length > budget) continue;
+          budget -= t.length;
+          todo.push(t);
+        }
+        scanCtx = await raceDeadline(engine.warm(scanCtx, todo), deadlineAt);
+        if (scanCtx === DEADLINE) { abandoned = true; return withhold(s, true); }
+      }
     }
     if (scanCtx === DEADLINE) return withhold(s, true);
-    const spans = engine.scan(s, scanCtx) || [];
+    const found = await raceDeadline(scanOf(engine, s, scanCtx), deadlineAt);
+    if (found === DEADLINE) { abandoned = true; return withhold(s, true); }
+    const spans = found;
     for (const span of spans) {
       seen.add(s.slice(span.start, span.end));
       if (seen.size > tokenCap) return withhold(s, true);
@@ -1041,10 +1067,10 @@ async function decidePromptText(ev, d, agentId, expansion) {
   if (prompt.length < 8) return { decision: 'allow' };
   const engine = d.engine();
   let ctx = await ctxFor(ev, d, agentId, 'assistant');
-  // scan() is pure: prepare() first fetches the vault's exact values (and
-  // local ones), so a pasted vault secret is caught even without a pattern.
+  // prepare() first reads what the vault looks for (the daemon matches its values: none reach this process; local
+  // ones are read here), so a pasted vault secret is caught even without a pattern.
   if (typeof engine.prepare === 'function') ctx = await engine.prepare(ctx);
-  const spans = engine.scan(prompt, ctx) || [];
+  const spans = await scanOf(engine, prompt, ctx);
   const secrets = spans.filter((s) => SECRET_SOURCES.has(s.source));
   // Prompts only: NAME=value in the middle of a sentence, even when the value
   // does not look random (see lib/scrub/prompt.js).
@@ -1053,8 +1079,9 @@ async function decidePromptText(ev, d, agentId, expansion) {
   }
   if (secrets.length === 0) return { decision: 'allow' };
   const others = [...spans, ...secrets];
-  const scanText = (t) => { try { return engine.scan(t, ctx) || []; } catch (_) { return []; } };
-  const names = secrets.map((s) => nameOf(s) || keyBefore(prompt, s, others, scanText));
+  const scanText = async (t) => { try { return await scanOf(engine, t, ctx); } catch (_) { return []; } };
+  const names = [];
+  for (const s of secrets) names.push(nameOf(s) || await keyBefore(prompt, s, others, scanText));
   const shown = [...new Set(secrets.map((s, i) => names[i] || kindLabel(s.type)))];
   const suggestion = names[0] || suggestedName(secrets[0]);
   const stats = { detections: Object.fromEntries([...new Set(secrets.map((s) => s.type || 'SECRET'))].map((k) => [k, 1])) };
@@ -1116,7 +1143,7 @@ const KEY_IDENT_RE = /^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/;
 // The text before a value can be another secret ("<id>:<secret>"). It is used
 // as a name only if it overlaps no other detection, looks like a key
 // identifier (not a random token) and is not itself detected as a secret.
-function keyBefore(text, span, others, scanText) {
+async function keyBefore(text, span, others, scanText) {
   if (span.name || !GENERIC_TYPES.has(String(span.type || '').toUpperCase())) return null;
   const from = Math.max(0, span.start - 140);
   const m = KEY_BEFORE_RE.exec(String(text).slice(from, span.start));
@@ -1128,7 +1155,7 @@ function keyBefore(text, span, others, scanText) {
   if (!KEY_IDENT_RE.test(raw)) return null;
   if (/\d/.test(raw) && /[a-z]/.test(raw) && /[A-Z]/.test(raw)) return null;
   if ((raw.match(/\d/g) || []).length > 3) return null;
-  if (scanText && scanText(raw).length > 0) return null;
+  if (scanText && (await scanText(raw)).length > 0) return null;
   const n = raw.replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/[-.]/g, '_').toUpperCase();
   return NAME_RE.test(n) ? n : null;
 }
@@ -1237,7 +1264,7 @@ async function decideStop(ev, d, agentId, opts) {
     const engine = d.engine();
     let ctx = await ctxFor(ev, d, agentId, 'assistant');
     if (typeof engine.prepare === 'function') ctx = await engine.prepare(ctx);
-    for (const span of engine.scan(message, ctx) || []) {
+    for (const span of await scanOf(engine, message, ctx)) {
       if (SECRET_SOURCES.has(span.source)) kinds.add(kindLabel(span.type));
     }
   }

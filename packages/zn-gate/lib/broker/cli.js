@@ -212,15 +212,8 @@ async function secretAllow(args, io) {
   if ((flags.in || []).some((p) => p !== 'header')) {
     out(io, 'Warning: in the URL or the body, an injected prompt could make zn send ' + name + ' somewhere readable on an allowed host (a gist, an issue). Allow it only if the API needs it.');
   }
-  if (typeof vault.updateSecretMeta === 'function') out(io, 'Confirm the change in the zn vault prompt (system dialog or the `zn unlock --foreground` terminal).');
-  if (typeof vault.updateSecretMeta === 'function') {
-    await vault.updateSecretMeta(name, meta);
-  } else {
-    const project = deps.findProjectRoot(io.cwd);
-    const value = await vault.resolve(project, markers.markerFor(name));
-    if (value == null) throw deps.znError('ZN_NOT_FOUND', name + ' has no value');
-    await vault.setSecret(name, value, meta);
-  }
+  out(io, 'Confirm the change in the zn vault prompt (system dialog or the `zn unlock --foreground` terminal).');
+  await vault.updateSecretMeta(name, meta);
   out(io, name + ': mode=' + meta.mode + ' hosts=' + (meta.allowHosts.join(',') || '-') + ' commands=' + (meta.allowCommands.join(',') || '-') + ' http=' + meta.allowIn.join(','));
   return 0;
 }

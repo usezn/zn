@@ -1,12 +1,13 @@
 'use strict';
 /*
- * The vault daemon gives out a value only for a context it checks itself.
- * A program that holds the session key cannot ask for "the value of X" with
- * nothing else: resolve needs a destination of the hooks or a purpose of the
- * broker, exactValues is the masking path's call, and the daemon applies the
- * restoration policy, the secret's settings, its approvals and the
- * organization policy to what the request says. An agent or tool name in the
- * request is recorded and grants nothing. Real daemon, fake values.
+ * What the vault daemon checks before it answers. The context of a request
+ * (a destination of the hooks, a purpose of the broker, an agent or tool name)
+ * is declared by the caller and is not proved; the daemon checks it against
+ * what it holds: the restoration table, the secret's mode, the commands,
+ * executables, hosts and places the user allowed, and the organization
+ * policy. A request that names no context gets nothing. Masking runs in the
+ * daemon (positions and names come back, never values). Real daemon, fake
+ * values.
  */
 const test = require('node:test');
 const assert = require('node:assert');
@@ -93,8 +94,14 @@ test('a destination or purpose the vault does not know is refused', async () => 
   await assert.rejects(vault.resolve(PROJECT, '__ZN_API_TOKEN__', { purpose: 'zn-cloud-key' }), denied);
 });
 
-test('the daemon applies the same restoration table as the engine', () => {
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(daemon.DESTINATION_POLICY)), JSON.parse(JSON.stringify(engine.POLICY)));
+test('the daemon applies the engine\'s restoration table, and never restores for the assistant', () => {
+  const daemonTable = JSON.parse(JSON.stringify(daemon.DESTINATION_POLICY));
+  const engineTable = JSON.parse(JSON.stringify(engine.POLICY));
+  const { assistant, ...otherDaemon } = daemonTable;
+  const { assistant: engineAssistant, ...otherEngine } = engineTable;
+  assert.deepStrictEqual(otherDaemon, otherEngine);
+  assert.strictEqual(engineAssistant.named, 'restore');
+  assert.deepStrictEqual(assistant, { detected: 'not_restored', named: 'not_restored' });
 });
 
 test('a named secret is not restored into a local command, whoever the request says it is', async () => {
@@ -202,19 +209,81 @@ test('zn run end to end through the real daemon: first use is confirmed, then th
   assert.notStrictEqual(refused, 0);
 });
 
-test('exactValues is the masking path\'s call: a plain request is refused and recorded', async () => {
-  await assert.rejects(vault.call('exactValues', [PROJECT]), denied);
-  await assert.rejects(vault.call('exactValues', [PROJECT, {}]), denied);
-  await assert.rejects(vault.call('exactValues', [PROJECT, { purpose: 'run' }]), denied);
-  await assert.rejects(vault.call('exactValues', [PROJECT, { purpose: 'http', agent: 'claude-code', tool: 'Bash' }]), denied);
-  const before = auditRecords().filter((r) => r.reason === 'mask_values').length;
-  const list = await vault.exactValues(PROJECT, { agent: 'claude-code', tool: 'Read' });
-  assert.ok(list.some((e) => e.name === 'DB_PASS' && e.values[0] === V.env), 'the masking path still gets the values');
-  assert.ok(!list.some((e) => e.name === BACKUP), 'backups are not values to search for');
-  await vault.exactValues(PROJECT, { agent: 'claude-code', tool: 'Read' });
-  const records = auditRecords();
-  assert.strictEqual(records.filter((r) => r.reason === 'mask_values').length, before + 1, 'one grant record a minute for each agent and tool');
-  assert.ok(records.some((r) => r.reason === 'policy:no_context' && r.mode === 'resolve' && r.agent === 'claude-code' && r.tool === 'Bash'));
+test('no request reads a value out: exactValues is gone, masking returns positions and names only', async () => {
+  // The old call, with every claim a caller can make, finds no operation.
+  for (const args of [[PROJECT], [PROJECT, {}], [PROJECT, { purpose: 'mask' }], [PROJECT, { purpose: 'mask', agent: 'claude-code', tool: 'Read' }]]) {
+    await assert.rejects(vault.call('exactValues', args), (e) => denied(e) && /unknown operation/.test(e.message));
+  }
+  const info = await vault.maskInfo(PROJECT, { agent: 'claude-code', tool: 'Read' });
+  assert.ok(info.names.includes('DB_PASS') && info.names.includes('API_TOKEN') && info.count >= 8 && info.longest >= V.env.length);
+  assert.ok(!info.names.includes(BACKUP), 'backups are not looked for');
+  const everything = JSON.stringify(info);
+  for (const v of Object.values(V)) assert.ok(!everything.includes(v));
+  const text = 'a ' + V.env + ' b ' + Buffer.from(V.proxy).toString('base64') + ' c ' + Buffer.from(V.file).toString('hex');
+  const [spans, none] = await vault.maskSpans(PROJECT, [text, 'nothing to see here at all'], { agent: 'claude-code', tool: 'Read' });
+  assert.deepStrictEqual([...new Set(spans.map((s) => s.name))].sort(), ['API_TOKEN', 'CERT_PEM', 'DB_PASS']);
+  assert.ok(spans.some((s) => s.name === 'DB_PASS' && text.slice(s.start, s.end) === V.env));
+  assert.deepStrictEqual(none, []);
+  const wire = JSON.stringify(spans);
+  for (const v of Object.values(V)) assert.ok(!wire.includes(v), 'a value reached the answer');
+  assert.ok(spans.every((s) => Object.keys(s).every((k) => ['start', 'end', 'type', 'source', 'name', 'variant', 'vault'].includes(k))));
+  // a secret the organization denies, the cloud key and proxy-mode secrets are matched too: masking must hide them
+  await vault.setSecret('ZN_CLOUD_API_KEY', 'fake-cloud-' + 'c'.repeat(24), { mode: 'proxy', allowHosts: ['api.usezn.com'] });
+  const [cloud] = await vault.maskSpans(PROJECT, ['k fake-cloud-' + 'c'.repeat(24)]);
+  assert.ok(cloud.some((s) => s.name === 'ZN_CLOUD_API_KEY'));
+  await vault.removeSecret('ZN_CLOUD_API_KEY');
+  // a secret stored after the first call is matched by the next one
+  await vault.setSecret('LATE_SECRET', 'fake-late-' + 'l'.repeat(24), { mode: 'env' });
+  const [late] = await vault.maskSpans(PROJECT, ['x fake-late-' + 'l'.repeat(24)]);
+  assert.ok(late.some((s) => s.name === 'LATE_SECRET'));
+  await vault.removeSecret('LATE_SECRET');
+  const [gone] = await vault.maskSpans(PROJECT, ['x fake-late-' + 'l'.repeat(24)]);
+  assert.deepStrictEqual(gone, []);
+  // bad requests
+  await assert.rejects(vault.call('maskSpans', [PROJECT, 'not an array']), denied);
+  await assert.rejects(vault.call('maskSpans', [PROJECT, [1]]), denied);
+  await assert.rejects(vault.call('maskSpans', [PROJECT, new Array(5000).fill('x')]), denied);
+  // the calls are recorded, at most one record a minute for each agent and tool
+  const grants = auditRecords().filter((r) => r.reason === 'mask_text' && r.agent === 'claude-code' && r.tool === 'Read');
+  assert.strictEqual(grants.length, 1);
+});
+
+test('hooks and the streaming scrubber mask the vault\'s values through the daemon, a value split between chunks included', async () => {
+  const runner = require('../lib/hooks/runner');
+  const adapter = require('../lib/agents/claude-code');
+  const { createStream } = require('../lib/scrub/stream');
+  const hex = Buffer.from(V.file).toString('hex');
+  const b64 = Buffer.from(V.env).toString('base64');
+  const output = 'build ok\nkey=' + V.proxy + '\nenv ' + b64 + '\ncert ' + hex + '\ndone\n';
+  const post = await runner.handle(adapter, { hook_event_name: 'PostToolUse', cwd: PROJECT, tool_name: 'Bash', tool_input: { command: 'make' }, tool_response: { stdout: output, stderr: '', interrupted: false, isImage: false } }, { vault, failMode: 'closed' });
+  const text = JSON.stringify(post.output);
+  for (const leaked of [V.proxy, b64, hex]) assert.ok(!text.includes(leaked), 'a value reached the model');
+  assert.ok(text.includes('__ZN_API_TOKEN__'), text.slice(0, 300));
+  // a pasted vault secret stops the prompt
+  const prompt = await runner.handle(adapter, { hook_event_name: 'UserPromptSubmit', cwd: PROJECT, prompt: 'please use ' + V.proxy + ' for the call' }, { vault, failMode: 'closed' });
+  assert.strictEqual(prompt.decision.decision, 'deny');
+  assert.ok(!JSON.stringify(prompt.output).includes(V.proxy));
+  // a value cut in two chunks, with the first half already past the flush timer
+  const written = [];
+  const stream = createStream({ ctx: { project: PROJECT, agent: 'stream', tool: 'stream', destination: 'assistant', vault, env: {}, exactFiles: false }, write: (t) => written.push(t) });
+  await stream.push('x'.repeat(5000) + V.env.slice(0, 20));
+  await stream.flushPartial();
+  await stream.push(V.env.slice(20) + ' tail\n');
+  await stream.end();
+  const out = written.join('');
+  assert.ok(!out.includes(V.env) && !out.includes(V.env.slice(0, 20)), 'a value, or the start of one, was written');
+  assert.ok(out.includes('__ZN_DB_PASS__') && out.includes(' tail'), out.slice(-120));
+});
+
+test('resolve for the assistant is refused whatever the secret: no value goes back in front of the model', async () => {
+  for (const token of ['__ZN_API_TOKEN__', '__ZN_DB_PASS__', '__ZN_CERT_PEM__']) {
+    for (const claim of [{}, { agent: 'claude-code', tool: 'Read' }]) {
+      await assert.rejects(vault.resolve(PROJECT, token, { destination: 'assistant', ...claim }), denied, token);
+      await assert.rejects(vault.resolve(PROJECT, token, { destination: 'assistant', withPolicy: true, ...claim }), denied, token);
+    }
+  }
+  const detected = await vault.mapToken(PROJECT, 'EMAIL', 'fake.user@example.org');
+  await assert.rejects(vault.resolve(PROJECT, detected, { destination: 'assistant' }), denied);
 });
 
 test('adoptToken keeps the value inside the vault; sameSecretValue answers yes or no', async () => {
@@ -277,6 +346,11 @@ test('POSIX: the daemon refuses to serve from files that are not private to its 
     fs.chmodSync(ep.address, 0o600);
     fs.chmodSync(ep.keyFile, 0o600);
     assert.doesNotThrow(() => daemon.assertPrivateEndpoint(ep));
+    fs.unlinkSync(ep.keyFile);
+    assert.doesNotThrow(() => daemon.assertPrivateEndpoint(ep), 'a file that does not exist yet is fine before the daemon starts');
+    assert.throws(() => daemon.assertPrivateEndpoint(ep, true), denied, 'but not once it should be there');
+    fs.writeFileSync(ep.keyFile, 'k');
+    fs.chmodSync(ep.keyFile, 0o600);
     fs.chmodSync(ep.keyFile, 0o640);
     assert.throws(() => daemon.assertPrivateEndpoint(ep), denied);
     fs.chmodSync(ep.keyFile, 0o600);
@@ -293,4 +367,17 @@ test('POSIX: the daemon refuses to serve from files that are not private to its 
     fs.chmodSync(dir, 0o700);
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('sameSecretValue is recorded and rate limited', async () => {
+  const before = auditRecords().filter((r) => r.reason === 'compare').length;
+  assert.strictEqual(await vault.sameSecretValue('DB_PASS', V.env), true);
+  assert.strictEqual(await vault.sameSecretValue('DB_PASS', V.env + 'x'), false);
+  assert.strictEqual(auditRecords().filter((r) => r.reason === 'compare').length, before + 2);
+  let refused = 0;
+  for (let i = 0; i < 130; i++) {
+    try { await vault.sameSecretValue('DB_PASS', 'guess-' + i); } catch (e) { if (denied(e)) refused += 1; }
+  }
+  assert.ok(refused >= 1, 'guesses are limited');
+  assert.ok(auditRecords().some((r) => r.reason === 'policy:compare_rate'));
 });
