@@ -39,6 +39,7 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const store = require('./store');
 const keychain = require('./keychain');
+const winacl = require('./winacl');
 const audit = require('./audit');
 const confirmMod = require('./confirm');
 const { variants, buildMatcher, MIN_LENGTH: MIN_NEEDLE } = require('../scrub/exact');
@@ -1052,9 +1053,16 @@ async function serve(opts) {
   if (ep.unix) fs.chmodSync(ep.address, 0o600);
   // Node cannot read the peer's credentials (SO_PEERCRED) from a Unix socket, so the kernel's file permissions are
   // the peer check: the socket is checked before the session key is written, and all three again after.
+  // Windows: the key file and the pipe get explicit owner-only permissions, read back.
+  // If any of these cannot be set or checked, the daemon does not stay up.
   try {
     if (ep.unix) assertPrivateEndpoint(ep);
     store.writePrivateFile(ep.keyFile, sessionKey.toString('hex'));
+    if (!ep.unix) {
+      const acl = o.winacl || winacl;
+      acl.ensurePrivate(ep.keyFile, { dir: false });
+      acl.ensurePipe(ep.address);
+    }
     assertPrivateEndpoint(ep, true);
   } catch (err) { await shutdown('lock'); throw err; }
   await state.serial(async () => {

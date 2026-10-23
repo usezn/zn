@@ -227,6 +227,7 @@ async function prepare(parsed, opts) {
   if (found && !planted) {
     try { opened = exe.openExecutable(found.real); } catch (_) { opened = null; }
   }
+  const risk = opened && found ? exe.scriptRisk(opened, found.real) : null;
   const ctx = { project, executable: opened ? { real: found.real, fp: opened.fp } : null };
   const close = () => { if (opened) { try { fs.closeSync(opened.fd); } catch (_) { /* closed */ } opened = null; } };
   try {
@@ -260,13 +261,14 @@ async function prepare(parsed, opts) {
     }
     if (planted) await deny(name, m.mode, '`' + argv0 + '` ' + planted + '; zn run will not give it ' + name);
     if (!opened) await deny(name, m.mode, '`' + argv0 + '` could not be opened for checking; zn run will not give it ' + name);
+    if (risk && risk.deny) await deny(name, m.mode, scriptDenial(risk.deny, argv0, name));
     chosen.push({ name, mode: m.mode, command: entry });
   }
 
   const skipped = [];
   for (const name of optional) {
     const m = meta.get(name);
-    const entry = m && !m.deny && m.mode === 'env' && !planted && opened ? markers.matchAllowCommands(m.allowCommands, parsed.command) : null;
+    const entry = m && !m.deny && m.mode === 'env' && !planted && opened && !(risk && risk.deny) ? markers.matchAllowCommands(m.allowCommands, parsed.command) : null;
     if (entry && await approvals.isApproved(name, entry, ctx)) chosen.push({ name, mode: m.mode, command: entry });
     else skipped.push(name);
   }
@@ -320,6 +322,11 @@ async function prepare(parsed, opts) {
   // Arguments go through exactly as written: assertNoArgvMarkers refused any marker in them.
   const argv = parsed.command.slice();
 
+  const ownScript = risk && !risk.deny && risk.warn ? risk.warn : null;
+  if (ownScript && chosen.length && opts.stderr !== false) {
+    (opts.stderr || process.stderr).write('zn run: warning: `' + exeName + '` is a script you can rewrite (' + ownScript + '); another program running as you could swap it while it starts and read the secret. ' +
+      'Keep it where only you can write, or run it through its interpreter.\n');
+  }
   for (const c of chosen) {
     // A `warn` rule of the organization policy: allowed, recorded as "warn", and said.
     const m = meta.get(c.name);
@@ -327,11 +334,24 @@ async function prepare(parsed, opts) {
       await audit({ secret: c.name, mode: c.mode, agent, tool: 'zn run', argv0: exeName, host: null, decision: 'warn', reason: WARN_REASON });
       if (opts.stderr !== false) (opts.stderr || process.stderr).write(warnNotice(c.name, m.warnReason) + '\n');
     } else {
-      await audit({ secret: c.name, mode: c.mode, agent, tool: 'zn run', argv0: exeName, host: null, decision: 'allow', reason: 'allowCommands: ' + c.command });
+      await audit({ secret: c.name, mode: c.mode, agent, tool: 'zn run', argv0: exeName, host: null, decision: 'allow', reason: 'allowCommands: ' + c.command + (ownScript ? '; script writable by the current user: ' + ownScript : '') });
     }
   }
   return { argv, env: childEnv, secrets: chosen.map((c) => ({ ...c, value: values.get(c.name) })), project, resolved: found ? found.real : null };
   }
+}
+
+/*
+ * A `#!` script (on Windows, a .cmd or .bat file) is opened again by its
+ * interpreter after the last check. When group or others (on Windows, another
+ * principal) can rewrite it or a folder above it, or another account owns it,
+ * it could be swapped in that window and would receive the secret: refuse.
+ * A script only the current user can write is allowed with a warning.
+ */
+function scriptDenial(loose, argv0, name) {
+  return '`' + argv0 + '` is a script that others can rewrite (' + loose + '), and its interpreter opens it again after zn has checked it, ' +
+    'so zn run will not give it ' + name + '. Next step: move the script where only you can write (not group or others) and that you own, ' +
+    'or run it through its interpreter, for example: zn run -- bash ./script.sh, after allowing that command.';
 }
 
 function closeExe(prep) {
@@ -367,6 +387,11 @@ function spawnChecked(prep, opts) {
     if (why) {
       return Promise.reject(znError('ZN_POLICY_DENIED', '`' + prep.argv[0] + '`: ' + why + ' (' + prep.exe.real + '); it was not started. ' +
         'Run the command again; if this keeps happening, something is replacing the program.'));
+    }
+    const again = exe.scriptRisk(prep.exe.opened, prep.exe.real);
+    if (again && again.deny) {
+      return Promise.reject(znError('ZN_POLICY_DENIED', '`' + prep.argv[0] + '` is a script that others can rewrite (' + again.deny + '); it was not started. ' +
+        'Put the script where only you can write, or run it through its interpreter.'));
     }
     file = exe.execPath(prep.exe.opened, prep.exe.real);
     // The program still sees the name it was called by (multi-call binaries need it).

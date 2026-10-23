@@ -263,6 +263,35 @@ prove it can read `~/.zn/run/session.key`.
   your agent's sandbox or permission rules so that it cannot run arbitrary
   programs without asking you.
 
+## Memory, swap and crash dumps
+
+While the vault is unlocked, the daemon holds the age identity, the decrypted
+secrets and the session key in the memory of one Node.js process. zn does what
+JavaScript allows and no more:
+
+- **What it does:** it zero-fills the session key when the vault locks, drops
+  its references to the identity and the secrets, and exits when the session
+  expires or the vault is locked (`zn lock`).
+- **What it cannot do:** JavaScript strings are immutable and managed by the
+  garbage collector, so a decrypted value cannot be wiped from memory. Copies
+  can stay in memory until the operating system reuses it. zn does not lock
+  memory pages (no `mlock`), does not turn swap off, and does not stop the
+  operating system from writing the process to disk.
+- **What that means:** a process that can read the daemon's memory (a
+  debugger, `ptrace`, `/proc/<pid>/mem`, or an administrator or root) can read
+  the unlocked vault; this is the same-user boundary described above. And
+  values that were in memory can end up in the swap file or partition, the
+  hibernation file, a core dump or a crash dump (Windows Error Reporting
+  dumps, `systemd-coredump`, macOS crash reports), where someone with access
+  to your disk later could find them.
+- **If this matters to you:** keep the vault locked when you are not using
+  secrets; encrypt the disk and the swap (BitLocker, FileVault, encrypted swap
+  or `dm-crypt`) and do not hibernate; turn core dumps off for your account
+  (`ulimit -c 0`, `Storage=none` in `coredump.conf`, or no Windows
+  `LocalDumps` setting); restrict `ptrace` (`kernel.yama.ptrace_scope` set to 1
+  or higher). Protection against a compromised administrator or root account is
+  outside what zn promises.
+
 ## Starting the approved program
 
 `zn run` resolves the command name once, to the real path of one file. It
@@ -273,11 +302,30 @@ right before starting it, and starts that path; it never looks the name up on
 - **Native programs on Linux** are started through the file zn opened and
   checked, so what runs is exactly what was checked, whatever happens to the
   path in between.
-- **Scripts (`#!`) on any system** are run by their interpreter, which opens
-  the script again by its path after zn's last check. A process of your user
-  that can write the script's directory could replace it in that short
-  window. A line `#!/usr/bin/env X` looks X up on the `PATH` of the caller, and
-  the check covers the script, not the interpreter it finds there.
+- **Scripts (`#!`) on Linux and macOS, and `.cmd`/`.bat` files on Windows**
+  are run by an interpreter that opens the script again by its path after zn's
+  last check. A process that can write the script, or its folder, could replace
+  it in that short window. `zn run` treats two cases differently:
+  - **Unsafe: refused, nothing is started.** Group or others can write the
+    script or a folder above it (a sticky folder such as `/tmp` does not
+    count), or the script or a folder above it belongs to another account
+    (neither root nor you). On Windows: the file or a folder above it lets any
+    principal other than you, SYSTEM, administrators or the installer service
+    write, or is owned by one. zn reads the permissions of the file and every
+    folder above it, and refuses if it cannot read them.
+  - **Your own script: allowed, with a warning.** Only you (and root or an
+    administrator) can write it, as with scripts installed by nvm, Homebrew,
+    pnpm, yarn, pipx or a virtual environment. `zn run` prints a one-line
+    warning on stderr and notes it in the audit log. The remaining risk: any
+    other program running as your user could still swap the script in that
+    window. That is the same trust zn already places in everything that runs
+    as you. To avoid it, run the script through its interpreter
+    (`zn run -- bash ./script.sh`, with that command allowed), or keep the
+    script where only an administrator can write.
+  A script that only root or an administrator can change, such as one under
+  `/usr/bin`, passes without a warning. A line `#!/usr/bin/env X` looks X up on
+  the `PATH` of the caller, and the check covers the script, not the
+  interpreter it finds there.
 - **Every program on macOS and Windows** is started by path right after the
   last check, so the same short window exists.
 - **Dynamic loader variables** (`LD_*`, `DYLD_*`) and the glibc variables that
@@ -424,13 +472,26 @@ stop malware running as the same user (see above).
 
 ## Design decisions and known limits
 
-- **`secrets_http_request` and secret modes:** a secret with `allowHosts` can be
-  used over HTTP whatever its mode. The host list is the explicit grant.
+- **`secrets_http_request` and secret modes:** only a secret in `proxy` mode is
+  sent over HTTP, to a host in its `allowHosts` and in the places its settings
+  allow. The vault checks the mode, the host and the placement again when it
+  hands the value over, so a request that skips the broker meets the same
+  limits. An `env` or `file` secret is meant for a local program and is never
+  put into an HTTP request.
 - **Versioned files keep markers.** zn never writes a value into a file git
   tracks. Restoring a value in a tracked file that already contains it is not
   supported: the token stays.
-- **The Windows named pipe has no explicit DACL.** Every connection
-  authenticates both ways with an HMAC over a session key that only the user
+- **Windows permissions are explicit.** The vault folders (`~/.zn` or
+  `ZN_HOME`, `vault\`, `run\`) get a protected access list with one allow entry
+  for your account and nothing inherited, and `session.key` the same. Node
+  cannot give a named pipe a security descriptor when it creates one, so right
+  after the daemon starts listening it sets one for the pipe (your account and
+  SYSTEM only). Each list is read back and checked (owner, no entry for anyone
+  else); if any of them cannot be set or verified, for example on a folder you
+  cannot change permissions on or one that another account created, the vault
+  does not start and says why. Administrators can still take ownership of a
+  file, as on any Windows system. On top of that, every connection
+  authenticates both ways with an HMAC over the session key that only the user
   can read, so another account cannot use it (see "What the vault daemon
   protects" for the case of a shared `ZN_HOME`).
 - **Dependencies:** the vault uses `age-encryption` (BSD-3-Clause) and its
