@@ -15,6 +15,8 @@
         "pi:disregard",
         "pi:forget",
         "pi:identity_override",
+        "pi:identity_request",
+        "pi:identity_request_multi",
         "pi:ignore_previous",
         "pi:jailbreak",
         "pi:multi_de",
@@ -45,7 +47,7 @@
         "secret:private_key"
       ],
       "sha256": {
-        "lib/rules.js": "a0a20d2ccd6889272448238a88794dd66c6d7190a4bc8ab3e177c6de38cc7aa8",
+        "lib/rules.js": "437279cf1b38ed08a9c89da3b5482827d0efadcca62da74d5a407192c53cebad",
         "lib/mcp-secrets.js": "6a59fc9809d6b1a3509ff285d21be57e2906449b1c78644e41fe142eccda69b9"
       }
     },
@@ -205,7 +207,7 @@
     },
     "policy": {
       "version_const": "POLICY_RULES_VERSION",
-      "version": "2026-10-24.3",
+      "version": "2026-10-24.8",
       "ids": [
         "SHELL_SCAN_CAP",
         "_decodeAnsiC",
@@ -233,7 +235,7 @@
         "writeDenial"
       ],
       "sha256": {
-        "lib/hooks/policy.js": "383fb7723f02356cb4df2fd43a9817d5bf23b6597c918bf1c4df2009fa402050",
+        "lib/hooks/policy.js": "44294091615dbc773aca179cf88caeb60f9bc3425f2df356bc2869561af76079",
         "lib/broker/files.js": "45dd8927cc626ac35e8c036e5118ec3c584a3f3a396640c09cee8b545e67c097",
         "lib/broker/markers.js": "301eb1d763e8e88c32e32a02c344be8f44b342b06b61897f3a2d478dbe55d6b4",
         "lib/broker/dotenv.js": "d12a12bd12108a38f84e9f4772ed50f0b015962a1e68f75362142b9b3449e8fe",
