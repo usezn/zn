@@ -44,6 +44,28 @@ function kindOf(rel) {
   return 'file';
 }
 
+function isRealDir(f) {
+  try { return fs.lstatSync(f).isDirectory(); } catch (err) { return false; }
+}
+
+function present(f) {
+  try { fs.lstatSync(f); return true; } catch (err) { return false; }
+}
+
+/** True when child is parent or lies inside it. */
+function inside(parent, child) {
+  const r = path.relative(parent, child);
+  return r === '' || (r.split(path.sep)[0] !== '..' && !path.isAbsolute(r));
+}
+
+/** The native backend that holds a zn entry on this computer, when keychain.json cannot say; else null. */
+function probeNative() {
+  let b = null;
+  try { b = keychain.detectBackend(); } catch (err) { return null; }
+  if (!b || b === 'passphrase' || !keychain._native[b]) return null;
+  try { return keychain._native[b].load() ? b : null; } catch (err) { return null; }
+}
+
 function walk(dir, acc, dirs) {
   let names = [];
   try { names = fs.readdirSync(dir); } catch (err) { return acc; }
@@ -71,19 +93,58 @@ function targets(opts) {
     let st;
     try { st = fs.lstatSync(d); } catch (err) { continue; }
     if (!st.isDirectory()) { files.push({ path: d, kind: 'backup' }); continue; }
-    for (const f of walk(d, [], dirs)) files.push({ path: f, kind: 'backup (' + n + ')' });
+    for (const f of walk(d, [], dirs)) files.push({ path: f, kind: 'backup (' + n + ')', folder: d });
     dirs.push(d);
   }
-  for (const f of walk(p.runDir, [])) files.push({ path: f, kind: path.basename(f) === 'session.key' ? 'session key' : 'daemon runtime file' });
+  // The vault and run folders are never followed when they are a link (or anything but a folder):
+  // the link itself is what goes. Inside run, only the first level, and never a folder.
+  if (present(p.vaultDir) && !isRealDir(p.vaultDir)) files.push({ path: p.vaultDir, kind: 'link in place of the vault folder (only the link is deleted)' });
+  if (present(p.runDir) && !isRealDir(p.runDir)) {
+    files.push({ path: p.runDir, kind: 'link in place of the runtime folder (only the link is deleted)' });
+  } else if (isRealDir(p.runDir)) {
+    let runNames = [];
+    try { runNames = fs.readdirSync(p.runDir); } catch (err) { /* unreadable */ }
+    for (const n of runNames) {
+      const f = path.join(p.runDir, n);
+      try { if (fs.lstatSync(f).isDirectory()) continue; } catch (err) { continue; }
+      files.push({ path: f, kind: n === 'session.key' ? 'session key' : 'daemon runtime file' });
+    }
+  }
   const fails = path.join(p.home, 'unlock-failures');
   try { if (fs.lstatSync(fails).isFile()) files.push({ path: fails, kind: 'failed-unlock counter' }); } catch (err) { /* none */ }
   let backend = null;
-  try { const m = keychain.readMeta(opts); backend = m && m.backend; } catch (err) { /* damaged */ }
-  return { files, dirs: dirs.sort((a, b) => b.length - a.length), backend };
+  let probe = null;
+  // keychain.json is read only from a real vault folder; when it is damaged, ask the system backends.
+  if (isRealDir(p.vaultDir)) {
+    try { const m = keychain.readMeta(opts); backend = m && m.backend; } catch (err) { probe = probeNative(); }
+  }
+  return { files, dirs: dirs.sort((a, b) => b.length - a.length), backend, probe };
 }
 
-/** Delete one file or link; returns true when it is gone. */
-function unlinkGone(f) {
+/**
+ * The lines that say what purge deletes, grouped: one line per backup folder, one for the token
+ * maps, the session key, and the keychain entry. Used by `uninstall` before its second question.
+ */
+function summary(t) {
+  const lines = [];
+  const folders = new Map();
+  let maps = 0;
+  for (const f of t.files) {
+    if (f.folder) folders.set(f.folder, (folders.get(f.folder) || 0) + 1);
+    else if (f.kind === 'token map of a project') maps++;
+    else lines.push('  - ' + f.path + '  (' + f.kind + ')');
+  }
+  for (const [d, n] of folders) lines.push('  - ' + d + ': ' + n + ' file' + (n === 1 ? '' : 's') + ' (a backup made by `zn vault reset`)');
+  if (maps) lines.push('  - ' + maps + ' token map' + (maps === 1 ? '' : 's') + ' of projects');
+  if (t.backend && t.backend !== 'passphrase') lines.push('  - the vault key in your ' + t.backend + ' keychain');
+  return lines;
+}
+
+/** Delete one file or link; returns true when it is gone. Never when its folder resolves outside zn's home. */
+function unlinkGone(f, homeReal) {
+  let dir;
+  try { dir = fs.realpathSync(path.dirname(f)); } catch (err) { return !!err && err.code === 'ENOENT'; }
+  if (!homeReal || !inside(homeReal, dir)) return false;
   try { fs.unlinkSync(f); } catch (err) { if (!err || err.code !== 'ENOENT') return false; }
   return true;
 }
@@ -97,7 +158,9 @@ async function removeAll(opts) {
   const t = targets(opts);
   const removed = [];
   const left = [];
-  for (const f of t.files) (unlinkGone(f.path) ? removed : left).push(f.path);
+  let homeReal = null;
+  try { homeReal = fs.realpathSync(store.paths(opts).home); } catch (err) { /* no zn folder */ }
+  for (const f of t.files) (unlinkGone(f.path, homeReal) ? removed : left).push(f.path);
   let key = 'none';
   if (left.length) {
     key = t.backend && t.backend !== 'passphrase' ? 'kept' : 'none';
@@ -112,7 +175,7 @@ async function removeAll(opts) {
   // Look again: what is still on disk counts, whatever each call said.
   for (const f of targets(opts).files) if (!left.includes(f.path)) left.push(f.path);
   for (const d of t.dirs) if (fs.existsSync(d) && !left.includes(d)) left.push(d);
-  return { removed: removed.filter((f) => !left.includes(f)), left, key, backend: t.backend };
+  return { removed: removed.filter((f) => !left.includes(f)), left, key, backend: t.backend, probe: t.probe };
 }
 
 /** The sentence for a key that is not confirmed gone, or null. */
@@ -123,6 +186,12 @@ function keyProblem(r) {
       '. It is harmless without the files; remove the "zn" entry by hand.';
   }
   return null;
+}
+
+/** A note (not a failure) when keychain.json is damaged and a native backend still holds a zn entry, or null. */
+function keyNote(r) {
+  if (!r.probe) return null;
+  return 'zn could not read the vault settings (damaged), and your ' + r.probe + ' keychain still holds a "zn" entry. zn cannot tell whether it belongs to this vault, so it was not touched. It is harmless without the vault files; remove the "zn" entry by hand if you use no other vault.';
 }
 
 /**
@@ -141,7 +210,12 @@ async function purgeVault(opts, io) {
     tty.requireHuman('zn vault purge', i);
   }
   const t = targets(o);
-  if (!t.files.length) { out('There is no vault here to purge. Nothing was changed.'); return 0; }
+  if (!t.files.length) {
+    out('There is no vault here to purge. Nothing was changed.');
+    const note = keyNote(t);
+    if (note) out(note);
+    return 0;
+  }
   const policyFiles = policy.paths(o);
   if ([policyFiles.teamFile, policyFiles.policyFile].some((x) => fs.existsSync(x))) { process.stderr.write('[zn] ' + reset.TEAM_REFUSAL + '\n'); return 1; }
   if (await daemon.isRunning(o)) { process.stderr.write('[zn] The vault is unlocked. Run `' + zn('lock') + '` first, then `' + zn('vault purge') + '`.\n'); return 1; }
@@ -168,7 +242,9 @@ async function purgeVault(opts, io) {
   }
   try { reset.clearUnlockFailures(o); } catch (err) { /* none */ }
   out('Purged: ' + r.removed.length + ' files deleted, and a new check found none left. Run `' + zn('unlock') + '` to create a new vault.');
+  const note = keyNote(r);
+  if (note) out(note);
   return 0;
 }
 
-module.exports = { purgeVault, targets, removeAll, keyProblem, PHRASE };
+module.exports = { purgeVault, targets, removeAll, keyProblem, keyNote, summary, PHRASE, _unlinkGone: unlinkGone };
