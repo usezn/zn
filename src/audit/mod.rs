@@ -282,6 +282,15 @@ impl AuditVault {
                 .ok();
         }
 
+        // Records written by 1.13.x kept the text of the nearest neighbour.
+        let scrubbed = scrub_legacy_neighbours(&mut conn)?;
+        if scrubbed > 0 {
+            info!(
+                "Audit records with neighbour text replaced by a keyed reference: {}",
+                scrubbed
+            );
+        }
+
         // Upgrade records written in the old format the first time the vault
         // opens with its key. A key that fails the stored key check is refused
         // before anything is written.
@@ -896,6 +905,58 @@ fn migrate_v1_records(conn: &mut Connection, key_bytes: &[u8; 32]) -> Result<Mig
     tx.commit()
         .map_err(|e| anyhow!("Failed to commit audit upgrade: {}", e))?;
     Ok(report)
+}
+
+/// One-time upgrade of audit rows written before the neighbour was kept as a
+/// reference: a `nearest_neighbor` that is not `<ref>:<distance>` (the text of
+/// the neighbour, optionally followed by `:<distance>`) becomes
+/// `content_ref(text):<distance>`, and the payload of an old `NEAREST_NEIGHBOR`
+/// row, which held the same text, is cleared. Rows that already hold a
+/// reference are left alone, so running it again changes nothing.
+fn scrub_legacy_neighbours(conn: &mut Connection) -> Result<usize> {
+    let rows: Vec<(String, String, String)> = {
+        let mut stmt = conn.prepare(
+            "SELECT id, event, nearest_neighbor FROM audit_logs WHERE nearest_neighbor IS NOT NULL",
+        )?;
+        let mapped = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        let mut out = Vec::new();
+        for row in mapped {
+            let (id, event, nn): (String, String, String) = row?;
+            let already = crate::ai::is_content_ref(&nn)
+                || nn
+                    .rsplit_once(':')
+                    .is_some_and(|(head, _)| crate::ai::is_content_ref(head));
+            if !already {
+                out.push((id, event, nn));
+            }
+        }
+        out
+    };
+    if rows.is_empty() {
+        return Ok(0);
+    }
+    let tx = conn.transaction()?;
+    for (id, event, nn) in &rows {
+        let new_nn = match nn.rsplit_once(':') {
+            Some((text, dist)) if dist.parse::<f64>().is_ok() => {
+                format!("{}:{}", crate::ai::content_ref(text), dist)
+            }
+            _ => crate::ai::content_ref(nn),
+        };
+        if event == "NEAREST_NEIGHBOR" {
+            tx.execute(
+                "UPDATE audit_logs SET nearest_neighbor = ?1, payload = NULL WHERE id = ?2",
+                params![new_nn, id],
+            )?;
+        } else {
+            tx.execute(
+                "UPDATE audit_logs SET nearest_neighbor = ?1 WHERE id = ?2",
+                params![new_nn, id],
+            )?;
+        }
+    }
+    tx.commit()?;
+    Ok(rows.len())
 }
 
 #[cfg(test)]
@@ -1876,5 +1937,96 @@ mod tests {
         assert!(text.starts_with("v2:"));
         assert!(!text.contains("tenant a secret"));
         fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn old_neighbour_text_is_replaced_by_a_reference_once() {
+        let path = temp_db_path();
+        let vault = AuditVault::new(&path, None).expect("vault");
+        {
+            let conn = vault.get_connection();
+            let conn = conn.lock().unwrap();
+            let ins = "INSERT INTO audit_logs (id, timestamp, event, tool_name, status, payload, nearest_neighbor) VALUES (?1, 't', ?2, 'tool', 'AUDIT', ?3, ?4)";
+            conn.execute(
+                ins,
+                params![
+                    "a",
+                    "TOOL_CALL",
+                    None::<String>,
+                    "login: {\"pin\":\"4821\"}:0.2500"
+                ],
+            )
+            .unwrap();
+            conn.execute(
+                ins,
+                params![
+                    "b",
+                    "NEAREST_NEIGHBOR",
+                    "login: {\"pin\":\"4821\"}:0.2500",
+                    "login: {\"pin\":\"4821\"}:0.2500"
+                ],
+            )
+            .unwrap();
+            conn.execute(
+                ins,
+                params!["c", "TOOL_CALL", None::<String>, "no distance here"],
+            )
+            .unwrap();
+            conn.execute(
+                ins,
+                params!["d", "NEAREST_NEIGHBOR", "keep", "h:0123456789abcdef:0.5000"],
+            )
+            .unwrap();
+        }
+        drop(vault);
+
+        let vault = AuditVault::new(&path, None).expect("reopen");
+        let get = |id: &str| -> (Option<String>, Option<String>) {
+            vault
+                .get_connection()
+                .lock()
+                .unwrap()
+                .query_row(
+                    "SELECT nearest_neighbor, payload FROM audit_logs WHERE id = ?1",
+                    [id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap()
+        };
+        let want = format!(
+            "{}:0.2500",
+            crate::ai::content_ref("login: {\"pin\":\"4821\"}")
+        );
+        assert_eq!(get("a").0.as_deref(), Some(want.as_str()));
+        let b = get("b");
+        assert_eq!(b.0.as_deref(), Some(want.as_str()));
+        assert!(b.1.is_none(), "old neighbour payload must be cleared");
+        let c = get("c").0.unwrap();
+        assert!(crate::ai::is_content_ref(&c), "{c}");
+        let d = get("d");
+        assert_eq!(d.0.as_deref(), Some("h:0123456789abcdef:0.5000"));
+        assert_eq!(d.1.as_deref(), Some("keep"), "ref rows stay untouched");
+        let all = format!("{:?}", vault.get_recent(10).unwrap());
+        assert!(!all.contains("4821") && !all.contains("no distance"));
+        drop(vault);
+
+        // A second opening changes nothing.
+        let vault = AuditVault::new(&path, None).expect("third open");
+        assert_eq!(get_nn(&vault, "a"), want);
+        drop(vault);
+        fs::remove_file(&path).ok();
+    }
+
+    fn get_nn(vault: &AuditVault, id: &str) -> String {
+        vault
+            .get_connection()
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT nearest_neighbor FROM audit_logs WHERE id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap()
     }
 }

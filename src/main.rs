@@ -355,6 +355,11 @@ async fn start_proxy(args: Args) -> Result<()> {
         .ok();
     }
 
+    // Key for the content references kept in the audit log and the vector
+    // memory; it never leaves this machine.
+    zn::ai::init_ref_key(std::path::Path::new("data"))
+        .map_err(|e| anyhow!("cannot set up data/ref.key: {e}"))?;
+
     // Initialize Audit Vault
     if zn_config.audit.store_payloads && db_key.is_none() {
         anyhow::bail!("audit.store_payloads needs an encryption key; none is available");
@@ -1285,9 +1290,10 @@ async fn process_mcp_message(
                 // decision is wired in; schema field defaults to absent here.
                 fusion: None,
             };
-            let mut audit_written = audit_write(state, &entry.event, entry.clone());
-
-            // Log nearest-neighbor separately if enabled
+            // Log nearest-neighbor separately if enabled. It goes first: with
+            // `audit.require_write`, a failed write here denies the call before
+            // any TOOL_CALL row exists, so no row says ALLOWED for a denied call.
+            let mut audit_written = true;
             if let Some(nn) = nearest_neighbor_entry {
                 let mut nn_entry = AuditEntry::new("NEAREST_NEIGHBOR", &tool_name, "AUDIT")
                     .with_nearest_neighbor(nn.clone())
@@ -1295,7 +1301,10 @@ async fn process_mcp_message(
                     .with_agent_id(&agent_id_str);
                 nn_entry.payload =
                     zn::audit::payload_if_enabled(state.config.audit.store_payloads, nn);
-                audit_written &= audit_write(state, "NEAREST_NEIGHBOR", nn_entry);
+                audit_written = audit_write(state, "NEAREST_NEIGHBOR", nn_entry);
+            }
+            if audit_written || !state.config.audit.require_write {
+                audit_written &= audit_write(state, &entry.event, entry.clone());
             }
 
             if !audit_written && state.config.audit.require_write {
