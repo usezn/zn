@@ -1,0 +1,2 @@
+### Security
+- `zn team sync` now keeps a membership generation in the vault, which goes up on every join and leave. A sync that was already running when you left a team, or joined another one, no longer applies its policy answer, writes the readable copy or uploads audit records and upload state for the team you left: before each write it checks that the organization, installation, token and generation are still the current ones, and refuses a stale response.

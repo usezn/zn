@@ -191,6 +191,8 @@ function checkOptions(opts) {
     now,
     // Called before each batch; true stops the upload (the vault was locked).
     shouldStop: typeof opts.shouldStop === 'function' ? opts.shouldStop : () => false,
+    // Async; false after a response means the membership changed during the request: nothing is written.
+    isCurrent: typeof opts.isCurrent === 'function' ? opts.isCurrent : null,
   };
 }
 
@@ -289,7 +291,7 @@ async function sync(o, ctx) {
   while (!outcome) {
     const from = ctx.head ? ctx.head.seq : 0;
     const start = sendable.findIndex((r) => r.seq > from);
-    if (start < 0 || batches >= o.maxBatches || o.shouldStop()) break;
+    if (start < 0 || batches >= o.maxBatches || await o.shouldStop()) break;
 
     const batch = sendable.slice(start, start + o.batchSize);
     const body = { install_id: o.installId };
@@ -320,6 +322,11 @@ async function sync(o, ctx) {
       break;
     }
 
+    if (o.isCurrent && !(await o.isCurrent())) {
+      ctx.stale = true;
+      outcome = { status: 'stale', text: 'the organization membership changed during the upload' };
+      break;
+    }
     if (!res || res.status !== 200) {
       outcome = { status: 'error', text: 'unexpected response from server' };
       break;
@@ -347,6 +354,8 @@ async function sync(o, ctx) {
   }
 
   const pending = countPending(records, ctx.head);
+  if (o.isCurrent && !(await o.isCurrent())) ctx.stale = true;
+  if (ctx.stale) return { status, uploaded: ctx.uploaded, head: ctx.head, pending };
   writeState(o.stateFile, { head: ctx.head, last_upload: ctx.lastUpload, last_status: status, last_error: text });
   return { status, uploaded: ctx.uploaded, head: ctx.head, pending };
 }

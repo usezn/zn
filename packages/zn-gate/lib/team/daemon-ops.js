@@ -84,8 +84,19 @@ function makeTeamOps(ctx) {
 
   /* Put back the readable copies (~/.zn/team.json and org-policy.json) from the vault when one was
    * deleted or edited: the hooks read them, and a missing team.json would leave the organization's
-   * custom detectors off. Best effort (strict = throw, used by the sync); the vault stays the source of truth. */
-  function ensureCopies(t, strict) {
+   * custom detectors off. Best effort (strict = throw, used by the sync); the vault stays the source of truth.
+   * It runs in the serialised section and only while `m` (a membership snapshot) is still the current one, so a
+   * request that started before a leave or a join of another organization cannot bring a copy back (false). */
+  async function ensureCopies(m, strict) {
+    return state.serial(async () => {
+      const cur = await team();
+      if (!sameMembership(cur, m)) return false;
+      writeCopies(cur, strict);
+      return true;
+    });
+  }
+
+  function writeCopies(t, strict) {
     try {
       const disk = policy.readTeam(state.opts);
       if (!disk || !sameJson(disk, Object.assign({ v: 1 }, teamRecord(t)))) policy.writeTeam(teamRecord(t), state.opts);
@@ -130,15 +141,36 @@ function makeTeamOps(ctx) {
     return { minVersion: Number(p.version) || 0, heldDigest, heldExpiresAt: Number.isFinite(heldExpiresAt) ? heldExpiresAt : null };
   }
 
-  async function updateTeam(fn) {
+  /*
+   * Membership generation. s.teamGen lives in the vault next to s.team but
+   * outlives it: joining and leaving each add one, so a sync that started
+   * under an earlier membership can never be mistaken for the current one.
+   */
+  const membership = (t) => ({ org: t.org, install_id: t.install_id, token: t.install_token, gen: Number.isInteger(t.gen) ? t.gen : 0 });
+  const sameMembership = (t, m) => !!t && t.org === m.org && t.install_id === m.install_id && t.install_token === m.token &&
+    (Number.isInteger(t.gen) ? t.gen : 0) === m.gen;
+
+  /*
+   * Runs fn on the team record inside the serialised section; with `snap`, only if the membership is still the one
+   * that was snapshotted. Returns false when nothing was applied, else {value: what fn returned}. `after(team, value)`
+   * runs in the same section once the vault is saved (the readable copies go there).
+   */
+  async function updateTeam(fn, snap, after) {
     return state.serial(async () => {
       const s = await state.loadSecrets();
-      if (!s.team) return null;
-      const r = fn(s.team);
+      if (!s.team || (snap && !sameMembership(s.team, snap))) return false;
+      const value = fn(s.team);
       await state.saveSecrets();
-      return r;
+      if (after) after(s.team, value);
+      return { value };
     });
   }
+
+  /* fn runs in the serialised section only while the membership is still the snapshotted one: {stale: true} otherwise. */
+  const guardedBy = (snap) => (fn) => state.serial(async () => {
+    if (!sameMembership(await team(), snap)) return { stale: true };
+    return { value: fn() };
+  });
 
   const ops = {
     /**
@@ -238,7 +270,9 @@ function makeTeamOps(ctx) {
       }
       return state.serial(async () => {
         const s = await state.loadSecrets();
+        s.teamGen = (Number.isInteger(s.teamGen) ? s.teamGen : 0) + 1;
         s.team = {
+          gen: s.teamGen,
           org: res.org, org_name: orgName, api_base: base, install_id: installId,
           install_token: res.install_token, pin: res.policy_public_key,
           joined_at: current ? current.joined_at : new Date().toISOString(), revoked_at: null,
@@ -273,6 +307,7 @@ function makeTeamOps(ctx) {
       return state.serial(async () => {
         const s = await state.loadSecrets();
         delete s.team;
+        s.teamGen = (Number.isInteger(s.teamGen) ? s.teamGen : 0) + 1;
         delete s.orgApprovals;
         writeAudit({ mode: 'remove', decision: 'allow', reason: 'team_left' });
         await state.saveSecrets();
@@ -285,7 +320,7 @@ function makeTeamOps(ctx) {
       const t = await team();
       if (!t) return { joined: false };
       const st = await policyState();
-      ensureCopies(t);
+      await ensureCopies(membership(t));
       return {
         joined: true, org: t.org, org_name: t.org_name, install_id: t.install_id, api_base: t.api_base,
         joined_at: t.joined_at, revoked_at: t.revoked_at || null, kid: t.pin.kid,
@@ -308,7 +343,7 @@ function makeTeamOps(ctx) {
     async teamHookInfo() {
       const t = await team();
       if (!t) return { joined: false };
-      ensureCopies(t);
+      await ensureCopies(membership(t));
       const st = await policyState();
       return {
         joined: true, org: t.org, state: st.state, version: st.version || null,
@@ -320,19 +355,25 @@ function makeTeamOps(ctx) {
      * teamSync({upload}) -> {policy: {status, version?, error?}, upload: {...}}
      * Downloads the policy (ETag) and uploads pending audit records.
      */
-    async teamSyncNow(args) {
+    async teamSyncNow(args, onSnapshot) {
       const a = args && typeof args === 'object' ? args : {};
       const t = await team();
       if (!t) throw znError(CODES.NOT_FOUND, 'this machine is not in an organization (zn team join <token>)');
       const api = apiFor(t);
+      const snap = membership(t);
+      if (typeof onSnapshot === 'function') onSnapshot(snap);
+      const isCurrent = async () => sameMembership(await team(), snap);
+      const guard = guardedBy(snap);
+      const stale = () => ({ policy: { status: 'stale' }, upload: null });
       const out = { policy: null, upload: null };
       const held = await policyState();
       try {
         const r = await api.getPolicy({ etag: held.state === 'active' ? held.etag : undefined });
         if (isClosed()) return { policy: { status: 'stopped' }, upload: null };
+        // The answer belongs to the membership that asked; if this machine left, rejoined or changed token meanwhile, drop it.
+        if (!(await isCurrent())) return stale();
         if (r.status === 304) {
-          await updateTeam((tt) => { if (tt.policy) tt.policy.fetched_at = new Date().toISOString(); });
-          policy.touchCache(state.opts);
+          if (!(await updateTeam((tt) => { if (tt.policy) tt.policy.fetched_at = new Date().toISOString(); }, snap, () => policy.touchCache(state.opts)))) return stale();
           out.policy = { status: 'current', version: held.version };
         } else if (r.status === 404) {
           out.policy = { status: 'none' };
@@ -345,11 +386,12 @@ function makeTeamOps(ctx) {
           let lifted = null;
           if (v.ok) {
             rec = { envelope: r.body, etag: typeof r.etag === 'string' && r.etag.length <= 200 ? r.etag : null, version: v.policy.version, digest: policy.digestOf(v.policy), fetched_at: new Date().toISOString() };
-            // One serialized write: the version and digest are checked again against what the vault holds now
-            // (the policy held may have changed since the download began) and what this version removes or loosens
-            // is computed against that same held policy. The same version again keeps what was recorded for it.
+            // One serialized write, only while this is still the membership that started the sync. Inside it the
+            // version and digest are checked again against what the vault holds now (the policy held may have
+            // changed since the download began) and what this version removes or loosens is computed against
+            // that same held policy. The same version again keeps what was recorded for it. The readable copy is
+            // written in the same section.
             const w = await updateTeam((tt) => {
-              if (tt.org !== t.org || tt.install_id !== t.install_id) return { error: 'this machine left the organization during the download' };
               const again = policy.verifyEnvelope(r.body, tt.pin, { org: tt.org, ...heldFloor(tt.policy) });
               if (!again.ok) return { error: again.error };
               const prev = tt.policy && tt.policy.envelope ? policy.verifyEnvelope(tt.policy.envelope, tt.pin, { org: tt.org, allowExpired: true }) : null;
@@ -359,11 +401,13 @@ function makeTeamOps(ctx) {
               if (change) rec.change = change; else delete rec.change;
               tt.policy = rec;
               return { ok: true, isNew, lifted: isNew ? change : null };
+            }, snap, (tt, res) => {
+              if (res && res.ok) policy.writeCache(rec.envelope, rec.etag, Object.assign({}, state.opts, { change: rec.change }));
             });
-            if (w && w.ok) { applied = true; newVersion = w.isNew; lifted = w.lifted; } else v = { ok: false, error: (w && w.error) || 'this machine left the organization during the download' };
+            if (!w) return stale();
+            if (w.value && w.value.ok) { applied = true; newVersion = w.value.isNew; lifted = w.value.lifted; } else v = { ok: false, error: (w.value && w.value.error) || 'the policy could not be applied' };
           }
           if (applied) {
-            policy.writeCache(rec.envelope, rec.etag, Object.assign({}, state.opts, { change: rec.change }));
             out.policy = { status: 'updated', version: v.policy.version };
             if (lifted) out.policy.lifted = lifted.count;
             if (newVersion) writeAudit({ mode: 'set', decision: 'allow', reason: 'org_policy_v' + v.policy.version });
@@ -373,24 +417,28 @@ function makeTeamOps(ctx) {
             writeAudit({ mode: 'set', decision: 'deny', reason: 'policy:rejected' });
           }
         }
-        if (t.revoked_at) await updateTeam((tt) => { tt.revoked_at = null; });
+        if (t.revoked_at) await updateTeam((tt) => { tt.revoked_at = null; }, snap);
       } catch (err) {
         if (err && err.status === 401) {
+          if (!(await isCurrent())) return stale();
           out.policy = { status: 'revoked' };
-          if (!t.revoked_at) await updateTeam((tt) => { tt.revoked_at = new Date().toISOString(); });
+          if (!t.revoked_at) await updateTeam((tt) => { tt.revoked_at = new Date().toISOString(); }, snap);
         } else {
           out.policy = { status: 'offline', error: (err && err.code) || 'error' };
         }
       }
       // Keep the readable copy in line with the vault (it may have been edited or deleted).
-      const now = await team();
-      if (now) ensureCopies(now, true); // a sync that cannot write the readable copy fails and says so
+      // Keep the readable copy in line with the vault (it may have been edited or deleted), only while this is still
+      // the membership that started the sync. A copy that cannot be written fails the sync.
+      if (!(await ensureCopies(snap, true))) return stale();
       if (a.upload !== false && out.policy.status !== 'revoked' && !isClosed()) {
         const f = files();
         out.upload = await uploadPending({
           auditFile: state.paths.auditFile, stateFile: f.uploadState, lockFile: f.uploadLock,
-          api, installId: t.install_id, version: VERSION, shouldStop: isClosed,
+          api, installId: t.install_id, version: VERSION,
           startAfterSeq: Number.isInteger(t.upload_after_seq) ? t.upload_after_seq : 0,
+          // Nothing is sent or written once this machine left, rejoined or changed token: every write, the upload lock included, goes through guard.
+          shouldStop: async () => isClosed() || !(await isCurrent()), isCurrent, guard,
         });
       }
       return out;
@@ -467,20 +515,22 @@ function makeTeamOps(ctx) {
    */
   ops.teamSync = async function teamSync(args) {
     let out;
+    let snap = null;
     try {
-      out = await ops.teamSyncNow(args);
+      out = await ops.teamSyncNow(args, (m) => { snap = m; });
     } catch (err) {
-      await noteSync(['sync failed: ' + printable(String((err && err.message) || (err && err.code) || err), 160)]).catch(() => {});
+      if (snap) await noteSync(['sync failed: ' + printable(String((err && err.message) || (err && err.code) || err), 160)], snap).catch(() => {});
       throw err;
     }
-    if (!(out.policy && out.policy.status === 'stopped')) await noteSync(syncOutcome(out).problems).catch(() => {});
+    if (snap && !(out.policy && out.policy.status === 'stopped')) await noteSync(syncOutcome(out).problems, snap).catch(() => {});
     return out;
   };
 
   /* Record how the last sync went. A failure leaves one local alert (an audit record), then at most one more every ALERT_EVERY_MS. */
-  async function noteSync(problems) {
+  async function noteSync(problems, snap) {
     const ok = problems.length === 0;
     const at = new Date().toISOString();
+    // Only for the membership that ran the sync: after a leave or a join of another organization nothing is written.
     await updateTeam((tt) => {
       const prev = tt.last_sync && typeof tt.last_sync === 'object' ? tt.last_sync : null;
       const next = { at, ok, problems: problems.slice(0, 5), last_ok_at: ok ? at : (prev && prev.last_ok_at) || null };
@@ -494,7 +544,7 @@ function makeTeamOps(ctx) {
         }
       }
       tt.last_sync = next;
-    });
+    }, snap);
   }
 
   return ops;

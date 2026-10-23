@@ -17,7 +17,7 @@ machine that stops reporting is visible.
 |---|---|
 | `zn team join <token>` | Connects this machine to your organization. The token (`znj_...`) comes from an organization admin. Needs the vault unlocked (`zn unlock`). The join counts as done only once the organization's first valid policy has been downloaded and applied. If the policy cannot be downloaded, or the organization has not published one yet, the command exits `1`: this machine is registered but `zn team status` shows the join as **pending** until `zn team sync` succeeds. |
 | `zn team status` | Organization, installation id, policy version and expiry, what the last policy version removed or loosened, upload state, and the result of the last sync (what failed, and when it last worked). `--json` for scripts (`join_pending`, `last_sync`, `policy.change`). Never shows the install token. |
-| `zn team sync` | Downloads the policy and uploads pending audit records now. Exits `0` only when a valid policy is applied and no upload failed; offline, no policy, a refused policy, a removed machine or a failed upload exit `1` and say why. This also happens on its own while the vault is unlocked: a few seconds after `zn unlock`, then every 15 minutes. |
+| `zn team sync` | Downloads the policy and uploads pending audit records now. Exits `0` only when a valid policy is applied and no upload failed; offline, no policy, a refused policy, a removed machine or a failed upload exit `1` and say why. This also happens on its own while the vault is unlocked: a few seconds after `zn unlock`, then every 15 minutes. If you leave the organization or join another one while a sync is running, that sync is dropped and writes nothing. |
 | `zn team leave` | Disconnects this machine. The organization's policy stops applying here. It deletes the local copies of the policy and the upload state one by one; if one cannot be deleted (for example a locked file), the command exits `1` and names the file to delete by hand, because the hooks still read it. The install token is deleted from this machine, but the server is not told: the installation stays on the organization's list of connected installations until an admin removes it there. |
 | `zn team managed-config` | Prints the files an admin deploys with device management so zn-gate's hooks run on every machine. Writes nothing; see [Deploy zn-gate's hooks to every machine](#deploy-zn-gates-hooks-to-every-machine-managed-settings). |
 | `zn vault log export --otlp` | Writes the local audit log as OpenTelemetry logs (works without zn Team; see below). |
@@ -217,12 +217,18 @@ back from the policy it holds: on the next `zn team sync` (also when the
 server cannot be reached), on `zn team status`, and when a hook asks for the
 detectors. In the meantime the hook takes the detectors straight from the
 vault, so they stay on. While the vault is locked the hooks have only the
-readable copies, and a deleted copy comes back after `zn unlock`.
+readable copies, and a deleted copy comes back after `zn unlock`. The copies
+are put back only for the organization this machine is in now: a sync that
+started before you left, or before you joined another organization, cannot
+bring back a copy of the old one.
 
 If the vault holds a policy that does not verify (for example the
 organization's key changed under it), no custom detector can be applied.
-Claude Code then shows `zn: Team detectors not applied` once an hour, with
-the command to run (`zn team sync`).
+The same happens when the policy copy is missing and the vault is locked or
+does not answer within 1.5 seconds: the hook cannot get the detectors from
+anywhere. Claude Code then shows `zn: Team detectors not applied` once an
+hour, with the command to run (`zn team sync`), instead of leaving the
+detectors off without a word.
 
 ## What is sent
 
