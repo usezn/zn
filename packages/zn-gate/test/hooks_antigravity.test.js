@@ -133,7 +133,7 @@ test('install (user) backs up, keeps foreign hooks and uninstall removes only zn
   let data = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.deepEqual(data.mine, mine);
   const written = data['zn-gate'].PreToolUse[0].hooks[0].command;
-  assert.match(written, /\/\.zn\/hooks\/zn-hook-antigravity\.sh' PreToolUse$/);
+  assert.match(written, /\/\.zn\/hooks\/zn-hook-antigravity\.sh PreToolUse$/);
   const launcherFile = require('../lib/agents/launcher').launcherFile('antigravity', { home });
   assert.ok(fs.existsSync(launcherFile));
   agy.uninstall({ scope: 'user', home });
@@ -287,6 +287,182 @@ test('a search over a folder that holds a plain-text .env asks; a clean folder o
   // no path at all: the workspace folder is the search folder
   const r2 = await run(pre('grep_search', { Query: 'x' }, { workspacePaths: [dir] }));
   assert.equal(r2.output.decision, 'force_ask');
+});
+
+test('write_to_file and multi_replace_file_content on a plain-text .env are denied; other files are not', async (t) => {
+  const dir = tempDir(t, 'zn-agy-envwrite-');
+  fs.writeFileSync(path.join(dir, '.env'), 'API_KEY=example-not-a-real-key\n');
+  fs.writeFileSync(path.join(dir, 'README.md'), 'hello\n');
+  const ws = { workspacePaths: [dir] };
+  const envFile = path.join(dir, '.env');
+  assert.equal((await run(pre('write_to_file', { TargetFile: envFile, CodeContent: 'x' }, ws))).output.decision, 'deny');
+  assert.equal((await run(pre('multi_replace_file_content', { TargetFile: envFile, ReplacementChunks: [{ TargetContent: 'a', ReplacementContent: 'b' }] }, ws))).output.decision, 'deny');
+  assert.equal((await run(pre('replace_file_content', { TargetFile: envFile, TargetContent: 'a', ReplacementContent: 'b' }, ws))).output.decision, 'deny');
+  const readme = path.join(dir, 'README.md');
+  assert.equal((await run(pre('write_to_file', { TargetFile: readme, CodeContent: 'x' }, ws))).output.decision, 'allow');
+  assert.equal((await run(pre('multi_replace_file_content', { TargetFile: readme, ReplacementChunks: [] }, ws))).output.decision, 'allow');
+  // a known file tool with no readable path is refused
+  assert.equal((await run(pre('multi_replace_file_content', { ReplacementChunks: [] }, ws))).output.decision, 'deny');
+});
+
+test('a recursive shell search over a folder with a plain-text .env asks, like the search tool does', async (t) => {
+  const dir = tempDir(t, 'zn-agy-shellgrep-');
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'hello');
+  const ws = { workspacePaths: [dir] };
+  const shell = async (line, args = {}) => (await run(pre('run_command', { CommandLine: line, Cwd: dir, ...args }, ws))).output;
+  assert.equal((await shell('grep -r API_KEY .')).decision, 'allow'); // clean folder
+  fs.writeFileSync(path.join(dir, '.env'), 'API_KEY=example-not-a-real-key\n');
+  const viaTool = (await run(pre('grep_search', { Query: 'API_KEY', SearchPath: dir }, ws))).output;
+  assert.equal(viaTool.decision, 'force_ask');
+  for (const line of ['grep -r API_KEY .', 'grep -rn API_KEY', 'grep --recursive API_KEY ' + dir, 'rg API_KEY', 'egrep -R "API_KEY" .']) {
+    const r = await shell(line);
+    assert.equal(r.decision, viaTool.decision, line);
+    assert.equal(r.reason, viaTool.reason, line);
+  }
+  assert.equal((await shell('grep API_KEY a.txt')).decision, 'allow'); // not recursive, no secret file named
+  assert.equal((await shell('ls -la')).decision, 'allow');
+  assert.equal((await shell('grep -r API_KEY .env')).decision, 'deny'); // a named secret file stays a deny
+});
+
+test('a recursive shell search asks in every segment of the line, after a cd, behind wrappers, with quoted separators', async (t) => {
+  const dir = tempDir(t, 'zn-agy-shellgrep2-');
+  fs.mkdirSync(path.join(dir, 'config'));
+  fs.writeFileSync(path.join(dir, 'config', '.env'), 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n');
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'hello');
+  const ws = { workspacePaths: [dir] };
+  const shell = async (line) => (await run(pre('run_command', { CommandLine: line, Cwd: dir }, ws))).output;
+  const asks = [
+    'grep -rn AWS config',
+    'cd config && grep -rn AWS .',
+    'cd config; rg AWS',
+    '(cd config && grep -r AWS .)',
+    'true; grep -rn AWS config',
+    'echo hi && grep -rn AWS config',
+    'cat a.txt | grep -r AWS config',
+    'sudo grep -rn AWS config',
+    'sudo -u root grep -rn AWS config',
+    'env FOO=1 grep -r AWS config',
+    'command grep -r AWS config',
+    'nice -n 5 grep -r AWS config',
+    'timeout 5 grep -r AWS config',
+    'xargs grep -r AWS config',
+    'git grep AWS config',
+    'git -C config grep AWS',
+    'grep -rE "AWS|KEY" config',
+    "grep -rE 'a;b' config",
+    'grep -rn -e AWS config',
+    'grep -rn --include "*.js" AWS config',
+    'cd config && rg -g "*.js" AWS',
+  ];
+  for (const line of asks) assert.equal((await shell(line)).decision, 'force_ask', line);
+  for (const line of ['true; grep -rn AWS .', 'grep -rE "AWS|KEY" .', 'ls config', 'echo "grep -r AWS config"', 'cd config; ls', 'git grep AWS a.txt']) {
+    // the folder itself has no .env, and a search that never reads config/ stays allowed
+    const r = await shell(line);
+    assert.notEqual(r.decision, 'deny', line);
+  }
+  assert.equal((await shell('grep -rE "AWS|KEY" .')).decision, 'allow');
+  assert.equal((await shell('cd .. ; ls')).decision, 'allow');
+});
+
+test('a long chain of cd stays linear: it finishes fast and asks past the cap, never allows', async (t) => {
+  const dir = tempDir(t, 'zn-agy-cdchain-');
+  fs.mkdirSync(path.join(dir, 'd0'));
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'hello');
+  const ws = { workspacePaths: [dir] };
+  const chain = (n, tail) => Array.from({ length: n }, (_, i) => 'cd d' + i).join(' && ') + ' && ' + tail;
+  const shell = async (line) => (await run(pre('run_command', { CommandLine: line, Cwd: dir }, ws))).output;
+  // 40 cd segments: past the cap, so zn asks, and it does so quickly
+  const t0 = Date.now();
+  const many = await shell(chain(40, 'grep -r AWS .'));
+  const ms = Date.now() - t0;
+  assert.equal(many.decision, 'force_ask');
+  assert.match(many.reason, /changes folders too many times/);
+  assert.ok(ms < 1000, 'took ' + ms + ' ms');
+  // a chain with a search path that is not a recursive search is not blocked by the cap
+  assert.equal((await shell(chain(40, 'ls'))).decision, 'allow');
+  // exactly at the cap (32 cd = 64 candidate folders) the search is still followed: clean folder allows
+  assert.equal((await shell(chain(32, 'grep -r AWS .'))).decision, 'allow');
+  // one more cd goes over the cap and asks
+  const over = await shell(chain(33, 'grep -r AWS .'));
+  assert.equal(over.decision, 'force_ask');
+  assert.match(over.reason, /too many times/);
+  // at the cap, a .env in a candidate folder still asks for that reason
+  fs.writeFileSync(path.join(dir, 'd0', '.env'), 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n');
+  const atCap = await shell(chain(32, 'grep -r AWS .'));
+  assert.equal(atCap.decision, 'force_ask');
+  assert.match(atCap.reason, /holds \.env/);
+});
+
+test('a recursive search reads one level of bash -c and asks on a path held in a variable', async (t) => {
+  const dir = tempDir(t, 'zn-agy-shellc-');
+  fs.mkdirSync(path.join(dir, 'config'));
+  fs.writeFileSync(path.join(dir, 'config', '.env'), 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n');
+  const ws = { workspacePaths: [dir] };
+  const shell = async (line) => (await run(pre('run_command', { CommandLine: line, Cwd: dir }, ws))).output;
+  for (const line of [
+    'bash -c "grep -r AWS config"',
+    "sh -c 'cd config && grep -r AWS .'",
+    'sudo bash -lc "grep -rn AWS config"',
+    'D=config; grep -r AWS $D',
+    'grep -r AWS "$(echo config)"',
+  ]) assert.equal((await shell(line)).decision, 'force_ask', line);
+  for (const line of ['bash -c "ls config"', "sh -c 'echo hi'", 'bash -c "grep AWS a.txt"', 'D=config; ls $D']) {
+    assert.equal((await shell(line)).decision, 'allow', line);
+  }
+  // a cd inside bash -c does not move the outer shell
+  assert.equal((await shell('bash -c "cd config" && grep -r AWS .')).decision, 'allow');
+});
+
+test('a very long line is not allowed unread, and an unknown cd folder or a ~ path is followed', async (t) => {
+  const dir = tempDir(t, 'zn-agy-long-');
+  const home = tempDir(t, 'zn-agy-home-');
+  fs.mkdirSync(path.join(dir, 'config'));
+  fs.writeFileSync(path.join(dir, 'config', '.env'), 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n');
+  fs.mkdirSync(path.join(home, 'proj', 'config'), { recursive: true });
+  fs.writeFileSync(path.join(home, 'proj', 'config', '.env'), 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n');
+  const ws = { workspacePaths: [dir] };
+  const shell = async (line) => (await run(pre('run_command', { CommandLine: line, Cwd: dir }, ws))).output;
+  // 600 segments before the search: the rest cannot be read in time, so it asks
+  const t0 = Date.now();
+  const longLine = ':;'.repeat(600) + ' grep -rn AWS config';
+  assert.equal((await shell(longLine)).decision, 'force_ask');
+  assert.equal((await shell('cd d0 && '.repeat(260) + 'cd config && grep -rn AWS .')).decision, 'force_ask');
+  assert.equal((await shell(':;'.repeat(600))).decision, 'force_ask');
+  assert.ok(Date.now() - t0 < 1000, 'took ' + (Date.now() - t0) + ' ms');
+  assert.equal((await shell(':;'.repeat(100) + ' grep -rn AWS config')).decision, 'force_ask'); // still read, and config holds .env
+  assert.equal((await shell(':;'.repeat(100) + ' ls')).decision, 'allow');
+  // a cd to a variable or a substitution leaves the folder unknown: the next recursive search asks
+  for (const line of ['cd $D && grep -r AWS .', 'cd "$(echo config)" && grep -rn AWS .', 'cd `echo config` && grep -rn AWS .']) {
+    assert.equal((await shell(line)).decision, 'force_ask', line);
+  }
+  assert.equal((await shell('cd $D && ls')).decision, 'allow');
+  assert.equal((await shell('cd $D; grep AWS a.txt')).decision, 'allow'); // not recursive
+  // ~ means the home folder the hook sees
+  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  try {
+    assert.equal((await shell('grep -r AWS ~/proj/config')).decision, 'force_ask');
+    assert.equal((await shell('cd ~/proj/config && grep -rn AWS .')).decision, 'force_ask');
+    assert.equal((await shell('cd ~/proj && grep -rn AWS config')).decision, 'force_ask');
+    assert.equal((await shell('grep -r AWS ~/nowhere')).decision, 'allow');
+    // other tilde forms (~+, ~-, ~user) cannot be followed: a recursive search asks, a plain command does not
+    for (const line of ['cd ~+/config && grep -rn AWS .', 'cd ~-/config && grep -rn AWS .', 'grep -r AWS ~user/x', 'grep -r AWS ~+/config']) {
+      assert.equal((await shell(line)).decision, 'force_ask', line);
+    }
+    assert.equal((await shell('cd ~user && ls')).decision, 'allow');
+    // on Windows ~\ is the home folder too (the platform is stubbed; the path is quoted so the shell keeps the backslash)
+    const plat = Object.getOwnPropertyDescriptor(process, 'platform');
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      assert.equal((await shell('grep -r AWS "~\\proj\\config"')).decision, 'force_ask');
+      assert.equal((await shell('grep -r AWS "~\\nowhere"')).decision, 'allow');
+    } finally {
+      Object.defineProperty(process, 'platform', plat);
+    }
+  } finally {
+    for (const k of Object.keys(saved)) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+  }
 });
 
 test('install warns that a project hook needs zn on PATH, and that its backup must not be committed', (t) => {
