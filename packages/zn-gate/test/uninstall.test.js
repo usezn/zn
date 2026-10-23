@@ -417,3 +417,46 @@ test('uninstall --help and -h print the uninstall help, not the general help', (
     assert.doesNotMatch(r.stdout, /hooks install/);
   }
 });
+
+test('uninstall: before the second question it lists what the vault delete removes, grouped', async (t) => {
+  const m = machine(t);
+  const v = vault(m);
+  const dir = path.dirname(v);
+  const zn = path.dirname(dir);
+  const backup = path.join(zn, 'vault-backup-20260101-100000', 'vault');
+  fs.mkdirSync(backup, { recursive: true });
+  fs.writeFileSync(path.join(backup, 'secrets.age'), 'old encrypted copy');
+  fs.writeFileSync(path.join(dir, 'c'.repeat(32) + '.age'), 'token map');
+  fs.writeFileSync(path.join(dir, 'd'.repeat(32) + '.age'), 'token map');
+  fs.mkdirSync(path.join(zn, 'run'), { recursive: true });
+  fs.writeFileSync(path.join(zn, 'run', 'session.key'), 'session key');
+  const keychain = require('../lib/vault/keychain');
+  const realMeta = keychain.readMeta;
+  keychain.readMeta = () => ({ backend: 'libsecret' });
+  t.after(() => { keychain.readMeta = realMeta; });
+  const c = io(m, { confirm: async () => false });
+  assert.equal(await dispatch('uninstall', [], c.o), 0, c.err());
+  const text = c.out();
+  assert.match(text, /vault-backup-20260101-100000: 1 file \(a backup made by `zn vault reset`\)/);
+  assert.match(text, /2 token maps of projects/);
+  assert.match(text, /session\.key\s+\(session key\)/);
+  assert.match(text, /vault key in your libsecret keychain/);
+  assert.ok(text.indexOf('2 token maps') < text.indexOf('The vault was kept'), 'listed before the answer');
+});
+
+test('uninstall: ~/.zn/run as a link to another folder is removed as a link; the folder it points to stays intact', async (t) => {
+  const m = machine(t);
+  const v = vault(m);
+  const zn = path.dirname(path.dirname(v));
+  const victim = tempDir(t, 'zn-uninst-victim-');
+  fs.mkdirSync(path.join(victim, 'sub'));
+  fs.writeFileSync(path.join(victim, 'important.txt'), 'mine');
+  fs.writeFileSync(path.join(victim, 'sub', 'deep.txt'), 'mine too');
+  fs.symlinkSync(victim, path.join(zn, 'run'), 'junction');
+  const c = io(m, { confirm: async () => true });
+  assert.equal(await dispatch('uninstall', [], c.o), 0, c.err());
+  assert.equal(fs.readFileSync(path.join(victim, 'important.txt'), 'utf8'), 'mine');
+  assert.equal(fs.readFileSync(path.join(victim, 'sub', 'deep.txt'), 'utf8'), 'mine too');
+  assert.equal(fs.existsSync(path.join(zn, 'run')), false, 'the link is gone');
+  assert.equal(fs.existsSync(v), false, 'the vault is deleted');
+});

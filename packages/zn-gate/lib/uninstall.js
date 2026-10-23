@@ -139,6 +139,8 @@ function printPlan(p, io) {
   if (p.vault.exists) {
     out(io, 'Asked separately at the end (default no):');
     out(io, '  The vault in ' + p.vault.home + ': your stored secrets. Deleting it cannot be undone.');
+    out(io, '  Deleting it removes (a link is deleted, never what it points to):');
+    for (const l of require('./vault/purge').summary(require('./vault/purge').targets(p.vaultOpts))) out(io, '  ' + l);
   }
   if (p.shadowed.length) {
     out(io, 'Left alone:');
@@ -183,6 +185,8 @@ async function removeVault(p, io) {
     return 'failed';
   }
   out(io, 'Vault deleted.');
+  const note = purge.keyNote(r);
+  if (note) out(io, note);
   return true;
 }
 
