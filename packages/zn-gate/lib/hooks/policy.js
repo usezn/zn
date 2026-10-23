@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-25.3';
+const POLICY_RULES_VERSION = '2026-10-25.4';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -773,6 +773,31 @@ function isInstructionFile(abs, ctx) {
   return ctx.agent.dirs.some((d) => s.startsWith(d + '/projects/') && /^[^/]+\/memory\/[^/]/.test(s.slice(d.length + 10)));
 }
 
+// On win32 a NEW file written under its 8.3 short name (`AGENTS~1.MD`) cannot be resolved, because it does not exist
+// yet. The short name of an instruction file is built from the first six letters of its name (a leading dot is
+// dropped: `.cursorrules` is `CURSOR~1`), so a short name with such a start and the same extension is reviewed. A
+// short name made from a hash (`COP3F1~1.MD`) shows nothing of the long one, so it is reviewed in a folder that holds
+// instruction files (`.github`). Anything else, like `NOTES~1.MD`, stays allowed. This only asks; it never denies more.
+const SHORT_INSTRUCTION_NAMES = INSTRUCTION_FILE_NAMES.concat(['copilot-instructions.md']).map((n) => {
+  const t = n.replace(/^\.+/, '');
+  const dot = t.lastIndexOf('.');
+  const base = (dot > 0 ? t.slice(0, dot) : t).replace(/[.\s]/g, '');
+  return { base: base.slice(0, 6).toUpperCase(), ext: (dot > 0 ? t.slice(dot + 1) : '').slice(0, 3).toUpperCase() };
+});
+function isShortInstructionName(abs) {
+  if (process.platform !== 'win32') return false;
+  const parts = slash(abs).split('/');
+  const m = SHORT_NAME_RE.exec(parts[parts.length - 1]);
+  if (!m) return false;
+  const pre = m[1].toUpperCase();
+  const ext = (m[2] || '').toUpperCase();
+  if (pre.length >= 4 && SHORT_INSTRUCTION_NAMES.some((n) => n.ext === ext && n.base.startsWith(pre))) return true;
+  const parent = (parts[parts.length - 2] || '').toLowerCase();
+  const inFolder = parent === '.github' || /^github~[0-9]+$/.test(parent) ||
+    (parts.length > 2 && parts[parts.length - 3].toLowerCase() === '.cursor' && parent === 'rules');
+  return inFolder && (ext === 'MD' || ext === '');
+}
+
 /** Whether a typed path names an instruction file, as typed or where it really leads (links followed). */
 function isInstructionPath(p, opts = {}) {
   if (typeof p !== 'string' || !p) return false;
@@ -785,7 +810,7 @@ function isInstructionPath(p, opts = {}) {
   const candidates = new Set([abs, realTargetOf(abs)]);
   const physical = physicalDotDot(expanded.text, ctx.cwd);
   if (physical) { candidates.add(physical); candidates.add(realTargetOf(physical)); }
-  for (const candidate of candidates) if (isInstructionFile(candidate, ctx)) return true;
+  for (const candidate of candidates) if (isInstructionFile(candidate, ctx) || isShortInstructionName(candidate)) return true;
   return false;
 }
 
