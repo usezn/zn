@@ -82,7 +82,7 @@ Outputs:
 | Output | Meaning |
 |---|---|
 | `sarif-file` | Path of the SARIF file (`format: sarif` only); empty if none was written. |
-| `scan-exit-code` | Exit code of the scan: `0` clean, `1` findings, `2` error; empty if it did not run. |
+| `scan-exit-code` | Exit code of the scan: `0` clean, `1` findings, `2` error, `3` no file was read or a file or folder was not read (zn-gate 1.14.0 and later); empty if it did not run. |
 | `audit-exit-code` | Exit code of the audit: `0` clean, `1` findings at or above the threshold, `2` error; empty if it did not run. |
 
 ## What the scan does not read

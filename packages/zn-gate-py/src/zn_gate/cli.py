@@ -567,20 +567,30 @@ def cmd_scan(args: argparse.Namespace) -> int:
         scanned += 1
         all_violations.extend(_scan_file(fp, shown, str(fp) in mcp_only_files))
 
-    _print_report(getattr(args, "format", "text"), scanned, skipped, all_violations, skipped_dirs, str(args.path))
-    if all_violations and not getattr(args, "no_fail", False):
+    allow_partial = bool(getattr(args, "allow_partial", False))
+    unread_dirs = sum(1 for d in skipped_dirs if d.get("reason") == "cannot be read")
+    _print_report(getattr(args, "format", "text"), scanned, skipped, all_violations, skipped_dirs, str(args.path), allow_partial=allow_partial)
+    if getattr(args, "no_fail", False):
+        return 0
+    if all_violations:
         return 1
+    # No finding is not a clean result when no file was read, or a file or folder that
+    # should have been read was not: exit 3, unless --allow-partial accepts the skipped ones.
+    if scanned == 0 or ((skipped or unread_dirs) and not allow_partial):
+        return 3
     return 0
 
 
-def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_violations: List[Dict[str, Any]], skipped_dirs: Optional[List[Dict[str, str]]] = None, target: str = ".") -> None:
+def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_violations: List[Dict[str, Any]], skipped_dirs: Optional[List[Dict[str, str]]] = None, target: str = ".", allow_partial: bool = False) -> None:
     """Print the scan report: rule names, fixed text, counts and redacted snippets only."""
     skipped_dirs = skipped_dirs or []
     leak_count = sum(1 for v in all_violations if v.get("type") == "secret_leak")
     other_count = len(all_violations) - leak_count
-    # An empty result is not a clean one: say so. The exit code stays 0 (a folder
-    # with nothing to scan is not an error for CI), but the output is explicit.
+    # An empty or partial result is not a clean one: say so (cmd_scan sets the exit code).
     nothing = f"No files were scanned in {target}" if scanned == 0 else ""
+    unread_dirs = sum(1 for d in skipped_dirs if d.get("reason") == "cannot be read")
+    incomplete = bool(skipped) or unread_dirs > 0
+    incomplete_note = f"{len(skipped)} file(s) and {unread_dirs} folder(s) were not read"
     if fmt == "github":
         # CI logs are public: rule, reason and location only, never the snippet.
         for v in all_violations:
@@ -597,6 +607,9 @@ def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_vio
             print(f"::notice file={_gh_property(sd['dir'])},title=Directory not scanned::{_gh_message(sd['reason'])}")
         if nothing:
             print(f"::warning title=Nothing scanned::{_gh_message(nothing)}")
+        if incomplete and not all_violations:
+            suffix = " (accepted with --allow-partial)" if allow_partial else ": exit code 3, use --allow-partial to accept"
+            print(f"::warning title=Incomplete scan::{_gh_message(incomplete_note + suffix)}")
         dir_note = f" and {len(skipped_dirs)} director{'y' if len(skipped_dirs) == 1 else 'ies'} skipped" if skipped_dirs else ""
         print(f"\n[zn-gate] Scanned {scanned} files ({len(skipped)} not scanned{dir_note}). Found {leak_count} secrets and {other_count} security threats.")
     elif fmt == "json":
@@ -607,6 +620,8 @@ def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_vio
             # Every finding, secrets included (as before); total_secrets counts the secrets alone.
             "total_threats": len(all_violations),
             "total_secrets": leak_count,
+            # True when a file or folder that should have been read was not (exit 3 unless --allow-partial).
+            "incomplete": incomplete,
             "threats": all_violations,
             "skipped": skipped,
             "skipped_dirs": skipped_dirs,
@@ -630,6 +645,12 @@ def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_vio
                 print(f"  ... and {len(skipped_dirs) - 20} more")
         if not all_violations and nothing:
             print()
+            return
+        if not all_violations and incomplete:
+            if allow_partial:
+                print(f"{_lead(ALERT)}No threats found in the files that were read. Partial coverage accepted with --allow-partial ({incomplete_note}).\n")
+            else:
+                print(f"{_lead(ALERT)}No threats found in the files that were read, but the scan is incomplete ({incomplete_note}). Exit code 3; use --allow-partial to accept.\n")
             return
         if not all_violations:
             print(f"{_lead(CHECK)}All scanned prompts, tool definitions, and files are clean!\n")
@@ -775,9 +796,10 @@ def build_parser() -> argparse.ArgumentParser:
     scan_parser = subparsers.add_parser("scan", help="Scan directory or files for injection traps & secret leaks")
     scan_parser.add_argument("path", default=".", nargs="?", help="File or directory path to scan (default: current directory)")
     scan_parser.add_argument("--format", choices=["text", "json", "github"], default="text", help="Output format")
-    scan_parser.add_argument("--no-fail", action="store_true", help="Do not exit with error code even if threats are found")
+    scan_parser.add_argument("--no-fail", action="store_true", help="Do not exit with error code even if threats are found or files were not read")
     scan_parser.add_argument("--include", help="Comma-separated custom extensions to include (e.g. .custom,.xml)")
     scan_parser.add_argument("--exclude", help="Comma-separated directory names to exclude")
+    scan_parser.add_argument("--allow-partial", action="store_true", help="Exit 0 even when some files or folders were not read (they are still listed). Reading no file at all stays an error (exit 3)")
     scan_parser.add_argument("--include-home", action="store_true", help="Also check your own MCP configs (Claude Desktop, Claude Code, Cursor, Codex, Gemini, Antigravity, OpenCode, Amazon Q) for passwords and keys written in plain text")
 
     # evidence command

@@ -149,7 +149,7 @@ Exit codes: `0` the local setting was removed (or there was nothing to remove), 
 ### `scan`
 
 ```bash
-zn-gate scan [path] [--format text|json|github] [--all] [--include .rst,.xml] [--exclude fixtures,legacy] [--include-home]
+zn-gate scan [path] [--format text|json|github] [--all] [--include .rst,.xml] [--exclude fixtures,legacy] [--include-home] [--allow-partial]
 ```
 
 Looks through prompt templates, markdown, skills and configs for injection traps and secrets. `path` defaults to the current folder. Matched values are never printed.
@@ -159,10 +159,11 @@ Looks through prompt templates, markdown, skills and configs for injection traps
 - `--include`: more file extensions to scan.
 - `--exclude`: more folders to skip.
 - `--include-home`: also check your own MCP configs for passwords and keys written in plain text.
+- `--allow-partial`: exit `0` even when some files or folders were not read. They are still listed in the report. It does not apply when no file was read at all.
 
-Exit codes: `0` nothing found, `1` something was found or the path does not exist, `2` an unknown `--format`.
+Exit codes: `0` nothing found and everything that matched was read, `1` something was found or the path does not exist, `2` an unknown `--format`, `3` the coverage is incomplete: no file was read, or a file or folder that should have been read was not. Findings win: when something was found the exit code is `1`, whether or not anything was skipped.
 
-A scan never reports a clean result for something it could not read. A folder it cannot open is listed under "Directories not scanned" (reason: cannot be read), in `skipped_dirs` for `--format json` and as a notice for `--format github`. If no file was read at all, the output says "No files were scanned" (a `warning` field in JSON) and the text report shows `NOTHING SCANNED` instead of `PASSED`. The exit code is still `0` in that case, because an empty folder is not an error in CI; a path that does not exist exits `1`. The Node (`npx zn-gate`) and Python (`pip install zn-gate`) versions give the same exit codes and the same JSON fields (`skipped_dirs`, `warning`) for these cases; the text report differs in its wording and in how it prints paths.
+A scan never reports a clean result for something it could not read. A folder it cannot open is listed under "Directories not scanned" (reason: cannot be read), in `skipped_dirs` for `--format json` and as a notice for `--format github`. If no file was read at all, the output says "No files were scanned" (a `warning` field in JSON) and the text report shows `NOTHING SCANNED` instead of `PASSED`. The exit code is `3` in that case, so a CI job cannot pass on a scan that looked at nothing; a path that does not exist exits `1`. The same exit code `3` applies when a file was skipped (2 MiB or larger, cannot be read, not a regular file, or a binary `.key` file) or a folder could not be opened, because the result does not cover everything that matched. Folders skipped by name (such as `node_modules`) do not count. Pass `--allow-partial` to accept skipped files and folders (exit `0`, still listed; `--format json` has `"incomplete": true`). Python also has `--no-fail`, which always exits `0`. The Node (`npx zn-gate`) and Python (`pip install zn-gate`) versions give the same exit codes and the same JSON fields (`skipped_dirs`, `warning`) for these cases; the text report differs in its wording and in how it prints paths.
 
 ### `audit`
 

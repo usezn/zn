@@ -61,7 +61,7 @@ outputs:
     description: 'Path of the SARIF file (format sarif only); empty if no check produced a report or the file could not be written'
     value: ${{ steps.run.outputs.sarif-file }}
   scan-exit-code:
-    description: 'Exit code of zn-gate scan (0 clean, 1 findings, 2 error); empty if it did not run'
+    description: 'Exit code of zn-gate scan (0 clean, 1 findings, 2 error, 3 no file was read or a file or folder was not read; 3 needs zn-gate 1.14.0 or later); empty if it did not run'
     value: ${{ steps.run.outputs.scan-exit-code }}
   audit-exit-code:
     description: 'Exit code of zn audit (0 clean, 1 findings at or above fail-on, 2 error); empty if it did not run'
