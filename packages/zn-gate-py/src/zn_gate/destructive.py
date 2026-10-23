@@ -28,7 +28,7 @@ from typing import List, Optional, Tuple
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-23.7"
+COMMAND_RULES_VERSION = "2026-10-23.8"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -221,7 +221,7 @@ def _decode_ansi_c(cmd: str) -> str:
 
 
 def _segments_of(cmd: str, posix: bool = False) -> Tuple[List[Tuple[List[str], Optional[str]]], bool]:
-    rest = re.sub(r"(\d*[<>]+)&(\d+|-)", r"\1_\2", str(cmd), flags=_A)
+    rest = re.sub(r"(?<=[<>])&(?=[0-9-])", "_", str(cmd), flags=_A)
     rest = re.sub(r"&>>?", ">", rest)
     # A drive root C:\ before a space is a path, not an escaped space.
     rest = re.sub(r"(^|[\s\"'])([A-Za-z]:)\\(?=\s|\Z)", r"\1\2/", rest)

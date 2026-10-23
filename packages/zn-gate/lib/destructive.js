@@ -25,7 +25,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-10-23.7';
+const COMMAND_RULES_VERSION = '2026-10-23.8';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -80,9 +80,10 @@ function programName(text) {
 /* Simple commands of a command line, with the operator that follows each: [{ words: string[], sep }]. */
 function segmentsOf(cmd, posix = false) {
   const { scanFirstCommand } = require('./hooks/policy');
-  // 2>&1 and &> are redirections, not the control operator &.
+  // 2>&1 and &> are redirections, not the control operator &. A one-character lookbehind keeps this linear: the
+  // earlier (\d*[<>]+)&(\d+|-) form backtracked quadratically on long runs of digits and angle brackets.
   // A drive root C:\ before a space is a path, not an escaped space.
-  let rest = String(cmd).replace(/(\d*[<>]+)&(\d+|-)/g, '$1_$2').replace(/&>>?/g, '>').replace(/(^|[\s"'])([A-Za-z]:)\\(?=\s|$)/g, '$1$2/');
+  let rest = String(cmd).replace(/(?<=[<>])&(?=[0-9-])/g, '_').replace(/&>>?/g, '>').replace(/(^|[\s"'])([A-Za-z]:)\\(?=\s|$)/g, '$1$2/');
   const out = [];
   let guard = 0;
   for (; rest.length && guard < MAX_SEGMENTS; guard++) {
@@ -441,4 +442,4 @@ function denial(command, rules) {
 /** The rules the agent hooks apply when the user has not changed anything. The other four are opt-in. */
 const DEFAULT_RULES = ['rm_root_home', 'disk_overwrite'];
 
-module.exports = { checkCommand, denial, DEFAULT_RULES, COMMAND_RULES_VERSION, RULES: Object.keys(REASONS).map((k) => 'destructive:' + k) };
+module.exports = { segmentsOf, checkCommand, denial, DEFAULT_RULES, COMMAND_RULES_VERSION, RULES: Object.keys(REASONS).map((k) => 'destructive:' + k) };
