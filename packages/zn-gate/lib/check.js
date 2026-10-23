@@ -26,6 +26,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { nodeAdvice } = require('./node-support');
+const VERSION = require('../package.json').version;
 
 const FAKE_LINE = 'ZN_CHECK_EXAMPLE_KEY=zn-check-fake-value-not-a-real-key\n';
 const HOOK_TIMEOUT_MS = 15000;
@@ -89,7 +90,7 @@ function pluginNodeProblem(st) {
 const AGENTS = [
   {
     id: 'claude-code', name: 'Claude Code', event: 'PreToolUse', tool: 'Read',
-    fix: 'install the zn-gate plugin: `claude plugin marketplace add usezn/zn`, then `claude plugin install zn-gate@usezn`',
+    fix: 'install the zn-gate plugin: `claude plugin marketplace add usezn/zn@v' + VERSION + '`, then `claude plugin install zn-gate@usezn`',
     file: (a, o) => a.settingsFile(o), project: (dir) => path.join(dir, '.claude', 'settings.json'),
     request: (dir, file) => ({ hook_event_name: 'PreToolUse', session_id: 'zn-check', cwd: dir, tool_name: 'Read', tool_input: { file_path: file } }),
   },

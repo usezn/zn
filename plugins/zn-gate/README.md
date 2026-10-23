@@ -205,6 +205,11 @@ claude plugin marketplace add usezn/zn@v1.13.1
 claude plugin install zn-gate@usezn
 ```
 
+To confirm that the tag exists and which commit it points to, before you add
+the marketplace: `git ls-remote https://github.com/usezn/zn refs/tags/v1.13.1`.
+The files of the release carry build provenance attestations; see
+[Verifying a release](https://github.com/usezn/zn/blob/v1.13.1/docs/verify-release.md).
+
 Codex, Cursor and OpenCode: see [plugins/README.md](https://github.com/usezn/zn/blob/v1.13.1/plugins/README.md).
 
 If you used `zn hooks install claude-code` before, remove those hooks so each

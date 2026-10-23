@@ -17,7 +17,8 @@ const { tempDir } = require('./helpers/tmp');
 const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
 const CLAUDE = path.resolve('/opt/bin/claude');
 const line = (s) => s.manual;
-const PLUGIN_STEPS = ['claude plugin marketplace add usezn/zn', 'claude plugin install zn-gate@usezn'];
+const VERSION = require('../package.json').version;
+const PLUGIN_STEPS = ['claude plugin marketplace add usezn/zn@v' + VERSION, 'claude plugin install zn-gate@usezn'];
 
 function machine(t) {
   const home = tempDir(t, 'zn-initnode-home-');

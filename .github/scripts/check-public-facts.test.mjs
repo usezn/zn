@@ -361,3 +361,17 @@ test('docsVersion.files follow the last final release on a pre-release and the r
   assert.equal(stale.length, 1, stale.join('\n'));
   assert.match(stale[0], /README\.md: version 2\.0\.0, public-facts\.json version says 2\.1\.0/);
 });
+
+test('every marketplace add on a public surface names a release tag', () => {
+  const tagged = { ...GOOD, 'README.md': GOOD['README.md'] + 'claude plugin marketplace add usezn/zn@v2.0.0\n' + 'codex plugin marketplace add usezn/zn --ref v2.0.0\n' };
+  assert.deepEqual(run(tagged), []);
+  for (const [file, cmd] of [['README.md', 'claude plugin marketplace add usezn/zn'], ['packages/zn-gate/README.md', 'claude plugin marketplace add usezn/zn'], ['plugins/zn-gate/README.md', 'codex plugin marketplace add usezn/zn'], ['docs/a.md', '/plugin marketplace add usezn/zn and then']]) {
+    const errs = run({ ...GOOD, [file]: (GOOD[file] || '') + cmd + '\n' });
+    assert.equal(errs.length, 1, file);
+    assert.match(errs[0], /has no release tag/);
+  }
+  // A tag of another version is caught by the pin check.
+  assert.match(run({ ...GOOD, 'README.md': GOOD['README.md'] + 'claude plugin marketplace add usezn/zn@v1.0.0\n' }).join('\n'), /pins usezn[/]zn@v1[.]0[.]0/);
+  // The changelog and code are not public install surfaces.
+  assert.deepEqual(run({ ...GOOD, 'CHANGELOG.md': 'claude plugin marketplace add usezn/zn\n' }), []);
+});
