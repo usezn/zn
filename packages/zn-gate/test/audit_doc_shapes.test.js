@@ -145,10 +145,10 @@ const IMPORTED_DOCS = {
 };
 for (const [name, text] of Object.entries(IMPORTED_DOCS)) {
   test('audit ZNA012: a docs file imported from CLAUDE.md gets no exemption, ' + name, (t) => {
-    const f = run(t, { 'CLAUDE.md': 'Read @docs/agent-rules.md first.\n', 'docs/agent-rules.md': text }, 'ZNA012');
+    const f = run(t, { 'CLAUDE.md': 'Read @docs/notes/agent-rules.md first.\n', 'docs/notes/agent-rules.md': text }, 'ZNA012');
     assert.ok(high(f).length > 0, JSON.stringify(f.map((x) => x.severity)));
     // The same file, not imported, keeps the documentation shapes.
-    assert.deepEqual(high(run(t, { 'docs/agent-rules.md': text }, 'ZNA012')), []);
+    assert.deepEqual(high(run(t, { 'docs/notes/agent-rules.md': text }, 'ZNA012')), []);
   });
 }
 
