@@ -48,7 +48,11 @@ impl ResultCache {
         }
 
         let key = self.make_key(agent_id, tool_name, arguments);
-        let expiry = Instant::now() + Duration::from_secs(self.config.ttl_seconds);
+        // A huge TTL must not overflow the clock; fall back to "expires now".
+        let now = Instant::now();
+        let expiry = now
+            .checked_add(Duration::from_secs(self.config.ttl_seconds))
+            .unwrap_or(now);
         self.cache.insert(key, CacheEntry { result, expiry });
     }
 
@@ -74,6 +78,14 @@ mod tests {
             enabled,
             ttl_seconds,
         })
+    }
+
+    #[test]
+    fn huge_ttl_does_not_panic() {
+        for ttl in [u64::MAX, i64::MAX as u64] {
+            let c = cache(true, ttl);
+            c.set("a", "t", "{}", "r".to_string());
+        }
     }
 
     #[test]
