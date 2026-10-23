@@ -87,7 +87,7 @@ This reads the text of a command, a URL or the arguments of an MCP call. It is a
 - requests made by other programs (`httpie`, `ssh`, `scp`, `git push`) or other languages;
 - the body of a file you upload with `@file`.
 
-It also depends on the scrubber: it reports what the scrubber can detect, so a name or an address that has no fixed format (a street, a first name) is not found, and neither is a bare password passed with `--user name:password` unless it looks like a credential the scrubber knows. MCP calls are checked in agents that send their arguments to the pre-tool check (see [Agent compatibility](compat.md)).
+It also depends on the scrubber: it reports what the scrubber can detect, so a name or an address that has no fixed format (a street, a first name) is not found. A password passed with `--user name:password` (or `-u`) is not matched against the credential formats the scrubber knows, but the check still asks you first, with the reason "URL password in the credentials", even when the password does not look like a known credential. MCP calls are checked in agents that send their arguments to the pre-tool check (see [Agent compatibility](compat.md)).
 
 The Python package (`zn-gate` on PyPI) does not install hooks and has no personal-data detector, so this check is part of the Node.js hooks only.
 
