@@ -351,18 +351,31 @@ type Bound = fn(&str, usize, usize) -> bool;
 fn checked_spans(re: &Regex, text: &str, bound: Bound, valid: Check) -> Vec<(usize, usize)> {
     let mut spans = Vec::new();
     let mut pos = 0;
+    let mut last_end = None;
     while pos < text.len() {
         let Some(m) = re.find_at(text, pos) else {
             break;
         };
         let (s, e) = (m.start(), m.end());
+        // A `+` that starts right where a redacted number ended starts a new number
+        // ("+14155552671+14155552671"): judge it as if nothing came before it, so one pass
+        // redacts both and a second pass finds nothing.
+        let adjacent = last_end == Some(s) && text.as_bytes()[s] == b'+';
         let found = (s + 1..=e)
             .rev()
             .filter(|&end| text.as_bytes()[end - 1].is_ascii_digit())
-            .find(|&end| bound(text, s, end) && valid(&text[s..end]));
+            .find(|&end| {
+                let ok = if adjacent {
+                    bound(&text[s..], 0, end - s)
+                } else {
+                    bound(text, s, end)
+                };
+                ok && valid(&text[s..end])
+            });
         match found {
             Some(end) => {
                 spans.push((s, end));
+                last_end = Some(end);
                 pos = end;
             }
             None => pos = e,
@@ -639,6 +652,25 @@ mod tests {
             Scrubber::scrub(r#"{"api_key":"fakeSecret1","n":"v"}"#),
             r#"{"api_key": "[SECRET_REDACTED]","n":"v"}"#
         );
+    }
+
+    #[test]
+    fn test_adjacent_phone_numbers_are_redacted_in_one_pass() {
+        // Same case as the idempotence test of the scrubber fuzz target (B-1013).
+        let once = Scrubber::scrub("+14155552671+14155552671");
+        assert_eq!(once, "[PHONE_REDACTED][PHONE_REDACTED]");
+        assert_eq!(Scrubber::scrub(&once), once);
+        assert_eq!(
+            Scrubber::scrub("+14155552671+14155552671+14155552671"),
+            "[PHONE_REDACTED][PHONE_REDACTED][PHONE_REDACTED]"
+        );
+        // Separated numbers were already stable; a number glued to letters stays alone.
+        for input in ["+14155552671 +14155552671", "+14155552671,+14155552671"] {
+            let once = Scrubber::scrub(input);
+            assert_eq!(once, input.replace("+14155552671", "[PHONE_REDACTED]"));
+            assert_eq!(Scrubber::scrub(&once), once);
+        }
+        assert_eq!(Scrubber::scrub("a+14155552671"), "a+14155552671");
     }
 
     #[test]
