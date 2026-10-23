@@ -107,6 +107,12 @@ lazy_static! {
         "Total number of audit log entries created"
     ).expect("Failed to create audit_entries metric");
 
+    /// Audit records that could not be written
+    pub static ref AUDIT_WRITE_FAILURES: IntCounter = IntCounter::new(
+        "zn_audit_write_failures_total",
+        "Total number of audit records that could not be written"
+    ).expect("Failed to create audit_write_failures metric");
+
     /// Neural embedding latency histogram (in seconds)
     pub static ref NEURAL_LATENCY: Histogram = Histogram::with_opts(
         HistogramOpts::new(
@@ -219,6 +225,7 @@ pub fn init() -> Result<(), prometheus::Error> {
     REGISTRY.register(Box::new(API_LATENCY_P99.clone()))?;
     REGISTRY.register(Box::new(PII_DETECTED.clone()))?;
     REGISTRY.register(Box::new(AUDIT_ENTRIES.clone()))?;
+    REGISTRY.register(Box::new(AUDIT_WRITE_FAILURES.clone()))?;
     REGISTRY.register(Box::new(NEURAL_LATENCY.clone()))?;
     REGISTRY.register(Box::new(NEURAL_LATENCY_P95.clone()))?;
     REGISTRY.register(Box::new(NEURAL_LATENCY_P99.clone()))?;
@@ -287,6 +294,11 @@ pub fn record_pii_detected(pii_type: &str) {
 /// Increment audit entries counter
 pub fn record_audit_entry() {
     AUDIT_ENTRIES.inc();
+}
+
+/// Count an audit record that could not be written
+pub fn record_audit_write_failure() {
+    AUDIT_WRITE_FAILURES.inc();
 }
 
 /// Record neural-layer latency (embed + classify) for one tool call
