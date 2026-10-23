@@ -47,6 +47,7 @@ const os = require('os');
 const path = require('path');
 const cfg = require('./config-file');
 const launcher = require('./launcher');
+const { searchScan } = require('../hooks/search-scan');
 const { whichSync } = require('../broker/markers');
 
 const id = 'gemini';
@@ -130,7 +131,9 @@ function normalize(raw) {
   if (SHELL_TOOLS.has(toolName)) {
     const cmd = firstString(args, COMMAND_KEYS);
     if (cmd === undefined) return unreadable('the command');
-    return { ...ev, tool: 'bash', input: { command: cmd, texts: [] } };
+    // A recursive shell search over a folder with a plain .env gets the same folder check as the grep tool.
+    const scan = searchScan(cmd, cwd);
+    return { ...ev, tool: 'bash', input: { command: cmd, texts: [], ...(scan.dirs.length ? { scanDirs: scan.dirs } : {}), ...(scan.ask ? { scanAsk: scan.ask } : {}) } };
   }
   const { paths, bad } = pathsOf(args);
   const input = { path: paths[0], paths, texts: [] };
@@ -180,7 +183,7 @@ function respond(d) {
     return deny('zn: this command uses a stored secret. Run it through zn instead, exactly like this: zn run -- ' + ev.input.command +
       '  (zn puts the value only into that process, if the user allowed this command for the secret).');
   }
-  if (d.decision === 'ask' && ev.tool === 'grep') {
+  if (d.decision === 'ask' && (ev.tool === 'grep' || d.kind === 'search')) {
     return deny((d.message || 'zn asks for confirmation') + ' Gemini CLI hooks cannot ask the user, so this search was blocked: name a narrower path.');
   }
   return null;

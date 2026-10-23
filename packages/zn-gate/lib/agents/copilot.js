@@ -48,6 +48,7 @@ const { fileURLToPath } = require('url');
 const os = require('os');
 const path = require('path');
 const cfg = require('./config-file');
+const { searchScan } = require('../hooks/search-scan');
 
 const id = 'copilot';
 const FILE_NAME = 'zn-gate.json';
@@ -152,7 +153,9 @@ function normalize(raw) {
   }
   const cmd = firstString(args, COMMAND_KEYS);
   if (SHELL_TOOLS.has(toolName) || (!known && cmd !== undefined)) {
-    const e = { ...ev, tool: toolName === 'powershell' ? 'powershell' : 'bash', input: { command: cmd || '', texts: [] } };
+    // A recursive shell search over a folder with a plain .env gets the same folder check as the grep tool.
+    const scan = cmd && toolName !== 'powershell' ? searchScan(cmd, cwd) : { dirs: [], ask: null };
+    const e = { ...ev, tool: toolName === 'powershell' ? 'powershell' : 'bash', input: { command: cmd || '', texts: [], ...(scan.dirs.length ? { scanDirs: scan.dirs } : {}), ...(scan.ask ? { scanAsk: scan.ask } : {}) } };
     if (cmd === undefined) e.unreadable = unreadable('command');
     return e;
   }

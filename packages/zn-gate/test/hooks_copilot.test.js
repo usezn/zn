@@ -196,6 +196,20 @@ test('a search over a folder that holds a plain-text .env asks; a clean folder d
   assert.match(r.output.permissionDecisionReason, /\.env/);
 });
 
+test('a recursive shell search over a folder with a plain-text .env asks, like the search tool', async (t) => {
+  const dir = tempDir(t, 'zn-cop-shgrep-');
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'hello');
+  const shell = async (line) => (await run(pre('bash', { command: line }, { cwd: dir }))).output;
+  assert.equal(await shell('grep -rn x .'), null);
+  fs.writeFileSync(path.join(dir, '.env'), 'API_KEY=sk_live_abcdefghijklmnop1234\n');
+  for (const line of ['grep -rn x .', 'rg x', 'bash -c "grep -r x ."']) {
+    const r = await shell(line);
+    assert.equal(r.permissionDecision, 'ask', line);
+    assert.match(r.permissionDecisionReason, /\.env/, line);
+  }
+  assert.equal(await shell('grep x a.txt'), null);
+});
+
 test('postToolUse: a secret in a shell result is replaced; clean and failed results are left alone', async () => {
   const r = await run({ ...pre('bash', { command: 'env' }), toolResult: { resultType: 'success', textResultForLlm: 'K=' + FAKE_AWS } });
   assert.ok(!r.output.modifiedResult.textResultForLlm.includes(FAKE_AWS));

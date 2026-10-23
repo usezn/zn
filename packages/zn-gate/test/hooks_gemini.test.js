@@ -165,6 +165,37 @@ test('a search over a folder that holds a plain-text .env is blocked (Gemini hoo
   assert.match(r.output.reason, /narrower path/);
 });
 
+test('a recursive shell search over a folder with a plain-text .env is blocked like the search tool; other searches are not', async (t) => {
+  const proj = tempDir(t, 'zn-gem-shgrep-');
+  const home = tempDir(t, 'zn-gem-shgrep-home-');
+  fs.mkdirSync(path.join(proj, 'config'));
+  fs.mkdirSync(path.join(proj, 'docs'));
+  fs.writeFileSync(path.join(proj, 'config', '.env'), 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n');
+  fs.writeFileSync(path.join(proj, 'docs', 'a.md'), 'todo\n');
+  const shell = async (line) => (await runner.handle(gem, bt('run_shell_command', { command: line }, { cwd: proj }), { home, engine: fakeEngine, vault: createFakeVault(), failMode: 'open', znRunPrefix: 'ZN_AGENT=x "node" "run.js" --' })).output;
+  const viaTool = (await runner.handle(gem, bt('grep_search', { pattern: 'AWS', dir_path: path.join(proj, 'config') }, { cwd: proj }), { home, engine: fakeEngine, vault: createFakeVault(), failMode: 'open' })).output;
+  assert.equal(viaTool.decision, 'deny');
+  for (const line of ['grep -rn AWS config', 'rg AWS config', 'cd config && grep -r AWS .', 'bash -c "grep -rn AWS config"', 'eval "grep -rn AWS config"', 'D=config; grep -rn AWS $D', 'sudo grep -rn AWS config']) {
+    const r = await shell(line);
+    assert.equal(r && r.decision, 'deny', line);
+    assert.match(r.reason, /config|folder|\.env/, line);
+    assert.match(r.reason, /cannot ask the user/, line);
+  }
+  assert.equal(await shell('grep -rn todo docs'), null);
+  assert.equal(await shell('grep AWS docs/a.md'), null);
+  assert.equal(await shell('ls -la'), null);
+  // a search whose folder cannot be known is blocked too
+  assert.equal((await shell('grep -rn AWS $UNKNOWN_DIR')).decision, 'deny');
+});
+
+test('a very long shell line is scanned in linear time', async (t) => {
+  const proj = tempDir(t, 'zn-gem-shlong-');
+  const line = 'echo ' + 'a'.repeat(100000) + ' && grep -rn AWS .';
+  const t0 = Date.now();
+  await runner.handle(gem, bt('run_shell_command', { command: line }, { cwd: proj }), { engine: fakeEngine, vault: createFakeVault(), failMode: 'open' });
+  assert.ok(Date.now() - t0 < 5000);
+});
+
 test('an unreadable hook input is refused with exit code 2 and the reason on stderr (the documented block)', (t) => {
   const home = tempDir(t, 'zn-gem-run-');
   for (const input of ['', 'not json', '[1]']) {
