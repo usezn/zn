@@ -107,6 +107,13 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
   (`updatedToolOutput`), and `PreToolUse` can rewrite the input and ask the user
   (`ask` + `updatedInput`). zn never returns `allow`, so your own permission
   rules always apply.
+  The output of web fetches, MCP tools and shell commands is also checked
+  with the local rules: when they flag text that reads like instructions to
+  the agent, zn adds a note (`additionalContext`) telling the agent to treat
+  it as data and to tell you. The output is not blocked for this. Turn it off
+  with `{"hooks": {"checkToolOutputInstructions": false}}` in
+  `~/.zn/config.json`. At most 64 KiB of each output are checked: the first 48 KiB and
+  the last 16 KiB.
 - **Codex CLI**:
   - Rewriting a call (`updatedInput`) is only accepted together with `allow`,
     which would skip your approval policy, and `ask` is not supported. So zn
