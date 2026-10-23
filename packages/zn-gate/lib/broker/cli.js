@@ -256,10 +256,9 @@ async function secretAdopt(args, io) {
   const vault = await vaultOf(io);
   if (await existingMeta(vault, flags.name)) throw deps.znError('ZN_USAGE', flags.name + ' already exists');
   const project = deps.findProjectRoot(io.cwd);
-  const value = await vault.resolve(project, markers.markerFor(tokenName));
-  if (value == null) throw deps.znError('ZN_NOT_FOUND', markers.markerFor(tokenName) + ' is not known for this project');
   const meta = metaFromFlags(flags, { source: 'adopted' });
-  await vault.setSecret(flags.name, value, meta);
+  // The value moves inside the vault: it never comes back to this process.
+  await vault.adoptToken(project, markers.markerFor(tokenName), flags.name, meta);
   out(io, 'Adopted ' + markers.markerFor(tokenName) + ' as ' + markers.markerFor(flags.name) + ' (' + meta.mode + ' mode).');
   return 0;
 }
@@ -327,8 +326,8 @@ async function storeItems(vault, items, flags, source, io) {
   for (const it of items) {
     const cur = await existingMeta(vault, it.name);
     if (cur && !flags.force) {
-      const same = await vault.resolve(deps.findProjectRoot(io.cwd), markers.markerFor(it.name));
-      if (same !== it.value) {
+      const same = await vault.sameSecretValue(it.name, it.value);
+      if (!same) {
         out(io, '  skip ' + it.name + ': a different value is already stored (use --force to replace)');
         continue;
       }
@@ -410,10 +409,11 @@ async function envUnshadow(args, io) {
   }
   needHuman(io, 'zn env unshadow');
   const vault = await vaultOf(io);
-  const text = await vault.resolve(deps.findProjectRoot(io.cwd), markers.markerFor(flags.backup));
-  if (text == null) throw deps.znError('ZN_NOT_FOUND', flags.backup + ' not found');
   const ok = await (io.confirm ? io.confirm('Write plain-text values back to ' + path.basename(file) + '?') : tty.confirm('Write plain-text values back to ' + path.basename(file) + '?', io));
   if (!ok) return 1;
+  // The vault asks again on its own channel before the plain text leaves it.
+  const text = await vault.readBackup(deps.findProjectRoot(io.cwd), flags.backup, file);
+  if (text == null) throw deps.znError('ZN_NOT_FOUND', flags.backup + ' not found');
   writeFileAtomic(file, text, 0o600);
   out(io, 'Restored ' + path.basename(file) + ' from ' + flags.backup + '.');
   return 0;

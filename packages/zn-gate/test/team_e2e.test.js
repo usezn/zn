@@ -196,15 +196,15 @@ test('the vault applies the organization policy when the hooks restore a named m
   assert.deepStrictEqual(await vault.resolve(HOME, detected, opts), { value: null, policy: 1, deny: true });
   const other = await vault.mapToken(HOME, 'EMAIL', 'jane.roe@example.org');
   assert.deepStrictEqual(await vault.resolve(HOME, other, opts), { value: 'jane.roe@example.org', policy: 1 });
-  // Without a destination (zn run, the MCP tools) the token resolves as before.
-  assert.strictEqual(await vault.resolve(HOME, detected), prodValue);
+  // A request with no destination and no purpose gets nothing: the value is not read around the policy.
+  await assert.rejects(vault.resolve(HOME, detected), /does not say what the value is for/);
   const st = await vault.status();
   assert.ok(st.features.includes('resolve-policy'));
   assert.equal(st.version, require('../package.json').version);
   const recs = fs.readFileSync(path.join(process.env.ZN_HOME, 'audit.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   assert.ok(recs.some((r) => r.secret === 'PROD_DB_URL' && r.decision === 'deny' && /^policy:org_deny:DB_URL_\d+$/.test(r.reason)));
-  // zn run and the secrets MCP tools resolve without a destination and apply the policy themselves
-  assert.strictEqual(await vault.resolve(HOME, '__ZN_STAGING_TOKEN__'), 'stg_' + 'q'.repeat(28));
+  // The broker resolves for a purpose, and the policy is applied again inside the vault (see vault_capabilities.test.js).
+  await assert.rejects(vault.resolve(HOME, '__ZN_STAGING_TOKEN__'), /does not say what the value is for/);
   const log = fs.readFileSync(path.join(process.env.ZN_HOME, 'audit.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   assert.ok(log.some((r) => r.secret === 'PROD_DB_URL' && r.decision === 'deny' && r.reason === 'policy:org_deny' && r.mode === 'resolve'));
 });
@@ -215,8 +215,8 @@ test('a scrubber token with the value of a stored secret under a warn rule comes
   const detected = await vault.mapToken(HOME, 'API_KEY', 'stg_' + 'q'.repeat(28));
   const got = await vault.resolve(HOME, detected, opts);
   assert.deepStrictEqual(got, { value: 'stg_' + 'q'.repeat(28), policy: 1, warn: true, warnReason: 'Staging credentials need review.', warnName: 'STAGING_TOKEN' });
-  // Without a destination (zn run, the MCP tools) the token resolves as before.
-  assert.strictEqual(await vault.resolve(HOME, detected), 'stg_' + 'q'.repeat(28));
+  // No destination and no purpose: refused.
+  await assert.rejects(vault.resolve(HOME, detected), /does not say what the value is for/);
 });
 
 test('a self-reported agent id (ZN_AGENT) cannot dodge a rule for another agent', async () => {

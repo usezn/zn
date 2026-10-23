@@ -252,7 +252,7 @@ function createSecretsServer(opts = {}) {
     const notice = notices.length ? notices.join(' ') : undefined;
     const used = (m, why) => (warned(m) ? { decision: 'warn', reason: WARN_REASON } : { decision: 'allow', reason: why });
     for (const m of named) {
-      const v = await (await getVault()).resolve(project, m.marker);
+      const v = await (await getVault()).resolve(project, m.marker, { purpose: 'http', agent, agentTrusted, tool: 'mcp:secrets_http_request', host, placements: placements(m.name) });
       if (v == null) return textResult({ error: 'ZN_NOT_FOUND', message: 'secret ' + m.name + ' has no value' }, true);
       values.set(m.name, String(v));
     }
@@ -440,7 +440,7 @@ function createSecretsServer(opts = {}) {
       }
     }
     for (const m of named) {
-      const v = await (await getVault()).resolve(project, m.marker);
+      const v = await (await getVault()).resolve(project, m.marker, { purpose: 'render', agent, agentTrusted, tool: 'mcp:secrets_render_file' });
       if (v == null) return textResult({ error: 'ZN_NOT_FOUND', message: 'secret ' + m.name + ' has no value' }, true);
       values.set(m.name, String(v));
     }

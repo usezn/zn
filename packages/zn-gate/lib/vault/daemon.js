@@ -12,15 +12,21 @@
  *   daemon, and a client never sends anything to a squatted pipe.
  * - Newline-delimited JSON. Requests on one connection run in order; vault
  *   writes are serialised.
- * - Policy is enforced here as well as in the engine: `resolve` refuses
- *   destinations that the restoration policy withholds (network commands,
- *   MCP input, versioned files), and every resolve is audited.
+ * - Policy is enforced here as well as in the engine. There is no general
+ *   "give me the value" call: `resolve` needs a context the daemon checks
+ *   itself (a restoration destination from the hooks, or a purpose of the
+ *   broker: zn run, an HTTP request, a rendered file), `exactValues` is only
+ *   served to the masking path, and the other readers are concrete
+ *   operations (adoptToken, sameSecretValue, readBackup). Every resolve is
+ *   audited.
  *
  * Limits (documented in the threat model): any process of the same OS user
  * that can read ~/.zn/run/session.key can talk to the daemon, exactly like
- * ssh-agent. Agent hooks deny agent tool calls that touch ~/.zn; the OS user
- * boundary is the real isolation. JS strings cannot be wiped from memory;
- * state is dropped and left to the garbage collector.
+ * ssh-agent, and can name any context. The checks above bind what a request
+ * must say (a host the secret allows, a command and an executable the user
+ * approved, a mode), not who is asking. Agent hooks deny agent tool calls that
+ * touch ~/.zn; the OS user boundary is the real isolation. JS strings cannot
+ * be wiped from memory; state is dropped and left to the garbage collector.
  *
  * The identity reaches the daemon process on stdin, never through argv,
  * environment variables or disk.
@@ -55,19 +61,43 @@ const HOST_RE = /^(?:\*\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*(?::\d{1,5})?$/;
 const COMMAND_RE = /^[A-Za-z0-9_.+\-/ *]{1,128}$/;
 const CLOUD_KEY_SECRET = 'ZN_CLOUD_API_KEY';
 const CLOUD_KEY_PURPOSE = 'zn-cloud-key';
-const DENIED_RESOLVE = new Set(['bash_network', 'mcp_input', 'write_tracked']);
+/* Restoration policy by destination (the hooks' contexts), the same table as
+ * the engine's POLICY (a test keeps them equal). `detected` is a scrubber
+ * token (__ZN_EMAIL_1__), `named` a stored secret (__ZN_NAME__); only
+ * 'restore' hands a value out. */
+const DESTINATION_POLICY = Object.freeze({
+  assistant:     Object.freeze({ detected: 'restore', named: 'restore' }),
+  write_ignored: Object.freeze({ detected: 'restore', named: 'restore' }),
+  write_tracked: Object.freeze({ detected: 'tracked_file', named: 'tracked_file' }),
+  bash_local:    Object.freeze({ detected: 'restore', named: 'use_broker' }),
+  bash_network:  Object.freeze({ detected: 'network', named: 'network' }),
+  mcp_input:     Object.freeze({ detected: 'mcp_input', named: 'mcp_input' }),
+});
+/* Purposes of the broker. Each one has its own checks in resolveFor():
+ *   run     zn run: an env-mode secret, a command its allowCommands list names, an executable the user approved
+ *   http    secrets_http_request: a host and placements the secret allows
+ *   render  secrets_render_file: a file-mode secret
+ * and the key of `zn-gate connect`, which only zn-gate's own cloud calls read. */
+const BROKER_PURPOSES = Object.freeze(['run', 'http', 'render']);
+const MASK_PURPOSE = 'mask';
+const MASK_AUDIT_EVERY_MS = 60 * 1000;
+const BACKUP_NAME_RE = /^ENVBAK_X[0-9A-F]{8}D\d{12}$/;
 /* What this vault does beyond the protocol. resolve-policy: resolve() with
  * {withPolicy: true} applies the organization policy and answers
- * {value, policy: RESOLVE_POLICY_VERSION, deny?, warn?, warnReason?}. */
+ * {value, policy: RESOLVE_POLICY_VERSION, deny?, warn?, warnReason?}.
+ * capabilities: resolve needs a context, exactValues needs purpose 'mask',
+ * and adoptToken, sameSecretValue and readBackup exist. */
 const RESOLVE_POLICY_VERSION = 1;
 const PACKAGE_VERSION = require('../../package.json').version;
-const VAULT_FEATURES = Object.freeze(['resolve-policy']);
+const VAULT_FEATURES = Object.freeze(['resolve-policy', 'capabilities']);
 const ALLOW_IN = ['header', 'query', 'body'];
 // Commands that run arbitrary code given to them (python3.12, node22, pwsh...):
 // approving one lets any script it runs read the secret. The confirmation
 // says so. One list for the daemon and the CLI, in lib/exe.js.
 const { isInterpreter, isInterpreterPath } = exe;
 
+const markers = require('../broker/markers');
+const { AGENT_IDS } = require('../agents');
 const { endpoint, hmac, safeEqualHex, createClient } = require('./client');
 
 /* ------------------------------------------------------------------ */
@@ -290,7 +320,71 @@ function makeOps(state, ctl) {
 
   const team = makeTeamOps({ state, writeAudit, confirmOutOfBand, fetchImpl: ctl.fetchImpl, isClosed: () => Boolean(ctl.closed) });
 
-  return {
+  const localOf = (name, s) => ({ name, mode: s.mode, allowHosts: s.allowHosts || [], allowCommands: s.allowCommands || [], allowIn: s.allowIn || ['header'] });
+  // When the masking path last asked for the values of each (agent, tool): one audit record a minute, not one per hook.
+  const maskAudited = new Map();
+
+  /* resolve for a purpose of the broker. The checks the broker makes before it asks are made again here, on what the
+   * vault itself holds, so a request that skips the broker meets the same limits: the secret's mode, the organization
+   * policy, and the settings and approvals the user gave. They do not tell who is asking: a program of the same user
+   * can name a host, a command and an executable that fit. */
+  async function resolveFor(project, inner, purpose, o) {
+    const refuse = async (reason, message) => {
+      await writeAudit({ secret: inner, mode: 'resolve', agent: o.agent, tool: o.tool, decision: 'deny', reason });
+      throw znError(CODES.POLICY_DENIED, message);
+    };
+    if (/_\d+$/.test(inner)) {
+      return refuse('policy:' + purpose + ':detected', 'this request is for a stored secret, not for a value the scrubber found. Next step: store the value with zn secret adopt first.');
+    }
+    const secrets = await state.loadSecrets();
+    const s = secrets.secrets[inner];
+    if (!s) {
+      await writeAudit({ secret: inner, mode: 'resolve', agent: o.agent, tool: o.tool, decision: 'deny', reason: 'not_found' });
+      return null;
+    }
+    // An agent id the client names decides nothing about a secret. The one thing it can change is which hosts the
+    // organization policy offers to an agent zn can identify, and those only apply once the user approved them here.
+    const agentId = typeof o.agent === 'string' && AGENT_IDS.includes(o.agent) ? o.agent : null;
+    const trusted = purpose === 'http' && o.agentTrusted === true && agentId !== null;
+    const [eff] = await team.effectiveList([localOf(inner, s)], agentId, trusted);
+    if (eff && eff.deny) {
+      return refuse('policy:org_deny', 'secret ' + inner + ' is blocked by your organization policy. Next step: do not use this secret here. If the task needs it, review the organization policy, or, if you are an agent, ask the user.');
+    }
+    const meta = eff || localOf(inner, s);
+    if (purpose === 'run') {
+      if (meta.mode !== 'env') {
+        return refuse('policy:run:mode', 'secret ' + inner + ' is in ' + (meta.mode || 'proxy') + ' mode, so it is never put into a process. Next step: use the secrets_http_request tool for HTTP APIs.');
+      }
+      const argv = Array.isArray(o.argv) && o.argv.length > 0 && o.argv.length <= 1024 && o.argv.every((a) => typeof a === 'string' && a.length <= 32768) ? o.argv : null;
+      const entry = argv ? markers.matchAllowCommands(meta.allowCommands, argv) : null;
+      if (!entry) return refuse('policy:run:command', 'this command is not allowed to use ' + inner + '. Next step: the user can allow it from their own terminal with zn secret allow.');
+      const real = o.exe && typeof o.exe === 'object' ? o.exe.real : null;
+      const fp = o.exe && typeof o.exe === 'object' ? o.exe.fp : null;
+      if (typeof real !== 'string' || !real || real.length > 4096 || !path.isAbsolute(real) || typeof fp !== 'string' || !fp) {
+        return refuse('policy:run:exe', 'zn run did not name the program it opened. Next step: run the command through zn run.');
+      }
+      const approved = await ops.isApproved(project, inner, exe.commandWord(entry).split(/[\\/]/).pop(), exe.approvalPath(real), fp);
+      if (!approved) return refuse('policy:run:not_approved', 'this program is not approved for ' + inner + ' yet. Next step: run it through zn run and confirm it in the zn vault prompt.');
+    } else if (purpose === 'render') {
+      if (meta.mode !== 'file') return refuse('policy:render:mode', 'secret ' + inner + ' is in ' + (meta.mode || 'proxy') + ' mode; only file-mode secrets are written to disk.');
+    } else {
+      const host = typeof o.host === 'string' ? o.host : '';
+      if (!markers.hostAllowed(meta.allowHosts, host)) {
+        return refuse('policy:http:host', 'secret ' + inner + ' may not be sent to ' + (host || 'an unnamed host') + '. Next step: the user can allow the host with zn secret allow.');
+      }
+      const allowIn = Array.isArray(meta.allowIn) ? meta.allowIn : ['header'];
+      const where = Array.isArray(o.placements) && o.placements.every((p) => ALLOW_IN.includes(p)) ? o.placements : null;
+      if (where === null || where.some((p) => !allowIn.includes(p))) {
+        return refuse('policy:http:placement', 'secret ' + inner + ' may only be sent where its settings allow (' + allowIn.join(', ') + '). Next step: the user can widen it with zn secret allow --in.');
+      }
+    }
+    s.lastUsed = new Date().toISOString();
+    state.dirtySecrets = true;
+    await writeAudit({ secret: inner, mode: 'resolve', agent: o.agent, tool: o.tool, decision: 'allow', reason: purpose });
+    return s.value;
+  }
+
+  const ops = {
     async status() {
       return { unlocked: true, protocol: PROTOCOL, pid: process.pid, expiresAt: new Date(ctl.expiresAt).toISOString(), idleMs: ctl.idleMs, confirm: channel.kind, features: VAULT_FEATURES, version: PACKAGE_VERSION };
     },
@@ -320,21 +414,33 @@ function makeOps(state, ctl) {
       if (!m) throw znError(CODES.POLICY_DENIED, 'invalid token. Next step: use the placeholder exactly as zn gave it, in the form __ZN_NAME__.');
       const o = opts && typeof opts === 'object' ? opts : {};
       const inner = m[1];
-      if (o.destination && DENIED_RESOLVE.has(o.destination)) {
-        await writeAudit({ secret: inner, mode: 'resolve', agent: o.agent, tool: o.tool, decision: 'deny', reason: 'policy:' + o.destination });
-        throw znError(CODES.POLICY_DENIED, 'destination ' + o.destination + ' does not receive real values. Next step: send the request to a host this secret is allowed for, or use a placeholder instead.');
+      const ordinal = /_(\d+)$/.exec(inner);
+      // What the request says it is for. A purpose wins over a destination; neither is proven by the caller, which is
+      // why each one is checked here against what the vault itself holds.
+      const purpose = typeof o.purpose === 'string' ? o.purpose : null;
+      const dest = !purpose && typeof o.destination === 'string' && Object.prototype.hasOwnProperty.call(DESTINATION_POLICY, o.destination) ? o.destination : null;
+      if (dest && DESTINATION_POLICY[dest][ordinal ? 'detected' : 'named'] !== 'restore') {
+        await writeAudit({ secret: inner, mode: 'resolve', agent: o.agent, tool: o.tool, decision: 'deny', reason: 'policy:' + dest });
+        throw znError(CODES.POLICY_DENIED, 'destination ' + dest + ' does not receive real values. Next step: send the request to a host this secret is allowed for, or use a placeholder instead.');
       }
       // The key `zn-gate connect` keeps here is not handed to hooks, the secrets broker or zn run, so writing its marker
       // in a file or a command never gets the real key back. A program running as the user can still ask for it.
-      if (inner === CLOUD_KEY_SECRET && o.purpose !== CLOUD_KEY_PURPOSE) {
+      if (inner === CLOUD_KEY_SECRET && purpose !== CLOUD_KEY_PURPOSE) {
         await writeAudit({ secret: inner, mode: 'resolve', agent: o.agent, tool: o.tool, decision: 'deny', reason: 'policy:zn_cloud_key' });
         if (o.withPolicy === true) return { value: null, policy: RESOLVE_POLICY_VERSION };
         throw znError(CODES.POLICY_DENIED, 'this secret is the key of zn-gate connect and is never put into a file or a command. Next step: ask the user to run zn-gate disconnect if it should stop working.');
       }
+      // There is no context-free resolve: a request that names no destination and no purpose, or one this vault does not
+      // know, gets nothing (and the attempt is on the audit log).
+      if (purpose ? (purpose !== CLOUD_KEY_PURPOSE && !BROKER_PURPOSES.includes(purpose)) || (purpose === CLOUD_KEY_PURPOSE && inner !== CLOUD_KEY_SECRET) : !dest) {
+        await writeAudit({ secret: inner, mode: 'resolve', agent: o.agent, tool: o.tool, decision: 'deny', reason: 'policy:no_context' });
+        throw znError(CODES.POLICY_DENIED, 'this request does not say what the value is for. Next step: restore placeholders through the zn hooks, or use zn run or the secrets MCP tools; a program cannot read values directly.');
+      }
+      if (BROKER_PURPOSES.includes(purpose)) return resolveFor(project, inner, purpose, o);
       let value = null;
       let org = null;
       const agentId = typeof o.agent === 'string' ? o.agent : null;
-      const asLocal = (name, s) => ({ name, mode: s.mode, allowHosts: s.allowHosts || [], allowCommands: s.allowCommands || [], allowIn: s.allowIn || ['header'] });
+      const asLocal = localOf;
       // names: the stored secrets the policy blocks (for a detected token, the
       // secrets with the same value): one local audit record each.
       const orgDenied = async (names) => {
@@ -342,14 +448,13 @@ function makeOps(state, ctl) {
         if (o.withPolicy === true) return { value: null, policy: RESOLVE_POLICY_VERSION, deny: true };
         throw znError(CODES.POLICY_DENIED, 'secret ' + inner + ' is blocked by your organization policy. Next step: do not use this secret here. If the task needs it, review the organization policy, or, if you are an agent, ask the user.');
       };
-      const ordinal = /_(\d+)$/.exec(inner);
       if (ordinal) {
         const p = await state.loadProject(String(project == null ? '' : project));
         value = Object.prototype.hasOwnProperty.call(p.data.tokens, token) ? p.data.tokens[token] : null;
         // A detected value that is also a stored secret: the organization
         // policy for that secret applies, so a blocked secret is not put back
         // through the scrubber's token for the same value.
-        if (value !== null && o.destination) {
+        if (value !== null && dest) {
           const secrets = await state.loadSecrets();
           const same = Object.entries(secrets.secrets)
             .filter(([, s]) => s && typeof s.value === 'string' && s.value === value)
@@ -368,14 +473,14 @@ function makeOps(state, ctl) {
         const s = secrets.secrets[inner];
         // A marker the agent hooks put back (they always give a destination):
         // the organization policy applies, as in zn run and the secrets MCP tools.
-        if (s && o.destination) {
+        if (s && dest) {
           const [eff] = await team.effectiveList([asLocal(inner, s)], agentId, false);
           if (eff && eff.deny) return orgDenied([inner]);
           if (eff && eff.warn === true) org = { warn: true, warnReason: eff.warnReason };
         }
         if (s) { value = s.value; s.lastUsed = new Date().toISOString(); state.dirtySecrets = true; }
       }
-      await writeAudit({ secret: inner, mode: 'resolve', agent: o.agent, tool: o.tool, decision: value === null ? 'deny' : 'allow', reason: value === null ? 'not_found' : (o.destination || 'unspecified') });
+      await writeAudit({ secret: inner, mode: 'resolve', agent: o.agent, tool: o.tool, decision: value === null ? 'deny' : 'allow', reason: value === null ? 'not_found' : (dest || purpose) });
       // withPolicy: {value, policy, deny?, warn?, warnReason?, warnName?} instead of the bare value.
       return o.withPolicy === true ? Object.assign({ value, policy: RESOLVE_POLICY_VERSION }, value === null ? null : org) : value;
     },
@@ -550,7 +655,24 @@ function makeOps(state, ctl) {
       });
     },
 
-    async exactValues(project) {
+    /* The masking path (hooks, the streaming scrubber, the broker's output
+     * masking) matches output against the real values, so it is the one reader
+     * of them. The request has to say so (purpose 'mask'); anything else is
+     * refused and recorded. Grants are recorded too, at most one a minute for
+     * each agent and tool, so a program reading them shows in `zn vault log`. */
+    async exactValues(project, opts) {
+      const o = opts && typeof opts === 'object' ? opts : {};
+      if (o.purpose !== MASK_PURPOSE) {
+        writeAudit({ mode: 'resolve', agent: o.agent, tool: o.tool, decision: 'deny', reason: 'policy:no_context' });
+        throw znError(CODES.POLICY_DENIED, 'exact values are only given to the masking path. Next step: scan text with the zn scrubber instead of reading values.');
+      }
+      const who = String(o.agent) + '\0' + String(o.tool);
+      const now = Date.now();
+      if (!maskAudited.has(who) || now - maskAudited.get(who) >= MASK_AUDIT_EVERY_MS) {
+        if (maskAudited.size > 256) maskAudited.clear();
+        maskAudited.set(who, now);
+        writeAudit({ mode: 'resolve', agent: o.agent, tool: o.tool, decision: 'allow', reason: 'mask_values' });
+      }
       const secrets = await state.loadSecrets();
       const out = [];
       for (const [name, s] of Object.entries(secrets.secrets)) {
@@ -567,6 +689,54 @@ function makeOps(state, ctl) {
         out.push({ type: m[1].replace(/_\d+$/, ''), values: variants(value) });
       }
       return out;
+    },
+
+    /* zn secret adopt: store a value the scrubber found as a named secret.
+     * The value goes from one table of the vault to another and never to the caller. */
+    async adoptToken(project, token, name, meta) {
+      const m = TOKEN_RE.exec(String(token || ''));
+      if (!m || !/_\d+$/.test(m[1])) throw znError(CODES.POLICY_DENIED, 'invalid token. Next step: give a placeholder the scrubber made, such as __ZN_AWS_KEY_1__.');
+      const n = checkName(name);
+      return state.serial(async () => {
+        const p = await state.loadProject(String(project == null ? '' : project));
+        const value = Object.prototype.hasOwnProperty.call(p.data.tokens, String(token)) ? p.data.tokens[String(token)] : null;
+        if (typeof value !== 'string' || value.length === 0) throw znError(CODES.NOT_FOUND, String(token) + ' is not known for this project. Next step: check the placeholder name.');
+        const secrets = await state.loadSecrets();
+        if (secrets.secrets[n]) throw znError(CODES.POLICY_DENIED, n + ' already exists. Next step: pick another name.');
+        secrets.secrets[n] = Object.assign(cleanMeta(meta), { value, created: new Date().toISOString(), lastUsed: null });
+        await writeAudit({ secret: n, mode: 'set', decision: 'allow', reason: 'adopted' });
+        await state.saveSecrets();
+        return true;
+      });
+    },
+
+    /* Is this the value stored under that name? Answers yes or no, never the value (zn secret import). */
+    async sameSecretValue(name, value) {
+      const n = str(name, 'name', 64);
+      str(value, 'value');
+      const stored = (await state.loadSecrets()).secrets[n];
+      if (!stored || typeof stored.value !== 'string') return false;
+      const a = crypto.createHash('sha256').update(stored.value).digest();
+      const b = crypto.createHash('sha256').update(value).digest();
+      return crypto.timingSafeEqual(a, b);
+    },
+
+    /* zn env unshadow: the user gets the original .env text back. Plain values go out of the vault,
+     * so the user confirms on the daemon's own channel, and only the copies `zn env shadow` made can be read. */
+    async readBackup(project, name, file) {
+      const n = str(name, 'name', 64);
+      if (!BACKUP_NAME_RE.test(n)) throw znError(CODES.POLICY_DENIED, 'invalid backup name. Next step: use the name zn env shadow printed.');
+      const stored = (await state.loadSecrets()).secrets[n];
+      if (!stored || stored.mode !== 'backup' || typeof stored.value !== 'string') throw znError(CODES.NOT_FOUND, n + ' not found. Next step: check the name zn env shadow printed.');
+      await confirmOutOfBand({
+        kind: 'file',
+        title: 'write the original values of ' + path.basename(String(file || '.env')) + ' back in plain text?',
+        warnings: ['zn env unshadow takes the values out of the vault and writes them in clear text.'],
+        fields: [['Backup', n], ['File', path.basename(String(file || '.env'))], ['Project', String(project)]],
+        footer: 'If you did not just run zn env unshadow, choose Deny.',
+      }, { secret: n, mode: 'file' });
+      writeAudit({ secret: n, mode: 'file', decision: 'ask:yes', reason: 'backup_read_confirmed' });
+      return stored.value;
     },
 
     async audit(event) {
@@ -589,6 +759,21 @@ function makeOps(state, ctl) {
       return true;
     },
   };
+  return ops;
+}
+
+/* POSIX: the socket, the session key and the directory that holds them must be owned by the daemon's user and closed to
+ * group and others. Windows relies on the ACL the user profile gives ~/.zn (see the threat model). */
+function assertPrivateEndpoint(ep) {
+  if (!ep.unix || typeof process.getuid !== 'function') return;
+  const me = process.getuid();
+  const dir = path.dirname(ep.address);
+  for (const [file, closed] of [[dir, 0o077], [ep.address, 0o077], [ep.keyFile, 0o077]]) {
+    const st = fs.lstatSync(file);
+    if (st.isSymbolicLink() || st.uid !== me || (st.mode & closed) !== 0) {
+      throw znError(CODES.POLICY_DENIED, 'the vault will not start: ' + path.basename(file) + ' is not private to your user. Next step: check the permissions of ' + dir + ' (it must be yours, mode 0700).');
+    }
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -754,6 +939,10 @@ async function serve(opts) {
   });
   if (ep.unix) fs.chmodSync(ep.address, 0o600);
   store.writePrivateFile(ep.keyFile, sessionKey.toString('hex'));
+  // Node cannot read the peer's credentials (SO_PEERCRED) from a Unix socket, so the kernel's file permissions are
+  // the peer check: refuse to serve unless the socket, the session key and their directory belong to this user and
+  // are closed to everyone else.
+  try { assertPrivateEndpoint(ep); } catch (err) { await shutdown('lock'); throw err; }
   await state.serial(async () => {
     const rec = audit.append({ mode: 'unlock', decision: 'allow', reason: 'ttl:' + Math.round(ttlMs / 60000) + 'm' },
       { file: state.paths.auditFile, key: Buffer.from(state.secrets.auditKey, 'hex') });
@@ -896,4 +1085,4 @@ if (require.main === module && process.argv.includes('--serve')) {
   daemonMain(process.argv.slice(2));
 }
 
-module.exports = { serve, unlock, unlockForeground, lock, isRunning, endpoint, DEFAULT_TTL_MS, DEFAULT_IDLE_MS, PROTOCOL };
+module.exports = { serve, unlock, unlockForeground, lock, isRunning, endpoint, DEFAULT_TTL_MS, DEFAULT_IDLE_MS, PROTOCOL, DESTINATION_POLICY, assertPrivateEndpoint };

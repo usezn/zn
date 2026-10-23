@@ -263,7 +263,7 @@ async function prepare(parsed, opts) {
 
   const values = new Map();
   for (const c of chosen) {
-    const v = await vault.resolve(project, markers.markerFor(c.name));
+    const v = await vault.resolve(project, markers.markerFor(c.name), { purpose: 'run', agent, tool: 'zn run', argv: parsed.command, exe: ctx.executable });
     if (v == null) await deny(c.name, c.mode, 'secret ' + c.name + ' has no value in the vault. Next step: save its value with zn secret set ' + c.name + ' in your own terminal, or, if you are an agent, ask the user to do it.', 'ZN_NOT_FOUND');
     values.set(c.name, String(v));
   }

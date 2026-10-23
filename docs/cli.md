@@ -330,7 +330,7 @@ Moves the values of a `.env` file (default `.env`) into the vault and leaves mar
 zn-gate env unshadow FILE --backup ENVBAK_NAME
 ```
 
-Puts the original values back into the file from the encrypted copy that `env shadow` printed.
+Puts the original values back into the file from the encrypted copy that `env shadow` printed. The plain text leaves the vault only after you confirm in the vault's own prompt (a system dialog, or the `zn unlock --foreground` terminal), as for the first use of a command.
 
 ### `run`
 

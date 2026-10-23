@@ -235,7 +235,7 @@ async function vaultEntries(ctx) {
   if (hit && now - hit.at < CACHE_TTL_MS) return hit;
   let res;
   try {
-    const list = await vault.exactValues(project);
+    const list = await vault.exactValues(project, { agent: ctx.agent, tool: ctx.tool });
     res = { at: now, entries: (Array.isArray(list) ? list : []).map((e) => Object.assign({}, e, { vault: true })), locked: false };
   } catch (err) {
     res = { at: now, entries: [], locked: true, error: err };

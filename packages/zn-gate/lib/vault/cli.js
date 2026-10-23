@@ -181,6 +181,7 @@ async function getPassphrase(args, creating, prompterOpts) {
 function out(s) { process.stdout.write(s + '\n'); }
 
 const RESOLVE_POLICY_FEATURE = 'resolve-policy';
+const CAPABILITIES_FEATURE = 'capabilities';
 
 /** The running vault's status, or null when none answers. */
 async function runningStatus(clientFactory) {
@@ -188,9 +189,10 @@ async function runningStatus(clientFactory) {
   try { return await c.status(); } catch (err) { return null; } finally { c.close(); }
 }
 
-/** A running vault started by an older zn-gate (it does not check the organization policy on restores). */
+/** A running vault started by an older zn-gate (it does not check the organization policy on restores, or still
+ *  hands out values without a context: zn unlock restarts it). */
 function isOutdatedVault(s) {
-  return Boolean(s) && !(Array.isArray(s.features) && s.features.includes(RESOLVE_POLICY_FEATURE));
+  return Boolean(s) && !(Array.isArray(s.features) && s.features.includes(RESOLVE_POLICY_FEATURE) && s.features.includes(CAPABILITIES_FEATURE));
 }
 
 /* Is the process still there? EPERM means it exists but is not ours to signal. */

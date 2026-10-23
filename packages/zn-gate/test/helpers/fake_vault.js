@@ -65,6 +65,29 @@ function createFakeVault(opts = {}) {
     async exactValues() {
       return [...secrets.entries()].map(([name, s]) => ({ name, type: name, values: variants(s.value) }));
     },
+    // Like the daemon's concrete operations (no value comes back except a backup the user asked for).
+    async adoptToken(project, token, name, meta = {}) {
+      const p = proj(project);
+      if (!p.byToken.has(token)) {
+        const err = new Error(token + ' is not known for this project');
+        err.code = 'ZN_NOT_FOUND';
+        throw err;
+      }
+      secrets.set(name, { value: p.byToken.get(token), meta: { ...meta } });
+      return true;
+    },
+    async sameSecretValue(name, value) {
+      return secrets.has(name) && secrets.get(name).value === String(value);
+    },
+    async readBackup(project, name) {
+      const s = secrets.get(name);
+      if (!s || s.meta.mode !== 'backup') {
+        const err = new Error(name + ' not found');
+        err.code = 'ZN_NOT_FOUND';
+        throw err;
+      }
+      return s.value;
+    },
     async audit(event) {
       auditLog.push({ ...event });
     },

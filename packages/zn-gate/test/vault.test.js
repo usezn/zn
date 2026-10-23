@@ -160,9 +160,9 @@ test('daemon: tokens are deterministic per project and survive a restart', async
   await startDaemon();
   const c2 = clientMod.createClient({});
   assert.strictEqual(await c2.mapToken('/work/app', 'EMAIL', v1), t1);
-  assert.strictEqual(await c2.resolve('/work/app', t1), v1);
-  assert.strictEqual(await c2.resolve('/work/other', t1), 'bob@example.org');
-  assert.strictEqual(await c2.resolve('/work/app', '__ZN_EMAIL_42__'), null);
+  assert.strictEqual(await c2.resolve('/work/app', t1, { destination: 'write_ignored' }), v1);
+  assert.strictEqual(await c2.resolve('/work/other', t1, { destination: 'write_ignored' }), 'bob@example.org');
+  assert.strictEqual(await c2.resolve('/work/app', '__ZN_EMAIL_42__', { destination: 'write_ignored' }), null);
   c2.close();
 });
 
@@ -212,7 +212,7 @@ test('daemon: named secrets, reserved names, metadata updates, backups', async (
   assert.deepStrictEqual(list[0].allowHosts, ['api.github.com']);
   assert.ok(!JSON.stringify(list).includes(value), 'listSecrets must never return values');
   await c.updateSecretMeta('GITHUB_TOKEN', { allowHosts: ['api.github.com', 'uploads.github.com'] });
-  assert.strictEqual(await c.resolve('/work/app', '__ZN_GITHUB_TOKEN__'), value, 'meta update keeps the value');
+  assert.strictEqual(await c.resolve('/work/app', '__ZN_GITHUB_TOKEN__', { destination: 'write_ignored' }), value, 'meta update keeps the value');
   await assert.rejects(c.updateSecretMeta('MISSING', {}), (e) => e.code === 'ZN_NOT_FOUND');
   await c.setSecret('ENV_BACKUP_ABCDEF', 'A=1\nB=' + fake(20) + '\n', { mode: 'backup' });
   const exact = await c.exactValues('/work/app');

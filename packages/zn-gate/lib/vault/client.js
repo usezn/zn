@@ -5,13 +5,21 @@
  *
  *   mapToken(project, type, value) -> token          __ZN_<TYPE>_<n>__
  *   resolve(project, token, opts)  -> value|null     broker and detokenize only; never exposed to the agent
- *                                  opts {destination, agent, tool, withPolicy}: with a destination the
- *                                  organization policy applies to named secrets; withPolicy returns
- *                                  {value, policy: 1, deny?, warn?, warnReason?}
- *       optional third argument {destination, agent, tool}: the daemon re-checks
- *       the restoration policy and records it in the audit log
+ *                                  opts must name what the value is for, or the daemon refuses:
+ *                                    destination  a restoration destination of the hooks (bash_local, write_ignored ...);
+ *                                                 the daemon applies the restoration and organization policy
+ *                                    purpose      'run' {argv, exe: {real, fp}} (zn run), 'http' {host, placements,
+ *                                                 agentTrusted} (secrets_http_request), 'render' (secrets_render_file),
+ *                                                 or 'zn-cloud-key'; the daemon checks the secret's mode, settings,
+ *                                                 approvals and the organization policy against what the request says
+ *                                  agent and tool are recorded in the audit log and grant nothing;
+ *                                  withPolicy returns {value, policy: 1, deny?, warn?, warnReason?}
  *   setSecret(name, value, meta) / listSecrets() / removeSecret(name)
- *   exactValues(project)           -> [{name, type, values: [raw, b64, hex, url]}]   in memory only
+ *   exactValues(project[, {agent, tool}]) -> [{name, type, values: [raw, b64, hex, url]}]   in memory only;
+ *                                  the masking path's call (the client sends purpose 'mask'), recorded in the audit log
+ *   adoptToken(project, token, name, meta)   store a scrubber token's value as a named secret; the value stays in the vault
+ *   sameSecretValue(name, value)   -> bool   is this the stored value; never returns it
+ *   readBackup(project, name, file) -> text  the .env copy `zn env shadow` made; the user confirms on the daemon's channel
  *   audit(event)                   {secret, mode, agent, tool, argv0, host, decision, reason}
  *
  *   updateSecretMeta(name, meta)                  policy change; the value is not touched.
@@ -52,7 +60,7 @@ const PROTOCOL = 1;
 const TIMEOUT_MS = 15000;
 // Operations the daemon confirms with the user wait for the answer.
 const CONFIRM_TIMEOUT_MS = 150000;
-const CONFIRMED_OPS = new Set(['recordApproval', 'updateSecretMeta', 'confirmFileWrite', 'teamJoin', 'teamLeave', 'confirmOrgOpening']);
+const CONFIRMED_OPS = new Set(['recordApproval', 'updateSecretMeta', 'confirmFileWrite', 'readBackup', 'teamJoin', 'teamLeave', 'confirmOrgOpening']);
 // Network calls to the zn cloud (policy download and audit upload).
 const NETWORK_OPS = new Set(['teamSync']);
 const NETWORK_TIMEOUT_MS = 120000;
@@ -244,7 +252,11 @@ class VaultClient {
   // opts {effective, agent}: the organization policy applied for that agent.
   listSecrets(opts) { return this.call('listSecrets', opts ? [opts] : []); }
   removeSecret(name) { return this.call('removeSecret', [name]); }
-  exactValues(project) { return this.call('exactValues', [project]); }
+  // The masking path is the one reader of the real values (it matches output against them).
+  exactValues(project, claim) { return this.call('exactValues', [project, { purpose: 'mask', agent: claim && claim.agent, tool: claim && claim.tool }]); }
+  adoptToken(project, token, name, meta) { return this.call('adoptToken', [project, token, name, meta || {}]); }
+  sameSecretValue(name, value) { return this.call('sameSecretValue', [name, value]); }
+  readBackup(project, name, file) { return this.call('readBackup', [project, name, file]); }
   audit(event) { return this.call('audit', [event || {}]); }
   updateSecretMeta(name, meta) { return this.call('updateSecretMeta', [name, meta || {}]); }
   // Optional fourth argument: {real, fp} of the executable zn run resolved.
@@ -280,12 +292,15 @@ async function setSecret(name, value, meta) { return client().setSecret(name, va
 // organization policy for that agent (zn Team).
 async function listSecrets() { return client().listSecrets(arguments[0]); }
 async function removeSecret(name) { return client().removeSecret(name); }
-async function exactValues(project) { return client().exactValues(project); }
+async function exactValues(project) { return client().exactValues(project, arguments[1]); }
 async function audit(event) { return client().audit(event); }
 async function updateSecretMeta(name, meta) { return client().updateSecretMeta(name, meta); }
 async function isApproved(project, secret, argv0) { return client().isApproved(...arguments); }
 async function recordApproval(project, secret, argv0) { return client().recordApproval(...arguments); }
 async function confirmFileWrite(project, file, names, reason) { return client().confirmFileWrite(project, file, names, reason); }
+async function adoptToken(project, token, name, meta) { return client().adoptToken(project, token, name, meta); }
+async function sameSecretValue(name, value) { return client().sameSecretValue(name, value); }
+async function readBackup(project, name, file) { return client().readBackup(project, name, file); }
 
 module.exports = {
   mapToken,
@@ -299,6 +314,9 @@ module.exports = {
   isApproved,
   recordApproval,
   confirmFileWrite,
+  adoptToken,
+  sameSecretValue,
+  readBackup,
   status: () => client().status(),
   isUnlocked: () => client().isUnlocked(),
   lock: () => client().lock(),
