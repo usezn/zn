@@ -15,7 +15,7 @@
  *
  *   rm_root_home     recursive delete of the home folder, the filesystem root,
  *                    a top-level system folder or a drive root
- *   pipe_to_shell    a download that is run as a script without being read
+ *   pipe_to_shell    a download that is run as a script (or by python, node, perl or ruby) without being read
  *   disk_overwrite   dd, mkfs, wipefs ... on a block device, or a redirect to one
  *   perm_root        chmod -R 777 or chown -R on the root or a system folder
  *   fork_bomb        the classic shell fork bomb
@@ -25,7 +25,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-10-23.8';
+const COMMAND_RULES_VERSION = '2026-10-23.10';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -73,6 +73,28 @@ const PS_CALL_RE = /(?:^|[\s;&|(])(?:iex|invoke-expression)\b[\s($]*(?:\(\s*)*(?
 const PS_NEXT_PIPE_RE = /\r?\n[ \t]*\|/g;
 const PS_TICK_RE = /(?:(?<=[\s|;&(A-Za-z0-9_.-])|^)`(?=[A-Za-z-])/g;
 const PS_DISK_RE = /(?:^|[\s;&|(])(?:format-volume|clear-disk)\b/i;
+
+// Code an interpreter runs from its command line (python -c, node -e, perl -e, ruby -e) and a download piped into one.
+// Every quantifier is bounded, so the scan over the code is linear.
+const INTERPRETER_RE = /^(?:py|python(?:[23](?:\.\d+)?)?|pypy3?|node(?:js)?|perl|ruby)$/;
+const INTERPRETERS = {
+  py: { skip: new Set(['-W', '-X']), code: /^-[A-Za-z]*c$/, noStdin: /^(?:-[A-Za-z]*[cmVh][A-Za-z]*|--(?:version|help))$/ },
+  node: { skip: new Set(['-r', '--require', '--import', '--loader', '--experimental-loader']), code: /^(?:-e|-p|-pe|--eval|--print)$/, noStdin: /^(?:-[A-Za-z]*[epcvh][A-Za-z]*|--(?:eval|print|check|version|help|test)(?:=.*)?)$/ },
+  perl: { skip: new Set(['-I']), code: /^-[A-Za-z]*[eE]$/, noStdin: /^-[A-Za-z]*[eEcvVh][A-Za-z]*$/ },
+  ruby: { skip: new Set(['-r', '-I']), code: /^-[A-Za-z]*e$/, noStdin: /^(?:-[A-Za-z]*[ecvh][A-Za-z]*|--(?:version|help))$/ },
+};
+// A recursive-delete call: shutil.rmtree, fs.rmSync / rmdirSync / rm / rmdir, rimraf, File::Path remove_tree / rmtree,
+// FileUtils.rm_rf / rm_r / remove_entry, and Perl's unlink glob(...).
+const OI_CALL_RE = /\b(rmtree|remove_tree|remove_entry_secure|remove_entry|remove_dir|rm_rf|rm_r|rimraf|removeSync|rmSync|rmdirSync|rmdir|rm)\b(?:\s{0,20}\.\s{0,20}sync\b)?\s{0,20}(\()?/g;
+const OI_GLOB_RE = /\bunlink\s{0,20}\(?\s{0,20}glob\b\s{0,20}\(?/g;
+const OI_NEEDS_PAREN = new Set(['rimraf', 'removeSync', 'rmSync', 'rmdirSync', 'rmdir', 'rm']);
+const OI_NEEDS_RECURSIVE = new Set(['rmSync', 'rmdirSync', 'rmdir', 'rm']);
+const OI_RECURSIVE_RE = /\brecursive['"]?\s{0,20}:\s{0,20}(?:true|1|!0)/;
+const OI_PATH_WRAP_RE = /^(?:(?:pathlib\s{0,20}\.\s{0,20})?(?:Pure)?(?:Posix)?(?:Windows)?Path\s{0,20}\(\s{0,20}|(?:path|dirname|dir)\s{0,20}=\s{0,20})/;
+// The home folder named by an expression and not by a literal: expanduser('~'), os.homedir(), Path.home(), Dir.home, $ENV{HOME} ...
+const OI_HOME_RE = /^(?:(?:os\s{0,20}\.\s{0,20}path\s{0,20}\.\s{0,20})?expanduser\s{0,20}\(\s{0,20}['"]~\/?['"]\s{0,20}\)|(?:require\s{0,20}\(\s{0,20}['"](?:node:)?os['"]\s{0,20}\)\s{0,20}\.\s{0,20}|os\s{0,20}\.\s{0,20})?homedir\s{0,20}\(\s{0,20}\)|(?:pathlib\s{0,20}\.\s{0,20})?Path\s{0,20}\.\s{0,20}home\s{0,20}\(\s{0,20}\)|Dir\s{0,20}\.\s{0,20}home\b(?:\s{0,20}\(\s{0,20}\))?|File\s{0,20}\.\s{0,20}expand_path\s{0,20}\(\s{0,20}['"]~\/?['"]\s{0,20}\)|ENV\s{0,20}\[\s{0,20}['"]HOME['"]\s{0,20}\]|\$ENV\s{0,20}\{\s{0,20}['"]?HOME['"]?\s{0,20}\}|os\s{0,20}\.\s{0,20}environ\s{0,20}\[\s{0,20}['"]HOME['"]\s{0,20}\]|os\s{0,20}\.\s{0,20}(?:getenv|environ\s{0,20}\.\s{0,20}get)\s{0,20}\(\s{0,20}['"]HOME['"]\s{0,20}\)|process\s{0,20}\.\s{0,20}env\s{0,20}(?:\.\s{0,20}HOME\b|\[\s{0,20}['"]HOME['"]\s{0,20}\]))/;
+const OI_LITERAL_RE = /^[rRbBuUfF]{0,2}(['"`])((?:[^'"`\\\r\n]|\\.){0,200})\1/;
+const OI_ENV_HOME_RE = /\$ENV\{['"]?HOME['"]?\}|\$\{?HOME\}?|%USERPROFILE%/gi;
 
 function programName(text) {
   return String(text).replace(/^\\+/, '').split(/[\\/]/).pop().toLowerCase().replace(/\.exe$/, '');
@@ -223,6 +245,74 @@ function redirectTargets(words) {
   return out;
 }
 
+/* The interpreter family of a program name ('py', 'node', 'perl', 'ruby'), or ''. */
+function interpreterKind(head) {
+  if (!INTERPRETER_RE.test(head)) return '';
+  if (head === 'py' || head.startsWith('py')) return 'py';
+  return head.startsWith('node') ? 'node' : head;
+}
+
+/* The code strings given on the command line of an interpreter (python -c CODE, node -e CODE, perl -e CODE, ruby -e CODE). */
+function interpreterCode(kind, rest) {
+  const def = INTERPRETERS[kind];
+  const out = [];
+  for (let i = 0; i < rest.length; i++) {
+    const w = rest[i];
+    if (w === '--' || !w.startsWith('-')) break;
+    if (def.code.test(w)) {
+      if (i + 1 < rest.length) out.push(rest[i + 1]);
+      i++;
+      if (kind === 'py' || kind === 'node') break;
+      continue;
+    }
+    const m = kind === 'node' ? /^--(?:eval|print)=([\s\S]*)$/.exec(w) : null;
+    if (m) { out.push(m[1]); break; }
+    if (def.skip.has(w)) i++;
+  }
+  return out;
+}
+
+/* True when the first argument of a delete call names the home folder, the root or a system folder. */
+function protectedArgument(tail) {
+  let t = tail.replace(/^\s{0,20}/, '');
+  const wrap = OI_PATH_WRAP_RE.exec(t);
+  if (wrap) t = t.slice(wrap[0].length);
+  const home = OI_HOME_RE.exec(t);
+  if (home) return /^\s{0,20}(?:[,)}\]]|$)/.test(t.slice(home[0].length));
+  const lit = OI_LITERAL_RE.exec(t);
+  return Boolean(lit) && Boolean(dangerousPath(lit[2].replace(OI_ENV_HOME_RE, '~')));
+}
+
+/* True when interpreter code calls a recursive delete on the home folder, the root or a system folder. */
+function codeDeletesProtected(code) {
+  for (const m of code.matchAll(OI_CALL_RE)) {
+    const name = m[1];
+    if (OI_NEEDS_PAREN.has(name) && !m[2]) continue;
+    const from = m.index + m[0].length;
+    const tail = code.slice(from, from + 300);
+    if (OI_NEEDS_RECURSIVE.has(name) && !OI_RECURSIVE_RE.test(tail)) continue;
+    if (protectedArgument(tail)) return true;
+  }
+  for (const m of code.matchAll(OI_GLOB_RE)) {
+    const from = m.index + m[0].length;
+    if (protectedArgument(code.slice(from, from + 300))) return true;
+  }
+  return false;
+}
+
+/* True when an interpreter in a pipeline reads its program from the pipe: no script file, -c, -e or -m. */
+function readsScriptFromStdin(kind, rest) {
+  const def = INTERPRETERS[kind];
+  for (let i = 0; i < rest.length; i++) {
+    const w = rest[i];
+    if (w === '-') return true;
+    if (def.noStdin.test(w)) return false;
+    if (w.startsWith('-')) { if (def.skip.has(w)) i++; continue; }
+    return false; // a script file: stdin is only data for it
+  }
+  return true;
+}
+
 function checkSimple(words, depth) {
   const args = unwrap(words);
   if (!args.length) return null;
@@ -247,6 +337,10 @@ function checkSimple(words, depth) {
     const hit = analyze(code, depth + 1);
     if (hit) return hit;
   }
+
+  // Code an interpreter runs from its command line: python -c, node -e, perl -e, ruby -e.
+  const kind = interpreterKind(head);
+  if (kind && on('rm_root_home') && interpreterCode(kind, rest).some((c) => codeDeletesProtected(c))) return 'rm_root_home';
 
   if (RM_HEADS.has(head)) {
     if ((rest.some((w) => recursiveFlag(w, head)) && operands(rest, head).some((w) => dangerousPath(w))) && on('rm_root_home')) return 'rm_root_home';
@@ -332,6 +426,12 @@ function checkPipeline(pipe) {
     // a download whose output reaches a shell
     for (let j = firstDl + 1; j < pipe.length; j++) {
       const h = heads[j];
+      // an interpreter that reads its program from the pipe (python3, python3 -, node, perl, ruby)
+      const interp = h.overflow || h.names.some((n) => SHELLS.has(n)) ? '' : h.names.map(interpreterKind).find(Boolean);
+      if (interp) {
+        if (readsScriptFromStdin(interp, h.args.slice(1)) && on('pipe_to_shell')) return 'pipe_to_shell';
+        continue;
+      }
       if (!h.overflow && !h.names.some((n) => SHELLS.has(n))) continue;
       const rest = h.args.slice(1);
       // -c runs the code of its argument (checked on its own); -n only reads the script to check its syntax.
