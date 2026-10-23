@@ -207,6 +207,65 @@ class TestSharedAndLoggingObjects(unittest.TestCase):
         self.assertFalse(check_tool_result(Captured()).allowed)
         self.assertTrue(check_tool_result(logging.getLogger().handlers).allowed)
 
+    def test_logger_handlers_filters_and_subclass_attributes_are_read(self):
+        logger = logging.getLogger("zn.example.capture")
+        handler = logging.handlers.MemoryHandler(capacity=10)
+        handler.buffer.append(logging.LogRecord("zn.example", logging.INFO, __file__, 1, BAD, None, None))
+        logger.addHandler(handler)
+        try:
+            res = check_tool_result(logger)
+            self.assertFalse(res.allowed)
+            self.assertNotEqual(res.rule, "size:items")
+        finally:
+            logger.removeHandler(handler)
+        self.assertTrue(check_tool_result(logger).allowed)
+
+        class NoteLogger(logging.Logger):
+            def __init__(self, name):
+                super().__init__(name)
+                self.note = BAD
+
+        self.assertFalse(check_tool_result(NoteLogger("zn.example.note")).allowed)
+
+    def test_partial_reads_stay_linear(self):
+        # Many rows of application objects in @guard arguments go over the value
+        # budget, so each later row is read in part. Forgetting what was marked done
+        # must cost what is removed: the table of done objects is never copied or
+        # walked (that made 80,000 rows take seconds, growing with the square).
+        import importlib
+
+        guard_mod = importlib.import_module("zn_gate.guard")
+        walked = []
+
+        class CountingDict(dict):
+            def __iter__(self):
+                walked.append(len(self))
+                return super().__iter__()
+
+        original_init = guard_mod._Walk.__init__
+
+        def init(walk):
+            original_init(walk)
+            walk.done = CountingDict()
+
+        @guard(on_block="return", fallback="blocked")
+        def tool(rows, q):
+            return "ran"
+
+        class Rec:
+            def __init__(self, i):
+                self.i = i
+                self.name = f"row {i}"
+                self.tags = ["a", "b"]
+
+        rows = [{"row": Rec(i)} for i in range(40_000)]
+        guard_mod._Walk.__init__ = init
+        try:
+            self.assertEqual(tool(rows, "weather"), "ran")
+        finally:
+            guard_mod._Walk.__init__ = original_init
+        self.assertEqual(walked, [])
+
     def test_object_cut_at_a_cycle_is_read_again(self):
         # A holds x=X and a deep chain to the injection; X points back to A. Reached
         # through a chain, A's deep part is left out, and X stopped at the cycle to A;

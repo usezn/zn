@@ -156,10 +156,13 @@ def _is_framework_context(value: Any) -> bool:
     return False
 
 
-# Loggers reach every logger of the process (logger.manager.loggerDict and the
-# parent chain) and carry no tool output, so they are not read. Handlers,
-# adapters and formatters are read: a capturing handler holds log records.
-_LOGGING_TYPES = (logging.Logger, logging.Manager, logging.PlaceHolder)
+# The logging manager and placeholders reach every logger of the process
+# (manager.loggerDict), so they are not read. A logger is read without its
+# manager, parent and level cache: its handlers and filters (a capturing handler
+# holds log records) and any attribute a subclass adds are checked.
+_LOGGING_TYPES = (logging.Manager, logging.PlaceHolder)
+# Attributes of a logger that lead to the other loggers of the process.
+_LOGGER_LINKS = frozenset({"manager", "parent", "_cache"})
 
 
 class _Walk:
@@ -210,8 +213,8 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
     MAX_OBJECT_VALUES values, so callers can fail closed. A container that
     contains itself is walked once, and a container reached through several
     references is walked and counted once, unless part of it was left out
-    the first time. Loggers are skipped: they reach every logger of the
-    process and hold no tool output (handlers and adapters are read).
+    the first time. A logger is read without its links to the other loggers
+    of the process (manager, parent), and the logging manager is skipped.
 
     Inside an object that is not a data model (a plain class instance such as
     a client, a session or an agent's dependencies), the walk is best effort:
@@ -278,6 +281,9 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
         is_model = _is_data_object(data)
         try:
             children = _object_fields(data)
+            if children is not None and isinstance(data, logging.Logger):
+                children = [c for i in range(0, len(children) - 1, 2)
+                            if children[i] not in _LOGGER_LINKS for c in children[i:i + 2]]
             if children is not None:
                 if not lenient and not is_model and lenient_objects:
                     # Entering an application object: unreadable parts and the value
@@ -324,8 +330,8 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
         else:
             # Something below was left out: what was marked done meanwhile may have
             # stopped at a cycle back into this partly read part, so read it again.
-            for key in list(seen.done)[done_before:]:
-                del seen.done[key]
+            while len(seen.done) > done_before:
+                seen.done.popitem()
         return strings
     finally:
         path.discard(id(data))
