@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-24.7';
+const POLICY_RULES_VERSION = '2026-10-24.8';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -116,16 +116,41 @@ const keyOf = (s) => {
 // explicit `::$DATA` style suffix is dropped.
 const ADS_TYPE_RE = /(?::[^\\/:*?"<>|]*)?:\$(?:DATA|INDEX_ALLOCATION|BITMAP)$/i;
 function stripStreams(text) {
-  if (typeof text !== 'string' || text.indexOf(':') < 0) return text;
+  if (typeof text !== 'string') return text;
   const win = process.platform === 'win32';
+  if (!win && text.indexOf(':') < 0) return text;
   return text.split(/([\\/]+)/).map((seg, i) => {
     if (win) {
       if (/^[A-Za-z]:$/.test(seg)) return seg;
-      if (i === 0 && /^[A-Za-z]:/.test(seg)) return seg.slice(0, 2) + seg.slice(2).replace(/:.*$/, '');
-      return seg.replace(/:.*$/, '');
+      if (i === 0 && /^[A-Za-z]:/.test(seg)) return seg.slice(0, 2) + dropTrailingDotsSpaces(seg.slice(2).replace(/:.*$/, ''));
+      return dropTrailingDotsSpaces(seg.replace(/:.*$/, ''));
     }
     return seg.replace(ADS_TYPE_RE, '');
   }).join('');
+}
+// Windows drops trailing dots and spaces from a name, so `settings.json.` and `settings.json ` open `settings.json`.
+// A name made only of dots (`.`, `..`) is left alone. Scanned from the end, so a long run cannot cost more than its length.
+function dropTrailingDotsSpaces(seg) {
+  let end = seg.length;
+  while (end > 0 && (seg.charCodeAt(end - 1) === 46 || seg.charCodeAt(end - 1) === 32)) end--;
+  if (end === seg.length) return seg;
+  if (/^\.*$/.test(seg)) return seg;
+  return seg.slice(0, end);
+}
+// An 8.3 short name: up to six characters, `~`, digits, and an optional extension of up to three (`SETTIN~1.JSO`,
+// `CLAUDE~1`). The long name it stands for cannot be read from the text, so on win32 it is checked as a pattern
+// (`{,.}settin*.jso*`) against the protected names, like a typed glob.
+const SHORT_NAME_RE = /^([^~\s.:*?"<>|\\/]{1,6})~[0-9]{1,6}(?:\.([^.\s:*?"<>|\\/]{1,3}))?$/;
+function shortNameGlob(text) {
+  if (process.platform !== 'win32' || typeof text !== 'string' || text.indexOf('~') < 0) return null;
+  let found = false;
+  const out = text.split(/([\\/]+)/).map((seg) => {
+    const m = SHORT_NAME_RE.exec(seg);
+    if (!m) return seg;
+    found = true;
+    return '{,.}' + m[1] + '*' + (m[2] ? '.' + m[2] + '*' : '');
+  }).join('');
+  return found ? out : null;
 }
 /** The pattern, ignoring case where the platform does. */
 const ci = (re) => (caseInsensitive() && !re.flags.includes('i') ? new RegExp(re.source, re.flags + 'i') : re);
@@ -300,6 +325,9 @@ function classifyPath(p, opts = {}) {
     const c = classifyResolved(candidate, ctx);
     if (c) return c;
   }
+  // A short name hides the long one: it counts as protected when it could stand for a protected file or folder.
+  const short = shortNameGlob(expanded.text);
+  if (short) return globClass(short, opts);
   return null;
 }
 
