@@ -14,13 +14,10 @@ Written against `pydantic-ai-slim` 2.57.0 (the core package, without the model p
 
 ## Install
 
-> This example uses features from the release after 1.13.0 of zn-gate. Until that release is published, run `pip install -r requirements.txt` below first, then install zn-gate from this repository over it: `pip install -e ../../packages/zn-gate-py` (from this folder).
-
 Use Python 3.11 to 3.13 in a virtual environment, then:
 
 ```bash
 pip install -r requirements.txt
-pip install -e ../../packages/zn-gate-py   # only until the release after 1.13.0 is published
 ```
 
 The versions in `requirements.txt` are exact, so the example behaves the same on your machine as it did when it was written. The check itself needs only `zn-gate`; the framework is needed only for `build_agent()`.
