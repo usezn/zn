@@ -34,7 +34,7 @@ function projectHooks(spec, cwd, userFile) {
   try { if (fs.lstatSync(file).isFile()) text = fs.readFileSync(file, 'utf8'); } catch (_) { return null; }
   if (spec.id === 'opencode') return /\/zn-gate\/lib\/hooks\/runner\.js"|"hook", "opencode"/.test(text) ? file : null;
   let tree = null;
-  try { tree = JSON.parse(text); } catch (_) { return null; }
+  try { tree = JSON.parse(text.replace(/^\uFEFF/, '')); } catch (_) { return null; }
   return chk.hookEntries(tree, spec.id).some((e) => chk.parseCommand(e.command, spec.id)) ? file : null;
 }
 
