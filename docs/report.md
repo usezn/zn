@@ -40,6 +40,30 @@ If zn-gate has not checked anything yet, it says so and shows no numbers. Counts
 | `--json` | Print the same numbers as JSON, for scripts. |
 | `--no-team-line` | Leave out the closing line about zn Team. The line also does not appear once this computer has joined a Team. |
 
+## Exit codes and help
+
+| Code | Meaning |
+|---|---|
+| 0 | The report was printed, including when there is nothing to report yet or counting is off. |
+| 2 | An option was not understood (an unknown option, `--since` without a value or outside `1d` to `90d`). The command prints `Usage: zn-gate report [--since 1d-90d] [--json] [--no-team-line]` and nothing else. |
+
+`zn-gate report --help` has no help of its own: it shows the general help of
+zn-gate. The usage line above is the full list of options.
+
+## The JSON
+
+`--json` prints one object with these keys:
+
+- `since`, `until`, `days`: the first day, the last day and the length of the period.
+- `blocked`, `redacted`: the number of blocked actions and of hidden secret values.
+- `by_agent`: blocked actions per agent.
+- `secret_types`: hidden secret values per kind of secret.
+- `new_mcp_servers`: the new protected MCP servers (names only).
+- `pending_tool_changes`: how many tools wait for your approval.
+- `busiest_day`: the day with the most blocked actions and its count, or `null`.
+- `sources`: where the numbers come from (`stats.json` and `mcp-pins`).
+- `sent`: always `false`; the report is never sent anywhere.
+
 ## Your data stays here
 
 The report only reads two things that zn-gate already keeps on your computer: the counts in `~/.zn/stats.json` and the list of protected MCP servers. It writes no files, opens no network connection and needs no account. It never prints prompts, file contents, folder names or the names of your secrets; a server is shown only by its name (the program and the package or script file), never by its arguments.
