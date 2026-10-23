@@ -50,7 +50,7 @@ function parsedFile(file) {
   const r = readBounded(file, CAP, false);
   if (typeof r.text !== 'string') return null;
   try {
-    return file.endsWith('.toml') ? require('./audit/parse').parseToml(r.text).data : JSON.parse(r.text);
+    return file.endsWith('.toml') ? require('./audit/parse').parseToml(r.text).data : JSON.parse(r.text.replace(/^\uFEFF/, ''));
   } catch (_) {
     return null;
   }

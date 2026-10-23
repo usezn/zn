@@ -482,8 +482,24 @@ function weakExfiltration(t) {
   return null;
 }
 
+// Setup steps carry no secret out: "git clone <url>", "cp .env.example .env" and
+// "create one at [Console](url)" are removed before the checks. The link is
+// removed only when nothing earlier on the line sends, copies or pastes, so
+// "Paste your API key here, get credits at [Free](url)" is still checked.
+const SEND_VERB = /\b(?:send|upload|post|exfiltrate|forward|transmit|leak|e-?mail|paste|share|copy)\b/i;
+// Earlier on the line only clear send verbs count ("your account email" is a noun).
+const EARLIER_SEND = /\b(?:send|upload|exfiltrate|forward|transmit|leak|paste|share|copy)\b/i;
+function stripSetupSteps(t) {
+  let s = t;
+  s = s.replace(/\b(?:git\s+)?clone\s+(?:--[\w-]+\s+)*(?:https?:\/\/|git@|ssh:\/\/)[^\s,;)]+/gi, ' ');
+  s = s.replace(/\b(?:copy|cp)\s+\S*\.env(?:\.[\w-]+)*\.(?:example|sample|template|dist)\b\S*\s+(?:to\s+)?\S*\.env\b/gi, ' ');
+  s = s.replace(/\b((?:create|generate|get|obtain|find|grab)\b[^\n[]{0,60}?)\[[^\]\n]*\]\(\s*https?:\/\/[^\s)]*\s*\)/gi,
+    (all, pre, offset, str) => (SEND_VERB.test(pre) || EARLIER_SEND.test(str.slice(0, offset)) ? all : pre));
+  return s;
+}
+
 function exfiltration(text) {
-  const t = String(text || '').slice(0, MAX_LINE).replace(ENV_TEMPLATE, 'env-template');
+  const t = stripSetupSteps(String(text || '').slice(0, MAX_LINE)).replace(ENV_TEMPLATE, 'env-template');
   for (const re of EXFIL) {
     const m = re.exec(t);
     if (m && !negated(t, m.index)) return m[0];

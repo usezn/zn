@@ -141,7 +141,7 @@ test('antigravity: user install writes the launcher; without Node.js it answers 
   assert.ok(fs.existsSync(ctx.file));
   const data = JSON.parse(fs.readFileSync(ctx.adapter.hooksFile({ env: ctx.env, home: ctx.home }), 'utf8'));
   const command = data['zn-gate'].PreToolUse[0].hooks[0].command;
-  assert.equal(command, "'" + ctx.file + "' PreToolUse");
+  assert.equal(command, ctx.file + " PreToolUse");
   assert.ok(cfg.isOurs(command, 'antigravity'));
   const bin = tempDir(t, 'zn-b96-bin-');
   const r = run(ctx.file, 'PreToolUse', bin);

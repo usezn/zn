@@ -348,7 +348,7 @@ Exit codes: the exit code of your command; `64` wrong usage, `77` refused (not a
 zn-gate unlock [--ttl 8h] [--idle 30m] [--backend name] [--passphrase-stdin] [--foreground]
 ```
 
-Unlocks the vault for this session. The first run creates it. `--ttl` and `--idle` take a number with `s`, `m` or `h` (between 1 minute and 24 hours). `--passphrase-stdin` reads the passphrase from a pipe when there is no system keychain. `--foreground` keeps the vault in this terminal and asks for confirmations here. It refuses to run under an AI agent. The time the session ends is shown in your local time, with the hours left, for example `until 23:09 (in 8 h)`.
+Unlocks the vault for this session. The first run creates it. `--ttl` and `--idle` take a number with `s`, `m` or `h` (between 1 minute and 24 hours). `--passphrase-stdin` reads the passphrase from a pipe when there is no system keychain. `--foreground` keeps the vault in this terminal and asks for confirmations here. It refuses to run under an AI agent. It says when the vault locks again: after the `--idle` time with no use, or at the end of the session at the latest, in your local time with the hours left, for example `Vault unlocked: locks after 30 min idle, or at 23:09 (in 8 h) at the latest.`
 
 If the system keychain refuses, zn says which one (macOS Keychain, Windows Credential Manager or the Linux keyring) and what to do: allow zn in the keychain window, check Credential Manager, unlock your keyring, or create the vault with a passphrase instead.
 
@@ -372,7 +372,7 @@ With no subcommand it is the same as `vault status`. Usage errors exit `2`: an u
 
 #### `vault status`
 
-Shows whether the vault exists and is unlocked, and until when (in your local time). Exit codes: `0` done, `2` wrong usage.
+Shows whether the vault exists and is unlocked and, when it is, when it locks: after the idle time with no use, or at the end of the session at the latest (in your local time). Exit codes: `0` done, `2` wrong usage.
 
 #### `vault log`
 

@@ -324,6 +324,8 @@ zn-gate blocks what is almost certainly an attack or a leak: reading credential 
 
 Some other patterns also appear in ordinary text, such as `system:` keys in YAML, "bypass the cache" or an article that explains what a jailbreak is. For those, zn-gate lets the text through and adds a short warning (`advisory` in the result) so you or your agent can take a look.
 
+The same goes for text in a tool result (a fetched page, an MCP result, a file) that tells your agent to say who its user is, or to put the user's name, email, account or API key in a header, a URL parameter, a cookie, a form field or the next request. That wording is rarely legitimate there, but docs and policies mention the same words, so by default it is an advisory (`pi:identity_request`; `pi:identity_request_multi` covers Spanish, Portuguese, French, German, Russian and Chinese) and strict mode blocks it. Documentation that tells you to send your own API key in the `Authorization` header does not match.
+
 To block those too, turn on strict mode: set `ZN_STRICT=1`, or add `"strict": true` to `zn.config.json` in your project (or a line `strict` in `.znrules`).
 
 ## Examples
