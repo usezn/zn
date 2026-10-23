@@ -337,3 +337,27 @@ test('on a final release docsVersion is not used', () => {
   };
   assert.deepEqual(runWith(final, files), []);
 });
+
+test('docsVersion.files follow the last final release on a pre-release and the release on a final', () => {
+  const rev = { file: 'README.md', regex: 'rev: v([0-9][^,\\s]*), hooks:' };
+  const withRev = (facts) => ({ ...facts, docsVersion: { ...facts.docsVersion, files: [rev] } });
+  const readme = (v) => `Install: npx -y zn-gate@${v} init\nrepos: [{rev: v${v}, hooks: []}]\n`;
+  // Pre-release: the rev stays on the last final release.
+  assert.deepEqual(runWith(withRev(RC), { ...RC_GOOD, 'README.md': readme('2.0.0') }), []);
+  const errs = runWith(withRev(RC), { ...RC_GOOD, 'README.md': 'Install: npx -y zn-gate@2.0.0 init\nrepos: [{rev: v2.1.0-rc.1, hooks: []}]\n' });
+  assert.equal(errs.length, 1, errs.join('\n'));
+  assert.match(errs[0], /README\.md: version 2\.1\.0-rc\.1, public-facts\.json docsVersion says 2\.0\.0/);
+  // Final release: the rev moves with the release.
+  const final = { ...withRev(RC), version: { ...RC.version, value: '2.1.0' }, examplesVersion: undefined };
+  const files = {
+    ...RC_GOOD,
+    'pkg/package.json': JSON.stringify({ version: '2.1.0' }),
+    'py/pyproject.toml': '[project]\nversion = "2.1.0"\n',
+    'README.md': readme('2.1.0'),
+    'SECURITY.md': '| 2.1.x | yes |\n',
+  };
+  assert.deepEqual(runWith(final, files), []);
+  const stale = runWith(final, { ...files, 'README.md': 'npx -y zn-gate@2.1.0 init\nrepos: [{rev: v2.0.0, hooks: []}]\n' });
+  assert.equal(stale.length, 1, stale.join('\n'));
+  assert.match(stale[0], /README\.md: version 2\.0\.0, public-facts\.json version says 2\.1\.0/);
+});

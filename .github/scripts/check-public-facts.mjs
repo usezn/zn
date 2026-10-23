@@ -146,6 +146,13 @@ export function check(facts, files, read, options = {}) {
     }
   }
 
+  // Versions the docs state outside a pin (the rev of the pre-commit example) follow the docs version too.
+  for (const v of (facts.docsVersion && facts.docsVersion.files) || []) {
+    const got = stated(v);
+    if (got === null) continue;
+    if (got !== docs) errors.push(`${v.file}: version ${got ?? 'not found'}, public-facts.json${docsLabel || ' version'} says ${docs}`);
+  }
+
   // examplesVersion is the zn-gate version the examples pin, checked when version is a final X.Y.Z (on a
   // pre-release nothing is checked):
   // - an older X.Y (minor line) is an error: a final X.Y.0 needs examples on X.Y.0-rc.N or X.Y.0, which are moved
