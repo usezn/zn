@@ -28,30 +28,39 @@ and each result is also given as its p95 divided by that start-up time.
 
 ## Results
 
-GitHub Actions `ubuntu-latest` runner (4 vCPU AMD EPYC 7763), Node.js 22.23, 2026-10-19, with the compile
-cache of the hook enabled. Times in milliseconds; a bare `node -e ""` takes 24 ms (p50). Runner speed varies
-from one run to the next by a few milliseconds; the budget below compares against Node's start-up in the same run.
+The numbers below are the baseline of the budget in CI (see below), kept in
+the repository as [`bench/hook_latency_baseline.json`](../bench/hook_latency_baseline.json):
+the median of 11 runs of the benchmark on GitHub Actions `ubuntu-latest`
+runners (4 vCPU AMD EPYC 9V74, Node.js 22.23.3), dated 2026-10-20, with the compile
+cache of the hook enabled. Each number is the p95 of the hook divided by what
+a bare `node -e ""` takes in the same run (25 ms at p50 in this baseline), so
+a change of runner speed moves both. The last column multiplies that ratio by
+25 ms to give the milliseconds on a machine like the runner.
 
-| Agent | Event | p50 | p95 |
+| Agent | Event | p95 / Node start-up | About (ms) |
 |---|---|---|---|
-| Claude Code | PreToolUse, shell command | 54 | 56.1 |
-| Codex CLI | PreToolUse, shell command | 53.1 | 55.6 |
-| Cursor | beforeShellExecution | 53.7 | 55.4 |
-| Claude Code | PostToolUse, 1 KB | 57.3 | 61.6 |
-| Codex CLI | PostToolUse, 1 KB | 57.2 | 60.7 |
-| Cursor | postToolUse (MCP), 1 KB | 57.1 | 58.8 |
-| Claude Code | PostToolUse, 100 KB | 61.9 | 65.4 |
-| Codex CLI | PostToolUse, 100 KB | 62 | 63.7 |
-| Cursor | postToolUse (MCP), 100 KB | 62.3 | 64.2 |
-| Claude Code | PostToolUse, 100 KB with 2 secrets | 69.5 | 72.3 |
-| Codex CLI | PostToolUse, 100 KB with 2 secrets | 68.8 | 72.3 |
-| Cursor | postToolUse (MCP), 100 KB with 2 secrets | 69.1 | 71.4 |
-| Claude Code | PostToolUse, 1000 KB | 79.7 | 81.4 |
-| Codex CLI | PostToolUse, 1000 KB | 79.2 | 82.6 |
-| Cursor | postToolUse (MCP), 1000 KB | 82.5 | 86.7 |
+| Claude Code | PreToolUse, shell command | 2.3 | 58 |
+| Codex CLI | PreToolUse, shell command | 2.3 | 57 |
+| Cursor | beforeShellExecution | 2.2 | 56 |
+| Claude Code | PostToolUse, 1 KB | 2.5 | 62 |
+| Codex CLI | PostToolUse, 1 KB | 2.8 | 70 |
+| Cursor | postToolUse (MCP), 1 KB | 2.4 | 61 |
+| Claude Code | PostToolUse, 100 KB | 2.6 | 66 |
+| Codex CLI | PostToolUse, 100 KB | 3.0 | 74 |
+| Cursor | postToolUse (MCP), 100 KB | 2.7 | 67 |
+| Claude Code | PostToolUse, 100 KB with 2 secrets | 3.2 | 79 |
+| Codex CLI | PostToolUse, 100 KB with 2 secrets | 3.5 | 88 |
+| Cursor | postToolUse (MCP), 100 KB with 2 secrets | 3.2 | 80 |
+| Claude Code | PostToolUse, 1000 KB | 3.4 | 84 |
+| Codex CLI | PostToolUse, 1000 KB | 3.6 | 91 |
+| Cursor | postToolUse (MCP), 1000 KB | 3.4 | 85 |
+
+To get the real milliseconds on your own computer, run the commands above: the
+benchmark prints p50, p95 and this ratio for every case, and a new baseline
+file is written by the command in the next section.
 
 On another machine the times change with it: dividing by Node's own start-up, as the budget does, removes
-most of that difference, not all of it.
+most of that difference, not all of it. The Windows baseline is in `bench/hook_latency_baseline_windows.json`.
 [`bench/HOOK_LATENCY.md`](../bench/HOOK_LATENCY.md) has earlier measurements with the vault unlocked and a
 breakdown of where the time goes.
 
