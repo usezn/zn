@@ -186,6 +186,8 @@ async function removeVault(p, io) {
     return 'failed';
   }
   out(io, 'Vault deleted.');
+  const note = purge.keyNote(r);
+  if (note) out(io, note);
   return true;
 }
 

@@ -610,6 +610,11 @@ function makeOps(state, ctl) {
       const before = (await state.loadSecrets()).secrets[n];
       if (!before) throw znError(CODES.NOT_FOUND, 'no secret named ' + n + '. Next step: check the name for a typo; if the secret is missing, save it with zn secret set ' + n + ' in your own terminal, or, if you are an agent, ask the user to do it.');
       const target = proposed(before);
+      // A value kept as a backup is not checked for its length; once it becomes a secret it is.
+      if (before.mode === 'backup' && target.mode !== 'backup') {
+        const tooShort = validateSecretValue(before.value);
+        if (tooShort) throw znError(CODES.POLICY_DENIED, 'invalid value: ' + tooShort);
+      }
       const adds = widening(before, target);
       if (adds.length) {
         const interp = (target.allowCommands || []).filter((c) => !(before.allowCommands || []).includes(c) && isInterpreter(c));
@@ -809,6 +814,8 @@ function makeOps(state, ctl) {
         const p = await state.loadProject(String(project == null ? '' : project));
         const value = Object.prototype.hasOwnProperty.call(p.data.tokens, String(token)) ? p.data.tokens[String(token)] : null;
         if (typeof value !== 'string' || value.length === 0) throw znError(CODES.NOT_FOUND, String(token) + ' is not known for this project. Next step: check the placeholder name.');
+        const tooShort = validateSecretValue(value);
+        if (tooShort) throw znError(CODES.POLICY_DENIED, 'invalid value: ' + tooShort);
         const secrets = await state.loadSecrets();
         if (secrets.secrets[n]) throw znError(CODES.POLICY_DENIED, n + ' already exists. Next step: pick another name.');
         // A new secret gets its own generation, as setSecret gives one: an approval never carries over from an older secret of that name.

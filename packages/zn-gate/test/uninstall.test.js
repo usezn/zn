@@ -447,7 +447,7 @@ test('uninstall: before the second question it lists the backups, token maps, se
   assert.match(d.out(), /2 token maps of projects/);
 });
 
-test('uninstall: a run or vault folder that is a link is removed as a link and never followed', { skip: process.platform === 'win32' }, async (t) => {
+test('uninstall: a run or vault folder that is a link is removed as a link and never followed', async (t) => {
   const m = machine(t);
   const znHome = path.join(m.home, '.zn');
   fs.mkdirSync(znHome, { recursive: true });
@@ -455,8 +455,8 @@ test('uninstall: a run or vault folder that is a link is removed as a link and n
   fs.mkdirSync(path.join(victim, 'sub'), { recursive: true });
   const files = ['important.txt', 'secrets.age', 'session.key', path.join('sub', 'deep.txt')].map((r) => path.join(victim, r));
   for (const f of files) fs.writeFileSync(f, 'keep');
-  fs.symlinkSync(victim, path.join(znHome, 'run'));
-  fs.symlinkSync(victim, path.join(znHome, 'vault'));
+  fs.symlinkSync(victim, path.join(znHome, 'run'), 'junction');
+  fs.symlinkSync(victim, path.join(znHome, 'vault'), 'junction');
   const c = io(m, { confirm: async () => true });
   assert.equal(await dispatch('uninstall', [], c.o), 0, c.err());
   for (const f of files) assert.equal(fs.readFileSync(f, 'utf8'), 'keep', f + ' is untouched');

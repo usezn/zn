@@ -469,3 +469,15 @@ test('sameSecretValue is recorded and rate limited', async () => {
   assert.ok(refused >= 1, 'guesses are limited');
   assert.ok(auditRecords().some((r) => r.reason === 'policy:compare_rate'));
 });
+
+test('adopting a short detected value, or turning a short backup into a secret, is refused like a new short value', async () => {
+  const short = await vault.mapToken(PROJECT, 'EMAIL', 'a@b.co');
+  await assert.rejects(vault.adoptToken(PROJECT, short, 'ADOPTED_SHORT', { mode: 'env' }), (e) => denied(e) && /at least 8 characters/.test(e.message));
+  assert.ok(!(await vault.listSecrets()).some((s) => s.name === 'ADOPTED_SHORT'));
+  // A backup keeps whatever text it holds; leaving the backup mode makes it a secret, and the length rule applies.
+  await vault.setSecret('SHORT_BACKUP', 'abc123', { mode: 'backup' });
+  await assert.rejects(vault.updateSecretMeta('SHORT_BACKUP', { mode: 'env' }), (e) => denied(e) && /at least 8 characters/.test(e.message));
+  await vault.setSecret('LONG_BACKUP', 'abcdefgh-long', { mode: 'backup' });
+  assert.strictEqual(await vault.updateSecretMeta('LONG_BACKUP', { mode: 'env' }), true);
+  for (const name of ['SHORT_BACKUP', 'LONG_BACKUP']) await vault.removeSecret(name);
+});

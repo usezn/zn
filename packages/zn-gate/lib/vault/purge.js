@@ -58,6 +58,14 @@ function walk(dir, acc, dirs) {
 
 const LINK_KIND = 'link to another folder (only the link is deleted, never what it points to)';
 
+/** The native backend that holds a zn entry on this computer when keychain.json cannot say; else null. */
+function probeNative() {
+  let b = null;
+  try { b = keychain.detectBackend(); } catch (err) { return null; }
+  if (!b || b === 'passphrase' || !keychain._native[b]) return null;
+  try { return keychain._native[b].load() ? b : null; } catch (err) { return null; }
+}
+
 function lstatOf(f) {
   try { return fs.lstatSync(f); } catch (err) { return null; }
 }
@@ -70,11 +78,24 @@ function lstatOf(f) {
 function targets(opts) {
   const p = store.paths(opts);
   const vaultSt = lstatOf(p.vaultDir);
-  const vaultLink = !!(vaultSt && vaultSt.isSymbolicLink());
+  const vaultLink = !!(vaultSt && !vaultSt.isDirectory());
   const files = reset.vaultFiles(opts)
     .filter((f) => !vaultLink || path.dirname(f.src) !== p.vaultDir)
     .map((f) => ({ path: f.src, kind: kindOf(f.rel) }));
-  if (vaultLink) files.push({ path: p.vaultDir, kind: LINK_KIND });
+  if (vaultLink) files.push({ path: p.vaultDir, kind: vaultSt.isSymbolicLink() ? LINK_KIND : 'file in place of the vault folder' });
+  // A link in place of one of the vault's own files (or of the audit log) is deleted as a link too.
+  if (vaultSt && vaultSt.isDirectory()) {
+    let names = [];
+    try { names = fs.readdirSync(p.vaultDir); } catch (err) { /* unreadable: the second look reports it */ }
+    for (const n of names) {
+      if (!(Object.prototype.hasOwnProperty.call(KIND, n) || /^[0-9a-f]{32}\.age$/.test(n))) continue;
+      const f = path.join(p.vaultDir, n);
+      const st = lstatOf(f);
+      if (st && st.isSymbolicLink()) files.push({ path: f, kind: LINK_KIND });
+    }
+  }
+  const auditSt = lstatOf(p.auditFile);
+  if (auditSt && auditSt.isSymbolicLink()) files.push({ path: p.auditFile, kind: LINK_KIND });
   const dirs = [];
   let names = [];
   try { names = fs.readdirSync(p.home); } catch (err) { /* no zn folder */ }
@@ -103,8 +124,12 @@ function targets(opts) {
   const fails = path.join(p.home, 'unlock-failures');
   try { if (fs.lstatSync(fails).isFile()) files.push({ path: fails, kind: 'failed-unlock counter' }); } catch (err) { /* none */ }
   let backend = null;
-  try { const m = keychain.readMeta(opts); backend = m && m.backend; } catch (err) { /* damaged */ }
-  return { files, dirs: dirs.sort((a, b) => b.length - a.length), backend };
+  let probe = null;
+  // keychain.json is read only from a real vault folder, never through a link. When it is damaged, ask the system backends.
+  if (vaultSt && vaultSt.isDirectory()) {
+    try { const m = keychain.readMeta(opts); backend = m && m.backend; } catch (err) { probe = probeNative(); }
+  }
+  return { files, dirs: dirs.sort((a, b) => b.length - a.length), backend, probe };
 }
 
 /** Is the folder holding this file inside the zn folder, once links are resolved? */
@@ -118,7 +143,11 @@ function insideHome(f, home) {
 
 /** Delete one file or link (a link is removed itself, never what it points to); returns true when it is gone. */
 function unlinkGone(f, home) {
-  if (home && !insideHome(f, home)) return false;
+  if (home) {
+    let dir = null;
+    try { dir = fs.realpathSync(path.dirname(f)); } catch (err) { return !!err && err.code === 'ENOENT'; }
+    if (!insideHome(f, home) || !dir) return false;
+  }
   try { fs.unlinkSync(f); } catch (err) {
     if (!err || err.code === 'ENOENT') return true;
     // Windows: a link to a folder is removed like a folder.
@@ -154,7 +183,7 @@ async function removeAll(opts) {
   // Look again: what is still on disk counts, whatever each call said.
   for (const f of targets(opts).files) if (!left.includes(f.path)) left.push(f.path);
   for (const d of t.dirs) if (fs.existsSync(d) && !left.includes(d)) left.push(d);
-  return { removed: removed.filter((f) => !left.includes(f)), left, key, backend: t.backend };
+  return { removed: removed.filter((f) => !left.includes(f)), left, key, backend: t.backend, probe: t.probe };
 }
 
 /** The sentence for a key that is not confirmed gone, or null. */
@@ -165,6 +194,12 @@ function keyProblem(r) {
       '. It is harmless without the files; remove the "zn" entry by hand.';
   }
   return null;
+}
+
+/** A note (not a failure) when keychain.json is damaged and a system keychain still holds a zn entry, or null. */
+function keyNote(r) {
+  if (!r || !r.probe) return null;
+  return 'zn could not read the vault settings (damaged), and your ' + r.probe + ' keychain still holds a "zn" entry. zn cannot tell whether it belongs to this vault, so it was not touched. It is harmless without the vault files; remove the "zn" entry by hand if you use no other vault.';
 }
 
 /**
@@ -183,7 +218,12 @@ async function purgeVault(opts, io) {
     tty.requireHuman('zn vault purge', i);
   }
   const t = targets(o);
-  if (!t.files.length) { out('There is no vault here to purge. Nothing was changed.'); return 0; }
+  if (!t.files.length) {
+    out('There is no vault here to purge. Nothing was changed.');
+    const note = keyNote(t);
+    if (note) out(note);
+    return 0;
+  }
   const policyFiles = policy.paths(o);
   if ([policyFiles.teamFile, policyFiles.policyFile].some((x) => fs.existsSync(x))) { process.stderr.write('[zn] ' + reset.TEAM_REFUSAL + '\n'); return 1; }
   if (await daemon.isRunning(o)) { process.stderr.write('[zn] The vault is unlocked. Run `' + zn('lock') + '` first, then `' + zn('vault purge') + '`.\n'); return 1; }
@@ -210,6 +250,8 @@ async function purgeVault(opts, io) {
   }
   try { reset.clearUnlockFailures(o); } catch (err) { /* none */ }
   out('Purged: ' + r.removed.length + ' files deleted, and a new check found none left. Run `' + zn('unlock') + '` to create a new vault.');
+  const note = keyNote(r);
+  if (note) out(note);
   return 0;
 }
 
@@ -237,4 +279,4 @@ function describe(t, opts) {
   return lines;
 }
 
-module.exports = { purgeVault, targets, removeAll, keyProblem, describe, PHRASE };
+module.exports = { purgeVault, targets, removeAll, keyProblem, keyNote, describe, PHRASE, _unlinkGone: unlinkGone };

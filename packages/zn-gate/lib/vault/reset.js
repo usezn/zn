@@ -46,7 +46,7 @@ function vaultFiles(opts) {
   const found = [];
   const add = (src, rel) => { try { if (fs.lstatSync(src).isFile()) found.push({ src, rel }); } catch (err) { /* absent */ } };
   let names = [];
-  try { names = fs.readdirSync(p.vaultDir); } catch (err) { /* no vault folder */ }
+  try { if (fs.lstatSync(p.vaultDir).isDirectory()) names = fs.readdirSync(p.vaultDir); } catch (err) { /* no vault folder, or a link: never followed */ }
   for (const n of names) if (VAULT_FILES.includes(n) || PROJECT_FILE_RE.test(n)) add(path.join(p.vaultDir, n), path.join('vault', n));
   add(p.auditFile, 'audit.jsonl');
   return found;

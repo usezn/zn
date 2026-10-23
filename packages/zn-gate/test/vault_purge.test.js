@@ -194,8 +194,6 @@ test('the vault CLI knows purge and rejects stray words', () => {
 
 /* ------------------------- links are never followed ------------------------- */
 
-const LINKS = process.platform !== 'win32';
-
 /** A folder outside ~/.zn with files, a subfolder and files named like zn's own, to be left alone. */
 function victimFolder(s) {
   const target = path.join(path.dirname(s.znHome), 'victim');
@@ -207,13 +205,13 @@ function victimFolder(s) {
 }
 const gone = (f) => { try { fs.lstatSync(f); return false; } catch (err) { return err.code === 'ENOENT'; } };
 
-test('a run folder that is a link is deleted as a link; the folder it points to is left alone', { skip: !LINKS }, async (t) => {
+test('a run folder that is a link is deleted as a link; the folder it points to is left alone', async (t) => {
   const s = setup(t);
   s.fill();
   fs.rmSync(path.join(s.znHome, 'run'), { recursive: true });
   const target = victimFolder(s);
   const link = path.join(s.znHome, 'run');
-  fs.symlinkSync(target, link);
+  fs.symlinkSync(target, link, 'junction');
   const before = tree(target);
   const listed = purge.targets({}).files;
   assert.ok(listed.some((f) => f.path === link), 'the link itself is listed');
@@ -224,13 +222,13 @@ test('a run folder that is a link is deleted as a link; the folder it points to 
   assert.deepEqual(tree(target), before, 'the target keeps every file and subfolder');
 });
 
-test('a vault folder that is a link is deleted as a link; the folder it points to is left alone, even with files named like the vault ones', { skip: !LINKS }, async (t) => {
+test('a vault folder that is a link is deleted as a link; the folder it points to is left alone, even with files named like the vault ones', async (t) => {
   const s = setup(t);
   s.fill();
   fs.rmSync(path.join(s.znHome, 'vault'), { recursive: true });
   const target = victimFolder(s);
   const link = path.join(s.znHome, 'vault');
-  fs.symlinkSync(target, link);
+  fs.symlinkSync(target, link, 'junction');
   const before = tree(target);
   const listed = purge.targets({}).files;
   assert.ok(listed.some((f) => f.path === link));
@@ -264,4 +262,90 @@ test('a file that still exists after its removal call is reported by the second 
   const r = await purge.removeAll({});
   assert.ok(r.left.includes(stuck), 'the file the call did not remove is in left');
   assert.ok(!r.removed.includes(stuck));
+});
+
+/* ------------- the settings file behind a link, the delete guard, a damaged settings file ------------- */
+
+test('purge: the settings file behind a vault link is not read, and the keychain entry is not touched', async (t) => {
+  const s = setup(t);
+  s.fill();
+  const target = victimFolder(s);
+  fs.writeFileSync(path.join(target, 'keychain.json'), JSON.stringify({ v: 1, backend: 'libsecret', recipient: 'age1' + 'q'.repeat(58) }));
+  const before = tree(target);
+  fs.rmSync(path.join(s.znHome, 'vault'), { recursive: true });
+  fs.symlinkSync(target, path.join(s.znHome, 'vault'), 'junction');
+  let removed = 0;
+  const native = keychain._native.libsecret;
+  keychain._native.libsecret = { load: () => 'AGE-SECRET-KEY-1' + 'Q'.repeat(20), remove: () => { removed += 1; return true; } };
+  t.after(() => { keychain._native.libsecret = native; });
+  assert.equal(purge.targets({}).backend, null, 'nothing is read through the link');
+  assert.equal(await purge.purgeVault({ yes: true }, person({ stdin: { isTTY: false } })), 0);
+  assert.equal(removed, 0, 'the keychain entry was not deleted');
+  assert.deepEqual(tree(target), before, 'the folder behind the link keeps its files');
+});
+
+test('purge: a file whose folder resolves outside the zn folder is refused by the delete guard', async (t) => {
+  const s = setup(t);
+  s.fill();
+  const target = victimFolder(s);
+  fs.rmSync(path.join(s.znHome, 'run'), { recursive: true });
+  fs.symlinkSync(target, path.join(s.znHome, 'run'), 'junction');
+  // The folder became a link after it was listed: the check before each delete says no.
+  assert.equal(purge._unlinkGone(path.join(s.znHome, 'run', 'important.txt'), s.znHome), false);
+  assert.equal(fs.readFileSync(path.join(target, 'important.txt'), 'utf8'), 'not zn files: important.txt');
+  assert.equal(purge._unlinkGone(path.join(s.znHome, 'audit.jsonl'), s.znHome), true, 'a file inside the zn folder goes');
+  assert.ok(gone(path.join(s.znHome, 'audit.jsonl')));
+  assert.equal(purge._unlinkGone(path.join(s.znHome, 'missing-folder', 'x'), s.znHome), true, 'a file whose folder is already gone is gone');
+});
+
+test('purge: a link in place of a vault file or of the audit log is deleted as a link and is not reported as nothing left', async (t) => {
+  const s = setup(t);
+  s.fill();
+  const keep = path.join(path.dirname(s.znHome), 'keep');
+  fs.mkdirSync(keep);
+  fs.writeFileSync(path.join(keep, 'real-secrets'), 'not zn data');
+  fs.writeFileSync(path.join(keep, 'real-audit'), 'not zn data');
+  fs.rmSync(path.join(s.znHome, 'vault', 'secrets.age'));
+  fs.rmSync(path.join(s.znHome, 'audit.jsonl'));
+  fs.symlinkSync(path.join(keep, 'real-secrets'), path.join(s.znHome, 'vault', 'secrets.age'));
+  fs.symlinkSync(path.join(keep, 'real-audit'), path.join(s.znHome, 'audit.jsonl'));
+  const listed = purge.targets({}).files.map((f) => f.path);
+  assert.ok(listed.includes(path.join(s.znHome, 'vault', 'secrets.age')));
+  assert.ok(listed.includes(path.join(s.znHome, 'audit.jsonl')));
+  const r = await purge.removeAll({});
+  assert.deepEqual(r.left, []);
+  assert.ok(gone(path.join(s.znHome, 'vault', 'secrets.age')));
+  assert.ok(gone(path.join(s.znHome, 'audit.jsonl')));
+  assert.equal(fs.readFileSync(path.join(keep, 'real-secrets'), 'utf8'), 'not zn data');
+  assert.equal(fs.readFileSync(path.join(keep, 'real-audit'), 'utf8'), 'not zn data');
+});
+
+test('purge: a damaged keychain.json does not hide a keychain entry that may remain', async (t) => {
+  const s = setup(t);
+  s.fill();
+  fs.writeFileSync(path.join(s.znHome, 'vault', 'keychain.json'), '{not json');
+  process.env.ZN_KEYCHAIN_BACKEND = 'libsecret';
+  const native = keychain._native.libsecret;
+  let removed = 0;
+  keychain._native.libsecret = { load: () => 'AGE-SECRET-KEY-1' + 'Q'.repeat(20), remove: () => { removed += 1; } };
+  t.after(() => { keychain._native.libsecret = native; });
+  assert.equal(purge.targets({}).probe, 'libsecret');
+  const said = [];
+  assert.equal(await purge.purgeVault({ yes: true }, person({ stdin: { isTTY: false }, out: (l) => said.push(l) })), 0);
+  assert.match(said.join('\n'), /libsecret keychain still holds a "zn" entry/);
+  assert.equal(removed, 0, 'an entry zn cannot tie to this vault is reported, not deleted');
+  assert.ok(gone(path.join(s.znHome, 'vault', 'secrets.age')), 'the files are still purged');
+});
+
+test('purge: with no vault files and a damaged settings file the keychain entry is still reported', async (t) => {
+  const s = setup(t);
+  fs.mkdirSync(path.join(s.znHome, 'vault'), { recursive: true });
+  fs.writeFileSync(path.join(s.znHome, 'vault', 'keychain.json'), '{not json');
+  const native = keychain._native.libsecret;
+  process.env.ZN_KEYCHAIN_BACKEND = 'libsecret';
+  keychain._native.libsecret = { load: () => 'AGE-SECRET-KEY-1' + 'Q'.repeat(20), remove: () => {} };
+  t.after(() => { keychain._native.libsecret = native; });
+  const said = [];
+  assert.equal(await purge.purgeVault({ yes: true }, person({ stdin: { isTTY: false }, out: (l) => said.push(l) })), 0);
+  assert.match(said.join('\n'), /keychain still holds a "zn" entry/);
 });
