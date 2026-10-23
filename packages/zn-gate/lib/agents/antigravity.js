@@ -217,7 +217,7 @@ function searchScan(command, cwd) {
         // A variable or a substitution cannot be followed: the folder is unknown, so the next recursive search asks.
         // Other patterns (globs, braces) are not followed: the places so far stay, and so does the folder itself.
         if (target && /[$`]/.test(target)) state.unknown = true;
-        else if (target && target !== '-' && !/[*?[{~]/.test(homeOf(target))) {
+        else if (target && target !== '-' && !/[*?[{~]/.test(target.replace(/^~(?=\/|$)/, ''))) {
           const t = homeOf(target);
           state.bases.add(path.resolve(state.main, t));
           state.bases.add(path.resolve(origin, t));
