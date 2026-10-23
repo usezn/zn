@@ -51,6 +51,10 @@ function handle(m) {
   if (m.method === 'tools/list') {
     const mode = m.params && m.params.mode;
     if (mode === 'null_tool') return out({ jsonrpc: '2.0', id: m.id, result: { tools: [null] } });
+    if (mode === 'dup') return out([
+      { jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'ok_tool', description: 'Returns a greeting.', inputSchema: { type: 'object' } }] } },
+      { jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'evil', description: INJ, inputSchema: { type: 'object' } }] } },
+    ]);
     return out({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'ok_tool', description: 'Returns a greeting.', inputSchema: { type: 'object' } }] } });
   }
   if (m.method !== 'tools/call') return out({ jsonrpc: '2.0', id: m.id, result: {} });
@@ -73,6 +77,7 @@ function handle(m) {
   if (name === 'deep') return out({ jsonrpc: '2.0', id: m.id, result: { content: [{ type: 'text', text: 'x' }], structuredContent: nested(40) } });
   if (name === 'wide') return out({ jsonrpc: '2.0', id: m.id, result: { content: [{ type: 'text', text: 'x' }], structuredContent: { a: Array.from({ length: 3000 }, (_, i) => i) } } });
   if (name === 'nan') { process.stdout.write('{"jsonrpc":"2.0","id":' + m.id + ',"result":{"content":[{"type":"text","text":"x"}],"n":NaN}}\\n'); return; }
+  if (name === 'batch_own') return out([{ jsonrpc: '2.0', id: m.id, result: {} }].concat(Array.from({ length: 8 }, (_, i) => ({ jsonrpc: '2.0', id: 2000 + i, result: {} }))));
   if (name === 'batch') return out(Array.from({ length: 8 }, (_, i) => ({ jsonrpc: '2.0', id: 1000 + i, result: {} })));
   if (name === 'flood') {
     const progress = process.env.PROGRESS_FILE;
@@ -96,14 +101,14 @@ function handle(m) {
 }
 `;
 
-function startShield(limits = {}, extraEnv = {}) {
+function startShield(limits = {}, extraEnv = {}, shieldArgs = []) {
   const cli = path.join(__dirname, '..', 'bin', 'cli.js');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-frame-'));
   const server = path.join(dir, 'server.js');
   fs.writeFileSync(server, SERVER);
   const home = path.join(dir, 'home');
   fs.mkdirSync(home);
-  const proc = spawn(process.execPath, [cli, 'shield', '--', process.execPath, server], {
+  const proc = spawn(process.execPath, [cli, 'shield', ...shieldArgs, '--', process.execPath, server], {
     stdio: ['pipe', 'pipe', 'pipe'],
     env: { ...process.env, HOME: home, USERPROFILE: home, ZN_HOME: '', ZN_SHIELD_LIMITS: JSON.stringify(limits), ...extraEnv },
   });
@@ -304,5 +309,87 @@ test('a server answer that is not valid JSON gets an error with the id of its re
     s.send(call(32, 'nan'));
     const r = await s.reply(32);
     assert.ok(r.error && r.result === undefined);
+  } finally { await s.stop(); }
+});
+
+test('two list answers for the same id in one server batch: the second is replaced by an error', async () => {
+  const s = startShield();
+  try {
+    s.send({ jsonrpc: '2.0', id: 40, method: 'tools/list', params: { mode: 'dup' } });
+    const batch = await s.wait(() => s.json().find((x) => Array.isArray(x)), 'batch answer');
+    assert.equal(batch.length, 2);
+    assert.equal(batch[0].result.tools[0].name, 'ok_tool');
+    assert.equal(batch[1].error.code, -32603);
+    assert.ok(!s.lines.some((l) => l.includes('previous instructions')), 'the injected description never reaches the client');
+    assert.ok(!s.lines.some((l) => l.includes('"evil"')));
+  } finally { await s.stop(); }
+});
+
+test('a request the client cancels is released from the pending table', async () => {
+  const s = startShield({ pending: 3 });
+  try {
+    s.send(call(1, 'hold'));
+    s.send(call(2, 'hold'));
+    s.send(call(3, 'hold'));
+    s.send(call(4, 'ok'));
+    assert.match((await s.reply(4)).error.message, /waiting for an answer/);
+    s.send({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 2 } });
+    s.send(call(5, 'ok'));
+    assert.equal((await s.reply(5)).result.content[0].text, 'fine');
+    // The table is full again with the new entry gone: 1, 3 wait, and 5 was answered.
+    s.send(call(6, 'ok'));
+    assert.equal((await s.reply(6)).result.content[0].text, 'fine');
+  } finally { await s.stop(); }
+});
+
+test('a server batch that is dropped gives each request it answered its own error', async () => {
+  const s = startShield({ batch: 5 });
+  try {
+    s.send(call(50, 'batch_own'));
+    const r = await s.reply(50);
+    assert.equal(r.error.code, -32603);
+    assert.ok(!s.json().some((m) => Array.isArray(m)));
+    s.send(call(51, 'ok'));
+    assert.equal((await s.reply(51)).result.content[0].text, 'fine');
+  } finally { await s.stop(); }
+});
+
+test('the batch limit refuses a batch at the number of messages it names', () => {
+  const framing = require('../lib/shield_framing');
+  const limits = { ...framing.DEFAULT_LIMITS, batch: 5 };
+  const mk = (n) => Buffer.from(JSON.stringify(Array.from({ length: n }, (_, i) => ({ id: i }))));
+  assert.equal(framing.shapeProblem(mk(4), limits), null);
+  assert.equal(framing.shapeProblem(mk(5), limits), 'batch');
+  const def = framing.DEFAULT_LIMITS;
+  assert.equal(framing.shapeProblem(mk(999), def), null);
+  assert.equal(framing.shapeProblem(mk(1000), def), 'batch');
+});
+
+test('ZN_SHIELD_LIMITS can only lower the limits', () => {
+  const framing = require('../lib/shield_framing');
+  const l = framing.resolveLimits({ ZN_SHIELD_LIMITS: JSON.stringify({ pending: 10, depth: 99999, batch: 10 ** 9, elements: -1 }) });
+  assert.equal(l.pending, 10);
+  assert.equal(l.depth, framing.DEFAULT_LIMITS.depth);
+  assert.equal(l.batch, framing.DEFAULT_LIMITS.batch);
+  assert.equal(l.elements, framing.DEFAULT_LIMITS.elements);
+});
+
+test('batchFields reads the ids of the messages of a truncated batch head', () => {
+  const framing = require('../lib/shield_framing');
+  const head = Buffer.from('[{"jsonrpc":"2.0","id":7,"result":{"id":99}},{"id":"a","method":"x"},{"jsonrpc":"2.0","id":9,"res');
+  const f = framing.batchFields(head);
+  assert.deepEqual(f.map((x) => [x.hasId, x.id, x.hasMethod]), [[true, 7, false], [true, 'a', true], [true, 9, false]]);
+  assert.equal(framing.batchFields(Buffer.from('{"id":1}')), null);
+});
+
+test('shadow mode does not refuse requests when the pending table is full', async () => {
+  const s = startShield({ pending: 2 }, {}, ['--shadow']);
+  try {
+    s.send(call(1, 'hold'));
+    s.send(call(2, 'hold'));
+    s.send(call(3, 'ok'));
+    assert.equal((await s.reply(3)).result.content[0].text, 'fine');
+    s.send({ jsonrpc: '2.0', id: 4, method: 'tools/list' });
+    assert.equal((await s.reply(4)).result.tools[0].name, 'ok_tool');
   } finally { await s.stop(); }
 });

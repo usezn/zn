@@ -22,7 +22,7 @@ const DEFAULT_LIMITS = {
 
 /**
  * The limits, with the ones named in ZN_SHIELD_LIMITS (a JSON object, for tests and unusual setups) replaced.
- * A value that is not a positive integer is ignored.
+ * A value that is not a positive integer is ignored, and a value above the default is cut to the default.
  */
 function resolveLimits(env = process.env) {
   const limits = { ...DEFAULT_LIMITS };
@@ -31,7 +31,8 @@ function resolveLimits(env = process.env) {
   try {
     const o = JSON.parse(raw);
     for (const k of Object.keys(DEFAULT_LIMITS)) {
-      if (o && Number.isInteger(o[k]) && o[k] > 0) limits[k] = o[k];
+      // Only lower: a value above the default is cut to it, so a setting cannot switch the limits off.
+      if (o && Number.isInteger(o[k]) && o[k] > 0) limits[k] = Math.min(o[k], DEFAULT_LIMITS[k]);
     }
   } catch { /* not JSON: defaults */ }
   return limits;
@@ -122,7 +123,8 @@ function shapeProblem(buf, limits) {
     } else if (c === 125 || c === 93) depth--;
     else if (c === 44) {
       if (++elements > limits.elements) return 'elements';
-      if (isBatch && depth === 1 && ++batch >= limits.batch) return 'batch';
+      // A batch of N messages has N - 1 commas at depth 1: it is refused from limits.batch messages on.
+      if (isBatch && depth === 1 && ++batch >= limits.batch - 1) return 'batch';
     }
   }
   return null;
@@ -177,4 +179,36 @@ function topLevelFields(buf) {
   return out;
 }
 
-module.exports = { DEFAULT_LIMITS, resolveLimits, createLineReader, shapeProblem, topLevelFields };
+/**
+ * For a line that is a batch ("[" first), the fields of each message object that starts in buf (a truncated head is
+ * fine), as topLevelFields gives them. Returns null when the line is not a batch.
+ */
+function batchFields(buf) {
+  let i = 0;
+  while (i < buf.length && isWs(buf[i])) i++;
+  if (buf[i] !== 91) return null;
+  const out = [];
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  for (; i < buf.length; i++) {
+    const c = buf[i];
+    if (inString) {
+      if (c === 92) i++;
+      else if (c === 34) inString = false;
+      continue;
+    }
+    if (c === 34) inString = true;
+    else if (c === 123 || c === 91) {
+      depth++;
+      if (c === 123 && depth === 2) start = i;
+    } else if (c === 125 || c === 93) {
+      if (c === 125 && depth === 2 && start >= 0) { out.push(topLevelFields(buf.subarray(start, i + 1))); start = -1; }
+      depth--;
+    }
+  }
+  if (start >= 0) out.push(topLevelFields(buf.subarray(start)));
+  return out;
+}
+
+module.exports = { DEFAULT_LIMITS, resolveLimits, createLineReader, shapeProblem, topLevelFields, batchFields };
