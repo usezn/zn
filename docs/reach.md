@@ -170,13 +170,15 @@ With `--fail-on high`, that run exits with code 1.
   (`protected`, `project-only`, `not-set-up`, or another state from `check`),
   `problem` and `fix`.
 - `findings`: one entry per finding, sorted from high to low, with `section`,
-  `severity`, `title`, `detail`, `fix` and, when they apply, `file`, `line`,
-  `id` (an audit rule), `names` (secret names) and `files` (credential files
-  by name).
+  `severity`, `kind`, `title`, `detail`, `fix` and, when they apply, `file`,
+  `line`, `id` (an audit rule), `names` (secret names) and `files` (credential
+  files by name). `kind` says what sort of finding it is, for example
+  `dotenv`, `credential-files`, `environment`, `audit` or `dotenv-link`.
 - `counts`: how many findings there are per severity.
 - `truncated`: `true` when the audit of the configuration ran out of time or
-  entries. Then the report says that some files were not checked, and never
-  that nothing needs fixing.
+  entries, and `null` when it did not (never `false`). When it is `true`, the
+  report says that some files were not checked, and never that nothing needs
+  fixing.
 - `previous`: present only with `--remember`: the counts and date of the
   earlier run in this folder, or `null` when there is none.
 
