@@ -11,6 +11,7 @@ pub mod config;
 pub mod crypto;
 pub mod engine;
 pub mod handlers;
+pub mod http_limits;
 pub mod jsonrpc;
 pub mod lfi_guard;
 pub mod metrics;

@@ -9,11 +9,15 @@
 //! Cases that expose a real gap keep their test, marked `#[ignore = "B-xxxx: ..."]`.
 
 use crate::handlers::api::CreateTenantRequest;
+use crate::http_limits::{serve_limited, ServeLimits};
 use crate::jsonrpc::{validate_jsonrpc, JsonRpcValidation};
 use axum::{
+    extract::ws::WebSocketUpgrade,
+    response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
+use futures::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
@@ -30,16 +34,37 @@ async fn tenants(Json(p): Json<CreateTenantRequest>) -> Json<Value> {
     Json(json!({ "name_len": p.name.len() }))
 }
 
+/// Short limits so the stall tests finish fast; the headers and body limits are well under `BOUND`.
+const TEST_LIMITS: ServeLimits = ServeLimits {
+    header_read_timeout: Duration::from_millis(300),
+    body_idle_timeout: Duration::from_millis(300),
+    max_connections: 64,
+};
+
 async fn spawn_server() -> SocketAddr {
+    spawn_server_with(TEST_LIMITS).await
+}
+
+/// The same serve function the gateway runs, with the given limits.
+async fn spawn_server_with(limits: ServeLimits) -> SocketAddr {
     let app = Router::new()
         .route("/api/v1/health", get(health))
-        .route("/api/v1/tenants", post(tenants));
+        .route("/api/v1/tenants", post(tenants))
+        .route("/ws", get(ws_echo));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        let _ = axum::serve(listener, app).await;
-    });
+    tokio::spawn(async move { serve_limited(listener, app, limits).await });
     addr
+}
+
+async fn ws_echo(ws: WebSocketUpgrade) -> impl IntoResponse {
+    ws.on_upgrade(|mut socket| async move {
+        while let Some(Ok(msg)) = socket.recv().await {
+            if socket.send(msg).await.is_err() {
+                break;
+            }
+        }
+    })
 }
 
 #[derive(Debug)]
@@ -104,7 +129,7 @@ fn post_with(extra: &str, body: &str) -> Vec<u8> {
 const BODY: &str = r#"{"name":"example","namespace":"example-ns","api_key":"example-key-0000"}"#;
 
 fn is_clean_reject(p: &Probe) -> bool {
-    !p.timed_out && p.elapsed < BOUND && p.status.map_or(true, |s| (400..500).contains(&s))
+    !p.timed_out && p.elapsed < BOUND && p.status.is_none_or(|s| (400..500).contains(&s))
 }
 
 #[tokio::test]
@@ -309,7 +334,6 @@ fn json_rpc_deeply_nested_frame_does_not_overflow_the_stack() {
 /// id=<object>, method="ping": a pass-through that is forwarded as the raw line. A downstream server that
 /// supports JSON-RPC batching would then run the embedded object as a request, unchecked.
 #[test]
-#[ignore = "B-1256: validate_jsonrpc reads a positional JSON array as a request and returns PassThrough"]
 fn positional_array_cannot_smuggle_a_tool_call_past_the_validator() {
     let frame = r#"["2.0",{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"bash","arguments":{"command":"echo example"}}},"ping"]"#;
     let v = validate_jsonrpc(frame);
@@ -318,7 +342,6 @@ fn positional_array_cannot_smuggle_a_tool_call_past_the_validator() {
 
 /// Client sends the headers of a POST with Content-Length 1000, 10 bytes of body, then goes silent.
 #[tokio::test]
-#[ignore = "B-1257: axum::serve sets no header-read or body-read timeout, so a stalled body holds the connection forever"]
 async fn stalled_body_is_closed_within_a_bound() {
     let addr = spawn_server().await;
     let raw = post_with("Content-Length: 1000\r\n", "0123456789");
@@ -332,7 +355,6 @@ async fn stalled_body_is_closed_within_a_bound() {
 
 /// Client sends a partial request line and header block, then goes silent (classic slowloris).
 #[tokio::test]
-#[ignore = "B-1257: axum::serve sets no header-read or body-read timeout, so half-sent headers hold the connection forever"]
 async fn stalled_headers_are_closed_within_a_bound() {
     let addr = spawn_server().await;
     let p = probe(
@@ -346,4 +368,186 @@ async fn stalled_headers_are_closed_within_a_bound() {
         !p.timed_out,
         "server kept the half-sent request open: {p:?}"
     );
+}
+
+/// A tool call hidden in a positional array comes back as an error (the same parse error every other
+/// non-object frame gets), never as a pass-through.
+#[test]
+fn array_frame_is_rejected() {
+    let frame = r#"["2.0",{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"bash","arguments":{"command":"echo example"}}},"ping"]"#;
+    match validate_jsonrpc(frame) {
+        JsonRpcValidation::Error { code, message, .. } => {
+            assert_eq!(code, crate::jsonrpc::jsonrpc_error::PARSE_ERROR);
+            assert!(message.contains("batches are not supported"), "{message}");
+        }
+        other => panic!("expected Error, got {other:?}"),
+    }
+    // A well-formed batch of objects is rejected the same way: the gateway does not check batches.
+    let batch =
+        r#"[{"jsonrpc":"2.0","id":1,"method":"ping"},{"jsonrpc":"2.0","id":2,"method":"ping"}]"#;
+    assert!(matches!(
+        validate_jsonrpc(batch),
+        JsonRpcValidation::Error { .. }
+    ));
+}
+
+#[test]
+fn scalar_frames_are_rejected() {
+    for frame in ["\"ping\"", "42", "-1.5", "true", "false", "null"] {
+        match validate_jsonrpc(frame) {
+            JsonRpcValidation::Error { code, .. } => {
+                assert_eq!(code, crate::jsonrpc::jsonrpc_error::PARSE_ERROR, "{frame}")
+            }
+            other => panic!("{frame}: expected Error, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn normal_object_frames_still_pass() {
+    let ping = r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
+    assert!(matches!(
+        validate_jsonrpc(ping),
+        JsonRpcValidation::PassThrough
+    ));
+    let call = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"echo","arguments":{"text":"example"}}}"#;
+    match validate_jsonrpc(call) {
+        JsonRpcValidation::ToolCall { tool_name, .. } => assert_eq!(tool_name, "echo"),
+        other => panic!("expected ToolCall, got {other:?}"),
+    }
+    // Leading whitespace is still a plain object.
+    assert!(matches!(
+        validate_jsonrpc(&format!("  \n{ping}")),
+        JsonRpcValidation::PassThrough
+    ));
+}
+
+/// A client that stays silent after the slowloris-style first bytes loses the connection at the header
+/// limit (300 ms here), well before the probe gives up.
+#[tokio::test]
+async fn slow_headers_are_closed_at_the_header_timeout() {
+    let addr = spawn_server().await;
+    let p = probe(
+        addr,
+        b"POST /api/v1/tenants HTTP/1.1\r\nHost: local".to_vec(),
+        Duration::from_secs(5),
+    )
+    .await;
+    report("header_timeout", &p);
+    assert!(!p.timed_out, "{p:?}");
+    assert!(p.elapsed >= Duration::from_millis(250), "{p:?}");
+    assert!(p.elapsed < Duration::from_secs(3), "{p:?}");
+}
+
+/// Same for a body that stops short of its Content-Length: the request fails and the answer is a 4xx.
+#[tokio::test]
+async fn stalled_body_is_a_4xx_after_the_body_timeout() {
+    let addr = spawn_server().await;
+    let raw = post_with("Content-Length: 1000\r\n", "0123456789");
+    let p = probe(addr, raw, Duration::from_secs(5)).await;
+    report("body_timeout", &p);
+    assert!(!p.timed_out, "{p:?}");
+    assert!(p.elapsed < Duration::from_secs(3), "{p:?}");
+    assert!(is_clean_reject(&p), "{p:?}");
+}
+
+/// A body that keeps moving is not cut: each chunk restarts the idle timer.
+#[tokio::test]
+async fn slow_but_moving_body_is_served() {
+    let addr = spawn_server().await;
+    let mut s = TcpStream::connect(addr).await.unwrap();
+    let head = format!(
+        "POST /api/v1/tenants HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+        BODY.len()
+    );
+    s.write_all(head.as_bytes()).await.unwrap();
+    // Three pieces 200 ms apart: longer than the 300 ms idle limit in total, never idle for 300 ms.
+    let bytes = BODY.as_bytes();
+    let third = bytes.len() / 3;
+    for part in [
+        &bytes[..third],
+        &bytes[third..2 * third],
+        &bytes[2 * third..],
+    ] {
+        s.write_all(part).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    let mut buf = vec![0u8; 4096];
+    let n = tokio::time::timeout(BOUND, s.read(&mut buf))
+        .await
+        .expect("no answer")
+        .unwrap();
+    let text = String::from_utf8_lossy(&buf[..n]);
+    assert!(text.starts_with("HTTP/1.1 200"), "{text}");
+}
+
+/// With the cap at 3, three idle clients take every slot: a fourth gets no answer until one leaves.
+#[tokio::test]
+async fn connection_cap_holds() {
+    let addr = spawn_server_with(ServeLimits {
+        header_read_timeout: Duration::from_secs(30),
+        body_idle_timeout: Duration::from_secs(30),
+        max_connections: 3,
+    })
+    .await;
+    let mut held = Vec::new();
+    for _ in 0..3 {
+        let mut c = TcpStream::connect(addr).await.unwrap();
+        // One finished request proves the slot is in use (keep-alive keeps it open).
+        c.write_all(b"GET /api/v1/health HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let mut buf = [0u8; 1024];
+        let n = tokio::time::timeout(BOUND, c.read(&mut buf))
+            .await
+            .expect("no answer")
+            .unwrap();
+        assert!(String::from_utf8_lossy(&buf[..n]).starts_with("HTTP/1.1 200"));
+        held.push(c);
+    }
+    let blocked = probe(
+        addr,
+        b"GET /api/v1/health HTTP/1.1\r\nHost: localhost\r\n\r\n".to_vec(),
+        Duration::from_millis(700),
+    )
+    .await;
+    report("cap_blocked", &blocked);
+    assert!(
+        blocked.timed_out,
+        "a fourth connection was served over the cap: {blocked:?}"
+    );
+    // Free one slot: a new client is served.
+    drop(held.pop());
+    let served = probe(
+        addr,
+        b"GET /api/v1/health HTTP/1.1\r\nHost: localhost\r\n\r\n".to_vec(),
+        BOUND,
+    )
+    .await;
+    report("cap_after_release", &served);
+    assert_eq!(served.status, Some(200), "{served:?}");
+}
+
+/// A WebSocket session outlives the header and body timeouts (300 ms each here) and still echoes.
+#[tokio::test]
+async fn websocket_outlives_the_body_and_header_timeouts() {
+    let addr = spawn_server().await;
+    let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws"))
+        .await
+        .expect("websocket handshake");
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    ws.send(tokio_tungstenite::tungstenite::Message::Text(
+        "still here".into(),
+    ))
+    .await
+    .expect("send after the timeouts");
+    let reply = tokio::time::timeout(BOUND, ws.next())
+        .await
+        .expect("no echo")
+        .expect("closed")
+        .expect("error");
+    match reply {
+        tokio_tungstenite::tungstenite::Message::Text(t) => assert_eq!(t.as_str(), "still here"),
+        other => panic!("unexpected {other:?}"),
+    }
 }

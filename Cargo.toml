@@ -22,7 +22,10 @@ anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 axum = { version = "0.7", features = ["macros", "ws", "multipart"] }
-tower-http = { version = "0.5", features = ["cors", "auth", "fs"] }
+tower-http = { version = "0.5", features = ["cors", "auth", "fs", "timeout"] }
+# Already in the tree through axum; named here to run the management API with read timeouts.
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "service"] }
 wasmtime = "48"
 rusqlite = { version = "0.40", default-features = false, features = ["bundled", "cache", "fallible_uint"] }
 ratatui = "0.30"

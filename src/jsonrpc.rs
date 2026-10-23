@@ -80,8 +80,31 @@ pub enum JsonRpcValidation {
 
 /// Validate and extract tool call from JSON-RPC request
 pub fn validate_jsonrpc(json_str: &str) -> JsonRpcValidation {
-    // Parse JSON
-    let request: JsonRpcRequest = match serde_json::from_str(json_str) {
+    // Parse to a plain value first. Deserializing straight into the struct would accept a JSON array
+    // as a positional struct (["2.0", {...}, "ping"] reads as jsonrpc, id, method) and forward the raw
+    // line, with whatever request it carries, unchecked.
+    let value: serde_json::Value = match serde_json::from_str(json_str) {
+        Ok(v) => v,
+        Err(_) => {
+            return JsonRpcValidation::Error {
+                id: None,
+                code: jsonrpc_error::PARSE_ERROR,
+                message: "Parse error: Invalid JSON".to_string(),
+            }
+        }
+    };
+    // One frame is one object. Batches (arrays) are not supported, and a string, number, boolean or null
+    // is not a request, so none of them is forwarded.
+    if !value.is_object() {
+        return JsonRpcValidation::Error {
+            id: None,
+            code: jsonrpc_error::PARSE_ERROR,
+            message:
+                "Parse error: a frame must be a single JSON object (batches are not supported)"
+                    .to_string(),
+        };
+    }
+    let request: JsonRpcRequest = match serde_json::from_value(value) {
         Ok(r) => r,
         Err(_) => {
             return JsonRpcValidation::Error {

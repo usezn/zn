@@ -7587,6 +7587,8 @@ dependencies = [
  "ed25519-dalek 3.0.0",
  "futures",
  "hex",
+ "hyper",
+ "hyper-util",
  "jsonwebtoken",
  "lazy_static",
  "lru",
