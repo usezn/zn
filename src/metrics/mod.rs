@@ -247,10 +247,60 @@ pub fn render() -> String {
     String::from_utf8(buffer).unwrap_or_default()
 }
 
+/// Tool names that keep their own `tool_name` label value. Any other name
+/// is counted as [`OTHER_TOOL_LABEL`], so a client cannot create an unbounded
+/// number of series (or put its own strings into `/metrics`) by sending
+/// arbitrary tool names.
+pub const KNOWN_TOOL_LABELS: &[&str] = &[
+    "Bash",
+    "Edit",
+    "Glob",
+    "Grep",
+    "MultiEdit",
+    "NotebookEdit",
+    "Read",
+    "Task",
+    "TodoWrite",
+    "WebFetch",
+    "WebSearch",
+    "Write",
+    "apply_patch",
+    "bash",
+    "create_directory",
+    "delete_file",
+    "edit_file",
+    "execute_command",
+    "fetch",
+    "get_file_info",
+    "list_directory",
+    "ls",
+    "move_file",
+    "query",
+    "read_file",
+    "run_command",
+    "search",
+    "search_files",
+    "shell",
+    "write_file",
+];
+
+/// Label value used for every tool name that is not in [`KNOWN_TOOL_LABELS`].
+pub const OTHER_TOOL_LABEL: &str = "other";
+
+/// The `tool_name` label value for a tool name: the name itself when it is
+/// a known tool, `other` otherwise.
+pub fn tool_label(tool_name: &str) -> &'static str {
+    KNOWN_TOOL_LABELS
+        .iter()
+        .copied()
+        .find(|known| *known == tool_name)
+        .unwrap_or(OTHER_TOOL_LABEL)
+}
+
 /// Record a tool call with its outcome
 pub fn record_tool_call(tool_name: &str, status: &str) {
     TOOL_CALLS_TOTAL
-        .with_label_values(&[tool_name, status])
+        .with_label_values(&[tool_label(tool_name), status])
         .inc();
     match status {
         "ALLOWED" => TOOL_CALLS_ALLOWED.inc(),
@@ -444,5 +494,40 @@ mod tests {
             out.contains("zn_batch_duration_seconds"),
             "batch duration missing"
         );
+    }
+
+    #[test]
+    fn tool_name_label_is_bounded() {
+        use prometheus::core::Collector;
+        for i in 0..1000 {
+            record_tool_call(&format!("attacker-tool-{i}"), "ALLOWED");
+        }
+        record_tool_call("read_file", "DENIED");
+        let mut values = std::collections::HashSet::new();
+        for family in TOOL_CALLS_TOTAL.collect() {
+            for m in family.get_metric() {
+                for l in m.get_label() {
+                    if l.name() == "tool_name" {
+                        values.insert(l.value().to_string());
+                    }
+                }
+            }
+        }
+        assert!(
+            values.len() <= KNOWN_TOOL_LABELS.len() + 1,
+            "{} distinct tool_name values",
+            values.len()
+        );
+        assert!(values.contains(OTHER_TOOL_LABEL));
+        assert!(values.contains("read_file"));
+        assert!(!values.iter().any(|v| v.starts_with("attacker-tool-")));
+    }
+
+    #[test]
+    fn tool_label_maps_unknown_names_to_other() {
+        assert_eq!(tool_label("read_file"), "read_file");
+        assert_eq!(tool_label("Bash"), "Bash");
+        assert_eq!(tool_label("not-a-known-tool"), OTHER_TOOL_LABEL);
+        assert_eq!(tool_label(""), OTHER_TOOL_LABEL);
     }
 }
