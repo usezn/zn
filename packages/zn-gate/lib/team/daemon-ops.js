@@ -88,12 +88,17 @@ function makeTeamOps(ctx) {
    * It runs in the serialised section and only while `m` (a membership snapshot) is still the current one, so a
    * request that started before a leave or a join of another organization cannot bring a copy back (false). */
   async function ensureCopies(m, strict) {
-    return state.serial(async () => {
-      const cur = await team();
-      if (!sameMembership(cur, m)) return false;
-      writeCopies(cur, strict);
-      return true;
-    });
+    try {
+      return await state.serial(async () => {
+        const cur = await team();
+        if (!sameMembership(cur, m)) return false;
+        writeCopies(cur, strict);
+        return true;
+      });
+    } catch (err) {
+      if (strict) throw err;
+      return false; // best effort: the vault closed meanwhile, nothing to put back
+    }
   }
 
   function writeCopies(t, strict) {
