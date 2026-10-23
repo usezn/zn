@@ -169,7 +169,11 @@ function hasUnsafeEventPaths(ev) {
   return hasUnsafeText([ev.cwd, ev.sessionId, ev.toolName, input, raw]);
 }
 
-/** Map every string leaf of a JSON value through an async function, keeping the shape. */
+/**
+ * Map every string leaf of a JSON value through an async function, keeping the shape. Object keys are text the
+ * model reads too, so they go through the same function. Two keys that map to the same text, or a mapped key that
+ * equals a key left as it was, are kept apart by numbering the mapped one ("<text> #2"), so no value is lost.
+ */
 async function mapStrings(value, fn) {
   if (typeof value === 'string') return fn(value);
   if (Array.isArray(value)) {
@@ -178,8 +182,22 @@ async function mapStrings(value, fn) {
     return out;
   }
   if (value && typeof value === 'object') {
+    const entries = Object.entries(value);
+    const names = [];
+    for (const [k] of entries) names.push(await fn(k));
+    const taken = new Set();
+    names.forEach((n, i) => { if (n === entries[i][0]) taken.add(n); });
     const out = {};
-    for (const [k, v] of Object.entries(value)) out[k] = await mapStrings(v, fn);
+    for (let i = 0; i < entries.length; i += 1) {
+      let name = names[i];
+      if (name !== entries[i][0]) {
+        const base = name;
+        for (let n = 2; taken.has(name); n += 1) name = `${base} #${n}`;
+        taken.add(name);
+      }
+      // defineProperty, so a key such as __proto__ stays an ordinary property
+      Object.defineProperty(out, name, { value: await mapStrings(entries[i][1], fn), enumerable: true, writable: true, configurable: true });
+    }
     return out;
   }
   return value;
