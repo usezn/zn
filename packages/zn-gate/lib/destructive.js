@@ -25,7 +25,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-10-23.6';
+const COMMAND_RULES_VERSION = '2026-10-23.7';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -70,7 +70,7 @@ const PS_PIPE_RE = /\b(?:iwr|irm|invoke-webrequest|invoke-restmethod|curl|wget)\
 const PS_CALL_RE = /(?:^|[\s;&|(])(?:iex|invoke-expression)\b[\s($]*(?:\(\s*)*(?:iwr|irm|invoke-webrequest|invoke-restmethod|curl|wget|new-object\s+(?:system\.)?net\.webclient)\b/i;
 // PowerShell escapes a character with a backtick (i`wr, Invoke-`Expression). Only a backtick inside a word counts: in
 // POSIX shells a backtick starts a command substitution, so the text is never stripped for the other patterns.
-const PS_TICK_RE = /(?<=[A-Za-z0-9_.-])`(?=[A-Za-z])/g;
+const PS_TICK_RE = /(?:(?<=[\s|;&(A-Za-z0-9_.-])|^)`(?=[A-Za-z-])/g;
 const PS_DISK_RE = /(?:^|[\s;&|(])(?:format-volume|clear-disk)\b/i;
 
 function programName(text) {
@@ -388,7 +388,7 @@ function analyze(cmd, depth = 0) {
   // (Past QUOTE_SCAN_MAX the quotes are left in: finding every pair is the one step that is not linear.)
   const bare = text.length > QUOTE_SCAN_MAX ? text : text.replace(QUOTED_RE, "''");
   if ((FORK_BOMB_RE.test(bare)) && on('fork_bomb')) return 'fork_bomb';
-  const psBare = bare.includes('`') ? bare.replace(PS_TICK_RE, '') : bare;
+  const psBare = bare.includes('`') ? bare.replace(/`\r?\n/g, ' ').replace(PS_TICK_RE, '') : bare;
   if ((SHELL_RUNS_DOWNLOAD_RE.test(text) || SOURCE_DOWNLOAD_RE.test(bare) || PS_PIPE_RE.test(psBare) || PS_CALL_RE.test(psBare)) && on('pipe_to_shell')) return 'pipe_to_shell';
   if ((PS_DISK_RE.test(bare)) && on('disk_overwrite')) return 'disk_overwrite';
   const segs = segmentsOf(text);

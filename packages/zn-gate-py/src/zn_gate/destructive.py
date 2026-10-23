@@ -28,7 +28,7 @@ from typing import List, Optional, Tuple
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-23.6"
+COMMAND_RULES_VERSION = "2026-10-23.7"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -99,7 +99,8 @@ _PS_CALL_RE = re.compile(
 )
 # PowerShell escapes a character with a backtick (i`wr, Invoke-`Expression). Only a backtick inside a word counts: in
 # POSIX shells a backtick starts a command substitution, so the text is never stripped for the other patterns.
-_PS_TICK_RE = re.compile(r"(?<=[A-Za-z0-9_.-])`(?=[A-Za-z])", _A)
+_PS_TICK_RE = re.compile(r"(?:(?<=[\s|;&(A-Za-z0-9_.-])|^)`(?=[A-Za-z-])", _A)
+_PS_LINE_TICK_RE = re.compile(r"`\r?\n")
 _PS_DISK_RE = re.compile(r"(?:^|[\s;&|(])(?:format-volume|clear-disk)\b", _AI)
 
 _ANSI_C_RE = re.compile(r"\$'((?:[^'\\]|\\[\s\S])*)'")
@@ -596,7 +597,7 @@ def _analyze(cmd: str, depth: int = 0) -> Optional[str]:
     bare = text if len(text) > _QUOTE_SCAN_MAX else _QUOTED_RE.sub("''", text)
     if _FORK_BOMB_RE.search(bare):
         return "fork_bomb"
-    ps_bare = _PS_TICK_RE.sub("", bare) if "`" in bare else bare
+    ps_bare = _PS_TICK_RE.sub("", _PS_LINE_TICK_RE.sub(" ", bare)) if "`" in bare else bare
     if (
         _SHELL_RUNS_DOWNLOAD_RE.search(text)
         or _SOURCE_DOWNLOAD_RE.search(bare)

