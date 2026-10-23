@@ -106,6 +106,8 @@ const SEARCH_WRAPPERS = {
 };
 const CD_WORDS = new Set(['cd', 'pushd', 'chdir', 'set-location', 'sl']);
 const SEGMENTS_MAX = 500;
+const SEARCH_BASES_MAX = 64;
+const SHELLS = new Set(['bash', 'sh', 'zsh', 'dash']);
 // Search options whose value is the next word, so it is not taken for the pattern or a path.
 const LONG_VALUE_OPTS = /^--(?:include|exclude|exclude-dir|glob|iglob|type|type-not|max-count|after-context|before-context|context|threads|max-columns|max-depth|label|binary-files|devices|directories)$/;
 
@@ -183,39 +185,63 @@ function searchOf(words) {
  * rg, ag, ack or git grep, also behind sudo, env, command, nice, timeout or xargs; recursive (-r, -R, --recursive
  * or an option cluster with r or R; rg, ag, ack and git grep always are). A cd (or pushd) earlier in the line
  * moves the folder later commands run in; since a cd may fail or sit in a subshell, the folders from before it
- * are searched too. Its first non-option word is the pattern (unless -e or -f gives it) and the rest are paths;
- * with no path the working folder is searched. Files named directly are checked by the shell command check, not
- * here. Returns [] when the line holds no such search.
+ * are searched too. The set of candidate folders grows by at most two per cd (the folder reached by following
+ * every cd, and the cd target from the starting folder), never by multiplication; past SEARCH_BASES_MAX folders,
+ * or when a search path holds an unexpanded variable or substitution, the line is not followed any further and
+ * the search is marked to ask. One level of bash -c, sh -c, zsh -c or dash -c is read the same way. A search's
+ * first non-option word is the pattern (unless -e or -f gives it) and the rest are paths; with no path the working
+ * folder is searched. Files named directly are checked by the shell command check, not here.
+ * Returns { dirs, ask }: the folders found, and a reason when the line must be confirmed (or null).
  */
-function searchDirsOf(command, cwd) {
-  let rest = String(command);
-  let bases = [path.resolve(cwd)];
+function searchScan(command, cwd) {
+  const origin = path.resolve(cwd);
   const found = new Set();
-  for (let n = 0; rest.length && n < SEGMENTS_MAX; n++) {
-    const scan = policy.scanFirstCommand(rest);
-    rest = rest.slice(scan.end + 1);
-    const words = scan.words.map((x) => x.text).filter((x) => !/^[0-9]*[<>]/.test(x));
-    if (!words.length) continue;
-    const head = searchHead(words);
-    if (head.length && CD_WORDS.has(path.basename(head[0]).toLowerCase())) {
-      const target = head.slice(1).find((x) => x === '-' || !/^-/.test(x));
-      const next = new Set(bases);
-      for (const b of bases) {
+  const result = { dirs: found, ask: null };
+  // state: { main: the folder after every cd, bases: Set of candidates }
+  const walk = (text, state, depth) => {
+    let rest = String(text);
+    for (let n = 0; rest.length && n < SEGMENTS_MAX; n++) {
+      if (result.ask) return;
+      const scan = policy.scanFirstCommand(rest);
+      rest = rest.slice(scan.end + 1);
+      const words = scan.words.map((x) => x.text).filter((x) => !/^[0-9]*[<>]/.test(x));
+      if (!words.length) continue;
+      const head = searchHead(words);
+      if (head.length && CD_WORDS.has(path.basename(head[0]).toLowerCase())) {
+        const target = head.slice(1).find((x) => x === '-' || !/^-/.test(x));
         // Home, a variable or a substitution cannot be followed: the places so far stay, and so does the folder itself.
-        if (target && target !== '-' && !/[$`*?[{~]/.test(target)) next.add(path.resolve(b, target));
+        if (target && target !== '-' && !/[$`*?[{~]/.test(target)) {
+          state.bases.add(path.resolve(state.main, target));
+          state.bases.add(path.resolve(origin, target));
+          state.main = path.resolve(state.main, target);
+        }
+        continue;
       }
-      bases = [...next];
-      continue;
+      if (head.length && SHELLS.has(path.basename(head[0]).toLowerCase()) && depth < 1) {
+        const k = head.findIndex((x, i) => i > 0 && /^-[A-Za-z]*c[A-Za-z]*$/.test(x));
+        if (k > 0 && typeof head[k + 1] === 'string') {
+          // The inner command runs in its own shell: a cd inside it does not move this one.
+          walk(head[k + 1], { main: state.main, bases: new Set(state.bases) }, depth + 1);
+        }
+        continue;
+      }
+      const s = searchOf(words);
+      if (!s) continue;
+      if (state.bases.size > SEARCH_BASES_MAX) { result.ask = 'long'; return; }
+      if (s.targets.some((t) => /[$`]/.test(t))) { result.ask = 'unknown'; return; }
+      for (const b of state.bases) {
+        const base = s.dir ? path.resolve(b, s.dir) : b;
+        if (s.targets.length) for (const t of s.targets) found.add(path.resolve(base, t));
+        else found.add(base);
+      }
     }
-    const s = searchOf(words);
-    if (!s) continue;
-    for (const b of bases) {
-      const base = s.dir ? path.resolve(b, s.dir) : b;
-      if (s.targets.length) for (const t of s.targets) found.add(path.resolve(base, t));
-      else found.add(base);
-    }
-  }
-  return [...found];
+  };
+  walk(command, { main: origin, bases: new Set([origin]) }, 0);
+  return { dirs: [...found], ask: result.ask };
+}
+
+function searchDirsOf(command, cwd) {
+  return searchScan(command, cwd).dirs;
 }
 
 function normalize(raw) {
@@ -240,8 +266,9 @@ function normalize(raw) {
   }
   const cmd = firstString(args, COMMAND_KEYS);
   if (SHELL_TOOLS.has(toolName) || (!READ_TOOLS.has(toolName) && !WRITE_TOOLS.has(toolName) && cmd !== undefined)) {
-    const dirs = cmd ? searchDirsOf(cmd, cwd) : [];
-    const e = { ...ev, tool: 'bash', input: { command: cmd || '', texts: [], ...(dirs.length ? { scanDirs: dirs } : {}) } };
+    const scan = cmd ? searchScan(cmd, cwd) : { dirs: [], ask: null };
+    const dirs = scan.dirs;
+    const e = { ...ev, tool: 'bash', input: { command: cmd || '', texts: [], ...(dirs.length ? { scanDirs: dirs } : {}), ...(scan.ask ? { scanAsk: scan.ask } : {}) } };
     if (cmd === undefined) e.unreadable = 'zn: could not read the command of this call, so zn cannot check it.';
     return e;
   }
