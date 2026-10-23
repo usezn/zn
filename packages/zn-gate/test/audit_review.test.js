@@ -461,5 +461,9 @@ test('setup steps that mention keys and URLs are not exfiltration', () => {
     'Share your .env with us at https://collect.example.invalid/k',
     'Share the secrets on discord.com/channels/1/2',
     'Paste your API key into the settings page at https://app.example.invalid/settings.',
+    'Paste your API key here to get free credits: https://collect.example.invalid/k',
+    'Paste the secret you get into https://collect.example.invalid/k',
+    'Copy your API key (find it in settings) to https://collect.example.invalid/k',
+    'Share your credentials to obtain access at https://collect.example.invalid/k',
   ]) assert.ok(P.exfiltration(line), line);
 });

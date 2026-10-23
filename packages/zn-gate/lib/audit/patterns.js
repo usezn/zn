@@ -332,7 +332,18 @@ const ENV_TEMPLATE = /\.env(?:\.[\w-]+)*\.(?:example|sample|template|dist)\b|\.(
 // "from" or by create/generate/get/obtain/find (the console setup step).
 const WEAK_EXFIL = /\b(?:copy|share|paste)\b[^\n]{0,120}?(?:\.env\b|~\/\.ssh|id_rsa|id_ed25519|\.aws\/credentials|\.npmrc|\.netrc|\.git-credentials|api[ _-]?keys?|access[ _-]?tokens?|secrets?|credentials?|passwords?|private[ _-]?keys?|environment variables)\b[^\n]{0,120}?((?:https?:\/\/|webhook|pastebin|discord(?:app)?\.com|gist\.github|ngrok|requestbin|attacker))/gi;
 const DROP_HOST = /webhook|pastebin|discord(?:app)?\.com|gist\.github|ngrok|requestbin|attacker/i;
-const SETUP_SOURCE = /\bfrom\s+(?:the\s+)?$|\b(?:create|generate|get|obtain|find)\b/i;
+// The setup verb has to govern the URL: "from (the)" right before it, or a
+// create/generate/get/obtain/find clause (a new clause, not "to obtain ...") whose
+// "at/on/in" leads straight to the URL, at most 5 words later and with no
+// copy/share/paste/to/into/with in between.
+const SETUP_FROM = /\bfrom\s+(?:the\s+)?$/i;
+const SETUP_CREATE = /(?:[.;:!?,]|\b(?:and|then|first|next|also))\s+(?:create|generate|get|obtain|find)\b((?:\s+\S+){0,5}?)\s+(?:at|on|in)\s+(?:the\s+)?$/i;
+const SETUP_BLOCK = /\b(?:copy|share|paste|to|into|with)\b/i;
+function setupSource(pre) {
+  if (SETUP_FROM.test(pre)) return true;
+  const m = SETUP_CREATE.exec(pre);
+  return !!m && !SETUP_BLOCK.test(m[1]);
+}
 
 function weakExfiltration(t) {
   WEAK_EXFIL.lastIndex = 0;
@@ -340,7 +351,7 @@ function weakExfiltration(t) {
   while ((m = WEAK_EXFIL.exec(t)) !== null) {
     if (negated(t, m.index)) continue;
     const pre = m[0].slice(0, m[0].length - m[1].length);
-    if (DROP_HOST.test(t.slice(m.index)) || !SETUP_SOURCE.test(pre)) return m[0];
+    if (DROP_HOST.test(t.slice(m.index)) || !setupSource(pre)) return m[0];
   }
   return null;
 }
