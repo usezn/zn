@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.14.0-rc.1] - 2026-10-25
+## [1.14.0-rc.2] - 2026-10-25
 
 zn-gate 1.14.0-rc.1 is a release candidate for 1.14.0. In Claude Code, zn-gate now checks the output of web fetches, MCP tools and shell commands with its local rules and tells the agent to treat text that reads like instructions as data. It also adds experimental hooks for Gemini CLI and Google Antigravity, finds plain-text keys in MCP server configs, and hardens the Python guard against deeply nested tool results and arguments. It also includes security fixes, listed under Security. Try it with `npm install -g zn-gate@next` or `pip install --pre -U zn-gate`, and report problems at https://github.com/usezn/zn/issues.
 
@@ -932,8 +932,8 @@ Limits: [docs/threat-model.md](docs/threat-model.md). Per-agent support:
 - MCP Server interface for Claude Code, Cursor, and custom agent loops.
 - Bidirectional inspection for prompt inputs and tool returns.
 
-[Unreleased]: https://github.com/usezn/zn/compare/v1.14.0-rc.1...next
-[1.14.0-rc.1]: https://github.com/usezn/zn/compare/v1.13.1...v1.14.0-rc.1
+[Unreleased]: https://github.com/usezn/zn/compare/v1.14.0-rc.2...next
+[1.14.0-rc.2]: https://github.com/usezn/zn/compare/v1.13.1...v1.14.0-rc.2
 [1.13.1]: https://github.com/usezn/zn/compare/v1.13.0...v1.13.1
 [1.13.0]: https://github.com/usezn/zn/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/usezn/zn/compare/v1.11.0...v1.12.0
