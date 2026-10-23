@@ -66,7 +66,11 @@ test('long runs of words do not make the family slow', () => {
 // a verdict.
 const ID_RULES = Object.fromEntries(rules.INJECTION_RULES.filter((r) => FAMILY.includes(r.id)).map((r) => [r.id, r]));
 const USER_GROUPS = {
-  'pi:identity_request': ['(?:user|operator|owner|human|principal)'],
+  'pi:identity_request': [
+    '(?:user|operator|owner|human|principal)',
+    String.raw`(?:whoami|git\s{1,4}config\s{1,4}(?:--[a-z-]{1,12}\s{1,4}){0,2}user\.(?:email|name))`,
+    String.raw`(?:your|their)\s{1,4}(?:(?:primary|login|account|real)\s{1,4})?e-?mail(?:\s{1,4}address(?:es)?)?`,
+  ],
   'pi:identity_request_multi': [
     '(?:usuario|operador|due[ñn]o|propietario)',
     '(?:usu[aá]rio|operador|dono|propriet[aá]rio)',
@@ -74,6 +78,7 @@ const USER_GROUPS = {
     '(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)',
     '(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)',
     '(?:用户|使用者|操作者|主人|所有者)',
+    String.raw`(?:whoami|git\s{1,4}config\s{1,4}(?:--[a-z-]{1,12}\s{1,4}){0,2}user\.(?:email|name))`,
   ],
 };
 
@@ -111,7 +116,7 @@ function placeGroups(source) {
       if (source[j] === ')' && --depth === 0) break;
     }
     const group = source.slice(i, j + 1);
-    if (/header/i.test(group) && group.length < 400 && !group.includes('[^\\n]') && !found.includes(group)) found.push(group);
+    if (/header/i.test(group) && group.length < 600 && !group.includes('[^\\n]') && !found.includes(group)) found.push(group);
   }
   return found;
 }
@@ -121,7 +126,7 @@ test('the rule ids are exactly the two identity-request ids', () => {
 });
 
 test('the prefilters hold the user and place groups that every alternative of the pattern needs', () => {
-  for (const [id, expected] of [['pi:identity_request', 1], ['pi:identity_request_multi', 6]]) {
+  for (const [id, expected] of [['pi:identity_request', 2], ['pi:identity_request_multi', 6]]) {
     const rule = ID_RULES[id];
     const [gate, place] = rule.prefilters;
     const places = placeGroups(rule.pattern.source);
