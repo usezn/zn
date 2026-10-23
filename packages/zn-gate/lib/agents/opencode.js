@@ -169,14 +169,20 @@ function pluginSource(opts = {}) {
   // cmd.exe must not look for `zn` in the current directory first (the
   // project, where an agent can write a zn.cmd of its own).
   const shell = project ? 'process.platform === "win32"' : 'false';
+  // Where to delete the plugin: this user's file, or the project's own folder (the path differs per person).
+  const pluginFile = JSON.stringify(project ? '.opencode/plugins/' + PLUGIN_FILE + ' in this project' : (opts.pluginFile || path.join('<OpenCode config folder>', 'plugins', PLUGIN_FILE)).replace(/\\/g, '/'));
   const env = project ? '{ ...process.env, NoDefaultCurrentDirectoryInExePath: "1" }' : 'process.env';
   return `${PLUGIN_MARK} (written by \`zn hooks install opencode\`; remove with \`zn hooks uninstall opencode\`).
 // Sends tool calls, tool results and chat messages to the local zn hook runner,
 // which blocks reads of secret files, puts commands that use stored secrets
 // through \`zn run\`, and replaces secret values in tool output with __ZN_ tokens.
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 
 ${launch}
+// Shown by OpenCode when zn-gate was removed but this plugin was left behind: every call and message
+// is blocked (fails closed), so the text says what happened and how to get out of it.
+const GONE = "zn-gate is no longer installed, but its OpenCode plugin is still active, so zn blocks every tool call and message. To fix this, reinstall zn-gate (npm install -g zn-gate) or delete the plugin file " + ${pluginFile} + ", then restart OpenCode.";
 const TIMEOUT_MS = ${HOOK_TIMEOUT_S * 1000};
 // The only answers the plugin acts on. Any other answer is an error, which
 // blocks the call (before), withholds the output (after) or stops the message.
@@ -199,6 +205,8 @@ function runHook(event) {
     let out = "";
     let done = false;
     const finish = (v) => { if (!done) { done = true; resolve(v); } };
+    // A runner that is gone cannot answer: say why, not just "no answer".
+    if (RUNNER !== null && !existsSync(RUNNER)) { finish({ action: "error", message: "zn-gate was removed", gone: true }); return; }
     let child;
     try {
       child = spawn(NODE, ${argv}, { stdio: ["pipe", "pipe", "ignore"], windowsHide: true, shell: ${shell}, env: ${env} });
@@ -208,7 +216,7 @@ function runHook(event) {
     }
     const timer = setTimeout(() => { try { child.kill(); } catch (_) {} finish({ action: "error", message: "timeout" }); }, TIMEOUT_MS);
     child.stdout.on("data", (c) => { out += c; });
-    child.on("error", (err) => { clearTimeout(timer); finish({ action: "error", message: String(err && err.message || err) }); });
+    child.on("error", (err) => { clearTimeout(timer); finish({ action: "error", message: String(err && err.message || err), gone: !!err && err.code === "ENOENT" }); });
     child.on("close", () => {
       clearTimeout(timer);
       let answer = null;
@@ -227,7 +235,7 @@ export const ZnGate = async ({ directory }) => ({
   "tool.execute.before": async (input, output) => {
     const r = await runHook({ hook: "tool.execute.before", tool: input.tool, sessionID: input.sessionID, cwd: directory, args: output.args, shell: SHELL, platform: process.platform });
     if (r.action === "deny") throw new Error(r.message);
-    if (r.action === "error") throw new Error("zn: the secret scrubber is not working (" + r.message + "); call blocked");
+    if (r.action === "error") throw new Error(r.gone ? GONE : "zn: the secret scrubber is not working (" + r.message + "); call blocked");
     if (r.action === "args" && r.args) for (const [k, v] of Object.entries(r.args)) output.args[k] = v;
   },
   "tool.execute.after": async (input, output) => {
@@ -255,7 +263,7 @@ export const ZnGate = async ({ directory }) => ({
     if (!prompt) return;
     const r = await runHook({ hook: "chat.message", sessionID: input.sessionID, cwd: directory, prompt });
     if (r.action === "deny") throw new Error(r.message);
-    if (r.action === "error") throw new Error("zn: the secret scrubber is not working (" + r.message + "); message not sent");
+    if (r.action === "error") throw new Error(r.gone ? GONE : "zn: the secret scrubber is not working (" + r.message + "); message not sent");
   },
 });
 `;
@@ -280,7 +288,7 @@ function install(opts = {}) {
     throw new Error(file + ' exists and was not written by zn; left unchanged');
   }
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  writeFileAtomic(file, pluginSource(opts), 0o644);
+  writeFileAtomic(file, pluginSource({ ...opts, pluginFile: file }), 0o644);
   if (opts.mcp !== false) {
     // A project's opencode.json is shared: the hint names zn on the PATH, never the paths of this machine.
     const project = (opts.scope || 'user') === 'project';

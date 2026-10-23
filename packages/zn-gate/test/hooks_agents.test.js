@@ -416,7 +416,7 @@ test('opencode plugin: sends only the name of the shell, not its path', () => {
   assert.match(src, /\.split\("\/"\)\.pop\(\)/);
   assert.match(src, /args: output\.args, shell: SHELL, platform: process\.platform/);
   // The generated plugin is valid JavaScript.
-  assert.doesNotThrow(() => new (require('vm').Script)(src.replace(/^import .*$/m, '').replace(/^export const/m, 'const')));
+  assert.doesNotThrow(() => new (require('vm').Script)(src.replace(/^import .*$/gm, '').replace(/^export const/m, 'const')));
 });
 
 test('opencode project plugin: cmd.exe does not look for zn in the project directory first', () => {
