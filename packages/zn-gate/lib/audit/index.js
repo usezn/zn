@@ -1034,6 +1034,8 @@ function checkInstructions(ctx) {
       let res = null;
       // Strict mode: audit grades each finding itself (high, medium, info).
       try { res = rules().evaluate(t, { strict: true }); } catch (_) { res = null; }
+      // A broken project rules file is reported once, as a configuration finding (see audit()), not on every line.
+      if (res && res.rule === 'custom:invalid_rules') res = null;
       let demo = false;
       if (res && res.verdict === 'block') {
         const d = docShape(t, { doc, skillNote, closedTags, fenced: fenced.has(i), lines: ctx.lines, at: i, open: fenceOpen.get(i) });
@@ -1932,6 +1934,15 @@ function audit(opts) {
   }
   checkShadowing(root, out);
   inventory(extDirs, out);
+  try {
+    const cfg = rules().loadCustomConfig();
+    if (cfg.errors.length > 0) {
+      const m = /^line (\d+):/.exec(cfg.errors[0]);
+      const f = uncheckedFinding({ file: cfg.file, agent: 'any', severity: 'medium', detail: 'The project rules in ' + cfg.file + ' are not valid (' + cfg.errors[0] + '), so they were not applied in this audit. To fix it, edit ' + cfg.file + (m ? ' line ' + m[1] : '') + ' or delete it.', fix: 'Edit the project rules file, or delete it; zn-gate check lists the errors.' });
+      if (m) f.line = Number(m[1]);
+      out.push(f);
+    }
+  } catch (_) { /* the rules file never stops the audit */ }
   for (const u of unchecked) out.push(uncheckedFinding(u));
   if (truncated && truncated.reason === 'entries') {
     out.push(uncheckedFinding({ file: truncated.at, agent: 'any', severity: 'high', detail: 'zn audit stopped after ' + maxEntries + ' directory entries (in ' + truncated.at + '); agent directories were read first, but files after that point were not checked.' }));
