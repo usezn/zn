@@ -285,12 +285,107 @@ def _test_markdown_image(text: str) -> bool:
     return False
 
 
+# The two identity-request rules start with a lookbehind chain and a group of
+# about 25 alternatives that Python's re tries at every start position, so a
+# long text without a match costs 200 to 500 ms per 256 KB. Each rule can only
+# match when the text holds a word from every part of its pattern (verb,
+# owner, identity noun, destination), so a few cheap searches for those words
+# decide the common case. The words are the pattern's own alternations, with
+# the same flag, so the gate can only skip a text the pattern cannot match.
+# Each group is one language (or branch); the text must satisfy every word
+# list of at least one group.
+def _gate(*lists: str) -> Tuple[re.Pattern[str], ...]:
+    return tuple(re.compile(src, re.IGNORECASE) for src in lists)
+
+
+_IDENTITY_EN_GATES = (
+    _gate(
+        r'user|operator|owner|human|principal|customer|account\s+holder',
+        r'header|x-|url\s+param|query\s+(?:string|param)|\?[a-z_]|cookie|form\s+(?:field|input|data)|body|payload'
+        r'|next\s+(?:request|call|message)|(?:subsequent|following|every|each|outgoing)\s+(?:http\s+)?(?:request|call|fetch)',
+        r'include|add|put|attach|append|insert|embed|set|send|pass|forward|submit|post|write|specify|provide|supply'
+        r'|encode|inject|place|share|transmit|reveal|disclose|expose',
+        r'name|mail|account|key|token|credential|password|login|identity|identifier|phone|address|secret|user\s{0,2}id',
+    ),
+    _gate(
+        r'user|operator|owner|human|principal',
+        r'identify|reveal|disclose|state|report|announce|tell|inform|say',
+    ),
+    _gate(
+        r'working|acting',
+        r'tell|state|say|reveal|report',
+    ),
+)
+
+_IDENTITY_MULTI_GATES = (
+    _gate(  # Spanish
+        r'usuario|operador|due[ñn]o|propietario',
+        r'cabecera|encabezado|header|par[aá]metro|cookie|formulario|campo|siguiente|pr[oó]xima|url',
+        r'incluye|incluya|incluyas|añade|añada|agrega|agregue|pon|ponga|envía|envia|envíe|adjunta|adjunte|inserta|pasa'
+        r'|indica|comparte|revela',
+        r'correo|e-?mail|nombre|cuenta|clave|token|credenciales|contrase[ñn]a|identidad',
+    ),
+    _gate(  # Portuguese
+        r'usu[aá]rio|operador|dono|propriet[aá]rio',
+        r'cabe[cç]alho|header|par[aâ]metro|cookie|formul[aá]rio|campo|pr[oó]xima|url',
+        r'inclua|inclui|adicione|adiciona|coloque|coloca|envie|envia|anexe|insira|passe|compartilhe|revele',
+        r'e-?mail|nome|conta|chave|token|credenciais|senha|identidade',
+    ),
+    _gate(  # French
+        r'utilisateur|opérateur|propriétaire',
+        r'en-t[eê]te|header|param[eè]tre|cookie|formulaire|champ|prochaine|url',
+        r'inclus|incluez|ajoute|ajoutez|mets|mettez|envoie|envoyez|joins|joignez|insère|insérez|transmets|transmettez'
+        r'|partage|partagez|révèle|révélez',
+        r'e-?mail|courriel|nom|compte|clé|jeton|identifiant|mot\s+de\s+passe|identité',
+    ),
+    _gate(  # German
+        r'nutzers|benutzers|bedieners|betreibers|besitzers|operators',
+        r'header|kopfzeile|parameter|cookie|formular|feld|nächste|url',
+        r'füge|fuege|sende|schicke|übergib|uebergib|setze|gib|teile|nenne|hänge|binde',
+        r'e-?mail|name|konto|schlüssel|token|zugangsdaten|passwort|identität',
+    ),
+    _gate(  # Russian
+        r'пользовател|оператор|владельц|хозяин',
+        r'заголов|header|параметр|cookie|куки|форм|поле|следующ|url',
+        r'добавь|добавьте|включи|включите|отправь|отправьте|передай|передайте|укажи|укажите|вставь|вставьте',
+        r'почт|email|e-mail|имя|имени|логин|аккаунт|ключ|токен|парол|учётн',
+    ),
+    _gate(  # Chinese
+        r'用户|使用者|操作者|主人|所有者',
+        r'请求头|头部|标头|header|参数|cookie|表单|字段|下一个请求|下一次请求|下个请求|url|查询字符串',
+        r'添加|加入|包含|附上|发送|传递|提供|填写|放入|带上|附加',
+        r'邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码',
+    ),
+)
+
+
+def _identity_tester(rule_id: str, gates: Tuple[Tuple[re.Pattern[str], ...], ...]) -> Any:
+    pattern = next(pat for rid, pat, _ in INJECTION_RULES if rid == rule_id)
+
+    def test(text: str) -> bool:
+        for group in gates:
+            for word in group:
+                if not word.search(text):
+                    break
+            else:
+                return pattern.search(text) is not None
+        return False
+
+    return test
+
+
+_test_identity_request = _identity_tester('pi:identity_request', _IDENTITY_EN_GATES)
+_test_identity_request_multi = _identity_tester('pi:identity_request_multi', _IDENTITY_MULTI_GATES)
+
+
 # Rules whose match is computed by a function instead of pattern.search().
 RULE_TESTERS: Dict[str, Any] = {
     'indirect:hidden_tag': _test_hidden_tag,
     'exfil:markdown_image': _test_markdown_image,
     'pi:multi_ru': _test_multi_ru,
     'pi:multi_zh': _test_multi_zh,
+    'pi:identity_request': _test_identity_request,
+    'pi:identity_request_multi': _test_identity_request_multi,
 }
 
 EXFIL_VERB_SOURCE = r'(?<![A-Za-z0-9_])(give|reveal|send|show|print|expose|leak|paste|dump|read|open|cat|fetch|extract|steal)(?![A-Za-z0-9_])'
