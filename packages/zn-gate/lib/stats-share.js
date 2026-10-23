@@ -124,23 +124,27 @@ function post(report) {
   });
 }
 
-/** Send the pending reports; sent_until moves past each day sent. Returns { sent, failed }. */
+/** Send the pending reports; sent_until moves past each day sent. Returns { sent, failed, sentDays, failedDays }. */
 async function sendPending({ now = new Date(), print = () => {} } = {}) {
   const reports = pendingReports(now);
   let sent = 0;
   let failed = 0;
+  const sentDays = [];
+  const failedDays = [];
   for (const r of reports) {
     print(r);
     if (await post(r)) {
       sent++;
+      sentDays.push(r.day);
       const cfg = readConfig();
       cfg.stats = { ...(cfg.stats || {}), sent_until: stats.today(new Date(Date.parse(r.day + 'T00:00:00Z') + 86400000)) };
       writeConfig(cfg);
     } else {
       failed++;
+      failedDays.push(r.day);
     }
   }
-  return { sent, failed };
+  return { sent, failed, sentDays, failedDays };
 }
 
 module.exports = { status, setShare, pendingReports, sendPending, ENDPOINT };
