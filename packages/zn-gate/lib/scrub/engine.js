@@ -49,6 +49,7 @@ const { warnNotice, WARN_REASON } = require('../team/effective');
 /* The vault's resolve-policy answer version this engine understands. */
 const RESOLVE_POLICY = 1;
 const { invisibleView } = require('../rules');
+const { normalisedView } = require('./normalize');
 
 const TOKEN_SOURCE = '__ZN_([A-Z0-9](?:[A-Z0-9_]*[A-Z0-9])?)__';
 const TOKEN_RE = new RegExp(TOKEN_SOURCE, 'g');
@@ -163,13 +164,26 @@ function scan(text, ctx) {
   // union is resolved as one set of spans.
   const direct = scanText(text, c);
   const view = invisibleView(text);
-  if (!view) return direct;
-  const viaView = scanText(view.clean, c).map((s) => ({
-    ...s,
-    start: view.map[s.start],
-    end: s.end > s.start ? view.map[s.end - 1] + 1 : view.map[s.start],
-  }));
-  return resolveOverlaps(direct.concat(viaView));
+  const norm = normalisedView(text);
+  if (!view && !norm) return direct;
+  let all = direct;
+  if (view) {
+    all = all.concat(scanText(view.clean, c).map((s) => ({
+      ...s,
+      start: view.map[s.start],
+      end: s.end > s.start ? view.map[s.end - 1] + 1 : view.map[s.start],
+    })));
+  }
+  // Shell-split quotes and percent-encoding: scanned as one decoded view; a
+  // span covers the whole original word or encoded value.
+  if (norm) {
+    all = all.concat(scanText(norm.clean, c).map((s) => ({
+      ...s,
+      start: norm.starts[s.start],
+      end: s.end > s.start ? norm.ends[s.end - 1] : norm.starts[s.start],
+    })));
+  }
+  return resolveOverlaps(all);
 }
 
 function scanText(text, c) {
