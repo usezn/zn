@@ -413,6 +413,74 @@ test('a recursive search reads one level of bash -c and asks on a path held in a
   assert.equal((await shell('bash -c "cd config" && grep -r AWS .')).decision, 'allow');
 });
 
+test('a recursive search is followed through nested shell strings, eval and a variable that holds the folder', async (t) => {
+  const dir = tempDir(t, 'zn-agy-forms-');
+  fs.mkdirSync(path.join(dir, 'config'));
+  fs.mkdirSync(path.join(dir, 'docs'));
+  fs.writeFileSync(path.join(dir, 'config', '.env'), 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n');
+  fs.writeFileSync(path.join(dir, 'docs', 'a.txt'), 'hello');
+  const ws = { workspacePaths: [dir] };
+  const shell = async (line) => (await run(pre('run_command', { CommandLine: line, Cwd: dir }, ws))).output;
+  const asks = [
+    'bash -c "bash -c \'grep -r AWS config\'"',
+    "sh -c \"sh -c 'grep -r AWS config'\"",
+    'bash -c "bash -c \\"grep -r AWS config\\""',
+    "bash -c \"sh -c \\\"bash -c 'grep -r AWS config'\\\"\"",
+    'eval "grep -r AWS config"',
+    "eval 'cd config && grep -r AWS .'",
+    'eval grep -r AWS config',
+    'eval "eval \'grep -r AWS config\'"',
+    'bash -c "eval \'grep -r AWS config\'"',
+    'eval "D=config"; grep -r AWS $D',
+    'D=config; grep -r AWS $D',
+    'D=config; grep -r AWS "$D"',
+    'D=config; grep -r AWS ${D}',
+    'export D=config; grep -r AWS $D',
+    'D=config && grep -r AWS $D',
+    'D=config; cd $D && grep -r AWS .',
+    'D=config; bash -c "grep -r AWS $D"',
+    'D=con; E=fig; grep -r AWS $D$E',
+    'D=docs; D=config; grep -r AWS $D',
+    'D=config; false && D=docs; grep -r AWS $D',
+    'D=docs; false || D=config; grep -r AWS $D',
+    'grep -r AWS $D',
+    'D=$X; grep -r AWS $D',
+    'D=config; grep -r AWS ${D:-docs}',
+    'D=docs; bash -c "bash -c \'grep -r AWS $E\'"',
+  ];
+  for (const line of asks) assert.equal((await shell(line)).decision, 'force_ask', line);
+  const allows = [
+    'bash -c "ls"',
+    'eval echo hi',
+    'bash -c "bash -c \'ls config\'"',
+    'bash -c "bash -c \'grep -r todo docs\'"',
+    'eval "grep -r todo docs"',
+    'eval "cd docs && grep -r todo ."',
+    'D=docs; grep -r todo $D',
+    'D=docs; cd $D && grep -r todo .',
+    'D=docs; eval "grep -r todo $D"',
+    'D=config; grep AWS $D/.env.example',
+    'D=config; ls $D',
+    'grep -r todo docs',
+    'eval "D=docs"; grep -r todo $D',
+    'bash -c "cd config" && eval "grep -r todo docs"',
+  ];
+  for (const line of allows) assert.equal((await shell(line)).decision, 'allow', line);
+  // three nested strings are read; a fourth is refused by the shell check before the search scan sees it
+  const deep = (n, inner) => n ? 'bash -c ' + JSON.stringify(deep(n - 1, inner)) : inner;
+  assert.equal((await shell(deep(3, 'grep -r AWS config'))).decision, 'force_ask');
+  assert.equal((await shell(deep(3, 'grep -r todo docs'))).decision, 'allow');
+  assert.equal((await shell(deep(3, 'ls docs'))).decision, 'allow');
+  assert.notEqual((await shell(deep(6, 'grep -r AWS docs'))).decision, 'allow');
+  // linear: a very long line of assignments and nested strings finishes fast and never allows a search unread
+  const t0 = Date.now();
+  const big = 'D=docs; '.repeat(13000) + 'bash -c "grep -r AWS $D"';
+  assert.equal(big.length > 100000, true);
+  assert.notEqual((await shell(big)).decision, 'allow'); // a line this long is refused or asked, never read in part and allowed
+  assert.notEqual((await shell('eval ' + JSON.stringify('x=1; '.repeat(20000) + 'grep -r AWS config'))).decision, 'allow');
+  assert.ok(Date.now() - t0 < 3000, 'took ' + (Date.now() - t0) + ' ms');
+});
+
 test('a very long line is not allowed unread, and an unknown cd folder or a ~ path is followed', async (t) => {
   const dir = tempDir(t, 'zn-agy-long-');
   const home = tempDir(t, 'zn-agy-home-');
