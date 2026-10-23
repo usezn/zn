@@ -121,3 +121,19 @@ test('short folders that are not instruction folders stay allowed (win32 control
     assert.deepEqual(benign.filter((p) => policy.instructionWriteNotice(p, O)), []);
   });
 });
+
+test('win32: many short folders after .cursor/rules still ask, and a long path stays fast', () => {
+  asWindows(() => {
+    const deep = 'CURSOR~1/rules/' + 'CLAUDE~1/'.repeat(7) + 'x.mdc';
+    assert.ok(policy.instructionWriteNotice(deep, O), deep);
+    assert.ok(policy.instructionWriteNotice('CURSOR~1/rules/' + 'CLAUDE~1/'.repeat(6) + 'x.mdc', O));
+    const long = 'CURSOR~1/rules/' + 'CLAUDE~1/'.repeat(4000) + 'x.mdc';
+    const plain = 'docs/' + 'notes/'.repeat(4000) + 'x.md';
+    const t0 = process.hrtime.bigint();
+    policy.instructionWriteNotice(long, O);
+    policy.instructionWriteNotice(plain, O);
+    const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+    assert.ok(ms < 2000, 'took ' + ms + ' ms');
+    assert.equal(policy.instructionWriteNotice(plain, O), null);
+  });
+});
