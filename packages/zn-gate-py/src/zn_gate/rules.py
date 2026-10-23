@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-25.8
+RULES_VERSION: 2026-10-25.9
 Zero external dependencies. Pure Python stdlib.
 """
 
@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, overload
 
 
-RULES_VERSION = "2026-10-25.8"
+RULES_VERSION = "2026-10-25.9"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -308,7 +308,17 @@ _IDENTITY_PATTERNS: Dict[str, re.Pattern[str]] = {
 }
 
 
+# Node compiles these patterns with the "iu" flags (simple case folding). Python's
+# re.IGNORECASE also folds dotless i (U+0131) and dotted capital I (U+0130) to "i",
+# which simple case folding does not. The two letters are swapped for a private-use
+# character of the same length (so the {0,N} windows are unchanged) before matching,
+# which gives the same result as Node on raw text; the normalised text, where both
+# letters already read as "i", is still checked by the caller.
+_NO_I_FOLD = str.maketrans({'ı': '', 'İ': ''})
+
+
 def _identity_test(rule_id: str, text: str) -> bool:
+    text = text.translate(_NO_I_FOLD)
     for prefilter in IDENTITY_PREFILTERS[rule_id]:
         if prefilter.search(text) is None:
             return False
