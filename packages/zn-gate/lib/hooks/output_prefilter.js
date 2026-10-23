@@ -43,7 +43,7 @@ const EXFIL_OBJECT_RE = /password|secret|credential|token|api[_-]?key|ssh[_-]?ke
 // reach these tests, they go to the full rules. The groups are copied from the alternations of the
 // two patterns in lib/rules.js, written without whitespace and widened to stems where that is cheaper.
 const IDENTITY_PERSON_RE = /user|operator|owner|human|principal|customer|accountholder|who|e-?mail|usuario|operador|dueno|propietario|dono|proprietario|utilisateur|nutzer|benutzer|bediener|betreiber|besitzer/i;
-const IDENTITY_PLACE_RE = /header|x-|urlparam|query|\?[a-z_]{1,20}=|cookie|formfield|forminput|formdata|body|payload|next(?:request|call|message)|(?:subsequent|following|every|each|outgoing)(?:http)?(?:request|call|fetch)|cabecera|encabezado|cabecalho|en-t|kopfzeile|param|formular|campo|champ|feld|peticion|solicitud|requisicao|requete|url/i;
+const IDENTITY_PLACE_RE = /header|x-|urlparam|query|\?[a-z_]{1,20}=|cookie|formfield|forminput|formdata|body|payload|next(?:request|call|message)|(?:subsequent|following|every|each|outgoing)(?:http)?(?:request|call|fetch)|cabecera|encabezado|cabecalho|en-t|kopfzeile|param|formula|campo|champ|feld|peticion|solicitud|requisicao|requete|url/i;
 const IDENTITY_PHRASE_RE = /your(?:user|operator|owner|human|principal)|who(?:your|the)(?:user|operator|owner|human|principal)is|whoyou(?:are|'re)|whoami|gitconfig/i;
 
 // Hidden markup: an opening "<" and a payload word.
