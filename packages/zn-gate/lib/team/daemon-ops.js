@@ -95,11 +95,17 @@ function makeTeamOps(ctx) {
 
   /* What a new policy has to beat: the version held and its canonical digest (same version, other content = refused). */
   function heldFloor(p) {
-    if (!p) return { minVersion: 0, heldDigest: null };
+    if (!p) return { minVersion: 0, heldDigest: null, heldExpiresAt: null };
     const pol = p.envelope && p.envelope.policy;
     let heldDigest = typeof p.digest === 'string' ? p.digest : null;
-    try { if (pol && pol.version === p.version) heldDigest = policy.digestOf(pol); } catch (err) { /* keep the stored digest */ }
-    return { minVersion: Number(p.version) || 0, heldDigest };
+    let heldExpiresAt = null;
+    try {
+      if (pol && pol.version === p.version) {
+        heldDigest = policy.digestOf(pol);
+        heldExpiresAt = Date.parse(pol.expires_at);
+      }
+    } catch (err) { /* keep the stored digest */ }
+    return { minVersion: Number(p.version) || 0, heldDigest, heldExpiresAt: Number.isFinite(heldExpiresAt) ? heldExpiresAt : null };
   }
 
   async function updateTeam(fn) {

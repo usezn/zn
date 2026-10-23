@@ -61,9 +61,17 @@ function canonicalJson(value) {
   return '{' + keys.map((k) => JSON.stringify(k) + ':' + canonicalJson(value[k])).join(',') + '}';
 }
 
-/** SHA-256 (hex) of the canonical JSON of a policy: what "the same policy" means for one version. */
+/**
+ * SHA-256 (hex) of the canonical JSON of a policy without its validity dates:
+ * what "the same policy" means for one version. The server signs the same
+ * version again every day with new issued_at and expires_at, so the dates are
+ * not part of the content.
+ */
 function digestOf(p) {
-  return crypto.createHash('sha256').update(canonicalJson(p), 'utf8').digest('hex');
+  const content = Object.assign({}, p);
+  delete content.issued_at;
+  delete content.expires_at;
+  return crypto.createHash('sha256').update(canonicalJson(content), 'utf8').digest('hex');
 }
 
 /** kid = first 16 hex characters of SHA-256 of the raw 32-byte public key. */
@@ -155,8 +163,10 @@ function checkShape(p) {
  *   -> {ok: true, policy, expired} | {ok: false, error}
  * envelope: {policy, signature: {alg, kid, sig}} as GET /v1/org/policy returns it.
  * pin: the organization's public key from `zn team join`.
- * minVersion + heldDigest: the version and canonical digest (digestOf) of the
- * policy already held; the same version with another digest is refused.
+ * minVersion + heldDigest + heldExpiresAt: the version, content digest (digestOf,
+ * without the dates) and expiry (ms) of the policy already held. The same
+ * version is accepted only with the same content and an expiry that is not
+ * earlier than the one held (the server re-signs a version every day).
  * allowExpired: used when reading the cache, so an expired policy can still
  * restrict (strict mode); a downloaded policy must never be expired.
  */
@@ -185,8 +195,9 @@ function verifyEnvelope(envelope, pin, opts) {
   if (o.minVersion && p.version < o.minVersion) return { ok: false, error: 'policy version rollback' };
   // The same version must be the same policy: a second signed policy with the
   // version already held but other content is refused.
-  if (o.minVersion && o.heldDigest && p.version === o.minVersion && digestOf(p) !== o.heldDigest) {
-    return { ok: false, error: 'policy version already used with different content' };
+  if (o.minVersion && o.heldDigest && p.version === o.minVersion) {
+    if (digestOf(p) !== o.heldDigest) return { ok: false, error: 'policy version already used with different content' };
+    if (Number.isFinite(o.heldExpiresAt) && Date.parse(p.expires_at) < o.heldExpiresAt) return { ok: false, error: 'policy older than the one held' };
   }
   return { ok: true, policy: p, expired };
 }
@@ -280,11 +291,12 @@ function accept(envelope, etag, opts) {
   const prev = readCache(o);
   let minVersion = Number(team.min_policy_version) || 0;
   let heldDigest = null;
+  let heldExpiresAt = null;
   if (prev) {
     const pv = verifyEnvelope(prev.envelope, pin, { now: o.now, org: team.org, allowExpired: true });
-    if (pv.ok && pv.policy.version >= minVersion) { minVersion = pv.policy.version; heldDigest = digestOf(pv.policy); }
+    if (pv.ok && pv.policy.version >= minVersion) { minVersion = pv.policy.version; heldDigest = digestOf(pv.policy); heldExpiresAt = Date.parse(pv.policy.expires_at); }
   }
-  const v = verifyEnvelope(envelope, pin, { now: o.now, org: team.org, minVersion, heldDigest });
+  const v = verifyEnvelope(envelope, pin, { now: o.now, org: team.org, minVersion, heldDigest, heldExpiresAt });
   if (!v.ok) return { ok: false, error: v.error };
   writeJson(paths(o).policyFile, {
     v: 1, envelope, etag: typeof etag === 'string' && etag.length <= 200 ? etag : null,

@@ -1,5 +1,5 @@
 ### Security
-- `zn team sync` refuses a second signed policy that carries the same version as the one already held but different content, and checks the version again when it saves the policy, so a policy replaced during a download is not overwritten.
+- `zn team sync` refuses a second signed policy that carries the same version as the one already held but different content, and checks the version again when it saves the policy, so a policy replaced during a download is not overwritten. The organization's policy service signs the same version again every day with new validity dates; those dates are not part of the content, so the daily renewal is accepted and extends the validity, while an older signature of the same version cannot shorten it.
 - `zn team join` no longer uploads the audit records written before you joined. Only records from the join on are sent; `zn team join <token> --include-history` adds the earlier ones, asks for it in its own warning in the confirmation dialog, and works only at the first join of an installation. A machine that joined with an earlier version keeps sending everything, as agreed then.
 
 ### Fixed

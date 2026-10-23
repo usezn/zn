@@ -71,8 +71,11 @@ zn-gate applies a downloaded policy only if:
   the future (five minutes of clock difference are tolerated);
 - its version is not lower than the last one accepted on this machine, and a
   policy with the same version as the one held has the same content (zn-gate
-  keeps a digest of each accepted policy and refuses a second, different
-  policy signed under the same version).
+  keeps a digest of each accepted policy, without its validity dates, and
+  refuses a second, different policy signed under the same version). The
+  service signs the same version again every day with new dates: that renewal
+  is accepted and extends the validity, while an older signature of the same
+  version cannot shorten it.
 
 The accepted policy is kept inside the encrypted vault. `~/.zn/org-policy.json`
 is a readable copy: editing or deleting it does not remove any restriction.

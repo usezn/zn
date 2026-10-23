@@ -494,6 +494,46 @@ test('another signed policy with the version already held but other content is r
   assert.strictEqual((await m.o.teamSync({ upload: false })).policy.status, 'updated');
 });
 
+test('the server re-signs the same version every day with new dates: each sync is accepted and the dates move forward', async () => {
+  // A stand-in server whose clock we move: day 1, 2 and 3 of the same published version.
+  let clock = Date.now() - 2 * DAY;
+  const daily = await startFakeTeamServer({ now: () => clock });
+  try {
+    const m = machine();
+    await m.o.teamJoin({ join_token: daily.createJoinToken({ maxUses: 5 }), api_base: daily.base, agent: 'claude-code' });
+    daily.publishPolicy({ rules: [{ secret: 'A_B', agents: ['*'], deny: true }] });
+    let last = null;
+    for (let n = 0; n < 3; n += 1) {
+      if (n) clock += DAY;
+      const r = await m.o.teamSync({ upload: false });
+      assert.strictEqual(r.policy.status, 'updated', 'day ' + (n + 1) + ': ' + JSON.stringify(r.policy));
+      const pol = m.secrets.team.policy.envelope.policy;
+      assert.strictEqual(pol.version, 1);
+      if (last) assert.ok(Date.parse(pol.expires_at) > last, 'the stored expiry moved forward');
+      last = Date.parse(pol.expires_at);
+      assert.strictEqual(policy.readCache().envelope.policy.expires_at, pol.expires_at, 'the readable copy follows');
+      assert.strictEqual((await m.o.teamInfo()).policy.state, 'active');
+    }
+    assert.ok(!m.audit.some((a) => a.reason === 'policy:rejected'), 'no sync was audited as rejected');
+    // Another content under the same version is still refused, on a new day as well.
+    daily.state.policyContent = { rules: [] };
+    m.secrets.team.policy.etag = null;
+    const bad = await m.o.teamSync({ upload: false });
+    assert.strictEqual(bad.policy.status, 'rejected');
+    assert.match(bad.policy.error, /different content/);
+    // A server that goes back to an earlier day cannot shorten the validity held.
+    daily.state.policyContent = { rules: [{ secret: 'A_B', agents: ['*'], deny: true }] };
+    clock -= 2 * DAY;
+    m.secrets.team.policy.etag = null;
+    const old = await m.o.teamSync({ upload: false });
+    assert.strictEqual(old.policy.status, 'rejected');
+    assert.match(old.policy.error, /older than the one held/);
+    assert.strictEqual(Date.parse(m.secrets.team.policy.envelope.policy.expires_at), last, 'the held expiry did not change');
+  } finally {
+    await daily.close();
+  }
+});
+
 test('the version and digest are checked again inside the serialized write', async () => {
   const m = await joined();
   cloud.publishPolicy({ rules: [{ secret: 'A_B', agents: ['*'], deny: true }] });
