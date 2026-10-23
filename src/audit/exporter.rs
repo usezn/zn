@@ -9,6 +9,24 @@ use reqwest::Client;
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 
+/// The scheme, host and port of `endpoint`, for log lines. The path, the query string and any
+/// user info are left out, because a SIEM URL often carries a token there.
+fn endpoint_origin(endpoint: &str) -> String {
+    match reqwest::Url::parse(endpoint) {
+        Ok(url) => match (url.host_str(), url.port()) {
+            (Some(host), Some(port)) => format!("{}://{}:{}", url.scheme(), host, port),
+            (Some(host), None) => format!("{}://{}", url.scheme(), host),
+            _ => "<endpoint without a host>".to_string(),
+        },
+        Err(_) => "<unparsable endpoint>".to_string(),
+    }
+}
+
+/// A send error as text, without the request URL that reqwest puts in it.
+fn redacted_error(e: reqwest::Error) -> String {
+    e.without_url().to_string()
+}
+
 pub struct SiemExporter {
     config: SiemConfig,
     client: Client,
@@ -32,7 +50,10 @@ impl SiemExporter {
             }
         };
 
-        info!("SIEM exporter active, sending to {}", endpoint);
+        info!(
+            "SIEM exporter active, sending to {}",
+            endpoint_origin(&endpoint)
+        );
 
         let mut batch = Vec::with_capacity(self.config.batch_size);
 
@@ -87,7 +108,7 @@ impl SiemExporter {
                 // In production, you might want a retry logic or local buffer
             }
             Err(e) => {
-                error!("SIEM export network error: {}", e);
+                error!("SIEM export network error: {}", redacted_error(e));
             }
         }
     }
@@ -156,6 +177,49 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(1), exporter.run(rx))
             .await
             .expect("run should stop after the lag and the close");
+    }
+
+    #[test]
+    fn endpoint_origin_keeps_only_scheme_host_and_port() {
+        assert_eq!(
+            endpoint_origin("https://siem.example.test/ingest?token=SECRET123"),
+            "https://siem.example.test"
+        );
+        assert_eq!(
+            endpoint_origin(
+                "http://user:pass@siem.example.test:8088/services/collector?key=SECRET123"
+            ),
+            "http://siem.example.test:8088"
+        );
+        assert_eq!(
+            endpoint_origin("not a url SECRET123"),
+            "<unparsable endpoint>"
+        );
+        for e in [
+            "https://siem.example.test/ingest?token=SECRET123",
+            "http://user:pass@siem.example.test:8088/x?key=SECRET123",
+            "not a url SECRET123",
+        ] {
+            let shown = endpoint_origin(e);
+            assert!(!shown.contains("SECRET123") && !shown.contains("pass"));
+        }
+    }
+
+    #[tokio::test]
+    async fn send_error_text_has_no_url_or_token() {
+        // Port 1 refuses the connection at once.
+        let url = "http://127.0.0.1:1/ingest?token=SECRET123";
+        let err = Client::new()
+            .post(url)
+            .send()
+            .await
+            .expect_err("nothing listens on port 1");
+        // The raw error carries the URL (this is what used to reach the log)...
+        assert!(err.to_string().contains("SECRET123"));
+        // ...and the redacted text does not.
+        let text = redacted_error(err);
+        assert!(!text.contains("SECRET123"), "token in: {text}");
+        assert!(!text.contains("/ingest"), "path in: {text}");
     }
 
     #[test]
