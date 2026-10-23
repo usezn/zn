@@ -193,7 +193,7 @@ except GuardBlockError as e:
 
 ### `check_tool_result(result: Any, block_truncated: bool = False, strict: bool | None = None, allow_truncated: bool = False) -> Assessment`
 
-- Dicts, lists, dataclasses, models, `SimpleNamespace` (for example from `json.loads(..., object_hook=...)`) and `argparse.Namespace` nested deeper than ten levels are blocked (rule `size:nesting`). Other objects are read up to 32 levels deep and blocked past that. The same applies to results checked by `@guard(check_result=True)`.
+- Dicts, lists, dataclasses, models, `SimpleNamespace` (for example from `json.loads(..., object_hook=...)`) and `argparse.Namespace` nested deeper than ten levels are blocked (rule `size:nesting`). Other objects are read up to 32 levels deep and blocked past that, and more than 100,000 values taken from them is blocked (rule `size:items`) instead of being skipped. The same applies to results checked by `@guard(check_result=True)`.
 
 - Inspects external tool return values for indirect injection payloads. Long strings are scanned in overlapping windows up to 4 MB; `Assessment.truncated` is `True` when a string was not scanned in full. Such output (over 4 MB) is blocked by default (rule `size:truncated`) because its middle was never checked; pass `allow_truncated=True` or set `ZN_ALLOW_TRUNCATED=1` to allow it marked `truncated`. `block_truncated=True` and `ZN_BLOCK_TRUNCATED=1` force the block. `@guard(check_result=True)` uses this check.
 
