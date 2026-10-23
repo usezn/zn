@@ -183,14 +183,21 @@ function parseCommand(command, agentId) {
   const c = require('./shell-quote').readableWindowsCommand(String(command).trim());
   // zn's launcher script (lib/agents/launcher.js): '<dir>/zn-hook-<agent>.sh' <Event>. It names the Node.js and
   // runner it was installed with in ZN_NODE=... and ZN_RUNNER=... lines.
-  const lm = new RegExp("^'(" + audit.SAFE_ABS + '/zn-hook-' + agentId + "\\.sh)' ([A-Za-z]+)$").exec(c);
+  // Antigravity runs the command split on spaces with no shell, so zn writes the path unquoted there (an older
+  // zn-gate wrote it quoted, which that agent cannot start: `quoted` makes check ask for a reinstall).
+  const lm = new RegExp(agentId === 'antigravity' ? "^('?)(" + audit.SAFE_ABS + '/zn-hook-' + agentId + "\\.sh)\\1 ([A-Za-z]+)$" : "^()'(" + audit.SAFE_ABS + '/zn-hook-' + agentId + "\\.sh)' ([A-Za-z]+)$").exec(c);
   if (lm) {
+    const quoted = lm[1] === "'" || agentId !== 'antigravity';
+    lm.splice(1, 1);
+    lm.quoted = quoted;
+    lm.raw = c;
     let text = '';
-    try { text = fs.readFileSync(lm[1], 'utf8'); } catch (err) { return { launcher: lm[1], event: lm[2], unreadable: true }; }
+    const extra = agentId === 'antigravity' ? { quoted: lm.quoted, raw: lm.raw } : {};
+    try { text = fs.readFileSync(lm[1], 'utf8'); } catch (err) { return { launcher: lm[1], event: lm[2], unreadable: true, ...extra }; }
     const n = new RegExp("^ZN_NODE='(" + audit.SAFE_ABS + ")'$", 'm').exec(text);
     const r = new RegExp("^ZN_RUNNER='(" + audit.SAFE_ABS + ")'$", 'm').exec(text);
-    if (!n || !r) return { launcher: lm[1], event: lm[2], unreadable: true };
-    return { launcher: lm[1], event: lm[2], node: n[1], runner: r[1] };
+    if (!n || !r) return { launcher: lm[1], event: lm[2], unreadable: true, ...extra };
+    return { launcher: lm[1], event: lm[2], node: n[1], runner: r[1], ...extra };
   }
   // On Windows, Cursor and Gemini CLI run the same three steps as an encoded PowerShell script (launcher.windowsScript).
   const ws = require('./shell-quote').windowsCommandScript(c);
@@ -372,7 +379,11 @@ function cliHooks(spec, ctx, userFile, given) {
     const isFile = (f) => { try { return fs.statSync(f).isFile(); } catch (err) { return false; } };
     const recorded = !cmd.unreadable && isFile(cmd.node) && isFile(cmd.runner);
     const viaPath = !recorded && !cmd.unreadable && Boolean(znOnPath(ctx.env) && onAbsPath('node', ctx.env));
-    if (cmd.unreadable) {
+    if (spec.id === 'antigravity' && cmd.quoted && !cmd.winScript) {
+      // Antigravity splits the command on spaces and runs it with no shell: the quotes stay in the file name (ENOENT).
+      out.problem = 'its hook cannot start: Antigravity runs the command without a shell, so the quotes around the launcher path (' + cmd.launcher + ') become part of the file name and the hook never runs';
+      out.fix = REINSTALL(spec.id);
+    } else if (cmd.unreadable) {
       out.problem = 'its hook cannot start: its launcher script (' + cmd.launcher + ') is missing or was changed';
       out.fix = REINSTALL(spec.id);
     } else if (!recorded && !viaPath) {
@@ -383,7 +394,8 @@ function cliHooks(spec, ctx, userFile, given) {
       // Run it with the PATH check was given, which is what decides whether `zn` and `node` are found.
       // Windows cannot run a .sh file directly; Claude Code runs it with sh (Git Bash) there.
       const run = cmd.winScript ? { file: 'powershell.exe', args: ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(cmd.winScript, 'utf16le').toString('base64')] }
-        : process.platform === 'win32' ? { file: 'sh', args: [cmd.launcher, cmd.event] } : { file: cmd.launcher, args: [cmd.event] };
+        : spec.id === 'antigravity' && process.platform !== 'win32' ? { file: cmd.raw.split(' ')[0], args: cmd.raw.split(' ').slice(1) } // as Antigravity runs it: split on spaces, no shell
+          : process.platform === 'win32' ? { file: 'sh', args: [cmd.launcher, cmd.event] } : { file: cmd.launcher, args: [cmd.event] };
       out.live = { ...run, env: ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {} };
     }
   } else if (cmd.missing) {
