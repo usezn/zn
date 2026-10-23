@@ -248,7 +248,7 @@ Stores a secret. You type the value at a hidden prompt, or use `--clipboard`. `-
 zn-gate secret list
 ```
 
-Lists the stored secrets: names and policy, never values.
+Lists the stored secrets: names and policy, never values. The vault must be unlocked first (`zn-gate unlock`); on a locked vault the command exits with an error.
 
 Aliases: `secret ls`.
 
