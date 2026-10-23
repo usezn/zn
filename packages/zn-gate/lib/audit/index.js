@@ -887,7 +887,8 @@ function exfiltrationLine(t) {
 }
 
 function checkInstructions(ctx) {
-  const doc = isDocFile(ctx.rec.rel);
+  // A file CLAUDE.md imports with @ is loaded as instructions, wherever it sits.
+  const doc = !ctx.rec.importedBy && isDocFile(ctx.rec.rel);
   const claudeExt = /(^|\/)\.claude\/(commands|agents|skills)\//i.test(ctx.rec.rel);
   // Supporting notes of a skill (not SKILL.md itself): the only files here
   // that are not read as instructions.
