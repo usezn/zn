@@ -222,6 +222,22 @@ function normArgv0(argv0) {
   return a;
 }
 
+/* Each time a secret's value is set or replaced it gets a new random
+ * generation id. An approval records the generation it was granted for and
+ * counts only for that one, so a new value stored under the same name never
+ * inherits an old approval. */
+function newGeneration() {
+  return crypto.randomBytes(16).toString('hex');
+}
+
+/* Approval keys are <project>:<secret>:<command>; none of the parts holds a colon. */
+function dropApprovalsOf(secrets, name) {
+  if (!secrets.approvals || typeof secrets.approvals !== 'object') return;
+  for (const key of Object.keys(secrets.approvals)) {
+    if (key.split(':')[1] === name) delete secrets.approvals[key];
+  }
+}
+
 function approvalKey(project, secret, argv0) {
   const s = String(secret || '');
   if (!NAME_RE.test(s)) throw znError(CODES.POLICY_DENIED, 'invalid secret name. Next step: use letters, digits and underscores, for example MY_API_KEY.');
@@ -386,7 +402,11 @@ function makeOps(state, ctl) {
       return state.serial(async () => {
         const secrets = await state.loadSecrets();
         const prev = secrets.secrets[n];
-        secrets.secrets[n] = Object.assign(cleanMeta(meta), { value, created: prev ? prev.created : new Date().toISOString(), lastUsed: prev ? prev.lastUsed : null });
+        // The same value again is not a new secret: it keeps its generation and its approvals.
+        const sameValue = !!prev && typeof prev.generation === 'string' && prev.generation !== '' && prev.value === value;
+        const generation = sameValue ? prev.generation : newGeneration();
+        if (!sameValue) dropApprovalsOf(secrets, n);
+        secrets.secrets[n] = Object.assign(cleanMeta(meta), { value, generation, created: prev ? prev.created : new Date().toISOString(), lastUsed: prev ? prev.lastUsed : null });
         await writeAudit({ secret: n, mode: 'set', decision: 'allow', reason: prev ? 'updated' : 'created' });
         await state.saveSecrets();
         return true;
@@ -422,6 +442,7 @@ function makeOps(state, ctl) {
         const merged = proposed(prev);
         if (widening(prev, merged).some((x) => !adds.includes(x))) throw znError(CODES.POLICY_DENIED, 'the policy changed while waiting for confirmation; try again. Next step: run the request again.');
         secrets.secrets[n] = Object.assign(merged, { value: prev.value, created: prev.created, lastUsed: prev.lastUsed || null });
+        if (prev.generation) secrets.secrets[n].generation = prev.generation;
         writeAudit({ secret: n, mode: 'set', decision: 'allow', reason: adds.length ? 'policy_widened_confirmed' : 'policy_updated' });
         await state.saveSecrets();
         return true;
@@ -438,6 +459,13 @@ function makeOps(state, ctl) {
       const secrets = await state.loadSecrets();
       const rec = secrets.approvals && secrets.approvals[approvalKey(project, secret, argv0)];
       if (!rec || typeof rec !== 'object' || !rec.exe) return false;
+      // The approval counts only for the value it was granted for. One recorded
+      // before generations existed has none, so it is asked for again once.
+      const current = secrets.secrets[String(secret)];
+      if (!current || typeof current.generation !== 'string' || current.generation === '' || rec.gen !== current.generation) {
+        writeAudit({ secret: String(secret), mode: 'env', argv0, decision: 'deny', reason: 'value_changed' });
+        return false;
+      }
       if (typeof exePath !== 'string' || rec.exe !== exePath) {
         writeAudit({ secret: String(secret), mode: 'env', argv0, decision: 'deny', reason: exePath ? 'exe_changed' : 'exe_not_found' });
         return false;
@@ -465,6 +493,7 @@ function makeOps(state, ctl) {
       if (openFp != null && openFp !== fp) throw znError(CODES.POLICY_DENIED, 'the executable changed while it was being checked. Next step: run the command again; if it keeps changing, check where the program is installed.');
       const cmd = normArgv0(argv0);
       const loaded = await state.loadSecrets();
+      const generationAsked = loaded.secrets[String(secret)] ? loaded.secrets[String(secret)].generation || null : null;
       if (!loaded.secrets[String(secret)]) throw znError(CODES.NOT_FOUND, 'no secret named ' + secret + '. Next step: check the name for a typo; if the secret is missing, save it with zn secret set ' + secret + ' in your own terminal, or, if you are an agent, ask the user to do it.');
       const prev = loaded.approvals && loaded.approvals[key];
       const changed = prev && typeof prev === 'object' && prev.exe && (prev.exe !== exePath || prev.fp !== fp);
@@ -492,8 +521,12 @@ function makeOps(state, ctl) {
       return state.serial(async () => {
         const secrets = await state.loadSecrets();
         if (fingerprint(exePath) !== fp) throw znError(CODES.POLICY_DENIED, 'the executable changed while waiting for confirmation. Next step: run the command again.');
+        const current = secrets.secrets[String(secret)];
+        if (!current) throw znError(CODES.NOT_FOUND, 'no secret named ' + secret + '. Next step: check the name for a typo; if the secret is missing, save it with zn secret set ' + secret + ' in your own terminal, or, if you are an agent, ask the user to do it.');
+        if ((current.generation || null) !== generationAsked) throw znError(CODES.POLICY_DENIED, 'the secret changed while waiting for confirmation. Next step: run the command again.');
+        if (!current.generation) current.generation = newGeneration();
         if (!secrets.approvals || typeof secrets.approvals !== 'object') secrets.approvals = {};
-        secrets.approvals[key] = { ts: new Date().toISOString(), exe: exePath, fp };
+        secrets.approvals[key] = { ts: new Date().toISOString(), exe: exePath, fp, gen: current.generation };
         writeAudit({ secret: String(secret), mode: 'env', argv0, decision: 'ask:yes', reason: changed ? 'changed_exe_reapproved' : 'first_use_approved' });
         await state.saveSecrets();
         return true;
@@ -544,6 +577,7 @@ function makeOps(state, ctl) {
         const secrets = await state.loadSecrets();
         if (!Object.prototype.hasOwnProperty.call(secrets.secrets, n)) return false;
         delete secrets.secrets[n];
+        dropApprovalsOf(secrets, n);
         await writeAudit({ secret: n, mode: 'remove', decision: 'allow' });
         await state.saveSecrets();
         return true;

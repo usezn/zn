@@ -258,7 +258,7 @@ Aliases: `secret ls`.
 zn-gate secret rm NAME
 ```
 
-Removes a secret.
+Removes a secret, together with the first-use approvals it had. A new value stored under the same name asks for approval again.
 
 Aliases: `secret remove`.
 
@@ -276,7 +276,7 @@ Adds allowed hosts or commands to a secret. At least one option is needed. `--re
 zn-gate secret approve NAME --command "psql"
 ```
 
-Approves the first use of a secret by a command that is already allowed. It is confirmed in the vault prompt.
+Approves the first use of a secret by a command that is already allowed. It is confirmed in the vault prompt. An approval belongs to the value it was given for: if you remove the secret or store a different value under the same name, zn asks again.
 
 #### `secret import`
 
