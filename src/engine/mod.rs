@@ -29,6 +29,26 @@ pub use policy_file::write_policy_file;
 /// Longest policy name accepted by the management API.
 pub const MAX_POLICY_NAME_LEN: usize = 64;
 
+/// Longest key or value a policy may pass to the state host functions.
+const MAX_HOST_BUFFER_LEN: usize = 64 * 1024;
+
+/// Allocate a zeroed host buffer for a guest-chosen `(ptr, len)` range.
+///
+/// Returns `None` when the length exceeds `MAX_HOST_BUFFER_LEN` or the range
+/// does not fit inside guest memory, so a hostile policy cannot make the host
+/// allocate gigabytes before the bounds check in `Memory::read` runs.
+fn guest_buffer(memory_size: usize, ptr: u32, len: u32) -> Option<Vec<u8>> {
+    let len = len as usize;
+    if len > MAX_HOST_BUFFER_LEN {
+        return None;
+    }
+    let end = (ptr as usize).checked_add(len)?;
+    if end > memory_size {
+        return None;
+    }
+    Some(vec![0u8; len])
+}
+
 /// True when `name` can name a policy file: 1 to `MAX_POLICY_NAME_LEN`
 /// ASCII letters, digits, `.`, `-` or `_`, starting with a letter or digit.
 /// Path separators, `..` and every other character are rejected, so the
@@ -221,8 +241,13 @@ impl ZnEngine {
                     _ => return,
                 };
 
-                let mut key_buf = vec![0u8; k_len as usize];
-                let mut val_buf = vec![0u8; v_len as usize];
+                let size = memory.data_size(&caller);
+                let (Some(mut key_buf), Some(mut val_buf)) = (
+                    guest_buffer(size, k_ptr, k_len),
+                    guest_buffer(size, v_ptr, v_len),
+                ) else {
+                    return;
+                };
 
                 if memory.read(&caller, k_ptr as usize, &mut key_buf).is_ok()
                     && memory.read(&caller, v_ptr as usize, &mut val_buf).is_ok()
@@ -251,7 +276,10 @@ impl ZnEngine {
                     _ => return 0,
                 };
 
-                let mut key_buf = vec![0u8; k_len as usize];
+                let Some(mut key_buf) = guest_buffer(memory.data_size(&caller), k_ptr, k_len)
+                else {
+                    return 0;
+                };
                 if memory.read(&caller, k_ptr as usize, &mut key_buf).is_err() {
                     return 0;
                 }
@@ -611,6 +639,63 @@ mod tests {
         let hash1 = ZnEngine::compute_hash(b"data1");
         let hash2 = ZnEngine::compute_hash(b"data2");
         assert_ne!(hash1, hash2);
+    }
+
+    fn test_engine() -> ZnEngine {
+        ZnEngine::new(ZnEngineConfig {
+            gas_limit: 1_000_000,
+            memory_limit: 16 * 1024 * 1024,
+            timeout_ms: 5_000,
+            allowed_hashes: vec![],
+            signing_public_key: None,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn guest_buffer_rejects_oversized_and_out_of_range_lengths() {
+        assert_eq!(guest_buffer(65536, 0, 4).map(|b| b.len()), Some(4));
+        assert!(guest_buffer(65536, 0, u32::MAX).is_none());
+        assert!(guest_buffer(65536, u32::MAX, 16).is_none());
+        assert!(guest_buffer(65536, 65530, 16).is_none());
+        assert!(guest_buffer(usize::MAX, 0, (MAX_HOST_BUFFER_LEN + 1) as u32).is_none());
+    }
+
+    #[test]
+    fn state_host_functions_ignore_huge_guest_lengths() {
+        // The policy first calls both state functions with 0xFFFFFFFF lengths,
+        // then does a normal set/get of "k" -> "v". It allows the call only if
+        // the huge calls were refused (get returned 0) and the normal ones worked.
+        let wat = r#"
+            (module
+              (import "env" "zn_state_set" (func $set (param i32 i32 i32 i32)))
+              (import "env" "zn_state_get" (func $get (param i32 i32 i32 i32) (result i32)))
+              (memory (export "memory") 1)
+              (data (i32.const 0) "kv")
+              (func (export "alloc") (param i32) (result i32) i32.const 1024)
+              (func (export "dealloc") (param i32 i32))
+              (func (export "validate_tool_call") (param i32 i32 i32 i32) (result i32)
+                (call $set (i32.const 0) (i32.const -1) (i32.const 0) (i32.const -1))
+                (if (i32.ne (call $get (i32.const 0) (i32.const -1) (i32.const 16) (i32.const 16))
+                            (i32.const 0))
+                  (then (return (i32.const 0))))
+                (call $set (i32.const 0) (i32.const 1) (i32.const 1) (i32.const 1))
+                (if (i32.ne (call $get (i32.const 0) (i32.const 1) (i32.const 16) (i32.const 16))
+                            (i32.const 1))
+                  (then (return (i32.const 0))))
+                (i32.const 1)))
+        "#;
+        let engine = test_engine();
+        let module = engine
+            ._load_policy_from_bytes(wat.as_bytes(), "huge")
+            .unwrap();
+        let allowed = engine.check_tool_call(&module, "tool", "{}", None).unwrap();
+        assert!(allowed);
+        assert_eq!(engine.state_store.len(), 1);
+        assert_eq!(
+            engine.state_store.get("k").map(|v| v.clone()),
+            Some("v".to_string())
+        );
     }
 
     fn temp_dir(name: &str) -> PathBuf {
