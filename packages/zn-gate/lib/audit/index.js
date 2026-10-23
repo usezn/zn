@@ -808,14 +808,44 @@ const SYSTEM_PLACEHOLDER_DOC = /<\s*\/?\s*system-(?:or-(?:project|user|global|lo
 const SYSTEM_IDENTITY_DOC = /\bsystem:(?:anonymous|authenticated|unauthenticated|masters|nodes?|serviceaccounts?(?::[\w-]+)*|kube-[\w-]+|node-[\w-]+|basic-user|discovery|public-info-viewer)(?![\w-])/gi;
 const CHAT_TOKEN_DOC = /<\|im_start\|>(?:[ \t]*(?:user|assistant|tool)\b|(?![ \t]*system\b))|<\|im_end\|>|\[\/?INST\]/gi;
 
-function stripDocShapes(text, fenced) {
-  let s = text;
-  // Placeholders: <system-or-project>, and <system> glued to a file name or path.
-  const paired = /<\s*system-[^>]*>[\s\S]*<\s*\/\s*system-/i.test(s);
-  if (!paired) s = s.replace(SYSTEM_PLACEHOLDER_DOC, ' ');
-  s = s.replace(/(?<=[\w\-/])<\s*system\s*>/gi, ' ');
-  // Identity values such as system:anonymous.
-  s = s.replace(SYSTEM_IDENTITY_DOC, ' ');
+// What may follow an opening placeholder for it to count as a name: nothing,
+// punctuation, or a file name or path glued to the tag. Anchored as a whole.
+const PLACEHOLDER_TAIL = /^(?:\.[a-z0-9]{1,6})?(?:[\/\][\w.\/\-]*)?[\s\p{P}\p{S}]*$/iu;
+// An opening tag that starts the line (after list or quote markers) reads as
+// a message to the agent, never as a name.
+const LINE_START = /^[\s>*+\-]*(?:\d+[.)][\s>*+\-]*)?$/;
+
+/**
+ * Placeholders such as <system-or-project> and identity values such as
+ * system:anonymous, which name something instead of wrapping text. A
+ * placeholder is skipped only when it wraps no text: not when its matching
+ * tag appears anywhere in the file, not when it starts the line, and not
+ * when anything but punctuation or a file name follows it on the line.
+ * `fileText` is the whole file.
+ */
+function stripSystemShapes(text, fileText) {
+  const file = fileText == null ? text : fileText;
+  const keep = (m, off, glued) => {
+    const name = glued ? '' : ((/system-([\w-]+)/i.exec(m) || [])[1] || '');
+    const closing = /^<\s*\//.test(m);
+    const tag = 'system' + (glued ? '' : '-' + name);
+    const other = new RegExp('<\s*' + (closing ? '' : '\/\s*') + tag + '\s*>', 'i');
+    if (other.test(file)) return true;
+    if (closing) return false;
+    if (!glued && LINE_START.test(text.slice(0, off))) return true;
+    let after = text.slice(off + m.length);
+    // A name inside a code span: only the rest of the span counts.
+    if (glued && (text.slice(0, off).split('`').length - 1) % 2 === 1 && after.includes('`')) after = after.slice(0, after.indexOf('`'));
+    return !PLACEHOLDER_TAIL.test(after);
+  };
+  let s = text.replace(SYSTEM_PLACEHOLDER_DOC, (m, off) => (keep(m, off, false) ? m : ' '));
+  // <system> glued to a file name or path.
+  s = s.replace(/(?<=[\w\-/])<\s*system\s*>/gi, (m, off) => (keep(m, off, true) ? m : ' '));
+  return s.replace(SYSTEM_IDENTITY_DOC, ' ');
+}
+
+function stripDocShapes(text, fenced, fileText) {
+  let s = stripSystemShapes(text, fileText);
   // "[system]" used as a label after a word, never a role marker ("[system]:").
   s = s.replace(/(?<=[A-Za-z0-9"'`)])[ \t]\[\s*system\s*\](?!\s*:)/gi, ' ');
   // A role label that opens a quoted example prompt: system: `You are ...`
@@ -870,7 +900,10 @@ function docShape(t, o) {
   let rest = t;
   // A tag named in backticks, never paired with a closing tag on the line.
   if (!/<\s*system[^>]*>[\s\S]*<\s*\/\s*system/i.test(rest)) rest = rest.replace(/`<\s*\/?\s*system\s*>`/gi, ' ');
-  if (o.doc) rest = stripNegated(stripDocShapes(rest, o.fenced));
+  if (o.doc) rest = stripNegated(stripDocShapes(rest, o.fenced, o.fileText));
+  // A note inside a skill folder that is not a docs file: only the
+  // placeholder and identity shapes, and "system:" ending the line.
+  else if (o.skillNote) rest = stripSystemShapes(rest, o.fileText).replace(/\bsystem\s*:\s*$/i, ' ');
   if (rest !== t && !blockOf(rest)) return 'skip';
   if (!o.doc) return null;
   // The strong pattern sits only inside the quotes of an example: reported one
@@ -883,9 +916,34 @@ function docShape(t, o) {
   return null;
 }
 
+const INSTRUCTION_FILE_NAMES = /^(?:agents(?:\.override)?\.md|claude(?:\.local)?\.md|gemini\.md|skill\.md|\.cursorrules|\.windsurfrules|copilot-instructions\.md)$/i;
+const LOADED_DIRS = /(^|\/)(?:commands?|agents?|prompts|rules|chatmodes|instructions|output-styles)\//i;
+/** A note inside a real skill folder (one that holds SKILL.md), not itself loaded as instructions. */
+function isSkillNote(rec) {
+  if (rec.importedBy) return false;
+  const rel = rec.rel;
+  if (!/\.(?:md|mdx|markdown)$/i.test(rel)) return false;
+  if (INSTRUCTION_FILE_NAMES.test(path.posix.basename(rel))) return false;
+  if (LOADED_DIRS.test(rel)) return false;
+  const parts = rel.split('/');
+  for (let k = 1; k < parts.length - 1; k++) {
+    const holder = parts[k - 1];
+    const ok = /^skills$/i.test(holder) || (/^skill$/i.test(holder) && /^\.opencode$/i.test(parts[k - 2] || ''));
+    if (!ok) continue;
+    let dir = rec.abs;
+    for (let up = parts.length - 1 - k; up > 0; up--) dir = path.dirname(dir);
+    try {
+      if (fs.readdirSync(dir).some((n) => n.toLowerCase() === 'skill.md')) return true;
+    } catch (_) { /* not readable: not a skill note */ }
+  }
+  return false;
+}
+
 function checkInstructions(ctx) {
   // A file CLAUDE.md imports with @ is loaded as instructions, wherever it sits.
   const doc = !ctx.rec.importedBy && isDocFile(ctx.rec.rel);
+  const skillNote = isSkillNote(ctx.rec);
+  const fileText = ctx.lines.join('\n');
   const claudeExt = /(^|\/)\.claude\/(commands|agents|skills)\//i.test(ctx.rec.rel);
   // Supporting notes of a skill (not SKILL.md itself): the only files here
   // that are not read as instructions.
@@ -924,7 +982,7 @@ function checkInstructions(ctx) {
       try { res = rules().evaluate(t, { strict: true }); } catch (_) { res = null; }
       let demo = false;
       if (res && res.verdict === 'block') {
-        const d = docShape(t, { doc, fenced: fenced.has(i), lines: ctx.lines, at: i, open: fenceOpen.get(i) });
+        const d = docShape(t, { doc, skillNote, fileText, fenced: fenced.has(i), lines: ctx.lines, at: i, open: fenceOpen.get(i) });
         if (d === 'skip') res = null; else if (d === 'demo') demo = true;
       }
       if (res && res.verdict === 'block' && !NOISY_IN_DOCS.test(String(res.rule))) {
