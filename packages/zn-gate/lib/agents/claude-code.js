@@ -180,8 +180,9 @@ function respond(d) {
   const ev = d && d.event;
   if (!ev || !ev.event) return null;
   const out = respondInner(d, ev);
-  // systemMessage: a notice shown to the user (not to the model).
+  // systemMessage: a notice shown to the user (not to the model). It can stand alone, on an allow that has nothing else to say.
   if (out && d.userMessage) out.systemMessage = d.userMessage;
+  else if (!out && d.userMessage && d.decision === 'allow') return { systemMessage: d.userMessage };
   return out;
 }
 

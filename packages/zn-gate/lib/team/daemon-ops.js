@@ -18,7 +18,8 @@
 
 const crypto = require('crypto');
 const policy = require('./policy');
-const { effective, approvalKey } = require('./effective');
+const { effective, approvalKey, detectorsOf } = require('./effective');
+const changes = require('./changes');
 const { createApi, checkBase } = require('./api');
 const { uploadPending } = require('./upload');
 const { CODES, znError } = require('../errors');
@@ -65,12 +66,33 @@ function makeTeamOps(ctx) {
     return createApi({ base: t.api_base, token: t.install_token, fetchImpl, userAgent: 'zn-gate/' + VERSION });
   }
 
+  const teamRecord = (t) => ({
+    org: t.org, org_name: t.org_name || null, api_base: t.api_base, install_id: t.install_id,
+    policy_public_key: t.pin, joined_at: t.joined_at,
+  });
+  /* Options for the readable policy copy: the date it was fetched and what it lifted, as held in the vault. */
+  const cacheOpts = (t) => Object.assign({}, state.opts, { now: Date.parse(t.policy.fetched_at) || undefined, change: t.policy.change || undefined });
+  const sameJson = (a, b) => { try { return policy.canonicalJson(a) === policy.canonicalJson(b); } catch (err) { return false; } };
+
   function mirror(t) {
-    policy.writeTeam({
-      org: t.org, org_name: t.org_name || null, api_base: t.api_base, install_id: t.install_id,
-      policy_public_key: t.pin, joined_at: t.joined_at,
-    }, state.opts);
-    if (t.policy && t.policy.envelope) policy.writeCache(t.policy.envelope, t.policy.etag || null, state.opts);
+    policy.writeTeam(teamRecord(t), state.opts);
+    if (t.policy && t.policy.envelope) policy.writeCache(t.policy.envelope, t.policy.etag || null, cacheOpts(t));
+  }
+
+  /* Put back the readable copies (~/.zn/team.json and org-policy.json) from the vault when one was
+   * deleted or edited: the hooks read them, and a missing team.json would leave the organization's
+   * custom detectors off. Best effort; the vault stays the source of truth. */
+  function ensureCopies(t) {
+    try {
+      const disk = policy.readTeam(state.opts);
+      if (!disk || !sameJson(disk, Object.assign({ v: 1 }, teamRecord(t)))) policy.writeTeam(teamRecord(t), state.opts);
+      if (t.policy && t.policy.envelope) {
+        const c = policy.readCache(state.opts);
+        if (!c || !sameJson(c.envelope, t.policy.envelope) || !sameJson(c.change || null, t.policy.change || null)) {
+          policy.writeCache(t.policy.envelope, t.policy.etag || null, cacheOpts(t));
+        }
+      }
+    } catch (err) { /* the copies are not the source of truth */ }
   }
 
   async function updateTeam(fn) {
@@ -200,10 +222,30 @@ function makeTeamOps(ctx) {
       const t = await team();
       if (!t) return { joined: false };
       const st = await policyState();
+      ensureCopies(t);
       return {
         joined: true, org: t.org, org_name: t.org_name, install_id: t.install_id, api_base: t.api_base,
         joined_at: t.joined_at, revoked_at: t.revoked_at || null, kid: t.pin.kid,
-        policy: { state: st.state, version: st.version || null, expires_at: st.expires_at || null, fetched_at: st.fetched_at || null, error: st.error || null },
+        policy: {
+          state: st.state, version: st.version || null, expires_at: st.expires_at || null, fetched_at: st.fetched_at || null, error: st.error || null,
+          change: changes.cleanChange(t.policy && t.policy.change),
+        },
+      };
+    },
+
+    /**
+     * teamHookInfo() -> what a hook needs when its readable copies are missing or do not verify:
+     * the custom detectors of the policy held in the vault, and what the last version lifted.
+     * It also puts the copies back. Never the token.
+     */
+    async teamHookInfo() {
+      const t = await team();
+      if (!t) return { joined: false };
+      ensureCopies(t);
+      const st = await policyState();
+      return {
+        joined: true, org: t.org, state: st.state, version: st.version || null,
+        detectors: detectorsOf(st), change: changes.cleanChange(t.policy && t.policy.change),
       };
     },
 
@@ -232,10 +274,20 @@ function makeTeamOps(ctx) {
           const v = policy.verifyEnvelope(r.body, t.pin, { org: t.org, minVersion: (t.policy && t.policy.version) || 0 });
           if (v.ok) {
             const rec = { envelope: r.body, etag: typeof r.etag === 'string' && r.etag.length <= 200 ? r.etag : null, version: v.policy.version, fetched_at: new Date().toISOString() };
-            await updateTeam((tt) => { tt.policy = rec; });
-            policy.writeCache(rec.envelope, rec.etag, state.opts);
+            const newVersion = held.version !== v.policy.version;
+            // What this version removes or loosens compared with the one held: shown to the person and audited.
+            // The same version again keeps what was recorded for it.
+            const lifted = newVersion && held.policy ? changes.changeRecord(held.policy, v.policy, rec.fetched_at) : null;
+            await updateTeam((tt) => {
+              rec.change = newVersion ? lifted : ((tt.policy && tt.policy.change) || null);
+              if (!rec.change) delete rec.change;
+              tt.policy = rec;
+            });
+            policy.writeCache(rec.envelope, rec.etag, Object.assign({}, state.opts, { change: rec.change }));
             out.policy = { status: 'updated', version: v.policy.version };
-            if (held.version !== v.policy.version) writeAudit({ mode: 'set', decision: 'allow', reason: 'org_policy_v' + v.policy.version });
+            if (lifted) out.policy.lifted = lifted.count;
+            if (newVersion) writeAudit({ mode: 'set', decision: 'allow', reason: 'org_policy_v' + v.policy.version });
+            if (lifted) writeAudit({ mode: 'set', decision: 'allow', reason: 'org_policy_lifted:v' + lifted.from + '-v' + lifted.to + ':n' + lifted.count });
           } else {
             out.policy = { status: 'rejected', error: v.error };
             writeAudit({ mode: 'set', decision: 'deny', reason: 'policy:rejected' });
@@ -252,10 +304,7 @@ function makeTeamOps(ctx) {
       }
       // Keep the readable copy in line with the vault (it may have been edited or deleted).
       const now = await team();
-      if (now && now.policy && now.policy.envelope) {
-        const disk = policy.readCache(state.opts);
-        if (!disk || JSON.stringify(disk.envelope) !== JSON.stringify(now.policy.envelope)) policy.writeCache(now.policy.envelope, now.policy.etag, state.opts);
-      }
+      if (now) ensureCopies(now);
       if (a.upload !== false && out.policy.status !== 'revoked' && !isClosed()) {
         const f = files();
         out.upload = await uploadPending({

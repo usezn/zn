@@ -1,0 +1,3 @@
+### Security
+- zn Team: when a new policy version removes or loosens restrictions (a secret no longer blocked, a wider host, command or placement list, no proxy mode, a removed custom detector), `zn team status` now lists what changed, the audit log gets a record of it, and Claude Code says so once in its next hook message. Before, the change applied without any notice on the machine.
+- zn Team: the hooks no longer lose the organization's custom detectors when `~/.zn/team.json` or the policy copy is deleted or edited. `zn team sync` and `zn team status` put both copies back from the vault, the hooks take the detectors from the unlocked vault in the meantime, and a policy that cannot be applied shows `Team detectors not applied`.

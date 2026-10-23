@@ -16,7 +16,7 @@ machine that stops reporting is visible.
 | Command | What it does |
 |---|---|
 | `zn team join <token>` | Connects this machine to your organization. The token (`znj_...`) comes from an organization admin. Needs the vault unlocked (`zn unlock`). |
-| `zn team status` | Organization, installation id, policy version and expiry, upload state. `--json` for scripts. Never shows the install token. |
+| `zn team status` | Organization, installation id, policy version and expiry, what the last policy version removed or loosened, upload state. `--json` for scripts. Never shows the install token. |
 | `zn team sync` | Downloads the policy and uploads pending audit records now. This also happens on its own while the vault is unlocked: a few seconds after `zn unlock`, then every 15 minutes. |
 | `zn team leave` | Disconnects this machine. The organization's policy stops applying here. |
 | `zn team managed-config` | Prints the files an admin deploys with device management so zn-gate's hooks run on every machine. Writes nothing; see [Deploy zn-gate's hooks to every machine](#deploy-zn-gates-hooks-to-every-machine-managed-settings). |
@@ -63,7 +63,10 @@ zn-gate applies a downloaded policy only if:
 - its version is not lower than the last one accepted on this machine.
 
 The accepted policy is kept inside the encrypted vault. `~/.zn/org-policy.json`
-is a readable copy: editing or deleting it does not remove any restriction.
+and `~/.zn/team.json` are readable copies for the hooks and `zn team status`:
+editing or deleting them does not remove any restriction, and zn-gate puts
+them back from the vault (see
+[The readable copies and the hooks](#the-readable-copies-and-the-hooks)).
 
 ### What the organization can change on this machine
 
@@ -75,6 +78,35 @@ is a readable copy: editing or deleting it does not remove any restriction.
 
 So a stolen organization signing key cannot make zn-gate send a secret
 somewhere new without someone at the machine saying yes.
+
+### When the organization lifts a restriction
+
+A new policy version can also remove or loosen what the previous one
+restricted: unblock a secret, turn a block into a warning or drop it, widen a
+host, command or placement list, drop `proxy` mode, remove a custom detector.
+zn-gate applies it. Who may relax the restrictions on a managed machine is
+the organization's decision, and the machine cannot tell a change the
+organization meant from one it did not mean, so there is no local minimum
+and no local approval for it (an approval that the person at the machine can
+give would also let them lift the restrictions the organization wants to
+keep). What zn-gate does is make the change visible:
+
+- `zn team status` lists what the last version removed or loosened (up to 20
+  items; the rest are counted), also with the vault locked. `--json` has it
+  as `policy.change`.
+- The audit log gets one record per such version, with the reason
+  `org_policy_lifted:v3-v4:n2` (the two versions and the number of
+  changes). It is uploaded with the other records.
+- With Claude Code, the next hook message that checks a tool output or a
+  prompt says once that your organization's policy lifted N restrictions
+  and where to look. Other agents do not show this line: use
+  `zn team status`.
+
+The comparison covers the rules' secret names and their block, warning,
+`proxy`, host, command and placement settings, and the custom detectors. A
+restriction that moves to another rule that still covers it is not
+reported. If the policy held before did not verify, there is nothing to
+compare with and nothing is reported.
 
 **Restrictions apply to every agent.** zn-gate cannot prove which agent is
 calling (any program on the machine can start its tools and say it is some
@@ -158,6 +190,24 @@ patterns are skipped on the machine, and all custom detectors together get
 | A downloaded policy fails a check (signature, key, organization, expiry, older version) | It is refused and the last accepted policy stays. The refusal is recorded in the audit log. |
 | An admin removes this machine | Uploads stop. `zn team status` shows "removed from org". The last policy applies until it expires, then strict mode. |
 | The vault is locked | Nothing is downloaded or uploaded until `zn unlock`. The last accepted policy still applies to every use of a secret, which needs the vault unlocked anyway. |
+| `~/.zn/team.json` or `~/.zn/org-policy.json` is deleted or edited | The vault puts them back (see below). |
+
+### The readable copies and the hooks
+
+The hooks do not open the vault to read the policy. They read
+`~/.zn/team.json` and `~/.zn/org-policy.json`, verify the policy again with
+the pinned key, and use its custom detectors. If either copy is missing, or
+the policy copy does not verify, the vault (when it is unlocked) puts both
+back from the policy it holds: on the next `zn team sync` (also when the
+server cannot be reached), on `zn team status`, and when a hook asks for the
+detectors. In the meantime the hook takes the detectors straight from the
+vault, so they stay on. While the vault is locked the hooks have only the
+readable copies, and a deleted copy comes back after `zn unlock`.
+
+If the vault holds a policy that does not verify (for example the
+organization's key changed under it), no custom detector can be applied.
+Claude Code then shows `zn: Team detectors not applied` once an hour, with
+the command to run (`zn team sync`).
 
 ## What is sent
 
