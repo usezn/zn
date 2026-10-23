@@ -236,6 +236,54 @@ test('daemon: named secrets, reserved names, metadata updates, backups', async (
   c.close();
 });
 
+test('daemon: a new value under 8 characters is refused; a short value from an older version keeps working', async () => {
+  const c = clientMod.createClient({});
+  for (const short of ['a', 'abc123', 'abcdefg']) {
+    await assert.rejects(c.setSecret('SHORT_PIN', short, { mode: 'env' }), (e) => e.code === 'ZN_POLICY_DENIED' && /at least 8 characters/.test(e.message), short);
+  }
+  assert.ok(!(await c.listSecrets()).some((s) => s.name === 'SHORT_PIN'), 'nothing was stored');
+  await c.setSecret('EIGHT_PIN', 'abcdefgh', { mode: 'env' });
+  assert.strictEqual(await c.removeSecret('EIGHT_PIN'), true);
+  c.close();
+  // A vault written by an older version holds a 6-character value.
+  await stopDaemon();
+  const p = store.paths();
+  const meta = keychain.readMeta({});
+  const doc = await store.readEncrypted(p.secretsFile, identity);
+  const original = fs.readFileSync(p.secretsFile);
+  try {
+    doc.secrets.LEGACY_PIN = { mode: 'env', allowHosts: [], allowCommands: [], allowIn: ['header'], source: 'local', value: 'pin-42', created: new Date().toISOString(), lastUsed: null };
+    // The integrity tag the daemon checks (HMAC keyed by the identity), as an older version wrote it.
+    delete doc.mac;
+    const macKey = crypto.createHmac('sha256', String(identity)).update('zn-vault-integrity-v1').digest();
+    doc.mac = crypto.createHmac('sha256', macKey).update(JSON.stringify(doc)).digest('hex');
+    await store.writeEncrypted(p.secretsFile, doc, meta.recipient);
+    await startDaemon();
+    const d = clientMod.createClient({});
+    // The daemon matches it itself (exactly, the whole text) and reports only a count of such values.
+    const info = await d.maskInfo('/work/app');
+    assert.strictEqual(info.shortCount, 1, 'one short value, counted and never shown');
+    assert.ok(info.names.includes('LEGACY_PIN'));
+    assert.ok(!JSON.stringify(info).includes('pin-42'));
+    const [whole, padded, inside, partial] = await d.maskSpans('/work/app', ['pin-42', ' pin-42\n', 'use pin-42 here', 'pin-4']);
+    assert.deepStrictEqual(whole.map((x) => [x.start, x.end, x.name]), [[0, 6, 'LEGACY_PIN']]);
+    assert.deepStrictEqual(padded.map((x) => [x.start, x.end, x.name]), [[1, 7, 'LEGACY_PIN']]);
+    assert.deepStrictEqual(inside, [], 'never as part of a longer text');
+    assert.deepStrictEqual(partial, []);
+    assert.strictEqual(await d.resolve('/work/app', '__ZN_LEGACY_PIN__', { destination: 'write_ignored' }), 'pin-42', 'it still resolves');
+    // Saving it again unchanged (a metadata change) is allowed; another short value is not.
+    await d.setSecret('LEGACY_PIN', 'pin-42', { mode: 'env', allowCommands: ['node'] });
+    await assert.rejects(d.setSecret('LEGACY_PIN', 'pin-43', { mode: 'env' }), (e) => /at least 8 characters/.test(e.message));
+    assert.strictEqual(await d.removeSecret('LEGACY_PIN'), true);
+    d.close();
+  } finally {
+    await stopDaemon();
+    fs.writeFileSync(p.secretsFile, original);
+    if (POSIX) fs.chmodSync(p.secretsFile, 0o600);
+  }
+  await startDaemon();
+});
+
 test('daemon: first-use approvals are per (project, secret, real executable)', async () => {
   const c = clientMod.createClient({});
   assert.ok(clientMod.resolveExecutable('node'), 'node must be on PATH for this test');

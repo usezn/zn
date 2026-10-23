@@ -915,32 +915,41 @@ async function decidePost(ev, d, agentId, opts = {}) {
   let stopped = false; // a limit was reached: the strings that follow are withheld too
   let abandoned = false; // the deadline passed while the engine or the vault was still working
   let scanCtx = null;
+  let hasShort = false; // the vault (or a local file) holds a value under 8 characters, from an older version
+  // The daemon reports a count of such values (shortCount), the local matcher its own: a count, never a value.
+  const shortIn = (c) => !!(c && ((c.exactMatcher && c.exactMatcher.shortSize > 0) || (c.vaultRemote && c.vaultRemote.shortCount > 0)));
   const withhold = (s, stop) => {
     if (stop) stopped = true;
     withheld += s.length;
     return POST_WITHHELD;
   };
   const check = async (s) => {
-    if (s === POST_WITHHELD || s.length < 8) return s;
-    if (stopped || Date.now() >= deadlineAt) return withhold(s, true);
-    if (s.length > room) return withhold(s, false);
+    if (s === POST_WITHHELD || s.length === 0) return s;
+    if (s.length >= 8 && (stopped || Date.now() >= deadlineAt)) return withhold(s, true);
+    if (s.length >= 8 && s.length > room) return withhold(s, false);
     // Scanning counts the values this string would add to the vault.
     if (scanCtx === null) {
+      if (s.length < 8 && (stopped || Date.now() >= deadlineAt)) return s;
       scanCtx = typeof engine.prepare === 'function' ? await raceDeadline(engine.prepare(ctx), deadlineAt) : ctx;
-      if (scanCtx === DEADLINE) { abandoned = true; return withhold(s, true); }
+      if (scanCtx === DEADLINE) { abandoned = true; return s.length < 8 ? s : withhold(s, true); }
+      hasShort = shortIn(scanCtx);
       // One request to the vault for every string that will be scanned, not one for each.
       if (typeof engine.warm === 'function') {
         let budget = room;
         const todo = [];
         for (const t of outputStrings) {
-          if (typeof t !== 'string' || t.length < 8 || t.length > budget) continue;
+          // A string under 8 characters is only asked about when the vault holds a short value from an older version.
+          if (typeof t !== 'string' || t.length === 0 || (t.length < 8 && !hasShort) || t.length > budget) continue;
           budget -= t.length;
           todo.push(t);
         }
-        scanCtx = await raceDeadline(engine.warm(scanCtx, todo), deadlineAt);
-        if (scanCtx === DEADLINE) { abandoned = true; return withhold(s, true); }
+        const warmed = await raceDeadline(engine.warm(scanCtx, todo), deadlineAt);
+        if (warmed === DEADLINE) { abandoned = true; scanCtx = DEADLINE; return s.length < 8 && !hasShort ? s : withhold(s, true); }
+        scanCtx = warmed;
       }
     }
+    // A string under 8 characters is only looked at when the vault holds a short value from an older version.
+    if (s.length < 8 && !hasShort) return s;
     if (scanCtx === DEADLINE) return withhold(s, true);
     // The vault did not answer: this string was not checked against its values, so it is not passed (like a deadline).
     let found;

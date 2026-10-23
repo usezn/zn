@@ -238,7 +238,7 @@ function localEntries(ctx) {
  * started by an older zn-gate, which answers no maskInfo and hands its values to exactValues instead. */
 async function vaultEntries(ctx) {
   const vault = ctx.vault;
-  const none = { remote: false, entries: [], names: [], longest: 0, count: 0 };
+  const none = { remote: false, entries: [], names: [], longest: 0, count: 0, shortCount: 0 };
   if (!vault || (typeof vault.maskInfo !== 'function' && typeof vault.exactValues !== 'function')) return Object.assign({ locked: !vault }, none);
   let perVault = vaultCache.get(vault);
   if (!perVault) { perVault = new Map(); vaultCache.set(vault, perVault); }
@@ -260,6 +260,7 @@ async function vaultEntries(ctx) {
           names: Array.isArray(info && info.names) ? info.names.map(String) : [],
           longest: Number(info && info.longest) || 0,
           count: Number(info && info.count) || 0,
+          shortCount: Number(info && info.shortCount) || 0,
         };
       } catch (err) {
         if (!(err && err.message === 'unknown operation') || typeof vault.exactValues !== 'function') throw err;
@@ -288,7 +289,8 @@ async function fetchVaultSpans(c, texts) {
   const pieces = []; // {text, base, piece}
   for (const t of texts) {
     if (map.has(t)) continue;
-    if (t.length < MIN_LENGTH) { map.set(t, EMPTY); continue; }
+    // A text under the minimum can only be a short value from an older version (compared exactly, whole text).
+    if (t.length === 0 || (t.length < MIN_LENGTH && !(r.shortCount > 0))) { map.set(t, EMPTY); continue; }
     const mine = { parts: [], spans: [] };
     map.set(t, mine);
     if (t.length <= SPAN_CHUNK) { pieces.push({ text: t, base: 0, owner: mine }); continue; }
@@ -355,7 +357,7 @@ async function prepare(ctx) {
   c.vaultLocked = fromVault.locked;
   if (fromVault.names.length) c.secretNames = (Array.isArray(c.secretNames) ? c.secretNames : EMPTY).concat(fromVault.names);
   c.vaultLongest = fromVault.longest;
-  c.vaultRemote = fromVault.remote && fromVault.count > 0 ? { vault: c.vault, project: String(c.project || ''), claim: { agent: c.agent, tool: c.tool }, longest: fromVault.longest } : null;
+  c.vaultRemote = fromVault.remote && (fromVault.count > 0 || fromVault.shortCount > 0) ? { vault: c.vault, project: String(c.project || ''), claim: { agent: c.agent, tool: c.tool }, longest: fromVault.longest, shortCount: fromVault.shortCount } : null;
   return c;
 }
 
@@ -386,7 +388,7 @@ async function warm(ctx, texts) {
   if (!c.vaultRemote) return c;
   const all = new Set();
   for (const t of texts) {
-    if (typeof t !== 'string' || t.length < MIN_LENGTH) continue;
+    if (typeof t !== 'string' || t.length === 0 || (t.length < MIN_LENGTH && !(c.vaultRemote.shortCount > 0))) continue;
     all.add(t);
     const view = invisibleView(t);
     if (view) all.add(view.clean);

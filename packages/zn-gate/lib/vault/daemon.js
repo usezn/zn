@@ -42,7 +42,7 @@ const keychain = require('./keychain');
 const winacl = require('./winacl');
 const audit = require('./audit');
 const confirmMod = require('./confirm');
-const { variants, buildMatcher, MIN_LENGTH: MIN_NEEDLE } = require('../scrub/exact');
+const { variants, buildMatcher, MIN_LENGTH: MIN_NEEDLE, validateSecretValue } = require('../scrub/exact');
 const exe = require('../exe');
 const { makeTeamOps } = require('../team/daemon-ops');
 const { CODES, znError } = require('../errors');
@@ -368,7 +368,8 @@ function makeOps(state, ctl) {
     const h = crypto.createHash('sha256');
     const live = [];
     for (const [name, s] of Object.entries(secrets.secrets)) {
-      if (s && s.mode !== 'backup' && typeof s.value === 'string' && s.value.length >= MIN_NEEDLE) {
+      // A value under the minimum comes from an older version (new ones are refused): it is compared exactly.
+      if (s && s.mode !== 'backup' && typeof s.value === 'string' && s.value.length > 0) {
         live.push([name, s]);
         h.update(name + '\0' + s.value + '\0');
       }
@@ -377,7 +378,9 @@ function makeOps(state, ctl) {
     const sig = h.digest('hex');
     const hit = maskCache.get(p.key);
     if (hit && hit.sig === sig) return hit;
-    const entries = live.map(([name, s]) => ({ name, type: s.type || 'SECRET', values: variants(s.value), vault: true }));
+    const entries = live.map(([name, s]) => (s.value.length >= MIN_NEEDLE
+      ? { name, type: s.type || 'SECRET', values: variants(s.value), vault: true }
+      : { name, type: s.type || 'SECRET', values: [s.value], exactShort: true, vault: true }));
     for (const [token, value] of Object.entries(p.data.tokens).slice(-MAX_DETECTED_EXACT).reverse()) {
       if (typeof value !== 'string' || value.length < MIN_NEEDLE) continue;
       const m = TOKEN_RE.exec(token);
@@ -385,7 +388,8 @@ function makeOps(state, ctl) {
     }
     let longest = 0;
     for (const e of entries) for (const v of e.values) if (v.length > longest) longest = v.length;
-    const built = { sig, matcher: buildMatcher(entries), names: entries.filter((e) => e.name).map((e) => e.name), longest, minNeedle: MIN_NEEDLE };
+    const matcher = buildMatcher(entries);
+    const built = { sig, matcher, names: entries.filter((e) => e.name).map((e) => e.name), longest, shortCount: matcher.shortSize, minNeedle: MIN_NEEDLE };
     if (maskCache.size > 64) maskCache.clear();
     maskCache.set(p.key, built);
     return built;
@@ -575,9 +579,15 @@ function makeOps(state, ctl) {
     async setSecret(name, value, meta) {
       const n = checkName(name);
       str(value, 'value');
+      const backup = meta && typeof meta === 'object' && meta.mode === 'backup'; // whole files kept by `zn env shadow`
       return state.serial(async () => {
         const secrets = await state.loadSecrets();
         const prev = secrets.secrets[n];
+        // New values under the minimum are refused; a value an older version stored keeps working.
+        if (!backup && !(prev && prev.value === value)) {
+          const bad = validateSecretValue(value);
+          if (bad) throw znError(CODES.POLICY_DENIED, 'invalid value: ' + bad);
+        }
         // The same value again is not a new secret: it keeps its generation and its approvals.
         const sameValue = !!prev && typeof prev.generation === 'string' && prev.generation !== '' && prev.value === value;
         const generation = sameValue ? prev.generation : newGeneration();
@@ -771,7 +781,8 @@ function makeOps(state, ctl) {
     async maskInfo(project, claim) {
       noteMask(claim);
       const m = await maskStateOf(project);
-      return { names: m.names, longest: m.longest, count: m.matcher.size };
+      // shortCount: how many values under the minimum (from older versions) are compared exactly. A count, never a value.
+      return { names: m.names, longest: m.longest, count: m.matcher.size, shortCount: m.shortCount };
     },
 
     async maskSpans(project, texts, claim) {
@@ -784,7 +795,7 @@ function makeOps(state, ctl) {
       if (total > MASK_MAX_CHARS) throw znError(CODES.POLICY_DENIED, 'text too long. Next step: send it in smaller pieces.');
       noteMask(claim);
       const m = await maskStateOf(project);
-      return { spans: texts.map((t) => (t.length < m.minNeedle ? [] : m.matcher.find(t))) };
+      return { spans: texts.map((t) => (t.length < m.minNeedle && m.shortCount === 0 ? [] : m.matcher.find(t))) };
     },
 
 
