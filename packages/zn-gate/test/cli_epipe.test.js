@@ -10,13 +10,13 @@ const { tempDir } = require('./helpers/tmp');
 
 const CLI = path.join(__dirname, '..', 'bin', 'cli.js');
 
-// Runs `zn-gate check` with an empty home. When `closeEarly` is set, the reading end of stdout is closed before the
+// Runs `zn-gate <command>` (default `check`) with an empty home. When `closeEarly` is set, the reading end of stdout is closed before the
 // child writes anything, so every write fails with EPIPE.
-function runCli(t, { closeEarly }) {
+function runCli(t, { closeEarly, command = 'check' }) {
   const home = tempDir(t, 'zn-epipe-home-');
   const cwd = tempDir(t, 'zn-epipe-cwd-');
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [CLI, 'check'], {
+    const child = spawn(process.execPath, [CLI, command], {
       cwd,
       env: { HOME: home, PATH: process.env.PATH, ZN_STATS: 'off', NO_COLOR: '1' },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -37,4 +37,15 @@ test('check: a reader that closes stdout early gets no EPIPE error or stack trac
   assert.doesNotMatch(closed.stderr, /EPIPE/);
   assert.doesNotMatch(closed.stderr, /^\s+at /m);
   assert.equal(closed.code, normal.code, 'same exit status as a run whose output is read');
+});
+
+test('report: a reader that closes stdout early gets no EPIPE error and exit status 0', async (t) => {
+  const normal = await runCli(t, { closeEarly: false, command: 'report' });
+  const closed = await runCli(t, { closeEarly: true, command: 'report' });
+
+  assert.equal(normal.code, 0);
+  assert.equal(closed.signal, null);
+  assert.doesNotMatch(closed.stderr, /EPIPE/);
+  assert.doesNotMatch(closed.stderr, /^\s+at /m);
+  assert.equal(closed.code, 0, 'zn-gate report | head exits 0');
 });
