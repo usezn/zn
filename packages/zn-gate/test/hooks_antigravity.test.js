@@ -446,6 +446,20 @@ test('a very long line is not allowed unread, and an unknown cd folder or a ~ pa
     assert.equal((await shell('cd ~/proj/config && grep -rn AWS .')).decision, 'force_ask');
     assert.equal((await shell('cd ~/proj && grep -rn AWS config')).decision, 'force_ask');
     assert.equal((await shell('grep -r AWS ~/nowhere')).decision, 'allow');
+    // other tilde forms (~+, ~-, ~user) cannot be followed: a recursive search asks, a plain command does not
+    for (const line of ['cd ~+/config && grep -rn AWS .', 'cd ~-/config && grep -rn AWS .', 'grep -r AWS ~user/x', 'grep -r AWS ~+/config']) {
+      assert.equal((await shell(line)).decision, 'force_ask', line);
+    }
+    assert.equal((await shell('cd ~user && ls')).decision, 'allow');
+    // on Windows ~\ is the home folder too (the platform is stubbed; the path is quoted so the shell keeps the backslash)
+    const plat = Object.getOwnPropertyDescriptor(process, 'platform');
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      assert.equal((await shell('grep -r AWS "~\\proj\\config"')).decision, 'force_ask');
+      assert.equal((await shell('grep -r AWS "~\\nowhere"')).decision, 'allow');
+    } finally {
+      Object.defineProperty(process, 'platform', plat);
+    }
   } finally {
     for (const k of Object.keys(saved)) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
   }

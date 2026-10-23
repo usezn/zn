@@ -194,8 +194,15 @@ function searchOf(words) {
  * Returns { dirs, ask }: the folders found, and a reason when the line must be confirmed (or null).
  */
 function homeOf(t) {
-  // A leading ~ is the home folder the hook sees, not a folder named "~".
-  return t === '~' || t.startsWith('~/') ? path.join(os.homedir(), t.slice(1)) : t;
+  // A leading ~ is the home folder the hook sees, not a folder named "~". On Windows ~\ counts too.
+  if (t === '~' || t.startsWith('~/')) return path.join(os.homedir(), t.slice(1));
+  if (process.platform === 'win32' && t.startsWith('~\\')) return path.join(os.homedir(), t.slice(2).replace(/\\/g, '/'));
+  return t;
+}
+
+// ~+, ~-, ~user: the shell expands them to a folder zn does not resolve, so the folder is unknown.
+function otherTilde(t) {
+  return /^~[^/]/.test(t) && !(process.platform === 'win32' && t[1] === '\\');
 }
 
 function searchScan(command, cwd) {
@@ -216,7 +223,7 @@ function searchScan(command, cwd) {
         const target = head.slice(1).find((x) => x === '-' || !/^-/.test(x));
         // A variable or a substitution cannot be followed: the folder is unknown, so the next recursive search asks.
         // Other patterns (globs, braces) are not followed: the places so far stay, and so does the folder itself.
-        if (target && /[$`]/.test(target)) state.unknown = true;
+        if (target && (/[$`]/.test(target) || otherTilde(target))) state.unknown = true;
         else if (target && target !== '-' && !/[*?[{~]/.test(target.replace(/^~(?=\/|$)/, ''))) {
           const t = homeOf(target);
           state.bases.add(path.resolve(state.main, t));
@@ -236,7 +243,7 @@ function searchScan(command, cwd) {
       const s = searchOf(words);
       if (!s) continue;
       if (state.bases.size > SEARCH_BASES_MAX) { result.ask = 'long'; return ''; }
-      if (state.unknown || s.targets.some((t) => /[$`]/.test(t))) { result.ask = 'unknown'; return ''; }
+      if (state.unknown || s.targets.some((t) => /[$`]/.test(t) || otherTilde(t))) { result.ask = 'unknown'; return ''; }
       for (const b of state.bases) {
         const base = s.dir ? path.resolve(b, s.dir) : b;
         if (s.targets.length) for (const t of s.targets) found.add(path.resolve(base, homeOf(t)));
