@@ -1216,7 +1216,13 @@ function topLevelKeys(head) {
 // read, and the replacement it takes (its adapter turns it into the agent's own answer). Each `isPost` looks
 // only at the keys of the event itself.
 const OVERSIZE_POST = {
-  'claude-code': { isPost: (k) => k.hook_event_name === 'PostToolUse', tool: 'bash', shape: (t) => t },
+  // Claude Code ignores a replacement whose shape differs from the result of a built-in tool, so Bash (and any
+  // tool not known to be an MCP one) gets the shape of its own result; MCP output is not validated.
+  'claude-code': {
+    isPost: (k) => k.hook_event_name === 'PostToolUse',
+    tool: 'bash',
+    shape: (t, k) => (typeof k.tool_name === 'string' && k.tool_name.startsWith('mcp__') ? t : { stdout: t, stderr: '', interrupted: false }),
+  },
   codex: { isPost: (k) => k.hook_event_name === 'PostToolUse', tool: 'bash', shape: (t) => t },
   // Copilot has two shapes: with an event name, that decides; the Copilot CLI one has none, and then the
   // result is a key of the event (it can come after the arguments, in which case it cannot be seen here and the
@@ -1238,9 +1244,10 @@ const OVERSIZE_POST = {
 // fixed notice in place of the output; anything else is refused like any event zn cannot read.
 function oversizeEvent(agentId, adapter, text) {
   const spec = OVERSIZE_POST[agentId];
-  if (!spec || !spec.isPost(topLevelKeys(text.slice(0, 65536)))) return refuseInput(agentId, 'the event on stdin is too large to check');
+  const keys = topLevelKeys(text.slice(0, 65536));
+  if (!spec || !spec.isPost(keys)) return refuseInput(agentId, 'the event on stdin is too large to check');
   const event = { event: 'post_tool', hookEvent: 'postToolUse', tool: spec.tool, input: { texts: [] } };
-  const output = adapter.respond({ decision: 'allow', updatedOutput: spec.shape(POST_WITHHELD), message: POST_CAP_NOTE, event });
+  const output = adapter.respond({ decision: 'allow', updatedOutput: spec.shape(POST_WITHHELD, keys), message: POST_CAP_NOTE, event });
   if (output !== null && output !== undefined) process.stdout.write(JSON.stringify(output));
 }
 

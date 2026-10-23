@@ -210,3 +210,56 @@ test('the real engine: 5,000 different keys and one more at the end: the last ke
   assert.ok(!JSON.stringify(r.output).includes(LAST_KEY));
   assert.match(r.output.hookSpecificOutput.updatedToolOutput.stdout, NOTICE);
 });
+
+// A 33 MiB result streamed to the real hook process: the answer is small, arrives within a bounded time, and the
+// hook does not hold the output in memory.
+async function runHugePostTool(toolName, response) {
+  const { spawn } = require('child_process');
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-huge-'));
+  try {
+    const env = { ...process.env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home, ZN_STATS: 'off' };
+    delete env.CLAUDE_CONFIG_DIR;
+    const t0 = Date.now();
+    const child = spawn(process.execPath, [path.resolve(__dirname, '../lib/hooks/runner.js'), 'claude-code'], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+    let out = '';
+    child.stdout.on('data', (c) => { out += c; });
+    child.stdin.on('error', () => { /* the hook stops reading after its cap */ });
+    let exited = false;
+    const closed = new Promise((resolve) => child.on('close', (code) => { exited = true; resolve(code); }));
+    const [pre, post] = response;
+    child.stdin.write('{"session_id":"s","cwd":"/","hook_event_name":"PostToolUse","tool_name":"' + toolName + '","tool_input":{},"tool_response":' + pre);
+    const chunk = Buffer.alloc(1024 * 1024, 'A');
+    for (let sent = 0; sent < 33 * 1024 * 1024 && !exited && !child.stdin.destroyed; sent += chunk.length) {
+      if (!child.stdin.write(chunk)) await Promise.race([new Promise((r) => child.stdin.once('drain', r)), closed]);
+    }
+    if (!exited && !child.stdin.destroyed) child.stdin.end(post + '}');
+    const code = await closed;
+    return { code, ms: Date.now() - t0, out };
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
+test('claude-code: a 33 MiB Bash result is withheld in the shape of a Bash result, in bounded time', async () => {
+  const r = await runHugePostTool('Bash', ['{"stdout":"', '","stderr":"","interrupted":false}']);
+  assert.equal(r.code, 0);
+  assert.ok(r.ms < 15000, 'answered in ' + r.ms + ' ms');
+  const res = JSON.parse(r.out);
+  const u = res.hookSpecificOutput.updatedToolOutput;
+  assert.equal(res.hookSpecificOutput.hookEventName, 'PostToolUse');
+  assert.deepEqual(Object.keys(u).sort(), ['interrupted', 'stderr', 'stdout']);
+  assert.equal(u.interrupted, false);
+  assert.equal(u.stderr, '');
+  assert.match(u.stdout, /output withheld because it is too large to check/);
+  assert.ok(r.out.length < 2000 && !r.out.includes('AAAA'));
+});
+
+test('claude-code: an oversized MCP result keeps the plain notice, PowerShell gets the Bash shape', async () => {
+  const mcp = await runHugePostTool('mcp__srv__tool', ['"', '"']);
+  assert.equal(typeof JSON.parse(mcp.out).hookSpecificOutput.updatedToolOutput, 'string');
+  const ps = await runHugePostTool('PowerShell', ['"', '"']);
+  assert.deepEqual(Object.keys(JSON.parse(ps.out).hookSpecificOutput.updatedToolOutput).sort(), ['interrupted', 'stderr', 'stdout']);
+});

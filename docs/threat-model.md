@@ -280,9 +280,13 @@ stop malware running as the same user (see above).
   deny, because after a tool has run a deny alone does not withhold the output
   in Claude Code, Copilot or OpenCode. An output that is mostly invisible characters has
   the invisible characters removed and the rest redacted, and is reported as
-  denied. Known limit: Claude Code ignores a replacement whose shape differs
-  from the output of a built-in tool, so a built-in tool result over 32 MiB
-  cannot be withheld (MCP output is not validated, so it is).
+  denied. Claude Code ignores a replacement whose shape differs from the
+  output of a built-in tool, so for a Bash result over 32 MiB (and any tool
+  that is not an MCP one) the notice is sent in the shape of a Bash result
+  (`stdout`, `stderr`, `interrupted`), the one the post-tool check already
+  uses for ordinary Bash output; MCP output is not validated. Known limit:
+  a result over 32 MiB from another built-in tool with its own result shape
+  (for example a file read) is not withheld.
 - **Scrubber error:** fails closed. The tool call is denied, the output
   withheld or the prompt blocked. A missing engine also fails closed, and the
   message explains how to reinstall. To let events pass while it is missing,
