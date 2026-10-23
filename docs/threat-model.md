@@ -54,6 +54,21 @@ not seen. Paths are checked after `~`, variables and symlinks are resolved,
 and globs and brace lists are checked against the files that exist now and
 against the names they could match.
 
+The hooks also ask before the agent writes to the files where it keeps memory and
+standing instructions: `MEMORY.md`, `SOUL.md`, `AGENTS.md`, `CLAUDE.md`,
+`CLAUDE.local.md`, `GEMINI.md`, `.cursorrules`, `.windsurfrules`,
+`.cursor/rules/*`, `.github/copilot-instructions.md` and the Claude Code memory
+folders (`~/.claude/projects/*/memory/*`). The agent reads these files at the
+start of later sessions, so an instruction written there (for example by a
+skill or a tool result) keeps working after the skill is uninstalled and the
+session has ended. A write by a file tool, a redirection, `tee`, `cp`, `mv` or
+an in-place edit asks you first, with the file name; in strict mode it is
+refused. Reading these files is never blocked. This is a question, not a wall:
+a write the hooks cannot read as a word of the command (inline code, a path
+built at run time) is not seen, and an agent that cannot ask (see
+[compat.md](compat.md#agent-memory-and-instruction-files)) keeps its own approval
+rules for these files. You can turn it off with `hooks.agentInstructionWrites`.
+
 ## Experimental adapters
 
 Some agents are supported through an adapter that is still experimental. It
