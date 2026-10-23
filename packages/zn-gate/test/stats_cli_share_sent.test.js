@@ -21,6 +21,7 @@ const realRequest = https.request;
 test.after(() => { https.request = realRequest; fs.rmSync(home, { recursive: true, force: true }); });
 
 const dayAgo = (n) => stats.today(new Date(Date.now() - n * 86400000));
+const D0 = dayAgo(3);
 const D1 = dayAgo(2);
 const D2 = dayAgo(1);
 
@@ -95,4 +96,59 @@ test('sendPending returns the sent and the failed days', async () => {
   assert.deepEqual(res.failedDays, [D2]);
   assert.equal(res.sent, 1);
   assert.equal(res.failed, 1);
+});
+
+function setup3() {
+  setup();
+  const data = JSON.parse(fs.readFileSync(stats.statsFile(), 'utf8'));
+  data.days[D0] = { 'hook:claude-code': { checked: 3, blocked: 0, detections: {} } };
+  fs.writeFileSync(stats.statsFile(), JSON.stringify(data));
+  const cfgFile = path.join(path.dirname(stats.statsFile()), 'config.json');
+  fs.writeFileSync(cfgFile, JSON.stringify({ stats: { share: true, install_id: 'test-id', sent_until: D0 } }));
+}
+
+test('a middle day that fails keeps sent_until before it, and the next run sends it again', async () => {
+  setup3();
+  stub({ [D1]: 'status' });
+  const first = await share.sendPending();
+  assert.deepEqual(first.sentDays, [D0, D2]);
+  assert.deepEqual(first.failedDays, [D1]);
+  // Only the leading run of sent days moved sent_until: it points at D1, not past D2.
+  assert.equal(share.status().sent_until, D1);
+  const sentAgain = [];
+  https.request = (opts, cb) => {
+    const req = new EventEmitter();
+    req.destroy = () => {};
+    req.end = (body) => {
+      sentAgain.push(JSON.parse(body).day);
+      const res = new EventEmitter();
+      res.statusCode = 200;
+      res.resume = () => {};
+      setImmediate(() => { cb(res); res.emit('end'); });
+    };
+    return req;
+  };
+  const second = await share.sendPending();
+  assert.deepEqual(sentAgain, [D1, D2]);
+  assert.deepEqual(second.failedDays, []);
+  assert.equal(share.status().sent_until, stats.today(new Date(Date.parse(D2 + 'T00:00:00Z') + 86400000)));
+  const third = await share.sendPending();
+  assert.deepEqual(third.sentDays, []);
+});
+
+test('"will be tried next time" is true: the failed day is pending again, the sent leading day is not', async () => {
+  setup3();
+  stub({ [D1]: 'error' });
+  const r = await run([]);
+  assert.match(r.out, /1 day\(s\) could not be shared; they will be tried next time/);
+  const pending = share.pendingReports().map((x) => x.day);
+  assert.ok(pending.includes(D1));
+  assert.ok(!pending.includes(D0));
+});
+
+test('when the first day fails nothing moves sent_until', async () => {
+  setup3();
+  stub({ [D0]: 'error' });
+  await share.sendPending();
+  assert.equal(share.status().sent_until, D0);
 });
