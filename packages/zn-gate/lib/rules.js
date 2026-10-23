@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-24.9
+ * RULES_VERSION: 2026-10-25.1
  */
 
-const RULES_VERSION = '2026-10-24.9';
+const RULES_VERSION = '2026-10-25.1';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -1336,9 +1336,22 @@ function sanitizeToolResult(toolOrResult, content, options = {}) {
     } else if (Array.isArray(val)) {
       return val.map(_sanitize);
     } else if (val !== null && typeof val === 'object') {
+      // Keys are text the model reads too, so they are redacted like values. A redacted key that equals another
+      // key, clean or redacted, is numbered ("<text> #2") so that no value is lost.
+      const entries = Object.entries(val);
+      const names = entries.map(([k]) => _sanitize(k));
+      const taken = new Set();
+      names.forEach((n, i) => { if (n === entries[i][0]) taken.add(n); });
       const out = {};
-      for (const [k, v] of Object.entries(val)) {
-        out[k] = _sanitize(v);
+      for (let i = 0; i < entries.length; i += 1) {
+        let name = names[i];
+        if (name !== entries[i][0]) {
+          const base = name;
+          for (let n = 2; taken.has(name); n += 1) name = `${base} #${n}`;
+          taken.add(name);
+        }
+        // defineProperty, so a key such as __proto__ stays an ordinary property
+        Object.defineProperty(out, name, { value: _sanitize(entries[i][1]), enumerable: true, writable: true, configurable: true });
       }
       return out;
     }

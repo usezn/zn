@@ -160,7 +160,8 @@ def _is_data_object(value: Any) -> bool:
 
 
 def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] = None,
-                     _budget: Optional[List[int]] = None, _lenient: bool = False) -> List[str]:
+                     _budget: Optional[List[int]] = None, _lenient: bool = False,
+                     lenient_objects: bool = True) -> List[str]:
     """Recursively extract all strings from nested structures.
 
     Walks every Mapping (keys and values), list, tuple, set, frozenset and dict
@@ -182,7 +183,10 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
     what sits below the depth limit or past the value budget, or cannot be
     read, is left out instead of blocking. Such objects are built by the
     application, not from the model's arguments, and walking them in full
-    blocked every call that passed one.
+    blocked every call that passed one. Pass lenient_objects=False (as
+    check_tool_call does) to walk plain objects as strictly as data models: a
+    payload hidden below the depth limit, in an unreadable object or past the
+    value budget then raises like it does for dicts and lists.
     """
     if isinstance(data, str):
         return [data]
@@ -205,16 +209,16 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
         children = list(data)
     elif isinstance(data, os.PathLike):
         path_value = os.fspath(data)
-        found = _extract_strings(path_value, max_depth, _path, budget)
+        found = _extract_strings(path_value, max_depth, _path, budget, lenient_objects=lenient_objects)
         # On Windows str() gives backslashes; the path rules also see the form with forward slashes.
         if isinstance(data, PurePath) and data.as_posix() != path_value:
-            found += _extract_strings(data.as_posix(), max_depth, _path, budget)
+            found += _extract_strings(data.as_posix(), max_depth, _path, budget, lenient_objects=lenient_objects)
         return found
     elif isinstance(data, io.IOBase):
         # An open file or stream: its contents are read by the tool, not passed
         # as text, and reading them here would move the file position. Check its name.
         name = getattr(data, "name", None)
-        return _extract_strings(name, max_depth, _path, budget) if isinstance(name, (str, bytes)) else []
+        return _extract_strings(name, max_depth, _path, budget, lenient_objects=lenient_objects) if isinstance(name, (str, bytes)) else []
     elif isinstance(data, Iterator) or isinstance(data, AsyncIterator):
         raise _Unscannable("type:unscannable",
                            "A one-shot iterator (such as a generator) cannot be checked "
@@ -229,13 +233,13 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
         try:
             children = _object_fields(data)
             if children is not None:
-                lenient = lenient or not is_model
+                lenient = lenient or (not is_model and lenient_objects)
             elif isinstance(data, Iterable):
                 children = []
                 for item in itertools.islice(data, max(budget[0], 0) + 1):
                     children.append(item)
         except Exception:
-            if lenient or not is_model:
+            if lenient or (not is_model and lenient_objects):
                 return []
             raise _Unscannable("type:unscannable", "An object could not be read to check it") from None
         if children is None:
@@ -256,16 +260,17 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
     try:
         strings: List[str] = []
         for child in children:
-            strings.extend(_extract_strings(child, max_depth - 1, path, budget, lenient))
+            strings.extend(_extract_strings(child, max_depth - 1, path, budget, lenient, lenient_objects))
         return strings
     finally:
         path.discard(id(data))
 
 
-def _strings_or_block(data: Any, what: str) -> Tuple[List[str], Optional[Assessment]]:
+def _strings_or_block(data: Any, what: str,
+                      lenient_objects: bool = True) -> Tuple[List[str], Optional[Assessment]]:
     """_extract_strings, or a block Assessment when the payload cannot be checked in full."""
     try:
-        return _extract_strings(data), None
+        return _extract_strings(data, lenient_objects=lenient_objects), None
     except _NestingTooDeep:
         return [], Assessment(verdict="block", confidence=1.0, rule="size:nesting",
                               reason=f"{what} nested too deeply to check")
@@ -315,8 +320,8 @@ def _call_payload(func: Any, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> D
 
 
 def _scan_strings(data: Any, what: str, block_truncated: bool, strict: Optional[bool],
-                  allow_truncated: bool = False) -> Assessment:
-    strings_to_check, blocked = _strings_or_block(data, what)
+                  lenient_objects: bool = True, allow_truncated: bool = False) -> Assessment:
+    strings_to_check, blocked = _strings_or_block(data, what, lenient_objects=lenient_objects)
     if blocked is not None:
         return blocked
     if too_invisible(strings_to_check):
@@ -349,20 +354,22 @@ def _scan_strings(data: Any, what: str, block_truncated: bool, strict: Optional[
 
 
 def check_tool_call(tool_name: str, arguments: Any = None, strict: Optional[bool] = None,
-                    block_truncated: bool = False) -> Assessment:
+                    block_truncated: bool = False, _lenient_objects: bool = False) -> Assessment:
     """
     Evaluates whether an agent tool call is safe to execute.
     Inspects tool arguments recursively for injection, evasion, or exfiltration attacks:
     every string, mapping key and object attribute (see _extract_strings).
     Arguments that cannot be checked in full are blocked: nested too deeply
-    (rule size:nesting), a one-shot iterator such as a generator (rule
+    (rule size:nesting, also for plain objects, as in the npm package), an
+    object that cannot be read (rule type:unscannable), a one-shot iterator such as a generator (rule
     type:unscannable) or too many values (rule size:items).
     Long strings are scanned in overlapping windows up to 4 MB, as tool results
     are; the result has truncated=True when some string was not fully analysed,
     and such arguments are blocked (rule size:truncated) when block_truncated
     is set or the ZN_BLOCK_TRUNCATED environment variable is "1".
     """
-    return _scan_strings(arguments, "Arguments", block_truncated=block_truncated, strict=strict)
+    return _scan_strings(arguments, "Arguments", block_truncated=block_truncated, strict=strict,
+                         lenient_objects=_lenient_objects)
 
 
 def check_tool_result(result: Any, block_truncated: bool = False, strict: Optional[bool] = None,
@@ -776,7 +783,8 @@ def guard(
             """(True, value to return) when the call is blocked; raises in the raise and custom modes."""
             combined_args = {"args": args, "kwargs": kwargs}
             assessment = check_tool_call(func_name, _call_payload(func, args, kwargs),
-                                         block_truncated=block_truncated)
+                                         block_truncated=block_truncated,
+                                         _lenient_objects=True)
             if assessment.allowed:
                 return False, None
             if callback:
