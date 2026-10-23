@@ -1,0 +1,137 @@
+'use strict';
+
+// The postinstall step (lib/agents/refresh.js) rewrites the hook launchers zn-gate wrote after the runner
+// changed (npm update -g), so the hooks keep working instead of blocking. It never fails an install and never
+// touches anything that is not a zn launcher. Values are fake; everything runs in a temporary home.
+
+process.env.ZN_STATS = 'off';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('fs');
+const path = require('path');
+const { spawnSync } = require('child_process');
+
+const { getAdapter } = require('../lib/agents');
+const launcher = require('../lib/agents/launcher');
+const refresh = require('../lib/agents/refresh');
+const { tempDir } = require('./helpers/tmp');
+
+const claude = getAdapter('claude-code');
+const posix = process.platform !== 'win32';
+const REAL = "process.stdout.write('REAL_RUNNER\\n'); process.exit(0);\n";
+
+function setup(t) {
+  const home = tempDir(t, 'zn-refresh-');
+  const env = { HOME: home, CLAUDE_CONFIG_DIR: path.join(home, '.claude'), ZN_HOME: path.join(home, '.zn'), PATH: process.env.PATH };
+  const runner = path.join(tempDir(t, 'zn-refresh-pkg-'), 'runner.js');
+  fs.writeFileSync(runner, REAL);
+  claude.install({ env, home, nodePath: process.execPath, runnerPath: runner, mcp: false });
+  return { home, env, runner, file: launcher.launcherFile('claude-code', { env, home }) };
+}
+
+function hook(file) {
+  return spawnSync('/bin/sh', [file, 'PreToolUse'], { input: '{}', encoding: 'utf8', env: { PATH: process.env.PATH, HOME: '/nonexistent' } });
+}
+
+function post(ctx, extra = {}) {
+  let out = '';
+  refresh.main({ env: ctx.env, home: ctx.home, runnerPath: ctx.runner, out: (s) => { out += s; }, ...extra });
+  return out;
+}
+
+test('refresh: an updated runner is picked up and the hook runs again instead of blocking', { skip: !posix }, (t) => {
+  const ctx = setup(t);
+  fs.writeFileSync(ctx.runner, "process.stdout.write('NEW_VERSION\\n'); process.exit(0);\n");
+  assert.equal(hook(ctx.file).status, 2, 'blocked before the refresh');
+  const out = post(ctx);
+  assert.equal(out, 'zn-gate: refreshed hook launchers for claude-code\n');
+  const r = hook(ctx.file);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout.trim(), 'NEW_VERSION');
+});
+
+test('refresh: running it twice gives byte-identical files and no output the second time', { skip: !posix }, (t) => {
+  const ctx = setup(t);
+  fs.writeFileSync(ctx.runner, REAL + '// v2\n');
+  assert.notEqual(post(ctx), '');
+  const first = fs.readFileSync(ctx.file);
+  assert.equal(post(ctx), '');
+  assert.deepEqual(fs.readFileSync(ctx.file), first);
+});
+
+test('refresh: no launcher directory means no output and no error', { skip: !posix }, (t) => {
+  const home = tempDir(t, 'zn-refresh-none-');
+  const env = { HOME: home, ZN_HOME: path.join(home, '.zn') };
+  let out = '';
+  assert.doesNotThrow(() => refresh.main({ env, home, out: (s) => { out += s; } }));
+  assert.equal(out, '');
+});
+
+test('refresh: a file that is not a zn launcher is left alone', { skip: !posix }, (t) => {
+  const ctx = setup(t);
+  fs.writeFileSync(ctx.runner, REAL + '// v2\n');
+  const dir = path.dirname(ctx.file);
+  const other = path.join(dir, 'zn-hook-other-tool.sh');
+  const text = "#!/bin/sh\n# somebody else's launcher\nZN_RUNNER='" + ctx.runner + "'\nZN_NODE='" + process.execPath + "'\n";
+  fs.writeFileSync(other, text);
+  const wrongId = path.join(dir, 'zn-hook-codex.sh');
+  const forged = '#!/bin/sh\n# Written by `zn hooks install cursor`; replaced on every install. Do not edit.\nZN_RUNNER=\'' + ctx.runner + "'\nZN_NODE='" + process.execPath + "'\n";
+  fs.writeFileSync(wrongId, forged);
+  fs.writeFileSync(path.join(dir, 'notes.txt'), 'hello');
+  post(ctx);
+  assert.equal(fs.readFileSync(other, 'utf8'), text);
+  assert.equal(fs.readFileSync(wrongId, 'utf8'), forged);
+  assert.equal(fs.readFileSync(path.join(dir, 'notes.txt'), 'utf8'), 'hello');
+});
+
+test('refresh: a corrupted, binary or unreadable launcher does not fail the install', { skip: !posix }, (t) => {
+  const ctx = setup(t);
+  fs.writeFileSync(ctx.runner, REAL + '// v2\n');
+  const dir = path.dirname(ctx.file);
+  fs.writeFileSync(path.join(dir, 'zn-hook-codex.sh'), Buffer.from([0, 255, 254, 1, 2]));
+  fs.mkdirSync(path.join(dir, 'zn-hook-cursor.sh'));
+  fs.symlinkSync('/nonexistent/target', path.join(dir, 'zn-hook-gemini.sh'));
+  const r = spawnSync(process.execPath, [path.join(__dirname, '..', 'lib', 'agents', 'refresh.js')], {
+    encoding: 'utf8', env: { ...ctx.env, HOME: ctx.home },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  // The run above used the real runner path, so it does not match the temp one; the in-process call below does.
+  assert.doesNotThrow(() => post(ctx));
+  assert.equal(hook(ctx.file).status, 0, 'the valid launcher was still refreshed');
+});
+
+test('refresh: the postinstall script exits 0 and prints nothing when there is nothing to do', { skip: !posix }, (t) => {
+  const home = tempDir(t, 'zn-refresh-cli-');
+  const r = spawnSync(process.execPath, [path.join(__dirname, '..', 'lib', 'agents', 'refresh.js')], {
+    encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home, ZN_HOME: path.join(home, '.zn') },
+  });
+  assert.equal(r.status, 0);
+  assert.equal(r.stdout + r.stderr, '');
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+  assert.equal(pkg.scripts.postinstall, 'node lib/agents/refresh.js');
+});
+
+test('refresh: a project-local install does not repoint launchers at another copy of zn-gate', { skip: !posix }, (t) => {
+  const ctx = setup(t);
+  // A second copy of the runner, as in ./node_modules/zn-gate of a project.
+  const localRunner = path.join(tempDir(t, 'zn-refresh-local-'), 'runner.js');
+  fs.writeFileSync(localRunner, "process.stdout.write('PROJECT_COPY\\n'); process.exit(0);\n");
+  const before = fs.readFileSync(ctx.file);
+  // Local install: not global, and the launcher's runner still exists.
+  assert.equal(post(ctx, { runnerPath: localRunner, global: false }), '');
+  assert.deepEqual(fs.readFileSync(ctx.file), before);
+  // Even npm_config_global=true leaves it alone while the recorded runner exists and is another file.
+  assert.equal(post(ctx, { runnerPath: localRunner, global: true }), '');
+  assert.deepEqual(fs.readFileSync(ctx.file), before);
+  // A global install whose recorded runner is gone (an old Node.js prefix was removed) does repoint it.
+  fs.unlinkSync(ctx.runner);
+  assert.equal(post(ctx, { runnerPath: localRunner, global: true }), 'zn-gate: refreshed hook launchers for claude-code\n');
+  assert.equal(hook(ctx.file).stdout.trim(), 'PROJECT_COPY');
+  // ...but a local install with a gone runner does not.
+  const ctx2 = setup(t);
+  fs.unlinkSync(ctx2.runner);
+  const b2 = fs.readFileSync(ctx2.file);
+  assert.equal(post(ctx2, { runnerPath: localRunner, global: false }), '');
+  assert.deepEqual(fs.readFileSync(ctx2.file), b2);
+});
