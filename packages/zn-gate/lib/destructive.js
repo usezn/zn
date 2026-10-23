@@ -25,7 +25,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-10-23.7';
+const COMMAND_RULES_VERSION = '2026-10-23.9';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -102,6 +102,124 @@ function segmentsOf(cmd, posix = false) {
 }
 
 const isPipe = (sep) => sep === '|' || sep === '|&';
+// xargs: the short options that take an argument, and the long ones (the value follows as a separate word).
+const XARGS_SHORT_ARG = new Set(['I', 'n', 'P', 'd', 'E', 'L', 's', 'a', 'J']);
+const XARGS_LONG_ARG = new Set(['--max-args', '--max-procs', '--delimiter', '--arg-file', '--eof', '--max-lines', '--max-chars', '--process-slot-var']);
+// What a command fed by an unknown source may be handed: the filesystem root and a disk device.
+const UNKNOWN_TARGETS = ['/', '/dev/sda'];
+// $@, $*, $1 and so on inside a shell script run with the matched files as its arguments.
+const SHELL_ARG_RE = /\$\{?(?:@|\*|[0-9]+)\}?/g;
+// True while the command under check is what `find -exec` runs on every file below the find path, so a plain rm or chmod
+// there covers the whole tree without -r / -R.
+let FIND_CTX = false;
+
+/* The command xargs runs, after its own options, and the placeholder it replaces ({} unless -I / -i / --replace says otherwise). */
+function xargsParse(args) {
+  let i = 0;
+  let ph = '{}';
+  while (i < args.length) {
+    const a = args[i];
+    if (a === '--') { i++; break; }
+    if (!a.startsWith('-') || a === '-') break;
+    i++;
+    if (a.startsWith('--')) {
+      const eq = a.indexOf('=');
+      const name = eq < 0 ? a : a.slice(0, eq);
+      if (name === '--replace' && eq >= 0) ph = a.slice(eq + 1) || '{}';
+      else if (eq < 0 && XARGS_LONG_ARG.has(name)) i++;
+      continue;
+    }
+    for (let j = 1; j < a.length; j++) {
+      const c = a[j];
+      if (XARGS_SHORT_ARG.has(c)) {
+        const attached = a.slice(j + 1);
+        if (c === 'I') ph = attached || (i < args.length ? args[i] : '{}');
+        if (!attached) i++;
+        break;
+      }
+      if (c === 'i' || c === 'l' || c === 'e') { if (c === 'i') ph = a.slice(j + 1) || '{}'; break; }
+    }
+  }
+  return { cmd: args.slice(i), ph };
+}
+
+/* The words with the placeholder (and {}) replaced by `value`; hit says whether any word held it. */
+function substitute(words, value, ph) {
+  let hit = false;
+  const holders = ph === '{}' ? ['{}'] : [ph, '{}'];
+  const out = words.map((w) => {
+    let r = w;
+    for (const p of holders) if (p && r.includes(p)) { r = r.split(p).join(value); hit = true; }
+    return r;
+  });
+  return { words: out, hit };
+}
+
+/* A find with no test that picks some files: every file and folder below the path goes. -maxdepth, -mindepth, -depth, -xdev,
+   -prune and -mount are not tests. When an action other than -delete runs (-exec, xargs), "-type d" picks the folders and
+   the path itself, and a recursive delete or chmod of them covers everything, so it is not a test either. */
+function findFiltered(args, acts) {
+  return args.some((w, i) => FIND_TESTS.test(w) && !(acts && w === '-type' && /^d(?:,d)*$/.test(args[i + 1] || '')));
+}
+
+/* The commands find -exec / -execdir / -ok / -okdir run: one array of words per action, up to its ; or +. */
+function findExecs(args) {
+  const out = [];
+  for (let i = 0; i < args.length; i++) {
+    if (!/^-(?:exec|execdir|ok|okdir)$/.test(args[i])) continue;
+    const body = [];
+    let j = i + 1;
+    while (j < args.length && !/^\\?;$/.test(args[j]) && args[j] !== '+') body.push(args[j++]);
+    out.push(body);
+    i = j;
+  }
+  return out;
+}
+
+/* What the text on the left of `| xargs` can hand it: the literal words of echo / printf, or, for find, the folders it lists
+   (nothing dangerous when it picks files by a test). Anything else, or no pipe at all, is unknown. */
+function stdinTargets(prev) {
+  if (!prev) return UNKNOWN_TARGETS;
+  const a = unwrap(prev.words);
+  const name = a.length ? programName(a[0]) : '';
+  if (name === 'echo' || name === 'printf') {
+    const out = [];
+    for (const w of a.slice(1)) {
+      if (w.startsWith('-')) continue;
+      for (const t of w.replace(/\\[0nrt]/g, ' ').split(/\s+/)) if (t) out.push(t);
+    }
+    return out.slice(0, 20);
+  }
+  if (name === 'find') {
+    const r = a.slice(1);
+    const ps = [];
+    for (const w of r) { if (w.startsWith('-') || w === '(' || w === '!') break; ps.push(w); }
+    if (!ps.length) ps.push('.');
+    return findFiltered(r, true) ? [] : ps;
+  }
+  return UNKNOWN_TARGETS;
+}
+
+/* Checks the command xargs or find -exec runs once for each possible target: the target takes the place of the placeholder
+   (and of $@ / $1 inside a shell script), or, for xargs without a placeholder, is added as the last argument. */
+function runBody(body, targets, depth, ph, append) {
+  for (const t of targets.slice(0, 20)) {
+    const sub = substitute(body, t, ph);
+    let words = sub.words;
+    if (append && !sub.hit) words = words.concat([t]);
+    const inner = unwrap(words);
+    if (inner.length && SHELLS.has(programName(inner[0]))) words = words.map((w) => w.replace(SHELL_ARG_RE, () => t));
+    const hit = checkSimple(words, depth + 1, null);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function inFindCtx(fn) {
+  const saved = FIND_CTX;
+  FIND_CTX = true;
+  try { return fn(); } finally { FIND_CTX = saved; }
+}
 
 /* The words of a command after wrappers that only run it (sudo, env, VAR=x, nohup, nice, time ...). */
 function unwrap(args) {
@@ -130,12 +248,15 @@ function unwrap(args) {
       while (i < args.length && args[i].startsWith('-')) { const f = args[i++]; if (f === '-n' || f === '-c') i++; }
       continue;
     }
-    if (name === 'timeout') {
+    if (name === 'timeout' || name === 'stdbuf') {
+      // Options that take an argument (-s KILL, -k 5, -o 0); glued forms (-o0, --signal=KILL) are one word.
+      const argFlags = name === 'timeout' ? /^-[sk]$|^--(?:signal|kill-after)$/ : /^-[ioe]$|^--(?:input|output|error)$/;
       i++;
-      while (i < args.length && args[i].startsWith('-')) i++;
-      i++; // the duration
+      while (i < args.length && args[i].startsWith('-')) { const f = args[i++]; if (argFlags.test(f)) i++; }
+      if (name === 'timeout') i++; // the duration
       continue;
     }
+    if (name === 'busybox' || name === 'toybox') { i++; continue; } // the next word is the applet
     break;
   }
   return args.slice(i);
@@ -222,7 +343,7 @@ function redirectTargets(words) {
   return out;
 }
 
-function checkSimple(words, depth) {
+function checkSimple(words, depth, prev) {
   const args = unwrap(words);
   if (!args.length) return null;
   const head = programName(args[0]);
@@ -248,18 +369,34 @@ function checkSimple(words, depth) {
   }
 
   if (RM_HEADS.has(head)) {
-    if ((rest.some((w) => recursiveFlag(w, head)) && operands(rest, head).some((w) => dangerousPath(w))) && on('rm_root_home')) return 'rm_root_home';
+    if (((FIND_CTX || rest.some((w) => recursiveFlag(w, head))) && operands(rest, head).some((w) => dangerousPath(w))) && on('rm_root_home')) return 'rm_root_home';
   }
   if (head === 'find') {
     const paths = [];
     for (const w of rest) { if (w.startsWith('-') || w === '(' || w === '!') break; paths.push(w); }
     const del = rest.includes('-delete') || rest.some((w, i) => w === '-exec' && /^(?:rm|shred)$/.test(programName(rest[i + 1] || '')));
     // With a test (-name, -type, -mtime ...) find removes only some files; with none it removes everything below the path.
-    const filtered = rest.some((w) => FIND_TESTS.test(w));
+    const execs = findExecs(rest);
+    const filtered = findFiltered(rest, execs.length > 0);
     if ((del && !filtered && paths.some((w) => dangerousPath(w))) && on('rm_root_home')) return 'rm_root_home';
+    if (!filtered && execs.length && depth < MAX_DEPTH) {
+      const dp = paths.filter((w) => dangerousPath(w));
+      if (dp.length) {
+        const hit = inFindCtx(() => { for (const body of execs) { const h = runBody(body, dp, depth, '{}', false); if (h) return h; } return null; });
+        if (hit) return hit;
+      }
+    }
+  }
+  if (head === 'xargs' && depth < MAX_DEPTH) {
+    // xargs runs its command on whatever arrives on its input: the command is checked with each thing that could arrive.
+    const x = xargsParse(rest);
+    if (x.cmd.length) {
+      const hit = runBody(x.cmd, stdinTargets(prev), depth, x.ph, true);
+      if (hit) return hit;
+    }
   }
   if (head === 'chmod' || head === 'chown' || head === 'chgrp') {
-    if (rest.some((w) => /^-[A-Za-z]*R[A-Za-z]*$/.test(w) || w === '--recursive')) {
+    if (FIND_CTX || rest.some((w) => /^-[A-Za-z]*R[A-Za-z]*$/.test(w) || w === '--recursive')) {
       const ops = operands(rest, head);
       const mode = ops[0] || '';
       const targets = ops.slice(1).map(dangerousPath).filter(Boolean);
@@ -331,6 +468,16 @@ function checkPipeline(pipe) {
     // a download whose output reaches a shell
     for (let j = firstDl + 1; j < pipe.length; j++) {
       const h = heads[j];
+      if (!h.overflow && h.head === 'xargs' && on('pipe_to_shell')) {
+        // xargs sh -c with no script of its own runs what the download says (also -I{} sh -c {}).
+        const x = xargsParse(h.args.slice(1));
+        const ia = unwrap(x.cmd);
+        if (ia.length && SHELLS.has(programName(ia[0]))) {
+          const ir = ia.slice(1);
+          const k = ir.findIndex((w) => /^-[A-Za-z]*c[A-Za-z]*$/.test(w));
+          if (k >= 0 && (k + 1 >= ir.length || ir[k + 1] === x.ph || ir[k + 1] === '{}')) return 'pipe_to_shell';
+        }
+      }
       if (!h.overflow && !h.names.some((n) => SHELLS.has(n))) continue;
       const rest = h.args.slice(1);
       // -c runs the code of its argument (checked on its own); -n only reads the script to check its syntax.
@@ -368,7 +515,7 @@ function on(rule) { return ENABLED === null || ENABLED.has(rule); }
 function checkSegments(segs, depth) {
   let pipe = [];
   for (const seg of segs) {
-    const hit = checkSimple(seg.words, depth);
+    const hit = checkSimple(seg.words, depth, pipe.length ? pipe[pipe.length - 1] : null);
     if (hit) return hit;
     pipe.push(seg);
     if (!isPipe(seg.sep)) {

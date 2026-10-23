@@ -28,7 +28,7 @@ from typing import List, Optional, Tuple
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-23.7"
+COMMAND_RULES_VERSION = "2026-10-23.9"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -249,6 +249,155 @@ def _is_pipe(sep: Optional[str]) -> bool:
     return sep in ("|", "|&")
 
 
+# xargs: the short options that take an argument, and the long ones (the value follows as a separate word).
+_XARGS_SHORT_ARG = set("InPdELsaJ")
+_XARGS_LONG_ARG = {"--max-args", "--max-procs", "--delimiter", "--arg-file", "--eof", "--max-lines", "--max-chars", "--process-slot-var"}
+# What a command fed by an unknown source may be handed: the filesystem root and a disk device.
+_UNKNOWN_TARGETS = ["/", "/dev/sda"]
+# $@, $*, $1 and so on inside a shell script run with the matched files as its arguments.
+_SHELL_ARG_RE = re.compile(r"\$\{?(?:@|\*|[0-9]+)\}?")
+# True while the command under check is what `find -exec` runs on every file below the find path, so a plain rm or chmod
+# there covers the whole tree without -r / -R.
+_FIND_CTX = False
+
+
+def _xargs_parse(args: List[str]) -> Tuple[List[str], str]:
+    """The command xargs runs, after its own options, and the placeholder it replaces ({} unless -I / -i / --replace says otherwise)."""
+    i = 0
+    n = len(args)
+    ph = "{}"
+    while i < n:
+        a = args[i]
+        if a == "--":
+            i += 1
+            break
+        if not a.startswith("-") or a == "-":
+            break
+        i += 1
+        if a.startswith("--"):
+            eq = a.find("=")
+            name = a if eq < 0 else a[:eq]
+            if name == "--replace" and eq >= 0:
+                ph = a[eq + 1:] or "{}"
+            elif eq < 0 and name in _XARGS_LONG_ARG:
+                i += 1
+            continue
+        for j in range(1, len(a)):
+            c = a[j]
+            if c in _XARGS_SHORT_ARG:
+                attached = a[j + 1:]
+                if c == "I":
+                    ph = attached or (args[i] if i < n else "{}")
+                if not attached:
+                    i += 1
+                break
+            if c in ("i", "l", "e"):
+                if c == "i":
+                    ph = a[j + 1:] or "{}"
+                break
+    return args[i:], ph
+
+
+def _substitute(words: List[str], value: str, ph: str) -> Tuple[List[str], bool]:
+    """The words with the placeholder (and {}) replaced by `value`, and whether any word held it."""
+    hit = False
+    holders = ["{}"] if ph == "{}" else [ph, "{}"]
+    out = []
+    for w in words:
+        r = w
+        for p in holders:
+            if p and p in r:
+                r = r.replace(p, value)
+                hit = True
+        out.append(r)
+    return out, hit
+
+
+def _find_filtered(args: List[str], acts: bool) -> bool:
+    """A find with a test that picks some files. -maxdepth, -mindepth, -depth, -xdev, -prune and -mount are not tests.
+    When an action other than -delete runs (-exec, xargs), "-type d" picks the folders and the path itself, and a
+    recursive delete or chmod of them covers everything, so it is not a test either."""
+    for i, w in enumerate(args):
+        if not _FIND_TESTS.match(w):
+            continue
+        if acts and w == "-type" and re.match(r"^d(?:,d)*\Z", args[i + 1] if i + 1 < len(args) else ""):
+            continue
+        return True
+    return False
+
+
+def _find_execs(args: List[str]) -> List[List[str]]:
+    """The commands find -exec / -execdir / -ok / -okdir run: one list of words per action, up to its ; or +."""
+    out: List[List[str]] = []
+    i = 0
+    while i < len(args):
+        if not re.match(r"^-(?:exec|execdir|ok|okdir)\Z", args[i]):
+            i += 1
+            continue
+        body: List[str] = []
+        j = i + 1
+        while j < len(args) and not re.match(r"^\\?;\Z", args[j]) and args[j] != "+":
+            body.append(args[j])
+            j += 1
+        out.append(body)
+        i = j + 1
+    return out
+
+
+def _stdin_targets(prev: Optional[List[str]]) -> List[str]:
+    """What the text on the left of `| xargs` can hand it: the literal words of echo / printf, or, for find, the folders
+    it lists (nothing dangerous when it picks files by a test). Anything else, or no pipe at all, is unknown."""
+    if prev is None:
+        return _UNKNOWN_TARGETS
+    a = _unwrap(prev)
+    name = _program_name(a[0]) if a else ""
+    if name in ("echo", "printf"):
+        out: List[str] = []
+        for w in a[1:]:
+            if w.startswith("-"):
+                continue
+            for t in re.sub(r"\\[0nrt]", " ", w).split():
+                out.append(t)
+        return out[:20]
+    if name == "find":
+        r = a[1:]
+        ps: List[str] = []
+        for w in r:
+            if w.startswith("-") or w == "(" or w == "!":
+                break
+            ps.append(w)
+        if not ps:
+            ps.append(".")
+        return [] if _find_filtered(r, True) else ps
+    return _UNKNOWN_TARGETS
+
+
+def _run_body(body: List[str], targets: List[str], depth: int, ph: str, append: bool) -> Optional[str]:
+    """Checks the command xargs or find -exec runs once for each possible target: the target takes the place of the
+    placeholder (and of $@ / $1 inside a shell script), or, for xargs without a placeholder, is added as the last argument."""
+    for t in targets[:20]:
+        words, hit = _substitute(body, t, ph)
+        if append and not hit:
+            words = words + [t]
+        inner = _unwrap(words)
+        if inner and _program_name(inner[0]) in _SHELLS:
+            words = [_SHELL_ARG_RE.sub(lambda _m, t=t: t, w) for w in words]
+        found = _check_simple(words, depth + 1, None)
+        if found:
+            return found
+    return None
+
+
+def _in_find_ctx(fn):
+    global _FIND_CTX
+    saved = _FIND_CTX
+    _FIND_CTX = True
+    try:
+        return fn()
+    finally:
+        _FIND_CTX = saved
+
+
 def _unwrap(args: List[str]) -> List[str]:
     i = 0
     guard = 0
@@ -288,11 +437,24 @@ def _unwrap(args: List[str]) -> List[str]:
                 if f in ("-n", "-c"):
                     i += 1
             continue
-        if name == "timeout":
+        if name in ("timeout", "stdbuf"):
+            # Options that take an argument (-s KILL, -k 5, -o 0); glued forms (-o0, --signal=KILL) are one word.
+            arg_flags = (
+                re.compile(r"^-[sk]\Z|^--(?:signal|kill-after)\Z")
+                if name == "timeout"
+                else re.compile(r"^-[ioe]\Z|^--(?:input|output|error)\Z")
+            )
             i += 1
             while i < len(args) and args[i].startswith("-"):
+                f = args[i]
                 i += 1
-            i += 1
+                if arg_flags.match(f):
+                    i += 1
+            if name == "timeout":
+                i += 1  # the duration
+            continue
+        if name in ("busybox", "toybox"):
+            i += 1  # the next word is the applet
             continue
         break
     return args[i:]
@@ -404,7 +566,7 @@ def _world_writable(mode: str) -> bool:
     return bool(m and (m.group(1) == "" or re.search(r"[ao]", m.group(1))))
 
 
-def _check_simple(words: List[str], depth: int) -> Optional[str]:
+def _check_simple(words: List[str], depth: int, prev: Optional[List[str]] = None) -> Optional[str]:
     args = _unwrap(words)
     if not args:
         return None
@@ -432,7 +594,7 @@ def _check_simple(words: List[str], depth: int) -> Optional[str]:
             return hit
 
     if head in _RM_HEADS:
-        if any(_recursive_flag(w, head) for w in rest) and any(_dangerous_path(w) for w in _operands(rest, head)):
+        if (_FIND_CTX or any(_recursive_flag(w, head) for w in rest)) and any(_dangerous_path(w) for w in _operands(rest, head)):
             return "rm_root_home"
     if head == "find":
         paths: List[str] = []
@@ -444,11 +606,38 @@ def _check_simple(words: List[str], depth: int) -> Optional[str]:
             w == "-exec" and re.match(r"^(?:rm|shred)\Z", _program_name(rest[j + 1] if j + 1 < len(rest) else ""))
             for j, w in enumerate(rest)
         )
-        filtered = any(_FIND_TESTS.match(w) for w in rest)
+        filtered = _find_filtered(rest, bool(_find_execs(rest)))
         if delete and not filtered and any(_dangerous_path(w) for w in paths):
             return "rm_root_home"
+    if head == "find" and depth < _MAX_DEPTH:
+        execs = _find_execs(rest)
+        if execs and not _find_filtered(rest, True):
+            fpaths: List[str] = []
+            for w in rest:
+                if w.startswith("-") or w == "(" or w == "!":
+                    break
+                fpaths.append(w)
+            dp = [w for w in fpaths if _dangerous_path(w)]
+            if dp:
+                def _exec_bodies() -> Optional[str]:
+                    for body in execs:
+                        found = _run_body(body, dp, depth, "{}", False)
+                        if found:
+                            return found
+                    return None
+
+                found = _in_find_ctx(_exec_bodies)
+                if found:
+                    return found
+    if head == "xargs" and depth < _MAX_DEPTH:
+        # xargs runs its command on whatever arrives on its input: the command is checked with each thing that could arrive.
+        xcmd, xph = _xargs_parse(rest)
+        if xcmd:
+            found = _run_body(xcmd, _stdin_targets(prev), depth, xph, True)
+            if found:
+                return found
     if head in ("chmod", "chown", "chgrp"):
-        if any(re.match(r"^-[A-Za-z]*R[A-Za-z]*\Z", w) or w == "--recursive" for w in rest):
+        if _FIND_CTX or any(re.match(r"^-[A-Za-z]*R[A-Za-z]*\Z", w) or w == "--recursive" for w in rest):
             ops = _operands(rest, head)
             mode = ops[0] if ops else ""
             targets = [d for d in (_dangerous_path(w) for w in ops[1:]) if d]
@@ -542,6 +731,15 @@ def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]]) -> Optional[str
     if first_dl >= 0:
         for j in range(first_dl + 1, len(pipe)):
             args, head, names, overflow = heads[j]
+            if not overflow and head == "xargs":
+                # xargs sh -c with no script of its own runs what the download says (also -I{} sh -c {}).
+                xcmd, xph = _xargs_parse(args[1:])
+                ia = _unwrap(xcmd)
+                if ia and _program_name(ia[0]) in _SHELLS:
+                    ir = ia[1:]
+                    k = next((q for q, w in enumerate(ir) if re.match(r"^-[A-Za-z]*c[A-Za-z]*\Z", w)), -1)
+                    if k >= 0 and (k + 1 >= len(ir) or ir[k + 1] in (xph, "{}")):
+                        return "pipe_to_shell"
             if not overflow and not any(n in _SHELLS for n in names):
                 continue
             rest = args[1:]
@@ -578,7 +776,7 @@ def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]]) -> Optional[str
 def _check_segments(segs: List[Tuple[List[str], Optional[str]]], depth: int) -> Optional[str]:
     pipe: List[Tuple[List[str], Optional[str]]] = []
     for words, sep in segs:
-        hit = _check_simple(words, depth)
+        hit = _check_simple(words, depth, pipe[-1][0] if pipe else None)
         if hit:
             return hit
         pipe.append((words, sep))
