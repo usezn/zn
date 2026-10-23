@@ -101,3 +101,23 @@ test('on posix a tilde name is just a name', () => {
   if (REAL_WIN) return;
   assert.equal(policy.instructionWriteNotice('AGENTS~1.MD', O), null);
 });
+
+// An 8.3 short name in a folder of the path (not only the last name) stands for the long folder: CURSOR~1 is .cursor.
+test('8.3 short folder names of an instruction folder are reviewed (win32)', () => {
+  asWindows(() => {
+    const names = ['CURSOR~1/rules/x.mdc', 'CURSOR~1\\rules\\x.mdc', 'GITHUB~1/COPILO~1.MD', 'GITHUB~1\\COPILO~1.MD',
+      'GITHUB~1/copilot-instructions.md', 'sub/CURSOR~1/rules/deep/x.mdc', '/Users/alice/proj/CURSOR~1/rules/x.mdc'];
+    assert.deepEqual(names.filter((p) => !policy.instructionWriteNotice(p, O)), []);
+    const note = {};
+    policy.bashDenial('echo x>CURSOR~1/rules/x.mdc', { ...O, instructionNotice: note });
+    assert.ok(note.hit);
+  });
+});
+
+test('short folders that are not instruction folders stay allowed (win32 control)', () => {
+  asWindows(() => {
+    const benign = ['NOTES~1.MD', 'PROJEC~1/notes.md', 'docs/x.md', 'DOCUME~1/x.md', 'CURSOR~1/x.md', 'GITHUB~1/workflows/ci.yml',
+      'CLAUDE~1/commands/x.md', 'NOTES~1/rules/x.mdc'];
+    assert.deepEqual(benign.filter((p) => policy.instructionWriteNotice(p, O)), []);
+  });
+});
