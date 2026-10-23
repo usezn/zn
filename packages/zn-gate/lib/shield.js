@@ -274,7 +274,7 @@ function startMcpShield(command, args, options = {}) {
   // sampling, resources/read, prompts/get and error messages) is checked with the same engine as tool results.
   // A blocked string is replaced by a notice; shadow mode only reports.
   const MAX_SERVER_STRINGS = 500;
-  // Listings (resources, resource templates, prompts) can be long; only their descriptions and titles are checked.
+  // Listings (resources, resource templates, prompts) and tools/list can be long: past this many items, the rest are removed.
   const MAX_LIST_STRINGS = 5000;
   const MAX_SERVER_DEPTH = 8;
   // Strings past the per-string limit are checked together, joined in chunks of this size. A chunk that comes
@@ -454,6 +454,27 @@ function startMcpShield(command, args, options = {}) {
     const checked = await scanServerText(label, k);
     return checked === k || options.shadow ? k : renameKey(obj, k, checked);
   }
+  // The identifiers of a listed resource, resource template or prompt: text the agent reads that cannot be
+  // rewritten without breaking the calls that use it.
+  const listIdentifiers = (item) => {
+    const out = [];
+    for (const f of ['name', 'uri', 'uriTemplate', 'mimeType']) if (typeof item[f] === 'string') out.push([f, item[f]]);
+    if (Array.isArray(item.arguments)) {
+      for (const arg of item.arguments) {
+        if (arg && typeof arg === 'object' && typeof arg.name === 'string') out.push(['argument name', arg.name]);
+      }
+    }
+    return out;
+  };
+  // Checks identifiers with the engine used for server text. Returns null when all pass unchanged, else a reason.
+  async function blockedIdentifier(label, fields) {
+    for (const [field, text] of fields) {
+      if (text.length === 0) continue;
+      const checked = await scanServerText(`${label} ${field}`, text);
+      if (checked !== text) return field;
+    }
+    return null;
+  }
   // `method` is the request this message answers, when the shield tracked it (tools/list, tools/call).
   // resultReplaced: the tools/call result was already replaced by a block notice, so its content is not checked again.
   async function scanServerMessage(msg, method, resultReplaced = false) {
@@ -501,13 +522,32 @@ function startMcpShield(command, args, options = {}) {
       if (result.completion && typeof result.completion === 'object' && Array.isArray(result.completion.values)) {
         await scanServerValue('completion/complete', result.completion, 'values', { n: 0 }, 0);
       }
-      // Listings: the descriptions and titles reach the agent. Names and URIs are left alone (they are identifiers).
+      // Listings: every field the agent can read is checked. Text (descriptions, titles, argument descriptions) is
+      // rewritten when it blocks; identifiers (names, URIs, URI templates, argument names) cannot be rewritten
+      // without breaking the calls that use them, so an item with a blocked identifier is dropped with a notice.
       for (const [key, label] of [['resources', 'resources/list'], ['resourceTemplates', 'resources/templates/list'], ['prompts', 'prompts/list']]) {
         if (!Array.isArray(result[key])) continue;
         const state = { n: 0, max: MAX_LIST_STRINGS };
+        const kept = [];
+        let dropped = 0;
         for (const item of result[key]) {
-          if (!item || typeof item !== 'object') continue;
+          if (!item || typeof item !== 'object' || Array.isArray(item)) { kept.push(item); continue; }
+          // Past the count limit an item is not checked, so it cannot be passed on.
+          const bad = kept.length + dropped >= MAX_LIST_STRINGS ? 'beyond the number of items zn-gate checks'
+            : await blockedIdentifier(label, listIdentifiers(item));
+          if (bad !== null && !options.shadow) { dropped += 1; continue; }
+          kept.push(item);
           for (const f of ['description', 'title']) if (typeof item[f] === 'string') await scanServerValue(label, item, f, state, 0);
+          if (Array.isArray(item.arguments)) {
+            for (const arg of item.arguments) {
+              if (!arg || typeof arg !== 'object') continue;
+              for (const f of ['description', 'title']) if (typeof arg[f] === 'string') await scanServerValue(label + ' argument', arg, f, state, 0);
+            }
+          }
+        }
+        if (dropped > 0) {
+          result[key] = kept;
+          process.stderr.write(`[zn-shield BLOCKED SERVER MESSAGE] ${label}: ${dropped} item(s) removed because a name, URI or argument name could not be passed on safely.\n`);
         }
       }
       if (method !== 'tools/call' && method !== 'tools/list' && msg.id !== undefined
@@ -799,6 +839,22 @@ function startMcpShield(command, args, options = {}) {
       // Handle tools/list response: sanitize tool descriptions and input schemas
       if (pending.method === 'tools/list') {
         let tools = msg.result?.tools;
+        if (Array.isArray(tools) && !options.shadow) {
+          // A tool name cannot be rewritten without breaking calls to it: a tool whose name carries an injection
+          // (or that is past the number of tools zn-gate checks) is removed from the list, with a notice.
+          const kept = [];
+          let dropped = 0;
+          for (const t of tools) {
+            if (!t || typeof t !== 'object' || typeof t.name !== 'string') { kept.push(t); continue; }
+            if (kept.length + dropped >= MAX_LIST_STRINGS || await blockedIdentifier('tools/list', [['name', t.name]]) !== null) { dropped += 1; continue; }
+            kept.push(t);
+          }
+          if (dropped > 0) {
+            msg.result.tools = kept;
+            tools = kept;
+            process.stderr.write(`[zn-shield BLOCKED TOOL NAME] tools/list: ${dropped} tool(s) removed because the name could not be passed on safely.\n`);
+          }
+        }
         if (Array.isArray(tools)) {
           // Text from the server cannot pass for a zn-gate notice.
           for (const t of tools) {
