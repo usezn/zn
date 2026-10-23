@@ -351,7 +351,73 @@ function startMcpShield(command, args, options = {}) {
   };
   async function scanServerValue(label, holder, key, state, depth) {
     await walkServerValue(label, holder, key, state, depth);
-    if (depth === 0) await flushDeferred(label, state);
+    if (depth === 0) {
+      await flushDeferred(label, state);
+      await canonicalGuard(label, holder[key], (notice) => { holder[key] = notice; });
+    }
+  }
+  // The model reads all the text of a message together, so a prompt injection can be split across fields that are
+  // each harmless alone. After the fields are checked one by one (an injection in a single field is replaced there,
+  // and the rest of the message is kept), the text that is left is checked once more as a whole, joined by newlines, the way the
+  // chunks are. A message whose text is over the scan budget, or whose joined text is blocked, is replaced as a
+  // whole instead of passing the part nobody checked. `replace` puts the notice where the message was.
+  // Two views, in reading order: the values alone (what a text field says next to the next one) and the values
+  // with their keys (a key is text too). The depth is bounded by MAX_SERVER_DEPTH; what is deeper was replaced.
+  function canonicalStrings(root) {
+    const values = [];
+    const all = [];
+    let chars = 0;
+    let over = false;
+    const add = (t, isValue) => {
+      all.push(t);
+      if (isValue) values.push(t);
+      chars += t.length;
+      if (chars > SHIELD_RESULT_SCAN_CHARS) over = true;
+    };
+    const visit = (v, d) => {
+      if (over) return;
+      if (typeof v === 'string') add(v, true);
+      else if (v && typeof v === 'object' && d < MAX_SERVER_DEPTH) {
+        const isArray = Array.isArray(v);
+        for (const k of Object.keys(v)) {
+          if (over) return;
+          if (!isArray) add(k, false);
+          if (k === 'blob' && typeof v[k] === 'string' && typeof v.uri === 'string') {
+            if (textBlob(v.mimeType)) add(Buffer.from(v[k], 'base64').toString('utf8'), true);
+          } else if (k === 'type' && typeof v[k] === 'string') {
+            add(v[k], false); // the content type is structure, not text between two fields
+          } else {
+            visit(v[k], d + 1);
+          }
+        }
+      }
+    };
+    visit(root, 0);
+    return { values, all, over };
+  }
+  async function canonicalGuard(label, root, replace) {
+    const { values, all, over } = canonicalStrings(root);
+    if (!over && all.length < 2) return false;
+    let rule = 'size:truncated';
+    if (!over) {
+      let check = null;
+      let text = '';
+      for (const view of all.length > values.length ? [values, all] : [values]) {
+        text = view.join('\n');
+        const c = await checkToolResult(label, text, { ...options, maxScanChars: SHIELD_RESULT_SCAN_CHARS, blockTruncated: true });
+        if (c.safe_to_ingest === false || c.assessment?.verdict === 'block' || c.verdict === 'block') { check = c; break; }
+      }
+      if (!check) return false;
+      rule = check.assessment?.rule || check.assessment?.reason || check.rule || check.reason || 'indirect prompt injection';
+      logServerBlock(label, text, rule, rule === 'size:truncated', check);
+    } else {
+      logServerBlock(label, '', rule, true, {});
+    }
+    if (options.shadow) return false;
+    replace(serverNotice(rule === 'size:truncated'
+      ? `it is too large for zn-gate to check in full (over ${SHIELD_RESULT_SCAN_CHARS / 1048576} MB)`
+      : `its text, read as a whole, tries to give instructions to the AI agent (${rule})`));
+    return true;
   }
   // An object key is text the agent reads too: a key whose check changes it is renamed to the checked text (the
   // notice or the redacted key), keeping its value. defineProperty, so no key can reach the object's prototype.
@@ -1050,6 +1116,19 @@ function startMcpShield(command, args, options = {}) {
     }
 
     await scanServerMessage(msg, answered, resultReplaced);
+    // A tool result is also checked as one text, after its items were checked one by one.
+    if (answered === 'tools/call' && !resultReplaced && msg.result && typeof msg.result === 'object' && !Array.isArray(msg.result)) {
+      serverLog = { n: 0, suppressed: 0, rules: new Map() };
+      try {
+        await canonicalGuard('tools/call', { content: msg.result.content, structuredContent: msg.result.structuredContent }, (notice) => {
+          delete msg.result.structuredContent;
+          msg.result.content = [{ type: 'text', text: notice }];
+          msg.result.isError = true;
+        });
+      } finally {
+        serverLog = null;
+      }
+    }
   }
 
   // Handle process termination
