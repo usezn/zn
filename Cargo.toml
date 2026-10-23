@@ -26,6 +26,8 @@ tower-http = { version = "0.5", features = ["cors", "auth", "fs", "timeout"] }
 # Already in the tree through axum; named here to run the management API with read timeouts.
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio", "service"] }
+# The parser hyper uses, to follow request framing on the raw connection (see http_limits).
+httparse = "1"
 wasmtime = "48"
 rusqlite = { version = "0.40", default-features = false, features = ["bundled", "cache", "fallible_uint"] }
 ratatui = "0.30"

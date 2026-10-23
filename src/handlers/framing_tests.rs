@@ -193,21 +193,96 @@ async fn non_numeric_and_signed_content_length_are_400() {
 }
 
 #[tokio::test]
-#[ignore = "B-1258: hyper accepts Content-Length plus Transfer-Encoding: chunked (chunked wins) and answers 200"]
 async fn content_length_plus_chunked_is_rejected() {
     let addr = spawn_server().await;
     let l = BODY.len();
     // A well-formed chunked body, so only the CL+TE combination can explain a rejection.
     let chunked = format!("{:x}\r\n{BODY}\r\n0\r\n\r\n", BODY.len());
-    let raw = post_with(
+    for (name, headers) in [
+        (
+            "cl_first",
+            format!("Content-Length: {l}\r\nTransfer-Encoding: chunked\r\n"),
+        ),
+        (
+            "te_first",
+            format!("Transfer-Encoding: chunked\r\nContent-Length: {l}\r\n"),
+        ),
+        (
+            "mixed_case",
+            format!("CONTENT-length: {l}\r\ntransfer-ENCODING: Chunked\r\n"),
+        ),
+    ] {
+        let p = probe(addr, post_with(&headers, &chunked), BOUND).await;
+        report(&format!("content_length_plus_chunked_{name}"), &p);
+        // RFC 9112 6.1: such a message "ought to be handled as an error" (smuggling risk behind a proxy).
+        // hyper removes Content-Length before the service sees it, so this is caught on the raw bytes.
+        assert_eq!(p.status, Some(400), "{name}: {p:?}");
+        assert!(!p.timed_out && p.elapsed < BOUND, "{name}: {p:?}");
+    }
+}
+
+#[tokio::test]
+async fn plain_chunked_and_plain_content_length_are_still_served() {
+    let addr = spawn_server().await;
+    let chunked = format!("{:x}\r\n{BODY}\r\n0\r\n\r\n", BODY.len());
+    let p = probe(
+        addr,
+        post_with("Transfer-Encoding: chunked\r\n", &chunked),
+        BOUND,
+    )
+    .await;
+    report("plain_chunked", &p);
+    assert_eq!(p.status, Some(200), "{p:?}");
+    let p = probe(
+        addr,
+        post_with(&format!("Content-Length: {}\r\n", BODY.len()), BODY),
+        BOUND,
+    )
+    .await;
+    report("plain_content_length", &p);
+    assert_eq!(p.status, Some(200), "{p:?}");
+}
+
+#[tokio::test]
+async fn transfer_encoding_on_http10_is_400() {
+    let addr = spawn_server().await;
+    let chunked = format!("{:x}\r\n{BODY}\r\n0\r\n\r\n", BODY.len());
+    let raw = format!(
+        "POST /api/v1/tenants HTTP/1.0\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n{chunked}"
+    )
+    .into_bytes();
+    let p = probe(addr, raw, BOUND).await;
+    report("http10_transfer_encoding", &p);
+    assert_eq!(p.status, Some(400), "{p:?}");
+}
+
+/// On a keep-alive connection the verdicts follow the requests: clean requests before the bad one are
+/// served, the bad one is a 400 whose handler never runs, and the connection is closed after it.
+#[tokio::test]
+async fn pipelined_clean_requests_then_content_length_plus_chunked() {
+    let addr = spawn_server().await;
+    let l = BODY.len();
+    let chunked = format!("{:x}\r\n{BODY}\r\n0\r\n\r\n", BODY.len());
+    let mut raw = b"GET /api/v1/health HTTP/1.1\r\nHost: localhost\r\n\r\n".to_vec();
+    raw.extend(post_with("Transfer-Encoding: chunked\r\n", &chunked));
+    raw.extend(post_with(
         &format!("Content-Length: {l}\r\nTransfer-Encoding: chunked\r\n"),
         &chunked,
-    );
-    let p = probe(addr, raw, BOUND).await;
-    report("content_length_plus_chunked", &p);
-    // RFC 9112 6.1 says such a message "ought to be handled as an error" (smuggling risk behind a proxy).
-    assert!(is_clean_reject(&p), "{p:?}");
-    assert_ne!(p.status, Some(200));
+    ));
+    let mut s = TcpStream::connect(addr).await.unwrap();
+    s.write_all(&raw).await.unwrap();
+    let mut out = Vec::new();
+    let _ = tokio::time::timeout(BOUND, s.read_to_end(&mut out)).await;
+    let text = String::from_utf8_lossy(&out);
+    // The responses follow each other without a line break after the body, so find each status line.
+    let statuses: Vec<&str> = text
+        .match_indices("HTTP/1.1 ")
+        .map(|(i, _)| &text[i + 9..i + 12])
+        .collect();
+    println!("FRAMING case=pipelined statuses={statuses:?}");
+    assert_eq!(statuses, ["200", "200", "400"], "{text}");
+    // Only the first POST ran its handler.
+    assert_eq!(text.matches("name_len").count(), 1, "{text}");
 }
 
 #[tokio::test]
