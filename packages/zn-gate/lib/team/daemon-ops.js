@@ -34,6 +34,8 @@ const JOIN_TOKEN_RE = /^znj_[A-Za-z0-9]{32,64}$/;
 const AGENT_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const NAME_RE = /^[A-Z][A-Z0-9_]{0,63}$/;
 const ALERT_EVERY_MS = 6 * 3600 * 1000; // a sync that keeps failing leaves one local alert every 6 hours
+const REVOCATION_GIVE_UP_MS = 30 * 24 * 3600 * 1000; // a revocation the server never confirms is dropped after 30 days
+const MAX_PENDING_REVOCATIONS = 8;
 
 const osName = () => (['linux', 'darwin', 'win32'].includes(process.platform) ? process.platform : 'other');
 /* Text from the server shown in dialogs and in `zn team status`: printable only (same invisible set as the dialogs). */
@@ -177,6 +179,91 @@ function makeTeamOps(ctx) {
     return { value: fn() };
   });
 
+  /*
+   * Revocations still to be told to the server. `zn team leave` calls POST /v1/org/install/leave with the
+   * installation's own token before it deletes anything. When the server cannot be told (offline, 5xx, 429, an older
+   * server without the endpoint), the machine still stops being a member at once; this record (s.pendingRevocations,
+   * in the vault) keeps only what the retry needs: the token, the organization, the API base and the time. It is
+   * not a membership: no policy, no uploads, no detectors. Each record is retried with its own token only, on every
+   * sync, and dropped on 200, on 401 (nothing is left to revoke with that token) or after REVOCATION_GIVE_UP_MS.
+   */
+  const pendingList = (s) => (Array.isArray(s.pendingRevocations) ? s.pendingRevocations : []);
+  const sameRevocation = (a, b) => a.install_id === b.install_id && a.install_token === b.install_token;
+
+  async function askServerToRevoke(rec) {
+    try {
+      return await createApi({ base: rec.api_base, token: rec.install_token, fetchImpl, userAgent: 'zn-gate/' + VERSION }).leaveInstall();
+    } catch (err) {
+      return { done: false, error: 'could not ask the server (' + printable(String((err && err.message) || err), 80) + ')' };
+    }
+  }
+
+  /* Runs fn(list) in the serialised section on the pending list and saves it. */
+  function updatePending(fn) {
+    return state.serial(async () => {
+      const s = await state.loadSecrets();
+      const list = pendingList(s).slice();
+      const r = fn(list, s);
+      if (list.length) s.pendingRevocations = list; else delete s.pendingRevocations;
+      await state.saveSecrets();
+      return r;
+    });
+  }
+
+  /* What `zn team status` shows: no token. */
+  function revocationsView(s) {
+    return pendingList(s).map((r) => ({
+      org: printable(r.org, 40), org_name: printable(r.org_name, 100) || null, install_id: printable(r.install_id, 64),
+      since: printable(r.since, 40), last_try_at: printable(r.last_try_at, 40) || null,
+      last_error: printable(r.last_error, 200) || null, tries: Number.isInteger(r.tries) ? r.tries : 0,
+      next_try_at: printable(r.next_try_at, 40) || null,
+      give_up_at: Number.isFinite(Date.parse(r.since)) ? new Date(Date.parse(r.since) + REVOCATION_GIVE_UP_MS).toISOString() : null,
+    }));
+  }
+
+  /*
+   * Tell the server about every pending revocation that is due. {tried, done, pending, abandoned}. Network calls
+   * are made outside the serialised section. `skip` is a record that was just tried.
+   */
+  async function retryRevocations(skip) {
+    const sum = { tried: 0, done: 0, pending: 0, abandoned: 0 };
+    const s0 = await state.loadSecrets();
+    for (const rec of pendingList(s0).map((r) => ({ ...r }))) {
+      if (isClosed()) break;
+      const now = Date.now();
+      const since = Date.parse(rec.since);
+      if (!Number.isFinite(since) || now - since > REVOCATION_GIVE_UP_MS) {
+        await updatePending((list) => {
+          const i = list.findIndex((r) => sameRevocation(r, rec));
+          if (i >= 0) { list.splice(i, 1); writeAudit({ mode: 'remove', decision: 'error', reason: 'team_revocation_abandoned' }); }
+        });
+        sum.abandoned += 1;
+        continue;
+      }
+      if ((skip && sameRevocation(skip, rec)) || (Date.parse(rec.next_try_at) > now)) { sum.pending += 1; continue; }
+      const r = await askServerToRevoke(rec);
+      sum.tried += 1;
+      await updatePending((list) => {
+        const i = list.findIndex((x) => sameRevocation(x, rec));
+        if (i < 0) return;
+        if (r.done) {
+          list.splice(i, 1);
+          writeAudit({ mode: 'remove', decision: 'allow', reason: 'team_revocation_done' });
+        } else {
+          list[i] = {
+            ...list[i], last_try_at: new Date(now).toISOString(), last_error: printable(r.error, 200) || 'unknown', tries: (Number.isInteger(list[i].tries) ? list[i].tries : 0) + 1,
+            next_try_at: r.retryAfterSeconds ? new Date(now + r.retryAfterSeconds * 1000).toISOString() : null,
+          };
+        }
+      });
+      if (r.done) sum.done += 1; else sum.pending += 1;
+    }
+    return sum;
+  }
+
+  const retrySafe = () => retryRevocations().catch(() => null);
+  const worthSaying = (sum) => Boolean(sum && (sum.done || sum.pending || sum.abandoned));
+
   const ops = {
     /**
      * teamJoin({join_token, api_base, agent}) -> {org, org_name, install_id, api_base}
@@ -294,13 +381,19 @@ function makeTeamOps(ctx) {
     },
 
     /**
-     * teamLeave() -> {left: org | null, pending_files: [paths still on disk]}. Confirmed: it removes the organization's restrictions.
-     * The vault entry is deleted first; every local copy is then deleted and checked one by one.
+     * teamLeave() -> {left: org | null, install_id, pending_files: [paths still on disk], revocation?}. Confirmed: it removes
+     * the organization's restrictions. The server is told first, with this installation's own token
+     * (revocation: {status: 'done', reason} or {status: 'pending', since, error}); the vault entry is then deleted and
+     * every local copy is deleted and checked one by one. A revocation the server could not take stays pending in the
+     * vault and is retried (see retryRevocations); it never keeps the machine in the organization.
      */
     async teamLeave() {
       const t = await team();
       if (!t) {
-        return { left: null, pending_files: removeLocalCopies() };
+        const stuck = removeLocalCopies();
+        const sum = await retrySafe();
+        const s = await state.loadSecrets();
+        return pendingList(s).length ? { left: null, pending_files: stuck, revocations: revocationsView(s) } : { left: null, pending_files: stuck };
       }
       await confirmOutOfBand({
         kind: 'team',
@@ -309,21 +402,45 @@ function makeTeamOps(ctx) {
         fields: [['Organization', t.org_name ? t.org_name + ' (' + t.org + ')' : t.org]],
         footer: 'If you did not just run `zn team leave` yourself, choose Deny.',
       }, { mode: 'set', reason: 'team_leave' });
-      return state.serial(async () => {
+      const snap = membership(t);
+      const told = await askServerToRevoke({ api_base: t.api_base, install_token: t.install_token });
+      const res = await state.serial(async () => {
         const s = await state.loadSecrets();
+        if (!s.team) return { left: null, pending_files: removeLocalCopies() };
+        if (!sameMembership(s.team, snap)) throw znError(CODES.POLICY_DENIED, 'the organization membership changed while leaving; run `zn team leave` again');
         delete s.team;
         s.teamGen = (Number.isInteger(s.teamGen) ? s.teamGen : 0) + 1;
         delete s.orgApprovals;
         writeAudit({ mode: 'remove', decision: 'allow', reason: 'team_left' });
+        let revocation = { status: 'done', reason: told.done ? told.reason : null };
+        let rec = null;
+        if (!told.done) {
+          const at = new Date().toISOString();
+          rec = {
+            org: t.org, org_name: t.org_name || null, install_id: t.install_id, api_base: t.api_base, install_token: t.install_token,
+            since: at, last_try_at: at, last_error: printable(told.error, 200) || 'unknown', tries: 1,
+            next_try_at: told.retryAfterSeconds ? new Date(Date.now() + told.retryAfterSeconds * 1000).toISOString() : null,
+          };
+          const list = pendingList(s).filter((r) => !sameRevocation(r, rec));
+          list.push(rec);
+          s.pendingRevocations = list.slice(-MAX_PENDING_REVOCATIONS);
+          writeAudit({ mode: 'set', decision: 'error', reason: 'team_revocation_pending' });
+          revocation = { status: 'pending', since: at, error: rec.last_error, give_up_at: new Date(Date.parse(at) + REVOCATION_GIVE_UP_MS).toISOString() };
+        }
         await state.saveSecrets();
-        return { left: t.org, install_id: t.install_id, pending_files: removeLocalCopies() };
+        return { rec, out: { left: t.org, install_id: t.install_id, pending_files: removeLocalCopies(), revocation } };
       });
+      if (!res.out) return res;
+      // Revocations of earlier memberships that are still pending get their turn too (not the one just tried).
+      await retryRevocations(res.rec).catch(() => null);
+      return res.out;
     },
 
     /** teamInfo() -> what `zn team status` shows. Never the token. */
     async teamInfo() {
       const t = await team();
-      if (!t) return { joined: false };
+      const secrets0 = await state.loadSecrets();
+      if (!t) return pendingList(secrets0).length ? { joined: false, revocations: revocationsView(secrets0) } : { joined: false };
       const st = await policyState();
       await ensureCopies(membership(t));
       return {
@@ -337,6 +454,7 @@ function makeTeamOps(ctx) {
         join_pending: st.state === 'none' || st.state === 'invalid',
         upload_after_seq: Number.isInteger(t.upload_after_seq) ? t.upload_after_seq : 0,
         last_sync: lastSyncOf(t),
+        ...(pendingList(secrets0).length ? { revocations: revocationsView(secrets0) } : {}),
       };
     },
 
@@ -525,9 +643,21 @@ function makeTeamOps(ctx) {
       out = await ops.teamSyncNow(args, (m) => { snap = m; });
     } catch (err) {
       if (snap) await noteSync(['sync failed: ' + printable(String((err && err.message) || (err && err.code) || err), 160)], snap).catch(() => {});
+      // Not in an organization (any more): the revocation of the installation left earlier is still retried here.
+      const sum = await retrySafe();
+      if (!snap && worthSaying(sum) && err && typeof err.message === 'string') {
+        const s = await state.loadSecrets().catch(() => ({}));
+        const left = pendingList(s)[0];
+        err.message += '. ' + (sum.pending
+          ? 'The server has not yet been told that installation ' + (left ? left.install_id : '') + ' left (retried now, still pending; see zn team status)'
+          : sum.done ? 'The revocation of the installation left earlier was completed'
+            : 'zn stopped retrying the revocation of the installation left earlier (30 days): ask an organization admin to remove it from the dashboard');
+      }
       throw err;
     }
     if (snap && !(out.policy && out.policy.status === 'stopped')) await noteSync(syncOutcome(out).problems, snap).catch(() => {});
+    const sum = isClosed() ? null : await retrySafe();
+    if (worthSaying(sum)) out.revocations = sum;
     return out;
   };
 

@@ -16,9 +16,9 @@ machine that stops reporting is visible.
 | Command | What it does |
 |---|---|
 | `zn team join <token>` | Connects this machine to your organization. The token (`znj_...`) comes from an organization admin. Needs the vault unlocked (`zn unlock`). The join counts as done only once the organization's first valid policy has been downloaded and applied. If the policy cannot be downloaded, or the organization has not published one yet, the command exits `1`: this machine is registered but `zn team status` shows the join as **pending** until `zn team sync` succeeds. |
-| `zn team status` | Organization, installation id, policy version and expiry, what the last policy version removed or loosened, upload state, and the result of the last sync (what failed, and when it last worked). `--json` for scripts (`join_pending`, `last_sync`, `policy.change`). Never shows the install token. |
+| `zn team status` | Organization, installation id, policy version and expiry, what the last policy version removed or loosened, upload state, and the result of the last sync (what failed, and when it last worked). If the server has not yet been told that you left, a "Revocation pending" line with the last error and the next step. `--json` for scripts (`join_pending`, `last_sync`, `policy.change`, `revocation_pending`). Never shows the install token. |
 | `zn team sync` | Downloads the policy and uploads pending audit records now. Exits `0` only when a valid policy is applied and no upload failed; offline, no policy, a refused policy, a removed machine or a failed upload exit `1` and say why. This also happens on its own while the vault is unlocked: a few seconds after `zn unlock`, then every 15 minutes. If you leave the organization or join another one while a sync is running, that sync is dropped and writes nothing. |
-| `zn team leave` | Disconnects this machine. The organization's policy stops applying here. It deletes the local copies of the policy and the upload state one by one; if one cannot be deleted (for example a locked file), the command exits `1` and names the file to delete by hand, because the hooks still read it. The install token is deleted from this machine, but the server is not told: the installation stays on the organization's list of connected installations until an admin removes it there. |
+| `zn team leave` | Disconnects this machine and tells the server (see [Leaving](#leaving)). The organization's policy stops applying here at once. It deletes the local copies of the policy and the upload state one by one; if one cannot be deleted (for example a locked file), the command exits `1` and names the file to delete by hand, because the hooks still read it. |
 | `zn team managed-config` | Prints the files an admin deploys with device management so zn-gate's hooks run on every machine. Writes nothing; see [Deploy zn-gate's hooks to every machine](#deploy-zn-gates-hooks-to-every-machine-managed-settings). |
 | `zn vault log export --otlp` | Writes the local audit log as OpenTelemetry logs (works without zn Team; see below). |
 
@@ -51,6 +51,40 @@ warning, and you can still choose Deny. History can only be added at the first
 join of an installation; to add it later, run `zn team leave` and join again
 with the flag. A machine that joined with an earlier zn-gate keeps sending
 everything, as it was agreed then.
+
+### Leaving
+
+`zn team leave` first asks the server to revoke this installation, using the
+installation's own install token (and nothing else: no id, no account), and
+only then deletes the local membership. The answer decides what is printed:
+
+- **The server revoked it** (or had already revoked it, or no longer accepts
+  the token because an admin removed the installation): the leave is
+  complete. The installation shows as left in the organization's activity log
+  and its token stops working.
+- **The server could not be asked or did not take it** (offline, a server
+  error, a rate limit, or an older server without this endpoint): this
+  machine still leaves at once. The organization's policy, detectors and
+  uploads stop applying here, and the command exits `0` and says clearly that
+  the server was **not told yet**. Until a retry works, the installation stays
+  on the organization's list of connected installations and its token still
+  works on the server.
+
+For that second case zn-gate keeps a small "revocation pending" record in
+the encrypted vault: the install token, the organization, the API address and
+the time. It is not a membership and gives the organization no control: no
+policy, no uploads, no detectors; the token is used for nothing else. It is
+retried on `zn team sync`, on `zn team leave` and every 15 minutes while the
+vault is unlocked, each time with the token of the installation that left
+(also after you join an organization again, when the new membership keeps its
+own token and is never affected). The record is removed when the server
+confirms (or answers that the token is no longer valid), and zn-gate gives up
+after **30 days**: from then on, ask an organization admin to remove the
+installation from the dashboard. `zn team status` shows the pending record
+(since when, the last error and when zn-gate stops trying); `--json` has it
+as `revocation_pending`. A server that answers 404 or 405 (an older API) is
+treated as "not supported yet", never as revoked. If the server asks to wait
+(HTTP 429), zn-gate waits for the time it gave.
 
 ## The organization policy
 
@@ -248,8 +282,13 @@ detectors off without a word.
   than were sent, a position outside the batch) is treated as a failed
   upload.
 
+- **Leaving:** one request to `POST /v1/org/install/leave` with the install
+  token and the header `X-ZN-Client: zn-gate/<version>`, no body. If it
+  fails, it is repeated as described under [Leaving](#leaving).
+
 The install token is kept in the encrypted vault and is sent only to the
-server you joined.
+server you joined. After you leave it stays in the vault only while a
+revocation is pending.
 
 ## Deploy zn-gate's hooks to every machine (managed settings)
 

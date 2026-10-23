@@ -645,7 +645,10 @@ async function serve(opts) {
   // unlocked (soon after unlock, then every teamSyncMs). No-op outside a team.
   const teamSyncMs = o.teamSyncMs === 0 ? 0 : (o.teamSyncMs || DEFAULT_TEAM_SYNC_MS);
   // Nobody is waiting for this one: teamSync records its own failures (last_sync, one local alert) before they reach this catch.
-  const teamSync = () => { if (!closed && state.secrets && state.secrets.team) ops.teamSync({}).catch(() => {}); };
+  const teamSync = () => {
+    const pendingRevocation = state.secrets && Array.isArray(state.secrets.pendingRevocations) && state.secrets.pendingRevocations.length > 0;
+    if (!closed && state.secrets && (state.secrets.team || pendingRevocation)) ops.teamSync({}).catch(() => {});
+  };
   const teamTimer = teamSyncMs ? setInterval(teamSync, teamSyncMs) : null;
   const teamFirst = teamSyncMs ? setTimeout(teamSync, 5000) : null;
   if (teamTimer) teamTimer.unref();

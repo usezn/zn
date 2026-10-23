@@ -52,7 +52,7 @@ const PROTOCOL = 1;
 const TIMEOUT_MS = 15000;
 // Operations the daemon confirms with the user wait for the answer.
 const CONFIRM_TIMEOUT_MS = 150000;
-const CONFIRMED_OPS = new Set(['recordApproval', 'updateSecretMeta', 'confirmFileWrite', 'teamJoin', 'teamLeave', 'confirmOrgOpening']);
+const CONFIRMED_OPS = new Set(['recordApproval', 'updateSecretMeta', 'confirmFileWrite', 'teamJoin', 'teamLeave', 'confirmOrgOpening']); // teamLeave also asks the server (10 s at most)
 // Network calls to the zn cloud (policy download and audit upload).
 const NETWORK_OPS = new Set(['teamSync']);
 const NETWORK_TIMEOUT_MS = 120000;

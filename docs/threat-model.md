@@ -357,6 +357,16 @@ stop malware running as the same user (see above).
   (at most once an hour) instead of staying silent. A sync, `zn team status`
   or a hook never restores the copies of an organization this machine has
   already left.
+- **zn Team: leaving and a pending revocation.** `zn team leave` asks the
+  server to revoke the installation with its own install token. If the server
+  cannot take it, the machine still leaves at once, and the vault keeps only
+  that token, the organization, the API address and the time to retry (on
+  sync, on leave and every 15 minutes while unlocked) for up to 30 days. The
+  record is not a membership: it applies no policy and uploads nothing, and
+  it is never used with the token of a later membership. Until the server
+  confirms, the installation's token still works there, which is why
+  `zn team status` shows the pending revocation and says when zn-gate stops
+  trying.
 - **Rollback of the vault file:** restoring an older, genuine copy of
   `secrets.age` is accepted, and brings back the approvals and policy it had.
   Keep backups of `~/.zn` private.

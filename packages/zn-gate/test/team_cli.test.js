@@ -325,7 +325,7 @@ test('status counts only the records after the join as pending', async () => {
   assert.match(r.stdout, /Audit upload: 1 records pending/);
 });
 
-test('leave exits 1 and names every file it could not delete; success says the server is not told', async () => {
+test('leave exits 1 and names every file it could not delete; success says what the server answered', async () => {
   fake.teamLeave = async () => ({ left: 'org_Example12345678', install_id: 'inst-0001', pending_files: ['/home/dev/.zn/org-policy.json', '/home/dev/.zn/team-upload.lock'] });
   let r = await capture(() => runTeamCommand(['team', 'leave']));
   assert.strictEqual(r.code, 1);
@@ -336,12 +336,69 @@ test('leave exits 1 and names every file it could not delete; success says the s
   assert.strictEqual(r.code, 1);
   assert.match(r.stdout, /^Not in an organization\./);
   assert.match(r.stderr, /team\.json/);
-  fake.teamLeave = async () => ({ left: 'org_Example12345678', install_id: 'inst-0001', pending_files: [] });
+  fake.teamLeave = async () => ({ left: 'org_Example12345678', install_id: 'inst-0001', pending_files: [], revocation: { status: 'done', reason: 'revoked' } });
   r = await capture(() => runTeamCommand(['team', 'leave']));
   assert.strictEqual(r.code, 0);
   assert.match(r.stdout, /^Left org_Example12345678\. The organization policy no longer applies on this machine\.\n/);
-  assert.match(r.stdout, /server is not told: installation inst-0001 stays on the organization's list of connected installations, with a token that still works, until an admin removes it there\./);
+  assert.match(r.stdout, /The server was told: installation inst-0001 is revoked and its token no longer works\./);
+  assert.doesNotMatch(r.stdout, /not told|NOT told/);
   assert.strictEqual(r.stderr, '');
+  fake.teamLeave = async () => ({ left: 'org_Example12345678', install_id: 'inst-0001', pending_files: [], revocation: { status: 'done', reason: 'token_invalid' } });
+  r = await capture(() => runTeamCommand(['team', 'leave']));
+  assert.strictEqual(r.code, 0);
+  assert.match(r.stdout, /no longer accepted this installation's token .* nothing is left to revoke\./);
+});
+
+test('leave with a revocation the server has not taken: exit 0, says clearly that the server was not told and what happens next; stuck files still exit 1', async () => {
+  const revocation = { status: 'pending', since: '2026-10-24T10:00:00.000Z', error: 'could not reach the server', give_up_at: '2026-11-23T10:00:00.000Z' };
+  fake.teamLeave = async () => ({ left: 'org_Example12345678', install_id: 'inst-0001', pending_files: [], revocation });
+  let r = await capture(() => runTeamCommand(['team', 'leave']));
+  assert.strictEqual(r.code, 0);
+  assert.match(r.stdout, /^Left org_Example12345678\. The organization policy no longer applies on this machine\.\n/);
+  assert.match(r.stdout, /The server was NOT told yet that you left \(could not reach the server\): installation inst-0001 stays on the organization's list, and its token still works there, until a retry succeeds\./);
+  assert.match(r.stdout, /no policy, no uploads, no detectors\. It retries on `zn team sync` and every 15 minutes while the vault is unlocked, and stops on 2026-11-23T10:00:00\.000Z\./);
+  assert.strictEqual(r.stderr, '');
+  fake.teamLeave = async () => ({ left: 'org_Example12345678', install_id: 'inst-0001', pending_files: ['/home/dev/.zn/team.json'], revocation });
+  r = await capture(() => runTeamCommand(['team', 'leave']));
+  assert.strictEqual(r.code, 1, 'an undeleted file is still exit 1');
+  assert.match(r.stderr, /team\.json/);
+});
+
+test('status shows a pending revocation with its last error and the next step, also when not in an organization, and --json carries it', async () => {
+  const rev = { org: 'org_Example12345678', org_name: 'Example Org', install_id: 'inst-0001', since: '2026-10-24T10:00:00.000Z', last_try_at: '2026-10-24T11:00:00.000Z', last_error: 'the server answered HTTP 503', tries: 3, next_try_at: null, give_up_at: '2026-11-23T10:00:00.000Z' };
+  fake.teamInfo = async () => ({ joined: false, revocations: [rev] });
+  let r = await capture(() => runTeamCommand(['team', 'status']));
+  assert.strictEqual(r.code, 0);
+  assert.match(r.stdout, /^Not in a zn organization\./);
+  assert.match(r.stdout, /Revocation pending since 2026-10-24T10:00:00\.000Z \(installation inst-0001, org_Example12345678\): last error the server answered HTTP 503 \(last try 2026-10-24T11:00:00\.000Z\)\./);
+  assert.match(r.stdout, /Next step: `zn team sync` retries now .* until 2026-11-23T10:00:00\.000Z, when it stops/);
+  r = await capture(() => runTeamCommand(['team', 'status', '--json']));
+  const j = JSON.parse(r.stdout);
+  assert.strictEqual(j.joined, false);
+  assert.deepStrictEqual(j.revocation_pending, [rev]);
+  assert.ok(!/zni_/.test(r.stdout), 'no token');
+  // Joined again meanwhile: both are shown.
+  fake.teamInfo = async () => ({ ...JOINED, policy: { state: 'active', version: 1, expires_at: '2099-01-01T00:00:00.000Z' }, revocations: [rev] });
+  r = await capture(() => runTeamCommand(['team', 'status']));
+  assert.match(r.stdout, /Organization: Example Org/);
+  assert.match(r.stdout, /Revocation pending since/);
+  // Nothing pending: no line, empty list.
+  fake.teamInfo = async () => ({ joined: false });
+  r = await capture(() => runTeamCommand(['team', 'status']));
+  assert.doesNotMatch(r.stdout, /Revocation/);
+  assert.deepStrictEqual(JSON.parse((await capture(() => runTeamCommand(['team', 'status', '--json']))).stdout).revocation_pending, []);
+});
+
+test('sync says when the earlier leave has now reached the server, or has not', async () => {
+  const ok = { policy: { status: 'current', version: 2 }, upload: { status: 'nothing', uploaded: 0, pending: 0 } };
+  fake.teamSync = async () => ({ ...ok, revocations: { tried: 1, done: 1, pending: 0, abandoned: 0 } });
+  let r = await capture(() => runTeamCommand(['team', 'sync']));
+  assert.strictEqual(r.code, 0);
+  assert.match(r.stdout, /Revocation: the server has now been told that the earlier installation left\./);
+  fake.teamSync = async () => ({ ...ok, revocations: { tried: 1, done: 0, pending: 1, abandoned: 0 } });
+  r = await capture(() => runTeamCommand(['team', 'sync']));
+  assert.strictEqual(r.code, 0, 'a pending revocation does not make a good sync fail');
+  assert.match(r.stdout, /Revocation: the server has not taken the earlier leave yet \(1 pending\); see `zn team status`\./);
 });
 
 test('leave says what happened', async () => {

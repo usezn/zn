@@ -555,7 +555,7 @@ Connects this machine to your organization with the join token your admin gave y
 zn-gate team status [--json]
 ```
 
-Shows the organization, the policy version, what the last policy version removed or loosened, and the state of the audit upload. See [zn Team](team.md#when-the-organization-lifts-a-restriction).
+Shows the organization, the policy version, what the last policy version removed or loosened, the state of the audit upload, and a revocation that is still pending after `team leave`. See [zn Team](team.md#when-the-organization-lifts-a-restriction).
 
 #### `team sync`
 
@@ -563,7 +563,7 @@ Downloads the policy and uploads the audit log now. Exit `0` only when a valid p
 
 #### `team leave`
 
-Disconnects this machine from the organization and deletes the local copies of its policy and upload state. Exit `1` when one of those files cannot be deleted; the message names it. The server is not told that you left: an admin removes the installation from the organization's list.
+Disconnects this machine from the organization. It first tells the server to revoke this installation (with the installation's own token), then deletes the local copies of the policy and upload state. Exit `1` when one of those files cannot be deleted; the message names it. If the server cannot take the revocation now (offline, an error, a rate limit, or an older server), the machine still leaves at once and the command exits `0`, but it prints that the server was not told yet: zn-gate keeps the token in the vault only to retry on `team sync` and while the vault is unlocked, for up to 30 days, and `team status` shows the pending revocation. See [zn Team](team.md#leaving).
 
 #### `team managed-config`
 

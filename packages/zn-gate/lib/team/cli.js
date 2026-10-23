@@ -105,9 +105,15 @@ async function statusCmd(args) {
     // true until a valid organization policy has been applied on this machine
     join_pending: joined && (!st || st.state === 'none' || st.state === 'invalid'),
     last_sync: (info && info.last_sync) || null,
+    // The server was not told yet that an installation left: kept in the vault and retried.
+    revocation_pending: (info && Array.isArray(info.revocations)) ? info.revocations : [],
   };
   if (json) { out(JSON.stringify(res, null, 2)); return 0; }
-  if (!joined) { out('Not in a zn organization. Join with: zn team join <token> (from your organization admin).'); return 0; }
+  if (!joined) {
+    out('Not in a zn organization. Join with: zn team join <token> (from your organization admin).');
+    for (const l of describeRevocations(res.revocation_pending)) out(l);
+    return 0;
+  }
   out('Organization: ' + (res.org_name ? res.org_name + ' (' + res.org + ')' : res.org));
   out('Installation: ' + res.install_id + ' via ' + res.api_base);
   if (res.revoked_at) out('REMOVED FROM ORG on ' + res.revoked_at + ': this machine no longer reports; the cached policy applies until it expires, then strict mode.');
@@ -120,8 +126,21 @@ async function statusCmd(args) {
     out('Last sync:    ' + (ls.ok ? 'ok, ' + ls.at : 'FAILED ' + ls.at + ': ' + (ls.problems.join('; ') || 'unknown') +
       (ls.last_ok_at ? ' (last success ' + ls.last_ok_at + ')' : ' (never succeeded)') + '; run `zn team sync` to retry'));
   }
+  for (const l of describeRevocations(res.revocation_pending)) out(l);
   if (!info) out('The vault is locked: policy downloads and uploads resume after `' + znCommand('unlock') + '`.');
   return 0;
+}
+
+/* Lines for `zn team status` about installations that left but whose revocation the server has not taken yet. */
+function describeRevocations(list) {
+  const lines = [];
+  for (const r of Array.isArray(list) ? list : []) {
+    lines.push('Revocation pending since ' + r.since + ' (installation ' + r.install_id + (r.org ? ', ' + r.org : '') + '): last error ' + (r.last_error || 'unknown') +
+      (r.last_try_at ? ' (last try ' + r.last_try_at + ')' : '') + '.');
+    lines.push('  The server was not told that this installation left, so its token still works there. Next step: `zn team sync` retries now (zn also retries every 15 minutes while the vault is unlocked)' +
+      (r.give_up_at ? ' until ' + r.give_up_at + ', when it stops; an admin can then remove the installation from the dashboard' : '') + '.');
+  }
+  return lines;
 }
 
 async function syncCmd() {
@@ -129,6 +148,8 @@ async function syncCmd() {
   const pol = r.policy || {};
   out('Policy: ' + (pol.status === 'updated' || pol.status === 'current' ? pol.status + ' (version ' + pol.version + ')' : pol.status + (pol.error ? ': ' + pol.error : '')));
   if (r.upload) out('Audit upload: ' + r.upload.status + ', ' + (r.upload.uploaded || 0) + ' sent, ' + (r.upload.pending > 0 ? r.upload.pending : 0) + ' pending');
+  if (r.revocations && r.revocations.pending) out('Revocation: the server has not taken the earlier leave yet (' + r.revocations.pending + ' pending); see `zn team status`.');
+  else if (r.revocations && r.revocations.done) out('Revocation: the server has now been told that the earlier installation left.');
   // Exit 0 only with a valid policy applied and no failed upload.
   const o = syncOutcome(r);
   if (!o.ok) err('[zn] sync incomplete: ' + o.problems.join('; '));
@@ -145,8 +166,18 @@ async function leaveCmd() {
     return 1;
   }
   out(r.left ? 'Left ' + r.left + '. The organization policy no longer applies on this machine.' : 'Not in an organization.');
-  // The token is deleted here, but leaving does not tell the server: the installation stays valid there until an admin removes it.
-  if (r.left && r.install_id) out('The installation token is deleted from this machine, but the server is not told: installation ' + r.install_id + ' stays on the organization\'s list of connected installations, with a token that still works, until an admin removes it there.');
+  // The server is told first (see teamLeave in daemon-ops.js); what it answered is said below.
+  const rev = r.revocation;
+  if (r.left && rev && rev.status === 'done') {
+    out(rev.reason === 'token_invalid'
+      ? 'The server no longer accepted this installation\'s token (an admin may have removed it already): nothing is left to revoke.'
+      : 'The server was told: installation ' + r.install_id + ' is revoked and its token no longer works.');
+  } else if (r.left && rev && rev.status === 'pending') {
+    out('The server was NOT told yet that you left (' + rev.error + '): installation ' + r.install_id + ' stays on the organization\'s list, and its token still works there, until a retry succeeds.');
+    out('zn keeps the token in your vault only for that retry and nothing else: no policy, no uploads, no detectors. It retries on `zn team sync` and every 15 minutes while the vault is unlocked, and stops on ' + rev.give_up_at + '. `zn team status` shows it.');
+  } else if (!r.left && Array.isArray(r.revocations) && r.revocations.length) {
+    for (const l of describeRevocations(r.revocations)) out(l);
+  }
   return 0;
 }
 
