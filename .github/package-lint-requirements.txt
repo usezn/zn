@@ -1,8 +1,9 @@
 # Hash-pinned check-wheel-contents for .github/workflows/package-lint.yml, installed with pip
 # --require-hashes together with .github/release-requirements.txt.
 #
-# Not managed by Dependabot (same reason as release-requirements.txt: uv's universal, hash-pinned
-# output). Regenerate with uv from this input (saved as package-lint.in):
+# Dependabot opens security updates only for this directory (same reason as
+# release-requirements.txt: uv's universal, hash-pinned output). Regenerate with uv
+# from this input (saved as package-lint.in):
 #   check-wheel-contents==0.6.3
 # uv pip compile package-lint.in --universal --python-version 3.12 \
 #   --generate-hashes --no-header --no-annotate --exclude-newer <date two weeks ago>

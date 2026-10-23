@@ -46,8 +46,14 @@ const BLOCK_EXIT_BY_AGENT = {
   'claude-code': new Set(['PreToolUse', 'UserPromptSubmit', 'UserPromptExpansion']),
   cursor: new Set(['beforeMCPExecution', 'beforeReadFile', 'beforeShellExecution', 'beforeSubmitPrompt', 'preToolUse']),
   gemini: new Set(['BeforeTool']),
+  // Antigravity: the hook answers with {decision:'deny',reason} on stdout (exit 0); its docs do not say what a failed hook does.
+  antigravity: new Set(['PreToolUse']),
 };
-const BLOCK_JSON_BY_AGENT = { 'claude-code': new Set(), cursor: new Set(), gemini: new Set() };
+const BLOCK_JSON_BY_AGENT = { 'claude-code': new Set(), cursor: new Set(), gemini: new Set(), antigravity: new Set() };
+// Agents that read a block from a deny JSON on stdout with exit 0 (not from exit code 2).
+const DENY_STDOUT = {
+  antigravity: (r) => ({ decision: 'deny', reason: r }),
+};
 // Agents whose non-blocking events get the warning on stderr (exit 0) instead of a systemMessage on stdout.
 const WARN_STDERR = new Set(['cursor']);
 const blockExit = (agentId) => BLOCK_EXIT_BY_AGENT[agentId] || BLOCK_EXIT;
@@ -119,8 +125,10 @@ function unixScript(agentId, nodePath, runnerPath) {
     'if [ -z "$ZN_RAN" ] && [ -n "$ZN_CMD" ] && PATH="$ZN_SAFE" command -v node >/dev/null 2>&1; then ZN_RAN=1; "$ZN_CMD" hook ' + agentId + '; ZN_RC=$?; case $ZN_RC in 0|2) exit $ZN_RC ;; esac; fi',
     'case "$ZN_EVENT" in',
     '  ' + exitEvents.join('|') + ')',
-    '    ' + pick('printf ' + shQuote('%s\\n') + ' ' + shQuote(crash) + ' >&2', 'printf ' + shQuote('%s\\n') + ' ' + shQuote(reason) + ' >&2'),
-    '    exit 2 ;;',
+    DENY_STDOUT[agentId]
+      ? '    ' + pick('printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify(DENY_STDOUT[agentId](crash))), 'printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify(DENY_STDOUT[agentId](reason))))
+      : '    ' + pick('printf ' + shQuote('%s\\n') + ' ' + shQuote(crash) + ' >&2', 'printf ' + shQuote('%s\\n') + ' ' + shQuote(reason) + ' >&2'),
+    DENY_STDOUT[agentId] ? '    exit 0 ;;' : '    exit 2 ;;',
     ...(jsonEvents.length ? [
       '  ' + jsonEvents.join('|') + ')',
       '    ' + pick(deny(crash), deny(reason)),
@@ -166,6 +174,7 @@ function windowsScript(agentId, event, nodePath, runnerPath) {
   if (/['‘’‚‛\u0000-\u001f]/.test(n + r)) return null;
   const reason = reasonText(agentId);
   const DENY_JSON = {
+    antigravity: (r) => ({ decision: 'deny', reason: r }),
     cursor: (r) => ({ permission: 'deny', continue: false, user_message: r, agent_message: r }),
     gemini: (r) => ({ decision: 'deny', reason: r }),
   };
