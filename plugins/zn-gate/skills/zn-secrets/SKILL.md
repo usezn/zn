@@ -24,6 +24,10 @@ into the conversation, and never try to recover a value.
   `psql "postgres://user:__ZN_DB_PASSWORD__@db/app"`, ask the user to store the
   secret under the name the program reads (`zn secret set PGPASSWORD --command
   psql`) and run `zn run --secrets PGPASSWORD -- psql "postgres://user@db/app"`.
+  Do not write `$NAME` into the arguments of `sh -c`, `bash -c` or any other
+  shell you start yourself: the shell expands it before the program starts, so
+  the value would show in the process list and in command-line logs, just like
+  a marker. Let the program read the variable itself.
 - **Files that need a real value** (for example a local config file): use
   `secrets_render_file`. The value is written to disk, never returned to you.
 - **A secret that does not exist yet:** call `secrets_request` with the name

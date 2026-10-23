@@ -198,8 +198,8 @@ prove it can read `~/.zn/run/session.key`.
     out by any destination or purpose, whatever its name: `zn env unshadow` is
     the only way to read it, after you confirm.
   - `zn run`, `secrets_http_request` and `secrets_render_file` each name a
-    purpose. The daemon checks the secret's mode (`env` for `zn run`, `file`
-    for a rendered file), the command in its allow-list, the executable you
+    purpose. The daemon checks the secret's mode (`env` for `zn run`, `proxy`
+    for HTTP, `file` for a rendered file), the command in its allow-list, the executable you
     approved (the same file identity as the approval), the hosts and places
     (header, URL, body) the secret allows, and the organization policy.
   - A request that names no destination and no purpose, or one the daemon does
@@ -221,7 +221,7 @@ prove it can read `~/.zn/run/session.key`.
   host, the command and the agent or tool name are all declared by whoever
   sends the request. Any process running as you that can read
   `~/.zn/run/session.key` can send any of them. A request that names a host
-  and a place the secret allows gets the value, and the daemon cannot see where
+  and a place a `proxy` mode secret allows gets the value, and the daemon cannot see where
   it goes next; a request that names a restore into a git-ignored file gets
   the value of an `env` or `file` mode secret by name, and what happens to that
   file afterwards is outside the daemon's reach. The changes in this release add
