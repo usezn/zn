@@ -151,9 +151,30 @@ pub struct AuditVault {
     db_path: String,
     /// Key for payload encryption (AES-256-GCM)
     encryption_key: Option<[u8; 32]>,
+    /// Whether request payloads are persisted. The gateway turns this off by
+    /// default (`audit.store_payloads`); a bare `AuditVault::new` keeps the
+    /// library behaviour so embedders and tests are unchanged.
+    store_payloads: bool,
+}
+
+/// Returns the payload to attach to an audit entry: `None` unless payload
+/// storage was explicitly enabled, so by default a record holds metadata only.
+pub fn payload_if_enabled(store_payloads: bool, payload: impl Into<String>) -> Option<String> {
+    if store_payloads {
+        Some(payload.into())
+    } else {
+        None
+    }
 }
 
 impl AuditVault {
+    /// Enable or disable persisting payloads. When disabled, any payload on an
+    /// entry is dropped before it is written.
+    pub fn with_payload_storage(mut self, enabled: bool) -> Self {
+        self.store_payloads = enabled;
+        self
+    }
+
     /// Create a new AuditVault, initializing the database schema if needed
     pub fn new(db_path: &str, encryption_key: Option<&str>) -> Result<Self> {
         info!("Initializing AuditVault at: {}", db_path);
@@ -291,6 +312,7 @@ impl AuditVault {
             conn: Arc::new(Mutex::new(conn)),
             db_path: db_path.to_string(),
             encryption_key: derived_key,
+            store_payloads: true,
         })
     }
 
@@ -301,9 +323,10 @@ impl AuditVault {
             .lock()
             .map_err(|e| anyhow!("Lock poisoned: {}", e))?;
 
-        // Encrypt payload if key is available
-        let payload = if let (Some(key_bytes), Some(p_raw)) = (&self.encryption_key, &entry.payload)
-        {
+        // Encrypt payload if key is available; drop it when storage is off.
+        let payload = if !self.store_payloads {
+            None
+        } else if let (Some(key_bytes), Some(p_raw)) = (&self.encryption_key, &entry.payload) {
             let encoded = encrypt_payload(key_bytes, &entry.id, entry.namespace.as_deref(), p_raw)?;
             Some(encoded)
         } else {
@@ -882,6 +905,38 @@ mod tests {
         let vault = AuditVault::new(&path, None).expect("Failed to create vault");
         assert_eq!(vault.count().unwrap(), 0);
         fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn payload_is_not_persisted_when_storage_is_off() {
+        let path = temp_db_path();
+        let vault = AuditVault::new(&path, None)
+            .expect("vault")
+            .with_payload_storage(false);
+        let e = AuditEntry::new("TOOL_CALL", "http_post", "ALLOWED")
+            .with_payload("{\"token\":\"example-token-not-real\",\"body\":\"example body\"}");
+        let id = e.id.clone();
+        vault.log(e).unwrap();
+        let raw: Option<String> = vault
+            .get_connection()
+            .lock()
+            .unwrap()
+            .query_row("SELECT payload FROM audit_logs WHERE id = ?1", [&id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(raw.is_none(), "payload must not be stored: {raw:?}");
+        let got = vault.get_recent(5).unwrap();
+        assert_eq!(got[0].tool_name, "http_post");
+        assert!(got[0].payload.is_none());
+        drop(vault);
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn payload_if_enabled_is_off_by_default() {
+        assert_eq!(payload_if_enabled(false, "x"), None);
+        assert_eq!(payload_if_enabled(true, "x").as_deref(), Some("x"));
     }
 
     #[test]
