@@ -21,7 +21,7 @@ thiserror = "1.0"
 anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-axum = { version = "0.7", features = ["macros", "ws", "multipart"] }
+axum = { version = "0.8.9", features = ["macros", "ws", "multipart"] }
 tower-http = { version = "0.5", features = ["cors", "auth", "fs", "timeout"] }
 # Already in the tree through axum; named here to run the management API with read timeouts.
 hyper = { version = "1", features = ["server", "http1"] }
@@ -38,7 +38,7 @@ dashmap = "5.5"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
 async-stream = "0.3"
-tower_governor = "0.4"
+tower_governor = "0.8.0"
 aho-corasick = "1.1"
 reqwest = { version = "0.12", features = ["json"] }
 prometheus = "0.14"
