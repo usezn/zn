@@ -462,11 +462,15 @@ stop malware running as the same user (see above).
   lets such events pass, with a note on stderr. A PowerShell byte order mark is
   accepted, so a pipe from PowerShell is read.
 - **The hook process does not start at all** (for example, Node moved after an
-  upgrade and the hook command points to the old path, or the hook times out):
-  tool calls in most agents then go ahead unchecked. Run `zn hooks install` again
-  after moving or upgrading Node. Agents that block prompts when the hook fails
-  (Claude Code, Cursor, OpenCode) block every prompt until then: see
-  [If your agent blocks every prompt](compat.md#if-your-agent-blocks-every-prompt).
+  upgrade and the hook command points to the old path): what happens depends on
+  the agent and on how the hooks were installed. A user install blocks tool
+  calls in Claude Code, Codex CLI, Cursor, Gemini CLI and Antigravity through its
+  launcher script; a project install, older hooks and the plugins differ per
+  agent, and Codex CLI and Gemini CLI let the call go ahead there. See
+  [If your agent blocks every prompt](compat.md#if-your-agent-blocks-every-prompt),
+  which has one statement per agent. A hook that times out is described in each
+  agent's own section of that page. Run `zn hooks install` again after moving or
+  upgrading Node.
 
 ## Design decisions and known limits
 

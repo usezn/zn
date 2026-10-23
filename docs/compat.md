@@ -328,10 +328,11 @@ node and runner paths of that install.
 
 A teammate who clones the project without zn on PATH gets no checks from these
 files, because the hook command runs zn from PATH. Claude Code 2.1.295 or later
-then blocks tool calls and prompts (the hooks are set to block when they cannot
-run); older Claude Code versions and Codex let the call go ahead. Cursor blocks
-file reads and prompts (those hooks fail closed) and lets the other calls go
-ahead; OpenCode blocks calls and messages. In Claude Code, Codex and Cursor, the
+then blocks tool calls, prompts and typed-command expansions (the hooks are set
+to block when they cannot run); older Claude Code versions and Codex let the
+call go ahead. Cursor blocks file reads and prompts (those hooks fail closed)
+and lets the other calls go ahead; OpenCode blocks calls and messages (see
+[what each agent does when the hook cannot start](#if-your-agent-blocks-every-prompt)). In Claude Code, Codex and Cursor, the
 output of a tool that already ran reaches the model without zn's cleaning,
 because the hook that runs after a tool cannot block it; OpenCode withholds that
 output.
@@ -339,11 +340,51 @@ Install zn on every machine that runs the agent.
 
 ## If your agent blocks every prompt
 
-When zn's hook cannot run, Claude Code 2.1.295 or later (with the zn-gate plugin or `zn hooks install`), Cursor and OpenCode block
-prompts instead of letting them through unchecked (see the table above). Codex CLI lets prompts through in that case.
+When zn's hook cannot start (for example, the Node.js it was installed with was
+removed, and `node` or `zn` is not on the PATH of the agent), what happens
+depends on the agent and on how the hooks were installed. A user install
+(`zn hooks install <agent>`) writes a small launcher script as the hook command
+(`~/.zn/hooks/zn-hook-<agent>.sh`; on Windows, for Codex CLI, Cursor, Gemini CLI
+and Antigravity, the same steps written inline in PowerShell). It runs the
+Node.js it was installed with, else `zn` from the PATH, else it answers the
+block itself, without Node.js. A project install (`--project`), hooks written by
+an older zn-gate and the plugins keep a plain command. Agent by agent:
+
+- **Claude Code**: with a user install, tool calls, prompts and typed-command
+  expansions are blocked in every Claude Code version; after a tool has run, zn
+  only warns in the session, so that output reaches the model unscrubbed. With
+  the plugin, a project install or older hooks, Claude Code 2.1.295 or later
+  blocks tool calls, prompts and typed-command expansions (the hooks carry
+  `onFailure: "block"`), and earlier versions let them go ahead.
+- **Codex CLI**: with a user install, tool calls, prompts and permission
+  requests are blocked, and after a tool has run zn only warns. With the plugin,
+  a project install or older hooks, Codex reports a hook failure and carries on:
+  tool calls and prompts go ahead unchecked.
+- **Cursor**: with a user install, shell commands, MCP calls, file reads,
+  prompts and `preToolUse` calls (Write, Delete, Grep) are blocked, and after a
+  tool has run zn only warns. With the plugin, shell commands, file reads,
+  prompts and `preToolUse` calls are blocked (its hooks are `failClosed`). With
+  a project install or older hooks, only file reads and prompts are blocked; the
+  other calls go ahead.
+- **Gemini CLI**: with a user install, tool calls are blocked. With a project
+  install or older hooks, Gemini CLI shows a warning and the tool call runs.
+- **GitHub Copilot CLI**: a hook command that cannot start fails closed for
+  `preToolUse`, so the tool call is blocked; the hook that runs after a tool
+  fails open, so that output is not scrubbed. Copilot has no launcher, and it
+  lets a call through when a hook times out.
+- **OpenCode**: the plugin starts the hook itself. When the hook cannot start,
+  times out or gives no valid answer, the tool call is blocked, the message is
+  not sent and the tool output is withheld, for user and project installs alike.
+- **Antigravity**: Antigravity does not document what a hook that cannot start
+  does. With a user install, the launcher answers a deny with the repair step
+  (the one block Antigravity documents), so the tool call is blocked. With a
+  project install or older hooks, zn-gate cannot promise anything: the call may
+  be blocked with no message from zn, or run.
+
+`zn-gate check` says which agents are in this state.
+
 This usually happens after Node.js is upgraded, moved or removed (for example with nvm). The fix, step by step
-(`npx -y zn-gate check`, then `npm install -g zn-gate` and `zn hooks install <agent>`, or turning zn off for that agent
-until it is fixed), is in [upgrading.md](upgrading.md#nodejs-was-upgraded-moved-or-removed-nvm-fnm-homebrew).
+(or turning zn off for that agent until it is fixed), is in [upgrading.md](upgrading.md#nodejs-was-upgraded-moved-or-removed-nvm-fnm-homebrew).
 
 ## Antigravity when its hook cannot start
 
