@@ -8,7 +8,7 @@ const path = require('path');
  * RULES_VERSION: 2026-10-25.5
  */
 
-const RULES_VERSION = '2026-10-25.6';
+const RULES_VERSION = '2026-10-25.9';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
