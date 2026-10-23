@@ -21,7 +21,7 @@ zn unlock
 The first `zn unlock` creates the vault: an [age](https://age-encryption.org)
 identity stored in your OS keychain (macOS Keychain, Windows Credential
 Manager, or Secret Service on Linux), or behind a passphrase when there is no
-keychain. The vault stays unlocked for 8 hours, or until 30 minutes without
+keychain. With a passphrase, it must have at least 12 characters (a shorter one is refused). The vault stays unlocked for 8 hours, or until 30 minutes without
 use, or until `zn lock`.
 
 After you update zn-gate, a vault that is still running from the older
@@ -56,7 +56,8 @@ For a connection string with a long password, only the password moves, as
 whole URL moves to the vault as `DATABASE_URL`, and `.env` keeps
 `DATABASE_URL=__ZN_DATABASE_URL__`.
 
-An encrypted copy of the original is kept (`zn env unshadow` restores it). To
+An encrypted copy of the original is kept (`zn env unshadow` restores it, and asks
+`Write plain-text values back? [y/N]` before it writes them into the file). To
 add a single secret, type it at a hidden prompt (never as an argument):
 
 ```bash
