@@ -1459,11 +1459,60 @@ function unparsable(ctx, err, what) {
   ctx.add('ZNA020', risky ? 'high' : 'low', err.line || 1, what + ' error: ' + err.message + (risky ? '. The file contains ' + Array.from(keys).slice(0, 6).join(', ') + ', which could not be checked.' : ''));
 }
 
+// First `max` bytes of a regular file that is over the limit (no symbolic link
+// followed unless `follow`); undefined when it cannot be read.
+function readPrefix(abs, max, follow) {
+  let fd;
+  try {
+    fd = fs.openSync(abs, fs.constants.O_RDONLY | O_NONBLOCK | (follow ? 0 : O_NOFOLLOW));
+    if (!fs.fstatSync(fd).isFile()) return undefined;
+    const buf = Buffer.alloc(max);
+    let n = 0;
+    while (n < max) {
+      const r = fs.readSync(fd, buf, n, max - n, n);
+      if (r <= 0) break;
+      n += r;
+    }
+    let text = buf.toString('utf8', 0, n);
+    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+    return text;
+  } catch (_) {
+    return undefined;
+  } finally {
+    if (fd !== undefined) try { fs.closeSync(fd); } catch (_) { /* ignore */ }
+  }
+}
+
+// Structured files (JSON, TOML) cut at the size limit cannot be parsed, so the
+// hooks and settings in them are not reviewed; only line-based checks run.
+function prefixLineScan(ctx) {
+  ctx.lines.forEach((l, i) => {
+    checkDownloadRun(ctx, l, i + 1, 'A line of this file');
+    if (ctx.rec.kind === 'vscode-tasks' && /"runOn"\s*:\s*"folderOpen"/.test(l)) {
+      ctx.add('ZNA001', 'high', i + 1, 'A task runs when the folder is opened (runOn: folderOpen).');
+    }
+  });
+}
+
+const OVER_LIMIT_FIX = 'Split the file or move rarely used content into other files so each one is under 1 MiB, then run zn audit again. Until then, review the part past the first 1 MiB by hand.';
+
 function auditFile(rec, out) {
-  const r = readBounded(rec.abs, MAX_FILE_BYTES, rec.scope === 'home');
+  let r = readBounded(rec.abs, MAX_FILE_BYTES, rec.scope === 'home');
+  let partial = false;
   if (r.skip === 'too-large') {
-    out.push(uncheckedFinding({ file: rec.display, agent: rec.agent, readers: rec.readers, severity: 'high', detail: rec.display + ' is ' + r.size + ' bytes; zn audit reads agent files up to ' + MAX_FILE_BYTES + ' bytes, the agent reads all of it.' }));
-    return true;
+    const size = r.size;
+    const prefix = readPrefix(rec.abs, MAX_FILE_BYTES, rec.scope === 'home');
+    const textual = ['instructions', 'workflow', 'opencode-plugin', 'dotenv'].includes(rec.kind);
+    out.push(uncheckedFinding({
+      file: rec.display, agent: rec.agent, readers: rec.readers, severity: 'high',
+      detail: rec.display + ' is ' + size + ' bytes, larger than the 1 MiB (' + MAX_FILE_BYTES + ' bytes) zn audit reads, so only its first 1 MiB was checked' +
+        (prefix === undefined ? ' (and it could not be read at all)' : '') + '. Agents may still read all of it, so anything after the first 1 MiB was not checked.' +
+        (textual || prefix === undefined ? '' : ' The file is structured, so it could not be parsed: its hooks, commands and settings were not reviewed, only a line-by-line search for stored credentials and downloads piped into a shell was run.'),
+      fix: OVER_LIMIT_FIX,
+    }));
+    if (prefix === undefined) return true;
+    r = { text: prefix };
+    partial = true;
   }
   if (r.skip === 'unreadable') {
     // The file is there but could not be opened: say so, never pass it as clean.
@@ -1501,6 +1550,10 @@ function auditFile(rec, out) {
     return true;
   }
   checkSecrets(ctx);
+  if (partial) {
+    prefixLineScan(ctx);
+    return true;
+  }
   if (rec.kind === 'codex-toml') {
     let parsed;
     try { parsed = parseToml(raw); } catch (err) {
