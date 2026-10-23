@@ -64,6 +64,14 @@ test('scan is synchronous, pure and never touches the vault', () => {
   assert.deepStrictEqual(vault.calls, []);
 });
 
+test('key-based personal fields follow the pii setting of the engine', () => {
+  const text = 'X-User-Name: Alice Example';
+  const on = E.scan(text, { exact: false });
+  assert.deepStrictEqual(on.map((s) => [s.type, s.source, text.slice(s.start, s.end)]), [['PERSON_NAME', 'pii', 'Alice Example']]);
+  assert.deepStrictEqual(E.scan(text, { exact: false, pii: false }), []);
+  assert.deepStrictEqual(E.scan(text, { exact: false, pii: { name: false } }), []);
+});
+
 test('scan uses resolved exact values from ctx.exactValues, exact layer first', () => {
   const secret = pick(30);
   const spans = E.scan('X ' + secret + ' Y', { exactValues: [{ name: 'ROLLOUT', type: 'ENV_ROLLOUT', value: secret }] });
