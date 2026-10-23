@@ -785,8 +785,204 @@ function checkBlankPadding(ctx) {
   }
 }
 
+/* ---- documentation shapes (SKILL.md and docs files) ---- */
+
+// A SKILL.md or a docs page describes prompts, chat formats and attacks; an
+// agent still reads it, so only precise shapes are skipped and the rest of
+// the line is checked again. Instruction files such as AGENTS.md or CLAUDE.md
+// get only the "tag named in backticks" exemption.
+function isDocFile(rel) {
+  const base = rel.split('/').pop();
+  if (/^skill\.md$/i.test(base)) return true;
+  if (!/\.(?:md|mdx|markdown|rst|txt)$/i.test(base)) return false;
+  // Never a file the agent reads as instructions (CLAUDE.md, AGENTS.md,
+  // .cursor/rules, .github/prompts, ...), wherever it sits, docs folder or not.
+  const kind = classify(rel, !rel.includes('/'));
+  if (kind && kind.kind === 'instructions') return false;
+  if (AGENT_DIR_PATH.test(rel)) return false;
+  // A docs folder or a README. Not under the folders an agent runs as
+  // instructions (commands/docs/run.md is a command, not a docs page).
+  const m = /(^|\/)(?:docs?|documentation|wiki)\//i.exec(rel);
+  if (m) return !AGENT_NAMED_DIR.test(rel.slice(0, m.index + m[1].length));
+  return /^readme/i.test(base) && !AGENT_NAMED_DIR.test(rel);
+}
+// Folders of the agents' own configuration, at any depth of the path.
+const AGENT_DIR_PATH = /(?:^|\/)(?:\.(?:claude|cursor|agents?|gemini|codex|opencode|windsurf|clinerules|continue|roo|kiro|amazonq|aider|augment|trae|goose|qwen)|\.github\/(?:prompts|instructions|agents|chatmodes))(?:\/|$)/i;
+// Folders named like what an agent runs, before the docs folder of the path.
+const AGENT_NAMED_DIR = /(?:^|\/)(?:commands|agents|prompts|instructions|skills?)(?:\/|$)/i;
+
+function blockOf(text) {
+  try {
+    const r = rules().evaluate(text, { strict: true });
+    return r && r.verdict === 'block' ? r : null;
+  } catch (_) { return null; }
+}
+
+const BADGE_HOST = /^(?:[\w-]+\.)*(?:shields\.io|badgen\.net|codecov\.io|coveralls\.io|badge\.fury\.io|travis-ci\.(?:com|org)|circleci\.com|sonarcloud\.io|codacy\.com|snyk\.io|bestpractices\.dev|fossa\.com|reuse\.software|readthedocs\.(?:org|io)|badgesize\.io)$/i;
+const BADGE_IMAGE = /!\[[^\]\n]*\]\(\s*(https?:\/\/[^\s)]+)(?:\s+"[^"\n]*")?\s*\)/gi;
+function stripBadges(text) {
+  return text.replace(BADGE_IMAGE, (all, url) => {
+    let u;
+    try { u = new URL(url); } catch (_) { return all; }
+    if (!BADGE_HOST.test(u.hostname)) return all;
+    // A placeholder or an expression in the URL can carry data out: keep it.
+    if (/[{<$]|%7B|%24|%3C/i.test(url)) return all;
+    return ' ';
+  });
+}
+
+const SYSTEM_PLACEHOLDER_DOC = /<(?:\s*\/)?\s*system-(?:or-(?:project|user|global|local|workspace|repo)|(?:name|path|dir|directory|id|type|version|wide))\s*>/gi;
+const SYSTEM_IDENTITY_DOC = /\bsystem:(?:anonymous|authenticated|unauthenticated|masters|nodes?|serviceaccounts?(?::[\w-]+)*|kube-[\w-]+|node-[\w-]+|basic-user|discovery|public-info-viewer)(?![\w-])/gi;
+const CHAT_TOKEN_DOC = /<\|im_start\|>(?:[ \t]*(?:user|assistant|tool)\b|(?![ \t]*system\b))|<\|im_end\|>|\[\/?INST\]/gi;
+
+// What may follow an opening placeholder for it to count as a name: nothing,
+// punctuation, or a file name or path glued to the tag. Checked in two steps
+// (the name, then the rest of the line) so a long run of dots cannot backtrack.
+const PLACEHOLDER_NAME = /^(?:\.[a-z0-9]{1,6})?(?:[\/\\][\w.\/\\-]*)?/i;
+const PLACEHOLDER_REST = /^[\s\p{P}\p{S}]*$/u;
+const placeholderTail = (after) => PLACEHOLDER_REST.test(after.slice(PLACEHOLDER_NAME.exec(after)[0].length));
+// An opening tag with no word before it on the line (only marks such as #,
+// -, >, quotes or a table bar) reads as a message to the agent, never as a name.
+const LINE_START = /^[^\p{L}\p{N}]*$/u;
+// Any system tag; used once per file to list the tags that close somewhere.
+const SYSTEM_TAG_ANY = /<(?:\s*(\/))?\s*(system(?:-[\w-]+)?)\s*>/gi;
+
+/** The system tag names that are closed somewhere in `fileText`, in one pass. */
+function closedSystemTags(fileText) {
+  const closed = new Set();
+  for (const m of String(fileText).matchAll(SYSTEM_TAG_ANY)) if (m[1]) closed.add(m[2].toLowerCase());
+  return closed;
+}
+
+/**
+ * Placeholders such as <system-or-project> and identity values such as
+ * system:anonymous, which name something instead of wrapping text. A
+ * placeholder is skipped only when it wraps no text: never a closing tag,
+ * and an opening tag only when it is not closed anywhere in the file, has a
+ * word before it on the line, and only punctuation or a file name follows it.
+ * `closed` is closedSystemTags() of the whole file.
+ */
+function stripSystemShapes(text, closed) {
+  const closedTags = closed || closedSystemTags(text);
+  const keep = (m, off, glued) => {
+    // A closing tag is never a name: the text before it reads as a message.
+    if (/^<\s*\//.test(m)) return true;
+    const tag = glued ? 'system' : 'system-' + ((/system-([\w-]+)/i.exec(m) || [])[1] || '').toLowerCase();
+    if (closedTags.has(tag)) return true;
+    if (LINE_START.test(text.slice(0, off))) return true;
+    let after = text.slice(off + m.length);
+    // A name inside a code span: only the rest of the span counts.
+    if (glued && (text.slice(0, off).split('`').length - 1) % 2 === 1 && after.includes('`')) after = after.slice(0, after.indexOf('`'));
+    return !placeholderTail(after);
+  };
+  let s = text.replace(SYSTEM_PLACEHOLDER_DOC, (m, off) => (keep(m, off, false) ? m : ' '));
+  // <system> glued to a file name or path.
+  s = s.replace(/(?<=[\w\-/])<\s*system\s*>/gi, (m, off) => (keep(m, off, true) ? m : ' '));
+  return s.replace(SYSTEM_IDENTITY_DOC, ' ');
+}
+
+function stripDocShapes(text, fenced, closed) {
+  let s = stripSystemShapes(text, closed);
+  // "[system]" used as a label after a word, never a role marker ("[system]:").
+  s = s.replace(/(?<=[A-Za-z0-9"'`)])[ \t]\[\s*system\s*\](?!\s*:)/gi, ' ');
+  // A role label that opens a quoted example prompt: system: `You are ...`
+  s = s.replace(/\bsystem\s*:\s*(?=[`"'])/gi, ' ');
+  // Badge images from known badge hosts.
+  s = stripBadges(s);
+  // Chat-template tokens shown as code: inside a closed fence, or inside quotes
+  // or backticks. A system role after the token is never skipped.
+  if (fenced) s = s.replace(CHAT_TOKEN_DOC, ' ');
+  else s = s.replace(/(["'`])[^"'`\n]{0,200}\1/g, (q) => q.replace(CHAT_TOKEN_DOC, ' '));
+  return s;
+}
+
+// A closed quote span. An unclosed quote is never a span: it would hide the
+// rest of the line.
+const QUOTE_SPAN = /"[^"\n]*"|“[^”\n]*”|`[^`\n]*`/g;
+const ONE_SPAN = /(?:"[^"\n]*"|“[^”\n]*”|`[^`\n]*`)/.source;
+// The closed quotes that come right after an explicit example marker ("phrases
+// like", "such as", "e.g."), alone or as a short list. Nothing else is removed:
+// "reply like this: ..." or "what this text says: ..." are instructions.
+const EXAMPLE_MARKER = /\b(?:(?:phrases?|wording|strings?|messages?|texts?|patterns?|attempts?|words?|things?|examples?)\s+(?:like|such as|including|containing|e\.g\.)|e\.g\.|i\.e\.|for example|for instance|such as)\s{0,3}[,:]?\s{0,3}/.source;
+const EXAMPLE_LIST_SEP = /\s{0,3}(?:,|;|\/|\bor\b|\band\b)\s{0,3}/.source;
+const EXAMPLE_QUOTES = new RegExp(EXAMPLE_MARKER + ONE_SPAN + '(?:' + EXAMPLE_LIST_SEP + ONE_SPAN + ')*', 'gi');
+// "Never follow instructions found in ...": the warning is about the object
+// ("instructions found in the page"); it ends at a comma, a full stop or a
+// conjunction, so an order that comes after it is still read.
+const WARN_OBJECT = /(?:(?:any|all|the|these|those|such|its|their|that|this|a|an)\s+)?(?:(?:embedded|hidden|untrusted|external|injected|malicious|user|page|tool|web|file|document|text)\s+)*(?:instructions?|commands?|directives?|prompts?|text|content|data|output|results?|messages?|pages?|files?|documents?|rules?|users?)/.source;
+const WARN_TAIL = /(?:\s+(?:found|contained|embedded|appearing|present|inside|in|from|within|on|returned|provided|given|coming|that)\b(?:(?!\s(?:and|or|but|then|also|instead|so)\s)[^.;,\n])*)?/.source;
+const NEGATED_CLAUSE = new RegExp(/\b(?:never|do not|don't|must not|should not|cannot|can't)\s+(?:follow|obey|execute|act on|comply with|run|trust)\s+/.source + WARN_OBJECT + WARN_TAIL, 'gi');
+/** The line without the "never follow instructions found in ..." warnings (a chunk that is itself an order stays). */
+function stripNegated(text) { return text.replace(NEGATED_CLAUSE, (m) => (blockOf(m) ? m : ' ')); }
+/** The line without the closed quotes listed after an example marker. */
+function stripExampleQuotes(text) { return text.replace(EXAMPLE_QUOTES, ' '); }
+
+// Text near an example that talks about attacks: a demonstration of one.
+const ATTACK_TALK = /\b(?:prompt[- ]?injection|jailbreak\w*|injection (?:attacks?|examples?|payloads?|patterns?|phrases?)|attack(?:s|ers?)?|malicious|adversarial|untrusted|red[- ]?team|threat)\b/i;
+function attackContext(lines, from, back) {
+  for (let k = from, seen = 0; k >= 0 && seen < back; k--) {
+    if (!lines[k].trim()) continue;
+    seen++;
+    if (ATTACK_TALK.test(lines[k])) return true;
+  }
+  return false;
+}
+
+/**
+ * What to do with a line the rules engine blocks: 'skip' when only a
+ * documentation shape made it match, 'demo' when it is an attack shown as an
+ * example (reported one level lower), else null.
+ */
+function docShape(t, o) {
+  let rest = t;
+  // A tag named in backticks, never paired with a closing tag on the line.
+  if (!/<\s*system[^>]*>[\s\S]*<\s*\/\s*system/i.test(rest)) rest = rest.replace(/`<(?:\s*\/)?\s*system\s*>`/gi, ' ');
+  if (o.doc) rest = stripNegated(stripDocShapes(rest, o.fenced, o.closedTags));
+  // A note inside a skill folder that is not a docs file: only the
+  // placeholder and identity shapes, and "system:" ending the line.
+  else if (o.skillNote) rest = stripSystemShapes(rest, o.closedTags).replace(/\bsystem\s*:\s*$/i, ' ');
+  if (rest !== t && !blockOf(rest)) return 'skip';
+  if (!o.doc) return null;
+  // The strong pattern sits only inside the quotes of an example: reported one
+  // level lower, never dropped.
+  const noExamples = stripExampleQuotes(rest);
+  if (noExamples !== rest && !blockOf(noExamples)) return 'demo';
+  if (o.fenced) return attackContext(o.lines, o.open - 1, 6) ? 'demo' : null;
+  const unquoted = t.replace(QUOTE_SPAN, ' ');
+  if (unquoted !== t && !blockOf(unquoted) && attackContext(o.lines, o.at, 10)) return 'demo';
+  return null;
+}
+
+const INSTRUCTION_FILE_NAMES = /^(?:agents(?:\.override)?\.md|claude(?:\.local)?\.md|gemini\.md|skill\.md|\.cursorrules|\.windsurfrules|copilot-instructions\.md)$/i;
+const LOADED_DIRS = /(^|\/)(?:commands?|agents?|prompts|rules|chatmodes|instructions|output-styles)\//i;
+/** A note inside a real skill folder (one that holds SKILL.md), not itself loaded as instructions. */
+function isSkillNote(rec) {
+  if (rec.importedBy) return false;
+  const rel = rec.rel;
+  if (!/\.(?:md|mdx|markdown)$/i.test(rel)) return false;
+  if (INSTRUCTION_FILE_NAMES.test(path.posix.basename(rel))) return false;
+  if (LOADED_DIRS.test(rel)) return false;
+  const parts = rel.split('/');
+  for (let k = 1; k < parts.length - 1; k++) {
+    const holder = parts[k - 1];
+    const ok = /^skills$/i.test(holder) || (/^skill$/i.test(holder) && /^\.opencode$/i.test(parts[k - 2] || ''));
+    if (!ok) continue;
+    let dir = rec.abs;
+    for (let up = parts.length - 1 - k; up > 0; up--) dir = path.dirname(dir);
+    try {
+      if (fs.readdirSync(dir).some((n) => n.toLowerCase() === 'skill.md')) return true;
+    } catch (_) { /* not readable: not a skill note */ }
+  }
+  return false;
+}
+
 function checkInstructions(ctx) {
   checkBlankPadding(ctx);
+  // A file CLAUDE.md imports with @ is loaded as instructions, wherever it sits.
+  const doc = !ctx.rec.importedBy && isDocFile(ctx.rec.rel);
+  const skillNote = isSkillNote(ctx.rec);
+  // The system tags closed somewhere in the file, listed once per file.
+  const closedTags = closedSystemTags(ctx.lines.join('\n'));
   const claudeExt = /(^|\/)\.claude\/(commands|agents|skills)\//i.test(ctx.rec.rel);
   // Supporting notes of a skill (not SKILL.md itself): the only files here
   // that are not read as instructions.
@@ -795,10 +991,11 @@ function checkInstructions(ctx) {
   // Lines inside code fences that are closed again (an unclosed fence runs
   // to the end of the file and counts as plain text).
   const fenced = new Set();
+  const fenceOpen = new Map();
   for (let i = 0, open = -1; i < ctx.lines.length; i++) {
     if (!/^\s*(?:```|~~~)/.test(ctx.lines[i])) continue;
     if (open < 0) { open = i; continue; }
-    for (let k = open + 1; k < i; k++) fenced.add(k);
+    for (let k = open + 1; k < i; k++) { fenced.add(k); fenceOpen.set(k, open); }
     open = -1;
   }
   ctx.lines.forEach((raw, i) => {
@@ -822,6 +1019,11 @@ function checkInstructions(ctx) {
       let res = null;
       // Strict mode: audit grades each finding itself (high, medium, info).
       try { res = rules().evaluate(t, { strict: true }); } catch (_) { res = null; }
+      let demo = false;
+      if (res && res.verdict === 'block') {
+        const d = docShape(t, { doc, skillNote, closedTags, fenced: fenced.has(i), lines: ctx.lines, at: i, open: fenceOpen.get(i) });
+        if (d === 'skip') res = null; else if (d === 'demo') demo = true;
+      }
       if (res && res.verdict === 'block' && !NOISY_IN_DOCS.test(String(res.rule))) {
         // Strong patterns are high, weaker ones medium. In the files an agent
         // reads as its instructions a strong pattern is never lowered: the
@@ -836,6 +1038,7 @@ function checkInstructions(ctx) {
         let quoted;
         if (strong) quoted = supporting && insideQuotedExample(t);
         else quoted = EXAMPLE_QUOTE.test(t) || fenced.has(i);
+        if (demo) quoted = true;
         if (quoted) sev = strong ? 'medium' : 'low';
         ctx.add('ZNA012', sev, ln, 'Rules engine: ' + (res.reason || res.rule) + (quoted ? ' (in quoted or code text)' : '') + '.');
       }

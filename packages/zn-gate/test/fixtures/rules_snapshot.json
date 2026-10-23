@@ -202,7 +202,7 @@
       ],
       "sha256": {
         "lib/audit/rules.js": "bdf7ff68206061bb3d51a739176f0eb323f53b3bbeda982a89260e94acbfd5ae",
-        "lib/audit/patterns.js": "40a35719bcc9ccea1a3033d743c813d7612f417515e965ccef513f0ccfbfcfb7"
+        "lib/audit/patterns.js": "c3a0492c39598e1c698d741f39a40dbbf36e579334de0748bb8736dd9548627f"
       }
     },
     "policy": {
