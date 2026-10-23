@@ -99,11 +99,17 @@ The signing identity is the signer workflow at the tag:
   (up to 1.11.x: `https://github.com/usezn/zn/.github/workflows/release.yml@refs/tags/v1.11.0`)
 - issuer: `https://token.actions.githubusercontent.com`
 
-With [sigstore-python](https://github.com/sigstore/sigstore-python):
+With [sigstore-python](https://github.com/sigstore/sigstore-python). On
+Ubuntu and Debian the command is `python3`, and `pip` refuses to install into
+the system Python, so install it into its own small folder (a virtual
+environment) first. If you use [pipx](https://pipx.pypa.io/), `pipx install
+sigstore` does the same and gives you a `sigstore` command to use in place of
+`zn-verify/bin/python -m sigstore`:
 
 ```sh
-python -m pip install sigstore
-python -m sigstore verify identity \
+python3 -m venv zn-verify
+zn-verify/bin/pip install sigstore
+zn-verify/bin/python -m sigstore verify identity \
   --bundle SHA256SUMS.sigstore.json \
   --cert-identity https://github.com/usezn/zn/.github/workflows/build-release.yml@refs/tags/v1.12.0 \
   --cert-oidc-issuer https://token.actions.githubusercontent.com \
@@ -111,7 +117,9 @@ python -m sigstore verify identity \
 ```
 
 With [cosign](https://github.com/sigstore/cosign) (2.4 or later; cosign 3
-does not need `--new-bundle-format`):
+does not need `--new-bundle-format`). cosign is not in the Ubuntu package
+list: download the program for your system from its
+[releases page](https://github.com/sigstore/cosign/releases):
 
 ```sh
 cosign verify-blob SHA256SUMS \
@@ -147,11 +155,14 @@ npm view zn-gate@1.5.0 dist.attestations
 Each file on [pypi.org/project/zn-gate](https://pypi.org/project/zn-gate/)
 has a provenance section (open the file details under "Download files"). To
 check it from the command line with
-[pypi-attestations](https://github.com/pypi/pypi-attestations):
+[pypi-attestations](https://github.com/pypi/pypi-attestations). Install it
+into a virtual environment as in step 3 (or with `pipx install
+pypi-attestations`):
 
 ```sh
-python -m pip install pypi-attestations
-pypi-attestations verify pypi \
+python3 -m venv zn-verify-pypi
+zn-verify-pypi/bin/pip install pypi-attestations
+zn-verify-pypi/bin/pypi-attestations verify pypi \
   --repository https://github.com/usezn/zn \
   pypi:zn_gate-1.5.0-py3-none-any.whl
 ```
@@ -162,8 +173,10 @@ From 1.12.0 on, the tag `vX.Y.Z` is created and signed by the
 [`Tag release` workflow](../.github/workflows/tag-release.yml) with
 [gitsign](https://github.com/sigstore/gitsign) (Sigstore keyless signing): the
 signature names that workflow, not a person, and the Release workflow refuses
-to publish a tag of such a commit without that signature. With gitsign 0.17
-or later, in a clone of this repository:
+to publish a tag of such a commit without that signature. gitsign is not in
+the Ubuntu package list: download the program for your system from its
+[releases page](https://github.com/sigstore/gitsign/releases). With gitsign
+0.17 or later, in a clone of this repository:
 
 ```sh
 git fetch origin tag v1.12.0
