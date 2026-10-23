@@ -115,6 +115,7 @@ function normalize(raw) {
     input.paths = files;
     input.path = files[0];
     input.tooLong = tooLong;
+    input.alsoReadCheck = true;
     input.unparsed = !tooLong && (files.length === 0 || scan.suspicious);
   }
   if (raw.hook === 'tool.execute.before') return { ...base, event: 'pre_tool', tool, toolName: t, input };

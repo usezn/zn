@@ -245,6 +245,8 @@ function normalize(raw) {
     input.paths = files;
     input.path = zn || files[0];
     input.tooLong = tooLong;
+    // The install page promises that patches to secret files are refused: the read check applies to a patch too.
+    input.alsoReadCheck = true;
     input.unparsed = !tooLong && (files.length === 0 || scan.suspicious);
     input.texts = [{ key: ['command'], value: String(ti.command || '') }];
     input.command = undefined;

@@ -287,7 +287,8 @@ async function decidePre(ev, d, agentId, opts) {
     }
     if (input.unparsed) return { decision: 'deny', message: 'zn: could not read the file names in this patch, so zn cannot check it.' };
     for (const p of Array.isArray(input.paths) ? input.paths : [input.path]) {
-      const deny = policy.writeDenial(p, pathOpts);
+      // An adapter that promises "no reads or writes of secret files" asks for the read check on a write too.
+      const deny = (input.alsoReadCheck && policy.readDenial(p, pathOpts)) || policy.writeDenial(p, pathOpts);
       if (deny) return { decision: 'deny', message: deny };
     }
   }
