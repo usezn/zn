@@ -8,7 +8,15 @@
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+
+/// Lock a mutex, recovering the data if another thread panicked while holding
+/// it. Every value guarded here is replaced or updated in one step (a pointer
+/// swap or a counter bump), so it is never left half-written by a panic, and
+/// one panic must not turn every later model lookup into a panic as well.
+fn locked<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// Decision counters feeding the FPR guard.
 /// FP = neural flagged but the rule layers allowed it; TN = not flagged & allowed.
@@ -26,21 +34,21 @@ impl CanaryStats {
     /// `bucket` = served by the canary, `flagged` = neural fired, `allowed` = allowed at the end.
     pub fn note(&mut self, bucket: bool, flagged: bool, allowed: bool) {
         if bucket {
-            self.canary_total += 1;
+            self.canary_total = self.canary_total.saturating_add(1);
         } else {
-            self.control_total += 1;
+            self.control_total = self.control_total.saturating_add(1);
         }
         if allowed {
             if flagged {
                 if bucket {
-                    self.canary_fp += 1;
+                    self.canary_fp = self.canary_fp.saturating_add(1);
                 } else {
-                    self.control_fp += 1;
+                    self.control_fp = self.control_fp.saturating_add(1);
                 }
             } else if bucket {
-                self.canary_tn += 1;
+                self.canary_tn = self.canary_tn.saturating_add(1);
             } else {
-                self.control_tn += 1;
+                self.control_tn = self.control_tn.saturating_add(1);
             }
         }
     }
@@ -95,11 +103,11 @@ impl CanaryDeployer {
     /// Record one decision for the agent's routed bucket.
     pub fn note(&self, agent_id: &str, flagged: bool, allowed: bool) {
         let bucket = self.is_canary_bucket(agent_id);
-        self.stats.lock().unwrap().note(bucket, flagged, allowed);
+        locked(&self.stats).note(bucket, flagged, allowed);
     }
 
     pub fn stats(&self) -> CanaryStats {
-        *self.stats.lock().unwrap()
+        *locked(&self.stats)
     }
 
     /// FPR of the serving population: the canary while one is active (the
@@ -127,17 +135,17 @@ impl CanaryDeployer {
     }
 
     pub fn active(&self) -> Arc<dyn super::ModelBackend> {
-        self.current.lock().unwrap().clone()
+        locked(&self.current).clone()
     }
 
     pub fn has_canary(&self) -> bool {
-        self.canary.lock().unwrap().is_some()
+        locked(&self.canary).is_some()
     }
 
     /// Route one agent to the backend serving it (canary when in-bucket).
     pub fn backend_for(&self, agent_id: &str) -> Arc<dyn super::ModelBackend> {
         let c = {
-            let g = self.canary.lock().unwrap();
+            let g = locked(&self.canary);
             g.as_ref().and_then(|c| {
                 if Self::bucket(agent_id) < c.pct {
                     Some(Arc::clone(&c.model))
@@ -148,15 +156,13 @@ impl CanaryDeployer {
         };
         match c {
             Some(m) => m,
-            None => self.current.lock().unwrap().clone(),
+            None => locked(&self.current).clone(),
         }
     }
 
     /// True if `agent_id` is currently served by the canary (stats bucketing).
     pub fn is_canary_bucket(&self, agent_id: &str) -> bool {
-        self.canary
-            .lock()
-            .unwrap()
+        locked(&self.canary)
             .as_ref()
             .map(|c| Self::bucket(agent_id) < c.pct)
             .unwrap_or(false)
@@ -165,7 +171,9 @@ impl CanaryDeployer {
     /// Start (or replace) the canary with `pct` in 1..=100.
     pub fn set_canary(&self, model: Arc<dyn super::ModelBackend>, pct: u8) {
         let pct = pct.clamp(1, 100);
-        *self.canary.lock().unwrap() = Some(Canary { model, pct });
+        let old = locked(&self.canary).replace(Canary { model, pct });
+        // Dropped after the guard is released: a panic in a backend's Drop must not poison the lock.
+        drop(old);
     }
 
     /// Promote the canary to current (hot swap). Requires a passed evals gate.
@@ -174,10 +182,11 @@ impl CanaryDeployer {
         if !gate_passed {
             return false;
         }
-        let canary = self.canary.lock().unwrap().take();
+        let canary = locked(&self.canary).take();
         match canary {
             Some(c) => {
-                *self.current.lock().unwrap() = Arc::clone(&c.model);
+                let old = std::mem::replace(&mut *locked(&self.current), Arc::clone(&c.model));
+                drop(old);
                 true
             }
             None => false,
@@ -186,7 +195,8 @@ impl CanaryDeployer {
 
     /// Drop the canary; `current` keeps serving everyone.
     pub fn rollback(&self) {
-        *self.canary.lock().unwrap() = None;
+        let old = locked(&self.canary).take();
+        drop(old);
     }
 
     /// Roll back automatically when the FPR guard trips. True if it rolled.
@@ -331,5 +341,47 @@ mod tests {
         }
         assert!(d.enforce_fpr_guard(&s, 50, 0.02));
         assert!(!d.has_canary(), "rollback must drop the canary");
+    }
+
+    #[test]
+    fn poisoned_locks_do_not_break_later_calls() {
+        let cur: Arc<dyn ModelBackend> = Arc::new(Stub { name: "cur".into() });
+        let can: Arc<dyn ModelBackend> = Arc::new(Stub { name: "can".into() });
+        let d = Arc::new(CanaryDeployer::new(cur));
+        d.set_canary(Arc::clone(&can), 100);
+
+        // Panic on other threads while each mutex is held, poisoning all three.
+        let poison = |f: fn(&CanaryDeployer)| {
+            let d2 = Arc::clone(&d);
+            let r = std::thread::spawn(move || f(&d2)).join();
+            assert!(r.is_err());
+        };
+        poison(|d| {
+            let _g = d.current.lock().unwrap();
+            panic!("poison current");
+        });
+        poison(|d| {
+            let _g = d.canary.lock().unwrap();
+            panic!("poison canary");
+        });
+        poison(|d| {
+            let _g = d.stats.lock().unwrap();
+            panic!("poison stats");
+        });
+        assert!(d.current.is_poisoned() && d.canary.is_poisoned() && d.stats.is_poisoned());
+
+        assert_eq!(d.active().name(), "cur");
+        assert!(d.has_canary());
+        assert_eq!(d.backend_for("agent-1").name(), "can");
+        assert!(d.is_canary_bucket("agent-1"));
+        d.note("agent-1", true, true);
+        assert_eq!(d.stats().canary_total, 1);
+        assert!(d.serving_fpr() > 0.0 || d.stats().canary_fp == 1);
+        assert!(!d.enforce_guard(50, 0.02));
+        assert!(d.promote(true));
+        assert_eq!(d.active().name(), "can");
+        d.set_canary(Arc::clone(&can), 10);
+        d.rollback();
+        assert!(!d.has_canary());
     }
 }
