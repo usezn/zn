@@ -74,6 +74,11 @@ function handle(m) {
     process.stdout.write('"}]}}\\n');
     return;
   }
+  if (name === 'garbage_other') {
+    // a line that cannot be passed on, for an id nobody asked for, then the real answer
+    process.stdout.write('{"jsonrpc":"2.0","id":4000,"result":"' + 'a'.repeat(300000) + '"\\n');
+    return out({ jsonrpc: '2.0', id: m.id, result: { content: [{ type: 'text', text: 'fine' }] } });
+  }
   if (name === 'big_garbage') {
     process.stdout.write('{"jsonrpc":"2.0","id":' + m.id + ',"result":"' + 'a'.repeat(300000) + '"\\n');
     return;
@@ -387,6 +392,19 @@ test('a client batch that is refused forgets its other requests: a later dropped
     s.send(call(73, 'ok'));
     await s.reply(73);
     assert.ok(!s.json().some((m) => !Array.isArray(m) && m.id === 70), 'id 70 was answered twice');
+  } finally { await s.stop(); }
+});
+
+test('a dropped single server message answers only a request the client sent', async () => {
+  const s = startShield({ serverLineBytes: 100000 });
+  try {
+    s.send(call(80, 'garbage_other'));
+    assert.equal((await s.reply(80)).result.content[0].text, 'fine');
+    await s.wait(() => /dropped/.test(s.stderr), 'stderr notice');
+    assert.ok(!s.json().some((m) => !Array.isArray(m) && m.id === 4000), 'an id the client never sent was answered');
+    // a request the client did send still gets its error when its answer is dropped
+    s.send(call(81, 'big_garbage'));
+    assert.equal((await s.reply(81)).error.code, -32603);
   } finally { await s.stop(); }
 });
 

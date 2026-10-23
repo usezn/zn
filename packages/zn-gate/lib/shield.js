@@ -828,7 +828,9 @@ function startMcpShield(command, args, options = {}) {
         if (key && (pendingCalls.has(key) || otherRequests.has(key))) await toClient(JSON.stringify(answerError(f.id, why)) + '\n');
       }
     } else if (fields && fields.hasId && !fields.hasMethod) {
-      await toClient(JSON.stringify(answerError(fields.id, why)) + '\n');
+      // Only a request the client sent gets the error; an id it never used is not answered.
+      const key = idKey(fields.id);
+      if (pendingCalls.has(key) || otherRequests.has(key)) await toClient(JSON.stringify(answerError(fields.id, why)) + '\n');
     }
   }
   const fieldsOf = (buf) => framing.batchFields(buf) || framing.topLevelFields(buf);
