@@ -35,6 +35,7 @@
   "main": "lib/client.js",
   "types": "lib/client.d.ts",
   "scripts": {
+    "postinstall": "node lib/agents/refresh.js",
     "test": "node test/run-all.js"
   },
   "files": [

@@ -113,7 +113,8 @@ test('check: no agent on the machine says so and offers no setup', async (t) => 
 test('check: an agent found but not set up is named after the protected ones, with the same exit code', async (t) => {
   const ctx = homeWithHooks(t, ['codex']);
   fs.mkdirSync(path.join(ctx.home, '.claude'), { recursive: true });
-  const res = await check({ ...ctx, env: { ...ctx.env, PATH: binDir(t, true) } });
+  // The hook runs with this PATH: it needs a hash tool (sha256sum, shasum or openssl) to verify the runner.
+  const res = await check({ ...ctx, env: { ...ctx.env, PATH: binDir(t, true) + ":/usr/bin:/bin" } });
   const { s, code } = textOf(res);
   assert.equal(code, 0);
   assert.match(s, /Not set up yet: Claude Code\. To add it, run `npx -y zn-gate init`/);
