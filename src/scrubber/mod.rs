@@ -9,6 +9,15 @@
 //! - Credit card numbers (known network prefix and length, Luhn checksum) → `[CARD_REDACTED]`
 //! - Social Security Numbers (US, valid area/group/serial) → `[SSN_REDACTED]`
 //! - Phone numbers (E.164 `+<digits>`, or formatted NANP numbers) → `[PHONE_REDACTED]`
+//! - IBANs (country length and mod-97 checksum) → `[IBAN_REDACTED]`
+//! - Spanish DNI and NIE (check letter) → `[DNI_REDACTED]`, `[NIE_REDACTED]`
+//! - IPv4 addresses (public ones only; **off by default**) → `[IPV4_REDACTED]`
+//! - A person's name, a postal address and a username, only from an explicit key next to the
+//!   value (an HTTP header such as `X-User-Name`, or a query or form key such as `name=`) →
+//!   `[PERSON_NAME_REDACTED]`, `[POSTAL_ADDRESS_REDACTED]`, `[USERNAME_REDACTED]`
+//!
+//! Which PII types are redacted is a [`PiiOptions`] value, as in the Node.js scrubber's `pii`
+//! option: everything on except IPv4. Secrets are always redacted.
 //!
 //! Card, SSN and phone candidates must stand on their own (not be part of a
 //! longer number or word) and pass the same checks as the Node.js scrubber,
@@ -17,11 +26,69 @@
 //! ## Performance
 //! Regex patterns are compiled once and cached using `OnceLock` for optimal performance.
 
+mod keyed;
+
 use regex::Regex;
 use std::sync::OnceLock;
 
 /// PII Scrubber for sanitizing sensitive data
 pub struct Scrubber;
+
+/// Which PII types the scrubber redacts (the `pii` option of the Node.js scrubber, with the
+/// same defaults: everything on except `ipv4`). Secrets, JWTs and Authorization headers are
+/// always redacted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PiiOptions {
+    pub email: bool,
+    pub phone: bool,
+    pub iban: bool,
+    pub card: bool,
+    /// Spanish DNI and NIE.
+    pub dni: bool,
+    pub ssn: bool,
+    pub ipv4: bool,
+    /// A person's name next to an explicit key (`X-User-Name`, `name=`).
+    pub name: bool,
+    /// A postal address next to an explicit key (`X-Address`, `address=`).
+    pub address: bool,
+    /// A username next to an explicit key (`X-Username`, `user=`).
+    pub username: bool,
+}
+
+impl Default for PiiOptions {
+    fn default() -> Self {
+        PiiOptions {
+            email: true,
+            phone: true,
+            iban: true,
+            card: true,
+            dni: true,
+            ssn: true,
+            ipv4: false,
+            name: true,
+            address: true,
+            username: true,
+        }
+    }
+}
+
+impl PiiOptions {
+    /// No PII type at all (secrets are still redacted).
+    pub fn none() -> Self {
+        PiiOptions {
+            email: false,
+            phone: false,
+            iban: false,
+            card: false,
+            dni: false,
+            ssn: false,
+            ipv4: false,
+            name: false,
+            address: false,
+            username: false,
+        }
+    }
+}
 
 // Compiled regex patterns (initialized once)
 static EMAIL_REGEX: OnceLock<Regex> = OnceLock::new();
@@ -33,6 +100,10 @@ static NANP_REGEX: OnceLock<Regex> = OnceLock::new();
 static JWT_REGEX: OnceLock<Regex> = OnceLock::new();
 static AUTH_HEADER_REGEX: OnceLock<Regex> = OnceLock::new();
 static AUTH_PLACEHOLDER_REGEX: OnceLock<Regex> = OnceLock::new();
+static IBAN_REGEX: OnceLock<(Regex, Regex)> = OnceLock::new();
+static DNI_REGEX: OnceLock<(Regex, Regex)> = OnceLock::new();
+static NIE_REGEX: OnceLock<(Regex, Regex)> = OnceLock::new();
+static IPV4_REGEX: OnceLock<(Regex, Regex)> = OnceLock::new();
 
 fn email_re() -> &'static Regex {
     EMAIL_REGEX
@@ -132,6 +203,31 @@ fn nanp_re() -> &'static Regex {
     })
 }
 
+/// A candidate pattern and the same pattern anchored at both ends (to test shorter ends).
+fn pair(src: &str) -> (Regex, Regex) {
+    (
+        Regex::new(src).unwrap(),
+        Regex::new(&format!("^(?:{src})$")).unwrap(),
+    )
+}
+
+fn iban_re() -> &'static (Regex, Regex) {
+    // Two letters, two digits, then 2-7 groups of four and an optional shorter last group.
+    IBAN_REGEX.get_or_init(|| pair(r"[A-Z]{2}[0-9]{2}(?: ?[A-Z0-9]{4}){2,7}(?: ?[A-Z0-9]{1,4})?"))
+}
+
+fn dni_re() -> &'static (Regex, Regex) {
+    DNI_REGEX.get_or_init(|| pair(r"[0-9]{8}-?[A-Z]"))
+}
+
+fn nie_re() -> &'static (Regex, Regex) {
+    NIE_REGEX.get_or_init(|| pair(r"[XYZ]-?[0-9]{7}-?[A-Z]"))
+}
+
+fn ipv4_re() -> &'static (Regex, Regex) {
+    IPV4_REGEX.get_or_init(|| pair(r"(?:[0-9]{1,3}\.){3}[0-9]{1,3}"))
+}
+
 fn jwt_re() -> &'static Regex {
     // Matches JWT tokens (header.payload.signature format)
     JWT_REGEX.get_or_init(|| {
@@ -221,6 +317,179 @@ fn ssn_valid(raw: &str) -> bool {
         return false;
     }
     parts[1] != "00" && parts[2] != "0000"
+}
+
+/// IBAN lengths per country (ISO 13616 registry, SEPA and common others; the Node.js table).
+const IBAN_LENGTHS: &[(&str, usize)] = &[
+    ("AD", 24),
+    ("AE", 23),
+    ("AL", 28),
+    ("AT", 20),
+    ("AZ", 28),
+    ("BA", 20),
+    ("BE", 16),
+    ("BG", 22),
+    ("BH", 22),
+    ("BR", 29),
+    ("CH", 21),
+    ("CR", 22),
+    ("CY", 28),
+    ("CZ", 24),
+    ("DE", 22),
+    ("DK", 18),
+    ("DO", 28),
+    ("EE", 20),
+    ("EG", 29),
+    ("ES", 24),
+    ("FI", 18),
+    ("FO", 18),
+    ("FR", 27),
+    ("GB", 22),
+    ("GE", 22),
+    ("GI", 23),
+    ("GL", 18),
+    ("GR", 27),
+    ("GT", 28),
+    ("HR", 21),
+    ("HU", 28),
+    ("IE", 22),
+    ("IL", 23),
+    ("IS", 26),
+    ("IT", 27),
+    ("JO", 30),
+    ("KW", 30),
+    ("KZ", 20),
+    ("LB", 28),
+    ("LI", 21),
+    ("LT", 20),
+    ("LU", 20),
+    ("LV", 21),
+    ("MC", 27),
+    ("MD", 24),
+    ("ME", 22),
+    ("MK", 19),
+    ("MR", 27),
+    ("MT", 31),
+    ("MU", 30),
+    ("NL", 18),
+    ("NO", 15),
+    ("PK", 24),
+    ("PL", 28),
+    ("PS", 29),
+    ("PT", 25),
+    ("QA", 29),
+    ("RO", 24),
+    ("RS", 22),
+    ("SA", 24),
+    ("SE", 24),
+    ("SI", 19),
+    ("SK", 24),
+    ("SM", 27),
+    ("TN", 24),
+    ("TR", 26),
+    ("UA", 29),
+    ("VG", 24),
+    ("XK", 20),
+];
+
+/// ISO 7064 mod 97-10: letters count as 10..35, the first four characters move to the end.
+fn mod97(iban: &str) -> u32 {
+    let mut rem = 0u32;
+    for c in iban[4..].chars().chain(iban[..4].chars()) {
+        match c {
+            'A'..='Z' => rem = (rem * 100 + (c as u32 - 55)) % 97,
+            _ => rem = (rem * 10 + (c as u32 - 48)) % 97,
+        }
+    }
+    rem
+}
+
+fn iban_valid(raw: &str) -> bool {
+    let iban: String = raw
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '-')
+        .map(|c| c.to_ascii_uppercase())
+        .collect();
+    if !iban.is_ascii() || iban.len() < 5 {
+        return false;
+    }
+    let Some(&(_, len)) = IBAN_LENGTHS.iter().find(|(c, _)| *c == &iban[..2]) else {
+        return false;
+    };
+    if iban.len() != len {
+        return false;
+    }
+    let b = iban.as_bytes();
+    if !(b[0].is_ascii_uppercase()
+        && b[1].is_ascii_uppercase()
+        && b[2].is_ascii_digit()
+        && b[3].is_ascii_digit()
+        && b[4..]
+            .iter()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()))
+    {
+        return false;
+    }
+    mod97(&iban) == 1
+}
+
+const DNI_LETTERS: &[u8; 23] = b"TRWAGMYFPDXBNJZSQVHLCKE";
+
+/// DNI: 8 digits and the check letter `DNI_LETTERS[number % 23]`.
+fn dni_valid(raw: &str) -> bool {
+    let v: Vec<u8> = raw
+        .bytes()
+        .filter(|&c| c != b'-')
+        .map(|c| c.to_ascii_uppercase())
+        .collect();
+    if v.len() != 9 || !v[..8].iter().all(u8::is_ascii_digit) || !v[8].is_ascii_uppercase() {
+        return false;
+    }
+    let n: u64 = v[..8].iter().fold(0, |a, &c| a * 10 + u64::from(c - b'0'));
+    DNI_LETTERS[(n % 23) as usize] == v[8]
+}
+
+/// NIE: X, Y or Z, 7 digits and the check letter (X, Y, Z count as 0, 1, 2).
+fn nie_valid(raw: &str) -> bool {
+    let v: Vec<u8> = raw
+        .bytes()
+        .filter(|&c| c != b'-')
+        .map(|c| c.to_ascii_uppercase())
+        .collect();
+    if v.len() != 9 || !v[1..8].iter().all(u8::is_ascii_digit) || !v[8].is_ascii_uppercase() {
+        return false;
+    }
+    let Some(lead) = b"XYZ".iter().position(|&c| c == v[0]) else {
+        return false;
+    };
+    let n: u64 = v[1..8]
+        .iter()
+        .fold(lead as u64, |a, &c| a * 10 + u64::from(c - b'0'));
+    DNI_LETTERS[(n % 23) as usize] == v[8]
+}
+
+/// A public IPv4 address: loopback, private, link-local, shared, documentation and reserved
+/// ranges are left alone (the Node.js rule).
+fn ipv4_public(raw: &str) -> bool {
+    let parts: Vec<u32> = raw
+        .split('.')
+        .map(|p| p.parse::<u32>().unwrap_or(u32::MAX))
+        .collect();
+    if parts.len() != 4 || parts.iter().any(|&p| p > 255) {
+        return false;
+    }
+    let (a, b) = (parts[0], parts[1]);
+    !(a == 0
+        || a == 10
+        || a == 127
+        || a >= 224
+        || (a == 169 && b == 254)
+        || (a == 172 && (16..=31).contains(&b))
+        || (a == 192 && b == 168)
+        || (a == 100 && (64..=127).contains(&b))
+        || (a == 192 && b == 0)
+        || (a == 198 && (b == 18 || b == 19 || b == 51))
+        || (a == 203 && b == 0))
 }
 
 fn sequential(digits: &str) -> bool {
@@ -339,6 +608,30 @@ fn nanp_bounded(text: &str, s: usize, e: usize) -> bool {
     before_ok && after_ok
 }
 
+/// ASCII letter or digit (the Node.js lookarounds of these types are ASCII-only).
+fn ascii_alnum(c: Option<char>) -> bool {
+    c.is_some_and(|c| c.is_ascii_alphanumeric())
+}
+
+/// A lookbehind or a lookahead: `true` when the character next to the match is allowed.
+type Around = fn(Option<char>) -> bool;
+
+fn not_alnum(c: Option<char>) -> bool {
+    !ascii_alnum(c)
+}
+
+fn dni_before(c: Option<char>) -> bool {
+    !matches!(c, Some(c) if c.is_ascii_alphanumeric() || "_.-".contains(c))
+}
+
+fn dni_after(c: Option<char>) -> bool {
+    !matches!(c, Some(c) if c.is_ascii_alphanumeric() || c == '_')
+}
+
+fn not_digit_or_dot(c: Option<char>) -> bool {
+    !matches!(c, Some(c) if c.is_ascii_digit() || c == '.')
+}
+
 type Check = fn(&str) -> bool;
 type Bound = fn(&str, usize, usize) -> bool;
 
@@ -384,10 +677,92 @@ fn checked_spans(re: &Regex, text: &str, bound: Bound, valid: Check) -> Vec<(usi
     spans
 }
 
-fn replace_spans(text: &str, spans: &[(usize, usize)], marker: &str) -> String {
+/// Spans of `pat` found as a JavaScript global regex with a lookbehind and a lookahead finds
+/// them (the Node.js scrubber's way): a start that fails its lookbehind is skipped, a match whose
+/// lookahead fails gives way to a shorter one (the longest end that passes), the next search
+/// starts where the match ended, and the match is kept only if `valid` accepts it. The
+/// anchored half of `pat` tests the shorter ends.
+fn js_spans(
+    pat: &(Regex, Regex),
+    text: &str,
+    before: Around,
+    after: Around,
+    valid: Check,
+) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    let mut pos = 0;
+    while pos < text.len() {
+        let Some(m) = pat.0.find_at(text, pos) else {
+            break;
+        };
+        let (s, e) = (m.start(), m.end());
+        let step = s + char_after(text, s).map_or(1, char::len_utf8);
+        if !before(char_before(text, s)) {
+            pos = step;
+            continue;
+        }
+        let end = (s + 1..=e).rev().find(|&x| {
+            text.is_char_boundary(x)
+                && after(char_after(text, x))
+                && (x == e || pat.1.is_match(&text[s..x]))
+        });
+        match end {
+            Some(x) => {
+                if valid(&text[s..x]) {
+                    spans.push((s, x));
+                }
+                pos = x;
+            }
+            None => pos = step,
+        }
+    }
+    spans
+}
+
+/// Redaction spans of the PII types, as `(start, end, marker)`.
+type Marked = (usize, usize, &'static str);
+
+/// Overlapping spans form a cluster that is redacted once, as the Node.js scrubber does
+/// (`resolveOverlaps`): spans that cover the whole cluster win; otherwise the longest span
+/// (the earlier one on a tie) names the marker and the union is redacted.
+fn resolve_overlaps(mut spans: Vec<Marked>) -> Vec<Marked> {
+    spans.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
+    let mut out = Vec::with_capacity(spans.len());
+    let mut i = 0;
+    while i < spans.len() {
+        let start = spans[i].0;
+        let mut end = spans[i].1;
+        let mut j = i + 1;
+        while j < spans.len() && spans[j].0 < end {
+            end = end.max(spans[j].1);
+            j += 1;
+        }
+        let members = &spans[i..j];
+        let covering: Vec<&Marked> = members
+            .iter()
+            .filter(|m| m.0 == start && m.1 == end)
+            .collect();
+        let pool: Vec<&Marked> = if covering.is_empty() {
+            members.iter().collect()
+        } else {
+            covering
+        };
+        let mut best = pool[0];
+        for m in &pool {
+            if m.1 - m.0 > best.1 - best.0 {
+                best = m;
+            }
+        }
+        out.push((start, end, best.2));
+        i = j;
+    }
+    out
+}
+
+fn replace_marked(text: &str, spans: &[Marked]) -> String {
     let mut out = String::with_capacity(text.len());
     let mut last = 0;
-    for &(s, e) in spans {
+    for &(s, e, marker) in spans {
         out.push_str(&text[last..s]);
         out.push_str(marker);
         last = e;
@@ -412,6 +787,28 @@ fn nanp_spans(text: &str) -> Vec<(usize, usize)> {
     checked_spans(nanp_re(), text, nanp_bounded, formatted_nanp_valid)
 }
 
+fn iban_spans(text: &str) -> Vec<(usize, usize)> {
+    js_spans(iban_re(), text, not_alnum, not_alnum, iban_valid)
+}
+
+fn dni_spans(text: &str) -> Vec<(usize, usize)> {
+    js_spans(dni_re(), text, dni_before, dni_after, dni_valid)
+}
+
+fn nie_spans(text: &str) -> Vec<(usize, usize)> {
+    js_spans(nie_re(), text, dni_before, dni_after, nie_valid)
+}
+
+fn ipv4_spans(text: &str) -> Vec<(usize, usize)> {
+    js_spans(
+        ipv4_re(),
+        text,
+        not_digit_or_dot,
+        not_digit_or_dot,
+        ipv4_public,
+    )
+}
+
 impl Scrubber {
     /// Scrub all PII and sensitive data from the input string
     ///
@@ -431,17 +828,59 @@ impl Scrubber {
     /// assert!(scrubbed.contains("[SECRET_REDACTED]"));
     /// ```
     pub fn scrub(input: &str) -> String {
+        Self::scrub_with(input, &PiiOptions::default())
+    }
+
+    /// Like [`Scrubber::scrub`], with the PII types to redact chosen by `pii`
+    /// (secrets, JWTs and Authorization headers are always redacted).
+    pub fn scrub_with(input: &str, pii: &PiiOptions) -> String {
         // Apply scrubbing in order of specificity
         let mut output = jwt_re().replace_all(input, "[JWT_REDACTED]").to_string();
-        output = email_re()
-            .replace_all(&output, "[EMAIL_REDACTED]")
-            .to_string();
+        if pii.email {
+            output = email_re()
+                .replace_all(&output, "[EMAIL_REDACTED]")
+                .to_string();
+        }
         output = auth_re().replace_all(&output, redact_auth).to_string();
         output = api_re().replace_all(&output, redact_secret).to_string();
-        output = replace_spans(&output, &card_spans(&output), "[CARD_REDACTED]");
-        output = replace_spans(&output, &ssn_spans(&output), "[SSN_REDACTED]");
-        output = replace_spans(&output, &e164_spans(&output), "[PHONE_REDACTED]");
-        output = replace_spans(&output, &nanp_spans(&output), "[PHONE_REDACTED]");
+        // The PII types are all searched in the same text, and spans that overlap are
+        // resolved together (a keyed value that is also an IBAN, a DNI or an IP address).
+        let mut found: Vec<Marked> = Vec::new();
+        let mut add = |spans: Vec<(usize, usize)>, marker: &'static str| {
+            found.extend(spans.into_iter().map(|(s, e)| (s, e, marker)));
+        };
+        if pii.phone {
+            add(e164_spans(&output), "[PHONE_REDACTED]");
+            add(nanp_spans(&output), "[PHONE_REDACTED]");
+        }
+        if pii.iban {
+            add(iban_spans(&output), "[IBAN_REDACTED]");
+        }
+        if pii.card {
+            add(card_spans(&output), "[CARD_REDACTED]");
+        }
+        if pii.dni {
+            add(dni_spans(&output), "[DNI_REDACTED]");
+            add(nie_spans(&output), "[NIE_REDACTED]");
+        }
+        if pii.ssn {
+            add(ssn_spans(&output), "[SSN_REDACTED]");
+        }
+        if pii.ipv4 {
+            add(ipv4_spans(&output), "[IPV4_REDACTED]");
+        }
+        if pii.name {
+            add(keyed::person_name_spans(&output), "[PERSON_NAME_REDACTED]");
+        }
+        if pii.address {
+            add(keyed::address_spans(&output), "[POSTAL_ADDRESS_REDACTED]");
+        }
+        if pii.username {
+            add(keyed::username_spans(&output), "[USERNAME_REDACTED]");
+        }
+        if !found.is_empty() {
+            output = replace_marked(&output, &resolve_overlaps(found));
+        }
 
         output
     }
@@ -458,27 +897,55 @@ impl Scrubber {
         scrubbed != input
     }
 
+    /// Like [`Scrubber::contains_pii`], with the PII types chosen by `pii`.
+    pub fn contains_pii_with(input: &str, pii: &PiiOptions) -> bool {
+        Self::scrub_with(input, pii) != input
+    }
+
     /// Get a list of PII types found in the input
     ///
     /// # Returns
     /// A vector of PII type names found in the input
     pub fn detect_pii_types(input: &str) -> Vec<&'static str> {
+        Self::detect_pii_types_with(input, &PiiOptions::default())
+    }
+
+    /// Like [`Scrubber::detect_pii_types`], for the PII types chosen by `pii`.
+    pub fn detect_pii_types_with(input: &str, pii: &PiiOptions) -> Vec<&'static str> {
         let mut types = Vec::new();
 
-        if email_re().is_match(input) {
+        if pii.email && email_re().is_match(input) {
             types.push("email");
         }
         if api_re().is_match(input) {
             types.push("api_key_or_secret");
         }
-        if !card_spans(input).is_empty() {
+        if pii.iban && !iban_spans(input).is_empty() {
+            types.push("iban");
+        }
+        if pii.card && !card_spans(input).is_empty() {
             types.push("credit_card");
         }
-        if !ssn_spans(input).is_empty() {
+        if pii.dni && (!dni_spans(input).is_empty() || !nie_spans(input).is_empty()) {
+            types.push("dni");
+        }
+        if pii.ssn && !ssn_spans(input).is_empty() {
             types.push("ssn");
         }
-        if !e164_spans(input).is_empty() || !nanp_spans(input).is_empty() {
+        if pii.phone && (!e164_spans(input).is_empty() || !nanp_spans(input).is_empty()) {
             types.push("phone");
+        }
+        if pii.ipv4 && !ipv4_spans(input).is_empty() {
+            types.push("ipv4");
+        }
+        if pii.name && !keyed::person_name_spans(input).is_empty() {
+            types.push("name");
+        }
+        if pii.address && !keyed::address_spans(input).is_empty() {
+            types.push("address");
+        }
+        if pii.username && !keyed::username_spans(input).is_empty() {
+            types.push("username");
         }
         if jwt_re().is_match(input) {
             types.push("jwt");
@@ -834,5 +1301,141 @@ mod tests {
         assert!(!e164_valid("+0123456789"));
         assert!(ssn_valid("123-45-6789"));
         assert!(!ssn_valid("900-45-6789"));
+    }
+}
+
+#[cfg(test)]
+mod parity_tests;
+
+#[cfg(test)]
+mod options_tests {
+    use super::*;
+
+    #[test]
+    fn defaults_match_the_node_scrubber() {
+        let d = PiiOptions::default();
+        assert!(d.email && d.phone && d.iban && d.card && d.dni && d.ssn);
+        assert!(d.name && d.address && d.username);
+        assert!(!d.ipv4, "IPv4 is off by default, as in Node");
+    }
+
+    #[test]
+    fn ipv4_switch_redacts_public_addresses_only() {
+        let on = PiiOptions {
+            ipv4: true,
+            ..PiiOptions::default()
+        };
+        assert_eq!(
+            Scrubber::scrub_with("host 8.8.8.8 up", &on),
+            "host [IPV4_REDACTED] up"
+        );
+        assert_eq!(Scrubber::scrub_with("v1.2.3.4", &on), "v[IPV4_REDACTED]");
+        for input in [
+            "10.0.0.1",
+            "172.16.5.4",
+            "192.168.1.1",
+            "127.0.0.1",
+            "169.254.1.1",
+            "100.64.0.1",
+            "0.1.2.3",
+            "224.0.0.1",
+            "192.0.2.10",   // documentation range
+            "198.51.100.7", // documentation range
+            "203.0.113.9",  // documentation range
+            "256.1.1.1",
+            "1.2.3.456",
+            "1.2.3",
+            "1.2.3.4.5",
+        ] {
+            assert_eq!(Scrubber::scrub_with(input, &on), input, "{input}");
+        }
+    }
+
+    #[test]
+    fn each_type_can_be_switched_off() {
+        let all = [
+            "a@example.com",
+            "4111111111111111",
+            "GB82WEST12345698765432",
+            "12345678Z",
+            "078-05-1120",
+            "+442071838750",
+            "X-User-Name: Jane Example",
+            "X-Address: 1 Example Street",
+            "X-Username: jane_example",
+        ]
+        .join(
+            "
+",
+        );
+        let all = all.as_str();
+        let none = PiiOptions::none();
+        // Nothing but PII in the text, so nothing is redacted.
+        assert_eq!(Scrubber::scrub_with(all, &none), all);
+        assert!(!Scrubber::contains_pii_with(all, &none));
+        let one = |f: fn(&mut PiiOptions), marker: &str| {
+            let mut o = PiiOptions::none();
+            f(&mut o);
+            let out = Scrubber::scrub_with(all, &o);
+            assert_eq!(out.matches("_REDACTED]").count(), 1, "{marker}: {out}");
+            assert!(out.contains(marker), "{marker}: {out}");
+        };
+        one(|o| o.email = true, "[EMAIL_REDACTED]");
+        one(|o| o.iban = true, "[IBAN_REDACTED]");
+        one(|o| o.card = true, "[CARD_REDACTED]");
+        one(|o| o.dni = true, "[DNI_REDACTED]");
+        one(|o| o.ssn = true, "[SSN_REDACTED]");
+        one(|o| o.phone = true, "[PHONE_REDACTED]");
+        one(|o| o.name = true, "[PERSON_NAME_REDACTED]");
+        one(|o| o.address = true, "[POSTAL_ADDRESS_REDACTED]");
+        one(|o| o.username = true, "[USERNAME_REDACTED]");
+        // The defaults redact every one of them.
+        assert_eq!(Scrubber::scrub(all).matches("_REDACTED]").count(), 9);
+    }
+
+    #[test]
+    fn secrets_are_redacted_whatever_the_pii_options() {
+        let input = "api_key=fakekeyfakekeyfakekey";
+        assert!(Scrubber::scrub_with(input, &PiiOptions::none()).contains("[SECRET_REDACTED]"));
+    }
+
+    #[test]
+    fn detect_pii_types_names_the_new_types() {
+        let input = [
+            "GB82WEST12345698765432 12345678Z",
+            "X-User-Name: Jane Example",
+            "X-Address: 1 Example Street",
+            "X-Username: jane_example",
+            "8.8.8.8",
+        ]
+        .join(
+            "
+",
+        );
+        let input = input.as_str();
+        let types = Scrubber::detect_pii_types(input);
+        for t in ["iban", "dni", "name", "address", "username"] {
+            assert!(types.contains(&t), "{t} in {types:?}");
+        }
+        assert!(!types.contains(&"ipv4"), "{types:?}");
+        let on = PiiOptions {
+            ipv4: true,
+            ..PiiOptions::default()
+        };
+        assert!(Scrubber::detect_pii_types_with(input, &on).contains(&"ipv4"));
+        assert!(Scrubber::detect_pii_types_with(input, &PiiOptions::none()).is_empty());
+    }
+
+    #[test]
+    fn validators_match_node() {
+        assert!(iban_valid("GB82 WEST 1234 5698 7654 32"));
+        assert!(!iban_valid("GB82WEST12345698765433"));
+        assert!(!iban_valid("XX82WEST12345698765432"));
+        assert!(dni_valid("12345678-Z"));
+        assert!(!dni_valid("12345678A"));
+        assert!(nie_valid("X1234567L"));
+        assert!(!nie_valid("X1234567A"));
+        assert!(ipv4_public("8.8.8.8"));
+        assert!(!ipv4_public("192.168.1.1"));
     }
 }
