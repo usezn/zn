@@ -17,7 +17,7 @@ from collections.abc import AsyncIterator, ItemsView, Iterable, Iterator, KeysVi
 from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set, Tuple, TypeVar, cast
 
 from .rules import Assessment, invisible_block, scan_windows, too_invisible
-from .rules import MAX_SCAN_CHARS, MAX_TOOL_RESULT_SCAN_CHARS, _check_base64_pipes
+from .rules import MAX_SCAN_CHARS, MAX_TOOL_RESULT_SCAN_CHARS, _check_base64_pipes, truncated_blocks
 
 
 _F = TypeVar("_F", bound=Callable[..., Any])
@@ -310,7 +310,8 @@ def _call_payload(func: Any, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> D
     return {"args": args, "kwargs": kwargs}
 
 
-def _scan_strings(data: Any, what: str, block_truncated: bool, strict: Optional[bool]) -> Assessment:
+def _scan_strings(data: Any, what: str, block_truncated: bool, strict: Optional[bool],
+                  allow_truncated: bool = False) -> Assessment:
     strings_to_check, blocked = _strings_or_block(data, what)
     if blocked is not None:
         return blocked
@@ -320,7 +321,7 @@ def _scan_strings(data: Any, what: str, block_truncated: bool, strict: Optional[
     advisory = None
     for s in strings_to_check:
         # Arguments over the scan limit are blocked, as the npm package does (its checkToolCall runs evaluate(),
-        # which blocks them with size:oversize); a result keeps the truncated flag (block_truncated decides).
+        # which blocks them with size:oversize); a result keeps the truncated flag and is blocked unless allow_truncated).
         if what == "Arguments" and isinstance(s, str) and len(s) > MAX_TOOL_RESULT_SCAN_CHARS:
             return Assessment(verdict="block", confidence=1.0, rule="size:oversize",
                               reason="Input too large to scan in full", truncated=True)
@@ -335,7 +336,8 @@ def _scan_strings(data: Any, what: str, block_truncated: bool, strict: Optional[
             return res
         truncated = truncated or res.truncated
         advisory = advisory or res.advisory
-    if truncated and (block_truncated or os.environ.get("ZN_BLOCK_TRUNCATED") == "1"):
+    if truncated and (what == "Arguments" and (block_truncated or os.environ.get("ZN_BLOCK_TRUNCATED") == "1")
+                      or what != "Arguments" and truncated_blocks(block_truncated, allow_truncated)):
         return Assessment(verdict="block", confidence=1.0, rule="size:truncated",
                           reason=f"{what} too large to scan in full", truncated=True)
     return Assessment(verdict="allow", confidence=1.0, rule="none", reason=None, truncated=truncated,
@@ -359,17 +361,19 @@ def check_tool_call(tool_name: str, arguments: Any = None, strict: Optional[bool
     return _scan_strings(arguments, "Arguments", block_truncated, strict)
 
 
-def check_tool_result(result: Any, block_truncated: bool = False, strict: Optional[bool] = None) -> Assessment:
+def check_tool_result(result: Any, block_truncated: bool = False, strict: Optional[bool] = None,
+                      allow_truncated: bool = False) -> Assessment:
     """
     Evaluates data returned by external tools (e.g. web search, file content, DB queries)
     for indirect prompt injections or leaked credentials.
     Large strings are scanned in overlapping windows (see rules.scan_windows);
     the result has truncated=True when some string was not fully analysed. Such
-    output is blocked (rule size:truncated) when block_truncated is set or the
-    ZN_BLOCK_TRUNCATED environment variable is "1". A result that cannot be
+    output (over 4 MB) is blocked by default (rule size:truncated); allow_truncated=True
+    or ZN_ALLOW_TRUNCATED=1 allows it, and block_truncated=True or ZN_BLOCK_TRUNCATED=1
+    forces the block. A result that cannot be
     checked in full is blocked as for check_tool_call (for example a generator).
     """
-    res = _scan_strings(result, "Result", block_truncated, strict)
+    res = _scan_strings(result, "Result", block_truncated, strict, allow_truncated)
     if res.rule == "size:truncated":
         res.reason = "Output too large to scan in full"
     return res

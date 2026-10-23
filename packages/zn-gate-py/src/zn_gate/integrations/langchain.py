@@ -96,7 +96,7 @@ class ZnGuardCallbackHandler(BaseCallbackHandler):
                 checks nothing that stops the run. "return" is not supported
                 here (it raises ValueError): use guard_langchain_tool.
     - mask_secrets: Treat a secret in a tool output as a block (default True).
-    - block_truncated: Block a tool output too large to scan in full
+    - block_truncated: Force a block for a tool output too large to scan in full (blocked by default; ZN_ALLOW_TRUNCATED=1 allows it)
                        (rule size:truncated) (default False).
     """
 
@@ -428,7 +428,7 @@ def guard_langchain_tool(
                 (for a blocked output: its output is dropped).
     - mask_secrets: Hide credentials in the tool output (default True).
     - check_result: Scan the tool output for prompt injection (default True).
-    - block_truncated: Block an output too large to scan in full (default False).
+    - block_truncated: Force a block for an output too large to scan in full (blocked by default; ZN_ALLOW_TRUNCATED=1 allows it).
     - fallback: Text the model gets for a block when on_block="return".
 
     The message of an exception raised by the tool is checked and masked like

@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-23.7
+ * RULES_VERSION: 2026-10-24.7
  */
 
-const RULES_VERSION = '2026-10-23.7';
+const RULES_VERSION = '2026-10-24.7';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -1252,6 +1252,15 @@ function invisibleBlock() {
   return { verdict: 'block', confidence: 1.0, reason: INVISIBLE_BLOCK_REASON, rule: 'size:invisible', engine: 'oss-local', rules_version: RULES_VERSION };
 }
 
+// A result whose middle was not scanned (over MAX_TOOL_RESULT_SCAN_CHARS) is
+// blocked by default. options.allowTruncated or ZN_ALLOW_TRUNCATED=1 opts out;
+// options.blockTruncated or ZN_BLOCK_TRUNCATED=1 (the former opt-in) still
+// forces the block and wins over the opt-out.
+function truncatedBlocks(options) {
+  if (options.blockTruncated === true || process.env.ZN_BLOCK_TRUNCATED === '1') return true;
+  return !(options.allowTruncated === true || process.env.ZN_ALLOW_TRUNCATED === '1');
+}
+
 function scanWindows(text, options = {}) {
   if (tooInvisible([text])) return invisibleBlock();
   if (typeof text !== 'string' || text.length <= MAX_SCAN_CHARS) return evaluate(text, options);
@@ -1283,10 +1292,10 @@ function sanitizeToolResult(toolOrResult, content, options = {}) {
     const textContent = typeof content === 'string' ? content : JSON.stringify(content);
     const assessment = scanWindows(textContent, options);
     const truncated = assessment.truncated === true;
-    // Output too large to scan in full is allowed (with `truncated: true`)
-    // unless the caller opts into blocking it.
-    const blockTruncated = options.blockTruncated === true || process.env.ZN_BLOCK_TRUNCATED === '1';
-    if (truncated && blockTruncated && assessment.verdict !== 'block') {
+    // Output too large to scan in full is blocked unless the caller opts out
+    // with allowTruncated or ZN_ALLOW_TRUNCATED=1 (then it is allowed with
+    // `truncated: true`).
+    if (truncated && truncatedBlocks(options) && assessment.verdict !== 'block') {
       assessment.verdict = 'block';
       assessment.confidence = 1.0;
       assessment.rule = 'size:truncated';
@@ -1385,6 +1394,7 @@ module.exports = {
   normalizeInput,
   invisibleView,
   scanWindows,
+  truncatedBlocks,
   MAX_SCAN_CHARS,
   MAX_TOOL_RESULT_SCAN_CHARS,
   MAX_FILTERED_VALUE,

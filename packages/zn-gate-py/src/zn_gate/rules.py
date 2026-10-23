@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, overload
 
 
-RULES_VERSION = "2026-10-23.7"
+RULES_VERSION = "2026-10-24.7"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -1463,6 +1463,18 @@ def invisible_block() -> Assessment:
     return Assessment(verdict='block', confidence=1.0, rule='size:invisible', reason=INVISIBLE_BLOCK_REASON)
 
 
+def truncated_blocks(block_truncated: bool = False, allow_truncated: bool = False) -> bool:
+    """True when a result whose middle was not scanned must be blocked.
+
+    Blocked by default. allow_truncated=True or ZN_ALLOW_TRUNCATED=1 opts out;
+    block_truncated=True or ZN_BLOCK_TRUNCATED=1 (the former opt-in) still
+    forces the block and wins over the opt-out.
+    """
+    if block_truncated or os.environ.get('ZN_BLOCK_TRUNCATED') == '1':
+        return True
+    return not (allow_truncated or os.environ.get('ZN_ALLOW_TRUNCATED') == '1')
+
+
 def scan_windows(text: str, strict: Optional[bool] = None) -> Assessment:
     strict = _strict(strict)
     if too_invisible([text]):
@@ -1508,6 +1520,7 @@ def sanitize_tool_result(
     mask_secrets: bool = True,
     block_truncated: bool = False,
     strict: Optional[bool] = None,
+    allow_truncated: bool = False,
 ) -> Tuple[Any, List[Dict[str, Any]]]: ...
 
 
@@ -1518,6 +1531,7 @@ def sanitize_tool_result(
     mask_secrets: bool = True,
     block_truncated: bool = False,
     strict: Optional[bool] = None,
+    allow_truncated: bool = False,
 ) -> SanitizedToolResult: ...
 
 
@@ -1527,6 +1541,7 @@ def sanitize_tool_result(
     mask_secrets: bool = True,
     block_truncated: bool = False,
     strict: Optional[bool] = None,
+    allow_truncated: bool = False,
 ) -> Any:
     """
     Sanitizes tool output to prevent prompt injection and credential leakage.
@@ -1538,8 +1553,9 @@ def sanitize_tool_result(
     string by string, as check_tool_result does, and as JSON text;
     sanitized_content is that JSON text (as in Node.js), with secrets masked.
     Tool output longer than MAX_TOOL_RESULT_SCAN_CHARS is not fully analysed:
-    `truncated` is then True, and the output is blocked when block_truncated is
-    set or the ZN_BLOCK_TRUNCATED environment variable is "1".
+    `truncated` is then True, and the output is blocked (rule size:truncated)
+    unless allow_truncated is set or the ZN_ALLOW_TRUNCATED environment variable
+    is "1". block_truncated and ZN_BLOCK_TRUNCATED=1 force the block.
     """
     if content is not None:
         tool_name = str(tool_or_result)
@@ -1557,7 +1573,7 @@ def sanitize_tool_result(
                 text_content = str(content)
             # The JSON text holds every string of the output: count the invisible
             # characters before the string-by-string check pays for them.
-            assessment = invisible_block() if too_invisible([text_content]) else check_tool_result(content, strict=strict)
+            assessment = invisible_block() if too_invisible([text_content]) else check_tool_result(content, strict=strict, allow_truncated=True)
             if assessment.allowed:
                 text_assessment = scan_windows(text_content, strict=strict)
                 if not text_assessment.allowed:
@@ -1565,7 +1581,7 @@ def sanitize_tool_result(
                 else:
                     assessment.truncated = assessment.truncated or text_assessment.truncated
         truncated = assessment.truncated
-        if truncated and assessment.allowed and (block_truncated or os.environ.get('ZN_BLOCK_TRUNCATED') == '1'):
+        if truncated and assessment.allowed and truncated_blocks(block_truncated, allow_truncated):
             assessment = Assessment(verdict='block', confidence=1.0, rule='size:truncated',
                                     reason='Output too large to scan in full', truncated=True)
         is_block = not assessment.allowed
