@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- `zn-gate init` and `zn-gate check` now add the Claude Code plugin marketplace at the tag of the installed release (`claude plugin marketplace add usezn/zn@v<version>`), and the READMEs say the same, so `claude plugin update` no longer follows the default branch. The release checks fail if any `marketplace add usezn/zn` on a public page has no release tag.
+
 ## [1.13.1] - 2026-10-20
 
 zn-gate 1.13.1 is a security patch for the Python package. The LangChain callback handler now stops a run when it blocks a tool call, and the new `guard_langchain_tool` wrapper checks tool arguments and masks secrets in tool output before the model reads them. Upgrade with `pip install -U zn-gate`. The npm package has no code changes in this release.

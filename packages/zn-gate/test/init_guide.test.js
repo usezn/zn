@@ -47,7 +47,8 @@ test('plan: one route per agent found; agents not found get no steps', async (t)
   const m = machine(t, ['claude-code', 'codex']);
   const { items, setup } = await plan({ ...m, claude: path.resolve('/opt/bin/claude'), temporary: false });
   const by = Object.fromEntries(items.map((i) => [i.id, i]));
-  assert.deepEqual(by['claude-code'].steps.map(line), ['claude plugin marketplace add usezn/zn', 'claude plugin install zn-gate@usezn']);
+  assert.deepEqual(by['claude-code'].steps.map(line), ['claude plugin marketplace add usezn/zn@v' + VERSION, 'claude plugin install zn-gate@usezn']);
+  assert.deepEqual(by['claude-code'].steps[0].run[1], ['plugin', 'marketplace', 'add', 'usezn/zn@v' + VERSION]);
   assert.equal(by['claude-code'].steps[0].run[0], path.resolve('/opt/bin/claude'));
   assert.deepEqual(by.codex.steps.map(line), ['zn hooks install codex']);
   // An install that stays runs its own CLI with node, by absolute path.
@@ -64,7 +65,7 @@ test('plan: without a claude command, Claude Code gets the two /plugin commands 
   const cc = items.find((i) => i.id === 'claude-code');
   assert.equal(cc.steps.length, 1);
   assert.equal(cc.steps[0].run, null);
-  assert.match(cc.steps[0].manual, /\/plugin marketplace add usezn\/zn.*\/plugin install zn-gate@usezn/);
+  assert.ok(cc.steps[0].manual.includes('/plugin marketplace add usezn/zn@v' + VERSION + ' and then /plugin install zn-gate@usezn'), cc.steps[0].manual);
 });
 
 test('plan: from a temporary copy, one global install comes before the hooks, by absolute path', async (t) => {

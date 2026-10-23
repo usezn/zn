@@ -28,6 +28,8 @@ const { spawnSync } = require('child_process');
 
 const PKG_ROOT = path.join(__dirname, '..');
 const VERSION = require('../package.json').version;
+// The plugin marketplace is added at this release's tag, so `claude plugin update` never follows the default branch.
+const MARKETPLACE_REF = 'usezn/zn@v' + VERSION;
 const isWin = process.platform === 'win32';
 
 /* zn-gate runs from a temporary copy (npx, pnpm dlx, yarn dlx, bunx) rather than an install that stays. */
@@ -142,10 +144,10 @@ async function plan(opts = {}) {
       } else if (!hooksVerb) {
         const claude = opts.claude !== undefined ? opts.claude : findProgram('claude', env);
         if (claude) {
-          item.steps.push({ label: 'add the usezn plugin marketplace', run: [claude, ['plugin', 'marketplace', 'add', 'usezn/zn']], manual: 'claude plugin marketplace add usezn/zn' });
+          item.steps.push({ label: 'add the usezn plugin marketplace', run: [claude, ['plugin', 'marketplace', 'add', MARKETPLACE_REF]], manual: 'claude plugin marketplace add ' + MARKETPLACE_REF });
           item.steps.push({ label: 'install the zn-gate plugin', run: [claude, ['plugin', 'install', 'zn-gate@usezn']], manual: 'claude plugin install zn-gate@usezn' });
         } else {
-          item.steps.push({ label: 'do this yourself', run: null, manual: 'in Claude Code, type /plugin marketplace add usezn/zn and then /plugin install zn-gate@usezn' });
+          item.steps.push({ label: 'do this yourself', run: null, manual: 'in Claude Code, type /plugin marketplace add ' + MARKETPLACE_REF + ' and then /plugin install zn-gate@usezn' });
         }
       } else {
         needsZn = true;
