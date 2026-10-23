@@ -64,7 +64,8 @@ async function main(args, ioIn) {
   const io = Object.assign({ stdout: process.stdout, stderr: process.stderr, cwd: process.cwd(), env: process.env, home: undefined }, ioIn || {});
   let opts;
   try {
-    opts = parseArgs(args || []);
+    // -h / --help anywhere prints the usage, even right after an option that takes a value.
+    opts = (args || []).some((a) => a === '-h' || a === '--help') ? { help: true } : parseArgs(args || []);
   } catch (err) {
     io.stderr.write('zn audit: ' + err.message + '\n' + USAGE + '\n');
     return 2;
