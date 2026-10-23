@@ -22,12 +22,13 @@
  *
  * findPatterns(text, opts) -> [{start, end, type, source: 'pattern'}]
  * findPii(text, opts)      -> [{start, end, type, source: 'pii'}]
- *   opts.pii = {email, phone, iban, card, dni, ssn, ipv4}  (booleans; ipv4 off by default)
+ *   opts.pii = {email, phone, iban, card, dni, ssn, ipv4, name, address, username}  (booleans; ipv4 off by default;
+ *     name, address and username are key-based: see the block before the PII list)
  */
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-10-19.6';
+const SCRUB_RULES_VERSION = '2026-10-23.3';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -553,7 +554,7 @@ const PATTERNS = [
     re: re(PEM_BEGIN + PEM_LABEL + '-----(?:[ \\t]*\\r?\\n[ \\t>#*/"\'-]*(?:[A-Za-z0-9+/=:,-]+[ \\t]*))*') },
   /* Password segment of scheme://user:password@host (any scheme). */
   { type: 'DB_PASSWORD', hints: ['://'],
-    re: re('\\b([a-zA-Z][a-zA-Z0-9+.-]{1,24}):\\/\\/([^\\s:@\\/?#\'"`<>]{0,128}):([^\\s@\\/?#\'"`<>]{1,256})@([A-Za-z0-9.-]+|\\[[0-9a-fA-F:]+\\])'),
+    re: re('(?<![A-Za-z0-9_])([a-zA-Z][a-zA-Z0-9+._-]{1,40}):\\/\\/([^\\s:@\\/?#\'"`<>]{0,128}):([^\\s@\\/?#\'"`<>]{1,256})@([A-Za-z0-9.-]+|\\[[0-9a-fA-F:]+\\])'),
     group: 3,
     check: (pw, text, index, m) => {
       const user = m[2];
@@ -693,6 +694,101 @@ function findEmails(text, check, out) {
   }
 }
 
+/* Personal fields that have no checksum (a person's name, a postal address, a
+ * username) are detected only from an explicit key next to the value:
+ *   - HTTP headers (X-User-Name: ..., also as a JSON key or inside -H '...');
+ *   - query strings and form bodies (?name=...&user=..., or a key=value line
+ *     that starts in column 0).
+ * Only the value is the span; the key stays readable. A bare value without its
+ * key is never matched. Code (keyword arguments, JSON schemas, package
+ * manifests, ALL-CAPS environment variables) is not in scope on purpose. */
+const KEYED_PLACEHOLDER = /^(?:\{.*\}|\$.*|<.*>|\[.*\]|%[sd]|__ZN_.*|null|undefined|none|nil|true|false|n\/a|na|anonymous|unknown|-+|\*+|x+)$/i;
+const NOT_A_PERSON = new Set(['root', 'admin', 'administrator', 'system', 'guest', 'default', 'test', 'tester', 'user', 'username', 'name', 'bot', 'ci', 'runner', 'ubuntu', 'ec2-user', 'nobody', 'www-data', 'service', 'me', 'self', 'github-actions', 'dependabot', 'example', 'git', 'postgres', 'mysql', 'nginx', 'deploy']);
+const NAME_PARTICLES = new Set(['de', 'del', 'la', 'van', 'von', 'da', 'di', 'bin', 'al', 'el', 'y']);
+
+function decodeFormValue(v) {
+  const s = v.replace(/\+/g, ' ');
+  try { return decodeURIComponent(s); } catch (_) { return s; }
+}
+function validPersonName(d, strong) {
+  if (d.length < 2 || d.length > 80) return false;
+  const words = d.trim().split(/\s+/);
+  if (words.length > 5) return false;
+  for (const w of words) if (!/^\p{L}[\p{L}'.-]*$/u.test(w)) return false;
+  if (words.length === 1) return strong && words[0].length >= 2 && !NOT_A_PERSON.has(words[0].toLowerCase());
+  if (strong) return true;
+  // generic key (name=): every word capitalised, so build names stay out
+  return words.every((w) => /^\p{Lu}/u.test(w) || NAME_PARTICLES.has(w.toLowerCase()));
+}
+function validUsername(d) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$/.test(d)) return false;
+  if (/^\d+$/.test(d) || NOT_A_PERSON.has(d.toLowerCase())) return false;
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(d)) return false;   // UUID
+  return true;
+}
+function validAddress(d) {
+  if (d.length < 6 || d.length > 160 || /:\/\/|@/.test(d) || /^0x/i.test(d)) return false;
+  const tokens = d.split(/[\s,]+/).filter(Boolean);
+  return tokens.length >= 2 && /\d/.test(d) && /\p{L}{2}/u.test(d);
+}
+
+function keyedFinder(spec) {
+  const hdr = new RegExp('(?<![A-Za-z0-9_-])(' + spec.headers.join('|') + ')["\']?[ \\t]*:[ \\t]*(["\']?)', 'gi');
+  const frm = new RegExp('(?<![A-Za-z0-9_.-])(' + spec.forms.join('|') + ')=', 'gi');
+  const isLetter = (c) => c !== undefined && /\p{L}/u.test(c);
+  const accept = (raw, strong, form) => {
+    if (!raw) return false;
+    const d = (form ? decodeFormValue(raw) : raw).trim();
+    if (KEYED_PLACEHOLDER.test(d)) return false;
+    return spec.valid(d, strong);
+  };
+  return function find(text, check, out) {
+    let m;
+    hdr.lastIndex = 0;
+    while ((m = hdr.exec(text)) !== null) {
+      const start = m.index + m[0].length;
+      const quote = m[2];
+      let i = start;
+      for (; i < text.length; i++) {
+        const c = text[i];
+        if (c === '\n' || c === '\r' || c === '"') break;
+        if (quote && c === quote) break;
+        if (c === "'" && !(isLetter(text[i - 1]) && isLetter(text[i + 1]))) break;
+      }
+      let end = i;
+      while (end > start && /[\s,;\\]/.test(text[end - 1])) end--;
+      if (end > start && accept(text.slice(start, end), true, false)) out.push({ start, end });
+      hdr.lastIndex = Math.max(hdr.lastIndex, i);
+    }
+    frm.lastIndex = 0;
+    while ((m = frm.exec(text)) !== null) {
+      const key = m[1];
+      const kStart = m.index;
+      const before = kStart > 0 ? text[kStart - 1] : '\n';
+      const query = before === '?' || before === '&';
+      if (!query && before !== '\n' && before !== '\r') continue;
+      if (!query && key === key.toUpperCase()) continue;   // USER=... style environment variables
+      const start = kStart + key.length + 1;
+      let i = start;
+      for (; i < text.length; i++) {
+        const c = text[i];
+        if (c === '\n' || c === '\r' || c === '&' || c === '"' || c === "'") break;
+        if (query && (c === ' ' || c === '\t' || c === '#')) break;
+      }
+      let end = i;
+      while (end > start && /[\s,;]/.test(text[end - 1])) end--;
+      const strong = !/^name$/i.test(key);
+      if (end > start && accept(text.slice(start, end), strong, true)) out.push({ start, end });
+      frm.lastIndex = Math.max(frm.lastIndex, i);
+    }
+  };
+}
+
+const KEYED_PREFILTER = /X-[A-Za-z-]{4,16}\s*["']?\s*:|(?:name|user|login|address)=/i;
+const findPersonName = keyedFinder({ headers: ['X-User-?Name', 'X-Full-?Name'], forms: ['full_?name', 'name'], valid: validPersonName });
+const findUsername = keyedFinder({ headers: ['X-Username', 'X-User', 'X-Forwarded-User', 'X-Remote-User'], forms: ['username', 'user', 'login'], valid: (d) => validUsername(d) });
+const findPostalAddress = keyedFinder({ headers: ['X-Address'], forms: ['address'], valid: (d) => validAddress(d) });
+
 const PII = [
   { type: 'EMAIL', key: 'email', hints: ['@'], find: findEmails,
     check: (v, text, index) => {
@@ -726,9 +822,12 @@ const PII = [
     re: re('(?<![0-9A-Za-z.-])\\d{3}-\\d{2}-\\d{4}(?![0-9A-Za-z]|-\\d)'), check: (v) => ssnValid(v) },
   { type: 'IPV4', key: 'ipv4', hints: ['.'],
     re: re('(?<![0-9.])(?:\\d{1,3}\\.){3}\\d{1,3}(?![0-9.])'), check: (v) => ipv4Public(v) },
+  { type: 'PERSON_NAME', key: 'name', hints: null, prefilter: KEYED_PREFILTER, find: findPersonName },
+  { type: 'POSTAL_ADDRESS', key: 'address', hints: null, prefilter: KEYED_PREFILTER, find: findPostalAddress },
+  { type: 'USERNAME', key: 'username', hints: null, prefilter: KEYED_PREFILTER, find: findUsername },
 ];
 
-const PII_DEFAULTS = { email: true, phone: true, iban: true, card: true, dni: true, ssn: true, ipv4: false };
+const PII_DEFAULTS = { email: true, phone: true, iban: true, card: true, dni: true, ssn: true, ipv4: false, name: true, address: true, username: true };
 const PII_TYPES = PII.map((p) => p.type);
 
 function findPii(text, opts) {

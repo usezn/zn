@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, overload
 
 
-RULES_VERSION = "2026-10-22.9"
+RULES_VERSION = "2026-10-23.7"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -66,7 +66,8 @@ ANSI_ESCAPE_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07\x1b]*\x07')
 # Hard caps for the Base64 smuggling check: above either one the command is blocked.
 MAX_B64_PAYLOADS = 16
 MAX_B64_DECODED_BYTES = 128 * 1024
-B64_EXEC_RE = re.compile(r'(?:echo|printf)\s+([A-Za-z0-9+/=]{16,})\s*\|\s*(?:base64\s+-(?:d|-decode)|openssl)', re.IGNORECASE)
+# The payload is group 2 (echo/printf pipe, quoted or not, with options) or group 4 (here-string).
+B64_EXEC_RE = re.compile(r'''(?:echo|printf(?:\s+(?:'%s'|"%s"|%s))?)(?:\s+-[A-Za-z]{1,3})*\s+(["']?)([A-Za-z0-9+/=]{16,})\1\s*\|\s*(?:base64\s+-(?:di?|id|-decode)|openssl)|base64\s+-(?:di?|id|-decode)\s*<<<\s*(["']?)([A-Za-z0-9+/=]{16,})\3''', re.IGNORECASE)
 # Maximal whitespace runs; only runs that contain a line break are joined.
 # A pattern anchored on the line break (such as [^\S\r\n]*[\r\n]) would rescan
 # a long run of spaces from every position.
@@ -321,7 +322,7 @@ ADVISORY_RULES: List[Tuple[str, Any, str]] = [
 SENSITIVE_PATH_RULES: List[Tuple[str, re.Pattern[str], str]] = [
     (
         'path:sensitive_file',
-        re.compile(r"""(?:^|[\s"'`(\[])(?:~|\/home\/[^\s/]+|\/root)?\/?\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE),
+        re.compile(r"""(?:^|[\s"'`(\[@])(?:~|\/home\/[^\s/]+|\/root)?\/?\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|=(?:~|\$\{?HOME\}?|\/home\/[^\s/]+|\/root|[A-Za-z]:\\Users\\[^\s\\]+)[\/\\]?\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE),
         'Targeting sensitive system credentials or environment file',
     ),
 ]
@@ -335,14 +336,13 @@ MARKDOWN_EXFIL_RULES: List[Tuple[str, re.Pattern[str], str]] = [
     ),
 ]
 
-# evaluate() analyses inputs longer than MAX_SCAN_CHARS as head + tail and
-# marks the result truncated=True. Tool results are scanned in overlapping
-# windows (up to MAX_TOOL_RESULT_SCAN_CHARS) by scan_windows() below. Lengths count code points here and UTF-16 code
-# units in Node.js; the two only differ for characters outside the BMP.
+# evaluate() scans an input longer than MAX_SCAN_CHARS whole, in overlapping
+# windows (_evaluate_oversize() below), and blocks one longer than
+# MAX_TOOL_RESULT_SCAN_CHARS (rule size:oversize), so no part of an input is left
+# unscanned. Tool results go through scan_windows(), which allows output past
+# that limit and only marks it truncated=True. Lengths count code points here and
+# UTF-16 code units in Node.js; the two only differ for characters outside the BMP.
 MAX_SCAN_CHARS = 256 * 1024
-SCAN_HEAD_CHARS = 192 * 1024
-# One character is reserved for the separator, so the window fits the limit.
-SCAN_TAIL_CHARS = MAX_SCAN_CHARS - SCAN_HEAD_CHARS - 1
 
 @dataclass
 class Assessment:
@@ -499,16 +499,70 @@ def _b64_decode_lenient(data: str) -> bytes:
     return base64.b64decode(body + '=' * (-len(body) % 4))
 
 
+def _check_base64_pipes(candidates: Tuple[str, ...], strict: Optional[bool]) -> Tuple[Optional[Assessment], Optional[Dict[str, Any]]]:
+    """Base64 payload smuggling: every `echo|printf ... | base64 -d` in `candidates` is
+    decoded and evaluated, not only the first, within hard caps that fail closed.
+    Returns (a block Assessment or None, advisory)."""
+    advisory = None
+    payloads = []
+    for text_candidate in candidates:
+        for b64_match in B64_EXEC_RE.finditer(text_candidate):
+            payload = b64_match.group(2) or b64_match.group(4)
+            if payload and payload not in payloads:
+                payloads.append(payload)
+    if len(payloads) > MAX_B64_PAYLOADS:
+        return Assessment(
+            verdict='block',
+            confidence=0.99,
+            rule='evasion:base64_smuggling',
+            reason=f'Smuggled Base64 execution: more than {MAX_B64_PAYLOADS} Base64 decode pipes in one command'
+        ), advisory
+    total = 0
+    for payload in payloads:
+        total += len(payload) * 3 // 4
+        if total > MAX_B64_DECODED_BYTES:
+            return Assessment(
+                verdict='block',
+                confidence=0.99,
+                rule='evasion:base64_smuggling',
+                reason='Smuggled Base64 execution: too much Base64 data to inspect'
+            ), advisory
+        try:
+            decoded = _b64_decode_lenient(payload).decode('utf-8', errors='ignore')
+            inner_res = evaluate(decoded, strict=strict)
+            if inner_res.advisory and advisory is None:
+                advisory = dict(inner_res.advisory)
+            if not inner_res.allowed:
+                return Assessment(
+                    verdict='block',
+                    confidence=inner_res.confidence,
+                    rule='evasion:base64_smuggling',
+                    reason=f'Smuggled Base64 execution: {inner_res.reason or inner_res.rule}'
+                ), advisory
+        except Exception:
+            pass
+    return None, advisory
+
+
+def _evaluate_oversize(input_text: str, strict: bool) -> Assessment:
+    # Scanned whole, in overlapping windows; one past MAX_TOOL_RESULT_SCAN_CHARS is
+    # blocked, because the part beyond the limit would go unscanned.
+    if len(input_text) > MAX_TOOL_RESULT_SCAN_CHARS:
+        return Assessment(verdict='block', confidence=1.0, rule='size:oversize',
+                          reason='Input too large to scan in full', truncated=True)
+    # A Base64 pipe longer than the window overlap can straddle two windows and be cut in
+    # both: the pipes are found in the whole input first. The windows still check normalized text.
+    b64_block, _ = _check_base64_pipes((input_text,), strict)
+    if b64_block is not None:
+        return b64_block
+    return scan_windows(input_text, strict=strict)
+
+
 def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
     if not isinstance(input_text, str) or not input_text.strip():
         return Assessment(verdict='allow', confidence=1.0, rule='none', reason=None)
     if len(input_text) > MAX_SCAN_CHARS:
-        # NUL is neither whitespace nor a word character, so normalization
-        # cannot join the end of the head and the start of the tail.
-        window = input_text[:SCAN_HEAD_CHARS] + '\u0000' + input_text[-SCAN_TAIL_CHARS:]
-        res = _evaluate_uncached(window, strict)
-        res.truncated = True
-        return res
+        return _evaluate_oversize(input_text, strict)
 
     normalized, stripped = normalize_input(input_text)
     # The raw input is matched with the same characters as in Node.js (see _CASE_FOLD_GUARD).
@@ -516,45 +570,9 @@ def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
 
     tier_advisory = None
 
-    # Check Base64 payload smuggling: every `echo|printf ... | base64 -d` is decoded
-    # and evaluated, not only the first, within hard caps that fail closed.
-    b64_advisory = None
-    b64_payloads = []
-    for text_candidate in (normalized, stripped):
-        for b64_match in B64_EXEC_RE.finditer(text_candidate):
-            if b64_match.group(1) not in b64_payloads:
-                b64_payloads.append(b64_match.group(1))
-    if len(b64_payloads) > MAX_B64_PAYLOADS:
-        return Assessment(
-            verdict='block',
-            confidence=0.99,
-            rule='evasion:base64_smuggling',
-            reason=f'Smuggled Base64 execution: more than {MAX_B64_PAYLOADS} Base64 decode pipes in one command'
-        )
-    b64_bytes = 0
-    for payload in b64_payloads:
-        b64_bytes += len(payload) * 3 // 4
-        if b64_bytes > MAX_B64_DECODED_BYTES:
-            return Assessment(
-                verdict='block',
-                confidence=0.99,
-                rule='evasion:base64_smuggling',
-                reason='Smuggled Base64 execution: too much Base64 data to inspect'
-            )
-        try:
-            decoded = _b64_decode_lenient(payload).decode('utf-8', errors='ignore')
-            inner_res = evaluate(decoded, strict=strict)
-            if inner_res.advisory and b64_advisory is None:
-                b64_advisory = dict(inner_res.advisory)
-            if not inner_res.allowed:
-                return Assessment(
-                    verdict='block',
-                    confidence=inner_res.confidence,
-                    rule='evasion:base64_smuggling',
-                    reason=f'Smuggled Base64 execution: {inner_res.reason or inner_res.rule}'
-                )
-        except Exception:
-            pass
+    b64_block, b64_advisory = _check_base64_pipes((normalized, stripped), strict)
+    if b64_block is not None:
+        return b64_block
 
     targets = list(dict.fromkeys([normalized, stripped, raw]))
 
@@ -627,7 +645,7 @@ SECRET_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
     ("secret:aws_access_key", re.compile(r'(?<![A-Za-z0-9_])(AKIA[0-9A-Z]{16})(?![A-Za-z0-9_])'), "[REDACTED_AWS_KEY]"),
     ("secret:aws_secret_key", re.compile(r"""((?:[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]_[Aa][Cc][Cc][Ee][Ss][Ss]_[Kk][Ee][Yy]|[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]|[Aa][Ww][Ss]_[Kk][Ee][Yy])\s*[:=]\s*['"]?)([A-Za-z0-9/+=]{40})(['"]?)"""), r'\1[REDACTED_AWS_SECRET]\3'),
     ("secret:github_token", re.compile(r'(?<![A-Za-z0-9_])((?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,40}|github_pat_[A-Za-z0-9_]{82})(?![A-Za-z0-9_])'), "[REDACTED_GITHUB_TOKEN]"),
-    ("secret:db_url_password", re.compile(r'((?:[Pp][Oo][Ss][Tt][Gg][Rr][Ee][Ss](?:[Qq][Ll])?|[Mm][Yy][Ss][Qq][Ll]|[Mm][Oo][Nn][Gg][Oo][Dd][Bb](?:\+[Ss][Rr][Vv])?|[Rr][Ee][Dd][Ii][Ss]|[Aa][Mm][Qq][Pp]):\/\/[^:\s\/]+:)(?!(?:\$\{(?:[A-Z_][A-Z0-9_]*|[a-z_][a-z0-9_]*)\}|\$[A-Z_][A-Z0-9_]*|%[A-Z_][A-Z0-9_]*%|<[A-Za-z][A-Za-z_-]{0,63}>|\{\{\s*[A-Za-z_][A-Za-z_.]*\s*\}\})@)([^@\s\/]+)(@)'), r'\1[REDACTED_DB_PASSWORD]\3'),
+    ("secret:db_url_password", re.compile(r'((?:[Pp][Oo][Ss][Tt][Gg][Rr][Ee][Ss](?:[Qq][Ll])?|[Mm][Yy][Ss][Qq][Ll]|[Mm][Oo][Nn][Gg][Oo][Dd][Bb](?:\+[Ss][Rr][Vv])?|[Rr][Ee][Dd][Ii][Ss]|[Aa][Mm][Qq][Pp])(?:\+[A-Za-z0-9_]+)?:\/\/[^:\s\/]+:)(?!(?:\$\{(?:[A-Z_][A-Z0-9_]*|[a-z_][a-z0-9_]*)\}|\$[A-Z_][A-Z0-9_]*|%[A-Z_][A-Z0-9_]*%|<[A-Za-z][A-Za-z_-]{0,63}>|\{\{\s*[A-Za-z_][A-Za-z_.]*\s*\}\})@)([^@\s\/]+)(@)'), r'\1[REDACTED_DB_PASSWORD]\3'),
     # The lookahead + backreference pairs act as atomic groups, so a long run of
     # "-eyJ" cannot make the engine retry every split point, and the lookbehind
     # allows a single start per token. Only used when the
@@ -1036,7 +1054,7 @@ PROVIDER_SECRET_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
     ("secret:azure_ad_client_secret", re.compile(r'(?<![A-Za-z0-9_~.-])[A-Za-z0-9_~.]{3}[0-9]Q~[A-Za-z0-9_~.-]{30,33}[A-Za-z0-9_~-](?![A-Za-z0-9_~-])(?!\.[A-Za-z0-9_~-])'), "[REDACTED_AZURE_AD_CLIENT_SECRET]"),
     # Password segment of scheme://user:password@host (any scheme, as DB_PASSWORD in patterns.js).
     # ASCII word boundary like the scrubber: a scheme after CJK or accented letters is still a URL.
-    ("secret:url_password", re.compile(r"((?<![A-Za-z0-9_])[a-zA-Z][a-zA-Z0-9+.-]{1,24}://[^\s:@/?#'\"`<>]{0,128}:)([^\s@/?#'\"`<>]{1,256})(@(?:[A-Za-z0-9.-]+|\[[0-9a-fA-F:]+\]))"), r'\1[REDACTED_URL_PASSWORD]\3'),
+    ("secret:url_password", re.compile(r"((?<![A-Za-z0-9_])[a-zA-Z][a-zA-Z0-9+._-]{1,40}://[^\s:@/?#'\"`<>]{0,128}:)([^\s@/?#'\"`<>]{1,256})(@(?:[A-Za-z0-9.-]+|\[[0-9a-fA-F:]+\]))"), r'\1[REDACTED_URL_PASSWORD]\3'),
     # Authorization header with a bearer token (BEARER_TOKEN in patterns.js). zn's
     # own __ZN_<NAME>__ markers are not secrets (_pv_bearer_not_secret).
     ("secret:bearer_token", re.compile(r'(Authorization[ \t]*:[ \t]*Bearer[ \t]+)([A-Za-z0-9._~+/=-]{20,})', re.IGNORECASE | re.ASCII), r'\1[REDACTED_BEARER_TOKEN]'),

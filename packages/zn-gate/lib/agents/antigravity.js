@@ -272,6 +272,7 @@ function detect(opts = {}) {
 
 module.exports = {
   id,
+  HOOK_TIMEOUT_S,
   detect,
   install,
   uninstall,

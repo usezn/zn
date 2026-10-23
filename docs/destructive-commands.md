@@ -1,4 +1,4 @@
-# Destructive commands (optional check)
+# Destructive commands
 
 zn-gate can refuse a small set of shell commands that wipe a machine or run a download unread. Two of the rules are **on by default** in the agent hooks: `rm_root_home` (a recursive delete of the home folder, the filesystem root or a system folder) and `disk_overwrite` (a write to a disk device). The other four rules (`pipe_to_shell`, `rc_download`, `perm_root`, `fork_bomb`) are **off by default** and you can turn them on. You can also turn the two default rules off.
 

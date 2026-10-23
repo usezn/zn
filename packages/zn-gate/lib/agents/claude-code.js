@@ -73,9 +73,9 @@ const launcher = require('./launcher');
 
 const id = 'claude-code';
 
-// Exact names (a matcher of letters and | is an exact list). PowerShell and
-// Monitor run commands like Bash; LSP reads files.
-const PRE_MATCHER = 'Bash|PowerShell|Monitor|Read|Grep|LSP|Edit|MultiEdit|Write|NotebookEdit|WebFetch';
+// A regex (it contains mcp__.*), anchored so it names exactly these tools. PowerShell and Monitor run
+// commands like Bash; LSP reads files; the MCP tools are checked for secrets and personal data before they run.
+const PRE_MATCHER = '^(Bash|PowerShell|Monitor|Read|Grep|LSP|Edit|MultiEdit|Write|NotebookEdit|WebFetch)$|^mcp__.*';
 // A regex (it contains mcp__.*), anchored so it names exactly these tools.
 const POST_MATCHER = '^(Bash|PowerShell|Monitor|Read|Grep|LSP|WebFetch|ReadMcpResourceTool)$|^mcp__.*';
 const HOOK_TIMEOUT_S = 15;
@@ -117,6 +117,14 @@ function textsOf(tool, input) {
   return texts;
 }
 
+// `ours` is set only for a call to zn's own server, verified from the MCP configuration (znMcpServerKind).
+function mcpInfo(server, tool, event, cwd) {
+  const info = { server, tool };
+  const ours = event === 'pre_tool' ? znMcpServerKind(server, cwd) : null;
+  if (ours) info.ours = ours;
+  return info;
+}
+
 function normalize(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const name = raw.hook_event_name;
@@ -138,11 +146,13 @@ function normalize(raw) {
     url: typeof ti.url === 'string' ? ti.url : undefined,
     texts: textsOf(tool, ti),
   };
+  // For an MCP tool, tool_input is the call's arguments; runner.js checks them (as for Codex).
+  if (mcp) input.args = ti;
   return {
     ...base,
     tool,
     toolName,
-    mcp: mcp ? { server: mcp[1], tool: mcp[2] } : null,
+    mcp: mcp ? mcpInfo(mcp[1], mcp[2], event, base.cwd) : null,
     input,
     output: event === 'post_tool' ? raw.tool_response : undefined,
   };
@@ -254,6 +264,8 @@ function runnerPath() {
 // so each tool call does not pay for loading the whole CLI.
 function hookCommand(opts = {}) {
   if (opts.command) return opts.command;
+  // A project install is a shared file: it names zn on the PATH, never the paths of the machine that installed it.
+  if ((opts.scope || 'user') === 'project') return 'zn hook claude-code';
   return quoteArg(opts.nodePath || process.execPath, opts.platform) + ' ' + quoteArg(opts.runnerPath || runnerPath(), opts.platform) + ' claude-code';
 }
 
@@ -339,6 +351,8 @@ function commandFor(opts = {}) {
 }
 
 function mcpServerConfig(opts = {}) {
+  // Same rule for the shared .mcp.json of a project install: zn from the PATH.
+  if ((opts.scope || 'user') === 'project') return { command: 'zn', args: ['secrets-mcp', '--agent', 'claude-code'] };
   return { command: opts.nodePath || process.execPath, args: [opts.cliPath || cliPath(), 'secrets-mcp', '--agent', 'claude-code'] };
 }
 
@@ -380,9 +394,17 @@ function installMcp(opts, report) {
   else report.warnings.push('`claude mcp add-json` failed (' + String(r.stderr || r.stdout || r.error || '').trim().slice(0, 300) + '): register the MCP server yourself with: ' + manual);
 }
 
+/* A project install names `zn`, so it only works where zn is on the PATH. opts.znBin overrides the lookup (tests). */
+function znOnPath(opts = {}) {
+  if (opts.znBin !== undefined) return !!opts.znBin;
+  const envPath = (opts.env || process.env).PATH || '';
+  if (whichSync('zn', envPath)) return true;
+  return process.platform === 'win32' && !!(whichSync('zn.cmd', envPath) || whichSync('zn.exe', envPath));
+}
+
 /**
  * Write the hook configuration (and register the "secrets" MCP server).
- * opts: {scope: 'user'|'project', projectDir, home, env, nodePath, cliPath, command, mcp: false, claudeBin}
+ * opts: {scope: 'user'|'project', projectDir, home, env, nodePath, cliPath, command, mcp: false, claudeBin, znBin}
  */
 function install(opts = {}) {
   const file = settingsFile(opts);
@@ -398,6 +420,11 @@ function install(opts = {}) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   writeFileAtomic(file, JSON.stringify(data, null, 2) + '\n', 0o644);
   if (opts.mcp !== false) installMcp(opts, report);
+  if (!opts.command && (opts.scope || 'user') === 'project' && !znOnPath(opts)) {
+    report.warnings.push('`zn` is not on your PATH, and this project install runs `zn hook claude-code`' +
+      (opts.mcp !== false ? ' and starts the MCP server with `zn`' : '') +
+      ': until zn-gate is installed globally (npm i -g zn-gate, or pip install zn-gate), the hooks fail here and Claude Code may block every tool call or skip the secret checks. Everyone who uses this project needs zn on their PATH.');
+  }
   // Organization settings can turn these hooks or the MCP server off with no
   // sign in Claude Code; say it here.
   // Advisory only: a failure here never fails an install already written.
@@ -496,6 +523,72 @@ function userMcpServerIsOurs(opts = {}) {
   return isZnSecretsServer(s);
 }
 
+/* ---- Is an MCP tool call going to one of zn's own servers? ----
+ * The PreToolUse event names only the tool (mcp__<server>__<tool>), not the server's command, so the
+ * adapter checks the MCP configuration Claude Code itself reads. A name alone is never enough: a project
+ * can define any server name in its own .mcp.json. The answer is 'secrets' (the vault server),
+ * 'analyze' (the plugin's detector server) or null. It is not null only when:
+ *  - the user-scope server named "secrets" is zn's (isZnSecretsServer: zn-gate's own bin/cli.js, `zn`,
+ *    `zn-gate` or `npx zn-gate`, the same test the installer uses to decide a server is ours), and
+ *  - no .mcp.json from the working folder upwards and no local-scope entry of ~/.claude.json defines a
+ *    server with that name, unless it is the bare command `zn secrets-mcp` that a project install writes
+ *    (a relative or absolute path to a binary is not accepted), and
+ *  - for the plugin's servers (plugin_zn-gate_secrets, plugin_zn-gate_zn-gate): the zn-gate plugin is
+ *    enabled in the user's settings and no project or local entry uses that name at all.
+ * Anything unreadable gives null, so the call is checked as for any other server. */
+const PLUGIN_SECRETS_SERVER = 'plugin_zn-gate_secrets';
+const PLUGIN_ANALYZE_SERVER = 'plugin_zn-gate_zn-gate';
+
+function readJsonFile(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
+  } catch (err) {
+    return err.code === 'ENOENT' ? undefined : null;
+  }
+}
+
+function isBareZnSecrets(s) {
+  if (!s || typeof s !== 'object' || s.url) return false;
+  const args = Array.isArray(s.args) ? s.args.map(String) : [];
+  return (s.command === 'zn' || s.command === 'zn-gate') && args[0] === 'secrets-mcp';
+}
+
+function znMcpServerKind(server, cwd, opts = {}) {
+  const plugin = server === PLUGIN_SECRETS_SERVER || server === PLUGIN_ANALYZE_SERVER;
+  if (server !== MCP_SERVER_NAME && !plugin) return null;
+  const env = opts.env || process.env;
+  const file = env.CLAUDE_CONFIG_DIR ? path.join(configDir(opts), '.claude.json') : path.join(opts.home || os.homedir(), '.claude.json');
+  const data = readJsonFile(file);
+  if (data === null) return null;
+  const userServers = data && typeof data.mcpServers === 'object' && data.mcpServers ? data.mcpServers : {};
+  const localProjects = data && typeof data.projects === 'object' && data.projects ? data.projects : {};
+  const overrides = [];
+  let dir = path.resolve(cwd || process.cwd());
+  for (;;) {
+    const proj = readJsonFile(path.join(dir, '.mcp.json'));
+    if (proj === null) return null;
+    if (proj && proj.mcpServers && proj.mcpServers[server]) overrides.push(proj.mcpServers[server]);
+    for (const k of Object.keys(localProjects)) {
+      const p = localProjects[k];
+      if (path.resolve(k) === dir && p && p.mcpServers && p.mcpServers[server]) overrides.push(p.mcpServers[server]);
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  if (plugin) {
+    if (overrides.length) return null;
+    const settings = readJsonFile(path.join(configDir(opts), 'settings.json'));
+    const enabled = settings && settings.enabledPlugins && typeof settings.enabledPlugins === 'object' ? settings.enabledPlugins : {};
+    if (!Object.keys(enabled).some((k) => /^zn-gate@/.test(k) && enabled[k] === true)) return null;
+    return server === PLUGIN_SECRETS_SERVER ? 'secrets' : 'analyze';
+  }
+  if (overrides.some((s) => !isBareZnSecrets(s))) return null;
+  if (userServers[server] !== undefined && !isZnSecretsServer(userServers[server])) return null;
+  if (!overrides.length && userServers[server] === undefined) return null;
+  return 'secrets';
+}
+
 function detect(opts = {}) {
   if (whichSync('claude', (opts.env || process.env).PATH || '')) return true;
   return fs.existsSync(configDir(opts));
@@ -503,7 +596,9 @@ function detect(opts = {}) {
 
 module.exports = {
   id,
+  HOOK_TIMEOUT_S,
   isZnSecretsServer,
+  znMcpServerKind,
   detect,
   install,
   uninstall,
