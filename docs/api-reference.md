@@ -165,6 +165,7 @@ from zn_gate import get_evidence_stats, export_evidence_ledger
 - `on_block='raise'` raises `GuardBlockError`; `'return'` returns `fallback` (or the `Assessment` when `fallback` is `None`); `'custom'` calls `callback(assessment, function_name, payload)` and then raises `GuardBlockError`, unless the callback raises its own exception first. A blocked call never runs the function.
 - `on_block` must be `'raise'`, `'return'` or `'custom'`; any other value, or `'custom'` without a `callback`, raises `ValueError` when the decorator is created.
 - `block_truncated=True` blocks arguments, and with `check_result=True` a result, too large to scan in full (rule `size:truncated`); `ZN_BLOCK_TRUNCATED=1` does the same for every guard. The `self` or `cls` of a method is not checked.
+- Application objects passed to the function (a client, a session, a dependency container) are read as far as possible: unlike `check_tool_call`, the decorator does not block an argument because a plain object in it is nested too deep or cannot be read.
 
 ### `GuardBlockError(assessment, target='', payload=None)`
 

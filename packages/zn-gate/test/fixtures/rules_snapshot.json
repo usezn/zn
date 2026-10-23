@@ -2,7 +2,7 @@
   "layers": {
     "rules": {
       "version_const": "RULES_VERSION",
-      "version": "2026-10-23.7",
+      "version": "2026-10-23.8",
       "ids": [
         "evasion:bidi_override",
         "exfil:credentials",
@@ -45,13 +45,13 @@
         "secret:private_key"
       ],
       "sha256": {
-        "lib/rules.js": "1af66f7c65d977430163cd48ea598447a92a199dd33c840bb74e28232ee2bbe3",
+        "lib/rules.js": "cadf669492673d4eec176eebb1170608cf8e480b4e859945132ec2746c4fc436",
         "lib/mcp-secrets.js": "6a59fc9809d6b1a3509ff285d21be57e2906449b1c78644e41fe142eccda69b9"
       }
     },
     "scrub": {
       "version_const": "SCRUB_RULES_VERSION",
-      "version": "2026-10-23.3",
+      "version": "2026-10-23.7",
       "ids": [
         "AGE_SECRET_KEY",
         "ALIBABA_KEY_ID",
@@ -147,13 +147,13 @@
         "exact.variants"
       ],
       "sha256": {
-        "lib/scrub/patterns.js": "a2df3a0450fa3ed58edcb72fa7abae454ba540ebd6809ada06501f553551f5a5",
+        "lib/scrub/patterns.js": "f6ccca7fe227413f9dba4128ac821fdbbce1dbb07158377e10168f2ba6bb8790",
         "lib/scrub/exact.js": "d104e85ec6a25e7d6d4b6c428bd0bf8b25d43c3ead313f6872f508b65793bf6b"
       }
     },
     "audit": {
       "version_const": "AUDIT_RULES_VERSION",
-      "version": "2026-10-22.4",
+      "version": "2026-10-23.3",
       "ids": [
         "ZNA001",
         "ZNA002",
@@ -198,13 +198,13 @@
         "patterns.weakening"
       ],
       "sha256": {
-        "lib/audit/rules.js": "e373e23050d8fdc003a07a61f1f3c8f2562ebaac6e12f343bb870cfaae73bde2",
-        "lib/audit/patterns.js": "42e1b797a9b0ededcd1b7ed3677ee1474ab6bc96c6d5681a959525ef8d57631e"
+        "lib/audit/rules.js": "fa4ddcd2b0ef1f08ce272d8728a7427ce40f2f96f2e743896f2a7b19e6cffbf7",
+        "lib/audit/patterns.js": "c3a0492c39598e1c698d741f39a40dbbf36e579334de0748bb8736dd9548627f"
       }
     },
     "policy": {
       "version_const": "POLICY_RULES_VERSION",
-      "version": "2026-10-23.4",
+      "version": "2026-10-24.3",
       "ids": [
         "SHELL_SCAN_CAP",
         "_decodeAnsiC",
@@ -214,6 +214,12 @@
         "bashDenial",
         "classifyPath",
         "classifyWord",
+        "egressDecodedCopies",
+        "egressLabel",
+        "egressMcpCovers",
+        "egressMcpParts",
+        "egressParts",
+        "egressUrlParts",
         "expandBraces",
         "globClass",
         "globRegExp",
@@ -226,7 +232,7 @@
         "writeDenial"
       ],
       "sha256": {
-        "lib/hooks/policy.js": "b95a9109056d5fd6ba24f32afc876e84bd8281bb2a72d12993f6f5c2299f5445",
+        "lib/hooks/policy.js": "383fb7723f02356cb4df2fd43a9817d5bf23b6597c918bf1c4df2009fa402050",
         "lib/broker/files.js": "45dd8927cc626ac35e8c036e5118ec3c584a3f3a396640c09cee8b545e67c097",
         "lib/broker/markers.js": "301eb1d763e8e88c32e32a02c344be8f44b342b06b61897f3a2d478dbe55d6b4",
         "lib/broker/dotenv.js": "d12a12bd12108a38f84e9f4772ed50f0b015962a1e68f75362142b9b3449e8fe",

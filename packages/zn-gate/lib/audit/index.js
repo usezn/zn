@@ -29,6 +29,16 @@ const TIME_BUDGET_MS = 120000;
 const LOCATE_WINDOW = 400;
 const MAX_ENTRIES = 50000;
 const EVIDENCE_MAX = 160;
+// Where zn audit looks for each agent, shown when nothing was found there.
+const AGENT_PLACES = {
+  claude: 'CLAUDE.md, .claude/, .mcp.json',
+  codex: 'AGENTS.md, .codex/',
+  cursor: '.cursor/, .cursorrules',
+  opencode: 'opencode.json, .opencode/',
+  amazonq: '.amazonq/',
+  copilot: '.github/copilot-instructions.md, .vscode/',
+  gemini: 'GEMINI.md, .gemini/',
+};
 const INSTRUCTION_READERS = ['codex', 'cursor', 'opencode', 'amazonq', 'copilot', 'gemini'];
 
 const SKIP_DIRS = new Set([
@@ -1129,8 +1139,8 @@ function readBounded(abs, max, follow) {
     let text = buf.toString('utf8', 0, n);
     if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
     return { text };
-  } catch (_) {
-    return { skip: 'unreadable' };
+  } catch (e) {
+    return { skip: 'unreadable', code: e && e.code };
   } finally {
     if (fd !== undefined) try { fs.closeSync(fd); } catch (_) { /* ignore */ }
   }
@@ -1602,6 +1612,11 @@ function auditFile(rec, out) {
     out.push(uncheckedFinding({ file: rec.display, agent: rec.agent, readers: rec.readers, severity: 'high', detail: rec.display + ' is ' + r.size + ' bytes; zn audit reads agent files up to ' + MAX_FILE_BYTES + ' bytes, the agent reads all of it.' }));
     return true;
   }
+  if (r.skip === 'unreadable') {
+    // The file is there but could not be opened: say so, never pass it as clean.
+    out.push(uncheckedFinding({ file: rec.display, agent: rec.agent, readers: rec.readers, severity: 'high', detail: rec.display + ' exists but could not be read (' + (r.code || 'read error') + '), so it was not checked. The agent may still read it.', fix: 'Make the file readable (check its permissions) and run zn audit again, or review it by hand.' }));
+    return true;
+  }
   if (r.text === undefined) return false;
   const raw = r.text;
   const ctx = new FileCtx(rec, raw, out);
@@ -1739,13 +1754,20 @@ function audit(opts) {
   for (const rec of redirectedConfigs(root, unchecked)) if (!known.has(rec.rel)) files.push(rec);
   for (const rec of importedInstructions(root, files, deadline, unchecked)) files.push(rec);
   let scanned = 0;
+  const agentFiles = Object.fromEntries(Array.from(selected).map((a) => [a, 0]));
+  const countFor = (rec) => {
+    if (rec.kind === 'workflow') return;
+    const who = new Set(rec.agent === 'any' ? [] : [rec.agent]);
+    if (rec.readers !== AGENTS) for (const r of rec.readers || []) who.add(r);
+    for (const a of who) if (a in agentFiles) agentFiles[a]++;
+  };
   let timedOut = truncated && truncated.reason === 'time';
   const wanted = (readers, agent) => agent === 'any' || (readers || []).some((r) => selected.has(r)) || selected.has(agent);
   for (const rec of files) {
     rec.root = root;
     if (rec.kind !== 'workflow' && !wanted(rec.readers, rec.agent)) continue;
     if (Date.now() > deadline) { timedOut = true; break; }
-    if (auditFile(rec, out)) scanned++;
+    if (auditFile(rec, out)) { scanned++; countFor(rec); }
   }
   if (o.includeHome) {
     const home = o.home || os.homedir();
@@ -1753,7 +1775,7 @@ function audit(opts) {
       rec.root = root;
       if (!wanted(rec.readers, rec.agent)) continue;
       if (!fs.existsSync(rec.abs)) continue;
-      if (auditFile(rec, out)) scanned++;
+      if (auditFile(rec, out)) { scanned++; countFor(rec); }
     }
   }
   checkShadowing(root, out);
@@ -1777,7 +1799,7 @@ function audit(opts) {
     findings.push(f);
   }
   findings.sort((a, b) => (RANK[b.severity] - RANK[a.severity]) || (a.file < b.file ? -1 : a.file > b.file ? 1 : 0) || (a.line - b.line) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  return { root, files: scanned, findings, truncated: Boolean(truncated) || timedOut, entries, skippedDirs, agents: Array.from(selected) };
+  return { root, files: scanned, findings, truncated: Boolean(truncated) || timedOut, entries, skippedDirs, agents: Array.from(selected), agentFiles, explicitAgents: !(!o.agents || o.agents.length === 0 || o.agents.includes('all')) };
 }
 
-module.exports = { audit, classify, redact, AGENTS, _internal: { globMatcher, hookCommands, isOurHook, isOurMcp, gitIgnored, readBounded, grantsWrite, withoutTrailingEquals, OUR_HOOKS, SAFE_ABS, znGateFile } };
+module.exports = { audit, classify, redact, AGENTS, AGENT_PLACES, _internal: { globMatcher, hookCommands, isOurHook, isOurMcp, gitIgnored, readBounded, grantsWrite, withoutTrailingEquals, OUR_HOOKS, SAFE_ABS, znGateFile } };
