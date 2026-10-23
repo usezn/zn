@@ -84,7 +84,12 @@ silently:
 
 - a symbolic link to an agent file or directory inside the repository is
   followed; one that leaves the repository is reported (ZNA020, high);
-- an agent file over 1 MB is reported (ZNA020, high) instead of skipped;
+- an agent file over 1 MiB is reported (ZNA020, high) instead of skipped, and
+  the first 1 MiB is still checked. Text files (instructions, workflows) get
+  every check on that part. JSON and TOML files cannot be parsed when cut, so
+  their hooks and settings are not reviewed; only a line search for stored
+  credentials and downloads piped into a shell runs. The finding says so, and
+  nothing after the first 1 MiB is reported as clean;
 - the scan stops after 50,000 directory entries or 120 seconds, and says so
   with a ZNA020 high finding (so the run fails at the default threshold);
 - FIFOs, devices and sockets are never opened;
@@ -142,7 +147,7 @@ Rule ids are stable: a rule may get better, but its id never changes meaning.
 | ZNA017 | medium | Project settings add plugin marketplaces or enable plugins (`extraKnownMarketplaces`, `enabledPlugins`) | Third-party plugins (hooks, MCP servers, skills) get installed and updated once the project is trusted ("Plugin4Shell") |
 | ZNA018 | low | The repository ships agent extensions (commands, subagents, skills, plugins) | Inventory: they are reviewed by the other rules, but you should know they are there |
 | ZNA019 | high / medium | A CI workflow runs an AI agent on input anyone can write (`issues`, `issue_comment`, `pull_request_target`, discussions) | An issue or comment becomes instructions for an agent that holds repository tokens. High with `pull_request_target`, issue or comment text pasted into the workflow (`${{ github.event.issue.body }}`, also through `env:`), an action opened to users without write access (`allowed_non_write_users`), or a CLI step (`claude -p`, `codex exec`) with write permissions and no author filter. Medium otherwise: the common agent actions check the actor's own permission before running |
-| ZNA020 | high / low | An agent file could not be checked: a syntax error, a size over 1 MB, a symbolic link leaving the repository, or a scan that stopped early | The agent may still act on it. High when the file can run commands or redirect the agent (the text is then searched for risky keys, and `runOn: folderOpen` or a download piped into a shell is still reported), when it uses a reserved key such as `__proto__`, or when the scan did not finish; low for a syntax error in a file that cannot run anything |
+| ZNA020 | high / low | An agent file could not be checked: a syntax error, a size over 1 MiB (the first 1 MiB is still checked), a symbolic link leaving the repository, or a scan that stopped early | The agent may still act on it. High when the file can run commands or redirect the agent (the text is then searched for risky keys, and `runOn: folderOpen` or a download piped into a shell is still reported), when it uses a reserved key such as `__proto__`, or when the scan did not finish; low for a syntax error in a file that cannot run anything |
 | ZNA021 | medium | An agent instruction file (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.cursorrules`, rules, `copilot-instructions.md`, `SKILL.md` and other skill, command and agent files) has a run of 40 or more empty or whitespace-only lines with more text after it | The text after the run is out of view for a person who opens the file and past the part of it a classifier reads. The finding gives the line where that text starts and the length of the run; the text is not printed. Blank lines at the end of a file are not reported. The check counts lines and uses no text patterns: read the file from the reported line |
 
 ## Output
@@ -194,10 +199,21 @@ file names) are printed as `\x1b`, never sent to the terminal.
     "bySeverity": { "critical": 1, "high": 0, "medium": 0, "low": 0 },
     "failOn": "high",
     "failed": true,
-    "agents": ["claude", "codex", "cursor", "opencode", "amazonq", "copilot", "gemini"]
+    "agents": ["claude", "codex", "cursor", "opencode", "amazonq", "copilot", "gemini"],
+    "agentStatus": [
+      { "agent": "claude", "files": 3, "checked": true },
+      { "agent": "codex", "files": 0, "checked": false }
+    ]
   }
 }
 ```
+
+`summary.agentStatus` says, for each selected agent, how many files were read and whether
+anything was checked. With `--agents`, the text report adds a line such as
+`codex: not checked (no instruction or config files found where zn looks: AGENTS.md, .codex/)`
+for an agent with no files, so a missed location is not mistaken for a clean result. The
+exit code does not change. A file that exists but cannot be read (for example, permission
+denied) is a high ZNA020 finding, never a clean result.
 
 `file` is relative to `root` with forward slashes; files from `--include-home`
 start with `~/`. `agent` is the agent that reads the file (`any` when several

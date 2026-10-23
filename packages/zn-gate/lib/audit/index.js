@@ -29,6 +29,16 @@ const TIME_BUDGET_MS = 120000;
 const LOCATE_WINDOW = 400;
 const MAX_ENTRIES = 50000;
 const EVIDENCE_MAX = 160;
+// Where zn audit looks for each agent, shown when nothing was found there.
+const AGENT_PLACES = {
+  claude: 'CLAUDE.md, .claude/, .mcp.json',
+  codex: 'AGENTS.md, .codex/',
+  cursor: '.cursor/, .cursorrules',
+  opencode: 'opencode.json, .opencode/',
+  amazonq: '.amazonq/',
+  copilot: '.github/copilot-instructions.md, .vscode/',
+  gemini: 'GEMINI.md, .gemini/',
+};
 const INSTRUCTION_READERS = ['codex', 'cursor', 'opencode', 'amazonq', 'copilot', 'gemini'];
 
 const SKIP_DIRS = new Set([
@@ -1010,8 +1020,8 @@ function readBounded(abs, max, follow) {
     let text = buf.toString('utf8', 0, n);
     if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
     return { text };
-  } catch (_) {
-    return { skip: 'unreadable' };
+  } catch (e) {
+    return { skip: 'unreadable', code: e && e.code };
   } finally {
     if (fd !== undefined) try { fs.closeSync(fd); } catch (_) { /* ignore */ }
   }
@@ -1477,10 +1487,64 @@ function unparsable(ctx, err, what) {
   ctx.add('ZNA020', risky ? 'high' : 'low', err.line || 1, what + ' error: ' + err.message + (risky ? '. The file contains ' + Array.from(keys).slice(0, 6).join(', ') + ', which could not be checked.' : ''));
 }
 
+// First `max` bytes of a regular file that is over the limit (no symbolic link
+// followed unless `follow`); undefined when it cannot be read.
+function readPrefix(abs, max, follow) {
+  let fd;
+  try {
+    fd = fs.openSync(abs, fs.constants.O_RDONLY | O_NONBLOCK | (follow ? 0 : O_NOFOLLOW));
+    if (!fs.fstatSync(fd).isFile()) return undefined;
+    const buf = Buffer.alloc(max);
+    let n = 0;
+    while (n < max) {
+      const r = fs.readSync(fd, buf, n, max - n, n);
+      if (r <= 0) break;
+      n += r;
+    }
+    let text = buf.toString('utf8', 0, n);
+    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+    return text;
+  } catch (_) {
+    return undefined;
+  } finally {
+    if (fd !== undefined) try { fs.closeSync(fd); } catch (_) { /* ignore */ }
+  }
+}
+
+// Structured files (JSON, TOML) cut at the size limit cannot be parsed, so the
+// hooks and settings in them are not reviewed; only line-based checks run.
+function prefixLineScan(ctx) {
+  ctx.lines.forEach((l, i) => {
+    checkDownloadRun(ctx, l, i + 1, 'A line of this file');
+    if (ctx.rec.kind === 'vscode-tasks' && /"runOn"\s*:\s*"folderOpen"/.test(l)) {
+      ctx.add('ZNA001', 'high', i + 1, 'A task runs when the folder is opened (runOn: folderOpen).');
+    }
+  });
+}
+
+const OVER_LIMIT_FIX = 'Split the file or move rarely used content into other files so each one is under 1 MiB, then run zn audit again. Until then, review the part past the first 1 MiB by hand.';
+
 function auditFile(rec, out) {
-  const r = readBounded(rec.abs, MAX_FILE_BYTES, rec.scope === 'home');
+  let r = readBounded(rec.abs, MAX_FILE_BYTES, rec.scope === 'home');
+  let partial = false;
   if (r.skip === 'too-large') {
-    out.push(uncheckedFinding({ file: rec.display, agent: rec.agent, readers: rec.readers, severity: 'high', detail: rec.display + ' is ' + r.size + ' bytes; zn audit reads agent files up to ' + MAX_FILE_BYTES + ' bytes, the agent reads all of it.' }));
+    const size = r.size;
+    const prefix = readPrefix(rec.abs, MAX_FILE_BYTES, rec.scope === 'home');
+    const textual = ['instructions', 'workflow', 'opencode-plugin', 'dotenv'].includes(rec.kind);
+    out.push(uncheckedFinding({
+      file: rec.display, agent: rec.agent, readers: rec.readers, severity: 'high',
+      detail: rec.display + ' is ' + size + ' bytes, larger than the 1 MiB (' + MAX_FILE_BYTES + ' bytes) zn audit reads, so only its first 1 MiB was checked' +
+        (prefix === undefined ? ' (and it could not be read at all)' : '') + '. Agents may still read all of it, so anything after the first 1 MiB was not checked.' +
+        (textual || prefix === undefined ? '' : ' The file is structured, so it could not be parsed: its hooks, commands and settings were not reviewed, only a line-by-line search for stored credentials and downloads piped into a shell was run.'),
+      fix: OVER_LIMIT_FIX,
+    }));
+    if (prefix === undefined) return true;
+    r = { text: prefix };
+    partial = true;
+  }
+  if (r.skip === 'unreadable') {
+    // The file is there but could not be opened: say so, never pass it as clean.
+    out.push(uncheckedFinding({ file: rec.display, agent: rec.agent, readers: rec.readers, severity: 'high', detail: rec.display + ' exists but could not be read (' + (r.code || 'read error') + '), so it was not checked. The agent may still read it.', fix: 'Make the file readable (check its permissions) and run zn audit again, or review it by hand.' }));
     return true;
   }
   if (r.text === undefined) return false;
@@ -1514,6 +1578,10 @@ function auditFile(rec, out) {
     return true;
   }
   checkSecrets(ctx);
+  if (partial) {
+    prefixLineScan(ctx);
+    return true;
+  }
   if (rec.kind === 'codex-toml') {
     let parsed;
     try { parsed = parseToml(raw); } catch (err) {
@@ -1620,13 +1688,20 @@ function audit(opts) {
   for (const rec of redirectedConfigs(root, unchecked)) if (!known.has(rec.rel)) files.push(rec);
   for (const rec of importedInstructions(root, files, deadline, unchecked)) files.push(rec);
   let scanned = 0;
+  const agentFiles = Object.fromEntries(Array.from(selected).map((a) => [a, 0]));
+  const countFor = (rec) => {
+    if (rec.kind === 'workflow') return;
+    const who = new Set(rec.agent === 'any' ? [] : [rec.agent]);
+    if (rec.readers !== AGENTS) for (const r of rec.readers || []) who.add(r);
+    for (const a of who) if (a in agentFiles) agentFiles[a]++;
+  };
   let timedOut = truncated && truncated.reason === 'time';
   const wanted = (readers, agent) => agent === 'any' || (readers || []).some((r) => selected.has(r)) || selected.has(agent);
   for (const rec of files) {
     rec.root = root;
     if (rec.kind !== 'workflow' && !wanted(rec.readers, rec.agent)) continue;
     if (Date.now() > deadline) { timedOut = true; break; }
-    if (auditFile(rec, out)) scanned++;
+    if (auditFile(rec, out)) { scanned++; countFor(rec); }
   }
   if (o.includeHome) {
     const home = o.home || os.homedir();
@@ -1634,7 +1709,7 @@ function audit(opts) {
       rec.root = root;
       if (!wanted(rec.readers, rec.agent)) continue;
       if (!fs.existsSync(rec.abs)) continue;
-      if (auditFile(rec, out)) scanned++;
+      if (auditFile(rec, out)) { scanned++; countFor(rec); }
     }
   }
   checkShadowing(root, out);
@@ -1658,7 +1733,7 @@ function audit(opts) {
     findings.push(f);
   }
   findings.sort((a, b) => (RANK[b.severity] - RANK[a.severity]) || (a.file < b.file ? -1 : a.file > b.file ? 1 : 0) || (a.line - b.line) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  return { root, files: scanned, findings, truncated: Boolean(truncated) || timedOut, entries, skippedDirs, agents: Array.from(selected) };
+  return { root, files: scanned, findings, truncated: Boolean(truncated) || timedOut, entries, skippedDirs, agents: Array.from(selected), agentFiles, explicitAgents: !(!o.agents || o.agents.length === 0 || o.agents.includes('all')) };
 }
 
-module.exports = { audit, classify, redact, AGENTS, _internal: { globMatcher, hookCommands, isOurHook, isOurMcp, gitIgnored, readBounded, grantsWrite, withoutTrailingEquals, OUR_HOOKS, SAFE_ABS, znGateFile } };
+module.exports = { audit, classify, redact, AGENTS, AGENT_PLACES, _internal: { globMatcher, hookCommands, isOurHook, isOurMcp, gitIgnored, readBounded, grantsWrite, withoutTrailingEquals, OUR_HOOKS, SAFE_ABS, znGateFile } };

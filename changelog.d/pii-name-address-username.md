@@ -1,0 +1,2 @@
+### Added
+- The scrubber now detects a person's name, a postal address and a username as personal data when an explicit key sits next to the value: headers such as `X-User-Name`, `X-Address` and `X-Username`, and query-string or form keys such as `full_name=`, `address=` and `username=`. Only the value is replaced. Without the key, or in code, nothing is matched. They follow the existing `pii` setting and can be switched off one by one (`name`, `address`, `username`).

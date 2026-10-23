@@ -83,6 +83,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m venv "$RUNNER_TEMP/lint-venv"
+          "$RUNNER_TEMP/lint-venv/bin/python" -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
           "$RUNNER_TEMP/lint-venv/bin/python" -m pip install --disable-pip-version-check --no-cache-dir \
             --require-hashes -r .github/release-requirements.txt -r .github/package-lint-requirements.txt
       - name: Build the wheel

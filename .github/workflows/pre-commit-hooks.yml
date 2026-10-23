@@ -52,6 +52,8 @@ jobs:
         with:
           node-version: 22.x
       - name: Install pre-commit and PyYAML
-        run: python3 -m pip install --user pre-commit==4.2.0 PyYAML
+        run: |
+          python3 -m pip install --disable-pip-version-check --no-cache-dir --user --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
+          python3 -m pip install --user pre-commit==4.2.0 PyYAML
       - name: Test the hooks
         run: bash .github/scripts/test-pre-commit-hooks.sh

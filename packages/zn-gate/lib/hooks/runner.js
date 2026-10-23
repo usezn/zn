@@ -122,6 +122,32 @@ function destructiveRulesOf(opts) {
   return DEFAULT_RULES;
 }
 
+/*
+ * Egress check (pre-tool): a network request that carries personal data or a literal secret in its headers, credentials,
+ * query string or body asks the user first. Network requests are curl, wget, Invoke-WebRequest and its aliases, inline
+ * python or node code that opens a URL, the WebFetch tool and MCP calls with a URL or headers (see policy.egressParts).
+ *
+ * ~/.zn/config.json, {"hooks": {"egressCheck": ...}}: "ask" (default), "deny" or "off" (false also turns it off).
+ * {"hooks": {"egressAllowHosts": ["api.example.com", "*.example.org"]}} lists hosts that are not checked; localhost,
+ * 127.0.0.1 and ::1 never are. ZN_EGRESS_CHECK=deny (or ask, when the file says off) raises the level from the
+ * environment; the environment cannot lower it, because the project an agent works in can set it.
+ */
+function egressModeOf(opts) {
+  const v = opts.egressCheck !== undefined ? opts.egressCheck : (readConfig(opts.home).hooks || {}).egressCheck;
+  let mode = 'ask';
+  if (v === false || String(v).toLowerCase() === 'off') mode = 'off';
+  else if (String(v).toLowerCase() === 'deny') mode = 'deny';
+  const env = String(process.env.ZN_EGRESS_CHECK || '').toLowerCase();
+  if (env === 'deny') mode = 'deny';
+  else if (env === 'ask' && mode === 'off') mode = 'ask';
+  return mode;
+}
+
+function egressAllowOf(opts) {
+  const v = (readConfig(opts.home).hooks || {}).egressAllowHosts;
+  return Array.isArray(v) ? v.filter((h) => typeof h === 'string' && /^(?:\*\.)?[A-Za-z0-9.:-]{1,253}$/.test(h)).slice(0, 64) : [];
+}
+
 // Reinstall the running version: `npm install -g zn-gate` alone could install an
 // older release without hooks.
 const { version: ZN_VERSION } = require('../../package.json');
@@ -169,7 +195,11 @@ function hasUnsafeEventPaths(ev) {
   return hasUnsafeText([ev.cwd, ev.sessionId, ev.toolName, input, raw]);
 }
 
-/** Map every string leaf of a JSON value through an async function, keeping the shape. */
+/**
+ * Map every string leaf of a JSON value through an async function, keeping the shape. Object keys are text the
+ * model reads too, so they go through the same function. Two keys that map to the same text, or a mapped key that
+ * equals a key left as it was, are kept apart by numbering the mapped one ("<text> #2"), so no value is lost.
+ */
 async function mapStrings(value, fn) {
   if (typeof value === 'string') return fn(value);
   if (Array.isArray(value)) {
@@ -178,8 +208,22 @@ async function mapStrings(value, fn) {
     return out;
   }
   if (value && typeof value === 'object') {
+    const entries = Object.entries(value);
+    const names = [];
+    for (const [k] of entries) names.push(await fn(k));
+    const taken = new Set();
+    names.forEach((n, i) => { if (n === entries[i][0]) taken.add(n); });
     const out = {};
-    for (const [k, v] of Object.entries(value)) out[k] = await mapStrings(v, fn);
+    for (let i = 0; i < entries.length; i += 1) {
+      let name = names[i];
+      if (name !== entries[i][0]) {
+        const base = name;
+        for (let n = 2; taken.has(name); n += 1) name = `${base} #${n}`;
+        taken.add(name);
+      }
+      // defineProperty, so a key such as __proto__ stays an ordinary property
+      Object.defineProperty(out, name, { value: await mapStrings(entries[i][1], fn), enumerable: true, writable: true, configurable: true });
+    }
     return out;
   }
   return value;
@@ -247,7 +291,95 @@ async function ctxFor(ev, d, agentId, destination, needVault = true) {
   };
 }
 
+/* ---------------------------- egress check --------------------------- */
+
+const EGRESS_KIND = {
+  EMAIL: 'an email address', PHONE: 'a phone number', IBAN: 'a bank account number (IBAN)', CARD: 'a card number',
+  DNI: 'a national ID number', NIE: 'a national ID number', SSN: 'a social security number', IPV4: 'an IP address',
+};
+const EGRESS_PLACE = {
+  header: 'in a header', body: 'in the body', 'query string': 'in the query string', URL: 'in the URL',
+  credentials: 'in the credentials', code: 'in the inline code', arguments: 'in the arguments',
+};
+const EGRESS_SCAN_CAP = 1024 * 1024;
+
+/*
+ * Scans the places a request sends data (policy.egressParts and friends) with the scrubber engine and returns the
+ * decision for the user's mode (ask or deny), or null when nothing is found. The values are never put in the message.
+ */
+async function egressCheck(ev, d, agentId, mode, requests, what) {
+  if (mode === 'off' || !requests.length) return null;
+  const engine = d.engine();
+  let ctx = await ctxFor(ev, d, agentId, 'bash_network');
+  if (typeof engine.prepare === 'function') ctx = await engine.prepare(ctx);
+  const found = new Set();
+  const hosts = new Set();
+  let toServer = false;   // a hit in plain MCP arguments: the MCP server receives it, not the host of a URL
+  for (const r of requests) {
+    let hit = false;
+    for (const part of r.parts) {
+      if (!part.text) continue;
+      const text = part.text.length > EGRESS_SCAN_CAP ? part.text.slice(0, EGRESS_SCAN_CAP) : part.text;
+      // The text as written, then its percent-decoded copies (an email address is "jane.doe%40example.com" in a URL or a form).
+      for (const copy of [text, ...policy.egressDecodedCopies(text)]) {
+        const scanned = copy === text ? part : { where: part.where, text: copy };
+        for (const span of engine.scan(copy, ctx) || []) {
+          if (!SECRET_SOURCES.has(span.source) && span.source !== 'pii') continue;
+          if (part.where === 'arguments') toServer = true;
+          else hit = true;
+          const kind = span.source === 'pii' ? (EGRESS_KIND[span.type] || kindLabel(span.type)) : kindLabel(span.type);
+          found.add(kind + ' ' + (EGRESS_PLACE[policy.egressLabel(scanned, span.start)] || 'in the request'));
+        }
+      }
+    }
+    if (hit) for (const h of r.hosts) hosts.add(h.replace(/[^A-Za-z0-9.:-]/g, '').slice(0, 60));
+  }
+  if (found.size === 0) return null;
+  const list = [...found].slice(0, 4).join(', ') + (found.size > 4 ? ' and more' : '');
+  const named = [...hosts].filter(Boolean).slice(0, 3);
+  if (toServer) named.push('the MCP server');
+  const to = named.length ? named.join(', ') : (what === 'MCP call' ? 'the MCP server' : 'a network host');
+  const sentence = 'would send ' + list + ' to ' + to;
+  if (mode === 'deny') {
+    return {
+      decision: 'deny',
+      message: 'zn blocked this ' + what + ': it ' + sentence + '. Next step: send the request without the personal data, and pass any secret through an environment variable ' +
+        '(such as $API_TOKEN) instead of writing the value in it; if the data must be sent, tell the user.',
+    };
+  }
+  return {
+    decision: 'ask',
+    message: 'zn: this ' + what + ' ' + sentence + '. Approve it only if that data should leave this computer. ' +
+      'To send a secret, read it from an environment variable (such as $API_TOKEN) instead of writing the value in the ' + what + '.',
+  };
+}
+
+/* The egress decision joined to the decision the rest of the checks made for the same call. */
+function withEgress(res, eg) {
+  if (!eg) return res;
+  if (eg.decision === 'deny' || res.decision === 'allow') return eg;
+  return { ...res, message: (res.message ? res.message + ' ' : '') + eg.message.replace(/^zn: /, 'Also, ') };
+}
+
 /* ---------------------------- pre_tool ---------------------------- */
+
+/**
+ * A search over a folder (or with no path) prints matching lines, and an agent that cannot redact that
+ * output would show a plain-text secret to the model: ask when the folder holds a .env or a key file.
+ * Used for a search tool and, when an adapter lists the folders a shell search covers, for that command.
+ */
+function searchFolderAsk(dirs, pathOpts) {
+  for (const dir of Array.isArray(dirs) ? dirs : [dirs]) {
+    let names = [];
+    try { names = fs.readdirSync(dir).slice(0, 5000); } catch (_) { names = []; }
+    for (const n of names) {
+      if (policy.readDenial(path.join(dir, n), pathOpts)) {
+        return { decision: 'ask', message: 'zn: this search covers a folder that holds ' + n + ', which has plain-text secrets, and matching lines are not hidden in this agent. Approve only if the search must include it, or name a narrower path.' };
+      }
+    }
+  }
+  return null;
+}
 
 async function decidePre(ev, d, agentId, opts) {
   const pathOpts = { cwd: ev.cwd, home: opts.home };
@@ -262,15 +394,8 @@ async function decidePre(ev, d, agentId, opts) {
     }
   }
   if (tool === 'grep' && input.scanDir) {
-    // A search over a folder (or with no path) prints matching lines, and an agent that cannot redact that
-    // output would show a plain-text secret to the model: ask when the folder holds a .env or a key file.
-    let names = [];
-    try { names = fs.readdirSync(input.scanDir).slice(0, 5000); } catch (_) { names = []; }
-    for (const n of names) {
-      if (policy.readDenial(path.join(input.scanDir, n), pathOpts)) {
-        return { decision: 'ask', message: 'zn: this search covers a folder that holds ' + n + ', which has plain-text secrets, and matching lines are not hidden in this agent. Approve only if the search must include it, or name a narrower path.' };
-      }
-    }
+    const ask = searchFolderAsk(input.scanDir, pathOpts);
+    if (ask) return ask;
   }
   if (tool === 'fileaccess') {
     // A tool zn does not know that names files: every path gets the read and the write checks.
@@ -287,7 +412,8 @@ async function decidePre(ev, d, agentId, opts) {
     }
     if (input.unparsed) return { decision: 'deny', message: 'zn: could not read the file names in this patch, so zn cannot check it.' };
     for (const p of Array.isArray(input.paths) ? input.paths : [input.path]) {
-      const deny = policy.writeDenial(p, pathOpts);
+      // An adapter that promises "no reads or writes of secret files" asks for the read check on a write too.
+      const deny = (input.alsoReadCheck && policy.readDenial(p, pathOpts)) || policy.writeDenial(p, pathOpts);
       if (deny) return { decision: 'deny', message: deny };
     }
   }
@@ -300,7 +426,8 @@ async function decidePre(ev, d, agentId, opts) {
           'of the zn "secrets" MCP server: zn sends the request with the real value, only to the hosts allowed for that secret.',
       };
     }
-    return { decision: 'allow' };
+    const eg = await egressCheck(ev, d, agentId, egressModeOf(opts), policy.egressUrlParts(input.url, { allow: () => egressAllowOf(opts) }), 'WebFetch request');
+    return eg || { decision: 'allow' };
   }
 
   if (tool === 'monitor') return decideMonitor(ev, pathOpts, opts);
@@ -311,12 +438,39 @@ async function decidePre(ev, d, agentId, opts) {
       if (deny) return { decision: 'deny', message: deny };
     }
   }
-  if (tool === 'mcp' && ev.input && ev.input.args !== undefined) return decideMcp(ev, d, agentId);
+  if (tool === 'mcp' && ev.input && ev.input.args !== undefined) {
+    let res = await decideMcp(ev, d, agentId);
+    if (res.decision === 'deny') return res;
+    // zn's own MCP server checks text on this computer: its arguments are not a network request.
+    if (ev.mcp && ev.mcp.ours === 'analyze') return res;
+    const mode = egressModeOf(opts);
+    // Personal data in the arguments follows the egress settings: with the check off nobody is asked, and when the
+    // call is a network request whose arguments the egress check read in full, it decides (local and allow-listed
+    // hosts are not asked about what goes to the host, only about the other arguments). If the walk was cut short
+    // (very deep or very large arguments), the question of the MCP check stays.
+    if (res.pii && (mode === 'off' || policy.egressMcpCovers(ev.input.args))) res = { decision: 'allow' };
+    if (mode === 'off') return res;
+    return withEgress(res, await egressCheck(ev, d, agentId, mode, policy.egressMcpParts(ev.input.args, { allow: () => egressAllowOf(opts) }), 'MCP call'));
+  }
 
   if (SHELL_TOOLS.has(tool)) {
     const original = String(input.command || '');
     const deny = policy.bashDenial(original, { ...pathOpts, destructiveRules: destructiveRulesOf(opts) });
     if (deny) return { decision: 'deny', message: deny };
+    if (input.scanAsk) {
+      return { decision: 'ask', message: input.scanAsk === 'long'
+        ? 'zn: this command changes folders too many times before a recursive search, so zn cannot tell which folders it covers, and matching lines are not hidden in this agent. Approve only if the search is safe, or split the command.'
+        : 'zn: this recursive search names a folder through a variable or a substitution, so zn cannot tell which folder it covers, and matching lines are not hidden in this agent. Approve only if the search is safe, or name the folder directly.' };
+    }
+    if (Array.isArray(input.scanDirs) && input.scanDirs.length) {
+      const ask = searchFolderAsk(input.scanDirs, pathOpts);
+      if (ask) return ask;
+    }
+
+    const egressMode = egressModeOf(opts);
+    const egress = egressMode === 'off' ? null
+      : await egressCheck(ev, d, agentId, egressMode, policy.egressParts(original, { powershell: tool === 'powershell', allow: () => egressAllowOf(opts) }), 'command');
+    if (egress && egress.decision === 'deny') return egress;
 
     let command = original;
     const notes = [];
@@ -355,12 +509,12 @@ async function decidePre(ev, d, agentId, opts) {
         // A command that carries markers always asks, even when nothing was rewritten
         // (already wrapped in `zn run` by the agent, or tokens kept unresolved).
         // Never let it run on the user's allow rules alone.
-        return { decision: 'ask', message: 'zn: this command contains secret placeholders (such as __ZN_NAME__)' + (notes.length ? '; ' + notes.join('; ') : '') + ', so it needs your approval before it runs.', context };
+        return withEgress({ decision: 'ask', message: 'zn: this command contains secret placeholders (such as __ZN_NAME__)' + (notes.length ? '; ' + notes.join('; ') : '') + ', so it needs your approval before it runs.', context }, egress);
       }
-      return notes.length ? { decision: 'allow', message: 'zn: ' + notes.join('; ') } : { decision: 'allow' };
+      return withEgress(notes.length ? { decision: 'allow', message: 'zn: ' + notes.join('; ') } : { decision: 'allow' }, egress);
     }
     // kind tells adapters that cannot rewrite input what the rewrite was for.
-    return { decision: 'ask', updatedInput: { command }, kind: wrap.wrapped ? 'wrap' : 'restore', message: 'zn: this command ' + notes.join('; ') + '.', context };
+    return withEgress({ decision: 'ask', updatedInput: { command }, kind: wrap.wrapped ? 'wrap' : 'restore', message: 'zn: this command ' + notes.join('; ') + '.', context }, egress);
   }
 
   if ((tool === 'write' || tool === 'edit' || tool === 'multiedit' || tool === 'notebookedit') && Array.isArray(input.texts)) {
@@ -510,13 +664,16 @@ function mcpArgumentText(args) {
   return out.join('\n');
 }
 
-/* zn's own "secrets" server: the exact command `zn hooks install` writes (the
- * matcher of `zn audit`, with the "--agent <id>" suffix it adds), outside the
- * project. A server reached by URL is never ours, and a name alone is not enough. */
+/* zn's own "secrets" server. Codex sends the server's command, which must be the exact command `zn hooks
+ * install` writes (the matcher of `zn audit`, with the "--agent <id>" suffix it adds), outside the project.
+ * Claude Code sends only the tool name, so its adapter sets ev.mcp.ours after checking the MCP
+ * configuration (znMcpServerKind in lib/agents/claude-code.js). A server reached by URL is never ours,
+ * and a name alone is not enough. */
 function isOurSecretsServer(ev, root) {
   const raw = ev.raw || {};
-  if (!ev.mcp || ev.mcp.server !== 'secrets') return false;
+  if (!ev.mcp || (ev.mcp.server !== 'secrets' && ev.mcp.ours !== 'secrets')) return false;
   if (raw.url || raw.mcp_server_url) return false;
+  if (ev.mcp.ours === 'secrets') return true;
   if (typeof raw.command !== 'string' || !raw.command.trim()) return false;
   const argv = require('../audit/patterns').splitCommand(raw.command);
   return Boolean(require('../audit')._internal.isOurMcp(argv, { rec: { root } }));
@@ -548,13 +705,26 @@ async function decideMcp(ev, d, agentId) {
   let ctx = await ctxFor(ev, d, agentId, 'mcp_input');
   if (typeof engine.prepare === 'function') ctx = await engine.prepare(ctx);
   const kinds = new Set();
+  const piiKinds = new Set();
   for (let start = 0; ; start += MCP_WINDOW - MCP_OVERLAP) {
     for (const span of engine.scan(text.slice(start, start + MCP_WINDOW), ctx) || []) {
       if (SECRET_SOURCES.has(span.source)) kinds.add(kindLabel(span.type));
+      else if (span.source === 'pii') piiKinds.add(kindLabel(span.type));
     }
     if (start + MCP_WINDOW >= text.length) break;
   }
-  if (kinds.size === 0) return { decision: 'allow' };
+  if (kinds.size === 0) {
+    // zn's own detector server (the plugin's) analyses the text the user asked about: no question for it.
+    if (piiKinds.size === 0 || (ev.mcp && ev.mcp.ours === 'analyze')) return { decision: 'allow' };
+    // Personal data is not always wrong to send: the user decides (never a deny).
+    return {
+      decision: 'ask',
+      pii: true,
+      kinds: [...piiKinds],
+      message: 'zn: this call would send personal data (' + [...piiKinds].join(', ') + ') to ' + mcpServerLabel(server) + '. ' +
+        'Approve only if this server should receive it.',
+    };
+  }
   return {
     decision: 'deny',
     kinds: [...kinds],
@@ -827,7 +997,7 @@ function kindLabel(type) {
     return w.toLowerCase();
   });
   const label = words.join(' ') || 'secret';
-  return (/^([AEIOU]|AWS\b|API\b|SSH\b|SSN\b|IBAN\b|OAUTH\b)/i.test(label) ? 'an ' : 'a ') + label;
+  return (/^(?!user)([AEIOU]|AWS\b|API\b|SSH\b|SSN\b|IBAN\b|OAUTH\b)/i.test(label) ? 'an ' : 'a ') + label;
 }
 
 // A generic detection has no name of its own. The credential name written just
