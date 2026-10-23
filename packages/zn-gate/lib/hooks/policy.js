@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-24.18';
+const POLICY_RULES_VERSION = '2026-10-24.20';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -141,16 +141,23 @@ function dropTrailingDotsSpaces(seg) {
 // `CLAUDE~1`). The long name it stands for cannot be read from the text, so on win32 it is checked as a pattern
 // (`{,.}settin*.jso*`) against the protected names, like a typed glob.
 const SHORT_NAME_RE = /^([^~\s.:*?"<>|\\/]{1,6})~[0-9]{1,6}(?:\.([^.\s:*?"<>|\\/]{1,3}))?$/;
-function shortNameGlob(text) {
+function shortNameGlob(text, parentProtected) {
   if (process.platform !== 'win32' || typeof text !== 'string' || text.indexOf('~') < 0) return null;
   let found = false;
   let lastShort = false;
-  const out = text.split(/([\\/]+)/).map((seg) => {
+  let prefix = '';
+  const out = text.split(/([\/]+)/).map((seg) => {
     const m = SHORT_NAME_RE.exec(seg);
-    if (!/^[\\/]*$/.test(seg)) lastShort = !!m;
-    if (!m) return seg;
+    if (!/^[\/]*$/.test(seg)) lastShort = !!m;
+    if (!m) { prefix += seg; return seg; }
     found = true;
-    return '{,.}' + m[1] + '*' + (m[2] ? '.' + m[2] + '*' : '');
+    // After the fifth name that would collide, Windows builds the short name from a hash (`SE1A2B~1.JSO`), which
+    // does not start with the long name. Under a protected folder any short name is therefore read as any name
+    // with that extension; elsewhere it keeps the stricter prefix pattern, so ordinary project files stay allowed.
+    const any = parentProtected && prefix && parentProtected(prefix);
+    const g = '{,.}' + (any ? '' : m[1]) + '*' + (m[2] ? '.' + m[2] + '*' : '');
+    prefix += g;
+    return g;
   }).join('');
   return found ? { glob: out, lastShort } : null;
 }
@@ -328,7 +335,7 @@ function classifyPath(p, opts = {}) {
     if (c) return c;
   }
   // A short name hides the long one: it counts as protected when it could stand for a protected file or folder.
-  const short = shortNameGlob(expanded.text);
+  const short = shortNameGlob(expanded.text, (dir) => isProtectedDirGlob(dir, ctx));
   // When the last name is written out, a .env there is judged by its own content (readDenial), not by the pattern.
   // A last name that is itself a glob (`*`, `.e*`) names whatever it matches, a plain .env included: no skipping then.
   if (short) return globClass(short.glob, short.lastShort || GLOB_RE.test(expanded.text) ? opts : { ...opts, skipDotenv: true });
@@ -584,6 +591,27 @@ function globClass(word, opts = {}) {
     }
   }
   return keyHit;
+}
+
+/**
+ * Whether a path prefix (a plain path or a glob made from short names) names one of the folders that hold protected
+ * files: the folders of the credential and agent configuration examples, and the agent folders the environment names.
+ * The home folder and the project folder themselves are not on the list.
+ */
+function isProtectedDirGlob(dir, ctx) {
+  const alts = expandBraces(dir.replace(/[\/]+$/, ''));
+  if (alts === null) return true;
+  const skip = new Set([keyOf(slash(path.resolve(ctx.home))), keyOf(slash(path.resolve(ctx.cwd)))]);
+  const dirs = new Set([...GLOB_EXAMPLES.map((e) => path.join(ctx.home, e)), ...PROJECT_EXAMPLES.map((e) => path.join(ctx.cwd, e))]
+    .map((e) => keyOf(slash(path.dirname(e)))));
+  for (const d of ctx.agent.dirs) dirs.add(d);
+  for (const d of skip) dirs.delete(d);
+  for (const alt of alts) {
+    const re = globRegExp(keyOf(slash(path.resolve(ctx.cwd, expandHome(alt, ctx.home)))));
+    if (re.impossible) continue;
+    for (const d of dirs) if (re.test(d)) return true;
+  }
+  return false;
 }
 
 /**
