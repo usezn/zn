@@ -35,7 +35,11 @@ def block_message(assessment: Assessment, target: str) -> str:
         what = ("The output was too large to check in full, so it was withheld."
                 if is_result else "The input was too large to check in full, so the call did not run.")
         why = f"Reason: too large to scan in full (rule: {assessment.rule})."
-        step = "Next step: shorten or split the input into smaller parts and try again."
+        if is_result:
+            step = ("Next step: if you trust this tool, set ZN_ALLOW_TRUNCATED=1 to let large outputs "
+                    "through without a full check (or pass allow_truncated=True to check_tool_result).")
+        else:
+            step = "Next step: shorten or split the input into smaller parts and try again."
         return f"zn-gate blocked '{target}'. {what} {why} {step}"
     reason = (assessment.reason or "").rstrip(".")
     if reason:
@@ -336,8 +340,8 @@ def _scan_strings(data: Any, what: str, block_truncated: bool, strict: Optional[
             return res
         truncated = truncated or res.truncated
         advisory = advisory or res.advisory
-    if truncated and (what == "Arguments" and (block_truncated or os.environ.get("ZN_BLOCK_TRUNCATED") == "1")
-                      or what != "Arguments" and truncated_blocks(block_truncated, allow_truncated)):
+    if truncated and ((what == "Arguments" and (block_truncated or os.environ.get("ZN_BLOCK_TRUNCATED") == "1"))
+                      or (what != "Arguments" and truncated_blocks(block_truncated, allow_truncated))):
         return Assessment(verdict="block", confidence=1.0, rule="size:truncated",
                           reason=f"{what} too large to scan in full", truncated=True)
     return Assessment(verdict="allow", confidence=1.0, rule="none", reason=None, truncated=truncated,
@@ -373,7 +377,7 @@ def check_tool_result(result: Any, block_truncated: bool = False, strict: Option
     forces the block. A result that cannot be
     checked in full is blocked as for check_tool_call (for example a generator).
     """
-    res = _scan_strings(result, "Result", block_truncated, strict, allow_truncated)
+    res = _scan_strings(result, "Result", block_truncated, strict, allow_truncated=allow_truncated)
     if res.rule == "size:truncated":
         res.reason = "Output too large to scan in full"
     return res
@@ -733,9 +737,12 @@ def guard(
     - check_result: Whether to inspect function return value (default False).
     - mask_secrets: Automatically redact leaked credentials in result (default False).
     - callback: Optional hook called on block: callback(assessment, func_name, payload).
-    - block_truncated: Block arguments, and with check_result a result, too large
-                       to scan in full (rule size:truncated). ZN_BLOCK_TRUNCATED=1
-                       does the same for every guard (default False).
+    - block_truncated: Force a block for arguments too large to scan in full
+                       (rule size:truncated); ZN_BLOCK_TRUNCATED=1 does the same
+                       for every guard (default False). With check_result, a
+                       result over 4 MB is blocked by default; ZN_ALLOW_TRUNCATED=1
+                       lets it through marked truncated (there is no per-guard
+                       opt-out), and block_truncated=True keeps it blocked even then.
 
     With check_result or mask_secrets, what the function gives back is handled
     the same way whatever its form:

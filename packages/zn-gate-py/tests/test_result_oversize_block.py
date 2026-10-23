@@ -46,3 +46,11 @@ def test_opt_out_allows_with_truncated_flag(monkeypatch):
 def test_result_under_limit_unchanged():
     res = check_tool_result("lorem ipsum " * 100000)
     assert res.allowed and not res.truncated
+
+
+def test_block_message_for_oversize_result_names_the_opt_out():
+    from zn_gate.guard import block_message
+    res = check_tool_result(_big(False))
+    msg = block_message(res, "tool:web:result")
+    assert "ZN_ALLOW_TRUNCATED=1" in msg and "allow_truncated" in msg
+    assert "ZN_ALLOW_TRUNCATED" not in block_message(res, "tool:web")

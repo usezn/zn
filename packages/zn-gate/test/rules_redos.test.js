@@ -311,13 +311,15 @@ test('sanitizeToolResult() blocks a result past the scan limit unless truncation
   assert.equal(opted.truncated, true);
   assert.equal(opted.assessment.rule, 'size:truncated');
   const prev = process.env.ZN_ALLOW_TRUNCATED;
+  const prevBlock = process.env.ZN_BLOCK_TRUNCATED;
   process.env.ZN_ALLOW_TRUNCATED = '1';
   try {
     assert.equal(sanitizeToolResult('read_file', input).safe_to_ingest, true);
     process.env.ZN_BLOCK_TRUNCATED = '1';
     assert.equal(sanitizeToolResult('read_file', input).safe_to_ingest, false);
   } finally {
-    delete process.env.ZN_BLOCK_TRUNCATED;
+    if (prevBlock === undefined) delete process.env.ZN_BLOCK_TRUNCATED;
+    else process.env.ZN_BLOCK_TRUNCATED = prevBlock;
     if (prev === undefined) delete process.env.ZN_ALLOW_TRUNCATED;
     else process.env.ZN_ALLOW_TRUNCATED = prev;
   }
@@ -367,4 +369,15 @@ test('a result of 8.8 MB with an injection past 4 MB is blocked by default, whol
   const small = scanToolResult(fill('lorem ipsum ', 100000));
   assert.equal(small.allowed, true);
   assert.equal(small.truncated, false);
+});
+
+test('the block message for a result over 4 MB names the opt-out', () => {
+  const { blockMessage, scanToolResult } = require('../lib/guard');
+  const res = scanToolResult(fill('lorem ipsum ', MAX_TOOL_RESULT_SCAN_CHARS + 1024));
+  assert.equal(res.rule, 'size:truncated');
+  const msg = blockMessage(res, 'tool:web:result');
+  assert.match(msg, /ZN_ALLOW_TRUNCATED=1/);
+  assert.match(msg, /allowTruncated/);
+  assert.match(msg, /over 4 MB/);
+  assert.doesNotMatch(blockMessage(res, 'tool:web'), /ZN_ALLOW_TRUNCATED/);
 });
