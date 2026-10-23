@@ -219,9 +219,15 @@ function install(opts = {}) {
   cfg.writeJson(file, data);
   report.warnings.push('Cursor cannot rewrite the output of shell commands or file reads: zn blocks reads of secret files and redacts MCP output only (see docs/compat.md).');
   if (opts.mcp !== false) {
+    // A project's .cursor/mcp.json is shared: the hint names zn on the PATH, never the paths of this machine.
+    const project = (opts.scope || 'user') === 'project';
     const cli = path.resolve(__dirname, '..', '..', 'bin', 'cli.js').replace(/\\/g, '/');
-    report.warnings.push('optional: to let Cursor use the secrets kept in zn\'s vault, add the "secrets" MCP server to ~/.cursor/mcp.json under "mcpServers": "secrets": ' +
-      JSON.stringify({ command: (opts.nodePath || process.execPath).replace(/\\/g, '/'), args: [cli, 'secrets-mcp', '--agent', 'cursor'] }));
+    const server = project
+      ? { command: 'zn', args: ['secrets-mcp', '--agent', 'cursor'] }
+      : { command: (opts.nodePath || process.execPath).replace(/\\/g, '/'), args: [cli, 'secrets-mcp', '--agent', 'cursor'] };
+    report.warnings.push('optional: to let Cursor use the secrets kept in zn\'s vault, add the "secrets" MCP server to ' +
+      (project ? '.cursor/mcp.json in this project' : '~/.cursor/mcp.json') + ' under "mcpServers": "secrets": ' + JSON.stringify(server) +
+      (project ? ' (everyone who uses the project needs zn on their PATH)' : ''));
   }
   return report;
 }

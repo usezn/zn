@@ -74,7 +74,9 @@ jobs:
         id: pipaudit
         if: ${{ !cancelled() && steps.python.outcome == 'success' }}
         continue-on-error: true
-        run: python3 -m pip install --require-hashes -r .github/audit-requirements.txt
+        run: |
+          python3 -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
+          python3 -m pip install --require-hashes -r .github/audit-requirements.txt
       - name: Install and run the Python examples offline
         if: ${{ !cancelled() && steps.python.outcome == 'success' }}
         env:
