@@ -1,8 +1,7 @@
 """@guard must still see arguments and results when it wraps common Python shapes.
 
 The blocked string is a stock phrase from this package's own test fixtures.
-Strict xfail entries are open gaps tracked on the board; when a gap is fixed,
-strict mode turns its test into a failure, which is the signal to drop the marker.
+A strict xfail entry would mark an open gap; none are open now.
 """
 import asyncio
 import dataclasses
@@ -40,7 +39,6 @@ def test_guard_of_partial_arg_at_call_blocked():
         g(BLOCK)
 
 
-@pytest.mark.xfail(strict=True, reason="B-1225: args bound with functools.partial before @guard are not scanned")
 def test_guard_of_partial_bound_arg_blocked():
     g = guard()(functools.partial(lambda x: x, BLOCK))
     with pytest.raises(GuardBlockError):
@@ -87,7 +85,6 @@ def test_classmethod_guard_above_args_blocked():
         C.f(BLOCK)
 
 
-@pytest.mark.xfail(strict=True, reason="B-1226: @guard above @classmethod makes every call raise TypeError")
 def test_classmethod_guard_above_benign_call_works():
     class C:
         @guard()
@@ -216,3 +213,50 @@ def test_async_generator_result_blocked():
         return [i async for i in agen(BENIGN)]
     with pytest.raises(GuardBlockError):
         asyncio.run(consume())
+
+
+def test_guard_of_nested_partial_bound_args_blocked():
+    inner = functools.partial(lambda a, b, c=None: (a, b, c), BENIGN)
+    outer = functools.partial(inner, BENIGN, c=BLOCK)
+    g = guard()(outer)
+    with pytest.raises(GuardBlockError):
+        g()
+    # A partial subclass is not flattened by functools, so it must be handled too.
+    class P(functools.partial):
+        pass
+    g2 = guard()(P(P(lambda a, b: (a, b), BLOCK), BENIGN))
+    with pytest.raises(GuardBlockError):
+        g2()
+
+
+def test_guard_of_partial_benign_runs_and_keyword_bound_blocked():
+    g = guard()(functools.partial(lambda x, y=None: (x, y), BENIGN))
+    assert g(BENIGN) == (BENIGN, BENIGN)
+    h = guard()(functools.partial(lambda x, y=None: (x, y), y=BLOCK))
+    with pytest.raises(GuardBlockError):
+        h(BENIGN)
+
+
+def test_classmethod_and_staticmethod_guard_above_class_and_instance():
+    class C:
+        @guard()
+        @classmethod
+        def cm(cls, x):
+            return (cls, x)
+
+        @guard()
+        @staticmethod
+        def sm(x):
+            return x
+
+    assert isinstance(C.__dict__["cm"], classmethod)
+    assert isinstance(C.__dict__["sm"], staticmethod)
+    assert C.cm(BENIGN) == (C, BENIGN)
+    assert C().cm(BENIGN) == (C, BENIGN)
+    assert C.sm(BENIGN) == BENIGN
+    assert C().sm(BENIGN) == BENIGN
+    for target in (C, C()):
+        with pytest.raises(GuardBlockError):
+            target.cm(BLOCK)
+        with pytest.raises(GuardBlockError):
+            target.sm(BLOCK)

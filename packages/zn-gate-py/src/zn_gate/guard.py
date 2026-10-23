@@ -346,6 +346,18 @@ def _call_payload(func: Any, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> D
     return {"args": args, "kwargs": kwargs}
 
 
+def _unwrap_partial(func: Any) -> Tuple[Any, Tuple[Any, ...], Dict[str, Any]]:
+    """(innermost callable, arguments bound by functools.partial, keywords bound by it).
+    Nested partials are flattened, the outer binding last so it wins on a repeated keyword."""
+    bound_args: Tuple[Any, ...] = ()
+    bound_kwargs: Dict[str, Any] = {}
+    while isinstance(func, functools.partial):
+        bound_args = tuple(func.args) + bound_args
+        bound_kwargs = {**func.keywords, **bound_kwargs}
+        func = func.func
+    return func, bound_args, bound_kwargs
+
+
 def _scan_strings(data: Any, what: str, block_truncated: bool, strict: Optional[bool],
                   lenient_objects: bool = True, allow_truncated: bool = False,
                   lenient_depth: Optional[int] = None) -> Assessment:
@@ -806,12 +818,21 @@ def guard(
         raise ValueError('on_block="custom" needs a callback; use on_block="raise" or pass callback=...')
 
     def decorator(func: _F) -> _F:
+        if isinstance(func, (classmethod, staticmethod)):
+            # Keep the descriptor: guard the plain function inside it and wrap it again
+            # as the same kind, so calls through the class and through an instance work.
+            return cast(_F, type(func)(decorator(func.__func__)))
         func_name = getattr(func, "__name__", "anonymous")
+        target, bound_args, bound_kwargs = _unwrap_partial(func)
 
         def _on_args(args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Tuple[bool, Any]:
             """(True, value to return) when the call is blocked; raises in the raise and custom modes."""
+            if bound_args or bound_kwargs:
+                # Arguments fixed with functools.partial are scanned with the call arguments.
+                args = bound_args + args
+                kwargs = {**bound_kwargs, **kwargs}
             combined_args = {"args": args, "kwargs": kwargs}
-            assessment = check_tool_call(func_name, _call_payload(func, args, kwargs),
+            assessment = check_tool_call(func_name, _call_payload(target, args, kwargs),
                                          block_truncated=block_truncated,
                                          _lenient_objects=True)
             if assessment.allowed:
