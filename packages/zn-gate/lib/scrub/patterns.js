@@ -28,7 +28,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-10-23.3';
+const SCRUB_RULES_VERSION = '2026-10-23.5';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -581,12 +581,22 @@ const PATTERNS = [
     re: re('(Authorization[ \\t]*:[ \\t]*Bearer[ \\t]+)([A-Za-z0-9._~+/=-]{20,})', 'i'),
     group: 2, check: (v) => !isPlaceholder(v) && !/^__ZN_[A-Z0-9_]+__$/.test(v) &&
       !maskedBody(v.replace(/^(?:sk-ant-[a-z]+\d{2}-|xox[a-z]-|gh[a-z]_|sk-)/, '')) && !/^(.)\1+$/.test(v.replace(/-/g, '')) },
-  /* Generic assignment: sensitive key = quoted high-entropy value. */
+  /* Generic assignment: sensitive key = quoted high-entropy value. The key and
+   * the value quotes may carry a backslash (`export api_key=\"value\"` inside a
+   * JSON string, as tool-call arguments and logs show it). */
   { type: 'SECRET', hints: null, prefilter: /(?:pass|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential|auth)/i,
-    re: re('(?:password|passwd|pwd|secret|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key|client[_-]?secret|auth[_-]?token|credentials?)[A-Za-z0-9_]{0,64}["\']?\\s*(?:=|:|=>|:=)\\s*["\'`]([^"\'`\\s\\\\]{12,200})["\'`]', 'i'),
+    re: re('(?:password|passwd|pwd|secret|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key|client[_-]?secret|auth[_-]?token|credentials?)[A-Za-z0-9_]{0,64}(?:\\\\{0,2}["\'])?\\s*(?:=|:|=>|:=)\\s*\\\\{0,2}["\'`]([^"\'`\\s\\\\]{12,200})\\\\{0,2}["\'`]', 'i'),
     group: 1,
     check: (v) => !isPlaceholder(v) && looksRandom(v, 3, 3.7) && !/^[a-z]+(?:[_.-][a-z]+)+$/i.test(v) &&
       !/^(?:process\.env|os\.environ|\$|\{|%|<|https?:)/.test(v) && !/[()\[\]{};,]/.test(v) },
+  /* URL query parameter: `?api_key=value`, `&token=value`, same names as the
+   * assignment above. The value runs up to the next `&`, `#`, quote or
+   * whitespace; other parameters are left alone. */
+  { type: 'SECRET', hints: null, prefilter: /(?:pass|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential|auth)/i,
+    re: re('[?&](?:[A-Za-z0-9_.-]{0,64}[_.-])?(?:password|passwd|pwd|secret|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key|client[_-]?secret|auth[_-]?token|credentials?)[A-Za-z0-9_]{0,64}=([^&#\\s"\'`\\\\]{12,})', 'i'),
+    group: 1,
+    check: (v) => !isPlaceholder(v) && looksRandom(v, 2, 3.0) && !/^[a-z]+(?:[_.-][a-z]+)+$/i.test(v) &&
+      !/^(?:\$|\{|%7B|%3C|<|https?:)/i.test(v) && !/__ZN_[A-Z0-9_]+__/.test(v) },
   /* Generic dotenv line: SENSITIVE_NAME=unquoted high-entropy value. */
   { type: 'SECRET', hints: null, prefilter: /(?:PASS|SECRET|TOKEN|KEY|CREDENTIAL|AUTH)/,
     re: re('^[ \\t]*(?:export[ \\t]+)?[A-Z][A-Z0-9_]{0,64}(?:PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY|ACCESS_KEY|PRIVATE_KEY|CREDENTIALS?|AUTH)[A-Z0-9_]{0,64}[ \\t]*=[ \\t]*([^\\s"\'`#]{16,200})[ \\t]*$', 'm'),
