@@ -517,7 +517,10 @@ def _collapse_blank_runs(text: str) -> str:
         blanks = 0
         while True:
             k = text.find('\n', j + 1)
-            if k == -1 or _BLANK_SPACE.match(text, j + 1, k).end() != k:
+            if k == -1:
+                break
+            m = _BLANK_SPACE.match(text, j + 1, k)
+            if m is None or m.end() != k:
                 break
             blanks += 1
             j = k
@@ -592,6 +595,9 @@ def _evaluate_oversize(input_text: str, strict: bool) -> Assessment:
 def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
     if not isinstance(input_text, str) or not input_text.strip():
         return Assessment(verdict='allow', confidence=1.0, rule='none', reason=None)
+    # Invisible padding is judged on the input as received (see evaluateUncached in rules.js).
+    if len(input_text) > MAX_SCAN_CHARS and too_invisible([input_text]):
+        return invisible_block()
     input_text = _collapse_blank_runs(input_text)
     if len(input_text) > MAX_SCAN_CHARS:
         return _evaluate_oversize(input_text, strict)

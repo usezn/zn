@@ -34,5 +34,13 @@ class TestBlankPadding(unittest.TestCase):
         self.assertEqual(R.evaluate("Run the tests.\n\u3000\n\u00a0\n\u2003\nThen build.\n").verdict, "allow")
 
 
+    def test_zero_width_only_lines_past_the_scan_limit_stay_size_invisible(self):
+        text = "hello\n" + ("\u200b\u200c\u200d" * 400 + "\n") * 2000 + "bye"
+        self.assertGreater(len(text), 256 * 1024)
+        res = R.evaluate(text)
+        self.assertEqual(res.verdict, "block")
+        self.assertEqual(res.rule, "size:invisible")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -629,6 +629,9 @@ function evaluateUncached(input, options = {}) {
   if (typeof input !== 'string') {
     return { verdict: 'allow', confidence: 1.0, rule: 'none', reason: null, engine: 'oss-local', rules_version: RULES_VERSION };
   }
+  // Invisible padding is judged on the input as received: collapsing first would turn lines made only of
+  // zero-width characters into one empty line and hide a size:invisible block.
+  if (input.length > MAX_SCAN_CHARS && tooInvisible([input])) return invisibleBlock();
   input = collapseBlankRuns(input);
   if (input.length > MAX_SCAN_CHARS) return evaluateOversize(input, options);
 

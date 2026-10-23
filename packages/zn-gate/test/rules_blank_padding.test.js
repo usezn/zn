@@ -42,3 +42,11 @@ for (const [name, ch] of [['U+00A0', '\u00a0'], ['U+2003', '\u2003'], ['U+3000',
 test('rules: a few lines of Unicode spaces between benign text stay allowed', () => {
   assert.equal(rules.evaluate('Run the tests.\n\u3000\n\u00a0\n\u2003\nThen build.\n').verdict, 'allow');
 });
+
+test('rules: lines made only of zero-width characters past the scan limit are still size:invisible', () => {
+  const text = 'hello\n' + ('\u200b\u200c\u200d'.repeat(400) + '\n').repeat(2000) + 'bye';
+  assert.ok(text.length > 256 * 1024);
+  const res = rules.evaluate(text);
+  assert.equal(res.verdict, 'block');
+  assert.equal(res.rule, 'size:invisible');
+});

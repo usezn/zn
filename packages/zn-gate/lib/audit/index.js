@@ -759,7 +759,7 @@ function insideQuotedExample(text) {
 const STRONG_IN_DOCS =/^(?:pi:(?:ignore_previous|disregard|system_tag|system_bracket|template_boundary|multi_\w+)|indirect:|evasion:|exfil:markdown_image)/;
 
 // A line the reader sees as empty: whitespace, or only zero-width characters.
-const BLANK_LINE_RE = /^[\s\u200b-\u200d\u2060\ufeff]*$/;
+const BLANK_LINE_RE = /^[\s\u0085\u00ad\u200b-\u200d\u2060\ufeff]*$/;
 const BLANK_PADDING_MIN = 40;
 const BLANK_PADDING_MAX_REPORTS = 10;
 
