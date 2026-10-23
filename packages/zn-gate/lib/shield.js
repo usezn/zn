@@ -376,6 +376,11 @@ function startMcpShield(command, args, options = {}) {
       delete holder.structuredContent;
       holder.content = [{ type: 'text', text: notice }];
       holder.isError = true;
+    } else if (key === '_meta') {
+      // A client reads _meta as an object: a string here makes it reject the whole tools/list.
+      delete holder._meta;
+    } else if (key === 'icons') {
+      holder.icons = [];
     } else holder[key] = notice;
   }
   // The model reads all the text of a message together, so a prompt injection can be split across fields that are
