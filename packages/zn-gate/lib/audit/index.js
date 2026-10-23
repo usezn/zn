@@ -992,8 +992,8 @@ function readBounded(abs, max, follow) {
     let text = buf.toString('utf8', 0, n);
     if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
     return { text };
-  } catch (_) {
-    return { skip: 'unreadable' };
+  } catch (e) {
+    return { skip: 'unreadable', code: e && e.code };
   } finally {
     if (fd !== undefined) try { fs.closeSync(fd); } catch (_) { /* ignore */ }
   }
@@ -1463,6 +1463,11 @@ function auditFile(rec, out) {
   const r = readBounded(rec.abs, MAX_FILE_BYTES, rec.scope === 'home');
   if (r.skip === 'too-large') {
     out.push(uncheckedFinding({ file: rec.display, agent: rec.agent, readers: rec.readers, severity: 'high', detail: rec.display + ' is ' + r.size + ' bytes; zn audit reads agent files up to ' + MAX_FILE_BYTES + ' bytes, the agent reads all of it.' }));
+    return true;
+  }
+  if (r.skip === 'unreadable') {
+    // The file is there but could not be opened: say so, never pass it as clean.
+    out.push(uncheckedFinding({ file: rec.display, agent: rec.agent, readers: rec.readers, severity: 'high', detail: rec.display + ' exists but could not be read (' + (r.code || 'read error') + '), so it was not checked. The agent may still read it.', fix: 'Make the file readable (check its permissions) and run zn audit again, or review it by hand.' }));
     return true;
   }
   if (r.text === undefined) return false;

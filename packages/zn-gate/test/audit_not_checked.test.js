@@ -74,3 +74,34 @@ test('audit: an agent not checked does not change the exit code', (t) => {
   const dir = repo(t, { 'README.md': 'x\n' });
   assert.equal(cli([dir, '--agents', 'gemini']).status, 0);
 });
+
+// A file that exists but cannot be opened is a finding, not a clean run.
+// openSync is stubbed in a preloaded module (chmod does nothing when CI runs as root).
+const STUB = path.join(__dirname, 'helpers', 'deny_open.js');
+function cliDenied(args, file) {
+  return spawnSync(process.execPath, ['-r', STUB, CLI, 'audit', ...args], { encoding: 'utf8', env: { ...process.env, ZN_TEST_DENY: file } });
+}
+
+test('audit: an unreadable agent file is a high finding, not "No findings"', (t) => {
+  const dir = repo(t, { 'AGENTS.md': 'Run the tests.\n', 'CLAUDE.md': 'Run the tests before you commit.\n' });
+  const r = cliDenied([dir, '--format', 'json'], path.join(dir, 'CLAUDE.md'));
+  const j = JSON.parse(r.stdout);
+  const f = j.findings.filter((x) => x.id === 'ZNA020');
+  assert.equal(f.length, 1);
+  assert.equal(f[0].severity, 'high');
+  assert.equal(f[0].file, 'CLAUDE.md');
+  assert.match(f[0].detail, /exists but could not be read \(EACCES\), so it was not checked/);
+  assert.equal(r.status, 1);
+  const text = cliDenied([dir], path.join(dir, 'CLAUDE.md'));
+  assert.doesNotMatch(text.stdout, /No findings/);
+  assert.match(text.stdout, /ZNA020/);
+});
+
+test('audit: --agents claude with an unreadable CLAUDE.md does not say it is missing', (t) => {
+  const dir = repo(t, { 'CLAUDE.md': 'Run the tests before you commit.\n' });
+  const r = cliDenied([dir, '--agents', 'claude'], path.join(dir, 'CLAUDE.md'));
+  assert.doesNotMatch(r.stdout, /claude: not checked|no instruction or config files/);
+  assert.doesNotMatch(r.stdout, /No findings|Nothing was checked/);
+  assert.match(r.stdout, /could not be read \(EACCES\)/);
+  assert.equal(r.status, 1);
+});
