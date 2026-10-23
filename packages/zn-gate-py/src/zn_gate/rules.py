@@ -1761,12 +1761,21 @@ _eval_cache: Dict[Tuple[bool, str], Tuple[Any, ...]] = {}
 _eval_cache_ver = RULES_VERSION
 
 
-def evaluate(input_text: str, strict: Optional[bool] = None) -> Assessment:
+def evaluate(text: Optional[str] = None, strict: Optional[bool] = None, *,
+             input_text: Optional[str] = None) -> Assessment:
     """Cached entry point: LRU(2048) keyed on raw input and strict mode, version-guarded.
 
-    strict=True (or ZN_STRICT=1) also blocks the heuristic rules that are
-    advisories by default (ADVISORY_BY_DEFAULT)."""
+    The text goes first or as text=...; input_text=... is the older keyword
+    name and still works. strict=True (or ZN_STRICT=1) also blocks the
+    heuristic rules that are advisories by default (ADVISORY_BY_DEFAULT)."""
     global _eval_cache_ver
+    if input_text is not None:
+        if text is not None:
+            raise TypeError("evaluate() takes the text once: pass text or input_text, not both")
+        text = input_text
+    elif text is None:
+        raise TypeError("evaluate() missing the text to check")
+    input_text = text
     strict = _strict(strict)
     if not isinstance(input_text, str) or len(input_text) > EVAL_CACHE_MAX_INPUT:
         return _evaluate_uncached(input_text, strict)
