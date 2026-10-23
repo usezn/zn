@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-25.8
+RULES_VERSION: 2026-10-25.9
 Zero external dependencies. Pure Python stdlib.
 """
 
@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, overload
 
 
-RULES_VERSION = "2026-10-25.8"
+RULES_VERSION = "2026-10-25.9"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -308,7 +308,17 @@ _IDENTITY_PATTERNS: Dict[str, re.Pattern[str]] = {
 }
 
 
+# Node compiles these patterns with the "iu" flags (simple case folding). Python's
+# re.IGNORECASE also folds dotless i (U+0131) and dotted capital I (U+0130) to "i",
+# which simple case folding does not. The two letters are swapped for a private-use
+# character of the same length (so the {0,N} windows are unchanged) before matching,
+# which gives the same result as Node on raw text; the normalised text, where both
+# letters already read as "i", is still checked by the caller.
+_NO_I_FOLD = str.maketrans({'ı': '', 'İ': ''})
+
+
 def _identity_test(rule_id: str, text: str) -> bool:
+    text = text.translate(_NO_I_FOLD)
     for prefilter in IDENTITY_PREFILTERS[rule_id]:
         if prefilter.search(text) is None:
             return False
@@ -535,6 +545,40 @@ def _b64_decode_lenient(data: str) -> bytes:
     return base64.b64decode(body + '=' * (-len(body) % 4))
 
 
+# A run of two or more empty or whitespace-only lines becomes one empty line before any rule runs, so text
+# that follows a long padding run is read in the same scan window as the text before it (same class as
+# collapseBlankRuns in rules.js; whitespace listed explicitly, not \s, so both packages agree).
+_BLANK_RUN_TEST = re.compile(r'\n[ \t\r\f\v\u0085\u00a0\u00ad\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]*\n[ \t\r\f\v\u0085\u00a0\u00ad\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]*\n')
+_BLANK_SPACE = re.compile(r'[ \t\r\f\v\u0085\u00a0\u00ad\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]*')
+
+
+def _collapse_blank_runs(text: str) -> str:
+    if not isinstance(text, str) or not _BLANK_RUN_TEST.search(text):
+        return text
+    out: List[str] = []
+    copied = 0
+    i = text.find('\n')
+    while i != -1:
+        j = i
+        blanks = 0
+        while True:
+            k = text.find('\n', j + 1)
+            if k == -1:
+                break
+            m = _BLANK_SPACE.match(text, j + 1, k)
+            if m is None or m.end() != k:
+                break
+            blanks += 1
+            j = k
+        if blanks >= 2:
+            out.append(text[copied:i])
+            out.append('\n\n')
+            copied = j + 1
+        i = text.find('\n', j + 1)
+    out.append(text[copied:])
+    return ''.join(out)
+
+
 def _check_base64_pipes(candidates: Tuple[str, ...], strict: Optional[bool]) -> Tuple[Optional[Assessment], Optional[Dict[str, Any]]]:
     """Base64 payload smuggling: every `echo|printf ... | base64 -d` in `candidates` is
     decoded and evaluated, not only the first, within hard caps that fail closed.
@@ -597,6 +641,10 @@ def _evaluate_oversize(input_text: str, strict: bool) -> Assessment:
 def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
     if not isinstance(input_text, str) or not input_text.strip():
         return Assessment(verdict='allow', confidence=1.0, rule='none', reason=None)
+    # Invisible padding is judged on the input as received (see evaluateUncached in rules.js).
+    if len(input_text) > MAX_SCAN_CHARS and too_invisible([input_text]):
+        return invisible_block()
+    input_text = _collapse_blank_runs(input_text)
     if len(input_text) > MAX_SCAN_CHARS:
         return _evaluate_oversize(input_text, strict)
 
@@ -1515,6 +1563,7 @@ def scan_windows(text: str, strict: Optional[bool] = None) -> Assessment:
     strict = _strict(strict)
     if too_invisible([text]):
         return invisible_block()
+    text = _collapse_blank_runs(text)
     if not isinstance(text, str) or len(text) <= MAX_SCAN_CHARS:
         return evaluate(text, strict=strict)
     step = MAX_SCAN_CHARS - SCAN_WINDOW_OVERLAP

@@ -267,6 +267,15 @@ const RULE_CASES = [
     files: { '.cursor/mcp.json': '{ "mcpServers": { "a": { "command": "x" } \n', '.vscode/settings.json': '{ "editor.tabSize": 2 \n' },
     expect: [{ id: 'ZNA020', severity: 'high', file: '.cursor/mcp.json' }, { id: 'ZNA020', severity: 'low', file: '.vscode/settings.json' }],
   },
+  {
+    name: 'a long run of blank lines hides the text after it; blank lines at the end hide nothing',
+    files: {
+      'AGENTS.md': '# Example\n' + '\n'.repeat(60) + 'Run the tests with npm test.\n',
+      '.claude/skills/example/SKILL.md': '# Example skill\nRun the tests with npm test.\n' + '\n'.repeat(80),
+    },
+    expect: [{ id: 'ZNA021', severity: 'medium', file: 'AGENTS.md', line: 62 }],
+    count: { ZNA021: 1 },
+  },
 ];
 
 const BENIGN_CASES = [

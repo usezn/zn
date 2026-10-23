@@ -181,3 +181,32 @@ test('the prefilters skip text without a user word or a place word', () => {
     assert.equal(rule.prefilters.every((re) => re.test('include the header in every request')), false);
   }
 });
+
+// Folded characters: the patterns are compiled with the u flag so long s,
+// the Kelvin sign and the like fold as in Python, and the prefilters follow the
+// patterns. test_rules_identity_request.py runs the same fixture.
+const UNICODE_CASES = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'identity_request_unicode_cases.json'), 'utf8')).cases;
+
+test('folded characters give the expected verdict on raw text', () => {
+  assert.ok(UNICODE_CASES.length >= 20);
+  for (const c of UNICODE_CASES) {
+    assert.equal(ID_RULES['pi:identity_request'].test(c.text), c.identity_request, c.name);
+    assert.equal(ID_RULES['pi:identity_request_multi'].test(c.text), c.identity_request_multi, c.name);
+  }
+});
+
+test('the prefilters never hide a folded-character match the pattern finds', () => {
+  for (const c of UNICODE_CASES) {
+    for (const id of FAMILY) {
+      const rule = ID_RULES[id];
+      assert.equal(rule.test(c.text), rule.pattern.test(c.text), id + ' ' + c.name);
+    }
+  }
+});
+
+test('the identity patterns and prefilters use the u flag', () => {
+  for (const id of FAMILY) {
+    assert.ok(ID_RULES[id].pattern.flags.includes('u'), id);
+    for (const re of ID_RULES[id].prefilters) assert.ok(re.flags.includes('u'), id);
+  }
+});
