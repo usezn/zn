@@ -2,8 +2,9 @@ name: Rust gateway
 
 on:
   push:
-    branches: [main, next]
-    paths: ["src/**", "Cargo.toml", "Cargo.lock", ".cargo/**", "build.rs", ".github/workflows/rust.yml", ".github/scripts/rust-scope.sh", ".github/scripts/ci-scope.sh", ".github/scripts/test-ci-scope.sh"]
+    # release/** is here, and there is no paths filter, because tag-release.yml requires "build, test, clippy,
+    # fmt" on the exact release commit, whatever that commit changed. rust-scope.sh runs every push in full.
+    branches: [main, next, 'release/**']
   pull_request:
     types: [ opened, synchronize, reopened, ready_for_review ]
     # No paths filter here: "build, test, clippy, fmt" is a required check, and a workflow skipped by a
