@@ -240,10 +240,6 @@ function searchScan(command, cwd) {
   return { dirs: [...found], ask: result.ask };
 }
 
-function searchDirsOf(command, cwd) {
-  return searchScan(command, cwd).dirs;
-}
-
 function normalize(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const wp = Array.isArray(raw.workspacePaths) && typeof raw.workspacePaths[0] === 'string' ? raw.workspacePaths[0] : null;
