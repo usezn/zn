@@ -555,7 +555,7 @@ Connects this machine to your organization with the join token your admin gave y
 zn-gate team status [--json]
 ```
 
-Shows the organization, the policy version and the state of the audit upload.
+Shows the organization, the policy version, what the last policy version removed or loosened, and the state of the audit upload. See [zn Team](team.md#when-the-organization-lifts-a-restriction).
 
 #### `team sync`
 

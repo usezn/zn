@@ -340,6 +340,19 @@ stop malware running as the same user (see above).
 - **Monitor commands** run as `bash -c` behind the scrubber's pipe. The
   functions and aliases of the agent's shell snapshot are not loaded there, so a
   monitor that depends on them will not work.
+- **zn Team: a signed policy can lift restrictions.** An organization admin
+  (or whoever holds the organization's signing key) can publish a version
+  that removes or loosens restrictions, and zn-gate applies it: the
+  organization decides what applies on a managed machine, and zn-gate cannot
+  tell an intended change from an unintended one. A stolen key still cannot
+  open a new host for a secret without a local approval. There is no local
+  minimum for restrictions. zn-gate shows what was lifted (`zn team status`,
+  one line in the next Claude Code hook message) and writes an audit record
+  (`org_policy_lifted:...`). See [zn Team](team.md#when-the-organization-lifts-a-restriction).
+- **zn Team readable copies:** `~/.zn/team.json` and `~/.zn/org-policy.json` are
+  for the hooks and `zn team status`. If one is deleted or edited, the vault
+  puts it back and the hook takes the custom detectors from the vault in the
+  meantime. With the vault locked, the hooks have only those copies.
 - **Rollback of the vault file:** restoring an older, genuine copy of
   `secrets.age` is accepted, and brings back the approvals and policy it had.
   Keep backups of `~/.zn` private.

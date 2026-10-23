@@ -535,6 +535,7 @@ function makeOps(state, ctl) {
     teamJoin: team.teamJoin,
     teamLeave: team.teamLeave,
     teamInfo: team.teamInfo,
+    teamHookInfo: team.teamHookInfo,
     teamSync: team.teamSync,
     confirmOrgOpening: team.confirmOrgOpening,
 

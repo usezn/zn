@@ -19,6 +19,7 @@ const fs = require('fs');
 const policy = require('./policy');
 const { pendingCount } = require('./upload');
 const { syncOutcome } = require('./sync-outcome');
+const { cleanChange, describeChange } = require('./changes');
 const { exportAuditFile } = require('./otel');
 const store = require('../vault/store');
 const { createClient } = require('../vault/client');
@@ -86,6 +87,10 @@ async function statusCmd(args) {
   try { pending = pendingCount({ auditFile: store.paths().auditFile, stateFile: p.uploadState, startAfterSeq: afterSeq }); } catch (e) { pending = null; }
   let upload = null;
   try { upload = JSON.parse(fs.readFileSync(p.uploadState, 'utf8')); } catch (e) { upload = null; }
+  // What the last policy version removed or loosened: from the vault, or from the readable copy when it is locked.
+  let change = null;
+  if (info && info.joined) change = cleanChange(info.policy && info.policy.change);
+  else { const c = policy.readCache(); change = c ? cleanChange(c.change) : null; }
   const joined = info ? info.joined : Boolean(team);
   const res = {
     joined,
@@ -95,7 +100,7 @@ async function statusCmd(args) {
     install_id: (info && info.install_id) || (team && team.install_id) || null,
     api_base: (info && info.api_base) || (team && team.api_base) || null,
     revoked_at: info ? info.revoked_at : null,
-    policy: st ? { state: st.state, version: st.version || null, expires_at: st.expires_at || null } : null,
+    policy: st ? { state: st.state, version: st.version || null, expires_at: st.expires_at || null, change } : null,
     upload: { pending, last_upload: upload && upload.last_upload, last_status: upload && upload.last_status },
     // true until a valid organization policy has been applied on this machine
     join_pending: joined && (!st || st.state === 'none' || st.state === 'invalid'),
@@ -107,6 +112,7 @@ async function statusCmd(args) {
   out('Installation: ' + res.install_id + ' via ' + res.api_base);
   if (res.revoked_at) out('REMOVED FROM ORG on ' + res.revoked_at + ': this machine no longer reports; the cached policy applies until it expires, then strict mode.');
   out('Policy:       ' + describePolicy(st));
+  if (change) { const lines = describeChange(change); out('Policy change: ' + lines[0]); for (const l of lines.slice(1)) out(l); }
   out('Audit upload: ' + (pending == null ? 'unknown' : pending + ' records pending') +
     (res.upload.last_upload ? ', last upload ' + res.upload.last_upload + ' (' + res.upload.last_status + ')' : ''));
   const ls = res.last_sync;

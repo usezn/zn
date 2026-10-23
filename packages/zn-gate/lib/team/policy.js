@@ -274,6 +274,7 @@ function state(opts) {
     expires_at: v.policy.expires_at,
     etag: typeof cache.etag === 'string' ? cache.etag : null,
     fetched_at: cache.fetched_at || null,
+    change: cache.change || null,
   };
 }
 
@@ -305,13 +306,18 @@ function accept(envelope, etag, opts) {
   return { ok: true, policy: v.policy };
 }
 
-/** Write the readable copy of an accepted policy (the vault daemon keeps the original). */
+/**
+ * Write the readable copy of an accepted policy (the vault daemon keeps the original).
+ * opts.change: what this version removed or loosened (team/changes.js), kept next to it.
+ */
 function writeCache(envelope, etag, opts) {
   const o = opts || {};
-  writeJson(paths(o).policyFile, {
+  const rec = {
     v: 1, envelope, etag: typeof etag === 'string' && etag.length <= 200 ? etag : null,
     fetched_at: new Date(o.now == null ? Date.now() : o.now).toISOString(), accepted_version: envelope.policy.version,
-  });
+  };
+  if (o.change) rec.change = o.change;
+  writeJson(paths(o).policyFile, rec);
 }
 
 /** Keep the cache but record that the server answered 304 (still current). */
