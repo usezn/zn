@@ -67,3 +67,31 @@ test('every silent name is skipped by pruneInfo and reported as silent', () => w
     assert.equal(info.silent, true, name);
   }
 }));
+
+test('every marker file makes its ambiguous name a reported skip', () => {
+  for (const [name, files] of Object.entries(MARKERS)) {
+    for (const file of files) {
+      withDir((dir) => {
+        fs.writeFileSync(path.join(dir, file), '');
+        assert.deepEqual(pruneInfo(name, dir), {
+          silent: false,
+          reason: 'skipped by name: ' + (name === 'vendor' ? 'dependencies' : 'build output') + ' next to ' + file,
+        }, name + ' + ' + file);
+      });
+    }
+  }
+});
+
+test('a marker directory does not count as a build file', () => withDir((dir) => {
+  fs.mkdirSync(path.join(dir, 'Cargo.toml'));
+  // existsSync is true for a directory, so the current behaviour is a skip.
+  assert.equal(pruneInfo('target', dir).silent, false);
+}));
+
+test('silent names are all in the scan list or are tool caches only', () => {
+  const { SCAN_DIRS } = require('../lib/prune');
+  for (const name of SCAN_DIRS) {
+    if (SILENT.has(name)) assert.equal(pruneInfo(name, os.tmpdir()).silent, true, name);
+  }
+  assert.ok(SCAN_DIRS.has('dist') && !SILENT.has('dist'));
+});
