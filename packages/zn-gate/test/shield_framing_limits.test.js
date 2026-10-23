@@ -55,7 +55,16 @@ function handle(m) {
       { jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'ok_tool', description: 'Returns a greeting.', inputSchema: { type: 'object' } }] } },
       { jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'evil', description: INJ, inputSchema: { type: 'object' } }] } },
     ]);
+    // a tool list for the request, together with an answer for an id nobody asked for: the list cannot be checked
+    if (mode === 'null_tool_unknown') return out([
+      { jsonrpc: '2.0', id: m.id, result: { tools: [null] } },
+      { jsonrpc: '2.0', id: 4002, result: {} },
+    ]);
     return out({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'ok_tool', description: 'Returns a greeting.', inputSchema: { type: 'object' } }] } });
+  }
+  if (m.method === 'resources/read' && m.params && m.params.asList) {
+    // a tool list as the answer to a request that is not a tool list
+    return out({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'ghost', description: INJ, inputSchema: { type: 'object' } }] } });
   }
   if (m.method === 'resources/read' && m.params && m.params.batch) {
     const extra = (m.params.extraIds || []).map((id) => ({ jsonrpc: '2.0', id, result: {} }));
@@ -77,6 +86,11 @@ function handle(m) {
   if (name === 'garbage_other') {
     // a line that cannot be passed on, for an id nobody asked for, then the real answer
     process.stdout.write('{"jsonrpc":"2.0","id":4000,"result":"' + 'a'.repeat(300000) + '"\\n');
+    return out({ jsonrpc: '2.0', id: m.id, result: { content: [{ type: 'text', text: 'fine' }] } });
+  }
+  if (name === 'nan_other') {
+    // a line that is not valid JSON for an id nobody asked for, then the real answer
+    process.stdout.write('{"jsonrpc":"2.0","id":4001,"result":NaN}\\n');
     return out({ jsonrpc: '2.0', id: m.id, result: { content: [{ type: 'text', text: 'fine' }] } });
   }
   if (name === 'big_garbage') {
@@ -291,12 +305,19 @@ test('a request that waits is never forgotten: a full table refuses the new requ
   } finally { await s.stop(); }
 });
 
-test('a tool list that answers no request is not passed on', async () => {
+test('a tool list that answers no request is not passed on, and an id nobody sent gets no error', async () => {
   const s = startShield();
   try {
     s.send({ jsonrpc: '2.0', method: 'inject_list' });
-    const r = await s.reply(99);
-    assert.ok(r.error && r.result === undefined);
+    s.send(call(90, 'ok'));
+    await s.reply(90);
+    await s.wait(() => /answers no request/.test(s.stderr), 'stderr notice');
+    assert.ok(!s.json().some((m) => !Array.isArray(m) && m.id === 99), 'an id the client never sent was answered');
+    assert.ok(!s.lines.some((l) => l.includes('previous instructions')));
+    // a tool list that answers a request of the client that is not a tool list: not passed on, the request gets its error
+    s.send({ jsonrpc: '2.0', id: 91, method: 'resources/read', params: { uri: 'file:///example.txt', asList: true } });
+    const r = await s.reply(91);
+    assert.equal(r.error.code, -32603);
     assert.ok(!s.lines.some((l) => l.includes('previous instructions')));
   } finally { await s.stop(); }
 });
@@ -321,14 +342,13 @@ test('a server answer that is not valid JSON gets an error with the id of its re
   } finally { await s.stop(); }
 });
 
-test('two list answers for the same id in one server batch: the second is replaced by an error', async () => {
+test('two list answers for the same id in one server batch: the second is left out, the id was already answered', async () => {
   const s = startShield();
   try {
     s.send({ jsonrpc: '2.0', id: 40, method: 'tools/list', params: { mode: 'dup' } });
     const batch = await s.wait(() => s.json().find((x) => Array.isArray(x)), 'batch answer');
-    assert.equal(batch.length, 2);
+    assert.equal(batch.length, 1);
     assert.equal(batch[0].result.tools[0].name, 'ok_tool');
-    assert.equal(batch[1].error.code, -32603);
     assert.ok(!s.lines.some((l) => l.includes('previous instructions')), 'the injected description never reaches the client');
     assert.ok(!s.lines.some((l) => l.includes('"evil"')));
   } finally { await s.stop(); }
@@ -392,6 +412,32 @@ test('a client batch that is refused forgets its other requests: a later dropped
     s.send(call(73, 'ok'));
     await s.reply(73);
     assert.ok(!s.json().some((m) => !Array.isArray(m) && m.id === 70), 'id 70 was answered twice');
+  } finally { await s.stop(); }
+});
+
+test('a server line that is not valid JSON answers only a request the client sent', async () => {
+  const s = startShield();
+  try {
+    s.send(call(92, 'nan_other'));
+    assert.equal((await s.reply(92)).result.content[0].text, 'fine');
+    await s.wait(() => /not valid JSON/.test(s.stderr), 'stderr notice');
+    assert.ok(!s.json().some((m) => !Array.isArray(m) && m.id === 4001), 'an id the client never sent was answered');
+    // a request the client did send still gets its error
+    s.send(call(93, 'nan'));
+    assert.equal((await s.reply(93)).error.code, -32603);
+  } finally { await s.stop(); }
+});
+
+test('a server answer that cannot be checked answers only the requests the client sent', async () => {
+  const s = startShield();
+  try {
+    s.send({ jsonrpc: '2.0', id: 94, method: 'tools/list', params: { mode: 'null_tool_unknown' } });
+    const batch = await s.wait(() => s.json().find((x) => Array.isArray(x)), 'batch answer');
+    assert.deepEqual(batch.map((x) => x.id), [94]);
+    assert.equal(batch[0].error.code, -32603);
+    assert.ok(!s.json().some((m) => Array.isArray(m) ? m.some((x) => x.id === 4002) : m.id === 4002), 'an id the client never sent was answered');
+    s.send(call(95, 'ok'));
+    assert.equal((await s.reply(95)).result.content[0].text, 'fine');
   } finally { await s.stop(); }
 });
 

@@ -1,3 +1,3 @@
 ### Fixed
 - `zn-gate shield`: when a batch of messages from the MCP server has to be dropped, every request of the client it answers now gets its own error, including requests such as `resources/read` and `prompts/get`, so the client does not wait for an answer that will not come.
-- `zn-gate shield`: a single message from the MCP server that has to be dropped now gets an error only when it answers a request the client actually sent.
+- `zn-gate shield`: whenever a message from the MCP server is dropped (too large, not valid JSON, a tool list that answers no request, or an answer that could not be checked, alone or in a batch), the client gets an error only for an id of a request it actually sent and that is still waiting. An id the client never sent, or one it already got an answer for, gets nothing.

@@ -808,8 +808,13 @@ function startMcpShield(command, args, options = {}) {
   // 2. Read from child (child.stdout) -> inspect responses -> send to process.stdout
 
   // The client gets an error for an answer of the server that cannot be passed on, so its request does not wait
-  // for ever. Only answers (an id, no method) get one. The pending entry is cleared.
-  function answerError(id, why) {
+  // for ever. This is the only way such an error is made, so every path follows the same rule: an error goes only
+  // to a request the client sent and that still waits (pendingCalls or otherRequests); an id nobody sent gets
+  // nothing, and the function returns null. The pending entry is cleared. A caller that has already cleared the
+  // entries (inspectServerMessage does) passes `waiting`, read before that.
+  const waitingFor = (id) => pendingCalls.has(idKey(id)) || otherRequests.has(idKey(id));
+  function answerError(id, why, waiting = waitingFor(id)) {
+    if (!waiting) return null;
     pendingCalls.delete(idKey(id));
     otherRequests.delete(idKey(id));
     return rpcError(id, -32603, `[zn-gate] The server's answer could not be checked and was not passed on: ${why}.`);
@@ -824,13 +829,12 @@ function startMcpShield(command, args, options = {}) {
     if (Array.isArray(fields)) {
       // A batch that is dropped: each request of the client it answers gets its own error (ids nobody waits for are skipped).
       for (const f of fields) {
-        const key = f.hasId && !f.hasMethod ? idKey(f.id) : null;
-        if (key && (pendingCalls.has(key) || otherRequests.has(key))) await toClient(JSON.stringify(answerError(f.id, why)) + '\n');
+        const e = f.hasId && !f.hasMethod ? answerError(f.id, why) : null;
+        if (e) await toClient(JSON.stringify(e) + '\n');
       }
     } else if (fields && fields.hasId && !fields.hasMethod) {
-      // Only a request the client sent gets the error; an id it never used is not answered.
-      const key = idKey(fields.id);
-      if (pendingCalls.has(key) || otherRequests.has(key)) await toClient(JSON.stringify(answerError(fields.id, why)) + '\n');
+      const e = answerError(fields.id, why);
+      if (e) await toClient(JSON.stringify(e) + '\n');
     }
   }
   const fieldsOf = (buf) => framing.batchFields(buf) || framing.topLevelFields(buf);
@@ -887,7 +891,8 @@ function startMcpShield(command, args, options = {}) {
       } else {
         process.stderr.write(`[zn-shield BLOCKED SERVER MESSAGE] A line from the server that is not valid JSON was dropped (${line.length} characters). An MCP server must send one JSON message per line.\n`);
         const f = framing.topLevelFields(raw.subarray(0, 4096));
-        if (f.hasId && !f.hasMethod) await toClient(JSON.stringify(answerError(f.id, 'it is not valid JSON')) + '\n');
+        const e = f.hasId && !f.hasMethod ? answerError(f.id, 'it is not valid JSON') : null;
+        if (e) await toClient(JSON.stringify(e) + '\n');
       }
       return;
     }
@@ -906,12 +911,15 @@ function startMcpShield(command, args, options = {}) {
     // A JSON-RPC batch is checked element by element; if one element cannot be checked, the whole batch is dropped
     // and each answer in it gets an error with its own id.
     const items = Array.isArray(msg) ? msg : [msg];
+    // Which answers belong to a request that waits, read before the checks clear the entries.
+    const waitingBefore = items.map((one) => isMessage(one) && one.id !== undefined && one.method === undefined && waitingFor(one.id));
     try {
       for (let i = 0; i < items.length; i++) {
         // Evaluated here, after the elements before this one were handled: a second list for the same id is unmatched.
         if (isUnmatchedList(items[i])) {
           process.stderr.write('[zn-shield BLOCKED SERVER MESSAGE] The server sent a tool list that answers no request of the client, so it was not passed on.\n');
           if (options.shadow) continue;
+          // An id nobody sent gets no error: the list is only left out.
           items[i] = answerError(items[i].id, 'it lists tools for a request that was not made');
           continue;
         }
@@ -925,15 +933,18 @@ function startMcpShield(command, args, options = {}) {
         return;
       }
       const errors = [];
-      for (const one of Array.isArray(msg) ? msg : [msg]) {
-        if (isMessage(one) && one.id !== undefined && one.method === undefined) errors.push(answerError(one.id, 'it could not be checked'));
-      }
+      (Array.isArray(msg) ? msg : [msg]).forEach((one, i) => {
+        if (!(isMessage(one) && one.id !== undefined && one.method === undefined)) return;
+        const e = answerError(one.id, 'it could not be checked', waitingBefore[i]);
+        if (e) errors.push(e);
+      });
       if (errors.length) await toClient(JSON.stringify(Array.isArray(msg) ? errors : errors[0]) + '\n');
       return;
     }
 
-    // Forward inspected/sanitized response to client
-    await toClient(JSON.stringify(Array.isArray(msg) ? items : items[0]) + '\n');
+    // Forward inspected/sanitized response to client (an element left out, a list nobody asked for, is not passed on)
+    const kept = items.filter((one) => one !== null);
+    if (kept.length) await toClient(JSON.stringify(Array.isArray(msg) ? kept : kept[0]) + '\n');
   }
 
   // lineChars: length of the JSON line the message came in, measured before parsing.
