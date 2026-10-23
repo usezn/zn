@@ -2,7 +2,7 @@
   "layers": {
     "rules": {
       "version_const": "RULES_VERSION",
-      "version": "2026-10-25.2",
+      "version": "2026-10-25.5",
       "ids": [
         "evasion:bidi_override",
         "exfil:credentials",
@@ -47,7 +47,7 @@
         "secret:private_key"
       ],
       "sha256": {
-        "lib/rules.js": "26ef6e8cfc714ae8e81b15f4396bef78d52ec46bfa45d75b305af240aaa52a51",
+        "lib/rules.js": "9ac7828ae3addb80adc21300e1c0beae953f7af30f4706a470c5ad78078283eb",
         "lib/mcp-secrets.js": "6a59fc9809d6b1a3509ff285d21be57e2906449b1c78644e41fe142eccda69b9"
       }
     },
@@ -155,7 +155,7 @@
     },
     "audit": {
       "version_const": "AUDIT_RULES_VERSION",
-      "version": "2026-10-23.4",
+      "version": "2026-10-23.7",
       "ids": [
         "ZNA001",
         "ZNA002",
@@ -177,6 +177,7 @@
         "ZNA018",
         "ZNA019",
         "ZNA020",
+        "ZNA021",
         "patterns.CRED_FLAG_NAME",
         "patterns.CRED_FLAG_ONLY",
         "patterns.INTERPRETERS",
@@ -203,14 +204,15 @@
         "patterns.weakening"
       ],
       "sha256": {
-        "lib/audit/rules.js": "48aebd0b2c2e5cf7cf8cde6aa3edf861cbaa9e3ec63eab402f28fb24fa15018f",
+        "lib/audit/rules.js": "9567d347da187ddd0eb11a0ddeed43c2b31d605964ea61b09e917751e42a2058",
         "lib/audit/patterns.js": "e758c777211da759a6973260363f3ddac41a37156171886bed624d97f18cdf46"
       }
     },
     "policy": {
       "version_const": "POLICY_RULES_VERSION",
-      "version": "2026-10-24.8",
+      "version": "2026-10-24.11",
       "ids": [
+        "INSTRUCTION_FILE_NAMES",
         "SHELL_SCAN_CAP",
         "_decodeAnsiC",
         "_globClassEnd",
@@ -229,6 +231,7 @@
         "globClass",
         "globRegExp",
         "hasNetworkSignals",
+        "instructionWriteNotice",
         "readDenial",
         "scanFirstCommand",
         "scanPowerShell",
@@ -237,12 +240,12 @@
         "writeDenial"
       ],
       "sha256": {
-        "lib/hooks/policy.js": "44294091615dbc773aca179cf88caeb60f9bc3425f2df356bc2869561af76079",
+        "lib/hooks/policy.js": "d7bf9a02ae13887459430d47e41867d4d0da5ae93f7370aeaeccbd634a25edcd",
         "lib/broker/files.js": "45dd8927cc626ac35e8c036e5118ec3c584a3f3a396640c09cee8b545e67c097",
         "lib/broker/markers.js": "301eb1d763e8e88c32e32a02c344be8f44b342b06b61897f3a2d478dbe55d6b4",
         "lib/broker/dotenv.js": "d12a12bd12108a38f84e9f4772ed50f0b015962a1e68f75362142b9b3449e8fe",
         "lib/shell-quote.js": "7624e8bfde93f671d0ef9ae8dd0fcc1002344d1556c30ceb0e14daa41fd5a122",
-        "lib/destructive.js": "9b7386bb24a563b26d99e55903785b9ae62df55c7fdfa0566432667743f11809"
+        "lib/destructive.js": "6a469b3003140e52faa40d42f8a2ee53c9ba9bfd146bde4d576a0d77b13350b5"
       }
     }
   }

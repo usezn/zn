@@ -216,6 +216,8 @@ function respondInner(d, ev) {
       return out;
     }
     if (d.decision === 'deny') return { decision: 'block', reason: d.message || 'Blocked by zn' };
+    // A note for the agent with the output unchanged (for example, text in it that reads like instructions).
+    if (d.message) return { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: d.message } };
     return null;
   }
   if (ev.event === 'user_prompt') {
@@ -456,8 +458,10 @@ function uninstall(opts = {}) {
       report.backup = backup(file);
       report.removed = 1;
       writeFileAtomic(file, cfg.stringifyJson(data), 0o644);
-      // The launcher of a user install (see commandFor) is no longer referenced.
-      if ((opts.scope || 'user') !== 'project') {
+      // The launcher (see commandFor) is shared by every Claude Code profile of this machine (every CLAUDE_CONFIG_DIR),
+      // so uninstalling one profile leaves it in place: deleting it would make the other profiles' hooks exit 127,
+      // which Claude Code runs through as a non-blocking error. Only the machine-wide uninstall removes it.
+      if ((opts.scope || 'user') !== 'project' && opts.removeLauncher === true) {
         try { fs.unlinkSync(launcher.launcherFile(id, opts)); } catch (_) { /* none */ }
       }
     }
