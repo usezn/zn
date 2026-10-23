@@ -5,7 +5,9 @@
 # handling between 1.2 and the current 1.x cannot slip through. Only the Python 3.12 /
 # ubuntu-latest entry installs it, in a separate step with its own virtual environment.
 #
-# Not managed by Dependabot, like ci-test-requirements.txt. Regenerate with uv from
+# Dependabot opens security updates only for this directory (version updates are off).
+# The minimum versions below are deliberate: they are the oldest supported releases, so
+# do not raise them to the latest. Regenerate with uv from
 # these inputs, written to a scratch file (for example requirements.in) next to this one:
 #   langchain-core==1.3.3
 #   llama-index-core>=0.14,<0.15

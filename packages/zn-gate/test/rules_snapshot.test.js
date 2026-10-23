@@ -6,7 +6,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { LAYERS, SNAPSHOT_FILE, computeLayer, compareLayer, readSnapshot } = require('./helpers/rules_snapshot');
+const { LAYERS, SNAPSHOT_FILE, computeLayer, compareLayer, compareVersions, readSnapshot } = require('./helpers/rules_snapshot');
 
 const snapshot = readSnapshot();
 
@@ -22,3 +22,12 @@ for (const name of Object.keys(LAYERS)) {
     assert.equal(problems.length, 0, problems.join('\n'));
   });
 }
+
+test('versions compare the integer suffix numerically, not as text', () => {
+  assert.ok(compareVersions('2026-10-22.10', '2026-10-22.9') > 0);
+  assert.ok(compareVersions('2026-10-22.9', '2026-10-22.10') < 0);
+  assert.ok(compareVersions('2026-10-22.6', '2026-10-22.57') < 0);
+  assert.equal(compareVersions('2026-10-22.9', '2026-10-22.9'), 0);
+  assert.ok(compareVersions('2026-10-23.1', '2026-10-22.99') > 0);
+  assert.ok(compareVersions('2026-10-21.99', '2026-10-22.1') < 0);
+});

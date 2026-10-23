@@ -8,6 +8,10 @@ on:
     types: [ opened, synchronize, reopened, ready_for_review ]
     # No paths filter here: "build, test, clippy, fmt" is a required check, and a workflow skipped by a
     # paths filter leaves it pending. rust-scope.sh skips the steps when no Rust file changed instead.
+  # The merge queue on next runs the required checks again on the queued commit; rust-scope.sh compares
+  # it with the group's base commit, so a group with no Rust change skips the steps like a pull request.
+  merge_group:
+    types: [ checks_requested ]
   schedule:
     - cron: "17 6 * * 1" # weekly advisory check
   workflow_dispatch:
@@ -42,7 +46,7 @@ jobs:
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: bash .github/scripts/rust-scope.sh
       - name: Test the scope scripts
         run: bash .github/scripts/test-ci-scope.sh
@@ -99,7 +103,7 @@ jobs:
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: bash .github/scripts/rust-scope.sh
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         if: steps.scope.outputs.rust == 'true'
@@ -145,7 +149,7 @@ jobs:
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: bash .github/scripts/rust-scope.sh
       - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         if: steps.scope.outputs.rust == 'true'

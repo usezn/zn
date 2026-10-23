@@ -30,6 +30,19 @@ allow = [
 multiple-versions = "warn"
 wildcards = "warn"
 highlight = "all"
+# getrandom is pulled in three versions that cannot be unified with a
+# compatible `cargo update`: every parent is already on its latest release.
+#   0.2.17 <- rand_core 0.6 (rand 0.8: tower_governor, jsonwebtoken RSA/ECDSA)
+#   0.3.4  <- rand_core 0.9 (rand 0.9: candle, opentelemetry_sdk, tokenizers),
+#             ahash 0.8.12, tempfile 3.27.0, tokenizers 0.22.2
+#   0.4.3  <- RustCrypto 2026 crates (crypto-common 0.2, password-hash, phc),
+#             rand 0.10, uuid 1.28
+# Unifying them needs a major upgrade of candle/tokenizers/tower_governor
+# upstream, so the two older ones are skipped here.
+skip = [
+    { crate = "getrandom@0.2.17", reason = "pulled by rand_core 0.6 (rand 0.8); parents have no release on getrandom 0.4" },
+    { crate = "getrandom@0.3.4", reason = "pulled by rand_core 0.9, ahash and tempfile, all at their latest release; needs upstream bumps" },
+]
 
 [sources]
 unknown-registry = "deny"

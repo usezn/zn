@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-21.1';
+const POLICY_RULES_VERSION = '2026-10-23.4';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -286,13 +286,18 @@ const GLOB_RE = /[*?[\]{}]/;
 // The first comma is matched by [^{},]*, so the pattern has one way to match and cannot backtrack.
 const BRACE_RE = /\{([^{},]*,[^{}]*)\}/;
 
+// A brace list has at least two alternatives, so more than 6 lists in one word always pass the default limit of 64.
+// The recursion stops there instead of following one level per list (a word with 20000 lists overflowed the stack).
+const BRACE_MAX_DEPTH = 8;
+
 /** Alternatives of a word with brace lists (`a{b,c}` -> ab, ac); null when there are too many. */
-function expandBraces(s, limit = 64) {
+function expandBraces(s, limit = 64, depth = 0) {
   const m = BRACE_RE.exec(s);
   if (!m) return [s];
+  if (depth >= BRACE_MAX_DEPTH) return null;
   const out = [];
   for (const alt of m[1].split(',')) {
-    const rest = expandBraces(s.slice(0, m.index) + alt + s.slice(m.index + m[0].length), limit);
+    const rest = expandBraces(s.slice(0, m.index) + alt + s.slice(m.index + m[0].length), limit, depth + 1);
     if (rest === null) return null;
     for (const x of rest) {
       out.push(x);
@@ -1015,7 +1020,7 @@ function hasNetworkSignals(cmd) {
 }
 
 // The program is zn, zn-gate (also with a version: npx -y zn-gate@1.6.0, pnpm dlx zn-gate@latest) or the bin file.
-const ZN_ADMIN_RE = /(^|[\s;&|(`$'"\\\/])((?:zn|zn-gate(?:@[^\s"'`;&|]+)?|cli\.js))(\.cmd|\.js|\.ps1)?["']?\s+(?:--\s+)?(secret\s+(set|get|rm|remove|import|adopt|approve|allow|reveal|link)|env\s+(shadow|unshadow)|unlock|lock|vault\s+reset|connect|disconnect|hooks\s+(install|uninstall)|init(?![^\n;&|#`$()'"<>\\]{0,512}[ \t]--(?:wrap-mcp|dry-run|revert|shadow)(?=[ \t\n]|$))|stats(?:\s+(?:-{1,2}[^\s-]\S*|\d+))*\s+share\s+on|["']?pins["']?\s+["']?approve)\b/i;
+const ZN_ADMIN_RE = /(^|[\s;&|(`$'"\\\/])((?:zn|zn-gate(?:@[^\s"'`;&|]+)?|cli\.js))(\.cmd|\.js|\.ps1)?["']?\s+(?:--\s+)?(secret\s+(set|get|rm|remove|import|adopt|approve|allow|reveal|link)|env\s+(shadow|unshadow)|unlock|lock|uninstall|vault\s+reset|connect|disconnect|hooks\s+(install|uninstall)|init(?![^\n;&|#`$()'"<>\\]{0,512}[ \t]--(?:wrap-mcp|dry-run|revert|shadow)(?=[ \t\n]|$))|stats(?:\s+(?:-{1,2}[^\s-]\S*|\d+))*\s+share\s+on|["']?pins["']?\s+["']?approve)\b/i;
 
 // `npm exec` (and `npm x`) keeps the options after the package for itself unless a `--` comes first, so
 // `npm exec zn-gate init --dry-run` runs the guided init: the options do not count there. Checked per simple

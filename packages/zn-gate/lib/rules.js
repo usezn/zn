@@ -5,10 +5,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-22.7
+ * RULES_VERSION: 2026-10-23.7
  */
 
-const RULES_VERSION = '2026-10-22.7';
+const RULES_VERSION = '2026-10-23.7';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -248,7 +248,7 @@ function matchesRule(rule, text) {
 const SENSITIVE_PATH_RULES = [
   {
     id: 'path:sensitive_file',
-    pattern: /(?:^|[\s"'`(\[])(?:~|\/home\/[^\s/]+|\/root)?\/?\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])/i,
+    pattern: /(?:^|[\s"'`(\[@])(?:~|\/home\/[^\s/]+|\/root)?\/?\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|=(?:~|\$\{?HOME\}?|\/home\/[^\s/]+|\/root|[A-Za-z]:\\Users\\[^\s\\]+)[\/\\]?\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])/i,
     description: 'Targeting sensitive system credentials or environment file',
   },
 ];
@@ -422,7 +422,12 @@ function foldCompatMatch(run) {
   return COMPAT_FOLD.get(run);
 }
 const ANSI_ESCAPE_RE = /\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07\x1b]*\x07/g;
-const B64_EXEC_RE = /(?:echo|printf)\s+([A-Za-z0-9+/=]{16,})\s*\|\s*(?:base64\s+-(?:d|-decode)|openssl)/i;
+// Hard caps for the Base64 smuggling check: above either one the command is blocked.
+const MAX_B64_PAYLOADS = 16;
+const MAX_B64_DECODED_BYTES = 128 * 1024;
+// The payload is group 2 (echo/printf pipe, quoted or not, with options) or group 4 (here-string).
+const B64_EXEC_RE = /(?:echo|printf(?:\s+(?:'%s'|"%s"|%s))?)(?:\s+-[A-Za-z]{1,3})*\s+(["']?)([A-Za-z0-9+/=]{16,})\1\s*\|\s*(?:base64\s+-(?:di?|id|-decode)|openssl)|base64\s+-(?:di?|id|-decode)\s*<<<\s*(["']?)([A-Za-z0-9+/=]{16,})\3/i;
+const B64_EXEC_ALL_RE = new RegExp(B64_EXEC_RE.source, 'gi');
 
 // Maximal whitespace runs; only runs that contain a line break are joined.
 // A pattern anchored on the line break (such as /[^\S\r\n]*[\r\n]/) would
@@ -527,24 +532,70 @@ function normalizeInput(str) {
   return { normalized, stripped };
 }
 
-// evaluate() analyses inputs longer than MAX_SCAN_CHARS as head + tail and
-// marks the result `truncated: true`. Tool results are scanned in overlapping
-// windows (up to MAX_TOOL_RESULT_SCAN_CHARS) by scanWindows() below.
+// evaluate() scans an input longer than MAX_SCAN_CHARS whole, in overlapping
+// windows (evaluateOversize() below), and blocks one longer than
+// MAX_TOOL_RESULT_SCAN_CHARS (rule size:oversize), so no part of an input is
+// left unscanned. Tool results go through scanWindows(), which allows output
+// past that limit and only marks it `truncated: true`.
 const MAX_SCAN_CHARS = 256 * 1024;
-const SCAN_HEAD_CHARS = 192 * 1024;
-// One character is reserved for the separator, so the window fits the limit.
-const SCAN_TAIL_CHARS = MAX_SCAN_CHARS - SCAN_HEAD_CHARS - 1;
+
+/* Base64 payload smuggling: every `echo|printf ... | base64 -d` in `candidates` is decoded
+   and evaluated, not only the first, within hard caps that fail closed.
+   Returns {block: a block result or null, advisory}. */
+function checkBase64Pipes(candidates, options) {
+  let advisory = null;
+  const payloads = new Set();
+  for (const candidate of candidates) {
+    for (const m of candidate.matchAll(B64_EXEC_ALL_RE)) {
+      const payload = m[2] || m[4];
+      if (payload) payloads.add(payload);
+    }
+  }
+  if (payloads.size > MAX_B64_PAYLOADS) {
+    return { block: { verdict: 'block', confidence: 0.99, reason: `Smuggled Base64 execution: more than ${MAX_B64_PAYLOADS} Base64 decode pipes in one command`, rule: 'evasion:base64_smuggling', engine: 'oss-local', rules_version: RULES_VERSION }, advisory };
+  }
+  let bytes = 0;
+  for (const payload of payloads) {
+    bytes += Math.floor(payload.length * 3 / 4);
+    if (bytes > MAX_B64_DECODED_BYTES) {
+      return { block: { verdict: 'block', confidence: 0.99, reason: 'Smuggled Base64 execution: too much Base64 data to inspect', rule: 'evasion:base64_smuggling', engine: 'oss-local', rules_version: RULES_VERSION }, advisory };
+    }
+    try {
+      const decoded = Buffer.from(payload, 'base64').toString('utf8');
+      const innerRes = evaluate(decoded, options);
+      if (innerRes.advisory && !advisory) advisory = innerRes.advisory;
+      if (innerRes.verdict === 'block') {
+        return {
+          block: { ...innerRes, reason: `Smuggled Base64 execution: ${innerRes.reason || innerRes.rule}`, rule: 'evasion:base64_smuggling' },
+          advisory,
+        };
+      }
+    } catch (e) {
+      // ignore invalid base64
+    }
+  }
+  return { block: null, advisory };
+}
+
+function evaluateOversize(input, options) {
+  if (input.length > MAX_TOOL_RESULT_SCAN_CHARS) {
+    return {
+      verdict: 'block', confidence: 1.0, rule: 'size:oversize', reason: 'Input too large to scan in full',
+      engine: 'oss-local', rules_version: RULES_VERSION, truncated: true,
+    };
+  }
+  // A Base64 pipe longer than the window overlap can straddle two windows and be cut in both:
+  // the pipes are found in the whole input first. The windows still check normalized text.
+  const b64 = checkBase64Pipes([input], options);
+  if (b64.block) return b64.block;
+  return scanWindows(input, { ...options, maxScanChars: MAX_TOOL_RESULT_SCAN_CHARS });
+}
 
 function evaluateUncached(input, options = {}) {
   if (typeof input !== 'string') {
     return { verdict: 'allow', confidence: 1.0, rule: 'none', reason: null, engine: 'oss-local', rules_version: RULES_VERSION };
   }
-  if (input.length > MAX_SCAN_CHARS) {
-    // NUL is neither whitespace nor a word character, so normalization cannot
-    // join the end of the head and the start of the tail into a new token.
-    const window = input.slice(0, SCAN_HEAD_CHARS) + '\u0000' + input.slice(-SCAN_TAIL_CHARS);
-    return { ...evaluateUncached(window, options), truncated: true };
-  }
+  if (input.length > MAX_SCAN_CHARS) return evaluateOversize(input, options);
 
   // Pre-normalization passes: stripped (preserves non-Latin) and normalized (maps homoglyphs)
   const { normalized, stripped } = normalizeInput(input);
@@ -552,25 +603,9 @@ function evaluateUncached(input, options = {}) {
   const strict = strictMode(options, loadCustomConfig());
   let tierAdvisory = null;
 
-  // Check Base64 payload smuggling
-  let b64Advisory = null;
-  const b64Match = normalized.match(B64_EXEC_RE) || stripped.match(B64_EXEC_RE);
-  if (b64Match && b64Match[1]) {
-    try {
-      const decoded = Buffer.from(b64Match[1], 'base64').toString('utf8');
-      const innerRes = evaluate(decoded, options);
-      if (innerRes.advisory) b64Advisory = innerRes.advisory;
-      if (innerRes.verdict === 'block') {
-        return {
-          ...innerRes,
-          reason: `Smuggled Base64 execution: ${innerRes.reason || innerRes.rule}`,
-          rule: 'evasion:base64_smuggling',
-        };
-      }
-    } catch (e) {
-      // ignore invalid base64
-    }
-  }
+  const b64 = checkBase64Pipes([normalized, stripped], options);
+  if (b64.block) return b64.block;
+  const b64Advisory = b64.advisory;
 
   // Check against normalized, stripped, and raw input
   const targets = Array.from(new Set([normalized, stripped, input]));
@@ -681,7 +716,7 @@ const SECRET_PATTERNS = [
   { id: 'secret:aws_access_key', pattern: /(?<![A-Za-z0-9_])(AKIA[0-9A-Z]{16})(?![A-Za-z0-9_])/g, replacement: '[REDACTED_AWS_KEY]' },
   { id: 'secret:aws_secret_key', pattern: /((?:[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]_[Aa][Cc][Cc][Ee][Ss][Ss]_[Kk][Ee][Yy]|[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]|[Aa][Ww][Ss]_[Kk][Ee][Yy])\s*[:=]\s*['"]?)([A-Za-z0-9/+=]{40})(['"]?)/g, replacement: '$1[REDACTED_AWS_SECRET]$3' },
   { id: 'secret:github_token', pattern: /(?<![A-Za-z0-9_])((?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,40}|github_pat_[A-Za-z0-9_]{82})(?![A-Za-z0-9_])/g, replacement: '[REDACTED_GITHUB_TOKEN]' },
-  { id: 'secret:db_url_password', pattern: /((?:[Pp][Oo][Ss][Tt][Gg][Rr][Ee][Ss](?:[Qq][Ll])?|[Mm][Yy][Ss][Qq][Ll]|[Mm][Oo][Nn][Gg][Oo][Dd][Bb](?:\+[Ss][Rr][Vv])?|[Rr][Ee][Dd][Ii][Ss]|[Aa][Mm][Qq][Pp]):\/\/[^:\s\/]+:)(?!(?:\$\{(?:[A-Z_][A-Z0-9_]*|[a-z_][a-z0-9_]*)\}|\$[A-Z_][A-Z0-9_]*|%[A-Z_][A-Z0-9_]*%|<[A-Za-z][A-Za-z_-]{0,63}>|\{\{\s*[A-Za-z_][A-Za-z_.]*\s*\}\})@)([^@\s\/]+)(@)/g, replacement: '$1[REDACTED_DB_PASSWORD]$3' },
+  { id: 'secret:db_url_password', pattern: /((?:[Pp][Oo][Ss][Tt][Gg][Rr][Ee][Ss](?:[Qq][Ll])?|[Mm][Yy][Ss][Qq][Ll]|[Mm][Oo][Nn][Gg][Oo][Dd][Bb](?:\+[Ss][Rr][Vv])?|[Rr][Ee][Dd][Ii][Ss]|[Aa][Mm][Qq][Pp])(?:\+[A-Za-z0-9_]+)?:\/\/[^:\s\/]+:)(?!(?:\$\{(?:[A-Z_][A-Z0-9_]*|[a-z_][a-z0-9_]*)\}|\$[A-Z_][A-Z0-9_]*|%[A-Z_][A-Z0-9_]*%|<[A-Za-z][A-Za-z_-]{0,63}>|\{\{\s*[A-Za-z_][A-Za-z_.]*\s*\}\})@)([^@\s\/]+)(@)/g, replacement: '$1[REDACTED_DB_PASSWORD]$3' },
   // The lookahead + backreference pairs act as atomic groups, so a long run of
   // "-eyJ" cannot make the engine retry every split point, and the lookbehind
   // allows a single start per token. Only used when the
@@ -1355,8 +1390,6 @@ module.exports = {
   MAX_FILTERED_VALUE,
   MAX_FILTERED_CHARS,
   SCAN_WINDOW_OVERLAP,
-  SCAN_HEAD_CHARS,
-  SCAN_TAIL_CHARS,
   EVAL_CACHE_MAX_INPUT,
   // Helper patterns used by normalization and the hidden-element check,
   // exported so the Python port can be checked against them.

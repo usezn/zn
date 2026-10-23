@@ -2,8 +2,9 @@
 # .github/workflows/build-release.yml with pip --require-hashes, in its own
 # virtual environment, apart from the build tools in release-requirements.txt).
 #
-# Not managed by Dependabot, for the same reason as release-requirements.txt.
-# Regenerate with uv from this input (saved as sbom-requirements.in):
+# Dependabot opens security updates only for this directory (same reason as
+# release-requirements.txt). Regenerate with uv from this input (saved as
+# sbom-requirements.in):
 #   cyclonedx-bom==7.5.0
 # uv pip compile sbom-requirements.in --universal --python-version 3.12 \
 #   --generate-hashes --no-header --no-annotate --exclude-newer <date two weeks ago>

@@ -9,6 +9,7 @@ const assert = require('node:assert/strict');
 const crypto = require('crypto');
 const engine = require('../lib/scrub/engine');
 const { findPatterns, SCRUB_RULES_VERSION } = require('../lib/scrub/patterns');
+const { compareVersions } = require('./helpers/rules_snapshot');
 
 const hex = (n) => crypto.randomBytes(n).toString('hex').slice(0, n);
 const key = () => 'zn_' + hex(48);
@@ -38,7 +39,7 @@ test('a zn API key is found, whole, wherever it appears', () => {
 test('the type is named, and the rules version moved with it', () => {
   const k = key();
   assert.deepEqual(findPatterns('x ' + k + ' y').map((d) => d.type), ['ZN_API_KEY']);
-  assert.ok(SCRUB_RULES_VERSION >= '2026-10-17.3');
+  assert.ok(compareVersions(SCRUB_RULES_VERSION, '2026-10-17.3') >= 0);
 });
 
 test('look-alikes are left alone: wrong length, uppercase, other prefixes, longer words', () => {
