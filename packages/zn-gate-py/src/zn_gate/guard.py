@@ -489,15 +489,22 @@ STREAM_OVERLAP = 256
 # secret that is split between two chunks is masked whole. The longest secret the
 # masker matches in a bounded span is a JWT (8192 + 512 + 4096 characters plus the
 # separators, about 12.8 thousand); a private key block is about 3.3 thousand
-# characters for RSA 4096 and 6.4 thousand for RSA 8192. A secret with an open
-# length (a credential value after a name such as api_key=) shrinks to one short
-# placeholder as soon as it is masked, so it stays inside the held text however
-# long it grows. 16 KiB covers all of them.
+# characters for RSA 4096 and 6.4 thousand for RSA 8192. 16 KiB covers all of them.
+# The held text is kept as it arrived, not masked: a secret with an open length
+# (a credential value after a name such as api_key=) is masked whole only when
+# its start is still in the text, however long it grows.
 STREAM_MASK_HOLD = 16384
 # New text is masked in batches: nothing is masked or passed on until the held
 # text and the new chunks together exceed STREAM_MASK_HOLD by this much, so a
 # stream of many small chunks does not mask the held text again for each chunk.
 STREAM_MASK_BATCH = 4096
+# Text is passed on up to a point (a cut) where no secret of the buffer starts before
+# the cut and ends after it: the cut is at least STREAM_MASK_HOLD from the end, and when
+# a secret lies across it, the cut moves back to an earlier break (after a white space),
+# at most STREAM_MASK_CUT_TRIES breaks. Without a usable cut nothing is passed on until
+# the buffer holds STREAM_MASK_FORCE characters (a secret longer than that is not kept whole).
+STREAM_MASK_CUT_TRIES = 128
+STREAM_MASK_FORCE = 262144
 _ERROR_CHAIN_LIMIT = 8
 
 
@@ -518,10 +525,12 @@ class _StreamMasker:
     """Masks the chunks of a streamed result without letting a secret through where two
     chunks meet.
 
-    Text (str, and bytes that are valid UTF-8) is appended to a buffer. When the
-    buffer is longer than STREAM_MASK_HOLD + STREAM_MASK_BATCH it is masked as a
-    whole, everything but its last STREAM_MASK_HOLD characters is passed on, and
-    the masked tail stays in the buffer to be masked again with the next chunk.
+    Text (str, and bytes that are valid UTF-8) is appended to a buffer, as it arrived.
+    When the buffer is longer than STREAM_MASK_HOLD + STREAM_MASK_BATCH it is masked
+    as a whole to find where a secret lies, the text before a cut that is at least
+    STREAM_MASK_HOLD from the end and outside every secret is masked and passed on,
+    and the rest stays in the buffer, unmasked, to be masked again with the next
+    chunk, so a secret that is cut by the end of a chunk is masked whole.
     flush() masks and passes on what is left. Chunks of other types and bytes that
     are not UTF-8 text are masked one by one, after the buffer is flushed, so the
     order of the stream is kept.
@@ -531,6 +540,7 @@ class _StreamMasker:
         self.pending = ""
         self.kind: Optional[type] = None  # str or bytes: the type the held text is passed on as
         self._partial = b""  # the first bytes of a multi-byte character cut by a chunk end
+        self._next_try = 0  # do not look for a cut again before the buffer is this long
 
     def _out(self, text: str) -> Any:
         return text.encode("utf-8") if self.kind is bytes else text
@@ -549,7 +559,37 @@ class _StreamMasker:
         self.pending = ""
         self.kind = None
         self._partial = b""
+        self._next_try = 0
         return pieces
+
+    def _release(self) -> str:
+        """The masked text that can be passed on now (and drop it from the buffer), or "" when no cut is safe."""
+        text = self.pending
+        limit = len(text) - STREAM_MASK_HOLD
+        whole = _mask_text(text)
+        if whole == text:
+            # No secret in the buffer: any cut is safe.
+            self.pending = text[limit:]
+            return text[:limit]
+        tries = 0
+        cut = limit
+        while cut > 0 and tries < STREAM_MASK_CUT_TRIES:
+            head = _mask_text(text[:cut])
+            if head + _mask_text(text[cut:]) == whole:
+                self.pending = text[cut:]
+                self._next_try = 0
+                return head
+            tries += 1
+            cut -= 1
+            while cut > 0 and not text[cut - 1].isspace():
+                cut -= 1
+        if len(text) <= STREAM_MASK_FORCE:
+            # A secret lies across every cut tried: keep the text, look again after more of it.
+            self._next_try = len(text) + 4 * STREAM_MASK_BATCH
+            return ""
+        self.pending = text[limit:]
+        self._next_try = 0
+        return _mask_text(text[:limit])
 
     def _decode(self, data: bytes) -> Optional[str]:
         """The text of data after the bytes held from the last chunk, or None when it is not UTF-8."""
@@ -585,13 +625,10 @@ class _StreamMasker:
             return self.flush(), False
         self.kind = kind
         self.pending += text
-        if len(self.pending) > STREAM_MASK_HOLD + STREAM_MASK_BATCH:
-            masked = _mask_text(self.pending)
-            if len(masked) > STREAM_MASK_HOLD:
-                ready, self.pending = masked[:-STREAM_MASK_HOLD], masked[-STREAM_MASK_HOLD:]
+        if len(self.pending) > max(STREAM_MASK_HOLD + STREAM_MASK_BATCH, self._next_try):
+            ready = self._release()
+            if ready:
                 pieces.append(self._out(ready))
-            else:
-                self.pending = masked
         return pieces, True
 
 
@@ -980,8 +1017,9 @@ def guard(
       A blocked chunk ends the stream: GuardBlockError, or the fallback as the
       last chunk with on_block="return". With mask_secrets the text is masked as
       one stream, so a secret split across chunks is masked whole: the last
-      16 KiB of text are held back until more text or the end of the stream
-      (also when the function fails) arrives. Each chunk the function yields
+      16 KiB of text are held back, as it arrived, until more text or the end
+      of the stream (also when the function fails) arrives; a secret that
+      reaches into them keeps the text from its start held as well. Each chunk the function yields
       still gives one chunk out, empty while its text is held, so the text
       comes out later and in larger pieces, in order and without gaps. The
       held text is withheld when a chunk blocks;
