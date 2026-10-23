@@ -35,7 +35,7 @@ const store = require('./store');
 const keychain = require('./keychain');
 const audit = require('./audit');
 const confirmMod = require('./confirm');
-const { variants } = require('../scrub/exact');
+const { variants, validateSecretValue } = require('../scrub/exact');
 const exe = require('../exe');
 const { makeTeamOps } = require('../team/daemon-ops');
 const { CODES, znError } = require('../errors');
@@ -383,9 +383,15 @@ function makeOps(state, ctl) {
     async setSecret(name, value, meta) {
       const n = checkName(name);
       str(value, 'value');
+      const backup = meta && typeof meta === 'object' && meta.mode === 'backup'; // whole files kept by `zn env shadow`
       return state.serial(async () => {
         const secrets = await state.loadSecrets();
         const prev = secrets.secrets[n];
+        // New values under the minimum are refused; a value an older version stored keeps working.
+        if (!backup && !(prev && prev.value === value)) {
+          const bad = validateSecretValue(value);
+          if (bad) throw znError(CODES.POLICY_DENIED, 'invalid value: ' + bad);
+        }
         secrets.secrets[n] = Object.assign(cleanMeta(meta), { value, created: prev ? prev.created : new Date().toISOString(), lastUsed: prev ? prev.lastUsed : null });
         await writeAudit({ secret: n, mode: 'set', decision: 'allow', reason: prev ? 'updated' : 'created' });
         await state.saveSecrets();
@@ -555,7 +561,10 @@ function makeOps(state, ctl) {
       const out = [];
       for (const [name, s] of Object.entries(secrets.secrets)) {
         // Backups (whole files kept by `zn env shadow`) are not values to search for.
-        if (s && s.mode !== 'backup' && typeof s.value === 'string' && s.value.length >= 8) out.push({ name, type: s.type || 'SECRET', values: variants(s.value) });
+        if (!s || s.mode === 'backup' || typeof s.value !== 'string' || s.value.length === 0) continue;
+        // A value under 8 characters comes from an older version: it is compared exactly (see buildMatcher).
+        if (s.value.length >= 8) out.push({ name, type: s.type || 'SECRET', values: variants(s.value) });
+        else out.push({ name, type: s.type || 'SECRET', values: [s.value], exactShort: true });
       }
       // Values already detected in this project (most recent first): once a
       // value was found, it is caught again even where no pattern matches.

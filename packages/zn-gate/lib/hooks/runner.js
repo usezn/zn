@@ -925,14 +925,17 @@ async function decidePost(ev, d, agentId, opts = {}) {
     return POST_WITHHELD;
   };
   const check = async (s) => {
-    if (s === POST_WITHHELD || s.length < 8) return s;
-    if (stopped || Date.now() >= deadlineAt) return withhold(s, true);
-    if (s.length > room) return withhold(s, false);
+    if (s === POST_WITHHELD || s.length === 0) return s;
+    if (s.length >= 8 && (stopped || Date.now() >= deadlineAt)) return withhold(s, true);
+    if (s.length >= 8 && s.length > room) return withhold(s, false);
     // The engine's own scan is pure and cheap: it counts the values this string would add to the vault.
     if (scanCtx === null) {
+      if (s.length < 8 && (stopped || Date.now() >= deadlineAt)) return s;
       scanCtx = typeof engine.prepare === 'function' ? await raceDeadline(engine.prepare(ctx), deadlineAt) : ctx;
-      if (scanCtx === DEADLINE) { abandoned = true; return withhold(s, true); }
+      if (scanCtx === DEADLINE) { abandoned = true; return s.length < 8 ? s : withhold(s, true); }
     }
+    // A string under 8 characters is only looked at when the vault holds a short value from an older version.
+    if (s.length < 8 && !(scanCtx && scanCtx !== DEADLINE && scanCtx.exactMatcher && scanCtx.exactMatcher.shortSize > 0)) return s;
     if (scanCtx === DEADLINE) return withhold(s, true);
     const spans = engine.scan(s, scanCtx) || [];
     for (const span of spans) {
