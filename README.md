@@ -417,6 +417,8 @@ Run both checks before each commit with the [pre-commit](https://pre-commit.com)
 
 Each tag's hooks run the exact zn-gate version of that tag (`npx --yes zn-gate@1.13.1 ...`), so the `rev` you pin decides which version runs on every commit.
 
+What the hooks look at: both hooks scan the whole working folder, not only the files in the commit (`pass_filenames: false`). A local `.env` file that holds a key, even one listed in `.gitignore`, makes every commit that starts the scan fail. `zn-gate-scan` starts only when the commit touches a prompt, markdown, text, YAML, JSON or TOML file, and it reads prompts, markdown, skills and agent configs, not source code (that needs `zn-gate scan --all`). A commit of only a `.env` file or a source file such as `app.py` therefore shows `Skipped` or `Passed` even when it holds a key: use a secret scanner for code. `zn-audit` starts when the commit touches an agent configuration file (for example `.claude/`, `.mcp.json` or `AGENTS.md`).
+
 ### Repository layout
 
 - `packages/zn-gate`: Node.js CLI, MCP server and `shield` proxy (npm).
