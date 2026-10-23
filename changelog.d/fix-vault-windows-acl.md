@@ -1,0 +1,4 @@
+### Security
+- On Windows, the vault now sets explicit owner-only permissions on its folders (`~/.zn` or `ZN_HOME`, `vault`, `run`), on the session key and on the daemon pipe, reads them back, and does not start if it cannot set or verify them. Before, it trusted inherited permissions, so a `ZN_HOME` outside your profile (such as `C:\zn`) could let another local account read the session key and talk to the daemon.
+- `zn run` no longer gives secret values to a `#!` script that can still be rewritten (by your user, or by group or others): its interpreter opens the script again after zn's last check, so it could be swapped in that window. `zn run` refuses and says how to run it through its interpreter instead. Native programs and scripts only an administrator can change are not affected.
+- The threat model now documents the memory, swap and crash-dump boundary of the unlocked vault.

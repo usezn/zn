@@ -33,6 +33,7 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const store = require('./store');
 const keychain = require('./keychain');
+const winacl = require('./winacl');
 const audit = require('./audit');
 const confirmMod = require('./confirm');
 const { variants } = require('../scrub/exact');
@@ -753,7 +754,19 @@ async function serve(opts) {
     throw err;
   });
   if (ep.unix) fs.chmodSync(ep.address, 0o600);
-  store.writePrivateFile(ep.keyFile, sessionKey.toString('hex'));
+  try {
+    store.writePrivateFile(ep.keyFile, sessionKey.toString('hex'));
+    if (!ep.unix) {
+      // Windows: the key file and the pipe get explicit owner-only permissions, read back.
+      // If either cannot be set or checked, the daemon does not stay up.
+      const acl = o.winacl || winacl;
+      acl.ensurePrivate(ep.keyFile, { dir: false });
+      acl.ensurePipe(ep.address);
+    }
+  } catch (err) {
+    await shutdown('error');
+    throw err;
+  }
   await state.serial(async () => {
     const rec = audit.append({ mode: 'unlock', decision: 'allow', reason: 'ttl:' + Math.round(ttlMs / 60000) + 'm' },
       { file: state.paths.auditFile, key: Buffer.from(state.secrets.auditKey, 'hex') });
