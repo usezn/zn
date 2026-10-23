@@ -198,10 +198,21 @@ file names) are printed as `\x1b`, never sent to the terminal.
     "bySeverity": { "critical": 1, "high": 0, "medium": 0, "low": 0 },
     "failOn": "high",
     "failed": true,
-    "agents": ["claude", "codex", "cursor", "opencode", "amazonq", "copilot", "gemini"]
+    "agents": ["claude", "codex", "cursor", "opencode", "amazonq", "copilot", "gemini"],
+    "agentStatus": [
+      { "agent": "claude", "files": 3, "checked": true },
+      { "agent": "codex", "files": 0, "checked": false }
+    ]
   }
 }
 ```
+
+`summary.agentStatus` says, for each selected agent, how many files were read and whether
+anything was checked. With `--agents`, the text report adds a line such as
+`codex: not checked (no instruction or config files found where zn looks: AGENTS.md, .codex/)`
+for an agent with no files, so a missed location is not mistaken for a clean result. The
+exit code does not change. A file that exists but cannot be read (for example, permission
+denied) is a high ZNA020 finding, never a clean result.
 
 `file` is relative to `root` with forward slashes; files from `--include-home`
 start with `~/`. `agent` is the agent that reads the file (`any` when several
