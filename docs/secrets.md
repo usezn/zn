@@ -94,9 +94,9 @@ name in text is never touched. Only the value is replaced; the key stays.
 
 | Type | HTTP header keys | Query string and form keys |
 |---|---|---|
-| `PERSON_NAME` | `X-User-Name`, `X-Full-Name` | `full_name`, `fullname`, `name` |
+| `PERSON_NAME` | `X-User-Name`, `X-Username`, `X-Full-Name` | `full_name`, `fullname`, `name` |
 | `POSTAL_ADDRESS` | `X-Address` | `address` |
-| `USERNAME` | `X-Username`, `X-User`, `X-Forwarded-User`, `X-Remote-User` | `username`, `user`, `login` |
+| `USERNAME` | `X-User`, `X-Forwarded-User`, `X-Remote-User` | `username`, `user`, `login` |
 
 - Keys are case-insensitive. A header value runs to the end of the line (or to
   the closing quote when the header sits in JSON or in `curl -H '...'`). A query
