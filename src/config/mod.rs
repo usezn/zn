@@ -303,6 +303,13 @@ pub struct AuditConfig {
     /// encryption key (`ZN_DB_KEY`), in every environment.
     #[serde(default)]
     pub store_payloads: bool,
+
+    /// Fail closed when the audit record of a call cannot be written: the
+    /// call is denied with a JSON-RPC error. Off by default: a write failure
+    /// is logged and counted (`zn_audit_write_failures_total`) and the call
+    /// goes on.
+    #[serde(default)]
+    pub require_write: bool,
 }
 
 impl Default for AuditConfig {
@@ -313,6 +320,7 @@ impl Default for AuditConfig {
             encryption_enabled: false,
             encryption_key: std::env::var("ZN_DB_KEY").ok(),
             store_payloads: false,
+            require_write: false,
         }
     }
 }
@@ -781,6 +789,10 @@ impl ZnConfig {
 
         if let Ok(v) = std::env::var("ZN_AUDIT_STORE_PAYLOADS") {
             self.audit.store_payloads = matches!(v.trim(), "1" | "true" | "TRUE" | "True");
+        }
+
+        if let Ok(v) = std::env::var("ZN_AUDIT_REQUIRE_WRITE") {
+            self.audit.require_write = matches!(v.trim(), "1" | "true" | "TRUE" | "True");
         }
 
         if let Ok(endpoint) = std::env::var("ZN_SIEM_ENDPOINT") {

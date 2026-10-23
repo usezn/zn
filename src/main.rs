@@ -914,6 +914,20 @@ fn resolve_namespace(authenticated: Option<String>, configured: Option<&str>) ->
         .unwrap_or_else(|| GLOBAL_NAMESPACE.to_string())
 }
 
+/// Write one audit record. A failure is logged (event name and error, never the
+/// payload) and counted in `zn_audit_write_failures_total`; the caller decides
+/// whether it denies the call (`audit.require_write`).
+fn audit_write(state: &AppState, event: &str, entry: AuditEntry) -> bool {
+    match state.vault.log(entry) {
+        Ok(()) => true,
+        Err(e) => {
+            metrics::record_audit_write_failure();
+            log::error(format!("AUDIT WRITE FAILED for {event}: {e}")).ok();
+            false
+        }
+    }
+}
+
 async fn process_mcp_message(
     line: &str,
     state: &AppState,
@@ -1139,13 +1153,16 @@ async fn process_mcp_message(
                                 neural_veto = true;
                                 metrics::record_neural_block();
                                 log::warning(format!(
-                                    "🛑 NEURAL VETO: risk {:.4} (anomaly {:.4} vs {}, classifier {:?} vs {}) Nearest: '{}'",
+                                    "🛑 NEURAL VETO: risk {:.4} (anomaly {:.4} vs {}, classifier {:?} vs {}) Nearest ref: '{}'",
                                     risk,
                                     distance,
                                     adjusted_threshold,
                                     prob,
                                     adjusted_classifier_threshold,
-                                    nearest.as_ref().map(|(t, _)| t.as_str()).unwrap_or("-")
+                                    nearest
+                                        .as_ref()
+                                        .map(|(t, _)| zn::ai::content_ref(t))
+                                        .unwrap_or_else(|| "-".to_string())
                                 ))
                                 .ok();
                             } else {
@@ -1161,8 +1178,11 @@ async fn process_mcp_message(
                         let mem = state.memory.clone();
                         let ns = memory_namespace.clone();
                         let agent = agent_id_str.clone();
+                        // The memory keeps the vector and a hash of the call,
+                        // never the arguments themselves.
+                        let neural_ref = zn::ai::content_ref(&neural_input);
                         tokio::spawn(async move {
-                            let _ = mem.store(&ns, &agent, &neural_input, &vec).await;
+                            let _ = mem.store(&ns, &agent, &neural_ref, &vec).await;
                         });
 
                         log::info(format!(
@@ -1237,7 +1257,11 @@ async fn process_mcp_message(
 
             // E-2: nearest-neighbor audit (if enabled)
             let nearest_neighbor_entry = if state.config.guardrails.nearest_neighbor_audit {
-                nearest.as_ref().map(|(t, d)| format!("{}:{:.4}", t, d))
+                // Distance plus a content-free reference to the neighbour
+                // (never its text).
+                nearest
+                    .as_ref()
+                    .map(|(t, d)| format!("{}:{:.4}", zn::ai::content_ref(t), d))
             } else {
                 None
             };
@@ -1261,7 +1285,7 @@ async fn process_mcp_message(
                 // decision is wired in; schema field defaults to absent here.
                 fusion: None,
             };
-            let _ = state.vault.log(entry.clone());
+            let mut audit_written = audit_write(state, &entry.event, entry.clone());
 
             // Log nearest-neighbor separately if enabled
             if let Some(nn) = nearest_neighbor_entry {
@@ -1271,7 +1295,18 @@ async fn process_mcp_message(
                     .with_agent_id(&agent_id_str);
                 nn_entry.payload =
                     zn::audit::payload_if_enabled(state.config.audit.store_payloads, nn);
-                let _ = state.vault.log(nn_entry);
+                audit_written &= audit_write(state, "NEAREST_NEIGHBOR", nn_entry);
+            }
+
+            if !audit_written && state.config.audit.require_write {
+                return Ok(Some(jsonrpc_error_response(
+                    id,
+                    -32001,
+                    &format!(
+                        "Tool call '{}' denied: the audit record could not be written (audit.require_write is on)",
+                        tool_name
+                    ),
+                )));
             }
 
             let _ = state.tx.send(entry.clone());
@@ -2400,5 +2435,211 @@ mod audit_isolation_tests {
             .unwrap();
         let rows = state.vault.get_recent(10).unwrap();
         assert_eq!(rows[0].namespace.as_deref(), Some(GLOBAL_NAMESPACE));
+    }
+}
+
+#[cfg(test)]
+mod audit_metadata_tests {
+    use super::*;
+    use std::path::Path;
+
+    const MARKER: &str = "zebra-marker-7f3a91";
+
+    /// Paths under `dir` (any depth) whose bytes contain `needle`.
+    fn files_containing(dir: &Path, needle: &str) -> Vec<String> {
+        let mut hits = Vec::new();
+        let mut stack = vec![dir.to_path_buf()];
+        while let Some(d) = stack.pop() {
+            for e in std::fs::read_dir(&d).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if std::fs::read(&p)
+                    .map(|b| b.windows(needle.len()).any(|w| w == needle.as_bytes()))
+                    .unwrap_or(false)
+                {
+                    hits.push(p.display().to_string());
+                }
+            }
+        }
+        hits
+    }
+
+    fn test_state(root: &Path, require_write: bool) -> AppState {
+        std::fs::create_dir_all(root).unwrap();
+        let mut cfg = ZnConfig::default();
+        cfg.audit.db_path = root.join("audit.db").to_string_lossy().into_owned();
+        cfg.audit.require_write = require_write;
+        assert!(cfg.neural.enabled, "neural is on by default");
+        assert!(
+            !cfg.audit.store_payloads,
+            "payload storage is off by default"
+        );
+        assert!(cfg.guardrails.nearest_neighbor_audit);
+        let vault = Arc::new(
+            AuditVault::new(&cfg.audit.db_path, None)
+                .unwrap()
+                .with_payload_storage(cfg.audit.store_payloads),
+        );
+        let tenants = Arc::new(TenantStore::new(vault.get_connection()).unwrap());
+        let engine = Arc::new(
+            ZnEngine::new(ZnEngineConfig {
+                gas_limit: cfg.engine.gas_limit,
+                memory_limit: cfg.engine.memory_limit_mb * 1024 * 1024,
+                timeout_ms: cfg.engine.timeout_ms,
+                allowed_hashes: cfg.engine.allowed_policy_hashes.clone(),
+                signing_public_key: cfg.engine.signing_public_key.clone(),
+            })
+            .unwrap(),
+        );
+        let (tx, _) = broadcast::channel(64);
+        let (webhook_tx, _webhook_rx) = tokio::sync::mpsc::channel(8);
+        let backend: Arc<dyn zn::ai::ModelBackend> = Arc::new(zn::ai::FastBootBackend::new(384));
+        let vectors = root.join("vectors");
+        std::fs::create_dir_all(&vectors).unwrap();
+        let memory = Arc::new(zn::ai::VectorMemory::new(
+            vectors.to_str().unwrap(),
+            384,
+            "test-audit-metadata",
+        ));
+        let cache = Arc::new(zn::engine::cache::ResultCache::new(cfg.caching.clone()));
+        let pool =
+            Arc::new(McpPool::new(std::collections::HashMap::new()).with_cache(cache.clone()));
+        AppState {
+            tx,
+            vault,
+            reputation: Arc::new(ReputationSystem::new()),
+            engine,
+            pool,
+            webhook_tx,
+            tenants,
+            canary: Arc::new(zn::ai::CanaryDeployer::new(backend)),
+            memory,
+            loop_breaker: Arc::new(zn::engine::loop_breaker::LoopBreaker::new(
+                cfg.loop_breaker.clone(),
+            )),
+            cache,
+            consensus: Arc::new(zn::engine::consensus::ConsensusManager::new(
+                cfg.consensus.clone(),
+            )),
+            config: Arc::new(cfg),
+        }
+    }
+
+    fn call(n: u32, text: &str) -> String {
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": n, "method": "tools/call",
+            "params": {"name": "read_note", "arguments": {"text": text}}
+        })
+        .to_string()
+    }
+
+    async fn wait_for_memory(state: &AppState) {
+        let vec = state
+            .canary
+            .backend_for("anonymous")
+            .embed("probe")
+            .unwrap();
+        for _ in 0..100 {
+            let found = state
+                .memory
+                .search(GLOBAL_NAMESPACE, "anonymous", &vec, 1)
+                .await
+                .map(|r| !r.is_empty())
+                .unwrap_or(false);
+            if found {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        panic!("the vector memory never stored the first call");
+    }
+
+    #[test]
+    fn scan_helper_finds_a_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("sub")).unwrap();
+        std::fs::write(dir.path().join("sub/a.bin"), format!("xx{MARKER}yy")).unwrap();
+        assert_eq!(files_containing(dir.path(), MARKER).len(), 1);
+        assert!(files_containing(dir.path(), "absent-needle").is_empty());
+    }
+
+    #[tokio::test]
+    async fn default_config_keeps_call_content_out_of_audit_sse_and_vectors() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state(dir.path(), false);
+        let mut rx = state.tx.subscribe();
+
+        process_mcp_message(&call(1, &format!("{MARKER} first")), &state, None)
+            .await
+            .unwrap();
+        wait_for_memory(&state).await;
+        process_mcp_message(&call(2, &format!("{MARKER} second")), &state, None)
+            .await
+            .unwrap();
+
+        let mut events = Vec::new();
+        while let Ok(e) = rx.try_recv() {
+            events.push(e);
+        }
+        assert!(!events.is_empty(), "the calls must reach the SSE stream");
+        let sse = serde_json::to_string(&events).unwrap();
+        assert!(!sse.contains(MARKER), "SSE events carry call content");
+        let nn = events
+            .iter()
+            .filter_map(|e| e.nearest_neighbor.clone())
+            .next()
+            .expect("the second call must report a nearest neighbour");
+        assert!(nn.starts_with("h:"), "neighbour must be a reference: {nn}");
+
+        let rows = state.vault.get_recent(100).unwrap();
+        assert!(rows.iter().any(|r| r.event == "NEAREST_NEIGHBOR"));
+        assert!(!serde_json::to_string(&rows).unwrap().contains(MARKER));
+
+        assert!(
+            files_containing(dir.path(), MARKER).is_empty(),
+            "call content reached a file: {:?}",
+            files_containing(dir.path(), MARKER)
+        );
+    }
+
+    #[tokio::test]
+    async fn audit_write_failure_is_counted_and_only_blocks_with_require_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let open = test_state(&dir.path().join("a"), false);
+        let strict = test_state(&dir.path().join("b"), true);
+        for st in [&open, &strict] {
+            st.vault
+                .get_connection()
+                .lock()
+                .unwrap()
+                .execute_batch("DROP TABLE audit_logs")
+                .unwrap();
+        }
+        let before = zn::metrics::AUDIT_WRITE_FAILURES.get();
+
+        let out = process_mcp_message(&call(1, "plain note"), &open, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            !out.contains("audit record could not be written"),
+            "default mode must not block: {out}"
+        );
+        assert!(zn::metrics::AUDIT_WRITE_FAILURES.get() > before);
+
+        let out = process_mcp_message(&call(2, "plain note"), &strict, None)
+            .await
+            .unwrap()
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(
+            v["error"]["message"]
+                .as_str()
+                .unwrap_or("")
+                .contains("audit record could not be written"),
+            "require_write must deny: {out}"
+        );
+        assert!(v.get("result").is_none());
     }
 }
