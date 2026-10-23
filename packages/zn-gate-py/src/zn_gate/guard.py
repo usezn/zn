@@ -539,6 +539,7 @@ def _mask_text_spans(text: str) -> Tuple[str, List[Tuple[int, int]]]:
 
 
 _OPEN_KEY = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----")
+_END_KEY = re.compile(r"-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----")
 
 
 def _open_private_key(text: str) -> Optional[int]:
@@ -549,7 +550,7 @@ def _open_private_key(text: str) -> Optional[int]:
     last = None
     for m in _OPEN_KEY.finditer(text):
         last = m
-    if last is None or "-----END " in text[last.end():]:
+    if last is None or _END_KEY.search(text, last.end()):
         return None
     return last.start()
 

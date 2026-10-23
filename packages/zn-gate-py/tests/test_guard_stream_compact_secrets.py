@@ -118,6 +118,23 @@ class TestLongSecretsStream(unittest.TestCase):
                     self.assertIsNone(rule)
                     self.assertTrue(out == whole, "differs from the whole text masked")
 
+    def test_chunk_that_ends_inside_the_end_line(self):
+        # A key is closed only by its whole END line, not by its first characters. These sizes and
+        # paddings let the BEGIN line out with a check that stopped at "-----END ".
+        for n, pad in ((17000, 3500), (20000, 500), (20000, 1500), (20000, 2500)):
+            key = fake_pem(n, n)
+            text = "x" * pad + "\n" + key + "\nafter\n"
+            whole = _mask_text(text)
+            end_at = text.index("-----END ")
+            for into in (9, 12, 20):
+                cut = end_at + into
+                with self.subTest(n=n, pad=pad, into=into):
+                    chunks = chunked(text[:cut], 4096) + chunked(text[cut:], 4096)
+                    out, rule = run_until_block(chunks)
+                    self.assertIsNone(rule)
+                    self.assertNotIn("BEGIN RSA PRIVATE KEY", out)
+                    self.assertTrue(out == whole, "differs from the whole text masked")
+
     def test_private_key_longer_than_the_buffer_blocks(self):
         key = fake_pem(5, 300000)
         text = "start\n" + key + "\nend\n"
