@@ -2,7 +2,8 @@
 # Decides whether the Rust gateway checks (fmt, clippy, build, test) need to run for this change.
 # Prints "rust=true" or "rust=false" to $GITHUB_OUTPUT (and to the log).
 #
-# Always true outside pull requests (pushes, tags, schedule, manual runs). For a pull request, true
+# Always true outside pull requests and the merge queue (pushes, tags, schedule, manual runs). For a
+# pull request or a merge queue group (compared with its base commit), true
 # when any changed file is something cargo reads: src/, Cargo.toml, Cargo.lock, .cargo/, build.rs,
 # benches/, tests/, rust-toolchain files, or this workflow and script.
 # Any error while listing the files means true: when in doubt, run the checks.
@@ -10,7 +11,7 @@ set -uo pipefail
 
 out() { echo "rust=$1"; [ -n "${GITHUB_OUTPUT:-}" ] && echo "rust=$1" >> "$GITHUB_OUTPUT"; exit 0; }
 
-[ "${EVENT_NAME:-}" = "pull_request" ] || out true
+case "${EVENT_NAME:-}" in pull_request|merge_group) ;; *) out true ;; esac
 [[ "${BASE_SHA:-}" =~ ^[0-9a-f]{40}$ ]] || out true
 
 git fetch --no-tags --depth=1 origin "$BASE_SHA" >/dev/null 2>&1 || out true
