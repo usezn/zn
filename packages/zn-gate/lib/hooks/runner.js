@@ -182,6 +182,25 @@ function destructiveRulesOf(opts) {
 }
 
 /*
+ * Writes to the files where an agent keeps memory and standing instructions (MEMORY.md, AGENTS.md, CLAUDE.md,
+ * .cursor/rules and the others in lib/hooks/policy.js) ask the user. Returns "ask" (the default), "deny" or "off".
+ *
+ * ~/.zn/config.json, {"hooks": {"agentInstructionWrites": ...}}: "ask", "deny", or "off" (also false or "allow").
+ * Strict mode, {"hooks": {"strict": true}} or ZN_STRICT=1 in the environment, refuses these writes. The environment
+ * can only add protection, like ZN_HOOK_FAIL_MODE: only ZN_STRICT=1 counts, and turning the check off is only
+ * possible from the config file, which the agent's file tools cannot write.
+ */
+function instructionWritesOf(opts) {
+  if (opts.instructionWrites) return ['ask', 'deny', 'off'].includes(opts.instructionWrites) ? opts.instructionWrites : 'ask';
+  if (process.env.ZN_STRICT === '1') return 'deny';
+  const hooks = readConfig(opts.home).hooks || {};
+  const v = hooks.agentInstructionWrites;
+  if (v === false || ['off', 'allow'].includes(String(v).toLowerCase())) return 'off';
+  if (String(v).toLowerCase() === 'deny' || hooks.strict === true) return 'deny';
+  return 'ask';
+}
+
+/*
  * Egress check (pre-tool): a network request that carries personal data or a literal secret in its headers, credentials,
  * query string or body asks the user first. Network requests are curl, wget, Invoke-WebRequest and its aliases, inline
  * python or node code that opens a URL, the WebFetch tool and MCP calls with a URL or headers (see policy.egressParts).
@@ -456,6 +475,7 @@ async function decidePre(ev, d, agentId, opts) {
     const ask = searchFolderAsk(input.scanDir, pathOpts);
     if (ask) return ask;
   }
+  let instructionAsk = null;
   if (tool === 'fileaccess') {
     // A tool zn does not know that names files: every path gets the read and the write checks.
     for (const p of Array.isArray(input.paths) ? input.paths : []) {
@@ -470,10 +490,20 @@ async function decidePre(ev, d, agentId, opts) {
       return { decision: 'deny', message: 'zn: this patch is too long for zn to check (over 100 KB), so it was blocked. Next step: tell the user; do not resend it in parts.' };
     }
     if (input.unparsed) return { decision: 'deny', message: 'zn: could not read the file names in this patch, so zn cannot check it.' };
+    const instructionMode = instructionWritesOf(opts);
+    let instruction = null;
     for (const p of Array.isArray(input.paths) ? input.paths : [input.path]) {
       // An adapter that promises "no reads or writes of secret files" asks for the read check on a write too.
       const deny = (input.alsoReadCheck && policy.readDenial(p, pathOpts)) || policy.writeDenial(p, pathOpts);
       if (deny) return { decision: 'deny', message: deny };
+      if (!instruction && instructionMode !== 'off') instruction = policy.instructionWriteNotice(p, pathOpts);
+    }
+    // A file the agent reads as standing instructions: ask (a deny in strict mode). Reading it is not checked.
+    // A write that carries secret markers goes on to the marker check below, which adds this question to its own message.
+    if (instruction) {
+      if (instructionMode === 'deny') return { decision: 'deny', message: instruction.deny };
+      if (!Array.isArray(input.texts)) return { decision: 'ask', message: instruction.ask };
+      instructionAsk = instruction.ask;
     }
   }
 
@@ -514,7 +544,9 @@ async function decidePre(ev, d, agentId, opts) {
 
   if (SHELL_TOOLS.has(tool)) {
     const original = String(input.command || '');
-    const deny = policy.bashDenial(original, { ...pathOpts, destructiveRules: destructiveRulesOf(opts) });
+    const instructionMode = instructionWritesOf(opts);
+    const instructionNotice = instructionMode === 'off' ? undefined : {};
+    const deny = policy.bashDenial(original, { ...pathOpts, destructiveRules: destructiveRulesOf(opts), instructionNotice });
     if (deny) return { decision: 'deny', message: deny };
     if (input.scanAsk) {
       return { decision: 'ask', message: input.scanAsk === 'long'
@@ -530,6 +562,13 @@ async function decidePre(ev, d, agentId, opts) {
     const egress = egressMode === 'off' ? null
       : await egressCheck(ev, d, agentId, egressMode, policy.egressParts(original, { powershell: tool === 'powershell', allow: () => egressAllowOf(opts) }), 'command');
     if (egress && egress.decision === 'deny') return egress;
+    // The command writes a file the agent reads as standing instructions: ask (a deny in strict mode).
+    const instruction = instructionNotice && instructionNotice.hit;
+    if (instruction && instructionMode === 'deny') return { decision: 'deny', message: instruction.deny };
+    const withInstruction = (r) => {
+      if (!instruction) return r;
+      return r.decision === 'ask' ? { ...r, message: (r.message ? r.message + ' ' : '') + instruction.ask } : { decision: 'ask', message: instruction.ask };
+    };
 
     let command = original;
     const notes = [];
@@ -568,17 +607,19 @@ async function decidePre(ev, d, agentId, opts) {
         // A command that carries markers always asks, even when nothing was rewritten
         // (already wrapped in `zn run` by the agent, or tokens kept unresolved).
         // Never let it run on the user's allow rules alone.
-        return withEgress({ decision: 'ask', message: 'zn: this command contains secret placeholders (such as __ZN_NAME__)' + (notes.length ? '; ' + notes.join('; ') : '') + ', so it needs your approval before it runs.', context }, egress);
+        return withEgress(withInstruction({ decision: 'ask', message: 'zn: this command contains secret placeholders (such as __ZN_NAME__)' + (notes.length ? '; ' + notes.join('; ') : '') + ', so it needs your approval before it runs.', context }), egress);
       }
-      return withEgress(notes.length ? { decision: 'allow', message: 'zn: ' + notes.join('; ') } : { decision: 'allow' }, egress);
+      return withEgress(withInstruction(notes.length ? { decision: 'allow', message: 'zn: ' + notes.join('; ') } : { decision: 'allow' }), egress);
     }
     // kind tells adapters that cannot rewrite input what the rewrite was for.
-    return withEgress({ decision: 'ask', updatedInput: { command }, kind: wrap.wrapped ? 'wrap' : 'restore', message: 'zn: this command ' + notes.join('; ') + '.', context }, egress);
+    return withEgress(withInstruction({ decision: 'ask', updatedInput: { command }, kind: wrap.wrapped ? 'wrap' : 'restore', message: 'zn: this command ' + notes.join('; ') + '.', context }), egress);
   }
 
   if ((tool === 'write' || tool === 'edit' || tool === 'multiedit' || tool === 'notebookedit') && Array.isArray(input.texts)) {
+    // The instruction-file question comes first; the marker result only adds its own notes to it.
+    const asked = (r) => (instructionAsk ? { ...r, decision: 'ask', message: (r.message ? r.message + ' ' : '') + instructionAsk } : r);
     const withMarkers = input.texts.filter((t) => markers.findMarkers(t.value).length);
-    if (withMarkers.length === 0) return { decision: 'allow' };
+    if (withMarkers.length === 0) return asked({ decision: 'allow' });
     const status = input.path ? gitStatusOf(path.resolve(ev.cwd || process.cwd(), input.path)) : 'unknown';
     const destination = status === 'ignored' || status === 'outside' ? 'write_ignored' : 'write_tracked';
     const ctx = await ctxFor(ev, d, agentId, destination);
@@ -611,15 +652,15 @@ async function decidePre(ev, d, agentId, opts) {
     const outdated = isOutdated(withheld);
     const told = [blocked.length ? blockedLine(blocked) : null, outdated ? outdatedLine() : null].filter(Boolean);
     const context = told.length ? 'zn: ' + told.join(' ') : undefined;
-    if (updates.length === 0 && told.length) return { decision: 'ask', message: 'zn:' + why, context };
-    if (updates.length === 0) return { decision: 'allow', message: why ? 'zn:' + why : undefined };
-    return {
+    if (updates.length === 0 && told.length) return asked({ decision: 'ask', message: 'zn:' + why, context });
+    if (updates.length === 0) return asked({ decision: 'allow', message: why ? 'zn:' + why : undefined });
+    return asked({
       decision: 'ask',
       updatedInput: { texts: updates },
       kind: 'restore',
       message: 'zn: restores ' + restored + ' secret value(s) in a git-ignored file.' + why,
       context,
-    };
+    });
   }
 
   return { decision: 'allow' };
