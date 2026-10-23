@@ -1,7 +1,7 @@
 'use strict';
 
 const { spawn } = require('child_process');
-const readline = require('readline');
+const framing = require('./shield_framing');
 // All shield inspections are local-only: tool arguments, tool descriptions and
 // tool results never leave the machine (see lib/client.js data-flow contract).
 const { analyzeLocal, checkToolResult } = require('./client');
@@ -253,7 +253,8 @@ function startMcpShield(command, args, options = {}) {
 
   // Keep track of pending requests to correlate with responses (capped to prevent memory exhaustion - CWE-400)
   // id -> { method, toolName, startTime }
-  const MAX_PENDING_CALLS = 5000;
+  const limits = framing.resolveLimits();
+  const MAX_PENDING_CALLS = limits.pending;
   const pendingCalls = new Map();
   // Tools removed from the list because they changed since they were approved (block mode).
   const unpinnedTools = new Set();
@@ -559,21 +560,60 @@ function startMcpShield(command, args, options = {}) {
   // One JSON-RPC message: an object (not an array, not a bare value).
   const isMessage = (x) => !!x && typeof x === 'object' && !Array.isArray(x);
 
+  // A request whose answer is awaited is never forgotten: its answer would reach the client unchecked. When the
+  // table is full the new request is refused instead (returns false) and the caller answers it with an error.
   function trackPendingCall(id, meta) {
-    if (pendingCalls.size >= MAX_PENDING_CALLS) {
-      const oldestKey = pendingCalls.keys().next().value;
-      pendingCalls.delete(oldestKey);
-    }
-    pendingCalls.set(idKey(id), meta);
+    if (id === undefined) return true;
+    const key = idKey(id);
+    if (!pendingCalls.has(key) && pendingCalls.size >= MAX_PENDING_CALLS) return false;
+    pendingCalls.set(key, meta);
+    return true;
   }
-
-  // 1. Read from client (process.stdin) -> inspect requests -> send to child.stdin
-  const clientRl = readline.createInterface({
-    input: process.stdin,
-    terminal: false,
+  const tooManyPending = (callId) => ({
+    jsonrpc: '2.0',
+    id: callId,
+    error: { code: -32000, message: `[zn-gate] Not sent: ${MAX_PENDING_CALLS} requests are already waiting for an answer from the server. Try again when it has caught up.` },
   });
 
-  clientRl.on('line', (line) => {
+  // Writes to the client and to the wrapped server. When the receiver is slow the writer waits (server output) or
+  // the sender is paused (client input), so nothing piles up in memory.
+  const toClient = (text) => {
+    if (process.stdout.write(text)) return undefined;
+    return new Promise((resolve) => {
+      const done = () => { process.stdout.off('drain', done); process.stdout.off('close', done); process.stdout.off('error', done); resolve(); };
+      process.stdout.once('drain', done);
+      process.stdout.once('close', done);
+      process.stdout.once('error', done);
+    });
+  };
+  let clientPaused = false;
+  const toChild = (text) => {
+    if (child.stdin.write(text) || clientPaused) return;
+    clientPaused = true;
+    process.stdin.pause();
+    const resume = () => { clientPaused = false; process.stdin.resume(); };
+    child.stdin.once('drain', resume);
+    child.stdin.once('close', resume);
+  };
+  const rpcError = (id, code, message) => ({ jsonrpc: '2.0', id, error: { code, message } });
+  const humanBytes = (n) => (n >= 1048576 ? `${Math.round(n / 1048576)} MiB` : `${n} bytes`);
+  const limitText = (why) => ({
+    depth: `it nests more than ${limits.depth} levels`,
+    elements: `it has more than ${limits.elements} values`,
+    batch: `its batch holds ${limits.batch} messages or more`,
+  })[why] || why;
+
+  // 1. Read from client (process.stdin) -> inspect requests -> send to child.stdin
+  function onClientLine(raw) {
+    if (!raw.length) return;
+    const problem = framing.shapeProblem(raw, limits);
+    if (problem) {
+      const f = framing.topLevelFields(raw.subarray(0, 4096));
+      process.stderr.write(`[zn-shield BLOCKED REQUEST] A message from the client was not sent because ${limitText(problem)}.\n`);
+      toClient(JSON.stringify(rpcError(f.hasId ? f.id : null, -32600, `[zn-gate] Invalid request: ${limitText(problem)}.`)) + '\n');
+      return;
+    }
+    let line = raw.toString('utf8');
     line = line.trim();
     if (!line) return;
 
@@ -582,7 +622,7 @@ function startMcpShield(command, args, options = {}) {
       msg = JSON.parse(line);
     } catch {
       // Non-JSON line, forward as-is
-      child.stdin.write(line + '\n');
+      toChild(line + '\n');
       return;
     }
 
@@ -592,13 +632,13 @@ function startMcpShield(command, args, options = {}) {
       if (!msg.every(isMessage)) {
         if (options.shadow) {
           process.stderr.write('[zn-shield] A batch from the client holds something that is not a message; shadow mode passes it on unchecked.\n');
-          child.stdin.write(line + '\n');
+          toChild(line + '\n');
         } else {
           process.stderr.write('[zn-shield BLOCKED REQUEST] A batch from the client holds something that is not a message (a nested batch or a bare value), so it was not sent.\n');
           // Each request in it gets an answer, and each entry that is not a request gets Invalid Request.
           const invalid = { jsonrpc: '2.0', id: null, error: { code: -32600, message: '[zn-gate] Invalid request: a batch may only hold request objects.' } };
           const out = msg.map((one) => (isMessage(one) ? (one.id !== undefined ? batchNotice(one.id) : null) : invalid)).filter(Boolean);
-          process.stdout.write(JSON.stringify(out) + '\n');
+          toClient(JSON.stringify(out) + '\n');
         }
         return;
       }
@@ -612,21 +652,21 @@ function startMcpShield(command, args, options = {}) {
           pendingCalls.delete(idKey(one.id));
           out.push(answers[i].response || batchNotice(one.id));
         });
-        if (out.length) process.stdout.write(JSON.stringify(out) + '\n');
+        if (out.length) toClient(JSON.stringify(out) + '\n');
         return;
       }
-      child.stdin.write(line + '\n');
+      toChild(line + '\n');
       return;
     }
 
     const answer = inspectClientMessage(msg);
     if (answer.response) {
-      process.stdout.write(JSON.stringify(answer.response) + '\n');
+      toClient(JSON.stringify(answer.response) + '\n');
       return;
     }
     // Forward approved request to child process
-    child.stdin.write(line + '\n');
-  });
+    toChild(line + '\n');
+  }
 
   // Checks one request from the client and tracks the ones whose answers are checked. Returns { response } when
   // the shield answers it itself (a refused or blocked tool call), or {} when it may go to the server.
@@ -636,11 +676,11 @@ function startMcpShield(command, args, options = {}) {
     if (msg && msg.method === 'tools/list') {
       const callId = msg.id;
       log(`Tracking tools/list request [${callId}] for tool poisoning inspection`);
-      trackPendingCall(callId, {
+      if (!trackPendingCall(callId, {
         method: 'tools/list',
         cursor: msg.params && msg.params.cursor,
         startTime: Date.now(),
-      });
+      })) return { response: tooManyPending(callId) };
     }
 
     // Intercept tool calls: method === "tools/call"
@@ -714,36 +754,84 @@ function startMcpShield(command, args, options = {}) {
       }
 
       // Record pending call for response checking
-      trackPendingCall(callId, {
+      if (!trackPendingCall(callId, {
         method: 'tools/call',
         toolName,
         startTime: Date.now(),
-      });
+      })) return { response: tooManyPending(callId) };
     }
     return {};
   }
 
   // The client is gone (its input closed): tell the wrapped server by closing its input, so it does not stay running.
-  clientRl.on('close', () => {
-    try { child.stdin.end(); } catch (_) { /* already closed */ }
+  framing.createLineReader(process.stdin, {
+    maxBytes: limits.clientLineBytes,
+    onLine: onClientLine,
+    onOversize: ({ bytes, head }) => {
+      const f = framing.topLevelFields(head);
+      process.stderr.write(`[zn-shield BLOCKED REQUEST] A message from the client was not sent: its line is longer than ${humanBytes(limits.clientLineBytes)} (${humanBytes(bytes)}).\n`);
+      toClient(JSON.stringify(rpcError(f.hasId ? f.id : null, -32600, `[zn-gate] Invalid request: the message is larger than ${humanBytes(limits.clientLineBytes)}.`)) + '\n');
+    },
+    // The client is gone (its input closed): tell the wrapped server by closing its input, so it does not stay running.
+    onEnd: () => {
+      try { child.stdin.end(); } catch (_) { /* already closed */ }
+    },
   });
 
   // 2. Read from child (child.stdout) -> inspect responses -> send to process.stdout
-  const serverRl = readline.createInterface({
-    input: child.stdout,
-    terminal: false,
-  });
+
+  // The client gets an error for an answer of the server that cannot be passed on, so its request does not wait
+  // for ever. Only answers (an id, no method) get one. The pending entry is cleared.
+  function answerError(id, why) {
+    pendingCalls.delete(idKey(id));
+    return rpcError(id, -32603, `[zn-gate] The server's answer could not be checked and was not passed on: ${why}.`);
+  }
+  async function dropServerLine(fields, why, shadowLine) {
+    if (options.shadow) {
+      process.stderr.write(`[zn-shield] A line from the server was not checked (${why}); shadow mode passes it on unchecked.\n`);
+      if (shadowLine !== undefined) await toClient(shadowLine + '\n');
+      return;
+    }
+    process.stderr.write(`[zn-shield BLOCKED SERVER MESSAGE] A line from the server was dropped: ${why}.\n`);
+    if (fields && fields.hasId && !fields.hasMethod) await toClient(JSON.stringify(answerError(fields.id, why)) + '\n');
+  }
 
   // Server lines are handled one at a time, in the order the server sent them: checking a message awaits, so
   // without the queue a short message could overtake a long one that came before it. A line that fails is dropped.
+  // Reading from the server is paused while a lot of output waits in the queue, and resumed when it has gone down.
   let serverQueue = Promise.resolve();
-  serverRl.on('line', (line) => {
-    serverQueue = serverQueue.then(() => onServerLine(line)).catch((err) => {
+  let queuedBytes = 0;
+  let serverPaused = false;
+  const enqueueServer = (bytes, work) => {
+    queuedBytes += bytes;
+    if (!serverPaused && queuedBytes >= limits.queueHighWater) { serverPaused = true; child.stdout.pause(); }
+    serverQueue = serverQueue.then(work).catch((err) => {
       process.stderr.write(`[zn-shield] A message from the server could not be checked and was dropped (${err && err.message}).\n`);
+    }).then(() => {
+      queuedBytes -= bytes;
+      if (serverPaused && queuedBytes < limits.queueHighWater / 2) { serverPaused = false; child.stdout.resume(); }
     });
+  };
+  framing.createLineReader(child.stdout, {
+    maxBytes: limits.serverLineBytes,
+    onLine: (raw) => enqueueServer(raw.length, () => onServerLine(raw)),
+    onOversize: ({ bytes, head }) => enqueueServer(head.length, () => dropServerLine(
+      framing.topLevelFields(head), `its line is longer than ${humanBytes(limits.serverLineBytes)} (${humanBytes(bytes)})`)),
   });
 
-  async function onServerLine(line) {
+  // An answer that lists tools for a request that was never made (or was already answered) cannot be matched
+  // with the tool pins and the checks of a list, so it is not passed on.
+  const isUnmatchedList = (m) => isMessage(m) && m.method === undefined && m.id !== undefined &&
+    isMessage(m.result) && Array.isArray(m.result.tools) && !pendingCalls.has(idKey(m.id));
+
+  async function onServerLine(raw) {
+    if (!raw.length) return;
+    const problem = framing.shapeProblem(raw, limits);
+    if (problem) {
+      await dropServerLine(framing.topLevelFields(raw.subarray(0, 4096)), limitText(problem), raw.toString('utf8').trim());
+      return;
+    }
+    let line = raw.toString('utf8');
     line = line.trim();
     if (!line) return;
 
@@ -752,12 +840,15 @@ function startMcpShield(command, args, options = {}) {
       msg = JSON.parse(line);
     } catch {
       // Not JSON for this parser (for example NaN, which some other JSON parsers accept): it is not checked, so
-      // it is not passed on. Shadow mode never alters traffic and only reports.
+      // it is not passed on. Shadow mode never alters traffic and only reports. The client still gets an error
+      // for the request this was meant to answer, when its id can be read.
       if (options.shadow) {
         process.stderr.write(`[zn-shield] A line from the server is not valid JSON (${line.length} characters); shadow mode passes it on unchecked.\n`);
-        process.stdout.write(line + '\n');
+        await toClient(line + '\n');
       } else {
         process.stderr.write(`[zn-shield BLOCKED SERVER MESSAGE] A line from the server that is not valid JSON was dropped (${line.length} characters). An MCP server must send one JSON message per line.\n`);
+        const f = framing.topLevelFields(raw.subarray(0, 4096));
+        if (f.hasId && !f.hasMethod) await toClient(JSON.stringify(answerError(f.id, 'it is not valid JSON')) + '\n');
       }
       return;
     }
@@ -766,23 +857,44 @@ function startMcpShield(command, args, options = {}) {
     if (Array.isArray(msg) ? !msg.every(isMessage) : !isMessage(msg)) {
       if (options.shadow) {
         process.stderr.write('[zn-shield] A line from the server is not a message or a batch of messages; shadow mode passes it on unchecked.\n');
-        process.stdout.write(line + '\n');
+        await toClient(line + '\n');
       } else {
         process.stderr.write('[zn-shield BLOCKED SERVER MESSAGE] A line from the server that is not a message or a batch of messages (a nested batch or a bare value) was dropped.\n');
       }
       return;
     }
 
-    // A JSON-RPC batch is checked element by element; if one element cannot be checked, the whole batch is dropped.
-    if (Array.isArray(msg)) {
-      // Each element is measured by the size of the whole line, so a large batch fails closed.
-      for (const one of msg) await inspectServerMessage(one, line.length);
-    } else {
-      await inspectServerMessage(msg, line.length);
+    // A JSON-RPC batch is checked element by element; if one element cannot be checked, the whole batch is dropped
+    // and each answer in it gets an error with its own id.
+    const items = Array.isArray(msg) ? msg : [msg];
+    const unmatched = items.map(isUnmatchedList);
+    try {
+      for (let i = 0; i < items.length; i++) {
+        if (unmatched[i]) {
+          process.stderr.write('[zn-shield BLOCKED SERVER MESSAGE] The server sent a tool list that answers no request of the client, so it was not passed on.\n');
+          if (options.shadow) continue;
+          items[i] = answerError(items[i].id, 'it lists tools for a request that was not made');
+          continue;
+        }
+        // Each element is measured by the size of the whole line, so a large batch fails closed.
+        await inspectServerMessage(items[i], line.length);
+      }
+    } catch (err) {
+      process.stderr.write(`[zn-shield BLOCKED SERVER MESSAGE] An answer from the server could not be checked (${err && err.message}), so it was not passed on.\n`);
+      if (options.shadow) {
+        await toClient(line + '\n');
+        return;
+      }
+      const errors = [];
+      for (const one of Array.isArray(msg) ? msg : [msg]) {
+        if (isMessage(one) && one.id !== undefined && one.method === undefined) errors.push(answerError(one.id, 'it could not be checked'));
+      }
+      if (errors.length) await toClient(JSON.stringify(Array.isArray(msg) ? errors : errors[0]) + '\n');
+      return;
     }
 
     // Forward inspected/sanitized response to client
-    process.stdout.write(JSON.stringify(msg) + '\n');
+    await toClient(JSON.stringify(Array.isArray(msg) ? items : items[0]) + '\n');
   }
 
   // lineChars: length of the JSON line the message came in, measured before parsing.
