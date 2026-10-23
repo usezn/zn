@@ -216,6 +216,8 @@ function respondInner(d, ev) {
       return out;
     }
     if (d.decision === 'deny') return { decision: 'block', reason: d.message || 'Blocked by zn' };
+    // A note for the agent with the output unchanged (for example, text in it that reads like instructions).
+    if (d.message) return { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: d.message } };
     return null;
   }
   if (ev.event === 'user_prompt') {
