@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-25.7
+RULES_VERSION: 2026-10-25.8
 Zero external dependencies. Pure Python stdlib.
 """
 
@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-10-25.7"
+RULES_VERSION = "2026-10-25.8"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -1287,6 +1287,187 @@ SCAN_SECRET_PREFILTERS: Dict[str, re.Pattern[str]] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Quoted values with spaces, and numbers, under a secret key. Same as
+# findQuotedKv in packages/zn-gate/lib/scrub/patterns.js (the Node.js
+# scrubber): the credential rules above read one word, so
+# `"password":"abcdefgh ijk lmn"` and `{"token":12345678}` were left in the
+# clear. Two kinds of value are redacted:
+#   - a quoted value that has whitespace in it, up to its closing quote: a
+#     double-quoted value ends at the first quote that is not escaped, a
+#     single-quoted one at the next ', and a value inside an escaped JSON
+#     string at its own escaped quote;
+#   - a bare number of 8 or more characters under a QUOTED key. The
+#     replacement is written as a string, so the JSON stays valid. A number
+#     under an unquoted key (YAML, shell) is left alone.
+# Values shorter than 8 characters, placeholders and values with no closing
+# quote inside _KV_MAX_VALUE characters are left alone. One pass over the
+# text, and each opener reads at most _KV_MAX_VALUE characters.
+# ---------------------------------------------------------------------------
+_KV_OPEN_RE = re.compile(
+    r"""(password|passwd|secret|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key|client[_-]?secret|auth[_-]?token)"""
+    r"""(\\{0,2}["'])?[ \t]{0,16}(?:=>|:=|=|:)[ \t]{0,16}(\\{0,2}["'])?""",
+    re.IGNORECASE | re.ASCII)
+_KV_PREFILTER_RE = re.compile(r"""pass|secret|token|api[_-]?key|access[_-]?key|private[_-]?key""", re.IGNORECASE | re.ASCII)
+_KV_MAX_VALUE = 4096
+_KV_MIN_VALUE = 8
+_KV_NUMBER_RE = re.compile(r"""-?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?""")
+_KV_MASK_RE = re.compile(r"""-?([0-9])\1+""")
+_KV_WORD_CHAR_RE = re.compile(r"""[A-Za-z0-9_.-]""")
+_KV_WORD_RUN_RE = re.compile(r"""[A-Za-z0-9_.-]*""")
+_KV_BACKSLASH_RE = re.compile(r"""\\""")
+_KV_BACKSLASH_RUN_RE = re.compile(r"""\\+""")
+_KV_DQUOTE_SPECIAL_RE = re.compile(r"""["\\]""")
+# JavaScript's \s: the same set of characters as in the Node.js scrubber.
+_KV_SPACE = '\t\n\x0b\x0c\r \xa0  -     　﻿'
+_KV_SPACE_RE = re.compile('[' + _KV_SPACE + ']')
+_KV_AUTH_WORD_RE = re.compile('(?:bearer|basic|token)[' + _KV_SPACE + ']+', re.IGNORECASE | re.ASCII)
+# A placeholder, or a reference after an auth scheme word ("Bearer ${TOKEN}").
+_KV_PLACEHOLDER_RE = re.compile(
+    r"""(?:x{3,}|\*{3,}|\.{3,}|-+|_+|<[^>]*>|\$\{?[^}]*\}?|\{\{?[^}]*\}?\}|%\(?[a-z_]*\)?s|:[a-z_]+|\[[^\]]*\])""",
+    re.IGNORECASE | re.ASCII)
+_KV_PLACEHOLDER_WORDS_RE = re.compile(
+    r"""(?:^|[^a-z])(?:password|passwd|passw0rd|secret|changeme|change_me|example|placeholder|your[_-]?|redacted|dummy|sample|foobar|hunter2|xxxx|todo|insert|replace|mypass|pass(?:word)?123)(?:[^a-z]|$)""",
+    re.IGNORECASE | re.ASCII)
+_KV_REPEAT_RE = re.compile('([^\n\r  ])\\1+')
+QUOTED_CREDENTIAL_RULE = "secret:quoted_credential"
+_KV_REPLACEMENT = "[REDACTED_SECRET]"
+
+
+def _kv_bare_placeholder(value: str) -> bool:
+    return (_KV_PLACEHOLDER_RE.fullmatch(value) is not None or _KV_PLACEHOLDER_WORDS_RE.search(value) is not None
+            or _KV_REPEAT_RE.fullmatch(value) is not None)
+
+
+def _kv_placeholder(value: str) -> bool:
+    if _kv_bare_placeholder(value):
+        return True
+    m = _KV_AUTH_WORD_RE.match(value)
+    return m is not None and _kv_bare_placeholder(value[m.end():])
+
+
+def _find_quoted_credentials(text: str) -> List[Tuple[int, int, str]]:
+    """Spans (start, end, quote) of the values described above. quote is the
+    quote that the replacement of a bare number is wrapped in (empty for a
+    quoted value, whose own quotes stay)."""
+    found: List[Tuple[int, int, str]] = []
+    n = len(text)
+    pos = 0
+    while True:
+        m = _KV_OPEN_RE.search(text, pos)
+        if m is None:
+            break
+        after = m.end()
+        pos = after
+        opener = m.group(3)
+        key_quote = m.group(2)
+        if opener is None:
+            num = _KV_NUMBER_RE.match(text, after)
+            # Only a quoted key (a JSON member or a dict entry) counts.
+            if not key_quote or num is None or num.end() - after < _KV_MIN_VALUE:
+                continue
+            end = num.end()
+            if end < n and _KV_WORD_CHAR_RE.match(text, end) is not None:
+                continue                              # part of a longer word, not a number
+            if _KV_MASK_RE.fullmatch(num.group()) is not None:
+                continue                              # 00000000: a mask
+            found.append((after, end, key_quote))
+            pos = end
+            continue
+        quote = opener[-1]
+        level = len(opener) - 1                       # backslashes before the opening quote
+        start = after
+        limit = min(n, start + _KV_MAX_VALUE)
+        end = -1
+        i = start
+        if level == 0 and quote == '"':
+            while True:
+                hit = _KV_DQUOTE_SPECIAL_RE.search(text, i, limit)
+                if hit is None:
+                    break
+                if text[hit.start()] == '"':
+                    end = hit.start()
+                    break
+                i = hit.start() + 2                   # a backslash escapes the next character
+        elif level == 0:
+            end = text.find(quote, i, limit)          # single quote: a backslash is just a character
+        else:
+            while True:
+                hit = _KV_BACKSLASH_RE.search(text, i, limit)
+                if hit is None:
+                    break
+                i = hit.start()
+                run_match = _KV_BACKSLASH_RUN_RE.match(text, i)
+                assert run_match is not None
+                run = run_match.end() - i
+                if run == level and text[i + run:i + run + 1] == quote:
+                    end = i
+                    break
+                i += run + 1
+        if end < 0:
+            continue
+        value = text[start:end]
+        if _utf16_len(value) < _KV_MIN_VALUE or _KV_SPACE_RE.search(value) is None or _kv_placeholder(value):
+            continue
+        span_end = end
+        if level == 0 and not key_quote:
+            # A shell word glued to more quoted pieces ('a b''c') is one value: take them too.
+            p = end + 1
+            for _ in range(8):
+                if p >= n or text[p] not in '"\'':
+                    break
+                word = _KV_WORD_RUN_RE.match(text, p + 1)
+                assert word is not None
+                q = word.end()
+                if q == p + 1:
+                    break
+                span_end = q
+                p = q + 1
+        found.append((start, span_end, ''))
+        pos = span_end
+    return found
+
+
+def _redact_quoted_credentials(text: str) -> Tuple[str, List[Dict[str, Any]]]:
+    """Redacts the values found by _find_quoted_credentials, on the text and on
+    the text without invisible characters (as every other rule)."""
+    if not text or _KV_PREFILTER_RE.search(text) is None:
+        return text, []
+    view = invisible_view(text)
+    passes: List[Tuple[str, Optional['array[int]']]] = [(text, None)]
+    if view is not None:
+        passes.append(view)
+    cands: List[Tuple[int, int, str, str]] = []
+    seen: List[Tuple[int, int]] = []
+    for hay, mapping in passes:
+        for start, end, quote in _find_quoted_credentials(hay):
+            s, e = _span_in(mapping, start, end)
+            if mapping is None:
+                seen.append((s, e))
+            elif len([1 for a, b in seen if s < b and a < e]) >= 2:
+                continue
+            cands.append((s, e, QUOTED_CREDENTIAL_RULE, quote + _KV_REPLACEMENT + quote))
+    if not cands:
+        return text, []
+    detections: List[Dict[str, Any]] = []
+    edits: List[Tuple[int, int, str]] = []
+    for start, end, rule_id, new in _merge_candidates(cands):
+        detections.append({"rule": rule_id, "start": start, "end": end})
+        edits.append((start, end, new))
+    return _apply_edits(text, edits), detections
+
+
+def _redact_credentials(text: str) -> Tuple[str, List[Dict[str, Any]]]:
+    """The quoted values first (the other rules read one word and would leave
+    the rest of `"api_key":"abcdefghijkl mno pqr"` behind), then SECRET_PATTERNS
+    and the provider formats."""
+    if not isinstance(text, str) or not text:
+        return text, []
+    redacted, first = _redact_quoted_credentials(text)
+    redacted, rest = _redact_with(redacted, SECRET_PATTERNS + PROVIDER_SECRET_PATTERNS)
+    return redacted, first + rest
+
+
 def _apply_edits(text: str, edits: List[Tuple[int, int, str]]) -> str:
     """Replaces the (start, end, replacement) spans, in ascending order, in text."""
     parts = []
@@ -1414,14 +1595,14 @@ def redact_secrets(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     characters; the redacted spans are the union of both (see redactSecrets in
     rules.js).
     """
-    return _redact_with(text, SECRET_PATTERNS + PROVIDER_SECRET_PATTERNS)
+    return _redact_credentials(text)
 
 
 def redact_scan_secrets(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     """redact_secrets plus SCAN_SECRET_PATTERNS, for `zn-gate scan`: the scan
     rules run on the text redact_secrets already redacted (redactScanSecrets in
     rules.js, with the provider formats in between as the Node.js scan does)."""
-    redacted, first = _redact_with(text, SECRET_PATTERNS + PROVIDER_SECRET_PATTERNS)
+    redacted, first = _redact_credentials(text)
     redacted, second = _redact_with(redacted, SCAN_SECRET_PATTERNS)
     return redacted, first + second
 
