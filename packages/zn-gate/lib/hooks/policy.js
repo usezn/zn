@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-24.15';
+const POLICY_RULES_VERSION = '2026-10-25.2';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -842,6 +842,52 @@ function downloadTargets(name, rest) {
   return out;
 }
 
+// Instruction files written by code an interpreter runs from its command line (python -c, node -e). Only a QUOTED
+// file name given straight to a write call counts; a name held in a variable is not followed. Every quantifier is
+// bounded, so the scan is linear in the code (at most ONELINER_CODE_MAX characters of it).
+const ONELINER_CODE_MAX = 20000;
+const ONELINER_NAME = String.raw`(?:file\s{0,20}=\s{0,20})?[rRbBuUfF]{0,2}(['"])([^'"\\\r\n]{1,300})\1`;
+// open('NAME', 'w') and io.open(...): a write only when the mode is a literal holding w, a, x or +.
+const ONELINER_PY_OPEN_RE = new RegExp(String.raw`(?<![A-Za-z0-9_])open\s{0,20}\(\s{0,20}` + ONELINER_NAME, 'g');
+// Path('NAME').open('w'), also pathlib.Path(...).
+const ONELINER_PY_PATH_OPEN_RE = new RegExp(String.raw`(?<![A-Za-z0-9_])Path\s{0,20}\(\s{0,20}` + ONELINER_NAME + String.raw`\s{0,20}\)\s{0,20}\.\s{0,20}open\s{0,20}\(`, 'g');
+// Path('NAME').write_text(...) and .write_bytes(...).
+const ONELINER_PY_WRITE_RE = new RegExp(String.raw`(?<![A-Za-z0-9_])Path\s{0,20}\(\s{0,20}` + ONELINER_NAME + String.raw`\s{0,20}\)\s{0,20}\.\s{0,20}write_(?:text|bytes)\b`, 'g');
+// fs.writeFileSync / writeFile / appendFile(Sync) / createWriteStream, also fs.promises.* and fsp.*.
+const ONELINER_NODE_RE = new RegExp(String.raw`(?<![A-Za-z0-9_$])(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream)\s{0,20}\(\s{0,20}` + ONELINER_NAME, 'g');
+const ONELINER_MODE_AFTER_NAME_RE = /^\s{0,20},\s{0,20}(?:mode\s{0,20}=\s{0,20})?[rRbBuUfF]{0,2}(['"])([A-Za-z+]{1,6})\1/;
+const ONELINER_MODE_FIRST_RE = /^\s{0,20}(?:mode\s{0,20}=\s{0,20})?[rRbBuUfF]{0,2}(['"])([A-Za-z+]{1,6})\1/;
+const ONELINER_MODE_KW_RE = /\bmode\s{0,20}=\s{0,20}(['"])([A-Za-z+]{1,6})\1/;
+
+/** Whether the arguments that follow a Python open call give a literal mode that writes (w, a, x or +). */
+function pythonModeWrites(tail, firstRe) {
+  const lead = firstRe.exec(tail);
+  const kw = lead ? null : ONELINER_MODE_KW_RE.exec(tail.slice(0, 200).split(')')[0]);
+  const mode = lead ? lead[2] : (kw ? kw[2] : '');
+  return /[wax+]/.test(mode);
+}
+
+/** The quoted file names that python -c or node -e code writes to (a read, or a name that is not quoted, is left out). */
+function oneLinerWriteTargets(kind, code) {
+  const text = String(code).slice(0, ONELINER_CODE_MAX);
+  const out = [];
+  const full = () => out.length >= INSTRUCTION_CHECKS_MAX;
+  if (kind === 'node') {
+    for (const m of text.matchAll(ONELINER_NODE_RE)) { out.push(m[2]); if (full()) break; }
+  } else if (kind === 'py') {
+    for (const m of text.matchAll(ONELINER_PY_WRITE_RE)) { out.push(m[2]); if (full()) break; }
+    for (const m of text.matchAll(ONELINER_PY_OPEN_RE)) {
+      if (pythonModeWrites(text.slice(m.index + m[0].length, m.index + m[0].length + 300), ONELINER_MODE_AFTER_NAME_RE)) out.push(m[2]);
+      if (full()) break;
+    }
+    for (const m of text.matchAll(ONELINER_PY_PATH_OPEN_RE)) {
+      if (pythonModeWrites(text.slice(m.index + m[0].length, m.index + m[0].length + 300), ONELINER_MODE_FIRST_RE)) out.push(m[2]);
+      if (full()) break;
+    }
+  }
+  return out;
+}
+
 const PS_COPY_MOVE = new Set(['copy', 'move', 'copy-item', 'move-item']);
 
 /** The value of PowerShell's -Destination (any unambiguous prefix, also -Destination:value), or null. */
@@ -895,7 +941,11 @@ function instructionWriteInWords(readings, opts) {
       const at = commandWordAt(seg, progs);
       const candidates = [];
       for (const w of seg) if (w.redirectTarget) candidates.push(w.text);
-      if (at >= 0 && INSTRUCTION_DOWNLOADERS[progs[at]] && Object.prototype.hasOwnProperty.call(INSTRUCTION_DOWNLOADERS, progs[at])) {
+      const oneLiner = at >= 0 && /^(?:py|python|pypy|node)/.test(progs[at]) ? require('../destructive').interpreterKind(progs[at]) : '';
+      if (oneLiner === 'py' || oneLiner === 'node') {
+        // python -c / node -e: a quoted instruction file name given to a write call in the code.
+        for (const code of require('../destructive').interpreterCode(oneLiner, seg.slice(at + 1).map((x) => x.text))) candidates.push(...oneLinerWriteTargets(oneLiner, code));
+      } else if (at >= 0 && INSTRUCTION_DOWNLOADERS[progs[at]] && Object.prototype.hasOwnProperty.call(INSTRUCTION_DOWNLOADERS, progs[at])) {
         candidates.push(...downloadTargets(progs[at], seg.slice(at + 1).map((x) => x.text)));
       } else if (at >= 0 && INSTRUCTION_WRITERS.has(progs[at])) {
         const name = progs[at];
