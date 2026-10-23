@@ -353,16 +353,41 @@ function startMcpShield(command, args, options = {}) {
     await walkServerValue(label, holder, key, state, depth);
     if (depth === 0) {
       await flushDeferred(label, state);
-      await canonicalGuard(label, holder[key], (notice) => { holder[key] = notice; });
+      await canonicalGuard(label, holder[key], (notice) => placeNotice(holder, key, notice));
     }
+  }
+  // A notice put where a whole message part was, with the shape that part has in JSON-RPC (a string in place of an
+  // object would make a client reject the message, and leave its request waiting). A notification or a request
+  // of the server cannot carry one: it is not forwarded (serverDrops, read when the line is written).
+  const serverDrops = new WeakMap();
+  function placeNotice(holder, key, notice) {
+    const old = holder[key];
+    const firstUri = (list) => {
+      for (const it of Array.isArray(list) ? list : [list]) if (it && typeof it === 'object' && typeof it.uri === 'string') return it.uri;
+      return 'zn-gate:blocked';
+    };
+    if (key === 'params' && typeof holder.method === 'string') serverDrops.set(holder, notice);
+    else if (key === 'error') holder.error = { code: old && Number.isInteger(old.code) ? old.code : -32603, message: notice };
+    else if (key === 'contents') holder.contents = [{ uri: firstUri(old), text: notice }];
+    else if (key === 'messages') holder.messages = [{ role: 'user', content: { type: 'text', text: notice } }];
+    else if (key === 'values' && Array.isArray(old)) holder.values = [];
+    else if (key === 'resource' && old && typeof old === 'object') holder.resource = { uri: firstUri(old), text: notice };
+    else if (key === 'structuredContent' || key === 'content') {
+      delete holder.structuredContent;
+      holder.content = [{ type: 'text', text: notice }];
+      holder.isError = true;
+    } else holder[key] = notice;
   }
   // The model reads all the text of a message together, so a prompt injection can be split across fields that are
   // each harmless alone. After the fields are checked one by one (an injection in a single field is replaced there,
   // and the rest of the message is kept), the text that is left is checked once more as a whole, joined by newlines, the way the
   // chunks are. A message whose text is over the scan budget, or whose joined text is blocked, is replaced as a
   // whole instead of passing the part nobody checked. `replace` puts the notice where the message was.
-  // Two views, in reading order: the values alone (what a text field says next to the next one) and the values
-  // with their keys (a key is text too). The depth is bounded by MAX_SERVER_DEPTH; what is deeper was replaced.
+  // Two views, in reading order, of what the model can read: the values alone (what a text field says next to the
+  // next one) and the values with their keys (a key is text too). Not text, so left out of both: the base64 data of
+  // an image or audio item, a binary blob, and the identifiers of a resource (uri, mimeType, type, role), which
+  // must not stand between two halves of a sentence. The depth is bounded by MAX_SERVER_DEPTH; what is deeper was
+  // replaced.
   function canonicalStrings(root) {
     const values = [];
     const all = [];
@@ -379,16 +404,21 @@ function startMcpShield(command, args, options = {}) {
       if (typeof v === 'string') add(v, true);
       else if (v && typeof v === 'object' && d < MAX_SERVER_DEPTH) {
         const isArray = Array.isArray(v);
+        const media = !isArray && (v.type === 'image' || v.type === 'audio');
+        const resourceLike = !isArray && typeof v.uri === 'string' && (typeof v.text === 'string' || typeof v.blob === 'string' || v.type === 'resource_link');
         for (const k of Object.keys(v)) {
           if (over) return;
-          if (!isArray) add(k, false);
-          if (k === 'blob' && typeof v[k] === 'string' && typeof v.uri === 'string') {
-            if (textBlob(v.mimeType)) add(Buffer.from(v[k], 'base64').toString('utf8'), true);
-          } else if (k === 'type' && typeof v[k] === 'string') {
-            add(v[k], false); // the content type is structure, not text between two fields
-          } else {
-            visit(v[k], d + 1);
+          if (!isArray && ((media && (k === 'data' || k === 'mimeType'))
+            || (resourceLike && (k === 'uri' || k === 'mimeType'))
+            || ((k === 'type' || k === 'role') && typeof v[k] === 'string' && (media || resourceLike || typeof v.text === 'string' || v.content !== undefined || v.resource !== undefined)))) {
+            continue;
           }
+          if (k === 'blob' && resourceLike) {
+            if (typeof v[k] === 'string' && textBlob(v.mimeType)) add(Buffer.from(v[k], 'base64').toString('utf8'), true);
+            continue;
+          }
+          if (!isArray) add(k, false);
+          visit(v[k], d + 1);
         }
       }
     };
@@ -847,6 +877,23 @@ function startMcpShield(command, args, options = {}) {
       await inspectServerMessage(msg, line.length);
     }
 
+    // A notification or request of the server whose text was blocked is not forwarded; a request is answered with
+    // an error, so the server does not wait for the client.
+    const dropped = (one) => {
+      const notice = serverDrops.get(one);
+      if (notice === undefined) return false;
+      process.stderr.write(`[zn-shield BLOCKED SERVER MESSAGE] ${safeLabel(one.method)} from the server was not forwarded.\n`);
+      if (one.id !== undefined && one.id !== null) {
+        child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: one.id, error: { code: -32603, message: notice } }) + '\n');
+      }
+      return true;
+    };
+    if (Array.isArray(msg)) {
+      const kept = msg.filter((one) => !dropped(one));
+      if (kept.length) process.stdout.write(JSON.stringify(kept) + '\n');
+      return;
+    }
+    if (dropped(msg)) return;
     // Forward inspected/sanitized response to client
     process.stdout.write(JSON.stringify(msg) + '\n');
   }
