@@ -37,6 +37,11 @@ a bare `node -e ""` takes in the same run (25 ms at p50 in this baseline), so
 a change of runner speed moves both. The last column multiplies that ratio by
 25 ms to give the milliseconds on a machine like the runner.
 
+The budget is measured on Node.js 22. On Node.js 20 each hook costs about 4 to 7 ms more, because Node.js 20
+has no built-in compile cache for the hook code, and the numbers in this section do not apply to it. The
+compile cache also needs the `~/.zn` folder to be mode 0700; when it is not, `zn-gate check` says so and the
+hooks start a few milliseconds slower. We recommend Node.js 22 or later for running zn.
+
 | Agent | Event | p95 / Node start-up | About (ms) |
 |---|---|---|---|
 | Claude Code | PreToolUse, shell command | 2.3 | 58 |
