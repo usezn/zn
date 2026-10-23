@@ -208,7 +208,6 @@ jobs:
           owner: usezn
           repositories: zn
           permission-contents: write
-          permission-workflows: write
       # Pushed with the app's token, the tag starts the Release workflow (on: push: tags).
       - name: Push the tag
         env:
