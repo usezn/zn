@@ -229,9 +229,20 @@ async function restartIfOutdated(deps) {
   return true;
 }
 
+/**
+ * When the vault locks, in words: after a quiet spell, or at the latest at the
+ * end of the session. Both limits are real (idle timer and session TTL), so the
+ * unlock and status messages share this one sentence.
+ */
+function lockWhenText(idleMs, expiresAt, now) {
+  const until = untilText(expiresAt, now);
+  if (!Number.isFinite(idleMs) || idleMs <= 0) return 'expires ' + until;
+  return 'locks after ' + Math.max(1, Math.round(idleMs / 60000)) + ' min idle, or at ' + until + ' at the latest';
+}
+
 /** The `zn vault status` line for an unlocked vault. */
 function unlockedLine(meta, s) {
-  const line = 'Vault: unlocked (backend ' + meta.backend + ', expires ' + untilText(s.expiresAt) + (s.version ? ', zn-gate ' + s.version : '') + ')';
+  const line = 'Vault: unlocked (backend ' + meta.backend + ', ' + lockWhenText(s.idleMs, s.expiresAt) + (s.version ? ', zn-gate ' + s.version : '') + ')';
   return isOutdatedVault(s) ? line + ', outdated: restart with `' + znCommand('lock') + '`, then `' + znCommand('unlock') + '`' : line;
 }
 
@@ -265,7 +276,7 @@ async function unlockCmd(args, deps) {
   const res = await daemon.unlock(opts);
   if (res.created) out('Created a new vault (' + backend + ') in ' + store.paths().vaultDir);
   vaultReset.clearUnlockFailures({});
-  out('Vault unlocked until ' + untilText(res.expiresAt) + ' (locks after ' + Math.round(opts.idleMs / 60000) + ' min idle). Run `' + znCommand('lock') + '` to lock now.');
+  out('Vault unlocked: ' + lockWhenText(opts.idleMs, res.expiresAt) + '. Run `' + znCommand('lock') + '` to lock now.');
   if (res.confirm === 'gui') out('Confirmations (first use of a secret by a command, policy changes) appear as a system dialog.');
   else {
     out('Note: no system dialog is available here, so first-use approvals and policy changes will be refused.');
@@ -278,7 +289,7 @@ async function unlockForegroundCmd(opts, backend) {
   if (!process.stdin.isTTY) throw new Error(messages.FOREGROUND_NEEDS_TERMINAL);
   const res = await daemon.unlockForeground(opts);
   if (res.created) out('Created a new vault (' + backend + ') in ' + store.paths().vaultDir);
-  out('Vault unlocked until ' + untilText(res.expiresAt) + ' (locks after ' + Math.round(opts.idleMs / 60000) + ' min idle).');
+  out('Vault unlocked: ' + lockWhenText(opts.idleMs, res.expiresAt) + '.');
   out('Keep this terminal open: zn asks here before a secret is used by a command for the first time or a policy changes.');
   out('Press Ctrl+C or run `' + znCommand('lock') + '` to lock.');
   const onSig = () => { res.close(); };
@@ -368,7 +379,7 @@ async function runVaultCommand(args) {
   }
 }
 
-module.exports = { runVaultCommand, unlockCmd, parseDuration, getPassphrase, createHiddenPrompter, restartIfOutdated, isOutdatedVault, unlockedLine, untilText };
+module.exports = { runVaultCommand, unlockCmd, parseDuration, getPassphrase, createHiddenPrompter, restartIfOutdated, isOutdatedVault, unlockedLine, untilText, lockWhenText };
 // The sentences that name a command are built when read, so they show the form that works on this computer.
 Object.defineProperties(module.exports, {
   ALREADY_UNLOCKED: { enumerable: true, get: () => messages.vaultAlreadyUnlocked() },

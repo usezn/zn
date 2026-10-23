@@ -136,17 +136,33 @@ fn card_network_ok(d: &str) -> bool {
 }
 
 fn card_valid(raw: &str) -> bool {
+    if raw.len() < 13 {
+        return false;
+    }
     // One kind of separator only: "4111 1111-1111 1111" is not a card number.
     let has_space = raw.contains(' ');
     let has_dash = raw.contains('-');
     if has_space && has_dash {
         return false;
     }
-    let d: String = raw.chars().filter(|c| c.is_ascii_digit()).collect();
-    if !(13..=19).contains(&d.len()) || all_same(&d) {
+    // At most 19 digits: collect them on the stack (this runs for every
+    // candidate start in long inputs).
+    let mut buf = [0u8; 19];
+    let mut n = 0;
+    for b in raw.bytes().filter(u8::is_ascii_digit) {
+        if n == buf.len() {
+            return false;
+        }
+        buf[n] = b;
+        n += 1;
+    }
+    let Ok(d) = std::str::from_utf8(&buf[..n]) else {
+        return false;
+    };
+    if n < 13 || all_same(d) {
         return false;
     }
-    card_network_ok(&d) && luhn_valid(&d)
+    card_network_ok(d) && luhn_valid(d)
 }
 
 /// US SSN: area 001-899 except 666, group 01-99, serial 0001-9999.
@@ -246,40 +262,49 @@ fn continues_number(text: &str, end: usize, seps: &[char]) -> bool {
         && matches!(rest.next(), Some(c) if c.is_ascii_digit())
 }
 
-fn card_bounded(text: &str, s: usize, e: usize) -> bool {
-    let before_ok =
-        !matches!(char_before(text, s), Some(c) if c.is_alphanumeric() || ".,_-".contains(c));
-    let after_ok = !matches!(char_after(text, e), Some(c) if c.is_alphanumeric() || c == '_')
-        && !continues_number(text, e, &['.', ',']);
-    before_ok && after_ok
+fn card_lead(text: &str, s: usize) -> bool {
+    !matches!(char_before(text, s), Some(c) if c.is_alphanumeric() || ".,_-".contains(c))
 }
 
-fn ssn_bounded(text: &str, s: usize, e: usize) -> bool {
-    let before_ok =
-        !matches!(char_before(text, s), Some(c) if c.is_alphanumeric() || ".-".contains(c));
-    let after_ok = !matches!(char_after(text, e), Some(c) if c.is_alphanumeric())
-        && !continues_number(text, e, &['-']);
-    before_ok && after_ok
+fn card_trail(text: &str, e: usize) -> bool {
+    !matches!(char_after(text, e), Some(c) if c.is_alphanumeric() || c == '_')
+        && !continues_number(text, e, &['.', ','])
+}
+
+fn ssn_lead(text: &str, s: usize) -> bool {
+    !matches!(char_before(text, s), Some(c) if c.is_alphanumeric() || ".-".contains(c))
+}
+
+fn ssn_trail(text: &str, e: usize) -> bool {
+    !matches!(char_after(text, e), Some(c) if c.is_alphanumeric())
+        && !continues_number(text, e, &['-'])
 }
 
 /// E.164: the Node.js scrubber's boundaries.
-fn e164_bounded(text: &str, s: usize, e: usize) -> bool {
+fn e164_lead(text: &str, s: usize) -> bool {
     !matches!(char_before(text, s), Some(c) if c.is_alphanumeric() || c == '+')
-        && !matches!(char_after(text, e), Some(c) if c.is_numeric())
+}
+
+fn e164_trail(text: &str, e: usize) -> bool {
+    !matches!(char_after(text, e), Some(c) if c.is_numeric())
 }
 
 /// Formatted NANP numbers have no `+`, so they need stricter boundaries
 /// to stay out of version strings and longer dashed numbers.
-fn nanp_bounded(text: &str, s: usize, e: usize) -> bool {
-    let before_ok =
-        !matches!(char_before(text, s), Some(c) if c.is_alphanumeric() || "+_-".contains(c));
-    let after_ok = !matches!(char_after(text, e), Some(c) if c.is_alphanumeric() || c == '_')
-        && !continues_number(text, e, &['.', ',', '-']);
-    before_ok && after_ok
+fn nanp_lead(text: &str, s: usize) -> bool {
+    !matches!(char_before(text, s), Some(c) if c.is_alphanumeric() || "+_-".contains(c))
+}
+
+fn nanp_trail(text: &str, e: usize) -> bool {
+    !matches!(char_after(text, e), Some(c) if c.is_alphanumeric() || c == '_')
+        && !continues_number(text, e, &['.', ',', '-'])
 }
 
 type Check = fn(&str) -> bool;
-type Bound = fn(&str, usize, usize) -> bool;
+/// Leading boundary: depends only on the text before the start.
+type Lead = fn(&str, usize) -> bool;
+/// Trailing boundary: depends only on the text after the end.
+type Trail = fn(&str, usize) -> bool;
 
 /// Spans of `re` matches that stand on their own and pass `valid`.
 ///
@@ -287,7 +312,19 @@ type Bound = fn(&str, usize, usize) -> bool;
 /// that fails these checks, so when a candidate fails, shorter versions of
 /// it (ending at an earlier digit) are tried, longest first. This keeps
 /// "4111 1111 1111 1111 2025" or two cards separated by a space redacted.
-fn checked_spans(re: &Regex, text: &str, bound: Bound, valid: Check) -> Vec<(usize, usize)> {
+///
+/// When a candidate fails its leading boundary, a real match can still start
+/// inside it (a card right after an IBAN-like token), so the search resumes at
+/// the next start that passes the leading boundary, not at the candidate's
+/// end. Starts that fail it are skipped without running the regex or the
+/// validators, which keeps long runs of digits or letters linear.
+fn checked_spans(
+    re: &Regex,
+    text: &str,
+    lead: Lead,
+    trail: Trail,
+    valid: Check,
+) -> Vec<(usize, usize)> {
     let mut spans = Vec::new();
     let mut pos = 0;
     while pos < text.len() {
@@ -295,16 +332,26 @@ fn checked_spans(re: &Regex, text: &str, bound: Bound, valid: Check) -> Vec<(usi
             break;
         };
         let (s, e) = (m.start(), m.end());
-        let found = (s + 1..=e)
-            .rev()
-            .filter(|&end| text.as_bytes()[end - 1].is_ascii_digit())
-            .find(|&end| bound(text, s, end) && valid(&text[s..end]));
+        let found = if lead(text, s) {
+            (s + 1..=e)
+                .rev()
+                .filter(|&end| text.as_bytes()[end - 1].is_ascii_digit())
+                .find(|&end| trail(text, end) && valid(&text[s..end]))
+        } else {
+            None
+        };
         match found {
             Some(end) => {
                 spans.push((s, end));
                 pos = end;
             }
-            None => pos = e,
+            None => {
+                // Matches are ASCII, so every offset up to `e` is a char boundary.
+                pos = s + 1;
+                while pos < e && !lead(text, pos) {
+                    pos += 1;
+                }
+            }
         }
     }
     spans
@@ -323,19 +370,19 @@ fn replace_spans(text: &str, spans: &[(usize, usize)], marker: &str) -> String {
 }
 
 fn card_spans(text: &str) -> Vec<(usize, usize)> {
-    checked_spans(card_re(), text, card_bounded, card_valid)
+    checked_spans(card_re(), text, card_lead, card_trail, card_valid)
 }
 
 fn ssn_spans(text: &str) -> Vec<(usize, usize)> {
-    checked_spans(ssn_re(), text, ssn_bounded, ssn_valid)
+    checked_spans(ssn_re(), text, ssn_lead, ssn_trail, ssn_valid)
 }
 
 fn e164_spans(text: &str) -> Vec<(usize, usize)> {
-    checked_spans(e164_re(), text, e164_bounded, e164_valid)
+    checked_spans(e164_re(), text, e164_lead, e164_trail, e164_valid)
 }
 
 fn nanp_spans(text: &str) -> Vec<(usize, usize)> {
-    checked_spans(nanp_re(), text, nanp_bounded, formatted_nanp_valid)
+    checked_spans(nanp_re(), text, nanp_lead, nanp_trail, formatted_nanp_valid)
 }
 
 impl Scrubber {
@@ -463,6 +510,64 @@ mod tests {
         // Digits from other scripts are not part of a card number.
         let out = Scrubber::scrub("card 4111111111111111\u{0663}");
         assert!(!out.contains("[CARD_REDACTED]"), "{out}");
+    }
+
+    #[test]
+    fn test_card_after_failed_boundary_candidate() {
+        // The first candidate starts inside the IBAN-like token and fails its
+        // leading boundary; the card after the space must still be found.
+        let out = Scrubber::scrub("GB82WEST12345698765432 4111111111111111");
+        assert_eq!(out, "GB82WEST12345698765432 [CARD_REDACTED]");
+        let out = Scrubber::scrub("A4111 1111 1111 1111 4111111111111111");
+        assert_eq!(out, "A4111 1111 1111 1111 [CARD_REDACTED]");
+        let out = Scrubber::scrub("ref x12345698765432 4111-1111-1111-1111 end");
+        assert_eq!(out, "ref x12345698765432 [CARD_REDACTED] end");
+    }
+
+    #[test]
+    fn test_phone_after_failed_boundary_candidate() {
+        // "1 212-456-7890" is rejected (preceded by a dash); the number that
+        // starts after the space is a separate, standalone match.
+        let out = Scrubber::scrub("-1 212-456-7890 ok");
+        assert_eq!(out, "-1 [PHONE_REDACTED] ok");
+    }
+
+    #[test]
+    fn test_failed_boundary_retry_keeps_negatives() {
+        for input in [
+            "order-4111111111111111",
+            "x4111111111111111",
+            "GB82WEST123456987654324111111111111111",
+            "amount 4111111111111111.50",
+            "id 1234567812345670",
+            "x4111 1111 1111 1111",
+        ] {
+            assert!(
+                !Scrubber::scrub(input).contains("[CARD_REDACTED]"),
+                "{input}"
+            );
+        }
+        assert!(!Scrubber::scrub("A123-45-6789").contains("[SSN_REDACTED]"));
+    }
+
+    #[test]
+    fn test_failed_boundary_retry_stays_fast() {
+        // Long runs where every candidate fails: time must stay linear.
+        let digits = "1234567890".repeat(104_858);
+        let mixed = "ab12 ".repeat(209_716);
+        let dashed = "x1-1-1-".repeat(150_000);
+        let spaced = "1111 ".repeat(209_716);
+        let hyphens = "1111-111-".repeat(116_508);
+        let plus = "+1234567".repeat(131_072);
+        let start = std::time::Instant::now();
+        for input in [&digits, &mixed, &dashed, &spaced, &hyphens, &plus] {
+            let _ = Scrubber::scrub(input);
+        }
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(5),
+            "{:?}",
+            start.elapsed()
+        );
     }
 
     #[test]
