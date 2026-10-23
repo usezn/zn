@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-19.1
+RULES_VERSION: 2026-10-23.8
 Zero external dependencies. Pure Python stdlib.
 """
 
@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, overload
 
 
-RULES_VERSION = "2026-10-23.4"
+RULES_VERSION = "2026-10-23.8"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -66,7 +66,8 @@ ANSI_ESCAPE_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07\x1b]*\x07')
 # Hard caps for the Base64 smuggling check: above either one the command is blocked.
 MAX_B64_PAYLOADS = 16
 MAX_B64_DECODED_BYTES = 128 * 1024
-B64_EXEC_RE = re.compile(r'(?:echo|printf)\s+([A-Za-z0-9+/=]{16,})\s*\|\s*(?:base64\s+-(?:d|-decode)|openssl)', re.IGNORECASE)
+# The payload is group 2 (echo/printf pipe, quoted or not, with options) or group 4 (here-string).
+B64_EXEC_RE = re.compile(r'''(?:echo|printf(?:\s+(?:'%s'|"%s"|%s))?)(?:\s+-[A-Za-z]{1,3})*\s+(["']?)([A-Za-z0-9+/=]{16,})\1\s*\|\s*(?:base64\s+-(?:di?|id|-decode)|openssl)|base64\s+-(?:di?|id|-decode)\s*<<<\s*(["']?)([A-Za-z0-9+/=]{16,})\3''', re.IGNORECASE)
 # Maximal whitespace runs; only runs that contain a line break are joined.
 # A pattern anchored on the line break (such as [^\S\r\n]*[\r\n]) would rescan
 # a long run of spaces from every position.
@@ -506,8 +507,9 @@ def _check_base64_pipes(candidates: Tuple[str, ...], strict: Optional[bool]) -> 
     payloads = []
     for text_candidate in candidates:
         for b64_match in B64_EXEC_RE.finditer(text_candidate):
-            if b64_match.group(1) not in payloads:
-                payloads.append(b64_match.group(1))
+            payload = b64_match.group(2) or b64_match.group(4)
+            if payload and payload not in payloads:
+                payloads.append(payload)
     if len(payloads) > MAX_B64_PAYLOADS:
         return Assessment(
             verdict='block',
@@ -1591,6 +1593,45 @@ def sanitize_tool_result(
     # Deep data structure sanitization
     detections: List[Dict[str, Any]] = []
 
+    def _unique_name(name: str, taken: set[Any]) -> str:
+        """Return `name`, or `name #N`, whichever is not taken yet, and take it."""
+        base = name
+        n = 2
+        while name in taken:
+            name = f"{base} #{n}"
+            n += 1
+        taken.add(name)
+        return name
+
+    def _unique_member(member: Any, taken: set[Any]) -> Any:
+        """Like _unique_name for a set member: a masked tuple that collides gets its first text part numbered."""
+        if isinstance(member, str):
+            return _unique_name(member, taken)
+        if isinstance(member, tuple) and member in taken:
+            idx = next((i for i, p in enumerate(member) if isinstance(p, str)), None)
+            if idx is not None:
+                base = member[idx]
+                n = 2
+                cand = member
+                while cand in taken:
+                    cand = member[:idx] + (f"{base} #{n}",) + member[idx + 1:]
+                    n += 1
+                member = cand
+        taken.add(member)
+        return member
+
+    def _sanitize_members(members: Any) -> List[Any]:
+        """Sanitize set members; masked members that become equal stay apart."""
+        originals = list(members)
+        cleaned = [_sanitize(m) for m in originals]
+        taken = {c for c, m in zip(cleaned, originals, strict=True) if c == m}
+        out: List[Any] = []
+        for c, m in zip(cleaned, originals, strict=True):
+            if c != m:
+                c = _unique_member(c, taken)
+            out.append(c)
+        return out
+
     def _sanitize(val: Any) -> Any:
         if isinstance(val, str):
             clean_str, det = redact_secrets(val)
@@ -1598,15 +1639,23 @@ def sanitize_tool_result(
                 detections.extend(det)
             return clean_str
         elif isinstance(val, dict):
-            return {(_sanitize(k) if isinstance(k, str) else k): _sanitize(v) for k, v in val.items()}
+            items = list(val.items())
+            names = [_sanitize(k) if isinstance(k, str) else k for k in [k for k, _ in items]]
+            taken = {n for n, (k, _) in zip(names, items, strict=True) if n == k}
+            out: Dict[Any, Any] = {}
+            for name, (key, v) in zip(names, items, strict=True):
+                if name != key:
+                    name = _unique_name(name, taken)
+                out[name] = _sanitize(v)
+            return out
         elif isinstance(val, list):
             return [_sanitize(v) for v in val]
         elif isinstance(val, tuple):
             return tuple(_sanitize(v) for v in val)
         elif isinstance(val, frozenset):
-            return frozenset(_sanitize(v) for v in val)
+            return frozenset(_sanitize_members(val))
         elif isinstance(val, set):
-            return {_sanitize(v) for v in val}
+            return set(_sanitize_members(val))
         return val
 
     sanitized = _sanitize(tool_or_result)
