@@ -17,7 +17,7 @@ zn-gate checks each step of a tool call. The same local pieces serve all three c
 The local pieces:
 
 - **Rules engine.** Signatures plus normalization against homoglyphs, zero-width characters, BiDi overrides, comment splicing and Base64. It checks prompts, tool arguments, tool output and MCP tool descriptions.
-- **PII and secret scrubber.** Replaces the secrets it recognises (provider keys, tokens, JWTs, private keys, database URL passwords) and detects personal data (cards, IBAN, national IDs, e-mail, phone). The model sees a marker or `[REDACTED_...]` text instead of the value.
+- **PII and secret scrubber.** Replaces the secrets it recognises (provider keys, tokens, JWTs, private keys, database URL passwords) and detects personal data (cards, IBAN, national IDs, e-mail, and phone numbers in compact international format such as `+14155550132`). The model sees a marker or `[REDACTED_...]` text instead of the value.
 - **Encrypted vault.** Keeps the real values of your secrets on your machine. The agent works with stable markers such as `__ZN_AWS_KEY_1__`, and `zn run` fills in a value only for a command you approved.
 - **Hash-chained audit log.** Records each assessment in `~/.zn/evidence.jsonl`.
 

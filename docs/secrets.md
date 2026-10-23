@@ -78,7 +78,7 @@ blocked.
 
 ### Name, address and username
 
-Besides checksummed personal data (cards, IBAN, national IDs, e-mail, phone), the
+Besides checksummed personal data (cards, IBAN, national IDs, e-mail, and phone numbers in compact international format such as `+14155550132`), the
 scrubber detects three personal fields that have no checksum: a person's name
 (`PERSON_NAME`), a postal address (`POSTAL_ADDRESS`) and a username (`USERNAME`).
 They are matched only when an explicit key sits next to the value, so a bare

@@ -24,7 +24,7 @@ Percent-encoded values are read too: `jane.doe%40example.com` in a URL or a form
 
 It looks for the same things the zn-gate scrubber already finds:
 
-- **personal data:** email addresses, phone numbers, bank account numbers (IBAN), card numbers, national ID numbers and social security numbers;
+- **personal data:** email addresses, phone numbers (only in compact international format, such as `+14155550132`: a plus sign and 8 to 15 digits, with no spaces or dashes; a number written with spaces, dashes or in national format is not found), bank account numbers (IBAN), card numbers, national ID numbers and social security numbers;
 - **literal secrets:** API keys, tokens, private keys and passwords in URLs, plus any secret you stored in the zn vault.
 
 ## What it does not flag
