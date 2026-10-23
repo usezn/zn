@@ -58,7 +58,8 @@ function handle(m) {
     return out({ jsonrpc: '2.0', id: m.id, result: { tools: [{ name: 'ok_tool', description: 'Returns a greeting.', inputSchema: { type: 'object' } }] } });
   }
   if (m.method === 'resources/read' && m.params && m.params.batch) {
-    return out([{ jsonrpc: '2.0', id: m.id, result: { contents: [] } }].concat(Array.from({ length: 8 }, (_, i) => ({ jsonrpc: '2.0', id: 3000 + i, result: {} }))));
+    const extra = (m.params.extraIds || []).map((id) => ({ jsonrpc: '2.0', id, result: {} }));
+    return out([{ jsonrpc: '2.0', id: m.id, result: { contents: [] } }].concat(extra, Array.from({ length: 8 }, (_, i) => ({ jsonrpc: '2.0', id: 3000 + i, result: {} }))));
   }
   if (m.method !== 'tools/call') return out({ jsonrpc: '2.0', id: m.id, result: {} });
   const name = m.params.name;
@@ -371,6 +372,21 @@ test('a dropped server batch also answers the other requests of the client, and 
     s.send(call(62, 'ok'));
     assert.equal((await s.reply(62)).result.content[0].text, 'fine');
     assert.equal(s.json().filter((m) => !Array.isArray(m) && m.id === 61).length, 1);
+  } finally { await s.stop(); }
+});
+
+test('a client batch that is refused forgets its other requests: a later dropped batch does not answer them again', async () => {
+  const s = startShield({ batch: 5 });
+  try {
+    // The batch is refused as a whole because its tool call carries an injection; the read in it gets one answer.
+    s.send([{ jsonrpc: '2.0', id: 70, method: 'resources/read', params: { uri: 'file:///example.txt' } }, call(71, 'ok', { text: INJ })]);
+    await s.wait(() => s.json().some((m) => Array.isArray(m) && m.some((x) => x && x.id === 70)), 'batch answer');
+    // The server now names id 70 in a batch that must be dropped: 70 was already answered and gets nothing more.
+    s.send({ jsonrpc: '2.0', id: 72, method: 'resources/read', params: { uri: 'file:///example.txt', batch: true, extraIds: [70] } });
+    assert.equal((await s.reply(72)).error.code, -32603);
+    s.send(call(73, 'ok'));
+    await s.reply(73);
+    assert.ok(!s.json().some((m) => !Array.isArray(m) && m.id === 70), 'id 70 was answered twice');
   } finally { await s.stop(); }
 });
 

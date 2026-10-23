@@ -667,6 +667,7 @@ function startMcpShield(command, args, options = {}) {
         msg.forEach((one, i) => {
           if (!one || typeof one !== 'object' || one.id === undefined) return;
           pendingCalls.delete(idKey(one.id));
+          otherRequests.delete(idKey(one.id));
           out.push(answers[i].response || batchNotice(one.id));
         });
         if (out.length) toClient(JSON.stringify(out) + '\n');
