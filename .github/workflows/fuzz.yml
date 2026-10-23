@@ -3,7 +3,7 @@ name: Fuzz
 # Weekly fuzzing of the parsers that read untrusted input, plus a short smoke run when the fuzz setup itself
 # changes. Not a required check: a crash opens no merge block, it uploads the crashing input as an artifact.
 #
-#   Rust    cargo-fuzz targets in fuzz/ (configuration, A2A messages, MCP JSON-RPC frames, policy modules)
+#   Rust    cargo-fuzz targets in fuzz/ (configuration, A2A messages, MCP JSON-RPC frames, policy modules, PII scrubber, injection detectors, origin check)
 #   Node.js the hook entry point (packages/zn-gate/lib/hooks/runner.js) fed arbitrary stdin
 #
 # Cost of one weekly run: about 25 minutes of Actions time for Rust (a cold build of the gateway with the
@@ -92,7 +92,7 @@ jobs:
           set -u
           cd fuzz
           failed=0
-          for target in config_parse a2a_message mcp_jsonrpc policy_wasm; do
+          for target in config_parse a2a_message mcp_jsonrpc policy_wasm scrubber detectors shield_origin; do
             echo "::group::$target ($FUZZ_SECONDS s)"
             # New inputs go to a scratch folder; the committed seeds stay as they are.
             mkdir -p "$RUNNER_TEMP/corpus/$target"
