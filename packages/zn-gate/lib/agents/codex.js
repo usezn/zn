@@ -58,11 +58,12 @@
  *
  * What that means here (docs/compat.md):
  *  - Reads of credential files, .env with values and ~/.zn are denied.
- *  - A command with __ZN_<NAME>__ markers is denied with the exact
- *    `zn run -- ...` command to use instead, because rewriting it would
- *    need "allow", which skips the user's approval policy. Once the agent
- *    runs it through zn run, the hook stays silent and Codex's approval
- *    policy plus zn run's own checks apply.
+ *  - A command with __ZN_<NAME>__ markers in its arguments is denied with
+ *    the way to pass the secret as an environment variable instead
+ *    (`zn run --secrets NAME -- ...`); a rewrite would need "allow", which
+ *    skips the user's approval policy. Once the agent runs it through zn
+ *    run, the hook stays silent and Codex's approval policy plus zn run's
+ *    own checks apply.
  *  - Detected tokens are never restored into commands (that would also need
  *    "allow"); they stay as tokens.
  *  - Output with secrets is replaced, through "block", by its tokenized

@@ -16,8 +16,11 @@ into the conversation, and never try to recover a value.
 - **HTTP APIs:** call the `secrets_http_request` tool of the `secrets` MCP
   server and put the marker where the value belongs (a header, the URL or the
   body). zn makes the request and returns the response with secrets masked.
-- **Commands:** run them through `zn run -- <command>`. zn fills the markers
-  only for commands the user allowed for that secret, and masks the output.
+- **Commands:** run them through `zn run --secrets NAME -- <command>`. The
+  program gets the value in the environment variable `NAME`, only if the user
+  allowed that command for the secret, and zn masks the output. Never write a
+  `__ZN_NAME__` marker in a command's arguments: zn does not fill it in there,
+  because an argument is visible to other processes.
 - **Files that need a real value** (for example a local config file): use
   `secrets_render_file`. The value is written to disk, never returned to you.
 - **A secret that does not exist yet:** call `secrets_request` with the name
@@ -26,7 +29,7 @@ into the conversation, and never try to recover a value.
 ## When zn denies a call
 
 A denial message starting with `zn:` explains why and what to do instead,
-for example to use `zn run --` or the MCP server. Follow it. Do not try to
+for example to use `zn run --secrets` or the MCP server. Follow it. Do not try to
 work around it by reading the file another way, encoding it, or asking the
 user to switch zn off. If the message says the vault is locked, ask the user
 to run `zn unlock` in their terminal.

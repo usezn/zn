@@ -4,9 +4,16 @@
  * zn run [--secrets A,B] -- <command> [args...]
  *
  * Env mode of the secrets broker (the MVP has no egress proxy):
- *   - Named markers (__ZN_<NAME>__) in the child's arguments and environment
- *     are replaced by the real values, and --secrets NAME sets env NAME=value.
- *     Nothing else is changed: values only ever exist inside the child.
+ *   - --secrets NAME sets env NAME=value in the child, and named markers
+ *     (__ZN_<NAME>__) in the environment zn run inherits are replaced by the
+ *     real values. Nothing else is changed: values only ever exist inside the
+ *     child's environment.
+ *   - A marker in the command's arguments is refused, never filled in: an
+ *     argument is visible to every process of the same user (ps,
+ *     /proc/<pid>/cmdline) and to command-line loggers. The environment is the
+ *     only channel zn run uses. Processes of the same user can read it too
+ *     (/proc/<pid>/environ), but it is not listed by ps or logged with the
+ *     command line.
  *   - Only for secrets in mode "env" whose allowCommands matches the command.
  *   - The first use of each (secret, command) pair needs your confirmation
  *     on the vault's own channel (dialog or `zn unlock --foreground`).
@@ -84,11 +91,32 @@ function parseRunArgs(args) {
   return out;
 }
 
-/** Named secrets the command needs: markers in argv plus --secrets. */
+/** Named secrets the command needs: the ones named with --secrets. */
 function requiredSecrets(parsed) {
-  const names = new Set(parsed.secrets);
+  return [...new Set(parsed.secrets)];
+}
+
+/** Names of the secret markers written in the command's arguments (never allowed). */
+function argvMarkers(parsed) {
+  const names = new Set();
   for (const a of parsed.command) for (const m of markers.findNamedMarkers(a)) names.add(m.name);
   return [...names];
+}
+
+/**
+ * Refuses a command that carries a secret marker in its arguments. The value
+ * would end up in the process list and in command-line logs, so zn run does
+ * not fill it in; the secret goes in the environment instead.
+ */
+function assertNoArgvMarkers(parsed) {
+  const found = argvMarkers(parsed);
+  if (found.length === 0) return;
+  const first = found[0];
+  throw znError('ZN_POLICY_DENIED', 'a secret marker in the command arguments (' + found.map((n) => markers.markerFor(n)).join(', ') + ') is not filled in: ' +
+    'an argument is visible to other processes (ps) and to command-line logs, so zn run never puts a value there. ' +
+    'Next step: give the program the secret as an environment variable instead: ' + znCommand('run --secrets ' + first + ' -- <command>') +
+    ', and have the program read $' + first + ' (many tools read a fixed variable, such as PGPASSWORD for psql: store the secret under that name). ' +
+    'For HTTP APIs use the secrets_http_request tool of the zn "secrets" MCP server.');
 }
 
 /**
@@ -170,6 +198,7 @@ async function prepare(parsed, opts) {
   const agent = opts.agent || parsed.agent || env.ZN_AGENT || null;
   const argv0 = parsed.command[0];
   const exeName = markers.normalizeExe(argv0);
+  assertNoArgvMarkers(parsed);
   const names = requiredSecrets(parsed);
   const optional = optionalSecrets(parsed, env);
   if (names.length === 0 && optional.length === 0) {
@@ -288,7 +317,8 @@ async function prepare(parsed, opts) {
       childEnv.NoDefaultCurrentDirectoryInExePath = '1';
     }
   }
-  const argv = parsed.command.map((a) => markers.substitute(a, values));
+  // Arguments go through exactly as written: assertNoArgvMarkers refused any marker in them.
+  const argv = parsed.command.slice();
 
   for (const c of chosen) {
     // A `warn` rule of the organization policy: allowed, recorded as "warn", and said.
@@ -398,6 +428,7 @@ async function runBroker(args, opts = {}) {
   const stderr = opts.stderr || process.stderr;
   try {
     const parsed = parseRunArgs(args);
+    assertNoArgvMarkers(parsed);
     const env = opts.env || process.env;
     let vault = opts.vault;
     let prep;
@@ -430,7 +461,7 @@ async function main(args) {
   process.exitCode = await runBroker(args);
 }
 
-module.exports = { systemCmdExe, batchInvocation, parseRunArgs, requiredSecrets, optionalSecrets, referencedSecrets, prepare, runBroker, main, USAGE };
+module.exports = { systemCmdExe, batchInvocation, parseRunArgs, requiredSecrets, argvMarkers, optionalSecrets, referencedSecrets, prepare, runBroker, main, USAGE };
 
 // Direct entry (`node lib/broker/run.js -- <command>`), used by hook rewrites.
 if (require.main === module) main(process.argv.slice(2));

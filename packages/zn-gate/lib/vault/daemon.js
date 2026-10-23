@@ -373,6 +373,11 @@ function makeOps(state, ctl) {
           if (eff && eff.deny) return orgDenied([inner]);
           if (eff && eff.warn === true) org = { warn: true, warnReason: eff.warnReason };
         }
+        // requireMode: the caller only accepts a secret stored in that mode (secrets_http_request: proxy).
+        if (s && typeof o.requireMode === 'string' && (s.mode || 'proxy') !== o.requireMode) {
+          await writeAudit({ secret: inner, mode: 'resolve', agent: o.agent, tool: o.tool, decision: 'deny', reason: 'mode_not_' + o.requireMode });
+          throw znError(CODES.POLICY_DENIED, 'secret ' + inner + ' is in ' + (s.mode || 'proxy') + ' mode, and this use needs ' + o.requireMode + ' mode. Next step: do not use this secret here. If the task needs it, ask the user.');
+        }
         if (s) { value = s.value; s.lastUsed = new Date().toISOString(); state.dirtySecrets = true; }
       }
       await writeAudit({ secret: inner, mode: 'resolve', agent: o.agent, tool: o.tool, decision: value === null ? 'deny' : 'allow', reason: value === null ? 'not_found' : (o.destination || 'unspecified') });

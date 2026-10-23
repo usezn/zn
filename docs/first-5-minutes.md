@@ -69,10 +69,10 @@ An ordinary command such as `ls` gets no answer at all: it is allowed and you se
 
 ### An approval question
 
-Sometimes zn does not block but asks you first. This happens when a command uses a secret marker. Real answer for a command that sends `__ZN_EXAMPLE_TOKEN__` to `https://example.com/api`:
+Sometimes zn does not block but asks you first. This happens, for example, when a command would send personal data to another host. Real answer for `curl -d "mail=ana@example.com" https://example.com/api`:
 
 ```text
-"permissionDecision":"ask","permissionDecisionReason":"zn: this command runs through zn run (zn's secret wrapper) for EXAMPLE_TOKEN; the first time, you approve the command, and secret values in its output stay hidden."
+"permissionDecision":"ask","permissionDecisionReason":"zn: this command would send an email address in the body to example.com. Approve it only if that data should leave this computer. To send a secret, read it from an environment variable (such as $API_TOKEN) instead of writing the value in the command."
 ```
 
 Your agent then shows its normal permission question. Read the command. Approve it only if it is what you expected.

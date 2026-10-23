@@ -7,7 +7,8 @@
  * Tools:
  *   secrets_list           names and policy of the stored secrets, never values
  *   secrets_http_request   zn makes the HTTP request with __ZN_<NAME>__ markers
- *                          replaced, only if the host is in each secret's
+ *                          replaced, only for secrets in mode "proxy", only if
+ *                          the host is in each secret's
  *                          allowHosts, and only in request headers unless the
  *                          secret also allows the URL ("query") or the body
  *                          (allowIn); the response is scrubbed before it returns
@@ -204,7 +205,7 @@ function createSecretsServer(opts = {}) {
     let asked = false;
     for (const m of named) {
       const s = meta.get(m.name);
-      if (!s || s.deny || markers.hostAllowed(s.allowHosts, host)) continue;
+      if (!s || s.deny || (s.mode || 'proxy') !== 'proxy' || markers.hostAllowed(s.allowHosts, host)) continue;
       const open = pickOpening(s.orgPending, 'host', (v) => markers.hostAllowed([v], host));
       const v = await getVault();
       if (open && typeof v.confirmOrgOpening === 'function') {
@@ -230,6 +231,13 @@ function createSecretsServer(opts = {}) {
         await audit({ secret: m.name, mode: s.mode, tool: 'mcp:secrets_http_request', argv0: null, host, decision: 'deny', reason: 'zn cloud key' });
         return denied(m.marker + ' is the key of `zn-gate connect`. Only zn-gate uses it, and revoking it is done in your own terminal (zn-gate disconnect). No request was made.');
       }
+      // Only secrets the user made available to HTTP requests (mode proxy) leave through this tool, whatever their allowHosts say:
+      // an env or file secret is meant for a local program, not for the network.
+      if ((s.mode || 'proxy') !== 'proxy') {
+        await audit({ secret: m.name, mode: s.mode, tool: 'mcp:secrets_http_request', argv0: null, host, decision: 'deny', reason: 'mode_not_proxy:' + s.mode });
+        return denied(m.marker + ' is in ' + s.mode + ' mode, and secrets_http_request only sends secrets in proxy mode. No request was made. ' +
+          'If the API really needs it, the user can change it in their own terminal: zn secret allow ' + m.name + ' --mode proxy');
+      }
       if (!markers.hostAllowed(s.allowHosts, host)) {
         await audit({ secret: m.name, mode: s.mode, tool: 'mcp:secrets_http_request', argv0: null, host, decision: 'deny', reason: 'host not in allowHosts' });
         return denied(m.marker + ' may not be sent to ' + host + ' (allowed: ' + ((s.allowHosts || []).join(', ') || 'none') + '). No request was made.');
@@ -252,7 +260,14 @@ function createSecretsServer(opts = {}) {
     const notice = notices.length ? notices.join(' ') : undefined;
     const used = (m, why) => (warned(m) ? { decision: 'warn', reason: WARN_REASON } : { decision: 'allow', reason: why });
     for (const m of named) {
-      const v = await (await getVault()).resolve(project, m.marker);
+      // requireMode: the vault checks the mode again when it hands the value over.
+      let v;
+      try {
+        v = await (await getVault()).resolve(project, m.marker, { requireMode: 'proxy', agent, tool: 'mcp:secrets_http_request' });
+      } catch (err) {
+        if (err && err.code === 'ZN_POLICY_DENIED') return denied(m.marker + ' was refused by the vault: ' + (err.message || 'not in proxy mode') + ' No request was made.');
+        throw err;
+      }
       if (v == null) return textResult({ error: 'ZN_NOT_FOUND', message: 'secret ' + m.name + ' has no value' }, true);
       values.set(m.name, String(v));
     }

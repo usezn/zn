@@ -1,0 +1,3 @@
+### Security
+- `zn run` no longer fills in a secret marker written in a command's arguments, where the value would show in the process list and in command-line logs. It refuses the command and says to pass the secret as an environment variable with `zn run --secrets NAME -- <command>`. The agent hooks refuse such a command with the same guidance instead of rewriting it, and the docs now describe what an environment variable does and does not hide.
+- `secrets_http_request` now sends only secrets stored in `proxy` mode. A secret kept for a program (`env`) or a file (`file`) is refused even when it has an allowed host, and the vault checks the mode again before it hands the value over.

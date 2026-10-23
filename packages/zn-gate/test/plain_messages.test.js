@@ -200,7 +200,7 @@ test('PowerShell refusals: the reason in plain words and one next step', () => {
     const r = policy.wrapPowerShell(cmd, opts);
     assert.equal(r.ok, false, cmd);
     assert.match(r.reason, reason, cmd);
-    assert.match(r.reason, /Next step: start the command with the program name/, cmd);
+    assert.match(r.reason, /Next step: give the program the secret as an environment variable/, cmd);
     assert.doesNotMatch(r.reason, /cannot be rewritten|cmdlet|could not identify|scrubber/, cmd);
   }
 });
@@ -242,7 +242,7 @@ test('Monitor notices: WebSocket, placeholders and the allowed monitor', async (
 
   const marked = await decidePre({ event: 'pre_tool', tool: 'monitor', input: { command: 'curl __ZN_GH__' }, raw: { tool_input: { command: 'curl __ZN_GH__' } }, cwd }, deps(), 'claude-code', opts);
   assert.equal(marked.decision, 'deny');
-  assert.match(marked.message, /^zn: a monitor cannot use secret placeholders \(such as __ZN_NAME__\)\. Next step: run the command with the Bash tool instead; zn fills in the placeholders there\.$/);
+  assert.match(marked.message, /^zn: a monitor cannot use secret placeholders \(such as __ZN_NAME__\)\. Next step: give the program the secret as an environment variable with \`.*run --secrets NAME -- <command>\` instead\.$/);
 
   const ok = await decidePre({ event: 'pre_tool', tool: 'monitor', input: { command: 'tail -f app.log' }, raw: { tool_input: { command: 'tail -f app.log' } }, cwd }, deps(), 'claude-code', opts);
   assert.equal(ok.decision, 'ask');

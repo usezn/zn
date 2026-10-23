@@ -200,6 +200,24 @@ test('daemon: the zn cloud key is refused to hooks, the broker and zn run', asyn
   c.close();
 });
 
+test('daemon: resolve with requireMode hands a value over only for a secret stored in that mode, and audits the refusal', async () => {
+  const c = clientMod.createClient({});
+  const value = 'ghp_' + fake(36);
+  for (const mode of ['env', 'file', 'backup']) {
+    await c.setSecret('MODE_CHECK', value, { mode, allowHosts: ['api.github.com'], allowCommands: ['node'] });
+    await assert.rejects(c.resolve('/work/app', '__ZN_MODE_CHECK__', { requireMode: 'proxy', tool: 'mcp:secrets_http_request' }), (e) => e.code === 'ZN_POLICY_DENIED' && /needs proxy mode/.test(e.message), mode);
+    // Without the requirement (zn run, hooks) the value is handed over as before.
+    assert.strictEqual(await c.resolve('/work/app', '__ZN_MODE_CHECK__'), value, mode);
+  }
+  await c.setSecret('MODE_CHECK', value, { mode: 'proxy', allowHosts: ['api.github.com'] });
+  assert.strictEqual(await c.resolve('/work/app', '__ZN_MODE_CHECK__', { requireMode: 'proxy', tool: 'mcp:secrets_http_request' }), value);
+  const denied = audit.read({ limit: 50 }).filter((r) => r.secret === 'MODE_CHECK' && r.decision === 'deny' && r.reason === 'mode_not_proxy');
+  assert.strictEqual(denied.length, 3, 'one audit record per refusal');
+  assert.ok(denied.every((r) => r.tool === 'mcp:secrets_http_request'));
+  await c.removeSecret('MODE_CHECK');
+  c.close();
+});
+
 test('daemon: named secrets, reserved names, metadata updates, backups', async () => {
   const c = clientMod.createClient({});
   const value = 'ghp_' + fake(36);

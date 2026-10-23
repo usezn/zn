@@ -11,8 +11,9 @@
  *   pre_tool    deny reads of credential files and ~/.zn, deny secret
  *               management commands, deny MCP call arguments that carry
  *               markers or secret values (other servers than zn's own),
- *               wrap shell commands (Bash, PowerShell)
- *               that carry __ZN_<NAME>__ markers in `zn run --` (ask),
+ *               refuse shell commands (Bash, PowerShell) that carry
+ *               __ZN_<NAME>__ markers in their arguments, with the way to pass
+ *               the secret as an environment variable (`zn run --secrets`),
  *               restore detected tokens per the restore policy (ask), refuse
  *               markers in WebFetch URLs (use secrets_http_request instead),
  *               and pipe Monitor commands through the streaming scrubber.
@@ -722,7 +723,7 @@ function decideMonitor(ev, pathOpts, opts) {
   const deny = policy.bashDenial(original, { ...pathOpts, destructiveRules: destructiveRulesOf(opts) });
   if (deny) return { decision: 'deny', message: deny };
   if (markers.findMarkers(original).length) {
-    return { decision: 'deny', message: 'zn: a monitor cannot use secret placeholders (such as __ZN_NAME__). Next step: run the command with the Bash tool instead; zn fills in the placeholders there.' };
+    return { decision: 'deny', message: 'zn: a monitor cannot use secret placeholders (such as __ZN_NAME__). Next step: give the program the secret as an environment variable with `' + znCommand('run --secrets NAME -- <command>') + '` instead.' };
   }
   if (isMonitorWrapper(original, opts)) return { decision: 'ask', message: 'zn: this monitor already checks its output for secrets.' };
   const command = wrapMonitor(original, opts);
@@ -1302,7 +1303,7 @@ function failClosed(ev, err, msg) {
  */
 function SESSION_CONTEXT() {
   return 'zn is on in this project: it blocks reads of .env files and of the secrets vault. ' +
-    'To run a command that needs a stored secret, write the placeholder __ZN_<NAME>__ and run the command with `' + znCommand('run -- <command>') + '`.';
+    'To run a command that needs a stored secret, use `' + znCommand('run --secrets NAME -- <command>') + '`: the program reads the value from the environment variable NAME. A placeholder in the arguments is not filled in.';
 }
 
 /*
