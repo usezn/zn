@@ -92,7 +92,7 @@ Shows that zn stops your agent from reading a fake secret, in a temporary folder
 
 Aliases: `doctor`.
 
-Exit codes: `0` every agent that is set up is protected. `1` an agent is not protected, or none is set up.
+Exit codes: `0` every agent that is set up is protected. `1` an agent is not protected, or none is set up. On a new machine, run `zn-gate init` first; until then `check` exits with `1`.
 
 ### `status`
 
