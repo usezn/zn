@@ -39,10 +39,29 @@ fn email_re() -> &'static Regex {
 
 fn api_re() -> &'static Regex {
     API_KEY_REGEX.get_or_init(|| {
-        // Matches: api_key=xxx, secret: xxx, password=xxx, token: xxx
+        // Matches: api_key=xxx, secret: xxx, password=xxx, token: xxx, and the same as a JSON
+        // member ("api_key": "xxx"), also inside a JSON string (\"api_key\":\"xxx\").
+        // Group 1 is the name, group 2 the optional quote that closes it, group 3 the optional
+        // quote that opens the value (both may be backslash-escaped), group 4 the value.
         // Requires at least 8 characters for the value (reduced from 16 for better detection)
-        Regex::new(r#"(?i)(api[_-]?key|secret[_-]?key|password|token|auth[_-]?token|access[_-]?token|bearer)[ ]*[:=][ ]*['"]?([a-zA-Z0-9_\-.]{8,})['"]?"#).unwrap()
+        Regex::new(r#"(?i)(api[_-]?key|secret[_-]?key|password|token|auth[_-]?token|access[_-]?token|bearer)(\\{0,2}['"])?[ \t]*[:=][ \t]*(\\{0,2}['"])?([a-zA-Z0-9_\-.]{8,})(?:\\{0,2}['"])?"#).unwrap()
     })
+}
+
+/// Replacement for one api_re() match. A plain `name=value` becomes `name: [SECRET_REDACTED]`.
+/// A quoted name (a JSON member) keeps its quotes, so the output is still valid JSON.
+fn redact_secret(caps: &regex::Captures) -> String {
+    let name = &caps[1];
+    match caps.get(2) {
+        None => format!("{name}: [SECRET_REDACTED]"),
+        Some(key_quote) => {
+            let value_quote = caps.get(3).map_or("", |m| m.as_str());
+            format!(
+                "{name}{}: {value_quote}[SECRET_REDACTED]{value_quote}",
+                key_quote.as_str()
+            )
+        }
+    }
 }
 
 fn card_re() -> &'static Regex {
@@ -362,9 +381,7 @@ impl Scrubber {
         output = email_re()
             .replace_all(&output, "[EMAIL_REDACTED]")
             .to_string();
-        output = api_re()
-            .replace_all(&output, "$1: [SECRET_REDACTED]")
-            .to_string();
+        output = api_re().replace_all(&output, redact_secret).to_string();
         output = replace_spans(&output, &card_spans(&output), "[CARD_REDACTED]");
         output = replace_spans(&output, &ssn_spans(&output), "[SSN_REDACTED]");
         output = replace_spans(&output, &e164_spans(&output), "[PHONE_REDACTED]");
@@ -436,6 +453,53 @@ mod tests {
         let scrubbed = Scrubber::scrub(input);
         assert!(scrubbed.contains("[SECRET_REDACTED]"));
         assert!(!scrubbed.contains("fakekeyfakekeyfakekey"));
+    }
+
+    #[test]
+    fn test_scrub_json_member() {
+        // Fake, random-looking values only.
+        let v = "zn_FAKEabcdef0123456789abcdef";
+        for input in [
+            format!(r#"{{"api_key":"{v}"}}"#),
+            format!(r#"{{"api_key" : "{v}"}}"#),
+            format!(r#"{{"api_key": "{v}"}}"#),
+            format!(r#"{{"password":"{v}","x":1}}"#),
+            format!("{{'api_key': '{v}'}}"),
+            format!(r#"{{"token": {v}}}"#),
+            format!(r#"{{"body":"{{\"api_key\":\"{v}\"}}"}}"#),
+        ] {
+            let scrubbed = Scrubber::scrub(&input);
+            assert!(
+                scrubbed.contains("[SECRET_REDACTED]"),
+                "{input} -> {scrubbed}"
+            );
+            assert!(!scrubbed.contains(v), "{input} -> {scrubbed}");
+            assert!(Scrubber::contains_pii(&input), "{input}");
+        }
+        // The quotes stay, so a redacted JSON object is still JSON.
+        assert_eq!(
+            Scrubber::scrub(&format!(r#"{{"api_key":"{v}","n":1}}"#)),
+            r#"{"api_key": "[SECRET_REDACTED]","n":1}"#
+        );
+        // Plain assignments keep their old output.
+        assert_eq!(
+            Scrubber::scrub(&format!("api_key=\"{v}\"")),
+            "api_key: [SECRET_REDACTED]"
+        );
+    }
+
+    #[test]
+    fn test_json_member_negatives() {
+        // A name that is not in the list, and a value under the 8-character minimum.
+        for input in [
+            r#"{"color":"zn_FAKEabcdef0123456789abcdef"}"#,
+            r#"{"api_key":"abc123"}"#,
+            r#"{"api_key": ""}"#,
+            r#"{"api_key_count": 3}"#,
+        ] {
+            assert_eq!(Scrubber::scrub(input), input);
+            assert!(!Scrubber::contains_pii(input), "{input}");
+        }
     }
 
     #[test]
