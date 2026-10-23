@@ -20,7 +20,7 @@ A short summary of the last 7 days on this computer:
 zn-gate report: 2026-10-11 to 2026-10-17 (this computer only; nothing was sent)
 
   Blocked actions   : 12  (claude-code 9, cursor 3)
-  Secrets hidden    : 31  (AWS_KEY 14, DB_PASSWORD 8, GITHUB_TOKEN 6)
+  Secrets hidden    : 28  (AWS_KEY 14, DB_PASSWORD 8, GITHUB_TOKEN 6)
   New MCP servers   : 1  (npx @modelcontextprotocol/server-github)
   Tools changed, waiting for your approval: 1  (run: zn-gate pins)
 
