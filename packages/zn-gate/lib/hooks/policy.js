@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-24.10';
+const POLICY_RULES_VERSION = '2026-10-24.11';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -763,7 +763,10 @@ const INSTRUCTION_WRAPPERS = new Map([
   ['xargs', new Set(['-n', '-I', '-L', '-P', '-d', '-E', '-s', '-a'])],
   ['nice', new Set(['-n'])],
   ['time', new Set(['-f', '-o'])],
-  ['command', new Set()], ['builtin', new Set()], ['exec', new Set()], ['nohup', new Set()],
+  ['command', new Set()], ['builtin', new Set()], ['exec', new Set()], ['nohup', new Set()], ['chronic', new Set()],
+  ['timeout', new Set(['-k', '-s', '--kill-after', '--signal'])],
+  ['stdbuf', new Set(['-i', '-o', '-e', '--input', '--output', '--error'])],
+  ['ionice', new Set(['-c', '-n', '-p', '-P', '-u', '--class', '--classdata'])],
   ['then', new Set()], ['do', new Set()], ['else', new Set()], ['if', new Set()], ['while', new Set()], ['until', new Set()],
   ['!', new Set()], ['{', new Set()],
 ]);
@@ -775,8 +778,10 @@ function commandWordAt(seg, progs) {
     if (seg[i].redirectTarget || /^[A-Za-z_][A-Za-z0-9_]*=/.test(seg[i].text)) { i++; continue; }
     const takesValue = INSTRUCTION_WRAPPERS.get(progs[i]);
     if (!takesValue) return i;
+    const wrapper = progs[i];
     i++;
     while (i < progs.length && seg[i].text.length > 1 && seg[i].text.startsWith('-')) i += takesValue.has(seg[i].text) ? 2 : 1;
+    if (wrapper === 'timeout') i++; // its first argument is the duration
   }
   return -1;
 }
@@ -812,6 +817,17 @@ function downloadTargets(name, rest) {
     }
   }
   return out;
+}
+
+const PS_COPY_MOVE = new Set(['copy', 'move', 'copy-item', 'move-item']);
+
+/** The value of PowerShell's -Destination (any unambiguous prefix, also -Destination:value), or null. */
+function psDestinationOf(rest) {
+  for (let i = 0; i < rest.length; i++) {
+    const m = /^-des(?:t(?:i(?:n(?:a(?:t(?:i(?:o(?:n)?)?)?)?)?)?)?)?(?::(.*))?$/i.exec(rest[i]);
+    if (m) return m[1] ? m[1] : (i + 1 < rest.length ? rest[i + 1] : null);
+  }
+  return null;
 }
 
 /** The target directory named with -t DIR or --target-directory[=]DIR, or null. */
@@ -867,8 +883,12 @@ function instructionWriteInWords(readings, opts) {
         } else if ((name === 'sed' || name === 'perl') && !rest.some((x) => IN_PLACE_RE.test(x))) {
           // These only read their files without an in-place flag.
         } else if (INSTRUCTION_DEST_LAST.has(name)) {
-          const dir = targetDirectoryOf(rest);
-          if (dir !== null) {
+          // Copy-Item -Path a -Destination b: the destination is named, whatever its place.
+          const psDest = PS_COPY_MOVE.has(name) ? psDestinationOf(rest) : null;
+          const dir = psDest !== null ? null : targetDirectoryOf(rest);
+          if (psDest !== null) {
+            candidates.push(psDest, ...intoDirectory(psDest, args.filter((x) => x !== psDest), false, opts));
+          } else if (dir !== null) {
             // -t DIR: every other argument is a source, written into DIR.
             const at = args.indexOf(dir);
             const sources = args.filter((_, j) => j !== at);
@@ -970,6 +990,8 @@ function scanFirstCommand(cmd, posix = false) {
       continue;
     }
     if (ch === '`' || (ch === '$' && s[i + 1] === '(')) { substitution = true; pushChar(ch, i); continue; }
+    // `>|` is one redirection (it overrides noclobber), not a `>` followed by a pipe.
+    if (ch === '|' && s[i - 1] === '>' && cur && cur.end === i && !cur.text.endsWith('>>')) { pushChar(ch, i); continue; }
     if (ch === ';' || ch === '&' || ch === '|' || ch === '\n' || ch === '(' || ch === ')') {
       endWord();
       return { end: i, words, substitution, operator: ch, unterminated: false };
@@ -998,9 +1020,9 @@ function allWords(cmd, posix = false) {
     for (let k = 0; k < scan.words.length; k++) {
       const w = scan.words[k];
       const prev = k > 0 ? scan.words[k - 1].text : '';
-      const isRedirTarget = /^[0-9]*>>?$/.test(prev) || /^[0-9]*>>?./.test(w.text);
+      const isRedirTarget = /^[0-9]*(?:>\||>>?)$/.test(prev) || /^[0-9]*(?:>\||>>?)./.test(w.text);
       // Input redirections: <file, 0<file, <>file (read and write), {fd}<file.
-      out.push({ text: w.text.replace(/^[0-9]*>>?/, '').replace(/^(?:[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})?<>?/, ''), redirectTarget: isRedirTarget, head, seq: guard, sub, gitArgs, git: gi >= 0 });
+      out.push({ text: w.text.replace(/^[0-9]*(?:>\||>>?)/, '').replace(/^(?:[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})?<>?/, ''), redirectTarget: isRedirTarget, head, seq: guard, sub, gitArgs, git: gi >= 0 });
     }
     rest = rest.slice(scan.end + 1);
   }

@@ -95,7 +95,7 @@ test('reading an instruction file, and other writes, are unchanged', async (t) =
     'git diff CLAUDE.md', 'ls .cursor/rules', 'echo hi > notes.txt', 'tee out.log', 'cp a.txt b.txt']) {
     assert.equal((await decide(env, 'Bash', { command })).decision, 'allow', command);
   }
-  for (const f of ['src/app.js', 'README.md', 'docs/CLAUDE.md.txt', 'rules/x.mdc']) {
+  for (const f of ['src/app.js', 'README.md', 'notes/CLAUDE.md.txt', 'rules/x.mdc']) {
     assert.equal((await decide(env, 'Write', { file_path: path.join(env.proj, f), content: 'x' })).decision, 'allow', f);
   }
 });
@@ -194,4 +194,39 @@ test('curl and wget write the file named by their output option', async (t) => {
     'curl -H "x: AGENTS.md" https://example.com/a', 'wget -O - https://example.com/a', 'curl -o - https://example.com/a | grep CLAUDE.md']) {
     assert.equal((await decide(env, 'Bash', { command })).decision, 'allow', command);
   }
+});
+
+test('>| is a redirection, and timeout, stdbuf, ionice and chronic run the next command', async (t) => {
+  const env = setup(t);
+  for (const command of ['echo x >|CLAUDE.md', 'echo x >| AGENTS.md', 'echo x 2>|.cursorrules', 'timeout 5 tee CLAUDE.md', 'timeout -k 2 10 tee -a AGENTS.md',
+    'stdbuf -o0 tee CLAUDE.md', 'ionice -c3 tee MEMORY.md', 'chronic tee SOUL.md']) {
+    const r = await decide(env, 'Bash', { command });
+    assert.equal(r.decision, 'ask', command);
+    assert.match(r.reason, /standing instructions/, command);
+  }
+  for (const command of ['echo x >|notes.txt', 'timeout 5 tee out.log', 'timeout 5 cat CLAUDE.md', 'stdbuf -o0 grep -n a AGENTS.md']) {
+    assert.equal((await decide(env, 'Bash', { command })).decision, 'allow', command);
+  }
+});
+
+test('PowerShell Copy-Item and Move-Item read -Destination by name', async (t) => {
+  const env = setup(t);
+  for (const command of ['Copy-Item -Destination CLAUDE.md -Path a.md', 'Copy-Item -Path a.md -Destination AGENTS.md', 'Copy-Item -Dest:CLAUDE.md a.md',
+    'Move-Item -Destination .cursorrules -Path a.md']) {
+    const r = await decide(env, 'PowerShell', { command });
+    assert.equal(r.decision, 'ask', command);
+    assert.match(r.reason, /standing instructions/, command);
+  }
+  for (const command of ['Copy-Item -Path CLAUDE.md -Destination backup.txt', 'Copy-Item -Destination out.txt -Path CLAUDE.md']) {
+    assert.equal((await decide(env, 'PowerShell', { command })).decision, 'allow', command);
+  }
+});
+
+test('a write to an instruction file that carries a secret marker asks once, with both notes', async (t) => {
+  const env = setup(t);
+  const r = await decide(env, 'Write', { file_path: path.join(env.proj, 'CLAUDE.md'), content: 'key=__ZN_AWS_KEY_1__\n' });
+  assert.equal(r.decision, 'ask');
+  assert.match(r.reason, /standing instructions in later sessions/);
+  assert.match(r.reason, /__ZN_AWS_KEY_1__/);
+  assert.equal((await decide(setup(t, { hooks: { strict: true } }), 'Write', { file_path: path.join(env.proj, 'CLAUDE.md'), content: 'key=__ZN_AWS_KEY_1__\n' })).decision, 'deny');
 });

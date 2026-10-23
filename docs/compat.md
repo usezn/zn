@@ -367,6 +367,8 @@ Agents that cannot ask the user show no question, so zn keeps quiet and the agen
 | Cursor | Shell commands only; its file tools have no question zn can use |
 | Codex CLI, Gemini CLI, OpenCode | No (own approval rules apply) |
 
+A tool that an adapter reports only as a generic file access (some Gemini CLI, Copilot and Antigravity tools) is not asked about: zn cannot tell a read from a write there, and reading these files is never a question.
+
 ## Limits that apply to every agent
 
 - **An event zn cannot read is refused.** Empty stdin, or stdin that is not

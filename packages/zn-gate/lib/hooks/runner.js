@@ -416,6 +416,7 @@ async function decidePre(ev, d, agentId, opts) {
     const ask = searchFolderAsk(input.scanDir, pathOpts);
     if (ask) return ask;
   }
+  let instructionAsk = null;
   if (tool === 'fileaccess') {
     // A tool zn does not know that names files: every path gets the read and the write checks.
     for (const p of Array.isArray(input.paths) ? input.paths : []) {
@@ -439,7 +440,12 @@ async function decidePre(ev, d, agentId, opts) {
       if (!instruction && instructionMode !== 'off') instruction = policy.instructionWriteNotice(p, pathOpts);
     }
     // A file the agent reads as standing instructions: ask (a deny in strict mode). Reading it is not checked.
-    if (instruction) return instructionMode === 'deny' ? { decision: 'deny', message: instruction.deny } : { decision: 'ask', message: instruction.ask };
+    // A write that carries secret markers goes on to the marker check below, which adds this question to its own message.
+    if (instruction) {
+      if (instructionMode === 'deny') return { decision: 'deny', message: instruction.deny };
+      if (!Array.isArray(input.texts)) return { decision: 'ask', message: instruction.ask };
+      instructionAsk = instruction.ask;
+    }
   }
 
   if (tool === 'webfetch') {
@@ -551,8 +557,10 @@ async function decidePre(ev, d, agentId, opts) {
   }
 
   if ((tool === 'write' || tool === 'edit' || tool === 'multiedit' || tool === 'notebookedit') && Array.isArray(input.texts)) {
+    // The instruction-file question comes first; the marker result only adds its own notes to it.
+    const asked = (r) => (instructionAsk ? { ...r, decision: 'ask', message: (r.message ? r.message + ' ' : '') + instructionAsk } : r);
     const withMarkers = input.texts.filter((t) => markers.findMarkers(t.value).length);
-    if (withMarkers.length === 0) return { decision: 'allow' };
+    if (withMarkers.length === 0) return asked({ decision: 'allow' });
     const status = input.path ? gitStatusOf(path.resolve(ev.cwd || process.cwd(), input.path)) : 'unknown';
     const destination = status === 'ignored' || status === 'outside' ? 'write_ignored' : 'write_tracked';
     const ctx = await ctxFor(ev, d, agentId, destination);
@@ -585,15 +593,15 @@ async function decidePre(ev, d, agentId, opts) {
     const outdated = isOutdated(withheld);
     const told = [blocked.length ? blockedLine(blocked) : null, outdated ? outdatedLine() : null].filter(Boolean);
     const context = told.length ? 'zn: ' + told.join(' ') : undefined;
-    if (updates.length === 0 && told.length) return { decision: 'ask', message: 'zn:' + why, context };
-    if (updates.length === 0) return { decision: 'allow', message: why ? 'zn:' + why : undefined };
-    return {
+    if (updates.length === 0 && told.length) return asked({ decision: 'ask', message: 'zn:' + why, context });
+    if (updates.length === 0) return asked({ decision: 'allow', message: why ? 'zn:' + why : undefined });
+    return asked({
       decision: 'ask',
       updatedInput: { texts: updates },
       kind: 'restore',
       message: 'zn: restores ' + restored + ' secret value(s) in a git-ignored file.' + why,
       context,
-    };
+    });
   }
 
   return { decision: 'allow' };
