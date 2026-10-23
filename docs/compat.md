@@ -302,9 +302,10 @@ files, because the hook command runs zn from PATH. Claude Code 2.1.295 or later
 then blocks tool calls and prompts (the hooks are set to block when they cannot
 run); older Claude Code versions and Codex let the call go ahead. Cursor blocks
 file reads and prompts (those hooks fail closed) and lets the other calls go
-ahead; OpenCode blocks calls and messages. In every agent, the output of a tool
-that already ran reaches the model without zn's cleaning, because the hook that
-runs after a tool cannot block it.
+ahead; OpenCode blocks calls and messages. In Claude Code, Codex and Cursor, the
+output of a tool that already ran reaches the model without zn's cleaning,
+because the hook that runs after a tool cannot block it; OpenCode withholds that
+output.
 Install zn on every machine that runs the agent.
 
 ## If your agent blocks every prompt
