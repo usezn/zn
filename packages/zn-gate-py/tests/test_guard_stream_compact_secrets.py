@@ -2,11 +2,12 @@
 many sizes, comes out masked as the whole text is. Fictitious values only.
 """
 
+import base64
 import hashlib
 import json
 import unittest
 
-from zn_gate import guard
+from zn_gate import GuardBlockError, guard
 from zn_gate.guard import _mask_text
 
 
@@ -61,6 +62,86 @@ class TestCompactSecretsStream(unittest.TestCase):
         text = dense_keys()
         self.check(text)
         self.assertFalse("AKIA0000" in "".join(run(chunked(text, 16 * 1024))), "a key came out unmasked")
+
+
+
+def run_until_block(chunks):
+    """What the guarded stream gives out before it ends or blocks, and whether it blocked."""
+    @guard(mask_secrets=True, check_args=False)
+    def tool():
+        yield from chunks
+
+    out = []
+    try:
+        for piece in tool():
+            out.append(piece)
+    except GuardBlockError as exc:
+        return "".join(out), exc.assessment.rule
+    return "".join(out), None
+
+
+def b64(n, seed):
+    raw = b""
+    i = 0
+    while len(raw) < n:
+        raw += hashlib.sha512(b"%d-%d" % (seed, i)).digest()
+        i += 1
+    return base64.b64encode(raw)[:n].decode()
+
+
+def fake_pem(seed, n):
+    body = b64(n, seed)
+    lines = "\n".join(body[i:i + 64] for i in range(0, n, 64))
+    return "-----BEGIN RSA PRIVATE KEY-----\n" + lines + "\n-----END RSA PRIVATE KEY-----"
+
+
+class TestLongSecretsStream(unittest.TestCase):
+    def test_private_keys_in_small_chunks(self):
+        # Each key has more places to cut than the nearest tries: the cut moves back far enough.
+        text = "".join(fake_pem(i, 3300) + "," for i in range(120))
+        whole = _mask_text(text)
+        out, rule = run_until_block(chunked(text, 4096))
+        self.assertIsNone(rule)
+        self.assertTrue(out == whole, "differs from the whole text masked")
+        self.assertNotIn("BEGIN RSA PRIVATE KEY", out)
+
+    def test_private_key_across_the_hold_in_one_chunk(self):
+        pre = '{"k":"v"},' * 40000
+        key = fake_pem(9, 6400)
+        text = pre + key + "," + "x" * (16384 - (len(key) - 3200) - 1)
+        out, rule = run_until_block([text])
+        self.assertIsNone(rule)
+        self.assertTrue(out == _mask_text(text), "differs from the whole text masked")
+        self.assertNotIn("BEGIN RSA PRIVATE KEY", out)
+
+    def test_url_list_keeps_every_value_masked(self):
+        values = [b64(30, i).replace("+", "A").replace("/", "B") for i in range(6000)]
+        text = "&".join("https://example.com/cb?api_key=%s&token=x" % v for v in values)
+        # The masker reads the whole line as one api_key value (no white space ends it), longer
+        # than the stream can hold: the stream blocks rather than pass any of it on.
+        out, rule = run_until_block(chunked(text, 16384))
+        self.assertFalse(any(v in out for v in values), "an api_key value came out unmasked")
+        self.assertEqual(rule, "secret:unmaskable")
+
+    def test_short_stream_with_a_long_value_is_masked_whole(self):
+        # Under the limit the whole text is held and masked at the end.
+        value = "".join(hashlib.sha256(b"%d" % i).hexdigest() for i in range(120000 // 64))
+        text = "API_KEY=" + value
+        out, rule = run_until_block(chunked(text, 16384))
+        self.assertIsNone(rule)
+        self.assertTrue(out == _mask_text(text), "differs from the whole text masked")
+        self.assertNotIn(value[:24], out)
+
+    def test_value_longer_than_the_buffer_blocks_and_never_leaks(self):
+        value = "".join(hashlib.sha256(b"%d" % i).hexdigest() for i in range(360000 // 64))
+        text = "API_KEY=" + value
+        for size in (16 * 1024, 64 * 1024, 300 * 1024):
+            with self.subTest(size=size):
+                out, rule = run_until_block(chunked(text, size))
+                self.assertEqual(rule, "secret:unmaskable")
+                self.assertNotIn(value[:24], out)
+                self.assertFalse(any(value[i:i + 24] in out for i in range(0, len(value) - 24, 4096)),
+                                 "part of the value came out")
 
 
 if __name__ == "__main__":
