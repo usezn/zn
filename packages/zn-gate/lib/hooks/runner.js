@@ -296,6 +296,7 @@ async function egressCheck(ev, d, agentId, mode, requests, what) {
   if (typeof engine.prepare === 'function') ctx = await engine.prepare(ctx);
   const found = new Set();
   const hosts = new Set();
+  let toServer = false;   // a hit in plain MCP arguments: the MCP server receives it, not the host of a URL
   for (const r of requests) {
     let hit = false;
     for (const part of r.parts) {
@@ -306,7 +307,8 @@ async function egressCheck(ev, d, agentId, mode, requests, what) {
         const scanned = copy === text ? part : { where: part.where, text: copy };
         for (const span of engine.scan(copy, ctx) || []) {
           if (!SECRET_SOURCES.has(span.source) && span.source !== 'pii') continue;
-          hit = true;
+          if (part.where === 'arguments') toServer = true;
+          else hit = true;
           const kind = span.source === 'pii' ? (EGRESS_KIND[span.type] || kindLabel(span.type)) : kindLabel(span.type);
           found.add(kind + ' ' + (EGRESS_PLACE[policy.egressLabel(scanned, span.start)] || 'in the request'));
         }
@@ -316,7 +318,9 @@ async function egressCheck(ev, d, agentId, mode, requests, what) {
   }
   if (found.size === 0) return null;
   const list = [...found].slice(0, 4).join(', ') + (found.size > 4 ? ' and more' : '');
-  const to = hosts.size ? [...hosts].filter(Boolean).slice(0, 3).join(', ') : (what === 'MCP call' ? 'the MCP server' : 'a network host');
+  const named = [...hosts].filter(Boolean).slice(0, 3);
+  if (toServer) named.push('the MCP server');
+  const to = named.length ? named.join(', ') : (what === 'MCP call' ? 'the MCP server' : 'a network host');
   const sentence = 'would send ' + list + ' to ' + to;
   if (mode === 'deny') {
     return {
@@ -407,6 +411,8 @@ async function decidePre(ev, d, agentId, opts) {
   if (tool === 'mcp' && ev.input && ev.input.args !== undefined) {
     let res = await decideMcp(ev, d, agentId);
     if (res.decision === 'deny') return res;
+    // zn's own MCP server checks text on this computer: its arguments are not a network request.
+    if (ev.mcp && ev.mcp.ours === 'analyze') return res;
     const mode = egressModeOf(opts);
     // Personal data in the arguments follows the egress settings: with the check off nobody is asked, and when the
     // call is a network request whose arguments the egress check read in full, it decides (local and allow-listed
