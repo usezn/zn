@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-24.17';
+const POLICY_RULES_VERSION = '2026-10-25.3';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -778,6 +778,9 @@ function isInstructionPath(p, opts = {}) {
   if (typeof p !== 'string' || !p) return false;
   const ctx = contextOf(opts);
   const expanded = expandEnv(expandHome(p, ctx.home), ctx.env);
+  // Windows drops trailing dots and spaces (and a stream suffix) from every name, so `AGENTS.md.` opens AGENTS.md:
+  // the same normalization as classifyPath, on the text, so it also holds for a file that does not exist yet.
+  expanded.text = stripStreams(expanded.text);
   const abs = path.resolve(ctx.cwd, expanded.text);
   const candidates = new Set([abs, realTargetOf(abs)]);
   const physical = physicalDotDot(expanded.text, ctx.cwd);
@@ -1159,7 +1162,28 @@ const READ_ONLY_CMDS = new Set(['cat', 'head', 'tail', 'more', 'grep', 'egrep', 
 const AGENT_CONFIG_MENTION_RE = /\.claude\/settings|\.codex\/|\.cursor\/hooks|\.gemini\/config\/hooks|\.copilot\/(?:hooks|settings|config)|\.github\/hooks|\.github\/copilot\/settings|github-copilot\/policy\.d|\.gemini\/settings|gemini-cli\/settings|antigravity-cli\/settings|opencode\.jsonc?|\.opencode\/|\.config\/opencode\//i;
 // .agents is shared with other tools (Codex reads .agents/skills; Antigravity keeps rules and workflows there), so
 // only the folder itself, its hooks file, globs or ".." inside it, and changing into it count as touching the hook.
-const AGENTS_DIR_RISKY_RE = /(?:^|[\/\s"'=:])\.agents(?:\/*(?=$|[\s"';&|)])|\/(?:[^\s"'\/]*\/)*(?:hooks\.json|\.\.(?=$|[\/\s"';&|)])|[^\s"'\/]*[*?[{$`]))/i;
+// Written as three linear pieces (the one pattern it replaces retried the whole rest of a word at every `.agents/` in it):
+// the folder named on its own, a start `.agents/`, and what may follow a start (names, then hooks.json, `..` or a glob).
+const AGENTS_BARE_RE = /(?<=^|[\/\s"'=:])\.agents\/*(?=$|[\s"';&|)])/i;
+const AGENTS_START_RE = /(?<=^|[\/\s"'=:])\.agents\//gi;
+const AGENTS_TAIL_RE = /^(?:[^\s"'\/]*\/)*(?:hooks\.json|\.\.(?=$|[\/\s"';&|)])|[^\s"'\/]*[*?[{$`])/i;
+const AGENTS_BREAK_RE = /[\s"']/g;
+/** Same answer as the single pattern the three above replace, in time linear in the word. */
+function agentsDirRiskyRe(t) {
+  if (AGENTS_BARE_RE.test(t)) return true;
+  AGENTS_START_RE.lastIndex = 0;
+  let m;
+  while ((m = AGENTS_START_RE.exec(t)) !== null) {
+    const from = m.index + m[0].length;
+    if (AGENTS_TAIL_RE.test(t.slice(from))) return true;
+    // The tail of a start covers the rest of its word, so later starts in the same word cannot do better: go on after it.
+    AGENTS_BREAK_RE.lastIndex = from;
+    const brk = AGENTS_BREAK_RE.exec(t);
+    if (!brk) break;
+    AGENTS_START_RE.lastIndex = brk.index;
+  }
+  return false;
+}
 const AGENTS_DIR_ANY_RE = /(?:^|[\/\s"'=:])\.agents(?:\/|$|[\s"';&|)])/i;
 // Commands that make a link: through a link, ".." no longer means what it says, so any mention of .agents counts.
 const LINK_CMDS = new Set(['ln', 'mklink']);
@@ -1173,7 +1197,7 @@ const AGENTS_PROTECTED = 'zn: this command would change agent hook or plugin set
 function agentsDirRisky(t, w) {
   // The first pattern is quadratic on long input: a word longer than a path can be is refused unchecked.
   if (t.length > 4096) return /\.agents/i.test(t);
-  if (AGENTS_DIR_RISKY_RE.test(t)) return true;
+  if (agentsDirRiskyRe(t)) return true;
   if (!AGENTS_DIR_ANY_RE.test(t)) return false;
   return CD_CMDS.has(bareHead(w.head).toLowerCase()) || w.link === true;
 }
