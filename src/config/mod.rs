@@ -505,6 +505,10 @@ pub struct ManagedRulesConfig {
     /// Multimodal: OCR and Visual PII Redaction
     #[serde(default = "default_false")]
     pub visual_pii_redaction: bool,
+    /// Block on the advisory prompt-injection words (today `pi:jailbreak`) too. Off by
+    /// default, like the Node.js and Python rules, which only warn about them.
+    #[serde(default = "default_false")]
+    pub strict_prompt_injection: bool,
 }
 
 impl Default for ManagedRulesConfig {
@@ -516,6 +520,7 @@ impl Default for ManagedRulesConfig {
             prompt_injection: true,
             restricted_commands: true,
             visual_pii_redaction: false,
+            strict_prompt_injection: false,
         }
     }
 }

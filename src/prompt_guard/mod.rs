@@ -185,6 +185,14 @@ pub fn detect_prompt_injection(input: &str) -> PromptDetectionResult {
     }
 }
 
+/// Rules that only warn by default. The Node.js and Python rules treat a bare
+/// `jailbreak` as advisory too: the word is common in security writing. The
+/// other advisory ids of the Node.js rules are still blocking here (a known
+/// difference of this experimental engine).
+pub fn is_advisory_rule(id: &str) -> bool {
+    id == "pi:jailbreak"
+}
+
 /// Quick check if input contains prompt injection patterns
 #[inline]
 pub fn contains_prompt_injection(input: &str) -> bool {

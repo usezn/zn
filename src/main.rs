@@ -707,7 +707,7 @@ impl AnalyzerPipeline {
 
         // 1. Managed Ruleset (System-1) - check for SQL injection, prompt injection, LFI, etc.
         let rules_hit =
-            match ManagedRuleset::evaluate(&self.config.managed_rules, "analyze", analysis_input) {
+            match ManagedRuleset::evaluate_text(&self.config.managed_rules, analysis_input) {
                 Ok(_) => false,
                 Err(msg) => {
                     // Rule matched - block
@@ -1999,7 +1999,7 @@ mod fusion_wiring_tests {
         let (attack, py_score) = texts
             .iter()
             .find(|(t, s)| {
-                *s >= tau && ManagedRuleset::evaluate(&p.config.managed_rules, "analyze", t).is_ok()
+                *s >= tau && ManagedRuleset::evaluate_text(&p.config.managed_rules, t).is_ok()
             })
             .expect("calibration corpus must contain a rules-missed vector scoring >= tau")
             .clone();
