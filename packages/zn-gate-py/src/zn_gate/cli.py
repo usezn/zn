@@ -803,7 +803,7 @@ def known_commands(parser: argparse.ArgumentParser) -> frozenset[str]:
     return frozenset(parser.get_default("_subparsers").choices)
 
 
-def main() -> int:
+def _main() -> int:
     _configure_output_streams()
     first = sys.argv[1] if len(sys.argv) > 1 else None
     if first in NPM_ONLY_SIMPLE_COMMANDS:
@@ -834,6 +834,69 @@ def main() -> int:
         return cmd_stats(args)
     else:
         parser.print_help()
+        return 0
+
+
+class _QuietStdout:
+    """Stdout that drops later writes once the reader has closed (a broken pipe).
+
+    The command then finishes with the exit status it would have had, as the Node CLI does.
+    """
+
+    def __init__(self, stream: Any) -> None:
+        self._stream = stream
+        self.closed_by_reader = False
+
+    def _drop(self) -> None:
+        self.closed_by_reader = True
+        # Python's own exit flush would report the broken pipe again: point stdout at devnull.
+        try:
+            os.dup2(os.open(os.devnull, os.O_WRONLY), self._stream.fileno())
+        except (OSError, ValueError, AttributeError):
+            pass
+
+    def write(self, data: str) -> int:
+        if self.closed_by_reader:
+            return len(data)
+        try:
+            return self._stream.write(data)
+        except BrokenPipeError:
+            self._drop()
+            return len(data)
+
+    def flush(self) -> None:
+        if self.closed_by_reader:
+            return
+        try:
+            self._stream.flush()
+        except BrokenPipeError:
+            self._drop()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._stream, name)
+
+
+def main() -> int:
+    """Console entry point: runs the CLI, with Ctrl-C and a closed output pipe handled quietly."""
+    real_stdout = sys.stdout
+    quiet = _QuietStdout(real_stdout)
+    sys.stdout = quiet  # type: ignore[assignment]
+    try:
+        try:
+            code = _main()
+            quiet.flush()
+            return code
+        finally:
+            sys.stdout = real_stdout
+    except KeyboardInterrupt:
+        try:
+            sys.stderr.write("\nInterrupted.\n")
+        except Exception:
+            pass
+        return 130
+    except BrokenPipeError:
+        # Raised outside the wrapped writes (for example through sys.stdout.buffer).
+        quiet._drop()
         return 0
 
 

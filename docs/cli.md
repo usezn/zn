@@ -26,6 +26,7 @@ A command that succeeds exits with `0`. The other codes depend on the command an
 | `64` | Wrong usage, for the secrets commands (`secret`, `env`, `hooks`, `vault log`, `run`). |
 | `77` | zn refused on purpose, for example to print a secret value, or to run a command you have not allowed. |
 | `127` | `run` could not find the program you asked it to start. |
+| `130` | You stopped the command with Ctrl-C (Python `zn-gate`). |
 
 The commands that start a long-running server (`mcp`, `shield`, `secrets-mcp`) exit when the server stops. A hook (`hook`) exits `2` to block an action, as the agent expects.
 
