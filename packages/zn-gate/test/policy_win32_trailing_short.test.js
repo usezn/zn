@@ -192,12 +192,19 @@ test('a glob under a short-named folder keeps matching a plain .env (win32)', (t
   const o = { cwd: dir, home, env: {} };
   asWindows(() => {
     fs.writeFileSync(env, 'AWS_ACCESS_KEY_ID=plain-text-example\nDEBUG=true\n');
+    // An unquoted backslash before "*" is a bash escape (the star is then a plain character), so the words are
+    // written quoted, or with forward slashes, which every shell takes as a separator.
+    const forms = (word) => [word, word.split(path.sep).join('/')];
     for (const g of ['*', '.e*', '.env*', '?env']) {
-      assert.ok(policy.bashDenial('type ' + dir + path.sep + g, o), 'type ' + g);
-      assert.ok(policy.bashDenial('cat ' + dir + path.sep + g, o), 'cat ' + g);
+      const word = dir + path.sep + g;
+      for (const w of forms(word)) {
+        assert.ok(policy.bashDenial('type "' + w + '"', o), 'type ' + w);
+        assert.ok(policy.bashDenial('cat "' + w + '"', o), 'cat ' + w);
+      }
     }
-    assert.ok(policy.bashDenial('type ' + dir + path.sep + '*.txt', o) === null, '*.txt cannot match .env');
+    const txt = dir + path.sep + '*.txt';
+    assert.equal(policy.bashDenial('type "' + txt + '"', o), null, '*.txt cannot match .env');
     fs.writeFileSync(env, 'AWS_ACCESS_KEY_ID=__ZN_AWS_ACCESS_KEY_ID__\nDEBUG=true\n');
-    assert.equal(policy.bashDenial('type ' + dir + path.sep + '*.txt', o), null, 'shadowed .env, *.txt');
+    assert.equal(policy.bashDenial('type "' + txt + '"', o), null, 'shadowed .env, *.txt');
   });
 });
