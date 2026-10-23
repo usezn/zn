@@ -2,7 +2,7 @@
   "layers": {
     "rules": {
       "version_const": "RULES_VERSION",
-      "version": "2026-10-25.3",
+      "version": "2026-10-25.5",
       "ids": [
         "evasion:bidi_override",
         "exfil:credentials",
@@ -47,7 +47,7 @@
         "secret:private_key"
       ],
       "sha256": {
-        "lib/rules.js": "437279cf1b38ed08a9c89da3b5482827d0efadcca62da74d5a407192c53cebad",
+        "lib/rules.js": "9ac7828ae3addb80adc21300e1c0beae953f7af30f4706a470c5ad78078283eb",
         "lib/mcp-secrets.js": "6a59fc9809d6b1a3509ff285d21be57e2906449b1c78644e41fe142eccda69b9"
       }
     },
@@ -207,8 +207,9 @@
     },
     "policy": {
       "version_const": "POLICY_RULES_VERSION",
-      "version": "2026-10-24.10",
+      "version": "2026-10-24.11",
       "ids": [
+        "INSTRUCTION_FILE_NAMES",
         "SHELL_SCAN_CAP",
         "_decodeAnsiC",
         "_globClassEnd",
@@ -227,6 +228,7 @@
         "globClass",
         "globRegExp",
         "hasNetworkSignals",
+        "instructionWriteNotice",
         "readDenial",
         "scanFirstCommand",
         "scanPowerShell",
@@ -235,7 +237,7 @@
         "writeDenial"
       ],
       "sha256": {
-        "lib/hooks/policy.js": "22d424dc1dc13350b623b35823b90a196e6bd8ce48ab5353250ef850ccbb0bcb",
+        "lib/hooks/policy.js": "d7bf9a02ae13887459430d47e41867d4d0da5ae93f7370aeaeccbd634a25edcd",
         "lib/broker/files.js": "45dd8927cc626ac35e8c036e5118ec3c584a3f3a396640c09cee8b545e67c097",
         "lib/broker/markers.js": "301eb1d763e8e88c32e32a02c344be8f44b342b06b61897f3a2d478dbe55d6b4",
         "lib/broker/dotenv.js": "d12a12bd12108a38f84e9f4772ed50f0b015962a1e68f75362142b9b3449e8fe",

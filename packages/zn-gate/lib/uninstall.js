@@ -229,7 +229,7 @@ async function run(args, io) {
       for (const scope of ['user', 'project']) {
         if (!(scope === 'user' ? a.userHooks : a.projectHooks)) continue;
         try {
-          const rep = adapter.uninstall({ scope, projectDir: io.cwd, home: io.home, env: io.env, mcp: true });
+          const rep = adapter.uninstall({ scope, projectDir: io.cwd, home: io.home, env: io.env, mcp: true, removeLauncher: true });
           out(io, '  ' + a.name + ': removed zn\'s hooks (' + scope + ') in ' + rep.settings + (rep.backup ? ' (copy saved: ' + rep.backup + ')' : ''));
         } catch (err) {
           out(io, '  ' + a.name + ': could not remove the ' + scope + ' hooks: ' + (err && err.message ? err.message : err));
