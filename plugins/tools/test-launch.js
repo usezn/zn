@@ -354,11 +354,28 @@ try {
   test('an oversized post-tool event is withheld by the launcher, with the event name after 200 KiB', () => {
     for (const [agent, make] of Object.entries(oversizePosts)) checkOversizeWithheld(agent, run(['hook', agent], evText(make())));
   });
-  test('an oversized post-tool event whose name comes after the limit is withheld too', () => {
-    for (const [agent, name] of [['claude-code', 'PostToolUse'], ['codex', 'PostToolUse'], ['cursor', 'postToolUse']]) {
-      const text = evText([['tool_name', 'MCP:fetch'], ['tool_response', BIG()], ['hook_event_name', name]]);
+  test('an oversized post-tool event whose name comes after the limit is withheld too, by its output key', () => {
+    for (const [agent, name, outputKey] of [['claude-code', 'PostToolUse', 'tool_response'], ['codex', 'PostToolUse', 'tool_response'], ['cursor', 'postToolUse', 'tool_output']]) {
+      const text = evText([['tool_name', 'MCP:fetch'], [outputKey, BIG()], ['hook_event_name', name]]);
       assert.ok(text.indexOf('"hook_event_name"') > CAP);
       checkOversizeWithheld(agent, run(['hook', agent], text));
+    }
+  });
+  test('an oversized event with no name in the text that was read and no output key is blocked, never passed', () => {
+    for (const agent of ['claude-code', 'codex']) {
+      const r = run(['hook', agent], evText([['tool_name', 'Write'], ['tool_input', { content: BIG() }], ['hook_event_name', 'PreToolUse']]));
+      refused(r, /too large/);
+      assert.strictEqual(r.stdout, '');
+    }
+    for (const [name, key] of [['beforeReadFile', 'content'], ['beforeShellExecution', 'command']]) {
+      for (const nameFirst of [true, false]) {
+        const pairs = nameFirst ? [['hook_event_name', name], [key, BIG()]] : [[key, BIG()], ['hook_event_name', name]];
+        const c = run(['hook', 'cursor'], evText(pairs));
+        refused(c, /too large/);
+        const out = JSON.parse(c.stdout);
+        assert.strictEqual(out.permission, 'deny');
+        assert.ok(!out.updated_mcp_tool_output);
+      }
     }
   });
   test('a hook_event_name inside the tool arguments or the tool output does not fool the launcher', () => {

@@ -95,7 +95,7 @@ for (const agent of ['claude-code', 'codex']) {
     });
   }
 
-  test(agent + ': an oversized event whose name comes after the limit is answered like a post-tool event', async () => {
+  test(agent + ': an oversized event with no name in the text that was read is withheld when it has its output key', async () => {
     const order = ['session_id', 'cwd', 'tool_name', 'tool_response', 'hook_event_name'];
     const text = build(order, v({ hook_event_name: q(POST), tool_response: q(big()) }));
     assert.ok(text.indexOf('hook_event_name') > CAP);
@@ -130,11 +130,21 @@ for (const agent of ['claude-code', 'codex']) {
   test(agent + ': an oversized UserPromptSubmit event is refused', async () => {
     const order = ['session_id', 'cwd', 'prompt', 'hook_event_name'];
     const text = build(order, { session_id: q('s'), cwd: q('/'), prompt: q(mid + big()), hook_event_name: q('UserPromptSubmit') });
-    // The name is after the cap: this is answered like a post-tool event, never passed through.
-    const r = await runMain(agent, text);
-    assert.ok(r.out.length > 0 || r.exit === 2, 'not passed through');
+    // The name is after the cap and there is no output key: refused, never passed through.
+    assertRefused(await runMain(agent, text));
     const early = await runMain(agent, build(['hook_event_name', 'session_id', 'prompt'], { hook_event_name: q('UserPromptSubmit'), session_id: q('s'), prompt: q(big()) }));
     assertRefused(early);
+  });
+
+  test(agent + ': an oversized event with no name and no output key is refused (it could be a pre-tool event)', async () => {
+    for (const order of [
+      [['session_id', 's'], ['cwd', '/'], ['tool_name', 'Bash'], ['tool_input', { command: 'x' + big() }], ['hook_event_name', PRE]],
+      [['session_id', 's'], ['tool_name', 'Write'], ['tool_input', { file_path: '/x', content: big() }]],
+    ]) {
+      const r = await runMain(agent, '{' + order.map(([k, x]) => q(k) + ':' + q(x)).join(',') + '}');
+      assertRefused(r);
+      assert.equal(r.out, '');
+    }
   });
 
   test(agent + ': an oversized Stop event passes with a warning, never exit 2', async () => {
@@ -152,6 +162,20 @@ test('cursor: an oversized post-tool event is withheld whatever the order of its
   assert.notEqual(r.exit, 2);
   assert.match(r.out, NOTICE);
   assert.ok(!r.out.includes('BBBB'));
+});
+
+test('cursor: an oversized beforeReadFile or beforeShellExecution event is denied, with the name first or after the content', async () => {
+  for (const [name, key, value] of [['beforeReadFile', 'content', big()], ['beforeShellExecution', 'command', 'x' + big()]]) {
+    for (const nameFirst of [true, false]) {
+      const pairs = nameFirst
+        ? [['conversation_id', 'c'], ['hook_event_name', name], ['file_path', '/repo/a.md'], [key, value]]
+        : [['conversation_id', 'c'], ['file_path', '/repo/a.md'], [key, value], ['hook_event_name', name]];
+      const r = await runMain('cursor', '{' + pairs.map(([k, x]) => q(k) + ':' + q(x)).join(',') + '}');
+      assertRefused(r);
+      assert.equal(JSON.parse(r.out).permission, 'deny', name + (nameFirst ? ' name first' : ' name last'));
+      assert.ok(!r.out.includes('updated_mcp_tool_output'));
+    }
+  }
 });
 
 test('a normal-size event is not treated as oversized', async () => {

@@ -1444,14 +1444,14 @@ function readStdin() {
   });
 }
 
-// BEGIN top-level scan (the same text is in plugins/zn-gate/scripts/zn-launch.js; a test keeps the two equal)
+// BEGIN top-level scan (the same text is in plugins/zn-gate/scripts/zn-launch.js and in packages/zn-gate/lib/hooks/runner.js; a test keeps the two equal)
 // The metadata of an event too large to parse: the keys of the TOP-LEVEL object that decide what the event is,
 // whatever their order and wherever they are in the text that was read (the first occurrence of each, with its
 // value when that is a short string, otherwise true). One pass, linear in the text, memory bounded by the
 // longest key or value kept (256 characters): strings are skipped as they are met and JSON depth is tracked, so a
 // key inside the tool arguments or the tool output, or text in a string that looks like a key, is never taken.
 // Returns null when the text is not the start of a JSON object.
-const TOP_KEYS = new Set(['hook_event_name', 'hookEventName', 'hook', 'tool_name', 'toolName', 'tool_response', 'toolResult', 'tool_result']);
+const TOP_KEYS = new Set(['hook_event_name', 'hookEventName', 'hook', 'tool_name', 'toolName', 'tool_response', 'toolResult', 'tool_result', 'tool_output']);
 
 function unescapeShort(s) {
   if (s.indexOf('\\') < 0) return s;
@@ -1513,12 +1513,13 @@ function topLevelKeys(text) {
 // How each agent's post-tool event can be told from the keys of an event that is too large to parse (all the
 // characters that were read are scanned, whatever the order of the keys), and the replacement it takes (its
 // adapter turns it into the agent's own answer). Each `isPost` looks only at the keys of the event itself.
-// Claude Code, Codex and Cursor always name the event, so an event with no name among the characters read is
-// one whose name comes after the cap: that is not told apart from a post-tool event, and it is answered like
-// one (exit 2 on a post-tool event would let the original output reach the model).
+// A post-tool event whose name comes after the characters that were read is told by its output key, which comes
+// before the big value: tool_response (Claude Code, Codex) or tool_output (Cursor). An event with no name and
+// no such key is not told apart from a pre-tool event, so it is refused (exit 2, or Cursor's deny) like any event
+// zn cannot read: letting it pass would let a blocking event through.
 const OVERSIZE_POST = {
-  'claude-code': { isPost: (k) => k.hook_event_name === undefined || k.hook_event_name === 'PostToolUse', tool: 'bash', shape: (t) => t },
-  codex: { isPost: (k) => k.hook_event_name === undefined || k.hook_event_name === 'PostToolUse', tool: 'bash', shape: (t) => t },
+  'claude-code': { isPost: (k) => k.hook_event_name === 'PostToolUse' || (k.hook_event_name === undefined && k.tool_response !== undefined), tool: 'bash', shape: (t) => t },
+  codex: { isPost: (k) => k.hook_event_name === 'PostToolUse' || (k.hook_event_name === undefined && k.tool_response !== undefined), tool: 'bash', shape: (t) => t },
   // Copilot has two shapes: with an event name, that decides; the Copilot CLI one has none, and then the
   // result is a key of the event (it can come after the arguments, in which case it cannot be seen here and the
   // event is refused).
@@ -1532,7 +1533,7 @@ const OVERSIZE_POST = {
     shape: (t) => t,
   },
   opencode: { isPost: (k) => k.hook === 'tool.execute.after', tool: 'bash', shape: (t) => ({ output: t }) },
-  cursor: { isPost: (k) => k.hook_event_name === undefined || k.hook_event_name === 'postToolUse', tool: 'mcp', shape: (t) => t },
+  cursor: { isPost: (k) => k.hook_event_name === 'postToolUse' || (k.hook_event_name === undefined && k.tool_output !== undefined), tool: 'mcp', shape: (t) => t },
 };
 
 // An event over POST_STDIN_CAP characters cannot be parsed in time. A post-tool event is answered with the

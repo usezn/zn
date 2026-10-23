@@ -494,14 +494,14 @@ function withhold(v) {
       : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, withhold(x)])) : v;
 }
 
-// BEGIN top-level scan (the same text is in plugins/zn-gate/scripts/zn-launch.js; a test keeps the two equal)
+// BEGIN top-level scan (the same text is in plugins/zn-gate/scripts/zn-launch.js and in packages/zn-gate/lib/hooks/runner.js; a test keeps the two equal)
 // The metadata of an event too large to parse: the keys of the TOP-LEVEL object that decide what the event is,
 // whatever their order and wherever they are in the text that was read (the first occurrence of each, with its
 // value when that is a short string, otherwise true). One pass, linear in the text, memory bounded by the
 // longest key or value kept (256 characters): strings are skipped as they are met and JSON depth is tracked, so a
 // key inside the tool arguments or the tool output, or text in a string that looks like a key, is never taken.
 // Returns null when the text is not the start of a JSON object.
-const TOP_KEYS = new Set(['hook_event_name', 'hookEventName', 'hook', 'tool_name', 'toolName', 'tool_response', 'toolResult', 'tool_result']);
+const TOP_KEYS = new Set(['hook_event_name', 'hookEventName', 'hook', 'tool_name', 'toolName', 'tool_response', 'toolResult', 'tool_result', 'tool_output']);
 
 function unescapeShort(s) {
   if (s.indexOf('\\') < 0) return s;
@@ -703,7 +703,7 @@ function readEvent() {
 /*
  * An event over STDIN_CAP characters is answered here, as the runner answers it, without loading zn-gate: the
  * installed runner may be an older one. What it is comes from its top-level keys, wherever they are in the text
- * that was read. A post-tool event (or one whose name comes after the limit) has its output withheld, which
+ * that was read. A post-tool event (or a nameless one that has its output key) has its output withheld, which
  * hooks.whenUnavailable does not change; a Stop event passes with a warning (exit 2 would make the agent go on
  * with its answer); anything else is refused like an event zn cannot read.
  */
@@ -717,7 +717,9 @@ function refuseOversize(text) {
     hook.refusal = { pass: true, msg: 'zn plugin: could not check this Stop event (it is too large), so the last answer was not checked.' };
     return;
   }
-  if (keys && (name === undefined || name === post)) {
+  // With no name among the characters read, the output key (before its big value) tells a post-tool event.
+  const outputKey = hook.agent === 'cursor' ? 'tool_output' : 'tool_response';
+  if (keys && (name === post || (name === undefined && keys[outputKey] !== undefined))) {
     hook.event.hook_event_name = post;
     const msg = 'zn plugin: the output of this tool call is too large to check for secrets, so it was withheld.';
     hook.refusal = { msg, ...refusalFor(msg) };
