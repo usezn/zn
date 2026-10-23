@@ -26,6 +26,7 @@
 //! ## Performance
 //! Regex patterns are compiled once and cached using `OnceLock` for optimal performance.
 
+mod invisible;
 mod keyed;
 
 use regex::Regex;
@@ -759,18 +760,6 @@ fn resolve_overlaps(mut spans: Vec<Marked>) -> Vec<Marked> {
     out
 }
 
-fn replace_marked(text: &str, spans: &[Marked]) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut last = 0;
-    for &(s, e, marker) in spans {
-        out.push_str(&text[last..s]);
-        out.push_str(marker);
-        last = e;
-    }
-    out.push_str(&text[last..]);
-    out
-}
-
 fn card_spans(text: &str) -> Vec<(usize, usize)> {
     checked_spans(card_re(), text, card_bounded, card_valid)
 }
@@ -809,6 +798,239 @@ fn ipv4_spans(text: &str) -> Vec<(usize, usize)> {
     )
 }
 
+/// A redaction of the text: bytes `[start, end)` become `repl`. `pri` is the Node.js layer
+/// priority of what found it (1 = secret patterns, 2 = PII; lower wins).
+struct Edit {
+    start: usize,
+    end: usize,
+    repl: String,
+    pri: u8,
+}
+
+/// A text being scrubbed in stages. When `origin` is kept, every byte also records the span of
+/// the first text it stands for and whether a redaction wrote it, so the redactions can be
+/// listed as edits of that first text afterwards.
+struct Tracked {
+    text: String,
+    origin: Option<Origin>,
+}
+
+struct Origin {
+    lo: Vec<usize>,
+    hi: Vec<usize>,
+    pri: Vec<u8>,
+}
+
+impl Tracked {
+    fn new(text: &str, track: bool) -> Self {
+        let origin = track.then(|| Origin {
+            lo: (0..text.len()).collect(),
+            hi: (1..=text.len()).collect(),
+            pri: vec![0; text.len()],
+        });
+        Tracked {
+            text: text.to_string(),
+            origin,
+        }
+    }
+
+    /// Replaces the given non-overlapping, ordered spans. A replacement equal to the text it
+    /// replaces changes nothing.
+    fn apply(&mut self, reps: Vec<(usize, usize, String)>, pri: u8) {
+        let reps: Vec<_> = reps
+            .into_iter()
+            .filter(|(s, e, r)| self.text[*s..*e] != *r)
+            .collect();
+        if reps.is_empty() {
+            return;
+        }
+        let mut out = String::with_capacity(self.text.len());
+        let mut last = 0;
+        let mut next = self.origin.as_ref().map(|_| Origin {
+            lo: Vec::with_capacity(self.text.len()),
+            hi: Vec::with_capacity(self.text.len()),
+            pri: Vec::with_capacity(self.text.len()),
+        });
+        for (s, e, r) in &reps {
+            out.push_str(&self.text[last..*s]);
+            out.push_str(r);
+            if let (Some(o), Some(n)) = (&self.origin, &mut next) {
+                n.lo.extend_from_slice(&o.lo[last..*s]);
+                n.hi.extend_from_slice(&o.hi[last..*s]);
+                n.pri.extend_from_slice(&o.pri[last..*s]);
+                n.lo.resize(n.lo.len() + r.len(), o.lo[*s]);
+                n.hi.resize(n.hi.len() + r.len(), o.hi[*e - 1]);
+                n.pri.resize(n.pri.len() + r.len(), pri);
+            }
+            last = *e;
+        }
+        out.push_str(&self.text[last..]);
+        if let (Some(o), Some(n)) = (&self.origin, &mut next) {
+            n.lo.extend_from_slice(&o.lo[last..]);
+            n.hi.extend_from_slice(&o.hi[last..]);
+            n.pri.extend_from_slice(&o.pri[last..]);
+        }
+        self.text = out;
+        self.origin = next;
+    }
+
+    /// The redactions made so far, as edits of the first text.
+    fn edits(&self) -> Vec<Edit> {
+        let Some(o) = &self.origin else {
+            return Vec::new();
+        };
+        let mut edits = Vec::new();
+        let mut i = 0;
+        while i < self.text.len() {
+            if o.pri[i] == 0 {
+                i += 1;
+                continue;
+            }
+            let mut j = i + 1;
+            while j < self.text.len() && o.pri[j] != 0 && o.lo[j] == o.lo[i] && o.hi[j] == o.hi[i] {
+                j += 1;
+            }
+            edits.push(Edit {
+                start: o.lo[i],
+                end: o.hi[i],
+                repl: self.text[i..j].to_string(),
+                pri: o.pri[i],
+            });
+            i = j;
+        }
+        edits
+    }
+}
+
+/// Overlapping edits form a cluster that is redacted once, as the Node.js scrubber does
+/// (`resolveOverlaps`): an edit that covers the whole cluster wins (lowest priority number,
+/// then the longest; the earlier one on a tie); otherwise the union is redacted with the
+/// replacement of the best member.
+fn resolve_edits(mut edits: Vec<Edit>) -> Vec<Edit> {
+    edits.sort_by(|a, b| {
+        a.start
+            .cmp(&b.start)
+            .then(b.end.cmp(&a.end))
+            .then(a.pri.cmp(&b.pri))
+    });
+    let mut out = Vec::with_capacity(edits.len());
+    let mut i = 0;
+    while i < edits.len() {
+        let start = edits[i].start;
+        let mut end = edits[i].end;
+        let mut j = i + 1;
+        while j < edits.len() && edits[j].start < end {
+            end = end.max(edits[j].end);
+            j += 1;
+        }
+        let members = &edits[i..j];
+        let covering = members.iter().any(|m| m.start == start && m.end == end);
+        let mut best: Option<&Edit> = None;
+        for m in members {
+            if covering && !(m.start == start && m.end == end) {
+                continue;
+            }
+            let better = best.is_none_or(|b| {
+                m.pri < b.pri || (m.pri == b.pri && m.end - m.start > b.end - b.start)
+            });
+            if better {
+                best = Some(m);
+            }
+        }
+        if let Some(b) = best {
+            out.push(Edit {
+                start,
+                end,
+                repl: b.repl.clone(),
+                pri: b.pri,
+            });
+        }
+        i = j;
+    }
+    out
+}
+
+/// The scrubbing stages, in order of specificity, on one text.
+fn scrub_stages(t: &mut Tracked, pii: &PiiOptions) {
+    let jwt: Vec<_> = jwt_re()
+        .find_iter(&t.text)
+        .map(|m| (m.start(), m.end(), "[JWT_REDACTED]".to_string()))
+        .collect();
+    t.apply(jwt, 1);
+    if pii.email {
+        let emails: Vec<_> = email_re()
+            .find_iter(&t.text)
+            .map(|m| (m.start(), m.end(), "[EMAIL_REDACTED]".to_string()))
+            .collect();
+        t.apply(emails, 2);
+    }
+    let auth: Vec<_> = auth_re()
+        .captures_iter(&t.text)
+        .map(|c| {
+            (
+                c.get(0).map_or(0, |m| m.start()),
+                c.get(0).map_or(0, |m| m.end()),
+                redact_auth(&c),
+            )
+        })
+        .collect();
+    t.apply(auth, 1);
+    let api: Vec<_> = api_re()
+        .captures_iter(&t.text)
+        .map(|c| {
+            (
+                c.get(0).map_or(0, |m| m.start()),
+                c.get(0).map_or(0, |m| m.end()),
+                redact_secret(&c),
+            )
+        })
+        .collect();
+    t.apply(api, 1);
+    // The PII types are all searched in the same text, and spans that overlap are
+    // resolved together (a keyed value that is also an IBAN, a DNI or an IP address).
+    let output = &t.text;
+    let mut found: Vec<Marked> = Vec::new();
+    let mut add = |spans: Vec<(usize, usize)>, marker: &'static str| {
+        found.extend(spans.into_iter().map(|(s, e)| (s, e, marker)));
+    };
+    if pii.phone {
+        add(e164_spans(output), "[PHONE_REDACTED]");
+        add(nanp_spans(output), "[PHONE_REDACTED]");
+    }
+    if pii.iban {
+        add(iban_spans(output), "[IBAN_REDACTED]");
+    }
+    if pii.card {
+        add(card_spans(output), "[CARD_REDACTED]");
+    }
+    if pii.dni {
+        add(dni_spans(output), "[DNI_REDACTED]");
+        add(nie_spans(output), "[NIE_REDACTED]");
+    }
+    if pii.ssn {
+        add(ssn_spans(output), "[SSN_REDACTED]");
+    }
+    if pii.ipv4 {
+        add(ipv4_spans(output), "[IPV4_REDACTED]");
+    }
+    if pii.name {
+        add(keyed::person_name_spans(output), "[PERSON_NAME_REDACTED]");
+    }
+    if pii.address {
+        add(keyed::address_spans(output), "[POSTAL_ADDRESS_REDACTED]");
+    }
+    if pii.username {
+        add(keyed::username_spans(output), "[USERNAME_REDACTED]");
+    }
+    if !found.is_empty() {
+        let reps = resolve_overlaps(found)
+            .into_iter()
+            .map(|(s, e, m)| (s, e, m.to_string()))
+            .collect();
+        t.apply(reps, 2);
+    }
+}
+
 impl Scrubber {
     /// Scrub all PII and sensitive data from the input string
     ///
@@ -834,54 +1056,37 @@ impl Scrubber {
     /// Like [`Scrubber::scrub`], with the PII types to redact chosen by `pii`
     /// (secrets, JWTs and Authorization headers are always redacted).
     pub fn scrub_with(input: &str, pii: &PiiOptions) -> String {
-        // Apply scrubbing in order of specificity
-        let mut output = jwt_re().replace_all(input, "[JWT_REDACTED]").to_string();
-        if pii.email {
-            output = email_re()
-                .replace_all(&output, "[EMAIL_REDACTED]")
-                .to_string();
-        }
-        output = auth_re().replace_all(&output, redact_auth).to_string();
-        output = api_re().replace_all(&output, redact_secret).to_string();
-        // The PII types are all searched in the same text, and spans that overlap are
-        // resolved together (a keyed value that is also an IBAN, a DNI or an IP address).
-        let mut found: Vec<Marked> = Vec::new();
-        let mut add = |spans: Vec<(usize, usize)>, marker: &'static str| {
-            found.extend(spans.into_iter().map(|(s, e)| (s, e, marker)));
+        // Invisible characters and wrapped line breaks can split a value. The text is scrubbed as
+        // it is and, as a second view, without them; the second view's redactions are mapped
+        // back to the original text and the union is resolved as one set of edits. A text with
+        // neither is scrubbed once, as it is.
+        let Some(view) = invisible::view(input) else {
+            let mut plain = Tracked::new(input, false);
+            scrub_stages(&mut plain, pii);
+            return plain.text;
         };
-        if pii.phone {
-            add(e164_spans(&output), "[PHONE_REDACTED]");
-            add(nanp_spans(&output), "[PHONE_REDACTED]");
+        let mut direct = Tracked::new(input, true);
+        scrub_stages(&mut direct, pii);
+        let mut via_view = Tracked::new(&view.clean, true);
+        scrub_stages(&mut via_view, pii);
+        let mut edits = direct.edits();
+        let direct_count = edits.len();
+        for e in via_view.edits() {
+            let (start, end) = view.original_span(e.start, e.end);
+            edits.push(Edit { start, end, ..e });
         }
-        if pii.iban {
-            add(iban_spans(&output), "[IBAN_REDACTED]");
+        if edits.len() == direct_count {
+            return direct.text;
         }
-        if pii.card {
-            add(card_spans(&output), "[CARD_REDACTED]");
+        let edits = resolve_edits(edits);
+        let mut output = String::with_capacity(input.len());
+        let mut last = 0;
+        for e in &edits {
+            output.push_str(&input[last..e.start]);
+            output.push_str(&e.repl);
+            last = e.end;
         }
-        if pii.dni {
-            add(dni_spans(&output), "[DNI_REDACTED]");
-            add(nie_spans(&output), "[NIE_REDACTED]");
-        }
-        if pii.ssn {
-            add(ssn_spans(&output), "[SSN_REDACTED]");
-        }
-        if pii.ipv4 {
-            add(ipv4_spans(&output), "[IPV4_REDACTED]");
-        }
-        if pii.name {
-            add(keyed::person_name_spans(&output), "[PERSON_NAME_REDACTED]");
-        }
-        if pii.address {
-            add(keyed::address_spans(&output), "[POSTAL_ADDRESS_REDACTED]");
-        }
-        if pii.username {
-            add(keyed::username_spans(&output), "[USERNAME_REDACTED]");
-        }
-        if !found.is_empty() {
-            output = replace_marked(&output, &resolve_overlaps(found));
-        }
-
+        output.push_str(&input[last..]);
         output
     }
 
@@ -1304,6 +1509,8 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod invisible_tests;
 #[cfg(test)]
 mod parity_tests;
 
