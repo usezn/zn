@@ -301,18 +301,22 @@ async function egressCheck(ev, d, agentId, mode, requests, what) {
     for (const part of r.parts) {
       if (!part.text) continue;
       const text = part.text.length > EGRESS_SCAN_CAP ? part.text.slice(0, EGRESS_SCAN_CAP) : part.text;
-      for (const span of engine.scan(text, ctx) || []) {
-        if (!SECRET_SOURCES.has(span.source) && span.source !== 'pii') continue;
-        hit = true;
-        const kind = span.source === 'pii' ? (EGRESS_KIND[span.type] || kindLabel(span.type)) : kindLabel(span.type);
-        found.add(kind + ' ' + (EGRESS_PLACE[policy.egressLabel(part, span.start)] || 'in the request'));
+      // The text as written, then its percent-decoded copies (an email address is "jane.doe%40example.com" in a URL or a form).
+      for (const copy of [text, ...policy.egressDecodedCopies(text)]) {
+        const scanned = copy === text ? part : { where: part.where, text: copy };
+        for (const span of engine.scan(copy, ctx) || []) {
+          if (!SECRET_SOURCES.has(span.source) && span.source !== 'pii') continue;
+          hit = true;
+          const kind = span.source === 'pii' ? (EGRESS_KIND[span.type] || kindLabel(span.type)) : kindLabel(span.type);
+          found.add(kind + ' ' + (EGRESS_PLACE[policy.egressLabel(scanned, span.start)] || 'in the request'));
+        }
       }
     }
     if (hit) for (const h of r.hosts) hosts.add(h.replace(/[^A-Za-z0-9.:-]/g, '').slice(0, 60));
   }
   if (found.size === 0) return null;
   const list = [...found].slice(0, 4).join(', ') + (found.size > 4 ? ' and more' : '');
-  const to = hosts.size ? [...hosts].filter(Boolean).slice(0, 3).join(', ') : 'a network host';
+  const to = hosts.size ? [...hosts].filter(Boolean).slice(0, 3).join(', ') : (what === 'MCP call' ? 'the MCP server' : 'a network host');
   const sentence = 'would send ' + list + ' to ' + to;
   if (mode === 'deny') {
     return {
@@ -405,8 +409,10 @@ async function decidePre(ev, d, agentId, opts) {
     if (res.decision === 'deny') return res;
     const mode = egressModeOf(opts);
     // Personal data in the arguments follows the egress settings: with the check off nobody is asked, and when the
-    // call is a network request the egress check below decides (local and allow-listed hosts are not asked about).
-    if (res.pii && (mode === 'off' || policy.egressMcpIsRequest(ev.input.args))) res = { decision: 'allow' };
+    // call is a network request whose arguments the egress check read in full, it decides (local and allow-listed
+    // hosts are not asked about what goes to the host, only about the other arguments). If the walk was cut short
+    // (very deep or very large arguments), the question of the MCP check stays.
+    if (res.pii && (mode === 'off' || policy.egressMcpCovers(ev.input.args))) res = { decision: 'allow' };
     if (mode === 'off') return res;
     return withEgress(res, await egressCheck(ev, d, agentId, mode, policy.egressMcpParts(ev.input.args, { allow: () => egressAllowOf(opts) }), 'MCP call'));
   }

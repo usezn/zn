@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-24.2';
+const POLICY_RULES_VERSION = '2026-10-24.3';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2297,7 +2297,8 @@ function egressPowerShell(text, powershell, found) {
     : /(?:^|[\s;|&(])(invoke-webrequest|invoke-restmethod|iwr|irm)(?=\s)/gi;
   let m;
   while ((m = re.exec(text)) !== null) {
-    let rest = text.slice(m.index + m[0].length);
+    // A backtick at the end of a line continues the command on the next one: join those lines before the cut.
+    let rest = text.slice(m.index + m[0].length).replace(/`[ \t]*\r?\n/g, ' ');
     const cut = rest.search(/\r?\n|\s\|\s|&&/);
     if (cut >= 0) rest = rest.slice(0, cut);
     found.push({ urls: rest.match(EGRESS_URLS_IN_TEXT_RE) || [], parts: [{ where: 'ps', text: rest }] });
@@ -2382,6 +2383,28 @@ function egressParts(cmd, opts = {}) {
   return egressResult(egressCollect(raw, opts, 0), opts.allow);
 }
 
+/*
+ * Percent-decoded copies of a text, for the scan: "%40" is how an email address is written in a URL or a form body, and
+ * "+" is a space in a query or form. Returns [] when the text has no "%", else up to three distinct copies (decoded,
+ * decoded with "+" as a space, and the first decoded once more for double encoding). Invalid sequences are left as
+ * they are, nothing throws, and the work is linear in the text.
+ */
+function egressDecode(text) {
+  return text.replace(/(?:%[0-9a-f]{2})+/gi, (seq) => {
+    try { return decodeURIComponent(seq); } catch (e) { return seq; }
+  });
+}
+function egressDecodedCopies(text) {
+  if (typeof text !== 'string' || text.indexOf('%') < 0) return [];
+  const out = new Set();
+  const once = egressDecode(text);
+  out.add(once);
+  if (text.indexOf('+') >= 0) out.add(egressDecode(text.replace(/\+/g, ' ')));
+  if (once.indexOf('%') >= 0) out.add(egressDecode(once));
+  out.delete(text);
+  return [...out];
+}
+
 /** The URL of a WebFetch call, in the shape egressParts returns ([] when its host is local or allow-listed). */
 function egressUrlParts(url, opts = {}) {
   const u = String(url || '');
@@ -2399,17 +2422,21 @@ function egressMcpCollect(args) {
   const parts = [];
   let request = false;
   let leaves = 0;
+  // complete: the walk reached every text in the arguments (depth and leaf limits not hit), so the parts cover all of it.
+  let complete = true;
   const walk = (value, key, where, depth) => {
-    if (depth > 6 || leaves > 2000) return;
+    if (depth > 6 || leaves > 2000) { complete = false; return; }
     if (typeof value === 'string') {
       leaves++;
       if (/^https?:\/\//i.test(value.trim()) || EGRESS_URL_KEY_RE.test(key)) { request = true; urls.push(value); parts.push({ where: 'url', text: value }); }
-      else if (where) parts.push({ where, text: value });
+      else parts.push({ where: where || 'arguments', text: value });
       return;
     }
     if (Array.isArray(value)) { for (const v of value) walk(v, key, where, depth + 1); return; }
     if (value && typeof value === 'object') {
       for (const [k, v] of Object.entries(value)) {
+        leaves++;
+        parts.push({ where: 'arguments', text: k });
         let w = where;
         if (!w && EGRESS_HEADER_KEY_RE.test(k)) w = 'header';
         else if (!w && EGRESS_BODY_KEY_RE.test(k)) w = 'body';
@@ -2419,20 +2446,35 @@ function egressMcpCollect(args) {
     }
   };
   walk(args, '', null, 0);
-  return { request, urls, parts };
+  return { request, urls, parts, complete };
 }
 
-/* True when an MCP call's arguments make a network request (a URL or headers), whatever the host. */
-function egressMcpIsRequest(args) {
+/*
+ * True when the egress check of an MCP call covers every text in its arguments: the call is a network request (a URL or
+ * headers) and the walk was not cut short by the depth or leaf limits. Only then may the egress check answer the
+ * personal-data question of the MCP check on its own; otherwise that question stays.
+ */
+function egressMcpCovers(args) {
   if (!args || typeof args !== 'object') return false;
-  return egressMcpCollect(args).request;
+  const c = egressMcpCollect(args);
+  return c.request && c.complete;
 }
 
+/*
+ * The places of an MCP call that the egress check scans. Only a call with a URL or headers is a request.
+ * Host rule: the host allow-list (and the local hosts) governs only what goes to the network host, that is the URL,
+ * headers and body parts. The MCP server receives all the arguments, whatever the host, so personal data in the other
+ * texts of the call (where 'arguments') is still scanned for a local or allow-listed host: it is the question the MCP
+ * check asks for a call that is not a request.
+ */
 function egressMcpParts(args, opts = {}) {
   if (!args || typeof args !== 'object') return [];
   const { request, urls, parts } = egressMcpCollect(args);
   if (!request) return [];
-  return egressResult([{ urls, parts }], opts.allow);
+  const out = egressResult([{ urls, parts }], opts.allow);
+  if (out.length) return out;
+  const rest = parts.filter((p) => p.where === 'arguments');
+  return rest.length ? [{ hosts: [], parts: rest.map((p) => ({ where: p.where, text: egressStripEnv(p.text) })) }] : [];
 }
 
 const EGRESS_PS_PARAMS = { headers: 'header', body: 'body', uri: 'URL', credential: 'credentials', authentication: 'credentials', token: 'credentials', useragent: 'header' };
@@ -2492,6 +2534,7 @@ module.exports = {
   egressParts,
   egressUrlParts,
   egressMcpParts,
-  egressMcpIsRequest,
+  egressMcpCovers,
+  egressDecodedCopies,
   egressLabel,
 };

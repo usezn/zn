@@ -20,6 +20,8 @@ In each request zn-gate reads the places where data leaves your computer:
 - the query string and the rest of the URL;
 - the body: `-d`, `--data*`, `--json`, `-F`, `--post-data`, and the same inside inline code.
 
+Percent-encoded values are read too: `jane.doe%40example.com` in a URL or a form body is the email address `jane.doe@example.com`. A PowerShell command split over several lines with a backtick at the end of each line is read as one command. For an MCP call, every text in the arguments is read, including the ones that are not a URL, a header or a body.
+
 It looks for the same things the zn-gate scrubber already finds:
 
 - **personal data:** email addresses, phone numbers, bank account numbers (IBAN), card numbers, national ID numbers and social security numbers;
@@ -30,6 +32,7 @@ It looks for the same things the zn-gate scrubber already finds:
 - **A value read from an environment variable.** `curl -H "Authorization: Bearer $TOKEN" ...`, `${API_KEY}`, `$env:TOKEN` and `%TOKEN%` are the safe way to pass a secret, so they are not reported. Only a value written out in the command counts. If you want an agent to use a secret, put it in an environment variable (or in the zn vault and use `__ZN_NAME__`) and refer to it by name.
 - **Requests to your own machine.** `localhost`, `127.0.0.1` and `::1` are never checked.
 - **Hosts you list** in `hooks.egressAllowHosts` (below).
+- **An MCP call to such a host is still read for its other arguments.** For a local or listed host, the URL, headers and body of an MCP call are not checked, because they go to that host. The MCP server itself receives all the arguments, so personal data in any other text of the call (a note, a message) still asks, as it does for an MCP call that is not a web request.
 - **Commands that only mention an address.** `git commit -m "reply to a@example.com"`, `git config user.email a@example.com` and `echo` are not network requests.
 - **File uploads.** `curl -d @file.json` sends a file, and the check does not read it.
 

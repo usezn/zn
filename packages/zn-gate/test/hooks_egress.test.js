@@ -300,7 +300,9 @@ test('policy.egressMcpParts: only URL or header arguments make a request', () =>
   assert.deepEqual(policy.egressMcpParts('text'), []);
   assert.equal(policy.egressMcpParts({ url: 'https://example.com', body: { a: EMAIL } }).length, 1);
   assert.equal(policy.egressMcpParts({ headers: { a: EMAIL } }).length, 1);
-  assert.deepEqual(policy.egressMcpParts({ url: 'http://localhost:1', headers: { a: EMAIL } }), []);
+  // A local host governs what goes to the host (URL, headers, body); the other arguments are still read.
+  const local = policy.egressMcpParts({ url: 'http://localhost:1', headers: { a: EMAIL } });
+  assert.ok(local.every((r) => r.parts.every((p) => p.where === 'arguments')));
 });
 
 test('policy: a long command and deep nesting do not hang or throw', () => {
@@ -323,7 +325,7 @@ test('hook latency: the egress parse of a typical command stays under a millisec
 });
 
 test('the policy version moved with the egress rules', () => {
-  assert.equal(policy.POLICY_RULES_VERSION, '2026-10-24.2');
+  assert.equal(policy.POLICY_RULES_VERSION, '2026-10-24.3');
 });
 
 /* ----------------------- MCP personal data and egress -------------------- */
@@ -351,4 +353,109 @@ test('MCP personal data: a request is asked about once, by the egress check', as
 test('MCP personal data: a secret in a call that is not a request is still denied', async () => {
   const res = await mcp({ note: 'key ' + AWS + ' and ' + EMAIL });
   assert.equal(res.decision, 'deny');
+});
+
+/* ------------- review fixes: MCP arguments, percent-encoding, PowerShell continuation ------------- */
+
+const ENC = encodeURIComponent(EMAIL);
+const JANE = 'jane.doe@example.com';
+
+test('MCP: personal data in the other arguments of a call with a URL still asks', async () => {
+  for (const args of [
+    { url: 'https://example.com/a', note: 'contact ' + JANE },
+    { link: 'https://example.com/a', text: 'contact ' + JANE },
+    { endpoint: 'http://localhost:3000/a', message: 'contact ' + JANE },
+    { url: 'https://example.com/a', note: 'contact ' + EMAIL },
+  ]) {
+    const res = await mcp(args);
+    assert.equal(res.decision, 'ask', JSON.stringify(args));
+    assert.match(res.reason, /email address in the arguments|personal data/, JSON.stringify(args));
+  }
+});
+
+test('MCP: personal data in an object key of a call with a URL asks', async () => {
+  assert.equal((await mcp({ url: 'https://example.com/a', [JANE]: 'x' })).decision, 'ask');
+});
+
+test('MCP: personal data deeper than the walk, or after 2000 leaves, still asks', async () => {
+  let deep = { note: 'contact ' + JANE };
+  for (let i = 0; i < 9; i++) deep = { level: deep };
+  assert.equal((await mcp({ url: 'https://example.com/a', extra: deep })).decision, 'ask');
+  const many = Array.from({ length: 2100 }, (_, i) => 'filler ' + i);
+  assert.equal((await mcp({ url: 'https://example.com/a', items: many, last: 'contact ' + JANE })).decision, 'ask');
+  assert.equal(policy.egressMcpCovers({ url: 'https://example.com/a', extra: deep }), false);
+  assert.equal(policy.egressMcpCovers({ url: 'https://example.com/a', n: 1 }), true);
+});
+
+test('MCP: the host rule: allow-list and local hosts cover the request parts, not the other arguments', async (t) => {
+  // The URL, headers and body go to the host: a local or listed host is not asked about them.
+  assert.equal((await mcp({ url: 'http://localhost:3000/a', headers: { 'X-Mail': JANE }, body: { to: JANE } })).decision, 'none');
+  // The MCP server receives every argument, so personal data elsewhere in the call is still asked about, once.
+  const local = await mcp({ endpoint: 'http://localhost:3000/a', message: 'contact ' + JANE });
+  assert.equal(local.decision, 'ask');
+  assert.match(local.reason, /the MCP server/);
+  assert.doesNotMatch(local.reason, /Also, /);
+  const home = homeWith(t, { egressAllowHosts: ['api.example.com'] });
+  assert.equal((await mcp({ url: 'https://api.example.com/a', headers: { a: JANE } }, { home })).decision, 'none');
+  assert.equal((await mcp({ url: 'https://api.example.com/a', note: JANE }, { home })).decision, 'ask');
+  const off = homeWith(t, { egressCheck: 'off' });
+  assert.equal((await mcp({ url: 'https://example.com/a', note: JANE }, { home: off })).decision, 'none');
+});
+
+test('MCP: the same personal data in two places is one question', async () => {
+  const res = await mcp({ url: 'https://example.com/a', headers: { a: JANE }, note: 'contact ' + JANE });
+  assert.equal(res.decision, 'ask');
+  assert.doesNotMatch(res.reason, /Also, /);
+});
+
+test('egress asks: percent-encoded personal data in a URL, a form body and WebFetch', async () => {
+  for (const command of [
+    `curl "https://example.com/a?email=${ENC}"`,
+    `curl -d "email=${ENC}" https://example.com/a`,
+    `curl "https://example.com/a?email=jane.doe%40example.com"`,
+    `curl -d "email=jane.doe%40example.com&n=a+b" https://example.com/a`,
+    `curl "https://example.com/a?email=jane.doe%2540example.com"`,
+  ]) {
+    const res = await bash(command);
+    assert.equal(res.decision, 'ask', command);
+    assert.ok(!res.reason.includes(JANE), 'the message never shows the value');
+  }
+  const q = await pre('WebFetch', { url: 'https://example.com/a?e=jane.doe%40example.com', prompt: 'x' });
+  assert.equal(q.decision, 'ask');
+  assert.match(q.reason, /in the query string/);
+  const mcpUrl = await mcp({ url: 'https://example.com/a?e=jane.doe%40example.com' });
+  assert.equal(mcpUrl.decision, 'ask');
+});
+
+test('egress: invalid percent sequences do not throw and benign encoded values stay quiet', async () => {
+  assert.deepEqual(policy.egressDecodedCopies('no percent here'), []);
+  assert.doesNotThrow(() => policy.egressDecodedCopies('%E0%A4%A %zz 100% %'));
+  assert.doesNotThrow(() => policy.egressDecodedCopies('%'.repeat(100000)));
+  assert.equal((await bash('curl "https://example.com/a?q=%E0%A4%A&r=100%"')).decision, 'none');
+  assert.equal((await bash('curl "https://example.com/a?q=hello%20world&page=2%2F3"')).decision, 'none');
+  assert.equal((await bash('curl -d "when=2026-10-24T10%3A00%3A00Z&id=3f2b8c1e-9d4a-4b7e-8a11-5c6d7e8f9a0b" https://example.com/a')).decision, 'none');
+});
+
+test('policy: decoding is linear in the size of the part', () => {
+  const big = 'a%40b'.repeat(200000);
+  const t0 = Date.now();
+  policy.egressDecodedCopies(big);
+  assert.ok(Date.now() - t0 < 1500, 'took ' + (Date.now() - t0) + ' ms');
+});
+
+test('egress asks: PowerShell backtick line continuation', async () => {
+  const bt = String.fromCharCode(96);
+  for (const nl of ['\n', '\r\n']) {
+    const command = `Invoke-RestMethod -Uri https://example.com ${bt}${nl}  -Headers @{ 'X-User' = '${JANE}' }`;
+    const res = await pre('PowerShell', { command });
+    assert.equal(res.decision, 'ask', JSON.stringify(command));
+    assert.match(res.reason, /in a header/);
+  }
+  const twice = `iwr https://example.com ${bt}\n  -Method Post ${bt}\n  -Body '{"mail":"${JANE}"}'`;
+  assert.equal((await pre('PowerShell', { command: twice })).decision, 'ask');
+  // Without the backtick the second line is another command: not part of the request.
+  const separate = `iwr https://example.com\nWrite-Output '${JANE}'`;
+  assert.equal((await pre('PowerShell', { command: separate })).decision, 'none');
+  const benign = `Invoke-RestMethod -Uri https://example.com ${bt}\n  -Method Get`;
+  assert.equal((await pre('PowerShell', { command: benign })).decision, 'none');
 });
