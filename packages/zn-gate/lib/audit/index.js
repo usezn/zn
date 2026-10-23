@@ -1473,7 +1473,7 @@ function globFiles(root, glob, budget) {
 function importedInstructions(root, files, deadline, unchecked) {
   let realRoot;
   try { realRoot = fs.realpathSync(root); } catch (_) { return []; }
-  const known = new Set(files.map((f) => f.rel));
+  const known = new Map(files.map((f) => [f.rel, f]));
   const out = [];
   const add = (abs, agent, from) => {
     if (out.length >= MAX_IMPORTED) return null;
@@ -1483,13 +1483,23 @@ function importedInstructions(root, files, deadline, unchecked) {
     try { st = fs.statSync(real); } catch (_) { return null; }
     if (!st.isFile()) return null;
     const rel = toRel(root, abs);
-    if (!rel || rel === '..' || rel.startsWith('../') || known.has(rel)) return null;
-    known.add(rel);
+    if (!rel || rel === '..' || rel.startsWith('../')) return null;
+    if (known.has(rel)) {
+      // Found earlier (for example through a skills folder) but also imported: the agent loads it as
+      // instructions, so it is no skill note and gets no lowered severities.
+      const seen = known.get(rel);
+      if (!seen.importedBy && seen.rel !== from && seen.kind === 'instructions') {
+        seen.importedBy = from;
+        return seen;
+      }
+      return null;
+    }
     const rec = { abs: real, rel, display: rel, scope: 'project', kind: 'instructions', agent, readers: [agent], importedBy: from };
+    known.set(rel, rec);
     out.push(rec);
     return rec;
   };
-  const queue = files.filter((f) => f.kind === 'instructions' && f.agent === 'claude' && /(^|\/)claude(\.local)?\.md$/i.test(f.rel))
+  const queue = files.filter((f) => f.kind === 'instructions' && ((f.agent === 'claude' && /(^|\/)claude(\.local)?\.md$/i.test(f.rel)) || /(^|\/)agents\.md$/i.test(f.rel)))
     .map((f) => ({ rec: f, hops: 0 }));
   while (queue.length) {
     const { rec, hops } = queue.shift();
@@ -1498,7 +1508,7 @@ function importedInstructions(root, files, deadline, unchecked) {
     if (!r.text) continue;
     for (const target of claudeImports(r.text)) {
       if (target.startsWith('~/') || path.isAbsolute(target)) continue;
-      const added = add(path.resolve(path.dirname(path.join(root, rec.rel)), target), 'claude', rec.rel);
+      const added = add(path.resolve(path.dirname(path.join(root, rec.rel)), target), rec.agent === 'any' ? 'claude' : rec.agent, rec.rel);
       if (added) queue.push({ rec: added, hops: hops + 1 });
     }
   }
