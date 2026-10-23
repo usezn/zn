@@ -810,7 +810,7 @@ const CHAT_TOKEN_DOC = /<\|im_start\|>(?:[ \t]*(?:user|assistant|tool)\b|(?![ \t
 
 // What may follow an opening placeholder for it to count as a name: nothing,
 // punctuation, or a file name or path glued to the tag. Anchored as a whole.
-const PLACEHOLDER_TAIL = /^(?:\.[a-z0-9]{1,6})?(?:[\/\][\w.\/\-]*)?[\s\p{P}\p{S}]*$/iu;
+const PLACEHOLDER_TAIL = /^(?:\.[a-z0-9]{1,6})?(?:[\/\\][\w.\/\\-]*)?[\s\p{P}\p{S}]*$/iu;
 // An opening tag that starts the line (after list or quote markers) reads as
 // a message to the agent, never as a name.
 const LINE_START = /^[\s>*+\-]*(?:\d+[.)][\s>*+\-]*)?$/;
@@ -829,7 +829,7 @@ function stripSystemShapes(text, fileText) {
     const name = glued ? '' : ((/system-([\w-]+)/i.exec(m) || [])[1] || '');
     const closing = /^<\s*\//.test(m);
     const tag = 'system' + (glued ? '' : '-' + name);
-    const other = new RegExp('<\s*' + (closing ? '' : '\/\s*') + tag + '\s*>', 'i');
+    const other = new RegExp('<\\s*' + (closing ? '' : '\\/\\s*') + tag + '\\s*>', 'i');
     if (other.test(file)) return true;
     if (closing) return false;
     if (!glued && LINE_START.test(text.slice(0, off))) return true;
