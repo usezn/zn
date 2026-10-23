@@ -1086,8 +1086,10 @@ function ruleCandidates(item, text, view, budget, out, patterns = null) {
   // Spans this rule found on the original text. A match on the view that overlaps two or more of them is
   // dropped, so two secrets on consecutive lines are not merged into one match across the break. A view
   // match that extends a single original match (the first line of a wrapped key) is kept, unless the next
-  // line starts a secret of its own (startsSecretAt).
-  const found = [];
+  // line starts a secret of its own (startsSecretAt). They come in order and without overlaps, so the
+  // ones a view match overlaps are counted with two binary searches.
+  const foundStarts = [];
+  const foundEnds = [];
   const flags = item.pattern.flags.includes('d') ? item.pattern.flags : item.pattern.flags + 'd';
   const regex = new RegExp(item.pattern.source, flags);
   for (const [hay, map] of passes) {
@@ -1115,11 +1117,14 @@ function ruleCandidates(item, text, view, budget, out, patterns = null) {
         }
       }
       const [start, end] = spanIn(map, m.index, m.index + m[0].length);
-      if (!map) found.push([start, end]);
-      else {
-        const over = found.filter(([s, e]) => start < e && s < end);
-        if (over.length >= 2) continue;
-        if (over.length === 1 && patterns && startsSecretAt(text, over[0][1], end, patterns)) continue;
+      if (!map) {
+        foundStarts.push(start);
+        foundEnds.push(end);
+      } else {
+        const first = upperBound(foundEnds, start);
+        const over = lowerBound(foundStarts, end) - first;
+        if (over >= 2) continue;
+        if (over === 1 && patterns && startsSecretAt(text, foundEnds[first], end, patterns)) continue;
       }
       out.push({ start, end, rule: item.id, text: expandTemplate(item.replacement, groups, text) });
     }
@@ -1271,6 +1276,29 @@ function findQuotedCredentials(text) {
   return found;
 }
 
+// The number of values of the sorted array a below x (lowerBound) or at most x (upperBound).
+function lowerBound(a, x) {
+  let lo = 0;
+  let hi = a.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (a[mid] < x) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+function upperBound(a, x) {
+  let lo = 0;
+  let hi = a.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (a[mid] <= x) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
 // Redacts the values found by findQuotedCredentials, on the text and on the text
 // without invisible characters (as every other rule).
 function redactQuotedCredentials(text) {
@@ -1278,12 +1306,17 @@ function redactQuotedCredentials(text) {
   const view = invisibleView(text);
   const passes = view ? [[text, null], [view.clean, view.map]] : [[text, null]];
   const cands = [];
-  const seen = [];
+  // The first pass gives its spans in order and without overlaps, so the spans of
+  // that pass a later span overlaps are counted with two binary searches.
+  const seenStarts = [];
+  const seenEnds = [];
   for (const [hay, map] of passes) {
     for (const f of findQuotedCredentials(hay)) {
       const [start, end] = spanIn(map, f.start, f.end);
-      if (!map) seen.push([start, end]);
-      else if (seen.filter(([s, e]) => start < e && s < end).length >= 2) continue;
+      if (!map) {
+        seenStarts.push(start);
+        seenEnds.push(end);
+      } else if (lowerBound(seenStarts, end) - upperBound(seenEnds, start) >= 2) continue;
       cands.push({ start, end, rule: QUOTED_CREDENTIAL_RULE, text: f.quote + KV_REPLACEMENT + f.quote });
     }
   }

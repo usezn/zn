@@ -151,3 +151,26 @@ test('redactSecrets is linear on adversarial inputs (each under 500 ms)', () => 
     assert.ok(ms < 500, `input ${i} (${text.length} characters) took ${ms.toFixed(0)} ms`);
   }
 });
+
+test('many values after an invisible character stay linear (time grows with the size, not its square)', () => {
+  // One invisible character makes a second pass, whose spans are compared with those
+  // of the first. Four times the text must take about four times as long: a quadratic
+  // count would take sixteen. The ratio does not depend on the speed of the machine.
+  const time = (text) => {
+    let best = Infinity;
+    for (let i = 0; i < 3; i++) {
+      const t0 = process.hrtime.bigint();
+      redactSecrets(text);
+      best = Math.min(best, Number(process.hrtime.bigint() - t0) / 1e6);
+    }
+    return best;
+  };
+  for (const member of ['"api_key":"q7a1b2c3d4e5f6a7b8",', '"token":12345678901,']) {
+    const small = '\u200b' + member.repeat(Math.floor(MiB / 4 / member.length));
+    const large = '\u200b' + member.repeat(Math.floor(MiB / member.length));
+    const ratio = time(large) / Math.max(time(small), 1);
+    assert.ok(ratio < 9, `1 MiB took ${ratio.toFixed(1)} times as long as 256 KiB`);
+    const out = redactSecrets(large).sanitized;
+    assert.ok(!out.includes('q7a1b2c3') && !out.includes('12345678901'));
+  }
+});
