@@ -33,6 +33,8 @@ Calls keep no content in the audit database, the event stream or the vector memo
 
 If an audit record cannot be written, the gateway logs the error (never the payload) and increments the `zn_audit_write_failures_total` counter, and the call goes on. To fail closed instead, set `audit.require_write = true` (or `ZN_AUDIT_REQUIRE_WRITE=1`): a call whose audit record cannot be written is denied with a JSON-RPC error.
 
+If ZN_NAMESPACE (security.namespace) equals a tenant's namespace, that tenant also sees the local stdio calls of this process.
+
 ## AWS KMS data key
 
 With `kms.kms_type = "aws"` and `kms.key_id` set, the audit database key is a KMS data key. The gateway creates it once (`GenerateDataKey`, AES-256, encryption context `purpose=zn-gate-audit-db-key`) and saves only its encrypted copy in `zn-kms-data-key.json`, in the same directory as the audit database (`audit.db_path`). The file is written atomically with mode 0600 and holds the KMS key id and the encrypted key, never the plaintext key. On every later start the gateway sends the encrypted key to KMS `Decrypt` and gets the same key back, so audit records written before a restart stay readable. The key needs `kms:GenerateDataKey` and `kms:Decrypt` permissions.
