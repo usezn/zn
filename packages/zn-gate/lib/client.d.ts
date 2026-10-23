@@ -92,6 +92,12 @@ export function analyzeLocal(input: string, options?: EvaluateOptions): AnalyzeR
  * Inspects tool output before it enters the model context. Local only; secrets
  * are always redacted from sanitized_content.
  */
+/**
+ * Destructive shell command check (Bash, sh, zsh or PowerShell text). Local only; applies all six
+ * destructive rules. A blocked command has rule "destructive:<name>".
+ */
+export function checkCommand(command: string): Assessment;
+
 export function checkToolResult(toolName: string, content: unknown, options?: SanitizeToolResultOptions): Promise<CheckedToolResult>;
 
 /** "windows" (default) or "off", from options.longInput or ZN_LONG_INPUT. */

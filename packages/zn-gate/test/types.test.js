@@ -36,6 +36,17 @@ test('the runtime exports the names the type definitions declare', () => {
   for (const n of ['logEvidence', 'verifyEvidenceLedger', 'EVIDENCE_FILE']) assert.ok(n in ev, n);
 });
 
+test('every value exported by lib/client.js is declared in lib/client.d.ts', () => {
+  const client = require('../lib/client');
+  const dts = fs.readFileSync(path.join(root, 'lib', 'client.d.ts'), 'utf8');
+  const declared = (name) =>
+    new RegExp(`export (function|const|class|let) ${name}\\b`).test(dts) ||
+    new RegExp(`export (type )?\\{[^}]*\\b${name}\\b[^}]*\\}`).test(dts);
+  for (const n of Object.keys(client)) {
+    assert.ok(declared(n), `${n} is exported by lib/client.js but has no declaration in lib/client.d.ts`);
+  }
+});
+
 test('tsc --noEmit accepts the usage example and rejects the marked misuse', () => {
   assert.ok(fs.existsSync(tsc), 'typescript is not installed: run npm ci');
   const r = spawnSync(process.execPath, [tsc, '-p', path.join(__dirname, 'types', 'tsconfig.json')], { encoding: 'utf8' });

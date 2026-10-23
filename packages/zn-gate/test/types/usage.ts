@@ -1,7 +1,7 @@
 // Compiled by test/types.test.js with `tsc --noEmit`. It is never run.
 // Importing the package directory (../..) resolves through the "types" field of package.json.
-import { analyze, analyzeLocal, checkToolResult, evaluate, longInputMode, RULES_VERSION } from '../..';
-import type { AnalyzeResult } from '../..';
+import { analyze, analyzeLocal, checkCommand, checkToolResult, evaluate, longInputMode, RULES_VERSION } from '../..';
+import type { AnalyzeResult, Assessment } from '../..';
 import { redactSecrets, sanitizeToolResult } from '../../lib/rules';
 import { logEvidence, verifyEvidenceLedger } from '../../lib/evidence';
 
@@ -39,3 +39,9 @@ analyzeLocal('x', { nope: true });
 // @ts-expect-error checkToolResult needs a tool name and content
 checkToolResult('only-name');
 void bad;
+
+const cmd: Assessment = checkCommand('ls -la');
+const cmdVerdict: 'allow' | 'block' = cmd.verdict;
+void cmdVerdict;
+// @ts-expect-error checkCommand takes the command text
+checkCommand(42);
