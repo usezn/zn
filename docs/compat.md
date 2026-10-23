@@ -310,13 +310,17 @@ want them to stay on your machine. Each agent's own hook trust still applies
 
 | Agent | File |
 |---|---|
-| Claude Code | `.claude/settings.json` |
+| Claude Code | `.claude/settings.json`, and `.mcp.json` for the `secrets` MCP server (add `--no-mcp` to skip it) |
 | Codex CLI | `.codex/hooks.json` |
 | Cursor | `.cursor/hooks.json` |
 | OpenCode | `.opencode/plugins/zn-gate.js` |
+| Antigravity | `.agents/hooks.json` |
+| GitHub Copilot CLI (experimental) | `.github/hooks/zn-gate.json` |
+| Gemini CLI (experimental) | `.gemini/settings.json` |
 
 A user install writes the same files under your home directory and names the
-node and runner paths of that install.
+node and runner paths of that install. When zn backs up a file it changes, the
+copy (`<file>.bak-zn-<date>`) sits next to it in the project: do not commit it.
 
 A teammate who clones the project without zn on PATH gets no checks from these
 files: the hook command fails, and in Claude Code and Codex the call goes ahead.

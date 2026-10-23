@@ -46,8 +46,10 @@ Other cases:
 - **OpenCode** uses a small plugin file that zn-gate writes. Run
   `zn hooks install opencode` again when a release says so.
 - **Project installs** (`zn hooks install <agent> --project`) write files you can
-  commit (`.claude/settings.json`, `.codex/hooks.json`, `.cursor/hooks.json`,
-  `.opencode/plugins/zn-gate.js`). They call `zn` from your PATH, so they follow
+  commit (`.claude/settings.json` and `.mcp.json`, `.codex/hooks.json`,
+  `.cursor/hooks.json`, `.opencode/plugins/zn-gate.js`, and for the experimental
+  adapters `.agents/hooks.json`, `.github/hooks/zn-gate.json` and
+  `.gemini/settings.json`). They call `zn` from your PATH, so they follow
   the zn-gate you have installed. Run the install again in the project when a
   release changes the hook, and commit the changed file.
 
