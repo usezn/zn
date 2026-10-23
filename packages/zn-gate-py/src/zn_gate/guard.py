@@ -11,6 +11,7 @@ import functools
 import inspect
 import io
 import itertools
+import logging
 import os
 from pathlib import PurePath
 import types
@@ -155,6 +156,12 @@ def _is_framework_context(value: Any) -> bool:
     return False
 
 
+# Logging objects carry the process's logging setup (every logger, handler and
+# formatter of the process through logger.manager), never the output of a tool.
+_LOGGING_TYPES = (logging.Filterer, logging.Manager, logging.PlaceHolder, logging.LoggerAdapter,
+                  logging.Formatter)
+
+
 def _is_data_object(value: Any) -> bool:
     """True for objects that carry plain data: dataclasses, pydantic, attrs and msgspec
     models, and SimpleNamespace / argparse.Namespace.
@@ -174,7 +181,8 @@ def _is_data_object(value: Any) -> bool:
 def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] = None,
                      _budget: Optional[List[int]] = None, _lenient: bool = False,
                      lenient_objects: bool = True,
-                     lenient_depth: Optional[int] = None) -> List[str]:
+                     lenient_depth: Optional[int] = None,
+                     _seen: Optional[Dict[str, Any]] = None) -> List[str]:
     """Recursively extract all strings from nested structures.
 
     Walks every Mapping (keys and values), list, tuple, set, frozenset and dict
@@ -189,7 +197,10 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
     generator (checking it would consume it, so the guarded function would get
     an empty iterator) or when objects and generic iterables hold more than
     MAX_OBJECT_VALUES values, so callers can fail closed. A container that
-    contains itself is walked once.
+    contains itself is walked once, and a container reached through several
+    references is walked and counted once, unless part of it was left out
+    the first time. Logging objects (loggers, handlers, formatters) are
+    skipped: they hold the process's logging setup, not tool output.
 
     Inside an object that is not a data model (a plain class instance such as
     a client, a session or an agent's dependencies), the walk is best effort:
@@ -213,7 +224,12 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
     if data is None or isinstance(data, (bool, int, float, complex, type, types.ModuleType)) \
             or inspect.isroutine(data):
         return []
-    if _is_framework_context(data):
+    if _is_framework_context(data) or isinstance(data, _LOGGING_TYPES):
+        return []
+    # ids of containers already walked in full (the object is kept so its id
+    # cannot be reused during the walk) and a count of parts left out.
+    seen = _seen if _seen is not None else {"done": {}, "skipped": 0}
+    if id(data) in seen["done"]:
         return []
     budget = _budget if _budget is not None else [MAX_OBJECT_VALUES]
     lenient = _lenient
@@ -228,18 +244,18 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
     elif isinstance(data, os.PathLike):
         path_value = os.fspath(data)
         found = _extract_strings(path_value, max_depth, _path, budget, lenient_objects=lenient_objects,
-                                lenient_depth=lenient_depth)
+                                lenient_depth=lenient_depth, _seen=seen)
         # On Windows str() gives backslashes; the path rules also see the form with forward slashes.
         if isinstance(data, PurePath) and data.as_posix() != path_value:
             found += _extract_strings(data.as_posix(), max_depth, _path, budget, lenient_objects=lenient_objects,
-                                lenient_depth=lenient_depth)
+                                lenient_depth=lenient_depth, _seen=seen)
         return found
     elif isinstance(data, io.IOBase):
         # An open file or stream: its contents are read by the tool, not passed
         # as text, and reading them here would move the file position. Check its name.
         name = getattr(data, "name", None)
         return _extract_strings(name, max_depth, _path, budget, lenient_objects=lenient_objects,
-                                lenient_depth=lenient_depth) if isinstance(name, (str, bytes)) else []
+                                lenient_depth=lenient_depth, _seen=seen) if isinstance(name, (str, bytes)) else []
     elif isinstance(data, Iterator) or isinstance(data, AsyncIterator):
         raise _Unscannable("type:unscannable",
                            "A one-shot iterator (such as a generator) cannot be checked "
@@ -267,28 +283,34 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
                     children.append(item)
         except Exception:
             if lenient or (not is_model and lenient_objects):
+                seen["skipped"] += 1
                 return []
             raise _Unscannable("type:unscannable", "An object could not be read to check it") from None
         if children is None:
             return []
         if lenient and lenient_depth is None and budget[0] - len(children) < 0:
+            seen["skipped"] += 1
             return []
         budget[0] -= len(children)
         if budget[0] < 0:
             raise _Unscannable("size:items", "Too many values to check")
     if max_depth <= 0:
         if lenient and lenient_depth is None:
+            seen["skipped"] += 1
             return []
         raise _NestingTooDeep()
     path = _path if _path is not None else set()
     if id(data) in path:
         return []
     path.add(id(data))
+    skipped_before = seen["skipped"]
     try:
         strings: List[str] = []
         for child in children:
             strings.extend(_extract_strings(child, max_depth - 1, path, budget, lenient, lenient_objects,
-                                            lenient_depth))
+                                            lenient_depth, seen))
+        if seen["skipped"] == skipped_before:
+            seen["done"][id(data)] = data
         return strings
     finally:
         path.discard(id(data))

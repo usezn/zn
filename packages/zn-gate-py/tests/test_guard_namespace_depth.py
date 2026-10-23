@@ -9,6 +9,7 @@ Fictitious values only.
 import argparse
 import dataclasses
 import json
+import logging
 import types
 import unittest
 
@@ -140,6 +141,62 @@ class TestResultBudget(unittest.TestCase):
             return "ran"
 
         self.assertEqual(tool(self._big("x"), "weather"), "ran")
+
+
+class TestSharedAndLoggingObjects(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # A process with many libraries has many loggers.
+        cls.loggers = [logging.getLogger(f"zn.example.lib{i}.module") for i in range(1000)]
+
+    def test_logger_in_result_allowed_with_many_loggers(self):
+        self.assertTrue(check_tool_result(self.loggers[0]).allowed)
+        self.assertTrue(check_tool_result(Data(self.loggers[1])).allowed)
+
+        @dataclasses.dataclass
+        class Report:
+            text: str
+            log: object
+
+        self.assertTrue(check_tool_result(Report(BENIGN, self.loggers[2])).allowed)
+        res = check_tool_result(Report(BAD, self.loggers[2]))
+        self.assertFalse(res.allowed)
+        self.assertNotEqual(res.rule, "size:items")
+
+    def test_shared_object_counted_once(self):
+        shared = Bag()
+        shared.__dict__.update({f"k{i}": "v" for i in range(10_000)})
+        result = [shared] * 20
+        self.assertTrue(check_tool_result(result).allowed)
+        shared.__dict__["note"] = BAD
+        res = check_tool_result(result)
+        self.assertFalse(res.allowed)
+        self.assertNotEqual(res.rule, "size:items")
+
+    def test_shared_object_inside_plain_objects(self):
+        shared = Bag()
+        shared.__dict__.update({f"k{i}": "v" for i in range(10_000)})
+        holders = [Plain(shared) for _ in range(20)]
+        self.assertTrue(check_tool_result(holders).allowed)
+
+    def test_distinct_objects_still_share_the_budget(self):
+        objs = []
+        for _ in range(20):
+            bag = Bag()
+            bag.__dict__.update({f"k{i}": "v" for i in range(10_000)})
+            objs.append(bag)
+        self.assertEqual(check_tool_result(objs).rule, "size:items")
+
+    def test_shared_object_left_out_once_is_read_again(self):
+        # In @guard arguments a part past the depth limit is left out; the same
+        # object reached again higher up is still read.
+        @guard(on_block="return", fallback="blocked")
+        def tool(client, q):
+            return "ran"
+
+        payload = types.SimpleNamespace(text=BAD)
+        deep = chain(Plain, 40, payload)
+        self.assertEqual(tool([deep, payload], "weather"), "blocked")
 
 
 class TestGuardDecoratorDepth(unittest.TestCase):
