@@ -438,6 +438,11 @@ function makeOps(state, ctl) {
     } else if (purpose === 'render') {
       if (meta.mode !== 'file') return refuse('policy:render:mode', 'secret ' + inner + ' is in ' + (meta.mode || 'proxy') + ' mode; only file-mode secrets are written to disk.');
     } else {
+      // Only a secret the user made available to HTTP requests (proxy mode, the default) leaves through this purpose,
+      // whatever its allowHosts say: an env or file secret is meant for a local program, not for the network.
+      if ((meta.mode || 'proxy') !== 'proxy') {
+        return refuse('policy:http:mode', 'secret ' + inner + ' is in ' + meta.mode + ' mode, so it is never sent over HTTP. Next step: do not use this secret here. If the API really needs it, the user can change its mode in their own terminal with zn secret allow ' + inner + ' --mode proxy.');
+      }
       const host = typeof o.host === 'string' ? o.host : '';
       if (!markers.hostAllowed(meta.allowHosts, host)) {
         return refuse('policy:http:host', 'secret ' + inner + ' may not be sent to ' + (host || 'an unnamed host') + '. Next step: the user can allow the host with zn secret allow.');

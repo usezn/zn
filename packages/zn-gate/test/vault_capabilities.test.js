@@ -157,6 +157,30 @@ test('purpose http: a host and a placement the secret allows, and nothing else',
   assert.strictEqual(await vault.resolve(PROJECT, '__ZN_NOT_STORED__', { ...ok, host: 'api.example.com', placements: ['header'] }), null);
 });
 
+test('purpose http: only a proxy-mode secret goes out, whatever hosts its settings list', async () => {
+  const ok = { purpose: 'http', agent: 'claude-code', tool: 'mcp:secrets_http_request', host: 'api.example.com', placements: ['header'] };
+  // A host and a placement that fit: the mode is the only thing left to refuse them.
+  await vault.setSecret('HOSTED_ENV', V.env, { mode: 'env', allowHosts: ['api.example.com'], allowCommands: [NODE_NAME] });
+  await vault.setSecret('HOSTED_FILE', V.file, { mode: 'file', allowHosts: ['api.example.com'] });
+  for (const name of ['HOSTED_ENV', 'HOSTED_FILE']) {
+    const mode = name === 'HOSTED_ENV' ? 'env' : 'file';
+    for (const claim of [{}, { agent: 'zn' }, { tool: 'Bash' }, { agentTrusted: true }]) {
+      await assert.rejects(vault.resolve(PROJECT, '__ZN_' + name + '__', { ...ok, ...claim }), (e) => denied(e) && /never sent over HTTP/.test(e.message), name);
+    }
+    assert.ok(auditRecords().some((r) => r.secret === name && r.decision === 'deny' && r.reason === 'policy:http:mode' && r.tool === 'mcp:secrets_http_request'), mode);
+  }
+  // A backup of a .env file is not handed out for HTTP either.
+  await assert.rejects(vault.resolve(PROJECT, '__ZN_' + BACKUP + '__', ok), denied);
+  // The mode the vault holds decides: the same secret is refused as env and handed over once the user made it proxy.
+  await vault.setSecret('HOSTED_FLIP', V.proxy, { mode: 'proxy', allowHosts: ['api.example.com'] });
+  assert.strictEqual(await vault.resolve(PROJECT, '__ZN_HOSTED_FLIP__', ok), V.proxy);
+  await vault.setSecret('HOSTED_FLIP', V.proxy, { mode: 'env', allowHosts: ['api.example.com'], allowCommands: [NODE_NAME] });
+  await assert.rejects(vault.resolve(PROJECT, '__ZN_HOSTED_FLIP__', ok), denied);
+  for (const name of ['HOSTED_ENV', 'HOSTED_FILE', 'HOSTED_FLIP']) await vault.removeSecret(name);
+  assert.ok(!JSON.stringify(auditRecords()).includes(V.env));
+  assert.ok(!JSON.stringify(auditRecords()).includes(V.file));
+});
+
 test('purpose render: only a file-mode secret is written to disk', async () => {
   assert.strictEqual(await vault.resolve(PROJECT, '__ZN_CERT_PEM__', { purpose: 'render', tool: 'mcp:secrets_render_file' }), V.file);
   await assert.rejects(vault.resolve(PROJECT, '__ZN_DB_PASS__', { purpose: 'render' }), denied);
