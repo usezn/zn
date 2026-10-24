@@ -75,48 +75,39 @@ fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
 static REF_KEY: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
 
 /// Read the 32-byte reference key stored as `ref.key` in `dir`, creating it
-/// (random, mode 0600, written to a temporary file and linked into place so a
-/// concurrent start cannot see a partial key) when it does not exist yet.
+/// (random, owner-only from the moment it exists) when it does not exist yet.
+/// An existing key is refused unless it is a regular file, not a link, that
+/// only this user can use; the check runs before the key is read.
 pub fn load_or_create_ref_key(dir: &std::path::Path) -> std::io::Result<[u8; 32]> {
-    use std::io::{Error, ErrorKind, Write};
+    use crate::private_file::{create_private_file_new, verify_private};
+    use std::io::{Error, ErrorKind};
     let path = dir.join("ref.key");
-    let read = |p: &std::path::Path| -> std::io::Result<[u8; 32]> {
-        let bytes = std::fs::read(p)?;
-        <[u8; 32]>::try_from(bytes.as_slice())
-            .map_err(|_| Error::new(ErrorKind::InvalidData, "ref.key must hold exactly 32 bytes"))
-    };
-    match read(&path) {
-        Ok(k) => return Ok(k),
-        Err(e) if e.kind() == ErrorKind::NotFound => {}
+    match std::fs::symlink_metadata(&path) {
+        Ok(_) => {}
+        Err(e) if e.kind() == ErrorKind::NotFound => {
+            std::fs::create_dir_all(dir)?;
+            let mut key = [0u8; 32];
+            {
+                use rand::Rng;
+                rand::rng().fill_bytes(&mut key);
+            }
+            match create_private_file_new(&path, &key) {
+                Ok(()) => return Ok(key),
+                Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
+                Err(e) => return Err(e),
+            }
+        }
         Err(e) => return Err(e),
     }
-    std::fs::create_dir_all(dir)?;
-    let mut key = [0u8; 32];
-    {
-        use rand::Rng;
-        rand::rng().fill_bytes(&mut key);
-    }
-    let tmp = dir.join(format!("ref.key.tmp-{}", std::process::id()));
-    let _ = std::fs::remove_file(&tmp);
-    {
-        let mut opts = std::fs::OpenOptions::new();
-        opts.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            opts.mode(0o600);
-        }
-        let mut f = opts.open(&tmp)?;
-        f.write_all(&key)?;
-        f.sync_all()?;
-    }
-    let linked = std::fs::hard_link(&tmp, &path);
-    let _ = std::fs::remove_file(&tmp);
-    match linked {
-        Ok(()) => Ok(key),
-        Err(e) if e.kind() == ErrorKind::AlreadyExists => read(&path),
-        Err(e) => Err(e),
-    }
+    verify_private(&path).map_err(|e| {
+        Error::new(
+            e.kind(),
+            format!("ref.key is not private to this user, refusing to use it: {e}"),
+        )
+    })?;
+    let bytes = std::fs::read(&path)?;
+    <[u8; 32]>::try_from(bytes.as_slice())
+        .map_err(|_| Error::new(ErrorKind::InvalidData, "ref.key must hold exactly 32 bytes"))
 }
 
 /// Load (or create) the local reference key in `dir` and use it for every
@@ -255,6 +246,7 @@ mod tests {
 #[cfg(test)]
 mod content_ref_tests {
     use super::*;
+    use crate::private_file::create_private_file;
 
     #[test]
     fn reference_hides_the_text_and_is_stable() {
@@ -329,7 +321,37 @@ mod content_ref_tests {
         let meta = std::fs::metadata(dir.path().join("ref.key")).unwrap();
         assert_eq!(meta.permissions().mode() & 0o777, 0o600);
         assert_eq!(meta.len(), 32);
-        std::fs::write(dir.path().join("ref.key"), b"short").unwrap();
+        std::fs::remove_file(dir.path().join("ref.key")).unwrap();
+        create_private_file(&dir.path().join("ref.key"), b"short").unwrap();
         assert!(load_or_create_ref_key(dir.path()).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_existing_key_that_is_a_link_or_open_to_others_is_refused() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let elsewhere = dir.path().join("known-32-bytes");
+        std::fs::write(&elsewhere, [9u8; 32]).unwrap();
+        std::fs::set_permissions(&elsewhere, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let data = dir.path().join("data");
+        std::fs::create_dir(&data).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, data.join("ref.key")).unwrap();
+        assert!(
+            load_or_create_ref_key(&data).is_err(),
+            "a ref.key that is a link must be refused"
+        );
+        std::fs::remove_file(data.join("ref.key")).unwrap();
+
+        std::fs::write(data.join("ref.key"), [9u8; 32]).unwrap();
+        std::fs::set_permissions(data.join("ref.key"), std::fs::Permissions::from_mode(0o644))
+            .unwrap();
+        assert!(
+            load_or_create_ref_key(&data).is_err(),
+            "a ref.key that others can read must be refused"
+        );
+        std::fs::set_permissions(data.join("ref.key"), std::fs::Permissions::from_mode(0o600))
+            .unwrap();
+        assert_eq!(load_or_create_ref_key(&data).unwrap(), [9u8; 32]);
     }
 }
