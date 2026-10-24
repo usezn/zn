@@ -76,7 +76,7 @@ const OPTIONS = {
   unlock: { '--ttl': true, '--idle': true, '--backend': true, '--passphrase-stdin': false, '--foreground': false },
   lock: {},
   status: {},
-  verify: {},
+  verify: { '--acknowledge': false },
   reset: {},
   forget: {},
 };
@@ -106,7 +106,7 @@ const USAGE = {
   unlock: () => 'usage: ' + znCommand('unlock') + ' [--ttl 8h] [--idle 30m] [--backend NAME] [--passphrase-stdin] [--foreground]',
   lock: () => 'usage: ' + znCommand('lock'),
   status: () => 'usage: ' + znCommand('vault status'),
-  verify: () => 'usage: ' + znCommand('vault verify'),
+  verify: () => 'usage: ' + znCommand('vault verify') + ' [--acknowledge]',
   reset: () => 'usage: ' + znCommand('vault reset'),
   forget: () => 'usage: ' + znCommand('vault forget') + ' [dir]',
 };
@@ -333,12 +333,23 @@ async function forgetCmd(args) {
   return 0;
 }
 
-async function auditVerifyCmd() {
+async function auditVerifyCmd(args) {
+  const acknowledge = (args || []).includes('--acknowledge');
+  // Accepting a changed log is a decision for a person at a terminal, never an agent.
+  if (acknowledge) require('../broker/tty').requireHuman('zn vault verify --acknowledge');
   const c = createClient({});
   try {
+    if (acknowledge) {
+      const a = await c.auditAcknowledge();
+      out(a.cleared ? 'The audit log is accepted as it is now. The earlier change stays recorded as a warning in the log.' : 'Nothing to accept: the vault noticed no change to the audit log.');
+      return 0;
+    }
     const r = await c.auditVerify();
     if (r.ok) { out('Audit log OK: ' + r.records + ' records, chain and MACs verified.'); return 0; }
     process.stderr.write(messages.auditFailed(r.line || r.records, r.error) + '\n');
+    if (r.tampered) {
+      process.stderr.write('The vault keeps this warning until you look into it. Keep a copy of the audit log as evidence, then, in your own terminal, run `' + znCommand('vault verify --acknowledge') + '` to accept the log as it is now.\n');
+    }
     return 1;
   } finally {
     c.close();
@@ -355,7 +366,7 @@ async function runVaultCommand(args) {
     if (cmd === 'lock') return check('lock', args.slice(1)) || await lockCmd();
     if (cmd === 'vault' && (sub === 'status' || sub === undefined)) return check('status', args.slice(2)) || await statusCmd();
     if (cmd === 'vault' && sub === 'forget') return check('forget', args.slice(2), 1) || await forgetCmd(args);
-    if (cmd === 'vault' && sub === 'verify') return check('verify', args.slice(2)) || await auditVerifyCmd();
+    if (cmd === 'vault' && sub === 'verify') return check('verify', args.slice(2)) || await auditVerifyCmd(args.slice(2));
     if (cmd === 'vault' && sub === 'reset') return check('reset', args.slice(2)) || await vaultReset.resetVault({});
     if (cmd === 'vault' && sub === 'log') return await require('../broker/cli').dispatch('vault', args.slice(1));
     if (cmd === 'vault' && sub === 'team') {

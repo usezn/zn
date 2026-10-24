@@ -154,7 +154,8 @@ the hook routes it through `zn run`. The value goes only into that process, its
 output is masked (raw, base64, hex and URL-encoded forms come back as the
 marker; standard output and standard error are masked separately, so a value
 that a program splits between the two is not caught), and the first time the
-vault asks you to confirm in its dialog or its terminal. That prompt shows the exact program that will run. Changing a
+vault asks you to confirm in its dialog or its terminal. That prompt shows the
+exact program that will run. Changing a
 secret's policy (`zn secret allow`) is confirmed the same way. The agent cannot
 answer these prompts from its own terminal.
 
@@ -239,7 +240,7 @@ example costs nothing.
 | `zn secret rm NAME` | Remove a secret |
 | `zn vault log` | Local audit log: who used which secret where (no values). Also `zn secret log`; `--since 1h` limits it. (`zn audit` reviews agent configs; see [audit.md](audit.md)) |
 | `zn vault log export --otlp` | The same log as OpenTelemetry logs (OTLP/JSON Lines) for an OpenTelemetry Collector; `--since 7d`, `--out FILE`. See [team.md](team.md#export-the-audit-log-to-opentelemetry) |
-| `zn vault verify` | Check the audit log's HMAC chain and compare its last record with the one the vault remembers (the vault saves that checkpoint every minute and when it locks) |
+| `zn vault verify` | Check the audit log's HMAC chain and compare its last record with the one the vault remembers. If the log was cut or replaced while the vault was locked or running, the vault keeps a warning (also after lock and unlock) and this command fails until you look into it and accept the log with `zn vault verify --acknowledge` in your own terminal (the vault asks you to confirm). The vault saves its checkpoint every minute and when it locks; if the vault process is killed, the records of the last minute may be missing without notice. Restoring an older `secrets.age` together with its older `audit.jsonl` is not detected. After a power loss the check can report a false alarm |
 | `zn lock` | Lock the vault now |
 | `zn vault reset` | Forgot the passphrase? Sets the old vault aside and starts a new, empty one. Your own terminal only; the old values are lost. See "If something fails" |
 | `zn hooks uninstall <agent>` | Remove the hooks. For Claude Code it also removes zn's own `secrets` MCP server, and keeps any other server with that name |

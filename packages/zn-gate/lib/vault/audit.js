@@ -103,9 +103,41 @@ function append(event, opts) {
   );
   record.mac = macOf(key, record);
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  fs.appendFileSync(file, JSON.stringify(record) + '\n', { mode: 0o600 });
+  // Flushed to disk before the vault saves its checkpoint of this record: after a
+  // power loss the checkpoint then never points past the end of the log.
+  const fd = fs.openSync(file, 'a', 0o600);
+  try {
+    fs.writeSync(fd, JSON.stringify(record) + '\n');
+    try { fs.fsyncSync(fd); } catch (err) { /* a file system without fsync: keep going */ }
+  } finally {
+    fs.closeSync(fd);
+  }
   if (process.platform !== 'win32') { try { fs.chmodSync(file, 0o600); } catch (err) { /* ignore */ } }
   return record;
+}
+
+/**
+ * checkHead(file, head) -> {ok, found?, reason?}
+ * The daemon is the only writer, so the last record in the file must be the
+ * one it remembers (sequence number and MAC). A different tail means the log
+ * was changed behind the daemon's back. head null: nothing to compare.
+ */
+function checkHead(file, head) {
+  if (!head) return { ok: true };
+  let last;
+  try { last = lastRecord(file); } catch (err) {
+    return { ok: false, found: null, reason: 'the last record of the log cannot be read' };
+  }
+  if (!last) return { ok: false, found: null, reason: 'the log is empty or missing, but the vault expects ' + head.seq + ' records' };
+  if (last.seq === head.seq && typeof head.mac === 'string' && last.mac === head.mac) return { ok: true };
+  const found = { seq: last.seq, mac: last.mac };
+  return {
+    ok: false,
+    found,
+    reason: last.seq < head.seq
+      ? 'log truncated (vault expects ' + head.seq + ' records, the log ends at ' + last.seq + ')'
+      : 'the last record of the log is not the one the vault remembers',
+  };
 }
 
 /**
@@ -194,4 +226,4 @@ function read(opts) {
   return limit ? out.slice(-limit) : out;
 }
 
-module.exports = { append, verify, read, sanitize, FIELDS, GENESIS };
+module.exports = { append, verify, checkHead, lastRecord, read, sanitize, FIELDS, GENESIS };

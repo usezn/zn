@@ -23,6 +23,7 @@ reads, command output, search results, MCP results and pasted prompts.
 | A secret written into a file by `secrets_render_file` outside the project, over an existing file, or into a credential file | **You are asked** | Only new files inside the project, other than credential files, are written without confirmation. The agents' hook and plugin settings and zn's own state are refused outright. An overwrite is done in place through the checked descriptor, so a power cut during it can leave a truncated file; a file with other hard links is refused |
 | The API reflects the token in its response | **Yes** | Responses are masked and scrubbed |
 | The vault file is forged with the public key, edited, or deleted | **Fails closed** | Integrity tag keyed by the identity; a missing vault with existing history is refused |
+| The audit log is cut or replaced while the vault is locked or running | **Detected** | The vault keeps the last record (sequence number and MAC) and compares the log with it before every write. A mismatch leaves a warning inside the vault; `zn vault verify` fails until you accept the log |
 
 ## What zn does not protect against
 
@@ -34,6 +35,8 @@ reads, command output, search results, MCP results and pasted prompts.
 | **Any program of your user asking the unlocked vault for a secret by name** | See "What the vault daemon protects" below: this includes commands the agent starts. |
 | **Deliberate encodings** of a value printed by an allowed command (reversed, base32, mixed-case hex) | Masking covers raw, base64, hex and URL-encoded forms. Standard output and standard error are masked separately, so a value split between them is not caught. It is a safety net, not a boundary. |
 | **Copies kept by the agent on your disk** | See below. |
+| **Restoring an old `secrets.age` together with its old `audit.jsonl`** | The pair is consistent, so the check passes. Detecting it needs an anchor outside `~/.zn` (a Team upload of the log is one). |
+| **Records of the last minute if the vault process is killed** | The vault saves its checkpoint every minute and when it locks. Records written after the last save can be cut without notice if the process is killed before the next save. |
 
 zn-gate is not a sandbox, and how much it sees depends on the agent (see
 [compat.md](compat.md)). Hooks are a guardrail: a determined process can find another
