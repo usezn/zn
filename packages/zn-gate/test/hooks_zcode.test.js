@@ -694,3 +694,124 @@ test('install and uninstall on a missing config leave an empty one', { skip: !po
   zc.uninstall({ home });
   assert.deepEqual(readCfg(home), {});
 });
+
+/* ------------------- atomic install / uninstall, start-up deadline ------------------- */
+
+const stateFile = (home) => path.join(home, '.zn', 'state', 'zcode-hooks-enabled.json');
+
+test('install that cannot save its state leaves config.json byte for byte as it was, and a later uninstall changes nothing', { skip: !posix }, (t) => {
+  const hook = { type: 'process', command: 'node', args: ['/mine/check.mjs'] };
+  const home = tempDir(t, 'zn-zc-atomic-state-');
+  write(home, { hooks: { enabled: false, events: { Stop: [{ hooks: [hook] }] } } });
+  const text = fs.readFileSync(cliFile(home), 'utf8');
+  // A plain file where the state folder must be: the state cannot be written (the same outcome as an unwritable folder).
+  fs.mkdirSync(path.join(home, '.zn'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.zn', 'state'), 'not a folder');
+  assert.throws(() => zc.install({ home, nodePath: '/usr/bin/node' }));
+  assert.equal(fs.readFileSync(cliFile(home), 'utf8'), text, 'the user\'s hooks were not switched on');
+  assert.equal(zc.uninstall({ home }).removed, 0);
+  assert.equal(fs.readFileSync(cliFile(home), 'utf8'), text);
+  assert.deepEqual(fs.readdirSync(path.dirname(cliFile(home))).filter((f) => f.endsWith('.zn-tmp')), []);
+});
+
+test('install whose config write fails puts the state back (none, or the one that was there) and leaves config.json valid and unchanged', { skip: !posix }, (t) => {
+  const home = tempDir(t, 'zn-zc-atomic-cfg-');
+  write(home, { hooks: { enabled: false } });
+  const text = fs.readFileSync(cliFile(home), 'utf8');
+  const realWrite = cfg.writeJson;
+  cfg.writeJson = () => { throw new Error('disk full'); };
+  try {
+    assert.throws(() => zc.install({ home, nodePath: '/usr/bin/node' }), /disk full/);
+    assert.equal(fs.existsSync(stateFile(home)), false, 'no state without a config that needs it');
+    fs.mkdirSync(path.dirname(stateFile(home)), { recursive: true });
+    const old = JSON.stringify({ file: cliFile(home), previous: 'absent' }) + '\n';
+    fs.writeFileSync(stateFile(home), old);
+    assert.throws(() => zc.install({ home, nodePath: '/usr/bin/node' }), /disk full/);
+    assert.equal(fs.readFileSync(stateFile(home), 'utf8'), old, 'the state that was there stays');
+  } finally {
+    cfg.writeJson = realWrite;
+  }
+  assert.equal(fs.readFileSync(cliFile(home), 'utf8'), text);
+  JSON.parse(fs.readFileSync(cliFile(home), 'utf8'));
+});
+
+test('uninstall whose config write fails keeps the state; the retry gives hooks.enabled its old value back', { skip: !posix }, (t) => {
+  const hook = { type: 'process', command: 'node', args: ['/mine/check.mjs'] };
+  const home = tempDir(t, 'zn-zc-atomic-un-');
+  write(home, { hooks: { enabled: false, events: { Stop: [{ hooks: [hook] }] } } });
+  const original = fs.readFileSync(cliFile(home), 'utf8');
+  zc.install({ home, nodePath: '/usr/bin/node' });
+  const installed = fs.readFileSync(cliFile(home), 'utf8');
+  const realWrite = cfg.writeJson;
+  cfg.writeJson = () => { throw new Error('read-only file system'); };
+  try {
+    assert.throws(() => zc.uninstall({ home }), /read-only/);
+  } finally {
+    cfg.writeJson = realWrite;
+  }
+  assert.equal(fs.readFileSync(cliFile(home), 'utf8'), installed, 'config.json is as the install left it');
+  assert.ok(fs.existsSync(stateFile(home)), 'the state is kept until the config is restored');
+  zc.uninstall({ home });
+  assert.equal(fs.readFileSync(cliFile(home), 'utf8'), original);
+  assert.equal(fs.existsSync(stateFile(home)), false);
+});
+
+test('a state left by a crash before the config was written does not leak into the next install', { skip: !posix }, (t) => {
+  const home = tempDir(t, 'zn-zc-atomic-stale-');
+  write(home, { hooks: { enabled: false } });
+  fs.mkdirSync(path.dirname(stateFile(home)), { recursive: true });
+  fs.writeFileSync(stateFile(home), JSON.stringify({ file: cliFile(home), previous: 'absent' }) + '\n');
+  const text = fs.readFileSync(cliFile(home), 'utf8');
+  zc.install({ home, nodePath: '/usr/bin/node' });
+  zc.uninstall({ home });
+  assert.equal(fs.readFileSync(cliFile(home), 'utf8'), text, 'enabled goes back to false, not to "not set"');
+});
+
+function fakeNode(t, body) {
+  const dir = tempDir(t, 'zn-zc-fakenode-');
+  const f = path.join(dir, 'node');
+  fs.writeFileSync(f, '#!/bin/sh\n' + body + '\n', { mode: 0o755 });
+  return f;
+}
+
+test('launcher deadline: a hook stuck on start-up is answered before Zcode would time out (exit 2 / deny), with no wait for the stuck process', { skip: !posix }, (t) => {
+  const home = tempDir(t, 'zn-zc-deadline-');
+  const slow = fakeNode(t, 'cat >/dev/null; exec sleep 60');
+  const file = launcher.writeLauncher('zcode', slow, RUNNER, { home, env: process.env, deadlineS: 1 });
+  const env = { PATH: process.env.PATH, HOME: home };
+  for (const ev of ['PreToolUse', 'PermissionRequest', 'UserPromptSubmit']) {
+    const t0 = Date.now();
+    const r = spawnSync(file, [ev], { input: '{}', encoding: 'utf8', env, timeout: 20000 });
+    assert.equal(r.status, 2, ev + ' ' + r.stderr);
+    assert.match(r.stderr, /its hook failed, so this was blocked/);
+    assert.ok(Date.now() - t0 < 8000, 'answered by the deadline, not by the 60 s sleep');
+  }
+  const post = spawnSync(file, ['PostToolUse'], { input: '{}', encoding: 'utf8', env, timeout: 20000 });
+  assert.equal(post.status, 0);
+  assert.match(JSON.parse(post.stdout).systemMessage, /NOT protecting this session/);
+});
+
+test('launcher deadline: a hook that answers in time gets the input and its exit code and output pass through; nothing lingers', { skip: !posix }, (t) => {
+  const home = tempDir(t, 'zn-zc-deadline-ok-');
+  const echo = fakeNode(t, 'cat; exit 0');
+  const file = launcher.writeLauncher('zcode', echo, RUNNER, { home, env: process.env, deadlineS: 30 });
+  const t0 = Date.now();
+  const r = spawnSync(file, ['PreToolUse'], { input: '{"a":1}', encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home }, timeout: 20000 });
+  assert.equal(r.status, 0);
+  assert.equal(r.stdout, '{"a":1}');
+  assert.ok(Date.now() - t0 < 8000, 'returns at once, it does not wait for the 30 s timer');
+  const two = fakeNode(t, 'cat >/dev/null; echo refused >&2; exit 2');
+  const f2 = launcher.writeLauncher('zcode', two, RUNNER, { home: tempDir(t, 'zn-zc-deadline-2-'), env: process.env, deadlineS: 30 });
+  const r2 = spawnSync(f2, ['PreToolUse'], { input: '{}', encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home }, timeout: 20000 });
+  assert.equal(r2.status, 2);
+  assert.match(r2.stderr, /refused/);
+});
+
+test('install writes the zcode launcher with a deadline 2 s under the hook timeout; other agents\' launchers have none', { skip: !posix }, (t) => {
+  const home = tempDir(t, 'zn-zc-deadline-text-');
+  zc.install({ home, nodePath: '/usr/bin/node' });
+  const text = fs.readFileSync(launcher.launcherFile('zcode', { home, env: process.env }), 'utf8');
+  assert.equal(zc.LAUNCHER_DEADLINE_S, zc.HOOK_TIMEOUT_S - 2);
+  assert.match(text, new RegExp('sleep ' + zc.LAUNCHER_DEADLINE_S + ' &'));
+  assert.doesNotMatch(launcher.unixScript('codex', '/usr/bin/node', RUNNER), /zn_run/);
+});

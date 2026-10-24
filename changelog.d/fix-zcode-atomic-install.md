@@ -1,0 +1,2 @@
+### Security
+- Zcode: `zn hooks install zcode` and `uninstall` are now atomic. The install saves what `hooks.enabled` was before it touches the config and writes `config.json` last, so an install that fails part-way no longer leaves your own hooks switched on with nothing recorded to undo it, and an uninstall that fails keeps its record until the config is restored. The launcher now has its own deadline two seconds under Zcode's hook timeout: a hook that hangs while starting is blocked instead of letting the call run, because Zcode lets a call run when a hook times out.

@@ -52,6 +52,7 @@ const cfg = require('./config-file');
 const launcher = require('./launcher');
 const { whichSync } = require('../broker/markers');
 const { shQuote, portablePath } = require('../shell-quote');
+const { writeFileAtomic } = require('../broker/files');
 
 const id = 'zcode';
 
@@ -72,6 +73,9 @@ const id = 'zcode';
 const HOOK_TIMEOUT_S = 30;
 const HOOK_TIMEOUT_MS = HOOK_TIMEOUT_S * 1000;
 const HOOK_STATUS = 'zn: checking for secrets';
+// The launcher's own deadline: Zcode lets the call run when a hook times out, and the runner arms its watchdog only after it has
+// started, so a hook stuck on start-up is answered (blocked) by the launcher 2 seconds before Zcode gives up.
+const LAUNCHER_DEADLINE_S = HOOK_TIMEOUT_S - 2;
 // Matchers: "*" (or none) matches every tool; a name list is only letters, digits, underscores and "|"; anything else is a regex.
 const PRE_MATCHER = '*';
 const PERMISSION_MATCHER = '*';
@@ -309,7 +313,7 @@ function handlerFor(opts = {}) {
       return { type: 'process', command: file, args, ...base };
     };
   }
-  const file = launcher.writeLauncher(id, node, runner, opts);
+  const file = launcher.writeLauncher(id, node, runner, { ...opts, deadlineS: LAUNCHER_DEADLINE_S });
   return (event) => ({ type: 'process', command: portablePath(file, platform), args: [event], ...base });
 }
 
@@ -371,7 +375,18 @@ function readEnabledState(opts, file) {
 function writeEnabledState(opts, file, previous) {
   const f = enabledStateFile(opts);
   fs.mkdirSync(path.dirname(f), { recursive: true });
-  fs.writeFileSync(f, JSON.stringify({ file, previous }) + '\n', { mode: 0o600 });
+  writeFileAtomic(f, JSON.stringify({ file, previous }) + '\n', 0o600);
+}
+
+/** The state file as it is on disk (a string), or null when there is none; used to put it back if an install fails. */
+function snapshotEnabledState(opts) {
+  try { return fs.readFileSync(enabledStateFile(opts), 'utf8'); } catch (_) { return null; }
+}
+
+function restoreEnabledState(opts, snapshot) {
+  try {
+    if (snapshot === null) clearEnabledState(opts); else writeFileAtomic(enabledStateFile(opts), snapshot, 0o600);
+  } catch (_) { /* best effort: a state that no longer matches the config is ignored by uninstall */ }
 }
 
 function clearEnabledState(opts) {
@@ -419,9 +434,19 @@ function install(opts = {}) {
       report.mcp = file;
     }
   }
-  cfg.writeJson(file, data);
-  // Keep the value "enabled" had, so uninstall can give it back (a re-install over zn's own switch keeps the first one).
-  if (wasOff && !readEnabledState(opts, file)) writeEnabledState(opts, file, previousEnabled === false ? false : 'absent');
+  // Order, so that a failure or a crash at any point leaves the old state or the new one, never a config that turned the
+  // user's hooks on with nothing recorded: (1) the launcher (already written, atomically, and shared), (2) the previous value
+  // of "enabled" in zn's state, (3) config.json last, atomically. If (3) fails the state goes back to what it was. A state
+  // left by a crash between (2) and (3) is harmless: uninstall only uses it while hooks.enabled is true.
+  // While "enabled" is not true no state of zn's can be current (its switch is off), so the first value is recorded again.
+  const stateBefore = snapshotEnabledState(opts);
+  if (wasOff) writeEnabledState(opts, file, previousEnabled === false ? false : 'absent');
+  try {
+    cfg.writeJson(file, data);
+  } catch (err) {
+    restoreEnabledState(opts, stateBefore);
+    throw err;
+  }
   if (userHooks.length) {
     report.warnings.push('"hooks.enabled" was ' + (previousEnabled === false ? 'false' : 'not set') + ' in ' + file + ', so these hooks of yours did not run until now and will run from the next Zcode session: ' + userHooks.join('; ') + '. `zn hooks uninstall zcode` puts the switch back.');
   }
@@ -470,11 +495,16 @@ function uninstall(opts = {}) {
       report.warnings.push('left the MCP server named "' + MCP_SERVER_NAME + '" in place: it is not zn\'s');
     }
   }
-  if (state) clearEnabledState(opts);
-  if (JSON.stringify(data) === before) return report;
+  // Config first, state after: if the write fails the config is untouched and the state still describes it; the state is
+  // dropped only once the config no longer needs it.
+  if (JSON.stringify(data) === before) {
+    if (state) clearEnabledState(opts);
+    return report;
+  }
   report.backup = cfg.backup(file);
   report.removed = 1;
   cfg.writeJson(file, data);
+  if (state) clearEnabledState(opts);
   // The launcher (see handlerFor) is shared by every config of this machine: one uninstall leaves it in place,
   // only the machine-wide uninstall (opts.removeLauncher) deletes it.
   if (opts.removeLauncher === true) {
@@ -531,6 +561,7 @@ module.exports = {
   capabilities: { ask: 'pre_tool', rewriteInput: false, rewriteOutput: false },
   HOOK_TIMEOUT_S,
   HOOK_TIMEOUT_MS,
+  LAUNCHER_DEADLINE_S,
   HOOK_STATUS,
   PRE_MATCHER,
   POST_MATCHER,
