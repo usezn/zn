@@ -34,7 +34,7 @@ function fakeAcls(over = {}, calls = []) {
   return (paths) => {
     calls.push(paths.slice());
     if (over.__fail) throw new Error(over.__fail);
-    return { user: ME, entries: paths.map((p) => ({ path: p, owner: ME, aces: goodAces(), ...(over[p] || {}) })) };
+    return { user: ME, entries: paths.map((p) => ({ path: p, owner: ME, aces: goodAces(), ...(over[p] || {}), ...(over.__file && fs.lstatSync(p).isFile() ? over.__file : {}) })) };
   };
 }
 const opts = (over, calls) => ({ trustedRoot: TMP_ROOT, readWinAcls: fakeAcls(over, calls), setWinPrivate: () => {} });
@@ -62,7 +62,7 @@ test('ZN_HOOK_DIR on Windows: a good chain is accepted, a new folder is created 
   const dir = path.join(root, 'a', 'hooks');
   win(dir, o);
   assert.ok(fs.statSync(dir).isDirectory());
-  assert.deepEqual(priv, [[dir, ME]]);
+  assert.deepEqual(priv, [[path.join(root, 'a'), ME], [dir, ME]]); // every new level is made private, one at a time
   assert.ok(calls.length >= 2); // before creating and after making it private
   win(dir, opts()); // an existing good folder is accepted as it is
 });
@@ -146,6 +146,148 @@ test('ZN_HOOK_DIR on Windows: a folder swapped for a bad one while the launcher 
   assert.deepEqual(fs.readdirSync(dir), []);
 });
 
+// ---- Daybreak #1 blockers: system programs only, new folder race, launcher file ------------------------------------
+const PS_PATH = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+const fakeSpawn = (calls, reply) => (file, args, o) => { calls.push({ file, args, o }); return reply || { status: 0, stdout: JSON.stringify({ user: ME, entries: [] }), stderr: '' }; };
+
+test('ZN_HOOK_DIR on Windows: PowerShell is the absolute System32 one, with a minimal environment (no PSModulePath, no PATH from the caller)', (t) => {
+  const calls = [];
+  const saved = { PSModulePath: process.env.PSModulePath, PATH: process.env.PATH };
+  process.env.PSModulePath = 'C:\\evil\\modules';
+  process.env.PATH = 'C:\\evil\\bin';
+  t.after(() => { for (const k of Object.keys(saved)) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } });
+  const io = { spawnSync: fakeSpawn(calls), powershell: PS_PATH };
+  launcher.readWinAcls(['C:\\a', 'C:\\a\\b'], io);
+  launcher.setWinPrivate('C:\\a\\b', ME, io);
+  assert.equal(calls.length, 2);
+  for (const c of calls) {
+    assert.equal(c.file, PS_PATH); // never the bare name that the current folder or PATH could answer
+    assert.ok(path.win32.isAbsolute(c.file));
+    assert.deepEqual(Object.keys(c.o.env).filter((k) => !/^ZN_/.test(k)).sort(), ['PATH', 'SystemDrive', 'SystemRoot', 'windir']);
+    assert.equal(c.o.env.PATH, 'C:\\Windows\\System32');
+    assert.equal(c.o.env.SystemRoot, 'C:\\Windows');
+    assert.equal(c.o.env.PSModulePath, undefined);
+    assert.equal(c.o.cwd, 'C:\\Windows');
+    assert.deepEqual(c.args.slice(0, 5), ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command']);
+  }
+  // the ACL is read with .NET directly (no Get-Acl, no module to autoload) and the owner-only step does not use icacls
+  assert.match(calls[0].args[5], /GetAccessControl/);
+  assert.doesNotMatch(calls[0].args[5] + calls[1].args[5], /Get-Acl|icacls/i);
+  assert.equal(calls[1].o.env.ZN_SID, ME);
+  assert.equal(calls[1].o.env.ZN_DIR, 'C:\\a\\b');
+});
+
+test('ZN_HOOK_DIR on Windows: without the system PowerShell, or with a failing one, the ACL calls fail closed', (t) => {
+  assert.throws(() => launcher.readWinAcls(['C:\\a'], { powershell: null, spawnSync: fakeSpawn([]) }), /system PowerShell was not found/);
+  assert.throws(() => launcher.setWinPrivate('C:\\a', ME, { powershell: null, spawnSync: fakeSpawn([]) }), /system PowerShell was not found/);
+  assert.throws(() => launcher.readWinAcls(['C:\\a'], { powershell: PS_PATH, spawnSync: fakeSpawn([], { status: 1, stdout: '', stderr: 'boom' }) }), /could not read the access list/);
+  assert.throws(() => launcher.readWinAcls(['C:\\a'], { powershell: PS_PATH, spawnSync: fakeSpawn([], { status: 0, stdout: 'not json', stderr: '' }) }), /unreadable answer/);
+  assert.throws(() => launcher.setWinPrivate('C:\\a', 'S-1-5-21; calc', { powershell: PS_PATH, spawnSync: fakeSpawn([]) }), /unexpected account id/);
+  if (process.platform !== 'win32') assert.throws(() => launcher.readWinAcls(['/x']), /system PowerShell was not found/); // the default is exe.systemPowerShell(), null off Windows
+});
+
+test('ZN_HOOK_DIR on Windows: another user who drops a file in the new folder before it is private makes zn refuse (race case)', (t) => {
+  const root = tempDir(t, 'zn-whd-race-');
+  const dir = path.join(root, 'hooks');
+  // the "attacker" acts in the window between mkdir and the access list change
+  const setWinPrivate = (d) => fs.writeFileSync(path.join(d, '.antigravity.' + process.pid + '.zn-tmp'), 'attacker');
+  assert.throws(() => launcher.writeLauncher('antigravity', process.execPath, '/x/runner.js', {
+    env: { ZN_HOOK_DIR: dir }, platform: 'win32', hookDirTrustedRoot: TMP_ROOT, readWinAcls: fakeAcls(), setWinPrivate,
+  }), /not empty when it was made private/);
+  assert.equal(fs.existsSync(path.join(dir, 'antigravity-hook.sh')), false);
+  assert.ok(!fs.readdirSync(dir).some((n) => !/zn-tmp$/.test(n)), 'no launcher was written');
+  // an empty new folder is fine
+  const ok = path.join(root, 'ok');
+  launcher.writeLauncher('antigravity', process.execPath, '/x/runner.js', {
+    env: { ZN_HOOK_DIR: ok }, platform: 'win32', hookDirTrustedRoot: TMP_ROOT, readWinAcls: fakeAcls(), setWinPrivate: () => {},
+  });
+  assert.equal(fs.readdirSync(ok).length, 1);
+});
+
+test('ZN_HOOK_DIR on Windows: the launcher file itself is checked after it is written (owner, access list, link)', (t) => {
+  const root = tempDir(t, 'zn-whd-file-');
+  const dir = path.join(root, 'hooks');
+  fs.mkdirSync(dir);
+  const run = (over) => launcher.writeLauncher('antigravity', process.execPath, '/x/runner.js', {
+    env: { ZN_HOOK_DIR: dir }, platform: 'win32', hookDirTrustedRoot: TMP_ROOT, readWinAcls: fakeAcls(over), setWinPrivate: () => {},
+  });
+  assert.throws(() => run({ __file: { owner: OTHER } }), /launcher file belongs to another user/);
+  assert.deepEqual(fs.readdirSync(dir), []); // and it was removed
+  for (const rights of [MODIFY, FULL, 0x2, 0x4, 0x10000, 0x40000, 0x80000]) {
+    assert.throws(() => run({ __file: { aces: [...goodAces(), ace(USERS, rights)] } }), /launcher file can be changed by other users/);
+    assert.deepEqual(fs.readdirSync(dir), []);
+  }
+  assert.throws(() => run({ __file: { reparse: true } }), /launcher is a link/);
+  run({ __file: { aces: [...goodAces(), ace(USERS, READ)] } }); // read access for others is fine
+  assert.equal(fs.readdirSync(dir).length, 1);
+  assert.equal(fs.readdirSync(dir).filter((n) => /zn-tmp/.test(n)).length, 0);
+});
+
+test('ZN_HOOK_DIR on Windows: an entry that new files inherit counts for the launcher folder even when it is inherit-only (C:\\ case)', (t) => {
+  const root = tempDir(t, 'zn-whd-inh-');
+  const dir = path.join(root, 'hooks');
+  fs.mkdirSync(dir);
+  const inh = (flags) => opts({ [dir]: { aces: [...goodAces(), ace('S-1-5-11', MODIFY, { inheritOnly: true, inh: flags })] } });
+  assert.throws(() => win(dir, inh(3)), /can be changed by other users/); // (OI)(CI)(IO): the launcher would inherit Modify
+  assert.throws(() => win(dir, inh(2)), /can be changed by other users/); // (OI)(IO)
+  win(dir, inh(1)); // (CI)(IO): only subfolders
+  // the same entry on a folder above does not matter
+  const up = path.join(root, 'up');
+  const leaf = path.join(up, 'hooks');
+  fs.mkdirSync(leaf, { recursive: true });
+  win(leaf, opts({ [up]: { aces: [...goodAces(), ace('S-1-5-11', MODIFY, { inheritOnly: true, inh: 3 })] } }));
+});
+
+test('ZN_HOOK_DIR on Windows: any reparse point in the path is refused (links, junctions, synced folders)', (t) => {
+  const root = tempDir(t, 'zn-whd-rp-');
+  const up = path.join(root, 'up');
+  const dir = path.join(up, 'hooks');
+  fs.mkdirSync(dir, { recursive: true });
+  assert.throws(() => win(dir, opts({ [up]: { reparse: true } })), /link, junction or synced folder is in its path/);
+  assert.throws(() => win(dir, opts({ [dir]: { reparse: true } })), /link, junction or synced folder is in its path/);
+  win(dir, opts({ [up]: { reparse: false } }));
+});
+
+test('ZN_HOOK_DIR on Windows: OWNER RIGHTS and TrustedInstaller entries are not "other users"', (t) => {
+  const root = tempDir(t, 'zn-whd-ownr-');
+  const dir = path.join(root, 'hooks');
+  fs.mkdirSync(dir);
+  const TI = 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464';
+  win(dir, opts({ [dir]: { aces: [...goodAces(), ace('S-1-3-4', FULL), ace(TI, FULL)] } }));
+});
+
+test('writeFileAtomic: the temporary file has an unpredictable name and is opened exclusively (a planted file is never used)', (t) => {
+  const files = require('../lib/broker/files');
+  const crypto = require('crypto');
+  const root = tempDir(t, 'zn-wfa-');
+  const target = path.join(root, 'launcher.sh');
+  const names = [];
+  const rename = fs.renameSync;
+  fs.renameSync = (a, b) => { names.push(path.basename(a)); return rename(a, b); };
+  t.after(() => { fs.renameSync = rename; });
+  files.writeFileAtomic(target, 'one', 0o755);
+  files.writeFileAtomic(target, 'two', 0o755);
+  fs.renameSync = rename;
+  assert.equal(names.length, 2);
+  assert.notEqual(names[0], names[1]);
+  for (const n of names) assert.match(n, new RegExp('^\\.launcher\\.sh\\.' + process.pid + '\\.[0-9a-f]{16}\\.zn-tmp$'));
+  assert.equal(fs.readFileSync(target, 'utf8'), 'two');
+  assert.deepEqual(fs.readdirSync(root), ['launcher.sh']);
+  // the old predictable name, and even the exact name this call would pick, are planted by "somebody else": refused, untouched
+  const old = path.join(root, '.launcher.sh.' + process.pid + '.zn-tmp');
+  fs.writeFileSync(old, 'attacker');
+  files.writeFileAtomic(target, 'three', 0o755);
+  assert.equal(fs.readFileSync(old, 'utf8'), 'attacker');
+  const rb = crypto.randomBytes;
+  crypto.randomBytes = () => Buffer.from('0123456789abcdef', 'hex');
+  t.after(() => { crypto.randomBytes = rb; });
+  const planted = path.join(root, '.launcher.sh.' + process.pid + '.0123456789abcdef.zn-tmp');
+  fs.writeFileSync(planted, 'attacker');
+  assert.throws(() => files.writeFileAtomic(target, 'four', 0o755), /EEXIST/);
+  assert.equal(fs.readFileSync(planted, 'utf8'), 'attacker');
+  assert.equal(fs.readFileSync(target, 'utf8'), 'three');
+});
+
 // ---- real ACLs (Windows only) -----------------------------------------------------------------------------------
 const real = { skip: process.platform !== 'win32' };
 const icacls = (...args) => {
@@ -196,4 +338,43 @@ test('real Windows: the production rule accepts a new folder under the user prof
   t.after(() => fs.rmSync(path.dirname(dir), { recursive: true, force: true }));
   launcher.ensureSafeHookDir(dir, 'win32');
   assert.ok(fs.statSync(dir).isDirectory());
+});
+
+test('real Windows: a powershell.exe or icacls.exe planted in the current folder, and a hostile PSModulePath, are not used', real, (t) => {
+  const plant = privateRoot(tempDir(t, 'zn-whd-plant-'));
+  // a program that cannot answer: if zn ran it (by name, from the current folder), the call below would fail
+  fs.copyFileSync(process.execPath, path.join(plant, 'powershell.exe'));
+  fs.copyFileSync(process.execPath, path.join(plant, 'icacls.exe'));
+  const mod = path.join(plant, 'Microsoft.PowerShell.Security');
+  fs.mkdirSync(mod);
+  const prevCwd = process.cwd();
+  const prevPsm = process.env.PSModulePath;
+  process.chdir(plant);
+  process.env.PSModulePath = plant;
+  try {
+    const doc = launcher.readWinAcls([plant]);
+    assert.match(doc.user, /^S-1-5-/);
+    assert.equal(doc.entries.length, 1);
+    const sub = path.join(plant, 'sub');
+    fs.mkdirSync(sub);
+    launcher.setWinPrivate(sub, doc.user);
+    launcher.ensureSafeHookDir(path.join(plant, 'new', 'hooks'), 'win32', { trustedRoot: TMP_ROOT });
+  } finally {
+    // back first: the current folder must not be the one that is removed, and later tests must not look for programs in it
+    process.chdir(prevCwd);
+    if (prevPsm === undefined) delete process.env.PSModulePath; else process.env.PSModulePath = prevPsm;
+  }
+});
+
+test('real Windows: a launcher is written, its own owner and access list are checked, and a junction in the path is refused', real, (t) => {
+  const root = privateRoot(tempDir(t, 'zn-whd-realw-'));
+  const dir = path.join(root, 'x', 'hooks');
+  const file = launcher.writeLauncher('antigravity', process.execPath, 'C:/x/runner.js', { env: { ZN_HOOK_DIR: dir }, platform: 'win32', hookDirTrustedRoot: TMP_ROOT });
+  assert.ok(fs.statSync(file).isFile());
+  assert.equal(fs.readdirSync(dir).filter((n) => /zn-tmp/.test(n)).length, 0);
+  const doc = launcher.readWinAcls([file]);
+  assert.equal(launcher.winProblem(doc.entries[0], doc.user, 'file'), null);
+  icacls(file, '/grant', '*S-1-5-32-545:(M)');
+  const again = launcher.readWinAcls([file]);
+  assert.match(launcher.winProblem(again.entries[0], again.user, 'file'), /can be changed by other users/);
 });
