@@ -275,3 +275,43 @@ for (const [name, opts] of [['plain', {}], ['with a deadline', { deadlineS: 5 }]
     assert.match(normal.stdout, /"permissionDecision":\s*"deny"/);
   });
 }
+
+// ---- predictable temporary names (no mktemp): a FIFO or link planted at the name is never used ----
+
+function noMktempScript(t, runnerBody) {
+  const file = writeScript(t, 'claude-code', runnerBody);
+  const text = fs.readFileSync(file, 'utf8').replace('/usr/bin/mktemp /bin/mktemp', '/nonexistent/mktemp');
+  assert.ok(text.includes('/nonexistent/mktemp'));
+  fs.writeFileSync(file, text, { mode: 0o755 });
+  return file;
+}
+
+function runPlanted(file, tmp, plant) {
+  // `exec` keeps the PID, so the names the launcher would try first are known before it runs.
+  const wrapper = 'for n in ack out; do ' + plant + '; done; exec /bin/sh "$0" PreToolUse';
+  return spawnSync('/bin/sh', ['-c', wrapper, file], { input: '{}', encoding: 'utf8', timeout: 15000, env: { PATH: process.env.PATH, HOME: '/nonexistent', TMPDIR: tmp } });
+}
+
+test('posix launcher (no mktemp): a FIFO and a link planted at the predictable names are skipped; the answer is the runner\'s', { skip: !posix }, (t) => {
+  const tmp = tempDir(t, 'zn-ov-plant-');
+  const file = noMktempScript(t, GOOD);
+  const r = runPlanted(file, tmp, 'mkfifo "$TMPDIR/zn-$n.$$.1"; ln -s /dev/null "$TMPDIR/zn-$n.$$.2"');
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout), { hookSpecificOutput: { permissionDecision: 'deny' } });
+});
+
+test('posix launcher (no mktemp): every name taken by a FIFO: blocked at once, no hang', { skip: !posix }, (t) => {
+  const tmp = tempDir(t, 'zn-ov-plant-');
+  const file = noMktempScript(t, GOOD);
+  const r = runPlanted(file, tmp, 'for i in 1 2 3 4 5 6; do mkfifo "$TMPDIR/zn-$n.$$.$i"; done');
+  assert.equal(r.status, 2, r.stderr);
+  assert.match(r.stderr, /so this was blocked/);
+});
+
+test('posix launcher (with mktemp): a FIFO at the old predictable name changes nothing', { skip: !posix }, (t) => {
+  const tmp = tempDir(t, 'zn-ov-plant-');
+  const file = writeScript(t, 'claude-code', GOOD);
+  const r = runPlanted(file, tmp, 'mkfifo "$TMPDIR/zn-$n.$$.1"');
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(JSON.parse(r.stdout).hookSpecificOutput.permissionDecision, 'deny');
+});
