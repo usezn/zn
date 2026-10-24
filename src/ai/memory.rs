@@ -258,9 +258,17 @@ impl VectorMemory {
             // in free pages or in the log, and only then record schema 3. If
             // this fails the file is not used, and the next start retries.
             conn.execute_batch("VACUUM;")?;
-            conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| {
-                r.get::<_, i64>(0)
-            })?;
+            // The result of the checkpoint matters: with another reader open
+            // it comes back busy and the old text is still in the main file.
+            let (busy, log, done): (i64, i64, i64) =
+                conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+                })?;
+            if busy != 0 || log != done {
+                return Err(anyhow!(
+                    "log checkpoint incomplete (busy {busy}, log {log}, done {done}); retrying on the next open"
+                ));
+            }
             conn.execute_batch("PRAGMA user_version = 3;")?;
         }
         Ok(conn)
@@ -1080,6 +1088,64 @@ mod tests {
         }
         let raw = Connection::open(m.db_path()).unwrap();
         let v: i64 = raw
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, SCHEMA_VERSION);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn files_contain(dir: &Path, needle: &str) -> bool {
+        std::fs::read_dir(dir).unwrap().any(|e| {
+            let bytes = std::fs::read(e.unwrap().path()).unwrap();
+            bytes.windows(needle.len()).any(|w| w == needle.as_bytes())
+        })
+    }
+
+    #[test]
+    fn a_busy_checkpoint_keeps_schema_2_and_the_retry_removes_the_text() {
+        let marker = "PINmarker-4821-zebra";
+        let dir = temp_dir("busyckpt");
+        let m = VectorMemory::new(dir.to_str().unwrap(), 1, "m");
+        let raw = write_old_file(&m, &dir, 2);
+        raw.query_row("PRAGMA journal_mode=WAL", [], |r| r.get::<_, String>(0))
+            .unwrap();
+        for i in 0..50 {
+            raw.execute(
+                "INSERT INTO memory (agent_id, text, vector) VALUES ('a', ?1, ?2)",
+                params![
+                    format!("{marker} {i} {}", "x".repeat(200)),
+                    1.0f32.to_le_bytes().to_vec()
+                ],
+            )
+            .unwrap();
+        }
+        drop(raw);
+        assert!(files_contain(&dir, marker), "setup: the text is on disk");
+
+        // A second reader keeps a snapshot open during the upgrade.
+        let reader = Connection::open(m.db_path()).unwrap();
+        reader.execute_batch("BEGIN;").unwrap();
+        reader
+            .query_row("SELECT COUNT(*) FROM memory", [], |r| r.get::<_, i64>(0))
+            .unwrap();
+
+        assert!(VectorMemory::open(&m.db_path(), Duration::from_millis(200)).is_err());
+        let check = Connection::open(m.db_path()).unwrap();
+        let v: i64 = check
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, 2, "schema 3 must not be recorded");
+        drop(check);
+
+        reader.execute_batch("COMMIT;").unwrap();
+        drop(reader);
+        drop(VectorMemory::open(&m.db_path(), Duration::from_millis(200)).unwrap());
+        assert!(
+            !files_contain(&dir, marker),
+            "the text is gone from the files"
+        );
+        let check = Connection::open(m.db_path()).unwrap();
+        let v: i64 = check
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
