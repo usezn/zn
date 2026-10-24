@@ -33,7 +33,7 @@ test('looksLikeZnKey rejects a value without the zn_ prefix', () => {
 });
 
 test('looksLikeZnKey rejects empty and non-string values', () => {
-  for (const v of ['', undefined, null, 12345678901234567890, {}, { key: fake(20) }]) {
+  for (const v of ['', undefined, null, 1234567890123456, {}, { key: fake(20) }]) {
     assert.strictEqual(looksLikeZnKey(v), false);
   }
 });
