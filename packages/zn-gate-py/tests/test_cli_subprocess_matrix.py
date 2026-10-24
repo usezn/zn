@@ -28,7 +28,8 @@ def zn(home, *args, **env_changes):
                PYTHONPATH=_SRC + os.pathsep + env.get("PYTHONPATH", ""))
     env.update(env_changes)
     return subprocess.run([sys.executable, "-m", "zn_gate.cli", *args],
-                          capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL,
+                          capture_output=True, text=True, encoding="utf-8", errors="replace", env=env,
+                          stdin=subprocess.DEVNULL,
                           timeout=60)
 
 
