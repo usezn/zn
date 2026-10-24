@@ -280,7 +280,7 @@ For these reasons, zn is installed correctly, but a setting stops your agent fro
 
   A hook marked `async` runs beside the tool call and cannot stop it. Remove `"async": true` from zn's entry, or run `zn hooks install zcode` again.
 
-- **ZCode's MCP support is off.** This is a note under an **OK** line, not a NOT protected line: `"features.mcp"` is false in <file>, so ZCode does not start zn's `secrets` MCP server. The hooks still work.
+- **ZCode's MCP support is off.** This is a note under an **OK** line, not a NOT protected line: `"features.mcp"` is false in <file>. We read that setting as "ZCode does not start zn's `secrets` MCP server", but we did not test what it does in the ZCode desktop app. The hooks still work.
 
 ### Gemini CLI settings switch the hook off
 

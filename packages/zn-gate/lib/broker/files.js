@@ -8,6 +8,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 
 function existingDir(p) {
@@ -68,11 +69,21 @@ function realTargetOf(file) {
   }
 }
 
-/** Write a file atomically with mode 0600 (best effort on Windows). */
+/**
+ * Write a file atomically with mode 0600 (best effort on Windows). The temporary file has an unpredictable name and is created
+ * with O_EXCL, so a file that somebody else planted under any name is never opened (it would keep its owner and access list
+ * through the rename); the rename then replaces the target in one step.
+ */
 function writeFileAtomic(file, data, mode = 0o600) {
-  const tmp = path.join(path.dirname(file), '.' + path.basename(file) + '.' + process.pid + '.zn-tmp');
-  fs.writeFileSync(tmp, data, { mode });
-  fs.renameSync(tmp, file);
+  const tmp = path.join(path.dirname(file), '.' + path.basename(file) + '.' + process.pid + '.' + crypto.randomBytes(8).toString('hex') + '.zn-tmp');
+  const fd = fs.openSync(tmp, 'wx', mode);
+  try {
+    try { fs.writeFileSync(fd, data); } finally { fs.closeSync(fd); }
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch (_) { /* best effort */ }
+    throw e;
+  }
 }
 
 module.exports = { gitStatusOf, realTargetOf, writeFileAtomic };
