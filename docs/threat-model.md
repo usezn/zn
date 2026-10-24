@@ -340,6 +340,33 @@ stop malware running as the same user (see above).
 - **Monitor commands** run as `bash -c` behind the scrubber's pipe. The
   functions and aliases of the agent's shell snapshot are not loaded there, so a
   monitor that depends on them will not work.
+- **zn Team: a signed policy can lift restrictions.** An organization admin
+  (or whoever holds the organization's signing key) can publish a version
+  that removes or loosens restrictions, and zn-gate applies it: the
+  organization decides what applies on a managed machine, and zn-gate cannot
+  tell an intended change from an unintended one. A stolen key still cannot
+  open a new host for a secret without a local approval. There is no local
+  minimum for restrictions. zn-gate shows what was lifted (`zn team status`,
+  one line in the next Claude Code hook message) and writes an audit record
+  (`org_policy_lifted:...`). See [zn Team](team.md#when-the-organization-lifts-a-restriction).
+- **zn Team readable copies:** `~/.zn/team.json` and `~/.zn/org-policy.json` are
+  for the hooks and `zn team status`. If one is deleted or edited, the vault
+  puts it back and the hook takes the custom detectors from the vault in the
+  meantime. With the vault locked, the hooks have only those copies; if the
+  policy copy is gone as well, Claude Code says `Team detectors not applied`
+  (at most once an hour) instead of staying silent. A sync, `zn team status`
+  or a hook never restores the copies of an organization this machine has
+  already left.
+- **zn Team: leaving and a pending revocation.** `zn team leave` asks the
+  server to revoke the installation with its own install token. If the server
+  cannot take it, the machine still leaves at once, and the vault keeps only
+  that token, the organization, the API address and the time to retry (on
+  sync, on leave and every 15 minutes while unlocked) for up to 30 days. The
+  record is not a membership: it applies no policy and uploads nothing, and
+  it is never used with the token of a later membership. Until the server
+  confirms, the installation's token still works there, which is why
+  `zn team status` shows the pending revocation and says when zn-gate stops
+  trying.
 - **Rollback of the vault file:** restoring an older, genuine copy of
   `secrets.age` is accepted, and brings back the approvals and policy it had.
   Keep backups of `~/.zn` private.

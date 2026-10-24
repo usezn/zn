@@ -345,28 +345,73 @@ function znRunPrefix(opts, agentId) {
   return 'ZN_AGENT=' + String(agentId).replace(/[^a-z0-9-]/g, '') + ' ' + q(opts.nodePath || process.execPath) + ' ' + q(runJs) + ' --';
 }
 
-/* Custom secret formats from the zn Team policy (verified cache), compiled
- * once per hook process. They only add redactions. */
+/* Custom secret formats from the zn Team policy, compiled once per hook
+ * process. They only add redactions. They come from the verified readable
+ * copy (~/.zn/org-policy.json); when that copy is missing or does not verify
+ * and the vault is unlocked, from the policy held in the vault (the daemon
+ * also puts the copies back). A machine that is joined but whose policy cannot
+ * be applied (the copy does not verify, or it was deleted and the vault is
+ * locked or does not answer in time) leaves a line for the person (see
+ * takeTeamNotes). */
 let orgDetectors = null;
-function orgDetectorsFor(opts) {
-  if (orgDetectors === null) {
-    try {
-      const team = require('../team/policy');
-      const { detectorsOf } = require('../team/effective');
-      orgDetectors = require('../team/detectors').compile(detectorsOf(team.state({ home: opts && opts.znHome })));
-    } catch (_) { orgDetectors = []; }
-  }
+let teamNotes = [];
+const takeTeamNotes = () => { const n = teamNotes; teamNotes = []; return n; };
+
+function withinMs(promise, ms) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), ms);
+    if (timer.unref) timer.unref();
+    Promise.resolve(promise).then((v) => { clearTimeout(timer); resolve(v); }, () => { clearTimeout(timer); resolve(null); });
+  });
+}
+
+async function orgDetectorsFor(opts, vault) {
+  if (orgDetectors !== null) return orgDetectors;
+  orgDetectors = [];
+  try {
+    const team = require('../team/policy');
+    const { detectorsOf } = require('../team/effective');
+    const { compile } = require('../team/detectors');
+    const popts = { home: opts && opts.znHome };
+    const st = team.state(popts);
+    let change = null;
+    let org = st.org || null;
+    let missing = false;
+    // The organization is known on this machine (team.json, or only a policy copy is left) but its policy
+    // is not readable here: the state is 'none'. That is the file-deleted case and must not be silent.
+    const copyLost = st.state === 'none' && (Boolean(st.org) || Boolean(team.readCache(popts)));
+    if (st.state === 'active' || st.state === 'expired') {
+      orgDetectors = compile(detectorsOf(st));
+      change = st.change;
+    } else if (vault && typeof vault.teamHookInfo === 'function') {
+      const r = await withinMs(vault.teamHookInfo(), 1500);
+      if (r && r.joined) {
+        org = r.org || org;
+        if (r.state === 'active' || r.state === 'expired') { orgDetectors = compile(Array.isArray(r.detectors) ? r.detectors : []); change = r.change; }
+        else if (r.state === 'invalid') missing = true;
+      } else if (r === null && (st.state === 'invalid' || copyLost)) missing = true;
+    } else if (st.state === 'invalid' || copyLost) {
+      missing = true;
+    }
+    if (change || missing) {
+      teamNotes = require('../team/changes').takeNotices({
+        home: team.paths(popts).home, org, change, detectorsMissing: missing,
+        statusCommand: znCommand('team status'), syncCommand: znCommand('team sync'),
+      });
+    }
+  } catch (_) { /* custom detectors only add redactions: nothing to apply */ }
   return orgDetectors;
 }
 
 async function ctxFor(ev, d, agentId, destination, needVault = true) {
+  const vault = needVault ? await d.vault() : undefined;
   return {
     project: deps.findProjectRoot(ev.cwd || process.cwd()),
     agent: agentId,
     tool: ev.toolName || ev.tool,
     destination,
-    vault: needVault ? await d.vault() : undefined,
-    detectors: d.detectors ? d.detectors() : orgDetectorsFor(),
+    vault,
+    detectors: d.detectors ? d.detectors() : await orgDetectorsFor(undefined, vault),
   };
 }
 
@@ -1347,6 +1392,9 @@ async function handle(adapter, rawEvent, opts = {}) {
   } catch (err) {
     decision = failDecision(ev, err, mode, adapter.id);
   }
+  // zn Team: a line for the person (a policy change that lifted restrictions, or detectors that are not applied).
+  const teamLines = takeTeamNotes();
+  if (teamLines.length && decision && !decision.userMessage) decision.userMessage = teamLines.join(' ');
   const output = adapter.respond({ ...decision, event: ev });
   countHook(adapter.id, ev, decision, opts);
   recordEvidence(adapter.id, ev, decision, opts);

@@ -544,10 +544,11 @@ With no subcommand it is the same as `team status`. Exit codes: `0` done, `1` an
 ```bash
 JOIN_TOKEN='paste-your-join-token-here'
 zn-gate team join "$JOIN_TOKEN"
-# Optional: add --api https://api.example.com (another server) or --agent claude-code
+# Optional: add --api https://api.example.com (another server), --agent claude-code,
+# or --include-history to also send the audit records written before you joined
 ```
 
-Connects this machine to your organization with the join token your admin gave you.
+Connects this machine to your organization with the join token your admin gave you. It exits `0` only after the organization's first valid policy has been downloaded and applied. If that fails (offline, or no policy published yet) it exits `1`; the machine stays registered, `team status` shows the join as pending, and `team sync` finishes it. Only the audit records written from the join on are uploaded; `--include-history` adds the earlier ones, and only at the first join of an installation.
 
 #### `team status`
 
@@ -555,15 +556,15 @@ Connects this machine to your organization with the join token your admin gave y
 zn-gate team status [--json]
 ```
 
-Shows the organization, the policy version and the state of the audit upload.
+Shows the organization, the policy version, what the last policy version removed or loosened, the state of the audit upload, and a revocation that is still pending after `team leave`. See [zn Team](team.md#when-the-organization-lifts-a-restriction).
 
 #### `team sync`
 
-Downloads the policy and uploads the audit log now. Exit `1` when the policy is rejected or the machine was removed.
+Downloads the policy and uploads the audit log now. Exit `0` only when a valid policy is applied and no upload failed. Exit `1` when the machine is offline, the organization has no policy, the policy is refused, the machine was removed, or an upload failed; `team status` keeps the last reason. A sync that was running when you left the organization, or joined another one, is dropped and writes nothing.
 
 #### `team leave`
 
-Disconnects this machine from the organization.
+Disconnects this machine from the organization. It first tells the server to revoke this installation (with the installation's own token), then deletes the local copies of the policy and upload state. Exit `1` when one of those files cannot be deleted; the message names it. If the server cannot take the revocation now (offline, an error, a rate limit, or an older server), the machine still leaves at once and the command exits `0`, but it prints that the server was not told yet: zn-gate keeps the token in the vault only to retry on `team sync` and while the vault is unlocked, for up to 30 days, and `team status` shows the pending revocation. See [zn Team](team.md#leaving).
 
 #### `team managed-config`
 

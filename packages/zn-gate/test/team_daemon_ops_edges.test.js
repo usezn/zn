@@ -29,7 +29,7 @@ let net;
 test.before(async () => { cloud = await startFakeTeamServer(); });
 test.after(async () => { await cloud.close(); fs.rmSync(HOME, { recursive: true, force: true }); });
 test.beforeEach(() => {
-  net = { throwError: false, status: 0, rewriteJoin: null };
+  net = { throwError: false, status: 0, rewriteJoin: null, afterPolicy: null };
   cloud.setOrgActive(true);
   fs.rmSync(process.env.ZN_HOME, { recursive: true, force: true });
   fs.mkdirSync(process.env.ZN_HOME, { recursive: true });
@@ -39,6 +39,7 @@ async function fetchImpl(url, init) {
   if (net.throwError) throw new TypeError('fetch failed');
   if (net.status) return new Response('{"error":"simulated failure"}', { status: net.status, headers: { 'content-type': 'application/json' } });
   const res = await fetch(url, init);
+  if (net.afterPolicy && String(url).endsWith('/v1/org/policy')) net.afterPolicy();
   if (net.rewriteJoin && String(url).endsWith('/v1/org/join')) {
     const body = JSON.parse(await res.text());
     net.rewriteJoin(body);
@@ -162,7 +163,7 @@ test('leave without an organization removes stale copies; leave in an organizati
   policy.writeTeam({ org: 'org_Stale123456789', api_base: cloud.base, install_id: 'x', policy_public_key: { alg: 'Ed25519', kid: '0'.repeat(16), key: 'A'.repeat(43) } });
   fs.writeFileSync(policy.paths().uploadState, '{}');
   fs.writeFileSync(policy.paths().policyFile, '{}');
-  assert.deepStrictEqual(await stale.o.teamLeave(), { left: null });
+  assert.deepStrictEqual(await stale.o.teamLeave(), { left: null, pending_files: [] });
   for (const f of ['teamFile', 'policyFile', 'uploadState']) assert.ok(!fs.existsSync(policy.paths()[f]), f);
   assert.strictEqual(stale.dialogs.length, 0);
 
@@ -181,6 +182,124 @@ test('leave without an organization removes stale copies; leave in an organizati
   assert.strictEqual(declined.secrets.orgApprovals, undefined);
   assert.deepStrictEqual(declined.audit.at(-1), { mode: 'remove', decision: 'allow', reason: 'team_left' });
   assert.strictEqual(policy.readTeam(), null);
+});
+
+/** Appends `count` correctly chained records (MACs under AUDIT_KEY) to the machine's audit log; returns them. */
+function addRecords(m, count) {
+  const old = fs.existsSync(m.auditFile) ? fs.readFileSync(m.auditFile, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
+  const last = old.at(-1);
+  const recs = makeAuditChain({ key: AUDIT_KEY, count, startSeq: last ? last.seq + 1 : 1, prev: last ? last.mac : undefined });
+  fs.appendFileSync(m.auditFile, recs.map((r) => JSON.stringify(r)).join('\n') + '\n');
+  return recs;
+}
+const uploadedSeqs = (r) => [...cloud.state.installs.get(r.install_id).events.map((e) => e.seq)];
+
+test('join sends only the records written since joining; the earlier audit log stays on the machine', async () => {
+  const m = machine();
+  addRecords(m, 5); // history: written before joining
+  const r = await m.o.teamJoin({ join_token: cloud.createJoinToken(), api_base: cloud.base, agent: 'claude-code' });
+  const shares = m.dialogs[0].fields.find(([k]) => k === 'Shares')[1];
+  assert.match(shares, /written from now on/);
+  assert.match(shares, /already on this machine stay here/);
+  assert.ok(!m.dialogs[0].warnings.some((w) => /already on this machine too/.test(w)));
+  assert.strictEqual(m.secrets.team.upload_after_seq, 5);
+  assert.strictEqual(m.secrets.team.upload_history, 'since_join');
+  assert.strictEqual(policy.readTeam().upload_after_seq, 5, 'the readable copy carries the floor for `zn team status`');
+  cloud.publishPolicy({ rules: [] });
+  let s = await m.o.teamSync({});
+  assert.strictEqual(s.upload.status, 'nothing', 'the five older records are not sent');
+  assert.deepStrictEqual(uploadedSeqs(r), []);
+  assert.strictEqual(s.upload.pending, 0);
+  addRecords(m, 3); // written after joining
+  s = await m.o.teamSync({});
+  assert.strictEqual(s.upload.status, 'ok');
+  assert.deepStrictEqual(uploadedSeqs(r), [6, 7, 8]);
+  assert.strictEqual((await m.o.teamInfo()).upload_after_seq, 5);
+});
+
+test('join with the history flag asks for it in the dialog and sends the whole audit log', async () => {
+  const m = machine();
+  addRecords(m, 4);
+  const r = await m.o.teamJoin({ join_token: cloud.createJoinToken(), api_base: cloud.base, include_history: true });
+  assert.ok(m.dialogs[0].warnings.some((w) => /send the audit records already on this machine too/.test(w)));
+  assert.match(m.dialogs[0].fields.find(([k]) => k === 'Shares')[1], /including the ones already on this machine/);
+  assert.strictEqual(m.secrets.team.upload_after_seq, 0);
+  assert.strictEqual(m.secrets.team.upload_history, 'included');
+  cloud.publishPolicy({ rules: [] });
+  await m.o.teamSync({});
+  assert.deepStrictEqual(uploadedSeqs(r), [1, 2, 3, 4]);
+  // Anything other than a true boolean is not consent.
+  const other = machine();
+  fs.rmSync(other.auditFile, { force: true }); // a different machine: its own log
+  addRecords(other, 2);
+  const r2 = await other.o.teamJoin({ join_token: cloud.createJoinToken(), api_base: cloud.base, include_history: 'yes' });
+  assert.strictEqual(other.secrets.team.upload_after_seq, 2);
+  assert.ok(r2.install_id);
+});
+
+test('rejoining keeps the choice made at the first join; history cannot be added later; a machine that joined before the choice existed keeps sending everything', async () => {
+  const m = machine();
+  addRecords(m, 3);
+  const first = await m.o.teamJoin({ join_token: cloud.createJoinToken(), api_base: cloud.base });
+  addRecords(m, 2);
+  await m.o.teamJoin({ join_token: cloud.createJoinToken(), api_base: cloud.base });
+  assert.strictEqual(m.secrets.team.upload_after_seq, 3, 'the floor does not move on a rejoin');
+  assert.match(m.dialogs.at(-1).fields.find(([k]) => k === 'Shares')[1], /already on this machine stay here/);
+  await assert.rejects(m.o.teamJoin({ join_token: cloud.createJoinToken(), api_base: cloud.base, include_history: true }), /cannot be added now.*Run `zn team leave` and join again with --include-history/);
+  assert.strictEqual(m.secrets.team.upload_after_seq, 3);
+  // A machine joined by an older zn-gate has neither field: everything stays uploadable, as it was agreed then.
+  delete m.secrets.team.upload_after_seq;
+  delete m.secrets.team.upload_history;
+  await m.o.teamJoin({ join_token: cloud.createJoinToken(), api_base: cloud.base });
+  assert.strictEqual(m.secrets.team.upload_after_seq, 0);
+  assert.match(m.dialogs.at(-1).fields.find(([k]) => k === 'Shares')[1], /including the ones already on this machine/);
+  cloud.publishPolicy({ rules: [] });
+  await m.o.teamSync({});
+  assert.deepStrictEqual(uploadedSeqs(first), [1, 2, 3, 4, 5]);
+});
+
+test('an unreadable audit log stops the join before anything is sent', async () => {
+  const m = machine();
+  fs.mkdirSync(m.auditFile, { recursive: true }); // a directory where the log should be
+  const seen = cloud.requests.length;
+  await assert.rejects(m.o.teamJoin({ join_token: cloud.createJoinToken(), api_base: cloud.base }), /could not read the local audit log.*not connected/);
+  assert.strictEqual(m.secrets.team, undefined);
+  assert.ok(!cloud.requests.slice(seen).some((q) => q.path === '/v1/org/join'), 'no join request');
+});
+
+test('leave deletes every local copy and the upload lock; one that cannot be deleted is reported by name', async () => {
+  const m = await joined();
+  cloud.publishPolicy({ rules: [] });
+  await m.o.teamSync({ upload: false });
+  const f = policy.paths();
+  fs.writeFileSync(f.uploadState, '{}');
+  fs.writeFileSync(f.uploadLock, '1 now\n');
+  for (const k of ['teamFile', 'policyFile', 'uploadState', 'uploadLock']) assert.ok(fs.existsSync(f[k]), k);
+  let out = await m.o.teamLeave();
+  assert.deepStrictEqual(out.pending_files, []);
+  assert.strictEqual(out.install_id, m.r.install_id);
+  for (const k of ['teamFile', 'policyFile', 'uploadState', 'uploadLock']) assert.ok(!fs.existsSync(f[k]), k + ' is gone');
+  assert.strictEqual(m.secrets.team, undefined, 'the vault no longer holds the organization');
+
+  // A copy that cannot be deleted (a directory stands in its place): leave still ends the membership, and names the file.
+  const m2 = await joined();
+  cloud.publishPolicy({ rules: [] });
+  await m2.o.teamSync({ upload: false });
+  fs.rmSync(f.policyFile);
+  fs.mkdirSync(path.join(f.policyFile, 'keep'), { recursive: true });
+  fs.mkdirSync(path.join(f.uploadLock, 'keep'), { recursive: true });
+  out = await m2.o.teamLeave();
+  assert.match(out.left, /^org_/);
+  assert.deepStrictEqual([...out.pending_files].sort(), [f.policyFile, f.uploadLock].sort());
+  assert.ok(!fs.existsSync(f.teamFile), 'the copies that could be deleted are gone');
+  assert.strictEqual(m2.secrets.team, undefined);
+
+  // Same check on a machine that is not in an organization any more but still has a stale copy.
+  const stale = machine();
+  fs.rmSync(f.policyFile, { recursive: true, force: true });
+  fs.rmSync(f.uploadLock, { recursive: true, force: true });
+  fs.mkdirSync(path.join(f.uploadState, 'keep'), { recursive: true });
+  assert.deepStrictEqual(await stale.o.teamLeave(), { left: null, pending_files: [f.uploadState] });
 });
 
 test('teamInfo says not joined, then describes the organization without the token', async () => {
@@ -243,6 +362,64 @@ test('sync with the server unreachable or failing is offline, not an error, and 
   assert.deepStrictEqual(s.policy, { status: 'offline', error: 'ZN_TEAM_BAD_RESPONSE' });
 });
 
+test('the last sync result is kept and shown by teamInfo; a failure leaves one bounded local alert', async () => {
+  const m = await joined();
+  const alerts = () => m.audit.filter((a) => a.reason === 'team_sync_failed');
+  cloud.publishPolicy({ rules: [] });
+  assert.strictEqual((await m.o.teamInfo()).last_sync, null, 'nothing synced yet');
+  assert.strictEqual((await m.o.teamInfo()).join_pending, true);
+  await m.o.teamSync({ upload: false });
+  let ls = (await m.o.teamInfo()).last_sync;
+  assert.strictEqual(ls.ok, true);
+  assert.deepStrictEqual(ls.problems, []);
+  assert.strictEqual((await m.o.teamInfo()).join_pending, false);
+  assert.strictEqual(alerts().length, 0);
+  // Offline: the cause is queryable and one alert is written...
+  net.throwError = true;
+  await m.o.teamSync({ upload: false });
+  ls = (await m.o.teamInfo()).last_sync;
+  assert.strictEqual(ls.ok, false);
+  assert.match(ls.problems[0], /could not reach the server \(ZN_TEAM_NETWORK\)/);
+  assert.ok(ls.last_ok_at, 'the last success is kept');
+  assert.deepStrictEqual(alerts(), [{ mode: 'set', decision: 'error', reason: 'team_sync_failed' }]);
+  // ...and the job failing again every 15 minutes does not flood the audit log.
+  for (let i = 0; i < 5; i++) await m.o.teamSync({ upload: false });
+  assert.strictEqual(alerts().length, 1);
+  // After 6 hours of failures, one more.
+  m.secrets.team.last_sync.alerted_at = new Date(Date.now() - 7 * 3600 * 1000).toISOString();
+  await m.o.teamSync({ upload: false });
+  assert.strictEqual(alerts().length, 2);
+  // Recovery clears the failure; the next failure alerts again.
+  net.throwError = false;
+  await m.o.teamSync({ upload: false });
+  assert.strictEqual((await m.o.teamInfo()).last_sync.ok, true);
+  net.throwError = true;
+  await m.o.teamSync({ upload: false });
+  assert.strictEqual(alerts().length, 3);
+  assert.ok(!JSON.stringify(await m.o.teamInfo()).includes('zni_'), 'no token in the status');
+});
+
+test('an exception inside a sync is recorded as the last error and still thrown; a failed upload counts as a failed sync', async () => {
+  const m = await joined();
+  cloud.publishPolicy({ rules: [] });
+  // The readable copy cannot be written (a directory is in its place): the sync throws.
+  fs.mkdirSync(path.join(policy.paths().policyFile, 'keep'), { recursive: true });
+  await assert.rejects(m.o.teamSync({ upload: false }));
+  const ls = (await m.o.teamInfo()).last_sync;
+  assert.strictEqual(ls.ok, false);
+  assert.match(ls.problems[0], /^sync failed: /);
+  assert.ok(m.audit.some((a) => a.reason === 'team_sync_failed'));
+  fs.rmSync(policy.paths().policyFile, { recursive: true, force: true });
+  // A good policy but an upload that fails.
+  fs.writeFileSync(m.auditFile, makeAuditChain({ key: AUDIT_KEY, count: 2 }).map((r) => JSON.stringify(r)).join('\n') + '\n');
+  const real = global.fetch;
+  global.fetch = async (url, init) => (String(url).endsWith('/v1/audit/ingest') ? new Response('{"error":"busy"}', { status: 503, headers: { 'content-type': 'application/json' } }) : real(url, init));
+  try { await m.o.teamSync({}); } finally { global.fetch = real; }
+  const after = (await m.o.teamInfo()).last_sync;
+  assert.strictEqual(after.ok, false);
+  assert.match(after.problems[0], /audit upload failed \(offline, 2 records pending\)/);
+});
+
 test('a revoked installation is marked, stops uploading, and recovers when the server accepts it again', async () => {
   const m = await joined();
   cloud.publishPolicy({ rules: [] });
@@ -286,6 +463,94 @@ test('a policy signed by another key, or one that rolls back, is rejected and th
   assert.deepStrictEqual(s2.policy, { status: 'rejected', error: 'unknown key id' });
   assert.deepStrictEqual(m.audit.at(-1), { mode: 'set', decision: 'deny', reason: 'policy:rejected' });
   assert.strictEqual(m.secrets.team.policy.version, held);
+});
+
+test('another signed policy with the version already held but other content is rejected; the same content is not', async () => {
+  const m = await joined();
+  cloud.publishPolicy({ rules: [{ secret: 'A_B', agents: ['*'], deny: true }] });
+  const first = await m.o.teamSync({ upload: false });
+  assert.strictEqual(first.policy.status, 'updated');
+  const version = m.secrets.team.policy.version;
+  assert.match(m.secrets.team.policy.digest, /^[0-9a-f]{64}$/);
+  const held = JSON.stringify(m.secrets.team.policy.envelope);
+  // The server (or whoever holds the signing key) signs a different policy under the same version.
+  cloud.state.policyContent = { rules: [] };
+  m.secrets.team.policy.etag = null; // force a full download instead of a 304
+  const s = await m.o.teamSync({ upload: false });
+  assert.strictEqual(s.policy.status, 'rejected');
+  assert.match(s.policy.error, /same version|already used with different content/);
+  assert.strictEqual(m.secrets.team.policy.version, version);
+  assert.strictEqual(JSON.stringify(m.secrets.team.policy.envelope), held, 'the policy held did not change');
+  assert.ok(m.audit.some((a) => a.reason === 'policy:rejected' && a.decision === 'deny'));
+  assert.strictEqual(policy.readCache().envelope.policy.rules.length, 1, 'the readable copy did not change either');
+  // The same content again (only a new ETag) is a normal update.
+  cloud.state.policyContent = { rules: [{ secret: 'A_B', agents: ['*'], deny: true }] };
+  m.secrets.team.policy.etag = null;
+  assert.strictEqual((await m.o.teamSync({ upload: false })).policy.status, 'updated');
+  // A real new version may change the content.
+  cloud.state.policyContent = { rules: [] };
+  cloud.state.policyVersion += 1;
+  m.secrets.team.policy.etag = null;
+  assert.strictEqual((await m.o.teamSync({ upload: false })).policy.status, 'updated');
+});
+
+test('the server re-signs the same version every day with new dates: each sync is accepted and the dates move forward', async () => {
+  // A stand-in server whose clock we move: day 1, 2 and 3 of the same published version.
+  let clock = Date.now() - 2 * DAY;
+  const daily = await startFakeTeamServer({ now: () => clock });
+  try {
+    const m = machine();
+    await m.o.teamJoin({ join_token: daily.createJoinToken({ maxUses: 5 }), api_base: daily.base, agent: 'claude-code' });
+    daily.publishPolicy({ rules: [{ secret: 'A_B', agents: ['*'], deny: true }] });
+    let last = null;
+    for (let n = 0; n < 3; n += 1) {
+      if (n) clock += DAY;
+      const r = await m.o.teamSync({ upload: false });
+      assert.strictEqual(r.policy.status, 'updated', 'day ' + (n + 1) + ': ' + JSON.stringify(r.policy));
+      const pol = m.secrets.team.policy.envelope.policy;
+      assert.strictEqual(pol.version, 1);
+      if (last) assert.ok(Date.parse(pol.expires_at) > last, 'the stored expiry moved forward');
+      last = Date.parse(pol.expires_at);
+      assert.strictEqual(policy.readCache().envelope.policy.expires_at, pol.expires_at, 'the readable copy follows');
+      assert.strictEqual((await m.o.teamInfo()).policy.state, 'active');
+    }
+    assert.ok(!m.audit.some((a) => a.reason === 'policy:rejected'), 'no sync was audited as rejected');
+    // Another content under the same version is still refused, on a new day as well.
+    daily.state.policyContent = { rules: [] };
+    m.secrets.team.policy.etag = null;
+    const bad = await m.o.teamSync({ upload: false });
+    assert.strictEqual(bad.policy.status, 'rejected');
+    assert.match(bad.policy.error, /different content/);
+    // A server that goes back to an earlier day cannot shorten the validity held.
+    daily.state.policyContent = { rules: [{ secret: 'A_B', agents: ['*'], deny: true }] };
+    clock -= 2 * DAY;
+    m.secrets.team.policy.etag = null;
+    const old = await m.o.teamSync({ upload: false });
+    assert.strictEqual(old.policy.status, 'rejected');
+    assert.match(old.policy.error, /older than the one held/);
+    assert.strictEqual(Date.parse(m.secrets.team.policy.envelope.policy.expires_at), last, 'the held expiry did not change');
+  } finally {
+    await daily.close();
+  }
+});
+
+test('the version and digest are checked again inside the serialized write', async () => {
+  const m = await joined();
+  cloud.publishPolicy({ rules: [{ secret: 'A_B', agents: ['*'], deny: true }] });
+  // While the download is in flight, another sync stored a newer policy.
+  // (The vault object is replaced, as a leave and join would, so the sync still holds the old one.)
+  net.afterPolicy = () => { m.secrets.team = { ...m.secrets.team, policy: { envelope: null, version: 99, digest: 'f'.repeat(64), etag: null, fetched_at: new Date().toISOString() } }; };
+  const s = await m.o.teamSync({ upload: false });
+  assert.strictEqual(s.policy.status, 'rejected');
+  assert.match(s.policy.error, /rollback/);
+  assert.strictEqual(m.secrets.team.policy.version, 99, 'the newer policy was not overwritten');
+  // Leaving and joining another organization during the download: nothing is written for the old one.
+  net.afterPolicy = () => { m.secrets.team = { ...m.secrets.team, install_id: '00000000-0000-4000-8000-000000000000' }; };
+  m.secrets.team.policy = null;
+  const s2 = await m.o.teamSync({ upload: false });
+  assert.strictEqual(s2.policy.status, 'stale', 'the membership generation check drops the answer');
+  assert.strictEqual(m.secrets.team.policy, null);
+  assert.strictEqual(policy.readCache(), null, 'no readable copy for the organization that was left');
 });
 
 test('a policy for another organization is rejected', async () => {

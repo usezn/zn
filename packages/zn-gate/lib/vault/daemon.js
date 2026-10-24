@@ -535,6 +535,7 @@ function makeOps(state, ctl) {
     teamJoin: team.teamJoin,
     teamLeave: team.teamLeave,
     teamInfo: team.teamInfo,
+    teamHookInfo: team.teamHookInfo,
     teamSync: team.teamSync,
     confirmOrgOpening: team.confirmOrgOpening,
 
@@ -643,7 +644,11 @@ async function serve(opts) {
   // zn Team: refresh the organization policy and upload the audit log while
   // unlocked (soon after unlock, then every teamSyncMs). No-op outside a team.
   const teamSyncMs = o.teamSyncMs === 0 ? 0 : (o.teamSyncMs || DEFAULT_TEAM_SYNC_MS);
-  const teamSync = () => { if (!closed && state.secrets && state.secrets.team) ops.teamSync({}).catch(() => {}); };
+  // Nobody is waiting for this one: teamSync records its own failures (last_sync, one local alert) before they reach this catch.
+  const teamSync = () => {
+    const pendingRevocation = state.secrets && Array.isArray(state.secrets.pendingRevocations) && state.secrets.pendingRevocations.length > 0;
+    if (!closed && state.secrets && (state.secrets.team || pendingRevocation)) ops.teamSync({}).catch(() => {});
+  };
   const teamTimer = teamSyncMs ? setInterval(teamSync, teamSyncMs) : null;
   const teamFirst = teamSyncMs ? setTimeout(teamSync, 5000) : null;
   if (teamTimer) teamTimer.unref();
