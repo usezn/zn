@@ -1,6 +1,6 @@
 # Antigravity hooks: checklist for a human run
 
-Purpose: close the seven open points of the experimental Antigravity hooks adapter in zn-gate (`packages/zn-gate/lib/agents/antigravity.js`). Run it on your own machine, in Antigravity App, CLI or IDE, with a test workspace that holds no real secrets.
+Purpose: close the seven open points of the Antigravity hooks adapter in zn-gate (`packages/zn-gate/lib/agents/antigravity.js`). Run it on your own machine, in Antigravity App, CLI or IDE, with a test workspace that holds no real secrets.
 
 Before you start:
 
