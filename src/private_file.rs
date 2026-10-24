@@ -1,8 +1,9 @@
-//! Writing files that only their owner can read.
+//! Writing and reading files that only their owner can access.
 //!
 //! `zn init` writes `zn.json` and the audit code writes `ref.key`. Both can hold
 //! material that other local accounts must not read, so they are created through
-//! this module instead of `std::fs::write`.
+//! this module instead of `std::fs::write`, and the key is read back through
+//! [`read_private_file`] instead of `std::fs::read`.
 //!
 //! What [`create_private_file`] does, on every platform:
 //!
@@ -21,13 +22,55 @@
 //!
 //! Protection by platform:
 //!
-//! - Unix: mode `0600` (exactly, whatever the umask), opened with `O_EXCL` and
-//!   `O_NOFOLLOW`; the owner must be the effective user.
+//! - Unix: mode `0600`, opened with `O_EXCL` and `O_NOFOLLOW`, whatever the
+//!   umask. The check accepts a file owned by the effective user that has no
+//!   access for group or others and no setuid, setgid or sticky bit (so `0400`
+//!   and `0700` pass, `0640` and `04600` do not).
 //! - Windows: the file is created with a security descriptor that makes the
 //!   current user the owner and grants full control to that user only, with a
-//!   protected DACL (no inherited entries, no SYSTEM, no Administrators). The
-//!   descriptor is passed to `CreateFileW`, so it applies from the first moment.
-//!   [`verify_private`] reads it back and accepts nothing else.
+//!   protected DACL (no inherited entries). The descriptor is passed to
+//!   `CreateFileW`, so it applies from the first moment. The check reads it back
+//!   and accepts nothing else.
+//!
+//! Why SYSTEM and Administrators get no entry on Windows: an administrator (or
+//! SYSTEM) can always take ownership of a file or read it with the backup
+//! privilege, so leaving them out gives no secrecy against them. What it does
+//! give is that no inherited or group entry can widen the access, and that the
+//! check stays simple (one entry, the owner). The consequences are deliberate:
+//! tools that run as SYSTEM without backup semantics (some indexers, backup or
+//! sync agents) cannot read these files, and if zn runs as a LocalSystem
+//! service the file belongs to SYSTEM and the interactive user cannot read it.
+//!
+//! # Reading
+//!
+//! Checking a file by path and then reading it by path leaves a gap in which the
+//! file can be swapped for a link. [`open_private`] and [`read_private_file`]
+//! close it: the file is opened without following a link in its last component
+//! (`O_NOFOLLOW` on Unix, `FILE_FLAG_OPEN_REPARSE_POINT` on Windows) and the
+//! checks (regular file, not a reparse point, owner, mode or DACL) run on the
+//! handle that was opened, which is the one the bytes are read from. Callers that
+//! read a private file must do it only through these two functions. Links in the
+//! folders above the file are still followed, as with any path.
+//!
+//! # File systems without Unix permissions
+//!
+//! Some file systems cannot store Unix permissions: a Windows drive mounted in
+//! WSL (`/mnt/c` without the `metadata` option, the default), FAT and exFAT, and
+//! some network shares. There `chmod` either fails or does nothing and every file
+//! looks like `0777`. The policy is to fail closed and not to weaken the check:
+//! creating a private file returns [`io::ErrorKind::Unsupported`] with a message
+//! that says what to do (use a folder on a Linux file system, or mount the drive
+//! with permission support), and [`verify_private`] and [`open_private`] report
+//! the wrong mode with the same hint.
+//!
+//! Some file systems cannot make hard links (certain FUSE and network mounts).
+//! [`create_private_file_new`] normally publishes the file with a hard link
+//! because that fails atomically when the target exists. When the link is not
+//! supported it creates the target itself with `O_EXCL`, which is just as
+//! race-safe about "who creates it". The difference is that the content is
+//! written into the final name, so a reader can briefly see an empty or partial
+//! file, and a crash mid-write leaves a truncated file. Readers of such a file
+//! must treat a wrong length as an error and retry.
 //!
 //! An existing target is handled explicitly:
 //!
@@ -41,12 +84,29 @@
 //!
 //! The target's folder is not changed. Callers that need a private folder must
 //! create and check it themselves.
+//!
+//! # Leftover temporary files
+//!
+//! A process that dies between creating the temporary file and moving it leaves
+//! a `.zn-private-*.tmp` file (owner-only, with the content) in the folder. Every
+//! write removes such files when they are more than an hour old
+//! ([`remove_stale_temp_files`] does the same on demand), and
+//! [`TEMP_FILE_PATTERN`] is the pattern for a `.gitignore` so that `git add .`
+//! never picks one up.
 
 use std::fs::{self, File, Metadata};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+/// Pattern (for a `.gitignore`) that matches the temporary files of this module.
+pub const TEMP_FILE_PATTERN: &str = ".zn-private-*.tmp";
+
+const TEMP_PREFIX: &str = ".zn-private-";
+const TEMP_SUFFIX: &str = ".tmp";
+/// Temporary files older than this belong to a process that is gone.
+const STALE_AFTER: Duration = Duration::from_secs(3600);
 
 /// Write `bytes` to `path` as a private file, replacing a regular file that is
 /// already there. See the module documentation for the exact behaviour.
@@ -60,32 +120,110 @@ pub fn create_private_file_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
     write_private(path, bytes, false)
 }
 
+/// Open `path` for reading if, and only if, it is a private regular file: not a
+/// link, owned by the current user and without access for anybody else (see the
+/// module documentation). The checks run on the opened handle, so the file read
+/// is the file checked. Fails with [`io::ErrorKind::PermissionDenied`] when the
+/// protection is wrong and [`io::ErrorKind::InvalidInput`] for a link or a file
+/// that is not regular.
+pub fn open_private(path: &Path) -> io::Result<File> {
+    sys::open_private(path)
+}
+
+/// Read a whole private file, with the checks of [`open_private`].
+pub fn read_private_file(path: &Path) -> io::Result<Vec<u8>> {
+    let mut file = open_private(path)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
 /// Check that `path` is a regular file (not a link) that only its owner can
-/// access: mode `0600` and owned by the effective user on Unix; owned by the
-/// current user with a protected DACL that has no entry for anybody else on
-/// Windows. Returns [`io::ErrorKind::PermissionDenied`] when it is not.
+/// access: owned by the effective user with no group, other or special mode bits
+/// on Unix; owned by the current user with a protected DACL that has no entry for
+/// anybody else on Windows. Returns [`io::ErrorKind::PermissionDenied`] when it
+/// is not. This is [`open_private`] without keeping the handle.
 pub fn verify_private(path: &Path) -> io::Result<()> {
-    let meta = fs::symlink_metadata(path)?;
-    require_regular(&meta, path)?;
-    sys::verify_path(path, &meta)
+    open_private(path).map(|_| ())
+}
+
+/// Remove `.zn-private-*.tmp` files in `dir` that are more than an hour old
+/// (left behind by a process that died while writing). Only regular files with
+/// the exact name shape of this module are touched. Returns how many were
+/// removed. Failures on single files are ignored.
+pub fn remove_stale_temp_files(dir: &Path) -> io::Result<usize> {
+    remove_temp_files_older_than(dir, STALE_AFTER)
+}
+
+fn remove_temp_files_older_than(dir: &Path, age: Duration) -> io::Result<usize> {
+    let mut removed = 0;
+    for entry in fs::read_dir(dir)? {
+        let Ok(entry) = entry else { continue };
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if !is_temp_name(name) {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(meta) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if !meta.is_file() {
+            continue;
+        }
+        let old = meta
+            .modified()
+            .ok()
+            .and_then(|m| SystemTime::now().duration_since(m).ok())
+            .is_some_and(|d| d >= age);
+        if old && fs::remove_file(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
+/// `.zn-private-<pid>-<counter>-<8 hex digits>.tmp`
+fn is_temp_name(name: &str) -> bool {
+    let Some(rest) = name
+        .strip_prefix(TEMP_PREFIX)
+        .and_then(|r| r.strip_suffix(TEMP_SUFFIX))
+    else {
+        return false;
+    };
+    let parts: Vec<&str> = rest.split('-').collect();
+    parts.len() == 3
+        && parts[..2]
+            .iter()
+            .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+        && parts[2].len() == 8
+        && parts[2].bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 fn denied(msg: String) -> io::Error {
     io::Error::new(io::ErrorKind::PermissionDenied, msg)
 }
 
+fn not_regular(path: &Path) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!("not a regular file: {}", path.display()),
+    )
+}
+
+fn link_refused(path: &Path, what: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!("refusing to {what} through a link: {}", path.display()),
+    )
+}
+
 fn require_regular(meta: &Metadata, path: &Path) -> io::Result<()> {
     if meta.file_type().is_symlink() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("refusing to write through a link: {}", path.display()),
-        ));
+        return Err(link_refused(path, "write"));
     }
     if !meta.is_file() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("not a regular file: {}", path.display()),
-        ));
+        return Err(not_regular(path));
     }
     Ok(())
 }
@@ -114,6 +252,8 @@ fn write_private(path: &Path, bytes: &[u8], replace: bool) -> io::Result<()> {
         Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
         _ => PathBuf::from("."),
     };
+    // Best effort: clear temporary files that a crashed writer left behind.
+    let _ = remove_stale_temp_files(&dir);
 
     let (tmp, mut file) = create_temp(&dir)?;
     let staged = (|| -> io::Result<()> {
@@ -129,7 +269,13 @@ fn write_private(path: &Path, bytes: &[u8], replace: bool) -> io::Result<()> {
         let _ = fs::remove_file(&tmp);
         return Err(e);
     }
-    let installed = sys::install(&tmp, path, replace);
+    let mut installed = sys::install(&tmp, path, replace);
+    if !replace && matches!(&installed, Err(e) if sys::hard_link_unsupported(e)) {
+        // This file system cannot make hard links. Fall back to creating the
+        // target itself with O_EXCL (see the module documentation): still atomic
+        // about who creates it, and the file is private from its first byte.
+        installed = create_in_place(path, bytes);
+    }
     // With a rename the temporary name is already gone (NotFound, ignored); with
     // a hard link it is the second name of the new file and must be removed.
     let _ = fs::remove_file(&tmp);
@@ -144,6 +290,19 @@ fn write_private(path: &Path, bytes: &[u8], replace: bool) -> io::Result<()> {
     Ok(())
 }
 
+/// Create `path` exclusively and write `bytes` into it. Used when the target
+/// cannot be published with a hard link; removes the file again on a failed write.
+fn create_in_place(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let mut file = sys::create_new_private(path)?;
+    let written = file.write_all(bytes).and_then(|_| file.sync_all());
+    drop(file);
+    if let Err(e) = written {
+        let _ = fs::remove_file(path);
+        return Err(e);
+    }
+    Ok(())
+}
+
 fn create_temp(dir: &Path) -> io::Result<(PathBuf, File)> {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     for _ in 0..16 {
@@ -153,7 +312,7 @@ fn create_temp(dir: &Path) -> io::Result<(PathBuf, File)> {
             .map(|d| d.subsec_nanos())
             .unwrap_or(0);
         let tmp = dir.join(format!(
-            ".zn-private-{}-{}-{:08x}.tmp",
+            "{TEMP_PREFIX}{}-{}-{:08x}{TEMP_SUFFIX}",
             std::process::id(),
             n,
             nanos
@@ -172,11 +331,20 @@ fn create_temp(dir: &Path) -> io::Result<(PathBuf, File)> {
 
 #[cfg(unix)]
 mod sys {
-    use super::denied;
-    use std::fs::{self, File, Metadata, OpenOptions, Permissions};
+    use super::{denied, link_refused, not_regular};
+    use std::fs::{self, File, OpenOptions, Permissions};
     use std::io;
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
     use std::path::Path;
+
+    const NO_PERMISSIONS: &str = "this file system does not keep Unix permissions (for example a \
+        Windows drive mounted in WSL, FAT or exFAT, or some network shares), so an owner-only file \
+        cannot be created here; use a folder on a Linux file system, or mount the drive with \
+        permission support (for WSL, the metadata mount option)";
+
+    fn no_permissions() -> io::Error {
+        io::Error::new(io::ErrorKind::Unsupported, NO_PERMISSIONS)
+    }
 
     pub fn create_new_private(path: &Path) -> io::Result<File> {
         let file = OpenOptions::new()
@@ -185,8 +353,50 @@ mod sys {
             .mode(0o600)
             .custom_flags(libc::O_NOFOLLOW)
             .open(path)?;
-        // The umask can only remove bits, but make the mode exact anyway.
-        file.set_permissions(Permissions::from_mode(0o600))?;
+        match settle_mode(&file) {
+            Ok(()) => Ok(file),
+            Err(e) => {
+                // Do not leave a file with unknown protection behind.
+                drop(file);
+                let _ = fs::remove_file(path);
+                Err(e)
+            }
+        }
+    }
+
+    /// Make the mode exactly 0600 and prove it stuck. The umask can only remove
+    /// bits, but a file system without permissions ignores or refuses chmod and
+    /// shows a fixed mode: that is reported as such, not as a bad mode.
+    fn settle_mode(file: &File) -> io::Result<()> {
+        if let Err(e) = file.set_permissions(Permissions::from_mode(0o600)) {
+            return Err(match e.raw_os_error() {
+                Some(libc::EPERM) | Some(libc::ENOTSUP) | Some(libc::ENOSYS) => no_permissions(),
+                _ => e,
+            });
+        }
+        if file.metadata()?.mode() & 0o7777 != 0o600 {
+            return Err(no_permissions());
+        }
+        Ok(())
+    }
+
+    pub fn open_private(path: &Path) -> io::Result<File> {
+        // O_NOFOLLOW: a link in the last component fails with ELOOP instead of
+        // being followed. O_NONBLOCK: opening a FIFO must not hang; it is a
+        // no-op for the regular file we insist on below.
+        let file = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(path)
+            .map_err(|e| match e.raw_os_error() {
+                Some(libc::ELOOP) => link_refused(path, "read"),
+                _ => e,
+            })?;
+        let meta = file.metadata()?; // fstat on the opened descriptor
+        if !meta.is_file() {
+            return Err(not_regular(path));
+        }
+        check(&meta)?;
         Ok(file)
     }
 
@@ -194,16 +404,14 @@ mod sys {
         check(&file.metadata()?)
     }
 
-    pub fn verify_path(_path: &Path, meta: &Metadata) -> io::Result<()> {
-        check(meta)
-    }
-
-    fn check(meta: &Metadata) -> io::Result<()> {
+    fn check(meta: &fs::Metadata) -> io::Result<()> {
         let mode = meta.mode() & 0o7777;
-        if mode & 0o077 != 0 {
+        if mode & 0o7077 != 0 {
             return Err(denied(format!(
-                "file mode is {:04o}, expected 0600 (no access for group or others)",
-                mode
+                "file mode is {mode:04o}, expected no access for group or others and no \
+                 setuid, setgid or sticky bit (run chmod 600 on it; if the mode does not change, \
+                 the file system does not keep Unix permissions: a Windows drive mounted in WSL, \
+                 FAT or exFAT, some network shares)"
             )));
         }
         // SAFETY: geteuid has no preconditions and cannot fail.
@@ -227,6 +435,14 @@ mod sys {
         }
     }
 
+    /// True when `link(2)` failed because the file system cannot make hard links.
+    pub fn hard_link_unsupported(e: &io::Error) -> bool {
+        matches!(
+            e.raw_os_error(),
+            Some(libc::EPERM) | Some(libc::ENOTSUP) | Some(libc::ENOSYS)
+        )
+    }
+
     pub fn sync_dir(dir: &Path) {
         if let Ok(d) = File::open(dir) {
             let _ = d.sync_all();
@@ -236,22 +452,25 @@ mod sys {
 
 #[cfg(windows)]
 mod sys {
-    use super::denied;
+    use super::{denied, link_refused, not_regular};
     use std::ffi::{c_void, OsStr};
-    use std::fs::{self, File, Metadata};
+    use std::fs::{self, File};
     use std::io;
     use std::mem::{size_of, zeroed};
     use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::fs::MetadataExt;
     use std::os::windows::io::{AsRawHandle, FromRawHandle, RawHandle};
     use std::path::Path;
-    use std::ptr::{addr_of, null, null_mut};
+    use std::ptr::{addr_of, null_mut};
+    use std::time::Duration;
 
     use windows_sys::Win32::Foundation::{
-        CloseHandle, LocalFree, HANDLE, HLOCAL, INVALID_HANDLE_VALUE,
+        CloseHandle, LocalFree, ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION, HANDLE, HLOCAL,
+        INVALID_HANDLE_VALUE,
     };
     use windows_sys::Win32::Security::Authorization::{
         ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
-        GetNamedSecurityInfoW, GetSecurityInfo, SDDL_REVISION_1, SE_FILE_OBJECT,
+        GetSecurityInfo, SDDL_REVISION_1, SE_FILE_OBJECT,
     };
     use windows_sys::Win32::Security::{
         AclSizeInformation, CopySid, EqualSid, GetAce, GetAclInformation, GetLengthSid,
@@ -261,7 +480,9 @@ mod sys {
         TOKEN_USER,
     };
     use windows_sys::Win32::Storage::FileSystem::{
-        CreateFileW, MoveFileExW, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_WRITE,
+        CreateFileW, MoveFileExW, CREATE_NEW, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL,
+        FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ,
+        FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
     };
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -271,11 +492,42 @@ mod sys {
     const SE_DACL_PRESENT: u16 = 0x0004;
     const SE_DACL_PROTECTED: u16 = 0x1000;
 
+    /// Pauses between the attempts to move a file that something else has open
+    /// for an instant (antivirus, search indexer, backup agent): 630 ms in all.
+    const BUSY_RETRY_PAUSES_MS: [u64; 6] = [10, 20, 40, 80, 160, 320];
+
     fn wide(path: &Path) -> Vec<u16> {
         path.as_os_str()
             .encode_wide()
             .chain(std::iter::once(0))
             .collect()
+    }
+
+    /// Sharing violation or access denied: what a filter driver that has the file
+    /// open for a moment produces. Anything else is returned at once.
+    fn is_busy(e: &io::Error) -> bool {
+        matches!(
+            e.raw_os_error().map(|c| c as u32),
+            Some(ERROR_SHARING_VIOLATION) | Some(ERROR_ACCESS_DENIED)
+        )
+    }
+
+    /// Run `op`, and run it again after each pause in `pauses_ms` while it fails
+    /// with a busy error. Like the Node `renameWithRetry`.
+    pub fn retry_busy<T>(
+        pauses_ms: &[u64],
+        mut op: impl FnMut() -> io::Result<T>,
+    ) -> io::Result<T> {
+        let mut pauses = pauses_ms.iter();
+        loop {
+            match op() {
+                Err(e) if is_busy(&e) => match pauses.next() {
+                    Some(ms) => std::thread::sleep(Duration::from_millis(*ms)),
+                    None => return Err(e),
+                },
+                other => return other,
+            }
+        }
     }
 
     /// The SID of the user this process runs as, copied out of the token.
@@ -357,7 +609,9 @@ mod sys {
     pub fn create_new_private(path: &Path) -> io::Result<File> {
         let sid = UserSid::current()?.to_sddl_string()?;
         // Owner = the user, protected DACL (P), one allow entry (A) with full file
-        // access (FA) for the user. Nothing for SYSTEM, Administrators or anyone else.
+        // access (FA) for the user. Nothing for SYSTEM, Administrators or anyone
+        // else, on purpose: see "Why SYSTEM and Administrators get no entry" in the
+        // module documentation.
         let sddl: Vec<u16> = OsStr::new(&format!("O:{sid}D:P(A;;FA;;;{sid})"))
             .encode_wide()
             .chain(std::iter::once(0))
@@ -404,6 +658,40 @@ mod sys {
         }
     }
 
+    /// Open an existing file for reading without following a reparse point in the
+    /// last component, then check it on the handle.
+    pub fn open_private(path: &Path) -> io::Result<File> {
+        let name = wide(path);
+        // SAFETY: `name` is NUL-terminated and outlives the call; the handle
+        // returned is owned by the File built from it.
+        let file = unsafe {
+            let handle = CreateFileW(
+                name.as_ptr(),
+                FILE_GENERIC_READ, // includes READ_CONTROL, needed for the DACL
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                std::ptr::null(),
+                OPEN_EXISTING,
+                // Open a symbolic link or junction itself, not its destination.
+                // (No FILE_FLAG_BACKUP_SEMANTICS: a folder cannot be opened.)
+                FILE_FLAG_OPEN_REPARSE_POINT,
+                null_mut(),
+            );
+            if handle == INVALID_HANDLE_VALUE {
+                return Err(io::Error::last_os_error());
+            }
+            File::from_raw_handle(handle as RawHandle)
+        };
+        let attrs = file.metadata()?.file_attributes(); // GetFileInformationByHandle
+        if attrs & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(link_refused(path, "read"));
+        }
+        if attrs & FILE_ATTRIBUTE_DIRECTORY != 0 {
+            return Err(not_regular(path));
+        }
+        verify_file(&file)?;
+        Ok(file)
+    }
+
     pub fn verify_file(file: &File) -> io::Result<()> {
         let handle = file.as_raw_handle() as HANDLE;
         let mut owner: PSID = null_mut();
@@ -431,41 +719,14 @@ mod sys {
         result
     }
 
-    pub fn verify_path(path: &Path, _meta: &Metadata) -> io::Result<()> {
-        let name = wide(path);
-        let mut owner: PSID = null_mut();
-        let mut dacl: *mut ACL = null_mut();
-        let mut psd: PSECURITY_DESCRIPTOR = null_mut();
-        // SAFETY: as in verify_file.
-        let rc = unsafe {
-            GetNamedSecurityInfoW(
-                name.as_ptr(),
-                SE_FILE_OBJECT,
-                OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
-                &mut owner,
-                null_mut(),
-                &mut dacl,
-                null_mut(),
-                &mut psd,
-            )
-        };
-        if rc != 0 {
-            return Err(io::Error::from_raw_os_error(rc as i32));
-        }
-        let result = check(owner, dacl, psd);
-        // SAFETY: psd was allocated by GetNamedSecurityInfoW.
-        unsafe { LocalFree(psd as HLOCAL) };
-        result
-    }
-
     /// Fail closed unless: the owner is the current user, the DACL is present and
     /// protected, and every entry is an explicit (not inherited) allow entry for
     /// the current user, with at least one entry.
     fn check(owner: PSID, dacl: *mut ACL, psd: PSECURITY_DESCRIPTOR) -> io::Result<()> {
         let me = UserSid::current()?;
-        // SAFETY: owner, dacl and psd come from a successful GetSecurityInfo or
-        // GetNamedSecurityInfoW call and stay valid until the caller frees psd;
-        // ACE pointers point inside the DACL.
+        // SAFETY: owner, dacl and psd come from a successful GetSecurityInfo call
+        // and stay valid until the caller frees psd; ACE pointers point inside
+        // the DACL.
         unsafe {
             if owner.is_null() || EqualSid(owner, me.psid()) == 0 {
                 return Err(denied("the file is not owned by the current user".into()));
@@ -524,31 +785,38 @@ mod sys {
 
     pub fn install(tmp: &Path, path: &Path, replace: bool) -> io::Result<()> {
         if replace {
-            fs::rename(tmp, path)
+            retry_busy(&BUSY_RETRY_PAUSES_MS, || fs::rename(tmp, path))
         } else {
             // No MOVEFILE_REPLACE_EXISTING: fails with AlreadyExists when the
             // target is there, atomically, on any file system.
             let from = wide(tmp);
             let to = wide(path);
-            // SAFETY: both buffers are NUL-terminated and outlive the call.
-            if unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), 0) } == 0 {
-                return Err(io::Error::last_os_error());
-            }
-            Ok(())
+            retry_busy(&BUSY_RETRY_PAUSES_MS, || {
+                // SAFETY: both buffers are NUL-terminated and outlive the call.
+                if unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), 0) } == 0 {
+                    Err(io::Error::last_os_error())
+                } else {
+                    Ok(())
+                }
+            })
         }
     }
 
-    pub fn sync_dir(_dir: &Path) {}
-
-    #[allow(dead_code)]
-    fn _unused(_: *const c_void) {
-        let _ = null::<c_void>();
+    /// Windows publishes with MoveFileExW, which needs no hard links.
+    pub fn hard_link_unsupported(_e: &io::Error) -> bool {
+        false
     }
+
+    // No directory sync: NTFS does not offer one, and the move is not made with
+    // MOVEFILE_WRITE_THROUGH. A power cut right after the move can lose the new
+    // name, never expose a half-written or unprotected file.
+    pub fn sync_dir(_dir: &Path) {}
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Read;
     use std::sync::{Arc, Barrier};
 
     fn leftovers(dir: &Path) -> Vec<String> {
@@ -715,6 +983,127 @@ mod tests {
         assert!(!missing.exists(), "the link destination was created");
     }
 
+    #[test]
+    fn read_private_file_returns_the_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ref.key");
+        create_private_file_new(&path, b"key-bytes").unwrap();
+        assert_eq!(read_private_file(&path).unwrap(), b"key-bytes");
+        let mut f = open_private(&path).unwrap();
+        let mut s = String::new();
+        f.read_to_string(&mut s).unwrap();
+        assert_eq!(s, "key-bytes");
+    }
+
+    #[test]
+    fn read_private_file_reports_a_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = read_private_file(&dir.path().join("nope")).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn read_private_file_refuses_a_link_and_does_not_read_its_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("dest.key");
+        create_private_file(&dest, b"private destination").unwrap();
+        let link = dir.path().join("ref.key");
+        if make_link(&dest, &link).is_none() {
+            eprintln!("skipped: cannot create a symbolic link here");
+            return;
+        }
+        // The destination is perfectly private; only the link must stop the read.
+        verify_private(&dest).unwrap();
+        for result in [
+            read_private_file(&link),
+            open_private(&link).map(|_| Vec::new()),
+        ] {
+            assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidInput);
+        }
+    }
+
+    #[test]
+    fn read_private_file_refuses_a_dangling_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("ref.key");
+        if make_link(&dir.path().join("missing"), &link).is_none() {
+            eprintln!("skipped: cannot create a symbolic link here");
+            return;
+        }
+        let err = read_private_file(&link).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn read_private_file_refuses_a_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("ref.key");
+        fs::create_dir(&sub).unwrap();
+        // Unix reports a directory as not regular; Windows cannot open it at all.
+        assert!(read_private_file(&sub).is_err());
+    }
+
+    #[test]
+    fn stale_temporary_files_are_removed_and_fresh_ones_are_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let stale = dir.path().join(".zn-private-4242-7-0000abcd.tmp");
+        let fresh = dir.path().join(".zn-private-4243-8-0000abce.tmp");
+        let unrelated = dir.path().join(".zn-private-notes.tmp");
+        let other = dir.path().join("zn.json");
+        for p in [&stale, &fresh, &unrelated, &other] {
+            fs::write(p, b"x").unwrap();
+        }
+        let old = SystemTime::now() - Duration::from_secs(2 * 3600);
+        fs::File::options()
+            .write(true)
+            .open(&stale)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        assert_eq!(remove_stale_temp_files(dir.path()).unwrap(), 1);
+        assert!(!stale.exists());
+        assert!(fresh.exists() && unrelated.exists() && other.exists());
+        // A normal write does the same clean-up on the way.
+        fs::File::options()
+            .write(true)
+            .open(&fresh)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        create_private_file(&dir.path().join("a.json"), b"{}").unwrap();
+        assert!(!fresh.exists());
+        assert!(
+            unrelated.exists(),
+            "names that are not ours are never touched"
+        );
+    }
+
+    #[test]
+    fn temp_name_shape_matches_what_the_writer_creates() {
+        assert!(is_temp_name(".zn-private-12-3-0000ffff.tmp"));
+        assert!(!is_temp_name(".zn-private-12-3-0000fffg.tmp"));
+        assert!(!is_temp_name(".zn-private-12-3.tmp"));
+        assert!(!is_temp_name("zn-private-12-3-0000ffff.tmp"));
+        assert!(!is_temp_name(".zn-private-12-3-0000ffff.txt"));
+        assert_eq!(TEMP_FILE_PATTERN, ".zn-private-*.tmp");
+        // The writer's own names must match the cleaner's shape.
+        let dir = tempfile::tempdir().unwrap();
+        let (tmp, file) = create_temp(dir.path()).unwrap();
+        drop(file);
+        assert!(is_temp_name(tmp.file_name().unwrap().to_str().unwrap()));
+    }
+
+    #[test]
+    fn create_in_place_is_exclusive_and_private() {
+        // The fallback used when a file system cannot make hard links.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ref.key");
+        create_in_place(&path, b"first").unwrap();
+        let err = create_in_place(&path, b"second").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(read_private_file(&path).unwrap(), b"first");
+    }
+
     #[cfg(unix)]
     mod unix_only {
         use super::*;
@@ -734,13 +1123,154 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("zn.json");
             create_private_file(&path, b"x").unwrap();
-            for bad in [0o640, 0o604, 0o644, 0o660, 0o666, 0o700 | 0o001] {
+            for bad in [
+                0o640, 0o604, 0o644, 0o660, 0o666, 0o701, 0o4600, 0o2600, 0o1600,
+            ] {
                 fs::set_permissions(&path, fs::Permissions::from_mode(bad)).unwrap();
                 let err = verify_private(&path).unwrap_err();
                 assert_eq!(err.kind(), io::ErrorKind::PermissionDenied, "mode {bad:o}");
             }
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o400)).unwrap();
-            verify_private(&path).unwrap();
+            // Owner-only modes other than 0600 are accepted: the check is "nothing
+            // for group or others and no special bits", as the documentation says.
+            for good in [0o400, 0o600, 0o700] {
+                fs::set_permissions(&path, fs::Permissions::from_mode(good)).unwrap();
+                verify_private(&path).unwrap();
+            }
+        }
+
+        #[test]
+        fn read_private_file_rejects_a_group_or_world_readable_file() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("ref.key");
+            create_private_file(&path, b"k").unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+            let err = read_private_file(&path).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+            assert!(err.to_string().contains("0644"), "{err}");
+        }
+
+        #[test]
+        fn read_private_file_rejects_a_fifo_without_hanging() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("ref.key");
+            let c = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+            // SAFETY: c is a valid NUL-terminated path.
+            assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+            let err = read_private_file(&path).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        }
+
+        #[test]
+        fn the_file_read_is_the_file_checked() {
+            // Swapping the path for a link after the open changes nothing: the
+            // bytes come from the descriptor that was checked.
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("ref.key");
+            create_private_file(&path, b"checked").unwrap();
+            let mut f = open_private(&path).unwrap();
+            fs::remove_file(&path).unwrap();
+            let evil = dir.path().join("evil");
+            fs::write(&evil, b"swapped").unwrap();
+            std::os::unix::fs::symlink(&evil, &path).unwrap();
+            let mut s = String::new();
+            f.read_to_string(&mut s).unwrap();
+            assert_eq!(s, "checked");
+        }
+
+        #[test]
+        fn a_wrong_mode_error_names_the_file_system_cause() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("zn.json");
+            create_private_file(&path, b"x").unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o777)).unwrap();
+            let msg = verify_private(&path).unwrap_err().to_string();
+            assert!(msg.contains("0777") && msg.contains("WSL"), "{msg}");
+        }
+
+        /// Run with `ZN_PRIVATE_FILE_TEST_NOPERM_DIR` set to a folder on a file
+        /// system without Unix permissions (a vfat mount, for example); skipped
+        /// otherwise.
+        #[test]
+        fn a_file_system_without_permissions_gets_a_clear_error() {
+            let Some(dir) = std::env::var_os("ZN_PRIVATE_FILE_TEST_NOPERM_DIR") else {
+                eprintln!("skipped: ZN_PRIVATE_FILE_TEST_NOPERM_DIR is not set");
+                return;
+            };
+            let dir = PathBuf::from(dir);
+            for result in [
+                create_private_file(&dir.join("zn.json"), b"x"),
+                create_private_file_new(&dir.join("ref.key"), b"x"),
+            ] {
+                let err = result.unwrap_err();
+                assert_eq!(err.kind(), io::ErrorKind::Unsupported, "{err}");
+                assert!(err.to_string().contains("does not keep Unix permissions"));
+            }
+            assert!(!dir.join("zn.json").exists() && !dir.join("ref.key").exists());
+            assert!(leftovers(&dir).is_empty(), "temporary file left behind");
+            println!("NOPERM_CHECKED");
+        }
+
+        #[test]
+        fn hard_link_errors_that_trigger_the_fallback() {
+            for code in [libc::EPERM, libc::ENOTSUP, libc::ENOSYS] {
+                assert!(sys::hard_link_unsupported(&io::Error::from_raw_os_error(
+                    code
+                )));
+            }
+            for code in [libc::EEXIST, libc::EACCES, libc::ENOSPC] {
+                assert!(!sys::hard_link_unsupported(&io::Error::from_raw_os_error(
+                    code
+                )));
+            }
+        }
+
+        fn umask_roundtrip(mask: libc::mode_t) {
+            let dir = tempfile::tempdir().unwrap();
+            // SAFETY: umask only changes this (child) process.
+            unsafe { libc::umask(mask) };
+            let a = dir.path().join("a.json");
+            let b = dir.path().join("b.key");
+            create_private_file(&a, b"x").unwrap();
+            create_private_file_new(&b, b"x").unwrap();
+            for p in [&a, &b] {
+                let mode = fs::metadata(p).unwrap().permissions().mode() & 0o7777;
+                assert_eq!(mode, 0o600, "umask {mask:03o}: mode {mode:o}");
+                read_private_file(p).unwrap();
+            }
+            println!("UMASK_CHILD_OK {mask:03o}");
+        }
+
+        /// Does something only in the child process started by `modes_ignore_the_umask`.
+        #[test]
+        fn umask_child() {
+            if let Some(m) = std::env::var_os("ZN_PRIVATE_FILE_UMASK_CHILD") {
+                let mask = u32::from_str_radix(m.to_str().unwrap(), 8).unwrap();
+                umask_roundtrip(mask as libc::mode_t);
+            }
+        }
+
+        #[test]
+        fn modes_ignore_the_umask() {
+            // The umask is per process, so each value runs in its own process.
+            let exe = std::env::current_exe().unwrap();
+            for mask in ["000", "077", "277"] {
+                let out = std::process::Command::new(&exe)
+                    .args([
+                        "--exact",
+                        "private_file::tests::unix_only::umask_child",
+                        "--nocapture",
+                        "--test-threads=1",
+                    ])
+                    .env("ZN_PRIVATE_FILE_UMASK_CHILD", mask)
+                    .output()
+                    .unwrap();
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                assert!(
+                    out.status.success() && stdout.contains(&format!("UMASK_CHILD_OK {mask}")),
+                    "umask {mask}: {stdout}\n{}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
         }
 
         #[test]
@@ -766,9 +1296,9 @@ mod tests {
         }
 
         #[test]
-        fn works_with_a_restrictive_umask_free_mode() {
-            // A file written in a folder the process cannot list still gets a
-            // clean error instead of a partial file.
+        fn a_folder_that_cannot_be_written_gives_a_clean_error() {
+            // A file written in a folder the process cannot write to gets an
+            // error and no partial file.
             let dir = tempfile::tempdir().unwrap();
             let sub = dir.path().join("locked");
             fs::create_dir(&sub).unwrap();
@@ -841,6 +1371,90 @@ mod tests {
             assert!(st.status.success(), "icacls grant failed: {st:?}");
             let err = verify_private(&path).unwrap_err();
             assert_eq!(err.kind(), io::ErrorKind::PermissionDenied, "{err}");
+        }
+
+        #[test]
+        fn read_private_file_reads_an_owner_only_file_and_rejects_others() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("ref.key");
+            create_private_file_new(&path, b"key-bytes").unwrap();
+            assert_eq!(read_private_file(&path).unwrap(), b"key-bytes");
+            let plain = dir.path().join("plain.key");
+            fs::write(&plain, b"x").unwrap();
+            let err = read_private_file(&plain).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::PermissionDenied, "{err}");
+            // Widened after creation: rejected on the handle that was opened.
+            let st = Command::new("icacls")
+                .arg(&path)
+                .args(["/grant", "*S-1-1-0:(R)"])
+                .output()
+                .expect("run icacls");
+            assert!(st.status.success(), "icacls grant failed: {st:?}");
+            let err = read_private_file(&path).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::PermissionDenied, "{err}");
+        }
+
+        #[test]
+        fn a_reparse_point_is_refused_by_the_attribute_check_and_not_followed() {
+            // A private file behind a link: the link is what is refused, even
+            // though its destination would pass every other check.
+            let dir = tempfile::tempdir().unwrap();
+            let dest = dir.path().join("dest.key");
+            create_private_file(&dest, b"private destination").unwrap();
+            let link = dir.path().join("ref.key");
+            if make_link(&dest, &link).is_none() {
+                eprintln!("skipped: cannot create a symbolic link here");
+                return;
+            }
+            let err = read_private_file(&link).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{err}");
+            assert!(err.to_string().contains("link"), "{err}");
+            println!("REPARSE_REFUSED");
+        }
+
+        #[test]
+        fn retry_busy_retries_busy_errors_and_nothing_else() {
+            use std::cell::Cell;
+            let calls = Cell::new(0);
+            let busy = |code: u32, fail: u32| {
+                calls.set(0);
+                super::sys::retry_busy(&[1, 1, 1], || {
+                    calls.set(calls.get() + 1);
+                    if calls.get() <= fail {
+                        Err(io::Error::from_raw_os_error(code as i32))
+                    } else {
+                        Ok(calls.get())
+                    }
+                })
+            };
+            assert_eq!(busy(32, 2).unwrap(), 3); // sharing violation, then fine
+            assert_eq!(busy(5, 3).unwrap(), 4); // access denied, then fine
+            assert!(busy(32, 99).is_err());
+            assert_eq!(calls.get(), 4, "one try plus three retries");
+            assert!(busy(2, 99).is_err()); // file not found: no retry
+            assert_eq!(calls.get(), 1);
+        }
+
+        #[test]
+        fn replacing_a_file_that_is_briefly_open_succeeds_after_a_retry() {
+            use std::os::windows::fs::OpenOptionsExt;
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("zn.json");
+            create_private_file(&path, b"old").unwrap();
+            // Another program holds the target open without sharing for a moment.
+            let holder = fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(&path)
+                .unwrap();
+            let release = std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                drop(holder);
+            });
+            create_private_file(&path, b"new").unwrap();
+            release.join().unwrap();
+            assert_eq!(read_private_file(&path).unwrap(), b"new");
+            assert!(leftovers(dir.path()).is_empty());
         }
 
         #[test]
