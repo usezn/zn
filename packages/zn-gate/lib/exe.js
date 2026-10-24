@@ -336,8 +336,18 @@ function systemPowerShell() {
   return ps;
 }
 
+/*
+ * The PSModulePath to give the system PowerShell: its own module folder only. Without a PSModulePath Windows PowerShell 5.1
+ * builds one that starts with the user's Documents\WindowsPowerShell\Modules, where a module planted by the same account would
+ * replace a cmdlet (ConvertTo-Json, Get-Acl...). `ps` is the path systemPowerShell() returned.
+ */
+function systemPsModulePath(ps) {
+  return path.win32.join(path.win32.dirname(ps), 'Modules');
+}
+
 module.exports = {
   systemPowerShell,
+  systemPsModulePath,
   commandWord,
   hasPathSeparator,
   resolveExecutable,
