@@ -351,7 +351,108 @@ function startMcpShield(command, args, options = {}) {
   };
   async function scanServerValue(label, holder, key, state, depth) {
     await walkServerValue(label, holder, key, state, depth);
-    if (depth === 0) await flushDeferred(label, state);
+    if (depth === 0) {
+      await flushDeferred(label, state);
+      await canonicalGuard(label, holder[key], (notice) => placeNotice(holder, key, notice));
+    }
+  }
+  // A notice put where a whole message part was, with the shape that part has in JSON-RPC (a string in place of an
+  // object would make a client reject the message, and leave its request waiting). A notification or a request
+  // of the server cannot carry one: it is not forwarded (serverDrops, read when the line is written).
+  const serverDrops = new WeakMap();
+  function placeNotice(holder, key, notice) {
+    const old = holder[key];
+    const firstUri = (list) => {
+      for (const it of Array.isArray(list) ? list : [list]) if (it && typeof it === 'object' && typeof it.uri === 'string') return it.uri;
+      return 'zn-gate:blocked';
+    };
+    if (key === 'params' && typeof holder.method === 'string') serverDrops.set(holder, notice);
+    else if (key === 'error') holder.error = { code: old && Number.isInteger(old.code) ? old.code : -32603, message: notice };
+    else if (key === 'contents') holder.contents = [{ uri: firstUri(old), text: notice }];
+    else if (key === 'messages') holder.messages = [{ role: 'user', content: { type: 'text', text: notice } }];
+    else if (key === 'values' && Array.isArray(old)) holder.values = [];
+    else if (key === 'resource' && old && typeof old === 'object') holder.resource = { uri: firstUri(old), text: notice };
+    else if (key === 'structuredContent' || key === 'content') {
+      delete holder.structuredContent;
+      holder.content = [{ type: 'text', text: notice }];
+      holder.isError = true;
+    } else if (key === '_meta') {
+      // A client reads _meta as an object: a string here makes it reject the whole tools/list.
+      delete holder._meta;
+    } else if (key === 'icons') {
+      holder.icons = [];
+    } else holder[key] = notice;
+  }
+  // The model reads all the text of a message together, so a prompt injection can be split across fields that are
+  // each harmless alone. After the fields are checked one by one (an injection in a single field is replaced there,
+  // and the rest of the message is kept), the text that is left is checked once more as a whole, joined by newlines, the way the
+  // chunks are. A message whose text is over the scan budget, or whose joined text is blocked, is replaced as a
+  // whole instead of passing the part nobody checked. `replace` puts the notice where the message was.
+  // Two views, in reading order, of what the model can read: the values alone (what a text field says next to the
+  // next one) and the values with their keys (a key is text too). Not text, so left out of both: the base64 data of
+  // an image or audio item, a binary blob, and the identifiers of a resource (uri, mimeType, type, role), which
+  // must not stand between two halves of a sentence. The depth is bounded by MAX_SERVER_DEPTH; what is deeper was
+  // replaced.
+  function canonicalStrings(root) {
+    const values = [];
+    const all = [];
+    let chars = 0;
+    let over = false;
+    const add = (t, isValue) => {
+      all.push(t);
+      if (isValue) values.push(t);
+      chars += t.length;
+      if (chars > SHIELD_RESULT_SCAN_CHARS) over = true;
+    };
+    const visit = (v, d) => {
+      if (over) return;
+      if (typeof v === 'string') add(v, true);
+      else if (v && typeof v === 'object' && d < MAX_SERVER_DEPTH) {
+        const isArray = Array.isArray(v);
+        const media = !isArray && (v.type === 'image' || v.type === 'audio');
+        const resourceLike = !isArray && typeof v.uri === 'string' && (typeof v.text === 'string' || typeof v.blob === 'string' || v.type === 'resource_link');
+        for (const k of Object.keys(v)) {
+          if (over) return;
+          if (!isArray && ((media && (k === 'data' || k === 'mimeType'))
+            || (resourceLike && (k === 'uri' || k === 'mimeType'))
+            || ((k === 'type' || k === 'role') && typeof v[k] === 'string' && (media || resourceLike || typeof v.text === 'string' || v.content !== undefined || v.resource !== undefined)))) {
+            continue;
+          }
+          if (k === 'blob' && resourceLike) {
+            if (typeof v[k] === 'string' && textBlob(v.mimeType)) add(Buffer.from(v[k], 'base64').toString('utf8'), true);
+            continue;
+          }
+          if (!isArray) add(k, false);
+          visit(v[k], d + 1);
+        }
+      }
+    };
+    visit(root, 0);
+    return { values, all, over };
+  }
+  async function canonicalGuard(label, root, replace) {
+    const { values, all, over } = canonicalStrings(root);
+    if (!over && all.length < 2) return false;
+    let rule = 'size:truncated';
+    if (!over) {
+      let check = null;
+      let text = '';
+      for (const view of all.length > values.length ? [values, all] : [values]) {
+        text = view.join('\n');
+        const c = await checkToolResult(label, text, { ...options, maxScanChars: SHIELD_RESULT_SCAN_CHARS, blockTruncated: true });
+        if (c.safe_to_ingest === false || c.assessment?.verdict === 'block' || c.verdict === 'block') { check = c; break; }
+      }
+      if (!check) return false;
+      rule = check.assessment?.rule || check.assessment?.reason || check.rule || check.reason || 'indirect prompt injection';
+      logServerBlock(label, text, rule, rule === 'size:truncated', check);
+    } else {
+      logServerBlock(label, '', rule, true, {});
+    }
+    if (options.shadow) return false;
+    replace(serverNotice(rule === 'size:truncated'
+      ? `it is too large for zn-gate to check in full (over ${SHIELD_RESULT_SCAN_CHARS / 1048576} MB)`
+      : `its text, read as a whole, tries to give instructions to the AI agent (${rule})`));
+    return true;
   }
   // An object key is text the agent reads too: a key whose check changes it is renamed to the checked text (the
   // notice or the redacted key), keeping its value. defineProperty, so no key can reach the object's prototype.
@@ -781,6 +882,23 @@ function startMcpShield(command, args, options = {}) {
       await inspectServerMessage(msg, line.length);
     }
 
+    // A notification or request of the server whose text was blocked is not forwarded; a request is answered with
+    // an error, so the server does not wait for the client.
+    const dropped = (one) => {
+      const notice = serverDrops.get(one);
+      if (notice === undefined) return false;
+      process.stderr.write(`[zn-shield BLOCKED SERVER MESSAGE] ${safeLabel(one.method)} from the server was not forwarded.\n`);
+      if (one.id !== undefined && one.id !== null) {
+        child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: one.id, error: { code: -32603, message: notice } }) + '\n');
+      }
+      return true;
+    };
+    if (Array.isArray(msg)) {
+      const kept = msg.filter((one) => !dropped(one));
+      if (kept.length) process.stdout.write(JSON.stringify(kept) + '\n');
+      return;
+    }
+    if (dropped(msg)) return;
     // Forward inspected/sanitized response to client
     process.stdout.write(JSON.stringify(msg) + '\n');
   }
@@ -1050,6 +1168,19 @@ function startMcpShield(command, args, options = {}) {
     }
 
     await scanServerMessage(msg, answered, resultReplaced);
+    // A tool result is also checked as one text, after its items were checked one by one.
+    if (answered === 'tools/call' && !resultReplaced && msg.result && typeof msg.result === 'object' && !Array.isArray(msg.result)) {
+      serverLog = { n: 0, suppressed: 0, rules: new Map() };
+      try {
+        await canonicalGuard('tools/call', { content: msg.result.content, structuredContent: msg.result.structuredContent }, (notice) => {
+          delete msg.result.structuredContent;
+          msg.result.content = [{ type: 'text', text: notice }];
+          msg.result.isError = true;
+        });
+      } finally {
+        serverLog = null;
+      }
+    }
   }
 
   // Handle process termination
