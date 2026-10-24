@@ -65,7 +65,10 @@ function lastRecord(file) {
   let fd;
   try { fd = fs.openSync(file, 'r'); } catch (err) { if (err.code === 'ENOENT') return null; throw err; }
   try {
-    const size = fs.fstatSync(fd).size;
+    const st = fs.fstatSync(fd);
+    // Windows opens a directory for reading without error and reports size 0: that is not an empty log.
+    if (!st.isFile()) { const e = new Error('the audit log is not a regular file'); e.code = 'EISDIR'; throw e; }
+    const size = st.size;
     if (size === 0) return null;
     let chunk = 4096;
     for (;;) {
