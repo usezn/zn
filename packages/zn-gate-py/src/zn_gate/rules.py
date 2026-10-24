@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-25.10
+RULES_VERSION: 2026-10-25.11
 Zero external dependencies. Pure Python stdlib.
 """
 
@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-10-25.10"
+RULES_VERSION = "2026-10-25.11"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -68,7 +68,7 @@ ANSI_ESCAPE_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07\x1b]*\x07')
 MAX_B64_PAYLOADS = 16
 MAX_B64_DECODED_BYTES = 128 * 1024
 # The payload is group 2 (echo/printf pipe, quoted or not, with options) or group 4 (here-string).
-B64_EXEC_RE = re.compile(r'''(?:echo|printf(?:\s+(?:'%s'|"%s"|%s))?)(?:\s+-[A-Za-z]{1,3})*\s+(["']?)([A-Za-z0-9+/=]{16,})\1\s*\|\s*(?:base64\s+-(?:di?|id|-decode)|openssl)|base64\s+-(?:di?|id|-decode)\s*<<<\s*(["']?)([A-Za-z0-9+/=]{16,})\3''', re.IGNORECASE)
+B64_EXEC_RE = re.compile(r'''(?:echo|printf(?:\s+(?:'%s'|"%s"|%s))?)(?:\s+-[A-Za-z]{1,3})*\s+(["']?)([A-Za-z0-9+/=]{16,})\1\s*\|\s*(?:base64\s+-(?:di?|id|-decode)|openssl\s+(?:base64|enc)(?:\s+(?:-[A-Za-z0-9]+|-(?![A-Za-z0-9])))*?\s+-d(?![A-Za-z0-9_]))|base64\s+-(?:di?|id|-decode)\s*<<<\s*(["']?)([A-Za-z0-9+/=]{16,})\3''', re.IGNORECASE)
 # Maximal whitespace runs; only runs that contain a line break are joined.
 # A pattern anchored on the line break (such as [^\S\r\n]*[\r\n]) would rescan
 # a long run of spaces from every position.
@@ -188,7 +188,47 @@ EVASION_RULES: List[Tuple[str, re.Pattern[str], str]] = [
 # [\s\S]*? tail, or an attribute run that may cross "<", re-scans the rest of
 # the input from every candidate and is super-linear on crafted markup.)
 OPEN_TAG_RE = re.compile(r'<[a-z0-9]+(?![A-Za-z0-9_])([^<>]*)(>?)', re.IGNORECASE)
-HIDDEN_ATTR_RE = re.compile(r'(?<![A-Za-z0-9_])(?:display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0|font-size\s*:\s*0(?:px)?|color\s*:\s*transparent|text-indent\s*:\s*-[0-9]{3,}px|hidden(?![A-Za-z0-9_]))', re.IGNORECASE)
+# What a style attribute must say to hide an element. Spaces are the ASCII ones (the CSS and HTML
+# separators), so Node and Python read the same text the same way.
+HIDDEN_ATTR_RE = re.compile(r'(?<![A-Za-z0-9_-])(?:display[\t\n\f\r ]*:[\t\n\f\r ]*none|visibility[\t\n\f\r ]*:[\t\n\f\r ]*hidden|opacity[\t\n\f\r ]*:[\t\n\f\r ]*0(?:\.0+)?(?![0-9.])|font-size[\t\n\f\r ]*:[\t\n\f\r ]*0(?:px)?(?![0-9.])|color[\t\n\f\r ]*:[\t\n\f\r ]*transparent|text-indent[\t\n\f\r ]*:[\t\n\f\r ]*-[0-9]{3,}px)', re.IGNORECASE)
+# An element of at most 1px, or with a clip that leaves nothing visible, or with no height and
+# its overflow cut off, is hidden in the way screen-reader-only text is.
+TINY_WIDTH_CSS_RE = re.compile(r'(?<![A-Za-z0-9_-])(?:max-)?width[\t\n\f\r ]*:[\t\n\f\r ]*(?:0(?:\.0+)?(?:[a-z]+|%)?(?![0-9.])|(?:0(?:\.[0-9]+)?|1(?:\.0+)?)(?:px)?(?![0-9.a-z%]))', re.IGNORECASE)
+TINY_HEIGHT_CSS_RE = re.compile(r'(?<![A-Za-z0-9_-])(?:max-)?height[\t\n\f\r ]*:[\t\n\f\r ]*(?:0(?:\.0+)?(?:[a-z]+|%)?(?![0-9.])|(?:0(?:\.[0-9]+)?|1(?:\.0+)?)(?:px)?(?![0-9.a-z%]))', re.IGNORECASE)
+OVERFLOW_HIDDEN_CSS_RE = re.compile(r'(?<![A-Za-z0-9_-])overflow(?:-[xy])?[\t\n\f\r ]*:[\t\n\f\r ]*hidden(?![A-Za-z0-9_-])', re.IGNORECASE)
+CLIP_CSS_RE = re.compile(r'(?<![A-Za-z0-9_-])(?:clip[\t\n\f\r ]*:[\t\n\f\r ]*rect\([\t\n\f\r ]*(?:0|1px)|clip-path[\t\n\f\r ]*:[\t\n\f\r ]*inset\([\t\n\f\r ]*(?:50|100)%)', re.IGNORECASE)
+# One attribute: name, then an optional value (double-quoted, single-quoted
+# or bare). An unterminated quote runs to the end of the run, so every
+# character is read once.
+ATTR_RE = re.compile(r'''([^\t\n\f\r "'<>\/=]+)(?:[\t\n\f\r ]*=[\t\n\f\r ]*(?:"([^"]*)"?|'([^']*)'?|([^\t\n\f\r "'<>=`]*)))?''')
+# The classes that hide an element in the common frameworks (a token of the class list).
+CLASS_HIDDEN_RE = re.compile(r'(?:^|[\t\n\f\r ])(?:hidden|visually-hidden|sr-only|d-none|invisible|is-hidden)(?=[\t\n\f\r ]|$)', re.IGNORECASE)
+_ASCII_SPACE = '\t\n\f\r '
+
+
+def _style_hides(v: str) -> bool:
+    return bool(HIDDEN_ATTR_RE.search(v) or CLIP_CSS_RE.search(v)
+                or (TINY_WIDTH_CSS_RE.search(v) and TINY_HEIGHT_CSS_RE.search(v))
+                or (OVERFLOW_HIDDEN_CSS_RE.search(v) and TINY_HEIGHT_CSS_RE.search(v)))
+
+
+# True when the attributes of an opening tag really hide the element: the
+# boolean hidden attribute, aria-hidden="true", a style that hides it, or a class
+# that hides it (hidden, sr-only and the like). A name that merely contains the word
+# (data-hidden) or a hidden word elsewhere in the tag does not count.
+def _attrs_hide(attrs: str) -> bool:
+    for m in ATTR_RE.finditer(attrs):
+        name = m.group(1).lower()
+        value = next((g for g in (m.group(2), m.group(3), m.group(4)) if g is not None), '')
+        if name == 'hidden':
+            return True
+        if name == 'aria-hidden' and value.strip(_ASCII_SPACE).lower() == 'true':
+            return True
+        if name == 'class' and CLASS_HIDDEN_RE.search(value):
+            return True
+        if name == 'style' and _style_hides(value):
+            return True
+    return False
 HIDDEN_PAYLOAD_RE = re.compile(r'ignore|system|instruction|prompt|bypass|override|exfil|leak', re.IGNORECASE)
 
 
@@ -228,7 +268,7 @@ def _test_hidden_tag(text: str) -> bool:
         if m is None:
             return False
         pos = m.end()
-        if m.group(2) == '>' and HIDDEN_ATTR_RE.search(m.group(1)):
+        if m.group(2) == '>' and _attrs_hide(m.group(1)):
             tag = _TAG_NAME_RE.match(m.group(0))
             if tag is None:
                 continue
@@ -245,7 +285,7 @@ def _test_hidden_tag(text: str) -> bool:
 # payload word. Used only for advisories.
 def _test_hidden_tag_anywhere(text: str) -> bool:
     for m in OPEN_TAG_RE.finditer(text):
-        if m.group(2) == '>' and HIDDEN_ATTR_RE.search(m.group(1)):
+        if m.group(2) == '>' and _attrs_hide(m.group(1)):
             return HIDDEN_PAYLOAD_RE.search(text, m.end()) is not None
     return False
 
@@ -357,7 +397,7 @@ ADVISORY_RULES: List[Tuple[str, Any, str]] = [
 SENSITIVE_PATH_RULES: List[Tuple[str, re.Pattern[str], str]] = [
     (
         'path:sensitive_file',
-        re.compile(r"""(?:^|[\s"'`(\[@])(?:~|\/home\/[^\s/]+|\/root)?\/?\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|=(?:~|\$\{?HOME\}?|\/home\/[^\s/]+|\/root|[A-Za-z]:\\Users\\[^\s\\]+)[\/\\]?\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE),
+        re.compile(r"""(?:^|[\s"'`(\[@])(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)?[\/\\]?\.(?:ssh[\/\\](?:id_rsa|id_ed25519|authorized_keys)|aws[\/\\]credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|=(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)[\/\\]?\.(?:ssh[\/\\](?:id_rsa|id_ed25519|authorized_keys)|aws[\/\\]credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE),
         'Targeting sensitive system credentials or environment file',
     ),
 ]

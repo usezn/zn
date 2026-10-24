@@ -6,10 +6,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-25.10
+ * RULES_VERSION: 2026-10-25.11
  */
 
-const RULES_VERSION = '2026-10-25.10';
+const RULES_VERSION = '2026-10-25.11';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -148,7 +148,52 @@ for (const rule of INJECTION_RULES) {
 // `[\s\S]*?` tail, or an attribute run that may cross "<", re-scans the rest
 // of the input from every candidate and is super-linear on crafted markup.)
 const OPEN_TAG_RE = /<[a-z0-9]+(?![A-Za-z0-9_])([^<>]*)(>?)/gi;
-const HIDDEN_ATTR_RE = /(?<![A-Za-z0-9_])(?:display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0|font-size\s*:\s*0(?:px)?|color\s*:\s*transparent|text-indent\s*:\s*-[0-9]{3,}px|hidden(?![A-Za-z0-9_]))/i;
+// What a style attribute must say to hide an element. Spaces are the ASCII ones (the CSS and HTML
+// separators), so Node and Python read the same text the same way.
+const HIDDEN_ATTR_RE = /(?<![A-Za-z0-9_-])(?:display[\t\n\f\r ]*:[\t\n\f\r ]*none|visibility[\t\n\f\r ]*:[\t\n\f\r ]*hidden|opacity[\t\n\f\r ]*:[\t\n\f\r ]*0(?:\.0+)?(?![0-9.])|font-size[\t\n\f\r ]*:[\t\n\f\r ]*0(?:px)?(?![0-9.])|color[\t\n\f\r ]*:[\t\n\f\r ]*transparent|text-indent[\t\n\f\r ]*:[\t\n\f\r ]*-[0-9]{3,}px)/i;
+// An element of at most 1px, or with a clip that leaves nothing visible, or with no height and
+// its overflow cut off, is hidden in the way screen-reader-only text is.
+const TINY_WIDTH_CSS_RE = /(?<![A-Za-z0-9_-])(?:max-)?width[\t\n\f\r ]*:[\t\n\f\r ]*(?:0(?:\.0+)?(?:[a-z]+|%)?(?![0-9.])|(?:0(?:\.[0-9]+)?|1(?:\.0+)?)(?:px)?(?![0-9.a-z%]))/i;
+const TINY_HEIGHT_CSS_RE = /(?<![A-Za-z0-9_-])(?:max-)?height[\t\n\f\r ]*:[\t\n\f\r ]*(?:0(?:\.0+)?(?:[a-z]+|%)?(?![0-9.])|(?:0(?:\.[0-9]+)?|1(?:\.0+)?)(?:px)?(?![0-9.a-z%]))/i;
+const OVERFLOW_HIDDEN_CSS_RE = /(?<![A-Za-z0-9_-])overflow(?:-[xy])?[\t\n\f\r ]*:[\t\n\f\r ]*hidden(?![A-Za-z0-9_-])/i;
+const CLIP_CSS_RE = /(?<![A-Za-z0-9_-])(?:clip[\t\n\f\r ]*:[\t\n\f\r ]*rect\([\t\n\f\r ]*(?:0|1px)|clip-path[\t\n\f\r ]*:[\t\n\f\r ]*inset\([\t\n\f\r ]*(?:50|100)%)/i;
+// One attribute: name, then an optional value (double-quoted, single-quoted
+// or bare). An unterminated quote runs to the end of the run, so every
+// character is read once.
+const ATTR_RE = /([^\t\n\f\r "'<>\/=]+)(?:[\t\n\f\r ]*=[\t\n\f\r ]*(?:"([^"]*)"?|'([^']*)'?|([^\t\n\f\r "'<>=`]*)))?/g;
+// The classes that hide an element in the common frameworks (a token of the class list).
+const CLASS_HIDDEN_RE = /(?:^|[\t\n\f\r ])(?:hidden|visually-hidden|sr-only|d-none|invisible|is-hidden)(?=[\t\n\f\r ]|$)/i;
+
+function isAsciiSpace(c) { return c === 32 || (c >= 9 && c <= 13 && c !== 11); }
+function asciiTrim(v) {
+  let a = 0;
+  let b = v.length;
+  while (a < b && isAsciiSpace(v.charCodeAt(a))) a++;
+  while (b > a && isAsciiSpace(v.charCodeAt(b - 1))) b--;
+  return v.slice(a, b);
+}
+
+function styleHides(v) {
+  return HIDDEN_ATTR_RE.test(v) || CLIP_CSS_RE.test(v) ||
+    (TINY_WIDTH_CSS_RE.test(v) && TINY_HEIGHT_CSS_RE.test(v)) ||
+    (OVERFLOW_HIDDEN_CSS_RE.test(v) && TINY_HEIGHT_CSS_RE.test(v));
+}
+
+// True when the attributes of an opening tag really hide the element: the
+// boolean hidden attribute, aria-hidden="true", a style that hides it, or a class
+// that hides it (hidden, sr-only and the like). A name that merely contains the word
+// (data-hidden) or a hidden word elsewhere in the tag does not count.
+function attrsHide(attrs) {
+  for (const m of attrs.matchAll(ATTR_RE)) {
+    const name = m[1].toLowerCase();
+    const value = m[2] ?? m[3] ?? m[4] ?? '';
+    if (name === 'hidden') return true;
+    if (name === 'aria-hidden' && asciiTrim(value).toLowerCase() === 'true') return true;
+    if (name === 'class' && CLASS_HIDDEN_RE.test(value)) return true;
+    if (name === 'style' && styleHides(value)) return true;
+  }
+  return false;
+}
 const HIDDEN_PAYLOAD_RE = /ignore|system|instruction|prompt|bypass|override|exfil|leak/gi;
 
 // The payload must be in the text of the hidden element itself: its content
@@ -182,7 +227,7 @@ function testHiddenTag(text) {
   const tagRe = new RegExp(OPEN_TAG_RE.source, OPEN_TAG_RE.flags);
   let m;
   while ((m = tagRe.exec(text)) !== null) {
-    if (m[2] === '>' && HIDDEN_ATTR_RE.test(m[1])) {
+    if (m[2] === '>' && attrsHide(m[1])) {
       const name = m[0].slice(1).match(/^[a-z0-9]+/i)[0].toLowerCase();
       const el = hiddenElementText(text, tagRe.lastIndex, name);
       if (new RegExp(HIDDEN_PAYLOAD_RE.source, 'i').test(el.text)) return true;
@@ -200,7 +245,7 @@ function testHiddenTagAnywhere(text) {
   const tagRe = new RegExp(OPEN_TAG_RE.source, OPEN_TAG_RE.flags);
   let m;
   while ((m = tagRe.exec(text)) !== null) {
-    if (m[2] === '>' && HIDDEN_ATTR_RE.test(m[1])) {
+    if (m[2] === '>' && attrsHide(m[1])) {
       const payloadRe = new RegExp(HIDDEN_PAYLOAD_RE.source, HIDDEN_PAYLOAD_RE.flags);
       payloadRe.lastIndex = tagRe.lastIndex;
       return payloadRe.test(text);
@@ -276,7 +321,7 @@ function matchesRule(rule, text) {
 const SENSITIVE_PATH_RULES = [
   {
     id: 'path:sensitive_file',
-    pattern: /(?:^|[\s"'`(\[@])(?:~|\/home\/[^\s/]+|\/root)?\/?\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|=(?:~|\$\{?HOME\}?|\/home\/[^\s/]+|\/root|[A-Za-z]:\\Users\\[^\s\\]+)[\/\\]?\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])/i,
+    pattern: /(?:^|[\s"'`(\[@])(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)?[\/\\]?\.(?:ssh[\/\\](?:id_rsa|id_ed25519|authorized_keys)|aws[\/\\]credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|=(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)[\/\\]?\.(?:ssh[\/\\](?:id_rsa|id_ed25519|authorized_keys)|aws[\/\\]credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])/i,
     description: 'Targeting sensitive system credentials or environment file',
   },
 ];
@@ -506,14 +551,16 @@ function foldCompatMatch(run) {
     }
     return parts.join('');
   }
-  return COMPAT_FOLD.get(run);
+  // A character of the ranges without a folded form stays as it is.
+  const folded = COMPAT_FOLD.get(run);
+  return folded === undefined ? run : folded;
 }
 const ANSI_ESCAPE_RE = /\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07\x1b]*\x07/g;
 // Hard caps for the Base64 smuggling check: above either one the command is blocked.
 const MAX_B64_PAYLOADS = 16;
 const MAX_B64_DECODED_BYTES = 128 * 1024;
 // The payload is group 2 (echo/printf pipe, quoted or not, with options) or group 4 (here-string).
-const B64_EXEC_RE = /(?:echo|printf(?:\s+(?:'%s'|"%s"|%s))?)(?:\s+-[A-Za-z]{1,3})*\s+(["']?)([A-Za-z0-9+/=]{16,})\1\s*\|\s*(?:base64\s+-(?:di?|id|-decode)|openssl)|base64\s+-(?:di?|id|-decode)\s*<<<\s*(["']?)([A-Za-z0-9+/=]{16,})\3/i;
+const B64_EXEC_RE = /(?:echo|printf(?:\s+(?:'%s'|"%s"|%s))?)(?:\s+-[A-Za-z]{1,3})*\s+(["']?)([A-Za-z0-9+/=]{16,})\1\s*\|\s*(?:base64\s+-(?:di?|id|-decode)|openssl\s+(?:base64|enc)(?:\s+(?:-[A-Za-z0-9]+|-(?![A-Za-z0-9])))*?\s+-d(?![A-Za-z0-9_]))|base64\s+-(?:di?|id|-decode)\s*<<<\s*(["']?)([A-Za-z0-9+/=]{16,})\3/i;
 const B64_EXEC_ALL_RE = new RegExp(B64_EXEC_RE.source, 'gi');
 
 // Maximal whitespace runs; only runs that contain a line break are joined.
@@ -1743,7 +1790,7 @@ module.exports = {
   EVAL_CACHE_MAX_INPUT,
   // Helper patterns used by normalization and the hidden-element check,
   // exported so the Python port can be checked against them.
-  HELPER_PATTERNS: { ZERO_WIDTH_RE, ANSI_ESCAPE_RE, B64_EXEC_RE, WHITESPACE_RUN_RE, OPEN_TAG_RE, HIDDEN_ATTR_RE, HIDDEN_PAYLOAD_RE, MD_IMAGE_RE, MD_URL_SCHEME_RE, MD_URL_SECRET_PARAM_RE,
+  HELPER_PATTERNS: { ZERO_WIDTH_RE, ANSI_ESCAPE_RE, B64_EXEC_RE, WHITESPACE_RUN_RE, OPEN_TAG_RE, HIDDEN_ATTR_RE, TINY_WIDTH_CSS_RE, TINY_HEIGHT_CSS_RE, OVERFLOW_HIDDEN_CSS_RE, CLIP_CSS_RE, ATTR_RE, CLASS_HIDDEN_RE, HIDDEN_PAYLOAD_RE, MD_IMAGE_RE, MD_URL_SCHEME_RE, MD_URL_SECRET_PARAM_RE,
     RU_FORGET_RE, RU_FORGET_OBJECT_RE, RU_IGNORE_RE, RU_IGNORE_OBJECT_RE, RU_PHRASE_RE,
     ZH_IGNORE_RE, ZH_IGNORE_OBJECT_RE, ZH_FORGET_RE, ZH_FORGET_OBJECT_RE, ZH_PHRASE_RE,
     CREDENTIAL_URL_RE, CREDENTIAL_STORE_RE, CREDENTIAL_CODE_ROOT_RE, CREDENTIAL_PLACEHOLDER_RE, CREDENTIAL_REFERENCE_RE, CREDENTIAL_REFERENCE_NAME_RE, CREDENTIAL_PLACEHOLDER_MARK_RE,
