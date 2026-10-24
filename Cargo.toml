@@ -72,6 +72,12 @@ tokenizers = "0.22.2"
 rmcp = { version = "=3.5.1", features = ["server", "macros", "schemars", "transport-io"] }
 schemars = "1"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.189"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
+
 [package.metadata.cargo-machete]
 # schemars is used through the rmcp::schemars derive, which expands to schemars:: paths,
 # so the crate must be a direct dependency even though no source line names it.

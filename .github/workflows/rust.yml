@@ -83,6 +83,41 @@ jobs:
         if: steps.scope.outputs.rust == 'true'
         run: cargo test --locked
 
+  private-file-windows:
+    name: private file writer (windows)
+    # The owner-only file writer has a separate Windows implementation (protected DACL), so its tests
+    # also run on Windows. Draft pull requests skip this job; marking the pull request ready for review runs it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Decide what this change needs
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: bash .github/scripts/rust-scope.sh
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        if: steps.scope.outputs.rust == 'true'
+        with:
+          toolchain: 1.99.0
+      - uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        if: steps.scope.outputs.rust == 'true'
+        with:
+          version: "29.3"
+          repo-token: ${{ github.token }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: steps.scope.outputs.rust == 'true'
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: test private_file
+        if: steps.scope.outputs.rust == 'true'
+        run: cargo test --locked --lib private_file
+
   msrv:
     name: minimum supported Rust version (1.95)
     # Draft pull requests skip this job; marking the pull request ready for review runs it.

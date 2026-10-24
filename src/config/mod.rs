@@ -715,7 +715,7 @@ impl ZnConfig {
     /// `path` that is a symbolic link or is not a regular file (a directory, a
     /// FIFO, a device) is refused and left untouched.
     pub fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
-        crate::private_file::replace_private_file(path, bytes)
+        crate::private_file::create_private_file(path, bytes)
             .map_err(|e| anyhow!("cannot write {}: {e}", path.display()))
     }
 
