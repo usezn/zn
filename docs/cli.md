@@ -52,7 +52,7 @@ zn-gate init
 zn-gate init --wrap-mcp [--dry-run] [--shadow] [--revert]
 ```
 
-Without options, `init` is the guided setup: it finds the coding agents on this machine (Claude Code, Codex CLI, Cursor, OpenCode), shows what is missing and, in your own terminal, asks before each step. It takes no other arguments. When it runs without a terminal, or an AI agent runs it, it only prints the steps and changes nothing.
+Without options, `init` is the guided setup: it finds the coding agents on this machine (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity), shows what is missing and, in your own terminal, asks before each step. It takes no other arguments. When it runs without a terminal, or an AI agent runs it, it only prints the steps and changes nothing.
 
 With `--wrap-mcp` it finds the MCP servers in known agent configs and wraps them with `shield`. Backups are written first.
 
