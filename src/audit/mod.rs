@@ -216,7 +216,7 @@ impl AuditVault {
                 )?;
                 if encrypted > 0 {
                     return Err(anyhow!(
-                        "audit database '{}' is encrypted; open it with its key",
+                        "audit database '{}' is encrypted but no key was given. Set the ZN_DB_KEY environment variable to the passphrase it was created with (or configure a KMS key with kms.key_id), then start again. Do not delete the file: its records cannot be read without the key.",
                         db_path
                     ));
                 }
@@ -1752,6 +1752,19 @@ mod tests {
         let stored = key_check_value(&path).expect("key check written");
         assert!(key_check_matches(&vault_key(&path, "right"), &stored));
         drop(AuditVault::new(&path, Some("right")).unwrap());
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn encrypted_database_without_a_key_names_the_fix() {
+        let path = temp_db_path();
+        drop(AuditVault::new(&path, Some("right")).unwrap());
+        let msg = match AuditVault::new(&path, None) {
+            Ok(_) => panic!("an encrypted database must not open without a key"),
+            Err(e) => e.to_string(),
+        };
+        assert!(msg.contains("ZN_DB_KEY"), "message was: {msg}");
+        assert!(msg.contains("kms.key_id"), "message was: {msg}");
         fs::remove_file(&path).ok();
     }
 
