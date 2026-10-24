@@ -155,6 +155,27 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
       await rejects({ ...BASE, 'lib/extra.js': "import('left-pad');\n" }, /left-pad would be loaded from outside the bundle/);
       await rejects({ ...BASE, 'lib/extra.js': 'const n = "x"; import(n);\n' }, /computed name cannot be checked/);
       await rejects({ ...BASE, 'lib/extra.js': "require('module').createRequire(__filename);\n" }, /createRequire/);
+      // The module built-in is allowed only for enableCompileCache.
+      await build({ ...BASE, 'lib/compile-cache.js': "const mod = require('module');\nif (typeof mod.enableCompileCache === 'function') mod.enableCompileCache('/tmp/x');\n" });
+      await rejects({ ...BASE, 'lib/extra.js': "const mod = require('module');\nmod.enableCompileCache('/x');\nmod.createRequire(__filename);\n" }, /module. built-in/);
+      await rejects({ ...BASE, 'lib/compile-cache.js': "const mod = require('module');\nmod.enableCompileCache('/x');\nmod.createRequire(__filename);\n" }, /module. built-in/);
+      await rejects({ ...BASE, 'lib/extra.js': "const mod = require('module');\nmod._load('left-pad');\n" }, /module. built-in/);
+      await rejects({ ...BASE, 'lib/compile-cache.js': "const mod = require('module');\nmod._load('left-pad');\n" }, /module. built-in/);
+      await rejects({ ...BASE, 'lib/extra.js': "const mod = require('module');\nmod.enableCompileCache = () => {};\n" }, /module. built-in/);
+      await rejects({ ...BASE, 'lib/compile-cache.js': "const mod = require('module');\nmod.enableCompileCache = () => {};\n" }, /module. built-in/);
+      await rejects({ ...BASE, 'lib/extra.js': "const mod = require('module');\nconst f = mod;\nmod.enableCompileCache();\n" }, /module. built-in/);
+      await rejects({ ...BASE, 'lib/compile-cache.js': "const mod = require('module');\nconst f = mod;\nmod.enableCompileCache();\n" }, /module. built-in/);
+      await rejects({ ...BASE, 'lib/extra.js': "const { _load } = require('module');\n" }, /module. built-in/);
+      await rejects({ ...BASE, 'lib/compile-cache.js': "const { _load } = require('module');\n" }, /module. built-in/);
+      await rejects({ ...BASE, 'lib/extra.js': "require('module').enableCompileCache();\n" }, /module. built-in/);
+      await rejects({ ...BASE, 'lib/compile-cache.js': "require('module').enableCompileCache();\n" }, /module. built-in/);
+      await rejects({ ...BASE, 'lib/extra.js': "const mod = require('module');\nmod.enableCompileCache();\nrequire('node:module').createRequire(__filename);\n" }, /module. built-in|createRequire/);
+      await rejects({ ...BASE, 'lib/compile-cache.js': "const mod = require('module');\nmod.enableCompileCache();\nrequire('node:module').createRequire(__filename);\n" }, /module. built-in|createRequire/);
+      await rejects({ ...BASE, 'lib/compile-cache.js': "const mod = require('module');\nmod.enableCompileCache();\nconst m = { ...mod };\nm._load('left-pad');\n" }, /module. built-in/);
+      await rejects({ ...BASE, 'lib/compile-cache.js': "const mod = require('module');\nmod.enableCompileCache();\nconst m = [...mod];\n" }, /module. built-in/);
+      await rejects({ ...BASE, 'lib/compile-cache.js': "const mod = require('module');\nmod.enableCompileCache();\nf(...mod);\n" }, /module. built-in/);
+      // Only lib/compile-cache.js may use the exception.
+      await rejects({ ...BASE, 'lib/extra.js': "const mod = require('module');\nmod.enableCompileCache('/x');\n" }, /module. built-in/);
       // Comments between import and the parenthesis do not hide the call.
       await rejects({ ...BASE, 'lib/extra.js': "import /* c */ ('left-pad');\n" }, /left-pad would be loaded from outside the bundle/);
       await rejects({ ...BASE, 'lib/extra.js': "import // c\n('left-pad');\n" }, /left-pad would be loaded from outside the bundle/);
