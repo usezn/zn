@@ -205,7 +205,7 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
   - Copilot's `userPromptSubmitted` hook cannot block or rewrite a typed
     prompt, so a pasted secret is not blocked.
   - A hook that takes longer than its timeout lets the call through (Copilot
-    fails open there). Machine policy hooks in `/etc/github-copilot/policy.d`
+    fails open there); zn blocks the call itself 4 seconds earlier. Machine policy hooks in `/etc/github-copilot/policy.d`
     run in addition and are not seen by zn.
   - MCP tools Copilot does not name as read or shell tools are not checked and
     their output is not scrubbed. The docs do not list the argument names of
@@ -348,6 +348,20 @@ Install zn on every machine that runs the agent.
 
 ## If your agent blocks every prompt
 
+A hook that does not finish is answered by zn too, for every agent. As the hook starts, before it reads
+its input, a timer is armed 4 seconds before the agent's own hook timeout (Claude Code, Copilot CLI,
+Gemini CLI and Antigravity: 15 seconds, so 11; OpenCode: 20, so 16; Codex CLI, Cursor and ZCode: 30, so
+26). If the check has not finished by then, including when the input never ends, zn answers the event with
+the block of its own agent (exit code 2, or the agent's deny answer) and exits: a tool call or prompt is
+blocked, a Stop event is only warned about, and the output of a tool that already ran is replaced by a short
+notice. The same answer is given when the hook is told to stop (SIGTERM, SIGHUP, SIGINT). The vault is
+waited for at most until 3 seconds before that, so a slow vault ends as "not checked" with its own reason.
+The launcher scripts (the POSIX ones, and on Windows ZCode's) add a second deadline, 2 seconds before the
+agent's timeout, that stops the whole hook (and anything it started) and answers the same block, for the case
+where the hook is stuck before it can start its own timer; the same answer is given when the launcher itself
+is told to stop. On Windows, Claude Code, Codex CLI, Cursor, Gemini CLI and Antigravity have the first timer
+only, and Copilot CLI has no launcher at all, so it has the first timer on every system.
+
 When zn's hook cannot start (for example, the Node.js it was installed with was
 removed, and `node` or `zn` is not on the PATH of the agent), what happens
 depends on the agent and on how the hooks were installed. A user install
@@ -378,8 +392,9 @@ an older zn-gate and the plugins keep a plain command. Agent by agent:
   install or older hooks, Gemini CLI shows a warning and the tool call runs.
 - **GitHub Copilot CLI**: a hook command that cannot start fails closed for
   `preToolUse`, so the tool call is blocked; the hook that runs after a tool
-  fails open, so that output is not scrubbed. Copilot has no launcher, and it
-  lets a call through when a hook times out.
+  fails open, so that output is not scrubbed. Copilot has no launcher; zn
+  blocks the call itself 4 seconds before Copilot's 15-second limit (Copilot
+  lets a call through when a hook times out).
 - **OpenCode**: the plugin starts the hook itself. When the hook cannot start,
   times out or gives no valid answer, the tool call is blocked, the message is
   not sent and the tool output is withheld, for user and project installs alike.

@@ -203,7 +203,7 @@ function commandFor(opts = {}) {
       return script ? launcher.windowsScriptCommand(script) : cfg.hookCommandWindows(id, opts);
     };
   }
-  const file = launcher.writeLauncher(id, node, runner, opts);
+  const file = launcher.writeLauncher(id, node, runner, { ...opts, deadlineS: launcher.launcherDeadlineS(HOOK_TIMEOUT_S), deadlineSoft: true });
   return (event) => launcher.launcherCommand(file, event, platform);
 }
 

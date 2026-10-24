@@ -72,12 +72,19 @@ const NETWORK_OPS = new Set(['teamSync']);
 const NETWORK_TIMEOUT_MS = 120000;
 const MAX_LINE = 64 * 1024 * 1024;
 
+// A hook (lib/hooks/runner.js) sets ZN_HOOK_VAULT_WAIT_MS: no call waits longer than that, so a slow vault ends as "the vault
+// did not answer" (a refusal) before the agent's own hook timeout (which lets the call run) and before zn's own deadline.
+function hookWaitCap(ms) {
+  const cap = Number(process.env.ZN_HOOK_VAULT_WAIT_MS);
+  return cap > 0 ? Math.min(ms, cap) : ms;
+}
+
 // How long a call waits for its answer before it fails with a timeout.
 function callTimeoutMs(op) {
-  if (op === 'teamJoin') return JOIN_CONFIRM_TIMEOUT_MS;
-  if (CONFIRMED_OPS.has(op)) return CONFIRM_TIMEOUT_MS;
-  if (NETWORK_OPS.has(op)) return NETWORK_TIMEOUT_MS;
-  return TIMEOUT_MS;
+  if (op === 'teamJoin') return hookWaitCap(JOIN_CONFIRM_TIMEOUT_MS);
+  if (CONFIRMED_OPS.has(op)) return hookWaitCap(CONFIRM_TIMEOUT_MS);
+  if (NETWORK_OPS.has(op)) return hookWaitCap(NETWORK_TIMEOUT_MS);
+  return hookWaitCap(TIMEOUT_MS);
 }
 
 function endpoint(opts) {
@@ -185,7 +192,7 @@ class VaultClient {
         socket.destroy();
         reject(err);
       };
-      const timer = setTimeout(() => fail(lockedError('timeout')), TIMEOUT_MS);
+      const timer = setTimeout(() => fail(lockedError('timeout')), hookWaitCap(TIMEOUT_MS));
       socket.on('error', (err) => { clearTimeout(timer); fail(lockedError(err.code, true)); });
       socket.on('close', () => {
         clearTimeout(timer);

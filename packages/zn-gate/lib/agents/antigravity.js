@@ -432,7 +432,7 @@ function commandFor(opts = {}) {
   // No path without spaces: nothing that Antigravity can start can be written, so refuse instead of writing a hook that never runs.
   const file = launcher.launcherFile(id, opts);
   if (!launcher.plainPathOk(file)) throw new Error(launcher.spaceMessage(file));
-  return launcher.launcherCommand(launcher.writeLauncher(id, node, runner, opts), 'PreToolUse', platform, { plain: true });
+  return launcher.launcherCommand(launcher.writeLauncher(id, node, runner, { ...opts, deadlineS: launcher.launcherDeadlineS(HOOK_TIMEOUT_S), deadlineSoft: true }), 'PreToolUse', platform, { plain: true });
 }
 
 function install(opts = {}) {

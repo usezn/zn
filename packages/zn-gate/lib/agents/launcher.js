@@ -98,6 +98,14 @@ function checkAgentId(agentId) {
   return agentId;
 }
 
+/**
+ * Seconds the launcher lets the hook run for an agent whose own hook timeout is `hostTimeoutS`: two seconds less, so the
+ * launcher answers (with the block of the event) before the agent gives up and, for most agents, runs the call.
+ */
+function launcherDeadlineS(hostTimeoutS) {
+  return Math.max(1, Math.floor(hostTimeoutS) - 2);
+}
+
 /** The text of the launcher script. */
 function unixScript(agentId, nodePath, runnerPath, opts = {}) {
   checkAgentId(agentId);
@@ -105,6 +113,9 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
   // not finished by then, so a hook stuck while it starts (before the runner arms its own watchdog) still blocks.
   const deadlineS = Number.isInteger(opts.deadlineS) && opts.deadlineS > 0 ? opts.deadlineS : 0;
   const run = (...w) => (deadlineS ? 'zn_run ' : '') + w.join(' ');
+  // Without a timer or private output a strict launcher (ZCode) does not run the hook and blocks; the others (the runner
+  // has its own deadline too) run it directly.
+  const noTimer = opts.deadlineSoft ? '"$@"; ZN_RC=$?' : 'ZN_RC=127';
   const reason = reasonText(agentId);
   const warn = warnText(agentId);
   const exitEvents = [...blockExit(agentId)];
@@ -120,6 +131,34 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
     'ZN_EVENT="${1:-}"',
     'ZN_NODE=' + shQuote(nodePath),
     'ZN_RUNNER=' + shQuote(runnerPath),
+    'ZN_RAN=',
+    'zn_block() {',
+    'case "$ZN_EVENT" in',
+    '  ' + exitEvents.join('|') + ')',
+    DENY_STDOUT[agentId]
+      ? '    ' + pick('printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify(DENY_STDOUT[agentId](crash))), 'printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify(DENY_STDOUT[agentId](reason))))
+      : '    ' + pick('printf ' + shQuote('%s\\n') + ' ' + shQuote(crash) + ' >&2', 'printf ' + shQuote('%s\\n') + ' ' + shQuote(reason) + ' >&2'),
+    DENY_STDOUT[agentId] ? '    exit 0 ;;' : '    exit 2 ;;',
+    ...(jsonEvents.length ? [
+      '  ' + jsonEvents.join('|') + ')',
+      '    ' + pick(deny(crash), deny(reason)),
+      '    exit 0 ;;',
+    ] : []),
+    '  *)',
+    WARN_STDERR.has(agentId)
+      ? '    ' + pick('printf ' + shQuote('%s\\n') + ' ' + shQuote(crashWarn) + ' >&2', 'printf ' + shQuote('%s\\n') + ' ' + shQuote(warn) + ' >&2')
+      : '    ' + pick('printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify({ systemMessage: crashWarn })), 'printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify({ systemMessage: warn }))),
+    '    exit 0 ;;',
+    'esac',
+    '}',
+    ...(deadlineS ? [
+      'zn_term() {',
+      '  [ -z "$ZN_P" ] || { kill -TERM -$ZN_P 2>/dev/null; kill -TERM $ZN_P 2>/dev/null; kill -KILL -$ZN_P 2>/dev/null; }',
+      '  [ -z "$ZN_T" ] || kill -TERM $ZN_T 2>/dev/null',
+      '  rm -f "$ZN_OF" "$ZN_EF"',
+      '  ZN_RAN=1; zn_block',
+      '}',
+    ] : []),
     '# Exit codes other than 0 (done) and 2 (blocked) are failures: they fall through to the block below.',
     ...(deadlineS ? [
       '# Runs a command with a deadline of ' + deadlineS + ' s: after that the command is killed (TERM, then KILL one second later; exit 143 or 137), which falls through to the block below.',
@@ -127,11 +166,12 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
       '# The hook runs in its own process group with its output in private files, so nothing it started can hold the pipes of the agent open or outlive the deadline: the launcher kills the whole group and prints the answer itself.',
       'zn_run() {',
       '  # No timer, no deadline, no private output: then the hook is not run at all and the launcher blocks.',
-      '  [ -x /bin/sleep ] || { ZN_RC=127; return 0; }',
-      '  ZN_OF=$(umask 077; mktemp "${TMPDIR:-/tmp}/zn-hook.XXXXXX" 2>/dev/null) || { ZN_RC=127; return 0; }',
-      '  ZN_EF=$(umask 077; mktemp "${TMPDIR:-/tmp}/zn-hook.XXXXXX" 2>/dev/null) || { rm -f "$ZN_OF"; ZN_RC=127; return 0; }',
+      '  [ -x /bin/sleep ] || { ' + noTimer + '; return 0; }',
+      '  ZN_OF=$(umask 077; mktemp "${TMPDIR:-/tmp}/zn-hook.XXXXXX" 2>/dev/null) || { ' + noTimer + '; return 0; }',
+      '  ZN_EF=$(umask 077; mktemp "${TMPDIR:-/tmp}/zn-hook.XXXXXX" 2>/dev/null) || { rm -f "$ZN_OF"; ' + noTimer + '; return 0; }',
       '  trap \'rm -f "$ZN_OF" "$ZN_EF"\' EXIT',
-      '  trap \'rm -f "$ZN_OF" "$ZN_EF"; exit 143\' HUP INT TERM',
+      '  # TERM, HUP or INT (the agent gives up on the hook): stop the hook and answer with the block of this event, not with silence.',
+      '  trap zn_term HUP INT TERM',
       '  # Own process group: setsid (Linux) or perl (macOS); with neither, only the hook itself is stopped at the deadline (its output is still private).',
       '  ZN_G=; for ZN_X in /usr/bin/setsid /bin/setsid; do [ -x "$ZN_X" ] && { ZN_G=1; ZN_GX=$ZN_X; break; }; done',
       '  [ -n "$ZN_G" ] || { [ -x /usr/bin/perl ] && { ZN_G=2; ZN_GX=/usr/bin/perl; }; }',
@@ -154,7 +194,6 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
       '  return 0',
       '}',
     ] : []),
-    'ZN_RAN=',
     'if [ -x "$ZN_NODE" ] && [ -f "$ZN_RUNNER" ]; then ZN_RAN=1; ' + (deadlineS ? run('"$ZN_NODE" "$ZN_RUNNER" ' + agentId) + '; ' : '"$ZN_NODE" "$ZN_RUNNER" ' + agentId + '; ZN_RC=$?; ') + 'case $ZN_RC in 0|2) exit $ZN_RC ;; esac; fi',
     '# Look up zn and node only in absolute PATH entries: a relative one depends on the folder the agent runs in.',
     'ZN_OLDIFS=$IFS; IFS=:; ZN_SAFE=',
@@ -163,23 +202,7 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
     'ZN_CMD=; [ -z "$ZN_SAFE" ] || ZN_CMD=$(PATH="$ZN_SAFE" command -v zn 2>/dev/null)',
     'case "$ZN_CMD" in /*) ;; *) ZN_CMD= ;; esac',
     'if [ -z "$ZN_RAN" ] && [ -n "$ZN_CMD" ] && PATH="$ZN_SAFE" command -v node >/dev/null 2>&1; then ZN_RAN=1; ' + (deadlineS ? run('"$ZN_CMD" hook ' + agentId) + '; ' : '"$ZN_CMD" hook ' + agentId + '; ZN_RC=$?; ') + 'case $ZN_RC in 0|2) exit $ZN_RC ;; esac; fi',
-    'case "$ZN_EVENT" in',
-    '  ' + exitEvents.join('|') + ')',
-    DENY_STDOUT[agentId]
-      ? '    ' + pick('printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify(DENY_STDOUT[agentId](crash))), 'printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify(DENY_STDOUT[agentId](reason))))
-      : '    ' + pick('printf ' + shQuote('%s\\n') + ' ' + shQuote(crash) + ' >&2', 'printf ' + shQuote('%s\\n') + ' ' + shQuote(reason) + ' >&2'),
-    DENY_STDOUT[agentId] ? '    exit 0 ;;' : '    exit 2 ;;',
-    ...(jsonEvents.length ? [
-      '  ' + jsonEvents.join('|') + ')',
-      '    ' + pick(deny(crash), deny(reason)),
-      '    exit 0 ;;',
-    ] : []),
-    '  *)',
-    WARN_STDERR.has(agentId)
-      ? '    ' + pick('printf ' + shQuote('%s\\n') + ' ' + shQuote(crashWarn) + ' >&2', 'printf ' + shQuote('%s\\n') + ' ' + shQuote(warn) + ' >&2')
-      : '    ' + pick('printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify({ systemMessage: crashWarn })), 'printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify({ systemMessage: warn }))),
-    '    exit 0 ;;',
-    'esac',
+    'zn_block',
     '',
   ].join('\n');
 }
@@ -193,7 +216,7 @@ function writeLauncher(agentId, nodePath, runnerPath, opts = {}) {
   else fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   // On Windows the script runs in Git Bash: write the paths with / so that `zn-gate check` can read them back.
   const platform = opts.platform || process.platform;
-  writeFileAtomic(file, unixScript(agentId, portablePath(nodePath, platform), portablePath(runnerPath, platform), { deadlineS: opts.deadlineS }), 0o755);
+  writeFileAtomic(file, unixScript(agentId, portablePath(nodePath, platform), portablePath(runnerPath, platform), { deadlineS: opts.deadlineS, deadlineSoft: opts.deadlineSoft }), 0o755);
   // Windows: the folder cannot be held open, so check the chain again after the write, now with the launcher file itself (owner
   // and access list, counting what it inherited from the folder); a swap in between removes the file.
   if (platform === 'win32' && (opts.env || process.env).ZN_HOOK_DIR) {
@@ -692,4 +715,4 @@ function windowsScriptCommand(script) {
   return 'powershell.exe -NoProfile -NonInteractive -EncodedCommand ' + Buffer.from(script, 'utf16le').toString('base64');
 }
 
-module.exports = { parseWinAcls, WIN_ACL_SCRIPT, WIN_PRIVATE_SCRIPT, projectShCommand, projectWindowsScript, isProjectGuard, isProjectWindowsScript, blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, spaceMessage, unsafeDirMessage, ensureSafeHookDir, readWinAcls, setWinPrivate, winProblem, windowsScript, BLOCK_EXIT, BLOCK_JSON };
+module.exports = { launcherDeadlineS, parseWinAcls, WIN_ACL_SCRIPT, WIN_PRIVATE_SCRIPT, projectShCommand, projectWindowsScript, isProjectGuard, isProjectWindowsScript, blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, spaceMessage, unsafeDirMessage, ensureSafeHookDir, readWinAcls, setWinPrivate, winProblem, windowsScript, BLOCK_EXIT, BLOCK_JSON };
