@@ -164,6 +164,85 @@ function launcherCommand(file, event, platform = process.platform, opts = {}) {
   return shQuote(portablePath(file, platform)) + ' ' + event;
 }
 
+/*
+ * The hook command of a project install for an agent that reads a deny JSON on stdout and runs the command split on
+ * spaces with no shell (Antigravity). A project file is shared through the repository, so it cannot name this
+ * machine's launcher: it names `zn` on the PATH, and a `zn` or `node` that is missing must still end in a deny with
+ * the repair step, where a plain `zn hook <agent>` would be exit 127 with no text from zn.
+ *
+ * The command is `sh -c <script>` with a script that holds no space, quote-free of anything the split could break:
+ * each space is the expansion ${IFS} (field splitting turns it back into spaces) and each space inside the JSON text
+ * is the printf escape \040. Only simple commands joined by ; && || are used, because a compound command
+ * (if, case) is told apart by real whitespace. Steps: the first `zn` and `node` found on the PATH (`zn` must be an
+ * absolute path: a relative PATH entry depends on the folder the agent runs in); run `zn hook <agent>`; its exit
+ * code 0 (an answer) or 2 (its own refusal, deny JSON already printed) ends it; anything else, or no zn or node, prints
+ * the deny JSON and exits 0, the way the user launcher does.
+ */
+const IFS = '${IFS}';
+const SH_SAFE_TEXT = /^[^'"\\%$\n\r]+$/;
+
+function projectTexts(agentId) {
+  const missing = 'zn: its hook cannot start because zn or Node.js was not found on the PATH, so this was blocked. Ask the user to run `npm install -g zn-gate` in their terminal.';
+  const crash = crashText(agentId);
+  for (const t of [missing, crash]) if (!SH_SAFE_TEXT.test(t)) throw new Error('zn: unsafe text in the project hook');
+  return { missing, crash };
+}
+
+/** The POSIX project hook command (see above), or throws for an agent without a deny JSON answer. */
+function projectShCommand(agentId) {
+  checkAgentId(agentId);
+  if (!DENY_STDOUT[agentId]) throw new Error('zn: no project guard for ' + agentId);
+  const t = projectTexts(agentId);
+  const sp = (...w) => w.join(IFS);
+  const say = (r) => sp("printf", "'" + JSON.stringify(DENY_STDOUT[agentId](r)).replace(/ /g, '\\040') + "\\n'");
+  const test = (...w) => '[' + IFS + w.join(IFS) + IFS + ']';
+  const script = [
+    ':',
+    'Z=$(' + sp('command', '-v', 'zn') + ')',
+    'N=$(' + sp('command', '-v', 'node') + ')',
+    'R=missing',
+    test('-n', '"$N"') + '&&' + test('"${Z#/}"', '!=', '"$Z"') + '&&R=ran&&"$Z"' + IFS + 'hook' + IFS + agentId,
+    'C=$?',
+    test('"$R"', '=', 'ran') + '&&' + test('"$C"', '=', '0') + '&&' + sp('exit', '0'),
+    test('"$R"', '=', 'ran') + '&&' + test('"$C"', '=', '2') + '&&' + sp('exit', '2'),
+    test('"$R"', '=', 'ran') + '&&' + say(t.crash) + '||' + say(t.missing),
+    sp('exit', '0'),
+  ].join(';');
+  if (/\s/.test(script)) throw new Error('zn: the project hook script holds a space');
+  return 'sh -c ' + script;
+}
+
+/** The PowerShell text of the same project hook (for windowsScriptCommand). Ends with the comment that isOurs() reads. */
+function projectWindowsScript(agentId) {
+  checkAgentId(agentId);
+  if (!DENY_STDOUT[agentId]) throw new Error('zn: no project guard for ' + agentId);
+  const t = projectTexts(agentId);
+  const say = (r) => "[Console]::Out.WriteLine('" + JSON.stringify(DENY_STDOUT[agentId](r)) + "')";
+  const leave = 'if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 2) { exit 0 }';
+  return "$ProgressPreference='SilentlyContinue'; $zt=0; " +
+    "if ((Get-Command zn.cmd -CommandType Application -ErrorAction SilentlyContinue) -and (Get-Command node -ErrorAction SilentlyContinue)) { $zt=1; & zn.cmd hook " + agentId + '; ' + leave + ' }; ' +
+    'if ($zt -eq 1) { ' + say(t.crash) + ' } else { ' + say(t.missing) + ' }; exit 0 # zn hook ' + agentId;
+}
+
+/** Whether a command is the POSIX project hook of this agent as written by projectShCommand. */
+function isProjectGuard(command, agentId) {
+  try {
+    if (typeof command !== 'string') return false;
+    if (command === projectShCommand(agentId)) return true;
+    // A later zn-gate may word the deny differently: recognize the guard by its structure (start and the hook call).
+    return command.startsWith('sh -c :;Z=$(' + ['command', '-v', 'zn'].join(IFS) + ')') && command.includes(IFS + 'hook' + IFS + agentId + ';');
+  } catch (_) { return false; }
+}
+
+/** Whether a command is a Windows project hook script of this agent (the readable PowerShell text). */
+function isProjectWindowsScript(script, agentId) {
+  try {
+    if (typeof script !== 'string') return false;
+    if (script === projectWindowsScript(agentId)) return true;
+    return script.startsWith("$ProgressPreference='SilentlyContinue'; $zt=0; ") && script.includes('& zn.cmd hook ' + agentId + ';') && script.endsWith('# zn hook ' + agentId);
+  } catch (_) { return false; }
+}
+
 /** Whether a path can be written into a command with no quotes: only letters, digits and a few punctuation marks. */
 function plainPathOk(file) {
   return /^[A-Za-z0-9_\/.@+=,:~-]+$/.test(String(file));
@@ -218,4 +297,4 @@ function windowsScriptCommand(script) {
   return 'powershell.exe -NoProfile -NonInteractive -EncodedCommand ' + Buffer.from(script, 'utf16le').toString('base64');
 }
 
-module.exports = { blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, windowsScript, BLOCK_EXIT, BLOCK_JSON };
+module.exports = { projectShCommand, projectWindowsScript, isProjectGuard, isProjectWindowsScript, blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, windowsScript, BLOCK_EXIT, BLOCK_JSON };

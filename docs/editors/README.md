@@ -11,7 +11,7 @@ zn-gate protects most where an agent lets it hook into its own tools: there it c
 | OpenCode | `zn hooks install opencode` | Yes | Yes | Yes | Yes | Yes, end to end |
 | [Cursor](cursor.md) | `zn hooks install cursor` | Yes | **No** (Cursor does not allow it) | Yes | Yes | Formats checked; no end-to-end run |
 | [VS Code (GitHub Copilot)](vscode.md) | MCP server | No | No | Only servers you wrap | No | Not yet verified |
-| [Google Antigravity](antigravity.md) (experimental) | `zn hooks install antigravity` | Yes | **No** (Antigravity hooks cannot rewrite output) | Only servers you wrap | No | Formats checked; no end-to-end run |
+| [Google Antigravity](antigravity.md) | `zn hooks install antigravity` | Yes | **No** (Antigravity hooks cannot rewrite output) | Only servers you wrap | No | Formats checked; hand-tested on Windows; no automated end-to-end run |
 | [Windsurf (Devin Desktop)](windsurf.md) | MCP server | No | No | Only servers you wrap | No | Not yet verified |
 | [Cline](cline.md) | MCP server | No | No | Only servers you wrap | No | Not yet verified |
 | [Zed](zed.md) | MCP server | No | No | Only servers you wrap | No | Not yet verified |
@@ -20,4 +20,4 @@ zn-gate protects most where an agent lets it hook into its own tools: there it c
 
 "Only servers you wrap" means that the results of the MCP servers you start through `zn-gate shield` are checked; each page shows how. The hooks need zn-gate 1.5 or later from npm (`npm install -g zn-gate`). Per-agent details for the hooks: [compat.md](../compat.md).
 
-VS Code and Windsurf have their own agent hooks, but zn-gate does not install hooks for them yet. Antigravity's hooks are experimental: see [its page](antigravity.md) for what they cover and what they do not.
+VS Code and Windsurf have their own agent hooks, but zn-gate does not install hooks for them yet. For what Antigravity's hooks cover and what they do not, see [its page](antigravity.md).

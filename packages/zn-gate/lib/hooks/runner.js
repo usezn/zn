@@ -1566,6 +1566,8 @@ function oversizeEvent(agentId, adapter, text) {
 function refuseInput(agentId, why) {
   if (failModeOf({}) === 'open') {
     process.stderr.write('zn hook: ' + why + '; passed through (hooks.whenUnavailable is "allow")\n');
+    // Antigravity denies the call when the hook prints nothing, so passing it through takes an explicit answer.
+    if (agentId === 'antigravity') process.stdout.write(JSON.stringify({ decision: 'allow' }));
     return;
   }
   // Claude Code and Codex show this stderr to the model, so it never says how to
@@ -1631,6 +1633,47 @@ function armCodexFailClosed(agentId, eventName) {
   };
 }
 
+/*
+ * Antigravity denies a tool call, with an empty reason, when its PreToolUse hook prints nothing, so a check that
+ * hangs or an error that escapes would leave the call with no word from zn (what Antigravity does when a hook
+ * runs past its timeout is not documented). While node is running, zn answers for itself first: a watchdog
+ * fires a few seconds before the hook's timeout, and an uncaught error or unhandled rejection does the same.
+ * Both print the deny decision (JSON only on stdout) and exit 2, like every other refusal of this runner.
+ */
+const ANTIGRAVITY_WATCHDOG_MARGIN_S = 5;
+const ANTIGRAVITY_FAIL_REASON = 'zn: the check could not finish in time or failed, so this call was blocked. ' +
+  'Try again; if it keeps happening, ask the user to run zn-gate check in their terminal.';
+
+function antigravityDeadlineMs() {
+  let ms = (require('../agents/antigravity').HOOK_TIMEOUT_S - ANTIGRAVITY_WATCHDOG_MARGIN_S) * 1000;
+  if (process.env.ZN_TEST_HOOK_FAULTS === '1') {
+    const t = Number(process.env.ZN_TEST_HOOK_DEADLINE_MS);
+    if (t > 0 && t < ms) ms = t; // tests may only shorten it
+  }
+  return ms;
+}
+
+// Returns a function that disarms the watchdog, or null when the event is not a PreToolUse call.
+function armAntigravityFailClosed(agentId, raw) {
+  if (agentId !== 'antigravity' || !raw || typeof raw !== 'object' || !raw.toolCall) return null;
+  let done = false;
+  const failNow = () => {
+    if (done) return;
+    done = true;
+    try { fs.writeSync(1, JSON.stringify({ decision: 'deny', reason: ANTIGRAVITY_FAIL_REASON })); } catch (_) { /* nothing more to do */ }
+    try { fs.writeSync(2, 'zn hook: ' + ANTIGRAVITY_FAIL_REASON + '\n'); } catch (_) { /* nothing more to do */ }
+    process.exit(2);
+  };
+  const timer = setTimeout(failNow, antigravityDeadlineMs());
+  process.on('uncaughtException', failNow);
+  process.on('unhandledRejection', failNow);
+  return () => {
+    clearTimeout(timer);
+    process.removeListener('uncaughtException', failNow);
+    process.removeListener('unhandledRejection', failNow);
+  };
+}
+
 async function main(args, readText = readStdin) {
   const state = { stopEvent: false };
   try {
@@ -1687,7 +1730,7 @@ async function handleEvent(args, state, readText) {
     return refuseInput(agentId, 'the event on stdin is not a JSON object');
   }
   state.stopEvent = raw.hook_event_name === 'Stop';
-  const disarm = armCodexFailClosed(agentId, raw.hook_event_name);
+  const disarm = armCodexFailClosed(agentId, raw.hook_event_name) || armAntigravityFailClosed(agentId, raw);
   try {
     const res = await handle(adapter, raw);
     if (res.stderr) process.stderr.write(res.stderr + ' (fail-open: event passed through)\n');
@@ -1698,7 +1741,7 @@ async function handleEvent(args, state, readText) {
       else process.stdout.write(JSON.stringify(res.output));
     }
     // zn itself failed: Codex also gets its documented block code, with the reason on stderr.
-    if (disarm && res.decision && res.decision.failClosed) {
+    if (disarm && agentId === 'codex' && res.decision && res.decision.failClosed) {
       process.stderr.write('zn hook: ' + (res.decision.message || CODEX_FAIL_REASON) + '\n');
       process.exitCode = 2;
     }
