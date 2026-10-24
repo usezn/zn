@@ -77,15 +77,15 @@ function render(req) {
 
 /* ------------------------------ none ------------------------------ */
 
-const NO_CHANNEL = 'zn could not ask you outside the agent: no confirmation channel. ' +
-  'Start the vault with `zn unlock --foreground` in a terminal of its own (it asks there), ' +
+const noChannelText = () => 'zn could not ask you outside the agent: no confirmation channel. ' +
+  'Start the vault with `' + require('../zn-command').znCommand('unlock --foreground') + '` in a terminal of its own (it asks there), ' +
   'or unlock it from a desktop session so zn can show a dialog.';
 
 function noneChannel() {
   return {
     kind: 'none',
     async confirm() {
-      const err = new Error(NO_CHANNEL);
+      const err = new Error(noChannelText());
       err.code = 'ZN_POLICY_DENIED';
       err.noChannel = true;
       throw err;
@@ -150,7 +150,7 @@ function exists(p) {
 
 // Popup type: 4 Yes/No + 48 warning icon + 256 second button (No) default + 4096 topmost.
 const WIN_SCRIPT = [
-  '$s = New-Object -ComObject WScript.Shell',
+  "$s = [System.Activator]::CreateInstance([System.Type]::GetTypeFromProgID('WScript.Shell'))",
   '$r = $s.Popup($env:ZN_CONFIRM_TEXT, [int]$env:ZN_CONFIRM_SECONDS, $env:ZN_CONFIRM_TITLE, 4 + 48 + 256 + 4096)',
   'if ($r -eq 6) { exit 0 } else { exit 1 }',
 ].join('\r\n');
@@ -183,7 +183,7 @@ function guiCommand(req, opts = {}) {
     return {
       file: ps,
       args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded],
-      env: { ZN_CONFIRM_TEXT: text, ZN_CONFIRM_TITLE: title, ZN_CONFIRM_SECONDS: String(seconds) },
+      env: { PSModulePath: require('../exe').systemPsModulePath(ps), ZN_CONFIRM_TEXT: text, ZN_CONFIRM_TITLE: title, ZN_CONFIRM_SECONDS: String(seconds) },
     };
   }
   if (platform === 'linux' || platform === 'freebsd' || platform === 'openbsd') {
@@ -219,7 +219,7 @@ function guiChannel(opts = {}) {
       let child;
       try {
         child = spawnFn(cmd.file, cmd.args, {
-          env: Object.assign({}, env, cmd.env),
+          env: cmd.env && cmd.env.PSModulePath ? require('../exe').psEnv(cmd.file, env, cmd.env) : Object.assign({}, env, cmd.env),
           stdio: 'ignore',
           windowsHide: false,
         });
@@ -264,6 +264,5 @@ module.exports = {
   render,
   field,
   INVISIBLE,
-  NO_CHANNEL,
   DEFAULT_TIMEOUT_MS,
 };

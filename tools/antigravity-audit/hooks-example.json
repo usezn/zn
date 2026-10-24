@@ -1,0 +1,33 @@
+{
+  "zn-audit-shape": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "node \"C:/zn-audit/shape-audit-hook.js\" PreToolUse", "timeout": 10 }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "node \"C:/zn-audit/shape-audit-hook.js\" PostToolUse", "timeout": 10 }
+        ]
+      }
+    ],
+    "PreInvocation": [
+      { "type": "command", "command": "node \"C:/zn-audit/shape-audit-hook.js\" PreInvocation", "timeout": 10 }
+    ]
+  },
+  "zn-audit-probe": {
+    "PreToolUse": [
+      {
+        "matcher": "write_to_file",
+        "hooks": [
+          { "type": "command", "command": "node \"C:/zn-audit/shape-audit-hook.js\" PreToolUse --probe deny", "timeout": 5 }
+        ]
+      }
+    ]
+  }
+}

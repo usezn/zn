@@ -25,6 +25,11 @@ on:
 
 permissions: {}
 
+env:
+  # gh sends usage telemetry to cafe.github.com, which the egress block of these jobs does not allow;
+  # it is not needed, so it is turned off instead of being allowed.
+  GH_TELEMETRY: "false"
+
 concurrency:
   group: plugin-repository
   cancel-in-progress: false
@@ -41,11 +46,25 @@ jobs:
       contents: read
       attestations: read
     steps:
-      - name: Harden the runner (egress audit)
+      # Egress is blocked in this job (it holds the plugin repository app key).
+      # The list comes from the audit-mode runs of this job (runs 39017124270, 39121981204 and 39289443428,
+      # 2026-10-17/19): git clone and push (github.com), api.github.com (app token, gh pr), registry.npmjs.org
+      # (npm pack), and gh attestation verify (tuf-repo.github.com, tuf-repo-cdn.sigstore.dev and the TUF mirror
+      # tmaproduction.blob.core.windows.net). results-receiver is the runner's own log endpoint. A new destination
+      # fails the run on purpose: add it here after reviewing it.
+      - name: Harden the runner (egress block)
         if: runner.os == 'Linux'
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
-          egress-policy: audit
+          egress-policy: block
+          allowed-endpoints: >-
+            github.com:443
+            api.github.com:443
+            registry.npmjs.org:443
+            tuf-repo.github.com:443
+            tuf-repo-cdn.sigstore.dev:443
+            tmaproduction.blob.core.windows.net:443
+            results-receiver.actions.githubusercontent.com:443
       - name: Check out this repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -56,6 +75,8 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.x
+          # Nothing this job builds may be read from or written to the Actions cache.
+          package-manager-cache: false
 
       - name: Find the commit that pinned the plugin
         id: version
@@ -120,7 +141,7 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          for i in 1 2 3 4 5 6 7 8 9 10; do
+          for _ in 1 2 3 4 5 6 7 8 9 10; do
             if npm pack "zn-gate@$VERSION" --silent --ignore-scripts; then exit 0; fi
             sleep 30
           done
@@ -169,7 +190,7 @@ jobs:
       - name: Create a token for the plugin repository
         if: steps.plugin.outputs.skip != 'true'
         id: token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           app-id: ${{ vars.PLUGIN_REPO_APP_ID }}
           private-key: ${{ secrets.PLUGIN_REPO_APP_KEY }}

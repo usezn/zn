@@ -13,6 +13,28 @@ updates:
         patterns: ["*"]
         update-types: [minor, patch]
 
+  - package-ecosystem: cargo
+    directory: "/fuzz"
+    target-branch: next
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
+    groups:
+      cargo-fuzz:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: "/.github/markdownlint"
+    target-branch: next
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
+    groups:
+      npm:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
   - package-ecosystem: npm
     directory: "/packages/zn-gate"
     target-branch: next
@@ -21,17 +43,6 @@ updates:
     open-pull-requests-limit: 5
     groups:
       npm:
-        patterns: ["*"]
-        update-types: [minor, patch]
-
-  - package-ecosystem: pip
-    directory: "/packages/zn-gate-py"
-    target-branch: next
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
-    groups:
-      pip:
         patterns: ["*"]
         update-types: [minor, patch]
 
@@ -51,6 +62,24 @@ updates:
         patterns: ["*"]
         update-types: [minor, patch]
 
+  - package-ecosystem: npm
+    directory: "/.github/sbom-tools"
+    target-branch: next
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
+
+  - package-ecosystem: pip
+    directory: "/packages/zn-gate-py"
+    target-branch: next
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      pip:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
   - package-ecosystem: pip
     directory: "/.github"
     target-branch: next
@@ -64,12 +93,16 @@ updates:
         patterns: ["*"]
         update-types: [minor, patch]
 
-  - package-ecosystem: docker
-    directory: "/"
+  - package-ecosystem: pip
+    directory: "/.github/workflow-lint"
     target-branch: next
     schedule:
       interval: weekly
     open-pull-requests-limit: 2
+    groups:
+      pip:
+        patterns: ["*"]
+        update-types: [minor, patch]
 
   - package-ecosystem: github-actions
     directory: "/"
@@ -78,4 +111,21 @@ updates:
       interval: weekly
     groups:
       github-actions:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: "/"
+    target-branch: next
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
+
+  - package-ecosystem: npm
+    directory: "/.github/eslint"
+    target-branch: next
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
+    groups:
+      lint-tooling:
         patterns: ["*"]

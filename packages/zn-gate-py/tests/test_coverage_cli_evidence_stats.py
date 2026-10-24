@@ -40,18 +40,18 @@ def _scan(path, fmt="text", **kw):
 # ---------------------------------------------------------------- scan: inputs
 
 def test_scan_missing_path(tmp_path, capsys):
-    assert _scan(tmp_path / "nope") == 2
+    assert _scan(tmp_path / "nope") == 1
     assert "target path not found" in capsys.readouterr().err
 
 
 def test_scan_empty_directory(tmp_path, capsys):
-    assert _scan(tmp_path) == 0
+    assert _scan(tmp_path) == 3
     out = capsys.readouterr().out
-    assert "Scanned 0 files" in out and "clean" in out
+    assert "Scanned 0 files" in out and "No files were scanned in" in out and "clean" not in out
 
 
 def test_scan_empty_directory_json(tmp_path, capsys):
-    assert _scan(tmp_path, "json") == 0
+    assert _scan(tmp_path, "json") == 3
     data = json.loads(capsys.readouterr().out)
     assert data["total_files"] == 0 and data["threats"] == [] and data["skipped"] == []
 
@@ -64,7 +64,7 @@ def test_scan_empty_file_is_clean(tmp_path, capsys):
 
 def test_scan_binary_key_file_is_skipped(tmp_path, capsys):
     (tmp_path / "doc.key").write_bytes(b"\x00\x01\x02binary" * 10)
-    assert _scan(tmp_path, "json") == 0
+    assert _scan(tmp_path, "json") == 3
     data = json.loads(capsys.readouterr().out)
     assert data["total_files"] == 0
     assert data["skipped"][0]["reason"] == "binary .key file, not a key"
@@ -79,7 +79,7 @@ def test_scan_utf16_key_file_is_not_treated_as_binary(tmp_path):
 
 def test_scan_file_of_two_mib_is_skipped(tmp_path, capsys):
     (tmp_path / "big.txt").write_bytes(b"a" * cli._MAX_SCAN_BYTES)
-    assert _scan(tmp_path, "json") == 0
+    assert _scan(tmp_path, "json") == 3
     data = json.loads(capsys.readouterr().out)
     assert data["skipped"] == [{"file": str(tmp_path / "big.txt"), "reason": "2 MiB or larger"}]
     assert cli._scan_file(tmp_path / "big.txt") == []
@@ -112,7 +112,7 @@ def test_skip_reason_when_the_file_cannot_be_opened(tmp_path):
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs POSIX named pipes")
 def test_scan_named_pipe_is_not_read(tmp_path, capsys):
     os.mkfifo(tmp_path / "pipe.txt")
-    assert _scan(tmp_path, "json") == 0
+    assert _scan(tmp_path, "json") == 3
     data = json.loads(capsys.readouterr().out)
     assert data["skipped"][0]["reason"] == "not a regular file"
 
@@ -120,7 +120,7 @@ def test_scan_named_pipe_is_not_read(tmp_path, capsys):
 def test_scan_more_than_twenty_skipped_files(tmp_path, capsys):
     for i in range(22):
         (tmp_path / f"b{i:02d}.key").write_bytes(b"\x00\x00")
-    assert _scan(tmp_path) == 0
+    assert _scan(tmp_path) == 3
     out = capsys.readouterr().out
     assert "Not scanned (22):" in out and "... and 2 more" in out
 
@@ -172,7 +172,7 @@ def test_scan_exclude_and_skip_dirs(tmp_path, capsys):
 def test_scan_include_extensions(tmp_path, capsys):
     (tmp_path / "a.custom").write_text("KEY=" + FAKE_AWS)
     (tmp_path / "b.XML").write_text("KEY=" + FAKE_AWS)
-    assert _scan(tmp_path, "json") == 0  # not scanned by default
+    assert _scan(tmp_path, "json") == 3  # not scanned by default: nothing was read
     capsys.readouterr()
     assert _scan(tmp_path, "json", include="custom, .xml, ,") == 1
     assert json.loads(capsys.readouterr().out)["total_files"] == 2

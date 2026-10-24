@@ -19,11 +19,11 @@ Hook scripts run on your machine: installing the plugin on the web does not inst
 
 ## Requirements
 
-- Node.js 20.12 or later, on your `PATH` (`node --version`). The native Claude
+- Node.js 20.19 or later, on your `PATH` (`node --version`). The native Claude
   Code installer does not include Node.js. Without it, Claude Code reports at
-  session start that `node` was not found, prompts are blocked (Claude Code
-  2.1.295 and later; earlier versions let them through unchecked), and tool
-  calls run unchecked. Install Node.js from https://nodejs.org and restart
+  session start that `node` was not found, and prompts, tool calls and typed
+  commands are blocked (Claude Code 2.1.295 and later; earlier versions let
+  them through unchecked). Install Node.js from https://nodejs.org and restart
   Claude Code (the terminal or the desktop app).
 - Git (on Windows, Git for Windows), to add the marketplace from GitHub.
   Without it, `claude plugin marketplace add` fails because Git is not found.
@@ -117,8 +117,10 @@ It is not a sandbox:
   marks as experimental. If a Node.js version lacks it or changes it, the
   launcher refuses to run (hooks exit 2, the MCP servers do not start).
 - **Timeouts pass in Claude Code.** A hook that does not answer in 15 s is
-  treated as a non-blocking error, and the call goes ahead. The Cursor hooks
-  are marked `failClosed`, so Cursor blocks the call instead.
+  treated as a non-blocking error, and the call goes ahead. In Cursor, only the
+  file-read and prompt hooks are marked `failClosed`, so only those are blocked
+  on a timeout; a shell command or tool call goes ahead, as zn gives no answer
+  there when it has no objection and Cursor would block every call otherwise.
 - **Refused output.** When the launcher refuses a tool-output event (the
   package was changed, zn-gate failed), it replaces the output with
   `[zn plugin: output withheld because zn could not check it]` in Claude Code,
@@ -164,9 +166,15 @@ to `api.usezn.com` and counts against your plan's quota. `check_tool_call`,
 `check_tool_result`, the `secrets` server and the hooks never send anything,
 with or without a key.
 
-Claude Code asks for the key when you enable the plugin. You can change or
-remove it later with `/plugin` (Installed, zn-gate, Configure options); it
-does not appear in `/config`. The key is marked sensitive, so Claude Code
+This setting is optional, and the plugin works fully without it. After
+`claude plugin install zn-gate@usezn`, Claude Code prints "1 userConfig option
+not yet set, run /plugin configure". That line comes from Claude Code, which
+prints it for every plugin option that has no value yet; it adds "(1 required)"
+only for a required option, and this one is not. You can ignore it. To add the
+key later, run `/plugin configure zn-gate@usezn` in Claude Code, or pass
+`--config api_key=YOUR_KEY` when you install. You can also change or remove it
+with `/plugin` (Installed, zn-gate, Configure options); it does not appear in
+`/config`. The key is marked sensitive, so Claude Code
 stores it with its own credentials (in the macOS Keychain, or in Claude Code's
 credentials file on other systems), not in `settings.json`. Leave it empty to
 keep everything on your machine.

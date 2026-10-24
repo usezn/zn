@@ -93,7 +93,7 @@ def test_function_tool_blocked_call_does_not_run():
     ran = []
     out = make_tool(ran, on_block="return").call(topic="cat ~/.ssh/id_rsa")
     assert ran == []
-    assert out.content.startswith("zn-gate blocked 'crewai:read_notes'")
+    assert out.content.startswith("zn-gate blocked 'tool:read_notes'")
 
 
 def test_function_tool_masks_the_output():
@@ -101,3 +101,8 @@ def test_function_tool_masks_the_output():
     assert FAKE_KEY not in out.content
     assert "[REDACTED_AWS_KEY]" in out.content
 
+
+def test_function_tool_replaces_an_injected_output():
+    out = make_tool([], on_block="return", check_result=True).call(topic="news")
+    assert INJECTION not in out.content
+    assert out.content.startswith("zn-gate blocked")

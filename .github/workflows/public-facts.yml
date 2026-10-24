@@ -2,11 +2,17 @@ name: Public facts
 
 # The version, agents with hooks, license and install command must read the same in every manifest and
 # doc of this repository (.github/public-facts.json). A release changes them in the same pull request.
+# Pushes always run it. Pull requests and the merge queue always run it too: "Public facts" is a required check,
+# and a workflow skipped by a paths filter leaves a required check pending forever. The job takes under a
+# minute, so there is no paths filter and no skip step.
 on:
   push:
-    branches: [ main, next ]
+    branches: [ main, next, 'release/**' ]
   pull_request:
     branches: [ main, next, 'release/**' ]
+  # The merge queue on next runs the required checks again on the queued commit.
+  merge_group:
+    types: [ checks_requested ]
 
 permissions:
   contents: read
@@ -25,17 +31,19 @@ jobs:
     steps:
       - name: Harden the runner (egress audit)
         if: runner.os == 'Linux'
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
+          package-manager-cache: false
           node-version: 22
       - name: Test the checker
-        run: node --test .github/scripts/check-public-facts.test.mjs
+        run: node --test .github/scripts/check-public-facts.test.mjs .github/scripts/check-rule-versions.test.mjs .github/scripts/release-required-checks.test.mjs .github/scripts/npm-dist-tag-plan.test.mjs
       - name: Check the public facts
         env:
           # A release pull request (from or into a release/* branch of this repository) is opened
@@ -46,3 +54,10 @@ jobs:
           # pin commit lands after npm publishes the release.
           PLUGIN_PIN_PENDING: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (startsWith(github.head_ref, 'release/') || startsWith(github.base_ref, 'release/')) }}
         run: node .github/scripts/check-public-facts.mjs
+      - name: Check the rule versions against the base branch
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git fetch --no-tags origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          node .github/scripts/check-rule-versions.mjs "origin/${BASE_REF}"

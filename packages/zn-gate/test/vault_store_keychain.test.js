@@ -195,7 +195,7 @@ test('readEncrypted: wrong key, garbage, truncation and non-JSON content fail cl
     await assert.rejects(() => store.readEncrypted(file, a.identity), (e) => {
       assert.equal(e.code, 'ZN_LOCKED');
       assert.match(e.message, /two\.age/);
-      assert.match(e.message, /zn will not read or replace it/);
+      assert.match(e.message, /will not start a new vault over it/);
       assert.doesNotMatch(e.message, /fake-value-for-tests|AGE-SECRET-KEY/);
       return true;
     });
@@ -296,7 +296,7 @@ test('an invalid service name or keychain path is refused before any helper runs
 test('a native helper that cannot start is reported as locked, and the blocked launcher saw the call', (t) => {
   withEnv(t, { ZN_KEYCHAIN_SERVICE: 'zn-vault-test', ZN_KEYCHAIN_PATH: undefined });
   const before = helperCalls.length;
-  assert.throws(() => keychain._native.macos.load(), (e) => e.code === 'ZN_LOCKED' && /failed to start/.test(e.message));
+  assert.throws(() => keychain._native.macos.load(), (e) => e.code === 'ZN_LOCKED' && /could not start the system program/.test(e.message));
   assert.equal(helperCalls.length, before + 1);
 });
 
@@ -364,12 +364,12 @@ test('loadIdentity: not initialised, missing or wrong passphrase, missing identi
   await assert.rejects(() => keychain.loadIdentity({ home: v.home, passphrase: PASS }), (e) => e.code === 'ZN_NOT_FOUND' && /identity\.age missing/.test(e.message));
 });
 
-test('loadIdentity: a truncated or garbage identity.age is reported as wrong passphrase or corruption', async (t) => {
+test('loadIdentity: a truncated or garbage identity.age is reported as a damaged file', async (t) => {
   const { home } = await newVault(t);
   const f = store.paths({ home }).identityFile;
   const good = fs.readFileSync(f);
   fs.writeFileSync(f, good.subarray(0, good.length - 10));
-  await assert.rejects(() => keychain.loadIdentity({ home, passphrase: PASS }), (e) => e.code === 'ZN_LOCKED' && /corrupted/.test(e.message));
+  await assert.rejects(() => keychain.loadIdentity({ home, passphrase: PASS }), (e) => e.code === 'ZN_LOCKED' && /looks damaged/.test(e.message));
   fs.writeFileSync(f, 'garbage');
   await assert.rejects(() => keychain.loadIdentity({ home, passphrase: PASS }), (e) => e.code === 'ZN_LOCKED');
 });
@@ -435,7 +435,7 @@ test('native backend (stub): a keychain that drops the item fails before the vau
   stubNative(t, 'macos', { store() { /* silently drops it */ }, load() { return null; }, remove() { return false; } });
   const home = tmpHome(t);
   await assert.rejects(() => keychain.initIdentity({ home, backend: 'macos' }),
-    (e) => e.code === 'ZN_LOCKED' && /did not return the stored identity/.test(e.message));
+    (e) => e.code === 'ZN_LOCKED' && /could not save the vault key in the macOS Keychain/.test(e.message));
   assert.equal(keychain.readMeta({ home }), null);
 });
 

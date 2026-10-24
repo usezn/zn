@@ -11,8 +11,7 @@
     "beforeShellExecution": [
       {
         "command": "node ./scripts/zn-launch.js hook cursor",
-        "timeout": 30,
-        "failClosed": true
+        "timeout": 30
       }
     ],
     "beforeSubmitPrompt": [
@@ -25,16 +24,14 @@
     "postToolUse": [
       {
         "command": "node ./scripts/zn-launch.js hook cursor",
-        "timeout": 30,
-        "failClosed": true
+        "timeout": 30
       }
     ],
     "preToolUse": [
       {
         "command": "node ./scripts/zn-launch.js hook cursor",
         "timeout": 30,
-        "matcher": "Grep|Write|Delete",
-        "failClosed": true
+        "matcher": "Grep|Write|Delete"
       }
     ]
   }

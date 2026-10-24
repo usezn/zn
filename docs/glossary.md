@@ -2,7 +2,7 @@
 
 Short meanings of words used in the zn-gate docs.
 
-**Coding agent**: a program such as Claude Code, Codex CLI, Cursor or OpenCode that reads your files and runs commands for you.
+**Coding agent**: a program such as Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app that reads your files and runs commands for you.
 
 **Terminal**: the window where you type commands. Run zn-gate's setup commands in your own terminal, not through an agent.
 
@@ -14,7 +14,7 @@ Short meanings of words used in the zn-gate docs.
 
 **Vault**: an encrypted store on your machine where zn-gate keeps the real values of your secrets.
 
-**Marker**: a stand-in for a secret, such as `__ZN_STRIPE_KEY__`. Your agent sees the marker. The real value stays in the vault.
+**Marker**: a stand-in for a secret, such as `__ZN_STRIPE_KEY__`. Your agent sees the marker. The real value stays in the vault. A marker is filled in for web requests and files, never in a command's arguments.
 
 **Redact**: replace a secret in some text with a marker or a label, so nobody who reads the text sees the value.
 
@@ -32,7 +32,7 @@ Short meanings of words used in the zn-gate docs.
 
 **Keychain**: the password store of your operating system.
 
-**Cloud check**: an optional second check, by the Galvanize 2 classifier at usezn.com, of the text sent to zn-gate's `analyze_prompt` tool. It is off until you turn it on.
+**Cloud check**: an optional second check, by the Galvanize 2 classifier at usezn.com, of the text sent to zn-gate's `analyze_prompt` tool. It is off until you turn it on. Its figures (recall, false positives) describe that classifier, not zn-gate's local rules.
 
 **Classifier**: a model that sorts text into groups, such as safe or an injection attempt.
 

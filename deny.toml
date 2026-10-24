@@ -1,0 +1,50 @@
+# cargo-deny configuration: licenses, bans and sources only.
+# Known vulnerabilities are already checked by `cargo audit` in rust.yml,
+# so the advisories section is left out on purpose.
+#
+# The allowed licenses are the permissive ones the project accepts. They are
+# the same as .github/license-allowlist.txt (derived from
+# packages/zn-gate/THIRD_PARTY_NOTICES.md), plus a few permissive licenses
+# that only Rust crates use (Unicode-3.0, Zlib, Apache-2.0 WITH
+# LLVM-exception). Anything else (for example MPL-2.0 or CC0-1.0) is
+# reported as a finding for a person to review.
+
+[graph]
+all-features = false
+
+[licenses]
+confidence-threshold = 0.9
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+]
+
+[bans]
+# Two versions of one crate are common in a large tree: report, do not fail.
+multiple-versions = "warn"
+wildcards = "warn"
+highlight = "all"
+# getrandom is pulled in three versions that cannot be unified with a
+# compatible `cargo update`: every parent is already on its latest release.
+#   0.2.17 <- rand_core 0.6 (rand 0.8: tower_governor, tungstenite 0.24)
+#   0.3.4  <- rand_core 0.9 (rand 0.9: candle, opentelemetry_sdk, tokenizers),
+#             ahash 0.8.12, tempfile 3.27.0, tokenizers 0.22.2
+#   0.4.3  <- RustCrypto 2026 crates (crypto-common 0.2, password-hash, phc),
+#             rand 0.10, uuid 1.28
+# Unifying them needs a major upgrade of candle/tokenizers/tower_governor
+# upstream, so the two older ones are skipped here.
+skip = [
+    { crate = "getrandom@0.2.17", reason = "pulled by rand_core 0.6 (rand 0.8); parents have no release on getrandom 0.4" },
+    { crate = "getrandom@0.3.4", reason = "pulled by rand_core 0.9, ahash and tempfile, all at their latest release; needs upstream bumps" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

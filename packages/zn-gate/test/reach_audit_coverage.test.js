@@ -155,7 +155,7 @@ test('audit: an unreadable config file is reported as skipped, not as an error',
   const dir = build(t, { 'f.json': '{}' });
   fs.chmodSync(path.join(dir, 'f.json'), 0o000);
   t.after(() => { try { fs.chmodSync(path.join(dir, 'f.json'), 0o600); } catch (_) { /* gone */ } });
-  assert.deepEqual(auditLib._internal.readBounded(path.join(dir, 'f.json'), 1024, false), { skip: 'unreadable' });
+  assert.deepEqual(auditLib._internal.readBounded(path.join(dir, 'f.json'), 1024, false), { skip: 'unreadable', code: 'EACCES' });
 });
 
 /* ------------------------------ reach ------------------------------ */

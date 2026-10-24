@@ -8,7 +8,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { agentAncestor, _internal } = require('../lib/broker/ancestry');
+const { _internal } = require('../lib/broker/ancestry');
 const tty = require('../lib/broker/tty');
 const { tempDir } = require('./helpers/tmp');
 
@@ -102,7 +102,7 @@ test('zn unlock with the system keychain refuses without an interactive terminal
   { encoding: 'utf8', input: '', env: { PATH: process.env.PATH, HOME: home, USERPROFILE: home, ZN_HOME: path.join(home, '.zn') } });
   assert.equal(typeof runVaultCommand, 'function');
   // Run from inside an agent the parent check refuses first; otherwise the terminal check does. Both refuse.
-  assert.match(r.stderr + r.stdout, /zn unlock needs an interactive terminal|not by an AI agent/, r.stderr + r.stdout);
+  assert.match(r.stderr + r.stdout, /unlock needs an interactive terminal|not by an AI agent/, r.stderr + r.stdout);
   assert.notEqual(r.status, 0);
 });
 

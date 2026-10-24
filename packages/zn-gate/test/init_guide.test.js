@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { getAdapter } = require('../lib/agents');
 const { guide: realGuide, plan: realPlan, fromTemporaryCopy, _internal } = require('../lib/init-guide');
-// These tests are about what they say whatever Node.js runs them: the plugin needs 20.12 or later, so one that
+// These tests are about what they say whatever Node.js runs them: the plugin needs 20.19 or later, so one that
 // supports it is injected (the check for older versions is in init_plugin_node.test.js).
 const guide = (opts) => realGuide({ nodeVersion: '22.0.0', ...opts });
 const plan = (opts) => realPlan({ nodeVersion: '22.0.0', ...opts });
@@ -479,4 +479,44 @@ test('plan: a plugin turned off next to broken zn hooks repairs the hooks only',
   const cc = items.find((i) => i.id === 'claude-code');
   assert.equal(cc.state, 'not-protected');
   assert.deepEqual(cc.steps.map(line), ['zn hooks install claude-code']);
+});
+
+const posixOnly = { skip: process.platform === 'win32' && 'EACCES is a POSIX failure' };
+
+test('guide: npm failing with EACCES gives a clear next step, never sudo', posixOnly, async (t) => {
+  const m = machine(t, ['codex', 'cursor']);
+  const out = capture();
+  const run = () => ({ ok: false, stderr: 'npm error code EACCES\nnpm error syscall mkdir\nnpm error path /usr/local/lib/node_modules\n' });
+  const code = await guide({ ...m, temporary: true, global: { npm: NPM, version: null, zn: ZN, prefix: '/usr/local' }, shell: '/bin/zsh', stdin: tty, write: out.write, run, confirm: async () => true });
+  const text = out.text();
+  assert.equal(code, 1);
+  assert.match(text, /npm is not allowed to write to its global folder \(\/usr\/local\)/);
+  assert.match(text, /Codex CLI, Cursor stay unprotected/);
+  assert.match(text, /npm config set prefix ~\/\.npm-global/);
+  assert.match(text, /export PATH="\$HOME\/\.npm-global\/bin:\$PATH"' >> ~\/\.zshrc/);
+  assert.match(text, /npx -y zn-gate init/);
+  assert.match(text, /nvm/);
+  assert.doesNotMatch(text, /sudo/);
+  assert.doesNotMatch(text, /Run it yourself/);
+});
+
+test('guide: any other npm failure keeps the plain message', posixOnly, async (t) => {
+  const m = machine(t, ['codex']);
+  const out = capture();
+  const run = () => ({ ok: false, stderr: 'npm error code ENOTFOUND\n' });
+  await guide({ ...m, temporary: true, global: { npm: NPM, version: null, zn: ZN }, stdin: tty, write: out.write, run, confirm: async () => true });
+  assert.match(out.text(), /that did not finish\. Run it yourself: npm install -g zn-gate@/);
+  assert.doesNotMatch(out.text(), /global folder/);
+  // A step stub that only returns false (no output) also keeps it.
+  const out2 = capture();
+  await guide({ ...m, temporary: true, global: { npm: NPM, version: null, zn: ZN }, stdin: tty, write: out2.write, run: () => false, confirm: async () => true });
+  assert.match(out2.text(), /Run it yourself/);
+});
+
+test('permissionFailure: a global folder that is not writable counts, a missing one does not', posixOnly, (t) => {
+  const { permissionFailure } = _internal;
+  assert.equal(permissionFailure('', ''), false);
+  assert.equal(permissionFailure('npm ERR! EPERM: operation not permitted', ''), true);
+  assert.equal(permissionFailure('', path.join(tempDir(t, 'zn-prefix-'), 'does-not-exist')), false);
+  assert.equal(permissionFailure('', tempDir(t, 'zn-prefix-')), false);
 });

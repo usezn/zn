@@ -1,0 +1,102 @@
+name: Package smoke
+
+# Python examples: installs each one from its requirements.txt, then runs its agent_guard.py offline (network
+# namespace with no interface, no API keys). An example that needs a zn-gate release that is not out yet has
+# examples/<name>/.requires-next and runs against this repository's package; the job prints a notice for it.
+# The marker must be removed once the pin reaches its release (the job fails until then).
+# Node examples: packs packages/zn-gate with npm pack, installs the tarball into a copy of each example and
+# runs it the same way (no network, no API keys).
+# MCP: starts the packed zn-gate in a clean node:22-slim container, the way an MCP directory checks a server:
+# initialize and tools/list over stdio must answer within 30 s with exactly the expected tools. Also
+# runnable locally:
+#   (cd packages/zn-gate && npm pack --pack-destination /tmp) && .github/scripts/mcp-smoke-docker.sh /tmp/zn-gate-*.tgz
+# One job runs the three, each step even when an earlier one failed, so one run reports all of them.
+on:
+  push:
+    branches: [ main, next ]
+    paths:
+      - 'examples/**'
+      - 'packages/zn-gate-py/**'
+      - 'packages/zn-gate/**'
+      - '!packages/**/*.md'
+      - '.github/scripts/examples-smoke*'
+      - '.github/scripts/mcp-smoke*'
+      - '.github/workflows/examples-smoke.yml'
+  pull_request:
+    branches: [ next, main, 'release/**' ]
+    paths:
+      - 'examples/**'
+      - 'packages/zn-gate-py/**'
+      - 'packages/zn-gate/**'
+      - '!packages/**/*.md'
+      - '.github/scripts/examples-smoke*'
+      - '.github/scripts/mcp-smoke*'
+      - '.github/workflows/examples-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: examples-smoke-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Package smoke (examples on Python 3.12 and Node.js 22, MCP in node:22-slim)
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        id: python
+        with:
+          # No pip cache here: the example requirements pull in large agent frameworks, and the
+          # cache key changes with every release, so each run saved a new 300 MB cache that was
+          # never reused and pushed the repository toward its 10 GB cache limit.
+          python-version: "3.12"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        id: node
+        if: ${{ !cancelled() }}
+        with:
+          node-version: "22.x"
+          package-manager-cache: false
+      - name: Check the requires-next markers
+        if: ${{ !cancelled() && steps.python.outcome == 'success' }}
+        run: python3 .github/scripts/examples-smoke.py markers
+      - name: Install pip-audit (hash-pinned) for the example dependency audit
+        id: pipaudit
+        if: ${{ !cancelled() && steps.python.outcome == 'success' }}
+        continue-on-error: true
+        run: |
+          python3 -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
+          python3 -m pip install --require-hashes -r .github/audit-requirements.txt
+      - name: Install and run the Python examples offline
+        if: ${{ !cancelled() && steps.python.outcome == 'success' }}
+        env:
+          # Report-only: advisories in each example's installed dependencies become warnings, never a failure.
+          ZN_EXAMPLES_AUDIT: ${{ steps.pipaudit.outcome == 'success' && '1' || '0' }}
+        run: python3 .github/scripts/examples-smoke.py run --netns
+      - name: Pack the package and run the Node examples offline
+        if: ${{ !cancelled() && steps.node.outcome == 'success' }}
+        run: bash .github/scripts/examples-smoke-node.sh
+      - name: Pack the package for the MCP smoke
+        id: mcp-pack
+        if: ${{ !cancelled() && steps.node.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/mcp-pack"
+          (cd packages/zn-gate && npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/mcp-pack")
+          ls "$RUNNER_TEMP/mcp-pack"
+      - name: Install in node:22-slim and ask for the tools
+        if: ${{ !cancelled() && steps.mcp-pack.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          tgz=$(ls "$RUNNER_TEMP"/mcp-pack/zn-gate-*.tgz)
+          .github/scripts/mcp-smoke-docker.sh "$tgz"

@@ -330,14 +330,14 @@ _PY_WRITER = (
     "from zn_gate.evidence import log_evidence\n"
     "file, wid, n = sys.argv[2], sys.argv[3], int(sys.argv[4])\n"
     "for i in range(n):\n"
-    "    if log_evidence({'payload': 'py-%s-%d' % (wid, i), 'tool_name': 'bash'}, file_path=file) is None:\n"
+    "    if log_evidence({'payload': 'py-%s-%d' % (wid, i), 'tool_name': 'bash'}, file_path=file, lock_wait=60) is None:\n"
     "        sys.exit(3)\n"
 )
 _NODE_WRITER = (
     "const { logEvidence } = require(process.argv[1]);\n"
     "const [, , file, id, n] = process.argv;\n"
     "for (let i = 0; i < Number(n); i++) {\n"
-    "  if (!logEvidence({ payload: 'node-' + id + '-' + i, tool_name: 'bash' }, file)) process.exit(3);\n"
+    "  if (!logEvidence({ payload: 'node-' + id + '-' + i, tool_name: 'bash' }, file, { lockWaitMs: 60000 })) process.exit(3);\n"
     "}\n"
 )
 
@@ -382,6 +382,33 @@ def test_python_and_node_writers_at_the_same_time_share_one_chain(tmp_path):
     assert v["error"] is None
     assert v["valid"] is True
     assert v["total"] == 6 * per
+
+
+def test_stale_lock_is_left_alone_while_another_breaker_holds_the_break_mutex(tmp_path):
+    p = _ledger(tmp_path, n=1)
+    with open(p + ".lock", "w") as f:
+        f.write("1:crashed")
+    old = time.time() - 60
+    os.utime(p + ".lock", (old, old))
+    with open(p + ".lock.break", "w") as f:
+        f.write("busy")
+    assert log_evidence({"payload": "x"}, file_path=p, lock_wait=0.2) is None
+    assert open(p + ".lock").read() == "1:crashed"  # a second breaker does not touch it
+    assert verify_evidence_ledger(p)["total"] == 1
+
+
+def test_repeated_stale_lock_races_never_drop_a_record(tmp_path):
+    for rnd in range(3):
+        p = str(tmp_path / f"race{rnd}.jsonl")
+        with open(p + ".lock", "w") as f:
+            f.write("1:crashed")
+        old = time.time() - 60
+        os.utime(p + ".lock", (old, old))
+        _wait_all([_spawn_py(p, i, 3) for i in range(8)])
+        v = verify_evidence_ledger(p)
+        assert v["valid"] is True
+        assert v["total"] == 8 * 3
+        assert not os.path.exists(p + ".lock.break")
 
 
 # ---- one canonical form for non-ASCII text, shared with Node ----
@@ -507,3 +534,159 @@ def test_unreadable_lock_path_does_not_spin_the_cpu(tmp_path, capsys):
     cpu0 = time.process_time()
     assert log_evidence({"payload": "x"}, file_path=p, lock_wait=0.6) is None
     assert time.process_time() - cpu0 < 0.4
+
+
+def test_lock_that_turns_out_not_to_be_stale_is_put_back(tmp_path, capsys, monkeypatch):
+    p = _ledger(tmp_path, n=1)
+    with open(p + ".lock", "w") as f:
+        f.write("1:crashed")
+    old = time.time() - 60
+    os.utime(p + ".lock", (old, old))
+    real_rename = os.rename
+
+    def rename_after_new_lock(src, dst):
+        # Simulates a second breaker that won the race: a new lock appears just before our rename.
+        if src == p + ".lock":
+            with open(src, "w") as f:
+                f.write("4242:newowner")
+        return real_rename(src, dst)
+
+    monkeypatch.setattr(os, "rename", rename_after_new_lock)
+    assert log_evidence({"payload": "x"}, file_path=p, lock_wait=0.3) is None
+    monkeypatch.setattr(os, "rename", real_rename)
+    assert open(p + ".lock").read() == "4242:newowner"
+    assert [n for n in os.listdir(tmp_path) if ".stale-" in n] == []
+
+
+def test_old_leftovers_of_broken_locks_are_cleaned_and_recent_ones_kept(tmp_path):
+    p = _ledger(tmp_path, n=1)
+    old = time.time() - 60
+    with open(p + ".lock", "w") as f:
+        f.write("1:crashed")
+    os.utime(p + ".lock", (old, old))
+    for name in ("old", "new"):
+        with open(p + ".lock.stale-" + name, "w") as f:
+            f.write("x")
+    os.utime(p + ".lock.stale-old", (old, old))
+    assert log_evidence({"payload": "x"}, file_path=p)
+    assert not os.path.exists(p + ".lock.stale-old")
+    assert os.path.exists(p + ".lock.stale-new")
+
+
+def test_lock_put_back_by_a_breaker_after_its_owner_released_is_not_left_behind(tmp_path, capsys, monkeypatch):
+    p = _ledger(tmp_path, n=1)
+    lock = p + ".lock"
+    aside = lock + ".stale-9-zz"
+    real_read = evidence._read_lock_token
+    reads = []
+
+    def read(path):
+        # The owner's lock is renamed aside before its write (a breaker took it), so the owner
+        # finds no lock when it checks and when it releases; right after the release first
+        # looks, the breaker links the lock back.
+        reads.append(path)
+        if len(reads) == 1:
+            os.rename(lock, aside)
+        result = real_read(path)
+        if len(reads) == 2:
+            os.link(aside, lock)
+            os.unlink(aside)
+        return result
+
+    monkeypatch.setattr(evidence, "_read_lock_token", read)
+    assert log_evidence({"payload": "x"}, file_path=p) is None
+    monkeypatch.setattr(evidence, "_read_lock_token", real_read)
+    assert len(reads) >= 3
+    assert [n for n in os.listdir(tmp_path) if ".lock" in n] == []
+
+
+@pytest.mark.parametrize("bad", [True, False])
+def test_lock_wait_that_is_a_bool_falls_back_to_the_default(tmp_path, bad):
+    p = _ledger(tmp_path, n=1)
+    with open(p + ".lock", "w") as f:
+        f.write("4242:other")
+    t0 = time.monotonic()
+    assert log_evidence({"payload": "x"}, file_path=p, lock_wait=bad) is None
+    assert 1.5 <= time.monotonic() - t0 < 6
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -1.0])
+def test_lock_wait_that_is_not_a_usable_number_falls_back_to_the_default(tmp_path, bad):
+    p = _ledger(tmp_path, n=1)
+    with open(p + ".lock", "w") as f:
+        f.write("4242:other")
+    t0 = time.monotonic()
+    assert log_evidence({"payload": "x"}, file_path=p, lock_wait=bad) is None
+    waited = time.monotonic() - t0
+    assert 1.5 <= waited < 6, waited
+
+
+def _stale_lock(p):
+    with open(p + ".lock", "w") as f:
+        f.write("1:crashed")
+    old = time.time() - 60
+    os.utime(p + ".lock", (old, old))
+    return old
+
+
+def test_breaker_never_deletes_a_break_mutex_another_breaker_recreated(tmp_path, monkeypatch):
+    p = _ledger(tmp_path, n=1)
+    _stale_lock(p)
+
+    def replace(mutex):
+        monkeypatch.delitem(evidence._test_hooks, "before_mutex_release")
+        os.unlink(mutex)
+        with open(mutex, "w") as f:
+            f.write("999:other-breaker")
+
+    monkeypatch.setitem(evidence._test_hooks, "before_mutex_release", replace)
+    assert log_evidence({"payload": "x"}, file_path=p, lock_wait=0.2) is not None
+    with open(p + ".lock.break") as f:
+        assert f.read() == "999:other-breaker"
+    assert verify_evidence_ledger(p)["total"] == 2
+
+
+def test_breaker_writes_its_token_into_the_break_mutex_and_deletes_it(tmp_path, monkeypatch):
+    import re
+    p = _ledger(tmp_path, n=1)
+    _stale_lock(p)
+    seen = []
+
+    def peek(mutex):
+        with open(mutex) as f:
+            seen.append(f.read())
+
+    monkeypatch.setitem(evidence._test_hooks, "after_mutex_create", peek)
+    assert log_evidence({"payload": "x"}, file_path=p) is not None
+    assert re.fullmatch(r"\d+:[0-9a-f]{16}", seen[0])
+    assert not os.path.exists(p + ".lock.break")
+
+
+def test_reclaiming_a_stale_break_mutex_keeps_one_created_meanwhile(tmp_path, monkeypatch):
+    p = _ledger(tmp_path, n=1)
+    old = _stale_lock(p)
+    with open(p + ".lock.break", "w") as f:
+        f.write("1:dead-breaker")
+    os.utime(p + ".lock.break", (old, old))
+
+    def replace(mutex):
+        monkeypatch.delitem(evidence._test_hooks, "before_mutex_reclaim")
+        os.unlink(mutex)
+        with open(mutex, "w") as f:
+            f.write("999:live-breaker")
+
+    monkeypatch.setitem(evidence._test_hooks, "before_mutex_reclaim", replace)
+    assert log_evidence({"payload": "x"}, file_path=p, lock_wait=0.1) is None
+    with open(p + ".lock.break") as f:
+        assert f.read() == "999:live-breaker"
+
+
+def test_stale_break_mutex_from_a_dead_breaker_is_reclaimed(tmp_path):
+    p = _ledger(tmp_path, n=1)
+    old = _stale_lock(p)
+    with open(p + ".lock.break", "w") as f:
+        f.write("1:dead-breaker")
+    os.utime(p + ".lock.break", (old, old))
+    assert log_evidence({"payload": "x"}, file_path=p, lock_wait=2.0) is not None
+    assert verify_evidence_ledger(p)["total"] == 2
+    assert [n for n in os.listdir(tmp_path) if ".lock" in n] == []

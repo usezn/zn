@@ -9,6 +9,7 @@ from __future__ import annotations
 import errno
 import hashlib
 import json
+import math
 import os
 import random
 import re
@@ -16,7 +17,7 @@ import secrets
 import sys
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, TextIO, Tuple
 
 
 def _redact(text: str) -> str:
@@ -35,7 +36,7 @@ def _ensure_dir(file_path: str) -> None:
         os.makedirs(dirname, mode=0o700, exist_ok=True)
 
 
-def _open_for_append(file_path: str):
+def _open_for_append(file_path: str) -> TextIO:
     """Opens the ledger for appending. New files are created 0600 and an existing
     file that is readable by others is restricted to 0600 (POSIX only)."""
     fd = os.open(file_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
@@ -169,6 +170,10 @@ def _acquire_lock(lock_path: str, wait: float = LOCK_WAIT) -> str:
     """Takes the lock and returns this writer's token (pid + random bytes), which is written into
     the lock file. The token lets a writer tell its own lock from one taken over after it was
     considered stale: it only releases, and only appends, while the file still holds its token."""
+    # NaN, infinity or a negative wait would never time out (or time out at once): use the default.
+    if not (isinstance(wait, (int, float)) and not isinstance(wait, bool)
+            and math.isfinite(wait) and wait >= 0):
+        wait = LOCK_WAIT
     deadline = time.monotonic() + wait
     token = f"{os.getpid()}:{secrets.token_hex(8)}"
     delay = 0.002
@@ -205,36 +210,172 @@ def _acquire_lock(lock_path: str, wait: float = LOCK_WAIT) -> str:
             stale = abs(time.time() - os.stat(lock_path).st_mtime) > LOCK_STALE
         except OSError:
             pass  # gone or unreadable: wait a moment and try again
-        if stale:
-            # Break it by renaming it away (atomic: when several writers try, only one rename wins),
-            # then delete the renamed file. Never delete by the shared path.
-            aside = f"{lock_path}.stale-{token.replace(':', '-')}"
-            try:
-                os.rename(lock_path, aside)
-            except OSError:
-                pass  # someone else broke it first
-            else:
-                try:
-                    os.unlink(aside)
-                except OSError:
-                    pass
-                continue
+        if stale and _break_stale_lock(lock_path, token):
+            continue
         time.sleep(delay + random.random() * delay)
         delay = min(delay * 2, 0.05)
+
+
+# Test seams: they let a test run code between two steps of the break protocol.
+_test_hooks: Dict[str, Any] = {}
+
+
+def _release_mutex(mutex: str, token: str) -> None:
+    """The break mutex holds its owner's token, like the lock: a breaker only deletes the mutex
+    while it is still its own. If it took longer than the stale window, another breaker may have
+    reclaimed it and created a new one, and deleting by path would remove that one."""
+    if _read_lock_token(mutex) == token:
+        try:
+            os.unlink(mutex)
+        except OSError:
+            pass
+
+
+def _reclaim_stale_mutex(mutex: str, token: str) -> None:
+    """A mutex older than the stale window belongs to a breaker that died. Move it aside first
+    (never delete by the shared path: a new mutex may have been created since we looked), and put
+    it back with link() if what we moved turns out to be fresh."""
+    try:
+        if abs(time.time() - os.stat(mutex).st_mtime) <= LOCK_STALE:
+            return
+        if _test_hooks.get("before_mutex_reclaim"):
+            _test_hooks["before_mutex_reclaim"](mutex)
+        aside = f"{mutex}-reclaim-{token.replace(':', '-')}"
+        os.rename(mutex, aside)
+        try:
+            fresh = abs(time.time() - os.stat(aside).st_mtime) <= LOCK_STALE
+        except OSError:
+            fresh = False
+        if fresh:
+            try:
+                os.link(aside, mutex)
+            except OSError:
+                pass  # another mutex exists again: its owner checks its token
+        try:
+            os.unlink(aside)
+        except OSError:
+            pass
+    except OSError:
+        pass  # gone or busy: wait and retry
+
+
+def _break_stale_lock(lock_path: str, token: str) -> bool:
+    """Breaks a stale lock. Breakers take a short-lived `<log>.lock.break` mutex first and judge the
+    lock stale again inside it: without it, a breaker that judged the old lock stale could rename
+    away a fresh lock another writer had just created, and that writer would then see its lock
+    "taken over" and drop its record. Returns True when the caller should retry at once."""
+    mutex = lock_path + ".break"
+    try:
+        fd = os.open(mutex, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except OSError:
+        # Another breaker is working. A mutex left by a dead process is removed after a while.
+        _reclaim_stale_mutex(mutex, token)
+        return False
+    try:
+        os.write(fd, token.encode("utf-8"))
+    except OSError:
+        pass  # best effort: without it the mutex is never released by us
+    try:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        if _test_hooks.get("after_mutex_create"):
+            _test_hooks["after_mutex_create"](mutex)
+        # Inside the mutex only breakers touch a stale lock, and a fresh one cannot appear while
+        # the stale file still exists, so what is judged stale here is still the stale file.
+        stale = False
+        try:
+            stale = abs(time.time() - os.stat(lock_path).st_mtime) > LOCK_STALE
+        except OSError:
+            pass  # gone
+        if not stale:
+            return True
+        # Break it by renaming it away, then delete the renamed file. Never delete by the shared path.
+        aside = f"{lock_path}.stale-{token.replace(':', '-')}"
+        try:
+            os.rename(lock_path, aside)
+        except OSError:
+            return False  # already gone, or busy on Windows: retry
+        # Defense in depth: if what we moved is not stale after all, put it back with link()
+        # (atomic, fails if a lock exists again) before deleting our copy.
+        try:
+            fresh = abs(time.time() - os.stat(aside).st_mtime) <= LOCK_STALE
+        except OSError:
+            fresh = False
+        if fresh:
+            try:
+                os.link(aside, lock_path)
+            except OSError:
+                pass  # a new lock exists: its owner checks its token
+        try:
+            os.unlink(aside)
+        except OSError:
+            pass
+        _sweep_stale_leftovers(lock_path)
+        return True
+    finally:
+        if _test_hooks.get("before_mutex_release"):
+            _test_hooks["before_mutex_release"](mutex)
+        _release_mutex(mutex, token)
+
+
+def _sweep_stale_leftovers(lock_path: str) -> None:
+    """Leftovers `<log>.lock.stale-*` only exist when a process died between renaming a stale lock
+    and deleting it. Remove a few old ones after a stale lock was broken; errors are ignored."""
+    try:
+        directory = os.path.dirname(lock_path) or "."
+        prefix = os.path.basename(lock_path) + ".stale-"
+        n = 0
+        for name in os.listdir(directory):
+            if not name.startswith(prefix):
+                continue
+            n += 1
+            if n > 5:
+                break
+            try:
+                p = os.path.join(directory, name)
+                if abs(time.time() - os.stat(p).st_mtime) > LOCK_STALE:
+                    os.unlink(p)
+            except OSError:
+                pass
+    except OSError:
+        pass
 
 
 def _owns_lock(lock_path: str, token: str) -> bool:
     return _read_lock_token(lock_path) == token
 
 
+def _unlink_lock(lock_path: str) -> None:
+    # On Windows, deleting a file can fail for a moment while another process (a virus scanner, an
+    # indexer) has it open. A lock that stays behind blocks every other writer until it goes stale,
+    # so try again briefly before giving up. A missing file is fine.
+    for i in range(40):
+        try:
+            os.unlink(lock_path)
+            return
+        except FileNotFoundError:
+            return
+        except OSError as e:
+            if not (os.name == "nt" and e.errno in _WIN_BUSY) or i == 39:
+                return
+        time.sleep(0.005)
+
+
 def _release_lock(lock_path: str, token: str) -> None:
     # Only remove the lock if it is still ours; after a takeover it belongs to someone else.
-    if not _owns_lock(lock_path, token):
-        return
-    try:
-        os.unlink(lock_path)
-    except OSError:
-        pass  # already gone
+    # If the file is missing it may be renamed aside by a breaker that is about to put it back
+    # (link-back): look again a few times, and delete it if it reappears with our token.
+    for i in range(4):
+        current = _read_lock_token(lock_path)
+        if current == token:
+            _unlink_lock(lock_path)
+            return
+        if current is not None:
+            return
+        if i < 3:
+            time.sleep(0.005)
 
 
 _LONE_SURROGATE = re.compile("[\ud800-\udfff]")
@@ -400,8 +541,9 @@ def verify_evidence_ledger(file_path: str = EVIDENCE_FILE) -> Dict[str, Any]:
             
         # Records written by the Node package or an older version may differ in how non-ASCII
         # text is written: accept both canonical forms.
+        # Called only within this iteration, before expected_prev is reassigned.
         def _hash_of(text: str) -> str:
-            return hashlib.sha256(f"{expected_prev}:{text}".encode("utf-8", errors="replace")).hexdigest()
+            return hashlib.sha256(f"{expected_prev}:{text}".encode("utf-8", errors="replace")).hexdigest()  # noqa: B023
 
         if recorded_hash not in (_hash_of(_canonical(base_record)), _hash_of(_canonical_ascii(base_record))):
             return {

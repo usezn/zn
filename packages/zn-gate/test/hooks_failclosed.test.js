@@ -89,7 +89,8 @@ test('an unexpected failure while handling the event is refused, not passed thro
   // that into a deny (fail-closed), so the call is refused.
   const ev = { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'cat README.md' }, cwd: 5 };
   const res = hook('codex', JSON.stringify(ev), tmpHome());
-  assert.equal(res.status, 0, res.stderr);
+  // Codex runs a call when a hook fails, so its deny answer comes with its block code (exit 2) too.
+  assert.equal(res.status, 2, res.stderr);
   assert.match(res.stdout, /"permissionDecision":"deny"/);
   assert.match(res.stdout, /something went wrong inside the zn hook/);
 });
@@ -99,4 +100,17 @@ test('a readable event is still handled as before', () => {
     tool_name: 'Bash', tool_input: { command: 'npm test' } };
   const res = hook('codex', JSON.stringify(ev), tmpHome());
   assert.equal(res.status, 0, res.stderr);
+});
+
+test('an empty event names the agent and how to set it up again', () => {
+  const res = spawnSync(process.execPath, [RUNNER, 'cursor'], { input: '', encoding: 'utf8', env: { ...process.env, HOME: tmpHome(), USERPROFILE: tmpHome(), ZN_HOOK_FAIL_MODE: '', CLAUDE_PLUGIN_ROOT: '' } });
+  assert.equal(res.status, 2);
+  assert.match(res.stderr, /run `(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) hooks install cursor` to set up zn for Cursor again/);
+});
+
+test('an empty event from the Claude Code plugin says to update the plugin, not to run hooks install', () => {
+  const res = spawnSync(process.execPath, [RUNNER, 'claude-code'], { input: '', encoding: 'utf8', env: { ...process.env, HOME: tmpHome(), USERPROFILE: tmpHome(), ZN_HOOK_FAIL_MODE: '', CLAUDE_PLUGIN_ROOT: '/example/plugin' } });
+  assert.equal(res.status, 2);
+  assert.match(res.stderr, /update or reinstall the zn-gate plugin/);
+  assert.ok(!/hooks install/.test(res.stderr));
 });

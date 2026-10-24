@@ -126,7 +126,7 @@ class TestBehaviourParity(unittest.TestCase):
         js = _node_export()
         samples = json.loads(SAMPLES_FILE.read_text(encoding="utf-8"))["samples"]
         self.assertEqual(len(samples), len(js["results"]))
-        for i, (sample, expected) in enumerate(zip(samples, js["results"])):
+        for i, (sample, expected) in enumerate(zip(samples, js["results"], strict=False)):
             text = _expand(sample)
             res = R.evaluate(text)
             label = f"sample {i}: {text[:40]!r}"
@@ -147,7 +147,7 @@ class TestBehaviourParity(unittest.TestCase):
         js = _node_export()
         samples = json.loads(SAMPLES_FILE.read_text(encoding="utf-8"))["redact_samples"]
         self.assertEqual(len(samples), len(js["redactions"]))
-        for i, (sample, expected) in enumerate(zip(samples, js["redactions"])):
+        for i, (sample, expected) in enumerate(zip(samples, js["redactions"], strict=False)):
             text = _expand(sample)
             redacted, found = R.redact_secrets(text)
             with self.subTest(sample=i):
@@ -267,8 +267,20 @@ class TestValidatedSecretPatterns(unittest.TestCase):
                 self.assertIn("secret:db_url_password", [d["rule"] for d in found])
         for url in ("po\u017ftgres://app:hunter2pass@db/app", "my\u017fql://root:s3cretpw@127.0.0.1/shop",
                     "mongodb+\u017frv://svc:m0ngopw@cluster0.example.net/prod"):
+            # Not a known database scheme, but the generic URL password rule still hides the
+            # password (the part of the scheme after the long s is read as a scheme).
             with self.subTest(url=ascii(url)):
-                self.assertEqual(R.redact_secrets(url), (url, []))
+                redacted, found = R.redact_secrets(url)
+                self.assertIn("[REDACTED_URL_PASSWORD]", redacted)
+                self.assertNotIn("secret:db_url_password", [d["rule"] for d in found])
+        # A scheme after CJK or accented letters is still redacted, like Node.js.
+        for prefix in ("连接", "数据库", "é", "ſ"):
+            for scheme in ("https", "mssql"):
+                with self.subTest(prefix=ascii(prefix), scheme=scheme):
+                    pw = "FAKE-" + "pw" * 5
+                    redacted, found = R.redact_secrets(f"{prefix}{scheme}://u:{pw}@h.example.test/x")
+                    self.assertNotIn(pw, redacted)
+                    self.assertIn("secret:url_password", [d["rule"] for d in found])
 
     def test_aws_secret_keeps_quotes_in_both_engines(self):
         secret = "A" * 20 + "/" + "b" * 19

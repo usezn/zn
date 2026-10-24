@@ -14,19 +14,20 @@ import re
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from . import __version__
 from .rules import RULES_VERSION, evaluate, mask_token_runs
 from .rules import SECRET_PATTERNS as _DLP_PATTERNS, redact_secrets as _dlp_redact, redact_scan_secrets as _scan_redact
+from . import mcp_secrets as _mcp
 from .client import analyze, is_cloud_enabled, resolve_endpoint
-from .evidence import log_evidence, verify_evidence_ledger, get_evidence_stats, export_evidence_ledger, recovery_hint, EVIDENCE_FILE
+from .evidence import verify_evidence_ledger, get_evidence_stats, export_evidence_ledger, recovery_hint, EVIDENCE_FILE
 
 # Secrets that span several lines (a PEM private key block). The line-by-line
 # scan never sees BEGIN and END together, so these run on the whole file.
 # Each entry: (rule name, pattern, header pattern shown instead of the match).
 _MULTILINE_RULES = [
-    (name, rx, re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"))
+    (name, rx, re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----"))
     for name, rx, _ in _DLP_PATTERNS if name == "secret:private_key"
 ]
 
@@ -34,8 +35,8 @@ _MULTILINE_RULES = [
 # lines after it that look like PEM headers or base64 are treated as key
 # material, up to the first empty or other line (an encrypted key has one
 # empty line after its Proc-Type / DEK-Info headers, which is kept).
-_KEY_BEGIN = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
-_KEY_END = re.compile(r"-----END [A-Z ]*PRIVATE KEY-----")
+_KEY_BEGIN = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----")
+_KEY_END = re.compile(r"-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----")
 _KEY_BODY = re.compile(r"^(?:[A-Za-z0-9+/=]{16,}|[A-Za-z-]+: )")
 _KEY_HEADER = re.compile(r"^[A-Za-z-]+: ")
 _TRUNCATED_KEY_REASON = "Exposed credential detected by DLP filter (private key without an END marker)"
@@ -46,6 +47,8 @@ _KEY_FILE_NAMES = {"id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "id_ecdsa_sk", 
 # with a NUL byte near the start (a Keynote document, not a key).
 _MAX_SCAN_BYTES = 2 * 1024 * 1024
 _BINARY_SNIFF = 8192
+# A home MCP config this large (~/.claude.json grows with history) gets only the MCP credential check, not the other rules.
+_MAX_HOME_MCP_BYTES = 64 * 1024 * 1024
 _UTF16_BOMS = (b"\xff\xfe", b"\xfe\xff")
 
 
@@ -64,6 +67,23 @@ def _decode_scan_text(raw: bytes) -> str:
 _SAFE_FILE_ARG = re.compile(r"[A-Za-z0-9._/@+-]+")
 
 
+def _relative_to_cwd(file: str) -> str:
+    """The path relative to the current directory, with the links on both sides
+    followed first. On macOS the temporary folder is /var/..., a link to
+    /private/var/..., and the current directory is reported as /private/var/...,
+    so comparing them as they are gives "../../private/var/..."."""
+    try:
+        cwd = os.path.realpath(os.getcwd())
+    except OSError:
+        cwd = os.getcwd()
+    absolute = os.path.abspath(file)
+    try:
+        resolved = os.path.join(os.path.realpath(os.path.dirname(absolute)), os.path.basename(absolute))
+    except OSError:
+        resolved = absolute
+    return os.path.relpath(resolved, cwd)
+
+
 def _leak_next_step(file: str, rule: str) -> str:
     """What to do about a secret found by the scan, in plain words (never the
     value). The same text as secretNextStep in the Node.js package; the file
@@ -73,7 +93,7 @@ def _leak_next_step(file: str, rule: str) -> str:
                 "and replace it if the file was ever committed or shared.")
     if re.match(r"\.env", os.path.basename(file), re.IGNORECASE):
         try:
-            rel = os.path.relpath(file)
+            rel = _relative_to_cwd(file)
         except ValueError:  # another drive on Windows
             rel = file
         if os.sep != "/":  # Windows: npx takes forward slashes too
@@ -177,7 +197,7 @@ def cmd_test(args: argparse.Namespace) -> int:
 
 def cmd_analyze(args: argparse.Namespace) -> int:
     text = args.text
-    options = {
+    options: Dict[str, Any] = {
         "api_key": getattr(args, "key", None) or os.environ.get("ZN_API_KEY"),
         "stage": getattr(args, "stage", None) or os.environ.get("ZN_STAGE") or "v30",
         "api_url": getattr(args, "url", None) or os.environ.get("ZN_API_URL"),
@@ -198,14 +218,14 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     return 2 if res.get("verdict") == "block" else 0
 
 
-def _skip_reason(file_path: Path) -> Optional[str]:
+def _skip_reason(file_path: Path, mcp_only: bool = False, follow: bool = False) -> Optional[str]:
     """Why a file that matches the scan is not read, or None."""
     try:
-        st = os.lstat(file_path)
+        st = os.stat(file_path) if follow else os.lstat(file_path)
         if not stat.S_ISREG(st.st_mode):
             return "not a regular file"
-        if st.st_size >= _MAX_SCAN_BYTES:
-            return "2 MiB or larger"
+        if st.st_size >= (_MAX_HOME_MCP_BYTES if mcp_only else _MAX_SCAN_BYTES):
+            return "64 MiB or larger" if mcp_only else "2 MiB or larger"
         with open(file_path, "rb") as f:
             head = f.read(_BINARY_SNIFF)
         if file_path.suffix.lower() == ".key" and head[:2] not in _UTF16_BOMS and b"\0" in head:
@@ -226,10 +246,32 @@ def _gh_message(value: str) -> str:
     return str(value).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
 
 
-def _scan_file(file_path: Path) -> List[Dict[str, Any]]:
+def _mcp_violations(shown: str, found: List[_mcp.McpSpan]) -> List[Dict[str, Any]]:
+    """MCP servers: every credential the MCP check found is a finding of its own; the
+    other rules ran on the text with those values masked (mcp_secrets.py). The value
+    is never printed."""
+    out: List[Dict[str, Any]] = []
+    for m in found:
+        if m.get("silent"):
+            continue
+        kind, name = str(m["kind"]), str(m["name"])
+        out.append({
+            "file": shown,
+            "line": m["line"],
+            "rule": _mcp.RULE_ID,
+            "reason": _mcp.mcp_reason(kind),
+            "type": "secret_leak",
+            "content": _mcp.mcp_sample(kind, name),
+            "next_step": _mcp.mcp_next_step(kind, name),
+        })
+    return out
+
+
+def _scan_file(file_path: Path, shown: Optional[str] = None, mcp_only: bool = False) -> List[Dict[str, Any]]:
     violations: List[Dict[str, Any]] = []
+    shown = str(file_path) if shown is None else shown
     try:
-        if file_path.stat().st_size >= _MAX_SCAN_BYTES:
+        if file_path.stat().st_size >= (_MAX_HOME_MCP_BYTES if mcp_only else _MAX_SCAN_BYTES):
             return []
         raw = file_path.read_bytes()
     except Exception:
@@ -237,6 +279,13 @@ def _scan_file(file_path: Path) -> List[Dict[str, Any]]:
     if file_path.suffix.lower() == ".key" and raw[:2] not in _UTF16_BOMS and b"\0" in raw[:_BINARY_SNIFF]:
         return []
     content = _decode_scan_text(raw)
+    mcp_found: List[_mcp.McpSpan] = []
+    if _mcp.is_mcp_config_path(str(file_path)):
+        # The MCP check runs first and its values are masked, so no other rule prints one.
+        mcp_found = _mcp.find_mcp_config_secret_spans(content, str(file_path))
+        content = _mcp.mask_mcp_values(content, mcp_found)
+    if mcp_only:
+        return _mcp_violations(shown, mcp_found)
 
     # Line numbers as the line pass counts them (str.splitlines boundaries).
     starts = [0]
@@ -246,7 +295,7 @@ def _scan_file(file_path: Path) -> List[Dict[str, Any]]:
     # printed, even when another rule fires on it (the line on its own does
     # not look like a key, so it would not be redacted).
     blocks = []  # (rule, first line, last line, header)
-    key_lines = set()
+    key_lines: Set[int] = set()
     for name, rx, header_rx in _MULTILINE_RULES:
         for m in rx.finditer(content):
             # A block on one line is redacted by the line pass.
@@ -290,7 +339,7 @@ def _scan_file(file_path: Path) -> List[Dict[str, Any]]:
         res = evaluate(line, strict=True)
         if not res.allowed:
             violations.append({
-                "file": str(file_path),
+                "file": shown,
                 "line": i,
                 "rule": res.rule,
                 "reason": res.reason or res.rule,
@@ -299,13 +348,13 @@ def _scan_file(file_path: Path) -> List[Dict[str, Any]]:
             })
         for finding in findings:
             violations.append({
-                "file": str(file_path),
+                "file": shown,
                 "line": i,
                 "rule": finding["rule"],
                 "reason": "Exposed credential detected by DLP filter",
                 "type": "secret_leak",
                 "content": snippet,
-                "next_step": _leak_next_step(str(file_path), finding["rule"]),
+                "next_step": _leak_next_step(shown, finding["rule"]),
             })
     seen = {(v["line"], v["rule"]) for v in violations}
     for name, first, _last, header, reason in blocks:
@@ -314,31 +363,145 @@ def _scan_file(file_path: Path) -> List[Dict[str, Any]]:
         seen.add((first, name))
         # Only the BEGIN marker, never the key material.
         violations.append({
-            "file": str(file_path),
+            "file": shown,
             "line": first,
             "rule": name,
             "reason": reason,
             "type": "secret_leak",
             "content": header,
-            "next_step": _leak_next_step(str(file_path), name),
+            "next_step": _leak_next_step(shown, name),
         })
+    violations.extend(_mcp_violations(shown, mcp_found))
     return violations
+
+
+def _home_mcp_files() -> List[Path]:
+    """The user's own MCP configuration files that exist on this computer."""
+    home = Path.home()
+    xdg = Path(os.environ.get("XDG_CONFIG_HOME") or (home / ".config"))
+    codex_home = Path(os.environ.get("CODEX_HOME") or (home / ".codex"))
+    if sys.platform == "win32":
+        claude_desktop = Path(os.environ.get("APPDATA") or (home / "AppData" / "Roaming")) / "Claude" / "claude_desktop_config.json"
+    elif sys.platform == "darwin":
+        claude_desktop = home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
+    else:
+        claude_desktop = xdg / "Claude" / "claude_desktop_config.json"
+    candidates = [
+        claude_desktop,
+        home / ".claude.json",
+        home / ".cursor" / "mcp.json",
+        codex_home / "config.toml",
+        home / ".gemini" / "settings.json",
+        home / ".gemini" / "antigravity" / "mcp_config.json",
+        home / ".gemini" / "config" / "mcp_config.json",
+        xdg / "opencode" / "opencode.json",
+        xdg / "opencode" / "opencode.jsonc",
+        home / ".aws" / "amazonq" / "mcp.json",
+    ]
+    # A file is read only when its real path (every link followed) is inside the home folder.
+    try:
+        real_home = home.resolve()
+    except OSError:
+        real_home = home
+    out = []
+    for c in candidates:
+        try:
+            try:
+                c.resolve().relative_to(real_home)
+            except ValueError:
+                continue
+            if c.is_file():
+                out.append(c)
+        except OSError:
+            continue
+    return out
+
+
+# Control characters (C0, DEL, C1) and bidirectional controls in a path from a
+# repository must not reach the terminal: an ESC sequence could rewrite the
+# lines above it. They are shown as \xNN or \u{NNNN}, like the Node.js package.
+_UNSAFE_CHARS = re.compile("[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069\u200e\u200f\u061c]")
+
+
+def _safe_text(value: Any) -> str:
+    def esc(m: "re.Match[str]") -> str:
+        cp = ord(m.group(0))
+        return "\\x%02x" % cp if cp <= 0xFF else "\\u{%x}" % cp
+    return _UNSAFE_CHARS.sub(esc, "" if value is None else str(value))
+
+
+def _home_display(file_path: Path) -> str:
+    """A file of the user's home as ~/..., the way the Node.js package shows it."""
+    try:
+        return "~/" + file_path.relative_to(Path.home()).as_posix()
+    except ValueError:
+        return str(file_path)
+
+
+# Directory names that scan does not enter. Caches and dependency stores are
+# skipped quietly; the other names are skipped by name and reported, because a
+# project can keep its own prompt or agent files there. `target` and `vendor`
+# are build output or dependencies only next to a build file or manifest, so
+# without one they are read. Test directories are read too: fixtures in them
+# can hold real secrets. This list mirrors packages/zn-gate/lib/prune.js, and a
+# parity test compares the two.
+_SCAN_SKIP_DIRS = {
+    "node_modules", ".git", ".next", ".turbo", ".idea", ".venv", "venv", "__pycache__", ".eggs",
+    "dist", "build", "target", "vendor",
+}
+_SILENT_SKIP_DIRS = {
+    "node_modules", ".git", ".next", ".turbo",
+}
+_SKIP_MARKERS = {
+    "target": ("Cargo.toml", "pom.xml", "build.gradle", "build.gradle.kts", "build.sbt"),
+    "vendor": ("go.mod", "composer.json", "Gemfile", "Cargo.toml"),
+}
+
+
+# What a reported name is, for the reason shown to the user. A name that is not
+# listed is build output. Same words as packages/zn-gate/lib/prune.js.
+_SKIP_KINDS = {
+    "vendor": "dependencies",
+    ".idea": "editor settings",
+    ".venv": "virtual environment",
+    "venv": "virtual environment",
+    "__pycache__": "Python cache",
+    ".eggs": "Python build files",
+}
+
+
+def _prune_info(name: str, parent: str) -> Optional[Dict[str, Any]]:
+    """None when the directory must be read, else {"silent": bool, "reason": str}."""
+    marker = None
+    needed = _SKIP_MARKERS.get(name)
+    if needed:
+        marker = next((m for m in needed if os.path.exists(os.path.join(parent, m))), None)
+        if marker is None:
+            return None
+    if name in _SILENT_SKIP_DIRS:
+        return {"silent": True, "reason": "skipped by name"}
+    reason = "skipped by name: " + _SKIP_KINDS.get(name, "build output")
+    if marker:
+        reason += " next to " + marker
+    return {"silent": False, "reason": reason}
 
 
 def cmd_scan(args: argparse.Namespace) -> int:
     target_path = Path(args.path)
     if not target_path.exists():
         print(f"Error: target path not found: {target_path}", file=sys.stderr)
-        return 2
+        return 1
 
     files_to_scan: List[Path] = []
-    skip_dirs = {".git", "node_modules", "venv", ".venv", "__pycache__", "dist", "build", ".eggs", "target", ".next"}
-    
+    skip_dirs = _SCAN_SKIP_DIRS
+    user_excluded = set()
+    skipped_dirs: List[Dict[str, str]] = []
+
     if getattr(args, "exclude", None):
         for ed in args.exclude.split(","):
             ed = ed.strip()
             if ed:
-                skip_dirs.add(ed)
+                user_excluded.add(ed)
 
     valid_exts = {".txt", ".md", ".json", ".yaml", ".yml", ".py", ".ts", ".js", ".prompt", ".env", ".toml", ".pem", ".key"}
     if getattr(args, "include", None):
@@ -349,37 +512,88 @@ def cmd_scan(args: argparse.Namespace) -> int:
             if ie:
                 valid_exts.add(ie)
 
-    if target_path.is_file():
+    # The file the user named is read even when it is a link; links found while
+    # walking a folder are not (os.walk lists them but does not enter them).
+    root_file = str(target_path) if target_path.is_file() else None
+    if root_file:
         files_to_scan.append(target_path)
     else:
-        for root, dirs, files in os.walk(target_path):
-            dirs[:] = [d for d in dirs if d not in skip_dirs]
+        # A folder that cannot be listed is reported, not skipped in silence: its files were not scanned.
+        def _unreadable(err: OSError) -> None:
+            skipped_dirs.append({"dir": str(err.filename), "reason": "cannot be read"})
+
+        for root, dirs, files in os.walk(target_path, onerror=_unreadable):
+            kept = []
+            for d in dirs:
+                if d in user_excluded:
+                    continue
+                if d in skip_dirs:
+                    pruned = _prune_info(d, root)
+                    if pruned:
+                        if not pruned["silent"]:
+                            skipped_dirs.append({"dir": str(Path(root) / d), "reason": pruned["reason"]})
+                        continue
+                kept.append(d)
+            dirs[:] = kept
             for f in files:
                 p = Path(root) / f
+                # A link found inside the folder is not followed and not a skipped file.
+                if p.is_symlink():
+                    continue
                 if p.suffix.lower() in valid_exts or p.name.startswith(".env") or p.name in _KEY_FILE_NAMES:
                     files_to_scan.append(p)
+
+    home_files = set()
+    mcp_only_files = set()
+    if getattr(args, "include_home", False):
+        queued = {str(f.resolve()) for f in files_to_scan}
+        for hf in _home_mcp_files():
+            home_files.add(str(hf))
+            if str(hf.resolve()) in queued:
+                continue
+            files_to_scan.append(hf)
+            try:
+                if hf.stat().st_size >= _MAX_SCAN_BYTES:
+                    mcp_only_files.add(str(hf))
+            except OSError:
+                pass
 
     all_violations: List[Dict[str, Any]] = []
     skipped: List[Dict[str, str]] = []
     scanned = 0
     for fp in files_to_scan:
-        reason = _skip_reason(fp)
+        shown = _home_display(fp) if str(fp) in home_files else str(fp)
+        reason = _skip_reason(fp, str(fp) in mcp_only_files, str(fp) in home_files or str(fp) == root_file)
         if reason:
-            skipped.append({"file": str(fp), "reason": reason})
+            skipped.append({"file": shown, "reason": reason})
             continue
         scanned += 1
-        all_violations.extend(_scan_file(fp))
+        all_violations.extend(_scan_file(fp, shown, str(fp) in mcp_only_files))
 
-    _print_report(getattr(args, "format", "text"), scanned, skipped, all_violations)
-    if all_violations and not getattr(args, "no_fail", False):
+    allow_partial = bool(getattr(args, "allow_partial", False))
+    unread_dirs = sum(1 for d in skipped_dirs if d.get("reason") == "cannot be read")
+    _print_report(getattr(args, "format", "text"), scanned, skipped, all_violations, skipped_dirs, str(args.path), allow_partial=allow_partial)
+    if getattr(args, "no_fail", False):
+        return 0
+    if all_violations:
         return 1
+    # No finding is not a clean result when no file was read, or a file or folder that
+    # should have been read was not: exit 3, unless --allow-partial accepts the skipped ones.
+    if scanned == 0 or ((skipped or unread_dirs) and not allow_partial):
+        return 3
     return 0
 
 
-def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_violations: List[Dict[str, Any]]) -> None:
+def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_violations: List[Dict[str, Any]], skipped_dirs: Optional[List[Dict[str, str]]] = None, target: str = ".", allow_partial: bool = False) -> None:
     """Print the scan report: rule names, fixed text, counts and redacted snippets only."""
+    skipped_dirs = skipped_dirs or []
     leak_count = sum(1 for v in all_violations if v.get("type") == "secret_leak")
     other_count = len(all_violations) - leak_count
+    # An empty or partial result is not a clean one: say so (cmd_scan sets the exit code).
+    nothing = f"No files were scanned in {target}" if scanned == 0 else ""
+    unread_dirs = sum(1 for d in skipped_dirs if d.get("reason") == "cannot be read")
+    incomplete = bool(skipped) or unread_dirs > 0
+    incomplete_note = f"{len(skipped)} file(s) and {unread_dirs} folder(s) were not read"
     if fmt == "github":
         # CI logs are public: rule, reason and location only, never the snippet.
         for v in all_violations:
@@ -392,32 +606,62 @@ def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_vio
             print(f"::error file={_gh_property(v['file'])},line={int(v['line'])},title={title}::{_gh_message(message)}")
         for s in skipped:
             print(f"::notice file={_gh_property(s['file'])},title=Not scanned::{_gh_message(s['reason'])}")
-        print(f"\n[zn-gate] Scanned {scanned} files ({len(skipped)} not scanned). Found {leak_count} secrets and {other_count} security threats.")
+        for sd in skipped_dirs:
+            print(f"::notice file={_gh_property(sd['dir'])},title=Directory not scanned::{_gh_message(sd['reason'])}")
+        if nothing:
+            print(f"::warning title=Nothing scanned::{_gh_message(nothing)}")
+        if incomplete and not all_violations:
+            suffix = " (accepted with --allow-partial)" if allow_partial else ": exit code 3, use --allow-partial to accept"
+            print(f"::warning title=Incomplete scan::{_gh_message(incomplete_note + suffix)}")
+        dir_note = f" and {len(skipped_dirs)} director{'y' if len(skipped_dirs) == 1 else 'ies'} skipped" if skipped_dirs else ""
+        print(f"\n[zn-gate] Scanned {scanned} files ({len(skipped)} not scanned{dir_note}). Found {leak_count} secrets and {other_count} security threats.")
     elif fmt == "json":
         print(json.dumps({
             "total_files": scanned,
             "total_skipped": len(skipped),
+            "total_skipped_dirs": len(skipped_dirs),
             # Every finding, secrets included (as before); total_secrets counts the secrets alone.
             "total_threats": len(all_violations),
             "total_secrets": leak_count,
+            # True when a file or folder that should have been read was not (exit 3 unless --allow-partial).
+            "incomplete": incomplete,
             "threats": all_violations,
             "skipped": skipped,
+            "skipped_dirs": skipped_dirs,
+            **({"warning": nothing} if nothing else {}),
         }, indent=2))
     else:
         print(f"\n{_lead(SHIELD)}zn-gate Security Scanner — Scanned {scanned} files")
+        if nothing:
+            print(f"{_lead(ALERT)}{_safe_text(nothing)}")
         if skipped:
             print(f"Not scanned ({len(skipped)}):")
             for s in skipped[:20]:
-                print(f"  {s['file']} ({s['reason']})")
+                print(f"  {_safe_text(s['file'])} ({_safe_text(s['reason'])})")
             if len(skipped) > 20:
                 print(f"  ... and {len(skipped) - 20} more")
+        if skipped_dirs:
+            print(f"Directories not scanned ({len(skipped_dirs)}):")
+            for sd in skipped_dirs[:20]:
+                print(f"  {_safe_text(sd['dir'])} ({_safe_text(sd['reason'])})")
+            if len(skipped_dirs) > 20:
+                print(f"  ... and {len(skipped_dirs) - 20} more")
+        if not all_violations and nothing:
+            print()
+            return
+        if not all_violations and incomplete:
+            if allow_partial:
+                print(f"{_lead(ALERT)}No threats found in the files that were read. Partial coverage accepted with --allow-partial ({incomplete_note}).\n")
+            else:
+                print(f"{_lead(ALERT)}No threats found in the files that were read, but the scan is incomplete ({incomplete_note}). Exit code 3; use --allow-partial to accept.\n")
+            return
         if not all_violations:
             print(f"{_lead(CHECK)}All scanned prompts, tool definitions, and files are clean!\n")
             return
         print(f"{_lead(ALERT)}Found {leak_count} secrets and {other_count} threat vectors:\n")
         for v in all_violations:
             label = "Secret found" if v.get("type") == "secret_leak" else "Threat"
-            print(f"  {v['file']}:{v['line']} {label} [{v['rule']}] {v['reason']}")
+            print(f"  {_safe_text(v['file'])}:{v['line']} {label} [{v['rule']}] {v['reason']}")
             print(f"    Snippet: {v['content']}")
             if v.get("next_step"):
                 print(f"    {v['next_step']}")
@@ -504,23 +748,37 @@ def npm_only_message(command: str) -> str:
         f"zn-gate {command} is in the npm package, not in this Python package.\n"
         "The Python package protects agents you build yourself (LangChain, CrewAI, "
         "LlamaIndex or plain tool calling).\n"
-        "To protect Claude Code, Codex CLI, Cursor or OpenCode, run this in your own "
+        "To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app, run this in your own "
         "terminal (it needs Node.js 18 or later):\n"
         "  npx -y zn-gate init\n"
     )
 
 
-def main() -> int:
-    _configure_output_streams()
-    if len(sys.argv) > 1 and sys.argv[1] in NPM_ONLY_COMMANDS:
-        sys.stderr.write(npm_only_message(sys.argv[1]))
-        return 2
+# Commands that exist only in the npm package and take no explanation of the
+# Python/agents split: they just say where the command lives.
+NPM_ONLY_SIMPLE_COMMANDS = frozenset({"report", "reach", "connect", "disconnect"})
+
+
+def npm_only_simple_message(command: str) -> str:
+    return (
+        f"zn-gate {command} is a command of the npm package, not of this Python package.\n"
+        "Run it with Node.js 18 or later:\n"
+        f"  npx -y zn-gate {command}\n"
+        f"or, after npm install -g zn-gate:\n"
+        f"  zn-gate {command}\n"
+    )
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """The argument parser. Its sub-commands are the commands this package knows."""
     parser = argparse.ArgumentParser(
         prog="zn-gate",
         description="zn deterministic guardrail engine for AI agents and LLM tool calling."
     )
-    parser.add_argument("--version", action="version", version=f"zn-gate {__version__} (rules: {RULES_VERSION})")
+    # -v and -V print the version too, as in the npm package.
+    parser.add_argument("-v", "-V", "--version", action="version", version=f"zn-gate {__version__} (rules: {RULES_VERSION})")
     subparsers = parser.add_subparsers(dest="command", help="Sub-commands")
+    parser.set_defaults(_subparsers=subparsers)
 
     # test command
     test_parser = subparsers.add_parser("test", help="Test a single text payload against guardrail rules")
@@ -541,9 +799,11 @@ def main() -> int:
     scan_parser = subparsers.add_parser("scan", help="Scan directory or files for injection traps & secret leaks")
     scan_parser.add_argument("path", default=".", nargs="?", help="File or directory path to scan (default: current directory)")
     scan_parser.add_argument("--format", choices=["text", "json", "github"], default="text", help="Output format")
-    scan_parser.add_argument("--no-fail", action="store_true", help="Do not exit with error code even if threats are found")
+    scan_parser.add_argument("--no-fail", action="store_true", help="Do not exit with error code even if threats are found or files were not read")
     scan_parser.add_argument("--include", help="Comma-separated custom extensions to include (e.g. .custom,.xml)")
     scan_parser.add_argument("--exclude", help="Comma-separated directory names to exclude")
+    scan_parser.add_argument("--allow-partial", action="store_true", help="Exit 0 even when some files or folders were not read (they are still listed). Reading no file at all stays an error (exit 3)")
+    scan_parser.add_argument("--include-home", action="store_true", help="Also check your own MCP configs (Claude Desktop, Claude Code, Cursor, Codex, Gemini, Antigravity, OpenCode, Amazon Q) for passwords and keys written in plain text")
 
     # evidence command
     ev_parser = subparsers.add_parser("evidence", help="Audit cryptographic evidence ledger")
@@ -560,6 +820,30 @@ def main() -> int:
     st_parser.add_argument("--days", type=int, default=30, help="Days to count (1-90, default 30)")
     st_parser.add_argument("--json", action="store_true", help="Output as JSON")
 
+    return parser
+
+
+def known_commands(parser: argparse.ArgumentParser) -> frozenset[str]:
+    """Names of the sub-commands of `parser` (built by build_parser)."""
+    return frozenset(parser.get_default("_subparsers").choices)
+
+
+def main() -> int:
+    _configure_output_streams()
+    first = sys.argv[1] if len(sys.argv) > 1 else None
+    if first in NPM_ONLY_SIMPLE_COMMANDS:
+        sys.stderr.write(npm_only_simple_message(first))
+        return 2
+    if first == "version":
+        print(f"zn-gate {__version__} (rules: {RULES_VERSION})")
+        return 0
+    parser = build_parser()
+    if first is not None and not first.startswith("-") and first not in known_commands(parser) and first not in NPM_ONLY_COMMANDS:
+        sys.stderr.write(f"Unknown command: {first}\nRun 'zn-gate --help' for usage.\n")
+        return 1
+    if len(sys.argv) > 1 and sys.argv[1] in NPM_ONLY_COMMANDS:
+        sys.stderr.write(npm_only_message(sys.argv[1]))
+        return 2
     args = parser.parse_args()
     if args.command == "test":
         return cmd_test(args)

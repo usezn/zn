@@ -3,7 +3,7 @@
 /**
  * Cursor (IDE agent) adapter.
  *
- * Hook format (cursor.com/docs/agent/hooks, read 2026-10-11):
+ * Hook format (cursor.com/docs/agent/hooks, read 2026-10-11; failure rules re-read 2026-10-20):
  *
  *  hooks.json in ~/.cursor/ (user) or <project>/.cursor/ (project):
  *    { "version": 1, "hooks": { "<event>": [ { "command": "...", "timeout": <s>, "matcher": "<regex>" } ] } }
@@ -20,14 +20,24 @@
  *  open: Cursor carries on with its own settings. That is how this adapter
  *  says "no opinion" for shell commands, so it never auto-approves.
  *
+ * A hook that cannot start (read 2026-10-20): "Other exit codes - Hook failed, action proceeds (fail-open by
+ *  default)." `failClosed: true` blocks "the action when the hook fails (crash, timeout, non-zero exit, or no
+ *  output)"; exit code 2 blocks. zn sets failClosed on beforeReadFile and beforeSubmitPrompt, and its launcher
+ *  (lib/agents/launcher.js) also exits 2 on the other events that can deny when the Node.js is gone.
+ *  Only an event where this adapter always answers may be failClosed: on shell, MCP and tool-use events it
+ *  writes nothing when it has no objection, Cursor documents no neutral answer ("allow" could skip its own
+ *  approval; an empty object is not documented as a valid permission answer), and failClosed would block every call. The
+ *  Cursor plugin's hooks.json follows the same set (plugins/tools/check-plugins.js and test/plugin_cursor_hooks.test.js).
+ *
  * What Cursor allows, and so what zn does there (docs/compat.md):
  *  - Reads of credential files, .env with values and ~/.zn are denied
  *    (beforeReadFile cannot redact, only allow or deny).
  *  - Shell commands that read those files or manage the vault are denied.
- *    A command with __ZN_<NAME>__ markers is denied with the exact
- *    `zn run -- ...` command to use; once wrapped, Cursor asks the user.
- *    (preToolUse could rewrite it, but only together with "allow", and
- *    Cursor does not enforce "ask" there.)
+ *    A command with __ZN_<NAME>__ markers in its arguments is denied with
+ *    the way to pass the secret as an environment variable
+ *    (`zn run --secrets NAME -- ...`); once the agent runs it through zn
+ *    run, Cursor asks the user. (preToolUse could rewrite a command, but
+ *    only together with "allow", and Cursor does not enforce "ask" there.)
  *  - Prompts with a secret are blocked.
  *  - MCP tool output is tokenized. Output of built-in tools (shell, file
  *    reads) cannot be rewritten in Cursor: a value printed by a command
@@ -40,6 +50,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const cfg = require('./config-file');
+const launcher = require('./launcher');
 const { whichSync } = require('../broker/markers');
 
 const id = 'cursor';
@@ -160,6 +171,42 @@ function strip(list) {
   return Array.isArray(list) ? list.filter((h) => !(h && cfg.isOurs(h.command, id))) : [];
 }
 
+/* The hook entry zn writes for each event, for one command (also used to print a managed hooks.json). */
+function hookEntries(command) {
+  const out = {};
+  for (const event of EVENTS) {
+    const entry = { command: typeof command === 'function' ? command(event) : command, timeout: HOOK_TIMEOUT_S };
+    if (event === 'preToolUse') entry.matcher = PRE_TOOL_MATCHER;
+    if (FAIL_CLOSED.has(event)) entry.failClosed = true;
+    out[event] = entry;
+  }
+  return out;
+}
+
+/**
+ * The hook command for each event. Cursor fails open when a hook cannot start (only failClosed hooks, and exit
+ * code 2, block), so a user install goes through zn's launcher (lib/agents/launcher.js): a Node.js that has gone
+ * away blocks instead of letting the call run. A project install or a command given by the caller keeps the
+ * plain command.
+ */
+function commandFor(opts = {}) {
+  const platform = opts.platform || process.platform;
+  if (opts.command || (opts.scope || 'user') === 'project') {
+    return platform === 'win32' && !opts.command ? cfg.hookCommandWindows(id, opts) : cfg.hookCommand(id, opts);
+  }
+  const node = opts.nodePath || process.execPath;
+  const runner = opts.runnerPath || cfg.runnerPath();
+  if (platform === 'win32') {
+    // Cursor wraps hook commands in PowerShell: the same three steps, inline.
+    return (event) => {
+      const script = launcher.windowsScript(id, event, node, runner);
+      return script ? launcher.windowsScriptCommand(script) : cfg.hookCommandWindows(id, opts);
+    };
+  }
+  const file = launcher.writeLauncher(id, node, runner, opts);
+  return (event) => launcher.launcherCommand(file, event, platform);
+}
+
 function install(opts = {}) {
   const file = hooksFile(opts);
   const data = cfg.readJson(file);
@@ -168,22 +215,24 @@ function install(opts = {}) {
   data.hooks = cfg.hooksOf(data, file);
   // On Windows Cursor wraps hook commands in PowerShell, which cannot run a
   // quoted path as a command: the powershell.exe form runs there.
-  const command = !opts.command && (opts.platform || process.platform) === 'win32'
-    ? cfg.hookCommandWindows(id, opts)
-    : cfg.hookCommand(id, opts);
+  const command = commandFor(opts);
+  const entries = hookEntries(command);
   for (const event of EVENTS) {
     data.hooks[event] = strip(data.hooks[event]);
-    const entry = { command, timeout: HOOK_TIMEOUT_S };
-    if (event === 'preToolUse') entry.matcher = PRE_TOOL_MATCHER;
-    if (FAIL_CLOSED.has(event)) entry.failClosed = true;
-    data.hooks[event].push(entry);
+    data.hooks[event].push(entries[event]);
   }
   cfg.writeJson(file, data);
   report.warnings.push('Cursor cannot rewrite the output of shell commands or file reads: zn blocks reads of secret files and redacts MCP output only (see docs/compat.md).');
   if (opts.mcp !== false) {
+    // A project's .cursor/mcp.json is shared: the hint names zn on the PATH, never the paths of this machine.
+    const project = (opts.scope || 'user') === 'project';
     const cli = path.resolve(__dirname, '..', '..', 'bin', 'cli.js').replace(/\\/g, '/');
-    report.warnings.push('optional: to let Cursor use the secrets kept in zn\'s vault, add the "secrets" MCP server to ~/.cursor/mcp.json under "mcpServers": "secrets": ' +
-      JSON.stringify({ command: (opts.nodePath || process.execPath).replace(/\\/g, '/'), args: [cli, 'secrets-mcp', '--agent', 'cursor'] }));
+    const server = project
+      ? { command: 'zn', args: ['secrets-mcp', '--agent', 'cursor'] }
+      : { command: (opts.nodePath || process.execPath).replace(/\\/g, '/'), args: [cli, 'secrets-mcp', '--agent', 'cursor'] };
+    report.warnings.push('optional: to let Cursor use the secrets kept in zn\'s vault, add the "secrets" MCP server to ' +
+      (project ? '.cursor/mcp.json in this project' : '~/.cursor/mcp.json') + ' under "mcpServers": "secrets": ' + JSON.stringify(server) +
+      (project ? ' (everyone who uses the project needs zn on their PATH)' : ''));
   }
   return report;
 }
@@ -203,6 +252,11 @@ function uninstall(opts = {}) {
     report.backup = cfg.backup(file);
     report.removed = 1;
     cfg.writeJson(file, data);
+    // The launcher (see commandFor) is shared by every config of this machine: one uninstall leaves it in place,
+    // only the machine-wide uninstall (opts.removeLauncher) deletes it.
+    if ((opts.scope || 'user') !== 'project' && opts.removeLauncher === true) {
+      try { fs.unlinkSync(launcher.launcherFile(id, opts)); } catch (_) { /* none */ }
+    }
   }
   return report;
 }
@@ -214,6 +268,7 @@ function detect(opts = {}) {
 
 module.exports = {
   id,
+  HOOK_TIMEOUT_S,
   detect,
   install,
   uninstall,
@@ -221,5 +276,7 @@ module.exports = {
   respond,
   capabilities: { ask: 'shell', rewriteInput: false, rewriteOutput: 'mcp' },
   EVENTS,
+  FAIL_CLOSED,
+  hookEntries,
   hooksFile,
 };

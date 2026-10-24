@@ -118,7 +118,7 @@ test('a key given with --key or ZN_API_KEY (and ZN_CLOUD=1) still goes to a cust
 
 test('the analyze_prompt MCP tool sends the stored key only to api.usezn.com', async () => {
   await withConnectedKey(async ({ key, seen }) => {
-    const res = await mcp.handleRequest({ id: 1, method: 'tools/call', params: { name: 'analyze_prompt', arguments: { text: 'What is the weather today?' } } }, { apiUrl: OTHER });
+    await mcp.handleRequest({ id: 1, method: 'tools/call', params: { name: 'analyze_prompt', arguments: { text: 'What is the weather today?' } } }, { apiUrl: OTHER });
     assert.deepEqual(seen.map((s) => s.host), ['api.usezn.com']);
     assert.equal(seen[0].auth, 'Bearer ' + key);
   });

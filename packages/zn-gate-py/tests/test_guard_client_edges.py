@@ -19,6 +19,7 @@ from zn_gate import client
 from zn_gate.guard import (
     GuardBlockError,
     block_message,
+    _NestingTooDeep,
     _extract_strings,
     check_tool_call,
     check_tool_result,
@@ -269,14 +270,15 @@ class TestAnalyzeFallbacks(_EnvCase):
 
 class TestExtractStrings(unittest.TestCase):
     def test_depth_limit_and_types(self):
-        self.assertEqual(_extract_strings("abc", max_depth=0), [])
-        self.assertEqual(_extract_strings(["a", ("b",), {"k": "v"}, 5, None, b"x"]), ["a", "b", "k", "v"])
+        self.assertEqual(_extract_strings("abc", max_depth=0), ["abc"])
+        self.assertEqual(_extract_strings(["a", ("b",), {"k": "v"}, 5, None, b"x"]), ["a", "b", "k", "v", "x"])
         self.assertEqual(sorted(_extract_strings({"s": {"x"}})), ["s", "x"])
         self.assertEqual(_extract_strings({1: "only-value"}), ["only-value"])
         nested = "leaf"
         for _ in range(20):
             nested = [nested]
-        self.assertEqual(_extract_strings(nested), [])
+        with self.assertRaises(_NestingTooDeep):
+            _extract_strings(nested)
         self.assertEqual(_extract_strings(None), [])
 
 
@@ -285,13 +287,13 @@ class TestBlockMessage(unittest.TestCase):
         a = Assessment(verdict="block", confidence=1.0, rule="demo:rule", reason=None)
         msg = block_message(a, "tool")
         self.assertIn("the input matched rule demo:rule", msg)
-        self.assertIn("do not retry with reworded text", msg)
+        self.assertIn("Next step: check the input", msg)
 
     def test_tool_output_target_gives_result_advice(self):
         a = Assessment(verdict="block", confidence=1.0, rule="demo:rule", reason="Bad data.")
         msg = block_message(a, "fetch:tool_output")
         self.assertIn("Reason: Bad data (rule: demo:rule).", msg)
-        self.assertIn("do not use this result", msg)
+        self.assertIn("output of this tool was withheld", msg)
 
 
 class TestChecks(_EnvCase):
@@ -314,7 +316,7 @@ class TestChecks(_EnvCase):
 
     def test_truncated_result_is_allowed_by_default(self):
         with mock.patch.object(guard_module, "scan_windows", return_value=self._truncated()):
-            res = check_tool_result("whatever")
+            res = check_tool_result("whatever", allow_truncated=True)
         self.assertTrue(res.allowed)
         self.assertTrue(res.truncated)
 
@@ -326,12 +328,17 @@ class TestChecks(_EnvCase):
             os.environ["ZN_BLOCK_TRUNCATED"] = "1"
             self.assertEqual(check_tool_result("whatever").rule, "size:truncated")
             os.environ["ZN_BLOCK_TRUNCATED"] = "0"
+            self.assertEqual(check_tool_result("whatever").rule, "size:truncated")
+            self.assertTrue(check_tool_result("whatever", allow_truncated=True).allowed)
+            os.environ["ZN_ALLOW_TRUNCATED"] = "1"
             self.assertTrue(check_tool_result("whatever").allowed)
+            os.environ["ZN_BLOCK_TRUNCATED"] = "1"
+            self.assertFalse(check_tool_result("whatever", allow_truncated=True).allowed)
 
     def test_advisory_is_copied(self):
         adv = {"note": "x"}
         ok = Assessment(verdict="allow", confidence=1.0, rule="none", reason=None, advisory=adv)
-        with mock.patch.object(guard_module, "evaluate", return_value=ok):
+        with mock.patch.object(guard_module, "scan_windows", return_value=ok):
             res = check_tool_call("t", {"a": "text"})
         self.assertEqual(res.advisory, adv)
         self.assertIsNot(res.advisory, adv)
@@ -357,14 +364,15 @@ class TestGuardModes(_EnvCase):
         self.assertFalse(res.allowed)
         self.assertEqual(tool2("fine"), "ran")
 
-    def test_sync_custom_calls_callback_and_runs_function(self):
+    def test_sync_custom_calls_callback_and_stops_the_call(self):
         calls = []
 
         @guard(on_block="custom", callback=lambda a, n, p: calls.append((a.allowed, n)))
         def tool(x):
             return "ran"
 
-        self.assertEqual(tool(BAD), "ran")
+        with self.assertRaises(GuardBlockError):
+            tool(BAD)
         self.assertEqual(calls, [(False, "tool")])
 
     def test_sync_raise_runs_callback_first(self):
@@ -395,18 +403,19 @@ class TestGuardModes(_EnvCase):
         def returner_assessment():
             return BAD
 
-        @guard(check_result=True, on_block="custom")
+        @guard(check_result=True, on_block="custom", callback=lambda a, n, p: None)
         def custom():
             return BAD
 
         with self.assertRaises(GuardBlockError) as cm:
             raiser()
         self.assertEqual(cm.exception.target, "raiser:result")
-        self.assertIn("do not use this result", str(cm.exception))
+        self.assertIn("output of this tool was withheld", str(cm.exception))
         self.assertEqual(calls, ["raiser"])
         self.assertEqual(returner(), "blocked")
         self.assertIsInstance(returner_assessment(), Assessment)
-        self.assertEqual(custom(), BAD)
+        with self.assertRaises(GuardBlockError):
+            custom()
 
     def test_sync_check_args_off_and_clean_result(self):
         @guard(check_args=False, check_result=True)
@@ -487,7 +496,8 @@ class TestGuardAsync(_EnvCase):
             self.run_async(raiser(BAD))
         self.assertEqual(self.run_async(returner(BAD)), "blocked")
         self.assertIsInstance(self.run_async(returner_assessment(BAD)), Assessment)
-        self.assertEqual(self.run_async(custom(BAD)), "ran")
+        with self.assertRaises(GuardBlockError):
+            self.run_async(custom(BAD))
         self.assertEqual(calls, ["raiser", "custom:custom"])
         self.assertEqual(self.run_async(raiser("fine")), "ran")
 
@@ -506,7 +516,7 @@ class TestGuardAsync(_EnvCase):
         async def returner_assessment():
             return BAD
 
-        @guard(check_result=True, on_block="custom")
+        @guard(check_result=True, on_block="custom", callback=lambda a, n, p: None)
         async def custom():
             return BAD
 
@@ -516,7 +526,8 @@ class TestGuardAsync(_EnvCase):
         self.assertEqual(calls, ["raiser"])
         self.assertEqual(self.run_async(returner()), "blocked")
         self.assertIsInstance(self.run_async(returner_assessment()), Assessment)
-        self.assertEqual(self.run_async(custom()), BAD)
+        with self.assertRaises(GuardBlockError):
+            self.run_async(custom())
 
     def test_async_clean_result_is_returned(self):
         @guard(check_result=True)

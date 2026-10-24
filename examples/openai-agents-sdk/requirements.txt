@@ -1,0 +1,2 @@
+zn-gate==1.14.0rc2
+openai-agents==0.24.0

@@ -5,11 +5,16 @@
 # handling between 1.2 and the current 1.x cannot slip through. Only the Python 3.12 /
 # ubuntu-latest entry installs it, in a separate step with its own virtual environment.
 #
-# Not managed by Dependabot, like ci-test-requirements.txt. Regenerate with uv from
-# these inputs (saved as ci-framework-test-requirements-oldest.in):
+# Dependabot opens security updates only for this directory (version updates are off).
+# The minimum versions below are deliberate: they are the oldest supported releases, so
+# do not raise them to the latest. Regenerate with uv from
+# these inputs, written to a scratch file (for example requirements.in) next to this one:
 #   langchain-core==1.3.3
 #   llama-index-core>=0.14,<0.15
-# uv pip compile ci-framework-test-requirements-oldest.in --python-version 3.12 #   --python-platform x86_64-manylinux_2_28 --generate-hashes --no-header --no-annotate #   --exclude-newer <date two weeks ago> -c ci-test-requirements.txt
+# then run, as one command:
+#   uv pip compile requirements.in --python-version 3.12 --python-platform x86_64-manylinux_2_28 \
+#     --generate-hashes --no-header --no-annotate --exclude-newer <date two weeks ago> \
+#     -c ci-test-requirements.txt -o ci-framework-test-requirements-oldest.txt
 # The -c keeps the shared packages at the versions ci-test-requirements.txt pins.
 aiohappyeyeballs==2.7.1 \
     --hash=sha256:065665c041c42a5938ed220bdcd7230f22527fbec085e1853d2402c8a3615d9d \
@@ -1704,9 +1709,9 @@ requests==2.34.2 \
 requests-toolbelt==1.0.0 \
     --hash=sha256:7681a0a3d047012b5bdc0ee37d7f8f07ebe76ab08caeccfc3921ce23c88d5bc6 \
     --hash=sha256:cccfdd665f0a24fcf4726e690f65639d272bb0637b9b92dfd91a5568ccf6bd06
-setuptools==84.0.0 \
-    --hash=sha256:51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670 \
-    --hash=sha256:f4695c21257f0d9b537ec2692c941d02ee143b7cc1276941349a546573b2ef73
+setuptools==84.1.0 \
+    --hash=sha256:23657205b63d4d31395ab917815247f694aafad28cd21316bf5fd45a51048ea0 \
+    --hash=sha256:5231689c6ac8156cd155cfb98c3fd6fb252c3e7e9bd3d78b64d3c55f132624c9
 sniffio==1.3.1 \
     --hash=sha256:2f6da418d1f1e0fddd844478f41680e794e6051915791a034ff65e5f100525a2 \
     --hash=sha256:f4324edc670a0f49750a81b895f35c3adb843cca46f0530f79fc1babb23789dc

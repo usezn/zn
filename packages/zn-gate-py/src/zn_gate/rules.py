@@ -1,25 +1,26 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-19.1
+RULES_VERSION: 2026-10-25.20
 Zero external dependencies. Pure Python stdlib.
 """
 
 from __future__ import annotations
 
 import base64
-import json
+import binascii
+import bisect
 from array import array
+import json
 import math
 import os
 import re
-import sys
-import time
 import unicodedata
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, cast, overload
 
-RULES_VERSION = "2026-10-19.1"
+
+RULES_VERSION = "2026-10-25.20"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -57,9 +58,17 @@ _HOMOGLYPH_TABLE = {ord(k): v for k, v in HOMOGLYPH_MAP.items()}
 # lazy wildcards, and repeated character classes are bounded.
 ZERO_WIDTH_RE = re.compile(r'[\u200B-\u200D\u2060\uFEFF\u00AD\uFE00-\uFE0F]')
 INVISIBLE_ASTRAL_RE = re.compile(r'[\U000E0000-\U000E007F\U000E0100-\U000E01EF]')
+# Line breaks are joined only in texts up to this size (see MAX_WRAP_VIEW_CHARS in rules.js).
+MAX_WRAP_VIEW_CHARS = 1 << 20
+# A line break inside a wrapped token (see WRAP_BREAK_RE in rules.js).
+WRAP_BREAK_RE = re.compile(r'(?<=[A-Za-z0-9_\-+/=]{10})[ \t]*\r?\n[ \t]*(?=[A-Za-z0-9_\-+/=]{10})(?![A-Za-z_][A-Za-z0-9_]*[ \t]*[=:](?!=[ \t]*(?:\r?\n|$)))')
 NON_ASCII_RE = re.compile(r'[^\x00-\x7f]')
 ANSI_ESCAPE_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07\x1b]*\x07')
-B64_EXEC_RE = re.compile(r'(?:echo|printf)\s+([A-Za-z0-9+/=]{16,})\s*\|\s*(?:base64\s+-(?:d|-decode)|openssl)', re.IGNORECASE)
+# Hard caps for the Base64 smuggling check: above either one the command is blocked.
+MAX_B64_PAYLOADS = 16
+MAX_B64_DECODED_BYTES = 128 * 1024
+# The payload is group 2 (echo/printf pipe, quoted or not, with options) or group 4 (here-string).
+B64_EXEC_RE = re.compile(r'''(?:echo|printf(?:\s+(?:'%s'|"%s"|%s))?)(?:\s+-[A-Za-z]{1,3})*\s+(["']?)([A-Za-z0-9+/=]{16,})\1\s*\|\s*(?:base64\s+-(?:di?|id|-decode)|openssl\s+(?:base64|enc)(?:\s+(?:-[A-Za-z0-9]+|-(?![A-Za-z0-9])))*?\s+-d(?![A-Za-z0-9_]))|base64\s+-(?:di?|id|-decode)\s*<<<\s*(["']?)([A-Za-z0-9+/=]{16,})\3''', re.IGNORECASE)
 # Maximal whitespace runs; only runs that contain a line break are joined.
 # A pattern anchored on the line break (such as [^\S\r\n]*[\r\n]) would rescan
 # a long run of spaces from every position.
@@ -112,7 +121,7 @@ ZH_FORGET_OBJECT_RE = re.compile(r'指示|指令|一切')
 ZH_PHRASE_RE = re.compile(r'你现在是|初始提示词')
 
 
-def _near_match(text: str, verb_re: re.Pattern, object_re: re.Pattern) -> bool:
+def _near_match(text: str, verb_re: re.Pattern[str], object_re: re.Pattern[str]) -> bool:
     """True when an object match starts at most NEAR_MAX_GAP characters after
     the end of a verb match, with no line break in between. Linear: the object
     search only restarts past the last object found."""
@@ -138,7 +147,7 @@ def _test_multi_zh(text: str) -> bool:
         or _near_match(text, ZH_FORGET_RE, ZH_FORGET_OBJECT_RE)
 
 
-INJECTION_RULES: List[Tuple[str, re.Pattern, str]] = [
+INJECTION_RULES: List[Tuple[str, re.Pattern[str], str]] = [
     ('pi:ignore_previous', re.compile(_override_rule_source('ignore'), re.IGNORECASE), 'Override prior instructions'),
     ('pi:disregard', re.compile(_override_rule_source('disregard'), re.IGNORECASE), 'Disregard instructions'),
     ('pi:forget', re.compile(r"""(?<![A-Za-z0-9_])forget\s+(?:about\s+)?(?:everything|all|your)(?![A-Za-z0-9_])(?!\s+(?:of\s+)?(?:the\s+)?(?:cached?|caches|entries|changes|data|files?|records|sessions?|cookies|state|tabs|devices?|passwords?|history|items|keys|tokens|credentials|settings|preferences|accounts?|connections?|logins?|networks?)(?![A-Za-z0-9_]))""", re.IGNORECASE), 'Forget-context attack'),
@@ -159,9 +168,11 @@ INJECTION_RULES: List[Tuple[str, re.Pattern, str]] = [
     ('pi:multi_de', re.compile(r'ignoriere\s+(alle\s+)?(anweisungen|instruktionen)|vergiss\s+(alles|jede)|du\s+bist\s+jetzt|handle\s+als', re.IGNORECASE), 'Multilingual prompt injection (German)'),
     ('pi:multi_ru', re.compile(r'забудь\s+[^\n]{0,80}?(все|инструкции)|игнорируй\s+[^\n]{0,80}?(все|предыдущие)|действуй\s+как|ты\s+теперь|найди\s+пароли', re.IGNORECASE), 'Multilingual prompt injection (Russian)'),
     ('pi:multi_zh', re.compile(r'忽略[^\n]{0,80}?(指示|指令|提示)|忘记[^\n]{0,80}?(指示|指令|一切)|你现在是|初始提示词'), 'Multilingual prompt injection (Chinese)'),
+    ('pi:identity_request', re.compile(r"""(?<![A-Za-z0-9_])(?<!never\s)(?<!not\s)(?<!n't\s)(?<!n\u2019t\s)(?<!avoid\s)(?:include|add|put|attach|append|insert|embed|set|send|pass|forward|submit|post|write|specify|provide|supply|encode|inject|place|share|transmit|reveal|disclose|expose)(?![A-Za-z0-9_])[^\n]{0,60}?(?:(?:(?:(?:your|the)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)|your\s{1,4}(?:end\s{1,4})?(?:customer|account\s{1,4}holder))[\x27’]s\s{1,4}(?:(?:full|real|first|last|login|primary|account|email|e-mail)\s{1,4}){0,2}(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|usernames?|user\s{0,2}ids?|accounts?|api[\s-]{0,2}keys?|access\s{1,4}tokens?|tokens?|credentials?|passwords?|logins?|identity|identifier|phone(?:\s{1,4}number)?|address|keys?|secrets?)|(?:(?:full|real|first|last|login|primary|account|email|e-mail)\s{1,4}){0,2}(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|usernames?|user\s{0,2}ids?|accounts?|api[\s-]{0,2}keys?|access\s{1,4}tokens?|tokens?|credentials?|passwords?|logins?|identity|identifier|phone(?:\s{1,4}number)?|address|keys?|secrets?)\s{1,4}(?:of|for)\s{1,4}(?:(?:your|the)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)|your\s{1,4}(?:end\s{1,4})?(?:customer|account\s{1,4}holder)))(?![A-Za-z0-9_])[^\n]{0,80}?(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|(?:request\s{1,4})?(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:subsequent|following|every|each|outgoing)\s{1,4}(?:http\s{1,4})?(?:requests?|calls?|fetch(?:es)?))|(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|(?:request\s{1,4})?(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:subsequent|following|every|each|outgoing)\s{1,4}(?:http\s{1,4})?(?:requests?|calls?|fetch(?:es)?))[^\n]{0,80}?(?:(?:(?:your|the)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)|your\s{1,4}(?:end\s{1,4})?(?:customer|account\s{1,4}holder))[\x27’]s\s{1,4}(?:(?:full|real|first|last|login|primary|account|email|e-mail)\s{1,4}){0,2}(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|usernames?|user\s{0,2}ids?|accounts?|api[\s-]{0,2}keys?|access\s{1,4}tokens?|tokens?|credentials?|passwords?|logins?|identity|identifier|phone(?:\s{1,4}number)?|address|keys?|secrets?)|(?:(?:full|real|first|last|login|primary|account|email|e-mail)\s{1,4}){0,2}(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|usernames?|user\s{0,2}ids?|accounts?|api[\s-]{0,2}keys?|access\s{1,4}tokens?|tokens?|credentials?|passwords?|logins?|identity|identifier|phone(?:\s{1,4}number)?|address|keys?|secrets?)\s{1,4}(?:of|for)\s{1,4}(?:(?:your|the)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)|your\s{1,4}(?:end\s{1,4})?(?:customer|account\s{1,4}holder)))(?![A-Za-z0-9_]))|(?<![A-Za-z0-9_])(?:(?:identify|reveal|disclose|state|report|announce)\s{1,4}(?:to\s{1,4}(?:me|us|this\s{1,4}[a-z]{3,10})\s{1,4})?(?:who\s{1,4})?your\s{1,4}(?:user|operator|owner|human|principal)(?:\s{1,4}is)?(?![A-Za-z0-9_])|(?:tell|inform)\s{1,4}(?:me|us)\s{1,4}who\s{1,4}(?:your|the)\s{1,4}(?:user|operator|owner|human|principal)\s{1,4}is(?![A-Za-z0-9_])|(?:tell|state|say|reveal|report)[^\n]{0,20}?who\s{1,4}you\s{1,4}(?:are|[\x27’]re)\s{1,4}(?:working|acting)\s{1,4}for(?![A-Za-z0-9_]))""", re.IGNORECASE), "Tool result asks the agent to identify its user or put the user identity in a request"),
+    ('pi:identity_request_multi', re.compile(r"""(?<![A-Za-z0-9_])(?:incluye|incluya|incluyas|añade|añada|agrega|agregue|pon|ponga|envía|envia|envíe|adjunta|adjunte|inserta|pasa|indica|comparte|revela)(?![A-Za-z0-9_])[^\n]{0,60}?(?:(?:(?:usuario|operador|due[ñn]o|propietario)[^\n]{0,30}?(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)|(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)[^\n]{0,30}?(?:usuario|operador|due[ñn]o|propietario))[^\n]{0,80}?(?:cabecera|encabezado|header|par[aá]metro|cookie|formulario|campo|(?:siguiente|pr[oó]xima)\s{1,4}(?:petici[oó]n|solicitud)|url)|(?:cabecera|encabezado|header|par[aá]metro|cookie|formulario|campo|(?:siguiente|pr[oó]xima)\s{1,4}(?:petici[oó]n|solicitud)|url)[^\n]{0,80}?(?:(?:usuario|operador|due[ñn]o|propietario)[^\n]{0,30}?(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)|(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)[^\n]{0,30}?(?:usuario|operador|due[ñn]o|propietario)))|(?:cabecera|encabezado|header|par[aá]metro|cookie|formulario|campo|(?:siguiente|pr[oó]xima)\s{1,4}(?:petici[oó]n|solicitud)|url)[^\n]{0,60}?(?<![A-Za-z0-9_])(?:incluye|incluya|incluyas|añade|añada|agrega|agregue|pon|ponga|envía|envia|envíe|adjunta|adjunte|inserta|pasa|indica|comparte|revela)(?![A-Za-z0-9_])[^\n]{0,60}?(?:(?:usuario|operador|due[ñn]o|propietario)[^\n]{0,30}?(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)|(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)[^\n]{0,30}?(?:usuario|operador|due[ñn]o|propietario))|(?<![A-Za-z0-9_])(?:inclua|inclui|adicione|adiciona|coloque|coloca|envie|envia|anexe|insira|passe|compartilhe|revele)(?![A-Za-z0-9_])[^\n]{0,60}?(?:(?:(?:usu[aá]rio|operador|dono|propriet[aá]rio)[^\n]{0,30}?(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)|(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)[^\n]{0,30}?(?:usu[aá]rio|operador|dono|propriet[aá]rio))[^\n]{0,80}?(?:cabe[cç]alho|header|par[aâ]metro|cookie|formul[aá]rio|campo|pr[oó]xima\s{1,4}requisi[cç][aã]o|url)|(?:cabe[cç]alho|header|par[aâ]metro|cookie|formul[aá]rio|campo|pr[oó]xima\s{1,4}requisi[cç][aã]o|url)[^\n]{0,80}?(?:(?:usu[aá]rio|operador|dono|propriet[aá]rio)[^\n]{0,30}?(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)|(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)[^\n]{0,30}?(?:usu[aá]rio|operador|dono|propriet[aá]rio)))|(?:cabe[cç]alho|header|par[aâ]metro|cookie|formul[aá]rio|campo|pr[oó]xima\s{1,4}requisi[cç][aã]o|url)[^\n]{0,60}?(?<![A-Za-z0-9_])(?:inclua|inclui|adicione|adiciona|coloque|coloca|envie|envia|anexe|insira|passe|compartilhe|revele)(?![A-Za-z0-9_])[^\n]{0,60}?(?:(?:usu[aá]rio|operador|dono|propriet[aá]rio)[^\n]{0,30}?(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)|(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)[^\n]{0,30}?(?:usu[aá]rio|operador|dono|propriet[aá]rio))|(?<![A-Za-z0-9_])(?:inclus|incluez|ajoute|ajoutez|mets|mettez|envoie|envoyez|joins|joignez|insère|insérez|transmets|transmettez|partage|partagez|révèle|révélez)(?![A-Za-z0-9_])[^\n]{0,60}?(?:(?:(?:utilisateur|opérateur|propriétaire)[^\n]{0,30}?(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)|(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)[^\n]{0,30}?(?:utilisateur|opérateur|propriétaire))[^\n]{0,80}?(?:en-t[eê]te|header|param[eè]tre|cookie|formulaire|champ|prochaine\s{1,4}requ[eê]te|url)|(?:en-t[eê]te|header|param[eè]tre|cookie|formulaire|champ|prochaine\s{1,4}requ[eê]te|url)[^\n]{0,80}?(?:(?:utilisateur|opérateur|propriétaire)[^\n]{0,30}?(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)|(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)[^\n]{0,30}?(?:utilisateur|opérateur|propriétaire)))|(?:en-t[eê]te|header|param[eè]tre|cookie|formulaire|champ|prochaine\s{1,4}requ[eê]te|url)[^\n]{0,60}?(?<![A-Za-z0-9_])(?:inclus|incluez|ajoute|ajoutez|mets|mettez|envoie|envoyez|joins|joignez|insère|insérez|transmets|transmettez|partage|partagez|révèle|révélez)(?![A-Za-z0-9_])[^\n]{0,60}?(?:(?:utilisateur|opérateur|propriétaire)[^\n]{0,30}?(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)|(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)[^\n]{0,30}?(?:utilisateur|opérateur|propriétaire))|(?<![A-Za-z0-9_])(?:füge|fuege|sende|schicke|übergib|uebergib|setze|gib|teile|nenne|hänge|binde)(?![A-Za-z0-9_])[^\n]{0,60}?(?:(?:(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)[^\n]{0,30}?(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)|(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)[^\n]{0,30}?(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators))[^\n]{0,80}?(?:header|kopfzeile|parameter|cookie|formular|feld|nächste\s{1,4}anfrage|url)|(?:header|kopfzeile|parameter|cookie|formular|feld|nächste\s{1,4}anfrage|url)[^\n]{0,80}?(?:(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)[^\n]{0,30}?(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)|(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)[^\n]{0,30}?(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)))|(?:header|kopfzeile|parameter|cookie|formular|feld|nächste\s{1,4}anfrage|url)[^\n]{0,60}?(?<![A-Za-z0-9_])(?:füge|fuege|sende|schicke|übergib|uebergib|setze|gib|teile|nenne|hänge|binde)(?![A-Za-z0-9_])[^\n]{0,60}?(?:(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)[^\n]{0,30}?(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)|(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)[^\n]{0,30}?(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators))|(?:добавь|добавьте|включи|включите|отправь|отправьте|передай|передайте|укажи|укажите|вставь|вставьте)[^\n]{0,60}?(?:(?:(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)[^\n]{0,30}?(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)|(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)[^\n]{0,30}?(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*))[^\n]{0,80}?(?:заголов[а-яё]+|header|параметр[а-яё]*|cookie|куки|форм[а-яё]+|поле|следующ[а-яё]+\s{1,4}запрос[а-яё]*|url)|(?:заголов[а-яё]+|header|параметр[а-яё]*|cookie|куки|форм[а-яё]+|поле|следующ[а-яё]+\s{1,4}запрос[а-яё]*|url)[^\n]{0,80}?(?:(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)[^\n]{0,30}?(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)|(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)[^\n]{0,30}?(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)))|(?:заголов[а-яё]+|header|параметр[а-яё]*|cookie|куки|форм[а-яё]+|поле|следующ[а-яё]+\s{1,4}запрос[а-яё]*|url)[^\n]{0,60}?(?:добавь|добавьте|включи|включите|отправь|отправьте|передай|передайте|укажи|укажите|вставь|вставьте)[^\n]{0,60}?(?:(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)[^\n]{0,30}?(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)|(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)[^\n]{0,30}?(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*))|(?:添加|加入|包含|附上|发送|传递|提供|填写|放入|带上|附加)[^\n]{0,60}?(?:(?:(?:用户|使用者|操作者|主人|所有者)[^\n]{0,30}?(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)|(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)[^\n]{0,30}?(?:用户|使用者|操作者|主人|所有者))[^\n]{0,80}?(?:请求头|头部|标头|header|参数|cookie|表单|字段|下一个请求|下一次请求|下个请求|url|查询字符串)|(?:请求头|头部|标头|header|参数|cookie|表单|字段|下一个请求|下一次请求|下个请求|url|查询字符串)[^\n]{0,80}?(?:(?:用户|使用者|操作者|主人|所有者)[^\n]{0,30}?(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)|(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)[^\n]{0,30}?(?:用户|使用者|操作者|主人|所有者)))|(?:请求头|头部|标头|header|参数|cookie|表单|字段|下一个请求|下一次请求|下个请求|url|查询字符串)[^\n]{0,60}?(?:添加|加入|包含|附上|发送|传递|提供|填写|放入|带上|附加)[^\n]{0,60}?(?:(?:用户|使用者|操作者|主人|所有者)[^\n]{0,30}?(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)|(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)[^\n]{0,30}?(?:用户|使用者|操作者|主人|所有者))""", re.IGNORECASE), "Tool result asks the agent to identify its user or put the user identity in a request (non-English)"),
 ]
 
-EVASION_RULES: List[Tuple[str, re.Pattern, str]] = [
+EVASION_RULES: List[Tuple[str, re.Pattern[str], str]] = [
     (
         'evasion:bidi_override',
         re.compile(r'[\u202A-\u202E\u2066-\u2069]'),
@@ -177,7 +188,47 @@ EVASION_RULES: List[Tuple[str, re.Pattern, str]] = [
 # [\s\S]*? tail, or an attribute run that may cross "<", re-scans the rest of
 # the input from every candidate and is super-linear on crafted markup.)
 OPEN_TAG_RE = re.compile(r'<[a-z0-9]+(?![A-Za-z0-9_])([^<>]*)(>?)', re.IGNORECASE)
-HIDDEN_ATTR_RE = re.compile(r'(?<![A-Za-z0-9_])(?:display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0|font-size\s*:\s*0(?:px)?|color\s*:\s*transparent|text-indent\s*:\s*-[0-9]{3,}px|hidden(?![A-Za-z0-9_]))', re.IGNORECASE)
+# What a style attribute must say to hide an element. Spaces are the ASCII ones (the CSS and HTML
+# separators), so Node and Python read the same text the same way.
+HIDDEN_ATTR_RE = re.compile(r'(?<![A-Za-z0-9_-])(?:display[\t\n\f\r ]*:[\t\n\f\r ]*none|visibility[\t\n\f\r ]*:[\t\n\f\r ]*hidden|opacity[\t\n\f\r ]*:[\t\n\f\r ]*0(?:\.0+)?(?![0-9.])|font-size[\t\n\f\r ]*:[\t\n\f\r ]*0(?:px)?(?![0-9.])|color[\t\n\f\r ]*:[\t\n\f\r ]*transparent|text-indent[\t\n\f\r ]*:[\t\n\f\r ]*-[0-9]{3,}px)', re.IGNORECASE)
+# An element of at most 1px, or with a clip that leaves nothing visible, or with no height and
+# its overflow cut off, is hidden in the way screen-reader-only text is.
+TINY_WIDTH_CSS_RE = re.compile(r'(?<![A-Za-z0-9_-])(?:max-)?width[\t\n\f\r ]*:[\t\n\f\r ]*(?:0(?:\.0+)?(?:[a-z]+|%)?(?![0-9.])|(?:0(?:\.[0-9]+)?|1(?:\.0+)?)(?:px)?(?![0-9.a-z%]))', re.IGNORECASE)
+TINY_HEIGHT_CSS_RE = re.compile(r'(?<![A-Za-z0-9_-])(?:max-)?height[\t\n\f\r ]*:[\t\n\f\r ]*(?:0(?:\.0+)?(?:[a-z]+|%)?(?![0-9.])|(?:0(?:\.[0-9]+)?|1(?:\.0+)?)(?:px)?(?![0-9.a-z%]))', re.IGNORECASE)
+OVERFLOW_HIDDEN_CSS_RE = re.compile(r'(?<![A-Za-z0-9_-])overflow(?:-[xy])?[\t\n\f\r ]*:[\t\n\f\r ]*hidden(?![A-Za-z0-9_-])', re.IGNORECASE)
+CLIP_CSS_RE = re.compile(r'(?<![A-Za-z0-9_-])(?:clip[\t\n\f\r ]*:[\t\n\f\r ]*rect\([\t\n\f\r ]*(?:0|1px)|clip-path[\t\n\f\r ]*:[\t\n\f\r ]*inset\([\t\n\f\r ]*(?:50|100)%)', re.IGNORECASE)
+# One attribute: name, then an optional value (double-quoted, single-quoted
+# or bare). An unterminated quote runs to the end of the run, so every
+# character is read once.
+ATTR_RE = re.compile(r'''([^\t\n\f\r "'<>\/=]+)(?:[\t\n\f\r ]*=[\t\n\f\r ]*(?:"([^"]*)"?|'([^']*)'?|([^\t\n\f\r "'<>=`]*)))?''')
+# The classes that hide an element in the common frameworks (a token of the class list).
+CLASS_HIDDEN_RE = re.compile(r'(?:^|[\t\n\f\r ])(?:hidden|visually-hidden|sr-only|d-none|invisible|is-hidden)(?=[\t\n\f\r ]|$)', re.IGNORECASE)
+_ASCII_SPACE = '\t\n\f\r '
+
+
+def _style_hides(v: str) -> bool:
+    return bool(HIDDEN_ATTR_RE.search(v) or CLIP_CSS_RE.search(v)
+                or (TINY_WIDTH_CSS_RE.search(v) and TINY_HEIGHT_CSS_RE.search(v))
+                or (OVERFLOW_HIDDEN_CSS_RE.search(v) and TINY_HEIGHT_CSS_RE.search(v)))
+
+
+# True when the attributes of an opening tag really hide the element: the
+# boolean hidden attribute, aria-hidden="true", a style that hides it, or a class
+# that hides it (hidden, sr-only and the like). A name that merely contains the word
+# (data-hidden) or a hidden word elsewhere in the tag does not count.
+def _attrs_hide(attrs: str) -> bool:
+    for m in ATTR_RE.finditer(attrs):
+        name = m.group(1).lower()
+        value = next((g for g in (m.group(2), m.group(3), m.group(4)) if g is not None), '')
+        if name == 'hidden':
+            return True
+        if name == 'aria-hidden' and value.strip(_ASCII_SPACE).lower() == 'true':
+            return True
+        if name == 'class' and CLASS_HIDDEN_RE.search(value):
+            return True
+        if name == 'style' and _style_hides(value):
+            return True
+    return False
 HIDDEN_PAYLOAD_RE = re.compile(r'ignore|system|instruction|prompt|bypass|override|exfil|leak', re.IGNORECASE)
 
 
@@ -217,8 +268,11 @@ def _test_hidden_tag(text: str) -> bool:
         if m is None:
             return False
         pos = m.end()
-        if m.group(2) == '>' and HIDDEN_ATTR_RE.search(m.group(1)):
-            name = _TAG_NAME_RE.match(m.group(0)).group(1).lower()
+        if m.group(2) == '>' and _attrs_hide(m.group(1)):
+            tag = _TAG_NAME_RE.match(m.group(0))
+            if tag is None:
+                continue
+            name = tag.group(1).lower()
             inner, stop = _hidden_element_text(text, m.end(), name)
             if HIDDEN_PAYLOAD_RE.search(inner):
                 return True
@@ -231,12 +285,12 @@ def _test_hidden_tag(text: str) -> bool:
 # payload word. Used only for advisories.
 def _test_hidden_tag_anywhere(text: str) -> bool:
     for m in OPEN_TAG_RE.finditer(text):
-        if m.group(2) == '>' and HIDDEN_ATTR_RE.search(m.group(1)):
+        if m.group(2) == '>' and _attrs_hide(m.group(1)):
             return HIDDEN_PAYLOAD_RE.search(text, m.end()) is not None
     return False
 
 
-INDIRECT_INJECTION_RULES: List[Tuple[str, re.Pattern, str]] = [
+INDIRECT_INJECTION_RULES: List[Tuple[str, re.Pattern[str], str]] = [
     (
         'indirect:html_comment',
         re.compile(r'<!--\s*(?:system|instruction|prompt|override|command)\s*:', re.IGNORECASE),
@@ -272,12 +326,44 @@ def _test_markdown_image(text: str) -> bool:
     return False
 
 
+# Cheap necessary conditions for the identity-request rules (same as in
+# rules.js), checked in front of the two (much more expensive) patterns.
+# Every match of pi:identity_request has a word for the user (user, operator,
+# owner...) or "who", and a place word (header, cookie, URL parameter, form
+# field, next request...) or one of its "who is your user" phrasings; every
+# match of pi:identity_request_multi has a word for the user and a place word
+# of its language. The groups are copied from the patterns (a test checks
+# that), so a text the pattern would match is never skipped.
+IDENTITY_PREFILTERS: Dict[str, Tuple[re.Pattern[str], ...]] = {
+    'pi:identity_request': (
+        re.compile(r"""(?:user|operator|owner|human|principal)|customer|account\s{1,4}holder|who""", re.IGNORECASE),
+        re.compile(r"""(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|(?:request\s{1,4})?(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:subsequent|following|every|each|outgoing)\s{1,4}(?:http\s{1,4})?(?:requests?|calls?|fetch(?:es)?))|who|your\s{1,4}(?:user|operator|owner|human|principal)""", re.IGNORECASE),
+    ),
+    'pi:identity_request_multi': (
+        re.compile(r"""(?:usuario|operador|due[ñn]o|propietario)|(?:usu[aá]rio|operador|dono|propriet[aá]rio)|(?:utilisateur|opérateur|propriétaire)|(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)|(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)|(?:用户|使用者|操作者|主人|所有者)""", re.IGNORECASE),
+        re.compile(r"""(?:cabecera|encabezado|header|par[aá]metro|cookie|formulario|campo|(?:siguiente|pr[oó]xima)\s{1,4}(?:petici[oó]n|solicitud)|url)|(?:cabe[cç]alho|header|par[aâ]metro|cookie|formul[aá]rio|campo|pr[oó]xima\s{1,4}requisi[cç][aã]o|url)|(?:en-t[eê]te|header|param[eè]tre|cookie|formulaire|champ|prochaine\s{1,4}requ[eê]te|url)|(?:header|kopfzeile|parameter|cookie|formular|feld|nächste\s{1,4}anfrage|url)|(?:заголов[а-яё]+|header|параметр[а-яё]*|cookie|куки|форм[а-яё]+|поле|следующ[а-яё]+\s{1,4}запрос[а-яё]*|url)|(?:请求头|头部|标头|header|参数|cookie|表单|字段|下一个请求|下一次请求|下个请求|url|查询字符串)""", re.IGNORECASE),
+    ),
+}
+_IDENTITY_PATTERNS: Dict[str, re.Pattern[str]] = {
+    rule_id: pat for rule_id, pat, _ in INJECTION_RULES if rule_id in IDENTITY_PREFILTERS
+}
+
+
+def _identity_test(rule_id: str, text: str) -> bool:
+    for prefilter in IDENTITY_PREFILTERS[rule_id]:
+        if prefilter.search(text) is None:
+            return False
+    return _IDENTITY_PATTERNS[rule_id].search(text) is not None
+
+
 # Rules whose match is computed by a function instead of pattern.search().
 RULE_TESTERS: Dict[str, Any] = {
     'indirect:hidden_tag': _test_hidden_tag,
     'exfil:markdown_image': _test_markdown_image,
     'pi:multi_ru': _test_multi_ru,
     'pi:multi_zh': _test_multi_zh,
+    'pi:identity_request': lambda t: _identity_test('pi:identity_request', t),
+    'pi:identity_request_multi': lambda t: _identity_test('pi:identity_request_multi', t),
 }
 
 EXFIL_VERB_SOURCE = r'(?<![A-Za-z0-9_])(give|reveal|send|show|print|expose|leak|paste|dump|read|open|cat|fetch|extract|steal)(?![A-Za-z0-9_])'
@@ -308,15 +394,15 @@ ADVISORY_RULES: List[Tuple[str, Any, str]] = [
     ('indirect:hidden_tag', _test_hidden_tag_anywhere, 'Hidden element in markup followed by instruction-like words'),
 ]
 
-SENSITIVE_PATH_RULES: List[Tuple[str, re.Pattern, str]] = [
+SENSITIVE_PATH_RULES: List[Tuple[str, re.Pattern[str], str]] = [
     (
         'path:sensitive_file',
-        re.compile(r"""(?:^|[\s"'`(\[])(?:~|\/home\/[^\s/]+|\/root)?\/?\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE),
+        re.compile(r"""(?:^|[\s"'`(\[@])(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)?[\/\\]?\.(?:ssh[\/\\](?:id_rsa|id_ed25519|authorized_keys)|aws[\/\\]credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|=(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)[\/\\]?\.(?:ssh[\/\\](?:id_rsa|id_ed25519|authorized_keys)|aws[\/\\]credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE),
         'Targeting sensitive system credentials or environment file',
     ),
 ]
 
-MARKDOWN_EXFIL_RULES: List[Tuple[str, re.Pattern, str]] = [
+MARKDOWN_EXFIL_RULES: List[Tuple[str, re.Pattern[str], str]] = [
     (
         'exfil:markdown_image',
         # The pattern is the linear image scanner; the rule is _test_markdown_image().
@@ -325,14 +411,13 @@ MARKDOWN_EXFIL_RULES: List[Tuple[str, re.Pattern, str]] = [
     ),
 ]
 
-# evaluate() analyses inputs longer than MAX_SCAN_CHARS as head + tail and
-# marks the result truncated=True. Tool results are scanned in overlapping
-# windows (up to MAX_TOOL_RESULT_SCAN_CHARS) by scan_windows() below. Lengths count code points here and UTF-16 code
-# units in Node.js; the two only differ for characters outside the BMP.
+# evaluate() scans an input longer than MAX_SCAN_CHARS whole, in overlapping
+# windows (_evaluate_oversize() below), and blocks one longer than
+# MAX_TOOL_RESULT_SCAN_CHARS (rule size:oversize), so no part of an input is left
+# unscanned. Tool results go through scan_windows(), which allows output past
+# that limit and only marks it truncated=True. Lengths count code points here and
+# UTF-16 code units in Node.js; the two only differ for characters outside the BMP.
 MAX_SCAN_CHARS = 256 * 1024
-SCAN_HEAD_CHARS = 192 * 1024
-# One character is reserved for the separator, so the window fits the limit.
-SCAN_TAIL_CHARS = MAX_SCAN_CHARS - SCAN_HEAD_CHARS - 1
 
 @dataclass
 class Assessment:
@@ -384,7 +469,7 @@ def _strip_c_comments(text: str) -> str:
     return ''.join(parts)
 
 
-def _join_line_break(m: Any) -> str:
+def _join_line_break(m: 're.Match[str]') -> str:
     run = m.group(0)
     if '\n' not in run and '\r' not in run:
         return run
@@ -402,22 +487,35 @@ def _strip_invisible(text: str) -> str:
     return INVISIBLE_ASTRAL_RE.sub('', ZERO_WIDTH_RE.sub('', text))
 
 
-def invisible_view(text: str) -> Optional[Tuple[str, array]]:
+def invisible_view(text: str) -> Optional[Tuple[str, 'array[int]']]:
     """Text without invisible characters and the index map back to `text`
     (map[i] is the index of clean[i]; map[len(clean)] is len(text)). None when
     the text has no invisible character. See invisibleView in rules.js."""
-    runs = sorted([m.span() for m in ZERO_WIDTH_RE.finditer(text)]
-                  + [m.span() for m in INVISIBLE_ASTRAL_RE.finditer(text)])
+    runs = [m.span() for m in ZERO_WIDTH_RE.finditer(text)] + [m.span() for m in INVISIBLE_ASTRAL_RE.finditer(text)]
+    if len(text) <= MAX_WRAP_VIEW_CHARS and '\n' in text:
+        runs += [m.span() for m in WRAP_BREAK_RE.finditer(text)]
     if not runs:
         return None
+    runs.sort(key=lambda r: (r[0], -r[1]))
     mapping = array('q')
+    parts: List[str] = []
     pos = 0
     for start, end in runs:
-        mapping.extend(range(pos, start))
-        pos = end
+        if end <= pos:
+            continue
+        mapping.extend(range(pos, max(pos, start)))
+        parts.append(text[pos:max(pos, start)])
+        pos = max(pos, end)
     mapping.extend(range(pos, len(text)))
+    parts.append(text[pos:])
     mapping.append(len(text))
-    return _strip_invisible(text), mapping
+    return ''.join(parts), mapping
+
+
+def _clean_value(text: str) -> str:
+    """A value as the secret rules see it: no invisible characters and no wrap breaks."""
+    s = _strip_invisible(text)
+    return WRAP_BREAK_RE.sub('', s) if '\n' in s else s
 
 
 def normalize_input(text: str) -> Tuple[str, str]:
@@ -455,6 +553,8 @@ ADVISORY_BY_DEFAULT = frozenset([
     'pi:bypass',
     'pi:override',
     'pi:template_boundary',
+    'pi:identity_request',
+    'pi:identity_request_multi',
 ])
 
 
@@ -463,16 +563,121 @@ def _strict(strict: Optional[bool]) -> bool:
     return bool(strict) or os.environ.get('ZN_STRICT') == '1'
 
 
+def _b64_decode_lenient(data: str) -> bytes:
+    """Decode Base64 the way Node.js Buffer.from(data, 'base64') and `base64 -d` do.
+
+    Missing '=' padding is accepted, decoding stops at the first '=', and a
+    single dangling character at the end (too short for a byte) is dropped,
+    so unpadded Base64 cannot slip past the smuggling check.
+    """
+    body = data.split('=', 1)[0]
+    if len(body) % 4 == 1:
+        body = body[:-1]
+    return base64.b64decode(body + '=' * (-len(body) % 4))
+
+
+# A run of two or more empty or whitespace-only lines becomes one empty line before any rule runs, so text
+# that follows a long padding run is read in the same scan window as the text before it (same class as
+# collapseBlankRuns in rules.js; whitespace listed explicitly, not \s, so both packages agree).
+_BLANK_RUN_TEST = re.compile(r'\n[ \t\r\f\v\u0085\u00a0\u00ad\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]*\n[ \t\r\f\v\u0085\u00a0\u00ad\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]*\n')
+_BLANK_SPACE = re.compile(r'[ \t\r\f\v\u0085\u00a0\u00ad\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]*')
+
+
+def _collapse_blank_runs(text: str) -> str:
+    if not isinstance(text, str) or not _BLANK_RUN_TEST.search(text):
+        return text
+    out: List[str] = []
+    copied = 0
+    i = text.find('\n')
+    while i != -1:
+        j = i
+        blanks = 0
+        while True:
+            k = text.find('\n', j + 1)
+            if k == -1:
+                break
+            m = _BLANK_SPACE.match(text, j + 1, k)
+            if m is None or m.end() != k:
+                break
+            blanks += 1
+            j = k
+        if blanks >= 2:
+            out.append(text[copied:i])
+            out.append('\n\n')
+            copied = j + 1
+        i = text.find('\n', j + 1)
+    out.append(text[copied:])
+    return ''.join(out)
+
+
+def _check_base64_pipes(candidates: Tuple[str, ...], strict: Optional[bool]) -> Tuple[Optional[Assessment], Optional[Dict[str, Any]]]:
+    """Base64 payload smuggling: every `echo|printf ... | base64 -d` in `candidates` is
+    decoded and evaluated, not only the first, within hard caps that fail closed.
+    Returns (a block Assessment or None, advisory)."""
+    advisory = None
+    payloads = []
+    for text_candidate in candidates:
+        for b64_match in B64_EXEC_RE.finditer(text_candidate):
+            payload = b64_match.group(2) or b64_match.group(4)
+            if payload and payload not in payloads:
+                payloads.append(payload)
+    if len(payloads) > MAX_B64_PAYLOADS:
+        return Assessment(
+            verdict='block',
+            confidence=0.99,
+            rule='evasion:base64_smuggling',
+            reason=f'Smuggled Base64 execution: more than {MAX_B64_PAYLOADS} Base64 decode pipes in one command'
+        ), advisory
+    total = 0
+    for payload in payloads:
+        total += len(payload) * 3 // 4
+        if total > MAX_B64_DECODED_BYTES:
+            return Assessment(
+                verdict='block',
+                confidence=0.99,
+                rule='evasion:base64_smuggling',
+                reason='Smuggled Base64 execution: too much Base64 data to inspect'
+            ), advisory
+        try:
+            decoded = _b64_decode_lenient(payload).decode('utf-8', errors='ignore')
+            inner_res = evaluate(decoded, strict=strict)
+            if inner_res.advisory and advisory is None:
+                advisory = dict(inner_res.advisory)
+            if not inner_res.allowed:
+                return Assessment(
+                    verdict='block',
+                    confidence=inner_res.confidence,
+                    rule='evasion:base64_smuggling',
+                    reason=f'Smuggled Base64 execution: {inner_res.reason or inner_res.rule}'
+                ), advisory
+        except Exception:
+            pass
+    return None, advisory
+
+
+def _evaluate_oversize(input_text: str, strict: bool) -> Assessment:
+    # Scanned whole, in overlapping windows; one past MAX_TOOL_RESULT_SCAN_CHARS is
+    # blocked, because the part beyond the limit would go unscanned.
+    if len(input_text) > MAX_TOOL_RESULT_SCAN_CHARS:
+        return Assessment(verdict='block', confidence=1.0, rule='size:oversize',
+                          reason='Input too large to scan in full', truncated=True)
+    # A Base64 pipe longer than the window overlap can straddle two windows and be cut in
+    # both: the pipes are found in the whole input first. The windows still check normalized text.
+    b64_block, _ = _check_base64_pipes((input_text,), strict)
+    if b64_block is not None:
+        return b64_block
+    return scan_windows(input_text, strict=strict)
+
+
 def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
     if not isinstance(input_text, str) or not input_text.strip():
         return Assessment(verdict='allow', confidence=1.0, rule='none', reason=None)
+    # Invisible padding is judged on the input as received (see evaluateUncached in rules.js).
+    if len(input_text) > MAX_SCAN_CHARS and too_invisible([input_text]):
+        return invisible_block()
+    input_text = _collapse_blank_runs(input_text)
     if len(input_text) > MAX_SCAN_CHARS:
-        # NUL is neither whitespace nor a word character, so normalization
-        # cannot join the end of the head and the start of the tail.
-        window = input_text[:SCAN_HEAD_CHARS] + '\u0000' + input_text[-SCAN_TAIL_CHARS:]
-        res = _evaluate_uncached(window, strict)
-        res.truncated = True
-        return res
+        return _evaluate_oversize(input_text, strict)
 
     normalized, stripped = normalize_input(input_text)
     # The raw input is matched with the same characters as in Node.js (see _CASE_FOLD_GUARD).
@@ -480,25 +685,9 @@ def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
 
     tier_advisory = None
 
-    # Check Base64 payload smuggling
-    b64_advisory = None
-    for text_candidate in (normalized, stripped):
-        b64_match = B64_EXEC_RE.search(text_candidate)
-        if b64_match:
-            try:
-                decoded = base64.b64decode(b64_match.group(1)).decode('utf-8', errors='ignore')
-                inner_res = evaluate(decoded, strict=strict)
-                if inner_res.advisory:
-                    b64_advisory = dict(inner_res.advisory)
-                if not inner_res.allowed:
-                    return Assessment(
-                        verdict='block',
-                        confidence=inner_res.confidence,
-                        rule='evasion:base64_smuggling',
-                        reason=f'Smuggled Base64 execution: {inner_res.reason or inner_res.rule}'
-                    )
-            except Exception:
-                pass
+    b64_block, b64_advisory = _check_base64_pipes((normalized, stripped), strict)
+    if b64_block is not None:
+        return b64_block
 
     targets = list(dict.fromkeys([normalized, stripped, raw]))
 
@@ -562,16 +751,16 @@ def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
 # -------------------------------------------------------------------------
 # DLP & Secret Masking Rules
 # -------------------------------------------------------------------------
-SECRET_PATTERNS: List[Tuple[str, re.Pattern, str]] = [
+SECRET_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
     # A body may not contain another BEGIN header: linear on repeated headers without END.
-    ("secret:private_key", re.compile(r"""-----BEGIN [A-Z ]*PRIVATE KEY-----(?:(?!-----BEGIN )[\s\S])*?-----END [A-Z ]*PRIVATE KEY-----"""), "[REDACTED_PRIVATE_KEY]"),
+    ("secret:private_key", re.compile(r"""-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----(?:(?!-----BEGIN )[\s\S])*?-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----"""), "[REDACTED_PRIVATE_KEY]"),
     ("secret:anthropic_key", re.compile(r'(?<![A-Za-z0-9_])(sk-ant-[A-Za-z0-9_-]{30,})(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))'), "[REDACTED_ANTHROPIC_KEY]"),
     # A key without a known prefix ends at the first character that is not a letter or digit.
     ("secret:openai_key", re.compile(r"""(?<![A-Za-z0-9_])(sk-(?:(?:proj|svcacct|admin|[Nn]one|or-v1|lf)-[A-Za-z0-9_-]{28,}(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))|helicone-(?:(?:eu|cp|gov|rl)-){0,4}[a-z0-9]{7}(?:-[a-z0-9]{7}){3}(?![a-z0-9])|(?=(?:eu|cp|gov|rl)-|[a-z0-9]{7}-)(?=[a-z-]{0,46}[0-9])(?:(?:eu|cp|gov|rl)-){0,4}[a-z0-9]{7}(?:-[a-z0-9]{7}){3}(?![a-z0-9])(?!-[a-z0-9])|sp-[A-Za-z0-9]{28,}(?![A-Za-z0-9])|[A-Za-z0-9]{28,}(?![A-Za-z0-9])|(?:(?!sk-)[A-Za-z0-9_-]){1,200}?T3BlbkFJ[A-Za-z0-9_-]{20,}(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))))"""), "[REDACTED_OPENAI_KEY]"),
     ("secret:aws_access_key", re.compile(r'(?<![A-Za-z0-9_])(AKIA[0-9A-Z]{16})(?![A-Za-z0-9_])'), "[REDACTED_AWS_KEY]"),
     ("secret:aws_secret_key", re.compile(r"""((?:[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]_[Aa][Cc][Cc][Ee][Ss][Ss]_[Kk][Ee][Yy]|[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]|[Aa][Ww][Ss]_[Kk][Ee][Yy])\s*[:=]\s*['"]?)([A-Za-z0-9/+=]{40})(['"]?)"""), r'\1[REDACTED_AWS_SECRET]\3'),
     ("secret:github_token", re.compile(r'(?<![A-Za-z0-9_])((?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,40}|github_pat_[A-Za-z0-9_]{82})(?![A-Za-z0-9_])'), "[REDACTED_GITHUB_TOKEN]"),
-    ("secret:db_url_password", re.compile(r'((?:[Pp][Oo][Ss][Tt][Gg][Rr][Ee][Ss](?:[Qq][Ll])?|[Mm][Yy][Ss][Qq][Ll]|[Mm][Oo][Nn][Gg][Oo][Dd][Bb](?:\+[Ss][Rr][Vv])?|[Rr][Ee][Dd][Ii][Ss]|[Aa][Mm][Qq][Pp]):\/\/[^:\s\/]+:)(?!(?:\$\{(?:[A-Z_][A-Z0-9_]*|[a-z_][a-z0-9_]*)\}|\$[A-Z_][A-Z0-9_]*|%[A-Z_][A-Z0-9_]*%|<[A-Za-z][A-Za-z_-]{0,63}>|\{\{\s*[A-Za-z_][A-Za-z_.]*\s*\}\})@)([^@\s\/]+)(@)'), r'\1[REDACTED_DB_PASSWORD]\3'),
+    ("secret:db_url_password", re.compile(r'((?:[Pp][Oo][Ss][Tt][Gg][Rr][Ee][Ss](?:[Qq][Ll])?|[Mm][Yy][Ss][Qq][Ll]|[Mm][Oo][Nn][Gg][Oo][Dd][Bb](?:\+[Ss][Rr][Vv])?|[Rr][Ee][Dd][Ii][Ss]|[Aa][Mm][Qq][Pp])(?:\+[A-Za-z0-9_]+)?:\/\/[^:\s\/]+:)(?!(?:\$\{(?:[A-Z_][A-Z0-9_]*|[a-z_][a-z0-9_]*)\}|\$[A-Z_][A-Z0-9_]*|%[A-Z_][A-Z0-9_]*%|<[A-Za-z][A-Za-z_-]{0,63}>|\{\{\s*[A-Za-z_][A-Za-z_.]*\s*\}\})@)([^@\s\/]+)(@)'), r'\1[REDACTED_DB_PASSWORD]\3'),
     # The lookahead + backreference pairs act as atomic groups, so a long run of
     # "-eyJ" cannot make the engine retry every split point, and the lookbehind
     # allows a single start per token. Only used when the
@@ -598,7 +787,7 @@ SECRET_PATTERN_REQUIRES: Dict[str, str] = {
 
 # A text without a match for one of these cannot match the credential patterns,
 # which are then not run at all.
-SECRET_PATTERN_PREFILTERS: Dict[str, re.Pattern] = {
+SECRET_PATTERN_PREFILTERS: Dict[str, re.Pattern[str]] = {
     "secret:env_credential": re.compile(r"""_[Kk][Ee][Yy]|_[Tt][Oo][Kk][Ee][Nn]|_[Pp][Aa][Ss][Ss]"""),
     "secret:prefixed_credential": re.compile(r"""KEY|TOKEN|SECRET|PASS|PWD|CREDENTIALS"""),
 }
@@ -915,7 +1104,7 @@ def _pv_bearer_not_secret(token: str, prefix: str) -> bool:
     return _pv_placeholder(token) or re.fullmatch(r'__ZN_[A-Z0-9_]+__', token) is not None
 
 
-PROVIDER_SECRET_PATTERNS: List[Tuple[str, re.Pattern, str]] = [
+PROVIDER_SECRET_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
     ("secret:aws_key_id", re.compile(_ALNUM_B + r'(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}' + _ALNUM_A), "[REDACTED_AWS_KEY]"),
     ("secret:gitlab_token", re.compile(_TB + r'gl(?:pat|dt|rt|ptt|cbt|ft|soat)-[A-Za-z0-9_-]{20,}' + _TA), "[REDACTED_GITLAB_TOKEN]"),
     ("secret:slack_token", re.compile(_TB + r'(?:xox[abeprs]-[0-9]{6,}-[A-Za-z0-9-]{8,}|xapp-[0-9]-[A-Z0-9]{6,}-[0-9]{6,}-[a-f0-9]{32,})' + _TA), "[REDACTED_SLACK_TOKEN]"),
@@ -979,8 +1168,8 @@ PROVIDER_SECRET_PATTERNS: List[Tuple[str, re.Pattern, str]] = [
     ("secret:teams_webhook", re.compile(_TB + r'https://[a-z0-9]+\.webhook\.office\.com/webhookb2/[a-z0-9]{8}-(?:[a-z0-9]{4}-){3}[a-z0-9]{12}@[a-z0-9]{8}-(?:[a-z0-9]{4}-){3}[a-z0-9]{12}/IncomingWebhook/[a-z0-9]{32}/[a-z0-9]{8}-(?:[a-z0-9]{4}-){3}[a-z0-9]{12}' + _TA), "[REDACTED_TEAMS_WEBHOOK]"),
     ("secret:azure_ad_client_secret", re.compile(r'(?<![A-Za-z0-9_~.-])[A-Za-z0-9_~.]{3}[0-9]Q~[A-Za-z0-9_~.-]{30,33}[A-Za-z0-9_~-](?![A-Za-z0-9_~-])(?!\.[A-Za-z0-9_~-])'), "[REDACTED_AZURE_AD_CLIENT_SECRET]"),
     # Password segment of scheme://user:password@host (any scheme, as DB_PASSWORD in patterns.js).
-    # The scheme does not start inside a longer word, Unicode letters included (a long s is not an s).
-    ("secret:url_password", re.compile(r"((?<!\w)[a-zA-Z][a-zA-Z0-9+.-]{1,24}://[^\s:@/?#'\"`<>]{0,128}:)([^\s@/?#'\"`<>]{1,256})(@(?:[A-Za-z0-9.-]+|\[[0-9a-fA-F:]+\]))"), r'\1[REDACTED_URL_PASSWORD]\3'),
+    # ASCII word boundary like the scrubber: a scheme after CJK or accented letters is still a URL.
+    ("secret:url_password", re.compile(r"((?<![A-Za-z0-9_])[a-zA-Z][a-zA-Z0-9+._-]{1,40}://[^\s:@/?#'\"`<>]{0,128}:)([^\s@/?#'\"`<>]{1,256})(@(?:[A-Za-z0-9.-]+|\[[0-9a-fA-F:]+\]))"), r'\1[REDACTED_URL_PASSWORD]\3'),
     # Authorization header with a bearer token (BEARER_TOKEN in patterns.js). zn's
     # own __ZN_<NAME>__ markers are not secrets (_pv_bearer_not_secret).
     ("secret:bearer_token", re.compile(r'(Authorization[ \t]*:[ \t]*Bearer[ \t]+)([A-Za-z0-9._~+/=-]{20,})', re.IGNORECASE | re.ASCII), r'\1[REDACTED_BEARER_TOKEN]'),
@@ -993,13 +1182,13 @@ def _pv_discord_check(v: str) -> bool:
     mac = rest.partition('.')[2]
     try:
         digits = base64.urlsafe_b64decode(ident + '=' * (-len(ident) % 4)).decode('latin-1')
-    except (ValueError, base64.binascii.Error):
+    except (ValueError, binascii.Error):
         return False
     return re.fullmatch(r'[0-9]{17,20}', digits) is not None and _pv_random(mac, 2, 3.0)
 
 
 PROVIDER_MATCH_CHECKS: Dict[str, Any] = {
-    "secret:aws_key_id": lambda v: re.fullmatch(r'(.)\1+', v[4:]) is None and not v.endswith('EXAMPLE'),
+    "secret:aws_key_id": lambda v: re.fullmatch(r'(.)\1+', v[4:]) is None,
     "secret:stripe_key": lambda v: _pv_random(v[8:], 2, 3.5),
     "secret:gitlab_token": lambda v: _pv_random(v[v.index('-') + 1:], 2, 3.3),
     "secret:hf_token": _pv_hf_check,
@@ -1121,7 +1310,7 @@ PROVIDER_HINTS: Dict[str, Tuple[str, ...]] = {
 # comment there); they run after SECRET_PATTERNS and the provider formats, on
 # the text those already redacted.
 # ---------------------------------------------------------------------------
-SCAN_SECRET_PATTERNS: List[Tuple[str, re.Pattern, str]] = [
+SCAN_SECRET_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
     ("secret:cli_credential_flag", re.compile(r"""(?<![A-Za-z0-9_-])(--(?:api[-_]?key|password|passwd|token|secret|access[-_]token|auth[-_]token|client[-_]secret)=["']?)([^\s'"]{8,512})[^\s'"]*(["']?)"""), r'\1[REDACTED_SECRET]\3'),
     # The name is at most 40 characters before the keyword, so each start costs a bounded amount.
     ("secret:credential_assignment", re.compile(r"""(?<![A-Za-z0-9_$])(\$?[A-Za-z0-9_]{0,40}?(?:[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy])["']?[ \t]*(?::=|=>|=|:)[ \t]*["'])([^\s'"]{8,512})(["'])"""), r'\1[REDACTED_SECRET]\3'),
@@ -1133,10 +1322,195 @@ SCAN_SECRET_VALUE_FILTERS = {
     "secret:credential_assignment": _is_non_secret_default,
 }
 
-SCAN_SECRET_PREFILTERS: Dict[str, re.Pattern] = {
+SCAN_SECRET_PREFILTERS: Dict[str, re.Pattern[str]] = {
     "secret:cli_credential_flag": re.compile(r"""--(?:api|pass|token|secret|access|auth|client)"""),
     "secret:credential_assignment": re.compile(r"""[Pp][Aa][Ss][Ss][Ww]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Kk][Ee][Yy]"""),
 }
+
+
+# ---------------------------------------------------------------------------
+# Quoted values with spaces, and numbers, under a secret key. Same as
+# findQuotedKv in packages/zn-gate/lib/scrub/patterns.js (the Node.js
+# scrubber): the credential rules above read one word, so
+# `"password":"abcdefgh ijk lmn"` and `{"token":12345678}` were left in the
+# clear. Two kinds of value are redacted:
+#   - a quoted value that has whitespace in it, up to its closing quote: a
+#     double-quoted value ends at the first quote that is not escaped, a
+#     single-quoted one at the next ', and a value inside an escaped JSON
+#     string at its own escaped quote;
+#   - a bare number of 8 or more characters under a QUOTED key. The
+#     replacement is written as a string, so the JSON stays valid. A number
+#     under an unquoted key (YAML, shell) is left alone.
+# Values shorter than 8 characters, placeholders and values with no closing
+# quote inside _KV_MAX_VALUE characters are left alone. One pass over the
+# text, and each opener reads at most _KV_MAX_VALUE characters.
+# ---------------------------------------------------------------------------
+_KV_OPEN_RE = re.compile(
+    r"""(password|passwd|secret|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key|client[_-]?secret|auth[_-]?token)"""
+    r"""(\\{0,2}["'])?[ \t]{0,16}(?:=>|:=|=|:)[ \t]{0,16}(\\{0,2}["'])?""",
+    re.IGNORECASE | re.ASCII)
+_KV_PREFILTER_RE = re.compile(r"""pass|secret|token|api[_-]?key|access[_-]?key|private[_-]?key""", re.IGNORECASE | re.ASCII)
+_KV_MAX_VALUE = 4096
+_KV_MIN_VALUE = 8
+_KV_NUMBER_RE = re.compile(r"""-?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?""")
+_KV_MASK_RE = re.compile(r"""-?([0-9])\1+""")
+_KV_WORD_CHAR_RE = re.compile(r"""[A-Za-z0-9_.-]""")
+_KV_WORD_RUN_RE = re.compile(r"""[A-Za-z0-9_.-]*""")
+_KV_BACKSLASH_RE = re.compile(r"""\\""")
+_KV_BACKSLASH_RUN_RE = re.compile(r"""\\+""")
+_KV_DQUOTE_SPECIAL_RE = re.compile(r"""["\\]""")
+# JavaScript's \s: the same set of characters as in the Node.js scrubber.
+_KV_SPACE = '\t\n\x0b\x0c\r \xa0  -     　﻿'
+_KV_SPACE_RE = re.compile('[' + _KV_SPACE + ']')
+_KV_AUTH_WORD_RE = re.compile('(?:bearer|basic|token)[' + _KV_SPACE + ']+', re.IGNORECASE | re.ASCII)
+# A placeholder, or a reference after an auth scheme word ("Bearer ${TOKEN}").
+_KV_PLACEHOLDER_RE = re.compile(
+    r"""(?:x{3,}|\*{3,}|\.{3,}|-+|_+|<[^>]*>|\$\{?[^}]*\}?|\{\{?[^}]*\}?\}|%\(?[a-z_]*\)?s|:[a-z_]+|\[[^\]]*\])""",
+    re.IGNORECASE | re.ASCII)
+_KV_PLACEHOLDER_WORDS_RE = re.compile(
+    r"""(?:^|[^a-z])(?:password|passwd|passw0rd|secret|changeme|change_me|example|placeholder|your[_-]?|redacted|dummy|sample|foobar|hunter2|xxxx|todo|insert|replace|mypass|pass(?:word)?123)(?:[^a-z]|$)""",
+    re.IGNORECASE | re.ASCII)
+_KV_REPEAT_RE = re.compile('([^\n\r  ])\\1+')
+QUOTED_CREDENTIAL_RULE = "secret:quoted_credential"
+_KV_REPLACEMENT = "[REDACTED_SECRET]"
+
+
+def _kv_bare_placeholder(value: str) -> bool:
+    return (_KV_PLACEHOLDER_RE.fullmatch(value) is not None or _KV_PLACEHOLDER_WORDS_RE.search(value) is not None
+            or _KV_REPEAT_RE.fullmatch(value) is not None)
+
+
+def _kv_placeholder(value: str) -> bool:
+    if _kv_bare_placeholder(value):
+        return True
+    m = _KV_AUTH_WORD_RE.match(value)
+    return m is not None and _kv_bare_placeholder(value[m.end():])
+
+
+def _find_quoted_credentials(text: str) -> List[Tuple[int, int, str]]:
+    """Spans (start, end, quote) of the values described above. quote is the
+    quote that the replacement of a bare number is wrapped in (empty for a
+    quoted value, whose own quotes stay)."""
+    found: List[Tuple[int, int, str]] = []
+    n = len(text)
+    pos = 0
+    while True:
+        m = _KV_OPEN_RE.search(text, pos)
+        if m is None:
+            break
+        after = m.end()
+        pos = after
+        opener = m.group(3)
+        key_quote = m.group(2)
+        if opener is None:
+            num = _KV_NUMBER_RE.match(text, after)
+            # Only a quoted key (a JSON member or a dict entry) counts.
+            if not key_quote or num is None or num.end() - after < _KV_MIN_VALUE:
+                continue
+            end = num.end()
+            if end < n and _KV_WORD_CHAR_RE.match(text, end) is not None:
+                continue                              # part of a longer word, not a number
+            if _KV_MASK_RE.fullmatch(num.group()) is not None:
+                continue                              # 00000000: a mask
+            found.append((after, end, key_quote))
+            pos = end
+            continue
+        quote = opener[-1]
+        level = len(opener) - 1                       # backslashes before the opening quote
+        start = after
+        limit = min(n, start + _KV_MAX_VALUE)
+        end = -1
+        i = start
+        if level == 0 and quote == '"':
+            while True:
+                hit = _KV_DQUOTE_SPECIAL_RE.search(text, i, limit)
+                if hit is None:
+                    break
+                if text[hit.start()] == '"':
+                    end = hit.start()
+                    break
+                i = hit.start() + 2                   # a backslash escapes the next character
+        elif level == 0:
+            end = text.find(quote, i, limit)          # single quote: a backslash is just a character
+        else:
+            while True:
+                hit = _KV_BACKSLASH_RE.search(text, i, limit)
+                if hit is None:
+                    break
+                i = hit.start()
+                run_match = _KV_BACKSLASH_RUN_RE.match(text, i)
+                assert run_match is not None
+                run = run_match.end() - i
+                if run == level and text[i + run:i + run + 1] == quote:
+                    end = i
+                    break
+                i += run + 1
+        if end < 0:
+            continue
+        value = text[start:end]
+        if _utf16_len(value) < _KV_MIN_VALUE or _KV_SPACE_RE.search(value) is None or _kv_placeholder(value):
+            continue
+        span_end = end
+        if level == 0 and not key_quote:
+            # A shell word glued to more quoted pieces ('a b''c') is one value: take them too.
+            p = end + 1
+            for _ in range(8):
+                if p >= n or text[p] not in '"\'':
+                    break
+                word = _KV_WORD_RUN_RE.match(text, p + 1)
+                assert word is not None
+                q = word.end()
+                if q == p + 1:
+                    break
+                span_end = q
+                p = q + 1
+        found.append((start, span_end, ''))
+        pos = span_end
+    return found
+
+
+def _redact_quoted_credentials(text: str) -> Tuple[str, List[Dict[str, Any]]]:
+    """Redacts the values found by _find_quoted_credentials, on the text and on
+    the text without invisible characters (as every other rule)."""
+    if not text or _KV_PREFILTER_RE.search(text) is None:
+        return text, []
+    view = invisible_view(text)
+    passes: List[Tuple[str, Optional['array[int]']]] = [(text, None)]
+    if view is not None:
+        passes.append(view)
+    cands: List[Tuple[int, int, str, str]] = []
+    # The first pass gives its spans in order and without overlaps, so the spans of
+    # that pass a later span overlaps are counted with two binary searches.
+    seen_starts: List[int] = []
+    seen_ends: List[int] = []
+    for hay, mapping in passes:
+        for start, end, quote in _find_quoted_credentials(hay):
+            s, e = _span_in(mapping, start, end)
+            if mapping is None:
+                seen_starts.append(s)
+                seen_ends.append(e)
+            elif bisect.bisect_left(seen_starts, e) - bisect.bisect_right(seen_ends, s) >= 2:
+                continue
+            cands.append((s, e, QUOTED_CREDENTIAL_RULE, quote + _KV_REPLACEMENT + quote))
+    if not cands:
+        return text, []
+    detections: List[Dict[str, Any]] = []
+    edits: List[Tuple[int, int, str]] = []
+    for start, end, rule_id, new in _merge_candidates(cands):
+        detections.append({"rule": rule_id, "start": start, "end": end})
+        edits.append((start, end, new))
+    return _apply_edits(text, edits), detections
+
+
+def _redact_credentials(text: str) -> Tuple[str, List[Dict[str, Any]]]:
+    """The quoted values first (the other rules read one word and would leave
+    the rest of `"api_key":"abcdefghijkl mno pqr"` behind), then SECRET_PATTERNS
+    and the provider formats."""
+    if not isinstance(text, str) or not text:
+        return text, []
+    redacted, first = _redact_quoted_credentials(text)
+    redacted, rest = _redact_with(redacted, SECRET_PATTERNS + PROVIDER_SECRET_PATTERNS)
+    return redacted, first + rest
 
 
 def _apply_edits(text: str, edits: List[Tuple[int, int, str]]) -> str:
@@ -1151,7 +1525,7 @@ def _apply_edits(text: str, edits: List[Tuple[int, int, str]]) -> str:
     return ''.join(parts)
 
 
-def _span_in(mapping: Optional[array], start: int, end: int) -> Tuple[int, int]:
+def _span_in(mapping: Optional['array[int]'], start: int, end: int) -> Tuple[int, int]:
     """Span [start, end) of a text without invisible characters, as a span of the
     original text. mapping is None for the original text itself."""
     if mapping is None:
@@ -1168,14 +1542,34 @@ def _expand_template(template: str, groups: List[Optional[Tuple[int, int]]], tex
     return re.sub(r'\\(\d)', sub, template)
 
 
-def _rule_candidates(rule_id: str, pattern: re.Pattern, replacement: str, text: str,
-                     view: Optional[Tuple[str, array]], budget: List[int], value_filter,
-                     out: List[Tuple[int, int, str, str]], match_check=None) -> None:
+def _starts_secret_at(text: str, start: int, limit: int,
+                      patterns: List[Tuple[str, re.Pattern[str], str]]) -> bool:
+    """True when a rule of `patterns` matches at the first non-space character after `start` (before
+    `limit`): the next line starts a secret of its own (see startsSecretAt in rules.js)."""
+    pos = start
+    while pos < limit and text[pos].isspace():
+        pos += 1
+    if pos >= limit:
+        return False
+    return any(p.match(text, pos) for _, p, _ in patterns)
+
+
+def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, text: str,
+                     view: Optional[Tuple[str, 'array[int]']], budget: List[int],
+                     value_filter: Optional[Callable[[str, str], bool]],
+                     out: List[Tuple[int, int, str, str]],
+                     match_check: Optional[Callable[[str], bool]] = None,
+                     patterns: Optional[List[Tuple[str, re.Pattern[str], str]]] = None) -> None:
     """Candidate redactions of one rule as (start, end, rule_id, replacement) in
     original coordinates. The rule runs on the original text and on the text
     without invisible characters (see ruleCandidates in rules.js). match_check,
     when given, receives the whole match and returns False to skip it."""
-    passes: List[Tuple[str, Optional[array]]] = [(text, None)]
+    passes: List[Tuple[str, Optional['array[int]']]] = [(text, None)]
+    # Spans this rule found on the original text; a view match overlapping two or more is dropped
+    # (see ruleCandidates in rules.js). They come in order and without overlaps, so the ones a
+    # view match overlaps are counted with two binary searches.
+    found_starts: List[int] = []
+    found_ends: List[int] = []
     if view is not None:
         passes.append(view)
     for hay, mapping in passes:
@@ -1201,17 +1595,29 @@ def _rule_candidates(rule_id: str, pattern: re.Pattern, replacement: str, text: 
                     groups.append(_span_in(mapping, m.start(k), m.end(k)))
             if value_filter is not None:
                 # The value (group 2) decides whether the match is redacted.
-                vs, ve = groups[2]
-                value = _strip_invisible(text[vs:ve])
+                span = groups[2]
+                assert span is not None
+                vs, ve = span
+                value = _clean_value(text[vs:ve])
                 prefix = ''
                 if groups[1] is not None:
-                    prefix = _strip_invisible(text[groups[1][0]:groups[1][1]])
+                    prefix = _clean_value(text[groups[1][0]:groups[1][1]])
                 n = _utf16_len(value)
                 if n <= MAX_FILTERED_VALUE and n <= budget[0]:
                     budget[0] -= n
                     if value_filter(value, prefix):
                         continue
             start, end = _span_in(mapping, m.start(), m.end())
+            if mapping is None:
+                found_starts.append(start)
+                found_ends.append(end)
+            else:
+                first = bisect.bisect_right(found_ends, start)
+                over = bisect.bisect_left(found_starts, end) - first
+                if over >= 2:
+                    continue
+                if over == 1 and patterns and _starts_secret_at(text, found_ends[first], end, patterns):
+                    continue
             out.append((start, end, rule_id, _expand_template(replacement, groups, text)))
 
 
@@ -1238,19 +1644,19 @@ def redact_secrets(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     characters; the redacted spans are the union of both (see redactSecrets in
     rules.js).
     """
-    return _redact_with(text, SECRET_PATTERNS + PROVIDER_SECRET_PATTERNS)
+    return _redact_credentials(text)
 
 
 def redact_scan_secrets(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     """redact_secrets plus SCAN_SECRET_PATTERNS, for `zn-gate scan`: the scan
     rules run on the text redact_secrets already redacted (redactScanSecrets in
     rules.js, with the provider formats in between as the Node.js scan does)."""
-    redacted, first = _redact_with(text, SECRET_PATTERNS + PROVIDER_SECRET_PATTERNS)
+    redacted, first = _redact_credentials(text)
     redacted, second = _redact_with(redacted, SCAN_SECRET_PATTERNS)
     return redacted, first + second
 
 
-def _redact_with(text: str, patterns: List[Tuple[str, re.Pattern, str]]) -> Tuple[str, List[Dict[str, Any]]]:
+def _redact_with(text: str, patterns: List[Tuple[str, re.Pattern[str], str]]) -> Tuple[str, List[Dict[str, Any]]]:
     if not isinstance(text, str) or not text:
         return text, []
 
@@ -1268,7 +1674,7 @@ def _redact_with(text: str, patterns: List[Tuple[str, re.Pattern, str]]) -> Tupl
         value_filter = (SECRET_VALUE_FILTERS.get(rule_id) or PROVIDER_VALUE_FILTERS.get(rule_id)
                         or SCAN_SECRET_VALUE_FILTERS.get(rule_id))
         _rule_candidates(rule_id, pattern, replacement, redacted, view, budget,
-                         value_filter, cands, PROVIDER_MATCH_CHECKS.get(rule_id))
+                         value_filter, cands, PROVIDER_MATCH_CHECKS.get(rule_id), patterns)
         if not cands:
             continue
         edits: List[Tuple[int, int, str]] = []
@@ -1330,8 +1736,54 @@ SCAN_WINDOW_OVERLAP = 4 * 1024
 MAX_TOOL_RESULT_SCAN_CHARS = 4 * 1024 * 1024
 
 
+# Tool output that is mostly invisible characters is blocked, not scanned: see
+# tooInvisible in rules.js. Counted in code points over every string of a result.
+MIN_INVISIBLE_CHECK_CHARS = 64 * 1024
+MAX_INVISIBLE_CHARS = 200000
+INVISIBLE_BLOCK_REASON = 'Output is mostly invisible characters'
+_SUBDIVISION_FLAG_RE = re.compile('\U0001F3F4[\U000E0030-\U000E0039\U000E0061-\U000E007A]{2,7}\U000E007F')
+
+
+def too_invisible(strings: Any) -> bool:
+    count = 0
+    length = 0
+    step = 1 << 20
+    for text in strings:
+        if not isinstance(text, str):
+            continue
+        length += len(text)
+        for i in range(0, len(text), step):
+            chunk = text[i:i + step]
+            flags = len(_SUBDIVISION_FLAG_RE.findall(chunk))
+            if flags:
+                chunk = _SUBDIVISION_FLAG_RE.sub('\U0001F3F4', chunk)
+            count += flags + len(chunk) - len(INVISIBLE_ASTRAL_RE.sub('', ZERO_WIDTH_RE.sub('', chunk)))
+            if count > MAX_INVISIBLE_CHARS:
+                return True
+    return length >= MIN_INVISIBLE_CHECK_CHARS and count * 2 > length
+
+
+def invisible_block() -> Assessment:
+    return Assessment(verdict='block', confidence=1.0, rule='size:invisible', reason=INVISIBLE_BLOCK_REASON)
+
+
+def truncated_blocks(block_truncated: bool = False, allow_truncated: bool = False) -> bool:
+    """True when a result whose middle was not scanned must be blocked.
+
+    Blocked by default. allow_truncated=True or ZN_ALLOW_TRUNCATED=1 opts out;
+    block_truncated=True or ZN_BLOCK_TRUNCATED=1 (the former opt-in) still
+    forces the block and wins over the opt-out.
+    """
+    if block_truncated or os.environ.get('ZN_BLOCK_TRUNCATED') == '1':
+        return True
+    return not (allow_truncated or os.environ.get('ZN_ALLOW_TRUNCATED') == '1')
+
+
 def scan_windows(text: str, strict: Optional[bool] = None) -> Assessment:
     strict = _strict(strict)
+    if too_invisible([text]):
+        return invisible_block()
+    text = _collapse_blank_runs(text)
     if not isinstance(text, str) or len(text) <= MAX_SCAN_CHARS:
         return evaluate(text, strict=strict)
     step = MAX_SCAN_CHARS - SCAN_WINDOW_OVERLAP
@@ -1356,12 +1808,63 @@ def scan_windows(text: str, strict: Optional[bool] = None) -> Assessment:
     return res
 
 
+class SanitizedToolResult(TypedDict):
+    """Result of sanitize_tool_result(tool_name, content)."""
+    tool_name: str
+    safe_to_ingest: bool
+    truncated: bool
+    assessment: Assessment
+    secrets_redacted: int
+    sanitized_content: str
+
+
+# Limits of the deep-data form of sanitize_tool_result, the same as the walker of
+# the guard (guard._DEFAULT_MAX_DEPTH and guard.MAX_OBJECT_VALUES): ten levels of
+# dicts, lists, tuples and sets, and 100,000 values in all.
+SANITIZE_MAX_DEPTH = 10
+SANITIZE_MAX_ITEMS = 100_000
+
+
+class SanitizeLimitError(ValueError):
+    """Raised by sanitize_tool_result(data) for data it will not walk to mask: nested deeper
+    than SANITIZE_MAX_DEPTH levels, a container that contains itself (rule size:nesting) or
+    more than SANITIZE_MAX_ITEMS values (rule size:items)."""
+
+    def __init__(self, rule: str, reason: str):
+        super().__init__(reason)
+        self.rule = rule
+        self.reason = reason
+
+
+@overload
+def sanitize_tool_result(
+    tool_or_result: Any,
+    content: None = None,
+    mask_secrets: bool = True,
+    block_truncated: bool = False,
+    strict: Optional[bool] = None,
+    allow_truncated: bool = False,
+) -> Tuple[Any, List[Dict[str, Any]]]: ...
+
+
+@overload
+def sanitize_tool_result(
+    tool_or_result: Any,
+    content: Any,
+    mask_secrets: bool = True,
+    block_truncated: bool = False,
+    strict: Optional[bool] = None,
+    allow_truncated: bool = False,
+) -> SanitizedToolResult: ...
+
+
 def sanitize_tool_result(
     tool_or_result: Any,
     content: Optional[Any] = None,
     mask_secrets: bool = True,
     block_truncated: bool = False,
     strict: Optional[bool] = None,
+    allow_truncated: bool = False,
 ) -> Any:
     """
     Sanitizes tool output to prevent prompt injection and credential leakage.
@@ -1369,16 +1872,43 @@ def sanitize_tool_result(
       1) sanitize_tool_result(data) -> returns (clean_data, detections)
       2) sanitize_tool_result(tool_name, content, mask_secrets=True) -> returns dict with
          {tool_name, safe_to_ingest, truncated, assessment, secrets_redacted, sanitized_content}
+    In form 1, data nested deeper than ten levels, a container that contains itself
+    or more than 100,000 values raises SanitizeLimitError (a ValueError with the
+    attributes rule, "size:nesting" or "size:items", and reason) instead of
+    exhausting the stack.
+    In form 2, content that is not a string (a dict, list or object) is checked
+    string by string, as check_tool_result does, and as JSON text;
+    sanitized_content is that JSON text (as in Node.js), with secrets masked.
     Tool output longer than MAX_TOOL_RESULT_SCAN_CHARS is not fully analysed:
-    `truncated` is then True, and the output is blocked when block_truncated is
-    set or the ZN_BLOCK_TRUNCATED environment variable is "1".
+    `truncated` is then True, and the output is blocked (rule size:truncated)
+    unless allow_truncated is set or the ZN_ALLOW_TRUNCATED environment variable
+    is "1". block_truncated and ZN_BLOCK_TRUNCATED=1 force the block.
     """
     if content is not None:
         tool_name = str(tool_or_result)
-        text_content = content if isinstance(content, str) else str(content)
-        assessment = scan_windows(text_content, strict=strict)
+        if isinstance(content, str):
+            text_content = content
+            assessment = scan_windows(text_content, strict=strict)
+        else:
+            # Structured output: check every real string value (keys and object
+            # attributes included) as check_tool_result does, then the JSON text
+            # as Node.js does. str() would escape BiDi and zero-width characters.
+            from .guard import check_tool_result
+            try:
+                text_content = json.dumps(content, ensure_ascii=False, default=str)
+            except (TypeError, ValueError, RecursionError):
+                text_content = str(content)
+            # The JSON text holds every string of the output: count the invisible
+            # characters before the string-by-string check pays for them.
+            assessment = invisible_block() if too_invisible([text_content]) else check_tool_result(content, strict=strict, allow_truncated=True)
+            if assessment.allowed:
+                text_assessment = scan_windows(text_content, strict=strict)
+                if not text_assessment.allowed:
+                    assessment = text_assessment
+                else:
+                    assessment.truncated = assessment.truncated or text_assessment.truncated
         truncated = assessment.truncated
-        if truncated and assessment.allowed and (block_truncated or os.environ.get('ZN_BLOCK_TRUNCATED') == '1'):
+        if truncated and assessment.allowed and truncated_blocks(block_truncated, allow_truncated):
             assessment = Assessment(verdict='block', confidence=1.0, rule='size:truncated',
                                     reason='Output too large to scan in full', truncated=True)
         is_block = not assessment.allowed
@@ -1406,18 +1936,92 @@ def sanitize_tool_result(
     # Deep data structure sanitization
     detections: List[Dict[str, Any]] = []
 
+    def _unique_name(name: str, taken: set[Any]) -> str:
+        """Return `name`, or `name #N`, whichever is not taken yet, and take it."""
+        base = name
+        n = 2
+        while name in taken:
+            name = f"{base} #{n}"
+            n += 1
+        taken.add(name)
+        return name
+
+    def _unique_member(member: Any, taken: set[Any]) -> Any:
+        """Like _unique_name for a set member: a masked tuple that collides gets its first text part numbered."""
+        if isinstance(member, str):
+            return _unique_name(member, taken)
+        if isinstance(member, tuple) and member in taken:
+            idx = next((i for i, p in enumerate(member) if isinstance(p, str)), None)
+            if idx is not None:
+                base = member[idx]
+                n = 2
+                cand = member
+                while cand in taken:
+                    cand = member[:idx] + (f"{base} #{n}",) + member[idx + 1:]
+                    n += 1
+                member = cand
+        taken.add(member)
+        return member
+
+    def _sanitize_members(members: Any) -> List[Any]:
+        """Sanitize set members; masked members that become equal stay apart."""
+        originals = list(members)
+        cleaned = [_sanitize(m) for m in originals]
+        taken = {c for c, m in zip(cleaned, originals, strict=True) if c == m}
+        out: List[Any] = []
+        for c, m in zip(cleaned, originals, strict=True):
+            if c != m:
+                c = _unique_member(c, taken)
+            out.append(c)
+        return out
+
+    path: set[int] = set()
+    budget = [SANITIZE_MAX_ITEMS]
+
+    def _enter(val: Any) -> None:
+        """Take one level for the container `val`, or raise SanitizeLimitError."""
+        if id(val) in path:
+            raise SanitizeLimitError("size:nesting", "The data contains itself")
+        if len(path) >= SANITIZE_MAX_DEPTH:
+            raise SanitizeLimitError("size:nesting", "The data is nested too deeply to mask")
+        budget[0] -= len(val) * 2 if isinstance(val, dict) else len(val)
+        if budget[0] < 0:
+            raise SanitizeLimitError("size:items", "The data holds too many values to mask")
+        path.add(id(val))
+
     def _sanitize(val: Any) -> Any:
+        if not isinstance(val, (dict, list, tuple, set, frozenset)):
+            return _sanitize_value(val)
+        _enter(val)
+        try:
+            return _sanitize_value(val)
+        finally:
+            path.discard(id(val))
+
+    def _sanitize_value(val: Any) -> Any:
         if isinstance(val, str):
             clean_str, det = redact_secrets(val)
             if det:
                 detections.extend(det)
             return clean_str
         elif isinstance(val, dict):
-            return {k: _sanitize(v) for k, v in val.items()}
+            items = list(val.items())
+            names = [_sanitize(k) if isinstance(k, str) else k for k in [k for k, _ in items]]
+            taken = {n for n, (k, _) in zip(names, items, strict=True) if n == k}
+            out: Dict[Any, Any] = {}
+            for name, (key, v) in zip(names, items, strict=True):
+                if name != key:
+                    name = _unique_name(name, taken)
+                out[name] = _sanitize(v)
+            return out
         elif isinstance(val, list):
             return [_sanitize(v) for v in val]
         elif isinstance(val, tuple):
             return tuple(_sanitize(v) for v in val)
+        elif isinstance(val, frozenset):
+            return frozenset(_sanitize_members(val))
+        elif isinstance(val, set):
+            return set(_sanitize_members(val))
         return val
 
     sanitized = _sanitize(tool_or_result)
@@ -1428,16 +2032,30 @@ def sanitize_tool_result(
 _EVAL_CACHE_MAX = 2048
 # Only inputs up to 8 KB are cached, so the cache itself stays small.
 EVAL_CACHE_MAX_INPUT = 8 * 1024
-_eval_cache = {}
+_eval_cache: Dict[Tuple[bool, str], Tuple[Any, ...]] = {}
 _eval_cache_ver = RULES_VERSION
 
 
-def evaluate(input_text: str, strict: Optional[bool] = None) -> Assessment:
+# Marks an argument that was not passed, so evaluate(None) keeps its old answer.
+_NOT_GIVEN: Any = object()
+
+
+def evaluate(text: Optional[str] = _NOT_GIVEN, strict: Optional[bool] = None, *,
+             input_text: Optional[str] = _NOT_GIVEN) -> Assessment:
     """Cached entry point: LRU(2048) keyed on raw input and strict mode, version-guarded.
 
-    strict=True (or ZN_STRICT=1) also blocks the heuristic rules that are
-    advisories by default (ADVISORY_BY_DEFAULT)."""
+    The text goes first or as text=...; input_text=... is the older keyword
+    name and still works. strict=True (or ZN_STRICT=1) also blocks the
+    heuristic rules that are advisories by default (ADVISORY_BY_DEFAULT)."""
     global _eval_cache_ver
+    if input_text is not _NOT_GIVEN:
+        if text is not _NOT_GIVEN:
+            raise TypeError("evaluate() takes the text once: pass text or input_text, not both")
+        text = input_text
+    elif text is _NOT_GIVEN:
+        raise TypeError("evaluate() missing the text to check")
+    # None is not a str but keeps its old answer (the check below handles it).
+    input_text = cast(str, text)
     strict = _strict(strict)
     if not isinstance(input_text, str) or len(input_text) > EVAL_CACHE_MAX_INPUT:
         return _evaluate_uncached(input_text, strict)
@@ -1448,7 +2066,7 @@ def evaluate(input_text: str, strict: Optional[bool] = None) -> Assessment:
     hit = _eval_cache.get(key)
     if hit is not None:
         _eval_cache[key] = _eval_cache.pop(key)
-        return Assessment(*hit[:7], advisory=dict(hit[7]) if hit[7] else None)
+        return Assessment(hit[0], hit[1], hit[2], hit[3], hit[4], hit[5], hit[6], advisory=dict(hit[7]) if hit[7] else None)
     res = _evaluate_uncached(input_text, strict)
     _eval_cache[key] = (res.verdict, res.confidence, res.rule,
                                res.reason, res.engine, res.rules_version, res.truncated,

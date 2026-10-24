@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zn-gate"
-version = "1.13.1"
+version = "1.14.0"
 description = "The local security layer for Python AI agents (LangChain, CrewAI, LlamaIndex, plain tool calling): prompt-injection checks and secret redaction, zero dependencies."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -22,7 +22,9 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Security",
+    "Typing :: Typed",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
@@ -40,7 +42,7 @@ dependencies = []
 
 [project.optional-dependencies]
 # Only for the tests that run the integrations through the real frameworks.
-test-frameworks = ["langchain-core>=1,<2", "llama-index-core>=0.14,<0.15"]
+test-frameworks = ["langchain-core>=1.3.3,<2", "llama-index-core>=0.14,<0.15"]
 
 [project.urls]
 Homepage = "https://usezn.com"
@@ -53,3 +55,30 @@ zn-gate = "zn_gate.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+# PEP 561 marker: the public API is typed.
+zn_gate = ["py.typed"]
+
+[tool.ruff]
+target-version = "py310"
+
+[tool.ruff.lint]
+# Minimal set: syntax errors and undefined names (E9), pyflakes (F), and the
+# bugbear checks (B). Style rules are left out on purpose.
+select = ["E9", "F", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# The lambdas here are passed to time_ms and called in the same loop iteration,
+# so the late-binding warning cannot bite.
+"tests/test_rules_redos.py" = ["B023"]
+
+[tool.mypy]
+# The CI job blocks the run, so the package has to stay clean.
+files = ["src/zn_gate"]
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+# Optional integrations; their packages are not installed in the lint job.
+module = ["langchain_core.*", "agents.*", "pydantic_ai.*", "google.adk.*"]
+ignore_missing_imports = true

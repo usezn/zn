@@ -159,3 +159,17 @@ test('zn_status says local-only with no cloud and no network endpoint', async (t
   assert.equal(st.endpoint, 'none (local only)');
   assert.equal(st.leaves_machine, 'nothing');
 });
+
+test('check_tool_call redacts a secret used as an argument key and keeps both values', async (t) => {
+  const g = startGate(t);
+  const other = FAKE_AWS.slice(0, -1) + (FAKE_AWS.endsWith('F') ? 'G' : 'F');
+  const r = await g.call(toolCall(1, 'check_tool_call', {
+    tool_name: 'http_post',
+    arguments: { url: 'https://example.com/hook', [FAKE_AWS]: 'first', [other]: 'second' },
+  }));
+  const out = textOf(r);
+  const sa = JSON.stringify(out.sanitized_arguments);
+  assert.ok(!sa.includes(FAKE_AWS) && !sa.includes(other));
+  assert.deepEqual(Object.values(out.sanitized_arguments).sort(), ['first', 'https://example.com/hook', 'second']);
+  assert.ok(out.secrets_redacted >= 2);
+});

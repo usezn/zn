@@ -141,7 +141,9 @@ function describeFingerprint(fp) {
 /**
  * Open an executable for the final check before it is started. The caller
  * closes fd. elf is true for native Linux/ELF programs, which can be started
- * through the open descriptor itself (see execPath).
+ * through the open descriptor itself (see execPath). script is true for a
+ * file that starts with `#!` (POSIX): the kernel hands its path to the
+ * interpreter, which opens it again (see scriptRisk).
  */
 function openExecutable(real) {
   const fd = fs.openSync(real, 'r');
@@ -149,12 +151,14 @@ function openExecutable(real) {
     const st = fs.fstatSync(fd);
     if (!st.isFile()) throw Object.assign(new Error('not a regular file: ' + real), { code: 'ZN_NOT_FOUND' });
     let elf = false;
-    if (process.platform === 'linux') {
+    let script = isWin && /\.(cmd|bat)$/i.test(real);
+    if (!isWin) {
       const head = Buffer.alloc(4);
       const n = fs.readSync(fd, head, 0, 4, 0);
-      elf = n === 4 && head[0] === 0x7f && head[1] === 0x45 && head[2] === 0x4c && head[3] === 0x46;
+      elf = process.platform === 'linux' && n === 4 && head[0] === 0x7f && head[1] === 0x45 && head[2] === 0x4c && head[3] === 0x46;
+      script = n >= 2 && head[0] === 0x23 && head[1] === 0x21;
     }
-    return { fd, fp: fingerprintOf(st), elf };
+    return { fd, fp: fingerprintOf(st), elf, script };
   } catch (err) {
     try { fs.closeSync(fd); } catch (_) { /* ignore */ }
     throw err;
@@ -173,6 +177,59 @@ function verifyOpen(opened, real, expectedFp) {
   if (now !== expectedFp) return 'the program changed after it was checked';
   if (fingerprint(real) !== now) return 'the path now leads to a different file';
   return null;
+}
+
+/**
+ * A `#!` script (on Windows, a .cmd or .bat file) is started by path: the
+ * kernel passes that path to the interpreter, which opens the file again after
+ * verifyOpen(), so the check covers a moment that is already over. Whoever can
+ * rewrite the script, or a folder above it, in that window could swap it. Two
+ * cases are told apart:
+ *
+ *   - Unsafe: group or others can write the script or a folder above it (a
+ *     sticky folder such as /tmp does not count), or the script or a folder
+ *     above it belongs to another account (neither root nor the current user).
+ *     On Windows: the file or a folder above it lets another principal write,
+ *     or is owned by one. The script must not receive secret values.
+ *   - Own: only the current user (or an administrator) can write it, as with
+ *     scripts installed by nvm, Homebrew, pnpm, pipx or a virtual environment.
+ *     It is allowed with a warning: another program running as the same user
+ *     can still swap it in that window, which is the same trust zn already
+ *     places in everything that runs as you.
+ *
+ * Returns {deny, warn} or null. deny is the first unsafe path with the reason
+ * (or null), warn is the first path only the current user can write (or null).
+ * null means nothing to say: not a script, or nobody but root can change it.
+ * On Windows the answer is read once per descriptor (it needs PowerShell).
+ */
+function scriptRisk(opened, real, o) {
+  const opt = o || {};
+  if (!opened || !opened.script || !real) return null;
+  const win = opt.platform ? opt.platform === 'win32' : isWin;
+  if (win) {
+    if (opened.risk !== undefined && !opt.tools) return opened.risk;
+    const r = require('./vault/winacl').scriptWriteRisk(real, { tools: opt.tools });
+    const out = r.deny || r.warn ? { deny: r.deny, warn: r.warn } : null;
+    if (!opt.tools) opened.risk = out;
+    return out;
+  }
+  const me = typeof process.getuid === 'function' ? process.getuid() : -1;
+  let cur = path.resolve(real);
+  let warn = null;
+  for (;;) {
+    let st;
+    try { st = fs.statSync(cur); } catch (_) { return { deny: cur + ' (it could not be checked)', warn }; }
+    const sticky = st.isDirectory() && (st.mode & 0o1000) !== 0;
+    if (st.uid !== 0 && st.uid !== me) return { deny: cur + ' (it belongs to another account)', warn };
+    if ((st.mode & 0o022) !== 0 && !sticky) return { deny: cur + ' (group or others can write it)', warn };
+    if (!warn && me !== 0 && st.uid === me && !sticky) {
+      try { fs.accessSync(cur, fs.constants.W_OK); warn = cur; } catch (_) { /* not writable by us */ }
+    }
+    const parent = path.dirname(cur);
+    if (parent === cur) break;
+    cur = parent;
+  }
+  return warn ? { deny: null, warn } : null;
 }
 
 /**
@@ -279,8 +336,32 @@ function systemPowerShell() {
   return ps;
 }
 
+/*
+ * The PSModulePath to give the system PowerShell: its own module folder only. Without a PSModulePath Windows PowerShell 5.1
+ * builds one that starts with the user's Documents\WindowsPowerShell\Modules, where a module planted by the same account would
+ * replace a cmdlet (ConvertTo-Json, Get-Acl...). `ps` is the path systemPowerShell() returned.
+ */
+function systemPsModulePath(ps) {
+  return path.win32.join(path.win32.dirname(ps), 'Modules');
+}
+
+/*
+ * The environment for a PowerShell that zn starts: `base` (default the process environment) plus `extra`, with EVERY case variant
+ * of PSModulePath removed first and zn's own set once. Windows environment names are case-insensitive but a JS object's keys are
+ * not, so an inherited PSMODULEPATH next to a PSModulePath would reach the child as two entries, and the one that wins is not ours.
+ */
+function psEnv(ps, base, extra) {
+  const env = {};
+  for (const k of Object.keys(base || process.env)) if (!/^psmodulepath$/i.test(k)) env[k] = (base || process.env)[k];
+  for (const k of Object.keys(extra || {})) if (!/^psmodulepath$/i.test(k)) env[k] = extra[k];
+  env.PSModulePath = systemPsModulePath(ps);
+  return env;
+}
+
 module.exports = {
   systemPowerShell,
+  systemPsModulePath,
+  psEnv,
   commandWord,
   hasPathSeparator,
   resolveExecutable,
@@ -292,6 +373,7 @@ module.exports = {
   openExecutable,
   verifyOpen,
   execPath,
+  scriptRisk,
   isInside,
   writableBy,
   interpreterBase,

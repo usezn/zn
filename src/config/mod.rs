@@ -50,7 +50,7 @@ pub struct ZnConfig {
     #[serde(default)]
     pub neural: NeuralConfig,
 
-    /// Fusion Gate (B-3): rules ∥ neural head. Missing section = disabled.
+    /// Fusion Gate: rules ∥ neural head. Missing section = disabled.
     #[serde(default)]
     pub fusion: FusionConfig,
 
@@ -115,6 +115,16 @@ pub struct ServerConfig {
     /// Broadcast channel capacity
     #[serde(default = "default_channel_capacity")]
     pub channel_capacity: usize,
+
+    /// Largest WebSocket message the gateway accepts, in bytes (default 1 MiB).
+    /// A larger message closes the connection.
+    #[serde(default = "default_ws_max_message_bytes")]
+    pub ws_max_message_bytes: usize,
+
+    /// Largest single WebSocket frame the gateway accepts, in bytes (default 1 MiB).
+    /// A larger frame closes the connection.
+    #[serde(default = "default_ws_max_frame_bytes")]
+    pub ws_max_frame_bytes: usize,
 }
 
 impl Default for ServerConfig {
@@ -123,12 +133,20 @@ impl Default for ServerConfig {
             port: default_port(),
             bind_address: default_bind_address(),
             channel_capacity: default_channel_capacity(),
+            ws_max_message_bytes: default_ws_max_message_bytes(),
+            ws_max_frame_bytes: default_ws_max_frame_bytes(),
         }
     }
 }
 
 fn default_port() -> u16 {
     9090
+}
+fn default_ws_max_message_bytes() -> usize {
+    1024 * 1024
+}
+fn default_ws_max_frame_bytes() -> usize {
+    1024 * 1024
 }
 fn default_bind_address() -> String {
     "127.0.0.1".to_string()
@@ -138,7 +156,7 @@ fn default_channel_capacity() -> usize {
 }
 
 /// Security-related configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SecurityConfig {
     /// API key for authentication (if None, auth is disabled - NOT recommended for production)
     pub api_key: Option<String>,
@@ -163,6 +181,23 @@ pub struct SecurityConfig {
 
     /// Token for MCP WebSocket authentication
     pub mcp_ws_token: Option<String>,
+}
+
+/// Debug output hides the API key, the JWT secret and the MCP WebSocket
+/// token, so a `{:?}` of the configuration never leaks them.
+impl std::fmt::Debug for SecurityConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let hide = |v: &Option<String>| v.as_ref().map(|_| "<redacted>");
+        f.debug_struct("SecurityConfig")
+            .field("api_key", &hide(&self.api_key))
+            .field("allowed_origins", &self.allowed_origins)
+            .field("rate_limit_enabled", &self.rate_limit_enabled)
+            .field("rate_limit_per_minute", &self.rate_limit_per_minute)
+            .field("namespace", &self.namespace)
+            .field("jwt_secret", &hide(&self.jwt_secret))
+            .field("mcp_ws_token", &hide(&self.mcp_ws_token))
+            .finish()
+    }
 }
 
 impl Default for SecurityConfig {
@@ -278,6 +313,20 @@ pub struct AuditConfig {
 
     /// Database encryption key
     pub encryption_key: Option<String>,
+
+    /// Persist the (scrubbed) request payload of each audited call.
+    /// Off by default: the audit log keeps only metadata (event, time, tool,
+    /// status, policy, agent, namespace). Turning it on requires an
+    /// encryption key (`ZN_DB_KEY`), in every environment.
+    #[serde(default)]
+    pub store_payloads: bool,
+
+    /// Fail closed when the audit record of a call cannot be written: the
+    /// call is denied with a JSON-RPC error. Off by default: a write failure
+    /// is logged and counted (`zn_audit_write_failures_total`) and the call
+    /// goes on.
+    #[serde(default)]
+    pub require_write: bool,
 }
 
 impl Default for AuditConfig {
@@ -287,6 +336,8 @@ impl Default for AuditConfig {
             max_logs_in_memory: default_max_logs(),
             encryption_enabled: false,
             encryption_key: std::env::var("ZN_DB_KEY").ok(),
+            store_payloads: false,
+            require_write: false,
         }
     }
 }
@@ -324,6 +375,11 @@ pub struct KmsConfig {
     pub key_id: Option<String>,
     /// Region (if applicable)
     pub region: Option<String>,
+    /// When `key_id` is set and the key cannot be fetched from the KMS, start
+    /// anyway with the key from the config. Off by default: the gateway
+    /// refuses to start instead.
+    #[serde(default)]
+    pub allow_config_fallback: bool,
 }
 
 impl Default for KmsConfig {
@@ -332,6 +388,7 @@ impl Default for KmsConfig {
             kms_type: default_kms_type(),
             key_id: std::env::var("ZN_KMS_KEY_ID").ok(),
             region: std::env::var("ZN_KMS_REGION").ok(),
+            allow_config_fallback: false,
         }
     }
 }
@@ -407,7 +464,7 @@ fn default_false() -> bool {
     false
 }
 
-/// Fusion Gate (B-3): block iff rules hit OR neural score >= tau.
+/// Fusion Gate: block iff rules hit OR neural score >= tau.
 ///
 /// A missing `[fusion]` section deserializes to `enabled: false`, which must
 /// degrade EXACTLY to the rules-only gate (regression-guarded in evals).
@@ -528,12 +585,15 @@ fn default_window() -> u64 {
 }
 
 /// Caching Configuration
+/// Longest `caching.ttl_seconds` the configuration accepts: one year.
+pub const MAX_CACHE_TTL_SECONDS: u64 = 365 * 24 * 60 * 60;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CachingConfig {
     /// Enable tool result caching
     #[serde(default = "default_false")]
     pub enabled: bool,
-    /// Cache Time-To-Live (seconds)
+    /// Cache Time-To-Live (seconds), from 0 to `MAX_CACHE_TTL_SECONDS` (one year)
     #[serde(default = "default_ttl")]
     pub ttl_seconds: u64,
 }
@@ -566,6 +626,10 @@ pub struct ConsensusConfig {
     /// Allow neural core to act as one witness if risk is low
     #[serde(default = "default_true")]
     pub neural_as_witness: bool,
+    /// Seconds a proposed action stays valid (default 900). After that it can no
+    /// longer be approved and is removed. 0 means the default.
+    #[serde(default = "default_pending_ttl_secs")]
+    pub pending_ttl_secs: u64,
 }
 
 impl Default for ConsensusConfig {
@@ -575,8 +639,13 @@ impl Default for ConsensusConfig {
             critical_tools: Vec::new(),
             required_signatures: 2,
             neural_as_witness: true,
+            pending_ttl_secs: default_pending_ttl_secs(),
         }
     }
+}
+
+fn default_pending_ttl_secs() -> u64 {
+    900
 }
 
 fn default_m() -> u32 {
@@ -628,6 +697,61 @@ fn default_fpr_margin() -> f64 {
 }
 
 impl ZnConfig {
+    /// A copy without the values `ZnConfig::default()` takes from the
+    /// environment, so they are not written to a file. Keys and tokens
+    /// (`ZN_API_KEY`, `ZN_JWT_SECRET`, `ZN_MCP_WS_TOKEN`, `ZN_DB_KEY`) are
+    /// always cleared. The namespace and the KMS key id and region are cleared
+    /// when they equal the current environment value (a value set in the
+    /// config itself is kept). Cleared values are read from the environment
+    /// again at start.
+    pub fn without_env_values(&self) -> Self {
+        fn same_as_env(value: &mut Option<String>, var: &str) {
+            if let (Some(v), Ok(env)) = (value.as_ref(), std::env::var(var)) {
+                if *v == env {
+                    *value = None;
+                }
+            }
+        }
+        let mut config = self.clone();
+        config.security.api_key = None;
+        config.security.jwt_secret = None;
+        config.security.mcp_ws_token = None;
+        config.audit.encryption_key = None;
+        same_as_env(&mut config.security.namespace, "ZN_NAMESPACE");
+        same_as_env(&mut config.kms.key_id, "ZN_KMS_KEY_ID");
+        same_as_env(&mut config.kms.region, "ZN_KMS_REGION");
+        config
+    }
+
+    /// The configuration `zn init` writes: the defaults, without any value
+    /// read from the environment.
+    pub fn init_template() -> Self {
+        Self::default().without_env_values()
+    }
+
+    /// Write `init_template()` to `path` as JSON, owner-only on Unix.
+    pub fn write_init_file(path: &Path) -> Result<()> {
+        Self::write_private_json(path, &Self::init_template())
+    }
+
+    /// Write `config` to `path` as pretty JSON through `write_private_file`.
+    pub fn write_private_json(path: &Path, config: &Self) -> Result<()> {
+        let json = serde_json::to_string_pretty(config)?;
+        Self::write_private_file(path, json.as_bytes())
+    }
+
+    /// The one protected writer for files that hold configuration (zn.json
+    /// and the locally saved synced config). It delegates to the shared
+    /// private-file module: a new 0600 temporary file in the same directory is
+    /// renamed over `path`, so a reader never sees a partial file and an
+    /// existing regular file is replaced atomically and ends up owner-only. A
+    /// `path` that is a symbolic link or is not a regular file (a directory, a
+    /// FIFO, a device) is refused and left untouched.
+    pub fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
+        crate::private_file::create_private_file(path, bytes)
+            .map_err(|e| anyhow!("cannot write {}: {e}", path.display()))
+    }
+
     /// Load configuration from file with environment variable overrides
     pub fn load(path: Option<&Path>) -> Result<Self> {
         let mut config = if let Some(p) = path {
@@ -735,6 +859,14 @@ impl ZnConfig {
             self.audit.encryption_enabled = true;
         }
 
+        if let Ok(v) = std::env::var("ZN_AUDIT_STORE_PAYLOADS") {
+            self.audit.store_payloads = matches!(v.trim(), "1" | "true" | "TRUE" | "True");
+        }
+
+        if let Ok(v) = std::env::var("ZN_AUDIT_REQUIRE_WRITE") {
+            self.audit.require_write = matches!(v.trim(), "1" | "true" | "TRUE" | "True");
+        }
+
         if let Ok(endpoint) = std::env::var("ZN_SIEM_ENDPOINT") {
             self.siem.endpoint = Some(endpoint);
         }
@@ -749,6 +881,11 @@ impl ZnConfig {
 
         if let Ok(key_id) = std::env::var("ZN_KMS_KEY_ID") {
             self.kms.key_id = Some(key_id);
+        }
+
+        if let Ok(allow) = std::env::var("ZN_KMS_ALLOW_CONFIG_FALLBACK") {
+            self.kms.allow_config_fallback =
+                matches!(allow.as_str(), "1" | "true" | "TRUE" | "True");
         }
 
         if let Ok(neural_enabled) = std::env::var("ZN_NEURAL_ENABLED") {
@@ -803,6 +940,22 @@ impl ZnConfig {
             }
         }
 
+        if self.security.rate_limit_per_minute < 1 {
+            return Err(anyhow!(
+                "security.rate_limit_per_minute must be at least 1 (allowed range: 1 to {}), but it is {}.",
+                u32::MAX,
+                self.security.rate_limit_per_minute
+            ));
+        }
+
+        if self.caching.ttl_seconds > MAX_CACHE_TTL_SECONDS {
+            return Err(anyhow!(
+                "caching.ttl_seconds must be between 0 and {} (one year), but it is {}",
+                MAX_CACHE_TTL_SECONDS,
+                self.caching.ttl_seconds
+            ));
+        }
+
         if self.security.api_key.is_none() && self.environment == "production" {
             tracing::warn!("No API key configured in production - Management API is unprotected!");
         }
@@ -816,6 +969,15 @@ impl ZnConfig {
         {
             return Err(anyhow!(
                 "Audit log encryption is MANDATORY in production. Please set ZN_DB_KEY."
+            ));
+        }
+
+        if self.audit.store_payloads
+            && self.kms.key_id.is_none()
+            && (!self.audit.encryption_enabled || self.audit.encryption_key.is_none())
+        {
+            return Err(anyhow!(
+                "audit.store_payloads needs an encryption key: set ZN_DB_KEY, or leave payloads off (the default)."
             ));
         }
 
@@ -872,6 +1034,49 @@ mod jwt_secret_tests {
 }
 
 #[cfg(test)]
+mod rate_limit_tests {
+    use super::*;
+
+    #[test]
+    fn zero_rate_limit_is_refused_with_the_allowed_range() {
+        let mut config = ZnConfig::default();
+        config.security.jwt_secret = None;
+        config.security.rate_limit_per_minute = 0;
+        let err = config
+            .validate()
+            .expect_err("0 must be refused")
+            .to_string();
+        assert!(err.contains("rate_limit_per_minute"), "{err}");
+        assert!(err.contains("at least 1"), "{err}");
+        for ok in [1, 60, u32::MAX] {
+            config.security.rate_limit_per_minute = ok;
+            assert!(config.validate().is_ok(), "{ok}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod cache_ttl_tests {
+    use super::*;
+
+    #[test]
+    fn cache_ttl_above_one_year_is_refused() {
+        let mut config = ZnConfig::default();
+        config.security.jwt_secret = None;
+        for ok in [0, 1, 300, MAX_CACHE_TTL_SECONDS] {
+            config.caching.ttl_seconds = ok;
+            assert!(config.validate().is_ok(), "{ok}");
+        }
+        for bad in [MAX_CACHE_TTL_SECONDS + 1, i64::MAX as u64, u64::MAX] {
+            config.caching.ttl_seconds = bad;
+            let err = config.validate().expect_err("too large").to_string();
+            assert!(err.contains("caching.ttl_seconds"), "{err}");
+            assert!(err.contains("one year"), "{err}");
+        }
+    }
+}
+
+#[cfg(test)]
 mod credential_tests {
     use super::*;
 
@@ -910,5 +1115,58 @@ mod credential_tests {
         );
         assert_eq!(credential_override(some("  "), None), None);
         assert_eq!(credential_override(None, None), None);
+    }
+
+    #[test]
+    fn security_config_debug_hides_secrets() {
+        let c = SecurityConfig {
+            api_key: Some("fake-api-key-0000".to_string()),
+            jwt_secret: Some("fake-jwt-secret-0000".to_string()),
+            mcp_ws_token: Some("fake-ws-token-0000".to_string()),
+            ..SecurityConfig::default()
+        };
+        let out = format!("{:?} {:#?}", c, c);
+        for secret in [
+            "fake-api-key-0000",
+            "fake-jwt-secret-0000",
+            "fake-ws-token-0000",
+        ] {
+            assert!(!out.contains(secret), "{secret} leaked");
+        }
+        assert!(out.contains("<redacted>"));
+    }
+}
+
+#[cfg(test)]
+mod audit_payload_tests {
+    use super::*;
+
+    #[test]
+    fn payload_storage_is_off_by_default() {
+        assert!(!AuditConfig::default().store_payloads);
+        let parsed: AuditConfig = serde_json::from_str("{}").unwrap();
+        assert!(!parsed.store_payloads);
+    }
+
+    #[test]
+    fn payload_storage_without_a_key_is_refused() {
+        let mut cfg = ZnConfig::default();
+        cfg.audit.store_payloads = true;
+        cfg.audit.encryption_enabled = false;
+        cfg.audit.encryption_key = None;
+        cfg.kms.key_id = None;
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("store_payloads"), "{err}");
+    }
+
+    #[test]
+    fn payload_storage_with_a_key_passes_that_check() {
+        let mut cfg = ZnConfig::default();
+        cfg.audit.store_payloads = true;
+        cfg.audit.encryption_enabled = true;
+        cfg.audit.encryption_key = Some("example-passphrase-not-secret".into());
+        if let Err(e) = cfg.validate() {
+            assert!(!e.to_string().contains("store_payloads"), "{e}");
+        }
     }
 }
