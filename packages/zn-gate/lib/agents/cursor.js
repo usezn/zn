@@ -50,6 +50,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const cfg = require('./config-file');
+const { askAsDeny, isPlainAsk } = require('./ask-deny');
 const launcher = require('./launcher');
 const { whichSync } = require('../broker/markers');
 
@@ -73,7 +74,7 @@ function normalize(raw) {
   const cwd = raw.cwd || (Array.isArray(raw.workspace_roots) && raw.workspace_roots[0]) || process.cwd();
   const base = { cwd, sessionId: raw.conversation_id || null, raw, hookEvent: name };
   if (name === 'beforeReadFile') return { ...base, event: 'pre_tool', tool: 'read', toolName: 'Read', input: { path: raw.file_path, texts: [] } };
-  if (name === 'beforeShellExecution') return { ...base, event: 'pre_tool', tool: 'bash', toolName: 'Shell', input: { command: String(raw.command || ''), texts: [] } };
+  if (name === 'beforeShellExecution') return { ...base, event: 'pre_tool', tool: 'bash', toolName: 'Shell', input: { command: typeof raw.command === 'string' ? raw.command : undefined, texts: [] } };
   if (name === 'beforeSubmitPrompt') return { ...base, event: 'user_prompt', tool: null, input: { prompt: typeof raw.prompt === 'string' ? raw.prompt : '' } };
   if (name === 'beforeMCPExecution') {
     return {
@@ -89,6 +90,8 @@ function normalize(raw) {
     // The input keys of Grep, Write and Delete are not documented: the first
     // string under a known name is the path. Without one, respond() fails closed for writes.
     const toolName = String(raw.tool_name || '');
+    // zn's preToolUse hook only runs for the tools in PRE_TOOL_MATCHER: a call without a tool name is malformed, not "another tool".
+    if (!toolName) return { ...base, event: 'pre_tool', tool: 'unreadable', toolName, input: { texts: [] }, unreadable: 'zn: could not read the tool name of this call, so zn cannot check it.' };
     const ti = raw.tool_input && typeof raw.tool_input === 'object' ? raw.tool_input : {};
     const pick = (...keys) => keys.map((k) => ti[k]).find((v) => typeof v === 'string' && v) || null;
     if (toolName === 'Grep') return { ...base, event: 'pre_tool', tool: 'grep', toolName, input: { path: pick('path', 'target_directory') || undefined, texts: [] } };
@@ -120,15 +123,20 @@ function respond(d) {
   const h = ev.hookEvent;
   if (h === 'preToolUse') {
     if (d.decision === 'deny') return { permission: 'deny', user_message: d.message || 'Blocked by zn', agent_message: d.message || 'Blocked by zn' };
+    if (ev.unreadable) return { permission: 'deny', user_message: ev.unreadable, agent_message: ev.unreadable };
     if (ev.tool === 'write' && !ev.input.path) {
       const msg = 'zn: could not read the file this call writes, so zn cannot check it. Name the file explicitly.';
       return { permission: 'deny', user_message: msg, agent_message: msg };
     }
+    // Cursor does not enforce "ask" from preToolUse: a question would be dropped, so it becomes a deny.
+    if (isPlainAsk(d)) { const msg = askAsDeny('Cursor', d); return { permission: 'deny', user_message: msg, agent_message: msg }; }
     // No opinion, not "allow": an allow could skip Cursor's own confirmations.
     return null;
   }
   if (h === 'beforeReadFile') {
     if (d.decision === 'deny') return { permission: 'deny', user_message: d.message || 'Blocked by zn' };
+    if (!ev.input.path) return { permission: 'deny', user_message: 'zn: could not read the file this call reads, so zn cannot check it.' };
+    if (isPlainAsk(d)) return { permission: 'deny', user_message: askAsDeny('Cursor', d) };
     return { permission: 'allow' };
   }
   if (h === 'beforeShellExecution') {
@@ -138,7 +146,7 @@ function respond(d) {
         '  (zn puts the value only into that process, if the user allowed this command for the secret).';
       return { permission: 'deny', user_message: msg, agent_message: msg };
     }
-    if (d.decision === 'ask' && !d.updatedInput) return { permission: 'ask', user_message: d.message || 'zn asks for confirmation' };
+    if (d.decision === 'ask' && (d.confirm === true || !d.updatedInput)) return { permission: 'ask', user_message: d.message || 'zn asks for confirmation' };
     return null; // no opinion: Cursor's own approval settings apply
   }
   if (h === 'beforeSubmitPrompt') {
@@ -147,6 +155,8 @@ function respond(d) {
   }
   if (h === 'beforeMCPExecution') {
     if (d.decision === 'deny') return { permission: 'deny', user_message: d.message || 'Blocked by zn', agent_message: d.message || 'Blocked by zn' };
+    // Cursor does not enforce a hook's "ask" for MCP calls: a question becomes a deny.
+    if (isPlainAsk(d)) { const msg = askAsDeny('Cursor', d); return { permission: 'deny', user_message: msg, agent_message: msg }; }
     return null; // no opinion: Cursor's own MCP approval applies
   }
   if (h === 'postToolUse') {

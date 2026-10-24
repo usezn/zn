@@ -10,7 +10,7 @@ const { znError, CODES } = require('../lib/errors');
 const SECRET = 'plugh-plugh-plugh-plugh';
 function adapter(ev) { return { id: 'claude-code', normalize: () => Object.assign({ cwd: process.cwd() }, ev), respond: (d) => d }; }
 function run(ev, vault) { return runner.handle(adapter(ev), {}, { home: process.env.HOME, vault, engine }); }
-const pre = { event: 'pre_tool', tool: 'webfetch', input: { url: 'https://example.com/?q=' + SECRET } };
+const pre = { event: 'pre_tool', tool: 'webfetch', toolName: 'WebFetch', input: { url: 'https://example.com/?q=' + SECRET } };
 const post = { event: 'post_tool', tool: 'bash', output: SECRET };
 
 const failures = {
