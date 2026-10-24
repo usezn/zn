@@ -233,6 +233,17 @@ function localEntries(ctx) {
   return entries;
 }
 
+function vaultUnavailableOnPurpose(err) {
+  return !!err && err.code === CODES.LOCKED && err.vaultUnanswered !== true;
+}
+
+function vaultInfoFailure(err) {
+  const why = String((err && err.message) || 'unknown error');
+  return Object.assign(new Error('zn could not read what your secret vault protects (' + why + '), so it cannot check this against your vault values. ' +
+    'Make sure the vault is running and unlocked (zn unlock), then try again.'), { code: CODES.LOCKED, vaultFailed: true, cause: err });
+}
+
+
 /* What the vault contributes to the exact layer. The values never leave the vault daemon: maskInfo says which secret
  * names and how many needles it has (and the longest, for the streaming scrubber), and scanAsync asks maskSpans
  * where they occur in each text. {remote, names, longest, count, entries, locked}. `entries` is only filled by a vault
@@ -271,6 +282,10 @@ async function vaultEntries(ctx) {
       res = await legacy();
     }
   } catch (err) {
+    // Not available on purpose (the daemon is not running, or it says it is locked): the vault adds nothing and the
+    // built-in layers still run. Anything else (no answer, bad reply, a refusal) is a failure to read what the vault
+    // protects: propagate it, so the hook denies instead of scanning without the vault's values.
+    if (!vaultUnavailableOnPurpose(err)) throw vaultInfoFailure(err);
     res = Object.assign({}, none, { at: now, locked: true, error: err });
   }
   perVault.set(project, res);

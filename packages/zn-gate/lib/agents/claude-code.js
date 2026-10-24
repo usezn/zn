@@ -318,7 +318,7 @@ function stripOurs(groups) {
   const out = [];
   for (const g of groups) {
     if (!g || !Array.isArray(g.hooks)) { out.push(g); continue; }
-    const hooks = g.hooks.filter((h) => !(h && typeof h.command === 'string' && OUR_COMMAND_RE.test(h.command)));
+    const hooks = g.hooks.filter((h) => !(h && typeof h.command === 'string' && (OUR_COMMAND_RE.test(h.command) || launcher.isProjectGuard(h.command, id))));
     if (hooks.length) out.push({ ...g, hooks });
   }
   return out;
@@ -343,11 +343,13 @@ function ourHooks(command) {
 /**
  * The hook command for each event. A user install goes through zn's launcher so that a Node.js that has gone
  * away blocks instead of letting Claude Code run the call unchecked (exit 127 is a non-blocking error);
- * a project install (the file is shared, an absolute path is not) or a command given by the caller keeps
- * the plain command. Claude Code runs hooks with sh (Git Bash on Windows), so the same script serves Windows.
+ * a project install (the file is shared, an absolute path is not) runs `zn` from the PATH inside a start guard that blocks the same
+ * way; a command given by the caller keeps the plain command. Claude Code runs hooks with sh (Git Bash on Windows), so the same script serves Windows.
  */
 function commandFor(opts = {}) {
-  if (opts.command || (opts.scope || 'user') === 'project') return hookCommand(opts);
+  if (opts.command) return hookCommand(opts);
+  // A project install names `zn` on the PATH inside zn's own start guard (launcher.projectShCommand): a missing zn or Node.js blocks.
+  if ((opts.scope || 'user') === 'project') return (event) => launcher.projectShCommand(id, event);
   const node = opts.nodePath || process.execPath;
   const runner = opts.runnerPath || runnerPath();
   const file = launcher.writeLauncher(id, node, runner, { ...opts, deadlineS: launcher.launcherDeadlineS(HOOK_TIMEOUT_S), deadlineSoft: true });
