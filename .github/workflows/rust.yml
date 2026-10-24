@@ -64,9 +64,11 @@ jobs:
         with:
           version: "29.3"
           repo-token: ${{ github.token }}
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 # zizmor: ignore[cache-poisoning] release pushes set lookup-only, so they neither restore nor save a cache
         if: steps.scope.outputs.rust == 'true'
         with:
+          # Release pushes never restore or save a cache that a pull request could have poisoned.
+          lookup-only: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/') }}
           # Each Rust cache is 1.5 to 3 GB, so only main saves one. next and pull requests
           # restore the cache of main (same key prefix) and save nothing, which keeps the
           # repository under its 10 GB cache limit.
@@ -116,9 +118,11 @@ jobs:
         with:
           version: "29.3"
           repo-token: ${{ github.token }}
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 # zizmor: ignore[cache-poisoning] release pushes set lookup-only, so they neither restore nor save a cache
         if: steps.scope.outputs.rust == 'true'
         with:
+          # Release pushes never restore or save a cache that a pull request could have poisoned.
+          lookup-only: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/') }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: test private_file
         if: steps.scope.outputs.rust == 'true'
@@ -156,9 +160,11 @@ jobs:
         with:
           version: "29.3"
           repo-token: ${{ github.token }}
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 # zizmor: ignore[cache-poisoning] release pushes set lookup-only, so they neither restore nor save a cache
         if: steps.scope.outputs.rust == 'true'
         with:
+          # Release pushes never restore or save a cache that a pull request could have poisoned.
+          lookup-only: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/') }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: check the declared version matches
         if: steps.scope.outputs.rust == 'true'
@@ -224,8 +230,10 @@ jobs:
         with:
           version: "29.3"
           repo-token: ${{ github.token }}
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 # zizmor: ignore[cache-poisoning] release pushes set lookup-only, so they neither restore nor save a cache
         with:
+          # Release pushes never restore or save a cache that a pull request could have poisoned.
+          lookup-only: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/') }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:
