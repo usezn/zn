@@ -257,6 +257,27 @@ The SARIF file is written before the exit code is known, so the upload step
   covers differs: in Cursor, for example, shell output and file contents are
   not scrubbed. See [what each agent supports](compat.md).
 
+## Common questions
+
+**Does reach change any file or send anything?**
+No. It is read only: it changes no file, starts no hook, opens no network
+connection and sends nothing anywhere. The only file it can write is the memory
+file, and only with `--remember`.
+
+**Does reach exit with an error when it finds a problem?**
+Not by default. `--fail-on` defaults to `none`, so the report always exits 0.
+Add `--fail-on high` (or `medium` or `low`) to exit with code 1 when a finding
+of at least that severity is found. Code 2 means a usage error or a failure
+while reach ran.
+
+**Why is a `.env` file in a sub-folder missing from the report?**
+Reach checks one folder and does not walk sub-folders for `.env` files. Run it
+in that folder, or use `npx -y zn-gate scan`.
+
+**Can I check another folder?**
+Yes. Pass it as `[path]`, for example `npx -y zn-gate reach ./my-app`. The
+default is the current folder, and the path must be a folder.
+
 ## If something fails
 
 - **Exit code 2**: reach did not run or stopped with an error. Check that the path is a folder and that you used only one folder and valid options. `--json` and `--sarif` cannot be used together.
