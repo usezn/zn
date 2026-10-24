@@ -160,3 +160,53 @@ test('Gemini: a payload that names another event is still ignored; one that name
   const unnamed = await run('gemini', { tool_name: 'run_shell_command', tool_input: { command: 'ls' }, cwd: CWD }, home);
   assert.equal(unnamed.output, null, 'a readable call that zn has no objection to gets no opinion');
 });
+
+/* ---- a real question merged into a rewrite proposal must still be blocked (review blocker) ---- */
+
+const { spawnSync } = require('child_process');
+const fs = require('fs');
+
+async function projectWithToken(t) {
+  const dir = tempDir(t, 'zn-ask-restore-');
+  spawnSync('git', ['init', '-q'], { cwd: dir });
+  fs.writeFileSync(path.join(dir, '.gitignore'), 'AGENTS.md\nGEMINI.md\n');
+  const vault = createFakeVault();
+  const token = await vault.mapToken(dir, 'AWS_KEY', 'AKIAIOSFODNN7EXAMPLE');
+  return { dir, vault, token };
+}
+
+function runWith(id, raw, home, vault) {
+  return runner.handle(getAdapter(id), raw, { engine: fakeEngine, vault, failMode: 'open', home, znRunPrefix: 'ZN_AGENT=x "node" "run.js" --' });
+}
+
+const RESTORE_CASES = [
+  ['codex Bash into AGENTS.md', 'codex', (dir, token) => ({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'echo ' + token + ' >> AGENTS.md' }, cwd: dir })],
+  ['gemini shell into GEMINI.md', 'gemini', (dir, token) => ({ hook_event_name: 'BeforeTool', tool_name: 'run_shell_command', tool_input: { command: 'echo ' + token + ' >> GEMINI.md' }, cwd: dir })],
+  ['opencode bash into AGENTS.md', 'opencode', (dir, token) => ({ hook: 'tool.execute.before', tool: 'bash', args: { command: 'echo ' + token + ' >> AGENTS.md' }, cwd: dir })],
+  ['opencode write to AGENTS.md', 'opencode', (dir, token) => ({ hook: 'tool.execute.before', tool: 'write', args: { filePath: path.join(dir, 'AGENTS.md'), content: 'k=' + token }, cwd: dir })],
+];
+
+for (const [label, id, make] of RESTORE_CASES) {
+  test('restorable token + instruction-file write (' + label + '): still a deny, not a pass', async (t) => {
+    const { dir, vault, token } = await projectWithToken(t);
+    const home = tempDir(t, 'zn-ask-restore-home-');
+    const r = await runWith(id, make(dir, token), home, vault);
+    assert.equal(r.decision.decision, 'ask');
+    assert.ok(r.decision.updatedInput, 'the decision carries a rewrite (the case under test)');
+    const reason = denyReason(id, r.output);
+    assert.ok(reason, 'a deny, not silence: ' + JSON.stringify(r.output));
+    assert.match(reason, HINT);
+    assert.ok(!JSON.stringify(r.output).includes('AKIAIOSFODNN7EXAMPLE'));
+  });
+}
+
+test('a rewrite proposal merged with an egress question (confirm) is a deny; a bare rewrite stays silent', () => {
+  const ev = { event: 'pre_tool', hookEvent: 'preToolUse', tool: 'bash', input: { command: 'x' } };
+  const merged = { decision: 'ask', updatedInput: { command: 'y' }, kind: 'restore', soft: false, confirm: true, message: 'zn: this command would send an email to a network host.' };
+  for (const id of ['codex', 'cursor', 'gemini', 'opencode']) {
+    const out = getAdapter(id).respond({ ...merged, event: id === 'cursor' ? { ...ev, hookEvent: 'beforeMCPExecution' } : ev });
+    assert.ok(denyReason(id, out), id + ': ' + JSON.stringify(out));
+  }
+  const bare = { decision: 'ask', updatedInput: { command: 'y' }, kind: 'restore', message: 'zn: puts back a value' };
+  assert.equal(getAdapter('codex').respond({ ...bare, event: ev }), null);
+});

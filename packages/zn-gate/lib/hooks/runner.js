@@ -479,7 +479,7 @@ async function egressCheck(ev, d, agentId, mode, requests, what) {
 function withEgress(res, eg) {
   if (!eg) return res;
   if (eg.decision === 'deny' || res.decision === 'allow') return eg;
-  return { ...res, soft: false, message: (res.message ? res.message + ' ' : '') + eg.message.replace(/^zn: /, 'Also, ') };
+  return { ...res, soft: false, confirm: true, message: (res.message ? res.message + ' ' : '') + eg.message.replace(/^zn: /, 'Also, ') };
 }
 
 /* ---------------------------- pre_tool ---------------------------- */
@@ -610,7 +610,7 @@ async function decidePre(ev, d, agentId, opts) {
     if (instruction && instructionMode === 'deny') return { decision: 'deny', message: instruction.deny };
     const withInstruction = (r) => {
       if (!instruction) return r;
-      return r.decision === 'ask' ? { ...r, soft: false, message: (r.message ? r.message + ' ' : '') + instruction.ask } : { decision: 'ask', message: instruction.ask };
+      return r.decision === 'ask' ? { ...r, soft: false, confirm: true, message: (r.message ? r.message + ' ' : '') + instruction.ask } : { decision: 'ask', message: instruction.ask };
     };
 
     let command = original;
@@ -656,7 +656,7 @@ async function decidePre(ev, d, agentId, opts) {
 
   if ((tool === 'write' || tool === 'edit' || tool === 'multiedit' || tool === 'notebookedit') && Array.isArray(input.texts)) {
     // The instruction-file question comes first; the marker result only adds its own notes to it.
-    const asked = (r) => (instructionAsk ? { ...r, decision: 'ask', soft: false, message: (r.message ? r.message + ' ' : '') + instructionAsk } : r);
+    const asked = (r) => (instructionAsk ? { ...r, decision: 'ask', soft: false, confirm: true, message: (r.message ? r.message + ' ' : '') + instructionAsk } : r);
     const withMarkers = input.texts.filter((t) => markers.findMarkers(t.value).length);
     if (withMarkers.length === 0) return asked({ decision: 'allow' });
     const status = input.path ? gitStatusOf(path.resolve(ev.cwd || process.cwd(), input.path)) : 'unknown';
