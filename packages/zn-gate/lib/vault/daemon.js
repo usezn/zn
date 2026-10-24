@@ -328,19 +328,87 @@ function recordTamper(state, reason, found) {
   state.serial(() => state.saveSecrets()).catch(() => {});
 }
 
+/* Chain check of the whole log (every MAC, the links, the sequence numbers and
+ * the vault's checkpoint). A failure leaves the persistent tamper mark. The
+ * result is remembered while the file is unchanged (size, mtime, ctime, inode)
+ * and the checkpoint is the same, and the daemon's own appends move it along,
+ * so a long log is read in full once, not on every request. */
+function logSignature(file) {
+  try {
+    const st = fs.statSync(file);
+    return [st.size, st.mtimeMs, st.ctimeMs, st.ino].join(':');
+  } catch (err) { return 'none'; }
+}
+
+function headKey(secrets) {
+  return secrets.auditHead ? secrets.auditHead.seq + ':' + secrets.auditHead.mac : '';
+}
+
+function chainStatus(state, opts) {
+  const secrets = state.secrets;
+  if (!secrets) throw znError(CODES.LOCKED, 'vault locked');
+  const file = state.paths.auditFile;
+  const t = secrets.auditTamper;
+  if (t) {
+    return {
+      ok: false,
+      tampered: true,
+      records: 0,
+      error: 'the audit log was changed behind the vault (noticed ' + t.at + '): ' + t.reason,
+    };
+  }
+  const sig = logSignature(file);
+  const c = state.chainCache;
+  if (!(opts && opts.force) && c && c.sig === sig && c.head === headKey(secrets)) return c.result;
+  state.chainCache = null;
+  let r;
+  try {
+    r = audit.verify({ file, key: Buffer.from(secrets.auditKey, 'hex'), checkpoint: secrets.auditHead });
+  } catch (err) {
+    r = { ok: false, records: 0, error: 'the audit log cannot be read' };
+  }
+  if (!r.ok) {
+    recordTamper(state, r.error + (r.line ? ' (record ' + r.line + ')' : ''), null);
+    return Object.assign({}, r, {
+      tampered: true,
+      error: 'the audit log was changed behind the vault (noticed ' + secrets.auditTamper.at + '): ' + secrets.auditTamper.reason,
+    });
+  }
+  state.chainCache = { sig, head: headKey(secrets), result: r };
+  return r;
+}
+
+/* After the daemon itself wrote to the log (or moved the checkpoint), keep a
+ * verified result valid for the new state of the file. */
+function advanceChainCache(state, wasVerified, records) {
+  const secrets = state.secrets;
+  if (!wasVerified || secrets.auditTamper) { state.chainCache = null; return; }
+  state.chainCache = { sig: logSignature(state.paths.auditFile), head: headKey(secrets), result: { ok: true, records } };
+}
+
 /* Every audit write goes through here: the in-memory head must be the last
- * record in the file before the daemon appends; if not, the checkpoint stays. */
+ * record in the file before the daemon appends, and the whole chain must
+ * verify (a change in the middle of the log is not seen by the head alone);
+ * if not, the checkpoint stays and the tamper mark is stored. */
 function appendChecked(state, event, extra) {
   const secrets = state.secrets;
   if (!secrets) throw znError(CODES.LOCKED, 'vault locked');
   const file = state.paths.auditFile;
+  let verified = false;
+  let before = 0;
   if (!secrets.auditTamper) {
     const h = audit.checkHead(file, secrets.auditHead);
     if (!h.ok) recordTamper(state, h.reason, h.found);
+    else {
+      const c = chainStatus(state);
+      verified = c.ok === true;
+      before = c.records || 0;
+    }
   }
   state.dirtySecrets = true;
   const rec = audit.append(event, Object.assign({ file, key: Buffer.from(secrets.auditKey, 'hex') }, extra));
   if (!secrets.auditTamper) secrets.auditHead = { seq: rec.seq, mac: rec.mac };
+  advanceChainCache(state, verified, before + 1);
   return rec;
 }
 
@@ -372,7 +440,7 @@ function makeOps(state, ctl) {
     return appendChecked(state, event, { knownValues: state.knownValues() });
   }
 
-  const team = makeTeamOps({ state, writeAudit, confirmOutOfBand, fetchImpl: ctl.fetchImpl, isClosed: () => Boolean(ctl.closed) });
+  const team = makeTeamOps({ state, writeAudit, verifyChain: () => chainStatus(state), confirmOutOfBand, fetchImpl: ctl.fetchImpl, isClosed: () => Boolean(ctl.closed) });
 
   const localOf = (name, s) => ({ name, mode: s.mode, allowHosts: s.allowHosts || [], allowCommands: s.allowCommands || [], allowIn: s.allowIn || ['header'] });
   // When the masking path last called the vault, for each (agent, tool): one audit record a minute, not one per hook.
@@ -904,10 +972,12 @@ function makeOps(state, ctl) {
     },
 
     async auditVerify() {
-      const secrets = await state.loadSecrets();
+      await state.loadSecrets();
       // The encrypted vault remembers the last record (sequence number and
-      // MAC): a lost tail or a replaced one is reported.
+      // MAC): a lost tail or a replaced one is reported, and the warning is stored.
+      const secrets = state.secrets;
       const r = audit.verify({ file: auditFile, key: Buffer.from(secrets.auditKey, 'hex'), checkpoint: secrets.auditHead });
+      if (!r.ok && !secrets.auditTamper) recordTamper(state, r.error + (r.line ? ' (record ' + r.line + ')' : ''), null);
       const t = secrets.auditTamper;
       if (!t) return r;
       return Object.assign({}, r, {
@@ -915,6 +985,26 @@ function makeOps(state, ctl) {
         tampered: true,
         error: 'the audit log was changed behind the vault (noticed ' + t.at + '): ' + t.reason,
       });
+    },
+
+    /* The audit log for display: verified first. A log that does not verify is
+     * refused (and the tamper mark is stored), never shown. */
+    async auditRead(args) {
+      await state.loadSecrets();
+      const c = chainStatus(state);
+      if (!c.ok) return { ok: false, tampered: c.tampered === true, error: c.error, line: c.line, events: [] };
+      const a = args && typeof args === 'object' ? args : {};
+      return { ok: true, records: c.records, events: audit.read({ file: auditFile, since: a.since, limit: a.limit }) };
+    },
+
+    /* The audit log for export (OTLP): verified first, refused otherwise. */
+    async auditExport(args) {
+      await state.loadSecrets();
+      const c = chainStatus(state);
+      if (!c.ok) return { ok: false, tampered: c.tampered === true, error: c.error, line: c.line };
+      const a = args && typeof args === 'object' ? args : {};
+      const r = require('../team/otel').exportAuditFile({ auditFile, since: a.since, installId: a.installId, orgId: a.orgId });
+      return Object.assign({ ok: true }, r);
     },
 
     /* The user accepts the log as it is now, after looking into the change.
@@ -941,6 +1031,7 @@ function makeOps(state, ctl) {
         const last = audit.lastRecord(auditFile);
         cur.auditHead = last ? { seq: last.seq, mac: last.mac } : null;
         delete cur.auditTamper;
+        state.chainCache = null;
         appendChecked(state, { decision: 'warn', reason: 'audit_tamper_acknowledged' }, {});
         await state.saveSecrets();
         return { ok: true, cleared: true };
@@ -1157,13 +1248,14 @@ async function serve(opts) {
     // Check the log against the vault's checkpoint BEFORE the unlock record is
     // written: that record would otherwise continue from whatever tail is there.
     try {
-      const pre = audit.verify({ file: state.paths.auditFile, key: Buffer.from(state.secrets.auditKey, 'hex'), checkpoint: state.secrets.auditHead });
-      if (!pre.ok) recordTamper(state, pre.error + (pre.line ? ' (record ' + pre.line + ')' : ''), null);
-      else if (!state.secrets.auditTamper) {
+      const pre = chainStatus(state, { force: true });
+      // A failed check has stored the tamper mark (chainStatus).
+      if (pre.ok && !state.secrets.auditTamper) {
         // The log verifies and carries the checkpoint record. Records after it were written
         // before a crash or a restored secrets.age could save the newer checkpoint: adopt them.
         const tail = audit.lastRecord(state.paths.auditFile);
         if (tail) state.secrets.auditHead = { seq: tail.seq, mac: tail.mac };
+        advanceChainCache(state, true, pre.records);
       }
     } catch (err) {
       recordTamper(state, 'the audit log cannot be read', null);

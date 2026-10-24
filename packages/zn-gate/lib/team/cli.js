@@ -102,6 +102,7 @@ async function syncCmd() {
   const pol = r.policy || {};
   out('Policy: ' + (pol.status === 'updated' || pol.status === 'current' ? pol.status + ' (version ' + pol.version + ')' : pol.status + (pol.error ? ': ' + pol.error : '')));
   if (r.upload) out('Audit upload: ' + r.upload.status + ', ' + (r.upload.uploaded || 0) + ' sent, ' + (r.upload.pending > 0 ? r.upload.pending : 0) + ' pending');
+  if (r.upload && r.upload.status === 'tampered') out('Nothing was uploaded: ' + r.upload.error + '. Keep a copy of the audit log, look into the change, then run `' + znCommand('vault verify --acknowledge') + '` in your own terminal.');
   return pol.status === 'rejected' || pol.status === 'revoked' ? 1 : 0;
 }
 
@@ -130,16 +131,37 @@ async function runTeamCommand(args) {
 }
 
 /** zn vault log export --otlp: args after "export". Returns the exit code. */
-function runLogExport(args) {
+async function runLogExport(args) {
   if (!args.includes('--otlp')) { err(EXPORT_USAGE); return 2; }
   try {
     const team = policy.readTeam();
-    const r = exportAuditFile({
+    const opts = {
       auditFile: store.paths().auditFile,
       since: flag(args, '--since'),
       installId: team ? team.install_id : undefined,
       orgId: team ? team.org : undefined,
-    });
+    };
+    // An unlocked vault verifies the chain first and refuses a log that does not verify.
+    // A locked vault cannot: the export then says so, loudly, and is not a verified copy.
+    let r = null;
+    const probe = createClient({});
+    try {
+      if (await probe.isUnlocked()) {
+        r = await probe.auditExport({ since: opts.since, installId: opts.installId, orgId: opts.orgId });
+        if (!r.ok) {
+          err('[zn] Not exported: ' + r.error + '. Keep a copy of ~/.zn/audit.jsonl as evidence, look into the change, then run `' + znCommand('vault verify --acknowledge') + '` in your own terminal.');
+          return 1;
+        }
+      }
+    } finally { probe.close(); }
+    let unverified = false;
+    if (!r) {
+      unverified = true;
+      r = exportAuditFile(opts);
+    }
+    const warn = () => {
+      if (unverified) err('[zn] Warning: the vault is locked, so the audit log chain was NOT verified. Unlock it (`' + znCommand('unlock') + '`) and export again for a verified copy.');
+    };
     const file = flag(args, '--out');
     if (file) {
       fs.writeFileSync(file, r.content, { mode: 0o600 });
@@ -147,6 +169,7 @@ function runLogExport(args) {
     } else {
       process.stdout.write(r.content);
     }
+    warn();
     return 0;
   } catch (e) {
     err('[zn] ' + (e && e.message ? e.message : e));

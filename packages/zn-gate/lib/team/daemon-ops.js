@@ -38,6 +38,7 @@ const printable = (s, max) => (typeof s === 'string' ? s.replace(INVISIBLE_RE, '
 
 function makeTeamOps(ctx) {
   const { state, writeAudit, confirmOutOfBand } = ctx;
+  const verifyChain = typeof ctx.verifyChain === 'function' ? ctx.verifyChain : null;
   const fetchImpl = ctx.fetchImpl;
   const isClosed = typeof ctx.isClosed === 'function' ? ctx.isClosed : () => false;
   const files = () => policy.paths(state.opts);
@@ -258,6 +259,12 @@ function makeTeamOps(ctx) {
       }
       if (a.upload !== false && out.policy.status !== 'revoked' && !isClosed()) {
         const f = files();
+        // The log is checked before anything leaves the machine; one that does not verify is never sent.
+        const chain = verifyChain ? verifyChain() : { ok: true };
+        if (!chain.ok) {
+          out.upload = { status: 'tampered', uploaded: 0, pending: -1, error: chain.error };
+          return out;
+        }
         out.upload = await uploadPending({
           auditFile: state.paths.auditFile, stateFile: f.uploadState, lockFile: f.uploadLock,
           api, installId: t.install_id, version: VERSION, shouldStop: isClosed,
