@@ -100,7 +100,6 @@ impl<'a> PersistedConfig<'a> {
             key_id,
             region,
             allow_config_fallback,
-            ..
         } = &c.kms;
         Self {
             environment: &c.environment,
