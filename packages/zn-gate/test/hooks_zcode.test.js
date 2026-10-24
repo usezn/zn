@@ -687,6 +687,28 @@ test('uninstall keeps what the user set after zn turned hooks on, and a re-insta
   assert.equal(readCfg(home2).hooks.enabled, false);
 });
 
+test('uninstall restores "hooks.enabled" only while a zn hook is still there, and reports a state file it cannot delete', { skip: !posix || (process.getuid && process.getuid() === 0) }, (t) => {
+  const home = tempDir(t, 'zn-zc-home-');
+  write(home, { hooks: { enabled: false } });
+  zc.install({ home, nodePath: '/usr/bin/node' });
+  const dir = path.dirname(path.join(home, '.zn', 'state', 'zcode-hooks-enabled.json'));
+  fs.chmodSync(dir, 0o555);
+  let rep;
+  try { rep = zc.uninstall({ home }); } finally { fs.chmodSync(dir, 0o755); }
+  assert.equal(rep.removed, 1);
+  assert.equal(rep.stateNotCleared, path.join(dir, 'zcode-hooks-enabled.json'));
+  assert.ok(rep.warnings.some((w) => /could not delete .*zcode-hooks-enabled\.json/.test(w)));
+  assert.deepEqual(readCfg(home), { hooks: { enabled: false } });
+  assert.ok(fs.existsSync(path.join(dir, 'zcode-hooks-enabled.json')));
+  // The user turns hooks on again (no zn hook in the file): a second uninstall must leave the switch on.
+  write(home, { hooks: { enabled: true, events: { Stop: [{ hooks: [{ type: 'process', command: 'x' }] }] } } });
+  const again = zc.uninstall({ home });
+  assert.equal(again.removed, 0);
+  assert.equal(readCfg(home).hooks.enabled, true);
+  assert.ok(!fs.existsSync(path.join(dir, 'zcode-hooks-enabled.json')), 'the leftover is cleared once no zn hook needs it');
+  assert.equal(again.stateNotCleared, undefined);
+});
+
 test('install and uninstall on a missing config leave an empty one', { skip: !posix }, (t) => {
   const home = tempDir(t, 'zn-zc-home-');
   zc.install({ home, nodePath: '/usr/bin/node' });

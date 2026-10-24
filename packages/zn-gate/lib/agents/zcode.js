@@ -387,8 +387,10 @@ function restoreEnabledState(opts, snapshot) {
   } catch (_) { /* best effort: a state that no longer matches the config is ignored by uninstall */ }
 }
 
+/** Deletes the state file. True when it is gone (or never was); false when it could not be deleted. */
 function clearEnabledState(opts) {
-  try { fs.unlinkSync(enabledStateFile(opts)); } catch (_) { /* none */ }
+  try { fs.unlinkSync(enabledStateFile(opts)); } catch (err) { return !!err && err.code === 'ENOENT'; }
+  return true;
 }
 
 /* "Event: command" for each hook in events that is not zn's. */
@@ -459,6 +461,13 @@ function install(opts = {}) {
   return report;
 }
 
+/* Deletes the state after a config that no longer needs it; a failure is reported, never silent. */
+function dropState(opts, report) {
+  if (clearEnabledState(opts)) return;
+  report.stateNotCleared = enabledStateFile(opts);
+  report.warnings.push('could not delete ' + report.stateNotCleared + ' (a leftover of the switch zn turned on); delete it by hand, or a later uninstall could change "hooks.enabled" again.');
+}
+
 function uninstall(opts = {}) {
   const file = configFile(opts);
   const report = { settings: file, backup: null, removed: 0, warnings: [] };
@@ -473,7 +482,11 @@ function uninstall(opts = {}) {
   const before = JSON.stringify(data);
   // Give "enabled" back the value it had before zn turned it on, unless the user changed it since.
   const state = readEnabledState(opts, file);
-  const restored = state && hooks.enabled === true;
+  // Only while one of zn's hook entries is still there: a state left behind by an earlier uninstall must not switch off
+  // hooks that the user turned on again afterwards.
+  let hadOurs = false;
+  for (const event of Object.keys(events)) if (Array.isArray(events[event]) && JSON.stringify(stripOurs(events[event])) !== JSON.stringify(events[event])) hadOurs = true;
+  const restored = state && hooks.enabled === true && hadOurs;
   for (const event of Object.keys(events)) {
     const kept = stripOurs(events[event]);
     if (kept.length) events[event] = kept; else delete events[event];
@@ -499,7 +512,7 @@ function uninstall(opts = {}) {
   // Config first, state after: if the write fails the config is untouched and the state still describes it; the state is
   // dropped only once the config no longer needs it.
   if (JSON.stringify(data) === before) {
-    if (state) clearEnabledState(opts);
+    if (state) dropState(opts, report);
     return report;
   }
   report.backup = cfg.backup(file);
@@ -510,7 +523,7 @@ function uninstall(opts = {}) {
     if (report.backup) { try { fs.unlinkSync(report.backup); } catch (_) { /* none */ } }
     throw err;
   }
-  if (state) clearEnabledState(opts);
+  if (state) dropState(opts, report);
   // The launcher (see handlerFor) is shared by every config of this machine: one uninstall leaves it in place,
   // only the machine-wide uninstall (opts.removeLauncher) deletes it.
   if (opts.removeLauncher === true) {
