@@ -12,6 +12,8 @@ Upgrade to it to receive them.
 
 Prereleases (`-alpha`, `-beta`, `-rc`) are not supported once the final release is out.
 
+Releases ship weekly; out-of-cycle releases only for high or critical vulnerabilities or a broken install.
+
 ---
 
 ## Reporting a Vulnerability
