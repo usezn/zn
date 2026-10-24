@@ -33,6 +33,7 @@ static NANP_REGEX: OnceLock<Regex> = OnceLock::new();
 static JWT_REGEX: OnceLock<Regex> = OnceLock::new();
 static AUTH_HEADER_REGEX: OnceLock<Regex> = OnceLock::new();
 static AUTH_PLACEHOLDER_REGEX: OnceLock<Regex> = OnceLock::new();
+static QUOTED_OPEN_REGEX: OnceLock<Regex> = OnceLock::new();
 
 fn email_re() -> &'static Regex {
     EMAIL_REGEX
@@ -172,8 +173,118 @@ fn secret_placeholder(value: &str) -> bool {
         })
 }
 
+/// Longest quoted value (in bytes) the scanner of `redact_quoted_values` reads. A value with
+/// no closing quote inside this window is left to api_re(), so the work per opening quote is
+/// bounded and a long run of openers stays linear.
+const MAX_QUOTED_VALUE: usize = 4096;
+
+/// A secret name followed by `:` or `=` and an opening quote: groups 1 (name), 2 (the quote
+/// that closes a quoted name) and 3 (the opening quote of the value, with the backslashes of a
+/// JSON string inside a JSON string).
+fn quoted_open_re() -> &'static Regex {
+    QUOTED_OPEN_REGEX.get_or_init(|| {
+        Regex::new(r#"(?i)(api[_-]?key|secret[_-]?key|password|token|auth[_-]?token|access[_-]?token|bearer)(\\{0,2}['"])?[ \t]*[:=][ \t]*(\\{0,2}["'])"#).unwrap()
+    })
+}
+
+/// Redacts a quoted value of a secret name up to its closing quote, spaces included
+/// (`"password":"abcdefgh ijk lmn"`). A double-quoted value ends at the first quote that is
+/// not escaped (a backslash escapes the next character); a single-quoted one at the next `'`.
+/// The closing quote is kept, so a JSON string stays valid. It only takes a value that has
+/// whitespace in it (api_re() does the rest); a value shorter than 8 characters, a placeholder,
+/// or one with no closing quote within MAX_QUOTED_VALUE bytes is left as it is (api_re() still
+/// sees it afterwards).
+fn redact_quoted_values(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut done = 0; // bytes of `text` already copied or replaced
+    let mut from = 0; // where to look for the next opening
+    while let Some(caps) = quoted_open_re().captures_at(text, from) {
+        let whole = caps.get(0).unwrap();
+        let quote = bytes[whole.end() - 1];
+        let level = caps[3].len() - 1; // backslashes before the opening quote
+        let start = whole.end();
+        let limit = (start + MAX_QUOTED_VALUE).min(bytes.len());
+        let mut i = start;
+        let mut close = None; // (end of the value, end of the closing quote)
+        while i < limit {
+            if bytes[i] == b'\\' {
+                if level > 0 {
+                    // Escaped level: the value ends at exactly `level` backslashes and the quote.
+                    // Count the run only inside the scan window, so one opener followed by a
+                    // very long run of backslashes stays linear.
+                    let mut k = 0;
+                    while i + k < limit && bytes[i + k] == b'\\' {
+                        k += 1;
+                    }
+                    if k == level && bytes.get(i + k) == Some(&quote) {
+                        close = Some((i, i + k + 1));
+                        break;
+                    }
+                    i += k + 1;
+                } else if quote == b'"' {
+                    i += 2; // a backslash escapes the next character
+                } else {
+                    i += 1;
+                }
+            } else if level == 0 && bytes[i] == quote {
+                close = Some((i, i + 1));
+                break;
+            } else {
+                i += 1;
+            }
+        }
+        let Some((end, after)) = close else {
+            from = whole.end();
+            continue;
+        };
+        let value = &text[start..end];
+        if value.chars().count() < 8
+            || !value.contains(char::is_whitespace)
+            || secret_placeholder(value)
+        {
+            from = whole.end();
+            continue;
+        }
+        // A value glued to more quoted pieces ('a b''c') is one shell word: take them too.
+        let mut after = after;
+        if level == 0 {
+            while matches!(bytes.get(after), Some(b'"' | b'\''))
+                && !text[after..].trim_start_matches(['"', '\'']).is_empty()
+            {
+                let rest = text[after..].trim_start_matches(['"', '\'']);
+                let piece = rest
+                    .bytes()
+                    .take_while(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+                    .count();
+                if piece == 0 {
+                    break;
+                }
+                after = text.len() - rest.len() + piece;
+            }
+        }
+        out.push_str(&text[done..whole.start()]);
+        out.push_str(&caps[1]);
+        match caps.get(2) {
+            None => out.push_str(": [SECRET_REDACTED]"),
+            Some(key_quote) => {
+                let open = &caps[3];
+                out.push_str(&format!(
+                    "{}: {open}[SECRET_REDACTED]{open}",
+                    key_quote.as_str()
+                ));
+            }
+        }
+        done = after;
+        from = done;
+    }
+    out.push_str(&text[done..]);
+    out
+}
+
 /// Replacement for one api_re() match. A plain `name=value` becomes `name: [SECRET_REDACTED]`.
-/// A quoted name (a JSON member) keeps its quotes, so the output is still valid JSON.
+/// A quoted name (a JSON member) keeps its quotes, so the output is still valid JSON: an
+/// unquoted value there (a number such as `12345678`) becomes a string, quoted like the name.
 /// A placeholder or reference is left as it is.
 fn redact_secret(caps: &regex::Captures) -> String {
     if secret_placeholder(secret_value(caps)) {
@@ -189,7 +300,7 @@ fn redact_secret(caps: &regex::Captures) -> String {
                     caps.get(q)
                         .map(|m| (m.as_str(), if closed { m.as_str() } else { "" }))
                 })
-                .unwrap_or(("", ""));
+                .unwrap_or_else(|| (key_quote.as_str(), key_quote.as_str()));
             format!(
                 "{name}{}: {open}[SECRET_REDACTED]{close}",
                 key_quote.as_str()
@@ -570,6 +681,7 @@ impl Scrubber {
             .replace_all(&output, "[EMAIL_REDACTED]")
             .to_string();
         output = auth_re().replace_all(&output, redact_auth).to_string();
+        output = redact_quoted_values(&output);
         output = api_re().replace_all(&output, redact_secret).to_string();
         output = replace_spans(&output, &card_spans(&output), "[CARD_REDACTED]");
         output = replace_spans(&output, &ssn_spans(&output), "[SSN_REDACTED]");
@@ -604,6 +716,7 @@ impl Scrubber {
         if api_re()
             .captures_iter(input)
             .any(|c| !secret_placeholder(secret_value(&c)))
+            || redact_quoted_values(input) != input
         {
             types.push("api_key_or_secret");
         }
@@ -888,12 +1001,165 @@ mod tests {
         serde_json::from_str::<serde_json::Value>(&out).expect("valid JSON");
         let out = Scrubber::scrub(r#"{'password': 'abcdefg"hij123'}"#);
         assert_eq!(out, r#"{'password': '[SECRET_REDACTED]'}"#);
-        // A value with a space has no closing quote after its first word: like the Node
-        // scrubber, nothing is changed, and the JSON is not left half closed.
+        // A quoted value with spaces is redacted whole, up to its closing quote.
         let input = r#"{"password":"abcdefgh ijk lmn","n":1}"#;
         let out = Scrubber::scrub(input);
-        assert_eq!(out, input);
+        assert_eq!(out, r#"{"password": "[SECRET_REDACTED]","n":1}"#);
         serde_json::from_str::<serde_json::Value>(&out).expect("valid JSON");
+    }
+
+    #[test]
+    fn test_quoted_value_with_spaces_goes_to_the_closing_quote() {
+        for (input, gone) in [
+            (r#"{"password":"abcdefgh ijk lmn","n":1}"#, "ijk"),
+            (r#"{"token":"fake one two three four","n":1}"#, "three"),
+            (
+                r#"{"api_key":"fake key \"with\" quotes and spaces","n":1}"#,
+                "spaces",
+            ),
+            (r#"{"secret_key":"tab\there and more words"}"#, "words"),
+            ("{'password': 'fake pass phrase here'}", "phrase"),
+        ] {
+            let out = Scrubber::scrub(input);
+            assert!(!out.contains(gone), "{input} -> {out}");
+            assert!(out.contains("[SECRET_REDACTED]"), "{input} -> {out}");
+            if input.starts_with("{\"") {
+                let v: serde_json::Value = serde_json::from_str(&out).expect("valid JSON");
+                assert!(v.as_object().is_some());
+            }
+            assert_eq!(Scrubber::scrub(&out), out, "not idempotent: {input}");
+        }
+        // Shell forms keep what follows the closing quote.
+        assert_eq!(
+            Scrubber::scrub(r#"export password="fake pass phrase here" && run"#),
+            "export password: [SECRET_REDACTED] && run"
+        );
+        assert_eq!(
+            Scrubber::scrub(r#"export password='fake pass phrase here''more' && run"#),
+            "export password: [SECRET_REDACTED]' && run"
+        );
+        // Short values, placeholders and an unterminated quote are not taken whole.
+        for input in [
+            r#"{"password":"a b c","n":1}"#,
+            r#"{"token":"${API TOKEN HERE}"}"#,
+        ] {
+            assert_eq!(Scrubber::scrub(input), input);
+        }
+        // Past the cap the closing quote is not searched for; the work stays bounded.
+        let long = format!(r#"{{"password":"{}"}}"#, "ab cd ".repeat(2000));
+        let out = Scrubber::scrub(&long);
+        assert_eq!(out.len(), long.len());
+        let many = r#"password=""#.repeat(50_000);
+        let start = std::time::Instant::now();
+        let _ = Scrubber::scrub(&many);
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
+        assert!(
+            Scrubber::detect_pii_types(r#"{"password":"abcdefgh ijk lmn"}"#)
+                .contains(&"api_key_or_secret")
+        );
+    }
+
+    #[test]
+    fn test_review_repro_cases_stay_valid_json() {
+        // The cases of the independent review (F5 and F6).
+        for input in [
+            r#"{"max_token":100000000,"x":1}"#,
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"t","arguments":{"page_token":123456789}}}"#,
+            r#"{"password":"abcdefgh12","n":1}"#,
+        ] {
+            let out = Scrubber::scrub(input);
+            serde_json::from_str::<serde_json::Value>(&out)
+                .unwrap_or_else(|e| panic!("{input} -> {out}: {e}"));
+            assert_ne!(out, input);
+            assert!(
+                !out.contains("12345678") && !out.contains("100000000"),
+                "{out}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_unquoted_json_value_becomes_a_string() {
+        let out = Scrubber::scrub(r#"{"token":12345678}"#);
+        assert_eq!(out, r#"{"token": "[SECRET_REDACTED]"}"#);
+        let out = Scrubber::scrub(r#"{'token': 12345678}"#);
+        assert_eq!(out, r#"{'token': '[SECRET_REDACTED]'}"#);
+    }
+
+    /// Every secret value must be gone and the output must still parse as JSON.
+    fn assert_valid_and_clean(input: &str, secrets: &[&str]) {
+        serde_json::from_str::<serde_json::Value>(input).expect("valid input");
+        let out = Scrubber::scrub(input);
+        let v = serde_json::from_str::<serde_json::Value>(&out)
+            .unwrap_or_else(|e| panic!("{input} -> {out}: {e}"));
+        for secret in secrets {
+            assert!(!out.contains(secret), "{input} -> {out}");
+        }
+        assert!(out.contains("[SECRET_REDACTED]"), "{input} -> {out}");
+        assert_eq!(Scrubber::scrub(&out), out, "not idempotent: {input}");
+        drop(v);
+    }
+
+    #[test]
+    fn test_parse_after_scrub_matrix() {
+        let keys = ["password", "token", "api_key", "secret_key", "access_token"];
+        for key in keys {
+            // numbers, spaced strings, escaped quotes, backslashes, unicode
+            for (value_json, secret) in [
+                ("12345678", "12345678"),
+                ("1234567890123456", "1234567890123456"),
+                ("-12345678.5", "12345678"),
+                ("1.2345678e10", "2345678"),
+                (r#""abcdefgh ijk lmn""#, "ijk"),
+                (r#""fake \"quoted\" phrase""#, "phrase"),
+                (r#""back\\slash value 12""#, "value"),
+                (r#""tab\tand newline\nvalue""#, "newline"),
+                (r#""caf\u00e9 phrase fake""#, "phrase"),
+                (r#""fakeSecret+Value/1234==""#, "Value/1234"),
+            ] {
+                // alone, with neighbours before and after, nested and in an array
+                for template in [
+                    format!(r#"{{"{key}":{value_json}}}"#),
+                    format!(r#"{{"a":1,"{key}":{value_json},"b":"x"}}"#),
+                    format!(r#"{{"a":{{"b":{{"{key}":{value_json},"c":[1,2]}}}}}}"#),
+                    format!(r#"[{{"{key}":{value_json}}},{{"{key}":{value_json}}}]"#),
+                    format!(r#"{{"list":[true,null,{{"{key}":{value_json}}},"z"]}}"#),
+                    format!(r#"{{ "{key}" : {value_json} , "n" : null }}"#),
+                ] {
+                    assert_valid_and_clean(&template, &[secret]);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_after_scrub_booleans_null_and_plain_values() {
+        // Not secrets: left alone, and still valid.
+        for input in [
+            r#"{"token":true}"#,
+            r#"{"token":false,"password":null}"#,
+            r#"{"api_key":null,"n":[true,false,null]}"#,
+            r#"{"token":[1,2,3],"password":{"a":1}}"#,
+            r#"{"nested":{"token":{"password":null}},"list":[null,true]}"#,
+            r#"{"password":"short"}"#,
+        ] {
+            let out = Scrubber::scrub(input);
+            serde_json::from_str::<serde_json::Value>(&out)
+                .unwrap_or_else(|e| panic!("{input} -> {out}: {e}"));
+            assert_eq!(out, input);
+        }
+        // Long literal words are never produced by the JSON grammar, but a number longer than
+        // the minimum is a secret and becomes a string.
+        assert_valid_and_clean(r#"{"n":null,"token":99999999,"ok":true}"#, &["99999999"]);
+        // A secret in a JSON string value (shell form inside) still parses.
+        assert_valid_and_clean(
+            r#"{"command":"export password=\"fake pass phrase\" && run","n":1}"#,
+            &["phrase"],
+        );
+        assert_valid_and_clean(
+            r#"{"cmd":"export password=\"fake pass phrase\" ok","n":[true,null]}"#,
+            &["phrase"],
+        );
     }
 
     #[test]
@@ -1055,6 +1321,36 @@ mod tests {
             "{:?}",
             start.elapsed()
         );
+    }
+
+    #[test]
+    fn test_backslash_run_after_opener_stays_linear() {
+        // One opener followed by a very long run of backslashes must cost about the same as the
+        // same length of any other character: the run is counted only inside the scan window.
+        let time = |input: &str| {
+            (0..3)
+                .map(|_| {
+                    let start = std::time::Instant::now();
+                    let _ = Scrubber::scrub(input);
+                    start.elapsed()
+                })
+                .min()
+                .unwrap()
+        };
+        for opener in ["password=\"", "password='", "password=\\\""] {
+            let slashes = format!("{opener}{}", "\\".repeat(1 << 20));
+            let filler = format!("{opener}{}", "a".repeat(1 << 20));
+            let t_slashes = time(&slashes);
+            let t_filler = time(&filler);
+            eprintln!("{opener}: backslashes {t_slashes:?} filler {t_filler:?}");
+            // Relative bound, with a small floor against timer noise on a fast filler run.
+            let bound = t_filler * 10 + std::time::Duration::from_millis(200);
+            assert!(
+                t_slashes < bound,
+                "{opener}: backslashes {t_slashes:?} vs filler {t_filler:?}"
+            );
+            assert!(t_slashes < std::time::Duration::from_secs(60), "{opener}");
+        }
     }
 
     #[test]
