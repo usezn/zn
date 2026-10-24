@@ -93,7 +93,7 @@ sqlite3 zn.db "UPDATE tenants SET api_key_hash = '$HASH' WHERE id = '<tenant id 
 
 ### MCP WebSocket token
 
-`ZN_MCP_WS_TOKEN` is an extra check for MCP WebSocket connections, on top of the management API authentication, sent in the `token` query parameter or the `X-MCP-Token` header. Surrounding whitespace is ignored, a blank value counts as not set (the gateway then generates a random token), and the comparison takes constant time. The `token` query parameter is also read as a management API credential, which takes the first `api_key` or `token` parameter: a client that sends both should put `api_key` first, or send the MCP token in the `X-MCP-Token` header.
+`ZN_MCP_WS_TOKEN` is an extra check for MCP WebSocket connections, on top of the management API authentication, sent in the `token` query parameter or the `X-MCP-Token` header. Surrounding whitespace is ignored, a blank value counts as not set (the gateway then generates a random token), and the comparison takes constant time. A generated token is saved in `zn-mcp-ws-token.txt`, in the same directory as `audit.db_path` (mode 0600; on Windows the file inherits the directory ACL). It changes on every start and is never printed, so read it from that file, or set `ZN_MCP_WS_TOKEN` to use a stable one. If the file cannot be written, the gateway refuses to start and asks you to set `ZN_MCP_WS_TOKEN`. The `token` query parameter is also read as a management API credential, which takes the first `api_key` or `token` parameter: a client that sends both should put `api_key` first, or send the MCP token in the `X-MCP-Token` header.
 
 ## Policy endpoints
 

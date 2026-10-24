@@ -389,11 +389,17 @@ async fn start_proxy(args: Args) -> Result<()> {
         webhook_manager.run(webhook_rx).await;
     });
 
-    // Generate MCP WS Token if missing
+    // Generate MCP WS Token if missing. A generated token is written to a
+    // private file next to the audit database, never printed.
+    let mut ws_token_file: Option<PathBuf> = None;
     if zn_config.security.mcp_ws_token.is_none() {
-        zn_config.security.mcp_ws_token = Some(shield::McpShield::generate_ws_token());
+        let token = shield::McpShield::generate_ws_token();
+        ws_token_file = Some(zn::tenants::generate_ws_token_file(
+            &zn_config.audit.db_path,
+            &token,
+        )?);
+        zn_config.security.mcp_ws_token = Some(token);
     }
-    let mcp_token = zn_config.security.mcp_ws_token.clone().unwrap_or_default();
 
     // Initialize Neural Core
     log::info("🧠 Initializing Neural Core (Candle)...")?;
@@ -593,9 +599,10 @@ async fn start_proxy(args: Args) -> Result<()> {
     });
 
     log::success("zn Core active. Zero Trust Layer Engaged.")?;
-    if state.config.environment == "development" {
-        note("Security", format!("MCP WebSocket Token: {}", mcp_token))?;
-    }
+    note(
+        "Security",
+        shield::McpShield::ws_token_notice(ws_token_file.as_deref()),
+    )?;
     note("Ready", "Listening for JSON-RPC on stdin...")?;
 
     let stdin = io::stdin();
