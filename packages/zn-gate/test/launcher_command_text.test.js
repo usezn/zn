@@ -7,6 +7,7 @@ process.env.ZN_STATS = 'off';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const path = require('path');
 
 const launcher = require('../lib/agents/launcher');
 const { getAdapter } = require('../lib/agents');
@@ -77,8 +78,11 @@ test('launcherCommand with plain writes no quotes, and plainPathOk tells which p
 });
 
 test('launcherFile and launcherDir follow ZN_HOME, then the home option; spaces are kept', () => {
-  assert.equal(launcher.launcherFile('cursor', { env: { ZN_HOME: '/srv/zn home' } }), '/srv/zn home/hooks/zn-hook-cursor.sh');
-  assert.equal(launcher.launcherDir({ env: {}, home: '/home/a b' }), '/home/a b/.zn/hooks');
+  // The result is built with path.join and path.resolve, so it uses the separators (and, on Windows, the
+  // drive letter) of the platform the test runs on.
+  assert.equal(launcher.launcherFile('cursor', { env: { ZN_HOME: '/srv/zn home' } }),
+    path.join(path.resolve('/srv/zn home'), 'hooks', 'zn-hook-cursor.sh'));
+  assert.equal(launcher.launcherDir({ env: {}, home: '/home/a b' }), path.join('/home/a b', '.zn', 'hooks'));
 });
 
 test('windowsScript: a path with a single quote gives no script; a normal one names the agent', () => {
