@@ -590,7 +590,8 @@ test('a server line that JSON.parse rejects (NaN) is dropped, not forwarded unch
     await s.reply(37);
     await waitStderr(s, /not valid JSON was dropped/);
     assert.ok(!s.lines.some((l) => l.includes(INJECTION)));
-    assert.ok(!s.json().some((m) => m.id === 36));
+    const e36 = s.json().find((m) => m.id === 36);
+    assert.ok(e36 && e36.error && e36.result === undefined, "the client gets an error for the request, not a result");
   } finally {
     await s.stop();
   }
