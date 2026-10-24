@@ -437,10 +437,10 @@ test('install on Windows writes a powershell.exe process hook that exits 2 itsel
   assert.equal(zc.uninstall({ home }).removed, 1);
 });
 
-test('install warnings: experimental, no output rewriting, user config only, fail-open on crash', (t) => {
+test('install warnings: no output rewriting, user config only, fail-open on crash', (t) => {
   const home = tempDir(t, 'zn-zc-warn-');
   const all = zc.install({ home, nodePath: '/usr/bin/node' }).warnings.join('\n');
-  assert.match(all, /experimental/);
+  assert.doesNotMatch(all, /experimental/);
   assert.match(all, /cannot rewrite what a tool returns/);
   assert.match(all, /hooks of a project are ignored/);
   assert.match(all, /zn turned it on/);
@@ -573,4 +573,77 @@ test('detect: the zcode program on PATH or a ~/.zcode folder', (t) => {
 
 test('the hook policy knows the install hint for zcode', () => {
   assert.match(policy.bashDenial('zn hooks install zcode'), /hooks install zcode`/);
+});
+
+/* --------------------- measured on zcode-cli 0.17.0 (ZCode commit 3c5b2276) --------------------- */
+
+test('measured: respond() answers a denied prompt with continue:false and no hookSpecificOutput', () => {
+  const ev = zc.normalize({ hook_event_name: 'UserPromptSubmit', session_id: 's', cwd: '/w', prompt: 'x' });
+  const out = zc.respond({ decision: 'deny', message: 'blocked', event: ev });
+  assert.deepEqual(out, { continue: false, reason: 'blocked' });
+});
+
+test('measured: PermissionRequest only ever gets deny, whatever the internal decision (allow would skip the approval screen)', () => {
+  const ev = zc.normalize({ hook_event_name: 'PermissionRequest', session_id: 's', cwd: '/w', tool_name: 'Bash', tool_input: { command: 'ls' } });
+  for (const d of [{ decision: 'allow' }, { decision: 'ask', message: 'q' }, { decision: 'allow', updatedInput: { command: 'x' }, kind: 'wrap' }, { decision: 'deny', message: 'no' }]) {
+    const out = zc.respond({ ...d, event: ev });
+    if (out === null) continue;
+    assert.equal(out.hookSpecificOutput.decision.behavior, 'deny', JSON.stringify(d));
+  }
+  assert.equal(zc.respond({ decision: 'allow', event: ev }), null);
+});
+
+test('measured: the camelCase fields alone are read like the snake_case ones, and tool names seen at run time map to the checks', () => {
+  const camel = { hookEventName: 'PreToolUse', sessionId: 's', cwd: '/w', toolName: 'Read', toolInput: { file_path: '/w/a.txt' }, toolCallId: 'c', riskLevel: 'low', sideEffectScope: 'none', mode: 'yolo', transcriptPath: '/t' };
+  const ev = zc.normalize(camel);
+  assert.equal(ev.event, 'pre_tool');
+  assert.equal(ev.tool, 'read');
+  assert.deepEqual(ev.input.paths, ['/w/a.txt']);
+  for (const [name, input, tool] of [['Bash', { command: 'ls', description: 'd' }, 'bash'], ['Write', { file_path: '/w/a', content: 'x' }, 'write'], ['Edit', { file_path: '/w/a', old_string: 'a', new_string: 'b', replace_all: false }, 'edit'],
+    ['WebFetch', { url: 'https://example.com', prompt: 'p' }, 'webfetch'], ['mcp__zn_fake__echo', { text: 'hi' }, 'mcp']]) {
+    const e = zc.normalize({ hook_event_name: 'PreToolUse', tool_name: name, tool_input: input, session_id: 's', cwd: '/w' });
+    assert.equal(e.tool, tool, name);
+    assert.notEqual(e.tool, 'unreadable', name);
+  }
+  assert.equal(zc.normalize({ hook_event_name: 'PreToolUse', tool_name: 'mcp__zn_fake__echo', tool_input: { text: 'hi' }, cwd: '/w' }).mcp.server, 'zn_fake');
+});
+
+test('measured: the agent is the one the launcher names; the CLAUDE_* variables Zcode sets change nothing', (t) => {
+  const home = tempDir(t, 'zn-zc-env-');
+  const env = { ...process.env, HOME: home, USERPROFILE: home, ZN_STATS: 'off', CLAUDE_PROJECT_DIR: '/w', CLAUDE_SESSION_ID: 's', CLAUDE_CODE_SESSION_ID: 's', ZCODE_PROJECT_DIR: '/w', ZCODE_SESSION_ID: 's' };
+  delete env.CLAUDECODE;
+  const payload = { hook_event_name: 'PreToolUse', session_id: 's', cwd: '/w', tool_name: 'Read', tool_input: { file_path: path.join(home, '.aws', 'credentials') }, tool_use_id: 'u' };
+  const r = spawnSync(process.execPath, [RUNNER, 'zcode'], { input: JSON.stringify(payload), encoding: 'utf8', env });
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  validZcodeOutput(out, 'PreToolUse');
+  assert.equal(out.hookSpecificOutput.permissionDecision, 'deny');
+});
+
+test('measured: hooks fire inside subagents too, so several hooks at once in one home all answer (no lock that deadlocks)', async (t) => {
+  const home = tempDir(t, 'zn-zc-par-');
+  const env = { ...process.env, HOME: home, USERPROFILE: home, ZN_STATS: 'off' };
+  const payload = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', cwd: '/w', tool_name: 'Read', tool_input: { file_path: path.join(home, '.aws', 'credentials') }, tool_use_id: 'u' });
+  const { spawn } = require('child_process');
+  const one = () => new Promise((resolve) => {
+    const c = spawn(process.execPath, [RUNNER, 'zcode'], { env });
+    let out = '';
+    c.stdout.on('data', (d) => { out += d; });
+    const timer = setTimeout(() => { c.kill('SIGKILL'); resolve({ hung: true }); }, 15000);
+    c.on('close', (code) => { clearTimeout(timer); resolve({ code, out }); });
+    c.stdin.end(payload);
+  });
+  const all = await Promise.all(Array.from({ length: 6 }, one));
+  for (const r of all) {
+    assert.ok(!r.hung, 'a hook hung');
+    assert.equal(JSON.parse(r.out).hookSpecificOutput.permissionDecision, 'deny');
+  }
+});
+
+test('measured: the hooks.enabled warning says the hooks of that file do not run (plugin hooks do), not all hooks', (t) => {
+  const home = tempDir(t, 'zn-zc-warn-');
+  write(home, { hooks: { enabled: false } });
+  const w = zc.configWarnings({ home });
+  assert.match(w.problems[0], /"hooks\.enabled" is false/);
+  assert.match(w.problems[0], /none of the hooks in that file/);
 });

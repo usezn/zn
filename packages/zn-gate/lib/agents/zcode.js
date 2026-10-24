@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Zcode (z.ai) adapter. Experimental.
+ * Zcode (z.ai) adapter.
  *
  * Sources (read 2026-10-24):
  *  - https://zcode.z.ai/en/docs/hooks and apps/zcode-cli/docs/usage/09-hooks.md in github.com/zai-org/ZCode
@@ -56,8 +56,17 @@ const { shQuote, portablePath } = require('../shell-quote');
 const id = 'zcode';
 
 /* ------------------------------------------------------------------------------------------------------------------
- * Assumptions about Zcode, in one place. Each is read from its docs or source (see above); the ones marked
- * "unverified" were not run against a real Zcode here.
+ * Facts about Zcode, in one place. Measured on zcode-cli 0.17.0 (ZCode commit 3c5b2276, 2026-10-20) on Linux x64,
+ * headless (--prompt) and in the terminal UI, with a fake model provider. Not tested: Windows, macOS, the desktop app.
+ * Measured: hooks fire headless and in every permission mode (yolo included); a "process" hook is run directly with
+ * no shell, a "command" hook with /bin/sh -c; exit code 2 blocks PreToolUse, PermissionRequest and UserPromptSubmit;
+ * on UserPromptSubmit a permissionDecision does not block (exit 2, {decision:"block"} or {continue:false} do);
+ * PermissionRequest only fires when a person would be asked (the terminal UI), and behavior "allow" there skips the
+ * approval screen, so zn only ever answers deny; any other failure, a timeout or a malformed answer lets the call
+ * run; hooks also fire inside subagents (so a hook must be reentrant); hooks.enabled=false turns off the hooks of
+ * the user's config but not the hooks of a plugin; the environment of a hook carries CLAUDE_PROJECT_DIR and
+ * CLAUDE_SESSION_ID next to ZCODE_PROJECT_DIR and ZCODE_SESSION_ID, so zn never takes the agent from the environment
+ * (it comes from the launcher the hook runs: `runner.js zcode`).
  * ---------------------------------------------------------------------------------------------------------------- */
 // Zcode's own default is 60000. zn's runner answers by itself 5 seconds before this (lib/hooks/runner.js).
 const HOOK_TIMEOUT_S = 30;
@@ -69,7 +78,8 @@ const PERMISSION_MATCHER = '*';
 // Tools whose output can hold a secret: the built-in ones that print file or command text, and every MCP tool.
 const POST_MATCHER = '^(Bash|Read|Grep|WebFetch)$|^mcp__.*';
 const EVENTS = ['PreToolUse', 'PermissionRequest', 'UserPromptSubmit', 'PostToolUse'];
-// Built-in tool names and the arguments zn reads (source: core/src/tool/handlers/*.ts; unverified at run time).
+// Tool names seen at run time: Bash, Read, Write, Edit, WebFetch, mcp__<server key>__<tool> (Glob and Grep only appear when
+// Bash is disallowed). ApplyPatch was not seen; the mapping stays, it is harmless.
 const SHELL_TOOLS = new Set(['Bash']);
 const READ_TOOLS = new Set(['Read']);
 const WRITE_TOOLS = new Set(['Write']);
@@ -367,7 +377,7 @@ function install(opts = {}) {
     }
   }
   cfg.writeJson(file, data);
-  report.warnings.push('Zcode support is experimental. zn checks tool calls (PreToolUse, PermissionRequest) and prompts before they run: it blocks reads and writes of secret files, shell commands that handle secrets, MCP calls that would send a secret and prompts that contain one.');
+  report.warnings.push('zn checks tool calls (PreToolUse, PermissionRequest) and prompts before they run: it blocks reads and writes of secret files, shell commands that handle secrets, MCP calls that would send a secret and prompts that contain one.');
   report.warnings.push('Zcode cannot rewrite what a tool returns: a value printed by a command or read from a file reaches the model. zn adds a notice to the output when it holds a secret. Keep secrets in the vault.');
   report.warnings.push('Zcode runs hooks only from ' + file + ' (hooks of a project are ignored) and only when "hooks.enabled" is true' + (wasOff ? ': zn turned it on' : '') + '. Start a new Zcode session: a running one keeps the hooks it started with.');
   report.warnings.push('Zcode lets a call run when its hook cannot start or crashes (only exit code 2 blocks). If the Node.js zn was installed with goes away, zn\'s launcher blocks the call instead; run `zn-gate check` to see that the hook works.');
@@ -435,7 +445,7 @@ function configWarnings(opts = {}) {
   if (!isObj(data)) return out;
   const hooks = isObj(data.hooks) ? data.hooks : {};
   if (hooks.enabled !== true) {
-    out.problems.push('"hooks.enabled" is ' + (hooks.enabled === false ? 'false' : 'not set') + ' in ' + file + ', so Zcode runs none of its hooks, zn\'s included');
+    out.problems.push('"hooks.enabled" is ' + (hooks.enabled === false ? 'false' : 'not set') + ' in ' + file + ', so Zcode runs none of the hooks in that file, zn\'s included');
     return out;
   }
   const events = isObj(hooks.events) ? hooks.events : {};

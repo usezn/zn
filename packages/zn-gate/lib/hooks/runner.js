@@ -1697,8 +1697,8 @@ async function handleEvent(args, state, readText) {
       if (res.decision && res.decision.abandoned) process.stdout.write(JSON.stringify(res.output), () => process.exit(process.exitCode || 0));
       else process.stdout.write(JSON.stringify(res.output));
     }
-    // zn itself failed: Codex also gets its documented block code, with the reason on stderr.
-    if (disarm && agentId === 'codex' && res.decision && res.decision.failClosed) {
+    // zn itself failed: Codex and Zcode also get their documented block code (2), with the reason on stderr.
+    if (disarm && (agentId === 'codex' || agentId === 'zcode') && res.decision && res.decision.failClosed) {
       process.stderr.write('zn hook: ' + (res.decision.message || CODEX_FAIL_REASON) + '\n');
       process.exitCode = 2;
     }

@@ -131,7 +131,7 @@ const AGENTS = [
   },
   {
     // Zcode only runs the hooks of the user's config.json; the project path is where a project install would have been.
-    id: 'zcode', name: 'Zcode (experimental)', event: 'PreToolUse', tool: 'Read',
+    id: 'zcode', name: 'Zcode', event: 'PreToolUse', tool: 'Read',
     fix: 'run `zn hooks install zcode` in your own terminal',
     file: (a, o) => a.configFile(o), project: (dir) => path.join(dir, '.zcode', 'config.json'),
     request: (dir, file) => ({ hook_event_name: 'PreToolUse', session_id: 'zn-check', cwd: dir, tool_name: 'Read', tool_input: { file_path: file } }),
@@ -161,7 +161,7 @@ function hookEntries(tree, agentId, opts = {}) {
     }
   } else if (agentId === 'zcode') {
     // Zcode keeps events under hooks.events, and a hook is a "process" (program + args) or a "command" (shell string).
-    sets.push(tree && tree.hooks && typeof tree.hooks.events === 'object' ? tree.hooks.events : {});
+    sets.push({ hooks: tree && tree.hooks && typeof tree.hooks.events === 'object' ? tree.hooks.events : {}, disabled: false });
   } else {
     sets.push({ hooks: tree && typeof tree.hooks === 'object' ? tree.hooks : {}, disabled: false });
   }
