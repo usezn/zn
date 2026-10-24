@@ -76,7 +76,7 @@ function winaclScripts() {
 }
 
 const scripts = () => {
-  const out = {};
+  const out = { acl: launcher.WIN_ACL_SCRIPT, private: launcher.WIN_PRIVATE_SCRIPT };
   for (const [id, events] of [['antigravity', ['PreToolUse']], ['cursor', ['beforeShellExecution', 'stop']], ['gemini', ['BeforeTool', 'AfterTool']], ['codex', ['PreToolUse', 'PermissionRequest', 'Stop']]]) {
     for (const e of events) out['hook ' + id + ' ' + e] = launcher.windowsScript(id, e, 'C:/node/node.exe', 'C:/z/runner.js');
   }
@@ -99,7 +99,7 @@ test('the lint itself finds cmdlets, aliases and Verb-Noun names, and ignores te
 
 test('every PowerShell script zn runs is free of cmdlets and aliases', () => {
   const all = scripts();
-  assert.ok(Object.keys(all).length >= 14, Object.keys(all).join(','));
+  assert.ok(Object.keys(all).length >= 16, Object.keys(all).join(','));
   assert.equal(winaclScripts().length, 3);
   for (const [name, script] of Object.entries(all)) {
     assert.equal(typeof script, 'string', name);
@@ -116,6 +116,7 @@ test('the hook scripts, the ZCode launcher included, find zn and node with .NET 
     if (opts.deadlineS) assert.match(s, /\[System\.Diagnostics\.ProcessStartInfo\]::new\(\)/);
   }
   const s = launcher.windowsScript('cursor', 'beforeShellExecution', 'C:/node/node.exe', 'C:/z/runner.js');
+  assert.match(s, /& \(zf 'zn\.cmd'\) hook cursor/);
   const cmd = launcher.windowsScriptCommand(s);
   assert.equal(windowsCommandScript(cmd), s);
   const parsed = require('../lib/check')._internal.parseCommand(cmd, 'cursor');
@@ -127,12 +128,34 @@ test('the scripts that zn starts get a PSModulePath with only the system module 
   assert.equal(exe.systemPsModulePath(PS), 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules');
   const gui = confirm.guiCommand({ title: 't', message: 'm' }, { platform: 'win32', powershell: PS, exists: () => true });
   assert.equal(gui.env.PSModulePath, 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules');
+  const calls = [];
+  const spawnSync = (file, args, o) => { calls.push(o); return { status: 0, stdout: 'U\tS-1-5-21-1\nZ\n', stderr: '' }; };
+  launcher.readWinAcls(['C:\\a'], { spawnSync, powershell: PS });
+  launcher.setWinPrivate('C:\\a', 'S-1-5-21-1', { spawnSync, powershell: PS });
+  assert.equal(calls.length, 2);
+  for (const o of calls) assert.equal(o.env.PSModulePath, 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules');
 });
 
 test('the SDDL of the vault ACL check is read with .NET: Access, Owner and Group', () => {
   const [first] = winaclScripts();
   assert.match(first.script, /GetSecurityDescriptorSddlForm\(\[System\.Security\.AccessControl\.AccessControlSections\]14\)/);
   assert.doesNotMatch(first.script, /Get-Acl/);
+});
+
+test('the line format of the ACL script is read strictly', () => {
+  const b64 = (s) => Buffer.from(s, 'utf8').toString('base64');
+  const ME = 'S-1-5-21-1-2-3-1001';
+  const ok = ['U\t' + ME, 'E\t' + b64('C:\\ü ünï\\a') + '\t' + ME + '\t1\t0', 'A\t' + ME + '\t2032127\tAllow\t0\t3', 'A\tS-1-1-0\t278\tDeny\t1\t1', 'E\t' + b64('C:\\f') + '\tS-1-5-18\t0\t1', 'Z', ''].join('\r\n');
+  const doc = launcher.parseWinAcls(ok);
+  assert.equal(doc.user, ME);
+  assert.equal(doc.entries.length, 2);
+  assert.equal(doc.entries[0].path, 'C:\\ü ünï\\a');
+  assert.equal(doc.entries[0].dir, true);
+  assert.deepEqual(doc.entries[0].aces[1], { sid: 'S-1-1-0', rights: 278, type: 'Deny', inheritOnly: true, inh: 1 });
+  assert.equal(doc.entries[1].reparse, true);
+  for (const bad of ['', 'Z\n', 'U\t' + ME + '\n', 'U\t' + ME + '\nZ\nE\tx\n', 'U\tnot-a-sid\nZ\n', 'A\t' + ME + '\t1\tAllow\t0\t0\nZ\n', 'U\t' + ME + '\nU\t' + ME + '\nZ\n', 'U\t' + ME + '\nQ\nZ\n', '{"user":"' + ME + '","entries":[]}']) {
+    assert.throws(() => launcher.parseWinAcls(bad), /unreadable answer/, JSON.stringify(bad));
+  }
 });
 
 // ---- real Windows: a module planted in the user's own Documents folder (opt-in, run on a VM as SYSTEM, admin and a standard user)
@@ -169,7 +192,7 @@ function plantUtilityModule(t) {
   return marker;
 }
 
-test('real Windows: a module planted in the user Documents folder does not change the hook script, the ZCode launcher or the vault ACL read', { skip: !realOn }, (t) => {
+test('real Windows: a module planted in the user Documents folder does not change the ACL checks, the hook script, the ZCode launcher or the vault ACL read', { skip: !realOn }, (t) => {
   const marker = plantUtilityModule(t);
   const ps = exe.systemPowerShell();
   const root = path.win32.dirname(path.win32.dirname(path.win32.dirname(path.win32.dirname(ps))));
@@ -208,4 +231,17 @@ test('real Windows: a module planted in the user Documents folder does not chang
   const sddl = winacl.verifyPrivate(dir, { dir: true });
   assert.ok(Array.isArray(sddl));
   assert.ok(!fs.existsSync(marker), 'a planted cmdlet ran in the vault ACL read');
+  // the ACL scripts of the hook folder
+  const adir = tempDir(t, 'zn-planted-acl-');
+  const doc = launcher.readWinAcls([adir]);
+  assert.match(doc.user, /^S-1-5-/);
+  assert.equal(doc.entries.length, 1);
+  assert.equal(doc.entries[0].path, adir);
+  assert.ok(doc.entries[0].aces.length > 0);
+  const sub = path.join(adir, 'sub');
+  fs.mkdirSync(sub);
+  launcher.setWinPrivate(sub, doc.user);
+  const after = launcher.readWinAcls([sub]);
+  assert.deepEqual(after.entries[0].aces.map((a) => a.sid), [doc.user]);
+  assert.ok(!fs.existsSync(marker), 'a planted cmdlet ran in the ACL scripts');
 });

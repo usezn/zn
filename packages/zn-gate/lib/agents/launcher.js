@@ -189,11 +189,16 @@ function writeLauncher(agentId, nodePath, runnerPath, opts = {}) {
   const file = launcherFile(agentId, opts);
   const dir = path.dirname(file);
   // ZN_HOOK_DIR names any folder: the launcher in it runs on every tool call, so the folder must be ours and private.
-  if ((opts.env || process.env).ZN_HOOK_DIR) ensureSafeHookDir(dir, opts.platform || process.platform, { trustedRoot: opts.hookDirTrustedRoot });
+  if ((opts.env || process.env).ZN_HOOK_DIR) ensureSafeHookDir(dir, opts.platform || process.platform, { trustedRoot: opts.hookDirTrustedRoot, readWinAcls: opts.readWinAcls, setWinPrivate: opts.setWinPrivate });
   else fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   // On Windows the script runs in Git Bash: write the paths with / so that `zn-gate check` can read them back.
   const platform = opts.platform || process.platform;
   writeFileAtomic(file, unixScript(agentId, portablePath(nodePath, platform), portablePath(runnerPath, platform), { deadlineS: opts.deadlineS }), 0o755);
+  // Windows: the folder cannot be held open, so check the chain again after the write, now with the launcher file itself (owner
+  // and access list, counting what it inherited from the folder); a swap in between removes the file.
+  if (platform === 'win32' && (opts.env || process.env).ZN_HOOK_DIR) {
+    try { ensureSafeHookDir(dir, platform, { trustedRoot: opts.hookDirTrustedRoot, readWinAcls: opts.readWinAcls, setWinPrivate: opts.setWinPrivate, file }); } catch (e) { try { fs.unlinkSync(file); } catch (_) { /* best effort */ } throw e; }
+  }
   try { fs.chmodSync(file, 0o755); } catch (_) { /* best effort */ }
   return file;
 }
@@ -340,23 +345,255 @@ function checkChain(start, trustedRoot, leafPath) {
   }
 }
 
+// ---- Windows rule for ZN_HOOK_DIR -------------------------------------------------------------------------------
+// Windows has no uid or mode, so the same idea is checked with the owner and the access list (ACL) of every folder in the
+// chain, read with the system PowerShell (.NET GetAccessControl, no module), plus "no link, junction or other reparse point
+// anywhere in the path". A folder is refused when its owner is not you, SYSTEM, Administrators or TrustedInstaller, or when an
+// allow entry for anybody else (Users, Everyone, Authenticated Users, another account) gives a right that lets them replace
+// it or what is in it: delete it, delete what it holds, change its access list or owner, and (for the launcher folder itself)
+// create or write files in it, directly or through an entry that new files inherit. The launcher file itself is checked after it
+// is written: owner, and no allow entry for anybody else that lets them write, delete or re-permission it.
+const WIN_TRUSTED_SIDS = new Set([
+  'S-1-5-18', // SYSTEM
+  'S-1-5-32-544', // Administrators
+  'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464', // TrustedInstaller
+  'S-1-3-0', // CREATOR OWNER (takes the owner's rights; the owner is checked on its own)
+  'S-1-3-4', // OWNER RIGHTS (the owner is checked on its own)
+]);
+const WIN_RIGHTS = { WRITE_DATA: 0x2, APPEND_DATA: 0x4, DELETE_CHILD: 0x40, DELETE: 0x10000, WRITE_DAC: 0x40000, WRITE_OWNER: 0x80000, GENERIC_ALL: 0x10000000, GENERIC_WRITE: 0x40000000 };
+const WIN_OBJECT_INHERIT = 0x2;
+
+/** True when an allow entry with these rights lets its holder replace the folder (or, for the leaf and the file, write to it). */
+function winRisky(rights, kind) {
+  const r = Number(rights) >>> 0;
+  let mask = WIN_RIGHTS.DELETE_CHILD | WIN_RIGHTS.DELETE | WIN_RIGHTS.WRITE_DAC | WIN_RIGHTS.WRITE_OWNER | WIN_RIGHTS.GENERIC_ALL | WIN_RIGHTS.GENERIC_WRITE;
+  if (kind !== 'ancestor') mask |= WIN_RIGHTS.WRITE_DATA | WIN_RIGHTS.APPEND_DATA;
+  return (r & mask) !== 0;
+}
+
+/**
+ * Why a folder (kind 'ancestor' or 'leaf') or the launcher file (kind 'file') cannot be trusted on Windows, or null.
+ * `entry` = { path, owner, reparse, aces:[{sid,rights,type,inheritOnly,inh}] }. An inherit-only entry does not count for a
+ * folder above the launcher, but it does for the launcher folder when files inherit it (ObjectInherit): the launcher would get it.
+ */
+function winProblem(entry, user, kind) {
+  const who = kind === 'ancestor' ? 'a folder above it (' + entry.path + ')' : 'it';
+  if (entry.reparse) return kind === 'file' ? 'the launcher is a link' : 'a link, junction or synced folder is in its path (' + entry.path + ')';
+  if (!entry.owner || (entry.owner !== user && !WIN_TRUSTED_SIDS.has(entry.owner))) return kind === 'ancestor' ? who + ' belongs to another user' : (kind === 'file' ? 'the launcher file belongs to another user' : 'it belongs to another user');
+  for (const a of entry.aces || []) {
+    if (String(a.type).toLowerCase() !== 'allow' && Number(a.type) !== 0) continue;
+    if (a.inheritOnly) {
+      if (kind === 'ancestor') continue;
+      if (kind === 'leaf' && !((Number(a.inh) || 0) & WIN_OBJECT_INHERIT)) continue;
+      if (kind === 'file') continue;
+    }
+    if (a.sid === user || WIN_TRUSTED_SIDS.has(a.sid)) continue;
+    if (winRisky(a.rights, kind)) return (kind === 'file' ? 'the launcher file' : who) + ' can be changed by other users (' + a.sid + ')';
+  }
+  return null;
+}
+
+// Both scripts are fixed text with no quotes of their own; the paths and the SID come in through the environment. They use no
+// cmdlet at all: only .NET types, static methods, operators and keywords. A cmdlet (Get-Acl, ConvertTo-Json, New-Object...)
+// belongs to a module, and Windows PowerShell 5.1 builds its module path with the user's own Documents\WindowsPowerShell\Modules
+// FIRST, so a module planted there by the same account would answer in place of the real one. The answer is written by hand, one
+// line per fact (see parseWinAcls), so there is no ConvertTo-Json either.
+const WIN_ACL_SCRIPT = [
+  "$ErrorActionPreference = 'Stop'",
+  '$t = [string][char]9',
+  '$n = [string][char]10',
+  '$sb = [System.Text.StringBuilder]::new()',
+  '$me = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value',
+  "[void]$sb.Append('U').Append($t).Append($me).Append($n)",
+  "foreach ($p in ($env:ZN_ACL_PATHS -split '[|]')) {",
+  '  $attr = [int][System.IO.File]::GetAttributes($p)',
+  '  $dir = 0; if (($attr -band 16) -ne 0) { $dir = 1 }',
+  '  $rp = 0; if (($attr -band 1024) -ne 0) { $rp = 1 }',
+  '  if ($dir -eq 1) { $a = [System.IO.DirectoryInfo]::new($p).GetAccessControl() } else { $a = [System.IO.FileInfo]::new($p).GetAccessControl() }',
+  '  $o = $a.GetOwner([System.Security.Principal.SecurityIdentifier]).Value',
+  '  $pb = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($p))',
+  "  [void]$sb.Append('E').Append($t).Append($pb).Append($t).Append($o).Append($t).Append($dir).Append($t).Append($rp).Append($n)",
+  '  foreach ($r in $a.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {',
+  '    $io = 0; if (([int]$r.PropagationFlags -band 2) -ne 0) { $io = 1 }',
+  "    [void]$sb.Append('A').Append($t).Append($r.IdentityReference.Value).Append($t).Append([int64]$r.FileSystemRights).Append($t).Append([string]$r.AccessControlType).Append($t).Append($io).Append($t).Append([int]$r.InheritanceFlags).Append($n)",
+  '  }',
+  '}',
+  "[void]$sb.Append('Z').Append($n)",
+  '[Console]::Out.Write($sb.ToString())',
+].join('\n');
+
+const WIN_PRIVATE_SCRIPT = [
+  "$ErrorActionPreference = 'Stop'",
+  '$sid = [System.Security.Principal.SecurityIdentifier]::new($env:ZN_SID)',
+  '$acl = [System.Security.AccessControl.DirectorySecurity]::new()',
+  '$acl.SetAccessRuleProtection($true, $false)',
+  '$inh = [System.Security.AccessControl.InheritanceFlags]([int]1 -bor [int]2)',
+  '$rule = [System.Security.AccessControl.FileSystemAccessRule]::new($sid, [System.Security.AccessControl.FileSystemRights]::FullControl, $inh, [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow)',
+  '$acl.AddAccessRule($rule)',
+  '[System.IO.DirectoryInfo]::new($env:ZN_DIR).SetAccessControl($acl)',
+].join('\n');
+
+/**
+ * Runs one fixed PowerShell script with the system PowerShell and a minimal environment. The program is the absolute
+ * path found through the kernel's \SystemRoot link (lib/exe.js), never a name looked up in the current directory or PATH, and the
+ * environment holds only SystemRoot, windir, SystemDrive, a PATH of System32, a PSModulePath that names only the system module
+ * folder (so the user's own Documents folder is not searched) and `extra`; no profile. `io` is for tests: { spawnSync, powershell }.
+ */
+function runWinPowerShell(script, extra, io = {}) {
+  const spawnSync = io.spawnSync || require('child_process').spawnSync;
+  const ps = io.powershell !== undefined ? io.powershell : require('../exe').systemPowerShell();
+  if (!ps) throw new Error('the system PowerShell was not found');
+  const w = path.win32;
+  const root = w.dirname(w.dirname(w.dirname(w.dirname(ps))));
+  const env = { SystemRoot: root, windir: root, SystemDrive: root.slice(0, 2), PATH: w.join(root, 'System32'), PSModulePath: require('../exe').systemPsModulePath(ps), ...extra };
+  return spawnSync(ps, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script], {
+    env, cwd: root, encoding: 'utf8', timeout: 30000, windowsHide: true,
+  });
+}
+
+/**
+ * Reads the line format of WIN_ACL_SCRIPT (tab separated; `U sid`, then per path `E base64(path) owner dir reparse` followed by
+ * its `A sid rights type inheritOnly inheritance` lines, then `Z`) into { user, entries }. Anything else, or no `Z`, throws.
+ */
+function parseWinAcls(text) {
+  const bad = () => new Error('could not read the access list of the folder (unreadable answer)');
+  const sid = (s) => (/^S-1-[0-9-]+$/.test(s) ? s : null);
+  let user = null;
+  let done = false;
+  let cur = null;
+  const entries = [];
+  for (const raw of String(text).split('\n')) {
+    const line = raw.replace(/\r$/, '');
+    if (!line) continue;
+    if (done) throw bad();
+    const f = line.split('\t');
+    if (f[0] === 'U' && f.length === 2 && !user && sid(f[1])) user = f[1];
+    else if (f[0] === 'E' && f.length === 5 && user && sid(f[2]) && /^[01]$/.test(f[3]) && /^[01]$/.test(f[4])) {
+      cur = { path: Buffer.from(f[1], 'base64').toString('utf8'), owner: f[2], dir: f[3] === '1', reparse: f[4] === '1', aces: [] };
+      entries.push(cur);
+    } else if (f[0] === 'A' && f.length === 6 && cur && sid(f[1]) && /^-?[0-9]+$/.test(f[2]) && /^[A-Za-z]+$/.test(f[3]) && /^[01]$/.test(f[4]) && /^[0-9]+$/.test(f[5])) {
+      cur.aces.push({ sid: f[1], rights: Number(f[2]), type: f[3], inheritOnly: f[4] === '1', inh: Number(f[5]) });
+    } else if (f[0] === 'Z' && f.length === 1 && user) done = true;
+    else throw bad();
+  }
+  if (!user || !done) throw bad();
+  return { user, entries };
+}
+
+/** Reads owner, ACL and reparse flag of each path with PowerShell: { user, entries }. Throws when it cannot (the caller fails closed). */
+function readWinAcls(paths, io) {
+  const res = runWinPowerShell(WIN_ACL_SCRIPT, { ZN_ACL_PATHS: paths.join('|') }, io);
+  if (res.error || res.status !== 0) throw new Error('could not read the access list of the folder (' + ((res.error && res.error.message) || String(res.stderr || '').trim().slice(0, 200) || 'exit ' + res.status) + ')');
+  return parseWinAcls(res.stdout);
+}
+
+/** Gives the folder one owner-only, non-inherited entry for `sid` (the same shape as the private file module). */
+function setWinPrivate(dir, sid, io) {
+  if (!/^S-1-[0-9-]+$/.test(String(sid))) throw new Error('could not make the folder private (unexpected account id)');
+  const res = runWinPowerShell(WIN_PRIVATE_SCRIPT, { ZN_DIR: dir, ZN_SID: sid }, io);
+  if (res.error || res.status !== 0) throw new Error('could not make the folder private (' + ((res.error && res.error.message) || String(res.stderr || res.stdout || '').trim().slice(0, 200) || 'exit ' + res.status) + ')');
+}
+
+function winUnsafeMessage(dir, why) {
+  return 'zn will not keep its hook launcher in ' + dir + ': ' + why + '. The launcher runs on every tool call, so anyone who can replace it could run commands as you. ' +
+    'Use a folder that you own, whose path has no link, junction or synced (OneDrive) folder, and where no folder above it can be changed by other users (only you, SYSTEM, Administrators and TrustedInstaller), ' +
+    'or unset ZN_HOOK_DIR to use the .zn/hooks folder in your home folder.';
+}
+
+/**
+ * Walks from `start` (a folder that exists) up to the drive root and refuses a link or junction in any folder of the path
+ * (before any ACL is read), then checks owner, ACL and reparse flag of every folder (and of `file`, the launcher, when given)
+ * with one PowerShell call. `trustedRoot` is the same internal test option as on Unix: the walk stops before that folder.
+ * Returns the SID of the current user.
+ */
+function checkWinChain(start, trustedRoot, leafPath, readAcls, file) {
+  const folders = [];
+  let p = start;
+  for (;;) {
+    if (trustedRoot && p === trustedRoot) break;
+    let st;
+    try { st = fs.lstatSync(p); } catch (e) { throw new Error(winUnsafeMessage(p, 'it cannot be read (' + e.code + ')')); }
+    if (st.isSymbolicLink()) throw new Error(winUnsafeMessage(start, p === leafPath ? 'it is a link' : 'a link or junction is in its path (' + p + ')'));
+    if (!st.isDirectory()) throw new Error(winUnsafeMessage(p, 'it is not a folder'));
+    folders.push(p);
+    const up = path.dirname(p);
+    if (up === p) break;
+    p = up;
+  }
+  const targets = folders.slice();
+  if (file) {
+    let st;
+    try { st = fs.lstatSync(file); } catch (e) { throw new Error(winUnsafeMessage(leafPath, 'the launcher cannot be read (' + e.code + ')')); }
+    if (st.isSymbolicLink() || !st.isFile()) throw new Error(winUnsafeMessage(leafPath, 'the launcher is not a plain file'));
+    targets.push(file);
+  }
+  let doc;
+  try { doc = readAcls(targets); } catch (e) { throw new Error(winUnsafeMessage(start, e.message)); }
+  const byPath = new Map(doc.entries.map((e) => [e.path, e]));
+  for (const f of targets) {
+    const entry = byPath.get(f);
+    if (!entry) throw new Error(winUnsafeMessage(start, 'its access list could not be read (' + f + ')'));
+    const kind = f === file ? 'file' : (f === leafPath ? 'leaf' : 'ancestor');
+    const why = winProblem(entry, doc.user, kind);
+    if (why) throw new Error(winUnsafeMessage(kind === 'ancestor' ? start : leafPath, why));
+  }
+  return doc.user;
+}
+
+/**
+ * Creates the missing folders one level at a time. A new folder inherits whatever its parent grants (under C:\ that is Modify
+ * for Authenticated Users) until it is made private, so each level is made private to `user` and must then be EMPTY: a file
+ * or folder another user dropped in during that window is refused rather than kept. On any failure the levels created here
+ * are removed again (best effort).
+ */
+function createPrivateWinFolders(abs, existing, user, setPrivate) {
+  const missing = [];
+  for (let p = abs; p !== existing; p = path.dirname(p)) missing.unshift(p);
+  const made = [];
+  try {
+    for (const p of missing) {
+      fs.mkdirSync(p);
+      made.push(p);
+      setPrivate(p, user);
+      const held = fs.readdirSync(p);
+      if (held.length) throw new Error(winUnsafeMessage(abs, 'a new folder was not empty when it was made private (' + p + ' holds ' + held.length + ' item(s))'));
+    }
+  } catch (e) {
+    for (const p of made.reverse()) { try { fs.rmdirSync(p); } catch (_) { /* best effort */ } }
+    throw e;
+  }
+}
+
+function ensureSafeWinHookDir(dir, opts = {}) {
+  const abs = path.resolve(dir);
+  const trusted = opts.trustedRoot ? path.resolve(opts.trustedRoot) : null;
+  const readAcls = opts.readWinAcls || readWinAcls;
+  const setPrivate = opts.setWinPrivate || setWinPrivate;
+  let existing = abs;
+  while (!fs.existsSync(existing) && !isLink(existing)) existing = path.dirname(existing);
+  if (isLink(abs)) throw new Error(winUnsafeMessage(dir, 'it is a link'));
+  const user = checkWinChain(existing, trusted, abs, readAcls, existing === abs ? opts.file : null);
+  if (existing === abs) return;
+  createPrivateWinFolders(abs, existing, user, setPrivate);
+  try {
+    checkWinChain(abs, trusted, abs, readAcls);
+  } catch (e) {
+    try { fs.rmdirSync(abs); } catch (_) { /* best effort */ }
+    throw e;
+  }
+}
+
 /**
  * Makes sure the folder that holds the launchers can be trusted. Nothing is created or written until the whole chain is
  * checked: the folder (or its nearest existing parent) must be a real folder with no link anywhere in its path, and it and
  * every folder above it up to / must belong to the current user or root and have no write for group or others. The sticky
  * bit is no excuse, so /tmp and a folder under it are refused: they can be emptied or replaced by someone else, while the
  * hook command keeps pointing at the old path. Creates the folder (0700) when it is missing. Throws a plain error
- * otherwise. On Windows there is no uid or mode to check (the same rule as the vault and the compile cache): it only
- * has to be a real folder, and the user profile's ACLs apply.
+ * otherwise. On Windows the same rule is read from the owner and the ACL of every folder in the chain (see the Windows rule above),
+ * and a missing folder is created owner-only.
  */
 function ensureSafeHookDir(dir, platform = process.platform, opts = {}) {
-  if (platform === 'win32') {
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const st = fs.lstatSync(dir);
-    if (st.isSymbolicLink()) throw new Error(unsafeDirMessage(dir, 'it is a link'));
-    if (!st.isDirectory()) throw new Error(unsafeDirMessage(dir, 'it is not a folder'));
-    return;
-  }
+  if (platform === 'win32') return ensureSafeWinHookDir(dir, opts);
   const abs = path.resolve(dir);
   const trusted = opts.trustedRoot ? path.resolve(opts.trustedRoot) : null;
   let existing = abs;
@@ -453,4 +690,4 @@ function windowsScriptCommand(script) {
   return 'powershell.exe -NoProfile -NonInteractive -EncodedCommand ' + Buffer.from(script, 'utf16le').toString('base64');
 }
 
-module.exports = { projectShCommand, projectWindowsScript, isProjectGuard, isProjectWindowsScript, blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, spaceMessage, unsafeDirMessage, ensureSafeHookDir, windowsScript, BLOCK_EXIT, BLOCK_JSON };
+module.exports = { parseWinAcls, WIN_ACL_SCRIPT, WIN_PRIVATE_SCRIPT, projectShCommand, projectWindowsScript, isProjectGuard, isProjectWindowsScript, blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, spaceMessage, unsafeDirMessage, ensureSafeHookDir, readWinAcls, setWinPrivate, winProblem, windowsScript, BLOCK_EXIT, BLOCK_JSON };
