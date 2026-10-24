@@ -1,0 +1,2 @@
+### Security
+- `zn-gate init` no longer writes through a symlinked parent folder. If a folder above an agent config in your home, such as `~/.cursor`, is a link that leads outside your home folder, the installer now refuses it and names the link, instead of replacing the file on the other side. Links that stay inside your home folder, and a home folder that is itself a link, keep working, and backups are written in the validated real folder.
