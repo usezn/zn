@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-25.5
+RULES_VERSION: 2026-10-25.7
 Zero external dependencies. Pure Python stdlib.
 """
 
@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-10-25.6"
+RULES_VERSION = "2026-10-25.7"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -1588,6 +1588,24 @@ class SanitizedToolResult(TypedDict):
     sanitized_content: str
 
 
+# Limits of the deep-data form of sanitize_tool_result, the same as the walker of
+# the guard (guard._DEFAULT_MAX_DEPTH and guard.MAX_OBJECT_VALUES): ten levels of
+# dicts, lists, tuples and sets, and 100,000 values in all.
+SANITIZE_MAX_DEPTH = 10
+SANITIZE_MAX_ITEMS = 100_000
+
+
+class SanitizeLimitError(ValueError):
+    """Raised by sanitize_tool_result(data) for data it will not walk to mask: nested deeper
+    than SANITIZE_MAX_DEPTH levels, a container that contains itself (rule size:nesting) or
+    more than SANITIZE_MAX_ITEMS values (rule size:items)."""
+
+    def __init__(self, rule: str, reason: str):
+        super().__init__(reason)
+        self.rule = rule
+        self.reason = reason
+
+
 @overload
 def sanitize_tool_result(
     tool_or_result: Any,
@@ -1624,6 +1642,10 @@ def sanitize_tool_result(
       1) sanitize_tool_result(data) -> returns (clean_data, detections)
       2) sanitize_tool_result(tool_name, content, mask_secrets=True) -> returns dict with
          {tool_name, safe_to_ingest, truncated, assessment, secrets_redacted, sanitized_content}
+    In form 1, data nested deeper than ten levels, a container that contains itself
+    or more than 100,000 values raises SanitizeLimitError (a ValueError with the
+    attributes rule, "size:nesting" or "size:items", and reason) instead of
+    exhausting the stack.
     In form 2, content that is not a string (a dict, list or object) is checked
     string by string, as check_tool_result does, and as JSON text;
     sanitized_content is that JSON text (as in Node.js), with secrets masked.
@@ -1723,7 +1745,30 @@ def sanitize_tool_result(
             out.append(c)
         return out
 
+    path: set[int] = set()
+    budget = [SANITIZE_MAX_ITEMS]
+
+    def _enter(val: Any) -> None:
+        """Take one level for the container `val`, or raise SanitizeLimitError."""
+        if id(val) in path:
+            raise SanitizeLimitError("size:nesting", "The data contains itself")
+        if len(path) >= SANITIZE_MAX_DEPTH:
+            raise SanitizeLimitError("size:nesting", "The data is nested too deeply to mask")
+        budget[0] -= len(val) * 2 if isinstance(val, dict) else len(val)
+        if budget[0] < 0:
+            raise SanitizeLimitError("size:items", "The data holds too many values to mask")
+        path.add(id(val))
+
     def _sanitize(val: Any) -> Any:
+        if not isinstance(val, (dict, list, tuple, set, frozenset)):
+            return _sanitize_value(val)
+        _enter(val)
+        try:
+            return _sanitize_value(val)
+        finally:
+            path.discard(id(val))
+
+    def _sanitize_value(val: Any) -> Any:
         if isinstance(val, str):
             clean_str, det = redact_secrets(val)
             if det:
