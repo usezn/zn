@@ -409,7 +409,7 @@ function windowsScript(agentId, event, nodePath, runnerPath, opts = {}) {
       'try { $c = [Console]::OpenStandardInput().CopyToAsync($p.StandardInput.BaseStream); [void]$c.Wait(' + deadlineS * 1000 + ') } catch {}; ' +
       'try { $p.StandardInput.Close() } catch {}; ' +
       '$left = [Math]::Max(0, ' + deadlineS * 1000 + ' - $sw.ElapsedMilliseconds); ' +
-      'if ($p.WaitForExit([int]$left)) { $rc = $p.ExitCode } else { & taskkill.exe /PID $p.Id /T /F *> $null; try { $p.Kill() } catch {} } } catch {}; return $rc }; ';
+      'if ($p.WaitForExit([int]$left)) { $rc = $p.ExitCode } else { try { & "$env:SystemRoot\\System32\\taskkill.exe" /PID $p.Id /T /F *> $null } catch {}; try { $p.Kill() } catch {} } } catch {}; return $rc }; ';
     const zleave = jsonDeny
       ? 'if ($rc -eq 0 -or $rc -eq 2) { exit 0 }'
       : 'if ($rc -eq 0 -or $rc -eq 2) { exit $rc }';

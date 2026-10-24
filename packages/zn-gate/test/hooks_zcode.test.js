@@ -824,7 +824,8 @@ test('Windows launcher: ZCode only, the hook runs as a child with a deadline, a 
   assert.ok(pre.includes('.Wait(' + zc.LAUNCHER_DEADLINE_S * 1000 + ')'));
   assert.match(pre, /RedirectStandardInput = \$true/);
   assert.match(pre, /OpenStandardInput\(\)\.CopyToAsync/);
-  assert.match(pre, /taskkill\.exe \/PID \$p\.Id \/T \/F/);
+  assert.ok(pre.includes('try { & "$env:SystemRoot\\System32\\taskkill.exe" /PID $p.Id /T /F *> $null } catch {}; try { $p.Kill() } catch {}'));
+  assert.doesNotMatch(pre, /& taskkill\.exe/);
   assert.match(pre, /\$rc = -1/);
   // timeout (-1) and crashes fall through to the same block text as before: exit 2 with "hook failed" for the blocking events
   assert.match(pre, /Console\]::Error\.WriteLine\('zn: its hook cannot start.*exit 2 # zn hook zcode$/);
