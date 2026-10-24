@@ -561,6 +561,37 @@ async function checkAgent(spec, ctx) {
       live = { file: process.execPath, args: [path.join(plugin.root, 'scripts', 'zn-launch.js'), 'hook', 'claude-code'], env: { CLAUDE_PLUGIN_ROOT: plugin.root }, plugin: true };
     }
   }
+  if (spec.id === 'zcode') {
+    // The zn-gate plugin: ZCode runs a plugin's hooks whatever hooks.enabled says, so it protects on its own.
+    const plugin = adapter.pluginState({ home: ctx.home });
+    if (plugin.root) {
+      const conf = readJson(userFile) || {};
+      const userHooks = hookEntries(conf, spec.id).some((e) => parseCommand(e.command, spec.id));
+      const userHooksOn = userHooks && conf.hooks && conf.hooks.enabled === true;
+      const script = path.join(plugin.root, 'scripts', 'zn-hook.sh');
+      if (plugin.enabled) {
+        installed = true;
+        res.where = 'the zn-gate plugin';
+        res.via = 'plugin';
+        if (userHooksOn) {
+          res.notes.push('zn is also set up with `zn hooks install zcode`, so every call is checked twice (ZCode does not remove duplicate hooks); keep one: run `zn hooks uninstall zcode` in your own terminal to keep the plugin, or turn the plugin off in ZCode (Settings, Plugins) to keep the hooks');
+        }
+        live = { file: 'sh', args: [script, 'PreToolUse'], env: ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {}, plugin: true };
+      } else if (!userHooksOn) {
+        // Turned off, and nothing else of zn's runs: ZCode is not protected.
+        installed = true;
+        res.where = 'the zn-gate plugin';
+        res.via = 'plugin';
+        res.problem = plugin.pluginsOff ? 'plugins are turned off in ZCode ("plugins.enabled" is false in ' + userFile + '), so the zn-gate plugin does not run and no other zn hook protects ZCode'
+          : userHooks ? 'the zn-gate plugin is turned off in ZCode, and "hooks.enabled" is ' + (conf.hooks && conf.hooks.enabled === false ? 'false' : 'not true') + ' in ' + userFile + ', so ZCode runs none of the hooks of `zn hooks install zcode` either and nothing of zn protects ZCode'
+          : 'the zn-gate plugin is turned off in ZCode, and the hooks of `zn hooks install zcode` are not installed, so nothing of zn protects ZCode';
+        res.fix = 'turn the plugin on in ZCode (Settings, Plugins), or run `zn hooks install zcode` in your own terminal, then run `zn-gate check` again';
+        res.pluginOff = true;
+      } else {
+        res.notes.push('the zn-gate plugin is installed but turned off; the hooks of `zn hooks install zcode` are what protect ZCode');
+      }
+    }
+  }
   if (!installed && spec.id === 'opencode') {
     let src = '';
     try { src = fs.readFileSync(userFile, 'utf8'); } catch (err) { src = ''; }
@@ -663,7 +694,7 @@ async function checkAgent(spec, ctx) {
       res.fix = 'change that Gemini CLI setting as it says, then run `zn-gate check` again';
     }
   }
-  if (spec.id === 'zcode' && installed && !res.problem) {
+  if (spec.id === 'zcode' && installed && !res.problem && res.via !== 'plugin') {
     // ZCode runs no hook unless hooks.enabled is true, and skips an entry that has "enabled": false.
     let w = { problems: [], notes: [], fix: '' };
     try { w = adapter.configWarnings({ file: userFile }); } catch (_) { /* nothing to add */ }

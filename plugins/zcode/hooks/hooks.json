@@ -1,0 +1,36 @@
+{
+  "description": "zn-gate: keep secret values out of tool calls, tool output and prompts. Every hook runs scripts/zn-hook.sh, which runs the pinned, verified zn-gate copy inside this plugin and blocks (exit 2) when it cannot.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "process", "command": "sh", "args": ["${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh", "UserPromptSubmit"], "timeoutMs": 30000, "statusMessage": "zn: checking for secrets" }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "process", "command": "sh", "args": ["${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh", "PreToolUse"], "timeoutMs": 30000, "statusMessage": "zn: checking for secrets" }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "process", "command": "sh", "args": ["${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh", "PermissionRequest"], "timeoutMs": 30000, "statusMessage": "zn: checking for secrets" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "^(Bash|Read|Grep|WebFetch)$|^mcp__.*",
+        "hooks": [
+          { "type": "process", "command": "sh", "args": ["${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh", "PostToolUse"], "timeoutMs": 30000, "statusMessage": "zn: checking for secrets" }
+        ]
+      }
+    ]
+  }
+}

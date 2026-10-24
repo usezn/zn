@@ -319,6 +319,36 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
       await rejects(BASE, /is not empty/, { out: stray });
     });
 
+    await test('--target zcode builds the ZCode plugin tree: own marketplace, bundled zn-gate, shared launcher', async () => {
+      builds++;
+      const file = path.join(tmp, 'zn-gate-zcode.tgz');
+      const archive = tgz(BASE);
+      fs.writeFileSync(file, archive);
+      const out = path.join(tmp, 'out-zcode');
+      const res = await builder.build({ tarball: file, out, integrity: sri(archive), source: 'a'.repeat(40), target: 'zcode' });
+      assert.strictEqual(res.target, 'zcode');
+      for (const [rel, from, dest] of builder.ZCODE_FILES) {
+        assert.ok(fs.readFileSync(path.join(out, dest)).equals(fs.readFileSync(path.join(from, rel))), dest + ' is copied unchanged');
+      }
+      const plug = path.join(out, builder.ZCODE_DIR);
+      const lock = JSON.parse(fs.readFileSync(path.join(plug, 'scripts', 'zn-gate.lock.json'), 'utf8'));
+      assert.strictEqual(lock.bundled, 'vendor/zn-gate');
+      assert.strictEqual(lock.version, VERSION);
+      assert.strictEqual(lock.source, 'a'.repeat(40));
+      for (const rel of Object.keys(lock.files)) {
+        const buf = fs.readFileSync(path.join(plug, 'vendor', 'zn-gate', ...rel.split('/')));
+        assert.strictEqual(crypto.createHash('sha256').update(buf).digest('hex'), lock.files[rel], rel);
+      }
+      assert.strictEqual(fs.readFileSync(path.join(out, '.gitattributes'), 'utf8'), '* -text\n');
+      // None of the Claude Code files: ZCode would load hooks/hooks.json and the Claude manifest of its own accord.
+      for (const absent of ['.claude-plugin', '.mcp.json', 'cursor', 'com.openai', 'package.json', 'package-lock.json']) {
+        assert.ok(!fs.existsSync(path.join(plug, absent)) && !fs.existsSync(path.join(out, absent)), absent + ' is not shipped');
+      }
+      const hooks = JSON.parse(fs.readFileSync(path.join(plug, 'hooks', 'hooks.json'), 'utf8'));
+      assert.ok(!JSON.stringify(hooks).includes('claude-code'), 'the ZCode hooks never name the claude-code adapter');
+      await assert.rejects(builder.build({ tarball: file, out: path.join(tmp, 'out-bad'), integrity: sri(archive), target: 'nope' }), /unknown target/);
+    });
+
     await test('PROVENANCE.md lists exactly the files that are copied', async () => {
       const text = fs.readFileSync(path.join(CLAUDE_DIR, 'PROVENANCE.md'), 'utf8');
       const start = text.indexOf('\n4. ');

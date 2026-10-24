@@ -76,7 +76,7 @@ const NODE_HINT = 'the zn-gate plugin needs Node.js 20.19 or later with vm.const
 // Not derived from the package's adapter list on purpose: this launcher runs the pinned, verified zn-gate
 // build, which can be older than the adapters in the repo, and the plugin ships hook files only for these
 // agents. plugins/tools/test-launch.js fails when an id here is not an adapter of the package.
-const SUPPORTED_AGENTS = new Set(['claude-code', 'codex', 'cursor']);
+const SUPPORTED_AGENTS = new Set(['claude-code', 'codex', 'cursor', 'zcode']);
 
 // zn-gate starts child processes with this process's environment; a preload
 // set through NODE_OPTIONS or a module path in NODE_PATH must not reach them.

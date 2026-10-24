@@ -28,6 +28,19 @@ There is no `--project` install. ZCode does not run the hooks of a project (`<pr
 
 Then run `npx -y zn-gate check` to see that the hook works on your machine.
 
+## The ZCode plugin
+
+zn-gate is also built as a ZCode plugin, for each release. The steps to add it in ZCode (Settings, Plugins) are published together with the plugin repository, once that exists. Until then the supported way to use zn-gate in ZCode is `zn hooks install zcode`, above.
+
+What the plugin is, so you know what to expect when it is published:
+
+- It carries its own copy of zn-gate, pinned to one release and checked against the SHA-256 of every file of the published release on each call. ZCode does not install npm packages, so there is nothing to download and nothing to go missing. It needs no account and no API key, and sends nothing over the network.
+- ZCode runs the hooks of a plugin whatever `hooks.enabled` says, so the plugin keeps protecting when that switch is off. It has the same hooks as `zn hooks install zcode`.
+- Its hook is a POSIX shell script: Linux and macOS, not Windows. It needs Node.js 20.19 or later, or uses the one ZCode itself runs on, and blocks the call when it finds none or when anything fails (ZCode lets a call run when a hook cannot start; only exit code 2 blocks).
+- Use the plugin or `zn hooks install zcode`, not both: ZCode does not remove duplicate hooks, so every call would be checked twice. `zn hooks install zcode` warns when the plugin is on, and `zn-gate check` reports it.
+- You can turn the plugin off in Settings, Plugins. With the plugin off and `hooks.enabled` false, nothing of zn runs in ZCode, and `zn-gate check` reports it as not protected. ZCode records the switch in `~/.zcode/cli/config.json` (`plugins.enabledPlugins`), which check reads.
+- Tested on the ZCode desktop app on Linux only; macOS is not tested. The plugin's own files are not protected by zn's policy: code that runs as you can edit them.
+
 ## What zn-gate protects in ZCode, and what it does not
 
 | | In ZCode |
