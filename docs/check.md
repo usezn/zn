@@ -71,6 +71,14 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
   install zn-gate again for the Node.js you use now: run `npm install -g zn-gate`, then `zn hooks install <agent>`, in your own terminal
   ```
 
+- **A project hook is a bare `zn hook`.**
+
+  ```text
+  the hook in <file> is a bare `zn hook <agent>`, so where zn or Node.js cannot start, <Agent> runs the call unchecked
+  ```
+
+  The hooks file of the project you are in (written by an older zn-gate, or by hand) runs `zn hook <agent>` with no start guard. Where `zn` or Node.js cannot start, the command fails with exit code 127 and the agent runs the call with no check. Run `zn hooks install <agent> --project` again in that project: it writes the same command inside a guard that blocks instead.
+
 - **The launcher script of the hook is gone.**
 
   ```text
