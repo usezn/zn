@@ -84,3 +84,54 @@ fn init_refuses_a_symlinked_zn_json() {
     assert_eq!(std::fs::read_to_string(&real).unwrap(), "{}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[cfg(unix)]
+#[test]
+fn init_refuses_a_non_regular_zn_json() {
+    use std::os::unix::fs::FileTypeExt;
+    let dir = workdir("init-nonregular");
+    let target = dir.join("zn.json");
+    let made = Command::new("mkfifo")
+        .arg(&target)
+        .status()
+        .expect("mkfifo");
+    assert!(made.success());
+    let out = Command::new(env!("CARGO_BIN_EXE_zn"))
+        .arg("init")
+        .current_dir(&dir)
+        .stdin(Stdio::null())
+        .output()
+        .expect("run zn init");
+    assert!(!out.status.success());
+    let ft = std::fs::symlink_metadata(&target).unwrap().file_type();
+    assert!(ft.is_fifo(), "the FIFO was replaced");
+    let leftovers: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.contains(".tmp"))
+        .collect();
+    assert!(leftovers.is_empty(), "temp files left: {leftovers:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn init_replaces_an_existing_zn_json_atomically_without_leftovers() {
+    let dir = workdir("init-replace");
+    std::fs::write(dir.join("zn.json"), "{\"old\":true}").unwrap();
+    run_init(&dir);
+    let text = std::fs::read_to_string(dir.join("zn.json")).unwrap();
+    assert!(!text.contains("\"old\""));
+    let tmp = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter(|e| {
+            e.as_ref()
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains(".tmp")
+        })
+        .count();
+    assert_eq!(tmp, 0);
+    let _ = std::fs::remove_dir_all(&dir);
+}

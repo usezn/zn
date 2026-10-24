@@ -701,54 +701,22 @@ impl ZnConfig {
         Self::write_private_json(path, &Self::init_template())
     }
 
-    /// Write `config` to `path` as pretty JSON, atomically and owner-only. The
-    /// JSON goes to a new temporary file in the same directory (created with
-    /// mode 0600 on Unix, never following a symlink) that is then renamed over
-    /// `path`, so a reader never sees a partial file and an existing file ends
-    /// up owner-only too. A `path` that is a symlink is refused.
+    /// Write `config` to `path` as pretty JSON through `write_private_file`.
     pub fn write_private_json(path: &Path, config: &Self) -> Result<()> {
-        use std::io::Write;
-        if let Ok(meta) = std::fs::symlink_metadata(path) {
-            if meta.file_type().is_symlink() {
-                return Err(anyhow!(
-                    "refusing to write {}: it is a symbolic link",
-                    path.display()
-                ));
-            }
-        }
         let json = serde_json::to_string_pretty(config)?;
-        let dir = match path.parent() {
-            Some(p) if !p.as_os_str().is_empty() => p,
-            _ => Path::new("."),
-        };
-        let name = path
-            .file_name()
-            .ok_or_else(|| anyhow!("{} has no file name", path.display()))?
-            .to_string_lossy();
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        let tmp = dir.join(format!(".{}.{}-{}.tmp", name, std::process::id(), nanos));
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let result = (|| -> Result<()> {
-            let mut file = options.open(&tmp)?;
-            file.write_all(json.as_bytes())?;
-            file.sync_all()?;
-            drop(file);
-            std::fs::rename(&tmp, path)?;
-            Ok(())
-        })();
-        if result.is_err() {
-            let _ = std::fs::remove_file(&tmp);
-        }
-        result
+        Self::write_private_file(path, json.as_bytes())
+    }
+
+    /// The one protected writer for files that hold configuration (zn.json
+    /// and the locally saved synced config). It delegates to the shared
+    /// private-file module: a new 0600 temporary file in the same directory is
+    /// renamed over `path`, so a reader never sees a partial file and an
+    /// existing regular file is replaced atomically and ends up owner-only. A
+    /// `path` that is a symbolic link or is not a regular file (a directory, a
+    /// FIFO, a device) is refused and left untouched.
+    pub fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
+        crate::private_file::replace_private_file(path, bytes)
+            .map_err(|e| anyhow!("cannot write {}: {e}", path.display()))
     }
 
     /// Load configuration from file with environment variable overrides
