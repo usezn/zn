@@ -129,6 +129,13 @@ const AGENTS = [
     file: (a, o) => a.settingsFile(o), project: (dir) => path.join(dir, '.gemini', 'settings.json'),
     request: (dir, file) => ({ hook_event_name: 'BeforeTool', session_id: 'zn-check', cwd: dir, tool_name: 'read_file', tool_input: { file_path: file } }),
   },
+  {
+    // Zcode only runs the hooks of the user's config.json; the project path is where a project install would have been.
+    id: 'zcode', name: 'Zcode (experimental)', event: 'PreToolUse', tool: 'Read',
+    fix: 'run `zn hooks install zcode` in your own terminal',
+    file: (a, o) => a.configFile(o), project: (dir) => path.join(dir, '.zcode', 'config.json'),
+    request: (dir, file) => ({ hook_event_name: 'PreToolUse', session_id: 'zn-check', cwd: dir, tool_name: 'Read', tool_input: { file_path: file } }),
+  },
 ];
 
 function readJson(file) {
@@ -149,6 +156,9 @@ function hookEntries(tree, agentId) {
     for (const v of Object.values(tree && typeof tree === 'object' ? tree : {})) {
       if (v && typeof v === 'object' && !Array.isArray(v) && v.enabled !== false) sets.push(v);
     }
+  } else if (agentId === 'zcode') {
+    // Zcode keeps events under hooks.events, and a hook is a "process" (program + args) or a "command" (shell string).
+    sets.push(tree && tree.hooks && typeof tree.hooks.events === 'object' ? tree.hooks.events : {});
   } else {
     sets.push(tree && typeof tree.hooks === 'object' ? tree.hooks : {});
   }
@@ -160,7 +170,8 @@ function hookEntries(tree, agentId) {
         // GitHub Copilot CLI keeps the shell command in "bash" (and "powershell"), next to an optional matcher.
         if (agentId === 'copilot' && typeof g.bash === 'string') out.push({ event, matcher: g.matcher, command: g.bash });
         for (const h of Array.isArray(g.hooks) ? g.hooks : []) {
-          if (h && typeof h.command === 'string') out.push({ event, matcher: g.matcher, command: h.command, onFailure: h.onFailure, async: h.async });
+          const text = agentId === 'zcode' ? require('./agents/zcode').commandText(h) : h && typeof h.command === 'string' ? h.command : '';
+          if (text) out.push({ event, matcher: g.matcher, command: text, onFailure: h.onFailure, async: h.async });
         }
       }
     }
@@ -600,6 +611,16 @@ async function checkAgent(spec, ctx) {
     if (p.length) {
       res.problem = bare(oneLine(p[0], 300));
       res.fix = 'change that Gemini CLI setting as it says, then run `zn-gate check` again';
+    }
+  }
+  if (spec.id === 'zcode' && installed && !res.problem) {
+    // Zcode runs no hook unless hooks.enabled is true, and skips an entry that has "enabled": false.
+    let w = { problems: [], notes: [], fix: '' };
+    try { w = adapter.configWarnings({ file: userFile }); } catch (_) { /* nothing to add */ }
+    res.notes.push(...w.notes.map((x) => oneLine(x, 300)));
+    if (w.problems.length) {
+      res.problem = bare(oneLine(w.problems[0], 300));
+      res.fix = w.fix;
     }
   }
   if (spec.id === 'codex' && installed && !res.problem) {
