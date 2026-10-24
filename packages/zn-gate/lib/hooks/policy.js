@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-24.17';
+const POLICY_RULES_VERSION = '2026-10-24.24';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -773,16 +773,74 @@ function isInstructionFile(abs, ctx) {
   return ctx.agent.dirs.some((d) => s.startsWith(d + '/projects/') && /^[^/]+\/memory\/[^/]/.test(s.slice(d.length + 10)));
 }
 
+// On win32 a NEW file written under its 8.3 short name (`AGENTS~1.MD`) cannot be resolved, because it does not exist
+// yet. The short name of an instruction file is built from the first six letters of its name (a leading dot is
+// dropped: `.cursorrules` is `CURSOR~1`), so a short name with such a start and the same extension is reviewed. A
+// short name made from a hash (`COP3F1~1.MD`) shows nothing of the long one, so it is reviewed in a folder that holds
+// instruction files (`.github`). Anything else, like `NOTES~1.MD`, stays allowed. This only asks; it never denies more.
+const SHORT_INSTRUCTION_NAMES = INSTRUCTION_FILE_NAMES.concat(['copilot-instructions.md']).map((n) => {
+  const t = n.replace(/^\.+/, '');
+  const dot = t.lastIndexOf('.');
+  const base = (dot > 0 ? t.slice(0, dot) : t).replace(/[.\s]/g, '');
+  return { base: base.slice(0, 6).toUpperCase(), ext: (dot > 0 ? t.slice(dot + 1) : '').slice(0, 3).toUpperCase() };
+});
+function isShortInstructionName(abs) {
+  if (process.platform !== 'win32') return false;
+  const parts = slash(abs).split('/');
+  const m = SHORT_NAME_RE.exec(parts[parts.length - 1]);
+  if (!m) return false;
+  const pre = m[1].toUpperCase();
+  const ext = (m[2] || '').toUpperCase();
+  if (pre.length >= 4 && SHORT_INSTRUCTION_NAMES.some((n) => n.ext === ext && n.base.startsWith(pre))) return true;
+  const parent = (parts[parts.length - 2] || '').toLowerCase();
+  const inFolder = parent === '.github' || /^github~[0-9]+$/.test(parent) ||
+    (parts.length > 2 && parts[parts.length - 3].toLowerCase() === '.cursor' && parent === 'rules');
+  return inFolder && (ext === 'MD' || ext === '');
+}
+
+// Folders whose long name an 8.3 short name in the MIDDLE of a path can stand for (`CURSOR~1/rules/x.mdc` is
+// .cursor/rules/x.mdc). A short name is its first six letters (a leading dot dropped), `~` and a number, so a folder
+// segment that starts like one of these is read as that folder and the path is judged again with the long name, the
+// way classifyPath reads a short segment as a pattern for the protected names.
+const SHORT_INSTRUCTION_FOLDERS = ['.cursor', '.github', '.claude'];
+function isInstructionUnderShortFolder(abs, ctx) {
+  if (process.platform !== 'win32') return false;
+  const parts = slash(abs).split('/');
+  const choices = parts.map((seg, i) => {
+    const m = i < parts.length - 1 ? SHORT_NAME_RE.exec(seg) : null;
+    if (!m || m[2]) return [seg];
+    const pre = m[1].toUpperCase();
+    const longs = SHORT_INSTRUCTION_FOLDERS.filter((f) => f.replace(/^\.+/, '').slice(0, 6).toUpperCase() === pre);
+    return longs.length ? [seg].concat(longs) : [seg];
+  });
+  const branching = choices.filter((c) => c.length > 1).length;
+  if (branching === 0) return false;
+  // More short folders than we expand (2^6 = 64 paths at most): ask rather than drop some of them unread.
+  if (branching > 6) return true;
+  let combos = [''];
+  choices.forEach((c, i) => {
+    const next = [];
+    for (const base of combos) for (const alt of c) next.push(i ? base + '/' + alt : alt);
+    combos = next;
+  });
+  return combos.some((c) => isInstructionFile(c, ctx));
+}
+
 /** Whether a typed path names an instruction file, as typed or where it really leads (links followed). */
 function isInstructionPath(p, opts = {}) {
   if (typeof p !== 'string' || !p) return false;
   const ctx = contextOf(opts);
   const expanded = expandEnv(expandHome(p, ctx.home), ctx.env);
+  // Windows drops trailing dots and spaces (and a stream suffix) from every name, so `AGENTS.md.` opens AGENTS.md:
+  // the same normalization as classifyPath, on the text, so it also holds for a file that does not exist yet.
+  expanded.text = stripStreams(expanded.text);
   const abs = path.resolve(ctx.cwd, expanded.text);
   const candidates = new Set([abs, realTargetOf(abs)]);
   const physical = physicalDotDot(expanded.text, ctx.cwd);
   if (physical) { candidates.add(physical); candidates.add(realTargetOf(physical)); }
-  for (const candidate of candidates) if (isInstructionFile(candidate, ctx)) return true;
+  for (const candidate of candidates) {
+    if (isInstructionFile(candidate, ctx) || isShortInstructionName(candidate) || isInstructionUnderShortFolder(candidate, ctx)) return true;
+  }
   return false;
 }
 
@@ -1159,7 +1217,28 @@ const READ_ONLY_CMDS = new Set(['cat', 'head', 'tail', 'more', 'grep', 'egrep', 
 const AGENT_CONFIG_MENTION_RE = /\.claude\/settings|\.codex\/|\.cursor\/hooks|\.gemini\/config\/hooks|\.copilot\/(?:hooks|settings|config)|\.github\/hooks|\.github\/copilot\/settings|github-copilot\/policy\.d|\.gemini\/settings|gemini-cli\/settings|antigravity-cli\/settings|opencode\.jsonc?|\.opencode\/|\.config\/opencode\//i;
 // .agents is shared with other tools (Codex reads .agents/skills; Antigravity keeps rules and workflows there), so
 // only the folder itself, its hooks file, globs or ".." inside it, and changing into it count as touching the hook.
-const AGENTS_DIR_RISKY_RE = /(?:^|[\/\s"'=:])\.agents(?:\/*(?=$|[\s"';&|)])|\/(?:[^\s"'\/]*\/)*(?:hooks\.json|\.\.(?=$|[\/\s"';&|)])|[^\s"'\/]*[*?[{$`]))/i;
+// Written as three linear pieces (the one pattern it replaces retried the whole rest of a word at every `.agents/` in it):
+// the folder named on its own, a start `.agents/`, and what may follow a start (names, then hooks.json, `..` or a glob).
+const AGENTS_BARE_RE = /(?<=^|[\/\s"'=:])\.agents\/*(?=$|[\s"';&|)])/i;
+const AGENTS_START_RE = /(?<=^|[\/\s"'=:])\.agents\//gi;
+const AGENTS_TAIL_RE = /^(?:[^\s"'\/]*\/)*(?:hooks\.json|\.\.(?=$|[\/\s"';&|)])|[^\s"'\/]*[*?[{$`])/i;
+const AGENTS_BREAK_RE = /[\s"']/g;
+/** Same answer as the single pattern the three above replace, in time linear in the word. */
+function agentsDirRiskyRe(t) {
+  if (AGENTS_BARE_RE.test(t)) return true;
+  AGENTS_START_RE.lastIndex = 0;
+  let m;
+  while ((m = AGENTS_START_RE.exec(t)) !== null) {
+    const from = m.index + m[0].length;
+    if (AGENTS_TAIL_RE.test(t.slice(from))) return true;
+    // The tail of a start covers the rest of its word, so later starts in the same word cannot do better: go on after it.
+    AGENTS_BREAK_RE.lastIndex = from;
+    const brk = AGENTS_BREAK_RE.exec(t);
+    if (!brk) break;
+    AGENTS_START_RE.lastIndex = brk.index;
+  }
+  return false;
+}
 const AGENTS_DIR_ANY_RE = /(?:^|[\/\s"'=:])\.agents(?:\/|$|[\s"';&|)])/i;
 // Commands that make a link: through a link, ".." no longer means what it says, so any mention of .agents counts.
 const LINK_CMDS = new Set(['ln', 'mklink']);
@@ -1173,7 +1252,7 @@ const AGENTS_PROTECTED = 'zn: this command would change agent hook or plugin set
 function agentsDirRisky(t, w) {
   // The first pattern is quadratic on long input: a word longer than a path can be is refused unchecked.
   if (t.length > 4096) return /\.agents/i.test(t);
-  if (AGENTS_DIR_RISKY_RE.test(t)) return true;
+  if (agentsDirRiskyRe(t)) return true;
   if (!AGENTS_DIR_ANY_RE.test(t)) return false;
   return CD_CMDS.has(bareHead(w.head).toLowerCase()) || w.link === true;
 }
