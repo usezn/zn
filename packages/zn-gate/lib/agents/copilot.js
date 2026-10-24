@@ -48,6 +48,7 @@ const { fileURLToPath } = require('url');
 const os = require('os');
 const path = require('path');
 const cfg = require('./config-file');
+const launcher = require('./launcher');
 
 const id = 'copilot';
 const FILE_NAME = 'zn-gate.json';
@@ -242,11 +243,17 @@ function install(opts = {}) {
   if (report.backup && project) report.warnings.push('The backup ' + report.backup + ' sits inside the project: do not commit it.');
   stripOurs(data);
   const platform = opts.platform || process.platform;
+  // A project install runs `zn` from the PATH inside zn's start guard (launcher.projectShCommand / projectWindowsScript): a missing zn or Node.js denies the call.
+  const guarded = project && !opts.command;
   const bash = cfg.hookCommand(id, opts);
-  const handler = { type: 'command', bash, timeoutSec: HOOK_TIMEOUT_S };
-  if (opts.command) handler.powershell = opts.command;
-  else if (project) handler.powershell = bash;
-  else if (platform === 'win32') handler.powershell = cfg.hookCommandWindows(id, opts);
+  const handlerFor = (event) => {
+    if (guarded) return { type: 'command', bash: launcher.projectShCommand(id, event), powershell: launcher.windowsScriptCommand(launcher.projectWindowsScript(id, event)), timeoutSec: HOOK_TIMEOUT_S };
+    const h = { type: 'command', bash, timeoutSec: HOOK_TIMEOUT_S };
+    if (opts.command) h.powershell = opts.command;
+    else if (project) h.powershell = bash;
+    else if (platform === 'win32') h.powershell = cfg.hookCommandWindows(id, opts);
+    return h;
+  };
   data.version = 1;
   if (!isObj(data.hooks)) data.hooks = {};
   // "disableAllHooks" in a file zn wrote would switch its own hook off: an install turns it back on.
@@ -256,7 +263,7 @@ function install(opts = {}) {
   }
   for (const event of INSTALL_EVENTS) {
     const list = Array.isArray(data.hooks[event]) ? data.hooks[event] : [];
-    data.hooks[event] = [...list, { ...handler }];
+    data.hooks[event] = [...list, handlerFor(event)];
   }
   cfg.writeJson(file, data);
   report.warnings.push('GitHub Copilot CLI support is experimental. zn checks tool calls before they run (preToolUse): it blocks reads and writes of secret files and shell commands that handle secrets, and it replaces secret values in the results of read-type and shell tools (postToolUse).');

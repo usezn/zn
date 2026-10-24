@@ -116,7 +116,7 @@ test('claude-code: reinstall replaces the launcher, uninstall removes it; a proj
   const proj = tempDir(t, 'zn-b95-proj-');
   claude.install({ scope: 'project', projectDir: proj, env, home, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
   const pd = JSON.parse(fs.readFileSync(path.join(proj, '.claude', 'settings.json'), 'utf8'));
-  assert.match(pd.hooks.PreToolUse[0].hooks[0].command, / claude-code$/);
+  assert.ok(launcher.isProjectGuard(pd.hooks.PreToolUse[0].hooks[0].command, 'claude-code'));
   assert.equal(fs.existsSync(file), false);
 });
 

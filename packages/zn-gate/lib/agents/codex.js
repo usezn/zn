@@ -362,13 +362,18 @@ function hookGroups(handler) {
 /**
  * The hook handler for each event. A user install goes through zn's launcher
  * (lib/agents/launcher.js) so that a Node.js that has gone away blocks instead
- * of letting Codex run the call unchecked; a project install, or a command
- * given by the caller, keeps the plain command.
+ * of letting Codex run the call unchecked; a project install runs `zn` from the
+ * PATH inside a start guard that blocks the same way; a command given by the
+ * caller keeps the plain command.
  */
 function handlerFor(opts = {}) {
   const base = { type: 'command', timeout: HOOK_TIMEOUT_S, statusMessage: HOOK_STATUS };
   const plain = () => ({ ...base, command: cfg.hookCommand(id, opts), commandWindows: cfg.hookCommandWindows(id, opts) });
-  if (opts.command || (opts.scope || 'user') === 'project') return plain;
+  if (opts.command) return plain;
+  // A project install runs `zn` from the PATH inside zn's start guard (launcher.projectShCommand): a missing zn or Node.js blocks.
+  if ((opts.scope || 'user') === 'project') {
+    return (event) => ({ ...plain(), command: launcher.projectShCommand(id, event), commandWindows: launcher.windowsScriptCommand(launcher.projectWindowsScript(id, event)) });
+  }
   const platform = opts.platform || process.platform;
   const node = opts.nodePath || process.execPath;
   const runner = opts.runnerPath || cfg.runnerPath();

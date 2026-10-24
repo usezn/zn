@@ -312,7 +312,13 @@ async function mapStrings(value, fn) {
 function lazyDeps(opts) {
   let engine = opts.engine;
   let vault = opts.vault === null ? null : opts.vault;
+  const injected = vault !== undefined;
   return {
+    // Closes the client this hook created (never one the caller passed in): its socket must not outlive the hook.
+    closeVault() {
+      if (injected || !vault || typeof vault.close !== 'function') return;
+      try { vault.close(); } catch (_) { /* already closed */ }
+    },
     engine() {
       if (!engine) engine = deps.loadEngine();
       return engine;
@@ -1419,9 +1425,9 @@ async function handle(adapter, rawEvent, opts = {}) {
   const mode = failModeOf(opts);
   let ev = null;
   let decision;
+  const d = lazyDeps(opts);
   try {
     ev = adapter.normalize(rawEvent);
-    const d = lazyDeps(opts);
     if (ev && ev.event) guardNativeText(ev);
     await injectTestFault();
     if (!ev || !ev.event) decision = { decision: 'allow' };
@@ -1434,6 +1440,8 @@ async function handle(adapter, rawEvent, opts = {}) {
     else decision = { decision: 'allow' };
   } catch (err) {
     decision = failDecision(ev, err, mode, adapter.id);
+  } finally {
+    d.closeVault();
   }
   // zn Team: a line for the person (a policy change that lifted restrictions, or detectors that are not applied).
   const teamLines = takeTeamNotes();

@@ -196,13 +196,15 @@ function hookEntries(command) {
 /**
  * The hook command for each event. Cursor fails open when a hook cannot start (only failClosed hooks, and exit
  * code 2, block), so a user install goes through zn's launcher (lib/agents/launcher.js): a Node.js that has gone
- * away blocks instead of letting the call run. A project install or a command given by the caller keeps the
- * plain command.
+ * away blocks instead of letting the call run. A project install runs `zn` from the PATH inside a start guard that
+ * blocks the same way; a command given by the caller keeps the plain command.
  */
 function commandFor(opts = {}) {
   const platform = opts.platform || process.platform;
-  if (opts.command || (opts.scope || 'user') === 'project') {
-    return platform === 'win32' && !opts.command ? cfg.hookCommandWindows(id, opts) : cfg.hookCommand(id, opts);
+  if (opts.command) return cfg.hookCommand(id, opts);
+  if ((opts.scope || 'user') === 'project') {
+    // `zn` from the PATH inside zn's start guard (launcher.projectShCommand / projectWindowsScript): a missing zn or Node.js blocks.
+    return (event) => (platform === 'win32' ? launcher.windowsScriptCommand(launcher.projectWindowsScript(id, event)) : launcher.projectShCommand(id, event));
   }
   const node = opts.nodePath || process.execPath;
   const runner = opts.runnerPath || cfg.runnerPath();

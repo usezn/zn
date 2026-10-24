@@ -188,7 +188,9 @@ test('install (project): BeforeTool group with a named command hook in milliseco
   assert.deepEqual(Object.keys(data.hooks), ['BeforeTool']);
   const [g] = data.hooks.BeforeTool;
   assert.equal(g.matcher, '*');
-  assert.deepEqual(g.hooks, [{ name: 'zn-gate', type: 'command', command: 'zn hook gemini', timeout: 15000 }]);
+  assert.equal(g.hooks.length, 1);
+  assert.deepEqual({ ...g.hooks[0], command: undefined }, { name: 'zn-gate', type: 'command', command: undefined, timeout: 15000 });
+  assert.ok(require('../lib/agents/launcher').isProjectGuard(g.hooks[0].command, 'gemini'));
   gem.install({ scope: 'project', projectDir: dir });
   assert.equal(readSettings(file).hooks.BeforeTool.length, 1);
   assert.equal(gem.uninstall({ scope: 'project', projectDir: dir }).removed, 1);
@@ -248,7 +250,7 @@ test('install and uninstall refuse a settings file or a hooks field of the wrong
   }
 });
 
-test('install on Windows (user scope) writes the powershell form; project scope stays portable', (t) => {
+test('install on Windows (user scope) writes the powershell form; project scope is zn on the PATH inside the start guard', (t) => {
   const home = tempDir(t, 'zn-gem-win-');
   gem.install({ scope: 'user', home, platform: 'win32', nodePath: 'C:/Program Files/nodejs/node.exe', runnerPath: 'C:/zn/zn-gate/lib/hooks/runner.js' });
   const winCommand = readSettings(settingsOf(home)).hooks.BeforeTool[0].hooks[0].command;
@@ -256,7 +258,9 @@ test('install on Windows (user scope) writes the powershell form; project scope 
   assert.match(require('../lib/shell-quote').windowsCommandScript(winCommand), /runner\.js.* gemini; if \(\$LASTEXITCODE -eq 0 -or \$LASTEXITCODE -eq 2\) \{ exit/);
   const dir = tempDir(t, 'zn-gem-win-p-');
   gem.install({ scope: 'project', projectDir: dir, platform: 'win32' });
-  assert.equal(readSettings(path.join(dir, '.gemini', 'settings.json')).hooks.BeforeTool[0].hooks[0].command, 'zn hook gemini');
+  const projWin = readSettings(path.join(dir, '.gemini', 'settings.json')).hooks.BeforeTool[0].hooks[0].command;
+  assert.match(projWin, /^powershell\.exe /);
+  assert.ok(require('../lib/agents/launcher').isProjectWindowsScript(require('../lib/shell-quote').windowsCommandScript(projWin), 'gemini'));
 });
 
 test('install warnings: experimental, fail-open on crash, no asking and no scrubbing, project trust, how it is turned off', (t) => {

@@ -588,7 +588,8 @@ test('project install writes .claude/settings.json and .mcp.json', (t) => {
   const settings = JSON.parse(settingsText);
   const commands = Object.values(settings.hooks).flat().flatMap((m) => m.hooks.map((h) => h.command));
   assert.ok(commands.length > 0);
-  for (const c of commands) assert.equal(c, 'zn hook claude-code');
+  // zn from the PATH inside zn's start guard (a missing zn or Node.js blocks instead of exit 127).
+  for (const c of commands) assert.ok(require('../lib/agents/launcher').isProjectGuard(c, 'claude-code'), c);
   for (const text of [settingsText, fs.readFileSync(path.join(dir, '.mcp.json'), 'utf8')]) {
     assert.ok(!text.includes('/opt/'), 'no absolute path in a shared file');
     assert.ok(!text.includes(process.execPath), 'no Node.js path in a shared file');
