@@ -48,7 +48,7 @@ const BLOCK_EXIT_BY_AGENT = {
   gemini: new Set(['BeforeTool']),
   // Antigravity: the hook answers with {decision:'deny',reason} on stdout (exit 0); its docs do not say what a failed hook does.
   antigravity: new Set(['PreToolUse']),
-  // Zcode: exit code 2 blocks PreToolUse, PermissionRequest and UserPromptSubmit (docs: "Blocking shortcut"); any other failure only logs and the call runs.
+  // ZCode: exit code 2 blocks PreToolUse, PermissionRequest and UserPromptSubmit (docs: "Blocking shortcut"); any other failure only logs and the call runs.
   zcode: new Set(['PreToolUse', 'PermissionRequest', 'UserPromptSubmit']),
 };
 const BLOCK_JSON_BY_AGENT = { 'claude-code': new Set(), cursor: new Set(), gemini: new Set(), antigravity: new Set(), zcode: new Set() };
@@ -99,8 +99,12 @@ function checkAgentId(agentId) {
 }
 
 /** The text of the launcher script. */
-function unixScript(agentId, nodePath, runnerPath) {
+function unixScript(agentId, nodePath, runnerPath, opts = {}) {
   checkAgentId(agentId);
+  // deadlineS (whole seconds, only for agents that fail open on a timeout): the launcher answers by itself when the hook has
+  // not finished by then, so a hook stuck while it starts (before the runner arms its own watchdog) still blocks.
+  const deadlineS = Number.isInteger(opts.deadlineS) && opts.deadlineS > 0 ? opts.deadlineS : 0;
+  const run = (...w) => (deadlineS ? 'zn_run ' : '') + w.join(' ');
   const reason = reasonText(agentId);
   const warn = warnText(agentId);
   const exitEvents = [...blockExit(agentId)];
@@ -117,15 +121,48 @@ function unixScript(agentId, nodePath, runnerPath) {
     'ZN_NODE=' + shQuote(nodePath),
     'ZN_RUNNER=' + shQuote(runnerPath),
     '# Exit codes other than 0 (done) and 2 (blocked) are failures: they fall through to the block below.',
+    ...(deadlineS ? [
+      '# Runs a command with a deadline of ' + deadlineS + ' s: after that the command is killed (TERM, then KILL one second later; exit 143 or 137), which falls through to the block below.',
+      '# The hook input (stdin) is passed on through fd 3 (a background command would otherwise get /dev/null).',
+      '# The hook runs in its own process group with its output in private files, so nothing it started can hold the pipes of the agent open or outlive the deadline: the launcher kills the whole group and prints the answer itself.',
+      'zn_run() {',
+      '  # No timer, no deadline, no private output: then the hook is not run at all and the launcher blocks.',
+      '  [ -x /bin/sleep ] || { ZN_RC=127; return 0; }',
+      '  ZN_OF=$(umask 077; mktemp "${TMPDIR:-/tmp}/zn-hook.XXXXXX" 2>/dev/null) || { ZN_RC=127; return 0; }',
+      '  ZN_EF=$(umask 077; mktemp "${TMPDIR:-/tmp}/zn-hook.XXXXXX" 2>/dev/null) || { rm -f "$ZN_OF"; ZN_RC=127; return 0; }',
+      '  trap \'rm -f "$ZN_OF" "$ZN_EF"\' EXIT',
+      '  trap \'rm -f "$ZN_OF" "$ZN_EF"; exit 143\' HUP INT TERM',
+      '  # Own process group: setsid (Linux) or perl (macOS); with neither, only the hook itself is stopped at the deadline (its output is still private).',
+      '  ZN_G=; for ZN_X in /usr/bin/setsid /bin/setsid; do [ -x "$ZN_X" ] && { ZN_G=1; ZN_GX=$ZN_X; break; }; done',
+      '  [ -n "$ZN_G" ] || { [ -x /usr/bin/perl ] && { ZN_G=2; ZN_GX=/usr/bin/perl; }; }',
+      '  exec 3<&0',
+      '  case $ZN_G in',
+      '    1) "$ZN_GX" "$@" <&3 3<&- >"$ZN_OF" 2>"$ZN_EF" & ;;',
+      '    2) "$ZN_GX" -e \'setpgrp(0,0); exec { $ARGV[0] } @ARGV; exit 127\' "$@" <&3 3<&- >"$ZN_OF" 2>"$ZN_EF" & ;;',
+      '    *) "$@" <&3 3<&- >"$ZN_OF" 2>"$ZN_EF" & ;;',
+      '  esac',
+      '  exec 3<&-',
+      '  ZN_P=$!',
+      '  # At the deadline the hook group gets TERM; if it is still there one second later (it ignores TERM) it gets KILL. A timer that cannot sleep ends the hook too.',
+      '  ( trap \'kill $ZN_SP 2>/dev/null; exit 0\' TERM; /bin/sleep ' + deadlineS + ' & ZN_SP=$!; wait $ZN_SP; kill -TERM -$ZN_P 2>/dev/null; kill -TERM $ZN_P 2>/dev/null; /bin/sleep 1 & ZN_SP=$!; wait $ZN_SP; kill -KILL -$ZN_P 2>/dev/null; kill -KILL $ZN_P 2>/dev/null ) >/dev/null 2>&1 </dev/null &',
+      '  ZN_T=$!',
+      '  wait $ZN_P; ZN_RC=$?',
+      '  kill -TERM $ZN_T 2>/dev/null',
+      '  kill -KILL -$ZN_P 2>/dev/null',
+      '  case $ZN_RC in 0|2) cat "$ZN_OF" ;; esac',
+      '  cat "$ZN_EF" >&2',
+      '  return 0',
+      '}',
+    ] : []),
     'ZN_RAN=',
-    'if [ -x "$ZN_NODE" ] && [ -f "$ZN_RUNNER" ]; then ZN_RAN=1; "$ZN_NODE" "$ZN_RUNNER" ' + agentId + '; ZN_RC=$?; case $ZN_RC in 0|2) exit $ZN_RC ;; esac; fi',
+    'if [ -x "$ZN_NODE" ] && [ -f "$ZN_RUNNER" ]; then ZN_RAN=1; ' + (deadlineS ? run('"$ZN_NODE" "$ZN_RUNNER" ' + agentId) + '; ' : '"$ZN_NODE" "$ZN_RUNNER" ' + agentId + '; ZN_RC=$?; ') + 'case $ZN_RC in 0|2) exit $ZN_RC ;; esac; fi',
     '# Look up zn and node only in absolute PATH entries: a relative one depends on the folder the agent runs in.',
     'ZN_OLDIFS=$IFS; IFS=:; ZN_SAFE=',
     'for ZN_D in $PATH; do case "$ZN_D" in /*) ZN_SAFE="${ZN_SAFE:+$ZN_SAFE:}$ZN_D" ;; esac; done',
     'IFS=$ZN_OLDIFS',
     'ZN_CMD=; [ -z "$ZN_SAFE" ] || ZN_CMD=$(PATH="$ZN_SAFE" command -v zn 2>/dev/null)',
     'case "$ZN_CMD" in /*) ;; *) ZN_CMD= ;; esac',
-    'if [ -z "$ZN_RAN" ] && [ -n "$ZN_CMD" ] && PATH="$ZN_SAFE" command -v node >/dev/null 2>&1; then ZN_RAN=1; "$ZN_CMD" hook ' + agentId + '; ZN_RC=$?; case $ZN_RC in 0|2) exit $ZN_RC ;; esac; fi',
+    'if [ -z "$ZN_RAN" ] && [ -n "$ZN_CMD" ] && PATH="$ZN_SAFE" command -v node >/dev/null 2>&1; then ZN_RAN=1; ' + (deadlineS ? run('"$ZN_CMD" hook ' + agentId) + '; ' : '"$ZN_CMD" hook ' + agentId + '; ZN_RC=$?; ') + 'case $ZN_RC in 0|2) exit $ZN_RC ;; esac; fi',
     'case "$ZN_EVENT" in',
     '  ' + exitEvents.join('|') + ')',
     DENY_STDOUT[agentId]
@@ -156,7 +193,7 @@ function writeLauncher(agentId, nodePath, runnerPath, opts = {}) {
   else fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   // On Windows the script runs in Git Bash: write the paths with / so that `zn-gate check` can read them back.
   const platform = opts.platform || process.platform;
-  writeFileAtomic(file, unixScript(agentId, portablePath(nodePath, platform), portablePath(runnerPath, platform)), 0o755);
+  writeFileAtomic(file, unixScript(agentId, portablePath(nodePath, platform), portablePath(runnerPath, platform), { deadlineS: opts.deadlineS }), 0o755);
   try { fs.chmodSync(file, 0o755); } catch (_) { /* best effort */ }
   return file;
 }
@@ -343,8 +380,10 @@ function spaceMessage(file) {
  * isOurs() recognizes it. Null when a path holds a character that would need
  * escaping inside the script: the caller then keeps the plain command.
  */
-function windowsScript(agentId, event, nodePath, runnerPath) {
+function windowsScript(agentId, event, nodePath, runnerPath, opts = {}) {
   checkAgentId(agentId);
+  // deadlineS (whole seconds, only for agents that fail open on a timeout, as in unixScript): the hook runs as a child with a deadline.
+  const deadlineS = Number.isInteger(opts.deadlineS) && opts.deadlineS > 0 ? opts.deadlineS : 0;
   const n = portablePath(nodePath, 'win32');
   const r = portablePath(runnerPath, 'win32');
   if (/['‘’‚‛\u0000-\u001f]/.test(n + r)) return null;
@@ -354,24 +393,46 @@ function windowsScript(agentId, event, nodePath, runnerPath) {
     cursor: (r) => ({ permission: 'deny', continue: false, user_message: r, agent_message: r }),
     gemini: (r) => ({ decision: 'deny', reason: r }),
   };
+  const jsonDeny = Boolean(DENY_JSON[agentId]);
+  // The block text (the Node.js is gone) or, when the hook ran and failed or timed out, the crash text.
+  const tailOf = (reason, warn) => {
   let tail;
   // A PowerShell inside the agent's own PowerShell (Cursor) turns a nested exit 2 into 1, and both Cursor and
   // Gemini CLI read the deny JSON only with exit 0. So for them a block is the deny JSON plus exit 0; the
   // runner's own refusal (exit 2, deny JSON already on stdout) is passed on as exit 0 too.
-  const jsonDeny = Boolean(DENY_JSON[agentId]);
   if (blockExit(agentId).has(event)) {
     tail = jsonDeny
       ? "[Console]::Out.WriteLine('" + JSON.stringify(DENY_JSON[agentId](reason)) + "'); [Console]::Error.WriteLine('" + reason + "'); exit 0"
       : "[Console]::Error.WriteLine('" + reason + "'); exit 2";
   }
   else if (blockJson(agentId).has(event)) tail = "[Console]::Out.WriteLine('" + JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: reason } } }) + "'); exit 0";
-  else if (WARN_STDERR.has(agentId)) tail = "[Console]::Error.WriteLine('" + warnText(agentId) + "'); exit 0";
-  else tail = "[Console]::Out.WriteLine('" + JSON.stringify({ systemMessage: warnText(agentId) }) + "'); exit 0";
+  else if (WARN_STDERR.has(agentId)) tail = "[Console]::Error.WriteLine('" + warn + "'); exit 0";
+  else tail = "[Console]::Out.WriteLine('" + JSON.stringify({ systemMessage: warn }) + "'); exit 0";
+  return tail;
+  };
+  const tail = tailOf(reason, warnText(agentId));
   // Only 0 (done) and 2 (blocked) leave early: a crash, an empty $LASTEXITCODE (a script the execution policy
   // refused) or any other code falls through to the block. zn.cmd, not zn.ps1, which Restricted refuses to run.
   const leave = jsonDeny
     ? 'if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 2) { exit 0 }'
     : 'if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 2) { exit $LASTEXITCODE }';
+  if (deadlineS) {
+    // zr runs the command as a child with the hook input passed on (stdin) and its output left alone; after the deadline the
+    // child and everything it started are killed (taskkill /T) and zr gives -1, which falls through to the block below.
+    const zr = 'function zr($f, $a) { $rc = -1; try { $i = New-Object System.Diagnostics.ProcessStartInfo; $i.FileName = $f; $i.Arguments = $a; $i.UseShellExecute = $false; ' +
+      '$i.RedirectStandardInput = $true; $sw = [System.Diagnostics.Stopwatch]::StartNew(); $p = [System.Diagnostics.Process]::Start($i); ' +
+      'try { $c = [Console]::OpenStandardInput().CopyToAsync($p.StandardInput.BaseStream); [void]$c.Wait(' + deadlineS * 1000 + ') } catch {}; ' +
+      'try { $p.StandardInput.Close() } catch {}; ' +
+      '$left = [Math]::Max(0, ' + deadlineS * 1000 + ' - $sw.ElapsedMilliseconds); ' +
+      'if ($p.WaitForExit([int]$left)) { $rc = $p.ExitCode } else { try { & "$env:SystemRoot\\System32\\taskkill.exe" /PID $p.Id /T /F *> $null } catch {}; try { $p.Kill() } catch {} } } catch {}; return $rc }; ';
+    const zleave = jsonDeny
+      ? 'if ($rc -eq 0 -or $rc -eq 2) { exit 0 }'
+      : 'if ($rc -eq 0 -or $rc -eq 2) { exit $rc }';
+    return "$ProgressPreference='SilentlyContinue'; $zt=0; " + zr +
+      "if ((Test-Path -LiteralPath '" + n + "') -and (Test-Path -LiteralPath '" + r + "')) { $zt=1; $rc = zr '\"" + n + "\"' '\"" + r + "\" " + agentId + "'; " + zleave + ' }; ' +
+      "if (($zt -eq 0) -and (Get-Command zn.cmd -CommandType Application -ErrorAction SilentlyContinue) -and (Get-Command node -ErrorAction SilentlyContinue)) { $zt=1; $rc = zr (Get-Command zn.cmd -CommandType Application).Source 'hook " + agentId + "'; " + zleave + ' }; ' +
+      'if ($zt -eq 1) { ' + tailOf(crashText(agentId), crashWarnText()) + ' }; ' + tail + ' # zn hook ' + agentId;
+  }
   return "$ProgressPreference='SilentlyContinue'; $zt=0; " +
     "if ((Test-Path -LiteralPath '" + n + "') -and (Test-Path -LiteralPath '" + r + "')) { $zt=1; & '" + n + "' '" + r + "' " + agentId + '; ' + leave + ' }; ' +
     "if (($zt -eq 0) -and (Get-Command zn.cmd -CommandType Application -ErrorAction SilentlyContinue) -and (Get-Command node -ErrorAction SilentlyContinue)) { & zn.cmd hook " + agentId + '; ' + leave + ' }; ' +

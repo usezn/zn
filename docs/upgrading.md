@@ -21,7 +21,7 @@ that fixes it.
 
 ## Run `zn hooks install <agent>` again when a release changes the hook
 
-The hooks of `zn hooks install` (Claude Code, Codex CLI, Cursor, Zcode) are written into
+The hooks of `zn hooks install` (Claude Code, Codex CLI, Cursor, ZCode desktop app) are written into
 the agent's own settings, so a new zn-gate does not rewrite them by itself. When
 a release adds or changes a hook, the release notes in the
 [changelog](../CHANGELOG.md) say so and name the agent. Run the install again
@@ -107,13 +107,19 @@ an older zn-gate and the plugins keep a plain command. Agent by agent:
   not sent and the tool output is withheld, for user and project installs alike.
 - **Antigravity**: Antigravity does not document what a hook that cannot start
   does. With a user install, the launcher answers a deny with the repair step
-  (the one block Antigravity documents), so the tool call is blocked. With a
-  project install or older hooks, zn-gate cannot promise anything: the call may
-  be blocked with no message from zn, or run.
-- **Zcode**: Zcode blocks only on exit code 2 or a deny answer; a hook that cannot
-  start is only logged and the call runs. With the user install (the only one
-  Zcode has), the launcher exits 2 with the repair step on tool calls, permission
-  requests and prompts, and after a tool has run zn only warns. If Zcode cannot
+  (the one block Antigravity documents), so the tool call is blocked. A
+  project install wraps `zn hook antigravity` in a one-line guard (`sh -c`, PowerShell on
+  Windows), so a missing `zn` or `node` ends in that deny too. Only hooks installed
+  by an older zn-gate keep the plain command: for those, zn-gate cannot promise
+  anything (the call may be blocked with no message from zn, or run). Not tested:
+  a hook that times out.
+- **ZCode**: ZCode's documentation says exit code 2 or a deny answer blocks and any
+  other non-zero exit code fails the hook recoverably; it does not say what happens
+  when a hook cannot start or times out (not tested). With the user install (the only one
+  ZCode has), the launcher exits 2 with the repair step on tool calls, permission
+  requests and prompts, and after a tool has run zn only warns. The launcher also
+  stops a hook that has not finished after 28 seconds (2 seconds under the 30-second
+  timeout zn sets on its hook entries) and blocks the call, on Windows too. If ZCode cannot
   start the launcher itself (the file deleted or not executable), the call goes
   ahead unchecked.
 

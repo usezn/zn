@@ -130,8 +130,8 @@ const AGENTS = [
     request: (dir, file) => ({ hook_event_name: 'BeforeTool', session_id: 'zn-check', cwd: dir, tool_name: 'read_file', tool_input: { file_path: file } }),
   },
   {
-    // Zcode only runs the hooks of the user's config.json; the project path is where a project install would have been.
-    id: 'zcode', name: 'Zcode', event: 'PreToolUse', tool: 'Read',
+    // ZCode only runs the hooks of the user's config.json; the project path is where a project install would have been.
+    id: 'zcode', name: 'ZCode', event: 'PreToolUse', tool: 'Read',
     fix: 'run `zn hooks install zcode` in your own terminal',
     file: (a, o) => a.configFile(o), project: (dir) => path.join(dir, '.zcode', 'config.json'),
     request: (dir, file) => ({ hook_event_name: 'PreToolUse', session_id: 'zn-check', cwd: dir, tool_name: 'Read', tool_input: { file_path: file } }),
@@ -160,7 +160,7 @@ function hookEntries(tree, agentId, opts = {}) {
       else if (opts.withDisabled) sets.push({ hooks: v, name, disabled: true });
     }
   } else if (agentId === 'zcode') {
-    // Zcode keeps events under hooks.events, and a hook is a "process" (program + args) or a "command" (shell string).
+    // ZCode keeps events under hooks.events, and a hook is a "process" (program + args) or a "command" (shell string).
     sets.push({ hooks: tree && tree.hooks && typeof tree.hooks.events === 'object' ? tree.hooks.events : {}, disabled: false });
   } else {
     sets.push({ hooks: tree && typeof tree.hooks === 'object' ? tree.hooks : {}, disabled: false });
@@ -662,7 +662,7 @@ async function checkAgent(spec, ctx) {
     }
   }
   if (spec.id === 'zcode' && installed && !res.problem) {
-    // Zcode runs no hook unless hooks.enabled is true, and skips an entry that has "enabled": false.
+    // ZCode runs no hook unless hooks.enabled is true, and skips an entry that has "enabled": false.
     let w = { problems: [], notes: [], fix: '' };
     try { w = adapter.configWarnings({ file: userFile }); } catch (_) { /* nothing to add */ }
     res.notes.push(...w.notes.map((x) => oneLine(x, 300)));
@@ -862,7 +862,7 @@ function report({ results, removed, warnings }, write) {
   const init = 'run `npx -y zn-gate init` in your own terminal: it shows each step and asks before it runs one.\n';
   // Nothing to set up only when every agent is missing from the machine (a project-only setup counts as found).
   if (!setUp && !results.some((r) => r.found !== false || r.state !== 'not-set-up')) {
-    w('No supported coding agent was found on this machine (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, Zcode), so there is nothing to check.\n');
+    w('No supported coding agent was found on this machine (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app), so there is nothing to check.\n');
     w('Install one, then run `npx -y zn-gate init`. Other editors: https://usezn.com/docs/install\n\n');
   } else if (!setUp) {
     w('zn is not set up for your agents yet, so nothing protects your secrets. To set it up, ' + init);

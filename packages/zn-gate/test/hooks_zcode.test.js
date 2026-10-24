@@ -2,10 +2,9 @@
 
 process.env.ZN_STATS = 'off';
 
-// Zcode (z.ai) hooks: fixtures follow the contract in the Zcode docs and source (https://zcode.z.ai/en/docs/hooks and
-// github.com/zai-org/ZCode, apps/zcode-cli, read 2026-10-24): stdin carries both camelCase fields and the snake_case
-// aliases, and an answer must pass Zcode's own output schema or the hook fails and the tool runs. There is no
-// Zcode binary here; the answers are checked against a copy of that schema (validZcodeOutput).
+// ZCode desktop app hooks: fixtures follow the contract in the ZCode docs (https://zcode.z.ai/en/docs/hooks, read 2026-10-24): stdin carries both camelCase fields and the snake_case
+// aliases, and an answer must pass ZCode's own output schema or the hook fails and the tool runs. There is no
+// ZCode binary here; the answers are checked against a copy of that schema (validZCodeOutput).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -39,8 +38,8 @@ const write = (home, obj) => {
   fs.writeFileSync(cliFile(home), typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2));
 };
 
-// The hook output schema of Zcode (contracts/src/hooks/index.ts: HookJSONOutputSchema), reduced to the keys zn uses.
-function validZcodeOutput(out, event) {
+// The hook output contract in the official ZCode hooks documentation (https://zcode.z.ai/en/docs/hooks), reduced to the keys zn uses.
+function validZCodeOutput(out, event) {
   assert.ok(out && typeof out === 'object' && !Array.isArray(out));
   const top = new Set(['additionalContext', 'additional_context', 'continue', 'decision', 'hookSpecificOutput', 'reason', 'stopReason', 'suppressOutput', 'systemMessage']);
   for (const k of Object.keys(out)) assert.ok(top.has(k), 'unknown key ' + k);
@@ -64,7 +63,7 @@ function validZcodeOutput(out, event) {
 
 test('registry lists zcode and accepts the zai alias', () => {
   assert.ok(listAdapters().includes('zcode'));
-  assert.equal(getAdapter('Zcode').id, 'zcode');
+  assert.equal(getAdapter('ZCode').id, 'zcode');
   assert.equal(getAdapter('zai').id, 'zcode');
 });
 
@@ -76,7 +75,7 @@ const readFixture = (f) => JSON.parse(fs.readFileSync(path.join(FIXTURES, f), 'u
 test('there are fixtures for every event zn registers and for events it ignores', () => {
   const events = new Set(names.map((n) => readFixture(n + '.in.json').hook_event_name));
   for (const ev of [...zc.EVENTS, 'SessionStart', 'Stop']) assert.ok(events.has(ev), ev);
-  // Both spellings are in every payload, as Zcode sends them.
+  // Both spellings are in every payload, as ZCode sends them.
   for (const n of names) {
     const i = readFixture(n + '.in.json');
     assert.equal(i.hookEventName, i.hook_event_name, n);
@@ -93,7 +92,7 @@ for (const name of names) {
       assert.equal(r.output, null, 'no opinion means no output: ' + JSON.stringify(r.output));
       return;
     }
-    validZcodeOutput(r.output, want.shape === 'prompt_block' ? 'UserPromptSubmit' : want.shape === 'post_notice' ? 'PostToolUse' : input.hook_event_name);
+    validZCodeOutput(r.output, want.shape === 'prompt_block' ? 'UserPromptSubmit' : want.shape === 'post_notice' ? 'PostToolUse' : input.hook_event_name);
     const text = JSON.stringify(r.output);
     if (want.shape === 'pre_deny') {
       assert.equal(r.output.hookSpecificOutput.permissionDecision, 'deny');
@@ -104,7 +103,7 @@ for (const name of names) {
       assert.equal(r.output.continue, false);
       assert.ok(r.output.reason);
     } else if (want.shape === 'post_notice') {
-      assert.match(r.output.hookSpecificOutput.additionalContext, /Zcode cannot hide tool output/);
+      assert.match(r.output.hookSpecificOutput.additionalContext, /ZCode cannot hide tool output/);
       assert.ok(!/AKIAIOSFODNN7EXAMPLE|__ZN_/.test(text), 'the notice never repeats the value or a token');
     }
     if (want.reason) assert.ok(text.includes(want.reason), text);
@@ -192,7 +191,7 @@ test('a search over a folder with a plain-text .env asks the user (PreToolUse su
   assert.equal((await run(pre('Grep', { pattern: 'x', path: dir }))).output, null);
   fs.writeFileSync(path.join(dir, '.env'), 'API_KEY=sk_live_abcdefghijklmnop1234\n');
   const r = await run(pre('Grep', { pattern: 'x', path: dir }));
-  validZcodeOutput(r.output, 'PreToolUse');
+  validZCodeOutput(r.output, 'PreToolUse');
   assert.equal(r.output.hookSpecificOutput.permissionDecision, 'ask');
   assert.match(r.output.hookSpecificOutput.permissionDecisionReason, /\.env/);
   // PermissionRequest never answers an ask: the prompt stays as it is.
@@ -203,7 +202,7 @@ test('a command already wrapped in zn run asks the user; PermissionRequest stays
   const cmd = 'zn run -- node -e "console.log(1)" __ZN_DB_PASSWORD__';
   const wrapped = await run(pre('Bash', { command: cmd }));
   assert.equal(wrapped.decision.decision, 'ask');
-  validZcodeOutput(wrapped.output, 'PreToolUse');
+  validZCodeOutput(wrapped.output, 'PreToolUse');
   assert.equal(wrapped.output.hookSpecificOutput.permissionDecision, 'ask');
   assert.equal(wrapped.output.hookSpecificOutput.updatedInput, undefined, 'the command is never rewritten');
   assert.equal((await run({ ...pre('Bash', { command: cmd }), hook_event_name: 'PermissionRequest' })).output, null);
@@ -253,7 +252,7 @@ test('the secrets MCP server is zn\'s own only when the user config registers zn
 test('PostToolUse: a notice for a secret in the output, nothing for clean output; the output is never rewritten', async () => {
   const mk = (resp) => ({ hook_event_name: 'PostToolUse', session_id: 's', cwd: '/work/proj', tool_name: 'Bash', tool_input: { command: 'env' }, tool_use_id: 'u', tool_response: resp });
   const hit = await run(mk({ stdout: 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE' }));
-  validZcodeOutput(hit.output, 'PostToolUse');
+  validZCodeOutput(hit.output, 'PostToolUse');
   assert.deepEqual(Object.keys(hit.output.hookSpecificOutput).sort(), ['additionalContext', 'hookEventName']);
   assert.match(hit.output.hookSpecificOutput.additionalContext, /1 secret value/);
   assert.equal((await run(mk({ stdout: 'nothing secret in here at all' }))).output, null);
@@ -280,10 +279,10 @@ function spawnHook(t, payload, fault) {
   return { ...r, ms: Date.now() - started };
 }
 
-test('the watchdog answers before Zcode\'s own timeout', () => {
+test('the watchdog answers before ZCode\'s own timeout', () => {
   assert.ok(zc.HOOK_TIMEOUT_S >= 10);
   assert.equal(zc.HOOK_TIMEOUT_MS, zc.HOOK_TIMEOUT_S * 1000);
-  assert.ok(zc.HOOK_TIMEOUT_MS < 60000, 'below Zcode\'s default timeout of 60000 ms');
+  assert.ok(zc.HOOK_TIMEOUT_MS < 60000, 'below ZCode\'s default timeout of 60000 ms');
   assert.ok(runner.postDeadlineMs('zcode') < zc.HOOK_TIMEOUT_MS);
 });
 
@@ -292,12 +291,12 @@ for (const [event, payload, check] of [
   ['PermissionRequest', { ...pre('Bash', { command: 'echo hi' }), hook_event_name: 'PermissionRequest' }, (o) => assert.equal(o.hookSpecificOutput.decision.behavior, 'deny')],
   ['UserPromptSubmit', { hook_event_name: 'UserPromptSubmit', session_id: 's', cwd: '/w', prompt: 'hello' }, (o) => assert.equal(o.continue, false)],
 ]) {
-  test('zcode ' + event + ': a hung or crashing check is answered with deny and exit 2 (Zcode would otherwise run the call)', (t) => {
+  test('zcode ' + event + ': a hung or crashing check is answered with deny and exit 2 (ZCode would otherwise run the call)', (t) => {
     for (const fault of [{ ZN_TEST_HOOK_FAULT: 'hang', ZN_TEST_HOOK_HANG_MS: '30000', ZN_TEST_HOOK_DEADLINE_MS: '800' }, { ZN_TEST_HOOK_FAULT: 'throw' }]) {
       const r = spawnHook(t, payload, fault);
       assert.equal(r.status, 2, r.stderr);
       const out = JSON.parse(r.stdout);
-      validZcodeOutput(out, event);
+      validZCodeOutput(out, event);
       check(out);
       assert.ok(r.ms < 10000, 'answered in ' + r.ms + ' ms');
     }
@@ -329,7 +328,7 @@ test('install (user) writes the four events with process hooks, turns hooks on, 
   for (const ev of zc.EVENTS) {
     const g = data.hooks.events[ev].find((x) => x.hooks.some((h) => cfg.isOurs(zc.commandText(h), 'zcode')));
     assert.ok(g, ev);
-    // Only the keys Zcode's strict schema knows: a stray key would make it drop the whole file.
+    // Only the keys ZCode's strict schema knows: a stray key would make it drop the whole file.
     assert.ok(Object.keys(g).every((k) => ['matcher', 'hooks'].includes(k)), ev);
     assert.equal(g.hooks.length, 1);
     assert.deepEqual(g.hooks[0], { type: 'process', command: file, args: [ev], timeoutMs: zc.HOOK_TIMEOUT_MS, statusMessage: zc.HOOK_STATUS });
@@ -342,7 +341,7 @@ test('install (user) writes the four events with process hooks, turns hooks on, 
   assert.equal(s.command, '/usr/bin/node');
   assert.deepEqual(s.args.slice(1), ['secrets-mcp', '--agent', 'zcode']);
   assert.equal(rep.mcp, cliFile(home));
-  assert.ok(fs.statSync(file).mode & 0o100, 'the launcher is executable (Zcode starts a process hook directly, with no shell)');
+  assert.ok(fs.statSync(file).mode & 0o100, 'the launcher is executable (ZCode starts a process hook directly, with no shell)');
 });
 
 test('install is idempotent and uninstall removes only zn: the user\'s hooks, settings and MCP servers stay', { skip: !posix }, (t) => {
@@ -406,7 +405,7 @@ test('install and uninstall refuse a config of the wrong shape and leave it alon
   }
 });
 
-test('there is no project install: Zcode ignores project hooks', (t) => {
+test('there is no project install: ZCode ignores project hooks', (t) => {
   const dir = tempDir(t, 'zn-zc-proj-');
   assert.throws(() => zc.install({ scope: 'project', projectDir: dir }), /ignores the hooks of a project/);
   assert.equal(fs.existsSync(path.join(dir, '.zcode')), false);
@@ -423,7 +422,7 @@ test('install on Windows writes a powershell.exe process hook that exits 2 itsel
   assert.equal(h.type, 'process');
   assert.deepEqual(h.args.slice(0, 3), ['-NoProfile', '-NonInteractive', '-EncodedCommand']);
   const script = require('../lib/shell-quote').windowsCommandScript(zc.commandText(h));
-  assert.match(script, /runner\.js.* zcode; if \(\$LASTEXITCODE -eq 0 -or \$LASTEXITCODE -eq 2\) \{ exit \$LASTEXITCODE \}/);
+  assert.match(script, /\$rc = zr .*runner\.js" zcode'; if \(\$rc -eq 0 -or \$rc -eq 2\) \{ exit \$rc \}/);
   assert.match(script, /Console\]::Error\.WriteLine\('zn: its hook cannot start.*exit 2 # zn hook zcode$/);
   assert.ok(cfg.isOurs(zc.commandText(h), 'zcode'));
   // PostToolUse only warns when the Node.js is gone (exit 0 with a systemMessage).
@@ -445,7 +444,7 @@ test('install warnings: no output rewriting, user config only, fail-open on cras
   assert.match(all, /hooks of a project are ignored/);
   assert.match(all, /zn turned it on/);
   assert.match(all, /only exit code 2 blocks/);
-  assert.match(all, /new Zcode session/);
+  assert.match(all, /new ZCode session/);
   assert.doesNotMatch(zc.install({ home, nodePath: '/usr/bin/node' }).warnings.join('\n'), /zn turned it on/);
   write(home, { features: { mcp: false } });
   assert.match(zc.install({ home, nodePath: '/usr/bin/node' }).warnings.join('\n'), /features\.mcp/);
@@ -460,7 +459,7 @@ test('launcher: with the Node.js gone the events that can deny exit 2 with the r
   const bin = tempDir(t, 'zn-zc-bin-');
   for (const ev of ['PreToolUse', 'PermissionRequest', 'UserPromptSubmit']) {
     const h = data.hooks.events[ev][0].hooks[0];
-    // Zcode starts a "process" hook with the file and its arguments, no shell.
+    // ZCode starts a "process" hook with the file and its arguments, no shell.
     const r = spawnSync(h.command, h.args, { input: '{}', encoding: 'utf8', env: { PATH: bin, HOME: '/nonexistent' } });
     assert.equal(r.status, 2, ev);
     assert.match(r.stderr, /zn hooks install zcode/);
@@ -482,13 +481,13 @@ test('launcher: with the recorded Node.js it runs the real hook, and a deny come
   const r = spawnSync(h.command, h.args, { input: JSON.stringify(ev), encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home, ZN_STATS: 'off' } });
   assert.equal(r.status, 0, r.stderr);
   const out = JSON.parse(r.stdout);
-  validZcodeOutput(out, 'PreToolUse');
+  validZCodeOutput(out, 'PreToolUse');
   assert.equal(out.hookSpecificOutput.permissionDecision, 'deny');
 });
 
 /* ------------------------------ zn-gate check ----------------------------- */
 
-test('zn-gate check reads the Zcode install state (absent, set up) and runs the installed hook', { skip: !posix }, async (t) => {
+test('zn-gate check reads the ZCode install state (absent, set up) and runs the installed hook', { skip: !posix }, async (t) => {
   const check = require('../lib/check');
   const home = tempDir(t, 'zn-zc-check-');
   const cwd = tempDir(t, 'zn-zc-check-cwd-');
@@ -575,15 +574,15 @@ test('the hook policy knows the install hint for zcode', () => {
   assert.match(policy.bashDenial('zn hooks install zcode'), /hooks install zcode`/);
 });
 
-/* --------------------- measured on zcode-cli 0.17.0 (ZCode commit 3c5b2276) --------------------- */
+/* --------------------- answer shapes from the official ZCode hooks documentation --------------------- */
 
-test('measured: respond() answers a denied prompt with continue:false and no hookSpecificOutput', () => {
+test('respond() answers a denied prompt with continue:false and no hookSpecificOutput', () => {
   const ev = zc.normalize({ hook_event_name: 'UserPromptSubmit', session_id: 's', cwd: '/w', prompt: 'x' });
   const out = zc.respond({ decision: 'deny', message: 'blocked', event: ev });
   assert.deepEqual(out, { continue: false, reason: 'blocked' });
 });
 
-test('measured: PermissionRequest only ever gets deny, whatever the internal decision (allow would skip the approval screen)', () => {
+test('PermissionRequest only ever gets deny, whatever the internal decision (allow would skip the approval screen)', () => {
   const ev = zc.normalize({ hook_event_name: 'PermissionRequest', session_id: 's', cwd: '/w', tool_name: 'Bash', tool_input: { command: 'ls' } });
   for (const d of [{ decision: 'allow' }, { decision: 'ask', message: 'q' }, { decision: 'allow', updatedInput: { command: 'x' }, kind: 'wrap' }, { decision: 'deny', message: 'no' }]) {
     const out = zc.respond({ ...d, event: ev });
@@ -593,7 +592,7 @@ test('measured: PermissionRequest only ever gets deny, whatever the internal dec
   assert.equal(zc.respond({ decision: 'allow', event: ev }), null);
 });
 
-test('measured: the camelCase fields alone are read like the snake_case ones, and tool names seen at run time map to the checks', () => {
+test('the camelCase fields alone are read like the snake_case ones, and the tool names map to the checks', () => {
   const camel = { hookEventName: 'PreToolUse', sessionId: 's', cwd: '/w', toolName: 'Read', toolInput: { file_path: '/w/a.txt' }, toolCallId: 'c', riskLevel: 'low', sideEffectScope: 'none', mode: 'yolo', transcriptPath: '/t' };
   const ev = zc.normalize(camel);
   assert.equal(ev.event, 'pre_tool');
@@ -608,7 +607,7 @@ test('measured: the camelCase fields alone are read like the snake_case ones, an
   assert.equal(zc.normalize({ hook_event_name: 'PreToolUse', tool_name: 'mcp__zn_fake__echo', tool_input: { text: 'hi' }, cwd: '/w' }).mcp.server, 'zn_fake');
 });
 
-test('measured: the agent is the one the launcher names; the CLAUDE_* variables Zcode sets change nothing', (t) => {
+test('the agent is the one the launcher names; the CLAUDE_* variables ZCode sets change nothing', (t) => {
   const home = tempDir(t, 'zn-zc-env-');
   const env = { ...process.env, HOME: home, USERPROFILE: home, ZN_STATS: 'off', CLAUDE_PROJECT_DIR: '/w', CLAUDE_SESSION_ID: 's', CLAUDE_CODE_SESSION_ID: 's', ZCODE_PROJECT_DIR: '/w', ZCODE_SESSION_ID: 's' };
   delete env.CLAUDECODE;
@@ -616,11 +615,11 @@ test('measured: the agent is the one the launcher names; the CLAUDE_* variables 
   const r = spawnSync(process.execPath, [RUNNER, 'zcode'], { input: JSON.stringify(payload), encoding: 'utf8', env });
   assert.equal(r.status, 0, r.stderr);
   const out = JSON.parse(r.stdout);
-  validZcodeOutput(out, 'PreToolUse');
+  validZCodeOutput(out, 'PreToolUse');
   assert.equal(out.hookSpecificOutput.permissionDecision, 'deny');
 });
 
-test('measured: hooks fire inside subagents too, so several hooks at once in one home all answer (no lock that deadlocks)', async (t) => {
+test('several hooks at once in one home all answer (no lock that deadlocks)', async (t) => {
   const home = tempDir(t, 'zn-zc-par-');
   const env = { ...process.env, HOME: home, USERPROFILE: home, ZN_STATS: 'off' };
   const payload = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', cwd: '/w', tool_name: 'Read', tool_input: { file_path: path.join(home, '.aws', 'credentials') }, tool_use_id: 'u' });
@@ -640,7 +639,7 @@ test('measured: hooks fire inside subagents too, so several hooks at once in one
   }
 });
 
-test('measured: the hooks.enabled warning says the hooks of that file do not run (plugin hooks do), not all hooks', (t) => {
+test('the hooks.enabled warning says the hooks of that file do not run (plugin hooks do), not all hooks', (t) => {
   const home = tempDir(t, 'zn-zc-warn-');
   write(home, { hooks: { enabled: false } });
   const w = zc.configWarnings({ home });
@@ -688,9 +687,272 @@ test('uninstall keeps what the user set after zn turned hooks on, and a re-insta
   assert.equal(readCfg(home2).hooks.enabled, false);
 });
 
+test('uninstall restores "hooks.enabled" only while a zn hook is still there, and reports a state file it cannot delete', { skip: !posix || (process.getuid && process.getuid() === 0) }, (t) => {
+  const home = tempDir(t, 'zn-zc-home-');
+  write(home, { hooks: { enabled: false } });
+  zc.install({ home, nodePath: '/usr/bin/node' });
+  const dir = path.dirname(path.join(home, '.zn', 'state', 'zcode-hooks-enabled.json'));
+  fs.chmodSync(dir, 0o555);
+  let rep;
+  try { rep = zc.uninstall({ home }); } finally { fs.chmodSync(dir, 0o755); }
+  assert.equal(rep.removed, 1);
+  assert.equal(rep.stateNotCleared, path.join(dir, 'zcode-hooks-enabled.json'));
+  assert.ok(rep.warnings.some((w) => /could not delete .*zcode-hooks-enabled\.json/.test(w)));
+  assert.deepEqual(readCfg(home), { hooks: { enabled: false } });
+  assert.ok(fs.existsSync(path.join(dir, 'zcode-hooks-enabled.json')));
+  // The user turns hooks on again (no zn hook in the file): a second uninstall must leave the switch on.
+  write(home, { hooks: { enabled: true, events: { Stop: [{ hooks: [{ type: 'process', command: 'x' }] }] } } });
+  const again = zc.uninstall({ home });
+  assert.equal(again.removed, 0);
+  assert.equal(readCfg(home).hooks.enabled, true);
+  assert.ok(!fs.existsSync(path.join(dir, 'zcode-hooks-enabled.json')), 'the leftover is cleared once no zn hook needs it');
+  assert.equal(again.stateNotCleared, undefined);
+});
+
 test('install and uninstall on a missing config leave an empty one', { skip: !posix }, (t) => {
   const home = tempDir(t, 'zn-zc-home-');
   zc.install({ home, nodePath: '/usr/bin/node' });
   zc.uninstall({ home });
   assert.deepEqual(readCfg(home), {});
+});
+
+/* ------------------- atomic install / uninstall, start-up deadline ------------------- */
+
+const stateFile = (home) => path.join(home, '.zn', 'state', 'zcode-hooks-enabled.json');
+
+test('install that cannot save its state leaves config.json byte for byte as it was, and a later uninstall changes nothing', { skip: !posix }, (t) => {
+  const hook = { type: 'process', command: 'node', args: ['/mine/check.mjs'] };
+  const home = tempDir(t, 'zn-zc-atomic-state-');
+  write(home, { hooks: { enabled: false, events: { Stop: [{ hooks: [hook] }] } } });
+  const text = fs.readFileSync(cliFile(home), 'utf8');
+  // A plain file where the state folder must be: the state cannot be written (the same outcome as an unwritable folder).
+  fs.mkdirSync(path.join(home, '.zn'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.zn', 'state'), 'not a folder');
+  assert.throws(() => zc.install({ home, nodePath: '/usr/bin/node' }));
+  assert.equal(fs.readFileSync(cliFile(home), 'utf8'), text, 'the user\'s hooks were not switched on');
+  assert.equal(zc.uninstall({ home }).removed, 0);
+  assert.equal(fs.readFileSync(cliFile(home), 'utf8'), text);
+  assert.deepEqual(fs.readdirSync(path.dirname(cliFile(home))).filter((f) => f.endsWith('.zn-tmp')), []);
+});
+
+test('install whose config write fails puts the state back (none, or the one that was there) and leaves config.json valid and unchanged', { skip: !posix }, (t) => {
+  const home = tempDir(t, 'zn-zc-atomic-cfg-');
+  write(home, { hooks: { enabled: false } });
+  const text = fs.readFileSync(cliFile(home), 'utf8');
+  const realWrite = cfg.writeJson;
+  cfg.writeJson = () => { throw new Error('disk full'); };
+  try {
+    assert.throws(() => zc.install({ home, nodePath: '/usr/bin/node' }), /disk full/);
+    assert.equal(fs.existsSync(stateFile(home)), false, 'no state without a config that needs it');
+    fs.mkdirSync(path.dirname(stateFile(home)), { recursive: true });
+    const old = JSON.stringify({ file: cliFile(home), previous: 'absent' }) + '\n';
+    fs.writeFileSync(stateFile(home), old);
+    assert.throws(() => zc.install({ home, nodePath: '/usr/bin/node' }), /disk full/);
+    assert.equal(fs.readFileSync(stateFile(home), 'utf8'), old, 'the state that was there stays');
+  } finally {
+    cfg.writeJson = realWrite;
+  }
+  assert.equal(fs.readFileSync(cliFile(home), 'utf8'), text);
+  JSON.parse(fs.readFileSync(cliFile(home), 'utf8'));
+});
+
+test('uninstall whose config write fails keeps the state; the retry gives hooks.enabled its old value back', { skip: !posix }, (t) => {
+  const hook = { type: 'process', command: 'node', args: ['/mine/check.mjs'] };
+  const home = tempDir(t, 'zn-zc-atomic-un-');
+  write(home, { hooks: { enabled: false, events: { Stop: [{ hooks: [hook] }] } } });
+  const original = fs.readFileSync(cliFile(home), 'utf8');
+  zc.install({ home, nodePath: '/usr/bin/node' });
+  const installed = fs.readFileSync(cliFile(home), 'utf8');
+  const realWrite = cfg.writeJson;
+  cfg.writeJson = () => { throw new Error('read-only file system'); };
+  try {
+    assert.throws(() => zc.uninstall({ home }), /read-only/);
+  } finally {
+    cfg.writeJson = realWrite;
+  }
+  assert.equal(fs.readFileSync(cliFile(home), 'utf8'), installed, 'config.json is as the install left it');
+  assert.ok(fs.existsSync(stateFile(home)), 'the state is kept until the config is restored');
+  zc.uninstall({ home });
+  assert.equal(fs.readFileSync(cliFile(home), 'utf8'), original);
+  assert.equal(fs.existsSync(stateFile(home)), false);
+});
+
+test('a state left by a crash before the config was written does not leak into the next install', { skip: !posix }, (t) => {
+  const home = tempDir(t, 'zn-zc-atomic-stale-');
+  write(home, { hooks: { enabled: false } });
+  fs.mkdirSync(path.dirname(stateFile(home)), { recursive: true });
+  fs.writeFileSync(stateFile(home), JSON.stringify({ file: cliFile(home), previous: 'absent' }) + '\n');
+  const text = fs.readFileSync(cliFile(home), 'utf8');
+  zc.install({ home, nodePath: '/usr/bin/node' });
+  zc.uninstall({ home });
+  assert.equal(fs.readFileSync(cliFile(home), 'utf8'), text, 'enabled goes back to false, not to "not set"');
+});
+
+function fakeNode(t, body) {
+  const dir = tempDir(t, 'zn-zc-fakenode-');
+  const f = path.join(dir, 'node');
+  fs.writeFileSync(f, '#!/bin/sh\n' + body + '\n', { mode: 0o755 });
+  return f;
+}
+
+test('launcher deadline: a hook stuck on start-up is answered before ZCode would time out (exit 2 / deny), with no wait for the stuck process', { skip: !posix }, (t) => {
+  const home = tempDir(t, 'zn-zc-deadline-');
+  const slow = fakeNode(t, 'cat >/dev/null; exec sleep 60');
+  const file = launcher.writeLauncher('zcode', slow, RUNNER, { home, env: process.env, deadlineS: 1 });
+  const env = { PATH: process.env.PATH, HOME: home };
+  for (const ev of ['PreToolUse', 'PermissionRequest', 'UserPromptSubmit']) {
+    const t0 = Date.now();
+    const r = spawnSync(file, [ev], { input: '{}', encoding: 'utf8', env, timeout: 20000 });
+    assert.equal(r.status, 2, ev + ' ' + r.stderr);
+    assert.match(r.stderr, /its hook failed, so this was blocked/);
+    assert.ok(Date.now() - t0 < 8000, 'answered by the deadline, not by the 60 s sleep');
+  }
+  const post = spawnSync(file, ['PostToolUse'], { input: '{}', encoding: 'utf8', env, timeout: 20000 });
+  assert.equal(post.status, 0);
+  assert.match(JSON.parse(post.stdout).systemMessage, /NOT protecting this session/);
+});
+
+test('launcher deadline: a hook that answers in time gets the input and its exit code and output pass through; nothing lingers', { skip: !posix }, (t) => {
+  const home = tempDir(t, 'zn-zc-deadline-ok-');
+  const echo = fakeNode(t, 'cat; exit 0');
+  const file = launcher.writeLauncher('zcode', echo, RUNNER, { home, env: process.env, deadlineS: 30 });
+  const t0 = Date.now();
+  const r = spawnSync(file, ['PreToolUse'], { input: '{"a":1}', encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home }, timeout: 20000 });
+  assert.equal(r.status, 0);
+  assert.equal(r.stdout, '{"a":1}');
+  assert.ok(Date.now() - t0 < 8000, 'returns at once, it does not wait for the 30 s timer');
+  const two = fakeNode(t, 'cat >/dev/null; echo refused >&2; exit 2');
+  const f2 = launcher.writeLauncher('zcode', two, RUNNER, { home: tempDir(t, 'zn-zc-deadline-2-'), env: process.env, deadlineS: 30 });
+  const r2 = spawnSync(f2, ['PreToolUse'], { input: '{}', encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home }, timeout: 20000 });
+  assert.equal(r2.status, 2);
+  assert.match(r2.stderr, /refused/);
+});
+
+test('install writes the zcode launcher with a deadline 2 s under the hook timeout; other agents\' launchers have none', { skip: !posix }, (t) => {
+  const home = tempDir(t, 'zn-zc-deadline-text-');
+  zc.install({ home, nodePath: '/usr/bin/node' });
+  const text = fs.readFileSync(launcher.launcherFile('zcode', { home, env: process.env }), 'utf8');
+  assert.equal(zc.LAUNCHER_DEADLINE_S, zc.HOOK_TIMEOUT_S - 2);
+  assert.match(text, new RegExp('sleep ' + zc.LAUNCHER_DEADLINE_S + ' &'));
+  assert.doesNotMatch(launcher.unixScript('codex', '/usr/bin/node', RUNNER), /zn_run/);
+});
+
+test('Windows launcher: ZCode only, the hook runs as a child with a deadline, a timeout kills the tree and takes the block path', () => {
+  const N = 'C:/Program Files/nodejs/node.exe';
+  const R = 'C:/zn/zn-gate/lib/hooks/runner.js';
+  const zcodeScript = (event) => launcher.windowsScript('zcode', event, N, R, { deadlineS: zc.LAUNCHER_DEADLINE_S });
+  const pre = zcodeScript('PreToolUse');
+  assert.match(pre, /function zr\(\$f, \$a\)/);
+  assert.ok(pre.includes('.Wait(' + zc.LAUNCHER_DEADLINE_S * 1000 + ')'));
+  assert.match(pre, /RedirectStandardInput = \$true/);
+  assert.match(pre, /OpenStandardInput\(\)\.CopyToAsync/);
+  assert.ok(pre.includes('try { & "$env:SystemRoot\\System32\\taskkill.exe" /PID $p.Id /T /F *> $null } catch {}; try { $p.Kill() } catch {}'));
+  assert.doesNotMatch(pre, /& taskkill\.exe/);
+  assert.match(pre, /\$rc = -1/);
+  // timeout (-1) and crashes fall through to the same block text as before: exit 2 with "hook failed" for the blocking events
+  assert.match(pre, /Console\]::Error\.WriteLine\('zn: its hook cannot start.*exit 2 # zn hook zcode$/);
+  assert.match(zcodeScript('PermissionRequest'), /exit 2 # zn hook zcode$/);
+  assert.match(zcodeScript('UserPromptSubmit'), /exit 2 # zn hook zcode$/);
+  assert.match(zcodeScript('PostToolUse'), /systemMessage.*exit 0 # zn hook zcode$/);
+  assert.doesNotMatch(zcodeScript('PostToolUse'), /exit 2 # zn hook/);
+  assert.ok(cfg.isOurs(pre, 'zcode'));
+  // install uses the 28 s constant
+});
+
+test('Windows launcher: install gives ZCode the deadline; other agents\' Windows launchers are unchanged', (t) => {
+  const home = tempDir(t, 'zn-zc-win-deadline-');
+  zc.install({ home, platform: 'win32', nodePath: 'C:/Program Files/nodejs/node.exe', runnerPath: 'C:/zn/zn-gate/lib/hooks/runner.js' });
+  const h = readCfg(home).hooks.events.PreToolUse.find((x) => x.hooks.some((y) => y.command === 'powershell.exe')).hooks[0];
+  const script = require('../lib/shell-quote').windowsCommandScript(zc.commandText(h));
+  assert.ok(script.includes('.Wait(' + zc.LAUNCHER_DEADLINE_S * 1000 + ')'));
+  for (const id of ['codex', 'cursor', 'gemini', 'antigravity']) {
+    const s = launcher.windowsScript(id, 'PreToolUse', 'C:/node/node.exe', 'C:/z/runner.js');
+    assert.doesNotMatch(s, /function zr|taskkill|Stopwatch/, id);
+    assert.match(s, /& 'C:\/node\/node\.exe' 'C:\/z\/runner\.js' /, id);
+  }
+  assert.equal(launcher.windowsScript('codex', 'PreToolUse', 'C:/node/node.exe', 'C:/z/runner.js', {}), launcher.windowsScript('codex', 'PreToolUse', 'C:/node/node.exe', 'C:/z/runner.js'));
+});
+
+test('launcher deadline: a grandchild that holds the output open neither keeps the caller waiting nor outlives the launcher', { skip: !posix }, (t) => {
+  const home = tempDir(t, 'zn-zc-grandchild-');
+  const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (_) { return false; } };
+  const cases = [
+    ['hook stuck after starting a grandchild', 2, 'cat >/dev/null; sleep 60 & echo $! > PIDFILE; wait'],
+    ['hook that answers and leaves a grandchild behind', 0, 'cat >/dev/null; sleep 60 & echo $! > PIDFILE; echo answer; exit 0'],
+  ];
+  for (const [name, status, body] of cases) {
+    const pidFile = path.join(home, 'pid-' + status);
+    const node = fakeNode(t, body.replace('PIDFILE', pidFile));
+    const file = launcher.writeLauncher('zcode', node, RUNNER, { home: tempDir(t, 'zn-zc-gc-h-'), env: process.env, deadlineS: 1 });
+    const t0 = Date.now();
+    const r = spawnSync(file, ['PreToolUse'], { input: '{}', encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home }, timeout: 20000 });
+    assert.equal(r.status, status, name + ' ' + r.stderr);
+    assert.ok(Date.now() - t0 < 5000, name + ': the caller sees the end of the output by the deadline, not after the 60 s sleep');
+    if (status === 0) assert.equal(r.stdout.trim(), 'answer', name);
+    const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+    assert.ok(pid > 0);
+    assert.equal(alive(pid), false, name + ': the grandchild is gone');
+  }
+});
+
+test('launcher deadline: a hook that ignores TERM is killed (KILL) one second after the deadline', { skip: !posix }, (t) => {
+  const home = tempDir(t, 'zn-zc-deadline-kill-');
+  const stubborn = fakeNode(t, "trap '' TERM; cat >/dev/null; while :; do /bin/sleep 1; done");
+  const file = launcher.writeLauncher('zcode', stubborn, RUNNER, { home, env: process.env, deadlineS: 2 });
+  const t0 = Date.now();
+  const r = spawnSync(file, ['PreToolUse'], { input: '{}', encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home }, timeout: 20000 });
+  assert.equal(r.status, 2, r.stderr);
+  assert.match(r.stderr, /its hook failed, so this was blocked/);
+  const ms = Date.now() - t0;
+  assert.ok(ms >= 2900 && ms < 9000, 'killed at deadline + 1 s, not left running (' + ms + ' ms)');
+});
+
+test('launcher deadline: a TERM sent to the launcher removes its private temporary files', { skip: !posix }, async (t) => {
+  const home = tempDir(t, 'zn-zc-term-');
+  const tmp = tempDir(t, 'zn-zc-term-tmp-');
+  const hook = fakeNode(t, 'cat >/dev/null; sleep 30');
+  const file = launcher.writeLauncher('zcode', hook, RUNNER, { home, env: process.env, deadlineS: 3 });
+  const { spawn } = require('child_process');
+  const child = spawn(file, ['PreToolUse'], { env: { PATH: process.env.PATH, HOME: home, TMPDIR: tmp }, stdio: ['pipe', 'ignore', 'ignore'] });
+  const closed = new Promise((resolve) => child.on('close', (code, sig) => resolve({ code, sig })));
+  child.stdin.end('{}');
+  const files = () => fs.readdirSync(tmp).filter((f) => f.startsWith('zn-hook.'));
+  for (let i = 0; i < 100 && files().length < 2; i++) await new Promise((r) => setTimeout(r, 50));
+  assert.equal(files().length, 2, 'the launcher made its two private files');
+  child.kill('SIGTERM');
+  const r = await closed;
+  assert.ok(r.code === 143 || r.sig === 'SIGTERM', 'the launcher ended on TERM: ' + JSON.stringify(r));
+  assert.deepEqual(files(), [], 'the temporary files are gone');
+});
+
+test('launcher deadline: a timer that cannot start blocks without running the hook', { skip: !posix }, (t) => {
+  const home = tempDir(t, 'zn-zc-deadline-notimer-');
+  const marker = path.join(home, 'ran');
+  const hook = fakeNode(t, 'touch ' + marker + '; cat; exit 0');
+  const file = launcher.writeLauncher('zcode', hook, RUNNER, { home, env: process.env, deadlineS: 5 });
+  const text = fs.readFileSync(file, 'utf8');
+  assert.ok(text.includes('/bin/sleep 5 &'), 'the timer is /bin/sleep with an absolute path');
+  fs.writeFileSync(file, text.split('/bin/sleep').join('/nonexistent/sleep'), { mode: 0o755 });
+  const r = spawnSync(file, ['PreToolUse'], { input: '{}', encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home }, timeout: 20000 });
+  assert.equal(r.status, 2, r.stderr);
+  assert.equal(fs.existsSync(marker), false, 'the hook did not run without a deadline');
+});
+
+test('failed install and failed uninstall leave no .bak-zn file behind', { skip: !posix }, (t) => {
+  const home = tempDir(t, 'zn-zc-nobak-');
+  write(home, { hooks: { enabled: false } });
+  const realWrite = cfg.writeJson;
+  cfg.writeJson = () => { throw new Error('disk full'); };
+  try {
+    assert.throws(() => zc.install({ home, nodePath: '/usr/bin/node' }), /disk full/);
+  } finally { cfg.writeJson = realWrite; }
+  const baks = () => fs.readdirSync(path.dirname(cliFile(home))).filter((f) => f.includes('.bak-zn-'));
+  assert.deepEqual(baks(), []);
+  zc.install({ home, nodePath: '/usr/bin/node' });
+  for (const f of baks()) fs.unlinkSync(path.join(path.dirname(cliFile(home)), f));
+  cfg.writeJson = () => { throw new Error('disk full'); };
+  try {
+    assert.throws(() => zc.uninstall({ home }), /disk full/);
+  } finally { cfg.writeJson = realWrite; }
+  assert.deepEqual(baks(), []);
 });

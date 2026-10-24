@@ -259,7 +259,7 @@ async function guide(opts = {}) {
   w('\n');
   const tail = () => w('(To wrap the MCP servers in your agent configs, which `zn-gate init` used to do: `zn-gate init --wrap-mcp`.)\n');
   if (!items.some((i) => i.found)) {
-    w('No supported coding agent was found (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, Zcode). Nothing was changed.\n');
+    w('No supported coding agent was found (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app). Nothing was changed.\n');
     w('Install one, then run `npx -y zn-gate init` again. Other editors: https://usezn.com/docs/install\n');
     tail();
     return 1;

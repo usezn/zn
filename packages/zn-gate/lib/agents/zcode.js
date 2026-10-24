@@ -1,24 +1,22 @@
 'use strict';
 
 /**
- * Zcode (z.ai) adapter.
+ * ZCode desktop app adapter.
  *
  * Sources (read 2026-10-24):
- *  - https://zcode.z.ai/en/docs/hooks and apps/zcode-cli/docs/usage/09-hooks.md in github.com/zai-org/ZCode
- *  - the source of that repository (Apache-2.0): apps/zcode-cli/packages/contracts/src/hooks (event and output
- *    schemas), packages/core/src/hooks (how a hook is run and how its answer is read), packages/adapters/src/config
- *    (the config file schema) and packages/core/src/tool/handlers (built-in tool names and arguments).
+ *  - https://zcode.z.ai/en/docs/hooks (the official documentation: events, input and output schemas, config file)
+ *  - zn's own automated tests (no ZCode binary is used; see the facts block below)
  *
  *  Config: ~/.zcode/cli/config.json (user). Hooks there only run when hooks.enabled is true (off by default):
  *    { "hooks": { "enabled": true, "events": { "<Event>": [ { "matcher": "<name list or regex>",
  *        "hooks": [ { "type": "process", "command": "<file>", "args": ["..."], "timeoutMs": <ms> } ] } ] } } }
  *  "process" runs the file with the arguments directly (no shell); "command" hands a string to the shell.
- *  The hooks, hook group and event objects are strict in Zcode's schema: a key it does not know makes it ignore the
- *  whole file, so zn writes only the keys above. Project hooks (<project>/.zcode/config.json, zcode.json) are
+ *  zn writes only the keys above (the documentation says unknown fields in a hook answer are ignored; it does not say how
+ *  the config file treats an unknown key). Project hooks (<project>/.zcode/config.json, zcode.json) are
  *  ignored as a whole by the current version, so there is no project install here. Hooks read when a session
  *  starts: a running session does not see a change.
  *
- *  stdin (one JSON line) carries both Zcode's camelCase fields and Claude Code's snake_case aliases:
+ *  stdin (one JSON line) carries both ZCode's camelCase fields and Claude Code's snake_case aliases:
  *    session_id, cwd, hook_event_name, permission_mode, transcript_path, and for tool events tool_name,
  *    tool_input, tool_use_id (PostToolUse adds tool_response; UserPromptSubmit adds prompt).
  *  Answers (stdout JSON, exit 0), validated against a schema (a wrong shape fails the hook, which then does not block):
@@ -30,8 +28,8 @@
  *    PostToolUse        hookSpecificOutput.{hookEventName, additionalContext}: appended for the model; it cannot replace
  *                       the tool output
  *  Exit code 2 blocks PreToolUse, PermissionRequest and UserPromptSubmit (stderr is the reason). Any other
- *  non-zero code, a timeout, a start failure or a malformed answer is "recoverable": diagnostics only, and the
- *  tool RUNS. So a hook that cannot start blocks nothing by itself: zn's launcher (lib/agents/launcher.js) exits 2
+ *  non-zero code or a wrongly typed answer fails the hook "recoverably" (documented). A timeout or a start failure is not
+ *  documented: assumed to let the tool RUN. So a hook that cannot start may block nothing by itself: zn's launcher (lib/agents/launcher.js) exits 2
  *  when the Node.js it was installed with is gone, and the runner has its own watchdog below the hook timeout.
  *
  * What that means here (docs/compat.md):
@@ -52,34 +50,36 @@ const cfg = require('./config-file');
 const launcher = require('./launcher');
 const { whichSync } = require('../broker/markers');
 const { shQuote, portablePath } = require('../shell-quote');
+const { writeFileAtomic } = require('../broker/files');
 
 const id = 'zcode';
 
 /* ------------------------------------------------------------------------------------------------------------------
- * Facts about Zcode, in one place. Measured on zcode-cli 0.17.0 (ZCode commit 3c5b2276, 2026-10-20) on Linux x64,
- * headless (--prompt) and in the terminal UI, with a fake model provider. Not tested: Windows, macOS, the desktop app.
- * Measured: hooks fire headless and in every permission mode (yolo included); a "process" hook is run directly with
- * no shell, a "command" hook with /bin/sh -c; exit code 2 blocks PreToolUse, PermissionRequest and UserPromptSubmit;
- * on UserPromptSubmit a permissionDecision does not block (exit 2, {decision:"block"} or {continue:false} do);
- * PermissionRequest only fires when a person would be asked (the terminal UI), and behavior "allow" there skips the
- * approval screen, so zn only ever answers deny; any other failure, a timeout or a malformed answer lets the call
- * run; hooks also fire inside subagents (so a hook must be reentrant); hooks.enabled=false turns off the hooks of
- * the user's config but not the hooks of a plugin; the environment of a hook carries CLAUDE_PROJECT_DIR and
- * CLAUDE_SESSION_ID next to ZCODE_PROJECT_DIR and ZCODE_SESSION_ID, so zn never takes the agent from the environment
- * (it comes from the launcher the hook runs: `runner.js zcode`).
+ * Facts about ZCode, in one place. Source: the official hooks documentation (https://zcode.z.ai/en/docs/hooks): a "process"
+ * hook is run directly with no shell, a "command" hook through the shell; exit code 2 blocks; any other non-zero code fails
+ * the hook recoverably; a UserPromptSubmit hook cannot rewrite the prompt (it can block the request); PermissionRequest
+ * fires only when the permission outcome would prompt the user; hooks.enabled=false turns off the hooks of the user's
+ * config, while the hooks of a plugin follow the plugin. Not in the documentation, so assumed and to be verified on the
+ * desktop app: what happens when a hook cannot start, times out or prints an unreadable answer (zn assumes the call runs);
+ * whether hooks fire inside subagents (zn's hook is reentrant either way); the exact environment of a hook (zn never takes
+ * the agent from the environment: it comes from the launcher the hook runs, `runner.js zcode`). zn only ever answers deny on
+ * PermissionRequest. Not tested: Windows with ZCode itself, macOS, the desktop app.
  * ---------------------------------------------------------------------------------------------------------------- */
-// Zcode's own default is 60000. zn's runner answers by itself 5 seconds before this (lib/hooks/runner.js).
+// ZCode's documented default is 60000. zn sets 30000 on its entries; zn's runner answers by itself 5 seconds before this (lib/hooks/runner.js).
 const HOOK_TIMEOUT_S = 30;
 const HOOK_TIMEOUT_MS = HOOK_TIMEOUT_S * 1000;
 const HOOK_STATUS = 'zn: checking for secrets';
+// The launcher's own deadline: assumed (not documented): the call runs when a hook times out, and the runner arms its watchdog only after it has
+// started, so a hook stuck on start-up is answered (blocked) by the launcher 2 seconds before ZCode gives up.
+const LAUNCHER_DEADLINE_S = HOOK_TIMEOUT_S - 2;
 // Matchers: "*" (or none) matches every tool; a name list is only letters, digits, underscores and "|"; anything else is a regex.
 const PRE_MATCHER = '*';
 const PERMISSION_MATCHER = '*';
 // Tools whose output can hold a secret: the built-in ones that print file or command text, and every MCP tool.
 const POST_MATCHER = '^(Bash|Read|Grep|WebFetch)$|^mcp__.*';
 const EVENTS = ['PreToolUse', 'PermissionRequest', 'UserPromptSubmit', 'PostToolUse'];
-// Tool names seen at run time: Bash, Read, Write, Edit, WebFetch, mcp__<server key>__<tool> (Glob and Grep only appear when
-// Bash is disallowed). ApplyPatch was not seen; the mapping stays, it is harmless.
+// Tool names assumed (to verify on the desktop app): Bash, Read, Write, Edit, WebFetch, mcp__<server key>__<tool> (Glob and Grep only appear when
+// Bash is disallowed). ApplyPatch is assumed; the mapping stays, it is harmless.
 const SHELL_TOOLS = new Set(['Bash']);
 const READ_TOOLS = new Set(['Read']);
 const WRITE_TOOLS = new Set(['Write']);
@@ -105,8 +105,8 @@ function firstString(obj, keys) {
 
 /**
  * Whether the "secrets" MCP server a call goes to is zn's own: the user's config names it, and it is zn's
- * (`secrets-mcp` run through zn-gate's bin/cli.js, `zn` or `zn-gate`). Zcode lets the user's server win over a
- * project server of the same name (docs/usage/07-mcp.md), so a project cannot stand in for it. Anything unreadable gives null.
+ * (`secrets-mcp` run through zn-gate's bin/cli.js, `zn` or `zn-gate`). ZCode lets the user's server win over a
+ * project server of the same name (the official MCP documentation, https://zcode.z.ai/en/docs/mcp-services: to be verified on the desktop app), so a project cannot stand in for it. Anything unreadable gives null.
  */
 function znMcpServerIsOurs(server, opts = {}) {
   if (server !== MCP_SERVER_NAME) return null;
@@ -200,23 +200,23 @@ function normalize(raw) {
 const preDeny = (reason) => ({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason || 'Blocked by zn' } });
 
 /**
- * The text appended for the model after a tool that printed a secret. Zcode's PostToolUse cannot replace the
+ * The text appended for the model after a tool that printed a secret. ZCode's PostToolUse cannot replace the
  * output, so this only tells the model (and through it the user) that the value was exposed.
  */
 function postNotice(d) {
   const n = d.stats && d.stats.redacted;
   if (n > 0) {
-    return 'zn: this output contains ' + n + ' secret value(s). Zcode cannot hide tool output, so the value is already in this conversation. ' +
+    return 'zn: this output contains ' + n + ' secret value(s). ZCode cannot hide tool output, so the value is already in this conversation. ' +
       'Do not repeat or write it anywhere, and tell the user to rotate it if it is real. Next time keep secrets in the zn vault instead of printing them.';
   }
   if (d.stats && d.stats.withheld) {
-    return 'zn: part of this output is too large for zn to check for secrets in time, and Zcode cannot withhold it. Ask for a smaller output (a line range, grep, head or tail).';
+    return 'zn: part of this output is too large for zn to check for secrets in time, and ZCode cannot withhold it. Ask for a smaller output (a line range, grep, head or tail).';
   }
   return d.message || null;
 }
 
 /**
- * Internal decision -> Zcode hook JSON, or null for "no opinion" (zn never says allow: that could skip the user's
+ * Internal decision -> ZCode hook JSON, or null for "no opinion" (zn never says allow: that could skip the user's
  * own confirmation). PermissionRequest only ever gets a deny.
  */
 function respond(d) {
@@ -291,7 +291,7 @@ function stripOurs(groups) {
 }
 
 /**
- * The hook entry for each event. A user install goes through zn's launcher (lib/agents/launcher.js): Zcode lets a
+ * The hook entry for each event. A user install goes through zn's launcher (lib/agents/launcher.js): ZCode lets a
  * call run when a hook cannot start, so a Node.js that has gone away must block (exit 2) instead. On Windows the
  * same three steps are an inline PowerShell script. A command given by the caller keeps the plain command.
  */
@@ -303,13 +303,13 @@ function handlerFor(opts = {}) {
   const runner = opts.runnerPath || cfg.runnerPath();
   if (platform === 'win32') {
     return (event) => {
-      const script = launcher.windowsScript(id, event, node, runner);
+      const script = launcher.windowsScript(id, event, node, runner, { deadlineS: opts.deadlineS || LAUNCHER_DEADLINE_S });
       if (!script) return { type: 'command', command: cfg.hookCommandWindows(id, opts), ...base };
       const [file, ...args] = launcher.windowsScriptCommand(script).split(' ');
       return { type: 'process', command: file, args, ...base };
     };
   }
-  const file = launcher.writeLauncher(id, node, runner, opts);
+  const file = launcher.writeLauncher(id, node, runner, { ...opts, deadlineS: LAUNCHER_DEADLINE_S });
   return (event) => ({ type: 'process', command: portablePath(file, platform), args: [event], ...base });
 }
 
@@ -351,7 +351,7 @@ function mcpServerConfig(opts = {}) {
 }
 
 /*
- * Zcode's config schema is strict (an unknown key makes it drop the whole file), so the value "hooks.enabled" had
+ * ZCode's config schema is strict (an unknown key makes it drop the whole file), so the value "hooks.enabled" had
  * before zn turned it on is kept in zn's own state, never in config.json: ~/.zn/state/zcode-hooks-enabled.json.
  */
 function enabledStateFile(opts = {}) {
@@ -371,11 +371,24 @@ function readEnabledState(opts, file) {
 function writeEnabledState(opts, file, previous) {
   const f = enabledStateFile(opts);
   fs.mkdirSync(path.dirname(f), { recursive: true });
-  fs.writeFileSync(f, JSON.stringify({ file, previous }) + '\n', { mode: 0o600 });
+  writeFileAtomic(f, JSON.stringify({ file, previous }) + '\n', 0o600);
 }
 
+/** The state file as it is on disk (a string), or null when there is none; used to put it back if an install fails. */
+function snapshotEnabledState(opts) {
+  try { return fs.readFileSync(enabledStateFile(opts), 'utf8'); } catch (_) { return null; }
+}
+
+function restoreEnabledState(opts, snapshot) {
+  try {
+    if (snapshot === null) clearEnabledState(opts); else writeFileAtomic(enabledStateFile(opts), snapshot, 0o600);
+  } catch (_) { /* best effort: a state that no longer matches the config is ignored by uninstall */ }
+}
+
+/** Deletes the state file. True when it is gone (or never was); false when it could not be deleted. */
 function clearEnabledState(opts) {
-  try { fs.unlinkSync(enabledStateFile(opts)); } catch (_) { /* none */ }
+  try { fs.unlinkSync(enabledStateFile(opts)); } catch (err) { return !!err && err.code === 'ENOENT'; }
+  return true;
 }
 
 /* "Event: command" for each hook in events that is not zn's. */
@@ -393,13 +406,13 @@ function userHookNames(events) {
 
 function install(opts = {}) {
   if ((opts.scope || 'user') === 'project') {
-    throw new Error('Zcode ignores the hooks of a project (it only runs the ones in ~/.zcode/cli/config.json), so there is no project install. Run `zn hooks install zcode` without --project.');
+    throw new Error('ZCode ignores the hooks of a project (it only runs the ones in ~/.zcode/cli/config.json), so there is no project install. Run `zn hooks install zcode` without --project.');
   }
   const file = configFile(opts);
   const data = cfg.readJson(file);
   const { hooks, events } = hooksTree(data, file);
   const servers = mcpServers(data, file, false);
-  const report = { settings: file, backup: cfg.backup(file), warnings: [] };
+  const report = { settings: file, backup: null, warnings: [] };
   const ours = hookGroups(handlerFor(opts));
   const wasOff = hooks.enabled !== true;
   const previousEnabled = hooks.enabled;
@@ -419,25 +432,45 @@ function install(opts = {}) {
       report.mcp = file;
     }
   }
-  cfg.writeJson(file, data);
-  // Keep the value "enabled" had, so uninstall can give it back (a re-install over zn's own switch keeps the first one).
-  if (wasOff && !readEnabledState(opts, file)) writeEnabledState(opts, file, previousEnabled === false ? false : 'absent');
+  // Order, so that a failure or a crash at any point leaves the old state or the new one, never a config that turned the
+  // user's hooks on with nothing recorded: (1) the launcher (already written, atomically, and shared), (2) the previous value
+  // of "enabled" in zn's state, (3) config.json last, atomically. If (3) fails the state goes back to what it was. A state
+  // left by a crash between (2) and (3) is harmless: uninstall only uses it while hooks.enabled is true.
+  // While "enabled" is not true no state of zn's can be current (its switch is off), so the first value is recorded again.
+  const stateBefore = snapshotEnabledState(opts);
+  if (wasOff) writeEnabledState(opts, file, previousEnabled === false ? false : 'absent');
+  // The backup is taken right before the write and removed again if the write fails: a failed install leaves no file behind.
+  report.backup = cfg.backup(file);
+  try {
+    cfg.writeJson(file, data);
+  } catch (err) {
+    restoreEnabledState(opts, stateBefore);
+    if (report.backup) { try { fs.unlinkSync(report.backup); } catch (_) { /* none */ } }
+    throw err;
+  }
   if (userHooks.length) {
-    report.warnings.push('"hooks.enabled" was ' + (previousEnabled === false ? 'false' : 'not set') + ' in ' + file + ', so these hooks of yours did not run until now and will run from the next Zcode session: ' + userHooks.join('; ') + '. `zn hooks uninstall zcode` puts the switch back.');
+    report.warnings.push('"hooks.enabled" was ' + (previousEnabled === false ? 'false' : 'not set') + ' in ' + file + ', so these hooks of yours did not run until now and will run from the next ZCode session: ' + userHooks.join('; ') + '. `zn hooks uninstall zcode` puts the switch back.');
   }
   report.warnings.push('zn checks tool calls (PreToolUse, PermissionRequest) and prompts before they run: it blocks reads and writes of secret files, shell commands that handle secrets, MCP calls that would send a secret and prompts that contain one.');
-  report.warnings.push('Zcode cannot rewrite what a tool returns: a value printed by a command or read from a file reaches the model. zn adds a notice to the output when it holds a secret. Keep secrets in the vault.');
-  report.warnings.push('Zcode runs hooks only from ' + file + ' (hooks of a project are ignored) and only when "hooks.enabled" is true' + (wasOff ? ': zn turned it on' : '') + '. Start a new Zcode session: a running one keeps the hooks it started with.');
-  report.warnings.push('Zcode lets a call run when its hook cannot start or crashes (only exit code 2 blocks). If the Node.js zn was installed with goes away, zn\'s launcher blocks the call instead; run `zn-gate check` to see that the hook works.');
-  if (data.features && data.features.mcp === false) report.warnings.push('"features.mcp" is false in ' + file + ', so Zcode starts no MCP server, zn\'s "secrets" server included.');
+  report.warnings.push('ZCode cannot rewrite what a tool returns: a value printed by a command or read from a file reaches the model. zn adds a notice to the output when it holds a secret. Keep secrets in the vault.');
+  report.warnings.push('ZCode runs hooks only from ' + file + ' (hooks of a project are ignored) and only when "hooks.enabled" is true' + (wasOff ? ': zn turned it on' : '') + '. Start a new ZCode session: a running one keeps the hooks it started with.');
+  report.warnings.push('ZCode lets a call run when its hook cannot start or crashes (only exit code 2 blocks). If the Node.js zn was installed with goes away, zn\'s launcher blocks the call instead; run `zn-gate check` to see that the hook works.');
+  if (data.features && data.features.mcp === false) report.warnings.push('"features.mcp" is false in ' + file + ', so ZCode starts no MCP server, zn\'s "secrets" server included.');
   return report;
+}
+
+/* Deletes the state after a config that no longer needs it; a failure is reported, never silent. */
+function dropState(opts, report) {
+  if (clearEnabledState(opts)) return;
+  report.stateNotCleared = enabledStateFile(opts);
+  report.warnings.push('could not delete ' + report.stateNotCleared + ' (a leftover of the switch zn turned on); delete it by hand, or a later uninstall could change "hooks.enabled" again.');
 }
 
 function uninstall(opts = {}) {
   const file = configFile(opts);
   const report = { settings: file, backup: null, removed: 0, warnings: [] };
   if ((opts.scope || 'user') === 'project') {
-    report.warnings.push('Zcode ignores the hooks of a project, so zn never installs there: nothing to remove. Run `zn hooks uninstall zcode` without --project to remove the user hooks.');
+    report.warnings.push('ZCode ignores the hooks of a project, so zn never installs there: nothing to remove. Run `zn hooks uninstall zcode` without --project to remove the user hooks.');
     return report;
   }
   if (!fs.existsSync(file)) return report;
@@ -447,13 +480,17 @@ function uninstall(opts = {}) {
   const before = JSON.stringify(data);
   // Give "enabled" back the value it had before zn turned it on, unless the user changed it since.
   const state = readEnabledState(opts, file);
-  const restored = state && hooks.enabled === true;
+  // Only while one of zn's hook entries is still there: a state left behind by an earlier uninstall must not switch off
+  // hooks that the user turned on again afterwards.
+  let hadOurs = false;
+  for (const event of Object.keys(events)) if (Array.isArray(events[event]) && JSON.stringify(stripOurs(events[event])) !== JSON.stringify(events[event])) hadOurs = true;
+  const restored = state && hooks.enabled === true && hadOurs;
   for (const event of Object.keys(events)) {
     const kept = stripOurs(events[event]);
     if (kept.length) events[event] = kept; else delete events[event];
   }
   if (Object.keys(events).length) hooks.events = events; else delete hooks.events;
-  // With nothing of the user's left, "enabled" alone is just the switch zn turned on: Zcode's default is off.
+  // With nothing of the user's left, "enabled" alone is just the switch zn turned on: ZCode's default is off.
   if (restored) {
     if (state.previous === false) hooks.enabled = false; else delete hooks.enabled;
     if (Object.keys(hooks).length === 0) delete data.hooks;
@@ -470,11 +507,21 @@ function uninstall(opts = {}) {
       report.warnings.push('left the MCP server named "' + MCP_SERVER_NAME + '" in place: it is not zn\'s');
     }
   }
-  if (state) clearEnabledState(opts);
-  if (JSON.stringify(data) === before) return report;
+  // Config first, state after: if the write fails the config is untouched and the state still describes it; the state is
+  // dropped only once the config no longer needs it.
+  if (JSON.stringify(data) === before) {
+    if (state) dropState(opts, report);
+    return report;
+  }
   report.backup = cfg.backup(file);
   report.removed = 1;
-  cfg.writeJson(file, data);
+  try {
+    cfg.writeJson(file, data);
+  } catch (err) {
+    if (report.backup) { try { fs.unlinkSync(report.backup); } catch (_) { /* none */ } }
+    throw err;
+  }
+  if (state) dropState(opts, report);
   // The launcher (see handlerFor) is shared by every config of this machine: one uninstall leaves it in place,
   // only the machine-wide uninstall (opts.removeLauncher) deletes it.
   if (opts.removeLauncher === true) {
@@ -484,7 +531,7 @@ function uninstall(opts = {}) {
 }
 
 /**
- * Settings that stop zn's hooks from running (read-only): {problems, notes}. Zcode runs no hook unless
+ * Settings that stop zn's hooks from running (read-only): {problems, notes}. ZCode runs no hook unless
  * hooks.enabled is true, and a single entry can be switched off with "enabled": false.
  */
 function configWarnings(opts = {}) {
@@ -500,19 +547,19 @@ function configWarnings(opts = {}) {
   if (!isObj(data)) return out;
   const hooks = isObj(data.hooks) ? data.hooks : {};
   if (hooks.enabled !== true) {
-    out.problems.push('"hooks.enabled" is ' + (hooks.enabled === false ? 'false' : 'not set') + ' in ' + file + ', so Zcode runs none of the hooks in that file, zn\'s included');
+    out.problems.push('"hooks.enabled" is ' + (hooks.enabled === false ? 'false' : 'not set') + ' in ' + file + ', so ZCode runs none of the hooks in that file, zn\'s included');
     return out;
   }
   const events = isObj(hooks.events) ? hooks.events : {};
   for (const [event, groups] of Object.entries(events)) {
     for (const g of Array.isArray(groups) ? groups : []) {
       for (const h of isObj(g) && Array.isArray(g.hooks) ? g.hooks : []) {
-        if (isObj(h) && isOursEntry(h) && h.enabled === false) out.problems.push('zn\'s ' + event + ' hook has "enabled": false in ' + file + ', so Zcode skips it');
+        if (isObj(h) && isOursEntry(h) && h.enabled === false) out.problems.push('zn\'s ' + event + ' hook has "enabled": false in ' + file + ', so ZCode skips it');
         if (isObj(h) && isOursEntry(h) && h.async === true) out.problems.push('zn\'s ' + event + ' hook runs in the background (async) in ' + file + ', and a background hook cannot block anything');
       }
     }
   }
-  if (isObj(data.features) && data.features.mcp === false) out.notes.push('"features.mcp" is false in ' + file + ', so Zcode does not start zn\'s "secrets" MCP server');
+  if (isObj(data.features) && data.features.mcp === false) out.notes.push('"features.mcp" is false in ' + file + ', so ZCode does not start zn\'s "secrets" MCP server');
   return out;
 }
 
@@ -531,6 +578,7 @@ module.exports = {
   capabilities: { ask: 'pre_tool', rewriteInput: false, rewriteOutput: false },
   HOOK_TIMEOUT_S,
   HOOK_TIMEOUT_MS,
+  LAUNCHER_DEADLINE_S,
   HOOK_STATUS,
   PRE_MATCHER,
   POST_MATCHER,

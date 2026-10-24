@@ -44,7 +44,7 @@ way to read a file. The point is that the agent's normal tools do not hand
 values to the model. The hooks also block the agent's file tools and shell
 commands from writing `~/.zn` and the agents' own hook and plugin settings:
 the files (`.claude/settings*.json`, `.codex/` files, `.cursor/hooks.json`, the
-OpenCode plugin and `opencode.json`, Antigravity's hook and settings files, Zcode's `config.json` and Gemini CLI's settings files,
+OpenCode plugin and `opencode.json`, Antigravity's hook and settings files, ZCode's `config.json` and Gemini CLI's settings files,
 listed under "Experimental adapters" below) and the directories that hold them
 (`~/.claude`, `~/.codex`, `~/.cursor`, `~/.config/opencode`, the same in the
 project, and the locations `CODEX_HOME`, `OPENCODE_CONFIG`,
@@ -464,7 +464,7 @@ stop malware running as the same user (see above).
 - **The hook process does not start at all** (for example, Node moved after an
   upgrade and the hook command points to the old path): what happens depends on
   the agent and on how the hooks were installed. A user install blocks tool
-  calls in Claude Code, Codex CLI, Cursor, Gemini CLI, Antigravity and Zcode through its
+  calls in Claude Code, Codex CLI, Cursor, Gemini CLI, Antigravity and ZCode desktop app through its
   launcher script; a project install, older hooks and the plugins differ per
   agent, and Codex CLI and Gemini CLI let the call go ahead there. See
   [If your agent blocks every prompt](compat.md#if-your-agent-blocks-every-prompt),
