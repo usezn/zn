@@ -6,10 +6,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-25.11
+ * RULES_VERSION: 2026-10-25.12
  */
 
-const RULES_VERSION = '2026-10-25.11';
+const RULES_VERSION = '2026-10-25.12';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -153,8 +153,8 @@ const OPEN_TAG_RE = /<[a-z0-9]+(?![A-Za-z0-9_])([^<>]*)(>?)/gi;
 const HIDDEN_ATTR_RE = /(?<![A-Za-z0-9_-])(?:display[\t\n\f\r ]*:[\t\n\f\r ]*none|visibility[\t\n\f\r ]*:[\t\n\f\r ]*hidden|opacity[\t\n\f\r ]*:[\t\n\f\r ]*0(?:\.0+)?(?![0-9.])|font-size[\t\n\f\r ]*:[\t\n\f\r ]*0(?:px)?(?![0-9.])|color[\t\n\f\r ]*:[\t\n\f\r ]*transparent|text-indent[\t\n\f\r ]*:[\t\n\f\r ]*-[0-9]{3,}px)/i;
 // An element of at most 1px, or with a clip that leaves nothing visible, or with no height and
 // its overflow cut off, is hidden in the way screen-reader-only text is.
-const TINY_WIDTH_CSS_RE = /(?<![A-Za-z0-9_-])(?:max-)?width[\t\n\f\r ]*:[\t\n\f\r ]*(?:0(?:\.0+)?(?:[a-z]+|%)?(?![0-9.])|(?:0(?:\.[0-9]+)?|1(?:\.0+)?)(?:px)?(?![0-9.a-z%]))/i;
-const TINY_HEIGHT_CSS_RE = /(?<![A-Za-z0-9_-])(?:max-)?height[\t\n\f\r ]*:[\t\n\f\r ]*(?:0(?:\.0+)?(?:[a-z]+|%)?(?![0-9.])|(?:0(?:\.[0-9]+)?|1(?:\.0+)?)(?:px)?(?![0-9.a-z%]))/i;
+const TINY_WIDTH_CSS_RE = /(?<![A-Za-z0-9_-])(?:max-)?width[\t\n\f\r ]*:[\t\n\f\r ]*(?:(?:0+(?:\.0*)?|\.0+)(?:e[+-]?[0-9]+)?(?:[a-z]+|%)?(?![0-9.])|(?:0+(?:\.[0-9]+)?|\.[0-9]+|0*1(?:\.0+)?)(?:e(?:[+-]?0+|-[0-9]+))?(?:px)?(?![0-9.a-z%]))/i;
+const TINY_HEIGHT_CSS_RE = /(?<![A-Za-z0-9_-])(?:max-)?height[\t\n\f\r ]*:[\t\n\f\r ]*(?:(?:0+(?:\.0*)?|\.0+)(?:e[+-]?[0-9]+)?(?:[a-z]+|%)?(?![0-9.])|(?:0+(?:\.[0-9]+)?|\.[0-9]+|0*1(?:\.0+)?)(?:e(?:[+-]?0+|-[0-9]+))?(?:px)?(?![0-9.a-z%]))/i;
 const OVERFLOW_HIDDEN_CSS_RE = /(?<![A-Za-z0-9_-])overflow(?:-[xy])?[\t\n\f\r ]*:[\t\n\f\r ]*hidden(?![A-Za-z0-9_-])/i;
 const CLIP_CSS_RE = /(?<![A-Za-z0-9_-])(?:clip[\t\n\f\r ]*:[\t\n\f\r ]*rect\([\t\n\f\r ]*(?:0|1px)|clip-path[\t\n\f\r ]*:[\t\n\f\r ]*inset\([\t\n\f\r ]*(?:50|100)%)/i;
 // One attribute: name, then an optional value (double-quoted, single-quoted

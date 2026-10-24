@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-25.11
+RULES_VERSION: 2026-10-25.12
 Zero external dependencies. Pure Python stdlib.
 """
 
@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, overload
 
 
-RULES_VERSION = "2026-10-25.11"
+RULES_VERSION = "2026-10-25.12"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -192,8 +192,8 @@ OPEN_TAG_RE = re.compile(r'<[a-z0-9]+(?![A-Za-z0-9_])([^<>]*)(>?)', re.IGNORECAS
 HIDDEN_ATTR_RE = re.compile(r'(?<![A-Za-z0-9_-])(?:display[\t\n\f\r ]*:[\t\n\f\r ]*none|visibility[\t\n\f\r ]*:[\t\n\f\r ]*hidden|opacity[\t\n\f\r ]*:[\t\n\f\r ]*0(?:\.0+)?(?![0-9.])|font-size[\t\n\f\r ]*:[\t\n\f\r ]*0(?:px)?(?![0-9.])|color[\t\n\f\r ]*:[\t\n\f\r ]*transparent|text-indent[\t\n\f\r ]*:[\t\n\f\r ]*-[0-9]{3,}px)', re.IGNORECASE)
 # An element of at most 1px, or with a clip that leaves nothing visible, or with no height and
 # its overflow cut off, is hidden in the way screen-reader-only text is.
-TINY_WIDTH_CSS_RE = re.compile(r'(?<![A-Za-z0-9_-])(?:max-)?width[\t\n\f\r ]*:[\t\n\f\r ]*(?:0(?:\.0+)?(?:[a-z]+|%)?(?![0-9.])|(?:0(?:\.[0-9]+)?|1(?:\.0+)?)(?:px)?(?![0-9.a-z%]))', re.IGNORECASE)
-TINY_HEIGHT_CSS_RE = re.compile(r'(?<![A-Za-z0-9_-])(?:max-)?height[\t\n\f\r ]*:[\t\n\f\r ]*(?:0(?:\.0+)?(?:[a-z]+|%)?(?![0-9.])|(?:0(?:\.[0-9]+)?|1(?:\.0+)?)(?:px)?(?![0-9.a-z%]))', re.IGNORECASE)
+TINY_WIDTH_CSS_RE = re.compile(r'(?<![A-Za-z0-9_-])(?:max-)?width[\t\n\f\r ]*:[\t\n\f\r ]*(?:(?:0+(?:\.0*)?|\.0+)(?:e[+-]?[0-9]+)?(?:[a-z]+|%)?(?![0-9.])|(?:0+(?:\.[0-9]+)?|\.[0-9]+|0*1(?:\.0+)?)(?:e(?:[+-]?0+|-[0-9]+))?(?:px)?(?![0-9.a-z%]))', re.IGNORECASE)
+TINY_HEIGHT_CSS_RE = re.compile(r'(?<![A-Za-z0-9_-])(?:max-)?height[\t\n\f\r ]*:[\t\n\f\r ]*(?:(?:0+(?:\.0*)?|\.0+)(?:e[+-]?[0-9]+)?(?:[a-z]+|%)?(?![0-9.])|(?:0+(?:\.[0-9]+)?|\.[0-9]+|0*1(?:\.0+)?)(?:e(?:[+-]?0+|-[0-9]+))?(?:px)?(?![0-9.a-z%]))', re.IGNORECASE)
 OVERFLOW_HIDDEN_CSS_RE = re.compile(r'(?<![A-Za-z0-9_-])overflow(?:-[xy])?[\t\n\f\r ]*:[\t\n\f\r ]*hidden(?![A-Za-z0-9_-])', re.IGNORECASE)
 CLIP_CSS_RE = re.compile(r'(?<![A-Za-z0-9_-])(?:clip[\t\n\f\r ]*:[\t\n\f\r ]*rect\([\t\n\f\r ]*(?:0|1px)|clip-path[\t\n\f\r ]*:[\t\n\f\r ]*inset\([\t\n\f\r ]*(?:50|100)%)', re.IGNORECASE)
 # One attribute: name, then an optional value (double-quoted, single-quoted
