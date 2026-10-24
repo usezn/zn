@@ -77,37 +77,59 @@ static REF_KEY: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
 /// Read the 32-byte reference key stored as `ref.key` in `dir`, creating it
 /// (random, owner-only from the moment it exists) when it does not exist yet.
 /// An existing key is refused unless it is a regular file, not a link, that
-/// only this user can use; the check runs before the key is read.
+/// only this user can use; the checks run on the opened file. A key of the
+/// wrong length (a crash while it was written) is never used: a new key
+/// replaces it, with a warning.
 pub fn load_or_create_ref_key(dir: &std::path::Path) -> std::io::Result<[u8; 32]> {
-    use crate::private_file::{create_private_file_new, verify_private};
+    let (key, regenerated) = load_ref_key(dir)?;
+    if regenerated {
+        tracing::warn!(
+            "ref.key did not hold a valid key and was replaced by a new one. References              (h:...) already stored in the audit log and the vector memory stay as they              are, but they will not match the references of new calls."
+        );
+    }
+    Ok(key)
+}
+
+/// Returns the key and whether a new one replaced a file of the wrong length.
+fn load_ref_key(dir: &std::path::Path) -> std::io::Result<([u8; 32], bool)> {
+    use crate::private_file::{create_private_file, create_private_file_new, read_private_file};
     use std::io::{Error, ErrorKind};
     let path = dir.join("ref.key");
-    match std::fs::symlink_metadata(&path) {
-        Ok(_) => {}
+    let new_key = || {
+        use rand::Rng;
+        let mut key = [0u8; 32];
+        rand::rng().fill_bytes(&mut key);
+        key
+    };
+    let existing = match read_private_file(&path) {
+        Ok(bytes) => bytes,
         Err(e) if e.kind() == ErrorKind::NotFound => {
             std::fs::create_dir_all(dir)?;
-            let mut key = [0u8; 32];
-            {
-                use rand::Rng;
-                rand::rng().fill_bytes(&mut key);
-            }
+            let key = new_key();
             match create_private_file_new(&path, &key) {
-                Ok(()) => return Ok(key),
-                Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
+                Ok(()) => return Ok((key, false)),
+                Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+                    read_private_file(&path).map_err(refuse)?
+                }
                 Err(e) => return Err(e),
             }
         }
-        Err(e) => return Err(e),
-    }
-    verify_private(&path).map_err(|e| {
+        Err(e) => return Err(refuse(e)),
+    };
+    fn refuse(e: Error) -> Error {
         Error::new(
             e.kind(),
-            format!("ref.key is not private to this user, refusing to use it: {e}"),
+            format!("ref.key cannot be used (it must be a regular file that only this user can access): {e}"),
         )
-    })?;
-    let bytes = std::fs::read(&path)?;
-    <[u8; 32]>::try_from(bytes.as_slice())
-        .map_err(|_| Error::new(ErrorKind::InvalidData, "ref.key must hold exactly 32 bytes"))
+    }
+    match <[u8; 32]>::try_from(existing.as_slice()) {
+        Ok(key) => Ok((key, false)),
+        Err(_) => {
+            let key = new_key();
+            create_private_file(&path, &key)?;
+            Ok((key, true))
+        }
+    }
 }
 
 /// Load (or create) the local reference key in `dir` and use it for every
@@ -115,6 +137,8 @@ pub fn load_or_create_ref_key(dir: &std::path::Path) -> std::io::Result<[u8; 32]
 /// written to the audit log or the vector memory.
 pub fn init_ref_key(dir: &std::path::Path) -> std::io::Result<()> {
     let key = load_or_create_ref_key(dir)?;
+    // Temporary files of an interrupted key write; failures do not matter.
+    let _ = crate::private_file::remove_stale_temp_files(dir);
     match REF_KEY.set(key) {
         Ok(()) => Ok(()),
         Err(_) if REF_KEY.get() == Some(&key) => Ok(()),
@@ -314,7 +338,7 @@ mod content_ref_tests {
 
     #[cfg(unix)]
     #[test]
-    fn key_file_is_private_and_a_bad_key_is_refused() {
+    fn key_file_is_private_and_a_short_key_is_replaced() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         load_or_create_ref_key(dir.path()).unwrap();
@@ -323,7 +347,40 @@ mod content_ref_tests {
         assert_eq!(meta.len(), 32);
         std::fs::remove_file(dir.path().join("ref.key")).unwrap();
         create_private_file(&dir.path().join("ref.key"), b"short").unwrap();
-        assert!(load_or_create_ref_key(dir.path()).is_err());
+        let key = load_or_create_ref_key(dir.path()).unwrap();
+        assert_eq!(std::fs::read(dir.path().join("ref.key")).unwrap(), key);
+    }
+
+    #[test]
+    fn a_truncated_key_is_replaced_never_used() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ref.key");
+        for bad in [0usize, 17, 33] {
+            create_private_file(&path, &vec![7u8; bad]).unwrap();
+            let (key, regenerated) = load_ref_key(dir.path()).unwrap();
+            assert!(regenerated, "a key of {bad} bytes must be replaced");
+            assert_eq!(std::fs::read(&path).unwrap().len(), 32);
+            assert_eq!(std::fs::read(&path).unwrap(), key.to_vec());
+            let (again, regenerated) = load_ref_key(dir.path()).unwrap();
+            assert!(!regenerated);
+            assert_eq!(again, key);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_key_with_wrong_protection_is_refused_not_regenerated() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ref.key");
+        create_private_file(&path, &[1u8; 17]).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(load_ref_key(dir.path()).is_err());
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            vec![1u8; 17],
+            "left untouched"
+        );
     }
 
     #[cfg(unix)]
