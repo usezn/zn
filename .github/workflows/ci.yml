@@ -2,24 +2,15 @@ name: zn CI
 
 # Pull requests into next run the checks the rulesets require (Node.js 18.x, 22.x and 24.x, Python 3.12, the
 # npm and Python package builds), all on Ubuntu, plus one lint job. The full matrix (every Node.js and
-# Python version, Windows and macOS) runs on pushes to main and next, on the daily schedule, on manual runs,
+# Python version, Windows and macOS) runs on pushes to main, next and release branches, on the daily schedule, on manual runs,
 # on pull requests into main and release branches, and on any pull request labelled full-ci. Its only macOS
 # job is Python 3.12.
 on:
   push:
-    branches: [ main, next ]
-    # Documentation-only pushes skip this workflow. Markdown under packages/, plugins/, skill/,
-    # bench/ and .github/ still runs it (the package and plugin checks read some of it): a stricter
-    # version of the split that .github/scripts/ci-scope.sh makes for pull requests.
-    paths:
-      - '**'
-      - '!docs/**'
-      - '!**/*.md'
-      - 'packages/**'
-      - 'plugins/**'
-      - 'skill/**'
-      - 'bench/**'
-      - '.github/**'
+    # release/** is here, and there is no paths filter, because tag-release.yml requires the checks of this
+    # workflow (and of the other workflows listed in .github/release-required-checks.txt) on the exact
+    # release commit: a documentation-only top commit, such as a changelog edit, must still get all of them.
+    branches: [ main, next, 'release/**' ]
   pull_request:
     branches: [ main, next, 'release/**' ]
     types: [ opened, synchronize, reopened, labeled, ready_for_review ]

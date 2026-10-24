@@ -2,23 +2,14 @@ name: zn-gate leak bench
 
 # Pull requests into next run the checks the rulesets require and Ubuntu with Node.js 22. Pushes to next
 # run every Node.js version on Ubuntu and Windows, without macOS. The full matrix (Windows and macOS,
-# every Node.js version) runs on pushes to main, on the daily schedule, on pull requests into main and
+# every Node.js version) runs on pushes to main and release branches, on the daily schedule, on pull requests into main and
 # release branches, on any pull request labelled full-ci, and on manual runs.
 on:
   push:
-    branches: [ main, next ]
-    # Documentation-only pushes skip this workflow. Markdown under packages/, plugins/, skill/,
-    # bench/ and .github/ still runs it (the package and plugin checks read some of it): a stricter
-    # version of the split that .github/scripts/ci-scope.sh makes for pull requests.
-    paths:
-      - '**'
-      - '!docs/**'
-      - '!**/*.md'
-      - 'packages/**'
-      - 'plugins/**'
-      - 'skill/**'
-      - 'bench/**'
-      - '.github/**'
+    # release/** is here, and there is no paths filter, because tag-release.yml requires the checks of this
+    # workflow (and of the other workflows listed in .github/release-required-checks.txt) on the exact
+    # release commit: a documentation-only top commit, such as a changelog edit, must still get all of them.
+    branches: [ main, next, 'release/**' ]
   pull_request:
     branches: [ next, main, 'release/**' ]
     types: [ opened, synchronize, reopened, labeled, ready_for_review ]
