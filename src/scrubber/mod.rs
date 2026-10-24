@@ -209,12 +209,14 @@ fn redact_quoted_values(text: &str) -> String {
         let mut close = None; // (end of the value, end of the closing quote)
         while i < limit {
             if bytes[i] == b'\\' {
-                let mut k = 0;
-                while bytes.get(i + k) == Some(&b'\\') {
-                    k += 1;
-                }
                 if level > 0 {
                     // Escaped level: the value ends at exactly `level` backslashes and the quote.
+                    // Count the run only inside the scan window, so one opener followed by a
+                    // very long run of backslashes stays linear.
+                    let mut k = 0;
+                    while i + k < limit && bytes[i + k] == b'\\' {
+                        k += 1;
+                    }
                     if k == level && bytes.get(i + k) == Some(&quote) {
                         close = Some((i, i + k + 1));
                         break;
@@ -1319,6 +1321,35 @@ mod tests {
             "{:?}",
             start.elapsed()
         );
+    }
+
+    #[test]
+    fn test_backslash_run_after_opener_stays_linear() {
+        // One opener followed by a very long run of backslashes must cost about the same as the
+        // same length of any other character: the run is counted only inside the scan window.
+        let time = |input: &str| {
+            (0..3)
+                .map(|_| {
+                    let start = std::time::Instant::now();
+                    let _ = Scrubber::scrub(input);
+                    start.elapsed()
+                })
+                .min()
+                .unwrap()
+        };
+        for opener in ["password=\"", "password='", "password=\\\""] {
+            let slashes = format!("{opener}{}", "\\".repeat(1 << 20));
+            let filler = format!("{opener}{}", "a".repeat(1 << 20));
+            let t_slashes = time(&slashes);
+            let t_filler = time(&filler);
+            // Relative bound, with a small floor against timer noise on a fast filler run.
+            let bound = t_filler * 10 + std::time::Duration::from_millis(200);
+            assert!(
+                t_slashes < bound,
+                "{opener}: backslashes {t_slashes:?} vs filler {t_filler:?}"
+            );
+            assert!(t_slashes < std::time::Duration::from_secs(60), "{opener}");
+        }
     }
 
     #[test]
