@@ -4,7 +4,7 @@ What the secrets scrubber and broker can do in each agent. zn-gate is not a sand
 depends on what each agent's hooks can see and block; formats were checked against each agent's official
 documentation on 2026-10-11 (Cursor again on 2026-10-17). End-to-end evidence is in [`bench/e2e/`](../bench/e2e/).
 
-ZCode desktop app: its hooks live in the user file the app documents (`~/.zcode/cli/config.json`, Settings -> Hooks). Their behaviour was measured on the ZCode agent runtime on Linux (headless and in the terminal UI, October 2026) and is to be re-verified on the official desktop app. [TO UPDATE: version of the ZCode desktop app tested end to end.] macOS was not tested.
+ZCode desktop app: its hooks live in the user file the app documents (`~/.zcode/cli/config.json`, Settings -> Hooks). zn follows the hook behaviour described in the official ZCode documentation. [TO UPDATE: version of the ZCode desktop app tested end to end.] macOS was not tested.
 
 | | Claude Code | Codex CLI | Cursor (IDE) | OpenCode | Antigravity | ZCode desktop app |
 |---|---|---|---|---|---|---|
