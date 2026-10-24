@@ -151,15 +151,41 @@ pub struct AuditVault {
     db_path: String,
     /// Key for payload encryption (AES-256-GCM)
     encryption_key: Option<[u8; 32]>,
+    /// Whether request payloads are persisted. The gateway turns this off by
+    /// default (`audit.store_payloads`); a bare `AuditVault::new` keeps the
+    /// library behaviour so embedders and tests are unchanged.
+    store_payloads: bool,
+}
+
+/// Returns the payload to attach to an audit entry: `None` unless payload
+/// storage was explicitly enabled, so by default a record holds metadata only.
+pub fn payload_if_enabled(store_payloads: bool, payload: impl Into<String>) -> Option<String> {
+    if store_payloads {
+        Some(payload.into())
+    } else {
+        None
+    }
 }
 
 impl AuditVault {
+    /// Enable or disable persisting payloads. When disabled, any payload on an
+    /// entry is dropped before it is written.
+    pub fn with_payload_storage(mut self, enabled: bool) -> Self {
+        self.store_payloads = enabled;
+        self
+    }
+
     /// Create a new AuditVault, initializing the database schema if needed
     pub fn new(db_path: &str, encryption_key: Option<&str>) -> Result<Self> {
         info!("Initializing AuditVault at: {}", db_path);
 
         let mut conn = Connection::open(db_path)
             .map_err(|e| anyhow!("Failed to open audit database '{}': {}", db_path, e))?;
+
+        // Overwrite deleted and replaced content with zeros, so text that a
+        // cleanup replaces does not stay in free pages of the file.
+        conn.execute_batch("PRAGMA secure_delete = ON;")
+            .map_err(|e| anyhow!("Failed to set secure_delete: {}", e))?;
 
         // Create metadata table for persistent configuration (like salt)
         conn.execute(
@@ -287,10 +313,45 @@ impl AuditVault {
             }
         }
 
+        // Records written by 1.13.x kept the text of the nearest neighbour.
+        let scrubbed = scrub_legacy_neighbours(&mut conn)?;
+        if scrubbed > 0 {
+            info!(
+                "Audit records with neighbour text replaced by a keyed reference: {}",
+                scrubbed
+            );
+        }
+
+        // The cleanup leaves a marker until the file has been compacted, so a
+        // VACUUM that was interrupted is repeated at the next start.
+        let vacuum_pending: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM metadata WHERE key = 'neighbours_vacuum_pending'",
+            [],
+            |r| r.get(0),
+        )?;
+        if vacuum_pending > 0 {
+            conn.execute_batch("VACUUM;")
+                .map_err(|e| anyhow!("Failed to compact the audit database: {}", e))?;
+            let (busy, log, done): (i64, i64, i64) =
+                conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+                })?;
+            if busy != 0 || log != done {
+                return Err(anyhow!(
+                    "audit database log checkpoint incomplete after compaction; retrying on the next start"
+                ));
+            }
+            conn.execute(
+                "DELETE FROM metadata WHERE key = 'neighbours_vacuum_pending'",
+                [],
+            )?;
+        }
+
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             db_path: db_path.to_string(),
             encryption_key: derived_key,
+            store_payloads: true,
         })
     }
 
@@ -301,9 +362,10 @@ impl AuditVault {
             .lock()
             .map_err(|e| anyhow!("Lock poisoned: {}", e))?;
 
-        // Encrypt payload if key is available
-        let payload = if let (Some(key_bytes), Some(p_raw)) = (&self.encryption_key, &entry.payload)
-        {
+        // Encrypt payload if key is available; drop it when storage is off.
+        let payload = if !self.store_payloads {
+            None
+        } else if let (Some(key_bytes), Some(p_raw)) = (&self.encryption_key, &entry.payload) {
             let encoded = encrypt_payload(key_bytes, &entry.id, entry.namespace.as_deref(), p_raw)?;
             Some(encoded)
         } else {
@@ -867,6 +929,83 @@ fn migrate_v1_records(conn: &mut Connection, key_bytes: &[u8; 32]) -> Result<Mig
     Ok(report)
 }
 
+/// One-time upgrade of audit rows written before the neighbour was kept as a
+/// reference: a `nearest_neighbor` that is not `<ref>:<distance>` (the text of
+/// the neighbour, optionally followed by `:<distance>`) becomes
+/// `content_ref(text):<distance>`, and the payload of an old `NEAREST_NEIGHBOR`
+/// row, which held the same text, is cleared. Rows that already hold a
+/// reference are left alone, so running it again changes nothing.
+fn scrub_legacy_neighbours(conn: &mut Connection) -> Result<usize> {
+    // Rows that already hold a reference (`h:` + 16 hex, optionally followed by
+    // `:<distance>`) are filtered out in SQL, so a start does not read them.
+    let hex16 = "[0-9a-f]".repeat(16);
+    let bare = format!("h:{hex16}");
+    let with_dist = format!("h:{hex16}:*");
+    // Select and update in one transaction, so no other writer can slip a row
+    // in between and nothing is left half converted.
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let rows: Vec<(String, String)> = {
+        let mut stmt = tx.prepare(
+            "SELECT id, nearest_neighbor FROM audit_logs WHERE nearest_neighbor IS NOT NULL \
+             AND NOT (nearest_neighbor GLOB ?1 OR nearest_neighbor GLOB ?2)",
+        )?;
+        let mapped = stmt.query_map(params![bare, with_dist], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        let mut out = Vec::new();
+        for row in mapped {
+            let (id, nn): (String, String) = row?;
+            let already = crate::ai::is_content_ref(&nn)
+                || nn
+                    .rsplit_once(':')
+                    .is_some_and(|(head, _)| crate::ai::is_content_ref(head));
+            if !already {
+                out.push((id, nn));
+            }
+        }
+        out
+    };
+    let mut changed = rows.len();
+    for (id, nn) in &rows {
+        let new_nn = match nn.rsplit_once(':') {
+            Some((text, dist)) if dist.parse::<f64>().is_ok() => {
+                format!("{}:{}", crate::ai::content_ref(text), dist)
+            }
+            _ => crate::ai::content_ref(nn),
+        };
+        tx.execute(
+            "UPDATE audit_logs SET nearest_neighbor = ?1 WHERE id = ?2",
+            params![new_nn, id],
+        )?;
+    }
+    // A NEAREST_NEIGHBOR row never keeps a payload: the reference is in
+    // `nearest_neighbor`, and an old payload held the text of the neighbour
+    // (also when that column is empty or already a reference).
+    changed += tx.execute(
+        "UPDATE audit_logs SET payload = NULL WHERE event = 'NEAREST_NEIGHBOR' AND payload IS NOT NULL",
+        [],
+    )?;
+    // Nothing in clear may remain; otherwise the whole cleanup is undone.
+    let left: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM audit_logs WHERE (nearest_neighbor IS NOT NULL \
+         AND NOT (nearest_neighbor GLOB ?1 OR nearest_neighbor GLOB ?2)) \
+         OR (event = 'NEAREST_NEIGHBOR' AND payload IS NOT NULL)",
+        params![bare, with_dist],
+        |r| r.get(0),
+    )?;
+    if left != 0 {
+        return Err(anyhow!(
+            "{left} audit rows still hold neighbour text after the cleanup"
+        ));
+    }
+    if changed > 0 {
+        tx.execute(
+            "INSERT OR REPLACE INTO metadata (key, value) VALUES ('neighbours_vacuum_pending', '1')",
+            [],
+        )?;
+    }
+    tx.commit()?;
+    Ok(changed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -882,6 +1021,38 @@ mod tests {
         let vault = AuditVault::new(&path, None).expect("Failed to create vault");
         assert_eq!(vault.count().unwrap(), 0);
         fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn payload_is_not_persisted_when_storage_is_off() {
+        let path = temp_db_path();
+        let vault = AuditVault::new(&path, None)
+            .expect("vault")
+            .with_payload_storage(false);
+        let e = AuditEntry::new("TOOL_CALL", "http_post", "ALLOWED")
+            .with_payload("{\"token\":\"example-token-not-real\",\"body\":\"example body\"}");
+        let id = e.id.clone();
+        vault.log(e).unwrap();
+        let raw: Option<String> = vault
+            .get_connection()
+            .lock()
+            .unwrap()
+            .query_row("SELECT payload FROM audit_logs WHERE id = ?1", [&id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(raw.is_none(), "payload must not be stored: {raw:?}");
+        let got = vault.get_recent(5).unwrap();
+        assert_eq!(got[0].tool_name, "http_post");
+        assert!(got[0].payload.is_none());
+        drop(vault);
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn payload_if_enabled_is_off_by_default() {
+        assert_eq!(payload_if_enabled(false, "x"), None);
+        assert_eq!(payload_if_enabled(true, "x").as_deref(), Some("x"));
     }
 
     #[test]
@@ -1813,5 +1984,246 @@ mod tests {
         assert!(text.starts_with("v2:"));
         assert!(!text.contains("tenant a secret"));
         fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn old_neighbour_text_is_replaced_by_a_reference_once() {
+        let path = temp_db_path();
+        let vault = AuditVault::new(&path, None).expect("vault");
+        {
+            let conn = vault.get_connection();
+            let conn = conn.lock().unwrap();
+            let ins = "INSERT INTO audit_logs (id, timestamp, event, tool_name, status, payload, nearest_neighbor) VALUES (?1, 't', ?2, 'tool', 'AUDIT', ?3, ?4)";
+            conn.execute(
+                ins,
+                params![
+                    "a",
+                    "TOOL_CALL",
+                    None::<String>,
+                    "login: {\"pin\":\"4821\"}:0.2500"
+                ],
+            )
+            .unwrap();
+            conn.execute(
+                ins,
+                params![
+                    "b",
+                    "NEAREST_NEIGHBOR",
+                    "login: {\"pin\":\"4821\"}:0.2500",
+                    "login: {\"pin\":\"4821\"}:0.2500"
+                ],
+            )
+            .unwrap();
+            conn.execute(
+                ins,
+                params!["c", "TOOL_CALL", None::<String>, "no distance here"],
+            )
+            .unwrap();
+            conn.execute(
+                ins,
+                params!["d", "NEAREST_NEIGHBOR", "keep", "h:0123456789abcdef:0.5000"],
+            )
+            .unwrap();
+        }
+        drop(vault);
+
+        let vault = AuditVault::new(&path, None).expect("reopen");
+        let get = |id: &str| -> (Option<String>, Option<String>) {
+            vault
+                .get_connection()
+                .lock()
+                .unwrap()
+                .query_row(
+                    "SELECT nearest_neighbor, payload FROM audit_logs WHERE id = ?1",
+                    [id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap()
+        };
+        let want = format!(
+            "{}:0.2500",
+            crate::ai::content_ref("login: {\"pin\":\"4821\"}")
+        );
+        assert_eq!(get("a").0.as_deref(), Some(want.as_str()));
+        let b = get("b");
+        assert_eq!(b.0.as_deref(), Some(want.as_str()));
+        assert!(b.1.is_none(), "old neighbour payload must be cleared");
+        let c = get("c").0.unwrap();
+        assert!(crate::ai::is_content_ref(&c), "{c}");
+        let d = get("d");
+        assert_eq!(d.0.as_deref(), Some("h:0123456789abcdef:0.5000"));
+        assert_eq!(d.1, None, "a neighbour row keeps no payload");
+        let all = format!("{:?}", vault.get_recent(10).unwrap());
+        assert!(!all.contains("4821") && !all.contains("no distance"));
+        drop(vault);
+
+        // A second opening changes nothing.
+        let vault = AuditVault::new(&path, None).expect("third open");
+        assert_eq!(get_nn(&vault, "a"), want);
+        drop(vault);
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn old_neighbour_payloads_are_cleared_even_when_the_column_is_empty_or_a_reference() {
+        let path = temp_db_path();
+        let vault = AuditVault::new(&path, None).expect("vault");
+        {
+            let conn = vault.get_connection();
+            let conn = conn.lock().unwrap();
+            let ins = "INSERT INTO audit_logs (id, timestamp, event, tool_name, status, payload, nearest_neighbor) VALUES (?1, 't', 'NEAREST_NEIGHBOR', 'tool', 'AUDIT', ?2, ?3)";
+            conn.execute(
+                ins,
+                params!["x", "login: {\"pin\":\"4821\"}", None::<String>],
+            )
+            .unwrap();
+            conn.execute(
+                ins,
+                params![
+                    "y",
+                    "login: {\"pin\":\"4821\"}",
+                    "h:0123456789abcdef:0.5000"
+                ],
+            )
+            .unwrap();
+        }
+        drop(vault);
+        let vault = AuditVault::new(&path, None).expect("reopen");
+        let all = format!("{:?}", vault.get_recent(10).unwrap());
+        assert!(!all.contains("4821"), "old neighbour text survived: {all}");
+        drop(vault);
+        fs::remove_file(&path).ok();
+    }
+
+    fn file_bytes_contain(path: &str, needle: &str) -> bool {
+        [path.to_string(), format!("{path}-wal")]
+            .iter()
+            .filter_map(|p| fs::read(p).ok())
+            .any(|b| b.windows(needle.len()).any(|w| w == needle.as_bytes()))
+    }
+
+    #[test]
+    fn old_neighbour_text_leaves_no_trace_in_the_audit_file() {
+        let marker = "neighbour-marker-7f3a91-zebra";
+        let path = temp_db_path();
+        let vault = AuditVault::new(&path, None).expect("vault");
+        {
+            let conn = vault.get_connection();
+            let conn = conn.lock().unwrap();
+            let long = format!("{marker} {}", "payload text ".repeat(600));
+            for i in 0..20 {
+                conn.execute(
+                    "INSERT INTO audit_logs (id, timestamp, event, tool_name, status, payload, nearest_neighbor) VALUES (?1, 't', 'NEAREST_NEIGHBOR', 'tool', 'AUDIT', ?2, ?3)",
+                    params![format!("n{i}"), long, format!("{marker} {i}:0.1000")],
+                )
+                .unwrap();
+            }
+        }
+        drop(vault);
+        assert!(
+            file_bytes_contain(&path, marker),
+            "setup: the text is on disk"
+        );
+
+        let vault = AuditVault::new(&path, None).expect("reopen scrubs");
+        drop(vault);
+        assert!(
+            !file_bytes_contain(&path, marker),
+            "the neighbour text must not stay in the file"
+        );
+        fs::remove_file(&path).ok();
+        fs::remove_file(format!("{path}-wal")).ok();
+    }
+
+    #[test]
+    fn an_interrupted_compaction_is_repeated_at_the_next_start() {
+        let path = temp_db_path();
+        let vault = AuditVault::new(&path, None).expect("vault");
+        vault
+            .get_connection()
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT OR REPLACE INTO metadata (key, value) VALUES ('neighbours_vacuum_pending', '1')",
+                [],
+            )
+            .unwrap();
+        drop(vault);
+        let vault = AuditVault::new(&path, None).expect("reopen");
+        let left: i64 = vault
+            .get_connection()
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM metadata WHERE key = 'neighbours_vacuum_pending'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(left, 0);
+        drop(vault);
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_second_opening_touches_no_rows() {
+        let path = temp_db_path();
+        let vault = AuditVault::new(&path, None).expect("vault");
+        {
+            let conn = vault.get_connection();
+            let conn = conn.lock().unwrap();
+            let ins = "INSERT INTO audit_logs (id, timestamp, event, tool_name, status, payload, nearest_neighbor) VALUES (?1, 't', ?2, 'tool', 'AUDIT', ?3, ?4)";
+            conn.execute(
+                ins,
+                params!["a", "TOOL_CALL", None::<String>, "old text:0.1000"],
+            )
+            .unwrap();
+            conn.execute(
+                ins,
+                params!["b", "NEAREST_NEIGHBOR", "keep", "h:0123456789abcdef:0.5000"],
+            )
+            .unwrap();
+            conn.execute(
+                ins,
+                params!["c", "TOOL_CALL", None::<String>, "h:0123456789abcdef"],
+            )
+            .unwrap();
+            // Looks like a reference prefix but is not one: must still be scrubbed.
+            conn.execute(
+                ins,
+                params!["d", "TOOL_CALL", None::<String>, "h:not a reference:0.2"],
+            )
+            .unwrap();
+        }
+        drop(vault);
+
+        let vault = AuditVault::new(&path, None).expect("second open");
+        {
+            let conn = vault.get_connection();
+            let mut conn = conn.lock().unwrap();
+            let before = conn.total_changes();
+            assert_eq!(scrub_legacy_neighbours(&mut conn).unwrap(), 0);
+            assert_eq!(conn.total_changes(), before, "no row may be written");
+        }
+        assert!(crate::ai::is_content_ref(
+            get_nn(&vault, "d").rsplit_once(':').unwrap().0
+        ));
+        assert_eq!(get_nn(&vault, "b"), "h:0123456789abcdef:0.5000");
+        assert_eq!(get_nn(&vault, "c"), "h:0123456789abcdef");
+        drop(vault);
+        fs::remove_file(&path).ok();
+    }
+
+    fn get_nn(vault: &AuditVault, id: &str) -> String {
+        vault
+            .get_connection()
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT nearest_neighbor FROM audit_logs WHERE id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap()
     }
 }
