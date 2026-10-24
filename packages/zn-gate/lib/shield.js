@@ -5,7 +5,7 @@ const readline = require('readline');
 // All shield inspections are local-only: tool arguments, tool descriptions and
 // tool results never leave the machine (see lib/client.js data-flow contract).
 const { analyzeLocal, checkToolResult } = require('./client');
-const { tooInvisible, invisibleBlock } = require('./rules');
+const { tooInvisible, invisibleBlock, sanitizeToolResult } = require('./rules');
 
 // A tool result is scanned in full up to this size. A larger one is blocked
 // (rule size:truncated) instead of being forwarded half-checked.
@@ -448,11 +448,14 @@ function startMcpShield(command, args, options = {}) {
   // other half at the start of the next one. The edges of one long part, and the chains of one stride, are
   // separated by DEFERRED_SEP, which the normalizer keeps and which no rule matches across, so the separator cannot
   // complete a phrase and a long part cannot read against itself. The bound: one scan per stride (SKIP_MAX_STRIDE - 1
-  // scans) over at most min(characters of the text, parts x 2 x edge) characters, so a large text costs nothing
-  // extra and no pair of parts is ever compared one by one. The edge is SKIP_EDGE_CHARS, and shrinks (down to
-  // SKIP_EDGE_MIN) when the parts are so many that their edges would pass SKIP_VIEW_BUDGET characters in one scan.
-  // What is not covered: more than SKIP_MAX_STRIDE - 1 parts between the halves, and three or more pieces with
-  // unequal gaps.
+  // scans) over at most min(characters of the text, parts x 2 x edge) characters, and no pair of parts is ever
+  // compared one by one. One long field adds only its edges; a result made of many short fields has nothing to
+  // cut, so each reading is the whole text again: measured up to about a third more time on 24 MB of short fields
+  // (before the secret masking was dropped from these scans, see canonicalGuard), about the same with few fields.
+  // The edge is SKIP_EDGE_CHARS, and shrinks (down to SKIP_EDGE_MIN) when the parts are so many that their edges
+  // would pass SKIP_VIEW_BUDGET characters in one scan.
+  // Only the values are read, not the keys. What is not covered: more than SKIP_MAX_STRIDE - 1 parts between the
+  // halves, halves placed in object keys, and three or more pieces with unequal gaps.
   const SKIP_MAX_STRIDE = 5;
   const SKIP_EDGE_CHARS = 256;
   const SKIP_EDGE_MIN = 64;
@@ -478,17 +481,23 @@ function startMcpShield(command, args, options = {}) {
     if (!over) {
       let check = null;
       let text = '';
+      // Only the verdict is used here, so the secret masking of checkToolResult (a second pass over the text whose
+      // result is thrown away) is left out: same verdict, less work.
+      const verdictOf = (view, max) => sanitizeToolResult('server message', view, { ...options, maskSecrets: false, maxScanChars: max, blockTruncated: true });
+      const blocks = (c) => c.safe_to_ingest === false || c.assessment?.verdict === 'block' || c.verdict === 'block';
       for (const view of all.length > values.length ? [values, all] : [values]) {
         text = view.join('\n');
-        const c = await checkToolResult(label, text, { ...options, maxScanChars: SHIELD_RESULT_SCAN_CHARS, blockTruncated: true });
-        if (c.safe_to_ingest === false || c.assessment?.verdict === 'block' || c.verdict === 'block') { check = c; break; }
+        const c = verdictOf(text, SHIELD_RESULT_SCAN_CHARS);
+        if (blocks(c)) { check = c; break; }
       }
       if (!check && values.length > 2) {
         for (const view of skipViews(values)) {
-          text = view;
           // Built from edges of parts that were within the budget: never truncated, never blocked for its size.
-          const c = await checkToolResult(label, text, { ...options, maxScanChars: text.length + 1, blockTruncated: true });
-          if (c.safe_to_ingest === false || c.assessment?.verdict === 'block' || c.verdict === 'block') { check = c; break; }
+          const c = verdictOf(view, view.length + 1);
+          // The credential rule reads a verb at the end of one field against a word in the next one ("contents: read"
+          // and "Replaces credentials"): joined across fields that are not neighbours it matches ordinary
+          // documentation, so it does not decide on a reading with gaps (it still does on the joined views).
+          if (blocks(c) && (c.assessment?.rule || c.rule) !== 'exfil:credentials') { check = c; text = view; break; }
         }
       }
       if (!check) return false;

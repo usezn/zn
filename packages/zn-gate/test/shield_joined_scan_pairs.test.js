@@ -33,6 +33,7 @@ const cases = {
   pair_gap: () => ({ content: [txt(A), txt(F)], structuredContent: { kind: 'x', note: B } }),
   clean: () => ({ content: [txt(F), txt('Temperature 18 C.'), txt('Humidity 40 percent.')], structuredContent: { city: 'Example City', note: 'fine' } }),
   big_text: () => ({ content: Array.from({ length: 40 }, (_, i) => txt(('Report ' + i + ': the quick brown fox jumps over the lazy dog. ').repeat(8000))) }),
+  far_creds: (n) => ({ content: [txt('permissions:\\n  contents: read'), ...Array.from({ length: n }, () => txt(F)), txt('- Replaces credentials in a string with placeholders such as \\x60[REDACTED_AWS_KEY]\\x60. Local only.')] }),
   many_short: () => ({ content: [txt('ok')], structuredContent: { rows: Array.from({ length: Number(process.env.ROWS || 30000) }, (_, i) => 'Line ' + i + ': weather is fine.') } }),
 };
 rl.on('line', (line) => {
@@ -42,7 +43,8 @@ rl.on('line', (line) => {
   const unmatched = name.startsWith('unmatched_');
   if (unmatched) name = name.slice('unmatched_'.length);
   if (name === 'many_short_big') { process.env.ROWS = '60000'; name = 'many_short'; }
-  const result = cases[name]();
+  const far = /^far_creds_(\\d)$/.exec(name);
+  const result = far ? cases.far_creds(Number(far[1])) : cases[name]();
   // An answer with an id the shield never saw is not matched to a tools/call.
   if (unmatched) send({ jsonrpc: '2.0', id: 55, result });
   send({ jsonrpc: '2.0', id: msg.id, result: unmatched ? { content: [txt('plain')] } : result });
@@ -119,6 +121,17 @@ test('a harmless result with several parts passes unchanged', async () => {
   assert.equal(res.isError, undefined);
   assert.equal(res.content.length, 3);
   assert.deepEqual(res.structuredContent, { city: 'Example City', note: 'fine' });
+});
+
+test('a permissions line and a credentials sentence with harmless parts between them pass unchanged', async () => {
+  // Real text from two docs pages: a permissions line and a sentence about replacing credentials. They only look
+  // like a risk when read across unrelated fields, so the reading with gaps must not act on them.
+  for (const n of [1, 2, 3, 4]) {
+    const res = answer(await run('far_creds_' + n)).result;
+    assert.equal(res.isError, undefined, 'n=' + n);
+    assert.equal(res.content.length, n + 2);
+    assert.match(res.content[n + 1].text, /Replaces credentials/);
+  }
 });
 
 test('a harmless unmatched answer passes unchanged', async () => {
