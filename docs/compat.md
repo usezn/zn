@@ -250,6 +250,12 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
     block when `failClosed` is set, which would block every such call. The
     trade-off: if this hook crashes or times out, the call runs unchecked. (If it cannot start
     because its Node.js is gone, the launcher script described above blocks the call.)
+    Cursor documents no neutral answer for these hooks: an `allow` could skip
+    Cursor's own approval, and an empty object is not a documented permission
+    answer. The zn-gate plugin for Cursor therefore sets `failClosed` on
+    `beforeReadFile` and `beforeSubmitPrompt` only, the same as
+    `zn hooks install cursor`, and `plugins/tools/check-plugins.js` fails if
+    another event gets it.
   - `preToolUse` (Write, Delete, Grep) checks the file a call names with the
     same rules as the other tools. Cursor does not document the input keys of
     these tools, so zn looks for the usual names (`file_path`, `path`,
