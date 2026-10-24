@@ -173,6 +173,31 @@ function esmRequests(sources) {
 const IMPORT_WORD = /(?<![.\w$])import\b/g;
 const LITERAL_ARG = /^\s*(['"])([^'"\n]+)\1\s*\)/;
 const UNCHECKABLE = /\bcreateRequire\b|\bimport\.meta\.resolve\b|\bprocess\.mainModule\b|\brequire\s*\(\s*(['"])(?:node:)?module\1/;
+const MODULE_REQUIRE = /\brequire\s*\(\s*(['"])(?:node:)?module\1\s*\)/g;
+const MODULE_DECL = /(?<![.\w$])(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*require\s*\(\s*(['"])(?:node:)?module\2\s*\)\s*;/;
+const ENABLE_COMPILE_CACHE_MEMBER = /^\s*\.\s*enableCompileCache(?![\w$])(?!\s*=(?!=))/;
+
+/**
+ * The text with one narrow use of the "module" built-in taken out: a single
+ * "const NAME = require('module');" where NAME is used at least once and
+ * every use is "NAME.enableCompileCache" (read or called, never assigned).
+ * That member only turns on V8's compile cache; it loads nothing. Any other
+ * use, such as createRequire, Module._load or passing the module around, is
+ * left in place for the UNCHECKABLE rule to refuse.
+ */
+function withoutCompileCacheUse(text) {
+  if ((text.match(MODULE_REQUIRE) || []).length !== 1) return text;
+  const decl = MODULE_DECL.exec(text);
+  if (!decl) return text;
+  const rest = text.slice(0, decl.index) + text.slice(decl.index + decl[0].length);
+  let uses = 0;
+  for (const m of rest.matchAll(/[A-Za-z_$][\w$]*/g)) {
+    if (m[0] !== decl[1] || rest[m.index - 1] === '.') continue;
+    if (!ENABLE_COMPILE_CACHE_MEMBER.test(rest.slice(m.index + m[0].length))) return text;
+    uses++;
+  }
+  return uses ? rest : text;
+}
 const MODULE_BUILTINS = new Set(['module', 'node:module']);
 
 /**
@@ -224,7 +249,7 @@ function dynamicImports(rel, text, problems) {
     if (lit) out.push(lit[2]);
     else problems.push(rel + ': import() with a computed name cannot be checked');
   }
-  if (UNCHECKABLE.test(text)) {
+  if (UNCHECKABLE.test(withoutCompileCacheUse(text))) {
     problems.push(rel + ': uses createRequire, import.meta.resolve, process.mainModule or the "module" built-in, which cannot be checked');
   }
   return out;
