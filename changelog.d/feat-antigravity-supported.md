@@ -1,7 +1,0 @@
-### Fixed
-- The Antigravity hook now answers with a deny, with a reason, when a check has not finished 5 seconds before the hook's timeout or an error escapes, instead of printing nothing (Antigravity blocks the call with an empty reason when a hook prints nothing). Tests run the real hook process through a hung check, an escaped error and unreadable input.
-- `zn hooks install antigravity --project` no longer writes a plain `zn hook antigravity` command, which exited 127 with no message from zn when `zn` or `node` was missing. The shared hook now carries its own guard (`sh -c` on macOS and Linux, PowerShell on Windows): a missing `zn` or `node`, or a `zn` that fails after it starts, ends in a deny with the repair step. The install self-check now runs the command the way Antigravity does (split on spaces, no shell).
-- `zn-gate check` now reports zn's Antigravity hook as not protected when it is turned off (`"enabled": false`, which Antigravity documents as disabling a hook without removing it), with the repair; before, it said Antigravity was not set up. `zn hooks install antigravity` turns the hook back on.
-
-### Changed
-- `zn-gate check` lists other enabled Antigravity `PreToolUse` hooks as a note: Antigravity documents neither the order in which hooks run nor which answer wins, so zn cannot promise its deny holds against them.

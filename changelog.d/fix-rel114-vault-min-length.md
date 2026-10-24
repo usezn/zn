@@ -1,2 +1,0 @@
-### Security
-- The vault no longer accepts a new secret value under 8 characters, from `zn secret set`, `zn env shadow --keys` or any other way to store one: such a value cannot be told apart from ordinary text, so it could reach the model unseen. A short value stored by an older version keeps working: it is matched exactly (the whole text, never a part of a word) and a short tool output is still checked for it.

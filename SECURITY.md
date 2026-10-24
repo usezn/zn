@@ -7,8 +7,8 @@ Upgrade to it to receive them.
 
 | Version  | Supported          |
 | -------- | ------------------ |
-| 1.13.x   | :white_check_mark: |
-| < 1.13.0 | :x:                |
+| 1.14.x   | :white_check_mark: |
+| < 1.14.0 | :x:                |
 
 Prereleases (`-alpha`, `-beta`, `-rc`) are not supported once the final release is out.
 

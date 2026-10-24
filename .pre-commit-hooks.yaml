@@ -7,14 +7,14 @@
 - id: zn-gate-scan
   name: zn-gate scan
   description: Look for prompt-injection traps and leaked secrets in prompts, markdown, skills and agent configs.
-  entry: npx --yes zn-gate@1.14.0-rc.2 scan
+  entry: npx --yes zn-gate@1.14.0 scan
   language: system
   pass_filenames: false
   files: '\.(md|mdx|markdown|txt|prompt|yaml|yml|json|jsonc|toml)$'
 - id: zn-audit
   name: zn audit
   description: Review the repository's agent configuration (hooks, MCP servers, permissions, instructions) before anyone opens it.
-  entry: npx --yes zn-gate@1.14.0-rc.2 audit
+  entry: npx --yes zn-gate@1.14.0 audit
   language: system
   pass_filenames: false
   files: '(^|/)(\.claude|\.codex|\.cursor|\.gemini|\.opencode|\.amazonq|\.github|\.vscode)/|(^|/)(\.mcp\.json|AGENTS\.md|CLAUDE\.md|GEMINI\.md|opencode\.json|SKILL\.md)$'

@@ -1,3 +1,0 @@
-### Security
-- The `tool_name` label of the `zn_tool_calls_total` metric, and the `method` and `result` labels of `zn_jsonrpc_requests_total`, now keep only well-known values and count every other value as `other`, so a client can no longer create an unbounded number of series or put its own strings into `/metrics`.
-- `zn start` no longer prints the MCP WebSocket token. A generated token is saved to `zn-mcp-ws-token.txt` next to the audit database (readable only by you, changes on every start), and the gateway refuses to start with a clear message if the file cannot be written; set `ZN_MCP_WS_TOKEN` to use a stable token. Debug output of the security configuration hides the API key, JWT secret and token.
