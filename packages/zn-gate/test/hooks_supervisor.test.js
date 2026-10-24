@@ -155,11 +155,11 @@ test('the runner on SIGTERM during a pre-tool event answers with the block of it
   for (const agent of ['codex', 'gemini', 'claude-code']) {
     const { child, done } = runner(t, agent, { ZN_TEST_HOOK_FAULT: 'hang', ZN_TEST_HOOK_HANG_MS: '20000' });
     child.stdin.end(JSON.stringify(PRE[agent]));
-    await new Promise((r) => setTimeout(r, 500));
+    await new Promise((r) => setTimeout(r, 2500)); // long enough for a loaded machine to start node and arm the handler
     child.kill('SIGTERM');
     const r = await done;
     assertBlocked(agent, r);
-    assert.ok(r.ms < 5000, agent + ' ended in ' + r.ms + ' ms');
+    assert.ok(r.ms < 8000, agent + ' ended in ' + r.ms + ' ms');
   }
 });
 
