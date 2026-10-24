@@ -50,7 +50,7 @@ test('every zn-gate subcommand named in docs/*.md exists in the CLI help', { ski
   assert.equal(help.status, 0);
   const listed = new Set();
   for (const line of help.stdout.split('\n')) {
-    const m = /^ {2}([a-z][a-z-]*(?:, -?[A-Za-z-]+)*)\s{2,}/.exec(line);
+    const m = /^ {2}([a-z][a-z-]*(?:, -?[A-Za-z-]+)*)(?: |$)/.exec(line);
     if (m) for (const n of m[1].split(', ')) listed.add(n);
   }
   const found = documentedSubcommands();
