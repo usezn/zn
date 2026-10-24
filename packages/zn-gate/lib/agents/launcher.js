@@ -131,6 +131,7 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
       '  ZN_OF=$(umask 077; mktemp "${TMPDIR:-/tmp}/zn-hook.XXXXXX" 2>/dev/null) || { ZN_RC=127; return 0; }',
       '  ZN_EF=$(umask 077; mktemp "${TMPDIR:-/tmp}/zn-hook.XXXXXX" 2>/dev/null) || { rm -f "$ZN_OF"; ZN_RC=127; return 0; }',
       '  trap \'rm -f "$ZN_OF" "$ZN_EF"\' EXIT',
+      '  trap \'rm -f "$ZN_OF" "$ZN_EF"; exit 143\' HUP INT TERM',
       '  # Own process group: setsid (Linux) or perl (macOS); with neither, only the hook itself is stopped at the deadline (its output is still private).',
       '  ZN_G=; for ZN_X in /usr/bin/setsid /bin/setsid; do [ -x "$ZN_X" ] && { ZN_G=1; ZN_GX=$ZN_X; break; }; done',
       '  [ -n "$ZN_G" ] || { [ -x /usr/bin/perl ] && { ZN_G=2; ZN_GX=/usr/bin/perl; }; }',

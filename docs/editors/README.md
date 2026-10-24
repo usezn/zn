@@ -12,7 +12,7 @@ zn-gate protects most where an agent lets it hook into its own tools: there it c
 | [Cursor](cursor.md) | `zn hooks install cursor` | Yes | **No** (Cursor does not allow it) | Yes | Yes | Formats checked; no end-to-end run |
 | [VS Code (GitHub Copilot)](vscode.md) | MCP server | No | No | Only servers you wrap | No | Not yet verified |
 | [Google Antigravity](antigravity.md) | `zn hooks install antigravity` | Yes | **No** (Antigravity hooks cannot rewrite output) | Only servers you wrap | No | Formats checked; hand-tested on Windows; no automated end-to-end run |
-| [ZCode desktop app](zcode.md) | `zn hooks install zcode` | Yes | **No** (ZCode hooks cannot rewrite output) | Only servers you wrap | Yes (blocked) | Hook behaviour measured on the ZCode agent runtime (Linux), to be re-verified on the desktop app; macOS not tested |
+| [ZCode desktop app](zcode.md) | `zn hooks install zcode` | Yes | **No** (ZCode hooks cannot rewrite output) | Only servers you wrap | Yes (blocked) | Follows the official ZCode hooks documentation; not tested end to end yet; macOS not tested |
 | [Windsurf (Devin Desktop)](windsurf.md) | MCP server | No | No | Only servers you wrap | No | Not yet verified |
 | [Cline](cline.md) | MCP server | No | No | Only servers you wrap | No | Not yet verified |
 | [Zed](zed.md) | MCP server | No | No | Only servers you wrap | No | Not yet verified |

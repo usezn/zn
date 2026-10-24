@@ -38,7 +38,7 @@ const write = (home, obj) => {
   fs.writeFileSync(cliFile(home), typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2));
 };
 
-// The hook output schema of ZCode (contracts/src/hooks/index.ts: HookJSONOutputSchema), reduced to the keys zn uses.
+// The hook output contract in the official ZCode hooks documentation (https://zcode.z.ai/en/docs/hooks), reduced to the keys zn uses.
 function validZCodeOutput(out, event) {
   assert.ok(out && typeof out === 'object' && !Array.isArray(out));
   const top = new Set(['additionalContext', 'additional_context', 'continue', 'decision', 'hookSpecificOutput', 'reason', 'stopReason', 'suppressOutput', 'systemMessage']);
@@ -574,15 +574,15 @@ test('the hook policy knows the install hint for zcode', () => {
   assert.match(policy.bashDenial('zn hooks install zcode'), /hooks install zcode`/);
 });
 
-/* --------------------- measured on the ZCode agent runtime --------------------- */
+/* --------------------- answer shapes from the official ZCode hooks documentation --------------------- */
 
-test('measured: respond() answers a denied prompt with continue:false and no hookSpecificOutput', () => {
+test('respond() answers a denied prompt with continue:false and no hookSpecificOutput', () => {
   const ev = zc.normalize({ hook_event_name: 'UserPromptSubmit', session_id: 's', cwd: '/w', prompt: 'x' });
   const out = zc.respond({ decision: 'deny', message: 'blocked', event: ev });
   assert.deepEqual(out, { continue: false, reason: 'blocked' });
 });
 
-test('measured: PermissionRequest only ever gets deny, whatever the internal decision (allow would skip the approval screen)', () => {
+test('PermissionRequest only ever gets deny, whatever the internal decision (allow would skip the approval screen)', () => {
   const ev = zc.normalize({ hook_event_name: 'PermissionRequest', session_id: 's', cwd: '/w', tool_name: 'Bash', tool_input: { command: 'ls' } });
   for (const d of [{ decision: 'allow' }, { decision: 'ask', message: 'q' }, { decision: 'allow', updatedInput: { command: 'x' }, kind: 'wrap' }, { decision: 'deny', message: 'no' }]) {
     const out = zc.respond({ ...d, event: ev });
@@ -592,7 +592,7 @@ test('measured: PermissionRequest only ever gets deny, whatever the internal dec
   assert.equal(zc.respond({ decision: 'allow', event: ev }), null);
 });
 
-test('measured: the camelCase fields alone are read like the snake_case ones, and tool names seen at run time map to the checks', () => {
+test('the camelCase fields alone are read like the snake_case ones, and the tool names map to the checks', () => {
   const camel = { hookEventName: 'PreToolUse', sessionId: 's', cwd: '/w', toolName: 'Read', toolInput: { file_path: '/w/a.txt' }, toolCallId: 'c', riskLevel: 'low', sideEffectScope: 'none', mode: 'yolo', transcriptPath: '/t' };
   const ev = zc.normalize(camel);
   assert.equal(ev.event, 'pre_tool');
@@ -607,7 +607,7 @@ test('measured: the camelCase fields alone are read like the snake_case ones, an
   assert.equal(zc.normalize({ hook_event_name: 'PreToolUse', tool_name: 'mcp__zn_fake__echo', tool_input: { text: 'hi' }, cwd: '/w' }).mcp.server, 'zn_fake');
 });
 
-test('measured: the agent is the one the launcher names; the CLAUDE_* variables ZCode sets change nothing', (t) => {
+test('the agent is the one the launcher names; the CLAUDE_* variables ZCode sets change nothing', (t) => {
   const home = tempDir(t, 'zn-zc-env-');
   const env = { ...process.env, HOME: home, USERPROFILE: home, ZN_STATS: 'off', CLAUDE_PROJECT_DIR: '/w', CLAUDE_SESSION_ID: 's', CLAUDE_CODE_SESSION_ID: 's', ZCODE_PROJECT_DIR: '/w', ZCODE_SESSION_ID: 's' };
   delete env.CLAUDECODE;
@@ -619,7 +619,7 @@ test('measured: the agent is the one the launcher names; the CLAUDE_* variables 
   assert.equal(out.hookSpecificOutput.permissionDecision, 'deny');
 });
 
-test('measured: hooks fire inside subagents too, so several hooks at once in one home all answer (no lock that deadlocks)', async (t) => {
+test('several hooks at once in one home all answer (no lock that deadlocks)', async (t) => {
   const home = tempDir(t, 'zn-zc-par-');
   const env = { ...process.env, HOME: home, USERPROFILE: home, ZN_STATS: 'off' };
   const payload = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', cwd: '/w', tool_name: 'Read', tool_input: { file_path: path.join(home, '.aws', 'credentials') }, tool_use_id: 'u' });
@@ -639,7 +639,7 @@ test('measured: hooks fire inside subagents too, so several hooks at once in one
   }
 });
 
-test('measured: the hooks.enabled warning says the hooks of that file do not run (plugin hooks do), not all hooks', (t) => {
+test('the hooks.enabled warning says the hooks of that file do not run (plugin hooks do), not all hooks', (t) => {
   const home = tempDir(t, 'zn-zc-warn-');
   write(home, { hooks: { enabled: false } });
   const w = zc.configWarnings({ home });
@@ -905,6 +905,24 @@ test('launcher deadline: a hook that ignores TERM is killed (KILL) one second af
   assert.match(r.stderr, /its hook failed, so this was blocked/);
   const ms = Date.now() - t0;
   assert.ok(ms >= 2900 && ms < 9000, 'killed at deadline + 1 s, not left running (' + ms + ' ms)');
+});
+
+test('launcher deadline: a TERM sent to the launcher removes its private temporary files', { skip: !posix }, async (t) => {
+  const home = tempDir(t, 'zn-zc-term-');
+  const tmp = tempDir(t, 'zn-zc-term-tmp-');
+  const hook = fakeNode(t, 'cat >/dev/null; sleep 30');
+  const file = launcher.writeLauncher('zcode', hook, RUNNER, { home, env: process.env, deadlineS: 3 });
+  const { spawn } = require('child_process');
+  const child = spawn(file, ['PreToolUse'], { env: { PATH: process.env.PATH, HOME: home, TMPDIR: tmp }, stdio: ['pipe', 'ignore', 'ignore'] });
+  const closed = new Promise((resolve) => child.on('close', (code, sig) => resolve({ code, sig })));
+  child.stdin.end('{}');
+  const files = () => fs.readdirSync(tmp).filter((f) => f.startsWith('zn-hook.'));
+  for (let i = 0; i < 100 && files().length < 2; i++) await new Promise((r) => setTimeout(r, 50));
+  assert.equal(files().length, 2, 'the launcher made its two private files');
+  child.kill('SIGTERM');
+  const r = await closed;
+  assert.ok(r.code === 143 || r.sig === 'SIGTERM', 'the launcher ended on TERM: ' + JSON.stringify(r));
+  assert.deepEqual(files(), [], 'the temporary files are gone');
 });
 
 test('launcher deadline: a timer that cannot start blocks without running the hook', { skip: !posix }, (t) => {
