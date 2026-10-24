@@ -1,0 +1,18 @@
+{
+ "rc": 0,
+ "dur_s": 8.5,
+ "requests": 2,
+ "tool_msgs": [
+  "zn: ~/.aws/credentials was not read because zn treats it as holding secrets (AWS credentials file), and secret values never go to the model. If a command needs a value, ask the user to run `npx -y zn-gate@1.14.0 secret set NAME`, then run the command with `npx -y zn-gate@1.14.0 run --secrets NAME -- <command>` so the program gets it as an environment variable."
+ ],
+ "proj_files": [
+  ".env",
+  "a.txt"
+ ],
+ "outcomes": [
+  "success",
+  "success",
+  "blocked",
+  "blocked"
+ ]
+}

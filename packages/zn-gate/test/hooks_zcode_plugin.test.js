@@ -1,0 +1,176 @@
+'use strict';
+
+process.env.ZN_STATS = 'off';
+
+// zn-gate and the ZCode plugin: how install and check see it. ZCode records an installed plugin in
+// ~/.zcode/cli/plugins/installed_plugins.json and its switch in ~/.zcode/cli/config.json (plugins.enabledPlugins);
+// the plugin's hooks run whatever hooks.enabled says (measured on the ZCode desktop app 3.16.3, see bench/e2e/zcode-plugin).
+// These tests use a stub plugin folder; the real plugin runs in plugins/tools/test-zcode-plugin.js and the e2e.
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('fs');
+const path = require('path');
+
+const { getAdapter } = require('../lib/agents');
+const { tempDir } = require('./helpers/tmp');
+
+const zc = getAdapter('zcode');
+const posix = process.platform !== 'win32';
+const ID = 'zn-gate@usezn';
+
+const base = (home) => path.join(home, '.zcode', 'cli');
+const cfgFile = (home) => path.join(base(home), 'config.json');
+const writeCfg = (home, obj) => {
+  fs.mkdirSync(base(home), { recursive: true });
+  fs.writeFileSync(cfgFile(home), JSON.stringify(obj, null, 2));
+};
+const readCfg = (home) => JSON.parse(fs.readFileSync(cfgFile(home), 'utf8'));
+
+// A plugin folder as ZCode leaves it in its cache. The stub hook denies a request that names ".env" and allows any other.
+function installPlugin(home, { script = true, manifest = true, id = ID } = {}) {
+  const root = path.join(base(home), 'plugins', 'cache', 'usezn', 'zn-gate', '1.14.0');
+  fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
+  fs.mkdirSync(path.join(root, '.zcode-plugin'), { recursive: true });
+  if (manifest) fs.writeFileSync(path.join(root, '.zcode-plugin', 'plugin.json'), '{"name":"zn-gate","version":"1.14.0"}');
+  if (script) {
+    fs.writeFileSync(path.join(root, 'scripts', 'zn-hook.sh'),
+      '#!/bin/sh\ninput=$(cat)\ncase "$input" in *.env*) printf \'%s\' \'{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"zn: .env holds plain-text secrets."}}\' ;; esac\nexit 0\n',
+      { mode: 0o755 });
+  }
+  fs.writeFileSync(path.join(base(home), 'plugins', 'installed_plugins.json'), JSON.stringify({
+    version: 1, plugins: [{ id, name: 'zn-gate', marketplace: 'usezn', version: '1.14.0', installPath: root, scope: 'user', source: './zn-gate' }],
+  }));
+  return root;
+}
+
+test('pluginState: absent, installed and on, switched off, plugins off, not ours', (t) => {
+  const home = tempDir(t, 'zn-zcp-state-');
+  assert.deepEqual(zc.pluginState({ home }), { root: null, id: null, version: null, enabled: false, pluginsOff: false, listed: false });
+
+  const root = installPlugin(home);
+  writeCfg(home, { plugins: { enabledPlugins: { [ID]: true } } });
+  let s = zc.pluginState({ home });
+  assert.equal(s.root, root);
+  assert.equal(s.id, ID);
+  assert.equal(s.version, '1.14.0');
+  assert.equal(s.enabled, true);
+
+  // No entry at all: ZCode writes true on install, so an absent entry is taken as on.
+  writeCfg(home, {});
+  assert.equal(zc.pluginState({ home }).enabled, true);
+  fs.rmSync(cfgFile(home));
+  assert.equal(zc.pluginState({ home }).enabled, true);
+
+  writeCfg(home, { plugins: { enabledPlugins: { [ID]: false } } });
+  s = zc.pluginState({ home });
+  assert.equal(s.enabled, false);
+  assert.equal(s.listed, true);
+
+  writeCfg(home, { plugins: { enabled: false, enabledPlugins: { [ID]: true } } });
+  s = zc.pluginState({ home });
+  assert.equal(s.pluginsOff, true);
+  assert.equal(s.enabled, false);
+
+  // A plugin of another name, or a zn-gate folder without our files, is not ours.
+  const other = tempDir(t, 'zn-zcp-state2-');
+  installPlugin(other, { id: 'other@usezn' });
+  assert.equal(zc.pluginState({ home: other }).root, null);
+  const noScript = tempDir(t, 'zn-zcp-state3-');
+  installPlugin(noScript, { script: false });
+  assert.equal(zc.pluginState({ home: noScript }).root, null);
+  const broken = tempDir(t, 'zn-zcp-state4-');
+  fs.mkdirSync(path.join(base(broken), 'plugins'), { recursive: true });
+  fs.writeFileSync(path.join(base(broken), 'plugins', 'installed_plugins.json'), '{ nope');
+  assert.equal(zc.pluginState({ home: broken }).root, null);
+});
+
+test('zn-gate check: the plugin alone protects ZCode, with hooks.enabled false, not set or true', { skip: !posix }, async (t) => {
+  const check = require('../lib/check');
+  const home = tempDir(t, 'zn-zcp-only-');
+  const cwd = tempDir(t, 'zn-zcp-only-cwd-');
+  const env = { ...process.env, HOME: home };
+  const find = async (live) => (await check.check({ home, cwd, env, live })).results.find((r) => r.id === 'zcode');
+  installPlugin(home);
+  for (const hooks of [{ enabled: false }, undefined, { enabled: true }]) {
+    writeCfg(home, { plugins: { enabledPlugins: { [ID]: true } }, ...(hooks ? { hooks } : {}) });
+    const r = await find(true);
+    assert.equal(r.state, 'protected', JSON.stringify(hooks) + ' ' + r.problem);
+    assert.equal(r.via, 'plugin');
+    assert.equal(r.verified, true);
+    assert.equal(r.where, 'the zn-gate plugin');
+  }
+  // Without live checks only the setup is read.
+  assert.notEqual((await find(false)).state, 'not-set-up');
+});
+
+test('zn-gate check: a plugin that is turned off, with nothing else of zn running, is NOT protected', { skip: !posix }, async (t) => {
+  const check = require('../lib/check');
+  const home = tempDir(t, 'zn-zcp-off-');
+  const cwd = tempDir(t, 'zn-zcp-off-cwd-');
+  const env = { ...process.env, HOME: home };
+  const find = async () => (await check.check({ home, cwd, env, live: true })).results.find((r) => r.id === 'zcode');
+  installPlugin(home);
+  writeCfg(home, { hooks: { enabled: false }, plugins: { enabledPlugins: { [ID]: false } } });
+  let r = await find();
+  assert.equal(r.state, 'not-protected');
+  assert.match(r.problem, /plugin is turned off in ZCode/);
+  assert.match(r.fix, /Settings, Plugins|hooks install zcode/);
+
+  writeCfg(home, { plugins: { enabled: false, enabledPlugins: { [ID]: true } } });
+  r = await find();
+  assert.equal(r.state, 'not-protected');
+  assert.match(r.problem, /plugins are turned off in ZCode/);
+});
+
+test('zn-gate check: plugin and zn hooks both on is protected, with a note about the double run', { skip: !posix }, async (t) => {
+  const check = require('../lib/check');
+  const home = tempDir(t, 'zn-zcp-both-');
+  const cwd = tempDir(t, 'zn-zcp-both-cwd-');
+  const env = { ...process.env, HOME: home };
+  zc.install({ home, nodePath: process.execPath });
+  installPlugin(home);
+  const c = readCfg(home);
+  writeCfg(home, { ...c, plugins: { enabledPlugins: { [ID]: true } } });
+  const r = (await check.check({ home, cwd, env, live: true })).results.find((x) => x.id === 'zcode');
+  assert.equal(r.state, 'protected', r.problem);
+  assert.ok(r.notes.some((n) => /checked twice/.test(n) && /hooks uninstall zcode/.test(n)), JSON.stringify(r.notes));
+});
+
+test('zn-gate check: plugin off with zn hooks on is protected by the hooks (and hooks.enabled false is still reported)', { skip: !posix }, async (t) => {
+  const check = require('../lib/check');
+  const home = tempDir(t, 'zn-zcp-hk-');
+  const cwd = tempDir(t, 'zn-zcp-hk-cwd-');
+  const env = { ...process.env, HOME: home };
+  zc.install({ home, nodePath: process.execPath });
+  installPlugin(home);
+  const c = readCfg(home);
+  writeCfg(home, { ...c, plugins: { enabledPlugins: { [ID]: false } } });
+  const find = async () => (await check.check({ home, cwd, env, live: true })).results.find((x) => x.id === 'zcode');
+  let r = await find();
+  assert.equal(r.state, 'protected', r.problem);
+  assert.ok(r.notes.some((n) => /plugin is installed but turned off/.test(n)), JSON.stringify(r.notes));
+  // The hooks switch off as well: nothing runs.
+  writeCfg(home, { ...c, hooks: { ...c.hooks, enabled: false }, plugins: { enabledPlugins: { [ID]: false } } });
+  r = await find();
+  assert.equal(r.state, 'not-protected');
+  assert.match(r.problem, /"hooks\.enabled" is false/);
+});
+
+test('zn hooks install zcode warns when the plugin is installed and on, and not when it is off', (t) => {
+  const home = tempDir(t, 'zn-zcp-inst-');
+  installPlugin(home);
+  writeCfg(home, { plugins: { enabledPlugins: { [ID]: true } } });
+  let rep = zc.install({ home, nodePath: process.execPath });
+  assert.ok(rep.warnings.some((w) => /also installed and turned on/.test(w) && /checked twice/.test(w)), rep.warnings.join('\n'));
+  assert.ok(rep.warnings.some((w) => /zn hooks uninstall zcode/.test(w)));
+  zc.uninstall({ home });
+
+  writeCfg(home, { plugins: { enabledPlugins: { [ID]: false } } });
+  rep = zc.install({ home, nodePath: process.execPath });
+  assert.ok(!rep.warnings.some((w) => /also installed/.test(w)));
+  // Nothing installed at all: no warning either.
+  const clean = tempDir(t, 'zn-zcp-inst2-');
+  rep = zc.install({ home: clean, nodePath: process.execPath });
+  assert.ok(!rep.warnings.some((w) => /also installed/.test(w)));
+});

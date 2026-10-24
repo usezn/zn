@@ -280,6 +280,17 @@ For these reasons, zn is installed correctly, but a setting stops your agent fro
 
   ZCode runs no hook from `~/.zcode/cli/config.json` unless `hooks.enabled` is `true`, and it is off by default. The hooks of a ZCode plugin keep running when it is off, but zn's are not a plugin. Start a new ZCode session after the fix: a running session keeps the hooks it started with.
 
+- **The zn-gate ZCode plugin is turned off, and nothing else of zn runs.**
+
+  ```text
+  the zn-gate plugin is turned off in ZCode, and the hooks of `zn hooks install zcode` are not installed, so nothing of zn protects ZCode
+  the zn-gate plugin is turned off in ZCode, and "hooks.enabled" is false in <file>, so ZCode runs none of the hooks of `zn hooks install zcode` either and nothing of zn protects ZCode
+  plugins are turned off in ZCode ("plugins.enabled" is false in <file>), so the zn-gate plugin does not run and no other zn hook protects ZCode
+  turn the plugin on in ZCode (Settings, Plugins), or run `zn hooks install zcode` in your own terminal, then run `zn-gate check` again
+  ```
+
+  The plugin keeps protecting ZCode when `hooks.enabled` is off, but only while it is on. ZCode records the plugin's switch in `~/.zcode/cli/config.json` (`plugins.enabledPlugins`), and `plugins.enabled` turns every plugin off. With the plugin on and `zn hooks install zcode` as well, `zn-gate check` reports a note, not a problem: ZCode does not remove duplicate hooks, so every call is checked twice. Keep one of them.
+
 - **One of zn's hooks is turned off.**
 
   ```text

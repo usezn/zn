@@ -1,0 +1,18 @@
+{
+ "rc": 0,
+ "dur_s": 8.6,
+ "requests": 2,
+ "tool_msgs": [
+  "ECHO:hello"
+ ],
+ "proj_files": [
+  ".env",
+  "MCP_CALLED",
+  "a.txt"
+ ],
+ "outcomes": [
+  "success",
+  "success",
+  "success"
+ ]
+}
