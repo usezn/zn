@@ -132,6 +132,34 @@ test('the pipe is refused when the result still lets another account in, or it c
   assert.throws(() => winacl.ensurePipe(PIPE, { tools: failing }), (e) => e.code === 'ZN_POLICY_DENIED' && /pipe busy/.test(e.message));
 });
 
+test('the built-in Administrator (RID 500): SDDL writes the user itself as LA and it is accepted; others stay refused', () => {
+  const ADM = 'S-1-5-21-111-222-333-500';
+  assert.deepEqual(winacl.problems('O:LAG:S-1-5-21-111-222-333-513D:PAI(A;OICI;FA;;;LA)', ADM, { dir: true }), []);
+  assert.deepEqual(winacl.problems('O:LAD:PAI(A;OICI;FA;;;' + ADM + ')(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)', ADM, { dir: true }), []);
+  assert.deepEqual(winacl.problems('O:BAD:P(A;;FA;;;LA)', ADM, {}), []);
+  // a standard user: LA is a different account (the machine Administrator), so it is not trusted
+  assert.ok(winacl.problems('O:' + ME + 'D:P(A;;FA;;;LA)', ME, {}).some((x) => /LA/.test(x)));
+  assert.ok(winacl.problems('O:LAD:P(A;;FA;;;' + ME + ')', ME, {}).some((x) => /owner/.test(x)));
+  // an Administrator of another machine (different domain prefix) is not this user
+  assert.ok(winacl.problems('O:S-1-5-21-9-9-9-500D:P(A;;FA;;;S-1-5-21-9-9-9-500)', ADM, {}).length > 0);
+  // another user, Everyone, Guest alias, unknown alias: refused
+  assert.ok(winacl.problems('O:LAD:P(A;;FA;;;' + ME + ')', ADM, {}).some((x) => /allows/.test(x)));
+  assert.ok(winacl.problems('O:LAD:P(A;;FA;;;WD)', ADM, {}).some((x) => /WD/.test(x)));
+  assert.ok(winacl.problems('O:LAD:P(A;;FA;;;LG)', ADM, {}).some((x) => /LG/.test(x)));
+  assert.ok(winacl.problems('O:LAD:P(A;;FA;;;ZZ)', ADM, {}).some((x) => /ZZ/.test(x)));
+  assert.ok(winacl.problems('O:ZZD:P(A;;FA;;;LA)', ADM, {}).some((x) => /owner/.test(x)));
+  // LA with a user that has no machine SID cannot be resolved: refused
+  assert.ok(winacl.problems('O:LAD:P(A;;FA;;;LA)', 'S-1-5-18', {}).some((x) => /LA/.test(x)));
+});
+
+test('ensurePrivate accepts the SDDL of the built-in Administrator and checks scripts with LA the same way', () => {
+  const ADM = 'S-1-5-21-111-222-333-500';
+  const t = fake('O:LAG:S-1-5-21-111-222-333-513D:PAI(A;OICI;FA;;;LA)').tools;
+  assert.doesNotThrow(() => winacl.ensurePrivate('C:\zn', { dir: true, tools: t, userSid: ADM }));
+  assert.deepEqual(winacl.scriptEntriesRisk([{ path: 'C:\s\a.cmd', dir: false, sddl: 'O:LAD:P(A;;FA;;;LA)(A;;FA;;;SY)' }], ADM).deny, null);
+  assert.match(winacl.scriptEntriesRisk([{ path: 'C:\s\a.cmd', dir: false, sddl: 'O:LAD:P(A;;FA;;;LA)' }], ME).deny, /owned by LA/);
+});
+
 test('on other systems the real entry points do nothing', { skip: process.platform === 'win32' }, () => {
   winacl.ensurePrivate('/nonexistent/x', { dir: true });
   winacl.ensurePipe('/nonexistent/x.sock');

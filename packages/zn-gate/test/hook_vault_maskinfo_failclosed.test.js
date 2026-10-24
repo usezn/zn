@@ -41,3 +41,46 @@ test('maskInfo answering nothing useful is still a plain answer; a vault unavail
   const none = await run(pre, null);
   assert.notStrictEqual(none.decision.decision, 'deny');
 });
+
+test('the deny message for a vault failure points to the vault (unlock), not to reinstalling hooks', async () => {
+  const r = await run(pre, { maskInfo: async () => { throw new Error('connection closed'); } });
+  assert.ok(/zn unlock/.test(r.decision.message), r.decision.message);
+  assert.ok(!/reinstall|hooks install|something went wrong inside/i.test(r.decision.message), r.decision.message);
+});
+
+test('a maskInfo answer of the wrong shape is a vault failure, not an empty vault', async () => {
+  for (const bad of [null, 'x', 7, [], { names: 'a' }]) {
+    const r = await run(pre, { maskInfo: async () => bad });
+    assert.strictEqual(r.decision.decision, 'deny', JSON.stringify(bad));
+    await assert.rejects(engine.prepare({ project: '/p', vault: { maskInfo: async () => bad } }), (e) => e.vaultFailed === true);
+  }
+  // an empty but well-formed answer is an empty vault
+  const ok = await engine.prepare({ project: '/p2', vault: { maskInfo: async () => ({ names: [], count: 0, longest: 0 }) } });
+  assert.strictEqual(ok.vaultLocked, false);
+});
+
+test('a late close of an old vault socket does not drop the newer connection', async () => {
+  const net = require('net');
+  const os = require('os'); const fs = require('fs'); const path = require('path');
+  const { EventEmitter } = require('events');
+  const { VaultClient } = require('../lib/vault/client');
+  const store = require('../lib/vault/store');
+  const home = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'zn-late-close-'));
+  const run = store.paths({ home }).runDir;
+  fs.mkdirSync(run, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(run, 'session.key'), 'a'.repeat(64), { mode: 0o600 });
+  const made = [];
+  const orig = net.createConnection;
+  net.createConnection = () => { const s = new EventEmitter(); Object.assign(s, { setEncoding() {}, write() {}, destroy() {}, unref() {} }); made.push(s); return s; };
+  try {
+    const c = new VaultClient({ home });
+    const first = c._connect(); first.catch(() => {});
+    made[0].emit('error', Object.assign(new Error('x'), { code: 'ECONNREFUSED' }));
+    await assert.rejects(first);
+    const second = c._connect(); second.catch(() => {});
+    assert.strictEqual(made.length, 2);
+    made[0].emit('close');
+    assert.strictEqual(c.conn, second, 'the newer connection is still the current one');
+    assert.strictEqual(c._connect(), second);
+  } finally { net.createConnection = orig; fs.rmSync(home, { recursive: true, force: true }); }
+});
