@@ -50,6 +50,8 @@ struct PersistedAudit<'a> {
     db_path: &'a str,
     max_logs_in_memory: usize,
     encryption_enabled: bool,
+    store_payloads: bool,
+    require_write: bool,
 }
 
 #[derive(Serialize)]
@@ -81,13 +83,17 @@ impl<'a> PersistedConfig<'a> {
             rate_limit_enabled,
             rate_limit_per_minute,
             namespace,
-            ..
+            api_key: _,
+            jwt_secret: _,
+            mcp_ws_token: _,
         } = &c.security;
         let AuditConfig {
             db_path,
             max_logs_in_memory,
             encryption_enabled,
-            ..
+            encryption_key: _,
+            store_payloads,
+            require_write,
         } = &c.audit;
         let KmsConfig {
             kms_type,
@@ -110,6 +116,8 @@ impl<'a> PersistedConfig<'a> {
                 db_path,
                 max_logs_in_memory: *max_logs_in_memory,
                 encryption_enabled: *encryption_enabled,
+                store_payloads: *store_payloads,
+                require_write: *require_write,
             },
             webhook_refs: c
                 .webhooks
@@ -444,6 +452,11 @@ mod tests {
         cfg.security.allowed_origins = vec!["https://app.example.com".to_string()];
         cfg.siem.batch_size = 77;
         cfg.audit.db_path = "roundtrip.db".to_string();
+        cfg.audit.require_write = true;
+        cfg.audit.store_payloads = true;
+        cfg.audit.encryption_enabled = true;
+        cfg.security.rate_limit_enabled = true;
+        cfg.kms.allow_config_fallback = true;
         let cleaned = cfg.without_env_values();
         let text = serde_json::to_string_pretty(&PersistedConfig::new(&cleaned)).unwrap();
         let back: ZnConfig = serde_json::from_str(&text).unwrap();
@@ -455,6 +468,12 @@ mod tests {
         );
         assert_eq!(back.siem.batch_size, 77);
         assert_eq!(back.audit.db_path, "roundtrip.db");
+        // Fail-closed and storage flags must survive persist + load.
+        assert!(back.audit.require_write);
+        assert!(back.audit.store_payloads);
+        assert!(back.audit.encryption_enabled);
+        assert!(back.security.rate_limit_enabled);
+        assert!(back.kms.allow_config_fallback);
         assert!(back.webhooks.is_empty());
         assert!(back.siem.token.is_none() && back.siem.endpoint.is_none());
     }
