@@ -12,7 +12,7 @@
 
 <p align="center">
   <strong>The local security layer for coding agents.</strong><br/>
-  zn-gate guards your secrets, your data and your systems while you use Claude Code, Codex CLI, Cursor, OpenCode or Antigravity.<br/>
+  zn-gate guards your secrets, your data and your systems while you use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or Zcode.<br/>
   An open-source security layer that runs on your machine, between your agent and the tools and content it touches.
 </p>
 
@@ -33,7 +33,7 @@
 
 ---
 
-**For:** developers using Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or any MCP client, and teams building agents with MCP, LangChain, CrewAI or LlamaIndex.
+**For:** developers using Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, Zcode or any MCP client, and teams building agents with MCP, LangChain, CrewAI or LlamaIndex.
 
 **What it does:** keeps secret values out of what your agent sends to its model, checks what your agent reads and calls for prompt injection, and audits prompts, skills and configs. Everything runs on your machine, is MIT-licensed and needs no account. The Python package has no runtime dependencies; the npm package's only one is `age-encryption` (with its `@noble`/`@scure` dependencies) for the secret vault, bundled in the package.
 
@@ -56,7 +56,7 @@ npx -y zn-gate init
 
 `init` does this:
 
-- It finds Claude Code, Codex CLI, Cursor, OpenCode and Antigravity on your machine.
+- It finds Claude Code, Codex CLI, Cursor, OpenCode, Antigravity and Zcode on your machine.
 - For each one that is not protected yet, it shows the setup: the zn-gate plugin for Claude Code (or zn's hooks when your Node.js is older than 20.19), and zn's hooks for the others.
 - It runs each step only after you confirm it.
 - It ends with `zn-gate check`.
@@ -115,6 +115,8 @@ In Codex, approve the new hooks with `/hooks`. In Cursor, shell output and file 
 
 **Antigravity.** `zn hooks install antigravity` (or `npx -y zn-gate init`) adds a hook that runs before each tool call. It blocks reads and writes of secret files and shell commands that handle secrets, and the agent cannot edit the hook files. It cannot remove secrets from what a tool returns, Antigravity's MCP configuration files are not protected, and Antigravity does not document what happens when a hook fails (in our tests the call is blocked), so treat it as a first layer. The MCP server works there too. Details: [Antigravity page](docs/editors/antigravity.md).
 
+**Zcode (z.ai).** `zn hooks install zcode` (or `npx -y zn-gate init`) adds hooks that run before each tool call and before each prompt. It blocks reads and writes of secret files, shell commands that handle secrets, MCP calls that would send a secret, and a prompt that contains a secret, and the agent cannot edit Zcode's own config file. It cannot remove secrets from what a tool returns (zn adds a notice when an output holds one), Zcode ignores the hooks of a project, and a hook that cannot start does not block the call by itself (zn's launcher blocks it when its Node.js is gone), so treat it as a first layer. Tested on zcode-cli 0.17.0 on Linux; Windows, macOS and the desktop app are not tested. Details: [Zcode page](docs/editors/zcode.md).
+
 **Copilot CLI (experimental).** `zn hooks install copilot` adds hooks that run before and after each tool call. They block reads and writes of secret files and shell commands that handle secrets, and replace secret values in the results of read-type and shell tools. They cannot block a typed prompt, a call goes through when a hook times out, it has not been tested on Windows, and Copilot's own session log keeps the original output, so treat it as a first layer. Details: [Copilot CLI notes](docs/compat.md).
 
 **Gemini CLI (experimental).** `zn hooks install gemini` adds a hook that runs before each tool call. It blocks reads and writes of secret files and shell commands that handle secrets, and the agent cannot edit Gemini CLI's settings files. It does not change what a tool returns, Gemini CLI hooks cannot ask you for confirmation, and a hook that crashes or times out does not block the call, so treat it as a first layer. Google replaced Gemini CLI with Antigravity CLI for free and Google One accounts on 18 June 2026; Gemini CLI keeps working with zn-gate. Details: [Gemini CLI notes](docs/compat.md).
@@ -140,7 +142,7 @@ zn-gate scan .
 
 `pipx ensurepath` puts `~/.local/bin` on your PATH. Until you reopen the terminal, `zn-gate` is reported as "command not found". With uv: `uv tool install zn-gate` (run `uv tool update-shell` if the command is not found). To run it once without installing: `uvx zn-gate scan .`
 
-The Python CLI does not install hooks. To protect Claude Code, Codex CLI, Cursor, OpenCode or Antigravity, run `npx -y zn-gate init` (Node 18 or later).
+The Python CLI does not install hooks. To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or Zcode, run `npx -y zn-gate init` (Node 18 or later).
 
 For LangChain and LangGraph, `ZnGuardCallbackHandler` stops the run when it blocks a prompt, a tool call or a tool output, and `guard_langchain_tool(tool)` wraps a tool so its arguments are checked before it runs and its output is checked and masked before the model reads it. A callback cannot change what a tool returns, so the handler with `mask_secrets=True` (default) also stops the run on a secret in a tool output (it fails closed); to hide secrets and keep going, wrap the tool and create the handler with `mask_secrets=False`. See the [Python package guide](packages/zn-gate-py/README.md#langchain--langgraph).
 
@@ -453,13 +455,14 @@ Runnable examples are in [`examples/`](examples/). The code API checks text for 
 - **Claude Code and OpenCode:** every tool, including shell commands, file reads, search and MCP.
 - **Codex CLI:** the result is replaced by its scrubbed text, so the model gets text instead of the structured result. Codex's own session log keeps the original output.
 - **Cursor:** MCP tool output only. Cursor's hooks cannot rewrite shell or file-read output.
+- **Zcode:** `zn hooks install zcode` blocks reads and writes of secret files, shell commands that handle secrets, MCP calls that would send a secret and prompts that contain one. It cannot rewrite what a tool returns, so a value a command prints still reaches the model (zn adds a notice). Zcode ignores the hooks of a project. Details: [docs/editors/zcode.md](docs/editors/zcode.md).
 - **Copilot CLI (experimental):** `zn hooks install copilot` blocks reads and writes of secret files and shell commands that handle secrets, and replaces secret values in the results of read-type and shell tools. It cannot block a typed prompt, lets a call through when its hook times out, has not been tested on Windows, and Copilot's own session log keeps the original output. Details: [docs/compat.md](docs/compat.md).
 - **Gemini CLI (experimental):** Google replaced Gemini CLI with Antigravity CLI for free and Google One accounts on 18 June 2026; Gemini CLI keeps working with zn-gate. `zn hooks install gemini` blocks reads and writes of secret files and shell commands that handle secrets. It does not change what a tool returns, so a value a command prints still reaches the model. Details: [docs/compat.md](docs/compat.md).
 - **Hermes Agent and the Cursor CLI:** not covered yet. For any MCP client, the output of an MCP server wrapped with `zn-gate shield` or `init` is scrubbed.
 
 For Codex CLI, zn also reviews the model's final answer. By default it only warns you; with `"stopReview": "block"` under `hooks` in `~/.zn/config.json`, Codex asks the model to rewrite a final answer that contains a secret value. A second opt-in, `"replaceToolOutputOnSecret": true` under `hooks` in the same file, makes Codex replace a tool result that holds a real secret with zn's stop text and carry on, so the model gets that text instead of the output. See [docs/compat.md](docs/compat.md).
 
-**Which agents are supported?** Claude Code, Codex CLI, Cursor, OpenCode and Antigravity, through hooks (what each one supports: [docs/compat.md](docs/compat.md)). Other editors (VS Code, Windsurf, Cline, Zed, JetBrains, Continue) work as an MCP server only: [setup for each one](https://usezn.com/docs/integrations/editors/). `init` can also wrap the MCP servers you already use.
+**Which agents are supported?** Claude Code, Codex CLI, Cursor, OpenCode, Antigravity and Zcode, through hooks (what each one supports: [docs/compat.md](docs/compat.md)). Other editors (VS Code, Windsurf, Cline, Zed, JetBrains, Continue) work as an MCP server only: [setup for each one](https://usezn.com/docs/integrations/editors/). `init` can also wrap the MCP servers you already use.
 
 **How do I remove it?** Run `npx -y zn-gate uninstall` in your own terminal. It lists what it found (the Claude Code plugin, zn's hooks for each agent, wrapped MCP servers), asks before removing, and ends with `zn-gate check`. Your vault is only deleted if you confirm that separately. `npx -y zn-gate uninstall --dry-run` shows the list and changes nothing. To remove one part at a time, or for the steps by agent, see the [removal guide](docs/uninstall.md). `init --revert` is narrower: it only puts back the MCP configs that were saved before `init --wrap-mcp` wrapped them. For a standalone server, remove the `zn-gate` entry from your agent config.
 

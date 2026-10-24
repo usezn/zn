@@ -252,6 +252,36 @@ For these reasons, zn is installed correctly, but a setting stops your agent fro
 
   Codex runs every hook for an event at the same time, each with the original call. Another tool's hook can change the call after zn has checked it, or answer an approval prompt, and zn cannot see what it does. See [compat](compat.md) for the details.
 
+### Zcode settings switch the hook off
+
+- **Hooks are turned off.**
+
+  ```text
+  "hooks.enabled" is false in <file>, so Zcode runs none of the hooks in that file, zn's included
+  "hooks.enabled" is not set in <file>, so Zcode runs none of the hooks in that file, zn's included
+  run `zn hooks install zcode` in your own terminal (it turns the hooks back on), then run `zn-gate check` again
+  ```
+
+  Zcode runs no hook from `~/.zcode/cli/config.json` unless `hooks.enabled` is `true`, and it is off by default. The hooks of a Zcode plugin keep running when it is off, but zn's are not a plugin. Start a new Zcode session after the fix: a running session keeps the hooks it started with.
+
+- **One of zn's hooks is turned off.**
+
+  ```text
+  zn's <event> hook has "enabled": false in <file>, so Zcode skips it
+  ```
+
+  Zcode skips an entry with `"enabled": false` without a message. Run `zn hooks install zcode` again, or set it back to `true`, then run `zn-gate check` again.
+
+- **One of zn's hooks runs in the background.**
+
+  ```text
+  zn's <event> hook runs in the background (async) in <file>, and a background hook cannot block anything
+  ```
+
+  A hook marked `async` runs beside the tool call and cannot stop it. Remove `"async": true` from zn's entry, or run `zn hooks install zcode` again.
+
+- **Zcode's MCP support is off.** This is a note under an **OK** line, not a NOT protected line: `"features.mcp"` is false in <file>, so Zcode does not start zn's `secrets` MCP server. The hooks still work.
+
 ### Gemini CLI settings switch the hook off
 
 - **Hooks are turned off, or zn's hook is on the disabled list.**

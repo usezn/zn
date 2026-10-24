@@ -2,7 +2,7 @@
 
 Short meanings of words used in the zn-gate docs.
 
-**Coding agent**: a program such as Claude Code, Codex CLI, Cursor, OpenCode or Antigravity that reads your files and runs commands for you.
+**Coding agent**: a program such as Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or Zcode that reads your files and runs commands for you.
 
 **Terminal**: the window where you type commands. Run zn-gate's setup commands in your own terminal, not through an agent.
 
