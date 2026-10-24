@@ -176,7 +176,7 @@ test('ZN_HOOK_DIR: a new folder inside a parent that anyone can write is refused
     const home = tempDir(t, 'zn-agy-par-');
     const parent = mkdirMode(path.join(tempDir(t, 'zn-agy-hd-'), 'parent'), mode);
     const dir = path.join(parent, 'hooks');
-    assert.throws(() => hookDirInstall(home, dir), /a folder above it .*can be written by other users|ZN_HOOK_DIR/, 'mode ' + mode.toString(8));
+    assert.throws(() => hookDirInstall(home, dir), /the folder above it, .*can be written by other users|ZN_HOOK_DIR/, 'mode ' + mode.toString(8));
     assert.equal(fs.existsSync(dir), false);
     assert.equal(fs.existsSync(hooksPath(home)), false);
     assert.deepEqual(fs.readdirSync(parent), []);
@@ -189,7 +189,7 @@ test('ZN_HOOK_DIR: a folder further down a parent that anyone can write is refus
   fs.mkdirSync(path.join(top, 'mid'), { mode: 0o700 });
   fs.chmodSync(path.join(top, 'mid'), 0o777);
   const dir = path.join(top, 'mid', 'a', 'b', 'hooks');
-  assert.throws(() => hookDirInstall(home, dir), /a folder above it .*can be written by other users/);
+  assert.throws(() => hookDirInstall(home, dir), /the folder above it, .*can be written by other users/);
   assert.equal(fs.existsSync(path.join(top, 'mid', 'a')), false);
 });
 
@@ -199,11 +199,11 @@ test('ZN_HOOK_DIR: a link anywhere in the path is refused, even when the target 
   const open777 = mkdirMode(path.join(root, 'open'), 0o777);
   const own = mkdirMode(path.join(root, 'own'), 0o700);
   fs.symlinkSync(open777, path.join(own, 'link'));
-  assert.throws(() => hookDirInstall(home, path.join(own, 'link', 'hooks2')), /a link is in its path/);
+  assert.throws(() => hookDirInstall(home, path.join(own, 'link', 'hooks2')), /goes through a link/);
   assert.deepEqual(fs.readdirSync(open777), []);
   const safe = mkdirMode(path.join(root, 'safe'), 0o700);
   fs.symlinkSync(safe, path.join(own, 'link2'));
-  assert.throws(() => hookDirInstall(home, path.join(own, 'link2', 'hooks')), /a link is in its path/);
+  assert.throws(() => hookDirInstall(home, path.join(own, 'link2', 'hooks')), /goes through a link/);
   assert.deepEqual(fs.readdirSync(safe), []);
 });
 
@@ -219,6 +219,6 @@ test('ZN_HOOK_DIR: production rule has no exception: a folder that anyone can wr
   const launcher = require('../lib/agents/launcher');
   const shared = mkdirMode(path.join(tempDir(t, 'zn-agy-hd-'), 'shared'), 0o1777); // like /tmp
   const dir = path.join(shared, 'x', 'hooks');
-  assert.throws(() => launcher.ensureSafeHookDir(dir, 'linux'), /a folder above it .*can be written by other users/);
+  assert.throws(() => launcher.ensureSafeHookDir(dir, 'linux'), /the folder above it, .*can be written by other users/);
   assert.equal(fs.existsSync(path.join(shared, 'x')), false);
 });
