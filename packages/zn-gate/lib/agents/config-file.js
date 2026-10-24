@@ -147,6 +147,8 @@ function isOurs(command, agentId) {
   if (typeof command !== 'string') return false;
   // zn's launcher script (lib/agents/launcher.js): '<dir>/zn-hook-<agent>.sh' <Event>
   if (new RegExp("zn-hook-" + agentId + "\\.sh'? [A-Za-z]+\\s*$").test(command)) return true;
+  // The project hook with its own start guard (lib/agents/launcher.js projectShCommand).
+  if (require('./launcher').isProjectGuard(command, agentId)) return true;
   const re = new RegExp('(\\bhook ' + agentId + '|hooks[\\\\/]runner\\.js["\']? ' + agentId + ')\\s*$');
   if (re.test(command)) return true;
   const script = windowsCommandScript(command);

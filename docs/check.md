@@ -87,6 +87,14 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
 
   An older zn-gate wrote the Antigravity launcher path in quotes. Antigravity does not read quotes, so the hook never starts. Run `zn hooks install antigravity` again: it writes the path without quotes.
 
+- **zn's Antigravity hook is turned off.**
+
+  ```text
+  zn's hook is turned off in <file> ("enabled": false on the hook "<name>"), so Antigravity skips it and zn does not protect Antigravity
+  ```
+
+  Antigravity documents `"enabled": false` as a way to disable a hook without removing it, and then runs nothing for it. Fix: run `zn hooks install antigravity` in your own terminal (it turns the hook back on), or set "enabled" to true on that hook, then run `zn-gate check` again. If another enabled Antigravity hook also runs before tool calls, `zn-gate check` adds a note: Antigravity does not document the order of hooks or which answer wins, so zn cannot tell whether its deny holds against that hook.
+
 - **The hook calls `zn`, and `zn` is not installed.**
 
   ```text

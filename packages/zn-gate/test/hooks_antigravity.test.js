@@ -88,9 +88,80 @@ test('a command with secret placeholders is wrapped in zn run and the user is as
   assert.equal(r.output.overwrite, undefined);
 });
 
-test('events other than PreToolUse answer {}', async () => {
+test('a named event other than PreToolUse answers {} (its documented answer)', async () => {
   const r = await run(pre('run_command', { CommandLine: 'ls' }, { hookEventName: 'PostToolUse' }));
   assert.deepEqual(r.output, {});
+});
+
+const VALID = new Set(['allow', 'auto_approve', 'deny', 'ask', 'force_ask', 'deny_unless_prior_grant']);
+
+test('every answer for a tool call is an explicit decision, never {} (Antigravity denies the call on {})', async () => {
+  const calls = [
+    pre('run_command', { CommandLine: 'ls' }),
+    pre('run_command', { Cwd: '/work' }),
+    pre('zn_unknown_tool', {}),
+    pre('view_file', {}),
+    { conversationId: 'c1' }, // not a tool call, no event name
+  ];
+  for (const raw of calls) {
+    const r = await run(raw);
+    assert.ok(r.output && VALID.has(r.output.decision), JSON.stringify(raw) + ' -> ' + JSON.stringify(r.output));
+    if (r.output.decision === 'deny') assert.ok(r.output.reason, 'a deny carries a reason');
+  }
+});
+
+test('an internal error answers deny with a plain reason (fail-closed), not nothing', async () => {
+  const broken = { id: 'antigravity', normalize: () => { throw new Error('boom'); }, respond: agy.respond };
+  const r = await runner.handle(broken, pre('run_command', { CommandLine: 'ls' }), { engine: fakeEngine, vault: createFakeVault(), failMode: 'closed' });
+  assert.equal(r.output.decision, 'deny');
+  assert.ok(typeof r.output.reason === 'string' && r.output.reason.length > 10);
+  // with hooks.whenUnavailable "allow" and a failure other than a missing engine, it is still a deny
+  const r2 = agy.respond({ decision: 'allow', event: null });
+  assert.equal(r2.decision, 'deny');
+  assert.ok(r2.reason);
+});
+
+test('main: input that cannot be read prints a deny decision as JSON on stdout', async () => {
+  const chunks = [];
+  const orig = process.stdout.write;
+  const code = process.exitCode;
+  process.stdout.write = (c) => { chunks.push(String(c)); return true; };
+  try {
+    await runner.main(['antigravity'], async () => 'this is not json');
+    await runner.main(['antigravity'], async () => '');
+  } finally { process.stdout.write = orig; process.exitCode = code; }
+  assert.equal(chunks.length, 2);
+  for (const c of chunks) {
+    const o = JSON.parse(c);
+    assert.equal(o.decision, 'deny');
+    assert.ok(o.reason);
+  }
+});
+
+test('selfCheck: passes for a hook that answers allow; fails for nothing, {}, text, deny and a missing command', () => {
+  const node = JSON.stringify(process.execPath);
+  const say = (js) => node + ' -e ' + JSON.stringify(js);
+  assert.equal(agy.selfCheck(say("process.stdin.resume();process.stdin.on('end',()=>console.log(JSON.stringify({decision:'allow'})))")).ok, true);
+  assert.equal(agy.selfCheck(say('0')).ok, false);
+  assert.equal(agy.selfCheck(say("console.log('{}')")).ok, false);
+  assert.equal(agy.selfCheck(say("console.log('hello')")).ok, false);
+  const denied = agy.selfCheck(say("console.log(JSON.stringify({decision:'deny',reason:'nope'}))"));
+  assert.equal(denied.ok, false);
+  assert.match(denied.detail, /deny/);
+  assert.equal(agy.selfCheck('zn-no-such-command-xyz').ok, false);
+});
+
+test('install with selfCheck runs the real hook once: ok, and a broken command is reported with a next step', (t) => {
+  const home = tempDir(t, 'zn-agy-sc-');
+  const good = agy.install({ scope: 'user', home, selfCheck: true, env: { ...process.env, HOME: home, USERPROFILE: home } });
+  assert.equal(good.selfCheck.ok, true, JSON.stringify(good.selfCheck));
+  assert.ok(good.warnings.some((w) => /Self-check passed/.test(w)));
+  const dir = tempDir(t, 'zn-agy-sc2-');
+  const bad = agy.install({ scope: 'project', projectDir: dir, command: 'zn-no-such-command-xyz', selfCheck: true });
+  assert.equal(bad.selfCheck.ok, false);
+  assert.ok(bad.warnings.some((w) => /SELF-CHECK FAILED/.test(w) && /Next step/.test(w)));
+  const plain = agy.install({ scope: 'project', projectDir: dir });
+  assert.equal(plain.selfCheck, undefined);
 });
 
 test('deny: the agent cannot edit the files that switch the hook off', async () => {
@@ -112,7 +183,10 @@ test('install (project): named hook with a nested PreToolUse group; idempotent; 
   assert.equal(data['zn-gate'].enabled, true);
   const [g] = data['zn-gate'].PreToolUse;
   assert.equal(g.matcher, '*');
-  assert.deepEqual(g.hooks, [{ type: 'command', command: 'zn hook antigravity', timeout: 15 }]);
+  // The shared project file names `zn` on the PATH inside zn's own guard (see hooks_antigravity_project.test.js).
+  const launcher = require('../lib/agents/launcher');
+  const guarded = process.platform === 'win32' ? launcher.windowsScriptCommand(launcher.projectWindowsScript('antigravity')) : launcher.projectShCommand('antigravity');
+  assert.deepEqual(g.hooks, [{ type: 'command', command: guarded, timeout: 15 }]);
   agy.install({ scope: 'project', projectDir: dir });
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf8'))['zn-gate'].PreToolUse.length, 1);
   assert.equal(agy.uninstall({ scope: 'project', projectDir: dir }).removed, 1);
@@ -209,7 +283,8 @@ test('zn-gate check reads the Antigravity hook state (set up, off, absent)', asy
   const data = JSON.parse(fs.readFileSync(file, 'utf8'));
   data['zn-gate'].enabled = false;
   fs.writeFileSync(file, JSON.stringify(data));
-  assert.equal((await find()).state, 'not-set-up');
+  // zn's hook is there but turned off: Antigravity skips it, so it is reported as not protected (check_antigravity_hooks.test.js)
+  assert.equal((await find()).state, 'not-protected');
 });
 
 test('project MCP path is looked for next to the two global ones', () => {
@@ -485,4 +560,109 @@ test('a link already on disk: write_to_file through ag/../hooks.json is denied',
   fs.symlinkSync(path.join('.agents', 'skills'), path.join(dir, 'ag'));
   const r = await run(pre('write_to_file', { TargetFile: dir + '/ag/../hooks.json', CodeContent: '{}' }, { workspacePaths: [dir] }));
   assert.equal(r.output.decision, 'deny');
+});
+
+test('real tool names: IDE read_file/write_file/edit_file and CLI read_file use the read and write checks', async () => {
+  const cred = path.join(HOME, '.ssh', 'id_rsa');
+  assert.equal(agy.normalize(pre('read_file', { Path: cred })).tool, 'read');
+  assert.equal(agy.normalize(pre('write_file', { Path: '/work/proj/a.txt', Content: 'x' })).tool, 'write');
+  assert.equal(agy.normalize(pre('edit_file', { Path: '/work/proj/a.txt', Target: 'old', Replacement: 'new' })).tool, 'write');
+  assert.equal((await run(pre('view_file', { AbsolutePath: cred }))).output.decision, 'deny');
+  assert.equal((await run(pre('read_file', { Path: cred }))).output.decision, 'deny');
+  assert.equal((await run(pre('read_file', { Path: '/work/proj/README.md' }))).output.decision, 'allow');
+  assert.equal(agy.normalize(pre('list_dir', { DirectoryPath: '/work/proj' })).tool, 'read');
+  assert.equal(agy.normalize(pre('find_by_name', { SearchDirectory: '/work/proj', Pattern: '*.js' })).tool, 'read');
+  assert.equal((await run(pre('write_file', { Path: path.join(HOME, '.zn', 'vault.json'), Content: 'x' }))).output.decision, 'deny');
+  assert.equal(agy.normalize(pre('run_command', { CommandLine: 'ls' })).tool, 'bash');
+});
+
+test('edit_file: the Target key is text, not a path', async () => {
+  const n = agy.normalize(pre('edit_file', { Path: '/work/proj/a.js', Target: path.join(HOME, '.aws', 'credentials') }));
+  assert.deepEqual(n.input.paths, ['/work/proj/a.js']);
+  assert.equal((await run(pre('edit_file', { Path: '/work/proj/a.js', Target: 'const a = 1;', Replacement: 'const a = 2;' }))).output.decision, 'allow');
+  // a call whose only candidate is Target has no readable path
+  assert.equal(agy.normalize(pre('edit_file', { Target: 'x' })).unreadable !== undefined, true);
+});
+
+test('search_web, invoke_subagent and other tools without a path keep the default (no opinion)', async () => {
+  for (const name of ['search_web', 'invoke_subagent', 'schedule', 'manage_task', 'ask_question', 'list_resources']) {
+    assert.equal((await run(pre(name, { Query: 'x' }))).output.decision, 'allow', name);
+  }
+});
+
+test('every real tool name, with its real argument shape, answers an explicit decision (never {} or nothing)', async () => {
+  const cred = path.join(HOME, '.ssh', 'id_rsa');
+  const shapes = [
+    ['read_file', { Path: '/work/proj/a.txt' }], ['read_file', { Path: cred }], ['read_file', {}],
+    ['write_file', { Path: '/work/proj/a.txt', Content: 'x' }], ['write_file', { Path: cred, Content: 'x' }], ['write_file', {}],
+    ['edit_file', { Path: '/work/proj/a.txt', Target: 'old', Replacement: 'new' }], ['edit_file', { Target: 'old' }], ['edit_file', {}],
+    ['run_command', { CommandLine: 'ls' }], ['run_command', { CommandLine: 'cat ' + cred }], ['run_command', {}],
+    ['view_file', { AbsolutePath: '/work/proj/a.txt' }], ['write_to_file', { TargetFile: '/work/proj/a.txt', CodeContent: 'x' }],
+    ['find_by_name', { SearchDirectory: '/work/proj', Pattern: '*.js' }], ['list_dir', { DirectoryPath: '/work/proj' }],
+    ['invoke_subagent', { Task: 'x' }], ['search_web', { query: 'x' }], ['schedule', {}], ['manage_task', {}], ['ask_question', {}], ['list_resources', {}],
+  ];
+  for (const [name, args] of shapes) {
+    const r = await run(pre(name, args));
+    assert.ok(r.output && VALID.has(r.output.decision), name + ' ' + JSON.stringify(args) + ' -> ' + JSON.stringify(r.output));
+    if (r.output.decision === 'deny') assert.ok(r.output.reason, name + ': a deny carries a reason');
+    assert.notDeepEqual(r.output, {}, name);
+  }
+});
+
+test('edit_file: Target is never taken for the file, also nested; write_to_file TargetFile still is', () => {
+  const n = agy.normalize(pre('edit_file', { Path: '/work/proj/a.js', Target: path.join(HOME, '.aws', 'credentials'), Edit: { Target: '/etc/passwd', Path: '/work/proj/b.js' } }));
+  assert.deepEqual(n.input.paths, ['/work/proj/a.js', '/work/proj/b.js']);
+  assert.deepEqual(agy.normalize(pre('write_to_file', { TargetFile: '/work/proj/a.txt', CodeContent: 'x' })).input.paths, ['/work/proj/a.txt']);
+});
+
+// The real hook process: a hung check, an escaped error and unreadable input all end in a deny on stdout.
+const { spawnSync } = require('child_process');
+const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
+
+function spawnHook(t, input, fault) {
+  const home = tempDir(t, 'zn-agy-hook-');
+  const env = { ...process.env, HOME: home, USERPROFILE: home, ZN_STATS: 'off' };
+  delete env.ZN_TEST_HOOK_FAULTS;
+  if (fault) { env.ZN_TEST_HOOK_FAULTS = '1'; Object.assign(env, fault); }
+  const started = Date.now();
+  const r = spawnSync(process.execPath, [RUNNER, 'antigravity'], { input, encoding: 'utf8', env, timeout: 20000 });
+  return { ...r, ms: Date.now() - started };
+}
+
+function assertDeny(r) {
+  const o = JSON.parse(r.stdout); // stdout is nothing but this JSON
+  assert.equal(o.decision, 'deny', r.stdout + r.stderr);
+  assert.ok(o.reason && o.reason.length > 10);
+  assert.ok(!/\bat .*\.js:\d+/.test(r.stdout), 'no stack trace on stdout');
+}
+
+test('the real hook: a hung check is answered with a deny before Antigravity gives up', (t) => {
+  const r = spawnHook(t, JSON.stringify(pre('run_command', { CommandLine: 'ls' })), { ZN_TEST_HOOK_FAULT: 'hang', ZN_TEST_HOOK_HANG_MS: '30000', ZN_TEST_HOOK_DEADLINE_MS: '800' });
+  assertDeny(r);
+  assert.equal(r.status, 2);
+  assert.ok(r.ms < 8000, 'answered in ' + r.ms + ' ms');
+  assert.ok(agy.HOOK_TIMEOUT_S >= 10, 'the watchdog (timeout minus 5 s) is not zero');
+});
+
+test('the real hook: an error that escapes, or a rejected promise, is answered with a deny', (t) => {
+  for (const f of ['crash', 'reject']) {
+    const r = spawnHook(t, JSON.stringify(pre('run_command', { CommandLine: 'ls' })), { ZN_TEST_HOOK_FAULT: f, ZN_TEST_HOOK_HANG_MS: '5000' });
+    assertDeny(r);
+  }
+  // a throw inside the check is caught by the runner itself: a deny too
+  assertDeny(spawnHook(t, JSON.stringify(pre('run_command', { CommandLine: 'ls' })), { ZN_TEST_HOOK_FAULT: 'throw' }));
+});
+
+test('the real hook: unreadable input (empty, not JSON, not an object) is a deny; a normal call is an allow', (t) => {
+  for (const input of ['', 'not json', '[1]', '42']) assertDeny(spawnHook(t, input));
+  const ok = spawnHook(t, JSON.stringify(pre('search_web', { query: 'x' })));
+  assert.equal(JSON.parse(ok.stdout).decision, 'allow');
+  assert.equal(ok.status, 0);
+});
+
+test('the real hook: the test variables do nothing without ZN_TEST_HOOK_FAULTS=1', (t) => {
+  const r = spawnHook(t, JSON.stringify(pre('search_web', { query: 'x' })), null);
+  assert.equal(JSON.parse(r.stdout).decision, 'allow');
+  const env2 = spawnSync(process.execPath, [RUNNER, 'antigravity'], { input: JSON.stringify(pre('search_web', { query: 'x' })), encoding: 'utf8', env: { ...process.env, ZN_STATS: 'off', ZN_TEST_HOOK_FAULT: 'hang', ZN_TEST_HOOK_HANG_MS: '30000', ZN_TEST_HOOK_DEADLINE_MS: '100', ZN_TEST_HOOK_FAULTS: '' }, timeout: 20000 });
+  assert.equal(JSON.parse(env2.stdout).decision, 'allow');
 });
