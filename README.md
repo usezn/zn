@@ -12,7 +12,7 @@
 
 <p align="center">
   <strong>The local security layer for coding agents.</strong><br/>
-  zn-gate guards your secrets, your data and your systems while you use Claude Code, Codex CLI, Cursor or OpenCode.<br/>
+  zn-gate guards your secrets, your data and your systems while you use Claude Code, Codex CLI, Cursor, OpenCode or Antigravity.<br/>
   An open-source security layer that runs on your machine, between your agent and the tools and content it touches.
 </p>
 
@@ -56,7 +56,7 @@ npx -y zn-gate init
 
 `init` does this:
 
-- It finds Claude Code, Codex CLI, Cursor and OpenCode on your machine.
+- It finds Claude Code, Codex CLI, Cursor, OpenCode and Antigravity on your machine.
 - For each one that is not protected yet, it shows the setup: the zn-gate plugin for Claude Code (or zn's hooks when your Node.js is older than 20.19), and zn's hooks for the others.
 - It runs each step only after you confirm it.
 - It ends with `zn-gate check`.

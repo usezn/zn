@@ -14,7 +14,7 @@
 
 **For:** developers building their own agents with LangChain, CrewAI, LlamaIndex or plain Python tool calling.
 
-> **Using Claude Code, Codex CLI, Cursor or OpenCode?** This Python package does not protect them. Run `npx -y zn-gate init` in your own terminal instead (it needs Node.js 18 or later; 22 LTS is recommended, and the Claude Code plugin needs 20.19 or later): see [Install](https://github.com/usezn/zn#install).
+> **Using Claude Code, Codex CLI, Cursor, OpenCode or Antigravity?** This Python package does not protect them. Run `npx -y zn-gate init` in your own terminal instead (it needs Node.js 18 or later; 22 LTS is recommended, and the Claude Code plugin needs 20.19 or later): see [Install](https://github.com/usezn/zn#install).
 
 ---
 
@@ -49,7 +49,7 @@ Inside an environment you already use (your project's virtualenv, Poetry, uv), `
 - `python3 -m venv` fails on Debian or Ubuntu: run `sudo apt install python3-venv`.
 - Python says it cannot find `zn_gate`: run your script with the Python of that environment (`.venv/bin/python`; Windows: `.venv\Scripts\python`).
 - Legitimate content is blocked: use `on_block="return"` with a fallback while you evaluate it.
-- You use Claude Code, Codex CLI, Cursor or OpenCode: this package does not protect them. Run `npx -y zn-gate init` in your own terminal instead.
+- You use Claude Code, Codex CLI, Cursor, OpenCode or Antigravity: this package does not protect them. Run `npx -y zn-gate init` in your own terminal instead.
 
 ## Check that it works
 
