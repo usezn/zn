@@ -352,7 +352,7 @@ function commandFor(opts = {}) {
   if ((opts.scope || 'user') === 'project') return (event) => launcher.projectShCommand(id, event);
   const node = opts.nodePath || process.execPath;
   const runner = opts.runnerPath || runnerPath();
-  const file = launcher.writeLauncher(id, node, runner, opts);
+  const file = launcher.writeLauncher(id, node, runner, { ...opts, deadlineS: launcher.launcherDeadlineS(HOOK_TIMEOUT_S), deadlineSoft: true });
   return (event) => launcher.launcherCommand(file, event, opts.platform);
 }
 

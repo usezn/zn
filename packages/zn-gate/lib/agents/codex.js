@@ -374,7 +374,7 @@ function handlerFor(opts = {}) {
   const platform = opts.platform || process.platform;
   const node = opts.nodePath || process.execPath;
   const runner = opts.runnerPath || cfg.runnerPath();
-  const file = platform === 'win32' ? null : launcher.writeLauncher(id, node, runner, opts);
+  const file = platform === 'win32' ? null : launcher.writeLauncher(id, node, runner, { ...opts, deadlineS: launcher.launcherDeadlineS(HOOK_TIMEOUT_S), deadlineSoft: true });
   return (event) => {
     const h = plain();
     if (file) h.command = launcher.launcherCommand(file, event, platform);
