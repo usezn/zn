@@ -11,7 +11,7 @@
  */
 
 const POLICY_OK = new Set(['updated', 'current']);
-const UPLOAD_FAILED = new Set(['offline', 'revoked', 'inactive', 'rejected', 'diverged', 'local_gap', 'error']);
+const UPLOAD_FAILED = new Set(['offline', 'revoked', 'inactive', 'rejected', 'diverged', 'local_gap', 'error', 'tampered']);
 
 const short = (s, n) => String(s == null ? '' : s).replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, n);
 
