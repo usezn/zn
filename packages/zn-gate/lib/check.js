@@ -862,7 +862,7 @@ function report({ results, removed, warnings }, write) {
   const init = 'run `npx -y zn-gate init` in your own terminal: it shows each step and asks before it runs one.\n';
   // Nothing to set up only when every agent is missing from the machine (a project-only setup counts as found).
   if (!setUp && !results.some((r) => r.found !== false || r.state !== 'not-set-up')) {
-    w('No supported coding agent was found on this machine (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity), so there is nothing to check.\n');
+    w('No supported coding agent was found on this machine (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, Zcode), so there is nothing to check.\n');
     w('Install one, then run `npx -y zn-gate init`. Other editors: https://usezn.com/docs/install\n\n');
   } else if (!setUp) {
     w('zn is not set up for your agents yet, so nothing protects your secrets. To set it up, ' + init);
