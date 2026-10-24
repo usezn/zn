@@ -354,6 +354,7 @@ function chainStatus(state, opts) {
       ok: false,
       tampered: true,
       records: 0,
+      reason: t.reason,
       error: 'the audit log was changed behind the vault (noticed ' + t.at + '): ' + t.reason,
     };
   }
@@ -371,6 +372,7 @@ function chainStatus(state, opts) {
     recordTamper(state, r.error + (r.line ? ' (record ' + r.line + ')' : ''), null);
     return Object.assign({}, r, {
       tampered: true,
+      reason: secrets.auditTamper.reason,
       error: 'the audit log was changed behind the vault (noticed ' + secrets.auditTamper.at + '): ' + secrets.auditTamper.reason,
     });
   }
@@ -992,7 +994,7 @@ function makeOps(state, ctl) {
     async auditRead(args) {
       await state.loadSecrets();
       const c = chainStatus(state);
-      if (!c.ok) return { ok: false, tampered: c.tampered === true, error: c.error, line: c.line, events: [] };
+      if (!c.ok) return { ok: false, tampered: c.tampered === true, error: c.error, reason: c.reason, events: [] };
       const a = args && typeof args === 'object' ? args : {};
       return { ok: true, records: c.records, events: audit.read({ file: auditFile, since: a.since, limit: a.limit }) };
     },

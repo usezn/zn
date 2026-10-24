@@ -436,7 +436,7 @@ async function audit(args, io) {
   let records;
   const verified = await verifiedRead(flags.since);
   if (verified && !verified.ok) {
-    out(io, 'chain: BROKEN: ' + (verified.error || 'verification failed') + (verified.line ? ' (record ' + verified.line + ')' : ''));
+    out(io, 'chain: BROKEN: ' + (verified.reason || verified.error || 'verification failed'));
     out(io, 'The log is not shown because it did not verify. Keep a copy of ~/.zn/audit.jsonl as evidence and run `' + znCommand('vault verify') + '`.');
     return 1;
   }

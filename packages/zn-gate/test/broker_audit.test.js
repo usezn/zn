@@ -128,23 +128,21 @@ test('the log checks the chain of an unlocked vault and exits 1 when it is broke
   const target = lines.findIndex((l) => l.includes('"secret":"DB_PASSWORD"'));
   const tampered = lines.slice();
   tampered[target] = tampered[target].replace('"decision":"allow"', '"decision":"deny"');
+  // A failed check stores the vault's tamper mark, which outlives the file being put back: check the
+  // valid log with both commands first, then the changed one (a cut tail is covered in vault_audit_reconcile.test.js).
   for (const cmd of LOG_COMMANDS) {
     fs.writeFileSync(file, orig);
-    let r = zn(home, cmd);
+    const r = zn(home, cmd);
     assert.strictEqual(r.status, 0, r.stderr);
     assert.ok(r.stdout.includes('chain: valid, ' + lines.length + ' records'), r.stdout);
     assertNotice(cmd, r);
-
+  }
+  for (const cmd of LOG_COMMANDS) {
     fs.writeFileSync(file, tampered.join('\n') + '\n');
-    r = zn(home, cmd);
+    const r = zn(home, cmd);
     assert.strictEqual(r.status, 1, r.stdout + r.stderr);
     assert.ok(r.stdout.includes('chain: BROKEN: bad mac (record ' + (target + 1) + ')'), r.stdout);
-    assertNotice(cmd, r);
-
-    fs.writeFileSync(file, lines.slice(0, -1).join('\n') + '\n');
-    r = zn(home, cmd);
-    assert.strictEqual(r.status, 1, r.stdout + r.stderr);
-    assert.match(r.stdout, /chain: BROKEN: log truncated/);
+    assert.ok(!r.stdout.includes('DB_PASSWORD'), 'a log that does not verify is not shown');
     assertNotice(cmd, r);
   }
 });

@@ -146,7 +146,9 @@ async function runLogExport(args) {
     let r = null;
     const probe = createClient({});
     try {
-      if (await probe.isUnlocked()) {
+      let unlocked = false;
+      try { unlocked = await probe.isUnlocked(); } catch (e) { unlocked = false; }
+      if (unlocked) {
         r = await probe.auditExport({ since: opts.since, installId: opts.installId, orgId: opts.orgId });
         if (!r.ok) {
           err('[zn] Not exported: ' + r.error + '. Keep a copy of ~/.zn/audit.jsonl as evidence, look into the change, then run `' + znCommand('vault verify --acknowledge') + '` in your own terminal.');
