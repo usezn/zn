@@ -345,10 +345,11 @@ let orgDetectors = null;
 let teamNotes = [];
 const takeTeamNotes = () => { const n = teamNotes; teamNotes = []; return n; };
 
+// The timer stays referenced on purpose: a promise that never settles must still reach the deadline and resolve null,
+// not leave the event loop empty (the hook would exit with nothing printed). It is cleared as soon as the promise settles.
 function withinMs(promise, ms) {
   return new Promise((resolve) => {
     const timer = setTimeout(() => resolve(null), ms);
-    if (timer.unref) timer.unref();
     Promise.resolve(promise).then((v) => { clearTimeout(timer); resolve(v); }, () => { clearTimeout(timer); resolve(null); });
   });
 }
