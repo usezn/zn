@@ -1,0 +1,3 @@
+### Security
+- Codex CLI, Cursor (its `preToolUse`, MCP and read hooks), OpenCode and Gemini CLI cannot show a question, and zn used to drop the ones it wanted to ask (an instruction-file write, personal data in an MCP call, a search over a folder with a plain-text `.env`), so the call ran. zn now blocks such a call and the reason says what was held back and how to approve it. Claude Code, GitHub Copilot CLI, Antigravity and ZCode keep asking.
+- A tool call that cannot be read is now blocked in every agent: no tool name, a shell call without a command, or an event without a tool call (Antigravity used to answer `allow`; Gemini CLI, ZCode and GitHub Copilot CLI let a call without an event name through silently).

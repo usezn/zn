@@ -123,7 +123,12 @@ function znMcpServerIsOurs(server, opts = {}) {
 
 function normalize(raw) {
   if (!isObj(raw)) return null;
-  const name = raw.hook_event_name || raw.hookEventName;
+  // A payload that names no event but carries a tool call is a malformed tool hook: a call without a result is
+  // checked as PreToolUse (and denied when unreadable), not ignored.
+  const has = (k) => raw[k] !== undefined && raw[k] !== null;
+  const inferred = has('tool_name') || has('toolName') || has('tool_input') || has('toolInput')
+    ? (has('tool_response') || has('toolResponse') ? 'PostToolUse' : 'PreToolUse') : undefined;
+  const name = raw.hook_event_name || raw.hookEventName || inferred;
   const event = name === 'PreToolUse' || name === 'PermissionRequest' ? 'pre_tool'
     : name === 'PostToolUse' ? 'post_tool' : name === 'UserPromptSubmit' ? 'user_prompt' : null;
   const cwd = typeof raw.cwd === 'string' && raw.cwd ? raw.cwd : process.cwd();

@@ -42,6 +42,7 @@
  */
 
 const fs = require('fs');
+const { askAsDeny, isPlainAsk } = require('./ask-deny');
 const { fileURLToPath } = require('url');
 const os = require('os');
 const path = require('path');
@@ -107,7 +108,9 @@ function pathsOf(args) {
 function normalize(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const base = { cwd: typeof raw.cwd === 'string' && raw.cwd ? raw.cwd : process.cwd(), sessionId: raw.session_id || null, raw };
-  if (raw.hook_event_name !== 'BeforeTool') return { ...base, event: null };
+  // zn registers BeforeTool only, so a payload that names no event is a malformed BeforeTool, not another event.
+  const named = raw.hook_event_name;
+  if (named !== undefined && named !== null && named !== '' && named !== 'BeforeTool') return { ...base, event: null };
   const toolName = typeof raw.tool_name === 'string' ? raw.tool_name : '';
   const args = isObj(raw.tool_input) ? raw.tool_input : {};
   const cwd = typeof args.dir_path === 'string' && args.dir_path && !/[\r\n]/.test(args.dir_path) && SHELL_TOOLS.has(toolName)
@@ -167,9 +170,8 @@ function deny(reason) {
 /**
  * Internal decision -> Gemini CLI hook JSON, or null for "no opinion" (zn never says allow).
  * The documented BeforeTool decisions are deny and block. A command that needs a secret is blocked with the exact
- * zn run command to use instead. Anything zn would only ask about stays silent, as in the Codex adapter (Gemini CLI's
- * own approval applies, and a command already wrapped in zn run still needs the user's approval in the vault),
- * except a search that would print plain-text secrets: it cannot be redacted afterwards, so it is blocked.
+ * zn run command to use instead. Anything zn would ask about is blocked too, with the way to approve it (Gemini CLI
+ * hooks cannot ask, and a silent pass would let the call run). A rewrite proposal (updatedInput) stays silent.
  */
 function respond(d) {
   const ev = d && d.event;
@@ -180,8 +182,9 @@ function respond(d) {
     return deny('zn: this command uses a stored secret. Run it through zn instead, exactly like this: zn run -- ' + ev.input.command +
       '  (zn puts the value only into that process, if the user allowed this command for the secret).');
   }
-  if (d.decision === 'ask' && ev.tool === 'grep') {
-    return deny((d.message || 'zn asks for confirmation') + ' Gemini CLI hooks cannot ask the user, so this search was blocked: name a narrower path.');
+  // Gemini CLI hooks cannot ask: a question zn wanted to ask is a deny, not a silent pass.
+  if (isPlainAsk(d)) {
+    return deny(askAsDeny('Gemini CLI', d) + (ev.tool === 'grep' ? ' For a search, naming a narrower path avoids the question.' : ''));
   }
   return null;
 }

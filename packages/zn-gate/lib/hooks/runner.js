@@ -479,7 +479,7 @@ async function egressCheck(ev, d, agentId, mode, requests, what) {
 function withEgress(res, eg) {
   if (!eg) return res;
   if (eg.decision === 'deny' || res.decision === 'allow') return eg;
-  return { ...res, message: (res.message ? res.message + ' ' : '') + eg.message.replace(/^zn: /, 'Also, ') };
+  return { ...res, soft: false, message: (res.message ? res.message + ' ' : '') + eg.message.replace(/^zn: /, 'Also, ') };
 }
 
 /* ---------------------------- pre_tool ---------------------------- */
@@ -610,7 +610,7 @@ async function decidePre(ev, d, agentId, opts) {
     if (instruction && instructionMode === 'deny') return { decision: 'deny', message: instruction.deny };
     const withInstruction = (r) => {
       if (!instruction) return r;
-      return r.decision === 'ask' ? { ...r, message: (r.message ? r.message + ' ' : '') + instruction.ask } : { decision: 'ask', message: instruction.ask };
+      return r.decision === 'ask' ? { ...r, soft: false, message: (r.message ? r.message + ' ' : '') + instruction.ask } : { decision: 'ask', message: instruction.ask };
     };
 
     let command = original;
@@ -646,7 +646,7 @@ async function decidePre(ev, d, agentId, opts) {
         // A command that carries markers always asks, even when nothing was rewritten
         // (already wrapped in `zn run` by the agent, or tokens kept unresolved).
         // Never let it run on the user's allow rules alone.
-        return withEgress(withInstruction({ decision: 'ask', message: 'zn: this command contains secret placeholders (such as __ZN_NAME__)' + (notes.length ? '; ' + notes.join('; ') : '') + ', so it needs your approval before it runs.', context }), egress);
+        return withEgress(withInstruction({ decision: 'ask', soft: true, message: 'zn: this command contains secret placeholders (such as __ZN_NAME__)' + (notes.length ? '; ' + notes.join('; ') : '') + ', so it needs your approval before it runs.', context }), egress);
       }
       return withEgress(withInstruction(notes.length ? { decision: 'allow', message: 'zn: ' + notes.join('; ') } : { decision: 'allow' }), egress);
     }
@@ -656,7 +656,7 @@ async function decidePre(ev, d, agentId, opts) {
 
   if ((tool === 'write' || tool === 'edit' || tool === 'multiedit' || tool === 'notebookedit') && Array.isArray(input.texts)) {
     // The instruction-file question comes first; the marker result only adds its own notes to it.
-    const asked = (r) => (instructionAsk ? { ...r, decision: 'ask', message: (r.message ? r.message + ' ' : '') + instructionAsk } : r);
+    const asked = (r) => (instructionAsk ? { ...r, decision: 'ask', soft: false, message: (r.message ? r.message + ' ' : '') + instructionAsk } : r);
     const withMarkers = input.texts.filter((t) => markers.findMarkers(t.value).length);
     if (withMarkers.length === 0) return asked({ decision: 'allow' });
     const status = input.path ? gitStatusOf(path.resolve(ev.cwd || process.cwd(), input.path)) : 'unknown';
@@ -691,7 +691,7 @@ async function decidePre(ev, d, agentId, opts) {
     const outdated = isOutdated(withheld);
     const told = [blocked.length ? blockedLine(blocked) : null, outdated ? outdatedLine() : null].filter(Boolean);
     const context = told.length ? 'zn: ' + told.join(' ') : undefined;
-    if (updates.length === 0 && told.length) return asked({ decision: 'ask', message: 'zn:' + why, context });
+    if (updates.length === 0 && told.length) return asked({ decision: 'ask', soft: true, message: 'zn:' + why, context });
     if (updates.length === 0) return asked({ decision: 'allow', message: why ? 'zn:' + why : undefined });
     return asked({
       decision: 'ask',
@@ -763,7 +763,7 @@ function decideMonitor(ev, pathOpts, opts) {
   if (markers.findMarkers(original).length) {
     return { decision: 'deny', message: 'zn: a monitor cannot use secret placeholders (such as __ZN_NAME__). Next step: give the program the secret as an environment variable with `' + znCommand('run --secrets NAME -- <command>') + '` instead.' };
   }
-  if (isMonitorWrapper(original, opts)) return { decision: 'ask', message: 'zn: this monitor already checks its output for secrets.' };
+  if (isMonitorWrapper(original, opts)) return { decision: 'ask', soft: true, message: 'zn: this monitor already checks its output for secrets.' };
   const command = wrapMonitor(original, opts);
   return { decision: 'ask', updatedInput: { command }, kind: 'monitor', message: 'zn: this monitor\'s output is checked on this computer before the model sees it. Secret values are replaced with placeholders such as __ZN_AWS_KEY_1__.' };
 }
@@ -1397,6 +1397,20 @@ async function injectTestFault() {
 }
 
 /**
+ * A tool call that names no tool, or a shell call without a command, cannot be checked: block it in every agent.
+ * Returns a deny decision, or null when the call is readable.
+ */
+function unreadablePre(ev, agentId) {
+  if (typeof ev.toolName !== 'string' || !ev.toolName.trim()) {
+    return { decision: 'deny', message: 'zn: could not read the tool name of this call, so zn cannot check it and blocked it. ' + fixHint(agentId) };
+  }
+  if ((ev.tool === 'bash' || ev.tool === 'powershell') && typeof (ev.input || {}).command !== 'string') {
+    return { decision: 'deny', message: 'zn: could not read the command of this call, so zn cannot check it and blocked it. ' + fixHint(agentId) };
+  }
+  return null;
+}
+
+/**
  * Handle one raw event. Returns {output, stderr} where output is the JSON
  * value to print (or null for "no opinion").
  * opts: {engine, vault, failMode, home}
@@ -1411,7 +1425,7 @@ async function handle(adapter, rawEvent, opts = {}) {
     if (ev && ev.event) guardNativeText(ev);
     await injectTestFault();
     if (!ev || !ev.event) decision = { decision: 'allow' };
-    else if (ev.event === 'pre_tool') decision = await decidePre(ev, d, adapter.id, opts);
+    else if (ev.event === 'pre_tool') decision = unreadablePre(ev, adapter.id) || await decidePre(ev, d, adapter.id, opts);
     else if (ev.event === 'post_tool') decision = await decidePost(ev, d, adapter.id, opts);
     else if (ev.event === 'user_prompt') decision = await decidePrompt(ev, d, adapter.id);
     else if (ev.event === 'stop') decision = await decideStop(ev, d, adapter.id, opts);

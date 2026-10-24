@@ -41,6 +41,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { whichSync } = require('../broker/markers');
+const { askAsDeny, isPlainAsk } = require('./ask-deny');
 const { writeFileAtomic } = require('../broker/files');
 const cfg = require('./config-file');
 const { patchScan, PATCH_SCAN_CAP } = require('./codex');
@@ -135,6 +136,8 @@ function respond(d) {
   const ev = d && d.event;
   if (!ev || !ev.event) return { action: 'none' };
   if (d.decision === 'deny' && ev.event !== 'post_tool') return { action: 'deny', message: d.message || 'Blocked by zn' };
+  // OpenCode's plugin API has no question: one that zn wanted to ask is a deny.
+  if (ev.event === 'pre_tool' && isPlainAsk(d)) return { action: 'deny', message: askAsDeny('OpenCode', d) };
   // Only rewrites that add no secret value (wrapping in `zn run`) are
   // applied. Restoring detected values into the arguments is not: OpenCode
   // keeps the mutated arguments in the session, where the model could read

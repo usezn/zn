@@ -275,7 +275,9 @@ function normalize(raw) {
   const base = { cwd, sessionId: raw.conversationId || null, raw };
   // The event name is not in Antigravity's stdin; if a caller adds one, anything but PreToolUse is ignored.
   const named = raw.hookEventName || raw.hook_event_name;
-  if (!call || (named && named !== 'PreToolUse')) return { ...base, event: null, otherEvent: Boolean(named && named !== 'PreToolUse') };
+  if (named && named !== 'PreToolUse') return { ...base, event: null, otherEvent: true };
+  // zn installs only PreToolUse: a payload without a tool call is a malformed one, and Antigravity must not get "allow" for it.
+  if (!call) return { ...base, event: 'pre_tool', toolName: '', tool: 'unreadable', input: { texts: [] }, unreadable: 'zn: could not read the tool call of this event, so zn cannot check it.' };
   const toolName = String(call.name || '');
   const ev = { ...base, event: 'pre_tool', toolName, rawArgs: args };
 
