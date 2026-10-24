@@ -21,7 +21,7 @@ that fixes it.
 
 ## Run `zn hooks install <agent>` again when a release changes the hook
 
-The hooks of `zn hooks install` (Claude Code, Codex CLI, Cursor, Zcode) are written into
+The hooks of `zn hooks install` (Claude Code, Codex CLI, Cursor, ZCode desktop app) are written into
 the agent's own settings, so a new zn-gate does not rewrite them by itself. When
 a release adds or changes a hook, the release notes in the
 [changelog](../CHANGELOG.md) say so and name the agent. Run the install again
@@ -110,12 +110,12 @@ an older zn-gate and the plugins keep a plain command. Agent by agent:
   (the one block Antigravity documents), so the tool call is blocked. With a
   project install or older hooks, zn-gate cannot promise anything: the call may
   be blocked with no message from zn, or run.
-- **Zcode**: Zcode blocks only on exit code 2 or a deny answer; a hook that cannot
+- **ZCode**: ZCode blocks only on exit code 2 or a deny answer; a hook that cannot
   start is only logged and the call runs. With the user install (the only one
-  Zcode has), the launcher exits 2 with the repair step on tool calls, permission
+  ZCode has), the launcher exits 2 with the repair step on tool calls, permission
   requests and prompts, and after a tool has run zn only warns. The launcher also
-  stops a hook that has not finished after 28 seconds (2 seconds under Zcode's own
-  limit) and blocks the call, on Windows too. If Zcode cannot
+  stops a hook that has not finished after 28 seconds (2 seconds under ZCode's own
+  limit) and blocks the call, on Windows too. If ZCode cannot
   start the launcher itself (the file deleted or not executable), the call goes
   ahead unchecked.
 
