@@ -495,7 +495,9 @@ impl VectorMemory {
         let busy_timeout = self.busy_timeout;
         let ns = namespace.to_string();
         let agent = agent_id.to_string();
-        let text = text.to_string();
+        // The file keeps the keyed reference of the text, never the text: a
+        // caller cannot store content by mistake.
+        let text = crate::ai::content_ref(text);
         let blob: Vec<u8> = vector.iter().flat_map(|v| v.to_le_bytes()).collect();
         let result = tokio::task::spawn_blocking(move || -> Result<()> {
             Self::with_conn(&slot, &path, true, BUSY_ATTEMPTS, busy_timeout, |conn| {
@@ -786,10 +788,10 @@ mod tests {
             .await
             .unwrap();
         let r = m.search(NS, "a", &[0.0, 0.0, 0.0], 2).await.unwrap();
-        assert_eq!(r, vec![("near".to_string(), 1.0), ("mid".to_string(), 4.0)]);
+        assert_eq!(r, vec![(zn_ref("near"), 1.0), (zn_ref("mid"), 4.0)]);
         let r = m.search(NS, "a", &[0.0, 0.0, 0.0], 10).await.unwrap();
         assert_eq!(r.len(), 3);
-        assert_eq!(r[2], ("far".to_string(), 9.0));
+        assert_eq!(r[2], (zn_ref("far"), 9.0));
         assert!(m
             .search(NS, "nobody", &[0.0, 0.0, 0.0], 1)
             .await
@@ -833,7 +835,7 @@ mod tests {
             .unwrap();
         m.store(NS, "a", "far", &[2.0, 0.0]).await.unwrap();
         let r = m.search(NS, "a", &[0.0, 0.0], 5).await.unwrap();
-        assert_eq!(r, vec![("near".to_string(), 1.0), ("far".to_string(), 4.0)]);
+        assert_eq!(r, vec![(zn_ref("near"), 1.0), (zn_ref("far"), 4.0)]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -847,9 +849,9 @@ mod tests {
                 .unwrap();
         }
         m.store(NS, "b", "b0", &[0.0]).await.unwrap();
-        assert_eq!(texts(&m, "a", 1).await, vec!["a3", "a4", "a5"]);
+        assert_eq!(texts(&m, "a", 1).await, refs(&["a3", "a4", "a5"]));
         // Another agent's rows are not affected.
-        assert_eq!(texts(&m, "b", 1).await, vec!["b0"]);
+        assert_eq!(texts(&m, "b", 1).await, refs(&["b0"]));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -872,7 +874,7 @@ mod tests {
             .map(|r| r.unwrap())
             .collect();
         all.sort();
-        assert_eq!(all, vec!["t6", "t7", "t8", "t9"]);
+        assert_eq!(all, refs(&["t6", "t7", "t8", "t9"]));
         assert_eq!(rows_per_namespace(&m), vec![(NS.to_string(), 4)]);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -888,8 +890,8 @@ mod tests {
 
         // The same agent id in another namespace is another memory.
         m.store("flood", "a", "f-a", &[0.0]).await.unwrap();
-        assert_eq!(texts_in(&m, "victim", "a", 1).await, vec!["v0", "v1"]);
-        assert_eq!(texts_in(&m, "flood", "a", 1).await, vec!["f-a"]);
+        assert_eq!(texts_in(&m, "victim", "a", 1).await, refs(&["v0", "v1"]));
+        assert_eq!(texts_in(&m, "flood", "a", 1).await, refs(&["f-a"]));
 
         // Rotating agent ids only evicts rows of the flooding namespace.
         for i in 0..20 {
@@ -897,20 +899,20 @@ mod tests {
                 .await
                 .unwrap();
         }
-        assert_eq!(texts_in(&m, "victim", "a", 1).await, vec!["v0", "v1"]);
+        assert_eq!(texts_in(&m, "victim", "a", 1).await, refs(&["v0", "v1"]));
         assert_eq!(
             rows_per_namespace(&m),
             vec![("flood".to_string(), 3), ("victim".to_string(), 2)]
         );
-        assert_eq!(texts_in(&m, "flood", "agent19", 1).await, vec!["f19"]);
+        assert_eq!(texts_in(&m, "flood", "agent19", 1).await, refs(&["f19"]));
         assert!(texts_in(&m, "flood", "a", 1).await.is_empty());
 
         // The file is full (5 rows). A new namespace still stores: the row
         // comes from the namespace furthest above its fair share (5 / 3 = 1),
         // the flooding one, and the victim keeps its rows.
         m.store("late", "a", "l0", &[0.0]).await.unwrap();
-        assert_eq!(texts_in(&m, "late", "a", 1).await, vec!["l0"]);
-        assert_eq!(texts_in(&m, "victim", "a", 1).await, vec!["v0", "v1"]);
+        assert_eq!(texts_in(&m, "late", "a", 1).await, refs(&["l0"]));
+        assert_eq!(texts_in(&m, "victim", "a", 1).await, refs(&["v0", "v1"]));
         assert_eq!(
             rows_per_namespace(&m),
             vec![
@@ -925,8 +927,8 @@ mod tests {
                 .await
                 .unwrap();
         }
-        assert_eq!(texts_in(&m, "victim", "a", 1).await, vec!["v0", "v1"]);
-        assert_eq!(texts_in(&m, "late", "a", 1).await, vec!["l0"]);
+        assert_eq!(texts_in(&m, "victim", "a", 1).await, refs(&["v0", "v1"]));
+        assert_eq!(texts_in(&m, "late", "a", 1).await, refs(&["l0"]));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -999,7 +1001,7 @@ mod tests {
         for i in 0..3 {
             m.store(NS, "a", &format!("t{i}"), &[0.0]).await.unwrap();
         }
-        assert_eq!(texts(&m, "a", 1).await, vec!["t0", "t1", "t2"]);
+        assert_eq!(texts(&m, "a", 1).await, refs(&["t0", "t1", "t2"]));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1012,7 +1014,7 @@ mod tests {
         }
         // A fourth namespace in a full file keeps its new row.
         m.store("a", "a", "a", &[0.0]).await.unwrap();
-        assert_eq!(texts_in(&m, "a", "a", 1).await, vec!["a"]);
+        assert_eq!(texts_in(&m, "a", "a", 1).await, refs(&["a"]));
         let total: i64 = rows_per_namespace(&m).iter().map(|(_, n)| n).sum();
         assert!(total <= 4, "{total} rows");
         let _ = std::fs::remove_dir_all(&dir);
@@ -1070,6 +1072,28 @@ mod tests {
             }
         }
         panic!("the upgrade never finished");
+    }
+
+    /// The references of `texts`, sorted like the `texts` helper sorts them.
+    fn refs(texts: &[&str]) -> Vec<String> {
+        let mut r: Vec<String> = texts.iter().map(|t| zn_ref(t)).collect();
+        r.sort();
+        r
+    }
+
+    #[tokio::test]
+    async fn store_keeps_the_reference_of_the_text_never_the_text() {
+        let marker = "store-marker-4821-zebra";
+        let dir = temp_dir("storeref");
+        let m = VectorMemory::new(dir.to_str().unwrap(), 1, "m");
+        m.store(NS, "a", &format!("{marker} recovery_code=hunter2"), &[1.0])
+            .await
+            .unwrap();
+        let found = m.search(NS, "a", &[0.0], 5).await.unwrap();
+        assert_eq!(found.len(), 1);
+        assert!(crate::ai::is_content_ref(&found[0].0));
+        assert!(!files_contain(&dir, marker), "the text reached the files");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn zn_ref(text: &str) -> String {
@@ -1221,7 +1245,7 @@ mod tests {
             );
 
             m.store(NS, "a", "new", &[1.0]).await.unwrap();
-            assert_eq!(texts(&m, "a", 1).await, vec!["new"]);
+            assert_eq!(texts(&m, "a", 1).await, refs(&["new"]));
             let _ = std::fs::remove_dir_all(&dir);
         }
     }
@@ -1279,7 +1303,7 @@ mod tests {
         locked_rx.recv().unwrap();
         m.store(NS, "a", "second", &[0.0]).await.unwrap();
         holder.join().unwrap();
-        assert_eq!(texts(&m, "a", 1).await, vec!["first", "second"]);
+        assert_eq!(texts(&m, "a", 1).await, refs(&["first", "second"]));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1307,7 +1331,7 @@ mod tests {
         ));
         assert!(MemoryError::is_search_give_up(&err));
         holder.join().unwrap();
-        assert_eq!(texts(&m, "a", 1).await, vec!["x"]);
+        assert_eq!(texts(&m, "a", 1).await, refs(&["x"]));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1414,7 +1438,10 @@ mod tests {
             rows_per_namespace(&a),
             vec![("flood".to_string(), 5), ("victim".to_string(), 3)]
         );
-        assert_eq!(texts_in(&b, "victim", "v", 1).await, vec!["v0", "v1", "v2"]);
+        assert_eq!(
+            texts_in(&b, "victim", "v", 1).await,
+            refs(&["v0", "v1", "v2"])
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1450,7 +1477,10 @@ mod tests {
             rows_per_namespace(&a),
             vec![("flood".to_string(), 3), ("victim".to_string(), 3)]
         );
-        assert_eq!(texts_in(&b, "victim", "v", 1).await, vec!["v0", "v1", "v2"]);
+        assert_eq!(
+            texts_in(&b, "victim", "v", 1).await,
+            refs(&["v0", "v1", "v2"])
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1512,10 +1542,7 @@ mod tests {
         // A zero limit still validates the query.
         assert!(m.search(NS, "a", &[0.0], 0).await.is_err());
         let all = m.search(NS, "a", &[0.0, 0.0], usize::MAX).await.unwrap();
-        assert_eq!(
-            all,
-            vec![("one".to_string(), 1.0), ("two".to_string(), 4.0)]
-        );
+        assert_eq!(all, vec![(zn_ref("one"), 1.0), (zn_ref("two"), 4.0)]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1531,7 +1558,7 @@ mod tests {
         assert_eq!(r.len(), 3);
         assert!(r.iter().all(|(_, d)| *d == 1.0));
         let r = m.search(NS, "a", &[0.0, 0.0], 4).await.unwrap();
-        assert_eq!(r[3], ("far".to_string(), 25.0));
+        assert_eq!(r[3], (zn_ref("far"), 25.0));
         assert!(r.windows(2).all(|w| w[0].1 <= w[1].1));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1553,7 +1580,7 @@ mod tests {
             )
             .unwrap();
         let r = m.search(NS, "a", &[0.0, 0.0], 5).await.unwrap();
-        assert_eq!(r, vec![("good".to_string(), 1.0)]);
+        assert_eq!(r, vec![(zn_ref("good"), 1.0)]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1565,7 +1592,7 @@ mod tests {
             m.store(NS, "a", "kept", &[1.0, 1.0]).await.unwrap();
         }
         let m = VectorMemory::new(dir.to_str().unwrap(), 2, "m");
-        assert_eq!(texts(&m, "a", 2).await, vec!["kept"]);
+        assert_eq!(texts(&m, "a", 2).await, refs(&["kept"]));
         // Another model id uses another file and sees nothing.
         let other = VectorMemory::new(dir.to_str().unwrap(), 2, "other");
         assert!(texts(&other, "a", 2).await.is_empty());
