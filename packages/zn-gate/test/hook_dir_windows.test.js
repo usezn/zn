@@ -148,7 +148,7 @@ test('ZN_HOOK_DIR on Windows: a folder swapped for a bad one while the launcher 
 
 // ---- Daybreak #1 blockers: system programs only, new folder race, launcher file ------------------------------------
 const PS_PATH = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
-const fakeSpawn = (calls, reply) => (file, args, o) => { calls.push({ file, args, o }); return reply || { status: 0, stdout: JSON.stringify({ user: ME, entries: [] }), stderr: '' }; };
+const fakeSpawn = (calls, reply) => (file, args, o) => { calls.push({ file, args, o }); return reply || { status: 0, stdout: 'U\t' + ME + '\nZ\n', stderr: '' }; };
 
 test('ZN_HOOK_DIR on Windows: PowerShell is the absolute System32 one, with a minimal environment (no PSModulePath, no PATH from the caller)', (t) => {
   const calls = [];
@@ -163,16 +163,17 @@ test('ZN_HOOK_DIR on Windows: PowerShell is the absolute System32 one, with a mi
   for (const c of calls) {
     assert.equal(c.file, PS_PATH); // never the bare name that the current folder or PATH could answer
     assert.ok(path.win32.isAbsolute(c.file));
-    assert.deepEqual(Object.keys(c.o.env).filter((k) => !/^ZN_/.test(k)).sort(), ['PATH', 'SystemDrive', 'SystemRoot', 'windir']);
+    assert.deepEqual(Object.keys(c.o.env).filter((k) => !/^ZN_/.test(k)).sort(), ['PATH', 'PSModulePath', 'SystemDrive', 'SystemRoot', 'windir']);
     assert.equal(c.o.env.PATH, 'C:\\Windows\\System32');
     assert.equal(c.o.env.SystemRoot, 'C:\\Windows');
-    assert.equal(c.o.env.PSModulePath, undefined);
+    // only the system module folder: the user's own Documents\WindowsPowerShell\Modules is never searched (not the inherited value either)
+    assert.equal(c.o.env.PSModulePath, 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules');
     assert.equal(c.o.cwd, 'C:\\Windows');
     assert.deepEqual(c.args.slice(0, 5), ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command']);
   }
-  // the ACL is read with .NET directly (no Get-Acl, no module to autoload) and the owner-only step does not use icacls
+  // the ACL is read with .NET directly (no cmdlet, so no module to autoload) and the owner-only step does not use icacls
   assert.match(calls[0].args[5], /GetAccessControl/);
-  assert.doesNotMatch(calls[0].args[5] + calls[1].args[5], /Get-Acl|icacls/i);
+  assert.doesNotMatch(calls[0].args[5] + calls[1].args[5], /Get-Acl|icacls|ConvertTo-Json|New-Object/i);
   assert.equal(calls[1].o.env.ZN_SID, ME);
   assert.equal(calls[1].o.env.ZN_DIR, 'C:\\a\\b');
 });

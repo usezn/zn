@@ -231,7 +231,9 @@ function parseCommand(command, agentId) {
   const ws = require('./shell-quote').windowsCommandScript(c);
   if (ws) {
     // Both the current script and the one written by earlier versions (no progress line, unconditional exit).
-    const wm = /^(?:\$ProgressPreference='SilentlyContinue'; \$zt=0; )?if \(\(Test-Path -LiteralPath '([^']+)'\) -and \(Test-Path -LiteralPath '([^']+)'\)\) \{ (?:\$zt=1; )?& '[^']+' '[^']+' ([a-z-]+); (?:if \(\$LASTEXITCODE -eq 0 -or \$LASTEXITCODE -eq 2\) \{ exit (?:\$LASTEXITCODE|0) \}|exit \$LASTEXITCODE) \}; .* # zn hook ([a-z-]+)$/s.exec(ws);
+    // the current script (no cmdlet: zf and [System.IO.File]::Exists) is read as the older Test-Path form below
+    const wsOld = ws.replace(/function zf\(\$x\) \{[^\n]*?return \$null \}; /, '').replace(/\[System\.IO\.File\]::Exists\('([^']+)'\)/g, "(Test-Path -LiteralPath '$1')");
+    const wm = /^(?:\$ProgressPreference='SilentlyContinue'; \$zt=0; )?if \(\(Test-Path -LiteralPath '([^']+)'\) -and \(Test-Path -LiteralPath '([^']+)'\)\) \{ (?:\$zt=1; )?& '[^']+' '[^']+' ([a-z-]+); (?:if \(\$LASTEXITCODE -eq 0 -or \$LASTEXITCODE -eq 2\) \{ exit (?:\$LASTEXITCODE|0) \}|exit \$LASTEXITCODE) \}; .* # zn hook ([a-z-]+)$/s.exec(wsOld);
     // winScript is the PowerShell text itself: c may be its readable -Command form, which is not base64.
     if (wm && wm[3] === agentId && wm[4] === agentId) return { winScript: ws, node: wm[1], runner: wm[2] };
   }

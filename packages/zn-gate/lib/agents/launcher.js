@@ -186,6 +186,12 @@ function launcherCommand(file, event, platform = process.platform, opts = {}) {
  * code 0 (an answer) or 2 (its own refusal, deny JSON already printed) ends it; anything else, or no zn or node, prints
  * the deny JSON and exits 0, the way the user launcher does.
  */
+// The hook scripts below use no cmdlet (Test-Path, Get-Command, New-Object...): a cmdlet belongs to a module, and Windows PowerShell 5.1
+// searches the user's own Documents\WindowsPowerShell\Modules first, so a module planted there by the same account could answer in
+// its place (and make the hook look done). Only .NET types, operators and keywords: zf finds a program on the PATH the way
+// Get-Command did, with [System.IO.File]::Exists.
+const ZF = "function zf($x) { foreach ($d in ($env:PATH -split ';')) { try { if ($d) { $c = [System.IO.Path]::Combine($d, $x); if ([System.IO.File]::Exists($c)) { return $c } } } catch {} }; return $null }; ";
+
 const IFS = '${IFS}';
 const SH_SAFE_TEXT = /^[^'"\\%$\n\r]+$/;
 
@@ -227,8 +233,8 @@ function projectWindowsScript(agentId) {
   const t = projectTexts(agentId);
   const say = (r) => "[Console]::Out.WriteLine('" + JSON.stringify(DENY_STDOUT[agentId](r)) + "')";
   const leave = 'if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 2) { exit 0 }';
-  return "$ProgressPreference='SilentlyContinue'; $zt=0; " +
-    "if ((Get-Command zn.cmd -CommandType Application -ErrorAction SilentlyContinue) -and (Get-Command node -ErrorAction SilentlyContinue)) { $zt=1; & zn.cmd hook " + agentId + '; ' + leave + ' }; ' +
+  return "$ProgressPreference='SilentlyContinue'; $zt=0; " + ZF +
+    "if ((zf 'zn.cmd') -and ((zf 'node.exe') -or (zf 'node.cmd'))) { $zt=1; & (zf 'zn.cmd') hook " + agentId + '; ' + leave + ' }; ' +
     'if ($zt -eq 1) { ' + say(t.crash) + ' } else { ' + say(t.missing) + ' }; exit 0 # zn hook ' + agentId;
 }
 
@@ -247,7 +253,7 @@ function isProjectWindowsScript(script, agentId) {
   try {
     if (typeof script !== 'string') return false;
     if (script === projectWindowsScript(agentId)) return true;
-    return script.startsWith("$ProgressPreference='SilentlyContinue'; $zt=0; ") && script.includes('& zn.cmd hook ' + agentId + ';') && script.endsWith('# zn hook ' + agentId);
+    return script.startsWith("$ProgressPreference='SilentlyContinue'; $zt=0; ") && (script.includes('& zn.cmd hook ' + agentId + ';') || script.includes("& (zf 'zn.cmd') hook " + agentId + ';')) && script.endsWith('# zn hook ' + agentId);
   } catch (_) { return false; }
 }
 
@@ -348,40 +354,51 @@ function winProblem(entry, user, kind) {
   return null;
 }
 
-// Both scripts are fixed text with no quotes of their own; the paths and the SID come in through the environment. They use .NET
-// directly (no Get-Acl, no module to autoload, so a PSModulePath cannot put another module in its place).
+// Both scripts are fixed text with no quotes of their own; the paths and the SID come in through the environment. They use no
+// cmdlet at all: only .NET types, static methods, operators and keywords. A cmdlet (Get-Acl, ConvertTo-Json, New-Object...)
+// belongs to a module, and Windows PowerShell 5.1 builds its module path with the user's own Documents\WindowsPowerShell\Modules
+// FIRST, so a module planted there by the same account would answer in place of the real one. The answer is written by hand, one
+// line per fact (see parseWinAcls), so there is no ConvertTo-Json either.
 const WIN_ACL_SCRIPT = [
   "$ErrorActionPreference = 'Stop'",
+  '$t = [string][char]9',
+  '$n = [string][char]10',
+  '$sb = [System.Text.StringBuilder]::new()',
   '$me = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value',
-  '$out = @()',
+  "[void]$sb.Append('U').Append($t).Append($me).Append($n)",
   "foreach ($p in ($env:ZN_ACL_PATHS -split '[|]')) {",
   '  $attr = [int][System.IO.File]::GetAttributes($p)',
-  '  $isDir = (($attr -band 16) -ne 0)',
-  '  if ($isDir) { $a = [System.IO.DirectoryInfo]::new($p).GetAccessControl() } else { $a = [System.IO.FileInfo]::new($p).GetAccessControl() }',
+  '  $dir = 0; if (($attr -band 16) -ne 0) { $dir = 1 }',
+  '  $rp = 0; if (($attr -band 1024) -ne 0) { $rp = 1 }',
+  '  if ($dir -eq 1) { $a = [System.IO.DirectoryInfo]::new($p).GetAccessControl() } else { $a = [System.IO.FileInfo]::new($p).GetAccessControl() }',
   '  $o = $a.GetOwner([System.Security.Principal.SecurityIdentifier]).Value',
-  '  $aces = @()',
+  '  $pb = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($p))',
+  "  [void]$sb.Append('E').Append($t).Append($pb).Append($t).Append($o).Append($t).Append($dir).Append($t).Append($rp).Append($n)",
   '  foreach ($r in $a.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {',
-  '    $aces += [pscustomobject]@{ sid = $r.IdentityReference.Value; rights = [int64]$r.FileSystemRights; type = [string]$r.AccessControlType; inheritOnly = (([int]$r.PropagationFlags -band 2) -ne 0); inh = [int]$r.InheritanceFlags }',
+  '    $io = 0; if (([int]$r.PropagationFlags -band 2) -ne 0) { $io = 1 }',
+  "    [void]$sb.Append('A').Append($t).Append($r.IdentityReference.Value).Append($t).Append([int64]$r.FileSystemRights).Append($t).Append([string]$r.AccessControlType).Append($t).Append($io).Append($t).Append([int]$r.InheritanceFlags).Append($n)",
   '  }',
-  '  $out += [pscustomobject]@{ path = $p; owner = $o; dir = $isDir; reparse = (($attr -band 1024) -ne 0); aces = $aces }',
   '}',
-  '[pscustomobject]@{ user = $me; entries = $out } | ConvertTo-Json -Depth 6 -Compress',
+  "[void]$sb.Append('Z').Append($n)",
+  '[Console]::Out.Write($sb.ToString())',
 ].join('\n');
 
 const WIN_PRIVATE_SCRIPT = [
   "$ErrorActionPreference = 'Stop'",
-  '$sid = New-Object System.Security.Principal.SecurityIdentifier($env:ZN_SID)',
-  '$acl = New-Object System.Security.AccessControl.DirectorySecurity',
+  '$sid = [System.Security.Principal.SecurityIdentifier]::new($env:ZN_SID)',
+  '$acl = [System.Security.AccessControl.DirectorySecurity]::new()',
   '$acl.SetAccessRuleProtection($true, $false)',
-  "$acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($sid, 'FullControl', 'ContainerInherit, ObjectInherit', 'None', 'Allow')))",
+  '$inh = [System.Security.AccessControl.InheritanceFlags]([int]1 -bor [int]2)',
+  '$rule = [System.Security.AccessControl.FileSystemAccessRule]::new($sid, [System.Security.AccessControl.FileSystemRights]::FullControl, $inh, [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow)',
+  '$acl.AddAccessRule($rule)',
   '[System.IO.DirectoryInfo]::new($env:ZN_DIR).SetAccessControl($acl)',
 ].join('\n');
 
 /**
  * Runs one fixed PowerShell script with the system PowerShell and a minimal environment. The program is the absolute
  * path found through the kernel's \SystemRoot link (lib/exe.js), never a name looked up in the current directory or PATH, and the
- * environment holds only SystemRoot, windir, SystemDrive, a PATH of System32 and `extra`: no PSModulePath, no profile.
- * `io` is for tests: { spawnSync, powershell }.
+ * environment holds only SystemRoot, windir, SystemDrive, a PATH of System32, a PSModulePath that names only the system module
+ * folder (so the user's own Documents folder is not searched) and `extra`; no profile. `io` is for tests: { spawnSync, powershell }.
  */
 function runWinPowerShell(script, extra, io = {}) {
   const spawnSync = io.spawnSync || require('child_process').spawnSync;
@@ -389,20 +406,46 @@ function runWinPowerShell(script, extra, io = {}) {
   if (!ps) throw new Error('the system PowerShell was not found');
   const w = path.win32;
   const root = w.dirname(w.dirname(w.dirname(w.dirname(ps))));
-  const env = { SystemRoot: root, windir: root, SystemDrive: root.slice(0, 2), PATH: w.join(root, 'System32'), ...extra };
+  const env = { SystemRoot: root, windir: root, SystemDrive: root.slice(0, 2), PATH: w.join(root, 'System32'), PSModulePath: require('../exe').systemPsModulePath(ps), ...extra };
   return spawnSync(ps, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script], {
     env, cwd: root, encoding: 'utf8', timeout: 30000, windowsHide: true,
   });
+}
+
+/**
+ * Reads the line format of WIN_ACL_SCRIPT (tab separated; `U sid`, then per path `E base64(path) owner dir reparse` followed by
+ * its `A sid rights type inheritOnly inheritance` lines, then `Z`) into { user, entries }. Anything else, or no `Z`, throws.
+ */
+function parseWinAcls(text) {
+  const bad = () => new Error('could not read the access list of the folder (unreadable answer)');
+  const sid = (s) => (/^S-1-[0-9-]+$/.test(s) ? s : null);
+  let user = null;
+  let done = false;
+  let cur = null;
+  const entries = [];
+  for (const raw of String(text).split('\n')) {
+    const line = raw.replace(/\r$/, '');
+    if (!line) continue;
+    if (done) throw bad();
+    const f = line.split('\t');
+    if (f[0] === 'U' && f.length === 2 && !user && sid(f[1])) user = f[1];
+    else if (f[0] === 'E' && f.length === 5 && user && sid(f[2]) && /^[01]$/.test(f[3]) && /^[01]$/.test(f[4])) {
+      cur = { path: Buffer.from(f[1], 'base64').toString('utf8'), owner: f[2], dir: f[3] === '1', reparse: f[4] === '1', aces: [] };
+      entries.push(cur);
+    } else if (f[0] === 'A' && f.length === 6 && cur && sid(f[1]) && /^-?[0-9]+$/.test(f[2]) && /^[A-Za-z]+$/.test(f[3]) && /^[01]$/.test(f[4]) && /^[0-9]+$/.test(f[5])) {
+      cur.aces.push({ sid: f[1], rights: Number(f[2]), type: f[3], inheritOnly: f[4] === '1', inh: Number(f[5]) });
+    } else if (f[0] === 'Z' && f.length === 1 && user) done = true;
+    else throw bad();
+  }
+  if (!user || !done) throw bad();
+  return { user, entries };
 }
 
 /** Reads owner, ACL and reparse flag of each path with PowerShell: { user, entries }. Throws when it cannot (the caller fails closed). */
 function readWinAcls(paths, io) {
   const res = runWinPowerShell(WIN_ACL_SCRIPT, { ZN_ACL_PATHS: paths.join('|') }, io);
   if (res.error || res.status !== 0) throw new Error('could not read the access list of the folder (' + ((res.error && res.error.message) || String(res.stderr || '').trim().slice(0, 200) || 'exit ' + res.status) + ')');
-  let doc;
-  try { doc = JSON.parse(res.stdout); } catch (_) { throw new Error('could not read the access list of the folder (unreadable answer)'); }
-  doc.entries = [].concat(doc.entries || []).map((e) => ({ ...e, aces: [].concat(e.aces || []) }));
-  return doc;
+  return parseWinAcls(res.stdout);
 }
 
 /** Gives the folder one owner-only, non-inherited entry for `sid` (the same shape as the private file module). */
@@ -570,9 +613,9 @@ function windowsScript(agentId, event, nodePath, runnerPath) {
   const leave = jsonDeny
     ? 'if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 2) { exit 0 }'
     : 'if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 2) { exit $LASTEXITCODE }';
-  return "$ProgressPreference='SilentlyContinue'; $zt=0; " +
-    "if ((Test-Path -LiteralPath '" + n + "') -and (Test-Path -LiteralPath '" + r + "')) { $zt=1; & '" + n + "' '" + r + "' " + agentId + '; ' + leave + ' }; ' +
-    "if (($zt -eq 0) -and (Get-Command zn.cmd -CommandType Application -ErrorAction SilentlyContinue) -and (Get-Command node -ErrorAction SilentlyContinue)) { & zn.cmd hook " + agentId + '; ' + leave + ' }; ' +
+  return "$ProgressPreference='SilentlyContinue'; $zt=0; " + ZF +
+    "if ([System.IO.File]::Exists('" + n + "') -and [System.IO.File]::Exists('" + r + "')) { $zt=1; & '" + n + "' '" + r + "' " + agentId + '; ' + leave + ' }; ' +
+    "if (($zt -eq 0) -and (zf 'zn.cmd') -and ((zf 'node.exe') -or (zf 'node.cmd'))) { & (zf 'zn.cmd') hook " + agentId + '; ' + leave + ' }; ' +
     tail + ' # zn hook ' + agentId;
 }
 
@@ -584,4 +627,4 @@ function windowsScriptCommand(script) {
   return 'powershell.exe -NoProfile -NonInteractive -EncodedCommand ' + Buffer.from(script, 'utf16le').toString('base64');
 }
 
-module.exports = { projectShCommand, projectWindowsScript, isProjectGuard, isProjectWindowsScript, blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, spaceMessage, unsafeDirMessage, ensureSafeHookDir, readWinAcls, setWinPrivate, winProblem, windowsScript, BLOCK_EXIT, BLOCK_JSON };
+module.exports = { parseWinAcls, WIN_ACL_SCRIPT, WIN_PRIVATE_SCRIPT, projectShCommand, projectWindowsScript, isProjectGuard, isProjectWindowsScript, blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, spaceMessage, unsafeDirMessage, ensureSafeHookDir, readWinAcls, setWinPrivate, winProblem, windowsScript, BLOCK_EXIT, BLOCK_JSON };

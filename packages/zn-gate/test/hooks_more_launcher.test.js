@@ -243,7 +243,7 @@ test('windows: cursor and gemini also print their deny JSON, call zn.cmd and lea
     const s = windowsCommandScript(cmd);
     assert.ok(s.startsWith("$ProgressPreference='SilentlyContinue';"), id);
     assert.ok(s.includes(deny), id + ' deny JSON');
-    assert.ok(s.includes('& zn.cmd hook ' + id) && !/& zn hook/.test(s), id + ' zn.cmd');
+    assert.ok(s.includes("& (zf 'zn.cmd') hook " + id) && !/& zn hook/.test(s), id + ' zn.cmd');
     assert.ok(!/exit \$LASTEXITCODE \}/.test(s.replace(/if \(\$LASTEXITCODE -eq 0 -or \$LASTEXITCODE -eq 2\) \{ exit \$LASTEXITCODE \}/g, '')), id + ' no unconditional exit');
     assert.match(s, /exit 0 # zn hook /, id + ': Cursor and Gemini read the deny JSON only with exit 0');
     assert.ok(s.includes('-eq 2) { exit 0 }'), id + ': the runner refusal is passed on as exit 0');
