@@ -40,6 +40,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
+          package-manager-cache: false
           node-version: 22
       - name: Test the checker
         run: node --test .github/scripts/check-public-facts.test.mjs .github/scripts/check-rule-versions.test.mjs .github/scripts/release-required-checks.test.mjs .github/scripts/npm-dist-tag-plan.test.mjs
