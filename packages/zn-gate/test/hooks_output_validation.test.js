@@ -137,7 +137,7 @@ for (const [name, opts] of [['plain', {}], ['with a deadline', { deadlineS: 5 }]
     for (const ev of ['PreToolUse', 'UserPromptSubmit']) {
       const r = await runLauncher(file, ev, '{}');
       assert.equal(r.status, 2, ev);
-      assert.match(r.stderr, /zn: its hook failed, so this was blocked/);
+      assert.match(r.stderr, /so this was blocked/);
       assert.doesNotMatch(r.stdout, /^\{$/m, 'the half answer is not passed on');
     }
     const post = await runLauncher(file, 'PostToolUse', '{}');
@@ -149,7 +149,7 @@ for (const [name, opts] of [['plain', {}], ['with a deadline', { deadlineS: 5 }]
     const bad = writeScript(t, 'claude-code', EMPTY_NO_ACK, opts);
     const r = await runLauncher(bad, 'PreToolUse', '{}');
     assert.equal(r.status, 2);
-    assert.match(r.stderr, /its hook failed/);
+    assert.match(r.stderr, /so this was blocked/);
     const ok = writeScript(t, 'claude-code', ALLOW, opts);
     const r2 = await runLauncher(ok, 'PreToolUse', '{}');
     assert.equal(r2.status, 0, r2.stderr);
@@ -179,7 +179,7 @@ for (const [name, opts] of [['plain', {}], ['with a deadline', { deadlineS: 5 }]
       child.on('close', (code) => resolve({ status: code, stderr }));
     });
     assert.equal(r.status, 2, 'before the fix this was 0: the deny never reached the agent and the call ran');
-    assert.match(r.stderr, /zn: its hook failed, so this was blocked/);
+    assert.match(r.stderr, /so this was blocked/);
   });
 }
 
@@ -269,7 +269,7 @@ for (const [name, opts] of [['plain', {}], ['with a deadline', { deadlineS: 5 }]
     });
     const closed = await run(true);
     assert.equal(closed.status, 2, 'before the fix this was 0: zn hook swallowed the EPIPE and the launcher accepted it');
-    assert.match(closed.stderr, /zn: its hook failed, so this was blocked/);
+    assert.match(closed.stderr, /so this was blocked/);
     const normal = await run(false);
     assert.equal(normal.status, 0, normal.stderr);
     assert.match(normal.stdout, /"permissionDecision":\s*"deny"/);
@@ -314,4 +314,14 @@ test('posix launcher (with mktemp): a FIFO at the old predictable name changes n
   const r = runPlanted(file, tmp, 'mkfifo "$TMPDIR/zn-$n.$$.1"');
   assert.equal(r.status, 0, r.stderr);
   assert.equal(JSON.parse(r.stdout).hookSpecificOutput.permissionDecision, 'deny');
+});
+
+test('posix launcher: a status 0 without the confirmation (an older zn on the PATH) gets its own message that says how to fix it', { skip: !posix }, async (t) => {
+  const file = writeScript(t, 'claude-code', EMPTY_NO_ACK);
+  const r = await runLauncher(file, 'PreToolUse', '{}');
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /older than this hook/);
+  assert.match(r.stderr, /npm install -g zn-gate.*zn hooks install claude-code/);
+  const post = await runLauncher(file, 'PostToolUse', '{}');
+  assert.match(JSON.parse(post.stdout).systemMessage, /zn hooks install claude-code/);
 });

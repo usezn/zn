@@ -76,6 +76,16 @@ function crashWarnText() {
   return 'zn is NOT protecting this session: its hook failed. Please run `zn-gate check` in your own terminal to see why.';
 }
 
+// The hook ran and ended with status 0 but did not confirm its answer: an older zn-gate answered (the zn on the PATH does not match the
+// launcher), or the hook stopped half way.
+function noAckText(agentId) {
+  return 'zn: its hook ended without confirming its answer (the zn-gate that answered is older than this hook, or it stopped half way), so this was blocked. Ask the user to run `npm install -g zn-gate` and then `zn hooks install ' + agentId + '` in their terminal, or `zn-gate check` to see why.';
+}
+
+function noAckWarnText(agentId) {
+  return 'zn is NOT protecting this session: its hook ended without confirming its answer (the zn-gate that answered is older than this hook, or it stopped half way). Please run `npm install -g zn-gate` and then `zn hooks install ' + agentId + '` in your own terminal.';
+}
+
 function warnText(agentId) {
   return 'zn is NOT protecting this session: its hook cannot start because the Node.js or the zn-gate files it was installed with are gone. Please ' +
     FIX.replace('codex', agentId) + '.';
@@ -111,7 +121,9 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
   const jsonEvents = [...blockJson(agentId)];
   const crash = crashText(agentId);
   const crashWarn = crashWarnText();
-  const pick = (ifRan, ifGone) => 'if [ -n "$ZN_RAN" ]; then ' + ifRan + '; else ' + ifGone + '; fi';
+  const pick = (ifRan, ifGone, ifNoAck) => (ifNoAck ? 'if [ -n "$ZN_NOACK" ]; then ' + ifNoAck + '; elif [ -n "$ZN_RAN" ]; then ' : 'if [ -n "$ZN_RAN" ]; then ') + ifRan + '; else ' + ifGone + '; fi';
+  const noAck = noAckText(agentId);
+  const noAckWarn = noAckWarnText(agentId);
   const deny = (r) => 'printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: r } } }));
   return [
     '#!/bin/sh',
@@ -128,7 +140,7 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
       '  zn_mk out; ZN_OF=$ZN_MK',
       '  [ -n "$ZN_OF" ] || { ZN_RC=127; return 0; }',
       '  "$@" >"$ZN_OF"; ZN_RC=$?',
-      '  if [ "$ZN_RC" = 0 ]; then zn_acked || ZN_RC=1; fi',
+      '  if [ "$ZN_RC" = 0 ]; then zn_acked || { ZN_RC=1; ZN_NOACK=1; }; fi',
       '  case $ZN_RC in 0|2) zn_relay "$ZN_OF" || ZN_RC=127 ;; esac',
       '  rm -f "$ZN_OF"',
       '  return 0',
@@ -161,7 +173,7 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
       '  ZN_T=$!',
       '  wait $ZN_P; ZN_RC=$?',
       '  # A status 0 counts only when the hook confirmed that its whole answer was written.',
-      '  if [ "$ZN_RC" = 0 ]; then zn_acked || ZN_RC=1; fi',
+      '  if [ "$ZN_RC" = 0 ]; then zn_acked || { ZN_RC=1; ZN_NOACK=1; }; fi',
       '  kill -TERM $ZN_T 2>/dev/null',
       '  kill -KILL -$ZN_P 2>/dev/null',
       '  case $ZN_RC in 0|2) zn_relay "$ZN_OF" || ZN_RC=127 ;; esac',
@@ -193,7 +205,7 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
     '  while IFS= read -r ZN_L || [ -n "$ZN_L" ]; do printf \'%s\\n\' "$ZN_L" || return 1; done <"$1"',
     '}',
     'zn_leave() {',
-    '  if [ "$1" = 0 ]; then zn_acked || return 0; fi',
+    '  if [ "$1" = 0 ]; then zn_acked || { ZN_NOACK=1; return 0; }; fi',
     '  case $1 in 0|2) exit $1 ;; esac',
     '  return 0',
     '}',
@@ -209,18 +221,18 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
     'case "$ZN_EVENT" in',
     '  ' + exitEvents.join('|') + ')',
     DENY_STDOUT[agentId]
-      ? '    ' + pick('printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify(DENY_STDOUT[agentId](crash))), 'printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify(DENY_STDOUT[agentId](reason))))
-      : '    ' + pick('printf ' + shQuote('%s\\n') + ' ' + shQuote(crash) + ' >&2', 'printf ' + shQuote('%s\\n') + ' ' + shQuote(reason) + ' >&2'),
+      ? '    ' + pick('printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify(DENY_STDOUT[agentId](crash))), 'printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify(DENY_STDOUT[agentId](reason))), 'printf ' + shQuote('%s\n') + ' ' + shQuote(JSON.stringify(DENY_STDOUT[agentId](noAck))))
+      : '    ' + pick('printf ' + shQuote('%s\\n') + ' ' + shQuote(crash) + ' >&2', 'printf ' + shQuote('%s\\n') + ' ' + shQuote(reason) + ' >&2', 'printf ' + shQuote('%s\n') + ' ' + shQuote(noAck) + ' >&2'),
     DENY_STDOUT[agentId] ? '    exit 0 ;;' : '    exit 2 ;;',
     ...(jsonEvents.length ? [
       '  ' + jsonEvents.join('|') + ')',
-      '    ' + pick(deny(crash), deny(reason)),
+      '    ' + pick(deny(crash), deny(reason), deny(noAck)),
       '    exit 0 ;;',
     ] : []),
     '  *)',
     WARN_STDERR.has(agentId)
-      ? '    ' + pick('printf ' + shQuote('%s\\n') + ' ' + shQuote(crashWarn) + ' >&2', 'printf ' + shQuote('%s\\n') + ' ' + shQuote(warn) + ' >&2')
-      : '    ' + pick('printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify({ systemMessage: crashWarn })), 'printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify({ systemMessage: warn }))),
+      ? '    ' + pick('printf ' + shQuote('%s\\n') + ' ' + shQuote(crashWarn) + ' >&2', 'printf ' + shQuote('%s\\n') + ' ' + shQuote(warn) + ' >&2', 'printf ' + shQuote('%s\n') + ' ' + shQuote(noAckWarn) + ' >&2')
+      : '    ' + pick('printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify({ systemMessage: crashWarn })), 'printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify({ systemMessage: warn })), 'printf ' + shQuote('%s\n') + ' ' + shQuote(JSON.stringify({ systemMessage: noAckWarn }))),
     '    exit 0 ;;',
     'esac',
     '',
