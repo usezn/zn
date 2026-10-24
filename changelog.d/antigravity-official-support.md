@@ -1,0 +1,2 @@
+### Changed
+- Antigravity is now a supported agent, no longer experimental: `zn hooks install antigravity` and `zn-gate init` set up its hook, and the README, the docs and the package description list it with Claude Code, Codex CLI, Cursor and OpenCode. Antigravity still does not document what happens when a hook fails (in our tests the tool call is blocked), and its hooks cannot rewrite what a tool returns. Gemini CLI stays supported (experimental), with a note that Google replaced it with Antigravity CLI for free and Google One accounts on 18 June 2026.
