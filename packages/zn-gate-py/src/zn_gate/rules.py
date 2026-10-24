@@ -16,10 +16,10 @@ import re
 import unicodedata
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, overload
+from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-10-25.5"
+RULES_VERSION = "2026-10-25.6"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -1761,12 +1761,26 @@ _eval_cache: Dict[Tuple[bool, str], Tuple[Any, ...]] = {}
 _eval_cache_ver = RULES_VERSION
 
 
-def evaluate(input_text: str, strict: Optional[bool] = None) -> Assessment:
+# Marks an argument that was not passed, so evaluate(None) keeps its old answer.
+_NOT_GIVEN: Any = object()
+
+
+def evaluate(text: Optional[str] = _NOT_GIVEN, strict: Optional[bool] = None, *,
+             input_text: Optional[str] = _NOT_GIVEN) -> Assessment:
     """Cached entry point: LRU(2048) keyed on raw input and strict mode, version-guarded.
 
-    strict=True (or ZN_STRICT=1) also blocks the heuristic rules that are
-    advisories by default (ADVISORY_BY_DEFAULT)."""
+    The text goes first or as text=...; input_text=... is the older keyword
+    name and still works. strict=True (or ZN_STRICT=1) also blocks the
+    heuristic rules that are advisories by default (ADVISORY_BY_DEFAULT)."""
     global _eval_cache_ver
+    if input_text is not _NOT_GIVEN:
+        if text is not _NOT_GIVEN:
+            raise TypeError("evaluate() takes the text once: pass text or input_text, not both")
+        text = input_text
+    elif text is _NOT_GIVEN:
+        raise TypeError("evaluate() missing the text to check")
+    # None is not a str but keeps its old answer (the check below handles it).
+    input_text = cast(str, text)
     strict = _strict(strict)
     if not isinstance(input_text, str) or len(input_text) > EVAL_CACHE_MAX_INPUT:
         return _evaluate_uncached(input_text, strict)
