@@ -1445,43 +1445,82 @@ function readStdin() {
   });
 }
 
-// The keys of the top-level object that can be read in the first characters of an event (the first
-// occurrence of each, with its value when that is a string, otherwise true). Keys inside the tool arguments
-// are deeper in the object and are not counted: an agent's event name must be a key of the event itself.
-function topLevelKeys(head) {
-  const keys = {};
-  let depth = 0;
+// BEGIN top-level scan (the same text is in plugins/zn-gate/scripts/zn-launch.js and in packages/zn-gate/lib/hooks/runner.js; a test keeps the two equal)
+// The metadata of an event too large to parse: the keys of the TOP-LEVEL object that decide what the event is,
+// whatever their order and wherever they are in the text that was read (the first occurrence of each, with its
+// value when that is a short string, otherwise true). One pass, linear in the text, memory bounded by the
+// longest key or value kept (256 characters): strings are skipped as they are met and JSON depth is tracked, so a
+// key inside the tool arguments or the tool output, or text in a string that looks like a key, is never taken.
+// Returns null when the text is not the start of a JSON object.
+const TOP_KEYS = new Set(['hook_event_name', 'hookEventName', 'hook', 'tool_name', 'toolName', 'tool_response', 'toolResult', 'tool_result', 'tool_output']);
+
+function unescapeShort(s) {
+  if (s.indexOf('\\') < 0) return s;
+  try { return JSON.parse('"' + s + '"'); } catch (_) { return s; }
+}
+
+function readShortString(text, k) {
+  if (text.charCodeAt(k) !== 34) return true;
+  const end = Math.min(text.length, k + 257);
+  for (let j = k + 1; j < end; j++) {
+    const d = text.charCodeAt(j);
+    if (d === 92) j++;
+    else if (d === 34) return unescapeShort(text.slice(k + 1, j));
+  }
+  return true;
+}
+
+function topLevelKeys(text) {
+  const keys = Object.create(null);
+  const n = text.length;
   let i = 0;
-  while (i < head.length) {
-    const c = head[i];
-    if (c === '"') {
+  while (i < n && text.charCodeAt(i) <= 32) i++;
+  if (text.charCodeAt(i) !== 123) return null;
+  let depth = 0;
+  for (; i < n; i++) {
+    const c = text.charCodeAt(i);
+    if (c === 34) {
       let j = i + 1;
-      while (j < head.length && head[j] !== '"') j += head[j] === '\\' ? 2 : 1;
-      const str = head.slice(i + 1, j);
-      i = j + 1;
-      if (depth === 1) {
-        const rest = head.slice(i, i + 300);
-        const colon = /^\s*:\s*/.exec(rest);
-        if (colon && !(str in keys)) {
-          const value = /^"((?:[^"\\]|\\.)*)"/.exec(rest.slice(colon[0].length));
-          keys[str] = value ? value[1] : true;
+      for (; j < n; j++) {
+        const d = text.charCodeAt(j);
+        if (d === 92) j++;
+        else if (d === 34) break;
+      }
+      if (j >= n) break; // the text ends inside this string
+      if (depth === 1 && j - i <= 65) {
+        const key = unescapeShort(text.slice(i + 1, j));
+        if (TOP_KEYS.has(key) && !(key in keys)) {
+          let k = j + 1;
+          while (k < n && text.charCodeAt(k) <= 32) k++;
+          if (text.charCodeAt(k) === 58) {
+            k++;
+            while (k < n && text.charCodeAt(k) <= 32) k++;
+            keys[key] = readShortString(text, k);
+          }
         }
       }
-      continue;
+      i = j;
+    } else if (c === 123 || c === 91) {
+      depth++;
+    } else if (c === 125 || c === 93) {
+      depth--;
+      if (depth <= 0) break;
     }
-    if (c === '{' || c === '[') depth++;
-    else if (c === '}' || c === ']') depth--;
-    i++;
   }
   return keys;
 }
+// END top-level scan
 
-// How each agent's post-tool event can be told from the first characters of an event that is too large to
-// read, and the replacement it takes (its adapter turns it into the agent's own answer). Each `isPost` looks
-// only at the keys of the event itself.
+// How each agent's post-tool event can be told from the keys of an event that is too large to parse (all the
+// characters that were read are scanned, whatever the order of the keys), and the replacement it takes (its
+// adapter turns it into the agent's own answer). Each `isPost` looks only at the keys of the event itself.
+// A post-tool event whose name comes after the characters that were read is told by its output key, which comes
+// before the big value: tool_response (Claude Code, Codex) or tool_output (Cursor). An event with no name and
+// no such key is not told apart from a pre-tool event, so it is refused (exit 2, or Cursor's deny) like any event
+// zn cannot read: letting it pass would let a blocking event through.
 const OVERSIZE_POST = {
-  'claude-code': { isPost: (k) => k.hook_event_name === 'PostToolUse', tool: 'bash', shape: (t) => t },
-  codex: { isPost: (k) => k.hook_event_name === 'PostToolUse', tool: 'bash', shape: (t) => t },
+  'claude-code': { isPost: (k) => k.hook_event_name === 'PostToolUse' || (k.hook_event_name === undefined && k.tool_response !== undefined), tool: 'bash', shape: (t) => t },
+  codex: { isPost: (k) => k.hook_event_name === 'PostToolUse' || (k.hook_event_name === undefined && k.tool_response !== undefined), tool: 'bash', shape: (t) => t },
   // Copilot has two shapes: with an event name, that decides; the Copilot CLI one has none, and then the
   // result is a key of the event (it can come after the arguments, in which case it cannot be seen here and the
   // event is refused).
@@ -1495,14 +1534,20 @@ const OVERSIZE_POST = {
     shape: (t) => t,
   },
   opencode: { isPost: (k) => k.hook === 'tool.execute.after', tool: 'bash', shape: (t) => ({ output: t }) },
-  cursor: { isPost: (k) => k.hook_event_name === 'postToolUse', tool: 'mcp', shape: (t) => t },
+  cursor: { isPost: (k) => k.hook_event_name === 'postToolUse' || (k.hook_event_name === undefined && k.tool_output !== undefined), tool: 'mcp', shape: (t) => t },
 };
 
 // An event over POST_STDIN_CAP characters cannot be parsed in time. A post-tool event is answered with the
-// fixed notice in place of the output; anything else is refused like any event zn cannot read.
+// fixed notice in place of the output; anything else is refused like any event zn cannot read. A Stop event
+// is never refused (exit 2 would make the agent go on with its answer): it passes with a warning.
 function oversizeEvent(agentId, adapter, text) {
   const spec = OVERSIZE_POST[agentId];
-  if (!spec || !spec.isPost(topLevelKeys(text.slice(0, 65536)))) return refuseInput(agentId, 'the event on stdin is too large to check');
+  const keys = topLevelKeys(text);
+  if (keys && keys.hook_event_name === 'Stop' && (agentId === 'claude-code' || agentId === 'codex')) {
+    process.stderr.write('zn hook: could not check this Stop event, so the last answer was not checked\n');
+    return;
+  }
+  if (!spec || !keys || !spec.isPost(keys)) return refuseInput(agentId, 'the event on stdin is too large to check');
   const event = { event: 'post_tool', hookEvent: 'postToolUse', tool: spec.tool, input: { texts: [] } };
   const output = adapter.respond({ decision: 'allow', updatedOutput: spec.shape(POST_WITHHELD), message: POST_CAP_NOTE, event });
   if (output !== null && output !== undefined) process.stdout.write(JSON.stringify(output));
@@ -1662,7 +1707,7 @@ async function handleEvent(args, state, readText) {
   }
 }
 
-module.exports = { handle, main, mapStrings, decidePre, decidePost, INVISIBLE_CHARS_RE, postDeadlineMs, POST_STDIN_CAP, POST_TOKEN_CAP, POST_SCAN_CAP, decidePrompt, decideExpansion, decideStop };
+module.exports = { handle, main, mapStrings, decidePre, decidePost, INVISIBLE_CHARS_RE, postDeadlineMs, POST_STDIN_CAP, POST_TOKEN_CAP, POST_SCAN_CAP, topLevelKeys, decidePrompt, decideExpansion, decideStop };
 
 // Direct entry (`node lib/hooks/runner.js <agent>`): what installed hooks call,
 // so a hook does not pay for loading the rest of the CLI.
