@@ -84,7 +84,12 @@ pub fn load_or_create_ref_key(dir: &std::path::Path) -> std::io::Result<[u8; 32]
     let (key, regenerated) = load_ref_key(dir)?;
     if regenerated {
         tracing::warn!(
-            "ref.key did not hold a valid key and was replaced by a new one. References              (h:...) already stored in the audit log and the vector memory stay as they              are, but they will not match the references of new calls."
+            "{}",
+            concat!(
+                "ref.key did not hold a valid key and was replaced by a new one. ",
+                "References (h:...) already stored in the audit log and the vector memory ",
+                "stay as they are, but they will not match the references of new calls."
+            )
         );
     }
     Ok(key)
