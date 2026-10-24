@@ -329,6 +329,30 @@ test('zn team status shows the organization and never the token', async () => {
   assert.ok(!r.stdout.includes('zni_'));
 });
 
+test('zn team sync exits 1 and uploads nothing when the local audit log was tampered with', async () => {
+  // Fresh records so that there is something to upload, then a same-length edit in the middle of the log.
+  await vault.setSecret('TAMPER_PROBE', 'tp_' + 'z'.repeat(24), { mode: 'env' });
+  const file = require('../lib/vault/store').paths().auditFile;
+  const good = fs.readFileSync(file, 'utf8');
+  const lines = good.trim().split('\n');
+  const i = Math.floor(lines.length / 2);
+  const rec = JSON.parse(lines[i]);
+  rec.decision = rec.decision === 'deny' ? 'allow' : 'deny';
+  lines[i] = JSON.stringify(rec);
+  fs.writeFileSync(file, lines.join('\n') + '\n');
+  const ingests = () => cloud.requests.filter((r) => r.path === '/v1/audit/ingest').length;
+  const before = ingests();
+  const r = await zn(['team', 'sync']);
+  assert.strictEqual(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /Audit upload: tampered, 0 sent/);
+  assert.match(r.stdout, /Nothing was uploaded/);
+  assert.match(r.stderr, /audit upload failed \(tampered/);
+  assert.strictEqual(ingests(), before, 'no upload request reached the server');
+  // Put the log back and clear the mark as the user would, so the rest of the file runs on a clean vault.
+  fs.writeFileSync(file, good);
+  assert.strictEqual((await vault.auditAcknowledge()).cleared, true);
+});
+
 test('leave is confirmed outside the agent and lifts the organization policy', async () => {
   answer = false;
   await assert.rejects(vault.teamLeave(), /declined/);

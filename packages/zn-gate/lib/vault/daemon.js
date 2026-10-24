@@ -1242,6 +1242,7 @@ async function serve(opts) {
     assertPrivateEndpoint(ep, true);
   } catch (err) { await shutdown('lock'); throw err; }
   let unlockFailure = null;
+  let adoptedRecords = 0;
   await state.serial(async () => {
     // Check the log against the vault's checkpoint BEFORE the unlock record is
     // written: that record would otherwise continue from whatever tail is there.
@@ -1252,12 +1253,16 @@ async function serve(opts) {
         // The log verifies and carries the checkpoint record. Records after it were written
         // before a crash or a restored secrets.age could save the newer checkpoint: adopt them.
         const tail = audit.lastRecord(state.paths.auditFile);
+        const prior = state.secrets.auditHead;
+        if (tail && prior && Number.isInteger(tail.seq) && tail.seq > prior.seq) adoptedRecords = tail.seq - prior.seq;
         if (tail) state.secrets.auditHead = { seq: tail.seq, mac: tail.mac };
       }
     } catch (err) {
       recordTamper(state, 'the audit log cannot be read', null);
     }
     try {
+      // Make every adoption visible in the log: those records were written but never checkpointed.
+      if (adoptedRecords > 0) appendChecked(state, { mode: 'unlock', decision: 'warn', reason: 'audit_tail_adopted_after_unclean_shutdown:' + adoptedRecords }, {});
       appendChecked(state, { mode: 'unlock', decision: 'allow', reason: 'ttl:' + Math.round(ttlMs / 60000) + 'm' }, {});
     } catch (err) {
       unlockFailure = err;
