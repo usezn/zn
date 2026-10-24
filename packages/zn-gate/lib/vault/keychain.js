@@ -82,7 +82,7 @@ function run(cmd, args, input, extraEnv) {
     encoding: 'utf8',
     timeout: 60000,
     windowsHide: true,
-    env: Object.assign({}, process.env, extraEnv || {}),
+    env: extraEnv && extraEnv.PSModulePath ? require('../exe').psEnv(cmd, process.env, extraEnv) : Object.assign({}, process.env, extraEnv || {}),
     maxBuffer: 1024 * 1024,
   });
   if (res.error) throw znError(CODES.LOCKED, messages.keychainHelperFailed(cmd + ' (' + res.error.code + ')'));

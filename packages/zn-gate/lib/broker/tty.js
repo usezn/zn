@@ -114,7 +114,7 @@ function readClipboard() {
       ? (ps ? [[ps, ['-NoProfile', '-Command', 'Get-Clipboard -Raw']]] : [])
       : [['/usr/bin/wl-paste', ['--no-newline']], ['/usr/bin/xclip', ['-selection', 'clipboard', '-o']], ['/usr/bin/xsel', ['--clipboard', '--output']]];
   for (const [cmd, args] of candidates) {
-    const r = spawnSync(cmd, args, { encoding: 'utf8', windowsHide: true, ...(cmd === ps ? { env: { ...process.env, PSModulePath: require('../exe').systemPsModulePath(ps) } } : {}) });
+    const r = spawnSync(cmd, args, { encoding: 'utf8', windowsHide: true, ...(cmd === ps ? { env: require('../exe').psEnv(ps) } : {}) });
     if (!r.error && r.status === 0) return String(r.stdout || '').replace(/\r?\n$/, '');
   }
   const err = new Error(candidates.length ? messages.clipboardUnreadable(candidates.map((c) => c[0])) : messages.CLIPBOARD_NO_POWERSHELL);

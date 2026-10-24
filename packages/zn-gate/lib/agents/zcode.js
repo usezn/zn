@@ -455,7 +455,7 @@ function install(opts = {}) {
   report.warnings.push('ZCode cannot rewrite what a tool returns: a value printed by a command or read from a file reaches the model. zn adds a notice to the output when it holds a secret. Keep secrets in the vault.');
   report.warnings.push('ZCode runs hooks only from ' + file + ' (hooks of a project are ignored) and only when "hooks.enabled" is true' + (wasOff ? ': zn turned it on' : '') + '. Start a new ZCode session: a running one keeps the hooks it started with.');
   report.warnings.push('ZCode lets a call run when its hook cannot start or crashes (only exit code 2 blocks). If the Node.js zn was installed with goes away, zn\'s launcher blocks the call instead; run `zn-gate check` to see that the hook works.');
-  if (data.features && data.features.mcp === false) report.warnings.push('"features.mcp" is false in ' + file + ', so ZCode starts no MCP server, zn\'s "secrets" server included.');
+  if (data.features && data.features.mcp === false) report.warnings.push('"features.mcp" is false in ' + file + ', so ZCode is expected to start no MCP server, zn\'s "secrets" server included (not tested).');
   return report;
 }
 
@@ -559,7 +559,7 @@ function configWarnings(opts = {}) {
       }
     }
   }
-  if (isObj(data.features) && data.features.mcp === false) out.notes.push('"features.mcp" is false in ' + file + ', so ZCode does not start zn\'s "secrets" MCP server');
+  if (isObj(data.features) && data.features.mcp === false) out.notes.push('"features.mcp" is false in ' + file + ', so ZCode is expected not to start zn\'s "secrets" MCP server (not tested)');
   return out;
 }
 

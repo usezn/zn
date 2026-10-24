@@ -219,7 +219,7 @@ function guiChannel(opts = {}) {
       let child;
       try {
         child = spawnFn(cmd.file, cmd.args, {
-          env: Object.assign({}, env, cmd.env),
+          env: cmd.env && cmd.env.PSModulePath ? require('../exe').psEnv(cmd.file, env, cmd.env) : Object.assign({}, env, cmd.env),
           stdio: 'ignore',
           windowsHide: false,
         });

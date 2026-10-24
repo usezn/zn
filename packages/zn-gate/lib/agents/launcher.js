@@ -445,7 +445,9 @@ function runWinPowerShell(script, extra, io = {}) {
   if (!ps) throw new Error('the system PowerShell was not found');
   const w = path.win32;
   const root = w.dirname(w.dirname(w.dirname(w.dirname(ps))));
-  const env = { SystemRoot: root, windir: root, SystemDrive: root.slice(0, 2), PATH: w.join(root, 'System32'), PSModulePath: require('../exe').systemPsModulePath(ps), ...extra };
+  const env = { SystemRoot: root, windir: root, SystemDrive: root.slice(0, 2), PATH: w.join(root, 'System32'), ...extra };
+  for (const k of Object.keys(env)) if (/^psmodulepath$/i.test(k)) delete env[k];
+  env.PSModulePath = require('../exe').systemPsModulePath(ps);
   return spawnSync(ps, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script], {
     env, cwd: root, encoding: 'utf8', timeout: 30000, windowsHide: true,
   });
