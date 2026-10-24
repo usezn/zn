@@ -429,12 +429,15 @@ function commandFor(opts = {}) {
   }
   // Antigravity splits the command on spaces and runs it with no shell, so a quote becomes part of the file name
   // and the hook never starts: the launcher path goes in unquoted. A path that would need quotes cannot be used.
-  if (!launcher.plainPathOk(launcher.launcherFile(id, opts))) return cfg.hookCommand(id, opts);
+  // No path without spaces: nothing that Antigravity can start can be written, so refuse instead of writing a hook that never runs.
+  const file = launcher.launcherFile(id, opts);
+  if (!launcher.plainPathOk(file)) throw new Error(launcher.spaceMessage(file));
   return launcher.launcherCommand(launcher.writeLauncher(id, node, runner, opts), 'PreToolUse', platform, { plain: true });
 }
 
 function install(opts = {}) {
   const file = hooksFile(opts);
+  const command = commandFor(opts); // may refuse (a launcher path Antigravity cannot start): before anything is written
   const data = cfg.readJson(file);
   const report = { settings: file, backup: cfg.backup(file), warnings: [] };
   if (report.backup && (opts.scope || 'user') === 'project') report.warnings.push('The backup ' + report.backup + ' sits inside the project: do not commit it.');
@@ -443,7 +446,6 @@ function install(opts = {}) {
   // Windows a quoted path such as C:/Program Files/... breaks the -Command form
   // and every tool call is blocked. -EncodedCommand has no space inside its
   // argument.
-  const command = commandFor(opts);
   // After the strip, a hook still called zn-gate is someone else's: zn never touches it (not even its enabled flag).
   let name = HOOK_NAME;
   while (data[name] !== undefined) name += '-zn';

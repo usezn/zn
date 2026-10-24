@@ -411,6 +411,17 @@ function cliHooks(spec, ctx, userFile, given) {
     return out;
   }
   const cmd = parseCommand(read.command, spec.id);
+  if (spec.id === 'antigravity' && process.platform !== 'win32') {
+    // Antigravity splits the command on spaces and runs it with no shell: any quote stays in a name, and a path with a
+    // space is cut in two. Run the same split instead of trusting how zn would read the command.
+    const first = String(read.command).trim().split(' ')[0];
+    const abs = path.isAbsolute(first) && !(() => { try { return fs.statSync(first).isFile(); } catch (err) { return false; } })();
+    if (/['"]/.test(read.command) || abs) {
+      out.problem = 'its hook cannot start: Antigravity runs the command without a shell, split on spaces, so this one (' + String(read.command).trim() + ') is cut in the wrong place and never runs';
+      out.fix = 'if the path of your home folder has a space, choose a folder with no spaces and run `ZN_HOOK_DIR=<that folder> zn hooks install antigravity` in your own terminal; otherwise ' + REINSTALL(spec.id);
+      return out;
+    }
+  }
   if (cmd.launcher || cmd.winScript) {
     // The launcher runs the Node.js it was installed with, else `zn` from the PATH, else it blocks (see launcher.js).
     const isFile = (f) => { try { return fs.statSync(f).isFile(); } catch (err) { return false; } };

@@ -79,9 +79,10 @@ function warnText(agentId) {
     FIX.replace('codex', agentId) + '.';
 }
 
-/** Where zn keeps its launchers: ~/.zn/hooks (or $ZN_HOME/hooks). */
+/** Where zn keeps its launchers: ~/.zn/hooks (or $ZN_HOME/hooks, or $ZN_HOOK_DIR itself). */
 function launcherDir(opts = {}) {
   const env = opts.env || process.env;
+  if (env.ZN_HOOK_DIR) return path.resolve(env.ZN_HOOK_DIR);
   const base = env.ZN_HOME ? path.resolve(env.ZN_HOME) : path.join(opts.home || os.homedir(), '.zn');
   return path.join(base, 'hooks');
 }
@@ -148,7 +149,9 @@ function unixScript(agentId, nodePath, runnerPath) {
 function writeLauncher(agentId, nodePath, runnerPath, opts = {}) {
   const file = launcherFile(agentId, opts);
   const dir = path.dirname(file);
-  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  // ZN_HOOK_DIR names any folder: the launcher in it runs on every tool call, so the folder must be ours and private.
+  if ((opts.env || process.env).ZN_HOOK_DIR) ensureSafeHookDir(dir, opts.platform || process.platform, { trustedRoot: opts.hookDirTrustedRoot });
+  else fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   // On Windows the script runs in Git Bash: write the paths with / so that `zn-gate check` can read them back.
   const platform = opts.platform || process.platform;
   writeFileAtomic(file, unixScript(agentId, portablePath(nodePath, platform), portablePath(runnerPath, platform)), 0o755);
@@ -248,6 +251,90 @@ function plainPathOk(file) {
   return /^[A-Za-z0-9_\/.@+=,:~-]+$/.test(String(file));
 }
 
+/** Why zn will not use a folder for the launchers (ZN_HOOK_DIR), and the way out. */
+function unsafeDirMessage(dir, why) {
+  return 'zn will not keep its hook launcher in ' + dir + ': ' + why + '. The launcher runs on every tool call, so anyone who can replace it could run commands as you. ' +
+    'Use a folder that you own, whose path has no link, and where every folder above it belongs to you or to root and cannot be written by anyone else ' +
+    '(/tmp and shared folders do not qualify, even with the sticky bit). For example `sudo mkdir -m 700 /opt/<you>-zn-hooks && sudo chown <you> /opt/<you>-zn-hooks`, ' +
+    'or unset ZN_HOOK_DIR to use ~/.zn/hooks.';
+}
+
+/**
+ * Checks one folder of the chain that leads to the launcher folder: a folder that exists, owned by root or the current
+ * user, with no write for group or others (no exception for the sticky bit: /tmp itself fails). Throws a plain error otherwise.
+ */
+function checkAncestor(dir, leaf) {
+  const st = fs.lstatSync(dir);
+  if (leaf) {
+    if (st.isSymbolicLink()) throw new Error(unsafeDirMessage(dir, 'it is a link'));
+    if (!st.isDirectory()) throw new Error(unsafeDirMessage(dir, 'it is not a folder'));
+  }
+  const me = typeof process.getuid === 'function' ? process.getuid() : null;
+  if (me !== null && st.uid !== me && !(!leaf && st.uid === 0)) throw new Error(unsafeDirMessage(dir, leaf ? 'it belongs to another user' : 'a folder above it (' + dir + ') belongs to another user'));
+  if ((st.mode & 0o022) !== 0) {
+    throw new Error(unsafeDirMessage(dir, leaf ? 'other users can write to it (mode ' + (st.mode & 0o777).toString(8) + ')' : 'a folder above it (' + dir + ') can be written by other users (mode ' + (st.mode & 0o777).toString(8) + ')'));
+  }
+}
+
+/**
+ * Checks the whole chain from `start` (a folder that exists) up to /: no link anywhere in the path (the real path must be
+ * the path itself) and every folder trusted (checkAncestor). `trustedRoot` is internal and only for tests: the walk stops
+ * before that folder, because the test folders live under the system temp folder, which is shared by design. Production
+ * never passes it.
+ */
+function checkChain(start, trustedRoot, leafPath) {
+  const real = fs.realpathSync(start);
+  if (real !== start) throw new Error(unsafeDirMessage(start, 'a link is in its path (it leads to ' + real + ')'));
+  let p = start;
+  for (;;) {
+    if (trustedRoot && p === trustedRoot) return;
+    checkAncestor(p, p === leafPath);
+    const up = path.dirname(p);
+    if (up === p) return;
+    p = up;
+  }
+}
+
+/**
+ * Makes sure the folder that holds the launchers can be trusted. Nothing is created or written until the whole chain is
+ * checked: the folder (or its nearest existing parent) must be a real folder with no link anywhere in its path, and it and
+ * every folder above it up to / must belong to the current user or root and have no write for group or others. The sticky
+ * bit is no excuse, so /tmp and a folder under it are refused: they can be emptied or replaced by someone else, while the
+ * hook command keeps pointing at the old path. Creates the folder (0700) when it is missing. Throws a plain error
+ * otherwise. On Windows there is no uid or mode to check (the same rule as the vault and the compile cache): it only
+ * has to be a real folder, and the user profile's ACLs apply.
+ */
+function ensureSafeHookDir(dir, platform = process.platform, opts = {}) {
+  if (platform === 'win32') {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const st = fs.lstatSync(dir);
+    if (st.isSymbolicLink()) throw new Error(unsafeDirMessage(dir, 'it is a link'));
+    if (!st.isDirectory()) throw new Error(unsafeDirMessage(dir, 'it is not a folder'));
+    return;
+  }
+  const abs = path.resolve(dir);
+  const trusted = opts.trustedRoot ? path.resolve(opts.trustedRoot) : null;
+  let existing = abs;
+  while (!fs.existsSync(existing) && !isLink(existing)) existing = path.dirname(existing);
+  if (isLink(abs)) throw new Error(unsafeDirMessage(dir, 'it is a link'));
+  checkChain(existing, trusted, abs);
+  fs.mkdirSync(abs, { recursive: true, mode: 0o700 });
+  checkChain(abs, trusted, abs);
+}
+
+function isLink(p) {
+  try { return fs.lstatSync(p).isSymbolicLink(); } catch (_) { return false; }
+}
+
+/** Why zn will not install the Antigravity hook at this launcher path, and the way out. */
+function spaceMessage(file) {
+  return 'zn cannot install the Antigravity hook: the launcher would be at ' + file + ', and Antigravity starts a hook by splitting the command on spaces, ' +
+    'without a shell or quotes, so a path with a space or another special character never starts, so the hook would protect nothing. ' +
+    'Choose a folder outside the home folder whose path has only letters, digits and - _ . / (for example `sudo mkdir -m 700 /opt/<you>-zn-hooks && sudo chown <you> /opt/<you>-zn-hooks`, ' +
+    'or a folder under $XDG_DATA_HOME if that path has no space), run `ZN_HOOK_DIR=<that folder> zn hooks install antigravity`, and nothing else changes. ' +
+    'The folder must be one you own, with no link in its path, and every folder above it must belong to you or to root and not be writable by others: zn-gate refuses anything else, because the launcher in it runs on every tool call.';
+}
+
 /**
  * The PowerShell text (for windowsCommand-style quoting by the caller) of the
  * same three steps, ending with a comment that names the agent so that
@@ -297,4 +384,4 @@ function windowsScriptCommand(script) {
   return 'powershell.exe -NoProfile -NonInteractive -EncodedCommand ' + Buffer.from(script, 'utf16le').toString('base64');
 }
 
-module.exports = { projectShCommand, projectWindowsScript, isProjectGuard, isProjectWindowsScript, blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, windowsScript, BLOCK_EXIT, BLOCK_JSON };
+module.exports = { projectShCommand, projectWindowsScript, isProjectGuard, isProjectWindowsScript, blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, spaceMessage, unsafeDirMessage, ensureSafeHookDir, windowsScript, BLOCK_EXIT, BLOCK_JSON };
