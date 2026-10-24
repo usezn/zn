@@ -517,13 +517,13 @@ test('audit: edits and truncation are detected', async () => {
   const edited = lines.slice();
   edited[1] = edited[1].replace('"decision":"', '"decision":"x');
   fs.writeFileSync(file, edited.join('\n') + '\n');
-  assert.strictEqual((await c.auditVerify()).ok, false);
-  fs.writeFileSync(file, lines.slice(0, -2).join('\n') + '\n');
-  const trunc = await c.auditVerify();
-  assert.strictEqual(trunc.ok, false);
-  assert.match(trunc.error, /truncated/);
+  const bad = await c.auditVerify();
+  assert.strictEqual(bad.ok, false);
+  assert.strictEqual(bad.tampered, true, 'a failed check stores the tamper mark');
+  // The mark stays even when the log is put back: only `zn vault verify --acknowledge` clears it
+  // (truncation and the acknowledge path are covered in vault_audit_reconcile.test.js).
   fs.writeFileSync(file, original);
-  assert.strictEqual((await c.auditVerify()).ok, true);
+  assert.strictEqual((await c.auditVerify()).ok, false);
   c.close();
 });
 

@@ -309,6 +309,102 @@ function widening(prev, next) {
   return out;
 }
 
+/* Tamper mark. The audit log is checked against the checkpoint the vault
+ * keeps in secrets.age. If the log was changed behind the daemon's back
+ * (truncated, replaced), the checkpoint is NOT moved to the new tail: the old
+ * one stays, and this mark is stored in the vault. `zn vault verify` fails
+ * until the user accepts the log with `zn vault verify --acknowledge`. */
+function recordTamper(state, reason, found) {
+  const secrets = state.secrets;
+  if (!secrets || secrets.auditTamper) return;
+  const head = secrets.auditHead;
+  secrets.auditTamper = {
+    at: new Date().toISOString(),
+    reason: String(reason).slice(0, 300),
+    expected: head ? { seq: head.seq, mac: head.mac } : null,
+    found: found || null,
+  };
+  state.dirtySecrets = true;
+  state.serial(() => state.saveSecrets()).catch(() => {});
+}
+
+/* Chain check of the whole log (every MAC, the links, the sequence numbers and
+ * the vault's checkpoint). A failure leaves the persistent tamper mark. The
+ * result is remembered while the file is unchanged (size, mtime, ctime, inode)
+ * and the checkpoint is the same; any append by the daemon drops it, so the
+ * next check reads the whole log again. */
+function logSignature(file) {
+  try {
+    const st = fs.statSync(file);
+    return [st.size, st.mtimeMs, st.ctimeMs, st.ino].join(':');
+  } catch (err) { return 'none'; }
+}
+
+function headKey(secrets) {
+  return secrets.auditHead ? secrets.auditHead.seq + ':' + secrets.auditHead.mac : '';
+}
+
+function chainStatus(state, opts) {
+  const secrets = state.secrets;
+  if (!secrets) throw znError(CODES.LOCKED, 'vault locked');
+  const file = state.paths.auditFile;
+  const t = secrets.auditTamper;
+  if (t) {
+    return {
+      ok: false,
+      tampered: true,
+      records: 0,
+      reason: t.reason,
+      error: 'the audit log was changed behind the vault (noticed ' + t.at + '): ' + t.reason,
+    };
+  }
+  const sig = logSignature(file);
+  const c = state.chainCache;
+  if (!(opts && opts.force) && c && c.sig === sig && c.head === headKey(secrets)) return c.result;
+  state.chainCache = null;
+  let r;
+  try {
+    r = audit.verify({ file, key: Buffer.from(secrets.auditKey, 'hex'), checkpoint: secrets.auditHead });
+  } catch (err) {
+    r = { ok: false, records: 0, error: 'the audit log cannot be read' };
+  }
+  if (!r.ok) {
+    recordTamper(state, r.error + (r.line ? ' (record ' + r.line + ')' : ''), null);
+    return Object.assign({}, r, {
+      tampered: true,
+      reason: secrets.auditTamper.reason,
+      error: 'the audit log was changed behind the vault (noticed ' + secrets.auditTamper.at + '): ' + secrets.auditTamper.reason,
+    });
+  }
+  state.chainCache = { sig, head: headKey(secrets), result: r };
+  return r;
+}
+
+/* Every audit write goes through here: the in-memory head must be the last
+ * record in the file before the daemon appends, and the whole chain must
+ * verify (a change in the middle of the log is not seen by the head alone);
+ * if not, the checkpoint stays and the tamper mark is stored. */
+function appendChecked(state, event, extra) {
+  const secrets = state.secrets;
+  if (!secrets) throw znError(CODES.LOCKED, 'vault locked');
+  const file = state.paths.auditFile;
+  if (!secrets.auditTamper) {
+    const h = audit.checkHead(file, secrets.auditHead);
+    if (!h.ok) recordTamper(state, h.reason, h.found);
+    else {
+      chainStatus(state);
+    }
+  }
+  if (state.opts && typeof state.opts._afterChainCheck === 'function') state.opts._afterChainCheck(); // test seam
+  state.dirtySecrets = true;
+  const rec = audit.append(event, Object.assign({ file, key: Buffer.from(secrets.auditKey, 'hex') }, extra));
+  if (!secrets.auditTamper) secrets.auditHead = { seq: rec.seq, mac: rec.mac };
+  // Never vouch for the file from a stat taken after our own write: a change made as the file grew
+  // would be folded in. The next read, export or upload checks the whole chain again.
+  state.chainCache = null;
+  return rec;
+}
+
 function makeOps(state, ctl) {
   const auditFile = state.paths.auditFile;
   const channel = ctl.channel;
@@ -334,15 +430,10 @@ function makeOps(state, ctl) {
   /* Synchronous on purpose: audit.append is synchronous file I/O, so two
    * appends can never interleave and break the chain. */
   function writeAudit(event) {
-    const secrets = state.secrets;
-    if (!secrets) throw znError(CODES.LOCKED, 'vault locked');
-    const rec = audit.append(event, { file: auditFile, key: Buffer.from(secrets.auditKey, 'hex'), knownValues: state.knownValues() });
-    secrets.auditHead = { seq: rec.seq, mac: rec.mac };
-    state.dirtySecrets = true;
-    return rec;
+    return appendChecked(state, event, { knownValues: state.knownValues() });
   }
 
-  const team = makeTeamOps({ state, writeAudit, confirmOutOfBand, fetchImpl: ctl.fetchImpl, isClosed: () => Boolean(ctl.closed) });
+  const team = makeTeamOps({ state, writeAudit, verifyChain: () => chainStatus(state), confirmOutOfBand, fetchImpl: ctl.fetchImpl, isClosed: () => Boolean(ctl.closed) });
 
   const localOf = (name, s) => ({ name, mode: s.mode, allowHosts: s.allowHosts || [], allowCommands: s.allowCommands || [], allowIn: s.allowIn || ['header'] });
   // When the masking path last called the vault, for each (agent, tool): one audit record a minute, not one per hook.
@@ -875,13 +966,70 @@ function makeOps(state, ctl) {
     },
 
     async auditVerify() {
+      await state.loadSecrets();
+      // The encrypted vault remembers the last record (sequence number and
+      // MAC): a lost tail or a replaced one is reported, and the warning is stored.
+      const secrets = state.secrets;
+      const r = audit.verify({ file: auditFile, key: Buffer.from(secrets.auditKey, 'hex'), checkpoint: secrets.auditHead });
+      if (!r.ok && !secrets.auditTamper) recordTamper(state, r.error + (r.line ? ' (record ' + r.line + ')' : ''), null);
+      const t = secrets.auditTamper;
+      if (!t) return r;
+      return Object.assign({}, r, {
+        ok: false,
+        tampered: true,
+        error: 'the audit log was changed behind the vault (noticed ' + t.at + '): ' + t.reason,
+      });
+    },
+
+    /* The audit log for display: verified first. A log that does not verify is
+     * refused (and the tamper mark is stored), never shown. */
+    async auditRead(args) {
+      await state.loadSecrets();
+      const c = chainStatus(state);
+      if (!c.ok) return { ok: false, tampered: c.tampered === true, error: c.error, reason: c.reason, events: [] };
+      const a = args && typeof args === 'object' ? args : {};
+      return { ok: true, records: c.records, events: audit.read({ file: auditFile, since: a.since, limit: a.limit }) };
+    },
+
+    /* The audit log for export (OTLP): verified first, refused otherwise. */
+    async auditExport(args) {
+      await state.loadSecrets();
+      const c = chainStatus(state);
+      if (!c.ok) return { ok: false, tampered: c.tampered === true, error: c.error, line: c.line };
+      const a = args && typeof args === 'object' ? args : {};
+      const r = require('../team/otel').exportAuditFile({ auditFile, since: a.since, installId: a.installId, orgId: a.orgId });
+      return Object.assign({ ok: true }, r);
+    },
+
+    /* The user accepts the log as it is now, after looking into the change.
+     * Needs the vault's own confirmation channel (an agent cannot answer it),
+     * and refuses when the chain itself does not verify. */
+    async auditAcknowledge() {
       const secrets = await state.loadSecrets();
-      const res = audit.verify({ file: auditFile, key: Buffer.from(secrets.auditKey, 'hex') });
-      // Truncation check: the encrypted vault remembers the last record.
-      if (res.ok && secrets.auditHead && res.records < secrets.auditHead.seq) {
-        return { ok: false, records: res.records, error: 'log truncated (vault expects ' + secrets.auditHead.seq + ' records)' };
-      }
-      return res;
+      const t = secrets.auditTamper;
+      if (!t) return { ok: true, cleared: false };
+      await confirmOutOfBand({
+        kind: 'audit_ack',
+        title: 'accept the audit log as it is now?',
+        warnings: ['The vault noticed that the audit log was changed behind it. Accepting makes the log as it is now the reference again; the earlier gap stays unexplained.'],
+        fields: [['Noticed', t.at], ['What', t.reason]],
+        footer: 'If you did not just ask for this in your own terminal, choose Deny.',
+      }, { decision: 'deny', reason: 'audit_ack' });
+      return state.serial(async () => {
+        const cur = state.secrets;
+        const key = Buffer.from(cur.auditKey, 'hex');
+        const chain = audit.verify({ file: auditFile, key });
+        if (!chain.ok) {
+          throw znError(CODES.POLICY_DENIED, 'the audit log does not verify on its own (' + chain.error + '), so it cannot be accepted. Next step: keep a copy of ~/.zn/audit.jsonl as evidence; to start a new log on purpose, see zn vault reset.');
+        }
+        const last = audit.lastRecord(auditFile);
+        cur.auditHead = last ? { seq: last.seq, mac: last.mac } : null;
+        delete cur.auditTamper;
+        state.chainCache = null;
+        appendChecked(state, { decision: 'warn', reason: 'audit_tamper_acknowledged' }, {});
+        await state.saveSecrets();
+        return { ok: true, cleared: true };
+      });
     },
 
     async lock() {
@@ -987,11 +1135,11 @@ async function serve(opts) {
     try {
       await state.serial(async () => {
         if (state.secrets) {
-          const secrets = state.secrets;
-          const rec = audit.append({ mode: reason === 'lock' ? 'lock' : 'expire', decision: 'allow', reason },
-            { file: state.paths.auditFile, key: Buffer.from(secrets.auditKey, 'hex') });
-          secrets.auditHead = { seq: rec.seq, mac: rec.mac };
-          await state.saveSecrets();
+          try {
+            appendChecked(state, { mode: reason === 'lock' ? 'lock' : 'expire', decision: 'allow', reason }, {});
+          } finally {
+            await state.saveSecrets();
+          }
         }
       });
     } catch (err) { /* best effort */ }
@@ -1093,12 +1241,35 @@ async function serve(opts) {
     }
     assertPrivateEndpoint(ep, true);
   } catch (err) { await shutdown('lock'); throw err; }
+  let unlockFailure = null;
   await state.serial(async () => {
-    const rec = audit.append({ mode: 'unlock', decision: 'allow', reason: 'ttl:' + Math.round(ttlMs / 60000) + 'm' },
-      { file: state.paths.auditFile, key: Buffer.from(state.secrets.auditKey, 'hex') });
-    state.secrets.auditHead = { seq: rec.seq, mac: rec.mac };
-    await state.saveSecrets();
+    // Check the log against the vault's checkpoint BEFORE the unlock record is
+    // written: that record would otherwise continue from whatever tail is there.
+    try {
+      const pre = chainStatus(state, { force: true });
+      // A failed check has stored the tamper mark (chainStatus).
+      if (pre.ok && !state.secrets.auditTamper) {
+        // The log verifies and carries the checkpoint record. Records after it were written
+        // before a crash or a restored secrets.age could save the newer checkpoint: adopt them.
+        const tail = audit.lastRecord(state.paths.auditFile);
+        if (tail) state.secrets.auditHead = { seq: tail.seq, mac: tail.mac };
+      }
+    } catch (err) {
+      recordTamper(state, 'the audit log cannot be read', null);
+    }
+    try {
+      appendChecked(state, { mode: 'unlock', decision: 'allow', reason: 'ttl:' + Math.round(ttlMs / 60000) + 'm' }, {});
+    } catch (err) {
+      unlockFailure = err;
+    } finally {
+      await state.saveSecrets();
+    }
   });
+  if (unlockFailure) {
+    // The log cannot be continued (its last line is unreadable): do not leave a half-started daemon.
+    await shutdown('error');
+    throw znError(CODES.LOCKED, 'the audit log cannot be read, so the vault stays locked. The vault keeps a warning about it. Next step: keep a copy of ~/.zn/audit.jsonl as evidence; to start a new log on purpose, see zn vault reset.');
+  }
   // The idle clock starts only now that the daemon is ready to serve, not
   // before the first (possibly slow) write above: otherwise a slow disk can
   // expire the session before the first client connects.

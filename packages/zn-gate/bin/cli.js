@@ -916,7 +916,7 @@ async function main() {
     return;
   }
   if (args[0] === 'vault' && args[1] === 'log' && args[2] === 'export') {
-    process.exitCode = require('../lib/team/cli').runLogExport(args.slice(3));
+    process.exitCode = await require('../lib/team/cli').runLogExport(args.slice(3));
     return;
   }
   if (args[0] === 'vault' && args[1] === 'log') {

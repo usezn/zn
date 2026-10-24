@@ -128,23 +128,21 @@ test('the log checks the chain of an unlocked vault and exits 1 when it is broke
   const target = lines.findIndex((l) => l.includes('"secret":"DB_PASSWORD"'));
   const tampered = lines.slice();
   tampered[target] = tampered[target].replace('"decision":"allow"', '"decision":"deny"');
+  // A failed check stores the vault's tamper mark, which outlives the file being put back: check the
+  // valid log with both commands first, then the changed one (a cut tail is covered in vault_audit_reconcile.test.js).
   for (const cmd of LOG_COMMANDS) {
     fs.writeFileSync(file, orig);
-    let r = zn(home, cmd);
+    const r = zn(home, cmd);
     assert.strictEqual(r.status, 0, r.stderr);
     assert.ok(r.stdout.includes('chain: valid, ' + lines.length + ' records'), r.stdout);
     assertNotice(cmd, r);
-
+  }
+  for (const cmd of LOG_COMMANDS) {
     fs.writeFileSync(file, tampered.join('\n') + '\n');
-    r = zn(home, cmd);
+    const r = zn(home, cmd);
     assert.strictEqual(r.status, 1, r.stdout + r.stderr);
     assert.ok(r.stdout.includes('chain: BROKEN: bad mac (record ' + (target + 1) + ')'), r.stdout);
-    assertNotice(cmd, r);
-
-    fs.writeFileSync(file, lines.slice(0, -1).join('\n') + '\n');
-    r = zn(home, cmd);
-    assert.strictEqual(r.status, 1, r.stdout + r.stderr);
-    assert.match(r.stdout, /chain: BROKEN: log truncated/);
+    assert.ok(!r.stdout.includes('DB_PASSWORD'), 'a log that does not verify is not shown');
     assertNotice(cmd, r);
   }
 });
@@ -185,5 +183,31 @@ test('zn vault log --help and zn secret log --help show the usage', (t) => {
     const r = zn(home, [...cmd, '--help']);
     assert.strictEqual(r.status, 0, r.stderr);
     assert.match(r.stdout, /usage: zn vault log/);
+  }
+});
+
+test('an unlocked vault whose verified read fails does not fall back to the unverified log', async (t) => {
+  const home = tempDir(t, 'zn-audit-');
+  fs.mkdirSync(path.join(home, '.zn'), { recursive: true });
+  const rec = { seq: 1, ts: new Date().toISOString(), decision: 'allow', secret: 'DB_PASSWORD', mode: 'run', agent: 'claude-code', tool: 'Bash', prev: '0', mac: '00' };
+  fs.writeFileSync(path.join(home, '.zn', 'audit.jsonl'), JSON.stringify(rec) + '\n');
+  const clientMod = require('../lib/vault/client');
+  const orig = clientMod.createClient;
+  clientMod.createClient = () => ({
+    isUnlocked: async () => true,
+    auditRead: async () => { throw new Error('unknown op: auditRead'); },
+    auditVerify: async () => ({ ok: true, records: 1 }),
+    close() {},
+  });
+  t.after(() => { clientMod.createClient = orig; });
+  const { dispatch } = require('../lib/broker/cli');
+  for (const cmd of LOG_COMMANDS) {
+    let stdout = '';
+    let stderr = '';
+    const code = await dispatch(cmd[0], cmd.slice(1), { stdout: { write: (x) => { stdout += x; } }, stderr: { write: (x) => { stderr += x; } }, env: {}, cwd: home });
+    assert.strictEqual(code, 1, stdout + stderr);
+    assert.doesNotMatch(stdout, /DB_PASSWORD/);
+    assert.match(stdout, /not shown/);
+    assert.match(stdout, /restart the vault|lock.*unlock/);
   }
 });

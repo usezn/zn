@@ -500,3 +500,12 @@ test('status lists what the last policy version removed or loosened, from the va
   assert.match(r.stdout, /Policy change: version 3 to 4 /);
   assert.match(r.stdout, /secret PROD_\* is no longer blocked/);
 });
+
+test('log export with a vault that cannot be probed warns that it is locked or unreachable', async () => {
+  fake.isUnlocked = async () => { throw new Error('connect ECONNREFUSED'); };
+  writeAudit([rec(1, new Date().toISOString())]);
+  const r = await capture(() => runLogExport(['--otlp']));
+  assert.strictEqual(r.code, 0);
+  assert.ok(r.stdout.length > 0);
+  assert.match(r.stderr, /the vault is locked or unreachable, so the audit log chain was NOT verified/);
+});

@@ -161,7 +161,9 @@ zn run --secrets PGPASSWORD -- psql -h db.example.test -U app -c "select 1"
 ```
 
 The value goes only into that process's environment. Its output is masked (raw,
-base64, hex and URL-encoded forms come back as the marker), and the first time
+base64, hex and URL-encoded forms come back as the marker; standard output and
+standard error are masked separately, so a value that a program splits between
+the two is not caught), and the first time
 the vault asks you to confirm in its dialog or its terminal. That prompt shows
 the exact program that will run. Changing a secret's policy (`zn secret allow`)
 is confirmed the same way. The agent cannot answer these prompts from its own
@@ -274,9 +276,9 @@ example costs nothing.
 |---|---|
 | `zn secret list` | Names, modes, hosts and commands (never values) |
 | `zn secret rm NAME` | Remove a secret |
-| `zn vault log` | Local audit log: who used which secret where (no values). Also `zn secret log`; `--since 1h` limits it. (`zn audit` reviews agent configs; see [audit.md](audit.md)) |
-| `zn vault log export --otlp` | The same log as OpenTelemetry logs (OTLP/JSON Lines) for an OpenTelemetry Collector; `--since 7d`, `--out FILE`. See [team.md](team.md#export-the-audit-log-to-opentelemetry) |
-| `zn vault verify` | Check the audit log's HMAC chain |
+| `zn vault log` | Local audit log: who used which secret where (no values). Also `zn secret log`; `--since 1h` limits it. With the vault unlocked it checks the whole chain first and shows nothing if the check fails (the vault stores a warning); with the vault locked it says the chain was not checked. (`zn audit` reviews agent configs; see [audit.md](audit.md)) |
+| `zn vault log export --otlp` | The same log as OpenTelemetry logs (OTLP/JSON Lines) for an OpenTelemetry Collector; `--since 7d`, `--out FILE`. An unlocked vault checks the chain first and refuses to export a log that does not verify; a locked vault cannot, and the export warns that it is not a verified copy. See [team.md](team.md#export-the-audit-log-to-opentelemetry) |
+| `zn vault verify` | Check the audit log's HMAC chain and compare its last record with the one the vault remembers. If the log was cut or replaced while the vault was locked or running, the vault keeps a warning (also after lock and unlock) and this command fails until you look into it and accept the log with `zn vault verify --acknowledge` in your own terminal (the vault asks you to confirm). The vault saves its checkpoint every minute and when it locks; if the vault process is killed, the records of the last minute may be missing without notice. Restoring an older `secrets.age`, with or without its older `audit.jsonl`, is not detected. After a power loss the check can report a false alarm |
 | `zn lock` | Lock the vault now |
 | `zn vault reset` | Forgot the passphrase? Sets the old vault aside (an encrypted backup) and starts a new, empty one. Your own terminal only; the old values are lost. See "If something fails" |
 | `zn vault purge` | Deletes the vault for good: it lists every file (vault, token maps, audit log, all backups, session key), asks you to type `purge my vault`, deletes them and checks that none is left. Your own terminal only (`--yes` for a script); cannot be undone |

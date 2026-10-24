@@ -432,7 +432,25 @@ async function audit(args, io) {
   }
   const reader = mod.read || mod.query || mod.list;
   if (typeof reader !== 'function') throw deps.znError('ZN_UNAVAILABLE', 'lib/vault/audit.js has no read API');
-  const records = await reader({ since: flags.since });
+  // An unlocked vault verifies the chain first and refuses to show a log that does not verify.
+  let records;
+  let verified;
+  try {
+    verified = await verifiedRead(flags.since);
+  } catch (err) {
+    // The vault is unlocked but could not check the log (an older daemon that is still running
+    // after an upgrade does not know the operation): do not show a log nobody verified.
+    out(io, 'The log is not shown because the unlocked vault could not check it (' + (err && err.message ? err.message : String(err)) + ').');
+    out(io, 'If you just upgraded zn, restart the vault (`' + znCommand('lock') + '`, then `' + znCommand('unlock') + '`) and try again.');
+    return 1;
+  }
+  if (verified && !verified.ok) {
+    out(io, 'chain: BROKEN: ' + (verified.reason || verified.error || 'verification failed'));
+    out(io, 'The log is not shown because it did not verify. Keep a copy of ~/.zn/audit.jsonl as evidence and run `' + znCommand('vault verify') + '`.');
+    return 1;
+  }
+  if (verified) records = verified.events;
+  else records = await reader({ since: flags.since });
   for (const r of records || []) {
     out(io, [r.ts, r.decision, r.secret, r.mode, r.agent, r.tool, r.argv0 || r.host || '', r.reason || ''].map((x) => x == null ? '-' : String(x)).join('  '));
   }
@@ -440,6 +458,23 @@ async function audit(args, io) {
   out(io, chain.line);
   // Same exit code as `zn vault verify` for a broken chain; "not checked" is not an error.
   return chain.broken ? 1 : 0;
+}
+
+/** Verified read through the unlocked vault; null when the vault is locked or unreachable.
+ *  Throws when the vault is unlocked but the verified read fails. */
+async function verifiedRead(since) {
+  let client;
+  try {
+    client = require('../vault/client').createClient({});
+    let unlocked = false;
+    try { unlocked = await client.isUnlocked(); } catch (err) { unlocked = false; }
+    if (!unlocked) return null;
+    return await client.auditRead({ since });
+  } catch (err) {
+    throw err;
+  } finally {
+    if (client) client.close();
+  }
 }
 
 /** The chain is checked with the key held by the unlocked vault (same check as `zn vault verify`). */
