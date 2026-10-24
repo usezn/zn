@@ -873,6 +873,28 @@ test('Windows launcher: install gives ZCode the deadline; other agents\' Windows
   assert.equal(launcher.windowsScript('codex', 'PreToolUse', 'C:/node/node.exe', 'C:/z/runner.js', {}), launcher.windowsScript('codex', 'PreToolUse', 'C:/node/node.exe', 'C:/z/runner.js'));
 });
 
+test('launcher deadline: a grandchild that holds the output open neither keeps the caller waiting nor outlives the launcher', { skip: !posix }, (t) => {
+  const home = tempDir(t, 'zn-zc-grandchild-');
+  const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (_) { return false; } };
+  const cases = [
+    ['hook stuck after starting a grandchild', 2, 'cat >/dev/null; sleep 60 & echo $! > PIDFILE; wait'],
+    ['hook that answers and leaves a grandchild behind', 0, 'cat >/dev/null; sleep 60 & echo $! > PIDFILE; echo answer; exit 0'],
+  ];
+  for (const [name, status, body] of cases) {
+    const pidFile = path.join(home, 'pid-' + status);
+    const node = fakeNode(t, body.replace('PIDFILE', pidFile));
+    const file = launcher.writeLauncher('zcode', node, RUNNER, { home: tempDir(t, 'zn-zc-gc-h-'), env: process.env, deadlineS: 1 });
+    const t0 = Date.now();
+    const r = spawnSync(file, ['PreToolUse'], { input: '{}', encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home }, timeout: 20000 });
+    assert.equal(r.status, status, name + ' ' + r.stderr);
+    assert.ok(Date.now() - t0 < 5000, name + ': the caller sees the end of the output by the deadline, not after the 60 s sleep');
+    if (status === 0) assert.equal(r.stdout.trim(), 'answer', name);
+    const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+    assert.ok(pid > 0);
+    assert.equal(alive(pid), false, name + ': the grandchild is gone');
+  }
+});
+
 test('launcher deadline: a hook that ignores TERM is killed (KILL) one second after the deadline', { skip: !posix }, (t) => {
   const home = tempDir(t, 'zn-zc-deadline-kill-');
   const stubborn = fakeNode(t, "trap '' TERM; cat >/dev/null; while :; do /bin/sleep 1; done");
