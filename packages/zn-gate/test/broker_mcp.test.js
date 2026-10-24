@@ -94,6 +94,60 @@ test('secrets_http_request substitutes for an allowed host and scrubs the respon
   }
 });
 
+// An env or file secret is meant for a local program or file, not for the network: it never leaves through
+// secrets_http_request, even when someone gave it allowHosts.
+for (const mode of ['env', 'file', 'backup']) {
+  test('secrets_http_request refuses a secret in ' + mode + ' mode even when its host is allowed, and sends nothing', async () => {
+    const { server, seen, port } = await startServer();
+    try {
+      const vault = createFakeVault();
+      await vault.setSecret('LOCAL_TOKEN', GHP, { mode, allowHosts: ['127.0.0.1'], allowCommands: ['node'], allowIn: ['header', 'query', 'body'] });
+      const srv = createSecretsServer({ vault, engine: fakeEngine });
+      for (const where of [
+        { headers: { Authorization: 'Bearer __ZN_LOCAL_TOKEN__' } },
+        { url: 'http://127.0.0.1:' + port + '/x?t=__ZN_LOCAL_TOKEN__' },
+        { method: 'POST', body: '{"t":"__ZN_LOCAL_TOKEN__"}' },
+      ]) {
+        const r = await call(srv, 'secrets_http_request', { method: 'GET', url: 'http://127.0.0.1:' + port + '/x', ...where });
+        assert.equal(r.isError, true, JSON.stringify(where));
+        assert.equal(r.data.error, 'ZN_POLICY_DENIED');
+        assert.match(r.data.message, new RegExp('is in ' + mode + ' mode, and secrets_http_request only sends secrets in proxy mode'));
+        assert.match(r.data.message, /No request was made/);
+        assert.ok(!JSON.stringify(r.data).includes(GHP));
+      }
+      assert.deepEqual(seen, [], 'nothing reached the server');
+      assert.ok(vault.auditLog.some((e) => e.decision === 'deny' && e.secret === 'LOCAL_TOKEN' && e.tool === 'mcp:secrets_http_request' && /^mode_not_proxy:/.test(e.reason)));
+    } finally {
+      server.close();
+    }
+  });
+}
+
+test('secrets_http_request asks the vault to check the mode again, and a refusal from the vault sends nothing', async () => {
+  const { server, seen, port } = await startServer();
+  try {
+    // The list says proxy, the vault says otherwise (a change made between the two calls): the vault's answer wins.
+    const vault = createFakeVault();
+    await vault.setSecret('GITHUB_TOKEN', GHP, { mode: 'proxy', allowHosts: ['127.0.0.1'] });
+    const asked = [];
+    vault.resolve = async (project, token, o) => {
+      asked.push({ token, purpose: o && o.purpose, host: o && o.host, placements: o && o.placements, tool: o && o.tool });
+      const err = new Error('secret GITHUB_TOKEN is in env mode, and this use needs proxy mode.');
+      err.code = 'ZN_POLICY_DENIED';
+      throw err;
+    };
+    const srv = createSecretsServer({ vault, engine: fakeEngine });
+    const r = await call(srv, 'secrets_http_request', { method: 'GET', url: 'http://127.0.0.1:' + port + '/x', headers: { Authorization: 'Bearer __ZN_GITHUB_TOKEN__' } });
+    assert.equal(r.isError, true);
+    assert.equal(r.data.error, 'ZN_POLICY_DENIED');
+    assert.match(r.data.message, /refused by the vault/);
+    assert.deepEqual(asked, [{ token: '__ZN_GITHUB_TOKEN__', purpose: 'http', host: '127.0.0.1', placements: ['header'], tool: 'mcp:secrets_http_request' }]);
+    assert.deepEqual(seen, [], 'nothing reached the server');
+  } finally {
+    server.close();
+  }
+});
+
 test('secrets_http_request scrubs a secret echoed in the status text', async () => {
   const server = http.createServer((req, res) => {
     // A server can put anything in the reason phrase.

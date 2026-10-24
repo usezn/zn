@@ -68,12 +68,56 @@ for everyday work.
 A user install of the hooks writes the paths of the Node.js and of the zn-gate
 files it was run from. A global npm package belongs to one Node.js version, so
 `nvm use`, `nvm uninstall`, a Homebrew Node.js upgrade or a new Node.js install
-can leave the hook pointing at something that is gone. When the hook cannot
-start:
+can leave the hook pointing at something that is gone.
 
-- Prompts: Claude Code 2.1.295 or later, Cursor and OpenCode block them instead
-  of letting them through unchecked. Codex CLI lets them through.
-- Tool calls: in Claude Code and Codex CLI they go ahead unchecked.
+When zn's hook cannot start (for example, the Node.js it was installed with was
+removed, and `node` or `zn` is not on the PATH of the agent), what happens
+depends on the agent and on how the hooks were installed. A user install
+(`zn hooks install <agent>`) writes a small launcher script as the hook command
+(`~/.zn/hooks/zn-hook-<agent>.sh`; on Windows, for Codex CLI, Cursor, Gemini CLI
+and Antigravity, the same steps written inline in PowerShell). It runs the
+Node.js it was installed with, else `zn` from the PATH, else it answers the
+block itself, without Node.js. A project install (`--project`), hooks written by
+an older zn-gate and the plugins keep a plain command. Agent by agent:
+
+- **Claude Code**: with a user install, tool calls, prompts and typed-command
+  expansions are blocked in every Claude Code version; after a tool has run, zn
+  only warns in the session, so that output reaches the model unscrubbed. With
+  the plugin, a project install or older hooks, Claude Code 2.1.295 or later
+  blocks tool calls, prompts and typed-command expansions (the hooks carry
+  `onFailure: "block"`), and earlier versions let them go ahead.
+- **Codex CLI**: with a user install, tool calls, prompts and permission
+  requests are blocked, and after a tool has run zn only warns. With the plugin,
+  a project install or older hooks, Codex reports a hook failure and carries on:
+  tool calls and prompts go ahead unchecked.
+- **Cursor**: with a user install, shell commands, MCP calls, file reads,
+  prompts and `preToolUse` calls (Write, Delete, Grep) are blocked, and after a
+  tool has run zn only warns. With the plugin, shell commands, file reads,
+  prompts and `preToolUse` calls are blocked (its hooks are `failClosed`). With
+  a project install or older hooks, only file reads and prompts are blocked; the
+  other calls go ahead.
+- **Gemini CLI**: with a user install, tool calls are blocked. With a project
+  install or older hooks, Gemini CLI shows a warning and the tool call runs.
+- **GitHub Copilot CLI**: a hook command that cannot start fails closed for
+  `preToolUse`, so the tool call is blocked; the hook that runs after a tool
+  fails open, so that output is not scrubbed. Copilot has no launcher, and it
+  lets a call through when a hook times out.
+- **OpenCode**: the plugin starts the hook itself. When the hook cannot start,
+  times out or gives no valid answer, the tool call is blocked, the message is
+  not sent and the tool output is withheld, for user and project installs alike.
+- **Antigravity**: Antigravity does not document what a hook that cannot start
+  does. With a user install, the launcher answers a deny with the repair step
+  (the one block Antigravity documents), so the tool call is blocked. With a
+  project install or older hooks, zn-gate cannot promise anything: the call may
+  be blocked with no message from zn, or run.
+- **Zcode**: Zcode blocks only on exit code 2 or a deny answer; a hook that cannot
+  start is only logged and the call runs. With the user install (the only one
+  Zcode has), the launcher exits 2 with the repair step on tool calls, permission
+  requests and prompts, and after a tool has run zn only warns. If Zcode cannot
+  start the launcher itself (the file deleted or not executable), the call goes
+  ahead unchecked.
+
+`zn-gate check` says which agents are in this state.
 
 To fix it, with the Node.js you want to keep:
 
@@ -89,8 +133,7 @@ To fix it, with the Node.js you want to keep:
    back on with `zn hooks install <agent>` or
    `claude plugin enable zn-gate@usezn`, then run `zn-gate check` again.
 
-Details on what each agent does when the hook cannot run:
-[compat.md](compat.md#if-your-agent-blocks-every-prompt).
+The same text is in [compat.md](compat.md#if-your-agent-blocks-every-prompt).
 
 ## Check that it works
 
@@ -110,6 +153,7 @@ For the full list of changes, see the [changelog](../CHANGELOG.md).
 
 | Version | Date | What to do |
 |---|---|---|
+| 1.14.0 | 2026-10-27 | **A secret marker in a command's arguments is now refused**, because arguments are visible to other processes and to command-line logs. Before: `psql "postgres://user:__ZN_DB_PASSWORD__@db/app"`. After: `zn secret set PGPASSWORD --command psql`, then `zn run --secrets PGPASSWORD -- psql "postgres://user@db/app"`, where psql reads the variable itself. A secret kept for a program or a file (`env` or `file` mode) is no longer sent by `secrets_http_request`: run `zn secret allow NAME --mode proxy` if an API needs it. Approvals saved by earlier versions do not carry over: the first time a command uses a secret after you update, zn asks you to approve it again. A vault that is already unlocked while you update is restarted by `zn unlock`. |
 | 1.13.0 | 2026-10-19 | If you installed Claude Code hooks with `zn hooks install claude-code`, run it again to add the hook that checks what a typed skill or command expands into (`zn-gate check` tells you; the plugin has it already). On a Node.js older than 20.12, `zn-gate init` sets up hooks instead of the plugin; if you have the plugin there, `check` gives the way out. In a GitHub workflow that uses the Action without `version`, set `version` to choose what runs: the 1.12.0 Action defaulted to 1.10.0. |
 | 1.12.0 | 2026-10-18 | No action. If you verify release signatures, the signer workflow is now `build-release.yml` (see [verify-release.md](verify-release.md)). |
 | 1.11.0 | 2026-10-17 | No action. A CI job that fails when `zn-gate scan` finds secrets can start failing on tokens of the new types (for example Square, Discord, Grafana or Notion tokens): look at each finding and rotate any real token. |

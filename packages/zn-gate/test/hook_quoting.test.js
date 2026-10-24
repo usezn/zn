@@ -18,7 +18,6 @@ const sq = require('../lib/shell-quote');
 const cfg = require('../lib/agents/config-file');
 const claude = require('../lib/agents/claude-code');
 const runner = require('../lib/hooks/runner');
-const policy = require('../lib/hooks/policy');
 const { createFakeVault } = require('./helpers/fake_vault');
 const fakeEngine = require('./helpers/fake_engine');
 const { tempDir } = require('./helpers/tmp');
@@ -197,22 +196,6 @@ test('hook commands run in sh and bash with every argument literal', { skip: !PO
   }
 });
 
-test('a rewritten Bash command (zn run prefix) runs with literal paths', { skip: !POSIX && 'needs bash' }, async (t) => {
-  for (const name of NAMES) {
-    const f = fakeInstall(t, name);
-    const runJs = path.join(f.dir, 'run.js');
-    const raw = {
-      session_id: 's', cwd: f.root, permission_mode: 'default', hook_event_name: 'PreToolUse',
-      tool_name: 'Bash', tool_input: { command: 'psql __ZN_DB_PASSWORD__ -c "select 1"' }, tool_use_id: 't',
-    };
-    const res = await runner.handle(claude, raw, { engine: fakeEngine, vault: createFakeVault(), failMode: 'closed', nodePath: f.node, runJs });
-    const cmd = res.output.hookSpecificOutput.updatedInput.command;
-    const { argv, agent } = runIn(t, 'bash', cmd, f);
-    assert.deepEqual(argv, [runJs, '--', 'psql', '__ZN_DB_PASSWORD__', '-c', 'select 1'], JSON.stringify(name));
-    assert.equal(agent, 'claude-code');
-  }
-});
-
 test('the Monitor wrapper pipes into the scrubber with literal paths', { skip: !POSIX && 'needs bash' }, async (t) => {
   for (const name of NAMES) {
     const f = fakeInstall(t, name);
@@ -265,12 +248,6 @@ test('PowerShell: quoted paths and the PowerShell wrapper run literally in pwsh'
       assert.ok(!fs.existsSync(path.join(f.root, CANARY)));
       assert.deepEqual(readArgv(f.out).argv, [f.runnerJs, 'cursor']);
     }
-    // The PowerShell tool rewrite (zn run in front of a native command).
-    const runJs = path.join(f.dir, 'run.js');
-    const w = policy.wrapPowerShell("psql '__ZN_DB_PASSWORD__' -c 'select 1'", { nodePath: f.node, runJs, agent: 'claude-code' });
-    assert.ok(w.ok && w.wrapped, w.reason);
-    assert.deepEqual(runIn(t, 'pwsh', w.command, f).argv,
-      [runJs, '--agent', 'claude-code', '--', 'psql', '__ZN_DB_PASSWORD__', '-c', 'select 1'], JSON.stringify(name));
   }
 });
 
@@ -284,12 +261,7 @@ test('PowerShell reading an sh-quoted command runs nothing from the paths', { sk
     'typo’ $(New-Item ' + CANARY + ') ‘x', '@(New-Item ' + CANARY + ')'];
   for (const name of names) {
     const f = fakeInstall(t, name);
-    const raw = {
-      session_id: 's', cwd: f.root, permission_mode: 'default', hook_event_name: 'PreToolUse',
-      tool_name: 'Bash', tool_input: { command: 'psql __ZN_DB_PASSWORD__' }, tool_use_id: 't',
-    };
-    const res = await runner.handle(claude, raw, { engine: fakeEngine, vault: createFakeVault(), failMode: 'closed', nodePath: f.node, runJs: path.join(f.dir, 'run.js') });
-    const commands = [claude.hookCommand({ nodePath: f.node, runnerPath: f.runnerJs }), res.output.hookSpecificOutput.updatedInput.command];
+    const commands = [claude.hookCommand({ nodePath: f.node, runnerPath: f.runnerJs })];
     for (const cmd of commands) {
       runScript(t, 'pwsh', cmd, { cwd: f.root, env: { ...process.env, ZN_ARGV_OUT: f.out } });
       assert.ok(!fs.existsSync(path.join(f.root, CANARY)), 'nothing ran in pwsh for ' + JSON.stringify(cmd));

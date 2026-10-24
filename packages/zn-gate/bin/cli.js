@@ -238,8 +238,9 @@ SECRETS (values stay on this machine; agents only see __ZN_<NAME>__ markers):
   secret import FILE  Copy the secret values of a .env file into the vault
   secret adopt TOKEN  Store a value the scrubber detected (e.g. AWS_KEY_1) as a named secret
   env shadow [FILE]   Move .env values into the vault and leave markers in the file
-  run -- <command>    Run a command with markers replaced by values (allowed commands only)
+  run -- <command>    Run a command with secrets in its environment (allowed commands only)
                       and its output masked [--secrets A,B to set env vars]
+                      (a marker in the command's arguments is refused, never filled in)
   secret log          Show the local audit log of secret use [--since 1h] (same as vault log)
   hooks install <agent> [--project]
                       Install zn's hooks for ${require('../lib/agents').listAdapters().join(', ')}
@@ -288,6 +289,7 @@ VAULT (local, encrypted with age; the key stays in the OS keychain):
   vault verify        Verify the HMAC-chained audit log of secret use
   vault forget [dir]  Forget the token map of a project (vault locked)
   vault reset         Lost the passphrase? Set the old vault aside and start empty (your terminal only)
+  vault purge         Delete the vault, every backup and the token maps for good [--yes] (your terminal only)
   vault log export --otlp
                       Export the audit log as OpenTelemetry logs (OTLP/JSON Lines)
                       [--since 7d] [--out FILE]
