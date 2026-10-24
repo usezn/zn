@@ -33,7 +33,7 @@ for (const [name, raw] of [['SessionStart', start], ['SubagentStart', sub]]) {
     const text = r.output.hookSpecificOutput.additionalContext;
     assert.match(text, /\.env/);
     assert.match(text, /vault/);
-    assert.match(text, /run -- /);
+    assert.match(text, /run --secrets NAME -- /);
     assert.ok(text.length < 400, 'short');
     assert.equal(r.decision.decision, 'allow');
     // Nothing that stops or decides: SessionStart can stop a session with continue:false, zn never does.

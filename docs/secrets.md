@@ -140,28 +140,57 @@ doctor` and `/status` show which source Claude Code used.
 
 ## 4. Let a command use a secret
 
-Allow the program that needs the value:
+A program gets a secret through its environment, never through its arguments:
+an argument is visible to every process of your user (`ps`) and ends up in
+command-line logs, so zn does not put a value there. If the agent writes a
+marker such as `__ZN_NAME__` in a command's arguments, zn refuses the command
+and tells the agent to pass the secret as an environment variable instead.
+
+Store the secret under the name the program reads and allow that program. For
+example, `psql` reads its password from `PGPASSWORD`:
 
 ```bash
-zn secret allow DATABASE_URL_PASSWORD --command psql
+zn secret set PGPASSWORD --command psql
 ```
 
-(If your password was short, the whole URL is in the vault, so allow
-`DATABASE_URL` instead and write `psql "__ZN_DATABASE_URL__"`.)
+The agent then runs the command through `zn run`, naming the secret with
+`--secrets`:
 
-When the agent runs `psql "postgres://app:__ZN_DATABASE_URL_PASSWORD__@db/app"`,
-the hook routes it through `zn run`. The value goes only into that process, its
-output is masked (raw, base64, hex and URL-encoded forms come back as the
-marker; standard output and standard error are masked separately, so a value
-that a program splits between the two is not caught), and the first time the
-vault asks you to confirm in its dialog or its terminal. That prompt shows the
-exact program that will run. Changing a
-secret's policy (`zn secret allow`) is confirmed the same way. The agent cannot
-answer these prompts from its own terminal.
+```bash
+zn run --secrets PGPASSWORD -- psql -h db.example.test -U app -c "select 1"
+```
+
+The value goes only into that process's environment. Its output is masked (raw,
+base64, hex and URL-encoded forms come back as the marker; standard output and
+standard error are masked separately, so a value that a program splits between
+the two is not caught), and the first time
+the vault asks you to confirm in its dialog or its terminal. That prompt shows
+the exact program that will run. Changing a secret's policy (`zn secret allow`)
+is confirmed the same way. The agent cannot answer these prompts from its own
+terminal.
+
+A marker in the environment that `zn run` inherits (for example a value from
+a shadowed `.env` that your shell or direnv loads) is filled in the same way,
+when the secret allows that program and you have approved it
+(`zn secret approve NAME --command psql`).
 
 Allow a specific program. `node`, `python`, `npm`, `make` and other
 interpreters run any code they are given, so allowing one lets every script it
 runs read the secret; zn warns you when you do.
+
+What an environment variable does and does not hide:
+
+- It is not in the process list (`ps`), in shell history, or in a log of the
+  command line.
+- Other processes of your user can still read it (on Linux, from
+  `/proc/<pid>/environ`), and the program can pass it on. If the program
+  copies the value into the arguments of another program (for example
+  `sh -c 'psql "$PGPASSWORD"'` expands it into the arguments of `psql`), that
+  copy is visible again. Let the program read the variable itself, or take
+  the secret from standard input or a file where it supports that.
+- The loader and interpreter start-up variables are removed from the
+  environment while values are injected; see
+  [threat-model.md](threat-model.md#starting-the-approved-program).
 
 ## 5. Let the agent call an API
 
@@ -178,6 +207,13 @@ zn sends the request only to the secret's `allowHosts`, only with the value in
 headers (the URL or the body need `zn secret allow NAME --in query|body`), and
 returns the response with secrets replaced by markers. There is no tool that
 returns a value.
+
+Only a secret in `proxy` mode is sent this way, which is what `zn secret set
+NAME --host api.github.com` stores. A secret stored for a program (`env` mode,
+`--command`) or for a file (`file` mode) is never sent over HTTP by this tool,
+even if it also has an allowed host: the tool refuses it and nothing is sent.
+Change the mode yourself with `zn secret allow NAME --mode proxy` if the API
+really needs it.
 
 ## MCP server configs
 
@@ -210,11 +246,13 @@ To fix one:
    hidden prompt).
 2. Allow the server's program to use it: `zn secret allow BRAVE_API_KEY
    --command npx` (use the program the server's `command` runs).
-3. Write `__ZN_BRAVE_API_KEY__` where the value was, and start the server
-   through `zn run`: set the server's `command` to `zn` and put `run`, `--`
-   and the old command first in `args`. `zn run` replaces the marker in the
-   server's environment and arguments with the real value, only inside that
-   process (section 4 above).
+3. Remove the value from the file and start the server through `zn run`: set
+   the server's `command` to `zn` and put `run`, `--secrets`, `BRAVE_API_KEY`,
+   `--` and the old command first in `args`. The server gets the value as the
+   environment variable `BRAVE_API_KEY`, only inside that process (section 4
+   above). A key that was a command-line argument (`--api-key ...`) has to move
+   to an environment variable the server reads: `zn run` does not fill a marker
+   written in an argument.
 4. For a header or a URL of a remote server there is no process to start, so
    refer to an environment variable instead, written the way your agent
    expects (`${BRAVE_API_KEY}` in Claude Code, `${env:BRAVE_API_KEY}` in
@@ -240,9 +278,10 @@ example costs nothing.
 | `zn secret rm NAME` | Remove a secret |
 | `zn vault log` | Local audit log: who used which secret where (no values). Also `zn secret log`; `--since 1h` limits it. (`zn audit` reviews agent configs; see [audit.md](audit.md)) |
 | `zn vault log export --otlp` | The same log as OpenTelemetry logs (OTLP/JSON Lines) for an OpenTelemetry Collector; `--since 7d`, `--out FILE`. See [team.md](team.md#export-the-audit-log-to-opentelemetry) |
-| `zn vault verify` | Check the audit log's HMAC chain and compare its last record with the one the vault remembers. If the log was cut or replaced while the vault was locked or running, the vault keeps a warning (also after lock and unlock) and this command fails until you look into it and accept the log with `zn vault verify --acknowledge` in your own terminal (the vault asks you to confirm). The vault saves its checkpoint every minute and when it locks; if the vault process is killed, the records of the last minute may be missing without notice. Restoring an older `secrets.age` together with its older `audit.jsonl` is not detected. After a power loss the check can report a false alarm |
+| `zn vault verify` | Check the audit log's HMAC chain and compare its last record with the one the vault remembers. If the log was cut or replaced while the vault was locked or running, the vault keeps a warning (also after lock and unlock) and this command fails until you look into it and accept the log with `zn vault verify --acknowledge` in your own terminal (the vault asks you to confirm). The vault saves its checkpoint every minute and when it locks; if the vault process is killed, the records of the last minute may be missing without notice. Restoring an older `secrets.age`, with or without its older `audit.jsonl`, is not detected. After a power loss the check can report a false alarm |
 | `zn lock` | Lock the vault now |
-| `zn vault reset` | Forgot the passphrase? Sets the old vault aside and starts a new, empty one. Your own terminal only; the old values are lost. See "If something fails" |
+| `zn vault reset` | Forgot the passphrase? Sets the old vault aside (an encrypted backup) and starts a new, empty one. Your own terminal only; the old values are lost. See "If something fails" |
+| `zn vault purge` | Deletes the vault for good: it lists every file (vault, token maps, audit log, all backups, session key), asks you to type `purge my vault`, deletes them and checks that none is left. Your own terminal only (`--yes` for a script); cannot be undone |
 | `zn hooks uninstall <agent>` | Remove the hooks. For Claude Code it also removes zn's own `secrets` MCP server, and keeps any other server with that name |
 
 If the vault is locked, the hooks still redact what they can recognise, but
@@ -256,7 +295,7 @@ you to run `zn unlock`.
 - **You updated zn-gate and secrets still show as markers in the hooks**: the vault is still the old version. Run `zn vault status`, then `zn unlock`, which restarts it.
 - **Codex does not run the hooks**: open Codex and approve them with `/hooks`.
 - **Claude Code ignores the hooks on a computer managed by an organization**: `zn hooks install claude-code` and `zn-gate status` say when a managed setting stops them. Ask your administrator to add zn to the managed settings.
-- **You forgot the vault passphrase**: nobody can recover it, so the values in that vault cannot be opened again. Run `zn lock`, then `zn vault reset` in your own terminal and type `reset my vault` when it asks. zn keeps the old vault in a `vault-backup-<date>-<time>` folder inside `~/.zn`, and the next `zn unlock` creates a new empty vault. Store your values again with `zn env shadow .env` or `zn secret set NAME`, and rotate any secret you cannot re-enter. It refuses if your agent runs it, if there is no terminal, or if this computer belongs to a zn Team organization.
+- **You forgot the vault passphrase**: nobody can recover it, so the values in that vault cannot be opened again. Run `zn lock`, then `zn vault reset` in your own terminal and type `reset my vault` when it asks. zn keeps the old vault in a `vault-backup-<date>-<time>` folder inside `~/.zn`, and the next `zn unlock` creates a new empty vault. The backup stays encrypted; `zn vault purge` is the separate command that deletes it, with the vault and its token maps. Store your values again with `zn env shadow .env` or `zn secret set NAME`, and rotate any secret you cannot re-enter. It refuses if your agent runs it, if there is no terminal, or if this computer belongs to a zn Team organization.
 - **You want your old `.env` back**: run the restore command that `zn env shadow` printed, for example `zn env unshadow .env --backup <name>`, in your own terminal.
 - **Not sure what is protected**: run `npx -y zn-gate check`.
 

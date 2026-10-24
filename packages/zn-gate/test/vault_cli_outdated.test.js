@@ -22,7 +22,7 @@ test('zn unlock restarts a running vault that lacks resolve-policy', async () =>
 });
 
 test('zn unlock leaves a current vault, or no vault, alone', async () => {
-  for (const status of [{ unlocked: true, features: ['resolve-policy'] }, new Error('locked')]) {
+  for (const status of [{ unlocked: true, features: ['resolve-policy', 'capabilities'] }, new Error('locked')]) {
     let locked = 0;
     const said = [];
     const restarted = await restartIfOutdated({ clientFactory: fakeClient(status), out: (s) => said.push(s), lock: async () => { locked += 1; } });
@@ -35,7 +35,7 @@ test('zn unlock leaves a current vault, or no vault, alone', async () => {
 test('zn vault status names the version and flags an outdated vault', () => {
   const meta = { backend: 'passphrase' };
   assert.equal(isOutdatedVault(null), false);
-  assert.equal(unlockedLine(meta, { expiresAt: 'T', features: ['resolve-policy'], version: '1.8.0' }),
+  assert.equal(unlockedLine(meta, { expiresAt: 'T', features: ['resolve-policy', 'capabilities'], version: '1.8.0' }),
     'Vault: unlocked (backend passphrase, expires T, zn-gate 1.8.0)');
   assert.match(unlockedLine(meta, { expiresAt: 'T' }),
     /^Vault: unlocked \(backend passphrase, expires T\), outdated: restart with `(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) lock`, then `(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock`$/);

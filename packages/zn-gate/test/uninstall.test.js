@@ -276,11 +276,35 @@ test('uninstall: the vault key is removed only after the files are gone', async 
   let fileThere = null;
   keychain.readMeta = () => ({ backend: 'test' });
   keychain.deleteIdentity = async () => { fileThere = fs.existsSync(v); };
-  t.after(() => { keychain.readMeta = realMeta; keychain.deleteIdentity = realDelete; });
+  keychain._native.test = { load: () => null };
+  t.after(() => { keychain.readMeta = realMeta; keychain.deleteIdentity = realDelete; delete keychain._native.test; });
   const c = io(m, { confirm: async () => true });
   assert.equal(await dispatch('uninstall', [], c.o), 0, c.err());
   assert.equal(fileThere, false);
   assert.match(c.out(), /Vault deleted/);
+});
+
+test('uninstall: the backups and token maps go too, and a keychain that keeps the key is not reported as deleted', async (t) => {
+  const m = machine(t);
+  const v = vault(m);
+  const dir = path.dirname(v);
+  const backup = path.join(path.dirname(dir), 'vault-backup-20260101-100000', 'vault');
+  fs.mkdirSync(backup, { recursive: true });
+  fs.writeFileSync(path.join(backup, 'secrets.age'), 'old encrypted copy');
+  fs.writeFileSync(path.join(dir, 'c'.repeat(32) + '.age'), 'token map');
+  const keychain = require('../lib/vault/keychain');
+  const realMeta = keychain.readMeta;
+  const realDelete = keychain.deleteIdentity;
+  keychain.readMeta = () => ({ backend: 'test' });
+  keychain.deleteIdentity = async () => ({ deleted: true });
+  keychain._native.test = { load: () => 'AGE-SECRET-KEY-1' + 'Q'.repeat(10) };
+  t.after(() => { keychain.readMeta = realMeta; keychain.deleteIdentity = realDelete; delete keychain._native.test; });
+  const c = io(m, { confirm: async () => true });
+  assert.equal(await dispatch('uninstall', [], c.o), 1, c.err());
+  assert.equal(fs.existsSync(path.dirname(backup)), false, 'the backup folder is gone');
+  assert.equal(fs.existsSync(path.join(dir, 'c'.repeat(32) + '.age')), false, 'the token map is gone');
+  assert.match(c.out(), /could not be removed from your test keychain/);
+  assert.doesNotMatch(c.out(), /Vault deleted/);
 });
 
 test('uninstall: a hook removal that fails exits 1 and says so', async (t) => {
@@ -392,4 +416,50 @@ test('uninstall --help and -h print the uninstall help, not the general help', (
     assert.match(r.stdout, /^usage: zn-gate uninstall \[--dry-run\]/m);
     assert.doesNotMatch(r.stdout, /hooks install/);
   }
+});
+
+test('uninstall: before the second question it lists the backups, token maps, session key and audit log it will delete', async (t) => {
+  const m = machine(t);
+  const v = vault(m);
+  const znHome = path.join(m.home, '.zn');
+  const put = (rel, body) => { const f = path.join(znHome, rel); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, body || 'x'); };
+  put(path.join('vault', 'a'.repeat(32) + '.age'));
+  put(path.join('vault', 'b'.repeat(32) + '.age'));
+  put(path.join('run', 'session.key'));
+  put('audit.jsonl');
+  put(path.join('vault-backup-20260101-100000', 'vault', 'secrets.age'));
+  put(path.join('vault-backup-20260101-100000', 'audit.jsonl'));
+  let atQuestion = null;
+  const c = io(m, { confirm: async (q) => { if (/Delete the vault/.test(q)) atQuestion = c.out(); return false; } });
+  assert.equal(await dispatch('uninstall', [], c.o), 0, c.err());
+  assert.ok(atQuestion, 'the second question was asked');
+  const tail = atQuestion.slice(atQuestion.lastIndexOf('Your vault still holds'));
+  assert.ok(tail.includes(v), 'the vault file is named');
+  assert.match(tail, /vault-backup-20260101-100000 {2}\(backup made by `zn vault reset`, 2 files\)/);
+  assert.match(tail, /2 token maps of projects/);
+  assert.match(tail, /session\.key {2}\(session key\)/);
+  assert.match(tail, /audit\.jsonl {2}\(audit log\)/);
+  assert.ok(fs.existsSync(v), 'answering no deletes nothing');
+  // The same list is in the plan, so --dry-run shows it too.
+  const d = io(m);
+  assert.equal(await dispatch('uninstall', ['--dry-run'], d.o), 0);
+  assert.match(d.out(), /vault-backup-20260101-100000 {2}\(backup made by/);
+  assert.match(d.out(), /2 token maps of projects/);
+});
+
+test('uninstall: a run or vault folder that is a link is removed as a link and never followed', async (t) => {
+  const m = machine(t);
+  const znHome = path.join(m.home, '.zn');
+  fs.mkdirSync(znHome, { recursive: true });
+  const victim = path.join(m.home, 'victim');
+  fs.mkdirSync(path.join(victim, 'sub'), { recursive: true });
+  const files = ['important.txt', 'secrets.age', 'session.key', path.join('sub', 'deep.txt')].map((r) => path.join(victim, r));
+  for (const f of files) fs.writeFileSync(f, 'keep');
+  fs.symlinkSync(victim, path.join(znHome, 'run'), 'junction');
+  fs.symlinkSync(victim, path.join(znHome, 'vault'), 'junction');
+  const c = io(m, { confirm: async () => true });
+  assert.equal(await dispatch('uninstall', [], c.o), 0, c.err());
+  for (const f of files) assert.equal(fs.readFileSync(f, 'utf8'), 'keep', f + ' is untouched');
+  for (const l of ['run', 'vault']) assert.throws(() => fs.lstatSync(path.join(znHome, l)), { code: 'ENOENT' });
+  assert.match(c.out(), /only the link is deleted/);
 });
