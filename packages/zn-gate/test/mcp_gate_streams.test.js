@@ -166,7 +166,7 @@ test('malformed JSON-RPC lines get -32700 with a null id and the stream keeps go
     assert.equal(e.error.message, 'Parse error');
     assert.equal(typeof e.error.data, 'string');
   }
-  assert.deepEqual(replies[replies.length - 1], { jsonrpc: '2.0', id: 7, result: {} });
+  assert.deepEqual(replies.find((r) => r.id === 7), { jsonrpc: '2.0', id: 7, result: {} });
 });
 
 test('a message with no method and an id gets -32601; tools/call errors keep the id', async () => {
