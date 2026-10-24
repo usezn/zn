@@ -1356,7 +1356,11 @@ function failDecision(ev, err, mode, agentId) {
   }
   const missing = err.code === 'ZN_UNAVAILABLE';
   const detail = missing ? '' : ' (' + (err.code ? err.code + ': ' : '') + String(err.message || 'unknown error') + ')';
-  const msg = 'zn: ' + (missing ? REINSTALL : HOOK_FAILED + fixHint(agentId)) + detail;
+  const vaultDown = err.vaultFailed === true;
+  const msg = vaultDown
+    ? 'zn: zn could not check this action against your secret vault, so it was blocked to keep your secrets safe. ' +
+      'Check that the vault is running and unlocked (zn unlock; zn lock stops it)' + detail
+    : 'zn: ' + (missing ? REINSTALL : HOOK_FAILED + fixHint(agentId)) + detail;
   // Fail open only when the engine itself is missing and the user chose so.
   if (mode === 'open' && missing) return { decision: 'allow', failOpen: true, warning: 'zn: ' + REINSTALL_USER };
   const r = failClosed(ev, err, msg);

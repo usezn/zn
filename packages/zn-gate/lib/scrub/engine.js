@@ -240,7 +240,7 @@ function vaultUnavailableOnPurpose(err) {
 function vaultInfoFailure(err) {
   const why = String((err && err.message) || 'unknown error');
   return Object.assign(new Error('zn could not read what your secret vault protects (' + why + '), so it cannot check this against your vault values. ' +
-    'Make sure the vault is running and unlocked (zn unlock), then try again.'), { code: CODES.LOCKED, vaultFailed: true, cause: err });
+    'Make sure the vault is running and unlocked (zn unlock), then try again.'), { code: CODES.LOCKED, vaultFailed: true, vaultUnanswered: true, cause: err });
 }
 
 
@@ -267,6 +267,10 @@ async function vaultEntries(ctx) {
     if (typeof vault.maskInfo === 'function') {
       try {
         const info = await vault.maskInfo(project, { agent: ctx.agent, tool: ctx.tool });
+        // A wrong shape (null, a string, names that are not a list) is not an empty vault: it is a failure.
+        if (!info || typeof info !== 'object' || Array.isArray(info) || (info.names !== undefined && !Array.isArray(info.names))) {
+          throw vaultInfoFailure(new Error('the vault answered with an unexpected reply'));
+        }
         res = {
           at: now, locked: false, remote: true, entries: [],
           names: Array.isArray(info && info.names) ? info.names.map(String) : [],

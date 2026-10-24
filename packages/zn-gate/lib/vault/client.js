@@ -179,10 +179,11 @@ class VaultClient {
       const socket = net.createConnection(ep.address);
       socket.setEncoding('utf8');
       const state = { socket, pending: new Map(), nextId: 1, stage: 'hello', buf: '', clientNonce: crypto.randomBytes(16).toString('hex'), serverNonce: null };
+      this.connState = state;
       const fail = (err) => {
         for (const p of state.pending.values()) p.reject(err);
         state.pending.clear();
-        this.conn = null;
+        if (this.connState === state) this.conn = null;
         socket.destroy();
         reject(err);
       };
@@ -192,8 +193,9 @@ class VaultClient {
         clearTimeout(timer);
         for (const p of state.pending.values()) p.reject(lockedError('connection closed'));
         state.pending.clear();
-        if (this.conn && state.stage !== 'ready') reject(lockedError('connection closed'));
-        this.conn = null;
+        if (this.conn && this.connState === state && state.stage !== 'ready') reject(lockedError('connection closed'));
+        // Only this connection's own close clears it: a late close of an old socket must not drop a newer one.
+        if (this.connState === state) this.conn = null;
       });
       socket.on('connect', () => {
         socket.write(JSON.stringify({ op: 'hello', v: PROTOCOL, nonce: state.clientNonce }) + '\n');
@@ -238,7 +240,8 @@ class VaultClient {
         }
       });
     });
-    this.conn.catch(() => { this.conn = null; });
+    const mine = this.conn;
+    mine.catch(() => { if (this.conn === mine) this.conn = null; });
     return this.conn;
   }
 
