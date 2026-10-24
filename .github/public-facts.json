@@ -47,6 +47,21 @@
     ],
     "allowPins": [
       {
+        "file": "README.md",
+        "pin": "zn-gate 1.14.0",
+        "why": "the minimum version of the allow-partial input and of the scan exit code 3 (not a pin)"
+      },
+      {
+        "file": "docs/github-action.md",
+        "pin": "zn-gate 1.14.0",
+        "why": "the minimum version of the allow-partial input and of the scan exit code 3 (not a pin)"
+      },
+      {
+        "file": "changelog.d/fix-rel114-scan-coverage.md",
+        "pin": "zn-gate 1.14.0",
+        "why": "the minimum version of the allow-partial input (not a pin)"
+      },
+      {
         "file": "docs/verify-release.md",
         "pin": "zn-gate@1.5.0",
         "why": "example of reading the attestations of a past release"
