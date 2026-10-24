@@ -22,8 +22,16 @@ set -euo pipefail
 : "${ZN_OUT:?ZN_OUT is not set (run through znops.gcp_vm)}"
 mkdir -p "$ZN_OUT/_status"
 ZN_RC_FILE="${ZN_RC_FILE:-$ZN_OUT/_status/rc}"
+scrub_key() { # remove the key file and any output file that holds the key value
+  if [ -n "${KEYFILE:-}" ] && [ -s "$KEYFILE" ]; then
+    grep -rlF -f "$KEYFILE" "$ZN_OUT" 2> /dev/null | while read -r hit; do echo "removed $hit (held the key)" >> "$ZN_OUT/SCRUB.txt"; rm -f "$hit"; done
+    if grep -rqF -f "$KEYFILE" "$ZN_OUT" 2> /dev/null; then echo "KEY STILL PRESENT IN OUTPUTS" >> "$ZN_OUT/SCRUB.txt"; fi
+    shred -u "$KEYFILE" 2> /dev/null || rm -f "$KEYFILE"
+  fi
+}
 on_exit() {
   local rc=$?
+  scrub_key
   echo "$rc" > "$ZN_RC_FILE"
   echo "[entry] exit rc=$rc"
   exit "$rc"
@@ -58,6 +66,14 @@ main() {
   # znops.preflight full runs the entry with ZN_PREFLIGHT=1: that is the one-request mode.
   if [ "${ZN_PREFLIGHT:-0}" = 1 ]; then MODE=preflight; fi
   export DEBIAN_FRONTEND=noninteractive
+  AGY_AUTH=${AGY_AUTH:-adc}
+  KEYFILE=/dev/shm/agy-key
+  if [ "$AGY_AUTH" = apikey ]; then
+    # the key arrives through a 15-minute presigned URL kept in a curl config file (not in argv); the object is deleted by the launcher
+    ( umask 077; curl -fsS -m 30 -K "$IN/key_url.cfg" -o "$KEYFILE" > /dev/null 2>&1 ); echo "key fetch rc=$?" > "$RES/key_fetch.rc"
+    rm -f "$IN/key_url.cfg"
+    if [ ! -s "$KEYFILE" ] || [ "$(wc -c < "$KEYFILE")" -gt 200 ]; then result BLOCKED "the API key could not be fetched (URL expired or object missing)"; return 0; fi
+  fi
 
   # KF-019: HOME is set explicitly (a job runs as root with no usable HOME of its own).
   export HOME=/opt/znjob/home
@@ -128,6 +144,38 @@ main() {
     return 0
   fi
 
+  if [ "$AGY_AUTH" = apikey ]; then
+    # ---- preflight with the Gemini API key: ONE minimal request
+    mkdir -p /opt/znjob/key-proj /opt/znjob/key-home/.gemini/antigravity-cli
+    printf '{"modelProvider":"gemini"}\n' > /opt/znjob/key-home/.gemini/antigravity-cli/settings.json
+    local KARGS=(); [ -n "$AGY_MODEL" ] && KARGS=(--model "$AGY_MODEL")
+    (
+      export HOME=/opt/znjob/key-home; GEMINI_API_KEY=$(cat "$KEYFILE"); export GEMINI_API_KEY
+      unset AGY_ADC_AUTH GOOGLE_API_KEY
+      cd /opt/znjob/key-proj || exit 1
+      timeout 60 "$AGY" models < /dev/null > "$RES/key_models.txt" 2>&1; echo "exit=$?" >> "$RES/key_models.txt"
+      timeout 180 "$AGY" -p "Reply with exactly the word: ok" --output-format json --print-timeout 2m "${KARGS[@]}" < /dev/null > "$RES/key_preflight.json" 2> "$RES/key_preflight.err"
+      echo "exit=$?" > "$RES/key_preflight.rc"
+    )
+    echo "API-key preflight: $(cat "$RES/key_preflight.rc")"
+    if [ "$(cat "$RES/key_preflight.rc")" != "exit=0" ] || ! grep -qi '"status": *"SUCCESS"\|ok' "$RES/key_preflight.json"; then
+      result BLOCKED "agy did not answer a minimal request with the API key (see key_preflight.json and .err)"; return 0
+    fi
+    if [ "$MODE" = preflight ]; then result PREFLIGHT_OK "agy answered one request with the Gemini API key"; return 0; fi
+    export AGY AGY_FLAGS AGY_MODEL AGY_APIKEY_AUTH=1
+    GEMINI_API_KEY=$(cat "$KEYFILE"); export GEMINI_API_KEY
+    unset AGY_ADC_AUTH GOOGLE_API_KEY
+    export EVID=$RES/evidence
+    bash "$IN/kit/run_antigravity.sh" /opt/znjob/w/run "$IN/fake_secrets.js" > "$RES/scenarios.log" 2>&1
+    local KRC=$?
+    cat "$RES/scenarios.log"
+    unset GEMINI_API_KEY
+    mkdir -p "$RES/raw"; cp -r /opt/znjob/w/run "$RES/raw/" 2>/dev/null
+    rm -rf "$RES"/raw/run/*/proj/.git 2>/dev/null
+    scrub_key
+    case $KRC in 0) result PASS "all scenarios";; 3) result INCONCLUSIVE "a scenario was never tried by the model";; *) result FAIL "a scenario failed";; esac
+    return 0
+  fi
   # ---- preflight: ONE minimal request with the VM's own identity (ADC through the metadata server)
   mkdir -p /opt/znjob/adc-proj
   local OKLOC="" OKMODEL="" LOC MD TAG

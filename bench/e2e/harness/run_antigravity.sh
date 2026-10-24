@@ -133,6 +133,9 @@ run_one() {
   (
     export HOME=$RUN/home ZN_HOME=$RUN/zn ZN_STATS=off ZN_KEYCHAIN_BACKEND=passphrase
     mkdir -p "$HOME/.gemini/antigravity-cli"
+    # API-key auth (AGY_APIKEY_AUTH=1): agy needs modelProvider=gemini in its settings AND GEMINI_API_KEY in the env.
+    # The key itself is only ever in the environment, never in a file.
+    if [ "${AGY_APIKEY_AUTH:-}" = 1 ]; then printf '{"modelProvider":"gemini"}\n' > "$HOME/.gemini/antigravity-cli/settings.json"; fi
     HJ=$HOME/.gemini/config/hooks.json
     if [ "$S" = project-hook ]; then
       # The project form: no user hook, no spy (the command must run exactly as zn wrote it).
@@ -150,7 +153,7 @@ run_one() {
     # Every call of the zn hook goes through the spy, which logs what agy sent and what zn answered.
     if [ "$S" != project-hook ]; then edit_hooks "$HJ" spy "$SPY $LOG"; cp "$HJ" "$OUT/hooks.json.installed"; fi
     case $S in
-      fail-node-gone) mv "$NODE_DIR/node" "$NODE_DIR/node.away" ;;
+      fail-node-gone) mv "$NODE_DIR/node" "$NODE_DIR/node.away"; if [ ! -e "$NODE_DIR/node.away" ] || [ -e "$NODE_DIR/node" ]; then touch "$OUT/node_not_removed"; fi ;;
       fail-launcher-silent) printf '#!/bin/sh\nexit 1\n' > "$ZN_HOME/hooks/zn-hook-antigravity.sh"; chmod +x "$ZN_HOME/hooks/zn-hook-antigravity.sh" ;;
       fail-timeout) printf '#!/bin/sh\nsleep 40\n' > "$ZN_HOME/hooks/zn-hook-antigravity.sh"; chmod +x "$ZN_HOME/hooks/zn-hook-antigravity.sh"
                     edit_hooks "$HJ" drop-timeout x ;;
@@ -208,7 +211,7 @@ for S in "${SCENARIOS[@]}"; do sed "s/^/$S: /" "$EVID/scenarios/$S/leak-check.tx
   echo "agent version: $("$AGY" --version 2>&1 | head -1)"
   echo "zn-gate: $(zn --version 2>&1 | head -1)"
   echo "agy flags: ${FLAGS_MODE:-none}${AGY_MODEL:+ --model $AGY_MODEL}"
-  echo "auth: ${AGY_ADC_AUTH:+ADC (AGY_ADC_AUTH=true, GCE metadata identity, Vertex AI)}"
+  echo "auth: ${AGY_ADC_AUTH:+ADC (AGY_ADC_AUTH=true, GCE metadata identity, Vertex AI)}${AGY_APIKEY_AUTH:+Gemini API key (AI Studio): modelProvider=gemini in settings, key in the environment only}"
 } > "$EVID/run.txt"
 sed -i "s#$WORK#<work>#g" "$EVID/summary.txt" "$EVID/exit-codes.txt" "$EVID/leak-check.txt" "$EVID"/scenarios/*/*.txt 2>/dev/null
 if [ "$STATUS" -ne 0 ]; then exit 1; fi

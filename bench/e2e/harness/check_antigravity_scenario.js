@@ -135,6 +135,7 @@ switch (S) {
   case 'fail-launcher-silent':
   case 'fail-timeout':
   case 'fail-launcher-missing': {
+    if (S === 'fail-node-gone' && exists(path.join(OUT, 'node_not_removed'))) { done('INCONCLUSIVE', 'node could not be removed (mv failed), so nothing was tested'); break; }
     const ran = exists(path.join(PROJ, 'fail-marker.txt'));
     const cs = touching(/fail-marker/);
     const answers0 = calls.map((c) => 'exit ' + c.rc + ' ' + (c.rawOut ? c.rawOut.slice(0, 100) : '(no stdout)') + (c.stderr ? ' stderr: ' + c.stderr.slice(0, 80) : '')).join(' | ');
