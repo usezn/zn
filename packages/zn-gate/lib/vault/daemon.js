@@ -331,8 +331,8 @@ function recordTamper(state, reason, found) {
 /* Chain check of the whole log (every MAC, the links, the sequence numbers and
  * the vault's checkpoint). A failure leaves the persistent tamper mark. The
  * result is remembered while the file is unchanged (size, mtime, ctime, inode)
- * and the checkpoint is the same, and the daemon's own appends move it along,
- * so a long log is read in full once, not on every request. */
+ * and the checkpoint is the same; any append by the daemon drops it, so the
+ * next check reads the whole log again. */
 function logSignature(file) {
   try {
     const st = fs.statSync(file);
@@ -380,17 +380,6 @@ function chainStatus(state, opts) {
   return r;
 }
 
-/* After the daemon itself wrote to the log (or moved the checkpoint), keep a
- * verified result valid for the new state of the file. */
-function advanceChainCache(state, wasVerified, records, sigBeforeAppend, cachedSig) {
-  const secrets = state.secrets;
-  if (!wasVerified || secrets.auditTamper) { state.chainCache = null; return; }
-  // Only a file that was still the one that was verified when the append started
-  // may be called verified afterwards; a change in between is not folded in.
-  if (sigBeforeAppend !== cachedSig) { state.chainCache = null; return; }
-  state.chainCache = { sig: logSignature(state.paths.auditFile), head: headKey(secrets), result: { ok: true, records } };
-}
-
 /* Every audit write goes through here: the in-memory head must be the last
  * record in the file before the daemon appends, and the whole chain must
  * verify (a change in the middle of the log is not seen by the head alone);
@@ -399,25 +388,20 @@ function appendChecked(state, event, extra) {
   const secrets = state.secrets;
   if (!secrets) throw znError(CODES.LOCKED, 'vault locked');
   const file = state.paths.auditFile;
-  let verified = false;
-  let before = 0;
-  let cachedSig = null;
   if (!secrets.auditTamper) {
     const h = audit.checkHead(file, secrets.auditHead);
     if (!h.ok) recordTamper(state, h.reason, h.found);
     else {
-      const c = chainStatus(state);
-      verified = c.ok === true;
-      before = c.records || 0;
-      cachedSig = state.chainCache ? state.chainCache.sig : null;
+      chainStatus(state);
     }
   }
   if (state.opts && typeof state.opts._afterChainCheck === 'function') state.opts._afterChainCheck(); // test seam
-  const sigBeforeAppend = logSignature(file);
   state.dirtySecrets = true;
   const rec = audit.append(event, Object.assign({ file, key: Buffer.from(secrets.auditKey, 'hex') }, extra));
   if (!secrets.auditTamper) secrets.auditHead = { seq: rec.seq, mac: rec.mac };
-  advanceChainCache(state, verified, before + 1, sigBeforeAppend, cachedSig);
+  // Never vouch for the file from a stat taken after our own write: a change made as the file grew
+  // would be folded in. The next read, export or upload checks the whole chain again.
+  state.chainCache = null;
   return rec;
 }
 
@@ -1264,7 +1248,6 @@ async function serve(opts) {
         // before a crash or a restored secrets.age could save the newer checkpoint: adopt them.
         const tail = audit.lastRecord(state.paths.auditFile);
         if (tail) state.secrets.auditHead = { seq: tail.seq, mac: tail.mac };
-        advanceChainCache(state, true, pre.records);
       }
     } catch (err) {
       recordTamper(state, 'the audit log cannot be read', null);

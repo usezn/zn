@@ -17,6 +17,7 @@ const keychain = require('../lib/vault/keychain');
 const daemon = require('../lib/vault/daemon');
 const clientMod = require('../lib/vault/client');
 const store = require('../lib/vault/store');
+const audit = require('../lib/vault/audit');
 
 const fake = (n) => crypto.randomBytes(n).toString('base64').replace(/[^A-Za-z0-9]/g, '').slice(0, n);
 
@@ -143,4 +144,32 @@ test('an edit that lands between the chain check and the append is not folded in
   const r = await h.c.auditRead({});
   assert.strictEqual(r.ok, false, 'the next read re-verifies and catches the edit: ' + JSON.stringify(r));
   assert.strictEqual(r.tampered, true);
+});
+
+test('an edit made right after the append write is never cached as verified (read and export refuse)', async (t) => {
+  const h = await harness(t);
+  assert.strictEqual((await h.c.auditRead({})).ok, true); // warm cache
+  const orig = audit.append;
+  t.after(() => { audit.append = orig; });
+  // Same-length edit of a middle record, made as soon as the write has finished (before any later stat).
+  audit.append = function (ev, o) {
+    audit.append = orig;
+    const rec = orig(ev, o);
+    const buf = fs.readFileSync(h.file());
+    const lines = buf.toString('utf8').split('\n').filter(Boolean);
+    const i = Math.floor(lines.length / 2);
+    let off = 0;
+    for (let k = 0; k < i; k++) off += Buffer.byteLength(lines[k]) + 1;
+    const pos = lines[i].indexOf('"ts":"') + 6 + 3;
+    const fd = fs.openSync(h.file(), 'r+');
+    fs.writeSync(fd, lines[i][pos] === '1' ? '2' : '1', off + pos);
+    fs.closeSync(fd);
+    return rec;
+  };
+  await h.set(92);
+  const r = await h.c.auditRead({});
+  assert.strictEqual(r.ok, false, 'read refuses: ' + JSON.stringify(r));
+  assert.strictEqual(r.tampered, true);
+  assert.strictEqual((await h.c.auditExport({})).ok, false, 'export refuses');
+  assert.strictEqual((await h.c.auditVerify()).ok, false, 'the mark is stored');
 });
