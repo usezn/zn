@@ -181,13 +181,13 @@ test('a vault started by an older zn-gate (no maskInfo) still gets its values ma
   });
   const r = await E.tokenize('a=' + value, ctx(legacy));
   assert.ok(r.text.startsWith('a=__ZN_GITHUB_TOKEN__'), r.text);
-  // any other refusal is a locked vault, never a fall back to reading values
+  // any other refusal is a failure (fail closed), never a fall back to reading values
   let readValues = false;
   const refused = Object.assign(memoryVault(), {
     maskInfo: async () => { throw Object.assign(new Error('nope'), { code: 'ZN_POLICY_DENIED' }); },
     exactValues: async () => { readValues = true; return []; },
   });
-  await E.tokenize('a=' + value, ctx(refused));
+  await assert.rejects(E.tokenize('a=' + value, ctx(refused)), (e) => e.vaultFailed === true);
   assert.strictEqual(readValues, false);
 });
 

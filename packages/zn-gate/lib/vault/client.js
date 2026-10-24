@@ -151,6 +151,7 @@ function lockedError(detail, notRunning = false) {
     : 'vault is locked; run `' + require('../zn-command').znCommand('unlock') + '`';
   const err = znError(CODES.LOCKED, text);
   if (notRunning) err.vaultNotRunning = true;
+  if (detail && !notRunning) err.vaultUnanswered = true;
   return err;
 }
 
