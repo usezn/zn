@@ -22,7 +22,7 @@ are left out.
 
 | Section | What it means |
 | --- | --- |
-| `AGENTS` | Claude Code, Codex CLI, Cursor and OpenCode, each marked as protected by zn, protected in one project only, not protected, or not found on this machine. |
+| `AGENTS` | Claude Code, Codex CLI, Cursor, OpenCode and Antigravity, each marked as protected by zn, protected in one project only, not protected, or not found on this machine. |
 | `WHAT THEY CAN REACH` | Secrets in the `.env` files of the folder (names only), credential files in your home folder (that they exist), and environment variables with a secret-looking name. |
 | `MCP SERVERS` | Tools your agent can call that run a server from the agent configuration. Problems such as an unpinned version, a plain HTTP address or a secret written into the config. |
 | `YOUR AGENT SETTINGS` | Agent settings in your home folder that apply to every project. |

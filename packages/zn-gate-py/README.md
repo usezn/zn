@@ -39,7 +39,7 @@ zn-gate scan .
 
 `pipx ensurepath` puts `~/.local/bin` on your PATH. Until you reopen the terminal, `zn-gate` is reported as "command not found". With uv: `uv tool install zn-gate` (run `uv tool update-shell` if the command is not found). To run it once without installing: `uvx zn-gate scan .`
 
-The Python CLI does not install hooks. To protect Claude Code, Codex CLI, Cursor or OpenCode, run `npx -y zn-gate init` (Node 18 or later).
+The Python CLI does not install hooks. To protect Claude Code, Codex CLI, Cursor, OpenCode or Antigravity, run `npx -y zn-gate init` (Node 18 or later).
 
 Inside an environment you already use (your project's virtualenv, Poetry, uv), `pip install zn-gate` is enough. Python 3.10 or later (CI tests 3.10 to 3.14). Zero runtime dependencies.
 
