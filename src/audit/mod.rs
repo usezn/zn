@@ -190,10 +190,38 @@ impl AuditVault {
         let mut conn = Connection::open(db_path)
             .map_err(|e| anyhow!("Failed to open audit database '{}': {}", db_path, e))?;
 
+        // Wait for other processes that have the file open (the first start
+        // after an upgrade compacts the file and needs a write lock).
+        conn.busy_timeout(std::time::Duration::from_secs(5))
+            .map_err(|e| anyhow!("Failed to set busy_timeout: {}", e))?;
+
         // Overwrite deleted and replaced content with zeros, so text that a
         // cleanup replaces does not stay in free pages of the file.
         conn.execute_batch("PRAGMA secure_delete = ON;")
             .map_err(|e| anyhow!("Failed to set secure_delete: {}", e))?;
+
+        // A database that was set up with an encryption key is not opened
+        // without it, and nothing is written before that check.
+        if encryption_key.is_none() {
+            let has_metadata: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'metadata'",
+                [],
+                |r| r.get(0),
+            )?;
+            if has_metadata > 0 {
+                let encrypted: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM metadata WHERE key IN ('key_check', 'derivation_salt')",
+                    [],
+                    |r| r.get(0),
+                )?;
+                if encrypted > 0 {
+                    return Err(anyhow!(
+                        "audit database '{}' is encrypted; open it with its key",
+                        db_path
+                    ));
+                }
+            }
+        }
 
         // Create metadata table for persistent configuration (like salt)
         conn.execute(
@@ -937,51 +965,92 @@ fn migrate_v1_records(conn: &mut Connection, key_bytes: &[u8; 32]) -> Result<Mig
     Ok(report)
 }
 
-/// One-time upgrade of audit rows written before the neighbour was kept as a
-/// reference: a `nearest_neighbor` that is not `<ref>:<distance>` (the text of
-/// the neighbour, optionally followed by `:<distance>`) becomes
-/// `content_ref(text):<distance>`, and the payload of an old `NEAREST_NEIGHBOR`
-/// row, which held the same text, is cleared. Rows that already hold a
-/// reference are left alone, so running it again changes nothing.
-fn scrub_legacy_neighbours(conn: &mut Connection) -> Result<usize> {
-    // Rows that already hold a reference (`h:` + 16 hex, optionally followed by
-    // `:<distance>`) are filtered out in SQL, so a start does not read them.
+/// True for exactly what the gateway writes in `nearest_neighbor`: a reference
+/// (`h:` and 16 lowercase hex characters) alone, or followed by `:` and a finite
+/// number. Anything else, including a reference followed by other text, is
+/// treated as legacy text. The whole value must match.
+fn is_neighbour_ref(value: &str) -> bool {
+    let Some(head) = value.get(..18) else {
+        return false;
+    };
+    if !crate::ai::is_content_ref(head) {
+        return false;
+    }
+    match value[18..].strip_prefix(':') {
+        None => value.len() == 18,
+        Some(distance) => distance.parse::<f32>().is_ok_and(f32::is_finite),
+    }
+}
+
+/// The distance 1.13 wrote after the text of a neighbour: digits, a dot and four
+/// decimals. Only that shape is kept as a distance; other suffixes are text.
+fn is_legacy_distance(distance: &str) -> bool {
+    match distance.split_once('.') {
+        Some((whole, frac)) => {
+            !whole.is_empty()
+                && whole.bytes().all(|b| b.is_ascii_digit())
+                && frac.len() == 4
+                && frac.bytes().all(|b| b.is_ascii_digit())
+                && distance.parse::<f32>().is_ok_and(f32::is_finite)
+        }
+        None => false,
+    }
+}
+
+/// The reference for a legacy `nearest_neighbor` value.
+fn neighbour_to_ref(value: &str) -> String {
+    match value.rsplit_once(':') {
+        Some((text, distance)) if is_legacy_distance(distance) => {
+            format!("{}:{}", crate::ai::content_ref(text), distance)
+        }
+        _ => crate::ai::content_ref(value),
+    }
+}
+
+/// SQL that is true only for values the Rust check accepts (a reference alone,
+/// or with a short plain decimal distance): it lets a start skip them without
+/// reading them. The Rust check decides for every other row.
+const SQL_NEIGHBOUR_OK: &str = "(nearest_neighbor GLOB ?1 OR (nearest_neighbor GLOB ?2 \
+     AND length(nearest_neighbor) <= 31 \
+     AND substr(nearest_neighbor, 20) NOT GLOB '*[^0-9.]*' \
+     AND length(substr(nearest_neighbor, 20)) - length(replace(substr(nearest_neighbor, 20), '.', '')) = 1))";
+
+/// Rows whose `nearest_neighbor` is not a reference in the strict sense.
+fn legacy_neighbour_rows(tx: &rusqlite::Transaction<'_>) -> Result<Vec<(String, String)>> {
     let hex16 = "[0-9a-f]".repeat(16);
     let bare = format!("h:{hex16}");
-    let with_dist = format!("h:{hex16}:*");
+    let with_dist = format!("h:{hex16}:[0-9]*");
+    let mut stmt = tx.prepare(&format!(
+        "SELECT id, nearest_neighbor FROM audit_logs WHERE nearest_neighbor IS NOT NULL \
+         AND NOT {SQL_NEIGHBOUR_OK}"
+    ))?;
+    let mapped = stmt.query_map(params![bare, with_dist], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    let mut out = Vec::new();
+    for row in mapped {
+        let (id, nn): (String, String) = row?;
+        if !is_neighbour_ref(&nn) {
+            out.push((id, nn));
+        }
+    }
+    Ok(out)
+}
+
+/// One-time upgrade of audit rows written before the neighbour was kept as a
+/// reference: a `nearest_neighbor` that is not a reference (see
+/// `is_neighbour_ref`) becomes `content_ref(text):<distance>`, or the reference
+/// of the whole value when it does not end in a distance, and the payload of an
+/// old `NEAREST_NEIGHBOR` row, which held the same text, is cleared. Rows that
+/// already hold a reference are left alone, so running it again changes nothing.
+fn scrub_legacy_neighbours(conn: &mut Connection) -> Result<usize> {
     // Select and update in one transaction, so no other writer can slip a row
     // in between and nothing is left half converted.
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    let rows: Vec<(String, String)> = {
-        let mut stmt = tx.prepare(
-            "SELECT id, nearest_neighbor FROM audit_logs WHERE nearest_neighbor IS NOT NULL \
-             AND NOT (nearest_neighbor GLOB ?1 OR nearest_neighbor GLOB ?2)",
-        )?;
-        let mapped = stmt.query_map(params![bare, with_dist], |r| Ok((r.get(0)?, r.get(1)?)))?;
-        let mut out = Vec::new();
-        for row in mapped {
-            let (id, nn): (String, String) = row?;
-            let already = crate::ai::is_content_ref(&nn)
-                || nn
-                    .rsplit_once(':')
-                    .is_some_and(|(head, _)| crate::ai::is_content_ref(head));
-            if !already {
-                out.push((id, nn));
-            }
-        }
-        out
-    };
+    let rows = legacy_neighbour_rows(&tx)?;
     let mut changed = rows.len();
     for (id, nn) in &rows {
-        let new_nn = match nn.rsplit_once(':') {
-            Some((text, dist)) if dist.parse::<f64>().is_ok() => {
-                format!("{}:{}", crate::ai::content_ref(text), dist)
-            }
-            _ => crate::ai::content_ref(nn),
-        };
         tx.execute(
             "UPDATE audit_logs SET nearest_neighbor = ?1 WHERE id = ?2",
-            params![new_nn, id],
+            params![neighbour_to_ref(nn), id],
         )?;
     }
     // A NEAREST_NEIGHBOR row never keeps a payload: the reference is in
@@ -992,13 +1061,12 @@ fn scrub_legacy_neighbours(conn: &mut Connection) -> Result<usize> {
         [],
     )?;
     // Nothing in clear may remain; otherwise the whole cleanup is undone.
-    let left: i64 = tx.query_row(
-        "SELECT COUNT(*) FROM audit_logs WHERE (nearest_neighbor IS NOT NULL \
-         AND NOT (nearest_neighbor GLOB ?1 OR nearest_neighbor GLOB ?2)) \
-         OR (event = 'NEAREST_NEIGHBOR' AND payload IS NOT NULL)",
-        params![bare, with_dist],
+    let payloads_left: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM audit_logs WHERE event = 'NEAREST_NEIGHBOR' AND payload IS NOT NULL",
+        [],
         |r| r.get(0),
     )?;
+    let left = legacy_neighbour_rows(&tx)?.len() as i64 + payloads_left;
     if left != 0 {
         return Err(anyhow!(
             "{left} audit rows still hold neighbour text after the cleanup"
@@ -2144,7 +2212,7 @@ mod tests {
     }
 
     #[test]
-    fn an_interrupted_compaction_is_repeated_at_the_next_start() {
+    fn the_scrub_leaves_the_vacuum_marker_and_the_next_start_compacts() {
         let path = temp_db_path();
         let vault = AuditVault::new(&path, None).expect("vault");
         vault
@@ -2152,24 +2220,114 @@ mod tests {
             .lock()
             .unwrap()
             .execute(
-                "INSERT OR REPLACE INTO metadata (key, value) VALUES ('neighbours_vacuum_pending', '1')",
+                "INSERT INTO audit_logs (id, timestamp, event, tool_name, status, payload, nearest_neighbor) VALUES ('n1', 't', 'NEAREST_NEIGHBOR', 'tool', 'AUDIT', 'old text', 'old text:0.1000')",
                 [],
             )
             .unwrap();
         drop(vault);
+        let mut c = Connection::open(&path).unwrap();
+        assert!(scrub_legacy_neighbours(&mut c).unwrap() > 0);
+        let marker = "SELECT COUNT(*) FROM metadata WHERE key = 'neighbours_vacuum_pending'";
+        let m: i64 = c.query_row(marker, [], |r| r.get(0)).unwrap();
+        assert_eq!(m, 1, "the scrub must leave the compaction marker");
+        drop(c);
+
+        // The next start compacts the file and removes the marker.
         let vault = AuditVault::new(&path, None).expect("reopen");
         let left: i64 = vault
             .get_connection()
             .lock()
             .unwrap()
-            .query_row(
-                "SELECT COUNT(*) FROM metadata WHERE key = 'neighbours_vacuum_pending'",
-                [],
-                |r| r.get(0),
-            )
+            .query_row(marker, [], |r| r.get(0))
             .unwrap();
         assert_eq!(left, 0);
         drop(vault);
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn only_exact_references_count_as_migrated() {
+        let path = temp_db_path();
+        let vault = AuditVault::new(&path, None).expect("vault");
+        let cases = [
+            "h:0123456789abcdef:recovery_code=4821",
+            "h:0123456789abcdef:NaN",
+            "h:0123456789abcdef:inf",
+            "h:0123456789abcdef:-inf",
+            "h:0123456789abcdef:",
+            "h:0123456789abcdef:a:b:0.5000",
+            "h:0123456789ABCDEF:0.5000",
+            "h:0123456789abcde:0.5000",
+            "h:0123456789abcdef0:0.5000",
+            "pin:4821",
+        ];
+        {
+            let conn = vault.get_connection();
+            let conn = conn.lock().unwrap();
+            for (i, v) in cases.iter().enumerate() {
+                conn.execute(
+                    "INSERT INTO audit_logs (id, timestamp, event, tool_name, status, nearest_neighbor) VALUES (?1, 't', 'TOOL_CALL', 'tool', 'AUDIT', ?2)",
+                    params![format!("c{i}"), v],
+                )
+                .unwrap();
+            }
+            conn.execute(
+                "INSERT INTO audit_logs (id, timestamp, event, tool_name, status, nearest_neighbor) VALUES ('ok1', 't', 'TOOL_CALL', 'tool', 'AUDIT', 'h:0123456789abcdef:0.5000')",
+                [],
+            )
+            .unwrap();
+        }
+        drop(vault);
+        let vault = AuditVault::new(&path, None).expect("reopen scrubs");
+        for (i, case) in cases.iter().enumerate() {
+            let v = get_nn(&vault, &format!("c{i}"));
+            assert!(is_neighbour_ref(&v), "{case} became {v}");
+            assert_ne!(&v, case);
+        }
+        assert_eq!(get_nn(&vault, "ok1"), "h:0123456789abcdef:0.5000");
+        drop(vault);
+        assert!(!file_bytes_contain(&path, "recovery_code=4821"));
+        assert!(!file_bytes_contain(&path, "pin:4821"));
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn the_reference_check_takes_exact_forms_only() {
+        for ok in [
+            "h:0123456789abcdef",
+            "h:0123456789abcdef:0.5000",
+            "h:0123456789abcdef:12",
+        ] {
+            assert!(is_neighbour_ref(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "h:0123456789abcdef:",
+            "h:0123456789abcdef:NaN",
+            "h:0123456789abcdef:inf",
+            "h:0123456789abcdef:-inf",
+            "h:0123456789abcdef:0.5:0.5",
+            "h:0123456789abcdef:secret",
+            "h:0123456789abcdefg",
+            "h:0123456789ABCDEF",
+            "h:0123456789abcde",
+            "h:0123456789abcdef0",
+            "h:0123456789abcdef0:0.5",
+            "x:0123456789abcdef",
+        ] {
+            assert!(!is_neighbour_ref(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn an_encrypted_database_is_not_opened_or_changed_without_its_key() {
+        let path = temp_db_path();
+        drop(AuditVault::new(&path, Some("a key")).expect("encrypted vault"));
+        let before = fs::read(&path).unwrap();
+        assert!(AuditVault::new(&path, None).is_err());
+        assert_eq!(fs::read(&path).unwrap(), before, "the file must not change");
+        // With the key it still opens.
+        drop(AuditVault::new(&path, Some("a key")).expect("reopen with the key"));
         fs::remove_file(&path).ok();
     }
 
@@ -2213,9 +2371,7 @@ mod tests {
             assert_eq!(scrub_legacy_neighbours(&mut conn).unwrap(), 0);
             assert_eq!(conn.total_changes(), before, "no row may be written");
         }
-        assert!(crate::ai::is_content_ref(
-            get_nn(&vault, "d").rsplit_once(':').unwrap().0
-        ));
+        assert!(is_neighbour_ref(&get_nn(&vault, "d")));
         assert_eq!(get_nn(&vault, "b"), "h:0123456789abcdef:0.5000");
         assert_eq!(get_nn(&vault, "c"), "h:0123456789abcdef");
         drop(vault);

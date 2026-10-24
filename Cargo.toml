@@ -57,7 +57,9 @@ opentelemetry_sdk = { version = "0.33", features = ["trace"] }
 sha2 = "0.11"
 rand = "0.10"
 ml-dsa = { version = "0.1.1", default-features = false, features = ["alloc"] }
-jsonwebtoken = { version = "10.3", features = ["rust_crypto"] }
+# The gateway only verifies HMAC (HS256) tokens. The aws-lc-rs backend is already in the tree
+# (rustls), so this drops the RustCrypto RSA/P-256/P-384 stack (rsa, p256, p384, crypto-bigint).
+jsonwebtoken = { version = "10.3", default-features = false, features = ["aws_lc_rs"] }
 async-trait = "0.1"
 aws-config = { version = "1.11", default-features = false, features = ["behavior-version-latest", "rt-tokio", "default-https-client", "credentials-process", "sso"] }
 aws-sdk-kms = { version = "1.117", default-features = false, features = ["rt-tokio", "default-https-client"] }

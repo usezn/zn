@@ -782,6 +782,20 @@ def _mask_value(res: Any) -> Tuple[Any, Optional[Assessment]]:
                            reason="The result holds a secret that could not be masked")
 
 
+def _secret_masked(original: Any, masked: Any) -> bool:
+    """Whether _mask_value hid a secret in `original`.
+
+    Decided by scanning `original`, not by comparing it with `masked`: an
+    object in a tool result can define __eq__ to always answer True.
+    """
+    if masked is original:
+        return False
+    try:
+        return _has_secret(original)
+    except Exception:
+        return True
+
+
 def _error_texts(exc: BaseException) -> List[str]:
     """str() and repr() of an exception and of the exceptions chained to it."""
     texts: List[str] = []

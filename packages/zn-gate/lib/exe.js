@@ -336,8 +336,32 @@ function systemPowerShell() {
   return ps;
 }
 
+/*
+ * The PSModulePath to give the system PowerShell: its own module folder only. Without a PSModulePath Windows PowerShell 5.1
+ * builds one that starts with the user's Documents\WindowsPowerShell\Modules, where a module planted by the same account would
+ * replace a cmdlet (ConvertTo-Json, Get-Acl...). `ps` is the path systemPowerShell() returned.
+ */
+function systemPsModulePath(ps) {
+  return path.win32.join(path.win32.dirname(ps), 'Modules');
+}
+
+/*
+ * The environment for a PowerShell that zn starts: `base` (default the process environment) plus `extra`, with EVERY case variant
+ * of PSModulePath removed first and zn's own set once. Windows environment names are case-insensitive but a JS object's keys are
+ * not, so an inherited PSMODULEPATH next to a PSModulePath would reach the child as two entries, and the one that wins is not ours.
+ */
+function psEnv(ps, base, extra) {
+  const env = {};
+  for (const k of Object.keys(base || process.env)) if (!/^psmodulepath$/i.test(k)) env[k] = (base || process.env)[k];
+  for (const k of Object.keys(extra || {})) if (!/^psmodulepath$/i.test(k)) env[k] = extra[k];
+  env.PSModulePath = systemPsModulePath(ps);
+  return env;
+}
+
 module.exports = {
   systemPowerShell,
+  systemPsModulePath,
+  psEnv,
   commandWord,
   hasPathSeparator,
   resolveExecutable,
