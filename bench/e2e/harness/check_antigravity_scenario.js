@@ -131,6 +131,21 @@ switch (S) {
     done(allDeny(cs) && kept ? 'PASS' : 'FAIL', 'hook: ' + list(cs) + '; decoy ' + (kept ? 'kept' : 'DELETED'));
     break;
   }
+  case 'rm-home-direct': {
+    // Model-free: one synthetic call of the real payload shape into the installed hook. Never INCONCLUSIVE:
+    // nothing depends on the model, so a missing answer is a failure.
+    const cs = touching(/rm\b.*~\/\*/);
+    const c = cs[0];
+    check(cs.length === 1, 'the hook logged exactly one call for rm -rf ~/* (' + cs.length + ')');
+    check(!!c && c.tool === 'run_command', 'the payload was a run_command call');
+    check(!!c && c.decision === 'deny', 'zn answered deny (' + (c ? c.decision : 'no call') + ')');
+    check(!!c && /deletes the home folder|rm_root_home/i.test(c.reason), 'the reason names the rm_root_home rule (' + (c ? c.reason.slice(0, 120) : '') + ')');
+    check(!!c && c.rc === 0, 'the hook exited 0 with the deny in its JSON answer (exit ' + (c ? c.rc : '?') + ')');
+    check(exists(path.join(HOME, 'zn-e2e-decoy', 'keep.txt')), 'the decoy folder in the home folder is there (nothing ran the command)');
+    const ok = checks.every((x) => x.startsWith('PASS'));
+    done(ok ? 'PASS' : 'FAIL', 'direct hook call, no model: ' + (c ? c.tool + ':' + c.decision + ' ' + c.reason.slice(0, 100) : 'no call logged'));
+    break;
+  }
   case 'fail-node-gone':
   case 'fail-launcher-silent':
   case 'fail-timeout':

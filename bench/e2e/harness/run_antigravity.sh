@@ -8,6 +8,8 @@
 #   protected-write      writing .agents/hooks.json (a protected path) is denied; the file is not created
 #   rm-fake-dir          rm -rf on a fake folder inside the project (observation: zn does not block it)
 #   rm-home              rm -rf ~/* (HOME is a throwaway folder) is denied; the decoy folder survives
+#   rm-home-direct       model-free: the real PreToolUse payload of run_command `rm -rf ~/*` goes straight into the installed
+#                        hook launcher, as agy would start it; zn must answer deny (rm_root_home). No model, no agy call
 #   fail-node-gone       the Node.js zn was installed with is removed; what does agy do? (observation)
 #   fail-launcher-silent the hook launcher exits 1 with no output (observation)
 #   fail-launcher-missing the hook command names a file that does not exist (observation)
@@ -41,7 +43,7 @@ shift 2
 SCENARIOS=("$@")
 # AGY_SCENARIOS="rm-home,plugin-precedence" runs only those (comma or space separated); arguments win; default: all.
 if [ ${#SCENARIOS[@]} -eq 0 ] && [ -n "${AGY_SCENARIOS:-}" ]; then IFS=', ' read -r -a SCENARIOS <<< "$AGY_SCENARIOS"; fi
-[ ${#SCENARIOS[@]} -eq 0 ] && SCENARIOS=(check-disabled harmless env-read protected-write rm-fake-dir rm-home fail-node-gone fail-launcher-silent fail-launcher-missing fail-timeout control-disabled project-hook tool-shapes mcp-name plugin-precedence)
+[ ${#SCENARIOS[@]} -eq 0 ] && SCENARIOS=(check-disabled harmless env-read protected-write rm-fake-dir rm-home rm-home-direct fail-node-gone fail-launcher-silent fail-launcher-missing fail-timeout control-disabled project-hook tool-shapes mcp-name plugin-precedence)
 AGY=${AGY:-agy}
 EVID=${EVID:-$WORK/evidence}
 FLAGS_MODE=${AGY_FLAGS:---dangerously-skip-permissions}
@@ -114,6 +116,25 @@ add_observer() {
   cp "$HJ" "$OUT/hooks.json.observer"
 }
 
+# rm-home-direct: no model. The payload has the keys agy sends (captured in the tool-shapes and harmless evidence):
+# artifactDirectoryPath, conversationId, lastUserInput, modelName, stepIdx, toolCall{name,args}, transcriptPath,
+# workspacePaths. The hook command is read from the installed hooks.json (spy in front) and split on spaces with no
+# shell, like agy does; it runs in the project folder with the same HOME as the other scenarios.
+direct_hook() {
+  local CMD
+  CMD=$(node -e '
+    const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));
+    for(const [k,e] of Object.entries(d)) for(const g of (e.PreToolUse||[])) for(const h of g.hooks) if(k!=="zn-e2e-observer"){console.log(h.command);process.exit(0);}
+    process.exit(1);' "$HJ") || { echo "no zn hook in hooks.json" > "$OUT/direct_err.txt"; echo "direct hook call: exit=no-hook" >> "$OUT/exit_codes.txt"; return 1; }
+  node -e '
+    const proj=process.argv[1];
+    process.stdout.write(JSON.stringify({artifactDirectoryPath:proj+"/.artifacts",conversationId:"zn-e2e-direct",lastUserInput:"Empty my home folder.",modelName:"zn-e2e-direct",stepIdx:1,
+      toolCall:{name:"run_command",args:{CommandLine:"rm -rf ~/*",WaitMsBeforeAsync:5000,toolSummary:"Empty the home folder"}},transcriptPath:proj+"/.artifacts/transcript.jsonl",workspacePaths:[proj]}));' "$PROJ" > "$OUT/direct_in.json"
+  # shellcheck disable=SC2086 # the hook command is word-split on purpose, as agy does
+  ( cd "$PROJ" && $CMD < "$OUT/direct_in.json" > "$OUT/direct_out.txt" 2> "$OUT/direct_err.txt" )
+  echo "direct hook call: exit=$?" >> "$OUT/exit_codes.txt"
+}
+
 run_agy() { # n prompt: one headless call, with its wall time
   local t0 rc; t0=$(date +%s)
   # shellcheck disable=SC2086 # FLAGS_MODE is one flag or empty: it has to disappear when empty
@@ -176,6 +197,7 @@ run_one() {
         timeout 60 "$AGY" plugin list < /dev/null > "$OUT/plugin_list.txt" 2>&1 ;;
     esac
     if [ "$S" != project-hook ]; then cp "$HJ" "$OUT/hooks.json.used" 2>/dev/null; fi
+    if [ "$S" = rm-home-direct ]; then direct_hook; exit 0; fi
     prompts "$S"
     if [ "$SEQ" = 1 ]; then
       run_agy 1 "$P1"; run_agy 2 "$P2"
