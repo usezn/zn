@@ -274,9 +274,40 @@ jobs:
           node-version: 24.x
           check-latest: true
           package-manager-cache: false
-      - name: Install an npm CLI with trusted publishing support
-        run: | # zizmor: ignore[adhoc-packages] npm is pinned to one exact version
-          npm install -g npm@11.21.0
+      # Only the lockfile of the npm CLI is taken from the verified commit (no other file, no credentials).
+      # It goes to its own folder: a checkout into the workspace root would delete the downloaded release/ folder.
+      - name: Fetch the lockfile of the pinned npm CLI
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          path: npm-cli
+          sparse-checkout: .github/npm-cli
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      # npm trusted publishing needs npm >= 11.5.1; the runner's bundled npm floats with the Node.js release,
+      # so the release uses one exact CLI. It comes from a committed lockfile (sha512 integrity of the
+      # tarball), is installed with --ignore-scripts, and the integrity is compared again with the value
+      # pinned here before the CLI is put on PATH.
+      - name: Install the pinned npm CLI (integrity checked, no install scripts)
+        env:
+          NPM_CLI_VERSION: 11.21.0
+          NPM_CLI_INTEGRITY: sha512-Zov8KhamNneiLdELtj5YALtNmJW4L4fCLTzjfpzXG2w6MSHcf0UxgdlK5uloCuksWT+7mGUU7wi79cO6RqivPg==
+        run: |
+          set -euo pipefail
+          cd npm-cli/.github/npm-cli
+          locked="$(node -p "const e=require('./package-lock.json').packages['node_modules/npm']; e.version+' '+e.integrity")"
+          if [ "$locked" != "${NPM_CLI_VERSION} ${NPM_CLI_INTEGRITY}" ]; then
+            echo "::error::package-lock.json pins '$locked', the workflow expects '${NPM_CLI_VERSION} ${NPM_CLI_INTEGRITY}'"
+            exit 1
+          fi
+          npm ci --ignore-scripts --no-audit --no-fund
+          installed="$(node -p "require('./node_modules/npm/package.json').version")"
+          [ "$installed" = "$NPM_CLI_VERSION" ] || { echo "::error::installed npm $installed, expected $NPM_CLI_VERSION"; exit 1; }
+          echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"
+      - name: Show the npm CLI in use
+        run: |
+          set -euo pipefail
+          [ "$(npm --version)" = 11.21.0 ] || { echo "::error::npm on PATH is not the pinned 11.21.0"; exit 1; }
           npm --version
       # Reads the dist-tags again here, after any wait for approval or for another release to finish
       # publishing, and fails closed (nothing is published) when they cannot be read or the release is
@@ -302,7 +333,21 @@ jobs:
         env:
           NPM_VERSION: ${{ needs.verify.outputs.npm_version }}
           DIST_TAG: ${{ steps.disttag.outputs.tag }}
-        run: npm publish "./zn-gate-${NPM_VERSION}.tgz" --tag "$DIST_TAG" --access public --provenance --ignore-scripts
+        run: |
+          set -euo pipefail
+          # Right before publishing: the tarball must still be the file SHA256SUMS lists.
+          tarball="zn-gate-${NPM_VERSION}.tgz"
+          [ -f SHA256SUMS ] || { echo "::error::SHA256SUMS is missing"; exit 1; }
+          [ -f "$tarball" ] || { echo "::error::$tarball is missing"; exit 1; }
+          expected="$(awk -v f="$tarball" '$2 == f || $2 == "*" f { print $1 }' SHA256SUMS)"
+          if [ -z "$expected" ] || [ "$(printf '%s\n' "$expected" | wc -l)" -ne 1 ]; then
+            echo "::error::SHA256SUMS has no single entry for $tarball"; exit 1
+          fi
+          actual="$(sha256sum "$tarball" | cut -d' ' -f1)"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::$tarball sha256 is $actual, SHA256SUMS lists $expected"; exit 1
+          fi
+          npm publish "./$tarball" --tag "$DIST_TAG" --access public --provenance --ignore-scripts
       # npm can take a few seconds to show a new dist-tag: read again for up to a minute. A dist-tag that
       # is not as planned, or a latest that moved backward, fails the job (the version is already published,
       # so this is a loud alarm for the maintainer to fix the dist-tag by hand, not a rollback).
