@@ -7589,6 +7589,7 @@ dependencies = [
  "hex",
  "jsonwebtoken",
  "lazy_static",
+ "libc",
  "lru",
  "ml-dsa",
  "notify",
@@ -7619,6 +7620,7 @@ dependencies = [
  "uuid",
  "walkdir",
  "wasmtime",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

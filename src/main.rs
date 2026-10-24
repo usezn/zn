@@ -933,6 +933,20 @@ fn audit_write(state: &AppState, event: &str, entry: AuditEntry) -> bool {
     }
 }
 
+/// The webhook alert for an audit entry: metadata only. The request payload
+/// never leaves in a webhook, even when `audit.store_payloads` keeps it in the
+/// database.
+fn alert_for(entry: &AuditEntry) -> webhooks::AlertPayload {
+    webhooks::AlertPayload {
+        event: entry.event.clone(),
+        tool_name: entry.tool_name.clone(),
+        status: entry.status.clone(),
+        timestamp: entry.timestamp.clone(),
+        policy_match: entry.policy_match.clone(),
+        details: None,
+    }
+}
+
 async fn process_mcp_message(
     line: &str,
     state: &AppState,
@@ -1295,12 +1309,10 @@ async fn process_mcp_message(
             // any TOOL_CALL row exists, so no row says ALLOWED for a denied call.
             let mut audit_written = true;
             if let Some(nn) = nearest_neighbor_entry {
-                let mut nn_entry = AuditEntry::new("NEAREST_NEIGHBOR", &tool_name, "AUDIT")
+                let nn_entry = AuditEntry::new("NEAREST_NEIGHBOR", &tool_name, "AUDIT")
                     .with_nearest_neighbor(nn.clone())
                     .with_namespace(&memory_namespace)
                     .with_agent_id(&agent_id_str);
-                nn_entry.payload =
-                    zn::audit::payload_if_enabled(state.config.audit.store_payloads, nn);
                 audit_written = audit_write(state, "NEAREST_NEIGHBOR", nn_entry);
             }
             if audit_written || !state.config.audit.require_write {
@@ -1318,7 +1330,12 @@ async fn process_mcp_message(
                 )));
             }
 
-            let _ = state.tx.send(entry.clone());
+            // The event stream carries metadata only, never a payload (even
+            // when `audit.store_payloads` keeps one in the database): the
+            // scrubber cannot know every secret field.
+            let mut streamed = entry.clone();
+            streamed.payload = None;
+            let _ = state.tx.send(streamed);
 
             if status == "ALLOWED" {
                 metrics::record_tool_call(&tool_name, "ALLOWED");
@@ -1347,14 +1364,7 @@ async fn process_mcp_message(
 
                 // Send webhook alert
                 let alert_tx = state.webhook_tx.clone();
-                let alert_payload = webhooks::AlertPayload {
-                    event: entry.event.clone(),
-                    tool_name: entry.tool_name.clone(),
-                    status: entry.status.clone(),
-                    timestamp: entry.timestamp.clone(),
-                    policy_match: entry.policy_match.clone(),
-                    details: entry.payload.clone(),
-                };
+                let alert_payload = alert_for(&entry);
                 tokio::spawn(async move {
                     let _ = webhooks::send_alert(&alert_tx, alert_payload).await;
                 });
@@ -2475,6 +2485,10 @@ mod audit_metadata_tests {
     }
 
     fn test_state(root: &Path, require_write: bool) -> AppState {
+        test_state_with(root, require_write, false)
+    }
+
+    fn test_state_with(root: &Path, require_write: bool, store_payloads: bool) -> AppState {
         std::fs::create_dir_all(root).unwrap();
         let mut cfg = ZnConfig::default();
         cfg.audit.db_path = root.join("audit.db").to_string_lossy().into_owned();
@@ -2484,6 +2498,7 @@ mod audit_metadata_tests {
             !cfg.audit.store_payloads,
             "payload storage is off by default"
         );
+        cfg.audit.store_payloads = store_payloads;
         assert!(cfg.guardrails.nearest_neighbor_audit);
         let vault = Arc::new(
             AuditVault::new(&cfg.audit.db_path, None)
@@ -2610,6 +2625,39 @@ mod audit_metadata_tests {
             "call content reached a file: {:?}",
             files_containing(dir.path(), MARKER)
         );
+    }
+
+    #[test]
+    fn webhook_alerts_carry_metadata_only() {
+        let mut entry = AuditEntry::new("TOOL_CALL", "read_note", "DENIED");
+        entry.payload = Some(format!("{MARKER} recovery_code=hunter2"));
+        let alert = alert_for(&entry);
+        assert!(alert.details.is_none());
+        assert!(!serde_json::to_string(&alert).unwrap().contains(MARKER));
+        assert_eq!(alert.tool_name, "read_note");
+    }
+
+    #[tokio::test]
+    async fn stored_payloads_never_reach_the_event_stream() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state_with(dir.path(), false, true);
+        let mut rx = state.tx.subscribe();
+        let text = format!("{MARKER} recovery_code=hunter2-not-a-pattern");
+        process_mcp_message(&call(1, &text), &state, None)
+            .await
+            .unwrap();
+        let rows = state.vault.get_recent(100).unwrap();
+        assert!(
+            serde_json::to_string(&rows).unwrap().contains(MARKER),
+            "the database keeps the payload when store_payloads is on"
+        );
+        let mut events = Vec::new();
+        while let Ok(e) = rx.try_recv() {
+            events.push(e);
+        }
+        assert!(!events.is_empty());
+        assert!(events.iter().all(|e| e.payload.is_none()));
+        assert!(!serde_json::to_string(&events).unwrap().contains(MARKER));
     }
 
     #[tokio::test]
