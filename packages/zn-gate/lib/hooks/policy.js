@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-24.17';
+const POLICY_RULES_VERSION = '2026-10-24.18';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2191,6 +2191,9 @@ function bashDenialOf(cmd, opts = {}) {
         (c && w.git && gitReadsContent(w.sub, w.gitArgs) ? gitHistoryDenial(text) : null);
       if (deny) return deny;
     }
+    // A relative name after a cd (cd ~/.gemini && echo {} > settings.json) is the file in the folder the cd reached.
+    const afterCd = cdRelativeDenial(text, writing || w.redirectTarget, opts);
+    if (afterCd) return afterCd;
     if (!c) {
       // Segments that are just "." name the same place (.agents/. is the folder itself).
       const t = slash(text).replace(/(?:\/\.)+(?=\/|$)/g, '');
@@ -2428,6 +2431,70 @@ function cdBasesOf(readings, opts) {
     }
   }
   return { dirs: [...all], unknown, moved, agentsDir };
+}
+
+/* Folders under the home directory that hold agent hook and settings files (the places AGENT_CONFIG_RES names).
+   One list for the cd check below: a new agent adds its folders here too (Zcode: '.zcode', '.zcode/cli'). */
+const AGENT_CONFIG_SUBDIRS = [
+  '.claude', '.codex', '.cursor', '.opencode', '.config/opencode', '.opencode/plugins', '.config/opencode/plugins',
+  '.gemini', '.gemini/config', '.gemini/antigravity-cli', '.agents', '.copilot', '.copilot/hooks',
+  '.github/hooks', '.github/copilot',
+];
+const CD_RELATIVE_CACHE = new WeakMap();
+
+/* A relative path in a command that changed directory first (cd ~/.gemini && echo {} > settings.json) names a file in
+   the place the cd reached, so it is judged there: a write into agent configuration, or a read of a secret. A cd zn cannot
+   follow (cd "$(...)", cd $DIR) leaves the place unknown: then a write to a relative name that would be agent configuration
+   in an agent folder the command itself names (the folder's name, or $CODEX_HOME and the like) is refused. Absolute
+   paths and ~ paths do not depend on the cd. */
+function cdRelativeDenial(text, writes, opts) {
+  const bases = opts.cdBases;
+  if (!bases || !bases.moved || typeof text !== 'string') return null;
+  if (/^[~/\$%]|^[A-Za-z]:|^-/.test(text) || text.includes('\0')) return null;
+  const cache = CD_RELATIVE_CACHE.get(bases) || new Map();
+  CD_RELATIVE_CACHE.set(bases, cache);
+  const key = (writes ? 'w' : 'r') + '\0' + text;
+  if (cache.has(key)) return cache.get(key);
+  const deny = cdRelativeOf(text, writes, opts, bases);
+  cache.set(key, deny);
+  return deny;
+}
+
+function cdRelativeOf(text, writes, opts, bases) {
+  const ctx = opts.ctx || contextOf(opts);
+  const cwd = path.resolve(opts.cwd || ctx.cwd || process.cwd());
+  const env = opts.env || ctx.env || process.env;
+  const judge = (dir) => classifyPath(text, { ...opts, cwd: dir, ctx: { ...ctx, cwd: dir } });
+  const verdict = (c, where) => {
+    const lead = 'zn: this command changes to ' + where + ' first, so ' + text + ' is there. ';
+    if (c.kind === 'agent_config') return writes ? lead + agentConfigDenial(text, c).replace(/^zn: /, '') : null;
+    if (c.kind === 'credential' || c.kind === 'zn_state') return lead + denialOf(c, text, opts).replace(/^zn: /, '');
+    return null;
+  };
+  for (const dir of bases.dirs) {
+    if (dir === cwd) continue;
+    if (overBudget(opts.budget, 1)) return TOO_SLOW_MESSAGE;
+    const c = judge(dir);
+    const deny = c && verdict(c, slash(dir));
+    if (deny) return deny;
+  }
+  if (!bases.unknown || !writes) return null;
+  // The place is unknown: the folders the command names, and every agent folder when it names an agent variable.
+  const mention = String(opts.cmdText || '');
+  const lower = slash(mention).toLowerCase();
+  const byEnv = [...AGENT_ENV].some((n) => mention.toUpperCase().includes(n));
+  const home = path.resolve(opts.home || ctx.home || os.homedir());
+  for (const d of AGENT_CONFIG_SUBDIRS) {
+    const head = d.startsWith('.config/') || d.startsWith('.github/') ? d : d.split('/')[0];
+    if (!byEnv && !lower.includes(head.toLowerCase())) continue;
+    if (overBudget(opts.budget, 1)) return TOO_SLOW_MESSAGE;
+    const c = classifyPath(text, { ...opts, cwd: path.join(home, d), ctx: { ...ctx, cwd: path.join(home, d) }, env });
+    if (c && c.kind === 'agent_config') {
+      return 'zn: this command changes to a folder zn cannot follow and then writes ' + text + ', which could be ' +
+        agentConfigDenial(text, c).replace(/^zn: /, '') + ' Give the full path instead.';
+    }
+  }
+  return null;
 }
 
 /* A .env path the working directory alone does not settle: one built while the command runs ($DIR/.env, $(...)/.env),
