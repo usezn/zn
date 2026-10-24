@@ -1517,12 +1517,16 @@ function recordEvidence(agentId, ev, decision, opts = {}) {
 
 // Reads the event. It stops after POST_STDIN_CAP characters (the text returned is then longer than the cap),
 // so a huge tool output cannot keep the hook reading until its agent's timeout.
+// What has been read so far is kept in stdinText, so the supervisor (armSupervisor) can tell what kind of event was
+// stuck when it answers for a hook whose stdin never ended.
+let stdinText = '';
 function readStdin() {
   return new Promise((resolve, reject) => {
     let raw = '';
     process.stdin.setEncoding('utf8');
     process.stdin.on('data', (c) => {
       raw += c;
+      stdinText = raw;
       if (raw.length > POST_STDIN_CAP) {
         process.stdin.removeAllListeners('data');
         process.stdin.pause();
@@ -1629,14 +1633,14 @@ const OVERSIZE_POST = {
 // An event over POST_STDIN_CAP characters cannot be parsed in time. A post-tool event is answered with the
 // fixed notice in place of the output; anything else is refused like any event zn cannot read. A Stop event
 // is never refused (exit 2 would make the agent go on with its answer): it passes with a warning.
-function oversizeEvent(agentId, adapter, text) {
+function oversizeEvent(agentId, adapter, text, why = 'the event on stdin is too large to check') {
   const spec = OVERSIZE_POST[agentId];
   const keys = topLevelKeys(text);
   if (keys && keys.hook_event_name === 'Stop' && (agentId === 'claude-code' || agentId === 'codex')) {
     process.stderr.write('zn hook: could not check this Stop event, so the last answer was not checked\n');
     return;
   }
-  if (!spec || !keys || !spec.isPost(keys)) return refuseInput(agentId, 'the event on stdin is too large to check');
+  if (!spec || !keys || !spec.isPost(keys)) return refuseInput(agentId, why);
   const event = { event: 'post_tool', hookEvent: 'postToolUse', tool: spec.tool, input: { texts: [] } };
   const output = adapter.respond({ decision: 'allow', updatedOutput: spec.shape(POST_WITHHELD), message: POST_CAP_NOTE, event });
   if (output !== null && output !== undefined) process.stdout.write(JSON.stringify(output));
@@ -1807,15 +1811,107 @@ function ackDone(state) {
   try { fs.writeFileSync(file, 'ok'); } catch (_) { /* no ack: the launcher treats the run as failed */ }
 }
 
+
+/*
+ * The supervisor of the whole hook, for every agent. Most agents let the call run when a hook runs past its timeout
+ * (Gemini CLI, Copilot CLI, Claude Code, Cursor, Codex and ZCode do; Antigravity does not say), and a hook whose stdin
+ * never ends, or whose check never finishes, would get there with no answer from zn. So a timer is armed as the hook
+ * starts, BEFORE stdin is read, SUPERVISOR_MARGIN_S seconds before the agent's own hook timeout, and answers for the event
+ * with the block of its own agent (what a refused or unreadable event gets) and exits. The event is told from what was read:
+ * a post-tool event is answered the way a too-large one is, a Stop event is only warned about (exit 2 would send the
+ * answer back to the model), anything else, including an event not seen at all, is refused. A SIGTERM, SIGHUP or SIGINT
+ * (the agent giving up on the hook) gets the same answer. The vault client waits at most as long as the deadline minus
+ * VAULT_MARGIN_S (ZN_HOOK_VAULT_WAIT_MS), so a slow vault is answered as "not checked" in time, with its own reason.
+ */
+const SUPERVISOR_MARGIN_S = 4;
+const VAULT_MARGIN_S = 3;
+const SUPERVISOR_REASON = 'the check did not finish in time';
+
+function hostTimeoutS(agentId) {
+  let seconds = POST_DEFAULT_TIMEOUT_S;
+  try {
+    const a = require('../agents').getAdapter(agentId);
+    if (a.HOOK_TIMEOUT_S > 0) seconds = a.HOOK_TIMEOUT_S;
+    else if (a.HOOK_TIMEOUT_MS > 0) seconds = a.HOOK_TIMEOUT_MS / 1000;
+  } catch (_) { /* an unknown agent gets the default */ }
+  return seconds;
+}
+
+function supervisorDeadlineMs(agentId) {
+  let ms = Math.max(1000, (hostTimeoutS(agentId) - SUPERVISOR_MARGIN_S) * 1000);
+  if (process.env.ZN_TEST_HOOK_FAULTS === '1') {
+    const t = Number(process.env.ZN_TEST_HOOK_DEADLINE_MS);
+    if (t > 0 && t < ms) ms = t; // tests may only shorten it
+  }
+  return ms;
+}
+
+// True when every byte was written (a closed pipe, or 1000 tries on a full one, is a failure the caller must not hide).
+function writeAllSync(fd, text) {
+  const buf = Buffer.from(String(text));
+  let off = 0;
+  for (let tries = 0; off < buf.length && tries < 1000; tries++) {
+    try { off += fs.writeSync(fd, buf, off); } catch (e) { if (!e || e.code !== 'EAGAIN') return false; }
+  }
+  return off >= buf.length;
+}
+
+// The answer of the supervisor: what the event gets when it cannot be checked in time.
+function supervisorAnswer(agentId, adapter, text) {
+  const keys = topLevelKeys(text) || {};
+  const name = keys.hook_event_name;
+  if ((agentId === 'codex' || agentId === 'zcode') && typeof name === 'string' && codexDenyFor(name, '', agentId)) {
+    process.stdout.write(JSON.stringify(codexDenyFor(name, CODEX_FAIL_REASON, agentId)));
+    process.stderr.write('zn hook: ' + CODEX_FAIL_REASON + '\n');
+    process.exitCode = 2;
+    return;
+  }
+  oversizeEvent(agentId, adapter, text, SUPERVISOR_REASON);
+}
+
+// Returns a function that disarms the supervisor.
+function armSupervisor(agentId, state) {
+  let adapter;
+  try { adapter = require('../agents').getAdapter(agentId); } catch (_) { return () => {}; }
+  const ms = supervisorDeadlineMs(agentId);
+  const hadWait = process.env.ZN_HOOK_VAULT_WAIT_MS;
+  process.env.ZN_HOOK_VAULT_WAIT_MS = String(Math.max(500, ms - VAULT_MARGIN_S * 1000));
+  let done = false;
+  const fire = () => {
+    if (done) return;
+    done = true;
+    // The answer must be out before the process ends: plain synchronous writes, whatever the stream.
+    process.stdout.write = (chunk, enc, cb) => { if (!writeAllSync(1, chunk)) state.stdoutFailed = true; (typeof enc === 'function' ? enc : cb || (() => {}))(); return true; };
+    process.stderr.write = (chunk, enc, cb) => { writeAllSync(2, chunk); (typeof enc === 'function' ? enc : cb || (() => {}))(); return true; };
+    try { supervisorAnswer(agentId, adapter, stdinText); } catch (_) { writeAllSync(2, 'zn hook: ' + SUPERVISOR_REASON + ', so this was blocked.' + String.fromCharCode(10)); process.exitCode = 2; }
+    // Under a launcher the answer counts only with the ack, and a failed write is never a status 0.
+    if (state.stdoutFailed) process.exitCode = failedWriteCode(state); else ackDone(state);
+    process.exit(process.exitCode || 0);
+  };
+  const timer = setTimeout(fire, ms);
+  const signals = ['SIGTERM', 'SIGHUP', 'SIGINT'];
+  for (const s of signals) process.on(s, fire);
+  return () => {
+    done = true;
+    clearTimeout(timer);
+    for (const s of signals) process.removeListener(s, fire);
+    if (hadWait === undefined) delete process.env.ZN_HOOK_VAULT_WAIT_MS; else process.env.ZN_HOOK_VAULT_WAIT_MS = hadWait;
+  };
+}
+
 async function main(args, readText = readStdin) {
   const state = { stopEvent: false, agentId: args[0] };
   watchStdout(state);
+  stdinText = '';
+  const disarmSupervisor = armSupervisor(args[0], state);
   try {
     await handleEvent(args, state, readText);
   } catch (err) {
     if (state.stopEvent) stopFailSafe(err);
     // Anything unexpected fails closed: the call is refused, not passed through.
     else refuseInput(args[0], 'the hook failed (' + ((err && err.message) || String(err)) + ')');
+  } finally {
+    disarmSupervisor();
   }
   await flushStdout(state);
   if (state.stdoutFailed) process.exitCode = failedWriteCode(state);

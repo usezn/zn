@@ -921,7 +921,7 @@ test('launcher deadline: a TERM sent to the launcher removes its private tempora
   assert.equal(files().length, 2, 'the launcher made its two private files');
   child.kill('SIGTERM');
   const r = await closed;
-  assert.ok(r.code === 143 || r.sig === 'SIGTERM', 'the launcher ended on TERM: ' + JSON.stringify(r));
+  assert.ok(r.code === 2, 'the launcher ended on TERM with the block of the event (exit 2): ' + JSON.stringify(r));
   assert.deepEqual(files(), [], 'the temporary files are gone');
 });
 

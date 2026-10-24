@@ -316,6 +316,27 @@ test('posix launcher (with mktemp): a FIFO at the old predictable name changes n
   assert.equal(JSON.parse(r.stdout).hookSpecificOutput.permissionDecision, 'deny');
 });
 
+// ---- with the hook supervisor ----
+
+test('posix launcher + supervisor: a post-tool event the check could not finish gets the supervisor\'s withheld notice, not the launcher\'s warning', { skip: !posix }, async (t) => {
+  const dir = tempDir(t, 'zn-ov-sup-');
+  const file = path.join(dir, 'launcher.sh');
+  fs.writeFileSync(file, launcher.unixScript('claude-code', process.execPath, RUNNER, {}), { mode: 0o755 });
+  const home = tempDir(t, 'zn-ov-home-');
+  const r = await new Promise((resolve) => {
+    const child = spawn('/bin/sh', [file, 'PostToolUse'], { env: { PATH: process.env.PATH, HOME: home, USERPROFILE: home, ZN_STATS: 'off', ZN_TEST_HOOK_FAULTS: '1', ZN_TEST_HOOK_DEADLINE_MS: '1500' }, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    child.stdout.on('data', (b) => { stdout += b; });
+    child.stdin.on('error', () => {});
+    // the event never ends: the supervisor answers for it
+    child.stdin.write('{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_response":"');
+    child.on('close', (code) => { resolve({ status: code, stdout }); });
+  });
+  assert.equal(r.status, 0);
+  assert.doesNotMatch(r.stdout, /NOT protecting this session/, 'the launcher warning is not what came back');
+  assert.ok(JSON.parse(r.stdout.trim()), 'a complete JSON answer');
+});
+
 test('posix launcher: a status 0 without the confirmation (an older zn on the PATH) gets its own message that says how to fix it', { skip: !posix }, async (t) => {
   const file = writeScript(t, 'claude-code', EMPTY_NO_ACK);
   const r = await runLauncher(file, 'PreToolUse', '{}');
