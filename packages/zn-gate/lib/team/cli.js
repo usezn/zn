@@ -162,7 +162,7 @@ async function runLogExport(args) {
       r = exportAuditFile(opts);
     }
     const warn = () => {
-      if (unverified) err('[zn] Warning: the vault is locked, so the audit log chain was NOT verified. Unlock it (`' + znCommand('unlock') + '`) and export again for a verified copy.');
+      if (unverified) err('[zn] Warning: the vault is locked or unreachable, so the audit log chain was NOT verified. Unlock it (`' + znCommand('unlock') + '`) and export again for a verified copy.');
     };
     const file = flag(args, '--out');
     if (file) {

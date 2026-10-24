@@ -382,9 +382,12 @@ function chainStatus(state, opts) {
 
 /* After the daemon itself wrote to the log (or moved the checkpoint), keep a
  * verified result valid for the new state of the file. */
-function advanceChainCache(state, wasVerified, records) {
+function advanceChainCache(state, wasVerified, records, sigBeforeAppend, cachedSig) {
   const secrets = state.secrets;
   if (!wasVerified || secrets.auditTamper) { state.chainCache = null; return; }
+  // Only a file that was still the one that was verified when the append started
+  // may be called verified afterwards; a change in between is not folded in.
+  if (sigBeforeAppend !== cachedSig) { state.chainCache = null; return; }
   state.chainCache = { sig: logSignature(state.paths.auditFile), head: headKey(secrets), result: { ok: true, records } };
 }
 
@@ -398,6 +401,7 @@ function appendChecked(state, event, extra) {
   const file = state.paths.auditFile;
   let verified = false;
   let before = 0;
+  let cachedSig = null;
   if (!secrets.auditTamper) {
     const h = audit.checkHead(file, secrets.auditHead);
     if (!h.ok) recordTamper(state, h.reason, h.found);
@@ -405,12 +409,15 @@ function appendChecked(state, event, extra) {
       const c = chainStatus(state);
       verified = c.ok === true;
       before = c.records || 0;
+      cachedSig = state.chainCache ? state.chainCache.sig : null;
     }
   }
+  if (state.opts && typeof state.opts._afterChainCheck === 'function') state.opts._afterChainCheck(); // test seam
+  const sigBeforeAppend = logSignature(file);
   state.dirtySecrets = true;
   const rec = audit.append(event, Object.assign({ file, key: Buffer.from(secrets.auditKey, 'hex') }, extra));
   if (!secrets.auditTamper) secrets.auditHead = { seq: rec.seq, mac: rec.mac };
-  advanceChainCache(state, verified, before + 1);
+  advanceChainCache(state, verified, before + 1, sigBeforeAppend, cachedSig);
   return rec;
 }
 

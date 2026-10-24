@@ -304,3 +304,12 @@ test('log export fails with exit 1 on a bad --since or an unwritable --out', asy
   assert.strictEqual(r.code, 1);
   assert.match(r.stderr, /^\[zn\] /);
 });
+
+test('log export with a vault that cannot be probed warns that it is locked or unreachable', async () => {
+  fake.isUnlocked = async () => { throw new Error('connect ECONNREFUSED'); };
+  writeAudit([rec(1, new Date().toISOString())]);
+  const r = await capture(() => runLogExport(['--otlp']));
+  assert.strictEqual(r.code, 0);
+  assert.ok(r.stdout.length > 0);
+  assert.match(r.stderr, /the vault is locked or unreachable, so the audit log chain was NOT verified/);
+});

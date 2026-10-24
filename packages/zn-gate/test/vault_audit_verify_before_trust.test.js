@@ -25,8 +25,8 @@ async function harness(t) {
   const created = await keychain.initIdentity({ passphrase: 'correct horse battery staple', workFactor: 10 });
   const identity = created.identity || created;
   const answers = [];
-  const opts = { identity, ttlMs: 60000, idleMs: 60000, confirm: async (req) => { answers.push(req); return true; } };
-  const h = { srv: null, c: null, answers };
+  const h = { srv: null, c: null, answers, hook: null };
+  const opts = { identity, ttlMs: 60000, idleMs: 60000, confirm: async (req) => { answers.push(req); return true; }, _afterChainCheck: () => { if (h.hook) h.hook(); } };
   h.unlock = async () => { h.srv = await daemon.serve(opts); h.c = clientMod.createClient({}); };
   h.lock = async () => { h.c.close(); await h.srv.close(); h.srv = null; h.c = null; };
   h.file = () => store.paths().auditFile;
@@ -131,4 +131,16 @@ test('the cached check notices a change made after it, and stays cheap for a lon
   assert.strictEqual((await h.c.auditRead({})).ok, true);
   h.editMiddle();
   assert.strictEqual((await h.c.auditRead({})).ok, false, 'a stale cache must not hide the edit');
+});
+
+test('an edit that lands between the chain check and the append is not folded into the cache', async (t) => {
+  const h = await harness(t);
+  assert.strictEqual((await h.c.auditRead({})).ok, true); // warm cache
+  // Same-length edit of a middle record, made after the daemon verified the chain and before it appends.
+  h.hook = () => { h.hook = null; h.editMiddle(); };
+  await h.set(91);
+  assert.strictEqual(h.hook, null, 'the seam ran');
+  const r = await h.c.auditRead({});
+  assert.strictEqual(r.ok, false, 'the next read re-verifies and catches the edit: ' + JSON.stringify(r));
+  assert.strictEqual(r.tampered, true);
 });
