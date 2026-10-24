@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-24.24';
+const POLICY_RULES_VERSION = '2026-10-24.25';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -71,6 +71,7 @@ const CREDENTIAL_RES = [
   [/(^|\/)\.kube\/config$/, 'Kubernetes credentials'],
   [/(^|\/)\.config\/gcloud\/(credentials\.db|access_tokens\.db|application_default_credentials\.json)$/, 'Google Cloud credentials'],
   [/(^|\/)\.azure\/(accessTokens\.json|msal_token_cache\.json)$/, 'Azure credentials'],
+  [/(^|\/)\.zcode\/v2\/provider_config\.json$/, 'Zcode model provider credentials'],
 ];
 
 // Credential-file variables. A path given through one of them, or equal to
@@ -94,6 +95,7 @@ const AGENT_CONFIG_RES = [
   [/(^|\/)github-copilot\/policy\.d\/[^/]*$/, 'GitHub Copilot policy hooks'],
   [/(^|\/)\.gemini\/settings\.json$/, 'Gemini CLI settings and hooks'],
   [/(^|\/)gemini-cli\/settings\.json$/, 'Gemini CLI system settings'],
+  [/(^|\/)\.zcode\/(cli\/)?config\.json$/, 'Zcode settings and hooks'],
   [/(^|\/)opencode\.jsonc?$/, 'OpenCode configuration'],
   [/(^|\/)\.(config\/)?opencode\/plugins?\//, 'OpenCode plugins'],
   [/(^|\/)\.opencode\/plugins?\//, 'OpenCode plugins'],
@@ -1214,7 +1216,7 @@ function commandName(words) {
 // (less and tree are not here: tree writes its output with -o, less can run commands.)
 const READ_ONLY_CMDS = new Set(['cat', 'head', 'tail', 'more', 'grep', 'egrep', 'fgrep', 'rg', 'ls', 'stat', 'wc', 'diff',
   'file', 'bat', 'jq', 'type', 'gc', 'get-content', 'select-string', 'findstr', 'dir', 'pwd', 'echo']);
-const AGENT_CONFIG_MENTION_RE = /\.claude\/settings|\.codex\/|\.cursor\/hooks|\.gemini\/config\/hooks|\.copilot\/(?:hooks|settings|config)|\.github\/hooks|\.github\/copilot\/settings|github-copilot\/policy\.d|\.gemini\/settings|gemini-cli\/settings|antigravity-cli\/settings|opencode\.jsonc?|\.opencode\/|\.config\/opencode\//i;
+const AGENT_CONFIG_MENTION_RE = /\.claude\/settings|\.codex\/|\.cursor\/hooks|\.gemini\/config\/hooks|\.copilot\/(?:hooks|settings|config)|\.github\/hooks|\.github\/copilot\/settings|github-copilot\/policy\.d|\.gemini\/settings|gemini-cli\/settings|\.zcode\/(?:cli\/)?config|antigravity-cli\/settings|opencode\.jsonc?|\.opencode\/|\.config\/opencode\//i;
 // .agents is shared with other tools (Codex reads .agents/skills; Antigravity keeps rules and workflows there), so
 // only the folder itself, its hooks file, globs or ".." inside it, and changing into it count as touching the hook.
 // Written as three linear pieces (the one pattern it replaces retried the whole rest of a word at every `.agents/` in it):

@@ -163,7 +163,7 @@
         "packages/zn-gate/package.json"
       ],
       "must": [
-        "while you use Claude Code, Codex CLI, Cursor, OpenCode or Antigravity"
+        "while you use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or Zcode"
       ]
     },
     {
@@ -172,7 +172,7 @@
         "README.md"
       ],
       "must": [
-        "Claude Code, Codex CLI, Cursor, OpenCode, Antigravity"
+        "Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or Zcode"
       ]
     },
     {
@@ -181,7 +181,7 @@
         "docs/compat.md"
       ],
       "must": [
-        "| | Claude Code | Codex CLI | Cursor (IDE) | OpenCode | Antigravity |"
+        "| | Claude Code | Codex CLI | Cursor (IDE) | OpenCode | Antigravity | Zcode |"
       ]
     },
     {

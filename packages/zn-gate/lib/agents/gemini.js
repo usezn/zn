@@ -301,4 +301,5 @@ module.exports = {
   settingsFile,
   hooksFile: settingsFile,
   systemSettingsFile,
+  pathsOf,
 };

@@ -41,7 +41,7 @@ way to read a file. The point is that the agent's normal tools do not hand
 values to the model. The hooks also block the agent's file tools and shell
 commands from writing `~/.zn` and the agents' own hook and plugin settings:
 the files (`.claude/settings*.json`, `.codex/` files, `.cursor/hooks.json`, the
-OpenCode plugin and `opencode.json`, Antigravity's hook and settings files, and Gemini CLI's settings files,
+OpenCode plugin and `opencode.json`, Antigravity's hook and settings files, Zcode's `config.json` and Gemini CLI's settings files,
 listed under "Experimental adapters" below) and the directories that hold them
 (`~/.claude`, `~/.codex`, `~/.cursor`, `~/.config/opencode`, the same in the
 project, and the locations `CODEX_HOME`, `OPENCODE_CONFIG`,

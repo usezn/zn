@@ -237,7 +237,7 @@ const REINSTALL_USER = 'part of zn-gate is missing from this installation, so zn
   'Reinstall it with `npm install -g zn-gate@' + ZN_VERSION + '` and then run `zn hooks install`. ' +
   'To let actions pass unchecked until then, set {"hooks": {"whenUnavailable": "allow"}} in ~/.zn/config.json.';
 /* Claude Code sets CLAUDE_PLUGIN_ROOT only for the hooks of a plugin: there `zn hooks install` does not apply. */
-const AGENT_NAMES = { 'claude-code': 'Claude Code', codex: 'Codex CLI', cursor: 'Cursor', opencode: 'OpenCode', antigravity: 'Antigravity' };
+const AGENT_NAMES = { 'claude-code': 'Claude Code', codex: 'Codex CLI', cursor: 'Cursor', opencode: 'OpenCode', antigravity: 'Antigravity', zcode: 'Zcode' };
 function fixHint(agentId) {
   if (agentId === 'claude-code' && process.env.CLAUDE_PLUGIN_ROOT) {
     return 'If it happens again, ask the user to update or reinstall the zn-gate plugin (`claude plugin update zn-gate@usezn`).';
@@ -1644,15 +1644,17 @@ const CODEX_WATCHDOG_MARGIN_S = 5;
 const CODEX_FAIL_REASON = 'zn-gate could not finish checking this in time, so it was blocked. ' +
   'Try again; if it keeps happening, run zn-gate doctor.';
 
-function codexDenyFor(eventName, reason) {
+function codexDenyFor(eventName, reason, agentId = 'codex') {
+  // Zcode reads a prompt block as {continue: false, reason}; Codex as {decision: "block", reason}.
+  if (agentId === 'zcode' && eventName === 'UserPromptSubmit') return { continue: false, reason };
   if (eventName === 'PreToolUse') return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } };
   if (eventName === 'PermissionRequest') return { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: reason } } };
   if (eventName === 'UserPromptSubmit') return { decision: 'block', reason };
   return null;
 }
 
-function codexDeadlineMs() {
-  let ms = (require('../agents/codex').HOOK_TIMEOUT_S - CODEX_WATCHDOG_MARGIN_S) * 1000;
+function codexDeadlineMs(agentId = 'codex') {
+  let ms = (require('../agents/' + agentId).HOOK_TIMEOUT_S - CODEX_WATCHDOG_MARGIN_S) * 1000;
   if (process.env.ZN_TEST_HOOK_FAULTS === '1') {
     const t = Number(process.env.ZN_TEST_HOOK_DEADLINE_MS);
     if (t > 0 && t < ms) ms = t; // tests may only shorten it
@@ -1661,17 +1663,18 @@ function codexDeadlineMs() {
 }
 
 // Returns a function that disarms the watchdog, or null when the event is not one it covers.
+// Zcode has the same gap as Codex (a hook that times out or crashes is only logged and the call runs), and exit 2 blocks.
 function armCodexFailClosed(agentId, eventName) {
-  if (agentId !== 'codex' || !codexDenyFor(eventName, '')) return null;
+  if ((agentId !== 'codex' && agentId !== 'zcode') || !codexDenyFor(eventName, '', agentId)) return null;
   let done = false;
   const failNow = () => {
     if (done) return;
     done = true;
-    try { fs.writeSync(1, JSON.stringify(codexDenyFor(eventName, CODEX_FAIL_REASON))); } catch (_) { /* nothing more to do */ }
+    try { fs.writeSync(1, JSON.stringify(codexDenyFor(eventName, CODEX_FAIL_REASON, agentId))); } catch (_) { /* nothing more to do */ }
     try { fs.writeSync(2, 'zn hook: ' + CODEX_FAIL_REASON + '\n'); } catch (_) { /* nothing more to do */ }
     process.exit(2);
   };
-  const timer = setTimeout(failNow, codexDeadlineMs());
+  const timer = setTimeout(failNow, codexDeadlineMs(agentId));
   process.on('uncaughtException', failNow);
   process.on('unhandledRejection', failNow);
   return () => {
@@ -1788,8 +1791,8 @@ async function handleEvent(args, state, readText) {
       if (res.decision && res.decision.abandoned) process.stdout.write(JSON.stringify(res.output), () => process.exit(process.exitCode || 0));
       else process.stdout.write(JSON.stringify(res.output));
     }
-    // zn itself failed: Codex also gets its documented block code, with the reason on stderr.
-    if (disarm && agentId === 'codex' && res.decision && res.decision.failClosed) {
+    // zn itself failed: Codex and Zcode also get their documented block code (2), with the reason on stderr.
+    if (disarm && (agentId === 'codex' || agentId === 'zcode') && res.decision && res.decision.failClosed) {
       process.stderr.write('zn hook: ' + (res.decision.message || CODEX_FAIL_REASON) + '\n');
       process.exitCode = 2;
     }

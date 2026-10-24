@@ -129,6 +129,13 @@ const AGENTS = [
     file: (a, o) => a.settingsFile(o), project: (dir) => path.join(dir, '.gemini', 'settings.json'),
     request: (dir, file) => ({ hook_event_name: 'BeforeTool', session_id: 'zn-check', cwd: dir, tool_name: 'read_file', tool_input: { file_path: file } }),
   },
+  {
+    // Zcode only runs the hooks of the user's config.json; the project path is where a project install would have been.
+    id: 'zcode', name: 'Zcode', event: 'PreToolUse', tool: 'Read',
+    fix: 'run `zn hooks install zcode` in your own terminal',
+    file: (a, o) => a.configFile(o), project: (dir) => path.join(dir, '.zcode', 'config.json'),
+    request: (dir, file) => ({ hook_event_name: 'PreToolUse', session_id: 'zn-check', cwd: dir, tool_name: 'Read', tool_input: { file_path: file } }),
+  },
 ];
 
 function readJson(file) {
@@ -152,6 +159,9 @@ function hookEntries(tree, agentId, opts = {}) {
       if (v.enabled !== false) sets.push({ hooks: v, name, disabled: false });
       else if (opts.withDisabled) sets.push({ hooks: v, name, disabled: true });
     }
+  } else if (agentId === 'zcode') {
+    // Zcode keeps events under hooks.events, and a hook is a "process" (program + args) or a "command" (shell string).
+    sets.push({ hooks: tree && tree.hooks && typeof tree.hooks.events === 'object' ? tree.hooks.events : {}, disabled: false });
   } else {
     sets.push({ hooks: tree && typeof tree.hooks === 'object' ? tree.hooks : {}, disabled: false });
   }
@@ -165,7 +175,8 @@ function hookEntries(tree, agentId, opts = {}) {
         // GitHub Copilot CLI keeps the shell command in "bash" (and "powershell"), next to an optional matcher.
         if (agentId === 'copilot' && typeof g.bash === 'string') out.push({ event, matcher: g.matcher, command: g.bash });
         for (const h of Array.isArray(g.hooks) ? g.hooks : []) {
-          if (h && typeof h.command === 'string') out.push({ event, matcher: g.matcher, command: h.command, onFailure: h.onFailure, async: h.async, ...extra });
+          const text = agentId === 'zcode' ? require('./agents/zcode').commandText(h) : h && typeof h.command === 'string' ? h.command : '';
+          if (text) out.push({ event, matcher: g.matcher, command: text, onFailure: h.onFailure, async: h.async, ...extra });
         }
       }
     }
@@ -650,6 +661,16 @@ async function checkAgent(spec, ctx) {
       res.fix = 'change that Gemini CLI setting as it says, then run `zn-gate check` again';
     }
   }
+  if (spec.id === 'zcode' && installed && !res.problem) {
+    // Zcode runs no hook unless hooks.enabled is true, and skips an entry that has "enabled": false.
+    let w = { problems: [], notes: [], fix: '' };
+    try { w = adapter.configWarnings({ file: userFile }); } catch (_) { /* nothing to add */ }
+    res.notes.push(...w.notes.map((x) => oneLine(x, 300)));
+    if (w.problems.length) {
+      res.problem = bare(oneLine(w.problems[0], 300));
+      res.fix = w.fix;
+    }
+  }
   if (spec.id === 'codex' && installed && !res.problem) {
     // Codex runs every PreToolUse hook at the same time, each with the original call: another tool's hook can
     // change a call after zn checked it, or answer an approval prompt. zn cannot see what that hook does.
@@ -841,7 +862,7 @@ function report({ results, removed, warnings }, write) {
   const init = 'run `npx -y zn-gate init` in your own terminal: it shows each step and asks before it runs one.\n';
   // Nothing to set up only when every agent is missing from the machine (a project-only setup counts as found).
   if (!setUp && !results.some((r) => r.found !== false || r.state !== 'not-set-up')) {
-    w('No supported coding agent was found on this machine (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity), so there is nothing to check.\n');
+    w('No supported coding agent was found on this machine (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, Zcode), so there is nothing to check.\n');
     w('Install one, then run `npx -y zn-gate init`. Other editors: https://usezn.com/docs/install\n\n');
   } else if (!setUp) {
     w('zn is not set up for your agents yet, so nothing protects your secrets. To set it up, ' + init);
