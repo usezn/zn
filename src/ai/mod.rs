@@ -106,7 +106,7 @@ fn load_ref_key(dir: &std::path::Path) -> std::io::Result<([u8; 32], bool)> {
         rand::rng().fill_bytes(&mut key);
         key
     };
-    std::fs::create_dir_all(dir)?;
+    create_key_dir(dir)?;
     check_key_dir(dir)?;
     let existing = match read_private_file(&path) {
         Ok(bytes) => bytes,
@@ -204,14 +204,56 @@ fn replace_bad_key_locked(path: &std::path::Path) -> std::io::Result<([u8; 32], 
 /// A lock file older than this belongs to a process that is gone.
 const REF_KEY_LOCK_STALE: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// Create the folder of `ref.key` (and missing parents), owner-only on Unix.
+fn create_key_dir(dir: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)
+    }
+    #[cfg(not(unix))]
+    std::fs::create_dir_all(dir)
+}
+
+/// What to do with the folder of `ref.key`.
+#[cfg(unix)]
+#[derive(Debug, PartialEq, Eq)]
+enum KeyDirVerdict {
+    Fine,
+    /// Ours, but group or others can write: tighten it to 0700.
+    Tighten,
+    Refuse(std::io::ErrorKind, &'static str),
+}
+
+#[cfg(unix)]
+fn judge_key_dir(is_symlink: bool, is_dir: bool, ours: bool, mode: u32) -> KeyDirVerdict {
+    use std::io::ErrorKind;
+    if is_symlink {
+        KeyDirVerdict::Refuse(ErrorKind::InvalidInput, "is a symbolic link")
+    } else if !is_dir {
+        KeyDirVerdict::Refuse(ErrorKind::InvalidInput, "is not a folder")
+    } else if !ours {
+        KeyDirVerdict::Refuse(ErrorKind::PermissionDenied, "belongs to another user")
+    } else if mode & 0o022 != 0 {
+        KeyDirVerdict::Tighten
+    } else {
+        KeyDirVerdict::Fine
+    }
+}
+
 /// The folder that holds `ref.key` must be a real folder (not a link) owned by
-/// the effective user that nobody else can write to; otherwise another user
-/// could swap the key file or plant a lock. Fails closed.
+/// the effective user; otherwise another user could swap the key file or plant
+/// a lock, so it is refused (fail closed). A folder of ours that group or others
+/// can write to (the default on distros with a 002 umask) is tightened to 0700
+/// with a warning; if that fails it is refused too.
 fn check_key_dir(dir: &std::path::Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
-        use std::io::{Error, ErrorKind};
-        use std::os::unix::fs::MetadataExt;
+        use std::io::Error;
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
         let refuse = |kind, why: &str| {
             Error::new(
                 kind,
@@ -222,24 +264,29 @@ fn check_key_dir(dir: &std::path::Path) -> std::io::Result<()> {
             )
         };
         let meta = std::fs::symlink_metadata(dir)?;
-        if meta.file_type().is_symlink() {
-            return Err(refuse(ErrorKind::InvalidInput, "is a symbolic link"));
-        }
-        if !meta.is_dir() {
-            return Err(refuse(ErrorKind::InvalidInput, "is not a folder"));
-        }
         // SAFETY: geteuid has no preconditions and cannot fail.
-        if meta.uid() != unsafe { libc::geteuid() } {
-            return Err(refuse(
-                ErrorKind::PermissionDenied,
-                "belongs to another user",
-            ));
-        }
-        if meta.mode() & 0o022 != 0 {
-            return Err(refuse(
-                ErrorKind::PermissionDenied,
-                "is writable by group or others",
-            ));
+        let ours = meta.uid() == unsafe { libc::geteuid() };
+        match judge_key_dir(
+            meta.file_type().is_symlink(),
+            meta.is_dir(),
+            ours,
+            meta.mode(),
+        ) {
+            KeyDirVerdict::Fine => {}
+            KeyDirVerdict::Refuse(kind, why) => return Err(refuse(kind, why)),
+            KeyDirVerdict::Tighten => {
+                let mode = std::fs::Permissions::from_mode(0o700);
+                if let Err(e) = std::fs::set_permissions(dir, mode) {
+                    return Err(refuse(
+                        e.kind(),
+                        "is writable by group or others and could not be tightened",
+                    ));
+                }
+                tracing::warn!(
+                    "the folder {} was writable by group or others; its permissions were changed to 0700 to protect ref.key",
+                    dir.display()
+                );
+            }
         }
     }
     // Windows: the folder ACL check belongs to the private_file module.
@@ -534,21 +581,61 @@ mod content_ref_tests {
 
     #[cfg(unix)]
     #[test]
-    fn a_key_folder_that_group_or_others_can_write_is_refused() {
+    fn a_key_folder_that_group_or_others_can_write_is_tightened() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let data = dir.path().join("data");
         std::fs::create_dir(&data).unwrap();
         for mode in [0o775, 0o757] {
             std::fs::set_permissions(&data, std::fs::Permissions::from_mode(mode)).unwrap();
-            assert!(
-                load_or_create_ref_key(&data).is_err(),
-                "folder mode {mode:o} must be refused"
-            );
-            assert!(!data.join("ref.key").exists(), "no key is created there");
+            let key = load_or_create_ref_key(&data).unwrap();
+            let after = std::fs::metadata(&data).unwrap().permissions().mode() & 0o7777;
+            assert_eq!(after, 0o700, "folder mode {mode:o} must be tightened");
+            assert_eq!(std::fs::read(data.join("ref.key")).unwrap(), key.to_vec());
+            std::fs::remove_file(data.join("ref.key")).unwrap();
         }
-        std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_new_key_folder_is_created_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("a").join("data");
         load_or_create_ref_key(&data).unwrap();
+        let mode = std::fs::metadata(&data).unwrap().permissions().mode() & 0o7777;
+        assert_eq!(mode, 0o700);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_key_folder_decision_refuses_links_files_and_other_owners() {
+        use std::io::ErrorKind::{InvalidInput, PermissionDenied};
+        assert_eq!(
+            judge_key_dir(true, true, true, 0o700),
+            KeyDirVerdict::Refuse(InvalidInput, "is a symbolic link")
+        );
+        assert_eq!(
+            judge_key_dir(false, false, true, 0o700),
+            KeyDirVerdict::Refuse(InvalidInput, "is not a folder")
+        );
+        assert_eq!(
+            judge_key_dir(false, true, false, 0o700),
+            KeyDirVerdict::Refuse(PermissionDenied, "belongs to another user")
+        );
+        assert_eq!(
+            judge_key_dir(false, true, false, 0o777),
+            KeyDirVerdict::Refuse(PermissionDenied, "belongs to another user")
+        );
+        assert_eq!(
+            judge_key_dir(false, true, true, 0o775),
+            KeyDirVerdict::Tighten
+        );
+        assert_eq!(
+            judge_key_dir(false, true, true, 0o757),
+            KeyDirVerdict::Tighten
+        );
+        assert_eq!(judge_key_dir(false, true, true, 0o755), KeyDirVerdict::Fine);
     }
 
     #[cfg(unix)]
