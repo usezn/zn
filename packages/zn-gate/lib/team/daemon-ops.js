@@ -285,7 +285,23 @@ function makeTeamOps(ctx) {
       const api = createApi({ base, fetchImpl, userAgent: 'zn-gate/' + VERSION });
       // Which organization the token is for, shown in the dialog before anything is shared.
       // The preview does not use up the token; an unusable token stops here, without a dialog.
-      // Only against the zn service: another server gets the token only after the user confirms.
+      // Only against the zn service, and only after the user agreed to the lookup above; another
+      // server gets the token only after the user confirms the join.
+      if (base === DEFAULT_API) {
+        // The token leaves this machine only after the user agrees: ask first, on the vault's own
+        // channel (it refuses when there is none), and only then look the organization up.
+        await confirmOutOfBand({
+          kind: 'team',
+          title: 'look up the organization for this join token?',
+          warnings: [],
+          fields: [
+            ['Server', host],
+            ['Join token', 'ends in ' + joinToken.slice(-6) + ' (check it against the one your administrator sent you)'],
+            ['Sends', 'the join token, to ' + host + ', to find out which organization it is for. This does not use up the token and does not connect this machine.'],
+          ],
+          footer: 'If you did not just run `zn team join` yourself with a token from your administrator, choose Deny.',
+        }, { mode: 'set', reason: 'team_join_lookup' });
+      }
       const pv = base === DEFAULT_API ? await api.preview(joinToken) : { ok: false, reason: 'unavailable', detail: 'not checked on a server other than api.usezn.com' };
       if (!pv.ok && (pv.reason === 'invalid' || pv.reason === 'no_subscription')) {
         writeAudit({ mode: 'set', decision: 'deny', reason: 'team_join_failed' });
