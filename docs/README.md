@@ -26,6 +26,7 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 | [Protect MCP servers](shield.md) | Wrap an MCP server with the shield, shadow mode and tool pins | Everyone who uses MCP servers |
 | [Reach](reach.md) | What the coding agents on your machine can reach (secrets by name, credential files, MCP servers) | Everyone |
 | [Report](report.md) | A weekly summary of what zn-gate blocked and hid | Everyone |
+| [Examples: stats and report](examples/stats-and-report.md) | Worked examples of `stats` and `report` with sample output | Everyone |
 | [Audit](audit.md) | Review a repository's agent configuration before you open it | Developers, reviewers |
 | [Connect](connect.md) | Turn on the optional cloud check, and turn it off | Anyone who opts in |
 | [Agent compatibility](compat.md) | What the scrubber can do in each agent | Everyone choosing or configuring an agent |
