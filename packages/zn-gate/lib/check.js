@@ -474,6 +474,19 @@ function cliHooks(spec, ctx, userFile, given) {
   return out;
 }
 
+/*
+ * Whether this folder's hooks file holds zn's hook as a bare `zn hook <agent>` (written by zn-gate before 1.14, or by hand):
+ * when `zn` or Node.js cannot start, the agent runs the call unchecked. The guarded form that `zn hooks install <agent> --project`
+ * writes now is not bare. `text` is the project file, read with a size limit.
+ */
+function bareProjectHook(spec, text) {
+  if (!text || spec.id === 'opencode' || spec.id === 'zcode') return false;
+  try {
+    const tree = JSON.parse(String(text).replace(/^\uFEFF/, ''));
+    return hookEntries(tree, spec.id).some((e) => { const c = parseCommand(e.command, spec.id); return Boolean(c && c.onPath && !c.guarded); });
+  } catch (_) { return false; }
+}
+
 /* Runs an installed hook with the two requests: '' when it blocks .env and allows the ordinary file, else the problem. */
 function runLive(spec, ctx, live) {
   const a = spawnHook(live.file, live.args, spec.request(ctx.dir, ctx.envFile), live.env, ctx.dir);
@@ -700,17 +713,29 @@ async function checkAgent(spec, ctx) {
   }
   if (spec.id === 'opencode' && installed) res.notes.push('zn\'s rules were checked; its plugin runs inside OpenCode, so it was not started here');
 
+  // The project file can be anyone's repository: read only a regular file, and only so much of it.
+  const projFile = spec.project(ctx.cwd);
+  const projText = path.resolve(projFile) !== path.resolve(userFile) ? require('./audit')._internal.readBounded(projFile, 256 * 1024, false).text : null;
+  const projBare = bareProjectHook(spec, projText);
+  const BARE_FIX = 'run `zn hooks install ' + spec.id + ' --project` again in that project (it writes the guarded command)';
+  if (installed && projBare) res.notes.push('the hook in ' + projFile + ' is a bare `zn hook ' + spec.id + '`: where zn or Node.js cannot start, ' + spec.name + ' runs the call unchecked there; ' + BARE_FIX);
+
   if (!installed) {
     // Whether the agent is on this machine at all, so the report offers no setup for an agent that is not there.
     try { res.found = Boolean(adapter.detect({ home: ctx.home, env: ctx.env })); } catch (err) { res.found = true; }
     // `zn hooks install` needs zn-gate installed for the user: run from npx alone, there is no `zn` command yet.
     if (spec.id !== 'claude-code' && !znOnPath(ctx.env)) res.fix = 'run `npm install -g zn-gate`, then `zn hooks install ' + spec.id + '`, in your own terminal';
-    const proj = spec.project(ctx.cwd);
-    // The project folder can be anyone's repository: read only a regular file, and only so much of it.
-    const text = path.resolve(proj) !== path.resolve(userFile) ? require('./audit')._internal.readBounded(proj, 256 * 1024, false).text : null;
+    const proj = projFile;
+    const text = projText;
     if (text && /zn|runner\.js/.test(text)) {
       res.state = 'project-only';
       res.where = proj;
+      if (projBare) {
+        // A bare `zn hook` fails open when zn or Node.js is gone: the project is not protected.
+        res.state = 'not-protected';
+        res.problem = 'the hook in ' + proj + ' is a bare `zn hook ' + spec.id + '`, so where zn or Node.js cannot start, ' + spec.name + ' runs the call unchecked';
+        res.fix = BARE_FIX;
+      }
     }
     return res;
   }

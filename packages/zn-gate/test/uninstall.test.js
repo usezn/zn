@@ -72,7 +72,7 @@ function vault(m) {
 
 const sha = (f) => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
 const settings = (m) => path.join(m.home, '.claude', 'settings.json');
-const znHooksIn = (file) => /runner\.js|zn hook/.test(fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '');
+const znHooksIn = (file) => /runner\.js|zn hook|command -v zn/.test(fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '');
 
 test('uninstall: the plan lists the plugin, hooks per agent, project hooks and wrapped MCP, with paths', async (t) => {
   const m = machine(t);

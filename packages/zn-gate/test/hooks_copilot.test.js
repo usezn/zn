@@ -215,7 +215,12 @@ test('install (project): own file with version 1, preToolUse and postToolUse; id
   const data = readJson(file);
   assert.equal(data.version, 1);
   assert.deepEqual(Object.keys(data.hooks).sort(), ['postToolUse', 'preToolUse']);
-  assert.deepEqual(data.hooks.preToolUse, [{ type: 'command', bash: 'zn hook copilot', powershell: 'zn hook copilot', timeoutSec: 15 }]);
+  assert.equal(data.hooks.preToolUse.length, 1);
+  const h = data.hooks.preToolUse[0];
+  assert.deepEqual(Object.keys(h), ['type', 'bash', 'powershell', 'timeoutSec']);
+  assert.ok(require('../lib/agents/launcher').isProjectGuard(h.bash, 'copilot'));
+  assert.ok(require('../lib/agents/launcher').isProjectWindowsScript(require('../lib/shell-quote').windowsCommandScript(h.powershell), 'copilot'));
+  assert.equal(h.timeoutSec, 15);
   assert.ok(rep.warnings.some((w) => /needs zn-gate installed|zn-gate installed/.test(w)));
   cop.install({ scope: 'project', projectDir: dir });
   assert.equal(readJson(file).hooks.preToolUse.length, 1);
