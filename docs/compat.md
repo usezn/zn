@@ -329,12 +329,17 @@ The hook command runs `zn` from your PATH inside a small start guard
 Node.js cannot start, for example on a teammate's machine that has not
 installed zn-gate, the guard answers with the agent's own block instead of
 letting the call run: exit code 2 with the reason for Claude Code, Codex,
-Cursor and Gemini CLI, and a deny answer for Copilot CLI and Antigravity. On
-events that cannot block (after a tool ran) it only warns. OpenCode's project
+Cursor and Gemini CLI (on Windows, Cursor and Gemini CLI get a deny answer on
+stdout and exit code 0 instead), and a deny answer for Copilot CLI, Antigravity
+and the Codex permission request. On events that cannot block (after a tool
+ran) it only warns. OpenCode's project
 plugin blocks by itself when `zn` cannot start. ZCode does not run project
 hooks. A project file written by zn-gate 1.13 or earlier holds a bare
 `zn hook <agent>` that fails open: run `zn hooks install <agent> --project`
-again, and `zn-gate check` reports the bare form as NOT protected.
+again. `zn-gate check` reports the bare form as NOT protected when the agent
+is not set up for your user; when it is, the bare form shows as a note under
+OK. A guard that looks like zn's but differs from the one zn writes is reported
+as modified in the same way.
 
 | Agent | File |
 |---|---|

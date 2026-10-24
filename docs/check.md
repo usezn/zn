@@ -77,7 +77,15 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
   the hook in <file> is a bare `zn hook <agent>`, so where zn or Node.js cannot start, <Agent> runs the call unchecked
   ```
 
-  The hooks file of the project you are in (written by an older zn-gate, or by hand) runs `zn hook <agent>` with no start guard. Where `zn` or Node.js cannot start, the command fails with exit code 127 and the agent runs the call with no check. Run `zn hooks install <agent> --project` again in that project: it writes the same command inside a guard that blocks instead.
+  The hooks file of the project you are in (written by an older zn-gate, or by hand) runs `zn hook <agent>` with no start guard. Where `zn` or Node.js cannot start, the command fails with exit code 127 and the agent runs the call with no check. Run `zn hooks install <agent> --project` again in that project: it writes the same command inside a guard that blocks instead. When the agent is set up for your user, this shows as a note under **OK**; when it is not, the line is **NOT protected**.
+
+- **A project hook was modified.**
+
+  ```text
+  the zn hook in <file> was modified (it is not the guard zn writes); run `zn hooks install <agent> --project` again in that project
+  ```
+
+  The hook in the project file looks like zn's start guard but is not exactly the command zn writes (someone edited it). `zn-gate check` never runs a project file, so it cannot tell what the edit does. Run `zn hooks install <agent> --project` again: it replaces the command with the exact guard. It is a note under **OK** when the agent is set up for your user, and **NOT protected** otherwise.
 
 - **The launcher script of the hook is gone.**
 
