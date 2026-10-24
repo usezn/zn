@@ -14,6 +14,7 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 | [Upgrading](upgrading.md) | What to do when you update zn-gate | Everyone |
 | [Remove zn-gate](uninstall.md) | Uninstall in one step or piece by piece, run from your own terminal | Everyone |
 | [Command line reference](cli.md) | Every command, option and exit code | Everyone |
+| [Command cheat sheet](commands-cheatsheet.md) | Every command, its main flags and one example, on one page | Everyone |
 
 ## Everyday use
 
