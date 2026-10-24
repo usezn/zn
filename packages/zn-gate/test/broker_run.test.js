@@ -11,7 +11,7 @@ const { createMasker, variantsOf } = require('../lib/broker/mask');
 const { runBroker, parseRunArgs } = require('../lib/broker/run');
 const { createFakeVault } = require('./helpers/fake_vault');
 const { generateAll } = require('./fixtures/fake_secrets');
-const { tempDir } = require('./helpers/tmp');
+const { tempDir, setTempDir } = require('./helpers/tmp');
 
 const FAKE = generateAll(777, { perType: 1, piiPerType: 1 });
 const PG = FAKE.secrets.find((s) => s.type === 'postgres_connection_string').sensitive;
@@ -44,8 +44,11 @@ test('marker names: valid, reserved and invalid', () => {
 });
 
 test('a program inside the project is refused, also when the project is reached through a symlink', { skip: process.platform === 'win32' }, () => {
-  // Under the package, not the temp dir: programs in the temp dir are refused anyway.
+  // Under the package. The temp dir is pointed at a folder that holds none of
+  // this fixture: a program in the temp dir is refused first, so without this the
+  // result would depend on where the checkout lives (e.g. under TMPDIR).
   const base = fs.mkdtempSync(path.join(__dirname, 'zn-exe-'));
+  const restoreTmp = setTempDir(path.join(base, 'no-temp-here'));
   try {
     const real = path.join(base, 'real');
     const link = path.join(base, 'link');
@@ -64,6 +67,7 @@ test('a program inside the project is refused, also when the project is reached 
     assert.match(markers.checkResolvedExecutable(path.join(real, 'bin', 'alias'), real), /inside the project/);
     assert.equal(markers.checkResolvedExecutable(other, link), null);
   } finally {
+    restoreTmp();
     fs.rmSync(base, { recursive: true, force: true });
   }
 });

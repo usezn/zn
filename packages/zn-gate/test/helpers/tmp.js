@@ -17,4 +17,19 @@ function tempDir(t, prefix, base = os.tmpdir()) {
   return dir;
 }
 
-module.exports = { tempDir, removeDir };
+// Points os.tmpdir() at `dir` until the returned function restores the old values.
+// Lets a test say which folder is the temp dir, so its result does not depend on
+// where the checkout lives (a checkout under TMPDIR is a common setup).
+function setTempDir(dir) {
+  const keys = ['TMPDIR', 'TMP', 'TEMP'];
+  const saved = keys.map((k) => [k, process.env[k]]);
+  for (const k of keys) process.env[k] = dir;
+  return () => {
+    for (const [k, v] of saved) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  };
+}
+
+module.exports = { tempDir, removeDir, setTempDir };
