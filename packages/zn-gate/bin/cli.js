@@ -273,6 +273,8 @@ OPTIONS:
                       512-token windows, up to 20) or off (first 512 tokens only)
   --all, --code       Include source code files in security scan
   --include <exts>    Custom extensions to scan (e.g. .rst,.xml)
+  --allow-partial     scan: exit 0 even when some files or folders were not read
+                      (they are still listed). Reading no file at all stays an error (exit 3)
   --exclude <dirs>    Additional directories to exclude (e.g. fixtures,legacy)
   --include-home      Also check your own MCP configs (Claude Desktop, Claude Code, Cursor, Codex,
                       Gemini, Antigravity, OpenCode, Amazon Q) for passwords and keys written in plain text
@@ -527,13 +529,17 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
       for (const entry of entries) {
         walk(path.join(current, entry));
       }
-    } else if (stat.isFile()) {
+    } else {
       const ext = path.extname(current).toLowerCase();
       const base = path.basename(current).toLowerCase();
-      let isCandidate = SCANNABLE_EXTS.has(ext) || base.startsWith('.env') || KEY_FILE_NAMES.has(path.basename(current));
-      if (isCandidate && stat.size < 2 * 1024 * 1024) {
+      // The file you name is read whatever its extension.
+      const isCandidate = isRoot || SCANNABLE_EXTS.has(ext) || base.startsWith('.env') || KEY_FILE_NAMES.has(path.basename(current));
+      if (!isCandidate) return;
+      if (!stat.isFile()) {
+        skipped.push({ file: current, reason: 'not a regular file' });
+      } else if (stat.size < 2 * 1024 * 1024) {
         filesToScan.push(current);
-      } else if (isCandidate) {
+      } else {
         skipped.push({ file: current, reason: '2 MiB or larger' });
       }
     }
@@ -697,9 +703,19 @@ Files   : ${files.length} file(s) queued for audit\n
 
   const totalSecrets = findings.filter((f) => f.type === 'secret_leak').length;
   const totalThreats = totalFindings - totalSecrets;
-  // An empty result is not a clean one: say so. The exit code stays 0 (a folder
-  // with nothing to scan is not an error for CI), but the output is explicit.
+  // An empty or partial result is not a clean one. Findings exit 1; otherwise a
+  // scan that read no file, or skipped a file or folder it should have read,
+  // exits 3, unless --allow-partial accepts the skipped ones.
   const nothingScanned = `No files were scanned in ${targetPath || '.'}`;
+  const unreadDirs = files.skippedDirs.filter((d) => d.reason === 'cannot be read').length;
+  const incomplete = files.skipped.length + unreadDirs > 0;
+  const incompleteNote = `${files.skipped.length} file(s) and ${unreadDirs} folder(s) were not read`;
+  const coverageExit = () => {
+    if (totalFindings > 0) return 1;
+    if (files.length - notRead === 0) return 3;
+    if (incomplete && !options.allowPartial) return 3;
+    return 0;
+  };
 
   if (format === 'github') {
     // CI logs are public: rule, reason and location only, never the line.
@@ -717,9 +733,10 @@ Files   : ${files.length} file(s) queued for audit\n
       process.stdout.write(`::notice file=${ghProperty(displayPath(s.dir, homeFiles))},title=Directory not scanned::${ghMessage(s.reason)}\n`);
     }
     if (files.length - notRead === 0) process.stdout.write(`::warning title=Nothing scanned::${ghMessage(nothingScanned)}\n`);
+    if (totalFindings === 0 && incomplete) process.stdout.write(`::warning title=Incomplete scan::${ghMessage(incompleteNote + (options.allowPartial ? ' (accepted with --allow-partial)' : ': exit code 3, use --allow-partial to accept'))}\n`);
     const dirNote = files.skippedDirs.length ? ` and ${files.skippedDirs.length} director${files.skippedDirs.length === 1 ? 'y' : 'ies'} skipped` : '';
     process.stdout.write(`\n[zn-gate] Scanned ${files.length - notRead} files (${files.skipped.length} not scanned${dirNote}). Found ${totalSecrets} secrets and ${totalThreats} security threats.\n`);
-    if (totalFindings > 0) process.exitCode = 1;
+    process.exitCode = coverageExit();
     return;
   }
   if (format === 'json') {
@@ -730,6 +747,8 @@ Files   : ${files.length} file(s) queued for audit\n
       // Every finding, secrets included (as before); total_secrets counts the secrets alone.
       total_threats: totalFindings,
       total_secrets: totalSecrets,
+      // true when a file or folder that should have been read was not (exit 3 unless --allow-partial).
+      incomplete,
       threats: findings.map((f) => {
         const out = { file: f.file, line: f.line, rule: f.rule, reason: f.reason, type: f.type, content: f.sample };
         if (f.next_step) out.next_step = f.next_step;
@@ -739,7 +758,7 @@ Files   : ${files.length} file(s) queued for audit\n
       skipped_dirs: files.skippedDirs.map((s) => ({ dir: displayPath(s.dir, homeFiles), reason: s.reason })),
       ...(files.length - notRead === 0 ? { warning: nothingScanned } : {}),
     }, null, 2) + '\n');
-    if (totalFindings > 0) process.exitCode = 1;
+    process.exitCode = coverageExit();
     return;
   }
 
@@ -762,9 +781,10 @@ Files   : ${files.length} file(s) queued for audit\n
   let status = files.length - notRead === 0 ? 'No files were read: this is not a clean result' : 'Clean workspace';
   if (totalThreats) status = 'Review and neutralize detected vectors';
   else if (totalSecrets) status = 'Move the secrets out of these files (see "Next" for each one)';
+  else if (incomplete && files.length - notRead > 0) status = options.allowPartial ? `Partial coverage accepted with --allow-partial (${incompleteNote})` : `Incomplete: ${incompleteNote}. Exit code 3; use --allow-partial to accept`;
   process.stdout.write(`
 ${ruleLine(process.env, 77)}
-Audit Result : ${totalFindings === 0 ? (files.length - notRead === 0 ? col.yellow('NOTHING SCANNED') : col.green('PASSED - NO THREATS DETECTED')) : col.red(`FAILED - ${resultParts.join(', ')}`)}
+Audit Result : ${totalFindings === 0 ? (files.length - notRead === 0 ? col.yellow('NOTHING SCANNED') : incomplete ? col.yellow(options.allowPartial ? 'PASSED - NO THREATS DETECTED (PARTIAL COVERAGE)' : 'INCOMPLETE - SOME FILES WERE NOT READ') : col.green('PASSED - NO THREATS DETECTED')) : col.red(`FAILED - ${resultParts.join(', ')}`)}
 Files Scanned: ${files.length - notRead}
 Files Skipped: ${files.skipped.length}${files.skipped.length ? ' (not read: see below)' : ''}
 Status       : ${status}
@@ -785,7 +805,7 @@ ${ruleLine(process.env, 77)}\n
 
   // exitCode, not process.exit(): a large report written to a pipe must be
   // flushed completely before the process ends.
-  if (totalFindings > 0) process.exitCode = 1;
+  process.exitCode = coverageExit();
 }
 
 // Secrets broker and agent hooks. Dispatched before the global option parsing
@@ -935,6 +955,7 @@ async function main() {
     tail: 20,
     includeCode: args.includes('--code') || args.includes('--all'),
     includeHome: args.includes('--include-home'),
+    allowPartial: args.includes('--allow-partial'),
     include: null,
     exclude: null,
   };

@@ -243,7 +243,7 @@ class TestScanMcpConfigs(_Base):
             env = {"HOME": home, "USERPROFILE": home, "CODEX_HOME": "", "XDG_CONFIG_HOME": "", "APPDATA": ""}
             with mock.patch.dict(os.environ, env), mock.patch("pathlib.Path.home", return_value=Path(home)):
                 code, _, _ = self._json()
-                self.assertEqual(code, 0)
+                self.assertEqual(code, 3)  # no file was read
                 code, data, out = self._json(include_home=True)
             self.assertEqual(code, 1)
             self._no_value(out)

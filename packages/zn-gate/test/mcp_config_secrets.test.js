@@ -233,7 +233,7 @@ test('--include-home also checks the user own MCP configs, shown as ~/', (t) => 
   write(home, { '.cursor/mcp.json': MCP_JSON, '.codex/config.toml': expand('[mcp_servers.x.env]\nBRAVE_API_KEY = "{V}"\n') });
   const env = { HOME: home, USERPROFILE: home, CODEX_HOME: '', XDG_CONFIG_HOME: '', APPDATA: '' };
   const without = scanJson(empty, [], env);
-  assert.equal(without.status, 0);
+  assert.equal(without.status, 3); // no file was read
   const withHome = scanJson(empty, ['--include-home'], env);
   assert.equal(withHome.status, 1);
   noValue(withHome.out, 'home');

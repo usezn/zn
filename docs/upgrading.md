@@ -110,6 +110,7 @@ For the full list of changes, see the [changelog](../CHANGELOG.md).
 
 | Version | Date | What to do |
 |---|---|---|
+| 1.14.0 | 2026-10-27 | A CI job or pre-commit hook that runs `zn-gate scan` can now exit `3` when a file was skipped (for example a JSON or Markdown file of 2 MiB or more) or when no file was read. Pass `--allow-partial` to accept skipped files (an empty scan still exits `3`); in the GitHub Action set `allow-partial: true`, and in pre-commit add `args: [--allow-partial]` to the `zn-gate-scan` hook. |
 | 1.13.0 | 2026-10-19 | If you installed Claude Code hooks with `zn hooks install claude-code`, run it again to add the hook that checks what a typed skill or command expands into (`zn-gate check` tells you; the plugin has it already). On a Node.js older than 20.12, `zn-gate init` sets up hooks instead of the plugin; if you have the plugin there, `check` gives the way out. In a GitHub workflow that uses the Action without `version`, set `version` to choose what runs: the 1.12.0 Action defaulted to 1.10.0. |
 | 1.12.0 | 2026-10-18 | No action. If you verify release signatures, the signer workflow is now `build-release.yml` (see [verify-release.md](verify-release.md)). |
 | 1.11.0 | 2026-10-17 | No action. A CI job that fails when `zn-gate scan` finds secrets can start failing on tokens of the new types (for example Square, Discord, Grafana or Notion tokens): look at each finding and rotate any real token. |
