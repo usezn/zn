@@ -461,3 +461,46 @@ fn modified_ciphertext_is_not_decrypted() {
     let got = vault.get_recent(10).unwrap();
     assert_ne!(got[0].payload.as_deref(), Some("payload-a"));
 }
+
+// ------------------------------------------------------------ namespace tag
+
+#[test]
+fn with_namespace_tags_the_entry() {
+    let e = AuditEntry::new("TOOL_CALL", "t", "ALLOWED").with_namespace("tenant-a");
+    assert_eq!(e.namespace.as_deref(), Some("tenant-a"));
+    assert!(AuditEntry::new("TOOL_CALL", "t", "ALLOWED")
+        .namespace
+        .is_none());
+}
+
+#[test]
+fn rows_without_a_namespace_are_visible_only_to_the_global_scope() {
+    let dir = TempDir::new().unwrap();
+    let vault = AuditVault::new(&db_in(&dir), None).unwrap();
+    vault
+        .log(AuditEntry::new("E", "legacy", "ALLOWED"))
+        .unwrap();
+    vault
+        .log(AuditEntry::new("E", "a1", "ALLOWED").with_namespace("tenant-a"))
+        .unwrap();
+    vault
+        .log(AuditEntry::new("E", "b1", "DENIED").with_namespace("tenant-b"))
+        .unwrap();
+
+    // The global scope (get_recent / stats) sees everything, old rows included.
+    assert_eq!(vault.get_recent(10).unwrap().len(), 3);
+    assert_eq!(vault.stats().unwrap().total, 3);
+
+    // A tenant sees its own rows only: no old rows, nothing of the other tenant.
+    let a = vault.get_recent_by_namespace("tenant-a", 10).unwrap();
+    assert_eq!(a.len(), 1);
+    assert_eq!(a[0].tool_name, "a1");
+    let sa = vault.stats_by_namespace("tenant-a").unwrap();
+    assert_eq!((sa.total, sa.allowed, sa.denied), (1, 1, 0));
+    let sb = vault.stats_by_namespace("tenant-b").unwrap();
+    assert_eq!((sb.total, sb.allowed, sb.denied), (1, 0, 1));
+    assert!(vault
+        .get_recent_by_namespace("tenant-c", 10)
+        .unwrap()
+        .is_empty());
+}

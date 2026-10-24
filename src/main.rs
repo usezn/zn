@@ -910,6 +910,15 @@ async fn run_mcp() -> Result<()> {
     Ok(())
 }
 
+/// Namespace of one connection: the authenticated one (WebSocket tenants) or, for the local stdio proxy,
+/// the configured one, and the global one when neither exists. Memory, reputation and the audit log all use
+/// this single value, so an entry is visible to the tenant that made the call and to nobody else.
+fn resolve_namespace(authenticated: Option<String>, configured: Option<&str>) -> String {
+    authenticated
+        .or_else(|| configured.map(str::to_string))
+        .unwrap_or_else(|| GLOBAL_NAMESPACE.to_string())
+}
+
 /// Write one audit record. A failure is logged (event name and error, never the
 /// payload) and counted in `zn_audit_write_failures_total`; the caller decides
 /// whether it denies the call (`audit.require_write`).
@@ -946,9 +955,7 @@ async fn process_mcp_message(
     // The vector memory is scoped to the authenticated namespace (WebSocket
     // tenants) or, for the local stdio proxy, to the configured one. The
     // agent id comes from the message and is not trusted for isolation.
-    let memory_namespace = namespace
-        .or_else(|| state.config.security.namespace.clone())
-        .unwrap_or_else(|| GLOBAL_NAMESPACE.to_string());
+    let memory_namespace = resolve_namespace(namespace, state.config.security.namespace.as_deref());
     let scrubbed_line = Scrubber::scrub(line);
 
     // Shodan Canary: Detect potential reconnaissance scans
@@ -1290,7 +1297,7 @@ async fn process_mcp_message(
                     Scrubber::scrub(&arguments),
                 ),
                 agent_id: Some(agent_id_str.clone()),
-                namespace: state.config.security.namespace.clone(),
+                namespace: Some(memory_namespace.clone()),
                 anomaly_score,
                 nearest_neighbor: nearest_neighbor_entry.clone(),
                 // Fusion Gate: live-path fusion evidence is attached where the fused
@@ -1304,6 +1311,7 @@ async fn process_mcp_message(
             if let Some(nn) = nearest_neighbor_entry {
                 let nn_entry = AuditEntry::new("NEAREST_NEIGHBOR", &tool_name, "AUDIT")
                     .with_nearest_neighbor(nn.clone())
+                    .with_namespace(&memory_namespace)
                     .with_agent_id(&agent_id_str);
                 audit_written = audit_write(state, "NEAREST_NEIGHBOR", nn_entry);
             }
@@ -2216,6 +2224,236 @@ mod gateway_hardening_tests {
         // The place the arguments came from must still be there; no arguments: nothing to rebuild.
         assert!(with_arguments(frame, "{}", ArgSource::Key("input")).is_none());
         assert!(with_arguments(frame, "{}", ArgSource::Missing).is_none());
+    }
+}
+
+/// Tenant isolation of the audit log: an entry carries the namespace of the authenticated caller, so
+/// `/api/v1/logs`, `/api/v1/stats` and the SSE stream of one tenant never show the calls of another one.
+#[cfg(test)]
+mod audit_isolation_tests {
+    use super::*;
+    use axum::response::IntoResponse;
+    use futures::StreamExt;
+    use std::time::Duration;
+    use zn::handlers::{
+        api::{self, ApiState},
+        sse::{self, SseState},
+    };
+
+    fn test_state(configured_namespace: Option<&str>) -> (AppState, tempfile::TempDir) {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut config = zn::config::ZnConfig::default();
+        config.neural.enabled = false;
+        config.security.namespace = configured_namespace.map(str::to_string);
+        let engine = Arc::new(
+            ZnEngine::new(zn::engine::ZnEngineConfig {
+                gas_limit: 10_000_000,
+                memory_limit: 10 * 1024 * 1024,
+                timeout_ms: 50,
+                allowed_hashes: vec![],
+                signing_public_key: None,
+            })
+            .expect("engine"),
+        );
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let tenants = Arc::new(
+            TenantStore::new(Arc::new(std::sync::Mutex::new(conn))).expect("tenant store"),
+        );
+        let backend: Arc<dyn zn::ai::ModelBackend> = Arc::new(zn::ai::FastBootBackend::new(8));
+        let memory_dir = dir.path().join("vectors");
+        std::fs::create_dir_all(&memory_dir).unwrap();
+        let (tx, _) = broadcast::channel(64);
+        let (webhook_tx, webhook_rx) = tokio::sync::mpsc::channel(8);
+        std::mem::forget(webhook_rx);
+        let state = AppState {
+            tx,
+            vault: Arc::new(AuditVault::new(":memory:", None).expect("vault")),
+            reputation: Arc::new(ReputationSystem::new()),
+            engine,
+            pool: Arc::new(McpPool::new(std::collections::HashMap::new())),
+            webhook_tx,
+            tenants,
+            canary: Arc::new(zn::ai::CanaryDeployer::new(backend)),
+            memory: Arc::new(zn::ai::VectorMemory::new(
+                memory_dir.to_str().unwrap(),
+                8,
+                "example-model",
+            )),
+            loop_breaker: Arc::new(zn::engine::loop_breaker::LoopBreaker::new(
+                config.loop_breaker.clone(),
+            )),
+            cache: Arc::new(zn::engine::cache::ResultCache::new(config.caching.clone())),
+            consensus: Arc::new(zn::engine::consensus::ConsensusManager::new(
+                config.consensus.clone(),
+            )),
+            config: Arc::new(config),
+        };
+        (state, dir)
+    }
+
+    fn frame(tool: &str) -> String {
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": { "name": tool, "arguments": { "query": "hello" } }
+        })
+        .to_string()
+    }
+
+    fn tenant(namespace: &str, role: TenantRole) -> TenantContext {
+        TenantContext {
+            id: format!("id-{namespace}"),
+            name: format!("org-{namespace}"),
+            namespace: namespace.to_string(),
+            role,
+        }
+    }
+
+    fn api_state(state: &AppState) -> ApiState {
+        ApiState {
+            vault: Arc::clone(&state.vault),
+            engine: Arc::clone(&state.engine),
+            tenants: Arc::clone(&state.tenants),
+            consensus: Arc::clone(&state.consensus),
+        }
+    }
+
+    async fn logs_of(state: &AppState, who: TenantContext) -> Vec<String> {
+        let res = api::logs(
+            State(api_state(state)),
+            Extension(who),
+            axum::extract::Query(std::collections::HashMap::new()),
+        )
+        .await;
+        assert_eq!(res.0["status"], "ok");
+        let mut tools: Vec<String> = res.0["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["tool_name"].as_str().unwrap().to_string())
+            .collect();
+        tools.sort();
+        tools
+    }
+
+    async fn total_of(state: &AppState, who: TenantContext) -> u64 {
+        let res = api::stats(State(api_state(state)), Extension(who)).await;
+        assert_eq!(res.0["status"], "ok");
+        res.0["stats"]["total"].as_u64().unwrap()
+    }
+
+    /// Everything the SSE stream delivers until it stays quiet for a moment.
+    async fn drain(body: &mut axum::body::BodyDataStream) -> Vec<String> {
+        let mut tools = Vec::new();
+        while let Ok(Some(chunk)) =
+            tokio::time::timeout(Duration::from_millis(300), body.next()).await
+        {
+            let text = String::from_utf8(chunk.unwrap().to_vec()).unwrap();
+            if let Some(data) = text.strip_prefix("data: ") {
+                let v: serde_json::Value = serde_json::from_str(data.trim_end()).unwrap();
+                tools.push(v["tool_name"].as_str().unwrap().to_string());
+            }
+        }
+        tools.sort();
+        tools
+    }
+
+    async fn open_sse(state: &AppState, who: TenantContext) -> axum::body::BodyDataStream {
+        let sse = sse::events(
+            State(SseState {
+                tx: state.tx.clone(),
+            }),
+            Extension(who),
+        )
+        .await;
+        sse.into_response().into_body().into_data_stream()
+    }
+
+    #[test]
+    fn namespace_is_the_authenticated_one_then_the_configured_one_then_global() {
+        assert_eq!(resolve_namespace(Some("a".into()), Some("b")), "a");
+        assert_eq!(resolve_namespace(None, Some("b")), "b");
+        assert_eq!(resolve_namespace(None, None), GLOBAL_NAMESPACE);
+    }
+
+    /// The configured namespace of the process equals the one of tenant B: before the fix, the calls of tenant
+    /// A were labelled with it, so B saw them and A saw nothing of its own.
+    #[tokio::test]
+    async fn logs_stats_and_sse_show_each_tenant_only_its_own_calls() {
+        let (state, _dir) = test_state(Some("tenant-b"));
+        let mut sse_a = open_sse(&state, tenant("tenant-a", TenantRole::User)).await;
+        let mut sse_b = open_sse(&state, tenant("tenant-b", TenantRole::User)).await;
+        let mut sse_root = open_sse(&state, tenant("global", TenantRole::SuperAdmin)).await;
+
+        for tool in ["a_one", "a_two"] {
+            process_mcp_message(&frame(tool), &state, Some("tenant-a".to_string()))
+                .await
+                .unwrap();
+        }
+        process_mcp_message(&frame("b_one"), &state, Some("tenant-b".to_string()))
+            .await
+            .unwrap();
+        // A legacy row without a namespace (written by an older version).
+        state
+            .vault
+            .log(AuditEntry::new("TOOL_CALL", "legacy_row", "ALLOWED"))
+            .unwrap();
+
+        let a = tenant("tenant-a", TenantRole::User);
+        let b = tenant("tenant-b", TenantRole::User);
+        let root = tenant("global", TenantRole::SuperAdmin);
+
+        assert_eq!(logs_of(&state, a.clone()).await, ["a_one", "a_two"]);
+        assert_eq!(logs_of(&state, b.clone()).await, ["b_one"]);
+        assert_eq!(
+            logs_of(&state, root.clone()).await,
+            ["a_one", "a_two", "b_one", "legacy_row"]
+        );
+
+        assert_eq!(total_of(&state, a).await, 2);
+        assert_eq!(total_of(&state, b).await, 1);
+        assert_eq!(total_of(&state, root).await, 4);
+
+        assert_eq!(drain(&mut sse_a).await, ["a_one", "a_two"]);
+        assert_eq!(drain(&mut sse_b).await, ["b_one"]);
+        assert_eq!(drain(&mut sse_root).await, ["a_one", "a_two", "b_one"]);
+    }
+
+    /// With no configured namespace the tenants used to get nothing at all (entries had no namespace).
+    #[tokio::test]
+    async fn tenants_see_their_calls_when_no_namespace_is_configured() {
+        let (state, _dir) = test_state(None);
+        process_mcp_message(&frame("a_one"), &state, Some("tenant-a".to_string()))
+            .await
+            .unwrap();
+        assert_eq!(
+            logs_of(&state, tenant("tenant-a", TenantRole::User)).await,
+            ["a_one"]
+        );
+        assert!(logs_of(&state, tenant("tenant-b", TenantRole::User))
+            .await
+            .is_empty());
+    }
+
+    /// A local stdio session (no authenticated tenant) is labelled with the configured namespace, or the
+    /// global one, never left empty.
+    #[tokio::test]
+    async fn local_session_entries_use_the_configured_or_global_namespace() {
+        let (state, _dir) = test_state(Some("example-local"));
+        process_mcp_message(&frame("local_one"), &state, None)
+            .await
+            .unwrap();
+        let rows = state.vault.get_recent(10).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].namespace.as_deref(), Some("example-local"));
+
+        let (state, _dir) = test_state(None);
+        process_mcp_message(&frame("local_two"), &state, None)
+            .await
+            .unwrap();
+        let rows = state.vault.get_recent(10).unwrap();
+        assert_eq!(rows[0].namespace.as_deref(), Some(GLOBAL_NAMESPACE));
     }
 }
 
