@@ -576,12 +576,9 @@ function makeOps(state, ctl) {
 
     async auditVerify() {
       const secrets = await state.loadSecrets();
-      const res = audit.verify({ file: auditFile, key: Buffer.from(secrets.auditKey, 'hex') });
-      // Truncation check: the encrypted vault remembers the last record.
-      if (res.ok && secrets.auditHead && res.records < secrets.auditHead.seq) {
-        return { ok: false, records: res.records, error: 'log truncated (vault expects ' + secrets.auditHead.seq + ' records)' };
-      }
-      return res;
+      // The encrypted vault remembers the last record (sequence number and
+      // MAC): a lost tail or a replaced one is reported.
+      return audit.verify({ file: auditFile, key: Buffer.from(secrets.auditKey, 'hex'), checkpoint: secrets.auditHead });
     },
 
     async lock() {
