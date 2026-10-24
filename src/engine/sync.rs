@@ -169,8 +169,35 @@ mod tests {
         std::os::unix::fs::symlink(&real, &link).unwrap();
 
         let err = ConfigSync::persist_to(&link, &ZnConfig::default()).unwrap_err();
-        assert!(err.to_string().contains("symbolic link"), "got: {err}");
+        assert!(
+            err.to_string().contains("regular file, not a link"),
+            "got: {err}"
+        );
         assert_eq!(std::fs::read_to_string(&real).unwrap(), "{}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn persist_refuses_a_non_regular_target() {
+        use std::os::unix::fs::FileTypeExt;
+        let dir = std::env::temp_dir().join(format!("zn-persist-fifo-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("zn.json");
+        let made = std::process::Command::new("mkfifo")
+            .arg(&target)
+            .status()
+            .unwrap();
+        assert!(made.success());
+
+        let err = ConfigSync::persist_to(&target, &ZnConfig::default()).unwrap_err();
+        assert!(
+            err.to_string().contains("regular file, not a link"),
+            "got: {err}"
+        );
+        let ft = std::fs::symlink_metadata(&target).unwrap().file_type();
+        assert!(ft.is_fifo(), "the FIFO was replaced");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
