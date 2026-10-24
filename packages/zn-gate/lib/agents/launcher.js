@@ -99,8 +99,12 @@ function checkAgentId(agentId) {
 }
 
 /** The text of the launcher script. */
-function unixScript(agentId, nodePath, runnerPath) {
+function unixScript(agentId, nodePath, runnerPath, opts = {}) {
   checkAgentId(agentId);
+  // deadlineS (whole seconds, only for agents that fail open on a timeout): the launcher answers by itself when the hook has
+  // not finished by then, so a hook stuck while it starts (before the runner arms its own watchdog) still blocks.
+  const deadlineS = Number.isInteger(opts.deadlineS) && opts.deadlineS > 0 ? opts.deadlineS : 0;
+  const run = (...w) => (deadlineS ? 'zn_run ' : '') + w.join(' ');
   const reason = reasonText(agentId);
   const warn = warnText(agentId);
   const exitEvents = [...blockExit(agentId)];
@@ -117,15 +121,30 @@ function unixScript(agentId, nodePath, runnerPath) {
     'ZN_NODE=' + shQuote(nodePath),
     'ZN_RUNNER=' + shQuote(runnerPath),
     '# Exit codes other than 0 (done) and 2 (blocked) are failures: they fall through to the block below.',
+    ...(deadlineS ? [
+      '# Runs a command with a deadline of ' + deadlineS + ' s: after that the command is killed (exit 143), which falls through to the block below.',
+      '# The hook input (stdin) is passed on through fd 3 (a background command would otherwise get /dev/null); the timer holds no output, so it cannot keep the agent waiting.',
+      'zn_run() {',
+      '  exec 3<&0',
+      '  "$@" <&3 3<&- &',
+      '  exec 3<&-',
+      '  ZN_P=$!',
+      '  ( trap \'kill $ZN_SP 2>/dev/null; exit 0\' TERM; sleep ' + deadlineS + ' & ZN_SP=$!; wait $ZN_SP && kill -TERM $ZN_P 2>/dev/null ) >/dev/null 2>&1 </dev/null &',
+      '  ZN_T=$!',
+      '  wait $ZN_P; ZN_RC=$?',
+      '  kill -TERM $ZN_T 2>/dev/null',
+      '  return 0',
+      '}',
+    ] : []),
     'ZN_RAN=',
-    'if [ -x "$ZN_NODE" ] && [ -f "$ZN_RUNNER" ]; then ZN_RAN=1; "$ZN_NODE" "$ZN_RUNNER" ' + agentId + '; ZN_RC=$?; case $ZN_RC in 0|2) exit $ZN_RC ;; esac; fi',
+    'if [ -x "$ZN_NODE" ] && [ -f "$ZN_RUNNER" ]; then ZN_RAN=1; ' + (deadlineS ? run('"$ZN_NODE" "$ZN_RUNNER" ' + agentId) + '; ' : '"$ZN_NODE" "$ZN_RUNNER" ' + agentId + '; ZN_RC=$?; ') + 'case $ZN_RC in 0|2) exit $ZN_RC ;; esac; fi',
     '# Look up zn and node only in absolute PATH entries: a relative one depends on the folder the agent runs in.',
     'ZN_OLDIFS=$IFS; IFS=:; ZN_SAFE=',
     'for ZN_D in $PATH; do case "$ZN_D" in /*) ZN_SAFE="${ZN_SAFE:+$ZN_SAFE:}$ZN_D" ;; esac; done',
     'IFS=$ZN_OLDIFS',
     'ZN_CMD=; [ -z "$ZN_SAFE" ] || ZN_CMD=$(PATH="$ZN_SAFE" command -v zn 2>/dev/null)',
     'case "$ZN_CMD" in /*) ;; *) ZN_CMD= ;; esac',
-    'if [ -z "$ZN_RAN" ] && [ -n "$ZN_CMD" ] && PATH="$ZN_SAFE" command -v node >/dev/null 2>&1; then ZN_RAN=1; "$ZN_CMD" hook ' + agentId + '; ZN_RC=$?; case $ZN_RC in 0|2) exit $ZN_RC ;; esac; fi',
+    'if [ -z "$ZN_RAN" ] && [ -n "$ZN_CMD" ] && PATH="$ZN_SAFE" command -v node >/dev/null 2>&1; then ZN_RAN=1; ' + (deadlineS ? run('"$ZN_CMD" hook ' + agentId) + '; ' : '"$ZN_CMD" hook ' + agentId + '; ZN_RC=$?; ') + 'case $ZN_RC in 0|2) exit $ZN_RC ;; esac; fi',
     'case "$ZN_EVENT" in',
     '  ' + exitEvents.join('|') + ')',
     DENY_STDOUT[agentId]
@@ -156,7 +175,7 @@ function writeLauncher(agentId, nodePath, runnerPath, opts = {}) {
   else fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   // On Windows the script runs in Git Bash: write the paths with / so that `zn-gate check` can read them back.
   const platform = opts.platform || process.platform;
-  writeFileAtomic(file, unixScript(agentId, portablePath(nodePath, platform), portablePath(runnerPath, platform)), 0o755);
+  writeFileAtomic(file, unixScript(agentId, portablePath(nodePath, platform), portablePath(runnerPath, platform), { deadlineS: opts.deadlineS }), 0o755);
   try { fs.chmodSync(file, 0o755); } catch (_) { /* best effort */ }
   return file;
 }
