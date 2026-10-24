@@ -28,7 +28,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-10-23.11';
+const SCRUB_RULES_VERSION = '2026-10-24.1';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -410,7 +410,7 @@ const KV_PLACEHOLDER = (v) => {
  *     is the quote that the engine puts around the token. An unquoted key
  *     (YAML, shell) with a number is left alone.
  * Values shorter than 8 characters, placeholders and values with no closing
- * quote inside KV_MAX_VALUE characters are left alone. One pass over the
+ * quote on the same line (and inside KV_MAX_VALUE characters) are left alone. One pass over the
  * text; each opener reads at most KV_MAX_VALUE characters. */
 function findQuotedKv(text, out) {
   KV_OPEN.lastIndex = 0;
@@ -440,6 +440,9 @@ function findQuotedKv(text, out) {
     let end = -1;
     while (i < limit) {
       const c = text.charCodeAt(i);
+      // A value never runs over a line break: the quote that follows `token="` in a source
+      // line is the closing quote of that string, not the start of a value (print("token=" + x)).
+      if (c === 10 || c === 13) break;
       if (c === 92) {
         if (level > 0) {
           // Count the run of backslashes only inside the window, so a long run stays linear.

@@ -182,3 +182,16 @@ test('a backslash run still ends an escaped value only at its own level', async 
   assert.ok(!out.includes('phrase'), out);
   JSON.parse(out);
 });
+
+test('a quote that closes a string literal in source code does not start a value on the next lines', async () => {
+  // From the CPython standard library (shlex.py, getpass.py): `token=` ends a string, and the next quote
+  // is on another line. A value never spans a line break.
+  const shlex = '            if raw != self.eof:\n                print("shlex: token=" + repr(raw))\n            else:\n                print("shlex: token=EOF")\n';
+  const getpass = "def unix_getpass(prompt='Password: ', stream=None, *, echo_char=None):\n    passwd = None\n    prompt = 'Password: '\n";
+  for (const text of [shlex, getpass]) {
+    assert.equal(await redact(text), text);
+    assert.deepEqual(findPatterns(text, {}), []);
+  }
+  // The same key and value on one line is still redacted.
+  assert.ok(!(await redact('password="abcdefgh ijk lmn"\n')).includes('ijk'));
+});
