@@ -235,7 +235,7 @@ function respond(d) {
     else if (d.updatedInput && d.kind === 'wrap' && typeof ev.input.command === 'string') {
       reason = 'zn: this command uses a stored secret. Run it through zn instead, exactly like this: zn run -- ' + ev.input.command +
         '  (zn puts the value only into that process, if the user allowed this command for the secret).';
-    } else if (d.decision === 'ask' && !d.updatedInput) ask = d.message || 'zn asks for confirmation';
+    } else if (d.decision === 'ask' && (d.confirm === true || !d.updatedInput)) ask = d.message || 'zn asks for confirmation';
     if (ev.permissionRequest) {
       return reason === null ? null : { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: reason } } };
     }

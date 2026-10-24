@@ -146,7 +146,7 @@ function respond(d) {
         '  (zn puts the value only into that process, if the user allowed this command for the secret).';
       return { permission: 'deny', user_message: msg, agent_message: msg };
     }
-    if (d.decision === 'ask' && !d.updatedInput) return { permission: 'ask', user_message: d.message || 'zn asks for confirmation' };
+    if (d.decision === 'ask' && (d.confirm === true || !d.updatedInput)) return { permission: 'ask', user_message: d.message || 'zn asks for confirmation' };
     return null; // no opinion: Cursor's own approval settings apply
   }
   if (h === 'beforeSubmitPrompt') {

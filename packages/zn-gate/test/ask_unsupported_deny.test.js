@@ -210,3 +210,18 @@ test('a rewrite proposal merged with an egress question (confirm) is a deny; a b
   const bare = { decision: 'ask', updatedInput: { command: 'y' }, kind: 'restore', message: 'zn: puts back a value' };
   assert.equal(getAdapter('codex').respond({ ...bare, event: ev }), null);
 });
+
+test('Cursor shell and ZCode Bash keep their native ask when a security question is merged with a rewrite', () => {
+  const merged = { decision: 'ask', updatedInput: { command: 'y' }, kind: 'restore', soft: false, confirm: true, message: 'zn: this command would send an email to a network host.' };
+  const cur = getAdapter('cursor').respond({ ...merged, event: { event: 'pre_tool', hookEvent: 'beforeShellExecution', tool: 'bash', input: { command: 'x' } } });
+  assert.ok(cur && cur.permission === 'ask', 'cursor: ' + JSON.stringify(cur));
+  const zc = getAdapter('zcode').respond({ ...merged, event: { event: 'pre_tool', hookEvent: 'PreToolUse', tool: 'Bash', input: { command: 'x' } } });
+  assert.match(JSON.stringify(zc), /"ask"/, 'zcode: ' + JSON.stringify(zc));
+});
+
+test('Cursor shell and ZCode Bash stay silent on a bare rewrite proposal', () => {
+  const bare = { decision: 'ask', updatedInput: { command: 'y' }, kind: 'restore', message: 'zn: puts back a value' };
+  assert.equal(getAdapter('cursor').respond({ ...bare, event: { event: 'pre_tool', hookEvent: 'beforeShellExecution', tool: 'bash', input: { command: 'x' } } }), null);
+  const zc = getAdapter('zcode').respond({ ...bare, event: { event: 'pre_tool', hookEvent: 'PreToolUse', tool: 'Bash', input: { command: 'x' } } });
+  assert.doesNotMatch(JSON.stringify(zc) || '', /"ask"/);
+});
