@@ -27,8 +27,8 @@ Use one of them. `zn-gate check` reports it when both are active, and when the p
 
 ## Limits
 
-- Linux and macOS. The hook is a POSIX shell script, so Windows is not supported by the plugin yet: use
-  `zn hooks install zcode` there. Tested on Linux with the ZCode desktop app only; macOS is not tested.
+- Linux (tested with the ZCode desktop app 3.16.3). macOS is not tested. The hook is a POSIX shell script, so
+  Windows is not supported by the plugin yet: use `zn hooks install zcode` there.
 - ZCode cannot rewrite what a tool returns: a value a command prints or a file the agent may read reaches the model.
   zn adds a notice when an output holds a secret. Keep secrets in the vault.
 - A user can turn the plugin off in Settings, Plugins. `zn-gate check` reads ZCode's configuration and says so.
