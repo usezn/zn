@@ -1342,6 +1342,7 @@ mod tests {
             let filler = format!("{opener}{}", "a".repeat(1 << 20));
             let t_slashes = time(&slashes);
             let t_filler = time(&filler);
+            eprintln!("{opener}: backslashes {t_slashes:?} filler {t_filler:?}");
             // Relative bound, with a small floor against timer noise on a fast filler run.
             let bound = t_filler * 10 + std::time::Duration::from_millis(200);
             assert!(
