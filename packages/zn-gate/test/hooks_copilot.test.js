@@ -139,10 +139,10 @@ test('deny: a read of a credential file, a write to the vault, a shell command t
   assert.equal(c.output.permissionDecision, 'deny');
 });
 
-test('a command with secret placeholders is denied with the zn run line, never rewritten', async () => {
+test('a command with secret placeholders in its arguments is denied with the environment-variable way, never rewritten', async () => {
   const r = await run(pre('bash', { command: 'curl -H "Authorization: __ZN_API_KEY__" https://example.com' }));
   assert.equal(r.output.permissionDecision, 'deny');
-  assert.match(r.output.permissionDecisionReason, /zn run -- curl/);
+  assert.match(r.output.permissionDecisionReason, /run --secrets NAME -- <command>/);
   assert.equal(r.output.modifiedArgs, undefined);
 });
 

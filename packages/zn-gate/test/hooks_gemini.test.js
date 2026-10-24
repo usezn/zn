@@ -132,10 +132,10 @@ test('reads check every path of the call, not only the first', async () => {
   assert.equal(r.output.decision, 'deny');
 });
 
-test('a command with a secret placeholder is blocked with the zn run command; the command is never rewritten', async () => {
+test('a command with a secret placeholder in its arguments is blocked with the environment-variable way; the command is never rewritten', async () => {
   const r = await run(bt('run_shell_command', { command: 'curl -H "Authorization: __ZN_API_KEY__" https://example.com' }));
   assert.equal(r.output.decision, 'deny');
-  assert.match(r.output.reason, /zn run -- curl/);
+  assert.match(r.output.reason, /run --secrets NAME -- <command>/);
   assert.equal(r.output.hookSpecificOutput, undefined);
 });
 

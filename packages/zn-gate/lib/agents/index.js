@@ -69,4 +69,4 @@ function listAdapters() {
   return Object.keys(ADAPTERS);
 }
 
-module.exports = { getAdapter, listAdapters, unsupportedAgentMessage };
+module.exports = { getAdapter, listAdapters, unsupportedAgentMessage, AGENT_IDS: Object.freeze(Object.keys(ADAPTERS)) };

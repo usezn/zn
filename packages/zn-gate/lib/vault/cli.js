@@ -7,6 +7,7 @@
  *   zn vault status
  *   zn vault forget [<project dir>]     (vault must be locked)
  *   zn vault reset                      (lost passphrase: set the old vault aside, start empty; own terminal only)
+ *   zn vault purge [--yes]              (delete the vault, its backups and token maps for good; own terminal, or a script with --yes)
  *   zn vault verify                     (audit log: chain, MACs, truncation)
  *   zn vault log [--since 1h]           (audit log: who used which secret; alias: zn secret log)
  *   zn vault log export --otlp          (the same log as OpenTelemetry logs; lib/team/cli.js)
@@ -33,6 +34,7 @@ const { agentDetected } = require('../broker/tty');
 const messages = require('../messages');
 const { CODES, messageWithUnlockHint } = require('../errors');
 const vaultReset = require('./reset');
+const vaultPurge = require('./purge');
 const { znCommand } = require('../zn-command');
 
 /* A usage mistake (an unknown option, a bad duration or backend): the command exits 2, as the docs say. */
@@ -78,6 +80,7 @@ const OPTIONS = {
   status: {},
   verify: {},
   reset: {},
+  purge: { '--yes': false },
   forget: {},
 };
 
@@ -108,6 +111,7 @@ const USAGE = {
   status: () => 'usage: ' + znCommand('vault status'),
   verify: () => 'usage: ' + znCommand('vault verify'),
   reset: () => 'usage: ' + znCommand('vault reset'),
+  purge: () => 'usage: ' + znCommand('vault purge') + ' [--yes]',
   forget: () => 'usage: ' + znCommand('vault forget') + ' [dir]',
 };
 
@@ -181,6 +185,7 @@ async function getPassphrase(args, creating, prompterOpts) {
 function out(s) { process.stdout.write(s + '\n'); }
 
 const RESOLVE_POLICY_FEATURE = 'resolve-policy';
+const CAPABILITIES_FEATURE = 'capabilities';
 
 /** The running vault's status, or null when none answers. */
 async function runningStatus(clientFactory) {
@@ -188,9 +193,10 @@ async function runningStatus(clientFactory) {
   try { return await c.status(); } catch (err) { return null; } finally { c.close(); }
 }
 
-/** A running vault started by an older zn-gate (it does not check the organization policy on restores). */
+/** A running vault started by an older zn-gate (it does not check the organization policy on restores, or still
+ *  hands out values without a context: zn unlock restarts it). */
 function isOutdatedVault(s) {
-  return Boolean(s) && !(Array.isArray(s.features) && s.features.includes(RESOLVE_POLICY_FEATURE));
+  return Boolean(s) && !(Array.isArray(s.features) && s.features.includes(RESOLVE_POLICY_FEATURE) && s.features.includes(CAPABILITIES_FEATURE));
 }
 
 /* Is the process still there? EPERM means it exists but is not ours to signal. */
@@ -357,6 +363,7 @@ async function runVaultCommand(args) {
     if (cmd === 'vault' && sub === 'forget') return check('forget', args.slice(2), 1) || await forgetCmd(args);
     if (cmd === 'vault' && sub === 'verify') return check('verify', args.slice(2)) || await auditVerifyCmd();
     if (cmd === 'vault' && sub === 'reset') return check('reset', args.slice(2)) || await vaultReset.resetVault({});
+    if (cmd === 'vault' && sub === 'purge') return check('purge', args.slice(2)) || await vaultPurge.purgeVault({ yes: args.includes('--yes') });
     if (cmd === 'vault' && sub === 'log') return await require('../broker/cli').dispatch('vault', args.slice(1));
     if (cmd === 'vault' && sub === 'team') {
       require('../stats').recordEvent('team-vault-request');
@@ -365,7 +372,7 @@ async function runVaultCommand(args) {
       return 0;
     }
     const z = znCommand;
-    process.stderr.write('usage: ' + z('unlock') + ' | ' + z('lock') + ' | ' + z('vault status') + ' | ' + z('vault verify') + ' | ' + z('vault log [--since 1h]') + ' | ' + z('vault forget [dir]') + ' | ' + z('vault reset') + '\n');
+    process.stderr.write('usage: ' + z('unlock') + ' | ' + z('lock') + ' | ' + z('vault status') + ' | ' + z('vault verify') + ' | ' + z('vault log [--since 1h]') + ' | ' + z('vault forget [dir]') + ' | ' + z('vault reset') + ' | ' + z('vault purge') + '\n');
     return 2;
   } catch (err) {
     process.stderr.write('[zn] ' + messageWithUnlockHint(err) + '\n');

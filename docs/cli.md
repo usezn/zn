@@ -259,7 +259,7 @@ Aliases: `secret ls`.
 zn-gate secret rm NAME
 ```
 
-Removes a secret.
+Removes a secret, together with the first-use approvals it had. A new value stored under the same name asks for approval again.
 
 Aliases: `secret remove`.
 
@@ -277,7 +277,7 @@ Adds allowed hosts or commands to a secret. At least one option is needed. `--re
 zn-gate secret approve NAME --command "psql"
 ```
 
-Approves the first use of a secret by a command that is already allowed. It is confirmed in the vault prompt.
+Approves the first use of a secret by a command that is already allowed. It is confirmed in the vault prompt. An approval belongs to the value it was given for: if you remove the secret or store a different value under the same name, zn asks again.
 
 #### `secret import`
 
@@ -331,7 +331,7 @@ Moves the values of a `.env` file (default `.env`) into the vault and leaves mar
 zn-gate env unshadow FILE --backup ENVBAK_NAME
 ```
 
-Puts the original values back into the file from the encrypted copy that `env shadow` printed.
+Puts the original values back into the file from the encrypted copy that `env shadow` printed. The plain text leaves the vault only after you confirm in the vault's own prompt (a system dialog, or the `zn unlock --foreground` terminal), as for the first use of a command.
 
 ### `run`
 
@@ -366,7 +366,7 @@ Locks the vault now. Exit codes: `0` done (also when the vault was not unlocked)
 ### `vault`
 
 ```text
-zn-gate vault <status|log|verify|forget|team|reset>
+zn-gate vault <status|log|verify|forget|team|reset|purge>
 ```
 
 With no subcommand it is the same as `vault status`. Usage errors exit `2`: an unknown subcommand, or an option or word the subcommand does not take.
@@ -409,7 +409,15 @@ Forgets the token map of a project (default: the current folder). The vault must
 zn-gate vault reset
 ```
 
-The way out when you lost the vault passphrase. It sets the old vault aside in a backup folder (`~/.zn/vault-backup-<date>`, still encrypted) and starts again with a new, empty vault the next time you run `unlock`. The values stored in the old vault are lost: nobody can read them without the old passphrase. It needs a person at a terminal, the vault must be locked, and you confirm by typing a phrase. It refuses on a machine that belongs to a zn Team organization. Exit codes: `0` done (or there was no vault), `1` refused or cancelled, `2` wrong usage.
+The way out when you lost the vault passphrase. It sets the old vault aside in a backup folder (`~/.zn/vault-backup-<date>`, still encrypted) and starts again with a new, empty vault the next time you run `unlock`. The values stored in the old vault are lost: nobody can read them without the old passphrase. It needs a person at a terminal, the vault must be locked, and you confirm by typing a phrase. It refuses on a machine that belongs to a zn Team organization. It never deletes the backup: to delete backups, use [`vault purge`](#vault-purge). Exit codes: `0` done (or there was no vault), `1` refused or cancelled, `2` wrong usage.
+
+#### `vault purge`
+
+```bash
+zn-gate vault purge [--yes]
+```
+
+Deletes the vault for good, with everything that can open or rebuild it. It first lists every file it will delete: the vault (secrets and first-use approvals), the token maps of your projects, the audit log, every `vault-backup-*` folder made by `vault reset`, and the session key, plus the vault key in your system keychain. Then you confirm by typing `purge my vault`, and it deletes them and checks again that none is left. If a file or the keychain entry cannot be removed, it says which one and exits `1`; it never reports the vault as purged while something remains. The vault must be locked, and it refuses on a machine that belongs to a zn Team organization. It needs a person at a terminal; a script can pass `--yes` to skip the typed phrase and the terminal, but an AI agent can never run it. Deleting cannot be undone. Exit codes: `0` purged (or there was no vault), `1` refused, cancelled or not fully purged, `2` wrong usage.
 
 #### `vault team`
 

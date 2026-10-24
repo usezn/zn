@@ -41,10 +41,18 @@ function memoryVault(opts) {
       const v = byToken.get(project + '\0' + token);
       return wrap(v === undefined ? null : v);
     },
-    async exactValues() {
-      calls.push('exactValues');
+    // Matching happens in the vault (as in the daemon): positions and names come back, never values.
+    async maskInfo() {
+      calls.push('maskInfo');
       const { variants } = require('../lib/scrub/exact');
-      return Array.from(named.entries()).map(([name, value]) => ({ name, type: 'SECRET', values: variants(value) }));
+      const list = Array.from(named.entries()).map(([name, value]) => ({ name, values: variants(value) }));
+      return { names: list.map((e) => e.name), longest: Math.max(0, ...list.flatMap((e) => e.values.map((v) => v.length))), count: list.length };
+    },
+    async maskSpans(project, texts) {
+      calls.push('maskSpans');
+      const { variants, buildMatcher } = require('../lib/scrub/exact');
+      const m = buildMatcher(Array.from(named.entries()).map(([name, value]) => ({ name, type: 'SECRET', values: variants(value), vault: true })));
+      return texts.map((t) => m.find(t));
     },
     async audit() { calls.push('audit'); },
     async setSecret() {}, async listSecrets() { return []; }, async removeSecret() {},
@@ -135,6 +143,61 @@ test('named vault secrets become __ZN_<NAME>__; encodings get their own tokens',
   assert.ok(r.text.startsWith('a=__ZN_GITHUB_TOKEN__ b=__ZN_GITHUB_TOKEN_1__'), r.text);
   assert.ok(!r.text.includes(value) && !r.text.includes(b64));
   assert.ok(r.replaced.every((x) => x.source === 'exact'));
+});
+
+test('scanAsync: the vault matches its own values (raw, base64, hex, URL-encoded, split by invisible characters) like a local exact value', async () => {
+  const value = 'ghp_' + pick(36);
+  const vault = memoryVault({ named: { GITHUB_TOKEN: value } });
+  const buf = Buffer.from(value);
+  const split = value.slice(0, 10) + '​' + value.slice(10);
+  const text = ['raw ' + value, 'b64 ' + buf.toString('base64'), 'hex ' + buf.toString('hex'), 'url ' + encodeURIComponent(value), 'zw ' + split, 'none nothing here'].join('\n');
+  const strip = (spans) => spans.map((s) => ({ start: s.start, end: s.end, type: s.type, source: s.source, name: s.name, variant: s.variant }));
+  const viaVault = await E.scanAsync(text, ctx(vault));
+  const local = E.scan(text, { exactValues: [{ name: 'GITHUB_TOKEN', type: 'SECRET', value }], env: {}, exactFiles: false });
+  assert.ok(viaVault.length >= 5, 'every variant is found: ' + viaVault.length);
+  assert.deepStrictEqual(strip(viaVault), strip(local));
+  assert.ok(viaVault.every((s) => s.source === 'exact' || s.source === 'pattern'));
+  // the vault only ever got asked where the values occur
+  assert.ok(vault.calls.includes('maskInfo') && vault.calls.includes('maskSpans'));
+  assert.strictEqual(typeof vault.exactValues, 'undefined');
+});
+
+test('scanAsync: a vault value on the cut of an oversize text is still found, once', async () => {
+  const value = 'ghp_' + pick(36);
+  const vault = memoryVault({ named: { GITHUB_TOKEN: value } });
+  const cut = 2 * 1024 * 1024;
+  const text = 'y'.repeat(cut - 10) + value + 'y'.repeat(cut + 1000);
+  const spans = (await E.scanAsync(text, ctx(vault))).filter((s) => s.source === 'exact');
+  assert.strictEqual(spans.length, 1);
+  assert.strictEqual(text.slice(spans[0].start, spans[0].end), value);
+});
+
+test('a vault started by an older zn-gate (no maskInfo) still gets its values masked through exactValues', async () => {
+  const value = 'ghp_' + pick(36);
+  const { variants } = require('../lib/scrub/exact');
+  const legacy = Object.assign(memoryVault(), {
+    maskInfo: async () => { throw Object.assign(new Error('unknown operation'), { code: 'ZN_POLICY_DENIED' }); },
+    exactValues: async () => [{ name: 'GITHUB_TOKEN', type: 'SECRET', values: variants(value) }],
+  });
+  const r = await E.tokenize('a=' + value, ctx(legacy));
+  assert.ok(r.text.startsWith('a=__ZN_GITHUB_TOKEN__'), r.text);
+  // any other refusal is a locked vault, never a fall back to reading values
+  let readValues = false;
+  const refused = Object.assign(memoryVault(), {
+    maskInfo: async () => { throw Object.assign(new Error('nope'), { code: 'ZN_POLICY_DENIED' }); },
+    exactValues: async () => { readValues = true; return []; },
+  });
+  await E.tokenize('a=' + value, ctx(refused));
+  assert.strictEqual(readValues, false);
+});
+
+test('a vault that stops answering a scan makes scanAsync and tokenize fail, never return clean text', async () => {
+  const value = 'ghp_' + pick(36);
+  const vault = memoryVault({ named: { GITHUB_TOKEN: value } });
+  vault.maskSpans = async () => { throw Object.assign(new Error('closed'), { code: 'ZN_LOCKED' }); };
+  const bad = (e) => e.vaultFailed === true && e.code === 'ZN_LOCKED';
+  await assert.rejects(E.scanAsync('a=' + value + ' tail', ctx(vault)), bad);
+  await assert.rejects(E.tokenize('a=' + value + ' tail', ctx(vault)), bad);
 });
 
 test('vault locked or missing: irreversible __ZN_REDACTED_<TYPE>__ and a warning, never the value', async () => {

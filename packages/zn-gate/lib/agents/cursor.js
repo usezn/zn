@@ -33,10 +33,11 @@
  *  - Reads of credential files, .env with values and ~/.zn are denied
  *    (beforeReadFile cannot redact, only allow or deny).
  *  - Shell commands that read those files or manage the vault are denied.
- *    A command with __ZN_<NAME>__ markers is denied with the exact
- *    `zn run -- ...` command to use; once wrapped, Cursor asks the user.
- *    (preToolUse could rewrite it, but only together with "allow", and
- *    Cursor does not enforce "ask" there.)
+ *    A command with __ZN_<NAME>__ markers in its arguments is denied with
+ *    the way to pass the secret as an environment variable
+ *    (`zn run --secrets NAME -- ...`); once the agent runs it through zn
+ *    run, Cursor asks the user. (preToolUse could rewrite a command, but
+ *    only together with "allow", and Cursor does not enforce "ask" there.)
  *  - Prompts with a secret are blocked.
  *  - MCP tool output is tokenized. Output of built-in tools (shell, file
  *    reads) cannot be rewritten in Cursor: a value printed by a command

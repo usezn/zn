@@ -11,8 +11,9 @@
  *   pre_tool    deny reads of credential files and ~/.zn, deny secret
  *               management commands, deny MCP call arguments that carry
  *               markers or secret values (other servers than zn's own),
- *               wrap shell commands (Bash, PowerShell)
- *               that carry __ZN_<NAME>__ markers in `zn run --` (ask),
+ *               refuse shell commands (Bash, PowerShell) that carry
+ *               __ZN_<NAME>__ markers in their arguments, with the way to pass
+ *               the secret as an environment variable (`zn run --secrets`),
  *               restore detected tokens per the restore policy (ask), refuse
  *               markers in WebFetch URLs (use secrets_http_request instead),
  *               and pipe Monitor commands through the streaming scrubber.
@@ -332,19 +333,6 @@ function lazyDeps(opts) {
   };
 }
 
-/**
- * The `zn run` prefix put in front of a Bash command that uses a secret. The
- * agent runs the rewritten command in bash (Claude Code's Bash tool, Git Bash
- * on Windows) or in the user's shell (OpenCode), so each path is one
- * single-quoted sh word and nothing in it is expanded.
- */
-function znRunPrefix(opts, agentId) {
-  if (opts.znRunPrefix) return opts.znRunPrefix;
-  const q = (s) => shQuote(portablePath(s));
-  const runJs = opts.runJs || path.resolve(__dirname, '..', 'broker', 'run.js');
-  return 'ZN_AGENT=' + String(agentId).replace(/[^a-z0-9-]/g, '') + ' ' + q(opts.nodePath || process.execPath) + ' ' + q(runJs) + ' --';
-}
-
 /* Custom secret formats from the zn Team policy, compiled once per hook
  * process. They only add redactions. They come from the verified readable
  * copy (~/.zn/org-policy.json); when that copy is missing or does not verify
@@ -415,6 +403,13 @@ async function ctxFor(ev, d, agentId, destination, needVault = true) {
   };
 }
 
+/* The spans of one text with every layer, the vault's values included (the vault daemon matches those: they never
+ * reach this process). An engine without scanAsync (a test double) scans with its own synchronous scan. */
+async function scanOf(engine, text, ctx) {
+  if (typeof engine.scanAsync === 'function') return (await engine.scanAsync(text, ctx)) || [];
+  return engine.scan(text, ctx) || [];
+}
+
 /* ---------------------------- egress check --------------------------- */
 
 const EGRESS_KIND = {
@@ -447,7 +442,7 @@ async function egressCheck(ev, d, agentId, mode, requests, what) {
       // The text as written, then its percent-decoded copies (an email address is "jane.doe%40example.com" in a URL or a form).
       for (const copy of [text, ...policy.egressDecodedCopies(text)]) {
         const scanned = copy === text ? part : { where: part.where, text: copy };
-        for (const span of engine.scan(copy, ctx) || []) {
+        for (const span of await scanOf(engine, copy, ctx)) {
           if (!SECRET_SOURCES.has(span.source) && span.source !== 'pii') continue;
           if (part.where === 'arguments') toServer = true;
           else hit = true;
@@ -467,14 +462,15 @@ async function egressCheck(ev, d, agentId, mode, requests, what) {
   if (mode === 'deny') {
     return {
       decision: 'deny',
-      message: 'zn blocked this ' + what + ': it ' + sentence + '. Next step: send the request without the personal data, and pass any secret through an environment variable ' +
-        '(such as $API_TOKEN) instead of writing the value in it; if the data must be sent, tell the user.',
+      message: 'zn blocked this ' + what + ': it ' + sentence + '. Next step: send the request without the personal data. Do not write the value of a secret in it, and do not expand a shell variable into its arguments (the value would show in the process list and in command-line logs). ' +
+        'For a web request use the secrets_http_request tool of the zn "secrets" MCP server (the secret in proxy mode); for a program, run it with ' + '`' + znCommand('run --secrets NAME -- <program that reads the variable>') + '`' + ', which gives it the secret as an environment variable that the program reads itself (or from standard input or a file, where it supports that). If the data must be sent, tell the user.',
     };
   }
   return {
     decision: 'ask',
     message: 'zn: this ' + what + ' ' + sentence + '. Approve it only if that data should leave this computer. ' +
-      'To send a secret, read it from an environment variable (such as $API_TOKEN) instead of writing the value in the ' + what + '.',
+      'To use a secret, do not write its value in the ' + what + ' and do not expand a shell variable into its arguments: use the secrets_http_request tool for a web request (the secret in proxy mode), or ' +
+      '`' + znCommand('run --secrets NAME -- <program that reads the variable>') + '` so the program reads the secret from its own environment variable.',
   };
 }
 
@@ -620,13 +616,9 @@ async function decidePre(ev, d, agentId, opts) {
     const notes = [];
     const wrap = tool === 'powershell'
       ? policy.wrapPowerShell(command, { nodePath: opts.nodePath || process.execPath, runJs: opts.runJs || path.resolve(__dirname, '..', 'broker', 'run.js'), agent: agentId })
-      : policy.wrapWithZnRun(command, znRunPrefix(opts, agentId));
+      : policy.wrapWithZnRun(command);
+    // Neither wrapper rewrites a command any more: a marker in the arguments is refused with guidance.
     if (!wrap.ok) return { decision: 'deny', message: wrap.reason };
-    if (wrap.wrapped) {
-      command = wrap.command;
-      notes.push('runs through zn run (zn\'s secret wrapper) for ' + markers.findNamedMarkers(original).map((m) => m.name).join(', ') +
-        '; the first time, you approve the command, and secret values in its output stay hidden');
-    }
 
     const detected = markers.findMarkers(command).filter((m) => m.detected);
     let context;
@@ -658,7 +650,7 @@ async function decidePre(ev, d, agentId, opts) {
       return withEgress(withInstruction(notes.length ? { decision: 'allow', message: 'zn: ' + notes.join('; ') } : { decision: 'allow' }), egress);
     }
     // kind tells adapters that cannot rewrite input what the rewrite was for.
-    return withEgress(withInstruction({ decision: 'ask', updatedInput: { command }, kind: wrap.wrapped ? 'wrap' : 'restore', message: 'zn: this command ' + notes.join('; ') + '.', context }), egress);
+    return withEgress(withInstruction({ decision: 'ask', updatedInput: { command }, kind: 'restore', message: 'zn: this command ' + notes.join('; ') + '.', context }), egress);
   }
 
   if ((tool === 'write' || tool === 'edit' || tool === 'multiedit' || tool === 'notebookedit') && Array.isArray(input.texts)) {
@@ -768,7 +760,7 @@ function decideMonitor(ev, pathOpts, opts) {
   const deny = policy.bashDenial(original, { ...pathOpts, destructiveRules: destructiveRulesOf(opts) });
   if (deny) return { decision: 'deny', message: deny };
   if (markers.findMarkers(original).length) {
-    return { decision: 'deny', message: 'zn: a monitor cannot use secret placeholders (such as __ZN_NAME__). Next step: run the command with the Bash tool instead; zn fills in the placeholders there.' };
+    return { decision: 'deny', message: 'zn: a monitor cannot use secret placeholders (such as __ZN_NAME__). Next step: give the program the secret as an environment variable with `' + znCommand('run --secrets NAME -- <command>') + '` instead.' };
   }
   if (isMonitorWrapper(original, opts)) return { decision: 'ask', message: 'zn: this monitor already checks its output for secrets.' };
   const command = wrapMonitor(original, opts);
@@ -852,12 +844,17 @@ async function decideMcp(ev, d, agentId) {
   if (typeof engine.prepare === 'function') ctx = await engine.prepare(ctx);
   const kinds = new Set();
   const piiKinds = new Set();
+  const windows = [];
   for (let start = 0; ; start += MCP_WINDOW - MCP_OVERLAP) {
-    for (const span of engine.scan(text.slice(start, start + MCP_WINDOW), ctx) || []) {
+    windows.push(text.slice(start, start + MCP_WINDOW));
+    if (start + MCP_WINDOW >= text.length) break;
+  }
+  if (typeof engine.warm === 'function') ctx = await engine.warm(ctx, windows);
+  for (const window of windows) {
+    for (const span of await scanOf(engine, window, ctx)) {
       if (SECRET_SOURCES.has(span.source)) kinds.add(kindLabel(span.type));
       else if (span.source === 'pii') piiKinds.add(kindLabel(span.type));
     }
-    if (start + MCP_WINDOW >= text.length) break;
   }
   if (kinds.size === 0) {
     // zn's own detector server (the plugin's) analyses the text the user asked about: no question for it.
@@ -965,22 +962,52 @@ async function decidePost(ev, d, agentId, opts = {}) {
   let stopped = false; // a limit was reached: the strings that follow are withheld too
   let abandoned = false; // the deadline passed while the engine or the vault was still working
   let scanCtx = null;
+  let hasShort = false; // the vault (or a local file) holds a value under 8 characters, from an older version
+  // The daemon reports a count of such values (shortCount), the local matcher its own: a count, never a value.
+  const shortIn = (c) => !!(c && ((c.exactMatcher && c.exactMatcher.shortSize > 0) || (c.vaultRemote && c.vaultRemote.shortCount > 0)));
   const withhold = (s, stop) => {
     if (stop) stopped = true;
     withheld += s.length;
     return POST_WITHHELD;
   };
   const check = async (s) => {
-    if (s === POST_WITHHELD || s.length < 8) return s;
-    if (stopped || Date.now() >= deadlineAt) return withhold(s, true);
-    if (s.length > room) return withhold(s, false);
-    // The engine's own scan is pure and cheap: it counts the values this string would add to the vault.
+    if (s === POST_WITHHELD || s.length === 0) return s;
+    if (s.length >= 8 && (stopped || Date.now() >= deadlineAt)) return withhold(s, true);
+    if (s.length >= 8 && s.length > room) return withhold(s, false);
+    // Scanning counts the values this string would add to the vault.
     if (scanCtx === null) {
+      if (s.length < 8 && (stopped || Date.now() >= deadlineAt)) return s;
       scanCtx = typeof engine.prepare === 'function' ? await raceDeadline(engine.prepare(ctx), deadlineAt) : ctx;
-      if (scanCtx === DEADLINE) { abandoned = true; return withhold(s, true); }
+      if (scanCtx === DEADLINE) { abandoned = true; return s.length < 8 ? s : withhold(s, true); }
+      hasShort = shortIn(scanCtx);
+      // One request to the vault for every string that will be scanned, not one for each.
+      if (typeof engine.warm === 'function') {
+        let budget = room;
+        const todo = [];
+        for (const t of outputStrings) {
+          // A string under 8 characters is only asked about when the vault holds a short value from an older version.
+          if (typeof t !== 'string' || t.length === 0 || (t.length < 8 && !hasShort) || t.length > budget) continue;
+          budget -= t.length;
+          todo.push(t);
+        }
+        const warmed = await raceDeadline(engine.warm(scanCtx, todo), deadlineAt);
+        if (warmed === DEADLINE) { abandoned = true; scanCtx = DEADLINE; return s.length < 8 && !hasShort ? s : withhold(s, true); }
+        scanCtx = warmed;
+      }
     }
+    // A string under 8 characters is only looked at when the vault holds a short value from an older version.
+    if (s.length < 8 && !hasShort) return s;
     if (scanCtx === DEADLINE) return withhold(s, true);
-    const spans = engine.scan(s, scanCtx) || [];
+    // The vault did not answer: this string was not checked against its values, so it is not passed (like a deadline).
+    let found;
+    try {
+      found = await raceDeadline(scanOf(engine, s, scanCtx), deadlineAt);
+    } catch (err) {
+      if (err && err.vaultFailed) return withhold(s, true);
+      throw err;
+    }
+    if (found === DEADLINE) { abandoned = true; return withhold(s, true); }
+    const spans = found;
     for (const span of spans) {
       seen.add(s.slice(span.start, span.end));
       if (seen.size > tokenCap) return withhold(s, true);
@@ -1087,10 +1114,10 @@ async function decidePromptText(ev, d, agentId, expansion) {
   if (prompt.length < 8) return { decision: 'allow' };
   const engine = d.engine();
   let ctx = await ctxFor(ev, d, agentId, 'assistant');
-  // scan() is pure: prepare() first fetches the vault's exact values (and
-  // local ones), so a pasted vault secret is caught even without a pattern.
+  // prepare() first reads what the vault looks for (the daemon matches its values: none reach this process; local
+  // ones are read here), so a pasted vault secret is caught even without a pattern.
   if (typeof engine.prepare === 'function') ctx = await engine.prepare(ctx);
-  const spans = engine.scan(prompt, ctx) || [];
+  const spans = await scanOf(engine, prompt, ctx);
   const secrets = spans.filter((s) => SECRET_SOURCES.has(s.source));
   // Prompts only: NAME=value in the middle of a sentence, even when the value
   // does not look random (see lib/scrub/prompt.js).
@@ -1099,8 +1126,9 @@ async function decidePromptText(ev, d, agentId, expansion) {
   }
   if (secrets.length === 0) return { decision: 'allow' };
   const others = [...spans, ...secrets];
-  const scanText = (t) => { try { return engine.scan(t, ctx) || []; } catch (_) { return []; } };
-  const names = secrets.map((s) => nameOf(s) || keyBefore(prompt, s, others, scanText));
+  const scanText = async (t) => { try { return await scanOf(engine, t, ctx); } catch (_) { return []; } };
+  const names = [];
+  for (const s of secrets) names.push(nameOf(s) || await keyBefore(prompt, s, others, scanText));
   const shown = [...new Set(secrets.map((s, i) => names[i] || kindLabel(s.type)))];
   const suggestion = names[0] || suggestedName(secrets[0]);
   const stats = { detections: Object.fromEntries([...new Set(secrets.map((s) => s.type || 'SECRET'))].map((k) => [k, 1])) };
@@ -1162,7 +1190,7 @@ const KEY_IDENT_RE = /^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/;
 // The text before a value can be another secret ("<id>:<secret>"). It is used
 // as a name only if it overlaps no other detection, looks like a key
 // identifier (not a random token) and is not itself detected as a secret.
-function keyBefore(text, span, others, scanText) {
+async function keyBefore(text, span, others, scanText) {
   if (span.name || !GENERIC_TYPES.has(String(span.type || '').toUpperCase())) return null;
   const from = Math.max(0, span.start - 140);
   const m = KEY_BEFORE_RE.exec(String(text).slice(from, span.start));
@@ -1174,7 +1202,7 @@ function keyBefore(text, span, others, scanText) {
   if (!KEY_IDENT_RE.test(raw)) return null;
   if (/\d/.test(raw) && /[a-z]/.test(raw) && /[A-Z]/.test(raw)) return null;
   if ((raw.match(/\d/g) || []).length > 3) return null;
-  if (scanText && scanText(raw).length > 0) return null;
+  if (scanText && (await scanText(raw)).length > 0) return null;
   const n = raw.replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/[-.]/g, '_').toUpperCase();
   return NAME_RE.test(n) ? n : null;
 }
@@ -1283,7 +1311,7 @@ async function decideStop(ev, d, agentId, opts) {
     const engine = d.engine();
     let ctx = await ctxFor(ev, d, agentId, 'assistant');
     if (typeof engine.prepare === 'function') ctx = await engine.prepare(ctx);
-    for (const span of engine.scan(message, ctx) || []) {
+    for (const span of await scanOf(engine, message, ctx)) {
       if (SECRET_SOURCES.has(span.source)) kinds.add(kindLabel(span.type));
     }
   }
@@ -1348,7 +1376,7 @@ function failClosed(ev, err, msg) {
  */
 function SESSION_CONTEXT() {
   return 'zn is on in this project: it blocks reads of .env files and of the secrets vault. ' +
-    'To run a command that needs a stored secret, write the placeholder __ZN_<NAME>__ and run the command with `' + znCommand('run -- <command>') + '`.';
+    'To run a command that needs a stored secret, use `' + znCommand('run --secrets NAME -- <command>') + '`: the program reads the value from the environment variable NAME. A placeholder in the arguments is not filled in.';
 }
 
 /*
@@ -1370,7 +1398,7 @@ async function injectTestFault() {
 /**
  * Handle one raw event. Returns {output, stderr} where output is the JSON
  * value to print (or null for "no opinion").
- * opts: {engine, vault, failMode, home, znRunPrefix}
+ * opts: {engine, vault, failMode, home}
  */
 async function handle(adapter, rawEvent, opts = {}) {
   const mode = failModeOf(opts);
