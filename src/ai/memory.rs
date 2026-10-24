@@ -1041,6 +1041,18 @@ mod tests {
         raw
     }
 
+    /// The first search of an old file runs the upgrade (VACUUM and a log
+    /// checkpoint), which can pass the search deadline on a loaded machine.
+    /// The upgrade is retried by the next call, so tests warm the file up.
+    async fn warm_up(m: &VectorMemory) {
+        for _ in 0..20 {
+            if m.search(NS, "warm", &[0.0], 1).await.is_ok() {
+                return;
+            }
+        }
+        panic!("the upgrade never finished");
+    }
+
     fn zn_ref(text: &str) -> String {
         crate::ai::content_ref(text)
     }
@@ -1057,6 +1069,7 @@ mod tests {
         .unwrap();
         drop(raw);
 
+        warm_up(&m).await;
         let found = m.search(LEGACY_NAMESPACE, "a", &[0.0], 5).await.unwrap();
         assert_eq!(found.len(), 2);
         assert!(found.iter().all(|(t, _)| crate::ai::is_content_ref(t)));
@@ -1106,6 +1119,7 @@ mod tests {
             let m = VectorMemory::new(dir.to_str().unwrap(), 1, "m");
             let raw = write_old_file(&m, &dir, version);
 
+            warm_up(&m).await;
             // Old rows go to the global namespace, not to any tenant.
             assert!(m.search(NS, "a", &[0.0], 5).await.unwrap().is_empty());
             assert_eq!(
