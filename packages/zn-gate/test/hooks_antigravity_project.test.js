@@ -202,3 +202,15 @@ test('zn-gate check reads the guarded project command as zn\'s own (sh form and 
   assert.deepEqual(win, { onPath: true, guarded: true });
   assert.equal(parseCommandForTest('sh -c :;echo${IFS}hi', 'antigravity'), null);
 });
+
+test('the project guard is recognized by its structure when its wording changes', () => {
+  const sh = launcher.projectShCommand('antigravity');
+  const reworded = sh.replace('blocked.', 'stopped.');
+  assert.notEqual(reworded, sh);
+  assert.equal(launcher.isProjectGuard(reworded, 'antigravity'), true);
+  assert.equal(launcher.isProjectGuard('sh -c :;echo${IFS}hi', 'antigravity'), false);
+  assert.equal(launcher.isProjectGuard(sh, 'cursor'), false);
+  const ps = launcher.projectWindowsScript('antigravity');
+  assert.equal(launcher.isProjectWindowsScript(ps.replace('exit 0 #', 'exit 0 ; # note #').replace('; # note #', ' #'), 'antigravity'), true);
+  assert.equal(launcher.isProjectWindowsScript('Write-Output hi # zn hook antigravity', 'antigravity'), false);
+});

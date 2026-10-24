@@ -226,12 +226,21 @@ function projectWindowsScript(agentId) {
 
 /** Whether a command is the POSIX project hook of this agent as written by projectShCommand. */
 function isProjectGuard(command, agentId) {
-  try { return typeof command === 'string' && command === projectShCommand(agentId); } catch (_) { return false; }
+  try {
+    if (typeof command !== 'string') return false;
+    if (command === projectShCommand(agentId)) return true;
+    // A later zn-gate may word the deny differently: recognize the guard by its structure (start and the hook call).
+    return command.startsWith('sh -c :;Z=$(' + ['command', '-v', 'zn'].join(IFS) + ')') && command.includes(IFS + 'hook' + IFS + agentId + ';');
+  } catch (_) { return false; }
 }
 
 /** Whether a command is a Windows project hook script of this agent (the readable PowerShell text). */
 function isProjectWindowsScript(script, agentId) {
-  try { return typeof script === 'string' && script === projectWindowsScript(agentId); } catch (_) { return false; }
+  try {
+    if (typeof script !== 'string') return false;
+    if (script === projectWindowsScript(agentId)) return true;
+    return script.startsWith("$ProgressPreference='SilentlyContinue'; $zt=0; ") && script.includes('& zn.cmd hook ' + agentId + ';') && script.endsWith('# zn hook ' + agentId);
+  } catch (_) { return false; }
 }
 
 /** Whether a path can be written into a command with no quotes: only letters, digits and a few punctuation marks. */
