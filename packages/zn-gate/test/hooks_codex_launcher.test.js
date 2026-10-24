@@ -124,7 +124,7 @@ test('codex uninstall removes the launcher; a project install writes none', { sk
   const proj = tempDir(t, 'zn-b93-proj-');
   codex.install({ scope: 'project', projectDir: proj, env, home, mcp: false });
   const data = JSON.parse(fs.readFileSync(path.join(proj, '.codex', 'hooks.json'), 'utf8'));
-  assert.equal(data.hooks.PreToolUse[0].hooks[0].command, 'zn hook codex');
+  assert.ok(launcher.isProjectGuard(data.hooks.PreToolUse[0].hooks[0].command, 'codex'));
   assert.equal(fs.existsSync(file), false);
 });
 

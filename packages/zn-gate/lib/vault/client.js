@@ -151,6 +151,7 @@ function lockedError(detail, notRunning = false) {
     : 'vault is locked; run `' + require('../zn-command').znCommand('unlock') + '`';
   const err = znError(CODES.LOCKED, text);
   if (notRunning) err.vaultNotRunning = true;
+  if (detail && !notRunning) err.vaultUnanswered = true;
   return err;
 }
 
@@ -178,10 +179,11 @@ class VaultClient {
       const socket = net.createConnection(ep.address);
       socket.setEncoding('utf8');
       const state = { socket, pending: new Map(), nextId: 1, stage: 'hello', buf: '', clientNonce: crypto.randomBytes(16).toString('hex'), serverNonce: null };
+      this.connState = state;
       const fail = (err) => {
         for (const p of state.pending.values()) p.reject(err);
         state.pending.clear();
-        this.conn = null;
+        if (this.connState === state) this.conn = null;
         socket.destroy();
         reject(err);
       };
@@ -191,8 +193,9 @@ class VaultClient {
         clearTimeout(timer);
         for (const p of state.pending.values()) p.reject(lockedError('connection closed'));
         state.pending.clear();
-        if (this.conn && state.stage !== 'ready') reject(lockedError('connection closed'));
-        this.conn = null;
+        if (this.conn && this.connState === state && state.stage !== 'ready') reject(lockedError('connection closed'));
+        // Only this connection's own close clears it: a late close of an old socket must not drop a newer one.
+        if (this.connState === state) this.conn = null;
       });
       socket.on('connect', () => {
         socket.write(JSON.stringify({ op: 'hello', v: PROTOCOL, nonce: state.clientNonce }) + '\n');
@@ -237,7 +240,8 @@ class VaultClient {
         }
       });
     });
-    this.conn.catch(() => { this.conn = null; });
+    const mine = this.conn;
+    mine.catch(() => { if (this.conn === mine) this.conn = null; });
     return this.conn;
   }
 
@@ -246,8 +250,11 @@ class VaultClient {
     return new Promise((resolve, reject) => {
       const id = state.nextId++;
       const timer = setTimeout(() => {
+        // The deadline passed: the connection is dropped, not kept for a late answer. Destroying the socket
+        // releases the handle (the process can exit) and nothing that arrives afterwards is read.
         state.pending.delete(id);
         reject(lockedError('timeout'));
+        this._drop(state);
       }, callTimeoutMs(op));
       state.pending.set(id, {
         resolve: (v) => { clearTimeout(timer); resolve(v); },
@@ -258,10 +265,23 @@ class VaultClient {
     });
   }
 
+  // Destroy this connection's socket and fail what still waits on it; the next call connects again.
+  _drop(state) {
+    const c = this.conn;
+    if (c) c.then((s) => { if (s === state && this.conn === c) this.conn = null; }, () => {});
+    for (const p of state.pending.values()) p.reject(lockedError('connection closed'));
+    state.pending.clear();
+    state.socket.destroy();
+  }
+
   close() {
     const c = this.conn;
     this.conn = null;
-    if (c) c.then((s) => s.socket.end(), () => {});
+    if (c) c.then((s) => {
+      for (const p of s.pending.values()) p.reject(lockedError('connection closed'));
+      s.pending.clear();
+      s.socket.destroy();
+    }, () => {});
   }
 
   mapToken(project, type, value) { return this.call('mapToken', [project, type, value]); }

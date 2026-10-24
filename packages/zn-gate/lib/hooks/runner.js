@@ -312,7 +312,13 @@ async function mapStrings(value, fn) {
 function lazyDeps(opts) {
   let engine = opts.engine;
   let vault = opts.vault === null ? null : opts.vault;
+  const injected = vault !== undefined;
   return {
+    // Closes the client this hook created (never one the caller passed in): its socket must not outlive the hook.
+    closeVault() {
+      if (injected || !vault || typeof vault.close !== 'function') return;
+      try { vault.close(); } catch (_) { /* already closed */ }
+    },
     engine() {
       if (!engine) engine = deps.loadEngine();
       return engine;
@@ -1350,7 +1356,11 @@ function failDecision(ev, err, mode, agentId) {
   }
   const missing = err.code === 'ZN_UNAVAILABLE';
   const detail = missing ? '' : ' (' + (err.code ? err.code + ': ' : '') + String(err.message || 'unknown error') + ')';
-  const msg = 'zn: ' + (missing ? REINSTALL : HOOK_FAILED + fixHint(agentId)) + detail;
+  const vaultDown = err.vaultFailed === true;
+  const msg = vaultDown
+    ? 'zn: zn could not check this action against your secret vault, so it was blocked to keep your secrets safe. ' +
+      'Check that the vault is running and unlocked (zn unlock; zn lock stops it)' + detail
+    : 'zn: ' + (missing ? REINSTALL : HOOK_FAILED + fixHint(agentId)) + detail;
   // Fail open only when the engine itself is missing and the user chose so.
   if (mode === 'open' && missing) return { decision: 'allow', failOpen: true, warning: 'zn: ' + REINSTALL_USER };
   const r = failClosed(ev, err, msg);
@@ -1405,9 +1415,9 @@ async function handle(adapter, rawEvent, opts = {}) {
   const mode = failModeOf(opts);
   let ev = null;
   let decision;
+  const d = lazyDeps(opts);
   try {
     ev = adapter.normalize(rawEvent);
-    const d = lazyDeps(opts);
     if (ev && ev.event) guardNativeText(ev);
     await injectTestFault();
     if (!ev || !ev.event) decision = { decision: 'allow' };
@@ -1420,6 +1430,8 @@ async function handle(adapter, rawEvent, opts = {}) {
     else decision = { decision: 'allow' };
   } catch (err) {
     decision = failDecision(ev, err, mode, adapter.id);
+  } finally {
+    d.closeVault();
   }
   // zn Team: a line for the person (a policy change that lifted restrictions, or detectors that are not applied).
   const teamLines = takeTeamNotes();

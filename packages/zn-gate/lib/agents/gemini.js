@@ -216,12 +216,14 @@ function stripOurs(groups) {
 /**
  * The hook command. Gemini CLI fails open when a hook cannot start (only exit code 2 blocks), so a user install
  * goes through zn's launcher (lib/agents/launcher.js): a Node.js that has gone away blocks the tool (exit 2)
- * instead of letting it run. A project install or a command given by the caller keeps the plain command.
+ * instead of letting it run. A project install runs `zn` from the PATH inside a start guard that blocks the same way; a command given by the caller keeps the plain command.
  */
 function commandFor(opts = {}) {
   const platform = opts.platform || process.platform;
   const scope = opts.scope || 'user';
-  if (opts.command || scope === 'project') return cfg.hookCommand(id, opts);
+  if (opts.command) return cfg.hookCommand(id, opts);
+  // A project install runs `zn` from the PATH inside zn's start guard (launcher.projectShCommand / projectWindowsScript): a missing zn or Node.js blocks.
+  if (scope === 'project') return platform === 'win32' ? launcher.windowsScriptCommand(launcher.projectWindowsScript(id, 'BeforeTool')) : launcher.projectShCommand(id, 'BeforeTool');
   const node = opts.nodePath || process.execPath;
   const runner = opts.runnerPath || cfg.runnerPath();
   if (platform === 'win32') {

@@ -78,7 +78,7 @@ test('cursor: uninstall removes the launcher; a project install writes none', { 
   assert.equal(fs.existsSync(file), false);
   const proj = tempDir(t, 'zn-b96-proj-');
   adapter.install({ scope: 'project', projectDir: proj, env, home, nodePath: process.execPath, runnerPath: RUNNER });
-  assert.match(JSON.parse(fs.readFileSync(path.join(proj, '.cursor', 'hooks.json'), 'utf8')).hooks.preToolUse[0].command, / cursor$/);
+  assert.ok(launcher.isProjectGuard(JSON.parse(fs.readFileSync(path.join(proj, '.cursor', 'hooks.json'), 'utf8')).hooks.preToolUse[0].command, 'cursor'));
   assert.equal(fs.existsSync(file), false);
 });
 

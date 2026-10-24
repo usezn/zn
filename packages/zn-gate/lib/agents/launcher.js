@@ -292,18 +292,79 @@ const SH_SAFE_TEXT = /^[^'"\\%$\n\r]+$/;
 function projectTexts(agentId) {
   const missing = 'zn: its hook cannot start because zn or Node.js was not found on the PATH, so this was blocked. Ask the user to run `npm install -g zn-gate` in their terminal.';
   const crash = crashText(agentId);
-  for (const t of [missing, crash]) if (!SH_SAFE_TEXT.test(t)) throw new Error('zn: unsafe text in the project hook');
-  return { missing, crash };
+  const warnMissing = 'zn is NOT protecting this session: its hook cannot start because zn or Node.js was not found on the PATH. Please run `npm install -g zn-gate` in your own terminal.';
+  const warnCrash = crashWarnText();
+  for (const t of [missing, crash, warnMissing, warnCrash]) if (!SH_SAFE_TEXT.test(t)) throw new Error('zn: unsafe text in the project hook');
+  return { missing, crash, warnMissing, warnCrash };
 }
 
-/** The POSIX project hook command (see above), or throws for an agent without a deny JSON answer. */
-function projectShCommand(agentId) {
-  checkAgentId(agentId);
-  if (!DENY_STDOUT[agentId]) throw new Error('zn: no project guard for ' + agentId);
+// What the guard prints when the hook cannot start, for the agents that read a block from a deny JSON on stdout (exit 0).
+const PROJECT_DENY_JSON = {
+  antigravity: (r) => ({ decision: 'deny', reason: r }),
+  copilot: (r) => ({ permissionDecision: 'deny', permissionDecisionReason: r }),
+};
+// Windows: Cursor and Gemini CLI read the deny JSON only with exit 0 (see windowsScript), so there a block is the JSON plus exit 0.
+const PROJECT_WIN_DENY_JSON = {
+  cursor: (r) => ({ permission: 'deny', continue: false, user_message: r, agent_message: r }),
+  gemini: (r) => ({ decision: 'deny', reason: r }),
+};
+
+/**
+ * What the project hook of one agent and event answers when `zn` or Node.js cannot start (why: 'missing') or the hook ran and
+ * failed (why: 'crash'): {stdout, stderr, exit}, each text or null. A blocking event answers the agent's own blocking response
+ * (exit 2 with the reason on stderr, or the deny JSON); an event that cannot block only warns. Antigravity (no event given)
+ * denies every call, as its project hook always did.
+ */
+function projectAnswer(agentId, event, why, win) {
   const t = projectTexts(agentId);
+  const crash = why === 'crash';
+  const block = agentId === 'antigravity' ? true : agentId === 'copilot' ? event === 'preToolUse' : blockExit(agentId).has(event);
+  if (block) {
+    const r = crash ? t.crash : t.missing;
+    if (PROJECT_DENY_JSON[agentId]) return { stdout: JSON.stringify(PROJECT_DENY_JSON[agentId](r)), stderr: null, exit: 0 };
+    if (win && PROJECT_WIN_DENY_JSON[agentId]) return { stdout: JSON.stringify(PROJECT_WIN_DENY_JSON[agentId](r)), stderr: r, exit: 0 };
+    return { stdout: null, stderr: r, exit: 2 };
+  }
+  const w = crash ? t.warnCrash : t.warnMissing;
+  if (agentId !== 'copilot' && blockJson(agentId).has(event)) {
+    return { stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: crash ? t.crash : t.missing } } }), stderr: null, exit: 0 };
+  }
+  if (agentId === 'copilot' || WARN_STDERR.has(agentId)) return { stdout: null, stderr: w, exit: 0 };
+  return { stdout: JSON.stringify({ systemMessage: w }), stderr: null, exit: 0 };
+}
+
+/**
+ * The POSIX project hook command (see above) for one event (omit it for Antigravity). Every agent that runs project hooks
+ * through a shell gets the same guard, so a `zn` or Node.js that is gone ends in that agent's own blocking answer instead of
+ * exit 127, which the agents run through as a non-blocking error.
+ */
+function projectShCommand(agentId, event) {
+  checkAgentId(agentId);
+  if (event !== undefined && !/^[A-Za-z]+$/.test(String(event))) throw new Error('zn: bad event name');
+  // An agent that runs the command through a shell (every one but Antigravity) gets the readable script in single quotes: the
+  // ${IFS} form below is for a command split on spaces with no shell, and a shell such as zsh does not split an unquoted ${IFS}.
+  if (agentId !== 'antigravity') {
+    const crash = projectAnswer(agentId, event, 'crash', false);
+    const missing = projectAnswer(agentId, event, 'missing', false);
+    const say = (a) => [
+      ...(a.stdout ? ["echo '" + a.stdout + "'"] : []),
+      ...(a.stderr ? ["echo '" + a.stderr + "' >&2"] : []),
+      'exit ' + a.exit,
+    ].join('; ');
+    const script = 'Z=$(command -v zn); N=$(command -v node); R=missing; ' +
+      'if [ -n "$N" ] && [ "${Z#/}" != "$Z" ]; then R=ran; "$Z" hook ' + agentId + '; C=$?; [ "$C" = 0 ] && exit 0; [ "$C" = 2 ] && exit 2; fi; ' +
+      'if [ "$R" = ran ]; then ' + say(crash) + '; fi; ' + say(missing);
+    return 'sh -c ' + shQuote(script);
+  }
   const sp = (...w) => w.join(IFS);
-  const say = (r) => sp("printf", "'" + JSON.stringify(DENY_STDOUT[agentId](r)).replace(/ /g, '\\040') + "\\n'");
+  const esc = (x) => "'" + x.replace(/ /g, '\\040') + "\\n'";
+  const say = (a) => [
+    ...(a.stdout ? [sp('printf', esc(a.stdout))] : []),
+    ...(a.stderr ? [sp('printf', esc(a.stderr)) + '>&2'] : []),
+  ];
   const test = (...w) => '[' + IFS + w.join(IFS) + IFS + ']';
+  const crash = projectAnswer(agentId, event, 'crash', false);
+  const missing = projectAnswer(agentId, event, 'missing', false);
   const script = [
     ':',
     'Z=$(' + sp('command', '-v', 'zn') + ')',
@@ -313,23 +374,29 @@ function projectShCommand(agentId) {
     'C=$?',
     test('"$R"', '=', 'ran') + '&&' + test('"$C"', '=', '0') + '&&' + sp('exit', '0'),
     test('"$R"', '=', 'ran') + '&&' + test('"$C"', '=', '2') + '&&' + sp('exit', '2'),
-    test('"$R"', '=', 'ran') + '&&' + say(t.crash) + '||' + say(t.missing),
-    sp('exit', '0'),
+    [test('"$R"', '=', 'ran'), ...say(crash), sp('exit', String(crash.exit))].join('&&'),
+    ...say(missing),
+    sp('exit', String(missing.exit)),
   ].join(';');
   if (/\s/.test(script)) throw new Error('zn: the project hook script holds a space');
   return 'sh -c ' + script;
 }
 
 /** The PowerShell text of the same project hook (for windowsScriptCommand). Ends with the comment that isOurs() reads. */
-function projectWindowsScript(agentId) {
+function projectWindowsScript(agentId, event) {
   checkAgentId(agentId);
-  if (!DENY_STDOUT[agentId]) throw new Error('zn: no project guard for ' + agentId);
-  const t = projectTexts(agentId);
-  const say = (r) => "[Console]::Out.WriteLine('" + JSON.stringify(DENY_STDOUT[agentId](r)) + "')";
-  const leave = 'if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 2) { exit 0 }';
+  if (event !== undefined && !/^[A-Za-z]+$/.test(String(event))) throw new Error('zn: bad event name');
+  const say = (a) => [
+    ...(a.stdout ? ["[Console]::Out.WriteLine('" + a.stdout + "')"] : []),
+    ...(a.stderr ? ["[Console]::Error.WriteLine('" + a.stderr + "')"] : []),
+  ].join('; ') + '; exit ' + a.exit;
+  const crash = projectAnswer(agentId, event, 'crash', true);
+  const missing = projectAnswer(agentId, event, 'missing', true);
+  // Only 0 (done) and 2 (blocked) leave early; with an answer that exits 0 (a deny JSON, a warning) the refusal passes on as exit 0.
+  const leave = 'if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 2) { exit ' + (crash.exit === 0 ? '0' : '$LASTEXITCODE') + ' }';
   return "$ProgressPreference='SilentlyContinue'; $zt=0; " + ZF +
     "if ((zf 'zn.cmd') -and ((zf 'node.exe') -or (zf 'node.cmd'))) { $zt=1; & (zf 'zn.cmd') hook " + agentId + '; ' + leave + ' }; ' +
-    'if ($zt -eq 1) { ' + say(t.crash) + ' } else { ' + say(t.missing) + ' }; exit 0 # zn hook ' + agentId;
+    'if ($zt -eq 1) { ' + say(crash) + ' } else { ' + say(missing) + ' }; # zn hook ' + agentId;
 }
 
 /** Whether a command is the POSIX project hook of this agent as written by projectShCommand. */
@@ -338,6 +405,7 @@ function isProjectGuard(command, agentId) {
     if (typeof command !== 'string') return false;
     if (command === projectShCommand(agentId)) return true;
     // A later zn-gate may word the deny differently: recognize the guard by its structure (start and the hook call).
+    if (command.startsWith("sh -c 'Z=$(command -v zn); N=$(command -v node); R=missing; if ") && command.includes('"$Z" hook ' + agentId + '; C=$?;')) return true;
     return command.startsWith('sh -c :;Z=$(' + ['command', '-v', 'zn'].join(IFS) + ')') && command.includes(IFS + 'hook' + IFS + agentId + ';');
   } catch (_) { return false; }
 }
@@ -348,6 +416,24 @@ function isProjectWindowsScript(script, agentId) {
     if (typeof script !== 'string') return false;
     if (script === projectWindowsScript(agentId)) return true;
     return script.startsWith("$ProgressPreference='SilentlyContinue'; $zt=0; ") && (script.includes('& zn.cmd hook ' + agentId + ';') || script.includes("& (zf 'zn.cmd') hook " + agentId + ';')) && script.endsWith('# zn hook ' + agentId);
+  } catch (_) { return false; }
+}
+
+/** Every event name an installer writes the project guard for (any agent); the exact check tries each one. */
+const GUARD_EVENTS = [undefined, 'PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'UserPromptExpansion', 'PermissionRequest', 'BeforeTool',
+  'beforeMCPExecution', 'beforeReadFile', 'beforeShellExecution', 'beforeSubmitPrompt', 'preToolUse', 'postToolUse'];
+
+/** Whether a command is exactly a POSIX project guard that this version writes (any event of this agent). */
+function isProjectGuardExact(command, agentId) {
+  try {
+    return typeof command === 'string' && GUARD_EVENTS.some((e) => command === projectShCommand(agentId, e));
+  } catch (_) { return false; }
+}
+
+/** Whether a script is exactly a Windows project guard that this version writes (any event of this agent). */
+function isProjectWindowsScriptExact(script, agentId) {
+  try {
+    return typeof script === 'string' && GUARD_EVENTS.some((e) => script === projectWindowsScript(agentId, e));
   } catch (_) { return false; }
 }
 
@@ -763,4 +849,4 @@ function windowsScriptCommand(script) {
   return 'powershell.exe -NoProfile -NonInteractive -EncodedCommand ' + Buffer.from(script, 'utf16le').toString('base64');
 }
 
-module.exports = { parseWinAcls, WIN_ACL_SCRIPT, WIN_PRIVATE_SCRIPT, projectShCommand, projectWindowsScript, isProjectGuard, isProjectWindowsScript, blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, spaceMessage, unsafeDirMessage, ensureSafeHookDir, readWinAcls, setWinPrivate, winProblem, windowsScript, BLOCK_EXIT, BLOCK_JSON };
+module.exports = { parseWinAcls, WIN_ACL_SCRIPT, WIN_PRIVATE_SCRIPT, projectShCommand, projectWindowsScript, isProjectGuard, isProjectWindowsScript, isProjectGuardExact, isProjectWindowsScriptExact, blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, spaceMessage, unsafeDirMessage, ensureSafeHookDir, readWinAcls, setWinPrivate, winProblem, windowsScript, BLOCK_EXIT, BLOCK_JSON };
