@@ -113,7 +113,9 @@ an older zn-gate and the plugins keep a plain command. Agent by agent:
 - **Zcode**: Zcode blocks only on exit code 2 or a deny answer; a hook that cannot
   start is only logged and the call runs. With the user install (the only one
   Zcode has), the launcher exits 2 with the repair step on tool calls, permission
-  requests and prompts, and after a tool has run zn only warns. If Zcode cannot
+  requests and prompts, and after a tool has run zn only warns. The launcher also
+  stops a hook that has not finished after 28 seconds (2 seconds under Zcode's own
+  limit) and blocks the call, on Windows too. If Zcode cannot
   start the launcher itself (the file deleted or not executable), the call goes
   ahead unchecked.
 
