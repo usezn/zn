@@ -4,6 +4,21 @@ The eleven messages people most often meet when they first use zn-gate: what eac
 
 Run every command in your own terminal, not through your AI agent. New here? Start with [First 5 minutes](first-5-minutes.md). Words you do not know are in the [glossary](glossary.md).
 
+## Symptom index
+
+- [Node.js is too old](#1-nodejs-is-too-old)
+- [`npx: command not found`](#2-npx-command-not-found)
+- ["running scripts is disabled on this system" (Windows)](#3-running-scripts-is-disabled-on-this-system-windows)
+- [It needs you at your own terminal](#4-it-needs-you-at-your-own-terminal)
+- ["Your secret vault is locked"](#5-your-secret-vault-is-locked)
+- [Your agent was blocked: "`.env` holds plain-text secrets"](#6-your-agent-was-blocked-env-holds-plain-text-secrets)
+- [`zn-gate connect` does not accept your key](#7-zn-gate-connect-does-not-accept-your-key)
+- ["will not send the saved key" (TLS settings)](#8-will-not-send-the-saved-key-tls-settings)
+- [Your agent ignores zn's hooks on a managed computer](#9-your-agent-ignores-zns-hooks-on-a-managed-computer)
+- ["the evidence log ... is damaged"](#10-the-evidence-log--is-damaged)
+- [The Claude Code plugin rejects every call, or its MCP servers show "Failed to connect"](#11-the-claude-code-plugin-rejects-every-call-or-its-mcp-servers-show-failed-to-connect)
+- [Also useful](#also-useful): TLS certificates and trust stores; npm EACCES
+
 ## 1. Node.js is too old
 
 ```text
