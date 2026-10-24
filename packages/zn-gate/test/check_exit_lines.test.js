@@ -77,12 +77,15 @@ test('check report: a half set-up machine with a broken hook exits 1 even though
 });
 
 test('check report: a fully set-up machine exits 0 with an OK line per agent and no missing-agent line', async (t) => {
-  const { res, out, code } = await run(machine(t, ['claude-code', 'codex', 'cursor', 'opencode']));
+  // Claude Code and Cursor start their hook through `sh` (Git Bash) on Windows, and this machine's PATH holds
+  // only an empty folder, so there is no `sh` for check to run: leave those two out there.
+  const ids = process.platform === 'win32' ? ['codex', 'opencode'] : ['claude-code', 'codex', 'cursor', 'opencode'];
+  const { res, out, code } = await run(machine(t, ids));
   assert.equal(code, 0);
-  for (const id of ['claude-code', 'codex', 'cursor', 'opencode']) {
+  for (const id of ids) {
     assert.equal(res.results.find((r) => r.id === id).state, 'protected', id);
   }
-  assert.equal((out.match(/^ {2}OK /gm) || []).length, 4);
+  assert.equal((out.match(/^ {2}OK /gm) || []).length, ids.length);
   assert.match(out, /Your agent cannot read secret files such as \.env through these tools\./);
   assert.match(out, /zn env shadow \.env/);
   assert.doesNotMatch(out, /Not set up yet|NOT protected/);
