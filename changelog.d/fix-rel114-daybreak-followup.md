@@ -1,2 +1,0 @@
-### Security
-- The audit log cleanup of the Rust gateway now accepts only an exact reference (or a reference followed by a finite distance) as already cleaned; a value that merely starts like a reference is replaced like any other old text. The audit database waits up to 5 seconds for other processes, an encrypted audit database is refused without its key before anything is written, and the vector memory keeps only the keyed reference of each call.
