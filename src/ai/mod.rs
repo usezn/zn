@@ -97,7 +97,7 @@ pub fn load_or_create_ref_key(dir: &std::path::Path) -> std::io::Result<[u8; 32]
 
 /// Returns the key and whether a new one replaced a file of the wrong length.
 fn load_ref_key(dir: &std::path::Path) -> std::io::Result<([u8; 32], bool)> {
-    use crate::private_file::{create_private_file, create_private_file_new, read_private_file};
+    use crate::private_file::{create_private_file_new, read_private_file};
     use std::io::{Error, ErrorKind};
     let path = dir.join("ref.key");
     let new_key = || {
@@ -106,10 +106,11 @@ fn load_ref_key(dir: &std::path::Path) -> std::io::Result<([u8; 32], bool)> {
         rand::rng().fill_bytes(&mut key);
         key
     };
+    std::fs::create_dir_all(dir)?;
+    check_key_dir(dir)?;
     let existing = match read_private_file(&path) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == ErrorKind::NotFound => {
-            std::fs::create_dir_all(dir)?;
             let key = new_key();
             match create_private_file_new(&path, &key) {
                 Ok(()) => return Ok((key, false)),
@@ -129,12 +130,122 @@ fn load_ref_key(dir: &std::path::Path) -> std::io::Result<([u8; 32], bool)> {
     }
     match <[u8; 32]>::try_from(existing.as_slice()) {
         Ok(key) => Ok((key, false)),
-        Err(_) => {
-            let key = new_key();
-            create_private_file(&path, &key)?;
-            Ok((key, true))
+        Err(_) => replace_bad_key(dir, &path),
+    }
+}
+
+/// A file that was already there with the wrong length. Replacing it is done
+/// under an exclusive lock file so two processes that find the same bad key
+/// cannot each write a different one: the first takes the lock and writes, the
+/// others wait for it and use the key that is on disk.
+fn replace_bad_key(
+    dir: &std::path::Path,
+    path: &std::path::Path,
+) -> std::io::Result<([u8; 32], bool)> {
+    use crate::private_file::{create_private_file_new, read_private_file};
+    use std::io::ErrorKind;
+    let lock = dir.join("ref.key.lock");
+    loop {
+        match create_private_file_new(&lock, std::process::id().to_string().as_bytes()) {
+            Ok(()) => {
+                let result = replace_bad_key_locked(path);
+                let _ = std::fs::remove_file(&lock);
+                return result;
+            }
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+                // The holder died without removing it: ignore the lock.
+                let stale = std::fs::metadata(&lock)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|t| t.elapsed().ok())
+                    .is_some_and(|age| age > REF_KEY_LOCK_STALE);
+                if stale {
+                    let _ = std::fs::remove_file(&lock);
+                    continue;
+                }
+                // Somebody else is replacing the key: use theirs once it is there.
+                if let Ok(bytes) = read_private_file(path) {
+                    if let Ok(key) = <[u8; 32]>::try_from(bytes.as_slice()) {
+                        return Ok((key, false));
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err(e) => return Err(e),
         }
     }
+}
+
+/// With the lock held: re-read first (another process may have fixed the file
+/// between our read and the lock), otherwise write a new key, and always return
+/// what is on disk afterwards.
+fn replace_bad_key_locked(path: &std::path::Path) -> std::io::Result<([u8; 32], bool)> {
+    use crate::private_file::{create_private_file, read_private_file};
+    use rand::Rng;
+    use std::io::{Error, ErrorKind};
+    let invalid = || Error::new(ErrorKind::InvalidData, "ref.key still has the wrong length");
+    match read_private_file(path) {
+        Ok(bytes) => {
+            if let Ok(key) = <[u8; 32]>::try_from(bytes.as_slice()) {
+                return Ok((key, false));
+            }
+        }
+        Err(e) if e.kind() == ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
+    }
+    let mut fresh = [0u8; 32];
+    rand::rng().fill_bytes(&mut fresh);
+    create_private_file(path, &fresh)?;
+    let on_disk = read_private_file(path)?;
+    let key = <[u8; 32]>::try_from(on_disk.as_slice()).map_err(|_| invalid())?;
+    Ok((key, true))
+}
+
+/// A lock file older than this belongs to a process that is gone.
+const REF_KEY_LOCK_STALE: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// The folder that holds `ref.key` must be a real folder (not a link) owned by
+/// the effective user that nobody else can write to; otherwise another user
+/// could swap the key file or plant a lock. Fails closed.
+fn check_key_dir(dir: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::{Error, ErrorKind};
+        use std::os::unix::fs::MetadataExt;
+        let refuse = |kind, why: &str| {
+            Error::new(
+                kind,
+                format!(
+                    "ref.key cannot be used: its folder {} {why}; it must be a real folder owned by this user that group and others cannot write to",
+                    dir.display()
+                ),
+            )
+        };
+        let meta = std::fs::symlink_metadata(dir)?;
+        if meta.file_type().is_symlink() {
+            return Err(refuse(ErrorKind::InvalidInput, "is a symbolic link"));
+        }
+        if !meta.is_dir() {
+            return Err(refuse(ErrorKind::InvalidInput, "is not a folder"));
+        }
+        // SAFETY: geteuid has no preconditions and cannot fail.
+        if meta.uid() != unsafe { libc::geteuid() } {
+            return Err(refuse(
+                ErrorKind::PermissionDenied,
+                "belongs to another user",
+            ));
+        }
+        if meta.mode() & 0o022 != 0 {
+            return Err(refuse(
+                ErrorKind::PermissionDenied,
+                "is writable by group or others",
+            ));
+        }
+    }
+    // Windows: the folder ACL check belongs to the private_file module.
+    #[cfg(not(unix))]
+    let _ = dir;
+    Ok(())
 }
 
 /// Load (or create) the local reference key in `dir` and use it for every
@@ -419,5 +530,84 @@ mod content_ref_tests {
         std::fs::set_permissions(data.join("ref.key"), std::fs::Permissions::from_mode(0o600))
             .unwrap();
         assert_eq!(load_or_create_ref_key(&data).unwrap(), [9u8; 32]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_key_folder_that_group_or_others_can_write_is_refused() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        std::fs::create_dir(&data).unwrap();
+        for mode in [0o775, 0o757] {
+            std::fs::set_permissions(&data, std::fs::Permissions::from_mode(mode)).unwrap();
+            assert!(
+                load_or_create_ref_key(&data).is_err(),
+                "folder mode {mode:o} must be refused"
+            );
+            assert!(!data.join("ref.key").exists(), "no key is created there");
+        }
+        std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o700)).unwrap();
+        load_or_create_ref_key(&data).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_key_folder_that_is_a_link_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        assert!(load_or_create_ref_key(&link).is_err());
+        assert!(!real.join("ref.key").exists());
+    }
+
+    #[test]
+    fn processes_that_find_a_truncated_key_together_end_with_the_same_key() {
+        for round in 0..40 {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("ref.key");
+            create_private_file(&path, b"short").unwrap();
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+            let handles: Vec<_> = (0..8)
+                .map(|_| {
+                    let (b, d) = (barrier.clone(), dir.path().to_path_buf());
+                    std::thread::spawn(move || {
+                        b.wait();
+                        load_or_create_ref_key(&d).unwrap()
+                    })
+                })
+                .collect();
+            let keys: Vec<[u8; 32]> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+            let on_disk = std::fs::read(&path).unwrap();
+            for k in &keys {
+                assert_eq!(
+                    k.to_vec(),
+                    on_disk,
+                    "round {round}: a key was not the one on disk"
+                );
+            }
+            assert!(!dir.path().join("ref.key.lock").exists(), "lock removed");
+        }
+    }
+
+    #[test]
+    fn a_stale_lock_does_not_block_the_replacement() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ref.key");
+        create_private_file(&path, b"short").unwrap();
+        let lock = dir.path().join("ref.key.lock");
+        std::fs::write(&lock, b"99999").unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(120);
+        std::fs::File::options()
+            .write(true)
+            .open(&lock)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        let key = load_or_create_ref_key(dir.path()).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), key.to_vec());
+        assert!(!lock.exists());
     }
 }
