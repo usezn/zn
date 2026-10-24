@@ -1,7 +1,7 @@
 #!/bin/bash
 # Entry of the znops job: Antigravity CLI (agy) end-to-end on an ephemeral Ubuntu 24.04 VM.
 # Staged inputs (cwd = /opt/znjob/work):
-#   params.env              MODE, TGZ, SHA, GCP_PROJECT, GCP_LOCATIONS, AGY_MODEL, AGY_FLAGS
+#   params.env              MODE, TGZ, SHA, GCP_PROJECT, GCP_LOCATIONS, AGY_MODEL, AGY_FLAGS, AGY_SCENARIOS
 #   zn-gate-<version>.tgz   the zn-gate tree under test, packed with npm pack
 #   fake_secrets.js         the fake-secret generator of that same tree
 #   kit/                    bench/e2e/harness/{run_antigravity.sh, agy_spy.sh, check_antigravity_scenario.js,
@@ -63,6 +63,7 @@ main() {
   GCP_LOCATIONS=${GCP_LOCATIONS//,/ }
   AGY_FLAGS=${AGY_FLAGS:---dangerously-skip-permissions}
   AGY_MODEL=${AGY_MODEL:-}
+  AGY_SCENARIOS=${AGY_SCENARIOS:-}   # comma list of scenarios for run_antigravity.sh; empty = all
   # znops.preflight full runs the entry with ZN_PREFLIGHT=1: that is the one-request mode.
   if [ "${ZN_PREFLIGHT:-0}" = 1 ]; then MODE=preflight; fi
   export DEBIAN_FRONTEND=noninteractive
@@ -99,7 +100,7 @@ main() {
     cp "$(command -v node)" /opt/znjob/w/mock-node
     printf '#!/bin/sh\nexec /opt/znjob/w/mock-node %s "$@"\n' "$IN/kit/mock_agy.js" > /opt/znjob/w/mock-agy
     chmod +x /opt/znjob/w/mock-agy
-    export AGY=/opt/znjob/w/mock-agy AGY_FLAGS AGY_MODEL=
+    export AGY=/opt/znjob/w/mock-agy AGY_FLAGS AGY_SCENARIOS AGY_MODEL=
     export EVID=$RES/evidence
     bash "$IN/kit/run_antigravity.sh" /opt/znjob/w/run "$IN/fake_secrets.js" > "$RES/scenarios.log" 2>&1
     local SRC=$?
@@ -162,7 +163,7 @@ main() {
       result BLOCKED "agy did not answer a minimal request with the API key (see key_preflight.json and .err)"; return 0
     fi
     if [ "$MODE" = preflight ]; then result PREFLIGHT_OK "agy answered one request with the Gemini API key"; return 0; fi
-    export AGY AGY_FLAGS AGY_MODEL AGY_APIKEY_AUTH=1
+    export AGY AGY_FLAGS AGY_SCENARIOS AGY_MODEL AGY_APIKEY_AUTH=1
     GEMINI_API_KEY=$(cat "$KEYFILE"); export GEMINI_API_KEY
     unset AGY_ADC_AUTH GOOGLE_API_KEY
     export EVID=$RES/evidence
@@ -217,7 +218,7 @@ main() {
   fi
 
   # ---- the scenarios
-  export AGY AGY_FLAGS AGY_MODEL AGY_ADC_AUTH=true GOOGLE_CLOUD_PROJECT=$GCP_PROJECT GOOGLE_CLOUD_QUOTA_PROJECT=$GCP_PROJECT GOOGLE_CLOUD_LOCATION=$OKLOC
+  export AGY AGY_FLAGS AGY_SCENARIOS AGY_MODEL AGY_ADC_AUTH=true GOOGLE_CLOUD_PROJECT=$GCP_PROJECT GOOGLE_CLOUD_QUOTA_PROJECT=$GCP_PROJECT GOOGLE_CLOUD_LOCATION=$OKLOC
   export EVID=$RES/evidence
   bash "$IN/kit/run_antigravity.sh" /opt/znjob/w/run "$IN/fake_secrets.js" > "$RES/scenarios.log" 2>&1
   local RC=$?
