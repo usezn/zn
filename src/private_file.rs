@@ -228,7 +228,10 @@ mod tests {
         assert!(read_private_file(&real).is_ok());
 
         std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o640)).unwrap();
-        assert!(read_private_file(&real).is_err(), "group read must be refused");
+        assert!(
+            read_private_file(&real).is_err(),
+            "group read must be refused"
+        );
         std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).unwrap();
 
         std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o777)).unwrap();
