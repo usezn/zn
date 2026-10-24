@@ -190,6 +190,11 @@ impl AuditVault {
         let mut conn = Connection::open(db_path)
             .map_err(|e| anyhow!("Failed to open audit database '{}': {}", db_path, e))?;
 
+        // Overwrite deleted and replaced content with zeros, so text that a
+        // cleanup replaces does not stay in free pages of the file.
+        conn.execute_batch("PRAGMA secure_delete = ON;")
+            .map_err(|e| anyhow!("Failed to set secure_delete: {}", e))?;
+
         // Create metadata table for persistent configuration (like salt)
         conn.execute(
             "CREATE TABLE IF NOT EXISTS metadata (
@@ -323,6 +328,31 @@ impl AuditVault {
                 "Audit records with neighbour text replaced by a keyed reference: {}",
                 scrubbed
             );
+        }
+
+        // The cleanup leaves a marker until the file has been compacted, so a
+        // VACUUM that was interrupted is repeated at the next start.
+        let vacuum_pending: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM metadata WHERE key = 'neighbours_vacuum_pending'",
+            [],
+            |r| r.get(0),
+        )?;
+        if vacuum_pending > 0 {
+            conn.execute_batch("VACUUM;")
+                .map_err(|e| anyhow!("Failed to compact the audit database: {}", e))?;
+            let (busy, log, done): (i64, i64, i64) =
+                conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+                })?;
+            if busy != 0 || log != done {
+                return Err(anyhow!(
+                    "audit database log checkpoint incomplete after compaction; retrying on the next start"
+                ));
+            }
+            conn.execute(
+                "DELETE FROM metadata WHERE key = 'neighbours_vacuum_pending'",
+                [],
+            )?;
         }
 
         Ok(Self {
@@ -973,6 +1003,12 @@ fn scrub_legacy_neighbours(conn: &mut Connection) -> Result<usize> {
         return Err(anyhow!(
             "{left} audit rows still hold neighbour text after the cleanup"
         ));
+    }
+    if changed > 0 {
+        tx.execute(
+            "INSERT OR REPLACE INTO metadata (key, value) VALUES ('neighbours_vacuum_pending', '1')",
+            [],
+        )?;
     }
     tx.commit()?;
     Ok(changed)
@@ -2063,6 +2099,76 @@ mod tests {
         let vault = AuditVault::new(&path, None).expect("reopen");
         let all = format!("{:?}", vault.get_recent(10).unwrap());
         assert!(!all.contains("4821"), "old neighbour text survived: {all}");
+        drop(vault);
+        fs::remove_file(&path).ok();
+    }
+
+    fn file_bytes_contain(path: &str, needle: &str) -> bool {
+        [path.to_string(), format!("{path}-wal")]
+            .iter()
+            .filter_map(|p| fs::read(p).ok())
+            .any(|b| b.windows(needle.len()).any(|w| w == needle.as_bytes()))
+    }
+
+    #[test]
+    fn old_neighbour_text_leaves_no_trace_in_the_audit_file() {
+        let marker = "neighbour-marker-7f3a91-zebra";
+        let path = temp_db_path();
+        let vault = AuditVault::new(&path, None).expect("vault");
+        {
+            let conn = vault.get_connection();
+            let conn = conn.lock().unwrap();
+            let long = format!("{marker} {}", "payload text ".repeat(600));
+            for i in 0..20 {
+                conn.execute(
+                    "INSERT INTO audit_logs (id, timestamp, event, tool_name, status, payload, nearest_neighbor) VALUES (?1, 't', 'NEAREST_NEIGHBOR', 'tool', 'AUDIT', ?2, ?3)",
+                    params![format!("n{i}"), long, format!("{marker} {i}:0.1000")],
+                )
+                .unwrap();
+            }
+        }
+        drop(vault);
+        assert!(
+            file_bytes_contain(&path, marker),
+            "setup: the text is on disk"
+        );
+
+        let vault = AuditVault::new(&path, None).expect("reopen scrubs");
+        drop(vault);
+        assert!(
+            !file_bytes_contain(&path, marker),
+            "the neighbour text must not stay in the file"
+        );
+        fs::remove_file(&path).ok();
+        fs::remove_file(format!("{path}-wal")).ok();
+    }
+
+    #[test]
+    fn an_interrupted_compaction_is_repeated_at_the_next_start() {
+        let path = temp_db_path();
+        let vault = AuditVault::new(&path, None).expect("vault");
+        vault
+            .get_connection()
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT OR REPLACE INTO metadata (key, value) VALUES ('neighbours_vacuum_pending', '1')",
+                [],
+            )
+            .unwrap();
+        drop(vault);
+        let vault = AuditVault::new(&path, None).expect("reopen");
+        let left: i64 = vault
+            .get_connection()
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM metadata WHERE key = 'neighbours_vacuum_pending'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(left, 0);
         drop(vault);
         fs::remove_file(&path).ok();
     }
