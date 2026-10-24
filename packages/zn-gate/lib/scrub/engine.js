@@ -190,6 +190,7 @@ function scanText(text, c) {
     if (s.vault) out.vault = true;
     if (s.variant) out.variant = s.variant;
     if (s.merged) out.merged = true;
+    if (s.quote && !s.merged) out.quote = s.quote;
     return out;
   });
 }
@@ -346,7 +347,8 @@ async function tokenizeWith(text, ctx, spansOfText) {
   for (const s of spans) {
     const value = text.slice(s.start, s.end);
     const token = await tokenFor(s, value);
-    out += text.slice(last, s.start) + token;
+    // A bare JSON number under a quoted key becomes a string, so the JSON stays valid.
+    out += text.slice(last, s.start) + (s.quote ? s.quote + token + s.quote : token);
     last = s.end;
     replaced.push({ type: s.type, token, source: s.source });
   }
