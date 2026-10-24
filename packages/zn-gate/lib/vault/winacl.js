@@ -30,7 +30,15 @@ const { CODES, znError } = require('../errors');
 
 const SYSTEM_SID = 'S-1-5-18';
 const ADMINS_SID = 'S-1-5-32-544';
-const ALIASES = { SY: SYSTEM_SID, BA: ADMINS_SID };
+// SDDL writes some accounts as two-letter aliases. Fixed ones map to one SID everywhere; LA and LG (the machine's own Administrator,
+// RID 500, and Guest, RID 501) depend on the machine, so they are resolved with the current user's own domain prefix. The SDDL form
+// uses LA for the user itself on a machine where the user is the built-in Administrator (GitHub's Windows runners). Any alias not
+// listed stays unresolved and is therefore never trusted.
+const ALIASES = {
+  SY: SYSTEM_SID, BA: ADMINS_SID, BU: 'S-1-5-32-545', BG: 'S-1-5-32-546', PU: 'S-1-5-32-547', AU: 'S-1-5-11', WD: 'S-1-1-0',
+  OW: 'S-1-3-4', CO: 'S-1-3-0', CG: 'S-1-3-1', IU: 'S-1-5-4', NU: 'S-1-5-2', AN: 'S-1-5-7', LS: 'S-1-5-19', NS: 'S-1-5-20',
+};
+const MACHINE_RIDS = { LA: 500, LG: 501 };
 const SID_RE = /^S-1-\d+(?:-\d+)+$/;
 const TIMEOUT_MS = 30000;
 
@@ -109,9 +117,14 @@ function parseSddl(sddl) {
   return { owner: o ? o[1] : null, hasDacl: true, flags, aces };
 }
 
-function norm(id) {
+function norm(id, userSid) {
   const t = String(id || '').trim().toUpperCase();
-  return ALIASES[t] || t;
+  if (ALIASES[t]) return ALIASES[t];
+  if (MACHINE_RIDS[t]) {
+    const m = /^(S-1-5-21-\d+-\d+-\d+)-\d+$/.exec(String(userSid || '').trim().toUpperCase());
+    return m ? m[1] + '-' + MACHINE_RIDS[t] : t;
+  }
+  return t;
 }
 
 /** Problems with an SDDL, as short strings; an empty list means private. */
@@ -119,7 +132,7 @@ function problems(sddl, userSid, opts) {
   const acl = parseSddl(sddl);
   const out = [];
   const me = norm(userSid);
-  const trusted = (id) => { const n = norm(id); return n === me || n === SYSTEM_SID || n === ADMINS_SID; };
+  const trusted = (id) => { const n = norm(id, me); return n === me || n === SYSTEM_SID || n === ADMINS_SID; };
   if (!acl.hasDacl) return ['no access list (open to everyone)'];
   if (!acl.owner || !trusted(acl.owner)) out.push('owner is ' + (acl.owner || 'unknown'));
   if (opts && opts.dir && !/P/.test(acl.flags.replace(/AI|AR|NO_ACCESS_CONTROL/g, ''))) out.push('inherits permissions from its parent');
@@ -260,7 +273,7 @@ function rightsMask(r) {
  */
 function scriptEntriesRisk(entries, userSid) {
   const me = norm(userSid);
-  const fix = (id) => { const n = norm(id); return n === 'CO' ? 'S-1-3-0' : n === 'OW' ? 'S-1-3-4' : n; };
+  const fix = (id) => { const n = norm(id, me); return n === 'CO' ? 'S-1-3-0' : n === 'OW' ? 'S-1-3-4' : n; };
   const trusted = (id) => { const n = fix(id); return n === me || n === SYSTEM_SID || n === ADMINS_SID || TRUSTED_EXTRA.has(n); };
   let warn = null;
   for (const e of entries) {
