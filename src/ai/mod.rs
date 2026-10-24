@@ -164,10 +164,14 @@ fn ref_key() -> &'static [u8; 32] {
     })
 }
 
-/// True when `text` already has the shape of a reference (`h:` and 16 hex
-/// characters).
+/// True when `text` already has the shape of a reference (`h:` and 16
+/// lowercase hex characters, exactly what `content_ref` writes).
 pub fn is_content_ref(text: &str) -> bool {
-    text.len() == 18 && text.starts_with("h:") && text[2..].bytes().all(|b| b.is_ascii_hexdigit())
+    text.len() == 18
+        && text.starts_with("h:")
+        && text[2..]
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 /// Reference to a piece of text under an explicit key.
