@@ -264,3 +264,38 @@ test('check: a bare `zn hook` in a project file is reported as not protected; th
     void spec;
   }
 });
+
+test('guard recognition is by exact equality: current forms accepted, 1.13.x bare form old, a modified guard is flagged', skip, async (t) => {
+  const parse = require('../lib/check')._internal.parseCommand;
+  const { check } = require('../lib/check');
+  const home = tempDir(t, 'zn-pg-mod-');
+  for (const agent of ['claude-code', 'codex', 'cursor', 'gemini', 'copilot']) {
+    // every form the installer writes is exact
+    const { commands } = install(t, agent);
+    for (const [, command] of commands) {
+      assert.equal(launcher.isProjectGuardExact(command, agent), true, agent);
+      assert.deepEqual(parse(command, agent), { onPath: true, guarded: true }, agent);
+      // a command inserted into the guard still looks like it (so reinstall replaces it) but is no longer exact
+      const edited = command.replace('; C=$?;', '; C=$?; true;');
+      assert.notEqual(edited, command);
+      assert.equal(launcher.isProjectGuardExact(edited, agent), false, agent);
+      assert.equal(cfg.isOurs(edited, agent), true, agent);
+      assert.deepEqual(parse(edited, agent), { onPath: true, guarded: true, modified: true }, agent);
+    }
+    // the 1.13.x form is the bare command: recognised as ours, not as a guard
+    assert.deepEqual(parse('zn hook ' + agent, agent), { onPath: true });
+    assert.equal(cfg.isOurs('zn hook ' + agent, agent), true);
+    // check: the file with an edited guard is reported, and the exact one is not
+    const proj = tempDir(t, 'zn-pg-modrepo-');
+    getAdapter(agent).install({ scope: 'project', projectDir: proj, home, env: { HOME: home }, mcp: false, managedDir: path.join(home, 'no-managed-policy') });
+    const file = path.join(proj, ...AGENTS[agent].file);
+    const text = fs.readFileSync(file, 'utf8');
+    fs.writeFileSync(file, text.split('; C=$?;').join('; C=$?; true;'));
+    const env = { HOME: home, PATH: process.env.PATH };
+    const res = await check({ home, env, cwd: proj });
+    const row = (res.results || res).find((x) => x.id === agent);
+    assert.equal(row.state, 'not-protected', agent);
+    assert.match(row.problem, /was modified/, agent);
+    assert.match(row.fix, /--project/, agent);
+  }
+});

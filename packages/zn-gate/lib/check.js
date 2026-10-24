@@ -249,7 +249,9 @@ function parseCommand(command, agentId) {
     if (wm && wm[3] === agentId && wm[4] === agentId) return { winScript: ws, node: wm[1], runner: wm[2] };
   }
   // The project hook (shared file): `zn` on the PATH inside zn's own guard (launcher.projectShCommand / projectWindowsScript).
-  if (launcher.isProjectGuard(c, agentId) || (ws && launcher.isProjectWindowsScript(ws, agentId))) return { onPath: true, guarded: true };
+  // Only the exact guard this version writes counts as guarded; a guard-looking command that differs is reported as modified.
+  if (launcher.isProjectGuardExact(c, agentId) || (ws && launcher.isProjectWindowsScriptExact(ws, agentId))) return { onPath: true, guarded: true };
+  if (launcher.isProjectGuard(c, agentId) || (ws && launcher.isProjectWindowsScript(ws, agentId))) return { onPath: true, guarded: true, modified: true };
   if (!c.endsWith(' ' + agentId) && !c.endsWith(' ' + agentId + '"')) return null;
   if (audit.OUR_HOOKS[0].test(c)) return { onPath: true };
   const quoted = new RegExp("^'(" + audit.SAFE_ABS + ")' '(" + audit.SAFE_ABS + "/zn-gate/lib/hooks/runner\\.js)' " + agentId + '$');
@@ -487,6 +489,15 @@ function bareProjectHook(spec, text) {
   } catch (_) { return false; }
 }
 
+/* Whether this folder's hooks file holds a guard that looks like zn's but is not exactly one this version writes. */
+function modifiedProjectGuard(spec, text) {
+  if (!text || spec.id === 'opencode' || spec.id === 'zcode') return false;
+  try {
+    const tree = JSON.parse(String(text).replace(/^\uFEFF/, ''));
+    return hookEntries(tree, spec.id).some((e) => { const c = parseCommand(e.command, spec.id); return Boolean(c && c.modified); });
+  } catch (_) { return false; }
+}
+
 /* Runs an installed hook with the two requests: '' when it blocks .env and allows the ordinary file, else the problem. */
 function runLive(spec, ctx, live) {
   const a = spawnHook(live.file, live.args, spec.request(ctx.dir, ctx.envFile), live.env, ctx.dir);
@@ -718,6 +729,9 @@ async function checkAgent(spec, ctx) {
   const projText = path.resolve(projFile) !== path.resolve(userFile) ? require('./audit')._internal.readBounded(projFile, 256 * 1024, false).text : null;
   const projBare = bareProjectHook(spec, projText);
   const BARE_FIX = 'run `zn hooks install ' + spec.id + ' --project` again in that project (it writes the guarded command)';
+  const projModified = !projBare && modifiedProjectGuard(spec, projText);
+  const MOD_MSG = 'the zn hook in ' + projFile + ' was modified (it is not the guard zn writes); run `zn hooks install ' + spec.id + ' --project` again in that project';
+  if (installed && projModified) res.notes.push(MOD_MSG);
   if (installed && projBare) res.notes.push('the hook in ' + projFile + ' is a bare `zn hook ' + spec.id + '`: where zn or Node.js cannot start, ' + spec.name + ' runs the call unchecked there; ' + BARE_FIX);
 
   if (!installed) {
@@ -734,6 +748,10 @@ async function checkAgent(spec, ctx) {
         // A bare `zn hook` fails open when zn or Node.js is gone: the project is not protected.
         res.state = 'not-protected';
         res.problem = 'the hook in ' + proj + ' is a bare `zn hook ' + spec.id + '`, so where zn or Node.js cannot start, ' + spec.name + ' runs the call unchecked';
+        res.fix = BARE_FIX;
+      } else if (projModified) {
+        res.state = 'not-protected';
+        res.problem = MOD_MSG;
         res.fix = BARE_FIX;
       }
     }
