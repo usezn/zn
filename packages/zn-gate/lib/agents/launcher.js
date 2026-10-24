@@ -48,8 +48,10 @@ const BLOCK_EXIT_BY_AGENT = {
   gemini: new Set(['BeforeTool']),
   // Antigravity: the hook answers with {decision:'deny',reason} on stdout (exit 0); its docs do not say what a failed hook does.
   antigravity: new Set(['PreToolUse']),
+  // Zcode: exit code 2 blocks PreToolUse, PermissionRequest and UserPromptSubmit (docs: "Blocking shortcut"); any other failure only logs and the call runs.
+  zcode: new Set(['PreToolUse', 'PermissionRequest', 'UserPromptSubmit']),
 };
-const BLOCK_JSON_BY_AGENT = { 'claude-code': new Set(), cursor: new Set(), gemini: new Set(), antigravity: new Set() };
+const BLOCK_JSON_BY_AGENT = { 'claude-code': new Set(), cursor: new Set(), gemini: new Set(), antigravity: new Set(), zcode: new Set() };
 // Agents that read a block from a deny JSON on stdout with exit 0 (not from exit code 2).
 const DENY_STDOUT = {
   antigravity: (r) => ({ decision: 'deny', reason: r }),

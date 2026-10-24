@@ -13,9 +13,10 @@ const ADAPTERS = {
   antigravity: () => require('./antigravity'),
   copilot: () => require('./copilot'),
   gemini: () => require('./gemini'),
+  zcode: () => require('./zcode'),
 };
 
-const ALIASES = { claude: 'claude-code', claudecode: 'claude-code', 'gemini-cli': 'gemini', geminicli: 'gemini' };
+const ALIASES = { claude: 'claude-code', claudecode: 'claude-code', 'gemini-cli': 'gemini', geminicli: 'gemini', 'z.ai': 'zcode', zai: 'zcode' };
 
 const has = (obj, key) => Object.hasOwn(obj, key);
 
