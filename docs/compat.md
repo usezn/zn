@@ -3,6 +3,7 @@
 What the secrets scrubber and broker can do in each agent. zn-gate is not a sandbox: what it covers
 depends on what each agent's hooks can see and block; formats were checked against each agent's official
 documentation on 2026-10-11 (Cursor again on 2026-10-17). End-to-end evidence is in [`bench/e2e/`](../bench/e2e/).
+Terms such as hook, matcher and scrubber are explained in the [glossary](glossary.md).
 
 | | Claude Code | Codex CLI | Cursor (IDE) | OpenCode | Antigravity (experimental) |
 |---|---|---|---|---|---|
