@@ -150,11 +150,15 @@ function writeLauncher(agentId, nodePath, runnerPath, opts = {}) {
   const file = launcherFile(agentId, opts);
   const dir = path.dirname(file);
   // ZN_HOOK_DIR names any folder: the launcher in it runs on every tool call, so the folder must be ours and private.
-  if ((opts.env || process.env).ZN_HOOK_DIR) ensureSafeHookDir(dir, opts.platform || process.platform, { trustedRoot: opts.hookDirTrustedRoot });
+  if ((opts.env || process.env).ZN_HOOK_DIR) ensureSafeHookDir(dir, opts.platform || process.platform, { trustedRoot: opts.hookDirTrustedRoot, readWinAcls: opts.readWinAcls, setWinPrivate: opts.setWinPrivate });
   else fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   // On Windows the script runs in Git Bash: write the paths with / so that `zn-gate check` can read them back.
   const platform = opts.platform || process.platform;
   writeFileAtomic(file, unixScript(agentId, portablePath(nodePath, platform), portablePath(runnerPath, platform)), 0o755);
+  // Windows: the folder cannot be held open, so check the chain again after the write; a swap in between removes the file.
+  if (platform === 'win32' && (opts.env || process.env).ZN_HOOK_DIR) {
+    try { ensureSafeHookDir(dir, platform, { trustedRoot: opts.hookDirTrustedRoot, readWinAcls: opts.readWinAcls, setWinPrivate: opts.setWinPrivate }); } catch (e) { try { fs.unlinkSync(file); } catch (_) { /* best effort */ } throw e; }
+  }
   try { fs.chmodSync(file, 0o755); } catch (_) { /* best effort */ }
   return file;
 }
@@ -295,23 +299,146 @@ function checkChain(start, trustedRoot, leafPath) {
   }
 }
 
+// ---- Windows rule for ZN_HOOK_DIR -------------------------------------------------------------------------------
+// Windows has no uid or mode, so the same idea is checked with the owner and the access list (ACL) of every folder in the
+// chain, read with PowerShell (Get-Acl), plus "no link or junction anywhere in the path". A folder is refused when its owner is
+// not you, SYSTEM, Administrators or TrustedInstaller, or when an allow entry for anybody else (Users, Everyone,
+// Authenticated Users, another account) gives a right that lets them replace it or what is in it: delete it, delete what it
+// holds, change its access list or owner, and (for the launcher folder itself) create or write files in it. Entries that only
+// apply to the children of a folder (inherit only) do not count for that folder.
+const WIN_TRUSTED_SIDS = new Set([
+  'S-1-5-18', // SYSTEM
+  'S-1-5-32-544', // Administrators
+  'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464', // TrustedInstaller
+  'S-1-3-0', // CREATOR OWNER (takes the owner's rights; the owner is checked on its own)
+]);
+const WIN_RIGHTS = { WRITE_DATA: 0x2, APPEND_DATA: 0x4, DELETE_CHILD: 0x40, DELETE: 0x10000, WRITE_DAC: 0x40000, WRITE_OWNER: 0x80000, GENERIC_ALL: 0x10000000, GENERIC_WRITE: 0x40000000 };
+
+/** True when an allow entry with these rights lets its holder replace the folder (or, for the leaf, put files in it). */
+function winRisky(rights, leaf) {
+  const r = Number(rights) >>> 0;
+  let mask = WIN_RIGHTS.DELETE_CHILD | WIN_RIGHTS.DELETE | WIN_RIGHTS.WRITE_DAC | WIN_RIGHTS.WRITE_OWNER | WIN_RIGHTS.GENERIC_ALL | WIN_RIGHTS.GENERIC_WRITE;
+  if (leaf) mask |= WIN_RIGHTS.WRITE_DATA | WIN_RIGHTS.APPEND_DATA;
+  return (r & mask) !== 0;
+}
+
+/** Why a folder of the chain cannot be trusted on Windows, or null. `entry` = { path, owner, aces:[{sid,rights,type,inheritOnly}] }. */
+function winProblem(entry, user, leaf) {
+  const who = leaf ? 'it' : 'a folder above it (' + entry.path + ')';
+  if (!entry.owner || (entry.owner !== user && !WIN_TRUSTED_SIDS.has(entry.owner))) return leaf ? 'it belongs to another user' : who + ' belongs to another user';
+  for (const a of entry.aces || []) {
+    if (String(a.type).toLowerCase() !== 'allow' && Number(a.type) !== 0) continue;
+    if (a.inheritOnly) continue;
+    if (a.sid === user || WIN_TRUSTED_SIDS.has(a.sid)) continue;
+    if (winRisky(a.rights, leaf)) return who + ' can be changed by other users (' + a.sid + ')';
+  }
+  return null;
+}
+
+const WIN_ACL_SCRIPT = [
+  "$ErrorActionPreference = 'Stop'",
+  '$me = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value',
+  '$out = @()',
+  "foreach ($p in ($env:ZN_ACL_PATHS -split '[|]')) {",
+  '  $a = Get-Acl -LiteralPath $p',
+  '  $o = $a.GetOwner([System.Security.Principal.SecurityIdentifier]).Value',
+  '  $aces = @()',
+  '  foreach ($r in $a.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {',
+  '    $aces += [pscustomobject]@{ sid = $r.IdentityReference.Value; rights = [int64]$r.FileSystemRights; type = [string]$r.AccessControlType; inheritOnly = (([int]$r.PropagationFlags -band 2) -ne 0) }',
+  '  }',
+  '  $out += [pscustomobject]@{ path = $p; owner = $o; aces = $aces }',
+  '}',
+  '[pscustomobject]@{ user = $me; entries = $out } | ConvertTo-Json -Depth 6 -Compress',
+].join('\n');
+
+/** Reads owner and ACL of each path with PowerShell: { user, entries }. Throws when it cannot (the caller fails closed). */
+function readWinAcls(paths) {
+  const { spawnSync } = require('child_process');
+  const res = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', WIN_ACL_SCRIPT], {
+    env: { ...process.env, ZN_ACL_PATHS: paths.join('|') }, encoding: 'utf8', timeout: 30000, windowsHide: true,
+  });
+  if (res.error || res.status !== 0) throw new Error('could not read the access list of the folder (' + ((res.error && res.error.message) || String(res.stderr || '').trim().slice(0, 200) || 'exit ' + res.status) + ')');
+  let doc;
+  try { doc = JSON.parse(res.stdout); } catch (_) { throw new Error('could not read the access list of the folder (unreadable answer)'); }
+  doc.entries = [].concat(doc.entries || []).map((e) => ({ ...e, aces: [].concat(e.aces || []) }));
+  return doc;
+}
+
+/** Gives the folder one owner-only, non-inherited entry for `sid` (the same shape as the private file module). */
+function setWinPrivate(dir, sid) {
+  const { spawnSync } = require('child_process');
+  const res = spawnSync('icacls.exe', [dir, '/inheritance:r', '/grant:r', '*' + sid + ':(OI)(CI)F'], { encoding: 'utf8', timeout: 30000, windowsHide: true });
+  if (res.error || res.status !== 0) throw new Error('could not make the folder private (' + ((res.error && res.error.message) || String(res.stdout || '').trim().slice(0, 200)) + ')');
+}
+
+function winUnsafeMessage(dir, why) {
+  return 'zn will not keep its hook launcher in ' + dir + ': ' + why + '. The launcher runs on every tool call, so anyone who can replace it could run commands as you. ' +
+    'Use a folder that you own, whose path has no link or junction, and where no folder above it can be changed by other users (only you, SYSTEM and Administrators), ' +
+    'or unset ZN_HOOK_DIR to use the .zn/hooks folder in your home folder.';
+}
+
+/**
+ * Walks from `start` (a folder that exists) up to the drive root and refuses a link or junction in any folder of the path
+ * (before any ACL is read), then checks owner and ACL of every folder with one PowerShell call. `trustedRoot` is the same
+ * internal test option as on Unix: the walk stops before that folder. Returns the SID of the current user.
+ */
+function checkWinChain(start, trustedRoot, leafPath, readAcls) {
+  const folders = [];
+  let p = start;
+  for (;;) {
+    if (trustedRoot && p === trustedRoot) break;
+    let st;
+    try { st = fs.lstatSync(p); } catch (e) { throw new Error(winUnsafeMessage(p, 'it cannot be read (' + e.code + ')')); }
+    if (st.isSymbolicLink()) throw new Error(winUnsafeMessage(start, p === leafPath ? 'it is a link' : 'a link or junction is in its path (' + p + ')'));
+    if (!st.isDirectory()) throw new Error(winUnsafeMessage(p, 'it is not a folder'));
+    folders.push(p);
+    const up = path.dirname(p);
+    if (up === p) break;
+    p = up;
+  }
+  let doc;
+  try { doc = readAcls(folders); } catch (e) { throw new Error(winUnsafeMessage(start, e.message)); }
+  const byPath = new Map(doc.entries.map((e) => [e.path, e]));
+  for (const f of folders) {
+    const entry = byPath.get(f);
+    if (!entry) throw new Error(winUnsafeMessage(start, 'its access list could not be read (' + f + ')'));
+    const why = winProblem(entry, doc.user, f === leafPath);
+    if (why) throw new Error(winUnsafeMessage(f === leafPath ? f : start, why));
+  }
+  return doc.user;
+}
+
+function ensureSafeWinHookDir(dir, opts = {}) {
+  const abs = path.resolve(dir);
+  const trusted = opts.trustedRoot ? path.resolve(opts.trustedRoot) : null;
+  const readAcls = opts.readWinAcls || readWinAcls;
+  const setPrivate = opts.setWinPrivate || setWinPrivate;
+  let existing = abs;
+  while (!fs.existsSync(existing) && !isLink(existing)) existing = path.dirname(existing);
+  if (isLink(abs)) throw new Error(winUnsafeMessage(dir, 'it is a link'));
+  const user = checkWinChain(existing, trusted, abs, readAcls);
+  if (existing === abs) return;
+  fs.mkdirSync(abs, { recursive: true });
+  try {
+    setPrivate(abs, user);
+    checkWinChain(abs, trusted, abs, readAcls);
+  } catch (e) {
+    try { fs.rmdirSync(abs); } catch (_) { /* best effort */ }
+    throw e;
+  }
+}
+
 /**
  * Makes sure the folder that holds the launchers can be trusted. Nothing is created or written until the whole chain is
  * checked: the folder (or its nearest existing parent) must be a real folder with no link anywhere in its path, and it and
  * every folder above it up to / must belong to the current user or root and have no write for group or others. The sticky
  * bit is no excuse, so /tmp and a folder under it are refused: they can be emptied or replaced by someone else, while the
  * hook command keeps pointing at the old path. Creates the folder (0700) when it is missing. Throws a plain error
- * otherwise. On Windows there is no uid or mode to check (the same rule as the vault and the compile cache): it only
- * has to be a real folder, and the user profile's ACLs apply.
+ * otherwise. On Windows the same rule is read from the owner and the ACL of every folder in the chain (see the Windows rule above),
+ * and a missing folder is created owner-only.
  */
 function ensureSafeHookDir(dir, platform = process.platform, opts = {}) {
-  if (platform === 'win32') {
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const st = fs.lstatSync(dir);
-    if (st.isSymbolicLink()) throw new Error(unsafeDirMessage(dir, 'it is a link'));
-    if (!st.isDirectory()) throw new Error(unsafeDirMessage(dir, 'it is not a folder'));
-    return;
-  }
+  if (platform === 'win32') return ensureSafeWinHookDir(dir, opts);
   const abs = path.resolve(dir);
   const trusted = opts.trustedRoot ? path.resolve(opts.trustedRoot) : null;
   let existing = abs;
