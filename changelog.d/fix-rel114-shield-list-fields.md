@@ -1,0 +1,2 @@
+### Security
+- The shield now checks the text of the tool, resource, resource template and prompt lists that the agent can read: names, descriptions, titles, URIs, URI templates, argument fields, and the _meta, annotations and icons of each item. Text that blocks is rewritten; an item whose name, URI or argument name cannot be rewritten without breaking calls is removed from the list with a notice.
