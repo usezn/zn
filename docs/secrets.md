@@ -163,11 +163,10 @@ zn run --secrets PGPASSWORD -- psql -h db.example.test -U app -c "select 1"
 The value goes only into that process's environment. Its output is masked (raw,
 base64, hex and URL-encoded forms come back as the marker; standard output and
 standard error are masked separately, so a value that a program splits between
-the two is not caught), and the first time
-the vault asks you to confirm in its dialog or its terminal. That prompt shows
-the exact program that will run. Changing a secret's policy (`zn secret allow`)
-is confirmed the same way. The agent cannot answer these prompts from its own
-terminal.
+the two is not caught), and the first time the vault asks you to confirm in its
+dialog or its terminal. That prompt shows the exact program that will run.
+Changing a secret's policy (`zn secret allow`) is confirmed the same way. The
+agent cannot answer these prompts from its own terminal.
 
 A marker in the environment that `zn run` inherits (for example a value from
 a shadowed `.env` that your shell or direnv loads) is filled in the same way,
