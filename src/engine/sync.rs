@@ -50,6 +50,8 @@ struct PersistedAudit<'a> {
     db_path: &'a str,
     max_logs_in_memory: usize,
     encryption_enabled: bool,
+    store_payloads: bool,
+    require_write: bool,
 }
 
 #[derive(Serialize)]
@@ -87,6 +89,8 @@ impl<'a> PersistedConfig<'a> {
             db_path,
             max_logs_in_memory,
             encryption_enabled,
+            store_payloads,
+            require_write,
             ..
         } = &c.audit;
         let KmsConfig {
@@ -110,6 +114,8 @@ impl<'a> PersistedConfig<'a> {
                 db_path,
                 max_logs_in_memory: *max_logs_in_memory,
                 encryption_enabled: *encryption_enabled,
+                store_payloads: *store_payloads,
+                require_write: *require_write,
             },
             webhook_refs: c
                 .webhooks
