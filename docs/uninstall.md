@@ -87,6 +87,7 @@ npx -y zn-gate check
 
 ## Related
 
+- [Files zn-gate writes in each editor, and how to remove them by hand](editors/remove-by-hand.md)
 - [Every command and exit code](cli.md#uninstall)
 - [Keep your `.env` values in the vault](secrets.md)
 - [Words you do not know](glossary.md)
